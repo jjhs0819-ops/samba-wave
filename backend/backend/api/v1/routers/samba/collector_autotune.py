@@ -343,22 +343,6 @@ async def _site_autotune_loop(site: str):
                                 else:
                                     _cur_cost = product.cost or product.sale_price or 0
                                 _cost_int = int(_cur_cost) if _cur_cost else 0
-                                # 재고변동 건수
-                                _stock_changes = 0
-                                if r.stock_changed and r.new_options:
-                                    _old_opts = product.options or []
-                                    _old_stock_map = {
-                                        (o.get("name", "") or o.get("size", "")): o.get(
-                                            "stock", 0
-                                        )
-                                        for o in _old_opts
-                                    }
-                                    for _o in r.new_options:
-                                        _k = _o.get("name", "") or _o.get("size", "")
-                                        _os = _old_stock_map.get(_k, 0) or 0
-                                        _ns = _o.get("stock", 0) or 0
-                                        if (_os <= 0) != (_ns <= 0):
-                                            _stock_changes += 1
 
                                 # DB 업데이트 준비
                                 updates: dict = {
@@ -604,11 +588,41 @@ async def _site_autotune_loop(site: str):
                                             )
                                         )
 
-                                    # 재고 변동 → 전송 예약
-                                    if r.stock_changed:
+                                    # 재고 변동 → last_sent_data 옵션 vs API 옵션 비교
+                                    _sent_opts = (
+                                        acc_last.get("options") if acc_last else None
+                                    )
+                                    _api_opts = r.new_options
+                                    _stock_diff = False
+                                    _stock_changes_acc = 0
+                                    if _api_opts:
+                                        if _sent_opts is None:
+                                            # 기준값 없음 → 첫 1회 무조건 전송
+                                            _stock_diff = True
+                                            _stock_changes_acc = len(_api_opts)
+                                        else:
+                                            _sent_map = {
+                                                (
+                                                    o.get("name", "")
+                                                    or o.get("size", "")
+                                                ): o.get("stock", 0)
+                                                for o in _sent_opts
+                                            }
+                                            for _o in _api_opts:
+                                                _k = _o.get("name", "") or _o.get(
+                                                    "size", ""
+                                                )
+                                                _ss = _sent_map.get(_k, 0) or 0
+                                                _ns = _o.get("stock", 0) or 0
+                                                if (_ss <= 0) != (_ns <= 0):
+                                                    _stock_diff = True
+                                                    _stock_changes_acc += 1
+                                    if _stock_diff:
                                         _all_stock_pids.add(r.product_id)
                                         retransmitted += 1
-                                        _actions.append(f"재고전송 → {acc_label}")
+                                        _actions.append(
+                                            f"재고전송({_stock_changes_acc}건) → {acc_label}"
+                                        )
                                         _transmit_queue.append(
                                             (
                                                 r.product_id,
@@ -627,7 +641,8 @@ async def _site_autotune_loop(site: str):
                                     if _old_cost_int != _cost_int
                                     else f"{_cost_int:,}"
                                 )
-                                _tail = f" [원가 {_cost_str}, 재고변동 {_stock_changes:,}건]"
+                                _sc = "Y" if r.product_id in _all_stock_pids else "0"
+                                _tail = f" [원가 {_cost_str}, 재고변동 {_sc}]"
                                 if _actions:
                                     _log_line(
                                         site,
@@ -717,6 +732,9 @@ async def _site_autotune_loop(site: str):
                                                 from backend.domain.samba.shipment.service import (
                                                     SambaShipmentService as _SyncSvc,
                                                 )
+                                                from backend.domain.samba.collector.repository import (
+                                                    SambaCollectedProductRepository as _ProdRepo,
+                                                )
 
                                                 _svc = _SyncSvc(_SyncRepo(tx_s), tx_s)
                                                 await _svc.start_update(
@@ -726,6 +744,24 @@ async def _site_autotune_loop(site: str):
                                                     skip_unchanged=False,
                                                     skip_refresh=True,
                                                 )
+                                                # 재고전송 성공 → last_sent_data에 옵션 기준값 저장
+                                                if "stock" in s_items:
+                                                    _pr = _ProdRepo(tx_s)
+                                                    _prod = await _pr.get_async(s_pid)
+                                                    if _prod:
+                                                        _lsd = dict(
+                                                            _prod.last_sent_data or {}
+                                                        )
+                                                        _acc_data = dict(
+                                                            _lsd.get(s_acc_id) or {}
+                                                        )
+                                                        _acc_data["options"] = (
+                                                            _prod.options
+                                                        )
+                                                        _lsd[s_acc_id] = _acc_data
+                                                        await _pr.update_async(
+                                                            s_pid, last_sent_data=_lsd
+                                                        )
                                                 await tx_s.commit()
                                         except Exception as _se:
                                             _s_site = getattr(
