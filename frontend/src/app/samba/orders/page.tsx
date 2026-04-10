@@ -163,8 +163,9 @@ export default function OrdersPage() {
   const loadOrders = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await orderApi.list(0, pageSize)
+      const data = await orderApi.listByDateRange(customStart, customEnd)
       setOrders(data)
+      setCurrentPage(1)
       setEditingTrackings({})
       // 서버에서 받은 action_tag로 activeActions 초기화
       const actions: Record<string, string | null> = {}
@@ -174,7 +175,7 @@ export default function OrdersPage() {
       setActiveActions(actions)
     } catch { /* ignore */ }
     setLoading(false)
-  }, [pageSize])
+  }, [customStart, customEnd])
 
   // 플레이오토 마켓번호 별칭 매핑
   const [siteAliasMap, setSiteAliasMap] = useState<Record<string, string>>({})
@@ -1427,8 +1428,8 @@ export default function OrdersPage() {
       </div>
 
       {/* 페이지네이션 */}
-      {filteredOrders.length > pageSize && (() => {
-        const totalPages = Math.ceil(filteredOrders.length / pageSize)
+      {(() => {
+        const totalPages = Math.max(1, Math.ceil(filteredOrders.length / pageSize))
         const pages: (number | string)[] = []
         if (totalPages <= 7) {
           for (let i = 1; i <= totalPages; i++) pages.push(i)
@@ -1439,7 +1440,7 @@ export default function OrdersPage() {
           if (currentPage < totalPages - 2) pages.push('...')
           pages.push(totalPages)
         }
-        const btnStyle = (active: boolean) => ({
+        const pgBtn = (active: boolean) => ({
           background: active ? '#FF8C00' : 'rgba(30,30,30,0.9)',
           color: active ? '#fff' : '#aaa',
           border: active ? 'none' : '1px solid #333',
@@ -1451,14 +1452,37 @@ export default function OrdersPage() {
           fontWeight: active ? 600 : 400,
         })
         return (
-          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '4px', padding: '1rem 0' }}>
-            <button style={btnStyle(false)} disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)}>‹</button>
-            {pages.map((p, i) =>
-              typeof p === 'string'
-                ? <span key={`dot-${i}`} style={{ color: '#555', padding: '0 4px' }}>…</span>
-                : <button key={p} style={btnStyle(p === currentPage)} onClick={() => setCurrentPage(p)}>{p}</button>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 0.5rem', borderTop: '1px solid #232323', marginTop: '0.5rem' }}>
+            {/* 좌측: 건수 정보 */}
+            <span style={{ fontSize: '0.75rem', color: '#888', whiteSpace: 'nowrap' }}>
+              총 <span style={{ color: '#FF8C00', fontWeight: 600 }}>{fmtNum(filteredOrders.length)}</span>건
+              {filteredOrders.length > pageSize && <> · {fmtNum(currentPage)}/{fmtNum(totalPages)}페이지</>}
+            </span>
+            {/* 중앙: 페이지 버튼 */}
+            {totalPages > 1 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <button style={pgBtn(false)} disabled={currentPage === 1} onClick={() => setCurrentPage(1)}>«</button>
+                <button style={pgBtn(false)} disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)}>‹</button>
+                {pages.map((p, i) =>
+                  typeof p === 'string'
+                    ? <span key={`dot-${i}`} style={{ color: '#555', padding: '0 4px' }}>…</span>
+                    : <button key={p} style={pgBtn(p === currentPage)} onClick={() => setCurrentPage(p as number)}>{p}</button>
+                )}
+                <button style={pgBtn(false)} disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => p + 1)}>›</button>
+                <button style={pgBtn(false)} disabled={currentPage === totalPages} onClick={() => setCurrentPage(totalPages)}>»</button>
+              </div>
             )}
-            <button style={btnStyle(false)} disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => p + 1)}>›</button>
+            {/* 우측: 페이지 크기 */}
+            <select
+              style={{ background: 'rgba(30,30,30,0.9)', border: '1px solid #333', color: '#aaa', borderRadius: '6px', padding: '0.25rem 0.4rem', fontSize: '0.75rem', cursor: 'pointer' }}
+              value={pageSize}
+              onChange={e => { setPageSize(Number(e.target.value)); setCurrentPage(1) }}
+            >
+              <option value={50}>50개</option>
+              <option value={100}>100개</option>
+              <option value={200}>200개</option>
+              <option value={500}>500개</option>
+            </select>
           </div>
         )
       })()}
