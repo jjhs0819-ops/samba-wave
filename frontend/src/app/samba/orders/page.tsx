@@ -162,8 +162,15 @@ export default function OrdersPage() {
   const loadOrders = useCallback(async () => {
     setLoading(true)
     try {
-      setOrders(await orderApi.list(0, pageSize))
+      const data = await orderApi.list(0, pageSize)
+      setOrders(data)
       setEditingTrackings({})
+      // 서버에서 받은 action_tag로 activeActions 초기화
+      const actions: Record<string, string | null> = {}
+      for (const o of data) {
+        if (o.action_tag) actions[o.id] = o.action_tag
+      }
+      setActiveActions(actions)
     } catch { /* ignore */ }
     setLoading(false)
   }, [pageSize])
@@ -562,12 +569,13 @@ export default function OrdersPage() {
     }
   }
 
-  // 직배/까대기/선물 토글
-  const toggleAction = (orderId: string, actionKey: string) => {
-    setActiveActions(prev => ({
-      ...prev,
-      [orderId]: prev[orderId] === actionKey ? null : actionKey,
-    }))
+  // 가격X/재고X/직배/까대기/선물 토글 (서버 저장)
+  const toggleAction = async (orderId: string, actionKey: string) => {
+    const newVal = activeActions[orderId] === actionKey ? null : actionKey
+    setActiveActions(prev => ({ ...prev, [orderId]: newVal }))
+    try {
+      await orderApi.update(orderId, { action_tag: newVal || '' })
+    } catch { /* ignore */ }
   }
 
   // 기간 필터 계산

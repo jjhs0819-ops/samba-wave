@@ -473,21 +473,49 @@ async def sync_returns_from_markets(
                 client = SmartStoreClient(client_id, client_secret)
                 raw_orders = await client.get_orders(days=body.days)
 
-                # 클레임이 있는 주문만 필터
+                # 클레임 또는 productOrderStatus 기반 취소/반품/교환 필터
+                # 판매자 직접 취소 등 claimType/claimStatus 없이
+                # productOrderStatus만 CANCELED/RETURNED/EXCHANGED인 경우도 포함
+                _PO_STATUS_FALLBACK: dict[str, tuple[str, str, str, str]] = {
+                    # productOrderStatus → (return_type, status, claim_status_raw, display_status)
+                    "CANCELED": ("cancel", "completed", "CANCEL_DONE", "취소완료"),
+                    "RETURNED": ("return", "completed", "RETURN_DONE", "반품완료"),
+                    "EXCHANGED": ("exchange", "completed", "EXCHANGE_DONE", "교환완료"),
+                }
+
                 claims_data: list[dict[str, Any]] = []
                 for ro in raw_orders:
                     po = ro.get("productOrder", ro)
                     order_info = ro.get("order", {})
                     claim_type = po.get("claimType", "")
                     claim_status = po.get("claimStatus", "")
-                    if not claim_type or not claim_status:
-                        continue
-                    if claim_status not in _CLAIM_STATUS_MAP:
-                        continue
 
-                    return_type = _CLAIM_TYPE_MAP.get(claim_type)
-                    if not return_type:
-                        continue
+                    return_type: str | None = None
+                    status: str = ""
+                    claim_status_raw: str = ""
+                    display_status: str = ""
+
+                    if (
+                        claim_type
+                        and claim_status
+                        and claim_status in _CLAIM_STATUS_MAP
+                    ):
+                        # 정상 클레임 필드가 있는 경우
+                        return_type = _CLAIM_TYPE_MAP.get(claim_type)
+                        if not return_type:
+                            continue
+                        status = _CLAIM_STATUS_MAP[claim_status]
+                        claim_status_raw = claim_status
+                        display_status = _CLAIM_STATUS_DISPLAY.get(
+                            claim_status, claim_status
+                        )
+                    else:
+                        # claimType/claimStatus 없음 → productOrderStatus로 추론
+                        po_status = po.get("productOrderStatus", "")
+                        fallback = _PO_STATUS_FALLBACK.get(po_status)
+                        if not fallback:
+                            continue
+                        return_type, status, claim_status_raw, display_status = fallback
 
                     product_order_id = po.get("productOrderId", "")
                     sale_price = (
@@ -504,11 +532,9 @@ async def sync_returns_from_markets(
                         {
                             "product_order_id": product_order_id,
                             "type": return_type,
-                            "status": _CLAIM_STATUS_MAP[claim_status],
-                            "claim_status_raw": claim_status,
-                            "display_status": _CLAIM_STATUS_DISPLAY.get(
-                                claim_status, claim_status
-                            ),
+                            "status": status,
+                            "claim_status_raw": claim_status_raw,
+                            "display_status": display_status,
                             "reason": claim_reason,
                             "quantity": quantity,
                             "requested_amount": float(sale_price),

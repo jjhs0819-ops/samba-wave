@@ -306,6 +306,41 @@ async def get_musinsa_cookie(session: AsyncSession | None = None) -> str:
         return ""
 
 
+# ── 판매이력상품 필터 조건 ──
+
+
+async def build_has_orders_conditions(session: AsyncSession, model_class: Any) -> list:
+    """판매이력상품 필터 — 주문 product_id가 market_product_nos JSON 값에 포함된 상품.
+
+    SambaOrder.product_id는 마켓상품번호(channelProductNo, spdNo, ProdCode 등)를 저장하고,
+    SambaCollectedProduct.market_product_nos는 {"account_id": "마켓상품번호"} 형태 JSON이므로,
+    LIKE 패턴으로 JSON value를 매칭한다.
+    """
+    from sqlalchemy import or_, text
+    from sqlmodel import select
+    from backend.domain.samba.order.model import SambaOrder
+
+    result = await session.execute(
+        select(SambaOrder.product_id)
+        .where(SambaOrder.product_id.isnot(None))
+        .where(SambaOrder.product_id != "")
+        .distinct()
+    )
+    order_pids = result.scalars().all()
+
+    if not order_pids:
+        return [text("1=0")]
+
+    return [
+        or_(
+            *[
+                cast(model_class.market_product_nos, _StrType).like(f'%"{pid}"%')
+                for pid in order_pids
+            ]
+        )
+    ]
+
+
 # ── 마켓등록상품 필터 조건 ──
 
 

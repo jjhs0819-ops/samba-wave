@@ -135,6 +135,11 @@ class SambaOrder(SQLModel, table=True):
         default=None, sa_column=Column(Text, nullable=True)
     )
 
+    # 액션 태그 (no_price/no_stock/direct/kkadaegi/gift)
+    action_tag: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
     # 출처
     source: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     shipment_id: Optional[str] = Field(

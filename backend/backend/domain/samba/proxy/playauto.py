@@ -479,11 +479,10 @@ class PlayAutoClient:
                     url = url[:-5] + ".jpg"
                 data[f"Image{img_idx}"] = url
                 img_idx += 1
-        # 미사용 슬롯 처리: Image5까지만 대표이미지로 채움 (EMP Content 자동추출 방지)
-        # Image6~10은 빈 문자열로 클리어 (추가이미지 없을 때 과다 등록 방지)
+        # 미사용 슬롯을 대표이미지로 채움 (EMP가 Content에서 자동추출하는 것 방지)
         main_img = data.get("Image1", "")
         for fill_idx in range(img_idx, 11):
-            data[f"Image{fill_idx}"] = main_img if fill_idx <= 5 else ""
+            data[f"Image{fill_idx}"] = main_img
 
         # 상세설명 HTML
         content = product.get("detail_html", "") or product.get("description", "")

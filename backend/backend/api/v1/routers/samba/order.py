@@ -1,5 +1,6 @@
 """SambaWave Order API router."""
 
+from datetime import datetime
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -2104,6 +2105,16 @@ async def sync_orders_from_markets(
     return {"total_synced": total_synced, "results": results}
 
 
+def _parse_iso_datetime(val: str | None) -> datetime | None:
+    """ISO 8601 문자열 → datetime 변환. 실패 시 None."""
+    if not val:
+        return None
+    try:
+        return datetime.fromisoformat(val.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+
+
 def _parse_smartstore_order(
     po: dict, order_info: dict, account_id: str, account_label: str
 ) -> dict[str, Any]:
@@ -2219,7 +2230,9 @@ def _parse_smartstore_order(
         "shipping_status": market_order_status,
         "shipping_company": po.get("deliveryCompany", ""),
         "tracking_number": po.get("trackingNumber", ""),
-        "paid_at": order_info.get("paymentDate") or po.get("paymentDate"),
+        "paid_at": _parse_iso_datetime(
+            order_info.get("paymentDate") or po.get("paymentDate")
+        ),
         "source": "smartstore",
     }
 

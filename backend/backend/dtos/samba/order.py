@@ -48,6 +48,7 @@ class OrderUpdate(BaseModel):
     source_url: Optional[str] = None
     source_site: Optional[str] = None
     coupang_display_name: Optional[str] = None
+    action_tag: Optional[str] = None
 
 
 class OrderStatusUpdate(BaseModel):

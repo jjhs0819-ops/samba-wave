@@ -624,14 +624,11 @@ async def scroll_products(
     #    "registered/collected/saved"는 상품 처리 상태(status 컬럼) 기준 — 혼동 주의
     _KNOWN_STATUS_VALUES = {"collected", "saved", "registered"}
     if status == "has_orders":
-        from backend.domain.samba.order.model import SambaOrder
-
-        order_pids = (
-            select(SambaOrder.product_id)
-            .where(SambaOrder.product_id.isnot(None))
-            .distinct()
+        from backend.api.v1.routers.samba.collector_common import (
+            build_has_orders_conditions,
         )
-        conditions.append(_CP.id.in_(order_pids))
+
+        conditions.extend(await build_has_orders_conditions(session, _CP))
     elif status == "free_ship":
         conditions.append(_CP.free_shipping == True)
     elif status == "same_day":
@@ -765,14 +762,11 @@ async def scroll_products(
     elif ai_filter == "video_no":
         conditions.append(or_(_CP.video_url.is_(None), _CP.video_url == ""))
     elif ai_filter == "has_orders":
-        from backend.domain.samba.order.model import SambaOrder
-
-        order_pids = (
-            select(SambaOrder.product_id)
-            .where(SambaOrder.product_id.isnot(None))
-            .distinct()
+        from backend.api.v1.routers.samba.collector_common import (
+            build_has_orders_conditions,
         )
-        conditions.append(_CP.id.in_(order_pids))
+
+        conditions.extend(await build_has_orders_conditions(session, _CP))
 
     # 목록에 필요한 컬럼 선택 (heavy 필드만 제외)
     list_cols = [c for c in mapper.columns if c.key not in _HEAVY_FIELDS]
