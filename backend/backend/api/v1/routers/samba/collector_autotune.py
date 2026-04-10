@@ -602,28 +602,28 @@ async def _site_autotune_loop(site: str):
                                             "있음" if _sent_opts else "없음",
                                             acc_id[:20],
                                         )
-                                    if _api_opts:
-                                        if _sent_opts is None:
-                                            # 기준값 없음 → 첫 1회 무조건 전송
-                                            _stock_diff = True
-                                            _stock_changes_acc = len(_api_opts)
-                                        else:
-                                            _sent_map = {
-                                                (
-                                                    o.get("name", "")
-                                                    or o.get("size", "")
-                                                ): o.get("stock", 0)
-                                                for o in _sent_opts
-                                            }
-                                            for _o in _api_opts:
-                                                _k = _o.get("name", "") or _o.get(
-                                                    "size", ""
-                                                )
-                                                _ss = _sent_map.get(_k, 0) or 0
-                                                _ns = _o.get("stock", 0) or 0
-                                                if (_ss <= 0) != (_ns <= 0):
-                                                    _stock_diff = True
-                                                    _stock_changes_acc += 1
+                                    if _sent_opts is None and _api_opts is not None:
+                                        # 기준값 없음 → 첫 1회 무조건 전송
+                                        _stock_diff = True
+                                        _stock_changes_acc = (
+                                            len(_api_opts) if _api_opts else 0
+                                        )
+                                    elif _api_opts and _sent_opts:
+                                        _sent_map = {
+                                            (
+                                                o.get("name", "") or o.get("size", "")
+                                            ): o.get("stock", 0)
+                                            for o in _sent_opts
+                                        }
+                                        for _o in _api_opts:
+                                            _k = _o.get("name", "") or _o.get(
+                                                "size", ""
+                                            )
+                                            _ss = _sent_map.get(_k, 0) or 0
+                                            _ns = _o.get("stock", 0) or 0
+                                            if (_ss <= 0) != (_ns <= 0):
+                                                _stock_diff = True
+                                                _stock_changes_acc += 1
                                     if _stock_diff:
                                         _all_stock_pids.add(r.product_id)
                                         retransmitted += 1
