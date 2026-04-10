@@ -70,7 +70,7 @@ export default function ShipmentsPage() {
   // 실시간 Job 큐 상태
   const [jobQueueStatus, setJobQueueStatus] = useState<{ running: number, pending: number }>({ running: 0, pending: 0 })
   const jobQueuePollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const cancelledAtRef = useRef<number>(0) // 작업중지 후 Read DB 복제 지연 방지
+  const cancelledAtRef = useRef<number>(0) // 작업중지 후 폴링 업데이트 차단 (새 전송 시작 시 해제)
 
   // 컴포넌트 언마운트 시 잡 폴링 정리
   useEffect(() => {
@@ -91,8 +91,8 @@ export default function ShipmentsPage() {
         ])
         const runJobs = await runRes.json()
         const penJobs = await penRes.json()
-        // 작업중지 후 10초간 Read DB stale 데이터 무시 (Write→Read 복제 지연 방지)
-        if (Date.now() - cancelledAtRef.current < 10_000) return
+        // 작업중지 후 폴링 업데이트 영구 차단 (새 전송 시작 시 해제)
+        if (cancelledAtRef.current) return
         setJobQueueStatus({
           running: Array.isArray(runJobs) ? runJobs.length : 0,
           pending: Array.isArray(penJobs) ? penJobs.length : 0,
@@ -539,6 +539,7 @@ export default function ShipmentsPage() {
     }
     const effectiveLabels = [...effectiveAccountSet].map(aid => accountLabelMap[aid] || aid)
     abortRef.current = false
+    cancelledAtRef.current = 0 // 폴링 업데이트 재허용
     addLog(`[${ts()}] 전송 시작 — 상품 ${total.toLocaleString()}개, ${effectiveLabels.length > 0 ? effectiveLabels.join(', ') : '연결 계정 없음'}`)
 
     const items: string[] = []
@@ -657,6 +658,7 @@ export default function ShipmentsPage() {
 
     setTransmitting(true)
     abortRef.current = false
+    cancelledAtRef.current = 0 // 폴링 업데이트 재허용
     const ts = () => new Date().toLocaleTimeString()
     const addLog = (msg: string) => setLogMessages(prev => [...prev, msg].slice(-30))
 
