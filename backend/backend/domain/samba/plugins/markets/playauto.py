@@ -207,9 +207,11 @@ class PlayAutoPlugin(MarketPlugin):
         image_url: str,
     ) -> str:
         """소싱처 이미지 → R2 업로드 (EMP 서버에서 접근 가능하도록)."""
-        # 이미 R2 URL이면 스킵
+        # 이미 R2 URL이면 스킵 (단, WebP는 JPG 변환 필요 — EMP 미지원)
         if public_url and public_url in image_url:
-            return image_url
+            if not image_url.lower().endswith(".webp"):
+                return image_url
+            logger.info(f"[플레이오토] R2 WebP→JPG 변환: {image_url[:80]}")
 
         # 해시 기반 중복 방지 — 동일 소싱처 URL은 같은 R2 파일로
         url_hash = hashlib.md5(image_url.encode()).hexdigest()[:12]

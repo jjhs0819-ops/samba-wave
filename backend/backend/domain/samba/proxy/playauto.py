@@ -462,6 +462,9 @@ class PlayAutoClient:
                     url = url[:-5] + ".jpg"
                 data[f"Image{img_idx}"] = url
                 img_idx += 1
+        # 미사용 이미지 슬롯 초기화 (이전 등록 잔여 이미지 제거)
+        for clear_idx in range(img_idx, 11):
+            data[f"Image{clear_idx}"] = ""
 
         # 상세설명 HTML
         content = product.get("detail_html", "") or product.get("description", "")
