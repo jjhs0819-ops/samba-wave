@@ -221,7 +221,7 @@ class PlayAutoPlugin(MarketPlugin):
             ext = ".png"
         elif low.endswith(".gif"):
             ext = ".gif"
-        r2_key = f"playauto/v3/{url_hash}{ext}"
+        r2_key = f"playauto/v4/{url_hash}{ext}"
         r2_url = f"{public_url}/{r2_key}"
 
         # R2에 이미 존재하면 재업로드 스킵
@@ -248,8 +248,10 @@ class PlayAutoPlugin(MarketPlugin):
         r2_key: str = "",
     ) -> str:
         """이미지 1장 다운로드 → R2 업로드 → 공개 URL 반환."""
+        # R2 URL이면 스킵 (단, WebP는 JPG 변환 필요)
         if public_url and public_url in image_url:
-            return image_url
+            if not image_url.lower().endswith(".webp"):
+                return image_url
 
         # 다운로드 (소싱처별 Referer 설정)
         parsed = urlparse(image_url)
@@ -295,7 +297,7 @@ class PlayAutoPlugin(MarketPlugin):
                 ext = ".png"
             elif image_url.lower().endswith(".gif"):
                 ext = ".gif"
-            r2_key = f"playauto/v3/{url_hash}{ext}"
+            r2_key = f"playauto/v4/{url_hash}{ext}"
 
         content_type = "image/jpeg"
         if r2_key.endswith(".png"):
