@@ -1006,14 +1006,14 @@ class JobWorker:
                 logger.error(f"[잡워커] 검색 실패: {e}")
                 break
 
-            # 중복 필터링 (현재 필터 기준 — 다른 그룹과 독립적으로 수집)
+            # 중복 필터링 (전역 기준 — unique constraint와 동일한 범위)
             candidate_ids = [
                 str(item.get("siteProductId", item.get("goodsNo", "")))
                 for item in search_items
             ]
             existing_result = await session.execute(
                 select(CPModel.site_product_id).where(
-                    CPModel.search_filter_id == filter_id,
+                    CPModel.source_site == site,
                     CPModel.site_product_id.in_(candidate_ids),
                 )
             )

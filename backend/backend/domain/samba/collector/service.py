@@ -2,6 +2,7 @@
 
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
 from backend.domain.samba.collector.model import (
@@ -91,7 +92,32 @@ class SambaCollectorService:
         self._fill_optional_images(data)
         await self._fill_source_brand(data)
         await self._inherit_group_attributes(data)
-        return await self.product_repo.create_async(**data)
+        try:
+            return await self.product_repo.create_async(**data)
+        except IntegrityError:
+            # 다른 검색필터에서 이미 수집된 상품 → 기존 상품 업데이트
+            await self.product_repo.session.rollback()
+            existing = (
+                (
+                    await self.product_repo.session.execute(
+                        select(SambaCollectedProduct).where(
+                            SambaCollectedProduct.source_site
+                            == data.get("source_site"),
+                            SambaCollectedProduct.site_product_id
+                            == data.get("site_product_id"),
+                        )
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            if existing:
+                for k, v in data.items():
+                    if k not in ("id", "source_site", "site_product_id", "created_at"):
+                        setattr(existing, k, v)
+                await self.product_repo.session.flush()
+                return existing
+            raise
 
     async def _fill_source_brand(self, data: Dict[str, Any]) -> None:
         """검색필터의 source_brand_name으로 빈 brand/manufacturer 자동 채움."""
