@@ -231,12 +231,10 @@ async def patch_return(
     if body.recovery_amount is not None:
         update_fields["recovery_amount"] = body.recovery_amount
     if body.check_date is not None:
-        from datetime import datetime, timezone
+        from backend.utils import kst_iso_to_utc
 
         update_fields["check_date"] = (
-            datetime.fromisoformat(body.check_date).replace(tzinfo=timezone.utc)
-            if body.check_date
-            else None
+            kst_iso_to_utc(body.check_date) if body.check_date else None
         )
     if body.memo is not None:
         update_fields["memo"] = body.memo
@@ -1107,7 +1105,9 @@ async def sync_returns_from_markets(
 
                 from datetime import UTC, datetime, timedelta
 
-                end_dt = datetime.now()  # 로컬 KST 기준 (11번가 API는 KST 시각 사용)
+                from backend.utils import now_kst
+
+                end_dt = now_kst()  # KST 기준 (11번가 API는 KST 시각 사용)
                 start_dt = end_dt - timedelta(days=body.days)
                 fmt = "%Y%m%d%H%M"
 
@@ -1681,18 +1681,16 @@ async def patch_exchange_tracking(
     if not ret:
         raise HTTPException(status_code=404, detail="교환 기록을 찾을 수 없습니다")
 
-    from datetime import datetime, timezone
-
     update_fields: dict[str, Any] = {}
 
     if body.exchange_retrieval_status is not None:
         update_fields["exchange_retrieval_status"] = body.exchange_retrieval_status
 
     if body.exchange_retrieved_at is not None:
+        from backend.utils import kst_iso_to_utc
+
         update_fields["exchange_retrieved_at"] = (
-            datetime.fromisoformat(body.exchange_retrieved_at).replace(
-                tzinfo=timezone.utc
-            )
+            kst_iso_to_utc(body.exchange_retrieved_at)
             if body.exchange_retrieved_at
             else None
         )
@@ -1704,10 +1702,10 @@ async def patch_exchange_tracking(
         update_fields["exchange_reship_tracking"] = body.exchange_reship_tracking
 
     if body.exchange_delivered_at is not None:
+        from backend.utils import kst_iso_to_utc
+
         update_fields["exchange_delivered_at"] = (
-            datetime.fromisoformat(body.exchange_delivered_at).replace(
-                tzinfo=timezone.utc
-            )
+            kst_iso_to_utc(body.exchange_delivered_at)
             if body.exchange_delivered_at
             else None
         )

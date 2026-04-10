@@ -379,14 +379,8 @@ async def _delete_playauto(
     product: dict[str, Any],
     account: Any = None,
 ) -> dict[str, Any]:
-    """플레이오토 상품 품절 처리 (취소대기 전환) — 플러그인 delete() 위임."""
-    from backend.domain.samba.plugins.markets.playauto import PlayAutoPlugin
-
-    product_no = product.get("market_product_no", {}).get("playauto", "")
-    if not product_no:
-        return {"success": False, "message": "플레이오토 상품번호 없음 (건너뜀)"}
-    plugin = PlayAutoPlugin()
-    return await plugin.delete(session, product_no, account)
+    """플레이오토 마켓삭제 — API 삭제 불가, DB 등록정보만 초기화 (강제삭제)."""
+    return {"success": True, "message": "플레이오토 등록정보 초기화 완료"}
 
 
 # 마켓별 삭제 핸들러 매핑

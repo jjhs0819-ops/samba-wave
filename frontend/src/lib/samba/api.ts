@@ -111,6 +111,7 @@ export interface SambaOrder {
   coupang_display_name?: string;
   source_url?: string;
   source_site?: string;
+  collected_product_id?: string;
   customer_name?: string;
   customer_phone?: string;
   customer_address?: string;
@@ -184,6 +185,10 @@ export const orderApi = {
   shipOrder: (id: string, shippingCompany: string, trackingNumber: string) =>
     request<{ ok: boolean; market_sent: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/ship`, {
       method: "POST", body: JSON.stringify({ shipping_company: shippingCompany, tracking_number: trackingNumber }),
+    }),
+  linkProduct: (orderId: string, collectedProductId: string) =>
+    request<{ ok: boolean }>(`${SAMBA_PREFIX}/orders/${orderId}/link-product`, {
+      method: "PATCH", body: JSON.stringify({ collected_product_id: collectedProductId }),
     }),
   fetchProductImage: (url: string) =>
     request<{ image_url: string }>(`${SAMBA_PREFIX}/orders/fetch-product-image`, {

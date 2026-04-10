@@ -13,6 +13,8 @@ from datetime import datetime
 from typing import Any, Optional
 from xml.etree import ElementTree as ET
 
+from backend.utils import now_kst
+
 import httpx
 
 from backend.core.config import settings
@@ -421,7 +423,7 @@ class ElevenstClient:
         import re as _re
 
         if not send_dt:
-            send_dt = datetime.now().strftime("%Y%m%d%H%M")
+            send_dt = now_kst().strftime("%Y%m%d%H%M")
 
         url = (
             f"https://api.11st.co.kr/rest/ordservices/reqdelivery"
@@ -696,7 +698,7 @@ class ElevenstClient:
 
         import urllib.parse
 
-        send_dt = datetime.now().strftime("%Y%m%d")
+        send_dt = now_kst().strftime("%Y%m%d")
         encoded_reason = urllib.parse.quote(reject_reason, safe="")
         # 구버전 GET (ordNo/ordPrdSeq/ordPrdCnSeq/dlvMthdCd/sendDt/dlvEtprsCd/invcNo)
         url = (
@@ -928,9 +930,9 @@ class ElevenstClient:
         from datetime import timedelta
 
         if not end_dt:
-            end_dt = datetime.now().strftime("%Y%m%d")
+            end_dt = now_kst().strftime("%Y%m%d")
         if not start_dt:
-            start_dt = (datetime.now() - timedelta(days=7)).strftime("%Y%m%d")
+            start_dt = (now_kst() - timedelta(days=7)).strftime("%Y%m%d")
 
         # answerStatus: 00=전체, 01=답변완료, 02=미답변
         url = f"https://api.11st.co.kr/rest/prodqnaservices/prodqnalist/{start_dt}/{end_dt}/00"
@@ -1326,7 +1328,7 @@ class ElevenstClient:
   <maktPrc>{makt_prc}</maktPrc>
   <selPrc>{sale_price}</selPrc>
   <selMthdCd>01</selMthdCd>
-  <aplBgnDy>{datetime.now().strftime("%Y%m%d")}</aplBgnDy>
+  <aplBgnDy>{now_kst().strftime("%Y%m%d")}</aplBgnDy>
   <selTermUseYn>N</selTermUseYn>
   <prdWeight>0</prdWeight>
   <rmaterialTypCd>04</rmaterialTypCd>

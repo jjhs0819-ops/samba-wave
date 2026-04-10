@@ -460,7 +460,7 @@ class PlayAutoClient:
         img_idx = 1
         if isinstance(images, list):
             for img_url in images:
-                if img_idx > 10:
+                if img_idx > 5:
                     break
                 url = img_url if isinstance(img_url, str) else img_url.get("url", "")
                 if not url:
@@ -480,10 +480,9 @@ class PlayAutoClient:
                 data[f"Image{img_idx}"] = url
                 img_idx += 1
         # 미사용 슬롯을 대표이미지로 채움 (EMP가 Content에서 자동추출하는 것 방지)
-        # 추가이미지 없으면 5개까지만 채움 (리소스 절약)
+        # 최대 5장 상한 (리소스 절약)
         main_img = data.get("Image1", "")
-        max_fill = 11 if img_idx > 2 else 6
-        for fill_idx in range(img_idx, max_fill):
+        for fill_idx in range(img_idx, 6):
             data[f"Image{fill_idx}"] = main_img
 
         # 상세설명 HTML

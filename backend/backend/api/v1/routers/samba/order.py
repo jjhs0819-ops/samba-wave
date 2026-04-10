@@ -314,15 +314,10 @@ async def list_orders_by_date_range(
     tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     """기간별 주문 조회 — COALESCE(paid_at, created_at) 기준, 제한 없이 전체 반환."""
-    from datetime import UTC, datetime
     from sqlalchemy import func, select as sa_select, or_
+    from backend.utils import kst_date_range_to_utc
 
-    start_dt = datetime.strptime(start, "%Y-%m-%d").replace(
-        hour=0, minute=0, second=0, tzinfo=UTC
-    )
-    end_dt = datetime.strptime(end, "%Y-%m-%d").replace(
-        hour=23, minute=59, second=59, tzinfo=UTC
-    )
+    start_dt, end_dt = kst_date_range_to_utc(start, end)
 
     order_date = func.coalesce(SambaOrder.paid_at, SambaOrder.created_at)
     stmt = (
@@ -373,6 +368,82 @@ async def create_order(
 ):
     svc = _write_service(session)
     return await svc.create_order(body.model_dump(exclude_unset=True))
+
+
+@router.patch("/{order_id}/link-product")
+async def link_order_to_product(
+    order_id: str,
+    body: dict,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """주문에 수집상품 ID 연결 (지연 채움)."""
+    cpid = body.get("collected_product_id", "")
+    if not cpid:
+        raise HTTPException(400, "collected_product_id 필수")
+    from sqlalchemy import text as _t
+
+    await session.execute(
+        _t(
+            "UPDATE samba_order SET collected_product_id = :cpid WHERE id = :oid AND collected_product_id IS NULL"
+        ),
+        {"cpid": cpid, "oid": order_id},
+    )
+    await session.commit()
+    return {"ok": True}
+
+
+@router.post("/backfill-product-links")
+async def backfill_product_links(
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """기존 주문의 collected_product_id 일괄 백필."""
+    from sqlalchemy import text as _t
+
+    # market_product_nos에서 역매핑 캐시 빌드
+    cp_rows = await session.execute(
+        _t(
+            "SELECT id, market_product_nos FROM samba_collected_product "
+            "WHERE market_product_nos IS NOT NULL"
+        )
+    )
+    mpn_map: dict[str, str] = {}
+    for cpid, mpnos in cp_rows.fetchall():
+        if not mpnos or not isinstance(mpnos, dict):
+            continue
+        for _v in mpnos.values():
+            if not _v:
+                continue
+            if isinstance(_v, dict):
+                for sv in [
+                    _v.get("smartstoreChannelProductNo"),
+                    _v.get("originProductNo"),
+                    _v.get("channelProductNo"),
+                ]:
+                    if sv:
+                        mpn_map[str(sv)] = cpid
+            else:
+                mpn_map[str(_v)] = cpid
+
+    # collected_product_id가 없는 주문 조회
+    null_orders = await session.execute(
+        _t(
+            "SELECT id, product_id FROM samba_order "
+            "WHERE collected_product_id IS NULL AND product_id IS NOT NULL"
+        )
+    )
+    linked = 0
+    for oid, pid in null_orders.fetchall():
+        cpid = mpn_map.get(str(pid))
+        if cpid:
+            await session.execute(
+                _t(
+                    "UPDATE samba_order SET collected_product_id = :cpid WHERE id = :oid"
+                ),
+                {"cpid": cpid, "oid": oid},
+            )
+            linked += 1
+    await session.commit()
+    return {"linked": linked, "total_cache": len(mpn_map)}
 
 
 @router.put("/{order_id}", response_model=SambaOrder)
@@ -1691,7 +1762,7 @@ async def sync_orders_from_markets(
 
             _cp_result = await session.execute(
                 _sa_text(
-                    "SELECT source_site, site_product_id, images, market_product_nos "
+                    "SELECT id, source_site, site_product_id, images, market_product_nos "
                     "FROM samba_collected_product WHERE market_product_nos IS NOT NULL LIMIT 50000"
                 )
             )
@@ -1712,7 +1783,7 @@ async def sync_orders_from_markets(
                 "Adidas": "https://www.adidas.co.kr/{}.html",
             }
             for _row in _cp_result.fetchall():
-                _site, _spid, _imgs, _mpnos = _row
+                _cpid, _site, _spid, _imgs, _mpnos = _row
                 if _mpnos and isinstance(_mpnos, dict):
                     _thumb = (
                         _imgs[0] if _imgs and isinstance(_imgs, list) and _imgs else ""
@@ -1722,6 +1793,12 @@ async def sync_orders_from_markets(
                         if _site in _sourcing_urls and _spid
                         else ""
                     )
+                    _entry = {
+                        "collected_product_id": _cpid,
+                        "source_site": _site,
+                        "product_image": _thumb,
+                        "original_link": _olink,
+                    }
                     for _k, _v in _mpnos.items():
                         if not _v:
                             continue
@@ -1733,17 +1810,9 @@ async def sync_orders_from_markets(
                                 _v.get("channelProductNo"),
                             ]:
                                 if _sub_v:
-                                    _mpn_cache[str(_sub_v)] = {
-                                        "source_site": _site,
-                                        "product_image": _thumb,
-                                        "original_link": _olink,
-                                    }
+                                    _mpn_cache[str(_sub_v)] = _entry
                         else:
-                            _mpn_cache[str(_v)] = {
-                                "source_site": _site,
-                                "product_image": _thumb,
-                                "original_link": _olink,
-                            }
+                            _mpn_cache[str(_v)] = _entry
 
             # 미등록 입력 캐시: 동일 product_id+channel_name에 대해 수동 등록된 source_url/product_image 재활용
             _unreg_cache: dict[str, dict[str, str]] = {}
@@ -1767,10 +1836,14 @@ async def sync_orders_from_markets(
                 _tid = account.tenant_id or tenant_id
                 if _tid:
                     order_data["tenant_id"] = _tid
-                # 수집상품 매칭 — product_image, source_site, source_url 보충
+                # 수집상품 매칭 — collected_product_id, product_image, source_site, source_url 보충
                 _pid = str(order_data.get("product_id", ""))
                 _matched = _mpn_cache.get(_pid)
                 if _matched:
+                    if not order_data.get("collected_product_id"):
+                        order_data["collected_product_id"] = _matched[
+                            "collected_product_id"
+                        ]
                     if not order_data.get("product_image"):
                         order_data["product_image"] = _matched["product_image"]
                     if not order_data.get("source_site"):
@@ -1801,22 +1874,24 @@ async def sync_orders_from_markets(
                         # 1차: DB에서 수집상품 조회
                         _cp_check = await session.execute(
                             _sa_text(
-                                "SELECT source_site, images FROM samba_collected_product WHERE site_product_id = :sid LIMIT 1"
+                                "SELECT id, source_site, images FROM samba_collected_product WHERE site_product_id = :sid LIMIT 1"
                             ),
                             {"sid": _sid},
                         )
                         _cp_row = _cp_check.fetchone()
                         if _cp_row:
-                            order_data["source_site"] = _cp_row[0]
+                            if not order_data.get("collected_product_id"):
+                                order_data["collected_product_id"] = _cp_row[0]
+                            order_data["source_site"] = _cp_row[1]
                             order_data["source_url"] = _sourcing_urls.get(
-                                _cp_row[0], ""
+                                _cp_row[1], ""
                             ).format(_sid)
                             if (
                                 not order_data.get("product_image")
-                                and _cp_row[1]
-                                and isinstance(_cp_row[1], list)
+                                and _cp_row[2]
+                                and isinstance(_cp_row[2], list)
                             ):
-                                order_data["product_image"] = _cp_row[1][0]
+                                order_data["product_image"] = _cp_row[2][0]
                         else:
                             # 2차: DB에 없어도 상품명 패턴으로 소싱처 추론
                             if len(_sid) >= 9:  # 패션플러스 상품번호는 9자리 이상
@@ -1874,8 +1949,11 @@ async def sync_orders_from_markets(
                         update_fields["source_url"] = order_data["source_url"]
                     if order_data.get("shipment_id") and not existing.shipment_id:
                         update_fields["shipment_id"] = order_data["shipment_id"]
-                    # 결제일 보충 (기존 주문에 없으면 채움)
-                    if order_data.get("paid_at") and not existing.paid_at:
+                    # 결제일 갱신 (마켓 API 값이 정확하므로 항상 갱신)
+                    if (
+                        order_data.get("paid_at")
+                        and order_data["paid_at"] != existing.paid_at
+                    ):
                         update_fields["paid_at"] = order_data["paid_at"]
                     # 주소 보충 (기존 주문에 없으면 채움)
                     if (
@@ -2292,21 +2370,11 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
             f"→ 반품요청으로 재매핑: odNo={item.get('odNo')}"
         )
 
-    # 주문 생성일 파싱 (yyyymmddHHmmss)
+    # 주문 생성일 파싱 (yyyymmddHHmmss) — 롯데ON은 KST 기준
+    from backend.utils import kst_str_to_utc
+
     created_str = item.get("odDttm", "") or ""
-    created_at = None
-    if created_str:
-        try:
-            created_at = datetime.strptime(created_str[:14], "%Y%m%d%H%M%S").replace(
-                tzinfo=timezone.utc
-            )
-        except ValueError:
-            try:
-                created_at = datetime.strptime(created_str[:8], "%Y%m%d").replace(
-                    tzinfo=timezone.utc
-                )
-            except ValueError:
-                pass
+    created_at = kst_str_to_utc(created_str)
     if not created_at:
         created_at = datetime.now(timezone.utc)
 
@@ -2383,20 +2451,11 @@ def _parse_playauto_order(
     site_id = ro.get("SiteId", "")
     supply_price = int(ro.get("SupplyPrice", 0) or 0)
 
-    # 결제일 파싱
-    paid_at = None
-    order_date_raw = ro.get("OrderDate", "") or ""
-    if order_date_raw:
-        from datetime import datetime, timezone
+    # 결제일 파싱 — 플레이오토는 KST 기준
+    from backend.utils import kst_str_to_utc
 
-        for fmt in ("%Y%m%d%H%M%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
-            try:
-                paid_at = datetime.strptime(order_date_raw.strip()[:19], fmt).replace(
-                    tzinfo=timezone.utc
-                )
-                break
-            except ValueError:
-                continue
+    order_date_raw = ro.get("OrderDate", "") or ""
+    paid_at = kst_str_to_utc(order_date_raw)
 
     return {
         "order_number": ro.get("OrderCode", ""),

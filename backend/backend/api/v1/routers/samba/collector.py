@@ -1279,12 +1279,15 @@ async def lookup_by_market_product_no(
     """마켓 상품번호로 수집상품 조회 (원문링크/이미지 등 반환)."""
     from sqlalchemy import text as sa_text
 
+    # 하이픈/공백 제거한 정규화 값 (IQ2245-068 → IQ2245068)
+    spid_norm = market_product_no.replace("-", "").replace(" ", "")
     sql = sa_text(
         "SELECT id, source_site, site_product_id, name, images, source_url "
         "FROM samba_collected_product "
         "WHERE market_product_nos::text LIKE :pattern "
         "   OR market_product_nos::text LIKE :pattern_bare "
         "   OR site_product_id = :spid "
+        "   OR REPLACE(site_product_id, '-', '') = :spid_norm "
         "LIMIT 1"
     )
     result = await session.execute(
@@ -1293,6 +1296,7 @@ async def lookup_by_market_product_no(
             "pattern": f'%"{market_product_no}"%',
             "pattern_bare": f"%{market_product_no}%",
             "spid": market_product_no,
+            "spid_norm": spid_norm,
         },
     )
     row = result.fetchone()

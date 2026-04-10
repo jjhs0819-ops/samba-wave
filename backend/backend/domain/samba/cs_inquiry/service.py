@@ -9,16 +9,12 @@ from backend.utils.logger import logger
 
 
 def _parse_date(raw: Any) -> Optional[datetime]:
-    """SSG 날짜 문자열을 datetime으로 파싱."""
+    """마켓 API KST 날짜 문자열을 UTC datetime으로 파싱."""
     if not raw:
         return None
-    s = str(raw).strip()
-    for fmt in ("%Y%m%d%H%M%S", "%Y-%m-%d %H:%M:%S", "%Y%m%d"):
-        try:
-            return datetime.strptime(s, fmt)
-        except ValueError:
-            continue
-    return None
+    from backend.utils import kst_str_to_utc
+
+    return kst_str_to_utc(str(raw))
 
 
 # CS 답변 기본 템플릿 (contact/service.py SMS 템플릿과 동일 패턴)

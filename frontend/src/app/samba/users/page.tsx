@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { userApi, type SambaUser } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { inputStyle } from '@/lib/samba/styles'
-import { fmtDate } from '@/lib/samba/utils'
+import { fmtDate, fmtDateTime } from '@/lib/samba/utils'
 
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
   active: { label: '활성', color: '#51CF66' },
@@ -50,18 +50,8 @@ const tdStyle: React.CSSProperties = {
   padding: '0.5rem 1rem', textAlign: 'center', fontSize: '0.8rem', color: '#C5C5C5',
 }
 
-// 로그인 일시 포맷: 2026-04-07 [08:44:50]
-const fmtLoginDate = (iso: string) => {
-  const d = new Date(iso)
-  const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000)
-  const y = kst.getUTCFullYear()
-  const m = pad(kst.getUTCMonth() + 1)
-  const day = pad(kst.getUTCDate())
-  const h = pad(kst.getUTCHours())
-  const min = pad(kst.getUTCMinutes())
-  const s = pad(kst.getUTCSeconds())
-  return `${y}-${m}-${day} [${h}:${min}:${s}]`
-}
+// 로그인 일시 포맷: 2026-04-07 [08:44:50] — KST 명시적 변환
+const fmtLoginDate = (iso: string) => fmtDateTime(iso)
 
 export default function UsersPage() {
   useEffect(() => { document.title = 'SAMBA-사용자' }, [])

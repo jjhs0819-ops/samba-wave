@@ -70,6 +70,10 @@ class SambaOrder(SQLModel, table=True):
     source_site: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)
     )
+    # 수집상품 직접 참조 (근본적 연결)
+    collected_product_id: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True, index=True)
+    )
 
     # 고객 정보
     customer_name: Optional[str] = Field(

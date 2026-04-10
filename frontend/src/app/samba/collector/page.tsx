@@ -154,6 +154,11 @@ export default function CollectorPage() {
   const [collecting, setCollecting] = useState(false);
   const [collectDetailImages, setCollectDetailImages] = useState(false);
   const [collectLog, setCollectLog] = useState<string[]>(["[대기] 수집 결과가 여기에 표시됩니다..."]);
+  const [collectQueueStatus, setCollectQueueStatus] = useState<{
+    running: Array<{ filter_name: string; source_site: string }>
+    pending: Array<{ filter_name: string; source_site: string }>
+  }>({ running: [], pending: [] })
+  const collectQueuePollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [selectedSite, setSelectedSite] = useState("MUSINSA");
   const [checkedOptions, setCheckedOptions] = useState<Record<string, boolean>>({
     excludePreorder: true,
@@ -410,6 +415,31 @@ export default function CollectorPage() {
     detectRunningCollect()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // 수집 Job 큐 상태 폴링 (5초 간격, 수집 중일 때만)
+  useEffect(() => {
+    if (!collecting) {
+      setCollectQueueStatus({ running: [], pending: [] })
+      return
+    }
+    const fetchStatus = async () => {
+      try {
+        const res = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/collect-queue-status`)
+        if (res.ok) {
+          const data = await res.json() as {
+            running: Array<{ filter_name: string; source_site: string }>
+            pending: Array<{ filter_name: string; source_site: string }>
+          }
+          setCollectQueueStatus(data)
+        }
+      } catch { /* 무시 */ }
+    }
+    const delay = setTimeout(() => {
+      fetchStatus()
+      collectQueuePollRef.current = setInterval(fetchStatus, 5000)
+    }, 1000)
+    return () => { clearTimeout(delay); if (collectQueuePollRef.current) clearInterval(collectQueuePollRef.current) }
+  }, [collecting])
 
   // 브랜드 코드를 포함하여 그룹 생성 (내부 실행)
   const executeCreateGroup = async (brandCode?: string) => {
@@ -1427,7 +1457,49 @@ export default function CollectorPage() {
           padding: "8px 16px", borderBottom: "1px solid #2D2D2D",
           display: "flex", alignItems: "center", justifyContent: "space-between",
         }}>
-          <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "#C5C5C5" }}>로그현황</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "#C5C5C5" }}>로그현황</span>
+            {(() => {
+              const { running, pending } = collectQueueStatus
+              const hasActivity = running.length > 0 || pending.length > 0
+              // 브랜드별 그룹핑
+              const groupByBrand = (items: Array<{ filter_name: string; source_site: string }>) => {
+                const brands = new Map<string, number>()
+                for (const item of items) {
+                  const parsed = parseGroupName(item.filter_name, item.source_site)
+                  const brand = parsed.brand || item.source_site || '알수없음'
+                  brands.set(brand, (brands.get(brand) || 0) + 1)
+                }
+                return brands
+              }
+              const runBrands = groupByBrand(running)
+              const penBrands = groupByBrand(pending)
+              const formatBrands = (brands: Map<string, number>, total: number) => {
+                const entries = [...brands.entries()]
+                if (entries.length === 0) return ''
+                if (entries.length <= 2) return entries.map(([b, c]) => c > 1 ? `${b} ${c}건` : b).join('/')
+                return `${entries[0][0]} 외 ${entries.length - 1}개`
+              }
+              return (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.72rem' }}>
+                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', flexShrink: 0,
+                    background: running.length > 0 ? '#51CF66' : pending.length > 0 ? '#FAB005' : '#444',
+                  }} />
+                  {running.length > 0 && (
+                    <span style={{ color: '#51CF66' }}>
+                      {formatBrands(runBrands, running.length)} 진행 {running.length.toLocaleString()}건
+                    </span>
+                  )}
+                  {pending.length > 0 && (
+                    <span style={{ color: '#FAB005' }}>
+                      {running.length > 0 ? '+ ' : ''}{formatBrands(penBrands, pending.length)} 대기 {pending.length.toLocaleString()}건
+                    </span>
+                  )}
+                  {!hasActivity && <span style={{ color: '#555' }}>대기 잡 없음</span>}
+                </div>
+              )
+            })()}
+          </div>
           <div style={{ display: "flex", gap: "4px" }}>
             {collecting && (
               <button onClick={handleStopCollect} style={{

@@ -1,7 +1,6 @@
 """삼바웨이브 사용자(로그인 계정) 관리 API."""
 
 import os
-from datetime import datetime, timezone
 from typing import Any, Optional
 
 import httpx
@@ -387,13 +386,21 @@ async def get_login_history(
     """로그인 이력 조회 (날짜 범위 필터)."""
     stmt = select(SambaLoginHistory).order_by(SambaLoginHistory.created_at.desc())
 
-    if start:
-        start_dt = datetime.strptime(start, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    if start and end:
+        from backend.utils import kst_date_range_to_utc
+
+        start_dt, end_dt = kst_date_range_to_utc(start, end)
         stmt = stmt.where(SambaLoginHistory.created_at >= start_dt)
-    if end:
-        end_dt = datetime.strptime(end, "%Y-%m-%d").replace(
-            hour=23, minute=59, second=59, tzinfo=timezone.utc
-        )
+        stmt = stmt.where(SambaLoginHistory.created_at <= end_dt)
+    elif start:
+        from backend.utils import kst_date_range_to_utc
+
+        start_dt, _ = kst_date_range_to_utc(start, start)
+        stmt = stmt.where(SambaLoginHistory.created_at >= start_dt)
+    elif end:
+        from backend.utils import kst_date_range_to_utc
+
+        _, end_dt = kst_date_range_to_utc(end, end)
         stmt = stmt.where(SambaLoginHistory.created_at <= end_dt)
 
     stmt = stmt.limit(limit)

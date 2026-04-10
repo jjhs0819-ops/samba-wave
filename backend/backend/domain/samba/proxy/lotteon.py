@@ -13,6 +13,8 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+from backend.utils import now_kst
+
 from backend.domain.samba.proxy.notice_utils import (
     build_lotteon_notice as _build_lot_notice,
 )
@@ -343,7 +345,7 @@ class LotteonClient:
         실패해도 상품 등록 자체는 롤백하지 않음 (best-effort).
         기간미설정(None)으로 등록 — 무기한 노출.
         """
-        now = datetime.now()
+        now = now_kst()
         # 시작일: 내일 00:00 — 즉시 등록 시 "과거일시" 에러 방지
         tomorrow = (now + timedelta(days=1)).replace(
             hour=0, minute=0, second=0, microsecond=0
@@ -436,7 +438,7 @@ class LotteonClient:
           dcTypCd: FX=정율, FL=정액
           aplyStrtDttm / aplyEndDttm: yyyymmddhhmiss 포맷
         """
-        now = datetime.now()
+        now = now_kst()
         # afflPrNo: 셀러 고유 프로모션번호 (최대 20자)
         # spdNo 숫자 부분(≤12자) + timestamp 끝 8자 = 최대 20자 이내
         spd_num = re.sub(r"[^0-9]", "", spd_no)[-12:]  # 숫자만 추출, 최대 12자
@@ -479,7 +481,7 @@ class LotteonClient:
           accmVpKndCd: 발송일로부터 N일 이내 구매확정 시 적립 (3~8 중 택1)
           cndAccmVal2/3/4: 리뷰/사진/동영상 포인트 (하이마트/홈쇼핑 전용, 일반은 0)
         """
-        now = datetime.now()
+        now = now_kst()
         spd_num = re.sub(r"[^0-9]", "", spd_no)[-12:]
         ts_suffix = str(int(now.timestamp()))[-8:]
         affil_pr_no = f"{spd_num}{ts_suffix}"
@@ -538,7 +540,7 @@ class LotteonClient:
           dcQtyList[].dcAmt: 할인액 (정액일 때, 정율이면 0)
           spdList[].spdNo: 적용 상품번호
         """
-        now = datetime.now()
+        now = now_kst()
         spd_num = re.sub(r"[^0-9]", "", spd_no)[-12:]
         ts_suffix = str(int(now.timestamp()))[-8:]
         affil_pr_no = f"{spd_num}{ts_suffix}"  # 최대 20자
@@ -651,9 +653,9 @@ class LotteonClient:
         롯데ON Order API — camelCase 액션 방식 사용.
         날짜 형식: yyyymmddhh24miss (전체 datetime)
         """
-        from datetime import datetime, timedelta
+        from datetime import timedelta
 
-        now = datetime.now()
+        now = now_kst()
         start = (now - timedelta(days=days)).strftime("%Y%m%d") + "000000"
         end = now.strftime("%Y%m%d") + "235959"
 
@@ -707,9 +709,9 @@ class LotteonClient:
         - 취소: cancellationOpenApi/getCancellationRequestAndComplateList
              + cancellationOpenApi/purFvrCnclSearch (구매자 취소)
         """
-        from datetime import datetime, timedelta
+        from datetime import timedelta
 
-        now = datetime.now()
+        now = now_kst()
         start = (now - timedelta(days=days)).strftime("%Y%m%d")
         end = now.strftime("%Y%m%d")
 
@@ -765,9 +767,9 @@ class LotteonClient:
 
     async def get_cs_inquiries(self, days: int = 30) -> list[dict[str, Any]]:
         """CS 문의(QnA) 목록 조회 — 엔드포인트 자동 탐색."""
-        from datetime import datetime, timedelta
+        from datetime import timedelta
 
-        now = datetime.now()
+        now = now_kst()
         start = (now - timedelta(days=days)).strftime("%Y%m%d")
         end = now.strftime("%Y%m%d")
 
@@ -949,7 +951,7 @@ class LotteonClient:
         jeju_fee = product.get("_jeju_fee", 0) or 0
 
         # ── 판매 기간 ───────────────────────────────────────────────
-        now = datetime.now()
+        now = now_kst()
         sl_strt = now.strftime("%Y%m%d%H%M%S")
         sl_end = (now + timedelta(days=365)).strftime("%Y%m%d%H%M%S")
 
@@ -1956,7 +1958,7 @@ class LotteonClient:
             procDttm        — 처리일시
         """
 
-        now = datetime.now()
+        now = now_kst()
         end_dt = (now + timedelta(days=1)).strftime("%Y%m%d")
         start_dt = (now - timedelta(days=days)).strftime("%Y%m%d")
 
@@ -2044,7 +2046,7 @@ class LotteonClient:
             regDttm         — 등록일시 (yyyyMMddHHmmss)
         """
 
-        now = datetime.now()
+        now = now_kst()
         end_dt = (now + timedelta(days=1)).strftime("%Y%m%d")
         start_dt = (now - timedelta(days=days)).strftime("%Y%m%d")
 
@@ -2120,7 +2122,7 @@ class LotteonClient:
             vocLcsfCd       — 문의유형코드
         """
 
-        now = datetime.now()
+        now = now_kst()
         end_dt = (now + timedelta(days=1)).strftime("%Y%m%d")
         start_dt = (now - timedelta(days=days)).strftime("%Y%m%d")
 
@@ -2185,7 +2187,7 @@ class LotteonClient:
             accpDttm        — 접수일시
         """
 
-        now = datetime.now()
+        now = now_kst()
         end_dt = (now + timedelta(days=1)).strftime("%Y%m%d")
         start_dt = (now - timedelta(days=days)).strftime("%Y%m%d")
 

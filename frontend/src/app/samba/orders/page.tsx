@@ -6,6 +6,7 @@ import { orderApi, channelApi, accountApi, proxyApi, collectorApi, sourcingAccou
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { PERIOD_BUTTONS } from '@/lib/samba/constants'
 import { inputStyle, fmtNum } from '@/lib/samba/styles'
+import { fmtDate } from '@/lib/samba/utils'
 
 const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
   pending:    { label: '주문접수', bg: 'rgba(255,211,61,0.15)', text: '#FFD93D' },
@@ -942,11 +943,11 @@ export default function OrdersPage() {
                     <div style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.25rem' }}>
                       {o.paid_at && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          <span style={{ fontSize: '0.72rem', color: '#fff', fontWeight: 700 }}>{new Date(o.paid_at).toLocaleDateString('ko-KR')} {new Date(o.paid_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
+                          <span style={{ fontSize: '0.72rem', color: '#fff', fontWeight: 700 }}>{fmtDate(o.paid_at, '.')}</span>
                         </div>
                       )}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <span style={{ fontSize: '0.72rem', color: '#555' }}>{new Date(o.created_at).toLocaleDateString('ko-KR')} {new Date(o.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
+                        <span style={{ fontSize: '0.72rem', color: '#555' }}>{fmtDate(o.created_at, '.')}</span>
                         <button onClick={() => handleDelete(o.id)} style={{ padding: '0.125rem 0.5rem', fontSize: '0.7rem', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>삭제</button>
                       </div>
                       <span style={{ fontSize: o.quantity > 1 ? '2.25rem' : '0.95rem', fontWeight: 700, color: o.quantity > 1 ? '#F5A623' : '#888' }}>수량: <span style={{ color: o.quantity > 1 ? '#F5A623' : '#E5E5E5' }}>{o.quantity.toLocaleString()}</span></span>
@@ -1021,38 +1022,43 @@ export default function OrdersPage() {
                       <button onClick={() => handleDanawa(o.product_name || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>다나와</button>
                       <button onClick={() => handleNaver(o.product_name || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>네이버</button>
                       <button onClick={async () => {
+                        // 1순위: collected_product_id 직접 참조 (근본적 해결)
+                        if (o.collected_product_id) {
+                          window.open(`/samba/products?search=${encodeURIComponent(o.collected_product_id)}&search_type=id&highlight=${o.collected_product_id}`, '_blank')
+                          return
+                        }
+                        // 2순위: 마켓 상품번호로 lookup (+ 지연 채움)
+                        const _openAndLink = (cpId: string) => {
+                          window.open(`/samba/products?search=${encodeURIComponent(cpId)}&search_type=id&highlight=${cpId}`, '_blank')
+                          orderApi.linkProduct(o.id, cpId).catch(() => {})
+                        }
                         if (o.product_id) {
                           try {
                             const res = await collectorApi.lookupByMarketNo(o.product_id)
-                            if (res.found && res.id) {
-                              window.open(`/samba/products?search=${encodeURIComponent(res.id)}&search_type=id&highlight=${res.id}`, '_blank')
-                              return
-                            }
+                            if (res.found && res.id) { _openAndLink(res.id); return }
                           } catch { /* ignore */ }
                         }
-                        // 상품명 끝 숫자(소싱 상품번호)로 site_product_id 검색
+                        // 3순위: 상품명 끝 숫자(소싱 상품번호)
                         const _spidMatch = (o.product_name || '').match(/\b(\d{6,})\s*$/)
                         if (_spidMatch) {
                           try {
                             const res = await collectorApi.lookupByMarketNo(_spidMatch[1])
-                            if (res.found && res.id) {
-                              window.open(`/samba/products?search=${encodeURIComponent(res.id)}&search_type=id&highlight=${res.id}`, '_blank')
-                              return
-                            }
+                            if (res.found && res.id) { _openAndLink(res.id); return }
                           } catch { /* ignore */ }
                         }
-                        // 상품명으로 수집상품 검색 (market_names 포함)
+                        // 4순위: 영문+숫자 조합 상품코드 (IQ2245 068 → IQ2245068)
+                        const _codeMatch = (o.product_name || '').match(/\b([A-Za-z]{1,5}\d{2,})[\s-]+(\d{2,4})\s*$/)
+                        if (_codeMatch) {
+                          try {
+                            const res = await collectorApi.lookupByMarketNo(`${_codeMatch[1]}${_codeMatch[2]}`)
+                            if (res.found && res.id) { _openAndLink(res.id); return }
+                          } catch { /* ignore */ }
+                        }
+                        // 5순위: 상품명으로 수집상품 검색 (market_names 포함)
                         if (o.product_name) {
                           try {
-                            const _scrollRes = await collectorApi.scrollProducts({
-                              search: o.product_name,
-                              search_type: 'name',
-                              limit: 1,
-                            })
-                            if (_scrollRes.items?.length > 0 && _scrollRes.total === 1) {
-                              window.open(`/samba/products?search=${encodeURIComponent(_scrollRes.items[0].id)}&search_type=id&highlight=${_scrollRes.items[0].id}`, '_blank')
-                              return
-                            }
+                            const _scrollRes = await collectorApi.scrollProducts({ search: o.product_name, search_type: 'name', limit: 1 })
+                            if (_scrollRes.items?.length > 0 && _scrollRes.total === 1) { _openAndLink(_scrollRes.items[0].id); return }
                           } catch { /* ignore */ }
                           window.open(`/samba/products?search=${encodeURIComponent(o.product_name)}`, '_blank')
                         } else {

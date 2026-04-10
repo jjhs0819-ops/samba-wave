@@ -21,3 +21,21 @@ export function fmtDate(iso: string | undefined | null, sep: string = '-'): stri
   const min = String(kst.getMinutes()).padStart(2, '0')
   return `${y}${sep}${m}${sep}${day} ${h}:${min}`
 }
+
+/**
+ * ISO 날짜 문자열을 초 단위까지 포함한 형식으로 변환 (KST 명시적)
+ * @returns 'YYYY-MM-DD [HH:mm:ss]'
+ */
+export function fmtDateTime(iso: string | undefined | null): string {
+  if (!iso) return '-'
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return typeof iso === 'string' ? iso.slice(0, 10) : '-'
+  const kst = new Date(d.toLocaleString('en-US', { timeZone: 'Asia/Seoul' }))
+  const y = kst.getFullYear()
+  const m = String(kst.getMonth() + 1).padStart(2, '0')
+  const day = String(kst.getDate()).padStart(2, '0')
+  const h = String(kst.getHours()).padStart(2, '0')
+  const min = String(kst.getMinutes()).padStart(2, '0')
+  const s = String(kst.getSeconds()).padStart(2, '0')
+  return `${y}-${m}-${day} [${h}:${min}:${s}]`
+}

@@ -857,7 +857,7 @@ class MusinsaClient:
                 try:
                     inv_resp = await client.post(
                         f"{self.BASE_DETAIL}/{goods_no}/options/v2/prioritized-inventories",
-                        headers={**self.HEADERS, "Content-Type": "application/json"},
+                        headers=self._headers({"Content-Type": "application/json"}),
                         json={"optionValueNos": all_option_value_nos},
                     )
                     if inv_resp.status_code == 200:

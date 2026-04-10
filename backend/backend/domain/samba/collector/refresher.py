@@ -944,6 +944,23 @@ async def _parse_kream(product: Any) -> RefreshResult:
         or new_sale_status != old_status
     )
 
+    # 옵션 재고 변동 — 품절↔리스탁 전환만 카운트
+    old_options = getattr(product, "options", None) or []
+    _stock_changes = 0
+    if new_options and old_options:
+        old_stock_map = {
+            (o.get("name", "") or o.get("size", "")): o.get("stock", 0)
+            for o in old_options
+        }
+        for o in new_options:
+            key = o.get("name", "") or o.get("size", "")
+            old_stock = old_stock_map.get(key, 0) or 0
+            new_stock = o.get("stock", 0) or 0
+            was_soldout = old_stock <= 0
+            is_soldout = new_stock <= 0
+            if was_soldout != is_soldout:
+                _stock_changes += 1
+
     # 마켓 정보
     _reg_accounts = getattr(product, "registered_accounts", None) or []
     _market_nos = getattr(product, "market_product_nos", None) or {}
@@ -977,6 +994,7 @@ async def _parse_kream(product: Any) -> RefreshResult:
         new_sale_status=new_sale_status,
         new_options=new_options,
         changed=changed,
+        stock_changed=_stock_changes > 0,
     )
 
 

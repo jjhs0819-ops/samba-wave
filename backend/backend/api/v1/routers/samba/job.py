@@ -184,6 +184,59 @@ async def clear_collect_log_buffer():
     return {"ok": True}
 
 
+@router.get("/collect-queue-status")
+async def get_collect_queue_status(
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """수집 Job 큐 상태 — 진행/대기 그룹 이름 포함."""
+    from sqlmodel import select, col
+    from backend.domain.samba.job.model import SambaJob
+    from backend.domain.samba.collector.model import SambaSearchFilter
+
+    stmt = (
+        select(SambaJob)
+        .where(
+            SambaJob.job_type == "collect",
+            col(SambaJob.status).in_([JobStatus.RUNNING, JobStatus.PENDING]),
+        )
+        .order_by(SambaJob.created_at.asc())
+    )
+    result = await session.execute(stmt)
+    jobs = result.scalars().all()
+
+    # filter_id → SearchFilter 이름 일괄 조회
+    filter_ids = [
+        (j.payload or {}).get("filter_id", "")
+        for j in jobs
+        if (j.payload or {}).get("filter_id")
+    ]
+    filter_map: dict[str, tuple[str, str]] = {}
+    if filter_ids:
+        f_result = await session.execute(
+            select(
+                SambaSearchFilter.id,
+                SambaSearchFilter.name,
+                SambaSearchFilter.source_site,
+            ).where(col(SambaSearchFilter.id).in_(filter_ids))
+        )
+        for fid, fname, fsite in f_result.all():
+            filter_map[fid] = (fname or "", fsite or "")
+
+    running = []
+    pending = []
+    for j in jobs:
+        payload = j.payload or {}
+        fid = payload.get("filter_id", "")
+        fname, fsite = filter_map.get(fid, ("", payload.get("source_site", "")))
+        item = {"filter_name": fname, "source_site": fsite}
+        if j.status == JobStatus.RUNNING:
+            running.append(item)
+        else:
+            pending.append(item)
+
+    return {"running": running, "pending": pending}
+
+
 @router.post("/cancel-all")
 async def cancel_all_jobs(
     session: AsyncSession = Depends(get_write_session_dependency),
