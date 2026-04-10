@@ -854,6 +854,25 @@ def _process_musinsa_detail(
             is_soldout = new_stock <= 0 or o.get("isSoldOut", False)
             if was_soldout != is_soldout:
                 _stock_changes += 1
+                logger.info(
+                    "[재고변동감지] %s %s: DB=%s(sold=%s) → API=%s(sold=%s)",
+                    site_product_id,
+                    key,
+                    old_stock,
+                    was_soldout,
+                    new_stock,
+                    is_soldout,
+                )
+    else:
+        if not old_options and new_options:
+            logger.warning(
+                "[재고변동] %s DB옵션없음(len=%d), API옵션=%d개",
+                site_product_id,
+                len(old_options),
+                len(new_options),
+            )
+        elif not new_options:
+            logger.warning("[재고변동] %s API옵션없음", site_product_id)
 
     # 상품명 (품번) 형태 + 마켓/계정 정보
     _brand = getattr(product, "brand", "") or ""
