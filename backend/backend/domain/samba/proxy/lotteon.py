@@ -1129,8 +1129,9 @@ class LotteonClient:
             "dvRsvDvsCd": "GNRL_DV",
             "sndBgtNday": product.get("_dispatch_days", 2),
             "dvMnsCd": "DPCL",
-            "cmbnDvPsbYn": product.get("cmbn_dv_psb_yn", "Y"),
-            "cmbnRtngPsbYn": product.get("cmbn_dv_psb_yn", "Y"),
+            # 기본값 "N" — plugin에서 bundleDelivery 설정값 미주입 시에도 합배송 불가로 보수적 처리
+            "cmbnDvPsbYn": product.get("cmbn_dv_psb_yn", "N"),
+            "cmbnRtngPsbYn": product.get("cmbn_dv_psb_yn", "N"),
             "rtngPsbYn": "Y",
             "xchgPsbYn": "Y",
             **({"rtngFee": return_fee} if return_fee else {}),
