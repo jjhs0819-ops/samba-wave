@@ -1359,6 +1359,9 @@ class SmartStoreClient:
                 "/v1/pay-order/seller/product-orders/last-changed-statuses",
                 params=qparams,
             )
+            logger.info(
+                f"[스마트스토어] last-changed-statuses 응답 (from={qdate}): {str(result)[:500]}"
+            )
             data = result.get("data", result) if isinstance(result, dict) else {}
             statuses = (
                 data.get("lastChangedStatuses", []) if isinstance(data, dict) else []
@@ -1973,9 +1976,9 @@ class SmartStoreClient:
         # brandId 없으면 brandName 전송하지 않음 (미등록 브랜드 에러 방지)
         if mfr_id:
             naver_search_info["manufacturerId"] = mfr_id
-            naver_search_info["manufacturerName"] = mfr
+            naver_search_info["manufacturerName"] = mfr[:50]
         elif mfr and mfr != "상세설명 참조":
-            naver_search_info["manufacturerName"] = mfr
+            naver_search_info["manufacturerName"] = mfr[:50]
         # 카탈로그 모델 ID — 설정하면 모델명/브랜드/제조사/상품속성 자동 매칭
         catalog_model_id = product.get("_catalog_model_id")
         if catalog_model_id:
