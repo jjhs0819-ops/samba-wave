@@ -321,12 +321,21 @@ async def _site_autotune_loop(site: str):
                                     f"[{idx:,}/{total:,}] " if idx and total else ""
                                 )
 
-                                # 원가 표시용
-                                _cur_cost = (
-                                    r.new_cost
-                                    if r.new_cost is not None
-                                    else (product.cost or product.sale_price or 0)
-                                )
+                                # 원가: DB 보존 로직과 일치시킴
+                                # (확장앱 혜택가가 더 낮으면 DB는 기존값 보존)
+                                if r.new_cost is not None:
+                                    _old_cost_for_compare = (
+                                        getattr(product, "cost", None) or 0
+                                    )
+                                    if (
+                                        _old_cost_for_compare > 0
+                                        and _old_cost_for_compare < r.new_cost
+                                    ):
+                                        _cur_cost = _old_cost_for_compare
+                                    else:
+                                        _cur_cost = r.new_cost
+                                else:
+                                    _cur_cost = product.cost or product.sale_price or 0
                                 _cost_int = int(_cur_cost) if _cur_cost else 0
                                 # 재고변동 건수
                                 _stock_changes = 0

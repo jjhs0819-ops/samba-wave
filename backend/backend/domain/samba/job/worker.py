@@ -660,7 +660,7 @@ class JobWorker:
                             err_msg = r.get("error") or tx_error.get("_all", "실패")
                             _add_job_log(
                                 job.id,
-                                f"[{i + 1}/{total}] {prod_name}: {str(err_msg)[:60]}",
+                                f"[{i + 1}/{total}] {prod_name}: {str(err_msg)[:200]}",
                             )
                         else:
                             fail_count += 1
