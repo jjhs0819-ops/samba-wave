@@ -1,7 +1,7 @@
 [project]
 name = "samba-wave-backend"
 version = "0.1.0"
-description = "Add your description here"
+description = "Samba Wave Backend API"
 readme = "README.md"
 requires-python = "==3.12.3"
 dependencies = [
