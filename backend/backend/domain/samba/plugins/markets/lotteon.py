@@ -1189,8 +1189,11 @@ class LotteonPlugin(MarketPlugin):
                             stk = 0
                         itm_stk_lst.append(
                             {
-                                "itmNo": str(itm_no),
-                                "itmStkQty": max(0, int(stk)),
+                                "sitmNo": str(itm.get("sitmNo") or itm_no),
+                                "spdNo": existing_no,
+                                "trNo": client.tr_no,
+                                "trGrpCd": client.tr_grp_cd or "SR",
+                                "stkQty": max(0, int(stk)),
                             }
                         )
 
@@ -1635,7 +1638,8 @@ class LotteonPlugin(MarketPlugin):
                     data["spdLst"][0]["spdNo"] = existing_no
                     data["spdLst"][0]["selPrdNo"] = existing_no
                     # 수정 API는 itmLst를 "새 단품 추가"로 처리 → 기존 옵션과 중복 에러 발생
-                    # 상품 헤더(이름/이미지/카테고리/가격)만 업데이트하고 itmLst는 제거
+                    # 상품 헤더만 업데이트하고 itmLst는 제거 (재고는 수정 후 update_stock으로 별도 반영)
+                    _saved_itm_lst = data["spdLst"][0].get("itmLst", [])
                     data["spdLst"][0].pop("itmLst", None)
                     data["spdLst"][0].pop("sitmYn", None)
                 _spd0 = data["spdLst"][0] if data.get("spdLst") else {}
@@ -1891,6 +1895,55 @@ class LotteonPlugin(MarketPlugin):
                     logger.info(
                         f"[롯데ON] 수정 후 새 spdNo 발급: {existing_no} → {new_spd_no}"
                     )
+                # ── 수정 후 재고 동기화 (수정 API는 itmLst 무시하므로 별도 호출) ──
+                if _saved_itm_lst and itm_lst_raw:
+                    try:
+                        # transform_product 결과의 옵션값 → 재고 매핑
+                        _new_stk_map: dict[str, tuple[int, str]] = {}
+                        for _new_itm in _saved_itm_lst:
+                            _new_opts = _new_itm.get("itmOptLst") or []
+                            if _new_opts:
+                                _opt_val = _new_opts[0].get("optVal", "").strip()
+                                _new_stk_map[_opt_val] = (
+                                    _new_itm.get("stkQty", 0),
+                                    _new_itm.get("dpYn", "Y"),
+                                )
+
+                        _itm_stk_lst = []
+                        for _old_itm in itm_lst_raw:
+                            _sitm_no = _old_itm.get("sitmNo") or _old_itm.get("itmNo")
+                            if not _sitm_no:
+                                continue
+                            _old_opts = _old_itm.get("itmOptLst") or []
+                            if _old_opts:
+                                _opt_val = _old_opts[0].get("optVal", "").strip()
+                                _stk_dp = _new_stk_map.get(_opt_val)
+                                _stk = (
+                                    _stk_dp[0] if _stk_dp else _old_itm.get("stkQty", 0)
+                                )
+                            else:
+                                _stk = 0
+                            _itm_stk_lst.append(
+                                {
+                                    "sitmNo": str(_sitm_no),
+                                    "spdNo": effective_no,
+                                    "trNo": client.tr_no,
+                                    "trGrpCd": client.tr_grp_cd or "SR",
+                                    "stkQty": max(0, int(_stk)),
+                                }
+                            )
+
+                        if _itm_stk_lst:
+                            await client.update_stock(_itm_stk_lst)
+                            logger.info(
+                                f"[롯데ON] 수정 후 재고 동기화 완료: {effective_no} — "
+                                f"{len(_itm_stk_lst)}건"
+                            )
+                    except Exception as _stk_e:
+                        logger.warning(
+                            f"[롯데ON] 수정 후 재고 동기화 실패 (무시): {_stk_e}"
+                        )
+
                 # ── 수정 후 프로모션 재설정 ──────────────────────────────
                 await self._apply_promotions(
                     client,
