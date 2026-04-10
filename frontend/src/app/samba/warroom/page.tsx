@@ -133,7 +133,7 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusCh
             let fontWeight: number | string = 400
             if (log.msg.includes('쿠키 로테이션')) { color = '#FFFFFF'; fontWeight = 700 }
             else if (log.msg.includes('실패') || log.msg.includes('오류') || log.msg.includes('차단')) color = '#C4736E'
-            else if (log.msg.includes('가격전송') && log.msg.includes('재고전송')) color = '#FFFFFF'
+            else if (log.msg.includes('가격전송') && log.msg.includes('재고전송')) color = '#4C9AFF'
             else if (log.msg.includes('재고전송')) color = '#FFD93D'
             else if (log.msg.includes('가격전송')) color = '#FFFFFF'
             else if (log.msg.includes('전송')) color = '#FFFFFF'
