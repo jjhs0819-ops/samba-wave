@@ -568,7 +568,7 @@ async def scroll_products(
     q = search.strip()
     if q:
         if search_type == "name":
-            # 원상품명 + 등록상품명 통합 부분 일치 (공백 무시)
+            # 원상품명 + 등록상품명 + 마켓등록명 통합 부분 일치 (공백 무시)
             q_no_space = q.replace(" ", "")
             conditions.append(
                 or_(
@@ -578,6 +578,7 @@ async def scroll_products(
                     func.replace(func.coalesce(_CP.name_en, ""), " ", "").ilike(
                         f"%{q_no_space}%"
                     ),
+                    func.coalesce(cast(_CP.market_names, String), "").ilike(f"%{q}%"),
                 )
             )
         elif search_type == "name_all":
@@ -1243,9 +1244,16 @@ async def lookup_by_market_product_no(
         "SELECT id, source_site, site_product_id, name, images, source_url "
         "FROM samba_collected_product "
         "WHERE market_product_nos::text LIKE :pattern "
+        "   OR market_product_nos::text LIKE :pattern_bare "
         "LIMIT 1"
     )
-    result = await session.execute(sql, {"pattern": f'%"{market_product_no}"%'})
+    result = await session.execute(
+        sql,
+        {
+            "pattern": f'%"{market_product_no}"%',
+            "pattern_bare": f"%{market_product_no}%",
+        },
+    )
     row = result.fetchone()
     if not row:
         return {"found": False}
