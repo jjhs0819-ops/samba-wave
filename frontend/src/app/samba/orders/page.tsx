@@ -177,7 +177,10 @@ export default function OrdersPage() {
         if (o.action_tag) actions[o.id] = o.action_tag
       }
       setActiveActions(actions)
-    } catch { /* ignore */ }
+    } catch (e) {
+      console.error('주문 로딩 실패:', e)
+      setLogMessages(prev => [...prev, `[에러] 주문 데이터 로딩 실패: ${e instanceof Error ? e.message : '서버 오류'}`])
+    }
     setLoading(false)
   }, [customStart, customEnd])
 

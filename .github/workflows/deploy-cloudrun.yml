@@ -21,6 +21,18 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
+      - name: Check migration sync
+        run: |
+          cd backend
+          pip install -q uv 2>/dev/null || true
+          uv venv --quiet
+          uv sync --quiet --no-dev 2>/dev/null || true
+          uv run python -m alembic check 2>&1 || {
+            echo "❌ 마이그레이션 누락 감지! 모델 변경 후 alembic revision --autogenerate 실행 필요"
+            exit 1
+          }
+          echo "✅ 마이그레이션 동기화 확인"
+
       - name: Write env vars file
         run: |
           cat > /tmp/cloudrun-env.yaml << EOF

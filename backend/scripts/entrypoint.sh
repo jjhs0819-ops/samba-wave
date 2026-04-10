@@ -93,6 +93,13 @@ asyncio.run(fix())
     fi
   done
 
+  # 모델 ↔ DB 스키마 정합성 검증 — 불일치 시 서버 시작 차단
+  echo "Verifying schema consistency..."
+  if ! uv run python scripts/verify_schema.py; then
+    echo "FATAL: 스키마 불일치로 서버 시작을 차단합니다. 이전 리비전이 계속 서빙됩니다."
+    exit 1
+  fi
+
   # Uvicorn 단일 프로세스 — --no-dev: 런타임에 dev 패키지 재설치 방지
   echo "Starting production server with Uvicorn (single process)..."
   exec uv run --no-dev -m uvicorn backend.main:app --host 0.0.0.0 --port 8080
