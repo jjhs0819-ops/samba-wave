@@ -1453,25 +1453,58 @@ async def brand_refresh(
         path = cat.get("path", "")
 
         if cat_code in existing_cat_codes:
-            # 기존 그룹 — 요청수를 현재 카테고리 상품수로 갱신
+            # 기존 그룹 — 요청수 갱신 + keyword URL 옵션 동기화
             f = existing_cat_codes[cat_code]
+            update_data: dict[str, Any] = {}
             if count > (f.requested_count or 0):
-                await svc.update_filter(f.id, {"requested_count": count})
+                update_data["requested_count"] = count
+
+            # keyword URL의 includeSoldOut 파라미터를 현재 옵션과 동기화
+            _cur_kw = f.keyword or ""
+            if _cur_kw.startswith("http"):
+                _p = urlparse(_cur_kw)
+                _q = parse_qs(_p.query)
+                _had_sold_out = _q.get("includeSoldOut", [""])[0] == "1"
+                _want_sold_out = bool(req.options.get("includeSoldOut"))
+                if _had_sold_out != _want_sold_out:
+                    if _want_sold_out:
+                        _sep = "&" if "?" in _cur_kw else "?"
+                        update_data["keyword"] = f"{_cur_kw}{_sep}includeSoldOut=1"
+                    else:
+                        # includeSoldOut 파라미터 제거
+                        import re as _re
+
+                        update_data["keyword"] = _re.sub(
+                            r"[&?]includeSoldOut=1", "", _cur_kw
+                        )
+
+            if update_data:
+                await svc.update_filter(f.id, update_data)
                 updated_groups += 1
         else:
             # 신규 카테고리 — 그룹 생성 (소싱처별 keyword/name 포맷)
+            # 공통 옵션 파라미터
+            _opt_parts: list[str] = []
+            if req.options.get("maxDiscount"):
+                _opt_parts.append("maxDiscount=1")
+            if req.options.get("includeSoldOut"):
+                _opt_parts.append("includeSoldOut=1")
+            _opt_suffix = ("&" + "&".join(_opt_parts)) if _opt_parts else ""
+
             segments = path.split(" > ") if path else [cat_code]
             if site == "Nike":
                 segments = [s for s in segments if s != "Nike"]
                 path_tail = "_".join(segments) if segments else cat_code
                 group_name = f"Nike_{path_tail}"
-                keyword_url = f"https://www.nike.com/kr/w?q={_quote(keyword)}"
+                keyword_url = (
+                    f"https://www.nike.com/kr/w?q={_quote(keyword)}{_opt_suffix}"
+                )
             elif site in ("ABCmart", "GrandStage"):
                 path_tail = "_".join(segments) if segments else cat_code
                 group_name = f"{site}_{keyword}_{path_tail}"
                 keyword_url = (
                     f"https://abcmart.a-rt.com/display/search-word/result"
-                    f"?searchWord={_quote(keyword)}"
+                    f"?searchWord={_quote(keyword)}{_opt_suffix}"
                 )
             elif site == "GSShop":
                 import base64 as _b64
@@ -1483,14 +1516,14 @@ async def brand_refresh(
                 ).decode()
                 keyword_url = (
                     f"https://www.gsshop.com/shop/search/main.gs"
-                    f"?tq={_quote(keyword)}&eh={_quote(_eh)}"
+                    f"?tq={_quote(keyword)}&eh={_quote(_eh)}{_opt_suffix}"
                 )
             elif site == "LOTTEON":
                 path_tail = "_".join(segments) if segments else cat_code
                 group_name = f"LOTTEON_{keyword}_{path_tail}"
                 keyword_url = (
                     f"https://www.lotteon.com/csearch/search/search"
-                    f"?render=search&platform=pc&q={_quote(keyword)}&mallId=2"
+                    f"?render=search&platform=pc&q={_quote(keyword)}&mallId=2{_opt_suffix}"
                 )
             else:
                 # MUSINSA
@@ -1508,6 +1541,8 @@ async def brand_refresh(
                     params["excludeBoutique"] = "1"
                 if req.options.get("maxDiscount"):
                     params["maxDiscount"] = "1"
+                if req.options.get("includeSoldOut"):
+                    params["includeSoldOut"] = "1"
                 keyword_url = (
                     f"https://www.musinsa.com/search/goods?{urlencode(params)}"
                 )

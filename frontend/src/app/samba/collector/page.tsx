@@ -1959,8 +1959,10 @@ export default function CollectorPage() {
                               if (job.current > lastCurrent) { addLog(`${gp} [${f.name}] [${job.current.toLocaleString()}/${job.total.toLocaleString()}] 수집 중... (${job.progress}%)`); lastCurrent = job.current }
                               if (job.status === 'completed') {
                                 const _s = job.result?.saved ?? 0, _sk = job.result?.skipped ?? 0, _p = job.result?.policy || ''
-                                const _parts = [`신규 ${_s}건`]
-                                if (_sk > 0) _parts.push(`중복 ${_sk}건`)
+                                const _inS = job.result?.in_stock_count ?? 0, _soC = job.result?.sold_out_count ?? 0
+                                const _parts = [`신규 ${_s.toLocaleString()}건`]
+                                if (_inS > 0 || _soC > 0) _parts.push(`재고 ${_inS.toLocaleString()}건 | 품절 ${_soC.toLocaleString()}건`)
+                                if (_sk > 0) _parts.push(`중복/스킵 ${_sk.toLocaleString()}건`)
                                 if (_p) _parts.push(_p)
                                 addLog(`${gp} [${f.name}] 수집 완료: ${_parts.join(' | ')}`)
                                 break
