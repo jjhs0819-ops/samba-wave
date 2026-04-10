@@ -1501,11 +1501,26 @@ async def sync_orders_from_markets(
     results: list[dict[str, Any]] = []
     total_synced = 0
 
-    for account in active_accounts:
-        market_type = account.market_type
-        extras = account.additional_fields or {}
-        seller_id = account.seller_id or ""
-        label = f"{account.market_name}({seller_id})"
+    # ORM 객체를 딕셔너리로 미리 추출 — rollback 후 lazy loading MissingGreenlet 방지
+    account_snapshots = [
+        {
+            "id": a.id,
+            "market_type": a.market_type,
+            "market_name": a.market_name,
+            "seller_id": a.seller_id or "",
+            "api_key": a.api_key,
+            "api_secret": a.api_secret,
+            "additional_fields": a.additional_fields or {},
+            "tenant_id": a.tenant_id,
+        }
+        for a in active_accounts
+    ]
+
+    for account in account_snapshots:
+        market_type = account["market_type"]
+        extras = account["additional_fields"]
+        seller_id = account["seller_id"]
+        label = f"{account['market_name']}({seller_id})"
 
         try:
             orders_data: list[dict[str, Any]] = []
@@ -1513,9 +1528,9 @@ async def sync_orders_from_markets(
             if market_type == "smartstore":
                 from backend.domain.samba.proxy.smartstore import SmartStoreClient
 
-                client_id = extras.get("clientId", "") or account.api_key or ""
+                client_id = extras.get("clientId", "") or account["api_key"] or ""
                 client_secret = (
-                    extras.get("clientSecret", "") or account.api_secret or ""
+                    extras.get("clientSecret", "") or account["api_secret"] or ""
                 )
                 if not client_id or not client_secret:
                     # fallback: 공유 설정
@@ -1539,7 +1554,7 @@ async def sync_orders_from_markets(
                     po = ro.get("productOrder", ro)
                     order_info = ro.get("order", {})
                     orders_data.append(
-                        _parse_smartstore_order(po, order_info, account.id, label)
+                        _parse_smartstore_order(po, order_info, account["id"], label)
                     )
                     if (
                         po.get("placeOrderStatus") == "NOT_YET"
@@ -1559,7 +1574,7 @@ async def sync_orders_from_markets(
             elif market_type == "lotteon":
                 from backend.domain.samba.proxy.lotteon import LotteonClient
 
-                api_key = extras.get("apiKey", "") or account.api_key or ""
+                api_key = extras.get("apiKey", "") or account["api_key"] or ""
                 if not api_key:
                     results.append(
                         {
@@ -1576,7 +1591,7 @@ async def sync_orders_from_markets(
                     f"[주문동기화] {label}: 롯데ON 주문 {len(raw_orders)}건 조회"
                 )
                 for ro in raw_orders:
-                    orders_data.append(_parse_lotteon_order(ro, account.id, label))
+                    orders_data.append(_parse_lotteon_order(ro, account["id"], label))
 
                 # ── 정산금액 매칭 (SettleItmdSales) ─────────────────────────
                 try:
@@ -1684,7 +1699,7 @@ async def sync_orders_from_markets(
 
                 from backend.domain.samba.proxy.playauto import PlayAutoClient
 
-                api_key = extras.get("apiKey", "") or account.api_key or ""
+                api_key = extras.get("apiKey", "") or account["api_key"] or ""
                 if not api_key:
                     results.append(
                         {"account": label, "status": "skip", "message": "API Key 없음"}
@@ -1716,7 +1731,7 @@ async def sync_orders_from_markets(
                     logger.info(f"[주문동기화] 플레이오토: {len(raw_orders)}건 조회")
                     for ro in raw_orders:
                         orders_data.append(
-                            _parse_playauto_order(ro, account.id, label, alias_map)
+                            _parse_playauto_order(ro, account["id"], label, alias_map)
                         )
                 except Exception as e:
                     logger.warning(f"[주문동기화] {label}: 플레이오토 조회 실패 — {e}")
@@ -1833,7 +1848,7 @@ async def sync_orders_from_markets(
             synced = 0
             for order_data in orders_data:
                 # tenant_id 주입 (멀티테넌트 격리 — account 우선, JWT fallback)
-                _tid = account.tenant_id or tenant_id
+                _tid = account["tenant_id"] or tenant_id
                 if _tid:
                     order_data["tenant_id"] = _tid
                 # 수집상품 매칭 — collected_product_id, product_image, source_site, source_url 보충

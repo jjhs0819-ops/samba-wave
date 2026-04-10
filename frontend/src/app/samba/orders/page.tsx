@@ -1479,17 +1479,7 @@ export default function OrdersPage() {
                 <button style={pgBtn(false)} disabled={currentPage === totalPages} onClick={() => setCurrentPage(totalPages)}>»</button>
               </div>
             )}
-            {/* 우측: 페이지 크기 */}
-            <select
-              style={{ background: 'rgba(30,30,30,0.9)', border: '1px solid #333', color: '#aaa', borderRadius: '6px', padding: '0.25rem 0.4rem', fontSize: '0.75rem', cursor: 'pointer' }}
-              value={pageSize}
-              onChange={e => { setPageSize(Number(e.target.value)); setCurrentPage(1) }}
-            >
-              <option value={50}>50개</option>
-              <option value={100}>100개</option>
-              <option value={200}>200개</option>
-              <option value={500}>500개</option>
-            </select>
+            <div />
           </div>
         )
       })()}
