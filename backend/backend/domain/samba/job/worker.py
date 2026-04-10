@@ -679,7 +679,7 @@ class JobWorker:
                             )
                         else:
                             fail_count += 1
-                            err = str(tx_error.get(acc_id, "실패"))[:60]
+                            err = str(tx_error.get(acc_id, "실패"))[:500]
                             if "<asyncio" in err or "Semaphore" in err:
                                 err = "전송 동시성 오류"
                             _add_job_log(
@@ -703,7 +703,7 @@ class JobWorker:
                             err_msg = r.get("error") or tx_error.get("_all", "실패")
                             _add_job_log(
                                 job.id,
-                                f"[{i + 1}/{total}] {prod_name}: {str(err_msg)[:200]}",
+                                f"[{i + 1}/{total}] {prod_name}: {str(err_msg)[:500]}",
                             )
                         else:
                             fail_count += 1
