@@ -204,9 +204,7 @@ async def get_last_resumable_transmit(
                 select(SambaJob)
                 .where(
                     SambaJob.job_type == "transmit",
-                    col(SambaJob.status).in_(
-                        [JobStatus.FAILED, JobStatus.CANCELLED]
-                    ),
+                    col(SambaJob.status).in_([JobStatus.FAILED, JobStatus.CANCELLED]),
                     SambaJob.total > 0,
                     SambaJob.current > 0,
                     SambaJob.current < SambaJob.total,
