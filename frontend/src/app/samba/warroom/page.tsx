@@ -693,7 +693,7 @@ export default function WarroomPage() {
                         return (
                           <div key={ci} style={{ marginBottom: ci < cycles - 1 ? '0.3rem' : 0, paddingBottom: ci < cycles - 1 ? '0.3rem' : 0, borderBottom: ci < cycles - 1 ? '1px solid #ffffff10' : 'none' }}>
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', alignItems: 'center' }}>
-                              {timeRange && <span style={{ fontSize: '0.6rem', color: '#555' }}>{timeRange}</span>}
+                              {timeRange && <span style={{ fontSize: '0.6rem', color: '#999' }}>{timeRange}</span>}
                               {total != null && (
                                 <span style={{ fontSize: '0.65rem', color: '#aaa' }}>대상 {total.toLocaleString()}</span>
                               )}
