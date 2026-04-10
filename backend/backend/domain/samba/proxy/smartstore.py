@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import base64
 import re
 import time
@@ -1369,14 +1371,24 @@ class SmartStoreClient:
                 qparams = dict(params)
                 qparams["lastChangedFrom"] = qdate
                 qparams["lastChangedType"] = change_type
-                try:
-                    result = await self._call_api(
-                        "GET",
-                        "/v1/pay-order/seller/product-orders/last-changed-statuses",
-                        params=qparams,
-                    )
-                except Exception:
-                    continue
+                for _retry in range(3):
+                    try:
+                        result = await self._call_api(
+                            "GET",
+                            "/v1/pay-order/seller/product-orders/last-changed-statuses",
+                            params=qparams,
+                        )
+                        break  # 성공 시 루프 탈출
+                    except Exception as _api_err:
+                        # 429 속도제한 → 대기 후 재시도
+                        if "429" in str(_api_err):
+                            await asyncio.sleep(1.0 * (_retry + 1))
+                            continue
+                        break  # 429 외 에러는 재시도 안 함
+                else:
+                    continue  # 3회 모두 실패 시 다음 타입으로
+                # 요청 간 간격 — 429 방지
+                await asyncio.sleep(0.3)
                 data = result.get("data", result) if isinstance(result, dict) else {}
                 statuses_list = (
                     (
