@@ -497,20 +497,18 @@ export default function WarroomPage() {
             id="btn-autotune-start"
             disabled={singleRefreshing}
             onClick={async () => {
-              // 상품번호 입력 시 → 단일 상품 갱신
+              // 상품번호 입력 시 → 단일 상품 갱신 (로그 패널에 결과 표시)
               if (singleProductNo.trim()) {
                 setSingleRefreshing(true)
                 try {
                   const res = await collectorApi.autotuneRefreshOne(singleProductNo.trim())
-                  if (res.ok) {
-                    const color = res.status === 'changed' ? '#51CF66' : res.status === 'error' ? '#FF6B6B' : '#888'
-                    const msg = `[${res.time}] ${res.brand} ${res.name} — ${res.detail}`
-                    await import('@/components/samba/Modal').then(m => m.showAlert(msg, res.status === 'error' ? 'error' : res.status === 'changed' ? 'success' : undefined))
-                  } else {
-                    await import('@/components/samba/Modal').then(m => m.showAlert(res.error || '갱신 실패', 'error'))
+                  if (!res.ok) {
+                    const { showAlert } = await import('@/components/samba/Modal')
+                    showAlert(res.error || '상품을 찾을 수 없습니다', 'error')
                   }
                 } catch {
-                  await import('@/components/samba/Modal').then(m => m.showAlert('갱신 요청 실패', 'error'))
+                  const { showAlert } = await import('@/components/samba/Modal')
+                  showAlert('갱신 요청 실패', 'error')
                 }
                 setSingleRefreshing(false)
                 setSingleProductNo('')

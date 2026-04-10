@@ -1405,10 +1405,15 @@ async def autotune_refresh_one(body: RefreshOneRequest):
         # 갱신 실행
         results, summary = await refresh_products_bulk([product], source="manual")
 
-        kst_now = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Seoul"))
+        now = datetime.now(timezone.utc)
+        kst_now = now.astimezone(ZoneInfo("Asia/Seoul"))
+        ts_str = kst_now.strftime("%H:%M:%S")
         r = results[0] if results else None
         detail_text = "갱신 실패"
         status = "error"
+        site = getattr(product, "source_site", "") or ""
+        brand = getattr(product, "brand", "") or ""
+        name = (getattr(product, "name", "") or "")[:50]
 
         if r and not r.error:
             old_price = product.sale_price or 0
@@ -1430,10 +1435,38 @@ async def autotune_refresh_one(body: RefreshOneRequest):
                 status = "unchanged"
 
             # DB 업데이트
+            from backend.api.v1.routers.samba.collector_common import _trim_history
+
             updates: dict = {
-                "last_refreshed_at": datetime.now(timezone.utc),
+                "last_refreshed_at": now,
                 "refresh_error_count": 0,
             }
+
+            # 가격이력 스냅샷 — 변동 여부와 관계없이 항상 기록
+            snapshot: dict = {
+                "date": now.isoformat(),
+                "source": "refresh-one",
+                "sale_price": r.new_sale_price
+                if r.new_sale_price is not None
+                else product.sale_price,
+                "original_price": r.new_original_price
+                if r.new_original_price is not None
+                else product.original_price,
+                "cost": r.new_cost if r.new_cost is not None else product.cost,
+                "sale_status": r.new_sale_status,
+                "changed": r.changed,
+            }
+            # 옵션: 신규 수집 우선, 없으면 기존 DB 옵션 폴백
+            _snap_options = r.new_options
+            if not _snap_options and product.options:
+                _snap_options = product.options
+            if _snap_options:
+                snapshot["options"] = _snap_options
+            history = list(product.price_history or [])
+            history.insert(0, snapshot)
+            updates["price_history"] = _trim_history(history)
+
+            # 옵션은 항상 갱신
             if r.new_options is not None:
                 updates["options"] = r.new_options
             updates["sale_status"] = r.new_sale_status
@@ -1449,15 +1482,28 @@ async def autotune_refresh_one(body: RefreshOneRequest):
         elif r and r.error:
             detail_text = r.error[:80]
 
-        return {
-            "ok": True,
-            "product_id": product.id,
-            "brand": getattr(product, "brand", "") or "",
-            "name": (getattr(product, "name", "") or "")[:50],
-            "time": kst_now.strftime("%H:%M:%S"),
-            "status": status,
-            "detail": detail_text,
-        }
+        # 오토튠 로그 버퍼에 직접 추가 → 실시간 로그 패널에 표시
+        from backend.domain.samba.collector.refresher import (
+            _refresh_log_buffer,
+        )
+        import backend.domain.samba.collector.refresher as _rfr
+
+        site_tag = f"[{site}] " if site else ""
+        log_msg = f"[{ts_str}] [단일갱신] {site_tag}{brand} {name}: {detail_text}"
+        _refresh_log_buffer.append(
+            {
+                "ts": now.isoformat(),
+                "site": site,
+                "product_id": product.id,
+                "name": name,
+                "msg": log_msg,
+                "level": "info" if status != "error" else "warning",
+                "source": "autotune",
+            }
+        )
+        _rfr._refresh_log_total += 1
+
+        return {"ok": True}
 
 
 @router.post("/autotune/start")
