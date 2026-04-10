@@ -548,7 +548,7 @@ class GsShopSourcingClient:
             path, gnb, c1, c2, c3 = key.split("||")
             categories.append(
                 {
-                    "categoryCode": c3 or c2 or c1,
+                    "categoryCode": path,
                     "path": path,
                     "count": count,
                     "category1": gnb or c1,

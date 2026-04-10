@@ -1614,11 +1614,11 @@ class SmartStoreClient:
         immediate_discount = None
         if discount_rate and 0 < discount_rate < 100:
             sale_price = int(desired_price / (1 - discount_rate / 100))
-            # 10원 단위 올림
-            sale_price = ((sale_price + 9) // 10) * 10
+            # 100원 단위 내림
+            sale_price = (sale_price // 100) * 100
             immediate_discount = True
         else:
-            sale_price = ((desired_price + 9) // 10) * 10
+            sale_price = desired_price  # calc_market_price에서 이미 100원 내림
 
         import re
 

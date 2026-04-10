@@ -190,6 +190,47 @@ async def cancel_all_jobs(
     return {"ok": True, "cancelled": r.rowcount}
 
 
+@router.get("/last-resumable-transmit")
+async def get_last_resumable_transmit(
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """재개 가능한 최근 transmit 잡 조회 (payload 포함)."""
+    from backend.domain.samba.job.model import SambaJob
+    from sqlmodel import select, col
+
+    job = (
+        (
+            await session.execute(
+                select(SambaJob)
+                .where(
+                    SambaJob.job_type == "transmit",
+                    col(SambaJob.status).in_(
+                        [JobStatus.FAILED, JobStatus.CANCELLED]
+                    ),
+                    SambaJob.total > 0,
+                    SambaJob.current > 0,
+                    SambaJob.current < SambaJob.total,
+                )
+                .order_by(SambaJob.created_at.desc())
+                .limit(1)
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if not job:
+        return None
+    return {
+        "id": job.id,
+        "job_type": job.job_type,
+        "status": job.status,
+        "payload": job.payload,
+        "current": job.current,
+        "total": job.total,
+        "created_at": job.created_at,
+    }
+
+
 # ── 경로 파라미터 라우트 (정적 경로 뒤에 배치) ──
 
 

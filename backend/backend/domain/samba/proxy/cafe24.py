@@ -326,13 +326,13 @@ class Cafe24Client(BaseProxyClient):
         original_price = int(product.get("original_price", 0) or 0)
         if sale_price <= 0:
             sale_price = original_price or 10000
-        # 10원 단위 올림
-        sale_price = ((sale_price + 9) // 10) * 10
+        # 100원 단위 내림
+        sale_price = (sale_price // 100) * 100
 
         # 정가(비교가): 원래가격이 판매가보다 높으면 표시
         retail_price = original_price if original_price > sale_price else 0
         if retail_price:
-            retail_price = ((retail_price + 9) // 10) * 10
+            retail_price = (retail_price // 100) * 100
 
         # 상품명 (최대 250자)
         name = (product.get("name") or "상품명 없음")[:250]

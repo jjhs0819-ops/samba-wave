@@ -112,7 +112,17 @@ export default function ShipmentsPage() {
         const res = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs?status=running&limit=1`)
         const jobs = await res.json()
         const job = Array.isArray(jobs) ? jobs.find((j: Record<string, unknown>) => j.job_type === 'transmit') : null
-        if (!job) return
+        if (!job) {
+          // 실행 중 잡이 없으면 → 재개 가능한 최근 잡 확인
+          try {
+            const resumableRes = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/last-resumable-transmit`)
+            const resumable = await resumableRes.json()
+            if (resumable && resumable.payload) {
+              setPausedJobPayload({ job_type: 'transmit', payload: resumable.payload })
+            }
+          } catch { /* ignore */ }
+          return
+        }
         if (jobPollRef.current || activeJobIdRef.current) return
         const jobId = job.id as string
         activeJobIdRef.current = jobId
@@ -942,9 +952,9 @@ export default function ShipmentsPage() {
               }}
                 style={{ padding: '4px 14px', fontSize: '0.78rem', background: stopping === 'cancel' ? 'rgba(255,180,0,0.4)' : 'rgba(255,180,0,0.15)', color: '#FFB800', border: '1px solid rgba(255,180,0,0.4)', borderRadius: '4px', cursor: stopping ? 'not-allowed' : 'pointer', fontWeight: 600, opacity: stopping ? 0.7 : 1 }}
               >{stopping === 'cancel' ? '일시정지중...' : '일시정지'}</button>
-            {pausedJobPayload && !transmitting && !stopping && <button onClick={handleResume}
-                style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(76,175,80,0.15)', color: '#4CAF50', border: '1px solid rgba(76,175,80,0.4)', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
-              >이어하기</button>}
+            <button disabled={!pausedJobPayload || transmitting || !!stopping} onClick={handleResume}
+                style={{ padding: '4px 14px', fontSize: '0.78rem', background: pausedJobPayload && !transmitting && !stopping ? 'rgba(76,175,80,0.15)' : 'rgba(76,175,80,0.06)', color: pausedJobPayload && !transmitting && !stopping ? '#4CAF50' : '#4CAF5055', border: `1px solid ${pausedJobPayload && !transmitting && !stopping ? 'rgba(76,175,80,0.4)' : 'rgba(76,175,80,0.15)'}`, borderRadius: '4px', cursor: pausedJobPayload && !transmitting && !stopping ? 'pointer' : 'not-allowed', fontWeight: 600, opacity: pausedJobPayload && !transmitting && !stopping ? 1 : 0.5 }}
+              >이어하기</button>
             <button disabled={!!stopping} onClick={async () => {
                 setStopping('emergency')
                 const ts = new Date().toLocaleTimeString()

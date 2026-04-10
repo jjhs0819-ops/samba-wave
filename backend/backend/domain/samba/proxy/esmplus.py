@@ -350,9 +350,9 @@ class ESMPlusClient:
 
         # 가격
         sale_price = int(product.get("sale_price", 0) or 0)
-        # 10원 단위 올림
-        if sale_price % 10 != 0:
-            sale_price = ((sale_price + 9) // 10) * 10
+        # 100원 단위 내림
+        if sale_price % 100 != 0:
+            sale_price = (sale_price // 100) * 100
         if sale_price < 10:
             sale_price = 10
 

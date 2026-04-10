@@ -343,7 +343,7 @@ export default function WarroomPage() {
     // 사이클 완료 시 이벤트 타임라인 갱신
     if (cycles > prevCyclesRef.current) {
       prevCyclesRef.current = cycles
-      monitorApi.recentEvents(10).then(ev => setEvents(ev)).catch(() => {})
+      monitorApi.recentEvents(30).then(ev => setEvents(ev)).catch(() => {})
     }
   }, [])
 
@@ -360,7 +360,7 @@ export default function WarroomPage() {
     try {
       const [dashboard, recentEvents, probeStatus, atStatus, scores] = await Promise.all([
         monitorApi.dashboard().catch(() => null),
-        monitorApi.recentEvents(10).catch(() => []),
+        monitorApi.recentEvents(30).catch(() => []),
         collectorApi.probeStatus().catch(() => ({})) as Promise<Record<string, Record<string, Record<string, unknown>>>>,
         collectorApi.autotuneStatus().catch(() => ({ running: false, last_tick: null, cycle_count: 0, restart_count: 0, target: 'registered', refreshed_count: 0, breaker_tripped: {} as Record<string, number> })) as ReturnType<typeof collectorApi.autotuneStatus>,
         monitorApi.storeScores().catch(() => ({})),

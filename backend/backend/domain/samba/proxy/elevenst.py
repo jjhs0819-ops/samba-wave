@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import math
 import re
 from datetime import datetime
 from typing import Any, Optional
@@ -1114,10 +1113,10 @@ class ElevenstClient:
         """
         cfg = settings or {}
         name = _clean_product_name(product.get("name", ""))
-        sale_price = math.ceil(int(product.get("sale_price", 0)) / 10) * 10
+        sale_price = (int(product.get("sale_price", 0)) // 100) * 100
         _orig = int(product.get("original_price", 0) or 0)
-        # maktPrc(정가)는 판매가 이상이어야 함
-        makt_prc = math.ceil(_orig / 10) * 10 if _orig > sale_price else sale_price
+        # maktPrc(정가)는 판매가 이상이어야 함 — 100원 내림
+        makt_prc = (_orig // 100) * 100 if _orig > sale_price else sale_price
         images = product.get("images") or []
         detail_images = product.get("detail_images") or []
 

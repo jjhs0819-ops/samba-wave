@@ -504,8 +504,10 @@ class CoupangClient:
 
             return {
                 "itemName": item_name,
-                "originalPrice": int(product.get("original_price", 0)) // 10 * 10,
-                "salePrice": int(product.get("sale_price", 0)) // 10 * 10,
+                "originalPrice": (int(product.get("original_price", 0)) // 100) * 100,
+                "salePrice": int(
+                    product.get("sale_price", 0)
+                ),  # calc_market_price에서 이미 100원 내림
                 "maximumBuyCount": min(stock, 99999),
                 "maximumBuyForPerson": 0,
                 "maximumBuyForPersonPeriod": 1,
