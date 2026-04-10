@@ -655,16 +655,6 @@ export default function WarroomPage() {
             {Object.keys(tickEventsBySite).length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.25rem' }}>
                 {Object.entries(tickEventsBySite).map(([siteName, siteEvents]) => {
-                  const latest = siteEvents[0]
-                  const _d = latest?.detail as Record<string, unknown> | undefined
-                  const total = _d?.total as number | undefined
-                  const ok = _d?.ok as number | undefined
-                  const errs = _d?.errors as number | undefined
-                  const rate = _d?.rate as number | undefined
-                  const dur = _d?.duration_sec as number | undefined
-                  const priceTx = _d?.price_transmit as number | undefined
-                  const stockTx = _d?.stock_transmit as number | undefined
-                  const deleted = _d?.deleted as number | undefined
                   const cycles = siteEvents.length
                   const siteColor = SITE_COLORS[siteName] || '#888'
                   return (
@@ -682,42 +672,66 @@ export default function WarroomPage() {
                           {cycles > 1 ? `최근 ${cycles}사이클` : ''}
                         </span>
                       </div>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
-                        {total != null && (
-                          <span style={{ fontSize: '0.65rem', color: '#aaa' }}>대상 {total.toLocaleString()}</span>
-                        )}
-                        {ok != null && (
-                          <span style={{ fontSize: '0.65rem', color: '#51CF66' }}>성공 {ok.toLocaleString()}</span>
-                        )}
-                        {errs != null && errs > 0 && (
-                          <span style={{ fontSize: '0.65rem', color: '#FF6B6B' }}>실패 {errs.toLocaleString()}</span>
-                        )}
-                        {dur != null && (
-                          <span style={{ fontSize: '0.65rem', color: '#888' }}>{Math.round(dur)}초</span>
-                        )}
-                        {rate != null && (
-                          <span style={{ fontSize: '0.65rem', color: '#51CF66', fontWeight: 600 }}>{rate.toLocaleString()}건/초</span>
-                        )}
-                      </div>
-                      {((priceTx && priceTx > 0) || (stockTx && stockTx > 0) || (deleted && deleted > 0)) && (
-                        <div style={{ display: 'flex', gap: '0.3rem', marginTop: '0.2rem' }}>
-                          {priceTx != null && priceTx > 0 && (
-                            <span style={{ fontSize: '0.6rem', padding: '0.05rem 0.3rem', borderRadius: '3px', background: '#FFB34715', color: '#FFB347', border: '1px solid #FFB34730' }}>
-                              가격전송 {priceTx.toLocaleString()}
-                            </span>
-                          )}
-                          {stockTx != null && stockTx > 0 && (
-                            <span style={{ fontSize: '0.6rem', padding: '0.05rem 0.3rem', borderRadius: '3px', background: '#A78BFA15', color: '#A78BFA', border: '1px solid #A78BFA30' }}>
-                              재고전송 {stockTx.toLocaleString()}
-                            </span>
-                          )}
-                          {deleted != null && deleted > 0 && (
-                            <span style={{ fontSize: '0.6rem', padding: '0.05rem 0.3rem', borderRadius: '3px', background: '#FF6B6B15', color: '#FF6B6B', border: '1px solid #FF6B6B30' }}>
-                              삭제 {deleted.toLocaleString()}
-                            </span>
-                          )}
-                        </div>
-                      )}
+                      {siteEvents.map((ev, ci) => {
+                        const _d = ev.detail as Record<string, unknown> | undefined
+                        const total = _d?.total as number | undefined
+                        const ok = _d?.ok as number | undefined
+                        const errs = _d?.errors as number | undefined
+                        const rate = _d?.rate as number | undefined
+                        const dur = _d?.duration_sec as number | undefined
+                        const priceTx = _d?.price_transmit as number | undefined
+                        const stockTx = _d?.stock_transmit as number | undefined
+                        const deleted = _d?.deleted as number | undefined
+                        const startedAt = _d?.started_at as string | undefined
+                        const endedAt = _d?.ended_at as string | undefined
+                        const fmtTime = (iso?: string) => {
+                          if (!iso) return ''
+                          const d = new Date(iso)
+                          return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+                        }
+                        const timeRange = startedAt && endedAt ? `${fmtTime(startedAt)}~${fmtTime(endedAt)}` : ''
+                        return (
+                          <div key={ci} style={{ marginBottom: ci < cycles - 1 ? '0.3rem' : 0, paddingBottom: ci < cycles - 1 ? '0.3rem' : 0, borderBottom: ci < cycles - 1 ? '1px solid #ffffff10' : 'none' }}>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', alignItems: 'center' }}>
+                              {timeRange && <span style={{ fontSize: '0.6rem', color: '#555' }}>{timeRange}</span>}
+                              {total != null && (
+                                <span style={{ fontSize: '0.65rem', color: '#aaa' }}>대상 {total.toLocaleString()}</span>
+                              )}
+                              {ok != null && (
+                                <span style={{ fontSize: '0.65rem', color: '#51CF66' }}>성공 {ok.toLocaleString()}</span>
+                              )}
+                              {errs != null && errs > 0 && (
+                                <span style={{ fontSize: '0.65rem', color: '#FF6B6B' }}>실패 {errs.toLocaleString()}</span>
+                              )}
+                              {dur != null && (
+                                <span style={{ fontSize: '0.65rem', color: '#888' }}>{Math.round(dur)}초</span>
+                              )}
+                              {rate != null && (
+                                <span style={{ fontSize: '0.65rem', color: '#51CF66', fontWeight: 600 }}>{rate.toLocaleString()}건/초</span>
+                              )}
+                            </div>
+                            {((priceTx && priceTx > 0) || (stockTx && stockTx > 0) || (deleted && deleted > 0)) && (
+                              <div style={{ display: 'flex', gap: '0.3rem', marginTop: '0.2rem' }}>
+                                {priceTx != null && priceTx > 0 && (
+                                  <span style={{ fontSize: '0.6rem', padding: '0.05rem 0.3rem', borderRadius: '3px', background: '#FFB34715', color: '#FFB347', border: '1px solid #FFB34730' }}>
+                                    가격전송 {priceTx.toLocaleString()}
+                                  </span>
+                                )}
+                                {stockTx != null && stockTx > 0 && (
+                                  <span style={{ fontSize: '0.6rem', padding: '0.05rem 0.3rem', borderRadius: '3px', background: '#A78BFA15', color: '#A78BFA', border: '1px solid #A78BFA30' }}>
+                                    재고전송 {stockTx.toLocaleString()}
+                                  </span>
+                                )}
+                                {deleted != null && deleted > 0 && (
+                                  <span style={{ fontSize: '0.6rem', padding: '0.05rem 0.3rem', borderRadius: '3px', background: '#FF6B6B15', color: '#FF6B6B', border: '1px solid #FF6B6B30' }}>
+                                    삭제 {deleted.toLocaleString()}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
                     </div>
                   )
                 })}
