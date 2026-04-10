@@ -70,6 +70,7 @@ export default function ShipmentsPage() {
   // 실시간 Job 큐 상태
   const [jobQueueStatus, setJobQueueStatus] = useState<{ running: number, pending: number }>({ running: 0, pending: 0 })
   const jobQueuePollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const cancelledAtRef = useRef<number>(0) // 작업중지 후 Read DB 복제 지연 방지
 
   // 컴포넌트 언마운트 시 잡 폴링 정리
   useEffect(() => {
@@ -90,6 +91,8 @@ export default function ShipmentsPage() {
         ])
         const runJobs = await runRes.json()
         const penJobs = await penRes.json()
+        // 작업중지 후 10초간 Read DB stale 데이터 무시 (Write→Read 복제 지연 방지)
+        if (Date.now() - cancelledAtRef.current < 10_000) return
         setJobQueueStatus({
           running: Array.isArray(runJobs) ? runJobs.length : 0,
           pending: Array.isArray(penJobs) ? penJobs.length : 0,
@@ -944,6 +947,8 @@ export default function ShipmentsPage() {
                   const { API_BASE_URL: apiBase } = await import('@/config/api')
                   await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/cancel`, { method: 'POST' })
                   activeJobIdRef.current = ''
+                  setJobQueueStatus({ running: 0, pending: 0 })
+                  cancelledAtRef.current = Date.now()
                   setLogMessages(prev => [...prev, `[${ts}] 일시정지 완료 — 이어하기로 재개 가능`].slice(-30))
                 } catch {
                   setLogMessages(prev => [...prev, `[${ts}] 일시정지 실패`].slice(-30))
@@ -969,6 +974,8 @@ export default function ShipmentsPage() {
                   await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/cancel-all`, { method: 'POST' })
                   activeJobIdRef.current = ''
                   setPausedJobPayload(null)
+                  setJobQueueStatus({ running: 0, pending: 0 })
+                  cancelledAtRef.current = Date.now()
                   setLogMessages(prev => [...prev, `[${ts}] 작업중지 완료`].slice(-30))
                 } catch {
                   setLogMessages(prev => [...prev, `[${ts}] 작업중지 실패`].slice(-30))
