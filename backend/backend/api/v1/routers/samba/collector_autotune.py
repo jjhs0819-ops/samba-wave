@@ -194,7 +194,6 @@ async def _site_autotune_loop(site: str):
                         .where(
                             *market_cond,
                             _CP.applied_policy_id != None,
-                            _CP.sale_status != "sold_out",
                             _CP.source_site == site,
                         )
                         .order_by(*_order_clause)
@@ -1184,7 +1183,6 @@ async def _autotune_loop():
                     site_stmt = select(func.distinct(_CP.source_site)).where(
                         *market_cond,
                         _CP.applied_policy_id != None,
-                        _CP.sale_status != "sold_out",
                         _CP.source_site != None,
                         _CP.source_site != "",
                     )

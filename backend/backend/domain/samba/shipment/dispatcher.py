@@ -45,7 +45,7 @@ async def _safe_delete(
     """
     product_no = product.get("market_product_no", {}).get(market_key, "")
     if not product_no:
-        return {"success": True, "message": f"{market_name} 상품번호 없음 (건너뜀)"}
+        return {"success": False, "message": f"{market_name} 상품번호 없음 (건너뜀)"}
     try:
         await api_call(product_no)
         return {"success": True, "message": f"{market_name} 삭제 완료"}
@@ -159,7 +159,7 @@ async def delete_from_market(
             # 삭제 핸들러 미구현 마켓 — 로그만 남김
             logger.warning(f"[디스패처] {market_type} 삭제 핸들러 미구현, 건너뜀")
             return {
-                "success": True,
+                "success": False,
                 "message": f"{market_type} 삭제 핸들러 미구현 (건너뜀)",
             }
         return await handler(session, product, account=account)
@@ -348,7 +348,7 @@ async def _delete_lotteon(
 
     product_no = product.get("market_product_no", {}).get("lotteon", "")
     if not product_no:
-        return {"success": True, "message": "롯데ON 상품번호 없음 (건너뜀)"}
+        return {"success": False, "message": "롯데ON 상품번호 없음 (건너뜀)"}
     plugin = LotteonPlugin()
     return await plugin.delete(session, product_no, account)
 
@@ -374,6 +374,21 @@ async def _delete_ssg(
     return await _safe_delete("SSG", "ssg", product, client.delete_product)
 
 
+async def _delete_playauto(
+    session: AsyncSession,
+    product: dict[str, Any],
+    account: Any = None,
+) -> dict[str, Any]:
+    """플레이오토 상품 품절 처리 (취소대기 전환) — 플러그인 delete() 위임."""
+    from backend.domain.samba.plugins.markets.playauto import PlayAutoPlugin
+
+    product_no = product.get("market_product_no", {}).get("playauto", "")
+    if not product_no:
+        return {"success": False, "message": "플레이오토 상품번호 없음 (건너뜀)"}
+    plugin = PlayAutoPlugin()
+    return await plugin.delete(session, product_no, account)
+
+
 # 마켓별 삭제 핸들러 매핑
 MARKET_DELETE_HANDLERS: dict[str, Any] = {
     "smartstore": _delete_smartstore,
@@ -383,4 +398,5 @@ MARKET_DELETE_HANDLERS: dict[str, Any] = {
     "ssg": _delete_ssg,
     "lottehome": _delete_lottehome,
     "gsshop": _delete_gsshop,
+    "playauto": _delete_playauto,
 }
