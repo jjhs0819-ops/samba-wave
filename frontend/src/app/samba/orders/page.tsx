@@ -1202,7 +1202,7 @@ export default function OrdersPage() {
                           borderRadius: '4px', cursor: 'pointer', textAlign: 'center',
                           fontWeight: 600,
                         }}
-                      >{(o.source === 'playauto' || o.channel_name?.toLowerCase().includes('플레이오토')) ? '주문확인' : '주문취소'}</button>
+                      >주문취소</button>
                       {ACTION_BUTTONS.map(btn => {
                         const isActive = activeAction === btn.key
                         return (
