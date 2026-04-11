@@ -710,9 +710,6 @@ async def _site_autotune_loop(site: str):
                                             from backend.domain.samba.shipment.service import (
                                                 SambaShipmentService as _FSvc,
                                             )
-                                            from backend.domain.samba.collector.repository import (
-                                                SambaCollectedProductRepository as _FProdRepo,
-                                            )
 
                                             _svc = _FSvc(_FRepo(_tx_s), _tx_s)
                                             await _svc.start_update(
@@ -722,24 +719,8 @@ async def _site_autotune_loop(site: str):
                                                 skip_unchanged=False,
                                                 skip_refresh=True,
                                             )
-                                            # 재고전송 → last_sent_data에 옵션 기준값 저장
-                                            if "stock" in _tx_items:
-                                                _fpr = _FProdRepo(_tx_s)
-                                                _fp = await _fpr.get_async(_tx_pid)
-                                                if _fp:
-                                                    _flsd = dict(
-                                                        _fp.last_sent_data or {}
-                                                    )
-                                                    _facc = dict(
-                                                        _flsd.get(_tx_acc) or {}
-                                                    )
-                                                    _facc["options"] = _fp.options
-                                                    _flsd[_tx_acc] = _facc
-                                                    await _fpr.update_async(
-                                                        _tx_pid,
-                                                        last_sent_data=_flsd,
-                                                    )
                                             await _tx_s.commit()
+                                        # start_update의 sent_snapshot이 last_sent_data를 이미 저장
                                         _synced_count += 1
                                     finally:
                                         _acc_sem.release()
