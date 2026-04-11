@@ -61,6 +61,14 @@ jobs:
           COMMIT_SHA: "${{ github.sha }}"
           EOF
 
+      - name: Clear stale secret-type env vars
+        run: |
+          gcloud run services update samba-wave-api \
+            --region asia-northeast3 \
+            --project fresh-sanctuary-489804-v4 \
+            --remove-secrets WRITE_DB_PASSWORD,READ_DB_PASSWORD,JWT_SECRET_KEY \
+            --quiet 2>/dev/null || true
+
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy samba-wave-api \
