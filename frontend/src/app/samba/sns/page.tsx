@@ -219,10 +219,11 @@ export default function SNSPage() {
 
   const loadWpSites = useCallback(async () => {
     try {
-      const data = await snsApi.listWpSites() as WpSite[]
-      setWpSites(data || [])
-      if (data?.length && !activeSiteId) {
-        setActiveSiteId(data[0].id)
+      const data = await snsApi.listWpSites() as { items: WpSite[] }
+      const items = data?.items || []
+      setWpSites(items)
+      if (items.length && !activeSiteId) {
+        setActiveSiteId(items[0].id)
       }
     } catch {
       // WP 사이트 로드 실패
@@ -231,8 +232,8 @@ export default function SNSPage() {
 
   const loadKeywordGroups = useCallback(async () => {
     try {
-      const data = await snsApi.listKeywordGroups() as KeywordGroup[]
-      setKeywordGroups(data || [])
+      const data = await snsApi.listKeywordGroups() as { items: KeywordGroup[] }
+      setKeywordGroups(data?.items || [])
     } catch {
       // 키워드 그룹 로드 실패
     }

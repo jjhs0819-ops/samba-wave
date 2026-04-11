@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 
 import base64
+import math
 import re
 import time
 from typing import Any, Optional
@@ -1715,18 +1716,12 @@ class SmartStoreClient:
         if desired_price <= 0:
             desired_price = int(product.get("original_price", 0)) or 10000
 
-        # 즉시할인: 원하는 판매가를 역산하여 판매가(정상가) 설정
-        # 예) 원하는 가격 80,000 + 할인율 20% → 판매가 100,000 + 즉시할인 20% = 할인가 80,000
-        discount_rate = product.get("_discount_rate", 0)
-        immediate_discount = None
-        if discount_rate and 0 < discount_rate < 100:
-            import math
-
-            # 올림 처리 — 내림하면 할인 후 가격이 desired_price보다 낮아짐
-            sale_price = math.ceil(desired_price / (1 - discount_rate / 100))
-            immediate_discount = True
-        else:
-            sale_price = desired_price  # calc_market_price에서 이미 100원 내림
+        # 즉시할인: SmartStore 판매가는 10원 단위만 허용 → 25% 고정
+        # (20% 역산 시 10원 단위에 안 맞는 경우 빈번, 25%로 고정하여 해결)
+        # 예) 원하는 가격 80,700 / 0.75 = 107,600 (10원 단위 정확)
+        discount_rate = 25
+        sale_price = math.ceil(desired_price / (1 - discount_rate / 100))
+        immediate_discount = True
 
         import re
 
@@ -2292,11 +2287,13 @@ class SmartStoreClient:
         specific_products = []
         for p in products:
             color = p.get("color", "") or "기본"
-            sale_price = (
+            _desired_price = (
                 p.get("_final_sale_price")
                 or p.get("sale_price")
                 or p.get("original_price", 0)
             )
+            # 즉시할인 25% 역산: 원하는 결제가 → 정가(listing price)
+            sale_price = math.ceil(int(_desired_price) / (1 - 25 / 100))
             stock = int(account_settings.get("stockQuantity", 0)) or 999
 
             # 옵션에서 재고 계산
@@ -2365,15 +2362,13 @@ class SmartStoreClient:
             if existing_no:
                 sp["originProductNo"] = int(existing_no)
 
-            # 즉시할인
-            discount_rate = account_settings.get("discountRate")
-            if discount_rate and float(discount_rate) > 0:
-                sp["immediateDiscountPolicy"] = {
-                    "discountMethod": {
-                        "value": int(float(discount_rate)),
-                        "unitType": "PERCENT",
-                    }
+            # 즉시할인: 25% 고정 (SmartStore 판매가 10원 단위 제약)
+            sp["immediateDiscountPolicy"] = {
+                "discountMethod": {
+                    "value": 25,
+                    "unitType": "PERCENT",
                 }
+            }
 
             specific_products.append(sp)
 

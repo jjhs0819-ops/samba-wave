@@ -1967,8 +1967,17 @@ async def enrich_product(
                 updates["original_price"] = result.new_original_price
             if result.new_cost is not None:
                 _old_cost = getattr(product, "cost", None) or 0
-                # 기존 원가가 더 낮으면(확장앱 혜택가) 보존
-                if not (_old_cost > 0 and _old_cost < result.new_cost):
+                _sale = getattr(product, "sale_price", 0) or 0
+                # 이상치: 판매가의 10% 미만이면 비정상 원가 → 무조건 갱신
+                _is_anomaly = _sale > 0 and _old_cost > 0 and _old_cost < _sale * 0.1
+                if _is_anomaly:
+                    logger.warning(
+                        f"[가격방어] 원가 이상치 감지 → 갱신: "
+                        f"기존={int(_old_cost):,}, 신규={int(result.new_cost):,}, "
+                        f"판매가={int(_sale):,}"
+                    )
+                # 기존 원가가 더 낮으면(확장앱 혜택가) 보존, 단 이상치는 예외
+                if _is_anomaly or not (_old_cost > 0 and _old_cost < result.new_cost):
                     updates["cost"] = result.new_cost
             if result.new_sale_status:
                 updates["sale_status"] = result.new_sale_status

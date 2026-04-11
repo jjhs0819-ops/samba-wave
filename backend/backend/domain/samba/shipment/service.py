@@ -423,6 +423,16 @@ class SambaShipmentService:
                         cost, policy.pricing, "smartstore", policy_market_data
                     )
 
+                    # 가격 이상치 방어: 원가가 정상가의 5% 미만이면 전송 차단
+                    _orig_price = pd.get("original_price") or pd.get("sale_price") or 0
+                    if _orig_price > 0 and cost > 0 and cost < _orig_price * 0.05:
+                        logger.error(
+                            f"[가격방어] 그룹전송 차단 — 원가 이상치: "
+                            f"원가={int(cost):,}, 정상가={int(_orig_price):,}, "
+                            f"계산가={calc_price:,}"
+                        )
+                        continue
+
                     pd["_final_sale_price"] = calc_price
                     logger.info(
                         f"[그룹전송] 가격 계산: 원가={cost} → 판매가={calc_price}"
@@ -1267,6 +1277,20 @@ class SambaShipmentService:
                     calc_price = calc_market_price(
                         cost, policy.pricing, market_type, policy_market_data
                     )
+
+                    # 가격 이상치 방어: 원가가 정상가의 5% 미만이면 전송 차단
+                    _orig_price = int(acct_product.get("original_price") or 0)
+                    if _orig_price > 0 and cost > 0 and cost < _orig_price * 0.05:
+                        logger.error(
+                            f"[가격방어] 전송 차단 — 원가 이상치: "
+                            f"원가={int(cost):,}, 정상가={_orig_price:,}, "
+                            f"계산가={calc_price:,}"
+                        )
+                        res["error"] = (
+                            f"원가 이상치 감지 "
+                            f"(원가 {int(cost):,}원 < 정상가 {_orig_price:,}원의 5%)"
+                        )
+                        return res
 
                     acct_product["sale_price"] = calc_price
                     logger.info(

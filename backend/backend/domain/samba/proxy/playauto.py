@@ -696,7 +696,7 @@ def _normalize_origin(origin: str | None) -> str:
 
     # 단일 값 — 국내/기타/해외 자동 판별
     if origin in _DOMESTIC_KEYWORDS:
-        return "국내=기타=기타"
+        return "국내=서울=서울"
     if origin in _ETC_KEYWORDS:
         return "기타=기타=기타"
     # 해외 국가 → 대륙 매핑

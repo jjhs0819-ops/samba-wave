@@ -339,12 +339,24 @@ async def _site_autotune_loop(site: str):
                                 )
 
                                 # 원가: DB 보존 로직과 일치시킴
-                                # (확장앱 혜택가가 더 낮으면 DB는 기존값 보존)
+                                # (확장앱 혜택가가 더 낮으면 DB는 기존값 보존, 단 이상치 예외)
                                 if r.new_cost is not None:
                                     _old_cost_for_compare = (
                                         getattr(product, "cost", None) or 0
                                     )
-                                    if (
+                                    _sale_for_compare = (
+                                        getattr(product, "sale_price", 0) or 0
+                                    )
+                                    # 이상치: 판매가의 10% 미만이면 비정상 원가
+                                    _cost_anomaly = (
+                                        _sale_for_compare > 0
+                                        and _old_cost_for_compare > 0
+                                        and _old_cost_for_compare
+                                        < _sale_for_compare * 0.1
+                                    )
+                                    if _cost_anomaly:
+                                        _cur_cost = r.new_cost
+                                    elif (
                                         _old_cost_for_compare > 0
                                         and _old_cost_for_compare < r.new_cost
                                     ):
@@ -393,8 +405,25 @@ async def _site_autotune_loop(site: str):
                                     updates["original_price"] = r.new_original_price
                                 if r.new_cost is not None:
                                     _old_cost = getattr(product, "cost", None) or 0
-                                    # 기존 원가가 더 낮으면(확장앱 혜택가) 보존
-                                    if not (_old_cost > 0 and _old_cost < r.new_cost):
+                                    _sale_chk = getattr(product, "sale_price", 0) or 0
+                                    # 이상치: 판매가의 10% 미만이면 비정상 원가 → 무조건 갱신
+                                    _cost_anom = (
+                                        _sale_chk > 0
+                                        and _old_cost > 0
+                                        and _old_cost < _sale_chk * 0.1
+                                    )
+                                    if _cost_anom:
+                                        log.warning(
+                                            "[가격방어] 오토튠 원가 이상치 → 갱신: "
+                                            "기존=%s, 신규=%s, 판매가=%s",
+                                            int(_old_cost),
+                                            int(r.new_cost),
+                                            int(_sale_chk),
+                                        )
+                                    # 기존 원가가 더 낮으면 보존, 단 이상치는 예외
+                                    if _cost_anom or not (
+                                        _old_cost > 0 and _old_cost < r.new_cost
+                                    ):
                                         updates["cost"] = r.new_cost
                                 if r.new_options is not None:
                                     updates["options"] = r.new_options
@@ -584,7 +613,27 @@ async def _site_autotune_loop(site: str):
 
                                     # 가격 변동 → 전송 예약 (100원 단위 절사 후 비교)
                                     expected_price = (expected_price // 100) * 100
-                                    if expected_price != last_price:
+
+                                    # 가격 이상치 방어: 원가 < 정상가 5%이면 재전송 차단
+                                    _orig_p = getattr(product, "original_price", 0) or 0
+                                    _price_blocked = (
+                                        _orig_p > 0
+                                        and new_cost > 0
+                                        and new_cost < _orig_p * 0.05
+                                    )
+                                    if _price_blocked:
+                                        _actions.append(
+                                            f"가격방어 차단 (원가 {int(new_cost):,}"
+                                            f" < 정상가 {int(_orig_p):,}의 5%)"
+                                        )
+                                        log.error(
+                                            "[오토튠][가격방어] %s: 원가 이상치 → "
+                                            "재전송 차단 (원가=%s, 정상가=%s)",
+                                            _prod_label,
+                                            int(new_cost),
+                                            int(_orig_p),
+                                        )
+                                    elif expected_price != last_price:
                                         price_changed_count += 1
                                         _all_price_pids.add(r.product_id)
                                         retransmitted += 1

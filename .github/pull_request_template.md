@@ -19,3 +19,9 @@
 - [ ] 백엔드 서버 재시작 필요 여부 확인
 - [ ] DB 마이그레이션 필요 여부 확인
 - [ ] 확장앱 버전 업데이트 여부 확인
+
+## ⚠️ 공유 파일 체크 (필수)
+
+- [ ] **본인 플러그인 파일(plugins/, proxy/)만 변경했는가?**
+- [ ] 공유 파일(page.tsx, api.ts, workflow, config)을 수정했다면 → 사유:
+- [ ] `__init__.py`, `market_base.py`, `sourcing_base.py` 수정 금지 확인

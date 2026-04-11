@@ -962,6 +962,7 @@ class JobWorker:
         search_page = 1
         empty_pages = 0  # 연속 신규 0건 페이지 카운터 (잡 간 오염 방지용 로컬 변수)
         max_pages = 100  # API totalPages 기반으로 동적 조정 (초기값)
+        _collected_sold_out = 0
 
         while total_saved < remaining and search_page <= max_pages:
             # 취소 확인 (DB에서 상태 재조회)
@@ -1054,8 +1055,6 @@ class JobWorker:
             _collect_results: list[dict | None] = []
             _rate_limited = False
             _shared_http = _httpx.AsyncClient(timeout=_httpx.Timeout(15, connect=5.0))
-
-            _collected_sold_out = 0
 
             async def _fetch_detail(goods_no: str) -> dict | None:
                 nonlocal total_skipped, _rate_limited, _collected_sold_out

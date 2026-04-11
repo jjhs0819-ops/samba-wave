@@ -31,7 +31,7 @@ interface MarketConfig {
   label: string
   authField?: string
   guideUrl?: string // API 가이드 링크
-  fields: { name: string; label: string; type: string; placeholder?: string; options?: { value: string; label: string }[] }[]
+  fields: { name: string; label: string; type: string; placeholder?: string; options?: { value: string; label: string }[]; disabled?: boolean; fixedValue?: number; description?: string }[]
 }
 
 const STORE_MARKETS: MarketConfig[] = [
@@ -42,7 +42,7 @@ const STORE_MARKETS: MarketConfig[] = [
     { name: 'clientSecret', label: 'Client Secret', type: 'password' },
     { name: 'asPhone', label: 'A/S 전화번호', type: 'text', placeholder: '010-1234-5678' },
     { name: 'asMessage', label: 'A/S 안내 문구', type: 'text', placeholder: '상세페이지 참조' },
-    { name: 'discountRate', label: '즉시할인율(%)', type: 'number', placeholder: '0 (미설정)' },
+    { name: 'discountRate', label: '즉시할인율(%)', type: 'number', disabled: true, fixedValue: 25, description: 'SmartStore 판매가 10원 단위 제약으로 25% 고정' },
     { name: 'returnFee', label: '반품배송비(편도)', type: 'number', placeholder: '3000' },
     { name: 'exchangeFee', label: '교환배송비(왕복)', type: 'number', placeholder: '6000' },
     { name: 'jejuFee', label: '제주/도서산간 추가비', type: 'number', placeholder: '3000' },
@@ -1779,12 +1779,15 @@ export default function SettingsPage() {
                           {field.placeholder && <span style={{ fontSize: '0.72rem', color: '#888' }}>({field.placeholder})</span>}
                         </label>
                       ) : field.type === 'number' ? (
-                        <NumInput
-                          style={{ flex: 1 }}
-                          value={storeData[market.key]?.[field.name] || ''}
-                          onChange={(v) => updateStoreField(market.key, field.name, v)}
-                          placeholder={field.placeholder || '0'}
-                        />
+                        <>
+                          <NumInput
+                            style={{ flex: 1, ...(field.disabled ? { opacity: 0.6, pointerEvents: 'none' as const } : {}) }}
+                            value={field.disabled && field.fixedValue != null ? field.fixedValue : (storeData[market.key]?.[field.name] || '')}
+                            onChange={(v) => { if (!field.disabled) updateStoreField(market.key, field.name, v) }}
+                            placeholder={field.placeholder || '0'}
+                          />
+                          {field.description && <span style={{ fontSize: '0.7rem', color: '#888', flexShrink: 0 }}>{field.description}</span>}
+                        </>
                       ) : field.type === 'password' ? (
                         <div style={{ display: 'flex', flex: 1, gap: '4px', alignItems: 'center' }}>
                           <input

@@ -1271,6 +1271,31 @@ export default function ProductsPage() {
                     }
                   }
                 }
+                // 1-2) 프론트에서 상세이미지 비율 체크 (세로 2배 이상 → 제거)
+                if (prod && (scope === 'detail' || scope === 'all')) {
+                  const detailImgs = prod.detail_images || []
+                  if (detailImgs.length > 0) {
+                    const tallCheck = await Promise.all(detailImgs.map(url =>
+                      new Promise<boolean>(resolve => {
+                        const img = new window.Image()
+                        img.onload = () => {
+                          const isTall = img.naturalHeight > img.naturalWidth * 2
+                          resolve(isTall)
+                        }
+                        img.onerror = () => resolve(false)
+                        img.src = url
+                        setTimeout(() => resolve(false), 10000)
+                      })
+                    ))
+                    const tallUrls = detailImgs.filter((_, i) => tallCheck[i])
+                    if (tallUrls.length > 0) {
+                      const kept = detailImgs.filter(u => !tallUrls.includes(u))
+                      await collectorApi.updateProduct(ids[i], { detail_images: kept })
+                      totalTall += tallUrls.length
+                      steps.push(`상세 긴이미지 ${tallUrls.length}장 제거`)
+                    }
+                  }
+                }
                 // 2) 백엔드 이미지 필터링
                 const r = await proxyApi.filterProductImages([ids[i]], '', scope)
                 if (r.success) {
