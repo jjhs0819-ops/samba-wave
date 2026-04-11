@@ -698,18 +698,7 @@ async def _site_autotune_loop(site: str):
                                     )
 
                                     _sem = _get_account_semaphore(_acc)
-                                    try:
-                                        await asyncio.wait_for(
-                                            _sem.acquire(), timeout=60
-                                        )
-                                    except asyncio.TimeoutError:
-                                        _log_line(
-                                            _site,
-                                            _pid,
-                                            f"{_label} 세마포어 60초 초과 — 스킵",
-                                            "warning",
-                                        )
-                                        return
+                                    await _sem.acquire()
                                     try:
                                         async with get_write_session() as _tx_s:
                                             from backend.domain.samba.shipment.repository import (
