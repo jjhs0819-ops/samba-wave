@@ -692,7 +692,7 @@ async def _site_autotune_loop(site: str):
                                     _acc_sem = _get_account_semaphore(_tx_acc)
                                     try:
                                         await asyncio.wait_for(
-                                            _acc_sem.acquire(), timeout=5
+                                            _acc_sem.acquire(), timeout=60
                                         )
                                     except asyncio.TimeoutError:
                                         _log_line(
