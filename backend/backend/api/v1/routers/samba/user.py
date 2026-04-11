@@ -12,7 +12,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
 from backend.domain.samba.user.model import SambaLoginHistory, SambaUser
 from backend.domain.samba.user.repository import SambaUserRepository
-from backend.domain.user.auth_service import get_user_id
+from backend.domain.samba.tenant.middleware import require_admin
 from backend.utils.logger import logger
 from backend.utils.password import hash_password, verify_password
 
@@ -62,7 +62,7 @@ async def list_users(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     session: AsyncSession = Depends(get_read_session_dependency),
-    _user_id: str = Depends(get_user_id),
+    _admin_id: str = Depends(require_admin),
 ):
     """활성 사용자 목록 조회 (삭제된 사용자 제외)."""
     stmt = (
@@ -220,13 +220,18 @@ _KR_CITY = {
 
 
 async def _resolve_ip_region(ip: str) -> str:
-    """IP 주소로 접속 지역 조회 (ip-api.com 무료 API)."""
+    """IP 주소로 접속 지역 조회 (ip-api.com).
+
+    주의: ip-api.com 무료 플랜은 HTTP만 지원. HTTPS는 유료.
+    프라이버시를 위해 HTTPS 사용하되, 실패 시 graceful degradation.
+    """
     if not ip or ip in ("127.0.0.1", "::1", "localhost"):
         return "로컬"
     try:
         async with httpx.AsyncClient(timeout=3) as client:
+            # HTTPS 우선 시도 (유료), 실패 시 지역정보 생략
             resp = await client.get(
-                f"http://ip-api.com/json/{ip}?fields=status,country,countryCode,regionName,city"
+                f"https://ip-api.com/json/{ip}?fields=status,country,countryCode,regionName,city"
             )
             if resp.status_code == 200:
                 data = resp.json()
@@ -326,7 +331,7 @@ async def update_user(
     user_id: str,
     body: UserUpdateDto,
     session: AsyncSession = Depends(get_write_session_dependency),
-    _user_id: str = Depends(get_user_id),
+    _admin_id: str = Depends(require_admin),
 ):
     """사용자 정보 수정."""
     repo = SambaUserRepository(session)
@@ -381,7 +386,7 @@ async def get_login_history(
     end: Optional[str] = Query(None, description="종료일 YYYY-MM-DD"),
     limit: int = Query(100, ge=1, le=500),
     session: AsyncSession = Depends(get_read_session_dependency),
-    _user_id: str = Depends(get_user_id),
+    _admin_id: str = Depends(require_admin),
 ):
     """로그인 이력 조회 (날짜 범위 필터)."""
     stmt = select(SambaLoginHistory).order_by(SambaLoginHistory.created_at.desc())
@@ -423,7 +428,7 @@ async def get_login_history(
 async def delete_user(
     user_id: str,
     session: AsyncSession = Depends(get_write_session_dependency),
-    _user_id: str = Depends(get_user_id),
+    _admin_id: str = Depends(require_admin),
 ):
     """사용자 계정 삭제 (소프트 삭제)."""
     repo = SambaUserRepository(session)

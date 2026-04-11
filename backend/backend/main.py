@@ -135,7 +135,10 @@ async def lifespan(app: FastAPI):
                 f"[startup] 스키마 마이그레이션 완료 ({len(_migrations)}건)"
             )
     except Exception as _mig_err:
-        _startup_log.warning(f"[startup] 스키마 마이그레이션 실패: {_mig_err}")
+        _startup_log.error(
+            f"[startup] 스키마 마이그레이션 실패 — 서비스 동작에 영향을 줄 수 있습니다: {_mig_err}",
+            exc_info=True,
+        )
 
     # 서버 시작 시 좀비 running Job 처리
     # - transmit: attempt < 3이면 pending 복구 (배포 중단 → 자동 재개)

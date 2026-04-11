@@ -9,6 +9,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
 from backend.domain.samba.tenant.middleware import get_optional_tenant_id
+from backend.utils.masking import mask_model_secrets
 
 router = APIRouter(prefix="/accounts", tags=["samba-accounts"])
 
@@ -59,7 +60,8 @@ async def list_accounts(
             )
         )
     result = await session.execute(stmt)
-    return result.scalars().all()
+    accounts = result.scalars().all()
+    return [mask_model_secrets(a.model_dump()) for a in accounts]
 
 
 @router.get("/active")
@@ -85,7 +87,8 @@ async def list_active_accounts(
             )
         )
     result = await session.execute(stmt)
-    return result.scalars().all()
+    accounts = result.scalars().all()
+    return [mask_model_secrets(a.model_dump()) for a in accounts]
 
 
 @router.get("/markets")

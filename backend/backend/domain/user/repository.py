@@ -2,7 +2,6 @@
 User domain repository with CRUD operations and custom queries.
 """
 
-import asyncio
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -123,21 +122,16 @@ class UserDataLoader:
             UserSubscription.user_id == user_id
         )
 
-        # Execute all queries in parallel
-        queries = [
-            self.session.execute(profile_stmt),
-            self.session.execute(lifestyle_stmt),
-            self.session.execute(preference_stmt),
-            self.session.execute(subscription_stmt),
-        ]
+        # 순차 실행 — AsyncSession은 동시 사용 불가 (SQLAlchemy 제약)
+        profile_result = await self.session.execute(profile_stmt)
+        lifestyle_result = await self.session.execute(lifestyle_stmt)
+        preference_result = await self.session.execute(preference_stmt)
+        subscription_result = await self.session.execute(subscription_stmt)
 
-        results = await asyncio.gather(*queries)
-
-        # Extract results
-        profile = results[0].scalar_one_or_none()
-        lifestyle = results[1].scalar_one_or_none()
-        preference = results[2].scalar_one_or_none()
-        subscription = results[3].scalar_one_or_none()
+        profile = profile_result.scalar_one_or_none()
+        lifestyle = lifestyle_result.scalar_one_or_none()
+        preference = preference_result.scalar_one_or_none()
+        subscription = subscription_result.scalar_one_or_none()
 
         return UserWithRelations(
             user=user,

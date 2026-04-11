@@ -23,8 +23,13 @@ export default function SambaLoginPage() {
     setSubmitting(true)
     try {
       const user = await userApi.login(email, password)
-      // JWT 토큰과 사용자 정보를 localStorage에 저장
-      if (user.token) localStorage.setItem('samba_token', user.token)
+      // JWT 토큰과 사용자 정보를 localStorage + 쿠키에 저장
+      const token = user.access_token || user.token
+      if (token) {
+        localStorage.setItem('samba_token', token)
+        // 미들웨어(서버사이드) 인증을 위해 쿠키에도 토큰 설정
+        document.cookie = `samba_user=${token}; path=/; max-age=${60 * 60 * 24 * 30}; SameSite=Lax`
+      }
       localStorage.setItem('samba_user', JSON.stringify(user))
       router.replace('/samba')
     } catch (err) {

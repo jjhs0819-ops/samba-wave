@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from backend.db.orm import get_write_session_dependency
+from backend.db.orm import get_read_session_dependency, get_write_session_dependency
 from backend.domain.samba.sns_posting.service import SnsPostingService
 
 router = APIRouter(prefix="/sns", tags=["samba-sns-posting"])
@@ -98,7 +98,7 @@ async def connect_wordpress(
 
 @router.get("/wordpress/sites")
 async def list_wordpress_sites(
-    session: AsyncSession = Depends(get_write_session_dependency),
+    session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """등록된 워드프레스 사이트 목록을 반환한다."""
     svc = SnsPostingService(session)
@@ -147,7 +147,7 @@ async def create_keyword_group(
 
 @router.get("/keywords")
 async def list_keyword_groups(
-    session: AsyncSession = Depends(get_write_session_dependency),
+    session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """키워드 그룹 목록을 반환한다."""
     svc = SnsPostingService(session)
@@ -298,7 +298,7 @@ async def list_posts(
     page: int = 1,
     size: int = 50,
     status: Optional[str] = None,
-    session: AsyncSession = Depends(get_write_session_dependency),
+    session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """발행된 SNS 포스트 목록을 반환한다."""
     svc = SnsPostingService(session)
@@ -327,7 +327,7 @@ async def list_posts(
 
 @router.get("/dashboard")
 async def get_dashboard(
-    session: AsyncSession = Depends(get_write_session_dependency),
+    session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """자동 포스팅 대시보드 통계를 반환한다."""
     svc = SnsPostingService(session)

@@ -14,9 +14,8 @@ from typing import Any
 from backend.domain.samba.plugins.market_base import MarketPlugin
 from backend.utils.logger import logger
 
-# ESM Plus 호스팅사(삼바웨이브) 인증 정보
-_ESM_HOSTING_ID = "hlccorp"
-_ESM_SECRET_KEY = "M2U0NWFhMmYtZGY0MS00Yjdk"
+# ESM Plus 호스팅 인증정보는 계정 설정(additional_fields)에서 제공해야 함
+# hostingId, secretKey 필드 필수
 
 
 class AuctionPlugin(MarketPlugin):
@@ -51,8 +50,13 @@ class AuctionPlugin(MarketPlugin):
                 "message": "옥션 판매자 ID(apiKey)가 없습니다. 계정 설정에서 입력해주세요.",
             }
 
-        hosting_id = creds.get("hostingId", "") or _ESM_HOSTING_ID
-        secret_key = creds.get("secretKey", "") or _ESM_SECRET_KEY
+        hosting_id = creds.get("hostingId", "")
+        secret_key = creds.get("secretKey", "")
+        if not hosting_id or not secret_key:
+            return {
+                "success": False,
+                "message": "옥션 호스팅 인증정보(hostingId, secretKey)가 없습니다. 계정 설정에서 입력해주세요.",
+            }
 
         client = ESMPlusClient(hosting_id, secret_key, seller_id, site="auction")
 
@@ -212,8 +216,10 @@ class AuctionPlugin(MarketPlugin):
         if not seller_id:
             return {"success": False, "message": "옥션 판매자 ID 없음"}
 
-        hosting_id = creds.get("hostingId", "") or _ESM_HOSTING_ID
-        secret_key = creds.get("secretKey", "") or _ESM_SECRET_KEY
+        hosting_id = creds.get("hostingId", "")
+        secret_key = creds.get("secretKey", "")
+        if not hosting_id or not secret_key:
+            return {"success": False, "message": "호스팅 인증정보 없음"}
         client = ESMPlusClient(hosting_id, secret_key, seller_id, site="auction")
 
         suspend_data = {

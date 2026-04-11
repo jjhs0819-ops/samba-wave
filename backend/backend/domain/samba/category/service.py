@@ -2652,8 +2652,12 @@ class SambaCategoryService:
         if not seller_id:
             raise ValueError(f"{market_type} 판매자 ID가 없습니다")
 
-        hosting_id = extra.get("hostingId") or "hlccorp"
-        secret_key = extra.get("secretKey") or "M2U0NWFhMmYtZGY0MS00Yjdk"
+        hosting_id = extra.get("hostingId") or ""
+        secret_key = extra.get("secretKey") or ""
+        if not hosting_id or not secret_key:
+            raise ValueError(
+                f"{market_type} 호스팅 인증정보(hostingId, secretKey)가 없습니다"
+            )
 
         client = ESMPlusClient(hosting_id, secret_key, seller_id, site=market_type)
         tree = await client.fetch_category_tree(delay=0.5)

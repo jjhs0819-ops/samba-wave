@@ -18,6 +18,7 @@ from backend.dtos.samba.sourcing_account import (
     SourcingAccountUpdate,
 )
 from backend.utils.logger import logger
+from backend.utils.masking import mask_model_secrets
 
 router = APIRouter(prefix="/sourcing-accounts", tags=["samba-sourcing-accounts"])
 
@@ -68,8 +69,10 @@ async def list_sourcing_accounts(
         if site_name:
             stmt = stmt.where(SambaSourcingAccount.site_name == site_name)
         result = await session.execute(stmt)
-        return result.scalars().all()
-    return await _read_service(session).list_accounts(site_name=site_name)
+        accounts = result.scalars().all()
+        return [mask_model_secrets(a.model_dump()) for a in accounts]
+    accounts = await _read_service(session).list_accounts(site_name=site_name)
+    return [mask_model_secrets(a.model_dump()) for a in accounts]
 
 
 @router.get("/sites")

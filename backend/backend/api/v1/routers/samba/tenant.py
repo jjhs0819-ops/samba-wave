@@ -1,4 +1,4 @@
-"""테넌트 관리 API."""
+"""테넌트 관리 API — 관리자 전용."""
 
 from typing import Optional
 
@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
+from backend.domain.samba.tenant.middleware import require_admin
 from backend.domain.samba.tenant.repository import SambaTenantRepository
 from backend.domain.samba.tenant.service import SambaTenantService
 
@@ -31,6 +32,7 @@ async def list_tenants(
     skip: int = 0,
     limit: int = 50,
     session: AsyncSession = Depends(get_read_session_dependency),
+    _admin_id: str = Depends(require_admin),
 ):
     svc = SambaTenantService(SambaTenantRepository(session))
     return await svc.list_tenants(skip=skip, limit=limit)
@@ -40,6 +42,7 @@ async def list_tenants(
 async def create_tenant(
     body: TenantCreate,
     session: AsyncSession = Depends(get_write_session_dependency),
+    _admin_id: str = Depends(require_admin),
 ):
     svc = SambaTenantService(SambaTenantRepository(session))
     tenant = await svc.create_tenant(body.model_dump())
@@ -51,6 +54,7 @@ async def create_tenant(
 async def get_tenant(
     tenant_id: str,
     session: AsyncSession = Depends(get_read_session_dependency),
+    _admin_id: str = Depends(require_admin),
 ):
     svc = SambaTenantService(SambaTenantRepository(session))
     tenant = await svc.get_tenant(tenant_id)
@@ -64,6 +68,7 @@ async def update_tenant(
     tenant_id: str,
     body: TenantUpdate,
     session: AsyncSession = Depends(get_write_session_dependency),
+    _admin_id: str = Depends(require_admin),
 ):
     svc = SambaTenantService(SambaTenantRepository(session))
     data = body.model_dump(exclude_unset=True)
