@@ -677,31 +677,39 @@ async def _site_autotune_loop(site: str):
                                         f"{_idx_prefix}{_prod_label}: 스킵{_tail}",
                                     )
 
-                            # lock 밖: 즉시 전송 (fire-and-forget + 계정 세마포어)
+                            # lock 밖: fire-and-forget 전송 (백그라운드 태스크)
                             for (
                                 _tx_pid,
                                 _tx_items,
                                 _tx_acc,
                                 _tx_label,
                             ) in _transmit_queue:
-                                try:
+
+                                async def _fire_transmit(
+                                    _pid=_tx_pid,
+                                    _items=_tx_items,
+                                    _acc=_tx_acc,
+                                    _label=_tx_label,
+                                    _site=site,
+                                ):
+                                    nonlocal _synced_count
                                     from backend.domain.samba.shipment.service import (
                                         _get_account_semaphore,
                                     )
 
-                                    _acc_sem = _get_account_semaphore(_tx_acc)
+                                    _sem = _get_account_semaphore(_acc)
                                     try:
                                         await asyncio.wait_for(
-                                            _acc_sem.acquire(), timeout=60
+                                            _sem.acquire(), timeout=60
                                         )
                                     except asyncio.TimeoutError:
                                         _log_line(
-                                            site,
-                                            _tx_pid,
-                                            f"{_tx_label} 세마포어 대기 초과 — 스킵",
+                                            _site,
+                                            _pid,
+                                            f"{_label} 세마포어 60초 초과 — 스킵",
                                             "warning",
                                         )
-                                        continue
+                                        return
                                     try:
                                         async with get_write_session() as _tx_s:
                                             from backend.domain.samba.shipment.repository import (
@@ -713,25 +721,26 @@ async def _site_autotune_loop(site: str):
 
                                             _svc = _FSvc(_FRepo(_tx_s), _tx_s)
                                             await _svc.start_update(
-                                                [_tx_pid],
-                                                _tx_items,
-                                                [_tx_acc],
+                                                [_pid],
+                                                _items,
+                                                [_acc],
                                                 skip_unchanged=False,
                                                 skip_refresh=True,
                                             )
                                             await _tx_s.commit()
-                                        # start_update의 sent_snapshot이 last_sent_data를 이미 저장
                                         _synced_count += 1
+                                    except Exception as _fe:
+                                        _log_line(
+                                            _site,
+                                            _pid,
+                                            f"{_label} 전송실패: {str(_fe)[:80]}",
+                                            "error",
+                                        )
                                     finally:
-                                        _acc_sem.release()
+                                        _sem.release()
                                     await asyncio.sleep(0.3)
-                                except Exception as _fe:
-                                    _log_line(
-                                        site,
-                                        _tx_pid,
-                                        f"{_tx_label} 즉시전송실패: {str(_fe)[:80]}",
-                                        "error",
-                                    )
+
+                                asyncio.create_task(_fire_transmit())
 
                         # DB 세션 복구 — 갱신 전 연결 확인
                         try:
