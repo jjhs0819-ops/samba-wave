@@ -1,3 +1,5 @@
+"""SambaWave 백엔드 서버 진입점."""
+
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
