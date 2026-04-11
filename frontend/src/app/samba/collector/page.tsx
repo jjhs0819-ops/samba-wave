@@ -310,13 +310,6 @@ export default function CollectorPage() {
     if (aiJobLogRef.current) aiJobLogRef.current.scrollTop = aiJobLogRef.current.scrollHeight
   }, [aiJobLogs])
 
-  // 드롭다운 필터 변경 시 drillBrand 활성 상태면 selectedIds를 displayedFilters 기준으로 재동기화
-  useEffect(() => {
-    if (drillBrand) {
-      setSelectedIds(new Set(displayedFilters.map(f => f.id)))
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drillBrand, displayedFilters, tagRegFilter, collectFilter, marketRegFilter, policyRegFilter, aiFilter])
 
   // 프록시 & 무신사 인증 상태 확인
   useEffect(() => {
@@ -1002,7 +995,13 @@ export default function CollectorPage() {
     return result
   }, [filters, siteFilter, drillSite, tree, drillBrand, aiFilter, collectFilter, marketRegFilter, tagRegFilter, policyRegFilter, sortBy])
 
-
+  // 드롭다운 필터 변경 시 drillBrand 활성 상태면 selectedIds를 displayedFilters 기준으로 재동기화
+  useEffect(() => {
+    if (drillBrand) {
+      setSelectedIds(new Set(displayedFilters.map(f => f.id)))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drillBrand, displayedFilters, tagRegFilter, collectFilter, marketRegFilter, policyRegFilter, aiFilter])
 
   return (
     <div style={{ color: '#E5E5E5' }}>

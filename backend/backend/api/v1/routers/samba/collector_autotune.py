@@ -276,8 +276,7 @@ async def _site_autotune_loop(site: str):
                             set()
                         )  # 사이클 중 삭제된 상품 ID
                         _session_lock = asyncio.Lock()
-                        # 사이클 중 감지된 전송 요청을 수집 (fire-and-forget 대신)
-                        _pending_syncs: list[tuple] = []
+                        _synced_count = 0
 
                         def _log_line(site, pid, msg, level="info"):
                             """오토튠 통합 로그 (한 줄)."""
@@ -315,7 +314,8 @@ async def _site_autotune_loop(site: str):
                                 retransmitted, \
                                 deleted_count, \
                                 price_changed_count, \
-                                _cycle_deleted_pids
+                                _cycle_deleted_pids, \
+                                _synced_count
 
                             async with _session_lock:
                                 if (
@@ -657,7 +657,7 @@ async def _site_autotune_loop(site: str):
                                     product.cost or product.sale_price or 0
                                 )
                                 _cost_str = (
-                                    f"{_old_cost_int:,}→{_cost_int:,}"
+                                    f"{_old_cost_int:,} → {_cost_int:,}"
                                     if _old_cost_int != _cost_int
                                     else f"{_cost_int:,}"
                                 )
@@ -676,9 +676,80 @@ async def _site_autotune_loop(site: str):
                                         f"{_idx_prefix}{_prod_label}: 스킵{_tail}",
                                     )
 
-                            # lock 밖: 전송 큐에 수집 (사이클 후 일괄 처리)
-                            for _tx_args in _transmit_queue:
-                                _pending_syncs.append(_tx_args)
+                            # lock 밖: 즉시 전송 (fire-and-forget + 계정 세마포어)
+                            for (
+                                _tx_pid,
+                                _tx_items,
+                                _tx_acc,
+                                _tx_label,
+                            ) in _transmit_queue:
+                                try:
+                                    from backend.domain.samba.shipment.service import (
+                                        _get_account_semaphore,
+                                    )
+
+                                    _acc_sem = _get_account_semaphore(_tx_acc)
+                                    try:
+                                        await asyncio.wait_for(
+                                            _acc_sem.acquire(), timeout=5
+                                        )
+                                    except asyncio.TimeoutError:
+                                        _log_line(
+                                            site,
+                                            _tx_pid,
+                                            f"{_tx_label} 세마포어 대기 초과 — 스킵",
+                                            "warning",
+                                        )
+                                        continue
+                                    try:
+                                        async with get_write_session() as _tx_s:
+                                            from backend.domain.samba.shipment.repository import (
+                                                SambaShipmentRepository as _FRepo,
+                                            )
+                                            from backend.domain.samba.shipment.service import (
+                                                SambaShipmentService as _FSvc,
+                                            )
+                                            from backend.domain.samba.collector.repository import (
+                                                SambaCollectedProductRepository as _FProdRepo,
+                                            )
+
+                                            _svc = _FSvc(_FRepo(_tx_s), _tx_s)
+                                            await _svc.start_update(
+                                                [_tx_pid],
+                                                _tx_items,
+                                                [_tx_acc],
+                                                skip_unchanged=False,
+                                                skip_refresh=True,
+                                            )
+                                            # 재고전송 → last_sent_data에 옵션 기준값 저장
+                                            if "stock" in _tx_items:
+                                                _fpr = _FProdRepo(_tx_s)
+                                                _fp = await _fpr.get_async(_tx_pid)
+                                                if _fp:
+                                                    _flsd = dict(
+                                                        _fp.last_sent_data or {}
+                                                    )
+                                                    _facc = dict(
+                                                        _flsd.get(_tx_acc) or {}
+                                                    )
+                                                    _facc["options"] = _fp.options
+                                                    _flsd[_tx_acc] = _facc
+                                                    await _fpr.update_async(
+                                                        _tx_pid,
+                                                        last_sent_data=_flsd,
+                                                    )
+                                            await _tx_s.commit()
+                                        _synced_count += 1
+                                    finally:
+                                        _acc_sem.release()
+                                    await asyncio.sleep(0.3)
+                                except Exception as _fe:
+                                    _log_line(
+                                        site,
+                                        _tx_pid,
+                                        f"{_tx_label} 즉시전송실패: {str(_fe)[:80]}",
+                                        "error",
+                                    )
 
                         # DB 세션 복구 — 갱신 전 연결 확인
                         try:
@@ -716,108 +787,7 @@ async def _site_autotune_loop(site: str):
                                     except Exception:
                                         pass
 
-                        # ④ 가격/재고 동기 — 전송잡 미실행 시에만 순차 처리
-                        _synced_count = 0
-                        if _pending_syncs:
-                            from sqlmodel import text as _sync_txt
-
-                            _tx_check = await session.execute(
-                                _sync_txt(
-                                    "SELECT count(*) FROM samba_jobs "
-                                    "WHERE status IN ('pending', 'running') "
-                                    "AND job_type = 'transmit'"
-                                )
-                            )
-                            _tx_job_count = _tx_check.scalar() or 0
-                            if _tx_job_count > 0:
-                                log.info(
-                                    "[오토튠] 전송잡 %d건 실행 중 — 가격/재고 동기 %d건 스킵 (잡이 처리)",
-                                    _tx_job_count,
-                                    len(_pending_syncs),
-                                )
-                            else:
-                                _sync_total = len(_pending_syncs)
-                                log.info(
-                                    "[오토튠] 가격/재고 동기 시작: %d건", _sync_total
-                                )
-                                _sync_sem = asyncio.Semaphore(2)
-
-                                async def _do_sync(s_pid, s_items, s_acc_id, s_label):
-                                    async with _sync_sem:
-                                        try:
-                                            async with get_write_session() as tx_s:
-                                                from backend.domain.samba.shipment.repository import (
-                                                    SambaShipmentRepository as _SyncRepo,
-                                                )
-                                                from backend.domain.samba.shipment.service import (
-                                                    SambaShipmentService as _SyncSvc,
-                                                )
-                                                from backend.domain.samba.collector.repository import (
-                                                    SambaCollectedProductRepository as _ProdRepo,
-                                                )
-
-                                                _svc = _SyncSvc(_SyncRepo(tx_s), tx_s)
-                                                await _svc.start_update(
-                                                    [s_pid],
-                                                    s_items,
-                                                    [s_acc_id],
-                                                    skip_unchanged=False,
-                                                    skip_refresh=True,
-                                                )
-                                                # 재고전송 성공 → last_sent_data에 옵션 기준값 저장
-                                                if "stock" in s_items:
-                                                    _pr = _ProdRepo(tx_s)
-                                                    _prod = await _pr.get_async(s_pid)
-                                                    if _prod:
-                                                        _lsd = dict(
-                                                            _prod.last_sent_data or {}
-                                                        )
-                                                        _acc_data = dict(
-                                                            _lsd.get(s_acc_id) or {}
-                                                        )
-                                                        _acc_data["options"] = (
-                                                            _prod.options
-                                                        )
-                                                        _lsd[s_acc_id] = _acc_data
-                                                        await _pr.update_async(
-                                                            s_pid, last_sent_data=_lsd
-                                                        )
-                                                await tx_s.commit()
-                                        except Exception as _se:
-                                            _s_site = getattr(
-                                                product_map.get(s_pid),
-                                                "source_site",
-                                                "UNKNOWN",
-                                            )
-                                            _log_line(
-                                                _s_site,
-                                                s_pid,
-                                                f"{s_label} 동기실패: {str(_se)[:80]}",
-                                                "error",
-                                            )
-                                        # API 429 방지 딜레이
-                                        await asyncio.sleep(0.5)
-
-                                # 동시 2개씩 순차 처리
-                                for _chunk_start in range(0, len(_pending_syncs), 10):
-                                    _chunk = _pending_syncs[
-                                        _chunk_start : _chunk_start + 10
-                                    ]
-                                    await asyncio.gather(
-                                        *[_do_sync(*a) for a in _chunk],
-                                        return_exceptions=True,
-                                    )
-                                    _synced_count += len(_chunk)
-                                    # 비상정지 체크
-                                    if is_emergency_stopped():
-                                        log.info("[오토튠] 비상정지 — 동기 중단")
-                                        break
-                                log.info(
-                                    "[오토튠] 가격/재고 동기 완료: %d/%d건",
-                                    _synced_count,
-                                    _sync_total,
-                                )
-                            _pending_syncs.clear()
+                        # ④ 즉시전송으로 전환 — _pending_syncs 일괄 처리 제거됨
 
                         # 사이클 완료 로그 — 에러 유형별 분류
                         _err_count = sum(1 for r in results if r.error)
