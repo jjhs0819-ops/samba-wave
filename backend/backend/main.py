@@ -1,5 +1,5 @@
 """SambaWave 백엔드 서버 진입점."""
-# DB 크리덴셜 로테이션 2026-04-11 v2
+# DB 크리덴셜 로테이션 2026-04-11 v3
 
 import asyncio
 from contextlib import asynccontextmanager
