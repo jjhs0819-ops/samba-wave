@@ -307,6 +307,7 @@ async def _site_autotune_loop(site: str):
                                 sa_update(_PU_CP).where(_PU_CP.id == pid).values(**vals)
                             )
                             await session.execute(stmt)
+                            await session.commit()
 
                         async def _on_result(product, r, idx=0, total=0):
                             """리프레시 직후 호출 — DB 업데이트 + 즉시 마켓 전송."""
