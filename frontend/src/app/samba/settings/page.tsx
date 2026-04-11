@@ -1782,7 +1782,7 @@ export default function SettingsPage() {
                         <>
                           <NumInput
                             style={{ flex: 1, ...(field.disabled ? { opacity: 0.6, pointerEvents: 'none' as const } : {}) }}
-                            value={field.disabled && field.fixedValue != null ? field.fixedValue : (storeData[market.key]?.[field.name] || '')}
+                            value={field.disabled && field.fixedValue != null ? String(field.fixedValue) : (storeData[market.key]?.[field.name] || '')}
                             onChange={(v) => { if (!field.disabled) updateStoreField(market.key, field.name, v) }}
                             placeholder={field.placeholder || '0'}
                           />
