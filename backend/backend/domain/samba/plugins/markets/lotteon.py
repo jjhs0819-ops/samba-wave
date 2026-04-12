@@ -1131,9 +1131,32 @@ class LotteonPlugin(MarketPlugin):
                 else:
                     new_price = int(product.get("sale_price") or 0)
                     new_options = product.get("options") or []
-                    # 옵션명 → 재고 매핑
-                    opt_stock_map = {
-                        o.get("name", ""): o.get("stock", 0) for o in new_options
+
+                    # 계정 재고수량 상한 (transform_product와 동일 정책)
+                    # 주의: 경량 분기는 1410 라인의 product_copy 주입보다 먼저 실행되므로
+                    # account.additional_fields에서 직접 로드해야 함.
+                    _acc_extras = getattr(account, "additional_fields", None) or {}
+                    try:
+                        _max_stock_per_opt = int(_acc_extras.get("stockQuantity") or 0)
+                    except (ValueError, TypeError):
+                        _max_stock_per_opt = 0
+
+                    def _apply_stock_cap(raw: int, sold: bool) -> int:
+                        """스마트스토어 _build_combination_options 패턴과 동일."""
+                        if sold:
+                            return 0
+                        r = max(int(raw or 0), 0)
+                        if _max_stock_per_opt > 0:
+                            return min(r, _max_stock_per_opt)
+                        return r
+
+                    # 옵션명 → (stock, isSoldOut) 매핑 — isSoldOut 반영 위해 튜플로
+                    opt_info_map = {
+                        (o.get("name") or "").strip(): (
+                            o.get("stock", 0) or 0,
+                            bool(o.get("isSoldOut", False)),
+                        )
+                        for o in new_options
                     }
 
                     # 가격 변경 요청
@@ -1153,19 +1176,24 @@ class LotteonPlugin(MarketPlugin):
                             )
                         # 재고 업데이트 (옵션명으로 매칭)
                         itm_name = (itm.get("itmNm") or itm.get("optNm") or "").strip()
-                        if itm_name in opt_stock_map:
-                            stk = opt_stock_map[itm_name]
-                        elif new_options:
-                            # 옵션명 매칭 실패 → 전체 재고 중 최솟값 사용
-                            stk = min(
-                                (o.get("stock", 0) for o in new_options), default=0
-                            )
+                        if itm_name in opt_info_map:
+                            raw_s, sold = opt_info_map[itm_name]
+                            stk = _apply_stock_cap(raw_s, sold)
                         else:
+                            # 매칭 실패 시: 기존 min() 폴백은 품절 옵션이 섞이면 0이 되는
+                            # 위험한 로직이었음. 이제는 명시적 0 + 경고 로그 (임의 재고 주입 금지).
+                            logger.warning(
+                                f"[롯데ON] 경량 업데이트 — 옵션명 매칭 실패: "
+                                f"'{itm_name}', stkQty=0 강제"
+                            )
                             stk = 0
                         itm_stk_lst.append(
                             {
-                                "itmNo": str(itm_no),
-                                "itmStkQty": max(0, int(stk)),
+                                "sitmNo": str(itm.get("sitmNo") or itm_no),
+                                "spdNo": existing_no,
+                                "trNo": client.tr_no,
+                                "trGrpCd": client.tr_grp_cd or "SR",
+                                "stkQty": max(0, int(stk)),
                             }
                         )
 
@@ -1610,7 +1638,8 @@ class LotteonPlugin(MarketPlugin):
                     data["spdLst"][0]["spdNo"] = existing_no
                     data["spdLst"][0]["selPrdNo"] = existing_no
                     # 수정 API는 itmLst를 "새 단품 추가"로 처리 → 기존 옵션과 중복 에러 발생
-                    # 상품 헤더(이름/이미지/카테고리/가격)만 업데이트하고 itmLst는 제거
+                    # 상품 헤더만 업데이트하고 itmLst는 제거 (재고는 수정 후 update_stock으로 별도 반영)
+                    _saved_itm_lst = data["spdLst"][0].get("itmLst", [])
                     data["spdLst"][0].pop("itmLst", None)
                     data["spdLst"][0].pop("sitmYn", None)
                 _spd0 = data["spdLst"][0] if data.get("spdLst") else {}
@@ -1866,6 +1895,55 @@ class LotteonPlugin(MarketPlugin):
                     logger.info(
                         f"[롯데ON] 수정 후 새 spdNo 발급: {existing_no} → {new_spd_no}"
                     )
+                # ── 수정 후 재고 동기화 (수정 API는 itmLst 무시하므로 별도 호출) ──
+                if _saved_itm_lst and itm_lst_raw:
+                    try:
+                        # transform_product 결과의 옵션값 → 재고 매핑
+                        _new_stk_map: dict[str, tuple[int, str]] = {}
+                        for _new_itm in _saved_itm_lst:
+                            _new_opts = _new_itm.get("itmOptLst") or []
+                            if _new_opts:
+                                _opt_val = _new_opts[0].get("optVal", "").strip()
+                                _new_stk_map[_opt_val] = (
+                                    _new_itm.get("stkQty", 0),
+                                    _new_itm.get("dpYn", "Y"),
+                                )
+
+                        _itm_stk_lst = []
+                        for _old_itm in itm_lst_raw:
+                            _sitm_no = _old_itm.get("sitmNo") or _old_itm.get("itmNo")
+                            if not _sitm_no:
+                                continue
+                            _old_opts = _old_itm.get("itmOptLst") or []
+                            if _old_opts:
+                                _opt_val = _old_opts[0].get("optVal", "").strip()
+                                _stk_dp = _new_stk_map.get(_opt_val)
+                                _stk = (
+                                    _stk_dp[0] if _stk_dp else _old_itm.get("stkQty", 0)
+                                )
+                            else:
+                                _stk = 0
+                            _itm_stk_lst.append(
+                                {
+                                    "sitmNo": str(_sitm_no),
+                                    "spdNo": effective_no,
+                                    "trNo": client.tr_no,
+                                    "trGrpCd": client.tr_grp_cd or "SR",
+                                    "stkQty": max(0, int(_stk)),
+                                }
+                            )
+
+                        if _itm_stk_lst:
+                            await client.update_stock(_itm_stk_lst)
+                            logger.info(
+                                f"[롯데ON] 수정 후 재고 동기화 완료: {effective_no} — "
+                                f"{len(_itm_stk_lst)}건"
+                            )
+                    except Exception as _stk_e:
+                        logger.warning(
+                            f"[롯데ON] 수정 후 재고 동기화 실패 (무시): {_stk_e}"
+                        )
+
                 # ── 수정 후 프로모션 재설정 ──────────────────────────────
                 await self._apply_promotions(
                     client,

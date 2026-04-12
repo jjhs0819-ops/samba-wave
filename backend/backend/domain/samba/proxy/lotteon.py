@@ -943,7 +943,9 @@ class LotteonClient:
             sale_price = int(sale_price * (1 - discount_rate / 100))
 
         # ── 재고 / 배송비 ───────────────────────────────────────────
-        # _stock_quantity: 설정된 경우 상한선(cap)으로 동작
+        # _stock_quantity: 양수면 옵션별 상한(cap)으로만 동작.
+        # 0/미설정이면 무신사 실재고(raw_stock) 그대로 사용.
+        # default_stock은 옵션이 없는 단품(else 분기)에서만 폴백 용도.
         max_stock = int(product.get("_stock_quantity") or 0)
         default_stock = max_stock if max_stock > 0 else 999
         return_fee = product.get("_return_fee", 0) or 0
@@ -1020,6 +1022,8 @@ class LotteonClient:
             return "옵션"
 
         # ── 단품(옵션) 목록 ─────────────────────────────────────────
+        # 스마트스토어 `_build_combination_options` 패턴(proxy/smartstore.py:270~)을
+        # 그대로 포팅 — isSoldOut 반영, 실재고 그대로, 상한 있을 때만 cap.
         itm_lst: list[dict[str, Any]] = []
         if options:
             # 상품 전체에서 optNm 한 번만 결정 (단품 간 불일치 시 9999 에러)
@@ -1031,24 +1035,37 @@ class LotteonClient:
                     or opt.get("value", "")
                     or f"옵션{idx + 1}"
                 )
-                raw_stock = opt.get("stock")
-                if raw_stock is None or raw_stock == 0:
-                    opt_stock = default_stock
-                elif max_stock > 0:
-                    # _stock_quantity 설정 시 상한선으로 cap
-                    opt_stock = min(int(raw_stock), max_stock)
+
+                # ── 스마트스토어 패턴: isSoldOut → stock=0, 실재고 그대로 ──
+                raw_stock = opt.get("stock", 0) or 0
+                sold_out = bool(opt.get("isSoldOut", False))
+                if sold_out:
+                    raw_stock = 0
+
+                if max_stock > 0:
+                    opt_stock = min(max(int(raw_stock), 0), max_stock)
                 else:
-                    opt_stock = int(raw_stock)
+                    opt_stock = max(int(raw_stock), 0)
+
+                # 품절/재고0 옵션은 미노출(dpYn=N) — smartstore의 usable=False 대응
+                dp_yn = "N" if (sold_out or opt_stock == 0) else "Y"
+
                 itm_lst.append(
                     {
                         "eitmNo": f"OPT{idx}",
-                        "dpYn": "Y",
+                        "dpYn": dp_yn,
                         "sortSeq": idx + 1,
                         "itmOptLst": [{"optNm": product_opt_nm, "optVal": opt_name}],
                         "itmImgLst": itm_img_lst,
                         "slPrc": sale_price,
                         "stkQty": opt_stock,
                     }
+                )
+
+            # 전 옵션 품절 가드 — 호출자가 sold_out 승격으로 차단해야 함
+            if all((itm["stkQty"] == 0 or itm["dpYn"] == "N") for itm in itm_lst):
+                _log.warning(
+                    "[롯데ON] 전 옵션 품절 상태로 transform_product 호출됨 — 상위에서 sold_out 처리 필요"
                 )
         else:
             itm_lst.append(
