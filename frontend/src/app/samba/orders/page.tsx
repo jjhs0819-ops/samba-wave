@@ -611,14 +611,11 @@ export default function OrdersPage() {
   // 필터링된 주문 목록
   const filteredOrders = useMemo(() => orders.filter(o => {
     const orderDate = new Date(o.paid_at || o.created_at)
-    // 시작일 고정이면 customStart 우선
-    if (startLocked && customStart) {
+    // 시작일 필터 — API 호출과 동일하게 customStart 기준
+    if (customStart) {
       const start = new Date(customStart)
       start.setHours(0, 0, 0, 0)
       if (orderDate < start) return false
-    } else {
-      const periodStart = getPeriodStart(period)
-      if (periodStart && orderDate < periodStart) return false
     }
     // 종료일 필터
     if (customEnd) {
@@ -682,7 +679,7 @@ export default function OrdersPage() {
     const aTime = a.paid_at ? new Date(a.paid_at).getTime() : new Date(a.created_at).getTime()
     const bTime = b.paid_at ? new Date(b.paid_at).getTime() : new Date(b.created_at).getTime()
     return bTime - aTime
-  }), [orders, period, startLocked, customStart, customEnd, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, activeActions, searchText, searchCategory, accounts])
+  }), [orders, customStart, customEnd, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, activeActions, searchText, searchCategory, accounts])
 
   // 문자열 입력 → 숫자 콤마 포맷 (편집 중 입력값용)
   const fmtNumStr = (v: string) => {
