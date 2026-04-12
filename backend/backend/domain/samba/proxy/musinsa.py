@@ -346,6 +346,7 @@ class MusinsaClient:
                 f"isSoldOut_d={d.get('isSoldOut')!r}, "
                 f"isOutOfStock={d.get('isOutOfStock')!r}, "
                 f"canBuy={d.get('canBuy')!r}, "
+                f"isOfflineGoods={d.get('isOfflineGoods')!r}, "
                 f"goodsTypeCode={d.get('goodsTypeCode')!r}, "
                 f"saleState={gp.get('saleState') or d.get('saleState')!r}, "
                 f"timeSale={d.get('timeSale')!r}, "
@@ -438,11 +439,12 @@ class MusinsaClient:
                 "isSale": gp.get("isSale", False),
                 # 판매 상태: sold_out(품절) → preorder(판매예정) → in_stock 순서로 판단
                 # sold_out을 먼저 체크해야 preorder 상태였다가 품절된 경우를 올바르게 처리
-                # canBuy=False: 오프라인 전용 등 온라인 구매 불가 상품도 sold_out 처리
+                # canBuy=False / isOfflineGoods=True: 오프라인 전용 상품 sold_out 처리
                 "saleStatus": (
                     "sold_out"
                     if bool(
                         d.get("canBuy") is False
+                        or d.get("isOfflineGoods") is True
                         or d.get("isSoldOut")
                         or (d.get("goodsPrice") or {}).get("isSoldOut")
                         or d.get("isOutOfStock", False)

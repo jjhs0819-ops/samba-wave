@@ -208,7 +208,7 @@ async def dashboard_stats(
         )
     daily_rows = (await session.execute(daily_q)).all()
     weekly = []
-    for i in range(7):
+    for i in range(8):
         d = week_ago + timedelta(days=i)
         day_str = d.strftime("%Y-%m-%d")
         row = next((r for r in daily_rows if str(r.day) == day_str), None)
