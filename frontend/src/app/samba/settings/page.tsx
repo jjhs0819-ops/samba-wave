@@ -1590,7 +1590,13 @@ export default function SettingsPage() {
                 <button
                   key={m.key}
                   onClick={() => {
-                    setStoreData(prev => { const next = { ...prev }; delete next[m.key]; return next })
+                    // 이전 탭 + 전환 대상 탭 모두 storeData 초기화 (잔류값 방지)
+                    setStoreData(prev => {
+                      const next = { ...prev }
+                      delete next[storeTab]  // 이전 탭 데이터 제거
+                      delete next[m.key]     // 전환 대상 탭 데이터 제거
+                      return next
+                    })
                     setStoreTab(m.key)
                     setEditingAccountId(null)
                   }}

@@ -607,6 +607,25 @@ async def _site_autotune_loop(site: str):
                                                 f"{_prod_label}",
                                             )
                                         )
+                                    else:
+                                        # 가격 동일 스킵 — 다중 마켓 디버그 로그
+                                        if len(reg_accounts) > 1:
+                                            _last_cost_sent = (
+                                                int(acc_last.get("cost", 0) or 0)
+                                                if acc_last
+                                                else 0
+                                            )
+                                            log.info(
+                                                "[오토튠][가격스킵] %s %s: "
+                                                "expected=%s==last=%s, "
+                                                "cost_now=%s, cost_sent=%s",
+                                                _prod_label,
+                                                acc_label,
+                                                expected_price,
+                                                last_price,
+                                                int(new_cost),
+                                                _last_cost_sent,
+                                            )
 
                                     # 재고 변동 → last_sent_data 옵션 vs API 옵션 비교
                                     _sent_opts = (
@@ -662,12 +681,18 @@ async def _site_autotune_loop(site: str):
                                         )
 
                                 # 통합 한 줄 로그 (전송 전에 즉시 출력)
-                                _old_cost_int = int(
-                                    product.cost or product.sale_price or 0
+                                # 원가 변동: 마지막 전송 시 원가 vs 현재 원가 비교
+                                _prev_costs = [
+                                    int(last_sent.get(a, {}).get("cost", 0) or 0)
+                                    for a in reg_accounts
+                                    if last_sent.get(a)
+                                ]
+                                _prev_cost = (
+                                    _prev_costs[0] if _prev_costs else _cost_int
                                 )
                                 _cost_str = (
-                                    f"{_old_cost_int:,} → {_cost_int:,}"
-                                    if _old_cost_int != _cost_int
+                                    f"{_prev_cost:,} → {_cost_int:,}"
+                                    if _prev_cost != _cost_int
                                     else f"{_cost_int:,}"
                                 )
                                 _sc = "Y" if r.product_id in _all_stock_pids else "0"
