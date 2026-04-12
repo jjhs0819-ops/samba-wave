@@ -1916,7 +1916,7 @@ export default function SettingsPage() {
                   {market.key === 'playauto' && (
                     <button
                       onClick={async () => {
-                        if (!await showConfirm('플레이오토 등록상품을 스마트스토어 등록상품과 매칭하여 registered_accounts에 추가합니다.')) return
+                        if (!await showConfirm('플레이오토 API에서 등록상품을 조회하여 DB 상품과 매칭 후 registered_accounts에 추가합니다.')) return
                         try {
                           const res = await collectorApi.bulkAddAccount()
                           showAlert(`플레이오토 상품 ${res.pa_products}개 중 ${res.matched}개 매칭, ${res.updated}개 추가 (이미등록 ${res.already}개)`, 'success')
