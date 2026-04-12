@@ -610,7 +610,7 @@ export default function OrdersPage() {
 
   // 필터링된 주문 목록
   const filteredOrders = useMemo(() => orders.filter(o => {
-    const orderDate = new Date(o.created_at)
+    const orderDate = new Date(o.paid_at || o.created_at)
     // 시작일 고정이면 customStart 우선
     if (startLocked && customStart) {
       const start = new Date(customStart)
