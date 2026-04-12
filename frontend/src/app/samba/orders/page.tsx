@@ -572,38 +572,6 @@ export default function OrdersPage() {
     }
   }
 
-  // 현재 페이지 주문 ID 목록
-  const currentPageIds = useMemo(() =>
-    filteredOrders.slice((currentPage - 1) * pageSize, currentPage * pageSize).map(o => o.id),
-    [filteredOrders, currentPage, pageSize])
-
-  // 전체 선택/해제
-  const toggleSelectAll = () => {
-    if (currentPageIds.every(id => selectedIds.has(id))) {
-      setSelectedIds(prev => { const next = new Set(prev); currentPageIds.forEach(id => next.delete(id)); return next })
-    } else {
-      setSelectedIds(prev => { const next = new Set(prev); currentPageIds.forEach(id => next.add(id)); return next })
-    }
-  }
-
-  // 일괄 상태 변경
-  const handleBulkStatusChange = async () => {
-    if (!bulkStatus || selectedIds.size === 0) return
-    setBulkUpdating(true)
-    let ok = 0
-    for (const id of selectedIds) {
-      try {
-        await orderApi.update(id, { status: bulkStatus })
-        ok++
-      } catch { /* ignore */ }
-    }
-    setLogMessages(prev => [...prev, `[완료] 일괄 상태 변경: ${ok.toLocaleString()}/${selectedIds.size.toLocaleString()}건 → ${bulkStatus}`])
-    setSelectedIds(new Set())
-    setBulkStatus('')
-    setBulkUpdating(false)
-    await loadOrders()
-  }
-
   // 가격X/재고X/직배/까대기/선물 토글 (서버 저장)
   const toggleAction = async (orderId: string, actionKey: string) => {
     const newVal = activeActions[orderId] === actionKey ? null : actionKey
@@ -715,6 +683,38 @@ export default function OrdersPage() {
     const bTime = b.paid_at ? new Date(b.paid_at).getTime() : new Date(b.created_at).getTime()
     return bTime - aTime
   }), [orders, customStart, customEnd, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, activeActions, searchText, searchCategory, accounts])
+
+  // 현재 페이지 주문 ID 목록
+  const currentPageIds = useMemo(() =>
+    filteredOrders.slice((currentPage - 1) * pageSize, currentPage * pageSize).map(o => o.id),
+    [filteredOrders, currentPage, pageSize])
+
+  // 전체 선택/해제
+  const toggleSelectAll = () => {
+    if (currentPageIds.every(id => selectedIds.has(id))) {
+      setSelectedIds(prev => { const next = new Set(prev); currentPageIds.forEach(id => next.delete(id)); return next })
+    } else {
+      setSelectedIds(prev => { const next = new Set(prev); currentPageIds.forEach(id => next.add(id)); return next })
+    }
+  }
+
+  // 일괄 상태 변경
+  const handleBulkStatusChange = async () => {
+    if (!bulkStatus || selectedIds.size === 0) return
+    setBulkUpdating(true)
+    let ok = 0
+    for (const id of selectedIds) {
+      try {
+        await orderApi.update(id, { status: bulkStatus })
+        ok++
+      } catch { /* ignore */ }
+    }
+    setLogMessages(prev => [...prev, `[완료] 일괄 상태 변경: ${ok.toLocaleString()}/${selectedIds.size.toLocaleString()}건 → ${bulkStatus}`])
+    setSelectedIds(new Set())
+    setBulkStatus('')
+    setBulkUpdating(false)
+    await loadOrders()
+  }
 
   // 문자열 입력 → 숫자 콤마 포맷 (편집 중 입력값용)
   const fmtNumStr = (v: string) => {
