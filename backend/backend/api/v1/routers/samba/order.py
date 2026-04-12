@@ -78,9 +78,11 @@ async def dashboard_stats(
     FULFILLMENT_STATUSES = (
         "pending",
         "wait_ship",
+        "processing",
         "arrived",
         "ship_failed",
         "shipping",
+        "shipped",
         "delivered",
         "exchanged",
         "exchanging",
