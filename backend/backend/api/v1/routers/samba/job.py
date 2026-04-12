@@ -318,13 +318,7 @@ async def cancel_all_jobs(
     )
     await session.commit()
 
-    # 3) 플래그 해제 — 워커가 이미 감지 완료, 다음 전송 정상 허용
-    from backend.domain.samba.emergency import clear_emergency_stop
-    from backend.domain.samba.shipment.service import clear_cancel_transmit
-
-    clear_emergency_stop()
-    clear_cancel_transmit()
-
+    # 플래그 해제하지 않음 — 워커가 감지 후 직접 해제
     return {"ok": True, "cancelled": r.rowcount}
 
 

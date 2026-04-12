@@ -685,6 +685,13 @@ export const shipmentApi = {
         body: JSON.stringify({ product_ids: productIds, target_account_ids: targetAccountIds }),
       }
     ),
+  marketDeleteByAccount: (accountId: string, dryRun = false) =>
+    request<{ dry_run?: boolean; account_id: string; account_label: string; market_type: string; total_products: number; estimated_seconds?: number; processed?: number; results?: { product_id: string; delete_results: Record<string, string>; success_count: number }[] }>(
+      `${SAMBA_PREFIX}/shipments/market-delete-by-account`, {
+        method: "POST",
+        body: JSON.stringify({ account_id: accountId, dry_run: dryRun }),
+      }
+    ),
 
   // 스스그룹 미리보기
   groupPreview: (searchFilterIds: string[], accountId: string) =>

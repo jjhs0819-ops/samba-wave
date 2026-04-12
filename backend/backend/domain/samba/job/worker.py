@@ -529,11 +529,11 @@ class JobWorker:
             clear_cancel_transmit,
         )
         from backend.domain.samba.shipment.repository import SambaShipmentRepository
+        from backend.domain.samba.emergency import clear_emergency_stop
 
-        # 이 잡의 잔존 취소 플래그만 해제 (세마포어/비상정지는 건드리지 않음)
-        # — 세마포어: 다른 잡이 공유 중이므로 클리어 금지
-        # — 비상정지: 전체 중단 의도이므로 별도 API에서만 해제
-        clear_cancel_transmit(job.id)
+        # 새 잡 시작 — 이전 취소의 잔존 플래그 전부 해제
+        clear_cancel_transmit()
+        clear_emergency_stop()
 
         payload = job.payload or {}
         product_ids = payload.get("product_ids", [])
@@ -612,8 +612,9 @@ class JobWorker:
                     f"[잡워커] 전송 {reason}: {job.id} — {i}건 완료, {cancelled}건 중단"
                 )
                 await repo.fail_job(job.id, f"{reason}: {i}건 완료, {cancelled}건 중단")
-                # 해당 잡 취소 플래그 정리
-                clear_cancel_transmit(job.id)
+                # 감지 완료 — 모든 플래그 정리
+                clear_cancel_transmit()
+                clear_emergency_stop()
                 return
 
             # 건별 독립 세션 — greenlet_spawn 방지 (세션 상태 누적 차단)
@@ -754,7 +755,13 @@ class JobWorker:
             for ri, pid in enumerate(failed_pids):
                 from backend.domain.samba.emergency import is_emergency_stopped
 
-                if is_emergency_stopped() or await repo.is_cancelled(job.id):
+                if (
+                    is_emergency_stopped()
+                    or is_cancel_requested(job.id)
+                    or await repo.is_cancelled(job.id)
+                ):
+                    clear_cancel_transmit()
+                    clear_emergency_stop()
                     break
                 try:
                     async with get_write_session() as retry_session:

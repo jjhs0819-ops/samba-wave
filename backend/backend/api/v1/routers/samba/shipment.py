@@ -24,6 +24,11 @@ class MarketDeleteRequest(BaseModel):
     target_account_ids: list[str]
 
 
+class MarketDeleteByAccountRequest(BaseModel):
+    account_id: str
+    dry_run: bool = False
+
+
 def _get_service(session: AsyncSession):
     from backend.domain.samba.shipment.repository import SambaShipmentRepository
     from backend.domain.samba.shipment.service import SambaShipmentService
@@ -67,17 +72,11 @@ async def emergency_stop(
     cancelled_count = r.rowcount
     await session.commit()
 
-    # 5. 비상정지 즉시 해제 — 진행 중 작업만 멈추고 이후 전송은 정상 허용
-    from backend.domain.samba.emergency import clear_emergency_stop
-    from backend.domain.samba.shipment.service import clear_cancel_transmit
-
-    clear_emergency_stop()
-    clear_cancel_transmit()
-
+    # 플래그 해제하지 않음 — 워커가 감지 후 직접 해제
     return {
         "ok": True,
         "cancelled_jobs": cancelled_count,
-        "message": "비상정지 완료 (자동 해제)",
+        "message": "비상정지 완료",
     }
 
 
@@ -171,6 +170,19 @@ async def market_delete(
     """선택된 상품을 대상 마켓에서 판매중지/삭제."""
     svc = _get_service(session)
     return await svc.delete_from_markets(body.product_ids, body.target_account_ids)
+
+
+@router.post("/market-delete-by-account")
+async def market_delete_by_account(
+    body: MarketDeleteByAccountRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """특정 마켓 계정에 등록된 모든 상품을 마켓에서 삭제."""
+    svc = _get_service(session)
+    try:
+        return await svc.delete_all_by_account(body.account_id, dry_run=body.dry_run)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/{shipment_id}/retry")

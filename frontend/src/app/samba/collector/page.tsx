@@ -1372,7 +1372,7 @@ export default function CollectorPage() {
             <p style={{ margin: '0 0 16px', fontSize: '0.78rem', color: '#888' }}>
               &quot;{pendingKeyword}&quot; 검색 결과 — 복수 선택 가능
             </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '50vh', overflowY: 'auto' }}>
               {brandSearchResults.map(b => {
                 const checked = selectedBrandCodes.has(b.brandCode)
                 return (
@@ -1416,7 +1416,7 @@ export default function CollectorPage() {
             <p style={{ margin: '0 0 16px', fontSize: '0.78rem', color: '#888' }}>
               &quot;{brandModalKeyword}&quot; 검색 결과 — 복수 선택 가능
             </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '50vh', overflowY: 'auto' }}>
               {brandModalList.map(b => {
                 const checked = brandModalSelected.has(b.name)
                 return (

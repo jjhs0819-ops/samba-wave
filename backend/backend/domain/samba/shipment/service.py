@@ -123,8 +123,8 @@ def clear_cancel_transmit(job_id: str | None = None):
             _cancel_events.clear()
         else:
             _cancel_events.pop(job_id, None)
-            # 글로벌 마커도 정리 (남아있으면 새 잡이 즉시 취소됨)
-            _cancel_events.pop("__all__", None)
+            # __all__ 은 제거하지 않음 — 다른 잡이 아직 감지하지 못했을 수 있음
+            # __all__ 해제는 clear_cancel_transmit(None)으로만 가능
 
 
 def is_cancel_requested(job_id: str | None = None) -> bool:
@@ -2166,6 +2166,61 @@ class SambaShipmentService:
             "processed": len(results),
             "results": results,
         }
+
+    async def delete_all_by_account(
+        self,
+        account_id: str,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """특정 마켓 계정에 등록된 전체 상품을 마켓에서 삭제.
+
+        dry_run=True이면 삭제 대상 상품 수만 반환.
+        """
+        from sqlalchemy import String, cast
+        from sqlmodel import select
+
+        from backend.domain.samba.account.model import SambaMarketAccount
+        from backend.domain.samba.collector.model import SambaCollectedProduct
+
+        # 1) 계정 존재 확인
+        account = await self.session.get(SambaMarketAccount, account_id)
+        if not account:
+            raise ValueError(f"계정을 찾을 수 없습니다: {account_id}")
+
+        # 2) 해당 계정에 등록된 상품 ID 조회
+        stmt = select(SambaCollectedProduct.id).where(
+            cast(SambaCollectedProduct.registered_accounts, String).like(
+                f'%"{account_id}"%'
+            )
+        )
+        result = await self.session.execute(stmt)
+        product_ids = list(result.scalars().all())
+        total_count = len(product_ids)
+
+        # 3) dry_run이면 상품 수와 예상 시간만 반환
+        if dry_run:
+            return {
+                "dry_run": True,
+                "account_id": account_id,
+                "account_label": account.account_label,
+                "market_type": account.market_type,
+                "total_products": total_count,
+                "estimated_seconds": total_count * 0.5,
+            }
+
+        if total_count == 0:
+            return {
+                "account_id": account_id,
+                "total_products": 0,
+                "message": "삭제 대상 상품이 없습니다.",
+            }
+
+        # 4) 기존 delete_from_markets 재사용
+        logger.info(
+            f"[계정삭제] {account.account_label}({account.market_type}) "
+            f"전체 {total_count}건 삭제 시작"
+        )
+        return await self.delete_from_markets(product_ids, [account_id])
 
     @staticmethod
     def get_status_label(status: str) -> str:

@@ -1617,7 +1617,7 @@ const ProductCard = React.memo(function ProductCard({
                 <td style={tdVal}>
                   {p.search_filter_id ? (
                     <span style={{ background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.25)', color: 'rgba(255,180,100,0.85)', fontSize: '0.72rem', padding: '1px 8px', borderRadius: '10px' }}>
-                      {filterNameMap[p.search_filter_id] || p.search_filter_id}
+                      {filterNameMap[p.search_filter_id] || p.source_site || '삭제된 그룹'}
                     </span>
                   ) : <span style={{ color: '#444', fontSize: '0.75rem' }}>-</span>}
                 </td>

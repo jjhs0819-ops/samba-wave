@@ -571,11 +571,11 @@ def _build_options(options: list[dict], default_stock: int = 999) -> list[dict]:
     """삼바웨이브 옵션 → EMP 옵션 변환.
 
     삼바웨이브 옵션 형식:
-        [{name: "색상", value: "빨강", ...}, ...]
-        또는
-        [{option_name: "색상/사이즈", option_value: "빨강/M", ...}, ...]
+        소싱처 형식: [{name: "WHITE / M", ...}, ...]  (value 필드 없음)
+        명시적 형식: [{option_name: "색상/사이즈", option_value: "빨강/M", ...}, ...]
     """
     emp_opts: list[dict] = []
+    seen_keys: set[tuple] = set()
 
     for opt in options:
         emp_opt: dict[str, str] = {"type": "SELECT"}
@@ -584,13 +584,37 @@ def _build_options(options: list[dict], default_stock: int = 999) -> list[dict]:
         opt_name = opt.get("option_name", "") or opt.get("name", "")
         opt_value = opt.get("option_value", "") or opt.get("value", "")
 
-        # "/" 구분 형식 (색상/사이즈 → 빨강/M)
-        names = opt_name.split("/") if "/" in opt_name else [opt_name]
-        values = opt_value.split("/") if "/" in opt_value else [opt_value]
+        if opt_value:
+            # 명시적 형식: option_name=제목, option_value=값 (cafe24 등)
+            names = opt_name.split("/") if "/" in opt_name else [opt_name]
+            values = opt_value.split("/") if "/" in opt_value else [opt_value]
+            for i, (n, v) in enumerate(zip(names[:3], values[:3]), 1):
+                emp_opt[f"title{i}"] = n.strip()
+                emp_opt[f"opt{i}"] = v.strip()
+        else:
+            # 소싱처 형식: name이 옵션값 역할 (MUSINSA, ABCmart, Nike 등)
+            # " / " 구분자로 다축 분리 (예: "WHITE / M" → 옵션1=WHITE, 옵션2=M)
+            parts = (
+                [p.strip() for p in opt_name.split(" / ")]
+                if " / " in opt_name
+                else [opt_name.strip()]
+            )
+            for i, p in enumerate(parts[:3], 1):
+                emp_opt[f"title{i}"] = f"옵션{i}" if len(parts) > 1 else "옵션"
+                emp_opt[f"opt{i}"] = p
 
-        for i, (n, v) in enumerate(zip(names[:3], values[:3]), 1):
-            emp_opt[f"title{i}"] = n.strip()
-            emp_opt[f"opt{i}"] = v.strip()
+        # 중복 옵션 제거 (EMP API "독립형옵션 중복오류" 방지)
+        key = (
+            emp_opt.get("title1", ""),
+            emp_opt.get("opt1", ""),
+            emp_opt.get("title2", ""),
+            emp_opt.get("opt2", ""),
+            emp_opt.get("title3", ""),
+            emp_opt.get("opt3", ""),
+        )
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
 
         # 옵션 가격
         opt_price = opt.get("option_price", 0) or opt.get("add_price", 0)
