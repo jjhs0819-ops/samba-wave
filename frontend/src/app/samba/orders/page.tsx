@@ -207,8 +207,9 @@ export default function OrdersPage() {
     setSyncing(true)
     const ts = () => new Date().toLocaleTimeString()
     const daysMap: Record<string, number> = {
-      today: 1, '1week': 7, '15days': 15, '1month': 30,
-      '3months': 90, '6months': 180, thisyear: Math.ceil((Date.now() - new Date(new Date().getFullYear(), 0, 1).getTime()) / 86400000) + 1, all: 365,
+      yesterday: 2, today: 1, thisweek: 7, lastweek: 14, '1week': 7, '15days': 15,
+      thismonth: 31, lastmonth: 60, '1month': 30, '3months': 90, '6months': 180,
+      thisyear: Math.ceil((Date.now() - new Date(new Date().getFullYear(), 0, 1).getTime()) / 86400000) + 1, all: 365,
     }
     const days = daysMap[period] || 7
 
@@ -646,7 +647,7 @@ export default function OrdersPage() {
       if (o.source_site !== siteFilter) return false
     }
     if (accountFilter) {
-      if (o.channel_id !== accountFilter) return false
+      if (o.sourcing_account_id !== accountFilter) return false
     }
     if (marketStatus) {
       if (o.shipping_status !== marketStatus) return false
@@ -920,7 +921,16 @@ export default function OrdersPage() {
           <select style={{ ...inputStyle, width: '110px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}><option value="">전체사이트보기</option>{['MUSINSA','KREAM','FashionPlus','Nike','Adidas','ABCmart','REXMONDE','SSG','LOTTEON','GSShop','ElandMall','SSF'].map(s => <option key={s} value={s}>{s}</option>)}</select>
           <select style={{ ...inputStyle, width: '130px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={accountFilter} onChange={e => setAccountFilter(e.target.value)}>
             <option value="">주문계정</option>
-            {accounts.map(a => <option key={a.id} value={a.id}>{a.market_name || a.market_type}</option>)}
+            {(() => {
+              const allSites = [...new Set(sourcingAccounts.map(sa => sa.site_name))]
+              return allSites.sort().map(site => (
+                <optgroup key={site} label={site}>
+                  {sourcingAccounts.filter(sa => sa.site_name === site).map(sa => (
+                    <option key={sa.id} value={sa.id}>{sa.account_label ? `${sa.account_label}(${sa.username})` : sa.username}</option>
+                  ))}
+                </optgroup>
+              ))
+            })()}
           </select>
           <select style={{ ...inputStyle, width: '112px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketStatus} onChange={e => setMarketStatus(e.target.value)}>
             <option value="">마켓상태 보기</option>
