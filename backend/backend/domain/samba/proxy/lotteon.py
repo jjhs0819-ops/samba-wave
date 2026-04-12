@@ -410,14 +410,18 @@ class LotteonClient:
     ) -> dict[str, Any]:
         """행사 제외 설정.
 
-        flags 예시:
-          ownrDscExYn: Y/N    오너스할인 제외
-          pdUtCpnExYn: Y/N    상품단위쿠폰 제외
-          dvCpnExYn: Y/N      배송쿠폰 제외
-          cmPcsDscExYn: Y/N   가격비교채널할인(CM+PCS) 제외
-          pcsDscExYn: Y/N     가격비교(PCS)할인 제외
+        flags 예시 (8개 필드 전부 필수):
+          onerDcXcldAgrCd: AGR/NXCLD       오너스할인
+          pcsDcXcldAgrCd: AGR/NXCLD        PCS할인
+          ovlpCpnXcldAgrCd: AGR/NXCLD      중복쿠폰(상품단위쿠폰)
+          dvCpnXcldAgrCd: AGR/NXCLD        배송쿠폰
+          stffDcXcldAgrCd: AGR/NXCLD       임직원할인
+          odCndCpnXcldAgrCd: AGR/NXCLD     장바구니쿠폰
+          crdCmDcXcldAgrCd: AGR/NXCLD      카드즉시할인(CM+PCS)
+          crdReqDcCashbXcldAgrCd: AGR/NXCLD 카드캐시백
+        값: AGR=제외, NXCLD=제외안함
         """
-        body = {"spdNo": spd_no, **flags}
+        body = {"trNo": self.tr_no, "spdNo": spd_no, **flags}
         return await self._call_api(
             "POST",
             "/v1/openapi/promotion/v1/OpenApiService/saveProductException",
