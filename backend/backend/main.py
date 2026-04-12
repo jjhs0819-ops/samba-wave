@@ -190,25 +190,29 @@ async def lifespan(app: FastAPI):
                             f"[startup] 플레이오토 site_id 추출: {len(pa_site_ids)}개"
                         )
                         if pa_site_ids:
-                            prod_stmt = _sel(SambaCollectedProduct).where(
-                                SambaCollectedProduct.status == "registered",
-                                SambaCollectedProduct.site_product_id.in_(pa_site_ids),
-                            )
-                            prod_result = await session.exec(prod_stmt)
+                            # 1,000개씩 분할 (PostgreSQL IN 파라미터 한도 32,767)
+                            _id_list = list(pa_site_ids)
                             _pa_updated = 0
-                            for p in prod_result.all():
-                                reg = list(p.registered_accounts or [])
-                                if pa_acc.id not in reg:
-                                    reg.append(pa_acc.id)
-                                    p.registered_accounts = reg
-                                    session.add(p)
-                                    _pa_updated += 1
+                            for _ci in range(0, len(_id_list), 1000):
+                                _chunk = _id_list[_ci : _ci + 1000]
+                                prod_stmt = _sel(SambaCollectedProduct).where(
+                                    SambaCollectedProduct.status == "registered",
+                                    SambaCollectedProduct.site_product_id.in_(_chunk),
+                                )
+                                prod_result = await session.exec(prod_stmt)
+                                for p in prod_result.all():
+                                    reg = list(p.registered_accounts or [])
+                                    if pa_acc.id not in reg:
+                                        reg.append(pa_acc.id)
+                                        p.registered_accounts = reg
+                                        session.add(p)
+                                        _pa_updated += 1
                             if _pa_updated > 0:
                                 await session.commit()
                             _startup_log.info(
                                 f"[startup] 플레이오토 매칭: "
                                 f"API {len(pa_products)}개 → site_id {len(pa_site_ids)}개 → "
-                                f"DB매칭 → 추가 {_pa_updated}개"
+                                f"추가 {_pa_updated}개"
                             )
                     finally:
                         await client.close()
