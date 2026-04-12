@@ -77,6 +77,9 @@ export default function OrdersPage() {
   const [searchText, setSearchText] = useState('')
   const [pageSize, setPageSize] = useState(20)
   const [currentPage, setCurrentPage] = useState(1)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkStatus, setBulkStatus] = useState('')
+  const [bulkUpdating, setBulkUpdating] = useState(false)
   const [logMessages, _setLogMessagesRaw] = useState<string[]>(['[대기] 주문 가져오기 결과가 여기에 표시됩니다...'])
   const setLogMessages: typeof _setLogMessagesRaw = (v) => _setLogMessagesRaw(prev => {
     const next = typeof v === 'function' ? v(prev) : v
@@ -569,6 +572,38 @@ export default function OrdersPage() {
     }
   }
 
+  // 현재 페이지 주문 ID 목록
+  const currentPageIds = useMemo(() =>
+    filteredOrders.slice((currentPage - 1) * pageSize, currentPage * pageSize).map(o => o.id),
+    [filteredOrders, currentPage, pageSize])
+
+  // 전체 선택/해제
+  const toggleSelectAll = () => {
+    if (currentPageIds.every(id => selectedIds.has(id))) {
+      setSelectedIds(prev => { const next = new Set(prev); currentPageIds.forEach(id => next.delete(id)); return next })
+    } else {
+      setSelectedIds(prev => { const next = new Set(prev); currentPageIds.forEach(id => next.add(id)); return next })
+    }
+  }
+
+  // 일괄 상태 변경
+  const handleBulkStatusChange = async () => {
+    if (!bulkStatus || selectedIds.size === 0) return
+    setBulkUpdating(true)
+    let ok = 0
+    for (const id of selectedIds) {
+      try {
+        await orderApi.update(id, { status: bulkStatus })
+        ok++
+      } catch { /* ignore */ }
+    }
+    setLogMessages(prev => [...prev, `[완료] 일괄 상태 변경: ${ok.toLocaleString()}/${selectedIds.size.toLocaleString()}건 → ${bulkStatus}`])
+    setSelectedIds(new Set())
+    setBulkStatus('')
+    setBulkUpdating(false)
+    await loadOrders()
+  }
+
   // 가격X/재고X/직배/까대기/선물 토글 (서버 저장)
   const toggleAction = async (orderId: string, actionKey: string) => {
     const newVal = activeActions[orderId] === actionKey ? null : actionKey
@@ -837,6 +872,17 @@ export default function OrdersPage() {
             })()}
           </select>
           <button onClick={handleFetch} disabled={syncing} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: syncing ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>{syncing ? '동기화 중...' : '가져오기'}</button>
+          <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 2px' }} />
+          <select value={bulkStatus} onChange={e => setBulkStatus(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.72rem', minWidth: '100px' }}>
+            <option value="">일괄 상태변경</option>
+            <option value="pending">대기</option>
+            <option value="wait_ship">배송대기</option>
+            <option value="processing">처리중</option>
+            <option value="shipped">출고완료</option>
+            <option value="delivered">배송완료</option>
+            <option value="cancelled">취소</option>
+          </select>
+          <button onClick={handleBulkStatusChange} disabled={bulkUpdating || !bulkStatus || selectedIds.size === 0} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: selectedIds.size > 0 && bulkStatus ? '#C0392B' : 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: selectedIds.size > 0 && bulkStatus ? '#fff' : '#666', borderRadius: '4px', cursor: bulkUpdating || !bulkStatus || selectedIds.size === 0 ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>{bulkUpdating ? '변경 중...' : `적용 (${selectedIds.size.toLocaleString()}건)`}</button>
         </div>
       </div>
 
@@ -907,7 +953,7 @@ export default function OrdersPage() {
           <thead>
             <tr style={{ background: '#0D1117', borderBottom: '2px solid #1C2333' }}>
               <th style={{ width: '36px', padding: '0.5rem', textAlign: 'center', borderRight: '1px solid #1C2333' }}>
-                <input type="checkbox" style={{ accentColor: '#F59E0B', width: '13px', height: '13px' }} />
+                <input type="checkbox" checked={currentPageIds.length > 0 && currentPageIds.every(id => selectedIds.has(id))} onChange={toggleSelectAll} style={{ accentColor: '#F59E0B', width: '13px', height: '13px', cursor: 'pointer' }} />
               </th>
               <th style={{ padding: '0.6rem 0.75rem', textAlign: 'center', fontSize: '0.75rem', fontWeight: 600, color: '#94A3B8', borderRight: '1px solid #1C2333' }}>주문정보</th>
               <th style={{ padding: '0.6rem 0.75rem', textAlign: 'center', fontSize: '0.75rem', fontWeight: 600, color: '#94A3B8', borderRight: '1px solid #1C2333', width: '143px' }}>금액</th>
@@ -931,7 +977,7 @@ export default function OrdersPage() {
                   {/* 체크박스 */}
                   <td style={{ padding: '0.75rem 0.5rem', textAlign: 'center', borderRight: '1px solid #1C2333' }}>
                     <div style={{ fontSize: '0.65rem', color: '#FFFFFF', fontWeight: 'bold', marginBottom: '2px' }}>{(currentPage - 1) * pageSize + index + 1}</div>
-                    <input type="checkbox" style={{ accentColor: '#F59E0B' }} />
+                    <input type="checkbox" checked={selectedIds.has(o.id)} onChange={() => setSelectedIds(prev => { const next = new Set(prev); next.has(o.id) ? next.delete(o.id) : next.add(o.id); return next })} style={{ accentColor: '#F59E0B', cursor: 'pointer' }} />
                   </td>
                   {/* 주문정보 */}
                   <td style={{ padding: '0.75rem', borderRight: '1px solid #1C2333', fontSize: '0.8125rem', position: 'relative' }}>
