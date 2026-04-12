@@ -143,6 +143,63 @@ async def lifespan(app: FastAPI):
             exc_info=True,
         )
 
+    # [원타임] 플레이오토 등록상품 → registered_accounts 일괄 추가
+    try:
+        from sqlmodel import select as _sel
+
+        from backend.domain.samba.account.model import SambaMarketAccount
+        from backend.domain.samba.collector.model import SambaCollectedProduct
+        from backend.domain.samba.proxy.playauto import PlayAutoClient
+
+        async with get_write_session() as session:
+            # 플레이오토 계정 조회
+            pa_stmt = _sel(SambaMarketAccount).where(
+                SambaMarketAccount.market_type == "playauto",
+                SambaMarketAccount.is_active == True,  # noqa: E712
+            )
+            pa_result = await session.exec(pa_stmt)
+            pa_acc = pa_result.first()
+            if pa_acc:
+                pa_extras = pa_acc.additional_fields or {}
+                pa_api_key = pa_extras.get("apiKey", "") or getattr(
+                    pa_acc, "api_key", ""
+                )
+                if pa_api_key:
+                    client = PlayAutoClient(pa_api_key)
+                    try:
+                        pa_products = await client.get_products()
+                        pa_model_names = {
+                            str(pp.get("ModelName", "") or "").strip()
+                            for pp in pa_products
+                            if str(pp.get("ModelName", "") or "").strip()
+                        }
+                        if pa_model_names:
+                            prod_stmt = _sel(SambaCollectedProduct).where(
+                                SambaCollectedProduct.status == "registered",
+                                SambaCollectedProduct.site_product_id.in_(
+                                    pa_model_names
+                                ),
+                            )
+                            prod_result = await session.exec(prod_stmt)
+                            _pa_updated = 0
+                            for p in prod_result.all():
+                                reg = list(p.registered_accounts or [])
+                                if pa_acc.id not in reg:
+                                    reg.append(pa_acc.id)
+                                    p.registered_accounts = reg
+                                    session.add(p)
+                                    _pa_updated += 1
+                            if _pa_updated > 0:
+                                await session.commit()
+                            _startup_log.info(
+                                f"[startup] 플레이오토 매칭: API상품 {len(pa_model_names)}개, "
+                                f"추가 {_pa_updated}개"
+                            )
+                    finally:
+                        await client.close()
+    except Exception as _pa_err:
+        _startup_log.warning(f"[startup] 플레이오토 매칭 실패: {_pa_err}")
+
     # 서버 시작 시 좀비 running Job 처리
     # - transmit: attempt < 3이면 pending 복구 (배포 중단 → 자동 재개)
     #             attempt >= 3이면 failed (OOM 무한루프 방지)
