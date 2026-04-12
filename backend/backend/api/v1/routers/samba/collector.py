@@ -1605,3 +1605,46 @@ async def bulk_update_tags(
         session.add(p)
     await session.commit()
     return {"updated": len(products)}
+
+
+@router.post("/products/bulk-add-account")
+async def bulk_add_registered_account(
+    body: dict,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """등록된 상품에 마켓 계정 일괄 추가.
+
+    body: { "account_id": "ma_xxx", "source_account_id": "ma_yyy" }
+    source_account_id가 registered_accounts에 있는 상품에 account_id를 추가.
+    """
+    account_id = body.get("account_id", "")
+    source_account_id = body.get("source_account_id", "")
+    if not account_id or not source_account_id:
+        raise HTTPException(400, "account_id, source_account_id 필수")
+
+    from backend.domain.samba.collector.model import SambaCollectedProduct
+
+    # source_account_id가 등록된 상품 조회
+    stmt = select(SambaCollectedProduct).where(
+        SambaCollectedProduct.status == "registered",
+        SambaCollectedProduct.registered_accounts.isnot(None),
+    )
+    results = await session.exec(stmt)
+    products = results.all()
+
+    updated = 0
+    for p in products:
+        reg = list(p.registered_accounts or [])
+        if source_account_id in reg and account_id not in reg:
+            reg.append(account_id)
+            p.registered_accounts = reg
+            session.add(p)
+            updated += 1
+
+    if updated > 0:
+        await session.commit()
+    return {
+        "total_checked": len(products),
+        "updated": updated,
+        "account_id": account_id,
+    }
