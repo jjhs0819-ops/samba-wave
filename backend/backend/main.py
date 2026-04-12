@@ -196,15 +196,20 @@ async def lifespan(app: FastAPI):
                             for _ci in range(0, len(_id_list), 1000):
                                 _chunk = _id_list[_ci : _ci + 1000]
                                 prod_stmt = _sel(SambaCollectedProduct).where(
-                                    SambaCollectedProduct.status == "registered",
                                     SambaCollectedProduct.site_product_id.in_(_chunk),
                                 )
                                 prod_result = await session.exec(prod_stmt)
                                 for p in prod_result.all():
+                                    _changed = False
                                     reg = list(p.registered_accounts or [])
                                     if pa_acc.id not in reg:
                                         reg.append(pa_acc.id)
                                         p.registered_accounts = reg
+                                        _changed = True
+                                    if p.status != "registered":
+                                        p.status = "registered"
+                                        _changed = True
+                                    if _changed:
                                         session.add(p)
                                         _pa_updated += 1
                             if _pa_updated > 0:
