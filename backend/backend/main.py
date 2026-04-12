@@ -168,11 +168,31 @@ async def lifespan(app: FastAPI):
                     client = PlayAutoClient(pa_api_key)
                     try:
                         pa_products = await client.get_products()
-                        pa_model_names = {
-                            str(pp.get("ModelName", "") or "").strip()
-                            for pp in pa_products
-                            if str(pp.get("ModelName", "") or "").strip()
-                        }
+                        # API 응답 필드 확인 로그
+                        if pa_products:
+                            _sample = (
+                                pa_products[0]
+                                if isinstance(pa_products, list)
+                                else pa_products
+                            )
+                            _startup_log.info(
+                                f"[startup] 플레이오토 API 응답: {len(pa_products)}건, "
+                                f"필드={list(_sample.keys())[:15]}"
+                            )
+                        # ModelName 또는 modelName 등 다양한 키 시도
+                        pa_model_names: set[str] = set()
+                        for pp in pa_products:
+                            mn = str(
+                                pp.get("ModelName", "")
+                                or pp.get("modelName", "")
+                                or pp.get("model_name", "")
+                                or ""
+                            ).strip()
+                            if mn:
+                                pa_model_names.add(mn)
+                        _startup_log.info(
+                            f"[startup] 플레이오토 ModelName 추출: {len(pa_model_names)}개"
+                        )
                         if pa_model_names:
                             prod_stmt = _sel(SambaCollectedProduct).where(
                                 SambaCollectedProduct.status == "registered",
