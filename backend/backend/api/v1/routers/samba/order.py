@@ -1998,6 +1998,12 @@ async def sync_orders_from_markets(
                     # 마켓 상품번호 보충 (기존 주문에 없으면 채움)
                     if order_data.get("product_id") and not existing.product_id:
                         update_fields["product_id"] = order_data["product_id"]
+                    # 주문 status 갱신 (이행매출 판정 기준)
+                    if (
+                        order_data.get("status")
+                        and order_data["status"] != existing.status
+                    ):
+                        update_fields["status"] = order_data["status"]
                     # 송장전송완료/배송중 이상 상태는 덮어쓰지 않음
                     # 단, 롯데ON은 발송완료/배송중/배송완료로 진행된 경우 갱신 허용
                     new_ship_status = order_data.get("shipping_status")
