@@ -1756,6 +1756,10 @@ async def sync_orders_from_markets(
                     )
                     logger.info(f"[주문동기화] 플레이오토: {len(raw_orders)}건 조회")
                     for ro in raw_orders:
+                        # 파생 주문 스킵 (사본-취소마감, ★교환주문 — 원주문에 이미 정보 포함)
+                        _pname = ro.get("ProdName", "")
+                        if _pname.startswith("[사본-") or "★교환주문" in _pname:
+                            continue
                         orders_data.append(
                             _parse_playauto_order(ro, account["id"], label, alias_map)
                         )
