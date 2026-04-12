@@ -1414,9 +1414,12 @@ class SambaShipmentService:
                         res["product_nos"] = nos
                         logger.info(f"[전송] {market_type} 상품번호: {product_no}")
 
-                    # 스냅샷 준비
+                    # 스냅샷 준비 (스마트스토어는 300원 올림 반영)
+                    _snap_price = int(acct_product.get("sale_price") or 0)
+                    if market_type == "smartstore":
+                        _snap_price = math.ceil(_snap_price / 300) * 300
                     res["sent_snapshot"] = {
-                        "sale_price": int(acct_product.get("sale_price") or 0),
+                        "sale_price": _snap_price,
                         "cost": int(acct_product.get("cost") or 0),
                         "options": [
                             {

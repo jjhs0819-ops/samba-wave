@@ -570,8 +570,16 @@ async def _site_autotune_loop(site: str):
                                         else 0
                                     )
 
-                                    # 가격 변동 → 전송 예약 (100원 단위 절사 후 비교)
-                                    expected_price = (expected_price // 100) * 100
+                                    # 가격 변동 → 전송 예약
+                                    # 스마트스토어: 300원 올림 (25% 역산 시 100원 단위 보장)
+                                    import math as _m
+
+                                    if market_type == "smartstore":
+                                        expected_price = (
+                                            _m.ceil(expected_price / 300) * 300
+                                        )
+                                    else:
+                                        expected_price = (expected_price // 100) * 100
 
                                     # 가격 이상치 방어: 원가 < 정상가 5%이면 재전송 차단
                                     _orig_p = getattr(product, "original_price", 0) or 0
