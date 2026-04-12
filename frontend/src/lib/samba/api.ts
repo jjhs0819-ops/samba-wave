@@ -530,6 +530,8 @@ export const collectorApi = {
       method: "POST",
       body: JSON.stringify({ ids, tags, seo_keywords: seoKeywords }),
     }),
+  bulkAddAccount: () =>
+    request<{ pa_products: number; matched: number; updated: number; already: number }>(`${SAMBA_PREFIX}/collector/products/bulk-add-account`, { method: "POST" }),
 
   // 재고/가격 갱신
   refresh: (productIds?: string[], autoRetransmit = true, searchFilterIds?: string[]) =>
