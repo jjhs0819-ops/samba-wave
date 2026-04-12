@@ -24,7 +24,13 @@ def utc_to_seoul(dt: datetime | None) -> datetime | None:
 
 def kst_str_to_utc(
     s: str | None,
-    fmts: tuple[str, ...] = ("%Y%m%d%H%M%S", "%Y-%m-%d %H:%M:%S", "%Y%m%d"),
+    fmts: tuple[str, ...] = (
+        "%Y%m%d%H%M%S",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y%m%d",
+        "%Y-%m-%d",
+    ),
 ) -> datetime | None:
     """마켓 API KST 날짜 문자열 → UTC aware datetime 변환.
     파싱 실패 시 None 반환.

@@ -99,9 +99,8 @@ async def dashboard_stats(
         hour=0, minute=0, second=0, microsecond=0
     )
 
-    # 날짜 기준: 고객결제일 우선, KST 변환
-    order_date_utc = func.coalesce(SambaOrder.paid_at, SambaOrder.created_at)
-    order_date = order_date_utc + text("INTERVAL '9 hours'")
+    # 날짜 기준: 고객결제일(paid_at)만 사용, KST 변환
+    order_date = SambaOrder.paid_at + text("INTERVAL '9 hours'")
 
     # 금월 집계
     this_month_q = select(
@@ -125,7 +124,7 @@ async def dashboard_stats(
                 else_=0,
             )
         ).label("fulfillment_count"),
-    ).where(order_date >= this_month_start)
+    ).where(SambaOrder.paid_at != None, order_date >= this_month_start)  # noqa: E711
     if tenant_id is not None:
         this_month_q = this_month_q.where(
             or_(
@@ -157,7 +156,10 @@ async def dashboard_stats(
                 else_=0,
             )
         ).label("fulfillment_count"),
-    ).where(and_(order_date >= last_month_start, order_date < this_month_start))
+    ).where(
+        SambaOrder.paid_at != None,
+        and_(order_date >= last_month_start, order_date < this_month_start),
+    )  # noqa: E711
     if tenant_id is not None:
         last_month_q = last_month_q.where(
             or_(
@@ -192,7 +194,7 @@ async def dashboard_stats(
                 )
             ).label("fulfillment_count"),
         )
-        .where(order_date >= week_ago)
+        .where(SambaOrder.paid_at != None, order_date >= week_ago)  # noqa: E711
         .group_by(func.date(order_date))
     )
     if tenant_id is not None:
@@ -238,10 +240,11 @@ async def dashboard_stats(
             ).label("fulfillment_sales"),
         )
         .where(
+            SambaOrder.paid_at != None,  # noqa: E711
             and_(
                 order_date >= year_start,
                 extract("year", order_date) == now.year,
-            )
+            ),
         )
         .group_by(extract("month", order_date))
     )
@@ -313,17 +316,20 @@ async def list_orders_by_date_range(
     session: AsyncSession = Depends(get_read_session_dependency),
     tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
-    """기간별 주문 조회 — COALESCE(paid_at, created_at) 기준, 제한 없이 전체 반환."""
-    from sqlalchemy import func, select as sa_select, or_
+    """기간별 주문 조회 — paid_at(고객결제일) 기준, 제한 없이 전체 반환."""
+    from sqlalchemy import select as sa_select, or_
     from backend.utils import kst_date_range_to_utc
 
     start_dt, end_dt = kst_date_range_to_utc(start, end)
 
-    order_date = func.coalesce(SambaOrder.paid_at, SambaOrder.created_at)
     stmt = (
         sa_select(SambaOrder)
-        .where(order_date >= start_dt, order_date <= end_dt)
-        .order_by(order_date.desc())
+        .where(
+            SambaOrder.paid_at != None,  # noqa: E711
+            SambaOrder.paid_at >= start_dt,
+            SambaOrder.paid_at <= end_dt,
+        )
+        .order_by(SambaOrder.paid_at.desc())
     )
     if tenant_id is not None:
         stmt = stmt.where(
@@ -2206,6 +2212,46 @@ async def sync_orders_from_markets(
                 except Exception as _bf_err:
                     logger.warning(
                         f"[주문동기화] {label}: paid_at 백필 실패 — {_bf_err}"
+                    )
+
+            # ── paid_at 백필 — 플레이오토 NULL paid_at 주문 → 동기화 데이터에서 매칭 ──
+            elif market_type == "playauto":
+                try:
+                    # 현재 동기화에서 paid_at이 유효한 주문의 order_number → paid_at 매핑
+                    _pa_paid_map: dict[str, datetime] = {}
+                    for od in orders_data:
+                        if od.get("paid_at") and od.get("order_number"):
+                            _pa_paid_map[od["order_number"]] = od["paid_at"]
+                    if _pa_paid_map:
+                        _null_rows = await session.execute(
+                            _sa_text(
+                                "SELECT order_number FROM samba_order "
+                                "WHERE paid_at IS NULL AND source = 'playauto' "
+                                "AND channel_id = :cid LIMIT 200"
+                            ),
+                            {"cid": account["id"]},
+                        )
+                        _null_ons = [r[0] for r in _null_rows.fetchall()]
+                        _backfilled = 0
+                        for _on in _null_ons:
+                            _paid = _pa_paid_map.get(_on)
+                            if _paid:
+                                await session.execute(
+                                    _sa_text(
+                                        "UPDATE samba_order SET paid_at = :paid "
+                                        "WHERE order_number = :on AND paid_at IS NULL"
+                                    ),
+                                    {"paid": _paid, "on": _on},
+                                )
+                                _backfilled += 1
+                        if _backfilled:
+                            await session.commit()
+                            logger.info(
+                                f"[주문동기화] {label}: 플레이오토 paid_at 백필 {_backfilled}건"
+                            )
+                except Exception as _bf_err:
+                    logger.warning(
+                        f"[주문동기화] {label}: 플레이오토 paid_at 백필 실패 — {_bf_err}"
                     )
 
         except Exception as e:
