@@ -606,7 +606,8 @@ async def _site_autotune_loop(site: str):
 
                                     acc_last = last_sent.get(acc_id, {})
                                     last_price = (
-                                        int(acc_last.get("sale_price", 0))
+                                        (int(acc_last.get("sale_price", 0)) // 100)
+                                        * 100
                                         if acc_last
                                         else 0
                                     )

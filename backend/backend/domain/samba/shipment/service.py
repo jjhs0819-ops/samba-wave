@@ -1303,7 +1303,7 @@ class SambaShipmentService:
                 cur_cost_int = int(acct_product.get("cost") or 0)
                 last_sent = (product_row.last_sent_data or {}).get(account_id)
                 if last_sent:
-                    last_price = int(last_sent.get("sale_price") or 0)
+                    last_price = (int(last_sent.get("sale_price") or 0) // 100) * 100
                     last_cost_sent = int(last_sent.get("cost") or 0)
                     last_opts = last_sent.get("options", [])
                     cur_opts = [
