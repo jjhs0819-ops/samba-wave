@@ -207,7 +207,7 @@ export default function OrdersPage() {
     setSyncing(true)
     const ts = () => new Date().toLocaleTimeString()
     const daysMap: Record<string, number> = {
-      yesterday: 2, today: 1, thisweek: 7, lastweek: 14, '1week': 7, '15days': 15,
+      yesterday: 1, today: 1, thisweek: 7, lastweek: 14, '1week': 7, '15days': 15,
       thismonth: 31, lastmonth: 60, '1month': 30, '3months': 90, '6months': 180,
       thisyear: Math.ceil((Date.now() - new Date(new Date().getFullYear(), 0, 1).getTime()) / 86400000) + 1, all: 365,
     }
