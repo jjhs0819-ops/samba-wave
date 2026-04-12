@@ -1054,12 +1054,35 @@ class MusinsaClient:
                 ) or coupon_json.get("data", [])
                 if isinstance(coupons, list):
                     for c in coupons:
-                        logger.debug(
+                        logger.info(
                             f"[쿠폰 상세] {goods_no}: salePrice={c.get('salePrice')}, "
                             f"discountPrice={c.get('discountPrice')}, "
-                            f"discountRate={c.get('discountRate')}, "
+                            f"couponApply={c.get('couponApply')}, "
+                            f"maxLimitQty={c.get('maxLimitQty')}, "
+                            f"bestSalePriceYn={c.get('bestSalePriceYn')}, "
                             f"couponNm={c.get('couponNm', '')[:30]}"
                         )
+                        # 조건 필터링: 사용 불가 쿠폰 제외
+                        if (c.get("maxLimitQty", 0) or 0) > 1:
+                            logger.info(
+                                f"[쿠폰 스킵] {goods_no}: maxLimitQty={c.get('maxLimitQty')} — 2개 이상 구매 조건"
+                            )
+                            continue
+                        if (c.get("lowPrice", 0) or 0) > s_price:
+                            logger.info(
+                                f"[쿠폰 스킵] {goods_no}: lowPrice={c.get('lowPrice')} > {s_price} — 최소 금액 미달"
+                            )
+                            continue
+                        if c.get("bestSalePriceYn") == "N":
+                            logger.info(
+                                f"[쿠폰 스킵] {goods_no}: bestSalePriceYn=N — 최대혜택가 미반영 쿠폰"
+                            )
+                            continue
+                        if c.get("downloadYn") == "N" or c.get("issuedYn") == "N":
+                            logger.info(
+                                f"[쿠폰 스킵] {goods_no}: downloadYn={c.get('downloadYn')}, issuedYn={c.get('issuedYn')} — 미발급 쿠폰"
+                            )
+                            continue
                         actual_discount = 0
                         c_sale_price = c.get("salePrice", 0) or 0
                         # salePrice 우선 처리
