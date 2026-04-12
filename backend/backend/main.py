@@ -167,38 +167,32 @@ async def lifespan(app: FastAPI):
                 if pa_api_key:
                     client = PlayAutoClient(pa_api_key)
                     try:
-                        pa_products = await client.get_products()
-                        # API 응답 필드 확인 로그
-                        if pa_products:
-                            _sample = (
-                                pa_products[0]
-                                if isinstance(pa_products, list)
-                                else pa_products
-                            )
-                            _startup_log.info(
-                                f"[startup] 플레이오토 API 응답: {len(pa_products)}건, "
-                                f"필드={list(_sample.keys())[:15]}"
-                            )
-                        # ModelName 또는 modelName 등 다양한 키 시도
-                        pa_model_names: set[str] = set()
-                        for pp in pa_products:
-                            mn = str(
-                                pp.get("ModelName", "")
-                                or pp.get("modelName", "")
-                                or pp.get("model_name", "")
-                                or ""
-                            ).strip()
-                            if mn:
-                                pa_model_names.add(mn)
-                        _startup_log.info(
-                            f"[startup] 플레이오토 ModelName 추출: {len(pa_model_names)}개"
+                        import re as _re
+
+                        pa_products = await client.get_products(
+                            my_cate_name="SAMBA-WAVE"
                         )
-                        if pa_model_names:
+                        _startup_log.info(
+                            f"[startup] 플레이오토 SAMBA-WAVE: {len(pa_products)}건"
+                        )
+                        # ProdName 끝에서 site_product_id 추출
+                        pa_site_ids: set[str] = set()
+                        for pp in pa_products:
+                            pn = str(pp.get("ProdName", "") or "").strip()
+                            # 상품명 마지막 토큰이 site_product_id
+                            parts = pn.split()
+                            if parts:
+                                last = parts[-1]
+                                # 숫자만 또는 영숫자 코드
+                                if _re.match(r"^[A-Za-z0-9_-]+$", last):
+                                    pa_site_ids.add(last)
+                        _startup_log.info(
+                            f"[startup] 플레이오토 site_id 추출: {len(pa_site_ids)}개"
+                        )
+                        if pa_site_ids:
                             prod_stmt = _sel(SambaCollectedProduct).where(
                                 SambaCollectedProduct.status == "registered",
-                                SambaCollectedProduct.site_product_id.in_(
-                                    pa_model_names
-                                ),
+                                SambaCollectedProduct.site_product_id.in_(pa_site_ids),
                             )
                             prod_result = await session.exec(prod_stmt)
                             _pa_updated = 0
@@ -212,8 +206,9 @@ async def lifespan(app: FastAPI):
                             if _pa_updated > 0:
                                 await session.commit()
                             _startup_log.info(
-                                f"[startup] 플레이오토 매칭: API상품 {len(pa_model_names)}개, "
-                                f"추가 {_pa_updated}개"
+                                f"[startup] 플레이오토 매칭: "
+                                f"API {len(pa_products)}개 → site_id {len(pa_site_ids)}개 → "
+                                f"DB매칭 → 추가 {_pa_updated}개"
                             )
                     finally:
                         await client.close()

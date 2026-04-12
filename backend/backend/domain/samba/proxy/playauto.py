@@ -169,10 +169,13 @@ class PlayAutoClient:
         url = f"{EMP_BASE_URL}/prods"
         return await self._call_api("GET", url, params={"MasterCode": master_code})
 
-    async def get_products(self) -> list[dict]:
+    async def get_products(self, my_cate_name: str = "") -> list[dict]:
         """상품 다중 조회 (GET /prods/info/lookupProd)."""
         url = f"{EMP_BASE_URL}/prods/info/lookupProd"
-        result = await self._call_api("GET", url)
+        params = {}
+        if my_cate_name:
+            params["MyCateName"] = my_cate_name
+        result = await self._call_api("GET", url, params=params or None)
         return result if isinstance(result, list) else [result]
 
     # ── 주문 API ──
