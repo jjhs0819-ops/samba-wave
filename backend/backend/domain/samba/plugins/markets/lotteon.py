@@ -2227,25 +2227,34 @@ class LotteonPlugin(MarketPlugin):
                 logger.warning(f"[롯데ON] 즉시할인 설정 실패 (무시): {e}")
 
         # ── 행사 제외 설정 ──────────────────────────────────────────────
-        # additional_fields 키: ownerDiscountExclude, unitCouponExclude,
-        #   deliveryCouponExclude, cmPcsExclude, pcsExclude (Y/N)
-        exception_flags: dict[str, str] = {}
+        # 설정값 Y/N → API값 AGR(제외)/NXCLD(제외안함) 변환
+        # 8개 필드 전부 필수, 미설정 항목은 NXCLD 기본값
         _flag_map = {
-            "ownerDiscountExclude": "ownrDscExYn",
-            "unitCouponExclude": "pdUtCpnExYn",
-            "deliveryCouponExclude": "dvCpnExYn",
-            "cmPcsExclude": "cmPcsDscExYn",
-            "pcsExclude": "pcsDscExYn",
+            "ownerDiscountExclude": "onerDcXcldAgrCd",
+            "unitCouponExclude": "ovlpCpnXcldAgrCd",
+            "deliveryCouponExclude": "dvCpnXcldAgrCd",
+            "cmPcsExclude": "crdCmDcXcldAgrCd",
+            "pcsExclude": "pcsDcXcldAgrCd",
         }
+        _yn_to_agr = {"Y": "AGR", "N": "NXCLD"}
+        exception_flags: dict[str, str] = {}
+        has_any = False
         for settings_key, api_key in _flag_map.items():
             val = extras.get(settings_key, "")
             if val in ("Y", "N"):
-                exception_flags[api_key] = val
+                exception_flags[api_key] = _yn_to_agr[val]
+                has_any = True
+            else:
+                exception_flags[api_key] = "NXCLD"
+        # 나머지 3개 필드는 NXCLD 기본값
+        exception_flags.setdefault("stffDcXcldAgrCd", "NXCLD")
+        exception_flags.setdefault("odCndCpnXcldAgrCd", "NXCLD")
+        exception_flags.setdefault("crdReqDcCashbXcldAgrCd", "NXCLD")
 
-        if exception_flags:
+        if has_any:
             try:
                 resp = await client.save_product_exception(spd_no, exception_flags)
-                logger.info(f"[롯데ON] 행사제외 설정 완료: {exception_flags} → {resp}")
+                logger.info(f"[롯데ON] 행사제외 설정 완료: {exception_flags} -> {resp}")
             except Exception as e:
                 logger.warning(f"[롯데ON] 행사제외 설정 실패 (무시): {e}")
 
