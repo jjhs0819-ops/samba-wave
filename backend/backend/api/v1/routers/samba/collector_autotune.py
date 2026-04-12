@@ -701,12 +701,9 @@ async def _site_autotune_loop(site: str):
                                     _site=site,
                                 ):
                                     nonlocal _synced_count
-                                    from backend.domain.samba.shipment.service import (
-                                        _get_account_semaphore,
-                                    )
-
-                                    _sem = _get_account_semaphore(_acc)
-                                    await _sem.acquire()
+                                    # 세마포어를 여기서 획득하면 안 됨
+                                    # — start_update → _dispatch_one 내부에서 동일 세마포어를
+                                    #   다시 획득하므로 데드락 발생 (Semaphore(1) 비재진입)
                                     try:
                                         async with get_write_session() as _tx_s:
                                             from backend.domain.samba.shipment.repository import (
@@ -733,8 +730,6 @@ async def _site_autotune_loop(site: str):
                                             f"{_label} 전송실패: {str(_fe)[:80]}",
                                             "error",
                                         )
-                                    finally:
-                                        _sem.release()
                                     await asyncio.sleep(0.3)
 
                                 asyncio.create_task(_fire_transmit())
