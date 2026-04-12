@@ -961,6 +961,16 @@ export default function SettingsPage() {
       const merged = { ...(savedStoreData[marketKey] || {}), ...filtered }
       // select "설정안함" 선택 시 해당 키 삭제
       for (const k of clearKeys) delete merged[k]
+      // 마스킹된 password 필드(****xxxx)가 있으면 savedStoreData 원본으로 복원
+      const pwdFieldsForSave = new Set(
+        (marketCfgForMerge?.fields ?? []).filter(f => f.type === 'password').map(f => f.name)
+      )
+      const savedOrig = savedStoreData[marketKey] || {}
+      for (const field of pwdFieldsForSave) {
+        if (merged[field]?.startsWith('****') && savedOrig[field]) {
+          merged[field] = savedOrig[field]
+        }
+      }
       const data = merged
       await forbiddenApi.saveSetting(`store_${marketKey}`, data)
       const marketCfg = STORE_MARKETS.find(m => m.key === marketKey)
@@ -1016,9 +1026,21 @@ export default function SettingsPage() {
     }
     setStoreStatus(prev => ({ ...prev, [marketKey]: '인증 확인 중...' }))
     try {
+      // 마스킹된 password 필드(****xxxx)가 있으면 savedStoreData 원본으로 복원
+      const marketCfg = STORE_MARKETS.find(m => m.key === marketKey)
+      const pwdFields = new Set(
+        (marketCfg?.fields ?? []).filter(f => f.type === 'password').map(f => f.name)
+      )
+      const saved = savedStoreData[marketKey] || {}
+      const safeData = { ...data }
+      for (const field of pwdFields) {
+        if (safeData[field]?.startsWith('****') && saved[field]) {
+          safeData[field] = saved[field]
+        }
+      }
       // 먼저 설정 저장
-      await forbiddenApi.saveSetting(`store_${marketKey}`, data)
-      setSavedStoreData(prev => ({ ...prev, [marketKey]: { ...data } }))
+      await forbiddenApi.saveSetting(`store_${marketKey}`, safeData)
+      setSavedStoreData(prev => ({ ...prev, [marketKey]: { ...safeData } }))
       // 마켓별 인증 테스트
       let result: { success: boolean; message: string }
       if (marketKey === 'smartstore') {
@@ -1918,10 +1940,20 @@ export default function SettingsPage() {
                           <button
                             onClick={() => {
                               setEditingAccountId(a.id)
-                              const accFields = (a.additional_fields || {}) as Record<string, string>
+                              // password 타입 필드는 계정 API에서 마스킹(****xxxx)된 값이므로 제외
+                              // savedStoreData(설정 API 원본)의 값을 유지해야 DB 손상 방지
+                              const passwordFieldNames = new Set(
+                                market.fields.filter(f => f.type === 'password').map(f => f.name)
+                              )
+                              const accFields = Object.fromEntries(
+                                Object.entries((a.additional_fields || {}) as Record<string, string>)
+                                  .filter(([k]) => !passwordFieldNames.has(k))
+                              )
+                              const savedFields = savedStoreData[market.key] || {}
                               const formData: Record<string, string> = {
                                 businessName: a.business_name || '',
                                 storeId: a.seller_id || '',
+                                ...savedFields,
                                 ...accFields,
                               }
                               setStoreData(prev => ({ ...prev, [market.key]: formData }))
