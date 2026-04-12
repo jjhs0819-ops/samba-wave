@@ -401,11 +401,16 @@ const ProductCard = React.memo(function ProductCard({
     .map(([marketName, v]) => {
       const r = calcPrice(cost, v.marginRate || marginRate, (v.shippingCost ?? shippingCost) || shippingCost, v.feeRate || 0, extraCharge, minMarginAmount)
       let displayPrice = r.price
+      let displayCalcStr = r.calcStr
       // 스마트스토어: 300원 올림 반영 (백엔드 25% 역산과 동일)
       if (marketName.includes('스마트스토어')) {
         displayPrice = Math.ceil(r.price / 300) * 300
+        const diff = displayPrice - r.price
+        if (diff > 0) {
+          displayCalcStr = `₩${fmt(displayPrice)} = ${r.calcStr.split(' = ')[1]} + 300원올림 +${fmt(diff)}`
+        }
       }
-      return { marketName, price: displayPrice, calcStr: r.calcStr }
+      return { marketName, price: displayPrice, calcStr: displayCalcStr }
     }), [mp, cost, marginRate, shippingCost, extraCharge, minMarginAmount])
 
   const marketEnabled = (p.market_enabled || {}) as Record<string, boolean>
