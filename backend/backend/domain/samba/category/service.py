@@ -3276,21 +3276,20 @@ JSON만 응답:
         leaf_keywords = _expand_synonyms(leaf_keywords)
         parent_keywords = _expand_synonyms(parent_keywords)
 
-        # 필터: leaf 키워드 매칭 우선 → 부족하면 상위 키워드 보조
+        # 필터: 키워드 매칭 개수로 가중치 정렬 — leaf(2점) + parent(1점)
         market_list_parts: list[str] = []
         for market, cats in market_cats.items():
-            # leaf 키워드와 매칭되는 카테고리
-            leaf_matches = [c for c in cats if any(kw in c for kw in leaf_keywords)]
-            if len(leaf_matches) >= 3:
-                relevant = leaf_matches[:15]
-            else:
-                # leaf 부족 → 상위 키워드로 보충
-                all_kw = leaf_keywords | parent_keywords
-                relevant = [c for c in cats if any(kw in c for kw in all_kw)]
-                if not relevant:
-                    relevant = cats[:10]
-                else:
-                    relevant = relevant[:15]
+            scored: list[tuple[int, str]] = []
+            for c in cats:
+                leaf_score = sum(2 for kw in leaf_keywords if kw in c)
+                parent_score = sum(1 for kw in parent_keywords if kw in c)
+                total = leaf_score + parent_score
+                if total > 0:
+                    scored.append((total, c))
+            scored.sort(key=lambda x: -x[0])
+            relevant = [c for _, c in scored[:20]]
+            if not relevant:
+                relevant = cats[:10]
             market_list_parts.append(
                 f"- {market}: {json.dumps(relevant, ensure_ascii=False)}"
             )
@@ -3377,9 +3376,14 @@ JSON만:
                     ai_validated[market] = suggested
                     logger.info(f"[AI매핑] {market}: '{suggested}' ✓ 목록에 존재")
                 else:
-                    # 목록에 없으면 유사매칭 시도
+                    # 목록에 없으면 유사매칭 시도 — leaf 키워드 포함 후보 우선
+                    fallback_pool = [
+                        c
+                        for c in market_cats[market]
+                        if any(kw in c for kw in leaf_keywords)
+                    ]
                     fallback = _similarity_match_smartstore(
-                        suggested, market_cats[market]
+                        suggested, fallback_pool or market_cats[market]
                     )
                     if fallback:
                         logger.warning(
