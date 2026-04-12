@@ -64,6 +64,20 @@ class MusinsaClient:
             h.update(extra)
         return h
 
+    async def _check_product_pre_point(
+        self, client: httpx.AsyncClient, goods_no: str
+    ) -> Optional[bool]:
+        """비인증 호출로 상품 본연의 isPrePoint 확인 (계정 설정 영향 배제)."""
+        try:
+            headers = {**self.HEADERS}  # 쿠키 미포함
+            resp = await client.get(f"{self.BASE_DETAIL}/{goods_no}", headers=headers)
+            if resp.status_code == 200:
+                data = resp.json().get("data", {})
+                return data.get("isPrePoint") is True
+        except Exception:
+            pass
+        return None  # 실패 시 None → 호출부에서 auth 값 유지
+
     @staticmethod
     def _to_image_url(path: str) -> str:
         if not path:
@@ -275,7 +289,19 @@ class MusinsaClient:
 
             # 4단계: 적립 선할인 (isPrePoint=True일 때)
             # 선할인 = 등급적립(remaining × memberSavePointRate) + 구매적립(savePoint)
+            # isPrePoint 교정: 인증 결과 True → 비인증으로 상품 본연 값 확인
             is_pre_point = d.get("isPrePoint") is True
+            if is_pre_point:
+                product_pre_point = await self._check_product_pre_point(
+                    client, goods_no
+                )
+                if product_pre_point is False:
+                    is_pre_point = False
+                    logger.info(
+                        f"[무신사 선할인 교정] {goods_no}: "
+                        f"계정 설정 영향 → isPrePoint=False로 교정"
+                    )
+                # product_pre_point=None(실패) → auth 값(True) 유지
             remaining = benefit_base - grade_discount - point_usage
             pre_discount = 0
             if is_pre_point:
@@ -412,10 +438,12 @@ class MusinsaClient:
                 "isSale": gp.get("isSale", False),
                 # 판매 상태: sold_out(품절) → preorder(판매예정) → in_stock 순서로 판단
                 # sold_out을 먼저 체크해야 preorder 상태였다가 품절된 경우를 올바르게 처리
+                # canBuy=False: 오프라인 전용 등 온라인 구매 불가 상품도 sold_out 처리
                 "saleStatus": (
                     "sold_out"
                     if bool(
-                        d.get("isSoldOut")
+                        d.get("canBuy") is False
+                        or d.get("isSoldOut")
                         or (d.get("goodsPrice") or {}).get("isSoldOut")
                         or d.get("isOutOfStock", False)
                         or (
