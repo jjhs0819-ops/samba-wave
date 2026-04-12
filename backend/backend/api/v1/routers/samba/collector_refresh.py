@@ -247,16 +247,15 @@ async def refresh_products(
         updates["sale_status"] = r.new_sale_status
         old_status = getattr(product, "sale_status", "in_stock")
 
+        # 원가는 가격 변동 여부와 무관하게 항상 최신값으로 갱신
+        if r.new_cost is not None:
+            updates["cost"] = r.new_cost
+
         if r.changed:
             if r.new_sale_price is not None:
                 updates["sale_price"] = r.new_sale_price
             if r.new_original_price is not None:
                 updates["original_price"] = r.new_original_price
-            if r.new_cost is not None:
-                _old_cost = getattr(product, "cost", None) or 0
-                # 기존 원가가 더 낮으면(확장앱 혜택가) 보존
-                if not (_old_cost > 0 and _old_cost < r.new_cost):
-                    updates["cost"] = r.new_cost
 
             # 가격 변동 추적
             old_price = product.sale_price or 0

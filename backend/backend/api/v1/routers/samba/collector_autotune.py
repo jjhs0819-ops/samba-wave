@@ -338,31 +338,9 @@ async def _site_autotune_loop(site: str):
                                     f"[{idx:,}/{total:,}] " if idx and total else ""
                                 )
 
-                                # 원가: DB 보존 로직과 일치시킴
-                                # (확장앱 혜택가가 더 낮으면 DB는 기존값 보존, 단 이상치 예외)
+                                # 원가: 항상 최신 계산값 사용
                                 if r.new_cost is not None:
-                                    _old_cost_for_compare = (
-                                        getattr(product, "cost", None) or 0
-                                    )
-                                    _sale_for_compare = (
-                                        getattr(product, "sale_price", 0) or 0
-                                    )
-                                    # 이상치: 판매가의 10% 미만이면 비정상 원가
-                                    _cost_anomaly = (
-                                        _sale_for_compare > 0
-                                        and _old_cost_for_compare > 0
-                                        and _old_cost_for_compare
-                                        < _sale_for_compare * 0.1
-                                    )
-                                    if _cost_anomaly:
-                                        _cur_cost = r.new_cost
-                                    elif (
-                                        _old_cost_for_compare > 0
-                                        and _old_cost_for_compare < r.new_cost
-                                    ):
-                                        _cur_cost = _old_cost_for_compare
-                                    else:
-                                        _cur_cost = r.new_cost
+                                    _cur_cost = r.new_cost
                                 else:
                                     _cur_cost = product.cost or product.sale_price or 0
                                 _cost_int = int(_cur_cost) if _cur_cost else 0
@@ -404,27 +382,7 @@ async def _site_autotune_loop(site: str):
                                 if r.new_original_price is not None:
                                     updates["original_price"] = r.new_original_price
                                 if r.new_cost is not None:
-                                    _old_cost = getattr(product, "cost", None) or 0
-                                    _sale_chk = getattr(product, "sale_price", 0) or 0
-                                    # 이상치: 판매가의 10% 미만이면 비정상 원가 → 무조건 갱신
-                                    _cost_anom = (
-                                        _sale_chk > 0
-                                        and _old_cost > 0
-                                        and _old_cost < _sale_chk * 0.1
-                                    )
-                                    if _cost_anom:
-                                        log.warning(
-                                            "[가격방어] 오토튠 원가 이상치 → 갱신: "
-                                            "기존=%s, 신규=%s, 판매가=%s",
-                                            int(_old_cost),
-                                            int(r.new_cost),
-                                            int(_sale_chk),
-                                        )
-                                    # 기존 원가가 더 낮으면 보존, 단 이상치는 예외
-                                    if _cost_anom or not (
-                                        _old_cost > 0 and _old_cost < r.new_cost
-                                    ):
-                                        updates["cost"] = r.new_cost
+                                    updates["cost"] = r.new_cost
                                 if r.new_options is not None:
                                     updates["options"] = r.new_options
                                 updates["sale_status"] = r.new_sale_status
