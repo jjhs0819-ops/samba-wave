@@ -1046,9 +1046,7 @@ class MusinsaClient:
                 )
             params = urlencode(params_dict)
             coupon_url = f"{self.BASE_COUPON}?{params}"
-            # 비인증 호출: 계정에 다운로드된 장바구니 쿠폰 제외, 상품 쿠폰만 반환
-            unauth_headers = {**self.HEADERS}  # 쿠키 미포함
-            resp = await client.get(coupon_url, headers=unauth_headers)
+            resp = await client.get(coupon_url, headers=self._headers())
             if resp.status_code == 200:
                 coupon_json = resp.json()
                 coupons = (coupon_json.get("data") or {}).get(
