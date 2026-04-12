@@ -1609,42 +1609,71 @@ async def bulk_update_tags(
 
 @router.post("/products/bulk-add-account")
 async def bulk_add_registered_account(
-    body: dict,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    """등록된 상품에 마켓 계정 일괄 추가.
-
-    body: { "account_id": "ma_xxx", "source_account_id": "ma_yyy" }
-    source_account_id가 registered_accounts에 있는 상품에 account_id를 추가.
-    """
-    account_id = body.get("account_id", "")
-    source_account_id = body.get("source_account_id", "")
-    if not account_id or not source_account_id:
-        raise HTTPException(400, "account_id, source_account_id 필수")
-
+    """플레이오토 API에서 등록 상품 조회 → site_product_id 매칭 → registered_accounts에 계정 추가."""
+    from backend.domain.samba.account.model import SambaMarketAccount
     from backend.domain.samba.collector.model import SambaCollectedProduct
+    from backend.domain.samba.proxy.playauto import PlayAutoClient
 
-    # source_account_id가 등록된 상품 조회
+    # 플레이오토 계정 조회
+    pa_stmt = select(SambaMarketAccount).where(
+        SambaMarketAccount.market_type == "playauto",
+        SambaMarketAccount.is_active == True,  # noqa: E712
+    )
+    pa_result = await session.exec(pa_stmt)
+    pa_acc = pa_result.first()
+    if not pa_acc:
+        raise HTTPException(400, "플레이오토 계정이 없습니다")
+
+    pa_extras = pa_acc.additional_fields or {}
+    pa_api_key = pa_extras.get("apiKey", "") or getattr(pa_acc, "api_key", "")
+    if not pa_api_key:
+        raise HTTPException(400, "플레이오토 API Key가 없습니다")
+
+    # 플레이오토 API에서 등록 상품 조회
+    client = PlayAutoClient(pa_api_key)
+    try:
+        pa_products = await client.get_products()
+    finally:
+        await client.close()
+
+    # ModelName(=site_product_id) 추출
+    pa_model_names = set()
+    for pp in pa_products:
+        mn = str(pp.get("ModelName", "") or "").strip()
+        if mn:
+            pa_model_names.add(mn)
+
+    if not pa_model_names:
+        return {"error": "플레이오토에 등록된 상품이 없습니다", "pa_count": 0}
+
+    # DB에서 매칭되는 상품 조회
     stmt = select(SambaCollectedProduct).where(
         SambaCollectedProduct.status == "registered",
-        SambaCollectedProduct.registered_accounts.isnot(None),
+        SambaCollectedProduct.site_product_id.in_(pa_model_names),
     )
     results = await session.exec(stmt)
     products = results.all()
 
     updated = 0
+    already = 0
     for p in products:
         reg = list(p.registered_accounts or [])
-        if source_account_id in reg and account_id not in reg:
-            reg.append(account_id)
+        if pa_acc.id not in reg:
+            reg.append(pa_acc.id)
             p.registered_accounts = reg
             session.add(p)
             updated += 1
+        else:
+            already += 1
 
     if updated > 0:
         await session.commit()
     return {
-        "total_checked": len(products),
+        "pa_products": len(pa_model_names),
+        "matched": len(products),
         "updated": updated,
-        "account_id": account_id,
+        "already": already,
+        "account_id": pa_acc.id,
     }
