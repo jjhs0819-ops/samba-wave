@@ -97,7 +97,7 @@ async def dashboard_stats(
         last_month_start = this_month_start.replace(year=now.year - 1, month=12)
     else:
         last_month_start = this_month_start.replace(month=now.month - 1)
-    week_ago = (now - timedelta(days=7)).replace(
+    week_ago = (now - timedelta(days=6)).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
 
@@ -208,7 +208,7 @@ async def dashboard_stats(
         )
     daily_rows = (await session.execute(daily_q)).all()
     weekly = []
-    for i in range(8):
+    for i in range(7):
         d = week_ago + timedelta(days=i)
         day_str = d.strftime("%Y-%m-%d")
         row = next((r for r in daily_rows if str(r.day) == day_str), None)
