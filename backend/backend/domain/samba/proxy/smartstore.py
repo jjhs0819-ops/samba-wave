@@ -1716,11 +1716,11 @@ class SmartStoreClient:
         if desired_price <= 0:
             desired_price = int(product.get("original_price", 0)) or 10000
 
-        # 즉시할인: SmartStore 판매가는 10원 단위만 허용 → 25% 고정
-        # (20% 역산 시 10원 단위에 안 맞는 경우 빈번, 25%로 고정하여 해결)
-        # 예) 원하는 가격 80,700 / 0.75 = 107,600 (10원 단위 정확)
+        # 300원 올림 → 25% 역산(÷0.75)이 항상 100원 단위로 정확히 나눠짐
+        # 예) 89,600 → 89,700 / 0.75 = 119,600 (100원 단위 정확)
+        desired_price = math.ceil(desired_price / 300) * 300
         discount_rate = 25
-        sale_price = math.ceil(desired_price / (1 - discount_rate / 100))
+        sale_price = desired_price * 4 // 3
         immediate_discount = True
 
         import re
@@ -2292,8 +2292,9 @@ class SmartStoreClient:
                 or p.get("sale_price")
                 or p.get("original_price", 0)
             )
-            # 즉시할인 25% 역산: 원하는 결제가 → 정가(listing price)
-            sale_price = math.ceil(int(_desired_price) / (1 - 25 / 100))
+            # 300원 올림 + 25% 역산: 정가·결제가 모두 100원 단위 보장
+            _dp = math.ceil(int(_desired_price) / 300) * 300
+            sale_price = _dp * 4 // 3
             stock = int(account_settings.get("stockQuantity", 0)) or 999
 
             # 옵션에서 재고 계산

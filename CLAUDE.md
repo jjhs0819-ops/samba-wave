@@ -208,8 +208,6 @@ main (단일 브랜치)
 git add .
 git commit -m "커밋 메시지 (한국어)"
 git push origin main
-# 또는 danpoong 리모트로
-git push danpoong main
 ```
 
 push 후 GitHub Actions 배포 완료까지 약 3~5분 소요. Cloud Run 로그에서 확인.

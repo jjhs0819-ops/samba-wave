@@ -400,7 +400,12 @@ const ProductCard = React.memo(function ProductCard({
     .filter(([, v]) => v.accountId)
     .map(([marketName, v]) => {
       const r = calcPrice(cost, v.marginRate || marginRate, (v.shippingCost ?? shippingCost) || shippingCost, v.feeRate || 0, extraCharge, minMarginAmount)
-      return { marketName, price: r.price, calcStr: r.calcStr }
+      let displayPrice = r.price
+      // 스마트스토어: 300원 올림 반영 (백엔드 25% 역산과 동일)
+      if (marketName.includes('스마트스토어')) {
+        displayPrice = Math.ceil(r.price / 300) * 300
+      }
+      return { marketName, price: displayPrice, calcStr: r.calcStr }
     }), [mp, cost, marginRate, shippingCost, extraCharge, minMarginAmount])
 
   const marketEnabled = (p.market_enabled || {}) as Record<string, boolean>
