@@ -790,6 +790,13 @@ const STORE_MARKETS: MarketConfig[] = [
   ]},
 ]
 
+// select 필드에 대해 DB에 값이 없을 때 주입할 "안전한 기본값"
+// ※ 이곳에 등록된 필드만 초기값이 자동 주입된다.
+// ※ 의도치 않은 정책 변경(예: dispatchDays) 방지를 위해 화이트리스트 방식으로 관리.
+const SAFE_SELECT_DEFAULTS: Record<string, string> = {
+  bundleDelivery: 'N',   // 롯데ON 합배송 — 보수적 기본값("불가능")
+}
+
 export default function SettingsPage() {
   useEffect(() => { document.title = 'SAMBA-설정' }, [])
   // Accounts state
@@ -899,7 +906,10 @@ export default function SettingsPage() {
     setAccountLoading(false)
   }, [])
 
-  // 스토어 연결 설정 로드 (폼은 비워두고 savedStoreData에만 저장)
+  // 스토어 연결 설정 로드
+  // ※ 과거 버그: savedStoreData만 세팅하고 storeData는 빈 상태였음 → select UI는 첫 옵션이 시각적으로 보이지만 state는 ''라서
+  //    저장 시 merge 로직이 select 필드값을 누락해 DB에 합배송 key 자체가 들어가지 않음 → 백엔드가 기본값 "Y"로 등록 (합배송 불가 UI와 불일치)
+  //    → storeData도 함께 세팅 + 안전한 기본값이 명시된 select 필드(SAFE_SELECT_DEFAULTS)에 한해 초기값 주입해 일관성 확보
   const loadStoreSettings = useCallback(async () => {
     const loaded: Record<string, Record<string, string>> = {}
     const statuses: Record<string, string> = {}
@@ -912,7 +922,19 @@ export default function SettingsPage() {
         }
       } catch { /* ignore */ }
     }
-    setSavedStoreData(loaded)
+    // 안전한 기본값을 가진 select 필드에만 초기값 주입
+    const withDefaults: Record<string, Record<string, string>> = {}
+    for (const market of STORE_MARKETS) {
+      const base = { ...(loaded[market.key] || {}) }
+      for (const field of market.fields) {
+        if (field.type === 'select' && field.name in SAFE_SELECT_DEFAULTS && !(field.name in base)) {
+          base[field.name] = SAFE_SELECT_DEFAULTS[field.name]
+        }
+      }
+      withDefaults[market.key] = base
+    }
+    setSavedStoreData(withDefaults)
+    setStoreData(withDefaults)
     setStoreStatus(statuses)
   }, [])
 

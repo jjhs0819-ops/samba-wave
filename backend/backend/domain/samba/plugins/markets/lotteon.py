@@ -1419,7 +1419,9 @@ class LotteonPlugin(MarketPlugin):
         product_copy["dv_cst_pol_no"] = extras.get("dvCstPolNo", "")
         product_copy["island_dv_cst_pol_no"] = extras.get("dvIslandCstPolNo", "")
         product_copy["rtrp_no"] = extras.get("rtrpNo", "")
-        product_copy["cmbn_dv_psb_yn"] = extras.get("bundleDelivery", "Y")
+        # 기본값 "N" (합배송 불가) — 설정에서 명시적으로 "Y"를 선택한 경우에만 합배송 허용
+        # 과거 "Y" 기본값 버그: DB에 bundleDelivery 키 없으면 의도치 않게 합배송 가능으로 등록됨
+        product_copy["cmbn_dv_psb_yn"] = extras.get("bundleDelivery", "N")
         # 계정 추가 설정 주입
         if extras.get("asPhone"):
             # 설정의 A/S 전화번호를 그대로 사용 (브랜드명 불포함 — 다브랜드 운영)
