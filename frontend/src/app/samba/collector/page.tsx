@@ -194,7 +194,7 @@ export default function CollectorPage() {
 
   // 롯데ON 브랜드 선택 모달
   const [showBrandModal, setShowBrandModal] = useState(false)
-  const [brandModalList, setBrandModalList] = useState<{ name: string; count: number }[]>([])
+  const [brandModalList, setBrandModalList] = useState<{ name: string; count: number; id?: string }[]>([])
   const [brandModalSelected, setBrandModalSelected] = useState<Set<string>>(new Set())
   const [brandModalKeyword, setBrandModalKeyword] = useState('')
   const [brandModalParsed, setBrandModalParsed] = useState<{ brand: string; keyword: string; gf: string } | null>(null)
@@ -1328,6 +1328,10 @@ export default function CollectorPage() {
                     options: checkedOptions,
                     source_site: selectedSite,
                     selected_brands: brandModalParsed ? Array.from(brandModalSelected) : undefined,
+                    // SSG repBrandId 필터: 선택된 브랜드 id 목록 전달
+                    brand_ids: brandModalParsed
+                      ? brandModalList.filter(b => brandModalSelected.has(b.name) && b.id).map(b => b.id as string)
+                      : undefined,
                   })
                   addLog(`[카테고리분류] ${res.created.toLocaleString()}개 그룹 생성 완료`)
                   showAlert(`${res.created.toLocaleString()}개 그룹이 생성되었습니다`, 'success')
@@ -1473,10 +1477,17 @@ export default function CollectorPage() {
                   setBrandCategories([]); setBrandSelectedCats(new Set())
                   const { brand, keyword, gf } = brandModalParsed || { brand: '', keyword: brandModalKeyword, gf: 'A' }
                   const selectedBrands = Array.from(brandModalSelected)
+                  // 선택된 브랜드의 id 목록 및 총 상품수 계산 (SSG repBrandId 필터링용)
+                  const selectedBrandIds = brandModalList
+                    .filter(b => brandModalSelected.has(b.name) && b.id)
+                    .map(b => b.id as string)
+                  const selectedBrandTotal = brandModalList
+                    .filter(b => brandModalSelected.has(b.name))
+                    .reduce((sum, b) => sum + b.count, 0)
                   const siteLabel = selectedSite === 'SSG' ? 'SSG' : selectedSite === 'FashionPlus' ? '패션플러스' : '롯데ON'
                   addLog(`[카테고리스캔] ${siteLabel} "${keyword || brand}" 스캔 시작... (${selectedBrands.length.toLocaleString()}개 브랜드)`)
                   try {
-                    const res = await collectorApi.brandScan(brand, gf, keyword, selectedSite, selectedBrands)
+                    const res = await collectorApi.brandScan(brand, gf, keyword, selectedSite, selectedBrands, selectedBrandIds, selectedBrandTotal)
                     setBrandCategories(res.categories)
                     setBrandTotal(res.total)
                     setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))

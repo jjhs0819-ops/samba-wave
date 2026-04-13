@@ -44,12 +44,19 @@ class SSGPlugin(SourcingPlugin):
         keyword: str,
         *,
         selected_brands: list[str] | None = None,
+        brand_ids: list[str] | None = None,
+        brand_total: int = 0,
     ) -> dict:
-        """SSG 카테고리 스캔 — categoryFilter 트리 플래튼."""
+        """SSG 카테고리 스캔 — categoryFilter 트리 플래튼 또는 상품 샘플링."""
         from backend.domain.samba.proxy.ssg_sourcing import SSGSourcingClient
 
         client = SSGSourcingClient()
-        return await client.scan_categories(keyword, selected_brands=selected_brands)
+        return await client.scan_categories(
+            keyword,
+            selected_brands=selected_brands,
+            brand_ids=brand_ids,
+            brand_total=brand_total,
+        )
 
     async def discover_brands(self, keyword: str) -> dict:
         """SSG 브랜드 탐색 — brandFilter에서 브랜드 목록 추출."""

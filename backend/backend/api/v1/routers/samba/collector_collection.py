@@ -2298,6 +2298,8 @@ class BrandScanRequest(BaseModel):
     keyword: str = ""
     source_site: str = "MUSINSA"
     selected_brands: list[str] = []
+    brand_ids: list[str] = []  # SSG repBrandId 리스트
+    brand_total: int = 0  # 선택된 브랜드 총 상품수 (비례 스케일링용)
 
 
 class BrandDiscoverRequest(BaseModel):
@@ -2405,7 +2407,12 @@ async def brand_scan(
 
         plugin = SSGPlugin()
         selected = body.selected_brands or [keyword]
-        return await plugin.scan_categories(keyword, selected_brands=selected)
+        return await plugin.scan_categories(
+            keyword,
+            selected_brands=selected,
+            brand_ids=body.brand_ids or None,
+            brand_total=body.brand_total,
+        )
 
     if body.source_site == "FashionPlus":
         from backend.domain.samba.plugins.sourcing.fashionplus import FashionPlusPlugin
@@ -2496,6 +2503,7 @@ class BrandCreateGroupsRequest(BaseModel):
     options: dict = {}
     source_site: str = "MUSINSA"
     selected_brands: list[str] = []
+    brand_ids: list[str] = []  # SSG repBrandId 리스트
 
 
 @router.post("/brand-create-groups")
@@ -2600,9 +2608,14 @@ async def brand_create_groups(
             _label_ssg = body.brand_name or body.brand or ""
             _md_ssg = "&maxDiscount=1" if body.options.get("maxDiscount") else ""
             _so_ssg = "&includeSoldOut=1" if _opts_include_sold_out else ""
+            # 선택된 브랜드의 repBrandId를 URL에 포함 → 워커가 파싱하여 수집 시 사용
+            _rep_brand = (
+                f"&repBrandId={'|'.join(body.brand_ids)}" if body.brand_ids else ""
+            )
             keyword = (
                 f"https://department.ssg.com/search"
-                f"?query={_quote_ssg(_label_ssg)}&stdCtg={code}{_md_ssg}{_so_ssg}"
+                f"?query={_quote_ssg(_label_ssg)}&stdCtg={code}"
+                f"{_rep_brand}{_md_ssg}{_so_ssg}"
             )
             category_filter = code or None
         elif body.source_site == "FashionPlus":

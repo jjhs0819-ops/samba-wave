@@ -126,8 +126,10 @@ class SSGSourcingClient:
         seen: set[str] = set()
         page = 1
 
-        # brand_ids 사전 추출 → 전 페이지에 브랜드 필터 일관 적용
-        _brand_ids = await self._fetch_brand_ids(keyword)
+        # 외부에서 brand_ids가 제공되면 _fetch_brand_ids 건너뛰기
+        _brand_ids: list[str] | None = kwargs.pop("brand_ids", None)
+        if _brand_ids is None:
+            _brand_ids = await self._fetch_brand_ids(keyword)
         logger.info(f"[SSG] 검색 brand_ids: {_brand_ids}")
 
         while len(products) < max_count:
@@ -354,7 +356,9 @@ class SSGSourcingClient:
                         )
                     except Exception:
                         count = 0
-                    brands.append({"name": bi["name"], "count": count})
+                    brands.append(
+                        {"name": bi["name"], "count": count, "id": bi["value"]}
+                    )
                     logger.info(f"[SSG] 브랜드 건수: {bi['name']} → {count}건")
 
         except RateLimitError:
@@ -416,32 +420,31 @@ class SSGSourcingClient:
         keyword: str,
         *,
         selected_brands: list[str] | None = None,
+        brand_ids: list[str] | None = None,
+        brand_total: int = 0,
     ) -> dict[str, Any]:
-        """키워드 검색 → 카테고리 필터 추출 → 브랜드 필터링 → 카테고리별 상품 수 집계.
+        """키워드 검색 → 카테고리 분포 추출.
 
-        SSG categoryFilter 트리(dispCtgLvl 1→2→3)를 leaf까지 플래튼하여
-        롯데ON과 동일한 세분화 수준의 카테고리 분포를 반환한다.
+        brand_ids 제공 시: repBrandId 적용 검색 → 상품 detail 샘플링으로 실제 분포 추출.
+        brand_ids 없을 시: categoryFilter 그대로 반환.
 
-        SSG categoryFilter는 repBrandId 필터를 반영하지 않으므로,
-        선택된 브랜드의 실제 상품수로 비례 스케일링하여 보정한다.
-        (예: "나이키" 키워드 7,602건 중 나이키 브랜드 1,539건 → ratio 0.20)
+        SSG categoryFilter는 repBrandId를 반영하지 않으므로,
+        브랜드가 선택된 경우 실제 상품의 dispCtgId를 샘플링해 정확한 분포를 구한다.
 
         Args:
             keyword: 검색 키워드 (예: "나이키")
-            selected_brands: 사용자가 선택한 브랜드 목록
-                (정확한 브랜드명으로 repBrandId 매칭하여 스케일링에 활용)
+            selected_brands: 사용자가 선택한 브랜드 이름 목록 (로그 용도)
+            brand_ids: 선택된 브랜드의 repBrandId 목록
+            brand_total: 선택된 브랜드의 총 상품수 (비례 스케일링용)
 
         Returns:
             {"categories": [...], "total": int, "groupCount": int}
         """
-        logger.info(f'[SSG] 카테고리 스캔 시작: "{keyword}"')
 
-        # selected_brands가 있으면 첫 번째 브랜드를 키워드로 사용
-        search_keyword = keyword
-        if selected_brands:
-            search_keyword = selected_brands[0]
-
-        brand_total = 0  # 브랜드 필터 적용 상품수
+        logger.info(
+            f'[SSG] 카테고리 스캔 시작: "{keyword}"'
+            + (f" brand_ids={brand_ids}" if brand_ids else "")
+        )
 
         try:
             _client_kwargs: dict[str, Any] = {
@@ -452,8 +455,8 @@ class SSGSourcingClient:
                 _client_kwargs["proxy"] = self.proxy_url
 
             async with httpx.AsyncClient(**_client_kwargs) as client:
-                # 키워드 검색 페이지 요청
-                search_url = f"{self.SEARCH_URL}?query={quote(search_keyword)}&page=1"
+                # 1단계: 키워드 검색 → categoryFilter로 dispCtgId→이름 매핑 테이블 구성
+                search_url = f"{self.SEARCH_URL}?query={quote(keyword)}&page=1"
                 resp = await client.get(search_url, headers=self._headers())
                 if resp.status_code in (429, 403):
                     raise RateLimitError(int(resp.status_code))
@@ -462,84 +465,104 @@ class SSGSourcingClient:
                     return {"categories": [], "total": 0, "groupCount": 0}
 
                 html = resp.text
+                all_categories = self._extract_category_filters(html)
 
-                # categoryFilter 트리에서 leaf 카테고리 추출
-                categories = self._extract_category_filters(html)
-                if not categories:
+                if not all_categories:
                     logger.info("[SSG] 카테고리 필터 없음 — 빈 결과 반환")
                     return {"categories": [], "total": 0, "groupCount": 0}
 
-                # 선택된 브랜드의 repBrandId 적용 검색으로 브랜드별 카테고리 카운트 조회
-                # 1순위: repBrandId 적용 응답에서 categoryFilter 직접 추출 (정확)
-                # 2순위: 균일 ratio 스케일링 폴백 (SSG가 브랜드 반영 안 할 경우)
-                if selected_brands:
-                    brand_items = self._extract_brand_filter(html)
-                    _selected_set = set(selected_brands)
-                    brand_ids = [
-                        bi["value"] for bi in brand_items if bi["name"] in _selected_set
-                    ]
-                    if brand_ids:
-                        try:
-                            _brand_url = (
-                                f"{self.SEARCH_URL}?query={quote(search_keyword)}"
-                                f"&repBrandId={'|'.join(brand_ids)}&page=1"
+                # dispCtgId → 카테고리 정보 매핑 테이블
+                ctg_map = {c["categoryCode"]: c for c in all_categories}
+
+                if brand_ids:
+                    # 2단계: repBrandId 적용 검색 → page 1 상품 목록 추출
+                    brand_url = (
+                        f"{self.SEARCH_URL}?query={quote(keyword)}"
+                        f"&repBrandId={'|'.join(brand_ids)}&page=1"
+                    )
+                    brand_resp = await client.get(brand_url, headers=self._headers())
+                    if brand_resp.status_code == 200:
+                        brand_products = self._parse_search_html(
+                            brand_resp.text, keyword
+                        )
+                        item_ids = [
+                            p.get("site_product_id", "")
+                            for p in brand_products[:20]
+                            if p.get("site_product_id")
+                        ]
+
+                        if item_ids:
+                            # 3단계: detail 조회로 dispCtgId 샘플링 (최대 20개, 순차 0.5s)
+                            logger.info(
+                                f"[SSG] 브랜드 카테고리 샘플링: "
+                                f"{selected_brands or brand_ids} → {len(item_ids)}개 상품"
                             )
-                            _br = await client.get(_brand_url, headers=self._headers())
-                            if _br.status_code == 200:
-                                brand_total = self._parse_area_count(_br.text)
-                                logger.info(
-                                    f"[SSG] 브랜드 필터 상품수: {brand_total}건"
-                                    f" (brands={[b for b in selected_brands]})"
-                                )
-                                # 브랜드 필터 응답에서 카테고리 직접 추출 시도
-                                # SSG가 repBrandId 반영 시 카테고리별 정확한 카운트 제공
-                                _brand_categories = self._extract_category_filters(
-                                    _br.text
-                                )
-                                if _brand_categories:
+                            sample_dist = await self._sample_category_dist(
+                                client, item_ids
+                            )
+
+                            if sample_dist and ctg_map:
+                                # 4단계: dispCtgId → 카테고리 이름 매핑 + 비례 스케일링
+                                categories: list[dict[str, Any]] = []
+                                total_sampled = sum(sample_dist.values())
+
+                                for ctg_id, cnt in sample_dist.items():
+                                    if ctg_id in ctg_map:
+                                        cat_info = ctg_map[ctg_id].copy()
+                                        # brand_total 제공 시 전체 규모로 스케일링
+                                        if brand_total > 0 and total_sampled > 0:
+                                            cat_info["count"] = max(
+                                                1,
+                                                round(
+                                                    cnt / total_sampled * brand_total
+                                                ),
+                                            )
+                                        else:
+                                            cat_info["count"] = cnt
+                                        categories.append(cat_info)
+                                    else:
+                                        logger.debug(
+                                            f"[SSG] dispCtgId {ctg_id} → 매핑 없음, 스킵"
+                                        )
+
+                                if categories:
+                                    categories = [
+                                        c for c in categories if c.get("count", 0) > 0
+                                    ]
+                                    categories.sort(key=lambda x: -x["count"])
+                                    total = sum(c["count"] for c in categories)
                                     logger.info(
-                                        f"[SSG] 브랜드 필터 카테고리 {len(_brand_categories)}개"
-                                        " 직접 추출 — ratio 스케일링 생략"
+                                        f"[SSG] 브랜드 샘플 카테고리 스캔 완료: "
+                                        f"{len(categories)}개, {total}건 "
+                                        f"(샘플 {len(item_ids)}개 기준)"
                                     )
-                                    categories = _brand_categories
-                                    brand_total = 0  # 스케일링 스킵
-                        except Exception as exc:
-                            logger.warning(f"[SSG] 브랜드 필터 상품수 조회 실패: {exc}")
+                                    return {
+                                        "categories": categories,
+                                        "total": total,
+                                        "groupCount": len(categories),
+                                    }
+
+                    logger.warning("[SSG] 브랜드 샘플링 실패 → categoryFilter 폴백")
+
+                # brand_ids 없거나 샘플링 실패: categoryFilter 그대로 반환
+                categories = [c for c in all_categories if c.get("count", 0) > 0]
+                categories.sort(key=lambda x: -x["count"])
+                total = sum(c["count"] for c in categories)
+                logger.info(
+                    f'[SSG] 카테고리 스캔 완료: "{keyword}" → '
+                    f"{len(categories)}개 카테고리, {total}건"
+                )
+                return {
+                    "categories": categories,
+                    "total": total,
+                    "groupCount": len(categories),
+                }
 
         except RateLimitError:
             raise
         except Exception as e:
             logger.error(f"[SSG] 카테고리 스캔 실패: {keyword} — {e}")
             return {"categories": [], "total": 0, "groupCount": 0}
-
-        # count > 0인 카테고리만 반환 (내림차순 정렬)
-        categories = [c for c in categories if c.get("count", 0) > 0]
-        categories.sort(key=lambda x: -x["count"])
-
-        keyword_total = sum(c["count"] for c in categories)
-
-        # 브랜드 스케일링: 키워드 전체 대비 브랜드 상품수 비율로 보정
-        # (예: 나이키 키워드 7,602건 중 나이키 브랜드 1,539건 → 각 카테고리 × 0.20)
-        if brand_total > 0 and keyword_total > brand_total:
-            ratio = brand_total / keyword_total
-            logger.info(
-                f"[SSG] 카테고리 스케일링: {keyword_total}→{brand_total}"
-                f" (ratio={ratio:.3f})"
-            )
-            for c in categories:
-                c["count"] = max(1, round(c["count"] * ratio))
-            # 스케일링 후 재정렬
-            categories.sort(key=lambda x: -x["count"])
-
-        total = sum(c["count"] for c in categories)
-        logger.info(
-            f'[SSG] 카테고리 스캔 완료: "{keyword}" → {len(categories)}개 카테고리, {total}건'
-        )
-        return {
-            "categories": categories,
-            "total": total,
-            "groupCount": len(categories),
-        }
 
     def _extract_category_filters(self, html: str) -> list[dict[str, Any]]:
         """__NEXT_DATA__에서 카테고리 필터 목록 추출.
@@ -668,6 +691,90 @@ class SSGSourcingClient:
                 )
 
         return categories
+
+    def _extract_category_dist_from_items(self, html: str) -> dict[str, int]:
+        """브랜드 필터 적용된 검색 결과의 상품 dataList에서 dispCtgId 분포 추출.
+
+        SSG categoryFilter는 repBrandId를 반영하지 않으므로,
+        실제 상품 item 데이터에서 dispCtgId를 추출해 카테고리별 분포를 샘플링한다.
+        1페이지(40개) 샘플로 브랜드별 카테고리 분포 비율을 추정.
+
+        Returns:
+            {dispCtgId: count} 딕셔너리 (비어있으면 샘플링 불가)
+        """
+        m = re.search(
+            r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>',
+            html,
+            re.DOTALL,
+        )
+        if not m:
+            return {}
+        try:
+            next_data = json.loads(m.group(1))
+        except json.JSONDecodeError:
+            return {}
+
+        queries = (
+            next_data.get("props", {})
+            .get("pageProps", {})
+            .get("dehydratedState", {})
+            .get("queries", [])
+        )
+
+        dist: dict[str, int] = {}
+        for q in queries:
+            qkey = q.get("queryKey") or []
+            if "fetchSearchItemListArea" not in qkey:
+                continue
+            area_list = q.get("state", {}).get("data", {}).get("areaList", [])
+            for area in area_list:
+                if area.get("unitType") != "ITEM_UNIT_LIST":
+                    continue
+                for item in area.get("dataList") or []:
+                    # SSG 검색결과 상품에 dispCtgId 필드가 있는지 시도
+                    ctg_id = str(
+                        item.get("dispCtgId")
+                        or item.get("dispCtgCd")
+                        or item.get("ctgId")
+                        or item.get("categoryId")
+                        or ""
+                    ).strip()
+                    if ctg_id:
+                        dist[ctg_id] = dist.get(ctg_id, 0) + 1
+                break
+            if dist:
+                break
+
+        return dist
+
+    async def _sample_category_dist(
+        self,
+        client: "httpx.AsyncClient",
+        item_ids: list[str],
+    ) -> dict[str, int]:
+        """상품 ID 목록에서 detail 요청으로 dispCtgId 분포를 샘플링.
+
+        SSG search result에 dispCtgId가 없으므로
+        상위 N개 상품의 detail 페이지에서 dispCtgId를 직접 조회한다.
+        요청 간 0.5초 대기 (차단 방지).
+
+        Returns:
+            {dispCtgId: count} 딕셔너리
+        """
+        import asyncio
+
+        dist: dict[str, int] = {}
+        for item_id in item_ids:
+            try:
+                det = await self.get_product_detail(item_id, _shared_client=client)
+                ctg_id = str(det.get("dispCtgId") or "").strip()
+                if ctg_id:
+                    dist[ctg_id] = dist.get(ctg_id, 0) + 1
+                    logger.debug(f"[SSG] 샘플 상품 {item_id} → dispCtgId={ctg_id}")
+            except Exception as exc:
+                logger.debug(f"[SSG] 샘플 detail 실패 {item_id}: {exc}")
+            await asyncio.sleep(0.5)
+        return dist
 
     def _parse_area_count(self, html: str) -> int:
         """__NEXT_DATA__에서 검색 결과 상품 수 파싱.

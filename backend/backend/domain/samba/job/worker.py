@@ -1324,6 +1324,10 @@ class JobWorker:
                     _search_kwargs["brand_id"] = brand_ids[0]
                 if brand_names:
                     _search_kwargs["brand_name"] = brand_names[0]
+                # SSG repBrandId 파라미터 → brand_ids 리스트로 전달
+                _rep_brand_id = qs.get("repBrandId", [""])[0]
+                if _rep_brand_id:
+                    _search_kwargs["brand_ids"] = _rep_brand_id.split("|")
                 # skipDetail 옵션
                 if qs.get("skipDetail", [""])[0] == "1":
                     _search_kwargs["_skip_detail"] = True
