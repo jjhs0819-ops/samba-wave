@@ -29,6 +29,7 @@ export const MARKETS: MarketDef[] = [
   { id: 'lottehome', label: '롯데홈쇼핑', group: 'domestic_home', hasCategory: true },
   { id: 'homeand', label: '홈앤쇼핑', group: 'domestic_home', hasCategory: true },
   { id: 'hmall', label: 'HMALL', group: 'domestic_home', hasCategory: true },
+  { id: 'ktalpha', label: 'KT알파쇼핑', group: 'domestic_home', hasCategory: true },
   // 국내 패션/리셀
   { id: 'musinsa', label: '무신사', group: 'domestic_fashion', hasCategory: false },
   { id: 'kream', label: 'KREAM', group: 'domestic_fashion', hasCategory: true },

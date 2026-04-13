@@ -225,25 +225,44 @@ class SSGSourcingClient:
     # 카테고리 스캔
     # ------------------------------------------------------------------
 
-    async def scan_categories(self, keyword: str) -> dict[str, Any]:
+    async def scan_categories(
+        self,
+        keyword: str,
+        *,
+        selected_brands: list[str] | None = None,
+    ) -> dict[str, Any]:
         """키워드 검색 → 카테고리 필터 추출 → 카테고리별 상품 수 집계.
 
-        __NEXT_DATA__의 필터 데이터에서 카테고리 필터를 직접 추출한다.
-        카테고리별 count가 0이면 개별 요청으로 PAGING_UNIT.itemCount를 파싱한다.
+        SSG categoryFilter 트리(dispCtgLvl 1→2→3)를 leaf까지 플래튼하여
+        롯데ON과 동일한 세분화 수준의 카테고리 분포를 반환한다.
+        각 노드에 itemCount가 포함되어 있어 추가 요청 없이 1회 검색으로 완료.
+
+        Args:
+            keyword: 검색 키워드 (예: "나이키")
+            selected_brands: 사용자가 선택한 브랜드 목록 (현재 SSG에서는 미사용,
+                향후 브랜드 필터 확장 대비)
 
         Returns:
             {"categories": [...], "total": int, "groupCount": int}
         """
-        import asyncio
-
         logger.info(f'[SSG] 카테고리 스캔 시작: "{keyword}"')
 
+        # selected_brands가 있으면 첫 번째 브랜드를 키워드로 사용
+        search_keyword = keyword
+        if selected_brands:
+            search_keyword = selected_brands[0]
+
         try:
-            async with httpx.AsyncClient(
-                timeout=self._timeout, follow_redirects=True
-            ) as client:
-                # 1단계: 키워드 검색 페이지 요청
-                search_url = f"{self.SEARCH_URL}?query={quote(keyword)}&page=1"
+            _client_kwargs: dict[str, Any] = {
+                "timeout": self._timeout,
+                "follow_redirects": True,
+            }
+            if self.proxy_url:
+                _client_kwargs["proxy"] = self.proxy_url
+
+            async with httpx.AsyncClient(**_client_kwargs) as client:
+                # 키워드 검색 페이지 요청
+                search_url = f"{self.SEARCH_URL}?query={quote(search_keyword)}&page=1"
                 resp = await client.get(search_url, headers=self._headers())
                 if resp.status_code in (429, 403):
                     raise RateLimitError(int(resp.status_code))
@@ -253,35 +272,11 @@ class SSGSourcingClient:
 
                 html = resp.text
 
-                # 2단계: __NEXT_DATA__에서 카테고리 필터 추출
+                # categoryFilter 트리에서 leaf 카테고리 추출
                 categories = self._extract_category_filters(html)
                 if not categories:
                     logger.info("[SSG] 카테고리 필터 없음 — 빈 결과 반환")
                     return {"categories": [], "total": 0, "groupCount": 0}
-
-                # 3단계: count가 0인 카테고리는 개별 요청으로 상품 수 파싱
-                need_count = [c for c in categories if c.get("count", 0) == 0]
-                if need_count:
-                    logger.info(
-                        f"[SSG] {len(need_count)}개 카테고리 count 개별 조회 시작"
-                    )
-                    for cat in need_count:
-                        await asyncio.sleep(1.0)
-                        try:
-                            cat_url = (
-                                f"{self.SEARCH_URL}?query={quote(keyword)}"
-                                f"&stdCtg={cat['categoryCode']}&page=1"
-                            )
-                            r = await client.get(cat_url, headers=self._headers())
-                            if r.status_code == 200:
-                                cat["count"] = self._parse_area_count(r.text)
-                                logger.info(
-                                    f"[SSG] 카테고리 건수: {cat['path']} → {cat['count']}건"
-                                )
-                        except Exception as e:
-                            logger.warning(
-                                f"[SSG] 카테고리 건수 조회 실패 {cat['path']}: {e}"
-                            )
 
         except RateLimitError:
             raise
@@ -306,12 +301,14 @@ class SSGSourcingClient:
     def _extract_category_filters(self, html: str) -> list[dict[str, Any]]:
         """__NEXT_DATA__에서 카테고리 필터 목록 추출.
 
-        useTemplateFilterQuery 데이터에서 카테고리 관련 filterType을 탐색한다.
-        후보: categoryFilter, ctgFilter, displayCategoryFilter, stdCtgFilter
+        SSG categoryFilter는 트리 구조(dispCtgLvl 1→2→3)로 제공된다.
+        각 노드에 dispCtgId(카테고리코드)와 itemCount(상품수)가 포함됨.
+        leaf 카테고리까지 플래튼하여 롯데ON과 동일한 세분화 결과를 반환한다.
 
         Returns:
-            [{"categoryCode": "...", "path": "패션의류 > 남성", "count": 123,
-              "category1": "패션의류", "category2": "남성", "category3": ""}]
+            [{"categoryCode": "6000206018", "path": "스포츠웨어/슈즈 > 스포츠 슈즈 > 워킹화",
+              "count": 282, "category1": "스포츠웨어/슈즈", "category2": "스포츠 슈즈",
+              "category3": "워킹화"}]
         """
         m = re.search(
             r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>',
@@ -333,7 +330,7 @@ class SSGSourcingClient:
             .get("queries", [])
         )
 
-        # 카테고리 필터 탐색 — filterType에 "ctg" 또는 "category" 포함
+        # categoryFilter 데이터 추출
         _CATEGORY_KEYWORDS = ("ctg", "category", "카테고리")
         cat_filter_data: list[dict] = []
 
@@ -342,9 +339,8 @@ class SSGSourcingClient:
                 continue
             filters_data = q.get("state", {}).get("data") or []
 
-            # 디버그: 모든 filterType 로깅 (개발 중 확인용)
             all_types = [f.get("filterType", "") for f in filters_data]
-            logger.info(f"[SSG] __NEXT_DATA__ filterTypes: {all_types}")
+            logger.debug(f"[SSG] __NEXT_DATA__ filterTypes: {all_types}")
 
             for f in filters_data:
                 ft = (f.get("filterType") or "").lower()
@@ -355,57 +351,78 @@ class SSGSourcingClient:
                         cat_filter_data.extend(unit.get("dataList", []))
                     break
 
-            # 카테고리 필터를 못 찾은 경우 — brandFilter 외 첫 번째 필터 시도
-            if not cat_filter_data:
-                for f in filters_data:
-                    ft = (f.get("filterType") or "").lower()
-                    if ft == "brandfilter":
-                        continue
-                    for unit in f.get("unitList", []):
-                        dl = unit.get("dataList", [])
-                        if dl:
-                            cat_filter_data.extend(dl)
-                            logger.info(
-                                f"[SSG] 폴백 필터 사용: filterType={f.get('filterType')}"
-                            )
-                            break
-                    if cat_filter_data:
-                        break
-
         if not cat_filter_data:
             return []
 
-        # 표준 형식으로 변환
+        # 트리 플래튼 — leaf 카테고리(자식 없는 노드)까지 재귀 탐색
         categories: list[dict[str, Any]] = []
         seen: set[str] = set()
-        for item in cat_filter_data:
-            name = (item.get("name") or "").strip()
-            value = str(item.get("value") or "").strip()
-            count = int(item.get("count", 0))
-            if not value or value in seen:
-                continue
-            seen.add(value)
 
-            # 카테고리 경로 파싱: "패션의류 > 남성의류" 또는 단일 이름
-            parts = [p.strip() for p in name.split(">") if p.strip()]
-            if not parts:
-                parts = [name] if name else [value]
-
-            c1 = parts[0] if len(parts) > 0 else ""
-            c2 = parts[1] if len(parts) > 1 else ""
-            c3 = parts[2] if len(parts) > 2 else ""
-            path = " > ".join(parts)
-
+        def _add_category(ctg_id: str, current_path: list[str], count: int) -> None:
+            """카테고리 결과에 추가 (중복/0건 제외)."""
+            if not ctg_id or ctg_id in seen or count <= 0:
+                return
+            seen.add(ctg_id)
+            c1 = current_path[0] if len(current_path) > 0 else ""
+            c2 = current_path[1] if len(current_path) > 1 else ""
+            c3 = current_path[2] if len(current_path) > 2 else ""
             categories.append(
                 {
-                    "categoryCode": value,
-                    "path": path,
+                    "categoryCode": ctg_id,
+                    "path": " > ".join(current_path),
                     "count": count,
                     "category1": c1,
                     "category2": c2,
                     "category3": c3,
                 }
             )
+
+        def _flatten(node: dict, ancestors: list[str]) -> None:
+            """카테고리 트리를 재귀적으로 플래튼."""
+            name = (node.get("name") or "").strip()
+            ctg_id = str(node.get("dispCtgId") or "").strip()
+            count = int(float(node.get("itemCount") or 0))
+            children = node.get("childList") or []
+
+            if not name:
+                return
+
+            current_path = ancestors + [name]
+
+            if children:
+                # 자식이 있으면 재귀 탐색
+                before = len(categories)
+                for child in children:
+                    _flatten(child, current_path)
+                # 자식 재귀로 아무것도 추가되지 않았으면 현재 노드를 leaf로 추가
+                if len(categories) == before:
+                    _add_category(ctg_id, current_path, count)
+            else:
+                # leaf 노드
+                _add_category(ctg_id, current_path, count)
+
+        for item in cat_filter_data:
+            _flatten(item, [])
+
+        # leaf가 없는 경우(childList 구조가 아닐 때) — 1단계 카테고리로 폴백
+        if not categories:
+            for item in cat_filter_data:
+                name = (item.get("name") or "").strip()
+                ctg_id = str(item.get("dispCtgId") or "").strip()
+                count = int(item.get("itemCount") or 0)
+                if not ctg_id or ctg_id in seen or count <= 0:
+                    continue
+                seen.add(ctg_id)
+                categories.append(
+                    {
+                        "categoryCode": ctg_id,
+                        "path": name,
+                        "count": count,
+                        "category1": name,
+                        "category2": "",
+                        "category3": "",
+                    }
+                )
 
         return categories
 

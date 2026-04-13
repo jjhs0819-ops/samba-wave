@@ -140,3 +140,26 @@ class ZoomPlugin(MarketPlugin):
             "success": False,
             "message": "Zum(줌) API 연동이 아직 구현되지 않았습니다.",
         }
+
+
+class KtalphaPlugin(MarketPlugin):
+    market_type = "ktalpha"
+    policy_key = "KT알파쇼핑"
+    required_fields = ["name", "sale_price"]
+
+    def transform(self, product: dict, category_id: str, **kwargs) -> dict:
+        return {}
+
+    async def execute(
+        self,
+        session,
+        product: dict,
+        creds: dict,
+        category_id: str,
+        account,
+        existing_no: str,
+    ) -> dict[str, Any]:
+        return {
+            "success": False,
+            "message": "KT알파쇼핑 API 연동이 아직 구현되지 않았습니다.",
+        }

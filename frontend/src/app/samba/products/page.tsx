@@ -452,7 +452,8 @@ export default function ProductsPage() {
         const priceStr = costVal != null ? `₩${Number(costVal).toLocaleString()}` : '-'
         const stockStr = p?.sale_status === 'preorder' ? '판매예정' : p?.sale_status === 'sold_out' || p?.is_sold_out ? '품절' : '재고있음'
         const now = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-        setActiveLog({ productId, message: `[${now}] ${productName} → ${priceStr} | ${stockStr}` })
+        const retransmitStr = data.retransmitted ? ` | 마켓 ${data.retransmit_accounts}계정 수정등록` : ''
+        setActiveLog({ productId, message: `[${now}] ${productName} → ${priceStr} | ${stockStr}${retransmitStr}` })
         // 해당 상품만 갱신 (전체 새로고침 없음)
         if (p) {
           setAllProducts(prev => prev.map(item => item.id === productId ? { ...item, ...p } : item))
@@ -1566,9 +1567,9 @@ export default function ProductsPage() {
               setRefreshModal(true)
               setRefreshLoading(true)
               try {
-                const res = await collectorApi.refresh(ids, false)
+                const res = await collectorApi.refresh(ids)
                 setRefreshDetails(res.details ?? [])
-                setRefreshSummary(`${res.total}건 중 ${res.changed}건 변동, ${res.sold_out}건 품절, ${res.errors}건 에러`)
+                setRefreshSummary(`${res.total}건 중 ${res.changed}건 변동, ${res.sold_out}건 품절${res.retransmitted ? `, ${res.retransmitted}건 재전송` : ''}, ${res.errors}건 에러`)
               } catch {
                 setRefreshSummary('갱신 실패')
               }

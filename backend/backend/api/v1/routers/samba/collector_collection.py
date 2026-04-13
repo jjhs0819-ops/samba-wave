@@ -1339,6 +1339,7 @@ class BrandRefreshRequest(BaseModel):
     gf: str = "A"
     options: dict = {}
     source_site: str = "MUSINSA"
+    categories: list[str] = []  # 빈 리스트=전체, 값 있으면 해당 카테고리만 처리
 
 
 @router.post("/brand-refresh")
@@ -1421,6 +1422,11 @@ async def brand_refresh(
             categories = scan_result.get("categories", [])
     except Exception as e:
         raise HTTPException(500, f"카테고리 스캔 실패: {e}")
+
+    # 1-b) 선택된 카테고리만 필터링
+    if req.categories:
+        allowed = set(req.categories)
+        categories = [c for c in categories if c.get("categoryCode", "") in allowed]
 
     # 2) 기존 그룹 조회 — source_site + category_filter로 매칭
     all_filters = await svc.list_filters(limit=10000)
@@ -1659,6 +1665,124 @@ async def collect_by_keyword(
     )
 
 
+async def _retransmit_if_changed(
+    session: AsyncSession,
+    product: Any,
+    updates: dict,
+) -> dict:
+    """가격/재고 변동 시 등록된 마켓에 자동 수정등록."""
+    result = {"retransmitted": False, "retransmit_accounts": 0}
+
+    if not getattr(product, "registered_accounts", None):
+        return result
+
+    # DB 변경사항 플러시 (재전송 시 최신 데이터 조회 보장)
+    await session.flush()
+
+    # 품절 전환 → 마켓 판매중지
+    new_status = updates.get("sale_status")
+    old_status = getattr(product, "sale_status", "in_stock")
+    if new_status == "sold_out" and old_status != "sold_out":
+        if getattr(product, "lock_delete", False):
+            logger.info(
+                f"[enrich] {product.id} 품절이지만 lock_delete=True, 마켓 삭제 건너뜀"
+            )
+            return result
+        try:
+            from backend.domain.samba.shipment.dispatcher import delete_from_market
+            from backend.domain.samba.account.model import SambaMarketAccount
+
+            # 계정 배치 조회 (N+1 방지)
+            _acc_stmt = select(SambaMarketAccount).where(
+                SambaMarketAccount.id.in_(product.registered_accounts)
+            )
+            _acc_result = await session.execute(_acc_stmt)
+            acc_map = {a.id: a for a in _acc_result.scalars().all()}
+
+            product_dict = {**product.model_dump(), **updates}
+            for account_id in product.registered_accounts:
+                account = acc_map.get(account_id)
+                if not account:
+                    continue
+                m_nos = product.market_product_nos or {}
+                pd = {
+                    **product_dict,
+                    "market_product_no": {
+                        account.market_type: m_nos.get(account_id, "")
+                    },
+                }
+                await delete_from_market(
+                    session, account.market_type, pd, account=account
+                )
+                result["retransmit_accounts"] += 1
+            result["retransmitted"] = True
+        except Exception as e:
+            logger.error(f"[enrich] {product.id} 마켓 판매중지 실패: {e}")
+        return result
+
+    # 가격 변동 확인
+    price_changed = False
+    old_sale = getattr(product, "sale_price", 0) or 0
+    new_sale = updates.get("sale_price", old_sale) or 0
+    if int(new_sale) != int(old_sale):
+        price_changed = True
+
+    old_cost = getattr(product, "cost", 0) or 0
+    new_cost = updates.get("cost", old_cost) or 0
+    if int(new_cost) != int(old_cost):
+        price_changed = True
+
+    # 재고(옵션) 변동 확인
+    stock_changed = False
+    old_options = getattr(product, "options", None) or []
+    new_options = updates.get("options")
+    if new_options and old_options:
+        old_stock_map = {
+            (o.get("name", "") or o.get("size", "")): o.get("stock", 0)
+            for o in old_options
+            if isinstance(o, dict)
+        }
+        for o in new_options:
+            if not isinstance(o, dict):
+                continue
+            key = o.get("name", "") or o.get("size", "")
+            old_stock = old_stock_map.get(key, 0) or 0
+            new_stock = o.get("stock", 0) or 0
+            if (old_stock <= 0) != (new_stock <= 0):
+                stock_changed = True
+                break
+
+    if not price_changed and not stock_changed:
+        return result
+
+    # 재전송 항목 결정
+    update_items: list[str] = []
+    if price_changed:
+        update_items.append("price")
+    if stock_changed:
+        update_items.append("stock")
+
+    try:
+        from backend.domain.samba.shipment.repository import SambaShipmentRepository
+        from backend.domain.samba.shipment.service import SambaShipmentService
+
+        ship_repo = SambaShipmentRepository(session)
+        ship_svc = SambaShipmentService(ship_repo, session)
+
+        await ship_svc.start_update(
+            [product.id],
+            update_items,
+            list(product.registered_accounts),
+            skip_unchanged=False,
+        )
+        result["retransmitted"] = True
+        result["retransmit_accounts"] = len(product.registered_accounts)
+    except Exception as e:
+        logger.error(f"[enrich] {product.id} 마켓 재전송 실패: {e}")
+
+    return result
+
+
 @router.post("/enrich/{product_id}")
 async def enrich_product(
     product_id: str,
@@ -1753,10 +1877,12 @@ async def enrich_product(
             updates["images"] = detail["images"]
 
         updated = await svc.update_collected_product(product_id, updates)
+        retransmit = await _retransmit_if_changed(session, product, updates)
         return {
             "success": True,
             "enriched_fields": list(updates.keys()),
             "product": updated,
+            **retransmit,
         }
 
     if product.source_site == "KREAM" and product.site_product_id:
@@ -1823,10 +1949,12 @@ async def enrich_product(
         updates["price_history"] = _trim_history(history)
 
         updated = await svc.update_collected_product(product_id, updates)
+        retransmit = await _retransmit_if_changed(session, product, updates)
         return {
             "success": True,
             "enriched_fields": list(updates.keys()),
             "product": updated,
+            **retransmit,
         }
 
     if product.source_site == "Nike" and product.site_product_id:
@@ -1880,10 +2008,12 @@ async def enrich_product(
         updates["price_history"] = _trim_history(history)
 
         updated = await svc.update_collected_product(product_id, updates)
+        retransmit = await _retransmit_if_changed(session, product, updates)
         return {
             "success": True,
             "enriched_fields": list(updates.keys()),
             "product": updated,
+            **retransmit,
         }
 
     if product.source_site == "FashionPlus" and product.site_product_id:
@@ -1931,10 +2061,12 @@ async def enrich_product(
         updates["price_history"] = _trim_history(history)
 
         updated = await svc.update_collected_product(product_id, updates)
+        retransmit = await _retransmit_if_changed(session, product, updates)
         return {
             "success": True,
             "enriched_fields": list(updates.keys()),
             "product": updated,
+            **retransmit,
         }
 
     # 플러그인 기반 소싱처 (FashionPlus, Nike, Adidas 등)
@@ -2027,10 +2159,12 @@ async def enrich_product(
             history.insert(0, snapshot)
             updates["price_history"] = _trim_history(history)
             updated = await svc.update_collected_product(product_id, updates)
+            retransmit = await _retransmit_if_changed(session, product, updates)
             return {
                 "success": True,
                 "enriched_fields": list(updates.keys()),
                 "product": updated,
+                **retransmit,
             }
         except Exception as e:
             raise HTTPException(502, f"{product.source_site} 갱신 실패: {e}")
@@ -2246,7 +2380,8 @@ async def brand_scan(
         from backend.domain.samba.plugins.sourcing.ssg import SSGPlugin
 
         plugin = SSGPlugin()
-        return await plugin.scan_categories(keyword)
+        selected = body.selected_brands or [keyword]
+        return await plugin.scan_categories(keyword, selected_brands=selected)
 
     raise HTTPException(400, f"카테고리 스캔 미지원 소싱처: {body.source_site}")
 

@@ -140,6 +140,7 @@ async def refresh_products(
     kst_now = now.astimezone(ZoneInfo("Asia/Seoul"))
     changed_ids: list[str] = []
     soldout_ids: list[str] = []
+    stock_only_ids: list[str] = []  # 가격 동일, 재고만 변동
     refresh_details: list[dict] = []  # 개별 상품 갱신 결과
 
     for r in results:
@@ -320,16 +321,29 @@ async def refresh_products(
                     product_name=product.name,
                 )
         else:
-            # 변동 없음
-            refresh_details.append(
-                {
-                    "time": kst_now.strftime("%H:%M:%S"),
-                    "brand": getattr(product, "brand", "") or "",
-                    "name": (getattr(product, "name", "") or "")[:40],
-                    "status": "unchanged",
-                    "detail": "변동 없음",
-                }
-            )
+            if r.stock_changed:
+                # 가격/상태 동일, 옵션 재고만 변동
+                stock_only_ids.append(r.product_id)
+                refresh_details.append(
+                    {
+                        "time": kst_now.strftime("%H:%M:%S"),
+                        "brand": getattr(product, "brand", "") or "",
+                        "name": (getattr(product, "name", "") or "")[:40],
+                        "status": "stock_changed",
+                        "detail": "재고변동",
+                    }
+                )
+            else:
+                # 변동 없음
+                refresh_details.append(
+                    {
+                        "time": kst_now.strftime("%H:%M:%S"),
+                        "brand": getattr(product, "brand", "") or "",
+                        "name": (getattr(product, "name", "") or "")[:40],
+                        "status": "unchanged",
+                        "detail": "변동 없음",
+                    }
+                )
 
         await repo.update_async(r.product_id, **updates)
 
@@ -338,7 +352,7 @@ async def refresh_products(
     # 자동 재전송 + 품절 삭제
     retransmitted = 0
     deleted_ids: list[str] = []
-    if body.auto_retransmit and (changed_ids or soldout_ids):
+    if body.auto_retransmit and (changed_ids or soldout_ids or stock_only_ids):
         from backend.domain.samba.shipment.repository import SambaShipmentRepository
         from backend.domain.samba.shipment.service import SambaShipmentService
 
@@ -363,6 +377,23 @@ async def refresh_products(
                 retransmitted += len(pids)
             except Exception as e:
                 logger.error(f"[refresh] 재전송 실패 ({len(pids)}건): {e}")
+
+        # 재고만 변동 상품 → 재전송 (계정별로 묶어서 배치 호출)
+        stock_retransmit_groups: dict[str, list[str]] = {}
+        for pid in stock_only_ids:
+            product = product_map.get(pid)
+            if product and product.registered_accounts:
+                acc_key = ",".join(sorted(product.registered_accounts))
+                stock_retransmit_groups.setdefault(acc_key, []).append(pid)
+        for acc_key, pids in stock_retransmit_groups.items():
+            acc_ids = acc_key.split(",")
+            try:
+                await ship_svc.start_update(
+                    pids, ["stock"], acc_ids, skip_unchanged=False
+                )
+                retransmitted += len(pids)
+            except Exception as e:
+                logger.error(f"[refresh] 재고 재전송 실패 ({len(pids)}건): {e}")
 
         # 품절 상품 → 마켓 판매중지/삭제 → 삼바 DB 삭제
         import asyncio
@@ -527,7 +558,7 @@ async def refresh_products(
     return {
         "total": summary.total,
         "refreshed": summary.refreshed,
-        "changed": summary.changed,
+        "changed": summary.changed + len(stock_only_ids),
         "sold_out": summary.sold_out,
         "deleted": len(deleted_ids) if body.auto_retransmit else 0,
         "retransmitted": summary.retransmitted,

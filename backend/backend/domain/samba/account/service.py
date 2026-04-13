@@ -80,6 +80,12 @@ SUPPORTED_MARKETS: List[Dict[str, Any]] = [
         "group": "국내",
         "api_fields": ["apiKey", "apiSecret"],
     },
+    {
+        "id": "ktalpha",
+        "name": "KT알파쇼핑",
+        "group": "국내",
+        "api_fields": ["apiKey", "apiSecret"],
+    },
     # Integration solution
     {
         "id": "playauto",

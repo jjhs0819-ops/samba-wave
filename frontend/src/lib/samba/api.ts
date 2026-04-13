@@ -381,7 +381,7 @@ export interface RefreshDetail {
   time: string
   brand: string
   name: string
-  status: 'changed' | 'unchanged' | 'error'
+  status: 'changed' | 'unchanged' | 'error' | 'stock_changed'
   detail: string
 }
 
@@ -429,7 +429,7 @@ export const collectorApi = {
   brandCreateGroups: (data: { brand: string; brand_name?: string; gf?: string; categories: { categoryCode: string; path: string; count: number }[]; requested_count_per_group?: number; real_total?: number; applied_policy_id?: string; options?: Record<string, boolean>; source_site?: string; selected_brands?: string[] }) =>
     request<{ created: number; groups: { id: string; name: string; count: number; path: string }[] }>(
       `${SAMBA_PREFIX}/collector/brand-create-groups`, { method: "POST", body: JSON.stringify(data) }),
-  brandRefresh: (data: { brand: string; brand_name?: string; gf?: string; options?: Record<string, boolean>; source_site?: string }) =>
+  brandRefresh: (data: { brand: string; brand_name?: string; gf?: string; options?: Record<string, boolean>; source_site?: string; categories?: string[] }) =>
     request<{ scanned: number; new_groups: number; updated_groups: number; message: string }>(
       `${SAMBA_PREFIX}/collector/brand-refresh`, { method: "POST", body: JSON.stringify(data) }),
 

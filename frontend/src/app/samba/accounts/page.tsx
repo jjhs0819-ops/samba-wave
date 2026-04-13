@@ -52,7 +52,7 @@ export default function AccountsPage() {
               <label className="text-xs text-[#666] mb-1 block">마켓</label>
               <select value={form.market_type} onChange={(e) => setForm({ ...form, market_type: e.target.value })}
                 className="w-full px-2.5 py-1.5 bg-[#0A0A0A] border border-[#1A1A1A] rounded text-sm text-[#E5E5E5]">
-                {["smartstore","coupang","11st","gmarket","auction","ssg","lotteon","lottehome","gsshop","homeand","hmall","kream"].map((m) => (
+                {["smartstore","coupang","11st","gmarket","auction","ssg","lotteon","lottehome","gsshop","homeand","hmall","kream","ktalpha"].map((m) => (
                   <option key={m} value={m}>{m}</option>
                 ))}
               </select>

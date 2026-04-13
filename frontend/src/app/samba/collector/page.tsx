@@ -1059,7 +1059,7 @@ export default function CollectorPage() {
                   setSelectedSite(site.id)
                   setCollectUrl("")
                   setCheckedOptions(Object.fromEntries(
-                    (SITE_OPTIONS[site.id] || []).map(opt => [opt.id, true])
+                    (SITE_OPTIONS[site.id] || []).map(opt => [opt.id, opt.id === 'includeSoldOut' ? false : true])
                   ))
                 }}
                 style={{
@@ -1913,24 +1913,71 @@ export default function CollectorPage() {
                   }
                   if (!brand) { showAlert(`${sourceSite}에서 브랜드 정보를 찾을 수 없습니다`); return }
                   const brandName = drillBrand || brand
-                  const ok = await showConfirm(`${brandName} 추가수집을 실행하시겠습니까?\n\n• 신규 카테고리 → 그룹 자동 생성\n• 기존 카테고리 → 요청수 갱신 후 수집`)
+                  // 선택된 카테고리 코드 추출
+                  const selectedCategories: string[] = []
+                  if (drillGroup) {
+                    // 트리에서 단일 카테고리 선택
+                    const sf = filters.find(f => f.id === drillGroup)
+                    if (sf) {
+                      if (sourceSite === 'MUSINSA') {
+                        const catParam = (() => { try { return new URL(sf.keyword || '').searchParams.get('category') } catch { return null } })()
+                        if (catParam) selectedCategories.push(catParam)
+                      } else {
+                        const cf = (sf as unknown as Record<string, string>).category_filter
+                        if (cf) selectedCategories.push(cf)
+                      }
+                    }
+                  } else if (selectedIds.size > 0 && selectedIds.size < displayedFilters.length) {
+                    // 체크박스로 일부 카테고리 선택
+                    for (const sf of displayedFilters.filter(f => selectedIds.has(f.id))) {
+                      if (sourceSite === 'MUSINSA') {
+                        const catParam = (() => { try { return new URL(sf.keyword || '').searchParams.get('category') } catch { return null } })()
+                        if (catParam) selectedCategories.push(catParam)
+                      } else {
+                        const cf = (sf as unknown as Record<string, string>).category_filter
+                        if (cf) selectedCategories.push(cf)
+                      }
+                    }
+                  }
+                  const scopeText = selectedCategories.length > 0
+                    ? `\n\n대상: 선택 카테고리 ${selectedCategories.length}개`
+                    : '\n\n대상: 전체 카테고리'
+                  const ok = await showConfirm(`${brandName} 추가수집을 실행하시겠습니까?\n\n• 신규 카테고리 → 그룹 자동 생성\n• 기존 카테고리 → 요청수 갱신 후 수집${scopeText}`)
                   if (!ok) return
-                  addLog(`[추가수집] ${brandName} 카테고리 스캔 중...`)
+                  addLog(`[추가수집] ${brandName} 카테고리 스캔 중...${selectedCategories.length > 0 ? ` (선택 ${selectedCategories.length}개)` : ''}`)
                   try {
-                    const res = await collectorApi.brandRefresh({ brand, brand_name: brandName, gf, options: checkedOptions, source_site: sourceSite })
+                    const res = await collectorApi.brandRefresh({ brand, brand_name: brandName, gf, options: checkedOptions, source_site: sourceSite, categories: selectedCategories.length > 0 ? selectedCategories : undefined })
                     addLog(`[추가수집] ${res.message}`)
                     await load(); await loadTree()
-                    // 갱신 후 자동 수집 시작
-                    const updatedFilters = (await collectorApi.listFilters()).filter(f => {
-                      if (f.source_site !== sourceSite) return false
-                      const p = (() => { try { return new URL(f.keyword || '') } catch { return null } })()
-                      if (sourceSite === 'MUSINSA') return p?.searchParams.get('brand') === brand
-                      if (sourceSite === 'Nike') return p?.searchParams.get('q') === brand
-                      if (sourceSite === 'ABCmart' || sourceSite === 'GrandStage') return p?.searchParams.get('searchWord') === brand
-                      if (sourceSite === 'GSShop') return p?.searchParams.get('tq') === brand
-                      if (sourceSite === 'LOTTEON') return p?.searchParams.get('q') === brand
-                      return p?.searchParams.get('q') === brand || p?.searchParams.get('brand') === brand
-                    })
+                    // 갱신 후 자동 수집 시작 — 선택된 범위만 대상
+                    let updatedFilters: typeof filters
+                    if (drillGroup) {
+                      const refreshed = (await collectorApi.listFilters()).find(f => f.id === drillGroup)
+                      updatedFilters = refreshed ? [refreshed] : []
+                    } else if (selectedCategories.length > 0) {
+                      const catSet = new Set(selectedCategories)
+                      updatedFilters = (await collectorApi.listFilters()).filter(f => {
+                        if (f.source_site !== sourceSite) return false
+                        let fCat = ''
+                        if (sourceSite === 'MUSINSA') {
+                          try { fCat = new URL(f.keyword || '').searchParams.get('category') || '' } catch { /* */ }
+                        } else {
+                          fCat = (f as unknown as Record<string, string>).category_filter || ''
+                        }
+                        return fCat !== '' && catSet.has(fCat)
+                      })
+                    } else {
+                      updatedFilters = (await collectorApi.listFilters()).filter(f => {
+                        if (f.source_site !== sourceSite) return false
+                        const p = (() => { try { return new URL(f.keyword || '') } catch { return null } })()
+                        if (sourceSite === 'MUSINSA') return p?.searchParams.get('brand') === brand
+                        if (sourceSite === 'Nike') return p?.searchParams.get('q') === brand
+                        if (sourceSite === 'ABCmart' || sourceSite === 'GrandStage') return p?.searchParams.get('searchWord') === brand
+                        if (sourceSite === 'GSShop') return p?.searchParams.get('tq') === brand
+                        if (sourceSite === 'LOTTEON') return p?.searchParams.get('q') === brand
+                        return p?.searchParams.get('q') === brand || p?.searchParams.get('brand') === brand
+                      })
+                    }
                     if (updatedFilters.length > 0) {
                       const collectOk = await showConfirm(`${res.message}\n\n${updatedFilters.length.toLocaleString()}개 그룹 상품수집을 시작하시겠습니까?`)
                       if (collectOk) {
