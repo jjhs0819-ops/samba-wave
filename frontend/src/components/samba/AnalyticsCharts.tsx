@@ -30,7 +30,7 @@ export function MarketSharePie({ data, height = 280 }: ChartProps) {
           innerRadius={50}
           outerRadius={90}
           dataKey="value"
-          label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+          label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
           labelLine={false}
           fontSize={11}
         >
@@ -38,7 +38,7 @@ export function MarketSharePie({ data, height = 280 }: ChartProps) {
             <Cell key={i} fill={COLORS[i % COLORS.length]} />
           ))}
         </Pie>
-        <Tooltip formatter={(v: number) => `${fmtNum(v)}원`} />
+        <Tooltip formatter={(v) => `${fmtNum(Number(v))}원`} />
       </PieChart>
     </ResponsiveContainer>
   )
@@ -60,7 +60,7 @@ export function RevenueTrendLine({ data, height = 280 }: ChartProps) {
         <CartesianGrid strokeDasharray="3 3" stroke="#2D2D2D" />
         <XAxis dataKey="date" tick={{ fill: '#999', fontSize: 11 }} />
         <YAxis tick={{ fill: '#999', fontSize: 11 }} tickFormatter={v => `${Math.round(v / 10000)}만`} />
-        <Tooltip formatter={(v: number) => `${fmtNum(v)}원`} contentStyle={{ background: '#1A1A1A', border: '1px solid #333', borderRadius: 6 }} labelStyle={{ color: '#999' }} />
+        <Tooltip formatter={(v) => `${fmtNum(Number(v))}원`} contentStyle={{ background: '#1A1A1A', border: '1px solid #333', borderRadius: 6 }} labelStyle={{ color: '#999' }} />
         <Legend />
         <Line type="monotone" dataKey="sales" name="매출" stroke="#FF8C00" strokeWidth={2} dot={false} />
         <Line type="monotone" dataKey="profit" name="이익" stroke="#22C55E" strokeWidth={2} dot={false} />
@@ -85,7 +85,7 @@ export function SalesBarChart({ data, height = 280, nameKey = 'name', valueKey =
         <CartesianGrid strokeDasharray="3 3" stroke="#2D2D2D" />
         <XAxis type="number" tick={{ fill: '#999', fontSize: 11 }} tickFormatter={v => `${Math.round(v / 10000)}만`} />
         <YAxis type="category" dataKey="name" tick={{ fill: '#ccc', fontSize: 11 }} width={100} />
-        <Tooltip formatter={(v: number) => `${fmtNum(v)}원`} contentStyle={{ background: '#1A1A1A', border: '1px solid #333', borderRadius: 6 }} labelStyle={{ color: '#999' }} />
+        <Tooltip formatter={(v) => `${fmtNum(Number(v))}원`} contentStyle={{ background: '#1A1A1A', border: '1px solid #333', borderRadius: 6 }} labelStyle={{ color: '#999' }} />
         <Bar dataKey="value" name="매출" fill="#FF8C00" radius={[0, 4, 4, 0]} />
         <Bar dataKey="profit" name="이익" fill="#22C55E" radius={[0, 4, 4, 0]} />
       </BarChart>
