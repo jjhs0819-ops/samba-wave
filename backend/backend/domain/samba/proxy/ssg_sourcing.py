@@ -1134,6 +1134,7 @@ class SSGSourcingClient:
             "stdCtgMclsNm": get_str("stdCtgMclsNm"),
             "stdCtgSclsNm": get_str("stdCtgSclsNm"),
             "stdCtgDclsNm": get_str("stdCtgDclsNm"),
+            "dispCtgId": get_str("dispCtgId"),
             "dispCtgNm": get_str("dispCtgNm"),
             "itemImgUrl": get_str("itemImgUrl"),
             "shppTypeDtlCd": get_str("shppTypeDtlCd"),
@@ -1454,6 +1455,10 @@ class SSGSourcingClient:
         brand = self._parse_brand(html)
         category_levels = self._parse_category(html)
 
+        # HTML에서 dispCtgId 추출 (카테고리 샘플링에 사용)
+        _disp_ctg_m = re.search(r'"dispCtgId"\s*[=:]\s*["\']?(\d+)["\']?', html)
+        disp_ctg_id = _disp_ctg_m.group(1) if _disp_ctg_m else ""
+
         images = [thumbnail] if thumbnail else []
         ssgcdn_pat = re.compile(
             r'https://sitem\.ssgcdn\.com/[^"\']+_i\d+_(?:1200|500)\.jpg',
@@ -1508,6 +1513,7 @@ class SSGSourcingClient:
             "sex": "",
             "brandNation": "",
             "kcCert": "",
+            "dispCtgId": disp_ctg_id,
             "tags": [],
             "isOutOfStock": is_out_of_stock,
             "isSale": not is_out_of_stock,
