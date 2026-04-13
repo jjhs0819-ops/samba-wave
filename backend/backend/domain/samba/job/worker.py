@@ -851,7 +851,7 @@ class JobWorker:
         _add_job_log(job.id, f"[{site}] [{sf.name}] 수집 시작", job_type="collect")
 
         # 직접 API 소싱처 (서버 HTTP)
-        DIRECT_API_SITES = {"FashionPlus", "Nike", "Adidas", "LOTTEON"}
+        DIRECT_API_SITES = {"FashionPlus", "Nike", "Adidas", "LOTTEON", "SSG"}
         # 확장앱 기반 소싱처 (소싱큐)
         EXTENSION_SITES = {
             "ABCmart",
@@ -860,7 +860,6 @@ class JobWorker:
             "GSShop",
             "ElandMall",
             "SSF",
-            "SSG",
         }
 
         if site in DIRECT_API_SITES:
@@ -1279,12 +1278,15 @@ class JobWorker:
                 qs = parse_qs(parsed.query)
                 _use_max_discount = qs.get("maxDiscount", [""])[0] == "1"
                 _include_sold_out = qs.get("includeSoldOut", [""])[0] == "1"
-                # 소싱처별 키워드 파라미터: LOTTEON=q, GSShop=tq, FashionPlus=searchWord
+                # 소싱처별 키워드 파라미터: LOTTEON=q, GSShop=tq, SSG=query, FashionPlus=searchWord
                 keyword = qs.get(
                     "q",
                     qs.get(
                         "tq",
-                        qs.get("keyword", qs.get("searchWord", [keyword])),
+                        qs.get(
+                            "query",
+                            qs.get("keyword", qs.get("searchWord", [keyword])),
+                        ),
                     ),
                 )[0]
                 # 패션플러스 필터 파라미터
@@ -1365,6 +1367,10 @@ class JobWorker:
                     [p.strip() for p in _gs_cfg.proxy_urls.split(",") if p.strip()]
                 )
             client = GsShopSourcingClient(proxy_pool=_gs_proxies or None)
+        elif site == "SSG":
+            from backend.domain.samba.proxy.ssg_sourcing import SSGSourcingClient
+
+            client = SSGSourcingClient()
 
         # 확장앱 소싱큐 기반 사이트 — 소싱큐로 검색 요청
         if not client:

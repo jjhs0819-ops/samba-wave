@@ -90,6 +90,54 @@ class SSGSourcingClient:
     # 검색
     # ------------------------------------------------------------------
 
+    async def search(
+        self, keyword: str, max_count: int = 100, **kwargs: Any
+    ) -> dict[str, Any]:
+        """worker.py 직접 API 패턴 호환 래퍼 — 멀티페이지 검색.
+
+        max_count까지 페이지를 증가시키며 상품을 수집한다.
+        """
+        import asyncio
+
+        products: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        page = 1
+
+        while len(products) < max_count:
+            raw = await self.search_products(keyword, page=page, size=40, **kwargs)
+            if not raw:
+                break
+
+            new_count = 0
+            for item in raw:
+                if len(products) >= max_count:
+                    break
+                pid = item.get("siteProductId") or item.get("goodsNo") or ""
+                if not pid or pid in seen:
+                    continue
+                seen.add(pid)
+                new_count += 1
+                products.append(
+                    {
+                        "site_product_id": pid,
+                        "name": item.get("name", ""),
+                        "brand": item.get("brand", ""),
+                        "sale_price": item.get("salePrice", 0),
+                        "original_price": item.get("originalPrice", 0),
+                        "images": [item.get("image", "")] if item.get("image") else [],
+                        "source_url": item.get("sourceUrl", ""),
+                        "free_shipping": item.get("freeShipping", False),
+                        "is_sold_out": item.get("isSoldOut", False),
+                    }
+                )
+
+            if new_count == 0:
+                break
+            page += 1
+            await asyncio.sleep(1.0)
+
+        return {"products": products, "total": len(products)}
+
     async def search_products(
         self,
         keyword: str,
