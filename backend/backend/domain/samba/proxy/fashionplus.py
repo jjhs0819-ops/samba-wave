@@ -128,6 +128,9 @@ class FashionPlusClient:
                             "category1": c1_name,
                             "category2": "",
                             "category3": "",
+                            "category1Id": c1_id,
+                            "category2Id": "",
+                            "category3Id": "",
                         }
                     )
                 continue
@@ -147,6 +150,9 @@ class FashionPlusClient:
                                 "category1": c1_name,
                                 "category2": c2_name,
                                 "category3": "",
+                                "category1Id": c1_id,
+                                "category2Id": c2_id,
+                                "category3Id": "",
                             }
                         )
                     continue
@@ -163,6 +169,9 @@ class FashionPlusClient:
                                 "category1": c1_name,
                                 "category2": c2_name,
                                 "category3": c3_name,
+                                "category1Id": c1_id,
+                                "category2Id": c2_id,
+                                "category3Id": c3_id,
                             }
                         )
 

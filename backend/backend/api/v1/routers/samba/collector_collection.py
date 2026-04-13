@@ -2605,6 +2605,27 @@ async def brand_create_groups(
                 f"?query={_quote_ssg(_label_ssg)}&stdCtg={code}{_md_ssg}{_so_ssg}"
             )
             category_filter = code or None
+        elif body.source_site == "FashionPlus":
+            from urllib.parse import quote as _quote_fp
+
+            _label_fp = body.brand_name or body.brand or ""
+            _c1 = cat.get("category1Id", "")
+            _c2 = cat.get("category2Id", "")
+            _c3 = cat.get("category3Id", "")
+            _md_fp = "&maxDiscount=1" if body.options.get("maxDiscount") else ""
+            _so_fp = "&includeSoldOut=1" if _opts_include_sold_out else ""
+            _cat_params = ""
+            if _c1:
+                _cat_params += f"&category1Id={_c1}"
+            if _c2:
+                _cat_params += f"&category2Id={_c2}"
+            if _c3:
+                _cat_params += f"&category3Id={_c3}"
+            keyword = (
+                f"https://www.fashionplus.co.kr/search/goods/result"
+                f"?searchWord={_quote_fp(_label_fp)}{_cat_params}{_md_fp}{_so_fp}"
+            )
+            category_filter = code or None
         else:  # LOTTEON
             from urllib.parse import quote as _quote_lt
 

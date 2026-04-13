@@ -328,6 +328,11 @@ async def _site_autotune_loop(site: str):
                                 _synced_count
 
                             async with _session_lock:
+                                # heartbeat 갱신 — Watchdog stuck 오판 방지
+                                _site_heartbeats[product.source_site or "UNKNOWN"] = (
+                                    time.time()
+                                )
+
                                 if (
                                     not _autotune_running_event.is_set()
                                     or is_emergency_stopped()
@@ -354,9 +359,9 @@ async def _site_autotune_loop(site: str):
                                     _cur_cost = product.cost or product.sale_price or 0
                                 _cost_int = int(_cur_cost) if _cur_cost else 0
 
-                                # DB 업데이트 준비
+                                # DB 업데이트 준비 — 실제 처리 시점 기록 (사이클 시작 now 아님)
                                 updates: dict = {
-                                    "last_refreshed_at": now,
+                                    "last_refreshed_at": datetime.now(timezone.utc),
                                     "refresh_error_count": 0,
                                 }
                                 snapshot: dict = {
@@ -1142,6 +1147,14 @@ async def _site_autotune_loop(site: str):
             except asyncio.CancelledError:
                 if not _autotune_running_event.is_set():
                     log.info("[오토튠][%s] 루프 취소됨 (정상 종료)", site)
+                    break
+                # Watchdog에 의해 _site_tasks에서 제거된 경우 → 좀비 루프 방지 종료
+                _my_task = _site_tasks.get(site)
+                if _my_task is not asyncio.current_task():
+                    log.info(
+                        "[오토튠][%s] Watchdog에 의해 교체됨 — 좀비 루프 방지 종료",
+                        site,
+                    )
                     break
                 try:
                     import backend.domain.samba.collector.refresher as _ref_cancel
