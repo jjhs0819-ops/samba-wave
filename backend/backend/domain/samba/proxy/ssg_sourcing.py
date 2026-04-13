@@ -86,6 +86,10 @@ class SSGSourcingClient:
             h.update(extra)
         return h
 
+    async def get_detail(self, item_id: str) -> dict[str, Any]:
+        """worker.py get_detail 패턴 호환 래퍼."""
+        return await self.get_product_detail(item_id)
+
     # ------------------------------------------------------------------
     # 검색
     # ------------------------------------------------------------------
@@ -973,6 +977,13 @@ class SSGSourcingClient:
         _card_price = self._extract_card_benefit_price(html)
         best_amt = _card_price or self._safe_int(obj.get("bestAmt", 0)) or sell_price
 
+        # 품번(style_code) 추출: 상품명에서 알파벳+숫자+하이픈 패턴 (예: IO9279-006)
+        _sc_match = re.search(r"[A-Z]{1,3}\d{3,}[-]\d{2,}", name)
+        _style_code = _sc_match.group(0) if _sc_match else ""
+
+        # 고시정보 파싱 (색상, 제조국, 재질 등)
+        _prod_info = self._parse_product_notice(html)
+
         # 품절 판단: soldOut 필드 (Y/N)
         is_sold_out = str(obj.get("soldOut", "N")).upper() == "Y"
 
@@ -1052,15 +1063,15 @@ class SSGSourcingClient:
             "couponPrice": best_amt,
             "memberDiscountRate": 0,
             "discountRate": discount_rate,
-            "origin": "",
-            "material": "",
-            "manufacturer": "",
-            "color": "",
-            "sizeInfo": "",
+            "origin": _prod_info.get("origin", ""),
+            "material": _prod_info.get("material", ""),
+            "manufacturer": _prod_info.get("manufacturer", ""),
+            "color": _prod_info.get("color", ""),
+            "sizeInfo": _prod_info.get("sizeInfo", ""),
             "care_instructions": "",
             "quality_guarantee": "",
             "season": "",
-            "style_code": "",
+            "style_code": _style_code,
             "sex": "",
             "brandNation": "",
             "kcCert": "",
@@ -1081,6 +1092,41 @@ class SSGSourcingClient:
             "collectedAt": now_iso,
             "updatedAt": now_iso,
         }
+
+    def _parse_product_notice(self, html: str) -> dict[str, str]:
+        """상세 HTML에서 고시정보(색상, 제조국, 재질, 제조사 등) 파싱.
+
+        SSG 상세 페이지의 <table> 기반 고시정보에서 주요 필드를 추출한다.
+        """
+        info: dict[str, str] = {}
+
+        # th/td 쌍에서 고시정보 추출
+        pairs = re.findall(
+            r"<t[hd][^>]*>\s*(.*?)\s*</t[hd]>\s*<t[hd][^>]*>\s*(.*?)\s*</t[hd]>",
+            html,
+            re.DOTALL | re.IGNORECASE,
+        )
+
+        for label_raw, value_raw in pairs:
+            label = re.sub(r"<[^>]+>", "", label_raw).strip()
+            value = re.sub(r"<[^>]+>", "", value_raw).strip()
+            if not label or not value:
+                continue
+
+            lbl = label.replace(" ", "")
+            if "색상" in lbl and "color" not in info:
+                info["color"] = value
+            elif "제조국" in lbl:
+                info["origin"] = value
+            elif lbl in ("제품의주소재", "소재", "재질", "주소재"):
+                if value and value != "0":
+                    info["material"] = value
+            elif "제조사" in lbl or "수입자" in lbl:
+                info["manufacturer"] = value
+            elif "치수" in lbl or "사이즈" in lbl:
+                info["sizeInfo"] = value
+
+        return info
 
     def _parse_uitem_options(self, obj: dict) -> list[dict[str, Any]]:
         """uitemObjList에서 옵션/재고 파싱."""

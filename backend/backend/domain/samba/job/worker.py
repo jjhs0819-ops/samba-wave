@@ -1826,6 +1826,36 @@ class JobWorker:
                     if str(it.get("site_product_id", "")) in _gsshop_details
                 ]
 
+        # SSG: 저장 전 상세 정보 선취합 (카테고리/원가/고시정보 보충 필수)
+        _ssg_details: dict[str, dict[str, Any]] = {}
+        if site == "SSG" and client:
+            new_items = [
+                it
+                for it in items_list
+                if str(it.get("site_product_id", "")) not in existing_ids
+            ][:remaining]
+            if new_items:
+                logger.info(
+                    f"[잡워커] SSG 상세 선취합 시작: {len(new_items)}건 (1건씩 순차)"
+                )
+                for idx, it in enumerate(new_items):
+                    pid = str(it.get("site_product_id", ""))
+                    try:
+                        det = await client.get_detail(pid)
+                        if det:
+                            _ssg_details[pid] = det
+                    except Exception as _e:
+                        logger.warning(f"[잡워커] SSG 상세 실패 {pid}: {_e}")
+                    if (idx + 1) % 5 == 0 or idx == len(new_items) - 1:
+                        await repo.update_progress(job.id, idx + 1, len(new_items))
+                        logger.info(
+                            f"[잡워커] SSG 상세 선취합 [{idx + 1}/{len(new_items)}]"
+                        )
+                    await asyncio.sleep(1.0)
+                logger.info(
+                    f"[잡워커] SSG 상세 선취합 완료: {len(_ssg_details)}/{len(new_items)}건"
+                )
+
         _collected_sold_out = 0
         for item in items_list:
             if total_saved >= remaining:
@@ -1892,6 +1922,9 @@ class JobWorker:
             # GSShop: 선취합된 상세 데이터 사용
             if site == "GSShop" and p_id in _gsshop_details:
                 detail = _gsshop_details[p_id]
+            # SSG: 선취합된 상세 데이터 사용
+            if site == "SSG" and p_id in _ssg_details:
+                detail = _ssg_details[p_id]
             _skip_detail = _search_kwargs.get("_skip_detail", False)
             # ABCmart 최대혜택가: API에서 쿠폰+멤버십 직접 계산 (확장앱 불필요)
             if (
