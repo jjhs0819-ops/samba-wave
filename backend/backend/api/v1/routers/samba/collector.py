@@ -425,6 +425,7 @@ async def get_filter_tree(session: AsyncSession = Depends(get_read_session_depen
 
     leaf_ids = [f.id for f in all_filters if not f.is_folder]
     count_map: dict[str, int] = {}
+    market_reg_map: dict[str, int] = {}
     ai_tag_map: dict[str, int] = {}
     tag_applied_map: dict[str, int] = {}
     if leaf_ids:
@@ -434,6 +435,17 @@ async def get_filter_tree(session: AsyncSession = Depends(get_read_session_depen
             select(
                 _CP.search_filter_id,
                 _func.count().label("cnt"),
+                _func.count(
+                    case(
+                        (
+                            and_(
+                                _CP.registered_accounts != None,
+                                _func.length(cast(_CP.registered_accounts, String)) > 2,
+                            ),
+                            literal(1),
+                        )
+                    )
+                ).label("market_registered"),
                 _func.count(
                     case(
                         (
@@ -461,13 +473,17 @@ async def get_filter_tree(session: AsyncSession = Depends(get_read_session_depen
         count_result = await session.execute(count_stmt)
         for row in count_result.all():
             count_map[row[0]] = row[1]
-            ai_tag_map[row[0]] = row[2]
-            tag_applied_map[row[0]] = row[3]
+            market_reg_map[row[0]] = row[2]
+            ai_tag_map[row[0]] = row[3]
+            tag_applied_map[row[0]] = row[4]
 
     filter_data = []
     for f in all_filters:
         data = {c.key: getattr(f, c.key) for c in f.__table__.columns}
         data["collected_count"] = count_map.get(f.id, 0) if not f.is_folder else 0
+        data["market_registered_count"] = (
+            market_reg_map.get(f.id, 0) if not f.is_folder else 0
+        )
         data["ai_tagged_count"] = ai_tag_map.get(f.id, 0) if not f.is_folder else 0
         data["tag_applied_count"] = (
             tag_applied_map.get(f.id, 0) if not f.is_folder else 0
@@ -1259,7 +1275,9 @@ async def get_price_history(
     row = result.one_or_none()
     if row is None:
         raise HTTPException(404, "상품을 찾을 수 없습니다")
-    return row[1] or []
+    raw = row[1] or []
+    # null/non-dict 엔트리 제거 — 데이터 손상 방어
+    return [h for h in raw if isinstance(h, dict)] if isinstance(raw, list) else []
 
 
 @router.post("/products", status_code=201)

@@ -1080,9 +1080,9 @@ class MusinsaClient:
                                 f"[쿠폰 스킵] {goods_no}: bestSalePriceYn=N — 최대혜택가 미반영 쿠폰"
                             )
                             continue
-                        if c.get("downloadYn") == "N" or c.get("issuedYn") == "N":
+                        if c.get("issuedYn") == "N":
                             logger.info(
-                                f"[쿠폰 스킵] {goods_no}: downloadYn={c.get('downloadYn')}, issuedYn={c.get('issuedYn')} — 미발급 쿠폰"
+                                f"[쿠폰 스킵] {goods_no}: issuedYn={c.get('issuedYn')} — 발급 불가 쿠폰"
                             )
                             continue
                         actual_discount = 0

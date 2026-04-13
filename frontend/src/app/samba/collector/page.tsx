@@ -2109,6 +2109,17 @@ export default function CollectorPage() {
               return true
             })
           }
+          if (marketRegFilter) {
+            allLeafInfos = allLeafInfos.filter(l => {
+              const r = l as unknown as Record<string, number>
+              const cnt = r.market_registered_count ?? 0
+              const total = r.collected_count ?? 0
+              if (marketRegFilter === 'registered') return cnt > 0 && cnt >= total
+              if (marketRegFilter === 'partial') return cnt > 0 && cnt < total
+              if (marketRegFilter === 'unregistered') return cnt === 0
+              return true
+            })
+          }
           // 크로스 필터: 사이트 목록 (선택된 브랜드 기준 필터)
           const baseSites = collectFilter
             ? tree.filter(s => allLeafInfos.some(l => l._siteId === s.id))

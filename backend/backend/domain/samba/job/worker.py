@@ -170,10 +170,9 @@ def _run_transmit_in_thread(worker: "JobWorker", job_id: str, payload: dict):
 
 
 class JobWorker:
-    """pending 잡을 폴링하여 병렬 실행 (전송 최대 3개 동시)."""
+    """pending 잡을 폴링하여 병렬 실행 (전송 무제한 동시)."""
 
     POLL_INTERVAL = 5  # 초
-    MAX_CONCURRENT_TRANSMIT = 3  # 전송 잡 동시 실행 상한
 
     STUCK_CHECK_INTERVAL = 2  # 2회 폴링마다 stuck 체크 (≒10초)
     STUCK_THRESHOLD_SEC = 60  # 1분 이상 progress 변화 없으면 stuck 판정
@@ -190,10 +189,8 @@ class JobWorker:
         self._search_cache: dict[tuple[str, str], tuple[list, float]] = {}
 
     async def start(self):
-        """무한 루프: pending 잡 조회 → 전송 잡 병렬 실행 (최대 3개)."""
-        logger.info(
-            f"[잡워커] 시작 (병렬 모드: 전송 최대 {self.MAX_CONCURRENT_TRANSMIT}개 동시 실행)"
-        )
+        """무한 루프: pending 잡 조회 → 전송 잡 병렬 실행 (무제한)."""
+        logger.info("[잡워커] 시작 (병렬 모드: 전송 무제한 동시 실행)")
         _worker_status["alive"] = "true"
         _worker_status["started_at"] = datetime.now(UTC).isoformat()
         _worker_status["restarts"] = str(int(_worker_status.get("restarts") or 0) + 1)
@@ -290,7 +287,7 @@ class JobWorker:
                 logger.error(f"[잡워커] 배포 종료 잡 복구 실패: {e}")
 
     async def _poll_once(self) -> bool:
-        """전송 잡 병렬 실행 (최대 MAX_CONCURRENT_TRANSMIT개).
+        """전송 잡 병렬 실행 (무제한).
 
         FOR UPDATE SKIP LOCKED로 원자적 잡 획득 — 멀티 worker 중복 실행 방지.
         """
@@ -308,10 +305,6 @@ class JobWorker:
         # 수집 실행 중이면 추가 claim 차단 (수집은 1개만)
         if self._active_collect:
             return bool(self._active_tasks)
-
-        # 전송 동시 실행 상한 도달 시 새 claim 차단
-        if len(self._active_tasks) >= self.MAX_CONCURRENT_TRANSMIT:
-            return True  # 실행 중이므로 sleep 안 함
 
         from backend.db.orm import get_write_session
         from backend.domain.samba.job.repository import SambaJobRepository
@@ -334,7 +327,7 @@ class JobWorker:
             self._active_tasks[job.id] = task
             logger.info(
                 f"[잡워커] 전송 Task 생성: {job.id} "
-                f"(동시 실행: {len(self._active_tasks)}/{self.MAX_CONCURRENT_TRANSMIT})"
+                f"(동시 실행: {len(self._active_tasks)}개)"
             )
             return True
 

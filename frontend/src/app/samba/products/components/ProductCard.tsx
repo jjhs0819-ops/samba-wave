@@ -490,8 +490,12 @@ const ProductCard = React.memo(function ProductCard({
           )
         }
         try {
-        const history = Array.isArray(priceHistoryData) ? priceHistoryData : []
+        // null/non-object 엔트리 필터링 — DB 데이터 손상 방어
+        const history = (Array.isArray(priceHistoryData) ? priceHistoryData : [])
+          .filter((h): h is Record<string, unknown> => h != null && typeof h === 'object' && !Array.isArray(h))
         const isKream = p.source_site === 'KREAM'
+        // 안전한 가격 포맷
+        const fmtPrice = (v: unknown): string => { const n = Number(v); return isNaN(n) || n === 0 ? '-' : n.toLocaleString() }
         // 원가(cost) 기준으로 최저/최고가 계산
         const costPrices = history.map(h => Number(h.cost || h.sale_price || 0)).filter(Boolean)
         const currentPrice = costPrices[0] || cost || p.sale_price || 0
@@ -500,10 +504,18 @@ const ProductCard = React.memo(function ProductCard({
         const minEntry = history.find(h => Number(h.cost || h.sale_price || 0) === minPrice)
         const maxEntry = history.find(h => Number(h.cost || h.sale_price || 0) === maxPrice)
         // KREAM 빠른배송/일반배송 현재가
-        const kreamFastMin = isKream && history[0] ? (history[0] as Record<string, unknown>).kream_fast_min as number || 0 : 0
-        const kreamGeneralMin = isKream && history[0] ? (history[0] as Record<string, unknown>).kream_general_min as number || 0 : 0
-        const fmtHistDate = (d: string) => new Date(d).toLocaleString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-        const fmtShortDate = (d: string) => new Date(d).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+        const kreamFastMin = isKream && history[0] ? Number((history[0] as Record<string, unknown>).kream_fast_min) || 0 : 0
+        const kreamGeneralMin = isKream && history[0] ? Number((history[0] as Record<string, unknown>).kream_general_min) || 0 : 0
+        const fmtHistDate = (d: unknown) => {
+          if (!d) return '-'
+          const dt = new Date(String(d))
+          return isNaN(dt.getTime()) ? String(d) : dt.toLocaleString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+        }
+        const fmtShortDate = (d: unknown) => {
+          if (!d) return '-'
+          const dt = new Date(String(d))
+          return isNaN(dt.getTime()) ? String(d) : dt.toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+        }
 
         return (
           <div
@@ -553,30 +565,30 @@ const ProductCard = React.memo(function ProductCard({
                     {isKream && kreamFastMin > 0 && (
                       <div>
                         <span style={{ color: '#666' }}>빠른배송 </span>
-                        <span style={{ color: '#FF8C00', fontWeight: 600 }}>₩ {kreamFastMin.toLocaleString()}</span>
+                        <span style={{ color: '#FF8C00', fontWeight: 600 }}>₩ {fmtPrice(kreamFastMin)}</span>
                       </div>
                     )}
                     {isKream && kreamGeneralMin > 0 && (
                       <div>
                         <span style={{ color: '#666' }}>일반배송 </span>
-                        <span style={{ color: '#E5E5E5', fontWeight: 600 }}>₩ {kreamGeneralMin.toLocaleString()}</span>
+                        <span style={{ color: '#E5E5E5', fontWeight: 600 }}>₩ {fmtPrice(kreamGeneralMin)}</span>
                       </div>
                     )}
                     {!isKream && (
                       <div>
                         <span style={{ color: '#666' }}>현재가 </span>
-                        <span style={{ color: '#E5E5E5', fontWeight: 600 }}>₩ {currentPrice.toLocaleString()}</span>
+                        <span style={{ color: '#E5E5E5', fontWeight: 600 }}>₩ {fmtPrice(currentPrice)}</span>
                       </div>
                     )}
                     <div>
                       <span style={{ color: '#666' }}>최저가 </span>
-                      <span style={{ color: '#51CF66', fontWeight: 600 }}>₩ {minPrice.toLocaleString()}</span>
-                      {minEntry && <span style={{ color: '#555', fontSize: '0.68rem' }}> ({fmtShortDate(String(minEntry.date))})</span>}
+                      <span style={{ color: '#51CF66', fontWeight: 600 }}>₩ {fmtPrice(minPrice)}</span>
+                      {minEntry && <span style={{ color: '#555', fontSize: '0.68rem' }}> ({fmtShortDate(minEntry.date)})</span>}
                     </div>
                     <div>
                       <span style={{ color: '#666' }}>최고가 </span>
-                      <span style={{ color: '#FF6B6B', fontWeight: 600 }}>₩ {maxPrice.toLocaleString()}</span>
-                      {maxEntry && <span style={{ color: '#555', fontSize: '0.68rem' }}> ({fmtShortDate(String(maxEntry.date))})</span>}
+                      <span style={{ color: '#FF6B6B', fontWeight: 600 }}>₩ {fmtPrice(maxPrice)}</span>
+                      {maxEntry && <span style={{ color: '#555', fontSize: '0.68rem' }}> ({fmtShortDate(maxEntry.date)})</span>}
                     </div>
                   </div>
                 )}
@@ -608,26 +620,28 @@ const ProductCard = React.memo(function ProductCard({
                     <tbody>
                       {history.map((h, i) => {
                         const rawOpts = h.options
-                        const opts = (Array.isArray(rawOpts) ? rawOpts : []) as Array<{ name?: string; price?: number; stock?: number; isSoldOut?: boolean }>
+                        // null/non-object 옵션 필터링
+                        const opts = (Array.isArray(rawOpts) ? rawOpts : [])
+                          .filter((o): o is Record<string, unknown> => o != null && typeof o === 'object') as Array<{ name?: string; price?: number; stock?: number; isSoldOut?: boolean }>
                         return (
                           <React.Fragment key={i}>
                             {/* 메인 행: 날짜 + 가격 + 옵션 요약 */}
                             <tr style={{ borderTop: i > 0 ? '1px solid #2D2D2D' : 'none', background: 'rgba(255,255,255,0.02)' }}>
                               <td style={{ padding: '8px 16px', color: '#C5C5C5', fontWeight: 600, fontSize: '0.78rem' }}>
-                                {fmtHistDate(String(h.date))}
+                                {fmtHistDate(h.date)}
                               </td>
                               {isKream ? (
                                 <>
                                   <td style={{ padding: '8px 16px', textAlign: 'right', color: '#FF8C00', fontWeight: 600 }}>
-                                    {(h as Record<string, unknown>).kream_fast_min ? `₩ ${((h as Record<string, unknown>).kream_fast_min as number).toLocaleString()}` : '-'}
+                                    {Number(h.kream_fast_min) > 0 ? `₩ ${fmtPrice(h.kream_fast_min)}` : '-'}
                                   </td>
                                   <td style={{ padding: '8px 16px', textAlign: 'right', color: '#FFB84D', fontWeight: 600 }}>
-                                    {(h as Record<string, unknown>).kream_general_min ? `₩ ${((h as Record<string, unknown>).kream_general_min as number).toLocaleString()}` : '-'}
+                                    {Number(h.kream_general_min) > 0 ? `₩ ${fmtPrice(h.kream_general_min)}` : '-'}
                                   </td>
                                 </>
                               ) : (
                                 <td style={{ padding: '8px 16px', textAlign: 'right', color: '#FFB84D', fontWeight: 600 }}>
-                                  ₩ {(h.cost || h.sale_price)?.toLocaleString() || '-'}
+                                  ₩ {fmtPrice(h.cost || h.sale_price)}
                                 </td>
                               )}
                               <td style={{ padding: '8px 16px', textAlign: 'right', color: '#888' }}>
@@ -637,11 +651,12 @@ const ProductCard = React.memo(function ProductCard({
                             {/* 옵션 상세 행 */}
                             {opts.map((opt, oi) => {
                               const kOpt = opt as Record<string, unknown>
-                              const soldOut = opt.isSoldOut || (opt.stock !== undefined && opt.stock !== null && opt.stock <= 0)
+                              const stk = Number(opt.stock)
+                              const soldOut = opt.isSoldOut || (opt.stock !== undefined && opt.stock !== null && stk <= 0)
                               const stockLabel = soldOut
                                 ? '품절'
-                                : opt.stock !== undefined
-                                  ? `${opt.stock.toLocaleString()}개`
+                                : opt.stock !== undefined && opt.stock !== null
+                                  ? `${stk.toLocaleString()}개`
                                   : 'O'
                               return (
                                 <tr key={oi} style={{ borderTop: '1px solid #1A1A1A' }}>
@@ -651,15 +666,15 @@ const ProductCard = React.memo(function ProductCard({
                                   {isKream ? (
                                     <>
                                       <td style={{ padding: '4px 16px', textAlign: 'right', color: '#888', fontSize: '0.73rem' }}>
-                                        {(kOpt.kreamFastPrice as number) > 0 ? `₩ ${(kOpt.kreamFastPrice as number).toLocaleString()}` : '-'}
+                                        {Number(kOpt.kreamFastPrice) > 0 ? `₩ ${fmtPrice(kOpt.kreamFastPrice)}` : '-'}
                                       </td>
                                       <td style={{ padding: '4px 16px', textAlign: 'right', color: '#888', fontSize: '0.73rem' }}>
-                                        {(kOpt.kreamGeneralPrice as number) > 0 ? `₩ ${(kOpt.kreamGeneralPrice as number).toLocaleString()}` : '-'}
+                                        {Number(kOpt.kreamGeneralPrice) > 0 ? `₩ ${fmtPrice(kOpt.kreamGeneralPrice)}` : '-'}
                                       </td>
                                     </>
                                   ) : (
                                     <td style={{ padding: '4px 16px', textAlign: 'right', color: '#888', fontSize: '0.73rem' }}>
-                                      ₩ {(h.cost || h.sale_price)?.toLocaleString()}
+                                      ₩ {fmtPrice(h.cost || h.sale_price)}
                                     </td>
                                   )}
                                   <td style={{
@@ -682,12 +697,16 @@ const ProductCard = React.memo(function ProductCard({
           </div>
         )
         } catch (err) {
-          // 데이터 파싱 에러 시 페이지 크래시 방지
-          console.error('[가격이력] 렌더링 에러:', err, '데이터:', priceHistoryData)
+          const errMsg = err instanceof Error ? err.message : String(err)
+          console.error('[가격이력] 렌더링 에러:', errMsg, err instanceof Error ? err.stack : '')
+          console.error('[가격이력] 데이터 샘플:', JSON.stringify(priceHistoryData?.slice(0, 2)))
           return (
             <div style={{ position: 'fixed', inset: 0, zIndex: 99998, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }}
               onClick={() => setShowPriceHistoryModal(false)}>
-              <div style={{ background: '#1A1A1A', borderRadius: '10px', padding: '2rem', color: '#FF6B6B', fontSize: '0.85rem' }}>이력 데이터 로드 실패</div>
+              <div style={{ background: '#1A1A1A', borderRadius: '10px', padding: '2rem', maxWidth: '400px' }}>
+                <div style={{ color: '#FF6B6B', fontSize: '0.85rem', marginBottom: '8px' }}>이력 데이터 표시 실패</div>
+                <div style={{ color: '#666', fontSize: '0.72rem' }}>{errMsg}</div>
+              </div>
             </div>
           )
         }
