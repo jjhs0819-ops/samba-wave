@@ -665,13 +665,13 @@ async def seller_cancel(
         if not api_key:
             raise HTTPException(status_code=400, detail="플레이오토 API Key 없음")
 
-        # order_number를 정수로 변환 (플레이오토 주문번호는 숫자)
+        # shipment_id(=Number)를 정수로 변환 (플레이오토 API는 Number 사용)
         try:
-            order_num = int(order.order_number)
+            order_num = int(order.shipment_id)
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
-                detail=f"플레이오토 주문번호 변환 실패: {order.order_number}",
+                detail=f"플레이오토 주문번호 변환 실패: {order.shipment_id}",
             )
 
         client = PlayAutoClient(api_key)
@@ -684,7 +684,9 @@ async def seller_cancel(
             order_id,
             {"shipping_status": "주문확인"},
         )
-        logger.info(f"[주문확인] 플레이오토 {order.order_number} 주문확인 완료")
+        logger.info(
+            f"[주문확인] 플레이오토 {order.order_number} (Number={order.shipment_id}) 주문확인 완료"
+        )
         return {"ok": True, "message": "주문확인 완료", "detail": str(result)}
 
     raise HTTPException(
