@@ -1488,10 +1488,12 @@ class JobWorker:
                     )
                 else:
                     # 카테고리필터가 있는 소싱처: 전체 검색 후 사후 필터링
+                    # SSG도 dispCtgId 사후 필터링을 사용하므로 전체 검색 필요
                     _max = (
                         9999
                         if (
-                            site in ("Nike", "ABCmart", "GSShop") and sf.category_filter
+                            site in ("Nike", "ABCmart", "GSShop", "SSG")
+                            and sf.category_filter
                         )
                         else max(remaining * 2, 100)
                     )

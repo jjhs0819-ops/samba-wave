@@ -94,12 +94,31 @@ class SSGSourcingClient:
     # 검색
     # ------------------------------------------------------------------
 
+    async def _fetch_brand_ids(self, keyword: str) -> list[str]:
+        """keyword에 매칭되는 repBrandId 목록 추출 (1회 HTTP 요청).
+
+        SSG __NEXT_DATA__의 brandFilter에서 keyword로 시작하는 브랜드를 전부 반환.
+        """
+        _ck: dict[str, Any] = {"timeout": self._timeout, "follow_redirects": True}
+        if self.proxy_url:
+            _ck["proxy"] = self.proxy_url
+        try:
+            async with httpx.AsyncClient(**_ck) as client:
+                _url = f"{self.SEARCH_URL}?query={quote(keyword)}&page=1"
+                _r = await client.get(_url, headers=self._headers())
+                if _r.status_code == 200:
+                    return self._extract_matching_brand_ids(_r.text, keyword)
+        except Exception:
+            pass
+        return []
+
     async def search(
         self, keyword: str, max_count: int = 100, **kwargs: Any
     ) -> dict[str, Any]:
         """worker.py 직접 API 패턴 호환 래퍼 — 멀티페이지 검색.
 
-        max_count까지 페이지를 증가시키며 상품을 수집한다.
+        사전에 brand_ids를 추출하여 전 페이지(1+)에 브랜드 필터를 일관 적용한다.
+        (기존: page 2+에서 brand_ids 유실로 비브랜드 상품 혼입 버그 수정)
         """
         import asyncio
 
@@ -107,8 +126,15 @@ class SSGSourcingClient:
         seen: set[str] = set()
         page = 1
 
+        # brand_ids 사전 추출 → 전 페이지에 브랜드 필터 일관 적용
+        _brand_ids = await self._fetch_brand_ids(keyword)
+        logger.info(f"[SSG] 검색 brand_ids: {_brand_ids}")
+
         while len(products) < max_count:
-            raw = await self.search_products(keyword, page=page, size=40, **kwargs)
+            # 모든 페이지에 brand_ids 전달 (page 1 포함, search_products 내부 추출 생략)
+            raw = await self.search_products(
+                keyword, page=page, size=40, brand_ids=_brand_ids, **kwargs
+            )
             if not raw:
                 break
 
@@ -168,8 +194,14 @@ class SSGSourcingClient:
             _client_kwargs["proxy"] = self.proxy_url
 
         async def _run(client: httpx.AsyncClient) -> list[dict[str, Any]]:
-            # 1단계: page=1로 브랜드 필터 목록 조회
-            if page == 1:
+            # brand_ids 결정: filters에서 제공되면 그대로 사용, 없으면 page=1 자동 추출
+            provided_brand_ids: list[str] | None = filters.get("brand_ids", None)
+
+            if provided_brand_ids is not None:
+                # search() 래퍼에서 사전 추출된 brand_ids 사용 (추가 요청 불필요)
+                brand_ids = provided_brand_ids
+            elif page == 1:
+                # 단독 호출(search_products 직접 사용) 시 page=1에서 자동 추출
                 first_url = f"{self.SEARCH_URL}?query={quote(keyword)}&page=1"
                 resp = await client.get(first_url, headers=self._headers())
                 if resp.status_code in (429, 403):
@@ -177,34 +209,25 @@ class SSGSourcingClient:
                 if resp.status_code != 200:
                     logger.warning(f"[SSG] 검색 페이지 HTTP {resp.status_code}")
                     return []
-                first_html = resp.text
-                brand_ids = self._extract_matching_brand_ids(first_html, keyword)
-                logger.info(f"[SSG] 매칭 브랜드: {len(brand_ids)}개 → {brand_ids}")
+                brand_ids = self._extract_matching_brand_ids(resp.text, keyword)
+                logger.info(
+                    f"[SSG] 매칭 브랜드 자동추출: {len(brand_ids)}개 → {brand_ids}"
+                )
             else:
-                # page > 1: filters에서 brand_ids 전달받음
-                brand_ids = filters.get("brand_ids", [])
-                first_html = None
+                # page > 1이고 brand_ids 미제공: 필터 없이 진행
+                brand_ids = []
 
-            # 2단계: 브랜드 필터 적용 URL로 수집
+            # 브랜드 필터 적용 URL 구성
             search_url = f"{self.SEARCH_URL}?query={quote(keyword)}&page={page}"
             if brand_ids:
                 search_url += f"&repBrandId={'|'.join(brand_ids)}"
 
-            # page=1은 이미 가져온 HTML 재사용, page>1은 새로 요청
-            if page == 1 and brand_ids:
-                resp2 = await client.get(search_url, headers=self._headers())
-                if resp2.status_code in (429, 403):
-                    raise RateLimitError(int(resp2.status_code))
-                html = resp2.text if resp2.status_code == 200 else first_html
-            elif page == 1:
-                html = first_html
-            else:
-                resp = await client.get(search_url, headers=self._headers())
-                if resp.status_code in (429, 403):
-                    raise RateLimitError(int(resp.status_code))
-                if resp.status_code != 200:
-                    return []
-                html = resp.text
+            resp = await client.get(search_url, headers=self._headers())
+            if resp.status_code in (429, 403):
+                raise RateLimitError(int(resp.status_code))
+            if resp.status_code != 200:
+                return []
+            html = resp.text
 
             products = self._parse_search_html(html, keyword)
             logger.info(
