@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useCallback, useEffect, useRef, useState, memo } from 'react'
-import { monitorApi, collectorApi, jobApi, fetchWithAuth, type DashboardStats, type MonitorEvent, type RefreshLogEntry, type SambaJob, type QueueStatus } from '@/lib/samba/api'
+import { monitorApi, collectorApi, fetchWithAuth, type DashboardStats, type MonitorEvent, type RefreshLogEntry } from '@/lib/samba/api'
 import { SITE_COLORS } from '@/lib/samba/constants'
 
 const POLL_INTERVAL = 30_000
@@ -207,10 +207,7 @@ export default function WarroomPage() {
   const [eventFilter, setEventFilter] = useState<EventFilter>('all')
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Job 큐 상태
-  const [collectQueue, setCollectQueue] = useState<QueueStatus | null>(null)
-  const [transmitQueue, setTransmitQueue] = useState<QueueStatus | null>(null)
-  const [recentJobs, setRecentJobs] = useState<SambaJob[]>([])
+  // 실시간 로그 상태
 
   // 소싱처/마켓 상태
   const [probeData, setProbeData] = useState<Record<string, Record<string, Record<string, unknown>>>>({})
@@ -363,15 +360,12 @@ export default function WarroomPage() {
 
   const load = useCallback(async () => {
     try {
-      const [dashboard, recentEvents, probeStatus, atStatus, scores, cq, tq, jobs] = await Promise.all([
+      const [dashboard, recentEvents, probeStatus, atStatus, scores] = await Promise.all([
         monitorApi.dashboard().catch(() => null),
         monitorApi.recentEvents(30).catch(() => []),
         collectorApi.probeStatus().catch(() => ({})) as Promise<Record<string, Record<string, Record<string, unknown>>>>,
         collectorApi.autotuneStatus().catch(() => ({ running: false, last_tick: null, cycle_count: 0, restart_count: 0, target: 'registered', refreshed_count: 0, breaker_tripped: {} as Record<string, number> })) as ReturnType<typeof collectorApi.autotuneStatus>,
         monitorApi.storeScores().catch(() => ({})),
-        jobApi.collectQueue().catch(() => null),
-        jobApi.transmitQueue().catch(() => null),
-        jobApi.list(undefined, 10).catch(() => []),
       ])
       if (dashboard) setStats(dashboard)
       setEvents(recentEvents)
@@ -380,9 +374,6 @@ export default function WarroomPage() {
       handleAutotuneStatus(atStatus.running, atStatus.cycle_count, atStatus.last_tick, atStatus.refreshed_count || 0)
       setAutotuneRestarts(atStatus.restart_count || 0)
       if (scores && Object.keys(scores).length > 0) setStoreScores(scores)
-      if (cq) setCollectQueue(cq)
-      if (tq) setTransmitQueue(tq)
-      setRecentJobs(jobs)
       setLastFetched(new Date())
       nextPollRef.current = POLL_INTERVAL / 1000
     } catch {
@@ -461,18 +452,11 @@ export default function WarroomPage() {
     )
   }
 
-  // 방어: API 응답에 일부 필드가 빠져있을 수 있으므로 기본값 제공
-  const product_stats = stats.product_stats || { total: 0, by_source: {}, by_priority: {}, by_sale_status: {} }
-  const refresh_stats = stats.refresh_stats || { last_refreshed_at: null, refreshed_1h: 0, refreshed_24h: 0, error_products: 0 }
-  const price_change_stats = stats.price_change_stats || { changes_24h: 0, avg_change_pct: 0, top_changes: [] }
-  const site_health = stats.site_health || {}
-  const market_health = stats.market_health || {}
-  const event_summary = stats.event_summary || { counts_24h: {}, recent_critical: [], recent_warnings: [] }
-  const hourly_changes = stats.hourly_changes || []
+  const { product_stats, refresh_stats, price_change_stats, site_health, market_health, event_summary, hourly_changes } = stats
 
   // 가로 바 차트 최대값
-  const maxBySource = Math.max(...Object.values(product_stats.by_source || {}), 1)
-  const maxHourly = Math.max(...(hourly_changes.length ? hourly_changes : [0]), 1)
+  const maxBySource = Math.max(...Object.values(product_stats.by_source), 1)
+  const maxHourly = Math.max(...hourly_changes, 1)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
@@ -651,102 +635,6 @@ export default function WarroomPage() {
         onStatusChange={handleAutotuneStatus}
         externalRunning={autotuneRunning}
       />
-
-      {/* Job 큐 대시보드 */}
-      {(() => {
-        const cRunning = collectQueue?.running
-        const cPending = collectQueue?.pending?.length || 0
-        const tRunning = transmitQueue?.running
-        const tPending = transmitQueue?.pending?.length || 0
-        const runCount = (cRunning ? 1 : 0) + (tRunning ? 1 : 0)
-        const pendCount = cPending + tPending
-        const doneCount = (collectQueue?.completed_today || 0) + (transmitQueue?.completed_today || 0)
-        const failCount = (collectQueue?.failed_today || 0) + (transmitQueue?.failed_today || 0)
-
-        const StatusCard = ({ label, count, color }: { label: string; count: number; color: string }) => (
-          <div style={{ flex: 1, background: `${color}10`, border: `1px solid ${color}30`, borderRadius: '8px', padding: '0.75rem 1rem', textAlign: 'center' }}>
-            <div style={{ fontSize: '1.5rem', fontWeight: 700, color }}>{count.toLocaleString()}</div>
-            <div style={{ fontSize: '0.75rem', color: '#999', marginTop: '0.25rem' }}>{label}</div>
-          </div>
-        )
-
-        return (
-          <div style={card}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-              <div style={{ fontSize: '0.875rem', fontWeight: 700, color: '#4C9AFF' }}>Job 큐 현황</div>
-              <button
-                onClick={async () => {
-                  if (!confirm('모든 대기/진행 잡을 취소합니다. 계속할까요?')) return
-                  await jobApi.cancelAll().catch(() => {})
-                  load()
-                }}
-                style={{ padding: '0.2rem 0.6rem', fontSize: '0.75rem', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '4px', color: '#EF4444', cursor: 'pointer' }}
-              >전체 취소</button>
-            </div>
-            <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem' }}>
-              <StatusCard label="실행 중" count={runCount} color="#22C55E" />
-              <StatusCard label="대기" count={pendCount} color="#F59E0B" />
-              <StatusCard label="완료 (오늘)" count={doneCount} color="#4C9AFF" />
-              <StatusCard label="실패 (오늘)" count={failCount} color="#EF4444" />
-            </div>
-
-            {/* 진행 중 잡 상세 */}
-            {(cRunning || tRunning) && (
-              <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                {[cRunning, tRunning].filter(Boolean).map((j) => {
-                  if (!j) return null
-                  const pct = j.total > 0 ? Math.round((j.progress / j.total) * 100) : 0
-                  return (
-                    <div key={j.id} style={{ flex: 1, background: '#1A1A1A', borderRadius: '6px', padding: '0.625rem 0.75rem', border: '1px solid #2D2D2D' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: '0.35rem' }}>
-                        <span style={{ color: '#E5E5E5', fontWeight: 600 }}>{j.type === 'collect' ? '수집' : '전송'}</span>
-                        <span style={{ color: '#22C55E' }}>{j.progress.toLocaleString()} / {j.total.toLocaleString()} ({pct}%)</span>
-                      </div>
-                      <div style={{ height: '4px', background: '#333', borderRadius: '2px', overflow: 'hidden' }}>
-                        <div style={{ width: `${pct}%`, height: '100%', background: '#22C55E', borderRadius: '2px', transition: 'width 0.3s' }} />
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.6875rem', color: '#666', marginTop: '0.25rem' }}>
-                        <span>성공 {j.success_count.toLocaleString()} / 실패 {j.fail_count.toLocaleString()}</span>
-                        <button onClick={async () => { await jobApi.cancel(j.id).catch(() => {}); load() }} style={{ color: '#EF4444', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.6875rem' }}>취소</button>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-
-            {/* 최근 잡 목록 */}
-            {recentJobs.length > 0 && (
-              <div style={{ maxHeight: '180px', overflowY: 'auto' }}>
-                <table style={{ width: '100%', fontSize: '0.75rem', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr style={{ borderBottom: '1px solid #2D2D2D' }}>
-                      <th style={{ padding: '0.35rem 0.5rem', textAlign: 'left', color: '#666' }}>유형</th>
-                      <th style={{ padding: '0.35rem 0.5rem', textAlign: 'left', color: '#666' }}>상태</th>
-                      <th style={{ padding: '0.35rem 0.5rem', textAlign: 'right', color: '#666' }}>진행</th>
-                      <th style={{ padding: '0.35rem 0.5rem', textAlign: 'right', color: '#666' }}>시간</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recentJobs.map(j => {
-                      const statusColors: Record<string, string> = { running: '#22C55E', pending: '#F59E0B', completed: '#4C9AFF', failed: '#EF4444', cancelled: '#666' }
-                      const statusLabels: Record<string, string> = { running: '실행중', pending: '대기', completed: '완료', failed: '실패', cancelled: '취소' }
-                      return (
-                        <tr key={j.id} style={{ borderBottom: '1px solid #1A1A1A' }}>
-                          <td style={{ padding: '0.3rem 0.5rem' }}>{j.type === 'collect' ? '수집' : j.type === 'transmit' ? '전송' : j.type}</td>
-                          <td style={{ padding: '0.3rem 0.5rem', color: statusColors[j.status] || '#999' }}>{statusLabels[j.status] || j.status}</td>
-                          <td style={{ padding: '0.3rem 0.5rem', textAlign: 'right' }}>{j.progress.toLocaleString()}/{j.total.toLocaleString()}</td>
-                          <td style={{ padding: '0.3rem 0.5rem', textAlign: 'right', color: '#666' }}>{new Date(j.updated_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )
-      })()}
 
       {/* 이벤트 타임라인 (로그 아래) */}
       <div style={card}>
