@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
+from backend.domain.samba.tenant.middleware import get_optional_tenant_id
 from backend.dtos.samba.returns import (
     ExchangeActionBody as ExchangeActionBodyDTO,
     ExchangeTrackingPatchBody as ExchangeTrackingPatchBodyDTO,
@@ -38,9 +39,10 @@ def _write_service(session: AsyncSession):
 @router.get("/stats")
 async def get_return_stats(
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     svc = _read_service(session)
-    return await svc.get_return_stats()
+    return await svc.get_return_stats(tenant_id=tenant_id)
 
 
 @router.get("/reasons")
@@ -72,6 +74,7 @@ async def list_returns(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     svc = _read_service(session)
     returns = await svc.list_returns(
@@ -82,6 +85,7 @@ async def list_returns(
         type=type,
         start_date=start_date,
         end_date=end_date,
+        tenant_id=tenant_id,
     )
 
     # 주문의 ext_order_number(타마켓주문링크) 또는 소싱처 주문상세 URL을 return_link로 매칭

@@ -15,8 +15,11 @@ async def get_current_tenant_id(
     request: Request,
     session: AsyncSession = Depends(get_read_session_dependency),
 ) -> str:
-    """JWT → user → tenant_id 추출. 인증 필수 API에 사용."""
-    # Authorization 헤더에서 JWT 토큰 추출
+    """JWT → tenant_id 추출. 인증 필수 API에 사용.
+
+    JWT에 tid 클레임이 있으면 DB 조회 없이 바로 반환 (성능 최적화).
+    구 토큰(tid 없음)은 DB 폴백으로 처리.
+    """
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         raise HTTPException(401, "인증 토큰이 없습니다")
@@ -36,7 +39,12 @@ async def get_current_tenant_id(
     if not user_id:
         raise HTTPException(401, "사용자 정보를 찾을 수 없습니다")
 
-    # DB에서 user의 tenant_id 조회
+    # 신규 토큰: tid 클레임 직접 사용 (DB 조회 없음)
+    tenant_id = payload.get("tid")
+    if tenant_id:
+        return tenant_id
+
+    # 구 토큰 폴백: DB에서 user의 tenant_id 조회
     from backend.domain.samba.user.model import SambaUser
     from sqlmodel import select
 
@@ -59,10 +67,9 @@ async def get_optional_tenant_id(
 ) -> Optional[str]:
     """테넌트 ID 선택적 추출 — 인증은 필수, tenant_id만 없을 수 있음 (SaaS 과도기).
 
-    인증 실패(401)는 그대로 전파하여 미인증 접근을 차단한다.
-    tenant_id가 아직 설정되지 않은 사용자만 None을 반환한다.
+    신규 토큰: JWT tid 클레임 직접 사용 (DB 조회 없음).
+    구 토큰: DB 폴백으로 처리.
     """
-    # 인증 검증 — 실패 시 HTTPException(401) 전파
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         raise HTTPException(401, "인증 토큰이 없습니다")
@@ -82,7 +89,12 @@ async def get_optional_tenant_id(
     if not user_id:
         raise HTTPException(401, "사용자 정보를 찾을 수 없습니다")
 
-    # 사용자 조회
+    # 신규 토큰: tid 클레임 직접 사용
+    tenant_id = payload.get("tid")
+    if tenant_id:
+        return tenant_id
+
+    # 구 토큰 폴백: DB 조회
     from backend.domain.samba.user.model import SambaUser
     from sqlmodel import select
 
@@ -92,7 +104,6 @@ async def get_optional_tenant_id(
     if not user:
         raise HTTPException(401, "사용자를 찾을 수 없습니다")
 
-    # tenant_id만 선택적 — 아직 미설정 사용자는 None 반환
     tenant_id = getattr(user, "tenant_id", None)
     if not tenant_id:
         logger.warning(f"사용자 {user_id}에 tenant_id가 없습니다 (SaaS 전환 과도기)")

@@ -37,9 +37,17 @@ class SambaReturnRepository(BaseRepository[SambaReturn]):
         type: Optional[str] = None,
         start_dt: Optional[datetime] = None,
         end_dt: Optional[datetime] = None,
+        tenant_id: Optional[str] = None,
     ) -> List[SambaReturn]:
         """필터 + 날짜 범위 목록 조회."""
+        from sqlalchemy import or_
+
         stmt = select(SambaReturn)
+        # 테넌트 격리 — NULL은 레거시 데이터로 허용 (backfill 완료 후 제거)
+        if tenant_id:
+            stmt = stmt.where(
+                or_(SambaReturn.tenant_id == tenant_id, SambaReturn.tenant_id.is_(None))
+            )
         if order_id:
             stmt = stmt.where(SambaReturn.order_id == order_id)
         if status:

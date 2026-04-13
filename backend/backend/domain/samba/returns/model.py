@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Any, List, Optional
 
-from sqlmodel import Column, DateTime, Field, JSON, SQLModel, Text
+from sqlmodel import Column, DateTime, Field, JSON, SQLModel, String, Text
 
 from ulid import ULID
 
@@ -21,6 +21,11 @@ class SambaReturn(SQLModel, table=True):
         default_factory=generate_return_id,
         primary_key=True,
         max_length=30,
+    )
+
+    # 테넌트 격리
+    tenant_id: Optional[str] = Field(
+        default=None, sa_column=Column(String, index=True, nullable=True)
     )
 
     # 연결 주문

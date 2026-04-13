@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from backend.domain.samba.channel.repository import SambaChannelRepository
 from backend.domain.samba.order.repository import SambaOrderRepository
@@ -20,27 +20,47 @@ class SambaAnalyticsService:
         self.product_repo = product_repo
         self.channel_repo = channel_repo
 
+    # ==================== 내부 헬퍼 ====================
+
+    @staticmethod
+    def _filter_by_tenant(orders: list, tenant_id: Optional[str]) -> list:
+        """tenant_id가 주어진 경우 해당 테넌트 주문만 반환.
+        NULL tenant_id 레코드는 기존 레거시 데이터로 간주해 포함한다.
+        backfill 완료 후 `not o.tenant_id` 조건을 제거할 것.
+        """
+        if not tenant_id:
+            return orders
+        return [o for o in orders if not o.tenant_id or o.tenant_id == tenant_id]
+
     # ==================== Today ====================
 
-    async def get_today_stats(self) -> Dict[str, Any]:
+    async def get_today_stats(self, tenant_id: Optional[str] = None) -> Dict[str, Any]:
         """오늘 기준 매출/주문/수익 통계."""
         now = datetime.now(UTC)
         start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        return await self._compute_stats_for_period(start_of_day, now)
+        return await self._compute_stats_for_period(
+            start_of_day, now, tenant_id=tenant_id
+        )
 
     # ==================== Date Range ====================
 
     async def get_stats_by_date_range(
-        self, start_date: datetime, end_date: datetime
+        self, start_date: datetime, end_date: datetime, tenant_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """기간별 매출/주문/수익 통계."""
-        return await self._compute_stats_for_period(start_date, end_date)
+        return await self._compute_stats_for_period(
+            start_date, end_date, tenant_id=tenant_id
+        )
 
     # ==================== By Channel ====================
 
-    async def get_sales_by_channel(self) -> List[Dict[str, Any]]:
+    async def get_sales_by_channel(
+        self, tenant_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """채널별 매출 통계."""
-        all_orders = await self.order_repo.list_async()
+        all_orders = self._filter_by_tenant(
+            await self.order_repo.list_async(), tenant_id
+        )
         all_channels = await self.channel_repo.list_async()
 
         channel_map: Dict[str, str] = {ch.id: ch.name for ch in all_channels}
@@ -65,9 +85,13 @@ class SambaAnalyticsService:
 
     # ==================== By Product ====================
 
-    async def get_sales_by_product(self) -> List[Dict[str, Any]]:
+    async def get_sales_by_product(
+        self, tenant_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """상품별 매출 통계."""
-        all_orders = await self.order_repo.list_async()
+        all_orders = self._filter_by_tenant(
+            await self.order_repo.list_async(), tenant_id
+        )
 
         agg: Dict[str, Dict[str, Any]] = defaultdict(
             lambda: {"sales": 0.0, "orders": 0, "profit": 0.0, "units": 0}
@@ -89,9 +113,13 @@ class SambaAnalyticsService:
 
     # ==================== Daily Trend ====================
 
-    async def get_daily_trend(self, days: int = 30) -> List[Dict[str, Any]]:
+    async def get_daily_trend(
+        self, days: int = 30, tenant_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """일별 매출 트렌드."""
-        all_orders = await self.order_repo.list_async()
+        all_orders = self._filter_by_tenant(
+            await self.order_repo.list_async(), tenant_id
+        )
         now = datetime.now(UTC)
         cutoff = now - timedelta(days=days)
 
@@ -124,9 +152,13 @@ class SambaAnalyticsService:
 
     # ==================== Monthly Comparison ====================
 
-    async def get_monthly_comparison(self) -> List[Dict[str, Any]]:
+    async def get_monthly_comparison(
+        self, tenant_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """월별 매출 비교."""
-        all_orders = await self.order_repo.list_async()
+        all_orders = self._filter_by_tenant(
+            await self.order_repo.list_async(), tenant_id
+        )
 
         monthly: Dict[str, Dict[str, Any]] = {}
 
@@ -150,13 +182,15 @@ class SambaAnalyticsService:
 
     # ==================== KPI Summary ====================
 
-    async def get_kpi_summary(self) -> Dict[str, Any]:
+    async def get_kpi_summary(self, tenant_id: Optional[str] = None) -> Dict[str, Any]:
         """종합 KPI 요약."""
-        today = await self.get_today_stats()
-        channels = await self.get_sales_by_channel()
-        products = await self.get_sales_by_product()
+        today = await self.get_today_stats(tenant_id=tenant_id)
+        channels = await self.get_sales_by_channel(tenant_id=tenant_id)
+        products = await self.get_sales_by_product(tenant_id=tenant_id)
 
-        all_orders = await self.order_repo.list_async()
+        all_orders = self._filter_by_tenant(
+            await self.order_repo.list_async(), tenant_id
+        )
         all_products = await self.product_repo.list_async()
         all_channels = await self.channel_repo.list_async()
 
@@ -182,9 +216,13 @@ class SambaAnalyticsService:
 
     # ==================== Order Status Stats ====================
 
-    async def get_order_status_stats(self) -> Dict[str, int]:
+    async def get_order_status_stats(
+        self, tenant_id: Optional[str] = None
+    ) -> Dict[str, int]:
         """주문 상태별 건수."""
-        all_orders = await self.order_repo.list_async()
+        all_orders = self._filter_by_tenant(
+            await self.order_repo.list_async(), tenant_id
+        )
 
         status_counts: Dict[str, int] = {
             "pending": 0,
@@ -206,10 +244,15 @@ class SambaAnalyticsService:
     # ==================== Sourcing ROI ====================
 
     async def get_sourcing_roi(
-        self, start_date: datetime | None = None, end_date: datetime | None = None
+        self,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        tenant_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """소싱처별 ROI 분석 — 원가, 매출, 이윤, 전환율."""
-        all_orders = await self.order_repo.list_async()
+        all_orders = self._filter_by_tenant(
+            await self.order_repo.list_async(), tenant_id
+        )
         if start_date:
             all_orders = [o for o in all_orders if o.created_at >= start_date]
         if end_date:
@@ -252,10 +295,12 @@ class SambaAnalyticsService:
     # ==================== Best / Worst Sellers ====================
 
     async def get_best_sellers(
-        self, limit: int = 10, days: int = 30
+        self, limit: int = 10, days: int = 30, tenant_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """매출 상위 상품 (베스트셀러)."""
-        all_orders = await self.order_repo.list_async()
+        all_orders = self._filter_by_tenant(
+            await self.order_repo.list_async(), tenant_id
+        )
         cutoff = datetime.now(UTC) - timedelta(days=days)
         filtered = [o for o in all_orders if o.created_at >= cutoff]
 
@@ -277,10 +322,12 @@ class SambaAnalyticsService:
         return result[:limit]
 
     async def get_worst_sellers(
-        self, limit: int = 10, days: int = 30
+        self, limit: int = 10, days: int = 30, tenant_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """이윤 최하위 상품 (워스트셀러)."""
-        all_orders = await self.order_repo.list_async()
+        all_orders = self._filter_by_tenant(
+            await self.order_repo.list_async(), tenant_id
+        )
         cutoff = datetime.now(UTC) - timedelta(days=days)
         filtered = [o for o in all_orders if o.created_at >= cutoff]
 
@@ -304,10 +351,15 @@ class SambaAnalyticsService:
     # ==================== Brand Analysis ====================
 
     async def get_sales_by_brand(
-        self, start_date: datetime | None = None, end_date: datetime | None = None
+        self,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        tenant_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """브랜드별 매출 분석."""
-        all_orders = await self.order_repo.list_async()
+        all_orders = self._filter_by_tenant(
+            await self.order_repo.list_async(), tenant_id
+        )
         if start_date:
             all_orders = [o for o in all_orders if o.created_at >= start_date]
         if end_date:
@@ -360,10 +412,12 @@ class SambaAnalyticsService:
     # ==================== Internal ====================
 
     async def _compute_stats_for_period(
-        self, start: datetime, end: datetime
+        self, start: datetime, end: datetime, tenant_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """기간 내 주문으로 통계 계산."""
-        all_orders = await self.order_repo.list_async()
+        all_orders = self._filter_by_tenant(
+            await self.order_repo.list_async(), tenant_id
+        )
 
         filtered = [o for o in all_orders if start <= o.created_at <= end]
 

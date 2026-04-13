@@ -34,16 +34,20 @@ class AuthService:
         self.session = session
         self._user_repo = UserRepository(session)
 
-    def _create_access_token(self, user_id: str) -> str:
-        """Create JWT access token."""
+    def _create_access_token(
+        self, user_id: str, tenant_id: Optional[str] = None
+    ) -> str:
+        """Create JWT access token. tenant_id를 tid 클레임으로 포함 (있을 경우)."""
         expire = datetime.now(timezone.utc) + timedelta(
             minutes=settings.access_token_expire_minutes
         )
-        payload = {
+        payload: dict = {
             "sub": user_id,
             "exp": expire,
             "type": "access",
         }
+        if tenant_id:
+            payload["tid"] = tenant_id  # 테넌트 ID — DB 조회 없이 바로 사용
         return jwt.encode(
             payload,
             settings.jwt_secret_key,
@@ -65,6 +69,18 @@ class AuthService:
             settings.jwt_secret_key,
             algorithm=settings.jwt_algorithm,
         )
+
+    async def _get_tenant_id(self, user_id: str) -> Optional[str]:
+        """SambaUser에서 tenant_id 조회 — 토큰 발급 시 사용."""
+        try:
+            from backend.domain.samba.user.model import SambaUser
+            from sqlmodel import select
+
+            stmt = select(SambaUser.tenant_id).where(SambaUser.id == user_id)
+            result = await self.session.execute(stmt)
+            return result.scalar_one_or_none()
+        except Exception:
+            return None
 
     def _verify_token(self, token: str, token_type: str = "access") -> Optional[str]:
         """Verify JWT token and return user_id if valid."""
@@ -105,8 +121,9 @@ class AuthService:
 
         logger.info(f"Created email user {user.id}")
 
-        # Generate tokens
-        access_token = self._create_access_token(user.id)
+        # Generate tokens (tenant_id 포함 — 신규 가입 시점엔 아직 없을 수 있음)
+        tenant_id = await self._get_tenant_id(user.id)
+        access_token = self._create_access_token(user.id, tenant_id=tenant_id)
         refresh_token = self._create_refresh_token(user.id)
 
         return LoginResponseDto(
@@ -137,8 +154,9 @@ class AuthService:
 
         logger.info(f"Email login successful for user {user.id}")
 
-        # Generate tokens
-        access_token = self._create_access_token(user.id)
+        # Generate tokens (tenant_id JWT 포함으로 매 요청 DB 조회 제거)
+        tenant_id = await self._get_tenant_id(user.id)
+        access_token = self._create_access_token(user.id, tenant_id=tenant_id)
         refresh_token = self._create_refresh_token(user.id)
 
         return LoginResponseDto(
@@ -165,8 +183,9 @@ class AuthService:
                 detail="User not found",
             )
 
-        # Generate new tokens
-        new_access_token = self._create_access_token(user_id)
+        # Generate new tokens (tenant_id 재포함)
+        tenant_id = await self._get_tenant_id(user_id)
+        new_access_token = self._create_access_token(user_id, tenant_id=tenant_id)
         new_refresh_token = self._create_refresh_token(user_id)
 
         return RefreshTokenResponseDto(

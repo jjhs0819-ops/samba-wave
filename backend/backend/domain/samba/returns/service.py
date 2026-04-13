@@ -63,12 +63,15 @@ class SambaReturnService:
         type: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> List[SambaReturn]:
-        # 날짜 필터가 있으면 list_filtered 사용
-        if start_date and end_date:
+        # 날짜 필터 또는 tenant_id가 있으면 list_filtered 사용
+        if (start_date and end_date) or tenant_id:
             from backend.utils import kst_date_range_to_utc
 
-            start_dt, end_dt = kst_date_range_to_utc(start_date, end_date)
+            start_dt, end_dt = None, None
+            if start_date and end_date:
+                start_dt, end_dt = kst_date_range_to_utc(start_date, end_date)
             return await self.repo.list_filtered(
                 skip=skip,
                 limit=limit,
@@ -77,6 +80,7 @@ class SambaReturnService:
                 type=type,
                 start_dt=start_dt,
                 end_dt=end_dt,
+                tenant_id=tenant_id,
             )
         if order_id:
             return await self.repo.list_by_order(order_id)
@@ -198,9 +202,14 @@ class SambaReturnService:
 
     # ==================== Stats ====================
 
-    async def get_return_stats(self) -> Dict[str, Any]:
+    async def get_return_stats(self, tenant_id: Optional[str] = None) -> Dict[str, Any]:
         """상태별/유형별 반품 통계 + 총 환불 금액."""
-        all_returns = await self.repo.list_async()
+        if tenant_id:
+            all_returns = await self.repo.list_filtered(
+                tenant_id=tenant_id, limit=10000
+            )
+        else:
+            all_returns = await self.repo.list_async()
 
         status_counts: Dict[str, int] = {}
         type_counts: Dict[str, int] = {}
