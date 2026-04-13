@@ -425,14 +425,17 @@ export default function CSPage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
           <select value={csSyncAccountId} onChange={e => setCsSyncAccountId(e.target.value)} style={{ ...inputStyle, padding: '0 0.4rem', fontSize: '0.75rem', height: '28px', minWidth: '140px' }}>
             <option value="">전체 계정</option>
-            {[...new Set(accounts.map(a => a.market_name))].map(market => (
-              <optgroup key={market} label={market}>
-                <option key={`market:${market}`} value={`market:${market}`}>{market} 전체</option>
-                {accounts.filter(a => a.market_name === market).map(a => (
-                  <option key={a.id} value={`account:${a.id}`}>{a.seller_id || a.business_name || '-'}</option>
-                ))}
-              </optgroup>
-            ))}
+            {[...new Set(accounts.map(a => a.market_name))].map(market => {
+              const marketAccounts = accounts.filter(a => a.market_name === market)
+              return (
+                <optgroup key={market} label={market}>
+                  {marketAccounts.length > 1 && <option key={`market:${market}`} value={`market:${market}`}>{market} 전체</option>}
+                  {marketAccounts.map(a => (
+                    <option key={a.id} value={`account:${a.id}`}>{a.seller_id || a.business_name || '-'}</option>
+                  ))}
+                </optgroup>
+              )
+            })}
           </select>
           <button onClick={handleSearch} style={{ padding: '0 0.65rem', fontSize: '0.75rem', height: '28px', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}>가져오기</button>
         </div>
