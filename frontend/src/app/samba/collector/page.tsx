@@ -1826,7 +1826,7 @@ export default function CollectorPage() {
             <select value={marketRegFilter} onChange={e => setMarketRegFilter(e.target.value)}
               style={{ fontSize: '0.78rem', padding: '0.3rem 0.5rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '6px', color: marketRegFilter ? '#4C9AFF' : '#888', cursor: 'pointer' }}>
               <option value="">마켓등록</option>
-              <option value="registered">등록</option>
+              <option value="registered">전체등록</option>
               <option value="partial">부분등록</option>
               <option value="unregistered">미등록</option>
             </select>

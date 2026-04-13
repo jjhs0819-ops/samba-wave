@@ -49,7 +49,6 @@ export default function ShipmentsPage() {
   [accounts])
   const [updateItems, setUpdateItems] = useState({ all: false, price: false, thumb: false, detail: false })
   const [skipEnabled, setSkipEnabled] = useState(false)
-  const [loopEnabled, setLoopEnabled] = useState(false)
   const [selectedSites, setSelectedSites] = useState<string[]>([])
 
   // 전송 로그
@@ -63,7 +62,6 @@ export default function ShipmentsPage() {
   const abortRef = useRef(false)
   const activeJobIdRef = useRef('')
   const jobPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const [loopRestart, setLoopRestart] = useState(false)
   const sinceIdxRef = useRef(0)  // 링 버퍼 폴링용
 
   // 실시간 Job 큐 상태
@@ -170,20 +168,6 @@ export default function ShipmentsPage() {
 
   // handleStart 최신 참조를 유지하는 ref (stale closure 방지)
   const handleStartRef = useRef<(targetIds?: string[]) => Promise<void>>(async () => {})
-
-  // 무한반복: 3분 대기 후 미등록 필터 + 전체 선택 + 재시작
-  useEffect(() => {
-    if (!loopRestart) return
-    setLoopRestart(false)
-    // 미등록 상품 전체 선택
-    const unregistered = products.filter(p => !(p.registered_accounts?.length)).map(p => p.id)
-    if (unregistered.length > 0) {
-      setSelectedProducts(unregistered)
-      setTimeout(() => handleStartRef.current(unregistered), 300)
-    } else {
-      setTransmitting(false)
-    }
-  }, [loopRestart, products])
 
   // 페이지 이탈해도 서버 잡은 계속 실행 (오토튠과 동일 — 다시 열면 자동 연결)
   const transmittingRef = useRef(false)
@@ -991,10 +975,6 @@ export default function ShipmentsPage() {
                 style={{ padding: '4px 14px', fontSize: '0.78rem', background: stopping === 'emergency' ? 'rgba(255,50,50,0.6)' : 'rgba(255,50,50,0.3)', color: '#FF4444', border: '1px solid rgba(255,50,50,0.6)', borderRadius: '4px', cursor: stopping ? 'not-allowed' : 'pointer', fontWeight: 700, opacity: stopping ? 0.7 : 1 }}
               >{stopping === 'emergency' ? '중지중...' : '작업중지'}</button>
             {<>
-              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', color: loopEnabled ? '#FF8C00' : '#666', cursor: 'pointer' }}>
-                <input type="checkbox" checked={loopEnabled} onChange={() => setLoopEnabled(!loopEnabled)} style={{ accentColor: '#FF8C00', width: '13px', height: '13px' }} />
-                무한반복
-              </label>
               <button onClick={() => handleStart()}
                 style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', border: '1px solid rgba(255,140,0,0.4)', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
               >선택전송</button>

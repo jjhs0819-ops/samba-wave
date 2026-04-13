@@ -7,7 +7,7 @@ proxy-server.mjs의 무신사 관련 로직을 Python으로 포팅.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 from urllib.parse import urlencode
 
@@ -904,14 +904,14 @@ class MusinsaClient:
                             for inv in inv_json["data"]:
                                 opt_item_no = inv.get("productVariantId")
                                 if opt_item_no:
+                                    _dd = inv.get("domesticDelivery") or {}
                                     inventory_map[opt_item_no] = {
                                         "remainQuantity": inv.get("remainQuantity"),
                                         "outOfStock": inv.get("outOfStock", False),
                                         "isRedirect": inv.get("isRedirect", False),
-                                        "deliveryType": (
-                                            (inv.get("domesticDelivery") or {}).get(
-                                                "deliveryType", ""
-                                            )
+                                        "deliveryType": _dd.get("deliveryType", ""),
+                                        "willReleaseDate": _dd.get(
+                                            "willReleaseDate", ""
                                         ),
                                     }
                 except Exception as inv_err:
@@ -955,6 +955,26 @@ class MusinsaClient:
                         stock = inv["remainQuantity"]
                     else:
                         stock = 99  # 재고 수량 불명 → 99
+
+                # 예약배송(MANUAL): 출고일 3일 초과 → 품절 처리
+                if not is_sold_out:
+                    _dt = (inv or {}).get("deliveryType", "")
+                    _wr = (inv or {}).get("willReleaseDate", "")
+                    if _dt == "MANUAL" and _wr:
+                        try:
+                            _KST = timezone(timedelta(hours=9))
+                            _today = datetime.now(tz=_KST).date()
+                            _release = date.fromisoformat(_wr)
+                            _days = (_release - _today).days
+                            if _days > 3:
+                                stock = 0
+                                is_sold_out = True
+                                logger.info(
+                                    f"[옵션] {goods_no} 예약배송 품절: "
+                                    f"출고일={_wr}({_days}일 후)"
+                                )
+                        except ValueError:
+                            pass
 
                 options.append(
                     {
@@ -1078,11 +1098,6 @@ class MusinsaClient:
                         if c.get("bestSalePriceYn") == "N":
                             logger.info(
                                 f"[쿠폰 스킵] {goods_no}: bestSalePriceYn=N — 최대혜택가 미반영 쿠폰"
-                            )
-                            continue
-                        if c.get("issuedYn") == "N":
-                            logger.info(
-                                f"[쿠폰 스킵] {goods_no}: issuedYn={c.get('issuedYn')} — 발급 불가 쿠폰"
                             )
                             continue
                         actual_discount = 0

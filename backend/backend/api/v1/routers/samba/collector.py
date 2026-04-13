@@ -213,8 +213,11 @@ async def list_filters(session: AsyncSession = Depends(get_write_session_depende
                     (
                         and_(
                             _CP.registered_accounts != None,
-                            func.length(cast(_CP.registered_accounts, String))
-                            > 2,  # [] = 2글자, 실제 데이터 있으면 > 2
+                            cast(_CP.registered_accounts, String) != "null",
+                            cast(_CP.registered_accounts, String) != "[]",
+                            _CP.market_product_nos != None,
+                            cast(_CP.market_product_nos, String) != "null",
+                            cast(_CP.market_product_nos, String) != "{}",
                         ),
                         literal(1),
                     )
@@ -440,7 +443,11 @@ async def get_filter_tree(session: AsyncSession = Depends(get_read_session_depen
                         (
                             and_(
                                 _CP.registered_accounts != None,
-                                _func.length(cast(_CP.registered_accounts, String)) > 2,
+                                cast(_CP.registered_accounts, String) != "null",
+                                cast(_CP.registered_accounts, String) != "[]",
+                                _CP.market_product_nos != None,
+                                cast(_CP.market_product_nos, String) != "null",
+                                cast(_CP.market_product_nos, String) != "{}",
                             ),
                             literal(1),
                         )
