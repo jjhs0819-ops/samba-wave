@@ -605,7 +605,7 @@ async def _site_autotune_loop(site: str):
                                         _all_price_pids.add(r.product_id)
                                         retransmitted += 1
                                         _actions.append(
-                                            f"가격전송 {last_price:,}→{expected_price:,} → {acc_label}"
+                                            f"가격변동 {last_price:,}→{expected_price:,} → {acc_label} (전송대기)"
                                         )
                                         _transmit_queue.append(
                                             (
@@ -747,7 +747,7 @@ async def _site_autotune_loop(site: str):
                                             )
 
                                             _svc = _FSvc(_FRepo(_tx_s), _tx_s)
-                                            await _svc.start_update(
+                                            _tx_result = await _svc.start_update(
                                                 [_pid],
                                                 _items,
                                                 [_acc],
@@ -755,7 +755,36 @@ async def _site_autotune_loop(site: str):
                                                 skip_refresh=True,
                                             )
                                             await _tx_s.commit()
-                                        _synced_count += 1
+
+                                        # 결과 검증: start_update는 실패 시 예외 없이 dict로 반환
+                                        _tx_res_list = _tx_result.get("results", [])
+                                        _tx_ok = any(
+                                            r.get("status") in ("success", "completed")
+                                            for r in _tx_res_list
+                                            if isinstance(r, dict)
+                                        )
+                                        if _tx_ok:
+                                            _synced_count += 1
+                                            _log_line(
+                                                _site,
+                                                _pid,
+                                                f"{_label} 전송완료",
+                                            )
+                                        else:
+                                            _fail_info = []
+                                            for r in _tx_res_list:
+                                                if isinstance(r, dict):
+                                                    _e = r.get(
+                                                        "transmit_error"
+                                                    ) or r.get("error", "")
+                                                    if _e:
+                                                        _fail_info.append(str(_e)[:60])
+                                            _log_line(
+                                                _site,
+                                                _pid,
+                                                f"{_label} 전송실패(검증): {_fail_info[0] if _fail_info else '결과없음'}",
+                                                "error",
+                                            )
                                     except Exception as _fe:
                                         _log_line(
                                             _site,

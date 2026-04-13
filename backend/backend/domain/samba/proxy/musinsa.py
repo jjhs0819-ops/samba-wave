@@ -1356,6 +1356,14 @@ class MusinsaClient:
 
             results: list[dict[str, Any]] = []
 
+            # 1단계에서 받은 모든 중분류 코드 수집 (형제 판별용)
+            all_mid_codes: set[str] = set()
+            for cat in cats:
+                for sub in cat.get("categoryList", []):
+                    code = sub.get("value", "")
+                    if code:
+                        all_mid_codes.add(code)
+
             for cat in cats:
                 big_name = cat.get("displayText", "")
                 big_code = cat.get("value", "")
@@ -1382,9 +1390,14 @@ class MusinsaClient:
                         ):
                             sub_cats.extend(d1.get("categoryList", []))
 
-                    if sub_cats:
-                        # 소분류별 상품 수 조회
-                        for small in sub_cats:
+                    # 형제 카테고리 제거 → 진짜 소분류만 남김
+                    real_sub_cats = [
+                        s for s in sub_cats if s.get("value", "") not in all_mid_codes
+                    ]
+
+                    if real_sub_cats:
+                        # 진짜 소분류별 상품 수 조회
+                        for small in real_sub_cats:
                             small_name = small.get("displayText", "")
                             small_code = small.get("value", "")
                             resp3 = await client.get(
@@ -1406,7 +1419,6 @@ class MusinsaClient:
                                     .get("totalCount", 0)
                                 )
                             if cnt > 0:
-                                # 소분류가 중분류와 동일하면 생략
                                 actual_cat3 = (
                                     "" if small_name == mid_name else small_name
                                 )
@@ -1426,7 +1438,7 @@ class MusinsaClient:
                                     }
                                 )
                     else:
-                        # 소분류 없으면 중분류가 최하단
+                        # 소분류 없음(형제만 있었거나 빈 응답) → 중분류 직접 조회
                         resp3 = await client.get(
                             "https://api.musinsa.com/api2/dp/v1/plp/goods",
                             params={

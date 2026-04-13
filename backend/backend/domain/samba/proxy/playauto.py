@@ -104,12 +104,12 @@ class PlayAutoClient:
             data = {"raw": resp.text}
 
         # HTTP 에러 체크
-        if resp.status_code >= 500:
+        if resp.status_code >= 400:
             msg = ""
             if isinstance(data, dict):
-                msg = data.get("message", data.get("msg", str(data)))
+                msg = data.get("message", data.get("msg", str(data)[:200]))
             raise PlayAutoApiError(
-                f"[플레이오토] 서버 에러({resp.status_code}): {msg}",
+                f"[플레이오토] HTTP {resp.status_code}: {msg or resp.reason_phrase}",
                 status=resp.status_code,
                 data=data,
             )
@@ -253,7 +253,7 @@ class PlayAutoClient:
     # ── 주문 상태변경 API ──
 
     async def confirm_order(self, numbers: list[int]) -> list[dict]:
-        """신규주문 → 주문확인 상태 변경 (PATCH /orders).
+        """신규주문 → 주문확인 상태 변경 (PUT /orders).
 
         Args:
             numbers: 주문번호(number) 리스트
@@ -263,7 +263,7 @@ class PlayAutoClient:
         """
         url = f"{EMP_BASE_URL}/orders"
         body = {"data": [{"number": n} for n in numbers]}
-        result = await self._call_api("PATCH", url, body=body)
+        result = await self._call_api("PUT", url, body=body)
         logger.info(f"[플레이오토] 주문확인 응답: {result}")
         return result if isinstance(result, list) else [result]
 

@@ -680,6 +680,18 @@ async def seller_cancel(
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"주문확인 실패: {e}")
 
+        # 응답 검증 — 플레이오토 API가 HTTP 200이지만 body에 에러를 넣을 수 있음
+        if result:
+            first = result[0] if isinstance(result, list) else result
+            if isinstance(first, dict):
+                code = str(first.get("code", ""))
+                msg = first.get("msg", "") or first.get("message", "")
+                if code and code not in ("200", "0", "OK", "SUCCESS"):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"플레이오토 주문확인 실패: {msg or code} (Number={order_num}, 응답={result})",
+                    )
+
         await svc.update_order(
             order_id,
             {"shipping_status": "주문확인"},
@@ -687,7 +699,11 @@ async def seller_cancel(
         logger.info(
             f"[주문확인] 플레이오토 {order.order_number} (Number={order.shipment_id}) 주문확인 완료"
         )
-        return {"ok": True, "message": "주문확인 완료", "detail": str(result)}
+        return {
+            "ok": True,
+            "message": f"주문확인 완료 (Number={order_num}, 응답={result})",
+            "detail": str(result),
+        }
 
     raise HTTPException(
         status_code=400, detail=f"{account.market_type} 판매자 취소 미지원"
@@ -1981,7 +1997,9 @@ async def sync_orders_from_markets(
                         update_fields["source_site"] = order_data["source_site"]
                     if order_data.get("source_url") and not existing.source_url:
                         update_fields["source_url"] = order_data["source_url"]
-                    if order_data.get("shipment_id") and not existing.shipment_id:
+                    if order_data.get("shipment_id") and order_data[
+                        "shipment_id"
+                    ] != str(existing.shipment_id or ""):
                         update_fields["shipment_id"] = order_data["shipment_id"]
                     # 결제일 갱신 (마켓 API 값이 정확하므로 항상 갱신)
                     if (

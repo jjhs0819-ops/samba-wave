@@ -1143,6 +1143,12 @@ class SambaShipmentService:
                 "clear_nos": [],
             }
             try:
+                # 전송 시작 전 취소 체크
+                if is_cancel_requested():
+                    res["error"] = "전송 취소됨"
+                    res["status"] = "cancelled"
+                    return res
+
                 account = _dispatch_account_map.get(account_id)
                 if not account:
                     res["error"] = "계정을 찾을 수 없습니다."
@@ -1353,6 +1359,14 @@ class SambaShipmentService:
                     logger.warning(f"[전송] 계정 {account_id} 세마포어 60초 타임아웃")
                     return res
                 try:
+                    # 취소 체크 — 세마포어 대기 중 취소됐을 수 있음
+                    if is_cancel_requested():
+                        res["error"] = "전송 취소됨"
+                        res["status"] = "cancelled"
+                        logger.info(
+                            f"[전송] 취소 감지 → {market_type} 전송 스킵 (계정 {account_id})"
+                        )
+                        return res
                     logger.info(f"[메모리] 마켓전송 전: {_mem_mb()}MB")
                     result = await dispatch_to_market(
                         self.session,
