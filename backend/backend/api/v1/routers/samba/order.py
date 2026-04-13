@@ -658,52 +658,14 @@ async def seller_cancel(
         return {"ok": True, "message": "판매자 취소 완료"}
 
     elif account.market_type == "playauto":
-        from backend.domain.samba.proxy.playauto import PlayAutoClient
-
-        extras = account.additional_fields or {}
-        api_key = extras.get("apiKey", "") or account.api_key or ""
-        if not api_key:
-            raise HTTPException(status_code=400, detail="플레이오토 API Key 없음")
-
-        # shipment_id(=Number)를 정수로 변환 (플레이오토 API는 Number 사용)
-        try:
-            order_num = int(order.shipment_id)
-        except (ValueError, TypeError):
-            raise HTTPException(
-                status_code=400,
-                detail=f"플레이오토 주문번호 변환 실패: {order.shipment_id}",
-            )
-
-        client = PlayAutoClient(api_key)
-        try:
-            result = await client.confirm_order([order_num])
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"주문확인 실패: {e}")
-
-        # 응답 검증 — 플레이오토 API가 HTTP 200이지만 body에 에러를 넣을 수 있음
-        if result:
-            first = result[0] if isinstance(result, list) else result
-            if isinstance(first, dict):
-                code = str(first.get("code", ""))
-                msg = first.get("msg", "") or first.get("message", "")
-                if code and code not in ("200", "0", "OK", "SUCCESS"):
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"플레이오토 주문확인 실패: {msg or code} (Number={order_num}, 응답={result})",
-                    )
-
+        # 플레이오토 EMP API는 주문확인 상태변경 미지원 (송장입력만 가능)
+        # DB 상태만 변경하여 이행 불가 건 구분용으로 사용
         await svc.update_order(
             order_id,
             {"shipping_status": "주문확인"},
         )
-        logger.info(
-            f"[주문확인] 플레이오토 {order.order_number} (Number={order.shipment_id}) 주문확인 완료"
-        )
-        return {
-            "ok": True,
-            "message": f"주문확인 완료 (Number={order_num}, 응답={result})",
-            "detail": str(result),
-        }
+        logger.info(f"[주문확인] 플레이오토 {order.order_number} 주문확인 완료 (DB)")
+        return {"ok": True, "message": "주문확인 완료"}
 
     raise HTTPException(
         status_code=400, detail=f"{account.market_type} 판매자 취소 미지원"

@@ -175,10 +175,13 @@ async def lifespan(app: FastAPI):
                         _startup_log.info(
                             f"[startup] 플레이오토 SAMBA-WAVE: {len(pa_products)}건"
                         )
-                        # ProdName 끝에서 site_product_id 추출
+                        # ProdName 끝에서 site_product_id 추출 + MasterCode 매핑
                         pa_site_ids: set[str] = set()
+                        # site_product_id → MasterCode 매핑 (MasterCode 복구용)
+                        pa_mastercode_map: dict[str, str] = {}
                         for pp in pa_products:
                             pn = str(pp.get("ProdName", "") or "").strip()
+                            mc = str(pp.get("MasterCode", "") or "").strip()
                             # 상품명 마지막 토큰이 site_product_id
                             parts = pn.split()
                             if parts:
@@ -186,6 +189,8 @@ async def lifespan(app: FastAPI):
                                 # 숫자만 또는 영숫자 코드
                                 if _re.match(r"^[A-Za-z0-9_-]+$", last):
                                     pa_site_ids.add(last)
+                                    if mc:
+                                        pa_mastercode_map[last] = mc
                         _startup_log.info(
                             f"[startup] 플레이오토 site_id 추출: {len(pa_site_ids)}개"
                         )
@@ -209,6 +214,16 @@ async def lifespan(app: FastAPI):
                                     if p.status != "registered":
                                         p.status = "registered"
                                         _changed = True
+                                    # MasterCode 복구: market_product_nos에 없으면 추가
+                                    nos = dict(p.market_product_nos or {})
+                                    if pa_acc.id not in nos:
+                                        mc = pa_mastercode_map.get(
+                                            p.site_product_id, ""
+                                        )
+                                        if mc:
+                                            nos[pa_acc.id] = mc
+                                            p.market_product_nos = nos
+                                            _changed = True
                                     if _changed:
                                         session.add(p)
                                         _pa_updated += 1
@@ -218,6 +233,43 @@ async def lifespan(app: FastAPI):
                                 f"[startup] 플레이오토 매칭: "
                                 f"API {len(pa_products)}개 → site_id {len(pa_site_ids)}개 → "
                                 f"추가 {_pa_updated}개"
+                            )
+
+                        # ── 역방향 동기화: DB에는 등록인데 플레이오토에 없는 상품 정리 ──
+                        if pa_site_ids:
+                            from sqlalchemy import cast, String
+
+                            _rev_stmt = _sel(SambaCollectedProduct).where(
+                                cast(
+                                    SambaCollectedProduct.registered_accounts,
+                                    String,
+                                ).like(f'%"{pa_acc.id}"%')
+                            )
+                            _rev_result = await session.exec(_rev_stmt)
+                            _pa_removed = 0
+                            for p in _rev_result.all():
+                                if (
+                                    p.site_product_id
+                                    and p.site_product_id not in pa_site_ids
+                                ):
+                                    reg = [
+                                        a
+                                        for a in (p.registered_accounts or [])
+                                        if a != pa_acc.id
+                                    ]
+                                    p.registered_accounts = reg if reg else None
+                                    nos = dict(p.market_product_nos or {})
+                                    nos.pop(str(pa_acc.id), None)
+                                    p.market_product_nos = nos if nos else None
+                                    if not reg:
+                                        p.status = "collected"
+                                    session.add(p)
+                                    _pa_removed += 1
+                            if _pa_removed > 0:
+                                await session.commit()
+                            _startup_log.info(
+                                f"[startup] 플레이오토 역동기화: "
+                                f"DB등록 중 플레이오토 미존재 {_pa_removed}개 정리"
                             )
                     finally:
                         await client.close()

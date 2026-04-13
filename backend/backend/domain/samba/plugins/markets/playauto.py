@@ -128,6 +128,7 @@ class PlayAutoPlugin(MarketPlugin):
                 )
                 return {
                     "success": True,
+                    "product_no": master_code,
                     "message": f"플레이오토 {'수정' if existing_no else '등록'} 성공",
                     "data": {
                         "market_product_no": master_code,

@@ -253,7 +253,7 @@ class PlayAutoClient:
     # ── 주문 상태변경 API ──
 
     async def confirm_order(self, numbers: list[int]) -> list[dict]:
-        """신규주문 → 주문확인 상태 변경 (PUT /orders).
+        """신규주문 → 주문확인 상태 변경 (PATCH /orders/state).
 
         Args:
             numbers: 주문번호(number) 리스트
@@ -261,9 +261,9 @@ class PlayAutoClient:
         Returns:
             [{code, status, msg}, ...]
         """
-        url = f"{EMP_BASE_URL}/orders"
-        body = {"data": [{"number": n} for n in numbers]}
-        result = await self._call_api("PUT", url, body=body)
+        url = f"{EMP_BASE_URL}/orders/state"
+        body = {"state": "주문확인", "data": [{"number": n} for n in numbers]}
+        result = await self._call_api("PATCH", url, body=body)
         logger.info(f"[플레이오토] 주문확인 응답: {result}")
         return result if isinstance(result, list) else [result]
 
