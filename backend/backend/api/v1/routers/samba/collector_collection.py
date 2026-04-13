@@ -2612,15 +2612,25 @@ async def brand_create_groups(
             _c1 = cat.get("category1Id", "")
             _c2 = cat.get("category2Id", "")
             _c3 = cat.get("category3Id", "")
+            # 카테고리 이름도 URL에 저장 — 수집 시 _CATEGORY_MAP 의존 없이 정확한 이름 복원용
+            _c1_name = cat.get("category1", "")
+            _c2_name = cat.get("category2", "")
+            _c3_name = cat.get("category3", "")
             _md_fp = "&maxDiscount=1" if body.options.get("maxDiscount") else ""
             _so_fp = "&includeSoldOut=1" if _opts_include_sold_out else ""
             _cat_params = ""
             if _c1:
                 _cat_params += f"&category1Id={_c1}"
+                if _c1_name:
+                    _cat_params += f"&category1Name={_quote_fp(_c1_name)}"
             if _c2:
                 _cat_params += f"&category2Id={_c2}"
+                if _c2_name:
+                    _cat_params += f"&category2Name={_quote_fp(_c2_name)}"
             if _c3:
                 _cat_params += f"&category3Id={_c3}"
+                if _c3_name:
+                    _cat_params += f"&category3Name={_quote_fp(_c3_name)}"
             keyword = (
                 f"https://www.fashionplus.co.kr/search/goods/result"
                 f"?searchWord={_quote_fp(_label_fp)}{_cat_params}{_md_fp}{_so_fp}"

@@ -1663,11 +1663,24 @@ class JobWorker:
         await repo.update_progress(job.id, 0, remaining)
 
         # 카테고리 매핑 (패션플러스)
+        # URL의 categoryName 파라미터 우선 사용 — _CATEGORY_MAP은 ID와 이름이 불일치할 수 있음
         _category1_name = ""
-        if site == "FashionPlus" and _search_kwargs.get("category1Id"):
-            from backend.domain.samba.proxy.fashionplus import _CATEGORY_MAP
+        _fp_cat1 = ""
+        _fp_cat2 = ""
+        _fp_cat3 = ""
+        if site == "FashionPlus":
+            _fp_cat1 = qs.get("category1Name", [""])[0]
+            _fp_cat2 = qs.get("category2Name", [""])[0]
+            _fp_cat3 = qs.get("category3Name", [""])[0]
+            _fp_path_parts = [n for n in [_fp_cat1, _fp_cat2, _fp_cat3] if n]
+            if _fp_path_parts:
+                # URL에 이름 파라미터가 있으면 경로 재구성 (예: "잡화 > 가방 > 백팩")
+                _category1_name = " > ".join(_fp_path_parts)
+            elif _search_kwargs.get("category1Id"):
+                # 구 URL(이름 파라미터 없음) 폴백 — _CATEGORY_MAP 사용
+                from backend.domain.samba.proxy.fashionplus import _CATEGORY_MAP
 
-            _category1_name = _CATEGORY_MAP.get(_search_kwargs["category1Id"], "")
+                _category1_name = _CATEGORY_MAP.get(_search_kwargs["category1Id"], "")
 
         # 중복 필터링
         candidate_ids = [
@@ -2046,22 +2059,25 @@ class JobWorker:
                     detail.get("category")
                     or _lotteon_cat
                     or item.get("category", "")
-                    or _category1_name
+                    or _category1_name  # 패션플러스: URL에서 재구성된 전체 카테고리 경로
                 )
                 _cat1 = (
                     detail.get("category1")
                     or _lotteon_cat1
                     or item.get("category1", "")
+                    or _fp_cat1  # 패션플러스 URL의 category1Name
                 )
                 _cat2 = (
                     detail.get("category2")
                     or _lotteon_cat2
                     or item.get("category2", "")
+                    or _fp_cat2  # 패션플러스 URL의 category2Name
                 )
                 _cat3 = (
                     detail.get("category3")
                     or _lotteon_cat3
                     or item.get("category3", "")
+                    or _fp_cat3  # 패션플러스 URL의 category3Name
                 )
                 _cat4 = (
                     detail.get("category4")
