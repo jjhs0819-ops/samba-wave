@@ -991,17 +991,43 @@ class SSGSourcingClient:
         # 품절 판단: soldOut 필드 (Y/N)
         is_sold_out = str(obj.get("soldOut", "N")).upper() == "Y"
 
-        # 카테고리: 표준 카테고리 4계층
-        cat1 = obj.get("stdCtgLclsNm", "")  # 대분류 (예: 패션의류)
-        cat2 = obj.get("stdCtgMclsNm", "")  # 중분류 (예: 여성브랜드패션)
-        cat3 = obj.get("stdCtgSclsNm", "")  # 소분류 (예: 패션잡화)
-        cat4 = obj.get("stdCtgDclsNm", "")  # 세분류 (예: 슈즈)
-        # 전시 카테고리명도 보조로 활용
-        disp_ctg_nm = obj.get("dispCtgNm", "")
+        # 카테고리: HTML breadcrumb(전시 카테고리) 우선 — 카테고리 스캔과 동일 체계
+        # stdCtg(표준 카테고리)는 스캔 결과와 불일치하므로 사용하지 않음
+        _bc_match = re.search(
+            r"신세계백화점\s*[/>\s]+\s*(.+?)(?:<|$)",
+            html[:30000],
+        )
+        if _bc_match:
+            _bc_parts = [
+                p.strip()
+                for p in re.sub(r"<[^>]+>", "", _bc_match.group(1)).split("/")
+                if p.strip()
+            ]
+            # "스포츠웨어/슈즈 > 스포츠 슈즈 > 워킹화" 형태 파싱
+            # breadcrumb 구분자: " > " 또는 " / " (HTML 엔티티 제거 후)
+            if len(_bc_parts) == 1:
+                _bc_parts = [p.strip() for p in _bc_parts[0].split(">") if p.strip()]
+        else:
+            _bc_parts = []
 
+        if _bc_parts:
+            cat1 = _bc_parts[0] if len(_bc_parts) > 0 else ""
+            cat2 = _bc_parts[1] if len(_bc_parts) > 1 else ""
+            cat3 = _bc_parts[2] if len(_bc_parts) > 2 else ""
+            cat4 = _bc_parts[3] if len(_bc_parts) > 3 else ""
+        else:
+            # 폴백: stdCtg 사용
+            cat1 = obj.get("stdCtgLclsNm", "")
+            cat2 = obj.get("stdCtgMclsNm", "")
+            cat3 = obj.get("stdCtgSclsNm", "")
+            cat4 = obj.get("stdCtgDclsNm", "")
+
+        disp_ctg_id = str(obj.get("dispCtgId") or "")
         category_levels = [c for c in [cat1, cat2, cat3, cat4] if c]
-        if not category_levels and disp_ctg_nm:
-            category_levels = [disp_ctg_nm]
+        if not category_levels:
+            disp_ctg_nm = obj.get("dispCtgNm", "")
+            if disp_ctg_nm:
+                category_levels = [disp_ctg_nm]
         category_str = " > ".join(category_levels)
 
         # 이미지: itemImgUrl 에서 _i1_36.jpg → _i{N}_1200.jpg 패턴으로 재구성
@@ -1079,6 +1105,7 @@ class SSGSourcingClient:
             "sex": "",
             "brandNation": "",
             "kcCert": "",
+            "dispCtgId": disp_ctg_id,
             "tags": [],
             "isOutOfStock": is_sold_out,
             "isSale": not is_sold_out,
@@ -1117,14 +1144,21 @@ class SSGSourcingClient:
             if not label or not value:
                 continue
 
+            # SSG 고시정보 값에 라벨이 중복 포함됨 (예: "색상:엔트라시트/...")
+            # "라벨:" 또는 "라벨 :" 접두어 제거
+            _prefix_match = re.match(r"^[가-힣A-Za-z/\s]+[:：]\s*", value)
+            if _prefix_match:
+                value = value[_prefix_match.end() :].strip()
+            if not value or value == "0":
+                continue
+
             lbl = label.replace(" ", "")
             if "색상" in lbl and "color" not in info:
                 info["color"] = value
             elif "제조국" in lbl:
                 info["origin"] = value
             elif lbl in ("제품의주소재", "소재", "재질", "주소재"):
-                if value and value != "0":
-                    info["material"] = value
+                info["material"] = value
             elif "제조사" in lbl or "수입자" in lbl:
                 info["manufacturer"] = value
             elif "치수" in lbl or "사이즈" in lbl:

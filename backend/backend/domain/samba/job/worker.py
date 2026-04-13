@@ -1855,6 +1855,25 @@ class JobWorker:
                 logger.info(
                     f"[잡워커] SSG 상세 선취합 완료: {len(_ssg_details)}/{len(new_items)}건"
                 )
+            # SSG: 카테고리 필터 적용 (dispCtgId 매칭, 카테고리 스캔과 동일 체계)
+            if sf.category_filter and _ssg_details:
+                before_ct = len(_ssg_details)
+                _ssg_cat_filter = sf.category_filter
+                _ssg_details = {
+                    pid: det
+                    for pid, det in _ssg_details.items()
+                    if (det.get("dispCtgId") or "") == _ssg_cat_filter
+                }
+                # dispCtgId 미매칭 상품을 items_list에서도 제거
+                items_list = [
+                    it
+                    for it in items_list
+                    if str(it.get("site_product_id", "")) in _ssg_details
+                    or str(it.get("site_product_id", "")) in existing_ids
+                ]
+                logger.info(
+                    f"[잡워커] SSG 카테고리 필터 {_ssg_cat_filter}: {before_ct}→{len(_ssg_details)}건"
+                )
 
         _collected_sold_out = 0
         for item in items_list:
