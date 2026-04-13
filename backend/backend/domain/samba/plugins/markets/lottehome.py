@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from backend.domain.samba.plugins.market_base import MarketPlugin
+from backend.utils import add_lazy_loading
 from backend.utils.logger import logger
 
 
@@ -79,8 +80,9 @@ def _transform_for_lottehome(
         or product.get("brand", "")
         or "상세페이지 참조",
         "img_url": images[0] if images else "",
-        "dtl_info_fcont": product.get("detail_html", "")
-        or f"<p>{product.get('name', '')}</p>",
+        "dtl_info_fcont": add_lazy_loading(
+            product.get("detail_html", "") or f"<p>{product.get('name', '')}</p>"
+        ),
         "sum_pkg_psb_yn": "N",
         "ec_goods_artc_cd": ec_goods_artc_cd,
         "cdl_yn": "Y",  # 업체직송

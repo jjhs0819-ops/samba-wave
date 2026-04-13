@@ -312,6 +312,106 @@ class KreamClient:
             return {"isLoggedIn": bool(self.token)}
 
     # ------------------------------------------------------------------
+    # 카테고리 스캔
+    # ------------------------------------------------------------------
+
+    async def scan_categories(self, keyword: str) -> dict[str, Any]:
+        """KREAM 카테고리 스캔 — 검색 페이지 HTML에서 카테고리 분포 집계.
+
+        검색 결과 HTML의 __NUXT__ 데이터에 포함된
+        shop_category_name_1d(대분류), shop_category_name_2d(중분류)를 추출한다.
+        단일 HTTP 요청으로 최대 100개 상품의 카테고리 분포를 파악할 수 있다.
+        """
+        import re as _re
+
+        search_url = f"https://kream.co.kr/search?keyword={quote(keyword)}&tab=products"
+        timeout = httpx.Timeout(30.0, connect=15.0)
+
+        logger.info(f'[KREAM] 카테고리 스캔 시작: "{keyword}"')
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=timeout, follow_redirects=True
+            ) as client:
+                resp = await client.get(
+                    search_url,
+                    headers={
+                        "User-Agent": self.HEADERS["User-Agent"],
+                        "Accept": "text/html,application/xhtml+xml",
+                        "Accept-Language": "ko-KR,ko;q=0.9",
+                    },
+                )
+                if resp.status_code != 200:
+                    logger.warning(
+                        f"[KREAM] 검색 페이지 요청 실패: HTTP {resp.status_code}"
+                    )
+                    return {"categories": [], "total": 0, "groupCount": 0}
+        except Exception as exc:
+            logger.error(f"[KREAM] 카테고리 스캔 HTTP 오류: {exc}")
+            return {"categories": [], "total": 0, "groupCount": 0}
+
+        text = resp.text
+        if not text or len(text) < 10000:
+            logger.warning("[KREAM] 검색 페이지 응답이 너무 짧음 (차단 의심)")
+            return {"categories": [], "total": 0, "groupCount": 0}
+
+        # __NUXT__ 데이터에서 shop_category_name_1d / 2d 쌍 추출
+        # 패턴 1: 이스케이프된 JSON — \"shop_category_name_1d\":\"신발\"
+        # 패턴 2: 비이스케이프 JSON — "shop_category_name_1d":"신발"
+        cat_pattern_escaped = _re.compile(
+            r'shop_category_name_1d\\"+:\\"+([^\\"]+)\\"+,\\"+'
+            r'shop_category_name_2d\\"+:\\"+([^\\"]+)'
+        )
+        matches = cat_pattern_escaped.findall(text)
+
+        if not matches:
+            # 폴백: 이스케이프 없는 일반 JSON 패턴
+            cat_pattern_raw = _re.compile(
+                r'"shop_category_name_1d"\s*:\s*"([^"]+)"\s*,'
+                r'\s*"shop_category_name_2d"\s*:\s*"([^"]+)"'
+            )
+            matches = cat_pattern_raw.findall(text)
+
+        if not matches:
+            logger.info(f'[KREAM] 카테고리 데이터 없음: "{keyword}"')
+            return {"categories": [], "total": 0, "groupCount": 0}
+
+        # 카테고리별 상품 수 집계
+        cat_counter: dict[str, int] = {}
+        for c1, c2 in matches:
+            path = f"{c1} > {c2}"
+            cat_counter[path] = cat_counter.get(path, 0) + 1
+
+        # 상품 수 내림차순 정렬
+        categories = []
+        for path, count in sorted(cat_counter.items(), key=lambda x: -x[1]):
+            parts = path.split(" > ")
+            c1 = parts[0] if len(parts) > 0 else ""
+            c2 = parts[1] if len(parts) > 1 else ""
+            code = f"{c1}_{c2}" if c2 else c1
+            categories.append(
+                {
+                    "categoryCode": code,
+                    "path": path,
+                    "count": count,
+                    "category1": c1,
+                    "category2": c2,
+                    "category3": "",
+                }
+            )
+
+        total = sum(c["count"] for c in categories)
+        logger.info(
+            f'[KREAM] 카테고리 스캔 완료: "{keyword}" → '
+            f"{len(categories)}개 카테고리, {total}건"
+        )
+        return {
+            "categories": categories,
+            "total": total,
+            "groupCount": len(categories),
+        }
+
+    # ------------------------------------------------------------------
     # Products
     # ------------------------------------------------------------------
 

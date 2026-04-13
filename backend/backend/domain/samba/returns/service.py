@@ -204,11 +204,15 @@ class SambaReturnService:
 
         status_counts: Dict[str, int] = {}
         type_counts: Dict[str, int] = {}
+        reason_counts: Dict[str, int] = {}
         total_refund: float = 0.0
 
         for ret in all_returns:
             status_counts[ret.status] = status_counts.get(ret.status, 0) + 1
             type_counts[ret.type] = type_counts.get(ret.type, 0) + 1
+            reason_counts[ret.reason or "미분류"] = (
+                reason_counts.get(ret.reason or "미분류", 0) + 1
+            )
             if ret.requested_amount and ret.status in ("approved", "completed"):
                 total_refund += ret.requested_amount
 
@@ -216,8 +220,38 @@ class SambaReturnService:
             "total": len(all_returns),
             "by_status": status_counts,
             "by_type": type_counts,
+            "by_reason": reason_counts,
             "total_refund_amount": total_refund,
         }
+
+    # ==================== Auto Approve ====================
+
+    async def auto_approve_returns(self, within_days: int = 7) -> int:
+        """요청 상태인 반품 중 N일 이내 요청건 자동승인. 반환: 승인 건수."""
+        from datetime import datetime, timezone, timedelta
+
+        all_returns = await self.repo.list_async()
+        cutoff = datetime.now(timezone.utc) - timedelta(days=within_days)
+        approved_count = 0
+
+        for ret in all_returns:
+            if ret.status != "requested":
+                continue
+            if ret.created_at < cutoff:
+                continue
+
+            # 자동승인 처리
+            timeline = list(ret.timeline or [])
+            timeline.append(
+                _make_timeline_entry(
+                    "approved",
+                    f"자동승인 (요청 후 {within_days}일 이내)",
+                )
+            )
+            await self.repo.update_async(ret.id, status="approved", timeline=timeline)
+            approved_count += 1
+
+        return approved_count
 
     # ==================== Reasons ====================
 

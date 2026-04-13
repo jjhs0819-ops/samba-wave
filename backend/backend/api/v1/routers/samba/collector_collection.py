@@ -1349,7 +1349,7 @@ async def brand_refresh(
 ):
     """브랜드 추가수집 — 신규 카테고리 그룹 생성 + 기존 그룹 요청수 갱신.
 
-    지원 소싱처: MUSINSA, Nike, ABCmart, GrandStage, LOTTEON
+    지원 소싱처: MUSINSA, Nike, ABCmart, GrandStage, LOTTEON, GSShop, KREAM
     """
     from backend.api.v1.routers.samba.collector_common import _get_services
     from urllib.parse import urlencode, urlparse, parse_qs, quote as _quote
@@ -1367,6 +1367,7 @@ async def brand_refresh(
             "GrandStage",
             "LOTTEON",
             "GSShop",
+            "KREAM",
         }
         if site not in _SCAN_SUPPORTED:
             raise HTTPException(
@@ -1399,6 +1400,11 @@ async def brand_refresh(
             scan_result = await LotteonSourcingPlugin().scan_categories(
                 keyword, selected_brands=selected
             )
+            categories = scan_result.get("categories", [])
+        elif site == "KREAM":
+            from backend.domain.samba.plugins.sourcing.kream import KreamPlugin
+
+            scan_result = await KreamPlugin().scan_categories(keyword)
             categories = scan_result.get("categories", [])
         else:
             # MUSINSA — 쿠키 로드 후 통합 스캔 방식 사용
@@ -1530,6 +1536,12 @@ async def brand_refresh(
                 keyword_url = (
                     f"https://www.lotteon.com/csearch/search/search"
                     f"?render=search&platform=pc&q={_quote(keyword)}&mallId=2{_opt_suffix}"
+                )
+            elif site == "KREAM":
+                path_tail = "_".join(segments) if segments else cat_code
+                group_name = f"KREAM_{keyword}_{path_tail}"
+                keyword_url = (
+                    f"https://kream.co.kr/search?keyword={_quote(keyword)}{_opt_suffix}"
                 )
             else:
                 # MUSINSA
@@ -2339,7 +2351,7 @@ async def brand_scan(
 ):
     """키워드/브랜드로 소싱처 카테고리 분포를 스캔하여 검색그룹 생성에 활용.
 
-    지원 소싱처: MUSINSA, LOTTEON, GSSHOP
+    지원 소싱처: MUSINSA, LOTTEON, GSSHOP, ABCmart, Nike, SSG, FashionPlus, KREAM
     """
     keyword = body.keyword or body.brand
     if not keyword:
@@ -2401,6 +2413,12 @@ async def brand_scan(
         plugin = FashionPlusPlugin()
         selected = body.selected_brands or [keyword]
         return await plugin.scan_categories(keyword, selected_brands=selected)
+
+    if body.source_site == "KREAM":
+        from backend.domain.samba.plugins.sourcing.kream import KreamPlugin
+
+        plugin = KreamPlugin()
+        return await plugin.scan_categories(keyword)
 
     raise HTTPException(400, f"카테고리 스캔 미지원 소싱처: {body.source_site}")
 

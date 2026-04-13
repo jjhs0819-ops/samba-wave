@@ -394,16 +394,19 @@ class SSGSourcingClient:
         *,
         selected_brands: list[str] | None = None,
     ) -> dict[str, Any]:
-        """키워드 검색 → 카테고리 필터 추출 → 카테고리별 상품 수 집계.
+        """키워드 검색 → 카테고리 필터 추출 → 브랜드 필터링 → 카테고리별 상품 수 집계.
 
         SSG categoryFilter 트리(dispCtgLvl 1→2→3)를 leaf까지 플래튼하여
         롯데ON과 동일한 세분화 수준의 카테고리 분포를 반환한다.
-        각 노드에 itemCount가 포함되어 있어 추가 요청 없이 1회 검색으로 완료.
+
+        SSG categoryFilter는 repBrandId 필터를 반영하지 않으므로,
+        선택된 브랜드의 실제 상품수로 비례 스케일링하여 보정한다.
+        (예: "나이키" 키워드 7,602건 중 나이키 브랜드 1,539건 → ratio 0.20)
 
         Args:
             keyword: 검색 키워드 (예: "나이키")
-            selected_brands: 사용자가 선택한 브랜드 목록 (현재 SSG에서는 미사용,
-                향후 브랜드 필터 확장 대비)
+            selected_brands: 사용자가 선택한 브랜드 목록
+                (정확한 브랜드명으로 repBrandId 매칭하여 스케일링에 활용)
 
         Returns:
             {"categories": [...], "total": int, "groupCount": int}
@@ -414,6 +417,8 @@ class SSGSourcingClient:
         search_keyword = keyword
         if selected_brands:
             search_keyword = selected_brands[0]
+
+        brand_total = 0  # 브랜드 필터 적용 상품수
 
         try:
             _client_kwargs: dict[str, Any] = {
@@ -441,6 +446,31 @@ class SSGSourcingClient:
                     logger.info("[SSG] 카테고리 필터 없음 — 빈 결과 반환")
                     return {"categories": [], "total": 0, "groupCount": 0}
 
+                # 선택된 브랜드의 repBrandId로 실제 상품수 조회 (스케일링용)
+                # SSG categoryFilter는 repBrandId를 반영하지 않으므로
+                # 별도 요청으로 브랜드별 실제 상품수를 구해 비례 보정
+                if selected_brands:
+                    brand_items = self._extract_brand_filter(html)
+                    _selected_set = set(selected_brands)
+                    brand_ids = [
+                        bi["value"] for bi in brand_items if bi["name"] in _selected_set
+                    ]
+                    if brand_ids:
+                        try:
+                            _brand_url = (
+                                f"{self.SEARCH_URL}?query={quote(search_keyword)}"
+                                f"&repBrandId={'|'.join(brand_ids)}&page=1"
+                            )
+                            _br = await client.get(_brand_url, headers=self._headers())
+                            if _br.status_code == 200:
+                                brand_total = self._parse_area_count(_br.text)
+                                logger.info(
+                                    f"[SSG] 브랜드 필터 상품수: {brand_total}건"
+                                    f" (brands={[b for b in selected_brands]})"
+                                )
+                        except Exception as exc:
+                            logger.warning(f"[SSG] 브랜드 필터 상품수 조회 실패: {exc}")
+
         except RateLimitError:
             raise
         except Exception as e:
@@ -450,6 +480,21 @@ class SSGSourcingClient:
         # count > 0인 카테고리만 반환 (내림차순 정렬)
         categories = [c for c in categories if c.get("count", 0) > 0]
         categories.sort(key=lambda x: -x["count"])
+
+        keyword_total = sum(c["count"] for c in categories)
+
+        # 브랜드 스케일링: 키워드 전체 대비 브랜드 상품수 비율로 보정
+        # (예: 나이키 키워드 7,602건 중 나이키 브랜드 1,539건 → 각 카테고리 × 0.20)
+        if brand_total > 0 and keyword_total > brand_total:
+            ratio = brand_total / keyword_total
+            logger.info(
+                f"[SSG] 카테고리 스케일링: {keyword_total}→{brand_total}"
+                f" (ratio={ratio:.3f})"
+            )
+            for c in categories:
+                c["count"] = max(1, round(c["count"] * ratio))
+            # 스케일링 후 재정렬
+            categories.sort(key=lambda x: -x["count"])
 
         total = sum(c["count"] for c in categories)
         logger.info(

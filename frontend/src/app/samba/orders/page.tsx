@@ -80,6 +80,7 @@ export default function OrdersPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkStatus, setBulkStatus] = useState('')
   const [bulkUpdating, setBulkUpdating] = useState(false)
+  const [sortBy, setSortBy] = useState('date_desc')
   const [logMessages, _setLogMessagesRaw] = useState<string[]>(['[대기] 주문 가져오기 결과가 여기에 표시됩니다...'])
   const setLogMessages: typeof _setLogMessagesRaw = (v) => _setLogMessagesRaw(prev => {
     const next = typeof v === 'function' ? v(prev) : v
@@ -680,10 +681,16 @@ export default function OrdersPage() {
     }
     return true
   }).sort((a, b) => {
-    const aTime = a.paid_at ? new Date(a.paid_at).getTime() : new Date(a.created_at).getTime()
-    const bTime = b.paid_at ? new Date(b.paid_at).getTime() : new Date(b.created_at).getTime()
-    return bTime - aTime
-  }), [orders, customStart, customEnd, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, activeActions, searchText, searchCategory, accounts])
+    const getTime = (o: SambaOrder) => o.paid_at ? new Date(o.paid_at).getTime() : new Date(o.created_at).getTime()
+    switch (sortBy) {
+      case 'date_asc':    return getTime(a) - getTime(b)
+      case 'profit_desc': return (b.profit || 0) - (a.profit || 0)
+      case 'profit_asc':  return (a.profit || 0) - (b.profit || 0)
+      case 'price_desc':  return (b.sale_price || 0) - (a.sale_price || 0)
+      case 'price_asc':   return (a.sale_price || 0) - (b.sale_price || 0)
+      default:            return getTime(b) - getTime(a) // date_desc
+    }
+  }), [orders, customStart, customEnd, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, activeActions, searchText, searchCategory, accounts, sortBy])
 
   // 현재 페이지 주문 ID 목록
   const currentPageIds = useMemo(() =>
@@ -699,18 +706,35 @@ export default function OrdersPage() {
     }
   }
 
-  // 일괄 상태 변경
-  const handleBulkStatusChange = async () => {
+  // 일괄 처리 (상태변경 / 발주확인 / 취소승인 / 삭제)
+  const handleBulkAction = async () => {
     if (!bulkStatus || selectedIds.size === 0) return
+    if (bulkStatus === 'delete') {
+      const confirmed = await showConfirm(`선택된 ${fmtNum(selectedIds.size)}건을 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)
+      if (!confirmed) return
+    }
     setBulkUpdating(true)
     let ok = 0
     for (const id of selectedIds) {
       try {
-        await orderApi.update(id, { status: bulkStatus })
+        if (bulkStatus === 'delete') {
+          await orderApi.delete(id)
+        } else if (bulkStatus === 'confirm') {
+          await orderApi.confirmOrder(id)
+        } else if (bulkStatus === 'approve_cancel') {
+          await orderApi.approveCancel(id)
+        } else {
+          await orderApi.update(id, { status: bulkStatus })
+        }
         ok++
       } catch { /* ignore */ }
     }
-    setLogMessages(prev => [...prev, `[완료] 일괄 상태 변경: ${ok.toLocaleString()}/${selectedIds.size.toLocaleString()}건 → ${bulkStatus}`])
+    const actionLabel =
+      bulkStatus === 'delete'         ? '삭제' :
+      bulkStatus === 'confirm'        ? '발주확인' :
+      bulkStatus === 'approve_cancel' ? '취소승인' :
+      `상태변경→${bulkStatus}`
+    setLogMessages(prev => [...prev, `[완료] 일괄 ${actionLabel}: ${fmtNum(ok)}/${fmtNum(selectedIds.size)}건`])
     setSelectedIds(new Set())
     setBulkStatus('')
     setBulkUpdating(false)
@@ -874,16 +898,23 @@ export default function OrdersPage() {
           </select>
           <button onClick={handleFetch} disabled={syncing} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: syncing ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>{syncing ? '동기화 중...' : '가져오기'}</button>
           <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 2px' }} />
-          <select value={bulkStatus} onChange={e => setBulkStatus(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.72rem', minWidth: '100px' }}>
-            <option value="">일괄 상태변경</option>
-            <option value="pending">대기</option>
-            <option value="wait_ship">배송대기</option>
-            <option value="processing">처리중</option>
-            <option value="shipped">출고완료</option>
-            <option value="delivered">배송완료</option>
-            <option value="cancelled">취소</option>
+          <select value={bulkStatus} onChange={e => setBulkStatus(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.72rem', minWidth: '110px' }}>
+            <option value="">일괄 작업 선택</option>
+            <optgroup label="상태 변경">
+              <option value="pending">→ 주문접수</option>
+              <option value="wait_ship">→ 배송대기</option>
+              <option value="arrived">→ 사무실도착</option>
+              <option value="shipped">→ 출고완료</option>
+              <option value="delivered">→ 배송완료</option>
+              <option value="cancelled">→ 취소완료</option>
+            </optgroup>
+            <optgroup label="주문 처리">
+              <option value="confirm">발주확인</option>
+              <option value="approve_cancel">취소승인</option>
+              <option value="delete">삭제 ⚠️</option>
+            </optgroup>
           </select>
-          <button onClick={handleBulkStatusChange} disabled={bulkUpdating || !bulkStatus || selectedIds.size === 0} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: selectedIds.size > 0 && bulkStatus ? '#C0392B' : 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: selectedIds.size > 0 && bulkStatus ? '#fff' : '#666', borderRadius: '4px', cursor: bulkUpdating || !bulkStatus || selectedIds.size === 0 ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>{bulkUpdating ? '변경 중...' : `적용 (${selectedIds.size.toLocaleString()}건)`}</button>
+          <button onClick={handleBulkAction} disabled={bulkUpdating || !bulkStatus || selectedIds.size === 0} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: selectedIds.size > 0 && bulkStatus ? (bulkStatus === 'delete' ? '#7B2D00' : '#C0392B') : 'rgba(50,50,50,0.9)', border: `1px solid ${selectedIds.size > 0 && bulkStatus === 'delete' ? '#A83200' : '#3D3D3D'}`, color: selectedIds.size > 0 && bulkStatus ? '#fff' : '#666', borderRadius: '4px', cursor: bulkUpdating || !bulkStatus || selectedIds.size === 0 ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>{bulkUpdating ? '처리 중...' : `실행 (${fmtNum(selectedIds.size)}건)`}</button>
         </div>
       </div>
 
@@ -950,7 +981,14 @@ export default function OrdersPage() {
             {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k} style={k === 'ship_failed' ? { color: '#FF3232' } : {}}>{v.label}</option>)}
           </select>
           <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 2px' }} />
-          <select style={{ ...inputStyle, width: '88px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }}><option>-- 정렬 --</option><option>주문일자▲</option><option>주문일자▼</option></select>
+          <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ ...inputStyle, width: '92px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }}>
+            <option value="date_desc">주문일자↓</option>
+            <option value="date_asc">주문일자↑</option>
+            <option value="profit_desc">수익↓</option>
+            <option value="profit_asc">수익↑</option>
+            <option value="price_desc">판매가↓</option>
+            <option value="price_asc">판매가↑</option>
+          </select>
           <select style={{ ...inputStyle, width: '92px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={pageSize} onChange={e => setPageSize(Number(e.target.value))}>
             <option value={20}>20개 보기</option><option value={50}>50개 보기</option><option value={100}>100개 보기</option><option value={200}>200개 보기</option><option value={500}>500개 보기</option>
           </select>

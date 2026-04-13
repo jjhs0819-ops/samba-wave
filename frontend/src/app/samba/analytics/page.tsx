@@ -1,10 +1,11 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { accountApi, collectorApi, orderApi, type SambaMarketAccount, type SambaOrder } from '@/lib/samba/api'
+import { accountApi, collectorApi, orderApi, analyticsApi, type SambaMarketAccount, type SambaOrder, type SourcingRoi, type ProductPerformance, type BrandSales } from '@/lib/samba/api'
 import { useLocalStorageState } from '@/hooks/useLocalStorageState'
 import { STORAGE_KEYS } from '@/lib/samba/constants'
 import { card, fmtNum } from '@/lib/samba/styles'
+import { MarketSharePie, RevenueTrendLine, SalesBarChart } from '@/components/samba/AnalyticsCharts'
 
 const SOURCE_SITES = ['MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'REXMONDE', 'SSG', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF']
 
@@ -53,6 +54,14 @@ export default function AnalyticsPage() {
   const [marketAccounts, setMarketAccounts] = useState<SambaMarketAccount[]>([])
   const [orders, setOrders] = useState<SambaOrder[]>([])
 
+  // 추가 분석 데이터
+  const [channelData, setChannelData] = useState<{ channel_name: string; sales: number; orders: number; profit: number }[]>([])
+  const [dailyData, setDailyData] = useState<{ date: string; sales: number; orders: number; profit: number }[]>([])
+  const [sourcingRoi, setSourcingRoi] = useState<SourcingRoi[]>([])
+  const [bestSellers, setBestSellers] = useState<ProductPerformance[]>([])
+  const [worstSellers, setWorstSellers] = useState<ProductPerformance[]>([])
+  const [brandData, setBrandData] = useState<BrandSales[]>([])
+
   // 검색 조건 (localStorage 자동 복원/저장)
   const now = new Date()
   const defaultSearch: AnalyticsSearch = {
@@ -92,6 +101,22 @@ export default function AnalyticsPage() {
         : `${searchYear}-12-31`
       const allOrders = await orderApi.listByDateRange(start, end).catch(() => [])
       setOrders(allOrders)
+
+      // 추가 분석 데이터 병렬 로드
+      const [ch, daily, roi, best, worst, brands] = await Promise.all([
+        analyticsApi.channels().catch(() => []),
+        analyticsApi.daily(30).catch(() => []),
+        analyticsApi.sourcingRoi(start, end).catch(() => []),
+        analyticsApi.bestSellers(10, 30).catch(() => []),
+        analyticsApi.worstSellers(5, 30).catch(() => []),
+        analyticsApi.brands(start, end).catch(() => []),
+      ])
+      setChannelData(ch)
+      setDailyData(daily)
+      setSourcingRoi(roi)
+      setBestSellers(best)
+      setWorstSellers(worst)
+      setBrandData(brands)
     } catch {}
     setLoading(false)
   }, [searchYear, searchMonth])
@@ -449,6 +474,132 @@ export default function AnalyticsPage() {
 
       {/* 주문상태별 통계 */}
       {renderMonthlyTable('주문상태별 통계', finalStatusColumns, statusTable.data)}
+
+      {/* ── 차트 + 추가 분석 섹션 ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginTop: '1.5rem' }}>
+        {/* 마켓 점유율 파이차트 */}
+        <div style={{ ...card, padding: '1.25rem' }}>
+          <div style={{ fontSize: '0.9375rem', fontWeight: 700, marginBottom: '0.75rem' }}>마켓별 매출 점유율</div>
+          <MarketSharePie data={channelData} />
+        </div>
+
+        {/* 매출 추이 라인차트 */}
+        <div style={{ ...card, padding: '1.25rem' }}>
+          <div style={{ fontSize: '0.9375rem', fontWeight: 700, marginBottom: '0.75rem' }}>최근 30일 매출 추이</div>
+          <RevenueTrendLine data={dailyData} />
+        </div>
+      </div>
+
+      {/* 브랜드별 매출 */}
+      {brandData.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginTop: '1.5rem' }}>
+          <div style={{ ...card, padding: '1.25rem' }}>
+            <div style={{ fontSize: '0.9375rem', fontWeight: 700, marginBottom: '0.75rem' }}>브랜드별 매출 TOP 10</div>
+            <SalesBarChart data={brandData} nameKey="brand" valueKey="sales" />
+          </div>
+          <div style={{ ...card, padding: '1.25rem' }}>
+            <div style={{ fontSize: '0.9375rem', fontWeight: 700, marginBottom: '0.75rem' }}>브랜드별 상세</div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', fontSize: '0.8125rem', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid #2D2D2D' }}>
+                    <th style={{ padding: '0.5rem', textAlign: 'left', color: '#999' }}>브랜드</th>
+                    <th style={{ padding: '0.5rem', textAlign: 'right', color: '#999' }}>매출</th>
+                    <th style={{ padding: '0.5rem', textAlign: 'right', color: '#999' }}>이익</th>
+                    <th style={{ padding: '0.5rem', textAlign: 'right', color: '#999' }}>건수</th>
+                    <th style={{ padding: '0.5rem', textAlign: 'right', color: '#999' }}>이윤율</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {brandData.slice(0, 15).map(b => (
+                    <tr key={b.brand} style={{ borderBottom: '1px solid #1A1A1A' }}>
+                      <td style={{ padding: '0.4rem 0.5rem' }}>{b.brand}</td>
+                      <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right', color: '#FF8C00' }}>₩{fmt(b.sales)}</td>
+                      <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right', color: '#22C55E' }}>₩{fmt(b.profit)}</td>
+                      <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>{fmt(b.orders)}</td>
+                      <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>{b.avg_margin_rate}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 소싱처 ROI */}
+      {sourcingRoi.length > 0 && (
+        <div style={{ ...card, padding: '1.25rem', marginTop: '1.5rem' }}>
+          <div style={{ fontSize: '0.9375rem', fontWeight: 700, marginBottom: '0.75rem' }}>소싱처별 ROI 분석</div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', fontSize: '0.8125rem', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #2D2D2D' }}>
+                  <th style={{ padding: '0.5rem', textAlign: 'left', color: '#999' }}>소싱처</th>
+                  <th style={{ padding: '0.5rem', textAlign: 'right', color: '#999' }}>매출</th>
+                  <th style={{ padding: '0.5rem', textAlign: 'right', color: '#999' }}>원가</th>
+                  <th style={{ padding: '0.5rem', textAlign: 'right', color: '#999' }}>이익</th>
+                  <th style={{ padding: '0.5rem', textAlign: 'right', color: '#999' }}>건수</th>
+                  <th style={{ padding: '0.5rem', textAlign: 'right', color: '#999' }}>건당이익</th>
+                  <th style={{ padding: '0.5rem', textAlign: 'right', color: '#999' }}>이윤율</th>
+                  <th style={{ padding: '0.5rem', textAlign: 'right', color: '#999' }}>ROI</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sourcingRoi.map(r => (
+                  <tr key={r.source_site} style={{ borderBottom: '1px solid #1A1A1A' }}>
+                    <td style={{ padding: '0.4rem 0.5rem', fontWeight: 600 }}>{r.source_site}</td>
+                    <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right', color: '#FF8C00' }}>₩{fmt(r.total_revenue)}</td>
+                    <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>₩{fmt(r.total_cost)}</td>
+                    <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right', color: '#22C55E' }}>₩{fmt(r.total_profit)}</td>
+                    <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>{fmt(r.order_count)}</td>
+                    <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>₩{fmt(r.avg_profit_per_order)}</td>
+                    <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>{r.avg_margin_rate}%</td>
+                    <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right', color: r.roi >= 0 ? '#22C55E' : '#EF4444', fontWeight: 600 }}>{r.roi}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* 베스트 / 워스트 셀러 */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginTop: '1.5rem' }}>
+        <div style={{ ...card, padding: '1.25rem' }}>
+          <div style={{ fontSize: '0.9375rem', fontWeight: 700, marginBottom: '0.75rem', color: '#FF8C00' }}>베스트셀러 TOP 10 (30일)</div>
+          {bestSellers.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              {bestSellers.map((p, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.4rem 0', borderBottom: '1px solid #1A1A1A', fontSize: '0.8125rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, minWidth: 0 }}>
+                    <span style={{ color: '#FF8C00', fontWeight: 700, width: '1.5rem' }}>{i + 1}</span>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.product_name}</span>
+                  </div>
+                  <span style={{ color: '#FF8C00', fontWeight: 600, whiteSpace: 'nowrap', marginLeft: '0.5rem' }}>₩{fmt(p.sales)}</span>
+                </div>
+              ))}
+            </div>
+          ) : <p style={{ color: '#666', fontSize: '0.8rem' }}>데이터 없음</p>}
+        </div>
+
+        <div style={{ ...card, padding: '1.25rem' }}>
+          <div style={{ fontSize: '0.9375rem', fontWeight: 700, marginBottom: '0.75rem', color: '#EF4444' }}>워스트셀러 TOP 5 (30일)</div>
+          {worstSellers.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              {worstSellers.map((p, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.4rem 0', borderBottom: '1px solid #1A1A1A', fontSize: '0.8125rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, minWidth: 0 }}>
+                    <span style={{ color: '#EF4444', fontWeight: 700, width: '1.5rem' }}>{i + 1}</span>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.product_name}</span>
+                  </div>
+                  <span style={{ color: p.profit >= 0 ? '#22C55E' : '#EF4444', fontWeight: 600, whiteSpace: 'nowrap', marginLeft: '0.5rem' }}>₩{fmt(p.profit)}</span>
+                </div>
+              ))}
+            </div>
+          ) : <p style={{ color: '#666', fontSize: '0.8rem' }}>데이터 없음</p>}
+        </div>
+      </div>
     </div>
   )
 }

@@ -1322,6 +1322,44 @@ export interface RefreshLogsResponse {
   }
 }
 
+// ── Job 큐 ──
+
+export interface SambaJob {
+  id: string
+  type: string
+  status: string
+  progress: number
+  total: number
+  success_count: number
+  fail_count: number
+  created_at: string
+  updated_at: string
+  error?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface QueueStatus {
+  running: SambaJob | null
+  pending: SambaJob[]
+  completed_today: number
+  failed_today: number
+}
+
+export const jobApi = {
+  list: (status?: string, limit = 20) => {
+    const p = new URLSearchParams({ limit: String(limit) })
+    if (status) p.set('status', status)
+    return request<SambaJob[]>(`${SAMBA_PREFIX}/jobs?${p}`)
+  },
+  get: (id: string) => request<SambaJob>(`${SAMBA_PREFIX}/jobs/${id}`),
+  cancel: (id: string) => request<{ ok: boolean }>(`${SAMBA_PREFIX}/jobs/${id}`, { method: 'DELETE' }),
+  cancelAll: () => request<{ ok: boolean }>(`${SAMBA_PREFIX}/jobs/cancel-all`, { method: 'POST' }),
+  collectQueue: () => request<QueueStatus>(`${SAMBA_PREFIX}/jobs/collect-queue-status`),
+  transmitQueue: () => request<QueueStatus>(`${SAMBA_PREFIX}/jobs/transmit-queue-status`),
+  collectLogs: (sinceIdx = 0) => request<{ logs: string[]; next_idx: number }>(`${SAMBA_PREFIX}/jobs/collect-logs?since_idx=${sinceIdx}`),
+  shipmentLogs: (sinceIdx = 0) => request<{ logs: string[]; next_idx: number }>(`${SAMBA_PREFIX}/jobs/shipment-logs?since_idx=${sinceIdx}`),
+}
+
 export const monitorApi = {
   dashboard: () =>
     request<DashboardStats>(`${SAMBA_PREFIX}/monitor/dashboard`),
@@ -1707,4 +1745,56 @@ export interface TenantUsage {
 export const tenantApi = {
   getMyInfo: () => request<{ tenant: TenantInfo | null }>(`${SAMBA_PREFIX}/tenants/me/info`),
   getMyUsage: () => request<TenantUsage>(`${SAMBA_PREFIX}/tenants/me/usage`),
+}
+
+// ── Analytics ──
+
+export interface SourcingRoi {
+  source_site: string
+  total_cost: number
+  total_revenue: number
+  total_profit: number
+  order_count: number
+  avg_profit_per_order: number
+  avg_margin_rate: number
+  roi: number
+}
+
+export interface ProductPerformance {
+  product_name: string
+  source_site: string
+  sales: number
+  profit: number
+  orders: number
+  units: number
+}
+
+export interface BrandSales {
+  brand: string
+  sales: number
+  profit: number
+  orders: number
+  avg_margin_rate: number
+}
+
+export const analyticsApi = {
+  channels: () => request<{ channel_name: string; sales: number; orders: number; profit: number }[]>(`${SAMBA_PREFIX}/analytics/channels`),
+  daily: (days = 30) => request<{ date: string; sales: number; orders: number; profit: number }[]>(`${SAMBA_PREFIX}/analytics/daily?days=${days}`),
+  monthly: () => request<{ month: string; sales: number; orders: number; profit: number }[]>(`${SAMBA_PREFIX}/analytics/monthly`),
+  sourcingRoi: (start?: string, end?: string) => {
+    const p = new URLSearchParams()
+    if (start) p.set('start_date', start)
+    if (end) p.set('end_date', end)
+    return request<SourcingRoi[]>(`${SAMBA_PREFIX}/analytics/sourcing-roi?${p}`)
+  },
+  bestSellers: (limit = 10, days = 30) =>
+    request<ProductPerformance[]>(`${SAMBA_PREFIX}/analytics/best-sellers?limit=${limit}&days=${days}`),
+  worstSellers: (limit = 10, days = 30) =>
+    request<ProductPerformance[]>(`${SAMBA_PREFIX}/analytics/worst-sellers?limit=${limit}&days=${days}`),
+  brands: (start?: string, end?: string) => {
+    const p = new URLSearchParams()
+    if (start) p.set('start_date', start)
+    if (end) p.set('end_date', end)
+    return request<BrandSales[]>(`${SAMBA_PREFIX}/analytics/brands?${p}`)
+  },
 }

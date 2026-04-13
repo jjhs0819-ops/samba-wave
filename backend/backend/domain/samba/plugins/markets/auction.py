@@ -12,6 +12,7 @@ import re
 from typing import Any
 
 from backend.domain.samba.plugins.market_base import MarketPlugin
+from backend.utils import add_lazy_loading
 from backend.utils.logger import logger
 
 # ESM Plus 호스팅 인증정보는 계정 설정(additional_fields)에서 제공해야 함
@@ -66,12 +67,11 @@ class AuctionPlugin(MarketPlugin):
             session, product_copy, account
         )
 
-        # 상세 HTML 프로토콜 보정
+        # 상세 HTML 프로토콜 보정 + lazy loading 삽입
         detail_html = product_copy.get("detail_html", "")
         if detail_html:
-            product_copy["detail_html"] = re.sub(
-                r'(src=["\'])\/\/', r"\1https://", detail_html
-            )
+            detail_html = re.sub(r'(src=["\'])\/\/', r"\1https://", detail_html)
+            product_copy["detail_html"] = add_lazy_loading(detail_html)
 
         # transform
         data = ESMPlusClient.transform_product(

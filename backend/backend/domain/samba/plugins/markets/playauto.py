@@ -16,6 +16,7 @@ import httpx
 
 from backend.domain.samba.plugins.market_base import MarketPlugin
 from backend.domain.samba.proxy.playauto import PlayAutoClient, PlayAutoApiError
+from backend.utils import add_lazy_loading
 from backend.utils.logger import logger
 
 
@@ -198,12 +199,13 @@ class PlayAutoPlugin(MarketPlugin):
                         uploaded.append(url)
             product["images"] = uploaded
 
-        # 상세설명 HTML 내 이미지도 동일 처리
+        # 상세설명 HTML 내 이미지도 동일 처리 + lazy loading 삽입
         detail_html = product.get("detail_html", "")
         if detail_html:
-            product["detail_html"] = await self._replace_detail_images(
+            replaced = await self._replace_detail_images(
                 detail_html, s3_client, bucket_name, public_url, proxy
             )
+            product["detail_html"] = add_lazy_loading(replaced)
 
         return product
 

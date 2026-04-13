@@ -262,29 +262,28 @@ class JobWorker:
                 break
             await asyncio.sleep(1)
 
-        # 모든 running Job → pending 복구 (current 보존)
-        remaining_ids = list(self._active_job_ids)
-        if remaining_ids:
-            try:
-                from backend.db.orm import get_write_session
-                from sqlalchemy import text
+        # 모든 running transmit Job → pending 복구 (current 보존)
+        # _execute_job().finally가 먼저 _active_job_ids를 비우므로
+        # remaining_ids에 의존하지 않고 DB를 직접 조회한다
+        try:
+            from backend.db.orm import get_write_session
+            from sqlalchemy import text
 
-                async with get_write_session() as session:
-                    for jid in remaining_ids:
-                        await session.execute(
-                            text(
-                                "UPDATE samba_jobs SET status = 'pending', "
-                                "started_at = NULL "
-                                "WHERE id = :jid AND status = 'running'"
-                            ),
-                            {"jid": jid},
-                        )
-                    await session.commit()
-                    logger.info(
-                        f"[잡워커] 배포 종료 — {len(remaining_ids)}개 잡 → pending 복구"
+            async with get_write_session() as session:
+                r = await session.execute(
+                    text(
+                        "UPDATE samba_jobs SET status = 'pending', "
+                        "started_at = NULL "
+                        "WHERE status = 'running' AND job_type = 'transmit'"
                     )
-            except Exception as e:
-                logger.error(f"[잡워커] 배포 종료 잡 복구 실패: {e}")
+                )
+                await session.commit()
+                if r.rowcount > 0:
+                    logger.info(
+                        f"[잡워커] 배포 종료 — {r.rowcount}개 잡 → pending 복구"
+                    )
+        except Exception as e:
+            logger.error(f"[잡워커] 배포 종료 잡 복구 실패: {e}")
 
     async def _poll_once(self) -> bool:
         """전송 잡 병렬 실행 (무제한).
@@ -549,12 +548,17 @@ class JobWorker:
         # 이어하기: 이전 진행 위치를 먼저 읽은 후 진행률 갱신
         # (update_progress가 identity map으로 job.current를 덮어쓰기 때문)
         start_from = job.current or 0
-        # 이어하기 방어: start_from이 total 이상이면 전체 재실행
+        # 이어하기 방어: start_from이 total 이상이면 이미 완료된 잡 → complete 처리
         if start_from >= total:
             logger.warning(
-                f"[잡워커] start_from({start_from}) >= total({total}) — 전체 재실행"
+                f"[잡워커] start_from({start_from}) >= total({total}) — 이미 완료된 잡"
             )
-            start_from = 0
+            await repo.complete_job(
+                job.id,
+                job.result or {"success": 0, "skipped": 0, "failed": 0},
+            )
+            await session.commit()
+            return
         await repo.update_progress(job.id, start_from, total)
 
         # 이어하기: 이전 실행의 카운트 복원
@@ -578,7 +582,7 @@ class JobWorker:
                 logger.warning(f"[잡워커] 취소 체크 중 DB 에러: {job.id} — {exc}")
                 _is_cancelled = False
 
-            # 배포 종료 감지 — progress 저장 후 정상 탈출 (pending 유지)
+            # 배포 종료 감지 — progress 저장 + 즉시 pending 전환 후 탈출
             if self._shutting_down:
                 remaining = len(product_ids) - i
                 _add_job_log(
@@ -586,16 +590,28 @@ class JobWorker:
                     f"배포 종료 — {i}건 완료, {remaining}건 남음 (다음 인스턴스에서 재개)",
                 )
                 logger.info(
-                    f"[잡워커] 배포 종료 감지: {job.id} — {i}/{total}건, pending 유지"
+                    f"[잡워커] 배포 종료 감지: {job.id} — {i}/{total}건, pending 전환"
                 )
                 try:
+                    from sqlalchemy import text
+
                     await repo.update_progress(job.id, i, total)
+                    # 정상 배포 중단 → 즉시 pending + attempt 리셋 (OOM 아님)
+                    # graceful_stop()의 DB 쿼리와 이중 보호
+                    await session.execute(
+                        text(
+                            "UPDATE samba_jobs SET status = 'pending', "
+                            "started_at = NULL, attempt = 0 "
+                            "WHERE id = :jid AND status = 'running'"
+                        ),
+                        {"jid": job.id},
+                    )
                     await session.commit()
                 except Exception as exc:
                     logger.warning(
                         f"[잡워커] 배포 종료 진행 저장 실패: {job.id} — {exc}"
                     )
-                return  # fail 아닌 정상 리턴 — graceful_stop이 pending으로 전환
+                return  # fail 아닌 정상 리턴
 
             if is_emergency_stopped() or is_cancel_requested(job.id) or _is_cancelled:
                 cancelled = len(product_ids) - i

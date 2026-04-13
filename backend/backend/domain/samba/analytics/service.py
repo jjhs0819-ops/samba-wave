@@ -203,6 +203,160 @@ class SambaAnalyticsService:
 
         return status_counts
 
+    # ==================== Sourcing ROI ====================
+
+    async def get_sourcing_roi(
+        self, start_date: datetime | None = None, end_date: datetime | None = None
+    ) -> List[Dict[str, Any]]:
+        """소싱처별 ROI 분석 — 원가, 매출, 이윤, 전환율."""
+        all_orders = await self.order_repo.list_async()
+        if start_date:
+            all_orders = [o for o in all_orders if o.created_at >= start_date]
+        if end_date:
+            all_orders = [o for o in all_orders if o.created_at <= end_date]
+
+        agg: Dict[str, Dict[str, Any]] = defaultdict(
+            lambda: {
+                "total_cost": 0.0,
+                "total_revenue": 0.0,
+                "total_profit": 0.0,
+                "order_count": 0,
+            }
+        )
+
+        for order in all_orders:
+            site = order.source_site or "미분류"
+            agg[site]["source_site"] = site
+            agg[site]["total_cost"] += order.cost * order.quantity
+            agg[site]["total_revenue"] += order.sale_price * order.quantity
+            agg[site]["total_profit"] += order.profit
+            agg[site]["order_count"] += 1
+
+        result = []
+        for item in agg.values():
+            cnt = item["order_count"]
+            rev = item["total_revenue"]
+            cost = item["total_cost"]
+            item["avg_profit_per_order"] = (
+                round(item["total_profit"] / cnt, 0) if cnt else 0
+            )
+            item["avg_margin_rate"] = round(
+                (item["total_profit"] / rev * 100) if rev > 0 else 0, 1
+            )
+            item["roi"] = round(((rev - cost) / cost * 100) if cost > 0 else 0, 1)
+            result.append(item)
+
+        result.sort(key=lambda x: x["total_revenue"], reverse=True)
+        return result
+
+    # ==================== Best / Worst Sellers ====================
+
+    async def get_best_sellers(
+        self, limit: int = 10, days: int = 30
+    ) -> List[Dict[str, Any]]:
+        """매출 상위 상품 (베스트셀러)."""
+        all_orders = await self.order_repo.list_async()
+        cutoff = datetime.now(UTC) - timedelta(days=days)
+        filtered = [o for o in all_orders if o.created_at >= cutoff]
+
+        agg: Dict[str, Dict[str, Any]] = defaultdict(
+            lambda: {"sales": 0.0, "profit": 0.0, "orders": 0, "units": 0}
+        )
+
+        for order in filtered:
+            pid = order.product_id or order.collected_product_id or "unknown"
+            agg[pid]["product_name"] = order.product_name or "기타"
+            agg[pid]["source_site"] = order.source_site or ""
+            agg[pid]["sales"] += order.sale_price * order.quantity
+            agg[pid]["profit"] += order.profit
+            agg[pid]["orders"] += 1
+            agg[pid]["units"] += order.quantity
+
+        result = list(agg.values())
+        result.sort(key=lambda x: x["sales"], reverse=True)
+        return result[:limit]
+
+    async def get_worst_sellers(
+        self, limit: int = 10, days: int = 30
+    ) -> List[Dict[str, Any]]:
+        """이윤 최하위 상품 (워스트셀러)."""
+        all_orders = await self.order_repo.list_async()
+        cutoff = datetime.now(UTC) - timedelta(days=days)
+        filtered = [o for o in all_orders if o.created_at >= cutoff]
+
+        agg: Dict[str, Dict[str, Any]] = defaultdict(
+            lambda: {"sales": 0.0, "profit": 0.0, "orders": 0, "units": 0}
+        )
+
+        for order in filtered:
+            pid = order.product_id or order.collected_product_id or "unknown"
+            agg[pid]["product_name"] = order.product_name or "기타"
+            agg[pid]["source_site"] = order.source_site or ""
+            agg[pid]["sales"] += order.sale_price * order.quantity
+            agg[pid]["profit"] += order.profit
+            agg[pid]["orders"] += 1
+            agg[pid]["units"] += order.quantity
+
+        result = list(agg.values())
+        result.sort(key=lambda x: x["profit"])
+        return result[:limit]
+
+    # ==================== Brand Analysis ====================
+
+    async def get_sales_by_brand(
+        self, start_date: datetime | None = None, end_date: datetime | None = None
+    ) -> List[Dict[str, Any]]:
+        """브랜드별 매출 분석."""
+        all_orders = await self.order_repo.list_async()
+        if start_date:
+            all_orders = [o for o in all_orders if o.created_at >= start_date]
+        if end_date:
+            all_orders = [o for o in all_orders if o.created_at <= end_date]
+
+        # collected_product_id → brand 매핑 구축
+        cp_ids = {o.collected_product_id for o in all_orders if o.collected_product_id}
+        brand_map: Dict[str, str] = {}
+        if cp_ids:
+            from backend.domain.samba.collector.model import SambaCollectedProduct
+
+            all_products = await self.product_repo.list_async()
+            # product_repo가 SambaProduct이므로 collector repo 별도 조회
+            try:
+                from sqlmodel import select
+
+                session = self.order_repo.session
+                stmt = select(
+                    SambaCollectedProduct.id, SambaCollectedProduct.brand
+                ).where(SambaCollectedProduct.id.in_(list(cp_ids)[:500]))
+                rows = (await session.execute(stmt)).all()
+                for pid, brand in rows:
+                    if brand:
+                        brand_map[pid] = brand
+            except Exception:
+                pass
+
+        agg: Dict[str, Dict[str, Any]] = defaultdict(
+            lambda: {"sales": 0.0, "profit": 0.0, "orders": 0}
+        )
+
+        for order in all_orders:
+            brand = brand_map.get(order.collected_product_id or "", "") or "미분류"
+            agg[brand]["brand"] = brand
+            agg[brand]["sales"] += order.sale_price * order.quantity
+            agg[brand]["profit"] += order.profit
+            agg[brand]["orders"] += 1
+
+        result = []
+        for item in agg.values():
+            rev = item["sales"]
+            item["avg_margin_rate"] = round(
+                (item["profit"] / rev * 100) if rev > 0 else 0, 1
+            )
+            result.append(item)
+
+        result.sort(key=lambda x: x["sales"], reverse=True)
+        return result
+
     # ==================== Internal ====================
 
     async def _compute_stats_for_period(

@@ -96,3 +96,51 @@ async def get_order_status_stats(
 ):
     svc = _get_service(session)
     return await svc.get_order_status_stats()
+
+
+@router.get("/sourcing-roi")
+async def get_sourcing_roi(
+    start_date: str = Query(None, description="시작일 (YYYY-MM-DD)"),
+    end_date: str = Query(None, description="종료일 (YYYY-MM-DD)"),
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """소싱처별 ROI 분석."""
+    svc = _get_service(session)
+    sd = datetime.fromisoformat(start_date) if start_date else None
+    ed = datetime.fromisoformat(end_date) if end_date else None
+    return await svc.get_sourcing_roi(sd, ed)
+
+
+@router.get("/best-sellers")
+async def get_best_sellers(
+    limit: int = Query(10, ge=1, le=50),
+    days: int = Query(30, ge=1, le=365),
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """매출 상위 상품 (베스트셀러)."""
+    svc = _get_service(session)
+    return await svc.get_best_sellers(limit=limit, days=days)
+
+
+@router.get("/worst-sellers")
+async def get_worst_sellers(
+    limit: int = Query(10, ge=1, le=50),
+    days: int = Query(30, ge=1, le=365),
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """이윤 최하위 상품 (워스트셀러)."""
+    svc = _get_service(session)
+    return await svc.get_worst_sellers(limit=limit, days=days)
+
+
+@router.get("/brands")
+async def get_sales_by_brand(
+    start_date: str = Query(None, description="시작일 (YYYY-MM-DD)"),
+    end_date: str = Query(None, description="종료일 (YYYY-MM-DD)"),
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """브랜드별 매출 분석."""
+    svc = _get_service(session)
+    sd = datetime.fromisoformat(start_date) if start_date else None
+    ed = datetime.fromisoformat(end_date) if end_date else None
+    return await svc.get_sales_by_brand(sd, ed)

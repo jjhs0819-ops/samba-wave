@@ -51,7 +51,8 @@ const tdCenter = { padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowr
 export default function ReturnsPage() {
   useEffect(() => { document.title = 'SAMBA-반품관리' }, [])
   const [returns, setReturns] = useState<SambaReturn[]>([])
-  const [stats, setStats] = useState<Record<string, number>>({})
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [stats, setStats] = useState<Record<string, any>>({})
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [detailItem, setDetailItem] = useState<SambaReturn | null>(null)
@@ -359,6 +360,29 @@ export default function ReturnsPage() {
           <p style={{ fontSize: '1.25rem', fontWeight: 700, color: totalProfit >= 0 ? '#51CF66' : '#FF6B6B' }}>₩{totalProfit.toLocaleString()}</p>
         </div>
       </div>
+
+      {/* 사유별 분포 */}
+      {stats.by_reason && Object.keys(stats.by_reason).length > 0 && (() => {
+        const reasons = stats.by_reason as Record<string, number>
+        const sorted = Object.entries(reasons).sort((a, b) => b[1] - a[1])
+        const maxVal = Math.max(...sorted.map(([, v]) => v), 1)
+        return (
+          <div style={{ ...card, padding: '1rem 1.25rem', marginBottom: '1rem' }}>
+            <div style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#FF8C00', marginBottom: '0.625rem' }}>사유별 분포</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+              {sorted.map(([reason, count]) => (
+                <div key={reason} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.75rem' }}>
+                  <span style={{ width: '100px', color: '#999', flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{reason}</span>
+                  <div style={{ flex: 1, height: '14px', background: '#1A1A1A', borderRadius: '3px', overflow: 'hidden' }}>
+                    <div style={{ width: `${(count / maxVal) * 100}%`, height: '100%', background: '#FF8C00', borderRadius: '3px' }} />
+                  </div>
+                  <span style={{ width: '30px', textAlign: 'right', color: '#E5E5E5', fontWeight: 600 }}>{count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )
+      })()}
 
       {/* 로그 영역 */}
       <div style={{ border: '1px solid #1C2333', borderRadius: '8px', overflow: 'hidden', marginBottom: '0.75rem' }}>

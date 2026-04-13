@@ -8,8 +8,8 @@
       }
     },
     "shadcn": {
-      "command": "npx",
-      "args": ["shadcn@latest", "mcp"]
+      "command": "cmd",
+      "args": ["/c", "npx", "shadcn@latest", "mcp"]
     }
   }
 }

@@ -1,0 +1,380 @@
+{
+  "master": {
+    "tasks": [
+      {
+        "id": "1",
+        "title": "SaaS Tier Pricing Implementation",
+        "description": "Implement subscription tier system (Basic/Pro/Enterprise) with feature restrictions and payment integration",
+        "details": "The PRD specifies three SaaS tiers but prices are marked as TODO. Implementation requires:\n\n1. Create `SambaTier` enum (BASIC, PRO, ENTERPRISE) in `backend/domain/samba/tenant/model.py`\n2. Add tier-related fields to `SambaTenant` model:\n   - `tier: SambaTier`\n   - `max_products: int` (1000/10000/unlimited)\n   - `max_sourcing_sites: int` (3/all/all)\n   - `max_markets: int` (2/5/unlimited)\n   - `autotune_enabled: bool` (false/true/true)\n   - `subscription_start: datetime`\n   - `subscription_end: datetime`\n3. Create `TierService` with validation methods:\n   - `check_product_limit(tenant_id)` - validate product count\n   - `check_sourcing_access(tenant_id, site_name)` - validate sourcing site access\n   - `check_market_access(tenant_id, market_type)` - validate market access\n4. Integrate Stripe for payment processing:\n   - Add stripe-python to dependencies\n   - Create `PaymentService` with subscription lifecycle methods\n5. Add middleware to enforce tier limits on relevant endpoints\n\nPseudo-code for tier validation:\n```python\nasync def check_tier_limit(tenant_id: str, resource: str) -> bool:\n    tenant = await get_tenant(tenant_id)\n    limits = TIER_LIMITS[tenant.tier]\n    current_count = await count_resources(tenant_id, resource)\n    return current_count < limits[resource]\n```",
+        "testStrategy": "1. Unit tests for TierService validation methods\n2. Integration tests for Stripe webhook handling\n3. E2E test: create tenant with Basic tier, attempt to exceed product limit, verify rejection\n4. E2E test: upgrade tier, verify new limits apply immediately",
+        "priority": "high",
+        "dependencies": [],
+        "status": "in-progress",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Enhance SambaTenant Model with Tier Enum and Subscription Fields",
+            "description": "Extend the existing SambaTenant model to include SambaTier enum, subscription dates, and feature flags for the three-tier system (Basic/Pro/Enterprise)",
+            "dependencies": [],
+            "details": "1. Create `SambaTier` enum in `backend/domain/samba/tenant/model.py` with values: FREE, BASIC, PRO, ENTERPRISE\n2. Add new fields to `SambaTenant` model:\n   - `tier: SambaTier` (default FREE, maps to existing `plan` field logic)\n   - `subscription_start: Optional[datetime]` (when subscription began)\n   - `subscription_end: Optional[datetime]` (when subscription expires)\n   - `autotune_enabled: bool` (false for Basic, true for Pro/Enterprise)\n3. Create a tier config constant `TIER_LIMITS` defining per-tier limits:\n   - Basic: max_products=1000, max_sourcing_sites=3, max_markets=2, autotune=false\n   - Pro: max_products=10000, max_sourcing_sites=-1(unlimited), max_markets=5, autotune=true\n   - Enterprise: max_products=-1, max_sourcing_sites=-1, max_markets=-1, autotune=true\n4. Create Alembic migration to add new columns\n5. Maintain backward compatibility with existing `plan` and `limits` fields during transition",
+            "status": "done",
+            "testStrategy": "1. Unit test: Verify SambaTier enum values\n2. Unit test: Verify TIER_LIMITS constant has correct values for each tier\n3. Integration test: Create tenant, verify default tier is FREE\n4. Migration test: Run alembic upgrade/downgrade, verify no data loss",
+            "parentId": "undefined",
+            "updatedAt": "2026-04-13T09:06:29.803Z"
+          },
+          {
+            "id": 2,
+            "title": "Create TierService with Validation Methods",
+            "description": "Implement TierService class with methods to validate tier limits for products, sourcing sites, and markets. Integrate with existing check_product_limit and check_market_limit functions",
+            "dependencies": [
+              1
+            ],
+            "details": "1. Create `backend/domain/samba/tenant/tier_service.py` with `TierService` class\n2. Implement validation methods:\n   - `check_product_limit(tenant_id)` - refactor existing middleware function\n   - `check_sourcing_access(tenant_id, site_name)` - validate sourcing site access based on tier\n   - `check_market_access(tenant_id, market_type)` - validate market count based on tier\n   - `check_autotune_access(tenant_id)` - returns false for Basic tier\n   - `check_subscription_valid(tenant_id)` - verify subscription not expired\n3. Add helper methods:\n   - `get_tier_limits(tier: SambaTier)` - return limit dict for given tier\n   - `get_current_usage(tenant_id)` - return dict with current product/market/sourcing counts\n4. Update `middleware.py` to use TierService instead of inline logic\n5. Add dependency injection pattern for TierService in routers",
+            "status": "done",
+            "testStrategy": "1. Unit test: check_product_limit returns error when limit exceeded\n2. Unit test: check_sourcing_access allows all sites for Pro/Enterprise, only 3 for Basic\n3. Unit test: check_subscription_valid returns false for expired subscriptions\n4. Integration test: Create tenant with Basic tier, attempt to add 4th sourcing site, verify rejection",
+            "parentId": "undefined",
+            "updatedAt": "2026-04-13T09:07:31.414Z"
+          },
+          {
+            "id": 3,
+            "title": "Implement Admin Tier Management API and UI",
+            "description": "Create admin endpoints and frontend UI for managing tenant tiers, viewing usage, and configuring tier pricing (since PRD prices are TODO)",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "1. Backend API endpoints in `backend/api/v1/routers/samba/tenant.py`:\n   - `PUT /tenants/{id}/tier` - update tenant tier (admin only)\n   - `GET /tenants/{id}/usage` - get current usage vs limits\n   - `GET /tier-config` - get tier pricing/limits config\n   - `PUT /tier-config` - update tier pricing (admin configurable since PRD has TODO prices)\n2. Create `TierConfig` model to store admin-configurable pricing:\n   - Store in DB or config file for easy updates\n   - Fields: tier_name, monthly_price_krw, max_products, max_sourcing_sites, max_markets, autotune_enabled\n3. Frontend (settings/page.tsx or new admin section):\n   - Tenant tier display card showing current tier and usage\n   - Usage progress bars (products: X/1000, markets: X/2, etc.)\n   - Admin-only tier pricing configuration form\n   - Tier comparison table showing feature differences\n4. Add tier badge component to display current tier in sidebar/header",
+            "status": "done",
+            "testStrategy": "1. API test: Update tier via PUT endpoint, verify tenant tier changes\n2. API test: Get usage endpoint returns accurate counts\n3. E2E test: Login as admin, change tenant tier, verify UI updates\n4. E2E test: Non-admin cannot access tier management endpoints",
+            "parentId": "undefined",
+            "updatedAt": "2026-04-13T09:14:42.545Z"
+          },
+          {
+            "id": 4,
+            "title": "Integrate Korean Payment System (TossPayments) for Subscription Billing",
+            "description": "Implement payment integration using TossPayments (Korean PG) for subscription billing, webhook handling, and subscription lifecycle management",
+            "dependencies": [
+              1,
+              3
+            ],
+            "details": "1. Add `tosspayments` package to `pyproject.toml` dependencies\n2. Create `backend/domain/samba/payment/` directory with:\n   - `model.py`: SambaSubscription model (tenant_id, tier, status, payment_key, billing_key, started_at, expires_at, auto_renew)\n   - `service.py`: PaymentService class\n   - `repository.py`: SubscriptionRepository\n3. PaymentService methods:\n   - `create_billing_key(tenant_id, card_info)` - register card for auto-billing\n   - `charge_subscription(tenant_id, tier)` - process monthly payment\n   - `cancel_subscription(tenant_id)` - cancel auto-renewal\n   - `handle_webhook(event)` - process TossPayments webhooks\n   - `check_payment_status(payment_key)` - verify payment completed\n4. API endpoints in `backend/api/v1/routers/samba/payment.py`:\n   - `POST /payment/billing-key` - create billing key\n   - `POST /payment/subscribe` - start subscription\n   - `POST /payment/webhook` - TossPayments webhook endpoint\n   - `DELETE /payment/subscribe` - cancel subscription\n5. Add TossPayments API keys to settings/environment variables\n6. Create Alembic migration for subscription table",
+            "status": "deferred",
+            "testStrategy": "1. Unit test: PaymentService methods with mocked TossPayments API\n2. Integration test: Webhook handling correctly updates subscription status\n3. E2E test: Complete subscription flow - billing key creation to first charge\n4. Test expired subscription correctly downgrades tenant to FREE tier",
+            "parentId": "undefined",
+            "updatedAt": "2026-04-13T09:38:51.731Z"
+          },
+          {
+            "id": 5,
+            "title": "Apply Tier Restrictions Across All Feature Endpoints",
+            "description": "Integrate tier validation middleware across all relevant API endpoints to enforce feature restrictions based on subscription tier",
+            "dependencies": [
+              2
+            ],
+            "details": "1. Add TierService dependency injection to relevant routers:\n   - `collector.py`: Check sourcing site access before collection\n   - `sourcing_account.py`: Validate sourcing account count on creation\n   - `account.py`: Validate market account count on creation\n   - `collector_autotune.py`: Check autotune_enabled before allowing autotune operations\n   - `shipment.py`: Check market access before product registration\n2. Create reusable FastAPI dependency functions:\n   - `verify_sourcing_access(site_name, tenant_id, session)` - dependency for sourcing endpoints\n   - `verify_market_access(market_type, tenant_id, session)` - dependency for market endpoints\n   - `verify_autotune_access(tenant_id, session)` - dependency for autotune endpoints\n3. Update existing `check_product_limit` and `check_market_limit` to use TierService\n4. Add tier-aware error messages with upgrade prompts:\n   - '소싱처 추가 제한: Basic 플랜은 최대 3개 소싱처만 지원합니다. Pro로 업그레이드하세요.'\n   - '오토튠 기능은 Pro 이상 플랜에서 사용 가능합니다.'\n5. Create middleware to check subscription expiry on protected routes\n6. Add grace period logic (7 days after expiry before downgrade)",
+            "status": "done",
+            "testStrategy": "1. E2E test: Basic tier tenant attempts to add 4th sourcing site, verify rejection with upgrade message\n2. E2E test: Basic tier tenant attempts autotune, verify rejection\n3. E2E test: Pro tier tenant can use autotune and all sourcing sites\n4. E2E test: Expired subscription blocks protected features after grace period\n5. Integration test: Upgrade tier mid-session, verify new limits apply immediately",
+            "parentId": "undefined",
+            "updatedAt": "2026-04-13T09:18:20.904Z"
+          }
+        ],
+        "updatedAt": "2026-04-13T09:38:51.731Z"
+      },
+      {
+        "id": "2",
+        "title": "Mobile Responsive Dashboard Enhancement",
+        "description": "Complete mobile responsiveness for all dashboard pages as specified in PRD roadmap",
+        "details": "Current frontend has basic Tailwind CSS but PRD roadmap specifies 'mobile responsive completion' as short-term goal.\n\n1. Audit existing pages in `frontend/src/app/samba/`:\n   - collector/page.tsx\n   - products/page.tsx\n   - orders/page.tsx\n   - analytics/page.tsx\n   - etc.\n\n2. Implement responsive breakpoints:\n   ```tsx\n   // Mobile-first approach\n   <div className=\"grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4\">\n   ```\n\n3. Create mobile navigation component:\n   - Hamburger menu for mobile\n   - Bottom navigation bar for quick access\n   - Swipe gestures for tab switching\n\n4. Optimize data tables for mobile:\n   - Horizontal scroll for wide tables\n   - Card view alternative for narrow screens\n   - Touch-friendly action buttons\n\n5. Performance optimization:\n   - Lazy load images with next/image\n   - Implement virtual scrolling for 100k+ products (already has `/collector/products/scroll`)\n   - Reduce initial bundle size",
+        "testStrategy": "1. Visual regression testing with Playwright across breakpoints (320px, 768px, 1024px, 1440px)\n2. Touch interaction testing on actual devices\n3. Lighthouse performance audit targeting 90+ score on mobile\n4. User acceptance testing with real sellers on mobile devices",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "3",
+        "title": "AutoTune Stability Enhancement",
+        "description": "Improve AutoTune reliability with better error handling, rate limiting, and fallback mechanisms",
+        "details": "PRD roadmap specifies 'AutoTune stability enhancement' as short-term priority. Current implementation in `collector_autotune.py` needs:\n\n1. Enhanced circuit breaker pattern:\n   ```python\n   class CircuitBreaker:\n       def __init__(self, failure_threshold=5, recovery_timeout=60):\n           self.failures = 0\n           self.last_failure = None\n           self.state = 'closed'  # closed/open/half-open\n       \n       async def call(self, func):\n           if self.state == 'open':\n               if time.time() - self.last_failure > self.recovery_timeout:\n                   self.state = 'half-open'\n               else:\n                   raise CircuitOpenError()\n           try:\n               result = await func()\n               if self.state == 'half-open':\n                   self.state = 'closed'\n                   self.failures = 0\n               return result\n           except Exception as e:\n               self.failures += 1\n               if self.failures >= self.failure_threshold:\n                   self.state = 'open'\n                   self.last_failure = time.time()\n               raise\n   ```\n\n2. Per-sourcing-site rate limiting:\n   - Implement adaptive backoff per site\n   - Track 429/rate limit responses\n   - Automatic cooldown periods\n\n3. Improved price change detection:\n   - Threshold-based change detection (ignore < 1% changes)\n   - Batch price updates to reduce API calls\n   - Priority queue for high-value products\n\n4. Better stock synchronization:\n   - Immediate propagation for sold-out detection\n   - Delayed propagation for restocks (verify stability)\n   - Partial stock updates (specific options only)",
+        "testStrategy": "1. Load testing: simulate 10k products with rapid price changes\n2. Chaos testing: inject network failures, verify circuit breaker activation\n3. Integration tests with mock sourcing APIs\n4. Monitor error rates in production warroom after deployment",
+        "priority": "high",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-04-13T09:34:10.882Z"
+      },
+      {
+        "id": "4",
+        "title": "Amazon Marketplace Full Integration",
+        "description": "Complete Amazon marketplace integration for registration, modification, and deletion as specified in PRD",
+        "details": "PRD shows Amazon as supported market with O for registration/modification but no order management. Current files exist:\n- `backend/domain/samba/plugins/markets/amazon.py`\n- `backend/domain/samba/proxy/amazon.py`\n\nRequired implementation:\n\n1. Amazon SP-API integration:\n   - Install `python-amazon-sp-api` dependency\n   - Implement OAuth2 authentication flow\n   - Handle rate limiting (2 requests/second for Listings API)\n\n2. Product listing implementation:\n   ```python\n   class AmazonPlugin(MarketPlugin):\n       market_type = \"amazon\"\n       policy_key = \"아마존\"\n       \n       async def execute(self, session, product, creds, category_id, account, existing_no):\n           # Use Listings API for product creation\n           # Map Korean product data to Amazon attributes\n           # Handle ASIN matching for existing products\n           pass\n       \n       def transform(self, product, category_id, **kwargs):\n           # Transform to Amazon feed format\n           # Include UPC/EAN/ISBN if available\n           # Map size/color variants\n           pass\n   ```\n\n3. Category mapping:\n   - Fetch Amazon browse node tree\n   - AI mapping from Korean categories to Amazon nodes\n   - Store mapping cache in DB\n\n4. Image requirements:\n   - Main image: 1000x1000px minimum, white background\n   - Variant images: up to 9 additional\n   - Auto-resize/pad using Pillow",
+        "testStrategy": "1. Sandbox testing with Amazon seller sandbox environment\n2. Unit tests for transform() with various product types\n3. Integration test: full listing creation flow\n4. Verify listing appears correctly in Seller Central",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "5",
+        "title": "Rakuten Japan Marketplace Integration",
+        "description": "Complete Rakuten Japan marketplace integration for cross-border commerce",
+        "details": "PRD lists Rakuten as supported market for registration/modification. Existing plugin file: `backend/domain/samba/plugins/markets/rakuten.py`\n\nImplementation requirements:\n\n1. Rakuten RMS API integration:\n   - Implement OAuth 1.0a authentication\n   - Handle Japanese text encoding (UTF-8 with proper escaping)\n   - Rate limiting: 50 requests/minute\n\n2. Product registration:\n   ```python\n   class RakutenPlugin(MarketPlugin):\n       market_type = \"rakuten\"\n       policy_key = \"라쿠텐\"\n       \n       def transform(self, product, category_id, **kwargs):\n           return {\n               'itemUrl': generate_url_safe_id(product['id']),\n               'itemName': translate_to_japanese(product['name']),\n               'itemPrice': convert_krw_to_jpy(product['sale_price']),\n               'genreId': category_id,\n               'itemInventory': product.get('stock', 0),\n               # ... additional fields\n           }\n   ```\n\n3. Translation integration:\n   - Use Google Translate API or DeepL for product names\n   - Store translated text in product metadata\n   - Manual override capability\n\n4. Currency conversion:\n   - Real-time KRW → JPY conversion\n   - Buffer margin for exchange rate fluctuation\n   - Price rounding to nice numbers (¥980 instead of ¥983)",
+        "testStrategy": "1. Test with Rakuten sandbox environment\n2. Verify Japanese text rendering in listings\n3. Currency conversion accuracy tests\n4. End-to-end listing creation with real products",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "6",
+        "title": "BUYMA Japan Marketplace Integration",
+        "description": "Complete BUYMA resale platform integration for Japanese market cross-border sales",
+        "details": "PRD lists BUYMA as supported market. Existing files:\n- `backend/domain/samba/plugins/markets/buyma.py`\n- `backend/domain/samba/proxy/buyma.py`\n\nBUYMA-specific requirements:\n\n1. API integration:\n   - BUYMA uses private API - may need reverse engineering or official partnership\n   - Authentication via session cookies or API keys\n   - Rate limiting: conservative approach (1 req/2sec)\n\n2. Product listing:\n   ```python\n   class BuymaPlugin(MarketPlugin):\n       market_type = \"buyma\"\n       policy_key = \"바이마\"\n       \n       def transform(self, product, category_id, **kwargs):\n           return {\n               'title': f\"[{product['brand']}] {translate_ja(product['name'])}\",\n               'price': convert_krw_to_jpy(product['sale_price']),\n               'buyerCountry': 'JP',\n               'shippingFrom': 'KR',\n               'category': category_id,\n               'condition': 'new',\n               'tags': extract_fashion_tags(product),\n           }\n   ```\n\n3. Fashion-specific handling:\n   - Size chart conversion (Korean → Japanese)\n   - Brand name standardization\n   - Seasonal tagging\n   - Luxury brand verification\n\n4. Shipping integration:\n   - EMS/DHL rate calculation\n   - Customs documentation\n   - Tracking number format conversion",
+        "testStrategy": "1. Manual testing with BUYMA seller account\n2. Verify size chart accuracy\n3. Test shipping cost calculations\n4. Currency and pricing validation",
+        "priority": "low",
+        "dependencies": [
+          "5"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "7",
+        "title": "AI Category Mapping Enhancement",
+        "description": "Improve AI-powered category mapping accuracy using Claude Sonnet",
+        "details": "PRD specifies 'Claude Sonnet based' category AI mapping. Current implementation needs enhancement.\n\n1. Improve mapping prompt:\n   ```python\n   CATEGORY_MAPPING_PROMPT = \"\"\"\n   You are an expert e-commerce category classifier.\n   \n   Source category: {source_category}\n   Product name: {product_name}\n   Brand: {brand}\n   \n   Target marketplace: {target_market}\n   Available categories:\n   {category_tree}\n   \n   Return the most appropriate category ID. Consider:\n   1. Product type (clothing, shoes, accessories, etc.)\n   2. Gender (men/women/unisex)\n   3. Age group if applicable\n   4. Sub-category specificity\n   \n   Output format: {\"category_id\": \"12345\", \"confidence\": 0.95, \"reason\": \"...\"}\n   \"\"\"\n   ```\n\n2. Caching layer:\n   - Cache mappings by source_category + target_market\n   - Expire cache after 30 days\n   - Allow manual override with priority\n\n3. Feedback loop:\n   - Track successful/rejected mappings\n   - Use successful mappings as few-shot examples\n   - Periodic model fine-tuning with accumulated data\n\n4. Batch processing:\n   - Group similar products for efficient API calls\n   - Parallel processing with rate limiting\n   - Background job for large batches",
+        "testStrategy": "1. Accuracy benchmark against manually mapped dataset (target: 95%+)\n2. A/B test: old mapping vs new mapping with real users\n3. Performance test: 1000 products mapping in < 5 minutes\n4. Edge case testing: unusual categories, multi-category products",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-04-13T10:13:07.176Z"
+      },
+      {
+        "id": "8",
+        "title": "CLIP Image Filtering Optimization",
+        "description": "Enhance CLIP ONNX model-based image classification for model/product cut separation",
+        "details": "PRD mentions 'CLIP ONNX model for model cut/product cut auto-classification'. Current implementation needs optimization.\n\n1. Model optimization:\n   - Use quantized INT8 ONNX model for faster inference\n   - Batch processing for multiple images\n   - GPU acceleration if available (onnxruntime-gpu)\n\n2. Classification logic:\n   ```python\n   class ImageClassifier:\n       LABELS = ['model_cut', 'product_only', 'detail_shot', 'lifestyle', 'size_chart']\n       \n       async def classify(self, image_urls: list[str]) -> list[dict]:\n           # Download images in parallel\n           images = await asyncio.gather(*[self.download(url) for url in image_urls])\n           \n           # Preprocess: resize to 224x224, normalize\n           tensors = [self.preprocess(img) for img in images]\n           \n           # Batch inference\n           embeddings = self.model.run(None, {'input': np.stack(tensors)})[0]\n           \n           # Classify each image\n           results = []\n           for emb in embeddings:\n               similarities = [cosine_sim(emb, self.label_embeddings[l]) for l in self.LABELS]\n               label = self.LABELS[np.argmax(similarities)]\n               confidence = max(similarities)\n               results.append({'label': label, 'confidence': confidence})\n           \n           return results\n   ```\n\n3. Smart image ordering:\n   - Product-only images first for main image\n   - Model cuts for lifestyle appeal\n   - Detail shots for quality assurance\n   - Size charts last\n\n4. Integration with R2 storage:\n   - Tag images with classification metadata\n   - Support manual reclassification\n   - Bulk reclassification for existing products",
+        "testStrategy": "1. Accuracy benchmark: 90%+ classification accuracy on test dataset\n2. Performance test: 100 images in < 10 seconds\n3. A/B test: auto-sorted images vs manual selection conversion rate\n4. Edge cases: blurry images, mixed content, text overlays",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "9",
+        "title": "Chrome Extension Cookie Sync Enhancement",
+        "description": "Improve Chrome extension cookie synchronization for sourcing sites requiring authentication",
+        "details": "PRD mentions 'Chrome extension + cookie proxy' for sites like KREAM and Musinsa. Enhancement needed:\n\n1. Cookie sync mechanism:\n   ```javascript\n   // extension/background.js\n   chrome.cookies.onChanged.addListener(async (changeInfo) => {\n     const { cookie, removed, cause } = changeInfo;\n     const trackedDomains = ['musinsa.com', 'kream.co.kr', 'lotteon.com'];\n     \n     if (trackedDomains.some(d => cookie.domain.includes(d)) && !removed) {\n       await syncCookieToBackend(cookie);\n     }\n   });\n   \n   async function syncCookieToBackend(cookie) {\n     await fetch(`${API_BASE}/api/v1/samba/sourcing-accounts/cookies`, {\n       method: 'POST',\n       headers: { 'Authorization': `Bearer ${token}` },\n       body: JSON.stringify({\n         domain: cookie.domain,\n         name: cookie.name,\n         value: cookie.value,\n         expires: cookie.expirationDate\n       })\n     });\n   }\n   ```\n\n2. Backend cookie storage:\n   - Encrypt cookies at rest (AES-256)\n   - Per-user cookie isolation\n   - Automatic expiration handling\n\n3. Cookie injection for API calls:\n   - httpx/aiohttp session with custom cookies\n   - Automatic refresh when cookies expire\n   - Fallback to re-authentication prompt\n\n4. Security considerations:\n   - HTTPS only for cookie transmission\n   - Rate limit cookie sync endpoints\n   - Audit log for cookie access",
+        "testStrategy": "1. Test cookie sync with various browser scenarios\n2. Verify encryption/decryption correctness\n3. Test cookie expiration handling\n4. Security audit for cookie storage",
+        "priority": "high",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-04-13T09:57:44.188Z"
+      },
+      {
+        "id": "10",
+        "title": "SmartStore TalkTalk Webhook Integration",
+        "description": "Implement SmartStore TalkTalk (chat) webhook for real-time customer inquiry handling",
+        "details": "PRD mentions 'SmartStore TalkTalk webhook integration' for CS automation.\n\n1. Webhook endpoint setup:\n   ```python\n   @router.post('/cs/talktalk/webhook')\n   async def talktalk_webhook(\n       request: Request,\n       session: AsyncSession = Depends(get_write_session_dependency)\n   ):\n       payload = await request.json()\n       signature = request.headers.get('X-Naver-Signature')\n       \n       if not verify_signature(payload, signature):\n           raise HTTPException(401, 'Invalid signature')\n       \n       event_type = payload['eventType']\n       if event_type == 'MESSAGE_RECEIVED':\n           await handle_new_message(session, payload)\n       elif event_type == 'READ_RECEIPT':\n           await handle_read_receipt(session, payload)\n       \n       return {'status': 'ok'}\n   ```\n\n2. Message handling:\n   - Parse inquiry type (order status, product question, complaint)\n   - Match to order/product using keywords\n   - Auto-suggest response template\n\n3. Template response system:\n   ```python\n   RESPONSE_TEMPLATES = {\n       'shipping_inquiry': '안녕하세요! 주문하신 상품은 현재 {status}입니다. 배송조회: {tracking_url}',\n       'stock_inquiry': '안녕하세요! 해당 상품은 현재 {stock_status}입니다.',\n       'return_guide': '반품 안내: {return_instructions}',\n   }\n   ```\n\n4. Notification forwarding:\n   - Push notification to seller (Firebase Cloud Messaging)\n   - Email digest for accumulated inquiries\n   - Urgent flag for time-sensitive issues",
+        "testStrategy": "1. Mock webhook testing with sample payloads\n2. Integration test with SmartStore sandbox\n3. Template matching accuracy test\n4. End-to-end: send message → receive webhook → auto-respond",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "11",
+        "title": "Source Code Sales Portal",
+        "description": "Build portal for source code purchase as specified in PRD business model B",
+        "details": "PRD specifies dual business model with source code sales. Required:\n\n1. Marketing landing page:\n   - `/source-code` route in Next.js\n   - Feature comparison table\n   - Demo video/screenshots\n   - Testimonials section\n   - Pricing (TODO in PRD)\n\n2. Purchase flow:\n   ```tsx\n   // frontend/src/app/source-code/purchase/page.tsx\n   export default function PurchasePage() {\n     return (\n       <div>\n         <PricingTable />\n         <PaymentForm />\n         <LicenseAgreement />\n         <OrderSummary />\n       </div>\n     );\n   }\n   ```\n\n3. Delivery system:\n   - After payment confirmation, generate unique download link\n   - Time-limited access (72 hours)\n   - Version tracking for future updates\n   - README with setup instructions\n\n4. License management:\n   - Generate license key per purchase\n   - License verification in backend (optional enforcement)\n   - Support for maintenance/update subscription\n\n5. Documentation package:\n   - Setup guide (Docker, cloud deployment)\n   - API documentation\n   - Customization guide\n   - Architecture overview",
+        "testStrategy": "1. Purchase flow E2E test with test payment\n2. Verify download link generation and expiration\n3. Test license key validation\n4. Documentation completeness review",
+        "priority": "low",
+        "dependencies": [
+          "1"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "12",
+        "title": "Multi-Market Order Consolidation",
+        "description": "Unify orders from all 18 markets into single dashboard with advanced filtering",
+        "details": "PRD specifies 'multi-market order unified view'. Current implementation in `samba_order_router` needs enhancement.\n\n1. Order aggregation service:\n   ```python\n   class OrderAggregationService:\n       async def fetch_all_orders(\n           self,\n           session: AsyncSession,\n           user_id: str,\n           filters: OrderFilters\n       ) -> list[UnifiedOrder]:\n           # Fetch from DB (already synced orders)\n           db_orders = await self.repo.get_orders(filters)\n           \n           # Optionally sync fresh from markets\n           if filters.force_sync:\n               await self.sync_from_markets(user_id)\n               db_orders = await self.repo.get_orders(filters)\n           \n           return db_orders\n   ```\n\n2. Real-time sync from markets:\n   - Polling scheduler for order updates (every 5 minutes)\n   - Webhook support for markets that offer it\n   - Conflict resolution for duplicate orders\n\n3. Advanced filtering UI:\n   - Filter by market, status, date range, amount\n   - Search by order ID, customer name, product name\n   - Saved filter presets\n\n4. Bulk actions:\n   - Mass shipping label generation\n   - Bulk status update\n   - Export to Excel/CSV",
+        "testStrategy": "1. Test order sync from multiple markets simultaneously\n2. Verify filtering accuracy with various criteria\n3. Performance test with 10k+ orders\n4. Bulk action reliability testing",
+        "priority": "high",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "13",
+        "title": "Analytics Dashboard Enhancement",
+        "description": "Expand analytics with multi-dimensional analysis as specified in PRD",
+        "details": "PRD specifies analytics features. Current implementation in `backend/domain/samba/analytics/` needs expansion.\n\n1. Sales analysis dimensions:\n   ```python\n   class AnalyticsService:\n       async def get_sales_breakdown(\n           self,\n           session: AsyncSession,\n           user_id: str,\n           period: Period,\n           group_by: list[str]  # ['market', 'sourcing_site', 'category', 'brand']\n       ) -> dict:\n           query = \"\"\"\n           SELECT\n               {group_cols},\n               SUM(total_amount) as revenue,\n               SUM(profit) as profit,\n               COUNT(*) as order_count,\n               AVG(profit_margin) as avg_margin\n           FROM samba_order\n           WHERE user_id = :user_id\n             AND created_at BETWEEN :start AND :end\n           GROUP BY {group_cols}\n           ORDER BY revenue DESC\n           \"\"\"\n           ...\n   ```\n\n2. Visualizations (using Recharts):\n   - Revenue trend line chart\n   - Market share pie chart\n   - Profit margin histogram\n   - Order status funnel\n\n3. Sourcing ROI analysis:\n   - Cost per sourcing site\n   - Conversion rate by source\n   - Average profit per product source\n\n4. Product performance:\n   - Best/worst sellers\n   - Dead stock identification\n   - Restock recommendations",
+        "testStrategy": "1. Verify calculation accuracy against known dataset\n2. Performance test with large date ranges\n3. Visual rendering across browsers\n4. Export functionality verification",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement Sourcing Site ROI Analysis API",
+            "description": "Create backend API endpoint for sourcing site ROI analysis including cost per site, conversion rate, and average profit per product source",
+            "dependencies": [],
+            "details": "Add new methods to SambaAnalyticsService in backend/domain/samba/analytics/service.py: 1) get_sourcing_roi() that calculates cost, revenue, profit, conversion_rate (orders/products ratio), avg_profit_per_product for each source_site. 2) Join samba_order with samba_collected_product on collected_product_id to get source_site data. 3) Add new router endpoint GET /analytics/sourcing-roi in analytics.py. Response schema: [{source_site: str, total_cost: float, total_revenue: float, total_profit: float, order_count: int, product_count: int, conversion_rate: float, avg_profit_per_product: float}]",
+            "status": "done",
+            "testStrategy": "Test with sample orders linked to collected products from different source_sites. Verify calculation accuracy: conversion_rate = order_count/product_count, avg_profit = total_profit/order_count",
+            "updatedAt": "2026-04-13T10:24:52.229Z",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "Implement Best/Worst Sellers and Dead Stock API",
+            "description": "Create backend API endpoints for product performance analysis including best sellers, worst sellers, and dead stock identification",
+            "dependencies": [
+              1
+            ],
+            "details": "Add methods to SambaAnalyticsService: 1) get_product_performance(limit=10, period_days=30) - returns top/bottom products by sales, profit, quantity. 2) get_dead_stock(days_threshold=60) - identifies products with zero orders in threshold period. Query samba_order joined with samba_collected_product. Add endpoints: GET /analytics/best-sellers, GET /analytics/worst-sellers, GET /analytics/dead-stock. Include fields: product_id, product_name, source_site, brand, total_sales, total_profit, order_count, last_order_date, days_since_last_sale",
+            "status": "done",
+            "testStrategy": "Create test data with varying order frequencies. Verify best sellers sorted by sales DESC, worst by sales ASC, dead stock shows only products with no orders in threshold period",
+            "parentId": "undefined",
+            "updatedAt": "2026-04-13T10:24:52.241Z"
+          },
+          {
+            "id": 3,
+            "title": "Implement Brand-Based Analysis API",
+            "description": "Create backend API endpoint for brand-level sales and profit analysis aggregation",
+            "dependencies": [
+              1
+            ],
+            "details": "Add get_sales_by_brand() method to SambaAnalyticsService that aggregates orders by brand field. Join samba_order with samba_collected_product on collected_product_id to access brand data. Add GET /analytics/brands endpoint. Return [{brand: str, total_sales: float, total_profit: float, order_count: int, product_count: int, avg_margin_rate: float}]. Handle null brands as '미분류 브랜드'. Sort by total_sales DESC. Add optional period filter (start_date, end_date query params)",
+            "status": "done",
+            "testStrategy": "Test with orders linked to products with various brands. Verify brand aggregation accuracy, null brand handling, and period filtering works correctly",
+            "parentId": "undefined",
+            "updatedAt": "2026-04-13T10:24:52.256Z"
+          },
+          {
+            "id": 4,
+            "title": "Create Recharts Visualization Components",
+            "description": "Build reusable Recharts chart components for market share pie chart, revenue trend line chart, and profit margin histogram",
+            "dependencies": [],
+            "details": "Create frontend/src/components/samba/charts/ directory with: 1) MarketSharePieChart.tsx - ResponsiveContainer + PieChart showing channel sales distribution. 2) RevenueTrendChart.tsx - LineChart with dual axis for sales and profit over time. 3) ProfitMarginChart.tsx - BarChart showing profit margin distribution. Use Recharts 3.6.0 already installed. Apply project's dark theme colors (#FF8C00 accent, #1A1A1A background). Each component accepts data prop and optional dimensions. Include tooltips and legends",
+            "status": "done",
+            "testStrategy": "Render each chart with mock data. Verify responsive behavior, correct data display, tooltip functionality, and theme consistency with existing analytics page",
+            "parentId": "undefined",
+            "updatedAt": "2026-04-13T10:26:03.882Z"
+          },
+          {
+            "id": 5,
+            "title": "Integrate Charts and New APIs into Analytics Dashboard",
+            "description": "Update analytics page to display new Recharts visualizations and integrate new API endpoints for comprehensive dashboard view",
+            "dependencies": [
+              1,
+              2,
+              3,
+              4
+            ],
+            "details": "Modify frontend/src/app/samba/analytics/page.tsx: 1) Add new API calls to fetch sourcing-roi, best-sellers, dead-stock, brands data. 2) Add collapsible sections for each new analysis type. 3) Integrate MarketSharePieChart showing channel distribution from existing marketTable data. 4) Add RevenueTrendChart using existing daily/monthly trend data. 5) Display sourcing ROI table with conversion rates. 6) Add best/worst sellers cards with top 5 each. 7) Add brand analysis table. Use existing card styling and fmtNum formatter for consistency",
+            "status": "done",
+            "testStrategy": "Load analytics page and verify: all charts render without errors, new API data displays correctly, responsive layout works, performance acceptable with production data volumes",
+            "parentId": "undefined",
+            "updatedAt": "2026-04-13T10:28:15.256Z"
+          }
+        ],
+        "updatedAt": "2026-04-13T10:28:15.256Z"
+      },
+      {
+        "id": "14",
+        "title": "Job Queue Monitoring Dashboard",
+        "description": "Enhance warroom with real-time job monitoring, alerts, and intervention capabilities",
+        "details": "PRD mentions warroom for 'real-time autotune logs, collection status per market'. Enhancement needed.\n\n1. Job status visualization:\n   ```tsx\n   // frontend/src/app/samba/warroom/JobMonitor.tsx\n   export function JobMonitor() {\n     const { jobs, refresh } = useJobs();\n     \n     return (\n       <div className=\"grid grid-cols-4 gap-4\">\n         <JobStatusCard status=\"running\" count={jobs.running} />\n         <JobStatusCard status=\"pending\" count={jobs.pending} />\n         <JobStatusCard status=\"completed\" count={jobs.completed} />\n         <JobStatusCard status=\"failed\" count={jobs.failed} />\n         \n         <JobTable jobs={jobs.recent} onCancel={cancelJob} />\n         <JobProgressChart data={jobs.history} />\n       </div>\n     );\n   }\n   ```\n\n2. Real-time updates:\n   - WebSocket or SSE for live updates\n   - 30-second polling fallback\n   - Visual notification for job state changes\n\n3. Intervention capabilities:\n   - Cancel running jobs\n   - Retry failed jobs\n   - Pause/resume job queue\n   - Emergency stop all\n\n4. Alerting system:\n   - Configurable thresholds (error rate, queue depth)\n   - Email/Slack notifications\n   - Sound alerts for critical issues",
+        "testStrategy": "1. Real-time update latency test (< 2 seconds)\n2. Job cancellation reliability\n3. Alert triggering accuracy\n4. UI responsiveness under high job volume",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-04-13T10:39:57.441Z"
+      },
+      {
+        "id": "15",
+        "title": "Multi-tenant Data Isolation Audit",
+        "description": "Verify and enhance tenant data isolation for SaaS security",
+        "details": "PRD mentions 'multi-tenancy structure complete'. Need security audit and enhancement.\n\n1. Data isolation verification:\n   - Every query must include tenant_id filter\n   - No cross-tenant data access possible\n\n2. Audit implementation:\n   ```python\n   class TenantIsolationMiddleware:\n       async def __call__(self, request: Request, call_next):\n           # Extract tenant_id from JWT\n           tenant_id = get_tenant_from_token(request)\n           \n           # Store in request state for use in repositories\n           request.state.tenant_id = tenant_id\n           \n           # Log data access\n           logger.info(f\"Tenant {tenant_id} accessing {request.url.path}\")\n           \n           response = await call_next(request)\n           return response\n   ```\n\n3. Repository pattern enforcement:\n   - All repositories must accept and use tenant_id\n   - SQL query review for missing WHERE clauses\n   - Database row-level security (PostgreSQL RLS) as additional layer\n\n4. Testing:\n   - Automated penetration testing for IDOR vulnerabilities\n   - Cross-tenant access attempt logging\n\n5. Compliance documentation:\n   - Data flow diagram\n   - Security controls documentation\n   - Incident response procedures",
+        "testStrategy": "1. Automated IDOR vulnerability scan\n2. Manual security review of all queries\n3. Attempt cross-tenant access with manipulated tokens\n4. RLS policy verification at database level",
+        "priority": "high",
+        "dependencies": [
+          "1"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "16",
+        "title": "Olive Young Sourcing Plugin Enhancement",
+        "description": "Improve Olive Young crawler stability and data extraction accuracy",
+        "details": "PRD lists Olive Young as sourcing site using crawling method. Existing file: `plugins/sourcing/oliveyoung.py`\n\n1. Anti-blocking measures:\n   ```python\n   class OliveYoungPlugin(SourcingPlugin):\n       site_name = 'oliveyoung'\n       concurrency = 2  # Conservative\n       request_interval = 3.0  # 3 seconds between requests\n       \n       async def search(self, keyword: str, **filters) -> list[dict]:\n           # Rotate user agents\n           headers = {'User-Agent': random.choice(USER_AGENTS)}\n           \n           # Use residential proxy if available\n           proxy = await self.get_proxy()\n           \n           async with self.session.get(\n               f'{BASE_URL}/search',\n               params={'query': keyword},\n               headers=headers,\n               proxy=proxy\n           ) as resp:\n               html = await resp.text()\n               return self.parse_search_results(html)\n   ```\n\n2. Data extraction:\n   - Product name with full details\n   - Regular price and sale price\n   - Review count and rating\n   - Stock status per option\n   - Category breadcrumb\n\n3. Error handling:\n   - CAPTCHA detection and alert\n   - Rate limit backoff\n   - Stale data detection",
+        "testStrategy": "1. Search functionality with various keywords\n2. Data accuracy verification against live site\n3. Rate limiting compliance test\n4. Long-running stability test (24 hours)",
+        "priority": "low",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "17",
+        "title": "Return/Exchange Management Enhancement",
+        "description": "Improve returns and exchange workflow with timeline tracking and automated processing",
+        "details": "PRD specifies 'return/exchange/cancel request unified management'. Current implementation in `returns/` needs enhancement.\n\n1. Timeline-based tracking:\n   ```python\n   class ReturnTimeline:\n       events: list[TimelineEvent]\n       \n       def add_event(self, event_type: str, description: str, metadata: dict = None):\n           self.events.append(TimelineEvent(\n               timestamp=datetime.now(),\n               type=event_type,  # 'requested', 'approved', 'pickup_scheduled', 'received', 'refunded'\n               description=description,\n               metadata=metadata or {}\n           ))\n   ```\n\n2. Automated processing:\n   - Auto-approve returns within policy window\n   - Auto-generate pickup request\n   - Auto-process refund when item received\n\n3. Reason categorization:\n   - Size/fit issue\n   - Product defect\n   - Different from description\n   - Simple change of mind\n   - Statistics by reason\n\n4. Integration with markets:\n   - Sync return status to SmartStore/Coupang\n   - Auto-update shipping cost claims",
+        "testStrategy": "1. Full return flow E2E test\n2. Timeline event ordering verification\n3. Auto-approval rule testing\n4. Market sync accuracy",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-04-13T10:50:14.832Z"
+      },
+      {
+        "id": "18",
+        "title": "AI Sourcing Recommendation System",
+        "description": "Implement AI-powered product sourcing recommendations based on market trends",
+        "details": "PRD mentions 'AI sourcing' for recommending best-selling brand×keyword combinations.\n\n1. Data collection:\n   ```python\n   class TrendCollector:\n       async def collect_musinsa_trends(self) -> list[TrendData]:\n           # Fetch ranking data from Musinsa\n           rankings = await self.musinsa_client.get_rankings()\n           return [TrendData(\n               brand=r['brand'],\n               keyword=r['category'],\n               rank=r['rank'],\n               sales_volume=r['sales'],\n               date=datetime.now()\n           ) for r in rankings]\n   ```\n\n2. Recommendation engine:\n   - Analyze trending brands × categories\n   - Consider seller's current inventory\n   - Factor in competition level\n   - Predict demand using historical data\n\n3. Scoring algorithm:\n   ```python\n   def calculate_opportunity_score(trend: TrendData, competition: int) -> float:\n       demand_score = normalize(trend.sales_volume)\n       competition_score = 1 - normalize(competition)\n       trend_momentum = calculate_momentum(trend.history)\n       return 0.4 * demand_score + 0.3 * competition_score + 0.3 * trend_momentum\n   ```\n\n4. UI presentation:\n   - Daily/weekly recommendations\n   - One-click add to collection queue\n   - Historical recommendation accuracy tracking",
+        "testStrategy": "1. Recommendation relevance evaluation\n2. A/B test: AI recommendations vs manual selection sales performance\n3. System performance with large datasets\n4. User feedback collection and iteration",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-04-13T10:54:59.013Z"
+      },
+      {
+        "id": "19",
+        "title": "Product Detail Page HTML Generator Enhancement",
+        "description": "Improve automatic detail page HTML generation with templates and CDN optimization",
+        "details": "PRD mentions 'detail page HTML auto-generation with top/bottom templates'. Enhancement needed.\n\n1. Template system:\n   ```python\n   class DetailPageGenerator:\n       def generate(self, product: dict, template: str = 'default') -> str:\n           template_obj = self.templates[template]\n           \n           return f\"\"\"\n           {template_obj.header}\n           \n           <div class=\"product-images\">\n               {''.join(f'<img src=\"{self.cdn_url(img)}\" />' for img in product['images'])}\n           </div>\n           \n           <div class=\"product-info\">\n               <h1>{product['name']}</h1>\n               <p>{product['description']}</p>\n           </div>\n           \n           <div class=\"size-chart\">\n               {self.render_size_chart(product)}\n           </div>\n           \n           {template_obj.footer}\n           \"\"\"\n   ```\n\n2. CDN image optimization:\n   - R2 URL with resize parameters\n   - WebP format for modern browsers\n   - Lazy loading implementation\n\n3. Template management:\n   - CRUD for custom templates\n   - Preview before publish\n   - Template versioning\n\n4. Market-specific formatting:\n   - SmartStore HTML restrictions compliance\n   - Coupang image size requirements\n   - Mobile-optimized layouts",
+        "testStrategy": "1. Generated HTML validation against market requirements\n2. Image loading performance test\n3. Mobile rendering verification\n4. Cross-market compatibility testing",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "20",
+        "title": "Forbidden Word Filter Enhancement",
+        "description": "Improve forbidden word detection and automatic removal/replacement",
+        "details": "PRD mentions 'forbidden word auto-detection and removal'. Current implementation in `forbidden/` needs enhancement.\n\n1. Market-specific word lists:\n   ```python\n   FORBIDDEN_WORDS = {\n       'smartstore': [\n           '가품', '짝퉁', '레플리카', '관부가세',\n           # Brand restrictions\n           '나이키 정품', '아디다스 공식',\n       ],\n       'coupang': [\n           '무료배송', '당일발송',  # Misleading if not true\n       ],\n       # ... per market\n   }\n   ```\n\n2. Detection engine:\n   - Exact match detection\n   - Fuzzy match (similar characters: 가>ㄱㅏ)\n   - Context-aware detection (OK in some contexts)\n\n3. Automatic handling:\n   - Remove word completely\n   - Replace with allowed alternative\n   - Flag for manual review\n\n4. Real-time validation:\n   - Check before market submission\n   - Warning in product edit form\n   - Bulk scan for existing products",
+        "testStrategy": "1. Detection accuracy: no false negatives for known forbidden words\n2. False positive rate < 1%\n3. Performance: 1000 products scanned in < 10 seconds\n4. Market submission success rate improvement tracking",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": []
+      }
+    ],
+    "metadata": {
+      "version": "1.0.0",
+      "lastModified": "2026-04-13T10:54:59.013Z",
+      "taskCount": 20,
+      "completedCount": 7,
+      "tags": [
+        "master"
+      ]
+    }
+  }
+}

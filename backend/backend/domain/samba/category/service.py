@@ -2928,12 +2928,19 @@ class SambaCategoryService:
                     "unisex": "남녀공용",
                 }.get(item.get("gender", ""), "")
                 ss_hint = item.get("ss_mapped", "")
+                mapped_refs = item.get("mapped_refs", {})
                 entry = f"{idx + 1}. [{item['site']}] {item['leaf_path']}"
                 if gender_hint:
                     entry += f" | 성별: {gender_hint}"
                 if sample_names:
                     entry += f" | 상품명: {' / '.join(sample_names)}"
-                if ss_hint:
+                # 기존 매핑된 타 마켓 참고 (ss_mapped 포함)
+                if mapped_refs:
+                    refs_str = ", ".join(
+                        f"{mk}:{val}" for mk, val in list(mapped_refs.items())[:4]
+                    )
+                    entry += f" | 기존매핑참고: {refs_str}"
+                elif ss_hint:
                     entry += f" | 스마트스토어매핑: {ss_hint}"
                 if seo_str:
                     entry += f" | SEO: {seo_str}"
@@ -3066,6 +3073,7 @@ class SambaCategoryService:
 
             prompt = f"""소싱 카테고리를 판매 마켓 카테고리에 매핑.
 소비자가 검색할 키워드와 가장 일치하는 카테고리를 선택하세요.
+각 항목에 "기존매핑참고"가 있으면 이미 다른 마켓에 매핑된 결과이니 동일 상품 유형으로 매핑하세요.
 
 {chr(10).join(cat_entries)}
 {cat_list_section}
@@ -3300,10 +3308,21 @@ JSON만 응답:
             [t for t in (sample_tags or []) if not t.startswith("__")][:5]
         )
 
+        # 이미 매핑된 타 마켓 참고 정보 구성
+        _ref_lines = ""
+        if result:
+            _ref_parts = [f"{mk}: {val}" for mk, val in result.items() if val]
+            if _ref_parts:
+                _ref_lines = (
+                    "\n[이미 매핑된 타 마켓 — 참고용]\n"
+                    + "\n".join(f"- {p}" for p in _ref_parts)
+                    + "\n"
+                )
+
         prompt = f"""소싱 카테고리를 마켓 카테고리에 매핑.
 
 [소싱] {source_site} | {source_category} | 상품: {sample_str} | 태그: {tag_str or "-"}
-
+{_ref_lines}
 [허용된 마켓 카테고리 — 이 중에서만 선택]
 {market_list_str}
 
@@ -3684,6 +3703,13 @@ JSON만:
                 ss_hint = current_targets.get("smartstore") or resolved.get(
                     "smartstore", ""
                 )
+                # 이미 매핑된 타 마켓 정보를 AI 참고용으로 전달
+                _all_resolved = {**current_targets, **resolved}
+                mapped_refs = {
+                    mk: val
+                    for mk, val in _all_resolved.items()
+                    if val and mk not in missing_markets
+                }
                 batch_items.append(
                     {
                         "site": site,
@@ -3694,6 +3720,7 @@ JSON만:
                         "groups": list(cat_groups.get((site, leaf_path), set())),
                         "gender": gender,
                         "ss_mapped": ss_hint,
+                        "mapped_refs": mapped_refs,
                         "target_markets": list(missing_markets),
                         "existing": existing,
                         "mode": "update" if existing else "create",

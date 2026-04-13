@@ -50,6 +50,18 @@ async def get_return_reasons():
     return SambaReturnService.get_return_reasons()
 
 
+@router.post("/auto-approve")
+async def auto_approve_returns(
+    within_days: int = 7,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """요청 상태인 반품 중 N일 이내 요청건 자동승인."""
+    svc = _write_service(session)
+    count = await svc.auto_approve_returns(within_days=within_days)
+    await session.commit()
+    return {"ok": True, "approved_count": count}
+
+
 @router.get("")
 async def list_returns(
     skip: int = Query(0, ge=0),

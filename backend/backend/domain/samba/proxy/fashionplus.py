@@ -50,9 +50,7 @@ class FashionPlusClient:
     SEARCH_API = "https://www.fashionplus.co.kr/search/goods/fetch"
     DETAIL_URL = "https://www.fashionplus.co.kr/goods/detail"
 
-    async def _fetch_search_meta(
-        self, keyword: str, selected_brands: list[str] | None = None
-    ) -> dict[str, Any]:
+    async def _fetch_search_meta(self, keyword: str) -> dict[str, Any]:
         """검색 API 호출 후 categories/brands 메타데이터 반환 (상품 목록은 1건만)."""
         async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
             params: dict[str, str] = {
@@ -60,9 +58,6 @@ class FashionPlusClient:
                 "page": "1",
                 "pageSize": "1",
             }
-            # 선택된 브랜드가 있으면 첫 번째 브랜드로 필터
-            if selected_brands:
-                params["brands[][name]"] = selected_brands[0]
             try:
                 resp = await client.get(self.SEARCH_API, params=params, headers=HEADERS)
                 resp.raise_for_status()
@@ -88,13 +83,32 @@ class FashionPlusClient:
     async def scan_categories(
         self, keyword: str, selected_brands: list[str] | None = None
     ) -> dict[str, Any]:
-        """카테고리 스캔 — 검색 API 응답의 categories 트리를 파싱하여 카테고리별 상품수 반환."""
-        data = await self._fetch_search_meta(keyword, selected_brands)
+        """카테고리 스캔 — 검색 API 응답의 categories 트리를 파싱하여 카테고리별 상품수 반환.
+
+        selected_brands가 있으면 해당 브랜드의 상품수 비율로 카테고리 count를 보정한다.
+        (패션플러스 API가 브랜드 필터를 지원하지 않으므로 비율 기반 추정)
+        """
+        data = await self._fetch_search_meta(keyword)
         if not data:
             return {"categories": [], "total": 0, "groupCount": 0}
 
         raw_categories = data.get("categories", [])
         total_count = data.get("goodsPaginator", {}).get("totalCount", 0)
+
+        # 선택된 브랜드의 상품수 비율 계산
+        brand_ratio = 1.0
+        brand_total = total_count
+        if selected_brands:
+            raw_brands = data.get("brands", [])
+            brand_names_set = set(selected_brands)
+            brand_sum = sum(
+                b.get("goodsCountInContext", 0)
+                for b in raw_brands
+                if b.get("name", "") in brand_names_set
+            )
+            if brand_sum > 0 and total_count > 0:
+                brand_ratio = brand_sum / total_count
+                brand_total = brand_sum
 
         # 카테고리 트리를 평탄화 — 리프(최하위) 노드 기준으로 경로 생성
         categories: list[dict[str, Any]] = []
@@ -152,14 +166,24 @@ class FashionPlusClient:
                             }
                         )
 
-        # 상품수 내림차순 정렬
+        # 브랜드 비율 보정 적용
+        if brand_ratio < 1.0:
+            for cat in categories:
+                cat["count"] = max(1, round(cat["count"] * brand_ratio))
+
+        # count=0 제거 후 상품수 내림차순 정렬
+        categories = [c for c in categories if c["count"] > 0]
         categories.sort(key=lambda x: -x["count"])
-        total = sum(c["count"] for c in categories)
         logger.info(
-            f"[패션플러스] 카테고리 스캔 '{keyword}' → {len(categories)}개 카테고리, {total}건"
+            f"[패션플러스] 카테고리 스캔 '{keyword}' → {len(categories)}개 카테고리, {brand_total}건"
+            + (f" (비율 보정 {brand_ratio:.1%})" if brand_ratio < 1.0 else "")
         )
 
-        return {"categories": categories, "total": total, "groupCount": len(categories)}
+        return {
+            "categories": categories,
+            "total": brand_total,
+            "groupCount": len(categories),
+        }
 
     async def search(
         self, keyword: str, page: int = 1, max_count: int = 0, **kwargs: Any

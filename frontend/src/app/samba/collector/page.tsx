@@ -1145,7 +1145,7 @@ export default function CollectorPage() {
               color: "#E5E5E5", outline: "none",
             }}
           />
-          {(selectedSite === 'MUSINSA' || selectedSite === 'LOTTEON' || selectedSite === 'GSShop' || selectedSite === 'ABCmart' || selectedSite === 'Nike' || selectedSite === 'SSG' || selectedSite === 'FashionPlus') && (
+          {(selectedSite === 'MUSINSA' || selectedSite === 'LOTTEON' || selectedSite === 'GSShop' || selectedSite === 'ABCmart' || selectedSite === 'Nike' || selectedSite === 'SSG' || selectedSite === 'FashionPlus' || selectedSite === 'KREAM') && (
             <button onClick={async () => {
               if (!collectUrl.trim()) { showAlert('URL 또는 키워드를 입력하세요'); return }
               setBrandScanning(true)
@@ -1231,6 +1231,21 @@ export default function CollectorPage() {
                   setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
                   addLog(`[카테고리스캔] Nike: ${scanKeyword} → ${res.groupCount.toLocaleString()}개 카테고리, 총 ${res.total.toLocaleString()}건`)
                 } catch (e) { addLog(`[카테고리스캔] Nike 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
+                setBrandScanning(false)
+                return
+              }
+
+              // KREAM: 키워드만으로 바로 스캔
+              if (selectedSite === 'KREAM') {
+                const scanKeyword = keyword || brand || collectUrl.trim()
+                addLog(`[카테고리스캔] KREAM "${scanKeyword}" 스캔 시작...`)
+                try {
+                  const res = await collectorApi.brandScan('', 'A', scanKeyword, 'KREAM')
+                  setBrandCategories(res.categories)
+                  setBrandTotal(res.total)
+                  setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
+                  addLog(`[카테고리스캔] KREAM: ${scanKeyword} → ${res.groupCount.toLocaleString()}개 카테고리, 총 ${res.total.toLocaleString()}건`)
+                } catch (e) { addLog(`[카테고리스캔] KREAM 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
                 setBrandScanning(false)
                 return
               }

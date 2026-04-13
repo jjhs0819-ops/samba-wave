@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from backend.domain.samba.plugins.market_base import MarketPlugin
+from backend.utils import add_lazy_loading
 
 
 async def _get_setting(session, key: str) -> Any:
@@ -36,8 +37,9 @@ def _transform_for_gsshop(
         "dispCtgrNo": category_id,
         "prdCntntListCntntUrlNm": images[0] if images else "",
         "mobilBannerImgUrl": images[0] if images else "",
-        "prdDetailCntnt": product.get("detail_html", "")
-        or f"<p>{product.get('name', '')}</p>",
+        "prdDetailCntnt": add_lazy_loading(
+            product.get("detail_html", "") or f"<p>{product.get('name', '')}</p>"
+        ),
     }
     # MD 협의 마켓마진율 (필수)
     if gs_margin_rate:

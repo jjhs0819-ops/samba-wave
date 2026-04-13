@@ -36,6 +36,13 @@ class KreamPlugin(SourcingPlugin):
         client = KreamClient()
         return await client.get_product_detail(site_product_id)
 
+    async def scan_categories(self, keyword: str, **kwargs: object) -> dict:
+        """KREAM 카테고리 스캔 — 검색 결과에서 카테고리 분포 집계."""
+        from backend.domain.samba.proxy.kream import KreamClient
+
+        client = KreamClient()
+        return await client.scan_categories(keyword)
+
     async def refresh(self, product) -> "RefreshResult":
         """가격/재고 갱신 — 기존 _parse_kream 위임."""
         from backend.domain.samba.collector.refresher import _parse_kream

@@ -10,6 +10,7 @@ import re
 from typing import Any
 
 from backend.domain.samba.plugins.market_base import MarketPlugin
+from backend.utils import add_lazy_loading
 from backend.utils.logger import logger
 
 # 전송 속도 최적화: API 결과 캐시 (같은 브랜드/카테고리/제조사 반복 호출 방지)
@@ -72,6 +73,8 @@ class SmartStorePlugin(MarketPlugin):
         # 프로토콜 없는 이미지 URL 보정 (src="//... → src="https://...)
         if detail_html:
             detail_html = re.sub(r'(src=["\'])\/\/', r"\1https://", detail_html)
+            # lazy loading 속성 자동 삽입
+            detail_html = add_lazy_loading(detail_html)
 
         import asyncio as _aio
         import httpx as _httpx
