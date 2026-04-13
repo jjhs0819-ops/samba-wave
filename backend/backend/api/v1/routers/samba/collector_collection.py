@@ -2309,6 +2309,12 @@ async def brand_discover(body: BrandDiscoverRequest):
         plugin = LotteonSourcingPlugin()
         return await plugin.discover_brands(body.keyword)
 
+    if body.source_site == "SSG":
+        from backend.domain.samba.plugins.sourcing.ssg import SSGPlugin
+
+        plugin = SSGPlugin()
+        return await plugin.discover_brands(body.keyword)
+
     raise HTTPException(400, f"브랜드 탐색 미지원 소싱처: {body.source_site}")
 
 

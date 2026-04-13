@@ -1158,11 +1158,11 @@ export default function CollectorPage() {
               const gf = parsed?.searchParams.get('gf') || 'A'
               if (!brand && !keyword) { showAlert('브랜드 또는 키워드를 확인하세요'); setBrandScanning(false); return }
 
-              // 롯데ON: 브랜드 탐색 후 선택 모달 표시
-              if (selectedSite === 'LOTTEON') {
+              // 롯데ON / SSG: 브랜드 탐색 후 선택 모달 표시
+              if (selectedSite === 'LOTTEON' || selectedSite === 'SSG') {
                 try {
                   const discoverKeyword = keyword || brand
-                  const res = await collectorApi.brandDiscover(discoverKeyword, 'LOTTEON')
+                  const res = await collectorApi.brandDiscover(discoverKeyword, selectedSite)
                   setBrandModalList(res.brands)
                   setBrandModalSelected(new Set())
                   setBrandModalKeyword(discoverKeyword)
@@ -1234,20 +1234,7 @@ export default function CollectorPage() {
                 return
               }
 
-              // SSG: 키워드만으로 바로 스캔
-              if (selectedSite === 'SSG') {
-                const scanKeyword = keyword || brand || collectUrl.trim()
-                addLog(`[카테고리스캔] SSG "${scanKeyword}" 스캔 시작...`)
-                try {
-                  const res = await collectorApi.brandScan('', 'A', scanKeyword, 'SSG')
-                  setBrandCategories(res.categories)
-                  setBrandTotal(res.total)
-                  setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
-                  addLog(`[카테고리스캔] SSG: ${scanKeyword} → ${res.groupCount.toLocaleString()}개 카테고리, 총 ${res.total.toLocaleString()}건`)
-                } catch (e) { addLog(`[카테고리스캔] SSG 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
-                setBrandScanning(false)
-                return
-              }
+
 
               // 무신사: 평문 키워드이고 브랜드 코드 없으면 브랜드 검색 모달 표시
               if (!brand && !parsed) {
@@ -1406,7 +1393,7 @@ export default function CollectorPage() {
         </div>
       )}
 
-      {/* ═══ 롯데ON 브랜드 선택 모달 ═══ */}
+      {/* ═══ 롯데ON / SSG 브랜드 선택 모달 ═══ */}
       {showBrandModal && brandModalList.length > 0 && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 99999, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           onClick={() => setShowBrandModal(false)}>
@@ -1444,14 +1431,15 @@ export default function CollectorPage() {
                   setBrandCategories([]); setBrandSelectedCats(new Set())
                   const { brand, keyword, gf } = brandModalParsed || { brand: '', keyword: brandModalKeyword, gf: 'A' }
                   const selectedBrands = Array.from(brandModalSelected)
-                  addLog(`[카테고리스캔] 롯데ON "${keyword || brand}" 스캔 시작... (${selectedBrands.length.toLocaleString()}개 브랜드)`)
+                  const siteLabel = selectedSite === 'SSG' ? 'SSG' : '롯데ON'
+                  addLog(`[카테고리스캔] ${siteLabel} "${keyword || brand}" 스캔 시작... (${selectedBrands.length.toLocaleString()}개 브랜드)`)
                   try {
-                    const res = await collectorApi.brandScan(brand, gf, keyword, 'LOTTEON', selectedBrands)
+                    const res = await collectorApi.brandScan(brand, gf, keyword, selectedSite, selectedBrands)
                     setBrandCategories(res.categories)
                     setBrandTotal(res.total)
                     setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
                     addLog(`[카테고리스캔] ${keyword || brand} (${selectedBrands.length.toLocaleString()}개 브랜드): ${res.groupCount.toLocaleString()}개 카테고리, 총 ${res.total.toLocaleString()}건`)
-                  } catch (e) { addLog(`[카테고리스캔] 롯데ON 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
+                  } catch (e) { addLog(`[카테고리스캔] ${siteLabel} 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
                   setBrandScanning(false)
                 }}
                 disabled={brandModalSelected.size === 0}

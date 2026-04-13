@@ -222,6 +222,117 @@ class SSGSourcingClient:
         return brand_ids
 
     # ------------------------------------------------------------------
+    # 브랜드 탐색
+    # ------------------------------------------------------------------
+
+    async def discover_brands(self, keyword: str) -> dict[str, Any]:
+        """키워드 검색 → brandFilter에서 브랜드 목록 + 개별 상품수 조회.
+
+        1단계: __NEXT_DATA__의 brandFilter에서 브랜드명/ID 추출
+        2단계: 각 브랜드별 repBrandId 파라미터로 검색 → PAGING_UNIT.itemCount 파싱
+
+        Returns:
+            {"brands": [{"name": "나이키", "count": 2601}, ...], "total": int}
+        """
+        import asyncio
+
+        logger.info(f'[SSG] 브랜드 탐색 시작: "{keyword}"')
+
+        try:
+            _client_kwargs: dict[str, Any] = {
+                "timeout": self._timeout,
+                "follow_redirects": True,
+            }
+            if self.proxy_url:
+                _client_kwargs["proxy"] = self.proxy_url
+
+            async with httpx.AsyncClient(**_client_kwargs) as client:
+                url = f"{self.SEARCH_URL}?query={quote(keyword)}&page=1"
+                resp = await client.get(url, headers=self._headers())
+                if resp.status_code in (429, 403):
+                    raise RateLimitError(int(resp.status_code))
+                if resp.status_code != 200:
+                    logger.warning(f"[SSG] 브랜드 탐색 HTTP {resp.status_code}")
+                    return {"brands": [], "total": 0}
+
+                html = resp.text
+
+                # 1단계: brandFilter에서 브랜드명/ID 추출
+                brand_items = self._extract_brand_filter(html)
+                if not brand_items:
+                    return {"brands": [], "total": 0}
+
+                # 2단계: 각 브랜드별 상품수 개별 조회
+                brands: list[dict[str, Any]] = []
+                for bi in brand_items:
+                    await asyncio.sleep(0.5)
+                    try:
+                        brand_url = (
+                            f"{self.SEARCH_URL}?query={quote(keyword)}"
+                            f"&repBrandId={bi['value']}&page=1"
+                        )
+                        r = await client.get(brand_url, headers=self._headers())
+                        count = (
+                            self._parse_area_count(r.text)
+                            if r.status_code == 200
+                            else 0
+                        )
+                    except Exception:
+                        count = 0
+                    brands.append({"name": bi["name"], "count": count})
+                    logger.info(f"[SSG] 브랜드 건수: {bi['name']} → {count}건")
+
+        except RateLimitError:
+            raise
+        except Exception as e:
+            logger.error(f"[SSG] 브랜드 탐색 실패: {keyword} — {e}")
+            return {"brands": [], "total": 0}
+
+        # count 내림차순 정렬
+        brands.sort(key=lambda x: -x["count"])
+        total = sum(b["count"] for b in brands)
+        logger.info(
+            f'[SSG] 브랜드 탐색 완료: "{keyword}" → {len(brands)}개 브랜드, 총 {total}건'
+        )
+        return {"brands": brands, "total": total}
+
+    def _extract_brand_filter(self, html: str) -> list[dict[str, str]]:
+        """__NEXT_DATA__의 brandFilter에서 브랜드 name/value 목록 추출."""
+        m = re.search(
+            r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>',
+            html,
+            re.DOTALL,
+        )
+        if not m:
+            return []
+        try:
+            next_data = json.loads(m.group(1))
+        except json.JSONDecodeError:
+            return []
+
+        queries = (
+            next_data.get("props", {})
+            .get("pageProps", {})
+            .get("dehydratedState", {})
+            .get("queries", [])
+        )
+
+        items: list[dict[str, str]] = []
+        for q in queries:
+            if "useTemplateFilterQuery" not in (q.get("queryKey") or []):
+                continue
+            for f in q.get("state", {}).get("data") or []:
+                if f.get("filterType") != "brandFilter":
+                    continue
+                for unit in f.get("unitList", []):
+                    for item in unit.get("dataList", []):
+                        name = (item.get("name") or "").strip()
+                        value = str(item.get("value") or "").strip()
+                        if name and value:
+                            items.append({"name": name, "value": value})
+        return items
+
+    # ------------------------------------------------------------------
     # 카테고리 스캔
     # ------------------------------------------------------------------
 
