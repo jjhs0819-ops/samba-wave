@@ -977,9 +977,13 @@ class SSGSourcingClient:
         _card_price = self._extract_card_benefit_price(html)
         best_amt = _card_price or self._safe_int(obj.get("bestAmt", 0)) or sell_price
 
-        # 품번(style_code) 추출: 상품명에서 알파벳+숫자+하이픈 패턴 (예: IO9279-006)
+        # 품번(style_code): 상품명 패턴 우선(정확), 없으면 HTML 모델번호 폴백(부정확할 수 있음)
         _sc_match = re.search(r"[A-Z]{1,3}\d{3,}[-]\d{2,}", name)
-        _style_code = _sc_match.group(0) if _sc_match else ""
+        if _sc_match:
+            _style_code = _sc_match.group(0)
+        else:
+            _mdl_match = re.search(r"모델번호\s*[:：]\s*(\S+)", html)
+            _style_code = _mdl_match.group(1).strip() if _mdl_match else ""
 
         # 고시정보 파싱 (색상, 제조국, 재질 등)
         _prod_info = self._parse_product_notice(html)
