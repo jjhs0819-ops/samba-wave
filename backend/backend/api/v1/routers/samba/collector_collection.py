@@ -2315,6 +2315,12 @@ async def brand_discover(body: BrandDiscoverRequest):
         plugin = SSGPlugin()
         return await plugin.discover_brands(body.keyword)
 
+    if body.source_site == "FashionPlus":
+        from backend.domain.samba.plugins.sourcing.fashionplus import FashionPlusPlugin
+
+        plugin = FashionPlusPlugin()
+        return await plugin.discover_brands(body.keyword)
+
     raise HTTPException(400, f"브랜드 탐색 미지원 소싱처: {body.source_site}")
 
 
@@ -2393,7 +2399,8 @@ async def brand_scan(
         from backend.domain.samba.plugins.sourcing.fashionplus import FashionPlusPlugin
 
         plugin = FashionPlusPlugin()
-        return await plugin.scan_categories(keyword)
+        selected = body.selected_brands or [keyword]
+        return await plugin.scan_categories(keyword, selected_brands=selected)
 
     raise HTTPException(400, f"카테고리 스캔 미지원 소싱처: {body.source_site}")
 

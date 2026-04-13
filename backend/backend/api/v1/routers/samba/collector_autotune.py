@@ -3,10 +3,11 @@
 import asyncio
 import logging
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 from sqlalchemy import func, case, update as sa_update
 from sqlalchemy.orm import defer
@@ -40,6 +41,11 @@ _site_breaker_tripped: dict[str, bool] = {}  # {소싱처: 중단 여부}
 _site_tasks: dict[str, asyncio.Task] = {}  # 소싱처별 asyncio 태스크
 _site_cycle_counts: dict[str, int] = {}  # 소싱처별 누적 사이클 수
 _site_last_ticks: dict[str, str] = {}  # 소싱처별 마지막 tick 시간
+
+# Watchdog — stuck 감지/복구
+_site_heartbeats: dict[str, float] = {}  # {소싱처: time.time()}
+STUCK_TIMEOUT_SECONDS = 300  # 5분간 heartbeat 없으면 stuck 판정
+MAX_RESTART_COUNT = 50  # 코디네이터 재시작 상한선
 
 # 단일 상품 오토튠 필터 (설정 시 해당 상품만 갱신)
 _autotune_target_ids: Optional[set] = None
@@ -131,6 +137,9 @@ async def _site_autotune_loop(site: str):
     try:
         while _autotune_running_event.is_set():
             try:
+                # Watchdog heartbeat 갱신
+                _site_heartbeats[site] = time.time()
+
                 from backend.domain.samba.emergency import is_emergency_stopped
 
                 if is_emergency_stopped():
@@ -1312,6 +1321,22 @@ async def _autotune_loop():
                             )
                         del _site_tasks[_s]
 
+                # Watchdog — stuck 소싱처 루프 강제 재시작
+                _now_ts = time.time()
+                for _s, _t in list(_site_tasks.items()):
+                    if _t.done():
+                        continue
+                    _last_hb = _site_heartbeats.get(_s, _now_ts)
+                    if _now_ts - _last_hb > STUCK_TIMEOUT_SECONDS:
+                        log.warning(
+                            "[오토튠][%s] stuck 감지 (%.0f초 무응답) — 강제 재시작",
+                            _s,
+                            _now_ts - _last_hb,
+                        )
+                        _t.cancel()
+                        del _site_tasks[_s]
+                        _site_heartbeats.pop(_s, None)
+
                 # 전역 통계 갱신
                 _autotune_cycle_count = sum(_site_cycle_counts.values())
                 _ticks = [v for v in _site_last_ticks.values() if v]
@@ -1329,6 +1354,12 @@ async def _autotune_loop():
                     log.info("[오토튠] 코디네이터 취소 (정상 종료)")
                     break
                 _autotune_restart_count += 1
+                if _autotune_restart_count >= MAX_RESTART_COUNT:
+                    log.error(
+                        "[오토튠] 재시작 상한(%d회) 도달 — 코디네이터 중단",
+                        MAX_RESTART_COUNT,
+                    )
+                    break
                 log.warning(
                     "[오토튠] CancelledError — 코디네이터 재시작 (누적 %d회)",
                     _autotune_restart_count,
@@ -1336,6 +1367,12 @@ async def _autotune_loop():
                 await asyncio.sleep(2)
             except Exception as e:
                 _autotune_restart_count += 1
+                if _autotune_restart_count >= MAX_RESTART_COUNT:
+                    log.error(
+                        "[오토튠] 재시작 상한(%d회) 도달 — 코디네이터 중단",
+                        MAX_RESTART_COUNT,
+                    )
+                    break
                 log.error(
                     "[오토튠] 코디네이터 오류 (누적 %d회): %s",
                     _autotune_restart_count,
@@ -1582,8 +1619,47 @@ async def autotune_refresh_one(body: RefreshOneRequest):
 
 
 @router.post("/autotune/start")
-async def autotune_start(body: AutotuneStartRequest = AutotuneStartRequest()):
+async def autotune_start(
+    body: AutotuneStartRequest = AutotuneStartRequest(),
+    request: Request = None,
+):
     """오토튠 무한 루프 시작 — 메인 이벤트 루프에서 실행."""
+    # 티어 제한 체크 — 오토튠 접근 권한
+    try:
+        from backend.db.orm import get_read_session
+        from backend.domain.samba.tenant.middleware import (
+            check_autotune_access,
+        )
+
+        if request:
+            async with get_read_session() as session:
+                # JWT에서 tenant_id 추출 시도
+                auth_header = request.headers.get("Authorization") or ""
+                if auth_header.startswith("Bearer "):
+                    token = auth_header.split(" ", 1)[1]
+                    try:
+                        from backend.core.config import settings
+                        import jwt as _jwt
+
+                        payload = _jwt.decode(
+                            token,
+                            settings.jwt_secret_key,
+                            algorithms=[settings.jwt_algorithm],
+                        )
+                        user_id = payload.get("sub", "")
+                        if user_id:
+                            from backend.domain.samba.user.model import SambaUser
+
+                            stmt = select(SambaUser).where(SambaUser.id == user_id)
+                            result = (await session.execute(stmt)).scalars().first()
+                            tid = getattr(result, "tenant_id", None) if result else None
+                            if tid:
+                                await check_autotune_access(tid, session)
+                    except Exception:
+                        pass  # 인증 실패 시 기존 동작 유지
+    except Exception:
+        pass  # 모듈 로드 실패 시 기존 동작 유지
+
     global \
         _autotune_task, \
         _autotune_cycle_count, \
@@ -1639,6 +1715,7 @@ async def autotune_start(body: AutotuneStartRequest = AutotuneStartRequest()):
     _site_cycle_counts.clear()
     _site_last_ticks.clear()
     _site_tasks.clear()
+    _site_heartbeats.clear()
     clear_bulk_cancel()
     _autotune_task = asyncio.create_task(_autotune_loop())
     if not body.target_product_no:
@@ -1708,9 +1785,14 @@ async def autotune_status():
     except Exception:
         pass
 
-    # 소싱처별 활성 루프 정보
+    # 소싱처별 활성 루프 정보 + heartbeat
+    _now_hb = time.time()
     _active_site_loops = {
-        s: {"running": not t.done(), "cycles": _site_cycle_counts.get(s, 0)}
+        s: {
+            "running": not t.done(),
+            "cycles": _site_cycle_counts.get(s, 0),
+            "heartbeat_ago": round(_now_hb - _site_heartbeats.get(s, _now_hb)),
+        }
         for s, t in _site_tasks.items()
     }
 
@@ -1721,12 +1803,14 @@ async def autotune_status():
         "last_tick": _autotune_last_tick,
         "cycle_count": _autotune_cycle_count,
         "restart_count": _autotune_restart_count,
+        "max_restart": MAX_RESTART_COUNT,
         "refreshed_count": refreshed_24h,
         "target": "registered",
         "breaker_tripped": tripped,
         "site_intervals": intervals_info.get("base_intervals", {}),
         "priority_enabled": priority_enabled,
         "site_loops": _active_site_loops,
+        "stuck_timeout": STUCK_TIMEOUT_SECONDS,
     }
 
 

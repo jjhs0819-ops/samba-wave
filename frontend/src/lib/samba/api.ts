@@ -1679,3 +1679,32 @@ export const sourcingAccountApi = {
   requestBalanceCheck: () =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/sourcing-accounts/request-balance-check`, { method: 'POST' }),
 }
+
+// ── Tenant (티어/사용량) ──
+
+export interface TenantInfo {
+  id: string
+  name: string
+  plan: string
+  limits: { max_products: number; max_markets: number; max_sourcing: number }
+  autotune_enabled: boolean
+  subscription_start: string | null
+  subscription_end: string | null
+  is_active: boolean
+}
+
+export interface TenantUsage {
+  plan: string
+  autotune_enabled: boolean
+  subscription_end: string | null
+  usage: {
+    products: { current: number; max: number }
+    markets: { current: number; max: number }
+    sourcing: { current: number; max: number }
+  }
+}
+
+export const tenantApi = {
+  getMyInfo: () => request<{ tenant: TenantInfo | null }>(`${SAMBA_PREFIX}/tenants/me/info`),
+  getMyUsage: () => request<TenantUsage>(`${SAMBA_PREFIX}/tenants/me/usage`),
+}

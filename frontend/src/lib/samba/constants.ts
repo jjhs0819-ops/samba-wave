@@ -18,6 +18,7 @@ export const SITE_COLORS: Record<string, string> = {
   GSShop: '#6B5CE7',
   ElandMall: '#4ECDC4',
   SSF: '#845EF7',
+  NAVERSTORE: '#03C75A',
 }
 
 /** 기간 선택 버튼 (주문/CS/반품 공용) */
@@ -39,6 +40,7 @@ export const SOURCING_SEARCH_URLS: Record<string, string> = {
   KREAM: 'https://kream.co.kr/search?keyword=',
   ABCmart: 'https://abcmart.a-rt.com/search?q=',
   LOTTEON: 'https://www.lotteon.com/csearch/search/search?render=search&platform=pc&mallId=2&q=',
+  NAVERSTORE: 'https://search.shopping.naver.com/search/all?query=',
 }
 
 /** 소싱처 상품 상세 URL (상품번호 뒤에 붙여 사용) */
@@ -49,6 +51,7 @@ export const SOURCING_PRODUCT_URLS: Record<string, string> = {
   ABCmart: 'https://www.a-rt.com/product?prdtNo=',
   Nike: 'https://www.nike.com/kr/t/',
   LOTTEON: 'https://www.lotteon.com/p/product/',
+  NAVERSTORE: 'https://smartstore.naver.com/',
 }
 
 /** 소싱처 주문 상세 URL (주문번호 뒤에 붙여 사용) */

@@ -1,4 +1,4 @@
-"""스마트스토어 소싱처 플러그인."""
+"""네이버스토어 소싱처 플러그인."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class SmartStorePlugin(SourcingPlugin):
-    """스마트스토어/네이버쇼핑 소싱처 플러그인.
+class NaverStorePlugin(SourcingPlugin):
+    """네이버스토어 소싱처 플러그인.
 
     네이버 쇼핑 검색 API를 활용한 상품 검색과
     스마트스토어 상품 페이지 HTML 파싱을 통한 상세 조회를 제공한다.
@@ -23,17 +23,17 @@ class SmartStorePlugin(SourcingPlugin):
     request_interval=0.3: 요청 간 300ms 딜레이
     """
 
-    site_name = "SMARTSTORE"
+    site_name = "NAVERSTORE"
     concurrency = 3
     request_interval = 0.3
 
     async def search(self, keyword: str, **filters) -> list[dict]:
-        """스마트스토어 키워드 검색 (네이버 쇼핑 API)."""
-        from backend.domain.samba.proxy.smartstore_sourcing import (
-            SmartStoreSourcingClient,
+        """네이버스토어 키워드 검색 (네이버 쇼핑 API)."""
+        from backend.domain.samba.proxy.naverstore_sourcing import (
+            NaverStoreSourcingClient,
         )
 
-        client = SmartStoreSourcingClient()
+        client = NaverStoreSourcingClient()
         page = filters.get("page", 1)
         size = filters.get("size", 40)
         sort = filters.get("sort", "sim")
@@ -42,19 +42,19 @@ class SmartStorePlugin(SourcingPlugin):
         )
 
     async def get_detail(self, site_product_id: str) -> dict:
-        """스마트스토어 상품 상세 조회."""
-        from backend.domain.samba.proxy.smartstore_sourcing import (
-            SmartStoreSourcingClient,
+        """네이버스토어 상품 상세 조회."""
+        from backend.domain.samba.proxy.naverstore_sourcing import (
+            NaverStoreSourcingClient,
         )
 
-        client = SmartStoreSourcingClient()
+        client = NaverStoreSourcingClient()
         return await self.safe_call(client.get_product_detail(site_product_id))
 
     async def refresh(self, product) -> "RefreshResult":
         """가격/재고 갱신 — 상세 페이지 재조회로 최신 데이터 추출."""
         from backend.domain.samba.collector.refresher import RefreshResult
-        from backend.domain.samba.proxy.smartstore_sourcing import (
-            SmartStoreSourcingClient,
+        from backend.domain.samba.proxy.naverstore_sourcing import (
+            NaverStoreSourcingClient,
         )
 
         product_id = getattr(product, "id", "")
@@ -70,17 +70,17 @@ class SmartStorePlugin(SourcingPlugin):
         if not lookup_key:
             return RefreshResult(
                 product_id=product_id,
-                error="스마트스토어 상품 ID/URL 없음",
+                error="네이버스토어 상품 ID/URL 없음",
             )
 
         try:
-            client = SmartStoreSourcingClient()
+            client = NaverStoreSourcingClient()
             detail = await self.safe_call(client.get_product_detail(lookup_key))
 
             if not detail:
                 return RefreshResult(
                     product_id=product_id,
-                    error=f"스마트스토어 상세 조회 실패: {lookup_key}",
+                    error=f"네이버스토어 상세 조회 실패: {lookup_key}",
                 )
 
             new_sale_price = detail.get("salePrice", 0)
@@ -117,8 +117,8 @@ class SmartStorePlugin(SourcingPlugin):
             )
 
         except Exception as e:
-            logger.error(f"[SMARTSTORE] 갱신 실패: {lookup_key} — {e}")
+            logger.error(f"[NAVERSTORE] 갱신 실패: {lookup_key} — {e}")
             return RefreshResult(
                 product_id=product_id,
-                error=f"스마트스토어 갱신 실패: {e}",
+                error=f"네이버스토어 갱신 실패: {e}",
             )

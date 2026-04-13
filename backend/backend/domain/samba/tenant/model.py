@@ -35,6 +35,20 @@ class SambaTenant(SQLModel, table=True):
         },
         sa_column=Column(JSON, nullable=True),
     )
+    # 구독 기간 관리
+    subscription_start: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    subscription_end: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    autotune_enabled: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default="false"),
+    )
+
     is_active: bool = Field(default=True, sa_column=Column(Boolean, default=True))
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),

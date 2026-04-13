@@ -1,4 +1,4 @@
-"""스마트스토어 소싱용 클라이언트 - 네이버 쇼핑 검색 API 기반.
+"""네이버스토어 소싱용 클라이언트 - 네이버 쇼핑 검색 API 기반.
 
 주의: proxy/smartstore.py는 판매처(마켓) 등록용 클라이언트이므로,
 소싱(상품 수집)용은 이 파일에서 별도로 관리한다.
@@ -21,8 +21,8 @@ from backend.core.config import settings
 from backend.utils.logger import logger
 
 
-class SmartStoreSourcingClient:
-    """스마트스토어/네이버쇼핑 소싱용 클라이언트.
+class NaverStoreSourcingClient:
+    """네이버스토어 소싱용 클라이언트.
 
     네이버 검색 API를 활용한 상품 검색과
     스마트스토어 상품 페이지 HTML 파싱을 통한 상세 조회를 제공한다.
@@ -51,6 +51,19 @@ class SmartStoreSourcingClient:
         self._client_secret = settings.naver_client_secret
 
     # ------------------------------------------------------------------
+    # sourcing_search / sourcing_detail API 인터페이스 래퍼
+    # ------------------------------------------------------------------
+
+    async def search(self, keyword: str, page: int = 1) -> dict[str, Any]:
+        """sourcing_search API 인터페이스 맞춤 래퍼."""
+        products = await self.search_products(keyword, page=page)
+        return {"products": products, "total": len(products)}
+
+    async def get_detail(self, product_id: str) -> dict[str, Any]:
+        """sourcing_detail API 인터페이스 맞춤 래퍼."""
+        return await self.get_product_detail(product_id)
+
+    # ------------------------------------------------------------------
     # 검색
     # ------------------------------------------------------------------
 
@@ -61,7 +74,7 @@ class SmartStoreSourcingClient:
         size: int = 40,
         sort: str = "sim",
     ) -> list[dict[str, Any]]:
-        """네이버 쇼핑 검색 API로 스마트스토어 상품 검색.
+        """네이버 쇼핑 검색 API로 네이버스토어 상품 검색.
 
         Args:
           keyword: 검색 키워드
@@ -74,7 +87,7 @@ class SmartStoreSourcingClient:
         """
         if not self._client_id or not self._client_secret:
             logger.warning(
-                "[SMARTSTORE] 네이버 API 키가 설정되지 않음 — HTML 파싱 폴백"
+                "[NAVERSTORE] 네이버 API 키가 설정되지 않음 — HTML 파싱 폴백"
             )
             return await self._search_html_fallback(keyword, page, size)
 
@@ -83,7 +96,7 @@ class SmartStoreSourcingClient:
         display = min(size, 100)
 
         logger.info(
-            f'[SMARTSTORE] 검색 시작 (API): "{keyword}" (start={start}, display={display})'
+            f'[NAVERSTORE] 검색 시작 (API): "{keyword}" (start={start}, display={display})'
         )
 
         try:
@@ -104,7 +117,7 @@ class SmartStoreSourcingClient:
 
                 if resp.status_code != 200:
                     logger.warning(
-                        f"[SMARTSTORE] 네이버 검색 API HTTP {resp.status_code}: {resp.text[:200]}"
+                        f"[NAVERSTORE] 네이버 검색 API HTTP {resp.status_code}: {resp.text[:200]}"
                     )
                     return await self._search_html_fallback(keyword, page, size)
 
@@ -118,14 +131,14 @@ class SmartStoreSourcingClient:
                     if product:
                         products.append(product)
 
-                logger.info(f'[SMARTSTORE] 검색 완료: "{keyword}" -> {len(products)}개')
+                logger.info(f'[NAVERSTORE] 검색 완료: "{keyword}" -> {len(products)}개')
                 return products
 
         except httpx.TimeoutException:
-            logger.error(f"[SMARTSTORE] 검색 타임아웃: {keyword}")
+            logger.error(f"[NAVERSTORE] 검색 타임아웃: {keyword}")
             return []
         except Exception as e:
-            logger.error(f"[SMARTSTORE] 검색 실패: {keyword} — {e}")
+            logger.error(f"[NAVERSTORE] 검색 실패: {keyword} — {e}")
             return []
 
     def _transform_api_item(
@@ -174,7 +187,7 @@ class SmartStoreSourcingClient:
             "category2": item.get("category2", ""),
             "category3": item.get("category3", ""),
             "category4": item.get("category4", ""),
-            "sourceSite": "SMARTSTORE",
+            "sourceSite": "NAVERSTORE",
             "sourceUrl": link,
             "collectedAt": now_iso,
         }
@@ -190,7 +203,7 @@ class SmartStoreSourcingClient:
             f"https://search.shopping.naver.com/search/all"
             f"?query={quote(keyword)}&pagingIndex={page}&pagingSize={size}"
         )
-        logger.info(f'[SMARTSTORE] 검색 폴백 (HTML): "{keyword}"')
+        logger.info(f'[NAVERSTORE] 검색 폴백 (HTML): "{keyword}"')
 
         try:
             async with httpx.AsyncClient(
@@ -198,7 +211,7 @@ class SmartStoreSourcingClient:
             ) as client:
                 resp = await client.get(search_url, headers=self.HEADERS)
                 if resp.status_code != 200:
-                    logger.warning(f"[SMARTSTORE] HTML 폴백 HTTP {resp.status_code}")
+                    logger.warning(f"[NAVERSTORE] HTML 폴백 HTTP {resp.status_code}")
                     return []
 
             html = resp.text
@@ -245,22 +258,22 @@ class SmartStoreSourcingClient:
                                 or item.get("price", 0),
                                 "thumbnailImageUrl": item.get("imageUrl", ""),
                                 "isSoldOut": False,
-                                "sourceSite": "SMARTSTORE",
+                                "sourceSite": "NAVERSTORE",
                                 "sourceUrl": item.get("crUrl", "")
                                 or item.get("productUrl", ""),
                                 "collectedAt": now_iso,
                             }
                         )
                 except (json.JSONDecodeError, KeyError) as e:
-                    logger.warning(f"[SMARTSTORE] __NEXT_DATA__ 파싱 실패: {e}")
+                    logger.warning(f"[NAVERSTORE] __NEXT_DATA__ 파싱 실패: {e}")
 
             logger.info(
-                f'[SMARTSTORE] HTML 폴백 완료: "{keyword}" -> {len(products)}개'
+                f'[NAVERSTORE] HTML 폴백 완료: "{keyword}" -> {len(products)}개'
             )
             return products
 
         except Exception as e:
-            logger.error(f"[SMARTSTORE] HTML 폴백 실패: {keyword} — {e}")
+            logger.error(f"[NAVERSTORE] HTML 폴백 실패: {keyword} — {e}")
             return []
 
     # ------------------------------------------------------------------
@@ -268,7 +281,7 @@ class SmartStoreSourcingClient:
     # ------------------------------------------------------------------
 
     async def get_product_detail(self, product_url_or_id: str) -> dict[str, Any]:
-        """스마트스토어 상품 상세 정보 조회.
+        """네이버스토어 상품 상세 정보 조회.
 
         스마트스토어/브랜드스토어 상품 페이지를 HTTP로 요청 후
         __NEXT_DATA__ 또는 메타 태그에서 데이터를 추출한다.
@@ -289,7 +302,7 @@ class SmartStoreSourcingClient:
             # ID만 있으면 네이버쇼핑 상품 페이지로 이동
             url = f"https://search.shopping.naver.com/product/{product_url_or_id}"
 
-        logger.info(f"[SMARTSTORE] 상세 조회: {url}")
+        logger.info(f"[NAVERSTORE] 상세 조회: {url}")
 
         try:
             async with httpx.AsyncClient(
@@ -297,7 +310,7 @@ class SmartStoreSourcingClient:
             ) as client:
                 resp = await client.get(url, headers=self.HEADERS)
                 if resp.status_code != 200:
-                    logger.warning(f"[SMARTSTORE] 상세 페이지 HTTP {resp.status_code}")
+                    logger.warning(f"[NAVERSTORE] 상세 페이지 HTTP {resp.status_code}")
                     return {}
 
             html = resp.text
@@ -312,10 +325,10 @@ class SmartStoreSourcingClient:
             return self._parse_meta_detail(html, url, now_iso)
 
         except httpx.TimeoutException:
-            logger.error(f"[SMARTSTORE] 상세 조회 타임아웃: {product_url_or_id}")
+            logger.error(f"[NAVERSTORE] 상세 조회 타임아웃: {product_url_or_id}")
             return {}
         except Exception as e:
-            logger.error(f"[SMARTSTORE] 상세 조회 실패: {product_url_or_id} — {e}")
+            logger.error(f"[NAVERSTORE] 상세 조회 실패: {product_url_or_id} — {e}")
             return {}
 
     def _parse_next_data_detail(
@@ -459,14 +472,14 @@ class SmartStoreSourcingClient:
                 "category": category_str,
                 "options": options,
                 "isSoldOut": is_sold_out,
-                "sourceSite": "SMARTSTORE",
+                "sourceSite": "NAVERSTORE",
                 "sourceUrl": "",
                 "collectedAt": now_iso,
                 "updatedAt": now_iso,
             }
 
         except (json.JSONDecodeError, KeyError, TypeError) as e:
-            logger.warning(f"[SMARTSTORE] __NEXT_DATA__ 파싱 실패: {e}")
+            logger.warning(f"[NAVERSTORE] __NEXT_DATA__ 파싱 실패: {e}")
             return None
 
     def _parse_meta_detail(self, html: str, url: str, now_iso: str) -> dict[str, Any]:
@@ -501,7 +514,7 @@ class SmartStoreSourcingClient:
             "category": "",
             "options": [],
             "isSoldOut": False,
-            "sourceSite": "SMARTSTORE",
+            "sourceSite": "NAVERSTORE",
             "sourceUrl": url,
             "collectedAt": now_iso,
             "updatedAt": now_iso,

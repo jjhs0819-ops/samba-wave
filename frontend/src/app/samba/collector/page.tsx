@@ -34,6 +34,7 @@ const SITES: { id: string; label: string; disabled?: boolean }[] = [
   { id: 'SSG', label: '신세계몰' },
   { id: 'LOTTEON', label: '롯데ON' },
   { id: 'GSShop', label: 'GSShop' },
+  { id: 'NAVERSTORE', label: '네이버스토어' },
   // 개발예정 (비활성)
   { id: 'DANAWA', label: '다나와', disabled: true },
   { id: 'Adidas', label: 'Adidas', disabled: true },
@@ -1158,8 +1159,8 @@ export default function CollectorPage() {
               const gf = parsed?.searchParams.get('gf') || 'A'
               if (!brand && !keyword) { showAlert('브랜드 또는 키워드를 확인하세요'); setBrandScanning(false); return }
 
-              // 롯데ON / SSG: 브랜드 탐색 후 선택 모달 표시
-              if (selectedSite === 'LOTTEON' || selectedSite === 'SSG') {
+              // 롯데ON / SSG / 패션플러스: 브랜드 탐색 후 선택 모달 표시
+              if (selectedSite === 'LOTTEON' || selectedSite === 'SSG' || selectedSite === 'FashionPlus') {
                 try {
                   const discoverKeyword = keyword || brand
                   const res = await collectorApi.brandDiscover(discoverKeyword, selectedSite)
@@ -1230,21 +1231,6 @@ export default function CollectorPage() {
                   setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
                   addLog(`[카테고리스캔] Nike: ${scanKeyword} → ${res.groupCount.toLocaleString()}개 카테고리, 총 ${res.total.toLocaleString()}건`)
                 } catch (e) { addLog(`[카테고리스캔] Nike 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
-                setBrandScanning(false)
-                return
-              }
-
-              // 패션플러스: 키워드만으로 바로 스캔
-              if (selectedSite === 'FashionPlus') {
-                const scanKeyword = keyword || brand || collectUrl.trim()
-                addLog(`[카테고리스캔] 패션플러스 "${scanKeyword}" 스캔 시작...`)
-                try {
-                  const res = await collectorApi.brandScan('', 'A', scanKeyword, 'FashionPlus')
-                  setBrandCategories(res.categories)
-                  setBrandTotal(res.total)
-                  setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
-                  addLog(`[카테고리스캔] 패션플러스: ${scanKeyword} → ${res.groupCount.toLocaleString()}개 카테고리, 총 ${res.total.toLocaleString()}건`)
-                } catch (e) { addLog(`[카테고리스캔] 패션플러스 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
                 setBrandScanning(false)
                 return
               }
@@ -1444,7 +1430,7 @@ export default function CollectorPage() {
                   setBrandCategories([]); setBrandSelectedCats(new Set())
                   const { brand, keyword, gf } = brandModalParsed || { brand: '', keyword: brandModalKeyword, gf: 'A' }
                   const selectedBrands = Array.from(brandModalSelected)
-                  const siteLabel = selectedSite === 'SSG' ? 'SSG' : '롯데ON'
+                  const siteLabel = selectedSite === 'SSG' ? 'SSG' : selectedSite === 'FashionPlus' ? '패션플러스' : '롯데ON'
                   addLog(`[카테고리스캔] ${siteLabel} "${keyword || brand}" 스캔 시작... (${selectedBrands.length.toLocaleString()}개 브랜드)`)
                   try {
                     const res = await collectorApi.brandScan(brand, gf, keyword, selectedSite, selectedBrands)

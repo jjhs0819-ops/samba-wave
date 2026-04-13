@@ -50,17 +50,48 @@ class FashionPlusClient:
     SEARCH_API = "https://www.fashionplus.co.kr/search/goods/fetch"
     DETAIL_URL = "https://www.fashionplus.co.kr/goods/detail"
 
-    async def scan_categories(self, keyword: str) -> dict[str, Any]:
-        """카테고리 스캔 — 검색 API 응답의 categories 트리를 파싱하여 카테고리별 상품수 반환."""
+    async def _fetch_search_meta(
+        self, keyword: str, selected_brands: list[str] | None = None
+    ) -> dict[str, Any]:
+        """검색 API 호출 후 categories/brands 메타데이터 반환 (상품 목록은 1건만)."""
         async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-            params = {"searchWord": keyword, "page": "1", "pageSize": "1"}
+            params: dict[str, str] = {
+                "searchWord": keyword,
+                "page": "1",
+                "pageSize": "1",
+            }
+            # 선택된 브랜드가 있으면 첫 번째 브랜드로 필터
+            if selected_brands:
+                params["brands[][name]"] = selected_brands[0]
             try:
                 resp = await client.get(self.SEARCH_API, params=params, headers=HEADERS)
                 resp.raise_for_status()
-                data = resp.json()
+                return resp.json()
             except Exception as e:
-                logger.warning(f"[패션플러스] 카테고리 스캔 실패: {e}")
-                return {"categories": [], "total": 0, "groupCount": 0}
+                logger.warning(f"[패션플러스] 검색 메타 조회 실패: {e}")
+                return {}
+
+    async def discover_brands(self, keyword: str) -> dict[str, Any]:
+        """키워드로 브랜드 목록 탐색 — 브랜드 선택 모달용."""
+        data = await self._fetch_search_meta(keyword)
+        raw_brands = data.get("brands", [])
+        brands = []
+        for b in raw_brands:
+            name = b.get("name", "")
+            count = b.get("goodsCountInContext", 0)
+            if name and count > 0:
+                brands.append({"name": name, "count": count})
+        brands.sort(key=lambda x: -x["count"])
+        logger.info(f"[패션플러스] 브랜드 탐색 '{keyword}' → {len(brands)}개 브랜드")
+        return {"brands": brands, "total": len(brands)}
+
+    async def scan_categories(
+        self, keyword: str, selected_brands: list[str] | None = None
+    ) -> dict[str, Any]:
+        """카테고리 스캔 — 검색 API 응답의 categories 트리를 파싱하여 카테고리별 상품수 반환."""
+        data = await self._fetch_search_meta(keyword, selected_brands)
+        if not data:
+            return {"categories": [], "total": 0, "groupCount": 0}
 
         raw_categories = data.get("categories", [])
         total_count = data.get("goodsPaginator", {}).get("totalCount", 0)

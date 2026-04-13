@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { csInquiryApi, orderApi, accountApi, returnApi, type SambaCSInquiry, type CSReplyTemplate, type SambaMarketAccount } from '@/lib/samba/api'
-import { CS_MARKET_FILTERS } from '@/lib/samba/markets'
+
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
 import { PERIOD_BUTTONS } from '@/lib/samba/constants'
@@ -28,7 +28,7 @@ const INQUIRY_TYPE_MAP: Record<string, { label: string; color: string }> = {
 }
 
 // 마켓 리스트 (@/lib/samba/markets에서 import)
-const MARKETS = CS_MARKET_FILTERS
+
 
 export default function CSPage() {
   useEffect(() => { document.title = 'SAMBA-CS관리' }, [])
@@ -464,9 +464,11 @@ export default function CSPage() {
           선택삭제
         </button>
         <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto', flexShrink: 0, alignItems: 'center' }}>
-          <select style={{ ...inputStyle, width: '100px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={filterMarket} onChange={e => { setFilterMarket(e.target.value); setPage(0) }}>
+          <select style={{ ...inputStyle, width: '130px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={filterMarket} onChange={e => { setFilterMarket(e.target.value); setPage(0) }}>
             <option value="">전체마켓보기</option>
-            {MARKETS.filter(m => m !== '전체마켓').map(m => <option key={m} value={m}>{m}</option>)}
+            {[...new Map(accounts.map(a => [a.market_type, a.market_name])).values()].map(name => (
+              <option key={name} value={name}>{name}</option>
+            ))}
           </select>
           <select style={{ ...inputStyle, width: '94px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={csSiteFilter} onChange={e => setCsSiteFilter(e.target.value)}>
             <option value="">전체사이트보기</option>

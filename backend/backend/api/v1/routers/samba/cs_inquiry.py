@@ -1337,8 +1337,8 @@ async def _do_sync_cs_from_markets(
 
                 pa_synced = 0
                 for qna in pa_qnas:
-                    # 상품평은 CS가 아니므로 제외
-                    if qna.get("QType", "") == "상품평":
+                    # 긴급메시지/문의만 수집, 나머지(상품평 등) 제외
+                    if qna.get("QType", "") not in ("긴급메시지", "문의"):
                         continue
                     qna_no = str(qna.get("Number", ""))
                     if not qna_no:

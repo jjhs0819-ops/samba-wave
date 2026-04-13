@@ -39,6 +39,7 @@ SITE_CONCURRENCY: dict[str, int] = {
     "GSShop": 5 if _IS_CLOUD else 2,
     "ElandMall": 5 if _IS_CLOUD else 2,
     "SSF": 5 if _IS_CLOUD else 2,
+    "NAVERSTORE": 5 if _IS_CLOUD else 2,
 }
 # 소싱처별 기본 인터벌 (초)
 SITE_BASE_INTERVAL: dict[str, float] = {
@@ -56,6 +57,7 @@ SITE_BASE_INTERVAL: dict[str, float] = {
     "GSShop": 1.0,
     "ElandMall": 1.0,
     "SSF": 1.0,
+    "NAVERSTORE": 0.5,
 }
 # 소싱처별 최소 인터벌 (초)
 SITE_MIN_INTERVAL: dict[str, float] = {
@@ -73,6 +75,7 @@ SITE_MIN_INTERVAL: dict[str, float] = {
     "GSShop": 0,
     "ElandMall": 0,
     "SSF": 0,
+    "NAVERSTORE": 0,
 }
 # 소싱처별 인터벌 복원 스텝 (성공 시 감소량)
 SITE_INTERVAL_STEP: dict[str, float] = {
@@ -90,6 +93,7 @@ SITE_INTERVAL_STEP: dict[str, float] = {
     "GSShop": 0.3,
     "ElandMall": 0.3,
     "SSF": 0.3,
+    "NAVERSTORE": 0.3,
 }
 # KREAM 확장앱 대기 타임아웃 (초)
 KREAM_TIMEOUT = 90

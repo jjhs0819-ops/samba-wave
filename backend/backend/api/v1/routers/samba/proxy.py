@@ -71,18 +71,29 @@ async def get_my_ip() -> dict[str, Any]:
 
 
 async def _get_setting(session: AsyncSession, key: str) -> Any:
-    """samba_settings 테이블에서 설정값 조회."""
+    """samba_settings 테이블에서 설정값 조회 (암호화 키는 자동 복호화)."""
+    from backend.utils.crypto import is_encrypted_key, decrypt_value
+
     repo = SambaSettingsRepository(session)
     row = await repo.find_by_async(key=key)
     if row:
-        return row.value
+        val = row.value
+        # 암호화 대상 키이고 문자열이면 자동 복호화
+        if val and is_encrypted_key(key) and isinstance(val, str):
+            val = decrypt_value(val)
+        return val
     return None
 
 
 async def _set_setting(session: AsyncSession, key: str, value: Any) -> None:
-    """samba_settings 테이블에 설정값 저장 (forbidden service 위임)."""
+    """samba_settings 테이블에 설정값 저장 (암호화 키는 자동 암호화)."""
+    from backend.utils.crypto import is_encrypted_key, encrypt_value
     from backend.domain.samba.forbidden.service import SambaForbiddenService
     from backend.domain.samba.forbidden.repository import SambaForbiddenWordRepository
+
+    # 암호화 대상 키이고 문자열이면 자동 암호화
+    if value and is_encrypted_key(key) and isinstance(value, str):
+        value = encrypt_value(value)
 
     svc = SambaForbiddenService(
         SambaForbiddenWordRepository(session), SambaSettingsRepository(session)
@@ -2451,6 +2462,12 @@ def _get_sourcing_client(site: str):
         from backend.domain.samba.proxy.adidas import AdidasClient
 
         return AdidasClient()
+    if s == "naverstore":
+        from backend.domain.samba.proxy.naverstore_sourcing import (
+            NaverStoreSourcingClient,
+        )
+
+        return NaverStoreSourcingClient()
     return None
 
 

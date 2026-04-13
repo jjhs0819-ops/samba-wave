@@ -22,12 +22,23 @@ class FashionPlusPlugin(SourcingPlugin):
     concurrency = 3
     request_interval = 0.5
 
-    async def scan_categories(self, keyword: str) -> dict:
-        """패��플러스 카테고리 스캔."""
+    async def discover_brands(self, keyword: str) -> dict:
+        """패션플러스 브랜드 탐색."""
         from backend.domain.samba.proxy.fashionplus import FashionPlusClient
 
         client = FashionPlusClient()
-        return await self.safe_call(client.scan_categories(keyword))
+        return await self.safe_call(client.discover_brands(keyword))
+
+    async def scan_categories(
+        self, keyword: str, selected_brands: list[str] | None = None
+    ) -> dict:
+        """패션플러스 카테고리 스캔."""
+        from backend.domain.samba.proxy.fashionplus import FashionPlusClient
+
+        client = FashionPlusClient()
+        return await self.safe_call(
+            client.scan_categories(keyword, selected_brands=selected_brands)
+        )
 
     async def search(self, keyword: str, **filters) -> list[dict]:
         """패션플러스 키워드 검색."""

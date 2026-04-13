@@ -26,6 +26,7 @@ SUPPORTED_SOURCING_SITES = [
     {"id": "GSShop", "name": "GS샵", "group": "오픈마켓"},
     {"id": "SSG", "name": "SSG", "group": "오픈마켓"},
     {"id": "DANAWA", "name": "다나와", "group": "가격비교"},
+    {"id": "NAVERSTORE", "name": "네이버스토어", "group": "오픈마켓"},
 ]
 
 

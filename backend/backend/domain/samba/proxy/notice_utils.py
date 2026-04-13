@@ -605,8 +605,34 @@ def build_smartstore_notice(product: dict[str, Any], **kwargs: str) -> dict[str,
             **common_fields,
             "height": _clean_special(size_text) or "상세 이미지 참조",
         }
+    elif notice_type == "BAG":
+        # 가방 — type 필드 필수 (종류: 백팩/크로스백/토트백 등)
+        _cat_parts = [
+            p.strip() for p in (product.get("category") or "").split(">") if p.strip()
+        ]
+        _bag_type = (
+            _cat_parts[1]
+            if len(_cat_parts) > 1
+            else (_cat_parts[0] if _cat_parts else "가방")
+        )
+        if not _bag_type:
+            _bag_type = "가방"
+        notice_data = {
+            **common_fields,
+            "type": _clean_special(_bag_type),
+        }
+    elif notice_type == "DIGITAL_CONTENTS":
+        # 전자제품/디지털콘텐츠 — 의류와 다른 필드 구조
+        notice_data = {
+            "itemName": (product.get("name", "") or fallback)[:50],
+            "modelName": fallback,
+            "manufacturer": _clean_special(mfr or fallback),
+            "caution": fallback,
+            "warrantyPolicy": common_fields["warrantyPolicy"],
+            "afterServiceDirector": common_fields["afterServiceDirector"],
+        }
     else:
-        # WEAR, BAG — 공통 필드 사용
+        # WEAR — 공통 필드 사용
         notice_data = common_fields
 
     # 화장품/식품/ETC에도 가이드 필드 추가
