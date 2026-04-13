@@ -227,6 +227,12 @@ export default function CollectorPage() {
   const aiJobAbortRef = useRef(false)
   const aiJobLogRef = useRef<HTMLDivElement>(null)
 
+  // 그룹 삭제 진행 모달
+  const [deleteJobModal, setDeleteJobModal] = useState(false)
+  const [deleteJobLogs, setDeleteJobLogs] = useState<string[]>([])
+  const [deleteJobDone, setDeleteJobDone] = useState(false)
+  const deleteJobLogRef = useRef<HTMLDivElement>(null)
+
   // 이미지 필터링 (모델컷/연출컷/배너 제거)
   const [imgFiltering, setImgFiltering] = useState(false)
   const [imgFilterScopes, setImgFilterScopes] = useState<Set<string>>(new Set(['detail_images']))
@@ -310,6 +316,9 @@ export default function CollectorPage() {
   useEffect(() => {
     if (aiJobLogRef.current) aiJobLogRef.current.scrollTop = aiJobLogRef.current.scrollHeight
   }, [aiJobLogs])
+  useEffect(() => {
+    if (deleteJobLogRef.current) deleteJobLogRef.current.scrollTop = deleteJobLogRef.current.scrollHeight
+  }, [deleteJobLogs])
 
 
   // 프록시 & 무신사 인증 상태 확인
@@ -662,22 +671,41 @@ export default function CollectorPage() {
       ? `${label} ${baseIds.size}개 + 하위 ${childCount}개 (총 ${allIds.size}개) 그룹과 상품을 모두 삭제하시겠습니까?`
       : `${label} ${baseIds.size}개 그룹과 그룹 내 상품을 모두 삭제하시겠습니까?`
     if (!await showConfirm(msg)) return;
-    for (const id of allIds) {
+
+    // 진행 모달 열기
+    const allIdsArr = [...allIds]
+    const nameMap = new Map(filters.map(f => [f.id, f.name]))
+    setDeleteJobLogs([`🗑️ 총 ${allIdsArr.length}개 그룹 삭제 시작...`])
+    setDeleteJobDone(false)
+    setDeleteJobModal(true)
+
+    let doneCount = 0
+    let skipCount = 0
+    for (const id of allIdsArr) {
+      const groupName = nameMap.get(id) || id
+      setDeleteJobLogs(prev => [...prev, `[${doneCount + skipCount + 1}/${allIdsArr.length}] "${groupName}" 처리 중...`])
       try {
         const res = await collectorApi.scrollProducts({ skip: 0, limit: 10000, search_filter_id: id })
         // 마켓 등록 상품 체크
         const registered = res.items.filter(p => p.market_product_nos && Object.keys(p.market_product_nos).length > 0)
         if (registered.length > 0) {
-          showAlert(`마켓등록 상품이 ${registered.length.toLocaleString()}건 있어서 삭제할 수 없습니다`, 'error')
+          setDeleteJobLogs(prev => [...prev, `  ⚠️ 마켓등록 상품 ${registered.length.toLocaleString()}건 — 삭제 건너뜀`])
+          skipCount++
           continue
         }
         const productIds = res.items.map(p => p.id)
         if (productIds.length > 0) {
+          setDeleteJobLogs(prev => [...prev, `  상품 ${productIds.length.toLocaleString()}건 삭제 중...`])
           await collectorApi.bulkDeleteProducts(productIds)
         }
       } catch { /* 상품 없으면 무시 */ }
-      await collectorApi.deleteFilter(id).catch(() => {});
+      await collectorApi.deleteFilter(id).catch(() => {})
+      doneCount++
+      setDeleteJobLogs(prev => [...prev, `  ✅ 삭제 완료`])
     }
+
+    setDeleteJobLogs(prev => [...prev, ``, `🎉 완료 — ${doneCount}개 삭제${skipCount > 0 ? `, ${skipCount}개 건너뜀` : ''}`])
+    setDeleteJobDone(true)
     setSelectedIds(new Set());
     setSelectAll(false);
     load(); loadTree();
@@ -3331,6 +3359,28 @@ export default function CollectorPage() {
       )}
     </div>
       {/* AI 작업 진행 모달 */}
+      {deleteJobModal && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: '#1E1E1E', border: '1px solid #333', borderRadius: '12px', padding: '1.5rem', width: '480px', maxHeight: '70vh', display: 'flex', flexDirection: 'column' }}>
+            <h3 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem', color: '#FF6B6B' }}>그룹 삭제 진행 중</h3>
+            <div ref={deleteJobLogRef} style={{ flex: 1, overflowY: 'auto', background: '#111', borderRadius: '8px', padding: '0.75rem', fontSize: '0.75rem', fontFamily: 'monospace', color: '#CCC', maxHeight: '50vh', lineHeight: 1.6 }}>
+              {deleteJobLogs.map((msg, i) => {
+                let color = '#CCC'
+                if (msg.includes('완료') || msg.includes('✅') || msg.includes('🎉')) color = '#51CF66'
+                if (msg.includes('⚠️') || msg.includes('건너뜀')) color = '#FFD43B'
+                if (msg.includes('시작') || msg.includes('🗑️')) color = '#4C9AFF'
+                return <div key={i} style={{ color }}>{msg || '\u00A0'}</div>
+              })}
+              {!deleteJobDone && <div style={{ color: '#888' }}>⏳ 처리 중...</div>}
+            </div>
+            <div style={{ marginTop: '0.75rem' }}>
+              {deleteJobDone && (
+                <button onClick={() => setDeleteJobModal(false)} style={{ width: '100%', padding: '0.5rem', background: '#333', border: '1px solid #555', borderRadius: '6px', color: '#E5E5E5', cursor: 'pointer', fontSize: '0.8rem' }}>닫기</button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       {aiJobModal && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ background: '#1E1E1E', border: '1px solid #333', borderRadius: '12px', padding: '1.5rem', width: '500px', maxHeight: '70vh', display: 'flex', flexDirection: 'column' }}>
