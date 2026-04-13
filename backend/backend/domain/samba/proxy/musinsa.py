@@ -250,7 +250,7 @@ class MusinsaClient:
             if 0 < coupon_price_raw < s_price:
                 benefit_coupon_discount = s_price - coupon_price_raw
             # 쿠폰 API로 추가 쿠폰 탐색 (goodsPrice에 미반영된 쿠폰 보충)
-            benefit_coupon_discount = await self._fetch_coupons(
+            benefit_coupon_discount, _coupon_api_failed = await self._fetch_coupons(
                 client, goods_no, d, s_price, benefit_coupon_discount
             )
             benefit_base = s_price - benefit_coupon_discount
@@ -474,6 +474,9 @@ class MusinsaClient:
                 "sameDayDelivery": is_same_day,
                 "collectedAt": now_iso,
                 "updatedAt": now_iso,
+                # 쿠폰 API 실패 + goodsPrice.couponPrice도 0이면 가격 불확실
+                # (쿠폰 API가 유일한 쿠폰 정보원인 경우)
+                "price_uncertain": _coupon_api_failed and coupon_price_raw == 0,
             }
         finally:
             if _own_client:
@@ -1052,8 +1055,8 @@ class MusinsaClient:
         d: dict[str, Any],
         s_price: int,
         best_coupon_discount: int,
-    ) -> int:
-        """쿠폰 API 호출."""
+    ) -> tuple[int, bool]:
+        """쿠폰 API 호출. Returns (할인액, API실패여부)."""
         try:
             specialty = d.get("specialtyCodes") or []
             params_dict: dict[str, Any] = {
@@ -1121,8 +1124,9 @@ class MusinsaClient:
                             best_coupon_discount = actual_discount
         except Exception as exc:
             logger.warning(f"[쿠폰] {goods_no} API 호출 실패: {exc}")
+            return best_coupon_discount, True
 
-        return best_coupon_discount
+        return best_coupon_discount, False
 
     @staticmethod
     def _extract_detail_images(desc_html: str) -> list[str]:

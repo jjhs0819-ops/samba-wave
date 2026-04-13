@@ -109,8 +109,12 @@ class LotteonSourcingPlugin(SourcingPlugin):
             client.fetch_benefit_price(pbf, spd_no=_spd, sitm_no=sitm_no),
             client.fetch_option_stock(pbf, spd_no=_spd, sitm_no=sitm_no),
         )
+        _benefit_failed = not benefit or benefit <= 0
         if benefit and benefit > 0:
             detail["bestBenefitPrice"] = benefit
+        # benefits API 실패 + PBF 자체에도 혜택가 없음 → 가격 불확실
+        if _benefit_failed and not detail.get("bestBenefitPrice"):
+            detail["price_uncertain"] = True
         if opt_stock:
             detail["options"] = opt_stock
 
@@ -552,4 +556,5 @@ class LotteonSourcingPlugin(SourcingPlugin):
             new_same_day_delivery=detail.get("sameDayDelivery"),
             changed=changed,
             stock_changed=_stock_changes > 0,
+            price_uncertain=bool(detail.get("price_uncertain")),
         )

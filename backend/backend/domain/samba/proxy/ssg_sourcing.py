@@ -469,9 +469,9 @@ class SSGSourcingClient:
                     logger.info("[SSG] 카테고리 필터 없음 — 빈 결과 반환")
                     return {"categories": [], "total": 0, "groupCount": 0}
 
-                # 선택된 브랜드의 repBrandId로 실제 상품수 조회 (스케일링용)
-                # SSG categoryFilter는 repBrandId를 반영하지 않으므로
-                # 별도 요청으로 브랜드별 실제 상품수를 구해 비례 보정
+                # 선택된 브랜드의 repBrandId 적용 검색으로 브랜드별 카테고리 카운트 조회
+                # 1순위: repBrandId 적용 응답에서 categoryFilter 직접 추출 (정확)
+                # 2순위: 균일 ratio 스케일링 폴백 (SSG가 브랜드 반영 안 할 경우)
                 if selected_brands:
                     brand_items = self._extract_brand_filter(html)
                     _selected_set = set(selected_brands)
@@ -491,6 +491,18 @@ class SSGSourcingClient:
                                     f"[SSG] 브랜드 필터 상품수: {brand_total}건"
                                     f" (brands={[b for b in selected_brands]})"
                                 )
+                                # 브랜드 필터 응답에서 카테고리 직접 추출 시도
+                                # SSG가 repBrandId 반영 시 카테고리별 정확한 카운트 제공
+                                _brand_categories = self._extract_category_filters(
+                                    _br.text
+                                )
+                                if _brand_categories:
+                                    logger.info(
+                                        f"[SSG] 브랜드 필터 카테고리 {len(_brand_categories)}개"
+                                        " 직접 추출 — ratio 스케일링 생략"
+                                    )
+                                    categories = _brand_categories
+                                    brand_total = 0  # 스케일링 스킵
                         except Exception as exc:
                             logger.warning(f"[SSG] 브랜드 필터 상품수 조회 실패: {exc}")
 

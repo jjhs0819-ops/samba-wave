@@ -434,9 +434,8 @@ class FashionPlusClient:
                         if isinstance(brand_info, dict)
                         else str(brand_info)
                     )
-                    # SKU → style_code (품번) + seller_id 추출
+                    # SKU → seller_id 추출 (이미지 URL 필터링용, 내부 상품번호이므로 품번으로 사용하지 않음)
                     sku = data.get("sku", "")
-                    result["style_code"] = sku
                     seller_id = sku.split("_")[0] if "_" in sku else ""
             except (json.JSONDecodeError, ValueError):
                 seller_id = ""
@@ -503,6 +502,18 @@ class FashionPlusClient:
                     result["quality_guarantee"] = v
                 elif "치수" in k or "사이즈" in kl:
                     result["size_info"] = v
+                elif "품번" in k or "모델번호" in k or "모델명" in k or k == "모델":
+                    # 고시정보 테이블에 품번/모델 항목이 있으면 우선 사용
+                    result["style_code"] = v
+
+        # 고시정보에서 품번을 못 찾은 경우 → 상품명 끝 토큰에서 추출 (폴백)
+        # 예: "내셔널지오그래픽 공용 캠핑 신학기 버디백팩 N261ABG040" → N261ABG040
+        if not result.get("style_code") and result.get("name"):
+            name_model_m = re.search(
+                r"(?<!\w)([A-Z][A-Z0-9\-]{4,19})(?:\s|$)", result["name"]
+            )
+            if name_model_m:
+                result["style_code"] = name_model_m.group(1)
 
         # 4) 상세 HTML — 상품 이미지를 img 태그로 조합
         if result["images"]:

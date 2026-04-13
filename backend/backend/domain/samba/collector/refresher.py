@@ -450,6 +450,9 @@ class RefreshResult:
     needs_extension: bool = False
     error: Optional[str] = None
     warnings: list = field(default_factory=list)
+    # 소싱처 보조 API(쿠폰/혜택) 실패로 가격 데이터가 불확실한 경우 True
+    # True이면 오토튠에서 cost 업데이트 및 전송을 보류함
+    price_uncertain: bool = False
 
 
 @dataclass
@@ -911,6 +914,7 @@ def _process_musinsa_detail(
         changed=changed,
         stock_changed=_stock_changes > 0,
         warnings=warnings,
+        price_uncertain=bool(detail.get("price_uncertain")),
     )
 
 
