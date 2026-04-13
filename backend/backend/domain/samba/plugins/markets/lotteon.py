@@ -1150,9 +1150,16 @@ class LotteonPlugin(MarketPlugin):
                             return min(r, _max_stock_per_opt)
                         return r
 
+                    def _norm_opt(name: str) -> str:
+                        """옵션명 정규화 — 공백/슬래시 차이 흡수."""
+                        s = (name or "").strip()
+                        s = re.sub(r"\s*/\s*", "/", s)
+                        s = re.sub(r"\s+", " ", s)
+                        return s
+
                     # 옵션명 → (stock, isSoldOut) 매핑 — isSoldOut 반영 위해 튜플로
                     opt_info_map = {
-                        (o.get("name") or "").strip(): (
+                        _norm_opt(o.get("name") or ""): (
                             o.get("stock", 0) or 0,
                             bool(o.get("isSoldOut", False)),
                         )
@@ -1174,8 +1181,8 @@ class LotteonPlugin(MarketPlugin):
                                     "slPrc": new_price,
                                 }
                             )
-                        # 재고 업데이트 (옵션명으로 매칭)
-                        itm_name = (itm.get("itmNm") or itm.get("optNm") or "").strip()
+                        # 재고 업데이트 (옵션명 정규화 매칭)
+                        itm_name = _norm_opt(itm.get("itmNm") or itm.get("optNm") or "")
                         if itm_name in opt_info_map:
                             raw_s, sold = opt_info_map[itm_name]
                             stk = _apply_stock_cap(raw_s, sold)
