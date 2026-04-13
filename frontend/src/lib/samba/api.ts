@@ -91,7 +91,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
 // ── Orders ──
 
-export interface DashboardStats {
+export interface OrderDashboardStats {
   thisMonth: { count: number; sales: number; fulfillmentSales: number; fulfillmentCount: number; fulfillment: number }
   lastMonth: { count: number; sales: number; fulfillmentSales: number; fulfillmentCount: number; fulfillment: number }
   salesChange: number
@@ -148,7 +148,7 @@ export const orderApi = {
   },
   listByDateRange: (start: string, end: string) =>
     request<SambaOrder[]>(`${SAMBA_PREFIX}/orders/by-date-range?start=${start}&end=${end}`),
-  dashboardStats: () => request<DashboardStats>(`${SAMBA_PREFIX}/orders/dashboard-stats`),
+  dashboardStats: () => request<OrderDashboardStats>(`${SAMBA_PREFIX}/orders/dashboard-stats`),
   get: (id: string) => request<SambaOrder>(`${SAMBA_PREFIX}/orders/${id}`),
   search: (q: string) => request<SambaOrder[]>(`${SAMBA_PREFIX}/orders/search?q=${encodeURIComponent(q)}`),
   create: (data: Partial<SambaOrder>) =>

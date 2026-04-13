@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, useCallback } from "react"
-import { orderApi, collectorApi, type DashboardStats } from "@/lib/samba/api"
+import { orderApi, collectorApi, type OrderDashboardStats } from "@/lib/samba/api"
 import { card, fmtNum } from "@/lib/samba/styles"
 
 // 날짜 포맷: 3. 14. 형식
@@ -10,7 +10,7 @@ function formatShortDate(d: Date) {
 }
 
 export default function SambaDashboard() {
-  const [stats, setStats] = useState<DashboardStats | null>(null)
+  const [stats, setStats] = useState<OrderDashboardStats | null>(null)
   const [collectedCount, setCollectedCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [bySource, setBySource] = useState<{ source_site: string; total: number; registered: number; sold_out: number }[]>([])

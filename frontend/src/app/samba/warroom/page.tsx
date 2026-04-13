@@ -461,11 +461,18 @@ export default function WarroomPage() {
     )
   }
 
-  const { product_stats, refresh_stats, price_change_stats, site_health, market_health, event_summary, hourly_changes } = stats
+  // 방어: API 응답에 일부 필드가 빠져있을 수 있으므로 기본값 제공
+  const product_stats = stats.product_stats || { total: 0, by_source: {}, by_priority: {}, by_sale_status: {} }
+  const refresh_stats = stats.refresh_stats || { last_refreshed_at: null, refreshed_1h: 0, refreshed_24h: 0, error_products: 0 }
+  const price_change_stats = stats.price_change_stats || { changes_24h: 0, avg_change_pct: 0, top_changes: [] }
+  const site_health = stats.site_health || {}
+  const market_health = stats.market_health || {}
+  const event_summary = stats.event_summary || { counts_24h: {}, recent_critical: [], recent_warnings: [] }
+  const hourly_changes = stats.hourly_changes || []
 
   // 가로 바 차트 최대값
-  const maxBySource = Math.max(...Object.values(product_stats.by_source), 1)
-  const maxHourly = Math.max(...hourly_changes, 1)
+  const maxBySource = Math.max(...Object.values(product_stats.by_source || {}), 1)
+  const maxHourly = Math.max(...(hourly_changes.length ? hourly_changes : [0]), 1)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
