@@ -118,6 +118,8 @@ async def list_cs_inquiries(
     search: Optional[str] = None,
     sort_field: str = Query("inquiry_date"),
     sort_desc: bool = Query(True),
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """CS 문의 목록 (필터 + 페이지네이션)."""
@@ -131,6 +133,8 @@ async def list_cs_inquiries(
         search=search,
         sort_field=sort_field,
         sort_desc=sort_desc,
+        start_date=start_date,
+        end_date=end_date,
     )
 
 

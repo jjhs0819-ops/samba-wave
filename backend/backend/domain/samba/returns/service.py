@@ -61,7 +61,23 @@ class SambaReturnService:
         order_id: Optional[str] = None,
         status: Optional[str] = None,
         type: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
     ) -> List[SambaReturn]:
+        # 날짜 필터가 있으면 list_filtered 사용
+        if start_date and end_date:
+            from backend.utils import kst_date_range_to_utc
+
+            start_dt, end_dt = kst_date_range_to_utc(start_date, end_date)
+            return await self.repo.list_filtered(
+                skip=skip,
+                limit=limit,
+                order_id=order_id,
+                status=status,
+                type=type,
+                start_dt=start_dt,
+                end_dt=end_dt,
+            )
         if order_id:
             return await self.repo.list_by_order(order_id)
         if status:

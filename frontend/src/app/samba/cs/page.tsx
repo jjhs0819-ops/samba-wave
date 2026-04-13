@@ -194,6 +194,8 @@ export default function CSPage() {
           reply_status: filterStatus || undefined,
           search: search || undefined,
           sort_desc: sortDesc,
+          start_date: csCustomStart || undefined,
+          end_date: csCustomEnd || undefined,
         }).catch(() => ({ items: [], total: 0 })),
         csInquiryApi.getStats().catch(() => ({})),
         csInquiryApi.getTemplates().catch(() => ({})),
@@ -206,7 +208,7 @@ export default function CSPage() {
       // 에러 무시
     }
     setLoading(false)
-  }, [filterMarket, filterType, filterStatus, search, sortDesc, pageSize, page])
+  }, [filterMarket, filterType, filterStatus, search, sortDesc, pageSize, page, csCustomStart, csCustomEnd])
 
   useEffect(() => { load() }, [load])
   useEffect(() => { accountApi.listActive().then(setAccounts).catch(() => {}) }, [])
@@ -244,21 +246,29 @@ export default function CSPage() {
   // 검색
   const handleSearch = async () => {
     const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    const label = csSyncAccountId
-      ? accounts.find(a => a.id === csSyncAccountId)?.market_name || csSyncAccountId
-      : '전체마켓'
+    // 드롭다운 value 파싱: "" = 전체, "market:XXX" = 마켓 단위, "account:ID" = 개별 계정
+    let selectedMarket: string | undefined
+    let label: string
+    if (csSyncAccountId.startsWith('market:')) {
+      selectedMarket = csSyncAccountId.slice(7)
+      label = selectedMarket
+    } else if (csSyncAccountId.startsWith('account:')) {
+      const accountId = csSyncAccountId.slice(8)
+      selectedMarket = accounts.find(a => a.id === accountId)?.market_name
+      label = selectedMarket || accountId
+    } else {
+      selectedMarket = undefined
+      label = '전체마켓'
+    }
     setCsLogMessages(prev => [...prev, `[${ts()}] ${label} CS 문의 동기화 중...`])
     try {
-      const selectedMarket = csSyncAccountId
-        ? accounts.find(a => a.id === csSyncAccountId)?.market_name
-        : undefined
       const result = await csInquiryApi.syncFromMarkets(selectedMarket)
       setCsLogMessages(prev => [...prev, `[${ts()}] ${result.message}`])
       setPage(0)
       setSearch('')
       setSearchInput('')
       const [data, st, tpl] = await Promise.all([
-        csInquiryApi.list({ skip: 0, limit: pageSize, sort_desc: sortDesc, market: filterMarket || undefined }).catch(() => ({ items: [], total: 0 })),
+        csInquiryApi.list({ skip: 0, limit: pageSize, sort_desc: sortDesc, market: filterMarket || undefined, start_date: csCustomStart || undefined, end_date: csCustomEnd || undefined }).catch(() => ({ items: [], total: 0 })),
         csInquiryApi.getStats().catch(() => ({})),
         csInquiryApi.getTemplates().catch(() => ({})),
       ])
@@ -268,33 +278,6 @@ export default function CSPage() {
       setTemplates(tpl)
     } catch (err) {
       setCsLogMessages(prev => [...prev, `[${ts()}] 동기화 실패: ${err}`])
-    }
-  }
-
-  const handleFetchAllMarkets = async () => {
-    const now = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    setCsLogMessages(prev => [...prev, `[${now}] 전체마켓 CS 문의 동기화 중...`])
-    try {
-      const result = await csInquiryApi.syncFromMarkets()
-      setCsLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}] ${result.message}`])
-      // 필터 초기화 후 page=0 첫 페이지 데이터 직접 조회
-      setPage(0)
-      setSearch('')
-      setSearchInput('')
-      setFilterMarket('')
-      setFilterType('')
-      setFilterStatus('')
-      const [data, st, tpl] = await Promise.all([
-        csInquiryApi.list({ skip: 0, limit: pageSize, sort_desc: sortDesc }).catch(() => ({ items: [], total: 0 })),
-        csInquiryApi.getStats().catch(() => ({})),
-        csInquiryApi.getTemplates().catch(() => ({})),
-      ])
-      setInquiries(data.items)
-      setTotal(data.total)
-      setStats(st)
-      setTemplates(tpl)
-    } catch (err) {
-      setCsLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}] 동기화 실패: ${err}`])
     }
   }
 
@@ -444,14 +427,14 @@ export default function CSPage() {
             <option value="">전체 계정</option>
             {[...new Set(accounts.map(a => a.market_name))].map(market => (
               <optgroup key={market} label={market}>
+                <option key={`market:${market}`} value={`market:${market}`}>{market} 전체</option>
                 {accounts.filter(a => a.market_name === market).map(a => (
-                  <option key={a.id} value={a.id}>{a.seller_id || a.business_name || '-'}</option>
+                  <option key={a.id} value={`account:${a.id}`}>{a.seller_id || a.business_name || '-'}</option>
                 ))}
               </optgroup>
             ))}
           </select>
           <button onClick={handleSearch} style={{ padding: '0 0.65rem', fontSize: '0.75rem', height: '28px', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}>가져오기</button>
-          <button onClick={handleFetchAllMarkets} style={{ padding: '0 0.65rem', fontSize: '0.75rem', height: '28px', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}>전체마켓 가져오기</button>
         </div>
       </div>
 

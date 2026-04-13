@@ -1032,11 +1032,13 @@ export interface SambaReturn {
 }
 
 export const returnApi = {
-  list: (orderId?: string, status?: string, type?: string, limit = 500) => {
+  list: (orderId?: string, status?: string, type?: string, limit = 500, startDate?: string, endDate?: string) => {
     const p = new URLSearchParams();
     if (orderId) p.set("order_id", orderId);
     if (status) p.set("status", status);
     if (type) p.set("type", type);
+    if (startDate) p.set("start_date", startDate);
+    if (endDate) p.set("end_date", endDate);
     p.set("limit", String(limit));
     return request<SambaReturn[]>(`${SAMBA_PREFIX}/returns?${p}`);
   },
@@ -1112,6 +1114,8 @@ export const csInquiryApi = {
     search?: string
     sort_field?: string
     sort_desc?: boolean
+    start_date?: string
+    end_date?: string
   }) => {
     const p = new URLSearchParams()
     if (params?.skip) p.set('skip', String(params.skip))
@@ -1122,6 +1126,8 @@ export const csInquiryApi = {
     if (params?.search) p.set('search', params.search)
     if (params?.sort_field) p.set('sort_field', params.sort_field)
     if (params?.sort_desc !== undefined) p.set('sort_desc', String(params.sort_desc))
+    if (params?.start_date) p.set('start_date', params.start_date)
+    if (params?.end_date) p.set('end_date', params.end_date)
     return request<CSInquiryListResponse>(`${SAMBA_PREFIX}/cs-inquiries?${p}`)
   },
   get: (id: string) => request<SambaCSInquiry>(`${SAMBA_PREFIX}/cs-inquiries/${id}`),

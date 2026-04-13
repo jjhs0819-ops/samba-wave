@@ -50,6 +50,86 @@ class FashionPlusClient:
     SEARCH_API = "https://www.fashionplus.co.kr/search/goods/fetch"
     DETAIL_URL = "https://www.fashionplus.co.kr/goods/detail"
 
+    async def scan_categories(self, keyword: str) -> dict[str, Any]:
+        """카테고리 스캔 — 검색 API 응답의 categories 트리를 파싱하여 카테고리별 상품수 반환."""
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            params = {"searchWord": keyword, "page": "1", "pageSize": "1"}
+            try:
+                resp = await client.get(self.SEARCH_API, params=params, headers=HEADERS)
+                resp.raise_for_status()
+                data = resp.json()
+            except Exception as e:
+                logger.warning(f"[패션플러스] 카테고리 스캔 실패: {e}")
+                return {"categories": [], "total": 0, "groupCount": 0}
+
+        raw_categories = data.get("categories", [])
+        total_count = data.get("goodsPaginator", {}).get("totalCount", 0)
+
+        # 카테고리 트리를 평탄화 — 리프(최하위) 노드 기준으로 경로 생성
+        categories: list[dict[str, Any]] = []
+        for cat1 in raw_categories:
+            c1_name = cat1.get("name", "")
+            c1_id = str(cat1.get("id", ""))
+            children1 = cat1.get("children", [])
+            if not children1:
+                # 대분류만 있는 경우
+                cnt = cat1.get("goodsCountInContext", 0)
+                if cnt > 0:
+                    categories.append(
+                        {
+                            "categoryCode": c1_id,
+                            "path": c1_name,
+                            "count": cnt,
+                            "category1": c1_name,
+                            "category2": "",
+                            "category3": "",
+                        }
+                    )
+                continue
+            for cat2 in children1:
+                c2_name = cat2.get("name", "")
+                c2_id = str(cat2.get("id", ""))
+                children2 = cat2.get("children", [])
+                if not children2:
+                    # 중분류가 리프
+                    cnt = cat2.get("goodsCountInContext", 0)
+                    if cnt > 0:
+                        categories.append(
+                            {
+                                "categoryCode": c2_id,
+                                "path": f"{c1_name} > {c2_name}",
+                                "count": cnt,
+                                "category1": c1_name,
+                                "category2": c2_name,
+                                "category3": "",
+                            }
+                        )
+                    continue
+                for cat3 in children2:
+                    c3_name = cat3.get("name", "")
+                    c3_id = str(cat3.get("id", ""))
+                    cnt = cat3.get("goodsCountInContext", 0)
+                    if cnt > 0:
+                        categories.append(
+                            {
+                                "categoryCode": c3_id,
+                                "path": f"{c1_name} > {c2_name} > {c3_name}",
+                                "count": cnt,
+                                "category1": c1_name,
+                                "category2": c2_name,
+                                "category3": c3_name,
+                            }
+                        )
+
+        # 상품수 내림차순 정렬
+        categories.sort(key=lambda x: -x["count"])
+        total = sum(c["count"] for c in categories)
+        logger.info(
+            f"[패션플러스] 카테고리 스캔 '{keyword}' → {len(categories)}개 카테고리, {total}건"
+        )
+
+        return {"categories": categories, "total": total, "groupCount": len(categories)}
+
     async def search(
         self, keyword: str, page: int = 1, max_count: int = 0, **kwargs: Any
     ) -> dict[str, Any]:

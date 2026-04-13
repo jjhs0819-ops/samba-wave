@@ -120,13 +120,13 @@ export default function ReturnsPage() {
   const load = useCallback(async () => {
     setLoading(true)
     const [data, st] = await Promise.all([
-      returnApi.list(undefined, filterStatus || undefined, filterType || undefined).catch(() => []),
+      returnApi.list(undefined, filterStatus || undefined, filterType || undefined, 500, customStart || undefined, customEnd || undefined).catch(() => []),
       returnApi.getStats().catch(() => ({})),
     ])
     setReturns(data)
     setStats(st)
     setLoading(false)
-  }, [filterStatus, filterType])
+  }, [filterStatus, filterType, customStart, customEnd])
 
   useEffect(() => { load() }, [load])
 

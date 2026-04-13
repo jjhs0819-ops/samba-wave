@@ -57,11 +57,19 @@ async def list_returns(
     order_id: Optional[str] = None,
     status: Optional[str] = None,
     type: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     svc = _read_service(session)
     returns = await svc.list_returns(
-        skip=skip, limit=limit, order_id=order_id, status=status, type=type
+        skip=skip,
+        limit=limit,
+        order_id=order_id,
+        status=status,
+        type=type,
+        start_date=start_date,
+        end_date=end_date,
     )
 
     # 주문의 ext_order_number(타마켓주문링크) 또는 소싱처 주문상세 URL을 return_link로 매칭

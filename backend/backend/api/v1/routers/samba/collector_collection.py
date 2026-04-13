@@ -2389,6 +2389,12 @@ async def brand_scan(
         selected = body.selected_brands or [keyword]
         return await plugin.scan_categories(keyword, selected_brands=selected)
 
+    if body.source_site == "FashionPlus":
+        from backend.domain.samba.plugins.sourcing.fashionplus import FashionPlusPlugin
+
+        plugin = FashionPlusPlugin()
+        return await plugin.scan_categories(keyword)
+
     raise HTTPException(400, f"카테고리 스캔 미지원 소싱처: {body.source_site}")
 
 

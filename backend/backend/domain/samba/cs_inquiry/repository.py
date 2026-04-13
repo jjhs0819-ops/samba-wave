@@ -24,6 +24,8 @@ class SambaCSInquiryRepository(BaseRepository[SambaCSInquiry]):
         search: Optional[str] = None,
         sort_field: str = "inquiry_date",
         sort_desc: bool = True,
+        start_dt: Optional[datetime] = None,
+        end_dt: Optional[datetime] = None,
     ) -> List[SambaCSInquiry]:
         """필터 + 정렬 + 페이지네이션 목록 조회."""
         stmt = select(SambaCSInquiry).where(SambaCSInquiry.is_hidden == False)  # noqa: E712
@@ -40,6 +42,10 @@ class SambaCSInquiryRepository(BaseRepository[SambaCSInquiry]):
                 | SambaCSInquiry.content.ilike(f"%{search}%")  # type: ignore
                 | SambaCSInquiry.market_order_id.ilike(f"%{search}%")  # type: ignore
             )
+        if start_dt:
+            stmt = stmt.where(SambaCSInquiry.inquiry_date >= start_dt)
+        if end_dt:
+            stmt = stmt.where(SambaCSInquiry.inquiry_date <= end_dt)
 
         # 정렬
         col = getattr(SambaCSInquiry, sort_field, SambaCSInquiry.inquiry_date)
@@ -55,6 +61,8 @@ class SambaCSInquiryRepository(BaseRepository[SambaCSInquiry]):
         inquiry_type: Optional[str] = None,
         reply_status: Optional[str] = None,
         search: Optional[str] = None,
+        start_dt: Optional[datetime] = None,
+        end_dt: Optional[datetime] = None,
     ) -> int:
         """필터 적용된 총 개수."""
         stmt = (
@@ -75,6 +83,10 @@ class SambaCSInquiryRepository(BaseRepository[SambaCSInquiry]):
                 | SambaCSInquiry.content.ilike(f"%{search}%")  # type: ignore
                 | SambaCSInquiry.market_order_id.ilike(f"%{search}%")  # type: ignore
             )
+        if start_dt:
+            stmt = stmt.where(SambaCSInquiry.inquiry_date >= start_dt)
+        if end_dt:
+            stmt = stmt.where(SambaCSInquiry.inquiry_date <= end_dt)
 
         result = await self.session.execute(stmt)
         return result.scalar_one()

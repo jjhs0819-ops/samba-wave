@@ -70,8 +70,17 @@ class SambaCSInquiryService:
         search: Optional[str] = None,
         sort_field: str = "inquiry_date",
         sort_desc: bool = True,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
     ) -> Dict[str, Any]:
         """필터링된 문의 목록 + 총 건수 반환."""
+        # KST 날짜 문자열 → UTC datetime 변환
+        start_dt = None
+        end_dt = None
+        if start_date and end_date:
+            from backend.utils import kst_date_range_to_utc
+
+            start_dt, end_dt = kst_date_range_to_utc(start_date, end_date)
         items = await self.repo.list_filtered(
             skip=skip,
             limit=limit,
@@ -81,12 +90,16 @@ class SambaCSInquiryService:
             search=search,
             sort_field=sort_field,
             sort_desc=sort_desc,
+            start_dt=start_dt,
+            end_dt=end_dt,
         )
         total = await self.repo.count_filtered(
             market=market,
             inquiry_type=inquiry_type,
             reply_status=reply_status,
             search=search,
+            start_dt=start_dt,
+            end_dt=end_dt,
         )
         return {"items": items, "total": total}
 
