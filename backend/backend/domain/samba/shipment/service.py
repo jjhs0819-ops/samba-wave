@@ -1359,9 +1359,18 @@ class SambaShipmentService:
                 # 기존 상품번호 확인
                 existing_nos = product_row.market_product_nos or {}
                 if market_type == "smartstore":
-                    existing_product_no = existing_nos.get(
-                        f"{account_id}_origin", ""
-                    ) or existing_nos.get(account_id, "")
+                    existing_product_no = existing_nos.get(f"{account_id}_origin", "")
+                    if not existing_product_no:
+                        raw_existing = existing_nos.get(account_id, "")
+                        if isinstance(raw_existing, dict):
+                            existing_product_no = (
+                                raw_existing.get("originProductNo")
+                                or raw_existing.get("smartstoreChannelProductNo")
+                                or raw_existing.get("groupProductNo")
+                                or ""
+                            )
+                        else:
+                            existing_product_no = raw_existing
                 else:
                     existing_product_no = existing_nos.get(account_id, "")
                 if existing_product_no:

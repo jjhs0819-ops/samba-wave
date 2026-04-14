@@ -42,6 +42,18 @@ class SmartStorePlugin(MarketPlugin):
         """스마트스토어 상품 등록/수정 — 전체 로직."""
         from backend.domain.samba.proxy.smartstore import SmartStoreClient
 
+        if isinstance(existing_no, dict):
+            existing_no = str(
+                existing_no.get("originProductNo")
+                or existing_no.get("smartstoreChannelProductNo")
+                or existing_no.get("groupProductNo")
+                or ""
+            )
+        elif existing_no:
+            existing_no = str(existing_no)
+        else:
+            existing_no = ""
+
         client_id = creds.get("clientId", "")
         client_secret = creds.get("clientSecret", "")
 
