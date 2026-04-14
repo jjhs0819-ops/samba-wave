@@ -321,6 +321,7 @@ async def update_filter(
                             "margin_rate": pr.get("marginRate", 15),
                             "shipping_cost": pr.get("shippingCost", 0),
                             "extra_charge": pr.get("extraCharge", 0),
+                            "source_site_margins": pr.get("sourceSiteMargins", {}),
                         }
                     bg_svc = _get_services(bg_session)
                     count = await bg_svc.apply_policy_to_filter_products(

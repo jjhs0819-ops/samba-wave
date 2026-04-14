@@ -678,11 +678,16 @@ export const shipmentApi = {
     }),
   retry: (id: string) =>
     request<SambaShipment>(`${SAMBA_PREFIX}/shipments/${id}/retry`, { method: "POST" }),
-  marketDelete: (productIds: string[], targetAccountIds: string[]) =>
+  marketDelete: (productIds: string[], targetAccountIds: string[], currentIdx?: number, totalCount?: number) =>
     request<{ processed: number; results: { product_id: string; delete_results: Record<string, string>; success_count: number }[] }>(
       `${SAMBA_PREFIX}/shipments/market-delete`, {
         method: "POST",
-        body: JSON.stringify({ product_ids: productIds, target_account_ids: targetAccountIds }),
+        body: JSON.stringify({
+          product_ids: productIds,
+          target_account_ids: targetAccountIds,
+          current_idx: currentIdx,
+          total_count: totalCount,
+        }),
       }
     ),
   marketDeleteByAccount: (accountId: string, dryRun = false) =>
@@ -1075,6 +1080,7 @@ export interface SambaCSInquiry {
   id: string
   market: string
   market_order_id?: string
+  market_product_no?: string
   account_name?: string
   inquiry_type: string
   questioner?: string
@@ -1682,9 +1688,11 @@ export interface SambaSourcingAccount {
 }
 
 export interface ChromeProfile {
-  directory: string
-  name: string
-  gaia_name: string
+  directory: string    // 하위 호환 (email 값)
+  name: string         // 하위 호환 (display_name 값)
+  gaia_name: string    // 하위 호환
+  email: string
+  display_name: string
 }
 
 export interface BalanceResult {

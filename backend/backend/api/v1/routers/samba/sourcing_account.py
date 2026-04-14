@@ -1,8 +1,6 @@
 """소싱처 계정 API 라우터."""
 
-import json
-import os
-from pathlib import Path
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -24,6 +22,11 @@ from backend.utils.logger import logger
 from backend.utils.masking import mask_model_secrets
 
 router = APIRouter(prefix="/sourcing-accounts", tags=["samba-sourcing-accounts"])
+
+# 확장앱 전용 라우터 — JWT 인증 불필요 (X-Api-Key 헤더만 사용)
+extension_router = APIRouter(
+    prefix="/sourcing-accounts", tags=["samba-sourcing-accounts-extension"]
+)
 
 
 def _read_service(session: AsyncSession):
@@ -88,30 +91,44 @@ async def get_supported_sites():
 
 
 @router.get("/chrome-profiles")
-async def get_chrome_profiles():
-    """PC에 존재하는 크롬 프로필 목록 반환."""
-    local_app_data = os.environ.get("LOCALAPPDATA", "")
-    local_state_path = (
-        Path(local_app_data) / "Google" / "Chrome" / "User Data" / "Local State"
-    )
-    if not local_state_path.exists():
-        return []
-    try:
-        data = json.loads(local_state_path.read_text(encoding="utf-8"))
-        profiles_info = data.get("profile", {}).get("info_cache", {})
-        results = []
-        for directory, info in profiles_info.items():
-            results.append(
-                {
-                    "directory": directory,
-                    "name": info.get("name", directory),
-                    "gaia_name": info.get("gaia_name", ""),
-                }
+async def get_chrome_profiles(
+    session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+):
+    """DB에 동기화된 크롬 프로필 목록 반환 (확장앱이 시작 시 자동 등록)."""
+    from backend.domain.samba.sourcing_account.model import SambaChromProfile
+
+    if tenant_id is not None:
+        from sqlalchemy import or_
+
+        stmt = (
+            select(SambaChromProfile)
+            .where(
+                or_(
+                    SambaChromProfile.tenant_id == tenant_id,
+                    SambaChromProfile.tenant_id == None,  # noqa: E711
+                )
             )
-        return sorted(results, key=lambda x: x["directory"])
-    except Exception as e:
-        logger.warning(f"크롬 프로필 목록 조회 실패: {e}")
-        return []
+            .order_by(SambaChromProfile.email)
+        )
+    else:
+        stmt = select(SambaChromProfile).order_by(SambaChromProfile.email)
+
+    result = await session.execute(stmt)
+    profiles = result.scalars().all()
+
+    return [
+        {
+            # 기존 인터페이스 호환 유지 (directory/name/gaia_name)
+            "directory": p.email,
+            "name": p.display_name or p.email.split("@")[0],
+            "gaia_name": p.display_name or "",
+            # 신규 필드
+            "email": p.email,
+            "display_name": p.display_name or p.email.split("@")[0],
+        }
+        for p in profiles
+    ]
 
 
 # 잔액 체크 요청 플래그 (확장앱이 폴링으로 확인)
@@ -361,3 +378,55 @@ async def get_balance(
         "cookie_updated_at": extra.get("cookie_updated_at"),
         "has_cookie": bool(extra.get("musinsa_cookie")),
     }
+
+
+# ==================== 확장앱 전용 엔드포인트 (extension_router) ====================
+
+
+class SyncChromeProfileRequest(BaseModel):
+    email: str
+    gaia_id: Optional[str] = None
+    display_name: Optional[str] = None
+
+
+@extension_router.post("/sync-chrome-profile")
+async def sync_chrome_profile(
+    body: SyncChromeProfileRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """확장앱에서 크롬 프로필 동기화 — email 기반 upsert."""
+    from backend.domain.samba.sourcing_account.model import SambaChromProfile
+
+    if not body.email:
+        return {"ok": False, "message": "이메일이 비어 있습니다"}
+
+    # email로 기존 레코드 조회
+    stmt = select(SambaChromProfile).where(SambaChromProfile.email == body.email)
+    result = await session.execute(stmt)
+    existing = result.scalars().first()
+
+    now = datetime.now(timezone.utc)
+
+    if existing:
+        # 기존 레코드 업데이트
+        existing.last_seen_at = now
+        if body.gaia_id:
+            existing.gaia_id = body.gaia_id
+        if body.display_name:
+            existing.display_name = body.display_name
+        session.add(existing)
+        await session.commit()
+        logger.info(f"[크롬프로필] 갱신: {body.email}")
+        return {"ok": True, "email": existing.email, "action": "updated"}
+    else:
+        # 새 레코드 생성
+        profile = SambaChromProfile(
+            email=body.email,
+            gaia_id=body.gaia_id,
+            display_name=body.display_name or body.email.split("@")[0],
+            last_seen_at=now,
+        )
+        session.add(profile)
+        await session.commit()
+        logger.info(f"[크롬프로필] 신규 등록: {body.email}")
+        return {"ok": True, "email": body.email, "action": "created"}

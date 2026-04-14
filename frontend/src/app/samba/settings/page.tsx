@@ -2114,7 +2114,7 @@ export default function SettingsPage() {
                 <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '120px', flexShrink: 0 }}>크롬 프로필</label>
                 <select style={{ ...inputStyle, flex: 1 }} value={sourcingForm.chrome_profile} onChange={e => setSourcingForm(prev => ({ ...prev, chrome_profile: e.target.value }))}>
                   <option value="">선택 안함</option>
-                  {chromeProfiles.map(p => <option key={p.directory} value={p.directory}>{p.name} ({p.directory})</option>)}
+                  {chromeProfiles.map(p => <option key={p.email || p.directory} value={p.email || p.directory}>{p.display_name || p.name} ({p.email || p.directory})</option>)}
                 </select>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
@@ -2159,7 +2159,7 @@ export default function SettingsPage() {
                         {a.chrome_profile && <span style={{ fontSize: '0.68rem', color: '#888', fontFamily: 'monospace' }}>{a.chrome_profile}</span>}
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem', fontSize: '0.7rem' }}>
-                        {a.chrome_profile && <span style={{ color: '#666', background: '#1A1A1A', padding: '0.05rem 0.3rem', borderRadius: '3px' }}>{chromeProfiles.find(p => p.directory === a.chrome_profile)?.name || a.chrome_profile}</span>}
+                        {a.chrome_profile && <span style={{ color: '#666', background: '#1A1A1A', padding: '0.05rem 0.3rem', borderRadius: '3px' }}>{chromeProfiles.find(p => p.email === a.chrome_profile || p.directory === a.chrome_profile)?.display_name || chromeProfiles.find(p => p.email === a.chrome_profile || p.directory === a.chrome_profile)?.name || a.chrome_profile}</span>}
                         {a.memo && <span style={{ color: '#888' }}>{a.memo}</span>}
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem', fontSize: '0.7rem' }}>

@@ -386,7 +386,7 @@ def _build_market_product_url(
     urls = {
         "스마트스토어": f"https://smartstore.naver.com/{store_slug}/products/{product_no}"
         if store_slug
-        else f"https://search.shopping.naver.com/product/{product_no}",
+        else "",
         "쿠팡": f"https://www.coupang.com/vp/products/{product_no}",
         "11번가": f"https://www.11st.co.kr/products/{product_no}",
         "롯데ON": f"https://www.lotteon.com/product/{product_no}",
@@ -889,6 +889,26 @@ async def _do_sync_cs_from_markets(
         except Exception as e:
             raise HTTPException(500, f"설정 조회 실패: {e}")
 
+    # SambaMarketAccount에서 smartstore 슬러그 미리 조회 (clientId → storeSlug 맵)
+    _ss_slug_map: dict[str, str] = {}
+    try:
+        from backend.domain.samba.account.model import SambaMarketAccount
+
+        _ss_acc_result = await session.execute(
+            select(SambaMarketAccount).where(
+                SambaMarketAccount.market_type == "smartstore",
+                SambaMarketAccount.is_active == True,  # noqa: E712
+            )
+        )
+        for _acc in _ss_acc_result.scalars().all():
+            _af = _acc.additional_fields or {}
+            _cid = _af.get("clientId", "") or _acc.api_key or ""
+            _slug = _af.get("storeSlug", "")
+            if _cid and _slug:
+                _ss_slug_map[_cid] = _slug
+    except Exception:
+        pass  # 슬러그 조회 실패 시 기존 로직으로 폴백
+
     for setting in ss_settings:
         try:
             import json
@@ -901,7 +921,12 @@ async def _do_sync_cs_from_markets(
             client_id = config.get("clientId", "")
             client_secret = config.get("clientSecret", "")
             account_name = config.get("businessName", "") or config.get("storeId", "")
-            store_slug = config.get("storeSlug", "") or config.get("storeId", "")
+            # storeSlug 우선순위: SambaMarketAccount > settings.storeSlug
+            # settings.storeId가 이메일 형태이면 슬러그로 사용 불가
+            _raw_slug = config.get("storeSlug", "") or config.get("storeId", "")
+            store_slug = _ss_slug_map.get(client_id) or (
+                _raw_slug if _raw_slug and "@" not in _raw_slug else ""
+            )
 
             if not client_id or not client_secret:
                 continue
@@ -1344,18 +1369,48 @@ async def _do_sync_cs_from_markets(
                     if not qna_no:
                         continue
 
-                    # 중복 체크
-                    existing = await session.execute(
+                    # 중복 체크 (기존 데이터에 product_link 없으면 업데이트)
+                    existing_result = await session.execute(
                         select(SambaCSInquiry).where(
                             SambaCSInquiry.market == "플레이오토",
                             SambaCSInquiry.market_inquiry_no == qna_no,
                         )
                     )
-                    if existing.scalar_one_or_none():
-                        continue
+                    existing_row = existing_result.scalar_one_or_none()
 
                     state = qna.get("State", "")
                     is_answered = state in ("답변완료", "전송완료")
+
+                    site_name = qna.get("SiteName", "")
+                    prod_code = qna.get("ProdCode") or qna.get("MasterCode") or ""
+
+                    # SiteName → 판매 구매페이지 URL 매핑
+                    _pa_site_url_map = {
+                        "GS이숍": "https://www.gsshop.com/prd/prd.gs?prdid={code}",
+                        "GS홈쇼핑": "https://www.gsshop.com/prd/prd.gs?prdid={code}",
+                        "GS샵": "https://www.gsshop.com/prd/prd.gs?prdid={code}",
+                        "지마켓": "https://item.gmarket.co.kr/Item?goodsCode={code}",
+                        "옥션": "https://itempage3.auction.co.kr/DetailView.aspx?ItemNo={code}",
+                        "11번가": "https://www.11st.co.kr/products/{code}",
+                        "쿠팡": "https://www.coupang.com/vp/products/{code}",
+                        "롯데ON": "https://www.lotteon.com/product/{code}",
+                        "인터파크": "https://shopping.interpark.com/product/productInfo.do?prdNo={code}",
+                        "위메프": "https://www.wemakeprice.com/product/{code}",
+                        "티몬": "https://www.tmon.co.kr/deal/{code}",
+                    }
+                    _pa_tpl = _pa_site_url_map.get(site_name, "")
+                    pa_product_link = (
+                        _pa_tpl.format(code=prod_code)
+                        if (_pa_tpl and prod_code)
+                        else ""
+                    )
+
+                    # 기존 데이터가 있지만 product_link가 비어 있으면 URL만 업데이트
+                    if existing_row:
+                        if pa_product_link and not existing_row.product_link:
+                            existing_row.product_link = pa_product_link
+                            session.add(existing_row)
+                        continue
 
                     raw_date = qna.get("WriteDate") or qna.get("QDate")
                     parsed_date = None
@@ -1367,14 +1422,12 @@ async def _do_sync_cs_from_markets(
                         except Exception:
                             pass
 
-                    site_name = qna.get("SiteName", "")
                     inquiry_data = {
                         "market": "플레이오토",
                         "market_inquiry_no": qna_no,
                         "market_answer_no": None,
                         "market_order_id": qna.get("OrderCode"),
-                        "market_product_no": qna.get("ProdCode")
-                        or qna.get("MasterCode"),
+                        "market_product_no": prod_code or None,
                         "account_name": f"{pa_label} ({site_name})"
                         if site_name
                         else pa_label,
@@ -1382,7 +1435,7 @@ async def _do_sync_cs_from_markets(
                         "questioner": qna.get("QName", ""),
                         "product_name": "",
                         "product_image": "",
-                        "product_link": "",
+                        "product_link": pa_product_link,
                         "original_link": "",
                         "collected_product_id": None,
                         "content": qna.get("QContent", "") or qna.get("QSubject", ""),

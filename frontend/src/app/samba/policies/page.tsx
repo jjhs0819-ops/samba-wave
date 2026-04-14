@@ -5,7 +5,8 @@ import { useSearchParams } from "next/navigation"
 import { policyApi, forbiddenApi, accountApi, detailTemplateApi, nameRuleApi, collectorApi, type SambaPolicy, type SambaMarketAccount, type SambaDetailTemplate, type SambaNameRule, type SambaCollectedProduct } from "@/lib/samba/api"
 import { MARKETS, MARKET_ID_BY_LABEL, POLICY_MARKETS_DOMESTIC, POLICY_MARKETS_OVERSEAS } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
-import { card, inputStyle } from '@/lib/samba/styles'
+import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
+import { SITE_COLORS } from '@/lib/samba/constants'
 import NumInput from '@/components/samba/NumInput'
 
 
@@ -14,6 +15,11 @@ interface RangeMargin {
   max: number
   rate: number
   amount: number
+}
+
+interface SourceSiteMargin {
+  marginRate: number
+  marginAmount: number
 }
 
 interface PricingForm {
@@ -28,6 +34,7 @@ interface PricingForm {
   customFormula: string
   currency: string
   customsIncluded: boolean
+  sourceSiteMargins: Record<string, SourceSiteMargin>
 }
 
 // 마켓정책
@@ -74,6 +81,15 @@ const defaultPricing: PricingForm = {
   customFormula: '',
   currency: 'KRW',
   customsIncluded: false,
+  sourceSiteMargins: {},
+}
+
+// 소싱처 목록 (SITE_COLORS 키 기반, 표시명 매핑)
+const SOURCING_SITE_LABELS: Record<string, string> = {
+  MUSINSA: '무신사', KREAM: '크림', FashionPlus: '패션플러스', Nike: '나이키',
+  Adidas: '아디다스', ABCmart: 'ABC마트', LOTTEON: '롯데ON', GSShop: 'GS샵',
+  SSG: 'SSG', REXMONDE: '렉스몬드', ElandMall: '이랜드몰', SSF: 'SSF',
+  NAVERSTORE: '네이버스토어', DANAWA: '다나와',
 }
 
 
@@ -90,6 +106,9 @@ export default function PoliciesPage() {
 
   // 정책 선택 드롭다운
   const [selectedPolicyId, setSelectedPolicyId] = useState<string | null>(null)
+
+  // 소싱처별 추가 마진 UI 토글
+  const [showSourceSiteMargins, setShowSourceSiteMargins] = useState(false)
 
   // 마켓정책 설정
   const [marketPolicyTab, setMarketPolicyTab] = useState('쿠팡')
@@ -221,6 +240,7 @@ export default function PoliciesPage() {
       customFormula: String(pr.customFormula ?? ''),
       currency: String(pr.currency ?? 'KRW'),
       customsIncluded: Boolean(pr.customsIncluded),
+      sourceSiteMargins: (pr.sourceSiteMargins || {}) as Record<string, SourceSiteMargin>,
     })
     // 마켓 정책 로드
     const mp = (p.market_policies || {}) as Record<string, MarketPolicyForm>
@@ -249,6 +269,7 @@ export default function PoliciesPage() {
           customFormula: pricing.customFormula,
           currency: pricing.currency,
           customsIncluded: pricing.customsIncluded,
+          sourceSiteMargins: pricing.sourceSiteMargins,
         },
         market_policies: marketPolicies,
         extras: {
@@ -353,6 +374,16 @@ export default function PoliciesPage() {
     const updated = [...pricing.rangeMargins]
     updated[idx] = { ...updated[idx], [field]: value }
     setPricing({ ...pricing, rangeMargins: updated })
+    triggerAutoSave()
+  }
+
+  // 소싱처별 추가 마진 업데이트
+  const updateSourceSiteMargin = (siteId: string, field: 'marginRate' | 'marginAmount', value: number) => {
+    const current = pricing.sourceSiteMargins[siteId] || { marginRate: 0, marginAmount: 0 }
+    setPricing({
+      ...pricing,
+      sourceSiteMargins: { ...pricing.sourceSiteMargins, [siteId]: { ...current, [field]: value } }
+    })
     triggerAutoSave()
   }
 
@@ -562,7 +593,64 @@ export default function PoliciesPage() {
 
             {/* 가격 계산 공식 */}
             <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: '8px', padding: '0.75rem 1rem', border: '1px solid #2D2D2D', fontSize: '0.8rem', color: '#888' }}>
-              [상품금액] = [원가] + [마진] + [배송비] + [추가요금] + [관세] + [마켓 수수료]
+              [상품금액] = [원가] + [마진] + [배송비] + [소싱처 추가 마진] + [관세] + [마켓 수수료]
+            </div>
+
+            {/* 소싱처별 추가 마진 설정 */}
+            <div style={{ marginTop: '1rem', borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem' }}>
+              <div
+                onClick={() => setShowSourceSiteMargins(!showSourceSiteMargins)}
+                style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', userSelect: 'none' }}
+              >
+                <span style={{ color: '#888', fontSize: '0.75rem' }}>{showSourceSiteMargins ? '▼' : '▶'}</span>
+                <span style={{ color: '#C5C5C5', fontSize: '0.8125rem', fontWeight: 600 }}>소싱처별 추가 마진 설정</span>
+                {Object.values(pricing.sourceSiteMargins).some(v => v.marginRate > 0 || v.marginAmount > 0) && (
+                  <span style={{ fontSize: '0.7rem', color: '#FF8C00' }}>
+                    ({Object.values(pricing.sourceSiteMargins).filter(v => v.marginRate > 0 || v.marginAmount > 0).length}개 설정됨)
+                  </span>
+                )}
+                <span style={{ fontSize: '0.7rem', color: '#555', marginLeft: '0.25rem' }}>— 기본 마진에 추가로 가산 (수수료 역산 전 적용)</span>
+              </div>
+              {showSourceSiteMargins && (
+                <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                    <span style={{ width: '90px', fontSize: '0.7rem', color: '#555' }}>소싱처</span>
+                    <span style={{ width: '100px', fontSize: '0.7rem', color: '#555', textAlign: 'center' }}>추가 마진율(%)</span>
+                    <span style={{ width: '110px', fontSize: '0.7rem', color: '#555', textAlign: 'center' }}>추가 마진금액(원)</span>
+                  </div>
+                  {Object.keys(SOURCING_SITE_LABELS).map(siteId => {
+                    const ssm = pricing.sourceSiteMargins[siteId] || { marginRate: 0, marginAmount: 0 }
+                    const isSet = ssm.marginRate > 0 || ssm.marginAmount > 0
+                    return (
+                      <div key={siteId} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span style={{
+                          width: '90px', fontSize: '0.75rem', fontWeight: 600,
+                          color: isSet ? (SITE_COLORS[siteId] || '#888') : '#555',
+                        }}>
+                          {SOURCING_SITE_LABELS[siteId]}
+                        </span>
+                        <NumInput
+                          value={ssm.marginRate}
+                          onChange={(v) => updateSourceSiteMargin(siteId, 'marginRate', v)}
+                          style={{ width: '80px' }}
+                          suffix="%"
+                        />
+                        <NumInput
+                          value={ssm.marginAmount}
+                          onChange={(v) => updateSourceSiteMargin(siteId, 'marginAmount', v)}
+                          style={{ width: '100px' }}
+                          suffix="원"
+                        />
+                        {isSet && (
+                          <span style={{ fontSize: '0.7rem', color: '#FF8C00' }}>
+                            +{ssm.marginRate > 0 ? `${ssm.marginRate}%` : ''}{ssm.marginRate > 0 && ssm.marginAmount > 0 ? ' + ' : ''}{ssm.marginAmount > 0 ? `${fmtNum(ssm.marginAmount)}원` : ''}
+                          </span>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           </div>
 

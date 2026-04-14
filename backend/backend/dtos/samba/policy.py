@@ -24,3 +24,4 @@ class PolicyUpdate(BaseModel):
 class PriceCalculateRequest(BaseModel):
     cost: float
     fee_rate: float = 0
+    source_site: str = ""

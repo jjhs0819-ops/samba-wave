@@ -639,6 +639,7 @@ async def _site_autotune_loop(site: str):
                                             policy.pricing,
                                             market_type,
                                             policy.market_policies,
+                                            source_site=site,
                                         )
                                     else:
                                         expected_price = int(new_cost)

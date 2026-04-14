@@ -48,6 +48,7 @@ from backend.api.v1.routers.samba.wholesale import router as samba_wholesale_rou
 from backend.api.v1.routers.samba.sns_posting import router as samba_sns_posting_router
 from backend.api.v1.routers.samba.sourcing_account import (
     router as samba_sourcing_account_router,
+    extension_router as samba_sourcing_account_extension_router,
 )
 
 from backend.domain.user.auth_service import get_user_id
@@ -557,6 +558,8 @@ def create_application() -> FastAPI:
     app.include_router(
         samba_sourcing_account_router, prefix="/api/v1/samba", dependencies=_samba_auth
     )
+    # 확장앱 전용 엔드포인트 — JWT 인증 없이 X-Api-Key만 사용
+    app.include_router(samba_sourcing_account_extension_router, prefix="/api/v1/samba")
 
     # 로컬 이미지 저장 디렉토리 서빙 (R2 미설정 시 사용)
     static_dir = Path(__file__).resolve().parent / "static" / "images"

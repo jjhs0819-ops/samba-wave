@@ -420,4 +420,6 @@ async def calculate_price(
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     svc = _get_service(session)
-    return await svc.get_price_preview(policy_id, body.cost, body.fee_rate)
+    return await svc.get_price_preview(
+        policy_id, body.cost, body.fee_rate, body.source_site
+    )

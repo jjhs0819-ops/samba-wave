@@ -1016,17 +1016,66 @@ chrome.alarms.get('balanceCheckPoll', (alarm) => {
   }
 })
 
+// ==================== 크롬 프로필 동기화 ====================
+
+async function syncChromeProfile() {
+  try {
+    const info = await chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' })
+    if (!info.email) {
+      console.log('[프로필동기화] 이메일 없음 (Google 계정 로그인 필요)')
+      return
+    }
+    console.log(`[프로필동기화] 이메일: ${info.email}, gaia_id: ${info.id}`)
+    const body = JSON.stringify({
+      email: info.email,
+      gaia_id: info.id || '',
+      display_name: info.email.split('@')[0],
+    })
+    const headers = { 'Content-Type': 'application/json' }
+
+    // 클라우드 서버에 전송
+    try {
+      await apiFetch(
+        `${CLOUD_URL}/api/v1/samba/sourcing-accounts/sync-chrome-profile`,
+        { method: 'POST', headers, body }
+      )
+    } catch (e) {
+      console.warn('[프로필동기화] 클라우드 전송 실패:', e.message)
+    }
+
+    // 로컬 서버에도 전송 (로컬 개발 환경)
+    if (PROXY_URL !== CLOUD_URL) {
+      try {
+        const res = await apiFetch(
+          `${PROXY_URL}/api/v1/samba/sourcing-accounts/sync-chrome-profile`,
+          { method: 'POST', headers, body }
+        )
+        if (res.ok) {
+          console.log('[프로필동기화] 완료')
+        }
+      } catch (e) {
+        console.log('[프로필동기화] 로컬 서버 없음 (무시):', e.message)
+      }
+    }
+  } catch (e) {
+    console.log(`[프로필동기화] 오류 (무시): ${e.message}`)
+  }
+}
+
 // 설치/업데이트 시
 chrome.runtime.onInstalled.addListener(() => {
   setupCookieSyncAlarm()
   startCollectPolling()
+  syncChromeProfile()
 })
 chrome.runtime.onStartup.addListener(() => {
   setupCookieSyncAlarm()
   startCollectPolling()
+  syncChromeProfile()
 })
 setupCookieSyncAlarm()
 startCollectPolling()
+syncChromeProfile()
 
 // ==================== AI소싱 큐 폴링 ====================
 

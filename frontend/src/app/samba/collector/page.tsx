@@ -712,18 +712,21 @@ export default function CollectorPage() {
   };
 
   const handleCollectGroups = async () => {
-    // 체크된 그룹이 없으면 현재 보이는 그룹 전체 수집
+    // 체크된 그룹이 있으면 체크박스 기준, 없고 상세뷰(drillGroup)가 열려있으면 해당 그룹만, 그 외 전체
     // displayedFilters와 교집합으로 실제 대상 결정
     const targetFilters = selectedIds.size > 0
       ? displayedFilters.filter(f => selectedIds.has(f.id))
-      : displayedFilters
+      : drillGroup
+        ? displayedFilters.filter(f => f.id === drillGroup)
+        : displayedFilters
     const targetIds = targetFilters.map(f => f.id)
     if (targetIds.length === 0) {
       addLog("수집할 그룹이 없습니다.")
       return
     }
     const totalReq = targetFilters.reduce((s, f) => s + (f.requested_count || 0), 0)
-    const ok = await showConfirm(`${selectedIds.size > 0 ? '선택된' : '표시된'} ${targetIds.length}개 그룹 상품수집을 시작하시겠습니까?\n(요청 ${totalReq.toLocaleString()}건, 중복 상품은 자동 스킵)`)
+    const label = selectedIds.size > 0 ? '선택된' : drillGroup ? '선택된' : '표시된'
+    const ok = await showConfirm(`${label} ${targetIds.length}개 그룹 상품수집을 시작하시겠습니까?\n(요청 ${totalReq.toLocaleString()}건, 중복 상품은 자동 스킵)`)
     if (!ok) return
     const abort = new AbortController()
     collectAbortRef.current = abort

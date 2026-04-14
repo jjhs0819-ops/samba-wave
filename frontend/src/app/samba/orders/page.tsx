@@ -107,6 +107,9 @@ export default function OrdersPage() {
     setNotifications(prev => [...prev, { id, message, type }])
   }
 
+  // 주문별 업데이트 로그 (주문 ID → 마지막 갱신 결과)
+  const [refreshLog, setRefreshLog] = useState<Record<string, string>>({})
+
   // 가격이력 모달
   const [priceHistoryModal, setPriceHistoryModal] = useState(false)
   const [priceHistoryData, setPriceHistoryData] = useState<Record<string, unknown>[]>([])
@@ -1107,6 +1110,12 @@ export default function OrdersPage() {
                       />
                     </div>
 
+                    {/* 업데이트 로그 */}
+                    {refreshLog[o.id] && (
+                      <div style={{ fontSize: '0.72rem', color: '#8A95B0', padding: '0.25rem 0', marginBottom: '0.25rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                        {refreshLog[o.id]}
+                      </div>
+                    )}
                     {/* 버튼 */}
                     <div style={{ display: 'flex', gap: '0.375rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
                       <button onClick={() => handleDanawa(o.product_name || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>다나와</button>
@@ -1172,9 +1181,13 @@ export default function OrdersPage() {
                       <button onClick={() => openUrlModal(o.id)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>미등록 입력</button>
                       <button onClick={() => handleTracking(o.shipping_company || '', o.tracking_number || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>배송조회</button>
                       <button onClick={async () => {
-                        // 마켓상품번호 → 수집상품 ID 역추적 → enrich 호출
+                        const ts = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                        setRefreshLog(prev => ({ ...prev, [o.id]: `[${ts}] 가격재고 갱신 중...` }))
+                        // 마켓상품번호 → 수집상품 ID 역추적
                         let cpId = ''
-                        if (o.product_id) {
+                        if (o.collected_product_id) {
+                          cpId = o.collected_product_id
+                        } else if (o.product_id) {
                           try {
                             const lookup = await collectorApi.lookupByMarketNo(o.product_id)
                             if (lookup.found && lookup.id) cpId = lookup.id
@@ -1189,22 +1202,22 @@ export default function OrdersPage() {
                             } catch { /* ignore */ }
                           }
                         }
-                        if (!cpId) { showAlert('수집상품을 찾을 수 없습니다', 'info'); return }
+                        if (!cpId) {
+                          setRefreshLog(prev => ({ ...prev, [o.id]: `[${ts}] 수집상품을 찾을 수 없습니다` }))
+                          return
+                        }
                         try {
-                          const { API_BASE_URL: apiBase } = await import('@/config/api')
-                          const res = await fetchWithAuth(`${apiBase}/api/v1/samba/collector/enrich/${cpId}`, { method: 'POST' })
-                          const data = await res.json()
-                          if (res.ok && data.success) {
-                            const p = data.product
-                            const costVal = p?.cost || p?.sale_price
-                            const priceStr = costVal != null ? `₩${Number(costVal).toLocaleString()}` : '-'
-                            const stockStr = p?.is_sold_out ? '품절' : '재고있음'
-                            showAlert(`${(o.product_name || '').slice(0, 20)} → ${priceStr} | ${stockStr}`, 'success')
-                            if (costVal) { await orderApi.update(o.id, { cost: costVal }); loadOrders() }
-                          } else {
-                            showAlert(data.message || '업데이트 실패', 'error')
-                          }
-                        } catch (e) { showAlert(e instanceof Error ? e.message : '업데이트 실패', 'error') }
+                          const res = await collectorApi.refresh([cpId])
+                          const detail = res.details?.[0]
+                          const logMsg = detail
+                            ? `${detail.name?.slice(0, 25)} → ${detail.detail}`
+                            : res.changed > 0 ? '변동 감지' : '변동 없음'
+                          const ts2 = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                          setRefreshLog(prev => ({ ...prev, [o.id]: `[${ts2}] ${logMsg}` }))
+                          loadOrders()
+                        } catch (e) {
+                          setRefreshLog(prev => ({ ...prev, [o.id]: `[${ts}] 갱신 실패: ${e instanceof Error ? e.message : ''}` }))
+                        }
                       }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>업데이트</button>
                       <button onClick={() => showAlert('마켓상품삭제 기능 준비중입니다', 'info')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>마켓상품삭제</button>
                       <button onClick={() => {
@@ -1343,7 +1356,7 @@ export default function OrdersPage() {
                             } catch (err) { showAlert(err instanceof Error ? err.message : '소싱주문번호 저장 실패', 'error') }
                           }}
                           onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                          style={{ flex: 1, fontSize: '0.68rem', padding: '0.25rem 0.375rem', background: '#1A1A1A', border: '1px solid #444', color: '#E5E5E5', borderRadius: '4px', minWidth: 0, fontFamily: 'monospace' }}
+                          style={{ ...inputStyle, flex: 1, fontSize: '0.75rem' }}
                         />
                       </div>
 

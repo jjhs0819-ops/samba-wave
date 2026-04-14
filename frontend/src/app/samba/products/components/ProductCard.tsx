@@ -100,16 +100,23 @@ function buildMarketProductUrl(marketType: string, sellerId: string, productNo: 
 // 가격 계산 공통 함수 (ProductCard 내 2곳 중복 제거)
 export function calcPrice(
   cost: number, mRate: number, ship: number, fee: number, extra: number, minMargin: number,
+  ssMRate = 0, ssMAmount = 0,
 ): { price: number; marginAmt: number; usedMin: boolean; feeAmt: number; calcStr: string } {
   let marginAmt = Math.round(cost * mRate / 100)
   const usedMin = minMargin > 0 && marginAmt < minMargin
   if (usedMin) marginAmt = minMargin
   let price = cost + marginAmt + ship
+  // 소싱처별 추가 마진 (수수료 역산 전 적용 — 백엔드 calc_market_price와 동일)
+  if (ssMRate > 0) price += Math.round(cost * ssMRate / 100)
+  if (ssMAmount > 0) price += ssMAmount
   if (fee > 0 && price > 0) price = Math.ceil(price / (1 - fee / 100))
   if (extra > 0) price += extra
   // 100원 단위 절사 (백엔드 calc_market_price와 동일)
   price = Math.floor(price / 100) * 100
   const feeAmt = fee > 0 && price > 0 ? Math.round(price * fee / 100) : 0
+  const ssExtra = ssMRate > 0 || ssMAmount > 0
+    ? ` + 소싱추가마진 ${fmt(Math.round(cost * ssMRate / 100) + ssMAmount)}`
+    : ''
   const parts = [
     `원가 ${fmt(cost)}`,
     usedMin ? `마진 ${fmt(marginAmt)}(최소마진)` : `마진 ${fmt(marginAmt)}(${mRate}%)`,
@@ -117,7 +124,7 @@ export function calcPrice(
     `추가요금 ${fmt(extra)}`,
     `수수료 ${fmt(feeAmt)}(${fee}%)`,
   ]
-  return { price, marginAmt, usedMin, feeAmt, calcStr: `₩${fmt(price)} = ${parts.join(' + ')}` }
+  return { price, marginAmt, usedMin, feeAmt, calcStr: `₩${fmt(price)} = ${parts.join(' + ')}${ssExtra}` }
 }
 
 // 소싱처별 원문링크 URL 템플릿 (통합 관리)
@@ -371,17 +378,22 @@ const ProductCard = React.memo(function ProductCard({
   // 원가: best_benefit_price(최대혜택가) > sale_price > original_price 순 우선
   const cost = p.cost || p.sale_price || p.original_price || 0
   const policy = policies.find((pol) => pol.id === p.applied_policy_id)
-  const pricing = (policy?.pricing || {}) as Record<string, number>
-  const marginRate = pricing.marginRate || 15
-  const extraCharge = pricing.extraCharge || 0
-  const shippingCost = pricing.shippingCost || 0
-  const feeRate = pricing.feeRate || 0
-  const minMarginAmount = pricing.minMarginAmount || 0
+  const pricing = (policy?.pricing || {}) as Record<string, unknown>
+  const marginRate = (pricing.marginRate as number) || 15
+  const extraCharge = (pricing.extraCharge as number) || 0
+  const shippingCost = (pricing.shippingCost as number) || 0
+  const feeRate = (pricing.feeRate as number) || 0
+  const minMarginAmount = (pricing.minMarginAmount as number) || 0
+  // 소싱처별 추가 마진 추출
+  const sourceSiteMargins = (pricing.sourceSiteMargins || {}) as Record<string, { marginRate?: number; marginAmount?: number }>
+  const ssmData = sourceSiteMargins[p.source_site] || {}
+  const ssMRate = ssmData.marginRate || 0
+  const ssMAmount = ssmData.marginAmount || 0
 
   // 공통 가격 계산 (useMemo 캐싱)
   const { price: marketPrice, marginAmt: calcMarginAmt, usedMin: usedMinMargin, feeAmt: feeAmount, calcStr } = useMemo(
-    () => calcPrice(cost, marginRate, shippingCost, feeRate, extraCharge, minMarginAmount),
-    [cost, marginRate, shippingCost, feeRate, extraCharge, minMarginAmount],
+    () => calcPrice(cost, marginRate, shippingCost, feeRate, extraCharge, minMarginAmount, ssMRate, ssMAmount),
+    [cost, marginRate, shippingCost, feeRate, extraCharge, minMarginAmount, ssMRate, ssMAmount],
   )
   const profit = marketPrice - cost
 
@@ -399,7 +411,7 @@ const ProductCard = React.memo(function ProductCard({
   const marketPriceList = useMemo(() => Object.entries(mp)
     .filter(([, v]) => v.accountId)
     .map(([marketName, v]) => {
-      const r = calcPrice(cost, v.marginRate || marginRate, (v.shippingCost ?? shippingCost) || shippingCost, v.feeRate || 0, extraCharge, minMarginAmount)
+      const r = calcPrice(cost, v.marginRate || marginRate, (v.shippingCost ?? shippingCost) || shippingCost, v.feeRate || 0, extraCharge, minMarginAmount, ssMRate, ssMAmount)
       let displayPrice = r.price
       let displayCalcStr = r.calcStr
       // 스마트스토어: 300원 올림 반영 (백엔드 25% 역산과 동일)
@@ -411,7 +423,7 @@ const ProductCard = React.memo(function ProductCard({
         }
       }
       return { marketName, price: displayPrice, calcStr: displayCalcStr }
-    }), [mp, cost, marginRate, shippingCost, extraCharge, minMarginAmount])
+    }), [mp, cost, marginRate, shippingCost, extraCharge, minMarginAmount, ssMRate, ssMAmount])
 
   const marketEnabled = (p.market_enabled || {}) as Record<string, boolean>
 

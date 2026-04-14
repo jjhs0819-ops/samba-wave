@@ -2614,7 +2614,7 @@ async def brand_create_groups(
             )
             keyword = (
                 f"https://department.ssg.com/search"
-                f"?query={_quote_ssg(_label_ssg)}&stdCtg={code}"
+                f"?query={_quote_ssg(_label_ssg)}&dispCtgId={code}"
                 f"{_rep_brand}{_md_ssg}{_so_ssg}"
             )
             category_filter = code or None

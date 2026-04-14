@@ -219,10 +219,13 @@ class SSGSourcingClient:
                 # page > 1이고 brand_ids 미제공: 필터 없이 진행
                 brand_ids = []
 
-            # 브랜드 필터 적용 URL 구성
+            # 브랜드/카테고리 필터 적용 URL 구성
             search_url = f"{self.SEARCH_URL}?query={quote(keyword)}&page={page}"
             if brand_ids:
                 search_url += f"&repBrandId={'|'.join(brand_ids)}"
+            disp_ctg_id = filters.get("disp_ctg_id", "")
+            if disp_ctg_id:
+                search_url += f"&dispCtgId={disp_ctg_id}"
 
             resp = await client.get(search_url, headers=self._headers())
             if resp.status_code in (429, 403):
@@ -486,9 +489,9 @@ class SSGSourcingClient:
                             brand_resp.text, keyword
                         )
                         item_ids = [
-                            p.get("site_product_id", "")
+                            p.get("siteProductId", "")
                             for p in brand_products[:20]
-                            if p.get("site_product_id")
+                            if p.get("siteProductId")
                         ]
 
                         if item_ids:
@@ -1134,6 +1137,11 @@ class SSGSourcingClient:
             "stdCtgMclsNm": get_str("stdCtgMclsNm"),
             "stdCtgSclsNm": get_str("stdCtgSclsNm"),
             "stdCtgDclsNm": get_str("stdCtgDclsNm"),
+            # 전시카테고리 레벨명 — 있으면 stdCtg보다 우선 사용
+            "dispCtgLclsNm": get_str("dispCtgLclsNm"),
+            "dispCtgMclsNm": get_str("dispCtgMclsNm"),
+            "dispCtgSclsNm": get_str("dispCtgSclsNm"),
+            "dispCtgDclsNm": get_str("dispCtgDclsNm"),
             "dispCtgId": get_str("dispCtgId"),
             "dispCtgNm": get_str("dispCtgNm"),
             "itemImgUrl": get_str("itemImgUrl"),
@@ -1144,6 +1152,15 @@ class SSGSourcingClient:
 
         now_iso = datetime.now(tz=timezone.utc).isoformat()
         timestamp = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
+
+        # refresh_only + 전품절 여부 사전 판단 — 고시정보/이미지 파싱 스킵용
+        _is_early_soldout = refresh_only and (
+            str(obj.get("soldOut", "N")).upper() == "Y"
+            or (
+                uitem_list
+                and all(str(u.get("usablInvQty", "0")) == "0" for u in uitem_list)
+            )
+        )
 
         # 기본 필드
         name = obj.get("itemNm", "").strip()
@@ -1174,41 +1191,72 @@ class SSGSourcingClient:
             _style_code = _mdl_match.group(1).strip() if _mdl_match else ""
 
         # 고시정보 파싱 (색상, 제조국, 재질 등)
-        _prod_info = self._parse_product_notice(html)
+        # refresh_only + 전품절이면 스킵 (HTML 전체 regex 비용 절감)
+        _prod_info = {} if _is_early_soldout else self._parse_product_notice(html)
 
         # 품절 판단: soldOut 필드 (Y/N)
         is_sold_out = str(obj.get("soldOut", "N")).upper() == "Y"
 
-        # 카테고리: HTML breadcrumb(전시 카테고리) 우선 — 카테고리 스캔과 동일 체계
-        # stdCtg(표준 카테고리)는 스캔 결과와 불일치하므로 사용하지 않음
-        _bc_match = re.search(
-            r"신세계백화점\s*[/>\s]+\s*(.+?)(?:<|$)",
-            html[:30000],
-        )
-        if _bc_match:
-            _bc_parts = [
-                p.strip()
-                for p in re.sub(r"<[^>]+>", "", _bc_match.group(1)).split("/")
-                if p.strip()
-            ]
-            # "스포츠웨어/슈즈 > 스포츠 슈즈 > 워킹화" 형태 파싱
-            # breadcrumb 구분자: " > " 또는 " / " (HTML 엔티티 제거 후)
-            if len(_bc_parts) == 1:
-                _bc_parts = [p.strip() for p in _bc_parts[0].split(">") if p.strip()]
-        else:
-            _bc_parts = []
+        # 카테고리: 전시카테고리(dispCtg) 우선 — 카테고리 스캔과 동일 체계
+        # stdCtg(표준 카테고리)는 스캔 결과와 불일치하므로 최후 폴백으로만 사용
+        #
+        # 우선순위:
+        #   1순위: resultItemObj의 dispCtgLclsNm/Mcls/Scls/Dcls (전시카테고리 레벨명)
+        #   2순위: HTML breadcrumb ("신세계백화점 / ..." 패턴)
+        #   3순위: dispCtgNm 단일명
+        #   최후: stdCtg (표준카테고리)
+        _disp_lcls = obj.get("dispCtgLclsNm", "")
+        _disp_mcls = obj.get("dispCtgMclsNm", "")
+        _disp_scls = obj.get("dispCtgSclsNm", "")
+        _disp_dcls = obj.get("dispCtgDclsNm", "")
 
-        if _bc_parts:
-            cat1 = _bc_parts[0] if len(_bc_parts) > 0 else ""
-            cat2 = _bc_parts[1] if len(_bc_parts) > 1 else ""
-            cat3 = _bc_parts[2] if len(_bc_parts) > 2 else ""
-            cat4 = _bc_parts[3] if len(_bc_parts) > 3 else ""
+        if _disp_lcls:
+            # 1순위: dispCtg 레벨명 (가장 정확한 전시카테고리)
+            cat1 = _disp_lcls
+            cat2 = _disp_mcls
+            cat3 = _disp_scls
+            cat4 = _disp_dcls
+            logger.debug(f"[SSG] 카테고리 dispCtg 레벨명 사용: {cat1}>{cat2}>{cat3}")
         else:
-            # 폴백: stdCtg 사용
-            cat1 = obj.get("stdCtgLclsNm", "")
-            cat2 = obj.get("stdCtgMclsNm", "")
-            cat3 = obj.get("stdCtgSclsNm", "")
-            cat4 = obj.get("stdCtgDclsNm", "")
+            # 2순위: HTML breadcrumb
+            # refresh_only + 전품절이면 HTML regex 스킵 (dispCtg/stdCtg 폴백 직행)
+            if not _is_early_soldout:
+                _bc_match = re.search(
+                    r"신세계백화점\s*[/>\s]+\s*(.+?)(?:<|$)",
+                    html[:30000],
+                )
+                if _bc_match:
+                    _bc_parts = [
+                        p.strip()
+                        for p in re.sub(r"<[^>]+>", "", _bc_match.group(1)).split("/")
+                        if p.strip()
+                    ]
+                    if len(_bc_parts) == 1:
+                        _bc_parts = [
+                            p.strip() for p in _bc_parts[0].split(">") if p.strip()
+                        ]
+                else:
+                    _bc_parts = []
+            else:
+                _bc_parts = []
+
+            if _bc_parts:
+                cat1 = _bc_parts[0] if len(_bc_parts) > 0 else ""
+                cat2 = _bc_parts[1] if len(_bc_parts) > 1 else ""
+                cat3 = _bc_parts[2] if len(_bc_parts) > 2 else ""
+                cat4 = _bc_parts[3] if len(_bc_parts) > 3 else ""
+            else:
+                # 3순위: dispCtgNm 단일명
+                _disp_nm = obj.get("dispCtgNm", "")
+                if _disp_nm:
+                    cat1 = _disp_nm
+                    cat2 = cat3 = cat4 = ""
+                else:
+                    # 최후 폴백: stdCtg (표준카테고리)
+                    cat1 = obj.get("stdCtgLclsNm", "")
+                    cat2 = obj.get("stdCtgMclsNm", "")
+                    cat3 = obj.get("stdCtgSclsNm", "")
+                    cat4 = obj.get("stdCtgDclsNm", "")
 
         disp_ctg_id = str(obj.get("dispCtgId") or "")
         category_levels = [c for c in [cat1, cat2, cat3, cat4] if c]
@@ -1219,8 +1267,13 @@ class SSGSourcingClient:
         category_str = " > ".join(category_levels)
 
         # 이미지: itemImgUrl 에서 _i1_36.jpg → _i{N}_1200.jpg 패턴으로 재구성
-        images = self._build_images_from_base_url(
-            obj.get("itemImgUrl", ""), item_id, html
+        # refresh_only + 전품절이면 이미지 파싱 스킵
+        images = (
+            []
+            if _is_early_soldout
+            else self._build_images_from_base_url(
+                obj.get("itemImgUrl", ""), item_id, html
+            )
         )
 
         # 상세 이미지 (갱신 모드에서는 스킵)
@@ -1315,13 +1368,15 @@ class SSGSourcingClient:
     def _parse_product_notice(self, html: str) -> dict[str, str]:
         """상세 HTML에서 고시정보(색상, 제조국, 재질, 제조사 등) 파싱.
 
-        SSG 상세 페이지의 <table> 기반 고시정보에서 주요 필드를 추출한다.
+        SSG 상세 페이지의 <table>(<th>/<td>) 또는 <dl>(<dt>/<dd>) 기반 고시정보에서
+        주요 필드를 추출한다.
         """
         info: dict[str, str] = {}
 
-        # th/td 쌍에서 고시정보 추출
+        # th/td 쌍 + dt/dd 쌍 모두 처리
         pairs = re.findall(
-            r"<t[hd][^>]*>\s*(.*?)\s*</t[hd]>\s*<t[hd][^>]*>\s*(.*?)\s*</t[hd]>",
+            r"<(?:t[hd]|dt|dd)[^>]*>\s*(.*?)\s*</(?:t[hd]|dt|dd)>\s*"
+            r"<(?:t[hd]|dt|dd)[^>]*>\s*(.*?)\s*</(?:t[hd]|dt|dd)>",
             html,
             re.DOTALL | re.IGNORECASE,
         )
@@ -1747,22 +1802,47 @@ class SSGSourcingClient:
 
         array_block = js_block[start:end]
 
-        # 각 객체({...}) 추출
+        # 각 객체({...}) 추출 — 브라켓 카운팅으로 중첩 {} 처리
         items = []
-        obj_pattern = re.compile(r"\{[^{}]+\}", re.DOTALL)
-        for obj_m in obj_pattern.finditer(array_block):
-            block = obj_m.group(0)
+        raw_blocks: list[str] = []
+        _i = 0
+        while _i < len(array_block):
+            if array_block[_i] == "{":
+                _depth, _obj_start = 1, _i
+                _i += 1
+                while _i < len(array_block) and _depth > 0:
+                    _ch = array_block[_i]
+                    if _ch == "\\":
+                        _i += 2
+                        continue
+                    if _ch in ('"', "'"):
+                        _q = _ch
+                        _i += 1
+                        while _i < len(array_block) and array_block[_i] != _q:
+                            if array_block[_i] == "\\":
+                                _i += 1
+                            _i += 1
+                    elif _ch == "{":
+                        _depth += 1
+                    elif _ch == "}":
+                        _depth -= 1
+                    _i += 1
+                raw_blocks.append(array_block[_obj_start:_i])
+            else:
+                _i += 1
 
-            def gs(k: str) -> str:
+        for block in raw_blocks:
+
+            def gs(k: str, _b: str = block) -> str:
                 pm = re.search(
-                    rf"[,\{{]\s*{re.escape(k)}\s*:\s*['\"]([^'\"]*)['\"]", block
+                    rf"(?:^|[,\{{])\s*{re.escape(k)}\s*:\s*['\"]([^'\"]*)['\"]", _b
                 )
                 return pm.group(1).strip() if pm else ""
 
-            def gn(k: str) -> int:
+            def gn(k: str, _b: str = block) -> int:
                 pm = re.search(
-                    rf"[,\{{]\s*{re.escape(k)}\s*:\s*(?:parseInt\s*\(\s*['\"](\d+)['\"]|['\"](\d+)['\"]|(\d+))",
-                    block,
+                    rf"(?:^|[,\{{])\s*{re.escape(k)}\s*:\s*(?:parseInt\s*\(\s*['\"](\d+)['\"]|['\"](\d+)['\"]|(\d+))",
+                    _b,
                 )
                 if pm:
                     v = pm.group(1) or pm.group(2) or pm.group(3)
@@ -1877,18 +1957,15 @@ class SSGSourcingClient:
     def _extract_dept_sale_price(html: str) -> int:
         """department.ssg.com 상세 페이지에서 실질 판매가 추출.
 
-        우선순위:
-          1순위: 카드혜택가 (mndtl_dl_tit > 카드혜택가 섹션) — 존재할 때만
-          2순위: cdtl_new_price notranslate — 항상 현재 최저 비카드가격 표시
-                 (최적가가 있으면 최적가, 없으면 세일가를 자동으로 표시)
-          3순위: cdtl_price point — 최적가 tooltip fallback
-        """
-        # 1순위: 카드혜택가
-        card_price = SSGSourcingClient._extract_card_benefit_price(html)
-        if card_price > 0:
-            return card_price
+        카드혜택가는 특정 카드 소지자만 적용되므로 salePrice에 포함하지 않음.
+        카드혜택가는 _extract_card_benefit_price()로 별도 추출 → bestBenefitPrice에만 반영.
 
-        # 2순위: 메인 표시 가격 (최적가 or 세일가 — 항상 현재 최저 비카드가격)
+        우선순위:
+          1순위: cdtl_new_price notranslate — 항상 현재 최저 비카드가격 표시
+                 (최적가가 있으면 최적가, 없으면 세일가를 자동으로 표시)
+          2순위: cdtl_price point — 최적가 tooltip fallback
+        """
+        # 1순위: 메인 표시 가격 (최적가 or 세일가 — 항상 현재 최저 비카드가격)
         m = re.search(
             r"cdtl_new_price\s+notranslate[^>]*>.*?ssg_price[^>]*>([\d,]+)",
             html,

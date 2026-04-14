@@ -9,6 +9,10 @@ from sqlmodel import Column, DateTime, Field, JSON, SQLModel, Text
 from ulid import ULID
 
 
+def generate_chrome_profile_id() -> str:
+    return f"cp_{ULID()}"
+
+
 def generate_sourcing_account_id() -> str:
     return f"sa_{ULID()}"
 
@@ -69,6 +73,36 @@ class SambaSourcingAccount(SQLModel, table=True):
         default_factory=lambda: datetime.now(tz=timezone.utc),
     )
     updated_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+        default_factory=lambda: datetime.now(tz=timezone.utc),
+    )
+
+
+class SambaChromProfile(SQLModel, table=True):
+    """확장앱에서 동기화된 크롬 프로필 정보."""
+
+    __tablename__ = "samba_chrome_profile"
+
+    id: str = Field(
+        default_factory=generate_chrome_profile_id,
+        primary_key=True,
+        max_length=30,
+    )
+    tenant_id: Optional[str] = Field(
+        default=None, sa_column=Column(String, index=True, nullable=True)
+    )
+    email: str = Field(
+        sa_column=Column(Text, nullable=False, index=True),
+    )
+    display_name: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+    gaia_id: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    last_seen_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+        default_factory=lambda: datetime.now(tz=timezone.utc),
+    )
+    created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False),
         default_factory=lambda: datetime.now(tz=timezone.utc),
     )

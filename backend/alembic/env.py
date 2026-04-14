@@ -34,6 +34,7 @@ from backend.domain.samba.user.model import *  # noqa: F401,F403
 from backend.domain.samba.job.model import *  # noqa: F401,F403
 from backend.domain.samba.store_care.model import *  # noqa: F401,F403
 from backend.domain.samba.wholesale.model import *  # noqa: F401,F403
+from backend.domain.samba.sourcing_account.model import *  # noqa: F401,F403
 
 config = context.config
 

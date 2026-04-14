@@ -1698,13 +1698,15 @@ class SmartStoreClient:
     ) -> dict[str, Any]:
         """SambaCollectedProduct → 스마트스토어 상품 등록 데이터 변환."""
         # 스마트스토어 상품명: market_names 우선, 없으면 name에서 49자 슬라이스
+        # 스마트스토어 금지 특수문자 제거: \ * ? " < >
+        _re_ss_special = re.compile(r'[\\*?"<>]')
         market_names = product.get("market_names") or {}
         ss_name = market_names.get("스마트스토어", "")
         if ss_name:
-            product_name = ss_name[:49]
+            product_name = _re_ss_special.sub("", ss_name).strip()[:49]
         else:
             raw_name = product.get("name", "")
-            product_name = raw_name[:49]
+            product_name = _re_ss_special.sub("", raw_name).strip()[:49]
 
         images_raw = product.get("images") or []
 
@@ -2254,14 +2256,16 @@ class SmartStoreClient:
         brand = first.get("brand", "")
 
         # 그룹 상품명: market_names 우선, 없으면 모델명(색상 제거) → 50자 슬라이스
+        # 스마트스토어 금지 특수문자 제거: \ * ? " < >
+        _re_ss_special = re.compile(r'[\\*?"<>]')
         first_market_names = first.get("market_names") or {}
         ss_group_name = first_market_names.get("스마트스토어", "")
         if ss_group_name:
-            group_name = ss_group_name[:50]
+            group_name = _re_ss_special.sub("", ss_group_name).strip()[:50]
         else:
             name = first.get("name", "")
-            group_name = name.split(" - ", 1)[0].strip() if " - " in name else name
-            group_name = group_name[:50]
+            name_base = name.split(" - ", 1)[0].strip() if " - " in name else name
+            group_name = _re_ss_special.sub("", name_base).strip()[:50]
 
         # A/S 정보
         as_phone = account_settings.get("asPhone", "") or "상세페이지 참조"

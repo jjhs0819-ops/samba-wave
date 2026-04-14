@@ -365,7 +365,20 @@ class SambaCollectorService:
                     if base >= r.get("min", 0) and base < max_val:
                         margin_rate = r.get("rate", 15)
                         break
-            calculated = int(base * (1 + margin_rate / 100) + shipping + extra)
+            # 소싱처별 추가 마진
+            source_margin = 0
+            ssm_data = policy_data.get("source_site_margins") or {}
+            if ssm_data and p.source_site:
+                _ssm = ssm_data.get(p.source_site, {})
+                _ss_rate = _ssm.get("marginRate", 0)
+                _ss_amount = _ssm.get("marginAmount", 0)
+                if _ss_rate > 0:
+                    source_margin += round(base * _ss_rate / 100)
+                if _ss_amount > 0:
+                    source_margin += _ss_amount
+            calculated = int(
+                base * (1 + margin_rate / 100) + source_margin + shipping + extra
+            )
             await self.product_repo.update_async(
                 p.id,
                 applied_policy_id=policy_id,

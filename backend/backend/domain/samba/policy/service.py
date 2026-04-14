@@ -47,7 +47,7 @@ class SambaPolicyService:
         return await self.repo.delete_async(policy_id)
 
     async def calculate_market_price(
-        self, policy_id: str, cost: float, fee_rate: float = 0
+        self, policy_id: str, cost: float, fee_rate: float = 0, source_site: str = ""
     ) -> int:
         policy = await self.repo.get_async(policy_id)
         if not policy or not policy.pricing:
@@ -68,6 +68,14 @@ class SambaPolicyService:
             price = price / (1 - margin_rate / 100)
         if pricing.get("marginAmount", 0) > 0:
             price += pricing["marginAmount"]
+
+        # 소싱처별 추가 마진 (수수료 역산 전 적용)
+        if source_site:
+            _ssm = pricing.get("sourceSiteMargins", {}).get(source_site, {})
+            if _ssm.get("marginRate", 0) > 0:
+                price += cost * _ssm["marginRate"] / 100
+            if _ssm.get("marginAmount", 0) > 0:
+                price += _ssm["marginAmount"]
 
         # 추가 요금
         price += pricing.get("extraCharge", 0)
@@ -99,9 +107,11 @@ class SambaPolicyService:
         return 15
 
     async def get_price_preview(
-        self, policy_id: str, cost: float, fee_rate: float = 0
+        self, policy_id: str, cost: float, fee_rate: float = 0, source_site: str = ""
     ) -> Dict[str, Any]:
-        market_price = await self.calculate_market_price(policy_id, cost, fee_rate)
+        market_price = await self.calculate_market_price(
+            policy_id, cost, fee_rate, source_site
+        )
         profit = market_price - cost
         profit_rate = round((profit / market_price) * 100, 1) if market_price > 0 else 0
         return {

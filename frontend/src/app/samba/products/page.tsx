@@ -32,6 +32,7 @@ export default function ProductsPage() {
   const router = useRouter();
 
   // URL searchParams에서 필터 읽기 — 한 번 읽은 뒤 URL에서 제거 (새로고침 시 풀림)
+  // searchParams를 dep에 포함해야 클라이언트 네비게이션 시에도 동작함
   const [filterByGroupId, setFilterByGroupId] = useState(searchParams.get("search_filter_id") || "")
   const [filterGroupName, setFilterGroupName] = useState(searchParams.get("group_name") || "")
   useEffect(() => {
@@ -47,8 +48,9 @@ export default function ProductsPage() {
       const qs = params.toString()
       router.replace(`/samba/products${qs ? `?${qs}` : ""}`)
     }
+  // searchParams가 바뀔 때(클라이언트 네비게이션)도 재실행 필요
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [searchParams])
 
   // highlight는 로컬 state로 관리 → 새로고침 시 자동 해제
   const [highlightProductId, setHighlightProductId] = useState(searchParams.get("highlight") || "");

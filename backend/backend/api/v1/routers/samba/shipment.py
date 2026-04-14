@@ -22,6 +22,8 @@ class ShipmentStartRequest(BaseModel):
 class MarketDeleteRequest(BaseModel):
     product_ids: list[str]
     target_account_ids: list[str]
+    current_idx: int | None = None  # 전체 삭제 중 현재 인덱스 (로그 표시용)
+    total_count: int | None = None  # 전체 삭제 대상 수 (로그 표시용)
 
 
 class MarketDeleteByAccountRequest(BaseModel):
@@ -169,7 +171,12 @@ async def market_delete(
 ):
     """선택된 상품을 대상 마켓에서 판매중지/삭제."""
     svc = _get_service(session)
-    return await svc.delete_from_markets(body.product_ids, body.target_account_ids)
+    return await svc.delete_from_markets(
+        body.product_ids,
+        body.target_account_ids,
+        current_idx=body.current_idx,
+        total_count=body.total_count,
+    )
 
 
 @router.post("/market-delete-by-account")

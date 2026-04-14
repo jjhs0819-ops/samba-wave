@@ -62,6 +62,8 @@ export default function ShipmentsPage() {
   const abortRef = useRef(false)
   const activeJobIdRef = useRef('')
   const jobPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const deletePollRef = useRef<ReturnType<typeof setInterval> | null>(null)  // 삭제 중 500ms 폴링
+  const bgPollRef = useRef<ReturnType<typeof setInterval> | null>(null)  // 상시 2s 백그라운드 폴링 (다른 창 공유용)
   const sinceIdxRef = useRef(0)  // 링 버퍼 폴링용
 
   // 실시간 Job 큐 상태
@@ -76,6 +78,8 @@ export default function ShipmentsPage() {
   useEffect(() => {
     return () => {
       if (jobPollRef.current) clearInterval(jobPollRef.current)
+      if (deletePollRef.current) clearInterval(deletePollRef.current)
+      if (bgPollRef.current) clearInterval(bgPollRef.current)
       if (jobQueuePollRef.current) clearInterval(jobQueuePollRef.current)
     }
   }, [])
@@ -164,6 +168,30 @@ export default function ShipmentsPage() {
         jobPollRef.current = setInterval(poll, 500)
       } catch { /* ignore */ }
     })()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 상시 백그라운드 폴링 — 삭제 로그를 다른 창에서도 실시간으로 표시하기 위해 2초마다 링 버퍼 조회
+  useEffect(() => {
+    let polling = false
+    const bgPoll = async () => {
+      // 전송/삭제 전용 폴링이 이미 실행 중이면 중복 실행 생략
+      if (jobPollRef.current || deletePollRef.current) return
+      if (polling) return
+      polling = true
+      try {
+        const { API_BASE_URL: apiBase } = await import('@/config/api')
+        const lr = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`)
+        const logData = await lr.json()
+        const newLogs = (logData.logs || []) as string[]
+        sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
+        if (newLogs.length > 0) {
+          for (const log of newLogs) setLogMessages(prev => [...prev, log].slice(-30))
+        }
+      } catch { /* ignore */ }
+      polling = false
+    }
+    bgPollRef.current = setInterval(bgPoll, 2000)
+    return () => { if (bgPollRef.current) clearInterval(bgPollRef.current) }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // handleStart 최신 참조를 유지하는 ref (stale closure 방지)
@@ -405,7 +433,6 @@ export default function ShipmentsPage() {
 
     setDeleting(true)
     const ts = () => new Date().toLocaleTimeString()
-    // 로그를 ref 배열로 관리 — spread O(n²) 방지
     const addLog = (msg: string) => setLogMessages(prev => [...prev, msg].slice(-30))
     const accLabelMap: Record<string, string> = {}
     for (const acc of accounts) {
@@ -414,37 +441,183 @@ export default function ShipmentsPage() {
     const targetAccLabels = effectiveDeleteList.map(aid => accLabelMap[aid] || aid).join(', ')
     addLog(`[${ts()}] 마켓삭제 시작 — 상품 ${targetProducts.length.toLocaleString()}개, ${targetAccLabels}`)
 
-    let totalSuccess = 0
-    let totalFail = 0
+    // 삭제 중 500ms 링 버퍼 폴링 시작 — 다른 창에서도 실시간 로그 공유
+    if (bgPollRef.current) { clearInterval(bgPollRef.current); bgPollRef.current = null }
+    if (deletePollRef.current) { clearInterval(deletePollRef.current); deletePollRef.current = null }
+    let delPollActive = true
+    const { API_BASE_URL: apiBaseDelete } = await import('@/config/api')
+    let delPolling = false
+    deletePollRef.current = setInterval(async () => {
+      if (!delPollActive || delPolling) return
+      delPolling = true
+      try {
+        const lr = await fetchWithAuth(`${apiBaseDelete}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`)
+        const logData = await lr.json()
+        const newLogs = (logData.logs || []) as string[]
+        sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
+        if (newLogs.length > 0) {
+          for (const log of newLogs) setLogMessages(prev => [...prev, log].slice(-30))
+        }
+      } catch { /* ignore */ }
+      delPolling = false
+    }, 500)
+
     for (let i = 0; i < targetProducts.length; i++) {
       const pid = targetProducts[i]
       const prod = products.find(p => p.id === pid)
-      const srcTag = prod?.source_site ? `[${prod.source_site}] ` : ''
-      const prodName = `${srcTag}${prod?.name?.slice(0, 30) || pid}`
       // 이 상품에 등록된 계정만 삭제 대상
       const prodAccIds = (prod?.registered_accounts || []).filter(aid => selectedSet.has(aid))
       if (prodAccIds.length === 0) continue
       try {
-        const res = await shipmentApi.marketDelete([pid], prodAccIds)
-        const r = res.results?.[0]
-        if (r) {
-          for (const [aid, st] of Object.entries(r.delete_results)) {
-            const accLabel = accLabelMap[aid] || aid
-            if (st === 'success') {
-              addLog(`[${ts()}] [${(i + 1).toLocaleString()}/${targetProducts.length.toLocaleString()}] ${prodName} → ${accLabel}: 삭제 성공`)
-              totalSuccess++
-            } else {
-              addLog(`[${ts()}] [${(i + 1).toLocaleString()}/${targetProducts.length.toLocaleString()}] ${prodName} → ${accLabel}: ${st}`)
-              totalFail++
-            }
-          }
+        // current_idx, total_count를 백엔드에 전달 → 링 버퍼 로그에 [i/N] 포함
+        await shipmentApi.marketDelete([pid], prodAccIds, i + 1, targetProducts.length)
+      } catch { /* 개별 실패는 백엔드가 링 버퍼에 기록 */ }
+    }
+
+    // 폴링 종료 후 백그라운드 폴링 복원
+    delPollActive = false
+    if (deletePollRef.current) { clearInterval(deletePollRef.current); deletePollRef.current = null }
+
+    addLog(`[${ts()}] 마켓삭제 완료`)
+
+    // 백그라운드 폴링 재시작
+    let bgPolling = false
+    bgPollRef.current = setInterval(async () => {
+      if (jobPollRef.current || deletePollRef.current || bgPolling) return
+      bgPolling = true
+      try {
+        const lr = await fetchWithAuth(`${apiBaseDelete}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`)
+        const logData = await lr.json()
+        const newLogs = (logData.logs || []) as string[]
+        sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
+        if (newLogs.length > 0) {
+          for (const log of newLogs) setLogMessages(prev => [...prev, log].slice(-30))
         }
-      } catch (e) {
-        addLog(`[${ts()}] [${(i + 1).toLocaleString()}/${targetProducts.length.toLocaleString()}] ${prodName}: 오류 — ${e instanceof Error ? e.message : ''}`)
-        totalFail++
+      } catch { /* ignore */ }
+      bgPolling = false
+    }, 2000)
+
+    await load()
+    setDeleting(false)
+  }
+
+  const handleSearchDelete = async () => {
+    if (selectedAccounts.length === 0) { showAlert('마켓 계정을 선택해주세요'); return }
+    if (selectedSites.length === 0) { showAlert('소싱사이트를 선택해주세요'); return }
+
+    // 현재 검색 조건으로 전체 상품 조회
+    const allParams: Record<string, string | number> = { skip: 0, limit: 10000 }
+    if (searchText.trim()) {
+      allParams.search = searchText.trim()
+      const typeMap: Record<string, string> = { name: 'name', brand: 'brand', name_all: 'name_all', group: 'filter', no: 'no', policy: 'policy' }
+      allParams.search_type = typeMap[searchField] || 'name'
+    }
+    if (siteFilter !== '전체') allParams.source_site = siteFilter
+    if (registrationFilter !== '전체') {
+      if (registrationFilter.startsWith('reg_') || registrationFilter.startsWith('unreg_') || registrationFilter.startsWith('mtype_')) {
+        allParams.status = registrationFilter
+      } else {
+        allParams.status = registrationFilter === '등록' ? 'market_registered' : registrationFilter === '미등록' ? 'market_unregistered' : registrationFilter === '품절' ? 'sold_out' : ''
       }
     }
-    addLog(`[${ts()}] 마켓삭제 완료 — 성공 ${totalSuccess.toLocaleString()}건, 실패 ${totalFail.toLocaleString()}건`)
+
+    let allItems
+    try {
+      const all = await collectorApi.scrollProducts(allParams)
+      const siteSet = new Set(selectedSites)
+      allItems = all.items.filter(p => siteSet.has(p.source_site))
+    } catch (e) {
+      showAlert('상품 조회 실패: ' + (e instanceof Error ? e.message : ''), 'error')
+      return
+    }
+
+    // 선택 계정에 등록된 상품만 필터
+    const selectedSet = new Set(selectedAccounts)
+    const targetProducts = allItems.filter(p =>
+      (p.registered_accounts || []).some(aid => selectedSet.has(aid))
+    )
+    if (targetProducts.length === 0) { showAlert('선택된 소싱사이트/마켓에 해당하는 등록 상품이 없습니다'); return }
+
+    const accLabelMap: Record<string, string> = {}
+    for (const acc of accounts) {
+      accLabelMap[acc.id] = `${acc.market_name}(${acc.seller_id || acc.business_name || '-'})`
+    }
+    const effectiveDeleteAccIds = new Set<string>()
+    for (const p of targetProducts) {
+      for (const aid of (p.registered_accounts || [])) {
+        if (selectedSet.has(aid)) effectiveDeleteAccIds.add(aid)
+      }
+    }
+    const effectiveDeleteList = [...effectiveDeleteAccIds]
+    const targetLabels = effectiveDeleteList.map(aid => accLabelMap[aid] || aid).join(', ')
+
+    if (!await showConfirm(`검색결과 ${targetProducts.length}개 상품을 ${targetLabels || '선택 계정'}에서 마켓삭제하시겠습니까?`)) return
+
+    // 비상정지 해제
+    try {
+      const { API_BASE_URL: apiBase } = await import('@/config/api')
+      await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
+    } catch { /* ignore */ }
+
+    setDeleting(true)
+    const ts = () => new Date().toLocaleTimeString()
+    const addLog = (msg: string) => setLogMessages(prev => [...prev, msg].slice(-30))
+    addLog(`[${ts()}] 검색결과 마켓삭제 시작 — 상품 ${targetProducts.length.toLocaleString()}개, ${targetLabels}`)
+
+    // 삭제 중 500ms 링 버퍼 폴링 시작 — 다른 창에서도 실시간 로그 공유
+    if (bgPollRef.current) { clearInterval(bgPollRef.current); bgPollRef.current = null }
+    if (deletePollRef.current) { clearInterval(deletePollRef.current); deletePollRef.current = null }
+    let delPollActiveSearch = true
+    const { API_BASE_URL: apiBaseSearch } = await import('@/config/api')
+    let delPollingSearch = false
+    deletePollRef.current = setInterval(async () => {
+      if (!delPollActiveSearch || delPollingSearch) return
+      delPollingSearch = true
+      try {
+        const lr = await fetchWithAuth(`${apiBaseSearch}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`)
+        const logData = await lr.json()
+        const newLogs = (logData.logs || []) as string[]
+        sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
+        if (newLogs.length > 0) {
+          for (const log of newLogs) setLogMessages(prev => [...prev, log].slice(-30))
+        }
+      } catch { /* ignore */ }
+      delPollingSearch = false
+    }, 500)
+
+    for (let i = 0; i < targetProducts.length; i++) {
+      const prod = targetProducts[i]
+      const prodAccIds = (prod.registered_accounts || []).filter(aid => selectedSet.has(aid))
+      if (prodAccIds.length === 0) continue
+      try {
+        // current_idx, total_count를 백엔드에 전달 → 링 버퍼 로그에 [i/N] 포함
+        await shipmentApi.marketDelete([prod.id], prodAccIds, i + 1, targetProducts.length)
+      } catch { /* 개별 실패는 백엔드가 링 버퍼에 기록 */ }
+    }
+
+    // 폴링 종료 후 백그라운드 폴링 복원
+    delPollActiveSearch = false
+    if (deletePollRef.current) { clearInterval(deletePollRef.current); deletePollRef.current = null }
+
+    addLog(`[${ts()}] 검색결과 마켓삭제 완료`)
+
+    // 백그라운드 폴링 재시작
+    let bgPollingSearch = false
+    bgPollRef.current = setInterval(async () => {
+      if (jobPollRef.current || deletePollRef.current || bgPollingSearch) return
+      bgPollingSearch = true
+      try {
+        const lr = await fetchWithAuth(`${apiBaseSearch}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`)
+        const logData = await lr.json()
+        const newLogs = (logData.logs || []) as string[]
+        sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
+        if (newLogs.length > 0) {
+          for (const log of newLogs) setLogMessages(prev => [...prev, log].slice(-30))
+        }
+      } catch { /* ignore */ }
+      bgPollingSearch = false
+    }, 2000)
+
     await load()
     setDeleting(false)
   }
@@ -1084,6 +1257,9 @@ export default function ShipmentsPage() {
               }}
                 style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
               >검색결과전송 ({fmtNum(totalCount)})</button>
+              <button onClick={handleSearchDelete} disabled={deleting}
+                style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,107,107,0.12)', border: '1px solid rgba(255,107,107,0.35)', color: '#FF6B6B', borderRadius: '4px', cursor: deleting ? 'not-allowed' : 'pointer', fontWeight: 600 }}
+              >검색결과삭제 ({fmtNum(totalCount)})</button>
             </>}
           </div>
         </div>

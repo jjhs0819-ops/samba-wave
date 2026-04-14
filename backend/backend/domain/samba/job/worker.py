@@ -1231,6 +1231,7 @@ class JobWorker:
                         "extra_charge": pr.get("extraCharge", 0),
                         "use_range_margin": pr.get("useRangeMargin", False),
                         "range_margins": pr.get("rangeMargins", []),
+                        "source_site_margins": pr.get("sourceSiteMargins", {}),
                     }
                 count = await svc.apply_policy_to_filter_products(
                     filter_id, sf.applied_policy_id, policy_data
@@ -1328,6 +1329,10 @@ class JobWorker:
                 _rep_brand_id = qs.get("repBrandId", [""])[0]
                 if _rep_brand_id:
                     _search_kwargs["brand_ids"] = _rep_brand_id.split("|")
+                # SSG dispCtgId 파라미터 → 검색 URL에 카테고리 필터 전달
+                _disp_ctg_id = qs.get("dispCtgId", [""])[0]
+                if _disp_ctg_id:
+                    _search_kwargs["disp_ctg_id"] = _disp_ctg_id
                 # skipDetail 옵션
                 if qs.get("skipDetail", [""])[0] == "1":
                     _search_kwargs["_skip_detail"] = True
@@ -1492,7 +1497,7 @@ class JobWorker:
                     )
                 else:
                     # 카테고리필터가 있는 소싱처: 전체 검색 후 사후 필터링
-                    # SSG도 dispCtgId 사후 필터링을 사용하므로 전체 검색 필요
+                    # SSG: dispCtgId가 검색 URL에서 서버사이드 필터링 안 됨 → 전수 검색 필요
                     _max = (
                         9999
                         if (
@@ -1864,51 +1869,80 @@ class JobWorker:
         # SSG: 저장 전 상세 정보 선취합 (카테고리/원가/고시정보 보충 필수)
         _ssg_details: dict[str, dict[str, Any]] = {}
         if site == "SSG" and client:
+            _ssg_cat_filter = sf.category_filter or None
+            # 카테고리 필터 있을 때: 전체 후보 대상 (서버사이드 필터링 안 됨)
+            # 카테고리 필터 없을 때: remaining개만 조회
             new_items = [
                 it
                 for it in items_list
                 if str(it.get("site_product_id", "")) not in existing_ids
-            ][:remaining]
+            ]
+            if not _ssg_cat_filter:
+                new_items = new_items[:remaining]
             if new_items:
                 logger.info(
                     f"[잡워커] SSG 상세 선취합 시작: {len(new_items)}건 (1건씩 순차)"
+                    + (
+                        f" | 카테고리 필터: {_ssg_cat_filter}"
+                        if _ssg_cat_filter
+                        else ""
+                    )
                 )
+                _ssg_matched = 0
                 for idx, it in enumerate(new_items):
+                    # 카테고리 필터 있을 때: remaining개 매칭되면 조기 종료
+                    if _ssg_cat_filter and _ssg_matched >= remaining:
+                        break
                     pid = str(it.get("site_product_id", ""))
                     try:
                         det = await client.get_detail(pid)
                         if det:
-                            _ssg_details[pid] = det
+                            if _ssg_cat_filter:
+                                det_ctg = str(det.get("dispCtgId") or "").strip()
+                                if det_ctg == _ssg_cat_filter:
+                                    _ssg_details[pid] = det
+                                    _ssg_matched += 1
+                            else:
+                                _ssg_details[pid] = det
                     except Exception as _e:
                         logger.warning(f"[잡워커] SSG 상세 실패 {pid}: {_e}")
                     if (idx + 1) % 5 == 0 or idx == len(new_items) - 1:
                         await repo.update_progress(job.id, idx + 1, len(new_items))
                         logger.info(
                             f"[잡워커] SSG 상세 선취합 [{idx + 1}/{len(new_items)}]"
+                            + (
+                                f" 카테고리 통과: {_ssg_matched}건"
+                                if _ssg_cat_filter
+                                else ""
+                            )
                         )
                     await asyncio.sleep(1.0)
                 logger.info(
                     f"[잡워커] SSG 상세 선취합 완료: {len(_ssg_details)}/{len(new_items)}건"
+                    + (
+                        f" (카테고리 필터 통과: {_ssg_matched})"
+                        if _ssg_cat_filter
+                        else ""
+                    )
                 )
-            # SSG: 카테고리 필터 적용 (dispCtgId 매칭, 카테고리 스캔과 동일 체계)
-            if sf.category_filter and _ssg_details:
-                before_ct = len(_ssg_details)
-                _ssg_cat_filter = sf.category_filter
-                _ssg_details = {
-                    pid: det
-                    for pid, det in _ssg_details.items()
-                    if (det.get("dispCtgId") or "") == _ssg_cat_filter
-                }
-                # dispCtgId 미매칭 상품을 items_list에서도 제거
-                items_list = [
-                    it
-                    for it in items_list
-                    if str(it.get("site_product_id", "")) in _ssg_details
-                    or str(it.get("site_product_id", "")) in existing_ids
-                ]
-                logger.info(
-                    f"[잡워커] SSG 카테고리 필터 {_ssg_cat_filter}: {before_ct}→{len(_ssg_details)}건"
-                )
+            # SSG 카테고리 필터: dispCtgId 확인된 상품만 수집 대상으로 교체
+            if _ssg_cat_filter:
+                if _ssg_details:
+                    items_list = [
+                        it
+                        for it in items_list
+                        if str(it.get("site_product_id", "")) in _ssg_details
+                    ]
+                    logger.info(
+                        f"[잡워커] SSG 카테고리 필터 적용 → {len(items_list)}건 통과"
+                        f" (dispCtgId={_ssg_cat_filter})"
+                    )
+                else:
+                    items_list = []
+                    logger.warning(
+                        f"[잡워커] SSG 카테고리 필터 매칭 없음"
+                        f" (dispCtgId={_ssg_cat_filter})"
+                    )
 
         _collected_sold_out = 0
         for item in items_list:
@@ -2196,6 +2230,7 @@ class JobWorker:
                         "extra_charge": pr.get("extraCharge", 0),
                         "use_range_margin": pr.get("useRangeMargin", False),
                         "range_margins": pr.get("rangeMargins", []),
+                        "source_site_margins": pr.get("sourceSiteMargins", {}),
                     }
                 count = await svc.apply_policy_to_filter_products(
                     filter_id, sf.applied_policy_id, policy_data

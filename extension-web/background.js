@@ -963,10 +963,44 @@ chrome.alarms.get('balanceCheckPoll', (alarm) => {
   }
 })
 
-// 설치/업데이트/시작 시 — 수집 폴링 자동 시작
-chrome.runtime.onInstalled.addListener(() => { startCollectPolling() })
-chrome.runtime.onStartup.addListener(() => { startCollectPolling() })
+// ==================== 크롬 프로필 동기화 ====================
+
+async function syncChromeProfile() {
+  try {
+    const info = await chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' })
+    if (!info.email) {
+      console.log('[프로필동기화] 이메일 없음 (Google 계정 로그인 필요)')
+      return
+    }
+    console.log(`[프로필동기화] 이메일: ${info.email}, gaia_id: ${info.id}`)
+    const res = await apiFetch(
+      `${PROXY_URL}/api/v1/samba/sourcing-accounts/sync-chrome-profile`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: info.email,
+          gaia_id: info.id || '',
+          display_name: info.email.split('@')[0],
+        }),
+      }
+    )
+    if (res.ok) {
+      const result = await res.json()
+      console.log('[프로필동기화] 완료:', result)
+    } else {
+      console.warn(`[프로필동기화] 실패: HTTP ${res.status}`)
+    }
+  } catch (e) {
+    console.log(`[프로필동기화] 오류 (무시): ${e.message}`)
+  }
+}
+
+// 설치/업데이트/시작 시 — 수집 폴링 + 프로필 동기화 자동 시작
+chrome.runtime.onInstalled.addListener(() => { startCollectPolling(); syncChromeProfile() })
+chrome.runtime.onStartup.addListener(() => { startCollectPolling(); syncChromeProfile() })
 startCollectPolling()
+syncChromeProfile()
 
 // ==================== AI소싱 큐 폴링 ====================
 

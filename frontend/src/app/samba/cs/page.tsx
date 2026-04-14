@@ -4,6 +4,21 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { csInquiryApi, orderApi, accountApi, returnApi, type SambaCSInquiry, type CSReplyTemplate, type SambaMarketAccount } from '@/lib/samba/api'
 
 import { showAlert, showConfirm } from '@/components/samba/Modal'
+
+/** HTML 태그를 줄바꿈으로 변환 후 제거 — CS 문의 텍스트를 깔끔하게 표시 */
+function htmlToText(html: string): string {
+  if (!html) return ''
+  return html
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
 import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
 import { PERIOD_BUTTONS } from '@/lib/samba/constants'
 import { fmtDate } from '@/lib/samba/utils'
@@ -664,7 +679,7 @@ export default function CSPage() {
 
                         {/* 문의 내용 */}
                         <div style={{ color: '#ccc', fontSize: '0.8125rem', lineHeight: '1.5', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                          {item.content}
+                          {htmlToText(item.content)}
                         </div>
 
                         {/* 답변 내용 */}
@@ -672,7 +687,7 @@ export default function CSPage() {
                           <div style={{ marginTop: '0.5rem', padding: '0.5rem 0.75rem', background: 'rgba(81,207,102,0.08)', borderRadius: '6px', borderLeft: '3px solid #51CF66' }}>
                             <div style={{ fontSize: '0.75rem', color: '#51CF66', marginBottom: '0.25rem', fontWeight: 600 }}>답변</div>
                             <div style={{ color: '#aaa', fontSize: '0.8125rem', lineHeight: '1.5', whiteSpace: 'pre-wrap' }}>
-                              {item.reply}
+                              {htmlToText(item.reply || '')}
                             </div>
                             {item.replied_at && (
                               <div style={{ fontSize: '0.6875rem', color: '#555', marginTop: '0.25rem' }}>
@@ -775,7 +790,7 @@ export default function CSPage() {
                 {replyModal.questioner && <div><span style={{ color: '#666' }}>질문자: </span><span style={{ color: '#E5E5E5' }}>{replyModal.questioner}</span></div>}
               </div>
               {replyModal.product_name && <div style={{ color: '#aaa', marginBottom: '0.375rem' }}>{replyModal.product_name}</div>}
-              <div style={{ color: '#ccc', lineHeight: '1.5', whiteSpace: 'pre-wrap' }}>{replyModal.content}</div>
+              <div style={{ color: '#ccc', lineHeight: '1.5', whiteSpace: 'pre-wrap' }}>{htmlToText(replyModal.content || '')}</div>
             </div>
 
             {/* 템플릿 카드 그리드 */}

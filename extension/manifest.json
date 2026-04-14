@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SAMBA-WAVE",
-  "version": "2.10.9",
+  "version": "2.10.10",
   "description": "무재고 위탁판매 솔루션 - 무신사/KREAM/소싱처 수집 연동",
   "permissions": [
     "cookies",
@@ -10,7 +10,9 @@
     "webRequest",
     "scripting",
     "activeTab",
-    "alarms"
+    "alarms",
+    "identity",
+    "identity.email"
   ],
   "host_permissions": [
     "https://*.musinsa.com/*",

@@ -34,7 +34,7 @@ SITE_CONCURRENCY: dict[str, int] = {
     "ABCmart": 5 if _IS_CLOUD else 2,
     "GrandStage": 5 if _IS_CLOUD else 2,
     "REXMONDE": 5 if _IS_CLOUD else 2,
-    "SSG": 3 if _IS_CLOUD else 1,
+    "SSG": 7 if _IS_CLOUD else 3,
     "LOTTEON": 5 if _IS_CLOUD else 2,
     "GSShop": 5 if _IS_CLOUD else 2,
     "ElandMall": 5 if _IS_CLOUD else 2,

@@ -48,11 +48,12 @@ def calc_market_price(
     policy_pricing: dict,
     market_type: str,
     market_policies: dict | None = None,
+    source_site: str = "",
 ) -> int:
     """정책 기반 마켓 최종 판매가 계산.
 
-    원가 + 마진 + 배송비 → 수수료 역산 → 추가요금.
-    마켓별 오버라이드 적용. 범위 마진 지원.
+    원가 + 마진 + 배송비 → 소싱처 추가 마진 → 수수료 역산 → 추가요금.
+    마켓별 오버라이드 적용. 범위 마진 지원. 소싱처별 추가 마진 지원.
     """
     if not policy_pricing:
         return int(cost)
@@ -73,6 +74,17 @@ def calc_market_price(
     if min_margin > 0 and margin_amt < min_margin:
         margin_amt = min_margin
     calc_price = cost + margin_amt + m_shipping
+
+    # 소싱처별 추가 마진 (수수료 역산 전 적용 — 수수료에도 자동 반영됨)
+    if source_site:
+        _ssm = pr.get("sourceSiteMargins", {}).get(source_site, {})
+        _ss_rate = _ssm.get("marginRate", 0)
+        _ss_amount = _ssm.get("marginAmount", 0)
+        if _ss_rate > 0:
+            calc_price += round(cost * _ss_rate / 100)
+        if _ss_amount > 0:
+            calc_price += _ss_amount
+
     if m_fee > 0 and calc_price > 0:
         calc_price = math.ceil(calc_price / (1 - m_fee / 100))
     if common_extra > 0:
@@ -420,7 +432,11 @@ class SambaShipmentService:
                         or 0
                     )
                     calc_price = calc_market_price(
-                        cost, policy.pricing, "smartstore", policy_market_data
+                        cost,
+                        policy.pricing,
+                        "smartstore",
+                        policy_market_data,
+                        source_site=p.source_site or "",
                     )
 
                     # 가격 이상치 방어: 원가가 정상가의 5% 미만이면 전송 차단
@@ -1281,7 +1297,11 @@ class SambaShipmentService:
                 )
                 if policy and policy.pricing:
                     calc_price = calc_market_price(
-                        cost, policy.pricing, market_type, policy_market_data
+                        cost,
+                        policy.pricing,
+                        market_type,
+                        policy_market_data,
+                        source_site=product_row.source_site or "",
                     )
 
                     # 가격 이상치 방어: 원가가 정상가의 5% 미만이면 전송 차단
@@ -2068,12 +2088,32 @@ class SambaShipmentService:
         self,
         product_ids: list[str],
         target_account_ids: list[str],
+        current_idx: int | None = None,
+        total_count: int | None = None,
     ) -> dict[str, Any]:
         """선택된 상품을 대상 마켓에서 삭제."""
         from backend.domain.samba.collector.repository import (
             SambaCollectedProductRepository,
         )
         from backend.domain.samba.shipment.dispatcher import delete_from_market
+        from backend.domain.samba.job.worker import _add_shipment_log
+        from datetime import (
+            datetime as _dt_del,
+            timezone as _tz_del,
+            timedelta as _td_del,
+        )
+
+        def _del_log(msg: str) -> None:
+            """삭제 로그를 KST 타임스탬프와 함께 링 버퍼에 기록."""
+            kst = (_dt_del.now(_tz_del.utc) + _td_del(hours=9)).strftime("%H:%M:%S")
+            _add_shipment_log(f"[{kst}] {msg}")
+
+        # 인덱스 prefix — 프론트에서 [i/N] 전달 시 표시
+        idx_prefix = (
+            f"[{current_idx:,}/{total_count:,}] "
+            if current_idx is not None and total_count is not None
+            else ""
+        )
 
         product_repo = SambaCollectedProductRepository(self.session)
 
@@ -2135,13 +2175,26 @@ class SambaShipmentService:
                 # 429 방지 — 삭제 요청 간 0.5초 딜레이
                 await asyncio.sleep(0.5)
 
+                # 로그용 상품/계정 레이블
+                src_tag = (
+                    f"[{product_row.source_site}] " if product_row.source_site else ""
+                )
+                prod_name = (product_row.name or product_id)[:30]
+                acc_label = f"{account.market_name}({account.seller_id or '-'})"
+
                 if result.get("success"):
                     delete_results[account_id] = "success"
+                    _del_log(
+                        f"{idx_prefix}{src_tag}{prod_name} → {acc_label}: 삭제 성공"
+                    )
                     logger.info(
                         f"[마켓삭제] {account.market_type} 성공 - 상품: {product_id}"
                     )
                 else:
                     delete_results[account_id] = result.get("message", "실패")
+                    _del_log(
+                        f"{idx_prefix}{src_tag}{prod_name} → {acc_label}: {delete_results[account_id]}"
+                    )
                     logger.warning(
                         f"[마켓삭제] {account.market_type} 실패 - {result.get('message')}"
                     )
