@@ -1677,6 +1677,64 @@ async def collect_by_keyword(
     )
 
 
+async def _check_policy_price_changed(
+    session: AsyncSession,
+    product: Any,
+    cost: float,
+) -> bool:
+    """소싱처 가격/재고 불변 시 정책 변동으로 마켓 판매가가 달라졌는지 확인.
+
+    현재 정책 기반으로 재계산한 마켓 판매가와 last_sent_data의 마지막 전송 판매가를
+    비교하여 하나라도 차이가 있으면 True를 반환한다.
+    """
+    policy_id = getattr(product, "applied_policy_id", None)
+    last_sent: dict = getattr(product, "last_sent_data", None) or {}
+    if not policy_id or not last_sent:
+        return False
+
+    try:
+        from backend.domain.samba.policy.repository import SambaPolicyRepository
+        from backend.domain.samba.shipment.service import (
+            calc_market_price,
+        )
+        from backend.domain.samba.account.model import SambaMarketAccount
+
+        pol_repo = SambaPolicyRepository(session)
+        policy = await pol_repo.get_async(policy_id)
+        if not policy or not policy.pricing:
+            return False
+
+        source_site = getattr(product, "source_site", "") or ""
+        policy_market_data = policy.market_policies or {}
+
+        # 계정 배치 조회 (N+1 방지)
+        acc_stmt = select(SambaMarketAccount).where(
+            SambaMarketAccount.id.in_(list(product.registered_accounts))
+        )
+        acc_result = await session.execute(acc_stmt)
+
+        for acc in acc_result.scalars().all():
+            new_price = calc_market_price(
+                cost,
+                policy.pricing,
+                acc.market_type,
+                policy_market_data,
+                source_site=source_site,
+            )
+            old_sent = last_sent.get(acc.id, {})
+            old_price = (int(old_sent.get("sale_price") or 0) // 100) * 100
+            if new_price != old_price:
+                logger.info(
+                    f"[정책변동] {product.id} {acc.market_type} "
+                    f"판매가 변동: ₩{old_price:,} → ₩{new_price:,}"
+                )
+                return True
+    except Exception as e:
+        logger.error(f"[정책변동체크] {getattr(product, 'id', '')} 오류: {e}")
+
+    return False
+
+
 async def _retransmit_if_changed(
     session: AsyncSession,
     product: Any,
@@ -1765,7 +1823,14 @@ async def _retransmit_if_changed(
                 break
 
     if not price_changed and not stock_changed:
-        return result
+        # 소싱처 가격/재고 불변 → 정책 변동으로 마켓 판매가가 달라졌는지 확인
+        cost_for_check = updates.get("cost") or old_cost or 0
+        policy_changed = await _check_policy_price_changed(
+            session, product, cost_for_check
+        )
+        if not policy_changed:
+            return result
+        price_changed = True
 
     # 재전송 항목 결정
     update_items: list[str] = []

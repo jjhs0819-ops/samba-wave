@@ -62,6 +62,10 @@ const ACTION_BUTTONS = [
 export default function OrdersPage() {
   useEffect(() => { document.title = 'SAMBA-주문관리' }, [])
   const searchParams = useSearchParams()
+  // 상품별 주문이력 조회 모드
+  const cpId = searchParams.get('cpId')
+  const cpName = searchParams.get('cpName')
+  const isProductMode = !!cpId
   const [orders, setOrders] = useState<SambaOrder[]>([])
   const [channels, setChannels] = useState<SambaChannel[]>([])
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
@@ -165,7 +169,9 @@ export default function OrdersPage() {
   const loadOrders = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await orderApi.listByDateRange(customStart, customEnd)
+      const data = isProductMode
+        ? await orderApi.listByCollectedProduct(cpId!)
+        : await orderApi.listByDateRange(customStart, customEnd)
       setOrders(data)
       setCurrentPage(1)
       setEditingTrackings({})
@@ -180,7 +186,7 @@ export default function OrdersPage() {
       setLogMessages(prev => [...prev, `[에러] 주문 데이터 로딩 실패: ${e instanceof Error ? e.message : '서버 오류'}`])
     }
     setLoading(false)
-  }, [customStart, customEnd])
+  }, [isProductMode, cpId, customStart, customEnd])
 
   // 플레이오토 마켓번호 별칭 매핑
   const [siteAliasMap, setSiteAliasMap] = useState<Record<string, string>>({})
@@ -618,18 +624,21 @@ export default function OrdersPage() {
 
   // 필터링된 주문 목록
   const filteredOrders = useMemo(() => orders.filter(o => {
-    const orderDate = new Date(o.paid_at || o.created_at)
-    // 시작일 필터 — API 호출과 동일하게 customStart 기준
-    if (customStart) {
-      const start = new Date(customStart)
-      start.setHours(0, 0, 0, 0)
-      if (orderDate < start) return false
-    }
-    // 종료일 필터
-    if (customEnd) {
-      const end = new Date(customEnd)
-      end.setHours(23, 59, 59, 999)
-      if (orderDate > end) return false
+    // 상품별 모드에서는 날짜 필터 건너뜀 (전체 이력 표시)
+    if (!isProductMode) {
+      const orderDate = new Date(o.paid_at || o.created_at)
+      // 시작일 필터 — API 호출과 동일하게 customStart 기준
+      if (customStart) {
+        const start = new Date(customStart)
+        start.setHours(0, 0, 0, 0)
+        if (orderDate < start) return false
+      }
+      // 종료일 필터
+      if (customEnd) {
+        const end = new Date(customEnd)
+        end.setHours(23, 59, 59, 999)
+        if (orderDate > end) return false
+      }
     }
     if (marketFilter) {
       if (marketFilter.startsWith('acc:')) {
@@ -693,7 +702,7 @@ export default function OrdersPage() {
       case 'price_asc':   return (a.sale_price || 0) - (b.sale_price || 0)
       default:            return getTime(b) - getTime(a) // date_desc
     }
-  }), [orders, customStart, customEnd, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, activeActions, searchText, searchCategory, accounts, sortBy])
+  }), [orders, customStart, customEnd, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, activeActions, searchText, searchCategory, accounts, sortBy, isProductMode])
 
   // 현재 페이지 주문 ID 목록
   const currentPageIds = useMemo(() =>
@@ -802,10 +811,31 @@ export default function OrdersPage() {
         <a href="/samba/returns" style={{ fontSize: '0.75rem', color: '#FF8C00', textDecoration: 'none' }}>반품교환 →</a>
         <a href="/samba/cs" style={{ fontSize: '0.75rem', color: '#4C9AFF', textDecoration: 'none' }}>CS →</a>
       </div>
+      {/* 상품별 주문이력 모드 배너 */}
+      {isProductMode && (
+        <div style={{
+          background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.25)',
+          borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '0.75rem',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '0.85rem', color: '#FF8C00', fontWeight: 600 }}>상품별 판매이력</span>
+            <span style={{ fontSize: '0.85rem', color: '#E5E5E5', fontWeight: 500, maxWidth: '400px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {cpName || cpId}
+            </span>
+            <span style={{ fontSize: '0.75rem', color: '#888' }}>({fmtNum(filteredOrders.length)}건)</span>
+          </div>
+          <a href='/samba/orders' style={{
+            fontSize: '0.75rem', color: '#4C9AFF', textDecoration: 'none',
+            padding: '4px 10px', border: '1px solid rgba(76,154,255,0.3)',
+            borderRadius: '5px', background: 'rgba(76,154,255,0.08)', whiteSpace: 'nowrap',
+          }}>전체 주문 보기 →</a>
+        </div>
+      )}
       {/* 헤더 */}
       <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
         <div>
-          <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.25rem' }}>주문 상황</h2>
+          <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.25rem' }}>{isProductMode ? '상품 판매이력' : '주문 상황'}</h2>
           <p style={{ fontSize: '0.875rem', color: '#888' }}>
             미배송: <span style={{ color: '#FF6B6B', fontWeight: 700 }}>{fmtNum(pendingCount)}</span>건 / 전체: <span style={{ fontWeight: 700 }}>{fmtNum(filteredOrders.length)}</span>건
           </p>
@@ -840,8 +870,8 @@ export default function OrdersPage() {
         </div>
       </div>
 
-      {/* 기간 필터 바 */}
-      <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.625rem 0.875rem', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+      {/* 기간 필터 바 — 상품별 모드에서는 숨김 */}
+      {!isProductMode && <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.625rem 0.875rem', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
         <div style={{ display: 'flex', gap: '4px', flexWrap: 'nowrap', alignItems: 'center' }}>
           {PERIOD_BUTTONS.map(pb => (
             <button key={pb.key} onClick={() => {
@@ -919,7 +949,7 @@ export default function OrdersPage() {
           </select>
           <button onClick={handleBulkAction} disabled={bulkUpdating || !bulkStatus || selectedIds.size === 0} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: selectedIds.size > 0 && bulkStatus ? (bulkStatus === 'delete' ? '#7B2D00' : '#C0392B') : 'rgba(50,50,50,0.9)', border: `1px solid ${selectedIds.size > 0 && bulkStatus === 'delete' ? '#A83200' : '#3D3D3D'}`, color: selectedIds.size > 0 && bulkStatus ? '#fff' : '#666', borderRadius: '4px', cursor: bulkUpdating || !bulkStatus || selectedIds.size === 0 ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>{bulkUpdating ? '처리 중...' : `실행 (${fmtNum(selectedIds.size)}건)`}</button>
         </div>
-      </div>
+      </div>}
 
       {/* 필터 바 */}
       <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
@@ -1214,7 +1244,6 @@ export default function OrdersPage() {
                             : res.changed > 0 ? '변동 감지' : '변동 없음'
                           const ts2 = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
                           setRefreshLog(prev => ({ ...prev, [o.id]: `[${ts2}] ${logMsg}` }))
-                          loadOrders()
                         } catch (e) {
                           setRefreshLog(prev => ({ ...prev, [o.id]: `[${ts}] 갱신 실패: ${e instanceof Error ? e.message : ''}` }))
                         }

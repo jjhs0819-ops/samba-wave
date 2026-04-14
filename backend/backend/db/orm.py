@@ -104,8 +104,8 @@ def _create_read_async_engine() -> AsyncEngine:
         future=True,
         echo=False,
         pool_pre_ping=True,
-        pool_size=8,  # 기본 연결 수
-        max_overflow=7,  # 추가 허용 (read 최대 15개)
+        pool_size=15,  # 기본 연결 수 (상품페이지 동시 API 호출 대응)
+        max_overflow=10,  # 추가 허용 (read 최대 25개)
         pool_recycle=3600,
         pool_timeout=30,
         connect_args={"timeout": 10},  # asyncpg 연결 타임아웃 10초

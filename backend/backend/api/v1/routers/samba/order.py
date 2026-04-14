@@ -344,6 +344,32 @@ async def list_orders_by_date_range(
     return list(result.scalars().all())
 
 
+@router.get("/by-collected-product", response_model=list[SambaOrder])
+async def list_orders_by_collected_product(
+    collected_product_id: str = Query(..., description="수집상품 ID (cp_ULID)"),
+    session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+):
+    """수집상품 ID로 해당 상품의 전체 주문 이력 조회."""
+    from sqlalchemy import select as sa_select, func as sa_func, or_
+
+    date_col = sa_func.coalesce(SambaOrder.paid_at, SambaOrder.created_at)
+    stmt = (
+        sa_select(SambaOrder)
+        .where(SambaOrder.collected_product_id == collected_product_id)
+        .order_by(date_col.desc())
+    )
+    if tenant_id is not None:
+        stmt = stmt.where(
+            or_(
+                SambaOrder.tenant_id == tenant_id,
+                SambaOrder.tenant_id == None,  # noqa: E711
+            )
+        )
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
 @router.get("/find-by-number")
 async def find_by_order_number(
     order_number: str = Query(...),

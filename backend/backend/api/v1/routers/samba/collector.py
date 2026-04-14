@@ -927,35 +927,39 @@ async def products_init_data(
     from backend.domain.samba.order.model import SambaOrder
     from backend.domain.samba.category.model import SambaCategoryMapping
 
-    # 모든 쿼리 병렬 실행
-    pol_task = session.execute(select(SambaPolicy).limit(50))
-    filter_task = session.execute(
-        select(_SF).where(_SF.is_folder == False).limit(10000)
-    )
-    words_task = session.execute(
-        select(SambaForbiddenWord).where(
-            SambaForbiddenWord.type == "deletion",
-            SambaForbiddenWord.is_active == True,
-        )
-    )
-    accs_task = session.execute(
-        select(SambaMarketAccount).where(SambaMarketAccount.is_active == True)
-    )
-    order_pids_task = session.execute(
-        select(SambaOrder.product_id)
-        .where(SambaOrder.product_id.isnot(None))
-        .distinct()
-    )
-    mappings_task = session.execute(select(SambaCategoryMapping))
+    # order_pids 캐시 확인 (주문 테이블 풀 스캔 방지 — 30초 TTL)
+    order_pids: list = await cache.get("init_data:order_pids") or []
+    need_order_pids = not order_pids
 
-    pol_r, filter_r, words_r, accs_r, order_r, map_r = await asyncio.gather(
-        pol_task,
-        filter_task,
-        words_task,
-        accs_task,
-        order_pids_task,
-        mappings_task,
-    )
+    # 모든 쿼리 병렬 실행 (order_pids는 캐시 미스 시에만 조회)
+    tasks = [
+        session.execute(select(SambaPolicy).limit(50)),
+        session.execute(select(_SF).where(_SF.is_folder == False).limit(500)),
+        session.execute(
+            select(SambaForbiddenWord).where(
+                SambaForbiddenWord.type == "deletion",
+                SambaForbiddenWord.is_active == True,
+            )
+        ),
+        session.execute(
+            select(SambaMarketAccount).where(SambaMarketAccount.is_active == True)
+        ),
+        session.execute(select(SambaCategoryMapping)),
+    ]
+    if need_order_pids:
+        tasks.append(
+            session.execute(
+                select(SambaOrder.product_id)
+                .where(SambaOrder.product_id.isnot(None))
+                .distinct()
+            )
+        )
+
+    results = await asyncio.gather(*tasks)
+    pol_r, filter_r, words_r, accs_r, map_r = results[:5]
+    if need_order_pids:
+        order_pids = [r[0] for r in results[5].all()]
+        await cache.set("init_data:order_pids", order_pids, ttl=30)
 
     # name_rules + detail_templates (policy 도메인에 정의됨)
     from backend.domain.samba.policy.model import SambaNameRule, SambaDetailTemplate
@@ -977,7 +981,6 @@ async def products_init_data(
         dict(r._mapping) if hasattr(r, "_mapping") else r
         for r in accs_r.scalars().all()
     ]
-    order_pids = [r[0] for r in order_r.all()]
     mappings = [
         dict(r._mapping) if hasattr(r, "_mapping") else r for r in map_r.scalars().all()
     ]

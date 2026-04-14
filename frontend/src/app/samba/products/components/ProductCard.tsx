@@ -1223,6 +1223,8 @@ const ProductCard = React.memo(function ProductCard({
                 style={{ fontSize: '0.6rem', padding: '2px 5px', borderRadius: '3px', cursor: 'pointer', border: '1px solid #2D2D2D', background: 'transparent', color: '#888', whiteSpace: 'nowrap' }}>원문</button>
               <button onClick={(e) => { e.stopPropagation(); onEnrich(p.id) }}
                 style={{ fontSize: '0.6rem', padding: '2px 5px', borderRadius: '3px', cursor: 'pointer', border: '1px solid #2D2D2D', background: 'transparent', color: '#888', whiteSpace: 'nowrap' }}>업데이트</button>
+              <button onClick={(e) => { e.stopPropagation(); window.open(`/samba/orders?cpId=${encodeURIComponent(p.id)}&cpName=${encodeURIComponent(p.name)}`, '_blank') }}
+                style={{ fontSize: '0.6rem', padding: '2px 5px', borderRadius: '3px', cursor: 'pointer', border: '1px solid rgba(255,140,0,0.3)', background: 'transparent', color: '#FF8C00', whiteSpace: 'nowrap' }}>판매</button>
               <span style={{ color: '#FFB84D', fontWeight: 600, flexShrink: 0 }}>₩{fmt(cost)}</span>
             </div>
             <div style={{ color: '#888', fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -1322,6 +1324,12 @@ const ProductCard = React.memo(function ProductCard({
               fontSize: '0.72rem', padding: '3px 9px', background: '#1E1E1E',
               color: '#999', border: '1px solid #2D2D2D', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap',
             }}>가격재고업데이트</button>
+            <button
+              onClick={() => window.open(`/samba/orders?cpId=${encodeURIComponent(p.id)}&cpName=${encodeURIComponent(p.name)}`, '_blank')}
+              style={{
+              fontSize: '0.72rem', padding: '3px 9px', background: '#1E1E1E',
+              color: '#FF8C00', border: '1px solid rgba(255,140,0,0.3)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap',
+            }}>판매이력</button>
             <button
               onClick={() => onMarketDelete(p.id)}
               style={{

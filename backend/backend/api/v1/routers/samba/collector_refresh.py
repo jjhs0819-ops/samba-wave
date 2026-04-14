@@ -483,6 +483,101 @@ async def refresh_products(
 
         await session.commit()
 
+    # 정책 변동 체크: 소싱처 불변 상품 중 등록 계정 있는 상품 → 정책 기반 판매가 비교
+    if body.auto_retransmit:
+        all_processed = set(changed_ids) | set(soldout_ids) | set(stock_only_ids)
+        policy_check_targets = []
+        for r in results:
+            if r.error or r.needs_extension:
+                continue
+            if r.product_id in all_processed:
+                continue
+            product = product_map.get(r.product_id)
+            if (
+                product
+                and product.registered_accounts
+                and getattr(product, "applied_policy_id", None)
+            ):
+                policy_check_targets.append(product)
+
+        if policy_check_targets:
+            from backend.domain.samba.policy.repository import SambaPolicyRepository
+            from backend.domain.samba.shipment.service import (
+                SambaShipmentService,
+                calc_market_price,
+            )
+            from backend.domain.samba.shipment.repository import SambaShipmentRepository
+            from backend.domain.samba.account.model import SambaMarketAccount as _PCA
+
+            # 정책 배치 조회 (중복 방지)
+            policy_ids_set = {p.applied_policy_id for p in policy_check_targets}
+            pol_repo = SambaPolicyRepository(session)
+            policies_map: dict = {}
+            for _pid in policy_ids_set:
+                _pol = await pol_repo.get_async(_pid)
+                if _pol:
+                    policies_map[_pid] = _pol
+
+            # 계정 배치 조회 (N+1 방지)
+            all_policy_acc_ids: set = set()
+            for p in policy_check_targets:
+                all_policy_acc_ids.update(p.registered_accounts)
+            policy_acc_map: dict = {}
+            if all_policy_acc_ids:
+                _pa_stmt = select(_PCA).where(_PCA.id.in_(list(all_policy_acc_ids)))
+                _pa_result = await session.execute(_pa_stmt)
+                policy_acc_map = {a.id: a for a in _pa_result.scalars().all()}
+
+            # 정책 기반 판매가 비교 → 변동 상품 계정별 그룹핑
+            policy_changed_groups: dict[str, list[str]] = {}
+            for p in policy_check_targets:
+                _pol = policies_map.get(p.applied_policy_id)
+                if not _pol or not _pol.pricing:
+                    continue
+                _cost = p.cost or 0
+                _last_sent: dict = p.last_sent_data or {}
+                _source_site = p.source_site or ""
+                _pm_data = _pol.market_policies or {}
+
+                for _acc_id in p.registered_accounts:
+                    _acc = policy_acc_map.get(_acc_id)
+                    if not _acc:
+                        continue
+                    _new_price = calc_market_price(
+                        _cost,
+                        _pol.pricing,
+                        _acc.market_type,
+                        _pm_data,
+                        source_site=_source_site,
+                    )
+                    _old_sent = _last_sent.get(_acc_id, {})
+                    _old_price = (int(_old_sent.get("sale_price") or 0) // 100) * 100
+                    if _new_price != _old_price:
+                        logger.info(
+                            f"[refresh 정책변동] {p.id} {_acc.market_type} "
+                            f"₩{_old_price:,} → ₩{_new_price:,}"
+                        )
+                        _acc_key = ",".join(sorted(p.registered_accounts))
+                        policy_changed_groups.setdefault(_acc_key, []).append(p.id)
+                        break
+
+            if policy_changed_groups:
+                _ship_repo = SambaShipmentRepository(session)
+                _ship_svc = SambaShipmentService(_ship_repo, session)
+                for _acc_key, _pids in policy_changed_groups.items():
+                    _acc_ids = _acc_key.split(",")
+                    try:
+                        await _ship_svc.start_update(
+                            _pids, ["price"], _acc_ids, skip_unchanged=False
+                        )
+                        retransmitted += len(_pids)
+                    except Exception as e:
+                        logger.error(
+                            f"[refresh] 정책 변동 재전송 실패 ({len(_pids)}건): {e}"
+                        )
+
+                await session.commit()
+
     summary.retransmitted = retransmitted
 
     # 갱신 후 상품 0건인 그룹 자동 삭제

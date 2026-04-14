@@ -4,14 +4,8 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from "react"
 import { useSearchParams, useRouter } from "next/navigation";
 import {
   collectorApi,
-  policyApi,
-  forbiddenApi,
-  accountApi,
   shipmentApi,
   proxyApi,
-  nameRuleApi,
-  categoryApi,
-  detailTemplateApi,
   fetchWithAuth,
   type SambaCollectedProduct,
   type SambaPolicy,
@@ -212,28 +206,23 @@ export default function ProductsPage() {
   }, [loadProducts, currentPage])
 
   // 메타데이터 + 상품 병렬 로드 (초기 1회)
+  // init-data 통합 API(8개→1개) + scrollProducts = 총 2개 HTTP 요청으로 최적화
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      // 메타데이터 8개 + 상품 scroll 동시 호출
       const knownStatus2 = ['has_orders', 'free_ship', 'same_day', 'free_same', 'market_registered', 'market_unregistered', 'sold_out']
       const statusParam = (knownStatus2.includes(statusFilter) || statusFilter.startsWith('reg_') || statusFilter.startsWith('unreg_'))
         ? statusFilter : statusFilter || undefined
       const aiParam = (aiFilter === 'has_orders') ? aiFilter : aiFilter || undefined
-      const [pol, filters, words, accs, orderPids, rules, mappings, tpls, productsRes] = await Promise.all([
-        policyApi.list().catch(() => []),
-        collectorApi.listFilters().catch(() => [] as SambaSearchFilter[]),
-        forbiddenApi.listWords('deletion').catch(() => []),
-        accountApi.listActive().catch(() => [] as SambaMarketAccount[]),
-        collectorApi.getProductIdsWithOrders().catch(() => [] as string[]),
-        nameRuleApi.list().catch(() => [] as SambaNameRule[]),
-        categoryApi.listMappings().catch(() => []) as Promise<{ source_site: string; source_category: string; target_mappings: Record<string, string> }[]>,
-        detailTemplateApi.list().catch(() => [] as SambaDetailTemplate[]),
+
+      // 메타데이터(통합) + 상품목록 동시 호출
+      const [meta, productsRes] = await Promise.all([
+        collectorApi.initData().catch(() => null),
         collectorApi.scrollProducts({
           skip: 0,
           limit: pageSize,
           search: searchQ.trim() || _idFilter || undefined,
-          search_type: searchQ.trim() ? searchType : (_idFilter ? "id" : undefined),
+          search_type: searchQ.trim() ? searchType : (_idFilter ? 'id' : undefined),
           source_site: siteFilter || undefined,
           status: statusParam,
           ai_filter: aiParam,
@@ -241,23 +230,28 @@ export default function ProductsPage() {
           sort_by: sortBy,
         }).catch(() => null),
       ])
-      setPolicies(pol)
-      setAccounts(accs)
-      setDetailTemplates(tpls)
-      setDeletionWords(words.filter((w: { is_active?: boolean }) => w.is_active !== false).map((w: { word: string }) => w.word))
-      setNameRules(rules)
-      setOrderProductIds(new Set(orderPids))
-      const nameMap: Record<string, string> = {}
-      filters.forEach((f: SambaSearchFilter) => { nameMap[f.id] = f.name })
-      setFilterNameMap(nameMap)
-      setSearchFilters(filters)
-      if (Array.isArray(mappings)) {
-        const map = new Map<string, Record<string, string>>()
-        mappings.forEach(m => {
-          map.set(`${m.source_site}::${m.source_category}`, m.target_mappings || {})
-        })
-        setCatMappingMap(map)
+
+      // 메타데이터 상태 반영
+      if (meta) {
+        setPolicies(meta.policies)
+        setAccounts(meta.accounts)
+        setDetailTemplates(meta.detail_templates)
+        setDeletionWords(meta.deletion_words)
+        setNameRules(meta.name_rules)
+        setOrderProductIds(new Set(meta.order_product_ids))
+        const nameMap: Record<string, string> = {}
+        meta.filters.forEach((f: SambaSearchFilter) => { nameMap[f.id] = f.name })
+        setFilterNameMap(nameMap)
+        setSearchFilters(meta.filters)
+        if (Array.isArray(meta.category_mappings)) {
+          const map = new Map<string, Record<string, string>>()
+          meta.category_mappings.forEach(m => {
+            map.set(`${m.source_site}::${m.source_category}`, m.target_mappings || {})
+          })
+          setCatMappingMap(map)
+        }
       }
+
       // 상품 데이터 세팅
       if (productsRes) {
         setAllProducts(productsRes.items)
@@ -266,7 +260,7 @@ export default function ProductsPage() {
         if (productsRes.counts) setKpiCounts(productsRes.counts)
       }
     } catch (e) {
-      console.error("load error:", e)
+      console.error('load error:', e)
     } finally {
       setLoading(false)
     }

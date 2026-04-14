@@ -150,9 +150,10 @@ class SambaOrder(SQLModel, table=True):
         default=None, sa_column=Column(Text, nullable=True)
     )
 
-    # 고객 결제시간
+    # 고객 결제시간 (대시보드/날짜 범위 조회의 핵심 필터 — 인덱스 필수)
     paid_at: Optional[datetime] = Field(
-        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True, index=True),
     )
 
     # Timestamps

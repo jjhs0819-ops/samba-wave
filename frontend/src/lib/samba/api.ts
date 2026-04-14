@@ -148,6 +148,8 @@ export const orderApi = {
   },
   listByDateRange: (start: string, end: string) =>
     request<SambaOrder[]>(`${SAMBA_PREFIX}/orders/by-date-range?start=${start}&end=${end}`),
+  listByCollectedProduct: (collectedProductId: string) =>
+    request<SambaOrder[]>(`${SAMBA_PREFIX}/orders/by-collected-product?collected_product_id=${encodeURIComponent(collectedProductId)}`),
   dashboardStats: () => request<OrderDashboardStats>(`${SAMBA_PREFIX}/orders/dashboard-stats`),
   get: (id: string) => request<SambaOrder>(`${SAMBA_PREFIX}/orders/${id}`),
   search: (q: string) => request<SambaOrder[]>(`${SAMBA_PREFIX}/orders/search?q=${encodeURIComponent(q)}`),
