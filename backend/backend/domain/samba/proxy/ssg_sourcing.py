@@ -1289,8 +1289,12 @@ class SSGSourcingClient:
                         images.append(di)
                         existing.add(di)
 
-        # 옵션/재고: uitemObjList 파싱
+        # 옵션/재고: uitemObjList 파싱, 비어있으면 HTML <select> 태그 폴백
+        # department.ssg.com: uitemObjList는 항상 [] — JS 런타임 로드 방식이므로
+        # <select id="ordOpt1"> 태그에서 구매가능 사이즈 파싱
         options = self._parse_uitem_options(obj)
+        if not options:
+            options = self._parse_select_options(html)
         # 품절 재확인: 모든 옵션이 품절이면 품절
         if options and all(opt.get("isSoldOut", False) for opt in options):
             is_sold_out = True
@@ -1400,7 +1404,7 @@ class SSGSourcingClient:
                 info["color"] = value
             elif "제조국" in lbl:
                 info["origin"] = value
-            elif lbl in ("제품의주소재", "소재", "재질", "주소재"):
+            elif lbl in ("제품의주소재", "상품의주소재", "소재", "재질", "주소재"):
                 info["material"] = value
             elif "제조사" in lbl or "수입자" in lbl:
                 info["manufacturer"] = value
@@ -1875,6 +1879,47 @@ class SSGSourcingClient:
             )
 
         return items
+
+    @staticmethod
+    def _parse_select_options(html: str) -> list[dict]:
+        """HTML <select id="ordOpt1"> 태그에서 구매가능 옵션 추출.
+
+        department.ssg.com은 uitemObjList가 항상 빈 배열 (JS 런타임 로드).
+        대신 HTML에 <select id="ordOpt1"> 태그가 있고 재고있는 옵션만 렌더링된다.
+        soldout 옵션은 HTML에 표시되지 않으므로 select 내 모든 option = 구매가능 상태.
+        """
+        m = re.search(
+            r'<select[^>]+id=["\']ordOpt1["\'][^>]*>(.*?)</select>',
+            html,
+            re.DOTALL | re.IGNORECASE,
+        )
+        if not m:
+            return []
+
+        options: list[dict] = []
+        select_html = m.group(1)
+
+        for opt_m in re.finditer(
+            r'<option[^>]+value=["\']([^"\']*)["\'][^>]*>(.*?)</option>',
+            select_html,
+            re.DOTALL | re.IGNORECASE,
+        ):
+            val = opt_m.group(1).strip()
+            text = re.sub(r"<[^>]+>", "", opt_m.group(2)).strip()
+            # 빈 값(선택하세요 등) 건너뜀
+            if not val:
+                continue
+            name = text or val
+            options.append(
+                {
+                    "name": name,
+                    "price": 0,
+                    "stock": 99,  # select에 표시 = 구매가능 = 재고있음
+                    "isSoldOut": False,
+                }
+            )
+
+        return options
 
     @staticmethod
     def _js_literal_to_json(js_str: str) -> str:

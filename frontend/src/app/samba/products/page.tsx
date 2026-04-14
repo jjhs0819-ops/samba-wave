@@ -42,11 +42,13 @@ export default function ProductsPage() {
       setFilterByGroupId(gid)
       setFilterGroupName(gname)
       // URL에서 그룹 필터 파라미터 제거 (새로고침 시 풀리도록)
-      const params = new URLSearchParams(searchParams.toString())
+      // router.replace 대신 window.history.replaceState 사용 — Next.js 리내비게이션 방지
+      // router.replace는 Next.js 내비게이션을 트리거해 컴포넌트 리마운트 → filterByGroupId 초기화 버그 유발
+      const params = new URLSearchParams(window.location.search)
       params.delete("search_filter_id")
       params.delete("group_name")
       const qs = params.toString()
-      router.replace(`/samba/products${qs ? `?${qs}` : ""}`)
+      window.history.replaceState(null, '', `/samba/products${qs ? `?${qs}` : ""}`)
     }
   // searchParams가 바뀔 때(클라이언트 네비게이션)도 재실행 필요
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -59,12 +61,12 @@ export default function ProductsPage() {
     if (h) {
       setHighlightProductId(h)
       // URL에서 highlight 파라미터 제거 (뒤로가기 히스토리 안 남김)
-      const params = new URLSearchParams(searchParams.toString())
+      const params = new URLSearchParams(window.location.search)
       params.delete("highlight")
       const qs = params.toString()
-      router.replace(`/samba/products${qs ? `?${qs}` : ""}`)
+      window.history.replaceState(null, '', `/samba/products${qs ? `?${qs}` : ""}`)
     }
-  }, [searchParams, router]);
+  }, [searchParams]);
 
   const [allProducts, setAllProducts] = useState<SambaCollectedProduct[]>([]);
   const [policies, setPolicies] = useState<SambaPolicy[]>([]);

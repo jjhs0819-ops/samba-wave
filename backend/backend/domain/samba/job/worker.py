@@ -1333,6 +1333,10 @@ class JobWorker:
                 _disp_ctg_id = qs.get("dispCtgId", [""])[0]
                 if _disp_ctg_id:
                     _search_kwargs["disp_ctg_id"] = _disp_ctg_id
+                # SSG ctgPath 파라미터 → 전시카테고리 전체 경로 (그룹 생성 시 저장)
+                _ctg_path = qs.get("ctgPath", [""])[0]
+                if _ctg_path:
+                    _search_kwargs["ctgPath"] = _ctg_path
                 # skipDetail 옵션
                 if qs.get("skipDetail", [""])[0] == "1":
                     _search_kwargs["_skip_detail"] = True
@@ -1677,6 +1681,22 @@ class JobWorker:
         _fp_cat1 = ""
         _fp_cat2 = ""
         _fp_cat3 = ""
+        # SSG: ctgPath URL 파라미터에서 전시카테고리 전체 경로 복원
+        _ssg_cat = ""
+        _ssg_cat1 = ""
+        _ssg_cat2 = ""
+        _ssg_cat3 = ""
+        _ssg_cat4 = ""
+        if site == "SSG":
+            _ctg_path_ssg = _search_kwargs.get("ctgPath", "")
+            if _ctg_path_ssg:
+                _ssg_parts = _ctg_path_ssg.split(" > ")
+                _ssg_cat = _ctg_path_ssg
+                _ssg_cat1 = _ssg_parts[0] if _ssg_parts else ""
+                _ssg_cat2 = _ssg_parts[1] if len(_ssg_parts) > 1 else ""
+                _ssg_cat3 = _ssg_parts[2] if len(_ssg_parts) > 2 else ""
+                _ssg_cat4 = _ssg_parts[3] if len(_ssg_parts) > 3 else ""
+                logger.debug(f"[잡워커] SSG ctgPath 카테고리: {_ssg_cat}")
         if site == "FashionPlus":
             _fp_cat1 = qs.get("category1Name", [""])[0]
             _fp_cat2 = qs.get("category2Name", [""])[0]
@@ -2092,6 +2112,14 @@ class JobWorker:
                 _cat2 = item.get("category2") or detail.get("category2") or ""
                 _cat3 = item.get("category3") or detail.get("category3") or ""
                 _cat4 = item.get("category4") or detail.get("category4") or ""
+            elif site == "SSG" and _ssg_cat:
+                # SSG: ctgPath(그룹 생성 시 저장된 전시카테고리 전체 경로) 최우선
+                # detail.get("category")는 잎노드만 반환 (예: "워킹화") → ctgPath로 대체
+                _cat = _ssg_cat
+                _cat1 = _ssg_cat1
+                _cat2 = _ssg_cat2
+                _cat3 = _ssg_cat3
+                _cat4 = _ssg_cat4
             else:
                 _cat = (
                     detail.get("category")

@@ -2612,10 +2612,12 @@ async def brand_create_groups(
             _rep_brand = (
                 f"&repBrandId={'|'.join(body.brand_ids)}" if body.brand_ids else ""
             )
+            # 카테고리 전체 경로(전시카테고리) URL에 저장 → 워커가 수집 시 정확한 카테고리 적용
+            _ctg_path_ssg = f"&ctgPath={_quote_ssg(path)}" if path else ""
             keyword = (
                 f"https://department.ssg.com/search"
                 f"?query={_quote_ssg(_label_ssg)}&dispCtgId={code}"
-                f"{_rep_brand}{_md_ssg}{_so_ssg}"
+                f"{_rep_brand}{_ctg_path_ssg}{_md_ssg}{_so_ssg}"
             )
             category_filter = code or None
         elif body.source_site == "FashionPlus":
