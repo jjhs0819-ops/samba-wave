@@ -5,6 +5,7 @@ import { collectorApi } from '@/lib/samba/api/commerce'
 import { fetchWithAuth } from '@/lib/samba/api/shared'
 import { monitorApi, type DashboardStats, type MonitorEvent, type RefreshLogEntry } from '@/lib/samba/api/operations'
 import { SITE_COLORS } from '@/lib/samba/constants'
+import { fmtNum } from '@/lib/samba/styles'
 
 const POLL_INTERVAL = 30_000
 const LOG_POLL_INTERVAL = 500
@@ -719,36 +720,36 @@ export default function WarroomPage() {
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', alignItems: 'center' }}>
                               {timeRange && <span style={{ fontSize: '0.6rem', color: '#999' }}>{timeRange}</span>}
                               {total != null && (
-                                <span style={{ fontSize: '0.65rem', color: '#aaa' }}>대상 {total.toLocaleString()}</span>
+                                <span style={{ fontSize: '0.65rem', color: '#aaa' }}>대상 {fmtNum(total)}</span>
                               )}
                               {ok != null && (
-                                <span style={{ fontSize: '0.65rem', color: '#51CF66' }}>성공 {ok.toLocaleString()}</span>
+                                <span style={{ fontSize: '0.65rem', color: '#51CF66' }}>성공 {fmtNum(ok)}</span>
                               )}
                               {errs != null && errs > 0 && (
-                                <span style={{ fontSize: '0.65rem', color: '#FF6B6B' }}>실패 {errs.toLocaleString()}</span>
+                                <span style={{ fontSize: '0.65rem', color: '#FF6B6B' }}>실패 {fmtNum(errs)}</span>
                               )}
                               {dur != null && (
                                 <span style={{ fontSize: '0.65rem', color: '#888' }}>{Math.round(dur)}초</span>
                               )}
                               {rate != null && (
-                                <span style={{ fontSize: '0.65rem', color: '#51CF66', fontWeight: 600 }}>{rate.toLocaleString()}건/초</span>
+                                <span style={{ fontSize: '0.65rem', color: '#51CF66', fontWeight: 600 }}>{fmtNum(rate)}건/초</span>
                               )}
                             </div>
                             {((priceTx && priceTx > 0) || (stockTx && stockTx > 0) || (deleted && deleted > 0)) && (
                               <div style={{ display: 'flex', gap: '0.3rem', marginTop: '0.2rem' }}>
                                 {priceTx != null && priceTx > 0 && (
                                   <span style={{ fontSize: '0.6rem', padding: '0.05rem 0.3rem', borderRadius: '3px', background: '#FFB34715', color: '#FFB347', border: '1px solid #FFB34730' }}>
-                                    가격전송 {priceTx.toLocaleString()}
+                                    가격전송 {fmtNum(priceTx)}
                                   </span>
                                 )}
                                 {stockTx != null && stockTx > 0 && (
                                   <span style={{ fontSize: '0.6rem', padding: '0.05rem 0.3rem', borderRadius: '3px', background: '#A78BFA15', color: '#A78BFA', border: '1px solid #A78BFA30' }}>
-                                    재고전송 {stockTx.toLocaleString()}
+                                    재고전송 {fmtNum(stockTx)}
                                   </span>
                                 )}
                                 {deleted != null && deleted > 0 && (
                                   <span style={{ fontSize: '0.6rem', padding: '0.05rem 0.3rem', borderRadius: '3px', background: '#FF6B6B15', color: '#FF6B6B', border: '1px solid #FF6B6B30' }}>
-                                    삭제 {deleted.toLocaleString()}
+                                    삭제 {fmtNum(deleted)}
                                   </span>
                                 )}
                               </div>
@@ -773,32 +774,32 @@ export default function WarroomPage() {
                   const sign = diff && diff > 0 ? '+' : ''
                   detailTags.push({
                     label: '가격',
-                    value: `₩${Number(d.old_price).toLocaleString()} → ₩${Number(d.new_price).toLocaleString()}${diff != null ? ` (${sign}${diff}%)` : ''}`,
+                    value: `₩${fmtNum(Number(d.old_price))} → ₩${fmtNum(Number(d.new_price))}${diff != null ? ` (${sign}${diff}%)` : ''}`,
                     color: (diff ?? 0) > 0 ? '#FF6B6B' : '#51CF66',
                   })
                 }
                 if (typeof d.refreshed === 'number' && d.refreshed > 0)
-                  detailTags.push({ label: '갱신', value: `${d.refreshed.toLocaleString()}건`, color: '#4C9AFF' })
+                  detailTags.push({ label: '갱신', value: `${fmtNum(d.refreshed)}건`, color: '#4C9AFF' })
                 if (typeof d.changed === 'number' && d.changed > 0)
-                  detailTags.push({ label: '변동', value: `${d.changed.toLocaleString()}건`, color: '#FFD93D' })
+                  detailTags.push({ label: '변동', value: `${fmtNum(d.changed)}건`, color: '#FFD93D' })
                 if (typeof d.sold_out === 'number' && d.sold_out > 0)
-                  detailTags.push({ label: '품절', value: `${d.sold_out.toLocaleString()}건`, color: '#FF6B6B' })
+                  detailTags.push({ label: '품절', value: `${fmtNum(d.sold_out)}건`, color: '#FF6B6B' })
                 if (typeof d.price_transmit === 'number' && d.price_transmit > 0)
-                  detailTags.push({ label: '가격전송', value: `${d.price_transmit.toLocaleString()}건`, color: '#FFB347' })
+                  detailTags.push({ label: '가격전송', value: `${fmtNum(d.price_transmit)}건`, color: '#FFB347' })
                 if (typeof d.stock_transmit === 'number' && d.stock_transmit > 0)
-                  detailTags.push({ label: '재고전송', value: `${d.stock_transmit.toLocaleString()}건`, color: '#A78BFA' })
+                  detailTags.push({ label: '재고전송', value: `${fmtNum(d.stock_transmit)}건`, color: '#A78BFA' })
                 if (typeof d.deleted === 'number' && d.deleted > 0)
-                  detailTags.push({ label: '삭제', value: `${d.deleted.toLocaleString()}건`, color: '#FF6B6B' })
+                  detailTags.push({ label: '삭제', value: `${fmtNum(d.deleted)}건`, color: '#FF6B6B' })
                 if (typeof d.no_pid === 'number' && d.no_pid > 0)
-                  detailTags.push({ label: 'ID없음', value: `${d.no_pid.toLocaleString()}건`, color: '#FFB347' })
+                  detailTags.push({ label: 'ID없음', value: `${fmtNum(d.no_pid)}건`, color: '#FFB347' })
                 if (typeof d.blocked === 'number' && d.blocked > 0)
-                  detailTags.push({ label: '차단', value: `${d.blocked.toLocaleString()}건`, color: '#FF6B6B' })
+                  detailTags.push({ label: '차단', value: `${fmtNum(d.blocked)}건`, color: '#FF6B6B' })
                 if (typeof d.timeouts === 'number' && d.timeouts > 0)
-                  detailTags.push({ label: '타임아웃', value: `${d.timeouts.toLocaleString()}건`, color: '#FFB347' })
+                  detailTags.push({ label: '타임아웃', value: `${fmtNum(d.timeouts)}건`, color: '#FFB347' })
                 if (typeof d.other_errors === 'number' && d.other_errors > 0)
-                  detailTags.push({ label: '기타에러', value: `${d.other_errors.toLocaleString()}건`, color: '#888' })
+                  detailTags.push({ label: '기타에러', value: `${fmtNum(d.other_errors)}건`, color: '#888' })
                 if (typeof d.count === 'number' && d.count > 0 && detailTags.length === 0)
-                  detailTags.push({ label: '건수', value: `${d.count.toLocaleString()}건`, color: '#4C9AFF' })
+                  detailTags.push({ label: '건수', value: `${fmtNum(d.count)}건`, color: '#4C9AFF' })
                 if (d.error && typeof d.error === 'string')
                   detailTags.push({ label: '에러', value: String(d.error).slice(0, 60), color: '#FF6B6B' })
                 if (Array.isArray(d.missing_fields) && d.missing_fields.length > 0)
@@ -967,9 +968,9 @@ export default function WarroomPage() {
                         <div style={{ fontSize: '0.65rem', color: '#666', marginBottom: '0.3rem' }}>등록 상품</div>
                         <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem' }}>
                           <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#4C9AFF' }}>
-                            {(acc.product_count ?? 0).toLocaleString()}
+                            {fmtNum(acc.product_count ?? 0)}
                           </span>
-                          <span style={{ fontSize: '0.68rem', color: '#888' }}>/ {acc.max_products.toLocaleString()}</span>
+                          <span style={{ fontSize: '0.68rem', color: '#888' }}>/ {fmtNum(acc.max_products)}</span>
                         </div>
                       </div>
                       )}
@@ -993,7 +994,7 @@ export default function WarroomPage() {
         <div style={card}>
           <div style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.5rem' }}>전체 상품</div>
           <div style={{ fontSize: '1.75rem', fontWeight: 700, color: '#E5E5E5' }}>
-            {product_stats.total.toLocaleString()}
+            {fmtNum(product_stats.total)}
           </div>
           <div style={{ fontSize: '0.7rem', color: '#888', marginTop: '0.25rem', display: 'flex', gap: '0.5rem' }}>
             {Object.entries(product_stats.by_priority).map(([k, v]) => (
@@ -1008,10 +1009,10 @@ export default function WarroomPage() {
         <div style={card}>
           <div style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.5rem' }}>등록상품 / 오토튠</div>
           <div style={{ fontSize: '1.75rem', fontWeight: 700, color: '#4C9AFF' }}>
-            {(product_stats.registered ?? 0).toLocaleString()}
+            {fmtNum(product_stats.registered ?? 0)}
           </div>
           <div style={{ fontSize: '0.7rem', color: '#888', marginTop: '0.25rem' }}>
-            24h 갱신 {autotuneRefreshed.toLocaleString()}건
+            24h 갱신 {fmtNum(autotuneRefreshed)}건
           </div>
         </div>
 
@@ -1196,11 +1197,11 @@ export default function WarroomPage() {
                     {c.name || c.product_id}
                   </span>
                   <span style={{ color: '#888', whiteSpace: 'nowrap' }}>
-                    ₩{c.old.toLocaleString()}
+                    ₩{fmtNum(c.old)}
                   </span>
                   <span style={{ color: '#888' }}>→</span>
                   <span style={{ color: '#E5E5E5', whiteSpace: 'nowrap' }}>
-                    ₩{c.new.toLocaleString()}
+                    ₩{fmtNum(c.new)}
                   </span>
                   <span style={{
                     color: c.pct < 0 ? '#FF6B6B' : '#51CF66',
@@ -1237,7 +1238,7 @@ export default function WarroomPage() {
                       transition: 'width 0.3s',
                     }} />
                   </div>
-                  <span style={{ fontSize: '0.7rem', color: '#E5E5E5', minWidth: '2.5rem', textAlign: 'right' }}>{cnt.toLocaleString()}</span>
+                  <span style={{ fontSize: '0.7rem', color: '#E5E5E5', minWidth: '2.5rem', textAlign: 'right' }}>{fmtNum(cnt)}</span>
                 </div>
               ))}
           </div>
@@ -1262,7 +1263,7 @@ export default function WarroomPage() {
                       transition: 'width 0.3s',
                     }} />
                   </div>
-                  <span style={{ fontSize: '0.7rem', color: '#E5E5E5', minWidth: '2.5rem', textAlign: 'right' }}>{cnt.toLocaleString()}</span>
+                  <span style={{ fontSize: '0.7rem', color: '#E5E5E5', minWidth: '2.5rem', textAlign: 'right' }}>{fmtNum(cnt)}</span>
                 </div>
               )
             })}
@@ -1287,7 +1288,7 @@ export default function WarroomPage() {
                       transition: 'width 0.3s',
                     }} />
                   </div>
-                  <span style={{ fontSize: '0.7rem', color: '#E5E5E5', minWidth: '2.5rem', textAlign: 'right' }}>{cnt.toLocaleString()}</span>
+                  <span style={{ fontSize: '0.7rem', color: '#E5E5E5', minWidth: '2.5rem', textAlign: 'right' }}>{fmtNum(cnt)}</span>
                 </div>
               )
             })}

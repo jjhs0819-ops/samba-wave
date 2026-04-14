@@ -1,28 +1,11 @@
-"""로컬 개발 서버 실행 스크립트.
-
-uvicorn CLI의 모듈 import 이슈 방지를 위해
-앱을 직접 임포트하여 실행합니다.
-
-사용법: python run.py [--port PORT]
-"""
+"""Local development server runner."""
 
 import argparse
-import signal
-import sys
 
 import uvicorn
 
+from backend.main import app
 
-def _handle_exit(sig, frame):
-    """Windows 로컬에서 Ctrl+C 시 즉시 종료 (SIGINT만).
-    SIGTERM은 uvicorn이 받아 lifespan shutdown을 실행하도록 위임."""
-    sys.exit(0)
-
-
-signal.signal(signal.SIGINT, _handle_exit)
-# SIGTERM은 가로채지 않음 — uvicorn → lifespan graceful shutdown 실행
-
-from backend.main import app  # noqa: F401 - 앱 직접 임포트
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

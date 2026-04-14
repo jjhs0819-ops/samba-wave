@@ -547,9 +547,19 @@ async function runFocusPoll() {
 
 // alarm 트리거 시 1회 폴링 — job 있으면 집중 모드 진입, 없으면 카운트 증가
 let emptyPollCount = 0
+let pollPausedUntil = 0
+
+function pauseCollectPolling(ms, reason) {
+  const nextUntil = Date.now() + ms
+  if (nextUntil > pollPausedUntil) {
+    pollPausedUntil = nextUntil
+    console.log(`[수집] 폴링 일시중지 ${Math.ceil(ms / 1000)}초: ${reason}`)
+  }
+}
 const MAX_EMPTY_POLLS = 300 // 1초 × 300 = 5분간 빈 결과 → 중지
 
 async function runPollCycle() {
+  if (Date.now() < pollPausedUntil) return
   // KREAM(pollCollectOnce, pollSearchOnce), AI소싱(pollAiSourcingOnce) 폴링 비활성화 — 401 오류 방지
   const hadSourcing = await pollSourcingOnce()
   if (hadSourcing) {

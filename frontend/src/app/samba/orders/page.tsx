@@ -249,7 +249,7 @@ export default function OrdersPage() {
           const res = await orderApi.syncFromMarkets(days, acc.id)
           for (const r of res.results) {
             if (r.status === 'success') {
-              setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${r.fetched?.toLocaleString()}건 조회, ${r.synced?.toLocaleString()}건 신규 저장${(r as Record<string, unknown>).confirmed ? `, ${(r as Record<string, unknown>).confirmed}건 발주확인` : ''}`])
+              setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${fmtNum(r.fetched)}건 조회, ${fmtNum(r.synced)}건 신규 저장${(r as Record<string, unknown>).confirmed ? `, ${fmtNum((r as Record<string, unknown>).confirmed as number)}건 발주확인` : ''}`])
             } else if (r.status === 'skip') {
               setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${r.message}`])
             } else {
@@ -262,9 +262,9 @@ export default function OrdersPage() {
           setLogMessages(prev => [...prev, `[${ts()}] ${label} 오류: ${e}`])
         }
       }
-      setLogMessages(prev => [...prev, `[${ts()}] ${marketName} 동기화 완료 — 총 ${totalSynced.toLocaleString()}건 신규 저장`])
+      setLogMessages(prev => [...prev, `[${ts()}] ${marketName} 동기화 완료 — 총 ${fmtNum(totalSynced)}건 신규 저장`])
       if (totalCancelRequested > 0) {
-        showNotification(`주문 취소요청 ${totalCancelRequested.toLocaleString()}건이 감지되었습니다. 확인이 필요합니다.`)
+        showNotification(`주문 취소요청 ${fmtNum(totalCancelRequested)}건이 감지되었습니다. 확인이 필요합니다.`)
       }
       await loadOrders()
       setSyncing(false)
@@ -280,20 +280,20 @@ export default function OrdersPage() {
       const res = await orderApi.syncFromMarkets(days, isAll ? undefined : syncAccountId)
       for (const r of res.results) {
         if (r.status === 'success') {
-          setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${r.fetched?.toLocaleString()}건 조회, ${r.synced?.toLocaleString()}건 신규 저장${(r as Record<string, unknown>).confirmed ? `, ${(r as Record<string, unknown>).confirmed}건 발주확인` : ''}`])
+          setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${fmtNum(r.fetched)}건 조회, ${fmtNum(r.synced)}건 신규 저장${(r as Record<string, unknown>).confirmed ? `, ${fmtNum((r as Record<string, unknown>).confirmed as number)}건 발주확인` : ''}`])
         } else if (r.status === 'skip') {
           setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${r.message}`])
         } else {
           setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: 오류 — ${r.message}`])
         }
       }
-      setLogMessages(prev => [...prev, `[${ts()}] 동기화 완료 — 총 ${res.total_synced.toLocaleString()}건 신규 저장`])
+      setLogMessages(prev => [...prev, `[${ts()}] 동기화 완료 — 총 ${fmtNum(res.total_synced)}건 신규 저장`])
       let totalCancelRequested = 0
       for (const r of res.results) {
         totalCancelRequested += ((r as Record<string, unknown>).cancel_requested as number) || 0
       }
       if (totalCancelRequested > 0) {
-        showNotification(`주문 취소요청 ${totalCancelRequested.toLocaleString()}건이 감지되었습니다. 확인이 필요합니다.`)
+        showNotification(`주문 취소요청 ${fmtNum(totalCancelRequested)}건이 감지되었습니다. 확인이 필요합니다.`)
       }
       await loadOrders()
     } catch (e) {
@@ -768,7 +768,7 @@ export default function OrdersPage() {
   // 문자열 입력 → 숫자 콤마 포맷 (편집 중 입력값용)
   const fmtNumStr = (v: string) => {
     const num = v.replace(/[^\d]/g, '')
-    return num ? Number(num).toLocaleString() : ''
+    return num ? fmtNum(Number(num)) : ''
   }
 
   const pendingCount = filteredOrders.filter(o => o.status === 'pending').length
@@ -856,13 +856,13 @@ export default function OrdersPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(76,154,255,0.08)', border: '1px solid rgba(76,154,255,0.2)', borderRadius: '8px' }}>
             <span style={{ fontSize: '0.8125rem', color: '#4C9AFF', fontWeight: 600 }}>SMS 잔여</span>
             <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>
-              SMS <span style={{ color: '#51CF66', fontWeight: 700 }}>{smsRemain.SMS_CNT?.toLocaleString()}</span>건
+              SMS <span style={{ color: '#51CF66', fontWeight: 700 }}>{fmtNum(smsRemain.SMS_CNT)}</span>건
             </span>
             <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>
-              LMS <span style={{ color: '#FFB84D', fontWeight: 700 }}>{smsRemain.LMS_CNT?.toLocaleString()}</span>건
+              LMS <span style={{ color: '#FFB84D', fontWeight: 700 }}>{fmtNum(smsRemain.LMS_CNT)}</span>건
             </span>
             <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>
-              MMS <span style={{ color: '#CC5DE8', fontWeight: 700 }}>{smsRemain.MMS_CNT?.toLocaleString()}</span>건
+              MMS <span style={{ color: '#CC5DE8', fontWeight: 700 }}>{fmtNum(smsRemain.MMS_CNT)}</span>건
             </span>
           </div>
         )}
@@ -966,7 +966,7 @@ export default function OrdersPage() {
       {/* 필터 바 */}
       <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
         <span style={{ fontSize: '0.72rem', color: '#aaa', whiteSpace: 'nowrap', marginRight: '4px' }}>
-          <span style={{ color: '#FF8C00', fontWeight: 600 }}>{filteredOrders.length.toLocaleString()}</span>건 / ₩<span style={{ color: '#FF8C00', fontWeight: 600 }}>{filteredOrders.reduce((s, o) => s + (o.sale_price || 0), 0).toLocaleString()}</span>
+          <span style={{ color: '#FF8C00', fontWeight: 600 }}>{fmtNum(filteredOrders.length)}</span>건 / ₩<span style={{ color: '#FF8C00', fontWeight: 600 }}>{fmtNum(filteredOrders.reduce((s, o) => s + (o.sale_price || 0), 0))}</span>
         </span>
         <select style={{ ...inputStyle, width: '80px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
           <option value="product">상품</option>

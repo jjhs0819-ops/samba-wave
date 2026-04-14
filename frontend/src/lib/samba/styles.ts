@@ -23,8 +23,10 @@ export const inputStyle = {
 }
 
 /** 숫자 포맷 (콤마 구분) */
-export function fmtNum(v: number): string {
-  return v.toLocaleString('ko-KR')
+export function fmtNum(v: number | string | null | undefined): string {
+  const n = typeof v === 'number' ? v : Number(v ?? 0)
+  if (!Number.isFinite(n)) return '0'
+  return n.toLocaleString('ko-KR')
 }
 
 /** 콤마 포맷 문자열 → 숫자 파싱 */

@@ -1310,7 +1310,7 @@ export default function SettingsPage() {
     proxyApi.ssgShippingPolicies().then(res => {
       if (!res.success || !res.policies?.length) return
       const opts = res.policies.map((p: { shppcstId: string; feeAmt: number; prpayCodDivNm: string; shppcstAplUnitNm: string; divCd: number }) => {
-        const fee = p.feeAmt ? `${Number(p.feeAmt).toLocaleString()}원` : '무료'
+        const fee = p.feeAmt ? `${fmtNum(Number(p.feeAmt))}원` : '무료'
         const parts = [p.shppcstId, fee]
         if (p.prpayCodDivNm) parts.push(p.prpayCodDivNm)
         if (p.shppcstAplUnitNm) parts.push(p.shppcstAplUnitNm)
@@ -1758,7 +1758,7 @@ export default function SettingsPage() {
                               const shipRes = await proxyApi.ssgShippingPolicies()
                               if (shipRes.success && shipRes.policies?.length) {
                                 setSsgShippingOptions(shipRes.policies.map((p: { shppcstId: string; feeAmt: number; prpayCodDivNm: string; shppcstAplUnitNm: string; divCd: number }) => {
-                                  const fee = p.feeAmt ? `${Number(p.feeAmt).toLocaleString()}원` : '무료'
+                                  const fee = p.feeAmt ? `${fmtNum(Number(p.feeAmt))}원` : '무료'
                                   const parts = [p.shppcstId, fee]
                                   if (p.prpayCodDivNm) parts.push(p.prpayCodDivNm)
                                   if (p.shppcstAplUnitNm) parts.push(p.shppcstAplUnitNm)
@@ -2088,7 +2088,7 @@ export default function SettingsPage() {
                     fontSize: '0.8125rem', fontWeight: sourcingTab === site.id ? 600 : 400,
                     cursor: 'pointer', marginBottom: '-1px', whiteSpace: 'nowrap',
                   }}
-                >{site.name}{count > 0 ? ` (${count.toLocaleString()})` : ''}</button>
+                >{site.name}{count > 0 ? ` (${fmtNum(count)})` : ''}</button>
               )
             })}
           </div>
@@ -2184,8 +2184,8 @@ export default function SettingsPage() {
                           <span style={{ color: '#FF6B6B', fontWeight: 600 }}>쿠키 만료 — 재로그인 필요</span>
                         ) : (
                           <>
-                            <span style={{ color: '#51CF66', fontWeight: 600 }}>머니 {(a.balance ?? 0).toLocaleString()}</span>
-                            <span style={{ color: '#4C9AFF', fontWeight: 600 }}>적립금 {Number((a.additional_fields as Record<string, unknown>)?.mileage ?? 0).toLocaleString()}</span>
+                            <span style={{ color: '#51CF66', fontWeight: 600 }}>머니 {fmtNum(a.balance ?? 0)}</span>
+                            <span style={{ color: '#4C9AFF', fontWeight: 600 }}>적립금 {fmtNum(Number((a.additional_fields as Record<string, unknown>)?.mileage ?? 0))}</span>
                           </>
                         )}
                         {a.balance_updated_at && <span style={{ color: '#666' }}>{new Date(a.balance_updated_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>}

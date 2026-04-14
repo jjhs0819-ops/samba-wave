@@ -1735,10 +1735,26 @@ async def _check_policy_price_changed(
     return False
 
 
+def _snapshot_old_values(product: Any) -> dict:
+    """Identity map 오염 전에 비교용 이전 값 캡처.
+
+    update_async 호출 전에 반드시 실행해야 함.
+    update_async는 같은 session의 identity map 객체를 직접 수정하므로
+    호출 후에는 old 값을 읽을 수 없음.
+    """
+    return {
+        "sale_price": getattr(product, "sale_price", 0) or 0,
+        "cost": getattr(product, "cost", 0) or 0,
+        "sale_status": getattr(product, "sale_status", "in_stock"),
+        "options": list(getattr(product, "options", None) or []),
+    }
+
+
 async def _retransmit_if_changed(
     session: AsyncSession,
     product: Any,
     updates: dict,
+    old_values: dict | None = None,
 ) -> dict:
     """가격/재고 변동 시 등록된 마켓에 자동 수정등록."""
     result = {"retransmitted": False, "retransmit_accounts": 0}
@@ -1751,7 +1767,9 @@ async def _retransmit_if_changed(
 
     # 품절 전환 → 마켓 판매중지
     new_status = updates.get("sale_status")
-    old_status = getattr(product, "sale_status", "in_stock")
+    old_status = (old_values or {}).get("sale_status") or getattr(
+        product, "sale_status", "in_stock"
+    )
     if new_status == "sold_out" and old_status != "sold_out":
         if getattr(product, "lock_delete", False):
             logger.info(
@@ -1790,21 +1808,32 @@ async def _retransmit_if_changed(
             logger.error(f"[enrich] {product.id} 마켓 판매중지 실패: {e}")
         return result
 
-    # 가격 변동 확인
+    # 가격 변동 확인 (old_values 우선 — identity map 오염 방지)
     price_changed = False
-    old_sale = getattr(product, "sale_price", 0) or 0
-    new_sale = updates.get("sale_price", old_sale) or 0
-    if int(new_sale) != int(old_sale):
+    _ov = old_values or {}
+    old_sale = int(
+        _ov.get("sale_price")
+        if "sale_price" in _ov
+        else getattr(product, "sale_price", 0) or 0
+    )
+    new_sale = int(updates.get("sale_price", old_sale) or 0)
+    if new_sale != old_sale:
         price_changed = True
 
-    old_cost = getattr(product, "cost", 0) or 0
-    new_cost = updates.get("cost", old_cost) or 0
-    if int(new_cost) != int(old_cost):
+    old_cost = int(
+        _ov.get("cost") if "cost" in _ov else getattr(product, "cost", 0) or 0
+    )
+    new_cost = int(updates.get("cost", old_cost) or 0)
+    if new_cost != old_cost:
         price_changed = True
 
-    # 재고(옵션) 변동 확인
+    # 재고(옵션) 변동 확인 (old_values 우선 — identity map 오염 방지)
     stock_changed = False
-    old_options = getattr(product, "options", None) or []
+    old_options = (
+        _ov.get("options")
+        if "options" in _ov
+        else (getattr(product, "options", None) or [])
+    )
     new_options = updates.get("options")
     if new_options and old_options:
         old_stock_map = {
@@ -1953,8 +1982,11 @@ async def enrich_product(
         if detail.get("images"):
             updates["images"] = detail["images"]
 
+        _old_vals = _snapshot_old_values(product)
         updated = await svc.update_collected_product(product_id, updates)
-        retransmit = await _retransmit_if_changed(session, product, updates)
+        retransmit = await _retransmit_if_changed(
+            session, product, updates, old_values=_old_vals
+        )
         return {
             "success": True,
             "enriched_fields": list(updates.keys()),
@@ -2025,8 +2057,11 @@ async def enrich_product(
         history.insert(0, snapshot)
         updates["price_history"] = _trim_history(history)
 
+        _old_vals = _snapshot_old_values(product)
         updated = await svc.update_collected_product(product_id, updates)
-        retransmit = await _retransmit_if_changed(session, product, updates)
+        retransmit = await _retransmit_if_changed(
+            session, product, updates, old_values=_old_vals
+        )
         return {
             "success": True,
             "enriched_fields": list(updates.keys()),
@@ -2084,8 +2119,11 @@ async def enrich_product(
         history.insert(0, snapshot)
         updates["price_history"] = _trim_history(history)
 
+        _old_vals = _snapshot_old_values(product)
         updated = await svc.update_collected_product(product_id, updates)
-        retransmit = await _retransmit_if_changed(session, product, updates)
+        retransmit = await _retransmit_if_changed(
+            session, product, updates, old_values=_old_vals
+        )
         return {
             "success": True,
             "enriched_fields": list(updates.keys()),
@@ -2137,8 +2175,11 @@ async def enrich_product(
         history.insert(0, snapshot)
         updates["price_history"] = _trim_history(history)
 
+        _old_vals = _snapshot_old_values(product)
         updated = await svc.update_collected_product(product_id, updates)
-        retransmit = await _retransmit_if_changed(session, product, updates)
+        retransmit = await _retransmit_if_changed(
+            session, product, updates, old_values=_old_vals
+        )
         return {
             "success": True,
             "enriched_fields": list(updates.keys()),
@@ -2235,8 +2276,11 @@ async def enrich_product(
             history = list(product.price_history or [])
             history.insert(0, snapshot)
             updates["price_history"] = _trim_history(history)
+            _old_vals = _snapshot_old_values(product)
             updated = await svc.update_collected_product(product_id, updates)
-            retransmit = await _retransmit_if_changed(session, product, updates)
+            retransmit = await _retransmit_if_changed(
+                session, product, updates, old_values=_old_vals
+            )
             return {
                 "success": True,
                 "enriched_fields": list(updates.keys()),

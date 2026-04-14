@@ -874,7 +874,7 @@ export default function SNSPage() {
                           )}
                         </td>
                         <td style={{ ...tdStyle, fontSize: '0.8rem' }}>{p.name}</td>
-                        <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 600 }}>{p.price.toLocaleString()}원</td>
+                        <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 600 }}>{fmtNum(p.price)}원</td>
                         <td style={{ ...tdStyle, textAlign: 'center', fontSize: '0.75rem', color: '#8A95B0' }}>{p.source}</td>
                       </tr>
                     ))}

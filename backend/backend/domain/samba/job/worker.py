@@ -1397,6 +1397,9 @@ class JobWorker:
                 )
             client = GsShopSourcingClient(proxy_pool=_gs_proxies or None)
         elif site == "SSG":
+            from backend.domain.samba.proxy.ssg_sourcing import (
+                RateLimitError as SSGRateLimitError,
+            )
             from backend.domain.samba.proxy.ssg_sourcing import SSGSourcingClient
 
             client = SSGSourcingClient()
@@ -1902,8 +1905,9 @@ class JobWorker:
                 it
                 for it in items_list
                 if str(it.get("site_product_id", "")) not in existing_ids
-            ][:remaining]
-            items_list = new_items
+            ]
+            if not _ssg_cat_filter:
+                new_items = new_items[:remaining]
             if new_items:
                 logger.info(
                     f"[잡워커] SSG 상세 선취합 시작: {len(new_items)}건 (페이지 순서 기준)"
@@ -1913,13 +1917,38 @@ class JobWorker:
                         else ""
                     )
                 )
+                _ssg_matched = 0
                 for idx, it in enumerate(new_items):
                     # 카테고리 필터 있을 때: remaining개 매칭되면 조기 종료
+                    if _ssg_cat_filter and _ssg_matched >= remaining:
+                        break
                     pid = str(it.get("site_product_id", ""))
                     try:
-                        det = await client.get_detail(pid)
+                        det = {}
+                        for attempt in range(3):
+                            try:
+                                det = await client.get_detail(pid)
+                                break
+                            except SSGRateLimitError as _rl:
+                                wait_seconds = max(
+                                    5,
+                                    min(int(getattr(_rl, "retry_after", 60) or 60), 60),
+                                )
+                                logger.warning(
+                                    f"[잡워커] SSG 상세 rate limit {pid}: "
+                                    f"wait={wait_seconds}s retry={attempt + 1}/3"
+                                )
+                                if attempt >= 2:
+                                    raise
+                                await asyncio.sleep(wait_seconds)
                         if det:
-                            _ssg_details[pid] = det
+                            if _ssg_cat_filter:
+                                det_ctg = str(det.get("dispCtgId") or "").strip()
+                                if det_ctg == _ssg_cat_filter:
+                                    _ssg_details[pid] = det
+                                    _ssg_matched += 1
+                            else:
+                                _ssg_details[pid] = det
                     except Exception as _e:
                         logger.warning(f"[잡워커] SSG 상세 실패 {pid}: {_e}")
                     if (idx + 1) % 5 == 0 or idx == len(new_items) - 1:
@@ -1931,6 +1960,17 @@ class JobWorker:
                 logger.info(
                     f"[잡워커] SSG 상세 선취합 완료: {len(_ssg_details)}/{len(new_items)}건"
                 )
+            if _ssg_cat_filter:
+                if _ssg_details:
+                    items_list = [
+                        it
+                        for it in items_list
+                        if str(it.get("site_product_id", "")) in _ssg_details
+                    ]
+                else:
+                    items_list = []
+            else:
+                items_list = new_items
 
         _collected_sold_out = 0
         for item in items_list:

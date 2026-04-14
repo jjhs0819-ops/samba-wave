@@ -93,7 +93,7 @@ export default function SambaDashboard() {
           return (
             <g key={v}>
               <line x1={padL} y1={y} x2={W - padR} y2={y} stroke="#2D2D2D" strokeWidth={1} />
-              <text x={padL - 6} y={y + 4} textAnchor="end" fill="#666" fontSize="8">{v.toLocaleString()}</text>
+              <text x={padL - 6} y={y + 4} textAnchor="end" fill="#666" fontSize="8">{fmtNum(v)}</text>
             </g>
           )
         })}
@@ -113,7 +113,7 @@ export default function SambaDashboard() {
           return (
             <g key={`t-${i}`}>
               <circle cx={x} cy={y} r={3} fill="rgba(255,140,0,0.4)" />
-              {kVal > 0 && <text x={x} y={y - 10} textAnchor="middle" fill="#888" fontSize="7">{kVal.toLocaleString()}</text>}
+              {kVal > 0 && <text x={x} y={y - 10} textAnchor="middle" fill="#888" fontSize="7">{fmtNum(kVal)}</text>}
             </g>
           )
         })}
@@ -125,7 +125,7 @@ export default function SambaDashboard() {
           return (
             <g key={`f-${i}`}>
               <circle cx={x} cy={y} r={3} fill="#FF8C00" />
-              {kVal > 0 && <text x={x} y={y - 10} textAnchor="middle" fill="#FF8C00" fontSize="7" fontWeight={600}>{kVal.toLocaleString()}</text>}
+              {kVal > 0 && <text x={x} y={y - 10} textAnchor="middle" fill="#FF8C00" fontSize="7" fontWeight={600}>{fmtNum(kVal)}</text>}
             </g>
           )
         })}
@@ -148,17 +148,17 @@ export default function SambaDashboard() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
         <div style={{ ...card, padding: '1.5rem', borderColor: 'rgba(255,140,0,0.25)' }}>
           <p style={{ fontSize: '0.8125rem', color: '#888', marginBottom: '0.5rem' }}>총 매출 (금월)</p>
-          <p style={{ fontSize: '1.75rem', fontWeight: 700, color: '#FF8C00' }}>₩{thisMonthSales.toLocaleString()}</p>
-          <p style={{ fontSize: '0.8125rem', color: '#888', marginTop: '0.5rem' }}>{thisMonthCount.toLocaleString()}건</p>
+          <p style={{ fontSize: '1.75rem', fontWeight: 700, color: '#FF8C00' }}>₩{fmtNum(thisMonthSales)}</p>
+          <p style={{ fontSize: '0.8125rem', color: '#888', marginTop: '0.5rem' }}>{fmtNum(thisMonthCount)}건</p>
         </div>
         <div style={{ ...card, padding: '1.5rem', borderColor: 'rgba(255,140,0,0.25)' }}>
           <p style={{ fontSize: '0.8125rem', color: '#888', marginBottom: '0.5rem' }}>이행매출 (금월)</p>
-          <p style={{ fontSize: '1.75rem', fontWeight: 700, color: '#FF8C00' }}>₩{thisMonthFulfillmentSales.toLocaleString()}</p>
+          <p style={{ fontSize: '1.75rem', fontWeight: 700, color: '#FF8C00' }}>₩{fmtNum(thisMonthFulfillmentSales)}</p>
           <p style={{ fontSize: '0.8125rem', color: '#888', marginTop: '0.5rem' }}>{month + 1}월 기준 · {Number(salesChange) >= 0 ? '▲' : '▼'}{Math.abs(Number(salesChange))}%</p>
         </div>
         <div style={{ ...card, padding: '1.5rem', borderColor: 'rgba(255,140,0,0.25)' }}>
           <p style={{ fontSize: '0.8125rem', color: '#888', marginBottom: '0.5rem' }}>수집상품</p>
-          <p style={{ fontSize: '1.75rem', fontWeight: 700, color: '#FF8C00' }}>{collectedCount.toLocaleString()}개</p>
+          <p style={{ fontSize: '1.75rem', fontWeight: 700, color: '#FF8C00' }}>{fmtNum(collectedCount)}개</p>
           <p style={{ fontSize: '0.8125rem', color: '#888', marginTop: '0.5rem' }}>등록된 상품</p>
         </div>
         <div style={{ ...card, padding: '1.5rem', borderColor: 'rgba(255,140,0,0.25)' }}>
@@ -186,8 +186,8 @@ export default function SambaDashboard() {
               {weeklyData.map((d) => (
                 <tr key={d.date.toISOString()} style={{ borderBottom: '1px solid rgba(45,45,45,0.3)' }}>
                   <td style={{ padding: '0.625rem 0', color: '#E5E5E5' }}>{formatShortDate(d.date)}</td>
-                  <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>₩{d.totalSale.toLocaleString()}</td>
-                  <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>₩{d.fulfillmentSale.toLocaleString()}</td>
+                  <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>₩{fmtNum(d.totalSale)}</td>
+                  <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>₩{fmtNum(d.fulfillmentSale)}</td>
                   <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>{d.rate}%</td>
                 </tr>
               ))}
@@ -210,14 +210,14 @@ export default function SambaDashboard() {
             <tbody>
               <tr style={{ borderBottom: '1px solid rgba(45,45,45,0.3)' }}>
                 <td style={{ padding: '0.625rem 0', color: '#E5E5E5' }}>금월</td>
-                <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>₩{thisMonthSales.toLocaleString()}</td>
-                <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>₩{thisMonthFulfillmentSales.toLocaleString()}</td>
+                <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>₩{fmtNum(thisMonthSales)}</td>
+                <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>₩{fmtNum(thisMonthFulfillmentSales)}</td>
                 <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>{thisMonthFulfillment}%</td>
               </tr>
               <tr>
                 <td style={{ padding: '0.625rem 0', color: '#E5E5E5' }}>전월</td>
-                <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>₩{lastMonthSales.toLocaleString()}</td>
-                <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>₩{lastMonthFulfillmentSales.toLocaleString()}</td>
+                <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>₩{fmtNum(lastMonthSales)}</td>
+                <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>₩{fmtNum(lastMonthFulfillmentSales)}</td>
                 <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>{lastMonthFulfillment}%</td>
               </tr>
             </tbody>

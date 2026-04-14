@@ -2189,12 +2189,16 @@ class SambaShipmentService:
                     f"[{product_row.source_site}] " if product_row.source_site else ""
                 )
                 prod_name = (product_row.name or product_id)[:30]
+                prod_no = str(product_row.site_product_id or product_id or "")
+                prod_label = (
+                    f"{prod_name} (상품번호: {prod_no})" if prod_no else prod_name
+                )
                 acc_label = f"{account.market_name}({account.seller_id or '-'})"
 
                 if result.get("success"):
                     delete_results[account_id] = "success"
                     _del_log(
-                        f"{idx_prefix}{src_tag}{prod_name} → {acc_label}: 삭제 성공"
+                        f"{idx_prefix}{src_tag}{prod_label} → {acc_label}: 삭제 성공"
                     )
                     logger.info(
                         f"[마켓삭제] {account.market_type} 성공 - 상품: {product_id}"
@@ -2202,7 +2206,7 @@ class SambaShipmentService:
                 else:
                     delete_results[account_id] = result.get("message", "실패")
                     _del_log(
-                        f"{idx_prefix}{src_tag}{prod_name} → {acc_label}: {delete_results[account_id]}"
+                        f"{idx_prefix}{src_tag}{prod_label} → {acc_label}: {delete_results[account_id]}"
                     )
                     logger.warning(
                         f"[마켓삭제] {account.market_type} 실패 - {result.get('message')}"

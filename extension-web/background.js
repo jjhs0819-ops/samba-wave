@@ -852,6 +852,7 @@ async function runFocusPoll() {
   console.log('[수집] 집중 폴링 모드 진입 (0.5초 간격, 최대 120회)')
   let emptyCount = 0
   while (emptyCount < 120) {
+    if (Date.now() < pollPausedUntil) break
     // KREAM/AI소싱 폴링 비활성화
     const hadSourcing = await pollSourcingOnce()
     if (hadSourcing) {
@@ -867,6 +868,7 @@ async function runFocusPoll() {
 
 // alarm 트리거 시 1회 폴링 — job 있으면 집중 모드 진입, 없으면 카운트 증가
 async function runPollCycle() {
+  if (Date.now() < pollPausedUntil) return
   // KREAM(pollCollectOnce, pollSearchOnce), AI소싱(pollAiSourcingOnce) 폴링 비활성화 — 401 오류 방지
   const hadSourcing = await pollSourcingOnce()
   if (hadSourcing) {
@@ -889,10 +891,20 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 // 수집 폴링 — job 없으면 5분 후 자동 중지, job 있으면 자동 재시작
 let emptyPollCount = 0
 let quickPollTimer = null
+let pollPausedUntil = 0
+
+function pauseCollectPolling(ms, reason) {
+  const nextUntil = Date.now() + ms
+  if (nextUntil > pollPausedUntil) {
+    pollPausedUntil = nextUntil
+    console.log(`[수집] 폴링 일시중지 ${Math.ceil(ms / 1000)}초: ${reason}`)
+  }
+}
 const MAX_EMPTY_POLLS = 300 // 1초 × 300 = 5분간 빈 결과 → 중지
 
 function startCollectPolling() {
   emptyPollCount = 0
+  pollPausedUntil = 0
   chrome.alarms.get('collectPoll', (alarm) => {
     if (!alarm) {
       chrome.alarms.create('collectPoll', { periodInMinutes: 0.5 })
@@ -1266,12 +1278,22 @@ async function pollSourcingOnce() {
   for (let i = 0; i < SOURCING_MAX_CONCURRENT; i++) {
     try {
       const res = await apiFetch(`${PROXY_URL}${API_PREFIX}/sourcing/collect-queue`)
-      if (!res.ok) break
+      if (!res.ok) {
+        if (res.status === 503) pauseCollectPolling(30000, 'backend shutting down')
+        break
+      }
       const job = await res.json()
+      if (job.shuttingDown) {
+        pauseCollectPolling(30000, 'backend shutting down')
+        break
+      }
       if (!job.hasJob) break
       console.log(`[소싱] ${job.url || '작업 수신'} (${jobs.length + 1}/${SOURCING_MAX_CONCURRENT})`)
       jobs.push(job)
-    } catch { break }
+    } catch {
+      pauseCollectPolling(10000, 'backend unreachable')
+      break
+    }
   }
   if (jobs.length === 0) return false
   if (jobs.length === 1) {

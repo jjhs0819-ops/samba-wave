@@ -843,7 +843,12 @@ def _process_musinsa_detail(
     old_cost = getattr(product, "cost", None)
     old_status = getattr(product, "sale_status", "in_stock")
 
-    changed = new_sale_price != old_sale or new_sale_status != old_status
+    _old_cost_int = int(old_cost) if old_cost else 0
+    _new_cost_int = int(new_cost) if new_cost else 0
+    cost_changed = new_cost is not None and _new_cost_int != _old_cost_int
+    changed = (
+        new_sale_price != old_sale or new_sale_status != old_status or cost_changed
+    )
 
     # 옵션 재고 변동 건수 — 품절↔리스탁 전환만 카운트
     old_options = getattr(product, "options", None) or []

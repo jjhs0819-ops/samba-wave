@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { collectorApi, categoryApi, accountApi, type SambaCollectedProduct } from '@/lib/samba/api/commerce'
 import { MARKET_LABELS } from '@/lib/samba/markets'
 import { showAlert } from '@/components/samba/Modal'
-import { card } from '@/lib/samba/styles'
+import { card, fmtNum } from '@/lib/samba/styles'
 
 // 카테고리 계층 구조 타입
 interface CatLevel {
@@ -365,7 +365,7 @@ export default function CategoriesPage() {
         source_category: sourceCategory,
         target_mappings: targetMappings,
       })
-      showAlert(`${Object.keys(targetMappings).length.toLocaleString()}개 마켓에 카테고리 매핑 저장 완료`, 'success')
+      showAlert(`${fmtNum(Object.keys(targetMappings).length)}개 마켓에 카테고리 매핑 저장 완료`, 'success')
       setManualModalOpen(false)
       load()
     } catch (e) {
@@ -395,7 +395,7 @@ export default function CategoriesPage() {
         source_category: sourceCategory,
         target_mappings: targetMappings,
       })
-      showAlert(`${Object.keys(targetMappings).length.toLocaleString()}개 마켓에 카테고리 매핑 저장 완료`, 'success')
+      showAlert(`${fmtNum(Object.keys(targetMappings).length)}개 마켓에 카테고리 매핑 저장 완료`, 'success')
       setAiModalOpen(false)
     } catch (e) {
       const msg = e instanceof Error ? e.message : '저장 실패'
@@ -515,7 +515,7 @@ export default function CategoriesPage() {
       return { calls: 1, tokens: '~1,500 in + ~300 out', cost: COST_PER_CALL_KRW }
     }
     const calls = Math.max(unmappedCount, 1)
-    return { calls, tokens: `~${(calls * 1500).toLocaleString()} in + ~${(calls * 300).toLocaleString()} out`, cost: calls * COST_PER_CALL_KRW }
+    return { calls, tokens: `~${fmtNum(calls * 1500)} in + ~${fmtNum(calls * 300)} out`, cost: calls * COST_PER_CALL_KRW }
   }, [selectedSite, selectedCat1, unmappedCount])
 
   // ── 매핑 현황 필터링 (드릴다운 선택에 연동) ──
@@ -744,7 +744,7 @@ export default function CategoriesPage() {
       const blockedCount = ids.length - deletableIds.length
 
       if (deletableIds.length === 0) {
-        showAlert(`전체 ${ids.length.toLocaleString()}건 모두 등록 상품이 있어 삭제할 수 없습니다`, 'error')
+        showAlert(`전체 ${fmtNum(ids.length)}건 모두 등록 상품이 있어 삭제할 수 없습니다`, 'error')
         return
       }
 
@@ -752,8 +752,8 @@ export default function CategoriesPage() {
       const result = await categoryApi.bulkDeleteMappings(deletableIds)
       setMappings(prev => prev.filter(m => !deletableIds.includes(m.id)))
       const msg = blockedCount > 0
-        ? `${result.deleted}건 삭제 완료 (등록 상품 있는 ${blockedCount}건은 유지)`
-        : `${result.deleted}건 매핑 삭제 완료`
+        ? `${fmtNum(result.deleted)}건 삭제 완료 (등록 상품 있는 ${fmtNum(blockedCount)}건은 유지)`
+        : `${fmtNum(result.deleted)}건 매핑 삭제 완료`
       showAlert(msg, 'success')
     } catch (e) {
       const msg = e instanceof Error ? e.message : '삭제 실패'
@@ -773,7 +773,7 @@ export default function CategoriesPage() {
       // 해당 마켓에 등록된 상품 확인
       const res = await categoryApi.checkMarketRegistered(market, ids)
       if (res.registered_count > 0) {
-        showAlert(`${MARKET_LABELS[market]}에 등록된 상품이 ${res.registered_count}건 있어 삭제할 수 없습니다`, 'error')
+        showAlert(`${MARKET_LABELS[market]}에 등록된 상품이 ${fmtNum(res.registered_count)}건 있어 삭제할 수 없습니다`, 'error')
         return
       }
       const result = await categoryApi.clearMarketColumn(market, ids)
@@ -786,7 +786,7 @@ export default function CategoriesPage() {
         }
         return m
       }))
-      showAlert(`${MARKET_LABELS[market]} 카테고리 ${result.cleared}건 삭제 완료`, 'success')
+      showAlert(`${MARKET_LABELS[market]} 카테고리 ${fmtNum(result.cleared)}건 삭제 완료`, 'success')
     } catch (e) {
       const msg = e instanceof Error ? e.message : '삭제 실패'
       showAlert(`매핑 삭제 실패: ${msg}`, 'error')
@@ -882,7 +882,7 @@ export default function CategoriesPage() {
     setMarketAiLoading(null)
     setLastAiUsage({ calls: successCount, tokens: successCount * 1800, cost: successCount * COST_PER_CALL_KRW, date: new Date().toLocaleTimeString() })
     setMarketAiProgress({ market, current: total, total, success: successCount, fail: errorCount })
-    if (skippedCount > 0) showAlert(`${skippedCount}건은 이미 매핑되어 건너뜀`, 'info')
+    if (skippedCount > 0) showAlert(`${fmtNum(skippedCount)}건은 이미 매핑되어 건너뜀`, 'info')
   }
 
   // ESM 크로스매핑 복사 (지마켓→옥션)
@@ -898,7 +898,7 @@ export default function CategoriesPage() {
     try {
       const result = await categoryApi.copyEsmMapping(fromMarket, toMarket, ids)
       const label = fromMarket === 'gmarket' ? 'G마켓→옥션' : '옥션→G마켓'
-      showAlert(`${label} 크로스매핑: ${result.copied}건 복사, ${result.skipped}건 스킵, ${result.failed}건 실패`, 'success')
+      showAlert(`${label} 크로스매핑: ${fmtNum(result.copied)}건 복사, ${fmtNum(result.skipped)}건 스킵, ${fmtNum(result.failed)}건 실패`, 'success')
       if (result.copied > 0) {
         const refreshed = await categoryApi.listMappings() as MappingRow[]
         setMappings(refreshed)
@@ -967,15 +967,15 @@ export default function CategoriesPage() {
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '8px', marginBottom: '0.75rem' }}>
         <span style={{ fontSize: '0.8125rem', color: '#FF8C00', fontWeight: 600 }}>AI 비용</span>
         <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>
-          예상 <span style={{ color: '#FFB84D', fontWeight: 700 }}>₩{costEstimate.cost.toLocaleString()}</span>
+          예상 <span style={{ color: '#FFB84D', fontWeight: 700 }}>₩{fmtNum(costEstimate.cost)}</span>
           <span style={{ color: '#888' }}> ({costEstimate.calls}회)</span>
         </span>
         {lastAiUsage && (
           <>
             <span style={{ color: '#2D2D2D' }}>|</span>
             <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>
-              최근 <span style={{ color: '#51CF66', fontWeight: 700 }}>₩{lastAiUsage.cost.toLocaleString()}</span>
-              <span style={{ color: '#888' }}> ({lastAiUsage.calls}회 / ~{lastAiUsage.tokens.toLocaleString()}토큰)</span>
+              최근 <span style={{ color: '#51CF66', fontWeight: 700 }}>₩{fmtNum(lastAiUsage.cost)}</span>
+              <span style={{ color: '#888' }}> ({fmtNum(lastAiUsage.calls)}회 / ~{fmtNum(lastAiUsage.tokens)}토큰)</span>
             </span>
             <span style={{ fontSize: '0.6875rem', color: '#555' }}>{lastAiUsage.date}</span>
           </>
@@ -987,7 +987,7 @@ export default function CategoriesPage() {
       <div style={{ background: 'rgba(255,140,0,0.05)', border: '1px solid rgba(255,140,0,0.25)', borderRadius: '8px', padding: '0.875rem 1.25rem', marginBottom: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
         <span style={{ fontSize: '0.8125rem', color: '#888', flex: 1 }}>
           {selectedPath
-            ? `선택: ${selectedPath} (${selectedProducts.length.toLocaleString()}개) — AI가 마켓별 카테고리를 추천합니다`
+            ? `선택: ${selectedPath} (${fmtNum(selectedProducts.length)}개) — AI가 마켓별 카테고리를 추천합니다`
             : '카테고리 선택 시 단건 매핑, 미선택 시 전체 미매핑 자동 처리'}
         </span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
@@ -1019,7 +1019,7 @@ export default function CategoriesPage() {
               cursor: filteredMappings.length === 0 ? 'not-allowed' : 'pointer',
               whiteSpace: 'nowrap',
             }}
-          >매핑 일괄 삭제 ({filteredMappings.length.toLocaleString()})</button>
+          >매핑 일괄 삭제 ({fmtNum(filteredMappings.length)})</button>
         </div>
       </div>
 
@@ -1119,8 +1119,8 @@ export default function CategoriesPage() {
             매핑 현황{' '}
             <span style={{ fontSize: '0.875rem', fontWeight: 400, color: '#888' }}>
               ({filteredMappings.length === mappings.length
-                ? `총 ${mappings.length.toLocaleString()}건`
-                : `${filteredMappings.length.toLocaleString()}건 / 전체 ${mappings.length.toLocaleString()}건`})
+                ? `총 ${fmtNum(mappings.length)}건`
+                : `${fmtNum(filteredMappings.length)}건 / 전체 ${fmtNum(mappings.length)}건`})
             </span>
           </h3>
           <div style={{ ...card, overflow: 'auto' }}>
@@ -1201,7 +1201,7 @@ export default function CategoriesPage() {
                               e.currentTarget.style.borderColor = 'transparent'
                             }
                           }}
-                          title={`${MARKET_LABELS[mk]} AI 리매핑 (${filteredMappings.length.toLocaleString()}건)`}
+                          title={`${MARKET_LABELS[mk]} AI 리매핑 (${fmtNum(filteredMappings.length)}건)`}
                         >{marketAiLoading === mk ? '...' : 'AI'}</button>
                         <button
                           onClick={() => handleMarketColumnDelete(mk)}
@@ -1217,11 +1217,11 @@ export default function CategoriesPage() {
                           }}
                           onMouseEnter={e => { e.currentTarget.style.color = '#EF4444' }}
                           onMouseLeave={e => { e.currentTarget.style.color = '#444' }}
-                          title={`${MARKET_LABELS[mk]} 카테고리 일괄 삭제 (${filteredMappings.length.toLocaleString()}건)`}
+                          title={`${MARKET_LABELS[mk]} 카테고리 일괄 삭제 (${fmtNum(filteredMappings.length)}건)`}
                         >✕</button>
                       </div>
                       <span style={{ fontSize: '0.625rem', color: (marketCatCounts[mk] || 0) >= 1000 ? '#51CF66' : '#FF6B6B' }}>
-                        {(marketCatCounts[mk] || 0).toLocaleString()}개
+                        {fmtNum(marketCatCounts[mk] || 0)}개
                       </span>
                       </div>
                     </th>
@@ -1425,7 +1425,7 @@ export default function CategoriesPage() {
           <div style={{ marginBottom: '1rem', fontSize: '0.875rem' }}>
             <span style={{ color: '#888' }}>[선택카테고리]</span>{' '}
             <span style={{ color: '#FF8C00', fontWeight: 600 }}>{selectedPath}</span>{' '}
-            <span style={{ color: '#888' }}>상품 {selectedProducts.length.toLocaleString()}개</span>
+            <span style={{ color: '#888' }}>상품 {fmtNum(selectedProducts.length)}개</span>
           </div>
 
           {selectedProducts.length > 0 && (
@@ -1445,7 +1445,7 @@ export default function CategoriesPage() {
                     </div>
                     <div style={{ padding: '0.75rem' }}>
                       <p style={{ fontSize: '0.8125rem', color: '#E5E5E5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: '0.25rem' }}>{p.name}</p>
-                      <p style={{ fontSize: '0.875rem', fontWeight: 600, color: '#FF8C00' }}>₩{(p.sale_price || 0).toLocaleString()}</p>
+                      <p style={{ fontSize: '0.875rem', fontWeight: 600, color: '#FF8C00' }}>₩{fmtNum(p.sale_price || 0)}</p>
                     </div>
                   </div>
                 ))}
@@ -1533,7 +1533,7 @@ export default function CategoriesPage() {
                   {/* 에러 목록 */}
                   {bulkResult.errors.length > 0 && (
                     <div style={{ padding: '0.75rem 1rem', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '8px' }}>
-                      <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#EF4444', marginBottom: '0.5rem' }}>오류 {bulkResult.errors.length.toLocaleString()}건</div>
+                      <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#EF4444', marginBottom: '0.5rem' }}>오류 {fmtNum(bulkResult.errors.length)}건</div>
                       <div style={{ maxHeight: '120px', overflowY: 'auto' }}>
                         {bulkResult.errors.map((err, i) => (
                           <div key={i} style={{ fontSize: '0.75rem', color: '#999', padding: '0.125rem 0' }}>{err}</div>
@@ -1660,7 +1660,7 @@ export default function CategoriesPage() {
               <p style={{ fontSize: '0.75rem', color: '#888' }}>
                 {marketAiProgress.current >= marketAiProgress.total
                   ? '매핑 완료'
-                  : `${marketAiProgress.current.toLocaleString()} / ${marketAiProgress.total.toLocaleString()}건 처리 중...`}
+                  : `${fmtNum(marketAiProgress.current)} / ${fmtNum(marketAiProgress.total)}건 처리 중...`}
               </p>
             </div>
 
@@ -1680,15 +1680,15 @@ export default function CategoriesPage() {
               {/* 결과 카드 */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem' }}>
                 <div style={{ padding: '0.75rem', background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)', borderRadius: '8px', textAlign: 'center' }}>
-                  <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#22C55E' }}>{marketAiProgress.success.toLocaleString()}</div>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#22C55E' }}>{fmtNum(marketAiProgress.success)}</div>
                   <div style={{ fontSize: '0.6875rem', color: '#888' }}>성공</div>
                 </div>
                 <div style={{ padding: '0.75rem', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: '8px', textAlign: 'center' }}>
-                  <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#EF4444' }}>{marketAiProgress.fail.toLocaleString()}</div>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#EF4444' }}>{fmtNum(marketAiProgress.fail)}</div>
                   <div style={{ fontSize: '0.6875rem', color: '#888' }}>실패</div>
                 </div>
                 <div style={{ padding: '0.75rem', background: 'rgba(255,255,255,0.03)', border: '1px solid #2D2D2D', borderRadius: '8px', textAlign: 'center' }}>
-                  <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#888' }}>{(marketAiProgress.total - marketAiProgress.current).toLocaleString()}</div>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#888' }}>{fmtNum(marketAiProgress.total - marketAiProgress.current)}</div>
                   <div style={{ fontSize: '0.6875rem', color: '#888' }}>대기</div>
                 </div>
               </div>
@@ -1767,7 +1767,7 @@ export default function CategoriesPage() {
                     ))}
                   </div>
                   <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.75rem' }}>
-                    선택: {activeMarketTypes.filter(t => bulkSelectedMarkets[t]).length.toLocaleString()}개 마켓
+                    선택: {fmtNum(activeMarketTypes.filter(t => bulkSelectedMarkets[t]).length)}개 마켓
                   </div>
                 </div>
               </>
@@ -1804,7 +1804,7 @@ export default function CategoriesPage() {
                     ))}
                   </div>
                   <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.75rem' }}>
-                    선택: {marketKeys.filter(mk => aiSelectedMarkets[mk]).length.toLocaleString()}개 마켓 · 예상 비용 ₩{COST_PER_CALL_KRW.toLocaleString()}
+                    선택: {fmtNum(marketKeys.filter(mk => aiSelectedMarkets[mk]).length)}개 마켓 · 예상 비용 ₩{fmtNum(COST_PER_CALL_KRW)}
                   </div>
                 </div>
               </>
@@ -1855,11 +1855,11 @@ export default function CategoriesPage() {
                     style={{ accentColor: '#51CF66', width: '14px', height: '14px' }}
                   />
                   <span style={{ fontSize: '0.8125rem', color: syncSelected[mk] ? '#E5E5E5' : '#666' }}>{label}</span>
-                  <span style={{ fontSize: '0.625rem', color: (marketCatCounts[mk] || 0) >= 1000 ? '#51CF66' : '#FF6B6B', marginLeft: 'auto' }}>{(marketCatCounts[mk] || 0).toLocaleString()}</span>
+                  <span style={{ fontSize: '0.625rem', color: (marketCatCounts[mk] || 0) >= 1000 ? '#51CF66' : '#FF6B6B', marginLeft: 'auto' }}>{fmtNum(marketCatCounts[mk] || 0)}</span>
                   {syncProgress[mk] && (() => {
                     const p = syncProgress[mk]
                     if (p.status === 'loading') return <span style={{ fontSize: '0.625rem', color: '#FF8C00' }}>...</span>
-                    if (p.status === 'ok') return <span style={{ fontSize: '0.625rem', color: '#51CF66' }}>{p.count?.toLocaleString()}</span>
+                    if (p.status === 'ok') return <span style={{ fontSize: '0.625rem', color: '#51CF66' }}>{fmtNum(p.count)}</span>
                     return <span style={{ fontSize: '0.625rem', color: '#FF6B6B' }}>X</span>
                   })()}
                 </label>
@@ -1876,7 +1876,7 @@ export default function CategoriesPage() {
                     <div key={mk} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.25rem 0', borderBottom: '1px solid #1C1C1C' }}>
                       <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>{MARKET_LABELS[mk] || mk}</span>
                       {p.status === 'ok' ? (
-                        <span style={{ fontSize: '0.8125rem', color: '#51CF66', fontWeight: 600 }}>{p.count?.toLocaleString()}개</span>
+                        <span style={{ fontSize: '0.8125rem', color: '#51CF66', fontWeight: 600 }}>{fmtNum(p.count)}개</span>
                       ) : (
                         <span style={{ fontSize: '0.8125rem', color: '#FF6B6B' }}>{p.error || '실패'}</span>
                       )}

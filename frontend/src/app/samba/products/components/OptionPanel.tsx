@@ -5,6 +5,7 @@ import {
   collectorApi,
   type SambaCollectedProduct,
 } from '@/lib/samba/api/commerce'
+import { fmtNum } from '@/lib/samba/styles'
 
 /** 옵션 패널 — 옵션명/가격/재고 편집 + 일괄수정. */
 const OptionPanel = React.memo(function OptionPanel({ options, productCost, productId, sourceSite }: { options: unknown[]; productCost: number; productId: string; sourceSite: string }) {
@@ -32,7 +33,7 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
     if (mode === 'price') {
       // React 상태로 가격 입력값 일괄 갱신
       const newPrices: Record<number, string> = {}
-      opts.forEach((_, idx) => { newPrices[idx] = v.toLocaleString() })
+      opts.forEach((_, idx) => { newPrices[idx] = fmtNum(v) })
       setEditingPrices(newPrices)
       saveOptions(opts.map(o => ({ ...o, salePrice: v })))
     } else {
@@ -119,7 +120,7 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
 
                 // 가격 표시: 편집 상태값 > salePrice > 계산값
                 const priceDisplay = editingPrices[idx] ?? (
-                  optionSalePrice > 0 ? optionSalePrice.toLocaleString() : '0'
+                  optionSalePrice > 0 ? fmtNum(optionSalePrice) : '0'
                 )
 
                 let stockDisplay: React.ReactNode
@@ -177,13 +178,13 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
                     </td>
                     <td style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.875rem', color: '#C5C5C5' }}>
                       {sourceSite === 'KREAM'
-                        ? (Number(o.kreamGeneralPrice || o.kreamNormalPrice || o.price || 0) > 0 ? `₩${Number(o.kreamGeneralPrice || o.kreamNormalPrice || o.price || 0).toLocaleString()}` : '-')
-                        : (optionCost > 0 ? `₩${optionCost.toLocaleString()}` : '-')
+                        ? (Number(o.kreamGeneralPrice || o.kreamNormalPrice || o.price || 0) > 0 ? `₩${fmtNum(Number(o.kreamGeneralPrice || o.kreamNormalPrice || o.price || 0))}` : '-')
+                        : (optionCost > 0 ? `₩${fmtNum(optionCost)}` : '-')
                       }
                     </td>
                     {sourceSite === 'KREAM' && (
                       <td style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.875rem', color: '#6B8AFF' }}>
-                        {Number(o.kreamFastPrice || 0) > 0 ? `₩${Number(o.kreamFastPrice).toLocaleString()}` : '-'}
+                        {Number(o.kreamFastPrice || 0) > 0 ? `₩${fmtNum(Number(o.kreamFastPrice))}` : '-'}
                       </td>
                     )}
                     <td style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.875rem', color: '#E5E5E5', whiteSpace: 'nowrap' }}>
@@ -201,7 +202,7 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
                         onBlur={(e) => {
                           // 블러 시 숫자 포맷팅 적용
                           const v = parseInt(e.target.value.replace(/,/g, ''), 10)
-                          setEditingPrices(prev => ({ ...prev, [idx]: isNaN(v) ? '0' : v.toLocaleString() }))
+                          setEditingPrices(prev => ({ ...prev, [idx]: isNaN(v) ? '0' : fmtNum(v) }))
                         }}
                         style={{ width: '80px', background: 'rgba(255,255,255,0.05)', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', textAlign: 'right', fontSize: '0.875rem' }}
                       />

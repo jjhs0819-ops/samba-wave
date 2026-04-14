@@ -148,7 +148,7 @@ export default function ReturnsPage() {
           const syncResult = await returnApi.syncFromMarkets(30, acc.id)
           for (const r of syncResult.results) {
             if (r.status === 'success') {
-              setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${(r.fetched ?? 0).toLocaleString()}건 조회, ${(r.synced ?? 0).toLocaleString()}건 신규`])
+              setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${fmtNum(r.fetched ?? 0)}건 조회, ${fmtNum(r.synced ?? 0)}건 신규`])
             } else if (r.status === 'error') {
               setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: 오류 — ${r.message}`])
             }
@@ -158,7 +158,7 @@ export default function ReturnsPage() {
           setLogMessages(prev => [...prev, `[${ts()}] ${acc.market_name}(${acc.seller_id || '-'}) 오류: ${e}`])
         }
       }
-      setLogMessages(prev => [...prev, `[${ts()}] ${marketName} 동기화 완료 (신규 ${totalSynced.toLocaleString()}건)`])
+      setLogMessages(prev => [...prev, `[${ts()}] ${marketName} 동기화 완료 (신규 ${fmtNum(totalSynced)}건)`])
       await load()
       return
     }
@@ -171,12 +171,12 @@ export default function ReturnsPage() {
       const syncResult = await returnApi.syncFromMarkets(30, isAll ? undefined : syncAccountId)
       for (const r of syncResult.results) {
         if (r.status === 'success') {
-          setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${(r.fetched ?? 0).toLocaleString()}건 조회, ${(r.synced ?? 0).toLocaleString()}건 신규`])
+          setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${fmtNum(r.fetched ?? 0)}건 조회, ${fmtNum(r.synced ?? 0)}건 신규`])
         } else if (r.status === 'error') {
           setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: 오류 — ${r.message}`])
         }
       }
-      setLogMessages(prev => [...prev, `[${ts()}] 동기화 완료 (신규 ${syncResult.total_synced.toLocaleString()}건)`])
+      setLogMessages(prev => [...prev, `[${ts()}] 동기화 완료 (신규 ${fmtNum(syncResult.total_synced)}건)`])
     } catch (e) {
       setLogMessages(prev => [...prev, `[오류] 동기화 실패: ${e}`])
     }
@@ -251,7 +251,7 @@ export default function ReturnsPage() {
     }
     setSelectedIds(new Set())
     load()
-    showAlert(`${deleted}건 삭제 완료`, 'success')
+    showAlert(`${fmtNum(deleted)}건 삭제 완료`, 'success')
   }
 
   // 교환/취소 액션
@@ -352,13 +352,13 @@ export default function ReturnsPage() {
         ].map(({ key, label, color }) => (
           <div key={key} style={{ ...card, padding: '1rem 1.25rem' }}>
             <p style={{ fontSize: '0.75rem', color: '#666', marginBottom: '0.375rem' }}>{label}</p>
-            <p style={{ fontSize: '1.5rem', fontWeight: 700, color }}>{(completionCounts[key as keyof typeof completionCounts] ?? 0).toLocaleString()}{key === 'requested' ? '건' : ''}</p>
+            <p style={{ fontSize: '1.5rem', fontWeight: 700, color }}>{fmtNum(completionCounts[key as keyof typeof completionCounts] ?? 0)}{key === 'requested' ? '건' : ''}</p>
           </div>
         ))}
         {/* 수익총액 통계 */}
         <div style={{ ...card, padding: '1rem 1.25rem', border: `1px solid ${totalProfit >= 0 ? 'rgba(81,207,102,0.2)' : 'rgba(255,107,107,0.2)'}` }}>
           <p style={{ fontSize: '0.75rem', color: '#666', marginBottom: '0.375rem' }}>수익총액</p>
-          <p style={{ fontSize: '1.25rem', fontWeight: 700, color: totalProfit >= 0 ? '#51CF66' : '#FF6B6B' }}>₩{totalProfit.toLocaleString()}</p>
+          <p style={{ fontSize: '1.25rem', fontWeight: 700, color: totalProfit >= 0 ? '#51CF66' : '#FF6B6B' }}>₩{fmtNum(totalProfit)}</p>
         </div>
       </div>
 
@@ -658,7 +658,7 @@ export default function ReturnsPage() {
                       <td style={{ ...tdCenter, padding: '0.375rem' }}>
                         <input
                           type="text"
-                          value={r.settlement_amount != null ? r.settlement_amount.toLocaleString() : ''}
+                          value={r.settlement_amount != null ? fmtNum(r.settlement_amount) : ''}
                           placeholder="0"
                           onFocus={(e) => { e.target.value = String(r.settlement_amount ?? '') }}
                           onChange={(e) => {
@@ -679,7 +679,7 @@ export default function ReturnsPage() {
                       <td style={{ ...tdCenter, padding: '0.375rem' }}>
                         <input
                           type="text"
-                          value={r.recovery_amount != null ? r.recovery_amount.toLocaleString() : ''}
+                          value={r.recovery_amount != null ? fmtNum(r.recovery_amount) : ''}
                           placeholder="0"
                           onFocus={(e) => { e.target.value = String(r.recovery_amount ?? '') }}
                           onChange={(e) => {
@@ -699,7 +699,7 @@ export default function ReturnsPage() {
                       </td>
                       <td style={{ ...tdCenter, fontSize: '0.8rem' }}>
                         {(r.settlement_amount != null || r.recovery_amount != null)
-                          ? ((r.settlement_amount ?? 0) - (r.recovery_amount ?? 0)).toLocaleString()
+                          ? fmtNum((r.settlement_amount ?? 0) - (r.recovery_amount ?? 0))
                           : '-'}
                       </td>
                       <td style={{ ...tdCenter, padding: '0.375rem' }}>
@@ -946,7 +946,7 @@ export default function ReturnsPage() {
                 { label: '주문 ID', value: detailItem.order_id },
                 { label: '유형', value: TYPE_LABELS[detailItem.type]?.label || detailItem.type },
                 { label: '수량', value: String(detailItem.quantity) },
-                { label: '요청금액', value: detailItem.requested_amount ? `₩${detailItem.requested_amount.toLocaleString()}` : '-' },
+                { label: '요청금액', value: detailItem.requested_amount ? `₩${fmtNum(detailItem.requested_amount)}` : '-' },
                 { label: '상태', value: STATUS_MAP[detailItem.status]?.label || detailItem.status },
                 { label: '등록일', value: detailItem.created_at?.slice(0, 10) || '-' },
               ].map(({ label, value }) => (

@@ -13,6 +13,7 @@ import {
 import { API_BASE } from '@/lib/samba/api/shared'
 import { type SambaNameRule, type SambaDetailTemplate } from '@/lib/samba/api/support'
 import { showAlert } from '@/components/samba/Modal'
+import { fmtNum } from '@/lib/samba/styles'
 import { fmtDate } from '@/lib/samba/utils'
 import ProductImage from './ProductImage'
 import OptionPanel from './OptionPanel'
@@ -61,7 +62,7 @@ const MARKET_NAME_LIMITS: Record<string, number> = {
 
 // 숫자 포맷 유틸
 function fmt(n: number): string {
-  return n.toLocaleString()
+  return fmtNum(n)
 }
 
 // 마켓별 상품 구매페이지 URL 생성 (상품번호가 있을 때만)
@@ -506,7 +507,7 @@ const ProductCard = React.memo(function ProductCard({
           .filter((h): h is Record<string, unknown> => h != null && typeof h === 'object' && !Array.isArray(h))
         const isKream = p.source_site === 'KREAM'
         // 안전한 가격 포맷
-        const fmtPrice = (v: unknown): string => { const n = Number(v); return isNaN(n) || n === 0 ? '-' : n.toLocaleString() }
+        const fmtPrice = (v: unknown): string => { const n = Number(v); return isNaN(n) || n === 0 ? '-' : fmtNum(n) }
         // 원가(cost) 기준으로 최저/최고가 계산
         const costPrices = history.map(h => Number(h.cost || h.sale_price || 0)).filter(Boolean)
         const currentPrice = costPrices[0] || cost || p.sale_price || 0
@@ -667,7 +668,7 @@ const ProductCard = React.memo(function ProductCard({
                               const stockLabel = soldOut
                                 ? '품절'
                                 : opt.stock !== undefined && opt.stock !== null
-                                  ? `${stk.toLocaleString()}개`
+                                  ? `${fmtNum(stk)}개`
                                   : 'O'
                               return (
                                 <tr key={oi} style={{ borderTop: '1px solid #1A1A1A' }}>
@@ -783,7 +784,7 @@ const ProductCard = React.memo(function ProductCard({
                       const field = list === detailImgList ? 'detail_images' : 'images'
                       const res = await collectorApi.bulkRemoveImage(img, [field])
                       setList(list.filter((_, j) => j !== i))
-                      setCardAlert({ msg: `${res.removed}개 상품에서 삭제 완료`, type: 'success' })
+                      setCardAlert({ msg: `${fmtNum(res.removed)}개 상품에서 삭제 완료`, type: 'success' })
                     } catch (e) { setCardAlert({ msg: '추적삭제 실패: ' + (e instanceof Error ? e.message : String(e)), type: 'error' }) }
                   },
                 })
@@ -883,7 +884,7 @@ const ProductCard = React.memo(function ProductCard({
                                     const res = await collectorApi.bulkRemoveImage(mainImg, ['images'])
                                     const remaining = productImages.slice(1)
                                     setProductImages(remaining)
-                                    setCardAlert({ msg: `${res.removed}개 상품에서 대표이미지 추적삭제 완료`, type: 'success' })
+                                    setCardAlert({ msg: `${fmtNum(res.removed)}개 상품에서 대표이미지 추적삭제 완료`, type: 'success' })
                                   } catch (e) { setCardAlert({ msg: '추적삭제 실패: ' + (e instanceof Error ? e.message : String(e)), type: 'error' }) }
                                 },
                               })

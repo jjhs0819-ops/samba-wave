@@ -167,7 +167,7 @@ export default function ShipmentsPage() {
               const r = (j.result || {}) as Record<string, number>
               const _ts = new Date().toLocaleTimeString()
               const statusLabel = j.status === 'completed' ? '전송 완료' : j.status === 'failed' ? '전송 실패' : '전송 중단'
-              setLogMessages(prev => [...prev, `[${_ts}] ${statusLabel} — 성공 ${(r.success || 0).toLocaleString()}건, 스킵 ${(r.skipped || 0).toLocaleString()}건, 실패 ${(r.failed || 0).toLocaleString()}건`].slice(-30))
+              setLogMessages(prev => [...prev, `[${_ts}] ${statusLabel} — 성공 ${fmtNum(r.success || 0)}건, 스킵 ${fmtNum(r.skipped || 0)}건, 실패 ${fmtNum(r.failed || 0)}건`].slice(-30))
               setTransmitting(false)
               activeJobIdRef.current = ''
               load()
@@ -450,7 +450,7 @@ export default function ShipmentsPage() {
       accLabelMap[acc.id] = `${acc.market_name}(${acc.seller_id || acc.business_name || '-'})`
     }
     const targetAccLabels = effectiveDeleteList.map(aid => accLabelMap[aid] || aid).join(', ')
-    addLog(`[${ts()}] 마켓삭제 시작 — 상품 ${targetProducts.length.toLocaleString()}개, ${targetAccLabels}`)
+    addLog(`[${ts()}] 마켓삭제 시작 — 상품 ${fmtNum(targetProducts.length)}개, ${targetAccLabels}`)
 
     // 삭제 중 500ms 링 버퍼 폴링 시작 — 다른 창에서도 실시간 로그 공유
     if (bgPollRef.current) { clearInterval(bgPollRef.current); bgPollRef.current = null }
@@ -573,7 +573,7 @@ export default function ShipmentsPage() {
     setDeleting(true)
     const ts = () => new Date().toLocaleTimeString()
     const addLog = (msg: string) => setLogMessages(prev => [...prev, msg].slice(-30))
-    addLog(`[${ts()}] 검색결과 마켓삭제 시작 — 상품 ${targetProducts.length.toLocaleString()}개, ${targetLabels}`)
+    addLog(`[${ts()}] 검색결과 마켓삭제 시작 — 상품 ${fmtNum(targetProducts.length)}개, ${targetLabels}`)
 
     // 삭제 중 500ms 링 버퍼 폴링 시작 — 다른 창에서도 실시간 로그 공유
     if (bgPollRef.current) { clearInterval(bgPollRef.current); bgPollRef.current = null }
@@ -676,13 +676,13 @@ export default function ShipmentsPage() {
     const total = policyProducts.length
 
     if (total === 0) {
-      addLog(`[${ts()}] 전송 대상 없음 — 선택된 ${visibleSelected.length.toLocaleString()}개 상품 중 정책 적용된 상품이 없습니다`)
+      addLog(`[${ts()}] 전송 대상 없음 — 선택된 ${fmtNum(visibleSelected.length)}개 상품 중 정책 적용된 상품이 없습니다`)
       setTransmitting(false)
       return
     }
 
     if (noPolicyCount > 0) {
-      addLog(`[${ts()}] 정책 미적용 ${noPolicyCount.toLocaleString()}개 제외 (선택 ${visibleSelected.length.toLocaleString()}개 → 전송 대상 ${total.toLocaleString()}개)`)
+      addLog(`[${ts()}] 정책 미적용 ${fmtNum(noPolicyCount)}개 제외 (선택 ${fmtNum(visibleSelected.length)}개 → 전송 대상 ${fmtNum(total)}개)`)
     }
 
     setProgress({ current: 0, total })
@@ -706,7 +706,7 @@ export default function ShipmentsPage() {
     const effectiveLabels = [...effectiveAccountSet].map(aid => accountLabelMap[aid] || aid)
     abortRef.current = false
     cancelledAtRef.current = 0 // 폴링 업데이트 재허용
-    addLog(`[${ts()}] 전송 시작 — 상품 ${total.toLocaleString()}개, ${effectiveLabels.length > 0 ? effectiveLabels.join(', ') : '연결 계정 없음'}`)
+    addLog(`[${ts()}] 전송 시작 — 상품 ${fmtNum(total)}개, ${effectiveLabels.length > 0 ? effectiveLabels.join(', ') : '연결 계정 없음'}`)
 
     const items: string[] = []
     if (updateItems.price) items.push('price', 'stock')
@@ -740,7 +740,7 @@ export default function ShipmentsPage() {
     }
 
     if (skipCount > 0) {
-      addLog(`[${ts()}] 선택 마켓 미연결 ${skipCount.toLocaleString()}개 스킵 → 실제 전송 ${tasks.length.toLocaleString()}개`)
+      addLog(`[${ts()}] 선택 마켓 미연결 ${fmtNum(skipCount)}개 스킵 → 실제 전송 ${fmtNum(tasks.length)}개`)
     }
     setProgress({ current: 0, total: tasks.length })
 
@@ -798,7 +798,7 @@ export default function ShipmentsPage() {
             // Job 결과를 프론트 로그에 직접 표시 (링 버퍼 인스턴스 격리 시 누락 방지)
             const r = (j.result || {}) as Record<string, number>
             const statusLabel = j.status === 'completed' ? '전송 완료' : j.status === 'failed' ? '전송 실패' : '전송 중단'
-            addLog(`[${_ts}] ${statusLabel} — 성공 ${(r.success || 0).toLocaleString()}건, 스킵 ${(r.skipped || 0).toLocaleString()}건, 실패 ${(r.failed || 0).toLocaleString()}건`)
+            addLog(`[${_ts}] ${statusLabel} — 성공 ${fmtNum(r.success || 0)}건, 스킵 ${fmtNum(r.skipped || 0)}건, 실패 ${fmtNum(r.failed || 0)}건`)
             if (j.status === 'completed') setPausedJobPayload(null)
             setTransmitting(false)
             activeJobIdRef.current = ''
@@ -842,7 +842,7 @@ export default function ShipmentsPage() {
       const pl = pausedJobPayload as { payload?: { product_ids?: string[] } }
       const total = pl.payload?.product_ids?.length || 0
       setProgress({ current: resumedFrom, total })
-      addLog(`[${ts()}] 이어하기 — ${resumedFrom.toLocaleString()}/${total.toLocaleString()}부터 재개`)
+      addLog(`[${ts()}] 이어하기 — ${fmtNum(resumedFrom)}/${fmtNum(total)}부터 재개`)
 
       // 전송 진행 폴링 + 링 버퍼 기반 실시간 로그
       let polling = false
@@ -873,7 +873,7 @@ export default function ShipmentsPage() {
             if (j.error) addLog(`[${_ts}] ${j.error}`)
             const r = (j.result || {}) as Record<string, number>
             const statusLabel = j.status === 'completed' ? '전송 완료' : j.status === 'failed' ? '전송 실패' : '작업중지됨'
-            addLog(`[${_ts}] ${statusLabel} — 성공 ${(r.success || 0).toLocaleString()}건, 스킵 ${(r.skipped || 0).toLocaleString()}건, 실패 ${(r.failed || 0).toLocaleString()}건`)
+            addLog(`[${_ts}] ${statusLabel} — 성공 ${fmtNum(r.success || 0)}건, 스킵 ${fmtNum(r.skipped || 0)}건, 실패 ${fmtNum(r.failed || 0)}건`)
             if (j.status === 'completed') setPausedJobPayload(null)
             setTransmitting(false)
             activeJobIdRef.current = ''
@@ -1087,7 +1087,7 @@ export default function ShipmentsPage() {
               }} />
               {jobQueueStatus.running.length > 0 ? (
                 <span style={{ color: '#51CF66' }}>
-                  전송 중 {jobQueueStatus.running.length}건 — {jobQueueStatus.running.map(j => `${j.markets} ${j.current.toLocaleString()}/${j.total.toLocaleString()}`).join(', ')}
+                  전송 중 {fmtNum(jobQueueStatus.running.length)}건 — {jobQueueStatus.running.map(j => `${j.markets} ${fmtNum(j.current)}/${fmtNum(j.total)}`).join(', ')}
                 </span>
               ) : jobQueueStatus.pending.length > 0 ? (
                 <span style={{ color: '#FAB005' }}>대기 {jobQueueStatus.pending.length}건</span>
@@ -1095,7 +1095,7 @@ export default function ShipmentsPage() {
                 <span style={{ color: '#555' }}>대기 잡 없음</span>
               )}
               {jobQueueStatus.pending.length > 0 && jobQueueStatus.running.length > 0 && (
-                <span style={{ color: '#FAB005' }}>+ 대기 {jobQueueStatus.pending.length}건 — {jobQueueStatus.pending.map(j => `${j.markets} ${j.product_count.toLocaleString()}건`).join(', ')}</span>
+                <span style={{ color: '#FAB005' }}>+ 대기 {fmtNum(jobQueueStatus.pending.length)}건 — {jobQueueStatus.pending.map(j => `${j.markets} ${fmtNum(j.product_count)}건`).join(', ')}</span>
               )}
             </div>
           </div>
@@ -1218,7 +1218,7 @@ export default function ShipmentsPage() {
                     const acc = accounts.find(a => a.id === aid)
                     return acc ? `${acc.market_name}(${acc.seller_id || '-'})` : aid
                   }).join(', ')
-                  addLog(`[${ts()}] 전송 시작 — 상품 ${allIds.length.toLocaleString()}개, ${accLabels || '연결 계정 없음'}`)
+                  addLog(`[${ts()}] 전송 시작 — 상품 ${fmtNum(allIds.length)}개, ${accLabels || '연결 계정 없음'}`)
                   const { API_BASE_URL: apiBase } = await import('@/config/api')
                   const res = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs`, {
                     method: 'POST',
@@ -1256,7 +1256,7 @@ export default function ShipmentsPage() {
                         const r = (j.result || {}) as Record<string, number>
                         const _ts = new Date().toLocaleTimeString()
                         const statusLabel = j.status === 'completed' ? '전송 완료' : j.status === 'failed' ? '전송 실패' : '전송 중단'
-                        setLogMessages(prev => [...prev, `[${_ts}] ${statusLabel} — 성공 ${(r.success || 0).toLocaleString()}건, 스킵 ${(r.skipped || 0).toLocaleString()}건, 실패 ${(r.failed || 0).toLocaleString()}건`].slice(-30))
+                        setLogMessages(prev => [...prev, `[${_ts}] ${statusLabel} — 성공 ${fmtNum(r.success || 0)}건, 스킵 ${fmtNum(r.skipped || 0)}건, 실패 ${fmtNum(r.failed || 0)}건`].slice(-30))
                         setTransmitting(false)
                         activeJobIdRef.current = ''
                         load()
@@ -1295,7 +1295,7 @@ export default function ShipmentsPage() {
       <div style={{ background: 'rgba(30,30,30,0.5)', border: '1px solid #2D2D2D', borderRadius: '12px', overflow: 'hidden' }}>
         {/* 상단 탭 */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', background: 'rgba(255,255,255,0.02)', borderBottom: '1px solid #2D2D2D', gap: '8px' }}>
-          <span style={{ fontSize: '0.8rem', color: '#888' }}>총 <span style={{ color: '#FF8C00', fontWeight: 600 }}>{totalCount.toLocaleString()}</span> 개의 상품이 검색되었습니다.</span>
+          <span style={{ fontSize: '0.8rem', color: '#888' }}>총 <span style={{ color: '#FF8C00', fontWeight: 600 }}>{fmtNum(totalCount)}</span> 개의 상품이 검색되었습니다.</span>
           <select value={sortBy} onChange={e => { onFilterChange(); setSortBy(e.target.value) }} style={{ ...inputStyle, width: '250px', marginLeft: 'auto' }}>
             <option value="updated_at_desc">상품업데이트 날짜순 ▼</option>
             <option value="updated_at_asc">상품업데이트 날짜순 ▲</option>
@@ -1354,7 +1354,7 @@ export default function ShipmentsPage() {
                         onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
                         onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
                       >
-                        [{p.site_product_id || ''}] {p.name} {optCount > 0 ? <span style={{ color: '#DCE0E8' }}>[옵션수:{optCount.toLocaleString()}]</span> : ''}
+                        [{p.site_product_id || ''}] {p.name} {optCount > 0 ? <span style={{ color: '#DCE0E8' }}>[옵션수:{fmtNum(optCount)}]</span> : ''}
                       </a>
                     </div>
                     {regMarkets.length > 0 && (
@@ -1432,7 +1432,7 @@ export default function ShipmentsPage() {
               style={{ padding: '4px 10px', fontSize: '0.78rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: currentPage >= Math.ceil(totalCount / pageSize) ? '#444' : '#C5C5C5', cursor: currentPage >= Math.ceil(totalCount / pageSize) ? 'default' : 'pointer' }}
             >▶</button>
             <span style={{ fontSize: '0.72rem', color: '#666', marginLeft: '8px' }}>
-              {totalCount.toLocaleString()}개 중 {((currentPage - 1) * pageSize + 1).toLocaleString()}~{Math.min(currentPage * pageSize, totalCount).toLocaleString()}
+              {fmtNum(totalCount)}개 중 {fmtNum((currentPage - 1) * pageSize + 1)}~{fmtNum(Math.min(currentPage * pageSize, totalCount))}
             </span>
           </div>
         )}

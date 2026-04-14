@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { fmtNum } from "@/lib/samba/styles";
 
 export interface StatCardProps {
   title: string;
@@ -71,7 +72,7 @@ export function StatCard({
           <div className="flex items-baseline space-x-1">
             {prefix && <span className="text-2xl font-bold text-gray-300">{prefix}</span>}
             <span className={`text-5xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r ${textGrad}`}>
-              {displayValue.toLocaleString()}
+              {fmtNum(displayValue)}
             </span>
             {suffix && <span className="text-xl font-bold text-gray-300 ml-1">{suffix}</span>}
           </div>

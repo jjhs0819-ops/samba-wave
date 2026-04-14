@@ -22,6 +22,7 @@ import {
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { SITE_COLORS, SOURCING_SEARCH_URLS } from '@/lib/samba/constants'
 import { fmtDate as _fmtDate } from '@/lib/samba/utils'
+import { fmtNum } from '@/lib/samba/styles'
 
 const fmtDate = (iso: string | undefined | null) => _fmtDate(iso, '.')
 
@@ -544,7 +545,7 @@ export default function CollectorPage() {
         const countResult = await proxyApi.searchCount(site, keyword, keywordUrl)
         if (countResult.totalCount > 0) {
           requestedCount = countResult.totalCount
-          addLog(`검색 결과: ${requestedCount.toLocaleString()}개 상품`)
+          addLog(`검색 결과: ${fmtNum(requestedCount)}개 상품`)
         }
       } catch { /* 조회 실패 시 기본값 100 유지 */ }
 
@@ -555,7 +556,7 @@ export default function CollectorPage() {
         requested_count: requestedCount,
       })
 
-      addLog(`그룹 생성 완료: "${created.name}" (${site}, ${requestedCount.toLocaleString()}개)`)
+      addLog(`그룹 생성 완료: "${created.name}" (${site}, ${fmtNum(requestedCount)}개)`)
       setCollectUrl("")
       load(); loadTree()
     } catch (e) {
@@ -619,19 +620,19 @@ export default function CollectorPage() {
       try {
         const keyword = pendingKeyword
         const gf = pendingScanGf.current
-        addLog(`[카테고리스캔] 무신사 "${keyword}" 스캔 시작... (${brandList.length.toLocaleString()}개 브랜드)`)
+        addLog(`[카테고리스캔] 무신사 "${keyword}" 스캔 시작... (${fmtNum(brandList.length)}개 브랜드)`)
         const allCategories: { categoryCode: string; path: string; count: number; category1: string; category2: string; category3: string }[] = []
         let totalCount = 0
         for (const code of brandList.length > 0 ? brandList : ['']) {
           const res = await collectorApi.brandScan(code, gf, keyword)
           allCategories.push(...res.categories)
           totalCount += res.total
-          if (code) addLog(`[카테고리스캔] ${keyword || code}: ${res.groupCount.toLocaleString()}개 카테고리, ${res.total.toLocaleString()}건`)
+          if (code) addLog(`[카테고리스캔] ${keyword || code}: ${fmtNum(res.groupCount)}개 카테고리, ${fmtNum(res.total)}건`)
         }
         setBrandCategories(allCategories)
         setBrandTotal(totalCount)
         setBrandSelectedCats(new Set(allCategories.map(c => c.categoryCode)))
-        addLog(`[카테고리스캔] 합계: ${allCategories.length}개 카테고리, 총 ${totalCount.toLocaleString()}건`)
+        addLog(`[카테고리스캔] 합계: ${fmtNum(allCategories.length)}개 카테고리, 총 ${fmtNum(totalCount)}건`)
       } catch (e) { addLog(`[카테고리스캔] 무신사 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
       setBrandScanning(false)
     } else {
@@ -690,13 +691,13 @@ export default function CollectorPage() {
         // 마켓 등록 상품 체크
         const registered = res.items.filter(p => p.market_product_nos && Object.keys(p.market_product_nos).length > 0)
         if (registered.length > 0) {
-          setDeleteJobLogs(prev => [...prev, `  ⚠️ 마켓등록 상품 ${registered.length.toLocaleString()}건 — 삭제 건너뜀`])
+          setDeleteJobLogs(prev => [...prev, `  ⚠️ 마켓등록 상품 ${fmtNum(registered.length)}건 — 삭제 건너뜀`])
           skipCount++
           continue
         }
         const productIds = res.items.map(p => p.id)
         if (productIds.length > 0) {
-          setDeleteJobLogs(prev => [...prev, `  상품 ${productIds.length.toLocaleString()}건 삭제 중...`])
+          setDeleteJobLogs(prev => [...prev, `  상품 ${fmtNum(productIds.length)}건 삭제 중...`])
           await collectorApi.bulkDeleteProducts(productIds)
         }
       } catch { /* 상품 없으면 무시 */ }
@@ -715,10 +716,10 @@ export default function CollectorPage() {
   const handleCollectGroups = async () => {
     // 체크된 그룹이 있으면 체크박스 기준, 없고 상세뷰(drillGroup)가 열려있으면 해당 그룹만, 그 외 전체
     // displayedFilters와 교집합으로 실제 대상 결정
-    const targetFilters = selectedIds.size > 0
-      ? displayedFilters.filter(f => selectedIds.has(f.id))
-      : drillGroup
-        ? displayedFilters.filter(f => f.id === drillGroup)
+    const targetFilters = drillGroup
+      ? displayedFilters.filter(f => f.id === drillGroup)
+      : selectedIds.size > 0
+        ? displayedFilters.filter(f => selectedIds.has(f.id))
         : displayedFilters
     const targetIds = targetFilters.map(f => f.id)
     if (targetIds.length === 0) {
@@ -727,12 +728,12 @@ export default function CollectorPage() {
     }
     const totalReq = targetFilters.reduce((s, f) => s + (f.requested_count || 0), 0)
     const label = selectedIds.size > 0 ? '선택된' : drillGroup ? '선택된' : '표시된'
-    const ok = await showConfirm(`${label} ${targetIds.length}개 그룹 상품수집을 시작하시겠습니까?\n(요청 ${totalReq.toLocaleString()}건, 중복 상품은 자동 스킵)`)
+    const ok = await showConfirm(`${label} ${fmtNum(targetIds.length)}개 그룹 상품수집을 시작하시겠습니까?\n(요청 ${fmtNum(totalReq)}건, 중복 상품은 자동 스킵)`)
     if (!ok) return
     const abort = new AbortController()
     collectAbortRef.current = abort
     setCollecting(true)
-    addLog(`${targetIds.length.toLocaleString()}개 그룹 상품수집 시작...`)
+    addLog(`${fmtNum(targetIds.length)}개 그룹 상품수집 시작...`)
 
     for (let gi = 0; gi < targetIds.length; gi++) {
       const id = targetIds[gi]
@@ -774,7 +775,7 @@ export default function CollectorPage() {
             }
 
             if (job.current > lastCurrent) {
-              addLog(`${gp} [${f.name}] [${job.current.toLocaleString()}/${job.total.toLocaleString()}] 수집 중... (${job.progress}%)`)
+              addLog(`${gp} [${f.name}] [${fmtNum(job.current)}/${fmtNum(job.total)}] 수집 중... (${job.progress}%)`)
               lastCurrent = job.current
               load()
             }
@@ -785,9 +786,9 @@ export default function CollectorPage() {
               const policy = job.result?.policy || ''
               const inStock = job.result?.in_stock_count ?? 0
               const soldOut = job.result?.sold_out_count ?? 0
-              const parts = [`신규 ${saved.toLocaleString()}건`]
-              if (inStock > 0 || soldOut > 0) parts.push(`재고 ${inStock.toLocaleString()}건 | 품절 ${soldOut.toLocaleString()}건`)
-              if (skipped > 0) parts.push(`중복/스킵 ${skipped.toLocaleString()}건`)
+              const parts = [`신규 ${fmtNum(saved)}건`]
+              if (inStock > 0 || soldOut > 0) parts.push(`재고 ${fmtNum(inStock)}건 | 품절 ${fmtNum(soldOut)}건`)
+              if (skipped > 0) parts.push(`중복/스킵 ${fmtNum(skipped)}건`)
               if (policy) parts.push(policy)
               addLog(`${gp} [${f.name}] 수집 완료: ${parts.join(' | ')}`)
               await new Promise(r => setTimeout(r, 100))
@@ -830,7 +831,7 @@ export default function CollectorPage() {
           await collectorApi.updateFilter(f.id, { requested_count: cc })
         }
       }
-      if (mismatch.length > 0) addLog(`[동기화] ${mismatch.length.toLocaleString()}개 그룹 요청수 → 수집수 자동 동기화`)
+      if (mismatch.length > 0) addLog(`[동기화] ${fmtNum(mismatch.length)}개 그룹 요청수 → 수집수 자동 동기화`)
     } catch { /* 동기화 실패해도 수집 흐름은 유지 */ }
   }
 
@@ -908,7 +909,7 @@ export default function CollectorPage() {
   const handleRefresh = async () => {
     setRefreshing(true)
     const filterIds = selectedIds.size > 0 ? [...selectedIds] : undefined
-    addLog(filterIds ? `선택된 ${filterIds.length.toLocaleString()}개 그룹 갱신 시작...` : '전체 일괄 갱신 시작...')
+    addLog(filterIds ? `선택된 ${fmtNum(filterIds.length)}개 그룹 갱신 시작...` : '전체 일괄 갱신 시작...')
     try {
       const result = await collectorApi.refresh(undefined, true, filterIds)
       setRefreshResult(result)
@@ -1029,13 +1030,6 @@ export default function CollectorPage() {
   }, [filters, siteFilter, drillSite, tree, drillBrand, aiFilter, collectFilter, marketRegFilter, tagRegFilter, policyRegFilter, sortBy])
 
   // 드롭다운 필터 변경 시 drillBrand 활성 상태면 selectedIds를 displayedFilters 기준으로 재동기화
-  useEffect(() => {
-    if (drillBrand) {
-      setSelectedIds(new Set(displayedFilters.map(f => f.id)))
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drillBrand, displayedFilters, tagRegFilter, collectFilter, marketRegFilter, policyRegFilter, aiFilter])
-
   return (
     <div style={{ color: '#E5E5E5' }}>
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0', padding: '0.5rem 1rem' }}>
@@ -1215,10 +1209,10 @@ export default function CollectorPage() {
                   try {
                     const p = await collectorApi.gsshopScanProgress()
                     if (p.stage === 'search') {
-                      addLog(`[카테고리스캔] 검색 중... ${p.page}페이지, ${(p.products ?? 0).toLocaleString()}개 상품 발견`)
+                      addLog(`[카테고리스캔] 검색 중... ${p.page}페이지, ${fmtNum(p.products ?? 0)}개 상품 발견`)
                     } else if (p.stage === 'detail') {
                       const done = (p.detail_ok ?? 0) + (p.detail_fail ?? 0)
-                      addLog(`[카테고리스캔] 상세 조회 중... ${done.toLocaleString()}/${(p.detail_total ?? 0).toLocaleString()}건 (성공: ${(p.detail_ok ?? 0).toLocaleString()}, 실패: ${(p.detail_fail ?? 0).toLocaleString()})`)
+                      addLog(`[카테고리스캔] 상세 조회 중... ${fmtNum(done)}/${fmtNum(p.detail_total ?? 0)}건 (성공: ${fmtNum(p.detail_ok ?? 0)}, 실패: ${fmtNum(p.detail_fail ?? 0)})`)
                     }
                   } catch { /* 폴링 실패 무시 */ }
                 }, 3000)
@@ -1228,7 +1222,7 @@ export default function CollectorPage() {
                   setBrandCategories(res.categories)
                   setBrandTotal(res.total)
                   setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
-                  addLog(`[카테고리스캔] 완료: ${res.groupCount.toLocaleString()}개 카테고리, 총 ${res.total.toLocaleString()}건`)
+                  addLog(`[카테고리스캔] 완료: ${fmtNum(res.groupCount)}개 카테고리, 총 ${fmtNum(res.total)}건`)
                 } catch (e) {
                   clearInterval(pollId)
                   showAlert(e instanceof Error ? e.message : '스캔 실패', 'error')
@@ -1246,7 +1240,7 @@ export default function CollectorPage() {
                   setBrandCategories(res.categories)
                   setBrandTotal(res.total)
                   setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
-                  addLog(`[카테고리스캔] ABC마트: ${scanKeyword} → ${res.groupCount.toLocaleString()}개 카테고리, 총 ${res.total.toLocaleString()}건`)
+                  addLog(`[카테고리스캔] ABC마트: ${scanKeyword} → ${fmtNum(res.groupCount)}개 카테고리, 총 ${fmtNum(res.total)}건`)
                 } catch (e) { addLog(`[카테고리스캔] ABC마트 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
                 setBrandScanning(false)
                 return
@@ -1261,7 +1255,7 @@ export default function CollectorPage() {
                   setBrandCategories(res.categories)
                   setBrandTotal(res.total)
                   setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
-                  addLog(`[카테고리스캔] Nike: ${scanKeyword} → ${res.groupCount.toLocaleString()}개 카테고리, 총 ${res.total.toLocaleString()}건`)
+                  addLog(`[카테고리스캔] Nike: ${scanKeyword} → ${fmtNum(res.groupCount)}개 카테고리, 총 ${fmtNum(res.total)}건`)
                 } catch (e) { addLog(`[카테고리스캔] Nike 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
                 setBrandScanning(false)
                 return
@@ -1276,7 +1270,7 @@ export default function CollectorPage() {
                   setBrandCategories(res.categories)
                   setBrandTotal(res.total)
                   setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
-                  addLog(`[카테고리스캔] KREAM: ${scanKeyword} → ${res.groupCount.toLocaleString()}개 카테고리, 총 ${res.total.toLocaleString()}건`)
+                  addLog(`[카테고리스캔] KREAM: ${scanKeyword} → ${fmtNum(res.groupCount)}개 카테고리, 총 ${fmtNum(res.total)}건`)
                 } catch (e) { addLog(`[카테고리스캔] KREAM 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
                 setBrandScanning(false)
                 return
@@ -1304,7 +1298,7 @@ export default function CollectorPage() {
                 setBrandCategories(res.categories)
                 setBrandTotal(res.total)
                 setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
-                addLog(`[카테고리스캔] ${keyword || brand}: ${res.groupCount.toLocaleString()}개 카테고리, 총 ${res.total.toLocaleString()}건`)
+                addLog(`[카테고리스캔] ${keyword || brand}: ${fmtNum(res.groupCount)}개 카테고리, 총 ${fmtNum(res.total)}건`)
               } catch (e) { addLog(`[카테고리스캔] ${selectedSite} 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
               setBrandScanning(false)
             }} disabled={brandScanning}
@@ -1337,9 +1331,9 @@ export default function CollectorPage() {
                       ? brandModalList.filter(b => brandModalSelected.has(b.name) && b.id).map(b => b.id as string)
                       : undefined,
                   })
-                  addLog(`[카테고리분류] ${res.created.toLocaleString()}개 그룹 생성 완료`)
-                  showAlert(`${res.created.toLocaleString()}개 그룹이 생성되었습니다`, 'success')
-                  addLog(`[카테고리분류] ${res.created.toLocaleString()}개 그룹 생성 (카테고리 간 중복은 수집 시 자동 스킵)`)
+                  addLog(`[카테고리분류] ${fmtNum(res.created)}개 그룹 생성 완료`)
+                  showAlert(`${fmtNum(res.created)}개 그룹이 생성되었습니다`, 'success')
+                  addLog(`[카테고리분류] ${fmtNum(res.created)}개 그룹 생성 (카테고리 간 중복은 수집 시 자동 스킵)`)
                   setBrandCategories([]); setBrandSelectedCats(new Set())
                   load(); loadTree()
                 } catch (e) { showAlert(e instanceof Error ? e.message : '그룹 생성 실패', 'error') }
@@ -1368,7 +1362,7 @@ export default function CollectorPage() {
               <div style={{ background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', padding: '0.75rem', maxHeight: '350px', overflowY: 'auto' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                   <span style={{ fontSize: '0.78rem', color: '#888' }}>
-                    {brandCategories.length.toLocaleString()}개 카테고리 / {brandTotal.toLocaleString()}건
+                    {fmtNum(brandCategories.length)}개 카테고리 / {fmtNum(brandTotal)}건
                     (선택 {brandSelectedCats.size}개)
                   </span>
                   <div style={{ display: 'flex', gap: '0.25rem' }}>
@@ -1389,7 +1383,7 @@ export default function CollectorPage() {
                         setBrandSelectedCats(next)
                       }} style={{ accentColor: '#FF8C00' }} />
                     <span style={{ color: '#E5E5E5', flex: 1 }}>{cat.path}</span>
-                    <span style={{ color: '#FF8C00', fontWeight: 600, fontSize: '0.72rem' }}>{cat.count.toLocaleString()}건</span>
+                    <span style={{ color: '#FF8C00', fontWeight: 600, fontSize: '0.72rem' }}>{fmtNum(cat.count)}건</span>
                   </label>
                 ))}
               </div>
@@ -1467,7 +1461,7 @@ export default function CollectorPage() {
                       }}
                       style={{ accentColor: '#FF8C00', width: '15px', height: '15px', cursor: 'pointer' }} />
                     <span style={{ fontWeight: 600, flex: 1 }}>{b.name}</span>
-                    <span style={{ color: '#FF8C00', fontSize: '0.78rem', fontWeight: 600 }}>{b.count.toLocaleString()}건</span>
+                    <span style={{ color: '#FF8C00', fontSize: '0.78rem', fontWeight: 600 }}>{fmtNum(b.count)}건</span>
                   </label>
                 )
               })}
@@ -1489,13 +1483,13 @@ export default function CollectorPage() {
                     .filter(b => brandModalSelected.has(b.name))
                     .reduce((sum, b) => sum + b.count, 0)
                   const siteLabel = selectedSite === 'SSG' ? 'SSG' : selectedSite === 'FashionPlus' ? '패션플러스' : '롯데ON'
-                  addLog(`[카테고리스캔] ${siteLabel} "${keyword || brand}" 스캔 시작... (${selectedBrands.length.toLocaleString()}개 브랜드)`)
+                  addLog(`[카테고리스캔] ${siteLabel} "${keyword || brand}" 스캔 시작... (${fmtNum(selectedBrands.length)}개 브랜드)`)
                   try {
                     const res = await collectorApi.brandScan(brand, gf, keyword, selectedSite, selectedBrands, selectedBrandIds, selectedBrandTotal)
                     setBrandCategories(res.categories)
                     setBrandTotal(res.total)
                     setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
-                    addLog(`[카테고리스캔] ${keyword || brand} (${selectedBrands.length.toLocaleString()}개 브랜드): ${res.groupCount.toLocaleString()}개 카테고리, 총 ${res.total.toLocaleString()}건`)
+                    addLog(`[카테고리스캔] ${keyword || brand} (${fmtNum(selectedBrands.length)}개 브랜드): ${fmtNum(res.groupCount)}개 카테고리, 총 ${fmtNum(res.total)}건`)
                   } catch (e) { addLog(`[카테고리스캔] ${siteLabel} 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
                   setBrandScanning(false)
                 }}
@@ -1551,12 +1545,12 @@ export default function CollectorPage() {
                   }} />
                   {running.length > 0 && (
                     <span style={{ color: '#51CF66' }}>
-                      {formatBrands(runBrands, running.length)} 진행 {running.length.toLocaleString()}건
+                      {formatBrands(runBrands, running.length)} 진행 {fmtNum(running.length)}건
                     </span>
                   )}
                   {pending.length > 0 && (
                     <span style={{ color: '#FAB005' }}>
-                      {running.length > 0 ? '+ ' : ''}{formatBrands(penBrands, pending.length)} 대기 {pending.length.toLocaleString()}건
+                      {running.length > 0 ? '+ ' : ''}{formatBrands(penBrands, pending.length)} 대기 {fmtNum(pending.length)}건
                     </span>
                   )}
                   {!hasActivity && <span style={{ color: '#555' }}>대기 잡 없음</span>}
@@ -1612,7 +1606,7 @@ export default function CollectorPage() {
             <>
               <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>{lastAiUsage.calls}건</span>
               <span style={{ fontSize: '0.78rem', color: '#888' }}>·</span>
-              <span style={{ fontSize: '0.78rem', color: '#FFB84D' }}>₩{lastAiUsage.cost.toLocaleString()}</span>
+              <span style={{ fontSize: '0.78rem', color: '#FFB84D' }}>₩{fmtNum(lastAiUsage.cost)}</span>
               <span style={{ fontSize: '0.7rem', color: '#555' }}>{lastAiUsage.date}</span>
             </>
           ) : (
@@ -1683,36 +1677,36 @@ export default function CollectorPage() {
                   }
                 } catch { /* 스킵 */ }
               }
-              if (productIds.length === 0) { showAlert(skippedAi > 0 ? `모든 상품이 이미 AI 변환 완료 (${skippedAi}건 스킵)` : '선택된 그룹에 상품이 없습니다'); return }
-              const skipMsg = skippedAi > 0 ? `\n(AI 변환 완료 ${skippedAi}건 스킵)` : ''
+              if (productIds.length === 0) { showAlert(skippedAi > 0 ? `모든 상품이 이미 AI 변환 완료 (${fmtNum(skippedAi)}건 스킵)` : '선택된 그룹에 상품이 없습니다'); return }
+              const skipMsg = skippedAi > 0 ? `\n(AI 변환 완료 ${fmtNum(skippedAi)}건 스킵)` : ''
               const scopeLabel = [aiImgScope.thumbnail && '대표', aiImgScope.additional && '추가', aiImgScope.detail && '상세'].filter(Boolean).join('+')
-              const ok = await showConfirm(`${activeIds.length.toLocaleString()}개 그룹 (${productIds.length.toLocaleString()}개 상품)의 ${scopeLabel} 이미지를 변환하시겠습니까?${skipMsg}`)
+              const ok = await showConfirm(`${fmtNum(activeIds.length)}개 그룹 (${fmtNum(productIds.length)}개 상품)의 ${scopeLabel} 이미지를 변환하시겠습니까?${skipMsg}`)
               if (!ok) return
               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
               setAiImgTransforming(true)
               aiJobAbortRef.current = false
-              setAiJobTitle(`AI 이미지변환 (${productIds.length.toLocaleString()}개)`)
+              setAiJobTitle(`AI 이미지변환 (${fmtNum(productIds.length)}개)`)
               setAiJobLogs([])
               setAiJobDone(false)
               setAiJobModal(true)
               const addLog = (msg: string) => setAiJobLogs(prev => [...prev, msg])
               const startTime = ts()
-              addLog(`시작: ${startTime} (${productIds.length.toLocaleString()}개 상품)`)
+              addLog(`시작: ${startTime} (${fmtNum(productIds.length)}개 상품)`)
               let success = 0
               let fail = 0
               for (let i = 0; i < productIds.length; i++) {
-                if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${i.toLocaleString()}/${productIds.length.toLocaleString()})`); break }
+                if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${fmtNum(i)}/${fmtNum(productIds.length)})`); break }
                 const label = productIds[i].slice(-8)
-                setAiJobTitle(`AI 이미지변환 [${(i + 1).toLocaleString()}/${productIds.length.toLocaleString()}]`)
+                setAiJobTitle(`AI 이미지변환 [${fmtNum(i + 1)}/${fmtNum(productIds.length)}]`)
                 try {
                   const res = await proxyApi.transformImages([productIds[i]], aiImgScope, aiImgMode, aiModelPreset)
-                  if (res.success) { success++; addLog(`[${ts()}] [${(i + 1).toLocaleString()}/${productIds.length.toLocaleString()}] ${label} — 완료`) }
-                  else { fail++; addLog(`[${ts()}] [${(i + 1).toLocaleString()}/${productIds.length.toLocaleString()}] ${label} — 실패: ${res.message}`) }
-                } catch (e) { fail++; addLog(`[${ts()}] [${(i + 1).toLocaleString()}/${productIds.length.toLocaleString()}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
+                  if (res.success) { success++; addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 완료`) }
+                  else { fail++; addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 실패: ${res.message}`) }
+                } catch (e) { fail++; addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
               }
               const endTime = ts()
-              setAiJobTitle(`AI 이미지변환 완료 (${success.toLocaleString()}/${productIds.length.toLocaleString()})`)
-              addLog(`\n완료: 성공 ${success.toLocaleString()}개 / 실패 ${fail.toLocaleString()}개`)
+              setAiJobTitle(`AI 이미지변환 완료 (${fmtNum(success)}/${fmtNum(productIds.length)})`)
+              addLog(`\n완료: 성공 ${fmtNum(success)}개 / 실패 ${fmtNum(fail)}개`)
               addLog(`시작 ${startTime} → 종료 ${endTime}`)
               setAiJobDone(true)
               setAiImgTransforming(false)
@@ -1748,12 +1742,12 @@ export default function CollectorPage() {
               const activeGroupIds = [...selectedIds].filter(id => displayedFilters.some(f => f.id === id))
               if (activeGroupIds.length === 0) { showAlert('현재 필터에 해당하는 그룹이 없습니다'); return }
               const scopeLabel = [...imgFilterScopes].map(s => s === 'images' ? '대표' : s === 'detail_images' ? '추가' : '상세').join('+')
-              const ok = await showConfirm(`선택된 ${activeGroupIds.length.toLocaleString()}개 그룹의 ${scopeLabel} 이미지를 필터링하시겠습니까?\n(모델컷/연출컷/배너를 자동 제거합니다)`)
+              const ok = await showConfirm(`선택된 ${fmtNum(activeGroupIds.length)}개 그룹의 ${scopeLabel} 이미지를 필터링하시겠습니까?\n(모델컷/연출컷/배너를 자동 제거합니다)`)
               if (!ok) return
               const scope = imgFilterScopes.has('images') && imgFilterScopes.has('detail_images') && imgFilterScopes.has('detail') ? 'all' : imgFilterScopes.has('images') && imgFilterScopes.has('detail_images') ? 'images' : imgFilterScopes.has('detail') ? 'detail' : [...imgFilterScopes][0] || 'images'
               setImgFiltering(true)
               aiJobAbortRef.current = false
-              setAiJobTitle(`이미지 필터링 (${activeGroupIds.length.toLocaleString()}개 그룹)`)
+              setAiJobTitle(`이미지 필터링 (${fmtNum(activeGroupIds.length)}개 그룹)`)
               setAiJobLogs([])
               setAiJobDone(false)
               setAiJobModal(true)
@@ -1773,21 +1767,21 @@ export default function CollectorPage() {
                   if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단`); break }
                   const gid = groupIds[gi]
                   const groupLabel = tree.find(t => t.id === gid)?.keyword?.slice(0, 20) || gid.slice(-8)
-                  addLog(`\n[그룹 ${(gi + 1).toLocaleString()}/${groupIds.length.toLocaleString()}] ${groupLabel} — 상품 조회중...`)
+                  addLog(`\n[그룹 ${fmtNum(gi + 1)}/${fmtNum(groupIds.length)}] ${groupLabel} — 상품 조회중...`)
                   try {
                     const { items: products } = await collectorApi.scrollProducts({ search_filter_id: gid, limit: 10000 })
                     totalProducts += products.length
-                    addLog(`[그룹 ${(gi + 1).toLocaleString()}/${groupIds.length.toLocaleString()}] ${groupLabel} — ${products.length.toLocaleString()}개 상품`)
-                    if (gi === 0 && products.length > 0) addLog(`\n시작: ${startTime} (${totalProducts.toLocaleString()}개 상품)\n`)
+                    addLog(`[그룹 ${fmtNum(gi + 1)}/${fmtNum(groupIds.length)}] ${groupLabel} — ${fmtNum(products.length)}개 상품`)
+                    if (gi === 0 && products.length > 0) addLog(`\n시작: ${startTime} (${fmtNum(totalProducts)}개 상품)\n`)
                     for (let i = 0; i < products.length; i++) {
-                      if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${processedProducts.toLocaleString()}/${totalProducts.toLocaleString()})`); break }
+                      if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${fmtNum(processedProducts)}/${fmtNum(totalProducts)})`); break }
                       const prod = products[i]
                       const prodName = prod.name?.slice(0, 25) || '이름없음'
                       const prodNo = prod.site_product_id || prod.id.slice(-8)
                       const prodBrand = prod.brand || '-'
                       const label = `${prodBrand} / ${prodNo} / ${prodName}${prod.name && prod.name.length > 25 ? '...' : ''}`
                       processedProducts++
-                      setAiJobTitle(`이미지 필터링 [${processedProducts.toLocaleString()}/${totalProducts.toLocaleString()}] ${prodBrand} / ${prodNo}`)
+                      setAiJobTitle(`이미지 필터링 [${fmtNum(processedProducts)}/${fmtNum(totalProducts)}] ${prodBrand} / ${prodNo}`)
                       try {
                         const steps: string[] = []
                         // 1) 프론트에서 추가이미지 비율 체크 (세로 2배 이상 → 제거)
@@ -1811,7 +1805,7 @@ export default function CollectorPage() {
                               const kept = imgs.filter(u => !tallUrls.includes(u))
                               await collectorApi.updateProduct(prod.id, { images: kept })
                               totalTall += tallUrls.length
-                              steps.push(`긴이미지 ${tallUrls.length.toLocaleString()}장 제거`)
+                              steps.push(`긴이미지 ${fmtNum(tallUrls.length)}장 제거`)
                             }
                           }
                         }
@@ -1823,17 +1817,17 @@ export default function CollectorPage() {
                           totalVisionRemoved += removed
                           if (removed > 0) steps.push(`CLIP ${removed}장 제거`)
                           else steps.push('CLIP 변동없음')
-                          addLog(`[${ts()}] [${processedProducts.toLocaleString()}/${totalProducts.toLocaleString()}] ${label} — ${steps.join(' → ')}`)
-                        } else { fail++; addLog(`[${ts()}] [${processedProducts.toLocaleString()}/${totalProducts.toLocaleString()}] ${label} — ${steps.length > 0 ? steps.join(' → ') + ' → ' : ''}실패`) }
-                      } catch (e) { fail++; addLog(`[${ts()}] [${processedProducts.toLocaleString()}/${totalProducts.toLocaleString()}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
+                          addLog(`[${ts()}] [${fmtNum(processedProducts)}/${fmtNum(totalProducts)}] ${label} — ${steps.join(' → ')}`)
+                        } else { fail++; addLog(`[${ts()}] [${fmtNum(processedProducts)}/${fmtNum(totalProducts)}] ${label} — ${steps.length > 0 ? steps.join(' → ') + ' → ' : ''}실패`) }
+                      } catch (e) { fail++; addLog(`[${ts()}] [${fmtNum(processedProducts)}/${fmtNum(totalProducts)}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
                     }
                   } catch (e) {
-                    addLog(`[그룹 ${(gi + 1).toLocaleString()}/${groupIds.length.toLocaleString()}] ${groupLabel} — 상품 조회 실패: ${e instanceof Error ? e.message : ''}`)
+                    addLog(`[그룹 ${fmtNum(gi + 1)}/${fmtNum(groupIds.length)}] ${groupLabel} — 상품 조회 실패: ${e instanceof Error ? e.message : ''}`)
                   }
                 }
-                const summary = [`성공 ${success.toLocaleString()}개`, `실패 ${fail.toLocaleString()}개`]
-                if (totalTall > 0) summary.push(`긴이미지 ${totalTall.toLocaleString()}장 제거`)
-                if (totalVisionRemoved > 0) summary.push(`CLIP ${totalVisionRemoved.toLocaleString()}장 제거`)
+                const summary = [`성공 ${fmtNum(success)}개`, `실패 ${fmtNum(fail)}개`]
+                if (totalTall > 0) summary.push(`긴이미지 ${fmtNum(totalTall)}장 제거`)
+                if (totalVisionRemoved > 0) summary.push(`CLIP ${fmtNum(totalVisionRemoved)}장 제거`)
                 const endTime = ts()
                 setAiJobTitle(`이미지 필터링 완료 (${success}/${totalProducts})`)
                 addLog(`\n완료: ${summary.join(' / ')}`)
@@ -1915,7 +1909,7 @@ export default function CollectorPage() {
                 if (targets.length === 0) { showAlert('동기화할 그룹이 없습니다'); return }
                 const mismatch = targets.filter(f => (f.requested_count || 0) !== (f.collected_count || 0))
                 if (mismatch.length === 0) { showAlert('모든 그룹이 이미 동기화되어 있습니다', 'info'); return }
-                if (!await showConfirm(`${mismatch.length.toLocaleString()}개 그룹의 요청수를 수집수로 동기화하시겠습니까?`)) return
+                if (!await showConfirm(`${fmtNum(mismatch.length)}개 그룹의 요청수를 수집수로 동기화하시겠습니까?`)) return
                 let synced = 0
                 for (const f of mismatch) {
                   try {
@@ -1923,7 +1917,7 @@ export default function CollectorPage() {
                     synced++
                   } catch { /* skip */ }
                 }
-                showAlert(`${synced}개 그룹 동기화 완료`, 'success')
+                showAlert(`${fmtNum(synced)}개 그룹 동기화 완료`, 'success')
                 load(); loadTree()
               }}
               style={{
@@ -2024,12 +2018,12 @@ export default function CollectorPage() {
                       })
                     }
                     if (updatedFilters.length > 0) {
-                      const collectOk = await showConfirm(`${res.message}\n\n${updatedFilters.length.toLocaleString()}개 그룹 상품수집을 시작하시겠습니까?`)
+                      const collectOk = await showConfirm(`${res.message}\n\n${fmtNum(updatedFilters.length)}개 그룹 상품수집을 시작하시겠습니까?`)
                       if (collectOk) {
                         const abort = new AbortController()
                         collectAbortRef.current = abort
                         setCollecting(true)
-                        addLog(`${updatedFilters.length.toLocaleString()}개 그룹 상품수집 시작...`)
+                        addLog(`${fmtNum(updatedFilters.length)}개 그룹 상품수집 시작...`)
                         for (let gi = 0; gi < updatedFilters.length; gi++) {
                           const f = updatedFilters[gi]
                           if (abort.signal.aborted) break
@@ -2047,13 +2041,13 @@ export default function CollectorPage() {
                               const jr = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
                               if (!jr.ok) break
                               const job = await jr.json()
-                              if (job.current > lastCurrent) { addLog(`${gp} [${f.name}] [${job.current.toLocaleString()}/${job.total.toLocaleString()}] 수집 중... (${job.progress}%)`); lastCurrent = job.current }
+                              if (job.current > lastCurrent) { addLog(`${gp} [${f.name}] [${fmtNum(job.current)}/${fmtNum(job.total)}] 수집 중... (${job.progress}%)`); lastCurrent = job.current }
                               if (job.status === 'completed') {
                                 const _s = job.result?.saved ?? 0, _sk = job.result?.skipped ?? 0, _p = job.result?.policy || ''
                                 const _inS = job.result?.in_stock_count ?? 0, _soC = job.result?.sold_out_count ?? 0
-                                const _parts = [`신규 ${_s.toLocaleString()}건`]
-                                if (_inS > 0 || _soC > 0) _parts.push(`재고 ${_inS.toLocaleString()}건 | 품절 ${_soC.toLocaleString()}건`)
-                                if (_sk > 0) _parts.push(`중복/스킵 ${_sk.toLocaleString()}건`)
+                                const _parts = [`신규 ${fmtNum(_s)}건`]
+                                if (_inS > 0 || _soC > 0) _parts.push(`재고 ${fmtNum(_inS)}건 | 품절 ${fmtNum(_soC)}건`)
+                                if (_sk > 0) _parts.push(`중복/스킵 ${fmtNum(_sk)}건`)
                                 if (_p) _parts.push(_p)
                                 addLog(`${gp} [${f.name}] 수집 완료: ${_parts.join(' | ')}`)
                                 break
@@ -2087,11 +2081,11 @@ export default function CollectorPage() {
                   ? displayedFilters.filter(f => checkedIds.includes(f.id))
                   : [...displayedFilters]
                 if (targetFilters.length === 0) { showAlert('검색그룹이 없습니다'); return }
-                const ok = await showConfirm(`${checkedIds.length > 0 ? '선택된' : '전체'} ${targetFilters.length.toLocaleString()}개 그룹의 상품에 AI 태그를 생성하시겠습니까?\n(그룹별 대표 1개로 API 호출, 미리보기 후 확정)`)
+                const ok = await showConfirm(`${checkedIds.length > 0 ? '선택된' : '전체'} ${fmtNum(targetFilters.length)}개 그룹의 상품에 AI 태그를 생성하시겠습니까?\n(그룹별 대표 1개로 API 호출, 미리보기 후 확정)`)
                 if (!ok) return
                 setTagPreviewLoading(true)
                 try {
-                  addLog(`[AI태그] ${targetFilters.length.toLocaleString()}개 그룹 태그 생성 시작...`)
+                  addLog(`[AI태그] ${fmtNum(targetFilters.length)}개 그룹 태그 생성 시작...`)
                   const allPreviews: typeof tagPreviews = []
                   let totalCalls = 0, totalInput = 0, totalOutput = 0, totalCost = 0
                   for (let i = 0; i < targetFilters.length; i++) {
@@ -2107,15 +2101,15 @@ export default function CollectorPage() {
                         totalCost += res.cost_krw || 0
                         const tags = res.previews[0]?.tags || []
                         const seo = res.previews[0]?.seo_keywords || []
-                        addLog(`[AI태그] [${i + 1}/${targetFilters.length.toLocaleString()}] ${f.name} → SEO: ${seo.join(', ')} | 태그: ${tags.length.toLocaleString()}개`)
+                        addLog(`[AI태그] [${fmtNum(i + 1)}/${fmtNum(targetFilters.length)}] ${f.name} → SEO: ${seo.join(', ')} | 태그: ${fmtNum(tags.length)}개`)
                       } else {
-                        addLog(`[AI태그] [${i + 1}/${targetFilters.length.toLocaleString()}] ${f.name} → 태그 없음`)
+                        addLog(`[AI태그] [${fmtNum(i + 1)}/${fmtNum(targetFilters.length)}] ${f.name} → 태그 없음`)
                       }
                     } catch (e) {
-                      addLog(`[AI태그] [${i + 1}/${targetFilters.length.toLocaleString()}] ${f.name} → 실패: ${e instanceof Error ? e.message : '오류'}`)
+                      addLog(`[AI태그] [${fmtNum(i + 1)}/${fmtNum(targetFilters.length)}] ${f.name} → 실패: ${e instanceof Error ? e.message : '오류'}`)
                     }
                   }
-                  addLog(`[AI태그] 완료: ${allPreviews.length.toLocaleString()}/${targetFilters.length.toLocaleString()}개 그룹 | API ${totalCalls.toLocaleString()}회 | ${Number(totalCost.toFixed(0)).toLocaleString()}원`)
+                  addLog(`[AI태그] 완료: ${fmtNum(allPreviews.length)}/${fmtNum(targetFilters.length)}개 그룹 | API ${fmtNum(totalCalls)}회 | ${fmtNum(Number(totalCost.toFixed(0)))}원`)
                   if (allPreviews.length > 0) {
                     setTagPreviews(allPreviews)
                     setTagPreviewCost({ api_calls: totalCalls, input_tokens: totalInput, output_tokens: totalOutput, cost_krw: totalCost })
@@ -2148,9 +2142,9 @@ export default function CollectorPage() {
         }}>
           ※ 정책 우선순위: <span style={{ color: '#FF8C00' }}>[상품별 개별정책]</span> → <span style={{ color: '#FF8C00' }}>[카테고리 정책]</span> 순으로 적용됩니다
           <span style={{ float: 'right', color: '#E5E5E5', fontWeight: 600 }}>
-            수집 <span style={{ color: '#FF8C00' }}>{filters.reduce((s, f) => s + ((f as unknown as Record<string, number>).collected_count ?? 0), 0).toLocaleString()}</span>
+            수집 <span style={{ color: '#FF8C00' }}>{fmtNum(filters.reduce((s, f) => s + ((f as unknown as Record<string, number>).collected_count ?? 0), 0))}</span>
             <span style={{ color: '#555' }}> / </span>
-            요청 <span style={{ color: '#FFB84D' }}>{filters.filter(f => !f.is_folder).reduce((s, f) => s + (f.requested_count ?? 0), 0).toLocaleString()}</span>
+            요청 <span style={{ color: '#FFB84D' }}>{fmtNum(filters.filter(f => !f.is_folder).reduce((s, f) => s + (f.requested_count ?? 0), 0))}</span>
           </span>
         </div>
 
@@ -2318,7 +2312,7 @@ export default function CollectorPage() {
                         onMouseLeave={e => { if (drillBrand !== brand) e.currentTarget.style.background = 'transparent' }}
                       >
                         {brand}
-                        <span style={{ marginLeft: 'auto', fontSize: '0.74rem', color: '#FF8C00', fontWeight: 600 }}>{count.toLocaleString()}</span>
+                        <span style={{ marginLeft: 'auto', fontSize: '0.74rem', color: '#FF8C00', fontWeight: 600 }}>{fmtNum(count)}</span>
                       </div>
                     )) : <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8rem' }}>브랜드 없음</div>
                   ) : null}
@@ -2336,7 +2330,7 @@ export default function CollectorPage() {
                         {(g as unknown as Record<string, number>).ai_tagged_count > 0 && (
                           <span style={{ fontSize: '0.55rem', padding: '0 3px', borderRadius: '3px', background: 'rgba(81,207,102,0.15)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.3)' }}>T</span>
                         )}
-                        <span style={{ marginLeft: 'auto', fontSize: '0.74rem', color: '#FF8C00', fontWeight: 600 }}>{(g.collected_count ?? 0).toLocaleString()}</span>
+                        <span style={{ marginLeft: 'auto', fontSize: '0.74rem', color: '#FF8C00', fontWeight: 600 }}>{fmtNum(g.collected_count ?? 0)}</span>
                       </div>
                     ))}
                   </>) : <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8rem' }}>항목 없음</div>
@@ -2369,7 +2363,7 @@ export default function CollectorPage() {
                               const res = await collectorApi.scrollProducts({ skip: 0, limit: 10000, search_filter_id: selectedFilter.id })
                               const registered = res.items.filter(p => p.market_product_nos && Object.keys(p.market_product_nos).length > 0)
                               if (registered.length > 0) {
-                                showAlert(`마켓등록 상품이 ${registered.length.toLocaleString()}건 있어서 삭제할 수 없습니다`, 'error')
+                                showAlert(`마켓등록 상품이 ${fmtNum(registered.length)}건 있어서 삭제할 수 없습니다`, 'error')
                                 return
                               }
                               const pIds = res.items.map(p => p.id)
@@ -2410,7 +2404,7 @@ export default function CollectorPage() {
                       const policyId = e.target.value
                       if (!policyId) return
                       const policyName = policies.find(p => p.id === policyId)?.name || ''
-                      if (!await showConfirm(`${drillBrand} 브랜드의 ${catGroups.length.toLocaleString()}개 그룹에 "${policyName}" 정책을 일괄 적용하시겠습니까?`)) { e.target.value = ''; return }
+                      if (!await showConfirm(`${drillBrand} 브랜드의 ${fmtNum(catGroups.length)}개 그룹에 "${policyName}" 정책을 일괄 적용하시겠습니까?`)) { e.target.value = ''; return }
                       let applied = 0
                       for (const g of catGroups) {
                         try {
@@ -2418,7 +2412,7 @@ export default function CollectorPage() {
                           applied++
                         } catch { /* 무시 */ }
                       }
-                      showAlert(`${applied.toLocaleString()}/${catGroups.length.toLocaleString()}개 그룹에 정책 적용 완료`, 'success')
+                      showAlert(`${fmtNum(applied)}/${fmtNum(catGroups.length)}개 그룹에 정책 적용 완료`, 'success')
                       e.target.value = ''
                       load(); loadTree()
                     }} style={{
@@ -2438,7 +2432,7 @@ export default function CollectorPage() {
                       color: selectedCount > 0 ? '#FF8C00' : '#555', fontWeight: 600, fontSize: '0.82rem',
                       cursor: selectedCount > 0 ? 'pointer' : 'default',
                       textDecoration: selectedCount > 0 ? 'underline' : 'none',
-                    }}>{selectedCount.toLocaleString()}</span>
+                    }}>{fmtNum(selectedCount)}</span>
                   ) : <span style={{ color: '#444', fontSize: '0.75rem' }}>-</span>}
                 </div>
                 {/* 8. 요청 */}
@@ -2488,7 +2482,7 @@ export default function CollectorPage() {
                           border: `1px solid ${mappedCount > 0 ? 'rgba(81,207,102,0.3)' : 'rgba(255,140,0,0.3)'}`,
                           color: mappedCount > 0 ? '#51CF66' : '#FF8C00',
                         }}
-                      >{mappedCount > 0 ? `${mappedCount.toLocaleString()}개 매핑` : '매핑'}</button>
+                      >{mappedCount > 0 ? `${fmtNum(mappedCount)}개 매핑` : '매핑'}</button>
                     )
                   })() : <span style={{ color: '#444', fontSize: '0.75rem' }}>-</span>}
                 </div>
@@ -2540,7 +2534,7 @@ export default function CollectorPage() {
                 }}>
                   <span style={{ fontSize: "0.85rem", color: "#999" }}>{item.label}</span>
                   <span style={{ fontSize: "0.95rem", fontWeight: 700, color: item.color }}>
-                    {item.value.toLocaleString()}건
+                    {fmtNum(item.value)}건
                   </span>
                 </div>
               ))}
@@ -2631,7 +2625,7 @@ export default function CollectorPage() {
                 } catch (e) { showAlert(e instanceof Error ? e.message : '저장 실패', 'error') }
               }}
                 style={{ padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px', cursor: 'pointer', border: '1px solid rgba(81,207,102,0.5)', background: 'rgba(81,207,102,0.15)', color: '#51CF66', fontWeight: 600 }}>
-                저장 ({Object.values(mappingData).filter(Boolean).length.toLocaleString()}개 마켓)
+                저장 ({fmtNum(Object.values(mappingData).filter(Boolean).length)}개 마켓)
               </button>
             </div>
           </div>
@@ -2657,7 +2651,7 @@ export default function CollectorPage() {
                       <span style={{ fontSize: '0.7rem', color: '#888', marginLeft: '6px' }}>({preview.rep_name})</span>
                     )}
                   </div>
-                  <span style={{ fontSize: '0.7rem', color: '#666' }}>{preview.product_count.toLocaleString()}개 상품 | {preview.tags.length.toLocaleString()}개 태그</span>
+                  <span style={{ fontSize: '0.7rem', color: '#666' }}>{fmtNum(preview.product_count)}개 상품 | {fmtNum(preview.tags.length)}개 태그</span>
                 </div>
                 <div style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <span style={{ fontSize: '0.72rem', color: '#4C9AFF', fontWeight: 600, whiteSpace: 'nowrap' }}>SEO:</span>
@@ -2724,7 +2718,7 @@ export default function CollectorPage() {
             ))}
             {removedTags.length > 0 && (
               <div style={{ marginBottom: '12px', padding: '10px 14px', background: 'rgba(255,107,107,0.06)', borderRadius: '6px', border: '1px solid rgba(255,107,107,0.15)' }}>
-                <span style={{ fontSize: '0.72rem', color: '#FF6B6B', fontWeight: 600 }}>금지태그 등록 예정 ({removedTags.length.toLocaleString()}개): </span>
+                <span style={{ fontSize: '0.72rem', color: '#FF6B6B', fontWeight: 600 }}>금지태그 등록 예정 ({fmtNum(removedTags.length)}개): </span>
                 <span style={{ fontSize: '0.72rem', color: '#888' }}>{removedTags.join(', ')}</span>
               </div>
             )}
@@ -3040,7 +3034,7 @@ export default function CollectorPage() {
                     { label: '발견 키워드쌍', value: aiResult.summary.total_pairs || 0, color: '#E5A0FF' },
                     { label: 'IP안전', value: aiResult.summary.safe_brands, color: '#51CF66' },
                     { label: '생성 그룹', value: aiResult.summary.total_combinations, color: '#FFB84D' },
-                    { label: '예상 상품', value: aiResult.summary.total_estimated_products.toLocaleString(), color: '#A29BFE' },
+                    { label: '예상 상품', value: fmtNum(aiResult.summary.total_estimated_products), color: '#A29BFE' },
                   ].map(s => (
                     <div key={s.label} style={{
                       background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px',
@@ -3169,7 +3163,7 @@ export default function CollectorPage() {
                   return (
                     <div style={{ marginBottom: '14px', padding: '12px 14px', background: 'rgba(255,107,107,0.04)', border: '1px solid rgba(255,107,107,0.15)', borderRadius: '8px' }}>
                       <div style={{ fontSize: '0.75rem', color: '#FF6B6B', marginBottom: '8px', fontWeight: 600 }}>
-                        IP위험 브랜드 ({unsafeBrands.length.toLocaleString()}개)
+                        IP위험 브랜드 ({fmtNum(unsafeBrands.length)}개)
                         {aiExcludedBrands.size > 0 && <span style={{ color: '#888', fontWeight: 400 }}> — {aiExcludedBrands.size}개 제외</span>}
                       </div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
@@ -3298,7 +3292,7 @@ export default function CollectorPage() {
                             <td style={{ padding: '6px', color: !combo.is_safe ? '#FF6B6B' : isExcluded ? '#888' : '#E5E5E5', fontWeight: 500, textDecoration: !combo.is_safe ? 'line-through' : 'none' }}>{combo.brand}</td>
                             <td style={{ padding: '6px', color: '#C5C5C5' }}>{combo.keyword || combo.category}</td>
                             <td style={{ padding: '6px', textAlign: 'right', color: '#FFB84D', fontWeight: 600 }}>
-                              {combo.estimated_count.toLocaleString()}
+                              {fmtNum(combo.estimated_count)}
                             </td>
                             <td style={{ padding: '6px', textAlign: 'center' }}>
                               {combo.is_safe
@@ -3316,7 +3310,7 @@ export default function CollectorPage() {
                 {/* 선택 요약 + 버튼 */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <span style={{ fontSize: '0.82rem', color: '#888' }}>
-                    {aiResult.combinations.filter((c, i) => aiSelectedCombos.has(i) && !aiExcludedBrands.has(c.brand) && !aiExcludedBrands.has(`__kw__${c.keyword || c.category}`)).length.toLocaleString()}개 선택 / 예상{' '}
+                    {fmtNum(aiResult.combinations.filter((c, i) => aiSelectedCombos.has(i) && !aiExcludedBrands.has(c.brand) && !aiExcludedBrands.has(`__kw__${c.keyword || c.category}`)).length)}개 선택 / 예상{' '}
                     {aiResult.combinations
                       .filter((c, i) => aiSelectedCombos.has(i) && !aiExcludedBrands.has(c.brand) && !aiExcludedBrands.has(`__kw__${c.keyword || c.category}`))
                       .reduce((s, c) => s + c.estimated_count, 0)
@@ -3340,13 +3334,13 @@ export default function CollectorPage() {
                         const totalEst = selected.reduce((s, c) => s + c.estimated_count, 0)
                         const site = SITES.find(s => s.id === aiSourceSite)
                         const ok = await showConfirm(
-                          `${selected.length}개 검색그룹을 생성하시겠습니까?\n소싱처: ${site?.label || aiSourceSite}\n예상 상품수: ${totalEst.toLocaleString()}개`
+                          `${fmtNum(selected.length)}개 검색그룹을 생성하시겠습니까?\n소싱처: ${site?.label || aiSourceSite}\n예상 상품수: ${fmtNum(totalEst)}개`
                         )
                         if (!ok) return
                         setAiCreating(true)
                         try {
                           const res = await aiSourcingApi.createGroups(selected)
-                          showAlert(`${res.created}개 검색그룹 생성 완료`, 'success')
+                          showAlert(`${fmtNum(res.created)}개 검색그룹 생성 완료`, 'success')
                           setShowAiSourcingModal(false)
                           load(); loadTree()
                         } catch (err) {

@@ -170,6 +170,7 @@ async def refresh_products(
                         "name": (getattr(product, "name", "") or "")[:40],
                         "status": "error",
                         "detail": r.error[:60],
+                        "product_id": r.product_id,
                     }
                 )
             continue
@@ -296,6 +297,11 @@ async def refresh_products(
                 )
             if r.new_sale_status and r.new_sale_status != old_status:
                 _changes.append(f"상태 {old_status}→{r.new_sale_status}")
+            if r.new_cost is not None:
+                _old_c = int(product.cost) if product.cost else 0
+                _new_c = int(r.new_cost)
+                if _new_c != _old_c:
+                    _changes.append(f"원가 ₩{_old_c:,}→₩{_new_c:,}")
             if r.stock_changed:
                 _changes.append("재고변동")
 
@@ -306,6 +312,7 @@ async def refresh_products(
                     "name": (getattr(product, "name", "") or "")[:40],
                     "status": "changed",
                     "detail": " / ".join(_changes) if _changes else "변동",
+                    "product_id": r.product_id,
                 }
             )
 
@@ -331,6 +338,7 @@ async def refresh_products(
                         "name": (getattr(product, "name", "") or "")[:40],
                         "status": "stock_changed",
                         "detail": "재고변동",
+                        "product_id": r.product_id,
                     }
                 )
             else:
@@ -342,6 +350,7 @@ async def refresh_products(
                         "name": (getattr(product, "name", "") or "")[:40],
                         "status": "unchanged",
                         "detail": "변동 없음",
+                        "product_id": r.product_id,
                     }
                 )
 
@@ -576,6 +585,18 @@ async def refresh_products(
                             f"[refresh] 정책 변동 재전송 실패 ({len(_pids)}건): {e}"
                         )
 
+                # 정책 변동으로 재전송된 상품의 refresh_details 업데이트
+                _retx_pids: set = set()
+                for _pids in policy_changed_groups.values():
+                    _retx_pids.update(_pids)
+                for _d in refresh_details:
+                    if (
+                        _d.get("product_id") in _retx_pids
+                        and _d.get("status") == "unchanged"
+                    ):
+                        _d["status"] = "changed"
+                        _d["detail"] = "정책 변동 → 재전송"
+
                 await session.commit()
 
     summary.retransmitted = retransmitted
@@ -649,6 +670,10 @@ async def refresh_products(
         },
     )
     await session.commit()
+
+    # 내부 추적용 product_id 제거 (외부 노출 방지)
+    for _d in refresh_details:
+        _d.pop("product_id", None)
 
     return {
         "total": summary.total,
