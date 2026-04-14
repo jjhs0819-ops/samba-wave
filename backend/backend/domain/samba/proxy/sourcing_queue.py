@@ -10,6 +10,7 @@ import asyncio
 import uuid
 from typing import Any
 
+from backend.shutdown_state import is_shutting_down
 from backend.utils.logger import logger
 
 # 사이트별 검색 URL 템플릿
@@ -45,6 +46,11 @@ class SourcingQueue:
     resolvers: dict[str, asyncio.Future[Any]] = {}
 
     @classmethod
+    def _ensure_accepting_jobs(cls) -> None:
+        if is_shutting_down():
+            raise RuntimeError("server is shutting down")
+
+    @classmethod
     def add_search_job(
         cls,
         site: str,
@@ -58,6 +64,7 @@ class SourcingQueue:
              없으면 SITE_SEARCH_URLS 템플릿에 keyword만 치환해서 사용.
         max_count: 확장앱에 최대 수집 건수 힌트 전달.
         """
+        cls._ensure_accepting_jobs()
         request_id = str(uuid.uuid4())[:8]
         if not url:
             url_template = SITE_SEARCH_URLS.get(site, "")
@@ -90,6 +97,7 @@ class SourcingQueue:
 
         sitm_no: LOTTEON sitmNo — 전달 시 확장앱이 탭 없이 pbf API 직접 호출.
         """
+        cls._ensure_accepting_jobs()
         request_id = str(uuid.uuid4())[:8]
         url_template = SITE_DETAIL_URLS.get(site, "")
         if not url_template:
@@ -116,6 +124,8 @@ class SourcingQueue:
     @classmethod
     def get_next_job(cls) -> dict[str, Any]:
         """큐에서 다음 작업 가져오기 (확장앱 폴링용)."""
+        if is_shutting_down():
+            return {"hasJob": False, "shuttingDown": True}
         if cls.queue:
             job = cls.queue.pop(0)
             return {"hasJob": True, **job}
@@ -142,3 +152,21 @@ class SourcingQueue:
             )
             return True
         return False
+
+    @classmethod
+    def cancel_all(cls, reason: str = "server is shutting down") -> None:
+        """Release pending waiters during process shutdown."""
+        cls.queue.clear()
+        futures = list(cls.resolvers.items())
+        cls.resolvers.clear()
+        for request_id, future in futures:
+            if future.done():
+                continue
+            exc = RuntimeError(reason)
+            try:
+                loop = future.get_loop()
+                loop.call_soon_threadsafe(future.set_exception, exc)
+            except RuntimeError:
+                if not future.done():
+                    future.set_exception(exc)
+            logger.info(f"[sourcing queue] shutdown cancel: {request_id}")

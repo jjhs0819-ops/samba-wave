@@ -8,8 +8,8 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from backend.domain.user.auth_service import get_user_id
@@ -758,8 +758,14 @@ _collect_events: dict[str, _asyncio.Event] = {}
 
 
 @router.get("/collect-queue")
-async def get_collect_queue():
+async def get_collect_queue(request: Request):
     """확장앱 폴링 — 수집 작업 큐."""
+    if getattr(request.app.state, "is_shutting_down", False):
+        return JSONResponse(
+            status_code=503,
+            content={"hasJob": False, "shuttingDown": True},
+            headers={"Connection": "close"},
+        )
     if _collect_queue:
         job = _collect_queue.popleft()
         return {"hasJob": True, **job}

@@ -919,6 +919,7 @@ async def products_init_data(
 
     Returns: { policies, filters, deletion_words, accounts, order_product_ids,
                name_rules, category_mappings, detail_templates }
+    각 섹션이 독립적으로 try/except 처리 — 부분 실패 시에도 나머지 데이터 반환.
     """
     from backend.domain.samba.policy.model import SambaPolicy
     from backend.domain.samba.collector.model import SambaSearchFilter as _SF
@@ -926,71 +927,6 @@ async def products_init_data(
     from backend.domain.samba.account.model import SambaMarketAccount
     from backend.domain.samba.order.model import SambaOrder
     from backend.domain.samba.category.model import SambaCategoryMapping
-
-    # order_pids 캐시 확인 (주문 테이블 풀 스캔 방지 — 30초 TTL)
-    order_pids: list = await cache.get("init_data:order_pids") or []
-    need_order_pids = not order_pids
-
-    # 모든 쿼리 병렬 실행 (order_pids는 캐시 미스 시에만 조회)
-    tasks = [
-        session.execute(select(SambaPolicy).limit(50)),
-        session.execute(select(_SF).where(_SF.is_folder == False).limit(500)),
-        session.execute(
-            select(SambaForbiddenWord).where(
-                SambaForbiddenWord.type == "deletion",
-                SambaForbiddenWord.is_active == True,
-            )
-        ),
-        session.execute(
-            select(SambaMarketAccount).where(SambaMarketAccount.is_active == True)
-        ),
-        session.execute(select(SambaCategoryMapping)),
-    ]
-    if need_order_pids:
-        tasks.append(
-            session.execute(
-                select(SambaOrder.product_id)
-                .where(SambaOrder.product_id.isnot(None))
-                .distinct()
-            )
-        )
-
-    results = await asyncio.gather(*tasks)
-    pol_r, filter_r, words_r, accs_r, map_r = results[:5]
-    if need_order_pids:
-        order_pids = [r[0] for r in results[5].all()]
-        await cache.set("init_data:order_pids", order_pids, ttl=30)
-
-    # name_rules + detail_templates (policy 도메인에 정의됨)
-    from backend.domain.samba.policy.model import SambaNameRule, SambaDetailTemplate
-
-    rules_r, tpl_r = await asyncio.gather(
-        session.execute(select(SambaNameRule)),
-        session.execute(select(SambaDetailTemplate)),
-    )
-
-    policies = [
-        dict(r._mapping) if hasattr(r, "_mapping") else r for r in pol_r.scalars().all()
-    ]
-    filters = [
-        dict(r._mapping) if hasattr(r, "_mapping") else r
-        for r in filter_r.scalars().all()
-    ]
-    words = [r.word for r in words_r.scalars().all()]
-    accounts = [
-        dict(r._mapping) if hasattr(r, "_mapping") else r
-        for r in accs_r.scalars().all()
-    ]
-    mappings = [
-        dict(r._mapping) if hasattr(r, "_mapping") else r for r in map_r.scalars().all()
-    ]
-    rules = [
-        dict(r._mapping) if hasattr(r, "_mapping") else r
-        for r in rules_r.scalars().all()
-    ]
-    templates = [
-        dict(r._mapping) if hasattr(r, "_mapping") else r for r in tpl_r.scalars().all()
-    ]
 
     # SQLModel 인스턴스를 dict로 변환
     def to_dict(obj):
@@ -1003,15 +939,77 @@ async def products_init_data(
             return d
         return obj
 
+    # 기본값 초기화 (각 섹션 실패 시 빈 배열 반환)
+    policies: list = []
+    filters: list = []
+    words: list = []
+    accounts: list = []
+    mappings: list = []
+    order_pids: list = []
+    rules: list = []
+    templates: list = []
+
+    # 1차: 핵심 메타데이터 (정책/필터/금지어/계정/카테고리) 병렬 조회
+    try:
+        core_results = await asyncio.gather(
+            session.execute(select(SambaPolicy).limit(50)),
+            session.execute(select(_SF).where(_SF.is_folder == False).limit(500)),
+            session.execute(
+                select(SambaForbiddenWord).where(
+                    SambaForbiddenWord.type == "deletion",
+                    SambaForbiddenWord.is_active == True,
+                )
+            ),
+            session.execute(
+                select(SambaMarketAccount).where(SambaMarketAccount.is_active == True)
+            ),
+            session.execute(select(SambaCategoryMapping)),
+        )
+        pol_r, filter_r, words_r, accs_r, map_r = core_results
+        policies = [to_dict(r) for r in pol_r.scalars().all()]
+        filters = [to_dict(r) for r in filter_r.scalars().all()]
+        words = [r.word for r in words_r.scalars().all()]
+        accounts = [to_dict(r) for r in accs_r.scalars().all()]
+        mappings = [to_dict(r) for r in map_r.scalars().all()]
+    except Exception as e:
+        logger.exception(f"[init-data] 핵심 메타데이터 조회 실패: {e}")
+
+    # 2차: order_pids (캐시 우선, 주문 테이블 풀 스캔 방지 — 30초 TTL)
+    try:
+        order_pids = await cache.get("init_data:order_pids") or []
+        if not order_pids:
+            order_r = await session.execute(
+                select(SambaOrder.product_id)
+                .where(SambaOrder.product_id.isnot(None))
+                .distinct()
+            )
+            order_pids = [r[0] for r in order_r.all()]
+            await cache.set("init_data:order_pids", order_pids, ttl=30)
+    except Exception as e:
+        logger.exception(f"[init-data] order_pids 조회 실패: {e}")
+
+    # 3차: name_rules + detail_templates (policy 도메인)
+    try:
+        from backend.domain.samba.policy.model import SambaNameRule, SambaDetailTemplate
+
+        rules_r, tpl_r = await asyncio.gather(
+            session.execute(select(SambaNameRule)),
+            session.execute(select(SambaDetailTemplate)),
+        )
+        rules = [to_dict(r) for r in rules_r.scalars().all()]
+        templates = [to_dict(r) for r in tpl_r.scalars().all()]
+    except Exception as e:
+        logger.exception(f"[init-data] name_rules/detail_templates 조회 실패: {e}")
+
     return {
-        "policies": [to_dict(p) for p in policies],
-        "filters": [to_dict(f) for f in filters],
+        "policies": policies,
+        "filters": filters,
         "deletion_words": words,
-        "accounts": [to_dict(a) for a in accounts],
+        "accounts": accounts,
         "order_product_ids": order_pids,
-        "name_rules": [to_dict(r) for r in rules],
-        "category_mappings": [to_dict(m) for m in mappings],
-        "detail_templates": [to_dict(t) for t in templates],
+        "name_rules": rules,
+        "category_mappings": mappings,
+        "detail_templates": templates,
     }
 
 

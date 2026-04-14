@@ -1,7 +1,24 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { accountApi, collectorApi, forbiddenApi, proxyApi, proxyConfigApi, sourcingAccountApi, tenantApi, API_BASE, type SambaMarketAccount, type SambaSourcingAccount, type ChromeProfile, type ProxyConfigItem, type ProxyPurpose, type TenantUsage } from '@/lib/samba/api'
+import {
+  accountApi,
+  collectorApi,
+  forbiddenApi,
+  proxyApi,
+  proxyConfigApi,
+  type SambaMarketAccount,
+  type ProxyConfigItem,
+  type ProxyPurpose,
+} from '@/lib/samba/api/commerce'
+import { API_BASE } from '@/lib/samba/api/shared'
+import {
+  sourcingAccountApi,
+  tenantApi,
+  type SambaSourcingAccount,
+  type ChromeProfile,
+  type TenantUsage,
+} from '@/lib/samba/api/operations'
 import { MARKET_SELECT_OPTIONS } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle, fmtNum, parseNum } from '@/lib/samba/styles'

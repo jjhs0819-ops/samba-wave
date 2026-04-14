@@ -4,17 +4,20 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from "react"
 import { useSearchParams, useRouter } from "next/navigation";
 import {
   collectorApi,
+  policyApi,
+  forbiddenApi,
+  accountApi,
+  categoryApi,
   shipmentApi,
   proxyApi,
-  fetchWithAuth,
   type SambaCollectedProduct,
   type SambaPolicy,
   type SambaSearchFilter,
   type SambaMarketAccount,
-  type SambaNameRule,
-  type SambaDetailTemplate,
   type RefreshDetail,
-} from "@/lib/samba/api";
+} from "@/lib/samba/api/commerce";
+import { fetchWithAuth } from "@/lib/samba/api/shared";
+import { detailTemplateApi, nameRuleApi, type SambaNameRule, type SambaDetailTemplate } from "@/lib/samba/api/support";
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtNum as fmt } from '@/lib/samba/styles'
 import ProductCard from './components/ProductCard'
@@ -205,54 +208,29 @@ export default function ProductsPage() {
     await loadProducts(currentPage)
   }, [loadProducts, currentPage])
 
-  // 메타데이터 + 상품 병렬 로드 (초기 1회)
-  // init-data 통합 API(8개→1개) + scrollProducts = 총 2개 HTTP 요청으로 최적화
+  // 메타데이터 + 상품 로드 — 2-phase
+  // Phase 1: scrollProducts만 먼저 → 상품 즉시 표시
+  // Phase 2: 메타데이터 8개 백그라운드 → 정책/계정 정보 채움
   const load = useCallback(async () => {
+    const knownStatus2 = ['has_orders', 'free_ship', 'same_day', 'free_same', 'market_registered', 'market_unregistered', 'sold_out']
+    const statusParam = (knownStatus2.includes(statusFilter) || statusFilter.startsWith('reg_') || statusFilter.startsWith('unreg_'))
+      ? statusFilter : statusFilter || undefined
+    const aiParam = (aiFilter === 'has_orders') ? aiFilter : aiFilter || undefined
+
+    // Phase 1: 상품 목록만 먼저 (빠른 초기 렌더링)
     setLoading(true)
     try {
-      const knownStatus2 = ['has_orders', 'free_ship', 'same_day', 'free_same', 'market_registered', 'market_unregistered', 'sold_out']
-      const statusParam = (knownStatus2.includes(statusFilter) || statusFilter.startsWith('reg_') || statusFilter.startsWith('unreg_'))
-        ? statusFilter : statusFilter || undefined
-      const aiParam = (aiFilter === 'has_orders') ? aiFilter : aiFilter || undefined
-
-      // 메타데이터(통합) + 상품목록 동시 호출
-      const [meta, productsRes] = await Promise.all([
-        collectorApi.initData().catch(() => null),
-        collectorApi.scrollProducts({
-          skip: 0,
-          limit: pageSize,
-          search: searchQ.trim() || _idFilter || undefined,
-          search_type: searchQ.trim() ? searchType : (_idFilter ? 'id' : undefined),
-          source_site: siteFilter || undefined,
-          status: statusParam,
-          ai_filter: aiParam,
-          search_filter_id: filterByGroupId || undefined,
-          sort_by: sortBy,
-        }).catch(() => null),
-      ])
-
-      // 메타데이터 상태 반영
-      if (meta) {
-        setPolicies(meta.policies)
-        setAccounts(meta.accounts)
-        setDetailTemplates(meta.detail_templates)
-        setDeletionWords(meta.deletion_words)
-        setNameRules(meta.name_rules)
-        setOrderProductIds(new Set(meta.order_product_ids))
-        const nameMap: Record<string, string> = {}
-        meta.filters.forEach((f: SambaSearchFilter) => { nameMap[f.id] = f.name })
-        setFilterNameMap(nameMap)
-        setSearchFilters(meta.filters)
-        if (Array.isArray(meta.category_mappings)) {
-          const map = new Map<string, Record<string, string>>()
-          meta.category_mappings.forEach(m => {
-            map.set(`${m.source_site}::${m.source_category}`, m.target_mappings || {})
-          })
-          setCatMappingMap(map)
-        }
-      }
-
-      // 상품 데이터 세팅
+      const productsRes = await collectorApi.scrollProducts({
+        skip: 0,
+        limit: pageSize,
+        search: searchQ.trim() || _idFilter || undefined,
+        search_type: searchQ.trim() ? searchType : (_idFilter ? 'id' : undefined),
+        source_site: siteFilter || undefined,
+        status: statusParam,
+        ai_filter: aiParam,
+        search_filter_id: filterByGroupId || undefined,
+        sort_by: sortBy,
+      }).catch(() => null)
       if (productsRes) {
         setAllProducts(productsRes.items)
         setServerTotal(productsRes.total)
@@ -264,6 +242,36 @@ export default function ProductsPage() {
     } finally {
       setLoading(false)
     }
+
+    // Phase 2: 메타데이터 백그라운드 로드 (상품 표시 후 비동기)
+    Promise.all([
+      policyApi.list().catch(() => [] as SambaPolicy[]),
+      collectorApi.listFilters().catch(() => [] as SambaSearchFilter[]),
+      forbiddenApi.listWords('deletion').catch(() => [] as { word: string }[]),
+      accountApi.listActive().catch(() => [] as SambaMarketAccount[]),
+      collectorApi.getProductIdsWithOrders().catch(() => [] as string[]),
+      nameRuleApi.list().catch(() => [] as SambaNameRule[]),
+      (categoryApi.listMappings() as Promise<{ source_site: string; source_category: string; target_mappings: Record<string, string> }[]>).catch(() => [] as { source_site: string; source_category: string; target_mappings: Record<string, string> }[]),
+      detailTemplateApi.list().catch(() => [] as SambaDetailTemplate[]),
+    ]).then(([pol, flts, wds, accs, orderPids, rules, catMaps, tpls]) => {
+      setPolicies(pol)
+      setAccounts(accs)
+      setDetailTemplates(tpls)
+      setDeletionWords((wds as { word: string }[]).map(w => w.word))
+      setNameRules(rules)
+      setOrderProductIds(new Set(orderPids))
+      const nameMap: Record<string, string> = {}
+      flts.forEach((f: SambaSearchFilter) => { nameMap[f.id] = f.name })
+      setFilterNameMap(nameMap)
+      setSearchFilters(flts)
+      if (Array.isArray(catMaps)) {
+        const map = new Map<string, Record<string, string>>()
+        catMaps.forEach(m => {
+          map.set(`${m.source_site}::${m.source_category}`, m.target_mappings || {})
+        })
+        setCatMappingMap(map)
+      }
+    }).catch(e => console.error('metadata load error:', e))
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -1640,6 +1648,12 @@ export default function ProductsPage() {
             <option value="update-desc">업데이트일 최신순</option>
             <option value="update-asc">업데이트일 오래된순</option>
           </select>
+          <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setCurrentPage(1) }}
+            style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: '#1A1A1A', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '6px' }}>
+            <option value={20}>20건</option>
+            <option value={50}>50건</option>
+            <option value={100}>100건</option>
+          </select>
         </div>
       </div>
 
@@ -1748,12 +1762,6 @@ export default function ProductsPage() {
           <span style={{ fontSize: '0.75rem', color: '#888', marginLeft: '0.5rem' }}>
             {fmt(serverTotal)}건 / {currentPage}/{fmt(totalPages)}p
           </span>
-          <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setCurrentPage(1) }}
-            style={{ marginLeft: '0.5rem', padding: '3px 6px', fontSize: '0.75rem', background: '#111520', border: '1px solid #2A3040', color: '#C5C5C5', borderRadius: '4px' }}>
-            <option value={20}>20건</option>
-            <option value={50}>50건</option>
-            <option value={100}>100건</option>
-          </select>
         </div>
       )}
     </div>

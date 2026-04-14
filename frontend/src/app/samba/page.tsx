@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, useCallback } from "react"
-import { orderApi, collectorApi, type OrderDashboardStats } from "@/lib/samba/api"
+import { orderApi, collectorApi, type OrderDashboardStats } from "@/lib/samba/api/commerce"
 import { card, fmtNum } from "@/lib/samba/styles"
 
 // 날짜 포맷: 3. 14. 형식

@@ -26,11 +26,13 @@ from fastapi import (
     Depends,
     HTTPException,
     Query,
+    Request,
     Response,
     UploadFile,
     File,
     Form,
 )
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -40,6 +42,7 @@ from backend.domain.samba.proxy.gsshop import GsShopApiError, GsShopClient
 from backend.domain.samba.proxy.kream import KreamClient
 from backend.domain.samba.proxy.lottehome import LotteApiError, LotteHomeClient
 from backend.domain.samba.proxy.musinsa import MusinsaClient
+from backend.shutdown_state import is_shutting_down
 from backend.utils.logger import logger
 
 router = APIRouter(prefix="/proxy", tags=["samba-proxy"])
@@ -2493,9 +2496,15 @@ async def lotteon_set_cookie(
     return {"success": True, "cookieCount": cookie_count}
 
 
-@sourcing_queue_router.get("/sourcing/collect-queue")
-async def sourcing_collect_queue() -> dict[str, Any]:
+@sourcing_queue_router.get("/sourcing/collect-queue", response_model=None)
+async def sourcing_collect_queue(request: Request) -> Any:
     """확장앱이 폴링하는 소싱 수집 큐 (인증 불필요)."""
+    if getattr(request.app.state, "is_shutting_down", False):
+        return JSONResponse(
+            status_code=503,
+            content={"hasJob": False, "shuttingDown": True},
+            headers={"Connection": "close"},
+        )
     from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
 
     return SourcingQueue.get_next_job()
@@ -2535,6 +2544,8 @@ async def sourcing_search(
         except asyncio.TimeoutError:
             SourcingQueue.resolvers.pop(request_id, None)
             return {"products": [], "total": 0, "error": "확장앱 응답 타임아웃 (60초)"}
+        except RuntimeError as e:
+            return {"products": [], "total": 0, "error": str(e)}
         except Exception as e:
             return {"products": [], "total": 0, "error": str(e)}
 
@@ -2563,6 +2574,8 @@ async def sourcing_detail(
         except asyncio.TimeoutError:
             SourcingQueue.resolvers.pop(request_id, None)
             return {"error": "확장앱 응답 타임아웃 (60초)"}
+        except RuntimeError as e:
+            return {"error": str(e)}
         except Exception as e:
             return {"error": str(e)}
 
@@ -2938,6 +2951,8 @@ async def kream_set_cookie(
 @router.get("/kream/collect-queue")
 async def kream_collect_queue_poll() -> dict[str, Any]:
     """확장앱이 폴링: 대기 중인 수집 요청 가져가기."""
+    if is_shutting_down():
+        return {"hasJob": False, "shuttingDown": True}
     if not KreamClient.collect_queue:
         return {"hasJob": False}
     job = KreamClient.collect_queue.pop(0)
@@ -2979,6 +2994,8 @@ async def kream_product_detail(product_id: str) -> dict[str, Any]:
 @router.get("/kream/search-queue")
 async def kream_search_queue_poll() -> dict[str, Any]:
     """확장앱이 3초마다 폴링: 대기 중인 검색 요청 가져가기."""
+    if is_shutting_down():
+        return {"hasJob": False, "shuttingDown": True}
     if not KreamClient.search_queue:
         return {"hasJob": False}
     job = KreamClient.search_queue.pop(0)

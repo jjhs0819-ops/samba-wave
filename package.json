@@ -4,8 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "concurrently -n \"backend,frontend\" -c \"yellow,cyan\" \"npm run dev:backend\" \"npm run dev:frontend\"",
-    "dev:backend": "cd backend && .venv/Scripts/python -m uvicorn backend.main:app --reload --port 28080",
-    "dev:frontend": "cd frontend && pnpm dev"
+    "dev:backend": "cd backend && .venv\\Scripts\\python.exe run.py --reload --port 28080",
+    "dev:frontend": "cd frontend && pnpm dev",
+    "test:backend": "cd backend && .venv\\Scripts\\python.exe -m pytest",
+    "verify:backend": "cd backend && .venv\\Scripts\\python.exe -m pytest tests/test_shutdown_queue.py"
   },
   "devDependencies": {
     "concurrently": "^9.0.0"

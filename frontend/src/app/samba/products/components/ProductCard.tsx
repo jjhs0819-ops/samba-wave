@@ -2,17 +2,16 @@
 
 import React, { useState, useMemo, useCallback } from 'react'
 import {
-  API_BASE,
   collectorApi,
   shipmentApi,
   proxyApi,
   type SambaCollectedProduct,
   type SambaPolicy,
   type SambaMarketAccount,
-  type SambaNameRule,
-  type SambaDetailTemplate,
   type SambaSearchFilter,
-} from '@/lib/samba/api'
+} from '@/lib/samba/api/commerce'
+import { API_BASE } from '@/lib/samba/api/shared'
+import { type SambaNameRule, type SambaDetailTemplate } from '@/lib/samba/api/support'
 import { showAlert } from '@/components/samba/Modal'
 import { fmtDate } from '@/lib/samba/utils'
 import ProductImage from './ProductImage'

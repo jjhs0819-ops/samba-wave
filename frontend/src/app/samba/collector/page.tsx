@@ -6,18 +6,19 @@ import {
   collectorApi,
   policyApi,
   proxyApi,
-  aiSourcingApi,
   categoryApi,
   accountApi,
-  fetchWithAuth,
-  API_BASE,
   type SambaSearchFilter,
   type SambaPolicy,
   type SambaMarketAccount,
   type RefreshResult,
+} from "@/lib/samba/api/commerce";
+import { fetchWithAuth, API_BASE } from "@/lib/samba/api/shared";
+import {
+  aiSourcingApi,
   type AISourcingResult,
   type AISourcingCombination,
-} from "@/lib/samba/api";
+} from "@/lib/samba/api/operations";
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { SITE_COLORS, SOURCING_SEARCH_URLS } from '@/lib/samba/constants'
 import { fmtDate as _fmtDate } from '@/lib/samba/utils'

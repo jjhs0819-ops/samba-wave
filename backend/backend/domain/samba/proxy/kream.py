@@ -49,6 +49,28 @@ class KreamClient:
     search_queue: list[dict[str, Any]] = []
     search_resolvers: dict[str, asyncio.Future[Any]] = {}
 
+    @classmethod
+    def cancel_all(cls, reason: str = "server is shutting down") -> None:
+        cls.collect_queue.clear()
+        cls.search_queue.clear()
+        pending = [
+            *cls.collect_resolvers.items(),
+            *cls.search_resolvers.items(),
+        ]
+        cls.collect_resolvers.clear()
+        cls.search_resolvers.clear()
+        for request_id, future in pending:
+            if future.done():
+                continue
+            exc = RuntimeError(reason)
+            try:
+                loop = future.get_loop()
+                loop.call_soon_threadsafe(future.set_exception, exc)
+            except RuntimeError:
+                if not future.done():
+                    future.set_exception(exc)
+            logger.info(f"[KREAM] shutdown cancel: {request_id}")
+
     def __init__(self, token: str = "", cookie: str = "") -> None:
         self.token = token
         self.cookie = cookie

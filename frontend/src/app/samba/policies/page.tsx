@@ -2,7 +2,21 @@
 
 import { useEffect, useState, useCallback, useRef } from "react"
 import { useSearchParams } from "next/navigation"
-import { policyApi, forbiddenApi, accountApi, detailTemplateApi, nameRuleApi, collectorApi, type SambaPolicy, type SambaMarketAccount, type SambaDetailTemplate, type SambaNameRule, type SambaCollectedProduct } from "@/lib/samba/api"
+import {
+  policyApi,
+  forbiddenApi,
+  accountApi,
+  collectorApi,
+  type SambaPolicy,
+  type SambaMarketAccount,
+  type SambaCollectedProduct,
+} from "@/lib/samba/api/commerce"
+import {
+  detailTemplateApi,
+  nameRuleApi,
+  type SambaDetailTemplate,
+  type SambaNameRule,
+} from "@/lib/samba/api/support"
 import { MARKETS, MARKET_ID_BY_LABEL, POLICY_MARKETS_DOMESTIC, POLICY_MARKETS_OVERSEAS } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
@@ -427,6 +441,8 @@ export default function PoliciesPage() {
             value={selectedPolicyId || ''}
             onChange={async (e) => {
               const id = e.target.value
+              // 정책 전환 전 진행 중인 자동저장 타이머 취소 (레이스 컨디션 방지)
+              if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current)
               if (id === '__new__') {
                 // 신규: DB 저장 없이 빈 폼만 열기 (저장 버튼 시 create)
                 setEditingId(null)

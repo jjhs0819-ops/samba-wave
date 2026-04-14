@@ -1502,14 +1502,20 @@ class JobWorker:
                 else:
                     # 카테고리필터가 있는 소싱처: 전체 검색 후 사후 필터링
                     # SSG: dispCtgId가 검색 URL에서 서버사이드 필터링 안 됨 → 전수 검색 필요
-                    _max = (
-                        9999
-                        if (
-                            site in ("Nike", "ABCmart", "GSShop", "SSG")
-                            and sf.category_filter
+                    if site == "SSG" and sf.category_filter:
+                        # SSG는 dispCtgId가 검색 URL에 서버사이드로 반영되므로
+                        # 요청 수량과 무관하게 카테고리 전체(최대 9999건)를 다시 긁을 필요가 없다.
+                        # 필요한 수량 주변까지만 검색해도 중복 제거 후 상세 수집 대상 선정이 가능하다.
+                        _max = max(remaining * 2, 40)
+                    else:
+                        _max = (
+                            9999
+                            if (
+                                site in ("Nike", "ABCmart", "GSShop", "SSG")
+                                and sf.category_filter
+                            )
+                            else max(remaining * 2, 100)
                         )
-                        else max(remaining * 2, 100)
-                    )
                     # 검색 캐시: 동일 브랜드 그룹 수집 시 전수 검색 1회만 실행
                     import time as _time
 
@@ -1896,73 +1902,35 @@ class JobWorker:
                 it
                 for it in items_list
                 if str(it.get("site_product_id", "")) not in existing_ids
-            ]
-            if not _ssg_cat_filter:
-                new_items = new_items[:remaining]
+            ][:remaining]
+            items_list = new_items
             if new_items:
                 logger.info(
-                    f"[잡워커] SSG 상세 선취합 시작: {len(new_items)}건 (1건씩 순차)"
+                    f"[잡워커] SSG 상세 선취합 시작: {len(new_items)}건 (페이지 순서 기준)"
                     + (
                         f" | 카테고리 필터: {_ssg_cat_filter}"
                         if _ssg_cat_filter
                         else ""
                     )
                 )
-                _ssg_matched = 0
                 for idx, it in enumerate(new_items):
                     # 카테고리 필터 있을 때: remaining개 매칭되면 조기 종료
-                    if _ssg_cat_filter and _ssg_matched >= remaining:
-                        break
                     pid = str(it.get("site_product_id", ""))
                     try:
                         det = await client.get_detail(pid)
                         if det:
-                            if _ssg_cat_filter:
-                                det_ctg = str(det.get("dispCtgId") or "").strip()
-                                if det_ctg == _ssg_cat_filter:
-                                    _ssg_details[pid] = det
-                                    _ssg_matched += 1
-                            else:
-                                _ssg_details[pid] = det
+                            _ssg_details[pid] = det
                     except Exception as _e:
                         logger.warning(f"[잡워커] SSG 상세 실패 {pid}: {_e}")
                     if (idx + 1) % 5 == 0 or idx == len(new_items) - 1:
                         await repo.update_progress(job.id, idx + 1, len(new_items))
                         logger.info(
                             f"[잡워커] SSG 상세 선취합 [{idx + 1}/{len(new_items)}]"
-                            + (
-                                f" 카테고리 통과: {_ssg_matched}건"
-                                if _ssg_cat_filter
-                                else ""
-                            )
                         )
                     await asyncio.sleep(1.0)
                 logger.info(
                     f"[잡워커] SSG 상세 선취합 완료: {len(_ssg_details)}/{len(new_items)}건"
-                    + (
-                        f" (카테고리 필터 통과: {_ssg_matched})"
-                        if _ssg_cat_filter
-                        else ""
-                    )
                 )
-            # SSG 카테고리 필터: dispCtgId 확인된 상품만 수집 대상으로 교체
-            if _ssg_cat_filter:
-                if _ssg_details:
-                    items_list = [
-                        it
-                        for it in items_list
-                        if str(it.get("site_product_id", "")) in _ssg_details
-                    ]
-                    logger.info(
-                        f"[잡워커] SSG 카테고리 필터 적용 → {len(items_list)}건 통과"
-                        f" (dispCtgId={_ssg_cat_filter})"
-                    )
-                else:
-                    items_list = []
-                    logger.warning(
-                        f"[잡워커] SSG 카테고리 필터 매칭 없음"
-                        f" (dispCtgId={_ssg_cat_filter})"
-                    )
 
         _collected_sold_out = 0
         for item in items_list:

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { accountApi, type SambaMarketAccount } from "@/lib/samba/api";
+import { accountApi, type SambaMarketAccount } from "@/lib/samba/api/commerce";
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 
 export default function AccountsPage() {

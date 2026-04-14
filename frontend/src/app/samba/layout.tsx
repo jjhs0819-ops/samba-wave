@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import SambaModal from "@/components/samba/Modal";
 import SambaBlockAlert from "@/components/samba/BlockAlert";
-import type { SambaUser } from "@/lib/samba/api";
+import type { SambaUser } from "@/lib/samba/api/operations";
 import { STORAGE_KEYS } from "@/lib/samba/constants";
 
 interface NavItem {

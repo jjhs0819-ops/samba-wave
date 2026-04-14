@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { userApi, type SambaUser } from '@/lib/samba/api'
+import { userApi, type SambaUser } from '@/lib/samba/api/operations'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { inputStyle } from '@/lib/samba/styles'
 import { fmtDate, fmtDateTime } from '@/lib/samba/utils'

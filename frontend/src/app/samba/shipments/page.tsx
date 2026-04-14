@@ -2,7 +2,18 @@
 
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { shipmentApi, accountApi, collectorApi, policyApi, categoryApi, fetchWithAuth, type SambaMarketAccount, type SambaCollectedProduct, type SambaSearchFilter, type SambaPolicy } from '@/lib/samba/api'
+import {
+  shipmentApi,
+  accountApi,
+  collectorApi,
+  policyApi,
+  categoryApi,
+  type SambaMarketAccount,
+  type SambaCollectedProduct,
+  type SambaSearchFilter,
+  type SambaPolicy,
+} from '@/lib/samba/api/commerce'
+import { fetchWithAuth } from '@/lib/samba/api/shared'
 import { MARKET_TYPE_TO_POLICY_KEY } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { SITE_COLORS } from '@/lib/samba/constants'

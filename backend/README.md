@@ -1,51 +1,54 @@
-# Little-Boy Backend
+# Samba Wave Backend
 
-Backend API service for the Little-Boy application.
+FastAPI backend for the Samba Wave operations platform.
 
-## Setup
+## Local Run
 
 ```bash
-# Create virtual environment
+cd backend
 uv venv
-
-# Activate virtual environment
-source .venv/bin/activate
-
-# Install dependencies
-uv pip install -e .
-
-# Start the development server
-uvicorn app.main:app --reload --port 28900
+uv pip install -e .[dev]
+.venv/Scripts/python run.py --reload --port 28080
 ```
 
-## Environment Variables
-
-Copy `.env.example` to `.env` and configure:
+Root workspace shortcut:
 
 ```bash
-cp .env.example .env
+npm run dev
 ```
 
-## Project Structure
+Backend tests should also use the pinned virtualenv interpreter:
 
+```bash
+cd backend
+.venv/Scripts/python -m pytest
 ```
+
+Or from the repo root:
+
+```bash
+npm run test:backend
+```
+
+## Structure
+
+```text
 backend/
-├── app/               # Application code
-│   ├── api/          # API endpoints
-│   ├── core/         # Core configuration
-│   ├── db/           # Database models and repositories
-│   └── services/     # Business logic services
-├── alembic/          # Database migrations
-├── infrastructure/   # Infrastructure as code
-├── scripts/          # Utility scripts
-└── tests/           # Test suite
+  backend/
+    main.py          # Thin entrypoint
+    app_factory.py   # FastAPI app assembly
+    lifecycle.py     # Startup/shutdown hooks
+    api/v1/routers/  # HTTP routers
+    domain/          # Business domains
+    db/              # Engine/session management
+    core/            # Settings
+  alembic/           # DB migrations
+  pyproject.toml     # Python deps and tooling
 ```
 
-## API Documentation
+## Notes
 
-Once running, API documentation is available at:
-
-- Swagger UI: http://localhost:8000/docs
-# deploy test
-# test
- 
+- Main app entry is `backend.main:app`.
+- Development docs endpoints are enabled only outside production.
+- Startup runs operational bootstrap work in `backend/lifecycle.py`, so treat app startup as more than plain API boot.
+- Runtime is pinned to Python `3.12.3` in local `.venv`, Docker, and startup validation.

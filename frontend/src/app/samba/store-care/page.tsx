@@ -1,13 +1,8 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import {
-  accountApi,
-  storeCareApi,
-  type SambaMarketAccount,
-  type StoreCareSchedule,
-  type StoreCarePurchase,
-} from '@/lib/samba/api'
+import { accountApi, type SambaMarketAccount } from '@/lib/samba/api/commerce'
+import { storeCareApi, type StoreCareSchedule, type StoreCarePurchase } from '@/lib/samba/api/operations'
 import { card as baseCard, fmtNum } from '@/lib/samba/styles'
 
 const card = { ...baseCard, padding: '20px' }

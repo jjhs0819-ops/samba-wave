@@ -1,7 +1,9 @@
 'use client'
 
 import React, { useCallback, useEffect, useRef, useState, memo } from 'react'
-import { monitorApi, collectorApi, fetchWithAuth, type DashboardStats, type MonitorEvent, type RefreshLogEntry } from '@/lib/samba/api'
+import { collectorApi } from '@/lib/samba/api/commerce'
+import { fetchWithAuth } from '@/lib/samba/api/shared'
+import { monitorApi, type DashboardStats, type MonitorEvent, type RefreshLogEntry } from '@/lib/samba/api/operations'
 import { SITE_COLORS } from '@/lib/samba/constants'
 
 const POLL_INTERVAL = 30_000

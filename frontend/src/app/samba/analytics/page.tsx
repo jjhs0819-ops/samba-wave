@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { accountApi, collectorApi, orderApi, analyticsApi, type SambaMarketAccount, type SambaOrder, type SourcingRoi, type ProductPerformance, type BrandSales } from '@/lib/samba/api'
+import { accountApi, collectorApi, orderApi, type SambaMarketAccount, type SambaOrder } from '@/lib/samba/api/commerce'
+import { analyticsApi, type SourcingRoi, type ProductPerformance, type BrandSales } from '@/lib/samba/api/operations'
 import { useLocalStorageState } from '@/hooks/useLocalStorageState'
 import { STORAGE_KEYS } from '@/lib/samba/constants'
 import { card, fmtNum } from '@/lib/samba/styles'

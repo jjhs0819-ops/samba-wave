@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { collectorApi } from '@/lib/samba/api'
+import { collectorApi } from '@/lib/samba/api/commerce'
 
 interface BlockedSite {
   site: string

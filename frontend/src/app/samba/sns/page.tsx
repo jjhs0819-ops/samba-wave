@@ -1,7 +1,8 @@
 'use client'
 
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { snsApi, wholesaleApi, fetchWithAuth } from '@/lib/samba/api'
+import { fetchWithAuth } from '@/lib/samba/api/shared'
+import { snsApi, wholesaleApi } from '@/lib/samba/api/operations'
 import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtDate as _fmtDate } from '@/lib/samba/utils'

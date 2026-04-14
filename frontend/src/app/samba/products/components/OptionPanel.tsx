@@ -4,7 +4,7 @@ import React, { useState, useCallback } from 'react'
 import {
   collectorApi,
   type SambaCollectedProduct,
-} from '@/lib/samba/api'
+} from '@/lib/samba/api/commerce'
 
 /** 옵션 패널 — 옵션명/가격/재고 편집 + 일괄수정. */
 const OptionPanel = React.memo(function OptionPanel({ options, productCost, productId, sourceSite }: { options: unknown[]; productCost: number; productId: string; sourceSite: string }) {

@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { userApi } from '@/lib/samba/api'
+import { userApi } from '@/lib/samba/api/operations'
 
 export default function SambaSignUpPage() {
   const router = useRouter()

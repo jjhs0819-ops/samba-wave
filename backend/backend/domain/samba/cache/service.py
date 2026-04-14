@@ -31,6 +31,16 @@ class CacheService:
             logger.warning(f"[캐시] Redis 연결 실패 — 인메모리 폴백: {e}")
             self._redis = None
 
+    async def disconnect(self):
+        """Release Redis connections during application shutdown."""
+        if self._redis:
+            try:
+                await self._redis.aclose()
+            except Exception as e:
+                logger.warning(f"[cache] Redis close failed: {e}")
+            finally:
+                self._redis = None
+
     async def get(self, key: str) -> Any | None:
         """캐시 조회."""
         if self._redis:

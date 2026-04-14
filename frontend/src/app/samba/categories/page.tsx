@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import { collectorApi, categoryApi, accountApi, type SambaCollectedProduct } from '@/lib/samba/api'
+import { collectorApi, categoryApi, accountApi, type SambaCollectedProduct } from '@/lib/samba/api/commerce'
 import { MARKET_LABELS } from '@/lib/samba/markets'
 import { showAlert } from '@/components/samba/Modal'
 import { card } from '@/lib/samba/styles'

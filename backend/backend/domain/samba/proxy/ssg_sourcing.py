@@ -125,6 +125,7 @@ class SSGSourcingClient:
         products: list[dict[str, Any]] = []
         seen: set[str] = set()
         page = 1
+        rate_limit_retries = 3
 
         # 외부에서 brand_ids가 제공되면 _fetch_brand_ids 건너뛰기
         _brand_ids: list[str] | None = kwargs.pop("brand_ids", None)
@@ -134,9 +135,23 @@ class SSGSourcingClient:
 
         while len(products) < max_count:
             # 모든 페이지에 brand_ids 전달 (page 1 포함, search_products 내부 추출 생략)
-            raw = await self.search_products(
-                keyword, page=page, size=40, brand_ids=_brand_ids, **kwargs
-            )
+            raw: list[dict[str, Any]] = []
+            for attempt in range(rate_limit_retries + 1):
+                try:
+                    raw = await self.search_products(
+                        keyword, page=page, size=40, brand_ids=_brand_ids, **kwargs
+                    )
+                    break
+                except RateLimitError as exc:
+                    if attempt >= rate_limit_retries:
+                        raise
+                    wait_seconds = exc.retry_after or min(15, 3 * (attempt + 1))
+                    logger.warning(
+                        f"[SSG] 검색 rate limit: keyword={keyword} page={page} "
+                        f"status={exc.status} wait={wait_seconds}s "
+                        f"retry={attempt + 1}/{rate_limit_retries}"
+                    )
+                    await asyncio.sleep(wait_seconds)
             if not raw:
                 break
 
