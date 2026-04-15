@@ -385,9 +385,18 @@ async def _site_autotune_loop(site: str):
                                     "changed": r.changed,
                                 }
                                 # 옵션: 신규 수집 우선, 없으면 기존 DB 옵션 폴백
+                                # 품절인데 new_options 없으면 기존 옵션의 재고를 0으로 처리
                                 _snap_options = r.new_options
                                 if not _snap_options and product.options:
-                                    _snap_options = product.options
+                                    if r.new_sale_status == "sold_out":
+                                        _snap_options = [
+                                            {**o, "stock": 0}
+                                            if isinstance(o, dict)
+                                            else o
+                                            for o in product.options
+                                        ]
+                                    else:
+                                        _snap_options = product.options
                                 if _snap_options:
                                     snapshot["options"] = _snap_options
                                 history = list(product.price_history or [])
@@ -404,6 +413,14 @@ async def _site_autotune_loop(site: str):
                                     updates["cost"] = r.new_cost
                                 if r.new_options is not None:
                                     updates["options"] = r.new_options
+                                elif (
+                                    r.new_sale_status == "sold_out" and product.options
+                                ):
+                                    # new_options 없지만 품절 → 기존 옵션 재고를 0으로 강제 업데이트
+                                    updates["options"] = [
+                                        {**o, "stock": 0} if isinstance(o, dict) else o
+                                        for o in product.options
+                                    ]
                                 updates["sale_status"] = r.new_sale_status
                                 # cost 변경도 price_changed_at에 반영 (warm/hot 분류 기준)
                                 if (
