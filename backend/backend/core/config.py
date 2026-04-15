@@ -97,14 +97,6 @@ class BackendSettings(BaseSettings):
     # 프록시 URL (수집용)
     collect_proxy_url: str = ""
 
-    # ===========================================
-    # LOTTEON 소싱 기능 플래그
-    # ===========================================
-    lotteon_full_paging_enabled: bool = False
-    """롯데ON 카테고리필터 수집 시 qapi 전수 페이징(최대 2,100건) 허용 여부.
-    기본 off — 기존 동작(요청수×2 또는 최소 100) 유지.
-    on으로 전환 시 worker.py _max=9999, 브랜드별 per_max=600 캡 적용."""
-
     # 추가 허용 origin (콤마 구분, Railway 환경변수로 주입)
     cors_extra_origins: str = ""
 
