@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 
 import httpx
 from datetime import UTC, datetime
@@ -484,7 +485,6 @@ def _rule_match(
     gender가 'female'이면 남성 카테고리를 여성으로 변환.
     무신사 카테고리의 '(브랜드명)' 같은 괄호 부분 제거 후 매칭.
     """
-    import re
 
     if source_site == "MUSINSA":
         rules = _MARKET_RULES.get(market)
@@ -1533,7 +1533,6 @@ class SambaCategoryService:
         if not source_category:
             return []
 
-        import re
 
         # 소싱처 ↔ 마켓 간 용어 차이 보완 (동의어 확장)
         SYNONYMS: Dict[str, List[str]] = {

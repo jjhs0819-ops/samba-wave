@@ -1,5 +1,6 @@
 """SambaWave Collector service."""
 
+import re
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.exc import IntegrityError
@@ -301,7 +302,6 @@ class SambaCollectorService:
     @staticmethod
     def _clean_company_names(data: Dict[str, Any]) -> None:
         """브랜드/제조사에서 (주), ㈜, (株) 제거."""
-        import re
 
         _pattern = re.compile(r"\(주\)|㈜|\(株\)")
         for field in ("brand", "manufacturer"):

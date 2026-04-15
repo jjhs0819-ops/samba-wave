@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import re
 import sys
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -135,8 +136,6 @@ async def _apply_startup_schema_fixes(logger: logging.Logger) -> None:
 
 async def _sync_playauto_registered_accounts(logger: logging.Logger) -> None:
     try:
-        import re
-
         from sqlalchemy import String, cast
         from sqlmodel import select
 

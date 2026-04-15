@@ -1,5 +1,6 @@
 """SambaWave Order API router."""
 
+import re
 from datetime import datetime
 from typing import Any, Optional
 
@@ -1399,7 +1400,6 @@ async def fetch_product_image(
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """URL에서 상품 대표이미지를 추출해 반환."""
-    import re
     from urllib.parse import urlparse
 
     import httpx

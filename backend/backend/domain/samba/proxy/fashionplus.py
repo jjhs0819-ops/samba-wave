@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import httpx
@@ -380,7 +381,6 @@ class FashionPlusClient:
     def _parse_detail_html(html: str, product_id: str) -> dict[str, Any]:
         """상세 페이지 HTML에서 이미지/고시정보/상세HTML 추출."""
         import json
-        import re
 
         result: dict[str, Any] = {
             "site_product_id": product_id,

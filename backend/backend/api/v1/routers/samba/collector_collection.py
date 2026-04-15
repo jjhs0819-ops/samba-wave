@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -121,7 +122,6 @@ async def collect_by_url(
     svc = _get_services(session)
 
     if site == "MUSINSA":
-        import re
         from urllib.parse import urlparse, parse_qs
         from backend.api.v1.routers.samba.collector_common import get_musinsa_cookie
 
@@ -505,7 +505,6 @@ async def collect_by_url(
                 return {"type": "single", "saved": 1, "product": collected}
 
     elif site == "KREAM":
-        import re
         from urllib.parse import urlparse, parse_qs
 
         parsed = urlparse(url)
@@ -703,7 +702,6 @@ async def collect_by_url(
 
     # ── SSG 수집 ──
     elif site == "SSG":
-        import re
         from urllib.parse import urlparse, parse_qs
         from backend.domain.samba.proxy.ssg_sourcing import SSGSourcingClient
 
@@ -963,7 +961,6 @@ async def collect_by_url(
 
     # ── 롯데ON 수집 ──
     elif site == "LOTTEON":
-        import re
         from urllib.parse import urlparse, parse_qs
         from backend.domain.samba.proxy.lotteon_sourcing import LotteonSourcingClient
 

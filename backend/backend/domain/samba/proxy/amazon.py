@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Any, Optional
 
@@ -212,7 +213,6 @@ class AmazonClient:
         # 상세 설명
         description = product.get("detail_html", "") or product.get("name", "")
         # HTML 태그 제거 (아마존은 일부 카테고리에서 HTML 미지원)
-        import re
 
         description_text = re.sub(r"<[^>]+>", "", description)[:2000]
 

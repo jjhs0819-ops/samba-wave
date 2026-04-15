@@ -27,6 +27,7 @@ JSON 구조 주의: SSG는 XStream 기반이므로 배열을
 
 from __future__ import annotations
 
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -780,7 +781,6 @@ class SSGClient:
         if not brand_display or not name:
             return name
 
-        import re
 
         # 한글 브랜드명 제거
         cleaned = re.sub(re.escape(brand_display), "", name, flags=re.IGNORECASE)

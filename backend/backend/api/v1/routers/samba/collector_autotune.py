@@ -615,10 +615,15 @@ async def _site_autotune_loop(site: str):
                                 else:
                                     policy = None
 
-                                _actions: list[str] = []
+                                _tx_actions: list[
+                                    str
+                                ] = []  # 전송 예정 액션 (_fire_transmit에서 결과와 함께 출력)
+                                _nontx_actions: list[
+                                    str
+                                ] = []  # 비전송 액션 (즉시 출력)
                                 _transmit_queue: list[
                                     tuple
-                                ] = []  # (pid, items, acc_id, label)
+                                ] = []  # (pid, items, acc_id, label, action_text)
 
                                 for acc_id in reg_accounts:
                                     if acc_id not in _account_cache:
@@ -671,7 +676,7 @@ async def _site_autotune_loop(site: str):
                                         and new_cost < _orig_p * 0.05
                                     )
                                     if _price_blocked:
-                                        _actions.append(
+                                        _nontx_actions.append(
                                             f"가격방어 차단 (원가 {int(new_cost):,}"
                                             f" < 정상가 {int(_orig_p):,}의 5%)"
                                         )
@@ -686,15 +691,15 @@ async def _site_autotune_loop(site: str):
                                         price_changed_count += 1
                                         _all_price_pids.add(r.product_id)
                                         retransmitted += 1
-                                        _actions.append(
-                                            f"가격변동 {last_price:,}→{expected_price:,} → {acc_label} (전송대기)"
-                                        )
+                                        _price_action_txt = f"가격변동 {last_price:,}→{expected_price:,} → {acc_label}"
+                                        _tx_actions.append(_price_action_txt)
                                         _transmit_queue.append(
                                             (
                                                 r.product_id,
                                                 ["price"],
                                                 acc_id,
                                                 f"{_prod_label}",
+                                                _price_action_txt,
                                             )
                                         )
                                     else:
@@ -758,15 +763,15 @@ async def _site_autotune_loop(site: str):
                                     if _stock_diff:
                                         _all_stock_pids.add(r.product_id)
                                         retransmitted += 1
-                                        _actions.append(
-                                            f"재고전송({_stock_changes_acc}건) → {acc_label}"
-                                        )
+                                        _stock_action_txt = f"재고전송({_stock_changes_acc}건) → {acc_label}"
+                                        _tx_actions.append(_stock_action_txt)
                                         _transmit_queue.append(
                                             (
                                                 r.product_id,
                                                 ["stock"],
                                                 acc_id,
                                                 f"{_prod_label}",
+                                                _stock_action_txt,
                                             )
                                         )
 
@@ -780,20 +785,22 @@ async def _site_autotune_loop(site: str):
                                 _prev_cost = (
                                     _prev_costs[0] if _prev_costs else _cost_int
                                 )
-                                _cost_str = (
-                                    f"{_prev_cost:,} → {_cost_int:,}"
-                                    if _prev_cost != _cost_int
-                                    else f"{_cost_int:,}"
-                                )
+                                if _prev_cost != _cost_int:
+                                    _cost_str = f"원가변동 {_prev_cost:,}→{_cost_int:,}"
+                                else:
+                                    _cost_str = f"원가 {_cost_int:,}"
                                 _sc = "Y" if r.product_id in _all_stock_pids else "0"
-                                _tail = f" [원가 {_cost_str}, 재고변동 {_sc}]"
-                                if _actions:
+                                _tail = f" [{_cost_str}, 재고변동 {_sc}]"
+                                # 비전송 액션(가격방어 차단 등)은 즉시 출력
+                                # 전송 예정 액션은 _fire_transmit에서 결과와 함께 출력
+                                if _nontx_actions:
                                     _log_line(
                                         site,
                                         r.product_id,
-                                        f"{_idx_prefix}{_prod_label}: {' | '.join(_actions)}{_tail}",
+                                        f"{_idx_prefix}{_prod_label}: {' | '.join(_nontx_actions)}{_tail}",
                                     )
-                                else:
+                                elif not _tx_actions:
+                                    # 전송 예정 액션도 없으면 스킵
                                     _log_line(
                                         site,
                                         r.product_id,
@@ -806,6 +813,7 @@ async def _site_autotune_loop(site: str):
                                 _tx_items,
                                 _tx_acc,
                                 _tx_label,
+                                _tx_action_text,
                             ) in _transmit_queue:
 
                                 async def _fire_transmit(
@@ -814,6 +822,9 @@ async def _site_autotune_loop(site: str):
                                     _acc=_tx_acc,
                                     _label=_tx_label,
                                     _site=site,
+                                    _action_text=_tx_action_text,
+                                    _idx_pfx=_idx_prefix,
+                                    _t=_tail,
                                 ):
                                     nonlocal _synced_count
                                     # 세마포어를 여기서 획득하면 안 됨
@@ -850,7 +861,7 @@ async def _site_autotune_loop(site: str):
                                             _log_line(
                                                 _site,
                                                 _pid,
-                                                f"{_label} 전송완료",
+                                                f"{_idx_pfx}{_label}: {_action_text} 전송완료{_t}",
                                             )
                                         else:
                                             _fail_info = []
@@ -864,14 +875,14 @@ async def _site_autotune_loop(site: str):
                                             _log_line(
                                                 _site,
                                                 _pid,
-                                                f"{_label} 전송실패(검증): {_fail_info[0] if _fail_info else '결과없음'}",
+                                                f"{_idx_pfx}{_label}: {_action_text} 전송실패(검증): {_fail_info[0] if _fail_info else '결과없음'}{_t}",
                                                 "error",
                                             )
                                     except Exception as _fe:
                                         _log_line(
                                             _site,
                                             _pid,
-                                            f"{_label} 전송실패: {str(_fe)[:200]}",
+                                            f"{_idx_pfx}{_label}: {_action_text} 전송실패: {str(_fe)[:200]}{_t}",
                                             "error",
                                         )
                                     await asyncio.sleep(0.3)

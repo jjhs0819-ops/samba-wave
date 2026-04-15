@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import UTC, datetime
 from typing import Any, Optional
 
@@ -1659,7 +1660,6 @@ class SambaShipmentService:
         composed = " ".join(p for p in parts if p and p.strip())
 
         # 치환어 적용 (동시치환/순차치환 분기)
-        import re
 
         replacements = name_rule.replacements or []
         if replacements:
@@ -1717,7 +1717,6 @@ class SambaShipmentService:
     @staticmethod
     def _simultaneous_replace(text: str, replacements: list) -> str:
         """동시치환: 모든 치환규칙의 매칭을 한번에 수집 → 긴 문자열 우선 → 비겹침 선택."""
-        import re
 
         # (start, end, to_val, from_len, priority)
         all_matches: list[tuple[int, int, str, int, int]] = []
