@@ -1329,10 +1329,14 @@ class JobWorker:
                 _rep_brand_id = qs.get("repBrandId", [""])[0]
                 if _rep_brand_id:
                     _search_kwargs["brand_ids"] = _rep_brand_id.split("|")
-                # SSG dispCtgId 파라미터 → 검색 URL에 카테고리 필터 전달
-                _disp_ctg_id = qs.get("dispCtgId", [""])[0]
-                if _disp_ctg_id:
-                    _search_kwargs["disp_ctg_id"] = _disp_ctg_id
+                # SSG ctgId 파라미터 → 검색 URL에 카테고리 필터 전달
+                # 하위호환: 기존 dispCtgId 그룹도 지원
+                _ctg_id = qs.get("ctgId", [""])[0] or qs.get("dispCtgId", [""])[0]
+                if _ctg_id:
+                    _search_kwargs["ctg_id"] = _ctg_id
+                _ctg_lv = qs.get("ctgLv", [""])[0]
+                if _ctg_lv:
+                    _search_kwargs["ctg_lv"] = _ctg_lv
                 # SSG ctgPath 파라미터 → 전시카테고리 전체 경로 (그룹 생성 시 저장)
                 _ctg_path = qs.get("ctgPath", [""])[0]
                 if _ctg_path:
@@ -1504,12 +1508,10 @@ class JobWorker:
                     )
                 else:
                     # 카테고리필터가 있는 소싱처: 전체 검색 후 사후 필터링
-                    # SSG: dispCtgId가 검색 URL에서 서버사이드 필터링 안 됨 → 전수 검색 필요
+                    # SSG: 검색 URL에 dispCtgId가 이미 포함되므로 상세 재검증 불필요
+                    # 중복 제거 여유분 5건만 추가해서 검색
                     if site == "SSG" and sf.category_filter:
-                        # SSG는 dispCtgId가 검색 URL에 서버사이드로 반영되므로
-                        # 요청 수량과 무관하게 카테고리 전체(최대 9999건)를 다시 긁을 필요가 없다.
-                        # 필요한 수량 주변까지만 검색해도 중복 제거 후 상세 수집 대상 선정이 가능하다.
-                        _max = max(remaining * 2, 40)
+                        _max = remaining + 5
                     else:
                         _max = (
                             9999
@@ -1571,6 +1573,11 @@ class JobWorker:
                                 )
                         logger.info(
                             f"[잡워커] {site} 검색 '{keyword}' → {len(items_list)}건"
+                        )
+                        _add_job_log(
+                            job.id,
+                            f"[{site}] [{sf.name}] 검색 완료: {len(items_list):,}건",
+                            job_type="collect",
                         )
                         # 전수 검색 결과 캐시 저장
                         if (
@@ -1899,15 +1906,14 @@ class JobWorker:
         _ssg_details: dict[str, dict[str, Any]] = {}
         if site == "SSG" and client:
             _ssg_cat_filter = sf.category_filter or None
-            # 카테고리 필터 있을 때: 전체 후보 대상 (서버사이드 필터링 안 됨)
-            # 카테고리 필터 없을 때: remaining개만 조회
             new_items = [
                 it
                 for it in items_list
                 if str(it.get("site_product_id", "")) not in existing_ids
             ]
-            if not _ssg_cat_filter:
-                new_items = new_items[:remaining]
+            # 카테고리 필터 유무 관계없이 remaining개로 제한
+            # SSG 검색 URL에 dispCtgId가 이미 포함되므로 추가 재검증 불필요
+            new_items = new_items[:remaining]
             if new_items:
                 logger.info(
                     f"[잡워커] SSG 상세 선취합 시작: {len(new_items)}건 (페이지 순서 기준)"
@@ -1917,58 +1923,105 @@ class JobWorker:
                         else ""
                     )
                 )
+                _add_job_log(
+                    job.id,
+                    f"[{site}] [{sf.name}] 상세 조회 시작: {len(new_items):,}건",
+                    job_type="collect",
+                )
+                # 2건씩 병렬 배치 + TCP 연결 재사용
+                # 5건 병렬은 SSG 429를 더 빨리 유발하므로 2건으로 조정
+                import httpx as _httpx_ssg
+
+                _SSG_BATCH = 2
                 _ssg_matched = 0
-                for idx, it in enumerate(new_items):
-                    # 카테고리 필터 있을 때: remaining개 매칭되면 조기 종료
-                    if _ssg_cat_filter and _ssg_matched >= remaining:
-                        break
-                    pid = str(it.get("site_product_id", ""))
-                    try:
-                        det = {}
-                        for attempt in range(3):
-                            try:
-                                det = await client.get_detail(pid)
-                                break
-                            except SSGRateLimitError as _rl:
-                                wait_seconds = max(
-                                    5,
-                                    min(int(getattr(_rl, "retry_after", 60) or 60), 60),
-                                )
-                                logger.warning(
-                                    f"[잡워커] SSG 상세 rate limit {pid}: "
-                                    f"wait={wait_seconds}s retry={attempt + 1}/3"
-                                )
-                                if attempt >= 2:
-                                    raise
-                                await asyncio.sleep(wait_seconds)
-                        if det:
-                            if _ssg_cat_filter:
-                                det_ctg = str(det.get("dispCtgId") or "").strip()
-                                if det_ctg == _ssg_cat_filter:
-                                    _ssg_details[pid] = det
-                                    _ssg_matched += 1
-                            else:
-                                _ssg_details[pid] = det
-                    except Exception as _e:
-                        logger.warning(f"[잡워커] SSG 상세 실패 {pid}: {_e}")
-                    if (idx + 1) % 5 == 0 or idx == len(new_items) - 1:
-                        await repo.update_progress(job.id, idx + 1, len(new_items))
-                        logger.info(
-                            f"[잡워커] SSG 상세 선취합 [{idx + 1}/{len(new_items)}]"
+                _shared_http = _httpx_ssg.AsyncClient(
+                    timeout=_httpx_ssg.Timeout(30, connect=10.0),
+                    follow_redirects=True,
+                )
+
+                async def _fetch_ssg_detail(
+                    _pid: str,
+                ) -> tuple[str, dict[str, Any]]:
+                    """개별 SSG 상세 조회 (rate limit 재시도 포함)."""
+                    for attempt in range(3):
+                        try:
+                            det = await client.get_detail(
+                                _pid, _shared_client=_shared_http
+                            )
+                            return (_pid, det)
+                        except SSGRateLimitError as _rl:
+                            wait_seconds = max(
+                                5,
+                                min(int(getattr(_rl, "retry_after", 60) or 60), 60),
+                            )
+                            logger.warning(
+                                f"[잡워커] SSG 상세 rate limit {_pid}: "
+                                f"wait={wait_seconds}s retry={attempt + 1}/3"
+                            )
+                            _add_job_log(
+                                job.id,
+                                f"[{site}] 속도 제한 — {wait_seconds}초 대기 중... (재시도 {attempt + 1}/3)",
+                                job_type="collect",
+                            )
+                            if attempt >= 2:
+                                raise
+                            await asyncio.sleep(wait_seconds)
+                    return (_pid, {})
+
+                try:
+                    for batch_start in range(0, len(new_items), _SSG_BATCH):
+                        batch = new_items[batch_start : batch_start + _SSG_BATCH]
+                        batch_pids = [
+                            str(it.get("site_product_id", "")) for it in batch
+                        ]
+
+                        # 배치 내 병렬 상세 조회
+                        results = await asyncio.gather(
+                            *(_fetch_ssg_detail(pid) for pid in batch_pids),
+                            return_exceptions=True,
                         )
-                    await asyncio.sleep(1.0)
+
+                        for pid, res in zip(batch_pids, results):
+                            if isinstance(res, Exception):
+                                logger.warning(f"[잡워커] SSG 상세 실패 {pid}: {res}")
+                                continue
+                            _, det = res
+                            if det:
+                                # 검색 URL에 dispCtgId가 이미 포함되므로 재검증 없이 저장
+                                _ssg_details[pid] = det
+
+                        done = min(batch_start + _SSG_BATCH, len(new_items))
+                        await repo.update_progress(job.id, done, len(new_items))
+                        _add_job_log(
+                            job.id,
+                            f"[{site}] [{sf.name}] 상세 조회 [{done:,}/{len(new_items):,}]",
+                            job_type="collect",
+                        )
+                        logger.info(
+                            f"[잡워커] SSG 상세 선취합 [{done}/{len(new_items)}]"
+                        )
+                        # 배치 간 딜레이 (마지막 배치 후 생략)
+                        # 2건 병렬 + 1.5초 = 약 1.3건/초 → SSG 차단 임계값 이하 유지
+                        if batch_start + _SSG_BATCH < len(new_items):
+                            await asyncio.sleep(1.5)
+                finally:
+                    await _shared_http.aclose()
+
                 logger.info(
                     f"[잡워커] SSG 상세 선취합 완료: {len(_ssg_details)}/{len(new_items)}건"
                 )
-            if _ssg_cat_filter:
-                if _ssg_details:
-                    items_list = [
-                        it
-                        for it in items_list
-                        if str(it.get("site_product_id", "")) in _ssg_details
-                    ]
-                else:
-                    items_list = []
+                _add_job_log(
+                    job.id,
+                    f"[{site}] [{sf.name}] 상세 조회 완료: {len(_ssg_details):,}건",
+                    job_type="collect",
+                )
+            # 상세 조회 성공한 상품만 저장 대상으로 사용 (없으면 검색 결과 그대로 사용)
+            if _ssg_details:
+                items_list = [
+                    it
+                    for it in items_list
+                    if str(it.get("site_product_id", "")) in _ssg_details
+                ]
             else:
                 items_list = new_items
 
@@ -2120,14 +2173,28 @@ class JobWorker:
                 _cat2 = item.get("category2") or detail.get("category2") or ""
                 _cat3 = item.get("category3") or detail.get("category3") or ""
                 _cat4 = item.get("category4") or detail.get("category4") or ""
-            elif site == "SSG" and _ssg_cat:
-                # SSG: ctgPath(그룹 생성 시 저장된 전시카테고리 전체 경로) 최우선
-                # detail.get("category")는 잎노드만 반환 (예: "워킹화") → ctgPath로 대체
-                _cat = _ssg_cat
-                _cat1 = _ssg_cat1
-                _cat2 = _ssg_cat2
-                _cat3 = _ssg_cat3
-                _cat4 = _ssg_cat4
+            elif site == "SSG":
+                # SSG: 개별 상품의 전시카테고리 전체 경로 우선
+                # category2가 없으면 leaf 단일명만 있는 불완전 카테고리이므로 ctgPath 폴백 사용
+                _det_cat = detail.get("category", "")
+                if _det_cat and detail.get("category2"):
+                    _cat = _det_cat
+                    _cat1 = detail.get("category1", "")
+                    _cat2 = detail.get("category2", "")
+                    _cat3 = detail.get("category3", "")
+                    _cat4 = detail.get("category4", "")
+                elif _ssg_cat:
+                    _cat = _ssg_cat
+                    _cat1 = _ssg_cat1
+                    _cat2 = _ssg_cat2
+                    _cat3 = _ssg_cat3
+                    _cat4 = _ssg_cat4
+                else:
+                    _cat = item.get("category", "")
+                    _cat1 = item.get("category1", "")
+                    _cat2 = item.get("category2", "")
+                    _cat3 = item.get("category3", "")
+                    _cat4 = item.get("category4", "")
             else:
                 _cat = (
                     detail.get("category")

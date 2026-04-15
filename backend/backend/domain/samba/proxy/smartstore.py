@@ -1725,8 +1725,6 @@ class SmartStoreClient:
         sale_price = desired_price * 4 // 3
         immediate_discount = True
 
-        import re
-
         # (주) 제거 함수
         def _clean_company(name: str) -> str:
             if not name:
@@ -2018,8 +2016,6 @@ class SmartStoreClient:
         # 모델명/품번 입력 — style_code 없으면 상품명에서 추출 시도
         if not style_code:
             # 상품명에서 영숫자 품번 패턴 추출 (예: DUF24G03R2)
-            import re
-
             code_match = re.search(r"[A-Z]{2,}[\dA-Z]{4,}", product.get("name", ""))
             if code_match:
                 style_code = code_match.group()

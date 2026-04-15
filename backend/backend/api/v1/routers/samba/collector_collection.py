@@ -2723,9 +2723,10 @@ async def brand_create_groups(
             )
             # 카테고리 전체 경로(전시카테고리) URL에 저장 → 워커가 수집 시 정확한 카테고리 적용
             _ctg_path_ssg = f"&ctgPath={_quote_ssg(path)}" if path else ""
+            # ctgId + ctgLv=3 사용 (SSG 실제 검색 URL 파라미터 준수)
             keyword = (
                 f"https://department.ssg.com/search"
-                f"?query={_quote_ssg(_label_ssg)}&dispCtgId={code}"
+                f"?query={_quote_ssg(_label_ssg)}&ctgId={code}&ctgLv=3"
                 f"{_rep_brand}{_ctg_path_ssg}{_md_ssg}{_so_ssg}"
             )
             category_filter = code or None

@@ -86,9 +86,11 @@ class SSGSourcingClient:
             h.update(extra)
         return h
 
-    async def get_detail(self, item_id: str) -> dict[str, Any]:
+    async def get_detail(
+        self, item_id: str, *, _shared_client: Optional[httpx.AsyncClient] = None
+    ) -> dict[str, Any]:
         """worker.py get_detail 패턴 호환 래퍼."""
-        return await self.get_product_detail(item_id)
+        return await self.get_product_detail(item_id, _shared_client=_shared_client)
 
     # ------------------------------------------------------------------
     # 검색
@@ -238,9 +240,14 @@ class SSGSourcingClient:
             search_url = f"{self.SEARCH_URL}?query={quote(keyword)}&page={page}"
             if brand_ids:
                 search_url += f"&repBrandId={'|'.join(brand_ids)}"
-            disp_ctg_id = filters.get("disp_ctg_id", "")
-            if disp_ctg_id:
-                search_url += f"&dispCtgId={disp_ctg_id}"
+            # ctgId + ctgLv 파라미터 사용 (SSG 실제 검색 URL 준수)
+            # 하위호환: 기존 disp_ctg_id 키로 저장된 그룹도 지원
+            ctg_id = filters.get("ctg_id", "") or filters.get("disp_ctg_id", "")
+            if ctg_id:
+                search_url += f"&ctgId={ctg_id}"
+            ctg_lv = filters.get("ctg_lv", "")
+            if ctg_lv:
+                search_url += f"&ctgLv={ctg_lv}"
 
             resp = await client.get(search_url, headers=self._headers())
             if resp.status_code in (429, 403):
@@ -1157,7 +1164,9 @@ class SSGSourcingClient:
             "dispCtgMclsNm": get_str("dispCtgMclsNm"),
             "dispCtgSclsNm": get_str("dispCtgSclsNm"),
             "dispCtgDclsNm": get_str("dispCtgDclsNm"),
-            "dispCtgId": get_str("dispCtgId"),
+            # dispCtgId는 JS에서 따옴표 없는 숫자 또는 parseInt() 형태이므로
+            # get_str 실패 시 get_num으로 폴백하여 카테고리 매칭 보장
+            "dispCtgId": get_str("dispCtgId") or str(get_num("dispCtgId") or ""),
             "dispCtgNm": get_str("dispCtgNm"),
             "itemImgUrl": get_str("itemImgUrl"),
             "shppTypeDtlCd": get_str("shppTypeDtlCd"),
@@ -1419,7 +1428,14 @@ class SSGSourcingClient:
                 info["color"] = value
             elif "제조국" in lbl:
                 info["origin"] = value
-            elif lbl in ("제품의주소재", "상품의주소재", "소재", "재질", "주소재"):
+            elif lbl in (
+                "제품의주소재",
+                "상품의주소재",
+                "소재",
+                "재질",
+                "주소재",
+                "제품소재",
+            ):
                 info["material"] = value
             elif "제조사" in lbl or "수입자" in lbl:
                 info["manufacturer"] = value

@@ -689,8 +689,8 @@ export default function OrdersPage() {
     if (inputFilter) {
       const action = activeActions[o.id]
       switch (inputFilter) {
-        case 'has_order': if (!o.order_number) return false; break
-        case 'no_order': if (o.order_number) return false; break
+        case 'has_order': if (!o.sourcing_order_number) return false; break
+        case 'no_order': if (o.sourcing_order_number) return false; break
         case 'direct': if (action !== 'direct') return false; break
         case 'kkadaegi': if (action !== 'kkadaegi') return false; break
         case 'gift': if (action !== 'gift') return false; break
@@ -1059,8 +1059,8 @@ export default function OrdersPage() {
             ) : filteredOrders.length === 0 ? (
               <tr><td colSpan={4} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>주문이 없습니다</td></tr>
             ) : filteredOrders.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((o, index) => {
-              const costDisplay = editingCosts[o.id] !== undefined ? fmtNumStr(editingCosts[o.id]) : (o.cost ? o.cost.toLocaleString() : '')
-              const shipFeeDisplay = editingShipFees[o.id] !== undefined ? fmtNumStr(editingShipFees[o.id]) : (o.shipping_fee ? o.shipping_fee.toLocaleString() : '')
+              const costDisplay = editingCosts[o.id] !== undefined ? fmtNumStr(editingCosts[o.id]) : (o.cost ? fmtNum(o.cost) : '')
+              const shipFeeDisplay = editingShipFees[o.id] !== undefined ? fmtNumStr(editingShipFees[o.id]) : (o.shipping_fee ? fmtNum(o.shipping_fee) : '')
               const liveProfit = calcProfit(o)
               const liveProfitRate = calcProfitRate(o)
               const activeAction = activeActions[o.id] || null
@@ -1085,7 +1085,7 @@ export default function OrdersPage() {
                         <span style={{ fontSize: '0.72rem', color: '#555' }}>{fmtDate(o.created_at, '.')}</span>
                         <button onClick={() => handleDelete(o.id)} style={{ padding: '0.125rem 0.5rem', fontSize: '0.7rem', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>삭제</button>
                       </div>
-                      <span style={{ fontSize: o.quantity > 1 ? '2.25rem' : '0.95rem', fontWeight: 700, color: o.quantity > 1 ? '#F5A623' : '#888' }}>수량: <span style={{ color: o.quantity > 1 ? '#F5A623' : '#E5E5E5' }}>{o.quantity.toLocaleString()}</span></span>
+                      <span style={{ fontSize: o.quantity > 1 ? '2.25rem' : '0.95rem', fontWeight: 700, color: o.quantity > 1 ? '#F5A623' : '#888' }}>수량: <span style={{ color: o.quantity > 1 ? '#F5A623' : '#E5E5E5' }}>{fmtNum(o.quantity)}</span></span>
                     </div>
 
                     {/* 상품 이미지 (100x100) + 마켓/주문번호 */}
@@ -1319,9 +1319,9 @@ export default function OrdersPage() {
                   {/* 금액 */}
                   <td style={{ padding: '0.75rem', borderRight: '1px solid #1C2333', fontSize: '0.8rem' }}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>결제</span><span>{o.sale_price.toLocaleString()}</span></div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>정산</span><span>{Math.round(o.revenue).toLocaleString()}</span></div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>실수익</span><span>{liveProfit >= 0 ? '+' : ''}{Math.round(liveProfit).toLocaleString()}</span></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>결제</span><span>{fmtNum(o.sale_price)}</span></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>정산</span><span>{fmtNum(Math.round(o.revenue))}</span></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>실수익</span><span>{liveProfit >= 0 ? '+' : ''}{fmtNum(Math.round(liveProfit))}</span></div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>수익률</span><span style={{ color: '#888' }}>{liveProfitRate}%</span></div>
                     </div>
                     {/* 주문취소 + 가격X/재고X/직배/까대기/선물 */}
@@ -1753,16 +1753,16 @@ export default function OrdersPage() {
                 {costPrices.length > 0 && (
                   <div style={{ display: 'flex', gap: '20px', fontSize: '0.78rem', flexWrap: 'wrap' }}>
                     {isKream && kreamFastMin > 0 && (
-                      <div><span style={{ color: '#666' }}>빠른배송 </span><span style={{ color: '#FF8C00', fontWeight: 600 }}>₩ {kreamFastMin.toLocaleString()}</span></div>
+                      <div><span style={{ color: '#666' }}>빠른배송 </span><span style={{ color: '#FF8C00', fontWeight: 600 }}>₩ {fmtNum(kreamFastMin)}</span></div>
                     )}
                     {isKream && kreamGeneralMin > 0 && (
-                      <div><span style={{ color: '#666' }}>일반배송 </span><span style={{ color: '#E5E5E5', fontWeight: 600 }}>₩ {kreamGeneralMin.toLocaleString()}</span></div>
+                      <div><span style={{ color: '#666' }}>일반배송 </span><span style={{ color: '#E5E5E5', fontWeight: 600 }}>₩ {fmtNum(kreamGeneralMin)}</span></div>
                     )}
                     {!isKream && (
-                      <div><span style={{ color: '#666' }}>현재가 </span><span style={{ color: '#E5E5E5', fontWeight: 600 }}>₩ {currentPrice.toLocaleString()}</span></div>
+                      <div><span style={{ color: '#666' }}>현재가 </span><span style={{ color: '#E5E5E5', fontWeight: 600 }}>₩ {fmtNum(currentPrice)}</span></div>
                     )}
-                    <div><span style={{ color: '#666' }}>최저가 </span><span style={{ color: '#51CF66', fontWeight: 600 }}>₩ {minPrice.toLocaleString()}</span>{minEntry && <span style={{ color: '#555', fontSize: '0.68rem' }}> ({fmtShortDate(String(minEntry.date))})</span>}</div>
-                    <div><span style={{ color: '#666' }}>최고가 </span><span style={{ color: '#FF6B6B', fontWeight: 600 }}>₩ {maxPrice.toLocaleString()}</span>{maxEntry && <span style={{ color: '#555', fontSize: '0.68rem' }}> ({fmtShortDate(String(maxEntry.date))})</span>}</div>
+                    <div><span style={{ color: '#666' }}>최저가 </span><span style={{ color: '#51CF66', fontWeight: 600 }}>₩ {fmtNum(minPrice)}</span>{minEntry && <span style={{ color: '#555', fontSize: '0.68rem' }}> ({fmtShortDate(String(minEntry.date))})</span>}</div>
+                    <div><span style={{ color: '#666' }}>최고가 </span><span style={{ color: '#FF6B6B', fontWeight: 600 }}>₩ {fmtNum(maxPrice)}</span>{maxEntry && <span style={{ color: '#555', fontSize: '0.68rem' }}> ({fmtShortDate(String(maxEntry.date))})</span>}</div>
                   </div>
                 )}
               </div>
@@ -1799,15 +1799,15 @@ export default function OrdersPage() {
                               {isKream ? (
                                 <>
                                   <td style={{ padding: '8px 16px', textAlign: 'right', color: '#FF8C00', fontWeight: 600 }}>
-                                    {(h as Record<string, unknown>).kream_fast_min ? `₩ ${((h as Record<string, unknown>).kream_fast_min as number).toLocaleString()}` : '-'}
+                                    {(h as Record<string, unknown>).kream_fast_min ? `₩ ${fmtNum((h as Record<string, unknown>).kream_fast_min as number)}` : '-'}
                                   </td>
                                   <td style={{ padding: '8px 16px', textAlign: 'right', color: '#FFB84D', fontWeight: 600 }}>
-                                    {(h as Record<string, unknown>).kream_general_min ? `₩ ${((h as Record<string, unknown>).kream_general_min as number).toLocaleString()}` : '-'}
+                                    {(h as Record<string, unknown>).kream_general_min ? `₩ ${fmtNum((h as Record<string, unknown>).kream_general_min as number)}` : '-'}
                                   </td>
                                 </>
                               ) : (
                                 <td style={{ padding: '8px 16px', textAlign: 'right', color: '#FFB84D', fontWeight: 600 }}>
-                                  ₩ {((h.cost || h.sale_price) as number)?.toLocaleString() || '-'}
+                                  ₩ {fmtNum((h.cost || h.sale_price) as number)}
                                 </td>
                               )}
                               <td style={{ padding: '8px 16px', textAlign: 'right', color: '#888' }}>
@@ -1817,22 +1817,26 @@ export default function OrdersPage() {
                             {opts.map((opt, oi) => {
                               const kOpt = opt as Record<string, unknown>
                               const soldOut = opt.isSoldOut || (opt.stock !== undefined && opt.stock <= 0)
-                              const stockLabel = soldOut ? '품절' : opt.stock !== undefined ? `${opt.stock.toLocaleString()}개` : 'O'
+                              const stockLabel = soldOut
+                                ? '품절'
+                                : opt.stock !== undefined
+                                  ? `${fmtNum(opt.stock)}개`
+                                  : 'O'
                               return (
                                 <tr key={oi} style={{ borderTop: '1px solid #1A1A1A' }}>
                                   <td style={{ padding: '4px 16px 4px 32px', color: '#666', fontSize: '0.73rem' }}>ㄴ {opt.name || `옵션${oi + 1}`}</td>
                                   {isKream ? (
                                     <>
                                       <td style={{ padding: '4px 16px', textAlign: 'right', color: '#888', fontSize: '0.73rem' }}>
-                                        {(kOpt.kreamFastPrice as number) > 0 ? `₩ ${(kOpt.kreamFastPrice as number).toLocaleString()}` : '-'}
+                                        {(kOpt.kreamFastPrice as number) > 0 ? `₩ ${fmtNum(kOpt.kreamFastPrice as number)}` : '-'}
                                       </td>
                                       <td style={{ padding: '4px 16px', textAlign: 'right', color: '#888', fontSize: '0.73rem' }}>
-                                        {(kOpt.kreamGeneralPrice as number) > 0 ? `₩ ${(kOpt.kreamGeneralPrice as number).toLocaleString()}` : '-'}
+                                        {(kOpt.kreamGeneralPrice as number) > 0 ? `₩ ${fmtNum(kOpt.kreamGeneralPrice as number)}` : '-'}
                                       </td>
                                     </>
                                   ) : (
                                     <td style={{ padding: '4px 16px', textAlign: 'right', color: '#888', fontSize: '0.73rem' }}>
-                                      ₩ {((h.cost || h.sale_price) as number)?.toLocaleString()}
+                                      ₩ {fmtNum((h.cost || h.sale_price) as number)}
                                     </td>
                                   )}
                                   <td style={{ padding: '4px 16px', textAlign: 'right', fontSize: '0.73rem', fontWeight: 600, color: soldOut ? '#FF6B6B' : '#51CF66' }}>

@@ -263,12 +263,22 @@ async function pollSourcingOnce() {
   for (let i = 0; i < SOURCING_MAX_CONCURRENT; i++) {
     try {
       const res = await apiFetch(`${PROXY_URL}${API_PREFIX}/sourcing/collect-queue`)
-      if (!res.ok) break
+      if (!res.ok) {
+        if (res.status === 503) pauseCollectPolling(30000, 'backend shutting down')
+        break
+      }
       const job = await res.json()
+      if (job.shuttingDown) {
+        pauseCollectPolling(30000, 'backend shutting down')
+        break
+      }
       if (!job.hasJob) break
       console.log(`[소싱] ${job.url || '작업 수신'} (${jobs.length + 1}/${SOURCING_MAX_CONCURRENT})`)
       jobs.push(job)
-    } catch { break }
+    } catch {
+      pauseCollectPolling(10000, 'backend unreachable')
+      break
+    }
   }
   if (jobs.length === 0) return false
   if (jobs.length === 1) {

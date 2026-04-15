@@ -425,8 +425,8 @@ export default function PoliciesPage() {
           <>
             <span style={{ color: '#2D2D2D' }}>|</span>
             <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>
-              최근 <span style={{ color: '#51CF66', fontWeight: 700 }}>₩{lastAiUsage.cost.toLocaleString()}</span>
-              <span style={{ color: '#888' }}> ({lastAiUsage.calls}회 / ~{lastAiUsage.tokens.toLocaleString()}토큰)</span>
+              최근 <span style={{ color: '#51CF66', fontWeight: 700 }}>₩{fmtNum(lastAiUsage.cost)}</span>
+              <span style={{ color: '#888' }}> ({fmtNum(lastAiUsage.calls)}회 / ~{fmtNum(lastAiUsage.tokens)}토큰)</span>
             </span>
             <span style={{ fontSize: '0.6875rem', color: '#555' }}>{lastAiUsage.date}</span>
           </>
@@ -1580,11 +1580,11 @@ export default function PoliciesPage() {
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                             <span style={{ fontSize: '0.75rem', color: '#888' }}>{fieldLabels[ch.field] || ch.field}</span>
-                            <span style={{ fontSize: '0.8125rem', color: '#666' }}>{prefix}{ch.before.toLocaleString()}{suffix}</span>
+                            <span style={{ fontSize: '0.8125rem', color: '#666' }}>{prefix}{fmtNum(ch.before)}{suffix}</span>
                             <span style={{ color: '#555' }}>→</span>
-                            <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#FF8C00' }}>{prefix}{ch.after.toLocaleString()}{suffix}</span>
+                            <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#FF8C00' }}>{prefix}{fmtNum(ch.after)}{suffix}</span>
                             <span style={{ fontSize: '0.6875rem', color: diff > 0 ? '#22C55E' : '#EF4444' }}>
-                              ({diff > 0 ? '+' : ''}{prefix}{diff.toLocaleString()}{suffix})
+                              ({diff > 0 ? '+' : ''}{prefix}{fmtNum(diff)}{suffix})
                             </span>
                           </div>
                         </div>

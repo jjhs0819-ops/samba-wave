@@ -28,6 +28,19 @@ PRESET_IMAGE_DIR = (
     Path(__file__).resolve().parent.parent.parent.parent / "static" / "model_presets"
 )
 
+# rembg U2-Net 세션 싱글턴 캐시 (최초 1회만 로드, 이후 재사용)
+_rembg_session_cache: dict[str, Any] = {}
+
+
+def _get_rembg_session() -> Any:
+    """rembg U2-Net 세션 반환 (프로세스 생애주기 동안 1회만 초기화)."""
+    if "session" not in _rembg_session_cache:
+        from rembg import new_session
+
+        _rembg_session_cache["session"] = new_session("u2net")
+    return _rembg_session_cache["session"]
+
+
 # ──────────────────────────────────────────────
 # 모델 프리셋 (12개) — image: 참조 이미지 파일명
 # ──────────────────────────────────────────────
@@ -537,8 +550,9 @@ class ImageTransformService:
                 buf_resized = io.BytesIO()
                 src.save(buf_resized, format="PNG")
                 data = buf_resized.getvalue()
-            # 배경 제거 (U2-Net 모델 사용, 첫 실행 시 자동 다운로드)
-            result = remove(data)
+            # 캐시된 세션 재사용 (매번 모델 로드 방지)
+            session = _get_rembg_session()
+            result = remove(data, session=session)
             # 흰배경 합성 + WebP 변환
             img = Image.open(io.BytesIO(result)).convert("RGBA")
             white_bg = Image.new("RGBA", img.size, (255, 255, 255, 255))

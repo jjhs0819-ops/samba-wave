@@ -138,7 +138,7 @@ export default function StoreCare() {
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#E5E5E5' }}>{m.account_label}</div>
                         <div style={{ fontSize: '0.72rem', color: '#8A95B0', marginTop: '2px' }}>
-                          오늘 {m.todayDone}/{m.daily_target}건 · ₩{fmt(m.todayAmount)}
+                          오늘 {fmt(m.todayDone)}/{fmt(m.daily_target)}건 · ₩{fmt(m.todayAmount)}
                         </div>
                       </div>
                       <div style={{ textAlign: 'right' }}>
@@ -210,10 +210,10 @@ export default function StoreCare() {
                       </td>
                       <td style={{ padding: '10px', fontSize: '0.82rem', color: '#C5C5C5' }}>{s.account_label}</td>
                       <td style={{ padding: '10px', textAlign: 'center', fontSize: '0.82rem', color: '#C5C5C5' }}>{s.interval_hours}시간</td>
-                      <td style={{ padding: '10px', textAlign: 'center', fontSize: '0.82rem', color: '#C5C5C5' }}>{s.daily_target}건</td>
+                      <td style={{ padding: '10px', textAlign: 'center', fontSize: '0.82rem', color: '#C5C5C5' }}>{fmt(s.daily_target)}건</td>
                       <td style={{ padding: '10px', textAlign: 'center' }}>
                         <span style={{ fontSize: '0.82rem', color: s.daily_done >= s.daily_target ? '#51CF66' : '#FFD33D', fontWeight: 600 }}>
-                          {s.daily_done}/{s.daily_target}
+                          {fmt(s.daily_done)}/{fmt(s.daily_target)}
                         </span>
                       </td>
                       <td style={{ padding: '10px', textAlign: 'center', fontSize: '0.78rem', color: '#8A95B0' }}>{s.next_run_at ? new Date(s.next_run_at).toLocaleString('ko') : '-'}</td>

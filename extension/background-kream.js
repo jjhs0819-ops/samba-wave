@@ -532,6 +532,7 @@ async function runFocusPoll() {
   console.log('[수집] 집중 폴링 모드 진입 (0.5초 간격, 최대 120회)')
   let emptyCount = 0
   while (emptyCount < 120) {
+    if (Date.now() < pollPausedUntil) break
     // KREAM/AI소싱 폴링 비활성화
     const hadSourcing = await pollSourcingOnce()
     if (hadSourcing) {
@@ -574,6 +575,7 @@ let quickPollTimer = null
 
 function startCollectPolling() {
   emptyPollCount = 0
+  pollPausedUntil = 0
   chrome.alarms.get('collectPoll', (alarm) => {
     if (!alarm) {
       chrome.alarms.create('collectPoll', { periodInMinutes: 0.5 })

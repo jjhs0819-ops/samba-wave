@@ -860,7 +860,7 @@ async def _site_autotune_loop(site: str):
                                                         "transmit_error"
                                                     ) or r.get("error", "")
                                                     if _e:
-                                                        _fail_info.append(str(_e)[:60])
+                                                        _fail_info.append(str(_e)[:200])
                                             _log_line(
                                                 _site,
                                                 _pid,
@@ -871,7 +871,7 @@ async def _site_autotune_loop(site: str):
                                         _log_line(
                                             _site,
                                             _pid,
-                                            f"{_label} 전송실패: {str(_fe)[:80]}",
+                                            f"{_label} 전송실패: {str(_fe)[:200]}",
                                             "error",
                                         )
                                     await asyncio.sleep(0.3)
