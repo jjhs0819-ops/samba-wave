@@ -1703,6 +1703,37 @@ class LotteonSourcingClient:
             tot_amt = data.get("totAmt")
             if tot_amt is not None and float(tot_amt) > 0:
                 benefit = int(float(tot_amt))
+                # 롯데멤버스카드는 1회성 혜택이므로 최대혜택가 계산에서 제외.
+                # 롯데카드/삼성카드 즉시할인은 유지 (상시 카드 결제 할인).
+                # 식별: discountGroups[].discountApplyPromotionList[] 중
+                #   dispTitle에 "롯데멤버스" 포함 + 적용됨(bestPrAplyYn=Y, prAplyYn=Y)
+                # 진단용: 전체 프로모션 dispTitle 로깅 (운영에서 실제 값 확인)
+                member_dc = 0
+                _promo_titles: list[str] = []
+                for _group in data.get("discountGroups") or []:
+                    for _pr in _group.get("discountApplyPromotionList") or []:
+                        _disp = str(_pr.get("dispTitle", "") or "")
+                        _pr_typ = str(_pr.get("prTypCd", "")).upper()
+                        _applied = (
+                            str(_pr.get("bestPrAplyYn", "")).upper() == "Y"
+                            and str(_pr.get("prAplyYn", "")).upper() == "Y"
+                        )
+                        _dc = int(float(_pr.get("dcAmt", 0) or 0))
+                        _promo_titles.append(
+                            f"{_disp}({_pr_typ},{'A' if _applied else '-'},{_dc})"
+                        )
+                        if _applied and "롯데멤버스" in _disp:
+                            member_dc += _dc
+                if _promo_titles:
+                    logger.info(
+                        f"[LOTTEON] benefits promotions: {spd_no} → {_promo_titles}"
+                    )
+                if member_dc > 0:
+                    benefit += member_dc
+                    logger.info(
+                        f"[LOTTEON] 롯데멤버스카드 제외(1회성): {spd_no} → "
+                        f"{member_dc:,} 복원 → {benefit:,}"
+                    )
                 logger.info(
                     f"[LOTTEON] benefits API 혜택가: {spd_no} → {benefit:,}"
                     f" (정가={sl_prc:,}, 할인={int(float(data.get('totDcAmt', 0))):,})"
