@@ -751,6 +751,22 @@ export const forbiddenApi = {
   getSetting: (key: string) => request<unknown>(`${SAMBA_PREFIX}/forbidden/settings/${key}`),
   saveSetting: (key: string, value: unknown) =>
     request<unknown>(`${SAMBA_PREFIX}/forbidden/settings/${key}`, { method: "PUT", body: JSON.stringify({ value }) }),
+  getExchangeRates: (forceRefresh = false) =>
+    request<{
+      provider: string
+      base: string
+      fetchedAt?: string
+      publishedAt?: string
+      currencies: Record<string, {
+        code: string
+        label: string
+        baseRate: number
+        adjustment: number
+        fixedRate: number
+        effectiveRate: number
+        useFixed: boolean
+      }>
+    }>(`${SAMBA_PREFIX}/forbidden/exchange-rates${forceRefresh ? "?force_refresh=true" : ""}`),
 
   // 태그 금지어 통합 조회
   getTagBannedWords: () =>

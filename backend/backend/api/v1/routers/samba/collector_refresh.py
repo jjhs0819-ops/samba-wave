@@ -12,6 +12,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
+from backend.domain.samba.exchange_rate_service import convert_cost_by_source_site
 
 from backend.api.v1.routers.samba.collector_common import (
     _trim_history,
@@ -552,8 +553,11 @@ async def refresh_products(
                     _acc = policy_acc_map.get(_acc_id)
                     if not _acc:
                         continue
+                    _cost_info = await convert_cost_by_source_site(
+                        session, _cost, _source_site, getattr(p, "tenant_id", None)
+                    )
                     _new_price = calc_market_price(
-                        _cost,
+                        _cost_info["convertedCost"],
                         _pol.pricing,
                         _acc.market_type,
                         _pm_data,

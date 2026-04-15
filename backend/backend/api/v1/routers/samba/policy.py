@@ -418,8 +418,9 @@ async def calculate_price(
     policy_id: str,
     body: PriceCalculateRequest,
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     svc = _get_service(session)
     return await svc.get_price_preview(
-        policy_id, body.cost, body.fee_rate, body.source_site
+        policy_id, body.cost, body.fee_rate, body.source_site, tenant_id
     )

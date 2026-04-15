@@ -12,6 +12,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
+from backend.domain.samba.exchange_rate_service import convert_cost_by_source_site
 from backend.domain.samba.proxy.musinsa import RateLimitError
 from backend.domain.samba.collector.grouping import (
     generate_group_key,
@@ -1711,8 +1712,11 @@ async def _check_policy_price_changed(
         acc_result = await session.execute(acc_stmt)
 
         for acc in acc_result.scalars().all():
+            cost_info = await convert_cost_by_source_site(
+                session, cost, source_site, getattr(product, "tenant_id", None)
+            )
             new_price = calc_market_price(
-                cost,
+                cost_info["convertedCost"],
                 policy.pricing,
                 acc.market_type,
                 policy_market_data,

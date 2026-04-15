@@ -267,6 +267,23 @@ async def save_setting(
     return new_setting
 
 
+@router.get("/exchange-rates")
+async def get_exchange_rates(
+    force_refresh: bool = False,
+    session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+):
+    from backend.domain.samba.exchange_rate_service import (
+        build_exchange_rate_response,
+        get_exchange_rate_settings,
+        get_latest_exchange_rates,
+    )
+
+    settings = await get_exchange_rate_settings(session, tenant_id)
+    latest_rates = await get_latest_exchange_rates(force_refresh=force_refresh)
+    return build_exchange_rate_response(settings, latest_rates)
+
+
 @router.get("/tag-banned-words")
 async def get_tag_banned_words(
     session: AsyncSession = Depends(get_read_session_dependency),

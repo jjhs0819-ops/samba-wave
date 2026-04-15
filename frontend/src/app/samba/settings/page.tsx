@@ -43,6 +43,40 @@ const AI_FEATURES = [
 
 
 // 마켓별 스토어 연결 필드 정의
+type ExchangeCurrencyCode = 'USD' | 'JPY' | 'CNY' | 'EUR'
+
+type ExchangeRateItem = {
+  code: ExchangeCurrencyCode
+  label: string
+  baseRate: number
+  adjustment: number
+  fixedRate: number
+  effectiveRate: number
+  useFixed: boolean
+}
+
+type ExchangeRateResponse = {
+  provider: string
+  base: string
+  fetchedAt?: string
+  publishedAt?: string
+  currencies: Record<ExchangeCurrencyCode, ExchangeRateItem>
+}
+
+const EXCHANGE_CURRENCY_ORDER: ExchangeCurrencyCode[] = ['USD', 'JPY', 'CNY', 'EUR']
+const getExchangeDisplayMultiplier = (code: ExchangeCurrencyCode) => code === 'JPY' ? 100 : 1
+
+const EMPTY_EXCHANGE_RATES: ExchangeRateResponse = {
+  provider: '',
+  base: 'KRW',
+  currencies: {
+    USD: { code: 'USD', label: '달러', baseRate: 0, adjustment: 0, fixedRate: 0, effectiveRate: 0, useFixed: false },
+    JPY: { code: 'JPY', label: '엔화', baseRate: 0, adjustment: 0, fixedRate: 0, effectiveRate: 0, useFixed: false },
+    CNY: { code: 'CNY', label: '위안화', baseRate: 0, adjustment: 0, fixedRate: 0, effectiveRate: 0, useFixed: false },
+    EUR: { code: 'EUR', label: '유로화', baseRate: 0, adjustment: 0, fixedRate: 0, effectiveRate: 0, useFixed: false },
+  },
+}
+
 interface MarketConfig {
   key: string
   label: string
@@ -883,6 +917,11 @@ export default function SettingsPage() {
   // 태그 금지어
   const [tagBanned, setTagBanned] = useState<{ rejected: string[]; brands: string[]; source_sites: string[] }>({ rejected: [], brands: [], source_sites: [] })
 
+  // 환율 설정
+  const [exchangeRates, setExchangeRates] = useState<ExchangeRateResponse>(EMPTY_EXCHANGE_RATES)
+  const [exchangeStatus, setExchangeStatus] = useState('')
+  const [exchangeSaving, setExchangeSaving] = useState(false)
+ 
   // Cloudflare R2 설정
   const [r2AccountId, setR2AccountId] = useState('')
   const [r2AccessKey, setR2AccessKey] = useState('')
@@ -1106,6 +1145,75 @@ export default function SettingsPage() {
   }
 
   // 설정 로드 (SMS/카카오/Claude)
+  const loadExchangeRates = useCallback(async (forceRefresh = false) => {
+    try {
+      const data = await forbiddenApi.getExchangeRates(forceRefresh)
+      setExchangeRates(data as ExchangeRateResponse)
+      if (forceRefresh) setExchangeStatus('최신 환율을 불러왔습니다.')
+    } catch {
+      setExchangeRates(prev => prev || EMPTY_EXCHANGE_RATES)
+      setExchangeStatus('환율 정보를 불러오지 못했습니다. 저장된 고정/조정 환율만 입력할 수 있습니다.')
+      if (forceRefresh) showAlert('환율 정보를 불러오지 못했습니다.', 'error')
+    }
+  }, [])
+
+  const updateExchangeField = (
+    code: ExchangeCurrencyCode,
+    field: 'adjustment' | 'fixedRate',
+    value: string,
+  ) => {
+    setExchangeRates(prev => {
+      const multiplier = getExchangeDisplayMultiplier(code)
+      const numericValue = (parseNum(value) || 0) / multiplier
+      const current = prev.currencies[code]
+      const nextAdjustment = field === 'adjustment' ? numericValue : current.adjustment
+      const nextFixedRate = field === 'fixedRate' ? numericValue : current.fixedRate
+      const useFixed = nextFixedRate > 0
+      return {
+        ...prev,
+        currencies: {
+          ...prev.currencies,
+          [code]: {
+            ...current,
+            [field]: numericValue,
+            adjustment: nextAdjustment,
+            fixedRate: nextFixedRate,
+            effectiveRate: useFixed
+              ? nextFixedRate
+              : Math.max(current.baseRate + nextAdjustment, 0),
+            useFixed,
+          },
+        },
+      }
+    })
+  }
+
+  const saveExchangeSettings = async () => {
+    setExchangeSaving(true)
+    try {
+      const payload = {
+        currencies: Object.fromEntries(
+          EXCHANGE_CURRENCY_ORDER.map((code) => [
+            code,
+            {
+              adjustment: exchangeRates.currencies[code].adjustment || 0,
+              fixedRate: exchangeRates.currencies[code].fixedRate || 0,
+            },
+          ]),
+        ),
+      }
+      await forbiddenApi.saveSetting('exchange_rates', payload)
+      setExchangeStatus('환율 설정이 저장되었습니다.')
+      await loadExchangeRates(true)
+      showAlert('환율 설정이 저장되었습니다.', 'success')
+    } catch {
+      setExchangeStatus('환율 설정 저장에 실패했습니다.')
+      showAlert('환율 설정 저장에 실패했습니다.', 'error')
+    } finally {
+      setExchangeSaving(false)
+    }
+  }
+
   const loadExternalSettings = useCallback(async () => {
     try {
       const sms = await forbiddenApi.getSetting('aligo_sms').catch(() => null) as Record<string, string> | null
@@ -1299,7 +1407,7 @@ export default function SettingsPage() {
     setProbeLoading(false)
   }
 
-  useEffect(() => { loadExternalSettings(); loadStoreSettings(); loadProbeStatus() }, [loadExternalSettings, loadStoreSettings, loadProbeStatus])
+  useEffect(() => { loadExchangeRates(); loadExternalSettings(); loadStoreSettings(); loadProbeStatus() }, [loadExchangeRates, loadExternalSettings, loadStoreSettings, loadProbeStatus])
 
   // SSG 탭 진입 시 배송비/주소 옵션 자동 로드
   useEffect(() => {
@@ -1666,6 +1774,85 @@ export default function SettingsPage() {
           </div>
         )
       })()}
+
+      
+        <div style={{ ...card, padding: '1.5rem', marginBottom: '1.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.35rem' }}>
+            <div style={{ fontSize: '1rem', fontWeight: 700, color: '#E5E5E5' }}>환율 설정</div>
+            <span style={{ fontSize: '0.75rem', color: '#888' }}>
+              해외 소싱가를 원화 계산가로 바꿀 때 사용됩니다.
+            </span>
+            <button
+              onClick={() => loadExchangeRates(true)}
+              style={{ marginLeft: 'auto', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', color: '#4C9AFF', padding: '0.35rem 0.8rem', borderRadius: '6px', fontSize: '0.78rem', cursor: 'pointer' }}
+            >
+              최신환율 새로고침
+            </button>
+            <button
+              onClick={saveExchangeSettings}
+              disabled={exchangeSaving}
+              style={{ background: exchangeSaving ? '#333' : 'rgba(255,140,0,0.16)', border: '1px solid rgba(255,140,0,0.35)', color: exchangeSaving ? '#777' : '#FF8C00', padding: '0.35rem 0.8rem', borderRadius: '6px', fontSize: '0.78rem', cursor: exchangeSaving ? 'not-allowed' : 'pointer' }}
+            >
+              환율 저장
+            </button>
+          </div>
+          <p style={{ fontSize: '0.8125rem', color: '#666', marginBottom: '1rem' }}>
+            + / - 조정은 기준 환율에 가감되고, 고정 환율을 입력하면 해당 통화는 고정값이 우선 적용됩니다.
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.875rem' }}>
+            {EXCHANGE_CURRENCY_ORDER.map((code) => {
+              const item = exchangeRates.currencies[code]
+              const multiplier = getExchangeDisplayMultiplier(code)
+              const unitLabel = code === 'JPY' ? '100' : '1'
+              return (
+                <div key={code} style={{ background: '#161616', border: '1px solid #2D2D2D', borderRadius: '10px', padding: '0.9rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                    <div>
+                      <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#E5E5E5' }}>{item.label}</div>
+                      <div style={{ fontSize: '0.72rem', color: '#777' }}>{code} {unitLabel} = ₩{fmtNum(Math.round(item.effectiveRate * multiplier))}</div>
+                    </div>
+                    <span style={{ fontSize: '0.68rem', color: item.useFixed ? '#FF8C00' : '#4C9AFF' }}>
+                      {item.useFixed ? '고정 적용' : '실시간 적용'}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
+                    <div>
+                      <div style={{ fontSize: '0.72rem', color: '#777', marginBottom: '0.25rem' }}>기준 환율</div>
+                      <div style={{ ...inputStyle, color: '#A3A3A3' }}>₩{fmtNum(Math.round(item.baseRate * multiplier))}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.72rem', color: '#777', marginBottom: '0.25rem' }}>+ / - 조정</div>
+                      <NumInput
+                        style={{ width: '100%' }}
+                        value={String((item.adjustment || 0) * multiplier)}
+                        onChange={(value) => updateExchangeField(code, 'adjustment', value)}
+                        placeholder="0"
+                      />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.72rem', color: '#777', marginBottom: '0.25rem' }}>고정 환율</div>
+                      <NumInput
+                        style={{ width: '100%' }}
+                        value={item.fixedRate ? String(item.fixedRate * multiplier) : ''}
+                        onChange={(value) => updateExchangeField(code, 'fixedRate', value)}
+                        placeholder="비워두면 실시간"
+                      />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.72rem', color: '#777', marginBottom: '0.25rem' }}>계산 환율</div>
+                      <div style={{ ...inputStyle, color: '#FF8C00', fontWeight: 700 }}>₩{fmtNum(Math.round(item.effectiveRate * multiplier))}</div>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', marginTop: '0.9rem', fontSize: '0.75rem', color: '#666' }}>
+            <span>통화 매핑: Amazon/eBay/Shopify=USD, Rakuten/BUYMA=JPY, Poizon/Zoom=CNY</span>
+            <span>{exchangeStatus || (exchangeRates.publishedAt ? `기준 시각: ${String(exchangeRates.publishedAt)}` : '')}</span>
+          </div>
+        </div>
+
 
       {/* 마켓 계정 */}
           {/* 스토어 연결 */}

@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from backend.domain.samba.exchange_rate_service import convert_cost_by_source_site
 from backend.domain.samba.shipment.model import SambaShipment
 from backend.domain.samba.shipment.repository import SambaShipmentRepository
 from backend.utils.logger import logger
@@ -432,8 +433,12 @@ class SambaShipmentService:
                         or pd.get("original_price")
                         or 0
                     )
+                    cost_info = await convert_cost_by_source_site(
+                        self.session, cost, p.source_site or "", p.tenant_id
+                    )
+                    effective_cost = cost_info["convertedCost"]
                     calc_price = calc_market_price(
-                        cost,
+                        effective_cost,
                         policy.pricing,
                         "smartstore",
                         policy_market_data,
@@ -1297,8 +1302,15 @@ class SambaShipmentService:
                     or 0
                 )
                 if policy and policy.pricing:
-                    calc_price = calc_market_price(
+                    cost_info = await convert_cost_by_source_site(
+                        self.session,
                         cost,
+                        product_row.source_site or "",
+                        product_row.tenant_id,
+                    )
+                    effective_cost = cost_info["convertedCost"]
+                    calc_price = calc_market_price(
+                        effective_cost,
                         policy.pricing,
                         market_type,
                         policy_market_data,

@@ -16,6 +16,7 @@ from sqlmodel import select
 from backend.api.v1.routers.samba.collector_common import (
     _trim_history,
 )
+from backend.domain.samba.exchange_rate_service import convert_cost_by_source_site
 
 logger = logging.getLogger(__name__)
 
@@ -639,8 +640,14 @@ async def _site_autotune_loop(site: str):
                                     market_type = acc.market_type or ""
 
                                     if policy and policy.pricing:
-                                        expected_price = calc_market_price(
+                                        cost_info = await convert_cost_by_source_site(
+                                            session,
                                             new_cost,
+                                            site,
+                                            getattr(product, "tenant_id", None),
+                                        )
+                                        expected_price = calc_market_price(
+                                            cost_info["convertedCost"],
                                             policy.pricing,
                                             market_type,
                                             policy.market_policies,

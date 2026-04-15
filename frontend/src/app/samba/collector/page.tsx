@@ -2217,8 +2217,14 @@ export default function CollectorPage() {
           const brandLeaves = drillSite
             ? allLeafInfos.filter(l => l._siteId === drillSite)
             : allLeafInfos
-          const brandMap = new Map<string, number>()
-          brandLeaves.forEach(l => brandMap.set(l._brand, (brandMap.get(l._brand) || 0) + 1))
+          const brandMap = new Map<string, { count: number; collected: number }>()
+          brandLeaves.forEach(l => {
+            const prev = brandMap.get(l._brand) || { count: 0, collected: 0 }
+            brandMap.set(l._brand, {
+              count: prev.count + 1,
+              collected: prev.collected + ((l as unknown as Record<string, number>).collected_count ?? 0)
+            })
+          })
           const brands = Array.from(brandMap.entries()).sort((a, b) => a[0].localeCompare(b[0], 'ko'))
           // 카테고리 그룹 (사이트+브랜드 교차 필터)
           let catLeaves = allLeafInfos
@@ -2230,8 +2236,8 @@ export default function CollectorPage() {
           const selectedCount = selectedFilter ? ((selectedFilter as unknown as Record<string, number>).collected_count ?? 0) : 0
 
           // 헤더·본문 너비 통일 (합계 100%)
-          // 사이트8 브랜드10 카테고리22 링크15 정책10 수집8 요청6 생성일11 매핑10
-          const colW = ['8%', '10%', '22%', '15%', '10%', '8%', '6%', '11%', '10%']
+          // 사이트12 브랜드13 카테고리22 링크15 정책10 수집8 요청6 생성일11 매핑3
+          const colW = ['12%', '13%', '22%', '15%', '10%', '8%', '6%', '11%', '3%']
           const colBase = { borderRight: '1px solid #2D2D2D', maxHeight: '320px', overflowY: 'auto' as const, boxSizing: 'border-box' as const, textAlign: 'left' as const }
           const colStyle = (i: number) => ({ ...colBase, width: colW[i], flexShrink: 0 })
           const detColStyle = (i: number) => ({ ...colBase, width: colW[i], flexShrink: 0, padding: '0.5rem 0.5rem' })
@@ -2282,8 +2288,12 @@ export default function CollectorPage() {
                         onMouseLeave={e => { if (drillSite !== s.id) e.currentTarget.style.background = 'transparent' }}
                       >
                         {s.source_site || s.name}
-                        <span style={{ marginLeft: 'auto', fontSize: '0.74rem', color: '#FF8C00', fontWeight: 600 }}>
-                          {getAllLeaves(s).length}
+                        <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: '#FF8C00', fontWeight: 600 }}>
+                          {(() => {
+                            const leaves = allLeafInfos.filter(l => l._siteId === s.id)
+                            const collected = leaves.reduce((sum, l) => sum + ((l as unknown as Record<string, number>).collected_count ?? 0), 0)
+                            return `${leaves.length}(${fmtNum(collected)})`
+                          })()}
                         </span>
                       </div>
                     ))
@@ -2292,7 +2302,7 @@ export default function CollectorPage() {
                 {/* 2. 브랜드: 브랜드 헤더 클릭 시 전체 표시 / 사이트 선택 시 연관만 표시 */}
                 <div style={colStyle(1)}>
                   {(drillEntry === 'brand' || drillSite) ? (
-                    brands.length > 0 ? brands.map(([brand, count]) => (
+                    brands.length > 0 ? brands.map(([brand, info]) => (
                       <div key={brand} style={itemSt(drillBrand === brand)}
                         onClick={() => {
                           const toggling = drillBrand === brand
@@ -2312,7 +2322,7 @@ export default function CollectorPage() {
                         onMouseLeave={e => { if (drillBrand !== brand) e.currentTarget.style.background = 'transparent' }}
                       >
                         {brand}
-                        <span style={{ marginLeft: 'auto', fontSize: '0.74rem', color: '#FF8C00', fontWeight: 600 }}>{fmtNum(count)}</span>
+                        <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: '#FF8C00', fontWeight: 600 }}>{info.count}({fmtNum(info.collected)})</span>
                       </div>
                     )) : <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8rem' }}>브랜드 없음</div>
                   ) : null}
@@ -2482,7 +2492,7 @@ export default function CollectorPage() {
                           border: `1px solid ${mappedCount > 0 ? 'rgba(81,207,102,0.3)' : 'rgba(255,140,0,0.3)'}`,
                           color: mappedCount > 0 ? '#51CF66' : '#FF8C00',
                         }}
-                      >{mappedCount > 0 ? `${fmtNum(mappedCount)}개 매핑` : '매핑'}</button>
+                      >{mappedCount > 0 ? fmtNum(mappedCount) : '+'}</button>
                     )
                   })() : <span style={{ color: '#444', fontSize: '0.75rem' }}>-</span>}
                 </div>
