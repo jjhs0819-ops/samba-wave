@@ -160,7 +160,7 @@ export default function CollectorPage() {
   const router = useRouter();
   const [filters, setFilters] = useState<SambaSearchFilter[]>([]);
   const [policies, setPolicies] = useState<SambaPolicy[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [, setLoading] = useState(true);
 
   // URL collect
   const [collectUrl, setCollectUrl] = useState("");

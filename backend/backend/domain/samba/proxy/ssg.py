@@ -781,7 +781,6 @@ class SSGClient:
         if not brand_display or not name:
             return name
 
-
         # 한글 브랜드명 제거
         cleaned = re.sub(re.escape(brand_display), "", name, flags=re.IGNORECASE)
         # CONTRACTED_BRANDS에서 영문명도 찾아서 제거

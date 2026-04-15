@@ -83,8 +83,8 @@ export default function AnalyticsPage() {
   const selectedStatuses = search.statuses
   const setSearchYear = (v: number) => setSearch(prev => ({ ...prev, year: v }))
   const setSearchMonth = (v: number) => setSearch(prev => ({ ...prev, month: v }))
-  const setSelectedMarkets = (v: string[]) => setSearch(prev => ({ ...prev, markets: v }))
-  const setSelectedSites = (v: string[]) => setSearch(prev => ({ ...prev, sites: v }))
+  const setSelectedMarkets = useCallback((v: string[]) => setSearch(prev => ({ ...prev, markets: v })), [setSearch])
+  const setSelectedSites = useCallback((v: string[]) => setSearch(prev => ({ ...prev, sites: v })), [setSearch])
   const setSelectedStatuses = (v: string[]) => setSearch(prev => ({ ...prev, statuses: v }))
 
   const toggleItem = (arr: string[], setArr: (v: string[]) => void, item: string) => {
@@ -137,7 +137,7 @@ export default function AnalyticsPage() {
       }
     }
     init()
-  }, [])
+  }, [setSelectedSites])
 
   // 마켓 기본값: 주문 데이터에서 마켓 추출
   const initialMarketSet = useRef(false)
@@ -156,7 +156,7 @@ export default function AnalyticsPage() {
         setSelectedMarkets([...orderMarkets])
       }
     }
-  }, [orders])
+  }, [orders, setSelectedMarkets])
 
   // 기간 + 주문상태 필터링 (고객결제일 기준)
   const filteredOrders = orders.filter(o => {

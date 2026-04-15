@@ -35,7 +35,6 @@ const COST_BASIS = 'Sonnet4 $3/M in + $15/M out × ₩1,450'
 export default function CategoriesPage() {
   useEffect(() => { document.title = 'SAMBA-카테고리' }, [])
   const router = useRouter()
-  const [products, setProducts] = useState<SambaCollectedProduct[]>([])
   const [loading, setLoading] = useState(true)
 
   // 사이트 목록
@@ -134,7 +133,7 @@ export default function CategoriesPage() {
     const tree: Record<string, CatLevel> = {}
     const siteSet = new Set<string>()
 
-    rows.forEach(({ source_site, category, count }) => {
+    rows.forEach(({ source_site, category }) => {
       const site = source_site || '기타'
       siteSet.add(site)
       if (!tree[site]) tree[site] = { name: site, children: {}, products: [] }
@@ -237,7 +236,6 @@ export default function CategoriesPage() {
   const [aiSelectedMarkets, setAiSelectedMarkets] = useState<Record<string, boolean>>({})
 
   // 수동 매핑
-  const [manualModalOpen, setManualModalOpen] = useState(false)
   const [manualEdits, setManualEdits] = useState<Record<string, string>>({})
 
   // 인라인 카테고리 검색 자동완성
@@ -339,15 +337,6 @@ export default function CategoriesPage() {
 
   // ── 수동 매핑 ──
 
-  const handleOpenManualMapping = () => {
-    if (!selectedSite || !selectedCat1) {
-      showAlert('사이트와 카테고리를 먼저 선택해주세요', 'info')
-      return
-    }
-    setManualEdits({})
-    setManualModalOpen(true)
-  }
-
   const handleManualSave = async () => {
     if (!selectedSite) return
     const sourceCategory = getSourceCategory()
@@ -366,7 +355,6 @@ export default function CategoriesPage() {
         target_mappings: targetMappings,
       })
       showAlert(`${fmtNum(Object.keys(targetMappings).length)}개 마켓에 카테고리 매핑 저장 완료`, 'success')
-      setManualModalOpen(false)
       load()
     } catch (e) {
       const msg = e instanceof Error ? e.message : '저장 실패'
@@ -822,11 +810,7 @@ export default function CategoriesPage() {
       const row = needMapping[i]
       setMarketAiProgress({ market, current: i + 1, total, success: successCount, fail: errorCount })
 
-      const rowProducts = products.filter(p =>
-        p.source_site === row.source_site &&
-        [p.category1, p.category2, p.category3, p.category4]
-          .filter(Boolean).join(' > ') === row.source_category
-      )
+      const rowProducts: SambaCollectedProduct[] = []
       const sampleNames = rowProducts.slice(0, 5).map(p => p.name)
       const sampleTags = (rowProducts[0]?.tags || []).filter((t: string) => !t.startsWith('__')).slice(0, 10)
 
@@ -1438,6 +1422,7 @@ export default function CategoriesPage() {
                     {/* 이미지 */}
                     <div style={{ width: '100%', aspectRatio: '1', background: '#1A1A1A', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
                       {p.images && p.images.length > 0 ? (
+                        // eslint-disable-next-line @next/next/no-img-element
                         <img src={p.images[0]} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
                       ) : (
                         <span style={{ color: '#555', fontSize: '2rem' }}>🖼</span>
@@ -1916,6 +1901,7 @@ export default function CategoriesPage() {
                     }
                   }
                   setSeedLoading(false)
+                  showAlert(`동기화 완료: ${fmtNum(okCount)}건 성공${failCount > 0 ? `, ${fmtNum(failCount)}건 실패` : ''}`, failCount > 0 ? 'error' : 'success')
                 }}
                 disabled={seedLoading}
                 style={{ padding: '0.5rem 1.25rem', background: seedLoading ? '#333' : '#51CF66', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.875rem', fontWeight: 600, cursor: seedLoading ? 'not-allowed' : 'pointer' }}

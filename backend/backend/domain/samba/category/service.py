@@ -1533,7 +1533,6 @@ class SambaCategoryService:
         if not source_category:
             return []
 
-
         # 소싱처 ↔ 마켓 간 용어 차이 보완 (동의어 확장)
         SYNONYMS: Dict[str, List[str]] = {
             "아우터": ["재킷", "점퍼", "코트", "자켓", "바람막이", "패딩", "야상"],
