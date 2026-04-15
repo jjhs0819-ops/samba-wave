@@ -9,6 +9,7 @@ tmp_captures/
 # Claude IDE 캐시
 .claude/tsc-cache/
 .claude/skills/
+.claude/skills-archive/
 .omc/
 backend/.omc/
 
