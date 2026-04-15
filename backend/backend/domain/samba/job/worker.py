@@ -1463,6 +1463,11 @@ class JobWorker:
             # 직접 API 검색
             # LOTTEON: brands 파라미터가 있으면 각 브랜드명을 키워드로 개별 검색해서 합침
             # (qapi 검색은 키워드 관련도 기반이라 단일 키워드로 검색하면 서브브랜드가 누락됨)
+            from backend.core.config import settings as _lo_cfg
+
+            _lotteon_full_paging = bool(
+                getattr(_lo_cfg, "lotteon_full_paging_enabled", False)
+            )
             _per_brand_keywords: list[str] = []
             if site == "LOTTEON":
                 try:
@@ -1481,7 +1486,16 @@ class JobWorker:
                 if _per_brand_keywords:
                     items_list = []
                     seen_pids: set[str] = set()
-                    per_max = max(remaining * 2, 100)
+                    # LOTTEON 전수 페이징: 브랜드당 최대 600건 (qapi 한계 2,100 고려)
+                    per_max = (
+                        600
+                        if (
+                            site == "LOTTEON"
+                            and sf.category_filter
+                            and _lotteon_full_paging
+                        )
+                        else max(remaining * 2, 100)
+                    )
                     for _kw in _per_brand_keywords:
                         try:
                             _r = await client.search(
@@ -1516,8 +1530,15 @@ class JobWorker:
                         _max = (
                             9999
                             if (
-                                site in ("Nike", "ABCmart", "GSShop", "SSG")
-                                and sf.category_filter
+                                (
+                                    site in ("Nike", "ABCmart", "GSShop", "SSG")
+                                    and sf.category_filter
+                                )
+                                or (
+                                    site == "LOTTEON"
+                                    and sf.category_filter
+                                    and _lotteon_full_paging
+                                )
                             )
                             else max(remaining * 2, 100)
                         )
@@ -1530,8 +1551,17 @@ class JobWorker:
                     if (
                         _cached
                         and _time.time() - _cached[1] < _cache_ttl
-                        and site in ("Nike", "ABCmart", "GSShop")
-                        and sf.category_filter
+                        and (
+                            (
+                                site in ("Nike", "ABCmart", "GSShop")
+                                and sf.category_filter
+                            )
+                            or (
+                                site == "LOTTEON"
+                                and sf.category_filter
+                                and _lotteon_full_paging
+                            )
+                        )
                     ):
                         items_list = list(_cached[0])
                         logger.info(
@@ -1581,10 +1611,16 @@ class JobWorker:
                         )
                         # 전수 검색 결과 캐시 저장
                         if (
-                            site in ("Nike", "ABCmart", "GSShop")
-                            and sf.category_filter
-                            and items_list
-                        ):
+                            (
+                                site in ("Nike", "ABCmart", "GSShop")
+                                and sf.category_filter
+                            )
+                            or (
+                                site == "LOTTEON"
+                                and sf.category_filter
+                                and _lotteon_full_paging
+                            )
+                        ) and items_list:
                             self._search_cache[_cache_key] = (
                                 items_list,
                                 _time.time(),

@@ -1043,6 +1043,8 @@ class LotteonSourcingClient:
         """worker.py 직접 API 패턴 호환 래퍼 — qapi offset 기반 멀티페이지 검색.
 
         max_count까지 u2 offset을 증가시키며 상품을 수집한다.
+        qapi는 offset 2,100 이상 요청을 받지 않으므로 해당 지점에서 강제 종료하며,
+        RateLimitError 발생 시 부분 결과를 반환하고 종료한다.
         """
         kwargs.pop("category_filter", None)
         kwargs.pop("dispCatNo", None)
@@ -1050,10 +1052,28 @@ class LotteonSourcingClient:
         seen: set[str] = set()
         offset = 0
         page_size = 60
+        # qapi 응답이 유효한 offset 상한 (offset>=2100이면 빈 응답 반복)
+        _MAX_QAPI_OFFSET = 2100
 
         while len(products) < max_count:
+            # 하드 가드 — qapi 상한 초과 요청은 응답이 비어 무한루프 위험
+            if offset >= _MAX_QAPI_OFFSET:
+                logger.info(
+                    f"[LOTTEON] search '{keyword}' qapi 상한 도달(offset={offset}) — "
+                    f"수집 종료 {len(products)}건"
+                )
+                break
+
             page_num = (offset // page_size) + 1
-            raw = await self.search_products(keyword, page=page_num, size=page_size)
+            try:
+                raw = await self.search_products(keyword, page=page_num, size=page_size)
+            except RateLimitError as e:
+                logger.warning(
+                    f"[LOTTEON] search '{keyword}' page={page_num} "
+                    f"RateLimit(status={e.status}, retry_after={e.retry_after}) — "
+                    f"부분 종료 {len(products)}건"
+                )
+                break
             if not raw:
                 break  # 더 이상 결과 없음
 
