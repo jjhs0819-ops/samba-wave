@@ -583,11 +583,35 @@ class LotteonClient:
         )
 
     async def update_stock(self, itm_stk_lst: list[dict[str, Any]]) -> dict[str, Any]:
-        """단품 재고 변경."""
+        """단품 재고 변경.
+
+        주의: 이 엔드포인트는 stkQty만 반영하고 slStatCd는 무시한다.
+        재고 0으로 자동 SOUT 잠긴 옵션을 풀려면 별도 change_item_status 호출 필요.
+        """
         return await self._call_api(
             "POST",
             "/v1/openapi/product/v1/item/stock/change",
             body={"itmStkLst": itm_stk_lst},
+        )
+
+    async def change_item_status(
+        self, sitm_lst: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """단품(옵션) 판매상태 변경 — slStatCd: SALE | SOUT.
+
+        재고 0으로 자동 SOUT 잠긴 옵션을 재고 회복 후 SALE로 복구할 때 사용.
+        sitmLst 각 항목 필수 필드: sitmNo, spdNo, slStatCd
+        (trGrpCd/trNo는 client 컨텍스트에서 자동 주입)
+        """
+        enriched = [
+            {"trGrpCd": self.tr_grp_cd or "SR", "trNo": self.tr_no, **item}
+            for item in sitm_lst
+        ]
+        body: dict[str, Any] = {"sitmLst": enriched}
+        return await self._call_api(
+            "POST",
+            "/v1/openapi/product/v1/item/status/change",
+            body=body,
         )
 
     async def update_price(self, itm_prc_lst: list[dict[str, Any]]) -> dict[str, Any]:

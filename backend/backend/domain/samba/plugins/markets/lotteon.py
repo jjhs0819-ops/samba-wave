@@ -1211,6 +1211,10 @@ class LotteonPlugin(MarketPlugin):
                     if itm_stk_lst:
                         await client.update_stock(itm_stk_lst)
                         _updated.append(f"재고({len(itm_stk_lst)}건)")
+                        # 재고 양수인데 SOUT_STK로 잠긴 옵션을 SALE로 자동 복구
+                        await self._restore_sout_to_sale(
+                            client, existing_no, itm_stk_lst
+                        )
 
                     logger.info(
                         f"[롯데ON] 경량 업데이트 완료: {existing_no} — {', '.join(_updated)}"
@@ -1948,6 +1952,10 @@ class LotteonPlugin(MarketPlugin):
                                 f"[롯데ON] 수정 후 재고 동기화 완료: {effective_no} — "
                                 f"{len(_itm_stk_lst)}건"
                             )
+                            # 재고 양수인데 SOUT_STK로 잠긴 옵션을 SALE로 자동 복구
+                            await self._restore_sout_to_sale(
+                                client, effective_no, _itm_stk_lst
+                            )
                     except Exception as _stk_e:
                         logger.warning(
                             f"[롯데ON] 수정 후 재고 동기화 실패 (무시): {_stk_e}"
@@ -2291,6 +2299,64 @@ class LotteonPlugin(MarketPlugin):
             action = "수정" if existing_no else "등록"
             logger.error(f"[롯데ON] {action} 실패: {e}")
             return {"success": False, "message": f"롯데ON {action} 실패: {e}"}
+
+    async def _restore_sout_to_sale(
+        self,
+        client: Any,
+        spd_no: str,
+        itm_stk_lst: list[dict],
+    ) -> None:
+        """재고 양수인데 SOUT_STK로 잠긴 옵션을 SALE로 자동 복구.
+
+        update_stock(item/stock/change)는 stkQty만 반영하고 slStatCd는 무시한다.
+        재고가 0→양수로 회복돼도 옵션 slStatCd는 SOUT 그대로 고착되어
+        소비자 페이지에서 [품절] 배지가 유지되는 문제 발생.
+        item/status/change 엔드포인트로 명시적 SALE 전환이 필요하다.
+
+        안전 장치:
+        - stkQty>0인 옵션만 대상 (재고 0 옵션은 건드리지 않음)
+        - slStatRsnCd='SOUT_STK' 인 옵션만 복구 (사람이 수동 잠근 다른 사유는 보존)
+        - 실패해도 결과에 영향 없음 (warning 로그만)
+        """
+        try:
+            positive_stk_sitms = {
+                str(it.get("sitmNo"))
+                for it in itm_stk_lst or []
+                if it.get("sitmNo") and int(it.get("stkQty") or 0) > 0
+            }
+            if not positive_stk_sitms:
+                return
+
+            cur = await client.get_product(spd_no)
+            cur_itm = (cur.get("data") or {}).get("itmLst") or []
+
+            to_recover: list[dict] = []
+            for itm in cur_itm:
+                sitm_no = str(itm.get("sitmNo") or "")
+                if sitm_no not in positive_stk_sitms:
+                    continue
+                if itm.get("slStatCd") != "SOUT":
+                    continue
+                if itm.get("slStatRsnCd") != "SOUT_STK":
+                    continue
+                to_recover.append(
+                    {
+                        "sitmNo": sitm_no,
+                        "spdNo": spd_no,
+                        "slStatCd": "SALE",
+                    }
+                )
+
+            if not to_recover:
+                return
+
+            await client.change_item_status(to_recover)
+            logger.info(
+                f"[롯데ON] SOUT→SALE 자동복구: {spd_no} — "
+                f"{len(to_recover)}건 ({[t['sitmNo'] for t in to_recover]})"
+            )
+        except Exception as e:
+            logger.warning(f"[롯데ON] SOUT→SALE 복구 실패 (무시): {spd_no} — {e}")
 
     async def _apply_promotions(
         self,
