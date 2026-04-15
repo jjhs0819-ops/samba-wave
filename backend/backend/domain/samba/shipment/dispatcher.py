@@ -379,8 +379,30 @@ async def _delete_playauto(
     product: dict[str, Any],
     account: Any = None,
 ) -> dict[str, Any]:
-    """플레이오토 마켓삭제 — API 삭제 불가, DB 등록정보만 초기화 (강제삭제)."""
-    return {"success": True, "message": "플레이오토 등록정보 초기화 완료"}
+    """플레이오토 품절 처리 — EMP API soldout 호출 (완전삭제 API 없음)."""
+    from backend.domain.samba.proxy.playauto import PlayAutoClient
+
+    api_key = ""
+    if account:
+        api_key = getattr(account, "api_key", "") or ""
+    if not api_key:
+        creds = await _get_setting(session, "store_playauto")
+        if creds and isinstance(creds, dict):
+            api_key = creds.get("apiKey", "")
+    if not api_key:
+        return {"success": False, "message": "플레이오토 인증 정보 없음"}
+
+    product_no = product.get("market_product_no", {}).get("playauto", "")
+    if not product_no:
+        return {"success": False, "message": "플레이오토 상품번호 없음 (건너뜀)"}
+
+    client = PlayAutoClient(api_key)
+    try:
+        await client.soldout_product([product_no])
+        return {"success": True, "message": "플레이오토 품절 처리 완료"}
+    except Exception as e:
+        logger.error(f"[플레이오토] 품절 처리 실패: {e}")
+        return {"success": False, "message": f"품절 처리 실패: {e}"}
 
 
 # 마켓별 삭제 핸들러 매핑

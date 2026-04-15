@@ -452,10 +452,13 @@ async def refresh_products(
                     }
                     delete_targets.append((pid, pd, account_id, account))
 
-        # 2단계: 마켓 판매중지 병렬 처리 (5개씩)
+        # 2단계: 마켓 판매중지 병렬 처리 (5개씩) — 성공한 계정 ID 추적
         sem = asyncio.Semaphore(5)
+        market_delete_success: dict[str, set[str]] = {}  # pid → 성공한 account_id set
 
-        async def _do_market_delete(pid: str, pd: dict, acc: object) -> None:
+        async def _do_market_delete(
+            pid: str, pd: dict, account_id: str, acc: object
+        ) -> None:
             async with sem:
                 try:
                     result = await delete_from_market(
@@ -465,6 +468,7 @@ async def refresh_products(
                         logger.info(
                             f"[refresh] {pid} → {acc.market_type} 판매중지 완료"
                         )  # type: ignore[union-attr]
+                        market_delete_success.setdefault(pid, set()).add(account_id)
                     else:
                         logger.warning(
                             f"[refresh] {pid} → {acc.market_type} 판매중지 실패: {result.get('message')}"
@@ -474,22 +478,47 @@ async def refresh_products(
 
         if delete_targets:
             await asyncio.gather(
-                *[_do_market_delete(pid, pd, acc) for pid, pd, _, acc in delete_targets]
+                *[
+                    _do_market_delete(pid, pd, account_id, acc)
+                    for pid, pd, account_id, acc in delete_targets
+                ]
             )
 
-        # 3단계: DB 일괄 삭제 (단일 쿼리)
+        # 3단계: 품절 상품 상태 업데이트 (DB 삭제 대신 보존)
         deleted_ids: list[str] = []
         if deletable_pids:
-            from sqlalchemy import delete as sa_delete
             from sqlmodel import col
             from backend.domain.samba.collector.model import SambaCollectedProduct
 
-            del_stmt = sa_delete(SambaCollectedProduct).where(
+            _upd_stmt = select(SambaCollectedProduct).where(
                 col(SambaCollectedProduct.id).in_(list(deletable_pids))
             )
-            await session.exec(del_stmt)  # type: ignore[arg-type]
-            deleted_ids = list(deletable_pids)
-            logger.info(f"[refresh] 품절 상품 {len(deleted_ids)}건 일괄 삭제 완료")
+            _upd_result = await session.execute(_upd_stmt)
+            _upd_rows = _upd_result.scalars().all()
+            for row in _upd_rows:
+                row.sale_status = "sold_out"  # type: ignore[assignment]
+                # 마켓 삭제 성공한 계정만 registered_accounts에서 제거
+                ok_accs = market_delete_success.get(row.id, set())
+                if ok_accs:
+                    new_reg = [
+                        a for a in (row.registered_accounts or []) if a not in ok_accs
+                    ]
+                    new_mnos = {
+                        k: v
+                        for k, v in (row.market_product_nos or {}).items()
+                        if not any(
+                            k == d_id or k.startswith(f"{d_id}_") for d_id in ok_accs
+                        )
+                    }
+                    row.registered_accounts = new_reg  # type: ignore[assignment]
+                    row.market_product_nos = new_mnos  # type: ignore[assignment]
+                    if not new_reg:
+                        row.status = "collected"  # type: ignore[assignment]
+                session.add(row)
+            deleted_ids = [r.id for r in _upd_rows]
+            logger.info(
+                f"[refresh] 품절 상품 {len(deleted_ids)}건 sold_out 상태 업데이트 완료 (DB 보존)"
+            )
 
         await session.commit()
 

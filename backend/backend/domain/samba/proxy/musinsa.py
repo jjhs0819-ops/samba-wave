@@ -341,6 +341,8 @@ class MusinsaClient:
             # 판매 상태 관련 필드 디버그 로그
             logger.info(
                 f"[무신사 상태 디버그] {goods_no}: "
+                f"goodsSaleType={d.get('goodsSaleType')!r}, "
+                f"goodsSaleTypeText={d.get('goodsSaleTypeText')!r}, "
                 f"isSale={gp.get('isSale')!r}, "
                 f"isSoldOut_gp={gp.get('isSoldOut')!r}, "
                 f"isSoldOut_d={d.get('isSoldOut')!r}, "
@@ -355,7 +357,7 @@ class MusinsaClient:
             )
 
             brand_info = d.get("brandInfo") or {}
-            return {
+            _result = {
                 "id": f"col_musinsa_{goods_no}_{int(datetime.now(tz=timezone.utc).timestamp() * 1000)}",
                 "sourceSite": "MUSINSA",
                 "siteProductId": str(d.get("goodsNo") or goods_no),
@@ -428,7 +430,9 @@ class MusinsaClient:
                 ),
                 # 품절 판단: isSale=False(판매안함/판매예정) + soldOut + 모든옵션품절
                 "isOutOfStock": bool(
-                    d.get("isSoldOut")
+                    str(d.get("goodsSaleType", "")).upper()
+                    in ("STOP_SALE", "PROHIBITED", "CLOSE", "SOLD_OUT")
+                    or d.get("isSoldOut")
                     or (d.get("goodsPrice") or {}).get("isSoldOut")
                     or d.get("isOutOfStock", False)
                     or (
@@ -444,7 +448,7 @@ class MusinsaClient:
                     "sold_out"
                     if bool(
                         str(d.get("goodsSaleType", "")).upper()
-                        in ("STOP_SALE", "PROHIBITED", "CLOSE")
+                        in ("STOP_SALE", "PROHIBITED", "CLOSE", "SOLD_OUT")
                         or d.get("canBuy") is False
                         or d.get("isOfflineGoods") is True
                         or d.get("isSoldOut")
@@ -480,6 +484,12 @@ class MusinsaClient:
                 # (쿠폰 API가 유일한 쿠폰 정보원인 경우)
                 "price_uncertain": _coupon_api_failed and coupon_price_raw == 0,
             }
+            # saleStatus=sold_out이면 모든 옵션 재고 강제 0 (API가 outOfStock=False로 내려와도)
+            if _result.get("saleStatus") == "sold_out" and _result.get("options"):
+                for _opt in _result["options"]:
+                    _opt["stock"] = 0
+                    _opt["isSoldOut"] = True
+            return _result
         finally:
             if _own_client:
                 await _own_client.aclose()
@@ -753,7 +763,9 @@ class MusinsaClient:
                         )
                         continue
                     is_sold_out = bool(
-                        d.get("isSoldOut")
+                        str(d.get("goodsSaleType", "")).upper()
+                        in ("STOP_SALE", "PROHIBITED", "CLOSE", "SOLD_OUT")
+                        or d.get("isSoldOut")
                         or (d.get("goodsPrice") or {}).get("isSoldOut")
                     )
                     price = (
@@ -832,7 +844,10 @@ class MusinsaClient:
                             "diffRate": diff_rate,
                             "name": d.get("goodsName", ""),
                             "isSoldOut": bool(
-                                d.get("isSoldOut") or gp_inner.get("isSoldOut")
+                                str(d.get("goodsSaleType", "")).upper()
+                                in ("STOP_SALE", "PROHIBITED", "CLOSE", "SOLD_OUT")
+                                or d.get("isSoldOut")
+                                or gp_inner.get("isSoldOut")
                             ),
                         }
                     )
