@@ -1395,6 +1395,11 @@ class SmartStoreClient:
                             )
                             await asyncio.sleep(wait)
                             continue
+                        if "400" in str(_api_err):
+                            logger.warning(
+                                "[스마트스토어] last-changed-statuses 400 "
+                                f"(type={change_type}, from={qdate}): {_api_err}"
+                            )
                         break
                 if result is None:
                     continue
@@ -1447,6 +1452,19 @@ class SmartStoreClient:
         else:
             orders_data = []
         logger.info(f"[스마트스토어] 주문 상세 결과: {len(orders_data)}건")
+        # 디버그: 클레임 주문 응답 구조 확인용 (취소/반품/교환 있는 첫 건 덤프)
+        for _dbg in orders_data:
+            _po = _dbg.get("productOrder", _dbg) if isinstance(_dbg, dict) else _dbg
+            _claim_top = (_po or {}).get("claimStatus") or (_po or {}).get("claimType")
+            _claim_sub = (_dbg.get("claim") or {}) if isinstance(_dbg, dict) else {}
+            if _claim_top or _claim_sub:
+                logger.info(
+                    f"[스마트스토어][클레임디버그] productOrderId={(_po or {}).get('productOrderId')} "
+                    f"po.claimStatus={(_po or {}).get('claimStatus')} "
+                    f"po.claimType={(_po or {}).get('claimType')} "
+                    f"claim_sub={_claim_sub}"
+                )
+                break
         return orders_data
 
     async def get_product_orders_by_ids(

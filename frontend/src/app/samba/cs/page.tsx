@@ -188,6 +188,24 @@ export default function CSPage() {
   ]
 
   // textarea에 태그 삽입
+  const isProductQuestion = (inquiry?: SambaCSInquiry | null) => inquiry?.inquiry_type === 'product_question'
+
+  const sanitizeReplyTextForInquiry = (text: string, inquiry?: SambaCSInquiry | null) => {
+    if (!isProductQuestion(inquiry)) return text
+    return text
+      .replace(/\{\{sellerName\}\}\s*고객님[,\s]*/g, '')
+      .replace(/\{\{sellerName\}\}\s*님[,\s]*/g, '')
+      .replace(/\{\{sellerName\}\}[^\S\r\n]*[^\s,.!?:;]+[^\S\r\n]*/g, '')
+      .replace(/\{\{sellerName\}\}/g, '')
+      .replace(/[ \t]{2,}/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+  }
+
+  const replyVariableTags = isProductQuestion(replyModal)
+    ? VARIABLE_TAGS.filter(v => v.tag !== '{{sellerName}}')
+    : VARIABLE_TAGS
+
   const insertTag = (ref: React.RefObject<HTMLTextAreaElement | null>, setter: (v: string) => void, getter: string, tag: string) => {
     const el = ref.current
     if (!el) { setter(getter + tag); return }
@@ -338,7 +356,8 @@ export default function CSPage() {
       return
     }
     try {
-      const res = await csInquiryApi.reply(replyModal.id, replyText)
+      const finalReplyText = sanitizeReplyTextForInquiry(replyText, replyModal)
+      const res = await csInquiryApi.reply(replyModal.id, finalReplyText)
       const marketMsg = (res as unknown as Record<string, unknown>).market_message as string
       const marketSent = (res as unknown as Record<string, unknown>).market_sent as boolean
       setReplyModal(null)
@@ -446,7 +465,7 @@ export default function CSPage() {
               const marketAccounts = accounts.filter(a => a.market_name === market)
               return (
                 <optgroup key={market} label={market}>
-                  {marketAccounts.length > 1 && <option key={`market:${market}`} value={`market:${market}`}>{market} 전체</option>}
+                  <option key={`market:${market}`} value={`market:${market}`}>{market}</option>
                   {marketAccounts.map(a => (
                     <option key={a.id} value={`account:${a.id}`}>{a.seller_id || a.business_name || '-'}</option>
                   ))}
@@ -672,7 +691,7 @@ export default function CSPage() {
                             </span>
                           )}
                           <button
-                            onClick={() => { setReplyModal(item); setReplyText(item.reply || ''); setSelectedTemplate('') }}
+                            onClick={() => { setReplyModal(item); setReplyText(sanitizeReplyTextForInquiry(item.reply || '', item)); setSelectedTemplate('') }}
                             style={{ marginLeft: item.product_name ? '0.375rem' : 0, padding: '0.1rem 0.4rem', background: item.reply_status === 'pending' ? 'rgba(255,140,0,0.15)' : 'rgba(81,207,102,0.1)', border: `1px solid ${item.reply_status === 'pending' ? 'rgba(255,140,0,0.3)' : 'rgba(81,207,102,0.3)'}`, borderRadius: '4px', color: item.reply_status === 'pending' ? '#FF8C00' : '#51CF66', fontSize: '0.6875rem', cursor: 'pointer', whiteSpace: 'nowrap', verticalAlign: 'middle' }}
                           >
                             {item.reply_status === 'pending' ? '답변' : '답변수정'}
@@ -800,7 +819,7 @@ export default function CSPage() {
               {Object.entries(templates).map(([key, tpl]) => (
                 <div
                   key={key}
-                  onClick={() => { setSelectedTemplate(key); setReplyText(tpl.content) }}
+                  onClick={() => { setSelectedTemplate(key); setReplyText(sanitizeReplyTextForInquiry(tpl.content, replyModal)) }}
                   style={{ background: selectedTemplate === key ? 'rgba(255,140,0,0.08)' : '#111', border: `1px solid ${selectedTemplate === key ? '#FF8C00' : '#2D2D2D'}`, borderRadius: '8px', padding: '0.625rem', cursor: 'pointer', transition: 'border-color 0.15s' }}
                   onMouseEnter={e => { if (selectedTemplate !== key) e.currentTarget.style.borderColor = '#444' }}
                   onMouseLeave={e => { if (selectedTemplate !== key) e.currentTarget.style.borderColor = '#2D2D2D' }}
@@ -813,7 +832,7 @@ export default function CSPage() {
 
             {/* 변수 태그 버튼 */}
             <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
-              {VARIABLE_TAGS.map(v => (
+              {replyVariableTags.map(v => (
                 <button
                   key={v.tag}
                   type="button"

@@ -1624,8 +1624,12 @@ async def sync_orders_from_markets(
                 for ro in raw_orders:
                     po = ro.get("productOrder", ro)
                     order_info = ro.get("order", {})
+                    # 클레임 정보: productOrder 최상위 또는 래퍼의 claim 서브 객체 모두 확인
+                    claim_info = ro.get("claim") or po.get("claim") or {}
                     orders_data.append(
-                        _parse_smartstore_order(po, order_info, account["id"], label)
+                        _parse_smartstore_order(
+                            po, order_info, account["id"], label, claim_info=claim_info
+                        )
                     )
                     if (
                         po.get("placeOrderStatus") == "NOT_YET"
@@ -2047,6 +2051,7 @@ async def sync_orders_from_markets(
                     # 단, 롯데ON은 발송완료/배송중/배송완료로 진행된 경우 갱신 허용
                     new_ship_status = order_data.get("shipping_status")
                     if new_ship_status:
+                        cancel_statuses = {"취소요청", "취소처리중", "취소완료"}
                         exchange_statuses = {
                             "교환요청",
                             "교환회수완료",
@@ -2054,7 +2059,21 @@ async def sync_orders_from_markets(
                             "교환완료",
                         }
                         advanced = {"발송완료", "배송중", "배송완료", "구매확정"}
-                        if new_ship_status in exchange_statuses:
+                        if new_ship_status in cancel_statuses:
+                            # 취소 상태는 항상 갱신 (송장전송완료 → 취소요청 등 역행 허용)
+                            # 단, 이미 반품 진행 중인 주문은 취소로 되돌리지 않음
+                            if existing.shipping_status in (
+                                "반품요청",
+                                "반품완료",
+                                "반품거부",
+                            ):
+                                logger.info(
+                                    f"[주문동기화] 반품 상태 보호: {order_data.get('order_number')} "
+                                    f"{existing.shipping_status} → {new_ship_status} 차단"
+                                )
+                            else:
+                                update_fields["shipping_status"] = new_ship_status
+                        elif new_ship_status in exchange_statuses:
                             # 교환 상태는 항상 갱신 (배송완료 → 교환요청 등 역행 허용)
                             # 단, 이미 반품 상태인 주문은 교환으로 되돌리지 않음
                             if existing.shipping_status in (
@@ -2321,6 +2340,7 @@ async def sync_orders_from_markets(
             SET shipping_status = CASE
                 WHEN r.type = 'exchange' THEN '교환요청'
                 WHEN r.type = 'return' THEN '반품요청'
+                WHEN r.type = 'cancel' THEN '취소요청'
                 ELSE o.shipping_status
             END
             FROM samba_return r
@@ -2328,13 +2348,14 @@ async def sync_orders_from_markets(
               AND r.status NOT IN ('completed', 'cancelled', 'rejected')
               AND o.shipping_status NOT IN (
                   '교환요청', '교환회수완료', '교환재배송', '교환완료',
-                  '반품요청', '반품완료', '반품거부'
+                  '반품요청', '반품완료', '반품거부',
+                  '취소완료'
               )
         """)
         )
         await session.commit()
         logger.info(
-            "[주문동기화] 반품/교환 진행 중 원주문 shipping_status 일괄 업데이트 완료"
+            "[주문동기화] 반품/교환/취소 진행 중 원주문 shipping_status 일괄 업데이트 완료"
         )
     except Exception as _upd_err:
         logger.warning(f"[주문동기화] 원주문 일괄 업데이트 실패: {_upd_err}")
@@ -2353,7 +2374,11 @@ def _parse_iso_datetime(val: str | None) -> datetime | None:
 
 
 def _parse_smartstore_order(
-    po: dict, order_info: dict, account_id: str, account_label: str
+    po: dict,
+    order_info: dict,
+    account_id: str,
+    account_label: str,
+    claim_info: dict | None = None,
 ) -> dict[str, Any]:
     """스마트스토어 productOrder + order → SambaOrder 데이터 변환."""
     status_map = {
@@ -2371,9 +2396,11 @@ def _parse_smartstore_order(
     sale_price = po.get("totalPaymentAmount", 0) or po.get("unitPrice", 0) or 0
     quantity = po.get("quantity", 1) or 1
 
-    # 클레임 상태 (취소/반품/교환 요청 — productOrderStatus와 별도 필드)
-    claim_type = po.get("claimType", "")
-    claim_status = po.get("claimStatus", "")
+    # 클레임 상태 (취소/반품/교환 요청)
+    # 우선순위: 호출자가 전달한 claim 서브 객체 → productOrder 최상위 순으로 fallback
+    _ci = claim_info or {}
+    claim_type = _ci.get("claimType") or po.get("claimType", "") or ""
+    claim_status = _ci.get("claimStatus") or po.get("claimStatus", "") or ""
 
     claim_status_map = {
         "CANCEL_REQUEST": "취소요청",
