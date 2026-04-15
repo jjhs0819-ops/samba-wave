@@ -965,14 +965,11 @@ class MusinsaClient:
 
                 if inv:
                     is_brand_delivery = inv.get("isRedirect") is True
-                    # outOfStock이면 배송타입 무관하게 품절 처리 (브랜드배송 포함)
-                    if inv.get("outOfStock"):
+                    if inv.get("outOfStock") and not is_brand_delivery:
                         stock = 0
                         is_sold_out = True
                     elif is_brand_delivery:
-                        # 브랜드직배도 remainQuantity 있으면 활용, 없을 때만 99
-                        rq = inv.get("remainQuantity")
-                        stock = rq if rq is not None else 99
+                        stock = 99  # 브랜드직배: 재고 불명 → 99
                         is_sold_out = False
                     elif inv.get("remainQuantity") is not None:
                         stock = inv["remainQuantity"]
