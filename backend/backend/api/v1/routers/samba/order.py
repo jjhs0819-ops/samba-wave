@@ -384,6 +384,43 @@ async def find_by_order_number(
     return {"id": order.id, "order_number": order.order_number}
 
 
+@router.get("/alarm-settings")
+async def get_alarm_settings(
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """취소알람 수집 주기 및 영업시간 설정 조회."""
+    from backend.api.v1.routers.samba.proxy import _get_setting
+
+    data = await _get_setting(session, "cancel_alarm_settings") or {}
+    return {
+        "hour": data.get("hour", 0),
+        "min": data.get("min", 5),
+        "sleep_start": data.get("sleep_start", "23:00"),
+        "sleep_end": data.get("sleep_end", "07:00"),
+    }
+
+
+@router.post("/alarm-settings")
+async def save_alarm_settings(
+    body: dict,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """취소알람 수집 주기 및 영업시간 설정 저장."""
+    from backend.api.v1.routers.samba.proxy import _set_setting
+
+    await _set_setting(
+        session,
+        "cancel_alarm_settings",
+        {
+            "hour": int(body.get("hour", 0)),
+            "min": int(body.get("min", 5)),
+            "sleep_start": body.get("sleep_start", "23:00"),
+            "sleep_end": body.get("sleep_end", "07:00"),
+        },
+    )
+    return {"ok": True}
+
+
 @router.get("/{order_id}", response_model=SambaOrder)
 async def get_order(
     order_id: str,

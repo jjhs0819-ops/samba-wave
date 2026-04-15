@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import {
   accountApi,
   collectorApi,
@@ -959,6 +959,15 @@ export default function SettingsPage() {
   const [sourcingEditId, setSourcingEditId] = useState<string | null>(null)
   const [sourcingForm, setSourcingForm] = useState({ site_name: 'MUSINSA', account_label: '', username: '', password: '', chrome_profile: '', memo: '' })
   const [balanceLoading, setBalanceLoading] = useState<Record<string, boolean>>({})
+  const normalizedChromeProfiles = useMemo(() => {
+    const seen = new Set<string>()
+    return chromeProfiles.filter(profile => {
+      const key = (profile.email || profile.directory || '').trim().toLowerCase()
+      if (!key || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  }, [chromeProfiles])
 
   const loadAccounts = useCallback(async () => {
     setAccountLoading(true)
@@ -2339,35 +2348,39 @@ export default function SettingsPage() {
                 <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '120px', flexShrink: 0 }}>비밀번호</label>
                 <input style={{ ...inputStyle, flex: 1 }} type="password" placeholder="로그인 비밀번호" value={sourcingForm.password} onChange={e => setSourcingForm(prev => ({ ...prev, password: e.target.value }))} />
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '120px', flexShrink: 0 }}>크롬 프로필</label>
-                <select style={{ ...inputStyle, flex: 1 }} value={sourcingForm.chrome_profile} onChange={e => setSourcingForm(prev => ({ ...prev, chrome_profile: e.target.value }))}>
-                  <option value="">선택 안함</option>
-                  {chromeProfiles.map(p => <option key={p.email || p.directory} value={p.email || p.directory}>{p.display_name || p.name} ({p.email || p.directory})</option>)}
-                </select>
-                <button
-                  type="button"
-                  onClick={handleSyncChromeProfiles}
-                  disabled={chromeProfilesSyncing}
-                  style={{
-                    padding: '0.55rem 0.8rem',
-                    background: 'rgba(76,154,255,0.12)',
-                    color: chromeProfilesSyncing ? '#666' : '#4C9AFF',
-                    border: '1px solid rgba(76,154,255,0.35)',
-                    borderRadius: '6px',
-                    fontSize: '0.8rem',
-                    fontWeight: 600,
-                    cursor: chromeProfilesSyncing ? 'not-allowed' : 'pointer',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {chromeProfilesSyncing ? '동기화중' : '동기화'}
-                </button>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '120px', flexShrink: 0 }}>지메일</label>
-                <input style={{ ...inputStyle, flex: 1 }} placeholder="지메일 주소" value={sourcingForm.memo} onChange={e => setSourcingForm(prev => ({ ...prev, memo: e.target.value }))} />
-              </div>
+              {sourcingTab === 'MUSINSA' && (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '120px', flexShrink: 0 }}>크롬 프로필</label>
+                    <select style={{ ...inputStyle, flex: 1 }} value={sourcingForm.chrome_profile} onChange={e => setSourcingForm(prev => ({ ...prev, chrome_profile: e.target.value }))}>
+                      <option value="">선택 안함</option>
+                      {normalizedChromeProfiles.map((p, idx) => <option key={`${p.email || p.directory || 'profile'}-${idx}`} value={p.email || p.directory}>{p.display_name || p.name} ({p.email || p.directory})</option>)}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={handleSyncChromeProfiles}
+                      disabled={chromeProfilesSyncing}
+                      style={{
+                        padding: '0.55rem 0.8rem',
+                        background: 'rgba(76,154,255,0.12)',
+                        color: chromeProfilesSyncing ? '#666' : '#4C9AFF',
+                        border: '1px solid rgba(76,154,255,0.35)',
+                        borderRadius: '6px',
+                        fontSize: '0.8rem',
+                        fontWeight: 600,
+                        cursor: chromeProfilesSyncing ? 'not-allowed' : 'pointer',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {chromeProfilesSyncing ? '동기화중' : '동기화'}
+                    </button>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '120px', flexShrink: 0 }}>지메일</label>
+                    <input style={{ ...inputStyle, flex: 1 }} placeholder="지메일 주소" value={sourcingForm.memo} onChange={e => setSourcingForm(prev => ({ ...prev, memo: e.target.value }))} />
+                  </div>
+                </>
+              )}
             </div>
 
             {/* 저장 버튼 */}
@@ -2403,11 +2416,11 @@ export default function SettingsPage() {
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
                         <span style={{ flex: 1, fontSize: '0.8rem', fontWeight: 600, color: '#E5E5E5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.account_label}({a.username})</span>
-                        {a.chrome_profile && <span style={{ fontSize: '0.68rem', color: '#888', fontFamily: 'monospace' }}>{a.chrome_profile}</span>}
+                        {sourcingTab === 'MUSINSA' && a.chrome_profile && <span style={{ fontSize: '0.68rem', color: '#888', fontFamily: 'monospace' }}>{a.chrome_profile}</span>}
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem', fontSize: '0.7rem' }}>
-                        {a.chrome_profile && <span style={{ color: '#666', background: '#1A1A1A', padding: '0.05rem 0.3rem', borderRadius: '3px' }}>{chromeProfiles.find(p => p.email === a.chrome_profile || p.directory === a.chrome_profile)?.display_name || chromeProfiles.find(p => p.email === a.chrome_profile || p.directory === a.chrome_profile)?.name || a.chrome_profile}</span>}
-                        {a.memo && <span style={{ color: '#888' }}>{a.memo}</span>}
+                        {sourcingTab === 'MUSINSA' && a.chrome_profile && <span style={{ color: '#666', background: '#1A1A1A', padding: '0.05rem 0.3rem', borderRadius: '3px' }}>{chromeProfiles.find(p => p.email === a.chrome_profile || p.directory === a.chrome_profile)?.display_name || chromeProfiles.find(p => p.email === a.chrome_profile || p.directory === a.chrome_profile)?.name || a.chrome_profile}</span>}
+                        {sourcingTab === 'MUSINSA' && a.memo && <span style={{ color: '#888' }}>{a.memo}</span>}
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem', fontSize: '0.7rem' }}>
                         {(a.additional_fields as Record<string, unknown>)?.cookie_expired ? (

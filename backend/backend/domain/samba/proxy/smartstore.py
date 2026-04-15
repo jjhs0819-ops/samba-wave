@@ -1349,6 +1349,7 @@ class SmartStoreClient:
         seen_po_ids: set[str] = set()
 
         # 변경 유형별 조회 (미지정 시 PAYED만 반환되므로 각 타입 명시)
+        # 주의: lastChangedType 파라미터는 CANCEL_REQUEST (D 없음) — productOrderStatus와 다름
         change_types = [
             "PAYED",
             "DELIVERING",
@@ -1357,7 +1358,12 @@ class SmartStoreClient:
             "EXCHANGED",
             "CANCELED",
             "RETURNED",
-            "CANCEL_REQUESTED",
+            "CANCEL_REQUEST",  # 취소요청 (CANCEL_REQUESTED X — API 파라미터 값)
+            "CANCEL_DONE",  # 취소완료
+            "RETURN_REQUEST",  # 반품요청
+            "RETURN_DONE",  # 반품완료
+            "EXCHANGE_REQUEST",  # 교환요청
+            "EXCHANGE_DONE",  # 교환완료
         ]
 
         # 요청 기간 + 최근 1일 병행 조회

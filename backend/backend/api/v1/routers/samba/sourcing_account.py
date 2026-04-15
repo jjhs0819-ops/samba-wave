@@ -133,7 +133,7 @@ async def get_chrome_profiles(
 
 # 잔액 체크 요청 플래그 (확장앱이 폴링으로 확인)
 _balance_check_requested = False
-_chrome_profile_sync_requested = False
+_CHROME_PROFILE_SYNC_REQUEST_KEY = "__chrome_profile_sync_requested__"
 
 
 @router.post("/request-balance-check")
@@ -155,19 +155,59 @@ async def get_balance_check_requested():
 
 
 @router.post("/request-chrome-profile-sync")
-async def request_chrome_profile_sync():
+async def request_chrome_profile_sync(
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
     """확장앱에 크롬 프로필 동기화를 요청한다."""
-    global _chrome_profile_sync_requested
-    _chrome_profile_sync_requested = True
+    from backend.domain.samba.forbidden.model import SambaSettings
+
+    stmt = select(SambaSettings).where(
+        SambaSettings.key == _CHROME_PROFILE_SYNC_REQUEST_KEY
+    )
+    result = await session.execute(stmt)
+    existing = result.scalars().first()
+    now = datetime.now(timezone.utc)
+
+    if existing:
+        existing.value = {"requested": True, "requested_at": now.isoformat()}
+        existing.updated_at = now
+        session.add(existing)
+    else:
+        session.add(
+            SambaSettings(
+                key=_CHROME_PROFILE_SYNC_REQUEST_KEY,
+                value={"requested": True, "requested_at": now.isoformat()},
+                updated_at=now,
+            )
+        )
+    await session.commit()
     return {"ok": True}
 
 
 @router.get("/chrome-profile-sync-requested")
-async def get_chrome_profile_sync_requested():
+async def get_chrome_profile_sync_requested(
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
     """확장앱이 소비할 크롬 프로필 동기화 요청 여부."""
-    global _chrome_profile_sync_requested
-    if _chrome_profile_sync_requested:
-        _chrome_profile_sync_requested = False
+    from backend.domain.samba.forbidden.model import SambaSettings
+
+    stmt = select(SambaSettings).where(
+        SambaSettings.key == _CHROME_PROFILE_SYNC_REQUEST_KEY
+    )
+    result = await session.execute(stmt)
+    existing = result.scalars().first()
+    if (
+        existing
+        and isinstance(existing.value, dict)
+        and existing.value.get("requested")
+    ):
+        existing.value = {
+            "requested": False,
+            "consumed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        existing.updated_at = datetime.now(timezone.utc)
+        session.add(existing)
+        await session.commit()
         return {"requested": True}
     return {"requested": False}
 

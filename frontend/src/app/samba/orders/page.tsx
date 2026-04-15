@@ -143,10 +143,10 @@ export default function OrdersPage() {
   const msgTextRef = useRef<HTMLTextAreaElement>(null)
   // 취소 알림 설정 (URL 파라미터 alarm=1이면 자동 오픈)
   const [showAlarmSetting, setShowAlarmSetting] = useState(searchParams.get('alarm') === '1')
-  const [alarmHour, setAlarmHour] = useState('1')
-  const [alarmMin, setAlarmMin] = useState('0')
-  const [sleepStart, setSleepStart] = useState('23:00')
-  const [sleepEnd, setSleepEnd] = useState('07:00')
+  const [alarmHour, setAlarmHour] = useState('0')
+  const [alarmMin, setAlarmMin] = useState('5')
+  const [sleepStart, setSleepStart] = useState('00:00')
+  const [sleepEnd, setSleepEnd] = useState('09:00')
 
   const MSG_VARIABLE_TAGS = [
     { tag: '{{sellerName}}', label: '판매자명' },
@@ -200,9 +200,34 @@ export default function OrdersPage() {
     setLoading(false)
   }, [isProductMode, cpId, customStart, customEnd])
 
+  const patchOrder = useCallback((id: string, patch: Partial<SambaOrder>) => {
+    setOrders(prev => prev.map(order => (
+      order.id === id ? { ...order, ...patch } : order
+    )))
+  }, [])
+
   // 플레이오토 마켓번호 별칭 매핑
   const [siteAliasMap, setSiteAliasMap] = useState<Record<string, string>>({})
   useEffect(() => { loadOrders() }, [loadOrders])
+  // 취소알람 설정 불러오기
+  useEffect(() => {
+    orderApi.getAlarmSettings().then(d => {
+      setAlarmHour(String(d.hour))
+      setAlarmMin(String(d.min))
+      setSleepStart(d.sleep_start)
+      setSleepEnd(d.sleep_end)
+    }).catch(() => {})
+  }, [])
+  // URL 파라미터 alarm=1 변경 감지 (다른 페이지에서 링크로 이동 시)
+  useEffect(() => {
+    if (searchParams.get('alarm') === '1') setShowAlarmSetting(true)
+  }, [searchParams])
+  // CustomEvent 감지 (이미 주문 페이지에 있을 때 헤더 벨 클릭 시)
+  useEffect(() => {
+    const handler = () => setShowAlarmSetting(true)
+    window.addEventListener('open-alarm-setting', handler)
+    return () => window.removeEventListener('open-alarm-setting', handler)
+  }, [])
   useEffect(() => { channelApi.list().then(setChannels).catch(() => {}) }, [])
   useEffect(() => { accountApi.listActive().then(setAccounts).catch(() => {}) }, [])
   useEffect(() => { sourcingAccountApi.list().then(accs => setSourcingAccounts(accs.filter(a => a.is_active))).catch(() => {}) }, [])
@@ -362,7 +387,10 @@ export default function OrdersPage() {
   }
 
   const handleStatusChange = async (id: string, status: string) => {
-    try { await orderApi.updateStatus(id, status); loadOrders() }
+    try {
+      await orderApi.updateStatus(id, status)
+      patchOrder(id, { status })
+    }
     catch (e) { showAlert(e instanceof Error ? e.message : '상태 변경 실패', 'error') }
   }
 
@@ -822,6 +850,7 @@ export default function OrdersPage() {
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginBottom: '0.25rem' }}>
         <a href="/samba/returns" style={{ fontSize: '0.75rem', color: '#FF8C00', textDecoration: 'none' }}>반품교환 →</a>
         <a href="/samba/cs" style={{ fontSize: '0.75rem', color: '#4C9AFF', textDecoration: 'none' }}>CS →</a>
+        <button onClick={() => setShowAlarmSetting(true)} style={{ fontSize: '0.75rem', color: '#FFD93D', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>🔔 취소알람설정</button>
       </div>
       {/* 상품별 주문이력 모드 배너 */}
       {isProductMode && (
@@ -1409,7 +1438,7 @@ export default function OrdersPage() {
                             const val = e.target.value
                             try {
                               await orderApi.update(o.id, { sourcing_account_id: val || undefined } as Partial<SambaOrder>)
-                              loadOrders()
+                              patchOrder(o.id, { sourcing_account_id: val || undefined })
                             } catch { /* ignore */ }
                           }}
                           style={{ ...inputStyle, flex: 1, fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' }}
@@ -1983,35 +2012,45 @@ export default function OrdersPage() {
               </div>
             </div>
 
-            {/* 수면타임 */}
+            {/* 영업시간 */}
             <div style={{ marginBottom: '1.5rem' }}>
-              <label style={{ fontSize: '0.8125rem', color: '#888', display: 'block', marginBottom: '0.5rem' }}>수면타임</label>
+              <label style={{ fontSize: '0.8125rem', color: '#888', display: 'block', marginBottom: '0.5rem' }}>영업시간 (이 시간대에만 수집)</label>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <span style={{ color: '#666', fontSize: '0.8125rem' }}>시작</span>
-                <input
-                  type="time"
-                  value={sleepStart}
-                  onChange={e => setSleepStart(e.target.value)}
-                  style={{ padding: '0.4rem 0.5rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '6px', color: '#E5E5E5', fontSize: '0.875rem', outline: 'none' }}
-                />
-                <span style={{ color: '#555', fontSize: '0.875rem' }}>~</span>
-                <span style={{ color: '#666', fontSize: '0.8125rem' }}>종료</span>
                 <input
                   type="time"
                   value={sleepEnd}
                   onChange={e => setSleepEnd(e.target.value)}
                   style={{ padding: '0.4rem 0.5rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '6px', color: '#E5E5E5', fontSize: '0.875rem', outline: 'none' }}
                 />
+                <span style={{ color: '#555', fontSize: '0.875rem' }}>~</span>
+                <span style={{ color: '#666', fontSize: '0.8125rem' }}>종료</span>
+                <input
+                  type="time"
+                  value={sleepStart}
+                  onChange={e => setSleepStart(e.target.value)}
+                  style={{ padding: '0.4rem 0.5rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '6px', color: '#E5E5E5', fontSize: '0.875rem', outline: 'none' }}
+                />
               </div>
-              <p style={{ fontSize: '0.72rem', color: '#555', marginTop: '0.375rem' }}>수면타임 동안은 취소주문 수집을 하지 않습니다</p>
+              <p style={{ fontSize: '0.72rem', color: '#555', marginTop: '0.375rem' }}>영업시간 외에는 취소주문 수집을 하지 않습니다</p>
             </div>
 
             <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
               <button onClick={() => setShowAlarmSetting(false)} style={{ padding: '0.625rem 1.25rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}>취소</button>
               <button
-                onClick={() => {
-                  showAlert(`수집 주기: ${alarmHour}시간 ${alarmMin}분 / 수면타임: ${sleepStart} ~ ${sleepEnd} 저장완료`, 'success')
-                  setShowAlarmSetting(false)
+                onClick={async () => {
+                  try {
+                    await orderApi.saveAlarmSettings({
+                      hour: Number(alarmHour),
+                      min: Number(alarmMin),
+                      sleep_start: sleepStart,
+                      sleep_end: sleepEnd,
+                    })
+                    showAlert(`수집 주기: ${alarmHour}시간 ${alarmMin}분 / 영업시간: ${sleepEnd} ~ ${sleepStart} 저장완료`, 'success')
+                    setShowAlarmSetting(false)
+                  } catch {
+                    showAlert('저장 실패', 'error')
+                  }
                 }}
                 style={{ padding: '0.625rem 1.25rem', background: '#FF8C00', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}
               >저장</button>

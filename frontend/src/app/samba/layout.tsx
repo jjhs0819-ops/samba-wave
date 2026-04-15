@@ -223,9 +223,15 @@ export default function SambaLayout({
           {/* 알림 + 계정관리 + 사용자 정보 + 로그아웃 */}
           <div className="flex items-center gap-3">
             {/* 취소 알림 설정 */}
-            <Link
-              href="/samba/orders?alarm=1"
+            <button
               title="취소 알림 설정"
+              onClick={() => {
+                if (pathname.startsWith("/samba/orders")) {
+                  window.dispatchEvent(new CustomEvent("open-alarm-setting"))
+                } else {
+                  router.push("/samba/orders?alarm=1")
+                }
+              }}
               style={{
                 width: "32px",
                 height: "32px",
@@ -248,7 +254,7 @@ export default function SambaLayout({
                 <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
                 <path d="M13.73 21a2 2 0 0 1-3.46 0" />
               </svg>
-            </Link>
+            </button>
             {/* 계정관리 아이콘 */}
             <Link
               href="/samba/users"

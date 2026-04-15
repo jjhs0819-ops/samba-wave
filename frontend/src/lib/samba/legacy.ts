@@ -200,6 +200,12 @@ export const orderApi = {
     request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/cancel-source-order`, {
       method: "POST", body: JSON.stringify({ order_number: orderNumber, reason: reason || '단순변심' }),
     }),
+  getAlarmSettings: () =>
+    request<{ hour: number; min: number; sleep_start: string; sleep_end: string }>(`${SAMBA_PREFIX}/orders/alarm-settings`),
+  saveAlarmSettings: (data: { hour: number; min: number; sleep_start: string; sleep_end: string }) =>
+    request<{ ok: boolean }>(`${SAMBA_PREFIX}/orders/alarm-settings`, {
+      method: 'POST', body: JSON.stringify(data),
+    }),
 };
 
 // ── Channels ──

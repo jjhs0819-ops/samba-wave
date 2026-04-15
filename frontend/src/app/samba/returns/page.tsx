@@ -363,7 +363,7 @@ export default function ReturnsPage() {
       </div>
 
       {/* 사유별 분포 */}
-      {stats.by_reason && Object.keys(stats.by_reason).length > 0 && (() => {
+      {false && stats.by_reason && Object.keys(stats.by_reason).length > 0 && (() => {
         const reasons = stats.by_reason as Record<string, number>
         const sorted = Object.entries(reasons).sort((a, b) => b[1] - a[1])
         const maxVal = Math.max(...sorted.map(([, v]) => v), 1)
