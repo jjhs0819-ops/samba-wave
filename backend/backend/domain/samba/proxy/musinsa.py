@@ -443,7 +443,9 @@ class MusinsaClient:
                 "saleStatus": (
                     "sold_out"
                     if bool(
-                        d.get("canBuy") is False
+                        str(d.get("goodsSaleType", "")).upper()
+                        in ("STOP_SALE", "PROHIBITED", "CLOSE")
+                        or d.get("canBuy") is False
                         or d.get("isOfflineGoods") is True
                         or d.get("isSoldOut")
                         or (d.get("goodsPrice") or {}).get("isSoldOut")

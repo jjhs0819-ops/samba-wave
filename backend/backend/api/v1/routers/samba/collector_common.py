@@ -172,7 +172,7 @@ def _build_product_data(
         "images": detail.get("images", []),
         "detail_images": detail.get("detailImages") or [],
         "options": [
-            {**o, "stock": 99 if (o.get("stock") or 0) > 0 else 0}
+            {**o, "stock": o.get("stock") if o.get("stock") is not None else 0}
             for o in cleaned_options
         ],
         "category": raw_cat,

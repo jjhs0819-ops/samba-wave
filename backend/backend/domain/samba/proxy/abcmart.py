@@ -915,8 +915,9 @@ class ARTSourcingClient:
 
         images = images[:9]
 
-        # 옵션/재고
+        # 옵션/재고 (스타일컬러 복수인 경우 API가 모든 컬러 옵션을 합쳐서 반환 → 동일 사이즈명 중복 가능)
         options: list[dict[str, Any]] = []
+        _seen_opt_names: dict[str, int] = {}  # 옵션명 → options 리스트 인덱스
         for opt in data.get("productOption") or []:
             opt_name = (opt.get("optnName") or "").strip()
             if not opt_name:
@@ -927,15 +928,21 @@ class ARTSourcingClient:
             is_sold_out = sell_stat != "10001" or order_qty == 0
             opt_price_info = opt.get("optionPrice") or {}
             opt_add_amt = self._safe_int(opt_price_info.get("optnAddAmt") or 0)
-            options.append(
-                {
-                    "no": int(opt.get("prdtOptnNo") or 0),
-                    "name": opt_name,
-                    "price": sale_price + opt_add_amt,
-                    "stock": order_qty,
-                    "isSoldOut": is_sold_out,
-                }
-            )
+            entry = {
+                "no": int(opt.get("prdtOptnNo") or 0),
+                "name": opt_name,
+                "price": sale_price + opt_add_amt,
+                "stock": order_qty,
+                "isSoldOut": is_sold_out,
+            }
+            if opt_name in _seen_opt_names:
+                # 중복 사이즈명 → 재고 있는 쪽 우선 채택
+                idx = _seen_opt_names[opt_name]
+                if options[idx].get("isSoldOut") and not is_sold_out:
+                    options[idx] = entry
+            else:
+                _seen_opt_names[opt_name] = len(options)
+                options.append(entry)
 
         # 카테고리
         category_str = (data.get("stdCtgrNameInline") or "").strip()
@@ -1861,6 +1868,22 @@ class ARTSourcingClient:
 
         return images
 
+    @staticmethod
+    def _dedup_options(options: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """동일 옵션명 중복 제거 — 재고 있는 쪽 우선 채택."""
+        seen: dict[str, int] = {}
+        result: list[dict[str, Any]] = []
+        for opt in options:
+            name = opt.get("name", "")
+            if name in seen:
+                # 기존 항목이 품절이고 새 항목에 재고 있으면 교체
+                if result[seen[name]].get("isSoldOut") and not opt.get("isSoldOut"):
+                    result[seen[name]] = opt
+            else:
+                seen[name] = len(result)
+                result.append(opt)
+        return result
+
     def _parse_options(self, html: str) -> list[dict[str, Any]]:
         """옵션(사이즈/색상) 정보 추출."""
         options: list[dict[str, Any]] = []
@@ -1903,7 +1926,7 @@ class ARTSourcingClient:
                         }
                     )
                 if options:
-                    return options
+                    return self._dedup_options(options)
             except (json.JSONDecodeError, TypeError):
                 pass
 
@@ -1964,7 +1987,7 @@ class ARTSourcingClient:
                         }
                     )
 
-        return options
+        return self._dedup_options(options)
 
     def _check_sold_out(self, html: str, options: list[dict[str, Any]]) -> bool:
         """품절 여부 판단."""
