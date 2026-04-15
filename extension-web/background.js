@@ -886,6 +886,9 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'balanceCheckPoll') {
     pollBalanceCheckRequest()
   }
+  if (alarm.name === 'chromeProfileSyncPoll') {
+    pollChromeProfileSyncRequest()
+  }
 })
 
 // 수집 폴링 — job 없으면 5분 후 자동 중지, job 있으면 자동 재시작
@@ -968,10 +971,35 @@ async function pollBalanceCheckRequest() {
   }
 }
 
+async function pollChromeProfileSyncRequest() {
+  const urls = [
+    'http://localhost:28080/api/v1/samba/sourcing-accounts/chrome-profile-sync-requested',
+    `${PROXY_URL}/api/v1/samba/sourcing-accounts/chrome-profile-sync-requested`,
+  ]
+  for (const url of urls) {
+    try {
+      const r = await apiFetch(url)
+      if (r.ok) {
+        const data = await r.json()
+        if (data.requested) {
+          console.log('[크롬프로필] 서버 동기화 요청 감지')
+          syncChromeProfile()
+          return
+        }
+      }
+    } catch { /* ignore */ }
+  }
+}
+
 // 잔액 폴링 (5분 주기, 서버에 요청 없으면 아무 동작 안 함)
 chrome.alarms.get('balanceCheckPoll', (alarm) => {
   if (!alarm) {
     chrome.alarms.create('balanceCheckPoll', { periodInMinutes: 5 })
+  }
+})
+chrome.alarms.get('chromeProfileSyncPoll', (alarm) => {
+  if (!alarm) {
+    chrome.alarms.create('chromeProfileSyncPoll', { periodInMinutes: 0.5 })
   }
 })
 
@@ -1012,6 +1040,7 @@ async function syncChromeProfile() {
 chrome.runtime.onInstalled.addListener(() => { startCollectPolling(); syncChromeProfile() })
 chrome.runtime.onStartup.addListener(() => { startCollectPolling(); syncChromeProfile() })
 startCollectPolling()
+pollChromeProfileSyncRequest()
 syncChromeProfile()
 
 // ==================== AI소싱 큐 폴링 ====================

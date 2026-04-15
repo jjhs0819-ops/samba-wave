@@ -139,9 +139,9 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusCh
             else if (log.msg.includes('품절')) color = '#A78BFA'
             else if (log.msg.includes('사이클 완료')) { color = '#4C9AFF'; fontWeight = 700 }
             else if (log.msg.includes('전송완료')) {
-              // 통합 로그: 가격변동/재고전송 + 전송완료가 한 줄에 공존
-              if (log.msg.includes('가격') && log.msg.includes('재고')) color = '#4C9AFF'
-              else color = '#7BAF7E'
+              if (log.msg.includes('가격변동') && log.msg.includes('재고전송')) color = '#4C9AFF'  // 가격+재고 동시 전송
+              else if (log.msg.includes('재고전송')) color = '#FFD93D'  // 재고만
+              // 가격변동만 → 기본색(흰색) 유지
             }
             else if (log.msg.includes('스킵')) color = '#888'
             else if (log.msg.includes('재고변동')) color = '#FFD93D'

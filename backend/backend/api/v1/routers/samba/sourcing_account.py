@@ -133,6 +133,7 @@ async def get_chrome_profiles(
 
 # 잔액 체크 요청 플래그 (확장앱이 폴링으로 확인)
 _balance_check_requested = False
+_chrome_profile_sync_requested = False
 
 
 @router.post("/request-balance-check")
@@ -149,6 +150,24 @@ async def get_balance_check_requested():
     global _balance_check_requested
     if _balance_check_requested:
         _balance_check_requested = False
+        return {"requested": True}
+    return {"requested": False}
+
+
+@router.post("/request-chrome-profile-sync")
+async def request_chrome_profile_sync():
+    """확장앱에 크롬 프로필 동기화를 요청한다."""
+    global _chrome_profile_sync_requested
+    _chrome_profile_sync_requested = True
+    return {"ok": True}
+
+
+@router.get("/chrome-profile-sync-requested")
+async def get_chrome_profile_sync_requested():
+    """확장앱이 소비할 크롬 프로필 동기화 요청 여부."""
+    global _chrome_profile_sync_requested
+    if _chrome_profile_sync_requested:
+        _chrome_profile_sync_requested = False
         return {"requested": True}
     return {"requested": False}
 

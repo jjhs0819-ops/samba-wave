@@ -22,6 +22,9 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'balanceCheckPoll') {
     pollBalanceCheckRequest()
   }
+  if (alarm.name === 'chromeProfileSyncPoll') {
+    pollChromeProfileSyncRequest()
+  }
 })
 
 // 무신사 잔액 체크 — 버튼 요청 시에만 실행
@@ -61,10 +64,35 @@ async function pollBalanceCheckRequest() {
   }
 }
 
+async function pollChromeProfileSyncRequest() {
+  const urls = [
+    'http://localhost:28080/api/v1/samba/sourcing-accounts/chrome-profile-sync-requested',
+    `${PROXY_URL}/api/v1/samba/sourcing-accounts/chrome-profile-sync-requested`,
+  ]
+  for (const url of urls) {
+    try {
+      const r = await apiFetch(url)
+      if (r.ok) {
+        const data = await r.json()
+        if (data.requested) {
+          console.log('[크롬프로필] 서버 동기화 요청 감지')
+          syncChromeProfile()
+          return
+        }
+      }
+    } catch { /* ignore */ }
+  }
+}
+
 // 잔액 폴링 (5분 주기, 서버에 요청 없으면 아무 동작 안 함)
 chrome.alarms.get('balanceCheckPoll', (alarm) => {
   if (!alarm) {
     chrome.alarms.create('balanceCheckPoll', { periodInMinutes: 5 })
+  }
+})
+chrome.alarms.get('chromeProfileSyncPoll', (alarm) => {
+  if (!alarm) {
+    chrome.alarms.create('chromeProfileSyncPoll', { periodInMinutes: 0.5 })
   }
 })
 
@@ -127,4 +155,5 @@ chrome.runtime.onStartup.addListener(() => {
 })
 setupCookieSyncAlarm()
 startCollectPolling()
+pollChromeProfileSyncRequest()
 syncChromeProfile()

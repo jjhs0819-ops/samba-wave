@@ -1744,6 +1744,8 @@ export const sourcingAccountApi = {
     request<{ balance: number; mileage: number; balance_updated_at: string; has_cookie: boolean }>(`${SAMBA_PREFIX}/sourcing-accounts/${id}/balance`),
   requestBalanceCheck: () =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/sourcing-accounts/request-balance-check`, { method: 'POST' }),
+  requestChromeProfileSync: () =>
+    request<{ ok: boolean }>(`${SAMBA_PREFIX}/sourcing-accounts/request-chrome-profile-sync`, { method: 'POST' }),
 }
 
 // ── Tenant (티어/사용량) ──

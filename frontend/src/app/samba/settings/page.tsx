@@ -953,6 +953,7 @@ export default function SettingsPage() {
   const [sourcingAccounts, setSourcingAccounts] = useState<SambaSourcingAccount[]>([])
   const [sourcingSites, setSourcingSites] = useState<{ id: string; name: string; group: string }[]>([])
   const [chromeProfiles, setChromeProfiles] = useState<ChromeProfile[]>([])
+  const [chromeProfilesSyncing, setChromeProfilesSyncing] = useState(false)
   const [sourcingTab, setSourcingTab] = useState('MUSINSA')
   const [sourcingFormOpen, setSourcingFormOpen] = useState(false)
   const [sourcingEditId, setSourcingEditId] = useState<string | null>(null)
@@ -1279,6 +1280,30 @@ export default function SettingsPage() {
       setChromeProfiles(profiles)
     } catch { /* ignore */ }
   }, [])
+
+  const handleSyncChromeProfiles = async () => {
+    setChromeProfilesSyncing(true)
+    try {
+      await sourcingAccountApi.requestChromeProfileSync()
+
+      let profiles: ChromeProfile[] = []
+      for (let i = 0; i < 12; i++) {
+        await new Promise(resolve => setTimeout(resolve, 2500))
+        profiles = await sourcingAccountApi.getChromeProfiles()
+        setChromeProfiles(profiles)
+        if (profiles.length > 0) break
+      }
+
+      if (profiles.length > 0) {
+        showAlert(`크롬 프로필 ${profiles.length}개를 동기화했습니다.`, 'success')
+      } else {
+        showAlert('동기화 요청은 보냈지만 프로필이 아직 없습니다. 확장앱 로그인 상태를 확인하세요.', 'error')
+      }
+    } catch (err) {
+      showAlert(err instanceof Error ? err.message : '크롬 프로필 동기화 실패', 'error')
+    }
+    setChromeProfilesSyncing(false)
+  }
 
   // 프록시 설정 로드
   const loadProxies = useCallback(async () => {
@@ -2320,6 +2345,24 @@ export default function SettingsPage() {
                   <option value="">선택 안함</option>
                   {chromeProfiles.map(p => <option key={p.email || p.directory} value={p.email || p.directory}>{p.display_name || p.name} ({p.email || p.directory})</option>)}
                 </select>
+                <button
+                  type="button"
+                  onClick={handleSyncChromeProfiles}
+                  disabled={chromeProfilesSyncing}
+                  style={{
+                    padding: '0.55rem 0.8rem',
+                    background: 'rgba(76,154,255,0.12)',
+                    color: chromeProfilesSyncing ? '#666' : '#4C9AFF',
+                    border: '1px solid rgba(76,154,255,0.35)',
+                    borderRadius: '6px',
+                    fontSize: '0.8rem',
+                    fontWeight: 600,
+                    cursor: chromeProfilesSyncing ? 'not-allowed' : 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {chromeProfilesSyncing ? '동기화중' : '동기화'}
+                </button>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                 <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '120px', flexShrink: 0 }}>지메일</label>
