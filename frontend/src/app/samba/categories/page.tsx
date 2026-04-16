@@ -6,6 +6,7 @@ import { collectorApi, categoryApi, accountApi, type SambaCollectedProduct } fro
 import { MARKET_LABELS } from '@/lib/samba/markets'
 import { showAlert } from '@/components/samba/Modal'
 import { card, fmtNum } from '@/lib/samba/styles'
+import { fmtTime } from '@/lib/samba/utils'
 
 // 카테고리 계층 구조 타입
 interface CatLevel {
@@ -306,7 +307,7 @@ export default function CategoriesPage() {
         const result = await categoryApi.aiSuggestBulk(targetMarkets, selectedSite, categoryPrefix)
         setBulkResult(result)
         const totalCalls = result.mapped + result.updated
-        setLastAiUsage({ calls: totalCalls, tokens: totalCalls * 1800, cost: totalCalls * COST_PER_CALL_KRW, date: new Date().toLocaleTimeString() })
+        setLastAiUsage({ calls: totalCalls, tokens: totalCalls * 1800, cost: totalCalls * COST_PER_CALL_KRW, date: fmtTime() })
         // 매핑 현황 새로고침
         if (totalCalls > 0) {
           const refreshed = await categoryApi.listMappings() as MappingRow[]
@@ -325,7 +326,7 @@ export default function CategoriesPage() {
         const result = await categoryApi.aiSuggestBulk(targetMarkets)
         setBulkResult(result)
         const totalCalls = result.mapped + result.updated
-        setLastAiUsage({ calls: totalCalls, tokens: totalCalls * 1800, cost: totalCalls * COST_PER_CALL_KRW, date: new Date().toLocaleTimeString() })
+        setLastAiUsage({ calls: totalCalls, tokens: totalCalls * 1800, cost: totalCalls * COST_PER_CALL_KRW, date: fmtTime() })
       } catch (e) {
         const msg = e instanceof Error ? e.message : '알 수 없는 오류'
         showAlert(`벌크 매핑 실패: ${msg}`, 'error')
@@ -881,7 +882,7 @@ export default function CategoriesPage() {
 
     setMappings(updatedMappings)
     setMarketAiLoading(null)
-    setLastAiUsage({ calls: successCount, tokens: successCount * 1800, cost: successCount * COST_PER_CALL_KRW, date: new Date().toLocaleTimeString() })
+    setLastAiUsage({ calls: successCount, tokens: successCount * 1800, cost: successCount * COST_PER_CALL_KRW, date: fmtTime() })
     setMarketAiProgress({ market, current: total, total, success: successCount, fail: errorCount })
     if (skippedCount > 0) showAlert(`${fmtNum(skippedCount)}건은 이미 매핑되어 건너뜀`, 'info')
   }

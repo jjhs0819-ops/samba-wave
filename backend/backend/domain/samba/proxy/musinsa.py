@@ -1139,6 +1139,16 @@ class MusinsaClient:
                             f"couponNm={c.get('couponNm', '')[:30]}"
                         )
                         # 조건 필터링: 사용 불가 쿠폰 제외
+                        coupon_apply = c.get("couponApply")
+                        if (
+                            coupon_apply is not None
+                            and not coupon_apply
+                            and coupon_apply != "Y"
+                        ):
+                            logger.info(
+                                f"[쿠폰 스킵] {goods_no}: couponApply={coupon_apply} — 적용 불가 쿠폰"
+                            )
+                            continue
                         if (c.get("maxLimitQty", 0) or 0) > 1:
                             logger.info(
                                 f"[쿠폰 스킵] {goods_no}: maxLimitQty={c.get('maxLimitQty')} — 2개 이상 구매 조건"

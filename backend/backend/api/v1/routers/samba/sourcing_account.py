@@ -349,6 +349,51 @@ class SyncBalanceRequest(BaseModel):
     expired: bool = False
 
 
+async def _sync_musinsa_cookie_to_settings(
+    session: AsyncSession,
+    new_cookie: str,
+    all_accounts: list,
+) -> None:
+    """SambaSourcingAccount 쿠키를 SambaSettings.musinsa_cookies 배열에 동기화.
+
+    refresher.py의 _get_musinsa_cookies()는 SambaSettings만 읽으므로,
+    확장앱이 자동 갱신한 쿠키가 오토튠에 반영되려면 이 동기화가 필요.
+    """
+    import json
+
+    from backend.domain.samba.forbidden.model import SambaSettings
+
+    # 모든 활성 무신사 계정의 쿠키 수집 (만료되지 않은 것만)
+    cookies: list[str] = []
+    for a in all_accounts:
+        af = a.additional_fields or {}
+        cookie_val = af.get("musinsa_cookie", "")
+        if cookie_val and not af.get("cookie_expired"):
+            cookies.append(cookie_val)
+
+    # 새 쿠키가 목록에 없으면 맨 앞에 추가
+    if new_cookie not in cookies:
+        cookies.insert(0, new_cookie)
+
+    if not cookies:
+        return
+
+    try:
+        result = await session.execute(
+            select(SambaSettings).where(SambaSettings.key == "musinsa_cookies")
+        )
+        row = result.scalar_one_or_none()
+        if row:
+            row.value = json.dumps(cookies)
+        else:
+            session.add(SambaSettings(key="musinsa_cookies", value=json.dumps(cookies)))
+        logger.info(
+            f"[쿠키동기화] SambaSettings.musinsa_cookies 업데이트: {len(cookies)}개"
+        )
+    except Exception as e:
+        logger.warning(f"[쿠키동기화] SambaSettings 업데이트 실패 (무시): {e}")
+
+
 @router.post("/sync-balance")
 async def sync_balance_from_extension(
     body: SyncBalanceRequest,
@@ -412,6 +457,9 @@ async def sync_balance_from_extension(
         balance_updated_at=datetime.now(timezone.utc),
         additional_fields=extra,
     )
+    # refresher가 읽는 SambaSettings.musinsa_cookies에도 동기화
+    if body.cookie:
+        await _sync_musinsa_cookie_to_settings(session, body.cookie, accounts)
     logger.info(
         f"[잔액동기화] {matched.account_label}: 머니 {body.money:,.0f} / 적립금 {body.mileage:,.0f}"
     )

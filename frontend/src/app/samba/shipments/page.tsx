@@ -18,6 +18,7 @@ import { MARKET_TYPE_TO_POLICY_KEY } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { SITE_COLORS } from '@/lib/samba/constants'
 import { inputStyle, fmtNum } from '@/lib/samba/styles'
+import { fmtTime } from '@/lib/samba/utils'
 
 const STATUS_CONFIG: Record<string, { bg: string; text: string; label: string }> = {
   pending:      { bg: 'rgba(100,100,100,0.15)', text: '#888', label: '대기중' },
@@ -165,7 +166,7 @@ export default function ShipmentsPage() {
               if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
               // Job 결과를 프론트 로그에 직접 표시 (링 버퍼 인스턴스 격리 시 누락 방지)
               const r = (j.result || {}) as Record<string, number>
-              const _ts = new Date().toLocaleTimeString()
+              const _ts = fmtTime()
               const statusLabel = j.status === 'completed' ? '전송 완료' : j.status === 'failed' ? '전송 실패' : '전송 중단'
               setLogMessages(prev => [...prev, `[${_ts}] ${statusLabel} — 성공 ${fmtNum(r.success || 0)}건, 스킵 ${fmtNum(r.skipped || 0)}건, 실패 ${fmtNum(r.failed || 0)}건`].slice(-30))
               setTransmitting(false)
@@ -447,7 +448,7 @@ export default function ShipmentsPage() {
     if (!await showConfirm(`${targetProducts.length}개 상품을 ${targetLabels || '선택 계정'}에서 마켓삭제하시겠습니까?`)) return
 
     setDeleting(true)
-    const ts = () => new Date().toLocaleTimeString()
+    const ts = fmtTime
     const addLog = (msg: string) => setLogMessages(prev => [...prev, msg].slice(-30))
     const accLabelMap: Record<string, string> = {}
     for (const acc of accounts) {
@@ -575,7 +576,7 @@ export default function ShipmentsPage() {
     } catch { /* ignore */ }
 
     setDeleting(true)
-    const ts = () => new Date().toLocaleTimeString()
+    const ts = fmtTime
     const addLog = (msg: string) => setLogMessages(prev => [...prev, msg].slice(-30))
     addLog(`[${ts()}] 검색결과 마켓삭제 시작 — 상품 ${fmtNum(targetProducts.length)}개, ${targetLabels}`)
 
@@ -662,7 +663,7 @@ export default function ShipmentsPage() {
     setPausedJobPayload(null)
     setTransmitting(true)
 
-    const ts = () => new Date().toLocaleTimeString()
+    const ts = fmtTime
     const addLog = (msg: string) => setLogMessages(prev => [...prev, msg].slice(-30))
 
     // 계정 ID → 표시명 매핑
@@ -797,7 +798,7 @@ export default function ShipmentsPage() {
           }
           if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
             if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
-            const _ts = new Date().toLocaleTimeString()
+            const _ts = fmtTime()
             if (j.error) addLog(`[${_ts}] ${j.error}`)
             // Job 결과를 프론트 로그에 직접 표시 (링 버퍼 인스턴스 격리 시 누락 방지)
             const r = (j.result || {}) as Record<string, number>
@@ -829,7 +830,7 @@ export default function ShipmentsPage() {
     setTransmitting(true)
     abortRef.current = false
     cancelledAtRef.current = 0 // 폴링 업데이트 재허용
-    const ts = () => new Date().toLocaleTimeString()
+    const ts = fmtTime
     const addLog = (msg: string) => setLogMessages(prev => [...prev, msg].slice(-30))
 
     try {
@@ -873,7 +874,7 @@ export default function ShipmentsPage() {
           }
           if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
             if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
-            const _ts = new Date().toLocaleTimeString()
+            const _ts = fmtTime()
             if (j.error) addLog(`[${_ts}] ${j.error}`)
             const r = (j.result || {}) as Record<string, number>
             const statusLabel = j.status === 'completed' ? '전송 완료' : j.status === 'failed' ? '전송 실패' : '작업중지됨'
@@ -1117,7 +1118,7 @@ export default function ShipmentsPage() {
               style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,107,107,0.12)', border: '1px solid rgba(255,107,107,0.35)', color: '#FF6B6B', borderRadius: '4px', cursor: deleting ? 'not-allowed' : 'pointer', fontWeight: 600 }}>마켓삭제</button>
             <button disabled={!!stopping} onClick={async () => {
                 setStopping('cancel')
-                const ts = new Date().toLocaleTimeString()
+                const ts = fmtTime()
                 setLogMessages(prev => [...prev, `[${ts}] 일시정지 요청...`].slice(-30))
                 abortRef.current = true
                 if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
@@ -1141,7 +1142,7 @@ export default function ShipmentsPage() {
               >이어하기</button>
             <button disabled={!!stopping} onClick={async () => {
                 setStopping('emergency')
-                const ts = new Date().toLocaleTimeString()
+                const ts = fmtTime()
                 setLogMessages(prev => [...prev, `[${ts}] 작업중지 요청...`].slice(-30))
                 abortRef.current = true
                 if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
@@ -1204,7 +1205,7 @@ export default function ShipmentsPage() {
                   if (allIds.length === 0) { showAlert('선택된 소싱사이트에 해당하는 상품이 없습니다'); return }
                   // Job 직접 생성
                   setTransmitting(true)
-                  const ts = () => new Date().toLocaleTimeString()
+                  const ts = fmtTime
                   const addLog = (msg: string) => setLogMessages(prev => [...prev, msg].slice(-30))
                   const items: string[] = []
                   if (updateItems.price) items.push('price', 'stock')
@@ -1266,7 +1267,7 @@ export default function ShipmentsPage() {
                         if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
                         // Job 결과를 프론트 로그에 직접 표시 (링 버퍼 인스턴스 격리 시 누락 방지)
                         const r = (j.result || {}) as Record<string, number>
-                        const _ts = new Date().toLocaleTimeString()
+                        const _ts = fmtTime()
                         const statusLabel = j.status === 'completed' ? '전송 완료' : j.status === 'failed' ? '전송 실패' : '전송 중단'
                         setLogMessages(prev => [...prev, `[${_ts}] ${statusLabel} — 성공 ${fmtNum(r.success || 0)}건, 스킵 ${fmtNum(r.skipped || 0)}건, 실패 ${fmtNum(r.failed || 0)}건`].slice(-30))
                         setTransmitting(false)

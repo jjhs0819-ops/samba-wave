@@ -1787,6 +1787,7 @@ class JobWorker:
                         if det:
                             _lotteon_details[pid] = det
                     done = min(batch_start + BATCH_SIZE, len(new_items))
+                    await repo.update_progress(job.id, done, len(new_items))
                     logger.info(
                         f"[잡워커] LOTTEON 상세 선취합 [{done}/{len(new_items)}]"
                     )

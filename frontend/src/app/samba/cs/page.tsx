@@ -23,7 +23,7 @@ function htmlToText(html: string): string {
 }
 import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
 import { PERIOD_BUTTONS } from '@/lib/samba/constants'
-import { fmtDate } from '@/lib/samba/utils'
+import { fmtDate, fmtTime } from '@/lib/samba/utils'
 
 // 답변 상태 맵
 const REPLY_STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
@@ -280,7 +280,7 @@ export default function CSPage() {
 
   // 검색
   const handleSearch = async () => {
-    const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    const ts = fmtTime
     // 드롭다운 value 파싱: "" = 전체, "market:XXX" = 마켓 단위, "account:ID" = 개별 계정
     let selectedMarket: string | undefined
     let label: string

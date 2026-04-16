@@ -21,7 +21,7 @@ import {
 } from "@/lib/samba/api/operations";
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { SITE_COLORS, SOURCING_SEARCH_URLS } from '@/lib/samba/constants'
-import { fmtDate as _fmtDate } from '@/lib/samba/utils'
+import { fmtDate as _fmtDate, fmtTime } from '@/lib/samba/utils'
 import { fmtNum } from '@/lib/samba/styles'
 
 const fmtDate = (iso: string | undefined | null) => _fmtDate(iso, '.')
@@ -343,7 +343,7 @@ export default function CollectorPage() {
   }, []);
 
   const addLog = useCallback((msg: string) => {
-    const time = new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    const time = fmtTime();
     setCollectLog((prev) => [...prev, `[${time}] ${msg}`].slice(-30));
     setTimeout(() => {
       if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -1682,7 +1682,7 @@ export default function CollectorPage() {
               const scopeLabel = [aiImgScope.thumbnail && '대표', aiImgScope.additional && '추가', aiImgScope.detail && '상세'].filter(Boolean).join('+')
               const ok = await showConfirm(`${fmtNum(activeIds.length)}개 그룹 (${fmtNum(productIds.length)}개 상품)의 ${scopeLabel} 이미지를 변환하시겠습니까?${skipMsg}`)
               if (!ok) return
-              const ts = () => new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+              const ts = fmtTime
               setAiImgTransforming(true)
               aiJobAbortRef.current = false
               setAiJobTitle(`AI 이미지변환 (${fmtNum(productIds.length)}개)`)
@@ -1752,7 +1752,7 @@ export default function CollectorPage() {
               setAiJobDone(false)
               setAiJobModal(true)
               const addLog = (msg: string) => setAiJobLogs(prev => [...prev, msg])
-              const ts = () => new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+              const ts = fmtTime
               const startTime = ts()
               let success = 0
               let fail = 0

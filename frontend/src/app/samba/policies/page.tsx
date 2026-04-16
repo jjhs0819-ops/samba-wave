@@ -21,6 +21,7 @@ import { MARKETS, MARKET_ID_BY_LABEL, POLICY_MARKETS_DOMESTIC, POLICY_MARKETS_OV
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
 import { SITE_COLORS } from '@/lib/samba/constants'
+import { fmtTime } from '@/lib/samba/utils'
 import NumInput from '@/components/samba/NumInput'
 
 
@@ -1492,7 +1493,7 @@ export default function PoliciesPage() {
                             const result = await policyApi.aiChange(aiPolicyCommand.trim())
                             setAiPolicyChanges(result.changes)
                             setAiPolicyApplied(result.applied)
-                            setLastAiUsage({ calls: 1, tokens: 1800, cost: 15, date: new Date().toLocaleTimeString() })
+                            setLastAiUsage({ calls: 1, tokens: 1800, cost: 15, date: fmtTime() })
                             setPolicies(await policyApi.list().catch(() => []))
                           } catch (err) {
                             const msg = err instanceof Error ? err.message : '실패'
@@ -1527,7 +1528,7 @@ export default function PoliciesPage() {
                         const result = await policyApi.aiChange(aiPolicyCommand.trim())
                         setAiPolicyChanges(result.changes)
                         setAiPolicyApplied(result.applied)
-                        setLastAiUsage({ calls: 1, tokens: 1800, cost: 15, date: new Date().toLocaleTimeString() })
+                        setLastAiUsage({ calls: 1, tokens: 1800, cost: 15, date: fmtTime() })
                         setPolicies(await policyApi.list().catch(() => []))
                       } catch (err) {
                         const msg = err instanceof Error ? err.message : '실패'

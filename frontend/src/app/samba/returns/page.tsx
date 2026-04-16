@@ -6,6 +6,7 @@ import { returnApi, type SambaReturn } from '@/lib/samba/api/support'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
 import { PERIOD_BUTTONS } from '@/lib/samba/constants'
+import { fmtTime } from '@/lib/samba/utils'
 
 const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
   requested: { label: '요청됨', bg: 'rgba(255,211,61,0.15)', text: '#FFD93D' },
@@ -134,7 +135,7 @@ export default function ReturnsPage() {
 
   // 가져오기 버튼 — 마켓 동기화 후 DB 데이터 로드
   const loadReturns = async () => {
-    const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    const ts = fmtTime
 
     // 마켓타입 선택 시 해당 마켓 계정들만 순회 동기화
     if (syncAccountId.startsWith('type:')) {

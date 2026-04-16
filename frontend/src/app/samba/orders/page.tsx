@@ -18,7 +18,7 @@ import { sourcingAccountApi, type SambaSourcingAccount } from '@/lib/samba/api/o
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { PERIOD_BUTTONS, DELIVERY_TRACKING_URLS } from '@/lib/samba/constants'
 import { inputStyle, fmtNum } from '@/lib/samba/styles'
-import { fmtDate } from '@/lib/samba/utils'
+import { fmtDate, fmtTime } from '@/lib/samba/utils'
 
 const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
   pending:    { label: '주문접수', bg: 'rgba(255,211,61,0.15)', text: '#FFD93D' },
@@ -274,7 +274,7 @@ export default function OrdersPage() {
 
   const handleFetch = async () => {
     setSyncing(true)
-    const ts = () => new Date().toLocaleTimeString()
+    const ts = () => fmtTime()
     const daysMap: Record<string, number> = {
       yesterday: 1, today: 1, thisweek: 7, lastweek: 14, '1week': 7, '15days': 15,
       thismonth: 31, lastmonth: 60, '1month': 30, '3months': 90, '6months': 180,
@@ -1282,7 +1282,7 @@ export default function OrdersPage() {
                       <button onClick={() => openUrlModal(o.id)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>미등록 입력</button>
                       <button onClick={() => handleTracking(o.shipping_company || '', o.tracking_number || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>배송조회</button>
                       <button onClick={async () => {
-                        const ts = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                        const ts = fmtTime()
                         setRefreshLog(prev => ({ ...prev, [o.id]: `[${ts}] 가격재고 갱신 중...` }))
                         // 마켓상품번호 → 수집상품 ID 역추적
                         let cpId = ''
@@ -1313,7 +1313,7 @@ export default function OrdersPage() {
                           const logMsg = detail
                             ? `${detail.name?.slice(0, 25)} → ${detail.detail}`
                             : res.changed > 0 ? '변동 감지' : '변동 없음'
-                          const ts2 = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                          const ts2 = fmtTime()
                           setRefreshLog(prev => ({ ...prev, [o.id]: `[${ts2}] ${logMsg}` }))
                         } catch (e) {
                           setRefreshLog(prev => ({ ...prev, [o.id]: `[${ts}] 갱신 실패: ${e instanceof Error ? e.message : ''}` }))
@@ -1551,12 +1551,12 @@ export default function OrdersPage() {
                             const tn = (document.getElementById(`ship-tn-${o.id}`) as HTMLInputElement)?.value.trim() || ''
                             const alreadyShipped = o.shipping_status === '송장전송완료'
                             if (co && tn && alreadyShipped) {
-                              const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                              const ts = fmtTime
                               try { await orderApi.update(o.id, { shipping_company: co, tracking_number: tn }) } catch { /* ignore */ }
                               setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 수정 저장완료 (${co} ${tn}) — 스마트스토어는 송장수정 API를 지원하지 않습니다. 판매자센터에서 직접 수정해주세요.`])
                               loadOrders()
                             } else if (co && tn) {
-                              const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                              const ts = fmtTime
                               setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 전송 중... (${co} ${tn})`])
                               try {
                                 const res = await orderApi.shipOrder(o.id, co, tn)
@@ -1594,12 +1594,12 @@ export default function OrdersPage() {
                             const alreadyShipped = o.shipping_status === '송장전송완료'
                             if (co && tn && changed && alreadyShipped) {
                               // 이미 발송된 주문 — DB만 저장, 마켓 수정은 판매자센터에서
-                              const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                              const ts = fmtTime
                               try { await orderApi.update(o.id, { shipping_company: co, tracking_number: tn }) } catch { /* ignore */ }
                               setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 수정 저장완료 (${co} ${tn}) — 스마트스토어는 송장수정 API를 지원하지 않습니다. 판매자센터에서 직접 수정해주세요.`])
                               loadOrders()
                             } else if (co && tn && (changed || retry)) {
-                              const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                              const ts = fmtTime
                               setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 전송 중... (${co} ${tn})`])
                               try {
                                 const res = await orderApi.shipOrder(o.id, co, tn)

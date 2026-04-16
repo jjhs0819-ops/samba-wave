@@ -20,6 +20,7 @@ import { fetchWithAuth } from "@/lib/samba/api/shared";
 import { detailTemplateApi, nameRuleApi, type SambaNameRule, type SambaDetailTemplate } from "@/lib/samba/api/support";
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtNum as fmt } from '@/lib/samba/styles'
+import { fmtTime } from '@/lib/samba/utils'
 import ProductCard from './components/ProductCard'
 import ProductImage from './components/ProductImage'
 
@@ -107,7 +108,7 @@ export default function ProductsPage() {
   // 작업 로그 (영상생성/이미지생성/태그생성 등)
   const [taskLogs, setTaskLogs] = useState<string[]>([]);
   const addTaskLog = (msg: string) => {
-    const ts = new Date().toLocaleTimeString()
+    const ts = fmtTime()
     setTaskLogs(prev => [...prev, `[${ts}] ${msg}`])
   }
   // AI 비용 추적
@@ -462,7 +463,7 @@ export default function ProductsPage() {
         const costVal = p?.cost || p?.sale_price
         const priceStr = costVal != null ? `₩${fmt(Number(costVal))}` : '-'
         const stockStr = p?.sale_status === 'preorder' ? '판매예정' : p?.sale_status === 'sold_out' || p?.is_sold_out ? '품절' : '재고있음'
-        const now = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+        const now = fmtTime()
         const retransmitStr = data.retransmitted ? ` | 마켓 ${data.retransmit_accounts}계정 수정등록` : ''
         setActiveLog({ productId, message: `[${now}] ${productName} → ${priceStr} | ${stockStr}${retransmitStr}` })
         // 해당 상품만 갱신 (전체 새로고침 없음)
@@ -486,7 +487,7 @@ export default function ProductsPage() {
     }
     if (!await showConfirm('마켓에서 상품을 삭제(판매중지)하시겠습니까?')) return
     const productName = (p?.name || productId).slice(0, 20)
-    const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    const ts = fmtTime
     setAiJobTitle(`마켓삭제 - ${productName}`)
     setAiJobLogs([])
     setAiJobDone(false)
@@ -1139,7 +1140,7 @@ export default function ProductsPage() {
             const ok = await showConfirm(`선택된 ${fmt(selectedIds.size)}개 상품의 ${scopeLabel} 이미지를 변환하시겠습니까?`)
             if (!ok) return
             const ids = [...selectedIds]
-            const ts = () => new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+            const ts = fmtTime
             setAiImgTransforming(true)
             aiJobAbortRef.current = false
             setAiJobTitle(`AI 이미지변환 (${fmt(ids.length)}개)`)
@@ -1231,7 +1232,7 @@ export default function ProductsPage() {
             setAiJobDone(false)
             setAiJobModal(true)
             const addLog = (msg: string) => setAiJobLogs(prev => [...prev, msg])
-            const ts = () => new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+            const ts = fmtTime
             // allProducts에 없는 상품 정보 미리 로드 (500개씩 청크)
             const missingIds = ids.filter(id => !allProducts.find(p => p.id === id))
             const productMap: Record<string, typeof allProducts[0]> = {}
@@ -1494,7 +1495,7 @@ export default function ProductsPage() {
               const flushLogs = () => setAiJobLogs([...logsRef])
               // 성공 계정 누적 (루프 끝나고 한번에 상품 상태 갱신)
               const successMap = new Map<string, string[]>()
-              const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+              const ts = fmtTime
               for (let i = 0; i < targets.length; i++) {
                 if (aiJobAbortRef.current) { logsRef.push(`\n⛔ 사용자 중단 (${i}/${targets.length})`); flushLogs(); break }
                 const t = targets[i]

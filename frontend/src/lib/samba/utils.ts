@@ -23,6 +23,14 @@ export function fmtDate(iso: string | undefined | null, sep: string = '-'): stri
 }
 
 /**
+ * 현재 시각을 24시간제 HH:mm:ss 형식으로 반환 (로그 타임스탬프용)
+ * @returns 'HH:mm:ss'
+ */
+export function fmtTime(): string {
+  return new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+/**
  * ISO 날짜 문자열을 초 단위까지 포함한 형식으로 변환 (KST 명시적)
  * @returns 'YYYY-MM-DD [HH:mm:ss]'
  */
