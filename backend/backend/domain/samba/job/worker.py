@@ -1606,21 +1606,22 @@ class JobWorker:
                         # GSShop: 원본 URL(카테고리 필터 포함) 전달
                         if site == "GSShop" and _original_url.startswith("http"):
                             _search_kwargs["url"] = _original_url
-                        result = await client.search(
-                            keyword, max_count=_max, **_search_kwargs
-                        )
-                        items_list = result.get("products", [])
-                        # ABCmart: 그랜드스테이지 결과 병합 (스캔과 동일 범위)
+                        # ABCmart: ABC + GS 동시 검색 (로컬 테스트: 순차 8.4s → 병렬 6.0s)
                         if site == "ABCmart" and sf.category_filter:
                             from backend.domain.samba.proxy.abcmart import (
                                 ARTSourcingClient as _ART,
                             )
 
                             _gs = _ART("10002")
-                            _gs_result = await _gs.search(
-                                keyword, max_count=_max, **_search_kwargs
+                            _abc_res, _gs_res = await asyncio.gather(
+                                client.search(
+                                    keyword, max_count=_max, **_search_kwargs
+                                ),
+                                _gs.search(keyword, max_count=_max, **_search_kwargs),
                             )
-                            _gs_products = _gs_result.get("products", [])
+                            result = _abc_res
+                            items_list = result.get("products", [])
+                            _gs_products = _gs_res.get("products", [])
                             if _gs_products:
                                 _seen = {
                                     p.get("site_product_id", "")
@@ -1633,9 +1634,14 @@ class JobWorker:
                                         _seen.add(pid)
                                         items_list.append(p)
                                 logger.info(
-                                    f"[잡워커] ABCmart+GS 병합: ABC {len(result.get('products', []))}건 "
+                                    f"[잡워커] ABCmart+GS 병렬 병합: ABC {len(result.get('products', []))}건 "
                                     f"+ GS {len(_gs_products)}건 → 총 {len(items_list)}건"
                                 )
+                        else:
+                            result = await client.search(
+                                keyword, max_count=_max, **_search_kwargs
+                            )
+                            items_list = result.get("products", [])
                         logger.info(
                             f"[잡워커] {site} 검색 '{keyword}' → {len(items_list)}건"
                         )
@@ -2203,6 +2209,13 @@ class JobWorker:
                             _abc_details[pid] = det
                     _done_abc = min(_batch_start + _ABC_BATCH, len(_new_items_abc))
                     await repo.update_progress(job.id, _done_abc, len(_new_items_abc))
+                    # 10건 단위 또는 마지막 배치에서 UI 로그 출력 (선취합 중 침묵 방지)
+                    if _done_abc % 10 == 0 or _done_abc == len(_new_items_abc):
+                        _add_job_log(
+                            job.id,
+                            f"[{site}] [{sf.name}] 상세 조회 [{_done_abc:,}/{len(_new_items_abc):,}]",
+                            job_type="collect",
+                        )
                     # 마지막 배치 제외 딜레이 (차단 방지)
                     if _batch_start + _ABC_BATCH < len(_new_items_abc):
                         await asyncio.sleep(0.5)
