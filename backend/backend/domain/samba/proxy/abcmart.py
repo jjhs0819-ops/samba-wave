@@ -471,9 +471,13 @@ class ARTSourcingClient:
         )
         return {"products": products, "total": total_count}
 
-    async def get_detail(self, product_id: str) -> dict[str, Any]:
+    async def get_detail(
+        self,
+        product_id: str,
+        shared_client: Optional[httpx.AsyncClient] = None,
+    ) -> dict[str, Any]:
         """worker 호환 상세 조회 — get_product_detail 래핑 + snake_case 변환."""
-        detail = await self.get_product_detail(product_id)
+        detail = await self.get_product_detail(product_id, shared_client=shared_client)
         if not detail:
             return {}
         # get_product_detail은 이미 상세 필드를 포함하므로 키만 snake_case로 변환
@@ -1406,6 +1410,7 @@ class ARTSourcingClient:
         self,
         product_id: str,
         refresh_only: bool = False,
+        shared_client: Optional[httpx.AsyncClient] = None,
     ) -> dict[str, Any]:
         """a-rt.com 상품 상세 정보 조회.
 
@@ -1415,6 +1420,8 @@ class ARTSourcingClient:
         Args:
           product_id: a-rt.com 상품 ID (prdtNo)
           refresh_only: True이면 가격/재고만 빠르게 갱신
+          shared_client: 외부에서 주입한 세션 클라이언트 (배치 선취합 시 재사용)
+                         None이면 내부에서 새 세션을 획득하고 완료 후 닫는다.
 
         Returns:
           표준 상품 상세 dict
@@ -1429,8 +1436,14 @@ class ARTSourcingClient:
         # 1순위: 내부 JSON API 직접 호출
         # 세션 쿠키(JSESSIONID)를 한 번 획득한 뒤 info/detail API 양쪽에 재사용한다.
         # (쿠키 없이 호출하면 API가 빈 응답을 반환함)
+        # shared_client가 주입되면 세션 획득을 생략하고 기존 쿠키를 재사용한다.
+        _owns_session = shared_client is None
         try:
-            session_client = await self._acquire_session_client(product_id)
+            session_client = (
+                shared_client
+                if shared_client is not None
+                else await self._acquire_session_client(product_id)
+            )
             try:
                 info_data = await self.get_product_info_api(
                     product_id, client=session_client
@@ -1458,7 +1471,9 @@ class ARTSourcingClient:
                 )
                 api_failed = True
             finally:
-                await session_client.aclose()
+                # shared_client는 호출자가 관리하므로 여기서 닫지 않음
+                if _owns_session:
+                    await session_client.aclose()
         except RateLimitError:
             raise
         except Exception as e:

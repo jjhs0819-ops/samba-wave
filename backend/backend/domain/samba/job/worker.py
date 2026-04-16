@@ -865,7 +865,10 @@ class JobWorker:
             return
 
         site = sf.source_site
-        _add_job_log(job.id, f"[{site}] [{sf.name}] 수집 시작", job_type="collect")
+        _gi = payload.get("group_index")
+        _gt = payload.get("group_total")
+        _prefix = f"({_gi}/{_gt})" if _gi and _gt else f"[{site}]"
+        _add_job_log(job.id, f"{_prefix} [{sf.name}] 수집 시작", job_type="collect")
 
         # 직접 API 소싱처 (서버 HTTP)
         DIRECT_API_SITES = {"FashionPlus", "Nike", "Adidas", "LOTTEON", "SSG"}
@@ -953,7 +956,7 @@ class JobWorker:
         if remaining <= 0:
             _add_job_log(
                 job.id,
-                f"[{site}] 이미 {existing_count}개 수집됨 (요청: {requested_count}개)",
+                f"{_prefix} 이미 {existing_count}개 수집됨 (요청: {requested_count}개)",
                 job_type="collect",
             )
             await repo.complete_job(
@@ -967,7 +970,7 @@ class JobWorker:
 
         _add_job_log(
             job.id,
-            f"[{site}] [{sf.name}] 잔여 {remaining}건 수집 시작 (기존 {existing_count}건)",
+            f"{_prefix} [{sf.name}] 잔여 {remaining}건 수집 시작 (기존 {existing_count}건)",
             job_type="collect",
         )
         await repo.update_progress(job.id, existing_count, requested_count)
@@ -1181,7 +1184,7 @@ class JobWorker:
                 if total_saved % 10 == 0 or total_saved >= remaining:
                     _add_job_log(
                         job.id,
-                        f"[{site}] [{sf.name}] [{existing_count + total_saved}/{requested_count}] 수집 중...",
+                        f"{_prefix} [{sf.name}] [{existing_count + total_saved}/{requested_count}] 수집 중...",
                         job_type="collect",
                     )
 
@@ -1251,7 +1254,7 @@ class JobWorker:
             _parts.append(policy_msg)
         _add_job_log(
             job.id,
-            f"[{site}] [{sf.name}] 수집 완료: {' | '.join(_parts)}",
+            f"{_prefix} [{sf.name}] 수집 완료: {' | '.join(_parts)}",
             job_type="collect",
         )
 
@@ -1283,6 +1286,10 @@ class JobWorker:
         keyword = sf.keyword or ""
         _original_url = keyword  # URL 원본 보존 (카테고리 필터 포함)
         requested_count = max(sf.requested_count or 100, 10)
+        _payload = job.payload or {}
+        _dgi = _payload.get("group_index")
+        _dgt = _payload.get("group_total")
+        _dprefix = f"({_dgi}/{_dgt})" if _dgi and _dgt else f"[{site}]"
 
         # URL에서 키워드/필터 추출
         _search_kwargs: dict = {}
@@ -1355,7 +1362,7 @@ class JobWorker:
         if remaining <= 0:
             _add_job_log(
                 job.id,
-                f"[{site}] [{sf.name}] 이미 {existing_count}개 수집됨",
+                f"{_dprefix} [{sf.name}] 이미 {existing_count}개 수집됨",
                 job_type="collect",
             )
             await repo.complete_job(
@@ -1550,14 +1557,17 @@ class JobWorker:
                         from datetime import timedelta as _td
 
                         _db_cache = await session.execute(
-                            select(_SCache).where(
+                            select(_SCache)
+                            .where(
                                 _SCache.source_site == site,
                                 _SCache.keyword == keyword,
                                 _SCache.created_at
                                 > datetime.now(tz=timezone.utc) - _td(minutes=60),
                             )
+                            .order_by(_SCache.created_at.desc())
+                            .limit(1)
                         )
-                        _db_cache_row = _db_cache.scalar_one_or_none()
+                        _db_cache_row = _db_cache.scalars().first()
                         if _db_cache_row and _db_cache_row.products:
                             items_list = list(_db_cache_row.products)
                             _abc_db_cache_hit = True
@@ -1566,7 +1576,7 @@ class JobWorker:
                             )
                             _add_job_log(
                                 job.id,
-                                f"[{site}] [{sf.name}] 검색 완료: {len(items_list):,}건 (캐시)",
+                                f"{_dprefix} [{sf.name}] 검색 완료: {len(items_list):,}건 (캐시)",
                                 job_type="collect",
                             )
                             # 인메모리 캐시에도 복사 (같은 인스턴스 내 후속 잡 최적화)
@@ -1589,7 +1599,7 @@ class JobWorker:
                         )
                         _add_job_log(
                             job.id,
-                            f"[{site}] [{sf.name}] 검색 완료: {len(items_list):,}건 (캐시)",
+                            f"{_dprefix} [{sf.name}] 검색 완료: {len(items_list):,}건 (캐시)",
                             job_type="collect",
                         )
                     elif not _abc_db_cache_hit:
@@ -1631,7 +1641,7 @@ class JobWorker:
                         )
                         _add_job_log(
                             job.id,
-                            f"[{site}] [{sf.name}] 검색 완료: {len(items_list):,}건",
+                            f"{_dprefix} [{sf.name}] 검색 완료: {len(items_list):,}건",
                             job_type="collect",
                         )
                         # 전수 검색 결과 캐시 저장
@@ -1659,13 +1669,12 @@ class JobWorker:
                                 _time.time(),
                             )
                             # ABCmart: DB 캐시에도 저장 (다중 인스턴스 공유)
+                            # 기존 항목을 먼저 삭제하고 새로 저장 (stale 데이터 방지)
                             if site == "ABCmart":
                                 from backend.domain.samba.collector.model import (
                                     SambaSearchCache as _SCache,
                                 )
-                                from sqlalchemy.dialects.postgresql import (
-                                    insert as _pg_insert,
-                                )
+                                from sqlalchemy import delete as _sa_delete
 
                                 _cache_data = {
                                     "id": generate_search_cache_id(),
@@ -1677,12 +1686,17 @@ class JobWorker:
                                     "created_at": datetime.now(tz=timezone.utc),
                                 }
                                 try:
-                                    _stmt = _pg_insert(_SCache).values(**_cache_data)
-                                    _stmt = _stmt.on_conflict_do_nothing()
-                                    await session.execute(_stmt)
+                                    # 동일 (source_site, keyword) 기존 캐시 전부 삭제
+                                    await session.execute(
+                                        _sa_delete(_SCache).where(
+                                            _SCache.source_site == site,
+                                            _SCache.keyword == keyword,
+                                        )
+                                    )
+                                    session.add(_SCache(**_cache_data))
                                     await session.flush()
                                     logger.info(
-                                        f"[잡워커] ABCmart DB 캐시 저장: '{keyword}' {len(items_list)}건"
+                                        f"[잡워커] ABCmart DB 캐시 갱신: '{keyword}' {len(items_list)}건"
                                     )
                                 except Exception as _ce:
                                     logger.warning(
@@ -2125,18 +2139,97 @@ class JobWorker:
             else:
                 items_list = new_items
 
+        # ABCmart/GrandStage: 저장 전 3건 병렬 선취합 (세션 배치 공유로 속도 향상)
+        # LOTTEON(10건)/Nike(10건)/GSShop(20건)과 동일 패턴
+        # a-rt.com 차단 방지: 3건 병렬 + 배치 간 0.5초 딜레이
+        _abc_details: dict[str, dict[str, Any]] = {}
+        if (
+            site in ("ABCmart", "GrandStage")
+            and client
+            and hasattr(client, "get_detail")
+        ):
+            _new_items_abc = [
+                it
+                for it in items_list
+                if str(it.get("site_product_id", "")) not in existing_ids
+            ][:remaining]
+            if _new_items_abc:
+                _ABC_BATCH = 3
+                logger.info(
+                    f"[잡워커] {site} 선취합 시작: {len(_new_items_abc)}건 ({_ABC_BATCH}건 병렬)"
+                )
+                _add_job_log(
+                    job.id,
+                    f"[{site}] [{sf.name}] 상세 조회 시작: {len(_new_items_abc):,}건",
+                    job_type="collect",
+                )
+                # 배치 단위로 세션 1개 획득 → 배치 내 모든 항목이 동일 JSESSIONID 재사용
+                for _batch_start in range(0, len(_new_items_abc), _ABC_BATCH):
+                    _batch = _new_items_abc[_batch_start : _batch_start + _ABC_BATCH]
+                    # 배치 전체가 공유할 세션 1개 획득
+                    _batch_session = None
+                    try:
+                        _first_pid = str(_batch[0].get("site_product_id", ""))
+                        _batch_session = await client._acquire_session_client(
+                            _first_pid
+                        )
+                    except Exception as _se:
+                        logger.warning(f"[잡워커] {site} 배치 세션 획득 실패: {_se!r}")
+                    try:
+                        _batch_details = await asyncio.gather(
+                            *(
+                                client.get_detail(
+                                    str(it.get("site_product_id", "")),
+                                    shared_client=_batch_session,
+                                )
+                                for it in _batch
+                            ),
+                            return_exceptions=True,
+                        )
+                    finally:
+                        if _batch_session is not None:
+                            try:
+                                await _batch_session.aclose()
+                            except Exception:
+                                pass
+                    for it, det in zip(_batch, _batch_details):
+                        pid = str(it.get("site_product_id", ""))
+                        if isinstance(det, Exception):
+                            logger.warning(
+                                f"[잡워커] {site} 선취합 실패 {pid}: {det!r}"
+                            )
+                            continue
+                        if det:
+                            _abc_details[pid] = det
+                    _done_abc = min(_batch_start + _ABC_BATCH, len(_new_items_abc))
+                    await repo.update_progress(job.id, _done_abc, len(_new_items_abc))
+                    # 마지막 배치 제외 딜레이 (차단 방지)
+                    if _batch_start + _ABC_BATCH < len(_new_items_abc):
+                        await asyncio.sleep(0.5)
+                logger.info(
+                    f"[잡워커] {site} 선취합 완료: {len(_abc_details)}/{len(_new_items_abc)}건"
+                )
+                _add_job_log(
+                    job.id,
+                    f"[{site}] [{sf.name}] 상세 조회 완료: {len(_abc_details):,}건",
+                    job_type="collect",
+                )
+
         _collected_sold_out = 0
+        _cancel_check_counter = 0
         for item in items_list:
             if total_saved >= remaining:
                 break
 
-            # 취소 확인 (DB에서 상태 재조회)
-            from backend.domain.samba.job.model import SambaJob as _SJ2
+            # 취소 확인 (5건 단위 — 매 아이템 DB 조회 대신 빈도 감소)
+            _cancel_check_counter += 1
+            if _cancel_check_counter % 5 == 1:
+                from backend.domain.samba.job.model import SambaJob as _SJ2
 
-            _job_chk = await session.get(_SJ2, job.id)
-            if _job_chk and _job_chk.status == JobStatus.FAILED:
-                logger.info(f"[잡워커] {site} 수집 취소됨: {job.id}")
-                return
+                _job_chk = await session.get(_SJ2, job.id)
+                if _job_chk and _job_chk.status == JobStatus.FAILED:
+                    logger.info(f"[잡워커] {site} 수집 취소됨: {job.id}")
+                    return
 
             p_id = str(item.get("site_product_id", ""))
             if p_id in existing_ids:
@@ -2194,8 +2287,11 @@ class JobWorker:
             # SSG: 선취합된 상세 데이터 사용
             if site == "SSG" and p_id in _ssg_details:
                 detail = _ssg_details[p_id]
+            # ABCmart/GrandStage: 선취합된 상세 데이터 사용
+            if site in ("ABCmart", "GrandStage") and p_id in _abc_details:
+                detail = _abc_details[p_id]
             _skip_detail = _search_kwargs.get("_skip_detail", False)
-            # ABCmart 최대혜택가: API에서 쿠폰+멤버십 직접 계산 (확장앱 불필요)
+            # ABCmart 최대혜택가: 선취합 미스 시 폴백 조회
             if (
                 _use_max_discount
                 and site in ("ABCmart", "GrandStage")
@@ -2205,11 +2301,10 @@ class JobWorker:
                 if hasattr(client, "get_detail"):
                     try:
                         detail = await client.get_detail(p_id)
-                        await asyncio.sleep(0.3)
                     except Exception as e:
                         logger.warning(f"[잡워커] {site} 서버 상세 실패 {p_id}: {e}")
             if not _skip_detail and not detail:
-                # 서버 HTTP 상세 조회 (빠르고 안정적)
+                # 서버 HTTP 상세 조회 (선취합 미스 폴백)
                 if hasattr(client, "get_detail"):
                     try:
                         # Nike: 검색 결과 URL 전달하여 중복 검색 방지
@@ -2221,9 +2316,13 @@ class JobWorker:
                             )
                         else:
                             detail = await client.get_detail(p_id)
-                        await asyncio.sleep(
-                            0.15 if site == "Nike" else (0 if site == "GSShop" else 0.3)
-                        )
+                        # ABCmart/GrandStage: 선취합에서 누락된 경우이므로 sleep 불필요
+                        if site not in ("ABCmart", "GrandStage"):
+                            await asyncio.sleep(
+                                0.15
+                                if site == "Nike"
+                                else (0 if site == "GSShop" else 0.3)
+                            )
                     except Exception as e:
                         logger.warning(f"[잡워커] {site} 서버 상세 실패 {p_id}: {e}")
 
@@ -2389,11 +2488,11 @@ class JobWorker:
                 await repo.update_progress(
                     job.id, existing_count + total_saved, requested_count
                 )
-                # 10건 단위 진행 로그
-                if total_saved % 10 == 0 or total_saved >= remaining:
+                # 10건 단위 or 마지막 아이템 진행 로그 (== 로 정확히 1회만)
+                if total_saved % 10 == 0 or total_saved == remaining:
                     _add_job_log(
                         job.id,
-                        f"[{site}] [{sf.name}] [{existing_count + total_saved}/{requested_count}] 수집 중...",
+                        f"{_dprefix} [{sf.name}] [{existing_count + total_saved}/{requested_count}] 수집 중...",
                         job_type="collect",
                     )
             except Exception as e:
@@ -2450,7 +2549,7 @@ class JobWorker:
             _parts.append(policy_msg.lstrip(", "))
         _add_job_log(
             job.id,
-            f"[{site}] [{sf.name}] 수집 완료: {' | '.join(_parts)}",
+            f"{_dprefix} [{sf.name}] 수집 완료: {' | '.join(_parts)}",
             job_type="collect",
         )
 
