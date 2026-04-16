@@ -37,7 +37,7 @@ def _get_rembg_session() -> Any:
     if "session" not in _rembg_session_cache:
         from rembg import new_session
 
-        _rembg_session_cache["session"] = new_session("u2netp")
+        _rembg_session_cache["session"] = new_session("silueta")
     return _rembg_session_cache["session"]
 
 
@@ -545,8 +545,8 @@ class ImageTransformService:
         def _process(data: bytes) -> bytes:
             # 큰 이미지 리사이즈 (메모리/시간 절약)
             src = Image.open(io.BytesIO(data))
-            if max(src.size) > 860:
-                src.thumbnail((860, 860), Image.LANCZOS)
+            if max(src.size) > 1024:
+                src.thumbnail((1024, 1024), Image.LANCZOS)
                 buf_resized = io.BytesIO()
                 src.save(buf_resized, format="PNG")
                 data = buf_resized.getvalue()
