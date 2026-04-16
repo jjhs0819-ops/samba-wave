@@ -1312,71 +1312,89 @@ class ARTSourcingClient:
         all_items: list[dict[str, Any]] = []
         total_count = 0
 
-        try:
-            async with httpx.AsyncClient(
-                timeout=self._timeout, follow_redirects=True
-            ) as client:
-                # 세션 획득 (JSESSIONID)
-                await client.get(subdomain + "/", headers=self.HEADERS)
-                await client.get(search_page_url, headers=self.HEADERS)
+        # 일시적 연결 오류 대비 최대 2회 시도
+        for _attempt in range(2):
+            _attempt_items: list[dict[str, Any]] = []
+            _attempt_total = 0
+            try:
+                async with httpx.AsyncClient(
+                    timeout=self._timeout, follow_redirects=True
+                ) as client:
+                    # 세션 획득 (JSESSIONID)
+                    await client.get(subdomain + "/", headers=self.HEADERS)
+                    await client.get(search_page_url, headers=self.HEADERS)
 
-                api_headers = {
-                    **self.API_HEADERS,
-                    "Referer": search_page_url,
-                }
+                    api_headers = {
+                        **self.API_HEADERS,
+                        "Referer": search_page_url,
+                    }
 
-                for page in range(1, max_pages + 1):
-                    resp = await client.get(
-                        api_url,
-                        params={
-                            "searchWord": keyword,
-                            "page": str(page),
-                            "perPage": str(per_page),
-                            "sort": "point",
-                            "channel": self.channel,
-                            "pageColumn": "3",
-                            "tabGubun": "total",
-                            "searchPageGubun": "product",
-                            "smartSearchCheck": "false",
-                        },
-                        headers=api_headers,
-                    )
-
-                    if resp.status_code in (429, 403):
-                        logger.warning(
-                            f"{site_label} 카테고리 스캔 차단 HTTP {resp.status_code}"
+                    for page in range(1, max_pages + 1):
+                        resp = await client.get(
+                            api_url,
+                            params={
+                                "searchWord": keyword,
+                                "page": str(page),
+                                "perPage": str(per_page),
+                                "sort": "point",
+                                "channel": self.channel,
+                                "pageColumn": "3",
+                                "tabGubun": "total",
+                                "searchPageGubun": "product",
+                                "smartSearchCheck": "false",
+                            },
+                            headers=api_headers,
                         )
-                        break
 
-                    if resp.status_code != 200:
-                        logger.warning(
-                            f"{site_label} 카테고리 스캔 HTTP {resp.status_code}"
+                        if resp.status_code in (429, 403):
+                            logger.warning(
+                                f"{site_label} 카테고리 스캔 차단 HTTP {resp.status_code}"
+                            )
+                            break
+
+                        if resp.status_code != 200:
+                            logger.warning(
+                                f"{site_label} 카테고리 스캔 HTTP {resp.status_code}"
+                            )
+                            break
+
+                        data = resp.json()
+
+                        if page == 1:
+                            _attempt_total = data.get("SEARCH_COUNT", 0) or 0
+
+                        items = data.get("SEARCH") or []
+                        if not items:
+                            break
+
+                        _attempt_items.extend(items)
+                        logger.info(
+                            f"{site_label} 카테고리 스캔 {page}페이지: "
+                            f"+{len(items)}건 (누적 {len(_attempt_items)}/{_attempt_total})"
                         )
-                        break
 
-                    data = resp.json()
+                        if len(_attempt_items) >= _attempt_total:
+                            break
 
-                    if page == 1:
-                        total_count = data.get("SEARCH_COUNT", 0) or 0
+                        # 차단 방지 딜레이
+                        await asyncio.sleep(0.3)
 
-                    items = data.get("SEARCH") or []
-                    if not items:
-                        break
+            except Exception as e:
+                logger.error(
+                    f"{site_label} 카테고리 스캔 검색 실패 "
+                    f"(시도 {_attempt + 1}/2): {e!r} ({type(e).__name__})"
+                )
+                if _attempt < 1:
+                    await asyncio.sleep(2.0)
+                    continue
 
-                    all_items.extend(items)
-                    logger.info(
-                        f"{site_label} 카테고리 스캔 {page}페이지: "
-                        f"+{len(items)}건 (누적 {len(all_items)}/{total_count})"
-                    )
-
-                    if len(all_items) >= total_count:
-                        break
-
-                    # 차단 방지 딜레이
-                    await asyncio.sleep(0.3)
-
-        except Exception as e:
-            logger.error(f"{site_label} 카테고리 스캔 검색 실패: {e}")
+            if _attempt_items:
+                all_items = _attempt_items
+                total_count = _attempt_total
+                break
+            elif _attempt < 1:
+                logger.warning(f"{site_label} 카테고리 스캔 결과 없음 — 2초 후 재시도")
+                await asyncio.sleep(2.0)
 
         return all_items, total_count
 

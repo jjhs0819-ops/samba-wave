@@ -1589,10 +1589,25 @@ class JobWorker:
                             job_type="collect",
                         )
                         # 전수 검색 결과 캐시 저장
+                        # ABCmart: GS 병합이 실패(0개)한 경우 캐시 저장 금지
+                        # → GS 실패 캐시가 전파되어 이후 모든 SF 잡이 GS 아이템 누락하는 현상 방지
+                        _abc_only_count = len(result.get("products", []))
+                        _gs_merged_count = len(items_list) - _abc_only_count
+                        _gs_was_attempted = site == "ABCmart" and sf.category_filter
+                        _cache_ok = not _gs_was_attempted or _gs_merged_count > 0
+                        if not _cache_ok:
+                            logger.warning(
+                                f"[잡워커] ABCmart GS 검색 실패로 캐시 저장 스킵 "
+                                f"(ABC {_abc_only_count}건, GS 0건) — 다음 잡에서 재시도"
+                            )
                         if (
-                            site in ("Nike", "ABCmart", "GSShop", "LOTTEON")
-                            and sf.category_filter
-                        ) and items_list:
+                            (
+                                site in ("Nike", "ABCmart", "GSShop", "LOTTEON")
+                                and sf.category_filter
+                            )
+                            and items_list
+                            and _cache_ok
+                        ):
                             self._search_cache[_cache_key] = (
                                 items_list,
                                 _time.time(),
