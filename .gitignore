@@ -10,6 +10,8 @@ tmp_captures/
 .claude/tsc-cache/
 .claude/skills/
 .claude/skills-archive/
+.claude/settings.local.json
+.claude/worktrees/
 .omc/
 backend/.omc/
 
