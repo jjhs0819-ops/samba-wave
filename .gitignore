@@ -6,6 +6,41 @@ tmp_*
 tmp_captures/
 .push-approved
 
+# Claude IDE 전체 (프로덕션 무관)
+.claude/
+backend/.claude/
+
+# Claude 관련 문서/설정
+.mcp.json
+backend/.mcp.json
+CLAUDE.md
+CLAUDE-DEPLOY.md
+CAFE24.md
+
+# 로컬 개발 도구
+.githooks/
+.taskmaster/
+.chrome-kream-profile/
+samba-wave.code-workspace
+
+# 로컬 개발 스크립트
+start-local.sh
+scripts/
+
+# 루트 npm lock (pnpm 사용)
+package-lock.json
+
+# 에디터/환경 템플릿
+.editorconfig
+.env.example
+
+# 로컬 DB 덤프 (민감정보)
+backend/local_dump.sql
+backend/local_dump_inserts.sql
+backend/.env.test
+backend/docs/
+backend/deploy.sh
+
 # Claude IDE 캐시
 .claude/tsc-cache/
 .claude/skills/
