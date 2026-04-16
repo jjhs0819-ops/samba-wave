@@ -1650,8 +1650,15 @@ async def sync_orders_from_markets(
                 for ro in raw_orders:
                     po = ro.get("productOrder", ro)
                     order_info = ro.get("order", {})
-                    # 클레임 정보: productOrder 최상위 또는 래퍼의 claim 서브 객체 모두 확인
-                    claim_info = ro.get("claim") or po.get("claim") or {}
+                    # 클레임 정보: claim / cancel / currentClaim 순으로 확인
+                    # 취소요청 시 응답 최상위에 'cancel' 키로 오는 경우 처리
+                    claim_info = (
+                        ro.get("claim")
+                        or ro.get("cancel")
+                        or ro.get("currentClaim")
+                        or po.get("claim")
+                        or {}
+                    )
                     orders_data.append(
                         _parse_smartstore_order(
                             po, order_info, account["id"], label, claim_info=claim_info
@@ -1671,6 +1678,71 @@ async def sync_orders_from_markets(
                         )
                     except Exception as ce:
                         logger.warning(f"[주문동기화] {label}: 발주확인 실패 — {ce}")
+
+                # last-changed API 권한 제한 보완:
+                # DB에 있는 미완결 주문을 직접 재조회하여 배송완료/취소요청 등 최신 상태 반영
+                _pending_statuses = {
+                    "발주미확인",
+                    "발송대기",
+                    "결제완료",
+                    "배송대기중",
+                    "송장전송완료",
+                    "배송중",
+                }
+                _already_fetched = {
+                    d["order_number"] for d in orders_data if d.get("order_number")
+                }
+                from sqlalchemy import select as _sa_select
+                from backend.domain.samba.order.model import SambaOrder as _SambaOrder
+                from datetime import datetime as _dt, timedelta, timezone as _tz
+
+                _cutoff = _dt.now(_tz.utc) - timedelta(days=max(body.days, 30))
+                _stmt = (
+                    _sa_select(_SambaOrder.order_number)
+                    .where(
+                        _SambaOrder.channel_id == account["id"],
+                        _SambaOrder.shipping_status.in_(_pending_statuses),
+                        _SambaOrder.updated_at >= _cutoff,
+                    )
+                    .limit(300)
+                )
+                _res = await session.execute(_stmt)
+                _pending_numbers = [
+                    r[0]
+                    for r in _res.fetchall()
+                    if r[0] and r[0] not in _already_fetched
+                ]
+                if _pending_numbers:
+                    logger.info(
+                        f"[주문동기화] {label}: 미완결 주문 {len(_pending_numbers)}건 직접 재조회"
+                    )
+                    try:
+                        _extra_raws = await client.get_product_orders_by_ids(
+                            _pending_numbers
+                        )
+                        for ro2 in _extra_raws:
+                            po2 = ro2.get("productOrder", ro2)
+                            order_info2 = ro2.get("order", {})
+                            claim_info2 = (
+                                ro2.get("claim")
+                                or ro2.get("cancel")
+                                or ro2.get("currentClaim")
+                                or po2.get("claim")
+                                or {}
+                            )
+                            orders_data.append(
+                                _parse_smartstore_order(
+                                    po2,
+                                    order_info2,
+                                    account["id"],
+                                    label,
+                                    claim_info=claim_info2,
+                                )
+                            )
+                    except Exception as _ex:
+                        logger.warning(
+                            f"[주문동기화] {label}: 미완결 주문 직접 재조회 실패 — {_ex}"
+                        )
 
             elif market_type == "lotteon":
                 from backend.domain.samba.proxy.lotteon import LotteonClient
