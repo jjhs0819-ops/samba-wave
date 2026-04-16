@@ -680,10 +680,21 @@ async def refresh_products(
         )
     if body.auto_retransmit and deleted_ids:
         for did in deleted_ids:
+            _dp = product_map.get(did)
+            if _dp:
+                _brand = _dp.source_brand_name or ""
+                _pname = (_dp.name or "")[:40]
+                _pid_str = _dp.site_product_id or ""
+                _label = f"{_brand} {_pname}".strip() if _brand else _pname
+                if _pid_str:
+                    _label = f"{_label} ({_pid_str})"
+                _del_summary = f"품절 삭제 — {_label}"
+            else:
+                _del_summary = f"품절 삭제 — {did}"
             await monitor.emit(
                 "market_deleted",
                 "info",
-                summary=f"품절 삭제 — {did}",
+                summary=_del_summary,
                 product_id=did,
             )
 

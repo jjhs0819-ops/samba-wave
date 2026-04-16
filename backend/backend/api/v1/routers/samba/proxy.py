@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from collections import defaultdict
 import re
 import time
 from typing import Any, Optional
@@ -186,34 +185,9 @@ async def _build_ai_tag_groups(
         filter_products = await _get_filter_products(gid)
         if not filter_products:
             continue
-
-        grouped_by_key: dict[str, list[Any]] = defaultdict(list)
-        singles: list[Any] = []
-        for product in filter_products:
-            group_key = (getattr(product, "group_key", None) or "").strip()
-            if group_key:
-                grouped_by_key[group_key].append(product)
-            else:
-                singles.append(product)
-
-        filter_name = await _get_filter_name(gid)
-        if grouped_by_key:
-            for group_key, items in grouped_by_key.items():
-                await _register_group(
-                    _make_ai_tag_group_key_id(gid, group_key),
-                    items,
-                    search_filter_id=gid,
-                    label=f"{filter_name} / {items[0].name or group_key}",
-                )
-            for product in singles:
-                await _register_group(
-                    _make_ai_tag_product_id(product.id),
-                    [product],
-                    search_filter_id=gid,
-                    label=f"{filter_name} / {product.name or product.id}",
-                )
-        else:
-            await _register_group(gid, filter_products, search_filter_id=gid)
+        # 그룹(사이트+브랜드+카테고리) 단위로 전체 상품을 1개 그룹으로 처리
+        # group_key(모델코드)별 분리 불필요 — AI 태그는 그룹 단위로 동일하게 적용
+        await _register_group(gid, filter_products, search_filter_id=gid)
 
     for pid in product_ids:
         product = await repo.get_async(pid)

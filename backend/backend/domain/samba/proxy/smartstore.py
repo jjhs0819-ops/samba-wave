@@ -2045,7 +2045,12 @@ class SmartStoreClient:
                 style_code = code_match.group()
         if style_code:
             # 품번 = manufactureDefineNo (셀러센터 "품번" 필드)
-            data["originProduct"]["detailAttribute"]["manufactureDefineNo"] = style_code
+            # 허용 문자만 유지: 영문·숫자·-_./ (공백·+·한글 등 제거)
+            sanitized_style = re.sub(r"[^A-Za-z0-9\-_./]", "", style_code)
+            if sanitized_style:
+                data["originProduct"]["detailAttribute"]["manufactureDefineNo"] = (
+                    sanitized_style
+                )
 
         # 브랜드명 정제 — brandId가 이미 있으면(카탈로그 매칭 완료) 정제 스킵
         # brandId 없을 때만 접미사 제거하여 검색 성공률 높임

@@ -48,6 +48,13 @@ const fmtMD = (d?: string | null) => {
   return `${dt.getMonth() + 1}/${dt.getDate()}`
 }
 
+const getAccountOptionLabel = (account: SambaMarketAccount) => (
+  account.account_label?.trim()
+  || account.seller_id?.trim()
+  || account.business_name?.trim()
+  || account.market_name
+)
+
 const tdCenter = { padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' as const, textAlign: 'center' as const, verticalAlign: 'middle' as const }
 
 export default function ReturnsPage() {
@@ -432,8 +439,7 @@ export default function ReturnsPage() {
               marketTypes.forEach(([type, name]) => {
                 items.push({ value: `type:${type}`, label: name, isGroup: true })
                 accounts.filter(a => a.market_type === type).forEach(a => {
-                  const label = `  ${name} ${a.business_name || ''} ${a.seller_id || ''}`.trim()
-                  items.push({ value: a.id, label, isGroup: false })
+                  items.push({ value: a.id, label: `  ${getAccountOptionLabel(a)}`, isGroup: false })
                 })
               })
               return items.map(item => (
@@ -470,8 +476,7 @@ export default function ReturnsPage() {
               marketTypes.forEach(([type, name]) => {
                 items.push({ value: `type:${type}`, label: name, isGroup: true })
                 accounts.filter(a => a.market_type === type).forEach(a => {
-                  const label = `${name} ${a.business_name || ''} ${a.seller_id || ''}`.trim()
-                  items.push({ value: `acc:${a.id}`, label: `  ${label}`, isGroup: false })
+                  items.push({ value: `acc:${a.id}`, label: `  ${getAccountOptionLabel(a)}`, isGroup: false })
                 })
               })
               return items.map(item => (
