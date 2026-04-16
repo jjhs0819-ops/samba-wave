@@ -987,17 +987,15 @@ export default function OrdersPage() {
             <option value="">전체마켓보기</option>
             {(() => {
               const marketTypes = [...new Map(accounts.map(a => [a.market_type, a.market_name])).entries()]
-              const items: { value: string; label: string; isGroup: boolean }[] = []
-              marketTypes.forEach(([type, name]) => {
-                items.push({ value: `type:${type}`, label: name, isGroup: true })
-                accounts.filter(a => a.market_type === type).forEach(a => {
-                  const label = `  ${name} ${a.business_name || ''} ${a.seller_id || ''}`.trim()
-                  items.push({ value: a.id, label, isGroup: false })
-                })
-              })
-              return items.map(item => (
-                <option key={item.value} value={item.value} style={{ fontWeight: item.isGroup ? 600 : 400 }}>{item.label}</option>
-              ))
+              return marketTypes.flatMap(([type, name]) => [
+                <option key={`type:${type}`} value={`type:${type}`}>{name}</option>,
+                ...accounts
+                  .filter(a => a.market_type === type)
+                  .map(a => {
+                    const accountName = a.account_label?.trim() || a.seller_id?.trim() || a.business_name?.trim() || a.market_name
+                    return <option key={a.id} value={a.id}>- {accountName}</option>
+                  }),
+              ])
             })()}
           </select>
           <button onClick={handleFetch} disabled={syncing} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: syncing ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>{syncing ? '동기화 중...' : '가져오기'}</button>
@@ -1040,17 +1038,15 @@ export default function OrdersPage() {
             <option value="">전체마켓보기</option>
             {(() => {
               const marketTypes = [...new Map(accounts.map(a => [a.market_type, a.market_name])).entries()]
-              const items: { value: string; label: string; isGroup: boolean }[] = []
-              marketTypes.forEach(([type, name]) => {
-                items.push({ value: `type:${type}`, label: name, isGroup: true })
-                accounts.filter(a => a.market_type === type).forEach(a => {
-                  const label = `${name} ${a.business_name || ''} ${a.seller_id || ''}`.trim()
-                  items.push({ value: `acc:${a.id}`, label: `  ${label}`, isGroup: false })
-                })
-              })
-              return items.map(item => (
-                <option key={item.value} value={item.value} style={{ fontWeight: item.isGroup ? 600 : 400 }}>{item.label}</option>
-              ))
+              return marketTypes.flatMap(([type, name]) => [
+                <option key={`type:${type}`} value={`type:${type}`}>{name}</option>,
+                ...accounts
+                  .filter(a => a.market_type === type)
+                  .map(a => {
+                    const accountName = a.account_label?.trim() || a.seller_id?.trim() || a.business_name?.trim() || a.market_name
+                    return <option key={`acc:${a.id}`} value={`acc:${a.id}`}>- {accountName}</option>
+                  }),
+              ])
             })()}
           </select>
           <select style={{ ...inputStyle, width: '110px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}><option value="">전체사이트보기</option>{['MUSINSA','KREAM','FashionPlus','Nike','Adidas','ABCmart','REXMONDE','SSG','LOTTEON','GSShop','ElandMall','SSF'].map(s => <option key={s} value={s}>{s}</option>)}</select>
