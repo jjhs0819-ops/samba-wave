@@ -1328,7 +1328,8 @@ export default function OrdersPage() {
                           MUSINSA: `https://www.musinsa.com/order/order-detail/${srcNo}`,
                           KREAM: `https://kream.co.kr/my/purchasing/${srcNo}`,
                           FashionPlus: `https://www.fashionplus.co.kr/mypage/order/detail/${srcNo}`,
-                          ABCmart: `https://www.a-rt.com/mypage/order-detail/${srcNo}`,
+                          ABCmart: `https://abcmart.a-rt.com/mypage/order/read-order-detail?orderNo=${srcNo}`,
+                          GrandStage: `https://grandstage.a-rt.com/mypage/order/read-order-detail?orderNo=${srcNo}`,
                           Nike: `https://www.nike.com/kr/orders/${srcNo}`,
                         }
                         const url = orderUrlMap[o.source_site || '']

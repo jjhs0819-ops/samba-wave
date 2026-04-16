@@ -111,7 +111,8 @@ async def list_returns(
             "MUSINSA": "https://www.musinsa.com/order/order-detail/{}",
             "KREAM": "https://kream.co.kr/my/purchasing/{}",
             "FashionPlus": "https://www.fashionplus.co.kr/mypage/order/detail/{}",
-            "ABCmart": "https://www.a-rt.com/mypage/order-detail/{}",
+            "ABCmart": "https://abcmart.a-rt.com/mypage/order/read-order-detail?orderNo={}",
+            "GrandStage": "https://grandstage.a-rt.com/mypage/order/read-order-detail?orderNo={}",
             "Nike": "https://www.nike.com/kr/orders/{}",
         }
         for row in rows:

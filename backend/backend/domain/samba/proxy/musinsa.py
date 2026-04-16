@@ -270,14 +270,17 @@ class MusinsaClient:
             )
             # 최대혜택가 = 할인가 - 쿠폰 - 등급 - 적립금 - 선할인
             # 1단계: 쿠폰 할인
-            coupon_price_raw = gp.get("couponPrice", 0) or 0
-            # 쿠폰할인: goodsPrice.couponPrice 기본 + 쿠폰 API 보충 (수집/갱신 동일)
-            benefit_coupon_discount = 0
-            if 0 < coupon_price_raw < s_price:
-                benefit_coupon_discount = s_price - coupon_price_raw
-            # 쿠폰 API로 추가 쿠폰 탐색 (goodsPrice에 미반영된 쿠폰 보충)
+            # goodsPrice.couponPrice는 카드/결제 쿠폰(AG 타입)을 포함하므로 최대혜택가 계산에 사용하지 않음
+            # 최대혜택가 쿠폰의 올바른 판단 기준: 쿠폰 API의 bestSalePriceYn=Y (SG/SB 타입)
+            coupon_price_raw = (
+                gp.get("couponPrice", 0) or 0
+            )  # price_uncertain 판단용으로만 사용
             benefit_coupon_discount, _coupon_api_failed = await self._fetch_coupons(
-                client, goods_no, d, s_price, benefit_coupon_discount
+                client,
+                goods_no,
+                d,
+                s_price,
+                0,  # 초기값 0 고정 — goodsPrice.couponPrice 미사용
             )
             benefit_base = s_price - benefit_coupon_discount
 
@@ -1139,16 +1142,6 @@ class MusinsaClient:
                             f"couponNm={c.get('couponNm', '')[:30]}"
                         )
                         # 조건 필터링: 사용 불가 쿠폰 제외
-                        coupon_apply = c.get("couponApply")
-                        if (
-                            coupon_apply is not None
-                            and not coupon_apply
-                            and coupon_apply != "Y"
-                        ):
-                            logger.info(
-                                f"[쿠폰 스킵] {goods_no}: couponApply={coupon_apply} — 적용 불가 쿠폰"
-                            )
-                            continue
                         if (c.get("maxLimitQty", 0) or 0) > 1:
                             logger.info(
                                 f"[쿠폰 스킵] {goods_no}: maxLimitQty={c.get('maxLimitQty')} — 2개 이상 구매 조건"
