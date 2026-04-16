@@ -63,9 +63,7 @@ async def create_job(
                     select(SambaJob)
                     .where(
                         SambaJob.job_type == "transmit",
-                        col(SambaJob.status).in_(
-                            [JobStatus.FAILED]
-                        ),
+                        col(SambaJob.status).in_([JobStatus.FAILED]),
                         SambaJob.total > 0,
                         SambaJob.current > 0,
                         SambaJob.current < SambaJob.total,  # 전체 완료된 Job 제외
