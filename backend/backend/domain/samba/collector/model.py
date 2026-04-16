@@ -357,3 +357,41 @@ class SambaCollectedProduct(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), nullable=False),
         default_factory=lambda: datetime.now(tz=timezone.utc),
     )
+
+
+def generate_search_cache_id() -> str:
+    return f"sc_{ULID()}"
+
+
+class SambaSearchCache(SQLModel, table=True):
+    """소싱처 전수검색 결과 DB 캐시.
+
+    동일 소싱처+키워드에 대해 여러 SF 잡이 실행될 때,
+    최초 잡 1회만 API 호출 후 결과를 저장 — 이후 잡들은 DB에서 읽기.
+    Cloud Run 다중 인스턴스 환경에서도 공유 가능.
+    """
+
+    __tablename__ = "samba_search_cache"
+
+    id: str = Field(
+        default_factory=generate_search_cache_id,
+        primary_key=True,
+        max_length=30,
+    )
+    tenant_id: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String(100), nullable=True, index=True),
+    )
+    source_site: str = Field(sa_column=Column(String(50), nullable=False, index=True))
+    keyword: str = Field(sa_column=Column(String(200), nullable=False))
+    # 검색 결과 상품 목록 (snake_case 정규화된 dict 리스트)
+    products: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    # 캐시 유효 시간 (분, 기본 60분)
+    ttl_minutes: int = Field(
+        default=60,
+        sa_column=Column(Integer, nullable=False, server_default="60"),
+    )
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+        default_factory=lambda: datetime.now(tz=timezone.utc),
+    )

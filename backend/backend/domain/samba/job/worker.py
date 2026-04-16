@@ -12,6 +12,7 @@ from collections import deque
 from datetime import datetime, timezone
 from typing import Any
 
+from backend.domain.samba.collector.model import generate_search_cache_id
 from backend.domain.samba.job.model import JobStatus
 
 logger = logging.getLogger(__name__)
@@ -1529,12 +1530,52 @@ class JobWorker:
                             else max(remaining * 2, 100)
                         )
                     # 검색 캐시: 동일 브랜드 그룹 수집 시 전수 검색 1회만 실행
+                    # ABCmart: DB 캐시 (다중 Cloud Run 인스턴스 공유), 나머지: 인메모리 캐시
                     import time as _time
 
                     _cache_key = (site, keyword)
                     _cached = self._search_cache.get(_cache_key)
-                    _cache_ttl = 300  # 5분
+                    _cache_ttl = 300  # 5분 (인메모리)
+                    _abc_db_cache_hit = False
+
+                    # ABCmart: DB 캐시 우선 조회 (인스턴스 간 공유)
                     if (
+                        site == "ABCmart"
+                        and sf.category_filter
+                        and not (_cached and _time.time() - _cached[1] < _cache_ttl)
+                    ):
+                        from backend.domain.samba.collector.model import (
+                            SambaSearchCache as _SCache,
+                        )
+                        from datetime import timedelta as _td
+
+                        _db_cache = await session.execute(
+                            select(_SCache).where(
+                                _SCache.source_site == site,
+                                _SCache.keyword == keyword,
+                                _SCache.created_at
+                                > datetime.now(tz=timezone.utc) - _td(minutes=60),
+                            )
+                        )
+                        _db_cache_row = _db_cache.scalar_one_or_none()
+                        if _db_cache_row and _db_cache_row.products:
+                            items_list = list(_db_cache_row.products)
+                            _abc_db_cache_hit = True
+                            logger.info(
+                                f"[잡워커] ABCmart DB 캐시 히트 '{keyword}' → {len(items_list)}건"
+                            )
+                            _add_job_log(
+                                job.id,
+                                f"[{site}] [{sf.name}] 검색 완료: {len(items_list):,}건 (캐시)",
+                                job_type="collect",
+                            )
+                            # 인메모리 캐시에도 복사 (같은 인스턴스 내 후속 잡 최적화)
+                            self._search_cache[_cache_key] = (
+                                items_list,
+                                _time.time(),
+                            )
+
+                    if not _abc_db_cache_hit and (
                         _cached
                         and _time.time() - _cached[1] < _cache_ttl
                         and (
@@ -1546,7 +1587,12 @@ class JobWorker:
                         logger.info(
                             f"[잡워커] {site} 검색 캐시 히트 '{keyword}' → {len(items_list)}건"
                         )
-                    else:
+                        _add_job_log(
+                            job.id,
+                            f"[{site}] [{sf.name}] 검색 완료: {len(items_list):,}건 (캐시)",
+                            job_type="collect",
+                        )
+                    elif not _abc_db_cache_hit:
                         # GSShop: 원본 URL(카테고리 필터 포함) 전달
                         if site == "GSShop" and _original_url.startswith("http"):
                             _search_kwargs["url"] = _original_url
@@ -1612,6 +1658,36 @@ class JobWorker:
                                 items_list,
                                 _time.time(),
                             )
+                            # ABCmart: DB 캐시에도 저장 (다중 인스턴스 공유)
+                            if site == "ABCmart":
+                                from backend.domain.samba.collector.model import (
+                                    SambaSearchCache as _SCache,
+                                )
+                                from sqlalchemy.dialects.postgresql import (
+                                    insert as _pg_insert,
+                                )
+
+                                _cache_data = {
+                                    "id": generate_search_cache_id(),
+                                    "tenant_id": getattr(sf, "tenant_id", None),
+                                    "source_site": site,
+                                    "keyword": keyword,
+                                    "products": items_list,
+                                    "ttl_minutes": 60,
+                                    "created_at": datetime.now(tz=timezone.utc),
+                                }
+                                try:
+                                    _stmt = _pg_insert(_SCache).values(**_cache_data)
+                                    _stmt = _stmt.on_conflict_do_nothing()
+                                    await session.execute(_stmt)
+                                    await session.flush()
+                                    logger.info(
+                                        f"[잡워커] ABCmart DB 캐시 저장: '{keyword}' {len(items_list)}건"
+                                    )
+                                except Exception as _ce:
+                                    logger.warning(
+                                        f"[잡워커] ABCmart DB 캐시 저장 실패 (무시): {_ce}"
+                                    )
             except Exception as e:
                 await repo.fail_job(job.id, f"검색 실패: {e}")
                 return
