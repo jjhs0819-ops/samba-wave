@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Any, List, Optional
 
-from sqlalchemy import BigInteger, Boolean, Index, Integer, String
+from sqlalchemy import BigInteger, Boolean, Index, Integer, String, text
 from sqlmodel import Column, DateTime, Field, JSON, SQLModel, Text
 
 from ulid import ULID
@@ -126,7 +126,14 @@ class SambaCollectedProduct(SQLModel, table=True):
     __tablename__ = "samba_collected_product"
     __table_args__ = (
         Index("ix_scp_status_source_site", "status", "source_site"),
-        Index("uq_scp_source_product", "source_site", "site_product_id", unique=True),
+        Index(
+            "uq_scp_tenant_source_product",
+            "tenant_id",
+            "source_site",
+            "site_product_id",
+            unique=True,
+            postgresql_where=text("site_product_id IS NOT NULL"),
+        ),
     )
 
     id: str = Field(

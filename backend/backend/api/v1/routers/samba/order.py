@@ -375,12 +375,16 @@ async def list_orders_by_collected_product(
 async def find_by_order_number(
     order_number: str = Query(...),
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     """상품주문번호로 주문 조회."""
     svc = _read_service(session)
     order = await svc.repo.find_by_async(order_number=order_number)
     if not order:
         return None
+    # 테넌트 소유권 검증
+    if tenant_id is not None and order.tenant_id != tenant_id:
+        raise HTTPException(403, "해당 주문에 대한 권한이 없습니다")
     return {"id": order.id, "order_number": order.order_number}
 
 
@@ -425,11 +429,15 @@ async def save_alarm_settings(
 async def get_order(
     order_id: str,
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     svc = _read_service(session)
     order = await svc.get_order(order_id)
     if not order:
         raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다")
+    # 테넌트 소유권 검증
+    if tenant_id is not None and order.tenant_id != tenant_id:
+        raise HTTPException(status_code=403, detail="해당 주문에 대한 권한이 없습니다")
     return order
 
 
@@ -1544,11 +1552,29 @@ async def sync_orders_from_markets(
     # 특정 계정 또는 전체 활성 계정
     if body.account_id:
         target = await account_repo.get_async(body.account_id)
-        active_accounts = [target] if target else []
+        if not target:
+            active_accounts = []
+        else:
+            # 테넌트 소유권 검증
+            if tenant_id is not None and target.tenant_id != tenant_id:
+                raise HTTPException(403, "해당 계정에 대한 권한이 없습니다")
+            active_accounts = [target]
     else:
-        active_accounts = await account_repo.filter_by_async(
-            is_active=True, order_by="created_at", order_by_desc=True
-        )
+        # 테넌트 필터링: tenant_id가 있으면 해당 테넌트 계정만 조회
+        if tenant_id is not None:
+            active_accounts = await account_repo.filter_by_async(
+                is_active=True, order_by="created_at", order_by_desc=True
+            )
+            # in-memory 필터링으로 tenant_id 또는 None(공용) 계정만 유지
+            active_accounts = [
+                a
+                for a in active_accounts
+                if a.tenant_id == tenant_id or a.tenant_id is None
+            ]
+        else:
+            active_accounts = await account_repo.filter_by_async(
+                is_active=True, order_by="created_at", order_by_desc=True
+            )
 
     svc = _write_service(session)
     results: list[dict[str, Any]] = []

@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
-from backend.domain.samba.tenant.middleware import get_optional_tenant_id
+from backend.domain.samba.tenant.middleware import get_optional_tenant_id, require_admin
 
 router = APIRouter(prefix="/shipments", tags=["samba-shipments"])
 
@@ -55,6 +55,7 @@ async def cancel_transmit(body: CancelRequest = CancelRequest()):
 @router.post("/emergency-stop")
 async def emergency_stop(
     session: AsyncSession = Depends(get_write_session_dependency),
+    admin: str = Depends(require_admin),
 ):
     """작업중지 — 전송 백그라운드 작업 즉시 중단 + pending/running Job 전부 취소 (오토튠 제외)."""
     from backend.domain.samba.emergency import trigger_emergency_stop
@@ -83,7 +84,7 @@ async def emergency_stop(
 
 
 @router.post("/emergency-clear")
-async def emergency_clear():
+async def emergency_clear(admin: str = Depends(require_admin)):
     """비상정지 해제 — 전송/오토튠 재개 가능."""
     from backend.domain.samba.emergency import clear_emergency_stop
     from backend.domain.samba.shipment.service import clear_cancel_transmit

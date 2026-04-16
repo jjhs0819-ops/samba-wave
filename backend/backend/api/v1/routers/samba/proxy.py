@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from collections import defaultdict
 import re
 import time
 from typing import Any, Optional
@@ -42,6 +43,7 @@ from backend.domain.samba.proxy.gsshop import GsShopApiError, GsShopClient
 from backend.domain.samba.proxy.kream import KreamClient
 from backend.domain.samba.proxy.lottehome import LotteApiError, LotteHomeClient
 from backend.domain.samba.proxy.musinsa import MusinsaClient
+from backend.domain.samba.tenant.middleware import require_admin
 from backend.shutdown_state import is_shutting_down
 from backend.utils.logger import logger
 
@@ -109,6 +111,193 @@ async def _get_musinsa_client(session: AsyncSession) -> MusinsaClient:
     return MusinsaClient(cookie=str(cookie))
 
 
+_AI_TAG_GROUP_KEY_PREFIX = "gk:"
+_AI_TAG_PRODUCT_PREFIX = "pid:"
+
+
+def _make_ai_tag_group_key_id(search_filter_id: str, group_key: str) -> str:
+    return f"{_AI_TAG_GROUP_KEY_PREFIX}{search_filter_id}:{group_key}"
+
+
+def _make_ai_tag_product_id(product_id: str) -> str:
+    return f"{_AI_TAG_PRODUCT_PREFIX}{product_id}"
+
+
+def _parse_ai_tag_group_id(group_id: str) -> tuple[str, str, str]:
+    if group_id.startswith(_AI_TAG_GROUP_KEY_PREFIX):
+        payload = group_id[len(_AI_TAG_GROUP_KEY_PREFIX) :]
+        search_filter_id, _, group_key = payload.partition(":")
+        if search_filter_id and group_key:
+            return ("group_key", search_filter_id, group_key)
+    if group_id.startswith(_AI_TAG_PRODUCT_PREFIX):
+        return ("product", group_id[len(_AI_TAG_PRODUCT_PREFIX) :], "")
+    return ("legacy", group_id, "")
+
+
+async def _build_ai_tag_groups(
+    repo,
+    session: AsyncSession,
+    product_ids: list[str],
+    req_group_ids: list[str],
+) -> tuple[dict[str, list[Any]], dict[str, str]]:
+    from backend.domain.samba.collector.model import SambaSearchFilter as _SF_tag
+
+    groups: dict[str, list[Any]] = {}
+    group_names: dict[str, str] = {}
+    filter_products_cache: dict[str, list[Any]] = {}
+    filter_names_cache: dict[str, str] = {}
+
+    async def _get_filter_name(search_filter_id: str) -> str:
+        if search_filter_id not in filter_names_cache:
+            sf = await session.get(_SF_tag, search_filter_id)
+            filter_names_cache[search_filter_id] = (
+                (sf.name or search_filter_id) if sf else search_filter_id
+            )
+        return filter_names_cache[search_filter_id]
+
+    async def _get_filter_products(search_filter_id: str) -> list[Any]:
+        if search_filter_id not in filter_products_cache:
+            filter_products_cache[search_filter_id] = list(
+                await repo.filter_by_async(
+                    search_filter_id=search_filter_id, limit=10000
+                )
+            )
+        return filter_products_cache[search_filter_id]
+
+    async def _register_group(
+        group_id: str,
+        products: list[Any],
+        *,
+        search_filter_id: str | None = None,
+        label: str | None = None,
+    ) -> None:
+        if not products or group_id in groups:
+            return
+        groups[group_id] = products
+        if label:
+            group_names[group_id] = label
+        elif search_filter_id:
+            group_names[group_id] = await _get_filter_name(search_filter_id)
+        else:
+            rep = products[0]
+            group_names[group_id] = rep.name or rep.id
+
+    for gid in req_group_ids:
+        filter_products = await _get_filter_products(gid)
+        if not filter_products:
+            continue
+
+        grouped_by_key: dict[str, list[Any]] = defaultdict(list)
+        singles: list[Any] = []
+        for product in filter_products:
+            group_key = (getattr(product, "group_key", None) or "").strip()
+            if group_key:
+                grouped_by_key[group_key].append(product)
+            else:
+                singles.append(product)
+
+        filter_name = await _get_filter_name(gid)
+        if grouped_by_key:
+            for group_key, items in grouped_by_key.items():
+                await _register_group(
+                    _make_ai_tag_group_key_id(gid, group_key),
+                    items,
+                    search_filter_id=gid,
+                    label=f"{filter_name} / {items[0].name or group_key}",
+                )
+            for product in singles:
+                await _register_group(
+                    _make_ai_tag_product_id(product.id),
+                    [product],
+                    search_filter_id=gid,
+                    label=f"{filter_name} / {product.name or product.id}",
+                )
+        else:
+            await _register_group(gid, filter_products, search_filter_id=gid)
+
+    for pid in product_ids:
+        product = await repo.get_async(pid)
+        if not product:
+            continue
+
+        search_filter_id = getattr(product, "search_filter_id", None) or ""
+        group_key = (getattr(product, "group_key", None) or "").strip()
+
+        if search_filter_id and group_key:
+            products = list(
+                await repo.filter_by_async(
+                    search_filter_id=search_filter_id,
+                    group_key=group_key,
+                    limit=10000,
+                )
+            )
+            await _register_group(
+                _make_ai_tag_group_key_id(search_filter_id, group_key),
+                products,
+                search_filter_id=search_filter_id,
+                label=f"{await _get_filter_name(search_filter_id)} / {product.name or group_key}",
+            )
+            continue
+
+        if search_filter_id:
+            filter_products = await _get_filter_products(search_filter_id)
+            has_grouped_products = any(
+                (getattr(item, "group_key", None) or "").strip()
+                for item in filter_products
+            )
+            if not has_grouped_products:
+                await _register_group(
+                    search_filter_id,
+                    filter_products,
+                    search_filter_id=search_filter_id,
+                )
+                continue
+
+        await _register_group(
+            _make_ai_tag_product_id(product.id),
+            [product],
+            search_filter_id=search_filter_id or None,
+            label=product.name or product.id,
+        )
+
+    return groups, group_names
+
+
+async def _resolve_ai_tag_apply_products(
+    repo, group: dict[str, Any]
+) -> tuple[str, list[Any]]:
+    product_ids = [pid for pid in group.get("product_ids", []) if pid]
+    if product_ids:
+        resolved: list[Any] = []
+        for pid in product_ids:
+            product = await repo.get_async(pid)
+            if product:
+                resolved.append(product)
+        return str(group.get("group_id", "") or ""), resolved
+
+    gid = str(group.get("group_id", "") or "")
+    if not gid:
+        return "", []
+
+    group_type, first, second = _parse_ai_tag_group_id(gid)
+    if group_type == "group_key":
+        products = await repo.filter_by_async(
+            search_filter_id=first,
+            group_key=second,
+            limit=10000,
+        )
+        return gid, list(products)
+    if group_type == "product":
+        product = await repo.get_async(first)
+        return gid, [product] if product else []
+
+    products = await repo.filter_by_async(search_filter_id=gid, limit=10000)
+    if products:
+        return gid, list(products)
+    product = await repo.get_async(gid)
+    return gid, [product] if product else []
+
+
 # ── 프록시 설정 관리 API ──
 
 
@@ -141,6 +330,7 @@ async def get_proxy_config(
 async def save_proxy_config(
     payload: ProxyConfigPayload,
     session: AsyncSession = Depends(get_write_session_dependency),
+    admin: str = Depends(require_admin),
 ):
     """프록시 설정 저장 (전체 교체)."""
     items = [p.model_dump() for p in payload.proxies]
@@ -1679,27 +1869,13 @@ async def generate_ai_tags(
     repo = SambaCollectedProductRepository(session)
 
     # 그룹 ID 직접 전달 시 바로 사용
-    group_ids: set[str] = set(req_group_ids)
-    ungrouped: list = []
+    group_products, group_names = await _build_ai_tag_groups(
+        repo, session, product_ids, req_group_ids
+    )
 
     # 상품 ID로 전달 시 그룹 추출
-    for pid in product_ids:
-        product = await repo.get_async(pid)
-        if not product:
-            continue
-        if product.search_filter_id:
-            group_ids.add(product.search_filter_id)
-        else:
-            ungrouped.append(product)
 
     # 그룹별 전체 상품 조회 (샘플링용)
-    group_products: dict[str, list] = {}
-    for gid in group_ids:
-        all_in_group = await repo.filter_by_async(search_filter_id=gid, limit=10000)
-        if all_in_group:
-            group_products[gid] = list(all_in_group)
-    for p in ungrouped:
-        group_products[p.id] = [p]
 
     if not group_products:
         return {"success": False, "message": "상품을 찾을 수 없습니다"}
@@ -1906,10 +2082,7 @@ async def generate_ai_tags(
                 tags = top12[2:12]
 
                 # 태그 생성 후 그룹 전체 상품 조회 → 벌크 적용
-                all_in_group = await repo.filter_by_async(
-                    search_filter_id=gid, limit=10000
-                )
-                for p in all_in_group:
+                for p in products:
                     existing = p.tags or []
                     merged = list(set(existing + tags + ["__ai_tagged__"]))
                     update_data: dict = {"tags": merged}
@@ -1988,38 +2161,16 @@ async def preview_ai_tags(
     repo = SambaCollectedProductRepository(session)
 
     # 그룹 ID 수집
-    group_ids: set[str] = set(req_group_ids)
-    ungrouped: list = []
-    for pid in product_ids:
-        product = await repo.get_async(pid)
-        if not product:
-            continue
-        if product.search_filter_id:
-            group_ids.add(product.search_filter_id)
-        else:
-            ungrouped.append(product)
+    groups, group_names = await _build_ai_tag_groups(
+        repo, session, product_ids, req_group_ids
+    )
 
     # 그룹별 상품 조회
-    groups: dict[str, list] = {}
-    for gid in group_ids:
-        all_in_group = await repo.filter_by_async(search_filter_id=gid, limit=10000)
-        if all_in_group:
-            groups[gid] = list(all_in_group)
-    for p in ungrouped:
-        groups[p.id] = [p]
 
     if not groups:
         return {"success": False, "message": "상품을 찾을 수 없습니다"}
 
     # 그룹명 조회
-    from backend.domain.samba.collector.model import SambaSearchFilter as _SF_tag
-
-    _filter_names: dict[str, str] = {}
-    for gid in group_ids:
-        sf = await session.get(_SF_tag, gid)
-        if sf:
-            _filter_names[gid] = sf.name or gid
-
     # 그룹별 태그 미리보기 결과
     preview_results: list[dict[str, Any]] = []
     failed_groups = 0
@@ -2217,9 +2368,11 @@ async def preview_ai_tags(
                 preview_results.append(
                     {
                         "group_id": gid,
-                        "group_name": _filter_names.get(gid, rep_name),
+                        "group_name": group_names.get(gid, rep_name),
                         "product_count": len(products),
                         "rep_name": rep_name,
+                        "product_ids": [p.id for p in products],
+                        "group_key": rep.group_key or "",
                         "tags": validated_tags,
                         "rejected_tags": rejected_tags,
                         "seo_keywords": seo_preview,
@@ -2303,20 +2456,15 @@ async def apply_ai_tags(
     total_tagged = 0
 
     for group in groups_data:
-        gid = group.get("group_id", "")
+        gid, products = await _resolve_ai_tag_apply_products(repo, group)
         tags = group.get("tags", [])
         if not gid or not tags:
             continue
 
         # 그룹 상품 조회
-        products = await repo.filter_by_async(search_filter_id=gid, limit=10000)
         if not products:
+            continue
             # 개별 상품 (그룹 없는 경우)
-            product = await repo.get_async(gid)
-            if product:
-                products = [product]
-            else:
-                continue
 
         # SEO 키워드: 프론트에서 수정한 값 우선, 없으면 자동 추출 (태그와 중복 방지)
         seo_kws: list[str] = group.get("seo_keywords", [])
@@ -2752,6 +2900,7 @@ class MusinsaSetCookieRequest(BaseModel):
 async def musinsa_set_cookie(
     body: MusinsaSetCookieRequest,
     write_session: AsyncSession = Depends(get_write_session_dependency),
+    admin: str = Depends(require_admin),
 ) -> dict[str, Any]:
     """브라우저 확장에서 쿠키 직접 전달."""
     client = MusinsaClient(cookie=body.cookie)
@@ -3153,6 +3302,7 @@ class LotteAuthRequest(BaseModel):
 async def lottehome_auth(
     body: LotteAuthRequest,
     write_session: AsyncSession = Depends(get_write_session_dependency),
+    admin: str = Depends(require_admin),
 ) -> dict[str, Any]:
     """롯데홈쇼핑 인증키 발급."""
     if not body.userId or not body.password:
@@ -3387,6 +3537,7 @@ class GsShopCredsRequest(BaseModel):
 async def gsshop_save_credentials(
     body: GsShopCredsRequest,
     write_session: AsyncSession = Depends(get_write_session_dependency),
+    admin: str = Depends(require_admin),
 ) -> dict[str, Any]:
     """GS샵 자격증명 저장."""
     await _set_setting(
@@ -3744,6 +3895,40 @@ async def get_extension_config(
 # 범용 이미지 프록시
 # ═══════════════════════════════════════════════
 
+# SSRF 방지 — 허용 도메인 목록
+_ALLOWED_IMAGE_HOSTS = {
+    "musinsa.com",
+    "image.musinsa.com",
+    "imagescdn.musinsa.com",
+    "kream.co.kr",
+    "images.kream.co.kr",
+    "lotteon.com",
+    "gsshop.com",
+    "ssg.com",
+    "gs.ssgcdn.com",
+    "abcmart.com",
+    "image.abcmart.com",
+    "nike.com",
+    "nike-anz.scene7.com",
+    "cdn.shopify.com",
+}
+
+
+def _validate_image_url(target: str) -> bool:
+    """허용 목록 기반 URL 검증."""
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(target)
+        host = parsed.netloc.lower()
+        # 호스트가 허용 목록에 포함되는지 확인
+        for allowed in _ALLOWED_IMAGE_HOSTS:
+            if host == allowed or host.endswith("." + allowed):
+                return True
+        return False
+    except Exception:
+        return False
+
 
 @router.get("/image-proxy")
 async def image_proxy(
@@ -3755,6 +3940,9 @@ async def image_proxy(
     from urllib.parse import unquote
 
     target = unquote(url)
+    # SSRF 방지 — 허용 도메인만 허용
+    if not _validate_image_url(target):
+        raise HTTPException(status_code=403, detail="허용되지 않는 호스트")
     try:
         async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
             resp = await client.get(

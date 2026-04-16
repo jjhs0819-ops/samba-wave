@@ -72,6 +72,7 @@ export default function CategoriesPage() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // 마켓별 카테고리 수
   const [marketCatCounts, setMarketCatCounts] = useState<Record<string, number>>({})
+  const [marketUnmappedFilters, setMarketUnmappedFilters] = useState<Record<string, boolean>>({})
   // 마켓별 AI 리매핑 로딩 상태
   const [marketAiLoading, setMarketAiLoading] = useState<string | null>(null)
   // 마켓별 AI 진행 모달
@@ -506,10 +507,14 @@ export default function CategoriesPage() {
     return { calls, tokens: `~${fmtNum(calls * 1500)} in + ~${fmtNum(calls * 300)} out`, cost: calls * COST_PER_CALL_KRW }
   }, [selectedSite, selectedCat1, unmappedCount])
 
+  const toggleMarketUnmappedFilter = (market: string) => {
+    setMarketUnmappedFilters(prev => ({ ...prev, [market]: !prev[market] }))
+  }
+
   // ── 매핑 현황 필터링 (드릴다운 선택에 연동) ──
 
   // treeRows 기반 매핑 현황 (상품 전체 순회 불필요)
-  const filteredMappings = useMemo(() => {
+  const baseFilteredMappings = useMemo(() => {
     // treeRows에서 고유 (site, leaf_category) 추출
     const productCats = new Map<string, { site: string; category: string }>()
     treeRows.forEach(({ source_site, category }) => {
@@ -568,6 +573,18 @@ export default function CategoriesPage() {
       a.source_site.localeCompare(b.source_site) || a.source_category.localeCompare(b.source_category)
     )
   }, [mappings, treeRows, selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4])
+
+  const filteredMappings = useMemo(() => {
+    const activeMarkets = Object.entries(marketUnmappedFilters)
+      .filter(([, enabled]) => enabled)
+      .map(([market]) => market)
+
+    if (activeMarkets.length === 0) return baseFilteredMappings
+
+    return baseFilteredMappings.filter(row =>
+      activeMarkets.every(market => !row.target_mappings?.[market]?.trim())
+    )
+  }, [baseFilteredMappings, marketUnmappedFilters])
 
   // ── 매핑 현황 핸들러 ──
 
@@ -1102,9 +1119,9 @@ export default function CategoriesPage() {
           <h3 style={{ fontSize: '1.125rem', fontWeight: 700, marginBottom: '0.75rem' }}>
             매핑 현황{' '}
             <span style={{ fontSize: '0.875rem', fontWeight: 400, color: '#888' }}>
-              ({filteredMappings.length === mappings.length
-                ? `총 ${fmtNum(mappings.length)}건`
-                : `${fmtNum(filteredMappings.length)}건 / 전체 ${fmtNum(mappings.length)}건`})
+              ({filteredMappings.length === baseFilteredMappings.length
+                ? `총 ${fmtNum(baseFilteredMappings.length)}건`
+                : `${fmtNum(filteredMappings.length)}건 / 전체 ${fmtNum(baseFilteredMappings.length)}건`})
             </span>
           </h3>
           <div style={{ ...card, overflow: 'auto' }}>
@@ -1204,9 +1221,27 @@ export default function CategoriesPage() {
                           title={`${MARKET_LABELS[mk]} 카테고리 일괄 삭제 (${fmtNum(filteredMappings.length)}건)`}
                         >✕</button>
                       </div>
-                      <span style={{ fontSize: '0.625rem', color: (marketCatCounts[mk] || 0) >= 1000 ? '#51CF66' : '#FF6B6B' }}>
-                        {fmtNum(marketCatCounts[mk] || 0)}개
-                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                        <span style={{ fontSize: '0.625rem', color: (marketCatCounts[mk] || 0) >= 1000 ? '#51CF66' : '#FF6B6B' }}>
+                          {fmtNum(marketCatCounts[mk] || 0)}개
+                        </span>
+                        <button
+                          onClick={() => toggleMarketUnmappedFilter(mk)}
+                          style={{
+                            background: marketUnmappedFilters[mk] ? 'rgba(255,140,0,0.14)' : 'transparent',
+                            border: `1px solid ${marketUnmappedFilters[mk] ? 'rgba(255,140,0,0.45)' : '#2D2D2D'}`,
+                            borderRadius: '999px',
+                            color: marketUnmappedFilters[mk] ? '#FFB84D' : '#777',
+                            fontSize: '0.625rem',
+                            padding: '1px 6px',
+                            cursor: 'pointer',
+                            lineHeight: 1.5,
+                          }}
+                          title={`${MARKET_LABELS[mk]} 미매핑 카테고리만 보기`}
+                        >
+                          미매핑만
+                        </button>
+                      </div>
                       </div>
                     </th>
                   ))}
@@ -1217,7 +1252,9 @@ export default function CategoriesPage() {
                 {filteredMappings.length === 0 && !isLeafCategory ? (
                   <tr>
                     <td colSpan={marketKeys.length + 3} style={{ padding: '1.5rem', textAlign: 'center', color: '#555' }}>
-                      {selectedSite ? `${selectedSite}에 매핑된 카테고리가 없습니다` : '매핑 데이터가 없습니다'}
+                      {Object.values(marketUnmappedFilters).some(Boolean)
+                        ? '선택한 판매처 기준 미매핑 카테고리가 없습니다'
+                        : selectedSite ? `${selectedSite}에 매핑된 카테고리가 없습니다` : '매핑 데이터가 없습니다'}
                     </td>
                   </tr>
                 ) : null}

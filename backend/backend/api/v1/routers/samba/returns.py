@@ -146,11 +146,17 @@ async def create_return(
 async def get_return(
     return_id: str,
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     svc = _read_service(session)
     ret = await svc.get_return(return_id)
     if not ret:
         raise HTTPException(status_code=404, detail="반품/교환 기록을 찾을 수 없습니다")
+    # 테넌트 소유권 검증
+    if tenant_id is not None and ret.tenant_id != tenant_id:
+        raise HTTPException(
+            status_code=403, detail="해당 반품/교환에 대한 권한이 없습니다"
+        )
     return ret
 
 
@@ -234,6 +240,7 @@ class ReturnPatchBody(BaseModel):
     original_order_no: Optional[str] = None
     type: Optional[str] = None
     market_order_status: Optional[str] = None
+    return_source: Optional[str] = None
 
 
 @router.patch("/{return_id}")
@@ -241,12 +248,18 @@ async def patch_return(
     return_id: str,
     body: ReturnPatchBody,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     """확인 체크박스, 정산금액, 환수금액 등 부분 업데이트."""
     svc = _write_service(session)
     ret = await svc.repo.get_async(return_id)
     if not ret:
         raise HTTPException(status_code=404, detail="반품/교환 기록을 찾을 수 없습니다")
+    # 테넌트 소유권 검증
+    if tenant_id is not None and ret.tenant_id != tenant_id:
+        raise HTTPException(
+            status_code=403, detail="해당 반품/교환에 대한 권한이 없습니다"
+        )
     update_fields: dict[str, Any] = {}
     if body.confirmed is not None:
         update_fields["confirmed"] = body.confirmed
@@ -442,6 +455,7 @@ class SyncReturnsRequest(BaseModel):
 async def sync_returns_from_markets(
     body: SyncReturnsRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     """활성 마켓 계정에서 반품/교환/취소 데이터를 가져와 DB에 저장."""
     from backend.domain.samba.account.repository import SambaMarketAccountRepository
@@ -454,11 +468,26 @@ async def sync_returns_from_markets(
     # 특정 계정 또는 전체 활성 계정
     if body.account_id:
         target = await account_repo.get_async(body.account_id)
-        active_accounts = [target] if target else []
+        if not target:
+            active_accounts = []
+        else:
+            # 테넌트 소유권 검증
+            if tenant_id is not None and target.tenant_id != tenant_id:
+                raise HTTPException(403, "해당 계정에 대한 권한이 없습니다")
+            active_accounts = [target]
     else:
-        active_accounts = await account_repo.filter_by_async(
+        # 테넌트 필터링: tenant_id가 있으면 해당 테넌트 계정만 조회
+        all_accounts = await account_repo.filter_by_async(
             is_active=True, order_by="created_at", order_by_desc=True
         )
+        if tenant_id is not None:
+            active_accounts = [
+                a
+                for a in all_accounts
+                if a.tenant_id == tenant_id or a.tenant_id is None
+            ]
+        else:
+            active_accounts = all_accounts
 
     svc = _write_service(session)
     results: list[dict[str, Any]] = []

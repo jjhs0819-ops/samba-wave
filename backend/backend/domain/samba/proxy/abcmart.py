@@ -49,6 +49,7 @@ class ARTSourcingClient:
     # 내부 검색 API (SPA가 호출하는 JSON API)
     SEARCH_API_PATH = "/display/search-word/result-total/list"
     DETAIL_PATH = "/product"
+    API_FAILURE_COST_FALLBACK = 200_000
 
     # 멤버십 할인률 캐시 (확장앱에서 감지 → sync-membership으로 갱신)
     _cached_membership_rate: float = 3.0  # 기본 수집가 등급
@@ -1405,6 +1406,7 @@ class ARTSourcingClient:
         """
         site_label = f"[{self._source_site}]"
         now_iso = datetime.now(tz=timezone.utc).isoformat()
+        api_failed = False
 
         # 1순위: 내부 JSON API 직접 호출
         # 세션 쿠키(JSESSIONID)를 한 번 획득한 뒤 info/detail API 양쪽에 재사용한다.
@@ -1436,12 +1438,14 @@ class ARTSourcingClient:
                 logger.warning(
                     f"{site_label} info API 응답 비어있음, HTML 폴백: {product_id}"
                 )
+                api_failed = True
             finally:
                 await session_client.aclose()
         except RateLimitError:
             raise
         except Exception as e:
             logger.warning(f"{site_label} info API 예외, HTML 폴백: {product_id} — {e}")
+            api_failed = True
 
         # 2순위: HTML 파싱 폴백
         logger.info(f"{site_label} HTML 폴백 상세 조회: {product_id}")
@@ -1471,7 +1475,13 @@ class ARTSourcingClient:
                     return {}
 
             html = resp.text
-            result = self._parse_detail_html(html, product_id, now_iso, refresh_only)
+            result = self._parse_detail_html(
+                html,
+                product_id,
+                now_iso,
+                refresh_only,
+                api_failed=api_failed,
+            )
             if not result.get("name"):
                 logger.warning(
                     f"{site_label} HTML 폴백도 상품명 없음 (삭제/비활성 상품): {product_id}"
@@ -1494,6 +1504,7 @@ class ARTSourcingClient:
         product_id: str,
         now_iso: str,
         refresh_only: bool = False,
+        api_failed: bool = False,
     ) -> dict[str, Any]:
         """상세 페이지 HTML 파싱.
 
@@ -1531,6 +1542,8 @@ class ARTSourcingClient:
         if original_price == 0:
             original_price = sale_price
         best_benefit_price = self._parse_best_benefit_price(html) or sale_price
+        if api_failed:
+            best_benefit_price = self.API_FAILURE_COST_FALLBACK
 
         # 브랜드
         brand = self._parse_brand(html, json_ld)
@@ -1593,7 +1606,7 @@ class ARTSourcingClient:
             "options": options,
             "originalPrice": original_price,
             "salePrice": sale_price,
-            "cost": sale_price + shipping_fee,
+            "cost": best_benefit_price,
             "shippingFee": shipping_fee,
             "bestBenefitPrice": best_benefit_price,
             "saleStatus": sale_status,

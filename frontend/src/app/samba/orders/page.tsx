@@ -166,6 +166,28 @@ export default function OrdersPage() {
     setMsgText(newVal)
     requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = start + tag.length; el.focus() })
   }
+
+  const renderMsgTemplate = useCallback((template: string, order: SambaOrder) => {
+    const matchedAccount = accounts.find(account => {
+      if (order.channel_name && account.market_name && order.channel_name.includes(account.market_name)) return true
+      if (order.channel_name && account.account_label && order.channel_name.includes(account.account_label)) return true
+      return false
+    })
+    const sellerName = matchedAccount?.business_name || matchedAccount?.seller_id || matchedAccount?.account_label || ''
+    const marketName = matchedAccount?.market_name || order.channel_name || ''
+    const variables: Record<string, string> = {
+      sellerName,
+      marketName,
+      OrderName: order.order_number || '',
+      rvcName: order.customer_name || '',
+      rcvHPNo: order.customer_phone || '',
+      goodsName: order.product_name || '',
+    }
+
+    return template
+      .replace(/\{\{(sellerName|marketName|OrderName|rvcName|rcvHPNo|goodsName)\}\}/g, (_, key: keyof typeof variables) => variables[key] || '')
+      .replace(/\{\{[^{}]+\}\}/g, '')
+  }, [accounts])
   // 검색 카테고리
   const [searchCategory, setSearchCategory] = useState('customer')
   // 일자 고정
@@ -367,11 +389,16 @@ export default function OrdersPage() {
     setMsgSending(true)
     try {
       const phone = msgModal.order.customer_phone || ''
+      const renderedMsg = renderMsgTemplate(msgText, msgModal.order).trim()
+      if (!renderedMsg) {
+        showAlert('치환 후 발송할 메시지가 비어 있습니다.', 'error')
+        return
+      }
       let res: { success: boolean; message: string }
       if (msgModal.type === 'sms') {
-        res = await proxyApi.sendSms(phone, msgText)
+        res = await proxyApi.sendSms(phone, renderedMsg)
       } else {
-        res = await proxyApi.sendKakao(phone, msgText)
+        res = await proxyApi.sendKakao(phone, renderedMsg)
       }
       if (res.success) {
         showAlert(res.message, 'success')
@@ -382,8 +409,9 @@ export default function OrdersPage() {
       }
     } catch (e) {
       showAlert(e instanceof Error ? e.message : '발송 실패', 'error')
+    } finally {
+      setMsgSending(false)
     }
-    setMsgSending(false)
   }
 
   const handleStatusChange = async (id: string, status: string) => {
@@ -405,9 +433,10 @@ export default function OrdersPage() {
     const val = editingCosts[id]
     if (val === undefined) return
     try {
-      await orderApi.update(id, { cost: Number(val) || 0 })
+      const nextCost = Number(val) || 0
+      await orderApi.update(id, { cost: nextCost })
+      patchOrder(id, { cost: nextCost })
       setEditingCosts(prev => { const n = { ...prev }; delete n[id]; return n })
-      loadOrders()
     } catch (e) { showAlert(e instanceof Error ? e.message : '원가 저장 실패', 'error') }
   }
 
@@ -416,9 +445,10 @@ export default function OrdersPage() {
     const val = editingShipFees[id]
     if (val === undefined) return
     try {
-      await orderApi.update(id, { shipping_fee: Number(val) || 0 })
+      const nextShippingFee = Number(val) || 0
+      await orderApi.update(id, { shipping_fee: nextShippingFee })
+      patchOrder(id, { shipping_fee: nextShippingFee })
       setEditingShipFees(prev => { const n = { ...prev }; delete n[id]; return n })
-      loadOrders()
     } catch (e) { showAlert(e instanceof Error ? e.message : '배송비 저장 실패', 'error') }
   }
 
@@ -1422,10 +1452,15 @@ export default function OrdersPage() {
                             if (val === (o.sourcing_order_number ?? '')) return
                             try {
                               await orderApi.update(o.id, { sourcing_order_number: val })
-                              loadOrders()
+                              patchOrder(o.id, { sourcing_order_number: val })
                             } catch (err) { showAlert(err instanceof Error ? err.message : '소싱주문번호 저장 실패', 'error') }
                           }}
-                          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              ;(e.target as HTMLInputElement).blur()
+                            }
+                          }}
                           style={{ ...inputStyle, flex: 1, fontSize: '0.75rem' }}
                         />
                       </div>
@@ -1478,7 +1513,12 @@ export default function OrdersPage() {
                             setEditingCosts(prev => ({ ...prev, [o.id]: raw }))
                           }}
                           onBlur={() => handleCostSave(o.id)}
-                          onKeyDown={e => { if (e.key === 'Enter') handleCostSave(o.id) }}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              handleCostSave(o.id)
+                            }
+                          }}
                         />
                         <input
                           type="text"
@@ -1490,7 +1530,12 @@ export default function OrdersPage() {
                             setEditingShipFees(prev => ({ ...prev, [o.id]: raw }))
                           }}
                           onBlur={() => handleShipFeeSave(o.id)}
-                          onKeyDown={e => { if (e.key === 'Enter') handleShipFeeSave(o.id) }}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              handleShipFeeSave(o.id)
+                            }
+                          }}
                         />
                       </div>
 

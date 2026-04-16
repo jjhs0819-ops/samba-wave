@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import String
+from sqlalchemy import Index, String
 from sqlmodel import Column, DateTime, Field, SQLModel, Text
 
 from ulid import ULID
@@ -26,6 +26,9 @@ class SambaOrder(SQLModel, table=True):
     """주문 테이블."""
 
     __tablename__ = "samba_order"
+    __table_args__ = (
+        Index("uq_order_tenant_number", "tenant_id", "order_number", unique=True),
+    )
 
     id: str = Field(
         default_factory=generate_order_id,

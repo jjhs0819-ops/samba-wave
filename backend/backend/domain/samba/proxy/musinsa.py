@@ -88,6 +88,32 @@ class MusinsaClient:
             return f"https:{path}"
         return f"https://image.msscdn.net{path}"
 
+    @staticmethod
+    def _floor_to_10(amount: float) -> int:
+        return int(amount / 10) * 10
+
+    @classmethod
+    def _calculate_display_benefit_price(
+        cls,
+        *,
+        benefit_base: int,
+        grade_discount_rate: float,
+        is_point_restricted: bool,
+        point_rate_pct: float,
+    ) -> tuple[int, int, int]:
+        """Calculate the product-page max benefit price shown by Musinsa."""
+        grade_discount = (
+            cls._floor_to_10(benefit_base * grade_discount_rate / 100)
+            if grade_discount_rate > 0
+            else 0
+        )
+        point_base = benefit_base - grade_discount
+        point_usage = 0
+        if not is_point_restricted and point_rate_pct > 0:
+            point_usage = cls._floor_to_10(point_base * point_rate_pct / 100)
+        display_price = benefit_base - grade_discount - point_usage
+        return grade_discount, point_usage, display_price
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -268,10 +294,17 @@ class MusinsaClient:
             save_point_value = gp.get("savePoint", 0) or 0
 
             # 2단계: 등급할인 (benefit_base 기준, 10원 절사)
-            grade_discount = (
-                int(benefit_base * grade_discount_rate / 100 / 10) * 10
-                if grade_discount_rate > 0
-                else 0
+            grade_discount, point_usage, display_benefit_price = (
+                self._calculate_display_benefit_price(
+                    benefit_base=benefit_base,
+                    grade_discount_rate=grade_discount_rate,
+                    is_point_restricted=d.get("isRestictedUsePoint") is True,
+                    point_rate_pct=(
+                        (d.get("maxUsePointRate", 0) or 0) * 100
+                        if 0 < (d.get("maxUsePointRate", 0) or 0) < 1
+                        else (d.get("maxUsePointRate", 0) or 0)
+                    ),
+                )
             )
 
             # 3단계: 적립금 사용 (benefit_base - 등급할인 기준, 10원 절사)
@@ -302,17 +335,18 @@ class MusinsaClient:
                         f"계정 설정 영향 → isPrePoint=False로 교정"
                     )
                 # product_pre_point=None(실패) → auth 값(True) 유지
-            remaining = benefit_base - grade_discount - point_usage
+            remaining = display_benefit_price
             pre_discount = 0
             if is_pre_point:
                 grade_point = (
-                    int(remaining * grade_save_point_rate / 100 / 10) * 10
+                    self._floor_to_10(remaining * grade_save_point_rate / 100)
                     if grade_save_point_rate > 0
                     else 0
                 )
                 pre_discount = grade_point + save_point_value
 
-            best_benefit_price = remaining - pre_discount
+            # Musinsa product-page max benefit excludes earned-point/pre-point accrual.
+            best_benefit_price = display_benefit_price
 
             logger.info(
                 f"[무신사 혜택가] {goods_no}: "

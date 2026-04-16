@@ -304,6 +304,7 @@ export default function ShipmentsPage() {
   const autoAll = searchParams.get('autoAll') === '1'
   const priceOnly = searchParams.get('priceOnly') === '1'
   const initializedRef = useRef(false)
+  const importedSelectionRef = useRef<string[]>([])
   useEffect(() => {
     if (initializedRef.current) return
     if (products.length === 0 || policies.length === 0) return
@@ -319,7 +320,10 @@ export default function ShipmentsPage() {
 
     if (preSelectedIds.length > 0) {
       const ids = preSelectedIds.filter(id => products.some(p => p.id === id))
-      if (ids.length > 0) setSelectedProducts(ids)
+      if (ids.length > 0) {
+        importedSelectionRef.current = ids
+        setSelectedProducts(ids)
+      }
     }
     if (preSelectedSites.length > 0) {
       setSelectedSites(preSelectedSites.filter(s => s))
@@ -1170,6 +1174,7 @@ export default function ShipmentsPage() {
                   const { API_BASE_URL: apiBase } = await import('@/config/api')
                   await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
                 } catch { /* ignore */ }
+                let targetProducts: SambaCollectedProduct[] = []
                 const allParams: Record<string, string | number> = { skip: 0, limit: 10000 }
                 if (searchText.trim()) {
                   allParams.search = searchText.trim()
@@ -1185,10 +1190,17 @@ export default function ShipmentsPage() {
                   }
                 }
                 try {
-                  const all = await collectorApi.scrollProducts(allParams)
+                  const importedSelectedIds = importedSelectionRef.current.filter(id => selectedProducts.includes(id))
+                  if (!userFilterChangedRef.current && importedSelectedIds.length > 0) {
+                    targetProducts = products.filter(p =>
+                      importedSelectedIds.includes(p.id) && new Set(selectedSites).has(p.source_site)
+                    )
+                  } else {
+                    const all = await collectorApi.scrollProducts(allParams)
+                    targetProducts = all.items.filter(p => new Set(selectedSites).has(p.source_site))
+                  }
                   // 소싱사이트 필터
-                  const siteSet = new Set(selectedSites)
-                  const allIds = all.items.filter(p => siteSet.has(p.source_site)).map(p => p.id)
+                  const allIds = targetProducts.map(p => p.id)
                   if (allIds.length === 0) { showAlert('선택된 소싱사이트에 해당하는 상품이 없습니다'); return }
                   // Job 직접 생성
                   setTransmitting(true)
@@ -1201,7 +1213,7 @@ export default function ShipmentsPage() {
                   // 정책 연결 계정만 필터 (선택전송과 동일 로직)
                   const selectedSet = new Set(selectedAccounts)
                   const effectiveAccIds = new Set<string>()
-                  for (const prod of all.items.filter(p => siteSet.has(p.source_site))) {
+                  for (const prod of targetProducts) {
                     if (!prod.applied_policy_id) continue
                     const policy = policies.find(p => p.id === prod.applied_policy_id)
                     if (!policy?.market_policies || typeof policy.market_policies !== 'object') continue

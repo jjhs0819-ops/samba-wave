@@ -105,12 +105,16 @@ async def get_supported_markets():
 async def get_account(
     account_id: str,
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     svc = _get_service(session)
     account = await svc.get_account(account_id)
     if not account:
         raise HTTPException(404, "계정을 찾을 수 없습니다")
-    return account
+    # IDOR 방지: 테넌트 소유권 검증
+    if tenant_id is not None and account.tenant_id != tenant_id:
+        raise HTTPException(403, "해당 계정에 대한 권한이 없습니다")
+    return mask_model_secrets(account.model_dump())
 
 
 @router.post("", status_code=201)

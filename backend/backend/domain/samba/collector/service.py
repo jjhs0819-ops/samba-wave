@@ -159,7 +159,17 @@ class SambaCollectorService:
             or data.get("applied_policy_id")
         ):
             return
-        existing = await self.product_repo.list_by_filter(fid, limit=1)
+        group_key = (data.get("group_key") or "").strip()
+        if group_key:
+            existing = await self.product_repo.filter_by_async(
+                search_filter_id=fid,
+                group_key=group_key,
+                limit=1,
+                order_by="created_at",
+                order_by_desc=True,
+            )
+        else:
+            existing = await self.product_repo.list_by_filter(fid, limit=1)
         if not existing:
             return
         ref = existing[0]
