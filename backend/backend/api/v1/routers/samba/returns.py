@@ -685,8 +685,11 @@ async def sync_returns_from_markets(
                             elif new_status == "completed":
                                 update_data["completion_date"] = datetime.now(UTC)
                             await svc.repo.update_async(existing_ret.id, **update_data)
-                        # 이미지/전화번호/주소 보충
+                        # 이미지/전화번호/주소/주문일 보충
                         patch_fields: dict[str, Any] = {}
+                        patch_fields["order_date"] = (
+                            existing_order.paid_at or existing_order.created_at
+                        )
                         if claim["product_image"] and not existing_ret.product_image:
                             patch_fields["product_image"] = claim["product_image"]
                         if (
@@ -852,6 +855,9 @@ async def sync_returns_from_markets(
                         # 기존 레코드에 누락/오류 필드 보충
                         er = existing_returns[0]
                         patch_lo: dict[str, Any] = {}
+                        patch_lo["order_date"] = (
+                            existing_order.paid_at or existing_order.created_at
+                        )
                         correct_type = claim[
                             "return_type"
                         ]  # API에서 확정된 type (return/exchange)
@@ -978,6 +984,9 @@ async def sync_returns_from_markets(
                             # 기존 레코드 image 보충 (type은 변경 금지 — 교환취소 후 반품 재신청 케이스 보호)
                             er = existing_returns[0]
                             patch: dict[str, Any] = {}
+                            patch["order_date"] = (
+                                existing_order.paid_at or existing_order.created_at
+                            )
                             if not er.product_image and existing_order.product_image:
                                 patch["product_image"] = existing_order.product_image
                             if not er.market_order_status:
@@ -1114,12 +1123,15 @@ async def sync_returns_from_markets(
                             "rejected": 2,
                             "cancelled": 2,
                         }
+                        update_lo: dict[str, Any] = {
+                            "order_date": existing_order.paid_at
+                            or existing_order.created_at
+                        }
                         if status_priority.get(new_status, 0) > status_priority.get(
                             existing_ret.status, 0
                         ):
-                            await svc.repo.update_async(
-                                existing_ret.id, status=new_status
-                            )
+                            update_lo["status"] = new_status
+                        await svc.repo.update_async(existing_ret.id, **update_lo)
                         continue
                     # 신규 반품 생성
                     market_label_map_lo: dict[str, str] = {
@@ -1240,13 +1252,15 @@ async def sync_returns_from_markets(
                     if existing_returns:
                         # 기존 레코드 — clm_req_seq/ord_prd_seq 보완
                         existing_ret = existing_returns[0]
-                        patch: dict[str, Any] = {}
+                        patch: dict[str, Any] = {
+                            "order_date": existing_order.paid_at
+                            or existing_order.created_at
+                        }
                         if clm_req_seq and not existing_ret.clm_req_seq:
                             patch["clm_req_seq"] = clm_req_seq
                         if ord_prd_seq and not existing_ret.ord_prd_seq:
                             patch["ord_prd_seq"] = ord_prd_seq
-                        if patch:
-                            await svc.repo.update_async(existing_ret.id, **patch)
+                        await svc.repo.update_async(existing_ret.id, **patch)
                         continue
 
                     # 신규 교환 레코드 생성
@@ -1432,13 +1446,15 @@ async def sync_returns_from_markets(
                     )
                     if existing_returns:
                         existing_ret = existing_returns[0]
-                        patch: dict[str, Any] = {}
+                        patch: dict[str, Any] = {
+                            "order_date": existing_order.paid_at
+                            or existing_order.created_at
+                        }
                         if clm_req_seq and not existing_ret.clm_req_seq:
                             patch["clm_req_seq"] = clm_req_seq
                         if ord_prd_seq and not existing_ret.ord_prd_seq:
                             patch["ord_prd_seq"] = ord_prd_seq
-                        if patch:
-                            await svc.repo.update_async(existing_ret.id, **patch)
+                        await svc.repo.update_async(existing_ret.id, **patch)
                         continue
 
                     from datetime import UTC, datetime as _dt
