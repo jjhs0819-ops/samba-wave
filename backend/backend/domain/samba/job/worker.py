@@ -1481,9 +1481,11 @@ class JobWorker:
                 if _per_brand_keywords:
                     items_list = []
                     seen_pids: set[str] = set()
-                    # LOTTEON 전수 페이징: 브랜드당 최대 600건 (qapi 한계 2,100 고려)
+                    # LOTTEON 전수 페이징: 브랜드당 qapi 상한 2,100건 전체 수집
+                    # BC코드 사후 필터링 특성상 수집 모수가 많아야 실제 카테고리 상품 확보 가능
+                    # (search() 내부에서 _MAX_QAPI_OFFSET=2100 하드캡 처리 중)
                     per_max = (
-                        600
+                        2100
                         if (site == "LOTTEON" and sf.category_filter)
                         else max(remaining * 2, 100)
                     )
