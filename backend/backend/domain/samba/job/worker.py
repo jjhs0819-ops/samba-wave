@@ -1606,25 +1606,21 @@ class JobWorker:
                         # GSShop: 원본 URL(카테고리 필터 포함) 전달
                         if site == "GSShop" and _original_url.startswith("http"):
                             _search_kwargs["url"] = _original_url
-                        # ABCmart: ABC + GS 동시 검색 (병렬화로 27초 → 14초)
+                        result = await client.search(
+                            keyword, max_count=_max, **_search_kwargs
+                        )
+                        items_list = result.get("products", [])
+                        # ABCmart: 그랜드스테이지 결과 병합 (스캔과 동일 범위)
                         if site == "ABCmart" and sf.category_filter:
                             from backend.domain.samba.proxy.abcmart import (
                                 ARTSourcingClient as _ART,
                             )
 
                             _gs = _ART("10002")
-                            _abc_search_coro = client.search(
+                            _gs_result = await _gs.search(
                                 keyword, max_count=_max, **_search_kwargs
                             )
-                            _gs_search_coro = _gs.search(
-                                keyword, max_count=_max, **_search_kwargs
-                            )
-                            _abc_res, _gs_res = await asyncio.gather(
-                                _abc_search_coro, _gs_search_coro
-                            )
-                            result = _abc_res
-                            items_list = result.get("products", [])
-                            _gs_products = _gs_res.get("products", [])
+                            _gs_products = _gs_result.get("products", [])
                             if _gs_products:
                                 _seen = {
                                     p.get("site_product_id", "")
@@ -1637,14 +1633,9 @@ class JobWorker:
                                         _seen.add(pid)
                                         items_list.append(p)
                                 logger.info(
-                                    f"[잡워커] ABCmart+GS 병렬 병합: ABC {len(result.get('products', []))}건 "
+                                    f"[잡워커] ABCmart+GS 병합: ABC {len(result.get('products', []))}건 "
                                     f"+ GS {len(_gs_products)}건 → 총 {len(items_list)}건"
                                 )
-                        else:
-                            result = await client.search(
-                                keyword, max_count=_max, **_search_kwargs
-                            )
-                            items_list = result.get("products", [])
                         logger.info(
                             f"[잡워커] {site} 검색 '{keyword}' → {len(items_list)}건"
                         )
