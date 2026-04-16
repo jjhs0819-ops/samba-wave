@@ -146,6 +146,18 @@ def get_worker_status() -> dict[str, str | None]:
     return dict(_worker_status)
 
 
+async def _fail_job_safe(job_id: str, error_msg: str) -> None:
+    """스레드 크래시 시 안전하게 잡을 FAILED로 마킹 (RUNNING 고착 방지)."""
+    from backend.db.orm import get_write_session
+    from backend.domain.samba.job.repository import SambaJobRepository
+
+    async with get_write_session() as session:
+        repo = SambaJobRepository(session)
+        await repo.fail_job(job_id, error_msg)
+        await session.commit()
+    _add_job_log(job_id, f"수집 실패: {error_msg}", job_type="collect")
+
+
 def _run_collect_in_thread(worker: "JobWorker", job_id: str, payload: dict):
     """별도 스레드에서 독립 이벤트 루프로 수집 실행."""
     loop = asyncio.new_event_loop()
@@ -154,6 +166,13 @@ def _run_collect_in_thread(worker: "JobWorker", job_id: str, payload: dict):
         loop.run_until_complete(worker._execute_collect_isolated(job_id, payload))
     except Exception as e:
         logger.error(f"[잡워커] 수집 스레드 에러: {job_id} — {e}")
+        # 잡 상태를 FAILED로 업데이트 — 미처리 시 RUNNING 고착 → stuck 복구 → 무한 재시작
+        try:
+            loop.run_until_complete(_fail_job_safe(job_id, f"수집 스레드 에러: {e}"))
+        except Exception as fe:
+            logger.error(
+                f"[잡워커] 수집 스레드 에러 후 잡 상태 갱신 실패: {job_id} — {fe}"
+            )
     finally:
         loop.close()
 
@@ -166,6 +185,23 @@ def _run_transmit_in_thread(worker: "JobWorker", job_id: str, payload: dict):
         loop.run_until_complete(worker._execute_transmit_isolated(job_id, payload))
     except Exception as e:
         logger.error(f"[잡워커] 전송 스레드 에러: {job_id} — {e}")
+        # 잡 상태를 FAILED로 업데이트 — 미처리 시 RUNNING 고착 방지
+        _err_msg = f"전송 스레드 에러: {e}"
+        try:
+            from backend.db.orm import get_write_session
+            from backend.domain.samba.job.repository import SambaJobRepository
+
+            async def _fail_transmit():
+                async with get_write_session() as session:
+                    repo = SambaJobRepository(session)
+                    await repo.fail_job(job_id, _err_msg)
+                    await session.commit()
+
+            loop.run_until_complete(_fail_transmit())
+        except Exception as fe:
+            logger.error(
+                f"[잡워커] 전송 스레드 에러 후 잡 상태 갱신 실패: {job_id} — {fe}"
+            )
     finally:
         loop.close()
 
@@ -176,7 +212,9 @@ class JobWorker:
     POLL_INTERVAL = 5  # 초
 
     STUCK_CHECK_INTERVAL = 2  # 2회 폴링마다 stuck 체크 (≒10초)
-    STUCK_THRESHOLD_SEC = 60  # 1분 이상 progress 변화 없으면 stuck 판정
+    STUCK_THRESHOLD_SEC = (
+        180  # 3분 이상 RUNNING 상태면 stuck 판정 (수집 잡은 60초+ 소요)
+    )
 
     def __init__(self):
         self._running = True
