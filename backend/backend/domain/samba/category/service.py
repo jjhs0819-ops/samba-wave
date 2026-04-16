@@ -2201,6 +2201,7 @@ class SambaCategoryService:
             "lottehome",
             "ssg",
             "gsshop",
+            "cafe24",
         ]
         results: Dict[str, Any] = {}
         for market in markets:

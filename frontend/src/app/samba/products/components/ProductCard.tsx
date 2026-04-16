@@ -92,6 +92,8 @@ function buildMarketProductUrl(marketType: string, sellerId: string, productNo: 
       return `https://kream.co.kr/products/${productNo}`
     case 'ebay':
       return `https://www.ebay.com/itm/${productNo}`
+    case 'cafe24':
+      return `https://${sellerId}.cafe24.com/product/detail.html?product_no=${productNo}`
     default:
       return ''
   }
