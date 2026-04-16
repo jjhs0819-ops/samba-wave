@@ -1743,6 +1743,7 @@ class JobWorker:
                                         f"[잡워커] ABCmart DB 캐시 갱신: '{keyword}' {len(items_list)}건"
                                     )
                                 except Exception as _ce:
+                                    await session.rollback()
                                     logger.warning(
                                         f"[잡워커] ABCmart DB 캐시 저장 실패 (무시): {_ce}"
                                     )
