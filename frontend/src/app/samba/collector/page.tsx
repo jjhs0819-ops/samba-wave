@@ -2025,6 +2025,11 @@ export default function CollectorPage() {
                     if (drillGroup) {
                       const refreshed = (await collectorApi.listFilters()).find(f => f.id === drillGroup)
                       updatedFilters = refreshed ? [refreshed] : []
+                    } else if (res.filter_ids && res.filter_ids.length > 0) {
+                      // 백엔드가 반환한 filter_ids 직접 사용 (brand 매칭 오류/race condition 방지)
+                      const idSet = new Set(res.filter_ids)
+                      const allFilters = await collectorApi.listFilters()
+                      updatedFilters = allFilters.filter(f => idSet.has(f.id))
                     } else if (selectedCategories.length > 0) {
                       const catSet = new Set(selectedCategories)
                       updatedFilters = (await collectorApi.listFilters()).filter(f => {

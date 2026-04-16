@@ -438,7 +438,7 @@ export const collectorApi = {
     request<{ created: number; groups: { id: string; name: string; count: number; path: string }[] }>(
       `${SAMBA_PREFIX}/collector/brand-create-groups`, { method: "POST", body: JSON.stringify(data) }),
   brandRefresh: (data: { brand: string; brand_name?: string; gf?: string; options?: Record<string, boolean>; source_site?: string; categories?: string[] }) =>
-    request<{ scanned: number; new_groups: number; updated_groups: number; message: string }>(
+    request<{ scanned: number; new_groups: number; updated_groups: number; filter_ids: string[]; message: string }>(
       `${SAMBA_PREFIX}/collector/brand-refresh`, { method: "POST", body: JSON.stringify(data) }),
 
   // 상태 확인

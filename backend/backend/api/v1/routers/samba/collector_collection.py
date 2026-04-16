@@ -1449,6 +1449,18 @@ async def brand_refresh(
                     existing_cat_codes[f_cat] = f
             except Exception:
                 continue
+        elif site == "LOTTEON":
+            # LOTTEON: category_filter + keyword q 파라미터로 브랜드 검증
+            # category_filter만으로 매칭하면 다른 브랜드의 같은 BC코드 필터가 섞임
+            if f.category_filter:
+                try:
+                    _fp = urlparse(f.keyword or "")
+                    _fq = parse_qs(_fp.query)
+                    _f_kw = _fq.get("q", [""])[0]
+                    if _f_kw == keyword:
+                        existing_cat_codes[f.category_filter] = f
+                except Exception:
+                    pass
         else:
             # Nike/ABCmart 등: category_filter로 매칭
             if f.category_filter:
@@ -1456,6 +1468,7 @@ async def brand_refresh(
 
     new_groups = 0
     updated_groups = 0
+    filter_ids: list[str] = []  # 이번 refresh에서 처리된 모든 필터 ID
 
     for cat in categories:
         cat_code = cat.get("categoryCode", "")
@@ -1465,6 +1478,7 @@ async def brand_refresh(
         if cat_code in existing_cat_codes:
             # 기존 그룹 — 요청수 갱신 + keyword URL 옵션 동기화
             f = existing_cat_codes[cat_code]
+            filter_ids.append(str(f.id))
             update_data: dict[str, Any] = {}
             if count > (f.requested_count or 0):
                 update_data["requested_count"] = count
@@ -1572,8 +1586,10 @@ async def brand_refresh(
                 }
                 if site != "MUSINSA":
                     create_data["category_filter"] = cat_code
-                await svc.create_filter(create_data)
+                new_filter = await svc.create_filter(create_data)
                 new_groups += 1
+                if new_filter and hasattr(new_filter, "id"):
+                    filter_ids.append(str(new_filter.id))
             except Exception as e:
                 logger.warning(f"[추가수집] 그룹 생성 실패 {group_name}: {e}")
 
@@ -1585,6 +1601,7 @@ async def brand_refresh(
         "scanned": total_cats,
         "new_groups": new_groups,
         "updated_groups": updated_groups,
+        "filter_ids": filter_ids,
         "message": f"스캔 {total_cats}개 카테고리 / 신규 그룹 {new_groups}개 생성 / 기존 {updated_groups}개 요청수 갱신",
     }
 

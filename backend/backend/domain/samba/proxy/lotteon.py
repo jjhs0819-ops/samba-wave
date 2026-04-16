@@ -943,6 +943,10 @@ class LotteonClient:
         from backend.utils.logger import logger as _log
 
         # ── 이미지 URL 정규화 ──────────────────────────────────────
+        import re as _re
+
+        _IMG_EXT_RE = _re.compile(r"\.(jpe?g|png|gif|webp|bmp)", _re.IGNORECASE)
+
         def _normalize_url(url: str) -> str:
             if url.startswith("//"):
                 return "https:" + url
@@ -952,9 +956,14 @@ class LotteonClient:
         images = [
             _normalize_url(u)
             for u in raw_images
-            if u and (u.startswith("http") or u.startswith("//"))
+            if u
+            and (u.startswith("http") or u.startswith("//"))
+            and _IMG_EXT_RE.search(u)  # 이미지 확장자 없는 추적/로거 URL 제외
         ][:10]
-        _log.info(f"[롯데ON] 이미지: 원본 {len(raw_images)}개 → 정규화 {len(images)}개")
+        _log.info(
+            f"[롯데ON] 이미지: 원본 {len(raw_images)}개 → 정규화 {len(images)}개"
+            f" (비이미지 URL {len(raw_images) - len(images)}개 제외)"
+        )
 
         # ── 기본 상품 정보 ──────────────────────────────────────────
         sale_price = int(product.get("sale_price", 0))
