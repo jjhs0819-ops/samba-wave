@@ -39,6 +39,7 @@ backend/local_dump.sql
 backend/local_dump_inserts.sql
 backend/.env.test
 backend/docs/
+docs/
 backend/deploy.sh
 
 # Claude IDE 캐시
