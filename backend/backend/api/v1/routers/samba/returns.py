@@ -96,6 +96,7 @@ async def list_returns(
     order_ids = list({r.order_id for r in returns if r.order_id})
     link_map: dict[str, str] = {}
     channel_id_map: dict[str, str] = {}  # order_id → channel_id
+    order_date_map: dict[str, Any] = {}  # order_id → paid_at or created_at
     if order_ids:
         from backend.domain.samba.order.model import SambaOrder
         from sqlmodel import select, col
@@ -106,6 +107,8 @@ async def list_returns(
             SambaOrder.source_site,
             SambaOrder.sourcing_order_number,
             SambaOrder.channel_id,
+            SambaOrder.paid_at,
+            SambaOrder.created_at,
         ).where(col(SambaOrder.id).in_(order_ids))
         rows = (await session.execute(stmt)).all()
         # 소싱처별 주문상세 URL 템플릿 (주문탭 orderUrlMap과 동일)
@@ -129,6 +132,8 @@ async def list_returns(
             # channel_id 수집
             if row.channel_id:
                 channel_id_map[row.id] = row.channel_id
+            # 주문일 수집 (paid_at 우선)
+            order_date_map[row.id] = row.paid_at or row.created_at
 
     # business_name 보정용 계정 조회
     account_map: dict[str, str] = {}  # channel_id → business_name
@@ -158,6 +163,9 @@ async def list_returns(
             cid = channel_id_map.get(r.order_id)
             if cid:
                 data["business_name"] = account_map.get(cid) or None
+        # order_date가 없으면 주문의 paid_at으로 동적 보정
+        if not data.get("order_date"):
+            data["order_date"] = order_date_map.get(r.order_id)
         results.append(data)
     return results
 
