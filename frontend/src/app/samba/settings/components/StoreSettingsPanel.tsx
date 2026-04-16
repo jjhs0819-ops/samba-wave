@@ -1,0 +1,438 @@
+'use client'
+
+import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
+import {
+  collectorApi,
+  forbiddenApi,
+  proxyApi,
+} from '@/lib/samba/api/commerce'
+import { showAlert, showConfirm } from '@/components/samba/Modal'
+import { NumInputStr as NumInput } from '@/components/samba/NumInput'
+import { STORE_MARKETS } from '../config'
+import type { StoreSettingsState, StoreSettingsActions } from '../hooks/useStoreSettings'
+
+type Props = StoreSettingsState & Pick<StoreSettingsActions,
+  'updateStoreField' | 'saveStoreSettings' | 'testStoreAuth' |
+  'handleAccountToggle' | 'handleAccountDelete' | 'togglePasswordVisibility' |
+  'setStoreTab' | 'setStoreData' | 'setSsgShippingOptions' | 'setSsgAddrOptions' |
+  'setEditingAccountId' | 'setVisiblePasswords'
+>
+
+export function StoreSettingsPanel(props: Props) {
+  const {
+    accounts,
+    storeTab,
+    visiblePasswords,
+    storeData,
+    savedStoreData,
+    storeStatus,
+    editingAccountId,
+    ssgShippingOptions,
+    ssgAddrOptions,
+    updateStoreField,
+    saveStoreSettings,
+    testStoreAuth,
+    handleAccountDelete,
+    togglePasswordVisibility,
+    setStoreTab,
+    setStoreData,
+    setSsgShippingOptions,
+    setSsgAddrOptions,
+    setEditingAccountId,
+  } = props
+
+  return (
+    <div style={{ ...card, padding: '1.5rem', marginBottom: '1.5rem' }}>
+      <div style={{ fontSize: '1rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.25rem' }}>스토어 연결</div>
+      <p style={{ fontSize: '0.8125rem', color: '#666', marginBottom: '1.25rem' }}>API 연결 및 계정 설정을 관리합니다</p>
+
+      {/* 마켓 탭바 — 국내/해외 구분 */}
+      {(() => {
+        const domestic = ['smartstore', 'coupang', '11st', 'gmarket', 'auction', 'lotteon', 'toss', 'ssg', 'gsshop', 'lottehome', 'homeand', 'hmall', 'musinsa', 'kream', 'playauto', 'cafe24']
+        const overseas = ['amazon', 'ebay', 'rakuten', 'qoo10', 'lazada', 'shopee', 'buyma', 'shopify', 'zoom', 'poison']
+        const domesticMarkets = STORE_MARKETS.filter(m => domestic.includes(m.key))
+        const overseasMarkets = STORE_MARKETS.filter(m => overseas.includes(m.key))
+        const renderTab = (m: typeof STORE_MARKETS[number]) => (
+          <button
+            key={m.key}
+            onClick={() => {
+              // 이전 탭 + 전환 대상 탭 모두 storeData 초기화 (잔류값 방지)
+              setStoreData(prev => {
+                const next = { ...prev }
+                delete next[storeTab]  // 이전 탭 데이터 제거
+                delete next[m.key]     // 전환 대상 탭 데이터 제거
+                return next
+              })
+              setStoreTab(m.key)
+              setEditingAccountId(null)
+            }}
+            style={{
+              padding: '0.5rem 0.75rem', background: 'none', border: 'none',
+              borderBottom: storeTab === m.key ? '2px solid #FF8C00' : '2px solid transparent',
+              color: storeTab === m.key ? '#FF8C00' : '#666',
+              fontSize: '0.8125rem', fontWeight: storeTab === m.key ? 600 : 400,
+              cursor: 'pointer', marginBottom: '-1px', whiteSpace: 'nowrap',
+            }}
+          >
+            {m.label}
+          </button>
+        )
+        return (
+          <div style={{ borderBottom: '1px solid #2D2D2D', marginBottom: '1.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0 }}>
+              <span style={{ fontSize: '0.68rem', color: '#FF8C00', fontWeight: 600, padding: '0.5rem 0.5rem 0.5rem 0', whiteSpace: 'nowrap' }}>국내</span>
+              {domesticMarkets.map(renderTab)}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0 }}>
+              <span style={{ fontSize: '0.68rem', color: '#4C9AFF', fontWeight: 600, padding: '0.5rem 0.5rem 0.5rem 0', whiteSpace: 'nowrap' }}>해외</span>
+              {overseasMarkets.map(renderTab)}
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* 마켓별 설정 폼 + 연결계정 */}
+      {STORE_MARKETS.filter(m => m.key === storeTab).map(market => (
+        <div key={market.key} style={{ display: 'flex', gap: '2rem', alignItems: 'flex-start' }}>
+          <div style={{ flex: 1, maxWidth: '560px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
+              <span style={{ fontSize: '0.9375rem', fontWeight: 600, color: '#E5E5E5' }}>{market.label} 설정</span>
+              {editingAccountId && (
+                <>
+                  <span style={{ fontSize: '0.75rem', color: '#FF8C00', fontWeight: 600 }}>
+                    ({accounts.find(a => a.id === editingAccountId)?.account_label} 수정중)
+                  </span>
+                  <button
+                    onClick={() => {
+                      setEditingAccountId(null)
+                      setStoreData(prev => { const next = { ...prev }; delete next[market.key]; return next })
+                    }}
+                    style={{ padding: '0.2rem 0.5rem', fontSize: '0.7rem', background: 'rgba(255,80,80,0.1)', border: '1px solid rgba(255,80,80,0.3)', borderRadius: '4px', color: '#FF6B6B', cursor: 'pointer' }}
+                  >취소</button>
+                </>
+              )}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {market.fields.map(field => field.type === 'divider' ? (
+                <div key={field.name} style={{ borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem', marginTop: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#FFB84D' }}>{field.label}</span>
+                  {market.key === 'ssg' && field.name === '_divider_shipping_code' && (
+                    <button
+                      onClick={async () => {
+                        try {
+                          // 현재 입력된 API Key로 먼저 설정 저장
+                          const data = storeData['ssg'] || savedStoreData['ssg'] || {}
+                          if (!data.apiKey) {
+                            showAlert('API KEY를 먼저 입력하세요.', 'error')
+                            return
+                          }
+                          await forbiddenApi.saveSetting('store_ssg', data)
+                          // 배송비정책 조회
+                          const shipRes = await proxyApi.ssgShippingPolicies()
+                          if (shipRes.success && shipRes.policies?.length) {
+                            setSsgShippingOptions(shipRes.policies.map((p: { shppcstId: string; feeAmt: number; prpayCodDivNm: string; shppcstAplUnitNm: string; divCd: number }) => {
+                              const fee = p.feeAmt ? `${fmtNum(Number(p.feeAmt))}원` : '무료'
+                              const parts = [p.shppcstId, fee]
+                              if (p.prpayCodDivNm) parts.push(p.prpayCodDivNm)
+                              if (p.shppcstAplUnitNm) parts.push(p.shppcstAplUnitNm)
+                              return { value: p.shppcstId, label: parts.join(' / '), divCd: p.divCd }
+                            }))
+                          }
+                          // 주소 조회
+                          const addrRes = await proxyApi.ssgAddresses()
+                          if (addrRes.success && addrRes.addresses?.length) {
+                            setSsgAddrOptions(addrRes.addresses.map((a: { grpAddrId: string; doroAddrId?: string; addrNm: string; bascAddr: string }) => ({
+                              value: a.doroAddrId || a.grpAddrId,
+                              label: `${a.addrNm}${a.bascAddr ? ` (${a.bascAddr})` : ''}`,
+                            })))
+                          }
+                          showAlert('배송비/주소 정보를 불러왔습니다.', 'success')
+                        } catch {
+                          showAlert('배송비/주소 조회 실패', 'error')
+                        }
+                      }}
+                      style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                    >배송비/주소 불러오기</button>
+                  )}
+                </div>
+              ) : field.type === 'info' ? (
+                <div key={field.name} style={{ padding: '0.4rem 0.6rem', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '4px' }}>
+                  <span style={{ fontSize: '0.75rem', color: '#FF8C00' }}>{field.label}</span>
+                </div>
+              ) : field.type === 'alias' ? (
+                <div key={field.name} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '180px', flexShrink: 0 }}>{field.label}</label>
+                  <input
+                    type="text"
+                    style={{ ...inputStyle, flex: 1 }}
+                    value={(() => {
+                      const v = storeData[market.key]?.[field.name] || ''
+                      return v.includes('-') ? v.split('-')[0] : v
+                    })()}
+                    onChange={(e) => {
+                      const nick = (storeData[market.key]?.[field.name] || '').split('-').slice(1).join('-')
+                      updateStoreField(market.key, field.name, nick ? `${e.target.value}-${nick}` : e.target.value)
+                    }}
+                    placeholder={field.placeholder || '마켓번호'}
+                  />
+                  <span style={{ color: '#555', fontSize: '0.8rem', flexShrink: 0 }}>—</span>
+                  <input
+                    type="text"
+                    style={{ ...inputStyle, width: '120px', flexShrink: 0 }}
+                    value={(() => {
+                      const v = storeData[market.key]?.[field.name] || ''
+                      return v.includes('-') ? v.split('-').slice(1).join('-') : ''
+                    })()}
+                    onChange={(e) => {
+                      const code = (storeData[market.key]?.[field.name] || '').split('-')[0]
+                      updateStoreField(market.key, field.name, e.target.value ? `${code}-${e.target.value}` : code)
+                    }}
+                    placeholder="사업자"
+                  />
+                </div>
+              ) : (
+                <div key={field.name} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '180px', flexShrink: 0 }}>{field.label}</label>
+                  {(field.type === 'ssg-shipping-select' || field.type === 'ssg-extra-select') ? (
+                    <select
+                      style={{ ...inputStyle, flex: 1 }}
+                      value={storeData[market.key]?.[field.name] || ''}
+                      onChange={(e) => updateStoreField(market.key, field.name, e.target.value)}
+                    >
+                      <option value=''>버튼으로 불러오기</option>
+                      {ssgShippingOptions
+                        .filter(o => {
+                          if (field.name === 'whoutShppcstId') return o.divCd === 10
+                          if (field.name === 'retShppcstId') return o.divCd === 20
+                          if (field.name === 'addShppcstIdJeju') return o.divCd === 70
+                          if (field.name === 'addShppcstIdIsland') return o.divCd === 60
+                          return false
+                        })
+                        .map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  ) : field.type === 'ssg-addr-select' ? (
+                    <select
+                      style={{ ...inputStyle, flex: 1 }}
+                      value={storeData[market.key]?.[field.name] || ''}
+                      onChange={(e) => updateStoreField(market.key, field.name, e.target.value)}
+                    >
+                      <option value=''>버튼으로 불러오기</option>
+                      {ssgAddrOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  ) : field.type === 'select' ? (
+                    <select
+                      style={{ ...inputStyle, flex: 1 }}
+                      value={storeData[market.key]?.[field.name] || ''}
+                      onChange={(e) => updateStoreField(market.key, field.name, e.target.value)}
+                    >
+                      {field.options?.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  ) : field.type === 'radio' ? (
+                    <div style={{ display: 'flex', gap: '0.5rem', flex: 1 }}>
+                      {field.options?.map(o => {
+                        const selected = (storeData[market.key]?.[field.name] || field.options?.[0]?.value || '') === o.value
+                        return (
+                          <button
+                            key={o.value}
+                            type="button"
+                            onClick={() => updateStoreField(market.key, field.name, o.value)}
+                            style={{
+                              padding: '0.4rem 1rem',
+                              background: selected ? '#FF8C00' : 'transparent',
+                              color: selected ? '#000' : '#888',
+                              border: `1px solid ${selected ? '#FF8C00' : '#2D2D2D'}`,
+                              borderRadius: '6px',
+                              fontSize: '0.8125rem',
+                              fontWeight: selected ? 600 : 400,
+                              cursor: 'pointer',
+                              minWidth: '80px',
+                            }}
+                          >{o.label}</button>
+                        )
+                      })}
+                    </div>
+                  ) : field.type === 'checkbox' ? (
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={storeData[market.key]?.[field.name] === 'true' || storeData[market.key]?.[field.name] as unknown === true}
+                        onChange={(e) => updateStoreField(market.key, field.name, e.target.checked ? 'true' : 'false')}
+                        style={{ accentColor: '#FF8C00', width: '14px', height: '14px' }}
+                      />
+                      {field.placeholder && <span style={{ fontSize: '0.72rem', color: '#888' }}>({field.placeholder})</span>}
+                    </label>
+                  ) : field.type === 'number' ? (
+                    <>
+                      <NumInput
+                        style={{ flex: 1, ...(field.disabled ? { opacity: 0.6, pointerEvents: 'none' as const } : {}) }}
+                        value={field.disabled && field.fixedValue != null ? String(field.fixedValue) : (storeData[market.key]?.[field.name] || '')}
+                        onChange={(v) => { if (!field.disabled) updateStoreField(market.key, field.name, v) }}
+                        placeholder={field.placeholder || '0'}
+                      />
+                      {field.description && <span style={{ fontSize: '0.7rem', color: '#888', flexShrink: 0 }}>{field.description}</span>}
+                    </>
+                  ) : field.type === 'password' ? (
+                    <div style={{ display: 'flex', flex: 1, gap: '4px', alignItems: 'center' }}>
+                      <input
+                        type={visiblePasswords.has(`${market.key}_${field.name}`) ? 'text' : 'password'}
+                        style={{ ...inputStyle, flex: 1 }}
+                        value={storeData[market.key]?.[field.name] || ''}
+                        onChange={(e) => updateStoreField(market.key, field.name, e.target.value)}
+                        placeholder={field.placeholder || ''}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => togglePasswordVisibility(`${market.key}_${field.name}`)}
+                        style={{ padding: '0.3rem 0.5rem', fontSize: '0.7rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                      >{visiblePasswords.has(`${market.key}_${field.name}`) ? '숨김' : '보기'}</button>
+                    </div>
+                  ) : (
+                    <input
+                      type={field.type}
+                      style={{ ...inputStyle, flex: 1 }}
+                      value={storeData[market.key]?.[field.name] || ''}
+                      onChange={(e) => updateStoreField(market.key, field.name, e.target.value)}
+                      placeholder={field.placeholder || ''}
+                    />
+                  )}
+                  {/* API 인증 필드 우측에 인증 테스트 버튼 */}
+                  {market.authField === field.name && !field.name.startsWith('_') && (
+                    <>
+                      <button
+                        onClick={() => testStoreAuth(market.key)}
+                        style={{ padding: '0.375rem 0.875rem', background: '#FF8C00', color: '#000', border: 'none', borderRadius: '6px', fontWeight: 600, fontSize: '0.8125rem', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                      >인증 테스트</button>
+                      {market.guideUrl && (
+                        <a href={market.guideUrl} target="_blank" rel="noopener noreferrer"
+                          style={{ padding: '0.375rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', textDecoration: 'none', whiteSpace: 'nowrap', flexShrink: 0 }}
+                        >API 발급</a>
+                      )}
+                    </>
+                  )}
+                  {/* 11번가 출고지정보 가져오기 버튼 */}
+                  {market.key === '11st' && field.name === 'shipFromAddress' && (
+                    <button
+                      onClick={async () => {
+                        try {
+                          // 현재 입력된 API Key로 먼저 설정 저장
+                          const data = storeData['11st'] || {}
+                          if (data.apiKey) {
+                            await forbiddenApi.saveSetting('store_11st', data)
+                          }
+                          const res = await proxyApi.elevenstSellerInfo()
+                          if (res.success && res.data) {
+                            const d = res.data
+                            if (d.shipFromAddress) updateStoreField('11st', 'shipFromAddress', d.shipFromAddress)
+                            if (d.returnAddress) updateStoreField('11st', 'returnAddress', d.returnAddress)
+                            if (d.returnFee) updateStoreField('11st', 'returnFee', d.returnFee)
+                            if (d.exchangeFee) updateStoreField('11st', 'exchangeFee', d.exchangeFee)
+                            showAlert('출고지/반품지 정보를 가져왔습니다.', 'success')
+                          } else {
+                            showAlert(res.message || '정보를 가져올 수 없습니다.', 'error')
+                          }
+                        } catch {
+                          showAlert('출고지 정보 조회 실패', 'error')
+                        }
+                      }}
+                      style={{ padding: '0.375rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                    >출고지정보 가져오기</button>
+                  )}
+                </div>
+              ))}
+              {storeStatus[market.key] && (
+                <div style={{ fontSize: '0.8125rem', color: storeStatus[market.key]?.includes('연결') || storeStatus[market.key]?.includes('저장') || storeStatus[market.key]?.includes('✓') ? '#51CF66' : storeStatus[market.key]?.includes('중...') ? '#FFD93D' : '#FF6B6B' }}>
+                  {storeStatus[market.key]}
+                </div>
+              )}
+            </div>
+
+            {/* 설정 저장 */}
+            <div style={{ marginTop: '1.5rem', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+              <button
+                onClick={() => saveStoreSettings(market.key)}
+                style={{ padding: '0.625rem 1.75rem', background: '#FF8C00', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 700, fontSize: '0.875rem', cursor: 'pointer' }}
+              >설정 저장</button>
+              {market.key === 'playauto' && (
+                <button
+                  onClick={async () => {
+                    if (!await showConfirm('플레이오토 API에서 등록상품을 조회하여 DB 상품과 매칭 후 registered_accounts에 추가합니다.')) return
+                    try {
+                      const res = await collectorApi.bulkAddAccount()
+                      showAlert(`플레이오토 상품 ${fmtNum(res.pa_products)}개 중 ${fmtNum(res.matched)}개 매칭, ${fmtNum(res.updated)}개 추가 (이미등록 ${fmtNum(res.already)}개)`, 'success')
+                    } catch (e) { showAlert(`실패: ${e}`, 'error') }
+                  }}
+                  style={{ padding: '0.625rem 1.25rem', background: 'rgba(81,207,102,0.1)', border: '1px solid rgba(81,207,102,0.3)', borderRadius: '6px', fontSize: '0.8rem', color: '#51CF66', cursor: 'pointer', fontWeight: 600 }}
+                >등록상품 일괄매칭</button>
+              )}
+            </div>
+          </div>
+
+          {/* 우측: 해당 마켓 연결계정 */}
+          <div style={{ width: '260px', flexShrink: 0 }}>
+            <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#888', marginBottom: '0.5rem' }}>연결 계정</div>
+            {(() => {
+              const marketAccounts = accounts.filter(a => a.market_type === market.key)
+              if (marketAccounts.length === 0) return (
+                <div style={{ fontSize: '0.78rem', color: '#555', padding: '0.5rem 0' }}>등록된 계정 없음</div>
+              )
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+                  {marketAccounts.map(a => (
+                    <div
+                      key={a.id}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '0.5rem',
+                        padding: '0.4rem 0.625rem', background: 'rgba(255,255,255,0.02)',
+                        borderRadius: '6px', border: '1px solid rgba(45,45,45,0.5)',
+                      }}>
+                      <div style={{ flex: 1, minWidth: 0, fontSize: '0.8rem', color: '#E5E5E5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {a.account_label}
+                      </div>
+                      <button
+                        onClick={() => {
+                          setEditingAccountId(a.id)
+                          // password 타입 필드는 계정 API에서 마스킹(****xxxx)된 값이므로 제외
+                          // savedStoreData(설정 API 원본)의 값을 유지해야 DB 손상 방지
+                          const passwordFieldNames = new Set(
+                            market.fields.filter(f => f.type === 'password').map(f => f.name)
+                          )
+                          const accFields = Object.fromEntries(
+                            Object.entries((a.additional_fields || {}) as Record<string, string>)
+                              .filter(([k]) => !passwordFieldNames.has(k))
+                          )
+                          const savedFields = savedStoreData[market.key] || {}
+                          const formData: Record<string, string> = {
+                            businessName: a.business_name || '',
+                            storeId: a.seller_id || '',
+                            ...savedFields,
+                            ...accFields,
+                          }
+                          setStoreData(prev => ({ ...prev, [market.key]: formData }))
+                        }}
+                        style={{
+                          padding: '0.15rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem',
+                          background: editingAccountId === a.id ? 'rgba(255,140,0,0.15)' : 'rgba(60,60,60,0.8)',
+                          color: editingAccountId === a.id ? '#FF8C00' : '#C5C5C5',
+                          border: editingAccountId === a.id ? '1px solid #FF8C00' : '1px solid #3D3D3D',
+                          cursor: 'pointer', whiteSpace: 'nowrap',
+                        }}
+                      >{editingAccountId === a.id ? '수정중' : '수정'}</button>
+                      <button
+                        onClick={() => handleAccountDelete(a.id)}
+                        style={{
+                          padding: '0.15rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem',
+                          background: 'rgba(255,80,80,0.15)', color: '#FF6B6B', border: '1px solid rgba(255,80,80,0.3)',
+                          cursor: 'pointer', whiteSpace: 'nowrap',
+                        }}
+                      >삭제</button>
+                    </div>
+                  ))}
+                </div>
+              )
+            })()}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}

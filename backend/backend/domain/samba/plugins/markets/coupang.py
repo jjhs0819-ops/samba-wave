@@ -125,6 +125,7 @@ class CoupangPlugin(MarketPlugin):
                     )
                     return {
                         "success": True,
+                        "product_no": existing_no,
                         "message": f"쿠팡 경량 업데이트: {', '.join(_parts)}",
                         "data": {"sellerProductId": existing_no},
                     }
@@ -208,6 +209,7 @@ class CoupangPlugin(MarketPlugin):
             result = await client.update_product(existing_no, data)
             return {
                 "success": True,
+                "product_no": existing_no,
                 "message": "쿠팡 수정 성공",
                 "data": {"sellerProductId": existing_no},
             }
@@ -225,6 +227,7 @@ class CoupangPlugin(MarketPlugin):
 
             return {
                 "success": True,
+                "product_no": seller_product_id,
                 "message": "쿠팡 등록 성공",
                 "data": {"sellerProductId": seller_product_id}
                 if seller_product_id

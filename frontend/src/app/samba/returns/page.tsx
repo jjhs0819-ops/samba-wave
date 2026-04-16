@@ -6,7 +6,7 @@ import { returnApi, type SambaReturn } from '@/lib/samba/api/support'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
 import { PERIOD_BUTTONS } from '@/lib/samba/constants'
-import { fmtTime } from '@/lib/samba/utils'
+import { fmtTime, getPeriodStart, getPeriodEnd } from '@/lib/samba/utils'
 
 const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
   requested: { label: '요청됨', bg: 'rgba(255,211,61,0.15)', text: '#FFD93D' },
@@ -87,44 +87,11 @@ export default function ReturnsPage() {
   useEffect(() => { accountApi.listActive().then(setAccounts).catch(() => {}) }, [])
   useEffect(() => { logRef.current && (logRef.current.scrollTop = logRef.current.scrollHeight) }, [logMessages])
 
-  // 기간 버튼 → 날짜 계산
-  const getPeriodStart = (key: string): Date | null => {
-    const now = new Date()
-    now.setHours(0, 0, 0, 0)
-    switch (key) {
-      case 'today': return now
-      case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
-      case 'thisweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d }
-      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - 7); return d }
-      case '1week': { const d = new Date(now); d.setDate(d.getDate() - 6); return d }
-      case '1month': { const d = new Date(now); d.setDate(d.getDate() - 29); return d }
-      case 'thismonth': return new Date(now.getFullYear(), now.getMonth(), 1)
-      case 'lastmonth': return new Date(now.getFullYear(), now.getMonth() - 1, 1)
-      case 'thisyear': return new Date(now.getFullYear(), 0, 1)
-      default: return null
-    }
-  }
 
-  // 기간 종료일 계산 (지난주/지난달/어제는 해당 기간 마지막 날)
-  const getPeriodEnd = (key: string): Date => {
-    const now = new Date()
-    now.setHours(0, 0, 0, 0)
-    switch (key) {
-      case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
-      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - 1); return d }
-      case 'lastmonth': return new Date(now.getFullYear(), now.getMonth(), 0)
-      default: return now
-    }
-  }
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
-  const [searchCategory, setSearchCategory] = useState('customer')
-  const [searchText, setSearchText] = useState('')
-  const [marketFilter, setMarketFilter] = useState('')
   const [siteFilter, setSiteFilter] = useState('진행중')
-  const [marketStatus, setMarketStatus] = useState('')
-  const [inputFilter, setInputFilter] = useState('')
   const [pageSize, setPageSize] = useState(50)
 
   const load = useCallback(async () => {
@@ -216,10 +183,6 @@ export default function ReturnsPage() {
   const [rejectModal, setRejectModal] = useState<{ id: string; reason: string } | null>(null)
   const [locationModal, setLocationModal] = useState<{ id: string; value: string; address: string } | null>(null)
 
-  const handleApprove = async (id: string) => {
-    try { await returnApi.approve(id); load() }
-    catch (e) { showAlert(e instanceof Error ? e.message : '승인 실패', 'error') }
-  }
   const handleReject = (id: string) => {
     setRejectModal({ id, reason: '' })
   }
@@ -233,10 +196,6 @@ export default function ReturnsPage() {
       setRejectModal(null)
       load()
     } catch (e) { showAlert(e instanceof Error ? e.message : '거절 처리 실패', 'error') }
-  }
-  const handleComplete = async (id: string) => {
-    try { await returnApi.complete(id); load() }
-    catch (e) { showAlert(e instanceof Error ? e.message : '완료 처리 실패', 'error') }
   }
   const handleCancel = async (id: string) => {
     if (!await showConfirm('취소하시겠습니까?')) return
@@ -369,29 +328,6 @@ export default function ReturnsPage() {
           <p style={{ fontSize: '1.25rem', fontWeight: 700, color: totalProfit >= 0 ? '#51CF66' : '#FF6B6B' }}>₩{fmtNum(totalProfit)}</p>
         </div>
       </div>
-
-      {/* 사유별 분포 */}
-      {false && stats.by_reason && Object.keys(stats.by_reason).length > 0 && (() => {
-        const reasons = stats.by_reason as Record<string, number>
-        const sorted = Object.entries(reasons).sort((a, b) => b[1] - a[1])
-        const maxVal = Math.max(...sorted.map(([, v]) => v), 1)
-        return (
-          <div style={{ ...card, padding: '1rem 1.25rem', marginBottom: '1rem' }}>
-            <div style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#FF8C00', marginBottom: '0.625rem' }}>사유별 분포</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-              {sorted.map(([reason, count]) => (
-                <div key={reason} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.75rem' }}>
-                  <span style={{ width: '100px', color: '#999', flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{reason}</span>
-                  <div style={{ flex: 1, height: '14px', background: '#1A1A1A', borderRadius: '3px', overflow: 'hidden' }}>
-                    <div style={{ width: `${(count / maxVal) * 100}%`, height: '100%', background: '#FF8C00', borderRadius: '3px' }} />
-                  </div>
-                  <span style={{ width: '30px', textAlign: 'right', color: '#E5E5E5', fontWeight: 600 }}>{count}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )
-      })()}
 
       {/* 로그 영역 */}
       <div style={{ border: '1px solid #1C2333', borderRadius: '8px', overflow: 'hidden', marginBottom: '0.75rem' }}>

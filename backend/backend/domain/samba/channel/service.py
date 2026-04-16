@@ -13,16 +13,6 @@ DEFAULT_FEE_RATES = {
     "overseas": 15,
 }
 
-PLATFORM_INFO = {
-    "coupang": {"name": "쿠팡", "type": "open-market"},
-    "11st": {"name": "11번가", "type": "open-market"},
-    "ssg": {"name": "SSG", "type": "mall"},
-    "lotte": {"name": "롯데온", "type": "mall"},
-    "musinsa": {"name": "무신사", "type": "resale"},
-    "amazon": {"name": "아마존", "type": "overseas"},
-    "ebay": {"name": "이베이", "type": "overseas"},
-}
-
 
 class SambaChannelService:
     def __init__(self, repo: SambaChannelRepository):
@@ -48,7 +38,3 @@ class SambaChannelService:
 
     async def delete_channel(self, channel_id: str) -> bool:
         return await self.repo.delete_async(channel_id)
-
-    @staticmethod
-    def get_platform_info(platform: str) -> Dict[str, str]:
-        return PLATFORM_INFO.get(platform, {"name": "기타", "type": "other"})

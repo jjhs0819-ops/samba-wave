@@ -18,7 +18,7 @@ import { sourcingAccountApi, type SambaSourcingAccount } from '@/lib/samba/api/o
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { PERIOD_BUTTONS, DELIVERY_TRACKING_URLS } from '@/lib/samba/constants'
 import { inputStyle, fmtNum } from '@/lib/samba/styles'
-import { fmtDate, fmtTime } from '@/lib/samba/utils'
+import { fmtDate, fmtTime, getPeriodStart, getPeriodEnd } from '@/lib/samba/utils'
 
 const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
   pending:    { label: '주문접수', bg: 'rgba(255,211,61,0.15)', text: '#FFD93D' },
@@ -660,36 +660,6 @@ export default function OrdersPage() {
     try {
       await orderApi.update(orderId, { action_tag: newVal || '' })
     } catch { /* ignore */ }
-  }
-
-  // 기간 필터 계산
-  const getPeriodStart = (key: string): Date | null => {
-    const now = new Date()
-    now.setHours(0, 0, 0, 0)
-    switch (key) {
-      case 'today': return now
-      case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
-      case 'thisweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d }
-      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - 7); return d }
-      case '1week': { const d = new Date(now); d.setDate(d.getDate() - 6); return d }
-      case '1month': { const d = new Date(now); d.setDate(d.getDate() - 29); return d }
-      case 'thismonth': return new Date(now.getFullYear(), now.getMonth(), 1)
-      case 'lastmonth': return new Date(now.getFullYear(), now.getMonth() - 1, 1)
-      case 'thisyear': return new Date(now.getFullYear(), 0, 1)
-      default: return null
-    }
-  }
-
-  // 기간 종료일 계산 (지난주/지난달/어제는 해당 기간 마지막 날)
-  const getPeriodEnd = (key: string): Date => {
-    const now = new Date()
-    now.setHours(0, 0, 0, 0)
-    switch (key) {
-      case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
-      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - 1); return d }
-      case 'lastmonth': return new Date(now.getFullYear(), now.getMonth(), 0)
-      default: return now
-    }
   }
 
   // 필터링된 주문 목록

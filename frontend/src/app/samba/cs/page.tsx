@@ -23,7 +23,7 @@ function htmlToText(html: string): string {
 }
 import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
 import { PERIOD_BUTTONS } from '@/lib/samba/constants'
-import { fmtDate, fmtTime } from '@/lib/samba/utils'
+import { fmtDate, fmtTime, getPeriodStart, getPeriodEnd } from '@/lib/samba/utils'
 
 // 답변 상태 맵
 const REPLY_STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
@@ -77,8 +77,6 @@ export default function CSPage() {
   const [csDateLocked, setCsDateLocked] = useState(false)
   const [searchCategory, setSearchCategory] = useState('customer')
   const [csSiteFilter, setCsSiteFilter] = useState('')
-  const [csMarketStatus, setCsMarketStatus] = useState('')
-  const [csInputFilter, setCsInputFilter] = useState('')
 
   // 선택
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -248,36 +246,6 @@ export default function CSPage() {
   useEffect(() => { load() }, [load])
   useEffect(() => { accountApi.listActive().then(setAccounts).catch(() => {}) }, [])
 
-  // 기간 버튼 → 날짜 계산
-  const getPeriodStart = (key: string): Date | null => {
-    const now = new Date()
-    now.setHours(0, 0, 0, 0)
-    switch (key) {
-      case 'today': return now
-      case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
-      case 'thisweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d }
-      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - 7); return d }
-      case '1week': { const d = new Date(now); d.setDate(d.getDate() - 6); return d }
-      case '1month': { const d = new Date(now); d.setDate(d.getDate() - 29); return d }
-      case 'thismonth': return new Date(now.getFullYear(), now.getMonth(), 1)
-      case 'lastmonth': return new Date(now.getFullYear(), now.getMonth() - 1, 1)
-      case 'thisyear': return new Date(now.getFullYear(), 0, 1)
-      default: return null
-    }
-  }
-
-  // 기간 종료일 계산 (지난주/지난달/어제는 해당 기간 마지막 날)
-  const getPeriodEnd = (key: string): Date => {
-    const now = new Date()
-    now.setHours(0, 0, 0, 0)
-    switch (key) {
-      case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
-      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - 1); return d }
-      case 'lastmonth': return new Date(now.getFullYear(), now.getMonth(), 0)
-      default: return now
-    }
-  }
-
   // 검색
   const handleSearch = async () => {
     const ts = fmtTime
@@ -374,14 +342,6 @@ export default function CSPage() {
     }
   }
 
-  // 템플릿 선택 시 답변란 채우기
-  const applyTemplate = (key: string) => {
-    setSelectedTemplate(key)
-    if (key && templates[key]) {
-      setReplyText(templates[key].content)
-    }
-  }
-
   // 단건 삭제
   const handleDelete = async (id: string) => {
     if (!await showConfirm('이 문의를 삭제하시겠습니까?')) return
@@ -406,8 +366,6 @@ export default function CSPage() {
 
   const totalPages = Math.ceil(total / pageSize)
   const pendingCount = (stats.pending as number) || 0
-  const repliedCount = (stats.replied as number) || 0
-  const totalCount = (stats.total as number) || 0
 
   return (
     <div style={{ color: '#E5E5E5' }}>
@@ -479,13 +437,7 @@ export default function CSPage() {
 
       {/* 필터 바 */}
       <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
-        <select style={{ ...inputStyle, width: '68px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
-          <option value="customer">고객</option>
-          <option value="order_number">주문번호</option>
-          <option value="product_id">상품번호</option>
-          <option value="content">문의내용</option>
-        </select>
-        <input style={{ ...inputStyle, width: '120px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={searchInput} onChange={e => setSearchInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleSearch() }} />
+        <input style={{ ...inputStyle, width: '150px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={searchInput} onChange={e => setSearchInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleSearch() }} placeholder='고객/주문번호 검색' />
         <button onClick={handleSearch} style={{ background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', padding: '0 0.6rem', borderRadius: '4px', fontSize: '0.75rem', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap', height: '28px' }}>검색</button>
         <button
           onClick={() => setShowTemplateManager(true)}

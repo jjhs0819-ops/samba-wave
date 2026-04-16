@@ -52,3 +52,11 @@ class SourcingPlugin(ABC):
     async def test_auth(self) -> bool:
         """인증 테스트 — 기본은 항상 성공."""
         return True
+
+    async def scan_categories(self, keyword: str, **kwargs) -> dict:
+        """카테고리 스캔 — 지원하지 않는 소싱처는 빈 결과 반환."""
+        return {"categories": [], "total": 0, "groupCount": 0}
+
+    async def discover_brands(self, keyword: str) -> dict:
+        """브랜드 탐색 — 지원하지 않는 소싱처는 빈 결과 반환."""
+        return {"brands": [], "total": 0}

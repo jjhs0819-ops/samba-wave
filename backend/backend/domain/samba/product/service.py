@@ -1,7 +1,5 @@
 """SambaWave Product service."""
 
-import math
-from datetime import UTC, datetime
 from typing import Any, Dict, List, Optional
 
 from backend.domain.samba.product.model import SambaProduct
@@ -37,41 +35,3 @@ class SambaProductService:
 
     async def search_products(self, query: str, limit: int = 100) -> List[SambaProduct]:
         return await self.repo.search(query, limit)
-
-    @staticmethod
-    def calculate_channel_price(cost: float, margin_rate: float) -> int:
-        if margin_rate >= 100:
-            return math.ceil(cost * 2)
-        return math.ceil(cost / (1 - margin_rate / 100))
-
-    @staticmethod
-    def calculate_profit(
-        sale_price: float, cost: float, fee_rate: float
-    ) -> Dict[str, float]:
-        revenue = sale_price * (1 - fee_rate / 100)
-        profit = revenue - cost
-        profit_rate = round((profit / revenue) * 100, 2) if revenue > 0 else 0
-        return {"revenue": revenue, "profit": profit, "profit_rate": profit_rate}
-
-    async def track_price_change(
-        self, product_id: str, current_price: float
-    ) -> Optional[Dict[str, Any]]:
-        product = await self.repo.get_async(product_id)
-        if not product:
-            return None
-
-        price_change = current_price - product.source_price
-        change_percent = (
-            round((price_change / product.source_price) * 100, 2)
-            if product.source_price
-            else 0
-        )
-
-        await self.repo.update_async(
-            product_id,
-            price_before_change=product.source_price,
-            source_price=current_price,
-            price_changed_at=datetime.now(UTC),
-        )
-
-        return {"price_change": price_change, "change_percent": change_percent}

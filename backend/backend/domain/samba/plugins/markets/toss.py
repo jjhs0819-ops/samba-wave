@@ -68,7 +68,7 @@ class TossPlugin(MarketPlugin):
                 or result.get("id")
                 or ""
             )
-            return {"success": True, "data": result, "productNo": product_no}
+            return {"success": True, "product_no": product_no, "data": result}
         except Exception as e:
             logger.error(
                 f"[토스] {'등록 실패' if isinstance(e, TossApiError) else '예외'}: {e}"

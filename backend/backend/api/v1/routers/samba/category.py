@@ -271,7 +271,7 @@ async def check_all_markets_registered(
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """모든 마켓에 대해 등록 상품 일괄 확인."""
-    from backend.domain.samba.category.service import MARKET_CATEGORIES
+    from backend.domain.samba.category.rules import MARKET_CATEGORIES
 
     svc = _get_service(session)
     blocked: dict[str, int] = {}

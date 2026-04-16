@@ -47,3 +47,41 @@ export function fmtDateTime(iso: string | undefined | null): string {
   const s = String(kst.getSeconds()).padStart(2, '0')
   return `${y}-${m}-${day} [${h}:${min}:${s}]`
 }
+
+/**
+ * 기간 키를 시작일 Date로 변환 (today/1week/1month 등)
+ * @param key - 기간 키 (today, yesterday, thisweek, lastweek, 1week, 1month, thismonth, lastmonth, thisyear)
+ * @returns 시작일 Date 또는 null (all 등 전체 기간)
+ */
+export function getPeriodStart(key: string): Date | null {
+  const now = new Date()
+  now.setHours(0, 0, 0, 0)
+  switch (key) {
+    case 'today': return now
+    case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
+    case 'thisweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d }
+    case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - 7); return d }
+    case '1week': { const d = new Date(now); d.setDate(d.getDate() - 6); return d }
+    case '1month': { const d = new Date(now); d.setDate(d.getDate() - 29); return d }
+    case 'thismonth': return new Date(now.getFullYear(), now.getMonth(), 1)
+    case 'lastmonth': return new Date(now.getFullYear(), now.getMonth() - 1, 1)
+    case 'thisyear': return new Date(now.getFullYear(), 0, 1)
+    default: return null
+  }
+}
+
+/**
+ * 기간 키를 종료일 Date로 변환 (지난주/지난달/어제는 해당 기간 마지막 날)
+ * @param key - 기간 키
+ * @returns 종료일 Date
+ */
+export function getPeriodEnd(key: string): Date {
+  const now = new Date()
+  now.setHours(0, 0, 0, 0)
+  switch (key) {
+    case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
+    case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - 1); return d }
+    case 'lastmonth': return new Date(now.getFullYear(), now.getMonth(), 0)
+    default: return now
+  }
+}

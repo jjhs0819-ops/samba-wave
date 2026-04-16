@@ -590,17 +590,16 @@ async def scroll_products(
     """
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
     from sqlalchemy import (
-        inspect as _sa_inspect,
         func,
         cast,
         String,
         and_,
         text,
         select,
+        inspect as _sa_inspect,
     )
 
     mapper = _sa_inspect(_CP)
-    light_cols = [c for c in mapper.columns if c.key not in _HEAVY_FIELDS]
 
     # 기본 조건
     conditions = []

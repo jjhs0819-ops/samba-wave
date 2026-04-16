@@ -97,26 +97,3 @@ export const POLICY_MARKETS_OVERSEAS: string[] = MARKETS
   .filter(m => OVERSEAS_GROUPS.has(m.group))
   .map(m => m.label)
 
-/** 전체 정책 마켓 라벨 목록 */
-export const POLICY_MARKETS: string[] = [...POLICY_MARKETS_DOMESTIC, ...POLICY_MARKETS_OVERSEAS]
-
-/** CS 필터용 마켓 라벨 목록 (전체마켓 포함) */
-export const CS_MARKET_FILTERS: string[] = [
-  '전체마켓',
-  ...MARKETS.filter(m => m.group !== 'solution').map(m => m.label),
-]
-
-/** 카테고리 매핑 대상 마켓 id 목록 */
-export const CATEGORY_MARKET_IDS: string[] = MARKETS
-  .filter(m => m.hasCategory)
-  .map(m => m.id)
-
-/** 마켓 라벨로 id 찾기 (없으면 원본 반환) */
-export function getMarketId(label: string): string {
-  return MARKET_ID_BY_LABEL[label] ?? label
-}
-
-/** 마켓 id로 라벨 찾기 (없으면 원본 반환) */
-export function getMarketLabel(id: string): string {
-  return MARKET_LABELS[id] ?? id
-}

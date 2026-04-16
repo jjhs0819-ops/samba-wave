@@ -1,0 +1,297 @@
+"""무신사 관련 엔드포인트."""
+
+from __future__ import annotations
+
+from typing import Any, Optional
+
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from backend.db.orm import get_read_session_dependency, get_write_session_dependency
+from backend.domain.samba.proxy.musinsa import MusinsaClient
+from backend.domain.samba.tenant.middleware import require_admin
+from backend.utils.logger import logger
+
+from ._helpers import _get_musinsa_client, _get_setting, _set_setting
+
+router = APIRouter(tags=["samba-proxy"])
+
+
+@router.get("/musinsa/goods/{goods_no}")
+async def musinsa_goods_detail(
+    goods_no: str,
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """무신사 상품 상세 조회."""
+    if not goods_no or not goods_no.isdigit():
+        raise HTTPException(status_code=400, detail="유효하지 않은 상품번호입니다.")
+
+    client = await _get_musinsa_client(session)
+    try:
+        product = await client.get_goods_detail(goods_no)
+        return {"success": True, "data": product}
+    except Exception as exc:
+        logger.error(f"[무신사] {goods_no} 수집 실패: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/brand-search")
+async def brand_search(
+    keyword: str = Query(...),
+    gf: str = Query("A"),
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """무신사 키워드로 브랜드 코드 검색."""
+    try:
+        client = await _get_musinsa_client(session)
+        brands = await client.search_brands(keyword, gf)
+        return {"brands": brands}
+    except Exception as exc:
+        logger.error(f"[무신사 브랜드검색] 실패: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/search-count")
+async def search_count(
+    source_site: str = Query(...),
+    keyword: str = Query(""),
+    url: str = Query(""),
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """소싱처별 검색 총 상품수 조회."""
+    try:
+        if source_site == "MUSINSA":
+            client = await _get_musinsa_client(session)
+            params: dict[str, Any] = {"keyword": keyword, "size": 1}
+            if url:
+                from urllib.parse import urlparse, parse_qs
+
+                parsed = parse_qs(urlparse(url).query)
+                if "brand" in parsed:
+                    params["brand"] = parsed["brand"][0]
+                if "category" in parsed:
+                    params["category"] = parsed["category"][0]
+                if "gf" in parsed:
+                    params["gf"] = parsed["gf"][0]
+                if "minPrice" in parsed:
+                    params["min_price"] = int(parsed["minPrice"][0])
+                if "maxPrice" in parsed:
+                    params["max_price"] = int(parsed["maxPrice"][0])
+                if not keyword and "keyword" in parsed:
+                    params["keyword"] = parsed["keyword"][0]
+            result = await client.search_products(**params)
+            return {"totalCount": result.get("totalCount", 0)}
+
+        elif source_site == "FashionPlus":
+            search_word = keyword
+            if not search_word and url:
+                from urllib.parse import urlparse, parse_qs
+
+                parsed = parse_qs(urlparse(url).query)
+                search_word = parsed.get("searchWord", [""])[0]
+            if not search_word:
+                return {"totalCount": 0}
+            async with httpx.AsyncClient(timeout=10) as http:
+                r = await http.get(
+                    "https://www.fashionplus.co.kr/search/goods/fetch",
+                    params={
+                        "searchWord": search_word,
+                        "page": 1,
+                        "pageSize": 1,
+                        "sort": "recommend",
+                    },
+                    headers={"User-Agent": "Mozilla/5.0"},
+                )
+                data = r.json()
+                return {
+                    "totalCount": data.get("goodsPaginator", {}).get("totalCount", 0)
+                }
+
+        elif source_site == "KREAM":
+            # KREAM은 확장앱 기반 수집 — 카운트 조회 불가
+            return {"totalCount": 0}
+
+        elif source_site in ("ABCmart", "Nike", "Adidas", "OliveYoung"):
+            # 이 소싱처들은 서버사이드 렌더링/확장앱 기반 — 카운트 조회 불가
+            return {"totalCount": 0}
+
+        else:
+            return {"totalCount": 0}
+
+    except Exception as e:
+        logger.warning(f"[검색카운트] {source_site} 실패: {e}")
+        return {"totalCount": 0}
+
+
+@router.get("/musinsa/search-api")
+async def musinsa_search_api(
+    keyword: str = Query("", description="검색 키워드"),
+    page: int = Query(1, ge=1),
+    size: int = Query(30, ge=1, le=200),
+    sort: str = Query("POPULAR"),
+    category: str = Query(""),
+    brand: str = Query(""),
+    min_price: Optional[int] = Query(None, alias="minPrice"),
+    max_price: Optional[int] = Query(None, alias="maxPrice"),
+    gf: str = Query("A"),
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """무신사 상품 검색 API."""
+    if not keyword:
+        raise HTTPException(status_code=400, detail="검색 키워드를 입력해주세요.")
+
+    client = await _get_musinsa_client(session)
+    try:
+        return await client.search_products(
+            keyword=keyword,
+            page=page,
+            size=size,
+            sort=sort,
+            category=category,
+            brand=brand,
+            min_price=min_price,
+            max_price=max_price,
+            gf=gf,
+        )
+    except Exception as exc:
+        logger.error(f"[무신사] 검색 실패: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/musinsa/search")
+async def musinsa_search_by_url(
+    url: str = Query("", description="무신사 URL"),
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """URL 기반 검색/리다이렉트 처리."""
+    if not url or ("musinsa.com" not in url and "musinsa.onelink.me" not in url):
+        raise HTTPException(status_code=400, detail="무신사 URL을 입력해주세요.")
+
+    client = await _get_musinsa_client(session)
+    try:
+        return await client.search_by_url(url)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+class MusinsaSetCookieRequest(BaseModel):
+    cookie: str
+
+
+@router.post("/musinsa/set-cookie")
+async def musinsa_set_cookie(
+    body: MusinsaSetCookieRequest,
+    write_session: AsyncSession = Depends(get_write_session_dependency),
+    admin: str = Depends(require_admin),
+) -> dict[str, Any]:
+    """브라우저 확장에서 쿠키 직접 전달."""
+    client = MusinsaClient(cookie=body.cookie)
+    result = await client.set_cookie_and_verify(body.cookie)
+    # DB에 저장
+    await _set_setting(write_session, "musinsa_cookie", body.cookie)
+    return result
+
+
+class MusinsaCheckLoginRequest(BaseModel):
+    cookie: Optional[str] = None
+
+
+@router.post("/musinsa/check-login")
+async def musinsa_check_login(
+    body: MusinsaCheckLoginRequest = MusinsaCheckLoginRequest(),
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """무신사 로그인 상태 확인."""
+    client = await _get_musinsa_client(session)
+    return await client.check_login_status(cookie=body.cookie)
+
+
+@router.get("/musinsa/auth/status")
+async def musinsa_auth_status(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """무신사 인증 상태 확인."""
+    cookie = await _get_setting(session, "musinsa_cookie") or ""
+    return {"isLoggedIn": bool(cookie), "cookieLength": len(str(cookie))}
+
+
+@router.delete("/musinsa/auth")
+async def musinsa_auth_delete(
+    write_session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """무신사 쿠키 초기화 (로그아웃)."""
+    await _set_setting(write_session, "musinsa_cookie", "")
+    return {"success": True, "isLoggedIn": False, "message": "로그아웃 완료"}
+
+
+class MusinsaCookiesRequest(BaseModel):
+    cookies: list[str]
+
+
+@router.post("/musinsa/cookies")
+async def set_musinsa_cookies(
+    body: MusinsaCookiesRequest,
+    write_session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """무신사 쿠키 로테이션 목록 저장."""
+    import json
+
+    await _set_setting(write_session, "musinsa_cookies", json.dumps(body.cookies))
+    return {"ok": True, "count": len(body.cookies)}
+
+
+@router.get("/musinsa/cookies")
+async def get_musinsa_cookies(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """무신사 쿠키 로테이션 목록 조회."""
+    import json
+
+    raw = await _get_setting(session, "musinsa_cookies")
+    if raw:
+        cookies = json.loads(raw) if isinstance(raw, str) else raw
+        return {"cookies": cookies, "count": len(cookies)}
+    return {"cookies": [], "count": 0}
+
+
+class StockCheckRequest(BaseModel):
+    goodsNos: list[str]
+
+
+@router.post("/musinsa/stock-check")
+async def musinsa_stock_check(
+    body: StockCheckRequest,
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """재고 소진 감지 (서브에이전트)."""
+    if not body.goodsNos:
+        raise HTTPException(status_code=400, detail="goodsNos 배열이 필요합니다.")
+
+    client = await _get_musinsa_client(session)
+    return await client.check_stock(body.goodsNos)
+
+
+class PriceMonitorProduct(BaseModel):
+    goodsNo: str
+    storedPrice: int = 0
+    productId: Optional[str] = None
+
+
+class PriceMonitorRequest(BaseModel):
+    products: list[PriceMonitorProduct]
+
+
+@router.post("/musinsa/price-monitor")
+async def musinsa_price_monitor(
+    body: PriceMonitorRequest,
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """가격 변동 감지 (서브에이전트)."""
+    if not body.products:
+        raise HTTPException(status_code=400, detail="products 배열이 필요합니다.")
+
+    client = await _get_musinsa_client(session)
+    products_dicts = [p.model_dump() for p in body.products]
+    return await client.monitor_prices(products_dicts)

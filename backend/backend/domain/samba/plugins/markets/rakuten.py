@@ -64,7 +64,7 @@ class RakutenPlugin(MarketPlugin):
                 result = await client.update_product(existing_no, payload)
             else:
                 result = await client.register_product(payload, manage_number)
-            return {"success": True, "data": result, "productNo": manage_number}
+            return {"success": True, "product_no": manage_number, "data": result}
         except Exception as e:
             logger.error(
                 f"[라쿠텐] {'등록 실패' if isinstance(e, RakutenApiError) else '예외'}: {e}"

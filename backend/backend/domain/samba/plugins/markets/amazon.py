@@ -71,7 +71,7 @@ class AmazonPlugin(MarketPlugin):
                 result = await client.update_product(existing_no, payload)
             else:
                 result = await client.register_product(payload, sku)
-            return {"success": True, "data": result, "productNo": sku}
+            return {"success": True, "product_no": sku, "data": result}
         except Exception as e:
             logger.error(
                 f"[아마존] {'등록 실패' if isinstance(e, AmazonApiError) else '예외'}: {e}"

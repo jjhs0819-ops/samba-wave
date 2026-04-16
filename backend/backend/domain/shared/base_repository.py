@@ -223,31 +223,6 @@ class BaseRepository(Generic[ModelType]):
             logger.exception(f"Error counting {self.model.__name__}: {e}")
             raise
 
-    async def exists_async(self, **kwargs: Any) -> bool:
-        """
-        Check if entity exists with given criteria.
-
-        Args:
-            **kwargs: Field:value pairs to check
-
-        Returns:
-            True if exists, False otherwise
-        """
-        try:
-            statement = select(self.model)
-
-            for field, value in kwargs.items():
-                if hasattr(self.model, field):
-                    statement = statement.where(getattr(self.model, field) == value)
-
-            statement = statement.limit(1)
-            result = await self.session.execute(statement)
-            return result.scalar_one_or_none() is not None
-
-        except SQLAlchemyError as e:
-            logger.exception(f"Error checking existence for {self.model.__name__}: {e}")
-            raise
-
     async def bulk_create_async(
         self, entities: List[Dict[str, Any]]
     ) -> List[ModelType]:
@@ -279,48 +254,6 @@ class BaseRepository(Generic[ModelType]):
         except SQLAlchemyError as e:
             await self.session.rollback()
             logger.exception(f"Error in bulk create for {self.model.__name__}: {e}")
-            raise
-
-    async def bulk_update_async(
-        self, updates: List[Dict[str, Any]], id_field: str = "id"
-    ) -> int:
-        """
-        Update multiple entities in a single transaction using bulk operations.
-
-        Args:
-            updates: List of update dictionaries (must include ID)
-            id_field: Name of the ID field
-
-        Returns:
-            Number of entities updated
-        """
-        try:
-            if not updates:
-                return 0
-
-            # Add updated_at timestamp if model supports it
-            if hasattr(self.model, "updated_at"):
-                timestamp = now_kst()
-                for update_data in updates:
-                    if "updated_at" not in update_data:
-                        update_data["updated_at"] = timestamp
-
-            # Use SQLAlchemy's bulk_update_mappings for efficient updates
-            from sqlalchemy.orm import class_mapper
-
-            mapper = class_mapper(self.model)
-            await self.session.run_sync(
-                lambda session: session.bulk_update_mappings(mapper, updates)
-            )
-
-            await self.session.commit()
-            updated_count = len(updates)
-            logger.info(f"Bulk updated {updated_count} {self.model.__name__} entities")
-            return updated_count
-
-        except SQLAlchemyError as e:
-            await self.session.rollback()
-            logger.exception(f"Error in bulk update for {self.model.__name__}: {e}")
             raise
 
     async def find_by_async(self, **kwargs: Any) -> Optional[ModelType]:
@@ -396,50 +329,3 @@ class BaseRepository(Generic[ModelType]):
         except SQLAlchemyError as e:
             logger.exception(f"Error filtering {self.model.__name__}: {e}")
             raise
-
-    async def execute_query_async(self, statement) -> Any:  # type: ignore[no-untyped-def]  # Generic query executor
-        """
-        Execute raw SQLModel statement.
-
-        Args:
-            statement: SQLModel select statement
-
-        Returns:
-            Query results
-        """
-        try:
-            results = await self.session.execute(statement)
-            return results
-        except SQLAlchemyError as e:
-            logger.exception(f"Error executing query: {e}")
-            raise
-
-    async def refresh_async(self, entity: ModelType) -> ModelType:
-        """
-        Refresh entity from database.
-
-        Args:
-            entity: Entity to refresh
-
-        Returns:
-            Refreshed entity
-        """
-        try:
-            await self.session.refresh(entity)
-            return entity
-        except SQLAlchemyError as e:
-            logger.exception(f"Error refreshing entity: {e}")
-            raise
-
-    async def commit_async(self) -> None:
-        """Commit current transaction."""
-        try:
-            await self.session.commit()
-        except SQLAlchemyError as e:
-            await self.session.rollback()
-            logger.exception(f"Error committing transaction: {e}")
-            raise
-
-    async def rollback_async(self) -> None:
-        """Rollback current transaction."""
-        await self.session.rollback()

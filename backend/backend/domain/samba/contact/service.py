@@ -29,14 +29,6 @@ DEFAULT_TEMPLATES: Dict[str, Dict[str, str]] = {
 }
 
 
-def parse_template(template_str: str, variables: Dict[str, Any]) -> str:
-    """템플릿 문자열의 {변수} 자리를 치환합니다."""
-    result = template_str
-    for key, value in variables.items():
-        result = result.replace(f"{{{key}}}", str(value))
-    return result
-
-
 class SambaContactService:
     def __init__(self, repo: SambaContactLogRepository):
         self.repo = repo
@@ -88,9 +80,6 @@ class SambaContactService:
 
     # ==================== Query ====================
 
-    async def get_contacts_by_order(self, order_id: str) -> List[SambaContactLog]:
-        return await self.repo.list_by_order(order_id)
-
     async def get_contact_stats(self) -> Dict[str, Any]:
         """상태별/유형별 연락 통계."""
         all_contacts = await self.repo.list_async()
@@ -113,16 +102,3 @@ class SambaContactService:
     @staticmethod
     def get_default_templates() -> Dict[str, Dict[str, str]]:
         return DEFAULT_TEMPLATES
-
-    @staticmethod
-    def render_template(
-        contact_type: str, template_name: str, variables: Dict[str, Any]
-    ) -> Optional[str]:
-        """템플릿 렌더링. 해당 타입/이름이 없으면 None 반환."""
-        type_templates = DEFAULT_TEMPLATES.get(contact_type)
-        if not type_templates:
-            return None
-        template_str = type_templates.get(template_name)
-        if not template_str:
-            return None
-        return parse_template(template_str, variables)

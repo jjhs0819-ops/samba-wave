@@ -111,6 +111,7 @@ class ElevenstPlugin(MarketPlugin):
                 )
                 return {
                     "success": True,
+                    "product_no": existing_no,
                     "message": f"11번가 경량 업데이트: {', '.join(_parts)}",
                     "data": result,
                 }
@@ -132,7 +133,12 @@ class ElevenstPlugin(MarketPlugin):
         try:
             if existing_no:
                 result = await client.update_product(existing_no, xml_data)
-                return {"success": True, "message": "11번가 수정 성공", "data": result}
+                return {
+                    "success": True,
+                    "product_no": existing_no,
+                    "message": "11번가 수정 성공",
+                    "data": result,
+                }
             else:
                 result = await client.register_product(xml_data)
                 return {"success": True, "message": "11번가 등록 성공", "data": result}
