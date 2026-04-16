@@ -93,6 +93,9 @@ export default function ReturnsPage() {
 
   const [siteFilter, setSiteFilter] = useState('진행중')
   const [pageSize, setPageSize] = useState(50)
+  const [searchCategory, setSearchCategory] = useState('product')
+  const [searchText, setSearchText] = useState('')
+  const [marketFilter, setMarketFilter] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
