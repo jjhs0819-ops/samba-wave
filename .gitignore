@@ -27,8 +27,9 @@ samba-wave.code-workspace
 start-local.sh
 scripts/
 
-# 루트 npm lock (pnpm 사용)
+# 루트 lock 파일 (frontend/pnpm-lock.yaml이 진짜)
 package-lock.json
+pnpm-lock.yaml
 
 # 에디터/환경 템플릿
 .editorconfig
