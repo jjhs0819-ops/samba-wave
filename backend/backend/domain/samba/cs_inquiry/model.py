@@ -117,3 +117,5 @@ class SambaCSInquiry(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), nullable=False),
         default_factory=lambda: datetime.now(tz=timezone.utc),
     )
+    # 카페24 CS 게시판 번호 (board_no 기반 문의 조회용)
+    board_no: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
