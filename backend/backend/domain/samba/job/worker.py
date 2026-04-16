@@ -1902,6 +1902,11 @@ class JobWorker:
                     logger.info(
                         f"[잡워커] LOTTEON 상세 선취합 [{done}/{len(new_items)}]"
                     )
+                    _add_job_log(
+                        job.id,
+                        f"[{site}] [{sf.name}] 상세 조회 [{done:,}/{len(new_items):,}]",
+                        job_type="collect",
+                    )
                     await asyncio.sleep(0.3)
                 logger.info(
                     f"[잡워커] LOTTEON 상세 선취합 완료: {len(_lotteon_details)}/{len(new_items)}건 성공"
@@ -1945,6 +1950,11 @@ class JobWorker:
                     done = min(batch_start + _NK_BATCH, len(new_items))
                     await repo.update_progress(job.id, done, len(new_items))
                     logger.info(f"[잡워커] Nike 상세 선취합 [{done}/{len(new_items)}]")
+                    _add_job_log(
+                        job.id,
+                        f"[{site}] [{sf.name}] 상세 조회 [{done:,}/{len(new_items):,}]",
+                        job_type="collect",
+                    )
                     await asyncio.sleep(0.15)
                 logger.info(
                     f"[잡워커] Nike 상세 선취합 완료: {len(_nike_details)}/{len(new_items)}건 성공"
@@ -2008,6 +2018,11 @@ class JobWorker:
                     logger.info(
                         f"[잡워커] GSShop 상세 선취합 [{done}/{len(new_items)}]"
                         f" 카테고리 통과: {len(_gsshop_details)}건"
+                    )
+                    _add_job_log(
+                        job.id,
+                        f"[{site}] [{sf.name}] 상세 조회 [{done:,}/{len(new_items):,}]",
+                        job_type="collect",
                     )
                 logger.info(
                     f"[잡워커] GSShop 상세 선취합 완료:"
@@ -2209,13 +2224,11 @@ class JobWorker:
                             _abc_details[pid] = det
                     _done_abc = min(_batch_start + _ABC_BATCH, len(_new_items_abc))
                     await repo.update_progress(job.id, _done_abc, len(_new_items_abc))
-                    # 10건 단위 또는 마지막 배치에서 UI 로그 출력 (선취합 중 침묵 방지)
-                    if _done_abc % 10 == 0 or _done_abc == len(_new_items_abc):
-                        _add_job_log(
-                            job.id,
-                            f"[{site}] [{sf.name}] 상세 조회 [{_done_abc:,}/{len(_new_items_abc):,}]",
-                            job_type="collect",
-                        )
+                    _add_job_log(
+                        job.id,
+                        f"[{site}] [{sf.name}] 상세 조회 [{_done_abc:,}/{len(_new_items_abc):,}]",
+                        job_type="collect",
+                    )
                     # 마지막 배치 제외 딜레이 (차단 방지)
                     if _batch_start + _ABC_BATCH < len(_new_items_abc):
                         await asyncio.sleep(0.5)
