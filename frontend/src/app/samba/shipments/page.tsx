@@ -1289,16 +1289,11 @@ export default function ShipmentsPage() {
         </div>
         <div
           ref={el => { if (el) el.scrollTop = el.scrollHeight }}
-          style={{ height: '250px', overflowY: 'auto', padding: '10px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.73rem', lineHeight: 1.8, color: '#4A5568' }}
+          style={{ height: '250px', overflowY: 'auto', padding: '10px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.73rem', lineHeight: 1.8, color: '#DCE0E8' }}
         >
-          {logMessages.map((msg, i) => {
-            let color = '#DCE0E8'
-            if (msg.includes('전송 완료') || msg.includes('전송 시작') || msg.includes('마켓삭제')) color = '#8A95B0'
-            else if (msg.includes('실패') || msg.includes('오류')) color = '#C4736E'
-            else if (msg.includes('스킵')) color = '#888'
-            else if (msg.includes('성공')) color = '#7BAF7E'
-            return <div key={i} style={{ color }}>{msg}</div>
-          })}
+          {logMessages.map((msg, i) => (
+            <div key={i} style={{ color: '#DCE0E8' }}>{msg}</div>
+          ))}
         </div>
         {/* 프로그레스바 */}
         {/* 진행률 바 제거 — 멀티 잡 시 왔다갔다 문제 */}

@@ -2105,9 +2105,8 @@ export default function CollectorPage() {
             <button
               disabled={tagPreviewLoading}
               onClick={async () => {
-                // 체크박스로 선택된 그룹만 (드릴다운 단독 선택은 무시 — 전체 처리)
-                const isDrillOnly = drillGroup && selectedIds.size === 1 && selectedIds.has(drillGroup)
-                const checkedIds = selectAll ? displayedFilters.map(f => f.id) : isDrillOnly ? [] : [...selectedIds]
+                // selectedIds 기준으로 대상 결정 (드릴다운 클릭도 selectedIds에 포함됨)
+                const checkedIds = selectAll ? displayedFilters.map(f => f.id) : [...selectedIds]
                 // displayedFilters와 교집합으로 실제 대상 결정
                 const targetFilters = checkedIds.length > 0
                   ? displayedFilters.filter(f => checkedIds.includes(f.id))

@@ -23,6 +23,15 @@ import { fmtNum as fmt } from '@/lib/samba/styles'
 import { fmtTime } from '@/lib/samba/utils'
 import ProductCard from './components/ProductCard'
 import ProductImage from './components/ProductImage'
+import { MARKETS } from './components/ProductCard'
+
+type MarketDeleteModalState = {
+  mode: 'single' | 'bulk'
+  title: string
+  products: SambaCollectedProduct[]
+  options: { accountId: string; label: string; marketType: string; productCount: number }[]
+  selectedAccountIds: string[]
+}
 
 export default function ProductsPage() {
   useEffect(() => { document.title = 'SAMBA-상품관리' }, [])
@@ -150,6 +159,7 @@ export default function ProductsPage() {
 
   // 삭제 확인 모달
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: string[]; label: string } | null>(null);
+  const [marketDeleteModal, setMarketDeleteModal] = useState<MarketDeleteModalState | null>(null)
 
   // 태그 일괄 입력
   const [showBulkTag, setShowBulkTag] = useState(false)
@@ -478,7 +488,148 @@ export default function ProductsPage() {
     }
   };
 
+  const applyMarketDeleteSuccessState = useCallback((product: SambaCollectedProduct, successAccIds: string[]) => {
+    const remaining = (product.registered_accounts ?? []).filter(id => !successAccIds.includes(id))
+    const marketNos = product.market_product_nos || {}
+    const removeKeys = new Set<string>(successAccIds)
+    successAccIds.forEach(id => removeKeys.add(`${id}_origin`))
+    const nextMarketNos = Object.fromEntries(
+      Object.entries(marketNos).filter(([key]) => !removeKeys.has(key))
+    )
+
+    return {
+      ...product,
+      registered_accounts: remaining,
+      market_product_nos: Object.keys(nextMarketNos).length ? nextMarketNos : null,
+      status: remaining.length === 0 ? 'collected' : product.status,
+    } as SambaCollectedProduct
+  }, [])
+
+  const openMarketDeleteModal = useCallback((targetProducts: SambaCollectedProduct[], mode: 'single' | 'bulk') => {
+    const counts = new Map<string, number>()
+    targetProducts.forEach(product => {
+      ;(product.registered_accounts ?? []).forEach(accountId => {
+        counts.set(accountId, (counts.get(accountId) ?? 0) + 1)
+      })
+    })
+
+    const options = Array.from(counts.entries())
+      .map(([accountId, productCount]) => {
+        const account = accountsMap.get(accountId)
+        if (!account) return null
+        const marketLabel = MARKETS.find(item => item.id === account.market_type)?.name || account.market_name || account.market_type
+        return {
+          accountId,
+          label: `${marketLabel}${account.seller_id ? ` (${account.seller_id})` : ''}`,
+          marketType: account.market_type,
+          productCount,
+        }
+      })
+      .filter((item): item is NonNullable<typeof item> => !!item)
+      .sort((a, b) => a.label.localeCompare(b.label))
+
+    if (!options.length) {
+      showAlert('등록된 판매처가 없습니다.')
+      return
+    }
+
+    setMarketDeleteModal({
+      mode,
+      title: mode === 'single'
+        ? `마켓삭제 - ${(targetProducts[0]?.name || targetProducts[0]?.id || '').slice(0, 20)}`
+        : `마켓삭제 (${targetProducts.length}건)`,
+      products: targetProducts,
+      options,
+      selectedAccountIds: options.map(option => option.accountId),
+    })
+  }, [accountsMap])
+
+  const executeMarketDelete = useCallback(async (targetProducts: SambaCollectedProduct[], accountIds: string[], title: string) => {
+    if (!accountIds.length) {
+      showAlert('삭제할 판매처를 선택해주세요.')
+      return
+    }
+
+    aiJobAbortRef.current = false
+    setAiJobTitle(title)
+    setAiJobLogs([])
+    setAiJobDone(false)
+    setAiJobModal(true)
+
+    const logsRef: string[] = []
+    const flushLogs = () => setAiJobLogs([...logsRef])
+    const successMap = new Map<string, string[]>()
+    const ts = fmtTime
+    let totalOk = 0
+    let totalFail = 0
+
+    for (let i = 0; i < targetProducts.length; i++) {
+      if (aiJobAbortRef.current) {
+        logsRef.push(``, `중단됨 (${i}/${targetProducts.length})`)
+        flushLogs()
+        break
+      }
+
+      const product = targetProducts[i]
+      const productName = (product.name || product.id).slice(0, 20)
+      const targetAccIds = accountIds.filter(id => (product.registered_accounts ?? []).includes(id))
+      if (!targetAccIds.length) continue
+
+      try {
+        const res = await shipmentApi.marketDelete([product.id], targetAccIds)
+        const result = res?.results?.[0]
+        if (result?.delete_results) {
+          const entries = Object.entries(result.delete_results as Record<string, string>)
+          const successAccIds: string[] = []
+          for (const [accId, status] of entries) {
+            const account = accountsMap.get(accId)
+            const label = account
+              ? (MARKETS.find(item => item.id === account.market_type)?.name || account.market_type)
+              : accId.slice(0, 8)
+            const isOk = status === 'success' || status.includes('성공')
+            if (isOk) {
+              totalOk++
+              successAccIds.push(accId)
+            } else {
+              totalFail++
+            }
+            logsRef.push(`[${ts()}] [${i + 1}/${targetProducts.length}] ${productName} -> ${label}: ${isOk ? '성공' : '실패'}`)
+          }
+          if (successAccIds.length) successMap.set(product.id, successAccIds)
+        } else {
+          totalOk++
+          logsRef.push(`[${ts()}] [${i + 1}/${targetProducts.length}] ${productName} -> 성공`)
+        }
+      } catch {
+        totalFail++
+        logsRef.push(`[${ts()}] [${i + 1}/${targetProducts.length}] ${productName} -> 오류`)
+      }
+
+      flushLogs()
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
+
+    if (successMap.size > 0) {
+      setAllProducts(prev => prev.map(product => {
+        const successAccIds = successMap.get(product.id)
+        return successAccIds ? applyMarketDeleteSuccessState(product, successAccIds) : product
+      }))
+    }
+
+    logsRef.push(``, `성공 ${totalOk} / 실패 ${totalFail}`)
+    flushLogs()
+    setAiJobDone(true)
+  }, [accountsMap, applyMarketDeleteSuccessState])
+
   const handleMarketDelete = async (productId: string) => {
+    const product = allProducts.find(x => x.id === productId)
+    if (!product) return
+    if (!(product.registered_accounts?.length ?? 0)) {
+      showAlert('마켓에 등록된 계정이 없습니다.')
+      return
+    }
+    openMarketDeleteModal([product], 'single')
+    return
     const p = allProducts.find(x => x.id === productId)
     const regAccIds = p?.registered_accounts ?? []
     if (!regAccIds.length) {
@@ -499,7 +650,7 @@ export default function ProductsPage() {
         const entries = Object.entries(result.delete_results as Record<string, string>)
         const logs = entries.map(([accId, status]) => {
           const acc = accountsMap.get(accId)
-          const label = acc ? acc.market_type : accId.slice(0, 8)
+          const label = acc?.market_type || accId.slice(0, 8)
           const isOk = status === 'success' || status.includes('성공')
           return `[${ts()}] ${productName} → ${label}: ${isOk ? '✓' : '✗'}`
         })
@@ -601,6 +752,95 @@ export default function ProductsPage() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
       {/* AI 작업 진행 모달 */}
+      {marketDeleteModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 99998,
+          background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }} onClick={() => setMarketDeleteModal(null)}>
+          <div style={{
+            background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px',
+            width: 'min(520px, 92vw)', maxHeight: '75vh', display: 'flex', flexDirection: 'column',
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{
+              padding: '14px 20px', borderBottom: '1px solid #2D2D2D',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            }}>
+              <span style={{ fontWeight: 700, fontSize: '0.9rem', color: '#E5E5E5' }}>{marketDeleteModal.title}</span>
+              <button onClick={() => setMarketDeleteModal(null)} style={{
+                background: 'none', border: 'none', color: '#888', fontSize: '0.77rem', cursor: 'pointer',
+              }}>닫기</button>
+            </div>
+            <div style={{ padding: '16px 20px 10px', color: '#A8B0C0', fontSize: '0.8rem', lineHeight: 1.6 }}>
+              삭제할 판매처를 선택하세요. 선택한 판매처에 등록된 상품만 삭제됩니다.
+            </div>
+            <div style={{ padding: '0 20px 16px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button onClick={() => setMarketDeleteModal(prev => prev ? { ...prev, selectedAccountIds: prev.options.map(option => option.accountId) } : prev)} style={{
+                padding: '5px 10px', borderRadius: '6px', border: '1px solid #3D3D3D', background: '#222', color: '#D0D0D0', cursor: 'pointer', fontSize: '0.75rem',
+              }}>전체선택</button>
+              <button onClick={() => setMarketDeleteModal(prev => prev ? { ...prev, selectedAccountIds: [] } : prev)} style={{
+                padding: '5px 10px', borderRadius: '6px', border: '1px solid #3D3D3D', background: '#222', color: '#D0D0D0', cursor: 'pointer', fontSize: '0.75rem',
+              }}>선택해제</button>
+            </div>
+            <div style={{ padding: '0 20px 20px', overflow: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {marketDeleteModal.options.map(option => {
+                const checked = marketDeleteModal.selectedAccountIds.includes(option.accountId)
+                return (
+                  <label key={option.accountId} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    gap: '12px', padding: '12px 14px', borderRadius: '8px',
+                    border: checked ? '1px solid rgba(255,140,0,0.55)' : '1px solid #2D2D2D',
+                    background: checked ? 'rgba(255,140,0,0.08)' : '#161616',
+                    cursor: 'pointer',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => setMarketDeleteModal(prev => {
+                          if (!prev) return prev
+                          const selected = prev.selectedAccountIds.includes(option.accountId)
+                            ? prev.selectedAccountIds.filter(id => id !== option.accountId)
+                            : [...prev.selectedAccountIds, option.accountId]
+                          return { ...prev, selectedAccountIds: selected }
+                        })}
+                      />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <span style={{ color: '#E5E5E5', fontSize: '0.82rem', fontWeight: 600 }}>{option.label}</span>
+                        <span style={{ color: '#8A95B0', fontSize: '0.74rem' }}>{option.marketType}</span>
+                      </div>
+                    </div>
+                    <span style={{ color: '#FFB84D', fontSize: '0.75rem', whiteSpace: 'nowrap' }}>
+                      {option.productCount}개 상품
+                    </span>
+                  </label>
+                )
+              })}
+            </div>
+            <div style={{
+              padding: '14px 20px', borderTop: '1px solid #2D2D2D',
+              display: 'flex', justifyContent: 'flex-end', gap: '8px',
+            }}>
+              <button onClick={() => setMarketDeleteModal(null)} style={{
+                padding: '7px 16px', borderRadius: '6px', border: '1px solid #3D3D3D',
+                background: '#222', color: '#AAA', cursor: 'pointer',
+              }}>취소</button>
+              <button onClick={async () => {
+                if (!marketDeleteModal.selectedAccountIds.length) {
+                  showAlert('삭제할 판매처를 선택해주세요.')
+                  return
+                }
+                const modal = marketDeleteModal
+                setMarketDeleteModal(null)
+                await executeMarketDelete(modal.products, modal.selectedAccountIds, modal.title)
+              }} style={{
+                padding: '7px 16px', borderRadius: '6px', border: 'none',
+                background: '#FF6B6B', color: '#FFF', cursor: 'pointer', fontWeight: 700,
+              }}>삭제 실행</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {aiJobModal && (
         <div style={{
           position: 'fixed', inset: 0, zIndex: 99998,
@@ -1483,6 +1723,8 @@ export default function ProductsPage() {
               }
               const targets = marketPool.filter(p => (p.registered_accounts?.length ?? 0) > 0)
               if (!targets.length) { showAlert('마켓에 등록된 상품이 없습니다.'); return }
+              openMarketDeleteModal(targets, 'bulk')
+              return
               if (!await showConfirm(`${targets.length}개 상품을 마켓에서 삭제(판매중지)하시겠습니까?`)) return
               aiJobAbortRef.current = false
               setAiJobTitle(`마켓삭제 (${targets.length}건)`)
@@ -1509,7 +1751,7 @@ export default function ProductsPage() {
                     const successAccIds: string[] = []
                     for (const [accId, status] of entries) {
                       const acc = accountsMap.get(accId)
-                      const label = acc ? acc.market_type : accId.slice(0, 8)
+                      const label = acc?.market_type || accId.slice(0, 8)
                       const isOk = status === 'success' || status.includes('성공')
                       if (isOk) { totalOk++; successAccIds.push(accId) } else totalFail++
                       logsRef.push(`[${ts()}] [${i + 1}/${targets.length}] ${name} → ${label}: ${isOk ? '✓' : '✗'}`)

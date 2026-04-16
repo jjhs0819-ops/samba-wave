@@ -64,7 +64,7 @@ async def create_job(
                     .where(
                         SambaJob.job_type == "transmit",
                         col(SambaJob.status).in_(
-                            [JobStatus.FAILED, JobStatus.CANCELLED]
+                            [JobStatus.FAILED]
                         ),
                         SambaJob.total > 0,
                         SambaJob.current > 0,

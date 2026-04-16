@@ -446,6 +446,45 @@ _SMARTSTORE_NOTICE_TYPE: dict[str, str] = {
 }
 
 
+_SMARTSTORE_NOTICE_FIELD_MAX_LENGTH = 1500
+
+
+def _normalize_smartstore_notice_fields(
+    value: Any,
+    *,
+    field_path: str,
+    max_length: int = _SMARTSTORE_NOTICE_FIELD_MAX_LENGTH,
+) -> Any:
+    """SmartStore 고시정보 문자열 필드를 안전 길이로 정규화한다."""
+    if isinstance(value, dict):
+        return {
+            key: _normalize_smartstore_notice_fields(
+                item,
+                field_path=f"{field_path}.{key}" if field_path else str(key),
+                max_length=max_length,
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [
+            _normalize_smartstore_notice_fields(
+                item,
+                field_path=f"{field_path}[{idx}]",
+                max_length=max_length,
+            )
+            for idx, item in enumerate(value)
+        ]
+    if isinstance(value, str) and len(value) > max_length:
+        from backend.utils.logger import logger as _notice_logger
+
+        _notice_logger.warning(
+            "[스마트스토어 고시정보] 문자열 길이 초과로 잘림: "
+            f"{field_path} {len(value)}->{max_length}"
+        )
+        return value[:max_length].rstrip()
+    return value
+
+
 def build_smartstore_notice(product: dict[str, Any], **kwargs: str) -> dict[str, Any]:
     """상품 카테고리에 맞는 스마트스토어 고시정보를 생성한다.
 
@@ -641,10 +680,14 @@ def build_smartstore_notice(product: dict[str, Any], **kwargs: str) -> dict[str,
             if gk not in notice_data:
                 notice_data[gk] = gv
 
-    return {
+    notice_payload = {
         "productInfoProvidedNoticeType": notice_type,
         field_key: notice_data,
     }
+    return _normalize_smartstore_notice_fields(
+        notice_payload,
+        field_path="productInfoProvidedNotice",
+    )
 
 
 # ────────────────────────────────────────────
