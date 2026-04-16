@@ -1,7 +1,7 @@
 """add_board_no_to_samba_cs_inquiry
 
 Revision ID: c4f2407a01
-Revises: 26dd9b23892a
+Revises: z3a4b5c6d7e8
 Create Date: 2026-04-07 18:30:00.000000
 
 """
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "c4f2407a01"
-down_revision: Union[str, Sequence[str], None] = "26dd9b23892a"
+down_revision: Union[str, Sequence[str], None] = "z3a4b5c6d7e8"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
