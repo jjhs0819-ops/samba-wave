@@ -647,7 +647,7 @@ export default function ReturnsPage() {
                           onFocus={(e) => { e.target.value = String(r.settlement_amount ?? '') }}
                           onChange={(e) => {
                             const raw = e.target.value.replace(/[^0-9.-]/g, '')
-                            if (raw === '') { setReturns(prev => prev.map(x => x.id === r.id ? { ...x, settlement_amount: null } : x)); return }
+                            if (raw === '') { setReturns(prev => prev.map(x => x.id === r.id ? { ...x, settlement_amount: undefined } : x)); return }
                             if (raw === '-') return
                             const num = parseFloat(raw)
                             if (!isNaN(num)) setReturns(prev => prev.map(x => x.id === r.id ? { ...x, settlement_amount: num } : x))
@@ -669,7 +669,7 @@ export default function ReturnsPage() {
                           onFocus={(e) => { e.target.value = String(r.recovery_amount ?? '') }}
                           onChange={(e) => {
                             const raw = e.target.value.replace(/[^0-9.-]/g, '')
-                            if (raw === '') { setReturns(prev => prev.map(x => x.id === r.id ? { ...x, recovery_amount: null } : x)); return }
+                            if (raw === '') { setReturns(prev => prev.map(x => x.id === r.id ? { ...x, recovery_amount: undefined } : x)); return }
                             if (raw === '-') return
                             const num = parseFloat(raw)
                             if (!isNaN(num)) setReturns(prev => prev.map(x => x.id === r.id ? { ...x, recovery_amount: num } : x))

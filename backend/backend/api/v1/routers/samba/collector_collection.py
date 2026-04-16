@@ -1911,7 +1911,9 @@ async def enrich_product(
         client = MusinsaClient(cookie=cookie)
         try:
             # refresh_only=True: 가격/재고만 갱신, 이미지/고시정보 처리 스킵
-            detail = await client.get_goods_detail(product.site_product_id, refresh_only=True)
+            detail = await client.get_goods_detail(
+                product.site_product_id, refresh_only=True
+            )
         except Exception as e:
             raise HTTPException(502, f"무신사 상세 조회 실패: {str(e)}")
 
