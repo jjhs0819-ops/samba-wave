@@ -1157,6 +1157,12 @@ class MusinsaClient:
                                 f"[쿠폰 스킵] {goods_no}: bestSalePriceYn=N — 최대혜택가 미반영 쿠폰"
                             )
                             continue
+                        # AG 타입(카드/결제 쿠폰)은 bestSalePriceYn=Y여도 최대혜택가 미포함
+                        if c.get("couponApply") == "AG":
+                            logger.info(
+                                f"[쿠폰 스킵] {goods_no}: couponApply=AG — 카드/결제 쿠폰 (최대혜택가 미포함)"
+                            )
+                            continue
                         actual_discount = 0
                         c_sale_price = c.get("salePrice", 0) or 0
                         # salePrice 우선 처리

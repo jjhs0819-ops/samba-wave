@@ -583,6 +583,11 @@ export const collectorApi = {
     request<{ ok: boolean; priority_enabled: boolean }>(`${SAMBA_PREFIX}/collector/autotune/priority`),
   autotuneSetPriority: (enabled: boolean) =>
     request<{ ok: boolean; priority_enabled: boolean }>(`${SAMBA_PREFIX}/collector/autotune/priority`, { method: 'POST', body: JSON.stringify({ enabled }) }),
+  collectSingleMusinsa: (url: string) =>
+    request<{ saved: number; updated: boolean; product_no: string; brand: string; filter_name: string }>(
+      `${SAMBA_PREFIX}/collector/collect-single-musinsa`,
+      { method: 'POST', body: JSON.stringify({ url }) }
+    ),
 }
 
 // ── Market Accounts ──

@@ -1308,13 +1308,20 @@ export default function OrdersPage() {
                           return
                         }
                         try {
-                          const res = await collectorApi.refresh([cpId])
-                          const detail = res.details?.[0]
-                          const logMsg = detail
-                            ? `${detail.name?.slice(0, 25)} → ${detail.detail}`
-                            : res.changed > 0 ? '변동 감지' : '변동 없음'
+                          const { API_BASE_URL: apiBase } = await import('@/config/api')
+                          const apiRes = await fetchWithAuth(`${apiBase}/api/v1/samba/collector/enrich/${cpId}`, { method: 'POST' })
+                          const data = await apiRes.json()
                           const ts2 = fmtTime()
-                          setRefreshLog(prev => ({ ...prev, [o.id]: `[${ts2}] ${logMsg}` }))
+                          if (apiRes.ok && data.success) {
+                            const p = data.product
+                            const costVal = p?.cost || p?.sale_price
+                            const priceStr = costVal != null ? `₩${fmtNum(Number(costVal))}` : '-'
+                            const stockStr = p?.sale_status === 'preorder' ? '판매예정' : p?.sale_status === 'sold_out' || p?.is_sold_out ? '품절' : '재고있음'
+                            const retransmitStr = data.retransmitted ? ` | 마켓 ${data.retransmit_accounts}계정 수정등록` : ''
+                            setRefreshLog(prev => ({ ...prev, [o.id]: `[${ts2}] ${priceStr} | ${stockStr}${retransmitStr}` }))
+                          } else {
+                            setRefreshLog(prev => ({ ...prev, [o.id]: `[${ts2}] 실패: ${data.detail || '갱신 실패'}` }))
+                          }
                         } catch (e) {
                           setRefreshLog(prev => ({ ...prev, [o.id]: `[${ts}] 갱신 실패: ${e instanceof Error ? e.message : ''}` }))
                         }

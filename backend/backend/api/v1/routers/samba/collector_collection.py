@@ -1910,7 +1910,8 @@ async def enrich_product(
 
         client = MusinsaClient(cookie=cookie)
         try:
-            detail = await client.get_goods_detail(product.site_product_id)
+            # refresh_only=True: 가격/재고만 갱신, 이미지/고시정보 처리 스킵
+            detail = await client.get_goods_detail(product.site_product_id, refresh_only=True)
         except Exception as e:
             raise HTTPException(502, f"무신사 상세 조회 실패: {str(e)}")
 
@@ -2817,4 +2818,172 @@ async def brand_create_groups(
     return {
         "created": len(created_groups),
         "groups": created_groups,
+    }
+
+
+# ── 무신사 단일 상품 수집 (그룹 자동 생성) ──
+
+
+class CollectSingleMusinsaRequest(BaseModel):
+    url: str
+
+
+@router.post("/collect-single-musinsa", status_code=201)
+async def collect_single_musinsa(
+    body: CollectSingleMusinsaRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """무신사 상품 URL 1개 수집 → 상품번호가 카테고리로 표시되는 그룹 자동 생성."""
+    from urllib.parse import urlparse
+
+    from backend.api.v1.routers.samba.collector_common import get_musinsa_cookie
+    from backend.domain.samba.collector.model import SambaCollectedProduct as CPModel
+    from backend.domain.samba.collector.model import SambaSearchFilter as SFModel
+    from backend.domain.samba.proxy.musinsa import MusinsaClient
+
+    url = body.url.strip()
+
+    # 무신사 로그인(쿠키) 체크
+    cookie = await get_musinsa_cookie(session)
+    if not cookie:
+        raise HTTPException(
+            400,
+            "무신사 수집은 로그인(쿠키)이 필요합니다. 확장앱에서 무신사 로그인 후 다시 시도하세요.",
+        )
+
+    # URL에서 상품번호 추출
+    parsed_url = urlparse(url)
+    match = re.search(r"/products/(\d+)", parsed_url.path) or re.search(
+        r"goodsNo=(\d+)", parsed_url.query
+    )
+    if not match:
+        raise HTTPException(400, "무신사 상품 URL에서 상품번호를 찾을 수 없습니다")
+    goods_no = match.group(1)
+
+    # 블랙리스트 체크
+    if await _is_blacklisted(session, "MUSINSA", goods_no):
+        raise HTTPException(400, f"수집차단된 상품입니다 ({goods_no})")
+
+    # 상품 상세 조회
+    client = MusinsaClient(cookie=cookie)
+    data = await client.get_goods_detail(goods_no)
+    if not data or not data.get("name"):
+        raise HTTPException(502, "무신사 상품 조회 실패")
+
+    brand = (data.get("brand") or "unknown").strip()
+
+    svc = _get_services(session)
+
+    # SearchFilter 중복 체크 (같은 상품번호로 이미 그룹 생성된 경우 재사용)
+    filter_name = f"MUSINSA_{brand}_{goods_no}"
+    existing_filter_stmt = select(SFModel).where(
+        SFModel.source_site == "MUSINSA",
+        SFModel.name == filter_name,
+    )
+    existing_filter = (await session.execute(existing_filter_stmt)).scalar_one_or_none()
+
+    if existing_filter:
+        search_filter = existing_filter
+    else:
+        search_filter = await svc.create_filter(
+            {
+                "source_site": "MUSINSA",
+                "name": filter_name,
+                "keyword": url,
+                "requested_count": 1,
+            }
+        )
+
+    filter_id = search_filter.id
+
+    # 가격이력 초기 스냅샷
+    initial_snapshot = {
+        "date": datetime.now(timezone.utc).isoformat(),
+        "sale_price": data.get("salePrice", 0),
+        "original_price": data.get("originalPrice", 0),
+        "options": data.get("options", []),
+    }
+
+    sale_status = data.get("saleStatus", "in_stock")
+    raw_detail_html = data.get("detailHtml", "")
+    if not raw_detail_html:
+        detail_imgs = data.get("detailImages") or []
+        if detail_imgs:
+            raw_detail_html = "\n".join(
+                f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
+                for img in detail_imgs
+            )
+
+    similar_no = str(data.get("similarNo", "0"))
+
+    product_data = {
+        "source_site": "MUSINSA",
+        "site_product_id": goods_no,
+        "search_filter_id": filter_id,
+        "name": data.get("name", ""),
+        "brand": brand,
+        "original_price": data.get("originalPrice", 0),
+        "sale_price": data.get("salePrice", 0),
+        "cost": data.get("bestBenefitPrice") or None,
+        "images": data.get("images", []),
+        "detail_images": data.get("detailImages") or [],
+        "options": data.get("options", []),
+        "category": data.get("category", ""),
+        "category1": data.get("category1", ""),
+        "category2": data.get("category2", ""),
+        "category3": data.get("category3", ""),
+        "category4": data.get("category4", ""),
+        "manufacturer": data.get("manufacturer", ""),
+        "origin": data.get("origin", ""),
+        "material": data.get("material", ""),
+        "color": data.get("color", "") or parse_color_from_name(data.get("name", "")),
+        "similar_no": similar_no,
+        "style_code": data.get("styleNo", ""),
+        "group_key": generate_group_key(
+            brand=brand,
+            similar_no=similar_no,
+            style_code=data.get("styleNo", ""),
+            name=data.get("name", ""),
+        ),
+        "detail_html": raw_detail_html,
+        "status": "collected",
+        "sale_status": sale_status,
+        "free_shipping": data.get("freeShipping", False),
+        "same_day_delivery": data.get("sameDayDelivery", False),
+        "price_history": [initial_snapshot],
+    }
+
+    # 기존 상품 체크 (upsert)
+    existing_stmt = select(CPModel).where(
+        CPModel.source_site == "MUSINSA",
+        CPModel.site_product_id == goods_no,
+    )
+    existing_row = (await session.execute(existing_stmt)).scalar_one_or_none()
+
+    if existing_row:
+        history = list(existing_row.price_history or [])
+        history.insert(0, initial_snapshot)
+        product_data["price_history"] = _trim_history(history)
+        if "tags" not in product_data or not product_data.get("tags"):
+            product_data.pop("tags", None)
+        # search_filter_id 갱신 (그룹 연결 보장)
+        product_data["search_filter_id"] = filter_id
+        collected = await svc.update_collected_product(existing_row.id, product_data)
+        updated = True
+    else:
+        collected = await svc.create_collected_product(product_data)
+        updated = False
+
+    # SearchFilter last_collected_at 갱신
+    search_filter.last_collected_at = datetime.now(timezone.utc)
+    session.add(search_filter)
+    await session.commit()
+
+    return {
+        "saved": 1,
+        "updated": updated,
+        "product_no": goods_no,
+        "brand": brand,
+        "filter_name": filter_name,
+        "product": collected,
     }

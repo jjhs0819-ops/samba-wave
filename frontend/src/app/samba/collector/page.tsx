@@ -1352,6 +1352,38 @@ export default function CollectorPage() {
           >
             {collecting ? "생성중..." : brandCategories.length > 0 ? `그룹 생성 (${brandSelectedCats.size}개)` : "그룹 생성"}
           </button>
+          {/* 1상품수집 버튼 — 무신사 전용 */}
+          {selectedSite === 'MUSINSA' && (
+            <button
+              onClick={async () => {
+                const url = collectUrl.trim()
+                if (!url) { showAlert('URL을 입력하세요'); return }
+                setCollecting(true)
+                addLog(`[1상품수집] ${url} 수집 시작...`)
+                try {
+                  const res = await collectorApi.collectSingleMusinsa(url)
+                  addLog(`[1상품수집] 완료: 상품번호 ${res.product_no} (${res.brand})`)
+                  showAlert('1상품 수집 완료', 'success')
+                  setCollectUrl('')
+                  load(); loadTree()
+                } catch (e) {
+                  addLog(`[1상품수집] 실패: ${e instanceof Error ? e.message : '오류'}`)
+                  showAlert(e instanceof Error ? e.message : '수집 실패', 'error')
+                }
+                setCollecting(false)
+              }}
+              disabled={collecting}
+              style={{
+                background: collecting ? '#333' : 'transparent',
+                border: '1px solid #51CF66',
+                color: '#51CF66',
+                padding: '0.6rem 1rem', borderRadius: '6px', fontWeight: 600, fontSize: '0.82rem',
+                whiteSpace: 'nowrap', cursor: collecting ? 'not-allowed' : 'pointer', opacity: collecting ? 0.6 : 1,
+              }}
+            >
+              1상품수집
+            </button>
+          )}
         </div>
 
         {/* 롯데ON 브랜드 선택 — 무신사 모달 스타일 */}

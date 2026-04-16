@@ -95,6 +95,7 @@ async def list_returns(
     order_repo = SambaOrderRepository(session)
     order_ids = list({r.order_id for r in returns if r.order_id})
     link_map: dict[str, str] = {}
+    channel_id_map: dict[str, str] = {}  # order_id → channel_id
     if order_ids:
         from backend.domain.samba.order.model import SambaOrder
         from sqlmodel import select, col
@@ -104,6 +105,7 @@ async def list_returns(
             SambaOrder.ext_order_number,
             SambaOrder.source_site,
             SambaOrder.sourcing_order_number,
+            SambaOrder.channel_id,
         ).where(col(SambaOrder.id).in_(order_ids))
         rows = (await session.execute(stmt)).all()
         # 소싱처별 주문상세 URL 템플릿 (주문탭 orderUrlMap과 동일)
@@ -124,12 +126,38 @@ async def list_returns(
                 tpl = _order_detail_urls.get(row.source_site, "")
                 if tpl:
                     link_map[row.id] = tpl.format(row.sourcing_order_number)
+            # channel_id 수집
+            if row.channel_id:
+                channel_id_map[row.id] = row.channel_id
+
+    # business_name 보정용 계정 조회
+    account_map: dict[str, str] = {}  # channel_id → business_name
+    channel_ids = list(set(channel_id_map.values()))
+    if channel_ids:
+        from backend.domain.samba.account.model import (
+            SambaMarketAccount as AccountModel,
+        )
+        from sqlmodel import select, col
+
+        acc_stmt = select(
+            AccountModel.id,
+            AccountModel.business_name,
+            AccountModel.market_name,
+        ).where(col(AccountModel.id).in_(channel_ids))
+        acc_rows = (await session.execute(acc_stmt)).all()
+        for acc in acc_rows:
+            account_map[acc.id] = acc.business_name or acc.market_name or ""
 
     results = []
     for r in returns:
         data = r.model_dump() if hasattr(r, "model_dump") else r.__dict__.copy()
         # 동적 생성 우선 → DB 값은 사용하지 않음 (하드코딩 방지)
         data["return_link"] = link_map.get(r.order_id) or None
+        # business_name이 없으면 계정에서 동적 보정
+        if not data.get("business_name"):
+            cid = channel_id_map.get(r.order_id)
+            if cid:
+                data["business_name"] = account_map.get(cid) or None
         results.append(data)
     return results
 
@@ -737,7 +765,8 @@ async def sync_returns_from_markets(
                             existing_order.customer_address
                         ),
                         "return_request_date": datetime.now(UTC),
-                        "order_date": existing_order.created_at,
+                        "order_date": existing_order.paid_at
+                        or existing_order.created_at,
                         "status": claim["status"],
                         "timeline": timeline_entries,
                         "notes": [],
@@ -1120,7 +1149,8 @@ async def sync_returns_from_markets(
                         or account.market_name
                         or label,
                         "market": market_label_map_lo.get(market_type, market_type),
-                        "order_date": existing_order.created_at,
+                        "order_date": existing_order.paid_at
+                        or existing_order.created_at,
                         "status": claim["status"],
                         "notes": [],
                     }
@@ -1259,7 +1289,8 @@ async def sync_returns_from_markets(
                             item.get("rcvAddr") or existing_order.customer_address
                         ),
                         "return_request_date": datetime.now(UTC),
-                        "order_date": existing_order.created_at,
+                        "order_date": existing_order.paid_at
+                        or existing_order.created_at,
                         "status": mapped_status,
                         "timeline": timeline_entries,
                         "notes": [],
@@ -1349,7 +1380,8 @@ async def sync_returns_from_markets(
                             existing_order.customer_address
                         ),
                         "return_request_date": _dt.now(UTC),
-                        "order_date": existing_order.created_at,
+                        "order_date": existing_order.paid_at
+                        or existing_order.created_at,
                         "status": "requested",
                         "timeline": timeline_entries,
                         "notes": [],
@@ -1448,7 +1480,8 @@ async def sync_returns_from_markets(
                             existing_order.customer_address
                         ),
                         "return_request_date": _dt.now(UTC),
-                        "order_date": existing_order.created_at,
+                        "order_date": existing_order.paid_at
+                        or existing_order.created_at,
                         "status": "requested",
                         "timeline": timeline_entries,
                         "notes": [],
