@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 import time
 from typing import Any
@@ -1129,13 +1130,30 @@ class LotteonPlugin(MarketPlugin):
                     )
                     # 폴백: 아래 전체 로직으로 진행
                 else:
-                    new_price = int(product.get("sale_price") or 0)
+                    _raw_price = int(product.get("sale_price") or 0)
                     new_options = product.get("options") or []
 
                     # 계정 재고수량 상한 (transform_product와 동일 정책)
                     # 주의: 경량 분기는 1410 라인의 product_copy 주입보다 먼저 실행되므로
                     # account.additional_fields에서 직접 로드해야 함.
                     _acc_extras = getattr(account, "additional_fields", None) or {}
+
+                    # ── 스토어 즉시할인 + 이벤트 할인 역산 (오토튠 경로 마진 보존) ──
+                    # 경량 경로는 transform_product를 건너뛰므로 동일 공식을 여기에도 적용.
+                    # 이벤트 할인율 우선순위: product._event_discount_pct (V2) → account.eventDiscountPct → 12
+                    _acc_discount_rate = int(_acc_extras.get("discountRate") or 0)
+                    if _acc_discount_rate > 0 and _raw_price > 0:
+                        _event_pct = int(
+                            product.get("_event_discount_pct")
+                            or _acc_extras.get("eventDiscountPct")
+                            or 12
+                        )
+                        _total_pct = 25 + max(0, min(30, _event_pct))
+                        _denom = max(10, 100 - _total_pct)
+                        _desired = math.ceil(_raw_price / 300) * 300
+                        new_price = _desired * 100 // _denom
+                    else:
+                        new_price = _raw_price
                     try:
                         _max_stock_per_opt = int(_acc_extras.get("stockQuantity") or 0)
                     except (ValueError, TypeError):
@@ -1441,8 +1459,16 @@ class LotteonPlugin(MarketPlugin):
             product_copy["_as_message"] = extras["asMessage"]
         # 스토어 즉시할인: 활성화 시 25% 고정 (proxy에서 판매가 역산, 마진 보존)
         # 사용자 입력값(예: 10%)은 활성화 여부로만 사용. 실제 할인율은 25% 강제.
+        # 이벤트 할인율(eventDiscountPct)은 역산 시 추가로 고려 — 없으면 proxy에서 기본 12% 사용
         if int(extras.get("discountRate") or 0) > 0:
             product_copy["_discount_rate"] = 25
+            if extras.get("eventDiscountPct") is not None:
+                try:
+                    product_copy["_event_discount_pct"] = int(
+                        extras["eventDiscountPct"]
+                    )
+                except (TypeError, ValueError):
+                    pass
         if extras.get("returnFee"):
             product_copy["_return_fee"] = int(extras["returnFee"])
         if extras.get("exchangeFee"):
