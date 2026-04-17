@@ -81,11 +81,47 @@ async def fix():
 asyncio.run(fix())
 " || echo "Emergency fix failed (non-fatal)"
 
-  # 긴급 우회: alembic_version이 26dd9b23892a에 묶인 경우 head로 강제 stamp
-  if uv run alembic current 2>&1 | grep -q "26dd9b23892a"; then
-    echo "alembic stamp: 26dd9b23892a → 873871a20399 (version 테이블 복구)"
-    uv run alembic stamp 873871a20399
-  fi
+  # 긴급 우회: alembic_version 테이블 직접 복구 — alembic current/stamp 우회
+  # (alembic current 파이프 조건이 로거/exit code 문제로 조용히 실패하는 것을 우회)
+  echo "=== [alembic_version] Direct DB repair ==="
+  uv run python -c "
+import asyncio, os, sys, asyncpg
+TARGET = '873871a20399'
+async def repair():
+    host = os.environ.get('WRITE_DB_HOST') or ''
+    if not host:
+        print('[alembic_version] skip — WRITE_DB_HOST not set'); return
+    kw = dict(
+        user=os.environ.get('WRITE_DB_USER') or 'postgres',
+        password=os.environ.get('WRITE_DB_PASSWORD') or '',
+        database=os.environ.get('WRITE_DB_NAME') or 'railway',
+    )
+    if host.startswith('/'):
+        kw['host'] = host
+    else:
+        kw['host'] = host
+        kw['port'] = int(os.environ.get('WRITE_DB_PORT') or 5432)
+    conn = await asyncpg.connect(**kw)
+    try:
+        await conn.execute('CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY)')
+        rows = await conn.fetch('SELECT version_num FROM alembic_version ORDER BY 1')
+        current = sorted(r[0] for r in rows)
+        print(f'[alembic_version] before: {current}')
+        if current == [TARGET]:
+            print(f'[alembic_version] already {TARGET} — no-op'); return
+        if not current or current == ['26dd9b23892a']:
+            async with conn.transaction():
+                await conn.execute('DELETE FROM alembic_version')
+                await conn.execute(\"INSERT INTO alembic_version (version_num) VALUES ('873871a20399')\")
+            after = await conn.fetch('SELECT version_num FROM alembic_version ORDER BY 1')
+            print(f'[alembic_version] REPAIRED to: {sorted(r[0] for r in after)}')
+        else:
+            print(f'[alembic_version] UNEXPECTED state: {current} — manual intervention required')
+            sys.exit(2)
+    finally:
+        await conn.close()
+asyncio.run(repair())
+" || echo '[alembic_version] repair step failed (non-fatal, continuing)'
 
   # DB 마이그레이션 자동 실행 (최대 3회 재시도)
   echo "Running database migrations..."
