@@ -85,6 +85,11 @@ exclude_lines = [
     "raise NotImplementedError",
 ]
 
+[tool.ruff]
+# scripts/ 디렉토리는 일회성 유틸/마이그레이션 스크립트 모음 — CI 린트 대상 제외
+# (단 entrypoint.sh, verify_schema.py 등 배포 필수 파일은 런타임 이미지에 포함됨)
+extend-exclude = ["scripts"]
+
 [tool.ruff.lint]
 # SQLAlchemy에서 == None, == True는 정상적인 ORM 패턴
 # E402: 조건부 import 패턴 허용
