@@ -56,8 +56,10 @@ if (
 
 # user/password URL-encoding — 비밀번호에 '@' 등 특수문자 포함 시 URL 파서가
 # 구분자로 오해하는 사고 방지 (2026-04-17: "gemini0674@@" 비밀번호로 4주간 alembic 인증 실패)
-db_user_encoded = quote_plus(db_user)
-db_password_encoded = quote_plus(db_password or "")
+# %를 %%로 이스케이프 — alembic의 configparser가 %40 같은 encode 결과를 interpolation 문법으로
+# 오해하는 2차 사고 방지 (configparser는 %%를 %로 복원, SQLAlchemy가 최종 %40→@ decode)
+db_user_encoded = quote_plus(db_user).replace("%", "%%")
+db_password_encoded = quote_plus(db_password or "").replace("%", "%%")
 
 # Cloud SQL Unix 소켓 경로 감지 (/cloudsql/...)
 if db_host.startswith("/"):
