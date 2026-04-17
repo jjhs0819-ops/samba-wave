@@ -145,16 +145,33 @@ class ARTSourcingClient:
         "Sec-Fetch-Site": "same-origin",
     }
 
-    def __init__(self, channel: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        channel: Optional[str] = None,
+        *,
+        proxy_pool: Optional[list[str]] = None,
+    ) -> None:
         """
         Args:
           channel: None → ABC마트(10001), "10002" → 그랜드스테이지
+          proxy_pool: Cloud Run IP가 a-rt.com에 차단되는 현상 우회용 프록시 풀
+                     라운드로빈으로 순환 사용 (무신사/GSShop과 동일 풀 공유)
         """
         self.channel = channel or self.CHANNEL_ABCMART
         self._source_site = (
             "GrandStage" if channel == self.CHANNEL_GRANDSTAGE else "ABCmart"
         )
         self._timeout = httpx.Timeout(10.0, connect=5.0)
+        self._proxy_pool: list[str] = proxy_pool or []
+        self._proxy_idx = 0
+
+    def _next_proxy(self) -> Optional[str]:
+        """라운드로빈 프록시 선택. 풀이 비어 있으면 None 반환(직접 접속)."""
+        if not self._proxy_pool:
+            return None
+        proxy = self._proxy_pool[self._proxy_idx % len(self._proxy_pool)]
+        self._proxy_idx += 1
+        return proxy
 
     # ------------------------------------------------------------------
     # 검색
@@ -198,7 +215,7 @@ class ARTSourcingClient:
 
         try:
             async with httpx.AsyncClient(
-                timeout=self._timeout, follow_redirects=True
+                timeout=self._timeout, follow_redirects=True, proxy=self._next_proxy()
             ) as client:
                 # 세션 획득: 홈 방문 → 검색 페이지 방문 (JSESSIONID 쿠키 설정)
                 await client.get(subdomain + "/", headers=self.HEADERS)
@@ -644,7 +661,9 @@ class ARTSourcingClient:
         """
         site_label = f"[{self._source_site}]"
         subdomain = self.SUBDOMAIN_MAP.get(self.channel, self.SUBDOMAIN_MAP["10001"])
-        client = httpx.AsyncClient(timeout=self._timeout, follow_redirects=True)
+        client = httpx.AsyncClient(
+            timeout=self._timeout, follow_redirects=True, proxy=self._next_proxy()
+        )
         try:
             # 1단계: 서브도메인 홈 방문으로 초기 쿠키 설정
             resp = await client.get(subdomain + "/", headers=self.HEADERS)
@@ -1322,7 +1341,9 @@ class ARTSourcingClient:
             _attempt_total = 0
             try:
                 async with httpx.AsyncClient(
-                    timeout=self._timeout, follow_redirects=True
+                    timeout=self._timeout,
+                    follow_redirects=True,
+                    proxy=self._next_proxy(),
                 ) as client:
                     # 세션 획득 (JSESSIONID)
                     await client.get(subdomain + "/", headers=self.HEADERS)
@@ -1490,7 +1511,7 @@ class ARTSourcingClient:
 
         try:
             async with httpx.AsyncClient(
-                timeout=self._timeout, follow_redirects=True
+                timeout=self._timeout, follow_redirects=True, proxy=self._next_proxy()
             ) as client:
                 resp = await client.get(url, headers=self.HEADERS)
 
@@ -1760,7 +1781,7 @@ class ARTSourcingClient:
         url = f"{self.BASE}{self.DETAIL_PATH}?{params}"
         try:
             async with httpx.AsyncClient(
-                timeout=self._timeout, follow_redirects=True
+                timeout=self._timeout, follow_redirects=True, proxy=self._next_proxy()
             ) as client:
                 resp = await client.get(url, headers=self.HEADERS)
                 if resp.status_code != 200:
