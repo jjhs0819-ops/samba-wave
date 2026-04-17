@@ -69,6 +69,13 @@ async def fix():
         kw['host'] = host; kw['port'] = int(_env('WRITE_DB_PORT') or 5432)
     conn = await asyncpg.connect(**kw)
     try:
+        # 배포 시 TooManyConnectionsError 방지 — alembic 실행 전 idle 연결 선제 정리
+        terminated = await conn.fetchval(
+            'SELECT COUNT(*) FROM pg_stat_activity'
+            ' WHERE state = \'idle\' AND datname = current_database()'
+            ' AND pid <> pg_backend_pid() AND pg_terminate_backend(pid)'
+        )
+        print(f'Cleared {terminated} idle connections before alembic.')
         await conn.execute('ALTER TABLE samba_search_filter ADD COLUMN IF NOT EXISTS source_brand_name TEXT')
         await conn.execute('ALTER TABLE samba_market_account DROP COLUMN IF EXISTS sort_order')
         await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS clm_req_seq TEXT')
