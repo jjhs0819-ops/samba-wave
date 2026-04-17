@@ -182,6 +182,19 @@ async def clear_collect_log_buffer():
     return {"ok": True}
 
 
+class CollectLogAddRequest(BaseModel):
+    message: str
+
+
+@router.post("/collect-logs/add")
+async def add_collect_log(body: CollectLogAddRequest):
+    """프론트엔드 로그를 서버 링 버퍼에 추가 — 페이지 이탈 후 복원용."""
+    from backend.domain.samba.job.worker import _add_collect_log
+
+    _add_collect_log(body.message)
+    return {"ok": True}
+
+
 @router.get("/collect-queue-status")
 async def get_collect_queue_status(
     session: AsyncSession = Depends(get_read_session_dependency),

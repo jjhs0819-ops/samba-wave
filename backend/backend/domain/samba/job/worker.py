@@ -173,6 +173,20 @@ def _run_collect_in_thread(worker: "JobWorker", job_id: str, payload: dict):
                 f"[잡워커] 수집 스레드 에러 후 잡 상태 갱신 실패: {job_id} — {fe}"
             )
     finally:
+        # 스레드 전용 엔진 dispose — 풀의 TCP 커넥션을 Cloud SQL에 즉시 반납
+        # 생략 시 loop.close() 만으로는 asyncpg 소켓이 GC까지 살아있어 좀비 누적 → max_connections 고갈 원인
+        try:
+            from backend.db.orm import _write_engine_cache, _read_engine_cache
+
+            for _cache in (_write_engine_cache, _read_engine_cache):
+                _eng = _cache.get(loop)
+                if _eng is not None:
+                    try:
+                        loop.run_until_complete(_eng.dispose())
+                    except Exception as de:
+                        logger.warning(f"[잡워커] 수집 엔진 dispose 실패: {de}")
+        except Exception:
+            pass
         loop.close()
 
 
@@ -217,8 +231,11 @@ class JobWorker:
         self._running = True
         self._shutting_down = False  # SIGTERM 수신 시 True — 전송 루프가 체크
         self._active_job_ids: set[str] = set()  # 현재 실행 중인 잡 ID 집합
-        self._active_tasks: dict[str, asyncio.Task] = {}  # job_id → Task (전송 병렬용)
-        self._active_collect = False  # 수집 잡 실행 중 여부
+        self._active_tasks: dict[
+            str, asyncio.Task
+        ] = {}  # job_id → Task (수집+전송 병렬용)
+        # 소싱처별 동시 실행 제어 — 같은 소싱처는 순차, 다른 소싱처는 병렬
+        self._active_collect_sources: set[str] = set()
         self._poll_count = 0
         # 검색 결과 캐시: {(site, keyword): (items_list, timestamp)}
         # 동일 브랜드 그룹 수집 시 전수 검색 1회만 실행
@@ -294,7 +311,7 @@ class JobWorker:
 
         # 모든 활성 Task가 종료될 때까지 대기
         for _ in range(timeout):
-            if not self._active_tasks and not self._active_collect:
+            if not self._active_tasks and not self._active_collect_sources:
                 break
             await asyncio.sleep(1)
 
@@ -337,16 +354,14 @@ class JobWorker:
             if exc:
                 logger.error(f"[잡워커] 전송 Task 예외: {jid} — {exc}")
 
-        # 수집 실행 중이면 추가 claim 차단 (수집은 1개만)
-        if self._active_collect:
-            return bool(self._active_tasks)
-
         from backend.db.orm import get_write_session
         from backend.domain.samba.job.repository import SambaJobRepository
 
         async with get_write_session() as session:
             repo = SambaJobRepository(session)
-            job = await repo.claim_pending_job()
+            # 현재 실행 중인 소싱처는 제외 — 같은 소싱처 순차, 다른 소싱처 병렬
+            _excl_sources = set(self._active_collect_sources)
+            job = await repo.claim_pending_job(exclude_sources=_excl_sources or None)
             if not job:
                 return bool(self._active_tasks)
 
@@ -366,7 +381,21 @@ class JobWorker:
             )
             return True
 
-        # 수집/기타: 기존 방식 (동기 대기, 1개만)
+        # 수집: 소싱처별 병렬 Task (같은 소싱처는 exclude_sources로 순차 보장)
+        if job.job_type == "collect":
+            task = asyncio.create_task(
+                self._execute_job(job),
+                name=f"collect-{job.id}",
+            )
+            self._active_tasks[job.id] = task
+            _site = (job.payload or {}).get("source_site", "?")
+            logger.info(
+                f"[잡워커] 수집 Task 생성: {job.id} (site={_site}, "
+                f"활성 소싱처={sorted(self._active_collect_sources | {_site})})"
+            )
+            return True
+
+        # 기타: 기존 방식 (동기 대기)
         await self._execute_job(job)
         return True
 
@@ -381,8 +410,12 @@ class JobWorker:
             _job_type = job.job_type
             _job_payload = job.payload or {}
             if _job_type == "collect":
-                self._active_collect = True
-                logger.info(f"[잡워커] 수집 실행 (격리 스레드): {_job_id}")
+                _collect_site = (_job_payload or {}).get("source_site") or ""
+                if _collect_site:
+                    self._active_collect_sources.add(_collect_site)
+                logger.info(
+                    f"[잡워커] 수집 실행 (격리 스레드): {_job_id} site={_collect_site}"
+                )
                 thread = threading.Thread(
                     target=_run_collect_in_thread,
                     args=(self, _job_id, _job_payload),
@@ -481,7 +514,9 @@ class JobWorker:
             self._active_job_ids.discard(_job_id)
             self._active_tasks.pop(_job_id, None)
             if _job_type == "collect":
-                self._active_collect = False
+                _collect_site = (_job_payload or {}).get("source_site") or ""
+                if _collect_site:
+                    self._active_collect_sources.discard(_collect_site)
             # 프론트 폴링이 로그를 읽을 시간 확보 후 삭제 (60초)
             try:
                 asyncio.get_running_loop().call_later(60, clear_job_logs, _job_id)

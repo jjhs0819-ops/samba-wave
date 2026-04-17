@@ -21,12 +21,21 @@ class SambaJobRepository(BaseRepository[SambaJob]):
     async def claim_pending_job(
         self,
         exclude_types: set[str] | None = None,
+        exclude_sources: set[str] | None = None,
     ) -> Optional[SambaJob]:
         """Pending 잡 1개를 원자적으로 claim (FOR UPDATE SKIP LOCKED).
 
         다른 worker가 이미 lock 잡은 row는 건너뛰므로 중복 실행 불가.
         write session 컨텍스트 안에서 호출해야 하며, 호출부에서 commit() 필요.
+
+        Args:
+            exclude_types: 제외할 job_type 집합 (예: {"collect"})
+            exclude_sources: 제외할 수집 소싱처 집합 — 현재 실행 중인 소싱처 스킵용.
+                             payload->>'source_site' 값이 이 셋에 포함된 collect 잡은 건너뜀.
+                             다른 소싱처 잡은 계속 pick 가능 → 소싱처별 동시 실행 허용.
         """
+        from sqlalchemy import and_, or_
+
         stmt = (
             select(SambaJob)
             .where(SambaJob.status == JobStatus.PENDING)
@@ -36,6 +45,19 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         )
         if exclude_types:
             stmt = stmt.where(SambaJob.job_type.notin_(list(exclude_types)))
+        if exclude_sources:
+            # collect 잡 중 source_site 가 exclude_sources 에 포함되면 제외
+            # 다른 타입(transmit 등) 이거나 다른 소싱처면 pick 허용
+            _excl_list = list(exclude_sources)
+            stmt = stmt.where(
+                or_(
+                    SambaJob.job_type != "collect",
+                    and_(
+                        SambaJob.job_type == "collect",
+                        SambaJob.payload.op("->>")("source_site").notin_(_excl_list),
+                    ),
+                )
+            )
 
         result = await self.session.execute(stmt)
         job = result.scalars().first()
