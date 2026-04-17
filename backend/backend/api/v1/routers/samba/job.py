@@ -311,6 +311,28 @@ async def cancel_collect_jobs(
     return {"ok": True, "cancelled": r.rowcount}
 
 
+@router.post("/cancel-transmit")
+async def cancel_transmit_jobs(
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """전송 잡만 취소 — 수집/오토튠은 영향 없음."""
+    from sqlalchemy import text
+    from backend.domain.samba.emergency import trigger_emergency_stop
+    from backend.domain.samba.shipment.service import request_cancel_transmit
+
+    request_cancel_transmit()
+    trigger_emergency_stop()
+
+    r = await session.execute(
+        text(
+            f"UPDATE samba_jobs SET status = '{JobStatus.CANCELLED}', completed_at = now() "
+            f"WHERE job_type = 'transmit' AND status IN ('{JobStatus.PENDING}', '{JobStatus.RUNNING}')"
+        )
+    )
+    await session.commit()
+    return {"ok": True, "cancelled": r.rowcount}
+
+
 @router.post("/cancel-all")
 async def cancel_all_jobs(
     session: AsyncSession = Depends(get_write_session_dependency),

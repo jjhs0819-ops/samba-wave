@@ -1165,7 +1165,7 @@ export default function ShipmentsPage() {
                 try {
                   const { API_BASE_URL: apiBase } = await import('@/config/api')
                   await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/cancel`, { method: 'POST' })
-                  await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/cancel-all`, { method: 'POST' })
+                  await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/cancel-transmit`, { method: 'POST' })
                   activeJobIdRef.current = ''
                   setPausedJobPayload(null)
                   setJobQueueStatus({ running: [], pending: [] })
@@ -1178,7 +1178,7 @@ export default function ShipmentsPage() {
                 setStopping('')
               }}
                 style={{ padding: '4px 14px', fontSize: '0.78rem', background: stopping === 'emergency' ? 'rgba(255,50,50,0.6)' : 'rgba(255,50,50,0.3)', color: '#FF4444', border: '1px solid rgba(255,50,50,0.6)', borderRadius: '4px', cursor: stopping ? 'not-allowed' : 'pointer', fontWeight: 700, opacity: stopping ? 0.7 : 1 }}
-              >{stopping === 'emergency' ? '중지중...' : '작업중지'}</button>
+              >{stopping === 'emergency' ? '취소중...' : '작업취소'}</button>
             {<>
               <button onClick={() => handleStart()}
                 style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', border: '1px solid rgba(255,140,0,0.4)', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}

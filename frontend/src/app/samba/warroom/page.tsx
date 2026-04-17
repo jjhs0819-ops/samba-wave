@@ -547,7 +547,7 @@ export default function WarroomPage() {
               fontWeight: 600,
               cursor: 'pointer',
             }}
-            >강제중단</button>
+            >작업취소</button>
             <button
               onClick={handlePriorityToggle}
               style={{
