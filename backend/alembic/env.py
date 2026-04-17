@@ -4,6 +4,7 @@ import os
 import pkgutil
 import sys
 from logging.config import fileConfig
+from urllib.parse import quote_plus
 
 from dotenv import load_dotenv
 from sqlalchemy import pool
@@ -53,16 +54,21 @@ if (
         "직접 실행이 필요하면: ALEMBIC_PRODUCTION_CONFIRMED=1 alembic upgrade heads"
     )
 
+# user/password URL-encoding — 비밀번호에 '@' 등 특수문자 포함 시 URL 파서가
+# 구분자로 오해하는 사고 방지 (2026-04-17: "gemini0674@@" 비밀번호로 4주간 alembic 인증 실패)
+db_user_encoded = quote_plus(db_user)
+db_password_encoded = quote_plus(db_password or "")
+
 # Cloud SQL Unix 소켓 경로 감지 (/cloudsql/...)
 if db_host.startswith("/"):
     config.set_main_option(
         "sqlalchemy.url",
-        f"postgresql+asyncpg://{db_user}:{db_password}@/{db_name}?host={db_host}",
+        f"postgresql+asyncpg://{db_user_encoded}:{db_password_encoded}@/{db_name}?host={db_host}",
     )
 else:
     config.set_main_option(
         "sqlalchemy.url",
-        f"postgresql+asyncpg://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}",
+        f"postgresql+asyncpg://{db_user_encoded}:{db_password_encoded}@{db_host}:{db_port}/{db_name}",
     )
 
 if config.config_file_name is not None:
