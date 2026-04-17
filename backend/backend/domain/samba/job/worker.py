@@ -1784,9 +1784,23 @@ class JobWorker:
                                     f"+ GS {len(_gs_products)}건 → 총 {len(items_list)}건"
                                 )
                         else:
-                            result = await client.search(
-                                keyword, max_count=_max, **_search_kwargs
-                            )
+                            # 단일 검색에도 120초 가드 — 카테고리필터 없는 경로 hang 방지
+                            try:
+                                result = await asyncio.wait_for(
+                                    client.search(
+                                        keyword, max_count=_max, **_search_kwargs
+                                    ),
+                                    timeout=120,
+                                )
+                            except asyncio.TimeoutError:
+                                logger.warning(
+                                    f"[잡워커] {site} 검색 120초 타임아웃: {keyword}"
+                                )
+                                await repo.fail_job(
+                                    job.id,
+                                    f"{site} 검색 응답 지연 (120초 타임아웃)",
+                                )
+                                return
                             items_list = result.get("products", [])
                         logger.info(
                             f"[잡워커] {site} 검색 '{keyword}' → {len(items_list)}건"
