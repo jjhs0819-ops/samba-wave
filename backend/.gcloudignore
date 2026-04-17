@@ -1,0 +1,47 @@
+# .gitignore 자동 상속 차단 — scripts/ 포함 보장
+# (이 파일 없으면 gcloud가 .gitignore를 참조해 backend/scripts/ 를 업로드에서 제외함)
+
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 환경변수 (Cloud Run은 --update-env-vars로 주입)
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Node / Frontend 관련 (backend 빌드에 불필요)
+node_modules/
+
+# Claude / 개발 도구
+.claude/
+.mcp.json
+CLAUDE.md
+CLAUDE-DEPLOY.md
+
+# 로컬 DB 덤프 (민감정보)
+local_dump*.sql
+
+# ⚠️ scripts/ 는 절대 제외하지 않음 — entrypoint.sh, verify_schema.py 등 배포 필수

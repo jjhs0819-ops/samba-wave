@@ -21,6 +21,11 @@ fi
 echo "Running in $ENVIRONMENT mode"
 
 if [ "$ENVIRONMENT" = "production" ]; then
+  # ══════════════════════════════════════════════════════════════
+  # 빌드 검증 마커 — 이 줄이 Cloud Run 로그에 찍히면 새 이미지 진입 확정
+  # ══════════════════════════════════════════════════════════════
+  echo "=== ENTRYPOINT VERSION MARKER: v2-asyncpg-repair (commit-time 2026-04-17) ==="
+
   # Cloud SQL Auth Proxy 사이드카 대기 — 재시도로 확실히 연결 확인
   echo "Waiting for Cloud SQL proxy..."
   for i in 1 2 3 4 5 6; do
@@ -46,44 +51,11 @@ exit(0 if r else 1)
     sleep 5
   done
 
-  # 누락 컬럼 긴급 패치 (alembic 체인 문제 우회)
-  echo "Applying emergency schema fixes..."
-  uv run python -c "
-import asyncio, os, sys
-def _env(key):
-    return os.environ.get(key) or os.environ.get(key.lower()) or os.environ.get(key.upper()) or ''
-async def fix():
-    import asyncpg
-    host = _env('WRITE_DB_HOST')
-    if not host:
-        print('WRITE_DB_HOST not set, skip emergency fix'); return
-    kw = dict(user=_env('WRITE_DB_USER') or 'postgres', password=_env('WRITE_DB_PASSWORD'), database=_env('WRITE_DB_NAME') or 'railway')
-    if host.startswith('/'):
-        kw['host'] = host
-    else:
-        kw['host'] = host; kw['port'] = int(_env('WRITE_DB_PORT') or 5432)
-    conn = await asyncpg.connect(**kw)
-    try:
-        await conn.execute('ALTER TABLE samba_search_filter ADD COLUMN IF NOT EXISTS source_brand_name TEXT')
-        await conn.execute('ALTER TABLE samba_market_account DROP COLUMN IF EXISTS sort_order')
-        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS clm_req_seq TEXT')
-        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS ord_prd_seq TEXT')
-        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_retrieval_status TEXT')
-        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_retrieved_at TIMESTAMPTZ')
-        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_reship_company TEXT')
-        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_reship_tracking TEXT')
-        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_delivered_at TIMESTAMPTZ')
-        await conn.execute('ALTER TABLE samba_order ADD COLUMN IF NOT EXISTS collected_product_id TEXT')
-        await conn.execute('CREATE INDEX IF NOT EXISTS ix_samba_order_collected_product_id ON samba_order (collected_product_id) WHERE collected_product_id IS NOT NULL')
-        print('Emergency schema fixes applied.')
-    finally:
-        await conn.close()
-asyncio.run(fix())
-" || echo "Emergency fix failed (non-fatal)"
-
-  # 긴급 우회: alembic_version 테이블 직접 복구 — alembic current/stamp 우회
-  # (alembic current 파이프 조건이 로거/exit code 문제로 조용히 실패하는 것을 우회)
-  echo "=== [alembic_version] Direct DB repair ==="
+  # ══════════════════════════════════════════════════════════════
+  # alembic_version 테이블 직접 복구 (Emergency schema fixes 앞에 배치)
+  # alembic current/stamp 명령 우회 — asyncpg 직접 쿼리로 결정론적 복구
+  # ══════════════════════════════════════════════════════════════
+  echo "=== [alembic_version] Direct DB repair (pre-emergency) ==="
   uv run python -c "
 import asyncio, os, sys, asyncpg
 TARGET = '873871a20399'
@@ -122,6 +94,41 @@ async def repair():
         await conn.close()
 asyncio.run(repair())
 " || echo '[alembic_version] repair step failed (non-fatal, continuing)'
+
+  # 누락 컬럼 긴급 패치 (alembic 체인 문제 우회)
+  echo "Applying emergency schema fixes..."
+  uv run python -c "
+import asyncio, os, sys
+def _env(key):
+    return os.environ.get(key) or os.environ.get(key.lower()) or os.environ.get(key.upper()) or ''
+async def fix():
+    import asyncpg
+    host = _env('WRITE_DB_HOST')
+    if not host:
+        print('WRITE_DB_HOST not set, skip emergency fix'); return
+    kw = dict(user=_env('WRITE_DB_USER') or 'postgres', password=_env('WRITE_DB_PASSWORD'), database=_env('WRITE_DB_NAME') or 'railway')
+    if host.startswith('/'):
+        kw['host'] = host
+    else:
+        kw['host'] = host; kw['port'] = int(_env('WRITE_DB_PORT') or 5432)
+    conn = await asyncpg.connect(**kw)
+    try:
+        await conn.execute('ALTER TABLE samba_search_filter ADD COLUMN IF NOT EXISTS source_brand_name TEXT')
+        await conn.execute('ALTER TABLE samba_market_account DROP COLUMN IF EXISTS sort_order')
+        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS clm_req_seq TEXT')
+        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS ord_prd_seq TEXT')
+        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_retrieval_status TEXT')
+        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_retrieved_at TIMESTAMPTZ')
+        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_reship_company TEXT')
+        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_reship_tracking TEXT')
+        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_delivered_at TIMESTAMPTZ')
+        await conn.execute('ALTER TABLE samba_order ADD COLUMN IF NOT EXISTS collected_product_id TEXT')
+        await conn.execute('CREATE INDEX IF NOT EXISTS ix_samba_order_collected_product_id ON samba_order (collected_product_id) WHERE collected_product_id IS NOT NULL')
+        print('Emergency schema fixes applied.')
+    finally:
+        await conn.close()
+asyncio.run(fix())
+" || echo "Emergency fix failed (non-fatal)"
 
   # DB 마이그레이션 자동 실행 (최대 3회 재시도)
   echo "Running database migrations..."
