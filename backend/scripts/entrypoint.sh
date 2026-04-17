@@ -125,6 +125,20 @@ async def fix():
         await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_delivered_at TIMESTAMPTZ')
         await conn.execute('ALTER TABLE samba_order ADD COLUMN IF NOT EXISTS collected_product_id TEXT')
         await conn.execute('CREATE INDEX IF NOT EXISTS ix_samba_order_collected_product_id ON samba_order (collected_product_id) WHERE collected_product_id IS NOT NULL')
+        # samba_search_cache (2b3042f4d3b6 마이그레이션 — alembic_version=873871a20399 stamp로 skip됨, 수동 생성 필요)
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS samba_search_cache (
+                id VARCHAR(30) PRIMARY KEY NOT NULL,
+                tenant_id VARCHAR(100),
+                source_site VARCHAR(50) NOT NULL,
+                keyword VARCHAR(200) NOT NULL,
+                products JSON,
+                ttl_minutes INTEGER NOT NULL DEFAULT 60,
+                created_at TIMESTAMPTZ NOT NULL
+            )
+        ''')
+        await conn.execute('CREATE INDEX IF NOT EXISTS ix_samba_search_cache_source_site ON samba_search_cache (source_site)')
+        await conn.execute('CREATE INDEX IF NOT EXISTS ix_samba_search_cache_tenant_id ON samba_search_cache (tenant_id)')
         print('Emergency schema fixes applied.')
     finally:
         await conn.close()
