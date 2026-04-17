@@ -705,10 +705,13 @@ export default function CollectorPage() {
     } catch { /* 동기화 실패해도 수집 흐름은 유지 */ }
   }
 
-  const handleStopCollect = () => {
-    collectAbortRef.current?.abort();
-    addLog('수집 중단 요청...');
-  };
+  const handleStopCollect = async () => {
+    collectAbortRef.current?.abort()
+    addLog('수집 중단 요청...')
+    try {
+      await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/cancel-all`, { method: 'POST' })
+    } catch { /* 취소 실패는 무시 */ }
+  }
 
   const handleClearLog = () => {
     setCollectLog(["로그가 초기화되었습니다."])

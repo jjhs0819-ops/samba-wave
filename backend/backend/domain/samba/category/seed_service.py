@@ -24,6 +24,63 @@ from backend.domain.samba.category.rules import (
 logger = logging.getLogger(__name__)
 
 
+def _build_fewshot_block(
+    batch: List[Dict[str, Any]],
+    target_markets: List[str],
+) -> str:
+    """EXPORTED_RULES에서 같은 소싱사이트+대분류 기준으로 학습 예시를 추출.
+
+    반환값은 프롬프트에 그대로 삽입할 문자열 (비어 있으면 "").
+    """
+    try:
+        from backend.domain.samba.category.rules_exported import EXPORTED_RULES
+    except ImportError:
+        return ""
+
+    if not EXPORTED_RULES:
+        return ""
+
+    examples: list[str] = []
+    seen: set[str] = set()
+
+    for item in batch:
+        site = item.get("site", "")
+        leaf_path = item.get("leaf_path", "")
+        if not site or not leaf_path:
+            continue
+        # 소싱 카테고리 대분류(cat1) 기준으로 유사 예시 추출
+        cat1 = leaf_path.split(" > ")[0].strip()
+
+        for market in target_markets:
+            exported = EXPORTED_RULES.get((site, market), {})
+            count = 0
+            for src, tgt in exported.items():
+                if not src.startswith(cat1):
+                    continue
+                # 자기 자신은 제외
+                if src == leaf_path:
+                    continue
+                key = f"{site}|{src}|{market}|{tgt}"
+                if key in seen or count >= 3:
+                    continue
+                seen.add(key)
+                examples.append(f"  [{site}] {src} → {market}: {tgt}")
+                count += 1
+            if len(examples) >= 8:
+                break
+        if len(examples) >= 8:
+            break
+
+    if not examples:
+        return ""
+
+    logger.info("[AI매핑] fewshots %d건 주입", len(examples))
+    block = "\n[학습 예시 — 아래 패턴과 일관되게 매핑하세요]\n"
+    block += "\n".join(examples[:8])
+    block += "\n"
+    return block
+
+
 class CategorySeedMixin:
     """시딩 + AI 배치 매핑."""
 
@@ -466,20 +523,28 @@ class CategorySeedMixin:
                     cat_list_section = ""
                     cat_rule = "각 마켓의 허용된 카테고리 중에서만 선택. 존재하지 않는 카테고리 생성 금지."
 
+            # EXPORTED_RULES 기반 학습 예시 구성 (동일 소싱사이트+대분류 패턴)
+            fewshot_block = _build_fewshot_block(batch, target_markets)
+
             prompt = f"""소싱 카테고리를 판매 마켓 카테고리에 매핑.
 소비자가 검색할 키워드와 가장 일치하는 카테고리를 선택하세요.
 각 항목에 "기존매핑참고"가 있으면 이미 다른 마켓에 매핑된 결과이니 동일 상품 유형으로 매핑하세요.
-
+{fewshot_block}
 {chr(10).join(cat_entries)}
 {cat_list_section}
 규칙:
 - {cat_rule}
 - 소싱 카테고리의 상품 유형(가방/신발/의류/스포츠 등)을 반드시 유지. 가방→가방, 신발→신발, 의류→의류로만 매핑.
-- 성별 정보가 없거나 남녀공용인 경우 반드시 여성 카테고리로 매핑.
+- 성별 매칭 최우선: 항목에 "성별: 남성"이면 남성 카테고리만, "성별: 여성"이면 여성 카테고리만 선택.
+- 소싱 카테고리 경로에 "남성", "맨즈", "남자" 단어가 있으면 반드시 남성 카테고리로 매핑.
+- 소싱 카테고리 경로에 "여성", "우먼즈", "여자" 단어가 있으면 반드시 여성 카테고리로 매핑.
+- 성별 근거가 전혀 없을 때만 남녀공용/성별무관 카테고리 선택 가능.
+- 패션 상품(의류/신발/가방/액세서리)은 "패션의류"·"패션잡화" 대분류 우선. "스포츠/레저" 대분류는 소싱 카테고리에 "스포츠", "아웃도어", "골프", "등산", "런닝", "요가", "축구", "농구", "야구", "스키", "자전거" 등 스포츠 키워드가 있을 때만 선택.
 - 주니어/아동/유아 카테고리는 절대 선택 금지. KC인증 문제가 있음.
 - 도서/음반/교재/학술 카테고리는 절대 선택 금지. 의류학 교재도 포함.
 - 의류/패션과 무관한 카테고리(식품, 인테리어, 여행, 자동차, 반려동물 등)는 절대 선택 금지.
 - 키워드 단순 매칭 금지. '웨이스트 백'은 허리에 차는 가방이지 바지가 아님. '기타'는 악기가 아닌 기타 등등을 의미함. 상품의 실제 의미를 파악하여 매핑.
+- 학습 예시가 있으면 동일 대분류·동일 성별 패턴을 따라 매핑하세요.
 - 확신이 없으면 빈 문자열("")로 남길 것. 억지로 맞지 않는 카테고리 선택 금지.
 JSON만 응답:
 {json.dumps({str(i + 1): {m: "" for m in target_markets} for i in range(len(batch))}, ensure_ascii=False)}"""
@@ -713,17 +778,33 @@ JSON만 응답:
                     + "\n"
                 )
 
+        # 성별 레이블 (프롬프트 힌트용)
+        _gender_label = {"male": "남성", "female": "여성", "unisex": "남녀공용"}.get(
+            gender, "-"
+        )
+
+        # EXPORTED_RULES 기반 학습 예시 구성
+        _single_fewshot = _build_fewshot_block(
+            [{"site": source_site, "leaf_path": source_category}],
+            list(market_cats.keys()),
+        )
+
         prompt = f"""소싱 카테고리를 마켓 카테고리에 매핑.
 
-[소싱] {source_site} | {source_category} | 상품: {sample_str} | 태그: {tag_str or "-"}
-{_ref_lines}
+[소싱] {source_site} | {source_category} | 상품: {sample_str} | 태그: {tag_str or "-"} | 성별: {_gender_label}
+{_ref_lines}{_single_fewshot}
 [허용된 마켓 카테고리 — 이 중에서만 선택]
 {market_list_str}
 
 규칙:
 1. 각 마켓별로 위 목록에 있는 카테고리 문자열을 정확히 그대로 복사하여 선택.
 2. 목록에 없는 카테고리를 임의로 만들거나 변형하지 마세요.
-3. 모든 마켓에 반드시 값을 채우세요. 빈값 금지.
+3. 성별 매칭 최우선: 성별이 "남성"이면 남성 카테고리만, "여성"이면 여성 카테고리만 선택.
+4. 소싱 카테고리 경로에 "남성", "맨즈", "남자" 단어가 있으면 반드시 남성 카테고리로 매핑.
+5. 소싱 카테고리 경로에 "여성", "우먼즈", "여자" 단어가 있으면 반드시 여성 카테고리로 매핑.
+6. 패션 상품(의류/신발/가방)은 "패션의류"·"패션잡화" 대분류 우선. "스포츠/레저"는 소싱에 스포츠 키워드가 있을 때만 선택.
+7. 학습 예시가 있으면 동일 대분류·동일 성별 패턴을 따라 매핑하세요.
+8. 모든 마켓에 반드시 값을 채우세요. 빈값 금지.
 JSON만:
 {json.dumps({m: "" for m in market_cats}, ensure_ascii=False)}"""
 

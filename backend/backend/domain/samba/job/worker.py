@@ -1026,7 +1026,10 @@ class JobWorker:
             from backend.domain.samba.job.model import SambaJob as _SJ
 
             _job_check = await session.get(_SJ, job.id)
-            if _job_check and _job_check.status == JobStatus.FAILED:
+            if _job_check and _job_check.status in (
+                JobStatus.FAILED,
+                JobStatus.CANCELLED,
+            ):
                 logger.info(f"[잡워커] 수집 취소됨: {job.id}")
                 return
 
@@ -2292,7 +2295,10 @@ class JobWorker:
                 from backend.domain.samba.job.model import SambaJob as _SJ2
 
                 _job_chk = await session.get(_SJ2, job.id)
-                if _job_chk and _job_chk.status == JobStatus.FAILED:
+                if _job_chk and _job_chk.status in (
+                    JobStatus.FAILED,
+                    JobStatus.CANCELLED,
+                ):
                     logger.info(f"[잡워커] {site} 수집 취소됨: {job.id}")
                     return
 

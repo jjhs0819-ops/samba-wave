@@ -22,6 +22,8 @@ export interface StoreSettingsState {
   editingAccountId: string | null
   ssgShippingOptions: { value: string; label: string; divCd: number }[]
   ssgAddrOptions: { value: string; label: string }[]
+  networkIps: { web: string; local: string }
+  networkIpStatus: string
 }
 
 export interface StoreSettingsActions {
@@ -39,6 +41,8 @@ export interface StoreSettingsActions {
   setSsgAddrOptions: React.Dispatch<React.SetStateAction<{ value: string; label: string }[]>>
   setEditingAccountId: (id: string | null) => void
   setVisiblePasswords: React.Dispatch<React.SetStateAction<Set<string>>>
+  setNetworkIps: React.Dispatch<React.SetStateAction<{ web: string; local: string }>>
+  saveNetworkIps: () => Promise<void>
 }
 
 export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
@@ -52,6 +56,8 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
   const [editingAccountId, setEditingAccountId] = useState<string | null>(null)
   const [ssgShippingOptions, setSsgShippingOptions] = useState<{ value: string; label: string; divCd: number }[]>([])
   const [ssgAddrOptions, setSsgAddrOptions] = useState<{ value: string; label: string }[]>([])
+  const [networkIps, setNetworkIps] = useState({ web: '', local: '' })
+  const [networkIpStatus, setNetworkIpStatus] = useState('')
 
   const loadAccounts = useCallback(async () => {
     setAccountLoading(true)
@@ -75,6 +81,16 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
       } catch { /* ignore */ }
     }
     // 안전한 기본값을 가진 select 필드에만 초기값 주입
+    try {
+      const network = await forbiddenApi.getSetting('store_network_ips').catch(() => null) as Record<string, string> | null
+      setNetworkIps({
+        web: String(network?.web || ''),
+        local: String(network?.local || ''),
+      })
+      setNetworkIpStatus(network && (network.web || network.local) ? '저장됨' : '')
+    } catch {
+      setNetworkIpStatus('')
+    }
     const withDefaults: Record<string, Record<string, string>> = {}
     for (const market of STORE_MARKETS) {
       const base = { ...(loaded[market.key] || {}) }
@@ -95,6 +111,22 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
       ...prev,
       [marketKey]: { ...(prev[marketKey] || {}), [fieldName]: value }
     }))
+  }
+
+  const saveNetworkIps = async () => {
+    try {
+      const payload = {
+        web: networkIps.web.trim(),
+        local: networkIps.local.trim(),
+      }
+      await forbiddenApi.saveSetting('store_network_ips', payload)
+      setNetworkIps(payload)
+      setNetworkIpStatus('저장됨')
+      showAlert('웹/로컬 IP를 저장했습니다.', 'success')
+    } catch {
+      setNetworkIpStatus('저장 실패')
+      showAlert('웹/로컬 IP 저장 실패', 'error')
+    }
   }
 
   const saveStoreSettings = async (marketKey: string) => {
@@ -290,9 +322,12 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
     editingAccountId,
     ssgShippingOptions,
     ssgAddrOptions,
+    networkIps,
+    networkIpStatus,
     loadAccounts,
     loadStoreSettings,
     updateStoreField,
+    saveNetworkIps,
     saveStoreSettings,
     testStoreAuth,
     handleAccountToggle,
@@ -304,5 +339,6 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
     setSsgAddrOptions,
     setEditingAccountId,
     setVisiblePasswords,
+    setNetworkIps,
   }
 }

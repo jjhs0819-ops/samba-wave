@@ -101,7 +101,17 @@ def _detect_gender(
     source_category: str = "",
 ) -> str:
     """상품명·태그·소싱 카테고리에서 성별 감지. 'male' | 'female' | 'unisex'."""
-    # 카테고리 자체가 여성 전용이면 바로 반환
+    # 소싱 카테고리 경로의 성별 단어를 최우선 신호로 사용
+    # "남녀공용", "남녀" 등 복합어는 먼저 제거하고 판단
+    cat_for_gender = source_category.replace("남녀공용", "").replace("남녀", "")
+    _MALE_CAT_SIGNALS = ("남성", "맨즈", "남자", "men")
+    _FEMALE_CAT_SIGNALS = ("여성", "우먼즈", "여자", "women")
+    if any(kw in cat_for_gender for kw in _MALE_CAT_SIGNALS):
+        return "male"
+    if any(kw in cat_for_gender for kw in _FEMALE_CAT_SIGNALS):
+        return "female"
+
+    # 카테고리 자체가 여성 전용 품목이면 female
     if any(fc in source_category for fc in _FEMALE_ONLY_CATS):
         return "female"
 
@@ -473,31 +483,72 @@ def _rule_match(
 
     gender가 'female'이면 남성 카테고리를 여성으로 변환.
     무신사 카테고리의 '(브랜드명)' 같은 괄호 부분 제거 후 매칭.
+    우선순위: 수기 룰 → EXPORTED_RULES(프로덕션 학습 데이터)
     """
+    result: Optional[str] = None
 
+    # ── 수기 룰 테이블 조회 ──
     if source_site == "MUSINSA":
         rules = _MARKET_RULES.get(market)
     elif source_site == "LOTTEON":
         rules = _LOTTEON_MARKET_RULES.get(market)
     else:
-        return None
-    if not rules:
-        return None
-    # 정확 매칭 먼저
-    result = rules.get(source_category)
-    # 괄호(브랜드명) 제거 후 재시도 — 예: "바지 > 기타 하의 (아디다스)" → "바지 > 기타 하의"
+        rules = None
+
+    if rules:
+        result = rules.get(source_category)
+        if not result:
+            normalized = re.sub(r"\s*\([^)]+\)", "", source_category).strip()
+            if normalized != source_category:
+                result = rules.get(normalized)
+        if not result:
+            parts = [p.strip() for p in source_category.split(">")]
+            for i in range(len(parts) - 1, 0, -1):
+                parent = " > ".join(parts[:i])
+                result = rules.get(parent)
+                if result:
+                    break
+
+    # ── EXPORTED_RULES(프로덕션 학습 데이터) 조회 ──
     if not result:
-        normalized = re.sub(r"\s*\([^)]+\)", "", source_category).strip()
-        if normalized != source_category:
-            result = rules.get(normalized)
-    # 상위 카테고리 계단식 매칭 — "A > B > C"가 없으면 "A > B", "A" 순으로 탐색
+        try:
+            from backend.domain.samba.category.rules_exported import EXPORTED_RULES
+
+            exported = EXPORTED_RULES.get((source_site, market), {})
+            if exported:
+                result = exported.get(source_category)
+                if not result:
+                    normalized = re.sub(r"\s*\([^)]+\)", "", source_category).strip()
+                    if normalized != source_category:
+                        result = exported.get(normalized)
+                if not result:
+                    parts = [p.strip() for p in source_category.split(">")]
+                    for i in range(len(parts) - 1, 0, -1):
+                        parent = " > ".join(parts[:i])
+                        result = exported.get(parent)
+                        if result:
+                            logger.info(
+                                "[매핑-exported] %s > %s → %s: %s",
+                                source_site,
+                                source_category,
+                                market,
+                                result,
+                            )
+                            break
+                if result and source_category in exported:
+                    logger.info(
+                        "[매핑-exported] %s > %s → %s: %s",
+                        source_site,
+                        source_category,
+                        market,
+                        result,
+                    )
+        except ImportError:
+            pass
+
     if not result:
-        parts = [p.strip() for p in source_category.split(">")]
-        for i in range(len(parts) - 1, 0, -1):
-            parent = " > ".join(parts[:i])
-            result = rules.get(parent)
-            if result:
-                break
+        return None
+
     # __SKIP__ = 해당 마켓에 등록 불가 → 빈 문자열 반환 (AI 폴백 방지)
     if result == "__SKIP__":
         logger.info(f"[매핑-스킵] {source_category} → {market}: 등록 불가 카테고리")

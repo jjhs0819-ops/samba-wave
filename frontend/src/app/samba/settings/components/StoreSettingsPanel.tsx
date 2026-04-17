@@ -15,7 +15,7 @@ type Props = StoreSettingsState & Pick<StoreSettingsActions,
   'updateStoreField' | 'saveStoreSettings' | 'testStoreAuth' |
   'handleAccountToggle' | 'handleAccountDelete' | 'togglePasswordVisibility' |
   'setStoreTab' | 'setStoreData' | 'setSsgShippingOptions' | 'setSsgAddrOptions' |
-  'setEditingAccountId' | 'setVisiblePasswords'
+  'setEditingAccountId' | 'setVisiblePasswords' | 'setNetworkIps' | 'saveNetworkIps'
 >
 
 export function StoreSettingsPanel(props: Props) {
@@ -29,7 +29,10 @@ export function StoreSettingsPanel(props: Props) {
     editingAccountId,
     ssgShippingOptions,
     ssgAddrOptions,
+    networkIps,
+    networkIpStatus,
     updateStoreField,
+    saveNetworkIps,
     saveStoreSettings,
     testStoreAuth,
     handleAccountDelete,
@@ -39,6 +42,7 @@ export function StoreSettingsPanel(props: Props) {
     setSsgShippingOptions,
     setSsgAddrOptions,
     setEditingAccountId,
+    setNetworkIps,
   } = props
 
   return (
@@ -47,6 +51,44 @@ export function StoreSettingsPanel(props: Props) {
       <p style={{ fontSize: '0.8125rem', color: '#666', marginBottom: '1.25rem' }}>API 연결 및 계정 설정을 관리합니다</p>
 
       {/* 마켓 탭바 — 국내/해외 구분 */}
+      <div style={{ marginBottom: '1.5rem', padding: '1rem', border: '1px solid #2D2D2D', borderRadius: '8px', background: 'rgba(255,255,255,0.02)' }}>
+        <div style={{ fontSize: '0.875rem', fontWeight: 600, color: '#E5E5E5', marginBottom: '0.75rem' }}>웹 / 로컬 IP</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '180px', flexShrink: 0 }}>웹 IP</label>
+            <input
+              type="text"
+              style={{ ...inputStyle, flex: 1 }}
+              value={networkIps.web}
+              onChange={(e) => setNetworkIps(prev => ({ ...prev, web: e.target.value }))}
+              placeholder="예: 123.123.123.123"
+            />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '180px', flexShrink: 0 }}>로컬 IP</label>
+            <input
+              type="text"
+              style={{ ...inputStyle, flex: 1 }}
+              value={networkIps.local}
+              onChange={(e) => setNetworkIps(prev => ({ ...prev, local: e.target.value }))}
+              placeholder="예: 192.168.0.10"
+            />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <button
+              type="button"
+              onClick={saveNetworkIps}
+              style={{ padding: '0.5rem 1rem', background: '#FF8C00', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 600, fontSize: '0.8125rem', cursor: 'pointer' }}
+            >IP 저장</button>
+            {networkIpStatus && (
+              <span style={{ fontSize: '0.8125rem', color: networkIpStatus.includes('실패') ? '#FF6B6B' : '#51CF66' }}>
+                {networkIpStatus}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
       {(() => {
         const domestic = ['smartstore', 'coupang', '11st', 'gmarket', 'auction', 'lotteon', 'toss', 'ssg', 'gsshop', 'lottehome', 'homeand', 'hmall', 'musinsa', 'kream', 'playauto', 'cafe24']
         const overseas = ['amazon', 'ebay', 'rakuten', 'qoo10', 'lazada', 'shopee', 'buyma', 'shopify', 'zoom', 'poison']
