@@ -22,13 +22,14 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Upgrade schema."""
     # uq_scp_source_product → uq_scp_tenant_source_product 교체 (tenant_id 포함 복합 유니크)
-    op.drop_index(op.f("uq_scp_source_product"), table_name="samba_collected_product")
-    op.create_index(
-        "uq_scp_tenant_source_product",
-        "samba_collected_product",
-        ["tenant_id", "source_site", "site_product_id"],
-        unique=True,
-        postgresql_where=sa.text("site_product_id IS NOT NULL"),
+    # IF EXISTS / IF NOT EXISTS 원시 SQL로 멱등 처리 — 부분 적용 상태에서도 안전
+    op.execute("DROP INDEX IF EXISTS uq_scp_source_product")
+    op.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_scp_tenant_source_product
+        ON samba_collected_product (tenant_id, source_site, site_product_id)
+        WHERE site_product_id IS NOT NULL
+        """
     )
     op.alter_column(
         "samba_detail_template",
@@ -44,11 +45,11 @@ def upgrade() -> None:
         type_=sqlmodel.sql.sqltypes.AutoString(length=30),
         existing_nullable=False,
     )
-    op.create_index(
-        "uq_order_tenant_number",
-        "samba_order",
-        ["tenant_id", "order_number"],
-        unique=True,
+    op.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_order_tenant_number
+        ON samba_order (tenant_id, order_number)
+        """
     )
     op.alter_column(
         "samba_return",
@@ -82,7 +83,7 @@ def downgrade() -> None:
         type_=sa.TEXT(),
         existing_nullable=True,
     )
-    op.drop_index("uq_order_tenant_number", table_name="samba_order")
+    op.execute("DROP INDEX IF EXISTS uq_order_tenant_number")
     op.alter_column(
         "samba_name_rule",
         "id",
@@ -97,14 +98,10 @@ def downgrade() -> None:
         type_=sa.TEXT(),
         existing_nullable=False,
     )
-    op.drop_index(
-        "uq_scp_tenant_source_product",
-        table_name="samba_collected_product",
-        postgresql_where=sa.text("site_product_id IS NOT NULL"),
-    )
-    op.create_index(
-        op.f("uq_scp_source_product"),
-        "samba_collected_product",
-        ["source_site", "site_product_id"],
-        unique=True,
+    op.execute("DROP INDEX IF EXISTS uq_scp_tenant_source_product")
+    op.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_scp_source_product
+        ON samba_collected_product (source_site, site_product_id)
+        """
     )

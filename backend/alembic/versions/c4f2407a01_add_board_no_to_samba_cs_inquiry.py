@@ -9,7 +9,6 @@ Create Date: 2026-04-07 18:30:00.000000
 from typing import Sequence, Union
 
 from alembic import op
-import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
@@ -22,12 +21,9 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Upgrade schema."""
     # 카페24 게시판 article 답변 시 필요한 board_no 컬럼 추가
-    op.add_column(
-        "samba_cs_inquiry",
-        sa.Column("board_no", sa.Text(), nullable=True),
-    )
+    op.execute("ALTER TABLE samba_cs_inquiry ADD COLUMN IF NOT EXISTS board_no TEXT")
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    op.drop_column("samba_cs_inquiry", "board_no")
+    op.execute("ALTER TABLE samba_cs_inquiry DROP COLUMN IF EXISTS board_no")
