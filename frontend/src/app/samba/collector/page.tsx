@@ -709,7 +709,7 @@ export default function CollectorPage() {
     collectAbortRef.current?.abort()
     addLog('수집 중단 요청...')
     try {
-      await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/cancel-all`, { method: 'POST' })
+      await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/cancel-collect`, { method: 'POST' })
     } catch { /* 취소 실패는 무시 */ }
   }
 

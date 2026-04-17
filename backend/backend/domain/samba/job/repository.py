@@ -142,6 +142,7 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         from sqlalchemy import text
 
         try:
+            await self.session.rollback()  # InFailedSQLTransactionError 대비 세션 복구
             result = await asyncio.wait_for(
                 self.session.execute(
                     text("SELECT status FROM samba_jobs WHERE id = :id"),

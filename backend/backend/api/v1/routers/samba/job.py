@@ -294,6 +294,23 @@ async def get_transmit_queue_status(
     return {"running": running, "pending": pending}
 
 
+@router.post("/cancel-collect")
+async def cancel_collect_jobs(
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """수집 잡만 취소 — 전송/오토튠은 영향 없음."""
+    from sqlalchemy import text
+
+    r = await session.execute(
+        text(
+            f"UPDATE samba_jobs SET status = '{JobStatus.CANCELLED}', completed_at = now() "
+            f"WHERE job_type = 'collect' AND status IN ('{JobStatus.PENDING}', '{JobStatus.RUNNING}')"
+        )
+    )
+    await session.commit()
+    return {"ok": True, "cancelled": r.rowcount}
+
+
 @router.post("/cancel-all")
 async def cancel_all_jobs(
     session: AsyncSession = Depends(get_write_session_dependency),
