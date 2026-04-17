@@ -33,6 +33,9 @@ from backend.api.v1.routers.samba.proxy import router as samba_proxy_router
 from backend.api.v1.routers.samba.proxy import (
     sourcing_queue_router as samba_sourcing_queue_router,
 )
+from backend.api.v1.routers.samba.proxy import (
+    cafe24_oauth_router as samba_cafe24_oauth_router,
+)
 from backend.api.v1.routers.samba.returns import router as samba_returns_router
 from backend.api.v1.routers.samba.shipment import router as samba_shipment_router
 from backend.api.v1.routers.samba.sns_posting import router as samba_sns_posting_router
@@ -138,6 +141,8 @@ def create_application() -> FastAPI:
         samba_proxy_router, prefix="/api/v1/samba", dependencies=samba_auth
     )
     app.include_router(samba_sourcing_queue_router, prefix="/api/v1/samba")
+    # 카페24 OAuth 콜백은 외부 서버 리다이렉트라 JWT 헤더 불가 → 별도 라우터로 JWT 예외
+    app.include_router(samba_cafe24_oauth_router, prefix="/api/v1/samba")
     app.include_router(
         samba_warroom_router, prefix="/api/v1/samba", dependencies=samba_auth
     )

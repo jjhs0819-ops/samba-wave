@@ -374,6 +374,21 @@ async def _delete_ssg(
     return await _safe_delete("SSG", "ssg", product, client.delete_product)
 
 
+async def _delete_cafe24(
+    session: AsyncSession,
+    product: dict[str, Any],
+    account: Any = None,
+) -> dict[str, Any]:
+    """카페24 상품 완전 삭제 — 플러그인 delete() 위임."""
+    from backend.domain.samba.plugins.markets.cafe24 import Cafe24Plugin
+
+    product_no = product.get("market_product_no", {}).get("cafe24", "")
+    if not product_no:
+        return {"success": True, "message": "카페24 상품번호 없음 (건너뜀)"}
+    plugin = Cafe24Plugin()
+    return await plugin.delete(session, product_no, account)
+
+
 async def _delete_playauto(
     session: AsyncSession,
     product: dict[str, Any],
@@ -414,5 +429,6 @@ MARKET_DELETE_HANDLERS: dict[str, Any] = {
     "ssg": _delete_ssg,
     "lottehome": _delete_lottehome,
     "gsshop": _delete_gsshop,
+    "cafe24": _delete_cafe24,
     "playauto": _delete_playauto,
 }

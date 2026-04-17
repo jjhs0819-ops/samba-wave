@@ -174,6 +174,17 @@ class SambaAccountService:
     async def update_account(
         self, account_id: str, data: Dict[str, Any]
     ) -> Optional[SambaMarketAccount]:
+        # additional_fields는 기존 값과 merge — 클라가 보내지 않은 키(OAuth 토큰 등) 보존
+        # 전체 교체 방식이면 카페24 OAuth 직후 설정 저장 시 accessToken/refreshToken이 증발함
+        if "additional_fields" in data and isinstance(data["additional_fields"], dict):
+            existing = await self.repo.get_async(account_id)
+            if existing:
+                existing_af = existing.additional_fields or {}
+                if isinstance(existing_af, dict):
+                    data["additional_fields"] = {
+                        **existing_af,
+                        **data["additional_fields"],
+                    }
         return await self.repo.update_async(account_id, **data)
 
     async def delete_account(self, account_id: str) -> bool:

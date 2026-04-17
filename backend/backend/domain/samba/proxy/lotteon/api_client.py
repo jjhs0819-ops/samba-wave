@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -981,8 +982,6 @@ class LotteonClient:
         # (스마트스토어 동일 정책: proxy/smartstore.py:1745 참조)
         discount_rate = product.get("_discount_rate", 0)
         if discount_rate:
-            import math
-
             desired_price = math.ceil(sale_price / 300) * 300
             sale_price = desired_price * 4 // 3
 

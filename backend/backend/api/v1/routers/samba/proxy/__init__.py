@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from . import (
     ai_tags,
     ai_tools,
+    cafe24_oauth,
     config,
     gsshop,
     image_filter,
@@ -41,4 +42,13 @@ router.include_router(gsshop.router)
 # 확장앱 소싱큐 전용 라우터 (인증 불필요) — app_factory.py에서 별도 등록
 sourcing_queue_router = sourcing.sourcing_queue_router
 
-__all__ = ["router", "sourcing_queue_router", "_get_setting", "_set_setting"]
+# 카페24 OAuth 전용 라우터 (인증 불필요) — app_factory.py에서 별도 등록
+cafe24_oauth_router = cafe24_oauth.cafe24_oauth_router
+
+__all__ = [
+    "router",
+    "sourcing_queue_router",
+    "cafe24_oauth_router",
+    "_get_setting",
+    "_set_setting",
+]
