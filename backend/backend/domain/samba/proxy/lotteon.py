@@ -974,10 +974,17 @@ class LotteonClient:
         style_code = product.get("style_code", "") or product.get("styleCode", "") or ""
         origin = product.get("origin", "") or ""
 
-        # ── 할인율 적용 ─────────────────────────────────────────────
+        # ── 스토어 즉시할인 역산 (마진 보존) ─────────────────────────
+        # 사용자 입력 sale_price를 고객 실결제 목표가로 간주.
+        # 300원 올림 → ×4/3 역산 시 100원 단위 정확히 맞춰지므로,
+        # 25% 할인 API 등록 후 고객 결제가가 원래 sale_price와 동일해짐.
+        # (스마트스토어 동일 정책: proxy/smartstore.py:1745 참조)
         discount_rate = product.get("_discount_rate", 0)
         if discount_rate:
-            sale_price = int(sale_price * (1 - discount_rate / 100))
+            import math
+
+            desired_price = math.ceil(sale_price / 300) * 300
+            sale_price = desired_price * 4 // 3
 
         # ── 재고 / 배송비 ───────────────────────────────────────────
         # _stock_quantity: 양수면 옵션별 상한(cap)으로만 동작.

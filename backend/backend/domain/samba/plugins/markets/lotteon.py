@@ -1439,8 +1439,10 @@ class LotteonPlugin(MarketPlugin):
             product_copy["_as_phone"] = extras["asPhone"]
         if extras.get("asMessage"):
             product_copy["_as_message"] = extras["asMessage"]
-        if extras.get("discountRate"):
-            product_copy["_discount_rate"] = int(extras["discountRate"])
+        # 스토어 즉시할인: 활성화 시 25% 고정 (proxy에서 판매가 역산, 마진 보존)
+        # 사용자 입력값(예: 10%)은 활성화 여부로만 사용. 실제 할인율은 25% 강제.
+        if int(extras.get("discountRate") or 0) > 0:
+            product_copy["_discount_rate"] = 25
         if extras.get("returnFee"):
             product_copy["_return_fee"] = int(extras["returnFee"])
         if extras.get("exchangeFee"):
@@ -2369,13 +2371,14 @@ class LotteonPlugin(MarketPlugin):
         """등록/수정 후 프로모션 설정 — 실패해도 결과에 영향 없음."""
 
         # ── 즉시할인 ───────────────────────────────────────────────────
-        discount_rate = int(extras.get("discountRate") or 0)
-        if discount_rate > 0:
+        # 활성화 시 25% 고정 (판매가는 proxy에서 ×4/3 역산 → 마진 보존).
+        # 스마트스토어와 동일 정책 (proxy/smartstore.py:1745 참조).
+        if int(extras.get("discountRate") or 0) > 0:
             try:
                 resp = await client.save_immediate_discount(
-                    spd_no, discount_rate, is_update=is_update
+                    spd_no, 25, is_update=is_update
                 )
-                logger.info(f"[롯데ON] 즉시할인 설정 완료: {discount_rate}% → {resp}")
+                logger.info(f"[롯데ON] 즉시할인 설정 완료: 25% (고정) → {resp}")
             except Exception as e:
                 logger.warning(f"[롯데ON] 즉시할인 설정 실패 (무시): {e}")
 
