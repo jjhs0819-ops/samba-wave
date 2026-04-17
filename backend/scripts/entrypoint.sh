@@ -23,8 +23,9 @@ echo "Running in $ENVIRONMENT mode"
 if [ "$ENVIRONMENT" = "production" ]; then
   # ══════════════════════════════════════════════════════════════
   # 빌드 검증 마커 — 이 줄이 Cloud Run 로그에 찍히면 새 이미지 진입 확정
+  # stdout + stderr 양쪽으로 출력 → severity 필터에 상관없이 캡처
   # ══════════════════════════════════════════════════════════════
-  echo "=== ENTRYPOINT VERSION MARKER: v2-asyncpg-repair (commit-time 2026-04-17) ==="
+  echo "=== ENTRYPOINT VERSION MARKER: v3-gitignore-removed (2026-04-17) ===" | tee /dev/stderr
 
   # Cloud SQL Auth Proxy 사이드카 대기 — 재시도로 확실히 연결 확인
   echo "Waiting for Cloud SQL proxy..."
