@@ -211,10 +211,17 @@ export default function CollectorPage() {
 
   const addLog = useCallback((msg: string) => {
     const time = fmtTime();
-    setCollectLog((prev) => [...prev, `[${time}] ${msg}`].slice(-30));
+    const line = `[${time}] ${msg}`
+    setCollectLog((prev) => [...prev, line].slice(-30));
     setTimeout(() => {
       if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
     }, 50);
+    // 서버 링 버퍼에도 저장 — 페이지 이탈 후 복원용 (fire-and-forget)
+    fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/collect-logs/add`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: line }),
+    }).catch(() => {})
   }, []);
 
   // 수집 로그 링 버퍼 폴링 (서버 로그 — 창 닫아도 유지)
