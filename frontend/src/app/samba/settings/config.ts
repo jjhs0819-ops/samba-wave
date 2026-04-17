@@ -204,12 +204,6 @@ export const STORE_MARKETS: MarketConfig[] = [
     { name: 'reviewPhotoPoint', label: '리뷰작성시 LPOINT', type: 'number', placeholder: '원' },
     { name: 'reviewMonthTextPoint', label: '사진첨부시 LPOINT', type: 'number', placeholder: '원' },
     { name: 'reviewMonthPhotoPoint', label: '동영상첨부시 LPOINT', type: 'number', placeholder: '원' },
-    { name: '_divider_purchase_confirm', label: '구매확정', type: 'divider' },
-    { name: 'purchaseConfirmDays', label: '구매확정기간', type: 'select', options: [
-      { value: '1', label: '1일' }, { value: '3', label: '3일' }, { value: '5', label: '5일' },
-      { value: '7', label: '7일' }, { value: '10', label: '10일' }, { value: '14', label: '14일' },
-      { value: '20', label: '20일' }, { value: '30', label: '30일' },
-    ]},
     { name: '_divider_event_exclude', label: '행사 제외 설정', type: 'divider' },
     { name: 'ownerDiscountExclude', label: '오너스할인', type: 'radio', options: [
       { value: 'N', label: '제외안함' }, { value: 'Y', label: '제외' },

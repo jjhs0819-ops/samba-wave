@@ -13,7 +13,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 from backend.domain.samba.collector.model import generate_search_cache_id
-from backend.domain.samba.job.model import JobStatus
 
 logger = logging.getLogger(__name__)
 UTC = timezone.utc
@@ -1022,14 +1021,10 @@ class JobWorker:
         _collected_sold_out = 0
 
         while total_saved < remaining and search_page <= max_pages:
-            # 취소 확인 (DB에서 상태 재조회)
-            from backend.domain.samba.job.model import SambaJob as _SJ
+            # 취소 확인 — raw SQL로 ORM 캐시 우회 + 비상정지 인메모리 플래그
+            from backend.domain.samba.emergency import is_emergency_stopped
 
-            _job_check = await session.get(_SJ, job.id)
-            if _job_check and _job_check.status in (
-                JobStatus.FAILED,
-                JobStatus.CANCELLED,
-            ):
+            if is_emergency_stopped() or await repo.is_cancelled(job.id):
                 logger.info(f"[잡워커] 수집 취소됨: {job.id}")
                 return
 
@@ -2289,16 +2284,12 @@ class JobWorker:
             if total_saved >= remaining:
                 break
 
-            # 취소 확인 (5건 단위 — 매 아이템 DB 조회 대신 빈도 감소)
+            # 취소 확인 (5건 단위 — raw SQL로 ORM 캐시 우회)
             _cancel_check_counter += 1
             if _cancel_check_counter % 5 == 1:
-                from backend.domain.samba.job.model import SambaJob as _SJ2
+                from backend.domain.samba.emergency import is_emergency_stopped
 
-                _job_chk = await session.get(_SJ2, job.id)
-                if _job_chk and _job_chk.status in (
-                    JobStatus.FAILED,
-                    JobStatus.CANCELLED,
-                ):
+                if is_emergency_stopped() or await repo.is_cancelled(job.id):
                     logger.info(f"[잡워커] {site} 수집 취소됨: {job.id}")
                     return
 

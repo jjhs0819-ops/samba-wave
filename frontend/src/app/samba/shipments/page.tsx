@@ -30,6 +30,22 @@ const STATUS_CONFIG: Record<string, { bg: string; text: string; label: string }>
 
 const SOURCE_SITES = ['전체', 'MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'REXMONDE', 'SSG', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF']
 
+function appendShipmentLog(
+  setLogMessages: React.Dispatch<React.SetStateAction<string[]>>,
+  msg: string,
+) {
+  const normalizeLog = (value: string) => value.replace(/^\[\d{2}:\d{2}:\d{2}\]\s*/, '')
+  setLogMessages(prev => {
+    const last = prev[prev.length - 1]
+    const normalizedMsg = normalizeLog(msg)
+    const normalizedLast = last ? normalizeLog(last) : ''
+    const isDuplicateCompletion =
+      normalizedMsg === normalizedLast &&
+      (normalizedMsg.includes('전송 완료') || normalizedMsg.includes('전송 실패') || normalizedMsg.includes('전송 중단') || normalizedMsg.includes('작업중지'))
+    if (isDuplicateCompletion) { return prev }
+    return [...prev, msg].slice(-30)
+  })
+}
 // 영문 market_type → 한글 정책 키 (markets.ts에서 import)
 
 export default function ShipmentsPage() {
@@ -449,7 +465,7 @@ export default function ShipmentsPage() {
 
     setDeleting(true)
     const ts = fmtTime
-    const addLog = (msg: string) => setLogMessages(prev => [...prev, msg].slice(-30))
+    const addLog = (msg: string) => appendShipmentLog(setLogMessages, msg)
     const accLabelMap: Record<string, string> = {}
     for (const acc of accounts) {
       accLabelMap[acc.id] = `${acc.market_name}(${acc.seller_id || acc.business_name || '-'})`
@@ -577,7 +593,7 @@ export default function ShipmentsPage() {
 
     setDeleting(true)
     const ts = fmtTime
-    const addLog = (msg: string) => setLogMessages(prev => [...prev, msg].slice(-30))
+    const addLog = (msg: string) => appendShipmentLog(setLogMessages, msg)
     addLog(`[${ts()}] 검색결과 마켓삭제 시작 — 상품 ${fmtNum(targetProducts.length)}개, ${targetLabels}`)
 
     // 삭제 중 500ms 링 버퍼 폴링 시작 — 다른 창에서도 실시간 로그 공유
@@ -664,7 +680,7 @@ export default function ShipmentsPage() {
     setTransmitting(true)
 
     const ts = fmtTime
-    const addLog = (msg: string) => setLogMessages(prev => [...prev, msg].slice(-30))
+    const addLog = (msg: string) => appendShipmentLog(setLogMessages, msg)
 
     // 계정 ID → 표시명 매핑
     const accountLabelMap: Record<string, string> = {}
@@ -831,7 +847,7 @@ export default function ShipmentsPage() {
     abortRef.current = false
     cancelledAtRef.current = 0 // 폴링 업데이트 재허용
     const ts = fmtTime
-    const addLog = (msg: string) => setLogMessages(prev => [...prev, msg].slice(-30))
+    const addLog = (msg: string) => appendShipmentLog(setLogMessages, msg)
 
     try {
       const { API_BASE_URL: apiBase } = await import('@/config/api')
@@ -1206,7 +1222,7 @@ export default function ShipmentsPage() {
                   // Job 직접 생성
                   setTransmitting(true)
                   const ts = fmtTime
-                  const addLog = (msg: string) => setLogMessages(prev => [...prev, msg].slice(-30))
+                  const addLog = (msg: string) => appendShipmentLog(setLogMessages, msg)
                   const items: string[] = []
                   if (updateItems.price) items.push('price', 'stock')
                   if (updateItems.thumb) items.push('image')
