@@ -1236,7 +1236,7 @@ class LotteonPlugin(MarketPlugin):
         # sex='여성' → 여성스포츠의류, 그 외(남성/유니섹스/라이프 등) → 남성스포츠의류
         _sex_val = (product.get("sex") or "").strip()
         if _sex_val == "여성" and category_id:
-            from backend.domain.samba.category.service import _LOTTEON_M_TO_F
+            from backend.domain.samba.category.rules import _LOTTEON_M_TO_F
 
             if ">" in category_id:
                 female_cat = _LOTTEON_M_TO_F.get(category_id)
