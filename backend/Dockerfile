@@ -41,10 +41,6 @@ RUN mkdir -p ${CLIP_MODEL_DIR} && \
     wget -q https://storage.googleapis.com/samba-wave-models/clip/text_features.npy -O ${CLIP_MODEL_DIR}/text_features.npy && \
     wget -q https://storage.googleapis.com/samba-wave-models/clip/meta.json -O ${CLIP_MODEL_DIR}/meta.json
 
-# 캐시 무효화 — 매 빌드마다 COPY scripts 레이어 재생성
-ARG CACHE_BUST=2026-04-17-003
-RUN echo "CACHE_BUST=$CACHE_BUST"
-
 COPY backend ./backend
 COPY scripts ./scripts
 COPY alembic.ini ./alembic.ini

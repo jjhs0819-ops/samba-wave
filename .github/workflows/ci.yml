@@ -63,6 +63,43 @@ jobs:
       - name: Ruff format check
         run: uv run ruff format --check .
 
+      # [2026-04-17 사고 후속] 의도치 않은 DROP 감지 — autogenerate 오류 방지
+      # 실수로 env.py 모델 import 누락 시 alembic이 DROP 18개짜리 migration 생성하는 사고 재발 방지
+      - name: Alembic migration safety check (DROP detection)
+        run: |
+          # PR/push에 새로 추가된 alembic 파일에서 의도치 않은 DROP 감지
+          DROP_FILES=$(git diff --name-only --diff-filter=A "origin/main" -- 'alembic/versions/*.py' 2>/dev/null || git diff --name-only HEAD~1 HEAD -- 'alembic/versions/*.py' 2>/dev/null || true)
+          if [ -z "$DROP_FILES" ]; then
+            echo "✅ 신규 alembic 파일 없음 — 스킵"
+            exit 0
+          fi
+          echo "검사 대상 신규 alembic 파일:"
+          echo "$DROP_FILES"
+          BLOCKERS=""
+          for f in $DROP_FILES; do
+            # op.drop_table / op.drop_index ix_* 감지 (의도된 DROP은 커밋 메시지에 명시)
+            if grep -nE "op\.drop_table\(|op\.drop_index\(op\.f\(\"ix_" "$f" 2>/dev/null; then
+              BLOCKERS="$BLOCKERS $f"
+            fi
+          done
+          if [ -n "$BLOCKERS" ]; then
+            # 커밋 메시지에 [intended-drop] 태그 있으면 통과
+            if git log -1 --pretty=%B | grep -q '\[intended-drop\]'; then
+              echo ""
+              echo "⚠️  DROP 감지됐으나 커밋 메시지 [intended-drop] 태그로 승인됨 → 통과"
+              exit 0
+            fi
+            echo ""
+            echo "❌ 의도치 않은 DROP 감지:$BLOCKERS"
+            echo ""
+            echo "조치:"
+            echo "  1. env.py에서 모델 import 누락 여부 확인 (pkgutil.walk_packages 작동 확인)"
+            echo "  2. 의도된 DROP이면 커밋 메시지에 '[intended-drop]' 태그 추가 후 다시 푸시"
+            echo "  3. 의도 외 DROP이면 해당 줄을 제거하거나 op.execute('DROP ... IF EXISTS')로 멱등화"
+            exit 1
+          fi
+          echo "✅ DROP 없음 — 안전"
+
   frontend:
     name: Frontend (TypeScript)
     needs: changes

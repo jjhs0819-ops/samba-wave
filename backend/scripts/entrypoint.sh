@@ -1,9 +1,13 @@
 #!/bin/sh
 
 # {backend/entrypoint.sh}
-
-# This script is the entrypoint for the application container.
-# It checks the ENVIRONMENT environment variable and runs the appropriate command.
+#
+# Cloud Run 컨테이너 진입점.
+# - production: Cloud SQL 대기 → Emergency schema fixes → alembic upgrade → verify_schema → Gunicorn
+# - development: uvicorn --reload
+#
+# 2026-04-17 사고 이후 조용한 실패 패턴 제거:
+#   - alembic 3회 실패 시 exit 1로 Cloud Run이 이전 리비전 유지 (침묵으로 배포 green 사고 재발 방지)
 
 set -e
 
@@ -21,12 +25,6 @@ fi
 echo "Running in $ENVIRONMENT mode"
 
 if [ "$ENVIRONMENT" = "production" ]; then
-  # ══════════════════════════════════════════════════════════════
-  # 빌드 검증 마커 — 이 줄이 Cloud Run 로그에 찍히면 새 이미지 진입 확정
-  # stdout + stderr 양쪽으로 출력 → severity 필터에 상관없이 캡처
-  # ══════════════════════════════════════════════════════════════
-  echo "=== ENTRYPOINT VERSION MARKER: v3-gitignore-removed (2026-04-17) ===" | tee /dev/stderr
-
   # Cloud SQL Auth Proxy 사이드카 대기 — 재시도로 확실히 연결 확인
   echo "Waiting for Cloud SQL proxy..."
   for i in 1 2 3 4 5 6; do
@@ -52,51 +50,8 @@ exit(0 if r else 1)
     sleep 5
   done
 
-  # ══════════════════════════════════════════════════════════════
-  # alembic_version 테이블 직접 복구 (Emergency schema fixes 앞에 배치)
-  # alembic current/stamp 명령 우회 — asyncpg 직접 쿼리로 결정론적 복구
-  # ══════════════════════════════════════════════════════════════
-  echo "=== [alembic_version] Direct DB repair (pre-emergency) ==="
-  uv run python -c "
-import asyncio, os, sys, asyncpg
-TARGET = '873871a20399'
-async def repair():
-    host = os.environ.get('WRITE_DB_HOST') or ''
-    if not host:
-        print('[alembic_version] skip — WRITE_DB_HOST not set'); return
-    kw = dict(
-        user=os.environ.get('WRITE_DB_USER') or 'postgres',
-        password=os.environ.get('WRITE_DB_PASSWORD') or '',
-        database=os.environ.get('WRITE_DB_NAME') or 'railway',
-    )
-    if host.startswith('/'):
-        kw['host'] = host
-    else:
-        kw['host'] = host
-        kw['port'] = int(os.environ.get('WRITE_DB_PORT') or 5432)
-    conn = await asyncpg.connect(**kw)
-    try:
-        await conn.execute('CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY)')
-        rows = await conn.fetch('SELECT version_num FROM alembic_version ORDER BY 1')
-        current = sorted(r[0] for r in rows)
-        print(f'[alembic_version] before: {current}')
-        if current == [TARGET]:
-            print(f'[alembic_version] already {TARGET} — no-op'); return
-        if not current or current == ['26dd9b23892a']:
-            async with conn.transaction():
-                await conn.execute('DELETE FROM alembic_version')
-                await conn.execute(\"INSERT INTO alembic_version (version_num) VALUES ('873871a20399')\")
-            after = await conn.fetch('SELECT version_num FROM alembic_version ORDER BY 1')
-            print(f'[alembic_version] REPAIRED to: {sorted(r[0] for r in after)}')
-        else:
-            print(f'[alembic_version] UNEXPECTED state: {current} — manual intervention required')
-            sys.exit(2)
-    finally:
-        await conn.close()
-asyncio.run(repair())
-" || echo '[alembic_version] repair step failed (non-fatal, continuing)'
-
-  # 누락 컬럼 긴급 패치 (alembic 체인 문제 우회)
+  # Emergency schema fixes — alembic_version=873871a20399 stamp 상태에서 누락된 테이블/컬럼 수동 보완
+  # (2026-04-17 사고 이후 stamp-DB 간극 해소용. 신규 누락 항목은 여기 추가)
   echo "Applying emergency schema fixes..."
   uv run python -c "
 import asyncio, os, sys
@@ -125,7 +80,7 @@ async def fix():
         await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_delivered_at TIMESTAMPTZ')
         await conn.execute('ALTER TABLE samba_order ADD COLUMN IF NOT EXISTS collected_product_id TEXT')
         await conn.execute('CREATE INDEX IF NOT EXISTS ix_samba_order_collected_product_id ON samba_order (collected_product_id) WHERE collected_product_id IS NOT NULL')
-        # samba_search_cache (2b3042f4d3b6 마이그레이션 — alembic_version=873871a20399 stamp로 skip됨, 수동 생성 필요)
+        # samba_search_cache (2b3042f4d3b6 마이그레이션 — stamp로 skip됨, 수동 생성 필요)
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS samba_search_cache (
                 id VARCHAR(30) PRIMARY KEY NOT NULL,
@@ -145,17 +100,29 @@ async def fix():
 asyncio.run(fix())
 " || echo "Emergency fix failed (non-fatal)"
 
-  # DB 마이그레이션 자동 실행 (최대 3회 재시도)
+  # DB 마이그레이션 자동 실행 (최대 3회 재시도) — 실패 시 exit 1로 배포 차단
+  # [2026-04-17] 조용한 continue 패턴 제거. 다음 사고는 즉시 배포 실패로 가시화됨.
   echo "Running database migrations..."
+  _MIGRATION_OK=0
   for i in 1 2 3; do
     if uv run alembic upgrade heads; then
       echo "Migrations complete."
+      _MIGRATION_OK=1
       break
     else
       echo "Migration attempt $i failed, retrying in 3s..."
       sleep 3
     fi
   done
+  if [ "$_MIGRATION_OK" != "1" ]; then
+    echo "=========================================================="
+    echo "FATAL: 마이그레이션 3회 연속 실패 — 서버 시작 차단"
+    echo "  이전 리비전이 계속 서빙되며 이 revision은 교체되지 않음"
+    echo "  alembic upgrade heads 로그에서 정확한 원인 확인 후"
+    echo "  마이그레이션 파일 수정 or 수동 복구 후 재배포"
+    echo "=========================================================="
+    exit 1
+  fi
 
   # 모델 ↔ DB 스키마 정합성 검증 — 불일치 시 서버 시작 차단
   echo "Verifying schema consistency..."
@@ -164,8 +131,7 @@ asyncio.run(fix())
     exit 1
   fi
 
-  # Gunicorn + Uvicorn worker — 기존 Cloud Run override와 동일한 구조로 맞춤
-  # (--no-dev: 런타임 dev 패키지 재설치 방지)
+  # Gunicorn + Uvicorn worker (--no-dev: 런타임 dev 패키지 재설치 방지)
   echo "Starting production server with Gunicorn (1 worker, uvicorn worker class)..."
   exec uv run --no-dev -m gunicorn -w 1 -k uvicorn.workers.UvicornWorker backend.main:app --bind 0.0.0.0:8080 --timeout 120 --graceful-timeout 600
 else
@@ -178,4 +144,3 @@ fi
 # fuser -k 8000/tcp
 
 disown
-# force redeploy 1774848910
