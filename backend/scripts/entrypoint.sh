@@ -100,28 +100,37 @@ async def fix():
 asyncio.run(fix())
 " || echo "Emergency fix failed (non-fatal)"
 
-  # DB 마이그레이션 자동 실행 (최대 3회 재시도) — 실패 시 exit 1로 배포 차단
-  # [2026-04-17] 조용한 continue 패턴 제거. 다음 사고는 즉시 배포 실패로 가시화됨.
-  echo "Running database migrations..."
-  _MIGRATION_OK=0
-  for i in 1 2 3; do
-    if uv run alembic upgrade heads; then
-      echo "Migrations complete."
-      _MIGRATION_OK=1
-      break
-    else
-      echo "Migration attempt $i failed, retrying in 3s..."
-      sleep 3
+  # DB 마이그레이션 — RUN_MIGRATIONS=0 설정 시 스킵 (긴급 롤백/디버깅 전용)
+  # 기본값 1 (미설정 포함) → 실행 + 실패 시 exit 1. 스킵해도 verify_schema는 아래에서 실행됨.
+  if [ "${RUN_MIGRATIONS:-1}" = "1" ]; then
+    echo "Running database migrations..."
+    _MIGRATION_OK=0
+    for i in 1 2 3; do
+      if uv run alembic upgrade heads; then
+        echo "Migrations complete."
+        _MIGRATION_OK=1
+        break
+      else
+        echo "Migration attempt $i failed, retrying in 3s..."
+        sleep 3
+      fi
+    done
+    if [ "$_MIGRATION_OK" != "1" ]; then
+      echo "=========================================================="
+      echo "FATAL: 마이그레이션 3회 연속 실패 — 서버 시작 차단"
+      echo "  이전 리비전이 계속 서빙되며 이 revision은 교체되지 않음"
+      echo "  alembic upgrade heads 로그에서 정확한 원인 확인 후"
+      echo "  마이그레이션 파일 수정 or 수동 복구 후 재배포"
+      echo "=========================================================="
+      exit 1
     fi
-  done
-  if [ "$_MIGRATION_OK" != "1" ]; then
+  else
     echo "=========================================================="
-    echo "FATAL: 마이그레이션 3회 연속 실패 — 서버 시작 차단"
-    echo "  이전 리비전이 계속 서빙되며 이 revision은 교체되지 않음"
-    echo "  alembic upgrade heads 로그에서 정확한 원인 확인 후"
-    echo "  마이그레이션 파일 수정 or 수동 복구 후 재배포"
+    echo "⚠️  WARNING: RUN_MIGRATIONS=$RUN_MIGRATIONS → 마이그레이션 스킵됨"
+    echo "    긴급 상황(롤백/디버깅) 외 사용 금지"
+    echo "    영구 설정 시 스키마 불일치 사고 위험 (2026-04-17 4주 사고 참조)"
+    echo "    복구 후 반드시 Cloud Run env에서 RUN_MIGRATIONS 제거할 것"
     echo "=========================================================="
-    exit 1
   fi
 
   # 모델 ↔ DB 스키마 정합성 검증 — 불일치 시 서버 시작 차단
