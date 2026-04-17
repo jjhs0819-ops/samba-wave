@@ -511,6 +511,14 @@ class JobWorker:
                 except Exception as e:
                     logger.error(f"[잡워커] 수집 실행 실패: {job_id} — {e}")
                     try:
+                        # 세션이 InFailedSQLTransactionError 로 aborted 상태일 수 있으므로
+                        # fail_job 호출 전 반드시 rollback 하여 트랜잭션 초기화
+                        try:
+                            await session.rollback()
+                        except Exception as rb_exc:
+                            logger.warning(
+                                f"[잡워커] 세션 rollback 실패(무시): {job_id} — {rb_exc}"
+                            )
                         await repo.fail_job(job_id, str(e))
                         await session.commit()
                     except Exception as fail_exc:
@@ -544,6 +552,14 @@ class JobWorker:
                 except Exception as e:
                     logger.error(f"[잡워커] 전송 실행 실패: {job_id} — {e}")
                     try:
+                        # 세션이 InFailedSQLTransactionError 로 aborted 상태일 수 있으므로
+                        # fail_job 호출 전 반드시 rollback 하여 트랜잭션 초기화
+                        try:
+                            await session.rollback()
+                        except Exception as rb_exc:
+                            logger.warning(
+                                f"[잡워커] 세션 rollback 실패(무시): {job_id} — {rb_exc}"
+                            )
                         await repo.fail_job(job_id, str(e))
                         await session.commit()
                     except Exception as fail_exc:
