@@ -81,6 +81,12 @@ async def fix():
 asyncio.run(fix())
 " || echo "Emergency fix failed (non-fatal)"
 
+  # 긴급 우회: alembic_version이 26dd9b23892a에 묶인 경우 head로 강제 stamp
+  if uv run alembic current 2>&1 | grep -q "26dd9b23892a"; then
+    echo "alembic stamp: 26dd9b23892a → 873871a20399 (version 테이블 복구)"
+    uv run alembic stamp 873871a20399
+  fi
+
   # DB 마이그레이션 자동 실행 (최대 3회 재시도)
   echo "Running database migrations..."
   for i in 1 2 3; do
