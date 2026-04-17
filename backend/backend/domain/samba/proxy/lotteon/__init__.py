@@ -1,7 +1,7 @@
-"""롯데ON 소싱용 웹 스크래핑 클라이언트 패키지.
+"""롯데ON 클라이언트 패키지.
 
-하위 호환성을 위해 LotteonSourcingClient, RateLimitError, set_lotteon_cookie,
-_lotteon_cookie_cache, _filter_by_brands, _LOTTEON_SCAT_NAMES 를 모두 re-export한다.
+- LotteonSourcingClient: 소싱용 웹 스크래핑
+- LotteonClient: Open API 상품 등록/수정
 """
 
 from __future__ import annotations
@@ -82,6 +82,14 @@ class LotteonSourcingClient(
         return self._timeout
 
 
+from backend.domain.samba.proxy.lotteon.api_client import (
+    LotteonApiError,
+    LotteonClient,
+    _build_lotteon_intro,
+    _build_lotteon_keywords,
+    _get_lotteon_origin_code,
+)
+
 __all__ = [
     "LotteonSourcingClient",
     "RateLimitError",
@@ -89,4 +97,9 @@ __all__ = [
     "_lotteon_cookie_cache",
     "_filter_by_brands",
     "_LOTTEON_SCAT_NAMES",
+    "LotteonClient",
+    "LotteonApiError",
+    "_build_lotteon_intro",
+    "_build_lotteon_keywords",
+    "_get_lotteon_origin_code",
 ]
