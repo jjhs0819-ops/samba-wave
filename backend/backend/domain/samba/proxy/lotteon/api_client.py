@@ -1111,12 +1111,12 @@ class LotteonClient:
                     "[롯데ON] 전 옵션 품절 상태로 transform_product 호출됨 — 상위에서 sold_out 처리 필요"
                 )
         else:
+            # itmOptLst 키 생략 — 빈 배열 [] 은 롯데ON API 9999 에러 발생
             itm_lst.append(
                 {
                     "eitmNo": "OPT0",
                     "dpYn": "Y",
                     "sortSeq": 1,
-                    "itmOptLst": [],
                     "itmImgLst": itm_img_lst,
                     "slPrc": sale_price,
                     "stkQty": default_stock,
