@@ -1254,6 +1254,10 @@ class SambaShipmentService:
                                 return res
                         except Exception as e:
                             logger.warning(f"[전송] 전 옵션 품절 마켓 삭제 실패: {e}")
+                            try:
+                                await self.session.rollback()
+                            except Exception:
+                                pass
                     res["error"] = "전 옵션 품절 (등록 불가)"
                     logger.info(
                         f"[전송] 상품 {product_id} → {market_type} 전 옵션 품절 스킵"
@@ -1506,6 +1510,10 @@ class SambaShipmentService:
                 else:
                     logger.error(f"[전송] 계정 {account_id} 예외: {exc}")
                 res["error"] = _err
+                try:
+                    await self.session.rollback()
+                except Exception:
+                    pass
             return res
 
         # 모든 계정 병렬 전송
@@ -1544,6 +1552,10 @@ class SambaShipmentService:
             )
         except Exception as _db_e:
             logger.warning(f"[전송] DB 업데이트 실패: {_db_e}")
+            try:
+                await self.session.rollback()
+            except Exception:
+                pass
 
         # 6. 최종 상태 결정
         values = list(transmit_result.values())

@@ -152,7 +152,14 @@ def get_read_sessionmaker() -> Any:
 async def get_write_session() -> AsyncGenerator[AsyncSession, None]:
     Session = get_write_sessionmaker()
     async with Session() as sess:
-        yield sess
+        try:
+            yield sess
+        except Exception:
+            try:
+                await sess.rollback()
+            except Exception:
+                pass
+            raise
 
 
 @asynccontextmanager

@@ -305,11 +305,11 @@ async def cancel_collect_jobs(
     # 1) 인메모리 플래그로 즉시 중단 (같은 인스턴스 1~2초 내 반응)
     request_cancel_collect()
 
-    # 2) DB 상태 변경 (멀티인스턴스 대비)
+    # 2) DB 상태 변경 (멀티인스턴스 대비) — .value로 실제 enum 값 사용
     r = await session.execute(
         text(
-            f"UPDATE samba_jobs SET status = '{JobStatus.CANCELLED}', completed_at = now() "
-            f"WHERE job_type = 'collect' AND status IN ('{JobStatus.PENDING}', '{JobStatus.RUNNING}')"
+            f"UPDATE samba_jobs SET status = '{JobStatus.CANCELLED.value}', completed_at = now() "
+            f"WHERE job_type = 'collect' AND status IN ('{JobStatus.PENDING.value}', '{JobStatus.RUNNING.value}')"
         )
     )
     await session.commit()
@@ -330,8 +330,8 @@ async def cancel_transmit_jobs(
 
     r = await session.execute(
         text(
-            f"UPDATE samba_jobs SET status = '{JobStatus.CANCELLED}', completed_at = now() "
-            f"WHERE job_type = 'transmit' AND status IN ('{JobStatus.PENDING}', '{JobStatus.RUNNING}')"
+            f"UPDATE samba_jobs SET status = '{JobStatus.CANCELLED.value}', completed_at = now() "
+            f"WHERE job_type = 'transmit' AND status IN ('{JobStatus.PENDING.value}', '{JobStatus.RUNNING.value}')"
         )
     )
     await session.commit()
@@ -351,11 +351,11 @@ async def cancel_all_jobs(
     request_cancel_transmit()
     trigger_emergency_stop()
 
-    # 2) DB 상태 일괄 취소
+    # 2) DB 상태 일괄 취소 — .value로 실제 enum 값 사용
     r = await session.execute(
         text(
-            f"UPDATE samba_jobs SET status = '{JobStatus.CANCELLED}', completed_at = now() "
-            f"WHERE status IN ('{JobStatus.PENDING}', '{JobStatus.RUNNING}')"
+            f"UPDATE samba_jobs SET status = '{JobStatus.CANCELLED.value}', completed_at = now() "
+            f"WHERE status IN ('{JobStatus.PENDING.value}', '{JobStatus.RUNNING.value}')"
         )
     )
     await session.commit()
