@@ -1038,6 +1038,7 @@ class JobWorker:
                 or await repo.is_cancelled(job.id)
             ):
                 logger.info(f"[잡워커] 수집 취소됨: {job.id}")
+                _add_job_log(job.id, "수집 취소됨", job_type="collect")
                 clear_collect_cancel()  # 다음 수집을 위해 해제
                 return
 
@@ -1657,6 +1658,17 @@ class JobWorker:
                             _search_kwargs["url"] = _original_url
                         # ABCmart: ABC + GS 동시 검색 (로컬 테스트: 순차 8.4s → 병렬 6.0s)
                         if site == "ABCmart" and sf.category_filter:
+                            # 검색 직전 취소 체크 (병렬 검색 6초 걸림)
+                            from backend.domain.samba.emergency import (
+                                clear_collect_cancel as _clear_cc2,
+                                is_collect_cancel_requested as _is_cc2,
+                                is_emergency_stopped as _is_es2,
+                            )
+
+                            if _is_cc2() or _is_es2():
+                                logger.info(f"[잡워커] {site} 검색 취소: {job.id}")
+                                _clear_cc2()
+                                return
                             from backend.domain.samba.proxy.abcmart import (
                                 ARTSourcingClient as _ART,
                             )
@@ -2236,6 +2248,17 @@ class JobWorker:
                 )
                 # 배치 단위로 세션 1개 획득 → 배치 내 모든 항목이 동일 JSESSIONID 재사용
                 for _batch_start in range(0, len(_new_items_abc), _ABC_BATCH):
+                    # 배치 시작 전 취소 체크 (배치당 3~5초 걸림)
+                    from backend.domain.samba.emergency import (
+                        clear_collect_cancel as _clear_cc,
+                        is_collect_cancel_requested as _is_cc,
+                        is_emergency_stopped as _is_es,
+                    )
+
+                    if _is_cc() or _is_es():
+                        logger.info(f"[잡워커] {site} 선취합 취소: {job.id}")
+                        _clear_cc()
+                        return
                     _batch = _new_items_abc[_batch_start : _batch_start + _ABC_BATCH]
                     # 배치 전체가 공유할 세션 1개 획득
                     _batch_session = None
@@ -2306,6 +2329,7 @@ class JobWorker:
 
             if is_collect_cancel_requested() or is_emergency_stopped():
                 logger.info(f"[잡워커] {site} 수집 취소됨: {job.id}")
+                _add_job_log(job.id, f"[{site}] 수집 취소됨", job_type="collect")
                 clear_collect_cancel()
                 return
 
