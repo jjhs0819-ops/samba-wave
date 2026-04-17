@@ -1,5 +1,7 @@
 import asyncio
+import importlib
 import os
+import pkgutil
 import sys
 from logging.config import fileConfig
 
@@ -16,26 +18,15 @@ load_dotenv()
 # 프로젝트 루트를 path에 추가
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-# Samba 모델 import (autogenerate용)
-# user 모델은 JWT 설정 의존성 때문에 제외
-from backend.domain.samba.product.model import *  # noqa: F401,F403
-from backend.domain.samba.order.model import *  # noqa: F401,F403
-from backend.domain.samba.channel.model import *  # noqa: F401,F403
-from backend.domain.samba.policy.model import *  # noqa: F401,F403
-from backend.domain.samba.collector.model import *  # noqa: F401,F403
-from backend.domain.samba.category.model import *  # noqa: F401,F403
-from backend.domain.samba.account.model import *  # noqa: F401,F403
-from backend.domain.samba.shipment.model import *  # noqa: F401,F403
-from backend.domain.samba.forbidden.model import *  # noqa: F401,F403
-from backend.domain.samba.contact.model import *  # noqa: F401,F403
-from backend.domain.samba.returns.model import *  # noqa: F401,F403
-from backend.domain.samba.warroom.model import *  # noqa: F401,F403
-from backend.domain.samba.user.model import *  # noqa: F401,F403
-from backend.domain.samba.job.model import *  # noqa: F401,F403
-from backend.domain.samba.store_care.model import *  # noqa: F401,F403
-from backend.domain.samba.wholesale.model import *  # noqa: F401,F403
-from backend.domain.samba.sourcing_account.model import *  # noqa: F401,F403
-from backend.domain.samba.cs_inquiry.model import *  # noqa: F401,F403
+# Samba 모든 도메인 모델 자동 import (autogenerate용)
+# 새 도메인 추가 시 이 블록 수정 불필요 — */model.py 자동 감지
+import backend.domain.samba as _samba_pkg  # noqa: E402
+
+for _, _modname, _ in pkgutil.walk_packages(
+    _samba_pkg.__path__, prefix="backend.domain.samba."
+):
+    if _modname.endswith(".model"):
+        importlib.import_module(_modname)
 
 config = context.config
 

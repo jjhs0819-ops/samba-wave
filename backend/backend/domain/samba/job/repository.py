@@ -135,23 +135,23 @@ class SambaJobRepository(BaseRepository[SambaJob]):
 
     async def is_cancelled(self, job_id: str) -> bool:
         """잡이 취소 상태인지 확인 (워커에서 건별 체크용).
-        Identity Map 우회: ORM select는 캐시된 객체를 반환하므로
-        다른 세션(cancel-all)에서 변경한 status를 감지 못함 → raw SQL 사용.
-        타임아웃/DB 에러 시 False 반환 (안전 우선 — 전송 계속)."""
+        완전히 새 세션으로 조회 — 워커 세션 오염 방지 + ORM 캐시 우회.
+        타임아웃/DB 에러 시 False 반환 (안전 우선 — 전송/수집 계속)."""
         import asyncio
         from sqlalchemy import text
+        from backend.db.orm import get_write_session
 
         try:
-            await self.session.rollback()  # InFailedSQLTransactionError 대비 세션 복구
-            result = await asyncio.wait_for(
-                self.session.execute(
-                    text("SELECT status FROM samba_jobs WHERE id = :id"),
-                    {"id": job_id},
-                ),
-                timeout=5,
-            )
-            row = result.first()
-            return row[0] == JobStatus.CANCELLED if row else False
+            async with get_write_session() as fresh_session:
+                result = await asyncio.wait_for(
+                    fresh_session.execute(
+                        text("SELECT status FROM samba_jobs WHERE id = :id"),
+                        {"id": job_id},
+                    ),
+                    timeout=5,
+                )
+                row = result.first()
+                return row[0] == JobStatus.CANCELLED if row else False
         except (asyncio.TimeoutError, Exception):
             return False
 
