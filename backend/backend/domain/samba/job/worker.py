@@ -921,12 +921,39 @@ class JobWorker:
             "SSF",
         }
 
+        # 잡 전체 10분 타임아웃 가드 — 무한 hang으로 running 고착되는 현상 방지
+        _JOB_TIMEOUT_SEC = 600
+
         if site in DIRECT_API_SITES:
-            await self._collect_direct_api(job, sf, session, repo)
+            try:
+                await asyncio.wait_for(
+                    self._collect_direct_api(job, sf, session, repo),
+                    timeout=_JOB_TIMEOUT_SEC,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"[잡워커] {site} 수집 {_JOB_TIMEOUT_SEC}초 타임아웃: {job.id}"
+                )
+                await repo.fail_job(
+                    job.id,
+                    f"{site} 수집 {_JOB_TIMEOUT_SEC // 60}분 타임아웃 — 응답 지연으로 자동 종료",
+                )
             return
 
         if site in EXTENSION_SITES:
-            await self._collect_direct_api(job, sf, session, repo)
+            try:
+                await asyncio.wait_for(
+                    self._collect_direct_api(job, sf, session, repo),
+                    timeout=_JOB_TIMEOUT_SEC,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"[잡워커] {site} 수집 {_JOB_TIMEOUT_SEC}초 타임아웃: {job.id}"
+                )
+                await repo.fail_job(
+                    job.id,
+                    f"{site} 수집 {_JOB_TIMEOUT_SEC // 60}분 타임아웃 — 응답 지연으로 자동 종료",
+                )
             return
 
         if site != "MUSINSA":
@@ -1678,12 +1705,44 @@ class JobWorker:
                             )
 
                             _gs = _ART("10002")
-                            _abc_res, _gs_res = await asyncio.gather(
-                                client.search(
-                                    keyword, max_count=_max, **_search_kwargs
-                                ),
-                                _gs.search(keyword, max_count=_max, **_search_kwargs),
-                            )
+                            # 프로덕션(Cloud Run IP)에서 a-rt.com이 응답을 씹는 경우 대비 120초 가드
+                            try:
+                                _abc_res, _gs_res = await asyncio.wait_for(
+                                    asyncio.gather(
+                                        client.search(
+                                            keyword,
+                                            max_count=_max,
+                                            **_search_kwargs,
+                                        ),
+                                        _gs.search(
+                                            keyword,
+                                            max_count=_max,
+                                            **_search_kwargs,
+                                        ),
+                                        return_exceptions=True,
+                                    ),
+                                    timeout=120,
+                                )
+                            except asyncio.TimeoutError:
+                                logger.warning(
+                                    f"[잡워커] ABCmart+GS 검색 120초 타임아웃: {keyword}"
+                                )
+                                await repo.fail_job(
+                                    job.id,
+                                    "ABCmart 응답 지연 (120초 타임아웃) — a-rt.com 응답 없음",
+                                )
+                                return
+                            # gather 내부 예외는 개별적으로 처리
+                            if isinstance(_abc_res, Exception):
+                                logger.warning(
+                                    f"[잡워커] ABCmart 검색 예외: {_abc_res}"
+                                )
+                                _abc_res = {"products": [], "total": 0}
+                            if isinstance(_gs_res, Exception):
+                                logger.warning(
+                                    f"[잡워커] GrandStage 검색 예외: {_gs_res}"
+                                )
+                                _gs_res = {"products": [], "total": 0}
                             result = _abc_res
                             items_list = result.get("products", [])
                             _gs_products = _gs_res.get("products", [])
