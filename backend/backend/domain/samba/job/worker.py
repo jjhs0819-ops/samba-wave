@@ -211,9 +211,7 @@ class JobWorker:
     POLL_INTERVAL = 5  # 초
 
     STUCK_CHECK_INTERVAL = 2  # 2회 폴링마다 stuck 체크 (≒10초)
-    STUCK_THRESHOLD_SEC = (
-        180  # 3분 이상 RUNNING 상태면 stuck 판정 (수집 잡은 60초+ 소요)
-    )
+    STUCK_THRESHOLD_SEC = 1800  # 30분 이상 RUNNING 상태면 stuck 판정 (ABCmart 대량 수집 정상 소요시간 수용)
 
     def __init__(self):
         self._running = True
@@ -1038,6 +1036,12 @@ class JobWorker:
                 or await repo.is_cancelled(job.id)
             ):
                 logger.info(f"[잡워커] 수집 취소됨: {job.id}")
+                # DB 상태 확실히 CANCELLED — stuck recovery 재시작 방지
+                try:
+                    await repo.cancel_job(job.id)
+                    await session.commit()
+                except Exception as _e:
+                    logger.warning(f"[잡워커] 취소 상태 저장 실패: {job.id} — {_e}")
                 _add_job_log(job.id, "수집 취소됨", job_type="collect")
                 clear_collect_cancel()  # 다음 수집을 위해 해제
                 return
@@ -2257,6 +2261,16 @@ class JobWorker:
 
                     if _is_cc() or _is_es():
                         logger.info(f"[잡워커] {site} 선취합 취소: {job.id}")
+                        try:
+                            await repo.cancel_job(job.id)
+                            await session.commit()
+                        except Exception as _e:
+                            logger.warning(
+                                f"[잡워커] 취소 상태 저장 실패: {job.id} — {_e}"
+                            )
+                        _add_job_log(
+                            job.id, f"[{site}] 수집 취소됨", job_type="collect"
+                        )
                         _clear_cc()
                         return
                     _batch = _new_items_abc[_batch_start : _batch_start + _ABC_BATCH]
@@ -2329,6 +2343,11 @@ class JobWorker:
 
             if is_collect_cancel_requested() or is_emergency_stopped():
                 logger.info(f"[잡워커] {site} 수집 취소됨: {job.id}")
+                try:
+                    await repo.cancel_job(job.id)
+                    await session.commit()
+                except Exception as _e:
+                    logger.warning(f"[잡워커] 취소 상태 저장 실패: {job.id} — {_e}")
                 _add_job_log(job.id, f"[{site}] 수집 취소됨", job_type="collect")
                 clear_collect_cancel()
                 return
@@ -2337,6 +2356,12 @@ class JobWorker:
             if _cancel_check_counter % 5 == 1:
                 if await repo.is_cancelled(job.id):
                     logger.info(f"[잡워커] {site} 수집 취소됨: {job.id}")
+                    try:
+                        await repo.cancel_job(job.id)
+                        await session.commit()
+                    except Exception as _e:
+                        logger.warning(f"[잡워커] 취소 상태 저장 실패: {job.id} — {_e}")
+                    _add_job_log(job.id, f"[{site}] 수집 취소됨", job_type="collect")
                     return
 
             p_id = str(item.get("site_product_id", ""))
