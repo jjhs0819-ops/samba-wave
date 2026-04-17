@@ -150,9 +150,10 @@ asyncio.run(fix())
     exit 1
   fi
 
-  # Uvicorn 단일 프로세스 — --no-dev: 런타임에 dev 패키지 재설치 방지
-  echo "Starting production server with Uvicorn (single process)..."
-  exec uv run --no-dev -m uvicorn backend.main:app --host 0.0.0.0 --port 8080
+  # Gunicorn + Uvicorn worker — 기존 Cloud Run override와 동일한 구조로 맞춤
+  # (--no-dev: 런타임 dev 패키지 재설치 방지)
+  echo "Starting production server with Gunicorn (1 worker, uvicorn worker class)..."
+  exec uv run --no-dev -m gunicorn -w 1 -k uvicorn.workers.UvicornWorker backend.main:app --bind 0.0.0.0:8080 --timeout 120 --graceful-timeout 600
 else
   # Run the development server with Uvicorn and --reload
   echo "Starting development server with Uvicorn..."

@@ -48,6 +48,9 @@ jobs:
       - name: Deploy to Cloud Run
         run: |
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          # --clear-command / --clear-args:
+          # Cloud Run service에 누적된 command/args override 제거 → Dockerfile ENTRYPOINT(entrypoint.sh) 사용 보장
+          # (이게 빠지면 과거 수동 설정된 "uv run -m gunicorn ..."이 entrypoint.sh를 덮어써 마이그레이션이 스킵됨)
           gcloud run deploy samba-wave-api \
             --source ./backend \
             --region asia-northeast3 \
@@ -55,6 +58,8 @@ jobs:
             --revision-suffix="${SHORT_SHA}" \
             --update-labels="commit-sha=${SHORT_SHA}" \
             --update-env-vars "COMMIT_SHA=${{ github.sha }},WEB_CONCURRENCY=1,GUNICORN_CMD_ARGS=--timeout 300 --graceful-timeout 300,TERMINATION_GRACE_HACK=1" \
+            --clear-command \
+            --clear-args \
             --memory 2Gi \
             --min-instances=1 \
             --max-instances=1 \
