@@ -495,6 +495,10 @@ class JobWorker:
         from backend.db.orm import get_write_session
         from backend.domain.samba.job.repository import SambaJobRepository
         from backend.domain.samba.job.model import SambaJob
+        from backend.domain.samba.emergency import clear_collect_cancel
+
+        # 새 수집 시작 시 이전 취소 플래그 초기화 (이전 수집의 잔여 플래그 방지)
+        clear_collect_cancel()
 
         try:
             async with get_write_session() as session:
@@ -1021,11 +1025,20 @@ class JobWorker:
         _collected_sold_out = 0
 
         while total_saved < remaining and search_page <= max_pages:
-            # 취소 확인 — raw SQL로 ORM 캐시 우회 + 비상정지 인메모리 플래그
-            from backend.domain.samba.emergency import is_emergency_stopped
+            # 취소 확인 — 인메모리 플래그 우선(빠름), DB 조회는 최후(멀티인스턴스 대비)
+            from backend.domain.samba.emergency import (
+                clear_collect_cancel,
+                is_collect_cancel_requested,
+                is_emergency_stopped,
+            )
 
-            if is_emergency_stopped() or await repo.is_cancelled(job.id):
+            if (
+                is_collect_cancel_requested()
+                or is_emergency_stopped()
+                or await repo.is_cancelled(job.id)
+            ):
                 logger.info(f"[잡워커] 수집 취소됨: {job.id}")
+                clear_collect_cancel()  # 다음 수집을 위해 해제
                 return
 
             # 검색
@@ -2284,12 +2297,21 @@ class JobWorker:
             if total_saved >= remaining:
                 break
 
-            # 취소 확인 (5건 단위 — raw SQL로 ORM 캐시 우회)
+            # 취소 확인 — 인메모리 플래그는 매 아이템, DB는 5건 단위
+            from backend.domain.samba.emergency import (
+                clear_collect_cancel,
+                is_collect_cancel_requested,
+                is_emergency_stopped,
+            )
+
+            if is_collect_cancel_requested() or is_emergency_stopped():
+                logger.info(f"[잡워커] {site} 수집 취소됨: {job.id}")
+                clear_collect_cancel()
+                return
+
             _cancel_check_counter += 1
             if _cancel_check_counter % 5 == 1:
-                from backend.domain.samba.emergency import is_emergency_stopped
-
-                if is_emergency_stopped() or await repo.is_cancelled(job.id):
+                if await repo.is_cancelled(job.id):
                     logger.info(f"[잡워커] {site} 수집 취소됨: {job.id}")
                     return
 

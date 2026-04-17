@@ -300,7 +300,12 @@ async def cancel_collect_jobs(
 ):
     """수집 잡만 취소 — 전송/오토튠은 영향 없음."""
     from sqlalchemy import text
+    from backend.domain.samba.emergency import request_cancel_collect
 
+    # 1) 인메모리 플래그로 즉시 중단 (같은 인스턴스 1~2초 내 반응)
+    request_cancel_collect()
+
+    # 2) DB 상태 변경 (멀티인스턴스 대비)
     r = await session.execute(
         text(
             f"UPDATE samba_jobs SET status = '{JobStatus.CANCELLED}', completed_at = now() "
