@@ -607,27 +607,37 @@ export default function CollectorPage() {
     }
     const totalReq = targetFilters.reduce((s, f) => s + (f.requested_count || 0), 0)
     const label = selectedIds.size > 0 ? '선택된' : drillGroup ? '선택된' : '표시된'
-    // 단일 브랜드이면 brand-collect-all 단일 Job으로 처리 (MUSINSA, ABCmart 지원)
+    // 단일 브랜드이면 brand-collect-all 단일 Job으로 처리 (MUSINSA, ABCmart, SSG, GSShop 지원)
     const _allMusinsa = sortedTargetFilters.every(f => f.source_site === 'MUSINSA')
     const _allABCmart = sortedTargetFilters.every(f => f.source_site === 'ABCmart')
+    const _allSSG = sortedTargetFilters.every(f => f.source_site === 'SSG')
+    const _allGS = sortedTargetFilters.every(f => f.source_site === 'GSShop')
     const _getBrandKey = (f: SambaSearchFilter) => {
       try {
         const p = new URL(f.keyword || '')
         if (f.source_site === 'MUSINSA') return p.searchParams.get('brand') || ''
         if (f.source_site === 'ABCmart') return p.searchParams.get('searchWord') || ''
+        if (f.source_site === 'SSG') return p.searchParams.get('query') || ''
+        if (f.source_site === 'GSShop') return p.searchParams.get('tq') || ''
         return ''
       } catch { return '' }
     }
     const _musinsaBrand = _allMusinsa && sortedTargetFilters.length > 0 ? _getBrandKey(sortedTargetFilters[0]) : ''
     const _abcBrand = _allABCmart && sortedTargetFilters.length > 0 ? _getBrandKey(sortedTargetFilters[0]) : ''
-    const _brandValue = _musinsaBrand || _abcBrand
-    const _brandSite = _allMusinsa ? 'MUSINSA' : _allABCmart ? 'ABCmart' : ''
+    const _ssgBrand = _allSSG && sortedTargetFilters.length > 0 ? _getBrandKey(sortedTargetFilters[0]) : ''
+    const _gsBrand = _allGS && sortedTargetFilters.length > 0 ? _getBrandKey(sortedTargetFilters[0]) : ''
+    const _brandValue = _musinsaBrand || _abcBrand || _ssgBrand || _gsBrand
+    const _brandSite = _allMusinsa ? 'MUSINSA' : _allABCmart ? 'ABCmart' : _allSSG ? 'SSG' : _allGS ? 'GSShop' : ''
     // 해당 브랜드의 전체 그룹 수 확인 — 선택된 수와 일치할 때만 브랜드전체수집
     const _totalMusinsaBrandCount = _musinsaBrand ? filters.filter(f => f.source_site === 'MUSINSA' && _getBrandKey(f) === _musinsaBrand).length : 0
     const _totalAbcBrandCount = _abcBrand ? filters.filter(f => f.source_site === 'ABCmart' && _getBrandKey(f) === _abcBrand).length : 0
+    const _totalSsgBrandCount = _ssgBrand ? filters.filter(f => f.source_site === 'SSG' && _getBrandKey(f) === _ssgBrand).length : 0
+    const _totalGsBrandCount = _gsBrand ? filters.filter(f => f.source_site === 'GSShop' && _getBrandKey(f) === _gsBrand).length : 0
     const _sameBrand = (
       (_musinsaBrand && sortedTargetFilters.length >= 2 && sortedTargetFilters.length === _totalMusinsaBrandCount && sortedTargetFilters.every(f => _getBrandKey(f) === _musinsaBrand)) ||
-      (_abcBrand && sortedTargetFilters.length >= 2 && sortedTargetFilters.length === _totalAbcBrandCount && sortedTargetFilters.every(f => _getBrandKey(f) === _abcBrand))
+      (_abcBrand && sortedTargetFilters.length >= 2 && sortedTargetFilters.length === _totalAbcBrandCount && sortedTargetFilters.every(f => _getBrandKey(f) === _abcBrand)) ||
+      (_ssgBrand && sortedTargetFilters.length >= 2 && sortedTargetFilters.length === _totalSsgBrandCount && sortedTargetFilters.every(f => _getBrandKey(f) === _ssgBrand)) ||
+      (_gsBrand && sortedTargetFilters.length >= 2 && sortedTargetFilters.length === _totalGsBrandCount && sortedTargetFilters.every(f => _getBrandKey(f) === _gsBrand))
     )
 
     const ok = await showConfirm(
@@ -642,8 +652,17 @@ export default function CollectorPage() {
     setCollecting(true)
 
     if (_sameBrand && _brandSite) {
-      // 브랜드 전체수집 — 단일 Job (MUSINSA/ABCmart)
-      const _searchKeyword = (() => { try { return new URL(sortedTargetFilters[0].keyword || '').searchParams.get('keyword') || _brandValue } catch { return _brandValue } })()
+      // 브랜드 전체수집 — 단일 Job (MUSINSA/ABCmart/SSG/GSShop)
+      const _searchKeyword = (() => {
+        try {
+          const p = new URL(sortedTargetFilters[0].keyword || '')
+          if (_brandSite === 'MUSINSA') return p.searchParams.get('keyword') || _brandValue
+          if (_brandSite === 'SSG') return p.searchParams.get('query') || _brandValue
+          if (_brandSite === 'GSShop') return p.searchParams.get('tq') || _brandValue
+          // ABCmart: searchWord
+          return p.searchParams.get('searchWord') || _brandValue
+        } catch { return _brandValue }
+      })()
       addLog(`[브랜드전체수집] '${_searchKeyword}' ${fmtNum(targetIds.length)}개 그룹 단일 Job 시작...`)
       try {
         const r = await fetchWithAuth(`${API_BASE}/api/v1/samba/collector/brand-collect-all`, {
@@ -674,10 +693,12 @@ export default function CollectorPage() {
             const jobData = await jr.json() as { status: string; result?: Record<string, number>; error?: string }
             if (jobData.status === 'completed') {
               addLog(`[브랜드전체수집] 완료 — 저장 ${fmtNum(jobData.result?.saved ?? 0)}건`)
+              await load(); await loadTree()
               break
             }
             if (jobData.status === 'failed') {
               addLog(`[브랜드전체수집] 실패: ${jobData.error || '오류'}`)
+              await load(); await loadTree()
               break
             }
           }
@@ -1938,13 +1959,16 @@ export default function CollectorPage() {
                         manualCollectRef.current = true
                         setCollecting(true)
 
-                        // 브랜드 전체수집: 단일 Job으로 수집 후 카테고리 배분 (MUSINSA/ABCmart)
-                        if (sourceSite === 'MUSINSA' || sourceSite === 'ABCmart') {
+                        // 브랜드 전체수집: 단일 Job으로 수집 후 카테고리 배분 (MUSINSA/ABCmart/SSG/GSShop)
+                        if (sourceSite === 'MUSINSA' || sourceSite === 'ABCmart' || sourceSite === 'SSG' || sourceSite === 'GSShop') {
                           let _searchKeyword = brand
                           if (updatedFilters.length > 0) {
                             try {
                               const _p = new URL(updatedFilters[0].keyword || '')
-                              _searchKeyword = _p.searchParams.get('keyword') || _p.searchParams.get('searchWord') || brand
+                              if (sourceSite === 'MUSINSA') _searchKeyword = _p.searchParams.get('keyword') || brand
+                              else if (sourceSite === 'SSG') _searchKeyword = _p.searchParams.get('query') || brand
+                              else if (sourceSite === 'GSShop') _searchKeyword = _p.searchParams.get('tq') || brand
+                              else _searchKeyword = _p.searchParams.get('searchWord') || brand
                             } catch { /* fallback */ }
                           }
                           addLog(`[브랜드전체수집] '${_searchKeyword}' ${fmtNum(updatedFilters.length)}개 그룹 단일 Job 시작...`)
@@ -1977,10 +2001,12 @@ export default function CollectorPage() {
                                 const jobData = await jr.json() as { status: string; current: number; total: number; result?: Record<string, number>; error?: string }
                                 if (jobData.status === 'completed') {
                                   addLog(`[브랜드전체수집] 완료 — 저장 ${fmtNum(jobData.result?.saved ?? 0)}건`)
+                                  await load(); await loadTree()
                                   break
                                 }
                                 if (jobData.status === 'failed') {
                                   addLog(`[브랜드전체수집] 실패: ${jobData.error || '오류'}`)
+                                  await load(); await loadTree()
                                   break
                                 }
                               }

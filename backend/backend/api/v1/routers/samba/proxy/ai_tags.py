@@ -631,7 +631,11 @@ async def generate_ai_tags(
                                 "contents": [{"parts": [{"text": prompt}]}],
                                 "generationConfig": {
                                     "maxOutputTokens": 400,
-                                    "thinkingConfig": {"thinkingBudget": 0},
+                                    **(
+                                        {"thinkingConfig": {"thinkingBudget": 0}}
+                                        if not model.endswith("-image")
+                                        else {}
+                                    ),
                                 },
                             },
                         )
@@ -926,7 +930,11 @@ async def preview_ai_tags(
                                 "contents": [{"parts": [{"text": prompt}]}],
                                 "generationConfig": {
                                     "maxOutputTokens": 400,
-                                    "thinkingConfig": {"thinkingBudget": 0},
+                                    **(
+                                        {"thinkingConfig": {"thinkingBudget": 0}}
+                                        if not model.endswith("-image")
+                                        else {}
+                                    ),
                                 },
                             },
                         )
