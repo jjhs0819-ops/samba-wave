@@ -404,6 +404,39 @@ class LotteonClient:
             body=body,
         )
 
+    async def list_products(
+        self,
+        page_no: int = 1,
+        rows_per_page: int = 100,
+        reg_strt_dttm: str | None = None,
+        reg_end_dttm: str | None = None,
+        sl_stat_cd: str | None = None,
+    ) -> dict[str, Any]:
+        """상품 목록 조회 (POST).
+
+        API 스펙:
+          regStrtDttm/regEndDttm 필수 (YYYYMMDDHH24MISS)
+          rowsPerPage MAX 100
+          slStatCd: SALE/SOUT/STP/END (선택)
+
+        page_no를 늘리며 호출, 응답 dataCount=0 또는 data=[]일 때까지.
+        """
+        body: dict[str, Any] = {
+            "trGrpCd": self.tr_grp_cd or "SR",
+            "trNo": self.tr_no,
+            "pageNo": page_no,
+            "rowsPerPage": rows_per_page,
+            "regStrtDttm": reg_strt_dttm or "20200101000000",
+            "regEndDttm": reg_end_dttm or "99990101000000",
+        }
+        if sl_stat_cd:
+            body["slStatCd"] = sl_stat_cd
+        return await self._call_api(
+            "POST",
+            "/v1/openapi/product/v1/product/list",
+            body=body,
+        )
+
     # ── 프로모션 API ───────────────────────────────────────────────────
 
     async def save_product_exception(
@@ -429,41 +462,58 @@ class LotteonClient:
             body=body,
         )
 
-    async def save_immediate_discount(
+    async def get_immediate_discount_list(
         self,
         spd_no: str,
-        discount_rate: int,
-        is_update: bool = False,  # 현재 미사용, 향후 기존 할인 수정 시 활용
+        awy_dc_pd_reg_no: str = "",
+        prd_dvs_cd: str = "2",
+        days_back: int = 365,
+        days_forward: int = 365,
     ) -> dict[str, Any]:
-        """판매자할인(스토어할인) 저장.
+        """판매자할인(스토어할인) 목록 조회.
 
-        API 스펙:
-          saveDvsCd: C=등록, U=수정(종료일만), D=삭제(시작 전만)
-          afflPrNo: 셀러 자체 프로모션번호(PK, 중복 불가)
-          dcTypCd: FX=정율, FL=정액
-          aplyStrtDttm / aplyEndDttm: yyyymmddhhmiss 포맷
+        API: /v1/openapi/promotion/v1/OpenApiService/getProductImmediateDiscountList
+        prd_dvs_cd: 2=시작일 체크, 3=종료일 체크
+        awy_dc_pd_reg_no 빈 값으로 호출 시 spd_no 기준 전체 행사 반환 기대.
         """
         now = now_kst()
-        # afflPrNo: 셀러 고유 프로모션번호 (최대 20자)
-        # spdNo 숫자 부분(≤12자) + timestamp 끝 8자 = 최대 20자 이내
-        spd_num = re.sub(r"[^0-9]", "", spd_no)[-12:]  # 숫자만 추출, 최대 12자
-        ts_suffix = str(int(now.timestamp()))[-8:]  # timestamp 끝 8자리
-        affil_pr_no = f"{spd_num}{ts_suffix}"  # 최대 20자
-        start_dt = now.strftime("%Y%m%d%H%M%S")
-        # 1년 후 종료 (포맷: yyyymmddhhmiss) — timedelta 사용 (윤년 2/29 안전)
-        end_dt = (now + timedelta(days=365)).strftime("%Y%m%d235959")
         body = {
-            "saveDvsCd": "C",  # 항상 신규 등록 (U=수정은 awyDcPdRegNo 필요)
-            "awyDcPdRegNo": "",  # 신규 등록 시 빈값
-            "afflPrNo": affil_pr_no,  # 셀러 자체 프로모션번호(PK)
-            "trNo": self.tr_no,  # 롯데ON 거래처번호
+            "awyDcPdRegNo": awy_dc_pd_reg_no,
+            "trNo": self.tr_no,
             "spdNo": spd_no,
-            "aplyStrtDttm": start_dt,
-            "aplyEndDttm": end_dt,
-            "dcTypCd": "FX",  # FX=정율, FL=정액
-            "dcVal": float(discount_rate),
+            "prdDvsCd": prd_dvs_cd,
+            "prdStrtDt": (now - timedelta(days=days_back)).strftime("%Y%m%d"),
+            "prdEndDt": (now + timedelta(days=days_forward)).strftime("%Y%m%d"),
         }
-        logger.info(f"[롯데ON] 즉시할인 요청 body: {body}")
+        return await self._call_api(
+            "POST",
+            "/v1/openapi/promotion/v1/OpenApiService/getProductImmediateDiscountList",
+            body=body,
+        )
+
+    async def update_immediate_discount_end(
+        self,
+        awy_dc_pd_reg_no: str,
+        affl_pr_no: str,
+        spd_no: str,
+        aply_end_dttm: str | None = None,
+    ) -> dict[str, Any]:
+        """즉시할인 행사 종료일 수정 (즉시 종료용).
+
+        saveDvsCd=U는 진행 중인 행사의 종료일만 수정 가능.
+        aply_end_dttm 미지정 시 현재시각-1초로 설정 → 즉시 종료.
+        """
+        if aply_end_dttm is None:
+            aply_end_dttm = (now_kst() - timedelta(seconds=1)).strftime("%Y%m%d%H%M%S")
+        body = {
+            "saveDvsCd": "U",
+            "awyDcPdRegNo": awy_dc_pd_reg_no,
+            "afflPrNo": affl_pr_no,
+            "trNo": self.tr_no,
+            "spdNo": spd_no,
+            "aplyEndDttm": aply_end_dttm,
+        }
+        logger.info(f"[롯데ON] 즉시할인 종료 요청 body: {body}")
         return await self._call_api(
             "POST",
             "/v1/openapi/promotion/v1/OpenApiService/saveProductImmediateDiscount",
@@ -1022,17 +1072,9 @@ class LotteonClient:
         style_code = product.get("style_code", "") or product.get("styleCode", "") or ""
         origin = product.get("origin", "") or ""
 
-        # ── 스토어 즉시할인 + 이벤트 할인 역산 (마진 보존) ─────────────────────────
-        # 사용자 입력 sale_price를 고객 실결제 목표가로 간주.
-        # 25% 즉시할인 API + 자동 적용되는 이벤트 할인(L.TOWN/카드할인 등)을 함께 고려.
-        # _event_discount_pct 기본 12% — V2에서 동일 셀러 PBF benefits 기반 동적 주입 예정.
-        discount_rate = product.get("_discount_rate", 0)
-        if discount_rate:
-            event_pct = int(product.get("_event_discount_pct", 12))
-            total_pct = int(discount_rate) + max(0, min(30, event_pct))
-            denom = max(10, 100 - total_pct)
-            desired_price = math.ceil(sale_price / 300) * 300
-            sale_price = desired_price * 100 // denom
+        # 즉시할인 미적용 — sale_price 그대로 등록.
+        # (이전: 25% + 이벤트 12% 역산으로 등록가를 부풀려 결제가가 의도와 어긋남.
+        #  팀장 결정으로 즉시할인 자체 사용 안 함, 끝자리 1원 단위는 calc_market_price에서 100원 내림으로 정리.)
 
         # ── 재고 / 배송비 ───────────────────────────────────────────
         # _stock_quantity: 양수면 옵션별 상한(cap)으로만 동작.

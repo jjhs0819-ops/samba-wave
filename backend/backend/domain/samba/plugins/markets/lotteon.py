@@ -1138,22 +1138,8 @@ class LotteonPlugin(MarketPlugin):
                     # account.additional_fields에서 직접 로드해야 함.
                     _acc_extras = getattr(account, "additional_fields", None) or {}
 
-                    # ── 스토어 즉시할인 + 이벤트 할인 역산 (오토튠 경로 마진 보존) ──
-                    # 경량 경로는 transform_product를 건너뛰므로 동일 공식을 여기에도 적용.
-                    # 이벤트 할인율 우선순위: product._event_discount_pct (V2) → account.eventDiscountPct → 12
-                    _acc_discount_rate = int(_acc_extras.get("discountRate") or 0)
-                    if _acc_discount_rate > 0 and _raw_price > 0:
-                        _event_pct = int(
-                            product.get("_event_discount_pct")
-                            or _acc_extras.get("eventDiscountPct")
-                            or 12
-                        )
-                        _total_pct = 25 + max(0, min(30, _event_pct))
-                        _denom = max(10, 100 - _total_pct)
-                        _desired = math.ceil(_raw_price / 300) * 300
-                        new_price = _desired * 100 // _denom
-                    else:
-                        new_price = _raw_price
+                    # 즉시할인 미적용 — sale_price 그대로 등록 (팀장 결정).
+                    new_price = _raw_price
                     try:
                         _max_stock_per_opt = int(_acc_extras.get("stockQuantity") or 0)
                     except (ValueError, TypeError):
@@ -1457,18 +1443,9 @@ class LotteonPlugin(MarketPlugin):
             product_copy["_as_phone"] = extras["asPhone"]
         if extras.get("asMessage"):
             product_copy["_as_message"] = extras["asMessage"]
-        # 스토어 즉시할인: 활성화 시 25% 고정 (proxy에서 판매가 역산, 마진 보존)
-        # 사용자 입력값(예: 10%)은 활성화 여부로만 사용. 실제 할인율은 25% 강제.
-        # 이벤트 할인율(eventDiscountPct)은 역산 시 추가로 고려 — 없으면 proxy에서 기본 12% 사용
-        if int(extras.get("discountRate") or 0) > 0:
-            product_copy["_discount_rate"] = 25
-            if extras.get("eventDiscountPct") is not None:
-                try:
-                    product_copy["_event_discount_pct"] = int(
-                        extras["eventDiscountPct"]
-                    )
-                except (TypeError, ValueError):
-                    pass
+        # 스토어 즉시할인: UI 입력값 무시 — 팀장 결정으로 즉시할인 자체 사용 안 함.
+        # (이전: 25% 하드코딩 + 12% 이벤트 할인 역산으로 결제가가 의도와 어긋남.
+        #  복잡도 대비 효과 부족 + 끝자리 1원 단위 발생으로 단순화.)
         if extras.get("returnFee"):
             product_copy["_return_fee"] = int(extras["returnFee"])
         if extras.get("exchangeFee"):
@@ -2397,16 +2374,7 @@ class LotteonPlugin(MarketPlugin):
         """등록/수정 후 프로모션 설정 — 실패해도 결과에 영향 없음."""
 
         # ── 즉시할인 ───────────────────────────────────────────────────
-        # 활성화 시 25% 고정 (판매가는 proxy에서 ×4/3 역산 → 마진 보존).
-        # 스마트스토어와 동일 정책 (proxy/smartstore.py:1745 참조).
-        if int(extras.get("discountRate") or 0) > 0:
-            try:
-                resp = await client.save_immediate_discount(
-                    spd_no, 25, is_update=is_update
-                )
-                logger.info(f"[롯데ON] 즉시할인 설정 완료: 25% (고정) → {resp}")
-            except Exception as e:
-                logger.warning(f"[롯데ON] 즉시할인 설정 실패 (무시): {e}")
+        # 팀장 결정으로 즉시할인 미사용 (sale_price 그대로 등록, 추가 할인 없음).
 
         # ── 행사 제외 설정 ──────────────────────────────────────────────
         # 설정값 Y/N → API값 AGR(제외)/NXCLD(제외안함) 변환
