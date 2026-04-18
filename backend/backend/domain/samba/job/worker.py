@@ -1245,7 +1245,9 @@ class JobWorker:
                             await asyncio.sleep(rle.retry_after)
                         return None
                     except Exception as e:
-                        logger.warning(f"[잡워커] 수집 실패 {goods_no}: {e}")
+                        logger.warning(
+                            f"[잡워커] 수집 실패 {goods_no}: {type(e).__name__}: {e}"
+                        )
                         return None
 
             _collect_results = await asyncio.gather(

@@ -6,6 +6,7 @@ proxy-server.mjs의 무신사 관련 로직을 Python으로 포팅.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
@@ -972,7 +973,9 @@ class MusinsaClient:
                                         ),
                                     }
                 except Exception as inv_err:
-                    logger.warning(f"[재고] {goods_no} 재고 API 실패 (무시): {inv_err}")
+                    logger.warning(
+                        f"[재고] {goods_no} 재고 API 실패 (무시): {type(inv_err).__name__}: {inv_err}"
+                    )
 
             # 옵션 정리 — preorder/품절 등 salePrice=0인 경우 normalPrice 폴백
             base_price = (
@@ -1047,7 +1050,9 @@ class MusinsaClient:
                 )
 
         except Exception as exc:
-            logger.warning(f"[옵션] {goods_no} 옵션 수집 실패: {exc}")
+            logger.warning(
+                f"[옵션] {goods_no} 옵션 수집 실패: {type(exc).__name__}: {exc}"
+            )
 
         return options, option_value_no_map
 
@@ -1443,6 +1448,7 @@ class MusinsaClient:
                         params={**base_params, "category": mid_code},
                         headers=self._headers(),
                     )
+                    await asyncio.sleep(0.3)
                     sub_cats = []
                     if resp2.status_code == 200:
                         for d1 in (
@@ -1474,6 +1480,7 @@ class MusinsaClient:
                                 },
                                 headers=self._headers(),
                             )
+                            await asyncio.sleep(0.3)
                             cnt = 0
                             if resp3.status_code == 200:
                                 cnt = (
@@ -1513,6 +1520,7 @@ class MusinsaClient:
                             },
                             headers=self._headers(),
                         )
+                        await asyncio.sleep(0.3)
                         cnt = 0
                         if resp3.status_code == 200:
                             cnt = (
