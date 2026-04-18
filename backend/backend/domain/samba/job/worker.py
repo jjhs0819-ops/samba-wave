@@ -1579,9 +1579,51 @@ class JobWorker:
         _rate_limited = False
         svc = _get_services(session)
 
-        # ── 1단계: 전체 검색 페이지 순회 (상세수집 없이 goodsNo만 수집) ──────────
-        # 상세수집을 검색 루프에서 분리해 Musinsa 스로틀링 방지
-        all_targets: list[str] = []
+        # 검색+상세수집 인터리빙 — 페이지마다 상세수집 후 다음 검색
+        # (2단계 분리는 상세수집 연속 요청으로 IP 차단 심화)
+        _collect_sem = asyncio.Semaphore(SITE_CONCURRENCY.get("MUSINSA", 5))
+        _shared_http = _httpx.AsyncClient(timeout=_httpx.Timeout(30, connect=5.0))
+
+        async def _fetch_detail_brand(goods_no: str) -> dict | None:
+            nonlocal total_skipped, _rate_limited, _collected_sold_out
+            if _rate_limited:
+                return None
+            async with _collect_sem:
+                try:
+                    detail = await client.get_goods_detail(
+                        goods_no, _shared_client=_shared_http
+                    )
+                    if not detail or not detail.get("name"):
+                        return None
+                    _is_sold = detail.get("saleStatus") == "sold_out" or detail.get(
+                        "isOutOfStock"
+                    )
+                    if _is_sold:
+                        if not _include_sold_out:
+                            total_skipped += 1
+                            return None
+                        _collected_sold_out += 1
+                    if _exclude_preorder and detail.get("saleStatus") == "preorder":
+                        total_skipped += 1
+                        return None
+                    if _exclude_boutique and detail.get("isBoutique"):
+                        total_skipped += 1
+                        return None
+                    return {"goods_no": goods_no, "detail": detail}
+                except RateLimitError as rle:
+                    current = _site_intervals.get(_ik, 1.0)
+                    _site_intervals[_ik] = min(30.0, current * 2)
+                    _site_consecutive_errors[_ik] = (
+                        _site_consecutive_errors.get("MUSINSA", 0) + 1
+                    )
+                    if _site_consecutive_errors[_ik] >= 5:
+                        _rate_limited = True
+                    if rle.retry_after > 0:
+                        await asyncio.sleep(rle.retry_after)
+                    return None
+                except Exception as e:
+                    logger.warning(f"[잡워커] 브랜드전체수집 상세 실패 {goods_no}: {e}")
+                    return None
 
         while search_page <= max_pages:
             from backend.domain.samba.emergency import (
@@ -1602,6 +1644,7 @@ class JobWorker:
                 except Exception:
                     pass
                 clear_collect_cancel()
+                await _shared_http.aclose()
                 return
 
             # 검색 요청 — 최대 3회 재시도
@@ -1655,199 +1698,114 @@ class JobWorker:
                 search_page += 1
                 continue
 
-            # goodsNo 추출 + dedup (상세수집은 하지 않음)
+            # goodsNo 추출 + dedup
+            _page_targets = []
             for item in search_items:
                 spid = str(item.get("siteProductId", item.get("goodsNo", "")))
                 if spid and spid not in existing_ids:
-                    all_targets.append(spid)
+                    _page_targets.append(spid)
 
-            _add_job_log(
-                job.id,
-                f"[브랜드전체수집] p{search_page}/{max_pages} 완료 — 신규 {len(all_targets):,}건 누적",
-                job_type="collect",
-            )
+            if not _page_targets:
+                await asyncio.sleep(1.0)
+                search_page += 1
+                continue
+
+            # 이 페이지 상세수집 — as_completed로 완료 순서대로 즉시 저장
+            tasks = [
+                asyncio.create_task(_fetch_detail_brand(gn)) for gn in _page_targets
+            ]
+            for _fut in asyncio.as_completed(tasks):
+                item = await _fut
+                if item is None:
+                    continue
+                goods_no = item["goods_no"]
+                detail = item["detail"]
+
+                cat_code = detail.get("categoryCode", "")
+                filter_id = cat_filter_map.get(cat_code)
+                if not filter_id:
+                    _cat_raw = detail.get("category_raw") or {}
+                    for _depth in [
+                        "categoryDepth3Code",
+                        "categoryDepth2Code",
+                        "categoryDepth1Code",
+                    ]:
+                        _c = _cat_raw.get(_depth, "")
+                        if _c and _c in cat_filter_map:
+                            filter_id = cat_filter_map[_c]
+                            break
+
+                if not filter_id:
+                    total_unmatched += 1
+                    logger.debug(
+                        f"[잡워커] 브랜드전체수집 카테고리 미매핑: {goods_no} cat={cat_code}"
+                    )
+                    continue
+
+                if _use_max_discount:
+                    _raw_cost = detail.get("bestBenefitPrice")
+                    new_cost = (
+                        _raw_cost
+                        if (_raw_cost is not None and _raw_cost > 0)
+                        else (detail.get("salePrice") or 0)
+                    )
+                else:
+                    new_cost = detail.get("salePrice") or 0
+
+                raw_cat = detail.get("category", "") or ""
+                cat_parts = (
+                    [c.strip() for c in raw_cat.split(">") if c.strip()]
+                    if raw_cat
+                    else []
+                )
+                _sale_price = detail.get("salePrice", 0)
+                _original_price = detail.get("originalPrice", 0)
+                raw_detail_html = detail.get("detailHtml", "")
+                if not raw_detail_html:
+                    detail_imgs = detail.get("detailImages") or []
+                    if detail_imgs:
+                        raw_detail_html = "\n".join(
+                            f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
+                            for img in detail_imgs
+                        )
+
+                product_data = _build_product_data(
+                    detail,
+                    goods_no,
+                    filter_id,
+                    "MUSINSA",
+                    new_cost,
+                    _sale_price,
+                    _original_price,
+                    raw_cat,
+                    cat_parts,
+                    raw_detail_html,
+                )
+                await svc.create_collected_product(product_data)
+                existing_ids.add(goods_no)
+                total_saved += 1
+                _collect_last_progress[job.id] = _time.time()
+
+                _m_brand = detail.get("brand", "") or ""
+                _m_name = (detail.get("name", "") or "")[:20]
+                _add_job_log(
+                    job.id,
+                    f"[{total_saved:,}/{_total_count:,}] {_m_brand} {_m_name} {goods_no}",
+                    job_type="collect",
+                )
+                if total_saved % 10 == 0:
+                    await repo.update_progress(job.id, total_saved, _total_count or 1)
+
+            if _rate_limited:
+                await _shared_http.aclose()
+                await repo.fail_job(job.id, "소싱처 차단 (연속 rate limit)")
+                return
 
             await asyncio.sleep(_site_intervals.get(_ik, 0))
             await asyncio.sleep(1.0)  # 페이지 간 스로틀링 방지
             search_page += 1
 
-        # ── 2단계: 수집된 goodsNo 전체 상세 수집 + 저장 ────────────────────────
-        if not all_targets:
-            _add_job_log(
-                job.id,
-                "[브랜드전체수집] 신규 상품 없음 (이미 모두 수집됨)",
-                job_type="collect",
-            )
-        else:
-            _add_job_log(
-                job.id,
-                f"[브랜드전체수집] 검색 완료 — {len(all_targets):,}건 상세 수집 시작",
-                job_type="collect",
-            )
-            await repo.update_progress(job.id, 0, len(all_targets))
-
-            _collect_sem = asyncio.Semaphore(SITE_CONCURRENCY.get("MUSINSA", 5))
-            _shared_http = _httpx.AsyncClient(timeout=_httpx.Timeout(30, connect=5.0))
-
-            async def _fetch_detail_brand(goods_no: str) -> dict | None:
-                nonlocal total_skipped, _rate_limited, _collected_sold_out
-                if _rate_limited:
-                    return None
-                async with _collect_sem:
-                    try:
-                        detail = await client.get_goods_detail(
-                            goods_no, _shared_client=_shared_http
-                        )
-                        if not detail or not detail.get("name"):
-                            return None
-                        _is_sold = detail.get("saleStatus") == "sold_out" or detail.get(
-                            "isOutOfStock"
-                        )
-                        if _is_sold:
-                            if not _include_sold_out:
-                                total_skipped += 1
-                                return None
-                            _collected_sold_out += 1
-                        if _exclude_preorder and detail.get("saleStatus") == "preorder":
-                            total_skipped += 1
-                            return None
-                        if _exclude_boutique and detail.get("isBoutique"):
-                            total_skipped += 1
-                            return None
-                        return {"goods_no": goods_no, "detail": detail}
-                    except RateLimitError as rle:
-                        current = _site_intervals.get(_ik, 1.0)
-                        _site_intervals[_ik] = min(30.0, current * 2)
-                        _site_consecutive_errors[_ik] = (
-                            _site_consecutive_errors.get("MUSINSA", 0) + 1
-                        )
-                        if _site_consecutive_errors[_ik] >= 5:
-                            _rate_limited = True
-                        if rle.retry_after > 0:
-                            await asyncio.sleep(rle.retry_after)
-                        return None
-                    except Exception as e:
-                        logger.warning(
-                            f"[잡워커] 브랜드전체수집 상세 실패 {goods_no}: {e}"
-                        )
-                        return None
-
-            # 100개씩 배치 처리 — 메모리·취소 대응
-            _BATCH = 100
-            for _b_start in range(0, len(all_targets), _BATCH):
-                if _rate_limited:
-                    break
-
-                if (
-                    is_collect_cancel_requested()
-                    or is_emergency_stopped()
-                    or await repo.is_cancelled(job.id)
-                ):
-                    _add_job_log(
-                        job.id, "[브랜드전체수집] 수집 취소됨", job_type="collect"
-                    )
-                    try:
-                        await repo.cancel_job(job.id)
-                        await session.commit()
-                    except Exception:
-                        pass
-                    clear_collect_cancel()
-                    return
-
-                batch = all_targets[_b_start : _b_start + _BATCH]
-                collect_results = await asyncio.gather(
-                    *[_fetch_detail_brand(gn) for gn in batch]
-                )
-
-                for item in collect_results:
-                    if item is None:
-                        continue
-                    goods_no = item["goods_no"]
-                    detail = item["detail"]
-
-                    # categoryCode depth 폴백으로 filter_id 결정
-                    cat_code = detail.get("categoryCode", "")
-                    filter_id = cat_filter_map.get(cat_code)
-                    if not filter_id:
-                        _cat_raw = detail.get("category_raw") or {}
-                        for _depth in [
-                            "categoryDepth3Code",
-                            "categoryDepth2Code",
-                            "categoryDepth1Code",
-                        ]:
-                            _c = _cat_raw.get(_depth, "")
-                            if _c and _c in cat_filter_map:
-                                filter_id = cat_filter_map[_c]
-                                break
-
-                    if not filter_id:
-                        total_unmatched += 1
-                        logger.debug(
-                            f"[잡워커] 브랜드전체수집 카테고리 미매핑: {goods_no} cat={cat_code}"
-                        )
-                        continue
-
-                    if _use_max_discount:
-                        _raw_cost = detail.get("bestBenefitPrice")
-                        new_cost = (
-                            _raw_cost
-                            if (_raw_cost is not None and _raw_cost > 0)
-                            else (detail.get("salePrice") or 0)
-                        )
-                    else:
-                        new_cost = detail.get("salePrice") or 0
-
-                    raw_cat = detail.get("category", "") or ""
-                    cat_parts = (
-                        [c.strip() for c in raw_cat.split(">") if c.strip()]
-                        if raw_cat
-                        else []
-                    )
-                    _sale_price = detail.get("salePrice", 0)
-                    _original_price = detail.get("originalPrice", 0)
-                    raw_detail_html = detail.get("detailHtml", "")
-                    if not raw_detail_html:
-                        detail_imgs = detail.get("detailImages") or []
-                        if detail_imgs:
-                            raw_detail_html = "\n".join(
-                                f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
-                                for img in detail_imgs
-                            )
-
-                    product_data = _build_product_data(
-                        detail,
-                        goods_no,
-                        filter_id,
-                        "MUSINSA",
-                        new_cost,
-                        _sale_price,
-                        _original_price,
-                        raw_cat,
-                        cat_parts,
-                        raw_detail_html,
-                    )
-                    await svc.create_collected_product(product_data)
-                    existing_ids.add(goods_no)
-                    total_saved += 1
-                    _collect_last_progress[job.id] = _time.time()
-
-                    _m_brand = detail.get("brand", "") or ""
-                    _m_name = (detail.get("name", "") or "")[:20]
-                    _add_job_log(
-                        job.id,
-                        f"[{total_saved:,}/{len(all_targets):,}] {_m_brand} {_m_name} {goods_no}",
-                        job_type="collect",
-                    )
-                    if total_saved % 10 == 0:
-                        await repo.update_progress(
-                            job.id, total_saved, len(all_targets)
-                        )
-
-            await _shared_http.aclose()
-
-            if _rate_limited:
-                await repo.fail_job(job.id, "소싱처 차단 (연속 rate limit)")
-                return
+        await _shared_http.aclose()
 
         # 각 SearchFilter의 requested_count를 실제 수집수로 갱신
         for f in filters:
