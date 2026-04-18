@@ -461,7 +461,7 @@ export default function ShipmentsPage() {
       const acc = accounts.find(a => a.id === aid)
       return acc ? `${acc.market_name}(${acc.seller_id || '-'})` : aid
     }).join(', ')
-    if (!await showConfirm(`${targetProducts.length}개 상품을 ${targetLabels || '선택 계정'}에서 마켓삭제하시겠습니까?`)) return
+    if (!await showConfirm(`${fmtNum(targetProducts.length)}개 상품을 ${targetLabels || '선택 계정'}에서 마켓삭제하시겠습니까?`)) return
 
     setDeleting(true)
     const ts = fmtTime
@@ -583,7 +583,7 @@ export default function ShipmentsPage() {
     const effectiveDeleteList = [...effectiveDeleteAccIds]
     const targetLabels = effectiveDeleteList.map(aid => accLabelMap[aid] || aid).join(', ')
 
-    if (!await showConfirm(`검색결과 ${targetProducts.length}개 상품을 ${targetLabels || '선택 계정'}에서 마켓삭제하시겠습니까?`)) return
+    if (!await showConfirm(`검색결과 ${fmtNum(targetProducts.length)}개 상품을 ${targetLabels || '선택 계정'}에서 마켓삭제하시겠습니까?`)) return
 
     // 비상정지 해제
     try {

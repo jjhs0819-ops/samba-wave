@@ -970,7 +970,7 @@ export default function CategoriesPage() {
         <span style={{ fontSize: '0.8125rem', color: '#FF8C00', fontWeight: 600 }}>AI 비용</span>
         <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>
           예상 <span style={{ color: '#FFB84D', fontWeight: 700 }}>₩{fmtNum(costEstimate.cost)}</span>
-          <span style={{ color: '#888' }}> ({costEstimate.calls}회)</span>
+          <span style={{ color: '#888' }}> ({fmtNum(costEstimate.calls)}회)</span>
         </span>
         {lastAiUsage && (
           <>
@@ -1541,15 +1541,15 @@ export default function CategoriesPage() {
                   {/* 요약 카드 */}
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem' }}>
                     <div style={{ padding: '1rem', background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)', borderRadius: '8px', textAlign: 'center' }}>
-                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#22C55E' }}>{bulkResult.mapped}</div>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#22C55E' }}>{fmtNum(bulkResult.mapped)}</div>
                       <div style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.25rem' }}>신규 매핑</div>
                     </div>
                     <div style={{ padding: '1rem', background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.25)', borderRadius: '8px', textAlign: 'center' }}>
-                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#3B82F6' }}>{bulkResult.updated}</div>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#3B82F6' }}>{fmtNum(bulkResult.updated)}</div>
                       <div style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.25rem' }}>마켓 보충</div>
                     </div>
                     <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', border: '1px solid #2D2D2D', borderRadius: '8px', textAlign: 'center' }}>
-                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#888' }}>{bulkResult.skipped}</div>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#888' }}>{fmtNum(bulkResult.skipped)}</div>
                       <div style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.25rem' }}>건너뜀</div>
                     </div>
                   </div>

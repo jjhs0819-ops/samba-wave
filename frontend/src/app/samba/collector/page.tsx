@@ -234,8 +234,7 @@ export default function CollectorPage() {
           collectLogSinceRef.current = 0
           return
         }
-        // 수동 수집 중에는 addLog가 직접 UI 업데이트 — 링버퍼 중복 표시 방지
-        if (data.logs.length > 0 && !manualCollectRef.current) {
+        if (data.logs.length > 0) {
           setCollectLog(prev => [...prev, ...data.logs].slice(-30))
           setTimeout(() => {
             if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
@@ -524,7 +523,7 @@ export default function CollectorPage() {
       ? new Set([...selectedIds].filter(id => displayedIds.has(id)))
       : displayedIds
     if (baseIds.size === 0) {
-      showAlert(`삭제 대상이 없습니다. (selectedIds=${selectedIds.size}, displayed=${displayedFilters.length}, drillBrand=${drillBrand || '없음'})`)
+      showAlert(`삭제 대상이 없습니다. (selectedIds=${fmtNum(selectedIds.size)}, displayed=${fmtNum(displayedFilters.length)}, drillBrand=${drillBrand || '없음'})`)
       return
     }
 
@@ -595,7 +594,12 @@ export default function CollectorPage() {
       : selectedIds.size > 0
         ? displayedFilters.filter(f => selectedIds.has(f.id))
         : displayedFilters
-    const sortedTargetFilters = [...targetFilters].sort((a, b) => (b.requested_count || 0) - (a.requested_count || 0))
+    const sortedTargetFilters = [...targetFilters].sort((a, b) => {
+      const remB = (b.requested_count || 0) - ((b as unknown as Record<string, number>).collected_count || 0)
+      const remA = (a.requested_count || 0) - ((a as unknown as Record<string, number>).collected_count || 0)
+      if (remB !== remA) return remB - remA
+      return (b.requested_count || 0) - (a.requested_count || 0)
+    })
     const targetIds = sortedTargetFilters.map(f => f.id)
     if (targetIds.length === 0) {
       addLog("수집할 그룹이 없습니다.")
@@ -603,90 +607,124 @@ export default function CollectorPage() {
     }
     const totalReq = targetFilters.reduce((s, f) => s + (f.requested_count || 0), 0)
     const label = selectedIds.size > 0 ? '선택된' : drillGroup ? '선택된' : '표시된'
-    const ok = await showConfirm(`${label} ${fmtNum(targetIds.length)}개 그룹 상품수집을 시작하시겠습니까?\n(요청 ${fmtNum(totalReq)}건, 중복 상품은 자동 스킵)`)
+    // 무신사 단일 브랜드이면 brand-collect-all 단일 Job으로 처리
+    const _allMusinsa = sortedTargetFilters.every(f => f.source_site === 'MUSINSA')
+    const _musinsaBrand = _allMusinsa && sortedTargetFilters.length > 0
+      ? (() => { try { return new URL(sortedTargetFilters[0].keyword || '').searchParams.get('brand') || '' } catch { return '' } })()
+      : ''
+    const _sameBrand = _musinsaBrand && sortedTargetFilters.every(f => {
+      try { return new URL(f.keyword || '').searchParams.get('brand') === _musinsaBrand } catch { return false }
+    })
+
+    const ok = await showConfirm(
+      _sameBrand
+        ? `${label} ${fmtNum(targetIds.length)}개 그룹 브랜드 전체수집을 시작하시겠습니까?`
+        : `${label} ${fmtNum(targetIds.length)}개 그룹 상품수집을 시작하시겠습니까?\n(요청 ${fmtNum(totalReq)}건, 중복 상품은 자동 스킵)`
+    )
     if (!ok) return
     const abort = new AbortController()
     collectAbortRef.current = abort
     manualCollectRef.current = true
     setCollecting(true)
-    addLog(`${fmtNum(targetIds.length)}개 그룹 상품수집 시작...`)
 
-    for (let gi = 0; gi < targetIds.length; gi++) {
-      const id = targetIds[gi]
-      if (abort.signal.aborted) break
-      const f = filters.find((x) => x.id === id)
-      if (!f) continue
-      const gp = `[${gi + 1}/${targetIds.length}]`
-      // 그룹 전환 시 렌더링 보장
-      await new Promise(r => setTimeout(r, 100))
-      addLog(`${gp} [${f.name}] 수집 요청 중...`)
-
+    if (_sameBrand) {
+      // 무신사 브랜드 전체수집 — 단일 Job
+      const _searchKeyword = (() => { try { return new URL(sortedTargetFilters[0].keyword || '').searchParams.get('keyword') || _musinsaBrand } catch { return _musinsaBrand } })()
+      addLog(`[브랜드전체수집] '${_searchKeyword}' ${fmtNum(targetIds.length)}개 그룹 단일 Job 시작...`)
       try {
-        // Job 생성
-        const res = await fetchWithAuth(
-          `${API_BASE}/api/v1/samba/collector/collect-filter/${id}?group_index=${gi + 1}&group_total=${targetIds.length}`,
-          { method: 'POST' }
-        )
-        if (!res.ok) {
-          const errData = await res.json().catch(() => null)
-          addLog(`[${f.name}] 수집 실패: ${errData?.detail || `HTTP ${res.status}`}`)
-          continue
-        }
-        const { job_id } = await res.json() as { job_id: string }
-        // 수집 시작 로그 생략
-
-        // 폴링으로 진행률 추적
-        let lastCurrent = 0
-        while (!abort.signal.aborted) {
-          await new Promise(r => setTimeout(r, 1000))
-          if (abort.signal.aborted) break
-
-          try {
-            const jobRes = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
-            if (!jobRes.ok) break
-            const job = await jobRes.json() as {
-              status: string; current: number; total: number
-              progress: number; result?: { saved?: number; skipped?: number; policy?: string; message?: string; in_stock_count?: number; sold_out_count?: number }
-              error?: string
-            }
-
-            if (job.current > lastCurrent) {
-              addLog(`${gp} [${f.name}] [${fmtNum(job.current)}/${fmtNum(job.total)}] 수집 중... (${job.progress}%)`)
-              lastCurrent = job.current
-              load()
-            }
-
-            if (job.status === 'completed') {
-              const saved = job.result?.saved ?? 0
-              const skipped = job.result?.skipped ?? 0
-              const policy = job.result?.policy || ''
-              const inStock = job.result?.in_stock_count ?? 0
-              const soldOut = job.result?.sold_out_count ?? 0
-              const parts = [`신규 ${fmtNum(saved)}건`]
-              if (inStock > 0 || soldOut > 0) parts.push(`재고 ${fmtNum(inStock)}건 | 품절 ${fmtNum(soldOut)}건`)
-              if (skipped > 0) parts.push(`중복/스킵 ${fmtNum(skipped)}건`)
-              if (policy) parts.push(policy)
-              addLog(`${gp} [${f.name}] 수집 완료: ${parts.join(' | ')}`)
-              await new Promise(r => setTimeout(r, 100))
+        const r = await fetchWithAuth(`${API_BASE}/api/v1/samba/collector/brand-collect-all`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filter_ids: targetIds,
+            source_site: 'MUSINSA',
+            keyword: _searchKeyword,
+            brand: _musinsaBrand,
+            gf: (() => { try { return new URL(sortedTargetFilters[0].keyword || '').searchParams.get('gf') || 'A' } catch { return 'A' } })(),
+            exclude_preorder: checkedOptions.excludePreorder ?? true,
+            exclude_boutique: checkedOptions.excludeBoutique ?? true,
+            use_max_discount: checkedOptions.maxDiscount ?? false,
+            include_sold_out: checkedOptions.includeSoldOut ?? false,
+          }),
+        })
+        if (!r.ok) {
+          addLog(`[브랜드전체수집] 시작 실패: HTTP ${r.status}`)
+        } else {
+          const { job_id } = await r.json() as { job_id: string }
+          addLog(`[브랜드전체수집] Job 생성 완료 — 백그라운드 실행 중 (페이지 이탈해도 계속 수집됩니다)`)
+          while (!abort.signal.aborted) {
+            await new Promise(resolve => setTimeout(resolve, 2000))
+            if (abort.signal.aborted) break
+            const jr = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
+            if (!jr.ok) break
+            const jobData = await jr.json() as { status: string; result?: Record<string, number>; error?: string }
+            if (jobData.status === 'completed') {
+              addLog(`[브랜드전체수집] 완료 — 저장 ${fmtNum(jobData.result?.saved ?? 0)}건`)
               break
             }
-            if (job.status === 'failed') {
-              addLog(`${gp} [${f.name}] 수집 실패: ${job.error || '알 수 없는 오류'}`)
-              await new Promise(r => setTimeout(r, 100))
+            if (jobData.status === 'failed') {
+              addLog(`[브랜드전체수집] 실패: ${jobData.error || '오류'}`)
               break
             }
-          } catch {
-            // 네트워크 오류 시 재시도
           }
         }
-      } catch (e) {
-        addLog(`${gp} [${f.name}] 수집 오류: ${(e as Error).message}`)
+      } catch (e) { addLog(`[브랜드전체수집] 오류: ${(e as Error).message}`) }
+    } else {
+      // 기타 소싱처 — 기존 순차 Job 루프
+      addLog(`${fmtNum(targetIds.length)}개 그룹 상품수집 시작...`)
+      for (let gi = 0; gi < targetIds.length; gi++) {
+        const id = targetIds[gi]
+        if (abort.signal.aborted) break
+        const f = filters.find((x) => x.id === id)
+        if (!f) continue
+        const gp = `[${gi + 1}/${targetIds.length}]`
+        await new Promise(r => setTimeout(r, 100))
+        try {
+          const res = await fetchWithAuth(
+            `${API_BASE}/api/v1/samba/collector/collect-filter/${id}?group_index=${gi + 1}&group_total=${targetIds.length}`,
+            { method: 'POST' }
+          )
+          if (!res.ok) {
+            const errData = await res.json().catch(() => null)
+            addLog(`[${f.name}] 수집 실패: ${errData?.detail || `HTTP ${res.status}`}`)
+            continue
+          }
+          const { job_id } = await res.json() as { job_id: string }
+          let lastCurrent = 0
+          while (!abort.signal.aborted) {
+            await new Promise(r => setTimeout(r, 1000))
+            if (abort.signal.aborted) break
+            try {
+              const jobRes = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
+              if (!jobRes.ok) break
+              const job = await jobRes.json() as {
+                status: string; current: number; total: number
+                progress: number; result?: { saved?: number; skipped?: number; policy?: string; in_stock_count?: number; sold_out_count?: number }
+                error?: string
+              }
+              if (job.current > lastCurrent) { lastCurrent = job.current; load() }
+              if (job.status === 'completed') {
+                const saved = job.result?.saved ?? 0
+                const skipped = job.result?.skipped ?? 0
+                const policy = job.result?.policy || ''
+                const inStock = job.result?.in_stock_count ?? 0
+                const soldOut = job.result?.sold_out_count ?? 0
+                const parts = [`신규 ${fmtNum(saved)}건`]
+                if (inStock > 0 || soldOut > 0) parts.push(`재고 ${fmtNum(inStock)}건 | 품절 ${fmtNum(soldOut)}건`)
+                if (skipped > 0) parts.push(`중복/스킵 ${fmtNum(skipped)}건`)
+                if (policy) parts.push(policy)
+                break
+              }
+              if (job.status === 'failed') { addLog(`${gp} [${f.name}] 수집 실패: ${job.error || '알 수 없는 오류'}`); break }
+            } catch { /* 재시도 */ }
+          }
+        } catch (e) { addLog(`${gp} [${f.name}] 수집 오류: ${(e as Error).message}`) }
       }
     }
+
     manualCollectRef.current = false
     setCollecting(false)
     collectAbortRef.current = null
-    // 수집 완료 후 수집한 그룹만 요청수→수집수 동기화
     await syncRequestedCounts(targetIds)
     load(); loadTree()
   }
@@ -699,8 +737,9 @@ export default function CollectorPage() {
       const scope = groupIds
         ? latestFilters.filter((f: SambaSearchFilter) => groupIds.includes(f.id))
         : latestFilters
+      // collected_count가 requested_count보다 클 때만 요청수 상향 (절대 감소 금지)
       const mismatch = scope.filter(
-        (f: SambaSearchFilter) => !f.is_folder && (f.requested_count || 0) !== ((f as unknown as Record<string, number>).collected_count || 0)
+        (f: SambaSearchFilter) => !f.is_folder && ((f as unknown as Record<string, number>).collected_count || 0) > (f.requested_count || 0)
       )
       for (const f of mismatch) {
         const cc = (f as unknown as Record<string, number>).collected_count || 0
@@ -796,8 +835,8 @@ export default function CollectorPage() {
       setRefreshResult(result)
       setShowRefreshModal(true)
       addLog(
-        `갱신 완료: ${result.refreshed}건 갱신, ${result.changed}건 변동, ` +
-        `${result.sold_out}건 품절, ${result.retransmitted}건 재전송`
+        `갱신 완료: ${fmtNum(result.refreshed)}건 갱신, ${fmtNum(result.changed)}건 변동, ` +
+        `${fmtNum(result.sold_out)}건 품절, ${fmtNum(result.retransmitted)}건 재전송`
       )
       load(); loadTree()
     } catch (e) {
@@ -1435,7 +1474,7 @@ export default function CollectorPage() {
           <span style={{ fontSize: '0.8125rem', color: '#51CF66', fontWeight: 600 }}>AI 비용</span>
           {lastAiUsage ? (
             <>
-              <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>{lastAiUsage.calls}건</span>
+              <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>{fmtNum(lastAiUsage.calls)}건</span>
               <span style={{ fontSize: '0.78rem', color: '#888' }}>·</span>
               <span style={{ fontSize: '0.78rem', color: '#FFB84D' }}>₩{fmtNum(lastAiUsage.cost)}</span>
               <span style={{ fontSize: '0.7rem', color: '#555' }}>{lastAiUsage.date}</span>
@@ -1486,7 +1525,7 @@ export default function CollectorPage() {
               })}
             </select>
           )}
-          <span style={{ fontSize: '0.78rem', color: '#888' }}>({selectedIds.size}개 그룹)</span>
+          <span style={{ fontSize: '0.78rem', color: '#888' }}>({fmtNum(selectedIds.size)}개 그룹)</span>
           <button
             onClick={async () => {
               if (selectedIds.size === 0) { showAlert('검색그룹을 선택해주세요'); return }
@@ -1660,7 +1699,7 @@ export default function CollectorPage() {
                 if (totalTall > 0) summary.push(`긴이미지 ${fmtNum(totalTall)}장 제거`)
                 if (totalVisionRemoved > 0) summary.push(`CLIP ${fmtNum(totalVisionRemoved)}장 제거`)
                 const endTime = ts()
-                setAiJobTitle(`이미지 필터링 완료 (${success}/${totalProducts})`)
+                setAiJobTitle(`이미지 필터링 완료 (${fmtNum(success)}/${fmtNum(totalProducts)})`)
                 addLog(`\n완료: ${summary.join(' / ')}`)
                 addLog(`시작 ${startTime} → 종료 ${endTime}`)
               } catch (e) { addLog(`오류: ${e instanceof Error ? e.message : '오류'}`) }
@@ -1675,7 +1714,7 @@ export default function CollectorPage() {
             }}
             disabled={imgFiltering || selectedIds.size === 0}
             style={{ marginLeft: 'auto', background: imgFiltering ? '#333' : 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.35)', color: imgFiltering ? '#888' : '#818CF8', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', cursor: imgFiltering ? 'not-allowed' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
-          >{imgFiltering ? '필터링중...' : `필터링 실행 (${selectedIds.size}개)`}</button>
+          >{imgFiltering ? '필터링중...' : `필터링 실행 (${fmtNum(selectedIds.size)}개)`}</button>
         </div>
       </div>
 
@@ -1880,52 +1919,100 @@ export default function CollectorPage() {
                     if (updatedFilters.length > 0) {
                       const collectOk = await showConfirm(`${res.message}\n\n${fmtNum(updatedFilters.length)}개 그룹 상품수집을 시작하시겠습니까?`)
                       if (collectOk) {
-                        updatedFilters = [...updatedFilters].sort((a, b) => (b.requested_count || 0) - (a.requested_count || 0))
                         const abort = new AbortController()
                         collectAbortRef.current = abort
                         manualCollectRef.current = true
                         setCollecting(true)
-                        addLog(`${fmtNum(updatedFilters.length)}개 그룹 상품수집 시작...`)
-                        for (let gi = 0; gi < updatedFilters.length; gi++) {
-                          const f = updatedFilters[gi]
-                          if (abort.signal.aborted) break
-                          const gp = `[${gi + 1}/${updatedFilters.length}]`
-                          addLog(`${gp} [${f.name}] 수집 요청 중...`)
+
+                        // 무신사 브랜드 전체수집: 단일 Job으로 수집 후 카테고리 배분
+                        if (sourceSite === 'MUSINSA') {
+                          // SearchFilter URL에서 한글 keyword 추출 (예: 에잇세컨즈)
+                          let _searchKeyword = brand
+                          if (updatedFilters.length > 0) {
+                            try {
+                              const _p = new URL(updatedFilters[0].keyword || '')
+                              _searchKeyword = _p.searchParams.get('keyword') || brand
+                            } catch { /* fallback */ }
+                          }
+                          addLog(`[브랜드전체수집] '${_searchKeyword}' ${fmtNum(updatedFilters.length)}개 그룹 단일 Job 시작...`)
                           try {
-                            const r = await fetchWithAuth(`${API_BASE}/api/v1/samba/collector/collect-filter/${f.id}?group_index=${gi + 1}&group_total=${updatedFilters.length}`, { method: 'POST' })
-                            if (!r.ok) { addLog(`[${f.name}] 수집 실패: HTTP ${r.status}`); continue }
-                            const { job_id } = await r.json()
-                            // 수집 시작 로그 생략
-                            let lastCurrent = 0
-                            while (!abort.signal.aborted) {
-                              await new Promise(r => setTimeout(r, 1000))
-                              if (abort.signal.aborted) break
-                              const jr = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
-                              if (!jr.ok) break
-                              const job = await jr.json()
-                              if (job.current > lastCurrent) { addLog(`${gp} [${f.name}] [${fmtNum(job.current)}/${fmtNum(job.total)}] 수집 중... (${job.progress}%)`); lastCurrent = job.current }
-                              if (job.status === 'completed') {
-                                break
+                            const r = await fetchWithAuth(`${API_BASE}/api/v1/samba/collector/brand-collect-all`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                filter_ids: updatedFilters.map(f => f.id),
+                                source_site: 'MUSINSA',
+                                keyword: _searchKeyword,
+                                brand: brand,
+                                gf: gf,
+                                exclude_preorder: checkedOptions.excludePreorder ?? true,
+                                exclude_boutique: checkedOptions.excludeBoutique ?? true,
+                                use_max_discount: checkedOptions.maxDiscount ?? false,
+                                include_sold_out: checkedOptions.includeSoldOut ?? false,
+                              }),
+                            })
+                            if (!r.ok) {
+                              addLog(`[브랜드전체수집] 시작 실패: HTTP ${r.status}`)
+                            } else {
+                              const { job_id } = await r.json()
+                              addLog(`[브랜드전체수집] Job 생성 완료 — 백그라운드 실행 중 (페이지 이탈해도 계속 수집됩니다)`)
+                              while (!abort.signal.aborted) {
+                                await new Promise(resolve => setTimeout(resolve, 2000))
+                                if (abort.signal.aborted) break
+                                const jr = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
+                                if (!jr.ok) break
+                                const jobData = await jr.json() as { status: string; current: number; total: number; result?: Record<string, number>; error?: string }
+                                if (jobData.status === 'completed') {
+                                  addLog(`[브랜드전체수집] 완료 — 저장 ${fmtNum(jobData.result?.saved ?? 0)}건`)
+                                  break
+                                }
+                                if (jobData.status === 'failed') {
+                                  addLog(`[브랜드전체수집] 실패: ${jobData.error || '오류'}`)
+                                  break
+                                }
                               }
-                              if (job.status === 'failed') { addLog(`${gp} [${f.name}] 수집 실패: ${job.error || '오류'}`); break }
                             }
-                          } catch (e) { addLog(`${gp} [${f.name}] 수집 오류: ${(e as Error).message}`) }
+                          } catch (e) { addLog(`[브랜드전체수집] 오류: ${(e as Error).message}`) }
+                        } else {
+                          // 기타 소싱처: 기존 카테고리별 순차 수집
+                          updatedFilters = [...updatedFilters].sort((a, b) => {
+                            const remB = (b.requested_count || 0) - ((b as unknown as Record<string, number>).collected_count || 0)
+                            const remA = (a.requested_count || 0) - ((a as unknown as Record<string, number>).collected_count || 0)
+                            if (remB !== remA) return remB - remA
+                            return (b.requested_count || 0) - (a.requested_count || 0)
+                          })
+                          addLog(`${fmtNum(updatedFilters.length)}개 그룹 상품수집 시작...`)
+                          for (let gi = 0; gi < updatedFilters.length; gi++) {
+                            const f = updatedFilters[gi]
+                            if (abort.signal.aborted) break
+                            const gp = `[${gi + 1}/${updatedFilters.length}]`
+                            try {
+                              const r = await fetchWithAuth(`${API_BASE}/api/v1/samba/collector/collect-filter/${f.id}?group_index=${gi + 1}&group_total=${updatedFilters.length}`, { method: 'POST' })
+                              if (!r.ok) { addLog(`[${f.name}] 수집 실패: HTTP ${r.status}`); continue }
+                              const { job_id } = await r.json()
+                              while (!abort.signal.aborted) {
+                                await new Promise(r => setTimeout(r, 1000))
+                                if (abort.signal.aborted) break
+                                const jr = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
+                                if (!jr.ok) break
+                                const job = await jr.json()
+                                if (job.status === 'completed') break
+                                if (job.status === 'failed') { addLog(`${gp} [${f.name}] 수집 실패: ${job.error || '오류'}`); break }
+                              }
+                            } catch (e) { addLog(`${gp} [${f.name}] 수집 오류: ${(e as Error).message}`) }
+                          }
                         }
+
                         manualCollectRef.current = false
                         setCollecting(false)
                         await syncRequestedCounts(updatedFilters.map(f => f.id))
                         load(); loadTree()
                       }
                     }
-                  } catch (e) { showAlert(e instanceof Error ? e.message : '추가수집 실패', 'error') }
+                  } catch (e) { showAlert(e instanceof Error ? e.message : '수집 실패', 'error') }
                 }}
-                style={{
-                  background: 'rgba(81,207,102,0.1)', border: '1px solid rgba(81,207,102,0.35)',
-                  color: '#51CF66', padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem', cursor: 'pointer',
-                }}
-              >
-                추가수집
-              </button>
+                style={{ display: 'none' }}
+              >추가수집</button>
             <button
               disabled={tagPreviewLoading}
               onClick={async () => {
@@ -2177,7 +2264,7 @@ export default function CollectorPage() {
                         onMouseLeave={e => { if (drillBrand !== brand) e.currentTarget.style.background = 'transparent' }}
                       >
                         {brand}
-                        <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: '#FF8C00', fontWeight: 600 }}>{info.count}({fmtNum(info.collected)})</span>
+                        <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: '#FF8C00', fontWeight: 600 }}>{fmtNum(info.count)}({fmtNum(info.collected)})</span>
                       </div>
                     )) : <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8rem' }}>브랜드 없음</div>
                   ) : null}

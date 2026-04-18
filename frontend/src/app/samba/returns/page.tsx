@@ -211,7 +211,7 @@ export default function ReturnsPage() {
       showAlert('삭제할 항목을 선택해주세요', 'info')
       return
     }
-    if (!await showConfirm(`${selectedIds.size}건을 삭제하시겠습니까?`)) return
+    if (!await showConfirm(`${fmtNum(selectedIds.size)}건을 삭제하시겠습니까?`)) return
     let deleted = 0
     for (const id of selectedIds) {
       try {

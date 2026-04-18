@@ -190,19 +190,38 @@ async def get_collect_log_buffer(
 
     logs, current_idx = get_collect_logs(since_idx)
 
-    if current_idx == 0 and since_idx == 0:
+    if len(logs) == 0:
+        # 크로스 인스턴스 fallback: 실행 중인 collect job의 DB 로그 조회
+        # jsonb 캐스팅 오류 방지: left('[') 로 배열 여부 텍스트 레벨에서 먼저 확인
         result = await session.execute(
             _text(
                 "SELECT logs FROM samba_jobs"
-                " WHERE job_type='collect' AND logs IS NOT NULL"
-                " AND jsonb_array_length(logs::jsonb) > 0"
-                " ORDER BY created_at DESC LIMIT 1"
+                " WHERE job_type='collect' AND status='running'"
+                " AND logs IS NOT NULL"
+                " AND left(trim(logs::text), 1) = '['"
+                " ORDER BY started_at DESC LIMIT 1"
             )
         )
         row = result.first()
         if row and row[0]:
             db_logs = row[0] if isinstance(row[0], list) else []
-            return {"logs": db_logs[-300:], "current_idx": len(db_logs)}
+            if len(db_logs) > since_idx:
+                return {"logs": db_logs[since_idx:], "current_idx": len(db_logs)}
+
+        # 실행 중인 job 없으면 최근 완료 job fallback (since_idx=0일 때만)
+        if since_idx == 0:
+            result = await session.execute(
+                _text(
+                    "SELECT logs FROM samba_jobs"
+                    " WHERE job_type='collect' AND logs IS NOT NULL"
+                    " AND left(trim(logs::text), 1) = '['"
+                    " ORDER BY created_at DESC LIMIT 1"
+                )
+            )
+            row = result.first()
+            if row and row[0]:
+                db_logs = row[0] if isinstance(row[0], list) else []
+                return {"logs": db_logs[-300:], "current_idx": len(db_logs)}
 
     return {"logs": logs, "current_idx": current_idx}
 

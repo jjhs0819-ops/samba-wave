@@ -558,7 +558,7 @@ export default function ProductsPage() {
       mode,
       title: mode === 'single'
         ? `마켓삭제 - ${(targetProducts[0]?.name || targetProducts[0]?.id || '').slice(0, 20)}`
-        : `마켓삭제 (${targetProducts.length}건)`,
+        : `마켓삭제 (${fmt(targetProducts.length)}건)`,
       products: targetProducts,
       options,
       selectedAccountIds: options.map(option => option.accountId),
@@ -947,7 +947,7 @@ export default function ProductsPage() {
             <div style={{ flex: 1, overflow: 'auto', padding: '0', maxHeight: '50vh' }}>
               {refreshLoading ? (
                 <div style={{ padding: '40px 20px', textAlign: 'center', color: '#FFB84D', fontSize: '0.85rem' }}>
-                  갱신 중... ({selectedIds.size}건)
+                  갱신 중... ({fmt(selectedIds.size)}건)
                 </div>
               ) : (
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
@@ -1342,7 +1342,7 @@ export default function ProductsPage() {
         <span style={{ fontSize: '0.8125rem', color: '#51CF66', fontWeight: 600 }}>AI 비용</span>
         {lastAiUsage ? (
           <>
-            <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>{lastAiUsage.calls}건</span>
+            <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>{fmt(lastAiUsage.calls)}건</span>
             <span style={{ fontSize: '0.78rem', color: '#888' }}>·</span>
             <span style={{ fontSize: '0.78rem', color: '#FFB84D' }}>₩{fmt(lastAiUsage.cost)}</span>
             <span style={{ fontSize: '0.7rem', color: '#555' }}>{lastAiUsage.date}</span>
@@ -1779,7 +1779,7 @@ export default function ProductsPage() {
           <button
             onClick={async () => {
               if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
-              if (!await showConfirm(`${selectedIds.size}개 상품의 마켓 등록 정보를 초기화하시겠습니까?\n(마켓에서 이미 삭제된 상품의 등록 상태만 정리합니다)`)) return
+              if (!await showConfirm(`${fmt(selectedIds.size)}개 상품의 마켓 등록 정보를 초기화하시겠습니까?\n(마켓에서 이미 삭제된 상품의 등록 상태만 정리합니다)`)) return
               const ids = Array.from(selectedIds)
               setAiJobTitle(`강제삭제 (${ids.length}건)`)
               setAiJobLogs([`${ids.length}건 초기화 중...`])
@@ -1813,7 +1813,7 @@ export default function ProductsPage() {
               try {
                 const res = await collectorApi.refresh(ids)
                 setRefreshDetails(res.details ?? [])
-                setRefreshSummary(`${res.total}건 중 ${res.changed}건 변동, ${res.sold_out}건 품절${res.retransmitted ? `, ${res.retransmitted}건 재전송` : ''}, ${res.errors}건 에러`)
+                setRefreshSummary(`${fmt(res.total)}건 중 ${fmt(res.changed)}건 변동, ${fmt(res.sold_out)}건 품절${res.retransmitted ? `, ${fmt(res.retransmitted)}건 재전송` : ''}, ${fmt(res.errors)}건 에러`)
               } catch {
                 setRefreshSummary('갱신 실패')
               }

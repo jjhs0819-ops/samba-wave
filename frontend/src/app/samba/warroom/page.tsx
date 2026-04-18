@@ -881,7 +881,7 @@ export default function WarroomPage() {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#E5E5E5' }}>스토어 현황 분석</span>
-                <span style={{ fontSize: '0.7rem', color: '#666' }}>{tabAccounts.length}개 계정</span>
+                <span style={{ fontSize: '0.7rem', color: '#666' }}>{fmtNum(tabAccounts.length)}개 계정</span>
               </div>
               <button
                 onClick={async () => {
@@ -1023,10 +1023,10 @@ export default function WarroomPage() {
         <div style={card}>
           <div style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.5rem' }}>가격 변동</div>
           <div style={{ fontSize: '1.75rem', fontWeight: 700, color: '#FFD93D' }}>
-            {price_change_stats.changes_24h}건
+            {fmtNum(price_change_stats.changes_24h)}건
           </div>
           <div style={{ fontSize: '0.7rem', color: price_change_stats.avg_change_pct < 0 ? '#FF6B6B' : '#51CF66', marginTop: '0.25rem' }}>
-            평균 {price_change_stats.avg_change_pct > 0 ? '+' : ''}{price_change_stats.avg_change_pct}%
+            평균 {price_change_stats.avg_change_pct > 0 ? '+' : ''}{fmtNum(price_change_stats.avg_change_pct)}%
           </div>
         </div>
 
@@ -1034,7 +1034,7 @@ export default function WarroomPage() {
         <div style={card}>
           <div style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.5rem' }}>에러 상품</div>
           <div style={{ fontSize: '1.75rem', fontWeight: 700, color: refresh_stats.error_products > 0 ? '#FF6B6B' : '#51CF66' }}>
-            {refresh_stats.error_products}
+            {fmtNum(refresh_stats.error_products)}
           </div>
           <div style={{ fontSize: '0.7rem', color: '#888', marginTop: '0.25rem' }}>
             연속실패
@@ -1078,7 +1078,7 @@ export default function WarroomPage() {
                     {h.interval.toFixed(1)}s
                   </td>
                   <td style={{ padding: '0.4rem 0.5rem', textAlign: 'center', color: h.errors > 0 ? '#FF6B6B' : '#E5E5E5' }}>
-                    {h.errors}
+                    {fmtNum(h.errors)}
                   </td>
                   <td style={{ padding: '0.4rem 0.5rem', textAlign: 'center', color: '#E5E5E5' }}>
                     {h.latency_ms != null ? `${h.latency_ms}ms` : '-'}

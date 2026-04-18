@@ -7,6 +7,7 @@ import {
   type ChromeProfile,
 } from '@/lib/samba/api/operations'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
+import { fmtNum } from '@/lib/samba/styles'
 
 export interface SourcingAccountsState {
   sourcingAccounts: SambaSourcingAccount[]
@@ -100,7 +101,7 @@ export function useSourcingAccounts(): SourcingAccountsState & SourcingAccountsA
       }
 
       if (profiles.length > 0) {
-        showAlert(`크롬 프로필 ${profiles.length}개를 동기화했습니다.`, 'success')
+        showAlert(`크롬 프로필 ${fmtNum(profiles.length)}개를 동기화했습니다.`, 'success')
       } else {
         showAlert('동기화 요청은 보냈지만 프로필이 아직 없습니다. 확장앱 로그인 상태를 확인하세요.', 'error')
       }

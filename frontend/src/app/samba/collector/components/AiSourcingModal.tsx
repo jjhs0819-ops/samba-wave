@@ -261,7 +261,7 @@ export default function AiSourcingModal({
                         })
                         setAiSelectedCombos(all)
                       } else if (payload.step) {
-                        setAiLogs(prev => [...prev, `[${payload.step}] ${payload.count}개 처리`])
+                        setAiLogs(prev => [...prev, `[${payload.step}] ${fmtNum(payload.count)}개 처리`])
                       } else if (payload.message) {
                         setAiLogs(prev => [...prev, payload.message])
                       }

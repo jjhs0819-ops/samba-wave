@@ -60,6 +60,20 @@ class BrandCreateGroupsRequest(BaseModel):
     brand_ids: list[str] = []  # SSG repBrandId 리스트
 
 
+class BrandCollectAllRequest(BaseModel):
+    """무신사 브랜드 전체수집 — 단일 Job으로 전상품 수집 후 카테고리별 배분."""
+
+    filter_ids: list[str]  # 대상 SearchFilter ID 목록 (카테고리별)
+    source_site: str = "MUSINSA"
+    keyword: str  # 브랜드 검색 키워드 (예: 에잇세컨즈)
+    brand: str  # 무신사 브랜드 코드 (예: 8seconds)
+    gf: str = "A"
+    exclude_preorder: bool = True
+    exclude_boutique: bool = True
+    use_max_discount: bool = False
+    include_sold_out: bool = False
+
+
 # ── 무신사 카테고리 스캔 내부 헬퍼 ──
 
 
@@ -416,6 +430,48 @@ async def gsshop_scan_progress():
     from backend.domain.samba.proxy.gsshop_sourcing import GsShopSourcingClient
 
     return GsShopSourcingClient.scan_progress or {"stage": "idle"}
+
+
+@router.post("/brand-collect-all")
+async def brand_collect_all(
+    body: BrandCollectAllRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """무신사 브랜드 전체 상품을 단일 Job으로 수집 후 카테고리별 SearchFilter에 배분.
+
+    기존 카테고리별 61개 Job 순차 실행 방식의 두 가지 문제를 해결:
+    1) 페이지 이탈 시 수집 중단 → 단일 백엔드 Job으로 완전 독립 실행
+    2) 글로벌 dedup으로 인한 카테고리 겹침 누락 → 브랜드 단위 수집 후 카테고리 배분
+    """
+    if body.source_site != "MUSINSA":
+        raise HTTPException(400, "brand-collect-all은 MUSINSA 전용입니다")
+    if not body.filter_ids:
+        raise HTTPException(400, "filter_ids가 필요합니다")
+    if not body.keyword or not body.brand:
+        raise HTTPException(400, "keyword와 brand가 필요합니다")
+
+    from backend.domain.samba.job.repository import SambaJobRepository
+    from backend.domain.samba.job.service import SambaJobService
+
+    svc = SambaJobService(SambaJobRepository(session))
+    job = await svc.create_job(
+        {
+            "job_type": "collect",
+            "payload": {
+                "brand_all": True,
+                "source_site": "MUSINSA",
+                "filter_ids": body.filter_ids,
+                "keyword": body.keyword,
+                "brand": body.brand,
+                "gf": body.gf,
+                "exclude_preorder": body.exclude_preorder,
+                "exclude_boutique": body.exclude_boutique,
+                "use_max_discount": body.use_max_discount,
+                "include_sold_out": body.include_sold_out,
+            },
+        }
+    )
+    return {"job_id": job.id, "filter_count": len(body.filter_ids)}
 
 
 @router.post("/brand-scan")

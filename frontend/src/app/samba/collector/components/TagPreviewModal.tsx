@@ -151,7 +151,7 @@ export default function TagPreviewModal({
         )}
         {tagPreviewCost && (
           <p style={{ margin: '0 0 16px', fontSize: '0.72rem', color: '#666', textAlign: 'right' }}>
-            API {tagPreviewCost.api_calls}회 | {tagPreviewCost.input_tokens + tagPreviewCost.output_tokens} 토큰 | ~{tagPreviewCost.cost_krw}원
+            API {fmtNum(tagPreviewCost.api_calls)}회 | {fmtNum(tagPreviewCost.input_tokens + tagPreviewCost.output_tokens)} 토큰 | ~{fmtNum(tagPreviewCost.cost_krw)}원
           </p>
         )}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>

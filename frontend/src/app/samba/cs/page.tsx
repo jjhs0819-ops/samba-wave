@@ -6,6 +6,7 @@ import { returnApi, csInquiryApi, type SambaCSInquiry, type CSReplyTemplate } fr
 import type { SambaMarketAccount } from '@/lib/samba/api/commerce'
 
 import { showAlert, showConfirm } from '@/components/samba/Modal'
+import { fmtNum } from '@/lib/samba/styles'
 
 /** HTML 태그를 줄바꿈으로 변환 후 제거 — CS 문의 텍스트를 깔끔하게 표시 */
 function htmlToText(html: string): string {
@@ -307,7 +308,7 @@ export default function CSPage() {
       showAlert('삭제할 항목을 선택해주세요', 'error')
       return
     }
-    if (!await showConfirm(`${selected.size}건을 삭제하시겠습니까?`)) return
+    if (!await showConfirm(`${fmtNum(selected.size)}건을 삭제하시겠습니까?`)) return
     try {
       await csInquiryApi.batchDelete(Array.from(selected))
       setSelected(new Set())

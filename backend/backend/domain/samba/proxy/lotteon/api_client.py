@@ -9,7 +9,6 @@
 
 from __future__ import annotations
 
-import math
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -475,7 +474,6 @@ class LotteonClient:
                 "regEndDttm": reg_end_dttm,
             },
         )
-
 
     async def save_lpoint_accumulation(
         self,
