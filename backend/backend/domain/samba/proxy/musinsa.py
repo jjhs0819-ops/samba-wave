@@ -1393,6 +1393,7 @@ class MusinsaClient:
         brand: str,
         gf: str = "A",
         keyword: str = "",
+        include_sold_out: bool = False,
     ) -> list[dict[str, Any]]:
         """브랜드의 최하위 카테고리 목록 + 상품 수 반환.
 
@@ -1400,12 +1401,14 @@ class MusinsaClient:
         각 중분류에 대해 소분류를 재귀 탐색하여 최하위 카테고리별 상품 수를 집계한다.
         """
         timeout = httpx.Timeout(30.0, connect=10.0)
-        base_params = {
+        base_params: dict[str, str] = {
             "caller": "SEARCH",
             "keyword": keyword or brand,
             "brand": brand,
             "gf": gf,
         }
+        if include_sold_out:
+            base_params["includeSoldOut"] = "1"
 
         async with httpx.AsyncClient(timeout=timeout) as client:
             # 1) 필터 API로 대>중분류 가져오기

@@ -39,6 +39,7 @@ class BrandScanRequest(BaseModel):
     selected_brands: list[str] = []
     brand_ids: list[str] = []  # SSG repBrandId 리스트
     brand_total: int = 0  # 선택된 브랜드 총 상품수 (비례 스케일링용)
+    options: dict = {}
 
 
 class BrandDiscoverRequest(BaseModel):
@@ -255,8 +256,7 @@ async def brand_refresh(
             f = existing_cat_codes[cat_code]
             filter_ids.append(str(f.id))
             update_data: dict[str, Any] = {}
-            if count > (f.requested_count or 0):
-                update_data["requested_count"] = count
+            update_data["requested_count"] = count
 
             # keyword URL의 includeSoldOut 파라미터를 현재 옵션과 동기화
             _cur_kw = f.keyword or ""
@@ -454,6 +454,7 @@ async def brand_scan(
             brand=body.brand,
             gf=body.gf,
             keyword=keyword,
+            include_sold_out=bool(body.options.get("includeSoldOut")),
         )
         total = sum(c["count"] for c in categories)
         return {

@@ -431,9 +431,9 @@ export const collectorApi = {
   gsshopScanProgress: () =>
     request<{ stage: string; keyword?: string; page?: number; products?: number; detail_ok?: number; detail_fail?: number; detail_total?: number }>(
       `${SAMBA_PREFIX}/collector/gsshop-scan-progress`),
-  brandScan: (brand: string, gf?: string, keyword?: string, source_site?: string, selected_brands?: string[], brand_ids?: string[], brand_total?: number) =>
+  brandScan: (brand: string, gf?: string, keyword?: string, source_site?: string, selected_brands?: string[], brand_ids?: string[], brand_total?: number, options?: Record<string, boolean>) =>
     request<{ categories: { categoryCode: string; path: string; count: number; category1: string; category2: string; category3: string }[]; total: number; groupCount: number }>(
-      `${SAMBA_PREFIX}/collector/brand-scan`, { method: "POST", body: JSON.stringify({ brand, gf: gf || 'A', keyword: keyword || '', source_site: source_site || 'MUSINSA', selected_brands: selected_brands || [], brand_ids: brand_ids || [], brand_total: brand_total || 0 }) }),
+      `${SAMBA_PREFIX}/collector/brand-scan`, { method: "POST", body: JSON.stringify({ brand, gf: gf || 'A', keyword: keyword || '', source_site: source_site || 'MUSINSA', selected_brands: selected_brands || [], brand_ids: brand_ids || [], brand_total: brand_total || 0, options: options || {} }) }),
   brandCreateGroups: (data: { brand: string; brand_name?: string; gf?: string; categories: { categoryCode: string; path: string; count: number }[]; requested_count_per_group?: number; real_total?: number; applied_policy_id?: string; options?: Record<string, boolean>; source_site?: string; selected_brands?: string[]; brand_ids?: string[] }) =>
     request<{ created: number; groups: { id: string; name: string; count: number; path: string }[] }>(
       `${SAMBA_PREFIX}/collector/brand-create-groups`, { method: "POST", body: JSON.stringify(data) }),

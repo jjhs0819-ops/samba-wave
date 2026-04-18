@@ -234,7 +234,8 @@ export default function CollectorPage() {
           collectLogSinceRef.current = 0
           return
         }
-        if (data.logs.length > 0) {
+        // 수동 수집 중에는 addLog가 직접 UI 업데이트 — 링버퍼 중복 표시 방지
+        if (data.logs.length > 0 && !manualCollectRef.current) {
           setCollectLog(prev => [...prev, ...data.logs].slice(-30))
           setTimeout(() => {
             if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
@@ -1174,7 +1175,7 @@ export default function CollectorPage() {
               }
               addLog(`[카테고리스캔] ${selectedSite} "${keyword || brand}" 스캔 시작...`)
               try {
-                const res = await collectorApi.brandScan(brand, gf, keyword, selectedSite)
+                const res = await collectorApi.brandScan(brand, gf, keyword, selectedSite, [], [], 0, checkedOptions)
                 setBrandCategories(res.categories)
                 setBrandTotal(res.total)
                 setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
