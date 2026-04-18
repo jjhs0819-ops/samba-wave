@@ -1,8 +1,7 @@
 name: Deploy Backend to Cloud Run
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
     paths:
       - 'backend/**'
 

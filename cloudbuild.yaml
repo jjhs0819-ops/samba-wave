@@ -1,14 +1,14 @@
 steps:
-  # Step 1: git 히스토리 추가 확보 (HEAD~1 diff 사용 위해)
-  - name: 'gcr.io/cloud-builders/git'
-    args: ['fetch', '--depth=2', 'origin', 'main']
-
-  # Step 2: 마이그레이션 체크 (model.py 변경 시 alembic 파일 필수)
+  # Step 1: 마이그레이션 체크 (HEAD~1 없는 shallow clone 환경이면 스킵)
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
+        if ! git rev-parse HEAD~1 >/dev/null 2>&1; then
+          echo "⚠️ shallow clone — 마이그레이션 체크 스킵"
+          exit 0
+        fi
         MODEL_CHANGED=$$(git diff HEAD~1 --name-only 2>/dev/null | grep 'model\.py' || true)
         if [ -n "$$MODEL_CHANGED" ]; then
           NEW_MIGRATION=$$(git diff HEAD~1 --name-only | grep 'alembic/versions/' || true)
