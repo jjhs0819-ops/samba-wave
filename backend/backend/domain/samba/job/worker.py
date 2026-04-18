@@ -1747,25 +1747,65 @@ class JobWorker:
                             filter_id = cat_filter_map[_c]
                             break
                 # 2차 fallback: Depth Name 경로 깊이별 매칭
-                if not filter_id:
-                    _cat_raw = detail.get("category_raw") or {}
+                _cat_raw = detail.get("category_raw") or {}
+                _name_parts = [
+                    (_cat_raw.get("categoryDepth1Name") or "").strip(),
+                    (_cat_raw.get("categoryDepth2Name") or "").strip(),
+                    (_cat_raw.get("categoryDepth3Name") or "").strip(),
+                    (_cat_raw.get("categoryDepth4Name") or "").strip(),
+                ]
+                _name_parts = [p for p in _name_parts if p]
+                if not _name_parts:
+                    _raw_cat_str = detail.get("category", "") or ""
                     _name_parts = [
-                        (_cat_raw.get("categoryDepth1Name") or "").strip(),
-                        (_cat_raw.get("categoryDepth2Name") or "").strip(),
-                        (_cat_raw.get("categoryDepth3Name") or "").strip(),
-                        (_cat_raw.get("categoryDepth4Name") or "").strip(),
+                        p.strip() for p in _raw_cat_str.split(">") if p.strip()
                     ]
-                    _name_parts = [p for p in _name_parts if p]
-                    if not _name_parts:
-                        _raw_cat_str = detail.get("category", "") or ""
-                        _name_parts = [
-                            p.strip() for p in _raw_cat_str.split(">") if p.strip()
-                        ]
+                if not filter_id:
                     for _d in range(len(_name_parts), 0, -1):
                         _sub = " > ".join(_name_parts[:_d])
                         filter_id = cat_filter_map.get(_sub) or cat_name_map.get(_sub)
                         if filter_id:
                             break
+
+                # 3차 fallback: 자동 카테고리 filter 생성 (미매핑 0 보장)
+                if not filter_id and filters and _name_parts:
+                    _parent = filters[0]
+                    _brand_nm = _parent.source_brand_name or keyword
+                    _cat_path_str = " > ".join(_name_parts)
+                    _new_name = f"MUSINSA_{_brand_nm}_" + "_".join(_name_parts)
+                    # keyword URL: 기존 filter에서 category param만 교체
+                    _new_keyword = None
+                    try:
+                        _parsed = urlparse(_parent.keyword or "")
+                        _q = parse_qs(_parsed.query)
+                        if cat_code:
+                            _q["category"] = [cat_code]
+                        _q_str = "&".join(f"{k}={v[0]}" for k, v in _q.items() if v)
+                        _new_keyword = f"{_parsed.scheme}://{_parsed.netloc}{_parsed.path}?{_q_str}"
+                    except Exception:
+                        _new_keyword = _parent.keyword
+
+                    _new_filter = SambaSearchFilter(
+                        source_site="MUSINSA",
+                        name=_new_name,
+                        parent_id=_parent.parent_id,
+                        tenant_id=_parent.tenant_id,
+                        keyword=_new_keyword,
+                        source_brand_name=_brand_nm,
+                        requested_count=0,
+                    )
+                    session.add(_new_filter)
+                    await session.flush()
+                    if cat_code:
+                        cat_filter_map[cat_code] = _new_filter.id
+                    cat_name_map[_cat_path_str] = _new_filter.id
+                    filter_id = _new_filter.id
+                    filters.append(_new_filter)
+                    _add_job_log(
+                        job.id,
+                        f"[자동생성] 신규 카테고리: {_cat_path_str} (code={cat_code})",
+                        job_type="collect",
+                    )
 
                 if not filter_id:
                     total_unmatched += 1
@@ -2057,19 +2097,46 @@ class JobWorker:
                     or detail.get("category_code", "")
                 )
                 filter_id = cat_filter_map.get(cat_code)
+                _item_cat = it.get("category", "") or detail.get("category", "")
+                _parts = [p.strip() for p in _item_cat.split(">") if p.strip()]
                 if not filter_id:
                     # 코드 불일치 → 카테고리 경로 깊이별 매칭
-                    _item_cat = it.get("category", "") or detail.get("category", "")
-                    _parts = [p.strip() for p in _item_cat.split(">") if p.strip()]
                     for _d in range(len(_parts), 0, -1):
                         _sub = " > ".join(_parts[:_d])
                         filter_id = cat_filter_map.get(_sub) or cat_name_map.get(_sub)
                         if filter_id:
                             break
+                # 자동 카테고리 filter 생성 (미매핑 0 보장)
+                if not filter_id and filters and _parts:
+                    _parent = filters[0]
+                    _brand_nm = _parent.source_brand_name or keyword
+                    _cat_path_str = " > ".join(_parts)
+                    _new_name = f"ABCmart_{_brand_nm}_" + "_".join(_parts)
+                    _new_filter = SambaSearchFilter(
+                        source_site=_parent.source_site or "ABCmart",
+                        name=_new_name,
+                        parent_id=_parent.parent_id,
+                        tenant_id=_parent.tenant_id,
+                        keyword=_parent.keyword,
+                        category_filter=cat_code or None,
+                        source_brand_name=_brand_nm,
+                        requested_count=0,
+                    )
+                    session.add(_new_filter)
+                    await session.flush()
+                    if cat_code:
+                        cat_filter_map[cat_code] = _new_filter.id
+                    cat_name_map[_cat_path_str] = _new_filter.id
+                    filter_id = _new_filter.id
+                    filters.append(_new_filter)
+                    _add_job_log(
+                        job.id,
+                        f"[자동생성] 신규 카테고리: {_cat_path_str} (code={cat_code})",
+                        job_type="collect",
+                    )
                 if not filter_id:
                     total_unmatched += 1
                     _p_name = (detail.get("name") or it.get("name", ""))[:20]
-                    _item_cat = it.get("category", "") or detail.get("category", "")
                     _add_job_log(
                         job.id,
                         f"[미매핑] {_p_name} ({spid}) cat={_item_cat[:40] or cat_code}",
@@ -2352,19 +2419,48 @@ class JobWorker:
                 disp_ctg_id = detail.get("dispCtgId", "")
                 filter_id = cat_filter_map.get(disp_ctg_id) if disp_ctg_id else None
 
+                # 카테고리 경로 깊이별 fallback
+                _cat_parts = [
+                    (detail.get("dispCtgLclsNm", "") or "").strip(),
+                    (detail.get("dispCtgMclsNm", "") or "").strip(),
+                    (detail.get("dispCtgSclsNm", "") or "").strip(),
+                ]
+                _cat_parts = [p for p in _cat_parts if p]
                 if not filter_id:
-                    # 카테고리 경로 깊이별 fallback
-                    _cat_parts = [
-                        (detail.get("dispCtgLclsNm", "") or "").strip(),
-                        (detail.get("dispCtgMclsNm", "") or "").strip(),
-                        (detail.get("dispCtgSclsNm", "") or "").strip(),
-                    ]
-                    _cat_parts = [p for p in _cat_parts if p]
                     for _d in range(len(_cat_parts), 0, -1):
                         _sub = " > ".join(_cat_parts[:_d])
                         filter_id = cat_filter_map.get(_sub) or cat_name_map.get(_sub)
                         if filter_id:
                             break
+
+                # 자동 카테고리 filter 생성 (미매핑 0 보장)
+                if not filter_id and filters and _cat_parts:
+                    _parent = filters[0]
+                    _brand_nm = _parent.source_brand_name or keyword
+                    _cat_path_str = " > ".join(_cat_parts)
+                    _new_name = f"SSG_{_brand_nm}_" + "_".join(_cat_parts)
+                    _new_filter = SambaSearchFilter(
+                        source_site="SSG",
+                        name=_new_name,
+                        parent_id=_parent.parent_id,
+                        tenant_id=_parent.tenant_id,
+                        keyword=_parent.keyword,
+                        category_filter=disp_ctg_id or None,
+                        source_brand_name=_brand_nm,
+                        requested_count=0,
+                    )
+                    session.add(_new_filter)
+                    await session.flush()
+                    if disp_ctg_id:
+                        cat_filter_map[disp_ctg_id] = _new_filter.id
+                    cat_name_map[_cat_path_str] = _new_filter.id
+                    filter_id = _new_filter.id
+                    filters.append(_new_filter)
+                    _add_job_log(
+                        job.id,
+                        f"[자동생성] 신규 카테고리: {_cat_path_str} (dispCtgId={disp_ctg_id})",
+                        job_type="collect",
+                    )
 
                 if not filter_id:
                     total_unmatched += 1
@@ -2632,15 +2728,15 @@ class JobWorker:
                 _cat_str = detail.get("category", "")
                 filter_id = cat_filter_map.get(_cat_str) if _cat_str else None
 
+                # category1~4 조합으로 깊이별 매핑 재시도
+                _c_parts = [
+                    (detail.get("category1", "") or "").strip(),
+                    (detail.get("category2", "") or "").strip(),
+                    (detail.get("category3", "") or "").strip(),
+                    (detail.get("category4", "") or "").strip(),
+                ]
+                _c_parts = [c for c in _c_parts if c]
                 if not filter_id:
-                    # category1~4 조합으로 깊이별 매핑 재시도
-                    _c_parts = [
-                        detail.get("category1", "") or "",
-                        detail.get("category2", "") or "",
-                        detail.get("category3", "") or "",
-                        detail.get("category4", "") or "",
-                    ]
-                    _c_parts = [c for c in _c_parts if c]
                     for _depth in range(len(_c_parts), 0, -1):
                         _sub_path = " > ".join(_c_parts[:_depth])
                         filter_id = cat_filter_map.get(_sub_path) or cat_name_map.get(
@@ -2649,9 +2745,39 @@ class JobWorker:
                         if filter_id:
                             break
 
+                # 자동 카테고리 filter 생성 (미매핑 0 보장)
+                if not filter_id and filters and _c_parts:
+                    _parent = filters[0]
+                    _brand_nm = _parent.source_brand_name or keyword
+                    _cat_path_str = " > ".join(_c_parts)
+                    _new_name = f"GSShop_{_brand_nm}_" + "_".join(_c_parts)
+                    _new_filter = SambaSearchFilter(
+                        source_site="GSShop",
+                        name=_new_name,
+                        parent_id=_parent.parent_id,
+                        tenant_id=_parent.tenant_id,
+                        keyword=_parent.keyword,
+                        category_filter=_cat_str or _cat_path_str,
+                        source_brand_name=_brand_nm,
+                        requested_count=0,
+                    )
+                    session.add(_new_filter)
+                    await session.flush()
+                    cat_filter_map[_cat_path_str] = _new_filter.id
+                    if _cat_str:
+                        cat_filter_map[_cat_str] = _new_filter.id
+                    cat_name_map[_cat_path_str] = _new_filter.id
+                    filter_id = _new_filter.id
+                    filters.append(_new_filter)
+                    _add_job_log(
+                        job.id,
+                        f"[자동생성] 신규 카테고리: {_cat_path_str}",
+                        job_type="collect",
+                    )
+
                 if not filter_id:
                     total_unmatched += 1
-                    _p_name = (detail.get("name") or it.get("name", ""))[:15]
+                    _p_name = (detail.get("name") or it.get("name", ""))[:20]
                     _add_job_log(
                         job.id,
                         f"[미매핑] {_p_name} ({spid}) cat={_cat_str[:30]}",
