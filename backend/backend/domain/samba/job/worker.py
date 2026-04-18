@@ -1954,6 +1954,27 @@ class JobWorker:
         # ABC-MART/GrandStage 카테고리 코드가 채널별로 다르므로
         # 코드 매칭 + 카테고리명(path) 매칭 병행
         if site == "ABCmart" and sf.category_filter:
+            # [DIAG] 필터 진입 전 source_site × category_code 분포 확인
+            from collections import Counter as _Ctr  # noqa: PLC0415
+
+            _diag = _Ctr(
+                (
+                    item.get("source_site", ""),
+                    item.get("category_code", "") or "(empty)",
+                )
+                for item in items_list
+            )
+            logger.info(
+                f"[잡워커][DIAG] ABCmart filter 진입 sf.category_filter={sf.category_filter!r} "
+                f"items={len(items_list)} 분포 TOP10={_diag.most_common(10)}"
+            )
+            _gs_samples = [
+                (item.get("category_code", ""), item.get("category", ""))
+                for item in items_list
+                if item.get("source_site") == "GrandStage"
+            ][:3]
+            logger.info(f"[잡워커][DIAG] GS 샘플: {_gs_samples}")
+        if site == "ABCmart" and sf.category_filter:
             before = len(items_list)
             # ABC-MART 코드에 대응하는 카테고리 이름(path) 수집
             _target_cat_names: set[str] = set()
