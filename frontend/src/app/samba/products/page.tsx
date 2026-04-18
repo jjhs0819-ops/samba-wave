@@ -1836,6 +1836,80 @@ export default function ProductsPage() {
               color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
             }}
           >가격재고갱신</button>
+          <button
+            onClick={async () => {
+              if (!await showConfirm('스마트스토어 동기화를 실행합니다.\n\n1단계: DB에 없는 Naver 등록 상품(고아 상품) 조회\n2단계: 목록 확인 후 실제 삭제 여부 선택\n\n계속하시겠습니까?')) return
+
+              setAiJobTitle('스마트스토어 동기화')
+              setAiJobLogs(['고아 상품 조회 중... (Naver 상품 전체 페이징 수집 — 수 분 소요)'])
+              setAiJobDone(false)
+              setAiJobModal(true)
+
+              try {
+                const res = await shipmentApi.cleanupSmartstoreOrphans(true)
+                const logs: string[] = [
+                  `DB 등록 상품: ${res.db_no_count.toLocaleString()}개`,
+                  `Naver 등록 상품: ${res.total_naver.toLocaleString()}개`,
+                  `고아 상품: ${res.total_orphans.toLocaleString()}개`,
+                  '',
+                ]
+                for (const a of res.accounts) {
+                  if (a.error) {
+                    logs.push(`[${a.account_id}] ${a.error}`)
+                    continue
+                  }
+                  logs.push(`[${a.account_id}] Naver ${(a.naver_count ?? 0).toLocaleString()}개 / 고아 ${(a.orphan_count ?? 0).toLocaleString()}개`)
+                  for (const o of (a.orphans ?? []).slice(0, 30)) {
+                    logs.push(`  - ${o.origin_no}  ${o.name}`)
+                  }
+                  if ((a.orphans?.length ?? 0) > 30) {
+                    logs.push(`  ... 외 ${(a.orphans!.length - 30).toLocaleString()}개`)
+                  }
+                }
+                setAiJobLogs(logs)
+                setAiJobDone(true)
+
+                if (res.total_orphans === 0) {
+                  logs.push('', '삭제할 고아 상품이 없습니다.')
+                  setAiJobLogs([...logs])
+                  return
+                }
+
+                if (!await showConfirm(`고아 상품 ${res.total_orphans.toLocaleString()}개를 실제로 삭제하시겠습니까?\n(한 번에 최대 ${res.max_delete}개까지 삭제됩니다)`)) {
+                  logs.push('', '삭제 취소됨.')
+                  setAiJobLogs([...logs])
+                  return
+                }
+
+                logs.push('', '삭제 실행 중...')
+                setAiJobLogs([...logs])
+                setAiJobDone(false)
+
+                const del = await shipmentApi.cleanupSmartstoreOrphans(false, res.max_delete)
+                logs.push(`삭제 완료: ${del.total_deleted.toLocaleString()}개`)
+                for (const a of del.accounts) {
+                  if (a.failed && a.failed.length > 0) {
+                    logs.push(`[${a.account_id}] 실패 ${a.failed.length}건:`)
+                    for (const f of a.failed.slice(0, 10)) {
+                      logs.push(`  - ${f.origin_no}: ${f.error}`)
+                    }
+                  }
+                }
+                if (del.total_orphans > del.total_deleted) {
+                  logs.push('', `남은 고아 상품 ${(del.total_orphans - del.total_deleted).toLocaleString()}개 — 동기화 다시 실행하세요.`)
+                }
+                setAiJobLogs([...logs])
+              } catch (e) {
+                setAiJobLogs(prev => [...prev, '', `실패: ${e instanceof Error ? e.message : String(e)}`])
+              }
+              setAiJobDone(true)
+            }}
+            style={{
+              fontSize: "0.78rem", padding: "4px 12px",
+              border: "1px solid #3D3D3D", borderRadius: "5px",
+              color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
+            }}
+          >동기화</button>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
           <button

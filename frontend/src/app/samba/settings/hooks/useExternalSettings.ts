@@ -141,7 +141,7 @@ export function useExternalSettings(): ExternalSettingsState & ExternalSettingsA
   const [aiFeatures, setAiFeatures] = useState<Record<string, boolean>>({ productName: true })
   // Gemini AI
   const [geminiApiKey, setGeminiApiKey] = useState('')
-  const [geminiModel, setGeminiModel] = useState('gemini-2.5-flash')
+  const [geminiModel, setGeminiModel] = useState('gemini-2.5-flash-lite')
   const [geminiStatus, setGeminiStatus] = useState('')
   // Cloudflare R2
   const [r2AccountId, setR2AccountId] = useState('')
@@ -283,7 +283,7 @@ export function useExternalSettings(): ExternalSettingsState & ExternalSettingsA
       const gm = await forbiddenApi.getSetting('gemini').catch(() => null) as Record<string, unknown> | null
       if (gm) {
         setGeminiApiKey(String(gm.apiKey || ''))
-        setGeminiModel(String(gm.model || 'gemini-2.5-flash'))
+        setGeminiModel(String(gm.model || 'gemini-2.5-flash-lite'))
         if (gm.apiKey) setGeminiStatus('저장됨')
       }
     } catch { /* ignore */ }

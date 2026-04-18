@@ -458,6 +458,7 @@ class SmartStoreClient:
         path: str,
         body: Optional[dict[str, Any]] = None,
         params: Optional[dict[str, Any]] = None,
+        timeout: Optional[int] = None,
     ) -> dict[str, Any]:
         """공통 API 호출."""
         token = await self._ensure_token()
@@ -466,8 +467,11 @@ class SmartStoreClient:
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
+        effective_timeout = (
+            timeout if timeout is not None else settings.http_timeout_default
+        )
 
-        async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
+        async with httpx.AsyncClient(timeout=effective_timeout) as client:
             if method == "GET":
                 resp = await client.get(url, headers=headers, params=params)
             elif method == "POST":
@@ -1251,40 +1255,35 @@ class SmartStoreClient:
         raise SmartStoreApiError("이미지 업로드 실패: 429 Rate Limit 초과")
 
     async def register_product(self, product_data: dict[str, Any]) -> dict[str, Any]:
-        """상품 등록.
-
-        product_data 예시:
-        {
-          "originProduct": {
-            "statusType": "SALE",
-            "saleType": "NEW",
-            "leafCategoryId": "50000803",
-            "name": "상품명",
-            "detailContent": "<p>상세설명 HTML</p>",
-            "images": {
-              "representativeImage": {"url": "https://..."},
-              "optionalImages": [{"url": "https://..."}]
-            },
-            "salePrice": 29900,
-            "stockQuantity": 999,
-            "deliveryInfo": {
-              "deliveryType": "DELIVERY",
-              "deliveryAttributeType": "NORMAL",
-              "deliveryFee": {"deliveryFeeType": "FREE"}
-            },
-            "detailAttribute": {
-              "afterServiceInfo": {"afterServiceTelephoneNumber": "02-0000-0000", "afterServiceGuideContent": "A/S 안내"},
-              "originAreaInfo": {"originAreaCode": "03", "content": "상세설명에 표기"}
-            }
-          },
-          "smartstoreChannelProduct": {
-            "channelProductName": "스마트스토어 노출 상품명",
-            "storeKeepExclusiveProduct": false
-          }
-        }
-        """
-        result = await self._call_api("POST", "/v2/products", body=product_data)
+        """상품 등록. POST /v2/products는 Naver 처리 시간이 길어 90초 타임아웃 적용."""
+        result = await self._call_api(
+            "POST", "/v2/products", body=product_data, timeout=90
+        )
         return {"success": True, "data": result}
+
+    async def find_by_management_code(
+        self, management_code: str
+    ) -> dict[str, Any] | None:
+        """sellerManagementCode로 기등록 상품 조회. 없으면 None 반환."""
+        try:
+            result = await self._call_api(
+                "POST",
+                "/v1/products/search",
+                body={"page": 1, "size": 5, "sellerManagementCode": management_code},
+            )
+            contents = result.get("contents") or result.get("data") or []
+            if isinstance(result, list):
+                contents = result
+            for item in contents:
+                code = item.get("sellerManagementCode") or item.get(
+                    "originProduct", {}
+                ).get("sellerCodeInfo", {}).get("sellerManagementCode", "")
+                if code == management_code:
+                    return item
+            return None
+        except Exception as e:
+            logger.warning(f"[스마트스토어] sellerManagementCode 조회 실패 (무시): {e}")
+            return None
 
     async def update_product(
         self, product_no: str, product_data: dict[str, Any]
@@ -2091,12 +2090,16 @@ class SmartStoreClient:
         catalog_model_id = product.get("_catalog_model_id")
         if catalog_model_id:
             naver_search_info["modelId"] = catalog_model_id
-        elif style_code:
-            # modelName은 50자 제한, 특수문자 제거
-            clean_code = style_code[:50].strip()
-            if clean_code:
-                naver_search_info["modelName"] = clean_code
-                naver_search_info["manufacturerModelName"] = clean_code
+        else:
+            # 모델명 ← 원상품명(product.name), 50자 제한
+            origin_name = (product.get("name") or "").strip()
+            if origin_name:
+                naver_search_info["modelName"] = origin_name[:50]
+            # 제조사 모델명 ← 품번(style_code), 50자 제한
+            if style_code:
+                clean_code = style_code[:50].strip()
+                if clean_code:
+                    naver_search_info["manufacturerModelName"] = clean_code
         if naver_search_info:
             logger.info(f"[스마트스토어] naverShoppingSearchInfo: {naver_search_info}")
             data["originProduct"]["detailAttribute"]["naverShoppingSearchInfo"] = (

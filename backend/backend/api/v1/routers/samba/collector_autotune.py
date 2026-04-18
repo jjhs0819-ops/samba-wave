@@ -711,22 +711,20 @@ async def _site_autotune_loop(site: str):
                                             int(new_cost),
                                             int(_orig_p),
                                         )
-                                    elif expected_price != last_price:
+                                    # 계정별 전송 아이템 수집 (가격+재고 합산 후 단일 전송)
+                                    _acc_items: list[str] = []
+                                    _acc_action_parts: list[str] = []
+
+                                    if (
+                                        expected_price != last_price
+                                        and not _price_blocked
+                                    ):
                                         price_changed_count += 1
                                         _all_price_pids.add(r.product_id)
-                                        retransmitted += 1
                                         _price_action_txt = f"가격변동 {last_price:,}→{expected_price:,} → {acc_label}"
-                                        _tx_actions.append(_price_action_txt)
-                                        _transmit_queue.append(
-                                            (
-                                                r.product_id,
-                                                ["price"],
-                                                acc_id,
-                                                f"{_prod_label}",
-                                                _price_action_txt,
-                                            )
-                                        )
-                                    else:
+                                        _acc_items.append("price")
+                                        _acc_action_parts.append(_price_action_txt)
+                                    elif expected_price == last_price:
                                         # 가격 동일 스킵 — 다중 마켓 디버그 로그
                                         if len(reg_accounts) > 1:
                                             _last_cost_sent = (
@@ -786,16 +784,24 @@ async def _site_autotune_loop(site: str):
                                                 _stock_changes_acc += 1
                                     if _stock_diff:
                                         _all_stock_pids.add(r.product_id)
-                                        retransmitted += 1
                                         _stock_action_txt = f"재고전송({_stock_changes_acc}건) → {acc_label}"
-                                        _tx_actions.append(_stock_action_txt)
+                                        _acc_items.append("stock")
+                                        _acc_action_parts.append(_stock_action_txt)
+
+                                    # 가격+재고 합산 단일 전송 (충돌 방지)
+                                    if _acc_items:
+                                        retransmitted += 1
+                                        _combined_action_txt = " + ".join(
+                                            _acc_action_parts
+                                        )
+                                        _tx_actions.append(_combined_action_txt)
                                         _transmit_queue.append(
                                             (
                                                 r.product_id,
-                                                ["stock"],
+                                                _acc_items,
                                                 acc_id,
                                                 f"{_prod_label}",
-                                                _stock_action_txt,
+                                                _combined_action_txt,
                                             )
                                         )
 

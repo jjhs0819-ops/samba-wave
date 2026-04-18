@@ -629,7 +629,10 @@ async def generate_ai_tags(
                             headers={"content-type": "application/json"},
                             json={
                                 "contents": [{"parts": [{"text": prompt}]}],
-                                "generationConfig": {"maxOutputTokens": 400},
+                                "generationConfig": {
+                                    "maxOutputTokens": 400,
+                                    "thinkingConfig": {"thinkingBudget": 0},
+                                },
                             },
                         )
                     else:
@@ -921,7 +924,10 @@ async def preview_ai_tags(
                             headers={"content-type": "application/json"},
                             json={
                                 "contents": [{"parts": [{"text": prompt}]}],
-                                "generationConfig": {"maxOutputTokens": 400},
+                                "generationConfig": {
+                                    "maxOutputTokens": 400,
+                                    "thinkingConfig": {"thinkingBudget": 0},
+                                },
                             },
                         )
                     else:

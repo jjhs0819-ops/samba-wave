@@ -1434,6 +1434,33 @@ class SambaShipmentService:
 
                 if result.get("success"):
                     res["status"] = "success"
+                    # 중복등록 차단 시 pre-check에서 추출한 원상품번호 직접 사용
+                    if result.get("_already_registered") and result.get("_origin_no"):
+                        _pre_origin = str(result["_origin_no"])
+                        res["product_nos"] = {
+                            account_id: _pre_origin,
+                            f"{account_id}_origin": _pre_origin,
+                        }
+                        logger.info(
+                            f"[전송] 스마트스토어 중복등록 차단 — 기존 originProductNo={_pre_origin} 연결"
+                        )
+                        res["sent_snapshot"] = {
+                            "sale_price": math.ceil(
+                                int(acct_product.get("sale_price") or 0) / 300
+                            )
+                            * 300,
+                            "cost": int(acct_product.get("cost") or 0),
+                            "options": [
+                                {
+                                    "name": o.get("name", ""),
+                                    "price": o.get("price"),
+                                    "stock": o.get("stock"),
+                                }
+                                for o in (acct_product.get("options") or [])
+                            ],
+                            "sent_at": datetime.now(UTC).isoformat(),
+                        }
+                        return res
                     # 상품번호 추출
                     # product_no: 플러그인이 "product_no" 키로 반환 (롯데ON 등)
                     # spdNo: 이전 방식 또는 일부 마켓 직접 반환 — 둘 다 확인

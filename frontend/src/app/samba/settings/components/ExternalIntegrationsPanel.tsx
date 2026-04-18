@@ -214,7 +214,8 @@ export function ExternalIntegrationsPanel(props: Props) {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
             <label style={{ color: '#888', minWidth: '100px', fontSize: '0.875rem' }}>모델</label>
             <select style={{ ...inputStyle, width: '300px' }} value={geminiModel} onChange={(e) => setGeminiModel(e.target.value)}>
-              <option value="gemini-2.5-flash">Gemini 2.5 Flash (권장)</option>
+              <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite (권장)</option>
+              <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
               <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
             </select>
           </div>

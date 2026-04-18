@@ -598,11 +598,36 @@ class SmartStorePlugin(MarketPlugin):
                             }
                     raise
             else:
+                # 중복 등록 방지: 이미 Naver에 등록된 상품인지 sellerManagementCode로 사전 확인
+                _mgmt_code = (
+                    d.get("originProduct", {})
+                    .get("sellerCodeInfo", {})
+                    .get("sellerManagementCode", "")
+                )
+                if _mgmt_code:
+                    _existing = await client.find_by_management_code(_mgmt_code)
+                    if _existing:
+                        _origin_no = str(
+                            _existing.get("originProductNo")
+                            or _existing.get("originProduct", {}).get("id", "")
+                            or ""
+                        )
+                        logger.warning(
+                            f"[스마트스토어] 중복등록 방지 — sellerManagementCode={_mgmt_code} 이미 존재: originProductNo={_origin_no}"
+                        )
+                        return {
+                            "success": True,
+                            "message": "스마트스토어 기등록 상품 재연결 (중복등록 차단)",
+                            "data": _existing,
+                            "_already_registered": True,
+                            "_origin_no": _origin_no,
+                        }
                 try:
                     r = await client.register_product(d)
                 except Exception as _reg_e:
                     if "leafCategoryId" in str(_reg_e):
-                        # 카테고리 ID 유효하지 않음 → 기본 카테고리로 fallback
+                        # 카테고리 ID 유효하지 않음 → 기본 카테고리로 fallback 재시도
+                        # (첫 호출은 에러 응답 = 미생성 확정이므로 중복 위험 없음)
                         _default_cat = "50000803"
                         logger.warning(
                             f"[스마트스토어] leafCategoryId 에러 → 기본 카테고리({_default_cat})로 재시도: {_reg_e}"

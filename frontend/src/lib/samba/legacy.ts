@@ -724,6 +724,34 @@ export const shipmentApi = {
       method: 'POST',
       body: JSON.stringify({ groups, singles, account_id: accountId }),
     }),
+
+  // 스마트스토어 고아 상품 정리 (DB에 없는 Naver 등록 상품 탐지/삭제)
+  cleanupSmartstoreOrphans: (dryRun = true, maxDelete = 50, accountId?: string) => {
+    const params = new URLSearchParams()
+    params.set('dry_run', String(dryRun))
+    params.set('max_delete', String(maxDelete))
+    if (accountId) params.set('account_id', accountId)
+    return request<{
+      ok: boolean
+      dry_run: boolean
+      db_no_count: number
+      total_naver: number
+      total_orphans: number
+      total_deleted: number
+      max_delete: number
+      accounts: {
+        account_id: string
+        naver_count?: number
+        orphan_count?: number
+        orphans?: { origin_no: string; name: string }[]
+        deleted?: string[]
+        failed?: { origin_no: string; error: string }[]
+        error?: string
+      }[]
+    }>(`${SAMBA_PREFIX}/shipments/smartstore/cleanup-orphans?${params.toString()}`, {
+      method: 'POST',
+    })
+  },
 };
 
 // ── Forbidden Words ──

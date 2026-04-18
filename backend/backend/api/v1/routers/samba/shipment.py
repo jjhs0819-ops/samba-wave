@@ -94,6 +94,160 @@ async def emergency_clear(admin: str = Depends(require_admin)):
     return {"ok": True, "message": "비상정지 해제"}
 
 
+@router.post("/smartstore/cleanup-orphans")
+async def cleanup_smartstore_orphans(
+    dry_run: bool = Query(True, description="true면 목록만, false면 실제 삭제"),
+    account_id: Optional[str] = Query(None, description="특정 계정만 정리"),
+    max_delete: int = Query(50, ge=0, le=500, description="한 번에 삭제할 최대 개수"),
+    session: AsyncSession = Depends(get_write_session_dependency),
+    admin: str = Depends(require_admin),
+):
+    """스마트스토어 고아 상품 정리.
+
+    DB `market_product_nos`에 없는 Naver 등록 상품을 탐지/삭제.
+    최초 호출 시 dry_run=true로 목록 확인 후 dry_run=false로 실제 삭제.
+    """
+    from sqlmodel import select
+
+    from backend.domain.samba.account.model import SambaMarketAccount
+    from backend.domain.samba.collector.model import SambaCollectedProduct
+    from backend.domain.samba.proxy.smartstore import SmartStoreClient
+
+    # 1. 스마트스토어 계정 조회
+    q = select(SambaMarketAccount).where(
+        SambaMarketAccount.market_type == "smartstore",
+        SambaMarketAccount.is_active == True,  # noqa: E712
+    )
+    if account_id:
+        q = q.where(SambaMarketAccount.id == account_id)
+    result = await session.exec(q)
+    accounts = result.all()
+    if not accounts:
+        raise HTTPException(status_code=404, detail="활성 스마트스토어 계정 없음")
+
+    # 2. DB에 기록된 모든 origin/channel product no 수집
+    prod_result = await session.exec(
+        select(SambaCollectedProduct).where(
+            SambaCollectedProduct.market_product_nos.isnot(None)
+        )
+    )
+    all_products = prod_result.all()
+    db_nos: set[str] = set()
+    for p in all_products:
+        for k, v in (p.market_product_nos or {}).items():
+            if isinstance(v, str) and v:
+                db_nos.add(v)
+            elif isinstance(v, dict):
+                for kk in (
+                    "originProductNo",
+                    "productNo",
+                    "smartstoreChannelProductNo",
+                ):
+                    vv = v.get(kk)
+                    if vv:
+                        db_nos.add(str(vv))
+
+    # 3. 각 계정별 Naver 조회 + 고아 판별
+    per_account = []
+    total_naver = 0
+    total_orphans = 0
+    total_deleted = 0
+
+    for account in accounts:
+        add_info = account.additional_fields or {}
+        client_id = add_info.get("clientId") or account.api_key or ""
+        client_secret = add_info.get("clientSecret") or account.api_secret or ""
+        if not client_id or not client_secret:
+            per_account.append({"account_id": account.id, "error": "API 키 없음"})
+            continue
+
+        client = SmartStoreClient(client_id, client_secret)
+
+        # 페이징 수집
+        naver_products: list[dict] = []
+        page = 1
+        while True:
+            r = await client._call_api(
+                "POST",
+                "/v1/products/search",
+                body={"page": page, "size": 100},
+            )
+            contents = r.get("contents") or r.get("data") or []
+            if isinstance(r, list):
+                contents = r
+            if not contents:
+                break
+            naver_products.extend(contents)
+            if len(contents) < 100:
+                break
+            page += 1
+            if page > 200:  # 20,000개 상한 — 무한루프 방지
+                break
+
+        total_naver += len(naver_products)
+
+        orphans = []
+        for np in naver_products:
+            origin_no = str(
+                np.get("originProductNo")
+                or np.get("originProduct", {}).get("id", "")
+                or ""
+            )
+            channel_nos = [
+                str(cp.get("channelProductNo", ""))
+                for cp in np.get("channelProducts", [])
+                if cp.get("channelProductNo")
+            ]
+            in_db = (origin_no and origin_no in db_nos) or any(
+                cn in db_nos for cn in channel_nos
+            )
+            if not in_db and origin_no:
+                name = (
+                    np.get("originProduct", {}).get("name") or np.get("name", "") or ""
+                )
+                orphans.append({"origin_no": origin_no, "name": name[:80]})
+
+        total_orphans += len(orphans)
+
+        deleted_here: list[str] = []
+        failed: list[dict] = []
+        if not dry_run and orphans:
+            # max_delete 한도 적용
+            remaining = max_delete - total_deleted
+            if remaining <= 0:
+                pass
+            else:
+                for o in orphans[:remaining]:
+                    try:
+                        await client.delete_product(o["origin_no"])
+                        deleted_here.append(o["origin_no"])
+                    except Exception as e:
+                        failed.append({"origin_no": o["origin_no"], "error": str(e)})
+                total_deleted += len(deleted_here)
+
+        per_account.append(
+            {
+                "account_id": account.id,
+                "naver_count": len(naver_products),
+                "orphan_count": len(orphans),
+                "orphans": orphans,
+                "deleted": deleted_here,
+                "failed": failed,
+            }
+        )
+
+    return {
+        "ok": True,
+        "dry_run": dry_run,
+        "db_no_count": len(db_nos),
+        "total_naver": total_naver,
+        "total_orphans": total_orphans,
+        "total_deleted": total_deleted,
+        "max_delete": max_delete,
+        "accounts": per_account,
+    }
+
+
 @router.get("")
 async def list_shipments(
     skip: int = Query(0, ge=0),
