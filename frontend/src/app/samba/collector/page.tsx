@@ -216,20 +216,15 @@ export default function CollectorPage() {
     setTimeout(() => {
       if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
     }, 50);
-    // 서버 링 버퍼에도 저장 — 페이지 이탈 후 복원용 (fire-and-forget)
-    fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/collect-logs/add`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: line }),
-    }).catch(() => {})
   }, []);
 
-  // 수집 로그 링 버퍼 폴링 (서버 로그 — 창 닫아도 유지)
+  // 수집 로그 링 버퍼 폴링 (서버 로그 — collecting 시작 즉시 폴링)
   useEffect(() => {
     if (!collecting) return
     collectLogPollingRef.current = true
     let checkCount = 0
-    const timer = setInterval(async () => {
+
+    const doPoll = async () => {
       if (!collectLogPollingRef.current) return
       try {
         const res = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/collect-logs?since_idx=${collectLogSinceRef.current}`)
@@ -267,7 +262,10 @@ export default function CollectorPage() {
           }
         }
       } catch { /* 네트워크 오류 무시 */ }
-    }, 500)
+    }
+
+    doPoll() // 즉시 첫 poll (500ms 첫 딜레이 제거)
+    const timer = setInterval(doPoll, 500)
     return () => { clearInterval(timer); collectLogPollingRef.current = false }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collecting])
@@ -596,7 +594,8 @@ export default function CollectorPage() {
       : selectedIds.size > 0
         ? displayedFilters.filter(f => selectedIds.has(f.id))
         : displayedFilters
-    const targetIds = targetFilters.map(f => f.id)
+    const sortedTargetFilters = [...targetFilters].sort((a, b) => (b.requested_count || 0) - (a.requested_count || 0))
+    const targetIds = sortedTargetFilters.map(f => f.id)
     if (targetIds.length === 0) {
       addLog("수집할 그룹이 없습니다.")
       return
@@ -1880,6 +1879,7 @@ export default function CollectorPage() {
                     if (updatedFilters.length > 0) {
                       const collectOk = await showConfirm(`${res.message}\n\n${fmtNum(updatedFilters.length)}개 그룹 상품수집을 시작하시겠습니까?`)
                       if (collectOk) {
+                        updatedFilters = [...updatedFilters].sort((a, b) => (b.requested_count || 0) - (a.requested_count || 0))
                         const abort = new AbortController()
                         collectAbortRef.current = abort
                         manualCollectRef.current = true
@@ -1904,13 +1904,6 @@ export default function CollectorPage() {
                               const job = await jr.json()
                               if (job.current > lastCurrent) { addLog(`${gp} [${f.name}] [${fmtNum(job.current)}/${fmtNum(job.total)}] 수집 중... (${job.progress}%)`); lastCurrent = job.current }
                               if (job.status === 'completed') {
-                                const _s = job.result?.saved ?? 0, _sk = job.result?.skipped ?? 0, _p = job.result?.policy || ''
-                                const _inS = job.result?.in_stock_count ?? 0, _soC = job.result?.sold_out_count ?? 0
-                                const _parts = [`신규 ${fmtNum(_s)}건`]
-                                if (_inS > 0 || _soC > 0) _parts.push(`재고 ${fmtNum(_inS)}건 | 품절 ${fmtNum(_soC)}건`)
-                                if (_sk > 0) _parts.push(`중복/스킵 ${fmtNum(_sk)}건`)
-                                if (_p) _parts.push(_p)
-                                addLog(`${gp} [${f.name}] 수집 완료: ${_parts.join(' | ')}`)
                                 break
                               }
                               if (job.status === 'failed') { addLog(`${gp} [${f.name}] 수집 실패: ${job.error || '오류'}`); break }

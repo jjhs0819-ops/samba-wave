@@ -1174,6 +1174,11 @@ class JobWorker:
                     logger.info(
                         f"[잡워커] API 총 {api_total_count}건, {api_total_pages}페이지 → max_pages={max_pages}"
                     )
+                    _add_job_log(
+                        job.id,
+                        f"{_prefix} [{sf.name}] API totalCount={api_total_count}건, totalPages={api_total_pages} → max_pages={max_pages}",
+                        job_type="collect",
+                    )
                 logger.info(
                     f"[잡워커] 검색 p{search_page}: {len(search_items)}건 (kw={keyword}, brand={_brand_filter})"
                 )
@@ -1211,13 +1216,17 @@ class JobWorker:
                 f"[잡워커] 중복={len(existing_ids)}, 타겟={len(targets)}, 스킵={total_skipped}"
             )
             if not targets:
-                # 연속 5페이지 신규 0건이면 조기 종료
+                # 중복만 있는 페이지 — 다른 그룹이 먼저 수집했을 수 있으므로
+                # max_pages까지 계속 탐색 (조기 종료 없음)
                 empty_pages += 1
-                if empty_pages >= 5:
-                    logger.info(
-                        f"[잡워커] 연속 {empty_pages}페이지 신규 0건 → 조기 종료"
-                    )
-                    break
+                logger.info(
+                    f"[잡워커] p{search_page}: 신규 0건 (중복 {len(existing_ids)}건) — 계속 탐색"
+                )
+                _add_job_log(
+                    job.id,
+                    f"{_prefix} [{sf.name}] p{search_page}: 중복 {len(existing_ids)}건, 다음 페이지 탐색",
+                    job_type="collect",
+                )
                 search_page += 1
                 continue
             empty_pages = 0  # 신규 상품 발견 시 카운터 리셋
