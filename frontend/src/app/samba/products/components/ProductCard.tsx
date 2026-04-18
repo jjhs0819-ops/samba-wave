@@ -326,6 +326,7 @@ interface ProductCardProps {
   onToggleMarket: (productId: string, marketId: string) => void
   onEnrich: (productId: string) => void
   onLockToggle: (productId: string, field: 'lock_delete' | 'lock_stock', value: boolean) => void
+  onBlockCollect: (productId: string) => Promise<void>
   onTagUpdate: (productId: string, tags: string[]) => void
   onMarketDelete: (productId: string) => void
   onAddTaskLog: (msg: string) => void
@@ -341,7 +342,7 @@ interface ProductCardProps {
 
 const ProductCard = React.memo(function ProductCard({
   product: p, idx, policies, accounts, nameRules, selectedIds, filterNameMap, deletionWords,
-  onCheckboxToggle, onDelete, onPolicyChange, onToggleMarket, onEnrich, onLockToggle, onTagUpdate, onMarketDelete, onAddTaskLog, onProductUpdate, logMessage,
+  onCheckboxToggle, onDelete, onPolicyChange, onToggleMarket, onEnrich, onLockToggle, onBlockCollect, onTagUpdate, onMarketDelete, onAddTaskLog, onProductUpdate, logMessage,
   catMappingMap, filters, detailTemplates, compact, expanded, onToggleExpand,
 }: ProductCardProps) {
   const accMap = useMemo(() => new Map(accounts.map(a => [a.id, a])), [accounts])
@@ -369,6 +370,7 @@ const ProductCard = React.memo(function ProductCard({
   // 알림/확인 모달 (alert/confirm 대체)
   const [cardAlert, setCardAlert] = useState<{ msg: string; type?: 'success' | 'error' } | null>(null)
   const [cardConfirm, setCardConfirm] = useState<{ msg: string; onOk: () => void } | null>(null)
+  const [collectBlocking, setCollectBlocking] = useState(false)
   const [imageTab, setImageTab] = useState<'main' | 'extra' | 'detail' | 'video'>('main')
   const [productImages, setProductImages] = useState<string[]>(p.images || [])
   const [detailImgList, setDetailImgList] = useState<string[]>(
@@ -1170,6 +1172,24 @@ const ProductCard = React.memo(function ProductCard({
           )}
         </div>
         <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: collectBlocking ? 'wait' : 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={collectBlocking}
+              disabled={collectBlocking}
+              onChange={async (e) => {
+                if (!e.target.checked || collectBlocking) return
+                setCollectBlocking(true)
+                try {
+                  await onBlockCollect(p.id)
+                } catch {
+                  setCollectBlocking(false)
+                }
+              }}
+              style={{ accentColor: '#FF6B6B', width: '12px', height: '12px', cursor: collectBlocking ? 'wait' : 'pointer' }}
+            />
+            <span style={{ fontSize: '0.7rem', color: collectBlocking ? '#FF6B6B' : '#888' }}>수집차단</span>
+          </label>
           <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
             <input
               type="checkbox"
@@ -1325,7 +1345,7 @@ const ProductCard = React.memo(function ProductCard({
               style={{
               fontSize: '0.72rem', padding: '3px 9px', background: '#1E1E1E',
               color: '#999', border: '1px solid #2D2D2D', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap',
-            }}>가격재고업데이트</button>
+            }}>가격재고</button>
             <button
               onClick={() => window.open(`/samba/orders?cpId=${encodeURIComponent(p.id)}&cpName=${encodeURIComponent(p.name)}`, '_blank')}
               style={{

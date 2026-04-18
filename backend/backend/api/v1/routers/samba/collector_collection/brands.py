@@ -190,25 +190,15 @@ async def brand_refresh(
             scan_result = await KreamPlugin().scan_categories(keyword)
             categories = scan_result.get("categories", [])
         else:
-            # MUSINSA — 쿠키 로드 후 통합 스캔 방식 사용
-            from backend.domain.samba.forbidden.model import SambaSettings
-            from sqlmodel import select as sql_select
+            # MUSINSA — brand-scan과 동일한 필터 API 재귀 탐색 방식 사용 (전체 카테고리)
+            from backend.domain.samba.proxy.musinsa import MusinsaClient
 
-            try:
-                row = (
-                    await session.execute(
-                        sql_select(SambaSettings).where(
-                            SambaSettings.key == "musinsa_cookie"
-                        )
-                    )
-                ).scalar_one_or_none()
-                cookie = (row.value if row and row.value else "") or ""
-            except Exception:
-                cookie = ""
-            scan_result = await _scan_musinsa_categories(
-                keyword, req.brand, req.gf, cookie
+            client = MusinsaClient()
+            categories = await client.scan_brand_categories(
+                brand=req.brand,
+                gf=req.gf,
+                keyword=keyword,
             )
-            categories = scan_result.get("categories", [])
     except Exception as e:
         raise HTTPException(500, f"카테고리 스캔 실패: {e}")
 

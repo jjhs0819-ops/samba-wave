@@ -6,6 +6,7 @@
 import asyncio
 import ctypes
 import gc
+import json
 import logging
 import threading
 from collections import deque
@@ -97,6 +98,25 @@ def clear_collect_logs():
     global _collect_log_total
     _collect_log_buffer.clear()
     _collect_log_total = 0
+
+
+async def _flush_job_logs(job_id: str, logs: list[str], job_type: str) -> None:
+    """잡 로그를 DB에 영속화 — 서버 재시작 후 복원용."""
+    if not logs:
+        return
+    try:
+        from sqlalchemy import text as _text
+        from backend.db.orm import get_write_session
+
+        async with get_write_session() as session:
+            await session.execute(
+                _text("UPDATE samba_jobs SET logs = :logs::jsonb WHERE id = :jid"),
+                {"logs": json.dumps(logs, ensure_ascii=False), "jid": job_id},
+            )
+            await session.commit()
+        logger.info(f"[잡워커] {job_type} 로그 DB 저장: {job_id} ({len(logs)}줄)")
+    except Exception as le:
+        logger.warning(f"[잡워커] {job_type} 로그 DB 저장 실패: {job_id} — {le}")
 
 
 def get_job_logs(job_id: str, since: int = 0) -> list[str]:
@@ -562,6 +582,8 @@ class JobWorker:
                         )
         except Exception as e:
             logger.error(f"[잡워커] 수집 세션 에러: {job_id} — {e}")
+        finally:
+            await _flush_job_logs(job_id, list(_collect_log_buffer), "수집")
 
     async def _execute_transmit_isolated(self, job_id: str, payload: dict):
         """격리된 이벤트 루프에서 전송 잡 실행 — 자체 DB 세션 관리."""
@@ -603,6 +625,8 @@ class JobWorker:
                         )
         except Exception as e:
             logger.error(f"[잡워커] 전송 세션 에러: {job_id} — {e}")
+        finally:
+            await _flush_job_logs(job_id, list(_shipment_log_buffer), "전송")
 
     async def _run_transmit(self, job, repo, session):
         """전송 잡 실행 — 기존 shipment_service 호출."""

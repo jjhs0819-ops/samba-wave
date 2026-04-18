@@ -431,6 +431,27 @@ export default function ProductsPage() {
     }
   };
 
+  const handleBlockCollect = async (productId: string) => {
+    const p = allProducts.find((x) => x.id === productId);
+    const productLabel = p?.name || '선택한 상품';
+    const ok = await showConfirm(`"${productLabel}" 상품을 수집차단 + 삭제하시겠습니까?\n(동일 상품이 다시 수집되지 않습니다)`);
+    if (!ok) throw new Error('cancelled');
+    try {
+      const res = await collectorApi.blockAndDelete([productId]);
+      showAlert(`차단 ${res.blocked}건, 삭제 ${res.deleted}건 완료`, 'success');
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        next.delete(productId);
+        return next;
+      });
+      setSelectAll(false);
+      reloadProducts();
+    } catch (e) {
+      showAlert(`수집차단 실패: ${e instanceof Error ? e.message : ''}`);
+      throw e;
+    }
+  };
+
   const confirmDelete = async () => {
     if (!deleteConfirm) return
     const ids = deleteConfirm.ids
@@ -1646,19 +1667,6 @@ export default function ProductsPage() {
             border: "1px solid #3D3D3D", borderRadius: "5px",
             color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: tagPreviewLoading ? "wait" : "pointer", whiteSpace: "nowrap", opacity: tagPreviewLoading ? 0.5 : 1,
           }}>{tagPreviewLoading ? 'AI태그 생성중...' : 'AI태그'}</button>
-          <button onClick={async () => {
-            if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
-            const ok = await showConfirm(`선택된 ${fmt(selectedIds.size)}개 상품의 태그를 모두 삭제하시겠습니까?`)
-            if (!ok) return
-            await collectorApi.bulkUpdateTags([...selectedIds], [], [])
-            setAllProducts(prev => prev.map(p => selectedIds.has(p.id) ? { ...p, tags: [], seo_keywords: [] as string[] } : p))
-            showAlert(`${fmt(selectedIds.size)}개 상품 태그 삭제 완료`, 'success')
-            setSelectedIds(new Set()); setSelectAll(false)
-          }} style={{
-            fontSize: "0.78rem", padding: "4px 12px",
-            border: "1px solid #3D3D3D", borderRadius: "5px",
-            color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
-          }}>태그 삭제</button>
           <button
             onClick={() => {
               if (selectedIds.size === 0) { showAlert('전송할 상품을 선택해주세요'); return }
@@ -1675,24 +1683,6 @@ export default function ProductsPage() {
               border: "1px solid #3D3D3D", borderRadius: "5px",
               color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
             }}>상품전송</button>
-          <button
-            onClick={async () => {
-              if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
-              const ids = [...selectedIds]
-              if (!await showConfirm(`${ids.length}개 상품을 수집차단 + 삭제하시겠습니까?\n(동일 상품이 다시 수집되지 않습니다)`)) return
-              try {
-                const res = await collectorApi.blockAndDelete(ids)
-                showAlert(`차단 ${res.blocked}건, 삭제 ${res.deleted}건 완료`, 'success')
-                setSelectedIds(new Set()); setSelectAll(false)
-                reloadProducts()
-              } catch (e) { showAlert(`수집차단 실패: ${e instanceof Error ? e.message : ''}`) }
-            }}
-            style={{
-              fontSize: "0.78rem", padding: "4px 12px",
-              border: "1px solid #3D3D3D", borderRadius: "5px",
-              color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
-            }}
-          >수집차단</button>
           <button
             onClick={handleBulkDelete}
             style={{
@@ -2047,6 +2037,7 @@ export default function ProductsPage() {
               onToggleMarket={handleToggleMarket}
               onEnrich={handleEnrich}
               onLockToggle={handleLockToggle}
+              onBlockCollect={handleBlockCollect}
               onMarketDelete={handleMarketDelete}
               onAddTaskLog={addTaskLog}
               onProductUpdate={handleProductUpdate}

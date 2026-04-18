@@ -1,0 +1,89 @@
+steps:
+  # Step 1: git 히스토리 추가 확보 (HEAD~1 diff 사용 위해)
+  - name: 'gcr.io/cloud-builders/git'
+    args: ['fetch', '--depth=2', 'origin', 'main']
+
+  # Step 2: 마이그레이션 체크 (model.py 변경 시 alembic 파일 필수)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        MODEL_CHANGED=$$(git diff HEAD~1 --name-only 2>/dev/null | grep 'model\.py' || true)
+        if [ -n "$$MODEL_CHANGED" ]; then
+          NEW_MIGRATION=$$(git diff HEAD~1 --name-only | grep 'alembic/versions/' || true)
+          if [ -z "$$NEW_MIGRATION" ]; then
+            echo "❌ model.py 변경됨 but 마이그레이션 파일 없음!"
+            echo "변경된 모델: $$MODEL_CHANGED"
+            exit 1
+          fi
+          echo "✅ 모델 변경 + 마이그레이션 파일 확인됨"
+        else
+          echo "✅ 모델 변경 없음 — 스킵"
+        fi
+
+  # Step 3: Cloud Run 배포
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        SHORT_SHA=$$(echo "$COMMIT_SHA" | cut -c1-7)
+        gcloud run deploy samba-wave-api \
+          --source ./backend \
+          --region asia-northeast3 \
+          --project fresh-sanctuary-489804-v4 \
+          --revision-suffix="$$SHORT_SHA" \
+          --update-labels="commit-sha=$$SHORT_SHA" \
+          --update-env-vars "COMMIT_SHA=$COMMIT_SHA,WEB_CONCURRENCY=1,GUNICORN_CMD_ARGS=--timeout 300 --graceful-timeout 300,TERMINATION_GRACE_HACK=1" \
+          --memory 2Gi \
+          --min-instances=1 \
+          --max-instances=1 \
+          --no-cpu-throttling \
+          --quiet
+
+  # Step 4: 트래픽 검증
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        LATEST=$$(gcloud run revisions list \
+          --service=samba-wave-api \
+          --region=asia-northeast3 \
+          --project=fresh-sanctuary-489804-v4 \
+          --sort-by=~createTime \
+          --limit=1 \
+          --format="value(name)")
+        SERVING=$$(gcloud run services describe samba-wave-api \
+          --region=asia-northeast3 \
+          --project=fresh-sanctuary-489804-v4 \
+          --format="value(status.traffic[0].revisionName)")
+        echo "최신 리비전: $$LATEST"
+        echo "트래픽 리비전: $$SERVING"
+        if [ "$$LATEST" != "$$SERVING" ]; then
+          echo "⚠️ 트래픽이 구 리비전에 고정됨 — 강제 전환"
+          gcloud run services update-traffic samba-wave-api \
+            --region=asia-northeast3 \
+            --project=fresh-sanctuary-489804-v4 \
+            --to-latest --quiet
+          echo "✅ 최신 리비전으로 트래픽 전환 완료"
+        fi
+
+  # Step 5: Health Check
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        sleep 15
+        STATUS=$$(curl -s -o /dev/null -w "%{http_code}" \
+          https://samba-wave-api-363598397345.asia-northeast3.run.app/api/v1/health)
+        if [ "$$STATUS" != "200" ]; then
+          echo "❌ Health check 실패 (HTTP $$STATUS)"
+          exit 1
+        fi
+        echo "✅ Health check 통과"
+
+options:
+  logging: CLOUD_LOGGING_ONLY

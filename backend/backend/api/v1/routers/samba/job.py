@@ -145,11 +145,28 @@ async def list_jobs(
 @router.get("/shipment-logs")
 async def get_shipment_log_buffer(
     since_idx: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_read_session_dependency),
 ):
-    """전송 로그 링 버퍼 조회 — 창 닫아도 유지."""
+    """전송 로그 링 버퍼 조회 — 창 닫아도 유지. 버퍼 비어있으면 DB fallback."""
     from backend.domain.samba.job.worker import get_shipment_logs
+    from sqlalchemy import text as _text
 
     logs, current_idx = get_shipment_logs(since_idx)
+
+    if current_idx == 0 and since_idx == 0:
+        result = await session.execute(
+            _text(
+                "SELECT logs FROM samba_jobs"
+                " WHERE job_type='transmit' AND logs IS NOT NULL"
+                " AND jsonb_array_length(logs::jsonb) > 0"
+                " ORDER BY created_at DESC LIMIT 1"
+            )
+        )
+        row = result.first()
+        if row and row[0]:
+            db_logs = row[0] if isinstance(row[0], list) else []
+            return {"logs": db_logs[-300:], "current_idx": len(db_logs)}
+
     return {"logs": logs, "current_idx": current_idx}
 
 
@@ -165,11 +182,28 @@ async def clear_shipment_log_buffer():
 @router.get("/collect-logs")
 async def get_collect_log_buffer(
     since_idx: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_read_session_dependency),
 ):
-    """수집 로그 링 버퍼 조회 — 창 닫아도 유지."""
+    """수집 로그 링 버퍼 조회 — 창 닫아도 유지. 버퍼 비어있으면 DB fallback."""
     from backend.domain.samba.job.worker import get_collect_logs
+    from sqlalchemy import text as _text
 
     logs, current_idx = get_collect_logs(since_idx)
+
+    if current_idx == 0 and since_idx == 0:
+        result = await session.execute(
+            _text(
+                "SELECT logs FROM samba_jobs"
+                " WHERE job_type='collect' AND logs IS NOT NULL"
+                " AND jsonb_array_length(logs::jsonb) > 0"
+                " ORDER BY created_at DESC LIMIT 1"
+            )
+        )
+        row = result.first()
+        if row and row[0]:
+            db_logs = row[0] if isinstance(row[0], list) else []
+            return {"logs": db_logs[-300:], "current_idx": len(db_logs)}
+
     return {"logs": logs, "current_idx": current_idx}
 
 
