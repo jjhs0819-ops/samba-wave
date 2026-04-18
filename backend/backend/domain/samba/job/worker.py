@@ -2236,12 +2236,11 @@ class JobWorker:
                 total_saved += 1
                 _collect_last_progress[job.id] = _time.time()
 
-                _proc_no = _bs + _bi + 1
-                _log_brand = detail_for_build.get("brand", "") or ""
-                _log_name = (detail_for_build.get("name", "") or "")[:20]
+                _log_brand = (detail_for_build.get("brand") or "").strip()
+                _log_name = (detail_for_build.get("name") or "").strip()[:20]
                 _add_job_log(
                     job.id,
-                    f"[{_proc_no:,}/{len(new_items):,}] {_log_brand} {_log_name} {spid}",
+                    f"{_log_brand} {_log_name} {spid}",
                     job_type="collect",
                 )
 
@@ -2474,9 +2473,12 @@ class JobWorker:
                         total_skipped += 1
                         continue
 
+                    # 카테고리 매핑 (3단계 폴백)
+                    # 1순위: dispCtgId → cat_filter_map
                     disp_ctg_id = detail.get("dispCtgId", "")
                     filter_id = cat_filter_map.get(disp_ctg_id) if disp_ctg_id else None
 
+                    # 2순위: dispCtg 레벨명 경로 → cat_filter_map / cat_name_map
                     _cat_parts = [
                         (detail.get("dispCtgLclsNm", "") or "").strip(),
                         (detail.get("dispCtgMclsNm", "") or "").strip(),
@@ -2492,11 +2494,34 @@ class JobWorker:
                             if filter_id:
                                 break
 
+                    # 3순위: detail["category"] — get_product_detail이 이미 4단계 폴백 적용한 최종 경로
+                    if not filter_id:
+                        _full_cat = (detail.get("category") or "").strip()
+                        if _full_cat:
+                            _fc_parts = [
+                                p.strip() for p in _full_cat.split(" > ") if p.strip()
+                            ]
+                            if not _cat_parts:
+                                _cat_parts = _fc_parts
+                            for _d in range(len(_fc_parts), 0, -1):
+                                _sub = " > ".join(_fc_parts[:_d])
+                                filter_id = cat_filter_map.get(
+                                    _sub
+                                ) or cat_name_map.get(_sub)
+                                if filter_id:
+                                    break
+
                     if not filter_id:
                         total_unmatched += 1
+                        _cat_dbg = (
+                            " > ".join(_cat_parts)
+                            or detail.get("category", "")
+                            or disp_ctg_id
+                            or "없음"
+                        )
                         _add_job_log(
                             job.id,
-                            f"[미매핑] {(detail.get('itemNm') or it.get('name', ''))[:15]} ({spid}) cat={disp_ctg_id}",
+                            f"[미매핑] {(detail.get('itemNm') or it.get('name', ''))[:15]} ({spid}) cat={_cat_dbg[:30]}",
                             job_type="collect",
                         )
                         continue
@@ -2555,16 +2580,18 @@ class JobWorker:
                     await svc.create_collected_product(product_data)
                     total_saved += 1
                     _collect_last_progress[job.id] = _time.time()
+                    _log_brand = (detail_for_build.get("brand") or "").strip()
+                    _log_name = (detail_for_build.get("name") or "").strip()[:20]
                     _add_job_log(
                         job.id,
-                        f"[p{_ssg_page}] {(detail_for_build.get('brand') or '')} {(detail_for_build.get('name') or '')[:20]} 저장 누적 {total_saved:,}건",
+                        f"{_log_brand} {_log_name} {spid}",
                         job_type="collect",
                     )
 
             await repo.update_progress(job.id, total_saved, total_saved + 1)
             _add_job_log(
                 job.id,
-                f"[SSG브랜드전체수집] {_ssg_page}페이지 완료 — 저장 누적 {total_saved:,}건",
+                f"[SSG브랜드전체수집] {_ssg_page}페이지 완료 — 저장 {total_saved:,}건",
                 job_type="collect",
             )
 
@@ -2875,12 +2902,11 @@ class JobWorker:
                 total_saved += 1
                 _collect_last_progress[job.id] = _time.time()
 
-                _proc_no = _bs + _bi + 1
-                _log_brand = detail_for_build.get("brand", "") or ""
-                _log_name = (detail_for_build.get("name", "") or "")[:20]
+                _log_brand = (detail_for_build.get("brand") or "").strip()
+                _log_name = (detail_for_build.get("name") or "").strip()[:20]
                 _add_job_log(
                     job.id,
-                    f"[{_proc_no:,}/{len(new_items):,}] {_log_brand} {_log_name} {spid}",
+                    f"{_log_brand} {_log_name} {spid}",
                     job_type="collect",
                 )
 
