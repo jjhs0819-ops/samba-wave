@@ -47,6 +47,7 @@ jobs:
       - name: Deploy to Cloud Run
         run: |
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          TS=$(date +%m%d%H%M)
           # ⚠️ command/args override 주의:
           # Cloud Run service는 이전 revision의 container command/args를 persist 함.
           # 과거에 수동 설정된 "uv run -m gunicorn ..."이 Dockerfile ENTRYPOINT(entrypoint.sh)를 덮어써
@@ -57,7 +58,7 @@ jobs:
             --source ./backend \
             --region asia-northeast3 \
             --project fresh-sanctuary-489804-v4 \
-            --revision-suffix="${SHORT_SHA}" \
+            --revision-suffix="${SHORT_SHA}-${TS}" \
             --update-labels="commit-sha=${SHORT_SHA}" \
             --update-env-vars "COMMIT_SHA=${{ github.sha }},WEB_CONCURRENCY=1,GUNICORN_CMD_ARGS=--timeout 300 --graceful-timeout 300,TERMINATION_GRACE_HACK=1" \
             --memory 2Gi \
