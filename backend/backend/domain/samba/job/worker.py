@@ -1022,6 +1022,10 @@ class JobWorker:
             _ba_site = payload.get("source_site", "MUSINSA")
             if _ba_site == "ABCmart":
                 await self._run_brand_collect_all_abc(job, repo, session)
+            elif _ba_site == "SSG":
+                await self._run_brand_collect_all_ssg(job, repo, session)
+            elif _ba_site == "GSShop":
+                await self._run_brand_collect_all_gs(job, repo, session)
             else:
                 await self._run_brand_collect_all(job, repo, session)
             return
@@ -1382,7 +1386,7 @@ class JobWorker:
                     job.id, existing_count + total_saved, requested_count
                 )
                 _p_brand = detail.get("brand", "") or ""
-                _p_name = (detail.get("name", "") or "")[:20]
+                _p_name = detail.get("name", "") or ""
                 _add_job_log(
                     job.id,
                     f"{_prefix} [{existing_count + total_saved:,}/{requested_count:,}] {_p_brand} {_p_name} {goods_no}",
@@ -1787,7 +1791,7 @@ class JobWorker:
                 _collect_last_progress[job.id] = _time.time()
 
                 _m_brand = detail.get("brand", "") or ""
-                _m_name = (detail.get("name", "") or "")[:20]
+                _m_name = detail.get("name", "") or ""
                 _add_job_log(
                     job.id,
                     f"[{total_saved:,}/{_total_count:,}] {_m_brand} {_m_name} {goods_no}",
