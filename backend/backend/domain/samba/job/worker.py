@@ -1002,7 +1002,11 @@ class JobWorker:
 
         # 브랜드 전체수집 모드 분기
         if payload.get("brand_all"):
-            await self._run_brand_collect_all(job, repo, session)
+            _ba_site = payload.get("source_site", "MUSINSA")
+            if _ba_site == "ABCmart":
+                await self._run_brand_collect_all_abc(job, repo, session)
+            else:
+                await self._run_brand_collect_all(job, repo, session)
             return
 
         filter_id = payload.get("filter_id")
@@ -1785,6 +1789,316 @@ class JobWorker:
             },
         )
         logger.info(f"[잡워커] 브랜드전체수집 완료: {job.id} ({total_saved}건)")
+
+    async def _run_brand_collect_all_abc(self, job, repo, session):
+        """ABCmart+GrandStage 브랜드 전체 상품을 단일 Job으로 수집 후 카테고리별 배분.
+
+        무신사(_run_brand_collect_all)와 동일 목적이나 ABCmart 전용 흐름:
+        - cat_filter_map: sf.category_filter 직접 사용 (URL category 파라미터 아님)
+        - 검색: ARTSourcingClient로 ABC+GS 병렬 전체 검색
+        - 상세: 3건 병렬 배치 선취합
+        - 배분: category_code → filter_id 매핑
+        """
+        from urllib.parse import parse_qs, urlparse
+        from sqlalchemy import select, update as _sa_upd, func as _func
+        from backend.domain.samba.collector.model import SambaSearchFilter
+        from backend.domain.samba.collector.model import (
+            SambaCollectedProduct as CPModel,
+        )
+        from backend.domain.samba.proxy.abcmart import ARTSourcingClient
+        from backend.api.v1.routers.samba.collector_common import (
+            _build_product_data,
+            _get_services,
+        )
+        from datetime import datetime, timezone as _tz
+
+        UTC = _tz.utc
+        payload = job.payload or {}
+        filter_ids: list[str] = payload.get("filter_ids", [])
+        keyword: str = payload.get("keyword", "")
+        _use_max_discount: bool = payload.get("use_max_discount", False)
+        _include_sold_out: bool = payload.get("include_sold_out", False)
+
+        if not filter_ids:
+            await repo.fail_job(job.id, "brand_all_abc: filter_ids 필요")
+            return
+
+        _add_job_log(
+            job.id,
+            f"[ABC브랜드전체수집] '{keyword}' 시작 — {len(filter_ids)}개 그룹 대상",
+            job_type="collect",
+        )
+
+        # SearchFilter 로드 + category_filter → filter_id 맵 구성
+        filters_result = await session.execute(
+            select(SambaSearchFilter).where(SambaSearchFilter.id.in_(filter_ids))
+        )
+        filters: list[SambaSearchFilter] = list(filters_result.scalars().all())
+
+        cat_filter_map: dict[str, str] = {}  # {category_code: filter_id}
+        for f in filters:
+            if f.category_filter:
+                cat_filter_map[f.category_filter] = f.id
+
+        if not cat_filter_map:
+            await repo.fail_job(
+                job.id,
+                "brand_all_abc: category_filter가 없습니다 (그룹 스캔 후 다시 시도)",
+            )
+            return
+
+        # 검색 키워드: 첫 번째 filter URL의 searchWord 파라미터
+        _abc_kw = keyword
+        if filters:
+            try:
+                _qs_kw = parse_qs(urlparse(filters[0].keyword or "").query)
+                _abc_kw = _qs_kw.get("searchWord", [keyword])[0] or keyword
+            except Exception:
+                pass
+
+        _add_job_log(
+            job.id,
+            f"[ABC브랜드전체수집] 카테고리 맵 {len(cat_filter_map)}개 | 키워드: '{_abc_kw}'",
+            job_type="collect",
+        )
+
+        # ABC + GrandStage 병렬 전체 검색 (카테고리 필터 없이)
+        abc_client = ARTSourcingClient(channel=None)
+        gs_client = ARTSourcingClient(channel="10002")
+        abc_res, gs_res = await asyncio.gather(
+            abc_client.search(_abc_kw, max_count=9999),
+            gs_client.search(_abc_kw, max_count=9999),
+            return_exceptions=True,
+        )
+
+        # 중복 제거 병합 (ABC 우선)
+        _seen_spids: set[str] = set()
+        all_items: list[dict] = []
+        for _res in [abc_res, gs_res]:
+            if isinstance(_res, Exception):
+                logger.warning(f"[잡워커] ABC브랜드전체수집 검색 실패: {_res}")
+                continue
+            for _it in _res.get("products", []):
+                _spid = str(_it.get("site_product_id", ""))
+                if _spid and _spid not in _seen_spids:
+                    _seen_spids.add(_spid)
+                    all_items.append(_it)
+
+        _add_job_log(
+            job.id,
+            f"[ABC브랜드전체수집] 전체 {len(all_items)}건 수집 (ABC+GS 병합)",
+            job_type="collect",
+        )
+        await repo.update_progress(job.id, 0, max(len(all_items), 1))
+
+        # 이미 수집된 상품 제외
+        existing_result = await session.execute(
+            select(CPModel.site_product_id).where(
+                CPModel.source_site.in_(["ABCmart", "GrandStage"]),
+                CPModel.search_filter_id.in_(filter_ids),
+            )
+        )
+        existing_ids: set[str] = {row[0] for row in existing_result.all()}
+
+        new_items = [
+            it
+            for it in all_items
+            if str(it.get("site_product_id", "")) not in existing_ids
+        ]
+        _add_job_log(
+            job.id,
+            f"[ABC브랜드전체수집] 신규 {len(new_items)}건 (기존 {len(existing_ids)}건 스킵)",
+            job_type="collect",
+        )
+
+        # 상세 조회 — 3건 병렬 배치 (_collect_direct_api ABCmart 선취합과 동일 패턴)
+        _abc_details: dict[str, dict] = {}
+        _ABC_BATCH = 3
+        for _bs in range(0, len(new_items), _ABC_BATCH):
+            from backend.domain.samba.emergency import (
+                is_collect_cancel_requested,
+                is_emergency_stopped,
+            )
+
+            if (
+                is_collect_cancel_requested()
+                or is_emergency_stopped()
+                or await repo.is_cancelled(job.id)
+            ):
+                await repo.cancel_job(job.id)
+                await session.commit()
+                return
+
+            _batch = new_items[_bs : _bs + _ABC_BATCH]
+            _details = await asyncio.gather(
+                *(
+                    abc_client.get_product_detail(str(it.get("site_product_id", "")))
+                    for it in _batch
+                ),
+                return_exceptions=True,
+            )
+            for it, det in zip(_batch, _details):
+                _pid = str(it.get("site_product_id", ""))
+                if isinstance(det, Exception) or not det:
+                    continue
+                _abc_details[_pid] = det
+
+            _done = min(_bs + _ABC_BATCH, len(new_items))
+            await repo.update_progress(job.id, _done, len(new_items))
+            if _bs + _ABC_BATCH < len(new_items):
+                await asyncio.sleep(0.5)
+
+        _add_job_log(
+            job.id,
+            f"[ABC브랜드전체수집] 상세 조회 완료: {len(_abc_details)}/{len(new_items)}건",
+            job_type="collect",
+        )
+
+        # 저장 — category_code로 filter_id 배분
+        svc = _get_services(session)
+        total_saved = 0
+        total_skipped = 0
+        total_unmatched = 0
+
+        for item in new_items:
+            spid = str(item.get("site_product_id", ""))
+            detail = _abc_details.get(spid) or {}
+
+            is_sold_out = bool(
+                detail.get("isOutOfStock") or item.get("is_sold_out", False)
+            )
+            if is_sold_out and not _include_sold_out:
+                total_skipped += 1
+                continue
+
+            # category_code: 상세 우선, 없으면 search 결과
+            cat_code = (
+                detail.get("categoryCode", "")
+                or detail.get("category_code", "")
+                or item.get("category_code", "")
+            )
+            filter_id = cat_filter_map.get(cat_code)
+            if not filter_id:
+                total_unmatched += 1
+                logger.debug(
+                    f"[잡워커] ABC브랜드전체수집 카테고리 미매핑: {spid} cat={cat_code}"
+                )
+                continue
+
+            # 가격
+            _sale_price = int(
+                detail.get("salePrice", 0) or item.get("sale_price", 0) or 0
+            )
+            _original_price = int(
+                detail.get("originalPrice", 0)
+                or item.get("original_price", 0)
+                or _sale_price
+            )
+            _cost = _sale_price
+            if _use_max_discount:
+                _bbp = int(detail.get("bestBenefitPrice", 0) or 0)
+                _cost = _bbp if _bbp > 0 else _sale_price
+            else:
+                _cost = int(item.get("cost", 0) or _sale_price)
+
+            # 배송비 가산
+            _is_free_ship = item.get("free_shipping", False) or detail.get(
+                "freeShipping", False
+            )
+            if not _is_free_ship:
+                _cost += int(detail.get("shippingFee", 3000) or 3000)
+
+            # 카테고리
+            raw_cat = detail.get("category", "") or item.get("category", "")
+            cat_parts = [
+                item.get("category1", "") or "",
+                item.get("category2", "") or "",
+                item.get("category3", "") or "",
+            ]
+            cat_parts = [c for c in cat_parts if c]
+
+            source_site = item.get("source_site", "ABCmart")
+
+            # _build_product_data 호환 detail dict 구성
+            detail_for_build: dict = {
+                "name": detail.get("name") or item.get("name", ""),
+                "brand": detail.get("brand") or item.get("brand", ""),
+                "images": (detail.get("images") or []) or item.get("images", []),
+                "detailImages": detail.get("detailImages")
+                or detail.get("detail_images")
+                or [],
+                "options": detail.get("options") or [],
+                "sourceUrl": (
+                    detail.get("sourceUrl")
+                    or detail.get("source_url")
+                    or f"https://www.a-rt.com/product?prdtNo={spid}"
+                ),
+                "category": raw_cat,
+                "manufacturer": detail.get("manufacturer") or item.get("brand", ""),
+                "origin": detail.get("origin", ""),
+                "material": detail.get("material", ""),
+                "color": detail.get("color", ""),
+                "saleStatus": "sold_out" if is_sold_out else "in_stock",
+                "freeShipping": _is_free_ship,
+                "style_code": detail.get("style_code") or item.get("style_code", ""),
+            }
+            raw_detail_html = detail.get("detailHtml", "") or detail.get(
+                "detail_html", ""
+            )
+
+            product_data = _build_product_data(
+                detail_for_build,
+                spid,
+                filter_id,
+                source_site,
+                _cost,
+                _sale_price,
+                _original_price,
+                raw_cat,
+                cat_parts,
+                raw_detail_html,
+            )
+            await svc.create_collected_product(product_data)
+            existing_ids.add(spid)
+            total_saved += 1
+            _collect_last_progress[job.id] = _time.time()
+
+            if total_saved % 10 == 0:
+                _add_job_log(
+                    job.id,
+                    f"[ABC브랜드전체수집] [{total_saved}건 저장]",
+                    job_type="collect",
+                )
+                await repo.update_progress(job.id, total_saved, len(new_items))
+
+        # 각 SearchFilter의 requested_count를 실제 수집수로 갱신
+        for f in filters:
+            actual = (
+                await session.execute(
+                    select(_func.count()).where(CPModel.search_filter_id == f.id)
+                )
+            ).scalar() or 0
+            if actual > (f.requested_count or 0):
+                await session.execute(
+                    _sa_upd(SambaSearchFilter)
+                    .where(SambaSearchFilter.id == f.id)
+                    .values(requested_count=actual, last_collected_at=datetime.now(UTC))
+                )
+
+        _add_job_log(
+            job.id,
+            f"[ABC브랜드전체수집] 완료: 저장 {total_saved}건 | 품절스킵 {total_skipped}건 | 카테고리미매핑 {total_unmatched}건",
+            job_type="collect",
+        )
+        await repo.complete_job(
+            job.id,
+            {
+                "saved": total_saved,
+                "skipped": total_skipped,
+                "unmatched": total_unmatched,
+            },
+        )
+        logger.info(f"[잡워커] ABC브랜드전체수집 완료: {job.id} ({total_saved}건)")
 
     async def _collect_direct_api(self, job, sf, session, repo):
         """FashionPlus/Nike/Adidas 등 직접 API 소싱처 수집."""

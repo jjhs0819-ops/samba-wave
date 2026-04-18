@@ -432,23 +432,31 @@ async def gsshop_scan_progress():
     return GsShopSourcingClient.scan_progress or {"stage": "idle"}
 
 
+_BRAND_COLLECT_ALL_SITES = {"MUSINSA", "ABCmart"}
+
+
 @router.post("/brand-collect-all")
 async def brand_collect_all(
     body: BrandCollectAllRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    """무신사 브랜드 전체 상품을 단일 Job으로 수집 후 카테고리별 SearchFilter에 배분.
+    """브랜드 전체 상품을 단일 Job으로 수집 후 카테고리별 SearchFilter에 배분.
 
-    기존 카테고리별 61개 Job 순차 실행 방식의 두 가지 문제를 해결:
+    지원 소싱처: MUSINSA, ABCmart (ABCmart는 GrandStage 병합 포함)
+    기존 카테고리별 Job 순차 실행 방식의 두 가지 문제를 해결:
     1) 페이지 이탈 시 수집 중단 → 단일 백엔드 Job으로 완전 독립 실행
     2) 글로벌 dedup으로 인한 카테고리 겹침 누락 → 브랜드 단위 수집 후 카테고리 배분
     """
-    if body.source_site != "MUSINSA":
-        raise HTTPException(400, "brand-collect-all은 MUSINSA 전용입니다")
+    if body.source_site not in _BRAND_COLLECT_ALL_SITES:
+        raise HTTPException(
+            400, f"brand-collect-all은 {_BRAND_COLLECT_ALL_SITES} 전용입니다"
+        )
     if not body.filter_ids:
         raise HTTPException(400, "filter_ids가 필요합니다")
-    if not body.keyword or not body.brand:
-        raise HTTPException(400, "keyword와 brand가 필요합니다")
+    if body.source_site == "MUSINSA" and (not body.keyword or not body.brand):
+        raise HTTPException(400, "MUSINSA: keyword와 brand가 필요합니다")
+    if body.source_site == "ABCmart" and not body.keyword:
+        raise HTTPException(400, "ABCmart: keyword가 필요합니다")
 
     from backend.domain.samba.job.repository import SambaJobRepository
     from backend.domain.samba.job.service import SambaJobService
@@ -459,7 +467,7 @@ async def brand_collect_all(
             "job_type": "collect",
             "payload": {
                 "brand_all": True,
-                "source_site": "MUSINSA",
+                "source_site": body.source_site,
                 "filter_ids": body.filter_ids,
                 "keyword": body.keyword,
                 "brand": body.brand,
