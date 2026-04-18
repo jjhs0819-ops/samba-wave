@@ -497,8 +497,8 @@ class LotteonClient:
         self,
         page: int = 1,
         size: int = 100,
-        reg_strt_dttm: str = "20260417",
-        reg_end_dttm: str = "20261231",
+        reg_strt_dttm: str = "20260417000000",
+        reg_end_dttm: str = "20261231235959",
     ) -> dict[str, Any]:
         """셀러 등록 상품 목록 페이지 조회 (마이그레이션용).
 

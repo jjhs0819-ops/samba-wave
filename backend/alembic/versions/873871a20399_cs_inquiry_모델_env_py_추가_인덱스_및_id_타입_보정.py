@@ -35,51 +35,63 @@ def upgrade() -> None:
         "samba_cs_inquiry",
         ["account_id"],
         unique=False,
+        if_not_exists=True,
     )
     op.create_index(
         op.f("ix_samba_cs_inquiry_collected_product_id"),
         "samba_cs_inquiry",
         ["collected_product_id"],
         unique=False,
+        if_not_exists=True,
     )
     op.create_index(
         op.f("ix_samba_cs_inquiry_external_id"),
         "samba_cs_inquiry",
         ["external_id"],
         unique=False,
+        if_not_exists=True,
     )
     op.create_index(
         op.f("ix_samba_cs_inquiry_inquiry_type"),
         "samba_cs_inquiry",
         ["inquiry_type"],
         unique=False,
+        if_not_exists=True,
     )
     op.create_index(
-        op.f("ix_samba_cs_inquiry_market"), "samba_cs_inquiry", ["market"], unique=False
+        op.f("ix_samba_cs_inquiry_market"),
+        "samba_cs_inquiry",
+        ["market"],
+        unique=False,
+        if_not_exists=True,
     )
     op.create_index(
         op.f("ix_samba_cs_inquiry_market_inquiry_no"),
         "samba_cs_inquiry",
         ["market_inquiry_no"],
         unique=False,
+        if_not_exists=True,
     )
     op.create_index(
         op.f("ix_samba_cs_inquiry_market_order_id"),
         "samba_cs_inquiry",
         ["market_order_id"],
         unique=False,
+        if_not_exists=True,
     )
     op.create_index(
         op.f("ix_samba_cs_inquiry_market_product_no"),
         "samba_cs_inquiry",
         ["market_product_no"],
         unique=False,
+        if_not_exists=True,
     )
     op.create_index(
         op.f("ix_samba_cs_inquiry_reply_status"),
         "samba_cs_inquiry",
         ["reply_status"],
         unique=False,
+        if_not_exists=True,
     )
     # ### end Alembic commands ###
 
