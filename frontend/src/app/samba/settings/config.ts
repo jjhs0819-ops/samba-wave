@@ -197,8 +197,6 @@ export const STORE_MARKETS: MarketConfig[] = [
     { name: 'jejuFee', label: '제주/도서산간 추가비', type: 'number', placeholder: '3000' },
     { name: 'stockQuantity', label: '재고수량', type: 'number', placeholder: '999 (기본값)' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
-    { name: '_divider_point', label: '스토어 즉시할인', type: 'divider' },
-    { name: 'discountRate', label: '즉시할인율(%)', type: 'number', disabled: true, fixedValue: 25, description: '롯데ON 역산 구조로 25% 고정' },
     { name: '_divider_review', label: 'LPOINT 추가적립', type: 'divider' },
     { name: 'reviewTextPoint', label: '구매확정 적립 LPOINT', type: 'number', placeholder: '원' },
     { name: 'reviewPhotoPoint', label: '리뷰작성시 LPOINT', type: 'number', placeholder: '원' },

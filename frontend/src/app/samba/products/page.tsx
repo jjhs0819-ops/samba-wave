@@ -1835,7 +1835,7 @@ export default function ProductsPage() {
               border: "1px solid #3D3D3D", borderRadius: "5px",
               color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
             }}
-          >가격재고갱신</button>
+          >갱신</button>
           <button
             onClick={async () => {
               if (!await showConfirm('스마트스토어 동기화를 실행합니다.\n\n1단계: DB에 없는 Naver 등록 상품(고아 상품) 조회\n2단계: 목록 확인 후 실제 삭제 여부 선택\n\n계속하시겠습니까?')) return

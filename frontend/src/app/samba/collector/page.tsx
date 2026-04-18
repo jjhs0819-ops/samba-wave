@@ -1782,6 +1782,30 @@ export default function CollectorPage() {
                     brand = parsed?.searchParams.get('q') || parsed?.searchParams.get('brand') || parsed?.searchParams.get('searchWord') || parsed?.searchParams.get('tq') || ''
                   }
                   if (!brand) { showAlert(`${sourceSite}에서 브랜드 정보를 찾을 수 없습니다`); return }
+
+                  // 여러 소싱처·브랜드 혼재 시 오류 — drillBrand가 없을 때만 체크
+                  if (!drillBrand) {
+                    const mixedSite = displayedFilters.some(f => f.source_site !== sourceSite)
+                    if (mixedSite) {
+                      showAlert('여러 소싱처가 혼재합니다.\n특정 브랜드 행을 클릭(드릴다운)한 후 추가수집을 실행해주세요.', 'warning')
+                      return
+                    }
+                    const extractB = (f: (typeof displayedFilters)[0]) => {
+                      const p = (() => { try { return new URL(f.keyword || '') } catch { return null } })()
+                      if (sourceSite === 'MUSINSA') return p?.searchParams.get('brand') || ''
+                      if (sourceSite === 'Nike') return p?.searchParams.get('q') || ''
+                      if (sourceSite === 'ABCmart' || sourceSite === 'GrandStage') return p?.searchParams.get('searchWord') || ''
+                      if (sourceSite === 'GSShop') return p?.searchParams.get('tq') || ''
+                      if (sourceSite === 'LOTTEON') return p?.searchParams.get('q') || ''
+                      return p?.searchParams.get('q') || p?.searchParams.get('brand') || p?.searchParams.get('searchWord') || p?.searchParams.get('tq') || ''
+                    }
+                    const mixedBrand = displayedFilters.some(f => extractB(f) !== brand)
+                    if (mixedBrand) {
+                      showAlert('여러 브랜드가 혼재합니다.\n특정 브랜드 행을 클릭(드릴다운)한 후 추가수집을 실행해주세요.', 'warning')
+                      return
+                    }
+                  }
+
                   const brandName = drillBrand || brand
                   // 선택된 카테고리 코드 추출
                   const selectedCategories: string[] = []

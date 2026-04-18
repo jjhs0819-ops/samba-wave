@@ -125,27 +125,14 @@ async def cleanup_smartstore_orphans(
     if not accounts:
         raise HTTPException(status_code=404, detail="활성 스마트스토어 계정 없음")
 
-    # 2. DB에 기록된 모든 origin/channel product no 수집
-    prod_result = await session.exec(
-        select(SambaCollectedProduct).where(
-            SambaCollectedProduct.market_product_nos.isnot(None)
-        )
-    )
-    all_products = prod_result.all()
-    db_nos: set[str] = set()
-    for p in all_products:
-        for k, v in (p.market_product_nos or {}).items():
-            if isinstance(v, str) and v:
-                db_nos.add(v)
-            elif isinstance(v, dict):
-                for kk in (
-                    "originProductNo",
-                    "productNo",
-                    "smartstoreChannelProductNo",
-                ):
-                    vv = v.get(kk)
-                    if vv:
-                        db_nos.add(str(vv))
+    # 2. DB 상품 전체 로드 (계정별 매핑 + style_code 동시 수집)
+    prod_result = await session.exec(select(SambaCollectedProduct))
+    all_db_products = prod_result.all()
+
+    # 삼바가 등록한 상품 식별용 style_code 집합
+    all_style_codes: set[str] = {
+        str(p.style_code) for p in all_db_products if p.style_code
+    }
 
     # 3. 각 계정별 Naver 조회 + 고아 판별
     per_account = []
@@ -160,6 +147,24 @@ async def cleanup_smartstore_orphans(
         if not client_id or not client_secret:
             per_account.append({"account_id": account.id, "error": "API 키 없음"})
             continue
+
+        # 이 계정에 매핑된 product_no만 수집
+        account_db_nos: set[str] = set()
+        for p in all_db_products:
+            nos = p.market_product_nos or {}
+            for k in (account.id, f"{account.id}_origin"):
+                v = nos.get(k)
+                if isinstance(v, str) and v:
+                    account_db_nos.add(v)
+                elif isinstance(v, dict):
+                    for kk in (
+                        "originProductNo",
+                        "productNo",
+                        "smartstoreChannelProductNo",
+                    ):
+                        vv = v.get(kk)
+                        if vv:
+                            account_db_nos.add(str(vv))
 
         client = SmartStoreClient(client_id, client_secret)
 
@@ -188,6 +193,17 @@ async def cleanup_smartstore_orphans(
 
         orphans = []
         for np in naver_products:
+            # sellerManagementCode가 DB style_code에 있어야 삼바 등록 상품
+            mgmt_code = (
+                np.get("originProduct", {})
+                .get("sellerCodeInfo", {})
+                .get("sellerManagementCode", "")
+                or np.get("sellerManagementCode", "")
+                or ""
+            )
+            if not mgmt_code or mgmt_code not in all_style_codes:
+                continue  # 외부 등록 상품 — 건드리지 않음
+
             origin_no = str(
                 np.get("originProductNo")
                 or np.get("originProduct", {}).get("id", "")
@@ -198,14 +214,16 @@ async def cleanup_smartstore_orphans(
                 for cp in np.get("channelProducts", [])
                 if cp.get("channelProductNo")
             ]
-            in_db = (origin_no and origin_no in db_nos) or any(
-                cn in db_nos for cn in channel_nos
+            in_db = (origin_no and origin_no in account_db_nos) or any(
+                cn in account_db_nos for cn in channel_nos
             )
             if not in_db and origin_no:
                 name = (
                     np.get("originProduct", {}).get("name") or np.get("name", "") or ""
                 )
-                orphans.append({"origin_no": origin_no, "name": name[:80]})
+                orphans.append(
+                    {"origin_no": origin_no, "name": name[:80], "mgmt_code": mgmt_code}
+                )
 
         total_orphans += len(orphans)
 
@@ -239,7 +257,7 @@ async def cleanup_smartstore_orphans(
     return {
         "ok": True,
         "dry_run": dry_run,
-        "db_no_count": len(db_nos),
+        "style_code_count": len(all_style_codes),
         "total_naver": total_naver,
         "total_orphans": total_orphans,
         "total_deleted": total_deleted,
