@@ -1573,6 +1573,7 @@ class JobWorker:
         total_skipped = 0
         total_unmatched = 0
         _collected_sold_out = 0
+        _total_count = 0  # 전체 건수 (1페이지 응답에서 채워짐)
         search_page = 1
         max_pages = 100
         _rate_limited = False
@@ -1599,31 +1600,59 @@ class JobWorker:
                 clear_collect_cancel()
                 return
 
-            try:
-                data = await client.search_products(
-                    keyword=keyword,
-                    page=search_page,
-                    size=100,
-                    brand=brand,
-                    gf=gf,
+            # 검색 요청 — 프로덕션 스로틀링 대비 최대 3회 재시도
+            search_items = []
+            _page_fail = False
+            for _retry in range(4):
+                try:
+                    data = await client.search_products(
+                        keyword=keyword,
+                        page=search_page,
+                        size=100,
+                        brand=brand,
+                        gf=gf,
+                    )
+                    search_items = data.get("data", [])
+                    if search_page == 1:
+                        max_pages = data.get("totalPages", 1) or 1
+                        _total_count = data.get("totalCount", 0) or 0
+                        _add_job_log(
+                            job.id,
+                            f"[브랜드전체수집] 총 {_total_count:,}건 / {max_pages}페이지",
+                            job_type="collect",
+                        )
+                        await repo.update_progress(
+                            job.id,
+                            0,
+                            data.get("totalCount", 0) or len(filter_ids) * 100,
+                        )
+                    break  # 성공
+                except Exception as e:
+                    logger.error(
+                        f"[잡워커] 브랜드전체수집 검색 실패 p{search_page} (재시도 {_retry + 1}/3): {e!r}",
+                        exc_info=True,
+                    )
+                    if _retry >= 3:
+                        _page_fail = True
+                        break
+                    await asyncio.sleep(5 * (_retry + 1))
+
+            if _page_fail:
+                _add_job_log(
+                    job.id,
+                    f"[브랜드전체수집] p{search_page} 재시도 초과, 수집 종료",
+                    job_type="collect",
                 )
-                search_items = data.get("data", [])
-                if search_page == 1:
-                    max_pages = data.get("totalPages", 1) or 1
-                    _add_job_log(
-                        job.id,
-                        f"[브랜드전체수집] 총 {data.get('totalCount', 0)}건 / {max_pages}페이지",
-                        job_type="collect",
-                    )
-                    await repo.update_progress(
-                        job.id, 0, data.get("totalCount", 0) or len(filter_ids) * 100
-                    )
-                if not search_items:
-                    break
-                await asyncio.sleep(_site_intervals.get(_ik, 0))
-            except Exception as e:
-                logger.error(f"[잡워커] 브랜드전체수집 검색 실패 p{search_page}: {e}")
                 break
+
+            # 빈 결과 처리 — p1이면 중단, p2+이면 스킵
+            if not search_items:
+                if search_page == 1:
+                    break
+                search_page += 1
+                continue
+
+            await asyncio.sleep(_site_intervals.get(_ik, 0))
 
             # 이 페이지에서 신규 상품만 추출
             targets = []
@@ -1770,12 +1799,14 @@ class JobWorker:
                 _m_name = (detail.get("name", "") or "")[:20]
                 _add_job_log(
                     job.id,
-                    f"[MUSINSA] {_m_brand} — {_m_name} ({goods_no})",
+                    f"[{total_saved:,}/{_total_count:,}] {_m_brand} {_m_name} {goods_no}",
                     job_type="collect",
                 )
                 if total_saved % 10 == 0:
                     await repo.update_progress(job.id, total_saved, max_pages * 100)
 
+            # 페이지 간 1초 대기 — 프로덕션 Musinsa 스로틀링 방지
+            await asyncio.sleep(1.0)
             search_page += 1
 
         # 각 SearchFilter의 requested_count를 실제 수집수로 갱신
@@ -1930,9 +1961,13 @@ class JobWorker:
             job_type="collect",
         )
 
-        # 상세 조회 — 10건 병렬 배치 + 20건마다 진행 로그
-        _abc_details: dict[str, dict] = {}
-        _ABC_BATCH = 10
+        # 3건 병렬 조회 → 배치 완료 즉시 1건씩 저장 → 건별 로그
+        svc = _get_services(session)
+        total_saved = 0
+        total_skipped = 0
+        total_unmatched = 0
+        _ABC_BATCH = 5
+
         for _bs in range(0, len(new_items), _ABC_BATCH):
             from backend.domain.samba.emergency import (
                 is_collect_cancel_requested,
@@ -1956,150 +1991,119 @@ class JobWorker:
                 ),
                 return_exceptions=True,
             )
-            for it, det in zip(_batch, _details):
-                _pid = str(it.get("site_product_id", ""))
-                if isinstance(det, Exception) or not det:
+
+            # 배치 완료 즉시 1건씩 저장 + 로그
+            for _bi, (it, det) in enumerate(zip(_batch, _details)):
+                spid = str(it.get("site_product_id", ""))
+                detail = det if (det and not isinstance(det, Exception)) else {}
+
+                is_sold_out = bool(
+                    detail.get("isOutOfStock") or it.get("is_sold_out", False)
+                )
+                if is_sold_out and not _include_sold_out:
+                    total_skipped += 1
                     continue
-                _abc_details[_pid] = det
+
+                cat_code = (
+                    detail.get("categoryCode", "")
+                    or detail.get("category_code", "")
+                    or it.get("category_code", "")
+                )
+                filter_id = cat_filter_map.get(cat_code)
+                if not filter_id:
+                    total_unmatched += 1
+                    _p_name = (detail.get("name") or it.get("name", ""))[:15]
+                    _add_job_log(
+                        job.id,
+                        f"[미매핑] {_p_name} ({spid}) cat={cat_code}",
+                        job_type="collect",
+                    )
+                    continue
+
+                _sale_price = int(
+                    detail.get("salePrice", 0) or it.get("sale_price", 0) or 0
+                )
+                _original_price = int(
+                    detail.get("originalPrice", 0)
+                    or it.get("original_price", 0)
+                    or _sale_price
+                )
+                if _use_max_discount:
+                    _bbp = int(detail.get("bestBenefitPrice", 0) or 0)
+                    _cost = _bbp if _bbp > 0 else _sale_price
+                else:
+                    _cost = int(it.get("cost", 0) or _sale_price)
+
+                _is_free_ship = it.get("free_shipping", False) or detail.get(
+                    "freeShipping", False
+                )
+                if not _is_free_ship:
+                    _cost += int(detail.get("shippingFee", 3000) or 3000)
+
+                raw_cat = detail.get("category", "") or it.get("category", "")
+                cat_parts = [
+                    it.get("category1", "") or "",
+                    it.get("category2", "") or "",
+                    it.get("category3", "") or "",
+                ]
+                cat_parts = [c for c in cat_parts if c]
+                source_site = it.get("source_site", "ABCmart")
+
+                detail_for_build: dict = {
+                    "name": detail.get("name") or it.get("name", ""),
+                    "brand": detail.get("brand") or it.get("brand", ""),
+                    "images": (detail.get("images") or []) or it.get("images", []),
+                    "detailImages": detail.get("detailImages") or [],
+                    "options": detail.get("options") or [],
+                    "sourceUrl": (
+                        detail.get("sourceUrl")
+                        or f"https://www.a-rt.com/product?prdtNo={spid}"
+                    ),
+                    "category": raw_cat,
+                    "manufacturer": detail.get("manufacturer") or it.get("brand", ""),
+                    "origin": detail.get("origin", ""),
+                    "material": detail.get("material", ""),
+                    "color": detail.get("color", ""),
+                    "saleStatus": "sold_out" if is_sold_out else "in_stock",
+                    "freeShipping": _is_free_ship,
+                    "styleNo": detail.get("styleCode")
+                    or detail.get("style_code")
+                    or it.get("style_code", ""),
+                }
+                raw_detail_html = detail.get("detailHtml", "") or detail.get(
+                    "detail_html", ""
+                )
+
+                product_data = _build_product_data(
+                    detail_for_build,
+                    spid,
+                    filter_id,
+                    source_site,
+                    _cost,
+                    _sale_price,
+                    _original_price,
+                    raw_cat,
+                    cat_parts,
+                    raw_detail_html,
+                )
+                await svc.create_collected_product(product_data)
+                existing_ids.add(spid)
+                total_saved += 1
+                _collect_last_progress[job.id] = _time.time()
+
+                _proc_no = _bs + _bi + 1
+                _log_brand = detail_for_build.get("brand", "") or ""
+                _log_name = (detail_for_build.get("name", "") or "")[:20]
+                _add_job_log(
+                    job.id,
+                    f"[{_proc_no:,}/{len(new_items):,}] {_log_brand} {_log_name} {spid}",
+                    job_type="collect",
+                )
 
             _done = min(_bs + _ABC_BATCH, len(new_items))
             await repo.update_progress(job.id, _done, len(new_items))
-            if _done % 20 == 0 or _done == len(new_items):
-                _add_job_log(
-                    job.id,
-                    f"[ABC브랜드전체수집] 상세 조회 [{_done}/{len(new_items)}]",
-                    job_type="collect",
-                )
             if _bs + _ABC_BATCH < len(new_items):
-                await asyncio.sleep(0.2)
-
-        _add_job_log(
-            job.id,
-            f"[ABC브랜드전체수집] 상세 조회 완료: {len(_abc_details)}/{len(new_items)}건",
-            job_type="collect",
-        )
-
-        # 저장 — category_code로 filter_id 배분
-        svc = _get_services(session)
-        total_saved = 0
-        total_skipped = 0
-        total_unmatched = 0
-
-        for item in new_items:
-            spid = str(item.get("site_product_id", ""))
-            detail = _abc_details.get(spid) or {}
-
-            is_sold_out = bool(
-                detail.get("isOutOfStock") or item.get("is_sold_out", False)
-            )
-            if is_sold_out and not _include_sold_out:
-                total_skipped += 1
-                continue
-
-            # category_code: 상세 우선, 없으면 search 결과
-            cat_code = (
-                detail.get("categoryCode", "")
-                or detail.get("category_code", "")
-                or item.get("category_code", "")
-            )
-            filter_id = cat_filter_map.get(cat_code)
-            if not filter_id:
-                total_unmatched += 1
-                _p_name = (detail.get("name") or item.get("name", ""))[:15]
-                _add_job_log(
-                    job.id,
-                    f"[미매핑] {_p_name} ({spid}) cat={cat_code}",
-                    job_type="collect",
-                )
-                continue
-
-            # 가격
-            _sale_price = int(
-                detail.get("salePrice", 0) or item.get("sale_price", 0) or 0
-            )
-            _original_price = int(
-                detail.get("originalPrice", 0)
-                or item.get("original_price", 0)
-                or _sale_price
-            )
-            _cost = _sale_price
-            if _use_max_discount:
-                _bbp = int(detail.get("bestBenefitPrice", 0) or 0)
-                _cost = _bbp if _bbp > 0 else _sale_price
-            else:
-                _cost = int(item.get("cost", 0) or _sale_price)
-
-            # 배송비 가산
-            _is_free_ship = item.get("free_shipping", False) or detail.get(
-                "freeShipping", False
-            )
-            if not _is_free_ship:
-                _cost += int(detail.get("shippingFee", 3000) or 3000)
-
-            # 카테고리
-            raw_cat = detail.get("category", "") or item.get("category", "")
-            cat_parts = [
-                item.get("category1", "") or "",
-                item.get("category2", "") or "",
-                item.get("category3", "") or "",
-            ]
-            cat_parts = [c for c in cat_parts if c]
-
-            source_site = item.get("source_site", "ABCmart")
-
-            # _build_product_data 호환 detail dict 구성
-            detail_for_build: dict = {
-                "name": detail.get("name") or item.get("name", ""),
-                "brand": detail.get("brand") or item.get("brand", ""),
-                "images": (detail.get("images") or []) or item.get("images", []),
-                "detailImages": detail.get("detailImages")
-                or detail.get("detail_images")
-                or [],
-                "options": detail.get("options") or [],
-                "sourceUrl": (
-                    detail.get("sourceUrl")
-                    or detail.get("source_url")
-                    or f"https://www.a-rt.com/product?prdtNo={spid}"
-                ),
-                "category": raw_cat,
-                "manufacturer": detail.get("manufacturer") or item.get("brand", ""),
-                "origin": detail.get("origin", ""),
-                "material": detail.get("material", ""),
-                "color": detail.get("color", ""),
-                "saleStatus": "sold_out" if is_sold_out else "in_stock",
-                "freeShipping": _is_free_ship,
-                "style_code": detail.get("style_code") or item.get("style_code", ""),
-            }
-            raw_detail_html = detail.get("detailHtml", "") or detail.get(
-                "detail_html", ""
-            )
-
-            product_data = _build_product_data(
-                detail_for_build,
-                spid,
-                filter_id,
-                source_site,
-                _cost,
-                _sale_price,
-                _original_price,
-                raw_cat,
-                cat_parts,
-                raw_detail_html,
-            )
-            await svc.create_collected_product(product_data)
-            existing_ids.add(spid)
-            total_saved += 1
-            _collect_last_progress[job.id] = _time.time()
-
-            _log_brand = detail_for_build.get("brand", "") or ""
-            _log_name = (detail_for_build.get("name", "") or "")[:20]
-            _add_job_log(
-                job.id,
-                f"[{source_site}] {_log_brand} — {_log_name} ({spid})",
-                job_type="collect",
-            )
-            if total_saved % 20 == 0:
-                await repo.update_progress(job.id, total_saved, len(new_items))
+                await asyncio.sleep(0.5)
 
         # 각 SearchFilter의 requested_count를 실제 수집수로 갱신
         for f in filters:
@@ -3521,7 +3525,7 @@ class JobWorker:
                 _log_n = (p_name or "")[:20]
                 _add_job_log(
                     job.id,
-                    f"[{site}] {_log_b} — {_log_n} ({p_id})",
+                    f"[{existing_count + total_saved:,}/{requested_count:,}] {_log_b} {_log_n} {p_id}",
                     job_type="collect",
                 )
             except Exception as e:
