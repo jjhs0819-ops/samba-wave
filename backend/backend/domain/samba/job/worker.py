@@ -1271,7 +1271,7 @@ class JobWorker:
             _collect_sem = asyncio.Semaphore(SITE_CONCURRENCY.get("MUSINSA", 5))
             _collect_results: list[dict | None] = []
             _rate_limited = False
-            _shared_http = _httpx.AsyncClient(timeout=_httpx.Timeout(15, connect=5.0))
+            _shared_http = _httpx.AsyncClient(timeout=_httpx.Timeout(30, connect=5.0))
 
             async def _fetch_detail(goods_no: str) -> dict | None:
                 nonlocal total_skipped, _rate_limited, _collected_sold_out
@@ -1516,7 +1516,7 @@ class JobWorker:
 
         _add_job_log(
             job.id,
-            f"[브랜드전체수집] '{keyword}' 시작 — {len(filter_ids)}개 그룹 대상",
+            f"[브랜드전체수집] '{keyword}' 시작 — {len(filter_ids):,}개 그룹 대상",
             job_type="collect",
         )
 
@@ -1555,7 +1555,7 @@ class JobWorker:
 
         _add_job_log(
             job.id,
-            f"[브랜드전체수집] 카테고리 맵 {len(cat_filter_map)}개 구성",
+            f"[브랜드전체수집] 카테고리 맵 {len(cat_filter_map):,}개 구성",
             job_type="collect",
         )
 
@@ -1687,7 +1687,7 @@ class JobWorker:
             await repo.update_progress(job.id, 0, len(all_targets))
 
             _collect_sem = asyncio.Semaphore(SITE_CONCURRENCY.get("MUSINSA", 5))
-            _shared_http = _httpx.AsyncClient(timeout=_httpx.Timeout(15, connect=5.0))
+            _shared_http = _httpx.AsyncClient(timeout=_httpx.Timeout(30, connect=5.0))
 
             async def _fetch_detail_brand(goods_no: str) -> dict | None:
                 nonlocal total_skipped, _rate_limited, _collected_sold_out
@@ -1865,7 +1865,7 @@ class JobWorker:
 
         _add_job_log(
             job.id,
-            f"[브랜드전체수집] 완료: 저장 {total_saved}건 | 품절스킵 {total_skipped}건 | 카테고리미매핑 {total_unmatched}건",
+            f"[브랜드전체수집] 완료: 저장 {total_saved:,}건 | 품절스킵 {total_skipped:,}건 | 카테고리미매핑 {total_unmatched:,}건",
             job_type="collect",
         )
         await repo.complete_job(
@@ -1878,7 +1878,7 @@ class JobWorker:
                 "sold_out_count": _collected_sold_out,
             },
         )
-        logger.info(f"[잡워커] 브랜드전체수집 완료: {job.id} ({total_saved}건)")
+        logger.info(f"[잡워커] 브랜드전체수집 완료: {job.id} ({total_saved:,}건)")
 
     async def _run_brand_collect_all_abc(self, job, repo, session):
         """ABCmart+GrandStage 브랜드 전체 상품을 단일 Job으로 수집 후 카테고리별 배분.
@@ -1915,7 +1915,7 @@ class JobWorker:
 
         _add_job_log(
             job.id,
-            f"[ABC브랜드전체수집] '{keyword}' 시작 — {len(filter_ids)}개 그룹 대상",
+            f"[ABC브랜드전체수집] '{keyword}' 시작 — {len(filter_ids):,}개 그룹 대상",
             job_type="collect",
         )
 
@@ -1926,9 +1926,17 @@ class JobWorker:
         filters: list[SambaSearchFilter] = list(filters_result.scalars().all())
 
         cat_filter_map: dict[str, str] = {}  # {category_code: filter_id}
+        cat_name_map: dict[
+            str, str
+        ] = {}  # {category_path: filter_id} — 코드 불일치 fallback
         for f in filters:
             if f.category_filter:
                 cat_filter_map[f.category_filter] = f.id
+            # f.name = "ABCmart_아디다스_신발_스니커즈" → "신발 > 스니커즈"
+            if f.name:
+                _nm_parts = f.name.split("_")
+                if len(_nm_parts) > 2:
+                    cat_name_map[" > ".join(_nm_parts[2:])] = f.id
 
         if not cat_filter_map:
             await repo.fail_job(
@@ -1976,7 +1984,7 @@ class JobWorker:
 
         _add_job_log(
             job.id,
-            f"[ABC브랜드전체수집] 전체 {len(all_items)}건 수집 (ABC+GS 병합)",
+            f"[ABC브랜드전체수집] 전체 {len(all_items):,}건 수집 (ABC+GS 병합)",
             job_type="collect",
         )
         await repo.update_progress(job.id, 0, max(len(all_items), 1))
@@ -1997,7 +2005,7 @@ class JobWorker:
         ]
         _add_job_log(
             job.id,
-            f"[ABC브랜드전체수집] 신규 {len(new_items)}건 (기존 {len(existing_ids)}건 스킵)",
+            f"[ABC브랜드전체수집] 신규 {len(new_items):,}건 (기존 {len(existing_ids):,}건 스킵)",
             job_type="collect",
         )
 
@@ -2050,6 +2058,10 @@ class JobWorker:
                     or detail.get("category_code", "")
                 )
                 filter_id = cat_filter_map.get(cat_code)
+                if not filter_id:
+                    # 코드 불일치 시 카테고리 이름 기반 fallback
+                    _item_cat = it.get("category", "")
+                    filter_id = cat_name_map.get(_item_cat)
                 if not filter_id:
                     total_unmatched += 1
                     _p_name = (detail.get("name") or it.get("name", ""))[:15]
@@ -2161,7 +2173,7 @@ class JobWorker:
 
         _add_job_log(
             job.id,
-            f"[ABC브랜드전체수집] 완료: 저장 {total_saved}건 | 품절스킵 {total_skipped}건 | 카테고리미매핑 {total_unmatched}건",
+            f"[ABC브랜드전체수집] 완료: 저장 {total_saved:,}건 | 품절스킵 {total_skipped:,}건 | 카테고리미매핑 {total_unmatched:,}건",
             job_type="collect",
         )
         await repo.complete_job(
@@ -2172,7 +2184,7 @@ class JobWorker:
                 "unmatched": total_unmatched,
             },
         )
-        logger.info(f"[잡워커] ABC브랜드전체수집 완료: {job.id} ({total_saved}건)")
+        logger.info(f"[잡워커] ABC브랜드전체수집 완료: {job.id} ({total_saved:,}건)")
 
     async def _collect_direct_api(self, job, sf, session, repo):
         """FashionPlus/Nike/Adidas 등 직접 API 소싱처 수집."""

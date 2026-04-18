@@ -1067,21 +1067,41 @@ class MusinsaClient:
                 headers=self._headers(),
             )
             if resp.status_code != 200:
+                logger.warning(
+                    f"[고시] {goods_no} essential API {resp.status_code}: {resp.text[:200]}"
+                )
                 return essential
             ess_json = resp.json()
-            if (ess_json.get("meta") or {}).get("result") != "SUCCESS" or not (
-                ess_json.get("data") or {}
-            ).get("essentials"):
+            if (ess_json.get("meta") or {}).get("result") != "SUCCESS":
+                logger.warning(
+                    f"[고시] {goods_no} essential API result 실패: {ess_json.get('meta')}"
+                )
                 return essential
 
-            for item in ess_json["data"]["essentials"]:
-                name = (item.get("name") or "").strip()
-                value = (item.get("value") or "").strip()
+            # 키 이름 변경 대비 — essentials / essentialItems 모두 시도
+            raw_data = ess_json.get("data") or {}
+            items = (
+                raw_data.get("essentials")
+                or raw_data.get("essentialItems")
+                or raw_data.get("essentialInformations")
+                or []
+            )
+            if not items:
+                logger.debug(
+                    f"[고시] {goods_no} essential 항목 없음. keys={list(raw_data.keys())}"
+                )
+                return essential
+
+            for item in items:
+                # name/title 키 모두 허용
+                name = (item.get("name") or item.get("title") or "").strip()
+                # value/content 키 모두 허용
+                value = (item.get("value") or item.get("content") or "").strip()
                 if not value:
                     continue
                 if "소재" in name or "재질" in name:
                     essential["material"] = value
-                elif name == "색상":
+                elif "색상" in name:
                     essential["color"] = value
                 elif (
                     ("치수" in name or "사이즈" in name)
@@ -1103,7 +1123,9 @@ class MusinsaClient:
                     essential["qualityGuarantee"] = value
 
         except Exception as exc:
-            logger.warning(f"[고시] {goods_no} 고시정보 수집 실패: {exc}")
+            logger.warning(
+                f"[고시] {goods_no} 고시정보 수집 실패: {exc!r}", exc_info=True
+            )
 
         return essential
 
