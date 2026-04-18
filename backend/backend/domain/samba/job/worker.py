@@ -1381,13 +1381,13 @@ class JobWorker:
                 await repo.update_progress(
                     job.id, existing_count + total_saved, requested_count
                 )
-                # 10건 단위 진행 로그
-                if total_saved % 10 == 0 or total_saved >= remaining:
-                    _add_job_log(
-                        job.id,
-                        f"{_prefix} [{sf.name}] [{existing_count + total_saved}/{requested_count}] 수집 중...",
-                        job_type="collect",
-                    )
+                _p_brand = detail.get("brand", "") or ""
+                _p_name = (detail.get("name", "") or "")[:20]
+                _add_job_log(
+                    job.id,
+                    f"{_prefix} [{existing_count + total_saved:,}/{requested_count:,}] {_p_brand} {_p_name} {goods_no}",
+                    job_type="collect",
+                )
 
                 if total_saved >= remaining:
                     break
@@ -2099,7 +2099,7 @@ class JobWorker:
                     it.get("category3", "") or "",
                 ]
                 cat_parts = [c for c in cat_parts if c]
-                source_site = it.get("source_site", "ABCmart")
+                source_site = "ABCmart"  # GrandStage 상품도 ABCmart로 통합 저장
 
                 detail_for_build: dict = {
                     "name": detail.get("name") or it.get("name", ""),

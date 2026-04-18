@@ -622,9 +622,12 @@ export default function CollectorPage() {
     const _abcBrand = _allABCmart && sortedTargetFilters.length > 0 ? _getBrandKey(sortedTargetFilters[0]) : ''
     const _brandValue = _musinsaBrand || _abcBrand
     const _brandSite = _allMusinsa ? 'MUSINSA' : _allABCmart ? 'ABCmart' : ''
+    // 해당 브랜드의 전체 그룹 수 확인 — 선택된 수와 일치할 때만 브랜드전체수집
+    const _totalMusinsaBrandCount = _musinsaBrand ? filters.filter(f => f.source_site === 'MUSINSA' && _getBrandKey(f) === _musinsaBrand).length : 0
+    const _totalAbcBrandCount = _abcBrand ? filters.filter(f => f.source_site === 'ABCmart' && _getBrandKey(f) === _abcBrand).length : 0
     const _sameBrand = (
-      (_musinsaBrand && sortedTargetFilters.every(f => _getBrandKey(f) === _musinsaBrand)) ||
-      (_abcBrand && sortedTargetFilters.every(f => _getBrandKey(f) === _abcBrand))
+      (_musinsaBrand && sortedTargetFilters.length >= 2 && sortedTargetFilters.length === _totalMusinsaBrandCount && sortedTargetFilters.every(f => _getBrandKey(f) === _musinsaBrand)) ||
+      (_abcBrand && sortedTargetFilters.length >= 2 && sortedTargetFilters.length === _totalAbcBrandCount && sortedTargetFilters.every(f => _getBrandKey(f) === _abcBrand))
     )
 
     const ok = await showConfirm(
