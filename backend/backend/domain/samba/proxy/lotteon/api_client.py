@@ -470,6 +470,53 @@ class LotteonClient:
             body=body,
         )
 
+    async def search_immediate_discount_list(self, spd_no: str) -> dict[str, Any]:
+        """상품의 활성 즉시할인 행사 목록 조회 (마이그레이션용)."""
+        return await self._call_api(
+            "POST",
+            "/v1/openapi/promotion/v1/OpenApiService/searchProductImmediateDiscountList",
+            body={"spdNo": spd_no},
+        )
+
+    async def terminate_immediate_discount(
+        self, spd_no: str, awy_dc_pd_reg_no: str
+    ) -> dict[str, Any]:
+        """즉시할인 행사 강제 종료 — saveDvsCd=D (마이그레이션용)."""
+        return await self._call_api(
+            "POST",
+            "/v1/openapi/promotion/v1/OpenApiService/saveProductImmediateDiscount",
+            body={
+                "saveDvsCd": "D",
+                "awyDcPdRegNo": awy_dc_pd_reg_no,
+                "spdNo": spd_no,
+                "trNo": self.tr_no,
+            },
+        )
+
+    async def list_registered_products(
+        self,
+        page: int = 1,
+        size: int = 100,
+        reg_strt_dttm: str = "20260417",
+        reg_end_dttm: str = "20261231",
+    ) -> dict[str, Any]:
+        """셀러 등록 상품 목록 페이지 조회 (마이그레이션용).
+
+        reg_strt_dttm / reg_end_dttm: yyyymmdd 포맷, 즉시할인 도입 시점(2026-04-17) 이후로 기본 설정.
+        """
+        return await self._call_api(
+            "POST",
+            "/v1/openapi/product/v1/product/list",
+            body={
+                "trGrpCd": self.tr_grp_cd,
+                "trNo": self.tr_no,
+                "pageNo": page,
+                "pageSize": size,
+                "regStrtDttm": reg_strt_dttm,
+                "regEndDttm": reg_end_dttm,
+            },
+        )
+
     async def save_lpoint_accumulation(
         self,
         spd_no: str,
