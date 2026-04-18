@@ -107,8 +107,8 @@ export default function StoreCare() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '20px' }}>
             <div style={card}>
               <div style={{ fontSize: '0.7rem', color: '#8A95B0', marginBottom: '4px' }}>오늘 가구매</div>
-              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#51CF66' }}>{todaySuccess}건</div>
-              {todayFailed > 0 && <div style={{ fontSize: '0.7rem', color: '#FF6B6B', marginTop: '2px' }}>실패 {todayFailed}건</div>}
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#51CF66' }}>{fmt(todaySuccess)}건</div>
+              {todayFailed > 0 && <div style={{ fontSize: '0.7rem', color: '#FF6B6B', marginTop: '2px' }}>실패 {fmt(todayFailed)}건</div>}
             </div>
             <div style={card}>
               <div style={{ fontSize: '0.7rem', color: '#8A95B0', marginBottom: '4px' }}>오늘 구매액</div>
@@ -116,8 +116,8 @@ export default function StoreCare() {
             </div>
             <div style={card}>
               <div style={{ fontSize: '0.7rem', color: '#8A95B0', marginBottom: '4px' }}>활성 스케줄</div>
-              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#4C9AFF' }}>{activeSchedules}개</div>
-              <div style={{ fontSize: '0.7rem', color: '#8A95B0', marginTop: '2px' }}>전체 {schedules.length}개</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#4C9AFF' }}>{fmt(activeSchedules)}개</div>
+              <div style={{ fontSize: '0.7rem', color: '#8A95B0', marginTop: '2px' }}>전체 {fmt(schedules.length)}개</div>
             </div>
             <div style={card}>
               <div style={{ fontSize: '0.7rem', color: '#8A95B0', marginBottom: '4px' }}>연결 마켓</div>

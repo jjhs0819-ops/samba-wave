@@ -472,11 +472,11 @@ export default function SNSPage() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '20px' }}>
             <div style={cardPad}>
               <div style={{ fontSize: '0.7rem', color: '#8A95B0', marginBottom: '4px' }}>오늘 포스팅</div>
-              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#4C9AFF' }}>{dashboard?.today_posts ?? 0}건</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#4C9AFF' }}>{fmtNum(dashboard?.today_posts ?? 0)}건</div>
             </div>
             <div style={cardPad}>
               <div style={{ fontSize: '0.7rem', color: '#8A95B0', marginBottom: '4px' }}>전체 포스팅</div>
-              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#51CF66' }}>{dashboard?.total_posts ?? 0}건</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#51CF66' }}>{fmtNum(dashboard?.total_posts ?? 0)}건</div>
             </div>
             <div style={cardPad}>
               <div style={{ fontSize: '0.7rem', color: '#8A95B0', marginBottom: '4px' }}>성공률</div>

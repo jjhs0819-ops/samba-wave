@@ -186,7 +186,7 @@ export default function TagPreviewModal({
             }}
             style={{ padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px', cursor: 'pointer', border: '1px solid rgba(255,140,0,0.5)', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', fontWeight: 600 }}
           >
-            전체 그룹에 적용 ({tagPreviews.reduce((s, p) => s + p.tags.length, 0)}개 태그)
+            전체 그룹에 적용 ({fmtNum(tagPreviews.reduce((s, p) => s + p.tags.length, 0))}개 태그)
           </button>
         </div>
       </div>

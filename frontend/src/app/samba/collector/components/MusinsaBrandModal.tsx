@@ -1,5 +1,7 @@
 'use client'
 
+import { fmtNum } from '@/lib/samba/styles'
+
 interface BrandSearchResult {
   brandCode: string
   brandName: string
@@ -65,7 +67,7 @@ export default function MusinsaBrandModal({
             disabled={selectedBrandCodes.size === 0}
             style={{ flex: 1, padding: '10px', background: selectedBrandCodes.size > 0 ? 'linear-gradient(135deg, #FF8C00, #FFB84D)' : '#333', border: 'none', borderRadius: '8px', color: '#fff', fontWeight: 600, fontSize: '0.85rem', cursor: selectedBrandCodes.size > 0 ? 'pointer' : 'not-allowed' }}
           >
-            선택 확인 ({selectedBrandCodes.size}개)
+            선택 확인 ({fmtNum(selectedBrandCodes.size)}개)
           </button>
           <button
             onClick={() => onConfirm(new Set())}

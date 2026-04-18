@@ -48,7 +48,7 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <span style={{ color: '#888', fontSize: '0.78rem' }}>{opts.length}개 옵션</span>
+        <span style={{ color: '#888', fontSize: '0.78rem' }}>{fmtNum(opts.length)}개 옵션</span>
         <button
           onClick={() => setOpen(!open)}
           style={{

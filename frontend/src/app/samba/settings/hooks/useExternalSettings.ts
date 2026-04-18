@@ -14,7 +14,7 @@ import {
   type ExchangeCurrencyCode,
   type ExchangeRateResponse,
 } from '../config'
-import { parseNum } from '@/lib/samba/styles'
+import { fmtNum, parseNum } from '@/lib/samba/styles'
 
 export interface ExternalSettingsState {
   // SMS
@@ -320,8 +320,8 @@ export function useExternalSettings(): ExternalSettingsState & ExternalSettingsA
       await forbiddenApi.saveSetting('aligo_sms', { userId: smsUserId, apiKey: smsApiKey, sender: smsSender })
       const result = await proxyApi.aligoRemain()
       if (result.success) {
-        setSmsStatus(`인증 완료 (SMS: ${result.SMS_CNT}건, LMS: ${result.LMS_CNT}건, MMS: ${result.MMS_CNT}건)`)
-        showAlert(`인증 완료 — SMS: ${result.SMS_CNT}건, LMS: ${result.LMS_CNT}건, MMS: ${result.MMS_CNT}건`, 'success')
+        setSmsStatus(`인증 완료 (SMS: ${fmtNum(result.SMS_CNT)}건, LMS: ${fmtNum(result.LMS_CNT)}건, MMS: ${fmtNum(result.MMS_CNT)}건)`)
+        showAlert(`인증 완료 — SMS: ${fmtNum(result.SMS_CNT)}건, LMS: ${fmtNum(result.LMS_CNT)}건, MMS: ${fmtNum(result.MMS_CNT)}건`, 'success')
       } else {
         setSmsStatus('인증 실패')
         showAlert(result.message || '알리고 API 인증 실패', 'error')

@@ -141,6 +141,49 @@ export default function OrdersPage() {
   const [msgText, setMsgText] = useState('')
   const [msgSending, setMsgSending] = useState(false)
   const msgTextRef = useRef<HTMLTextAreaElement>(null)
+
+  // SMS 템플릿 (localStorage 저장)
+  const DEFAULT_SMS_TEMPLATES = [
+    { id: 't1', label: '주문취소안내', msg: '{{marketName}} 주문취소안내\n주문상품 : {{goodsName}}\n\n안녕하세요, {{rvcName}} 고객님.\n\n해당 상품이 일시적으로 시스템 오류로 노출되어 주문이 접수된 것으로 확인되었습니다.\n\n불편을 드려 정말 죄송합니다.\n\n빠른 환불 처리를 위해 "단순취소" 사유로 주문취소 해주시면 확인 후 바로 환불도와드리겠습니다.\n\n불편을 드려 진심으로 죄송하며, 더 나은 서비스로 보답드리겠습니다. 감사합니다.' },
+    { id: 't2', label: '가격변동 취소', msg: '{{marketName}} 가격변동 안내\n주문상품 : {{goodsName}}\n\n안녕하세요 {{rvcName}} 고객님\n\n해당 제품 공급처에서 가격을 변동하여 안내드립니다.\n취소 후 재주문 부탁드립니다.' },
+    { id: 't3', label: '국내상품 발주안내', msg: '{{marketName}} 주문상품 발주 완료\n주문상품 : {{goodsName}}\n\n안녕하세요 {{rvcName}} 고객님^^ 발주 완료되었습니다. 배송완료까지 영업일기준 2~3일정도 소요됩니다.' },
+    { id: 't4', label: '반품비', msg: '{{marketName}} 반품비 안내\n상품명 : {{goodsName}}\n\n반품비 안내드립니다.\n교환비용 8,000원 발생(고객변심)하므로 따로 개별 문자 안내드리겠습니다.' },
+    { id: 't5', label: '반품안내문자', msg: '{{marketName}} 반품 안내\n주문상품 : {{goodsName}}\n\n안녕하세요 {{rvcName}} 고객님\n반품신청으로 문자안내드립니다.\n교환 접수시 회수기사님 방문2-3일내 이루어지며 회수된 상품 해당부서로 이동하여 검수진행과정 진행됩니다.' },
+    { id: 't6', label: '발주 후 품절', msg: '{{marketName}} 품절안내\n주문상품 : {{goodsName}}\n\n안녕하세요 {{rvcName}} 고객님. 저희가 해당 제품 발주를 넣었는데 공급처에서 품절이라고 연락이 왔습니다.\n취소 처리 도와드리겠습니다.' },
+  ]
+  const [smsTemplates, setSmsTemplates] = useState<{ id: string; label: string; msg: string }[]>(() => {
+    try {
+      const saved = localStorage.getItem('samba_sms_templates')
+      return saved ? JSON.parse(saved) : DEFAULT_SMS_TEMPLATES
+    } catch { return DEFAULT_SMS_TEMPLATES }
+  })
+  const [templateEditModal, setTemplateEditModal] = useState<{ id: string; label: string; msg: string } | null>(null)
+  const [isNewTemplate, setIsNewTemplate] = useState(false)
+
+  const saveSmsTemplates = (templates: { id: string; label: string; msg: string }[]) => {
+    setSmsTemplates(templates)
+    localStorage.setItem('samba_sms_templates', JSON.stringify(templates))
+  }
+  const openNewTemplate = () => {
+    setIsNewTemplate(true)
+    setTemplateEditModal({ id: `t_${Date.now()}`, label: '', msg: '' })
+  }
+  const openEditTemplate = (t: { id: string; label: string; msg: string }) => {
+    setIsNewTemplate(false)
+    setTemplateEditModal({ ...t })
+  }
+  const saveTemplate = () => {
+    if (!templateEditModal) return
+    if (isNewTemplate) {
+      saveSmsTemplates([...smsTemplates, templateEditModal])
+    } else {
+      saveSmsTemplates(smsTemplates.map(t => t.id === templateEditModal.id ? templateEditModal : t))
+    }
+    setTemplateEditModal(null)
+  }
+  const deleteTemplate = (id: string) => {
+    saveSmsTemplates(smsTemplates.filter(t => t.id !== id))
+  }
   // 취소 알림 설정 (URL 파라미터 alarm=1이면 자동 오픈)
   const [showAlarmSetting, setShowAlarmSetting] = useState(searchParams.get('alarm') === '1')
   const [alarmHour, setAlarmHour] = useState('0')
@@ -287,7 +330,7 @@ export default function OrdersPage() {
       const marketType = syncAccountId.replace('type:', '')
       const marketAccs = accounts.filter(a => a.market_type === marketType)
       const marketName = marketAccs[0]?.market_name || marketType
-      setLogMessages(prev => [...prev, `[${ts()}] ${marketName} 전체 계정 주문 동기화 시작 (${marketAccs.length}개 계정, 최근 ${days}일)...`])
+      setLogMessages(prev => [...prev, `[${ts()}] ${marketName} 전체 계정 주문 동기화 시작 (${fmtNum(marketAccs.length)}개 계정, 최근 ${days}일)...`])
       let totalSynced = 0
       let totalCancelRequested = 0
       for (const acc of marketAccs) {
@@ -1788,7 +1831,7 @@ export default function OrdersPage() {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid #2D2D2D' }}>
                 <h3 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600, color: '#E5E5E5' }}>가격 / 재고 이력</h3>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <span style={{ fontSize: '0.75rem', color: '#666' }}>{history.length}건 기록</span>
+                  <span style={{ fontSize: '0.75rem', color: '#666' }}>{fmtNum(history.length)}건 기록</span>
                   <button onClick={() => setPriceHistoryModal(false)} style={{ background: 'transparent', border: 'none', color: '#888', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
                 </div>
               </div>
@@ -1859,7 +1902,7 @@ export default function OrdersPage() {
                                 </td>
                               )}
                               <td style={{ padding: '8px 16px', textAlign: 'right', color: '#888' }}>
-                                {opts.length > 0 ? `${opts.length}개 옵션` : '-'}
+                                {opts.length > 0 ? `${fmtNum(opts.length)}개 옵션` : '-'}
                               </td>
                             </tr>
                             {opts.map((opt, oi) => {
@@ -1930,25 +1973,47 @@ export default function OrdersPage() {
 
             {/* 빠른 템플릿 카드 */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '0.75rem' }}>
-              {[
-                { label: '주문취소안내', msg: '{{marketName}} 주문취소안내\n주문상품 : {{goodsName}}\n\n안녕하세요, {{rvcName}} 고객님.\n\n해당 상품이 일시적으로 시스템 오류로 노출되어 주문이 접수된 것으로 확인되었습니다.\n\n불편을 드려 정말 죄송합니다.\n\n빠른 환불 처리를 위해 "단순취소" 사유로 주문취소 해주시면 확인 후 바로 환불도와드리겠습니다.\n\n불편을 드려 진심으로 죄송하며, 더 나은 서비스로 보답드리겠습니다. 감사합니다.' },
-                { label: '가격변동 취소', msg: '{{marketName}} 가격변동 안내\n주문상품 : {{goodsName}}\n\n안녕하세요 {{rvcName}} 고객님\n\n해당 제품 공급처에서 가격을 변동하여 안내드립니다.\n취소 후 재주문 부탁드립니다.' },
-                { label: '국내상품 발주안내', msg: '{{marketName}} 주문상품 발주 완료\n주문상품 : {{goodsName}}\n\n안녕하세요 {{rvcName}} 고객님^^ 발주 완료되었습니다. 배송완료까지 영업일기준 2~3일정도 소요됩니다.' },
-                { label: '반품비', msg: '{{marketName}} 반품비 안내\n상품명 : {{goodsName}}\n\n반품비 안내드립니다.\n교환비용 8,000원 발생(고객변심)하므로 따로 개별 문자 안내드리겠습니다.' },
-                { label: '반품안내문자', msg: '{{marketName}} 반품 안내\n주문상품 : {{goodsName}}\n\n안녕하세요 {{rvcName}} 고객님\n반품신청으로 무자안내드립니다.\n교환 접수시 회수기사님 방문2-3일내 이루어지며 회수된 상품 해당부서로 이동하여 검수진행과정 진행됩니다.' },
-                { label: '발주 후 품절', msg: '{{marketName}} 품절안내\n주문상품 : {{goodsName}}\n\n안녕하세요 {{rvcName}} 고객님. 저희가 해당 제품 발주를 넣었는데 공급처에서 품절이라고 연락이 왔습니다.\n취소 처리 도와드리겠습니다.' },
-              ].map(t => (
+              {smsTemplates.map(t => (
                 <div
-                  key={t.label}
-                  onClick={() => setMsgText(t.msg)}
-                  style={{ background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', padding: '0.625rem', cursor: 'pointer', transition: 'border-color 0.15s' }}
+                  key={t.id}
+                  style={{ background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', padding: '0.625rem', transition: 'border-color 0.15s', position: 'relative' }}
                   onMouseEnter={e => (e.currentTarget.style.borderColor = '#FF8C00')}
                   onMouseLeave={e => (e.currentTarget.style.borderColor = '#2D2D2D')}
                 >
-                  <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#E5E5E5', marginBottom: '0.375rem' }}>{t.label}</div>
-                  <div style={{ fontSize: '0.625rem', color: '#777', lineHeight: '1.4', maxHeight: '3.5rem', overflow: 'hidden', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{t.msg.slice(0, 80)}...</div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.375rem' }}>
+                    <div
+                      style={{ fontSize: '0.75rem', fontWeight: 600, color: '#E5E5E5', cursor: 'pointer', flex: 1 }}
+                      onClick={() => setMsgText(t.msg)}
+                    >{t.label}</div>
+                    <div style={{ display: 'flex', gap: '0.25rem', flexShrink: 0 }}>
+                      <button
+                        onClick={e => { e.stopPropagation(); openEditTemplate(t) }}
+                        style={{ background: 'none', border: 'none', color: '#888', fontSize: '0.65rem', cursor: 'pointer', padding: '0.1rem 0.25rem', lineHeight: 1 }}
+                        title='수정'
+                      >✏</button>
+                      <button
+                        onClick={e => { e.stopPropagation(); if (confirm(`"${t.label}" 템플릿을 삭제할까요?`)) deleteTemplate(t.id) }}
+                        style={{ background: 'none', border: 'none', color: '#666', fontSize: '0.65rem', cursor: 'pointer', padding: '0.1rem 0.25rem', lineHeight: 1 }}
+                        title='삭제'
+                      >✕</button>
+                    </div>
+                  </div>
+                  <div
+                    style={{ fontSize: '0.625rem', color: '#777', lineHeight: '1.4', maxHeight: '3.5rem', overflow: 'hidden', whiteSpace: 'pre-wrap', wordBreak: 'break-word', cursor: 'pointer' }}
+                    onClick={() => setMsgText(t.msg)}
+                  >{t.msg.slice(0, 80)}...</div>
                 </div>
               ))}
+              {/* 새 템플릿 추가 카드 */}
+              <div
+                onClick={openNewTemplate}
+                style={{ background: '#111', border: '1px dashed #3D3D3D', borderRadius: '8px', padding: '0.625rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.375rem', transition: 'border-color 0.15s', minHeight: '72px' }}
+                onMouseEnter={e => (e.currentTarget.style.borderColor = '#FF8C00')}
+                onMouseLeave={e => (e.currentTarget.style.borderColor = '#3D3D3D')}
+              >
+                <span style={{ fontSize: '1rem', color: '#555' }}>+</span>
+                <span style={{ fontSize: '0.75rem', color: '#666' }}>새 템플릿</span>
+              </div>
             </div>
 
             {/* 변수 태그 버튼 */}
@@ -1996,6 +2061,49 @@ export default function OrdersPage() {
               >
                 {msgSending ? '발송중...' : msgModal.type === 'sms' ? 'SMS 발송' : '카카오 발송'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SMS 템플릿 편집 모달 */}
+      {templateEditModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}>
+          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '1.5rem', width: '520px', maxWidth: '90vw' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
+              <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#E5E5E5' }}>{isNewTemplate ? '새 템플릿 추가' : '템플릿 수정'}</h3>
+              <button onClick={() => setTemplateEditModal(null)} style={{ background: 'none', border: 'none', color: '#888', fontSize: '1.25rem', cursor: 'pointer' }}>✕</button>
+            </div>
+            <div style={{ marginBottom: '0.75rem' }}>
+              <label style={{ fontSize: '0.8125rem', color: '#888', display: 'block', marginBottom: '0.375rem' }}>템플릿 이름</label>
+              <input
+                type='text'
+                value={templateEditModal.label}
+                onChange={e => setTemplateEditModal({ ...templateEditModal, label: e.target.value })}
+                placeholder='예: 주문취소안내'
+                style={{ width: '100%', padding: '0.5rem 0.75rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#E5E5E5', fontSize: '0.875rem', outline: 'none', boxSizing: 'border-box' }}
+              />
+            </div>
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ fontSize: '0.8125rem', color: '#888', display: 'block', marginBottom: '0.375rem' }}>메시지 내용</label>
+              <textarea
+                value={templateEditModal.msg}
+                onChange={e => setTemplateEditModal({ ...templateEditModal, msg: e.target.value })}
+                placeholder='메시지 내용을 입력하세요. {{marketName}}, {{goodsName}}, {{rvcName}} 등 변수 사용 가능'
+                rows={8}
+                style={{ width: '100%', padding: '0.625rem 0.75rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#E5E5E5', fontSize: '0.8125rem', outline: 'none', resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.5', boxSizing: 'border-box' }}
+              />
+              <div style={{ fontSize: '0.7rem', color: '#555', marginTop: '0.25rem' }}>
+                사용 가능 변수: {'{{marketName}}'} {'{{goodsName}}'} {'{{rvcName}}'} {'{{sellerName}}'} {'{{OrderName}}'} {'{{rcvHPNo}}'}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button onClick={() => setTemplateEditModal(null)} style={{ padding: '0.5rem 1rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}>취소</button>
+              <button
+                onClick={saveTemplate}
+                disabled={!templateEditModal.label.trim() || !templateEditModal.msg.trim()}
+                style={{ padding: '0.5rem 1rem', background: '#FF8C00', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer', opacity: (!templateEditModal.label.trim() || !templateEditModal.msg.trim()) ? 0.5 : 1 }}
+              >저장</button>
             </div>
           </div>
         </div>

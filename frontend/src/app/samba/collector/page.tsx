@@ -543,14 +543,14 @@ export default function CollectorPage() {
     const childCount = allIds.size - baseIds.size
     const label = selectedIds.size > 0 ? '선택된' : '표시된'
     const msg = childCount > 0
-      ? `${label} ${baseIds.size}개 + 하위 ${childCount}개 (총 ${allIds.size}개) 그룹과 상품을 모두 삭제하시겠습니까?`
-      : `${label} ${baseIds.size}개 그룹과 그룹 내 상품을 모두 삭제하시겠습니까?`
+      ? `${label} ${fmtNum(baseIds.size)}개 + 하위 ${fmtNum(childCount)}개 (총 ${fmtNum(allIds.size)}개) 그룹과 상품을 모두 삭제하시겠습니까?`
+      : `${label} ${fmtNum(baseIds.size)}개 그룹과 그룹 내 상품을 모두 삭제하시겠습니까?`
     if (!await showConfirm(msg)) return;
 
     // 진행 모달 열기
     const allIdsArr = [...allIds]
     const nameMap = new Map(filters.map(f => [f.id, f.name]))
-    setDeleteJobLogs([`🗑️ 총 ${allIdsArr.length}개 그룹 삭제 시작...`])
+    setDeleteJobLogs([`🗑️ 총 ${fmtNum(allIdsArr.length)}개 그룹 삭제 시작...`])
     setDeleteJobDone(false)
     setDeleteJobModal(true)
 
@@ -558,7 +558,7 @@ export default function CollectorPage() {
     let skipCount = 0
     for (const id of allIdsArr) {
       const groupName = nameMap.get(id) || id
-      setDeleteJobLogs(prev => [...prev, `[${doneCount + skipCount + 1}/${allIdsArr.length}] "${groupName}" 처리 중...`])
+      setDeleteJobLogs(prev => [...prev, `[${fmtNum(doneCount + skipCount + 1)}/${fmtNum(allIdsArr.length)}] "${groupName}" 처리 중...`])
       try {
         const res = await collectorApi.scrollProducts({ skip: 0, limit: 10000, search_filter_id: id })
         // 마켓 등록 상품 체크
@@ -579,7 +579,7 @@ export default function CollectorPage() {
       setDeleteJobLogs(prev => [...prev, `  ✅ 삭제 완료`])
     }
 
-    setDeleteJobLogs(prev => [...prev, ``, `🎉 완료 — ${doneCount}개 삭제${skipCount > 0 ? `, ${skipCount}개 건너뜀` : ''}`])
+    setDeleteJobLogs(prev => [...prev, ``, `🎉 완료 — ${fmtNum(doneCount)}개 삭제${skipCount > 0 ? `, ${fmtNum(skipCount)}개 건너뜀` : ''}`])
     setDeleteJobDone(true)
     setSelectedIds(new Set());
     setSelectAll(false);
@@ -1284,7 +1284,7 @@ export default function CollectorPage() {
               border: "none", opacity: collecting ? 0.6 : 1,
             }}
           >
-            {collecting ? "생성중..." : brandCategories.length > 0 ? `그룹 생성 (${brandSelectedCats.size}개)` : "그룹 생성"}
+            {collecting ? "생성중..." : brandCategories.length > 0 ? `그룹 생성 (${fmtNum(brandSelectedCats.size)}개)` : "그룹 생성"}
           </button>
           {/* 1상품수집 버튼 — 무신사 전용 */}
           {selectedSite === 'MUSINSA' && (
@@ -1329,7 +1329,7 @@ export default function CollectorPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                   <span style={{ fontSize: '0.78rem', color: '#888' }}>
                     {fmtNum(brandCategories.length)}개 카테고리 / {fmtNum(brandTotal)}건
-                    (선택 {brandSelectedCats.size}개)
+                    (선택 {fmtNum(brandSelectedCats.size)}개)
                   </span>
                   <div style={{ display: 'flex', gap: '0.25rem' }}>
                     <button onClick={() => setBrandSelectedCats(new Set(brandCategories.map(c => c.categoryCode)))}
@@ -1419,8 +1419,8 @@ export default function CollectorPage() {
               const formatBrands = (brands: Map<string, number>, total: number) => {
                 const entries = [...brands.entries()]
                 if (entries.length === 0) return ''
-                if (entries.length <= 2) return entries.map(([b, c]) => c > 1 ? `${b} ${c}건` : b).join('/')
-                return `${entries[0][0]} 외 ${entries.length - 1}개`
+                if (entries.length <= 2) return entries.map(([b, c]) => c > 1 ? `${b} ${fmtNum(c)}건` : b).join('/')
+                return `${entries[0][0]} 외 ${fmtNum(entries.length - 1)}개`
               }
               return (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.72rem' }}>
@@ -1887,11 +1887,11 @@ export default function CollectorPage() {
                     }
                   }
                   const scopeText = selectedCategories.length > 0
-                    ? `\n\n대상: 선택 카테고리 ${selectedCategories.length}개`
+                    ? `\n\n대상: 선택 카테고리 ${fmtNum(selectedCategories.length)}개`
                     : '\n\n대상: 전체 카테고리'
                   const ok = await showConfirm(`${brandName} 추가수집을 실행하시겠습니까?\n\n• 신규 카테고리 → 그룹 자동 생성\n• 기존 카테고리 → 요청수 갱신 후 수집${scopeText}`)
                   if (!ok) return
-                  addLog(`[추가수집] ${brandName} 카테고리 스캔 중...${selectedCategories.length > 0 ? ` (선택 ${selectedCategories.length}개)` : ''}`)
+                  addLog(`[추가수집] ${brandName} 카테고리 스캔 중...${selectedCategories.length > 0 ? ` (선택 ${fmtNum(selectedCategories.length)}개)` : ''}`)
                   try {
                     const res = await collectorApi.brandRefresh({ brand, brand_name: brandName, gf, options: checkedOptions, source_site: sourceSite, categories: selectedCategories.length > 0 ? selectedCategories : undefined })
                     addLog(`[추가수집] ${res.message}`)

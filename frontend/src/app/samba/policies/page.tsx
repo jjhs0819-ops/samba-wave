@@ -623,7 +623,7 @@ export default function PoliciesPage() {
                 <span style={{ color: '#C5C5C5', fontSize: '0.8125rem', fontWeight: 600 }}>소싱처별 추가 마진 설정</span>
                 {Object.values(pricing.sourceSiteMargins).some(v => v.marginRate > 0 || v.marginAmount > 0) && (
                   <span style={{ fontSize: '0.7rem', color: '#FF8C00' }}>
-                    ({Object.values(pricing.sourceSiteMargins).filter(v => v.marginRate > 0 || v.marginAmount > 0).length}개 설정됨)
+                    ({fmtNum(Object.values(pricing.sourceSiteMargins).filter(v => v.marginRate > 0 || v.marginAmount > 0).length)}개 설정됨)
                   </span>
                 )}
                 <span style={{ fontSize: '0.7rem', color: '#555', marginLeft: '0.25rem' }}>— 기본 마진에 추가로 가산 (수수료 역산 전 적용)</span>
@@ -723,7 +723,7 @@ export default function PoliciesPage() {
                         )
                       })}
                       {linkedIds.length > 0 && (
-                        <span style={{ fontSize: '0.7rem', color: '#51CF66', padding: '0.15rem 0.4rem', background: 'rgba(81,207,102,0.1)', borderRadius: '4px' }}>{linkedIds.length}개 연결</span>
+                        <span style={{ fontSize: '0.7rem', color: '#51CF66', padding: '0.15rem 0.4rem', background: 'rgba(81,207,102,0.1)', borderRadius: '4px' }}>{fmtNum(linkedIds.length)}개 연결</span>
                       )}
                     </div>
                   ) : (

@@ -119,7 +119,7 @@ export default function ReturnsPage() {
       const marketType = syncAccountId.replace('type:', '')
       const marketAccs = accounts.filter(a => a.market_type === marketType)
       const marketName = marketAccs[0]?.market_name || marketType
-      setLogMessages(prev => [...prev, `[${ts()}] ${marketName} 반품교환 동기화 시작 (${marketAccs.length}개 계정)...`])
+      setLogMessages(prev => [...prev, `[${ts()}] ${marketName} 반품교환 동기화 시작 (${fmtNum(marketAccs.length)}개 계정)...`])
       let totalSynced = 0
       for (const acc of marketAccs) {
         try {

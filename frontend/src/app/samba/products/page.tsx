@@ -400,18 +400,18 @@ export default function ProductsPage() {
       .map(p => p.id)
     if (deletableIds.length === 0) {
       const reasons = [
-        locked.length > 0 ? `삭제잠금 ${locked.length}개` : '',
-        registered.length > 0 ? `마켓등록 ${registered.length}개` : '',
+        locked.length > 0 ? `삭제잠금 ${fmt(locked.length)}개` : '',
+        registered.length > 0 ? `마켓등록 ${fmt(registered.length)}개` : '',
       ].filter(Boolean).join(', ')
       showAlert(`삭제 가능한 상품이 없습니다 (${reasons})`)
       return;
     }
     const excludes = [
-      locked.length > 0 ? `잠금 ${locked.length}개` : '',
-      registered.length > 0 ? `마켓등록 ${registered.length}개` : '',
+      locked.length > 0 ? `잠금 ${fmt(locked.length)}개` : '',
+      registered.length > 0 ? `마켓등록 ${fmt(registered.length)}개` : '',
     ].filter(Boolean)
     const excludeMsg = excludes.length > 0 ? ` (${excludes.join(', ')} 제외)` : ''
-    setDeleteConfirm({ ids: deletableIds, label: `${deletableIds.length}개 상품${excludeMsg}` });
+    setDeleteConfirm({ ids: deletableIds, label: `${fmt(deletableIds.length)}개 상품${excludeMsg}` });
   };
 
   const handleLockToggle = async (productId: string, field: 'lock_delete' | 'lock_stock', value: boolean) => {
@@ -438,7 +438,7 @@ export default function ProductsPage() {
     if (!ok) throw new Error('cancelled');
     try {
       const res = await collectorApi.blockAndDelete([productId]);
-      showAlert(`차단 ${res.blocked}건, 삭제 ${res.deleted}건 완료`, 'success');
+      showAlert(`차단 ${fmt(res.blocked)}건, 삭제 ${fmt(res.deleted)}건 완료`, 'success');
       setSelectedIds(prev => {
         const next = new Set(prev);
         next.delete(productId);
@@ -456,14 +456,14 @@ export default function ProductsPage() {
     if (!deleteConfirm) return
     const ids = deleteConfirm.ids
     setDeleteConfirm(null)
-    setAiJobTitle(`삭제 (${ids.length}건)`)
-    setAiJobLogs([`${ids.length}건 일괄 삭제 중...`])
+    setAiJobTitle(`삭제 (${fmt(ids.length)}건)`)
+    setAiJobLogs([`${fmt(ids.length)}건 일괄 삭제 중...`])
     setAiJobDone(false)
     setAiJobModal(true)
     const idSet = new Set(ids)
     try {
       const res = await collectorApi.bulkDeleteProducts(ids)
-      setAiJobLogs(prev => [...prev, `${res.deleted}건 삭제 완료 ✓`])
+      setAiJobLogs(prev => [...prev, `${fmt(res.deleted)}건 삭제 완료 ✓`])
     } catch {
       setAiJobLogs(prev => [...prev, `삭제 실패 ✗`])
     }
@@ -831,7 +831,7 @@ export default function ProductsPage() {
                       </div>
                     </div>
                     <span style={{ color: '#FFB84D', fontSize: '0.75rem', whiteSpace: 'nowrap' }}>
-                      {option.productCount}개 상품
+                      {fmt(option.productCount)}개 상품
                     </span>
                   </label>
                 )
@@ -1038,7 +1038,7 @@ export default function ProductsPage() {
               <div key={preview.group_id} style={{ marginBottom: '20px', padding: '16px', background: '#0F0F0F', borderRadius: '8px', border: '1px solid #2D2D2D' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
                   <span style={{ fontSize: '0.82rem', color: '#FFB84D', fontWeight: 600 }}>{preview.rep_name}</span>
-                  <span style={{ fontSize: '0.7rem', color: '#666' }}>{preview.product_count}개 상품 | {preview.tags.length}개 태그</span>
+                  <span style={{ fontSize: '0.7rem', color: '#666' }}>{fmt(preview.product_count)}개 상품 | {fmt(preview.tags.length)}개 태그</span>
                 </div>
                 <div style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <span style={{ fontSize: '0.72rem', color: '#4C9AFF', fontWeight: 600, whiteSpace: 'nowrap' }}>SEO:</span>
@@ -1105,7 +1105,7 @@ export default function ProductsPage() {
             ))}
             {removedTags.length > 0 && (
               <div style={{ marginBottom: '12px', padding: '10px 14px', background: 'rgba(255,107,107,0.06)', borderRadius: '6px', border: '1px solid rgba(255,107,107,0.15)' }}>
-                <span style={{ fontSize: '0.72rem', color: '#FF6B6B', fontWeight: 600 }}>금지태그 등록 예정 ({removedTags.length}개): </span>
+                <span style={{ fontSize: '0.72rem', color: '#FF6B6B', fontWeight: 600 }}>금지태그 등록 예정 ({fmt(removedTags.length)}개): </span>
                 <span style={{ fontSize: '0.72rem', color: '#888' }}>{removedTags.join(', ')}</span>
               </div>
             )}
@@ -1149,7 +1149,7 @@ export default function ProductsPage() {
                 }
               }}
                 style={{ padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px', cursor: 'pointer', border: '1px solid rgba(255,140,0,0.5)', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', fontWeight: 600 }}>
-                전체 그룹에 적용 ({tagPreviews.reduce((s, p) => s + p.tags.length, 0)}개 태그)
+                전체 그룹에 적용 ({fmt(tagPreviews.reduce((s, p) => s + p.tags.length, 0))}개 태그)
               </button>
             </div>
           </div>
@@ -1715,9 +1715,9 @@ export default function ProductsPage() {
               if (!targets.length) { showAlert('마켓에 등록된 상품이 없습니다.'); return }
               openMarketDeleteModal(targets, 'bulk')
               return
-              if (!await showConfirm(`${targets.length}개 상품을 마켓에서 삭제(판매중지)하시겠습니까?`)) return
+              if (!await showConfirm(`${fmt(targets.length)}개 상품을 마켓에서 삭제(판매중지)하시겠습니까?`)) return
               aiJobAbortRef.current = false
-              setAiJobTitle(`마켓삭제 (${targets.length}건)`)
+              setAiJobTitle(`마켓삭제 (${fmt(targets.length)}건)`)
               setAiJobLogs([])
               setAiJobDone(false)
               setAiJobModal(true)
@@ -1781,14 +1781,14 @@ export default function ProductsPage() {
               if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
               if (!await showConfirm(`${fmt(selectedIds.size)}개 상품의 마켓 등록 정보를 초기화하시겠습니까?\n(마켓에서 이미 삭제된 상품의 등록 상태만 정리합니다)`)) return
               const ids = Array.from(selectedIds)
-              setAiJobTitle(`강제삭제 (${ids.length}건)`)
-              setAiJobLogs([`${ids.length}건 초기화 중...`])
+              setAiJobTitle(`강제삭제 (${fmt(ids.length)}건)`)
+              setAiJobLogs([`${fmt(ids.length)}건 초기화 중...`])
               setAiJobDone(false)
               setAiJobModal(true)
               const idSet = new Set(ids)
               try {
                 const res = await collectorApi.bulkResetRegistration(ids)
-                setAiJobLogs(prev => [...prev, `${res.reset}건 초기화 완료 ✓`])
+                setAiJobLogs(prev => [...prev, `${fmt(res.reset)}건 초기화 완료 ✓`])
                 setAllProducts(prev => prev.map(p =>
                   idSet.has(p.id) ? { ...p, registered_accounts: null, market_product_nos: null, status: 'collected' } as unknown as SambaCollectedProduct : p
                 ))
@@ -1879,7 +1879,7 @@ export default function ProductsPage() {
                 logs.push(`삭제 완료: ${del.total_deleted.toLocaleString()}개`)
                 for (const a of del.accounts) {
                   if (a.failed && a.failed.length > 0) {
-                    logs.push(`[${a.account_id}] 실패 ${a.failed.length}건:`)
+                    logs.push(`[${a.account_id}] 실패 ${fmt(a.failed.length)}건:`)
                     for (const f of a.failed.slice(0, 10)) {
                       logs.push(`  - ${f.origin_no}: ${f.error}`)
                     }

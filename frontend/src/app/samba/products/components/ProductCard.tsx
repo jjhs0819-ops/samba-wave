@@ -559,7 +559,7 @@ const ProductCard = React.memo(function ProductCard({
                   가격 / 재고 이력
                 </h3>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <span style={{ fontSize: '0.75rem', color: '#666' }}>{history.length}건 기록</span>
+                  <span style={{ fontSize: '0.75rem', color: '#666' }}>{fmtNum(history.length)}건 기록</span>
                   <button
                     onClick={() => setShowPriceHistoryModal(false)}
                     style={{ background: 'transparent', border: 'none', color: '#888', fontSize: '1.2rem', cursor: 'pointer' }}
@@ -661,7 +661,7 @@ const ProductCard = React.memo(function ProductCard({
                                 </td>
                               )}
                               <td style={{ padding: '8px 16px', textAlign: 'right', color: '#888' }}>
-                                {opts.length > 0 ? `${opts.length}개 옵션` : '-'}
+                                {opts.length > 0 ? `${fmtNum(opts.length)}개 옵션` : '-'}
                               </td>
                             </tr>
                             {/* 옵션 상세 행 */}
@@ -1011,7 +1011,7 @@ const ProductCard = React.memo(function ProductCard({
                 {imageTab === 'detail' && (
                   <div>
                     <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '12px' }}>
-                      ※ 상세페이지에 포함된 이미지입니다. ({detailImgs.length}개) — 클릭하여 삭제
+                      ※ 상세페이지에 포함된 이미지입니다. ({fmtNum(detailImgs.length)}개) — 클릭하여 삭제
                     </p>
                     {detailImgs.length === 0 ? (
                       <div style={{ padding: '2rem', textAlign: 'center', color: '#555' }}>상세페이지 이미지 없음</div>

@@ -478,7 +478,7 @@ export default function AiSourcingModal({
                 <div style={{ marginBottom: '14px', padding: '12px 14px', background: 'rgba(255,107,107,0.04)', border: '1px solid rgba(255,107,107,0.15)', borderRadius: '8px' }}>
                   <div style={{ fontSize: '0.75rem', color: '#FF6B6B', marginBottom: '8px', fontWeight: 600 }}>
                     IP위험 브랜드 ({fmtNum(unsafeBrands.length)}개)
-                    {aiExcludedBrands.size > 0 && <span style={{ color: '#888', fontWeight: 400 }}> — {aiExcludedBrands.size}개 제외</span>}
+                    {aiExcludedBrands.size > 0 && <span style={{ color: '#888', fontWeight: 400 }}> — {fmtNum(aiExcludedBrands.size)}개 제외</span>}
                   </div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                     {unsafeBrands.map(b => {
@@ -671,7 +671,7 @@ export default function AiSourcingModal({
                     opacity: aiSelectedCombos.size === 0 ? 0.5 : 1,
                   }}
                 >
-                  {aiCreating ? '생성중...' : `${aiSelectedCombos.size}개 그룹 생성`}
+                  {aiCreating ? '생성중...' : `${fmtNum(aiSelectedCombos.size)}개 그룹 생성`}
                 </button>
               </div>
             </div>

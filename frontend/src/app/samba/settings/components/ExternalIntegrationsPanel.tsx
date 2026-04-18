@@ -432,7 +432,7 @@ export function ExternalIntegrationsPanel(props: Props) {
                     const deduped = words.join('; ')
                     setForbiddenText(deduped)
                     setInitialForbiddenText(deduped)
-                    showAlert(`금지어 ${words.length}개 저장 완료`, 'success')
+                    showAlert(`금지어 ${fmtNum(words.length)}개 저장 완료`, 'success')
                   } catch {
                     showAlert('저장 실패', 'error')
                   }
@@ -456,7 +456,7 @@ export function ExternalIntegrationsPanel(props: Props) {
               }}
             />
             <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '2px' }}>
-              {forbiddenText.split(';').filter(w => w.trim()).length}개
+              {fmtNum(forbiddenText.split(';').filter(w => w.trim()).length)}개
             </div>
           </div>
           <div>
@@ -475,7 +475,7 @@ export function ExternalIntegrationsPanel(props: Props) {
                     setDeletionText(deduped)
                     setInitialDeletionText(deduped)
                     const { showAlert } = await import('@/components/samba/Modal')
-                    showAlert(`삭제어 ${words.length}개 저장 완료`, 'success')
+                    showAlert(`삭제어 ${fmtNum(words.length)}개 저장 완료`, 'success')
                   } catch {
                     showAlert('저장 실패', 'error')
                   }
@@ -499,7 +499,7 @@ export function ExternalIntegrationsPanel(props: Props) {
               }}
             />
             <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '2px' }}>
-              {deletionText.split(';').filter(w => w.trim()).length}개
+              {fmtNum(deletionText.split(';').filter(w => w.trim()).length)}개
             </div>
           </div>
           <div>
@@ -518,7 +518,7 @@ export function ExternalIntegrationsPanel(props: Props) {
                     setOptionDeletionText(deduped)
                     setInitialOptionDeletionText(deduped)
                     const { showAlert } = await import('@/components/samba/Modal')
-                    showAlert(`옵션삭제어 ${words.length}개 저장 완료`, 'success')
+                    showAlert(`옵션삭제어 ${fmtNum(words.length)}개 저장 완료`, 'success')
                   } catch {
                     showAlert('저장 실패', 'error')
                   }
@@ -542,7 +542,7 @@ export function ExternalIntegrationsPanel(props: Props) {
               }}
             />
             <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '2px' }}>
-              {optionDeletionText.split(';').filter(w => w.trim()).length}개
+              {fmtNum(optionDeletionText.split(';').filter(w => w.trim()).length)}개
             </div>
           </div>
         </div>
@@ -560,7 +560,7 @@ export function ExternalIntegrationsPanel(props: Props) {
           {/* API 거부 태그 */}
           <div>
             <div style={{ fontSize: '0.8125rem', color: '#C4736E', fontWeight: 600, marginBottom: '0.4rem' }}>
-              API 거부 태그 ({tagBanned.rejected.length}개)
+              API 거부 태그 ({fmtNum(tagBanned.rejected.length)}개)
               <span style={{ fontWeight: 400, color: '#666', marginLeft: '0.5rem' }}>전송 실패 시 자동 누적 + 직접 추가 가능</span>
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
@@ -600,7 +600,7 @@ export function ExternalIntegrationsPanel(props: Props) {
           {/* 수집 브랜드 */}
           <div>
             <div style={{ fontSize: '0.8125rem', color: '#FFB84D', fontWeight: 600, marginBottom: '0.4rem' }}>
-              수집 브랜드 ({tagBanned.brands.length}개)
+              수집 브랜드 ({fmtNum(tagBanned.brands.length)}개)
               <span style={{ fontWeight: 400, color: '#666', marginLeft: '0.5rem' }}>브랜드명 포함 태그 자동 제외</span>
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', maxHeight: '80px', overflow: 'auto' }}>
@@ -612,7 +612,7 @@ export function ExternalIntegrationsPanel(props: Props) {
           {/* 소싱처 */}
           <div>
             <div style={{ fontSize: '0.8125rem', color: '#4C9AFF', fontWeight: 600, marginBottom: '0.4rem' }}>
-              소싱처 ({tagBanned.source_sites.length}개)
+              소싱처 ({fmtNum(tagBanned.source_sites.length)}개)
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
               {tagBanned.source_sites.map((w, i) => (

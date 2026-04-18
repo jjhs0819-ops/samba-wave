@@ -1111,7 +1111,7 @@ export default function ShipmentsPage() {
                   전송 중 {fmtNum(jobQueueStatus.running.length)}건 — {jobQueueStatus.running.map(j => `${j.markets} ${fmtNum(j.current)}/${fmtNum(j.total)}`).join(', ')}
                 </span>
               ) : jobQueueStatus.pending.length > 0 ? (
-                <span style={{ color: '#FAB005' }}>대기 {jobQueueStatus.pending.length}건</span>
+                <span style={{ color: '#FAB005' }}>대기 {fmtNum(jobQueueStatus.pending.length)}건</span>
               ) : (
                 <span style={{ color: '#555' }}>대기 잡 없음</span>
               )}

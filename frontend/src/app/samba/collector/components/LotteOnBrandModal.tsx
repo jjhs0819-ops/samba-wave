@@ -107,7 +107,7 @@ export default function LotteOnBrandModal({
             disabled={brandModalSelected.size === 0}
             style={{ flex: 1, padding: '10px', background: brandModalSelected.size === 0 ? '#333' : 'linear-gradient(135deg, #FF8C00, #FFB84D)', border: 'none', borderRadius: '8px', color: '#fff', fontWeight: 600, fontSize: '0.85rem', cursor: brandModalSelected.size === 0 ? 'not-allowed' : 'pointer' }}
           >
-            카테고리 스캔 진행 ({brandModalSelected.size}개)
+            카테고리 스캔 진행 ({fmtNum(brandModalSelected.size)}개)
           </button>
           <button
             onClick={onClose}
