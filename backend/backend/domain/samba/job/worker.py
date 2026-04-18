@@ -8,6 +8,7 @@ import ctypes
 import gc
 import json
 import logging
+import re
 import threading
 import time as _time
 from collections import deque
@@ -18,6 +19,21 @@ from backend.domain.samba.collector.model import generate_search_cache_id
 
 logger = logging.getLogger(__name__)
 UTC = timezone.utc
+
+
+def _fmt_num(value: Any) -> str:
+    try:
+        return f"{int(value):,}"
+    except Exception:
+        return str(value)
+
+
+_LOG_NUMBER_PATTERN = re.compile(r"(?<![\d/])(\d{4,})(?=(건|개|원|회|토큰|페이지))")
+
+
+def _normalize_job_log_numbers(msg: str) -> str:
+    return _LOG_NUMBER_PATTERN.sub(lambda m: f"{int(m.group(1)):,}", msg)
+
 
 # 수집 잡 진행 트래커 — job_id → 마지막 저장 시각 (UNIX timestamp)
 # 저장 루프에서 갱신, 스레드 래퍼에서 polling하여 진행 기반 타임아웃 판단
@@ -141,6 +157,7 @@ def _add_job_log(job_id: str, msg: str, job_type: str = ""):
     # 백엔드 타임스탬프 (KST) — 프론트 폴링 시각이 아닌 실제 처리 시각 기록
     from datetime import datetime as _dt, timezone, timedelta
 
+    msg = _normalize_job_log_numbers(msg)
     msg = f"[{(_dt.now(timezone.utc) + timedelta(hours=9)).strftime('%H:%M:%S')}] {msg}"
     if job_id not in _job_logs:
         _job_logs[job_id] = []
@@ -1749,12 +1766,14 @@ class JobWorker:
                 total_saved += 1
                 _collect_last_progress[job.id] = _time.time()  # 진행 갱신
 
+                _m_brand = detail.get("brand", "") or ""
+                _m_name = (detail.get("name", "") or "")[:20]
+                _add_job_log(
+                    job.id,
+                    f"[MUSINSA] {_m_brand} — {_m_name} ({goods_no})",
+                    job_type="collect",
+                )
                 if total_saved % 10 == 0:
-                    _add_job_log(
-                        job.id,
-                        f"[브랜드전체수집] [{total_saved}건 저장] p{search_page}/{max_pages}",
-                        job_type="collect",
-                    )
                     await repo.update_progress(job.id, total_saved, max_pages * 100)
 
             search_page += 1
@@ -1911,9 +1930,9 @@ class JobWorker:
             job_type="collect",
         )
 
-        # 상세 조회 — 3건 병렬 배치 (_collect_direct_api ABCmart 선취합과 동일 패턴)
+        # 상세 조회 — 10건 병렬 배치 + 20건마다 진행 로그
         _abc_details: dict[str, dict] = {}
-        _ABC_BATCH = 3
+        _ABC_BATCH = 10
         for _bs in range(0, len(new_items), _ABC_BATCH):
             from backend.domain.samba.emergency import (
                 is_collect_cancel_requested,
@@ -1945,8 +1964,14 @@ class JobWorker:
 
             _done = min(_bs + _ABC_BATCH, len(new_items))
             await repo.update_progress(job.id, _done, len(new_items))
+            if _done % 20 == 0 or _done == len(new_items):
+                _add_job_log(
+                    job.id,
+                    f"[ABC브랜드전체수집] 상세 조회 [{_done}/{len(new_items)}]",
+                    job_type="collect",
+                )
             if _bs + _ABC_BATCH < len(new_items):
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.2)
 
         _add_job_log(
             job.id,
@@ -1980,8 +2005,11 @@ class JobWorker:
             filter_id = cat_filter_map.get(cat_code)
             if not filter_id:
                 total_unmatched += 1
-                logger.debug(
-                    f"[잡워커] ABC브랜드전체수집 카테고리 미매핑: {spid} cat={cat_code}"
+                _p_name = (detail.get("name") or item.get("name", ""))[:15]
+                _add_job_log(
+                    job.id,
+                    f"[미매핑] {_p_name} ({spid}) cat={cat_code}",
+                    job_type="collect",
                 )
                 continue
 
@@ -2063,12 +2091,14 @@ class JobWorker:
             total_saved += 1
             _collect_last_progress[job.id] = _time.time()
 
-            if total_saved % 10 == 0:
-                _add_job_log(
-                    job.id,
-                    f"[ABC브랜드전체수집] [{total_saved}건 저장]",
-                    job_type="collect",
-                )
+            _log_brand = detail_for_build.get("brand", "") or ""
+            _log_name = (detail_for_build.get("name", "") or "")[:20]
+            _add_job_log(
+                job.id,
+                f"[{source_site}] {_log_brand} — {_log_name} ({spid})",
+                job_type="collect",
+            )
+            if total_saved % 20 == 0:
                 await repo.update_progress(job.id, total_saved, len(new_items))
 
         # 각 SearchFilter의 requested_count를 실제 수집수로 갱신
@@ -3487,13 +3517,13 @@ class JobWorker:
                 await repo.update_progress(
                     job.id, existing_count + total_saved, requested_count
                 )
-                # 10건 단위 or 마지막 아이템 진행 로그 (== 로 정확히 1회만)
-                if total_saved % 10 == 0 or total_saved == remaining:
-                    _add_job_log(
-                        job.id,
-                        f"{_dprefix} [{sf.name}] [{existing_count + total_saved}/{requested_count}] 수집 중...",
-                        job_type="collect",
-                    )
+                _log_b = item.get("brand", "") or ""
+                _log_n = (p_name or "")[:20]
+                _add_job_log(
+                    job.id,
+                    f"[{site}] {_log_b} — {_log_n} ({p_id})",
+                    job_type="collect",
+                )
             except Exception as e:
                 logger.warning(f"[잡워커] {site} 저장 실패 {p_id}: {e}")
 
