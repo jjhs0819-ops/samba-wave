@@ -1546,16 +1546,23 @@ class JobWorker:
         filters: list[SambaSearchFilter] = list(filters_result.scalars().all())
 
         cat_filter_map: dict[str, str] = {}  # {category_code: filter_id}
+        cat_name_map: dict[
+            str, str
+        ] = {}  # {category_path: filter_id} — name 기반 fallback
         for f in filters:
-            if not f.keyword:
-                continue
-            try:
-                _qs = parse_qs(urlparse(f.keyword).query)
-                cat = _qs.get("category", [""])[0]
-                if cat:
-                    cat_filter_map[cat] = f.id
-            except Exception:
-                pass
+            if f.keyword:
+                try:
+                    _qs = parse_qs(urlparse(f.keyword).query)
+                    cat = _qs.get("category", [""])[0]
+                    if cat:
+                        cat_filter_map[cat] = f.id
+                except Exception:
+                    pass
+            # f.name = "MUSINSA_브랜드_대분류_중분류_소분류" → "대분류 > 중분류 > 소분류"
+            if f.name:
+                _nm_parts = f.name.split("_")
+                if len(_nm_parts) > 2:
+                    cat_name_map[" > ".join(_nm_parts[2:])] = f.id
 
         _add_job_log(
             job.id,
@@ -1727,6 +1734,7 @@ class JobWorker:
 
                 cat_code = detail.get("categoryCode", "")
                 filter_id = cat_filter_map.get(cat_code)
+                # 1차 fallback: Depth 코드
                 if not filter_id:
                     _cat_raw = detail.get("category_raw") or {}
                     for _depth in [
@@ -1738,11 +1746,35 @@ class JobWorker:
                         if _c and _c in cat_filter_map:
                             filter_id = cat_filter_map[_c]
                             break
+                # 2차 fallback: Depth Name 경로 깊이별 매칭
+                if not filter_id:
+                    _cat_raw = detail.get("category_raw") or {}
+                    _name_parts = [
+                        (_cat_raw.get("categoryDepth1Name") or "").strip(),
+                        (_cat_raw.get("categoryDepth2Name") or "").strip(),
+                        (_cat_raw.get("categoryDepth3Name") or "").strip(),
+                        (_cat_raw.get("categoryDepth4Name") or "").strip(),
+                    ]
+                    _name_parts = [p for p in _name_parts if p]
+                    if not _name_parts:
+                        _raw_cat_str = detail.get("category", "") or ""
+                        _name_parts = [
+                            p.strip() for p in _raw_cat_str.split(">") if p.strip()
+                        ]
+                    for _d in range(len(_name_parts), 0, -1):
+                        _sub = " > ".join(_name_parts[:_d])
+                        filter_id = cat_filter_map.get(_sub) or cat_name_map.get(_sub)
+                        if filter_id:
+                            break
 
                 if not filter_id:
                     total_unmatched += 1
-                    logger.debug(
-                        f"[잡워커] 브랜드전체수집 카테고리 미매핑: {goods_no} cat={cat_code}"
+                    _p_name = (detail.get("name") or "")[:20]
+                    _cat_str = detail.get("category", "") or cat_code
+                    _add_job_log(
+                        job.id,
+                        f"[미매핑] {_p_name} ({goods_no}) cat={_cat_str[:40]}",
+                        job_type="collect",
                     )
                     continue
 
@@ -2026,15 +2058,21 @@ class JobWorker:
                 )
                 filter_id = cat_filter_map.get(cat_code)
                 if not filter_id:
-                    # 코드 불일치 시 카테고리 이름 기반 fallback
-                    _item_cat = it.get("category", "")
-                    filter_id = cat_name_map.get(_item_cat)
+                    # 코드 불일치 → 카테고리 경로 깊이별 매칭
+                    _item_cat = it.get("category", "") or detail.get("category", "")
+                    _parts = [p.strip() for p in _item_cat.split(">") if p.strip()]
+                    for _d in range(len(_parts), 0, -1):
+                        _sub = " > ".join(_parts[:_d])
+                        filter_id = cat_filter_map.get(_sub) or cat_name_map.get(_sub)
+                        if filter_id:
+                            break
                 if not filter_id:
                     total_unmatched += 1
-                    _p_name = (detail.get("name") or it.get("name", ""))[:15]
+                    _p_name = (detail.get("name") or it.get("name", ""))[:20]
+                    _item_cat = it.get("category", "") or detail.get("category", "")
                     _add_job_log(
                         job.id,
-                        f"[미매핑] {_p_name} ({spid}) cat={cat_code}",
+                        f"[미매핑] {_p_name} ({spid}) cat={_item_cat[:40] or cat_code}",
                         job_type="collect",
                     )
                     continue
@@ -2315,21 +2353,26 @@ class JobWorker:
                 filter_id = cat_filter_map.get(disp_ctg_id) if disp_ctg_id else None
 
                 if not filter_id:
-                    # 카테고리 경로 이름으로 fallback
+                    # 카테고리 경로 깊이별 fallback
                     _cat_parts = [
-                        detail.get("dispCtgLclsNm", "") or "",
-                        detail.get("dispCtgMclsNm", "") or "",
-                        detail.get("dispCtgSclsNm", "") or "",
+                        (detail.get("dispCtgLclsNm", "") or "").strip(),
+                        (detail.get("dispCtgMclsNm", "") or "").strip(),
+                        (detail.get("dispCtgSclsNm", "") or "").strip(),
                     ]
-                    _cat_path = " > ".join(p for p in _cat_parts if p)
-                    filter_id = cat_name_map.get(_cat_path) if _cat_path else None
+                    _cat_parts = [p for p in _cat_parts if p]
+                    for _d in range(len(_cat_parts), 0, -1):
+                        _sub = " > ".join(_cat_parts[:_d])
+                        filter_id = cat_filter_map.get(_sub) or cat_name_map.get(_sub)
+                        if filter_id:
+                            break
 
                 if not filter_id:
                     total_unmatched += 1
-                    _p_name = (detail.get("itemNm") or it.get("name", ""))[:15]
+                    _p_name = (detail.get("itemNm") or it.get("name", ""))[:20]
+                    _cat_path = " > ".join(_cat_parts) if _cat_parts else ""
                     _add_job_log(
                         job.id,
-                        f"[미매핑] {_p_name} ({spid}) dispCtgId={disp_ctg_id}",
+                        f"[미매핑] {_p_name} ({spid}) cat={_cat_path[:40] or disp_ctg_id}",
                         job_type="collect",
                     )
                     continue
