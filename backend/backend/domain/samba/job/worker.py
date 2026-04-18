@@ -1478,6 +1478,7 @@ class JobWorker:
         - 페이지 이탈 = 수집 중단 → 단일 백엔드 Job으로 완전 독립
         - 글로벌 dedup 누락 → 상품당 1개 filter에만 저장, 중복 없음
         """
+        import random as _random
         from urllib.parse import urlparse, parse_qs
         from sqlmodel import select, func as _func
         from backend.domain.samba.collector.model import SambaSearchFilter
@@ -1494,7 +1495,6 @@ class JobWorker:
             _site_intervals,
             _site_consecutive_errors,
             get_interval_key,
-            SITE_CONCURRENCY,
         )
         import httpx as _httpx
         from sqlalchemy import update as _sa_upd
@@ -1580,8 +1580,8 @@ class JobWorker:
         svc = _get_services(session)
 
         # 검색+상세수집 인터리빙 — 페이지마다 상세수집 후 다음 검색
-        # (2단계 분리는 상세수집 연속 요청으로 IP 차단 심화)
-        _collect_sem = asyncio.Semaphore(SITE_CONCURRENCY.get("MUSINSA", 5))
+        # 병렬도 5 고정 (오토튠 검증선과 동일 — 안전 우선)
+        _collect_sem = asyncio.Semaphore(5)
         _shared_http = _httpx.AsyncClient(timeout=_httpx.Timeout(30, connect=5.0))
 
         async def _fetch_detail_brand(goods_no: str) -> dict | None:
@@ -1801,8 +1801,8 @@ class JobWorker:
                 await repo.fail_job(job.id, "소싱처 차단 (연속 rate limit)")
                 return
 
-            await asyncio.sleep(_site_intervals.get(_ik, 0))
-            await asyncio.sleep(1.0)  # 페이지 간 스로틀링 방지
+            # 지터 0.3~0.8초 — 고정 인터벌 봇 지문 회피
+            await asyncio.sleep(_random.uniform(0.3, 0.8))
             search_page += 1
 
         await _shared_http.aclose()
@@ -1990,9 +1990,14 @@ class JobWorker:
                 return
 
             _batch = new_items[_bs : _bs + _ABC_BATCH]
+            _gs_client = ARTSourcingClient(channel="10002")
             _details = await asyncio.gather(
                 *(
-                    abc_client.get_product_detail(str(it.get("site_product_id", "")))
+                    (
+                        _gs_client
+                        if it.get("source_site") == "GrandStage"
+                        else abc_client
+                    ).get_product_detail(str(it.get("site_product_id", "")))
                     for it in _batch
                 ),
                 return_exceptions=True,
