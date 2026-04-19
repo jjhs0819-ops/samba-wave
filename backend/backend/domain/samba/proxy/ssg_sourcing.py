@@ -1170,21 +1170,25 @@ class SSGSourcingClient:
 
         js_block = html[start:end]
 
-        # 개별 필드 추출 헬퍼 사용
+        # uitemObjList 원본 블록에서 먼저 추출 (옵션 목록)
+        uitem_list = self._extract_uitem_list(js_block)
+
+        # 중첩된 객체/배열 제거 — 연관상품(itemAssocList), 비교상품(cmptItemObjMap) 등의
+        # dispCtgLclsNm 등 내부 필드가 상위 필드보다 먼저 매칭되어 카테고리 오염되는
+        # 버그 방지. 최상위(depth=1) 필드만 남긴 블록을 사용해 필드 추출.
+        js_top = self._strip_nested_structures(js_block)
+
         def get_str(key: str) -> str:
-            return self._extract_js_str_field(js_block, key)
+            return self._extract_js_str_field(js_top, key)
 
         def get_num(key: str) -> int:
-            return self._extract_js_num_field(js_block, key)
+            return self._extract_js_num_field(js_top, key)
 
         # 필수 필드 확인
         name = get_str("itemNm")
         if not name:
             logger.warning(f"[SSG] resultItemObj에서 itemNm 추출 실패: {item_id}")
             return {}
-
-        # uitemObjList JSON 추출 (별도 파싱)
-        uitem_list = self._extract_uitem_list(js_block)
 
         obj = {
             "itemNm": name,
@@ -1819,6 +1823,66 @@ class SSGSourcingClient:
     # ------------------------------------------------------------------
     # 공통 헬퍼
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _strip_nested_structures(js_block: str) -> str:
+        """resultItemObj JS 블록에서 연관/비교 상품 배열·객체를 제거.
+
+        itemAssocList, cmptItemObjMap, cmptItemList, imgAssoItemList,
+        frebieList 등 내부에 dispCtgLclsNm 같은 필드가 있어 상위 필드보다
+        먼저 매칭되어 카테고리가 오염되는 버그 방지용.
+
+        해당 키 뒤의 [...] 또는 {...} 를 bracket 카운터로 찾아 제거.
+        """
+        SKIP_KEYS = [
+            "itemAssocList",
+            "cmptItemObjMap",
+            "cmptItemList",
+            "imgAssoItemList",
+            "frebieList",
+            "suMcoObjList",
+        ]
+
+        result = js_block
+        for key in SKIP_KEYS:
+            # key: [ ... ] 또는 key: { ... } 를 찾아 제거
+            pattern = re.compile(rf"\b{re.escape(key)}\s*:\s*([\[\{{])")
+            while True:
+                m = pattern.search(result)
+                if not m:
+                    break
+                open_ch = m.group(1)
+                close_ch = "]" if open_ch == "[" else "}"
+                start = m.end() - 1  # open bracket 위치
+                depth = 0
+                i = start
+                n = len(result)
+                while i < n:
+                    c = result[i]
+                    if c in ('"', "'"):
+                        q = c
+                        i += 1
+                        while i < n and result[i] != q:
+                            if result[i] == "\\":
+                                i += 2
+                                continue
+                            i += 1
+                        i += 1
+                        continue
+                    if c == open_ch:
+                        depth += 1
+                    elif c == close_ch:
+                        depth -= 1
+                        if depth == 0:
+                            i += 1
+                            break
+                    i += 1
+                # 제거: m.start() 부터 i 까지 (뒤따르는 , 도 함께)
+                j = i
+                while j < n and result[j] in " \t\n\r,":
+                    j += 1
+                result = result[: m.start()] + result[j:]
+        return result
 
     @staticmethod
     def _extract_js_str_field(js_block: str, key: str) -> str:
