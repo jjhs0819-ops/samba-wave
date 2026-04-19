@@ -501,8 +501,8 @@ export default function ShipmentsPage() {
       const prodAccIds = (prod?.registered_accounts || []).filter(aid => selectedSet.has(aid))
       if (prodAccIds.length === 0) continue
       try {
-        // current_idx, total_count를 백엔드에 전달 → 링 버퍼 로그에 [i/N] 포함
-        await shipmentApi.marketDelete([pid], prodAccIds, i + 1, targetProducts.length)
+        // log_to_buffer=true: 이 페이지의 링 버퍼 폴링으로 실시간 로그 표시
+        await shipmentApi.marketDelete([pid], prodAccIds, i + 1, targetProducts.length, true)
       } catch { /* 개별 실패는 백엔드가 링 버퍼에 기록 */ }
     }
 
@@ -622,8 +622,8 @@ export default function ShipmentsPage() {
       const prodAccIds = (prod.registered_accounts || []).filter(aid => selectedSet.has(aid))
       if (prodAccIds.length === 0) continue
       try {
-        // current_idx, total_count를 백엔드에 전달 → 링 버퍼 로그에 [i/N] 포함
-        await shipmentApi.marketDelete([prod.id], prodAccIds, i + 1, targetProducts.length)
+        // log_to_buffer=true: 이 페이지의 링 버퍼 폴링으로 실시간 로그 표시
+        await shipmentApi.marketDelete([prod.id], prodAccIds, i + 1, targetProducts.length, true)
       } catch { /* 개별 실패는 백엔드가 링 버퍼에 기록 */ }
     }
 

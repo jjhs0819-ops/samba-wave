@@ -608,13 +608,18 @@ export default function ProductsPage() {
               ? (MARKETS.find(item => item.id === account.market_type)?.name || account.market_type)
               : accId.slice(0, 8)
             const isOk = status === 'success' || status.includes('성공')
+            const isSoldout = status === 'soldout_fallback'
             if (isOk) {
               totalOk++
               successAccIds.push(accId)
+            } else if (isSoldout) {
+              totalOk++
+              // 품절 처리 성공 — 등록 상태 유지 (successAccIds 미추가)
             } else {
               totalFail++
             }
-            logsRef.push(`[${ts()}] [${fmt(i + 1)}/${fmt(targetProducts.length)}] ${productName} -> ${label}: ${isOk ? '성공' : status}`)
+            const logMsg = isOk ? '성공' : isSoldout ? '품절 처리 완료 (주문 완료 후 재삭제)' : status
+            logsRef.push(`[${ts()}] [${fmt(i + 1)}/${fmt(targetProducts.length)}] ${productName} -> ${label}: ${logMsg}`)
           }
           if (successAccIds.length) successMap.set(product.id, successAccIds)
         } else {

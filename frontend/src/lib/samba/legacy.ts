@@ -691,7 +691,7 @@ export const shipmentApi = {
     }),
   retry: (id: string) =>
     request<SambaShipment>(`${SAMBA_PREFIX}/shipments/${id}/retry`, { method: "POST" }),
-  marketDelete: (productIds: string[], targetAccountIds: string[], currentIdx?: number, totalCount?: number) =>
+  marketDelete: (productIds: string[], targetAccountIds: string[], currentIdx?: number, totalCount?: number, logToBuffer = false) =>
     request<{ processed: number; results: { product_id: string; delete_results: Record<string, string>; success_count: number }[] }>(
       `${SAMBA_PREFIX}/shipments/market-delete`, {
         method: "POST",
@@ -700,6 +700,7 @@ export const shipmentApi = {
           target_account_ids: targetAccountIds,
           current_idx: currentIdx,
           total_count: totalCount,
+          log_to_buffer: logToBuffer,
         }),
       }
     ),

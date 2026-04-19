@@ -24,6 +24,7 @@ class MarketDeleteRequest(BaseModel):
     target_account_ids: list[str]
     current_idx: int | None = None  # 전체 삭제 중 현재 인덱스 (로그 표시용)
     total_count: int | None = None  # 전체 삭제 대상 수 (로그 표시용)
+    log_to_buffer: bool = False  # True: 상품전송삭제 페이지 링 버퍼에 기록
 
 
 class MarketDeleteByAccountRequest(BaseModel):
@@ -391,6 +392,7 @@ async def market_delete(
         body.target_account_ids,
         current_idx=body.current_idx,
         total_count=body.total_count,
+        log_to_buffer=body.log_to_buffer,
     )
 
 

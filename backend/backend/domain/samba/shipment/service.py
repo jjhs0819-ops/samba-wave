@@ -2161,23 +2161,33 @@ class SambaShipmentService:
         target_account_ids: list[str],
         current_idx: int | None = None,
         total_count: int | None = None,
+        log_to_buffer: bool = False,
     ) -> dict[str, Any]:
-        """선택된 상품을 대상 마켓에서 삭제."""
+        """선택된 상품을 대상 마켓에서 삭제.
+
+        log_to_buffer=True: 상품전송삭제 페이지 링 버퍼에 로그 기록 (폴링으로 실시간 표시).
+        False(기본): 상품관리 페이지에서 호출 시 — 모달이 자체 로그를 표시하므로 버퍼 불필요.
+        """
         from backend.domain.samba.collector.repository import (
             SambaCollectedProductRepository,
         )
         from backend.domain.samba.shipment.dispatcher import delete_from_market
-        from backend.domain.samba.job.worker import _add_shipment_log
-        from datetime import (
-            datetime as _dt_del,
-            timezone as _tz_del,
-            timedelta as _td_del,
-        )
 
-        def _del_log(msg: str) -> None:
-            """삭제 로그를 KST 타임스탬프와 함께 링 버퍼에 기록."""
-            kst = (_dt_del.now(_tz_del.utc) + _td_del(hours=9)).strftime("%H:%M:%S")
-            _add_shipment_log(f"[{kst}] {msg}")
+        if log_to_buffer:
+            from backend.domain.samba.job.worker import _add_shipment_log
+            from datetime import (
+                datetime as _dt_del,
+                timezone as _tz_del,
+                timedelta as _td_del,
+            )
+
+            def _del_log(msg: str) -> None:
+                kst = (_dt_del.now(_tz_del.utc) + _td_del(hours=9)).strftime("%H:%M:%S")
+                _add_shipment_log(f"[{kst}] {msg}")
+        else:
+
+            def _del_log(msg: str) -> None:  # type: ignore[misc]
+                pass
 
         # 인덱스 prefix — 프론트에서 [i/N] 전달 시 표시
         idx_prefix = (
@@ -2268,13 +2278,23 @@ class SambaShipmentService:
                 acc_label = f"{account.market_name}({account.seller_id or '-'})"
 
                 if result.get("success"):
-                    delete_results[account_id] = "success"
-                    _del_log(
-                        f"{idx_prefix}{src_tag}{prod_label} → {acc_label}: 삭제 성공"
-                    )
-                    logger.info(
-                        f"[마켓삭제] {account.market_type} 성공 - 상품: {product_id}"
-                    )
+                    if result.get("soldout_fallback"):
+                        # 주문 진행중 → 품절 처리 fallback (등록 상태 유지)
+                        delete_results[account_id] = "soldout_fallback"
+                        _del_log(
+                            f"{idx_prefix}{src_tag}{prod_label} → {acc_label}: 품절 처리 완료"
+                        )
+                        logger.info(
+                            f"[마켓삭제] {account.market_type} 품절 fallback - 상품: {product_id}"
+                        )
+                    else:
+                        delete_results[account_id] = "success"
+                        _del_log(
+                            f"{idx_prefix}{src_tag}{prod_label} → {acc_label}: 삭제 성공"
+                        )
+                        logger.info(
+                            f"[마켓삭제] {account.market_type} 성공 - 상품: {product_id}"
+                        )
                 else:
                     delete_results[account_id] = result.get("message", "실패")
                     _del_log(
@@ -2284,7 +2304,7 @@ class SambaShipmentService:
                         f"[마켓삭제] {account.market_type} 실패 - {result.get('message')}"
                     )
 
-            # 성공한 계정만 등록 해제 (429 등 실패 시 등록 상태 유지)
+            # 성공한 계정만 등록 해제 (soldout_fallback은 등록 상태 유지)
             success_ids = [
                 aid for aid, status in delete_results.items() if status == "success"
             ]

@@ -203,6 +203,39 @@ async def _delete_smartstore(
     if not product_no:
         return {"success": False, "message": "스마트스토어 상품번호 없음 (건너뜀)"}
 
+    async def _soldout_fallback(target_no: str, original_err: str) -> dict[str, Any]:
+        """삭제 불가 시 전 옵션 재고 0 품절 폴백 (order.py 패턴 차용)."""
+        logger.warning(
+            f"[스마트스토어] 삭제 실패({original_err[:120]}) → 품절 폴백 시도: {target_no}"
+        )
+        try:
+            existing = await client.get_product(target_no)
+            origin = existing.get("originProduct", {})
+            for k in ["productNo", "channelProducts", "regDate", "modifiedDate"]:
+                origin.pop(k, None)
+            origin["stockQuantity"] = 0
+            opt_info = (origin.get("detailAttribute", {}).get("optionInfo")) or {}
+            for combo in opt_info.get("combinations", []):
+                combo["stockQuantity"] = 0
+            put_data: dict[str, Any] = {"originProduct": origin}
+            if "smartstoreChannelProduct" in existing:
+                put_data["smartstoreChannelProduct"] = existing[
+                    "smartstoreChannelProduct"
+                ]
+            await client.update_product(target_no, put_data)
+            logger.info(f"[스마트스토어] 품절 폴백 완료: {target_no}")
+            return {
+                "success": True,
+                "soldout_fallback": True,
+                "message": "품절 처리 완료 (주문 완료 후 재시도)",
+            }
+        except Exception as fb_err:
+            logger.error(f"[스마트스토어] 품절 폴백도 실패: {fb_err}")
+            return {
+                "success": False,
+                "message": f"삭제 실패: {original_err} / 품절 폴백 실패: {fb_err}",
+            }
+
     try:
         await client.delete_product(product_no)
         return {"success": True, "message": "스마트스토어 삭제 완료"}
@@ -242,13 +275,10 @@ async def _delete_smartstore(
                                 "success": True,
                                 "message": "스마트스토어 삭제 완료 (이미 삭제됨)",
                             }
-                        logger.error(f"[스마트스토어] origin 역조회 후 삭제 실패: {e2}")
-                        return {
-                            "success": False,
-                            "message": f"삭제 실패 (origin={origin_no}): {e2}",
-                        }
-        logger.error(f"[스마트스토어] 삭제 실패: {e}")
-        return {"success": False, "message": f"삭제 실패: {e}"}
+                        # origin 번호로도 삭제 실패 → 품절 폴백
+                        return await _soldout_fallback(origin_no, str(e2))
+        # 삭제 실패 시 에러 종류 무관하게 품절 폴백 시도
+        return await _soldout_fallback(product_no, err_str)
 
 
 async def _delete_coupang(
