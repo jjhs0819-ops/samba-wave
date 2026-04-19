@@ -237,17 +237,18 @@ class SSGSourcingClient:
                 brand_ids = []
 
             # 브랜드/카테고리 필터 적용 URL 구성
-            search_url = f"{self.SEARCH_URL}?query={quote(keyword)}&page={page}"
-            if brand_ids:
-                search_url += f"&repBrandId={'|'.join(brand_ids)}"
-            # ctgId + ctgLv 파라미터 사용 (SSG 실제 검색 URL 준수)
+            # [중요] SSG 검색 API는 repBrandId + ctgId 동시 사용 시 ctgId를 무시함.
+            # → 카테고리 필터가 있으면 repBrandId를 제외하고 query 키워드로만 브랜드 제한.
             # 하위호환: 기존 disp_ctg_id 키로 저장된 그룹도 지원
+            search_url = f"{self.SEARCH_URL}?query={quote(keyword)}&page={page}"
             ctg_id = filters.get("ctg_id", "") or filters.get("disp_ctg_id", "")
             if ctg_id:
                 search_url += f"&ctgId={ctg_id}"
-            ctg_lv = filters.get("ctg_lv", "")
-            if ctg_lv:
-                search_url += f"&ctgLv={ctg_lv}"
+                ctg_lv = filters.get("ctg_lv", "")
+                if ctg_lv:
+                    search_url += f"&ctgLv={ctg_lv}"
+            elif brand_ids:
+                search_url += f"&repBrandId={'|'.join(brand_ids)}"
             # 할인상품만 보기 (사용자 UI에서 maxDiscount=1 필터 지정한 경우 동일 결과 반환 보장)
             max_discount = filters.get("maxDiscount", "")
             if max_discount:
