@@ -1231,8 +1231,11 @@ class SambaShipmentService:
                             del_result = await delete_from_market(
                                 self.session, market_type, product_dict, account_id
                             )
-                            if del_result.get("success"):
-                                # registered_accounts에서 제거 + DB 반영
+                            if del_result.get("success") and not del_result.get(
+                                "soldout_fallback"
+                            ):
+                                # 실제 삭제(DELETE 200) 시에만 registered_accounts 제거
+                                # soldout_fallback(재고0 처리)은 계속 추적 필요
                                 _prod = await SambaCollectedProductRepository(
                                     self.session
                                 ).get_async(product_id)
