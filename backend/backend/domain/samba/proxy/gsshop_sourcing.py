@@ -83,7 +83,7 @@ class GsShopSourcingClient:
     def __init__(
         self, cookie: str = "", *, proxy_pool: list[str] | None = None
     ) -> None:
-        self._timeout = httpx.Timeout(20.0, connect=10.0)
+        self._timeout = httpx.Timeout(30.0, connect=10.0)
         self.cookie = cookie
         self._proxy_pool = proxy_pool or []
         self._proxy_idx = 0
@@ -226,7 +226,7 @@ class GsShopSourcingClient:
                         break
 
                     # 페이지 간 딜레이 (차단 방지)
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(0.2)
 
             products = [
                 {
@@ -669,7 +669,7 @@ class GsShopSourcingClient:
     async def get_product_detail(
         self, product_id: str, refresh_only: bool = False
     ) -> dict[str, Any]:
-        """GS샵 상품 상세 정보 조회.
+        """GS샵 상품 상세 정보 조회 (재시도 2회 포함).
 
         refresh_only=False(수집): 모바일+PC 병렬 요청 → 데이터 온전 유지
         refresh_only=True(오토튠/가격재고): 모바일만 → 빠른 가격/재고 갱신
@@ -679,32 +679,48 @@ class GsShopSourcingClient:
             f"{' (refresh_only)' if refresh_only else ''}"
         )
 
-        try:
-            _proxy = self._next_proxy()
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                _proxy = self._next_proxy()
 
-            if refresh_only:
-                # 오토튠/가격재고업데이트 → 모바일만 (빠름)
-                mobile_html = await self._fetch_mobile(product_id, _proxy)
-                return self._parse_mobile_html(mobile_html, product_id)
-            else:
-                # 수집 → 모바일+PC 병렬 (데이터 온전)
-                mobile_html, pc_html = await asyncio.gather(
-                    self._fetch_mobile(product_id, _proxy),
-                    self._fetch_pc(product_id, _proxy),
+                if refresh_only:
+                    mobile_html = await self._fetch_mobile(product_id, _proxy)
+                    return self._parse_mobile_html(mobile_html, product_id)
+                else:
+                    mobile_html, pc_html = await asyncio.gather(
+                        self._fetch_mobile(product_id, _proxy),
+                        self._fetch_pc(product_id, _proxy),
+                    )
+                    result = self._parse_mobile_html(mobile_html, product_id)
+                    if result.get("name") and pc_html:
+                        self._enrich_from_pc_html(result, pc_html)
+                    return result
+
+            except RateLimitError as e:
+                last_exc = e
+                wait = min(e.retry_after, 15) if e.retry_after else (2**attempt)
+                logger.warning(
+                    f"[GSSHOP] 차단({e.status}) {product_id} — {wait}s 대기 후 재시도({attempt + 1}/3)"
                 )
-                result = self._parse_mobile_html(mobile_html, product_id)
-                if result.get("name") and pc_html:
-                    self._enrich_from_pc_html(result, pc_html)
-                return result
+                await asyncio.sleep(wait)
+            except httpx.TimeoutException as e:
+                last_exc = e
+                if attempt < 2:
+                    wait = 1.0 * (attempt + 1)
+                    logger.warning(
+                        f"[GSSHOP] 타임아웃 {product_id} — {wait}s 대기 후 재시도({attempt + 1}/3)"
+                    )
+                    await asyncio.sleep(wait)
+                else:
+                    logger.error(f"[GSSHOP] 타임아웃 최종 실패: {product_id}")
+                    return {}
+            except Exception as e:
+                logger.error(f"[GSSHOP] 상세 조회 실패: {product_id} — {e}")
+                return {}
 
-        except RateLimitError:
-            raise
-        except httpx.TimeoutException:
-            logger.error(f"[GSSHOP] 상세 조회 타임아웃: {product_id}")
-            return {}
-        except Exception as e:
-            logger.error(f"[GSSHOP] 상세 조회 실패: {product_id} — {e}")
-            return {}
+        logger.error(f"[GSSHOP] 상세 조회 3회 모두 실패: {product_id} — {last_exc}")
+        return {}
 
     async def get_detail(self, product_id: str) -> dict[str, Any]:
         """worker 호환 상세 조회 — get_product_detail 래핑 + snake_case 변환."""

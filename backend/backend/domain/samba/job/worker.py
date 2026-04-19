@@ -149,7 +149,9 @@ async def _flush_job_logs(job_id: str, logs: list[str], job_type: str) -> None:
 
         async with get_write_session() as session:
             await session.execute(
-                _text("UPDATE samba_jobs SET logs = :logs::jsonb WHERE id = :jid"),
+                _text(
+                    "UPDATE samba_jobs SET logs = CAST(:logs AS jsonb) WHERE id = :jid"
+                ),
                 {"logs": json.dumps(logs, ensure_ascii=False), "jid": job_id},
             )
             await session.commit()
@@ -2240,7 +2242,7 @@ class JobWorker:
                 _log_name = (detail_for_build.get("name") or "").strip()[:20]
                 _add_job_log(
                     job.id,
-                    f"{_log_brand} {_log_name} {spid}",
+                    f"[{total_saved:,}/{len(new_items):,}] {_log_brand} {_log_name} {spid}",
                     job_type="collect",
                 )
 
@@ -2357,9 +2359,39 @@ class JobWorker:
         )
 
         # 인터리빙: 검색 1페이지 → 즉시 상세+저장 → 검색 2페이지 → ...
-        client = SSGSourcingClient()
-        from backend.domain.samba.proxy.ssg_sourcing import (
-            RateLimitError as SSGSearchRL,
+        # 프록시 풀 로테이션 — 단일 프록시 한도 초과 회피
+        from backend.core.config import settings as _ssg_settings
+
+        _ssg_proxy_pool: list[str] = []
+        if _ssg_settings.collect_proxy_url:
+            _ssg_proxy_pool.append(_ssg_settings.collect_proxy_url.strip())
+        if _ssg_settings.proxy_urls:
+            for _p in _ssg_settings.proxy_urls.split(","):
+                _p = _p.strip()
+                if _p and _p not in _ssg_proxy_pool:
+                    _ssg_proxy_pool.append(_p)
+
+        # 프록시별 client 생성 (라운드로빈)
+        _ssg_clients: list[SSGSourcingClient] = []
+        if _ssg_proxy_pool:
+            for _p in _ssg_proxy_pool:
+                _ssg_clients.append(SSGSourcingClient(proxy_url=_p))
+        else:
+            _ssg_clients.append(SSGSourcingClient())
+
+        _ssg_client_idx = 0
+
+        def _next_ssg_client() -> SSGSourcingClient:
+            nonlocal _ssg_client_idx
+            c = _ssg_clients[_ssg_client_idx % len(_ssg_clients)]
+            _ssg_client_idx += 1
+            return c
+
+        client = _ssg_clients[0]  # 검색용은 첫 번째 고정
+        _add_job_log(
+            job.id,
+            f"[SSG브랜드전체수집] 프록시 풀: {len(_ssg_proxy_pool)}개",
+            job_type="collect",
         )
 
         if not _brand_ids_from_filter:
@@ -2384,8 +2416,11 @@ class JobWorker:
         total_saved = 0
         total_skipped = 0
         total_unmatched = 0
-        _SSG_BATCH = 5
+        # 일반 SSG 수집과 동일하게 2건 병렬 — 5건은 429 유발
+        _SSG_BATCH = 2
         _ssg_page = 1
+        # 필터 requested_count 합산 → 총 예상 건수 (진행률 표시용)
+        _ssg_total_est = sum(f.requested_count or 0 for f in filters) or 1
 
         while True:
             from backend.domain.samba.emergency import (
@@ -2398,38 +2433,60 @@ class JobWorker:
                 await session.commit()
                 return
 
-            # 1단계: 해당 페이지 검색
+            # 1단계: 해당 페이지 검색 — 확장앱 소싱큐로 위임 (하이브리드)
+            from urllib.parse import quote as _qs_quote
+            from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+
+            _brand_q = (
+                "|".join(_brand_ids_from_filter) if _brand_ids_from_filter else ""
+            )
+            _ssg_search_url = (
+                f"https://department.ssg.com/search?query={_qs_quote(keyword)}"
+                f"&page={_ssg_page}"
+            )
+            if _brand_q:
+                _ssg_search_url += f"&repBrandId={_brand_q}"
+
+            _add_job_log(
+                job.id,
+                f"[SSG브랜드전체수집] {_ssg_page}페이지 검색 중(확장앱)...",
+                job_type="collect",
+            )
             _raw: list[dict] = []
-            for _attempt in range(3):
+            try:
+                _req_id, _future = SourcingQueue.add_search_job(
+                    "SSG", keyword, url=_ssg_search_url, max_count=40
+                )
                 try:
-                    _raw = await client.search_products(
-                        keyword,
-                        page=_ssg_page,
-                        size=40,
-                        brand_ids=_brand_ids_from_filter,
-                    )
-                    break
-                except SSGSearchRL as _rl:
-                    _wait = _rl.retry_after or min(15, 3 * (_attempt + 1))
+                    _ext_result = await asyncio.wait_for(_future, timeout=180)
+                    _raw = _ext_result.get("products", []) or []
+                except asyncio.TimeoutError:
+                    SourcingQueue.resolvers.pop(_req_id, None)
                     _add_job_log(
                         job.id,
-                        f"[SSG브랜드전체수집] 검색 속도제한 {_wait}초 대기 (p{_ssg_page})",
+                        f"[SSG브랜드전체수집] {_ssg_page}페이지 확장앱 타임아웃",
                         job_type="collect",
                     )
-                    if await _cancellable_sleep(_wait):
-                        await repo.cancel_job(job.id)
-                        await session.commit()
-                        return
+                    _raw = []
+            except Exception as _se:
+                _add_job_log(
+                    job.id,
+                    f"[SSG브랜드전체수집] {_ssg_page}페이지 확장앱 오류: {type(_se).__name__}",
+                    job_type="collect",
+                )
+                _raw = []
+
             if not _raw:
+                # 검색 결과 없음 — 루프 종료 (SSG 결과 소진)
                 break
 
-            # 2단계: 이 페이지 신규 상품 추출
+            # 2단계: 이 페이지 신규 상품 추출 (확장앱 반환은 이미 정규화된 형태)
             page_new: list[dict] = []
             for item in _raw:
                 pid = str(
-                    item.get("siteProductId")
+                    item.get("site_product_id")
+                    or item.get("siteProductId")
                     or item.get("goodsNo")
-                    or item.get("site_product_id")
                     or ""
                 )
                 if not pid or pid in _seen_spids:
@@ -2451,19 +2508,48 @@ class JobWorker:
                     }
                 )
 
-            # 3단계: 신규 상품 즉시 상세조회+저장 (5건 배치)
+            # 3단계: 신규 상품 즉시 상세조회+저장 (2건 배치, 1.5초 딜레이)
+            from backend.domain.samba.proxy.ssg_sourcing import RateLimitError as _SSGLR
+
+            _page_cancelled = False
             for _bs in range(0, len(page_new), _SSG_BATCH):
+                if _page_cancelled:
+                    break
                 _batch = page_new[_bs : _bs + _SSG_BATCH]
+                # 배치 내에서도 프록시 로테이션 (각 상품마다 다른 프록시)
+                _batch_clients = [_next_ssg_client() for _ in _batch]
                 _details = await asyncio.gather(
                     *(
-                        client.get_product_detail(it["site_product_id"])
-                        for it in _batch
+                        _bc.get_product_detail(it["site_product_id"])
+                        for _bc, it in zip(_batch_clients, _batch)
                     ),
                     return_exceptions=True,
                 )
 
-                for it, det in zip(_batch, _details):
+                for it, det, _orig_bc in zip(_batch, _details, _batch_clients):
+                    if _page_cancelled:
+                        break
                     spid = it["site_product_id"]
+
+                    # 상세 조회 실패(429 포함) 시 최대 3회 재시도 (매 재시도 다른 프록시)
+                    # _cancellable_sleep → True 반환 시 즉시 전체 중단
+                    if not det or isinstance(det, Exception):
+                        for _retry in range(1, 4):
+                            _wait = _retry * 10  # 10s→20s→30s
+                            if await _cancellable_sleep(_wait):
+                                _page_cancelled = True
+                                break
+                            try:
+                                _retry_client = _next_ssg_client()
+                                det = await _retry_client.get_product_detail(spid)
+                                if det and not isinstance(det, Exception):
+                                    break
+                            except _SSGLR:
+                                det = {}
+                            except Exception:
+                                det = {}
+                    if _page_cancelled:
+                        break
                     detail = det if (det and not isinstance(det, Exception)) else {}
 
                     is_sold_out = bool(
@@ -2473,7 +2559,7 @@ class JobWorker:
                         total_skipped += 1
                         continue
 
-                    # 카테고리 매핑 (3단계 폴백)
+                    # 카테고리 매핑 (3단계 + 최후 fallback)
                     # 1순위: dispCtgId → cat_filter_map
                     disp_ctg_id = detail.get("dispCtgId", "")
                     filter_id = cat_filter_map.get(disp_ctg_id) if disp_ctg_id else None
@@ -2494,7 +2580,7 @@ class JobWorker:
                             if filter_id:
                                 break
 
-                    # 3순위: detail["category"] — get_product_detail이 이미 4단계 폴백 적용한 최종 경로
+                    # 3순위: detail["category"] (4단계 폴백 적용된 최종 경로)
                     if not filter_id:
                         _full_cat = (detail.get("category") or "").strip()
                         if _full_cat:
@@ -2511,17 +2597,18 @@ class JobWorker:
                                 if filter_id:
                                     break
 
+                    # 3회 재시도 후에도 카테고리 없으면 스킵 (API 호출 실패)
                     if not filter_id:
                         total_unmatched += 1
                         _cat_dbg = (
                             " > ".join(_cat_parts)
                             or detail.get("category", "")
                             or disp_ctg_id
-                            or "없음"
+                            or "상세조회실패"
                         )
                         _add_job_log(
                             job.id,
-                            f"[미매핑] {(detail.get('itemNm') or it.get('name', ''))[:15]} ({spid}) cat={_cat_dbg[:30]}",
+                            f"[스킵] {(detail.get('itemNm') or it.get('name', ''))[:15]} ({spid}) cat={_cat_dbg[:30]}",
                             job_type="collect",
                         )
                         continue
@@ -2584,21 +2671,26 @@ class JobWorker:
                     _log_name = (detail_for_build.get("name") or "").strip()[:20]
                     _add_job_log(
                         job.id,
-                        f"{_log_brand} {_log_name} {spid}",
+                        f"[{total_saved:,}/{_ssg_total_est:,}] {_log_brand} {_log_name} {spid}",
                         job_type="collect",
                     )
 
             await repo.update_progress(job.id, total_saved, total_saved + 1)
             _add_job_log(
                 job.id,
-                f"[SSG브랜드전체수집] {_ssg_page}페이지 완료 — 저장 {total_saved:,}건",
+                f"[SSG브랜드전체수집] {_ssg_page}페이지 완료 — 저장 누적 {total_saved:,}건 (신규 {len(page_new)}건)",
                 job_type="collect",
             )
 
-            if not page_new:
-                break
+            if _page_cancelled:
+                await repo.cancel_job(job.id)
+                await session.commit()
+                return
+
+            # 페이지 전체 dupe여도 다음 페이지 계속 시도 — 누수 방지
+            # _raw 자체가 비면 break (search 결과 소진)
             _ssg_page += 1
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(1.5)  # 페이지 간 딜레이 (429 방지)
 
         # 각 SearchFilter의 requested_count를 실제 수집수로 갱신
         for f in filters:
@@ -2697,8 +2789,17 @@ class JobWorker:
             job_type="collect",
         )
 
-        # GS 전체 상품 검색 (서버 직접 크롤링)
-        gs_client = GsShopSourcingClient()
+        # GS 전체 상품 검색 (서버 직접 크롤링) — 프록시 풀 적용
+        from backend.core.config import settings as _gs_cfg2
+
+        _gs_proxies2: list[str] = []
+        if _gs_cfg2.collect_proxy_url:
+            _gs_proxies2.append(_gs_cfg2.collect_proxy_url.strip())
+        if _gs_cfg2.proxy_urls:
+            _gs_proxies2.extend(
+                [p.strip() for p in _gs_cfg2.proxy_urls.split(",") if p.strip()]
+            )
+        gs_client = GsShopSourcingClient(proxy_pool=_gs_proxies2 or None)
         _add_job_log(
             job.id,
             f"[GS브랜드전체수집] '{keyword}' 전체 상품 검색 중 (백화점탭 크롤링)...",
@@ -2906,7 +3007,7 @@ class JobWorker:
                 _log_name = (detail_for_build.get("name") or "").strip()[:20]
                 _add_job_log(
                     job.id,
-                    f"{_log_brand} {_log_name} {spid}",
+                    f"[{total_saved:,}/{len(new_items):,}] {_log_brand} {_log_name} {spid}",
                     job_type="collect",
                 )
 
@@ -4197,11 +4298,7 @@ class JobWorker:
                             detail = await client.get_detail(p_id)
                         # ABCmart/GrandStage: 선취합에서 누락된 경우이므로 sleep 불필요
                         if site not in ("ABCmart", "GrandStage"):
-                            await asyncio.sleep(
-                                0.15
-                                if site == "Nike"
-                                else (0 if site == "GSShop" else 0.3)
-                            )
+                            await asyncio.sleep(0.15 if site == "Nike" else 0.3)
                     except Exception as e:
                         logger.warning(f"[잡워커] {site} 서버 상세 실패 {p_id}: {e}")
 
