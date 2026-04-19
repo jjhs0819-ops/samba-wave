@@ -52,11 +52,63 @@ async def create_job(
                 ).scalar()
             ) or 0
 
-    # 전송 잡: 최근 실패/취소 잡이 있으면 이어하기 (current 위치부터 재개)
+    # 전송 잡: 중복 클릭/요청 차단 + 이어하기
     if body.job_type == "transmit":
         from backend.domain.samba.job.model import SambaJob
         from sqlmodel import select, col
+        from sqlalchemy import text as _text
 
+        new_pids: list = body.payload.get("product_ids") or []
+
+        # advisory lock — 동시 중복 요청 직렬화 (트랜잭션 종료 시 자동 해제)
+        _lock_key = f"transmit_create:{body.tenant_id or 'default'}"
+        await session.execute(
+            _text("SELECT pg_advisory_xact_lock(hashtext(:k))"),
+            {"k": _lock_key},
+        )
+
+        # 1) PENDING/RUNNING 잡과 중복 → 기존 잡 그대로 반환
+        active_jobs = (
+            (
+                await session.execute(
+                    select(SambaJob)
+                    .where(
+                        SambaJob.job_type == "transmit",
+                        col(SambaJob.status).in_(
+                            [JobStatus.PENDING, JobStatus.RUNNING]
+                        ),
+                    )
+                    .order_by(SambaJob.created_at.desc())
+                    .limit(5)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for a in active_jobs:
+            if not a.payload:
+                continue
+            existing_pids: list = a.payload.get("product_ids") or []
+            if existing_pids == new_pids:
+                # 완전 동일 리스트 → 중복 클릭, 기존 잡 재활용
+                return {
+                    "id": a.id,
+                    "status": a.status,
+                    "job_type": "transmit",
+                    "duplicate": True,
+                    "current": a.current,
+                    "total": a.total,
+                }
+            if new_pids and set(existing_pids) & set(new_pids):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"진행 중인 전송({a.id[:8]})과 상품이 중복됩니다. "
+                        "완료 후 재시도하세요."
+                    ),
+                )
+
+        # 2) FAILED 잡이 있으면 이어하기 (current 위치부터 재개)
         prev = (
             (
                 await session.execute(
@@ -75,11 +127,7 @@ async def create_job(
             .scalars()
             .first()
         )
-        if (
-            prev
-            and prev.payload
-            and prev.payload.get("product_ids") == body.payload.get("product_ids")
-        ):
+        if prev and prev.payload and prev.payload.get("product_ids") == new_pids:
             # 같은 상품 목록 → 기존 잡을 pending으로 리셋하여 이어하기
             prev.status = JobStatus.PENDING
             prev.started_at = None

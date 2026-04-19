@@ -138,6 +138,7 @@ async def cleanup_smartstore_orphans(
     per_account = []
     total_naver = 0
     total_orphans = 0
+    total_stale_db = 0
     total_deleted = 0
 
     for account in accounts:
@@ -148,14 +149,19 @@ async def cleanup_smartstore_orphans(
             per_account.append({"account_id": account.id, "error": "API 키 없음"})
             continue
 
-        # 이 계정에 매핑된 product_no만 수집
+        # 이 계정에 매핑된 product_no 수집 + DB product → originProductNo 역매핑
         account_db_nos: set[str] = set()
+        # DB 상품 id → 매핑된 originProductNo (stale 판정용)
+        db_origin_map: dict[str, dict] = {}
         for p in all_db_products:
             nos = p.market_product_nos or {}
+            origin_no_for_p: str = ""
             for k in (account.id, f"{account.id}_origin"):
                 v = nos.get(k)
                 if isinstance(v, str) and v:
                     account_db_nos.add(v)
+                    if not origin_no_for_p:
+                        origin_no_for_p = v
                 elif isinstance(v, dict):
                     for kk in (
                         "originProductNo",
@@ -165,6 +171,15 @@ async def cleanup_smartstore_orphans(
                         vv = v.get(kk)
                         if vv:
                             account_db_nos.add(str(vv))
+                            if not origin_no_for_p and kk == "originProductNo":
+                                origin_no_for_p = str(vv)
+            if origin_no_for_p:
+                db_origin_map[origin_no_for_p] = {
+                    "db_id": str(p.id),
+                    "style_code": str(p.style_code or ""),
+                    "mapped_origin_no": origin_no_for_p,
+                    "product_name": (p.product_name or "")[:80],
+                }
 
         client = SmartStoreClient(client_id, client_secret)
 
@@ -190,6 +205,21 @@ async def cleanup_smartstore_orphans(
                 break
 
         total_naver += len(naver_products)
+
+        # Naver 상품의 originProductNo / channelProductNo 전체 집합 (stale 역방향 판정용)
+        account_naver_nos: set[str] = set()
+        for np in naver_products:
+            on = str(
+                np.get("originProductNo")
+                or np.get("originProduct", {}).get("id", "")
+                or ""
+            )
+            if on:
+                account_naver_nos.add(on)
+            for cp in np.get("channelProducts", []):
+                cn = cp.get("channelProductNo")
+                if cn:
+                    account_naver_nos.add(str(cn))
 
         orphans = []
         for np in naver_products:
@@ -227,6 +257,14 @@ async def cleanup_smartstore_orphans(
 
         total_orphans += len(orphans)
 
+        # DB→Naver 역고아: DB에 매핑은 있지만 Naver 목록에 없는 상품
+        stale_db = [
+            info
+            for origin_no, info in db_origin_map.items()
+            if origin_no not in account_naver_nos
+        ]
+        total_stale_db += len(stale_db)
+
         deleted_here: list[str] = []
         failed: list[dict] = []
         if not dry_run and orphans:
@@ -249,6 +287,8 @@ async def cleanup_smartstore_orphans(
                 "naver_count": len(naver_products),
                 "orphan_count": len(orphans),
                 "orphans": orphans,
+                "stale_db_count": len(stale_db),
+                "stale_db": stale_db[:50],
                 "deleted": deleted_here,
                 "failed": failed,
             }
@@ -257,7 +297,9 @@ async def cleanup_smartstore_orphans(
     return {
         "ok": True,
         "dry_run": dry_run,
+        "db_no_count": len(all_db_products),
         "style_code_count": len(all_style_codes),
+        "total_stale_db": total_stale_db,
         "total_naver": total_naver,
         "total_orphans": total_orphans,
         "total_deleted": total_deleted,

@@ -1837,10 +1837,13 @@ export default function ProductsPage() {
 
               try {
                 const res = await shipmentApi.cleanupSmartstoreOrphans(true)
+                const dbCount = res.db_no_count ?? 0
+                const staleCount = res.total_stale_db ?? 0
                 const logs: string[] = [
-                  `DB 등록 상품: ${res.db_no_count.toLocaleString()}개`,
+                  `DB 등록 상품: ${dbCount.toLocaleString()}개`,
                   `Naver 등록 상품: ${res.total_naver.toLocaleString()}개`,
-                  `고아 상품: ${res.total_orphans.toLocaleString()}개`,
+                  `Naver→DB 고아: ${res.total_orphans.toLocaleString()}개 (Naver엔 있는데 DB 매핑 없음)`,
+                  `DB→Naver 역고아: ${staleCount.toLocaleString()}개 (DB엔 판매중인데 Naver에 없음)`,
                   '',
                 ]
                 for (const a of res.accounts) {
@@ -1848,19 +1851,25 @@ export default function ProductsPage() {
                     logs.push(`[${a.account_id}] ${a.error}`)
                     continue
                   }
-                  logs.push(`[${a.account_id}] Naver ${(a.naver_count ?? 0).toLocaleString()}개 / 고아 ${(a.orphan_count ?? 0).toLocaleString()}개`)
+                  logs.push(`[${a.account_id}] Naver ${(a.naver_count ?? 0).toLocaleString()}개 / 고아 ${(a.orphan_count ?? 0).toLocaleString()}개 / 역고아 ${(a.stale_db_count ?? 0).toLocaleString()}개`)
                   for (const o of (a.orphans ?? []).slice(0, 30)) {
-                    logs.push(`  - ${o.origin_no}  ${o.name}`)
+                    logs.push(`  [고아] ${o.origin_no}  ${o.name}`)
                   }
                   if ((a.orphans?.length ?? 0) > 30) {
                     logs.push(`  ... 외 ${(a.orphans!.length - 30).toLocaleString()}개`)
+                  }
+                  for (const s of (a.stale_db ?? []).slice(0, 30)) {
+                    logs.push(`  [역고아] originNo=${s.mapped_origin_no}  ${s.product_name}  (style=${s.style_code})`)
+                  }
+                  if ((a.stale_db?.length ?? 0) > 30) {
+                    logs.push(`  ... 외 ${(a.stale_db!.length - 30).toLocaleString()}개`)
                   }
                 }
                 setAiJobLogs(logs)
                 setAiJobDone(true)
 
-                if (res.total_orphans === 0) {
-                  logs.push('', '삭제할 고아 상품이 없습니다.')
+                if (res.total_orphans === 0 && staleCount === 0) {
+                  logs.push('', '고아/역고아 상품이 없습니다.')
                   setAiJobLogs([...logs])
                   return
                 }

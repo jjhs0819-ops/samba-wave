@@ -735,15 +735,19 @@ export const shipmentApi = {
       ok: boolean
       dry_run: boolean
       db_no_count: number
+      style_code_count: number
       total_naver: number
       total_orphans: number
+      total_stale_db: number
       total_deleted: number
       max_delete: number
       accounts: {
         account_id: string
         naver_count?: number
         orphan_count?: number
-        orphans?: { origin_no: string; name: string }[]
+        orphans?: { origin_no: string; name: string; mgmt_code?: string }[]
+        stale_db_count?: number
+        stale_db?: { db_id: string; style_code: string; mapped_origin_no: string; product_name: string }[]
         deleted?: string[]
         failed?: { origin_no: string; error: string }[]
         error?: string

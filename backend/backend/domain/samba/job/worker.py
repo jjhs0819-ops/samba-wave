@@ -2395,8 +2395,8 @@ class JobWorker:
         total_unmatched = 0
         # 재시도 큐 — 상세조회/매핑 실패 상품 누수 방지
         _failed_queue: list[dict] = []
-        # 확장앱 병렬 처리: 5건 병렬 (확장앱 SOURCING_MAX_CONCURRENT=5 최대)
-        _SSG_BATCH = 5
+        # 1건 순차 + 5초 딜레이 — 탭 사용 최소화 테스트
+        _SSG_BATCH = 1
         _ssg_page = 1
         # 필터 requested_count 합산 → 총 예상 건수 (진행률 표시용)
         _ssg_total_est = sum(f.requested_count or 0 for f in filters) or 1
@@ -2739,7 +2739,8 @@ class JobWorker:
                         job_type="collect",
                     )
 
-                # 배치 간 딜레이 없음 — 최대 속도
+                # 배치 간 5초 딜레이 — 1탭 순차, 과부하 방지
+                await asyncio.sleep(5.0)
 
             await repo.update_progress(job.id, total_saved, total_saved + 1)
             _add_job_log(

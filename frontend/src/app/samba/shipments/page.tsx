@@ -655,6 +655,9 @@ export default function ShipmentsPage() {
   }
 
   const handleStart = async (targetIds?: string[]) => {
+    // 중복 클릭 방지 — 이미 전송 중이거나 Job 진행 중이면 무시
+    if (transmittingRef.current || activeJobIdRef.current) return
+
     const inputIds = targetIds || selectedProducts
     if (inputIds.length === 0) { showAlert('상품을 선택해주세요'); return }
     if (selectedAccounts.length === 0) { showAlert('마켓 계정을 선택해주세요'); return }
@@ -788,7 +791,11 @@ export default function ShipmentsPage() {
       const jobData = await res.json()
       const jobId = jobData.id || ''
       activeJobIdRef.current = jobId
-      setProgress({ current: 0, total: tasks.length })
+      // 중복 Job 반환 시 알림 (이미 진행 중인 잡을 추적)
+      if (jobData.duplicate) {
+        addLog(`[${ts()}] 이미 진행 중인 전송이 있어 해당 작업을 계속 추적합니다`)
+      }
+      setProgress({ current: jobData.current || 0, total: jobData.total || tasks.length })
       // 전송 진행 폴링 + 링 버퍼 기반 실시간 로그
       let polling = false
       if (jobPollRef.current) clearInterval(jobPollRef.current)
