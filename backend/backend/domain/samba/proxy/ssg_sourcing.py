@@ -248,6 +248,10 @@ class SSGSourcingClient:
             ctg_lv = filters.get("ctg_lv", "")
             if ctg_lv:
                 search_url += f"&ctgLv={ctg_lv}"
+            # 할인상품만 보기 (사용자 UI에서 maxDiscount=1 필터 지정한 경우 동일 결과 반환 보장)
+            max_discount = filters.get("maxDiscount", "")
+            if max_discount:
+                search_url += f"&maxDiscount={max_discount}"
 
             resp = await client.get(search_url, headers=self._headers())
             if resp.status_code in (429, 403):

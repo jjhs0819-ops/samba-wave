@@ -3266,6 +3266,7 @@ class JobWorker:
                     "sort",
                     "minPrice",
                     "maxPrice",
+                    "maxDiscount",
                 ):
                     v = qs.get(k, [""])[0]
                     if v:
