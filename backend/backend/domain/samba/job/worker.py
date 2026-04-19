@@ -2295,6 +2295,12 @@ class JobWorker:
             SambaCollectedProduct as CPModel,
         )
         from backend.domain.samba.proxy.ssg_sourcing import SSGSourcingClient
+        from backend.domain.samba.proxy.ssg_sourcing import (
+            RateLimitError as SSGSearchRL,
+        )
+        from backend.domain.samba.proxy.ssg_sourcing import (
+            RateLimitError as _SSGLR,
+        )
         from backend.api.v1.routers.samba.collector_common import (
             _build_product_data,
             _get_services,
@@ -2358,16 +2364,37 @@ class JobWorker:
             job_type="collect",
         )
 
-        # 프록시 미사용 — 로컬 IP + 속도 조절로 429 회피
-        _ssg_clients: list[SSGSourcingClient] = [SSGSourcingClient()]
+        # 프록시 풀 로테이션 — 서버 직접 수집 (확장앱 미사용)
+        from backend.core.config import settings as _ssg_settings
+
+        _ssg_proxy_pool: list[str] = []
+        if _ssg_settings.collect_proxy_url:
+            _ssg_proxy_pool.append(_ssg_settings.collect_proxy_url.strip())
+        if _ssg_settings.proxy_urls:
+            for _p in _ssg_settings.proxy_urls.split(","):
+                _p = _p.strip()
+                if _p and _p not in _ssg_proxy_pool:
+                    _ssg_proxy_pool.append(_p)
+
+        _ssg_clients: list[SSGSourcingClient] = []
+        if _ssg_proxy_pool:
+            for _p in _ssg_proxy_pool:
+                _ssg_clients.append(SSGSourcingClient(proxy_url=_p))
+        else:
+            _ssg_clients.append(SSGSourcingClient())
+
+        _ssg_client_idx = 0
 
         def _next_ssg_client() -> SSGSourcingClient:
-            return _ssg_clients[0]
+            nonlocal _ssg_client_idx
+            c = _ssg_clients[_ssg_client_idx % len(_ssg_clients)]
+            _ssg_client_idx += 1
+            return c
 
         client = _ssg_clients[0]
         _add_job_log(
             job.id,
-            "[SSG브랜드전체수집] 프록시 미사용 (로컬 IP) — 1건/5초 속도",
+            f"[SSG브랜드전체수집] 프록시 풀 {len(_ssg_proxy_pool)}개 — 1건/5초 속도",
             job_type="collect",
         )
 
@@ -2414,7 +2441,6 @@ class JobWorker:
 
             # 1단계: 해당 페이지 검색 — 확장앱 소싱큐로 위임 (하이브리드)
             from urllib.parse import quote as _qs_quote
-            from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
 
             _brand_q = (
                 "|".join(_brand_ids_from_filter) if _brand_ids_from_filter else ""
@@ -2428,35 +2454,39 @@ class JobWorker:
 
             _add_job_log(
                 job.id,
-                f"[SSG브랜드전체수집] {_ssg_page}페이지 검색 중(확장앱)...",
+                f"[SSG브랜드전체수집] {_ssg_page}페이지 검색 중...",
                 job_type="collect",
             )
             _raw: list[dict] = []
-            try:
-                _req_id, _future = SourcingQueue.add_search_job(
-                    "SSG", keyword, url=_ssg_search_url, max_count=40
-                )
+            for _attempt in range(3):
                 try:
-                    _ext_result = await asyncio.wait_for(_future, timeout=180)
-                    _raw = _ext_result.get("products", []) or []
-                except asyncio.TimeoutError:
-                    SourcingQueue.resolvers.pop(_req_id, None)
+                    _raw = await client.search_products(
+                        keyword,
+                        page=_ssg_page,
+                        size=40,
+                        brand_ids=_brand_ids_from_filter,
+                    )
+                    break
+                except SSGSearchRL as _rl:
+                    _wait = _rl.retry_after or min(15, 3 * (_attempt + 1))
                     _add_job_log(
                         job.id,
-                        f"[SSG브랜드전체수집] {_ssg_page}페이지 확장앱 타임아웃",
+                        f"[SSG브랜드전체수집] 검색 속도제한 {_wait}초 대기 (p{_ssg_page})",
                         job_type="collect",
                     )
-                    _raw = []
-            except Exception as _se:
-                _add_job_log(
-                    job.id,
-                    f"[SSG브랜드전체수집] {_ssg_page}페이지 확장앱 오류: {type(_se).__name__}",
-                    job_type="collect",
-                )
-                _raw = []
+                    if await _cancellable_sleep(_wait):
+                        await repo.cancel_job(job.id)
+                        await session.commit()
+                        return
+                except Exception as _se:
+                    _add_job_log(
+                        job.id,
+                        f"[SSG브랜드전체수집] 검색 오류: {type(_se).__name__} (p{_ssg_page})",
+                        job_type="collect",
+                    )
+                    break
 
             if not _raw:
-                # 검색 결과 없음 — 루프 종료 (SSG 결과 소진)
                 break
 
             # 2단계: 이 페이지 신규 상품 추출 (확장앱 반환은 이미 정규화된 형태)
@@ -2494,67 +2524,14 @@ class JobWorker:
                 if _page_cancelled:
                     break
                 _batch = page_new[_bs : _bs + _SSG_BATCH]
-                _parser_client = _ssg_clients[0]
 
-                # 상세 조회 — 확장앱 SourcingQueue (브라우저 IP/쿠키 사용)
-                async def _fetch_detail_ext(spid: str):
-                    try:
-                        _did, _dfut = SourcingQueue.add_detail_job("SSG", spid)
-                        try:
-                            _res = await asyncio.wait_for(_dfut, timeout=60)
-                        except asyncio.TimeoutError:
-                            SourcingQueue.resolvers.pop(_did, None)
-                            return {}
-                        if not _res or not _res.get("success"):
-                            return {}
-                        _html = _res.get("html") or ""
-                        if not _html:
-                            return {}
-                        _ctg = _res.get("ctgFields", {}) or {}
-                        _rio = _res.get("resultItemObj", {}) or {}
-                        try:
-                            _parsed = _parser_client._parse_result_item_obj(
-                                _html, spid, False
-                            )
-                            if not _parsed:
-                                _parsed = _parser_client._parse_detail_fallback(
-                                    _html, spid
-                                )
-                            if not _parsed:
-                                _parsed = {}
-                        except Exception:
-                            _parsed = {}
-                        # 확장앱 ctgFields로 카테고리 덮어쓰기
-                        if _ctg.get("dispCtgId"):
-                            _parsed["dispCtgId"] = str(_ctg["dispCtgId"])
-                        if _ctg.get("dispCtgNm"):
-                            _parsed["dispCtgNm"] = _ctg["dispCtgNm"]
-                        for _k in (
-                            "dispCtgLclsNm",
-                            "dispCtgMclsNm",
-                            "dispCtgSclsNm",
-                            "stdCtgLclsNm",
-                            "stdCtgMclsNm",
-                            "stdCtgSclsNm",
-                        ):
-                            if _ctg.get(_k):
-                                _parsed[_k] = _ctg[_k]
-                        if not _parsed.get("itemNm"):
-                            _parsed["itemNm"] = _rio.get("itemNm", "")
-                        if not _parsed.get("sellprc"):
-                            _parsed["sellprc"] = _rio.get("sellprc", 0)
-                        if not _parsed.get("repBrandNm"):
-                            _parsed["repBrandNm"] = _rio.get("repBrandNm") or _rio.get(
-                                "brandNm", ""
-                            )
-                        if not _parsed.get("soldOut"):
-                            _parsed["soldOut"] = _rio.get("soldOut", "N")
-                        return _parsed
-                    except Exception:
-                        return {}
-
+                # 상세 조회 — 서버 직접 (프록시 풀 로테이션)
+                _batch_clients = [_next_ssg_client() for _ in _batch]
                 _details = await asyncio.gather(
-                    *(_fetch_detail_ext(it["site_product_id"]) for it in _batch),
+                    *(
+                        _bc.get_product_detail(it["site_product_id"])
+                        for _bc, it in zip(_batch_clients, _batch)
+                    ),
                     return_exceptions=True,
                 )
 
@@ -2562,20 +2539,26 @@ class JobWorker:
                     if _page_cancelled:
                         break
                     spid = it["site_product_id"]
+
+                    # 429/실패 시 프록시 로테이션 3회 재시도
                     if not det or isinstance(det, Exception):
-                        det = {}
-                    # 확장앱 실패 시 1회 재시도
-                    if not det.get("itemNm"):
-                        if await _cancellable_sleep(3):
-                            _page_cancelled = True
-                            break
-                        det = await _fetch_detail_ext(spid)
-                        if not isinstance(det, dict):
-                            det = {}
+                        for _retry in range(1, 4):
+                            _wait = _retry * 10  # 10s→20s→30s
+                            if await _cancellable_sleep(_wait):
+                                _page_cancelled = True
+                                break
+                            try:
+                                det = await _next_ssg_client().get_product_detail(spid)
+                                if det and not isinstance(det, Exception):
+                                    break
+                            except _SSGLR:
+                                det = {}
+                            except Exception:
+                                det = {}
                     if _page_cancelled:
                         break
-                    detail = det if (det and det.get("itemNm")) else {}
-                    if not detail:
+                    detail = det if (det and not isinstance(det, Exception)) else {}
+                    if not detail or not detail.get("itemNm"):
                         _failed_queue.append(it)
                         continue
 
