@@ -842,6 +842,85 @@ async def market_delete_order_product(
         )
         return {"ok": True, "message": "마켓 상품 삭제 완료", "detail": result}
 
+    if account.market_type == "smartstore":
+        from backend.domain.samba.proxy.smartstore import SmartStoreClient
+
+        extras = account.additional_fields or {}
+        client_id = extras.get("clientId", "") or account.api_key or ""
+        client_secret = extras.get("clientSecret", "") or account.api_secret or ""
+        if not client_id or not client_secret:
+            raise HTTPException(status_code=400, detail="스마트스토어 인증 정보 없음")
+
+        # originProductNo: collected_product의 market_product_nos에서 우선 조회
+        origin_product_no = ""
+        if order.collected_product_id:
+            from backend.domain.samba.collector.repository import (
+                SambaCollectorRepository,
+            )
+
+            cp_repo = SambaCollectorRepository(session)
+            cp = await cp_repo.get_async(order.collected_product_id)
+            if cp and cp.market_product_nos:
+                origin_product_no = (cp.market_product_nos or {}).get(
+                    order.channel_id, ""
+                )
+
+        # fallback: channelProductNo (order.product_id)
+        if not origin_product_no:
+            origin_product_no = order.product_id or ""
+
+        if not origin_product_no:
+            raise HTTPException(
+                status_code=400, detail="스마트스토어 상품번호를 찾을 수 없습니다"
+            )
+
+        client = SmartStoreClient(client_id, client_secret)
+        try:
+            result = await client.delete_product(origin_product_no)
+            logger.info(
+                f"[마켓상품삭제] 스마트스토어 삭제 성공 productNo={origin_product_no} "
+                f"order={order.order_number}"
+            )
+            return {"ok": True, "message": "마켓 상품 삭제 완료", "detail": result}
+        except Exception as del_err:
+            # 진행중 주문 등으로 삭제 불가 시 → 전 옵션 재고 0 (품절) 폴백
+            logger.warning(
+                f"[마켓상품삭제] 스마트스토어 삭제 실패({del_err}), 품절 폴백 시도: {origin_product_no}"
+            )
+
+        try:
+            existing = await client.get_product(origin_product_no)
+            origin = existing.get("originProduct", {})
+            for k in ["productNo", "channelProducts", "regDate", "modifiedDate"]:
+                origin.pop(k, None)
+
+            # 전 옵션 재고 0
+            origin["stockQuantity"] = 0
+            opt_info = origin.get("detailAttribute", {}).get("optionInfo") or {}
+            for combo in opt_info.get("combinations", []):
+                combo["stockQuantity"] = 0
+
+            put_data: dict[str, Any] = {"originProduct": origin}
+            if "smartstoreChannelProduct" in existing:
+                put_data["smartstoreChannelProduct"] = existing[
+                    "smartstoreChannelProduct"
+                ]
+
+            await client.update_product(origin_product_no, put_data)
+            logger.info(
+                f"[마켓상품삭제] 스마트스토어 품절 폴백 완료 productNo={origin_product_no}"
+            )
+            return {
+                "ok": True,
+                "message": "마켓 삭제 불가 — 전 옵션 품절처리 완료",
+                "fallback": True,
+            }
+        except Exception as fb_err:
+            raise HTTPException(
+                status_code=500,
+                detail=f"마켓상품삭제 및 품절처리 모두 실패: {fb_err}",
+            )
+
     raise HTTPException(
         status_code=400, detail=f"{account.market_type} 마켓상품삭제 미지원"
     )
