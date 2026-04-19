@@ -939,7 +939,7 @@ class SambaShipmentService:
                 status="failed",
                 error="정책 미적용 상품은 전송할 수 없습니다.",
             )
-            return shipment
+            return await self.repo.get_async(shipment.id) or shipment
 
         from backend.domain.samba.policy.repository import SambaPolicyRepository
 

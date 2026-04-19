@@ -712,7 +712,7 @@ export default function CollectorPage() {
         if (abort.signal.aborted) break
         const f = filters.find((x) => x.id === id)
         if (!f) continue
-        const gp = `[${gi + 1}/${targetIds.length}]`
+        const gp = `[${fmtNum(gi + 1)}/${fmtNum(targetIds.length)}]`
         await new Promise(r => setTimeout(r, 100))
         try {
           const res = await fetchWithAuth(
@@ -2024,7 +2024,7 @@ export default function CollectorPage() {
                           for (let gi = 0; gi < updatedFilters.length; gi++) {
                             const f = updatedFilters[gi]
                             if (abort.signal.aborted) break
-                            const gp = `[${gi + 1}/${updatedFilters.length}]`
+                            const gp = `[${fmtNum(gi + 1)}/${fmtNum(updatedFilters.length)}]`
                             try {
                               const r = await fetchWithAuth(`${API_BASE}/api/v1/samba/collector/collect-filter/${f.id}?group_index=${gi + 1}&group_total=${updatedFilters.length}`, { method: 'POST' })
                               if (!r.ok) { addLog(`[${f.name}] 수집 실패: HTTP ${r.status}`); continue }

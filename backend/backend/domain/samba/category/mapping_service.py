@@ -184,9 +184,11 @@ class CategoryMappingMixin:
         if not tree or not tree.cat2:
             return ""
         code_map = tree.cat2
-        # 1. 정확 매칭
+        # 1. 정확 매칭 (리프인 경우만 즉시 반환 — 비-리프이면 prefix 매칭으로 fall-through)
         if category_path in code_map:
-            return str(code_map[category_path])
+            prefix = category_path + " > "
+            if not any(p.startswith(prefix) for p in code_map):
+                return str(code_map[category_path])
 
         # 1.5. Prefix 매칭 — 입력이 부모 경로인 경우 (3단계 → 4단계 leaf 검색)
         # 예: "패션의류 > 남성의류 > 바지" → "패션의류 > 남성의류 > 바지 > 청바지" 코드 반환

@@ -20,6 +20,7 @@ SITE_SEARCH_URLS: dict[str, str] = {
     "REXMONDE": "https://www.okmall.com/products/list?keyword={keyword}",
     "LOTTEON": "https://www.lotteon.com/csearch/search/search?render=search&platform=pc&mallId=2&q={keyword}",
     "GSShop": "https://www.gsshop.com/shop/search/main.gs?tq={keyword}",
+    "SSG": "https://department.ssg.com/search?query={keyword}",
     "ElandMall": "https://www.elandmall.com/search/search.action?kwd={keyword}",
     "SSF": "https://www.ssfshop.com/search?keyword={keyword}",
 }
@@ -31,6 +32,7 @@ SITE_DETAIL_URLS: dict[str, str] = {
     "REXMONDE": "https://www.okmall.com/products/detail/{product_id}",
     "LOTTEON": "https://www.lotteon.com/p/product/{product_id}",
     "GSShop": "https://www.gsshop.com/prd/prd.gs?prdid={product_id}",
+    "SSG": "https://www.ssg.com/item/itemView.ssg?itemId={product_id}",
     "ElandMall": "https://www.elandmall.com/goods/goods.action?goodsNo={product_id}",
     "SSF": "https://www.ssfshop.com/goods/{product_id}",
     "FashionPlus": "https://www.fashionplus.co.kr/goods/detail/{product_id}",
@@ -147,8 +149,11 @@ class SourcingQueue:
                 # 루프가 닫혔으면 직접 set (같은 스레드일 수도 있음)
                 if not future.done():
                     future.set_result(data)
+            _prods = data.get("products") or []
+            _err = data.get("error") or ""
             logger.info(
-                f"[소싱큐] 결과 수신: id={request_id}, success={data.get('success')}"
+                f"[소싱큐] 결과 수신: id={request_id}, success={data.get('success')}, "
+                f"products={len(_prods)}, error={_err[:100]}"
             )
             return True
         return False

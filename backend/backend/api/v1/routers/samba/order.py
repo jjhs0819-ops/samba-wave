@@ -1603,7 +1603,7 @@ async def sync_orders_from_markets(
         "ABCmart": "https://www.a-rt.com/product?prdtNo={}",
         "GrandStage": "https://www.a-rt.com/product?prdtNo={}",
         "REXMONDE": "https://www.okmall.com/products/detail/{}",
-        "LOTTEON": "https://www.lotteon.com/product/productDetail.lotte?spdNo={}",
+        "LOTTEON": "https://www.lotteon.com/p/product/{}",
         "GSShop": "https://www.gsshop.com/prd/prd.gs?prdid={}",
         "ElandMall": "https://www.elandmall.com/goods/goods.action?goodsNo={}",
         "SSF": "https://www.ssfshop.com/goods/{}",
@@ -1954,18 +1954,19 @@ async def sync_orders_from_markets(
 
             _cp_result = await session.execute(
                 _sa_text(
-                    "SELECT id, source_site, site_product_id, images, market_product_nos "
+                    "SELECT id, source_site, site_product_id, images, market_product_nos, source_url "
                     "FROM samba_collected_product WHERE market_product_nos IS NOT NULL LIMIT 50000"
                 )
             )
             _mpn_cache: dict[str, dict] = {}
             for _row in _cp_result.fetchall():
-                _cpid, _site, _spid, _imgs, _mpnos = _row
+                _cpid, _site, _spid, _imgs, _mpnos, _src_url = _row
                 if _mpnos and isinstance(_mpnos, dict):
                     _thumb = (
                         _imgs[0] if _imgs and isinstance(_imgs, list) and _imgs else ""
                     )
-                    _olink = (
+                    # DB에 저장된 source_url 우선 사용 (수집기가 올바르게 저장한 URL)
+                    _olink = _src_url or (
                         _sourcing_urls.get(_site, "").format(_spid)
                         if _site in _sourcing_urls and _spid
                         else ""

@@ -611,11 +611,63 @@ async function extractSearchResults(tabId, site, maxCount = 999) {
         'REXMONDE': /\/products\/detail\/(\d+)/,
         'LOTTEON': /\/product\/productDetail[^"]*spdNo=(\d+)/,
         'GSShop': /\/(?:prd\/prd\.gs\?prdid|deal\/deal\.gs\?dealNo)=(\d+)/,
+        'SSG': /itemView\.ssg\?itemId=(\d{10,13})/,
         'ElandMall': /\/goods\/goods\.action\?goodsNo=(\d+)/,
         'SSF': /\/goods\/([A-Z0-9]+)/,
       }
       const pattern = linkPatterns[siteName]
       if (!pattern) return { success: false, products: [], total: 0 }
+
+      // SSG 전용: __NEXT_DATA__ JSON에서 상품 추출 (DOM a 태그보다 정확)
+      if (siteName === 'SSG') {
+        try {
+          const nextDataEl = document.querySelector('script#__NEXT_DATA__')
+          if (nextDataEl) {
+            const nextData = JSON.parse(nextDataEl.textContent || '{}')
+            const queries = nextData?.props?.pageProps?.dehydratedState?.queries || []
+            let dataList = []
+            for (const q of queries) {
+              const qk = q.queryKey || []
+              // ssg_sourcing.py와 동일: queryKey에 "fetchSearchItemListArea" 포함 체크
+              if (!qk.includes('fetchSearchItemListArea')) continue
+              const areaList = q?.state?.data?.areaList || []
+              for (const area of areaList) {
+                if (area.unitType === 'ITEM_UNIT_LIST') {
+                  dataList = area.dataList || []
+                  break
+                }
+              }
+              if (dataList.length > 0) break
+            }
+            for (const it of dataList) {
+              if (products.length >= maxItems) break
+              const pid = String(it.itemId || '')
+              if (!pid || seen.has(pid)) continue
+              seen.add(pid)
+              let img = it.itemImgUrl || ''
+              if (img.startsWith('//')) img = 'https:' + img
+              const salePrice = parseInt(String(it.finalPrice || it.sellprc || 0).replace(/[^\d]/g, '')) || 0
+              const origPrice = parseInt(String(it.strikeOutPrice || it.norprc || 0).replace(/[^\d]/g, '')) || salePrice
+              products.push({
+                site_product_id: pid,
+                name: it.itemName || '',
+                brand: it.repBrandNm || it.brandName || '',
+                original_price: origPrice,
+                sale_price: salePrice,
+                images: img ? [img] : [],
+                source_site: 'SSG',
+                is_sold_out: !!(it.soldOutMessage || '').trim(),
+              })
+            }
+            if (products.length > 0) {
+              return { success: true, products, total: products.length }
+            }
+          }
+        } catch (e) {
+          console.warn('[SSG] __NEXT_DATA__ parse 실패, DOM 파싱으로 폴백:', e)
+        }
+        // 폴백: a 태그 정규식 (아래 일반 로직)
+      }
 
       // 모든 a 태그에서 상품 링크 찾기 (GSShop: 컨테이너 스코핑)
       let allLinks
@@ -754,6 +806,129 @@ async function extractDetailData(tabId, site, productId) {
     world: 'MAIN',
     func: (siteName, prdId) => {
       try {
+      // ── SSG 전용: HTML + resultItemObj 객체 모두 반환 ──
+      if (siteName === 'SSG') {
+        try {
+          // resultItemObj의 최상위 키 + 카테고리 관련 키만 추출 (디버그)
+          const obj = window.resultItemObj || {}
+          const ctgKeys = Object.keys(obj).filter(k => k.toLowerCase().includes('ctg') || k.toLowerCase().includes('cat'))
+          const ctgFields = {}
+          for (const k of ctgKeys) {
+            try { ctgFields[k] = obj[k] } catch {}
+          }
+          // JSON 직렬화 가능한 필드만 추림
+          const safeObj = {}
+          for (const k of Object.keys(obj)) {
+            try {
+              const v = obj[k]
+              if (v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+                safeObj[k] = v
+              } else if (typeof v === 'object' && !Array.isArray(v)) {
+                // 중첩 객체 키만 기록 (과대 데이터 방지)
+                safeObj[k] = Object.keys(v).length > 0 ? '{' + Object.keys(v).slice(0,10).join(',') + '...}' : '{}'
+              } else if (Array.isArray(v)) {
+                safeObj[k] = `[array len=${v.length}]`
+              }
+            } catch {}
+          }
+          return {
+            success: true,
+            site_product_id: prdId,
+            source_site: 'SSG',
+            html: document.documentElement.outerHTML,
+            resultItemObj: safeObj,  // 1차 평면 구조
+            ctgFields: ctgFields,  // 카테고리 관련 전체 필드
+            url: location.href,
+          }
+        } catch (e) {
+          return { success: false, message: 'SSG HTML 추출 실패: ' + e.message, site_product_id: prdId }
+        }
+      }
+      // Unused-SSG branch (dead code — replaced above)
+      if (false && siteName === 'SSG') {
+        try {
+          const obj = window.resultItemObj || {}
+          if (!obj.itemNm) {
+            return { success: false, message: 'resultItemObj 없음', site_product_id: prdId }
+          }
+          // 가격 (문자열/숫자 혼용 → int 정규화)
+          const toInt = (v) => {
+            if (v == null) return 0
+            const n = parseInt(String(v).replace(/[^\d]/g, ''))
+            return isNaN(n) ? 0 : n
+          }
+          const salePrice = toInt(obj.sellprc || obj.finalPrice)
+          const bestAmt = toInt(obj.bestAmt)
+          const origPrice = toInt(obj.norprc || obj.strikeOutPrice) || salePrice
+          // 카테고리 (dispCtg 우선, stdCtg 폴백)
+          const dispCtgId = String(obj.dispCtgId || '')
+          const c1 = obj.dispCtgLclsNm || obj.stdCtgLclsNm || ''
+          const c2 = obj.dispCtgMclsNm || obj.stdCtgMclsNm || ''
+          const c3 = obj.dispCtgSclsNm || obj.stdCtgSclsNm || ''
+          const catParts = [c1, c2, c3].filter(Boolean)
+          const catStr = catParts.join(' > ')
+          // 이미지
+          const imgs = []
+          if (obj.itemImgUrl) {
+            let img = obj.itemImgUrl
+            if (img.startsWith('//')) img = 'https:' + img
+            imgs.push(img)
+          }
+          // 추가 이미지 (uitemObjList의 이미지도 있을 수 있음)
+          if (Array.isArray(obj.imgList)) {
+            for (const im of obj.imgList) {
+              const url = im.imgFilePath || im.imgUrl || ''
+              if (url) {
+                let fixed = url
+                if (fixed.startsWith('//')) fixed = 'https:' + fixed
+                if (!imgs.includes(fixed)) imgs.push(fixed)
+              }
+            }
+          }
+          // 옵션 (uitemObjList)
+          const options = []
+          if (Array.isArray(obj.uitemObjList)) {
+            for (const u of obj.uitemObjList) {
+              options.push({
+                name: u.optnDisplayNm || u.optnNm || '',
+                price: toInt(u.addAmt || 0),
+                stock: toInt(u.usablInvQty || 99),
+                isSoldOut: String(u.usablInvQty || '0') === '0',
+              })
+            }
+          }
+          const isSoldOut = String(obj.soldOut || 'N').toUpperCase() === 'Y'
+          const result = {
+            success: true,
+            site_product_id: prdId,
+            itemNm: obj.itemNm,
+            name: obj.itemNm,
+            repBrandNm: obj.repBrandNm || obj.brandNm || '',
+            brand: obj.repBrandNm || obj.brandNm || '',
+            sellprc: salePrice,
+            sale_price: salePrice,
+            bestAmt: bestAmt,
+            best_benefit_price: bestAmt,
+            originalPrice: origPrice,
+            original_price: origPrice,
+            dispCtgId: dispCtgId,
+            dispCtgLclsNm: c1,
+            dispCtgMclsNm: c2,
+            dispCtgSclsNm: c3,
+            category: catStr,
+            images: imgs,
+            options: options,
+            soldOut: isSoldOut ? 'Y' : 'N',
+            is_sold_out: isSoldOut,
+            sourceUrl: 'https://www.ssg.com/item/itemView.ssg?itemId=' + prdId,
+            source_site: 'SSG',
+            freeShipping: (obj.shppTypeDtlCd || '').includes('FREE'),
+          }
+          return result
+        } catch (e) {
+          return { success: false, message: 'SSG 파싱 실패: ' + e.message, site_product_id: prdId }
+        }
+      }
       // ── 패션플러스 전용 파싱 ──
       if (siteName === 'FashionPlus') {
         // JSON-LD 기본 정보

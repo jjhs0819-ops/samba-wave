@@ -137,7 +137,7 @@ const SOURCE_URL_MAP: Record<string, string> = {
   ABCMART: 'https://www.a-rt.com/product?prdtNo={id}',
   GRANDSTAGE: 'https://www.a-rt.com/product?prdtNo={id}&tChnnlNo=10002',
   REXMONDE: 'https://www.okmall.com/products/detail/{id}',
-  LOTTEON: 'https://www.lotteon.com/product/productDetail.lotte?spdNo={id}',
+  LOTTEON: 'https://www.lotteon.com/p/product/{id}',
   GSSHOP: 'https://www.gsshop.com/prd/prd.gs?prdid={id}',
   ELANDMALL: 'https://www.elandmall.com/goods/goods.action?goodsNo={id}',
   SSF: 'https://www.ssfshop.com/goods/{id}',

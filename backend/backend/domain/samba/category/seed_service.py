@@ -334,11 +334,11 @@ class CategorySeedMixin:
         }
         market_names = ", ".join(market_labels.get(m, m) for m in target_markets)
 
-        # DB에서 마켓별 실제 카테고리 목록 조회 (AI가 이 중에서만 선택)
+        # DB에서 마켓별 실제 카테고리 목록 조회 (AI가 이 중에서만 선택, 리프만 허용)
         market_cat_lists: Dict[str, List[str]] = {}
         for m in target_markets:
             try:
-                cats = await self._get_market_categories(m)
+                cats = _filter_to_leaves(await self._get_market_categories(m))
                 if cats:
                     # 모든 마켓 공통: 브랜드/명품/디자이너/해외직구 접두어 카테고리 제외
                     _exclude_prefixes = (
@@ -711,10 +711,10 @@ JSON만 응답:
 
         import anthropic
 
-        # DB 우선 조회 후 하드코딩 fallback
+        # DB 우선 조회 후 하드코딩 fallback (리프만 허용 — 비-리프 매핑 방지)
         market_cats: Dict[str, List[str]] = {}
         for m in remaining_markets:
-            cats = await self._get_market_categories(m)
+            cats = _filter_to_leaves(await self._get_market_categories(m))
             if cats:
                 market_cats[m] = cats
 

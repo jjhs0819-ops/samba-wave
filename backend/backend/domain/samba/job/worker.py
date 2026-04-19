@@ -2358,39 +2358,16 @@ class JobWorker:
             job_type="collect",
         )
 
-        # 인터리빙: 검색 1페이지 → 즉시 상세+저장 → 검색 2페이지 → ...
-        # 프록시 풀 로테이션 — 단일 프록시 한도 초과 회피
-        from backend.core.config import settings as _ssg_settings
-
-        _ssg_proxy_pool: list[str] = []
-        if _ssg_settings.collect_proxy_url:
-            _ssg_proxy_pool.append(_ssg_settings.collect_proxy_url.strip())
-        if _ssg_settings.proxy_urls:
-            for _p in _ssg_settings.proxy_urls.split(","):
-                _p = _p.strip()
-                if _p and _p not in _ssg_proxy_pool:
-                    _ssg_proxy_pool.append(_p)
-
-        # 프록시별 client 생성 (라운드로빈)
-        _ssg_clients: list[SSGSourcingClient] = []
-        if _ssg_proxy_pool:
-            for _p in _ssg_proxy_pool:
-                _ssg_clients.append(SSGSourcingClient(proxy_url=_p))
-        else:
-            _ssg_clients.append(SSGSourcingClient())
-
-        _ssg_client_idx = 0
+        # 프록시 미사용 — 로컬 IP + 속도 조절로 429 회피
+        _ssg_clients: list[SSGSourcingClient] = [SSGSourcingClient()]
 
         def _next_ssg_client() -> SSGSourcingClient:
-            nonlocal _ssg_client_idx
-            c = _ssg_clients[_ssg_client_idx % len(_ssg_clients)]
-            _ssg_client_idx += 1
-            return c
+            return _ssg_clients[0]
 
-        client = _ssg_clients[0]  # 검색용은 첫 번째 고정
+        client = _ssg_clients[0]
         _add_job_log(
             job.id,
-            f"[SSG브랜드전체수집] 프록시 풀: {len(_ssg_proxy_pool)}개",
+            "[SSG브랜드전체수집] 프록시 미사용 (로컬 IP) — 1건/5초 속도",
             job_type="collect",
         )
 
@@ -2416,8 +2393,10 @@ class JobWorker:
         total_saved = 0
         total_skipped = 0
         total_unmatched = 0
-        # 일반 SSG 수집과 동일하게 2건 병렬 — 5건은 429 유발
-        _SSG_BATCH = 2
+        # 재시도 큐 — 상세조회/매핑 실패 상품 누수 방지
+        _failed_queue: list[dict] = []
+        # 확장앱 병렬 처리: 5건 병렬 (확장앱 SOURCING_MAX_CONCURRENT=5 최대)
+        _SSG_BATCH = 5
         _ssg_page = 1
         # 필터 requested_count 합산 → 총 예상 건수 (진행률 표시용)
         _ssg_total_est = sum(f.requested_count or 0 for f in filters) or 1
@@ -2508,49 +2487,97 @@ class JobWorker:
                     }
                 )
 
-            # 3단계: 신규 상품 즉시 상세조회+저장 (2건 배치, 1.5초 딜레이)
-            from backend.domain.samba.proxy.ssg_sourcing import RateLimitError as _SSGLR
+            # 3단계: 신규 상품 즉시 상세조회+저장 (1건 순차, 배치당 2초)
 
             _page_cancelled = False
             for _bs in range(0, len(page_new), _SSG_BATCH):
                 if _page_cancelled:
                     break
                 _batch = page_new[_bs : _bs + _SSG_BATCH]
-                # 배치 내에서도 프록시 로테이션 (각 상품마다 다른 프록시)
-                _batch_clients = [_next_ssg_client() for _ in _batch]
+                _parser_client = _ssg_clients[0]
+
+                # 상세 조회 — 확장앱 SourcingQueue (브라우저 IP/쿠키 사용)
+                async def _fetch_detail_ext(spid: str):
+                    try:
+                        _did, _dfut = SourcingQueue.add_detail_job("SSG", spid)
+                        try:
+                            _res = await asyncio.wait_for(_dfut, timeout=60)
+                        except asyncio.TimeoutError:
+                            SourcingQueue.resolvers.pop(_did, None)
+                            return {}
+                        if not _res or not _res.get("success"):
+                            return {}
+                        _html = _res.get("html") or ""
+                        if not _html:
+                            return {}
+                        _ctg = _res.get("ctgFields", {}) or {}
+                        _rio = _res.get("resultItemObj", {}) or {}
+                        try:
+                            _parsed = _parser_client._parse_result_item_obj(
+                                _html, spid, False
+                            )
+                            if not _parsed:
+                                _parsed = _parser_client._parse_detail_fallback(
+                                    _html, spid
+                                )
+                            if not _parsed:
+                                _parsed = {}
+                        except Exception:
+                            _parsed = {}
+                        # 확장앱 ctgFields로 카테고리 덮어쓰기
+                        if _ctg.get("dispCtgId"):
+                            _parsed["dispCtgId"] = str(_ctg["dispCtgId"])
+                        if _ctg.get("dispCtgNm"):
+                            _parsed["dispCtgNm"] = _ctg["dispCtgNm"]
+                        for _k in (
+                            "dispCtgLclsNm",
+                            "dispCtgMclsNm",
+                            "dispCtgSclsNm",
+                            "stdCtgLclsNm",
+                            "stdCtgMclsNm",
+                            "stdCtgSclsNm",
+                        ):
+                            if _ctg.get(_k):
+                                _parsed[_k] = _ctg[_k]
+                        if not _parsed.get("itemNm"):
+                            _parsed["itemNm"] = _rio.get("itemNm", "")
+                        if not _parsed.get("sellprc"):
+                            _parsed["sellprc"] = _rio.get("sellprc", 0)
+                        if not _parsed.get("repBrandNm"):
+                            _parsed["repBrandNm"] = _rio.get("repBrandNm") or _rio.get(
+                                "brandNm", ""
+                            )
+                        if not _parsed.get("soldOut"):
+                            _parsed["soldOut"] = _rio.get("soldOut", "N")
+                        return _parsed
+                    except Exception:
+                        return {}
+
                 _details = await asyncio.gather(
-                    *(
-                        _bc.get_product_detail(it["site_product_id"])
-                        for _bc, it in zip(_batch_clients, _batch)
-                    ),
+                    *(_fetch_detail_ext(it["site_product_id"]) for it in _batch),
                     return_exceptions=True,
                 )
 
-                for it, det, _orig_bc in zip(_batch, _details, _batch_clients):
+                for it, det in zip(_batch, _details):
                     if _page_cancelled:
                         break
                     spid = it["site_product_id"]
-
-                    # 상세 조회 실패(429 포함) 시 최대 3회 재시도 (매 재시도 다른 프록시)
-                    # _cancellable_sleep → True 반환 시 즉시 전체 중단
                     if not det or isinstance(det, Exception):
-                        for _retry in range(1, 4):
-                            _wait = _retry * 10  # 10s→20s→30s
-                            if await _cancellable_sleep(_wait):
-                                _page_cancelled = True
-                                break
-                            try:
-                                _retry_client = _next_ssg_client()
-                                det = await _retry_client.get_product_detail(spid)
-                                if det and not isinstance(det, Exception):
-                                    break
-                            except _SSGLR:
-                                det = {}
-                            except Exception:
-                                det = {}
+                        det = {}
+                    # 확장앱 실패 시 1회 재시도
+                    if not det.get("itemNm"):
+                        if await _cancellable_sleep(3):
+                            _page_cancelled = True
+                            break
+                        det = await _fetch_detail_ext(spid)
+                        if not isinstance(det, dict):
+                            det = {}
                     if _page_cancelled:
                         break
-                    detail = det if (det and not isinstance(det, Exception)) else {}
+                    detail = det if (det and det.get("itemNm")) else {}
+                    if not detail:
+                        _failed_queue.append(it)
+                        continue
 
                     is_sold_out = bool(
                         detail.get("soldOut") == "Y" or it.get("is_sold_out", False)
@@ -2597,21 +2624,58 @@ class JobWorker:
                                 if filter_id:
                                     break
 
-                    # 3회 재시도 후에도 카테고리 없으면 스킵 (API 호출 실패)
+                    # 3순위도 실패 시 필터 자동 생성 — 누수 0 보장
                     if not filter_id:
-                        total_unmatched += 1
-                        _cat_dbg = (
+                        # stdCtg 경로도 시도
+                        _std_parts = [
+                            (detail.get("stdCtgLclsNm", "") or "").strip(),
+                            (detail.get("stdCtgMclsNm", "") or "").strip(),
+                            (detail.get("stdCtgSclsNm", "") or "").strip(),
+                        ]
+                        _std_parts = [p for p in _std_parts if p]
+                        _brand_nm = keyword or "브랜드"
+                        _cat_path_final = (
                             " > ".join(_cat_parts)
-                            or detail.get("category", "")
-                            or disp_ctg_id
-                            or "상세조회실패"
+                            or " > ".join(_std_parts)
+                            or detail.get("dispCtgNm", "")
+                            or "미분류"
                         )
-                        _add_job_log(
-                            job.id,
-                            f"[스킵] {(detail.get('itemNm') or it.get('name', ''))[:15]} ({spid}) cat={_cat_dbg[:30]}",
-                            job_type="collect",
+                        _cat_parts_for_name = (
+                            _cat_parts
+                            or _std_parts
+                            or [detail.get("dispCtgNm", "기타")]
                         )
-                        continue
+                        _new_name = f"SSG_{_brand_nm}_" + "_".join(_cat_parts_for_name)
+                        # 동일 이름 필터 중복 방지
+                        _existing = next(
+                            (f for f in filters if f.name == _new_name), None
+                        )
+                        if _existing:
+                            filter_id = _existing.id
+                        else:
+                            _parent = filters[0] if filters else None
+                            _new_filter = SambaSearchFilter(
+                                source_site="SSG",
+                                name=_new_name,
+                                parent_id=_parent.parent_id if _parent else None,
+                                tenant_id=_parent.tenant_id if _parent else None,
+                                keyword=_parent.keyword if _parent else "",
+                                category_filter=disp_ctg_id or None,
+                                source_brand_name=keyword,
+                                requested_count=0,
+                            )
+                            session.add(_new_filter)
+                            await session.flush()
+                            if disp_ctg_id:
+                                cat_filter_map[disp_ctg_id] = _new_filter.id
+                            cat_name_map[_cat_path_final] = _new_filter.id
+                            filters.append(_new_filter)
+                            filter_id = _new_filter.id
+                            _add_job_log(
+                                job.id,
+                                f"[필터자동생성] {_new_name} (cat={_cat_path_final[:40]})",
+                                job_type="collect",
+                            )
 
                     _sale_price = int(
                         detail.get("sellprc", 0) or it.get("sale_price", 0) or 0
@@ -2675,6 +2739,8 @@ class JobWorker:
                         job_type="collect",
                     )
 
+                # 배치 간 딜레이 없음 — 최대 속도
+
             await repo.update_progress(job.id, total_saved, total_saved + 1)
             _add_job_log(
                 job.id,
@@ -2690,7 +2756,126 @@ class JobWorker:
             # 페이지 전체 dupe여도 다음 페이지 계속 시도 — 누수 방지
             # _raw 자체가 비면 break (search 결과 소진)
             _ssg_page += 1
-            await asyncio.sleep(1.5)  # 페이지 간 딜레이 (429 방지)
+            # 페이지 간 딜레이 없음 — 최대 속도
+
+        # 4단계: 재시도 큐 처리 — 메인 루프에서 실패한 상품을 긴 대기 후 재시도
+        if _failed_queue:
+            _add_job_log(
+                job.id,
+                f"[SSG브랜드전체수집] 재시도 큐 {len(_failed_queue):,}건 (누수 방지)",
+                job_type="collect",
+            )
+            _retry_waits = [60, 120, 300, 600, 600]  # 5 라운드
+            for _round_idx, _wait_sec in enumerate(_retry_waits, 1):
+                if not _failed_queue:
+                    break
+                _add_job_log(
+                    job.id,
+                    f"[재시도 R{_round_idx}] {_wait_sec}초 대기 후 {len(_failed_queue):,}건 재시도",
+                    job_type="collect",
+                )
+                if await _cancellable_sleep(_wait_sec):
+                    break
+                _current = _failed_queue
+                _failed_queue = []
+                for _fit in _current:
+                    from backend.domain.samba.emergency import (
+                        is_collect_cancel_requested as _icc_r,
+                        is_emergency_stopped as _ies_r,
+                    )
+
+                    if _icc_r() or _ies_r() or await repo.is_cancelled(job.id):
+                        await repo.cancel_job(job.id)
+                        await session.commit()
+                        return
+                    _spid = _fit["site_product_id"]
+                    try:
+                        _det = await _next_ssg_client().get_product_detail(_spid)
+                    except Exception:
+                        _det = {}
+                    if not _det or not _det.get("itemNm"):
+                        _failed_queue.append(_fit)
+                        continue
+                    # 카테고리 매핑 (간단 버전 — 메인 로직과 동일)
+                    _disp = _det.get("dispCtgId", "")
+                    _fid = cat_filter_map.get(_disp) if _disp else None
+                    if not _fid:
+                        _cps = [
+                            (_det.get("dispCtgLclsNm", "") or "").strip(),
+                            (_det.get("dispCtgMclsNm", "") or "").strip(),
+                            (_det.get("dispCtgSclsNm", "") or "").strip(),
+                        ]
+                        _cps = [p for p in _cps if p]
+                        for _d in range(len(_cps), 0, -1):
+                            _sub = " > ".join(_cps[:_d])
+                            _fid = cat_filter_map.get(_sub) or cat_name_map.get(_sub)
+                            if _fid:
+                                break
+                    if not _fid:
+                        total_unmatched += 1
+                        continue
+                    # 저장
+                    _sp = int(_det.get("sellprc", 0) or 0)
+                    _op = int(_det.get("originalPrice", 0) or _sp)
+                    _bbp = int(_det.get("bestAmt", 0) or 0)
+                    _co = (_bbp if _bbp > 0 else _sp) if _use_max_discount else _sp
+                    _fs = _det.get("freeShipping", False)
+                    if not _fs:
+                        _co += int(_det.get("shippingFee", 3000) or 3000)
+                    _cat_parts_r = [
+                        _det.get("dispCtgLclsNm", "") or "",
+                        _det.get("dispCtgMclsNm", "") or "",
+                        _det.get("dispCtgSclsNm", "") or "",
+                    ]
+                    _cat_parts_r = [c for c in _cat_parts_r if c]
+                    _d4build = {
+                        "name": _det.get("itemNm", ""),
+                        "brand": _det.get("repBrandNm", ""),
+                        "images": _det.get("images") or [],
+                        "detailImages": _det.get("detailImages") or [],
+                        "options": _det.get("options") or [],
+                        "sourceUrl": _det.get("sourceUrl")
+                        or f"https://www.ssg.com/item/itemView.ssg?itemId={_spid}",
+                        "category": " > ".join(_cat_parts_r),
+                        "manufacturer": _det.get("repBrandNm", ""),
+                        "origin": _det.get("origin", ""),
+                        "material": "",
+                        "color": "",
+                        "saleStatus": "in_stock",
+                        "freeShipping": _fs,
+                        "styleNo": _det.get("modelNo", ""),
+                    }
+                    _pd = _build_product_data(
+                        _d4build,
+                        _spid,
+                        _fid,
+                        "SSG",
+                        _co,
+                        _sp,
+                        _op,
+                        " > ".join(_cat_parts_r),
+                        _cat_parts_r,
+                        _det.get("detailHtml", ""),
+                    )
+                    await svc.create_collected_product(_pd)
+                    total_saved += 1
+                    _add_job_log(
+                        job.id,
+                        f"[재시도 R{_round_idx}][{total_saved:,}/{_ssg_total_est:,}] {(_d4build.get('brand') or '').strip()} {(_d4build.get('name') or '')[:20]} {_spid}",
+                        job_type="collect",
+                    )
+                _add_job_log(
+                    job.id,
+                    f"[재시도 R{_round_idx}] 완료 — 남은 실패 {len(_failed_queue):,}건",
+                    job_type="collect",
+                )
+
+            if _failed_queue:
+                _add_job_log(
+                    job.id,
+                    f"[SSG브랜드전체수집] 최종 실패 {len(_failed_queue):,}건 (재시도 한도 초과)",
+                    job_type="collect",
+                )
 
         # 각 SearchFilter의 requested_count를 실제 수집수로 갱신
         for f in filters:

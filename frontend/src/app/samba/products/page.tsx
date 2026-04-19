@@ -614,16 +614,16 @@ export default function ProductsPage() {
             } else {
               totalFail++
             }
-            logsRef.push(`[${ts()}] [${i + 1}/${targetProducts.length}] ${productName} -> ${label}: ${isOk ? '성공' : '실패'}`)
+            logsRef.push(`[${ts()}] [${fmt(i + 1)}/${fmt(targetProducts.length)}] ${productName} -> ${label}: ${isOk ? '성공' : '실패'}`)
           }
           if (successAccIds.length) successMap.set(product.id, successAccIds)
         } else {
           totalOk++
-          logsRef.push(`[${ts()}] [${i + 1}/${targetProducts.length}] ${productName} -> 성공`)
+          logsRef.push(`[${ts()}] [${fmt(i + 1)}/${fmt(targetProducts.length)}] ${productName} -> 성공`)
         }
       } catch {
         totalFail++
-        logsRef.push(`[${ts()}] [${i + 1}/${targetProducts.length}] ${productName} -> 오류`)
+        logsRef.push(`[${ts()}] [${fmt(i + 1)}/${fmt(targetProducts.length)}] ${productName} -> 오류`)
       }
 
       flushLogs()
@@ -637,7 +637,7 @@ export default function ProductsPage() {
       }))
     }
 
-    logsRef.push(``, `성공 ${totalOk} / 실패 ${totalFail}`)
+    logsRef.push(``, `성공 ${fmt(totalOk)} / 실패 ${fmt(totalFail)}`)
     flushLogs()
     setAiJobDone(true)
   }, [accountsMap, applyMarketDeleteSuccessState])
@@ -1744,16 +1744,16 @@ export default function ProductsPage() {
                       const label = acc?.market_type || accId.slice(0, 8)
                       const isOk = status === 'success' || status.includes('성공')
                       if (isOk) { totalOk++; successAccIds.push(accId) } else totalFail++
-                      logsRef.push(`[${ts()}] [${i + 1}/${targets.length}] ${name} → ${label}: ${isOk ? '✓' : '✗'}`)
+                      logsRef.push(`[${ts()}] [${fmt(i + 1)}/${fmt(targets.length)}] ${name} → ${label}: ${isOk ? '✓' : '✗'}`)
                     }
                     if (successAccIds.length) successMap.set(t.id, successAccIds)
                   } else {
                     totalOk++
-                    logsRef.push(`[${ts()}] [${i + 1}/${targets.length}] ${name} → ✓`)
+                    logsRef.push(`[${ts()}] [${fmt(i + 1)}/${fmt(targets.length)}] ${name} → ✓`)
                   }
                 } catch {
                   totalFail++
-                  logsRef.push(`[${ts()}] [${i + 1}/${targets.length}] ${name} → ✗`)
+                  logsRef.push(`[${ts()}] [${fmt(i + 1)}/${fmt(targets.length)}] ${name} → ✗`)
                 }
                 flushLogs()
                 await new Promise(r => setTimeout(r, 50))
@@ -1767,7 +1767,7 @@ export default function ProductsPage() {
                   return { ...pp, registered_accounts: remaining, status: remaining.length === 0 ? 'collected' : pp.status } as SambaCollectedProduct
                 }))
               }
-              logsRef.push(``, `성공 ${totalOk} / 실패 ${totalFail}`)
+              logsRef.push(``, `성공 ${fmt(totalOk)} / 실패 ${fmt(totalFail)}`)
               flushLogs()
               setAiJobDone(true)
             }}

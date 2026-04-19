@@ -504,7 +504,7 @@ export default function OrdersPage() {
 
   const calcProfitRate = (o: SambaOrder) => {
     const profit = calcProfit(o)
-    return o.revenue > 0 ? ((profit / o.revenue) * 100).toFixed(1) : '0'
+    return o.sale_price > 0 ? ((profit / o.sale_price) * 100).toFixed(1) : '0'
   }
 
   // 버튼 핸들러
@@ -1127,8 +1127,8 @@ export default function OrdersPage() {
             ) : filteredOrders.length === 0 ? (
               <tr><td colSpan={4} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>주문이 없습니다</td></tr>
             ) : filteredOrders.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((o, index) => {
-              const costDisplay = editingCosts[o.id] !== undefined ? fmtNumStr(editingCosts[o.id]) : (o.cost ? fmtNum(o.cost) : '')
-              const shipFeeDisplay = editingShipFees[o.id] !== undefined ? fmtNumStr(editingShipFees[o.id]) : (o.shipping_fee ? fmtNum(o.shipping_fee) : '')
+              const costDisplay = editingCosts[o.id] !== undefined ? fmtNumStr(editingCosts[o.id]) : (o.cost != null ? fmtNum(o.cost) : '')
+              const shipFeeDisplay = editingShipFees[o.id] !== undefined ? fmtNumStr(editingShipFees[o.id]) : (o.shipping_fee != null ? fmtNum(o.shipping_fee) : '')
               const liveProfit = calcProfit(o)
               const liveProfitRate = calcProfitRate(o)
               const activeAction = activeActions[o.id] || null
@@ -1340,6 +1340,7 @@ export default function OrdersPage() {
                         if (o.ext_order_number) { window.open(o.ext_order_number, '_blank'); return }
                         const srcNo = o.sourcing_order_number || ''
                         if (!srcNo) { showAlert('소싱 주문번호가 없습니다', 'info'); return }
+                        const isGift = (activeActions[o.id] ?? o.action_tag) === 'gift'
                         const orderUrlMap: Record<string, string> = {
                           MUSINSA: `https://www.musinsa.com/order/order-detail/${srcNo}`,
                           KREAM: `https://kream.co.kr/my/purchasing/${srcNo}`,
@@ -1347,6 +1348,9 @@ export default function OrdersPage() {
                           ABCmart: `https://abcmart.a-rt.com/mypage/order/read-order-detail?orderNo=${srcNo}`,
                           GrandStage: `https://grandstage.a-rt.com/mypage/order/read-order-detail?orderNo=${srcNo}`,
                           Nike: `https://www.nike.com/kr/orders/${srcNo}`,
+                          LotteON: isGift
+                            ? `https://www.lotteon.com/p/order/claim/giftBoxDetail?odNo=${srcNo}&type=snd`
+                            : `https://www.lotteon.com/p/order/claim/orderDetail?odNo=${srcNo}`,
                         }
                         const url = orderUrlMap[o.source_site || '']
                         if (!url) { showAlert(`${o.source_site || '알수없는'} 소싱처는 원주문링크를 지원하지 않습니다`, 'info'); return }
@@ -1514,7 +1518,7 @@ export default function OrdersPage() {
                           background: 'rgba(30,30,30,0.6)', border: '1px solid #2D2D2D', borderRadius: '6px',
                           display: 'flex', alignItems: 'center', justifyContent: 'center',
                         }}>
-                          <span style={{ fontSize: '0.75rem', color: '#4C9AFF', fontWeight: 600 }}>{o.shipping_status || '-'}</span>
+                          <span style={{ fontSize: '0.75rem', color: '#4C9AFF', fontWeight: 600 }}>{STATUS_MAP[o.shipping_status]?.label || o.shipping_status || '-'}</span>
                         </div>
                       </div>
 
