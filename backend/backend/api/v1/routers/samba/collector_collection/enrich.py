@@ -114,36 +114,39 @@ async def _retransmit_if_changed(
     """가격/재고 변동 시 등록된 마켓에 자동 수정등록."""
     result = {"retransmitted": False, "retransmit_accounts": 0}
 
-    if not getattr(product, "registered_accounts", None):
-        return result
-
-    # DB 변경사항 플러시 (재전송 시 최신 데이터 조회 보장)
-    await session.flush()
-
-    # 품절 전환 → 마켓 삭제
+    # 품절 전환 → 마켓 삭제 (registered_accounts가 없어도 market_product_nos로 fallback)
     new_status = updates.get("sale_status")
-    old_status = (old_values or {}).get("sale_status") or getattr(
-        product, "sale_status", "in_stock"
-    )
     if new_status == "sold_out":
         if getattr(product, "lock_delete", False):
             logger.info(
                 f"[enrich] {product.id} 품절이지만 lock_delete=True, 마켓 삭제 건너뜀"
             )
             return result
+
+        # registered_accounts 우선, 없으면 market_product_nos 키로 fallback
+        # (autotune이 soldout_fallback 후 registered_accounts를 제거해도 재시도 가능)
+        reg_accounts = list(getattr(product, "registered_accounts", None) or [])
+        if not reg_accounts:
+            m_nos_fb = getattr(product, "market_product_nos", None) or {}
+            reg_accounts = list(m_nos_fb.keys())
+        if not reg_accounts:
+            return result
+
         try:
             from backend.domain.samba.shipment.dispatcher import delete_from_market
             from backend.domain.samba.account.model import SambaMarketAccount
 
             # 계정 배치 조회 (N+1 방지)
             _acc_stmt = select(SambaMarketAccount).where(
-                SambaMarketAccount.id.in_(product.registered_accounts)
+                SambaMarketAccount.id.in_(reg_accounts)
             )
             _acc_result = await session.execute(_acc_stmt)
             acc_map = {a.id: a for a in _acc_result.scalars().all()}
 
+            # DB 변경사항 플러시 (재전송 시 최신 데이터 조회 보장)
+            await session.flush()
             product_dict = {**product.model_dump(), **updates}
-            for account_id in product.registered_accounts:
+            for account_id in reg_accounts:
                 account = acc_map.get(account_id)
                 if not account:
                     continue
@@ -162,6 +165,12 @@ async def _retransmit_if_changed(
         except Exception as e:
             logger.error(f"[enrich] {product.id} 마켓 판매중지 실패: {e}")
         return result
+
+    if not getattr(product, "registered_accounts", None):
+        return result
+
+    # DB 변경사항 플러시 (재전송 시 최신 데이터 조회 보장)
+    await session.flush()
 
     # 가격 변동 확인 (old_values 우선 — identity map 오염 방지)
     price_changed = False
