@@ -215,19 +215,28 @@ async def _delete_smartstore(
                 origin.pop(k, None)
             origin["stockQuantity"] = 0
             opt_info = (origin.get("detailAttribute", {}).get("optionInfo")) or {}
-            for combo in opt_info.get("combinations", []):
+            # SmartStore GET 응답은 optionCombinations 키 사용 (transform_product와 동일)
+            combos = opt_info.get("optionCombinations") or opt_info.get(
+                "combinations", []
+            )
+            zeroed = 0
+            for combo in combos:
                 combo["stockQuantity"] = 0
+                combo["usable"] = False
+                zeroed += 1
             put_data: dict[str, Any] = {"originProduct": origin}
             if "smartstoreChannelProduct" in existing:
                 put_data["smartstoreChannelProduct"] = existing[
                     "smartstoreChannelProduct"
                 ]
             await client.update_product(target_no, put_data)
-            logger.info(f"[스마트스토어] 품절 폴백 완료: {target_no}")
+            logger.info(
+                f"[스마트스토어] 품절 폴백 완료: {target_no} (옵션 {zeroed}개 재고0+usable=False)"
+            )
             return {
                 "success": True,
                 "soldout_fallback": True,
-                "message": "품절 처리 완료 (주문 완료 후 재시도)",
+                "message": f"품절 처리 완료 (옵션 {zeroed}개)",
             }
         except Exception as fb_err:
             logger.error(f"[스마트스토어] 품절 폴백도 실패: {fb_err}")

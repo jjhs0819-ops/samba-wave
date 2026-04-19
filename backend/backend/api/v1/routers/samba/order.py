@@ -894,11 +894,15 @@ async def market_delete_order_product(
             for k in ["productNo", "channelProducts", "regDate", "modifiedDate"]:
                 origin.pop(k, None)
 
-            # 전 옵션 재고 0
+            # 전 옵션 재고 0 + usable=False
             origin["stockQuantity"] = 0
             opt_info = origin.get("detailAttribute", {}).get("optionInfo") or {}
-            for combo in opt_info.get("combinations", []):
+            combos = opt_info.get("optionCombinations") or opt_info.get(
+                "combinations", []
+            )
+            for combo in combos:
                 combo["stockQuantity"] = 0
+                combo["usable"] = False
 
             put_data: dict[str, Any] = {"originProduct": origin}
             if "smartstoreChannelProduct" in existing:
