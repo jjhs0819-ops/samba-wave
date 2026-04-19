@@ -125,7 +125,7 @@ async def _retransmit_if_changed(
     old_status = (old_values or {}).get("sale_status") or getattr(
         product, "sale_status", "in_stock"
     )
-    if new_status == "sold_out" and old_status != "sold_out":
+    if new_status == "sold_out":
         if getattr(product, "lock_delete", False):
             logger.info(
                 f"[enrich] {product.id} 품절이지만 lock_delete=True, 마켓 삭제 건너뜀"

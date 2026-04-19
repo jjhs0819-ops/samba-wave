@@ -614,7 +614,7 @@ export default function ProductsPage() {
             } else {
               totalFail++
             }
-            logsRef.push(`[${ts()}] [${fmt(i + 1)}/${fmt(targetProducts.length)}] ${productName} -> ${label}: ${isOk ? '성공' : '실패'}`)
+            logsRef.push(`[${ts()}] [${fmt(i + 1)}/${fmt(targetProducts.length)}] ${productName} -> ${label}: ${isOk ? '성공' : status}`)
           }
           if (successAccIds.length) successMap.set(product.id, successAccIds)
         } else {

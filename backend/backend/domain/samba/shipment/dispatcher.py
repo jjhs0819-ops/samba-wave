@@ -51,7 +51,7 @@ async def _safe_delete(
         return {"success": True, "message": f"{market_name} 삭제 완료"}
     except Exception as e:
         logger.error(f"[{market_name}] 삭제 실패: {e}")
-        return {"success": False, "message": f"삭제 실패: {e}"}
+        return {"success": False, "message": f"삭제 실패: {e}", "error_detail": str(e)}
 
 
 # ═══════════════════════════════════════════════
@@ -196,10 +196,59 @@ async def _delete_smartstore(
     if not client_id or not client_secret:
         return {"success": False, "message": "스마트스토어 인증 정보 없음"}
 
+    from backend.domain.samba.proxy.smartstore import SmartStoreApiError
+
     client = SmartStoreClient(client_id, client_secret)
-    return await _safe_delete(
-        "스마트스토어", "smartstore", product, client.delete_product
-    )
+    product_no = product.get("market_product_no", {}).get("smartstore", "")
+    if not product_no:
+        return {"success": False, "message": "스마트스토어 상품번호 없음 (건너뜀)"}
+
+    try:
+        await client.delete_product(product_no)
+        return {"success": True, "message": "스마트스토어 삭제 완료"}
+    except SmartStoreApiError as e:
+        err_str = str(e)
+        if "HTTP 404" in err_str:
+            logger.info(
+                f"[스마트스토어] 상품 {product_no} 이미 삭제됨 (404) → 성공 처리"
+            )
+            return {"success": True, "message": "스마트스토어 삭제 완료 (이미 삭제됨)"}
+        # 채널번호로 잘못 호출된 경우 — sellerManagementCode로 originProductNo 역조회
+        style_code = product.get("style_code", "") or product.get("styleCode", "")
+        if style_code:
+            logger.warning(
+                f"[스마트스토어] 삭제 실패({err_str[:80]}) → sellerManagementCode({style_code})로 origin 역조회 시도"
+            )
+            found = await client.find_by_management_code(style_code)
+            if found:
+                origin_no = str(
+                    found.get("originProductNo")
+                    or found.get("originProduct", {}).get("id", "")
+                    or ""
+                )
+                if origin_no and origin_no != product_no:
+                    logger.info(
+                        f"[스마트스토어] origin 역조회 성공: {product_no} → {origin_no}, 재시도"
+                    )
+                    try:
+                        await client.delete_product(origin_no)
+                        return {
+                            "success": True,
+                            "message": f"스마트스토어 삭제 완료 (origin={origin_no})",
+                        }
+                    except SmartStoreApiError as e2:
+                        if "HTTP 404" in str(e2):
+                            return {
+                                "success": True,
+                                "message": "스마트스토어 삭제 완료 (이미 삭제됨)",
+                            }
+                        logger.error(f"[스마트스토어] origin 역조회 후 삭제 실패: {e2}")
+                        return {
+                            "success": False,
+                            "message": f"삭제 실패 (origin={origin_no}): {e2}",
+                        }
+        logger.error(f"[스마트스토어] 삭제 실패: {e}")
+        return {"success": False, "message": f"삭제 실패: {e}"}
 
 
 async def _delete_coupang(

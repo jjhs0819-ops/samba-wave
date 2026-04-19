@@ -1335,7 +1335,19 @@ export default function OrdersPage() {
                           setRefreshLog(prev => ({ ...prev, [o.id]: `[${ts}] 갱신 실패: ${e instanceof Error ? e.message : ''}` }))
                         }
                       }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>업데이트</button>
-                      <button onClick={() => showAlert('마켓상품삭제 기능 준비중입니다', 'info')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>마켓상품삭제</button>
+                      <button onClick={async () => {
+                        if (!await showConfirm('롯데ON 마켓에서 상품을 삭제(판매종료)하시겠습니까?\n이 작업은 되돌릴 수 없습니다.')) return
+                        try {
+                          const result = await orderApi.marketDelete(o.id)
+                          if (result.ok) {
+                            showAlert('마켓 상품 삭제 완료')
+                          } else {
+                            showAlert(result.message || '삭제 실패', 'error')
+                          }
+                        } catch (e) {
+                          showAlert(e instanceof Error ? e.message : '마켓 상품 삭제 실패', 'error')
+                        }
+                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>마켓상품삭제</button>
                       <button onClick={() => {
                         if (o.ext_order_number) { window.open(o.ext_order_number, '_blank'); return }
                         const srcNo = o.sourcing_order_number || ''

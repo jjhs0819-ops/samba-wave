@@ -670,33 +670,38 @@ async def refresh_products(
         if cleaned_filter_ids:
             await session.commit()
 
-    # 모니터링: 재전송/삭제 이벤트
-    if retransmitted > 0:
-        await monitor.emit(
-            "market_retransmit",
-            "info",
-            summary=f"가격변동 재전송 {retransmitted}건",
-            detail={"count": retransmitted},
-        )
-    if body.auto_retransmit and deleted_ids:
-        for did in deleted_ids:
-            _dp = product_map.get(did)
-            if _dp:
-                _brand = _dp.source_brand_name or ""
-                _pname = (_dp.name or "")[:40]
-                _pid_str = _dp.site_product_id or ""
-                _label = f"{_brand} {_pname}".strip() if _brand else _pname
-                if _pid_str:
-                    _label = f"{_label} ({_pid_str})"
-                _del_summary = f"품절 삭제 — {_label}"
-            else:
-                _del_summary = f"품절 삭제 — {did}"
+    # 모니터링: 재전송/삭제 이벤트 (실패해도 응답에 영향 없도록 try/except 처리)
+    try:
+        if retransmitted > 0:
             await monitor.emit(
-                "market_deleted",
+                "market_retransmit",
                 "info",
-                summary=_del_summary,
-                product_id=did,
+                summary=f"가격변동 재전송 {retransmitted}건",
+                detail={"count": retransmitted},
             )
+        if body.auto_retransmit and deleted_ids:
+            for did in deleted_ids:
+                _dp = product_map.get(did)
+                if _dp:
+                    _brand = _dp.brand or ""
+                    _pname = (_dp.name or "")[:40]
+                    _pid_str = _dp.site_product_id or ""
+                    _label = f"{_brand} {_pname}".strip() if _brand else _pname
+                    if _pid_str:
+                        _label = f"{_label} ({_pid_str})"
+                    _del_summary = f"품절 삭제 — {_label}"
+                else:
+                    _del_summary = f"품절 삭제 — {did}"
+                await monitor.emit(
+                    "market_deleted",
+                    "info",
+                    summary=_del_summary,
+                    product_id=did,
+                )
+    except Exception as _mon_err:
+        logger.warning(
+            f"[refresh] 모니터 이벤트 emit 실패 (응답에 영향 없음): {_mon_err}"
+        )
 
     # 모니터링: 배치 갱신 완료
     await monitor.emit(

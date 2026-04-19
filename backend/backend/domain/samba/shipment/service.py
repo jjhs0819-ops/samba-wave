@@ -1493,10 +1493,18 @@ class SambaShipmentService:
                         nos: dict[str, str] = {account_id: str(product_no)}
                         if market_type == "smartstore" and isinstance(api_data, dict):
                             origin_no = api_data.get("originProductNo") or ""
+                            channel_no = (
+                                api_data.get("smartstoreChannelProductNo") or ""
+                            )
+                            # _origin 키가 없으면 삭제 API 실패 — 항상 저장 (있으면 덮어씀)
                             if origin_no:
                                 nos[f"{account_id}_origin"] = str(origin_no)
+                                nos[account_id] = str(channel_no or product_no)
+                            elif channel_no:
+                                # origin 없이 channel 만 온 경우 channel 로 fallback
+                                nos[account_id] = str(channel_no)
                             logger.info(
-                                f"[전송] 스마트스토어 상품번호 — channel={product_no}, origin={origin_no}"
+                                f"[전송] 스마트스토어 상품번호 — channel={channel_no or product_no}, origin={origin_no}"
                             )
                         res["product_nos"] = nos
                         logger.info(f"[전송] {market_type} 상품번호: {product_no}")
@@ -2223,11 +2231,21 @@ class SambaShipmentService:
                     continue
 
                 # 상품번호를 product_dict에 주입 (디스패처가 사용)
-                # 스마트스토어: 삭제 API는 originProductNo 사용
+                # 스마트스토어: 삭제 API는 originProductNo 사용 (2143473a 전송경로 패치와 대칭)
                 if account.market_type == "smartstore":
-                    product_no = market_product_nos.get(
-                        f"{account_id}_origin", ""
-                    ) or market_product_nos.get(account_id, "")
+                    product_no = market_product_nos.get(f"{account_id}_origin", "")
+                    if not product_no:
+                        raw = market_product_nos.get(account_id, "")
+                        if isinstance(raw, dict):
+                            product_no = (
+                                raw.get("originProductNo")
+                                or raw.get("smartstoreChannelProductNo")
+                                or raw.get("groupProductNo")
+                                or ""
+                            )
+                        else:
+                            product_no = raw
+                    product_no = str(product_no) if product_no else ""
                 else:
                     product_no = market_product_nos.get(account_id, "")
                 product_dict["market_product_no"] = {account.market_type: product_no}
