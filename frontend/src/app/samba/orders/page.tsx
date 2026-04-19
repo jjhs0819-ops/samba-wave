@@ -527,8 +527,8 @@ export default function OrdersPage() {
     window.open(`${baseUrl}${trackingNumber}`, '_blank')
   }
   const handleSourceLink = async (o: SambaOrder) => {
-    // 1. 미등록 입력으로 등록한 source_url 우선
-    if (o.source_url) {
+    // 1. source_url 우선 (구 LotteON productDetail.lotte 형식은 무효 — API 역추적으로 fallback)
+    if (o.source_url && !o.source_url.includes('productDetail.lotte')) {
       window.open(o.source_url, '_blank')
       return
     }
@@ -1348,7 +1348,7 @@ export default function OrdersPage() {
                           ABCmart: `https://abcmart.a-rt.com/mypage/order/read-order-detail?orderNo=${srcNo}`,
                           GrandStage: `https://grandstage.a-rt.com/mypage/order/read-order-detail?orderNo=${srcNo}`,
                           Nike: `https://www.nike.com/kr/orders/${srcNo}`,
-                          LotteON: isGift
+                          LOTTEON: isGift
                             ? `https://www.lotteon.com/p/order/claim/giftBoxDetail?odNo=${srcNo}&type=snd`
                             : `https://www.lotteon.com/p/order/claim/orderDetail?odNo=${srcNo}`,
                         }

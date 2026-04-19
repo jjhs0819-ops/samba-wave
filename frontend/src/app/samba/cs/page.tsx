@@ -578,7 +578,14 @@ export default function CSPage() {
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', marginTop: '0.375rem', alignItems: 'center' }}>
                           <button
-                            onClick={() => item.original_link ? window.open(item.original_link, '_blank') : showAlert('소싱처 원문링크가 없습니다', 'info')}
+                            onClick={() => {
+                              if (!item.original_link) { showAlert('소싱처 원문링크가 없습니다', 'info'); return }
+                              const link = item.original_link.replace(
+                                /https?:\/\/www\.lotteon\.com\/product\/productDetail\.lotte\?spdNo=([^&\s]+).*/,
+                                'https://www.lotteon.com/p/product/$1'
+                              )
+                              window.open(link, '_blank')
+                            }}
                             style={{ fontSize: '0.72rem', padding: '0.15rem 0.375rem', border: '1px solid #444', borderRadius: '3px', color: item.original_link ? '#4C9AFF' : '#555', background: 'transparent', cursor: 'pointer', width: '100%', textAlign: 'center' }}
                           >원문링크</button>
                           <button
