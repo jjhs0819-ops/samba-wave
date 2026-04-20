@@ -1858,11 +1858,37 @@ async def sync_orders_from_markets(
                 for ro in raw_orders:
                     orders_data.append(_parse_lotteon_order(ro, account["id"], label))
 
+                # ── 판매자 분담 할인 집계 — 주문 즉시 예상 정산 계산용 ─────────
+                # SellerDeliveryOrdersSearch 응답(raw_orders)에 판매자 부담 할인 관련
+                # 필드 2종이 포함되어 별도 API 호출 불필요.
+                #   prEntpShrAmtSum: 업체(셀러) 분담 할인 합계
+                #   sptDcPgmCmsnSum: 지원 DC 프로그램 커미션 (이벤트/쿠폰 등 롯데ON이
+                #     지원한 할인에 대해 셀러에게 전가되는 수수료 — 실질적 셀러 부담)
+                # 정산 공식: revenue = 판매가 × (1 - 수수료율) - (entp + sptCmsn)
+                seller_discount_map: dict[str, int] = {}
+                for ro in raw_orders:
+                    _od_no = str(ro.get("odNo") or "")
+                    if not _od_no:
+                        continue
+                    _entp = int(float(ro.get("prEntpShrAmtSum") or 0))
+                    _spt = int(float(ro.get("sptDcPgmCmsnSum") or 0))
+                    _seller_dc = _entp + _spt
+                    # 멀티아이템 주문은 동일 odNo로 여러 라인 반환 — 각 라인에 이미
+                    # 라인별(line-level) 합계로 내려오므로 덧셈 누적이 아닌 max 보존.
+                    prev = seller_discount_map.get(_od_no, 0)
+                    if _seller_dc > prev:
+                        seller_discount_map[_od_no] = _seller_dc
+                logger.info(
+                    f"[주문동기화] {label}: 판매자분담할인 매핑 "
+                    f"{len(seller_discount_map)}건 (raw_orders {len(raw_orders)}건 중 DC>0)"
+                )
+
                 # ── 정산금액 매칭 (SettleItmdSales) ─────────────────────────
+                # 정산 데이터는 배송완료 → 구매확정 후 수일 지나서 생성되므로
+                # 주문 조회 기간(body.days)보다 넓게(최대 30일) 조회해야 매칭률 ↑.
+                # 최대값 30은 api_client.get_settlement_items 내부에서 cap.
                 try:
-                    settle_items = await lotteon_client.get_settlement_items(
-                        days=body.days
-                    )
+                    settle_items = await lotteon_client.get_settlement_items(days=30)
                     # (odNo, odSeq, procSeq) → 정산 데이터 매핑
                     settle_map: dict[tuple[str, str, str], dict] = {}
                     for si in settle_items:
@@ -2057,13 +2083,13 @@ async def sync_orders_from_markets(
 
             _cp_result = await session.execute(
                 _sa_text(
-                    "SELECT id, source_site, site_product_id, images, market_product_nos, source_url "
+                    "SELECT id, source_site, site_product_id, images, market_product_nos, source_url, category "
                     "FROM samba_collected_product WHERE market_product_nos IS NOT NULL LIMIT 50000"
                 )
             )
             _mpn_cache: dict[str, dict] = {}
             for _row in _cp_result.fetchall():
-                _cpid, _site, _spid, _imgs, _mpnos, _src_url = _row
+                _cpid, _site, _spid, _imgs, _mpnos, _src_url, _cat = _row
                 if _mpnos and isinstance(_mpnos, dict):
                     _thumb = (
                         _imgs[0] if _imgs and isinstance(_imgs, list) and _imgs else ""
@@ -2079,6 +2105,7 @@ async def sync_orders_from_markets(
                         "source_site": _site,
                         "product_image": _thumb,
                         "original_link": _olink,
+                        "category": _cat or "",
                     }
                     for _k, _v in _mpnos.items():
                         if not _v:
@@ -2133,6 +2160,25 @@ async def sync_orders_from_markets(
                         "original_link"
                     ):
                         order_data["source_url"] = _matched["original_link"]
+                # 롯데ON 예상 정산금액 계산 — 정산 API 매칭 실패 시에도 주문 즉시 값 표시
+                #   revenue = 판매가 × (1 - 카테고리 수수료) - 판매자부담 할인 총액
+                # 정산 API 매칭 성공(pymtAmt)이 이미 있으면 건드리지 않음.
+                if order_data.get("source") == "lotteon" and not order_data.get(
+                    "revenue"
+                ):
+                    from backend.domain.samba.proxy.lotteon.category_fees import (
+                        get_fee_rate_for_category,
+                    )
+
+                    _cat_for_fee = _matched.get("category", "") if _matched else ""
+                    _fee = get_fee_rate_for_category(_cat_for_fee)
+                    _sp = int(order_data.get("sale_price", 0) or 0)
+                    # order_number는 합성키(odNo_odSeq_procSeq)이므로 순수 od_no로 조회
+                    _od_no = str(order_data.get("od_no") or "")
+                    _seller_dc = int(seller_discount_map.get(_od_no, 0))
+                    _after_fee = int(_sp * (1 - _fee / 100))
+                    order_data["fee_rate"] = _fee
+                    order_data["revenue"] = max(0, _after_fee - _seller_dc)
                 # 미등록 입력 자동 적용: 동일 상품의 기존 source_url/product_image 복사
                 _ukey = f"{_pid}|{order_data.get('channel_name', '')}"
                 _unreg_matched = _unreg_cache.get(_ukey)

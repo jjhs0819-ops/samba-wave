@@ -713,6 +713,11 @@ class LotteonClient:
             "POST", "/v1/openapi/order/v1/getSROrderList", body=body
         )
         logger.info(f"[롯데ON] 주문 API 응답 키: {list(result.keys())}")
+        # 디버그: 실제 응답 전체 덤프 (처음 2000자) — 원인 추적용, 추후 제거
+        import json as _json
+
+        _preview = _json.dumps(result, ensure_ascii=False, default=str)[:2000]
+        logger.info(f"[롯데ON] getSROrderList raw 응답(2KB): {_preview}")
 
         # 응답 구조 탐색 (data.orderItems 또는 data.list 등)
         data = result.get("data") or {}
