@@ -2394,7 +2394,7 @@ class JobWorker:
         client = _ssg_clients[0]
         _add_job_log(
             job.id,
-            f"[SSG브랜드전체수집] 프록시 풀 {len(_ssg_proxy_pool)}개 — 1건/5초 속도",
+            f"[SSG브랜드전체수집] 프록시 풀 {len(_ssg_proxy_pool)}개 — 1건/1초 속도",
             job_type="collect",
         )
 
@@ -2422,7 +2422,7 @@ class JobWorker:
         total_unmatched = 0
         # 재시도 큐 — 상세조회/매핑 실패 상품 누수 방지
         _failed_queue: list[dict] = []
-        # 1건 순차 + 5초 딜레이 — 탭 사용 최소화 테스트
+        # 1건 순차 + 1초 딜레이
         _SSG_BATCH = 1
         _ssg_page = 1
         # 필터 requested_count 합산 → 총 예상 건수 (진행률 표시용)
@@ -2574,10 +2574,10 @@ class JobWorker:
                         break
                     spid = it["site_product_id"]
 
-                    # 429/실패 시 프록시 로테이션 3회 재시도
+                    # 429/실패 시 60초 대기 후 3회 재시도 (SSG 복구 시간 맞춤)
                     if not det or isinstance(det, Exception):
                         for _retry in range(1, 4):
-                            _wait = _retry * 10  # 10s→20s→30s
+                            _wait = 60
                             if await _cancellable_sleep(_wait):
                                 _page_cancelled = True
                                 break
@@ -2756,8 +2756,8 @@ class JobWorker:
                         job_type="collect",
                     )
 
-                # 배치 간 5초 딜레이 — 1탭 순차, 과부하 방지
-                await asyncio.sleep(5.0)
+                # 배치 간 1초 딜레이
+                await asyncio.sleep(1.0)
 
             await repo.update_progress(job.id, total_saved, total_saved + 1)
             _add_job_log(
