@@ -1304,45 +1304,70 @@ class SSGSourcingClient:
             cat4 = _disp_dcls
             logger.debug(f"[SSG] 카테고리 dispCtg 레벨명 사용: {cat1}>{cat2}>{cat3}")
         else:
-            # 2순위: HTML breadcrumb
-            # refresh_only + 전품절이면 HTML regex 스킵 (dispCtg/stdCtg 폴백 직행)
+            # 2순위: 상품 상세 HTML의 "카테고리 로케이션" 브레드크럼 DOM 파싱.
+            # resultItemObj에는 dispCtgNm(리프)만 있고 상위 레벨이 없는 경우가 대부분이므로
+            # UI로 렌더링되는 lo_depth_XX 링크에서 대/중/소/세 카테고리를 순차 추출한다.
+            # 예: "남성패션 > 맨투맨/후드/티셔츠 > 반팔티셔츠"
+            _loc_parts: list[str] = []
             if not _is_early_soldout:
-                _bc_match = re.search(
-                    r"신세계백화점\s*[/>\s]+\s*(.+?)(?:<|$)",
-                    html[:30000],
-                )
-                if _bc_match:
-                    _bc_parts = [
-                        p.strip()
-                        for p in re.sub(r"<[^>]+>", "", _bc_match.group(1)).split("/")
-                        if p.strip()
-                    ]
-                    if len(_bc_parts) == 1:
+                for _lv in ("대", "중", "소", "세"):
+                    _m = re.search(
+                        rf'data-react-tarea="[^"]*카테고리 로케이션\|{_lv}카테고리"'
+                        r"[^>]*>\s*([^<]+?)\s*</a>",
+                        html,
+                    )
+                    if _m:
+                        _loc_parts.append(_m.group(1).strip())
+                    else:
+                        break
+
+            if _loc_parts:
+                cat1 = _loc_parts[0] if len(_loc_parts) > 0 else ""
+                cat2 = _loc_parts[1] if len(_loc_parts) > 1 else ""
+                cat3 = _loc_parts[2] if len(_loc_parts) > 2 else ""
+                cat4 = _loc_parts[3] if len(_loc_parts) > 3 else ""
+                logger.debug(f"[SSG] 카테고리 로케이션 DOM 사용: {cat1}>{cat2}>{cat3}")
+            else:
+                # 3순위: 구 버전 "신세계백화점 / ..." breadcrumb 정규식 (호환)
+                if not _is_early_soldout:
+                    _bc_match = re.search(
+                        r"신세계백화점\s*[/>\s]+\s*(.+?)(?:<|$)",
+                        html[:30000],
+                    )
+                    if _bc_match:
                         _bc_parts = [
-                            p.strip() for p in _bc_parts[0].split(">") if p.strip()
+                            p.strip()
+                            for p in re.sub(r"<[^>]+>", "", _bc_match.group(1)).split(
+                                "/"
+                            )
+                            if p.strip()
                         ]
+                        if len(_bc_parts) == 1:
+                            _bc_parts = [
+                                p.strip() for p in _bc_parts[0].split(">") if p.strip()
+                            ]
+                    else:
+                        _bc_parts = []
                 else:
                     _bc_parts = []
-            else:
-                _bc_parts = []
 
-            if _bc_parts:
-                cat1 = _bc_parts[0] if len(_bc_parts) > 0 else ""
-                cat2 = _bc_parts[1] if len(_bc_parts) > 1 else ""
-                cat3 = _bc_parts[2] if len(_bc_parts) > 2 else ""
-                cat4 = _bc_parts[3] if len(_bc_parts) > 3 else ""
-            else:
-                # 3순위: dispCtgNm 단일명
-                _disp_nm = obj.get("dispCtgNm", "")
-                if _disp_nm:
-                    cat1 = _disp_nm
-                    cat2 = cat3 = cat4 = ""
+                if _bc_parts:
+                    cat1 = _bc_parts[0] if len(_bc_parts) > 0 else ""
+                    cat2 = _bc_parts[1] if len(_bc_parts) > 1 else ""
+                    cat3 = _bc_parts[2] if len(_bc_parts) > 2 else ""
+                    cat4 = _bc_parts[3] if len(_bc_parts) > 3 else ""
                 else:
-                    # 최후 폴백: stdCtg (표준카테고리)
-                    cat1 = obj.get("stdCtgLclsNm", "")
-                    cat2 = obj.get("stdCtgMclsNm", "")
-                    cat3 = obj.get("stdCtgSclsNm", "")
-                    cat4 = obj.get("stdCtgDclsNm", "")
+                    # 4순위: dispCtgNm 단일명
+                    _disp_nm = obj.get("dispCtgNm", "")
+                    if _disp_nm:
+                        cat1 = _disp_nm
+                        cat2 = cat3 = cat4 = ""
+                    else:
+                        # 최후 폴백: stdCtg (표준카테고리)
+                        cat1 = obj.get("stdCtgLclsNm", "")
+                        cat2 = obj.get("stdCtgMclsNm", "")
+                        cat3 = obj.get("stdCtgSclsNm", "")
+                        cat4 = obj.get("stdCtgDclsNm", "")
 
         disp_ctg_id = str(obj.get("dispCtgId") or "")
         category_levels = [c for c in [cat1, cat2, cat3, cat4] if c]
@@ -1414,6 +1439,13 @@ class SSGSourcingClient:
             "category2": cat2,
             "category3": cat3,
             "category4": cat4,
+            # worker.py 라우팅 2순위가 참조하는 전시카테고리 레벨명 키.
+            # 기존엔 원본 JSON 필드 기반이라 None이었지만 이제 브레드크럼 DOM
+            # 파싱값으로 채워 라우팅이 경로명 매칭에 성공하도록 한다.
+            "dispCtgLclsNm": cat1,
+            "dispCtgMclsNm": cat2,
+            "dispCtgSclsNm": cat3,
+            "dispCtgDclsNm": cat4,
             "images": images[:9],
             "detailImages": detail_images,
             "detailHtml": detail_html,
@@ -1643,6 +1675,10 @@ class SSGSourcingClient:
             "category2": category_levels[1] if len(category_levels) > 1 else "",
             "category3": category_levels[2] if len(category_levels) > 2 else "",
             "category4": category_levels[3] if len(category_levels) > 3 else "",
+            "dispCtgLclsNm": category_levels[0] if len(category_levels) > 0 else "",
+            "dispCtgMclsNm": category_levels[1] if len(category_levels) > 1 else "",
+            "dispCtgSclsNm": category_levels[2] if len(category_levels) > 2 else "",
+            "dispCtgDclsNm": category_levels[3] if len(category_levels) > 3 else "",
             "images": images[:9],
             "detailImages": [],
             "detailHtml": "",

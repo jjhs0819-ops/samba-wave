@@ -633,10 +633,14 @@ async def scroll_products(
                         f"%{q_no_space}%"
                     ),
                     func.coalesce(cast(_CP.market_names, String), "").ilike(f"%{q}%"),
+                    func.coalesce(_CP.brand, "").ilike(f"%{q}%"),
+                    func.coalesce(_CP.style_code, "").ilike(f"%{q}%"),
+                    _CP.site_product_id.ilike(f"%{q}%"),
                 )
             )
         elif search_type == "name_all":
-            # 상품명 + 등록상품명(name_en) 동시 검색 (공백 무시)
+            # 상품명 + 등록상품명 구성 요소(brand/style_code/site_product_id 포함) 동시 검색
+            # composeProductName()이 조합하는 모든 필드를 커버해야 등록명 내 모델코드 검색이 동작함
             q_no_space = q.replace(" ", "")
             conditions.append(
                 or_(
@@ -646,6 +650,9 @@ async def scroll_products(
                     func.replace(func.coalesce(_CP.name_en, ""), " ", "").ilike(
                         f"%{q_no_space}%"
                     ),
+                    func.coalesce(_CP.brand, "").ilike(f"%{q}%"),
+                    func.coalesce(_CP.style_code, "").ilike(f"%{q}%"),
+                    _CP.site_product_id.ilike(f"%{q}%"),
                 )
             )
         elif search_type == "no":
