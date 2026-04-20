@@ -126,8 +126,12 @@ async def cleanup_smartstore_orphans(
     if not accounts:
         raise HTTPException(status_code=404, detail="활성 스마트스토어 계정 없음")
 
-    # 2. DB 상품 전체 로드 (계정별 매핑 + style_code 동시 수집)
-    prod_result = await session.exec(select(SambaCollectedProduct))
+    # 2. DB 상품 로드 — 해당 계정들의 tenant_id로 범위 한정
+    tenant_ids = list({a.tenant_id for a in accounts if a.tenant_id})
+    prod_query = select(SambaCollectedProduct)
+    if tenant_ids:
+        prod_query = prod_query.where(SambaCollectedProduct.tenant_id.in_(tenant_ids))
+    prod_result = await session.exec(prod_query)
     all_db_products = prod_result.all()
 
     # 삼바가 등록한 상품 식별용 style_code 집합
@@ -224,37 +228,27 @@ async def cleanup_smartstore_orphans(
 
         orphans = []
         for np in naver_products:
-            # sellerManagementCode가 DB style_code에 있어야 삼바 등록 상품
-            mgmt_code = (
-                np.get("originProduct", {})
-                .get("sellerCodeInfo", {})
-                .get("sellerManagementCode", "")
-                or np.get("sellerManagementCode", "")
-                or ""
-            )
-            if not mgmt_code or mgmt_code not in all_style_codes:
-                continue  # 외부 등록 상품 — 건드리지 않음
+            origin_no = str(np.get("originProductNo") or "")
+            if not origin_no:
+                continue
 
-            origin_no = str(
-                np.get("originProductNo")
-                or np.get("originProduct", {}).get("id", "")
-                or ""
-            )
+            channel_products = np.get("channelProducts", [])
             channel_nos = [
                 str(cp.get("channelProductNo", ""))
-                for cp in np.get("channelProducts", [])
+                for cp in channel_products
                 if cp.get("channelProductNo")
             ]
-            in_db = (origin_no and origin_no in account_db_nos) or any(
+            # /v1/products/search 는 originProduct 미포함 → sellerManagementCode 조회 불가.
+            # originProductNo / channelProductNo 직접 비교로 orphan 판별.
+            in_db = (origin_no in account_db_nos) or any(
                 cn in account_db_nos for cn in channel_nos
             )
-            if not in_db and origin_no:
-                name = (
-                    np.get("originProduct", {}).get("name") or np.get("name", "") or ""
+            if not in_db:
+                name = next(
+                    (cp.get("name", "") for cp in channel_products if cp.get("name")),
+                    "",
                 )
-                orphans.append(
-                    {"origin_no": origin_no, "name": name[:80], "mgmt_code": mgmt_code}
-                )
+                orphans.append({"origin_no": origin_no, "name": name[:80]})
 
         total_orphans += len(orphans)
 
