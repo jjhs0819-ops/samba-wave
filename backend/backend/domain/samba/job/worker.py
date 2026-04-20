@@ -2490,6 +2490,16 @@ class JobWorker:
                 break
 
             # 2단계: 이 페이지 신규 상품 추출 (확장앱 반환은 이미 정규화된 형태)
+            # [중요] SSG 검색 API는 repBrandId+ctgId 동시 사용 시 ctgId 무시 → repBrandId 제거 상태.
+            # query 키워드 매칭이 하위 브랜드(나이키키즈/스윔/골프)까지 반환하므로 클라이언트 post-filter 필수.
+            # 2중 방어:
+            #   (1) brandId 정확 매칭 — _brand_ids_from_filter set 기준
+            #   (2) brand 이름 정확 매칭 — keyword(=선택 브랜드명)와 item.brand 비교
+            _allowed_brand_ids: set[str] = {
+                str(b).strip() for b in (_brand_ids_from_filter or []) if str(b).strip()
+            }
+            _keyword_norm = str(keyword or "").strip()
+            _brand_dropped = 0
             page_new: list[dict] = []
             for item in _raw:
                 pid = str(
@@ -2499,6 +2509,23 @@ class JobWorker:
                     or ""
                 )
                 if not pid or pid in _seen_spids:
+                    continue
+                # 브랜드 post-filter
+                _item_bid = str(
+                    item.get("repBrandId") or item.get("brandId") or ""
+                ).strip()
+                _item_bname = str(item.get("brand") or "").strip()
+                _match_id = (not _allowed_brand_ids) or (
+                    _item_bid and _item_bid in _allowed_brand_ids
+                )
+                _match_name = (not _keyword_norm) or (_item_bname == _keyword_norm)
+                # brandId가 없으면 name 매칭만으로 판정, brandId가 있으면 id 매칭 우선
+                if _item_bid:
+                    _keep = _match_id
+                else:
+                    _keep = _match_name
+                if not _keep:
+                    _brand_dropped += 1
                     continue
                 _seen_spids.add(pid)
                 page_new.append(
@@ -2515,6 +2542,13 @@ class JobWorker:
                         else item.get("images", []),
                         "is_sold_out": item.get("isSoldOut", False),
                     }
+                )
+
+            if _brand_dropped:
+                _add_job_log(
+                    job.id,
+                    f"[SSG브랜드전체수집] 하위브랜드 drop {_brand_dropped}건 (p{_ssg_page})",
+                    job_type="collect",
                 )
 
             # 3단계: 신규 상품 즉시 상세조회+저장 (1건 순차, 배치당 2초)

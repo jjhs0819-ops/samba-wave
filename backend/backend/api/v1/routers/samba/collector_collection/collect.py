@@ -342,6 +342,7 @@ async def collect_by_url(
                         cat_parts,
                         raw_detail_html,
                     )
+                    await svc._inherit_group_attributes(product_data)
                     _batch_buf.append(svc.prepare_product_data(product_data))
                     saved += 1
                     if len(_batch_buf) >= _BATCH_SIZE:
@@ -853,6 +854,7 @@ async def collect_by_url(
                         cat_parts,
                         raw_detail_html,
                     )
+                    await svc._inherit_group_attributes(product_data)
                     _batch_buf.append(svc.prepare_product_data(product_data))
                     saved += 1
                     if len(_batch_buf) >= _BATCH_SIZE:
@@ -1159,6 +1161,7 @@ async def collect_by_url(
                         cat_parts,
                         raw_detail_html,
                     )
+                    await svc._inherit_group_attributes(product_data)
                     _batch_buf_lt.append(svc.prepare_product_data(product_data))
                     saved += 1
                     if len(_batch_buf_lt) >= _BATCH_SIZE:

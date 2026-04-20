@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import or_
 from sqlmodel import select
@@ -16,6 +16,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
 from backend.domain.samba.cache import cache
 from backend.domain.user.auth_service import get_user_id
+from backend.domain.samba.tenant.middleware import get_optional_tenant_id
 
 from backend.api.v1.routers.samba.collector_common import (
     _HEAVY_FIELDS,
@@ -158,12 +159,15 @@ class BulkTagUpdateRequest(BaseModel):
 
 @router.get("/products/duplicates")
 async def get_duplicate_products(
+    request: Request,
     session: AsyncSession = Depends(get_read_session_dependency),
-    user_id: str = Depends(get_user_id),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     """마켓 등록 상품과 동일 원상품명인 중복 상품 그룹 반환."""
+    if not tenant_id:
+        return {"groups": [], "total": 0}
     svc = _get_services(session)
-    groups = await svc.get_duplicate_products(tenant_id=user_id)
+    groups = await svc.get_duplicate_products(tenant_id=tenant_id)
     return {"groups": groups, "total": len(groups)}
 
 

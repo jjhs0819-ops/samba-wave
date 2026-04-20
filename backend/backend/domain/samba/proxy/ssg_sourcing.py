@@ -1014,6 +1014,11 @@ class SSGSourcingClient:
                 or (f"{self.ITEM_URL}?itemId={item_id}&siteNo={self.SITE_NO}")
             )
 
+            # brandId 추출 (post-filter에서 하위 브랜드 제외용)
+            rep_brand_id = str(
+                item.get("repBrandId") or item.get("brandId") or item.get("brdId") or ""
+            ).strip()
+
             products.append(
                 {
                     "siteProductId": item_id,
@@ -1021,6 +1026,8 @@ class SSGSourcingClient:
                     "name": item_name,
                     "brand": item.get("brandName", ""),
                     "brandEngNm": item.get("brandEngNm", ""),
+                    "repBrandId": rep_brand_id,
+                    "brandId": rep_brand_id,
                     "salePrice": sale_price,
                     "originalPrice": original_price,
                     "discountRate": discount_rate,
