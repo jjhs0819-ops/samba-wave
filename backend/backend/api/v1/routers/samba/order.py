@@ -2183,6 +2183,8 @@ async def sync_orders_from_markets(
                             d
                             for d in _dup_candidates
                             if d.product_id == order_data["product_id"]
+                            and (d.product_option or "")
+                            == (order_data.get("product_option") or "")
                         ),
                         None,
                     )
