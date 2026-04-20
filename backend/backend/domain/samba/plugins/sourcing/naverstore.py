@@ -1,9 +1,9 @@
-"""네이버스토어 소싱처 플러그인."""
+"""네이버스토어 소싱처 플러그인 — 내부 JSON API 기반."""
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from backend.domain.samba.plugins.sourcing_base import SourcingPlugin
 
@@ -16,10 +16,9 @@ logger = logging.getLogger(__name__)
 class NaverStorePlugin(SourcingPlugin):
     """네이버스토어 소싱처 플러그인.
 
-    네이버 쇼핑 검색 API를 활용한 상품 검색과
-    스마트스토어 상품 페이지 HTML 파싱을 통한 상세 조회를 제공한다.
+    내부 JSON API를 활용하여 스토어 상품 목록 및 상세를 수집한다.
 
-    concurrency=3: 네이버 API는 비교적 안정적이므로 병렬 3개
+    concurrency=3: 병렬 3개 (스마트스토어 API 안정적)
     request_interval=0.3: 요청 간 300ms 딜레이
     """
 
@@ -28,30 +27,91 @@ class NaverStorePlugin(SourcingPlugin):
     request_interval = 0.3
 
     async def search(self, keyword: str, **filters) -> list[dict]:
-        """네이버스토어 키워드 검색 (네이버 쇼핑 API)."""
+        """네이버스토어 상품 검색.
+
+        keyword가 URL인 경우 → 해당 스토어의 상품 목록 조회
+        keyword가 일반 텍스트인 경우 → 현재 미지원
+        """
         from backend.domain.samba.proxy.naverstore_sourcing import (
             NaverStoreSourcingClient,
         )
 
         client = NaverStoreSourcingClient()
-        page = filters.get("page", 1)
-        size = filters.get("size", 40)
-        sort = filters.get("sort", "sim")
+
+        # URL이면 스토어 상품 목록 조회
+        if "smartstore.naver.com" in keyword or "brand.naver.com" in keyword:
+            page = filters.get("page", 1)
+            size = filters.get("size", 40)
+            sort = filters.get("sort", "POPULAR")
+            result = await self.safe_call(
+                client.get_store_products(
+                    keyword,
+                    page=page,
+                    page_size=size,
+                    sort_type=sort,
+                )
+            )
+            return result.get("products", []) if isinstance(result, dict) else []
+
+        logger.warning(
+            f"[NAVERSTORE] 키워드 검색은 스토어 URL을 입력해주세요: {keyword}"
+        )
+        return []
+
+    async def get_detail(self, site_product_id: str, **kwargs) -> dict:
+        """네이버스토어 상품 상세 조회.
+
+        Args:
+            site_product_id: 상품 URL 또는 채널상품ID
+            **kwargs: channel_uid (선택)
+        """
+        from backend.domain.samba.proxy.naverstore_sourcing import (
+            NaverStoreSourcingClient,
+        )
+
+        client = NaverStoreSourcingClient()
+        channel_uid = kwargs.get("channel_uid")
+        cookies = kwargs.get("cookies")
         return await self.safe_call(
-            client.search_products(keyword, page=page, size=size, sort=sort)
+            client.get_product_detail(
+                site_product_id, channel_uid=channel_uid, cookies=cookies
+            )
         )
 
-    async def get_detail(self, site_product_id: str) -> dict:
-        """네이버스토어 상품 상세 조회."""
+    async def browse_store(
+        self,
+        store_url: str,
+        page: int = 1,
+        page_size: int = 40,
+        sort: str = "POPULAR",
+    ) -> dict[str, Any]:
+        """스토어 상품 목록 조회.
+
+        Args:
+            store_url: 스마트스토어 URL
+            page: 페이지 번호
+            page_size: 페이지당 상품 수
+            sort: 정렬 (POPULAR, RECENT, LOW_PRICE, HIGH_PRICE, REVIEW)
+
+        Returns:
+            {"products": [...], "totalCount": int, "page": int, ...}
+        """
         from backend.domain.samba.proxy.naverstore_sourcing import (
             NaverStoreSourcingClient,
         )
 
         client = NaverStoreSourcingClient()
-        return await self.safe_call(client.get_product_detail(site_product_id))
+        return await self.safe_call(
+            client.get_store_products(
+                store_url,
+                page=page,
+                page_size=page_size,
+                sort_type=sort,
+            )
+        )
 
-    async def refresh(self, product) -> "RefreshResult":
-        """가격/재고 갱신 — 상세 페이지 재조회로 최신 데이터 추출."""
+    async def refresh(self, product, **kwargs) -> "RefreshResult":
+        """가격/재고 갱신 — 상세 API 재조회로 최신 데이터 추출."""
         from backend.domain.samba.collector.refresher import RefreshResult
         from backend.domain.samba.proxy.naverstore_sourcing import (
             NaverStoreSourcingClient,
@@ -65,7 +125,6 @@ class NaverStorePlugin(SourcingPlugin):
             product, "sourceUrl", ""
         )
 
-        # URL이 있으면 URL로, 없으면 ID로 조회
         lookup_key = source_url if source_url else site_product_id
         if not lookup_key:
             return RefreshResult(
@@ -75,7 +134,10 @@ class NaverStorePlugin(SourcingPlugin):
 
         try:
             client = NaverStoreSourcingClient()
-            detail = await self.safe_call(client.get_product_detail(lookup_key))
+            cookies = kwargs.get("cookies") if kwargs else None
+            detail = await self.safe_call(
+                client.get_product_detail(lookup_key, cookies=cookies)
+            )
 
             if not detail:
                 return RefreshResult(
@@ -89,30 +151,27 @@ class NaverStorePlugin(SourcingPlugin):
 
             # 옵션 데이터 변환
             new_options = None
-            raw_options = detail.get("options", [])
-            if raw_options:
+            raw_combos = detail.get("optionCombinations", [])
+            if raw_combos:
                 new_options = [
                     {
-                        "name": opt.get("name", ""),
-                        "price": opt.get("price", 0),
-                        "stock": 0
-                        if opt.get("isSoldOut")
-                        else (opt.get("stock") or 99),
-                        "isSoldOut": opt.get("isSoldOut", False),
+                        "name": combo.get("displayName", ""),
+                        "price": combo.get("additionalPrice", 0),
+                        "stock": combo.get("stockQuantity", 0),
+                        "isSoldOut": combo.get("isSoldOut", False),
                     }
-                    for opt in raw_options
+                    for combo in raw_combos
                 ]
 
             return RefreshResult(
                 product_id=product_id,
-                new_sale_price=float(new_sale_price) if new_sale_price else None,
-                new_original_price=float(new_original_price)
-                if new_original_price
-                else None,
-                new_sale_status="sold_out" if is_sold_out else "in_stock",
+                new_sale_price=(float(new_sale_price) if new_sale_price else None),
+                new_original_price=(
+                    float(new_original_price) if new_original_price else None
+                ),
+                new_sale_status=("sold_out" if is_sold_out else "in_stock"),
                 new_options=new_options,
                 new_images=detail.get("images"),
-                new_detail_images=detail.get("detailImages"),
                 changed=True,
             )
 

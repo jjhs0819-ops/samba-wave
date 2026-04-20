@@ -26,6 +26,9 @@ from backend.api.v1.routers.samba.contact import router as samba_contact_router
 from backend.api.v1.routers.samba.cs_inquiry import router as samba_cs_inquiry_router
 from backend.api.v1.routers.samba.forbidden import router as samba_forbidden_router
 from backend.api.v1.routers.samba.job import router as samba_job_router
+from backend.api.v1.routers.samba.naverstore_sourcing import (
+    router as samba_naverstore_sourcing_router,
+)
 from backend.api.v1.routers.samba.order import router as samba_order_router
 from backend.api.v1.routers.samba.policy import router as samba_policy_router
 from backend.api.v1.routers.samba.product import router as samba_product_router
@@ -171,6 +174,11 @@ def create_application() -> FastAPI:
         samba_sourcing_account_router, prefix="/api/v1/samba", dependencies=samba_auth
     )
     app.include_router(samba_sourcing_account_extension_router, prefix="/api/v1/samba")
+    app.include_router(
+        samba_naverstore_sourcing_router,
+        prefix="/api/v1/samba",
+        dependencies=samba_auth,
+    )
 
     static_dir = Path(__file__).resolve().parent / "static" / "images"
     static_dir.mkdir(parents=True, exist_ok=True)

@@ -375,7 +375,28 @@ export default function CollectorPage() {
         keyword = input
       }
 
-      const groupName = keyword ? `${site}_${keyword.replace(/\s+/g, '_')}` : `${site}_${new Date().toLocaleDateString("ko-KR")}`
+      let groupName = keyword ? `${site}_${keyword.replace(/\s+/g, '_')}` : `${site}_${new Date().toLocaleDateString("ko-KR")}`
+
+      // NAVERSTORE: 스토어명 + 카테고리명으로 그룹명 구성 (3단 드릴다운 지원)
+      // URL → /url-info 호출하여 storeName + categoryName 획득
+      // 결과: "NAVERSTORE_coming_스니커즈" → 브랜드=coming, 카테고리=스니커즈
+      if (site === 'NAVERSTORE' && isUrl && (input.includes('smartstore.naver.com') || input.includes('brand.naver.com'))) {
+        try {
+          const infoRes = await fetchWithAuth(
+            `${API_BASE}/api/v1/samba/naverstore-sourcing/url-info?store_url=${encodeURIComponent(input)}`
+          )
+          if (infoRes.ok) {
+            const info = await infoRes.json()
+            const storeName = (info.storeName || '').trim()
+            const categoryName = (info.categoryName || '전체상품').trim()
+            if (storeName) {
+              groupName = `NAVERSTORE_${storeName}_${categoryName.replace(/\s+/g, '_')}`
+            }
+          }
+        } catch {
+          /* url-info 실패 시 기존 groupName 유지 */
+        }
+      }
 
       let keywordUrl = input
       if (site === "MUSINSA") {

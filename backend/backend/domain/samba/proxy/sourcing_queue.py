@@ -93,19 +93,27 @@ class SourcingQueue:
 
     @classmethod
     def add_detail_job(
-        cls, site: str, product_id: str, *, sitm_no: str = ""
+        cls,
+        site: str,
+        product_id: str,
+        *,
+        sitm_no: str = "",
+        url: str = "",
+        extra: dict[str, Any] | None = None,
     ) -> tuple[str, asyncio.Future[Any]]:
         """상세조회 작업 큐에 추가. (requestId, future) 반환.
 
         sitm_no: LOTTEON sitmNo — 전달 시 확장앱이 탭 없이 pbf API 직접 호출.
+        url: 비어있지 않으면 SITE_DETAIL_URLS 템플릿 대신 직접 사용 (NAVERSTORE 등 템플릿만으로 부족한 경우).
+        extra: job dict에 병합할 추가 필드 (channelUid, storeName 등).
         """
         cls._ensure_accepting_jobs()
         request_id = str(uuid.uuid4())[:8]
-        url_template = SITE_DETAIL_URLS.get(site, "")
-        if not url_template:
-            raise ValueError(f"지원하지 않는 소싱처: {site}")
-
-        url = url_template.replace("{product_id}", product_id)
+        if not url:
+            url_template = SITE_DETAIL_URLS.get(site, "")
+            if not url_template:
+                raise ValueError(f"지원하지 않는 소싱처: {site}")
+            url = url_template.replace("{product_id}", product_id)
         loop = asyncio.get_event_loop()
         future: asyncio.Future[Any] = loop.create_future()
 
@@ -118,6 +126,8 @@ class SourcingQueue:
         }
         if sitm_no:
             job["sitmNo"] = sitm_no
+        if extra:
+            job.update(extra)
         cls.queue.append(job)
         cls.resolvers[request_id] = future
         logger.info(f"[소싱큐] 상세 추가: {site} #{product_id} (id={request_id})")

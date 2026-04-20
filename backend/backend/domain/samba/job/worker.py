@@ -1064,7 +1064,14 @@ class JobWorker:
         _add_job_log(job.id, f"{_prefix} [{sf.name}] 수집 시작", job_type="collect")
 
         # 직접 API 소싱처 (서버 HTTP)
-        DIRECT_API_SITES = {"FashionPlus", "Nike", "Adidas", "LOTTEON", "SSG"}
+        DIRECT_API_SITES = {
+            "FashionPlus",
+            "Nike",
+            "Adidas",
+            "LOTTEON",
+            "SSG",
+            "NAVERSTORE",
+        }
         # 확장앱 기반 소싱처 (소싱큐)
         EXTENSION_SITES = {
             "ABCmart",
@@ -3381,6 +3388,12 @@ class JobWorker:
             from backend.domain.samba.proxy.ssg_sourcing import SSGSourcingClient
 
             client = SSGSourcingClient()
+        elif site == "NAVERSTORE":
+            from backend.domain.samba.proxy.naverstore_sourcing import (
+                NaverStoreSourcingClient,
+            )
+
+            client = NaverStoreSourcingClient()
 
         # 확장앱 소싱큐 기반 사이트 — 소싱큐로 검색 요청
         if not client:

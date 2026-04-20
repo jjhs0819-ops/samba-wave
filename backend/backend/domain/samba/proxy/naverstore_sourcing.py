@@ -1,541 +1,387 @@
-"""네이버스토어 소싱용 클라이언트 - 네이버 쇼핑 검색 API 기반.
+"""네이버스토어 소싱용 클라이언트 — 내부 JSON API 기반.
 
-주의: proxy/smartstore.py는 판매처(마켓) 등록용 클라이언트이므로,
-소싱(상품 수집)용은 이 파일에서 별도로 관리한다.
+스마트스토어 내부 API를 직접 호출하여 상품 목록/상세를 수집한다.
+curl_cffi를 사용하여 TLS fingerprint를 브라우저처럼 위장한다.
+worker 컨텍스트에서는 동기 Session + asyncio.to_thread로 greenlet 충돌 회피.
 
-네이버 쇼핑 검색 API:
-  GET https://openapi.naver.com/v1/search/shop.json
-  인증: X-Naver-Client-Id, X-Naver-Client-Secret 헤더
+핵심 API:
+  - 상품 목록: GET /i/v2/channels/{channelUid}/categories/ALL/products?page=1&pageSize=40
+  - 상품 상세: GET /i/v2/channels/{channelUid}/products/{productId}?withWindow=false
 """
 
 from __future__ import annotations
 
+import json
 import re
-from datetime import datetime, timezone
-from typing import Any, Optional
-from urllib.parse import quote
+from typing import Optional
 
-import httpx
-
-from backend.core.config import settings
+from backend.domain.samba.proxy.naverstore_sourcing_detail_mixin import (
+    NaverStoreDetailMixin,
+)
+from backend.domain.samba.proxy.naverstore_sourcing_list_mixin import (
+    NaverStoreListMixin,
+)
 from backend.utils.logger import logger
 
 
-class NaverStoreSourcingClient:
+def _get_proxy_url() -> str:
+    """수집용 프록시 URL 가져오기."""
+    try:
+        from backend.core.config import settings
+
+        url = settings.collect_proxy_url or ""
+        return url.strip()
+    except Exception:
+        return ""
+
+
+class NaverStoreSourcingClient(NaverStoreListMixin, NaverStoreDetailMixin):
     """네이버스토어 소싱용 클라이언트.
 
-    네이버 검색 API를 활용한 상품 검색과
-    스마트스토어 상품 페이지 HTML 파싱을 통한 상세 조회를 제공한다.
+    내부 JSON API를 활용한 상품 목록/상세 조회를 제공한다.
+    curl_cffi로 브라우저 TLS fingerprint를 위장하여 봇 차단을 우회한다.
+
+    - 목록/검색 메서드: `NaverStoreListMixin` (naverstore_sourcing_list_mixin.py)
+    - 상세 메서드: `NaverStoreDetailMixin` (naverstore_sourcing_detail_mixin.py)
     """
 
-    # 네이버 검색 API
-    SEARCH_API = "https://openapi.naver.com/v1/search/shop.json"
-
-    # 스마트스토어 / 브랜드스토어 URL 패턴
-    SMARTSTORE_BASE = "https://smartstore.naver.com"
-    BRAND_BASE = "https://brand.naver.com"
+    BASE_URL = "https://smartstore.naver.com"
 
     HEADERS: dict[str, str] = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
+            "Chrome/136.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "ko-KR,ko;q=0.9",
+        "Referer": "https://smartstore.naver.com/",
+    }
+
+    HTML_HEADERS: dict[str, str] = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/136.0.0.0 Safari/537.36"
         ),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "ko-KR,ko;q=0.9",
     }
 
-    def __init__(self) -> None:
-        self._timeout = httpx.Timeout(20.0, connect=10.0)
-        self._client_id = settings.naver_client_id
-        self._client_secret = settings.naver_client_secret
+    # 계정 쿠키 캐시 (프로세스 생애주기 내 60초)
+    _cookies_cache: tuple[str, float] = ("", 0.0)
 
-    # ------------------------------------------------------------------
-    # sourcing_search / sourcing_detail API 인터페이스 래퍼
-    # ------------------------------------------------------------------
+    @classmethod
+    async def _fetch_cookies_from_db(cls) -> str:
+        """sourcing_account 테이블에서 NAVERSTORE 활성 계정 쿠키 조회.
 
-    async def search(self, keyword: str, page: int = 1) -> dict[str, Any]:
-        """sourcing_search API 인터페이스 맞춤 래퍼."""
-        products = await self.search_products(keyword, page=page)
-        return {"products": products, "total": len(products)}
-
-    async def get_detail(self, product_id: str) -> dict[str, Any]:
-        """sourcing_detail API 인터페이스 맞춤 래퍼."""
-        return await self.get_product_detail(product_id)
-
-    # ------------------------------------------------------------------
-    # 검색
-    # ------------------------------------------------------------------
-
-    async def search_products(
-        self,
-        keyword: str,
-        page: int = 1,
-        size: int = 40,
-        sort: str = "sim",
-    ) -> list[dict[str, Any]]:
-        """네이버 쇼핑 검색 API로 네이버스토어 상품 검색.
-
-        Args:
-          keyword: 검색 키워드
-          page: 페이지 번호 (1부터)
-          size: 페이지당 결과 수 (10~100)
-          sort: 정렬 기준 (sim=유사도, date=날짜, asc=가격낮은순, dsc=가격높은순)
-
-        Returns:
-          표준 상품 dict 리스트
+        additional_fields JSON 의 'cookies' 키 값 반환. 60초 캐싱.
         """
-        if not self._client_id or not self._client_secret:
-            logger.warning(
-                "[NAVERSTORE] 네이버 API 키가 설정되지 않음 — HTML 파싱 폴백"
+        import time as _time
+
+        cached_val, cached_at = cls._cookies_cache
+        if cached_val and (_time.time() - cached_at) < 60:
+            return cached_val
+
+        from backend.db.orm import get_read_session
+        from backend.domain.samba.sourcing_account.model import SambaSourcingAccount
+        from sqlmodel import select
+
+        async with get_read_session() as session:
+            stmt = (
+                select(SambaSourcingAccount)
+                .where(SambaSourcingAccount.site_name == "NAVERSTORE")
+                .where(SambaSourcingAccount.is_active == True)  # noqa: E712
+                .order_by(SambaSourcingAccount.updated_at.desc())
+                .limit(1)
             )
-            return await self._search_html_fallback(keyword, page, size)
+            result = await session.execute(stmt)
+            account = result.scalar_one_or_none()
 
-        # 네이버 검색 API 호출
-        start = (page - 1) * size + 1  # API는 start 파라미터 사용 (1~1000)
-        display = min(size, 100)
+        cookies = ""
+        if account and account.additional_fields:
+            af = account.additional_fields
+            if isinstance(af, dict):
+                cookies = str(af.get("cookies") or "").strip()
 
-        logger.info(
-            f'[NAVERSTORE] 검색 시작 (API): "{keyword}" (start={start}, display={display})'
-        )
+        cls._cookies_cache = (cookies, _time.time())
+        return cookies
+
+    # 상세 API 요청 간 딜레이 (초) — 429 방지
+    DETAIL_DELAY: float = 2.0
+
+    def __init__(self, proxy_url: str | None = None) -> None:
+        self._proxy_url = proxy_url or _get_proxy_url()
+        self._timeout = 20
+        # channelUid 캐시: store_name -> channelUid
+        self._uid_cache: dict[str, str] = {}
+
+    def _build_proxies(self) -> dict[str, str] | None:
+        """프록시 설정 dict 반환."""
+        if self._proxy_url:
+            return {"https": self._proxy_url, "http": self._proxy_url}
+        return None
+
+    # ------------------------------------------------------------------
+    # channelUid 추출
+    # ------------------------------------------------------------------
+
+    async def resolve_channel_uid(self, store_url: str) -> Optional[str]:
+        """스토어 URL에서 channelUid를 추출한다.
+
+        목록 API를 호출하여 응답에서 channelUid를 추출하는 방식을 우선 시도하고,
+        실패 시 HTML 파싱으로 폴백한다.
+        """
+        store_name = self._extract_store_name(store_url)
+        if not store_name:
+            logger.error(f"[NAVERSTORE] 스토어명 추출 실패: {store_url}")
+            return None
+
+        # 캐시 확인
+        if store_name in self._uid_cache:
+            return self._uid_cache[store_name]
+
+        # HTML 페이지에서 channelUid 추출
+        page_url = f"{self.BASE_URL}/{store_name}"
+        logger.info(f"[NAVERSTORE] channelUid 조회: {page_url}")
 
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.get(
-                    self.SEARCH_API,
-                    params={
-                        "query": keyword,
-                        "display": display,
-                        "start": start,
-                        "sort": sort,
-                    },
-                    headers={
-                        "X-Naver-Client-Id": self._client_id,
-                        "X-Naver-Client-Secret": self._client_secret,
-                    },
-                )
+            from curl_cffi.requests import AsyncSession
 
+            async with AsyncSession(
+                timeout=self._timeout,
+                proxies=self._build_proxies(),
+                impersonate="chrome",
+            ) as session:
+                resp = await session.get(page_url, headers=self.HTML_HEADERS)
                 if resp.status_code != 200:
-                    logger.warning(
-                        f"[NAVERSTORE] 네이버 검색 API HTTP {resp.status_code}: {resp.text[:200]}"
+                    logger.error(
+                        f"[NAVERSTORE] 스토어 페이지 HTTP {resp.status_code}: {store_name}"
                     )
-                    return await self._search_html_fallback(keyword, page, size)
+                    return None
 
-                data = resp.json()
-                items = data.get("items", [])
-                now_iso = datetime.now(tz=timezone.utc).isoformat()
-
-                products: list[dict[str, Any]] = []
-                for item in items:
-                    product = self._transform_api_item(item, now_iso)
-                    if product:
-                        products.append(product)
-
-                logger.info(f'[NAVERSTORE] 검색 완료: "{keyword}" -> {len(products)}개')
-                return products
-
-        except httpx.TimeoutException:
-            logger.error(f"[NAVERSTORE] 검색 타임아웃: {keyword}")
-            return []
-        except Exception as e:
-            logger.error(f"[NAVERSTORE] 검색 실패: {keyword} — {e}")
-            return []
-
-    def _transform_api_item(
-        self, item: dict[str, Any], now_iso: str
-    ) -> Optional[dict[str, Any]]:
-        """네이버 검색 API 결과를 표준 상품 dict로 변환.
-
-        API 응답 필드:
-          title, link, image, lprice, hprice, mallName, productId,
-          productType, brand, maker, category1~4
-        """
-        title = re.sub(r"</?b>", "", item.get("title", ""))  # HTML 태그 제거
-        link = item.get("link", "")
-        product_id = item.get("productId", "")
-
-        if not title or not product_id:
-            return None
-
-        lprice = int(item.get("lprice", "0") or "0")
-        hprice = int(item.get("hprice", "0") or "0")
-        image = item.get("image", "")
-
-        # 카테고리 조합
-        categories = []
-        for i in range(1, 5):
-            cat = item.get(f"category{i}", "")
-            if cat:
-                categories.append(cat)
-        category_str = " > ".join(categories)
-
-        return {
-            "siteProductId": str(product_id),
-            "name": title,
-            "brand": item.get("brand", "") or item.get("maker", ""),
-            "mallName": item.get("mallName", ""),
-            "originalPrice": hprice if hprice > 0 else lprice,
-            "salePrice": lprice,
-            "discountRate": (
-                round((1 - lprice / hprice) * 100) if hprice > lprice > 0 else 0
-            ),
-            "thumbnailImageUrl": image,
-            "isSoldOut": False,
-            "productType": item.get("productType", ""),
-            "category": category_str,
-            "category1": item.get("category1", ""),
-            "category2": item.get("category2", ""),
-            "category3": item.get("category3", ""),
-            "category4": item.get("category4", ""),
-            "sourceSite": "NAVERSTORE",
-            "sourceUrl": link,
-            "collectedAt": now_iso,
-        }
-
-    async def _search_html_fallback(
-        self, keyword: str, page: int = 1, size: int = 40
-    ) -> list[dict[str, Any]]:
-        """네이버 API 키가 없을 때 HTML 파싱 폴백.
-
-        네이버 쇼핑 검색 페이지를 직접 요청하여 파싱한다.
-        """
-        search_url = (
-            f"https://search.shopping.naver.com/search/all"
-            f"?query={quote(keyword)}&pagingIndex={page}&pagingSize={size}"
-        )
-        logger.info(f'[NAVERSTORE] 검색 폴백 (HTML): "{keyword}"')
-
-        try:
-            async with httpx.AsyncClient(
-                timeout=self._timeout, follow_redirects=True
-            ) as client:
-                resp = await client.get(search_url, headers=self.HEADERS)
-                if resp.status_code != 200:
-                    logger.warning(f"[NAVERSTORE] HTML 폴백 HTTP {resp.status_code}")
-                    return []
-
-            html = resp.text
-            products: list[dict[str, Any]] = []
-            now_iso = datetime.now(tz=timezone.utc).isoformat()
-
-            # __NEXT_DATA__ JSON에서 상품 데이터 추출 시도
-            next_data_match = re.search(
-                r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>',
-                html,
-                re.DOTALL,
-            )
-            if next_data_match:
-                import json
-
-                try:
-                    next_data = json.loads(next_data_match.group(1))
-                    items = (
-                        next_data.get("props", {})
-                        .get("pageProps", {})
-                        .get("initialState", {})
-                        .get("products", {})
-                        .get("list", [])
+                html = resp.text
+                channel_uid = self._parse_channel_uid(html)
+                if channel_uid:
+                    self._uid_cache[store_name] = channel_uid
+                    logger.info(
+                        f"[NAVERSTORE] channelUid 확인: {store_name} -> {channel_uid}"
                     )
-                    for item_wrapper in items:
-                        item = item_wrapper.get("item", item_wrapper)
-                        product_id = str(
-                            item.get("id", "") or item.get("productId", "")
-                        )
-                        if not product_id:
-                            continue
-
-                        title = item.get("productTitle", "") or item.get("title", "")
-                        title = re.sub(r"</?b>", "", title)
-
-                        products.append(
-                            {
-                                "siteProductId": product_id,
-                                "name": title,
-                                "brand": item.get("brand", ""),
-                                "mallName": item.get("mallName", ""),
-                                "originalPrice": item.get("price", 0),
-                                "salePrice": item.get("lowPrice", 0)
-                                or item.get("price", 0),
-                                "thumbnailImageUrl": item.get("imageUrl", ""),
-                                "isSoldOut": False,
-                                "sourceSite": "NAVERSTORE",
-                                "sourceUrl": item.get("crUrl", "")
-                                or item.get("productUrl", ""),
-                                "collectedAt": now_iso,
-                            }
-                        )
-                except (json.JSONDecodeError, KeyError) as e:
-                    logger.warning(f"[NAVERSTORE] __NEXT_DATA__ 파싱 실패: {e}")
-
-            logger.info(
-                f'[NAVERSTORE] HTML 폴백 완료: "{keyword}" -> {len(products)}개'
-            )
-            return products
+                return channel_uid
 
         except Exception as e:
-            logger.error(f"[NAVERSTORE] HTML 폴백 실패: {keyword} — {e}")
-            return []
-
-    # ------------------------------------------------------------------
-    # 상세 조회
-    # ------------------------------------------------------------------
-
-    async def get_product_detail(self, product_url_or_id: str) -> dict[str, Any]:
-        """네이버스토어 상품 상세 정보 조회.
-
-        스마트스토어/브랜드스토어 상품 페이지를 HTTP로 요청 후
-        __NEXT_DATA__ 또는 메타 태그에서 데이터를 추출한다.
-
-        Args:
-          product_url_or_id: 상품 URL 또는 상품 ID
-            - URL: https://smartstore.naver.com/store/products/ID
-            - URL: https://brand.naver.com/store/products/ID
-            - ID: 숫자 문자열 (네이버쇼핑 productId)
-
-        Returns:
-          표준 상품 상세 dict
-        """
-        # URL인지 ID인지 판별
-        if product_url_or_id.startswith("http"):
-            url = product_url_or_id
-        else:
-            # ID만 있으면 네이버쇼핑 상품 페이지로 이동
-            url = f"https://search.shopping.naver.com/product/{product_url_or_id}"
-
-        logger.info(f"[NAVERSTORE] 상세 조회: {url}")
-
-        try:
-            async with httpx.AsyncClient(
-                timeout=self._timeout, follow_redirects=True
-            ) as client:
-                resp = await client.get(url, headers=self.HEADERS)
-                if resp.status_code != 200:
-                    logger.warning(f"[NAVERSTORE] 상세 페이지 HTTP {resp.status_code}")
-                    return {}
-
-            html = resp.text
-            now_iso = datetime.now(tz=timezone.utc).isoformat()
-
-            # __NEXT_DATA__에서 상세 데이터 추출 시도
-            detail = self._parse_next_data_detail(html, now_iso)
-            if detail:
-                return detail
-
-            # 메타 태그 폴백
-            return self._parse_meta_detail(html, url, now_iso)
-
-        except httpx.TimeoutException:
-            logger.error(f"[NAVERSTORE] 상세 조회 타임아웃: {product_url_or_id}")
-            return {}
-        except Exception as e:
-            logger.error(f"[NAVERSTORE] 상세 조회 실패: {product_url_or_id} — {e}")
-            return {}
-
-    def _parse_next_data_detail(
-        self, html: str, now_iso: str
-    ) -> Optional[dict[str, Any]]:
-        """__NEXT_DATA__ JSON에서 상품 상세 데이터 추출."""
-        import json
-
-        next_data_match = re.search(
-            r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>',
-            html,
-            re.DOTALL,
-        )
-        if not next_data_match:
+            logger.error(f"[NAVERSTORE] channelUid 조회 실패: {store_name} — {e}")
             return None
 
-        try:
-            next_data = json.loads(next_data_match.group(1))
-            page_props = next_data.get("props", {}).get("pageProps", {})
-
-            # 스마트스토어 상품 페이지 구조
-            product = (
-                page_props.get("product")
-                or page_props.get("initialState", {}).get("product", {}).get("A", {})
-                or {}
-            )
-
-            if not product:
-                return None
-
-            product_id = str(product.get("id", "") or product.get("productNo", ""))
-            name = product.get("name", "") or product.get("productName", "")
-            if not name:
-                return None
-
-            # 가격 정보
-            sale_price = (
-                product.get("salePrice", 0)
-                or product.get("discountedSalePrice", 0)
-                or product.get("price", 0)
-            )
-            original_price = product.get("originalPrice", 0) or product.get("price", 0)
-            if original_price == 0:
-                original_price = sale_price
-
-            # 이미지
-            images: list[str] = []
-            representative_image = product.get("representativeImage", {})
-            if isinstance(representative_image, dict):
-                img_url = representative_image.get("url", "")
-                if img_url:
-                    images.append(img_url)
-            elif isinstance(representative_image, str) and representative_image:
-                images.append(representative_image)
-
-            # 추가 이미지
-            for img in product.get("images", []):
-                img_url = img.get("url", "") if isinstance(img, dict) else str(img)
-                if img_url and img_url not in images:
-                    images.append(img_url)
-
-            # 옵션
-            options: list[dict[str, Any]] = []
-            option_combinations = product.get("optionCombinations", [])
-            for opt in option_combinations:
-                opt_name_parts = []
-                for key in ["optionName1", "optionName2", "optionName3"]:
-                    val = opt.get(key, "")
-                    if val:
-                        opt_name_parts.append(val)
-                opt_name = (
-                    " / ".join(opt_name_parts)
-                    if opt_name_parts
-                    else opt.get("name", "")
-                )
-
-                options.append(
-                    {
-                        "name": opt_name,
-                        "price": opt.get("price", 0) or opt.get("stockPrice", 0),
-                        "stock": opt.get("stockQuantity", 0),
-                        "isSoldOut": opt.get("soldout", False)
-                        or opt.get("usable", True) is False,
-                    }
-                )
-
-            # 카테고리
-            category_info = product.get("category", {})
-            category_str = ""
-            if isinstance(category_info, dict):
-                cat_parts = []
-                for key in ["wholeCategoryName", "categoryName"]:
-                    if category_info.get(key):
-                        category_str = category_info[key]
-                        break
-                if not category_str:
-                    for key in [
-                        "category1Name",
-                        "category2Name",
-                        "category3Name",
-                        "category4Name",
-                    ]:
-                        val = category_info.get(key, "")
-                        if val:
-                            cat_parts.append(val)
-                    category_str = " > ".join(cat_parts)
-
-            # 브랜드
-            brand = (
-                product.get("brand", {}).get("name", "")
-                if isinstance(product.get("brand"), dict)
-                else product.get("brand", "")
-            )
-
-            # 상세 이미지
-            detail_images: list[str] = []
-            detail_content = product.get("detailContent", "")
-            if detail_content:
-                img_matches = re.findall(r'<img[^>]+src="([^"]+)"', detail_content)
-                detail_images = [img for img in img_matches if img.startswith("http")]
-
-            thumbnail = images[0] if images else ""
-            is_sold_out = product.get("saleStatus", "") == "OUTOFSTOCK" or product.get(
-                "soldout", False
-            )
-
-            return {
-                "siteProductId": product_id,
-                "name": name,
-                "brand": brand,
-                "originalPrice": original_price,
-                "salePrice": sale_price,
-                "discountRate": (
-                    round((1 - sale_price / original_price) * 100)
-                    if original_price > sale_price > 0
-                    else 0
-                ),
-                "thumbnailImageUrl": thumbnail,
-                "images": images,
-                "detailImages": detail_images,
-                "category": category_str,
-                "options": options,
-                "isSoldOut": is_sold_out,
-                "sourceSite": "NAVERSTORE",
-                "sourceUrl": "",
-                "collectedAt": now_iso,
-                "updatedAt": now_iso,
-            }
-
-        except (json.JSONDecodeError, KeyError, TypeError) as e:
-            logger.warning(f"[NAVERSTORE] __NEXT_DATA__ 파싱 실패: {e}")
-            return None
-
-    def _parse_meta_detail(self, html: str, url: str, now_iso: str) -> dict[str, Any]:
-        """메타 태그에서 기본 상품 정보 추출 (폴백)."""
-        name = self._extract_meta(html, "og:title") or ""
-        image = self._extract_meta(html, "og:image") or ""
-        description = self._extract_meta(html, "og:description") or ""
-
-        # 가격 추출
-        sale_price = 0
-        price_meta = self._extract_meta(html, "product:price:amount")
-        if price_meta:
-            sale_price = int(re.sub(r"[^\d]", "", price_meta) or "0")
-
-        # URL에서 상품 ID 추출
-        product_id = ""
-        id_match = re.search(r"/products/(\d+)", url)
-        if id_match:
-            product_id = id_match.group(1)
-
-        return {
-            "siteProductId": product_id,
-            "name": name,
-            "brand": "",
-            "originalPrice": sale_price,
-            "salePrice": sale_price,
-            "discountRate": 0,
-            "thumbnailImageUrl": image,
-            "images": [image] if image else [],
-            "detailImages": [],
-            "description": description,
-            "category": "",
-            "options": [],
-            "isSoldOut": False,
-            "sourceSite": "NAVERSTORE",
-            "sourceUrl": url,
-            "collectedAt": now_iso,
-            "updatedAt": now_iso,
-        }
-
-    # ------------------------------------------------------------------
-    # 내부 헬퍼
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _extract_meta(html: str, prop: str) -> Optional[str]:
-        """og/product 메타 태그에서 content 추출."""
-        pattern = (
-            rf'<meta[^>]+(?:property|name)="{re.escape(prop)}"[^>]+content="([^"]*)"'
-        )
-        m = re.search(pattern, html, re.IGNORECASE)
+    def _parse_channel_uid(self, html: str) -> Optional[str]:
+        """HTML의 __PRELOADED_STATE__에서 channelUid를 추출."""
+        # channelUid 패턴: 영숫자 21자리
+        m = re.search(r'"channelUid"\s*:\s*"([a-zA-Z0-9]{15,30})"', html)
         if m:
             return m.group(1)
-        # content가 먼저 오는 경우
-        pattern2 = (
-            rf'<meta[^>]+content="([^"]*)"[^>]+(?:property|name)="{re.escape(prop)}"'
-        )
-        m2 = re.search(pattern2, html, re.IGNORECASE)
-        return m2.group(1) if m2 else None
+
+        # __PRELOADED_STATE__ JSON 파싱 시도
+        state_match = re.search(r"window\.__PRELOADED_STATE__\s*=\s*", html)
+        if state_match:
+            start = state_match.end()
+            end = html.find(";</script>", start)
+            if end > start:
+                raw = html[start:end]
+                raw = re.sub(r"\bundefined\b", "null", raw)
+                try:
+                    decoder = json.JSONDecoder()
+                    data, _ = decoder.raw_decode(raw)
+                    # channel 정보에서 channelUid 추출
+                    channel = data.get("channel", {})
+                    if isinstance(channel, dict):
+                        uid = channel.get("channelUid")
+                        if uid:
+                            return uid
+                    # simpleProductForDetailPage에서 추출
+                    spd = data.get("simpleProductForDetailPage", {}).get("A", {})
+                    ch = spd.get("channel", {})
+                    if isinstance(ch, dict):
+                        uid = ch.get("channelUid")
+                        if uid:
+                            return uid
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
+        return None
+
+    # ------------------------------------------------------------------
+    # URL → 스토어명/카테고리명 파싱 (UI 표시용)
+    # ------------------------------------------------------------------
+
+    async def resolve_url_info(self, store_url: str) -> dict[str, str]:
+        """URL에서 스토어명 + 카테고리 표시명 추출.
+
+        Returns:
+            {"storeName": "coming", "categoryName": "전체상품" | "스니커즈" | ...}
+
+        우선순위: HTML <title> 파싱 → JSON 스코프 매칭 → 메타 API → fallback.
+        title 파싱이 UUID/숫자 카테고리 모두 가장 안정적(리프 카테고리명 추출).
+        BBLUE처럼 <title>이 스토어명 단독인 스토어는 JSON 스코프 매칭으로 fallback.
+        JSON 스코프에서는 스토어 메뉴 카테고리명(name/categoryName)만 사용 —
+        wholeCategoryName은 네이버 표준 카테고리 전체경로라 제외.
+        """
+        store_name = self._extract_store_name(store_url) or ""
+        category_id = self._extract_category_id(store_url)
+
+        # 카테고리 없음 → 전체상품
+        if not category_id:
+            return {"storeName": store_name, "categoryName": "전체상품"}
+
+        from curl_cffi.requests import AsyncSession
+
+        # HTML 한 번만 받아서 1)/2) 둘 다 시도
+        html = ""
+        try:
+            html_url = f"{self.BASE_URL}/{store_name}/category/{category_id}?cp=1"
+            async with AsyncSession(
+                timeout=self._timeout,
+                proxies=self._build_proxies(),
+                impersonate="chrome",
+            ) as session:
+                r = await session.get(html_url, headers=self.HTML_HEADERS)
+                if r.status_code == 200:
+                    html = r.text
+        except Exception as e:
+            logger.warning(f"[NAVERSTORE] HTML fetch 실패: {e}")
+
+        # 1) HTML <title> 파싱 — UUID/숫자 카테고리 모두 가장 안정적
+        #    전형 포맷 예: "스니커즈 : gaia2937 - 네이버 스마트스토어"
+        title_is_store_only = False
+        if html:
+            try:
+                m = re.search(r"<title>([^<]+)</title>", html)
+                if m:
+                    title = m.group(1).strip()
+                    for sep in [" : ", " - ", " | "]:
+                        if sep in title:
+                            candidate = title.split(sep)[0].strip()
+                            if (
+                                candidate
+                                and candidate != store_name
+                                and "네이버" not in candidate
+                                and "스마트스토어" not in candidate
+                                and "브랜드스토어" not in candidate
+                            ):
+                                return {
+                                    "storeName": store_name,
+                                    "categoryName": candidate,
+                                }
+                    # 구분자 없고 store_name만 있는 경우 → JSON 스코프 매칭으로 넘김
+                    if title.strip() == store_name:
+                        title_is_store_only = True
+            except Exception as e:
+                logger.warning(f"[NAVERSTORE] <title> 파싱 실패: {e}")
+
+        # 2) JSON 스코프 매칭 fallback — BBLUE처럼 title이 스토어명 단독인 케이스
+        #    HTML 내 카테고리 정보는 `"name":"...","categoryId":"<id>",...,` 형태.
+        #    스토어 메뉴 카테고리명만 추출 (wholeCategoryName은 네이버 표준 카테고리라 제외).
+        if html:
+            try:
+                cid_pattern = rf'"categoryId"\s*:\s*"{re.escape(category_id)}"'
+                cat_name = ""
+                for m in re.finditer(cid_pattern, html):
+                    scope_start = max(0, m.start() - 400)
+                    scope_end = min(len(html), m.end() + 400)
+                    scope = html[scope_start:scope_end]
+                    for field in ("name", "categoryName"):
+                        fm = re.search(rf'"{field}"\s*:\s*"([^"]+)"', scope)
+                        if fm:
+                            raw_name = fm.group(1)
+                            try:
+                                decoded = json.loads(f'"{raw_name}"')
+                            except Exception:
+                                decoded = raw_name
+                            decoded = decoded.strip()
+                            if decoded and decoded != store_name:
+                                cat_name = decoded
+                                break
+                    if cat_name:
+                        break
+                if cat_name:
+                    return {"storeName": store_name, "categoryName": cat_name}
+            except Exception as e:
+                logger.warning(f"[NAVERSTORE] JSON 스코프 매칭 실패: {e}")
+
+        # title이 스토어명 단독이었고 JSON 스코프도 못 찾으면 "전체상품"
+        if title_is_store_only:
+            return {"storeName": store_name, "categoryName": "전체상품"}
+
+        # 2) 메타 API fallback
+        channel_uid = await self.resolve_channel_uid(store_url)
+        if channel_uid:
+            meta_url = (
+                f"{self.BASE_URL}/i/v2/channels/{channel_uid}"
+                f"/categories/{category_id}?categoryDisplayType=DISPLAY"
+            )
+            referer = f"{self.BASE_URL}/{store_name}/category/{category_id}"
+            try:
+                async with AsyncSession(
+                    timeout=self._timeout,
+                    proxies=self._build_proxies(),
+                    impersonate="chrome",
+                ) as session:
+                    resp = await session.get(
+                        meta_url,
+                        headers={**self.HEADERS, "Referer": referer},
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json() or {}
+                        cat_name = (
+                            data.get("name")
+                            or data.get("displayName")
+                            or data.get("categoryName")
+                            or data.get("title")
+                            or ""
+                        )
+                        if not cat_name:
+                            info = (
+                                data.get("categoryInfo") or data.get("category") or {}
+                            )
+                            if isinstance(info, dict):
+                                cat_name = (
+                                    info.get("name")
+                                    or info.get("displayName")
+                                    or info.get("categoryName")
+                                    or ""
+                                )
+                        if cat_name:
+                            return {"storeName": store_name, "categoryName": cat_name}
+            except Exception as e:
+                logger.warning(f"[NAVERSTORE] 메타 API 카테고리명 조회 실패: {e}")
+
+        # 3) 최후 fallback
+        return {"storeName": store_name, "categoryName": category_id[:8]}
+
+    # ------------------------------------------------------------------
+    # 헬퍼
+    # ------------------------------------------------------------------
+
+    def _uid_cache_reverse(self, channel_uid: str) -> str:
+        """channelUid로 store_name 역조회."""
+        for name, uid in self._uid_cache.items():
+            if uid == channel_uid:
+                return name
+        return ""
+
+    @staticmethod
+    def _extract_store_name(url: str) -> Optional[str]:
+        """URL에서 스토어명 추출."""
+        m = re.search(r"(?:smartstore|brand)\.naver\.com/([a-zA-Z0-9_-]+)", url)
+        return m.group(1) if m else None
+
+    @staticmethod
+    def _extract_category_id(url: str) -> Optional[str]:
+        """URL에서 카테고리 ID 추출. 없으면 None (전체 상품)."""
+        m = re.search(r"/category/(\w{8,})", url)
+        return m.group(1) if m else None
+
+    @staticmethod
+    def _extract_product_id(url: str) -> Optional[str]:
+        """URL에서 상품 ID 추출."""
+        m = re.search(r"/products/(\d+)", url)
+        return m.group(1) if m else None
