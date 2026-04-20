@@ -95,23 +95,35 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
         return name_set, key_set
 
     async def find_duplicates(
-        self, tenant_id, source_site: str | None = None, brand: str | None = None
+        self,
+        tenant_id,
+        source_site: str | None = None,
+        filter_ids: list[str] | None = None,
     ) -> list:
         """동일 name이 2개 이상이며 그 중 마켓 등록 상품이 포함된 그룹 전체 반환.
-        source_site 지정 시 해당 소싱처만 대상. brand 지정 시 해당 브랜드만 대상.
+        filter_ids 지정 시 해당 search_filter_id 상품만 대상 (드릴 컨텍스트 정밀 필터).
+        source_site 지정 시 해당 소싱처만 대상 (filter_ids 없을 때 사용).
         """
         from sqlalchemy import cast, func, String
 
         tf = self._tenant_filter(tenant_id)
-        sc = [SambaCollectedProduct.source_site == source_site] if source_site else []
-        bc = [SambaCollectedProduct.brand == brand] if brand else []
+        if filter_ids:
+            fc: list = [SambaCollectedProduct.search_filter_id.in_(filter_ids)]
+            sc: list = []
+        else:
+            fc = []
+            sc = (
+                [SambaCollectedProduct.source_site == source_site]
+                if source_site
+                else []
+            )
 
         registered_names_sq = (
             select(SambaCollectedProduct.name)
             .where(
                 tf,
                 *sc,
-                *bc,
+                *fc,
                 SambaCollectedProduct.registered_accounts.isnot(None),
                 cast(SambaCollectedProduct.registered_accounts, String) != "null",
                 cast(SambaCollectedProduct.registered_accounts, String) != "[]",
@@ -124,7 +136,7 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
             .where(
                 tf,
                 *sc,
-                *bc,
+                *fc,
                 SambaCollectedProduct.name.in_(select(registered_names_sq.c.name)),
             )
             .group_by(SambaCollectedProduct.name)
@@ -136,7 +148,7 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
             .where(
                 tf,
                 *sc,
-                *bc,
+                *fc,
                 SambaCollectedProduct.name.in_(select(dup_names_sq.c.name)),
             )
             .order_by(

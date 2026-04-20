@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Index, String
+from sqlalchemy import Index, String, text
 from sqlmodel import Column, DateTime, Field, SQLModel, Text
 
 from ulid import ULID
@@ -28,6 +28,16 @@ class SambaOrder(SQLModel, table=True):
     __tablename__ = "samba_order"
     __table_args__ = (
         Index("uq_order_tenant_number", "tenant_id", "order_number", unique=True),
+        Index(
+            "ix_samba_order_lotteon_line",
+            "tenant_id",
+            "channel_id",
+            "od_no",
+            "od_seq",
+            "proc_seq",
+            unique=True,
+            postgresql_where=text("source = 'lotteon'"),
+        ),
     )
 
     id: str = Field(
@@ -146,6 +156,12 @@ class SambaOrder(SQLModel, table=True):
     action_tag: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)
     )
+
+    # 롯데ON 라인 키 (동일 주문 내 다른 옵션 식별)
+    od_no: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    od_seq: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    proc_seq: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    sitm_no: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
     # 출처
     source: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))

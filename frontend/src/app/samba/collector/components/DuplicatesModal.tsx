@@ -34,12 +34,12 @@ type DuplicateGroup = {
 interface DuplicatesModalProps {
   open: boolean
   sourceSite?: string
-  brand?: string
+  filterIds?: string[]
   onClose: () => void
   onDeleted: () => void
 }
 
-export default function DuplicatesModal({ open, sourceSite, brand, onClose, onDeleted }: DuplicatesModalProps) {
+export default function DuplicatesModal({ open, sourceSite, filterIds, onClose, onDeleted }: DuplicatesModalProps) {
   const [groups, setGroups] = useState<DuplicateGroup[]>([])
   const [loading, setLoading] = useState(false)
   const [checked, setChecked] = useState<Set<string>>(new Set())
@@ -51,7 +51,7 @@ export default function DuplicatesModal({ open, sourceSite, brand, onClose, onDe
   const load = async () => {
     setLoading(true)
     try {
-      const res = await collectorApi.getDuplicates(sourceSite, brand)
+      const res = await collectorApi.getDuplicates(sourceSite, filterIds)
       setGroups(res.groups)
       setChecked(new Set(res.groups.flatMap(g => g.duplicates.map(d => d.id))))
       setLoaded(true)
@@ -60,14 +60,14 @@ export default function DuplicatesModal({ open, sourceSite, brand, onClose, onDe
     }
   }
 
-  // 모달 열릴 때 또는 sourceSite/brand 변경 시 자동 조회
+  // 모달 열릴 때 또는 sourceSite/filterIds 변경 시 자동 조회
   useEffect(() => {
     if (open) {
       setLoaded(false)
       load()
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, sourceSite, brand])
+  }, [open, sourceSite, filterIds])
 
   if (!open) return null
 

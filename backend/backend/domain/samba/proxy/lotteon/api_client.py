@@ -1476,6 +1476,8 @@ class LotteonClient:
         quantity: int,
         shipping_company: str,
         tracking_number: str,
+        od_seq: str = "1",
+        proc_seq: str = "1",
     ) -> bool:
         """발송처리 + 송장번호 등록 (SellerDeliveryProgressStateInform, odPrgsStepCd=13)."""
         KST = timezone(timedelta(hours=9))
@@ -1488,8 +1490,8 @@ class LotteonClient:
                 {
                     "dvRtrvDvsCd": "DV",
                     "odNo": od_no,
-                    "odSeq": "1",
-                    "procSeq": "1",
+                    "odSeq": od_seq,
+                    "procSeq": proc_seq,
                     "orglProcSeq": "",
                     "clmNo": "",
                     "odPrgsStepCd": "13",
@@ -1870,6 +1872,8 @@ class LotteonClient:
         quantity: int,
         shipping_company: str,
         tracking_number: str,
+        od_seq: str = "1",
+        proc_seq: str = "1",
     ) -> bool:
         """교환 재배송 처리 (SellerDeliveryProgressStateInform, odPrgsStepCd=13, clmNo 포함)."""
         KST = timezone(timedelta(hours=9))
@@ -1881,8 +1885,8 @@ class LotteonClient:
                 {
                     "dvRtrvDvsCd": "DV",
                     "odNo": od_no,
-                    "odSeq": "1",
-                    "procSeq": "1",
+                    "odSeq": od_seq,
+                    "procSeq": proc_seq,
                     "orglProcSeq": "",
                     "clmNo": clm_no,
                     "odPrgsStepCd": "13",

@@ -678,7 +678,7 @@ async def seller_cancel(
         try:
             await client.test_auth()
             success, message = await client.seller_cancel_order(
-                od_no=order.order_number,
+                od_no=order.od_no or order.order_number,
                 reason_code=body.reason_code,
                 reason_text=body.reason_text or "고객변심",
             )
@@ -779,7 +779,13 @@ async def confirm_order(
         try:
             await client.test_auth()
             ok = await client.confirm_orders(
-                [{"odNo": order.order_number, "odSeq": 1, "procSeq": 1}]
+                [
+                    {
+                        "odNo": order.od_no or order.order_number,
+                        "odSeq": int(order.od_seq or 1),
+                        "procSeq": int(order.proc_seq or 1),
+                    }
+                ]
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"주문확인 실패: {e}")
@@ -1065,7 +1071,7 @@ async def exchange_action(
         try:
             exchange_claims = await client.get_exchanges(days=30)
             for claim in exchange_claims:
-                if str(claim.get("odNo", "")) == str(order.order_number):
+                if str(claim.get("odNo", "")) == str(order.od_no or order.order_number):
                     if not clm_no:
                         clm_no = claim.get("clmNo", "")
                     found_claim = claim
@@ -1097,11 +1103,11 @@ async def exchange_action(
                 clm_rsn_cd = str(found_claim.get("clmRsnCd", "204"))
                 try:
                     approved = await client.approve_exchange(
-                        od_no=order.order_number,
+                        od_no=order.od_no or order.order_number,
                         clm_no=clm_no,
                         items=[
                             {
-                                "odSeq": 1,
+                                "odSeq": int(order.od_seq or 1),
                                 "procSeq": int(proc_seq),
                                 "orglProcSeq": int(orgl_proc_seq),
                                 "slrRsnCd": clm_rsn_cd,
@@ -1115,7 +1121,9 @@ async def exchange_action(
 
             try:
                 sent = await client.ship_order_exchange(
-                    od_no=order.order_number,
+                    od_no=order.od_no or order.order_number,
+                    od_seq=order.od_seq or "1",
+                    proc_seq=order.proc_seq or "1",
                     sitm_no=sitm_no,
                     spd_no=spd_no,
                     clm_no=clm_no,
@@ -1322,9 +1330,8 @@ async def return_action(
             if body.action == "approve":
                 # 반품 클레임 목록에서 해당 주문 item 조회
                 raw_returns = await client.get_returns(days=30)
-                claim_items = [
-                    i for i in raw_returns if i.get("odNo") == order.order_number
-                ]
+                _lo_od_no = order.od_no or order.order_number
+                claim_items = [i for i in raw_returns if i.get("odNo") == _lo_od_no]
                 if not claim_items:
                     raise HTTPException(
                         status_code=400,
@@ -1346,10 +1353,10 @@ async def return_action(
                         "sitmNm": ci.get("sitmNm", ""),
                     }
                 ]
-                await client.approve_return(order.order_number, clm_no, items_payload)
+                await client.approve_return(_lo_od_no, clm_no, items_payload)
                 new_status = "반품승인"
             elif body.action == "reject":
-                await client.reject_return(order.order_number, body.reason or "")
+                await client.reject_return(_lo_od_no, body.reason or "")
                 new_status = "반품거부"
             else:
                 raise HTTPException(
@@ -1458,8 +1465,10 @@ async def ship_order(
                     client = LotteonClient(config["apiKey"])
                     await client.test_auth()
                     sent = await client.ship_order(
-                        od_no=order.order_number,
-                        sitm_no=order.shipment_id or order.order_number,
+                        od_no=order.od_no or order.order_number,
+                        od_seq=order.od_seq or "1",
+                        proc_seq=order.proc_seq or "1",
+                        sitm_no=order.sitm_no or order.shipment_id or "",
                         spd_no=order.product_id or "",
                         quantity=order.quantity or 1,
                         shipping_company=body.shipping_company,
@@ -1919,7 +1928,8 @@ async def sync_orders_from_markets(
                             )
                             found_in_data = False
                             for od in orders_data:
-                                if od.get("order_number") == ex_od_no:
+                                # order_number는 합성키(odNo_odSeq_procSeq)이므로 od_no로 비교
+                                if od.get("od_no") == ex_od_no:
                                     cur_status = od.get("shipping_status", "")
                                     cur_p = exchange_priority.get(cur_status, 0)
                                     new_p = exchange_priority.get(ex_status, 0)
@@ -1930,8 +1940,18 @@ async def sync_orders_from_markets(
                                     found_in_data = True
                                     break
                             if not found_in_data and ex_od_no:
-                                existing = await svc.repo.find_by_async(
-                                    order_number=ex_od_no
+                                from sqlalchemy import text as _sa_text_ex
+
+                                _ex_row = await session.execute(
+                                    _sa_text_ex(
+                                        "SELECT id FROM samba_order "
+                                        "WHERE source = 'lotteon' AND od_no = :od_no LIMIT 1"
+                                    ),
+                                    {"od_no": ex_od_no},
+                                )
+                                _ex_id = (_ex_row.fetchone() or [None])[0]
+                                existing = (
+                                    await svc.repo.get_async(_ex_id) if _ex_id else None
                                 )
                                 if existing:
                                     cur_p = exchange_priority.get(
@@ -2165,10 +2185,33 @@ async def sync_orders_from_markets(
                                 order_data["source_url"] = (
                                     f"https://www.musinsa.com/products/{_sid}"
                                 )
-                # order_number 기준 중복 체크 + shipment_id 기반 2차 체크 (발주확인 후 productOrderId 변경 대응)
-                existing = await svc.repo.find_by_async(
-                    order_number=order_data["order_number"]
-                )
+                # 중복 체크: 롯데ON은 od_no+od_seq+proc_seq 기반, 기타는 order_number 기반
+                if order_data.get("source") == "lotteon" and order_data.get("od_no"):
+                    _lo_row = await session.execute(
+                        _sa_text(
+                            "SELECT id FROM samba_order "
+                            "WHERE source = 'lotteon' "
+                            "AND tenant_id IS NOT DISTINCT FROM :tid "
+                            "AND channel_id = :cid "
+                            "AND od_no = :od_no "
+                            "AND od_seq = :od_seq "
+                            "AND proc_seq = :proc_seq "
+                            "LIMIT 1"
+                        ),
+                        {
+                            "tid": order_data.get("tenant_id"),
+                            "cid": order_data.get("channel_id"),
+                            "od_no": order_data["od_no"],
+                            "od_seq": order_data.get("od_seq", "1"),
+                            "proc_seq": order_data.get("proc_seq", "1"),
+                        },
+                    )
+                    _lo_id = (_lo_row.fetchone() or [None])[0]
+                    existing = await svc.repo.get_async(_lo_id) if _lo_id else None
+                else:
+                    existing = await svc.repo.find_by_async(
+                        order_number=order_data["order_number"]
+                    )
                 if (
                     not existing
                     and order_data.get("shipment_id")
@@ -2752,12 +2795,22 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
     addr2 = item.get("dvpStnmDtlAddr") or ""
     full_addr = f"{addr1} {addr2}".strip()
 
+    _od_no = str(item.get("odNo", "") or "")
+    _od_seq = str(item.get("odSeq", "1") or "1")
+    _proc_seq = str(item.get("procSeq", "1") or "1")
+    _sitm_no = str(item.get("sitmNo", "") or "")
+
     return {
         "channel_id": account_id,
         "channel_name": label,
         "source": "lotteon",
-        "order_number": str(item.get("odNo", "")),
-        "shipment_id": str(item.get("sitmNo", "") or ""),
+        # 합성 키: 동일 odNo 내 다른 옵션(odSeq)을 구분하기 위해 _odSeq_procSeq 접미사
+        "order_number": f"{_od_no}_{_od_seq}_{_proc_seq}" if _od_no else "",
+        "od_no": _od_no,
+        "od_seq": _od_seq,
+        "proc_seq": _proc_seq,
+        "sitm_no": _sitm_no,
+        "shipment_id": _sitm_no,
         "product_id": str(item.get("spdNo", "") or ""),
         "product_name": item.get("spdNm", "") or "",
         "product_option": item.get("sitmNm", "") or "",

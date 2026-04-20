@@ -542,9 +542,19 @@ async def brand_scan(
         return await plugin.scan_categories(keyword)
 
     if body.source_site == "SSG":
+        from backend.api.v1.routers.samba.proxy._helpers import _get_setting
         from backend.domain.samba.job.worker import _add_collect_log
         from backend.domain.samba.plugins.sourcing.ssg import SSGPlugin
 
+        # 수집 용도 활성 프록시 URL 목록 조회
+        _proxy_cfg = await _get_setting(session, "proxy_config") or []
+        _proxy_list = [
+            p["url"]
+            for p in _proxy_cfg
+            if p.get("enabled")
+            and "collect" in (p.get("purposes") or [])
+            and p.get("url")
+        ]
         plugin = SSGPlugin()
         selected = body.selected_brands or [keyword]
         return await plugin.scan_categories(
@@ -553,6 +563,7 @@ async def brand_scan(
             brand_ids=body.brand_ids or None,
             brand_total=body.brand_total,
             log_fn=_add_collect_log,
+            proxy_urls=_proxy_list or None,
         )
 
     if body.source_site == "FashionPlus":

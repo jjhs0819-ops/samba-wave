@@ -161,14 +161,15 @@ class BulkTagUpdateRequest(BaseModel):
 async def get_duplicate_products(
     request: Request,
     source_site: Optional[str] = Query(None),
-    brand: Optional[str] = Query(None),
+    filter_ids: Optional[str] = Query(None),
     session: AsyncSession = Depends(get_read_session_dependency),
     tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     """마켓 등록 상품과 동일 원상품명인 중복 상품 그룹 반환."""
     svc = _get_services(session)
+    parsed_filter_ids = filter_ids.split(",") if filter_ids else None
     groups = await svc.get_duplicate_products(
-        tenant_id=tenant_id, source_site=source_site, brand=brand
+        tenant_id=tenant_id, source_site=source_site, filter_ids=parsed_filter_ids
     )
     return {"groups": groups, "total": len(groups)}
 

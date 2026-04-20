@@ -222,9 +222,9 @@ export default function CollectorPage() {
     }, 50);
   }, []);
 
-  // 수집 로그 링 버퍼 폴링 (서버 로그 — collecting 시작 즉시 폴링)
+  // 수집 로그 링 버퍼 폴링 (서버 로그 — collecting 또는 brandScanning 시 폴링)
   useEffect(() => {
-    if (!collecting) return
+    if (!collecting && !brandScanning) return
     collectLogPollingRef.current = true
     let checkCount = 0
 
@@ -272,7 +272,7 @@ export default function CollectorPage() {
     const timer = setInterval(doPoll, 500)
     return () => { clearInterval(timer); collectLogPollingRef.current = false }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collecting])
+  }, [collecting, brandScanning])
 
   // 페이지 로드 시 진행 중인 수집 Job 자동 감지 + 로그 복원
   useEffect(() => {
@@ -2640,8 +2640,8 @@ export default function CollectorPage() {
       {/* 중복 상품 모달 */}
       <DuplicatesModal
         open={showDuplicatesModal}
-        sourceSite={drillSite ? tree.find(s => s.id === drillSite)?.source_site : undefined}
-        brand={drillBrand ?? undefined}
+        sourceSite={drillSite && !drillBrand ? tree.find(s => s.id === drillSite)?.source_site : undefined}
+        filterIds={(drillSite || drillBrand) ? displayedFilters.map(f => f.id) : undefined}
         onClose={() => setShowDuplicatesModal(false)}
         onDeleted={() => { load(); loadTree() }}
       />
