@@ -67,7 +67,7 @@ export default function DuplicatesModal({ open, sourceSite, filterIds, onClose, 
       load()
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, sourceSite, filterIds])
+  }, [open, sourceSite, filterIds?.join(',')])
 
   useEffect(() => {
     if (deleting) logEndRef.current?.scrollIntoView({ behavior: 'smooth' })

@@ -618,7 +618,7 @@ class SSGSourcingClient:
                             try:
                                 leaf_url = (
                                     f"{self.SEARCH_URL}?query={quote(keyword)}"
-                                    f"&ctgId={leaf_ctg_id}&page=1"
+                                    f"&ctgId={leaf_ctg_id}&repBrandId={brand_param}&page=1"
                                 )
                                 r = await _leaf_client.get(
                                     leaf_url, headers=self._headers()
@@ -656,7 +656,12 @@ class SSGSourcingClient:
                                     matched = self._extract_matching_brand_ids(
                                         r.text, keyword
                                     )
-                                    if matched:
+                                    # 선택된 brand_ids가 있으면 해당 ID가 직접 포함된 leaf만 확정
+                                    # (나이키스윔/나이키키즈 등 하위브랜드 전용 leaf 제외)
+                                    if matched and (
+                                        not brand_ids
+                                        or any(bid in matched for bid in brand_ids)
+                                    ):
                                         brand_leaf_ids.add(leaf_ctg_id)
                                         logger.debug(
                                             f"[SSG] leaf {leaf_ctg_id} valid "
@@ -695,7 +700,15 @@ class SSGSourcingClient:
 
                     if filtered_leaves:
                         filtered_leaves.sort(key=lambda x: -x["count"])
-                        total = sum(c["count"] for c in filtered_leaves)
+                        raw_total = sum(c["count"] for c in filtered_leaves)
+                        # brand_total로 비율 스케일링 (비브랜드 count 과대계산 보정)
+                        if brand_total > 0 and raw_total > 0:
+                            ratio = brand_total / raw_total
+                            for c in filtered_leaves:
+                                c["count"] = max(1, round(c["count"] * ratio))
+                            total = brand_total
+                        else:
+                            total = raw_total
                         _log(
                             f"[SSG] 카테고리 스캔 완료: "
                             f"{len(filtered_leaves)}개 그룹, {total:,}건"

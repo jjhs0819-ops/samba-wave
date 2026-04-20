@@ -988,6 +988,10 @@ export default function CollectorPage() {
     return result
   }, [filters, siteFilter, drillSite, tree, drillBrand, aiFilter, collectFilter, marketRegFilter, tagRegFilter, policyRegFilter, sortBy])
 
+  // 중복상품 모달 필터: 드릴다운 기준만 사용 (selectedSite 탭은 무관)
+  const _activeSite = drillSite ? tree.find(s => s.id === drillSite)?.source_site : undefined
+  const _modalFilterIds = drillBrand ? displayedFilters.map(f => f.id) : undefined
+
   // 드롭다운 필터 변경 시 drillBrand 활성 상태면 selectedIds를 displayedFilters 기준으로 재동기화
   return (
     <div style={{ color: '#E5E5E5' }}>
@@ -2640,8 +2644,8 @@ export default function CollectorPage() {
       {/* 중복 상품 모달 */}
       <DuplicatesModal
         open={showDuplicatesModal}
-        sourceSite={drillSite && !drillBrand ? tree.find(s => s.id === drillSite)?.source_site : undefined}
-        filterIds={(drillSite || drillBrand) ? displayedFilters.map(f => f.id) : undefined}
+        sourceSite={drillBrand ? undefined : _activeSite}
+        filterIds={_modalFilterIds}
         onClose={() => setShowDuplicatesModal(false)}
         onDeleted={() => { load(); loadTree() }}
       />
