@@ -67,7 +67,14 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
             order_by_desc=True,
         )
 
-    async def get_registered_name_keys(self, tenant_id: str) -> tuple[set, set]:
+    @staticmethod
+    def _tenant_filter(tenant_id):
+        """tenant_id None이면 IS NULL, 있으면 = 조건."""
+        if tenant_id is None:
+            return SambaCollectedProduct.tenant_id.is_(None)
+        return SambaCollectedProduct.tenant_id == tenant_id
+
+    async def get_registered_name_keys(self, tenant_id) -> tuple[set, set]:
         """마켓 등록된 상품의 (name_set, (source_site, site_product_id)_set) 반환."""
         from sqlalchemy import cast, String
 
@@ -76,7 +83,7 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
             SambaCollectedProduct.source_site,
             SambaCollectedProduct.site_product_id,
         ).where(
-            SambaCollectedProduct.tenant_id == tenant_id,
+            self._tenant_filter(tenant_id),
             SambaCollectedProduct.registered_accounts.isnot(None),
             cast(SambaCollectedProduct.registered_accounts, String) != "null",
             cast(SambaCollectedProduct.registered_accounts, String) != "[]",
@@ -87,15 +94,16 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
         key_set = {(r[1], r[2]) for r in rows if r[1] and r[2]}
         return name_set, key_set
 
-    async def find_duplicates(self, tenant_id: str) -> list:
+    async def find_duplicates(self, tenant_id) -> list:
         """동일 name이 2개 이상이며 그 중 마켓 등록 상품이 포함된 그룹 전체 반환."""
         from sqlalchemy import cast, func, String
 
-        # 마켓 등록된 상품이 포함된 name 서브쿼리
+        tf = self._tenant_filter(tenant_id)
+
         registered_names_sq = (
             select(SambaCollectedProduct.name)
             .where(
-                SambaCollectedProduct.tenant_id == tenant_id,
+                tf,
                 SambaCollectedProduct.registered_accounts.isnot(None),
                 cast(SambaCollectedProduct.registered_accounts, String) != "null",
                 cast(SambaCollectedProduct.registered_accounts, String) != "[]",
@@ -103,11 +111,10 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
             .distinct()
         ).subquery()
 
-        # 해당 name 중 2개 이상 존재하는 name만 추출
         dup_names_sq = (
             select(SambaCollectedProduct.name)
             .where(
-                SambaCollectedProduct.tenant_id == tenant_id,
+                tf,
                 SambaCollectedProduct.name.in_(select(registered_names_sq.c.name)),
             )
             .group_by(SambaCollectedProduct.name)
@@ -117,7 +124,7 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
         stmt = (
             select(SambaCollectedProduct)
             .where(
-                SambaCollectedProduct.tenant_id == tenant_id,
+                tf,
                 SambaCollectedProduct.name.in_(select(dup_names_sq.c.name)),
             )
             .order_by(

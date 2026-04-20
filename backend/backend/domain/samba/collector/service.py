@@ -270,13 +270,15 @@ class SambaCollectorService:
         from sqlalchemy.exc import IntegrityError
 
         # 마켓 등록된 상품명 + (source_site, site_product_id) 키 사전 조회
-        tenant_ids = {d.get("tenant_id") for d in items if d.get("tenant_id")}
+        # tenant_id가 None인 경우도 포함 (멀티테넌시 미적용 환경)
+        tenant_ids = {d.get("tenant_id") for d in items}
         registered_names_by_tid: Dict[str, set] = {}
         registered_keys_by_tid: Dict[str, set] = {}
         for tid in tenant_ids:
-            names, keys = await self.product_repo.get_registered_name_keys(str(tid))
-            registered_names_by_tid[str(tid)] = names
-            registered_keys_by_tid[str(tid)] = keys
+            key = str(tid) if tid is not None else "__null__"
+            names, keys = await self.product_repo.get_registered_name_keys(tid)
+            registered_names_by_tid[key] = names
+            registered_keys_by_tid[key] = keys
 
         # 동일 소싱처 내 동일 원 상품명 중복 필터링
         source_site_pairs = {(d.get("tenant_id"), d.get("source_site")) for d in items}
@@ -317,8 +319,9 @@ class SambaCollectorService:
                 # 배치 내 자체 중복 → skip
                 continue
             # 마켓 등록된 상품명 차단: 동일 상품(같은 키) 갱신은 허용
-            reg_names = registered_names_by_tid.get(tid, set())
-            reg_keys = registered_keys_by_tid.get(tid, set())
+            tid_key = tid if tid else "__null__"
+            reg_names = registered_names_by_tid.get(tid_key, set())
+            reg_keys = registered_keys_by_tid.get(tid_key, set())
             if nm in reg_names and (ss, spid) not in reg_keys:
                 continue
             seen_names.add(key)
