@@ -7,7 +7,6 @@ Create Date: 2026-04-20 00:00:00.000000
 
 from typing import Sequence, Union
 
-import sqlalchemy as sa
 from alembic import op
 
 revision: str = "z_lotteon_order_line_keys"
@@ -17,11 +16,11 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # 1단계: 컬럼 추가 (모두 nullable)
-    op.add_column("samba_order", sa.Column("od_no", sa.Text(), nullable=True))
-    op.add_column("samba_order", sa.Column("od_seq", sa.Text(), nullable=True))
-    op.add_column("samba_order", sa.Column("proc_seq", sa.Text(), nullable=True))
-    op.add_column("samba_order", sa.Column("sitm_no", sa.Text(), nullable=True))
+    # 1단계: 컬럼 추가 — IF NOT EXISTS로 재실행 안전
+    op.execute("ALTER TABLE samba_order ADD COLUMN IF NOT EXISTS od_no TEXT")
+    op.execute("ALTER TABLE samba_order ADD COLUMN IF NOT EXISTS od_seq TEXT")
+    op.execute("ALTER TABLE samba_order ADD COLUMN IF NOT EXISTS proc_seq TEXT")
+    op.execute("ALTER TABLE samba_order ADD COLUMN IF NOT EXISTS sitm_no TEXT")
 
     # 2단계: 기존 lotteon 행 backfill (od_no=order_number, od_seq='1', proc_seq='1')
     op.execute("""
@@ -30,14 +29,12 @@ def upgrade() -> None:
         WHERE source = 'lotteon' AND od_no IS NULL
     """)
 
-    # 3단계: partial unique 인덱스 (lotteon 전용)
-    op.create_index(
-        "ix_samba_order_lotteon_line",
-        "samba_order",
-        ["tenant_id", "channel_id", "od_no", "od_seq", "proc_seq"],
-        unique=True,
-        postgresql_where=sa.text("source = 'lotteon'"),
-    )
+    # 3단계: partial unique 인덱스 (lotteon 전용) — IF NOT EXISTS로 재실행 안전
+    op.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_samba_order_lotteon_line
+        ON samba_order (tenant_id, channel_id, od_no, od_seq, proc_seq)
+        WHERE source = 'lotteon'
+    """)
 
 
 def downgrade() -> None:

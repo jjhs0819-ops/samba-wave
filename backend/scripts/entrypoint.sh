@@ -101,6 +101,15 @@ async def fix():
         ''')
         await conn.execute('CREATE INDEX IF NOT EXISTS ix_samba_search_cache_source_site ON samba_search_cache (source_site)')
         await conn.execute('CREATE INDEX IF NOT EXISTS ix_samba_search_cache_tenant_id ON samba_search_cache (tenant_id)')
+        # alembic_version 충돌 수정: 롯데ON 라인키 마이그레이션이 이미 적용된 경우
+        # 39f5332d495f(부모)와 z_lotteon_order_line_keys(자식)가 동시에 존재하면 overlaps 에러 발생
+        await conn.execute("""
+            DELETE FROM alembic_version
+            WHERE version_num = '39f5332d495f'
+              AND EXISTS (
+                SELECT 1 FROM alembic_version WHERE version_num = 'z_lotteon_order_line_keys'
+              )
+        """)
         print('Emergency schema fixes applied.')
     finally:
         await conn.close()
