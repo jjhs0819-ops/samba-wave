@@ -95,6 +95,13 @@ def clear_shipment_logs():
 _collect_log_buffer: deque[str] = deque(maxlen=300)
 _collect_log_total: int = 0
 
+# 수집 잡 컨텍스트 추적 — _add_job_log 호출 시 자동으로 collect 링 버퍼에 추가하기 위함
+from contextvars import ContextVar  # noqa: E402
+
+_current_collect_job_id: ContextVar[str] = ContextVar(
+    "current_collect_job_id", default=""
+)
+
 
 def get_collect_logs(since_idx: int = 0) -> tuple[list[str], int]:
     """수집 로그 링 버퍼 조회 (since_idx 이후). (logs, current_idx) 반환."""
@@ -181,8 +188,11 @@ def _add_job_log(job_id: str, msg: str, job_type: str = ""):
     buf.append(msg)
     if len(buf) > _MAX_JOB_LOGS:
         _job_logs[job_id] = buf[-_MAX_JOB_LOGS:]
-    # 수집/전송 링 버퍼 분기
-    if job_type == "collect":
+    # 수집/전송 링 버퍼 분기 — job_type 미지정 시 ContextVar로 자동 감지
+    effective_type = job_type or (
+        "collect" if _current_collect_job_id.get() == job_id else ""
+    )
+    if effective_type == "collect":
         _add_collect_log(msg)
         # 20줄마다 DB 플러시 — Cloud Run 멀티 인스턴스에서도 로그 조회 가능하도록
         _collect_log_flush_counter[job_id] = (
@@ -618,6 +628,8 @@ class JobWorker:
         # 새 수집 시작 시 이전 취소 플래그 초기화 (이전 수집의 잔여 플래그 방지)
         clear_collect_cancel()
 
+        # 수집 잡 컨텍스트 설정 — _add_job_log 호출 시 자동으로 collect 링 버퍼에 추가
+        _ctx_token = _current_collect_job_id.set(job_id)
         try:
             async with get_write_session() as session:
                 repo = SambaJobRepository(session)
@@ -648,6 +660,7 @@ class JobWorker:
         except Exception as e:
             logger.error(f"[잡워커] 수집 세션 에러: {job_id} — {e}")
         finally:
+            _current_collect_job_id.reset(_ctx_token)
             await _flush_job_logs(job_id, list(_collect_log_buffer), "수집")
 
     async def _execute_transmit_isolated(self, job_id: str, payload: dict):
@@ -2308,6 +2321,7 @@ class JobWorker:
         from backend.api.v1.routers.samba.collector_common import (
             _build_product_data,
             _get_services,
+            _is_blacklisted,
         )
         from datetime import datetime, timezone as _tz
 
@@ -2400,8 +2414,8 @@ class JobWorker:
         total_unmatched = 0
         # 재시도 큐 — 상세조회/매핑 실패 상품 누수 방지
         _failed_queue: list[dict] = []
-        # 1건 순차 + 1초 딜레이
-        _SSG_BATCH = 1
+        # 병렬 배치 처리 (배치당 5개 동시)
+        _SSG_BATCH = 5
         _ssg_page = 1
         # 필터 requested_count 합산 → 총 예상 건수 (진행률 표시용)
         _ssg_total_est = sum(f.requested_count or 0 for f in filters) or 1
@@ -2537,73 +2551,91 @@ class JobWorker:
                     break
                 _batch = page_new[_bs : _bs + _SSG_BATCH]
 
-                # 상세 조회 — 확장앱 소싱큐 위임 (SSG 서버사이드 차단 우회)
-                for it in _batch:
+                # 상세 조회 — 확장앱 소싱큐 병렬 배치 처리 (배치당 5개 동시)
+                # 1단계: 블랙리스트 사전 필터링 (순차)
+                _non_bl: list[dict] = []
+                for _bl_it in _batch:
+                    if _page_cancelled:
+                        break
+                    _spid_bl = _bl_it["site_product_id"]
+                    if await _is_blacklisted(session, "SSG", _spid_bl):
+                        logger.info(f"[SSG수집] 블랙리스트 스킵: SSG/{_spid_bl}")
+                        total_skipped += 1
+                    else:
+                        _non_bl.append(_bl_it)
+
+                # 2단계: 병렬 상세조회
+                from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+
+                _ssg_ext_cache: dict[str, Any] = {}
+                if _non_bl and not _page_cancelled:
+                    _bl_futs = [
+                        SourcingQueue.add_detail_job("SSG", _it["site_product_id"])
+                        for _it in _non_bl
+                    ]
+                    _gathered_ext = await asyncio.gather(
+                        *[asyncio.wait_for(f, timeout=30) for _, f in _bl_futs],
+                        return_exceptions=True,
+                    )
+                    for _bl_it2, _bl_ext in zip(_non_bl, _gathered_ext):
+                        _ssg_ext_cache[_bl_it2["site_product_id"]] = _bl_ext
+
+                # 3단계: 결과 처리 및 DB 저장
+                for it in _non_bl:
                     if _page_cancelled:
                         break
                     spid = it["site_product_id"]
-                    if await _is_blacklisted(session, "SSG", spid):
-                        logger.info(f"[SSG수집] 블랙리스트 스킵: SSG/{spid}")
-                        total_skipped += 1
-                        continue
+                    _ext_result = _ssg_ext_cache.get(spid)
                     detail: dict = {}
-                    try:
-                        from backend.domain.samba.proxy.sourcing_queue import (
-                            SourcingQueue,
-                        )
-
-                        _req_id, _future = SourcingQueue.add_detail_job("SSG", spid)
-                        _ext_result = await asyncio.wait_for(_future, timeout=30)
-                        if isinstance(_ext_result, dict) and _ext_result.get("success"):
-                            _html = _ext_result.get("html", "")
-                            if _html:
-                                detail = (
-                                    client._parse_result_item_obj(_html, spid, False)
-                                    or {}
-                                )
-                            # _parse_result_item_obj 실패 시 (dept.ssg.com AJAX 로드):
-                            # 확장앱 safeObj의 itemNm + HTML select 직접 파싱으로 폴백
-                            if not detail:
-                                _ext_obj = _ext_result.get("resultItemObj", {})
-                                _item_nm = _ext_obj.get("itemNm", "")
-                                if _item_nm and _html:
-                                    _opts = client._parse_select_options(_html)
-                                    _sold = (
-                                        all(o.get("isSoldOut", False) for o in _opts)
-                                        if _opts
-                                        else False
-                                    )
-                                    detail = {
-                                        "itemNm": _item_nm,
-                                        "name": _item_nm,
-                                        "brand": _ext_obj.get("repBrandNm")
-                                        or _ext_obj.get("brandNm", ""),
-                                        "options": _opts,
-                                        "soldOut": "Y" if _sold else "N",
-                                        "dispCtgLclsNm": "",
-                                        "dispCtgMclsNm": "",
-                                        "dispCtgSclsNm": "",
-                                        "dispCtgId": "",
-                                    }
-                            # 확장앱 uitemOptions(AJAX 후 실제 재고)로 옵션 품절 상태 보정
-                            _uitem_opts = _ext_result.get("uitemOptions", [])
-                            if _uitem_opts and detail.get("options"):
-                                _soldout_names = {
-                                    o["name"] for o in _uitem_opts if o.get("isSoldOut")
-                                }
-                                if _soldout_names:
-                                    for _opt in detail["options"]:
-                                        if _opt.get("name") in _soldout_names:
-                                            _opt["isSoldOut"] = True
-                                            _opt["stock"] = 0
-                    except asyncio.TimeoutError:
+                    if isinstance(_ext_result, asyncio.TimeoutError):
                         _add_job_log(
                             job.id,
                             f"[SSG] 상세 타임아웃: {spid} (확장앱 미응답)",
                             job_type="collect",
                         )
-                    except Exception as _ext_err:
-                        logger.debug(f"[SSG] 확장앱 상세 실패: {spid} — {_ext_err}")
+                    elif isinstance(_ext_result, Exception):
+                        logger.debug(f"[SSG] 확장앱 상세 실패: {spid} — {_ext_result}")
+                    elif isinstance(_ext_result, dict) and _ext_result.get("success"):
+                        _html = _ext_result.get("html", "")
+                        if _html:
+                            detail = (
+                                client._parse_result_item_obj(_html, spid, False) or {}
+                            )
+                        # _parse_result_item_obj 실패 시 (dept.ssg.com AJAX 로드):
+                        # 확장앱 safeObj의 itemNm + HTML select 직접 파싱으로 폴백
+                        if not detail:
+                            _ext_obj = _ext_result.get("resultItemObj", {})
+                            _item_nm = _ext_obj.get("itemNm", "")
+                            if _item_nm and _html:
+                                _opts = client._parse_select_options(_html)
+                                _sold = (
+                                    all(o.get("isSoldOut", False) for o in _opts)
+                                    if _opts
+                                    else False
+                                )
+                                detail = {
+                                    "itemNm": _item_nm,
+                                    "name": _item_nm,
+                                    "brand": _ext_obj.get("repBrandNm")
+                                    or _ext_obj.get("brandNm", ""),
+                                    "options": _opts,
+                                    "soldOut": "Y" if _sold else "N",
+                                    "dispCtgLclsNm": "",
+                                    "dispCtgMclsNm": "",
+                                    "dispCtgSclsNm": "",
+                                    "dispCtgId": "",
+                                }
+                        # 확장앱 uitemOptions(AJAX 후 실제 재고)로 옵션 품절 상태 보정
+                        _uitem_opts = _ext_result.get("uitemOptions", [])
+                        if _uitem_opts and detail.get("options"):
+                            _soldout_names = {
+                                o["name"] for o in _uitem_opts if o.get("isSoldOut")
+                            }
+                            if _soldout_names:
+                                for _opt in detail["options"]:
+                                    if _opt.get("name") in _soldout_names:
+                                        _opt["isSoldOut"] = True
+                                        _opt["stock"] = 0
 
                     if not detail or not (detail.get("itemNm") or detail.get("name")):
                         _failed_queue.append(it)
@@ -2744,11 +2776,13 @@ class JobWorker:
                         "category": _raw_cat,
                         "manufacturer": detail.get("repBrandNm") or it.get("brand", ""),
                         "origin": detail.get("origin", ""),
-                        "material": "",
-                        "color": "",
+                        "material": detail.get("material", ""),
+                        "color": detail.get("color", ""),
+                        "care_instructions": detail.get("care_instructions", ""),
                         "saleStatus": "sold_out" if is_sold_out else "in_stock",
                         "freeShipping": _is_free,
-                        "styleNo": detail.get("modelNo", ""),
+                        "styleNo": detail.get("style_code", "")
+                        or detail.get("modelNo", ""),
                     }
                     product_data = _build_product_data(
                         detail_for_build,
@@ -2874,11 +2908,13 @@ class JobWorker:
                         "category": " > ".join(_cat_parts_r),
                         "manufacturer": _det.get("repBrandNm", ""),
                         "origin": _det.get("origin", ""),
-                        "material": "",
-                        "color": "",
+                        "material": _det.get("material", ""),
+                        "color": _det.get("color", ""),
+                        "care_instructions": _det.get("care_instructions", ""),
                         "saleStatus": "in_stock",
                         "freeShipping": _fs,
-                        "styleNo": _det.get("modelNo", ""),
+                        "styleNo": _det.get("style_code", "")
+                        or _det.get("modelNo", ""),
                     }
                     _pd = _build_product_data(
                         _d4build,
@@ -4212,21 +4248,45 @@ class JobWorker:
                     SourcingQueue as _SSGQueue,
                 )
 
-                for _ssg_idx, _ssg_it in enumerate(new_items):
-                    from backend.domain.samba.emergency import (
-                        is_collect_cancel_requested as _icc_ssg,
-                        is_emergency_stopped as _ies_ssg,
-                    )
+                from backend.domain.samba.emergency import (
+                    is_collect_cancel_requested as _icc_ssg,
+                    is_emergency_stopped as _ies_ssg,
+                )
 
+                _SSG_PREFETCH_BATCH = 5
+                _ssg_done = 0
+                for _pb_i in range(0, len(new_items), _SSG_PREFETCH_BATCH):
                     if _icc_ssg() or _ies_ssg() or await repo.is_cancelled(job.id):
                         await repo.cancel_job(job.id)
                         await session.commit()
                         return
-                    spid = str(_ssg_it.get("site_product_id", ""))
-                    try:
-                        _req_id, _future = _SSGQueue.add_detail_job("SSG", spid)
-                        _ext_result = await asyncio.wait_for(_future, timeout=30)
-                        if isinstance(_ext_result, dict) and _ext_result.get("success"):
+                    _pb_batch = new_items[_pb_i : _pb_i + _SSG_PREFETCH_BATCH]
+                    _pb_futs = [
+                        _SSGQueue.add_detail_job(
+                            "SSG", str(_pb_it.get("site_product_id", ""))
+                        )
+                        for _pb_it in _pb_batch
+                    ]
+                    _pb_results = await asyncio.gather(
+                        *[asyncio.wait_for(f, timeout=30) for _, f in _pb_futs],
+                        return_exceptions=True,
+                    )
+                    for _pb_it, _ext_result in zip(_pb_batch, _pb_results):
+                        spid = str(_pb_it.get("site_product_id", ""))
+                        det: dict = {}
+                        if isinstance(_ext_result, asyncio.TimeoutError):
+                            _add_job_log(
+                                job.id,
+                                f"[SSG] 상세 타임아웃: {spid} (확장앱 미응답)",
+                                job_type="collect",
+                            )
+                        elif isinstance(_ext_result, Exception):
+                            logger.debug(
+                                f"[SSG] 확장앱 상세 실패: {spid} — {_ext_result}"
+                            )
+                        elif isinstance(_ext_result, dict) and _ext_result.get(
+                            "success"
+                        ):
                             _html = _ext_result.get("html", "")
                             if _html:
                                 det = (
@@ -4265,15 +4325,7 @@ class JobWorker:
                                                 _o2["stock"] = 0
                                 if det:
                                     _ssg_details[spid] = det
-                    except asyncio.TimeoutError:
-                        _add_job_log(
-                            job.id,
-                            f"[SSG] 상세 타임아웃: {spid} (확장앱 미응답)",
-                            job_type="collect",
-                        )
-                    except Exception as _ext_err:
-                        logger.debug(f"[SSG] 확장앱 상세 실패: {spid} — {_ext_err}")
-                    _ssg_done = _ssg_idx + 1
+                        _ssg_done += 1
                     await repo.update_progress(job.id, _ssg_done, len(new_items))
                     _add_job_log(
                         job.id,

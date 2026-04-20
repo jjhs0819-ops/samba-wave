@@ -1345,7 +1345,7 @@ const ProductCard = React.memo(function ProductCard({
               style={{
               fontSize: '0.72rem', padding: '3px 9px', background: '#1E1E1E',
               color: '#999', border: '1px solid #2D2D2D', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap',
-            }}>가격재고</button>
+            }}>업데이트</button>
             <button
               onClick={() => window.open(`/samba/orders?cpId=${encodeURIComponent(p.id)}&cpName=${encodeURIComponent(p.name)}`, '_blank')}
               style={{

@@ -77,8 +77,11 @@ class SSGPlugin(SourcingPlugin):
         return await self.safe_call(client.get_product_detail(site_product_id))
 
     async def refresh(self, product) -> "RefreshResult":
-        """가격/재고 갱신 — 상세 페이지 재조회로 최신 데이터 추출."""
+        """가격/재고 갱신 — SSG 서버사이드 차단 우회를 위해 확장앱 SourcingQueue 위임."""
+        import asyncio
+
         from backend.domain.samba.collector.refresher import RefreshResult
+        from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
         from backend.domain.samba.proxy.ssg_sourcing import SSGSourcingClient
 
         product_id = getattr(product, "id", "")
@@ -94,14 +97,59 @@ class SSGPlugin(SourcingPlugin):
 
         try:
             client = SSGSourcingClient()
-            detail = await self.safe_call(
-                client.get_product_detail(site_product_id, refresh_only=True)
-            )
+            detail: dict = {}
+
+            # SSG는 서버사이드 직접 HTTP 차단 → 확장앱 위임 (worker.py 동일 패턴)
+            _req_id, _future = SourcingQueue.add_detail_job("SSG", site_product_id)
+            _ext_result = await asyncio.wait_for(_future, timeout=25)
+
+            if isinstance(_ext_result, dict) and _ext_result.get("success"):
+                _html = _ext_result.get("html", "")
+                if _html:
+                    detail = (
+                        client._parse_result_item_obj(_html, site_product_id, True)
+                        or {}
+                    )
+                # _parse_result_item_obj 실패 시 (dept.ssg.com AJAX 로드): resultItemObj 폴백
+                if not detail:
+                    _ext_obj = _ext_result.get("resultItemObj", {})
+                    _item_nm = _ext_obj.get("itemNm", "")
+                    if _item_nm and _html:
+                        _opts = client._parse_select_options(_html)
+                        _sold = (
+                            all(o.get("isSoldOut", False) for o in _opts)
+                            if _opts
+                            else False
+                        )
+                        _sell = int(_ext_obj.get("sellprc", 0) or 0)
+                        _best = int(_ext_obj.get("bestAmt", 0) or 0) or _sell
+                        for _opt in _opts:
+                            if not _opt.get("price"):
+                                _opt["price"] = _sell
+                        detail = {
+                            "salePrice": _sell,
+                            "originalPrice": _sell,
+                            "bestBenefitPrice": _best,
+                            "options": _opts,
+                            "isOutOfStock": _sold,
+                            "isSoldOut": _sold,
+                        }
+                # uitemOptions(AJAX 후 실제 재고)로 옵션 품절 상태 보정
+                _uitem_opts = _ext_result.get("uitemOptions", [])
+                if _uitem_opts and detail.get("options"):
+                    _soldout_names = {
+                        o["name"] for o in _uitem_opts if o.get("isSoldOut")
+                    }
+                    if _soldout_names:
+                        for _opt in detail["options"]:
+                            if _opt.get("name") in _soldout_names:
+                                _opt["isSoldOut"] = True
+                                _opt["stock"] = 0
 
             if not detail:
                 return RefreshResult(
                     product_id=product_id,
-                    error=f"SSG 상세 조회 실패: {site_product_id}",
+                    error=f"SSG 상세 조회 실패 (확장앱 미응답 또는 파싱 실패): {site_product_id}",
                 )
 
             new_sale_price = detail.get("salePrice", 0)
@@ -145,6 +193,12 @@ class SSGPlugin(SourcingPlugin):
                 changed=True,
             )
 
+        except asyncio.TimeoutError:
+            logger.warning(f"[SSG] 갱신 타임아웃 (확장앱 미연결): {site_product_id}")
+            return RefreshResult(
+                product_id=product_id,
+                error=f"SSG 갱신 타임아웃 (확장앱이 연결되어 있지 않습니다): {site_product_id}",
+            )
         except Exception as e:
             logger.error(f"[SSG] 갱신 실패: {site_product_id} — {e}")
             return RefreshResult(

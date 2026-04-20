@@ -1471,7 +1471,7 @@ class SSGSourcingClient:
         best_amt = _card_price or self._safe_int(obj.get("bestAmt", 0)) or sell_price
 
         # 품번(style_code): 상품명 패턴 우선(정확), 없으면 HTML 모델번호 폴백(부정확할 수 있음)
-        _sc_match = re.search(r"[A-Z]{1,3}\d{3,}[-]\d{2,}", name)
+        _sc_match = re.search(r"[A-Za-z]{1,3}\d{3,}[-]\d{2,}", name)
         if _sc_match:
             _style_code = _sc_match.group(0)
         else:
@@ -1678,7 +1678,7 @@ class SSGSourcingClient:
             "manufacturer": _prod_info.get("manufacturer", ""),
             "color": _prod_info.get("color", ""),
             "sizeInfo": _prod_info.get("sizeInfo", ""),
-            "care_instructions": "",
+            "care_instructions": _prod_info.get("care_instructions", ""),
             "quality_guarantee": "",
             "season": "",
             "style_code": _style_code,
@@ -1752,6 +1752,8 @@ class SSGSourcingClient:
                 info["manufacturer"] = value
             elif "치수" in lbl or "사이즈" in lbl:
                 info["sizeInfo"] = value
+            elif "세탁" in lbl or "취급방법" in lbl:
+                info["care_instructions"] = value
 
         return info
 

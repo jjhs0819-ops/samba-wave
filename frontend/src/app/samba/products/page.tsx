@@ -1697,6 +1697,7 @@ export default function ProductsPage() {
             }}>상품전송</button>
           <button
             onClick={handleBulkDelete}
+            title="DB에서 정보 삭제"
             style={{
               fontSize: "0.78rem", padding: "4px 12px",
               border: "1px solid #3D3D3D", borderRadius: "5px",
@@ -1783,6 +1784,7 @@ export default function ProductsPage() {
               flushLogs()
               setAiJobDone(true)
             }}
+            title="등록마켓에서 상품 삭제"
             style={{
             fontSize: "0.78rem", padding: "4px 12px",
             border: "1px solid #3D3D3D", borderRadius: "5px",
@@ -1809,35 +1811,13 @@ export default function ProductsPage() {
               }
               setAiJobDone(true)
             }}
+            title="판매마켓에서 직접 삭제 후 연결 끊긴 상품 판매처 기록 삭제"
             style={{
               fontSize: "0.78rem", padding: "4px 12px",
               border: "1px solid #3D3D3D", borderRadius: "5px",
               color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
             }}
           >강제삭제</button>
-          <button
-            onClick={async () => {
-              if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
-              const ids = Array.from(selectedIds)
-              setRefreshDetails([])
-              setRefreshModal(true)
-              setRefreshLoading(true)
-              try {
-                const res = await collectorApi.refresh(ids)
-                setRefreshDetails(res.details ?? [])
-                setRefreshSummary(`${fmt(res.total)}건 중 ${fmt(res.changed)}건 변동, ${fmt(res.sold_out)}건 품절${res.retransmitted ? `, ${fmt(res.retransmitted)}건 재전송` : ''}, ${fmt(res.errors)}건 에러`)
-              } catch {
-                setRefreshSummary('갱신 실패')
-              }
-              setRefreshLoading(false)
-              reloadProducts()
-            }}
-            style={{
-              fontSize: "0.78rem", padding: "4px 12px",
-              border: "1px solid #3D3D3D", borderRadius: "5px",
-              color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
-            }}
-          >갱신</button>
           <button
             onClick={async () => {
               if (!await showConfirm('스마트스토어 동기화를 실행합니다.\n\n1단계: DB에 없는 Naver 등록 상품(고아 상품) 조회\n2단계: 목록 확인 후 실제 삭제 여부 선택\n\n계속하시겠습니까?')) return
@@ -1917,12 +1897,36 @@ export default function ProductsPage() {
               }
               setAiJobDone(true)
             }}
+            title="삼바에는 판매처 등록되어 있지 않은데 판매처에 등록된 상품 삭제"
             style={{
               fontSize: "0.78rem", padding: "4px 12px",
               border: "1px solid #3D3D3D", borderRadius: "5px",
               color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
             }}
-          >동기화</button>
+          >유령삭제</button>
+          <button
+            onClick={async () => {
+              if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
+              const ids = Array.from(selectedIds)
+              setRefreshDetails([])
+              setRefreshModal(true)
+              setRefreshLoading(true)
+              try {
+                const res = await collectorApi.refresh(ids)
+                setRefreshDetails(res.details ?? [])
+                setRefreshSummary(`${fmt(res.total)}건 중 ${fmt(res.changed)}건 변동, ${fmt(res.sold_out)}건 품절${res.retransmitted ? `, ${fmt(res.retransmitted)}건 재전송` : ''}, ${fmt(res.errors)}건 에러`)
+              } catch {
+                setRefreshSummary('갱신 실패')
+              }
+              setRefreshLoading(false)
+              reloadProducts()
+            }}
+            style={{
+              fontSize: "0.78rem", padding: "4px 12px",
+              border: "1px solid #3D3D3D", borderRadius: "5px",
+              color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
+            }}
+          >업데이트</button>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
           <button
