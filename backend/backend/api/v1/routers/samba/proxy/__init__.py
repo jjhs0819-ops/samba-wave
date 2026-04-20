@@ -13,6 +13,7 @@ from . import (
     image_filter,
     kream,
     lottehome,
+    message_history,
     misc,
     musinsa,
     notifications,
@@ -27,6 +28,7 @@ router = APIRouter(prefix="/proxy", tags=["samba-proxy"])
 
 router.include_router(config.router)
 router.include_router(notifications.router)
+router.include_router(message_history.router)
 router.include_router(smartstore.router)
 router.include_router(misc.router)
 router.include_router(ai_tools.router)

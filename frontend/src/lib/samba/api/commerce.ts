@@ -30,4 +30,5 @@ export type {
   SambaForbiddenWord,
   ProxyPurpose,
   ProxyConfigItem,
+  MessageLog,
 } from '../legacy'

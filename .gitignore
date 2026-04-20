@@ -538,6 +538,9 @@ backend/cloud-sql-proxy.exe
 # 배포 스크립트 (민감정보 포함 가능)
 backend/deploy.sh
 
+# 프로덕션 일회성 점검 스크립트 (민감정보 포함 가능)
+backend/scripts/*_prod_*.py
+
 dev-debug.log
 # Environment variables
 # Editor directories and files

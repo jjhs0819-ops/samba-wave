@@ -138,6 +138,18 @@ export interface SambaOrder {
   paid_at?: string;
   created_at: string;
   updated_at: string;
+  has_sms_sent?: boolean;
+  has_kakao_sent?: boolean;
+}
+
+export interface MessageLog {
+  id: string;
+  message_type: 'sms' | 'kakao';
+  rendered_message: string;
+  receiver: string;
+  sent_at: string;
+  success: boolean;
+  result_message?: string;
 }
 
 export const orderApi = {
@@ -849,12 +861,16 @@ export const proxyApi = {
   aligoRemain: () =>
     request<{ success: boolean; message: string; SMS_CNT?: number; LMS_CNT?: number; MMS_CNT?: number }>(
       `${SAMBA_PREFIX}/proxy/aligo/remain`, { method: 'POST' }),
-  sendSms: (receiver: string, message: string, title?: string) =>
+  sendSms: (receiver: string, message: string, title?: string, orderId?: string, templateRaw?: string) =>
     request<{ success: boolean; message: string; msg_id?: string; msg_type?: string }>(
-      `${SAMBA_PREFIX}/proxy/aligo/send-sms`, { method: 'POST', body: JSON.stringify({ receiver, message, title: title || '' }) }),
-  sendKakao: (receiver: string, message: string, templateCode?: string, subject?: string) =>
+      `${SAMBA_PREFIX}/proxy/aligo/send-sms`, { method: 'POST', body: JSON.stringify({ receiver, message, title: title || '', order_id: orderId, template_raw: templateRaw }) }),
+  sendKakao: (receiver: string, message: string, templateCode?: string, subject?: string, orderId?: string, templateRaw?: string) =>
     request<{ success: boolean; message: string; msg_type?: string }>(
-      `${SAMBA_PREFIX}/proxy/aligo/send-kakao`, { method: 'POST', body: JSON.stringify({ receiver, message, template_code: templateCode || '', subject: subject || '' }) }),
+      `${SAMBA_PREFIX}/proxy/aligo/send-kakao`, { method: 'POST', body: JSON.stringify({ receiver, message, template_code: templateCode || '', subject: subject || '', order_id: orderId, template_raw: templateRaw }) }),
+  fetchMessageHistory: (orderId: string) =>
+    request<MessageLog[]>(`${SAMBA_PREFIX}/proxy/messages/by-order/${encodeURIComponent(orderId)}`),
+  fetchSentFlags: (orderIds: string[]) =>
+    request<Record<string, { sms: boolean; kakao: boolean }>>(`${SAMBA_PREFIX}/proxy/messages/sent-flags?order_ids=${orderIds.map(encodeURIComponent).join(',')}`),
   smartstoreAuthTest: () =>
     request<{ success: boolean; message: string; token_preview?: string }>(
       `${SAMBA_PREFIX}/proxy/smartstore/auth-test`, { method: 'POST' }),

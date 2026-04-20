@@ -12,6 +12,7 @@ import {
   type SambaOrder,
   type SambaChannel,
   type SambaMarketAccount,
+  type MessageLog,
 } from '@/lib/samba/api/commerce'
 import { fetchWithAuth } from '@/lib/samba/api/shared'
 import { sourcingAccountApi, type SambaSourcingAccount } from '@/lib/samba/api/operations'
@@ -141,6 +142,10 @@ export default function OrdersPage() {
   const [msgText, setMsgText] = useState('')
   const [msgSending, setMsgSending] = useState(false)
   const msgTextRef = useRef<HTMLTextAreaElement>(null)
+  // 발송 이력 (모달 내 표시용)
+  const [msgHistory, setMsgHistory] = useState<MessageLog[]>([])
+  // 발송 완료된 주문 ID 플래그 (버튼 색상용)
+  const [sentFlags, setSentFlags] = useState<Record<string, { sms: boolean; kakao: boolean }>>({})
 
   // SMS 템플릿 (localStorage 저장)
   const DEFAULT_SMS_TEMPLATES = [
@@ -258,6 +263,12 @@ export default function OrdersPage() {
         if (o.action_tag) actions[o.id] = o.action_tag
       }
       setActiveActions(actions)
+      // SMS/카카오 발송 여부 플래그 조회
+      if (data.length > 0) {
+        proxyApi.fetchSentFlags(data.map(o => o.id)).then(flags => {
+          setSentFlags(flags)
+        }).catch(() => {})
+      }
     } catch (e) {
       console.error('주문 로딩 실패:', e)
       setLogMessages(prev => [...prev, `[에러] 주문 데이터 로딩 실패: ${e instanceof Error ? e.message : '서버 오류'}`])
@@ -422,6 +433,8 @@ export default function OrdersPage() {
     }
     setMsgModal({ type, order })
     setMsgText('')
+    setMsgHistory([])
+    proxyApi.fetchMessageHistory(order.id).then(setMsgHistory).catch(() => {})
   }
 
   const handleSendMsg = async () => {
@@ -437,14 +450,20 @@ export default function OrdersPage() {
         showAlert('치환 후 발송할 메시지가 비어 있습니다.', 'error')
         return
       }
+      const orderId = msgModal.order.id
+      const msgType = msgModal.type
       let res: { success: boolean; message: string }
-      if (msgModal.type === 'sms') {
-        res = await proxyApi.sendSms(phone, renderedMsg)
+      if (msgType === 'sms') {
+        res = await proxyApi.sendSms(phone, renderedMsg, '', orderId, msgText)
       } else {
-        res = await proxyApi.sendKakao(phone, renderedMsg)
+        res = await proxyApi.sendKakao(phone, renderedMsg, '', '', orderId, msgText)
       }
       if (res.success) {
         showAlert(res.message, 'success')
+        setSentFlags(prev => ({
+          ...prev,
+          [orderId]: { ...prev[orderId], sms: msgType === 'sms' ? true : (prev[orderId]?.sms ?? false), kakao: msgType === 'kakao' ? true : (prev[orderId]?.kakao ?? false) },
+        }))
         setMsgModal(null)
         setMsgText('')
       } else {
@@ -1180,8 +1199,8 @@ export default function OrdersPage() {
                             return o.source_site
                           })()}</span>}
                           <button onClick={() => handleCopyOrderNumber(o.order_number)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>주문번호복사</button>
-                          <button onClick={() => openMsgModal('sms', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>SMS</button>
-                          <button onClick={() => openMsgModal('kakao', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>KAKAO</button>
+                          <button onClick={() => openMsgModal('sms', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: sentFlags[o.id]?.sms ? '#1F3A24' : 'transparent', border: `1px solid ${sentFlags[o.id]?.sms ? '#51CF66' : '#2D2D2D'}`, borderRadius: '4px', color: sentFlags[o.id]?.sms ? '#51CF66' : '#B0B0B0', cursor: 'pointer' }}>SMS</button>
+                          <button onClick={() => openMsgModal('kakao', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: sentFlags[o.id]?.kakao ? '#3A320F' : 'transparent', border: `1px solid ${sentFlags[o.id]?.kakao ? '#FFD93D' : '#2D2D2D'}`, borderRadius: '4px', color: sentFlags[o.id]?.kakao ? '#FFD93D' : '#B0B0B0', cursor: 'pointer' }}>KAKAO</button>
                         </div>
                         {/* 상품주문번호 + 주문번호 같은 행 */}
                         <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
@@ -2058,6 +2077,25 @@ export default function OrdersPage() {
                 {msgText.length > 0 ? `${new TextEncoder().encode(msgText).length}바이트` : ''}
                 {msgText.length > 0 && new TextEncoder().encode(msgText).length > 90 ? ' (LMS)' : ''}
               </span>
+            </div>
+
+            {/* 이전 발송 기록 */}
+            <div style={{ marginBottom: '1rem' }}>
+              <div style={{ fontSize: '0.75rem', color: '#666', marginBottom: '0.5rem' }}>이전 발송 기록</div>
+              <div style={{ maxHeight: '200px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+                {msgHistory.length === 0 ? (
+                  <div style={{ fontSize: '0.75rem', color: '#444', padding: '0.5rem', background: '#111', borderRadius: '6px' }}>이전 발송 기록 없음</div>
+                ) : msgHistory.map(h => (
+                  <div key={h.id} style={{ background: '#111', border: `1px solid ${h.success ? '#2D3A2D' : '#3A2D2D'}`, borderRadius: '6px', padding: '0.5rem 0.75rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                      <span style={{ fontSize: '0.65rem', padding: '0.1rem 0.375rem', borderRadius: '3px', background: h.message_type === 'sms' ? '#1F3A24' : '#3A320F', color: h.message_type === 'sms' ? '#51CF66' : '#FFD93D', fontWeight: 600 }}>{h.message_type.toUpperCase()}</span>
+                      <span style={{ fontSize: '0.65rem', color: '#666' }}>{h.sent_at ? new Date(h.sent_at).toLocaleString('ko-KR') : ''}</span>
+                      <span style={{ fontSize: '0.65rem', color: h.success ? '#51CF66' : '#FF6B6B', marginLeft: 'auto' }}>{h.success ? '성공' : '실패'}</span>
+                    </div>
+                    <div style={{ fontSize: '0.7rem', color: '#B0B0B0', whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: '1.4' }}>{h.rendered_message}</div>
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
