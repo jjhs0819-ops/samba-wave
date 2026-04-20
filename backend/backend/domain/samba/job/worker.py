@@ -2394,7 +2394,7 @@ class JobWorker:
         client = _ssg_clients[0]
         _add_job_log(
             job.id,
-            f"[SSG브랜드전체수집] 프록시 풀 {len(_ssg_proxy_pool)}개 — 1건/5초 속도",
+            f"[SSG브랜드전체수집] 프록시 풀 {len(_ssg_proxy_pool)}개 — 그룹별 ctg_id 수집 (1건/1초)",
             job_type="collect",
         )
 
