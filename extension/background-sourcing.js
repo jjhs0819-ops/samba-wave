@@ -421,6 +421,51 @@ async function fetchAbcmartBenefitPrice(productId, site) {
   }
 }
 
+// 네이버스토어 상세 — 탭 컨텍스트에서 내부 JSON API(/i/v2) 직접 호출
+// 서버 측 curl_cffi/httpx는 모두 429 차단되지만, 실브라우저 same-origin fetch는 통과
+async function fetchNaverstoreDetail(tabId, channelUid, productId) {
+  if (!channelUid || !productId) {
+    return { success: false, message: 'channelUid/productId 누락' }
+  }
+  const apiUrl = `https://smartstore.naver.com/i/v2/channels/${channelUid}/products/${productId}?withWindow=false`
+  try {
+    const [res] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: async (url) => {
+        try {
+          const r = await fetch(url, {
+            credentials: 'include',
+            headers: { 'Accept': 'application/json, text/plain, */*' }
+          })
+          if (!r.ok) return { error: `HTTP ${r.status}` }
+          const data = await r.json()
+          return { data }
+        } catch (e) {
+          return { error: e.message }
+        }
+      },
+      args: [apiUrl]
+    })
+    const payload = res?.result
+    if (!payload || payload.error) {
+      console.log(`[NAVERSTORE] 상세 fetch 실패: ${payload?.error || 'no result'}`)
+      return { success: false, message: payload?.error || '탭 fetch 실패' }
+    }
+    const raw = payload.data
+    const product = raw?.data && typeof raw.data === 'object' && raw.data.id ? raw.data : raw
+    if (!product?.id) {
+      console.log(`[NAVERSTORE] 상세 응답에 id 없음 — keys=${Object.keys(product || {}).slice(0, 10).join(',')}`)
+      return { success: false, message: 'product.id 없음' }
+    }
+    console.log(`[NAVERSTORE] 상세 수집 성공: pid=${product.id} name="${(product.name || '').slice(0, 30)}"`)
+    return { success: true, data: product }
+  } catch (err) {
+    console.error('[NAVERSTORE] 상세 예외:', err.message)
+    return { success: false, message: err.message }
+  }
+}
+
 // 소싱 작업 처리 — 탭 열기 → DOM 파싱 → 결과 전송
 async function handleSourcingJob(job) {
   let tabId = null
@@ -435,6 +480,8 @@ async function handleSourcingJob(job) {
       await waitForGSShopContent(tabId, 8000)
     } else if (job.type === 'search' && job.site === 'GSShop') {
       await waitForGSShopSearchResults(tabId, 6000)
+    } else if (job.type === 'detail' && job.site === 'NAVERSTORE') {
+      // NAVERSTORE 상세는 DOM 파싱이 아닌 consumer API fetch — SPA 렌더링 대기 불필요
     } else {
       await wait(5000) // SPA 렌더링 대기
     }
@@ -578,6 +625,9 @@ async function handleSourcingJob(job) {
       } else {
         console.log(`[${job.site}] 혜택가 없음: ${job.productId}`)
       }
+    } else if (job.type === 'detail' && job.site === 'NAVERSTORE') {
+      // 네이버스토어 — 탭 컨텍스트에서 내부 JSON API 호출 (서비스 워커 직접 fetch는 429 차단됨)
+      result = await fetchNaverstoreDetail(tabId, job.channelUid, job.productId)
     } else if (job.type === 'detail') {
       result = await extractDetailData(tabId, job.site, job.productId)
     }
