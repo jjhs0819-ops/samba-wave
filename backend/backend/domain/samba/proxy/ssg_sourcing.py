@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from urllib.parse import quote
 
 import httpx
@@ -483,6 +483,7 @@ class SSGSourcingClient:
         selected_brands: list[str] | None = None,
         brand_ids: list[str] | None = None,
         brand_total: int = 0,
+        log_fn: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         """키워드 검색 → 카테고리 분포 추출.
 
@@ -497,10 +498,16 @@ class SSGSourcingClient:
             selected_brands: 사용자가 선택한 브랜드 이름 목록 (로그 용도)
             brand_ids: 선택된 브랜드의 repBrandId 목록
             brand_total: 선택된 브랜드의 총 상품수 (비례 스케일링용)
+            log_fn: UI 로그창 콜백 (없으면 서버 로그만 출력)
 
         Returns:
             {"categories": [...], "total": int, "groupCount": int}
         """
+
+        def _log(msg: str) -> None:
+            logger.info(msg)
+            if log_fn:
+                log_fn(msg)
 
         logger.info(
             f'[SSG] 카테고리 스캔 시작: "{keyword}"'
@@ -542,21 +549,11 @@ class SSGSourcingClient:
                 )
 
                 if brand_ids and top_categories:
-                    # 2단계: 대분류별 브랜드 건수 조회 + 실제 브랜드 상품의 leaf 추출
-                    # SSG는 repBrandId+ctgId 동시 사용 시 ctgId 무시 → count에 하위 브랜드 포함됨.
-                    # probe 응답의 상품 dataList에서 brand가 정확히 일치하는 상품의
-                    # dispCtgId만 모아 valid leaf set을 구성한다.
+                    # 2단계: 대분류별 브랜드 건수 조회 (스케일링용 count만 수집)
                     brand_param = "|".join(brand_ids)
-                    allowed_brand_ids = {
-                        str(b).strip() for b in brand_ids if str(b).strip()
-                    }
                     top_brand_counts: dict[str, int] = {}
-                    brand_leaf_ids: set[str] = set()
 
-                    logger.info(
-                        f"[SSG] 대분류 브랜드 카운트 시작: "
-                        f"{selected_brands or brand_ids} → {len(top_categories)}개 대분류"
-                    )
+                    _log(f"[SSG] 대분류 카운트 시작: {len(top_categories)}개")
 
                     for top in top_categories:
                         top_name = top["name"]
@@ -579,43 +576,97 @@ class SSGSourcingClient:
                             if check_resp.status_code == 200:
                                 count = self._parse_area_count(check_resp.text)
                                 top_brand_counts[top_name] = count
-                                # probe 응답에서 브랜드 정확 일치 상품의 itemId 추출
-                                # (dataList에 dispCtgId 없으므로 detail 조회로 샘플링)
-                                matched_ids = self._extract_brand_filtered_item_ids(
-                                    check_resp.text,
-                                    keyword,
-                                    allowed_brand_ids,
-                                    limit=10,
-                                )
-                                if matched_ids:
-                                    dist = await self._sample_category_dist(
-                                        client, matched_ids
-                                    )
-                                    brand_leaf_ids.update(dist.keys())
                                 if count > 0:
-                                    logger.info(
-                                        f"[SSG] 대분류 {top_name} → {count}건 "
-                                        f"(매칭상품샘플 {len(matched_ids)}, "
-                                        f"leaf누적 {len(brand_leaf_ids)})"
-                                    )
+                                    _log(f"[SSG] 대분류 {top_name} → {count:,}건")
                         except Exception as exc:
                             logger.debug(f"[SSG] 대분류 카운트 실패 {top_name}: {exc}")
-                        await _asyncio.sleep(1.0)
+                        await _asyncio.sleep(3.0)
 
-                    # 3단계: 실제 브랜드 상품이 존재하는 leaf만 통과
-                    # (대분류 카운트>0 이어도 하위브랜드만일 수 있으므로 leaf ID로 교차검증)
                     valid_tops = {
                         name for name, cnt in top_brand_counts.items() if cnt > 0
                     }
-                    filtered_leaves = [
+                    candidate_leaves = [
                         c
                         for c in all_categories
                         if c.get("category1", "") in valid_tops
-                        and c.get("categoryCode", "") in brand_leaf_ids
+                    ]
+
+                    # 3단계: 각 leaf 직접 검증
+                    # 대분류 15회 요청 직후 진입하면 SSG rate limit 즉시 발동 → 20s 쿨다운
+                    await _asyncio.sleep(20.0)
+                    # ctgId만으로 검색 → brandFilter 사이드바에 keyword 브랜드 있으면 valid
+                    # (하위브랜드 전용 leaf는 brandFilter에 keyword 브랜드 미등장 → 제외)
+                    # 429 발생 시 60s 대기 후 재시도 (skip 금지 — skip하면 그룹 누락)
+                    brand_leaf_ids: set[str] = set()
+                    _log(
+                        f"[SSG] leaf 검증 시작: {len(candidate_leaves)}개 후보 "
+                        f"(20초 쿨다운 후 3초 간격)"
+                    )
+                    for _leaf_idx, leaf in enumerate(candidate_leaves):
+                        leaf_ctg_id = leaf.get("categoryCode", "")
+                        if not leaf_ctg_id:
+                            continue
+                        try:
+                            leaf_url = (
+                                f"{self.SEARCH_URL}?query={quote(keyword)}"
+                                f"&ctgId={leaf_ctg_id}&page=1"
+                            )
+                            r = await client.get(leaf_url, headers=self._headers())
+                            # 429/403: skip 금지 — 60s 대기 후 최대 2회 재시도
+                            if r.status_code in (429, 403):
+                                _retry = 0
+                                while r.status_code in (429, 403) and _retry < 2:
+                                    _log(
+                                        f"[SSG] leaf 검증 차단, "
+                                        f"60초 대기 후 재시도 ({_retry + 1}/2)"
+                                    )
+                                    await _asyncio.sleep(60.0)
+                                    try:
+                                        r = await client.get(
+                                            leaf_url, headers=self._headers()
+                                        )
+                                    except Exception:
+                                        break
+                                    _retry += 1
+                                if r.status_code not in (200,):
+                                    logger.warning(
+                                        f"[SSG] leaf {leaf_ctg_id} 차단 지속, 제외"
+                                    )
+                                    await _asyncio.sleep(3.0)
+                                    continue
+                            if r.status_code == 200:
+                                matched = self._extract_matching_brand_ids(
+                                    r.text, keyword
+                                )
+                                if matched:
+                                    brand_leaf_ids.add(leaf_ctg_id)
+                                    logger.debug(
+                                        f"[SSG] leaf {leaf_ctg_id} valid "
+                                        f"({leaf.get('path', '')}) brand={matched}"
+                                    )
+                        except Exception as exc:
+                            logger.debug(f"[SSG] leaf 검증 실패 {leaf_ctg_id}: {exc}")
+                        # 10개마다 진행률 로그
+                        _done = _leaf_idx + 1
+                        if _done % 10 == 0 or _done == len(candidate_leaves):
+                            _log(
+                                f"[SSG] leaf 검증 중 {_done}/{len(candidate_leaves)} "
+                                f"(확정 {len(brand_leaf_ids)}개)"
+                            )
+                        await _asyncio.sleep(3.0)
+
+                    _log(
+                        f"[SSG] leaf 검증 완료: {len(candidate_leaves)}개 → "
+                        f"{len(brand_leaf_ids)}개 그룹"
+                    )
+
+                    filtered_leaves = [
+                        c
+                        for c in all_categories
+                        if c.get("categoryCode", "") in brand_leaf_ids
                     ]
                     logger.info(
                         f"[SSG] leaf 필터링: 전체 {len(all_categories)}개 → "
-                        f"브랜드매칭 leaf {len(brand_leaf_ids)}개 → "
                         f"최종 {len(filtered_leaves)}개"
                     )
 
@@ -644,10 +695,9 @@ class SSGSourcingClient:
                         filtered_leaves.sort(key=lambda x: -x["count"])
                         total = sum(c["count"] for c in filtered_leaves)
                         brand_total_actual = sum(top_brand_counts.values())
-                        logger.info(
-                            f"[SSG] 브랜드 카테고리 스캔 완료: "
-                            f"{len(filtered_leaves)}개 leaf, {total}건 "
-                            f"(대분류합계={brand_total_actual}, brand_total={brand_total})"
+                        _log(
+                            f"[SSG] 카테고리 스캔 완료: "
+                            f"{len(filtered_leaves)}개 그룹, {total:,}건"
                         )
                         return {
                             "categories": filtered_leaves,

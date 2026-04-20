@@ -2641,6 +2641,7 @@ export default function CollectorPage() {
       <DuplicatesModal
         open={showDuplicatesModal}
         sourceSite={drillSite ? tree.find(s => s.id === drillSite)?.source_site : undefined}
+        brand={drillBrand ?? undefined}
         onClose={() => setShowDuplicatesModal(false)}
         onDeleted={() => { load(); loadTree() }}
       />

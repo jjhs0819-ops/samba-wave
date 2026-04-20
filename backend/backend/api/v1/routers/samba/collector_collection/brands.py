@@ -542,6 +542,7 @@ async def brand_scan(
         return await plugin.scan_categories(keyword)
 
     if body.source_site == "SSG":
+        from backend.domain.samba.job.worker import _add_collect_log
         from backend.domain.samba.plugins.sourcing.ssg import SSGPlugin
 
         plugin = SSGPlugin()
@@ -551,6 +552,7 @@ async def brand_scan(
             selected_brands=selected,
             brand_ids=body.brand_ids or None,
             brand_total=body.brand_total,
+            log_fn=_add_collect_log,
         )
 
     if body.source_site == "FashionPlus":

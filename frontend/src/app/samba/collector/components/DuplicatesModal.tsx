@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { collectorApi, shipmentApi } from '@/lib/samba/api/commerce'
 import { showConfirm } from '@/components/samba/Modal'
 import { fmtNum } from '@/lib/samba/styles'
@@ -16,6 +16,14 @@ type DuplicateItem = {
   status: string
 }
 
+type DeleteLogEntry = {
+  time: string
+  brand: string
+  name: string
+  productId: string
+  status: 'processing' | 'done' | 'failed' | 'skipped'
+}
+
 type DuplicateGroup = {
   name: string
   total: number
@@ -26,21 +34,24 @@ type DuplicateGroup = {
 interface DuplicatesModalProps {
   open: boolean
   sourceSite?: string
+  brand?: string
   onClose: () => void
   onDeleted: () => void
 }
 
-export default function DuplicatesModal({ open, sourceSite, onClose, onDeleted }: DuplicatesModalProps) {
+export default function DuplicatesModal({ open, sourceSite, brand, onClose, onDeleted }: DuplicatesModalProps) {
   const [groups, setGroups] = useState<DuplicateGroup[]>([])
   const [loading, setLoading] = useState(false)
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [deleting, setDeleting] = useState(false)
   const [loaded, setLoaded] = useState(false)
+  const [deleteLog, setDeleteLog] = useState<DeleteLogEntry[]>([])
+  const logEndRef = useRef<HTMLDivElement>(null)
 
   const load = async () => {
     setLoading(true)
     try {
-      const res = await collectorApi.getDuplicates(sourceSite)
+      const res = await collectorApi.getDuplicates(sourceSite, brand)
       setGroups(res.groups)
       setChecked(new Set(res.groups.flatMap(g => g.duplicates.map(d => d.id))))
       setLoaded(true)
@@ -49,14 +60,14 @@ export default function DuplicatesModal({ open, sourceSite, onClose, onDeleted }
     }
   }
 
-  // 모달 열릴 때 또는 sourceSite 변경 시 자동 조회
+  // 모달 열릴 때 또는 sourceSite/brand 변경 시 자동 조회
   useEffect(() => {
     if (open) {
       setLoaded(false)
       load()
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, sourceSite])
+  }, [open, sourceSite, brand])
 
   if (!open) return null
 
@@ -80,6 +91,16 @@ export default function DuplicatesModal({ open, sourceSite, onClose, onDeleted }
     })
   }
 
+  const nowStr = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+
+  const updateLogStatus = (id: string, status: DeleteLogEntry['status']) => {
+    setDeleteLog(prev => prev.map(e => e.productId === id ? { ...e, status } : e))
+  }
+
+  useEffect(() => {
+    if (deleting) logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [deleteLog, deleting])
+
   const handleDelete = async () => {
     if (checked.size === 0) return
     const ids = Array.from(checked)
@@ -99,9 +120,19 @@ export default function DuplicatesModal({ open, sourceSite, onClose, onDeleted }
     const ok = await showConfirm(confirmMsg)
     if (!ok) return
 
+    // 로그 초기화
+    setDeleteLog(selected.map(d => ({
+      time: nowStr(),
+      brand: d.brand ?? '-',
+      name: d.name,
+      productId: d.id,
+      status: 'processing',
+    })))
+
     setDeleting(true)
     try {
       let safeToDeleteIds = ids
+      const failedIds = new Set<string>()
 
       // 마켓 등록 상품은 마켓에서 먼저 삭제
       if (hasMarketRegistered) {
@@ -112,20 +143,29 @@ export default function DuplicatesModal({ open, sourceSite, onClose, onDeleted }
         const res = await shipmentApi.marketDelete(marketIds, accountIds)
 
         // 마켓삭제 실패한 상품은 DB 삭제 제외 (고아 상품 방지)
-        const failedIds = new Set(
-          (res.results ?? [])
-            .filter(r => r.success_count === 0)
-            .map(r => r.product_id)
-        )
+        ;(res.results ?? [])
+          .filter(r => r.success_count === 0)
+          .forEach(r => failedIds.add(r.product_id))
+
         if (failedIds.size > 0) {
           safeToDeleteIds = ids.filter(id => !failedIds.has(id))
+          failedIds.forEach(id => updateLogStatus(id, 'failed'))
           alert(`마켓삭제 실패 ${fmtNum(failedIds.size)}건 — 해당 상품은 DB 삭제 건너뜀. 재시도하세요.`)
         }
       }
 
       if (safeToDeleteIds.length > 0) {
         await collectorApi.bulkDeleteProducts(safeToDeleteIds)
+        setDeleteLog(prev => prev.map(e =>
+          safeToDeleteIds.includes(e.productId) ? { ...e, status: 'done', time: nowStr() } : e
+        ))
       }
+
+      // skipped 처리 (마켓삭제 실패가 아닌 나머지 미삭제 항목)
+      setDeleteLog(prev => prev.map(e =>
+        e.status === 'processing' ? { ...e, status: 'skipped' } : e
+      ))
+
       await load()
       onDeleted()
     } finally {
@@ -185,6 +225,31 @@ export default function DuplicatesModal({ open, sourceSite, onClose, onDeleted }
 
         {/* 본문 */}
         <div style={{ overflowY: 'auto', flex: 1, padding: '0.75rem 1.25rem' }}>
+          {/* 삭제 진행 로그 */}
+          {deleting && deleteLog.length > 0 && (
+            <div style={{ marginBottom: '1rem', background: '#0D0D0D', border: '1px solid #2A2A2A', borderRadius: '8px', overflow: 'hidden' }}>
+              <div style={{ padding: '0.5rem 0.875rem', background: '#161616', borderBottom: '1px solid #222', fontSize: '0.78rem', color: '#AAA', fontWeight: 600 }}>
+                삭제 진행 중 ({fmtNum(deleteLog.filter(e => e.status === 'done').length)} / {fmtNum(deleteLog.length)})
+              </div>
+              <div style={{ maxHeight: '220px', overflowY: 'auto', padding: '0.25rem 0' }}>
+                {deleteLog.map((entry, i) => {
+                  const statusColor = entry.status === 'done' ? '#6DD68A' : entry.status === 'failed' ? '#FF6B6B' : entry.status === 'skipped' ? '#888' : '#FFA726'
+                  const statusLabel = entry.status === 'done' ? '완료' : entry.status === 'failed' ? '실패' : entry.status === 'skipped' ? '건너뜀' : '처리중'
+                  return (
+                    <div key={i} style={{ padding: '0.35rem 0.875rem', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid #1A1A1A', fontSize: '0.75rem' }}>
+                      <span style={{ color: '#555', flexShrink: 0, fontFamily: 'monospace' }}>{entry.time}</span>
+                      <span style={{ color: '#888', flexShrink: 0, maxWidth: '80px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.brand}</span>
+                      <span style={{ color: '#CCC', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.name}</span>
+                      <span style={{ color: '#555', flexShrink: 0, fontFamily: 'monospace', fontSize: '0.7rem' }}>{entry.productId}</span>
+                      <span style={{ color: statusColor, flexShrink: 0, fontWeight: 600, minWidth: '40px', textAlign: 'right' }}>{statusLabel}</span>
+                    </div>
+                  )
+                })}
+                <div ref={logEndRef} />
+              </div>
+            </div>
+          )}
+
           {loading && (
             <div style={{ textAlign: 'center', color: '#888', padding: '2rem', fontSize: '0.85rem' }}>조회 중...</div>
           )}

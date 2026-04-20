@@ -430,12 +430,14 @@ class SambaCollectorService:
         data["images"] = images
 
     async def get_duplicate_products(
-        self, tenant_id, source_site: str | None = None
+        self, tenant_id, source_site: str | None = None, brand: str | None = None
     ) -> list:
         """동일 name 중복 상품 그룹 반환 (원본=가장 먼저 수집된 것, 나머지=중복)."""
         from collections import defaultdict
 
-        products = await self.product_repo.find_duplicates(tenant_id, source_site)
+        products = await self.product_repo.find_duplicates(
+            tenant_id, source_site, brand
+        )
         groups_map: dict = defaultdict(list)
         for p in products:
             groups_map[(p.name or "").strip()].append(p)

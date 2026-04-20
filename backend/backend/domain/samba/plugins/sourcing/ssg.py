@@ -46,6 +46,7 @@ class SSGPlugin(SourcingPlugin):
         selected_brands: list[str] | None = None,
         brand_ids: list[str] | None = None,
         brand_total: int = 0,
+        log_fn=None,
     ) -> dict:
         """SSG 카테고리 스캔 — categoryFilter 트리 플래튼 또는 상품 샘플링."""
         from backend.domain.samba.proxy.ssg_sourcing import SSGSourcingClient
@@ -56,6 +57,7 @@ class SSGPlugin(SourcingPlugin):
             selected_brands=selected_brands,
             brand_ids=brand_ids,
             brand_total=brand_total,
+            log_fn=log_fn,
         )
 
     async def discover_brands(self, keyword: str) -> dict:

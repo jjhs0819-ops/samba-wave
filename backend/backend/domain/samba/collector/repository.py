@@ -94,20 +94,24 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
         key_set = {(r[1], r[2]) for r in rows if r[1] and r[2]}
         return name_set, key_set
 
-    async def find_duplicates(self, tenant_id, source_site: str | None = None) -> list:
+    async def find_duplicates(
+        self, tenant_id, source_site: str | None = None, brand: str | None = None
+    ) -> list:
         """동일 name이 2개 이상이며 그 중 마켓 등록 상품이 포함된 그룹 전체 반환.
-        source_site 지정 시 해당 소싱처만 대상.
+        source_site 지정 시 해당 소싱처만 대상. brand 지정 시 해당 브랜드만 대상.
         """
         from sqlalchemy import cast, func, String
 
         tf = self._tenant_filter(tenant_id)
         sc = [SambaCollectedProduct.source_site == source_site] if source_site else []
+        bc = [SambaCollectedProduct.brand == brand] if brand else []
 
         registered_names_sq = (
             select(SambaCollectedProduct.name)
             .where(
                 tf,
                 *sc,
+                *bc,
                 SambaCollectedProduct.registered_accounts.isnot(None),
                 cast(SambaCollectedProduct.registered_accounts, String) != "null",
                 cast(SambaCollectedProduct.registered_accounts, String) != "[]",
@@ -120,6 +124,7 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
             .where(
                 tf,
                 *sc,
+                *bc,
                 SambaCollectedProduct.name.in_(select(registered_names_sq.c.name)),
             )
             .group_by(SambaCollectedProduct.name)
@@ -131,6 +136,7 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
             .where(
                 tf,
                 *sc,
+                *bc,
                 SambaCollectedProduct.name.in_(select(dup_names_sq.c.name)),
             )
             .order_by(

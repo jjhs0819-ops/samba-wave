@@ -553,9 +553,10 @@ export const collectorApi = {
   bulkAddAccount: () =>
     request<{ pa_products: number; matched: number; updated: number; already: number }>(`${SAMBA_PREFIX}/collector/products/bulk-add-account`, { method: "POST" }),
 
-  getDuplicates: (sourceSite?: string) => {
+  getDuplicates: (sourceSite?: string, brand?: string) => {
     const p = new URLSearchParams()
     if (sourceSite) p.set('source_site', sourceSite)
+    if (brand) p.set('brand', brand)
     const qs = p.toString() ? `?${p}` : ''
     return request<{
       groups: Array<{

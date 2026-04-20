@@ -126,11 +126,18 @@ async def cleanup_smartstore_orphans(
     if not accounts:
         raise HTTPException(status_code=404, detail="활성 스마트스토어 계정 없음")
 
-    # 2. DB 상품 로드 — 해당 계정들의 tenant_id로 범위 한정
+    # 2. DB 상품 로드 — tenant_id 필터 + NULL 포함 (멀티테넌시 도입 전 상품 누락 방지)
+    from sqlalchemy import or_
+
     tenant_ids = list({a.tenant_id for a in accounts if a.tenant_id})
     prod_query = select(SambaCollectedProduct)
     if tenant_ids:
-        prod_query = prod_query.where(SambaCollectedProduct.tenant_id.in_(tenant_ids))
+        prod_query = prod_query.where(
+            or_(
+                SambaCollectedProduct.tenant_id.in_(tenant_ids),
+                SambaCollectedProduct.tenant_id.is_(None),
+            )
+        )
     prod_result = await session.exec(prod_query)
     all_db_products = prod_result.all()
 

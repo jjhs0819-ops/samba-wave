@@ -2364,37 +2364,11 @@ class JobWorker:
             job_type="collect",
         )
 
-        # 프록시 풀 로테이션 — 서버 직접 수집 (확장앱 미사용)
-        from backend.core.config import settings as _ssg_settings
-
-        _ssg_proxy_pool: list[str] = []
-        if _ssg_settings.collect_proxy_url:
-            _ssg_proxy_pool.append(_ssg_settings.collect_proxy_url.strip())
-        if _ssg_settings.proxy_urls:
-            for _p in _ssg_settings.proxy_urls.split(","):
-                _p = _p.strip()
-                if _p and _p not in _ssg_proxy_pool:
-                    _ssg_proxy_pool.append(_p)
-
-        _ssg_clients: list[SSGSourcingClient] = []
-        if _ssg_proxy_pool:
-            for _p in _ssg_proxy_pool:
-                _ssg_clients.append(SSGSourcingClient(proxy_url=_p))
-        else:
-            _ssg_clients.append(SSGSourcingClient())
-
-        _ssg_client_idx = 0
-
-        def _next_ssg_client() -> SSGSourcingClient:
-            nonlocal _ssg_client_idx
-            c = _ssg_clients[_ssg_client_idx % len(_ssg_clients)]
-            _ssg_client_idx += 1
-            return c
-
-        client = _ssg_clients[0]
+        # 메인 IP 단일 클라이언트 — 프록시 미사용
+        client = SSGSourcingClient()
         _add_job_log(
             job.id,
-            f"[SSG브랜드전체수집] 프록시 풀 {len(_ssg_proxy_pool)}개 — 1건/1초 속도",
+            "[SSG브랜드전체수집] 메인IP 단일 클라이언트 — 1건/1초 속도",
             job_type="collect",
         )
 
@@ -2559,12 +2533,11 @@ class JobWorker:
                     break
                 _batch = page_new[_bs : _bs + _SSG_BATCH]
 
-                # 상세 조회 — 서버 직접 (프록시 풀 로테이션)
-                _batch_clients = [_next_ssg_client() for _ in _batch]
+                # 상세 조회 — 메인IP 단일 클라이언트
                 _details = await asyncio.gather(
                     *(
-                        _bc.get_product_detail(it["site_product_id"])
-                        for _bc, it in zip(_batch_clients, _batch)
+                        client.get_product_detail(it["site_product_id"])
+                        for it in _batch
                     ),
                     return_exceptions=True,
                 )
@@ -2574,15 +2547,15 @@ class JobWorker:
                         break
                     spid = it["site_product_id"]
 
-                    # 429/실패 시 60초 대기 후 3회 재시도 (SSG 복구 시간 맞춤)
+                    # 429/실패 시 30초 대기 후 3회 재시도
                     if not det or isinstance(det, Exception):
                         for _retry in range(1, 4):
-                            _wait = 60
+                            _wait = 30
                             if await _cancellable_sleep(_wait):
                                 _page_cancelled = True
                                 break
                             try:
-                                det = await _next_ssg_client().get_product_detail(spid)
+                                det = await client.get_product_detail(spid)
                                 if det and not isinstance(det, Exception):
                                     break
                             except _SSGLR:
@@ -2808,7 +2781,7 @@ class JobWorker:
                         return
                     _spid = _fit["site_product_id"]
                     try:
-                        _det = await _next_ssg_client().get_product_detail(_spid)
+                        _det = await client.get_product_detail(_spid)
                     except Exception:
                         _det = {}
                     if not _det or not _det.get("itemNm"):
@@ -2895,19 +2868,36 @@ class JobWorker:
                     job_type="collect",
                 )
 
-        # 각 SearchFilter의 requested_count를 실제 수집수로 갱신
+        # 각 SearchFilter의 requested_count를 실제 수집수로 갱신 + 0건 그룹 자동 삭제
+        from sqlalchemy import delete as _sa_del
+
+        _empty_filter_ids: list[str] = []
         for f in filters:
             actual = (
                 await session.execute(
                     select(_func.count()).where(CPModel.search_filter_id == f.id)
                 )
             ).scalar() or 0
-            if actual > (f.requested_count or 0):
+            if actual == 0:
+                _empty_filter_ids.append(f.id)
+            elif actual > (f.requested_count or 0):
                 await session.execute(
                     _sa_upd(SambaSearchFilter)
                     .where(SambaSearchFilter.id == f.id)
                     .values(requested_count=actual, last_collected_at=datetime.now(UTC))
                 )
+
+        if _empty_filter_ids:
+            await session.execute(
+                _sa_del(SambaSearchFilter).where(
+                    SambaSearchFilter.id.in_(_empty_filter_ids)
+                )
+            )
+            _add_job_log(
+                job.id,
+                f"[SSG브랜드전체수집] 0건 그룹 {len(_empty_filter_ids):,}개 자동 삭제",
+                job_type="collect",
+            )
 
         _add_job_log(
             job.id,
