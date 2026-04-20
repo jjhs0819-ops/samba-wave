@@ -69,6 +69,10 @@ export default function DuplicatesModal({ open, sourceSite, filterIds, onClose, 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, sourceSite, filterIds])
 
+  useEffect(() => {
+    if (deleting) logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [deleteLog, deleting])
+
   if (!open) return null
 
   const toggleItem = (id: string) => {
@@ -96,10 +100,6 @@ export default function DuplicatesModal({ open, sourceSite, filterIds, onClose, 
   const updateLogStatus = (id: string, status: DeleteLogEntry['status']) => {
     setDeleteLog(prev => prev.map(e => e.productId === id ? { ...e, status } : e))
   }
-
-  useEffect(() => {
-    if (deleting) logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [deleteLog, deleting])
 
   const handleDelete = async () => {
     if (checked.size === 0) return
