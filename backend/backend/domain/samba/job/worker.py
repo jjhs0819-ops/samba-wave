@@ -2259,7 +2259,7 @@ class JobWorker:
                 _collect_last_progress[job.id] = _time.time()
 
                 _log_brand = (detail_for_build.get("brand") or "").strip()
-                _log_name = (detail_for_build.get("name") or "").strip()[:20]
+                _log_name = (detail_for_build.get("name") or "").strip()
                 _add_job_log(
                     job.id,
                     f"[{total_saved:,}/{len(new_items):,}] {_log_brand} {_log_name} {spid}",
@@ -2414,8 +2414,8 @@ class JobWorker:
         total_unmatched = 0
         # 재시도 큐 — 상세조회/매핑 실패 상품 누수 방지
         _failed_queue: list[dict] = []
-        # 병렬 배치 처리 (배치당 5개 동시)
-        _SSG_BATCH = 5
+        # 병렬 배치 처리 (배치당 4개 동시)
+        _SSG_BATCH = 4
         _ssg_page = 1
         # 필터 requested_count 합산 → 총 예상 건수 (진행률 표시용)
         _ssg_total_est = sum(f.requested_count or 0 for f in filters) or 1
@@ -2843,8 +2843,11 @@ class JobWorker:
                     f"[재시도 R{_round_idx}] {_wait_sec}초 대기 후 {len(_failed_queue):,}건 재시도",
                     job_type="collect",
                 )
+                # 대기 중에도 heartbeat 갱신 — 메인 스레드 타임아웃(600s) 방지
+                _collect_last_progress[job.id] = _time.time()
                 if await _cancellable_sleep(_wait_sec):
                     break
+                _collect_last_progress[job.id] = _time.time()
                 _current = _failed_queue
                 _failed_queue = []
                 for _fit in _current:
@@ -2858,8 +2861,39 @@ class JobWorker:
                         await session.commit()
                         return
                     _spid = _fit["site_product_id"]
+                    # 확장앱 소싱큐 경유 (직접 HTTP 차단 우회)
+                    from backend.domain.samba.proxy.sourcing_queue import (
+                        SourcingQueue as _SQ_r,
+                    )
+
+                    _det: dict = {}
                     try:
-                        _det = await client.get_product_detail(_spid)
+                        _, _r_fut = _SQ_r.add_detail_job("SSG", _spid)
+                        _r_ext = await asyncio.wait_for(_r_fut, timeout=30)
+                        if isinstance(_r_ext, dict) and _r_ext.get("success"):
+                            _r_html = _r_ext.get("html", "")
+                            if _r_html:
+                                _det = (
+                                    client._parse_result_item_obj(_r_html, _spid, False)
+                                    or {}
+                                )
+                            if not _det:
+                                _r_obj = _r_ext.get("resultItemObj", {})
+                                _r_nm = _r_obj.get("itemNm", "")
+                                if _r_nm and _r_html:
+                                    _r_opts = client._parse_select_options(_r_html)
+                                    _det = {
+                                        "itemNm": _r_nm,
+                                        "name": _r_nm,
+                                        "brand": _r_obj.get("repBrandNm")
+                                        or _r_obj.get("brandNm", ""),
+                                        "options": _r_opts,
+                                        "soldOut": "N",
+                                        "dispCtgLclsNm": "",
+                                        "dispCtgMclsNm": "",
+                                        "dispCtgSclsNm": "",
+                                        "dispCtgId": "",
+                                    }
                     except Exception:
                         _det = {}
                     if not _det or not (_det.get("itemNm") or _det.get("name")):
@@ -3277,7 +3311,7 @@ class JobWorker:
                 _collect_last_progress[job.id] = _time.time()
 
                 _log_brand = (detail_for_build.get("brand") or "").strip()
-                _log_name = (detail_for_build.get("name") or "").strip()[:20]
+                _log_name = (detail_for_build.get("name") or "").strip()
                 _add_job_log(
                     job.id,
                     f"[{total_saved:,}/{len(new_items):,}] {_log_brand} {_log_name} {spid}",
