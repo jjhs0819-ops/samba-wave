@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "z_lotteon_order_line_keys"
-down_revision: Union[str, None] = "z3a4b5c6d7e8"
+down_revision: Union[str, None] = "39f5332d495f"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
