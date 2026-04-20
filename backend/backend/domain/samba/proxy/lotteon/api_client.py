@@ -1445,7 +1445,9 @@ class LotteonClient:
             # 롯데ON 쪽에서는 이미 전체 주문이 취소 상태. 삼바 DB 동기화를 위해 성공으로 처리.
             # _call_api가 "응답 에러 (3006): ..." 형식으로 LotteonApiError를 던지므로 메시지로 구분.
             if "(3006)" in err_msg:
-                logger.info(f"[롯데ON][판매자취소] 이미 취소된 주문 (3006): odNo={od_no}")
+                logger.info(
+                    f"[롯데ON][판매자취소] 이미 취소된 주문 (3006): odNo={od_no}"
+                )
                 return True, "이미 취소된 주문"
             logger.warning(f"[롯데ON][판매자취소] 실패: odNo={od_no} / {err_msg}")
             return False, err_msg
