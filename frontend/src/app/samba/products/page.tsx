@@ -1848,10 +1848,12 @@ export default function ProductsPage() {
               setAiJobModal(true)
 
               try {
-                const res = await shipmentApi.cleanupSmartstoreOrphans(true)
+                const syncAccountId = statusFilter.startsWith('reg_') ? statusFilter.replace('reg_', '') : undefined
+                const res = await shipmentApi.cleanupSmartstoreOrphans(true, 50, syncAccountId)
                 const dbCount = res.db_no_count ?? 0
                 const staleCount = res.total_stale_db ?? 0
                 const logs: string[] = [
+                  syncAccountId ? `계정 필터: ${syncAccountId}` : '전체 계정',
                   `DB 등록 상품: ${dbCount.toLocaleString()}개`,
                   `Naver 등록 상품: ${res.total_naver.toLocaleString()}개`,
                   `Naver→DB 고아: ${res.total_orphans.toLocaleString()}개 (Naver엔 있는데 DB 매핑 없음)`,
@@ -1896,7 +1898,7 @@ export default function ProductsPage() {
                 setAiJobLogs([...logs])
                 setAiJobDone(false)
 
-                const del = await shipmentApi.cleanupSmartstoreOrphans(false, res.max_delete)
+                const del = await shipmentApi.cleanupSmartstoreOrphans(false, res.max_delete, syncAccountId)
                 logs.push(`삭제 완료: ${del.total_deleted.toLocaleString()}개`)
                 for (const a of del.accounts) {
                   if (a.failed && a.failed.length > 0) {
