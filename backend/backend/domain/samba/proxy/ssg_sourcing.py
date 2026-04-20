@@ -653,19 +653,14 @@ class SSGSourcingClient:
                                         await _asyncio.sleep(_leaf_delay)
                                         continue
                                 if r.status_code == 200:
-                                    matched = self._extract_matching_brand_ids(
-                                        r.text, keyword
-                                    )
-                                    # 선택된 brand_ids가 있으면 해당 ID가 직접 포함된 leaf만 확정
-                                    # (나이키스윔/나이키키즈 등 하위브랜드 전용 leaf 제외)
-                                    if matched and (
-                                        not brand_ids
-                                        or any(bid in matched for bid in brand_ids)
-                                    ):
+                                    # repBrandId 필터 결과의 area_count로 판정
+                                    # brandFilter 사이드바는 ctgId와 무관하게 동일 반환되어 사용 불가
+                                    count = self._parse_area_count(r.text)
+                                    if count > 0:
                                         brand_leaf_ids.add(leaf_ctg_id)
                                         logger.debug(
                                             f"[SSG] leaf {leaf_ctg_id} valid "
-                                            f"({leaf.get('path', '')}) brand={matched}"
+                                            f"({leaf.get('path', '')}) count={count}"
                                         )
                             except Exception as exc:
                                 logger.debug(

@@ -109,7 +109,11 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
         tf = self._tenant_filter(tenant_id)
         if filter_ids:
             fc: list = [SambaCollectedProduct.search_filter_id.in_(filter_ids)]
-            sc: list = []
+            sc: list = (
+                [SambaCollectedProduct.source_site == source_site]
+                if source_site
+                else []
+            )
         else:
             fc = []
             sc = (

@@ -2298,9 +2298,6 @@ class JobWorker:
         from backend.domain.samba.proxy.ssg_sourcing import (
             RateLimitError as SSGSearchRL,
         )
-        from backend.domain.samba.proxy.ssg_sourcing import (
-            RateLimitError as _SSGLR,
-        )
         from backend.api.v1.routers.samba.collector_common import (
             _build_product_data,
             _get_services,
@@ -2533,38 +2530,32 @@ class JobWorker:
                     break
                 _batch = page_new[_bs : _bs + _SSG_BATCH]
 
-                # 상세 조회 — 메인IP 단일 클라이언트
-                _details = await asyncio.gather(
-                    *(
-                        client.get_product_detail(it["site_product_id"])
-                        for it in _batch
-                    ),
-                    return_exceptions=True,
-                )
-
-                for it, det in zip(_batch, _details):
+                # 상세 조회 — 확장앱 소싱큐 위임 (SSG 서버사이드 차단 우회)
+                for it in _batch:
                     if _page_cancelled:
                         break
                     spid = it["site_product_id"]
+                    detail: dict = {}
+                    try:
+                        from backend.domain.samba.proxy.sourcing_queue import (
+                            SourcingQueue,
+                        )
 
-                    # 429/실패 시 30초 대기 후 3회 재시도
-                    if not det or isinstance(det, Exception):
-                        for _retry in range(1, 4):
-                            _wait = 30
-                            if await _cancellable_sleep(_wait):
-                                _page_cancelled = True
-                                break
-                            try:
-                                det = await client.get_product_detail(spid)
-                                if det and not isinstance(det, Exception):
-                                    break
-                            except _SSGLR:
-                                det = {}
-                            except Exception:
-                                det = {}
-                    if _page_cancelled:
-                        break
-                    detail = det if (det and not isinstance(det, Exception)) else {}
+                        _req_id, _future = SourcingQueue.add_detail_job("SSG", spid)
+                        _ext_result = await asyncio.wait_for(_future, timeout=30)
+                        if isinstance(_ext_result, dict) and _ext_result.get("success"):
+                            _html = _ext_result.get("html", "")
+                            if _html:
+                                detail = client._parse_item_view_html(_html, spid) or {}
+                    except asyncio.TimeoutError:
+                        _add_job_log(
+                            job.id,
+                            f"[SSG] 상세 타임아웃: {spid} (확장앱 미응답)",
+                            job_type="collect",
+                        )
+                    except Exception as _ext_err:
+                        logger.debug(f"[SSG] 확장앱 상세 실패: {spid} — {_ext_err}")
+
                     if not detail or not detail.get("itemNm"):
                         _failed_queue.append(it)
                         continue
@@ -3387,9 +3378,6 @@ class JobWorker:
                 )
             client = GsShopSourcingClient(proxy_pool=_gs_proxies or None)
         elif site == "SSG":
-            from backend.domain.samba.proxy.ssg_sourcing import (
-                RateLimitError as SSGRateLimitError,
-            )
             from backend.domain.samba.proxy.ssg_sourcing import SSGSourcingClient
 
             client = SSGSourcingClient()
@@ -4160,94 +4148,50 @@ class JobWorker:
                     f"[{site}] [{sf.name}] 상세 조회 시작: {len(new_items):,}건",
                     job_type="collect",
                 )
-                # 2건씩 병렬 배치 + TCP 연결 재사용
-                # 5건 병렬은 SSG 429를 더 빨리 유발하므로 2건으로 조정
-                import httpx as _httpx_ssg
-
-                _SSG_BATCH = 2
-                _ssg_matched = 0
-                _shared_http = _httpx_ssg.AsyncClient(
-                    timeout=_httpx_ssg.Timeout(30, connect=10.0),
-                    follow_redirects=True,
+                # 확장앱 소싱큐 위임 (SSG 서버사이드 차단 우회)
+                from backend.domain.samba.proxy.sourcing_queue import (
+                    SourcingQueue as _SSGQueue,
                 )
 
-                async def _fetch_ssg_detail(
-                    _pid: str,
-                ) -> tuple[str, dict[str, Any]]:
-                    """개별 SSG 상세 조회 (rate limit 재시도 포함)."""
-                    for attempt in range(3):
-                        try:
-                            det = await client.get_detail(
-                                _pid, _shared_client=_shared_http
-                            )
-                            return (_pid, det)
-                        except SSGRateLimitError as _rl:
-                            wait_seconds = max(
-                                5,
-                                min(int(getattr(_rl, "retry_after", 60) or 60), 60),
-                            )
-                            logger.warning(
-                                f"[잡워커] SSG 상세 rate limit {_pid}: "
-                                f"wait={wait_seconds}s retry={attempt + 1}/3"
-                            )
-                            _add_job_log(
-                                job.id,
-                                f"[{site}] 속도 제한 — {wait_seconds}초 대기 중... (재시도 {attempt + 1}/3)",
-                                job_type="collect",
-                            )
-                            if attempt >= 2:
-                                raise
-                            if await _cancellable_sleep(wait_seconds):
-                                return (_pid, {})
-                    return (_pid, {})
+                for _ssg_idx, _ssg_it in enumerate(new_items):
+                    from backend.domain.samba.emergency import (
+                        is_collect_cancel_requested as _icc_ssg,
+                        is_emergency_stopped as _ies_ssg,
+                    )
 
-                try:
-                    for batch_start in range(0, len(new_items), _SSG_BATCH):
-                        from backend.domain.samba.emergency import (
-                            is_collect_cancel_requested as _icc_ssg,
-                            is_emergency_stopped as _ies_ssg,
-                        )
-
-                        if _icc_ssg() or _ies_ssg() or await repo.is_cancelled(job.id):
-                            await repo.cancel_job(job.id)
-                            await session.commit()
-                            return
-                        batch = new_items[batch_start : batch_start + _SSG_BATCH]
-                        batch_pids = [
-                            str(it.get("site_product_id", "")) for it in batch
-                        ]
-
-                        # 배치 내 병렬 상세 조회
-                        results = await asyncio.gather(
-                            *(_fetch_ssg_detail(pid) for pid in batch_pids),
-                            return_exceptions=True,
-                        )
-
-                        for pid, res in zip(batch_pids, results):
-                            if isinstance(res, Exception):
-                                logger.warning(f"[잡워커] SSG 상세 실패 {pid}: {res}")
-                                continue
-                            _, det = res
-                            if det:
-                                # 검색 URL에 dispCtgId가 이미 포함되므로 재검증 없이 저장
-                                _ssg_details[pid] = det
-
-                        done = min(batch_start + _SSG_BATCH, len(new_items))
-                        await repo.update_progress(job.id, done, len(new_items))
+                    if _icc_ssg() or _ies_ssg() or await repo.is_cancelled(job.id):
+                        await repo.cancel_job(job.id)
+                        await session.commit()
+                        return
+                    spid = str(_ssg_it.get("site_product_id", ""))
+                    try:
+                        _req_id, _future = _SSGQueue.add_detail_job("SSG", spid)
+                        _ext_result = await asyncio.wait_for(_future, timeout=30)
+                        if isinstance(_ext_result, dict) and _ext_result.get("success"):
+                            _html = _ext_result.get("html", "")
+                            if _html:
+                                det = client._parse_item_view_html(_html, spid) or {}
+                                if det:
+                                    _ssg_details[spid] = det
+                    except asyncio.TimeoutError:
                         _add_job_log(
                             job.id,
-                            f"[{site}] [{sf.name}] 상세 조회 [{done:,}/{len(new_items):,}]",
+                            f"[SSG] 상세 타임아웃: {spid} (확장앱 미응답)",
+                            job_type="collect",
+                        )
+                    except Exception as _ext_err:
+                        logger.debug(f"[SSG] 확장앱 상세 실패: {spid} — {_ext_err}")
+                    _ssg_done = _ssg_idx + 1
+                    if _ssg_done % 5 == 0 or _ssg_done == len(new_items):
+                        await repo.update_progress(job.id, _ssg_done, len(new_items))
+                        _add_job_log(
+                            job.id,
+                            f"[{site}] [{sf.name}] 상세 조회 [{_ssg_done:,}/{len(new_items):,}]",
                             job_type="collect",
                         )
                         logger.info(
-                            f"[잡워커] SSG 상세 선취합 [{done}/{len(new_items)}]"
+                            f"[잡워커] SSG 상세 선취합 [{_ssg_done}/{len(new_items)}]"
                         )
-                        # 배치 간 딜레이 (마지막 배치 후 생략)
-                        # 2건 병렬 + 3.0초 = 약 0.67건/초 → SSG rate limit 방지
-                        if batch_start + _SSG_BATCH < len(new_items):
-                            await asyncio.sleep(3.0)
-                finally:
-                    await _shared_http.aclose()
 
                 logger.info(
                     f"[잡워커] SSG 상세 선취합 완료: {len(_ssg_details)}/{len(new_items)}건"

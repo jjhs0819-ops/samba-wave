@@ -2644,7 +2644,7 @@ export default function CollectorPage() {
       {/* 중복 상품 모달 */}
       <DuplicatesModal
         open={showDuplicatesModal}
-        sourceSite={drillBrand ? undefined : _activeSite}
+        sourceSite={_activeSite}
         filterIds={_modalFilterIds}
         onClose={() => setShowDuplicatesModal(false)}
         onDeleted={() => { load(); loadTree() }}
