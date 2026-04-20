@@ -153,6 +153,20 @@ class BulkTagUpdateRequest(BaseModel):
     seo_keywords: list[str] | None = None
 
 
+# ── Duplicate Detection ──
+
+
+@router.get("/products/duplicates")
+async def get_duplicate_products(
+    session: AsyncSession = Depends(get_read_session_dependency),
+    user_id: str = Depends(get_user_id),
+):
+    """마켓 등록 상품과 동일 원상품명인 중복 상품 그룹 반환."""
+    svc = _get_services(session)
+    groups = await svc.get_duplicate_products(tenant_id=user_id)
+    return {"groups": groups, "total": len(groups)}
+
+
 # ── Status / Health ──
 
 

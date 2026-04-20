@@ -266,6 +266,15 @@ class SambaCollectorService:
         from backend.domain.samba.collector.model import SambaCollectedProduct
         from sqlalchemy.exc import IntegrityError
 
+        # 마켓 등록된 상품명 + (source_site, site_product_id) 키 사전 조회
+        tenant_ids = {d.get("tenant_id") for d in items if d.get("tenant_id")}
+        registered_names_by_tid: Dict[str, set] = {}
+        registered_keys_by_tid: Dict[str, set] = {}
+        for tid in tenant_ids:
+            names, keys = await self.product_repo.get_registered_name_keys(str(tid))
+            registered_names_by_tid[str(tid)] = names
+            registered_keys_by_tid[str(tid)] = keys
+
         # 동일 소싱처 내 동일 원 상품명 중복 필터링
         source_site_pairs = {(d.get("tenant_id"), d.get("source_site")) for d in items}
         # (tenant_id, source_site, name) → set of site_product_ids
@@ -288,7 +297,7 @@ class SambaCollectorService:
         seen_names: set = set()
         filtered_items: list = []
         for d in items:
-            tid = d.get("tenant_id")
+            tid = str(d.get("tenant_id") or "")
             ss = d.get("source_site")
             nm = (d.get("name") or "").strip()
             spid = d.get("site_product_id")
@@ -303,6 +312,11 @@ class SambaCollectorService:
                     continue
             elif key in seen_names:
                 # 배치 내 자체 중복 → skip
+                continue
+            # 마켓 등록된 상품명 차단: 동일 상품(같은 키) 갱신은 허용
+            reg_names = registered_names_by_tid.get(tid, set())
+            reg_keys = registered_keys_by_tid.get(tid, set())
+            if nm in reg_names and (ss, spid) not in reg_keys:
                 continue
             seen_names.add(key)
             filtered_items.append(d)
@@ -408,6 +422,60 @@ class SambaCollectorService:
                 images.append(di)
                 existing.add(di)
         data["images"] = images
+
+    async def get_duplicate_products(self, tenant_id: str) -> list:
+        """마켓 등록 상품과 동일 name인 중복 상품 그룹 반환."""
+        from collections import defaultdict
+
+        products = await self.product_repo.find_duplicates(tenant_id)
+        groups_map: dict = defaultdict(list)
+        for p in products:
+            groups_map[(p.name or "").strip()].append(p)
+
+        result = []
+        for name, items in groups_map.items():
+            registered = [
+                p
+                for p in items
+                if p.registered_accounts
+                and p.registered_accounts not in ([], "null", None)
+            ]
+            duplicates = [p for p in items if p not in registered]
+            if not duplicates:
+                continue
+            result.append(
+                {
+                    "name": name,
+                    "total": len(items),
+                    "registered": [
+                        {
+                            "id": p.id,
+                            "name": p.name,
+                            "source_site": p.source_site,
+                            "brand": p.brand,
+                            "sale_price": p.sale_price,
+                            "images": (p.images or [])[:1],
+                            "registered_accounts": p.registered_accounts,
+                            "status": p.status,
+                        }
+                        for p in registered
+                    ],
+                    "duplicates": [
+                        {
+                            "id": p.id,
+                            "name": p.name,
+                            "source_site": p.source_site,
+                            "brand": p.brand,
+                            "sale_price": p.sale_price,
+                            "images": (p.images or [])[:1],
+                            "registered_accounts": p.registered_accounts,
+                            "status": p.status,
+                        }
+                        for p in duplicates
+                    ],
+                }
+            )
+        return result
 
     async def delete_collected_product(self, product_id: str) -> bool:
         return await self.product_repo.delete_async(product_id)

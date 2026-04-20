@@ -28,6 +28,7 @@ import TagPreviewModal, { type TagPreview, type TagPreviewCost } from './compone
 import AiSourcingModal from './components/AiSourcingModal'
 import MusinsaBrandModal from './components/MusinsaBrandModal'
 import LotteOnBrandModal from './components/LotteOnBrandModal'
+import DuplicatesModal from './components/DuplicatesModal'
 
 const fmtDate = (iso: string | undefined | null) => _fmtDate(iso, '.')
 
@@ -112,6 +113,9 @@ export default function CollectorPage() {
   // 이미지 필터링 (모델컷/연출컷/배너 제거)
   const [imgFiltering, setImgFiltering] = useState(false)
   const [imgFilterScopes, setImgFilterScopes] = useState<Set<string>>(new Set(['detail_images']))
+
+  // 중복 상품 모달
+  const [showDuplicatesModal, setShowDuplicatesModal] = useState(false)
 
   // 카테고리 매핑 모달
   const [showMappingModal, setShowMappingModal] = useState(false)
@@ -1789,6 +1793,15 @@ export default function CollectorPage() {
               <option value="unregistered">미등록</option>
             </select>
             <button
+              onClick={() => setShowDuplicatesModal(true)}
+              style={{
+                background: 'rgba(255,165,0,0.1)', border: '1px solid rgba(255,165,0,0.3)',
+                color: '#FFA500', padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem', cursor: 'pointer',
+              }}
+            >
+              중복 상품
+            </button>
+            <button
               onClick={handleDeleteSelectedGroups}
               style={{
                 background: 'rgba(255,100,100,0.1)', border: '1px solid rgba(255,100,100,0.3)',
@@ -2623,6 +2636,12 @@ export default function CollectorPage() {
         done={aiJobDone}
         abortRef={aiJobAbortRef}
         onClose={() => setAiJobModal(false)}
+      />
+      {/* 중복 상품 모달 */}
+      <DuplicatesModal
+        open={showDuplicatesModal}
+        onClose={() => setShowDuplicatesModal(false)}
+        onDeleted={() => { load(); loadTree() }}
       />
     </div>
   );

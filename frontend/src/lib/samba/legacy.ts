@@ -553,6 +553,17 @@ export const collectorApi = {
   bulkAddAccount: () =>
     request<{ pa_products: number; matched: number; updated: number; already: number }>(`${SAMBA_PREFIX}/collector/products/bulk-add-account`, { method: "POST" }),
 
+  getDuplicates: () =>
+    request<{
+      groups: Array<{
+        name: string
+        total: number
+        registered: Array<{ id: string; name: string; source_site: string; brand: string | null; sale_price: number; images: string[]; registered_accounts: unknown; status: string }>
+        duplicates: Array<{ id: string; name: string; source_site: string; brand: string | null; sale_price: number; images: string[]; registered_accounts: unknown; status: string }>
+      }>
+      total: number
+    }>(`${SAMBA_PREFIX}/collector/products/duplicates`),
+
   // 재고/가격 갱신
   refresh: (productIds?: string[], autoRetransmit = true, searchFilterIds?: string[]) =>
     request<RefreshResult>(`${SAMBA_PREFIX}/collector/products/refresh`, {
