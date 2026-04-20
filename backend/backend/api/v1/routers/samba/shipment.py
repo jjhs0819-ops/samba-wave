@@ -245,11 +245,15 @@ async def cleanup_smartstore_orphans(
                 for cp in channel_products
                 if cp.get("channelProductNo")
             ]
-            # /v1/products/search 는 originProduct 미포함 → sellerManagementCode 조회 불가.
-            # originProductNo / channelProductNo 직접 비교로 orphan 판별.
+            # originProductNo / channelProductNo 직접 비교
             in_db = (origin_no in account_db_nos) or any(
                 cn in account_db_nos for cn in channel_nos
             )
+            # 구 등록 상품은 account_db_nos에 origin_no 미포함 → sellerManagementCode(=style_code)로 추가 확인
+            if not in_db:
+                mgmt_code = str(np.get("sellerManagementCode") or "")
+                if mgmt_code and mgmt_code in all_style_codes:
+                    in_db = True
             if not in_db:
                 name = next(
                     (cp.get("name", "") for cp in channel_products if cp.get("name")),
