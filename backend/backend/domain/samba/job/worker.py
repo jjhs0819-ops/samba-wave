@@ -4253,9 +4253,9 @@ class JobWorker:
                             f"[잡워커] SSG 상세 선취합 [{done}/{len(new_items)}]"
                         )
                         # 배치 간 딜레이 (마지막 배치 후 생략)
-                        # 2건 병렬 + 1.5초 = 약 1.3건/초 → SSG 차단 임계값 이하 유지
+                        # 2건 병렬 + 3.0초 = 약 0.67건/초 → SSG rate limit 방지
                         if batch_start + _SSG_BATCH < len(new_items):
-                            await asyncio.sleep(1.5)
+                            await asyncio.sleep(3.0)
                 finally:
                     await _shared_http.aclose()
 
