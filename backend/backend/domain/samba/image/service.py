@@ -552,9 +552,19 @@ class ImageTransformService:
                 data = buf_resized.getvalue()
             # 캐시된 세션 재사용 (매번 모델 로드 방지)
             session = _get_rembg_session()
-            result = remove(data, session=session)
+            result = remove(
+                data,
+                session=session,
+                alpha_matting=True,
+                alpha_matting_foreground_threshold=250,
+                alpha_matting_background_threshold=30,
+                alpha_matting_erode_size=15,
+            )
             # 흰배경 합성 + WebP 변환
             img = Image.open(io.BytesIO(result)).convert("RGBA")
+            r, g, b, a = img.split()
+            a = a.point(lambda x: 0 if x < 20 else x)
+            img = Image.merge("RGBA", (r, g, b, a))
             white_bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
             composite = Image.alpha_composite(white_bg, img).convert("RGB")
             buf = io.BytesIO()
