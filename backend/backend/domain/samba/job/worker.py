@@ -2394,7 +2394,7 @@ class JobWorker:
         client = _ssg_clients[0]
         _add_job_log(
             job.id,
-            f"[SSG브랜드전체수집] 프록시 풀 {len(_ssg_proxy_pool)}개 — 그룹별 ctg_id 수집 (1건/1초)",
+            f"[SSG브랜드전체수집] 프록시 풀 {len(_ssg_proxy_pool)}개 — 1건/5초 속도",
             job_type="collect",
         )
 
@@ -2420,130 +2420,180 @@ class JobWorker:
         total_saved = 0
         total_skipped = 0
         total_unmatched = 0
-        # 재시도 큐 — 상세조회 실패 상품 누수 방지 (_filter_id 포함)
+        # 재시도 큐 — 상세조회/매핑 실패 상품 누수 방지
         _failed_queue: list[dict] = []
+        # 1건 순차 + 5초 딜레이 — 탭 사용 최소화 테스트
+        _SSG_BATCH = 1
+        _ssg_page = 1
         # 필터 requested_count 합산 → 총 예상 건수 (진행률 표시용)
         _ssg_total_est = sum(f.requested_count or 0 for f in filters) or 1
 
-        # 필터별 ctg_id 검색 — 개별 그룹 수집과 동일한 빠른 경로
-        # (기존: 브랜드 전체 검색 후 dispCtgId 매핑 → 1700건 × 1초 = 28분)
-        # (변경: 필터별 ctg_id 필터 검색 → 카테고리당 수십 건 × 필터 수)
-        for sf in filters:
-            ctg_id = sf.category_filter
-            if not ctg_id:
-                _add_job_log(
-                    job.id,
-                    f"[SSG브랜드전체수집] [{sf.name}] ctg_id 없음 — 스킵",
-                    job_type="collect",
-                )
-                continue
-
-            _sf_page = 1
-            _add_job_log(
-                job.id,
-                f"[SSG브랜드전체수집] [{sf.name}] 수집 시작 (ctg={ctg_id})",
-                job_type="collect",
+        while True:
+            from backend.domain.samba.emergency import (
+                is_collect_cancel_requested as _icc_s,
+                is_emergency_stopped as _ies_s,
             )
 
-            while True:
-                from backend.domain.samba.emergency import (
-                    is_collect_cancel_requested as _icc_s,
-                    is_emergency_stopped as _ies_s,
-                )
+            if _icc_s() or _ies_s() or await repo.is_cancelled(job.id):
+                await repo.cancel_job(job.id)
+                await session.commit()
+                return
 
-                if _icc_s() or _ies_s() or await repo.is_cancelled(job.id):
-                    await repo.cancel_job(job.id)
-                    await session.commit()
-                    return
+            # 1단계: 해당 페이지 검색 — 확장앱 소싱큐로 위임 (하이브리드)
+            from urllib.parse import quote as _qs_quote
 
-                _raw: list[dict] = []
-                for _attempt in range(3):
-                    try:
-                        _raw = await client.search_products(
-                            keyword,
-                            page=_sf_page,
-                            size=40,
-                            ctg_id=ctg_id,
-                            brand_ids=_brand_ids_from_filter,
-                        )
-                        break
-                    except SSGSearchRL as _rl:
-                        _wait = _rl.retry_after or min(15, 3 * (_attempt + 1))
-                        _add_job_log(
-                            job.id,
-                            f"[SSG브랜드전체수집] 검색 속도제한 {_wait}초 대기 (p{_sf_page})",
-                            job_type="collect",
-                        )
-                        if await _cancellable_sleep(_wait):
-                            await repo.cancel_job(job.id)
-                            await session.commit()
-                            return
-                    except Exception as _se:
-                        _add_job_log(
-                            job.id,
-                            f"[SSG브랜드전체수집] 검색 오류: {type(_se).__name__} (p{_sf_page})",
-                            job_type="collect",
-                        )
-                        break
+            _brand_q = (
+                "|".join(_brand_ids_from_filter) if _brand_ids_from_filter else ""
+            )
+            _ssg_search_url = (
+                f"https://department.ssg.com/search?query={_qs_quote(keyword)}"
+                f"&page={_ssg_page}"
+            )
+            if _brand_q:
+                _ssg_search_url += f"&repBrandId={_brand_q}"
 
-                if not _raw:
+            _add_job_log(
+                job.id,
+                f"[SSG브랜드전체수집] {_ssg_page}페이지 검색 중...",
+                job_type="collect",
+            )
+            _raw: list[dict] = []
+            for _attempt in range(3):
+                try:
+                    _raw = await client.search_products(
+                        keyword,
+                        page=_ssg_page,
+                        size=40,
+                        brand_ids=_brand_ids_from_filter,
+                    )
+                    break
+                except SSGSearchRL as _rl:
+                    _wait = _rl.retry_after or min(15, 3 * (_attempt + 1))
+                    _add_job_log(
+                        job.id,
+                        f"[SSG브랜드전체수집] 검색 속도제한 {_wait}초 대기 (p{_ssg_page})",
+                        job_type="collect",
+                    )
+                    if await _cancellable_sleep(_wait):
+                        await repo.cancel_job(job.id)
+                        await session.commit()
+                        return
+                except Exception as _se:
+                    _add_job_log(
+                        job.id,
+                        f"[SSG브랜드전체수집] 검색 오류: {type(_se).__name__} (p{_ssg_page})",
+                        job_type="collect",
+                    )
                     break
 
-                page_new: list[dict] = []
-                for item in _raw:
-                    pid = str(
-                        item.get("site_product_id")
-                        or item.get("siteProductId")
-                        or item.get("goodsNo")
-                        or ""
-                    )
-                    if not pid or pid in _seen_spids:
-                        continue
-                    _seen_spids.add(pid)
-                    page_new.append(
-                        {
-                            "site_product_id": pid,
-                            "name": item.get("name", ""),
-                            "brand": item.get("brand", ""),
-                            "sale_price": item.get("salePrice")
-                            or item.get("sale_price", 0),
-                            "original_price": item.get("originalPrice")
-                            or item.get("original_price", 0),
-                            "images": [item.get("image")]
-                            if item.get("image")
-                            else item.get("images", []),
-                            "is_sold_out": item.get("isSoldOut", False),
-                        }
-                    )
+            if not _raw:
+                break
 
-                _page_cancelled = False
-                for it in page_new:
+            # 2단계: 이 페이지 신규 상품 추출 (확장앱 반환은 이미 정규화된 형태)
+            # [중요] SSG 검색 API는 repBrandId+ctgId 동시 사용 시 ctgId 무시 → repBrandId 제거 상태.
+            # query 키워드 매칭이 하위 브랜드(나이키키즈/스윔/골프)까지 반환하므로 클라이언트 post-filter 필수.
+            # 2중 방어:
+            #   (1) brandId 정확 매칭 — _brand_ids_from_filter set 기준
+            #   (2) brand 이름 정확 매칭 — keyword(=선택 브랜드명)와 item.brand 비교
+            _allowed_brand_ids: set[str] = {
+                str(b).strip() for b in (_brand_ids_from_filter or []) if str(b).strip()
+            }
+            _keyword_norm = str(keyword or "").strip()
+            _brand_dropped = 0
+            page_new: list[dict] = []
+            for item in _raw:
+                pid = str(
+                    item.get("site_product_id")
+                    or item.get("siteProductId")
+                    or item.get("goodsNo")
+                    or ""
+                )
+                if not pid or pid in _seen_spids:
+                    continue
+                # 브랜드 post-filter
+                _item_bid = str(
+                    item.get("repBrandId") or item.get("brandId") or ""
+                ).strip()
+                _item_bname = str(item.get("brand") or "").strip()
+                _match_id = (not _allowed_brand_ids) or (
+                    _item_bid and _item_bid in _allowed_brand_ids
+                )
+                _match_name = (not _keyword_norm) or (_item_bname == _keyword_norm)
+                # brandId가 없으면 name 매칭만으로 판정, brandId가 있으면 id 매칭 우선
+                if _item_bid:
+                    _keep = _match_id
+                else:
+                    _keep = _match_name
+                if not _keep:
+                    _brand_dropped += 1
+                    continue
+                _seen_spids.add(pid)
+                page_new.append(
+                    {
+                        "site_product_id": pid,
+                        "name": item.get("name", ""),
+                        "brand": item.get("brand", ""),
+                        "sale_price": item.get("salePrice")
+                        or item.get("sale_price", 0),
+                        "original_price": item.get("originalPrice")
+                        or item.get("original_price", 0),
+                        "images": [item.get("image")]
+                        if item.get("image")
+                        else item.get("images", []),
+                        "is_sold_out": item.get("isSoldOut", False),
+                    }
+                )
+
+            if _brand_dropped:
+                _add_job_log(
+                    job.id,
+                    f"[SSG브랜드전체수집] 하위브랜드 drop {_brand_dropped}건 (p{_ssg_page})",
+                    job_type="collect",
+                )
+
+            # 3단계: 신규 상품 즉시 상세조회+저장 (1건 순차, 배치당 2초)
+
+            _page_cancelled = False
+            for _bs in range(0, len(page_new), _SSG_BATCH):
+                if _page_cancelled:
+                    break
+                _batch = page_new[_bs : _bs + _SSG_BATCH]
+
+                # 상세 조회 — 서버 직접 (프록시 풀 로테이션)
+                _batch_clients = [_next_ssg_client() for _ in _batch]
+                _details = await asyncio.gather(
+                    *(
+                        _bc.get_product_detail(it["site_product_id"])
+                        for _bc, it in zip(_batch_clients, _batch)
+                    ),
+                    return_exceptions=True,
+                )
+
+                for it, det in zip(_batch, _details):
                     if _page_cancelled:
                         break
                     spid = it["site_product_id"]
 
-                    # 상세 조회 — 프록시 풀 로테이션 + 3회 재시도
-                    det: dict = {}
-                    for _retry in range(3):
-                        try:
-                            _d = await _next_ssg_client().get_product_detail(spid)
-                            if _d and not isinstance(_d, Exception):
-                                det = _d
-                                break
-                        except _SSGLR:
-                            _wait = (_retry + 1) * 10
+                    # 429/실패 시 프록시 로테이션 3회 재시도
+                    if not det or isinstance(det, Exception):
+                        for _retry in range(1, 4):
+                            _wait = _retry * 10  # 10s→20s→30s
                             if await _cancellable_sleep(_wait):
                                 _page_cancelled = True
                                 break
-                        except Exception:
-                            pass
+                            try:
+                                det = await _next_ssg_client().get_product_detail(spid)
+                                if det and not isinstance(det, Exception):
+                                    break
+                            except _SSGLR:
+                                det = {}
+                            except Exception:
+                                det = {}
                     if _page_cancelled:
                         break
-
-                    detail = det
+                    detail = det if (det and not isinstance(det, Exception)) else {}
                     if not detail or not detail.get("itemNm"):
-                        _failed_queue.append({**it, "_filter_id": sf.id})
-                        await asyncio.sleep(1.0)
+                        _failed_queue.append(it)
                         continue
 
                     is_sold_out = bool(
@@ -2551,18 +2601,98 @@ class JobWorker:
                     )
                     if is_sold_out and not _include_sold_out:
                         total_skipped += 1
-                        await asyncio.sleep(1.0)
                         continue
 
-                    # ctg_id로 이미 카테고리 필터링됨 → sf.id 직접 사용
-                    filter_id = sf.id
+                    # 카테고리 매핑 (3단계 + 최후 fallback)
+                    # 1순위: dispCtgId → cat_filter_map
+                    disp_ctg_id = detail.get("dispCtgId", "")
+                    filter_id = cat_filter_map.get(disp_ctg_id) if disp_ctg_id else None
 
+                    # 2순위: dispCtg 레벨명 경로 → cat_filter_map / cat_name_map
                     _cat_parts = [
                         (detail.get("dispCtgLclsNm", "") or "").strip(),
                         (detail.get("dispCtgMclsNm", "") or "").strip(),
                         (detail.get("dispCtgSclsNm", "") or "").strip(),
                     ]
                     _cat_parts = [p for p in _cat_parts if p]
+                    if not filter_id:
+                        for _d in range(len(_cat_parts), 0, -1):
+                            _sub = " > ".join(_cat_parts[:_d])
+                            filter_id = cat_filter_map.get(_sub) or cat_name_map.get(
+                                _sub
+                            )
+                            if filter_id:
+                                break
+
+                    # 3순위: detail["category"] (4단계 폴백 적용된 최종 경로)
+                    if not filter_id:
+                        _full_cat = (detail.get("category") or "").strip()
+                        if _full_cat:
+                            _fc_parts = [
+                                p.strip() for p in _full_cat.split(" > ") if p.strip()
+                            ]
+                            if not _cat_parts:
+                                _cat_parts = _fc_parts
+                            for _d in range(len(_fc_parts), 0, -1):
+                                _sub = " > ".join(_fc_parts[:_d])
+                                filter_id = cat_filter_map.get(
+                                    _sub
+                                ) or cat_name_map.get(_sub)
+                                if filter_id:
+                                    break
+
+                    # 3순위도 실패 시 필터 자동 생성 — 누수 0 보장
+                    if not filter_id:
+                        # stdCtg 경로도 시도
+                        _std_parts = [
+                            (detail.get("stdCtgLclsNm", "") or "").strip(),
+                            (detail.get("stdCtgMclsNm", "") or "").strip(),
+                            (detail.get("stdCtgSclsNm", "") or "").strip(),
+                        ]
+                        _std_parts = [p for p in _std_parts if p]
+                        _brand_nm = keyword or "브랜드"
+                        _cat_path_final = (
+                            " > ".join(_cat_parts)
+                            or " > ".join(_std_parts)
+                            or detail.get("dispCtgNm", "")
+                            or "미분류"
+                        )
+                        _cat_parts_for_name = (
+                            _cat_parts
+                            or _std_parts
+                            or [detail.get("dispCtgNm", "기타")]
+                        )
+                        _new_name = f"SSG_{_brand_nm}_" + "_".join(_cat_parts_for_name)
+                        # 동일 이름 필터 중복 방지
+                        _existing = next(
+                            (f for f in filters if f.name == _new_name), None
+                        )
+                        if _existing:
+                            filter_id = _existing.id
+                        else:
+                            _parent = filters[0] if filters else None
+                            _new_filter = SambaSearchFilter(
+                                source_site="SSG",
+                                name=_new_name,
+                                parent_id=_parent.parent_id if _parent else None,
+                                tenant_id=_parent.tenant_id if _parent else None,
+                                keyword=_parent.keyword if _parent else "",
+                                category_filter=disp_ctg_id or None,
+                                source_brand_name=keyword,
+                                requested_count=0,
+                            )
+                            session.add(_new_filter)
+                            await session.flush()
+                            if disp_ctg_id:
+                                cat_filter_map[disp_ctg_id] = _new_filter.id
+                            cat_name_map[_cat_path_final] = _new_filter.id
+                            filters.append(_new_filter)
+                            filter_id = _new_filter.id
+                            _add_job_log(
+                                job.id,
+                                f"[필터자동생성] {_new_name} (cat={_cat_path_final[:40]})",
+                                job_type="collect",
+                            )
 
                     _sale_price = int(
                         detail.get("sellprc", 0) or it.get("sale_price", 0) or 0
@@ -2625,21 +2755,26 @@ class JobWorker:
                         f"[{total_saved:,}/{_ssg_total_est:,}] {_log_brand} {_log_name} {spid}",
                         job_type="collect",
                     )
-                    await asyncio.sleep(1.0)
 
-                await repo.update_progress(job.id, total_saved, total_saved + 1)
-                _add_job_log(
-                    job.id,
-                    f"[SSG브랜드전체수집] [{sf.name}] p{_sf_page} 완료 — 저장 누적 {total_saved:,}건 (신규 {len(page_new)}건)",
-                    job_type="collect",
-                )
+                # 배치 간 5초 딜레이 — 1탭 순차, 과부하 방지
+                await asyncio.sleep(5.0)
 
-                if _page_cancelled:
-                    await repo.cancel_job(job.id)
-                    await session.commit()
-                    return
+            await repo.update_progress(job.id, total_saved, total_saved + 1)
+            _add_job_log(
+                job.id,
+                f"[SSG브랜드전체수집] {_ssg_page}페이지 완료 — 저장 누적 {total_saved:,}건 (신규 {len(page_new)}건)",
+                job_type="collect",
+            )
 
-                _sf_page += 1
+            if _page_cancelled:
+                await repo.cancel_job(job.id)
+                await session.commit()
+                return
+
+            # 페이지 전체 dupe여도 다음 페이지 계속 시도 — 누수 방지
+            # _raw 자체가 비면 break (search 결과 소진)
+            _ssg_page += 1
+            # 페이지 간 딜레이 없음 — 최대 속도
 
         # 4단계: 재시도 큐 처리 — 메인 루프에서 실패한 상품을 긴 대기 후 재시도
         if _failed_queue:
@@ -2672,16 +2807,30 @@ class JobWorker:
                         await session.commit()
                         return
                     _spid = _fit["site_product_id"]
-                    _fid = _fit.get("_filter_id")
-                    if not _fid:
-                        total_unmatched += 1
-                        continue
                     try:
                         _det = await _next_ssg_client().get_product_detail(_spid)
                     except Exception:
                         _det = {}
                     if not _det or not _det.get("itemNm"):
                         _failed_queue.append(_fit)
+                        continue
+                    # 카테고리 매핑 (간단 버전 — 메인 로직과 동일)
+                    _disp = _det.get("dispCtgId", "")
+                    _fid = cat_filter_map.get(_disp) if _disp else None
+                    if not _fid:
+                        _cps = [
+                            (_det.get("dispCtgLclsNm", "") or "").strip(),
+                            (_det.get("dispCtgMclsNm", "") or "").strip(),
+                            (_det.get("dispCtgSclsNm", "") or "").strip(),
+                        ]
+                        _cps = [p for p in _cps if p]
+                        for _d in range(len(_cps), 0, -1):
+                            _sub = " > ".join(_cps[:_d])
+                            _fid = cat_filter_map.get(_sub) or cat_name_map.get(_sub)
+                            if _fid:
+                                break
+                    if not _fid:
+                        total_unmatched += 1
                         continue
                     # 저장
                     _sp = int(_det.get("sellprc", 0) or 0)
@@ -4021,10 +4170,11 @@ class JobWorker:
                     f"[{site}] [{sf.name}] 상세 조회 시작: {len(new_items):,}건",
                     job_type="collect",
                 )
-                # 1건 순차 + 1초 딜레이
+                # 2건씩 병렬 배치 + TCP 연결 재사용
+                # 5건 병렬은 SSG 429를 더 빨리 유발하므로 2건으로 조정
                 import httpx as _httpx_ssg
 
-                _SSG_BATCH = 1
+                _SSG_BATCH = 2
                 _ssg_matched = 0
                 _shared_http = _httpx_ssg.AsyncClient(
                     timeout=_httpx_ssg.Timeout(30, connect=10.0),
@@ -4103,8 +4253,9 @@ class JobWorker:
                             f"[잡워커] SSG 상세 선취합 [{done}/{len(new_items)}]"
                         )
                         # 배치 간 딜레이 (마지막 배치 후 생략)
+                        # 2건 병렬 + 3.0초 = 약 0.67건/초 → SSG rate limit 방지
                         if batch_start + _SSG_BATCH < len(new_items):
-                            await asyncio.sleep(1.0)
+                            await asyncio.sleep(3.0)
                 finally:
                     await _shared_http.aclose()
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { collectorApi, shipmentApi } from '@/lib/samba/api/commerce'
 import { showConfirm } from '@/components/samba/Modal'
 import { fmtNum } from '@/lib/samba/styles'
@@ -25,11 +25,12 @@ type DuplicateGroup = {
 
 interface DuplicatesModalProps {
   open: boolean
+  sourceSite?: string
   onClose: () => void
   onDeleted: () => void
 }
 
-export default function DuplicatesModal({ open, onClose, onDeleted }: DuplicatesModalProps) {
+export default function DuplicatesModal({ open, sourceSite, onClose, onDeleted }: DuplicatesModalProps) {
   const [groups, setGroups] = useState<DuplicateGroup[]>([])
   const [loading, setLoading] = useState(false)
   const [checked, setChecked] = useState<Set<string>>(new Set())
@@ -39,7 +40,7 @@ export default function DuplicatesModal({ open, onClose, onDeleted }: Duplicates
   const load = async () => {
     setLoading(true)
     try {
-      const res = await collectorApi.getDuplicates()
+      const res = await collectorApi.getDuplicates(sourceSite)
       setGroups(res.groups)
       setChecked(new Set(res.groups.flatMap(g => g.duplicates.map(d => d.id))))
       setLoaded(true)
@@ -48,15 +49,16 @@ export default function DuplicatesModal({ open, onClose, onDeleted }: Duplicates
     }
   }
 
-  const handleOpen = () => {
-    if (!loaded) load()
-  }
+  // 모달 열릴 때 또는 sourceSite 변경 시 자동 조회
+  useEffect(() => {
+    if (open) {
+      setLoaded(false)
+      load()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, sourceSite])
 
   if (!open) return null
-
-  if (!loaded && !loading) {
-    handleOpen()
-  }
 
   const toggleItem = (id: string) => {
     setChecked(prev => {

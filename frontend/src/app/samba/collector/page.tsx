@@ -2640,6 +2640,7 @@ export default function CollectorPage() {
       {/* 중복 상품 모달 */}
       <DuplicatesModal
         open={showDuplicatesModal}
+        sourceSite={selectedSite || undefined}
         onClose={() => setShowDuplicatesModal(false)}
         onDeleted={() => { load(); loadTree() }}
       />

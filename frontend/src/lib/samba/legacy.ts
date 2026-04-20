@@ -553,8 +553,11 @@ export const collectorApi = {
   bulkAddAccount: () =>
     request<{ pa_products: number; matched: number; updated: number; already: number }>(`${SAMBA_PREFIX}/collector/products/bulk-add-account`, { method: "POST" }),
 
-  getDuplicates: () =>
-    request<{
+  getDuplicates: (sourceSite?: string) => {
+    const p = new URLSearchParams()
+    if (sourceSite) p.set('source_site', sourceSite)
+    const qs = p.toString() ? `?${p}` : ''
+    return request<{
       groups: Array<{
         name: string
         total: number
@@ -562,7 +565,8 @@ export const collectorApi = {
         duplicates: Array<{ id: string; name: string; source_site: string; brand: string | null; sale_price: number; images: string[]; registered_accounts: unknown; status: string }>
       }>
       total: number
-    }>(`${SAMBA_PREFIX}/collector/products/duplicates`),
+    }>(`${SAMBA_PREFIX}/collector/products/duplicates${qs}`)
+  },
 
   // 재고/가격 갱신
   refresh: (productIds?: string[], autoRetransmit = true, searchFilterIds?: string[]) =>
