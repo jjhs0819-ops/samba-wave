@@ -6,7 +6,7 @@ import type { SambaCollectedProduct, SambaPolicy, SambaMarketAccount } from '@/l
 import NewProductCard from './components/NewProductCard'
 import ManualProductCard from './components/ManualProductCard'
 
-interface Policy { id: string; name: string }
+interface Policy { id: string; name: string; market_policies?: Record<string, unknown> }
 interface Account { id: string; market_type: string; account_name: string }
 
 export default function ManualProductsPage() {
@@ -24,7 +24,7 @@ export default function ManualProductsPage() {
         accountApi.list(),
       ])
       setProducts(prods)
-      setPolicies((pols as SambaPolicy[]).map(p => ({ id: p.id, name: p.name })))
+      setPolicies((pols as SambaPolicy[]).map(p => ({ id: p.id, name: p.name, market_policies: p.market_policies })))
       setAccounts(
         (accs as SambaMarketAccount[]).map(a => ({
           id: a.id,
@@ -51,7 +51,7 @@ export default function ManualProductsPage() {
     <div className='p-6 max-w-4xl mx-auto'>
       <h1 className='text-xl font-bold text-[#E5E5E5] mb-6'>수동 상품 등록</h1>
 
-      <NewProductCard accounts={accounts} onCreated={load} />
+      <NewProductCard accounts={accounts} policies={policies} onCreated={load} />
 
       {loading ? (
         <p className='text-sm text-[#666]'>불러오는 중...</p>

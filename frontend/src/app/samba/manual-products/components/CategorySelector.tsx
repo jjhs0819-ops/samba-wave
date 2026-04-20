@@ -92,7 +92,6 @@ export default function CategorySelector({ accounts, savedCategories, onSave }: 
                   background: '#111',
                   border: '1px solid #2D2D2D',
                   borderRadius: 4,
-                  marginTop: 2,
                   maxHeight: 160,
                   overflowY: 'auto',
                   fontSize: 13,

@@ -11,8 +11,15 @@ interface Account {
   account_name: string
 }
 
+interface Policy {
+  id: string
+  name: string
+  market_policies?: Record<string, unknown>
+}
+
 interface Props {
   accounts: Account[]
+  policies: Policy[]
   onCreated: () => void
 }
 
@@ -26,7 +33,18 @@ interface OptionRow {
 const INPUT = 'w-full px-2.5 py-1.5 bg-[#0A0A0A] border border-[#1A1A1A] rounded text-sm text-[#E5E5E5] placeholder-[#444] focus:outline-none focus:border-[#FF8C00]'
 const LABEL = 'text-xs text-[#666] mb-1 block'
 
-export default function NewProductCard({ accounts, onCreated }: Props) {
+function policyAccountIds(policy: Policy | undefined, accounts: Account[]): Account[] {
+  if (!policy?.market_policies) return []
+  const ids = Object.values(policy.market_policies).flatMap(mp => {
+    const m = mp as Record<string, unknown>
+    if (Array.isArray(m.accountIds) && m.accountIds.length > 0) return m.accountIds as string[]
+    if (typeof m.accountId === 'string') return [m.accountId]
+    return []
+  })
+  return accounts.filter(a => ids.includes(a.id))
+}
+
+export default function NewProductCard({ accounts, policies, onCreated }: Props) {
   const [name, setName] = useState('')
   const [nameEn, setNameEn] = useState('')
   const [nameJa, setNameJa] = useState('')
@@ -48,6 +66,7 @@ export default function NewProductCard({ accounts, onCreated }: Props) {
   const [options, setOptions] = useState<OptionRow[]>([
     { id: crypto.randomUUID(), name: '', price: 0, stock: 0 },
   ])
+  const [selectedPolicyId, setSelectedPolicyId] = useState('')
   const [pendingCategories, setPendingCategories] = useState<Record<string, string>>({})
   const [showImageModal, setShowImageModal] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -74,6 +93,7 @@ export default function NewProductCard({ accounts, onCreated }: Props) {
     setSex('남녀공용'); setSeason('사계절'); setColor(''); setMaterial('')
     setImages([]); setDetailImages([]); setTags([])
     setOptions([{ id: crypto.randomUUID(), name: '', price: 0, stock: 0 }])
+    setSelectedPolicyId('')
     setPendingCategories({})
     setError('')
   }
@@ -103,10 +123,11 @@ export default function NewProductCard({ accounts, onCreated }: Props) {
         material: material.trim() || undefined,
         tags: tags.length > 0 ? tags : undefined,
       })
-      if (Object.keys(pendingCategories).length > 0) {
-        await manualProductApi.update(created.id, {
-          extra_data: { manual_market_categories: pendingCategories },
-        })
+      const updates: Record<string, unknown> = {}
+      if (selectedPolicyId) updates.applied_policy_id = selectedPolicyId
+      if (Object.keys(pendingCategories).length > 0) updates.extra_data = { manual_market_categories: pendingCategories }
+      if (Object.keys(updates).length > 0) {
+        await manualProductApi.update(created.id, updates)
       }
       reset()
       onCreated()
@@ -185,11 +206,34 @@ export default function NewProductCard({ accounts, onCreated }: Props) {
           </div>
         </div>
 
-        {/* 판매처별 카테고리 */}
+        {/* 정책 */}
         <div>
-          <label className={LABEL}>판매처별 카테고리</label>
-          <CategorySelector accounts={accounts} savedCategories={pendingCategories} onSave={setPendingCategories} />
+          <label className={LABEL}>정책</label>
+          <select
+            className={INPUT}
+            value={selectedPolicyId}
+            onChange={e => { setSelectedPolicyId(e.target.value); setPendingCategories({}) }}
+          >
+            <option value=''>정책 없음</option>
+            {policies.map(p => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
         </div>
+
+        {/* 판매처별 카테고리 — 정책 선택 시에만 표시 */}
+        {selectedPolicyId && (() => {
+          const policy = policies.find(p => p.id === selectedPolicyId)
+          const linked = policyAccountIds(policy, accounts)
+          return linked.length > 0 ? (
+            <div>
+              <label className={LABEL}>판매처별 카테고리</label>
+              <CategorySelector accounts={linked} savedCategories={pendingCategories} onSave={setPendingCategories} />
+            </div>
+          ) : (
+            <p className='text-xs text-[#666]'>이 정책에 연결된 판매처 계정이 없습니다.</p>
+          )
+        })()}
 
         {/* 태그 */}
         <div>

@@ -7,7 +7,18 @@ import ImageManagerModal from './ImageManagerModal'
 import type { SambaCollectedProduct } from '@/lib/samba/legacy'
 import { fmtNum } from '@/lib/samba/styles'
 
-interface Policy { id: string; name: string }
+interface Policy { id: string; name: string; market_policies?: Record<string, unknown> }
+
+function policyAccountIds(policy: Policy | undefined, accounts: Account[]): Account[] {
+  if (!policy?.market_policies) return []
+  const ids = Object.values(policy.market_policies).flatMap(mp => {
+    const m = mp as Record<string, unknown>
+    if (Array.isArray(m.accountIds) && m.accountIds.length > 0) return m.accountIds as string[]
+    if (typeof m.accountId === 'string') return [m.accountId]
+    return []
+  })
+  return accounts.filter(a => ids.includes(a.id))
+}
 interface Account { id: string; market_type: string; account_name: string }
 
 interface Props {
@@ -138,26 +149,31 @@ export default function ManualProductCard({ product, policies, accounts, onDelet
         </div>
       </div>
 
-      {/* 카테고리 */}
-      <div>
-        <button
-          onClick={() => setShowCategories(v => !v)}
-          className='text-xs text-[#FF8C00] hover:text-[#E07B00]'
-        >
-          {showCategories ? '카테고리 접기 ▲' : `마켓별 카테고리 ▼${catCount > 0 ? ` (${fmtNum(catCount)}개 설정됨)` : ''}`}
-        </button>
-        {showCategories && (
-          <div className='mt-2'>
-            <CategorySelector
-              accounts={selectedAccounts.length > 0
-                ? accounts.filter(a => selectedAccounts.includes(a.id))
-                : accounts}
-              savedCategories={savedCats}
-              onSave={saveCategories}
-            />
+      {/* 카테고리 — 정책 연결 시에만 표시 */}
+      {product.applied_policy_id && (() => {
+        const policy = policies.find(p => p.id === product.applied_policy_id)
+        const linked = policyAccountIds(policy, accounts)
+        if (linked.length === 0) return null
+        return (
+          <div>
+            <button
+              onClick={() => setShowCategories(v => !v)}
+              className='text-xs text-[#FF8C00] hover:text-[#E07B00]'
+            >
+              {showCategories ? '카테고리 접기 ▲' : `마켓별 카테고리 ▼${catCount > 0 ? ` (${fmtNum(catCount)}개 설정됨)` : ''}`}
+            </button>
+            {showCategories && (
+              <div className='mt-2'>
+                <CategorySelector
+                  accounts={linked}
+                  savedCategories={savedCats}
+                  onSave={saveCategories}
+                />
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        )
+      })()}
 
       {/* 전송 */}
       <div className='flex items-center gap-2 pt-1'>
