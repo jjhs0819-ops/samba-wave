@@ -32,7 +32,7 @@ SITE_DETAIL_URLS: dict[str, str] = {
     "REXMONDE": "https://www.okmall.com/products/detail/{product_id}",
     "LOTTEON": "https://www.lotteon.com/p/product/{product_id}",
     "GSShop": "https://www.gsshop.com/prd/prd.gs?prdid={product_id}",
-    "SSG": "https://www.ssg.com/item/itemView.ssg?itemId={product_id}",
+    "SSG": "https://department.ssg.com/item/itemView.ssg?itemId={product_id}&siteNo=6009",
     "ElandMall": "https://www.elandmall.com/goods/goods.action?goodsNo={product_id}",
     "SSF": "https://www.ssfshop.com/goods/{product_id}",
     "FashionPlus": "https://www.fashionplus.co.kr/goods/detail/{product_id}",

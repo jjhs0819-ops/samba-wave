@@ -2542,6 +2542,10 @@ class JobWorker:
                     if _page_cancelled:
                         break
                     spid = it["site_product_id"]
+                    if await _is_blacklisted(session, "SSG", spid):
+                        logger.info(f"[SSG수집] 블랙리스트 스킵: SSG/{spid}")
+                        total_skipped += 1
+                        continue
                     detail: dict = {}
                     try:
                         from backend.domain.samba.proxy.sourcing_queue import (
@@ -2553,7 +2557,45 @@ class JobWorker:
                         if isinstance(_ext_result, dict) and _ext_result.get("success"):
                             _html = _ext_result.get("html", "")
                             if _html:
-                                detail = client._parse_item_view_html(_html, spid) or {}
+                                detail = (
+                                    client._parse_result_item_obj(_html, spid, False)
+                                    or {}
+                                )
+                            # _parse_result_item_obj 실패 시 (dept.ssg.com AJAX 로드):
+                            # 확장앱 safeObj의 itemNm + HTML select 직접 파싱으로 폴백
+                            if not detail:
+                                _ext_obj = _ext_result.get("resultItemObj", {})
+                                _item_nm = _ext_obj.get("itemNm", "")
+                                if _item_nm and _html:
+                                    _opts = client._parse_select_options(_html)
+                                    _sold = (
+                                        all(o.get("isSoldOut", False) for o in _opts)
+                                        if _opts
+                                        else False
+                                    )
+                                    detail = {
+                                        "itemNm": _item_nm,
+                                        "name": _item_nm,
+                                        "brand": _ext_obj.get("repBrandNm")
+                                        or _ext_obj.get("brandNm", ""),
+                                        "options": _opts,
+                                        "soldOut": "Y" if _sold else "N",
+                                        "dispCtgLclsNm": "",
+                                        "dispCtgMclsNm": "",
+                                        "dispCtgSclsNm": "",
+                                        "dispCtgId": "",
+                                    }
+                            # 확장앱 uitemOptions(AJAX 후 실제 재고)로 옵션 품절 상태 보정
+                            _uitem_opts = _ext_result.get("uitemOptions", [])
+                            if _uitem_opts and detail.get("options"):
+                                _soldout_names = {
+                                    o["name"] for o in _uitem_opts if o.get("isSoldOut")
+                                }
+                                if _soldout_names:
+                                    for _opt in detail["options"]:
+                                        if _opt.get("name") in _soldout_names:
+                                            _opt["isSoldOut"] = True
+                                            _opt["stock"] = 0
                     except asyncio.TimeoutError:
                         _add_job_log(
                             job.id,
@@ -2563,7 +2605,7 @@ class JobWorker:
                     except Exception as _ext_err:
                         logger.debug(f"[SSG] 확장앱 상세 실패: {spid} — {_ext_err}")
 
-                    if not detail or not detail.get("itemNm"):
+                    if not detail or not (detail.get("itemNm") or detail.get("name")):
                         _failed_queue.append(it)
                         continue
 
@@ -2687,8 +2729,12 @@ class JobWorker:
 
                     _raw_cat = " > ".join(_cat_parts)
                     detail_for_build: dict = {
-                        "name": detail.get("itemNm") or it.get("name", ""),
-                        "brand": detail.get("repBrandNm") or it.get("brand", ""),
+                        "name": detail.get("itemNm")
+                        or detail.get("name")
+                        or it.get("name", ""),
+                        "brand": detail.get("repBrandNm")
+                        or detail.get("brand")
+                        or it.get("brand", ""),
                         "images": detail.get("images")
                         or ([it["images"][0]] if it.get("images") else []),
                         "detailImages": detail.get("detailImages") or [],
@@ -2782,7 +2828,7 @@ class JobWorker:
                         _det = await client.get_product_detail(_spid)
                     except Exception:
                         _det = {}
-                    if not _det or not _det.get("itemNm"):
+                    if not _det or not (_det.get("itemNm") or _det.get("name")):
                         _failed_queue.append(_fit)
                         continue
                     # 카테고리 매핑 (간단 버전 — 메인 로직과 동일)
@@ -4183,7 +4229,40 @@ class JobWorker:
                         if isinstance(_ext_result, dict) and _ext_result.get("success"):
                             _html = _ext_result.get("html", "")
                             if _html:
-                                det = client._parse_item_view_html(_html, spid) or {}
+                                det = (
+                                    client._parse_result_item_obj(_html, spid, False)
+                                    or {}
+                                )
+                                if not det:
+                                    _ext_obj2 = _ext_result.get("resultItemObj", {})
+                                    _nm2 = _ext_obj2.get("itemNm", "")
+                                    if _nm2:
+                                        _opts2 = client._parse_select_options(_html)
+                                        det = {
+                                            "itemNm": _nm2,
+                                            "name": _nm2,
+                                            "options": _opts2,
+                                            "soldOut": "Y"
+                                            if _opts2
+                                            and all(
+                                                o.get("isSoldOut", False)
+                                                for o in _opts2
+                                            )
+                                            else "N",
+                                        }
+                                # 확장앱 uitemOptions(AJAX 후 실제 재고)로 품절 상태 보정
+                                _uitem_opts2 = _ext_result.get("uitemOptions", [])
+                                if _uitem_opts2 and det.get("options"):
+                                    _soldout_nm2 = {
+                                        o["name"]
+                                        for o in _uitem_opts2
+                                        if o.get("isSoldOut")
+                                    }
+                                    if _soldout_nm2:
+                                        for _o2 in det["options"]:
+                                            if _o2.get("name") in _soldout_nm2:
+                                                _o2["isSoldOut"] = True
+                                                _o2["stock"] = 0
                                 if det:
                                     _ssg_details[spid] = det
                     except asyncio.TimeoutError:
@@ -4195,16 +4274,15 @@ class JobWorker:
                     except Exception as _ext_err:
                         logger.debug(f"[SSG] 확장앱 상세 실패: {spid} — {_ext_err}")
                     _ssg_done = _ssg_idx + 1
-                    if _ssg_done % 5 == 0 or _ssg_done == len(new_items):
-                        await repo.update_progress(job.id, _ssg_done, len(new_items))
-                        _add_job_log(
-                            job.id,
-                            f"[{site}] [{sf.name}] 상세 조회 [{_ssg_done:,}/{len(new_items):,}]",
-                            job_type="collect",
-                        )
-                        logger.info(
-                            f"[잡워커] SSG 상세 선취합 [{_ssg_done}/{len(new_items)}]"
-                        )
+                    await repo.update_progress(job.id, _ssg_done, len(new_items))
+                    _add_job_log(
+                        job.id,
+                        f"[{site}] [{sf.name}] 상세 조회 [{_ssg_done:,}/{len(new_items):,}]",
+                        job_type="collect",
+                    )
+                    logger.info(
+                        f"[잡워커] SSG 상세 선취합 [{_ssg_done}/{len(new_items)}]"
+                    )
 
                 logger.info(
                     f"[잡워커] SSG 상세 선취합 완료: {len(_ssg_details)}/{len(new_items)}건"

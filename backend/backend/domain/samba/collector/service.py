@@ -135,6 +135,14 @@ class SambaCollectorService:
                 exclude_site_product_id=data.get("site_product_id"),
             ):
                 return None
+        # 블랙리스트 체크 — 수집차단된 상품 재수집 방지 (모든 소싱처 공통)
+        _src = data.get("source_site", "")
+        _spid = data.get("site_product_id", "")
+        if _src and _spid:
+            from backend.api.v1.routers.samba.collector_common import _is_blacklisted
+
+            if await _is_blacklisted(self.product_repo.session, _src, _spid):
+                return None
         try:
             return await self.product_repo.create_async(**data)
         except IntegrityError:

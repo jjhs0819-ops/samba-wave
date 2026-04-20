@@ -2,7 +2,7 @@
 
 from typing import List
 
-from sqlalchemy import or_
+from sqlalchemy import cast, or_, String
 from sqlmodel import select
 
 from backend.domain.shared.base_repository import BaseRepository
@@ -76,7 +76,6 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
 
     async def get_registered_name_keys(self, tenant_id) -> tuple[set, set]:
         """마켓 등록된 상품의 (name_set, (source_site, site_product_id)_set) 반환."""
-        from sqlalchemy import cast, String
 
         stmt = select(
             SambaCollectedProduct.name,
@@ -104,7 +103,7 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
         filter_ids 지정 시 해당 search_filter_id 상품만 대상 (드릴 컨텍스트 정밀 필터).
         source_site 지정 시 해당 소싱처만 대상 (filter_ids 없을 때 사용).
         """
-        from sqlalchemy import cast, func, String
+        from sqlalchemy import func
 
         tf = self._tenant_filter(tenant_id)
         if filter_ids:
@@ -162,6 +161,34 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    async def find_by_market_name_and_account(
+        self,
+        tenant_id,
+        market_key: str,
+        product_name: str,
+        account_id: str,
+        exclude_product_id: int | None = None,
+    ) -> "SambaCollectedProduct | None":
+        """동일 마켓 계정에 같은 등록상품명이 이미 등록된 상품 조회.
+
+        market_key: market_names의 키 (예: "스마트스토어")
+        account_id: registered_accounts 배열에서 확인할 계정 ID 문자열
+        """
+        from sqlalchemy.dialects.postgresql import JSONB
+
+        stmt = select(SambaCollectedProduct).where(
+            self._tenant_filter(tenant_id),
+            cast(SambaCollectedProduct.market_names, JSONB)[market_key].astext
+            == product_name,
+            cast(SambaCollectedProduct.registered_accounts, String).contains(
+                f'"{account_id}"'
+            ),
+        )
+        if exclude_product_id is not None:
+            stmt = stmt.where(SambaCollectedProduct.id != exclude_product_id)
+        result = await self.session.execute(stmt)
+        return result.scalars().first()
 
     async def bulk_update_by_filter(self, search_filter_id: str, **kwargs) -> int:
         """search_filter_id에 해당하는 모든 상품을 한 번의 쿼리로 업데이트."""

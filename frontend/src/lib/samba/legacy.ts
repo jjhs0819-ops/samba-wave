@@ -1904,3 +1904,55 @@ export const analyticsApi = {
     return request<BrandSales[]>(`${SAMBA_PREFIX}/analytics/brands?${p}`)
   },
 }
+
+export const manualProductApi = {
+  list: (params?: { skip?: number; limit?: number }) => {
+    const qs = new URLSearchParams({
+      source_site: 'manual',
+      skip: String(params?.skip ?? 0),
+      limit: String(params?.limit ?? 50),
+    })
+    return request<SambaCollectedProduct[]>(`${SAMBA_PREFIX}/collector/products?${qs}`)
+  },
+
+  create: (data: {
+    name: string
+    name_en?: string
+    name_ja?: string
+    brand?: string
+    original_price?: number
+    sale_price?: number
+    cost?: number
+    images?: string[]
+    detail_images?: string[]
+    options?: { name: string; stock: number; price?: number }[]
+    category1?: string
+    category2?: string
+    category3?: string
+    category4?: string
+    manufacturer?: string
+    style_code?: string
+    origin?: string
+    sex?: string
+    season?: string
+    color?: string
+    material?: string
+    tags?: string[]
+  }) => {
+    return request<SambaCollectedProduct>(`${SAMBA_PREFIX}/collector/products`, {
+      method: 'POST',
+      body: JSON.stringify({ ...data, source_site: 'manual', status: 'collected' }),
+    })
+  },
+
+  update: (id: string, data: Partial<SambaCollectedProduct>) => {
+    return request<SambaCollectedProduct>(`${SAMBA_PREFIX}/collector/products/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    })
+  },
+
+  delete: (id: string) => {
+    return request<void>(`${SAMBA_PREFIX}/collector/products/${id}`, { method: 'DELETE' })
+  },
+}

@@ -78,6 +78,8 @@ class CollectedProductCreate(BaseModel):
     site_product_id: Optional[str] = None
     search_filter_id: Optional[str] = None
     name: str
+    name_en: Optional[str] = None
+    name_ja: Optional[str] = None
     brand: Optional[str] = None
     original_price: float = 0
     sale_price: float = 0
@@ -89,6 +91,15 @@ class CollectedProductCreate(BaseModel):
     category2: Optional[str] = None
     category3: Optional[str] = None
     category4: Optional[str] = None
+    manufacturer: Optional[str] = None
+    style_code: Optional[str] = None
+    origin: Optional[str] = None
+    sex: Optional[str] = None
+    season: Optional[str] = None
+    color: Optional[str] = None
+    material: Optional[str] = None
+    detail_images: Optional[list] = None
+    tags: Optional[list] = None
     status: str = "collected"
 
 
@@ -118,6 +129,7 @@ class CollectedProductUpdate(BaseModel):
     detail_images: Optional[list] = None
     tags: Optional[list] = None
     options: Optional[list] = None
+    extra_data: Optional[dict] = None
 
 
 class BulkCreateRequest(BaseModel):
@@ -1452,9 +1464,17 @@ async def update_collected_product(
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
     svc = _get_services(session)
-    result = await svc.update_collected_product(
-        product_id, body.model_dump(exclude_unset=True)
-    )
+    data = body.model_dump(exclude_unset=True)
+
+    # extra_data는 덮어쓰지 않고 기존 값과 병합
+    if "extra_data" in data and data["extra_data"] is not None:
+        repo = svc.product_repo
+        existing = await repo.get_async(product_id)
+        if existing:
+            existing_extra = getattr(existing, "extra_data", {}) or {}
+            data["extra_data"] = {**existing_extra, **data["extra_data"]}
+
+    result = await svc.update_collected_product(product_id, data)
     if not result:
         raise HTTPException(404, "상품을 찾을 수 없습니다")
     return result

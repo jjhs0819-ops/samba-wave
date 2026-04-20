@@ -74,6 +74,8 @@ export default function CategoriesPage() {
   // 마켓별 카테고리 수
   const [marketCatCounts, setMarketCatCounts] = useState<Record<string, number>>({})
   const [marketUnmappedFilters, setMarketUnmappedFilters] = useState<Record<string, boolean>>({})
+  // AI 매핑 후 리뷰 대상 행 ID (미매핑 필터 중에도 표시 유지)
+  const [postAiReviewIds, setPostAiReviewIds] = useState<Set<string>>(new Set())
   // 마켓별 AI 리매핑 로딩 상태
   const [marketAiLoading, setMarketAiLoading] = useState<string | null>(null)
   // 마켓별 AI 진행 모달
@@ -510,6 +512,7 @@ export default function CategoriesPage() {
 
   const toggleMarketUnmappedFilter = (market: string) => {
     setMarketUnmappedFilters(prev => ({ ...prev, [market]: !prev[market] }))
+    setPostAiReviewIds(new Set())
   }
 
   // ── 매핑 현황 필터링 (드릴다운 선택에 연동) ──
@@ -583,9 +586,10 @@ export default function CategoriesPage() {
     if (activeMarkets.length === 0) return baseFilteredMappings
 
     return baseFilteredMappings.filter(row =>
+      postAiReviewIds.has(row.id) ||
       activeMarkets.every(market => !row.target_mappings?.[market]?.trim())
     )
-  }, [baseFilteredMappings, marketUnmappedFilters])
+  }, [baseFilteredMappings, marketUnmappedFilters, postAiReviewIds])
 
   // ── 매핑 현황 핸들러 ──
 
@@ -647,7 +651,9 @@ export default function CategoriesPage() {
         target_mappings: targets,
       })
       if (created && typeof created === 'object' && 'id' in created) {
-        setMappings(prev => [...prev, created as MappingRow])
+        const createdRow = created as MappingRow
+        setMappings(prev => [...prev, createdRow])
+        setPostAiReviewIds(prev => { const next = new Set(prev); next.add(createdRow.id); return next })
       } else {
         await load()
       }
@@ -670,6 +676,7 @@ export default function CategoriesPage() {
       try {
         await categoryApi.updateMapping(id, { target_mappings: updatedTargets })
         setMappings(prev => prev.map(m => m.id === id ? { ...m, target_mappings: updatedTargets } : m))
+        setPostAiReviewIds(prev => { const next = new Set(prev); next.add(id); return next })
       } catch {
         // PUT 실패 시 새로 생성
         try {
@@ -710,6 +717,9 @@ export default function CategoriesPage() {
       try {
         await categoryApi.updateMapping(id, { target_mappings: updatedTargets })
         setMappings(prev => prev.map(m => m.id === id ? { ...m, target_mappings: updatedTargets } : m))
+        if (editingValue.trim()) {
+          setPostAiReviewIds(prev => { const next = new Set(prev); next.add(id); return next })
+        }
       } catch {
         // PUT 실패 시 새로 생성
         try {
@@ -823,6 +833,7 @@ export default function CategoriesPage() {
     let successCount = 0
     let errorCount = 0
     const updatedMappings = [...mappings]
+    const mappedIds: string[] = []
 
     for (let i = 0; i < needMapping.length; i++) {
       const row = needMapping[i]
@@ -849,9 +860,11 @@ export default function CategoriesPage() {
               target_mappings: { [market]: newCat },
             })
             if (created && typeof created === 'object' && 'id' in created) {
+              const createdRow = created as typeof row
               const idx = updatedMappings.findIndex(m => m.id === row.id)
-              if (idx >= 0) updatedMappings[idx] = created as typeof row
-              else updatedMappings.push(created as typeof row)
+              if (idx >= 0) updatedMappings[idx] = createdRow
+              else updatedMappings.push(createdRow)
+              mappedIds.push(createdRow.id)
             }
           } else {
             const updatedTargets = { ...row.target_mappings, [market]: newCat }
@@ -859,6 +872,7 @@ export default function CategoriesPage() {
               await categoryApi.updateMapping(row.id, { target_mappings: updatedTargets })
               const idx = updatedMappings.findIndex(m => m.id === row.id)
               if (idx >= 0) updatedMappings[idx] = { ...updatedMappings[idx], target_mappings: updatedTargets }
+              mappedIds.push(row.id)
             } catch {
               // PUT 실패 시 새로 생성
               const created = await categoryApi.createMapping({
@@ -867,9 +881,11 @@ export default function CategoriesPage() {
                 target_mappings: updatedTargets,
               })
               if (created && typeof created === 'object' && 'id' in created) {
+                const createdRow = created as typeof row
                 const idx = updatedMappings.findIndex(m => m.id === row.id)
-                if (idx >= 0) updatedMappings[idx] = created as typeof row
-                else updatedMappings.push(created as typeof row)
+                if (idx >= 0) updatedMappings[idx] = createdRow
+                else updatedMappings.push(createdRow)
+                mappedIds.push(createdRow.id)
               }
             }
           }
@@ -881,6 +897,13 @@ export default function CategoriesPage() {
     }
 
     setMappings(updatedMappings)
+    if (mappedIds.length > 0) {
+      setPostAiReviewIds(prev => {
+        const next = new Set(prev)
+        mappedIds.forEach(id => next.add(id))
+        return next
+      })
+    }
     setMarketAiLoading(null)
     setLastAiUsage({ calls: successCount, tokens: successCount * 1800, cost: successCount * COST_PER_CALL_KRW, date: fmtTime() })
     setMarketAiProgress({ market, current: total, total, success: successCount, fail: errorCount })

@@ -1603,11 +1603,26 @@ class SSGSourcingClient:
                         existing.add(di)
 
         # 옵션/재고: uitemObjList 파싱, 비어있으면 HTML <select> 태그 폴백
-        # department.ssg.com: uitemObjList는 항상 [] — JS 런타임 로드 방식이므로
-        # <select id="ordOpt1"> 태그에서 구매가능 사이즈 파싱
+        # department.ssg.com: SSR의 uitemObjList는 낙관값(stock=99)이므로
+        # <select id="ordOpt1">의 "(매진)" 텍스트로 실제 품절 상태 보완
         options = self._parse_uitem_options(obj)
         if not options:
-            options = self._parse_select_options(html)
+            options = self._parse_select_options(html, base_price=sell_price)
+            # 가격 정보 없는 옵션(추가가=0 등)에 sell_price 채움
+            for _opt in options:
+                if not _opt.get("price"):
+                    _opt["price"] = sell_price
+        else:
+            # uitemObjList가 있어도 select의 "(매진)" 정보로 실제 품절 상태 보완
+            # (SSR HTML의 uitemObjList는 실시간 재고 미반영)
+            _select_opts = self._parse_select_options(html)
+            if _select_opts:
+                _soldout_names = {o["name"] for o in _select_opts if o.get("isSoldOut")}
+                if _soldout_names:
+                    for _opt in options:
+                        if _opt.get("name") in _soldout_names:
+                            _opt["isSoldOut"] = True
+                            _opt["stock"] = 0
         # 품절 재확인: 모든 옵션이 품절이면 품절
         if options and all(opt.get("isSoldOut", False) for opt in options):
             is_sold_out = True
@@ -2058,7 +2073,7 @@ class SSGSourcingClient:
                 text = text.strip()
                 if not value or "선택" in text:
                     continue
-                is_soldout = "품절" in text
+                is_soldout = "매진" in text or "품절" in text
                 options.append(
                     {
                         "name": text,
@@ -2272,12 +2287,14 @@ class SSGSourcingClient:
         return items
 
     @staticmethod
-    def _parse_select_options(html: str) -> list[dict]:
-        """HTML <select id="ordOpt1"> 태그에서 구매가능 옵션 추출.
+    def _parse_select_options(html: str, base_price: int = 0) -> list[dict]:
+        """HTML <select id="ordOpt1"> 태그에서 옵션 추출.
 
         department.ssg.com은 uitemObjList가 항상 빈 배열 (JS 런타임 로드).
-        대신 HTML에 <select id="ordOpt1"> 태그가 있고 재고있는 옵션만 렌더링된다.
-        soldout 옵션은 HTML에 표시되지 않으므로 select 내 모든 option = 구매가능 상태.
+        대신 HTML에 <select id="ordOpt1"> 태그가 있으며, 매진 옵션도 렌더링되고
+        옵션명에 "(매진)" 텍스트가 붙어 있다.
+
+        base_price: 상품 판매가. data-add-price / (+X원) 추가가 합산에 사용.
         """
         m = re.search(
             r'<select[^>]+id=["\']ordOpt1["\'][^>]*>(.*?)</select>',
@@ -2291,22 +2308,51 @@ class SSGSourcingClient:
         select_html = m.group(1)
 
         for opt_m in re.finditer(
-            r'<option[^>]+value=["\']([^"\']*)["\'][^>]*>(.*?)</option>',
+            r"<option([^>]*)>(.*?)</option>",
             select_html,
             re.DOTALL | re.IGNORECASE,
         ):
-            val = opt_m.group(1).strip()
+            attrs_raw = opt_m.group(1)
             text = re.sub(r"<[^>]+>", "", opt_m.group(2)).strip()
+
+            # value 추출
+            val_m = re.search(r'value=["\']([^"\']*)["\']', attrs_raw)
+            val = val_m.group(1).strip() if val_m else ""
             # 빈 값(선택하세요 등) 건너뜀
             if not val:
                 continue
+
             name = text or val
+
+            # 가격 추출 우선순위:
+            # 1) data-price (절대가) → 2) data-add-price (추가가, base_price+add) → 3) 텍스트 패턴 → 4) 0
+            price = 0
+            dp_m = re.search(r'data-price=["\'](\d+)["\']', attrs_raw)
+            if dp_m:
+                price = int(dp_m.group(1))
+            else:
+                dap_m = re.search(r'data-add-price=["\'](\d+)["\']', attrs_raw)
+                if dap_m:
+                    # 추가가: base_price + add (add=0이면 price=0 → 호출부에서 base_price로 채움)
+                    add = int(dap_m.group(1))
+                    price = base_price + add if add > 0 else 0
+                else:
+                    # 텍스트 내 "(+10,000원)" 추가가 또는 "(315,000원)" 절대가
+                    plus_m = re.search(r"\(\+([\d,]+)원\)", text)
+                    abs_m = re.search(r"\(([\d,]+)원\)", text)
+                    if plus_m:
+                        price = base_price + int(plus_m.group(1).replace(",", ""))
+                    elif abs_m:
+                        price = int(abs_m.group(1).replace(",", ""))
+
+            is_soldout = "매진" in name or "품절" in name
+            clean_name = re.sub(r"\s*[\(\[](매진|품절)[\)\]]", "", name).strip()
             options.append(
                 {
-                    "name": name,
-                    "price": 0,
-                    "stock": 99,  # select에 표시 = 구매가능 = 재고있음
-                    "isSoldOut": False,
+                    "name": clean_name,
+                    "price": price,
+                    "stock": 0 if is_soldout else 99,
+                    "isSoldOut": is_soldout,
                 }
             )
 

@@ -21,7 +21,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // 전체 상태 조회
   if (msg.type === 'GET_STATUS') {
     getMusinsaCookies().then(async ({ cookies, isLoggedIn }) => {
-      const alarm = await chrome.alarms.get('collectPoll')
+      const alarm = await chrome.alarms.get('kreamPoll')
       sendResponse({
         musinsa: { isLoggedIn, cookieCount: cookies.length },
         kream: { isLoggedIn: !!kreamCookie, cookieCount: kreamCookie ? kreamCookie.split(';').length : 0 },

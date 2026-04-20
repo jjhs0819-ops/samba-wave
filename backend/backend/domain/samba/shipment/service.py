@@ -641,6 +641,15 @@ class SambaShipmentService:
         # OOM 방지: 전송에 불필요한 대용량 필드 제외
         product_dict = product_row.model_dump(exclude={"last_sent_data", "extra_data"})
 
+        # 수동등록 상품의 계정별 카테고리 (extra_data.manual_market_categories: {account_id: category_id})
+        # extra_data는 product_dict에서 제외되므로 product_row에서 직접 읽음
+        _raw_manual_cats: dict = (product_row.extra_data or {}).get(
+            "manual_market_categories"
+        ) or {}
+        _manual_market_categories: dict[str, str] = {
+            str(k): str(v) for k, v in _raw_manual_cats.items()
+        }
+
         # 업데이트 항목이 체크되어 있으면 소싱처 최신화 먼저 실행
         # skip_refresh=True면 오토튠에서 이미 최신화 완료 → 건너뜀
         has_update = bool(update_items) and len(update_items) > 0
@@ -1178,7 +1187,17 @@ class SambaShipmentService:
                     return res
 
                 market_type = account.market_type
-                category_id = mapped_categories.get(market_type, "")
+
+                # 0순위: 수동등록 상품의 계정별 명시 카테고리
+                # manual_market_categories는 {account_id: category_id} 구조
+                category_id = _manual_market_categories.get(str(account_id), "")
+                if category_id:
+                    logger.info(
+                        f"[전송] 수동등록 카테고리 사용: {market_type} account={account_id} → {category_id}"
+                    )
+                # 수동카테고리 없으면 기존 매핑 카테고리 사용
+                if not category_id:
+                    category_id = mapped_categories.get(market_type, "")
 
                 # ESM Plus 크로스매핑: 지마켓↔옥션 자동 변환
                 if not category_id and market_type in ("gmarket", "auction"):
@@ -1417,6 +1436,29 @@ class SambaShipmentService:
                             f"[전송] 취소 감지 → {market_type} 전송 스킵 (계정 {account_id})"
                         )
                         return res
+                    # 등록상품명 계정별 중복 등록 차단
+                    _mkt_names = product_dict.get("market_names") or {}
+                    _reg_name = _mkt_names.get(account.market_name)
+                    if _reg_name:
+                        _dup = await product_repo.find_by_market_name_and_account(
+                            tenant_id=product_row.tenant_id,
+                            market_key=account.market_name,
+                            product_name=_reg_name,
+                            account_id=account_id,
+                            exclude_product_id=product_row.id,
+                        )
+                        if _dup:
+                            res["error"] = (
+                                f"등록상품명 중복 차단: '{_reg_name}' 이(가) "
+                                f"이미 상품 ID={_dup.id}({_dup.name[:20]})에 등록됨"
+                            )
+                            logger.warning(
+                                f"[중복등록 차단] 등록상품명={_reg_name!r} "
+                                f"계정={account.account_label}({account_id}) "
+                                f"기등록 상품 ID={_dup.id}"
+                            )
+                            return res
+
                     logger.info(f"[메모리] 마켓전송 전: {_mem_mb()}MB")
                     result = await dispatch_to_market(
                         self.session,
