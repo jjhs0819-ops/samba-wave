@@ -2574,7 +2574,7 @@ class JobWorker:
                         for _it in _non_bl
                     ]
                     _gathered_ext = await asyncio.gather(
-                        *[asyncio.wait_for(f, timeout=30) for _, f in _bl_futs],
+                        *[asyncio.wait_for(f, timeout=45) for _, f in _bl_futs],
                         return_exceptions=True,
                     )
                     for _bl_it2, _bl_ext in zip(_non_bl, _gathered_ext):
@@ -2869,7 +2869,7 @@ class JobWorker:
                     _det: dict = {}
                     try:
                         _, _r_fut = _SQ_r.add_detail_job("SSG", _spid)
-                        _r_ext = await asyncio.wait_for(_r_fut, timeout=30)
+                        _r_ext = await asyncio.wait_for(_r_fut, timeout=45)
                         if isinstance(_r_ext, dict) and _r_ext.get("success"):
                             _r_html = _r_ext.get("html", "")
                             if _r_html:
@@ -4302,7 +4302,7 @@ class JobWorker:
                         for _pb_it in _pb_batch
                     ]
                     _pb_results = await asyncio.gather(
-                        *[asyncio.wait_for(f, timeout=30) for _, f in _pb_futs],
+                        *[asyncio.wait_for(f, timeout=45) for _, f in _pb_futs],
                         return_exceptions=True,
                     )
                     for _pb_it, _ext_result in zip(_pb_batch, _pb_results):

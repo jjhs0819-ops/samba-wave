@@ -1800,12 +1800,6 @@ class SSGSourcingClient:
             if high_res:
                 images.append(self._normalize_image(high_res))
 
-            # i2~i9 이미지 URL 생성 (CDN 경로 동일, 인덱스만 변경)
-            base_path = re.sub(r"_i\d+_\d+\.jpg", "", base_img_url)
-            for i in range(2, 10):
-                candidate = f"{base_path}_i{i}_1200.jpg"
-                images.append(self._normalize_image(candidate))
-
         # HTML에서 sitem.ssgcdn.com 이미지 수집으로 보충
         ssgcdn_pattern = re.compile(
             r'["\']?(https://sitem\.ssgcdn\.com/[^"\']+_i\d+_(?:1200|500)\.jpg)["\']?',

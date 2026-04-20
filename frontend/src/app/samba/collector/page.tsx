@@ -93,7 +93,7 @@ export default function CollectorPage() {
   const [removedTags, setRemovedTags] = useState<string[]>([])
 
   // AI 이미지 변환
-  const [aiImgScope, setAiImgScope] = useState({ thumbnail: true, additional: false, detail: false })
+  const [aiImgScope, setAiImgScope] = useState({ thumbnail: true, additional: true, detail: false })
   const [aiImgMode, setAiImgMode] = useState('background')
   const [aiModelPreset, setAiModelPreset] = useState('auto')
   const [aiImgTransforming, setAiImgTransforming] = useState(false)

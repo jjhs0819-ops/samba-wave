@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { manualProductApi, shipmentApi } from '@/lib/samba/legacy'
 import CategorySelector from './CategorySelector'
 import ImageManagerModal from './ImageManagerModal'
@@ -21,25 +21,50 @@ function policyAccountIds(policy: Policy | undefined, accounts: Account[]): Acco
 }
 interface Account { id: string; market_type: string; account_name: string }
 
+interface LogEntry {
+  id: number
+  time: string
+  type: 'transmit' | 'delete'
+  message: string
+  ok: boolean
+}
+
 interface Props {
   product: SambaCollectedProduct
   policies: Policy[]
   accounts: Account[]
   onDeleted: () => void
   onUpdated: (p: SambaCollectedProduct) => void
+  onRefresh: () => void
 }
 
 const SELECT = 'w-full px-2.5 py-1.5 bg-[#0A0A0A] border border-[#1A1A1A] rounded text-sm text-[#E5E5E5] focus:outline-none focus:border-[#FF8C00]'
 
-export default function ManualProductCard({ product, policies, accounts, onDeleted, onUpdated }: Props) {
+export default function ManualProductCard({ product, policies, accounts, onDeleted, onUpdated, onRefresh }: Props) {
   const [showCategories, setShowCategories] = useState(false)
   const [showImageModal, setShowImageModal] = useState(false)
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([])
   const [transmitting, setTransmitting] = useState(false)
   const [result, setResult] = useState('')
+  const [logs, setLogs] = useState<LogEntry[]>([])
+  const [deletingAccountId, setDeletingAccountId] = useState<string | null>(null)
+  const logSeq = useRef(0)
 
   const extraData = (product.extra_data as Record<string, unknown>) ?? {}
   const savedCats = (extraData.manual_market_categories as Record<string, string>) ?? {}
+
+  const addLog = (type: LogEntry['type'], message: string, ok: boolean) => {
+    setLogs(prev => [
+      ...prev,
+      {
+        id: logSeq.current++,
+        time: new Date().toLocaleTimeString('ko-KR'),
+        type,
+        message,
+        ok,
+      },
+    ])
+  }
 
   const applyPolicy = async (policyId: string) => {
     const updated = await manualProductApi.update(product.id, { applied_policy_id: policyId })
@@ -73,10 +98,31 @@ export default function ManualProductCard({ product, policies, accounts, onDelet
         false,
       )
       setResult('전송 요청 완료')
+      addLog('transmit', `전송 완료 (${fmtNum(selectedAccounts.length)}개 계정)`, true)
     } catch (e) {
-      setResult('전송 실패: ' + String(e))
+      const msg = '전송 실패: ' + String(e)
+      setResult(msg)
+      addLog('transmit', msg, false)
     } finally {
       setTransmitting(false)
+    }
+  }
+
+  const deleteFromMarket = async (accountId: string) => {
+    const acc = accounts.find(a => a.id === accountId)
+    const label = acc ? `${acc.market_type}/${acc.account_name}` : accountId
+    setDeletingAccountId(accountId)
+    try {
+      const res = await shipmentApi.marketDelete([product.id], [accountId])
+      const r = res.results?.[0]
+      const status = r?.delete_results?.[accountId] ?? 'unknown'
+      const ok = status === 'success'
+      addLog('delete', `마켓 삭제 [${label}]: ${ok ? '완료' : status}`, ok)
+      if (ok) onRefresh()
+    } catch (e) {
+      addLog('delete', `마켓 삭제 실패 [${label}]: ${String(e)}`, false)
+    } finally {
+      setDeletingAccountId(null)
     }
   }
 
@@ -88,6 +134,7 @@ export default function ManualProductCard({ product, policies, accounts, onDelet
 
   const thumb = product.images?.[0]
   const catCount = Object.keys(savedCats).length
+  const marketProductNos = (product.market_product_nos as Record<string, string> | undefined) ?? {}
 
   return (
     <div className='bg-[#111] border border-[#1A1A1A] rounded-lg p-4 space-y-3'>
@@ -168,6 +215,9 @@ export default function ManualProductCard({ product, policies, accounts, onDelet
                   accounts={linked}
                   savedCategories={savedCats}
                   onSave={saveCategories}
+                  marketProductNos={marketProductNos}
+                  onDeleteFromMarket={deleteFromMarket}
+                  deletingAccountId={deletingAccountId ?? undefined}
                 />
               </div>
             )}
@@ -176,18 +226,51 @@ export default function ManualProductCard({ product, policies, accounts, onDelet
       })()}
 
       {/* 전송 */}
-      <div className='flex items-center gap-2 pt-1'>
-        <button
-          onClick={transmit}
-          disabled={transmitting}
-          className='px-4 py-1.5 bg-[#FF8C00] text-white text-sm rounded-lg font-medium hover:bg-[#E07B00] disabled:opacity-50'
-        >
-          {transmitting ? '전송 중...' : '마켓 전송'}
-        </button>
-        {result && (
-          <span className={`text-xs ${result.includes('실패') || result.includes('선택') ? 'text-[#FF6B6B]' : 'text-green-400'}`}>
-            {result}
-          </span>
+      <div className='pt-1 space-y-2'>
+        <div className='flex items-center gap-2'>
+          <button
+            onClick={transmit}
+            disabled={transmitting}
+            className='px-4 py-1.5 bg-[#FF8C00] text-white text-sm rounded-lg font-medium hover:bg-[#E07B00] disabled:opacity-50'
+          >
+            {transmitting ? '전송 중...' : '마켓 전송'}
+          </button>
+          {result && (
+            <span className={`text-xs ${result.includes('실패') || result.includes('선택') ? 'text-[#FF6B6B]' : 'text-green-400'}`}>
+              {result}
+            </span>
+          )}
+        </div>
+
+        {/* 로그창 */}
+        {logs.length > 0 && (
+          <div
+            style={{
+              maxHeight: 120,
+              overflowY: 'auto',
+              background: '#0A0A0A',
+              border: '1px solid #1A1A1A',
+              borderRadius: 6,
+              padding: '6px 8px',
+            }}
+          >
+            {logs.map(log => (
+              <div
+                key={log.id}
+                style={{
+                  display: 'flex',
+                  gap: 6,
+                  fontSize: 11,
+                  lineHeight: '18px',
+                  color: log.ok ? '#4ADE80' : '#FF6B6B',
+                }}
+              >
+                <span style={{ color: '#444', flexShrink: 0 }}>{log.time}</span>
+                <span style={{ color: '#666', flexShrink: 0 }}>{log.type === 'transmit' ? '전송' : '삭제'}</span>
+                <span style={{ wordBreak: 'break-all' }}>{log.message}</span>
+              </div>
+            ))}
+          </div>
         )}
       </div>
 

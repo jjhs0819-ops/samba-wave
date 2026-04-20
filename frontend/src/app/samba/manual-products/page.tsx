@@ -65,6 +65,7 @@ export default function ManualProductsPage() {
               accounts={accounts}
               onDeleted={() => handleDeleted(p.id)}
               onUpdated={handleUpdated}
+              onRefresh={load}
             />
           ))}
         </div>

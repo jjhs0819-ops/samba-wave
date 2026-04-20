@@ -128,7 +128,7 @@ export default function ProductsPage() {
   const [aiImgMode, setAiImgMode] = useState('background')
   const [aiModelPreset, setAiModelPreset] = useState('auto')
   const [aiPresetList, setAiPresetList] = useState<{ key: string; label: string; desc: string; image: string | null }[]>([])
-  const [aiImgScope, setAiImgScope] = useState({ thumbnail: true, additional: false, detail: false })
+  const [aiImgScope, setAiImgScope] = useState({ thumbnail: true, additional: true, detail: false })
   const [aiImgTransforming, setAiImgTransforming] = useState(false)
   const [imgFiltering, setImgFiltering] = useState(false)
   const [imgFilterScopes, setImgFilterScopes] = useState<Set<string>>(new Set(['detail_images']))

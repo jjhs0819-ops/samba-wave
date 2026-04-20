@@ -13,9 +13,29 @@ interface Props {
   accounts: Account[]
   savedCategories: Record<string, string>
   onSave: (categories: Record<string, string>) => void
+  marketProductNos?: Record<string, string>
+  onDeleteFromMarket?: (accountId: string) => void
+  deletingAccountId?: string
 }
 
-export default function CategorySelector({ accounts, savedCategories, onSave }: Props) {
+function getMarketProductUrl(marketType: string, productNo: string): string | null {
+  switch (marketType) {
+    case 'coupang': return `https://www.coupang.com/vp/products/${productNo}`
+    case '11st': return `https://www.11st.co.kr/products/${productNo}`
+    case 'ssg': return `https://www.ssg.com/item/itemView.ssg?itemId=${productNo}`
+    case 'gsshop': return `https://www.gsshop.com/prd/prd.gs?prdid=${productNo}`
+    default: return null
+  }
+}
+
+export default function CategorySelector({
+  accounts,
+  savedCategories,
+  onSave,
+  marketProductNos,
+  onDeleteFromMarket,
+  deletingAccountId,
+}: Props) {
   const [cats, setCats] = useState<Record<string, string>>(savedCategories)
   const [queries, setQueries] = useState<Record<string, string>>({})
   const [suggestions, setSuggestions] = useState<Record<string, string[]>>({})
@@ -53,74 +73,127 @@ export default function CategorySelector({ accounts, savedCategories, onSave }: 
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {accounts.map(acc => (
-        <div
-          key={acc.id}
-          style={{ background: '#0A0A0A', border: '1px solid #1A1A1A', borderRadius: 6, padding: 8 }}
-        >
-          <p style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>
-            {acc.market_type} · {acc.account_name}
-          </p>
-          <div style={{ position: 'relative' }}>
-            <input
-              value={queries[acc.id] ?? cats[acc.id] ?? ''}
-              onChange={e => search(acc.id, acc.market_type, e.target.value)}
-              placeholder='카테고리 검색...'
-              style={{
-                width: '100%',
-                padding: '6px 10px',
-                background: '#0A0A0A',
-                border: '1px solid #2D2D2D',
-                borderRadius: 4,
-                fontSize: 13,
-                color: '#E5E5E5',
-                outline: 'none',
-                boxSizing: 'border-box',
-              }}
-            />
-            {loading[acc.id] && (
-              <span style={{ position: 'absolute', right: 8, top: 8, fontSize: 11, color: '#666' }}>
-                검색 중
-              </span>
-            )}
-            {(suggestions[acc.id] ?? []).length > 0 && (
-              <ul
+      {accounts.map(acc => {
+        const productNo = marketProductNos?.[acc.id]
+        const isRegistered = !!productNo
+        const marketUrl = isRegistered ? getMarketProductUrl(acc.market_type, productNo) : null
+        const isDeleting = deletingAccountId === acc.id
+
+        return (
+          <div
+            key={acc.id}
+            style={{ background: '#0A0A0A', border: '1px solid #1A1A1A', borderRadius: 6, padding: 8 }}
+          >
+            {/* 헤더: 계정명 + 구매페이지/삭제 버튼 */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+              <p style={{ fontSize: 11, color: '#666', margin: 0 }}>
+                {acc.market_type} · {acc.account_name}
+              </p>
+              {isRegistered && (
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {marketUrl && (
+                    <button
+                      onClick={() => window.open(marketUrl, '_blank')}
+                      title='구매페이지 열기'
+                      style={{
+                        padding: '2px 8px',
+                        fontSize: 11,
+                        background: '#0F1C2E',
+                        border: '1px solid #1A3A5C',
+                        borderRadius: 4,
+                        color: '#4A9EFF',
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      구매페이지
+                    </button>
+                  )}
+                  {onDeleteFromMarket && (
+                    <button
+                      onClick={() => !isDeleting && onDeleteFromMarket(acc.id)}
+                      disabled={isDeleting}
+                      title='마켓에서 삭제'
+                      style={{
+                        padding: '2px 8px',
+                        fontSize: 11,
+                        background: '#1A0A0A',
+                        border: '1px solid #3A1A1A',
+                        borderRadius: 4,
+                        color: isDeleting ? '#666' : '#FF6B6B',
+                        cursor: isDeleting ? 'not-allowed' : 'pointer',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {isDeleting ? '삭제 중...' : '마켓삭제'}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* 카테고리 검색 */}
+            <div style={{ position: 'relative' }}>
+              <input
+                value={queries[acc.id] ?? cats[acc.id] ?? ''}
+                onChange={e => search(acc.id, acc.market_type, e.target.value)}
+                placeholder='카테고리 검색...'
                 style={{
-                  position: 'absolute',
-                  zIndex: 50,
                   width: '100%',
-                  background: '#111',
+                  padding: '6px 10px',
+                  background: '#0A0A0A',
                   border: '1px solid #2D2D2D',
                   borderRadius: 4,
-                  maxHeight: 160,
-                  overflowY: 'auto',
                   fontSize: 13,
-                  listStyle: 'none',
-                  padding: 0,
-                  margin: 0,
-                  marginTop: 4,
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                  color: '#E5E5E5',
+                  outline: 'none',
+                  boxSizing: 'border-box',
                 }}
-              >
-                {suggestions[acc.id].map((cat, i) => (
-                  <li
-                    key={i}
-                    onClick={() => select(acc.id, cat)}
-                    style={{ padding: '7px 12px', color: '#E5E5E5', cursor: 'pointer' }}
-                    onMouseEnter={e => { (e.currentTarget as HTMLLIElement).style.background = '#1A1A1A' }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLLIElement).style.background = 'transparent' }}
-                  >
-                    {cat}
-                  </li>
-                ))}
-              </ul>
+              />
+              {loading[acc.id] && (
+                <span style={{ position: 'absolute', right: 8, top: 8, fontSize: 11, color: '#666' }}>
+                  검색 중
+                </span>
+              )}
+              {(suggestions[acc.id] ?? []).length > 0 && (
+                <ul
+                  style={{
+                    position: 'absolute',
+                    zIndex: 50,
+                    width: '100%',
+                    background: '#111',
+                    border: '1px solid #2D2D2D',
+                    borderRadius: 4,
+                    maxHeight: 160,
+                    overflowY: 'auto',
+                    fontSize: 13,
+                    listStyle: 'none',
+                    padding: 0,
+                    margin: 0,
+                    marginTop: 4,
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                  }}
+                >
+                  {suggestions[acc.id].map((cat, i) => (
+                    <li
+                      key={i}
+                      onClick={() => select(acc.id, cat)}
+                      style={{ padding: '7px 12px', color: '#E5E5E5', cursor: 'pointer' }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLLIElement).style.background = '#1A1A1A' }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLLIElement).style.background = 'transparent' }}
+                    >
+                      {cat}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            {cats[acc.id] && (
+              <p style={{ fontSize: 11, color: '#FF8C00', marginTop: 4 }}>선택됨: {cats[acc.id]}</p>
             )}
           </div>
-          {cats[acc.id] && (
-            <p style={{ fontSize: 11, color: '#FF8C00', marginTop: 4 }}>선택됨: {cats[acc.id]}</p>
-          )}
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }

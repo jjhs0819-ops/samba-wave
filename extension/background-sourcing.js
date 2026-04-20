@@ -473,7 +473,7 @@ async function handleSourcingJob(job) {
     // active:false — 병렬 처리 시 여러 탭 동시 오픈 (백그라운드 탭도 JS 렌더링 됨)
     const tab = await chrome.tabs.create({ url: job.url, active: false })
     tabId = tab.id
-    await waitForTabLoad(tabId, 15000)
+    await waitForTabLoad(tabId, 20000)
 
     // GSShop: 동적 DOM 감지 (고정 8초 → 평균 2~3초)
     if (job.type === 'category-scan' && job.site === 'GSShop') {
@@ -571,7 +571,7 @@ async function handleSourcingJob(job) {
           const nextUrl = new URL(job.url)
           nextUrl.searchParams.set('eh', eh)
           await chrome.tabs.update(tabId, { url: nextUrl.toString() })
-          await waitForTabLoad(tabId, 15000)
+          await waitForTabLoad(tabId, 20000)
           await waitForGSShopSearchResults(tabId, 5000)
         }
 
