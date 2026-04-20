@@ -1293,8 +1293,15 @@ async def create_collected_product(
     body: CollectedProductCreate,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
+    from fastapi.responses import JSONResponse
+
     svc = _get_services(session)
     result = await svc.create_collected_product(body.model_dump(exclude_unset=True))
+    if result is None:
+        return JSONResponse(
+            status_code=409,
+            content={"detail": "동일 소싱처에 동일 원 상품명이 이미 존재합니다."},
+        )
     # 상품 생성 시 캐시 무효화
     await cache.clear_pattern("products:*")
     return result

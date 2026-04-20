@@ -96,15 +96,45 @@ class SambaCollectorService:
     ) -> Optional[SambaCollectedProduct]:
         return await self.product_repo.get_async(product_id)
 
+    async def _exists_by_name(
+        self,
+        tenant_id: Optional[str],
+        source_site: str,
+        name: str,
+        exclude_site_product_id: Optional[str] = None,
+    ) -> bool:
+        """동일 소싱처 내 동일 원 상품명 존재 여부 (삭제 포함)."""
+        q = select(SambaCollectedProduct).where(
+            SambaCollectedProduct.tenant_id == tenant_id,
+            SambaCollectedProduct.source_site == source_site,
+            SambaCollectedProduct.name == name.strip(),
+        )
+        if exclude_site_product_id:
+            q = q.where(
+                SambaCollectedProduct.site_product_id != exclude_site_product_id
+            )
+        result = await self.product_repo.session.execute(q.limit(1))
+        return result.scalars().first() is not None
+
     async def create_collected_product(
         self, data: Dict[str, Any]
-    ) -> SambaCollectedProduct:
+    ) -> Optional[SambaCollectedProduct]:
         self._sanitize_kream_data(data)
         self._clean_company_names(data)
         self._fill_optional_images(data)
         await self._fill_source_brand(data)
         await self._inherit_group_attributes(data)
         _derive_sale_status(data)
+        # 동일 소싱처 내 동일 원 상품명 존재 시 수집 차단
+        name_val = (data.get("name") or "").strip()
+        if name_val:
+            if await self._exists_by_name(
+                tenant_id=data.get("tenant_id"),
+                source_site=data.get("source_site", ""),
+                name=name_val,
+                exclude_site_product_id=data.get("site_product_id"),
+            ):
+                return None
         try:
             return await self.product_repo.create_async(**data)
         except IntegrityError:
@@ -235,6 +265,48 @@ class SambaCollectorService:
                 item["manufacturer"] = source_brand
         from backend.domain.samba.collector.model import SambaCollectedProduct
         from sqlalchemy.exc import IntegrityError
+
+        # 동일 소싱처 내 동일 원 상품명 중복 필터링
+        source_site_pairs = {(d.get("tenant_id"), d.get("source_site")) for d in items}
+        # (tenant_id, source_site, name) → set of site_product_ids
+        existing_name_spids: Dict[tuple, set] = {}
+        for tid, ss in source_site_pairs:
+            rows = (
+                await self.product_repo.session.execute(
+                    select(
+                        SambaCollectedProduct.name,
+                        SambaCollectedProduct.site_product_id,
+                    ).where(
+                        SambaCollectedProduct.tenant_id == tid,
+                        SambaCollectedProduct.source_site == ss,
+                    )
+                )
+            ).all()
+            for row_name, row_spid in rows:
+                k = (tid, ss, (row_name or "").strip())
+                existing_name_spids.setdefault(k, set()).add(row_spid)
+        seen_names: set = set()
+        filtered_items: list = []
+        for d in items:
+            tid = d.get("tenant_id")
+            ss = d.get("source_site")
+            nm = (d.get("name") or "").strip()
+            spid = d.get("site_product_id")
+            key = (tid, ss, nm)
+            existing_spids = existing_name_spids.get(key, set())
+            if existing_spids:
+                if spid and spid in existing_spids:
+                    # 동일 site_product_id 재수집 → upsert 허용
+                    pass
+                else:
+                    # 다른 상품이 동일 이름 → skip
+                    continue
+            elif key in seen_names:
+                # 배치 내 자체 중복 → skip
+                continue
+            seen_names.add(key)
+            filtered_items.append(d)
+        items = filtered_items
 
         created = 0
         for d in items:

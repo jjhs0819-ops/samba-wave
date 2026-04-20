@@ -179,7 +179,7 @@ async def cleanup_smartstore_orphans(
                     "db_id": str(p.id),
                     "style_code": str(p.style_code or ""),
                     "mapped_origin_no": origin_no_for_p,
-                    "product_name": (p.product_name or "")[:80],
+                    "product_name": (p.name or "")[:80],
                 }
 
         client = SmartStoreClient(client_id, client_secret)

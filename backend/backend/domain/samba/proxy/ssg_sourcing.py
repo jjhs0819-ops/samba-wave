@@ -954,12 +954,21 @@ class SSGSourcingClient:
 
         products: list[dict[str, Any]] = []
         seen: set[str] = set()
+        skipped_other_site = 0
 
         for item in data_list:
             item_id = str(item.get("itemId", ""))
             if not item_id or item_id in seen:
                 continue
             seen.add(item_id)
+
+            # siteNo 필터: 신세계백화점(6009) 상품만 통과.
+            # SSG 통합검색은 신세계몰(6004)/이마트몰 상품까지 섞어 반환하므로
+            # 여기서 걸러내지 않으면 카테고리 체계가 달라 라우팅이 깨진다.
+            raw_site_no = str(item.get("siteNo", "")).strip()
+            if raw_site_no and raw_site_no != self.SITE_NO:
+                skipped_other_site += 1
+                continue
 
             item_name = item.get("itemName", "").strip()
             if not item_name:
@@ -1022,6 +1031,12 @@ class SSGSourcingClient:
                     "siteNo": item.get("siteNo", self.SITE_NO),
                     "salestrNo": str(item.get("salestrNo", "")),
                 }
+            )
+
+        if skipped_other_site:
+            logger.info(
+                f"[SSG] 타 사이트 상품 {skipped_other_site}건 제외 "
+                f"(신세계백화점 siteNo={self.SITE_NO} 외)"
             )
 
         return products

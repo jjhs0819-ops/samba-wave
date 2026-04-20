@@ -134,6 +134,7 @@ class SambaCollectedProduct(SQLModel, table=True):
             unique=True,
             postgresql_where=text("site_product_id IS NOT NULL"),
         ),
+        Index("ix_scp_tenant_source_name", "tenant_id", "source_site", "name"),
     )
 
     id: str = Field(
