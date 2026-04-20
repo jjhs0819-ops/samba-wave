@@ -681,6 +681,8 @@ async def seller_cancel(
                 od_no=order.od_no or order.order_number,
                 reason_code=body.reason_code,
                 reason_text=body.reason_text or "고객변심",
+                od_seq=int(order.od_seq or 1),
+                proc_seq=int(order.proc_seq or 1),
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"판매자 취소 실패: {e}")
@@ -692,10 +694,40 @@ async def seller_cancel(
             order_id,
             {"shipping_status": "취소완료", "status": "cancelled"},
         )
+        # 롯데ON은 단일 itemList 요청으로 같은 odNo의 모든 옵션이 함께 취소됨.
+        # 삼바 DB도 같은 odNo의 다른 옵션 레코드를 일괄 cancelled 처리해 UI 정합성 유지.
+        od_no_val = order.od_no
+        sibling_count = 0
+        if od_no_val:
+            from sqlmodel import select
+
+            sibling_stmt = (
+                select(SambaOrder)
+                .where(SambaOrder.od_no == od_no_val)
+                .where(SambaOrder.channel_id == order.channel_id)
+                .where(SambaOrder.id != order_id)
+                .where(SambaOrder.status != "cancelled")
+            )
+            sibling_rows = (await session.execute(sibling_stmt)).scalars().all()
+            for sib in sibling_rows:
+                await svc.update_order(
+                    sib.id,
+                    {"shipping_status": "취소완료", "status": "cancelled"},
+                )
+            sibling_count = len(sibling_rows)
+        if sibling_count:
+            logger.info(
+                f"[판매자취소] 롯데ON {order.order_number} 동일 주문 옵션 {sibling_count}건 동반 취소"
+            )
         logger.info(
             f"[판매자취소] 롯데ON {order.order_number} 완료 ({body.reason_code})"
         )
-        return {"ok": True, "message": "판매자 취소 완료", "detail": message}
+        user_msg = (
+            "이미 취소된 주문 — DB 상태 갱신 완료"
+            if message == "이미 취소된 주문"
+            else "판매자 취소 완료"
+        )
+        return {"ok": True, "message": user_msg, "detail": message}
 
     elif account.market_type == "smartstore":
         from backend.domain.samba.proxy.smartstore import SmartStoreClient

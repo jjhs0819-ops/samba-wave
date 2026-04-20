@@ -1359,13 +1359,20 @@ class LotteonClient:
             logger.warning(f"[롯데ON][정산] 조회 실패 ({start_date}~{end_date}): {e}")
             return []
 
-    # 판매자 취소 사유코드
+    # 판매자 취소 사유코드 (롯데ON 3자리 숫자 + 스마트스토어 영문코드 호환)
     SELLER_CANCEL_REASON_CODES: dict[str, str] = {
-        "soldout": "111",  # 판매자 취소(품절)
-        "price": "132",  # 가격오등록
-        "reseller": "133",  # 리셀러주문
-        "delivery": "137",  # 택배지원불가
-        "customer": "135",  # 판매자 취소(고객변심)
+        # 롯데ON 내부 키 (레거시)
+        "soldout": "111",
+        "price": "132",
+        "reseller": "133",
+        "delivery": "137",
+        "customer": "135",
+        # 스마트스토어 호환 키 (프론트가 마켓 구분 없이 보내는 값)
+        "SOLD_OUT": "111",  # 품절
+        "PRICE_FLUCTUATION": "132",  # 가격오등록
+        "INTENT_CHANGED": "135",  # 고객변심
+        "WRONG_ORDER": "135",  # 잘못된주문 → 고객변심
+        "DELAYED_DELIVERY": "137",  # 배송지연 → 택배불가
     }
 
     async def seller_cancel_order(
@@ -1381,6 +1388,7 @@ class LotteonClient:
         Args:
             od_no: 주문번호
             reason_code: 판매자 사유코드 (111=품절, 132=가격오등록, 133=리셀러, 135=고객변심, 137=택배불가)
+                         또는 스마트스토어 영문코드(SOLD_OUT/INTENT_CHANGED 등)도 허용
             reason_text: 판매자 사유 내용 (선택)
             od_seq: 주문순번 (기본 1)
             proc_seq: 처리순번 (기본 1)
@@ -1388,6 +1396,19 @@ class LotteonClient:
         Returns:
             (성공여부, 메시지)
         """
+        # 3자리 숫자가 아니면 매핑 딕셔너리로 변환 (에러 3073 방어)
+        if not (reason_code.isdigit() and len(reason_code) == 3):
+            mapped = self.SELLER_CANCEL_REASON_CODES.get(reason_code)
+            if mapped:
+                logger.info(
+                    f"[롯데ON][판매자취소] 사유코드 매핑: {reason_code} → {mapped}"
+                )
+                reason_code = mapped
+            else:
+                logger.warning(
+                    f"[롯데ON][판매자취소] 알 수 없는 사유코드 '{reason_code}', 기본값 111(품절) 사용"
+                )
+                reason_code = "111"
         payload = {
             "odNo": od_no,
             "itemList": [
@@ -1401,7 +1422,8 @@ class LotteonClient:
             ],
         }
         logger.info(
-            f"[롯데ON][판매자취소] odNo={od_no} rsnCd={reason_code} rsnText={reason_text}"
+            f"[롯데ON][판매자취소] odNo={od_no} odSeq={od_seq} procSeq={proc_seq} "
+            f"rsnCd={reason_code} rsnText={reason_text}"
         )
         try:
             resp = await self._call_api(
@@ -1418,8 +1440,17 @@ class LotteonClient:
             )
             return success, message or ("정상 처리" if success else "실패")
         except Exception as e:
-            logger.warning(f"[롯데ON][판매자취소] 실패: odNo={od_no} / {e}")
-            return False, str(e)
+            err_msg = str(e)
+            # 3006 = "주문의 상태를 확인해 주세요" — 같은 odNo의 다른 옵션이 먼저 취소되어
+            # 롯데ON 쪽에서는 이미 전체 주문이 취소 상태. 삼바 DB 동기화를 위해 성공으로 처리.
+            # _call_api가 "응답 에러 (3006): ..." 형식으로 LotteonApiError를 던지므로 메시지로 구분.
+            if "(3006)" in err_msg:
+                logger.info(
+                    f"[롯데ON][판매자취소] 이미 취소된 주문 (3006): odNo={od_no}"
+                )
+                return True, "이미 취소된 주문"
+            logger.warning(f"[롯데ON][판매자취소] 실패: odNo={od_no} / {err_msg}")
+            return False, err_msg
 
     async def confirm_orders(self, order_items: list[dict]) -> bool:
         """주문확인 = 연동완료 처리 (SellerIfCompleteInform, ifCplYN=Y).
