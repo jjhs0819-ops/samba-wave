@@ -264,6 +264,7 @@ class SambaShipmentService:
                         "transmit_result": shipment.transmit_result or {},
                         "transmit_error": shipment.transmit_error or {},
                         "update_result": shipment.update_result or {},
+                        "error": shipment.error,
                     }
                 )
                 processed += 1

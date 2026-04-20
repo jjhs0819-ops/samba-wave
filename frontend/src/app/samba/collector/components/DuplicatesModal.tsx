@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { collectorApi } from '@/lib/samba/api/commerce'
+import { collectorApi, shipmentApi } from '@/lib/samba/api/commerce'
 import { showConfirm } from '@/components/samba/Modal'
 import { fmtNum } from '@/lib/samba/styles'
 
@@ -80,11 +80,50 @@ export default function DuplicatesModal({ open, onClose, onDeleted }: Duplicates
 
   const handleDelete = async () => {
     if (checked.size === 0) return
-    const ok = await showConfirm(`선택한 중복 상품 ${fmtNum(checked.size)}개를 삭제하시겠습니까?`)
+    const ids = Array.from(checked)
+
+    // 선택된 중복 상품들의 registered_accounts 수집
+    const allDuplicates = groups.flatMap(g => g.duplicates)
+    const selected = allDuplicates.filter(d => checked.has(d.id))
+    const registeredIds = selected.filter(d => {
+      const ra = d.registered_accounts
+      return ra && Array.isArray(ra) && ra.length > 0
+    })
+    const hasMarketRegistered = registeredIds.length > 0
+
+    const confirmMsg = hasMarketRegistered
+      ? `선택한 중복 상품 ${fmtNum(ids.length)}개를 삭제합니다.\n마켓에 등록된 ${fmtNum(registeredIds.length)}개는 마켓에서도 삭제됩니다.\n계속하시겠습니까?`
+      : `선택한 중복 상품 ${fmtNum(ids.length)}개를 삭제하시겠습니까?`
+    const ok = await showConfirm(confirmMsg)
     if (!ok) return
+
     setDeleting(true)
     try {
-      await collectorApi.bulkDeleteProducts(Array.from(checked))
+      let safeToDeleteIds = ids
+
+      // 마켓 등록 상품은 마켓에서 먼저 삭제
+      if (hasMarketRegistered) {
+        const marketIds = registeredIds.map(d => d.id)
+        const accountIds: string[] = Array.from(
+          new Set(registeredIds.flatMap(d => Array.isArray(d.registered_accounts) ? d.registered_accounts as string[] : []))
+        )
+        const res = await shipmentApi.marketDelete(marketIds, accountIds)
+
+        // 마켓삭제 실패한 상품은 DB 삭제 제외 (고아 상품 방지)
+        const failedIds = new Set(
+          (res.results ?? [])
+            .filter(r => r.success_count === 0)
+            .map(r => r.product_id)
+        )
+        if (failedIds.size > 0) {
+          safeToDeleteIds = ids.filter(id => !failedIds.has(id))
+          alert(`마켓삭제 실패 ${fmtNum(failedIds.size)}건 — 해당 상품은 DB 삭제 건너뜀. 재시도하세요.`)
+        }
+      }
+
+      if (safeToDeleteIds.length > 0) {
+        await collectorApi.bulkDeleteProducts(safeToDeleteIds)
+      }
       await load()
       onDeleted()
     } finally {
@@ -114,6 +153,16 @@ export default function DuplicatesModal({ open, onClose, onDeleted }: Duplicates
             )}
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <button
+              onClick={() => setChecked(new Set(groups.flatMap(g => g.duplicates.map(d => d.id))))}
+              disabled={!loaded || groups.length === 0}
+              style={{ fontSize: '0.75rem', padding: '0.3rem 0.75rem', background: 'rgba(80,80,80,0.2)', border: '1px solid #333', color: '#AAA', borderRadius: '6px', cursor: 'pointer' }}
+            >전체선택</button>
+            <button
+              onClick={() => setChecked(new Set())}
+              disabled={!loaded || checked.size === 0}
+              style={{ fontSize: '0.75rem', padding: '0.3rem 0.75rem', background: 'rgba(80,80,80,0.2)', border: '1px solid #333', color: '#AAA', borderRadius: '6px', cursor: 'pointer' }}
+            >전체해제</button>
             <button
               onClick={load}
               disabled={loading}
