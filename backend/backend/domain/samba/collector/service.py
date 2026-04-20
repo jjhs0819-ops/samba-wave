@@ -189,33 +189,36 @@ class SambaCollectorService:
             or data.get("applied_policy_id")
         ):
             return
+        # 태그/SEO/정책: SearchFilter 전체에서 참조 (같은 검색그룹이면 공유)
+        filter_refs = await self.product_repo.list_by_filter(fid, limit=1)
+        # market_prices: group_key 단위로 참조 (동일 SKU 패밀리에서만 의미 있음)
+        group_refs: list = []
         group_key = (data.get("group_key") or "").strip()
         if group_key:
-            existing = await self.product_repo.filter_by_async(
+            group_refs = await self.product_repo.filter_by_async(
                 search_filter_id=fid,
                 group_key=group_key,
                 limit=1,
                 order_by="created_at",
                 order_by_desc=True,
             )
-        else:
-            existing = await self.product_repo.list_by_filter(fid, limit=1)
-        if not existing:
-            return
-        ref = existing[0]
-        # 태그 복사 (내부 시스템 태그 제외)
-        ref_tags = [t for t in (ref.tags or []) if not t.startswith("__")]
-        if ref_tags:
-            data["tags"] = ref_tags + ["__ai_tagged__"]
-        # SEO 키워드 복사
-        if ref.seo_keywords:
-            data["seo_keywords"] = list(ref.seo_keywords)
-        # 정책 복사
-        if ref.applied_policy_id:
-            data["applied_policy_id"] = ref.applied_policy_id
-        # 마켓 가격 복사
-        if ref.market_prices:
-            data["market_prices"] = dict(ref.market_prices)
+        if filter_refs:
+            ref = filter_refs[0]
+            # 태그 복사 (내부 시스템 태그 제외)
+            ref_tags = [t for t in (ref.tags or []) if not t.startswith("__")]
+            if ref_tags:
+                data["tags"] = ref_tags + ["__ai_tagged__"]
+            # SEO 키워드 복사
+            if ref.seo_keywords:
+                data["seo_keywords"] = list(ref.seo_keywords)
+            # 정책 복사
+            if ref.applied_policy_id:
+                data["applied_policy_id"] = ref.applied_policy_id
+        if group_refs:
+            gref = group_refs[0]
+            # 마켓 가격 복사 (동일 모델 SKU 패밀리 내에서만)
+            if gref.market_prices:
+                data["market_prices"] = dict(gref.market_prices)
 
     def prepare_product_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """전처리만 수행 (배치 저장용). DB 저장은 별도."""
@@ -424,7 +427,7 @@ class SambaCollectorService:
         data["images"] = images
 
     async def get_duplicate_products(self, tenant_id: str) -> list:
-        """마켓 등록 상품과 동일 name인 중복 상품 그룹 반환."""
+        """동일 name 중복 상품 그룹 반환 (원본=가장 먼저 수집된 것, 나머지=중복)."""
         from collections import defaultdict
 
         products = await self.product_repo.find_duplicates(tenant_id)
@@ -432,47 +435,36 @@ class SambaCollectorService:
         for p in products:
             groups_map[(p.name or "").strip()].append(p)
 
+        def _to_dict(p) -> dict:
+            return {
+                "id": p.id,
+                "name": p.name,
+                "source_site": p.source_site,
+                "brand": p.brand,
+                "sale_price": p.sale_price,
+                "images": (p.images or [])[:1],
+                "registered_accounts": p.registered_accounts,
+                "status": p.status,
+            }
+
+        def _is_registered(p) -> bool:
+            ra = p.registered_accounts
+            return bool(ra and ra not in ([], "null", None))
+
         result = []
         for name, items in groups_map.items():
-            registered = [
-                p
-                for p in items
-                if p.registered_accounts
-                and p.registered_accounts not in ([], "null", None)
-            ]
-            duplicates = [p for p in items if p not in registered]
-            if not duplicates:
+            if len(items) <= 1:
                 continue
+            # 등록된 상품 중 가장 먼저 수집된 것을 원본으로, 없으면 첫 수집 상품
+            registered = [p for p in items if _is_registered(p)]
+            original = registered[0] if registered else items[0]
+            duplicates = [p for p in items if p.id != original.id]
             result.append(
                 {
                     "name": name,
                     "total": len(items),
-                    "registered": [
-                        {
-                            "id": p.id,
-                            "name": p.name,
-                            "source_site": p.source_site,
-                            "brand": p.brand,
-                            "sale_price": p.sale_price,
-                            "images": (p.images or [])[:1],
-                            "registered_accounts": p.registered_accounts,
-                            "status": p.status,
-                        }
-                        for p in registered
-                    ],
-                    "duplicates": [
-                        {
-                            "id": p.id,
-                            "name": p.name,
-                            "source_site": p.source_site,
-                            "brand": p.brand,
-                            "sale_price": p.sale_price,
-                            "images": (p.images or [])[:1],
-                            "registered_accounts": p.registered_accounts,
-                            "status": p.status,
-                        }
-                        for p in duplicates
-                    ],
+                    "registered": [_to_dict(original)],
+                    "duplicates": [_to_dict(p) for p in duplicates],
                 }
             )
         return result

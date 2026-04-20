@@ -83,6 +83,7 @@ export default function ProductsPage() {
   const [filterNameMap, setFilterNameMap] = useState<Record<string, string>>({});
   const [searchFilters, setSearchFilters] = useState<SambaSearchFilter[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   // 서버사이드 페이지네이션 상태
   const [serverTotal, setServerTotal] = useState(0);
   const [serverSites, setServerSites] = useState<string[]>([]);
@@ -203,6 +204,7 @@ export default function ProductsPage() {
         search_filter_id: filterByGroupId || undefined,
         sort_by: sortBy,
       })
+      setLoadError(false)
       setAllProducts(res.items)
       setServerTotal(res.total)
       setServerSites(res.sites)
@@ -210,6 +212,7 @@ export default function ProductsPage() {
       if (res.counts) setKpiCounts(res.counts)
     } catch (e) {
       console.error("loadProducts error:", e)
+      setLoadError(true)
     } finally {
       setLoading(false)
     }
@@ -245,13 +248,17 @@ export default function ProductsPage() {
         sort_by: sortBy,
       }).catch(() => null)
       if (productsRes) {
+        setLoadError(false)
         setAllProducts(productsRes.items)
         setServerTotal(productsRes.total)
         setServerSites(productsRes.sites)
         if (productsRes.counts) setKpiCounts(productsRes.counts)
+      } else {
+        setLoadError(true)
       }
     } catch (e) {
       console.error('load error:', e)
+      setLoadError(true)
     } finally {
       setLoading(false)
     }
@@ -1986,6 +1993,14 @@ export default function ProductsPage() {
       {/* Product list */}
       {loading ? (
         <div style={{ padding: "3rem", textAlign: "center", color: "#555", fontSize: "0.9rem" }}>로딩 중...</div>
+      ) : loadError ? (
+        <div style={{ padding: "3rem", textAlign: "center", fontSize: "0.85rem" }}>
+          <div style={{ color: "#FF6B6B", marginBottom: "8px" }}>서버 연결에 실패했습니다</div>
+          <button
+            onClick={() => loadProducts()}
+            style={{ padding: "6px 16px", borderRadius: "6px", fontSize: "0.8rem", background: "rgba(255,107,107,0.15)", border: "1px solid rgba(255,107,107,0.4)", color: "#FF6B6B", cursor: "pointer" }}
+          >다시 시도</button>
+        </div>
       ) : products.length === 0 ? (
         <div style={{ padding: "3rem", textAlign: "center", color: "#555", fontSize: "0.9rem" }}>
           등록된 상품이 없습니다

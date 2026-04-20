@@ -262,6 +262,37 @@ class SSGSourcingClient:
             html = resp.text
 
             products = self._parse_search_html(html, keyword)
+
+            # [중요] ctgId 사용 시 SSG 서버에서 repBrandId를 무시하므로
+            # 검색 결과에 하위 브랜드(예: 나이키키즈/스윔/골프)가 혼입됨.
+            # 클라이언트 post-filter 로 제거한다.
+            if brand_ids and ctg_id:
+                _allowed = {str(b).strip() for b in brand_ids if str(b).strip()}
+                _keyword_norm = str(keyword or "").strip()
+                _filtered: list[dict[str, Any]] = []
+                _dropped = 0
+                _sample_drop: list[str] = []
+                for p in products:
+                    _bid = str(p.get("repBrandId") or p.get("brandId") or "").strip()
+                    _bname = str(p.get("brand") or "").strip()
+                    if _bid:
+                        _keep = _bid in _allowed
+                    else:
+                        _keep = (not _keyword_norm) or (_bname == _keyword_norm)
+                    if _keep:
+                        _filtered.append(p)
+                    else:
+                        _dropped += 1
+                        if len(_sample_drop) < 3:
+                            _sample_drop.append(f"{_bname}({_bid or 'no-id'})")
+                if _dropped:
+                    logger.info(
+                        f"[SSG] 하위브랜드 drop {_dropped}건 "
+                        f'keyword="{keyword}" ctgId={ctg_id} '
+                        f"allowed={_allowed} samples={_sample_drop}"
+                    )
+                products = _filtered
+
             logger.info(
                 f'[SSG] 검색 완료: "{keyword}" page={page} -> {len(products)}개'
             )
@@ -511,10 +542,16 @@ class SSGSourcingClient:
                 )
 
                 if brand_ids and top_categories:
-                    # 2단계: 대분류별 브랜드 건수 조회 (~15회 요청, 1초 간격)
-                    # 비브랜드 전체 leaf 대신 대분류 단위로 프로빙 → rate limit 안전
+                    # 2단계: 대분류별 브랜드 건수 조회 + 실제 브랜드 상품의 leaf 추출
+                    # SSG는 repBrandId+ctgId 동시 사용 시 ctgId 무시 → count에 하위 브랜드 포함됨.
+                    # probe 응답의 상품 dataList에서 brand가 정확히 일치하는 상품의
+                    # dispCtgId만 모아 valid leaf set을 구성한다.
                     brand_param = "|".join(brand_ids)
+                    allowed_brand_ids = {
+                        str(b).strip() for b in brand_ids if str(b).strip()
+                    }
                     top_brand_counts: dict[str, int] = {}
+                    brand_leaf_ids: set[str] = set()
 
                     logger.info(
                         f"[SSG] 대분류 브랜드 카운트 시작: "
@@ -542,13 +579,31 @@ class SSGSourcingClient:
                             if check_resp.status_code == 200:
                                 count = self._parse_area_count(check_resp.text)
                                 top_brand_counts[top_name] = count
+                                # probe 응답에서 브랜드 정확 일치 상품의 itemId 추출
+                                # (dataList에 dispCtgId 없으므로 detail 조회로 샘플링)
+                                matched_ids = self._extract_brand_filtered_item_ids(
+                                    check_resp.text,
+                                    keyword,
+                                    allowed_brand_ids,
+                                    limit=10,
+                                )
+                                if matched_ids:
+                                    dist = await self._sample_category_dist(
+                                        client, matched_ids
+                                    )
+                                    brand_leaf_ids.update(dist.keys())
                                 if count > 0:
-                                    logger.debug(f"[SSG] 대분류 {top_name} → {count}건")
+                                    logger.info(
+                                        f"[SSG] 대분류 {top_name} → {count}건 "
+                                        f"(매칭상품샘플 {len(matched_ids)}, "
+                                        f"leaf누적 {len(brand_leaf_ids)})"
+                                    )
                         except Exception as exc:
                             logger.debug(f"[SSG] 대분류 카운트 실패 {top_name}: {exc}")
                         await _asyncio.sleep(1.0)
 
-                    # 3단계: 브랜드 건수 있는 대분류만 필터링 후 비례 스케일링
+                    # 3단계: 실제 브랜드 상품이 존재하는 leaf만 통과
+                    # (대분류 카운트>0 이어도 하위브랜드만일 수 있으므로 leaf ID로 교차검증)
                     valid_tops = {
                         name for name, cnt in top_brand_counts.items() if cnt > 0
                     }
@@ -556,7 +611,13 @@ class SSGSourcingClient:
                         c
                         for c in all_categories
                         if c.get("category1", "") in valid_tops
+                        and c.get("categoryCode", "") in brand_leaf_ids
                     ]
+                    logger.info(
+                        f"[SSG] leaf 필터링: 전체 {len(all_categories)}개 → "
+                        f"브랜드매칭 leaf {len(brand_leaf_ids)}개 → "
+                        f"최종 {len(filtered_leaves)}개"
+                    )
 
                     # 대분류별 원본 leaf_sum 사전 계산 (수정 전 값 사용해야 정확)
                     # 루프 내에서 count를 수정하면 이후 leaf의 leaf_sum이 오염되므로
@@ -594,9 +655,13 @@ class SSGSourcingClient:
                             "groupCount": len(filtered_leaves),
                         }
 
+                    # 브랜드 매칭 leaf 0개 — 빈 결과 반환 (전체 fallback 금지)
+                    # 전체 leaf 폴백하면 하위브랜드(나이키키즈 등)가 그룹으로 생성됨
                     logger.warning(
-                        "[SSG] 브랜드 카테고리 카운트 결과 없음 → 전체 leaf 폴백"
+                        f"[SSG] 브랜드 매칭 leaf 0개 — 빈 결과 반환 "
+                        f"(brand_leaf_ids={len(brand_leaf_ids)}, valid_tops={len(valid_tops)})"
                     )
+                    return {"categories": [], "total": 0, "groupCount": 0}
 
                 # brand_ids 없거나 브랜드 프로빙 결과 없음: 전체 leaf 그대로 반환
                 categories = [c for c in all_categories if c.get("count", 0) > 0]
@@ -759,6 +824,77 @@ class SSGSourcingClient:
                 )
 
         return categories, top_categories
+
+    def _extract_brand_filtered_item_ids(
+        self,
+        html: str,
+        keyword: str,
+        allowed_brand_ids: set[str],
+        limit: int = 10,
+    ) -> list[str]:
+        """probe 응답에서 brand가 정확히 일치하는 상품의 itemId 목록 추출.
+
+        SSG dataList에는 dispCtgId가 없으므로, brand가 일치하는 itemId만 뽑아
+        호출 측에서 detail 조회로 실제 dispCtgId를 샘플링한다.
+
+        매칭 규칙:
+          - item의 brandId가 allowed_brand_ids에 포함 → 통과
+          - brandId 없으면 brandName이 keyword와 정확 일치 → 통과
+        """
+        m = re.search(
+            r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>',
+            html,
+            re.DOTALL,
+        )
+        if not m:
+            return set()
+        try:
+            next_data = json.loads(m.group(1))
+        except json.JSONDecodeError:
+            return set()
+
+        queries = (
+            next_data.get("props", {})
+            .get("pageProps", {})
+            .get("dehydratedState", {})
+            .get("queries", [])
+        )
+
+        keyword_norm = str(keyword or "").strip()
+        result: list[str] = []
+
+        for q in queries:
+            qkey = q.get("queryKey") or []
+            if "fetchSearchItemListArea" not in qkey:
+                continue
+            area_list = q.get("state", {}).get("data", {}).get("areaList", [])
+            for area in area_list:
+                if area.get("unitType") != "ITEM_UNIT_LIST":
+                    continue
+                for item in area.get("dataList") or []:
+                    bid = str(
+                        item.get("repBrandId")
+                        or item.get("brandId")
+                        or item.get("brdId")
+                        or ""
+                    ).strip()
+                    bname = str(item.get("brandName") or "").strip()
+                    if bid:
+                        if bid not in allowed_brand_ids:
+                            continue
+                    else:
+                        if not keyword_norm or bname != keyword_norm:
+                            continue
+                    item_id = str(item.get("itemId") or "").strip()
+                    if item_id:
+                        result.append(item_id)
+                        if len(result) >= limit:
+                            return result
+                break
+            if result:
+                break
+
+        return result
 
     def _extract_category_dist_from_items(self, html: str) -> dict[str, int]:
         """브랜드 필터 적용된 검색 결과의 상품 dataList에서 dispCtgId 분포 추출.
