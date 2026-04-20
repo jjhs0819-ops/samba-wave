@@ -120,6 +120,9 @@ asyncio.run(fix())
   # 기본값 1 (미설정 포함) → 실행 + 실패 시 exit 1. 스킵해도 verify_schema는 아래에서 실행됨.
   if [ "${RUN_MIGRATIONS:-1}" = "1" ]; then
     echo "Running database migrations..."
+    # 롯데ON overlap 해소: 39f5332d495f + z_lotteon_order_line_keys 동시 존재 시 stamp으로 정리
+    echo "Stamping alembic to z_lotteon_order_line_keys (overlap guard)..."
+    uv run alembic stamp z_lotteon_order_line_keys 2>/dev/null || true
     _MIGRATION_OK=0
     for i in 1 2 3; do
       if uv run alembic upgrade heads; then
