@@ -396,11 +396,12 @@ export default function OrdersPage() {
       if (totalCancelRequested > 0) {
         showNotification(`주문 취소요청 ${fmtNum(totalCancelRequested)}건이 감지되었습니다. 확인이 필요합니다.`)
       }
-      await loadOrders()
     } catch (e) {
       setLogMessages(prev => [...prev, `[${ts()}] 오류: ${e}`])
+    } finally {
+      await loadOrders()
+      setSyncing(false)
     }
-    setSyncing(false)
   }
 
   const openEdit = (o: SambaOrder) => {
