@@ -451,13 +451,27 @@ class SambaCollectorService:
             ra = p.registered_accounts
             return bool(ra and ra not in ([], "null", None))
 
+        def _min_pid(p) -> int:
+            """market_product_nos 값 중 가장 작은 pid 숫자. 없으면 inf."""
+            mpn = p.market_product_nos
+            if not mpn or mpn in ({}, None):
+                return 2**62
+            try:
+                pids = [int(v) for v in mpn.values() if str(v).isdigit()]
+                return min(pids) if pids else 2**62
+            except Exception:
+                return 2**62
+
         result = []
         for name, items in groups_map.items():
             if len(items) <= 1:
                 continue
-            # 등록된 상품 중 가장 먼저 수집된 것을 원본으로, 없으면 첫 수집 상품
+            # 등록된 상품 중 pid가 가장 작은 것(먼저 마켓 등록)을 원본으로
             registered = [p for p in items if _is_registered(p)]
-            original = registered[0] if registered else items[0]
+            if registered:
+                original = min(registered, key=_min_pid)
+            else:
+                original = items[0]
             duplicates = [p for p in items if p.id != original.id]
             result.append(
                 {
