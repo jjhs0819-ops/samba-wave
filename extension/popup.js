@@ -1,4 +1,4 @@
-const API_GATEWAY_KEY = '6woI2L8NjVrcgthMQ05VvvOTH-3HPoVdmvwa123ot1w'
+const API_GATEWAY_KEY = 'Vtc-wzZY2xU8NKHljIF8hEG01CJOkCHgqzNlRlDJorU'
 function apiFetch(url, init = {}) {
   const headers = { ...(init.headers || {}), 'X-Api-Key': API_GATEWAY_KEY }
   return fetch(url, { ...init, headers })

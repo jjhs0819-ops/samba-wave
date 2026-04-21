@@ -1100,10 +1100,12 @@ async def product_counts(
 async def product_dashboard_stats(
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
-    """대시보드 현황판 — 소싱처별 수집현황 + 마켓/계정별 등록현황."""
-    cached = await cache.get("products:dashboard-stats")
+    """대시보드 현황판 — 소싱처별 수집현황 + 마켓/계정별 등록현황 (브랜드별 breakdown 포함)."""
+    cached = await cache.get("products:dashboard-stats-v2")
     if cached:
         return cached
+
+    from collections import defaultdict
 
     from backend.domain.samba.account.model import SambaMarketAccount as _MA
     from sqlalchemy import text
@@ -1124,12 +1126,43 @@ async def product_dashboard_stats(
         ORDER BY total DESC
     """)
     site_rows = (await session.execute(site_stmt)).all()
+
+    # 1-b) 소싱처별 브랜드 breakdown
+    brand_site_stmt = text("""
+        SELECT source_site,
+               COALESCE(NULLIF(TRIM(brand), ''), '기타') AS brand_name,
+               COUNT(*) AS total,
+               COUNT(*) FILTER (
+                   WHERE registered_accounts IS NOT NULL
+                     AND registered_accounts::text != 'null'
+                     AND registered_accounts::text != '[]'
+               ) AS registered,
+               COUNT(*) FILTER (WHERE sale_status = 'sold_out') AS sold_out
+        FROM samba_collected_product
+        WHERE source_site IS NOT NULL AND source_site != ''
+        GROUP BY source_site, COALESCE(NULLIF(TRIM(brand), ''), '기타')
+        ORDER BY source_site, total DESC
+    """)
+    brand_site_rows = (await session.execute(brand_site_stmt)).all()
+
+    brand_by_source: dict[str, list[dict]] = defaultdict(list)
+    for r in brand_site_rows:
+        brand_by_source[r.source_site].append(
+            {
+                "brand": r.brand_name,
+                "total": r.total,
+                "registered": r.registered,
+                "sold_out": r.sold_out,
+            }
+        )
+
     by_source = [
         {
             "source_site": r.source_site,
             "total": r.total,
             "registered": r.registered,
             "sold_out": r.sold_out,
+            "brands": brand_by_source.get(r.source_site, []),
         }
         for r in site_rows
     ]
@@ -1151,6 +1184,33 @@ async def product_dashboard_stats(
         """)
         acct_rows = (await session.execute(acct_stmt)).all()
 
+        # 계정별 브랜드 breakdown
+        brand_acct_stmt = text("""
+            SELECT aid,
+                   COALESCE(NULLIF(TRIM(brand), ''), '기타') AS brand_name,
+                   COUNT(*) AS cnt
+            FROM (
+                SELECT jsonb_array_elements_text(registered_accounts::jsonb) AS aid,
+                       brand
+                FROM samba_collected_product
+                WHERE registered_accounts IS NOT NULL
+                  AND registered_accounts::text != 'null'
+                  AND registered_accounts::text != '[]'
+            ) sub
+            GROUP BY aid, COALESCE(NULLIF(TRIM(brand), ''), '기타')
+            ORDER BY aid, cnt DESC
+        """)
+        brand_acct_rows = (await session.execute(brand_acct_stmt)).all()
+
+        brand_by_acct: dict[str, list[dict]] = defaultdict(list)
+        for r in brand_acct_rows:
+            brand_by_acct[r.aid].append(
+                {
+                    "brand": r.brand_name,
+                    "registered": r.cnt,
+                }
+            )
+
         # 계정 ID → 마켓명/계정라벨 매핑
         acct_ids = [r.aid for r in acct_rows]
         acct_map: dict[str, dict[str, str]] = {}
@@ -1171,6 +1231,7 @@ async def product_dashboard_stats(
                 "market_name": acct_map.get(r.aid, {}).get("market_name", "알 수 없음"),
                 "account_label": acct_map.get(r.aid, {}).get("account_label", ""),
                 "registered": r.cnt,
+                "brands": brand_by_acct.get(r.aid, []),
             }
             for r in acct_rows
         ]
@@ -1179,7 +1240,7 @@ async def product_dashboard_stats(
         by_account = []
 
     result = {"by_source": by_source, "by_account": by_account}
-    await cache.set("products:dashboard-stats", result, ttl=60)
+    await cache.set("products:dashboard-stats-v2", result, ttl=60)
     return result
 
 

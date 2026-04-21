@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import React, { useEffect, useState, useCallback } from "react"
 import { orderApi, collectorApi, type OrderDashboardStats } from "@/lib/samba/api/commerce"
 import { card, fmtNum } from "@/lib/samba/styles"
 
@@ -9,12 +9,35 @@ function formatShortDate(d: Date) {
   return `${d.getMonth() + 1}. ${d.getDate()}.`
 }
 
+type SourceBrand = { brand: string; total: number; registered: number; sold_out: number }
+type SourceStat = { source_site: string; total: number; registered: number; sold_out: number; brands: SourceBrand[] }
+type AccountBrand = { brand: string; registered: number }
+type AccountStat = { account_id: string; market_name: string; account_label: string; registered: number; brands: AccountBrand[] }
+
 export default function SambaDashboard() {
   const [stats, setStats] = useState<OrderDashboardStats | null>(null)
   const [collectedCount, setCollectedCount] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [bySource, setBySource] = useState<{ source_site: string; total: number; registered: number; sold_out: number }[]>([])
-  const [byAccount, setByAccount] = useState<{ account_id: string; market_name: string; account_label: string; registered: number }[]>([])
+  const [bySource, setBySource] = useState<SourceStat[]>([])
+  const [byAccount, setByAccount] = useState<AccountStat[]>([])
+  const [expandedSources, setExpandedSources] = useState<Set<string>>(new Set())
+  const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set())
+
+  function toggleSource(key: string) {
+    setExpandedSources(prev => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      return next
+    })
+  }
+
+  function toggleAccount(key: string) {
+    setExpandedAccounts(prev => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      return next
+    })
+  }
 
   const now = new Date()
   const year = now.getFullYear()
@@ -259,14 +282,36 @@ export default function SambaDashboard() {
               </tr>
             </thead>
             <tbody>
-              {bySource.map((s) => (
-                <tr key={s.source_site} style={{ borderBottom: '1px solid rgba(45,45,45,0.3)' }}>
-                  <td style={{ padding: '0.5rem 0', color: '#E5E5E5' }}>{s.source_site}</td>
-                  <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#E5E5E5' }}>{fmtNum(s.total)}</td>
-                  <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#FF8C00' }}>{fmtNum(s.registered)}</td>
-                  <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#888' }}>{fmtNum(s.sold_out)}</td>
-                </tr>
-              ))}
+              {bySource.map((s) => {
+                const isExpanded = expandedSources.has(s.source_site)
+                const hasBrands = s.brands && s.brands.length > 0
+                return (
+                  <React.Fragment key={s.source_site}>
+                    <tr
+                      style={{ borderBottom: '1px solid rgba(45,45,45,0.3)', cursor: hasBrands ? 'pointer' : 'default' }}
+                      onClick={() => hasBrands && toggleSource(s.source_site)}
+                    >
+                      <td style={{ padding: '0.5rem 0', color: '#E5E5E5', display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                        {hasBrands && (
+                          <span style={{ fontSize: '0.625rem', color: '#888', display: 'inline-block', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>▶</span>
+                        )}
+                        {s.source_site}
+                      </td>
+                      <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#E5E5E5' }}>{fmtNum(s.total)}</td>
+                      <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#FF8C00' }}>{fmtNum(s.registered)}</td>
+                      <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#888' }}>{fmtNum(s.sold_out)}</td>
+                    </tr>
+                    {isExpanded && s.brands.map((b) => (
+                      <tr key={`${s.source_site}-${b.brand}`} style={{ borderBottom: '1px solid rgba(45,45,45,0.15)', background: 'rgba(255,255,255,0.02)' }}>
+                        <td style={{ padding: '0.3rem 0 0.3rem 1.25rem', color: '#888', fontSize: '0.8125rem' }}>- {b.brand}</td>
+                        <td style={{ padding: '0.3rem 0', textAlign: 'right', color: '#888', fontSize: '0.8125rem' }}>{fmtNum(b.total)}</td>
+                        <td style={{ padding: '0.3rem 0', textAlign: 'right', color: '#CC7000', fontSize: '0.8125rem' }}>{fmtNum(b.registered)}</td>
+                        <td style={{ padding: '0.3rem 0', textAlign: 'right', color: '#666', fontSize: '0.8125rem' }}>{fmtNum(b.sold_out)}</td>
+                      </tr>
+                    ))}
+                  </React.Fragment>
+                )
+              })}
               {bySource.length > 0 && (
                 <tr style={{ borderTop: '1px solid #2D2D2D' }}>
                   <td style={{ padding: '0.5rem 0', color: '#FF8C00', fontWeight: 600 }}>합계</td>
@@ -294,13 +339,34 @@ export default function SambaDashboard() {
               </tr>
             </thead>
             <tbody>
-              {byAccount.map((a) => (
-                <tr key={a.account_id} style={{ borderBottom: '1px solid rgba(45,45,45,0.3)' }}>
-                  <td style={{ padding: '0.5rem 0', color: '#E5E5E5' }}>{a.market_name}</td>
-                  <td style={{ padding: '0.5rem 0', color: '#888' }}>{a.account_label}</td>
-                  <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#FF8C00' }}>{fmtNum(a.registered)}</td>
-                </tr>
-              ))}
+              {byAccount.map((a) => {
+                const isExpanded = expandedAccounts.has(a.account_id)
+                const hasBrands = a.brands && a.brands.length > 0
+                return (
+                  <React.Fragment key={a.account_id}>
+                    <tr
+                      style={{ borderBottom: '1px solid rgba(45,45,45,0.3)', cursor: hasBrands ? 'pointer' : 'default' }}
+                      onClick={() => hasBrands && toggleAccount(a.account_id)}
+                    >
+                      <td style={{ padding: '0.5rem 0', color: '#E5E5E5', display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                        {hasBrands && (
+                          <span style={{ fontSize: '0.625rem', color: '#888', display: 'inline-block', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>▶</span>
+                        )}
+                        {a.market_name}
+                      </td>
+                      <td style={{ padding: '0.5rem 0', color: '#888' }}>{a.account_label}</td>
+                      <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#FF8C00' }}>{fmtNum(a.registered)}</td>
+                    </tr>
+                    {isExpanded && a.brands.map((b) => (
+                      <tr key={`${a.account_id}-${b.brand}`} style={{ borderBottom: '1px solid rgba(45,45,45,0.15)', background: 'rgba(255,255,255,0.02)' }}>
+                        <td style={{ padding: '0.3rem 0 0.3rem 1.25rem', color: '#888', fontSize: '0.8125rem' }}>- {b.brand}</td>
+                        <td style={{ padding: '0.3rem 0', color: '#666', fontSize: '0.8125rem' }}></td>
+                        <td style={{ padding: '0.3rem 0', textAlign: 'right', color: '#CC7000', fontSize: '0.8125rem' }}>{fmtNum(b.registered)}</td>
+                      </tr>
+                    ))}
+                  </React.Fragment>
+                )
+              })}
               {byAccount.length > 0 && (
                 <tr style={{ borderTop: '1px solid #2D2D2D' }}>
                   <td colSpan={2} style={{ padding: '0.5rem 0', color: '#FF8C00', fontWeight: 600 }}>합계</td>
