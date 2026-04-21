@@ -89,8 +89,17 @@ async def create_job(
             if not a.payload:
                 continue
             existing_pids: list = a.payload.get("product_ids") or []
-            if existing_pids == new_pids:
-                # 완전 동일 리스트 → 중복 클릭, 기존 잡 재활용
+            existing_accounts: set = set(a.payload.get("target_account_ids") or [])
+            new_accounts: set = set(body.payload.get("target_account_ids") or [])
+            # 계정이 겹치지 않으면 다른 마켓 전송 → 허용
+            if (
+                existing_accounts
+                and new_accounts
+                and not (existing_accounts & new_accounts)
+            ):
+                continue
+            if existing_pids == new_pids and existing_accounts == new_accounts:
+                # 완전 동일 (상품+계정) → 중복 클릭, 기존 잡 재활용
                 return {
                     "id": a.id,
                     "status": a.status,

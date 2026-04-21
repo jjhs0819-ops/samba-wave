@@ -98,8 +98,8 @@ def calc_market_price(
 # 그룹상품 동시성 제어 락 (account_id별)
 _group_locks: dict[str, asyncio.Lock] = {}
 
-# 상품별 전송 락 — 동일 상품 중복 전송 방지
-_transmitting_products: set[str] = set()
+# 상품별 전송 락 — 동일 상품+동일 계정 조합 중복 전송 방지
+_transmitting_products: set[tuple] = set()
 
 # 계정별 세마포어 — API Rate Limit 방지 (계정당 동시 1건)
 _account_semaphores: dict[str, asyncio.Semaphore] = {}
@@ -545,8 +545,10 @@ class SambaShipmentService:
     ) -> SambaShipment:
         """단일 상품에 대한 실제 마켓 전송."""
 
-        # 상품 전송 락 — 동일 상품 중복 전송 방지
-        if product_id in _transmitting_products:
+        # 상품 전송 락 — 동일 상품 + 동일 계정 조합 중복 전송 방지
+        # (마켓이 다르면 같은 상품이라도 동시 전송 허용)
+        _lock_key = (product_id, frozenset(target_account_ids))
+        if _lock_key in _transmitting_products:
             shipment = await self.repo.create_async(
                 product_id=product_id,
                 target_account_ids=target_account_ids,
@@ -557,7 +559,7 @@ class SambaShipmentService:
                 transmit_error={"_all": "이미 전송 중인 상품입니다."},
             )
             return shipment
-        _transmitting_products.add(product_id)
+        _transmitting_products.add(_lock_key)
 
         try:
             return await asyncio.wait_for(
@@ -583,7 +585,7 @@ class SambaShipmentService:
             )
             return shipment
         finally:
-            _transmitting_products.discard(product_id)
+            _transmitting_products.discard(_lock_key)
 
     async def _transmit_product_inner(
         self,
