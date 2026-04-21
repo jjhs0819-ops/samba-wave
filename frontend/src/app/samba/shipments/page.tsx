@@ -1237,8 +1237,22 @@ export default function ShipmentsPage() {
                   if (updateItems.price) items.push('price', 'stock')
                   if (updateItems.thumb) items.push('image')
                   if (updateItems.detail) items.push('description')
-                  // 선택된 계정 전체를 target으로 설정 (백엔드에서 상품별 정책 연결 계정으로 실제 필터링)
-                  const effectiveAccList = selectedAccounts
+                  // 로드된 상품의 정책 기반 계정 필터링 (선택전송과 동일 로직)
+                  const selectedSet = new Set(selectedAccounts)
+                  const effectiveAccIds = new Set<string>()
+                  for (const prod of products) {
+                    if (!prod.applied_policy_id) continue
+                    const policy = policies.find(p => p.id === prod.applied_policy_id)
+                    if (!policy?.market_policies || typeof policy.market_policies !== 'object') continue
+                    const mp = policy.market_policies as Record<string, { accountId?: string; accountIds?: string[] }>
+                    for (const marketPolicy of Object.values(mp)) {
+                      const ids = Array.isArray(marketPolicy.accountIds)
+                        ? marketPolicy.accountIds
+                        : (marketPolicy.accountId ? [marketPolicy.accountId] : [])
+                      ids.forEach((id: string) => { if (selectedSet.has(id)) effectiveAccIds.add(id) })
+                    }
+                  }
+                  const effectiveAccList = effectiveAccIds.size > 0 ? [...effectiveAccIds] : [...selectedSet]
                   const accLabels = effectiveAccList.map(aid => {
                     const acc = accounts.find(a => a.id === aid)
                     return acc ? `${acc.market_name}(${acc.seller_id || '-'})` : aid
