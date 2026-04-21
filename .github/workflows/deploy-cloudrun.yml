@@ -64,7 +64,6 @@ jobs:
             --memory 2Gi \
             --min-instances=1 \
             --max-instances=1 \
-            --no-cpu-throttling \
             --quiet
 
       - name: Verify traffic on latest revision

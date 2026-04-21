@@ -19,7 +19,7 @@ import {
 import { fetchWithAuth } from "@/lib/samba/api/shared";
 import { detailTemplateApi, nameRuleApi, type SambaNameRule, type SambaDetailTemplate } from "@/lib/samba/api/support";
 import { showAlert, showConfirm } from '@/components/samba/Modal'
-import { fmtNum as fmt } from '@/lib/samba/styles'
+import { fmtNum as fmt, fmtTextNumbers } from '@/lib/samba/styles'
 import { fmtTime } from '@/lib/samba/utils'
 import ProductCard from './components/ProductCard'
 import ProductImage from './components/ProductImage'
@@ -909,7 +909,7 @@ export default function ProductsPage() {
                   color: line.includes('완료') && !line.includes('실패') ? '#51CF66'
                     : line.includes('실패') || line.includes('오류') ? '#FF6B6B'
                     : '#8A95B0',
-                }}>{line}</p>
+                }}>{fmtTextNumbers(line)}</p>
               ))}
               {!aiJobDone && (
                 <p style={{ margin: 0, color: '#FFB84D' }}>처리 중...</p>

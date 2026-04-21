@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useEffect } from 'react'
+import { fmtTextNumbers } from '@/lib/samba/styles'
 
 interface AiJobModalProps {
   open: boolean
@@ -33,7 +34,7 @@ export default function AiJobModal({ open, title, logs, done, abortRef, onClose 
             if (msg.includes('완료')) color = '#51CF66'
             if (msg.includes('실패') || msg.includes('오류')) color = '#FF6B6B'
             if (msg.includes('시작')) color = '#4C9AFF'
-            return <div key={i} style={{ color }}>{msg}</div>
+            return <div key={i} style={{ color }}>{fmtTextNumbers(msg)}</div>
           })}
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>

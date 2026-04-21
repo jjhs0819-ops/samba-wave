@@ -35,6 +35,28 @@ def _normalize_job_log_numbers(msg: str) -> str:
     return _LOG_NUMBER_PATTERN.sub(lambda m: f"{int(m.group(1)):,}", msg)
 
 
+_LOG_FRACTION_PATTERN = re.compile(r"\[(\d+)/(\d+)\]")
+_LOG_UNIT_NUMBER_PATTERN = re.compile(
+    r"(?<![\d,])(\d{4,})(?=(건|개|원|회|토큰|페이지))"
+)
+_LOG_CONTEXT_NUMBER_PATTERN = re.compile(
+    r"(?P<prefix>(?:원가|판매가|정상가|계산가|성공|스킵|실패|상품|옵션|선택|총|전체|대기|완료|남은|중단|재고변동)\s*)(?P<num>\d{4,})(?=(?:\D|$))"
+)
+
+
+def _normalize_job_log_numbers(msg: str) -> str:
+    def _fmt_fraction(match: re.Match[str]) -> str:
+        return f"[{_fmt_num(match.group(1))}/{_fmt_num(match.group(2))}]"
+
+    msg = _LOG_FRACTION_PATTERN.sub(_fmt_fraction, msg)
+    msg = _LOG_NUMBER_PATTERN.sub(lambda m: _fmt_num(m.group(1)), msg)
+    msg = _LOG_UNIT_NUMBER_PATTERN.sub(lambda m: _fmt_num(m.group(1)), msg)
+    return _LOG_CONTEXT_NUMBER_PATTERN.sub(
+        lambda m: f"{m.group('prefix')}{_fmt_num(m.group('num'))}",
+        msg,
+    )
+
+
 # 수집 잡 진행 트래커 — job_id → 마지막 저장 시각 (UNIX timestamp)
 # 저장 루프에서 갱신, 스레드 래퍼에서 polling하여 진행 기반 타임아웃 판단
 # CPython dict read/write는 GIL로 thread-safe

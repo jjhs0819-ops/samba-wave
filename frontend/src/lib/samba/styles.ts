@@ -30,6 +30,17 @@ export function fmtNum(v: number | string | null | undefined): string {
 }
 
 /** 콤마 포맷 문자열 → 숫자 파싱 */
+export function fmtTextNumbers(text: string): string {
+  const fmt = (value: string) => fmtNum(Number(value.replace(/,/g, '')))
+  return text
+    .replace(/\[(\d+)\/(\d+)\]/g, (_m, current: string, total: string) => `[${fmt(current)}/${fmt(total)}]`)
+    .replace(/(^|[^\d,])(\d{4,})(?=(건|개|원|회|토큰|페이지))/g, (_m, prefix: string, value: string) => `${prefix}${fmt(value)}`)
+    .replace(
+      /((?:원가|판매가|정상가|계산가|성공|스킵|실패|상품|옵션|선택|총|전체|대기|완료|남은|중단|재고변동)\s*)(\d{4,})(?=(?:\D|$))/g,
+      (_m, prefix: string, value: string) => `${prefix}${fmt(value)}`,
+    )
+}
+
 export function parseNum(s: string): number {
   return Number(s.replace(/[^0-9.-]/g, '')) || 0
 }

@@ -19,7 +19,7 @@ import {
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { SOURCING_SEARCH_URLS } from '@/lib/samba/constants'
 import { fmtDate as _fmtDate, fmtTime } from '@/lib/samba/utils'
-import { fmtNum } from '@/lib/samba/styles'
+import { fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
 import { SITES, SITE_OPTIONS } from './constants'
 import AiJobModal from './components/AiJobModal'
 import DeleteJobModal from './components/DeleteJobModal'
@@ -1534,7 +1534,7 @@ export default function CollectorPage() {
                 : "#8A95B0",
               margin: 0,
             }}>
-              {line}
+              {fmtTextNumbers(line)}
             </p>
           ))}
         </div>

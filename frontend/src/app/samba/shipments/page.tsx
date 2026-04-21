@@ -17,7 +17,7 @@ import { fetchWithAuth } from '@/lib/samba/api/shared'
 import { MARKET_TYPE_TO_POLICY_KEY } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { SITE_COLORS } from '@/lib/samba/constants'
-import { inputStyle, fmtNum } from '@/lib/samba/styles'
+import { inputStyle, fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
 import { fmtTime } from '@/lib/samba/utils'
 
 const STATUS_CONFIG: Record<string, { bg: string; text: string; label: string }> = {
@@ -35,15 +35,16 @@ function appendShipmentLog(
   msg: string,
 ) {
   const normalizeLog = (value: string) => value.replace(/^\[\d{2}:\d{2}:\d{2}\]\s*/, '')
+  const formattedMsg = fmtTextNumbers(msg)
   setLogMessages(prev => {
     const last = prev[prev.length - 1]
-    const normalizedMsg = normalizeLog(msg)
+    const normalizedMsg = normalizeLog(formattedMsg)
     const normalizedLast = last ? normalizeLog(last) : ''
     const isDuplicateCompletion =
       normalizedMsg === normalizedLast &&
       (normalizedMsg.includes('전송 완료') || normalizedMsg.includes('전송 실패') || normalizedMsg.includes('전송 중단') || normalizedMsg.includes('작업중지'))
     if (isDuplicateCompletion) { return prev }
-    return [...prev, msg].slice(-30)
+    return [...prev, formattedMsg].slice(-30)
   })
 }
 // 영문 market_type → 한글 정책 키 (markets.ts에서 import)
@@ -1318,7 +1319,7 @@ export default function ShipmentsPage() {
           style={{ height: '250px', overflowY: 'auto', padding: '10px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.73rem', lineHeight: 1.8, color: '#DCE0E8' }}
         >
           {logMessages.map((msg, i) => (
-            <div key={i} style={{ color: '#DCE0E8' }}>{msg}</div>
+            <div key={i} style={{ color: '#DCE0E8' }}>{fmtTextNumbers(msg)}</div>
           ))}
         </div>
         {/* 프로그레스바 */}

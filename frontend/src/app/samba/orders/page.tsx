@@ -18,7 +18,7 @@ import { fetchWithAuth } from '@/lib/samba/api/shared'
 import { sourcingAccountApi, type SambaSourcingAccount } from '@/lib/samba/api/operations'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { PERIOD_BUTTONS, DELIVERY_TRACKING_URLS } from '@/lib/samba/constants'
-import { inputStyle, fmtNum } from '@/lib/samba/styles'
+import { inputStyle, fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
 import { fmtDate, fmtTime, getPeriodStart, getPeriodEnd } from '@/lib/samba/utils'
 
 const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
@@ -970,7 +970,7 @@ export default function OrdersPage() {
           </div>
         </div>
         <div ref={el => { if (el) el.scrollTop = el.scrollHeight }} style={{ height: '144px', overflowY: 'auto', padding: '8px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.788rem', color: '#8A95B0', background: '#080A10', lineHeight: 1.8 }}>
-          {logMessages.map((msg, i) => <p key={i} style={{ color: '#8A95B0', fontSize: 'inherit', margin: 0 }}>{msg}</p>)}
+          {logMessages.map((msg, i) => <p key={i} style={{ color: '#8A95B0', fontSize: 'inherit', margin: 0 }}>{fmtTextNumbers(msg)}</p>)}
         </div>
       </div>
 

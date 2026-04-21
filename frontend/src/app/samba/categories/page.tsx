@@ -947,7 +947,7 @@ export default function CategoriesPage() {
 
   // 마켓 키 목록
   const marketKeys = Object.keys(MARKET_LABELS)
-  const gridCols = `80px 260px repeat(${marketKeys.length}, 150px) 40px`
+  const gridCols = `80px 299px repeat(${marketKeys.length}, 150px) 40px`
 
   const colStyle = {
     flex: 1,

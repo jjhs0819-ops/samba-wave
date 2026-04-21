@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useEffect } from 'react'
+import { fmtTextNumbers } from '@/lib/samba/styles'
 
 interface DeleteJobModalProps {
   open: boolean
@@ -31,7 +32,7 @@ export default function DeleteJobModal({ open, logs, done, onClose }: DeleteJobM
             if (msg.includes('완료') || msg.includes('✅') || msg.includes('🎉')) color = '#51CF66'
             if (msg.includes('⚠️') || msg.includes('건너뜀')) color = '#FFD43B'
             if (msg.includes('시작') || msg.includes('🗑️')) color = '#4C9AFF'
-            return <div key={i} style={{ color }}>{msg || '\u00A0'}</div>
+            return <div key={i} style={{ color }}>{msg ? fmtTextNumbers(msg) : '\u00A0'}</div>
           })}
           {!done && <div style={{ color: '#888' }}>⏳ 처리 중...</div>}
         </div>

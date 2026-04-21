@@ -5,7 +5,7 @@ import { collectorApi } from '@/lib/samba/api/commerce'
 import { fetchWithAuth } from '@/lib/samba/api/shared'
 import { monitorApi, type DashboardStats, type MonitorEvent, type RefreshLogEntry } from '@/lib/samba/api/operations'
 import { SITE_COLORS } from '@/lib/samba/constants'
-import { fmtNum } from '@/lib/samba/styles'
+import { fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
 
 const POLL_INTERVAL = 30_000
 const LOG_POLL_INTERVAL = 500
@@ -146,7 +146,7 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusCh
             else if (log.msg.includes('스킵')) color = '#888'
             else if (log.msg.includes('재고변동')) color = '#FFD93D'
             else if (log.msg.includes('성공')) color = '#7BAF7E'
-            return <div key={`${log.ts}-${i}`} style={{ color, fontWeight }}>{log.msg}</div>
+            return <div key={`${log.ts}-${i}`} style={{ color, fontWeight }}>{fmtTextNumbers(log.msg)}</div>
           })
         )}
       </div>
