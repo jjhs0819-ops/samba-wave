@@ -206,6 +206,7 @@ async def get_shipment_log_buffer(
             _text(
                 "SELECT logs FROM samba_jobs"
                 " WHERE job_type='transmit' AND logs IS NOT NULL"
+                " AND jsonb_typeof(logs::jsonb) = 'array'"
                 " AND jsonb_array_length(logs::jsonb) > 0"
                 " ORDER BY created_at DESC LIMIT 1"
             )

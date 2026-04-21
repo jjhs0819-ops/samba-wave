@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useEffect, useState, useCallback } from "react"
+import React, { useEffect, useState, useCallback, useMemo } from "react"
 import { orderApi, collectorApi, type OrderDashboardStats } from "@/lib/samba/api/commerce"
 import { card, fmtNum } from "@/lib/samba/styles"
 
@@ -22,6 +22,7 @@ export default function SambaDashboard() {
   const [byAccount, setByAccount] = useState<AccountStat[]>([])
   const [expandedSources, setExpandedSources] = useState<Set<string>>(new Set())
   const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set())
+  const [expandedSourceSites, setExpandedSourceSites] = useState<Set<string>>(new Set())
 
   function toggleSource(key: string) {
     setExpandedSources(prev => {
@@ -38,6 +39,35 @@ export default function SambaDashboard() {
       return next
     })
   }
+
+  function toggleSourceSite(key: string) {
+    setExpandedSourceSites(prev => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      return next
+    })
+  }
+
+  const bySourceSite = useMemo(() => {
+    const map = new Map<string, { total: number; brands: Map<string, number> }>()
+    for (const account of byAccount) {
+      for (const b of account.brands) {
+        const entry = map.get(b.source_site) ?? { total: 0, brands: new Map() }
+        entry.total += b.registered
+        entry.brands.set(b.brand, (entry.brands.get(b.brand) ?? 0) + b.registered)
+        map.set(b.source_site, entry)
+      }
+    }
+    return Array.from(map.entries())
+      .map(([source_site, data]) => ({
+        source_site,
+        registered: data.total,
+        brands: Array.from(data.brands.entries())
+          .map(([brand, registered]) => ({ brand, registered }))
+          .sort((a, b) => b.registered - a.registered),
+      }))
+      .sort((a, b) => b.registered - a.registered)
+  }, [byAccount])
 
   const now = new Date()
   const year = now.getFullYear()
@@ -327,54 +357,51 @@ export default function SambaDashboard() {
           </table>
         </div>
 
-        {/* 마켓/계정별 등록현황 */}
+        {/* 소싱처별 등록현황 */}
         <div style={{ ...card, padding: '1.5rem' }}>
-          <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '1rem' }}>마켓/계정별 등록현황</h3>
+          <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '1rem' }}>소싱처별 등록현황</h3>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid #2D2D2D' }}>
-                <th style={{ textAlign: 'left', padding: '0.5rem 0', color: '#888', fontWeight: 500 }}>마켓</th>
-                <th style={{ textAlign: 'left', padding: '0.5rem 0', color: '#888', fontWeight: 500 }}>계정</th>
+                <th style={{ textAlign: 'left', padding: '0.5rem 0', color: '#888', fontWeight: 500 }}>소싱처</th>
                 <th style={{ textAlign: 'right', padding: '0.5rem 0', color: '#888', fontWeight: 500 }}>등록 상품</th>
               </tr>
             </thead>
             <tbody>
-              {byAccount.map((a) => {
-                const isExpanded = expandedAccounts.has(a.account_id)
-                const hasBrands = a.brands && a.brands.length > 0
+              {bySourceSite.map((s) => {
+                const isExpanded = expandedSourceSites.has(s.source_site)
+                const hasBrands = s.brands && s.brands.length > 0
                 return (
-                  <React.Fragment key={a.account_id}>
+                  <React.Fragment key={s.source_site}>
                     <tr
                       style={{ borderBottom: '1px solid rgba(45,45,45,0.3)', cursor: hasBrands ? 'pointer' : 'default' }}
-                      onClick={() => hasBrands && toggleAccount(a.account_id)}
+                      onClick={() => hasBrands && toggleSourceSite(s.source_site)}
                     >
                       <td style={{ padding: '0.5rem 0', color: '#E5E5E5', display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
                         {hasBrands && (
                           <span style={{ fontSize: '0.625rem', color: '#888', display: 'inline-block', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>▶</span>
                         )}
-                        {a.market_name}
+                        {s.source_site}
                       </td>
-                      <td style={{ padding: '0.5rem 0', color: '#888' }}>{a.account_label}</td>
-                      <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#FF8C00' }}>{fmtNum(a.registered)}</td>
+                      <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#FF8C00' }}>{fmtNum(s.registered)}</td>
                     </tr>
-                    {isExpanded && a.brands.map((b) => (
-                      <tr key={`${a.account_id}-${b.brand}`} style={{ borderBottom: '1px solid rgba(45,45,45,0.15)', background: 'rgba(255,255,255,0.02)' }}>
-                        <td style={{ padding: '0.3rem 0 0.3rem 1.25rem', color: '#888', fontSize: '0.8125rem' }}>- {b.source_site} / {b.brand}</td>
-                        <td style={{ padding: '0.3rem 0', color: '#666', fontSize: '0.8125rem' }}></td>
+                    {isExpanded && s.brands.map((b) => (
+                      <tr key={`${s.source_site}-${b.brand}`} style={{ borderBottom: '1px solid rgba(45,45,45,0.15)', background: 'rgba(255,255,255,0.02)' }}>
+                        <td style={{ padding: '0.3rem 0 0.3rem 1.25rem', color: '#888', fontSize: '0.8125rem' }}>- {b.brand}</td>
                         <td style={{ padding: '0.3rem 0', textAlign: 'right', color: '#CC7000', fontSize: '0.8125rem' }}>{fmtNum(b.registered)}</td>
                       </tr>
                     ))}
                   </React.Fragment>
                 )
               })}
-              {byAccount.length > 0 && (
+              {bySourceSite.length > 0 && (
                 <tr style={{ borderTop: '1px solid #2D2D2D' }}>
-                  <td colSpan={2} style={{ padding: '0.5rem 0', color: '#FF8C00', fontWeight: 600 }}>합계</td>
-                  <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#FF8C00', fontWeight: 600 }}>{fmtNum(byAccount.reduce((a, r) => a + r.registered, 0))}</td>
+                  <td style={{ padding: '0.5rem 0', color: '#FF8C00', fontWeight: 600 }}>합계</td>
+                  <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#FF8C00', fontWeight: 600 }}>{fmtNum(bySourceSite.reduce((a, r) => a + r.registered, 0))}</td>
                 </tr>
               )}
-              {byAccount.length === 0 && (
-                <tr><td colSpan={3} style={{ padding: '1.5rem 0', textAlign: 'center', color: '#555' }}>데이터 없음</td></tr>
+              {bySourceSite.length === 0 && (
+                <tr><td colSpan={2} style={{ padding: '1.5rem 0', textAlign: 'center', color: '#555' }}>데이터 없음</td></tr>
               )}
             </tbody>
           </table>
