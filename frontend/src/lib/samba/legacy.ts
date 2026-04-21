@@ -505,7 +505,6 @@ export const collectorApi = {
   }) => {
     const p = new URLSearchParams()
     p.set('ids_only', 'true')
-    p.set('limit', '100000')
     if (params.search) p.set('search', params.search)
     if (params.search_type) p.set('search_type', params.search_type)
     if (params.source_sites) p.set('source_sites', params.source_sites)
