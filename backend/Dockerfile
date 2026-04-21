@@ -17,7 +17,7 @@ RUN rm -f /usr/lib/python*/EXTERNALLY-MANAGED
 
 # Download and run the uv installer (버전 고정 — 최신 uv의 런타임 변경 방지)
 # /usr/local/bin으로 복사 — 비루트 사용자도 접근 가능
-ADD https://astral.sh/uv/0.10.9/install.sh /uv-installer.sh
+RUN wget -q https://astral.sh/uv/0.10.9/install.sh -O /uv-installer.sh
 RUN sh /uv-installer.sh && rm /uv-installer.sh \
     && cp /root/.local/bin/uv /usr/local/bin/uv
 
