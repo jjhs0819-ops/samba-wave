@@ -1198,33 +1198,36 @@ export default function ShipmentsPage() {
                   const { API_BASE_URL: apiBase } = await import('@/config/api')
                   await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
                 } catch { /* ignore */ }
-                let targetProducts: SambaCollectedProduct[] = []
-                const allParams: Record<string, string | number> = { skip: 0, limit: 10000 }
+                const idParams: { search?: string; search_type?: string; source_site?: string; source_sites?: string; status?: string } = {}
                 if (searchText.trim()) {
-                  allParams.search = searchText.trim()
+                  idParams.search = searchText.trim()
                   const typeMap: Record<string, string> = { name: 'name', brand: 'brand', name_all: 'name_all', group: 'filter', no: 'no', policy: 'policy' }
-                  allParams.search_type = typeMap[searchField] || 'name'
+                  idParams.search_type = typeMap[searchField] || 'name'
                 }
-                if (siteFilter !== '전체') allParams.source_site = siteFilter
+                if (siteFilter !== '전체') {
+                  idParams.source_site = siteFilter
+                } else if (selectedSites.length > 0) {
+                  idParams.source_sites = selectedSites.join(',')
+                }
                 if (registrationFilter !== '전체') {
                   if (registrationFilter.startsWith('reg_') || registrationFilter.startsWith('unreg_') || registrationFilter.startsWith('mtype_')) {
-                    allParams.status = registrationFilter
+                    idParams.status = registrationFilter
                   } else {
-                    allParams.status = registrationFilter === '등록' ? 'market_registered' : registrationFilter === '미등록' ? 'market_unregistered' : registrationFilter === '품절' ? 'sold_out' : ''
+                    idParams.status = registrationFilter === '등록' ? 'market_registered' : registrationFilter === '미등록' ? 'market_unregistered' : registrationFilter === '품절' ? 'sold_out' : ''
                   }
                 }
                 try {
+                  let allIds: string[]
                   const importedSelectedIds = importedSelectionRef.current.filter(id => selectedProducts.includes(id))
                   if (!userFilterChangedRef.current && importedSelectedIds.length > 0) {
-                    targetProducts = products.filter(p =>
-                      importedSelectedIds.includes(p.id) && new Set(selectedSites).has(p.source_site)
-                    )
+                    allIds = products
+                      .filter(p => importedSelectedIds.includes(p.id) && new Set(selectedSites).has(p.source_site))
+                      .map(p => p.id)
                   } else {
-                    const all = await collectorApi.scrollProducts(allParams)
-                    targetProducts = all.items.filter(p => new Set(selectedSites).has(p.source_site))
+                    // ID만 조회 (전체 상품 데이터 다운로드 없이 경량 요청)
+                    const result = await collectorApi.getProductIds(idParams)
+                    allIds = result.ids
                   }
-                  // 소싱사이트 필터
-                  const allIds = targetProducts.map(p => p.id)
                   if (allIds.length === 0) { showAlert('선택된 소싱사이트에 해당하는 상품이 없습니다'); return }
                   // Job 직접 생성
                   setTransmitting(true)
@@ -1234,22 +1237,8 @@ export default function ShipmentsPage() {
                   if (updateItems.price) items.push('price', 'stock')
                   if (updateItems.thumb) items.push('image')
                   if (updateItems.detail) items.push('description')
-                  // 정책 연결 계정만 필터 (선택전송과 동일 로직)
-                  const selectedSet = new Set(selectedAccounts)
-                  const effectiveAccIds = new Set<string>()
-                  for (const prod of targetProducts) {
-                    if (!prod.applied_policy_id) continue
-                    const policy = policies.find(p => p.id === prod.applied_policy_id)
-                    if (!policy?.market_policies || typeof policy.market_policies !== 'object') continue
-                    const mp = policy.market_policies as Record<string, { accountId?: string; accountIds?: string[] }>
-                    for (const marketPolicy of Object.values(mp)) {
-                      const ids = Array.isArray(marketPolicy.accountIds)
-                        ? marketPolicy.accountIds
-                        : (marketPolicy.accountId ? [marketPolicy.accountId] : [])
-                      ids.forEach((id: string) => { if (selectedSet.has(id)) effectiveAccIds.add(id) })
-                    }
-                  }
-                  const effectiveAccList = [...effectiveAccIds]
+                  // 선택된 계정 전체를 target으로 설정 (백엔드에서 상품별 정책 연결 계정으로 실제 필터링)
+                  const effectiveAccList = selectedAccounts
                   const accLabels = effectiveAccList.map(aid => {
                     const acc = accounts.find(a => a.id === aid)
                     return acc ? `${acc.market_name}(${acc.seller_id || '-'})` : aid

@@ -499,6 +499,22 @@ export const collectorApi = {
       `${SAMBA_PREFIX}/collector/products/scroll?${p}`
     )
   },
+  getProductIds: (params: {
+    search?: string; search_type?: string;
+    source_site?: string; source_sites?: string; status?: string;
+  }) => {
+    const p = new URLSearchParams()
+    p.set('ids_only', 'true')
+    p.set('limit', '100000')
+    if (params.search) p.set('search', params.search)
+    if (params.search_type) p.set('search_type', params.search_type)
+    if (params.source_sites) p.set('source_sites', params.source_sites)
+    else if (params.source_site) p.set('source_site', params.source_site)
+    if (params.status) p.set('status', params.status)
+    return request<{ ids: string[]; total: number }>(
+      `${SAMBA_PREFIX}/collector/products/scroll?${p}`
+    )
+  },
   // 초기 메타데이터 통합 API (8개 API → 1개)
   initData: () =>
     request<{

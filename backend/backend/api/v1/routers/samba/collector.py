@@ -611,14 +611,17 @@ async def scroll_products(
     search: str = Query("", max_length=200),
     search_type: str = Query("name"),
     source_site: Optional[str] = None,
+    source_sites: Optional[str] = None,
     status: Optional[str] = None,
     ai_filter: Optional[str] = None,
     search_filter_id: Optional[str] = None,
     sort_by: str = Query("collect-desc"),
+    ids_only: bool = Query(False),
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """서버사이드 필터/정렬/페이지네이션 — 무한스크롤용.
 
+    ids_only=True이면 {ids: [...], total: int}만 반환 (경량).
     Returns: {items: [...], total: int, sites: [str]}
     """
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
@@ -692,8 +695,12 @@ async def scroll_products(
             pol_ids = select(_POL.id).where(_POL.name.ilike(f"%{q}%"))
             conditions.append(_CP.applied_policy_id.in_(pol_ids))
 
-    # 소싱처 필터
-    if source_site:
+    # 소싱처 필터 (단일 또는 복수)
+    if source_sites:
+        sites_list = [s.strip() for s in source_sites.split(",") if s.strip()]
+        if sites_list:
+            conditions.append(_CP.source_site.in_(sites_list))
+    elif source_site:
         conditions.append(_CP.source_site == source_site)
 
     # 그룹(검색필터) 필터
@@ -852,6 +859,20 @@ async def scroll_products(
         )
 
         conditions.extend(await build_has_orders_conditions(session, _CP))
+
+    # ids_only 모드: ID + total만 반환 (검색결과전송 최적화)
+    if ids_only:
+        count_stmt = select(func.count()).select_from(_CP)
+        for c in conditions:
+            count_stmt = count_stmt.where(c)
+        id_stmt = select(_CP.id)
+        for c in conditions:
+            id_stmt = id_stmt.where(c)
+        count_result = await session.execute(count_stmt)
+        total = count_result.scalar() or 0
+        ids_result = await session.execute(id_stmt)
+        ids = [r[0] for r in ids_result.all()]
+        return {"ids": ids, "total": total}
 
     # 목록에 필요한 컬럼 선택 (heavy 필드만 제외)
     list_cols = [c for c in mapper.columns if c.key not in _HEAVY_FIELDS]

@@ -742,6 +742,31 @@ JSON만 응답:
         markets = target_markets or list(MARKET_CATEGORIES.keys())
         result: Dict[str, str] = {}
 
+        # 0단계: DB 기존 매핑 직접 조회 — 저장된 값 있으면 AI 없이 그대로 반환
+        existing = await self.mapping_repo.find_mapping(source_site, source_category)
+        if existing and existing.target_mappings:
+            for m in markets:
+                val = (existing.target_mappings.get(m) or "").strip()
+                if val and " > " in val:
+                    result[m] = val
+            remaining_after_db = [m for m in markets if m not in result]
+            if not remaining_after_db:
+                logger.info(
+                    "[매핑-DB] %s > %s → 전 마켓 DB 캐시 히트",
+                    source_site,
+                    source_category,
+                )
+                return result
+            logger.info(
+                "[매핑-DB] %s > %s → %d/%d 마켓 DB 히트, 나머지 %s 계속",
+                source_site,
+                source_category,
+                len(result),
+                len(markets),
+                remaining_after_db,
+            )
+            markets = remaining_after_db
+
         # 성별 감지 (상품명, 태그, 카테고리에서 추출)
         gender = _detect_gender(sample_products, sample_tags, source_category)
 
@@ -1402,6 +1427,10 @@ JSON만:
             if esm_copied:
                 logger.info("[벌크매핑] ESM 크로스매핑 자동 적용: %d건", esm_copied)
                 updated += esm_copied
+
+        # 벌크매핑 완료 후 rules_exported.py 자동 갱신
+        if mapped + updated > 0:
+            asyncio.create_task(self._rebuild_exported_rules())
 
         return {
             "mapped": mapped,

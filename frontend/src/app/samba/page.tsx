@@ -13,6 +13,9 @@ type SourceBrand = { brand: string; total: number; registered: number; sold_out:
 type SourceStat = { source_site: string; total: number; registered: number; sold_out: number; brands: SourceBrand[] }
 type AccountBrand = { source_site: string; brand: string; registered: number }
 type AccountStat = { account_id: string; market_name: string; account_label: string; registered: number; brands: AccountBrand[] }
+type MarketSourceStat = { source_site: string; registered: number; brands: { brand: string; registered: number }[] }
+type MarketAcctStat = { account_id: string; account_label: string; registered: number; sources: MarketSourceStat[] }
+type MarketStat = { market_name: string; registered: number; accounts: MarketAcctStat[] }
 
 export default function SambaDashboard() {
   const [stats, setStats] = useState<OrderDashboardStats | null>(null)
@@ -21,8 +24,9 @@ export default function SambaDashboard() {
   const [bySource, setBySource] = useState<SourceStat[]>([])
   const [byAccount, setByAccount] = useState<AccountStat[]>([])
   const [expandedSources, setExpandedSources] = useState<Set<string>>(new Set())
-  const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set())
-  const [expandedSourceSites, setExpandedSourceSites] = useState<Set<string>>(new Set())
+  const [expandedMarkets, setExpandedMarkets] = useState<Set<string>>(new Set())
+  const [expandedMarketAccts, setExpandedMarketAccts] = useState<Set<string>>(new Set())
+  const [expandedAcctSources, setExpandedAcctSources] = useState<Set<string>>(new Set())
 
   function toggleSource(key: string) {
     setExpandedSources(prev => {
@@ -32,41 +36,68 @@ export default function SambaDashboard() {
     })
   }
 
-  function toggleAccount(key: string) {
-    setExpandedAccounts(prev => {
+  function toggleMarket(key: string) {
+    setExpandedMarkets(prev => {
       const next = new Set(prev)
       next.has(key) ? next.delete(key) : next.add(key)
       return next
     })
   }
 
-  function toggleSourceSite(key: string) {
-    setExpandedSourceSites(prev => {
+  function toggleMarketAcct(key: string) {
+    setExpandedMarketAccts(prev => {
       const next = new Set(prev)
       next.has(key) ? next.delete(key) : next.add(key)
       return next
     })
   }
 
-  const bySourceSite = useMemo(() => {
-    const map = new Map<string, { total: number; brands: Map<string, number> }>()
-    for (const account of byAccount) {
-      for (const b of account.brands) {
-        const entry = map.get(b.source_site) ?? { total: 0, brands: new Map() }
-        entry.total += b.registered
-        entry.brands.set(b.brand, (entry.brands.get(b.brand) ?? 0) + b.registered)
-        map.set(b.source_site, entry)
+  function toggleAcctSource(key: string) {
+    setExpandedAcctSources(prev => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      return next
+    })
+  }
+
+  const byMarket = useMemo((): MarketStat[] => {
+    const marketMap = new Map<string, { registered: number; accts: Map<string, { account_id: string; account_label: string; registered: number; srcMap: Map<string, { registered: number; brandMap: Map<string, number> }> }> }>()
+    for (const acct of byAccount) {
+      const mKey = acct.market_name
+      const mEntry = marketMap.get(mKey) ?? { registered: 0, accts: new Map() }
+      mEntry.registered += acct.registered
+      const aEntry = mEntry.accts.get(acct.account_id) ?? { account_id: acct.account_id, account_label: acct.account_label, registered: acct.registered, srcMap: new Map() }
+      for (const b of acct.brands) {
+        const sEntry = aEntry.srcMap.get(b.source_site) ?? { registered: 0, brandMap: new Map() }
+        sEntry.registered += b.registered
+        sEntry.brandMap.set(b.brand, (sEntry.brandMap.get(b.brand) ?? 0) + b.registered)
+        aEntry.srcMap.set(b.source_site, sEntry)
       }
+      mEntry.accts.set(acct.account_id, aEntry)
+      marketMap.set(mKey, mEntry)
     }
-    return Array.from(map.entries())
-      .map(([source_site, data]) => ({
-        source_site,
-        registered: data.total,
-        brands: Array.from(data.brands.entries())
-          .map(([brand, registered]) => ({ brand, registered }))
-          .sort((a, b) => b.registered - a.registered),
+    return Array.from(marketMap.entries())
+      .map(([market_name, mData]) => ({
+        market_name,
+        registered: mData.registered,
+        accounts: Array.from(mData.accts.values())
+          .map(a => ({
+            account_id: a.account_id,
+            account_label: a.account_label,
+            registered: a.registered,
+            sources: Array.from(a.srcMap.entries())
+              .map(([source_site, sData]) => ({
+                source_site,
+                registered: sData.registered,
+                brands: Array.from(sData.brandMap.entries())
+                  .map(([brand, registered]) => ({ brand, registered }))
+                  .sort((x, y) => y.registered - x.registered),
+              }))
+              .sort((x, y) => y.registered - x.registered),
+          }))
+          .sort((x, y) => y.registered - x.registered),
       }))
-      .sort((a, b) => b.registered - a.registered)
+      .sort((x, y) => y.registered - x.registered)
   }, [byAccount])
 
   const now = new Date()
@@ -297,7 +328,7 @@ export default function SambaDashboard() {
         {renderLineChart()}
       </div>
 
-      {/* 소싱처별 수집현황 + 마켓/계정별 등록현황 */}
+      {/* 소싱처별 수집현황 + 계정별 등록현황 */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '1.5rem' }}>
         {/* 소싱처별 수집현황 */}
         <div style={{ ...card, padding: '1.5rem' }}>
@@ -357,50 +388,89 @@ export default function SambaDashboard() {
           </table>
         </div>
 
-        {/* 소싱처별 등록현황 */}
+        {/* 계정별 등록현황 */}
         <div style={{ ...card, padding: '1.5rem' }}>
-          <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '1rem' }}>소싱처별 등록현황</h3>
+          <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '1rem' }}>계정별 등록현황</h3>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid #2D2D2D' }}>
-                <th style={{ textAlign: 'left', padding: '0.5rem 0', color: '#888', fontWeight: 500 }}>소싱처</th>
+                <th style={{ textAlign: 'left', padding: '0.5rem 0', color: '#888', fontWeight: 500 }}>마켓 / 계정 / 소싱처</th>
                 <th style={{ textAlign: 'right', padding: '0.5rem 0', color: '#888', fontWeight: 500 }}>등록 상품</th>
               </tr>
             </thead>
             <tbody>
-              {bySourceSite.map((s) => {
-                const isExpanded = expandedSourceSites.has(s.source_site)
-                const hasBrands = s.brands && s.brands.length > 0
+              {byMarket.map((m) => {
+                const mExpanded = expandedMarkets.has(m.market_name)
                 return (
-                  <React.Fragment key={s.source_site}>
+                  <React.Fragment key={m.market_name}>
+                    {/* 마켓 행 */}
                     <tr
-                      style={{ borderBottom: '1px solid rgba(45,45,45,0.3)', cursor: hasBrands ? 'pointer' : 'default' }}
-                      onClick={() => hasBrands && toggleSourceSite(s.source_site)}
+                      style={{ borderBottom: '1px solid rgba(45,45,45,0.3)', cursor: 'pointer' }}
+                      onClick={() => toggleMarket(m.market_name)}
                     >
-                      <td style={{ padding: '0.5rem 0', color: '#E5E5E5', display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                        {hasBrands && (
-                          <span style={{ fontSize: '0.625rem', color: '#888', display: 'inline-block', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>▶</span>
-                        )}
-                        {s.source_site}
+                      <td style={{ padding: '0.5rem 0', color: '#E5E5E5', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                        <span style={{ fontSize: '0.625rem', color: '#888', display: 'inline-block', transform: mExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>▶</span>
+                        {m.market_name}
                       </td>
-                      <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#FF8C00' }}>{fmtNum(s.registered)}</td>
+                      <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#FF8C00', fontWeight: 600 }}>{fmtNum(m.registered)}</td>
                     </tr>
-                    {isExpanded && s.brands.map((b) => (
-                      <tr key={`${s.source_site}-${b.brand}`} style={{ borderBottom: '1px solid rgba(45,45,45,0.15)', background: 'rgba(255,255,255,0.02)' }}>
-                        <td style={{ padding: '0.3rem 0 0.3rem 1.25rem', color: '#888', fontSize: '0.8125rem' }}>- {b.brand}</td>
-                        <td style={{ padding: '0.3rem 0', textAlign: 'right', color: '#CC7000', fontSize: '0.8125rem' }}>{fmtNum(b.registered)}</td>
-                      </tr>
-                    ))}
+                    {mExpanded && m.accounts.map((a) => {
+                      const acctKey = `${m.market_name}::${a.account_id}`
+                      const aExpanded = expandedMarketAccts.has(acctKey)
+                      return (
+                        <React.Fragment key={a.account_id}>
+                          {/* 계정 행 */}
+                          <tr
+                            style={{ borderBottom: '1px solid rgba(45,45,45,0.2)', cursor: 'pointer', background: 'rgba(255,255,255,0.02)' }}
+                            onClick={() => toggleMarketAcct(acctKey)}
+                          >
+                            <td style={{ padding: '0.4rem 0 0.4rem 1.25rem', color: '#CCCCCC', display: 'flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.8125rem' }}>
+                              <span style={{ fontSize: '0.5625rem', color: '#666', display: 'inline-block', transform: aExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>▶</span>
+                              {a.account_label || a.account_id}
+                            </td>
+                            <td style={{ padding: '0.4rem 0', textAlign: 'right', color: '#FF8C00', fontSize: '0.8125rem' }}>{fmtNum(a.registered)}</td>
+                          </tr>
+                          {aExpanded && a.sources.map((s) => {
+                            const srcKey = `${a.account_id}::${s.source_site}`
+                            const sExpanded = expandedAcctSources.has(srcKey)
+                            const hasBrands = s.brands.length > 0
+                            return (
+                              <React.Fragment key={s.source_site}>
+                                {/* 소싱처 행 */}
+                                <tr
+                                  style={{ borderBottom: '1px solid rgba(45,45,45,0.15)', cursor: hasBrands ? 'pointer' : 'default', background: 'rgba(255,255,255,0.03)' }}
+                                  onClick={() => hasBrands && toggleAcctSource(srcKey)}
+                                >
+                                  <td style={{ padding: '0.35rem 0 0.35rem 2.5rem', color: '#AAAAAA', display: 'flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.8125rem' }}>
+                                    {hasBrands && (
+                                      <span style={{ fontSize: '0.5rem', color: '#555', display: 'inline-block', transform: sExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>▶</span>
+                                    )}
+                                    {s.source_site}
+                                  </td>
+                                  <td style={{ padding: '0.35rem 0', textAlign: 'right', color: '#CC7000', fontSize: '0.8125rem' }}>{fmtNum(s.registered)}</td>
+                                </tr>
+                                {sExpanded && s.brands.map((b) => (
+                                  <tr key={`${s.source_site}-${b.brand}`} style={{ borderBottom: '1px solid rgba(45,45,45,0.1)', background: 'rgba(255,255,255,0.04)' }}>
+                                    <td style={{ padding: '0.3rem 0 0.3rem 3.75rem', color: '#888', fontSize: '0.75rem' }}>- {b.brand}</td>
+                                    <td style={{ padding: '0.3rem 0', textAlign: 'right', color: '#AA5F00', fontSize: '0.75rem' }}>{fmtNum(b.registered)}</td>
+                                  </tr>
+                                ))}
+                              </React.Fragment>
+                            )
+                          })}
+                        </React.Fragment>
+                      )
+                    })}
                   </React.Fragment>
                 )
               })}
-              {bySourceSite.length > 0 && (
+              {byMarket.length > 0 && (
                 <tr style={{ borderTop: '1px solid #2D2D2D' }}>
                   <td style={{ padding: '0.5rem 0', color: '#FF8C00', fontWeight: 600 }}>합계</td>
-                  <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#FF8C00', fontWeight: 600 }}>{fmtNum(bySourceSite.reduce((a, r) => a + r.registered, 0))}</td>
+                  <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#FF8C00', fontWeight: 600 }}>{fmtNum(byMarket.reduce((a, m) => a + m.registered, 0))}</td>
                 </tr>
               )}
-              {bySourceSite.length === 0 && (
+              {byMarket.length === 0 && (
                 <tr><td colSpan={2} style={{ padding: '1.5rem 0', textAlign: 'center', color: '#555' }}>데이터 없음</td></tr>
               )}
             </tbody>
