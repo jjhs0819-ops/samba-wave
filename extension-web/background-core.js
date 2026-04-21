@@ -15,12 +15,11 @@
     if (cached.apiKey) return cached.apiKey
 
     try {
-      const info = await chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' })
       const url = proxyUrl || DEFAULT_PROXY_URL
       const res = await fetch(`${url}/api/v1/samba/sourcing-accounts/extension-key`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ gaia_id: info.id || '', email: info.email || '' }),
+        body: JSON.stringify({}),
       })
       if (res.ok) {
         const data = await res.json()
