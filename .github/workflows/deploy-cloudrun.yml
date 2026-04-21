@@ -64,6 +64,7 @@ jobs:
             --memory 2Gi \
             --min-instances=1 \
             --max-instances=1 \
+            --vpc-egress=private-ranges-only \
             --quiet
 
       - name: Verify traffic on latest revision
