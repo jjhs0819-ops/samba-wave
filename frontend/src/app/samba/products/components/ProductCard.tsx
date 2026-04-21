@@ -62,7 +62,7 @@ const MARKET_NAME_LIMITS: Record<string, number> = {
 
 // byte 기준 제한 마켓 (한글 3byte 기준)
 const MARKET_NAME_BYTE_LIMITS: Record<string, number> = {
-  '롯데ON': 150,
+  '롯데ON': 149,
 }
 
 function truncateToBytes(text: string, maxBytes: number): string {

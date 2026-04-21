@@ -25,6 +25,13 @@ from backend.core.config import settings
 from backend.utils.logger import logger
 
 
+def _truncate_to_bytes(text: str, max_bytes: int) -> str:
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    return encoded[:max_bytes].decode("utf-8", errors="ignore")
+
+
 # ──────────────────────────────────────────────────────────────────────
 # 원산지 → 롯데ON ISO alpha-2 코드 매핑
 # ──────────────────────────────────────────────────────────────────────
@@ -978,7 +985,7 @@ class LotteonClient:
 
         # ── 기본 상품 정보 ──────────────────────────────────────────
         sale_price = int(product.get("sale_price", 0))
-        name = (product.get("name", "") or "")[:150]
+        name = _truncate_to_bytes((product.get("name", "") or ""), 149)
         brand = product.get("brand", "") or ""
         # 제조사: manufacturer → brand → "제조사 미확인" 순 폴백
         manufacturer = product.get("manufacturer", "") or brand or "제조사 미확인"

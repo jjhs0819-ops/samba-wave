@@ -421,6 +421,7 @@ class CategorySyncMixin:
                 d3_results = await asyncio.gather(
                     *[_fetch(d2id) for d2id in depth2_to_fetch]
                 )
+                depth3_non_leaf: List[str] = []
                 for parent_id, items in d3_results:
                     if not items:
                         leaf_ids.append(parent_id)
@@ -429,7 +430,28 @@ class CategorySyncMixin:
                         d = item.get("data", item)
                         cid = _add_item(d, parent_id)
                         if cid:
-                            leaf_ids.append(cid)
+                            if d.get("leaf_yn") == "Y":
+                                leaf_ids.append(cid)
+                            else:
+                                depth3_non_leaf.append(cid)
+
+                # depth=4 탐색 (가운>여성용 같이 4단계까지 있는 케이스)
+                if depth3_non_leaf:
+                    logger.info(
+                        "[롯데ON 동기화] depth=4 대상: %d개", len(depth3_non_leaf)
+                    )
+                    d4_results = await asyncio.gather(
+                        *[_fetch(d3id) for d3id in depth3_non_leaf]
+                    )
+                    for parent_id, items in d4_results:
+                        if not items:
+                            leaf_ids.append(parent_id)
+                            continue
+                        for item in items:
+                            d = item.get("data", item)
+                            cid = _add_item(d, parent_id)
+                            if cid:
+                                leaf_ids.append(cid)
 
         logger.info(
             "[롯데ON 동기화] 완료: node_map=%d개, leaf_ids=%d개",

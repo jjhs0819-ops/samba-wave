@@ -1,6 +1,6 @@
-const API_GATEWAY_KEY = 'Vtc-wzZY2xU8NKHljIF8hEG01CJOkCHgqzNlRlDJorU'
-function apiFetch(url, init = {}) {
-  const headers = { ...(init.headers || {}), 'X-Api-Key': API_GATEWAY_KEY }
+async function apiFetch(url, init = {}) {
+  const data = await chrome.storage.local.get('apiKey')
+  const headers = { ...(init.headers || {}), 'X-Api-Key': data.apiKey || '' }
   return fetch(url, { ...init, headers })
 }
 

@@ -2,8 +2,6 @@
   const DEFAULT_PROXY_URL = 'http://localhost:28080'
   const CLOUD_URL = 'https://samba-wave-api-363598397345.asia-northeast3.run.app'
   const API_PREFIX = '/api/v1/samba/proxy'
-  const API_GATEWAY_KEY = 'Vtc-wzZY2xU8NKHljIF8hEG01CJOkCHgqzNlRlDJorU'
-
   const DEFAULT_SELECTORS = {
     kream_size_items: '.select_item',
     kream_bottom_sheet: '.layer_bottom_sheet--open',
@@ -12,8 +10,31 @@
     kream_normal_delivery: '????',
   }
 
-  function apiFetch(url, init = {}) {
-    const headers = { ...(init.headers || {}), 'X-Api-Key': API_GATEWAY_KEY }
+  async function loadApiKey(proxyUrl) {
+    const cached = await chrome.storage.local.get('apiKey')
+    if (cached.apiKey) return cached.apiKey
+
+    try {
+      const info = await chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' })
+      const url = proxyUrl || DEFAULT_PROXY_URL
+      const res = await fetch(`${url}/api/v1/samba/sourcing-accounts/extension-key`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gaia_id: info.id || '', email: info.email || '' }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        await chrome.storage.local.set({ apiKey: data.api_key })
+        return data.api_key
+      }
+    } catch {}
+    return ''
+  }
+
+  async function apiFetch(url, init = {}) {
+    const proxyData = await chrome.storage.local.get('proxyUrl')
+    const apiKey = await loadApiKey(proxyData.proxyUrl)
+    const headers = { ...(init.headers || {}), 'X-Api-Key': apiKey }
     return fetch(url, { ...init, headers })
   }
 

@@ -500,6 +500,42 @@ class SyncChromeProfileRequest(BaseModel):
     display_name: Optional[str] = None
 
 
+class ExtensionKeyRequest(BaseModel):
+    gaia_id: str = ""
+    email: str = ""
+
+
+@extension_router.post("/extension-key")
+async def get_extension_key(
+    body: ExtensionKeyRequest,
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """확장앱 API 키 발급 — gaia_id 또는 email로 등록된 사용자에게만 반환."""
+    from sqlalchemy import or_
+
+    from backend.core.config import settings
+    from backend.domain.samba.sourcing_account.model import SambaChromProfile
+
+    if not body.gaia_id and not body.email:
+        raise HTTPException(status_code=403, detail="인증 정보가 없습니다.")
+
+    stmt = select(SambaChromProfile).where(
+        or_(
+            SambaChromProfile.gaia_id == body.gaia_id if body.gaia_id else False,
+            SambaChromProfile.email == body.email if body.email else False,
+        )
+    )
+    result = await session.execute(stmt)
+    profile = result.scalars().first()
+
+    if not profile:
+        raise HTTPException(
+            status_code=403, detail="등록되지 않은 확장앱 사용자입니다."
+        )
+
+    return {"api_key": settings.api_gateway_key}
+
+
 @extension_router.post("/sync-chrome-profile")
 async def sync_chrome_profile(
     body: SyncChromeProfileRequest,
