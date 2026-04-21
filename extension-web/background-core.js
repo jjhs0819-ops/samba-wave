@@ -35,7 +35,14 @@
     const proxyData = await chrome.storage.local.get('proxyUrl')
     const apiKey = await loadApiKey(proxyData.proxyUrl)
     const headers = { ...(init.headers || {}), 'X-Api-Key': apiKey }
-    return fetch(url, { ...init, headers })
+    const res = await fetch(url, { ...init, headers })
+    if (res.status === 403) {
+      await chrome.storage.local.remove('apiKey')
+      const newKey = await loadApiKey(proxyData.proxyUrl)
+      const retryHeaders = { ...(init.headers || {}), 'X-Api-Key': newKey }
+      return fetch(url, { ...init, headers: retryHeaders })
+    }
+    return res
   }
 
   async function loadSelectors(proxyUrl) {
