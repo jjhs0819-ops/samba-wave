@@ -219,11 +219,10 @@ class NaverStoreSourcingClient(NaverStoreListMixin, NaverStoreDetailMixin):
         Returns:
             {"storeName": "coming", "categoryName": "전체상품" | "스니커즈" | ...}
 
-        우선순위: HTML <title> 파싱 → JSON 스코프 매칭 → 메타 API → fallback.
-        title 파싱이 UUID/숫자 카테고리 모두 가장 안정적(리프 카테고리명 추출).
-        BBLUE처럼 <title>이 스토어명 단독인 스토어는 JSON 스코프 매칭으로 fallback.
-        JSON 스코프에서는 스토어 메뉴 카테고리명(name/categoryName)만 사용 —
-        wholeCategoryName은 네이버 표준 카테고리 전체경로라 제외.
+        우선순위: JSON 스코프 매칭 → HTML <title> 파싱 → 메타 API → fallback.
+        Why: <title>에는 운영자가 넣은 SEO 키워드(언더스코어 연결)가 들어있어
+        실제 메뉴명과 다를 수 있음. JSON 스코프(`"categoryId":"<id>"` 근처의
+        `"name":"..."`)는 메뉴 렌더링에 쓰이는 실제 메뉴명이라 더 정확.
         """
         store_name = self._extract_store_name(store_url) or ""
         category_id = self._extract_category_id(store_url)
@@ -234,7 +233,15 @@ class NaverStoreSourcingClient(NaverStoreListMixin, NaverStoreDetailMixin):
 
         from curl_cffi.requests import AsyncSession
 
-        # HTML 한 번만 받아서 1)/2) 둘 다 시도
+        def _is_seo_keyword_blob(s: str) -> bool:
+            """SEO용 언더스코어 키워드 나열인지 판단.
+
+            예: "컨버스_첵테일러_올스타_더블_스텍_하이_로우_리프트_키높이_운동화"
+            → 언더스코어 ≥ 3개 + 공백 없음 → 메뉴명이 아니라 SEO 키워드.
+            """
+            return s.count("_") >= 3 and " " not in s
+
+        # HTML 한 번만 받아서 JSON 스코프 + <title> 둘 다 시도
         html = ""
         try:
             html_url = f"{self.BASE_URL}/{store_name}/category/{category_id}?cp=1"
@@ -249,37 +256,9 @@ class NaverStoreSourcingClient(NaverStoreListMixin, NaverStoreDetailMixin):
         except Exception as e:
             logger.warning(f"[NAVERSTORE] HTML fetch 실패: {e}")
 
-        # 1) HTML <title> 파싱 — UUID/숫자 카테고리 모두 가장 안정적
-        #    전형 포맷 예: "스니커즈 : gaia2937 - 네이버 스마트스토어"
-        title_is_store_only = False
-        if html:
-            try:
-                m = re.search(r"<title>([^<]+)</title>", html)
-                if m:
-                    title = m.group(1).strip()
-                    for sep in [" : ", " - ", " | "]:
-                        if sep in title:
-                            candidate = title.split(sep)[0].strip()
-                            if (
-                                candidate
-                                and candidate != store_name
-                                and "네이버" not in candidate
-                                and "스마트스토어" not in candidate
-                                and "브랜드스토어" not in candidate
-                            ):
-                                return {
-                                    "storeName": store_name,
-                                    "categoryName": candidate,
-                                }
-                    # 구분자 없고 store_name만 있는 경우 → JSON 스코프 매칭으로 넘김
-                    if title.strip() == store_name:
-                        title_is_store_only = True
-            except Exception as e:
-                logger.warning(f"[NAVERSTORE] <title> 파싱 실패: {e}")
-
-        # 2) JSON 스코프 매칭 fallback — BBLUE처럼 title이 스토어명 단독인 케이스
-        #    HTML 내 카테고리 정보는 `"name":"...","categoryId":"<id>",...,` 형태.
-        #    스토어 메뉴 카테고리명만 추출 (wholeCategoryName은 네이버 표준 카테고리라 제외).
+        # 1) JSON 스코프 매칭 (1순위) — 스토어 메뉴 렌더링용 실제 메뉴명
+        #    HTML 내 카테고리 정보는 `"name":"...","categoryId":"<id>",...` 형태.
+        #    wholeCategoryName(네이버 표준 카테고리 전체경로)은 제외.
         if html:
             try:
                 cid_pattern = rf'"categoryId"\s*:\s*"{re.escape(category_id)}"'
@@ -297,7 +276,11 @@ class NaverStoreSourcingClient(NaverStoreListMixin, NaverStoreDetailMixin):
                             except Exception:
                                 decoded = raw_name
                             decoded = decoded.strip()
-                            if decoded and decoded != store_name:
+                            if (
+                                decoded
+                                and decoded != store_name
+                                and not _is_seo_keyword_blob(decoded)
+                            ):
                                 cat_name = decoded
                                 break
                     if cat_name:
@@ -307,11 +290,33 @@ class NaverStoreSourcingClient(NaverStoreListMixin, NaverStoreDetailMixin):
             except Exception as e:
                 logger.warning(f"[NAVERSTORE] JSON 스코프 매칭 실패: {e}")
 
-        # title이 스토어명 단독이었고 JSON 스코프도 못 찾으면 "전체상품"
-        if title_is_store_only:
-            return {"storeName": store_name, "categoryName": "전체상품"}
+        # 2) HTML <title> 파싱 fallback — JSON 스코프에서 못 찾은 케이스
+        #    전형 포맷 예: "스니커즈 : gaia2937 - 네이버 스마트스토어"
+        #    단, `_` 3개 이상 연결된 SEO 키워드는 건너뜀.
+        if html:
+            try:
+                m = re.search(r"<title>([^<]+)</title>", html)
+                if m:
+                    title = m.group(1).strip()
+                    for sep in [" : ", " - ", " | "]:
+                        if sep in title:
+                            candidate = title.split(sep)[0].strip()
+                            if (
+                                candidate
+                                and candidate != store_name
+                                and "네이버" not in candidate
+                                and "스마트스토어" not in candidate
+                                and "브랜드스토어" not in candidate
+                                and not _is_seo_keyword_blob(candidate)
+                            ):
+                                return {
+                                    "storeName": store_name,
+                                    "categoryName": candidate,
+                                }
+            except Exception as e:
+                logger.warning(f"[NAVERSTORE] <title> 파싱 실패: {e}")
 
-        # 2) 메타 API fallback
+        # 3) 메타 API fallback
         channel_uid = await self.resolve_channel_uid(store_url)
         if channel_uid:
             meta_url = (
@@ -349,12 +354,12 @@ class NaverStoreSourcingClient(NaverStoreListMixin, NaverStoreDetailMixin):
                                     or info.get("categoryName")
                                     or ""
                                 )
-                        if cat_name:
+                        if cat_name and not _is_seo_keyword_blob(cat_name):
                             return {"storeName": store_name, "categoryName": cat_name}
             except Exception as e:
                 logger.warning(f"[NAVERSTORE] 메타 API 카테고리명 조회 실패: {e}")
 
-        # 3) 최후 fallback
+        # 4) 최후 fallback
         return {"storeName": store_name, "categoryName": category_id[:8]}
 
     # ------------------------------------------------------------------
