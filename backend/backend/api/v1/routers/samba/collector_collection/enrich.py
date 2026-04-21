@@ -10,7 +10,6 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_write_session_dependency
-from backend.domain.samba.exchange_rate_service import convert_cost_by_source_site
 from backend.domain.samba.collector.refresher import _site_intervals
 
 from backend.api.v1.routers.samba.collector_common import (
@@ -29,89 +28,13 @@ router = APIRouter(tags=["samba-collector"])
 # ── enrich 전용 헬퍼 ──
 
 
-async def _check_policy_price_changed(
-    session: AsyncSession,
-    product: Any,
-    cost: float,
-) -> bool:
-    """소싱처 가격/재고 불변 시 정책 변동으로 마켓 판매가가 달라졌는지 확인.
-
-    현재 정책 기반으로 재계산한 마켓 판매가와 last_sent_data의 마지막 전송 판매가를
-    비교하여 하나라도 차이가 있으면 True를 반환한다.
-    """
-    policy_id = getattr(product, "applied_policy_id", None)
-    last_sent: dict = getattr(product, "last_sent_data", None) or {}
-    if not policy_id or not last_sent:
-        return False
-
-    try:
-        from backend.domain.samba.policy.repository import SambaPolicyRepository
-        from backend.domain.samba.shipment.service import (
-            calc_market_price,
-        )
-        from backend.domain.samba.account.model import SambaMarketAccount
-
-        pol_repo = SambaPolicyRepository(session)
-        policy = await pol_repo.get_async(policy_id)
-        if not policy or not policy.pricing:
-            return False
-
-        source_site = getattr(product, "source_site", "") or ""
-        policy_market_data = policy.market_policies or {}
-
-        # 계정 배치 조회 (N+1 방지)
-        acc_stmt = select(SambaMarketAccount).where(
-            SambaMarketAccount.id.in_(list(product.registered_accounts))
-        )
-        acc_result = await session.execute(acc_stmt)
-
-        for acc in acc_result.scalars().all():
-            cost_info = await convert_cost_by_source_site(
-                session, cost, source_site, getattr(product, "tenant_id", None)
-            )
-            new_price = calc_market_price(
-                cost_info["convertedCost"],
-                policy.pricing,
-                acc.market_type,
-                policy_market_data,
-                source_site=source_site,
-            )
-            old_sent = last_sent.get(acc.id, {})
-            old_price = (int(old_sent.get("sale_price") or 0) // 100) * 100
-            if new_price != old_price:
-                logger.info(
-                    f"[정책변동] {product.id} {acc.market_type} "
-                    f"판매가 변동: ₩{old_price:,} → ₩{new_price:,}"
-                )
-                return True
-    except Exception as e:
-        logger.error(f"[정책변동체크] {getattr(product, 'id', '')} 오류: {e}")
-
-    return False
-
-
-def _snapshot_old_values(product: Any) -> dict:
-    """Identity map 오염 전에 비교용 이전 값 캡처.
-
-    update_async 호출 전에 반드시 실행해야 함.
-    update_async는 같은 session의 identity map 객체를 직접 수정하므로
-    호출 후에는 old 값을 읽을 수 없음.
-    """
-    return {
-        "sale_price": getattr(product, "sale_price", 0) or 0,
-        "cost": getattr(product, "cost", 0) or 0,
-        "sale_status": getattr(product, "sale_status", "in_stock"),
-        "options": list(getattr(product, "options", None) or []),
-    }
-
-
 async def _retransmit_if_changed(
     session: AsyncSession,
     product: Any,
     updates: dict,
-    old_values: dict | None = None,
+    old_values: dict | None = None,  # 하위 호환성 유지, 미사용
 ) -> dict:
-    """가격/재고 변동 시 등록된 마켓에 자동 수정등록."""
+    """등록된 마켓에 가격/재고 수정등록 (변동 여부 무관하게 항상 전송)."""
     result = {"retransmitted": False, "retransmit_accounts": 0}
 
     # 품절 전환 → 마켓 삭제 (registered_accounts가 없어도 market_product_nos로 fallback)
@@ -172,66 +95,6 @@ async def _retransmit_if_changed(
     # DB 변경사항 플러시 (재전송 시 최신 데이터 조회 보장)
     await session.flush()
 
-    # 가격 변동 확인 (old_values 우선 — identity map 오염 방지)
-    price_changed = False
-    _ov = old_values or {}
-    old_sale = int(
-        _ov.get("sale_price")
-        if "sale_price" in _ov
-        else getattr(product, "sale_price", 0) or 0
-    )
-    new_sale = int(updates.get("sale_price", old_sale) or 0)
-    if new_sale != old_sale:
-        price_changed = True
-
-    old_cost = int(
-        _ov.get("cost") if "cost" in _ov else getattr(product, "cost", 0) or 0
-    )
-    new_cost = int(updates.get("cost", old_cost) or 0)
-    if new_cost != old_cost:
-        price_changed = True
-
-    # 재고(옵션) 변동 확인 (old_values 우선 — identity map 오염 방지)
-    stock_changed = False
-    old_options = (
-        _ov.get("options")
-        if "options" in _ov
-        else (getattr(product, "options", None) or [])
-    )
-    new_options = updates.get("options")
-    if new_options and old_options:
-        old_stock_map = {
-            (o.get("name", "") or o.get("size", "")): o.get("stock", 0)
-            for o in old_options
-            if isinstance(o, dict)
-        }
-        for o in new_options:
-            if not isinstance(o, dict):
-                continue
-            key = o.get("name", "") or o.get("size", "")
-            old_stock = old_stock_map.get(key, 0) or 0
-            new_stock = o.get("stock", 0) or 0
-            if (old_stock <= 0) != (new_stock <= 0):
-                stock_changed = True
-                break
-
-    if not price_changed and not stock_changed:
-        # 소싱처 가격/재고 불변 → 정책 변동으로 마켓 판매가가 달라졌는지 확인
-        cost_for_check = updates.get("cost") or old_cost or 0
-        policy_changed = await _check_policy_price_changed(
-            session, product, cost_for_check
-        )
-        if not policy_changed:
-            return result
-        price_changed = True
-
-    # 재전송 항목 결정
-    update_items: list[str] = []
-    if price_changed:
-        update_items.append("price")
-    if stock_changed:
-        update_items.append("stock")
-
     try:
         from backend.domain.samba.shipment.repository import SambaShipmentRepository
         from backend.domain.samba.shipment.service import SambaShipmentService
@@ -241,7 +104,7 @@ async def _retransmit_if_changed(
 
         await ship_svc.start_update(
             [product.id],
-            update_items,
+            ["price", "stock"],
             list(product.registered_accounts),
             skip_unchanged=False,
         )
@@ -349,11 +212,8 @@ async def enrich_product(
         if detail.get("images"):
             updates["images"] = detail["images"]
 
-        _old_vals = _snapshot_old_values(product)
         updated = await svc.update_collected_product(product_id, updates)
-        retransmit = await _retransmit_if_changed(
-            session, product, updates, old_values=_old_vals
-        )
+        retransmit = await _retransmit_if_changed(session, product, updates)
         return {
             "success": True,
             "enriched_fields": list(updates.keys()),
@@ -423,11 +283,8 @@ async def enrich_product(
         history.insert(0, snapshot)
         updates["price_history"] = _trim_history(history)
 
-        _old_vals = _snapshot_old_values(product)
         updated = await svc.update_collected_product(product_id, updates)
-        retransmit = await _retransmit_if_changed(
-            session, product, updates, old_values=_old_vals
-        )
+        retransmit = await _retransmit_if_changed(session, product, updates)
         return {
             "success": True,
             "enriched_fields": list(updates.keys()),
@@ -484,11 +341,8 @@ async def enrich_product(
         history.insert(0, snapshot)
         updates["price_history"] = _trim_history(history)
 
-        _old_vals = _snapshot_old_values(product)
         updated = await svc.update_collected_product(product_id, updates)
-        retransmit = await _retransmit_if_changed(
-            session, product, updates, old_values=_old_vals
-        )
+        retransmit = await _retransmit_if_changed(session, product, updates)
         return {
             "success": True,
             "enriched_fields": list(updates.keys()),
@@ -539,11 +393,8 @@ async def enrich_product(
         history.insert(0, snapshot)
         updates["price_history"] = _trim_history(history)
 
-        _old_vals = _snapshot_old_values(product)
         updated = await svc.update_collected_product(product_id, updates)
-        retransmit = await _retransmit_if_changed(
-            session, product, updates, old_values=_old_vals
-        )
+        retransmit = await _retransmit_if_changed(session, product, updates)
         return {
             "success": True,
             "enriched_fields": list(updates.keys()),
@@ -637,11 +488,8 @@ async def enrich_product(
             history = list(product.price_history or [])
             history.insert(0, snapshot)
             updates["price_history"] = _trim_history(history)
-            _old_vals = _snapshot_old_values(product)
             updated = await svc.update_collected_product(product_id, updates)
-            retransmit = await _retransmit_if_changed(
-                session, product, updates, old_values=_old_vals
-            )
+            retransmit = await _retransmit_if_changed(session, product, updates)
             return {
                 "success": True,
                 "enriched_fields": list(updates.keys()),

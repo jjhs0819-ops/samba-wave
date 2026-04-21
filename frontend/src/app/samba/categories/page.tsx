@@ -946,8 +946,12 @@ export default function CategoriesPage() {
   }
 
   // 마켓 키 목록
-  const marketKeys = Object.keys(MARKET_LABELS)
-  const gridCols = `80px 299px repeat(${marketKeys.length}, 150px) 40px`
+  const sourceAdjacentMarkets = ['smartstore', 'lotteon']
+  const marketKeys = [
+    ...sourceAdjacentMarkets.filter(mk => MARKET_LABELS[mk]),
+    ...Object.keys(MARKET_LABELS).filter(mk => !sourceAdjacentMarkets.includes(mk)),
+  ]
+  const gridCols = `80px 299px ${marketKeys.map(mk => sourceAdjacentMarkets.includes(mk) ? '300px' : '150px').join(' ')} 40px`
 
   const colStyle = {
     flex: 1,
