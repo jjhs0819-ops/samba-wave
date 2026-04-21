@@ -947,6 +947,7 @@ export default function CategoriesPage() {
 
   // 마켓 키 목록
   const marketKeys = Object.keys(MARKET_LABELS)
+  const gridCols = `80px 200px repeat(${marketKeys.length}, 150px) 40px`
 
   const colStyle = {
     flex: 1,
@@ -1158,13 +1159,13 @@ export default function CategoriesPage() {
             </span>
           </h3>
           <div ref={tableScrollRef} style={{ ...card, overflow: 'auto', maxHeight: 'calc(100vh - 260px)' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem', tableLayout: 'fixed' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
               <thead>
-                <tr style={{ borderBottom: '1px solid #2D2D2D', background: 'rgba(255,255,255,0.03)' }}>
-                  <th style={{ padding: '0.625rem 0.75rem', textAlign: 'left', color: '#888', fontWeight: 600, whiteSpace: 'nowrap', width: '80px' }}>사이트</th>
-                  <th style={{ padding: '0.625rem 0.75rem', textAlign: 'left', color: '#888', fontWeight: 600, whiteSpace: 'nowrap', width: '200px' }}>소싱 카테고리</th>
+                <tr style={{ display: 'grid', gridTemplateColumns: gridCols, borderBottom: '1px solid #2D2D2D', background: 'rgba(255,255,255,0.03)' }}>
+                  <th style={{ padding: '0.625rem 0.75rem', textAlign: 'left', color: '#888', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden' }}>사이트</th>
+                  <th style={{ padding: '0.625rem 0.75rem', textAlign: 'left', color: '#888', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden' }}>소싱 카테고리</th>
                   {marketKeys.map(mk => (
-                    <th key={mk} style={{ padding: '0.625rem 0.5rem', textAlign: 'left', color: '#888', fontWeight: 600, whiteSpace: 'nowrap', width: '150px' }}>
+                    <th key={mk} style={{ padding: '0.625rem 0.5rem', textAlign: 'left', color: '#888', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', minWidth: 0 }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.125rem' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
                         <span>{MARKET_LABELS[mk]}</span>
@@ -1278,13 +1279,19 @@ export default function CategoriesPage() {
                       </div>
                     </th>
                   ))}
-                  <th style={{ padding: '0.625rem 0.75rem', width: '40px' }} />
+                  <th style={{ padding: '0.625rem 0.75rem' }} />
                 </tr>
               </thead>
-              <tbody>
+              <tbody style={{
+                display: 'block',
+                paddingTop: rowVirtualizer.getVirtualItems().length > 0 ? rowVirtualizer.getVirtualItems()[0].start : 0,
+                paddingBottom: rowVirtualizer.getVirtualItems().length > 0
+                  ? rowVirtualizer.getTotalSize() - rowVirtualizer.getVirtualItems()[rowVirtualizer.getVirtualItems().length - 1].end
+                  : 0,
+              }}>
                 {filteredMappings.length === 0 && !isLeafCategory ? (
-                  <tr>
-                    <td colSpan={marketKeys.length + 3} style={{ padding: '1.5rem', textAlign: 'center', color: '#555' }}>
+                  <tr style={{ display: 'block' }}>
+                    <td style={{ display: 'block', padding: '1.5rem', textAlign: 'center', color: '#555' }}>
                       {Object.values(marketUnmappedFilters).some(Boolean)
                         ? '선택한 판매처 기준 미매핑 카테고리가 없습니다'
                         : selectedSite ? `${selectedSite}에 매핑된 카테고리가 없습니다` : '매핑 데이터가 없습니다'}
@@ -1293,13 +1300,13 @@ export default function CategoriesPage() {
                 ) : null}
                 {/* 최하단 카테고리 선택 + 매핑 없음 → 신규 편집 행 */}
                 {isLeafCategory && filteredMappings.length === 0 && (
-                  <tr style={{ borderBottom: '1px solid #2D2D2D', background: 'rgba(255,140,0,0.04)' }}>
-                    <td style={{ padding: '0.5rem 0.75rem', color: '#FFB84D', fontWeight: 600, whiteSpace: 'nowrap' }}>{selectedSite}</td>
-                    <td style={{ padding: '0.5rem 0.75rem', color: '#E5E5E5', whiteSpace: 'nowrap' }}>{getSourceCategory()}</td>
+                  <tr style={{ display: 'grid', gridTemplateColumns: gridCols, borderBottom: '1px solid #2D2D2D', background: 'rgba(255,140,0,0.04)', alignItems: 'center' }}>
+                    <td style={{ padding: '0.5rem 0.75rem', color: '#FFB84D', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden' }}>{selectedSite}</td>
+                    <td style={{ padding: '0.5rem 0.75rem', color: '#E5E5E5', whiteSpace: 'nowrap', overflow: 'hidden' }}>{getSourceCategory()}</td>
                     {marketKeys.map(mk => {
                       const isEditing = inlineFocusedMarket === mk || editingCell?.id === '__new__' && editingCell?.market === mk
                       return (
-                        <td key={mk} style={{ padding: '0.25rem 0.5rem', minWidth: '140px' }}>
+                        <td key={mk} style={{ padding: '0.25rem 0.5rem', minWidth: 0 }}>
                           <div>
                             <input
                               value={manualEdits[mk] || ''}
@@ -1343,107 +1350,94 @@ export default function CategoriesPage() {
                     </td>
                   </tr>
                 )}
-                {/* 가상화: 2700행 → 뷰포트 내 ~20행만 DOM 마운트 */}
-                {(() => {
-                  const virtualItems = rowVirtualizer.getVirtualItems()
-                  const totalSize = rowVirtualizer.getTotalSize()
-                  const paddingTop = virtualItems.length > 0 ? virtualItems[0].start : 0
-                  const paddingBottom = virtualItems.length > 0 ? totalSize - virtualItems[virtualItems.length - 1].end : 0
+                {/* 가상화: display:block tbody + CSS padding으로 더미 행 없이 스크롤 공간 확보 */}
+                {rowVirtualizer.getVirtualItems().map(virtualRow => {
+                  const row = filteredMappings[virtualRow.index]
                   return (
-                    <>
-                      {paddingTop > 0 && (
-                        <tr><td colSpan={marketKeys.length + 3} style={{ height: paddingTop, padding: 0 }} /></tr>
-                      )}
-                      {virtualItems.map(virtualRow => {
-                        const row = filteredMappings[virtualRow.index]
+                    <tr key={row.id} style={{ display: 'grid', gridTemplateColumns: gridCols, borderBottom: '1px solid #2D2D2D', alignItems: 'center' }}>
+                      <td style={{ padding: '0.5rem 0.75rem', color: '#FFB84D', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden' }}>{row.source_site}</td>
+                      <td style={{ padding: '0.5rem 0.75rem', color: '#E5E5E5', whiteSpace: 'nowrap', overflow: 'hidden' }}>{row.source_category}</td>
+                      {marketKeys.map(mk => {
+                        const val = row.target_mappings?.[mk] || ''
+                        const isEditing = editingCell?.id === row.id && editingCell?.market === mk
                         return (
-                          <tr key={row.id} style={{ borderBottom: '1px solid #2D2D2D' }}>
-                            <td style={{ padding: '0.5rem 0.75rem', color: '#FFB84D', fontWeight: 600, whiteSpace: 'nowrap' }}>{row.source_site}</td>
-                            <td style={{ padding: '0.5rem 0.75rem', color: '#E5E5E5', whiteSpace: 'nowrap' }}>{row.source_category}</td>
-                            {marketKeys.map(mk => {
-                              const val = row.target_mappings?.[mk] || ''
-                              const isEditing = editingCell?.id === row.id && editingCell?.market === mk
-                              return (
-                                <td key={mk} style={{ padding: '0.25rem 0.5rem', minWidth: '140px', position: 'relative' }}>
-                                  {isEditing ? (
-                                    <div style={{ position: 'relative' }}>
-                                      <input
-                                        autoFocus
-                                        value={editingValue}
-                                        onChange={e => handleSuggestSearch(e.target.value, mk, e.target)}
-                                        onFocus={e => updateDropdownPos(e.target)}
-                                        onBlur={() => {
-                                          setTimeout(() => {
-                                            if (editingCell?.id === row.id && editingCell?.market === mk) {
-                                              handleSaveEdit()
-                                            }
-                                          }, 250)
-                                        }}
-                                        onKeyDown={handleEditKeyDown}
-                                        placeholder="카테고리 검색..."
-                                        style={{
-                                          width: '100%',
-                                          padding: '0.375rem 0.5rem',
-                                          background: '#1A1A1A',
-                                          border: '1px solid #FF8C00',
-                                          borderRadius: '4px',
-                                          color: '#E5E5E5',
-                                          fontSize: '0.75rem',
-                                          outline: 'none',
-                                        }}
-                                      />
-                                    </div>
-                                  ) : (
-                                    <div
-                                      onClick={() => handleStartEdit(row.id, mk, val)}
-                                      style={{
-                                        padding: '0.375rem 0.5rem',
-                                        borderRadius: '4px',
-                                        cursor: 'pointer',
-                                        color: val ? '#C5C5C5' : '#555',
-                                        fontSize: '0.75rem',
-                                        transition: 'background 0.15s',
-                                      }}
-                                      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)' }}
-                                      onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
-                                      title={val || '클릭하여 매핑 추가'}
-                                    >
-                                      {val || '─'}
-                                    </div>
-                                  )}
-                                </td>
-                              )
-                            })}
-                            <td style={{ padding: '0.5rem 0.5rem', textAlign: 'center' }}>
-                              {row.id.startsWith('unmapped_') ? (
-                                <span style={{ color: '#555', fontSize: '0.7rem' }}>미매핑</span>
-                              ) : (
-                                <button
-                                  onClick={() => handleDeleteMapping(row.id)}
-                                  style={{
-                                    background: 'none',
-                                    border: 'none',
-                                    color: '#666',
-                                    fontSize: '0.875rem',
-                                    cursor: 'pointer',
-                                    padding: '0.25rem',
-                                    lineHeight: 1,
+                          <td key={mk} style={{ padding: '0.25rem 0.5rem', minWidth: 0, position: 'relative' }}>
+                            {isEditing ? (
+                              <div style={{ position: 'relative' }}>
+                                <input
+                                  autoFocus
+                                  value={editingValue}
+                                  onChange={e => handleSuggestSearch(e.target.value, mk, e.target)}
+                                  onFocus={e => updateDropdownPos(e.target)}
+                                  onBlur={() => {
+                                    setTimeout(() => {
+                                      if (editingCell?.id === row.id && editingCell?.market === mk) {
+                                        handleSaveEdit()
+                                      }
+                                    }, 250)
                                   }}
-                                  onMouseEnter={e => { e.currentTarget.style.color = '#EF4444' }}
-                                  onMouseLeave={e => { e.currentTarget.style.color = '#666' }}
-                                  title="매핑 삭제"
-                                >✕</button>
-                              )}
-                            </td>
-                          </tr>
+                                  onKeyDown={handleEditKeyDown}
+                                  placeholder="카테고리 검색..."
+                                  style={{
+                                    width: '100%',
+                                    padding: '0.375rem 0.5rem',
+                                    background: '#1A1A1A',
+                                    border: '1px solid #FF8C00',
+                                    borderRadius: '4px',
+                                    color: '#E5E5E5',
+                                    fontSize: '0.75rem',
+                                    outline: 'none',
+                                  }}
+                                />
+                              </div>
+                            ) : (
+                              <div
+                                onClick={() => handleStartEdit(row.id, mk, val)}
+                                style={{
+                                  padding: '0.375rem 0.5rem',
+                                  borderRadius: '4px',
+                                  cursor: 'pointer',
+                                  color: val ? '#C5C5C5' : '#555',
+                                  fontSize: '0.75rem',
+                                  transition: 'background 0.15s',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                }}
+                                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)' }}
+                                onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                                title={val || '클릭하여 매핑 추가'}
+                              >
+                                {val || '─'}
+                              </div>
+                            )}
+                          </td>
                         )
                       })}
-                      {paddingBottom > 0 && (
-                        <tr><td colSpan={marketKeys.length + 3} style={{ height: paddingBottom, padding: 0 }} /></tr>
-                      )}
-                    </>
+                      <td style={{ padding: '0.5rem 0.5rem', textAlign: 'center' }}>
+                        {row.id.startsWith('unmapped_') ? (
+                          <span style={{ color: '#555', fontSize: '0.7rem' }}>미매핑</span>
+                        ) : (
+                          <button
+                            onClick={() => handleDeleteMapping(row.id)}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#666',
+                              fontSize: '0.875rem',
+                              cursor: 'pointer',
+                              padding: '0.25rem',
+                              lineHeight: 1,
+                            }}
+                            onMouseEnter={e => { e.currentTarget.style.color = '#EF4444' }}
+                            onMouseLeave={e => { e.currentTarget.style.color = '#666' }}
+                            title="매핑 삭제"
+                          >✕</button>
+                        )}
+                      </td>
+                    </tr>
                   )
-                })()}
+                })}
               </tbody>
             </table>
           </div>
