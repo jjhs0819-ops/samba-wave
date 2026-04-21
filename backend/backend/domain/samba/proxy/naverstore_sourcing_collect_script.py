@@ -47,14 +47,18 @@ def extract_category_id(url):
     m = re.search(r"/category/(\w{8,})", url)
     return m.group(1) if m else None
 
-def extract_search_keyword(url):
-    # /search?q=... 형식에서 키워드 추출. 검색 URL이 아니면 None.
+def parse_search_url(url):
+    # 검색 URL 판정 + 키워드 추출을 튜플로 분리 반환.
+    # (is_search, keyword_or_None)
+    # - /search path 없음: (False, None)
+    # - /search path 있고 q=kw: (True, "kw")
+    # - /search path 있고 q= 비어있음: (True, None) → 호출부에서 조기 종료
     from urllib.parse import parse_qs, urlparse
     p = urlparse(url)
     if "/search" not in p.path:
-        return None
+        return False, None
     kw = parse_qs(p.query).get("q", [""])[0].strip()
-    return kw or None
+    return True, (kw or None)
 
 def parse_channel_uid(html):
     m = re.search(r'"channelUid"\s*:\s*"([a-zA-Z0-9]{15,30})"', html)
@@ -62,12 +66,20 @@ def parse_channel_uid(html):
 
 store_name = extract_store_name(store_url) or ""
 category_id = extract_category_id(store_url) or "ALL"
-search_keyword = extract_search_keyword(store_url)
+is_search_url, search_keyword = parse_search_url(store_url)
 page_size = 40
 pages_needed = math.ceil(max_count / page_size)
 now_iso = datetime.now(tz=timezone.utc).isoformat()
 
-LOG(f"store_name={store_name}, category_id={category_id}, search_keyword={search_keyword}, pages_needed={pages_needed}")
+LOG(f"store_name={store_name}, category_id={category_id}, is_search={is_search_url}, search_keyword={search_keyword}, pages_needed={pages_needed}")
+
+# 검색 URL인데 q= 키워드가 비어있으면 silent failure 방지 — 조기 종료.
+# Why: use_html_parse=False로 빠지면 /categories/ALL/products가 호출되어 사용자
+# 의도(검색)와 달리 전체 상품이 조용히 수집됨 (팀장 리뷰 #56).
+if is_search_url and not search_keyword:
+    LOG("검색 URL이나 q= 키워드 누락 — 조기 종료")
+    print(json.dumps({"products": [], "total": 0, "error": "검색 키워드(q)가 비어있음"}))
+    sys.exit(0)
 
 from curl_cffi.requests import Session
 proxies = {"https": proxy_url, "http": proxy_url} if proxy_url else None
@@ -96,7 +108,8 @@ try:
         is_hash_cat = category_id != "ALL" and len(category_id) >= 20
         # 검색 URL(/search?q=...)도 UUID 카테고리와 동일하게 React SPA HTML에
         # data-shp-area="list.pd" 슬롯으로 상품이 임베드됨. 검색 전용 JSON API는 없음.
-        use_html_parse = is_hash_cat or bool(search_keyword)
+        # is_search_url 기준 분기 — keyword 비면 위에서 이미 조기 종료됨.
+        use_html_parse = is_hash_cat or is_search_url
 
         def _push_product(pid, name, sale_price, disc_price, disc_rate, thumb,
                           cat_str, cat_id_val, brand, manuf,

@@ -229,9 +229,12 @@ class NaverStoreSourcingClient(NaverStoreListMixin, NaverStoreDetailMixin):
 
         # 검색 URL(/search?q=...) → 카테고리명을 "[검색]_{키워드}"로 반환.
         # Why: 검색은 카테고리와 다른 진입 경로라 UI 그룹명에 검색 컨텍스트 명시 필요.
-        search_kw = self._extract_search_keyword(store_url)
-        if search_kw:
-            return {"storeName": store_name, "categoryName": f"[검색]_{search_kw}"}
+        # /search path 있는데 q= 비어있으면 명시적으로 표시 — silent 전체수집 방지(팀장 리뷰 #56).
+        is_search, search_kw = self._parse_search_url(store_url)
+        if is_search:
+            if search_kw:
+                return {"storeName": store_name, "categoryName": f"[검색]_{search_kw}"}
+            return {"storeName": store_name, "categoryName": "[검색오류]_키워드없음"}
 
         # 카테고리 없음 → 전체상품
         if not category_id:
@@ -398,13 +401,19 @@ class NaverStoreSourcingClient(NaverStoreListMixin, NaverStoreDetailMixin):
         return m.group(1) if m else None
 
     @staticmethod
-    def _extract_search_keyword(url: str) -> Optional[str]:
-        """URL에서 검색어 추출. `/search?q=...` 형식 매칭."""
+    def _parse_search_url(url: str) -> tuple[bool, Optional[str]]:
+        """URL에서 (검색 URL 여부, 키워드) 튜플 반환.
+
+        Returns:
+            (False, None) — /search path 없음
+            (True, "양말") — /search?q=양말
+            (True, None)  — /search?q= (빈 키워드) → 호출부에서 silent 실패 차단 필요
+        """
         from urllib.parse import parse_qs, urlparse
 
         parsed = urlparse(url)
         if "/search" not in parsed.path:
-            return None
+            return False, None
         qs = parse_qs(parsed.query)
         kw = qs.get("q", [""])[0].strip()
-        return kw or None
+        return True, (kw or None)
