@@ -31,6 +31,15 @@ _CATEGORY_GROUP: dict[str, str] = {
     "속옷": "wear",
     "잠옷": "wear",
     "정장": "wear",
+    # 아웃도어/스포츠 의류 — sports 그룹이 아닌 wear로 분류 (쿠팡 "기타 재화" fallback 방지)
+    "남성등산의류": "wear",
+    "여성등산의류": "wear",
+    "등산의류": "wear",
+    "스포츠의류": "wear",
+    "남성스포츠의류": "wear",
+    "여성스포츠의류": "wear",
+    "아웃도어의류": "wear",
+    "골프웨어": "wear",
     # 신발
     "신발": "shoes",
     "스니커즈": "shoes",
@@ -44,6 +53,10 @@ _CATEGORY_GROUP: dict[str, str] = {
     "러닝화": "shoes",
     "축구화": "shoes",
     "농구화": "shoes",
+    # 아웃도어 신발 — 등산화/트레킹화
+    "등산화": "shoes",
+    "트레킹화": "shoes",
+    "등산화/트레킹화": "shoes",
     # 가방
     "가방": "bag",
     "백팩": "bag",
@@ -108,11 +121,15 @@ def detect_notice_group(product: dict[str, Any]) -> str:
     """
     cat1 = (product.get("category1") or "").strip()
 
-    # "스포츠/레저", "소품" 등 복합 카테고리는 category2로 세분화
+    # "스포츠/레저", "소품" 등 복합 카테고리는 category2/category3로 세분화
     if cat1 in ("스포츠/레저", "소품"):
         cat2 = (product.get("category2") or "").strip()
         if cat2 in _CATEGORY_GROUP:
             return _CATEGORY_GROUP[cat2]
+        # cat3 정확 매칭 — "남성등산의류" / "등산화/트레킹화" 등 세분류에서 wear/shoes 검출
+        cat3 = (product.get("category3") or "").strip()
+        if cat3 in _CATEGORY_GROUP:
+            return _CATEGORY_GROUP[cat3]
         for keyword, group in _CATEGORY_GROUP.items():
             if keyword in cat2:
                 return group
@@ -156,11 +173,15 @@ def detect_notice_group(product: dict[str, Any]) -> str:
             "조던",
             "트레이너",
             "베이퍼",
+            "등산화",
+            "트레킹화",
+            "경등산화",
         ],
         "wear": [
             "티셔츠",
             "셔츠",
             "자켓",
+            "재킷",
             "팬츠",
             "후드",
             "맨투맨",
@@ -175,6 +196,15 @@ def detect_notice_group(product: dict[str, Any]) -> str:
             "점퍼",
             "윈드",
             "바람막이",
+            "방풍",
+            "아노락",
+            "블루종",
+            "GTX",
+            "고어텍스",
+            "플리스",
+            "후리스",
+            "다운",
+            "레인자켓",
         ],
         "bag": ["가방", "백팩", "크로스백", "토트백", "숄더백"],
         "accessories": [
@@ -238,6 +268,8 @@ _COUPANG_NOTICE_CATEGORY: dict[str, str] = {
     "cosmetic": "화장품(기능성화장품 포함)",
     "food": "식품(일반식품)",
     "electronics": "전자제품",
+    # 스포츠 용품 fallback (의류는 cat3에서 wear로 매칭됨)
+    "sports": "기타 재화",
     "etc": "기타 재화",
 }
 
