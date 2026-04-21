@@ -38,7 +38,9 @@
     const res = await fetch(url, { ...init, headers })
     if (res.status === 403) {
       await chrome.storage.local.remove('apiKey')
-      const newKey = await loadApiKey(proxyData.proxyUrl)
+      // 실제 요청 URL의 origin으로 키 재발급 (storage의 proxyUrl이 localhost일 수 있음)
+      const serverBase = new URL(url).origin
+      const newKey = await loadApiKey(serverBase)
       const retryHeaders = { ...(init.headers || {}), 'X-Api-Key': newKey }
       return fetch(url, { ...init, headers: retryHeaders })
     }
