@@ -255,12 +255,13 @@ async function handleAiSourcingJob(job) {
 
 // ==================== 통합 소싱 큐 폴링 (ABCmart, GrandStage, REXMONDE, 롯데ON, GSShop) ====================
 
-const SOURCING_MAX_CONCURRENT = 5
+// 안전 상한 — 실제 동시 실행 수는 백엔드 _SSG_BATCH로 제어
+const SOURCING_MAX_POLL_LIMIT = 10
 
 async function pollSourcingOnce() {
-  // 최대 SOURCING_MAX_CONCURRENT개 job을 가져와서 병렬 처리
+  // 백엔드가 배치 크기만큼만 큐에 넣으므로 자연히 그 수만큼 처리됨
   const jobs = []
-  for (let i = 0; i < SOURCING_MAX_CONCURRENT; i++) {
+  for (let i = 0; i < SOURCING_MAX_POLL_LIMIT; i++) {
     try {
       const res = await apiFetch(`${PROXY_URL}${API_PREFIX}/sourcing/collect-queue`)
       if (!res.ok) {
@@ -273,7 +274,7 @@ async function pollSourcingOnce() {
         break
       }
       if (!job.hasJob) break
-      console.log(`[소싱] ${job.url || '작업 수신'} (${jobs.length + 1}/${SOURCING_MAX_CONCURRENT})`)
+      console.log(`[소싱] ${job.url || '작업 수신'} (${jobs.length + 1}/${SOURCING_MAX_POLL_LIMIT})`)
       jobs.push(job)
     } catch {
       pauseCollectPolling(10000, 'backend unreachable')
@@ -428,13 +429,15 @@ async function handleSourcingJob(job) {
     // active:false — 병렬 처리 시 여러 탭 동시 오픈 (백그라운드 탭도 JS 렌더링 됨)
     const tab = await chrome.tabs.create({ url: job.url, active: false })
     tabId = tab.id
-    await waitForTabLoad(tabId, 20000)
+    await waitForTabLoad(tabId, 30000)
 
     // GSShop: 동적 DOM 감지 (고정 8초 → 평균 2~3초)
     if (job.type === 'category-scan' && job.site === 'GSShop') {
       await waitForGSShopContent(tabId, 8000)
     } else if (job.type === 'search' && job.site === 'GSShop') {
       await waitForGSShopSearchResults(tabId, 6000)
+    } else if (job.type === 'detail' && job.site === 'SSG') {
+      await wait(10000) // SSG Next.js hydration 대기
     } else {
       await wait(5000) // SPA 렌더링 대기
     }

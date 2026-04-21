@@ -321,6 +321,8 @@ class JobWorker:
         ] = {}  # job_id → Task (수집+전송 병렬용)
         # 소싱처별 동시 실행 제어 — 같은 소싱처는 순차, 다른 소싱처는 병렬
         self._active_collect_sources: set[str] = set()
+        # brand_all 잡 직렬화 — SSG+MUSINSA 동시 실행 시 DB/메모리 고갈 방지
+        self._brand_all_running: bool = False
         self._poll_count = 0
         # 검색 결과 캐시: {(site, keyword): (items_list, timestamp)}
         # 동일 브랜드 그룹 수집 시 전수 검색 1회만 실행
@@ -446,7 +448,10 @@ class JobWorker:
             repo = SambaJobRepository(session)
             # 현재 실행 중인 소싱처는 제외 — 같은 소싱처 순차, 다른 소싱처 병렬
             _excl_sources = set(self._active_collect_sources)
-            job = await repo.claim_pending_job(exclude_sources=_excl_sources or None)
+            job = await repo.claim_pending_job(
+                exclude_sources=_excl_sources or None,
+                exclude_brand_all=self._brand_all_running,
+            )
             if not job:
                 return bool(self._active_tasks)
 
@@ -496,8 +501,14 @@ class JobWorker:
             _job_payload = job.payload or {}
             if _job_type == "collect":
                 _collect_site = (_job_payload or {}).get("source_site") or ""
+                _is_brand_all = bool((_job_payload or {}).get("brand_all"))
                 if _collect_site:
                     self._active_collect_sources.add(_collect_site)
+                if _is_brand_all:
+                    self._brand_all_running = True
+                    logger.info(
+                        f"[잡워커] brand_all 시작 — 직렬 실행 플래그 set: {_job_id} site={_collect_site}"
+                    )
                 logger.info(
                     f"[잡워커] 수집 실행 (격리 스레드): {_job_id} site={_collect_site}"
                 )
@@ -612,6 +623,11 @@ class JobWorker:
                 _collect_site = (_job_payload or {}).get("source_site") or ""
                 if _collect_site:
                     self._active_collect_sources.discard(_collect_site)
+                if (_job_payload or {}).get("brand_all"):
+                    self._brand_all_running = False
+                    logger.info(
+                        f"[잡워커] brand_all 완료 — 직렬 실행 플래그 clear: {_job_id}"
+                    )
             # 프론트 폴링이 로그를 읽을 시간 확보 후 삭제 (60초)
             try:
                 asyncio.get_running_loop().call_later(60, clear_job_logs, _job_id)
@@ -2378,17 +2394,12 @@ class JobWorker:
 
         _add_job_log(
             job.id,
-            f"[SSG브랜드전체수집] 카테고리 맵 {len(cat_filter_map)}개 | brand_ids={_brand_ids_from_filter}",
+            f"[SSG브랜드전체수집] 카테고리 맵 {len(cat_filter_map)}개 | 브랜드: {keyword}",
             job_type="collect",
         )
 
         # 메인 IP 단일 클라이언트 — 프록시 미사용
         client = SSGSourcingClient()
-        _add_job_log(
-            job.id,
-            "[SSG브랜드전체수집] 메인IP 단일 클라이언트 — 1건/1초 속도",
-            job_type="collect",
-        )
 
         if not _brand_ids_from_filter:
             _brand_ids_from_filter = await client._fetch_brand_ids(keyword)
@@ -2415,7 +2426,7 @@ class JobWorker:
         # 재시도 큐 — 상세조회/매핑 실패 상품 누수 방지
         _failed_queue: list[dict] = []
         # 병렬 배치 처리 (배치당 4개 동시)
-        _SSG_BATCH = 4
+        _SSG_BATCH = 3
         _ssg_page = 1
         # 필터 requested_count 합산 → 총 예상 건수 (진행률 표시용)
         _ssg_total_est = sum(f.requested_count or 0 for f in filters) or 1

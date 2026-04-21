@@ -710,12 +710,21 @@ export default function CollectorPage() {
         } else {
           const { job_id } = await r.json() as { job_id: string }
           addLog(`[브랜드전체수집] Job 생성 완료 — 백그라운드 실행 중 (페이지 이탈해도 계속 수집됩니다)`)
+          let _pendingLoggedAt = 0
           while (!abort.signal.aborted) {
             await new Promise(resolve => setTimeout(resolve, 2000))
             if (abort.signal.aborted) break
             const jr = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
             if (!jr.ok) break
             const jobData = await jr.json() as { status: string; result?: Record<string, number>; error?: string }
+            if (jobData.status === 'pending') {
+              const now = Date.now()
+              if (now - _pendingLoggedAt > 10000) {
+                addLog(`[브랜드전체수집] 대기 중 — 다른 브랜드수집 완료 후 자동 시작...`)
+                _pendingLoggedAt = now
+              }
+              continue
+            }
             if (jobData.status === 'completed') {
               addLog(`[브랜드전체수집] 완료 — 저장 ${fmtNum(jobData.result?.saved ?? 0)}건`)
               await load(); await loadTree()

@@ -22,6 +22,7 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         self,
         exclude_types: set[str] | None = None,
         exclude_sources: set[str] | None = None,
+        exclude_brand_all: bool = False,
     ) -> Optional[SambaJob]:
         """Pending 잡 1개를 원자적으로 claim (FOR UPDATE SKIP LOCKED).
 
@@ -33,6 +34,8 @@ class SambaJobRepository(BaseRepository[SambaJob]):
             exclude_sources: 제외할 수집 소싱처 집합 — 현재 실행 중인 소싱처 스킵용.
                              payload->>'source_site' 값이 이 셋에 포함된 collect 잡은 건너뜀.
                              다른 소싱처 잡은 계속 pick 가능 → 소싱처별 동시 실행 허용.
+            exclude_brand_all: True면 brand_all collect 잡을 skip — 1개씩 직렬 실행 보장.
+                               SSG+MUSINSA 동시 실행 시 DB 커넥션 고갈/OOM 방지.
         """
         from sqlalchemy import and_, or_
 
@@ -56,6 +59,14 @@ class SambaJobRepository(BaseRepository[SambaJob]):
                         SambaJob.job_type == "collect",
                         SambaJob.payload.op("->>")("source_site").notin_(_excl_list),
                     ),
+                )
+            )
+        if exclude_brand_all:
+            # brand_all collect 잡은 현재 실행 중인 brand_all 완료 후 픽업
+            stmt = stmt.where(
+                ~and_(
+                    SambaJob.job_type == "collect",
+                    SambaJob.payload.op("->>")("brand_all") == "true",
                 )
             )
 
