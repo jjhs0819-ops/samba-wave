@@ -47,17 +47,27 @@ def extract_category_id(url):
     m = re.search(r"/category/(\w{8,})", url)
     return m.group(1) if m else None
 
+def extract_search_keyword(url):
+    # /search?q=... 형식에서 키워드 추출. 검색 URL이 아니면 None.
+    from urllib.parse import parse_qs, urlparse
+    p = urlparse(url)
+    if "/search" not in p.path:
+        return None
+    kw = parse_qs(p.query).get("q", [""])[0].strip()
+    return kw or None
+
 def parse_channel_uid(html):
     m = re.search(r'"channelUid"\s*:\s*"([a-zA-Z0-9]{15,30})"', html)
     return m.group(1) if m else None
 
 store_name = extract_store_name(store_url) or ""
 category_id = extract_category_id(store_url) or "ALL"
+search_keyword = extract_search_keyword(store_url)
 page_size = 40
 pages_needed = math.ceil(max_count / page_size)
 now_iso = datetime.now(tz=timezone.utc).isoformat()
 
-LOG(f"store_name={store_name}, category_id={category_id}, pages_needed={pages_needed}")
+LOG(f"store_name={store_name}, category_id={category_id}, search_keyword={search_keyword}, pages_needed={pages_needed}")
 
 from curl_cffi.requests import Session
 proxies = {"https": proxy_url, "http": proxy_url} if proxy_url else None
@@ -84,6 +94,9 @@ try:
         # 대신 카테고리 메타 엔드포인트(mappingContent)에서 상품 ID 리스트 획득 후
         # 각 ID마다 상세 API 호출하여 데이터 채움
         is_hash_cat = category_id != "ALL" and len(category_id) >= 20
+        # 검색 URL(/search?q=...)도 UUID 카테고리와 동일하게 React SPA HTML에
+        # data-shp-area="list.pd" 슬롯으로 상품이 임베드됨. 검색 전용 JSON API는 없음.
+        use_html_parse = is_hash_cat or bool(search_keyword)
 
         def _push_product(pid, name, sale_price, disc_price, disc_rate, thumb,
                           cat_str, cat_id_val, brand, manuf,
@@ -132,18 +145,25 @@ try:
                 "collected_at": now_iso,
             })
 
-        if is_hash_cat:
-            # Plan B: HTML SSR 직접 파싱 — detail API 지속 429 회피 (UUID 카테고리 대응)
+        if use_html_parse:
+            # Plan B: HTML SSR 직접 파싱 — detail API 지속 429 회피 (UUID 카테고리/검색 대응)
             # Why: coming 등 UUID 카테고리는 mappingContent 메타/detail API가 0건 또는
             # 지속 429 반환. 2026-04-18 진단 로그에서 확인: HTML(2.3MB)의 data-shp-area="list.pd"
             # 슬롯에 data-shp-contents-id(ID) + data-shp-contents-dtl(JSON: chnl_prod_nm=이름,
             # price=가격, exhibition_category=카테고리ID) 임베디드. swiper 슬라이드 내
             # shop-phinf.pstatic.net img URL도 함께 SSR됨. detail API 없이 HTML만으로 수집 가능.
+            # 검색(/search?q=...)도 동일 SSR 구조라 같은 파서 재사용.
             import html as html_lib
+            from urllib.parse import quote
+
+            def _build_listing_url(page):
+                if search_keyword:
+                    return f"{BASE_URL}/{store_name}/search?q={quote(search_keyword)}&cp={page}"
+                return f"{BASE_URL}/{store_name}/category/{category_id}?cp={page}"
 
             def _fetch_html_products(page):
-                html_url = f"{BASE_URL}/{store_name}/category/{category_id}?cp={page}"
-                LOG(f"HTML 전체 파싱: cp={page}")
+                html_url = _build_listing_url(page)
+                LOG(f"HTML 전체 파싱: {html_url}")
                 r2 = sess.get(html_url, headers=HTML_HEADERS)
                 if r2.status_code != 200:
                     LOG(f"HTML 실패 status={r2.status_code} cp={page}")

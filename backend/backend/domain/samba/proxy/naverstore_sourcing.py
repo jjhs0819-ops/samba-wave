@@ -227,6 +227,12 @@ class NaverStoreSourcingClient(NaverStoreListMixin, NaverStoreDetailMixin):
         store_name = self._extract_store_name(store_url) or ""
         category_id = self._extract_category_id(store_url)
 
+        # 검색 URL(/search?q=...) → 카테고리명을 "[검색]_{키워드}"로 반환.
+        # Why: 검색은 카테고리와 다른 진입 경로라 UI 그룹명에 검색 컨텍스트 명시 필요.
+        search_kw = self._extract_search_keyword(store_url)
+        if search_kw:
+            return {"storeName": store_name, "categoryName": f"[검색]_{search_kw}"}
+
         # 카테고리 없음 → 전체상품
         if not category_id:
             return {"storeName": store_name, "categoryName": "전체상품"}
@@ -390,3 +396,15 @@ class NaverStoreSourcingClient(NaverStoreListMixin, NaverStoreDetailMixin):
         """URL에서 상품 ID 추출."""
         m = re.search(r"/products/(\d+)", url)
         return m.group(1) if m else None
+
+    @staticmethod
+    def _extract_search_keyword(url: str) -> Optional[str]:
+        """URL에서 검색어 추출. `/search?q=...` 형식 매칭."""
+        from urllib.parse import parse_qs, urlparse
+
+        parsed = urlparse(url)
+        if "/search" not in parsed.path:
+            return None
+        qs = parse_qs(parsed.query)
+        kw = qs.get("q", [""])[0].strip()
+        return kw or None
