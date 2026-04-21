@@ -19,24 +19,30 @@ async def _get_esm_client(
     market: str,
     account_id: str | None,
 ):
-    """계정 정보로 ESMPlusClient 생성."""
+    """계정 정보로 ESMPlusClient 생성. 호스팅 인증정보는 환경변수에서 로드."""
+    from backend.core.config import settings
     from backend.domain.samba.proxy.esmplus import ESMPlusClient
     from sqlalchemy import text
 
     if market not in ("gmarket", "auction"):
         return None
 
+    hosting_id = settings.esmplus_hosting_id
+    secret_key = settings.esmplus_secret_key
+    if not hosting_id or not secret_key:
+        return None
+
     if account_id:
         result = await session.exec(
             text(
-                "SELECT seller_id, additional_fields FROM samba_market_account "
+                "SELECT seller_id FROM samba_market_account "
                 "WHERE id = :aid AND market_type = :mtype AND is_active = true"
             ).bindparams(aid=account_id, mtype=market)
         )
     else:
         result = await session.exec(
             text(
-                "SELECT seller_id, additional_fields FROM samba_market_account "
+                "SELECT seller_id FROM samba_market_account "
                 "WHERE market_type = :mtype AND is_active = true LIMIT 1"
             ).bindparams(mtype=market)
         )
@@ -46,11 +52,7 @@ async def _get_esm_client(
         return None
 
     seller_id = row[0] or ""
-    extras = row[1] if isinstance(row[1], dict) else {}
-    hosting_id = extras.get("hostingId", "")
-    secret_key = extras.get("secretKey", "")
-
-    if not seller_id or not hosting_id or not secret_key:
+    if not seller_id:
         return None
 
     return ESMPlusClient(hosting_id, secret_key, seller_id, site=market)
@@ -78,7 +80,7 @@ async def esm_delivery_info(
                 "success": False,
                 "places": [],
                 "dispatchPolicies": [],
-                "message": "계정 인증정보(hostingId/secretKey)가 없습니다. 계정 설정을 먼저 저장해주세요.",
+                "message": "계정 정보가 없거나 서버 환경변수(ESMPLUS_HOSTING_ID/ESMPLUS_SECRET_KEY)가 설정되지 않았습니다.",
             }
 
         places, dispatch_policies = await asyncio.gather(

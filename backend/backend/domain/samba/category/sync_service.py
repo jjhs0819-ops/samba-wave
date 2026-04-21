@@ -585,11 +585,13 @@ class CategorySyncMixin:
         if not seller_id:
             raise ValueError(f"{market_type} 판매자 ID가 없습니다")
 
-        hosting_id = extra.get("hostingId") or ""
-        secret_key = extra.get("secretKey") or ""
+        from backend.core.config import settings
+
+        hosting_id = settings.esmplus_hosting_id
+        secret_key = settings.esmplus_secret_key
         if not hosting_id or not secret_key:
             raise ValueError(
-                f"{market_type} 호스팅 인증정보(hostingId, secretKey)가 없습니다"
+                f"{market_type} 호스팅 인증정보(환경변수 ESMPLUS_HOSTING_ID/ESMPLUS_SECRET_KEY)가 없습니다"
             )
 
         client = ESMPlusClient(hosting_id, secret_key, seller_id, site=market_type)

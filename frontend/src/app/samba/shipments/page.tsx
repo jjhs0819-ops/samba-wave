@@ -76,7 +76,7 @@ export default function ShipmentsPage() {
   const getAccountIdsByMarkets = useCallback((marketTypes: string[]) =>
     accounts.filter(a => marketTypes.includes(a.market_type)).map(a => a.id),
   [accounts])
-  const [updateItems, setUpdateItems] = useState({ all: false, price: false, thumb: false, detail: false })
+  const [updateItems, setUpdateItems] = useState({ all: true, price: true, thumb: true, detail: true })
   const [skipEnabled, setSkipEnabled] = useState(false)
   const [selectedSites, setSelectedSites] = useState<string[]>([])
 
@@ -986,15 +986,6 @@ export default function ShipmentsPage() {
             )}
           </select>
         </div>
-        {/* 실패건처리 */}
-        <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', gap: '8px', flexWrap: 'wrap', borderBottom: '1px solid #181C28' }}>
-          <span style={{ minWidth: '72px', color: '#666', fontSize: '0.78rem' }}>실패건처리</span>
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.78rem', color: '#8A95B0', cursor: 'pointer' }}>
-            <input type="checkbox" style={{ accentColor: '#FF8C00', width: '14px', height: '14px' }} /> 재고연동 실패 건
-          </label>
-          <button style={{ padding: '4px 14px', fontSize: '0.78rem', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>실패건 마켓상품삭제</button>
-        </div>
-
         {/* 검색하기 버튼 */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '2px solid #181C28', flexWrap: 'wrap', gap: '8px' }}>
           <div style={{ display: 'flex', gap: '8px' }}>
@@ -1018,45 +1009,6 @@ export default function ShipmentsPage() {
               </label>
             ))}
           </div>
-        </div>
-
-        {/* 업데이트 항목 */}
-        <div style={{ padding: '10px 16px 12px', borderBottom: '1px solid #181C28' }}>
-          <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#C5C5C5', marginBottom: '10px', paddingBottom: '6px', borderBottom: '1px solid #1C1E2A' }}>업데이트 항목</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 20px' }}>
-            {[
-              { key: 'all', label: '전체' }, { key: 'price', label: '가격/재고' },
-              { key: 'thumb', label: '썸네일' }, { key: 'detail', label: '상세페이지' },
-            ].map(item => (
-              <label key={item.key} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: '#8A95B0', cursor: 'pointer' }}>
-                <input type="checkbox" checked={updateItems[item.key as keyof typeof updateItems]}
-                  onChange={() => {
-                    if (item.key === 'all') {
-                      setUpdateItems({ all: !updateItems.all, price: !updateItems.all, thumb: !updateItems.all, detail: !updateItems.all })
-                    } else {
-                      setUpdateItems(prev => {
-                        const next = { ...prev, [item.key]: !prev[item.key as keyof typeof prev] }
-                        // 개별 항목 변경 시 전체 체크 자동 동기화
-                        next.all = next.price && next.thumb && next.detail
-                        return next
-                      })
-                    }
-                  }}
-                  style={{ accentColor: '#FF8C00', width: '14px', height: '14px' }} />
-                {item.label}
-              </label>
-            ))}
-          </div>
-        </div>
-
-        {/* 스킵 설정 */}
-        <div style={{ padding: '10px 16px 12px', borderBottom: '1px solid #181C28' }}>
-          <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#C5C5C5', marginBottom: '10px', paddingBottom: '6px', borderBottom: '1px solid #1C1E2A' }}>스킵 설정</div>
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: '#8A95B0', cursor: 'pointer' }}>
-            <input type="checkbox" checked={skipEnabled} onChange={() => setSkipEnabled(!skipEnabled)} style={{ accentColor: '#FF8C00', width: '14px', height: '14px' }} />
-            업데이트 스킵
-          </label>
-          <span style={{ fontSize: '0.72rem', color: '#555', marginLeft: '4px' }}>마켓 전송 가격에 영향을 미치는 요인(원가, 수수료, 배송비, 추가요금, 마진율)에 변동이 없으면 전송하지 않고 건너뜀</span>
         </div>
 
         {/* 마켓 체크박스 (마켓별 통합 — 선택 시 해당 마켓의 모든 계정에 전송) */}

@@ -909,12 +909,7 @@ export default function OrdersPage() {
         }
       `}</style>
 
-      {/* 관련 페이지 연결 */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginBottom: '0.25rem' }}>
-        <a href="/samba/returns" style={{ fontSize: '0.75rem', color: '#FF8C00', textDecoration: 'none' }}>반품교환 →</a>
-        <a href="/samba/cs" style={{ fontSize: '0.75rem', color: '#4C9AFF', textDecoration: 'none' }}>CS →</a>
-        <button onClick={() => setShowAlarmSetting(true)} style={{ fontSize: '0.75rem', color: '#FFD93D', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>🔔 취소알람설정</button>
-      </div>
+
       {/* 상품별 주문이력 모드 배너 */}
       {isProductMode && (
         <div style={{

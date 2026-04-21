@@ -64,7 +64,9 @@ jobs:
             --memory 2Gi \
             --min-instances=1 \
             --max-instances=1 \
-            --clear-vpc-connector \
+            --network=default \
+            --subnet=default \
+            --vpc-egress=all-traffic \
             --quiet
 
       - name: Verify traffic on latest revision

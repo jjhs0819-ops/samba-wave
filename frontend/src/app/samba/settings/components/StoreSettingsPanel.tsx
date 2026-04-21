@@ -173,8 +173,8 @@ export function StoreSettingsPanel(props: Props) {
                       onClick={async () => {
                         try {
                           const data = storeData[market.key] || savedStoreData[market.key] || {}
-                          if (!data.hostingId || !data.secretKey) {
-                            showAlert('호스팅사 ID와 시크릿 키를 먼저 입력하고 저장해주세요.', 'error')
+                          if (!data.storeId) {
+                            showAlert('판매자 ID를 먼저 입력하고 저장해주세요.', 'error')
                             return
                           }
                           await forbiddenApi.saveSetting(`store_${market.key}`, data)

@@ -97,6 +97,14 @@ class BackendSettings(BaseSettings):
     # 프록시 URL (수집용)
     collect_proxy_url: str = ""
 
+    # ===========================================
+    # ESMPlus 호스팅 인증정보 (셀링툴업체 고정값)
+    # ===========================================
+    esmplus_hosting_id: str = ""
+    """ESMPlus 호스팅 마스터 ID — 삼바웨이브 셀링툴 고정값."""
+    esmplus_secret_key: str = ""
+    """ESMPlus 호스팅 시크릿 키 — 삼바웨이브 셀링툴 고정값."""
+
     # 추가 허용 origin (콤마 구분, Railway 환경변수로 주입)
     cors_extra_origins: str = ""
 

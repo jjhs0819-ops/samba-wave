@@ -15,8 +15,7 @@ from backend.domain.samba.plugins.market_base import MarketPlugin
 from backend.utils import add_lazy_loading
 from backend.utils.logger import logger
 
-# ESM Plus 호스팅 인증정보는 계정 설정(additional_fields)에서 제공해야 함
-# hostingId, secretKey 필드 필수
+# ESM Plus 호스팅 인증정보는 서버 환경변수(ESMPLUS_HOSTING_ID/ESMPLUS_SECRET_KEY)에서 로드
 
 
 class GMarketMarketPlugin(MarketPlugin):
@@ -51,13 +50,15 @@ class GMarketMarketPlugin(MarketPlugin):
                 "message": "지마켓 판매자 ID(apiKey)가 없습니다. 계정 설정에서 입력해주세요.",
             }
 
-        # 호스팅 인증정보 (계정 설정에서 필수 제공)
-        hosting_id = creds.get("hostingId", "")
-        secret_key = creds.get("secretKey", "")
+        # 호스팅 인증정보 — 서버 환경변수에서 로드 (셀링툴업체 고정값)
+        from backend.core.config import settings
+
+        hosting_id = settings.esmplus_hosting_id
+        secret_key = settings.esmplus_secret_key
         if not hosting_id or not secret_key:
             return {
                 "success": False,
-                "message": "지마켓 호스팅 인증정보(hostingId, secretKey)가 없습니다. 계정 설정에서 입력해주세요.",
+                "message": "서버 환경변수(ESMPLUS_HOSTING_ID/ESMPLUS_SECRET_KEY)가 설정되지 않았습니다.",
             }
 
         client = ESMPlusClient(hosting_id, secret_key, seller_id, site="gmarket")
@@ -225,10 +226,12 @@ class GMarketMarketPlugin(MarketPlugin):
         if not seller_id:
             return {"success": False, "message": "지마켓 판매자 ID 없음"}
 
-        hosting_id = creds.get("hostingId", "")
-        secret_key = creds.get("secretKey", "")
+        from backend.core.config import settings
+
+        hosting_id = settings.esmplus_hosting_id
+        secret_key = settings.esmplus_secret_key
         if not hosting_id or not secret_key:
-            return {"success": False, "message": "호스팅 인증정보 없음"}
+            return {"success": False, "message": "호스팅 인증정보(환경변수) 없음"}
         client = ESMPlusClient(hosting_id, secret_key, seller_id, site="gmarket")
 
         # 판매중지

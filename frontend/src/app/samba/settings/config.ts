@@ -107,11 +107,9 @@ export const STORE_MARKETS: MarketConfig[] = [
     { name: 'reviewMonthPhotoPoint', label: '한달사용 포토/동영상 리뷰', type: 'number', placeholder: '원' },
     { name: '_info_storeMember', label: '알림받기 동의고객 포인트는 셀러센터에서 직접 설정', type: 'info' },
   ]},
-  { key: 'gmarket', label: '지마켓', authField: 'secretKey', fields: [
+  { key: 'gmarket', label: '지마켓', authField: 'storeId', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
     { name: 'storeId', label: '판매자 ID', type: 'text', placeholder: 'ESMPlus 판매자 ID' },
-    { name: 'hostingId', label: '호스팅사 ID', type: 'text', placeholder: 'ESMPlus 호스팅 마스터 ID' },
-    { name: 'secretKey', label: '시크릿 키', type: 'password', placeholder: 'ESMPlus 호스팅 시크릿 키' },
     { name: '_divider_shipping', label: '배송정책 (ESMPlus에서 불러오기)', type: 'divider' },
     { name: 'shippingFeeType', label: '배송비 설정', type: 'select', options: [
       { value: 'FREE', label: '무료' }, { value: 'PAID', label: '유료' },
@@ -155,11 +153,9 @@ export const STORE_MARKETS: MarketConfig[] = [
     { name: 'reviewMonthTextPoint', label: '한달사용 텍스트 리뷰', type: 'number', placeholder: '원' },
     { name: 'reviewMonthPhotoPoint', label: '한달사용 포토/동영상 리뷰', type: 'number', placeholder: '원' },
   ]},
-  { key: 'auction', label: '옥션', authField: 'secretKey', fields: [
+  { key: 'auction', label: '옥션', authField: 'storeId', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
     { name: 'storeId', label: '판매자 ID', type: 'text', placeholder: 'ESMPlus 판매자 ID' },
-    { name: 'hostingId', label: '호스팅사 ID', type: 'text', placeholder: 'ESMPlus 호스팅 마스터 ID' },
-    { name: 'secretKey', label: '시크릿 키', type: 'password', placeholder: 'ESMPlus 호스팅 시크릿 키' },
     { name: '_divider_shipping', label: '배송정책 (ESMPlus에서 불러오기)', type: 'divider' },
     { name: 'shippingFeeType', label: '배송비 설정', type: 'select', options: [
       { value: 'FREE', label: '무료' }, { value: 'PAID', label: '유료' },
