@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { useRouter } from 'next/navigation'
 import { collectorApi, categoryApi, accountApi, type SambaCollectedProduct } from '@/lib/samba/api/commerce'
 import { MARKET_LABELS } from '@/lib/samba/markets'
@@ -246,6 +247,7 @@ export default function CategoriesPage() {
   const [inlineFocusedMarket, setInlineFocusedMarket] = useState<string | null>(null)
   const [inlineSuggestions, setInlineSuggestions] = useState<string[]>([])
   const inlineDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const tableScrollRef = useRef<HTMLDivElement>(null)
 
   const handleOpenAiMarketSelect = () => {
     if (!selectedSite || !selectedCat1) {
@@ -590,6 +592,13 @@ export default function CategoriesPage() {
       activeMarkets.every(market => !row.target_mappings?.[market]?.trim())
     )
   }, [baseFilteredMappings, marketUnmappedFilters, postAiReviewIds])
+
+  const rowVirtualizer = useVirtualizer({
+    count: filteredMappings.length,
+    getScrollElement: () => tableScrollRef.current,
+    estimateSize: () => 36,
+    overscan: 8,
+  })
 
   // ── 매핑 현황 핸들러 ──
 
@@ -1148,7 +1157,7 @@ export default function CategoriesPage() {
                 : `${fmtNum(filteredMappings.length)}건 / 전체 ${fmtNum(baseFilteredMappings.length)}건`})
             </span>
           </h3>
-          <div style={{ ...card, overflow: 'auto' }}>
+          <div ref={tableScrollRef} style={{ ...card, overflow: 'auto', maxHeight: 'calc(100vh - 260px)' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid #2D2D2D', background: 'rgba(255,255,255,0.03)' }}>
@@ -1334,87 +1343,107 @@ export default function CategoriesPage() {
                     </td>
                   </tr>
                 )}
-                {filteredMappings.map(row => (
-                    <tr key={row.id} style={{ borderBottom: '1px solid #2D2D2D' }}>
-                      <td style={{ padding: '0.5rem 0.75rem', color: '#FFB84D', fontWeight: 600, whiteSpace: 'nowrap' }}>{row.source_site}</td>
-                      <td style={{ padding: '0.5rem 0.75rem', color: '#E5E5E5', whiteSpace: 'nowrap' }}>{row.source_category}</td>
-                      {marketKeys.map(mk => {
-                        const val = row.target_mappings?.[mk] || ''
-                        const isEditing = editingCell?.id === row.id && editingCell?.market === mk
+                {/* 가상화: 2700행 → 뷰포트 내 ~20행만 DOM 마운트 */}
+                {(() => {
+                  const virtualItems = rowVirtualizer.getVirtualItems()
+                  const totalSize = rowVirtualizer.getTotalSize()
+                  const paddingTop = virtualItems.length > 0 ? virtualItems[0].start : 0
+                  const paddingBottom = virtualItems.length > 0 ? totalSize - virtualItems[virtualItems.length - 1].end : 0
+                  return (
+                    <>
+                      {paddingTop > 0 && (
+                        <tr><td colSpan={marketKeys.length + 3} style={{ height: paddingTop, padding: 0 }} /></tr>
+                      )}
+                      {virtualItems.map(virtualRow => {
+                        const row = filteredMappings[virtualRow.index]
                         return (
-                          <td key={mk} style={{ padding: '0.25rem 0.5rem', minWidth: '140px', position: 'relative' }}>
-                            {isEditing ? (
-                              <div style={{ position: 'relative' }}>
-                                <input
-                                  autoFocus
-                                  value={editingValue}
-                                  onChange={e => handleSuggestSearch(e.target.value, mk, e.target)}
-                                  onFocus={e => updateDropdownPos(e.target)}
-                                  onBlur={() => {
-                                    setTimeout(() => {
-                                      if (editingCell?.id === row.id && editingCell?.market === mk) {
-                                        handleSaveEdit()
-                                      }
-                                    }, 250)
-                                  }}
-                                  onKeyDown={handleEditKeyDown}
-                                  placeholder="카테고리 검색..."
+                          <tr key={row.id} style={{ borderBottom: '1px solid #2D2D2D' }}>
+                            <td style={{ padding: '0.5rem 0.75rem', color: '#FFB84D', fontWeight: 600, whiteSpace: 'nowrap' }}>{row.source_site}</td>
+                            <td style={{ padding: '0.5rem 0.75rem', color: '#E5E5E5', whiteSpace: 'nowrap' }}>{row.source_category}</td>
+                            {marketKeys.map(mk => {
+                              const val = row.target_mappings?.[mk] || ''
+                              const isEditing = editingCell?.id === row.id && editingCell?.market === mk
+                              return (
+                                <td key={mk} style={{ padding: '0.25rem 0.5rem', minWidth: '140px', position: 'relative' }}>
+                                  {isEditing ? (
+                                    <div style={{ position: 'relative' }}>
+                                      <input
+                                        autoFocus
+                                        value={editingValue}
+                                        onChange={e => handleSuggestSearch(e.target.value, mk, e.target)}
+                                        onFocus={e => updateDropdownPos(e.target)}
+                                        onBlur={() => {
+                                          setTimeout(() => {
+                                            if (editingCell?.id === row.id && editingCell?.market === mk) {
+                                              handleSaveEdit()
+                                            }
+                                          }, 250)
+                                        }}
+                                        onKeyDown={handleEditKeyDown}
+                                        placeholder="카테고리 검색..."
+                                        style={{
+                                          width: '100%',
+                                          padding: '0.375rem 0.5rem',
+                                          background: '#1A1A1A',
+                                          border: '1px solid #FF8C00',
+                                          borderRadius: '4px',
+                                          color: '#E5E5E5',
+                                          fontSize: '0.75rem',
+                                          outline: 'none',
+                                        }}
+                                      />
+                                    </div>
+                                  ) : (
+                                    <div
+                                      onClick={() => handleStartEdit(row.id, mk, val)}
+                                      style={{
+                                        padding: '0.375rem 0.5rem',
+                                        borderRadius: '4px',
+                                        cursor: 'pointer',
+                                        color: val ? '#C5C5C5' : '#555',
+                                        fontSize: '0.75rem',
+                                        transition: 'background 0.15s',
+                                      }}
+                                      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)' }}
+                                      onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                                      title={val || '클릭하여 매핑 추가'}
+                                    >
+                                      {val || '─'}
+                                    </div>
+                                  )}
+                                </td>
+                              )
+                            })}
+                            <td style={{ padding: '0.5rem 0.5rem', textAlign: 'center' }}>
+                              {row.id.startsWith('unmapped_') ? (
+                                <span style={{ color: '#555', fontSize: '0.7rem' }}>미매핑</span>
+                              ) : (
+                                <button
+                                  onClick={() => handleDeleteMapping(row.id)}
                                   style={{
-                                    width: '100%',
-                                    padding: '0.375rem 0.5rem',
-                                    background: '#1A1A1A',
-                                    border: '1px solid #FF8C00',
-                                    borderRadius: '4px',
-                                    color: '#E5E5E5',
-                                    fontSize: '0.75rem',
-                                    outline: 'none',
+                                    background: 'none',
+                                    border: 'none',
+                                    color: '#666',
+                                    fontSize: '0.875rem',
+                                    cursor: 'pointer',
+                                    padding: '0.25rem',
+                                    lineHeight: 1,
                                   }}
-                                />
-                              </div>
-                            ) : (
-                              <div
-                                onClick={() => handleStartEdit(row.id, mk, val)}
-                                style={{
-                                  padding: '0.375rem 0.5rem',
-                                  borderRadius: '4px',
-                                  cursor: 'pointer',
-                                  color: val ? '#C5C5C5' : '#555',
-                                  fontSize: '0.75rem',
-                                  transition: 'background 0.15s',
-                                }}
-                                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)' }}
-                                onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
-                                title={val || '클릭하여 매핑 추가'}
-                              >
-                                {val || '─'}
-                              </div>
-                            )}
-                          </td>
+                                  onMouseEnter={e => { e.currentTarget.style.color = '#EF4444' }}
+                                  onMouseLeave={e => { e.currentTarget.style.color = '#666' }}
+                                  title="매핑 삭제"
+                                >✕</button>
+                              )}
+                            </td>
+                          </tr>
                         )
                       })}
-                      <td style={{ padding: '0.5rem 0.5rem', textAlign: 'center' }}>
-                        {row.id.startsWith('unmapped_') ? (
-                          <span style={{ color: '#555', fontSize: '0.7rem' }}>미매핑</span>
-                        ) : (
-                          <button
-                            onClick={() => handleDeleteMapping(row.id)}
-                            style={{
-                              background: 'none',
-                              border: 'none',
-                              color: '#666',
-                              fontSize: '0.875rem',
-                              cursor: 'pointer',
-                              padding: '0.25rem',
-                              lineHeight: 1,
-                            }}
-                            onMouseEnter={e => { e.currentTarget.style.color = '#EF4444' }}
-                            onMouseLeave={e => { e.currentTarget.style.color = '#666' }}
-                            title="매핑 삭제"
-                          >✕</button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                      {paddingBottom > 0 && (
+                        <tr><td colSpan={marketKeys.length + 3} style={{ height: paddingBottom, padding: 0 }} /></tr>
+                      )}
+                    </>
+                  )
+                })()}
               </tbody>
             </table>
           </div>

@@ -84,6 +84,63 @@ def _build_fewshot_block(
 class CategorySeedMixin:
     """시딩 + AI 배치 매핑."""
 
+    async def _get_db_fewshot_examples(
+        self,
+        source_sites: list[str],
+        target_markets: list[str],
+        exclude_cat: str | None = None,
+        limit: int = 8,
+    ) -> str:
+        """DB 매핑 데이터에서 few-shot 예시 추출.
+
+        같은 소싱처의 기존 매핑을 조회해 AI 프롬프트에 주입할 문자열 반환.
+        대분류 단독(' > ' 없음)은 제외.
+        """
+        from sqlmodel import select
+        from backend.domain.samba.category.model import SambaCategoryMapping
+
+        examples: list[str] = []
+        seen: set[str] = set()
+
+        for site in source_sites:
+            stmt = (
+                select(SambaCategoryMapping)
+                .where(SambaCategoryMapping.source_site == site)
+                .limit(100)
+            )
+            result = await self.mapping_repo.session.execute(stmt)
+            rows = result.scalars().all()
+            for row in rows:
+                if not row.target_mappings or not isinstance(row.target_mappings, dict):
+                    continue
+                src_cat = (row.source_category or "").strip()
+                if not src_cat or src_cat == exclude_cat:
+                    continue
+                for market in target_markets:
+                    tgt = row.target_mappings.get(market, "")
+                    if not tgt or " > " not in tgt:
+                        continue
+                    key = f"{site}|{src_cat}|{market}|{tgt}"
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    examples.append(f"  [{site}] {src_cat} → {market}: {tgt}")
+                    if len(examples) >= limit:
+                        break
+                if len(examples) >= limit:
+                    break
+            if len(examples) >= limit:
+                break
+
+        if not examples:
+            return ""
+        logger.info("[AI매핑] DB few-shot %d건 주입", len(examples))
+        return (
+            "\n[기존 매핑 참고 예시 — 동일 소싱처의 확정된 매핑]\n"
+            + "\n".join(examples)
+            + "\n"
+        )
+
     # ==================== Market Category Seed ====================
 
     async def seed_market_categories(self) -> Dict[str, int]:
@@ -365,6 +422,12 @@ class CategorySeedMixin:
         has_cat_list = bool(market_cat_lists)
         batch_size = 5 if has_cat_list else 10
 
+        # DB 기존 매핑 few-shot — 배치 전체에 공통 적용 (한 번만 조회)
+        batch_sites = list({item["site"] for item in items})
+        _db_fewshot_global = await self._get_db_fewshot_examples(
+            batch_sites, target_markets, limit=8
+        )
+
         for batch_start in range(0, len(items), batch_size):
             batch = items[batch_start : batch_start + batch_size]
 
@@ -523,8 +586,10 @@ class CategorySeedMixin:
                     cat_list_section = ""
                     cat_rule = "각 마켓의 허용된 카테고리 중에서만 선택. 존재하지 않는 카테고리 생성 금지."
 
-            # EXPORTED_RULES 기반 학습 예시 구성 (동일 소싱사이트+대분류 패턴)
-            fewshot_block = _build_fewshot_block(batch, target_markets)
+            # EXPORTED_RULES 기반 학습 예시 + DB 기존 매핑 few-shot 합산
+            fewshot_block = (
+                _build_fewshot_block(batch, target_markets) + _db_fewshot_global
+            )
 
             prompt = f"""소싱 카테고리를 판매 마켓 카테고리에 매핑.
 소비자가 검색할 키워드와 가장 일치하는 카테고리를 선택하세요.
@@ -616,6 +681,12 @@ JSON만 응답:
                                         f"[벌크매핑] '{suggested}' 패션 무관 카테고리 → 스킵"
                                     )
                                     continue
+                                # 대분류 단독 거부 — ' > ' 없으면 1단계 대분류
+                                if " > " not in suggested:
+                                    logger.warning(
+                                        f"[벌크매핑] '{suggested}' 대분류 단독 → 스킵"
+                                    )
+                                    continue
                                 # 동기화된 카테고리 목록에 있는지 검증
                                 market_cat_list = market_cat_lists.get(market, [])
                                 if not market_cat_list or suggested in market_cat_list:
@@ -684,11 +755,11 @@ JSON만 응답:
                         f"[매핑-룰] {source_site} > {source_category} → {m}: {rule} (성별:{gender})"
                     )
 
-        # 2단계: 유사도 매칭 (룰에서 못 찾은 마켓만)
+        # 2단계: 유사도 매칭 (룰에서 못 찾은 마켓만) — 리프만 허용
         for m in markets:
             if m in result:
                 continue
-            cats = await self._get_market_categories(m)
+            cats = _filter_to_leaves(await self._get_market_categories(m))
             if cats:
                 sim = _similarity_match_smartstore(source_category, cats)
                 if sim:
@@ -788,11 +859,17 @@ JSON만 응답:
             [{"site": source_site, "leaf_path": source_category}],
             list(market_cats.keys()),
         )
+        # DB 기존 매핑 few-shot (실시간 반영)
+        _db_fewshot = await self._get_db_fewshot_examples(
+            [source_site],
+            list(market_cats.keys()),
+            exclude_cat=source_category,
+        )
 
         prompt = f"""소싱 카테고리를 마켓 카테고리에 매핑.
 
 [소싱] {source_site} | {source_category} | 상품: {sample_str} | 태그: {tag_str or "-"} | 성별: {_gender_label}
-{_ref_lines}{_single_fewshot}
+{_ref_lines}{_single_fewshot}{_db_fewshot}
 [허용된 마켓 카테고리 — 이 중에서만 선택]
 {market_list_str}
 
@@ -804,7 +881,8 @@ JSON만 응답:
 5. 소싱 카테고리 경로에 "여성", "우먼즈", "여자" 단어가 있으면 반드시 여성 카테고리로 매핑.
 6. 패션 상품(의류/신발/가방)은 "패션의류"·"패션잡화" 대분류 우선. "스포츠/레저"는 소싱에 스포츠 키워드가 있을 때만 선택.
 7. 학습 예시가 있으면 동일 대분류·동일 성별 패턴을 따라 매핑하세요.
-8. 모든 마켓에 반드시 값을 채우세요. 빈값 금지.
+8. 확신이 없으면 빈 문자열("")로 남길 것. 억지로 맞지 않는 카테고리 선택 금지.
+9. 대분류 단독 선택 절대 금지. 반드시 ' > '가 1개 이상 포함된 2단계 이상 경로만 선택. (예 불가: "패션의류", "스포츠/레저" / 예 가능: "패션의류 > 남성의류 > 티셔츠")
 JSON만:
 {json.dumps({m: "" for m in market_cats}, ensure_ascii=False)}"""
 
@@ -863,6 +941,12 @@ JSON만:
             ai_validated: Dict[str, str] = {}
             for market, suggested in ai_result.items():
                 if market not in market_cats or not suggested:
+                    continue
+                # 대분류 단독 거부 — ' > ' 없으면 1단계 대분류
+                if " > " not in suggested:
+                    logger.warning(
+                        f"[AI매핑] {market}: '{suggested}' 대분류 단독 → 스킵"
+                    )
                     continue
                 if suggested in market_cats[market]:
                     ai_validated[market] = suggested
@@ -1102,16 +1186,17 @@ JSON만:
                             f"[매핑-룰] {site} > {leaf_path} → {mk}: {rule_result} (성별:{gender})"
                         )
 
-            # ── 2단계: 유사도 매칭 (룰에서 못 찾은 마켓만, 롯데ON 제외) ──
+            # ── 2단계: 유사도 매칭 (룰에서 못 찾은 마켓만, MUSINSA→롯데ON 제외) ──
             # ESM(지마켓/옥션): SS 매핑이 있으면 SS 결과를 브릿지로 사용
-            # 롯데ON은 카테고리 구조가 복잡하여 유사도 매칭이 오히려 오류를 유발 → 룰에서 못 찾으면 AI에 위임
+            # MUSINSA 소싱처는 카테고리 어휘 차이로 유사도 오류 유발 → 룰 미스 시 AI 위임
+            # 그 외 소싱처(GSSHOP, ABCmart 등)는 롯데ON 유사도 매칭 허용
             ss_mapped = current_targets.get("smartstore") or resolved.get(
                 "smartstore", ""
             )
             for mk in list(missing_markets):
                 if mk in resolved:
                     continue
-                if mk == "lotteon":
+                if mk == "lotteon" and site == "MUSINSA":
                     continue
                 mk_cats = (
                     ss_cats
