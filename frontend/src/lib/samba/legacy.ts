@@ -1501,6 +1501,10 @@ export const monitorApi = {
     request<Record<string, { account_id: string; account_label: string; market_type: string; grade: string; grade_code: string; good_service: Record<string, number> | null; penalty: number | null; penalty_rate: number | null; updated_at: string }>>(`${SAMBA_PREFIX}/monitor/store-scores`),
   refreshStoreScores: () =>
     request<{ success: boolean; accounts: number }>(`${SAMBA_PREFIX}/monitor/store-scores/refresh`, { method: 'POST' }),
+  siteChanges: (limit = 5) =>
+    request<Record<string, Record<string, Array<{ id: string; product_id: string | null; product_name: string | null; detail: Record<string, unknown> | null; created_at: string }>>>>(
+      `${SAMBA_PREFIX}/monitor/events/site-changes?limit=${limit}`,
+    ),
 }
 
 // ── S3 이미지 헬퍼 ──

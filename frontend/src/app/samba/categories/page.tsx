@@ -947,7 +947,7 @@ export default function CategoriesPage() {
 
   // 마켓 키 목록
   const marketKeys = Object.keys(MARKET_LABELS)
-  const gridCols = `80px 200px repeat(${marketKeys.length}, 150px) 40px`
+  const gridCols = `80px 260px repeat(${marketKeys.length}, 150px) 40px`
 
   const colStyle = {
     flex: 1,
@@ -1163,7 +1163,7 @@ export default function CategoriesPage() {
               <thead>
                 <tr style={{ display: 'grid', gridTemplateColumns: gridCols, borderBottom: '1px solid #2D2D2D', background: 'rgba(255,255,255,0.03)' }}>
                   <th style={{ padding: '0.625rem 0.75rem', textAlign: 'left', color: '#888', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden' }}>사이트</th>
-                  <th style={{ padding: '0.625rem 0.75rem', textAlign: 'left', color: '#888', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden' }}>소싱 카테고리</th>
+                  <th style={{ padding: '0.625rem 0.75rem', textAlign: 'center', color: '#888', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden' }}>소싱 카테고리</th>
                   {marketKeys.map(mk => (
                     <th key={mk} style={{ padding: '0.625rem 0.5rem', textAlign: 'left', color: '#888', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', minWidth: 0 }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.125rem' }}>

@@ -1918,11 +1918,12 @@ class JobWorker:
 
                 _m_brand = detail.get("brand", "") or ""
                 _m_name = detail.get("name", "") or ""
-                _add_job_log(
-                    job.id,
-                    f"[{total_saved:,}/{_total_count:,}] {_m_brand} {_m_name} {goods_no}",
-                    job_type="collect",
-                )
+                _m_style = detail.get("style_code", "") or ""
+                _m_log = f"[{total_saved:,}/{_total_count:,}] {_m_brand} {_m_name}"
+                if _m_style:
+                    _m_log += f" {_m_style}"
+                _m_log += f" {goods_no}"
+                _add_job_log(job.id, _m_log, job_type="collect")
                 if total_saved % 10 == 0:
                     await repo.update_progress(job.id, total_saved, _total_count or 1)
 
@@ -2811,12 +2812,15 @@ class JobWorker:
                     total_saved += 1
                     _collect_last_progress[job.id] = _time.time()
                     _log_brand = (detail_for_build.get("brand") or "").strip()
-                    _log_name = (detail_for_build.get("name") or "").strip()[:20]
-                    _add_job_log(
-                        job.id,
-                        f"[{total_saved:,}/{_ssg_total_est:,}] {_log_brand} {_log_name} {spid}",
-                        job_type="collect",
+                    _log_name = (detail_for_build.get("name") or "").strip()
+                    _log_style = (detail_for_build.get("style_code") or "").strip()
+                    _ssg_log = (
+                        f"[{total_saved:,}/{_ssg_total_est:,}] {_log_brand} {_log_name}"
                     )
+                    if _log_style:
+                        _ssg_log += f" {_log_style}"
+                    _ssg_log += f" {spid}"
+                    _add_job_log(job.id, _ssg_log, job_type="collect")
 
                 # 배치 간 1초 딜레이
                 await asyncio.sleep(1.0)
@@ -2975,11 +2979,14 @@ class JobWorker:
                     )
                     await svc.create_collected_product(_pd)
                     total_saved += 1
-                    _add_job_log(
-                        job.id,
-                        f"[재시도 R{_round_idx}][{total_saved:,}/{_ssg_total_est:,}] {(_d4build.get('brand') or '').strip()} {(_d4build.get('name') or '')[:20]} {_spid}",
-                        job_type="collect",
-                    )
+                    _r_brand = (_d4build.get("brand") or "").strip()
+                    _r_name = (_d4build.get("name") or "").strip()
+                    _r_style = (_d4build.get("style_code") or "").strip()
+                    _r_log = f"[재시도 R{_round_idx}][{total_saved:,}/{_ssg_total_est:,}] {_r_brand} {_r_name}"
+                    if _r_style:
+                        _r_log += f" {_r_style}"
+                    _r_log += f" {_spid}"
+                    _add_job_log(job.id, _r_log, job_type="collect")
                 _add_job_log(
                     job.id,
                     f"[재시도 R{_round_idx}] 완료 — 남은 실패 {len(_failed_queue):,}건",
@@ -4792,12 +4799,13 @@ class JobWorker:
                     job.id, existing_count + total_saved, requested_count
                 )
                 _log_b = item.get("brand", "") or ""
-                _log_n = (p_name or "")[:20]
-                _add_job_log(
-                    job.id,
-                    f"[{existing_count + total_saved:,}/{requested_count:,}] {_log_b} {_log_n} {p_id}",
-                    job_type="collect",
-                )
+                _log_n = p_name or ""
+                _log_s = item.get("style_code", "") or ""
+                _fp_log = f"[{existing_count + total_saved:,}/{requested_count:,}] {_log_b} {_log_n}"
+                if _log_s:
+                    _fp_log += f" {_log_s}"
+                _fp_log += f" {p_id}"
+                _add_job_log(job.id, _fp_log, job_type="collect")
             except Exception as e:
                 logger.warning(f"[잡워커] {site} 저장 실패 {p_id}: {e}")
 

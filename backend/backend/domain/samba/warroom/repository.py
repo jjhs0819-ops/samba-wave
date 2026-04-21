@@ -103,6 +103,46 @@ class SambaMonitorEventRepository(BaseRepository[SambaMonitorEvent]):
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
+    async def list_changes_per_site(
+        self,
+        event_types: List[str],
+        per_site_limit: int = 5,
+    ) -> List[SambaMonitorEvent]:
+        """소싱처·이벤트타입별 최신 N건 조회 (price_changed/sold_out 등)."""
+        from sqlalchemy import literal_column
+
+        row_num = (
+            func.row_number()
+            .over(
+                partition_by=[
+                    SambaMonitorEvent.source_site,
+                    SambaMonitorEvent.event_type,
+                ],
+                order_by=SambaMonitorEvent.created_at.desc(),
+            )
+            .label("rn")
+        )
+
+        subq = (
+            select(SambaMonitorEvent.id, row_num).where(
+                SambaMonitorEvent.event_type.in_(event_types),
+                SambaMonitorEvent.source_site.is_not(None),
+            )
+        ).subquery()
+
+        stmt = (
+            select(SambaMonitorEvent)
+            .join(subq, SambaMonitorEvent.id == subq.c.id)
+            .where(literal_column("rn") <= per_site_limit)
+            .order_by(
+                SambaMonitorEvent.source_site,
+                SambaMonitorEvent.event_type,
+                SambaMonitorEvent.created_at.desc(),
+            )
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
     async def cleanup_old(self, before: datetime) -> int:
         """오래된 이벤트 정리."""
         from sqlalchemy import delete as sa_delete

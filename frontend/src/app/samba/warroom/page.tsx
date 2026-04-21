@@ -203,6 +203,8 @@ export default function WarroomPage() {
   useEffect(() => { document.title = 'SAMBA-오토튠' }, [])
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [events, setEvents] = useState<MonitorEvent[]>([])
+  const [siteChanges, setSiteChanges] = useState<Record<string, Record<string, Array<{ id: string; product_id: string | null; product_name: string | null; detail: Record<string, unknown> | null; created_at: string }>>>>({})
+
   const [loading, setLoading] = useState(true)
   const [lastFetched, setLastFetched] = useState<Date | null>(null)
   const [storeScores, setStoreScores] = useState<Record<string, StoreScore>>({})
@@ -352,6 +354,7 @@ export default function WarroomPage() {
     if (cycles > prevCyclesRef.current) {
       prevCyclesRef.current = cycles
       monitorApi.recentEvents(30).then(ev => setEvents(ev)).catch(() => {})
+      monitorApi.siteChanges(5).then(c => { if (c && Object.keys(c).length > 0) setSiteChanges(c) }).catch(() => {})
     }
   }, [])
 
@@ -366,15 +369,17 @@ export default function WarroomPage() {
 
   const load = useCallback(async () => {
     try {
-      const [dashboard, recentEvents, probeStatus, atStatus, scores] = await Promise.all([
+      const [dashboard, recentEvents, probeStatus, atStatus, scores, changes] = await Promise.all([
         monitorApi.dashboard().catch(() => null),
         monitorApi.recentEvents(30).catch(() => []),
         collectorApi.probeStatus().catch(() => ({})) as Promise<Record<string, Record<string, Record<string, unknown>>>>,
         collectorApi.autotuneStatus().catch(() => ({ running: false, last_tick: null, cycle_count: 0, restart_count: 0, target: 'registered', refreshed_count: 0, breaker_tripped: {} as Record<string, number> })) as ReturnType<typeof collectorApi.autotuneStatus>,
         monitorApi.storeScores().catch(() => ({})),
+        monitorApi.siteChanges(5).catch(() => ({})),
       ])
       if (dashboard) setStats(dashboard)
       setEvents(recentEvents)
+      if (changes && Object.keys(changes).length > 0) setSiteChanges(changes)
       if (probeStatus && Object.keys(probeStatus).length > 0) setProbeData(probeStatus)
       // 오토튠 상태는 handleAutotuneStatus를 통해 처리 (falseCountRef 가드 적용, 경쟁 상태 방지)
       handleAutotuneStatus(atStatus.running, atStatus.cycle_count, atStatus.last_tick, atStatus.refreshed_count || 0)
@@ -756,6 +761,68 @@ export default function WarroomPage() {
                                   </span>
                                 )}
                               </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+            {/* 소싱처별 최근 수정 상품 내역 */}
+            {Object.keys(tickEventsBySite).length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                {Object.keys(tickEventsBySite).map(siteName => {
+                  const sitePriceChanges = siteChanges[siteName]?.price_changed ?? []
+                  const siteSoldOuts = siteChanges[siteName]?.sold_out ?? []
+                  if (sitePriceChanges.length === 0 && siteSoldOuts.length === 0) return null
+                  const siteColor = SITE_COLORS[siteName] || '#888'
+                  const fmtT = (iso: string) => {
+                    const d = new Date(iso)
+                    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
+                  }
+                  const shortId = (id: string | null) => id ? id.slice(-8) : '-'
+                  return (
+                    <div key={`changes-${siteName}`} style={{
+                      flex: '1 1 200px',
+                      padding: '0.5rem 0.6rem',
+                      borderRadius: '6px',
+                      border: `1px solid ${siteColor}20`,
+                      background: `${siteColor}05`,
+                    }}>
+                      <div style={{ fontSize: '0.65rem', color: '#666', marginBottom: '0.3rem', fontWeight: 600 }}>
+                        {siteName} 점검
+                      </div>
+                      {siteSoldOuts.map(ev => {
+                        const d = ev.detail
+                        const status = d?.sale_status as string | undefined
+                        return (
+                          <div key={ev.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
+                            <span style={{ fontSize: '0.6rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
+                            <span style={{ fontSize: '0.6rem', color: '#aaa', fontFamily: 'monospace' }}>{shortId(ev.product_id)}</span>
+                            <span style={{ fontSize: '0.6rem', color: '#A78BFA' }}>재고변동</span>
+                            <span style={{ fontSize: '0.6rem', color: status === 'SUSPENSION' ? '#FF6B6B' : '#51CF66' }}>
+                              {status === 'SUSPENSION' ? '품절' : status ?? '변동'}
+                            </span>
+                          </div>
+                        )
+                      })}
+                      {sitePriceChanges.map(ev => {
+                        const d = ev.detail
+                        const oldP = d?.old_price as number | undefined
+                        const newP = d?.new_price as number | undefined
+                        const pct = d?.diff_pct as number | undefined
+                        const sign = pct != null && pct > 0 ? '+' : ''
+                        return (
+                          <div key={ev.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
+                            <span style={{ fontSize: '0.6rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
+                            <span style={{ fontSize: '0.6rem', color: '#aaa', fontFamily: 'monospace' }}>{shortId(ev.product_id)}</span>
+                            <span style={{ fontSize: '0.6rem', color: '#FFB347' }}>가격변동</span>
+                            {oldP != null && newP != null && (
+                              <span style={{ fontSize: '0.6rem', color: (pct ?? 0) > 0 ? '#FF6B6B' : '#51CF66' }}>
+                                ₩{fmtNum(oldP)}→₩{fmtNum(newP)}{pct != null ? ` (${sign}${pct}%)` : ''}
+                              </span>
                             )}
                           </div>
                         )

@@ -117,6 +117,38 @@ async def list_price_changes(
     ]
 
 
+@router.get("/events/site-changes")
+async def list_site_changes(
+    limit: int = Query(5, ge=1, le=20),
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """소싱처별 최근 가격변동·재고변동 이벤트 (각 N건)."""
+    repo = SambaMonitorEventRepository(session)
+    events = await repo.list_changes_per_site(
+        event_types=["price_changed", "sold_out"],
+        per_site_limit=limit,
+    )
+
+    result: dict[str, dict[str, list]] = {}
+    for e in events:
+        site = e.source_site or "기타"
+        etype = e.event_type
+        if site not in result:
+            result[site] = {}
+        if etype not in result[site]:
+            result[site][etype] = []
+        result[site][etype].append(
+            {
+                "id": e.id,
+                "product_id": e.product_id,
+                "product_name": e.product_name,
+                "detail": e.detail,
+                "created_at": e.created_at.isoformat(),
+            }
+        )
+    return result
+
+
 @router.get("/site-health")
 async def get_site_health(
     session: AsyncSession = Depends(get_read_session_dependency),
