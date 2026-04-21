@@ -223,6 +223,95 @@ async def lotteon_auth_test(
 
 
 # ═══════════════════════════════════════════════
+# 롯데ON 배송비정책 / 출고지 회수지 목록
+# ═══════════════════════════════════════════════
+
+
+@router.get("/lotteon/delivery-policies")
+async def lotteon_delivery_policies(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """롯데ON 배송비정책 목록 조회."""
+    creds = await _get_setting(session, "store_lotteon")
+    api_key = ((creds or {}).get("apiKey", "") or "").strip()
+    if not api_key:
+        return {"success": False, "policies": []}
+    try:
+        from backend.domain.samba.proxy.lotteon import LotteonClient
+
+        client = LotteonClient(api_key)
+        await client.test_auth()
+        result = await client.get_delivery_policies()
+        items = result.get("data", []) or []
+        fee_map = {"A": "유료", "B": "무료", "C": "조건부"}
+        policies = []
+        for item in items:
+            if item.get("useYn") != "Y":
+                continue
+            pol_no = item.get("dvCstPolNo", "")
+            pol_nm = item.get("dvCstPolNm", "")
+            fee_type = fee_map.get(item.get("dvCstDvsCd", ""), "")
+            fee = item.get("dvCst", 0)
+            island = item.get("inrmAdtnDvCst", 0)
+            parts = [p for p in [pol_no, pol_nm] if p]
+            if fee_type:
+                parts.append(fee_type)
+            try:
+                if fee and float(fee):
+                    parts.append(f"{int(float(fee)):,}원")
+            except (ValueError, TypeError):
+                pass
+            try:
+                if island and float(island):
+                    parts.append(f"도서+{int(float(island)):,}원")
+            except (ValueError, TypeError):
+                pass
+            policies.append({"value": pol_no, "label": " / ".join(parts)})
+        return {"success": True, "policies": policies}
+    except Exception as exc:
+        logger.error(f"[롯데ON] 배송비정책 조회 실패: {exc}")
+        return {"success": False, "policies": [], "message": str(exc)}
+
+
+@router.get("/lotteon/warehouses")
+async def lotteon_warehouses(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """롯데ON 출고지/회수지 목록 조회."""
+    creds = await _get_setting(session, "store_lotteon")
+    api_key = ((creds or {}).get("apiKey", "") or "").strip()
+    if not api_key:
+        return {"success": False, "departure": [], "return_": []}
+    try:
+        from backend.domain.samba.proxy.lotteon import LotteonClient
+
+        client = LotteonClient(api_key)
+        await client.test_auth()
+        result = await client.get_warehouses()
+        items = result.get("data", []) or []
+        departure: list[dict[str, str]] = []
+        return_: list[dict[str, str]] = []
+        for item in items:
+            if item.get("useYn") != "Y":
+                continue
+            addr = (
+                f"{item.get('stnmZipAddr', '')} {item.get('stnmDtlAddr', '')}".strip()
+            )
+            dvp_no = item.get("dvpNo", "")
+            dvp_nm = item.get("dvpNm", "")
+            label = f"{dvp_no} / {dvp_nm}" + (f" ({addr})" if addr else "")
+            entry = {"value": dvp_no, "label": label}
+            if item.get("dvpTypCd") == "02":
+                departure.append(entry)
+            elif item.get("dvpTypCd") == "01":
+                return_.append(entry)
+        return {"success": True, "departure": departure, "return_": return_}
+    except Exception as exc:
+        logger.error(f"[롯데ON] 출고지/회수지 조회 실패: {exc}")
+        return {"success": False, "departure": [], "return_": [], "message": str(exc)}
+
+
+# ═══════════════════════════════════════════════
 # SSG Open API 인증 테스트
 # ═══════════════════════════════════════════════
 

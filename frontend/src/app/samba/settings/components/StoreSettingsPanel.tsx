@@ -15,6 +15,8 @@ type Props = StoreSettingsState & Pick<StoreSettingsActions,
   'updateStoreField' | 'saveStoreSettings' | 'testStoreAuth' |
   'handleAccountToggle' | 'handleAccountDelete' | 'togglePasswordVisibility' |
   'setStoreTab' | 'setStoreData' | 'setSsgShippingOptions' | 'setSsgAddrOptions' |
+  'setEsmPlaceOptions' | 'setEsmDispatchOptions' |
+  'setLotteonDeliveryPolicyOptions' | 'setLotteonWarehouseOptions' |
   'setEditingAccountId' | 'setVisiblePasswords' | 'setNetworkIps' | 'saveNetworkIps'
 >
 
@@ -29,6 +31,10 @@ export function StoreSettingsPanel(props: Props) {
     editingAccountId,
     ssgShippingOptions,
     ssgAddrOptions,
+    esmPlaceOptions,
+    esmDispatchOptions,
+    lotteonDeliveryPolicyOptions,
+    lotteonWarehouseOptions,
     networkIps,
     networkIpStatus,
     updateStoreField,
@@ -41,6 +47,10 @@ export function StoreSettingsPanel(props: Props) {
     setStoreData,
     setSsgShippingOptions,
     setSsgAddrOptions,
+    setEsmPlaceOptions,
+    setEsmDispatchOptions,
+    setLotteonDeliveryPolicyOptions,
+    setLotteonWarehouseOptions,
     setEditingAccountId,
     setNetworkIps,
   } = props
@@ -158,6 +168,39 @@ export function StoreSettingsPanel(props: Props) {
               {market.fields.map(field => field.type === 'divider' ? (
                 <div key={field.name} style={{ borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem', marginTop: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                   <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#FFB84D' }}>{field.label}</span>
+                  {(market.key === 'gmarket' || market.key === 'auction') && field.name === '_divider_shipping' && (
+                    <button
+                      onClick={async () => {
+                        try {
+                          const data = storeData[market.key] || savedStoreData[market.key] || {}
+                          if (!data.hostingId || !data.secretKey) {
+                            showAlert('호스팅사 ID와 시크릿 키를 먼저 입력하고 저장해주세요.', 'error')
+                            return
+                          }
+                          await forbiddenApi.saveSetting(`store_${market.key}`, data)
+                          const res = await proxyApi.esmDeliveryInfo(market.key, editingAccountId || undefined)
+                          if (!res.success) {
+                            showAlert(res.message || '배송정보를 불러올 수 없습니다.', 'error')
+                            return
+                          }
+                          const places = (res.places || []).map((p: { placeNo: number; placeNm: string; placeType?: number }) => ({
+                            value: String(p.placeNo),
+                            label: `[${p.placeType === 2 ? '반품지' : '출고지'}] ${p.placeNm} (${p.placeNo})`,
+                          }))
+                          const dispatches = (res.dispatchPolicies || []).map((d: { dispatchPolicyNo: number; policyNm: string }) => ({
+                            value: String(d.dispatchPolicyNo),
+                            label: `${d.policyNm} (${d.dispatchPolicyNo})`,
+                          }))
+                          setEsmPlaceOptions(prev => ({ ...prev, [market.key]: places }))
+                          setEsmDispatchOptions(prev => ({ ...prev, [market.key]: dispatches }))
+                          showAlert(`출고지/반품지 ${places.length}개, 발송정책 ${dispatches.length}개를 불러왔습니다.`, 'success')
+                        } catch {
+                          showAlert('배송정보 조회 실패', 'error')
+                        }
+                      }}
+                      style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                    >배송정보 불러오기</button>
+                  )}
                   {market.key === 'ssg' && field.name === '_divider_shipping_code' && (
                     <button
                       onClick={async () => {
@@ -195,6 +238,25 @@ export function StoreSettingsPanel(props: Props) {
                       }}
                       style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
                     >배송비/주소 불러오기</button>
+                  )}
+                  {market.key === 'lotteon' && field.name === '_divider_shipping_infra' && (
+                    <button
+                      onClick={async () => {
+                        try {
+                          const data = storeData['lotteon'] || savedStoreData['lotteon'] || {}
+                          if (!data.apiKey) { showAlert('API Key를 먼저 입력하세요.', 'error'); return }
+                          await forbiddenApi.saveSetting('store_lotteon', data)
+                          const [polRes, whRes] = await Promise.all([
+                            proxyApi.lotteonDeliveryPolicies(),
+                            proxyApi.lotteonWarehouses(),
+                          ])
+                          if (polRes.success) setLotteonDeliveryPolicyOptions(polRes.policies)
+                          if (whRes.success) setLotteonWarehouseOptions({ departure: whRes.departure, return_: whRes.return_ })
+                          showAlert('배송정책/출고지/회수지 정보를 불러왔습니다.', 'success')
+                        } catch { showAlert('불러오기 실패', 'error') }
+                      }}
+                      style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                    >배송정책/출고지 불러오기</button>
                   )}
                 </div>
               ) : field.type === 'info' ? (
@@ -235,7 +297,25 @@ export function StoreSettingsPanel(props: Props) {
               ) : (
                 <div key={field.name} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                   <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '180px', flexShrink: 0 }}>{field.label}</label>
-                  {(field.type === 'ssg-shipping-select' || field.type === 'ssg-extra-select') ? (
+                  {field.type === 'esm-place-select' ? (
+                    <select
+                      style={{ ...inputStyle, flex: 1 }}
+                      value={storeData[market.key]?.[field.name] || ''}
+                      onChange={(e) => updateStoreField(market.key, field.name, e.target.value)}
+                    >
+                      <option value=''>불러오기 버튼으로 선택</option>
+                      {(esmPlaceOptions[market.key] || []).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  ) : field.type === 'esm-dispatch-select' ? (
+                    <select
+                      style={{ ...inputStyle, flex: 1 }}
+                      value={storeData[market.key]?.[field.name] || ''}
+                      onChange={(e) => updateStoreField(market.key, field.name, e.target.value)}
+                    >
+                      <option value=''>불러오기 버튼으로 선택</option>
+                      {(esmDispatchOptions[market.key] || []).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  ) : (field.type === 'ssg-shipping-select' || field.type === 'ssg-extra-select') ? (
                     <select
                       style={{ ...inputStyle, flex: 1 }}
                       value={storeData[market.key]?.[field.name] || ''}
@@ -260,6 +340,33 @@ export function StoreSettingsPanel(props: Props) {
                     >
                       <option value=''>버튼으로 불러오기</option>
                       {ssgAddrOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  ) : field.type === 'lotteon-policy-select' ? (
+                    <select
+                      style={{ ...inputStyle, flex: 1 }}
+                      value={storeData[market.key]?.[field.name] || ''}
+                      onChange={(e) => updateStoreField(market.key, field.name, e.target.value)}
+                    >
+                      <option value=''>-- 불러오기 버튼으로 선택 --</option>
+                      {lotteonDeliveryPolicyOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  ) : field.type === 'lotteon-departure-select' ? (
+                    <select
+                      style={{ ...inputStyle, flex: 1 }}
+                      value={storeData[market.key]?.[field.name] || ''}
+                      onChange={(e) => updateStoreField(market.key, field.name, e.target.value)}
+                    >
+                      <option value=''>-- 불러오기 버튼으로 선택 --</option>
+                      {lotteonWarehouseOptions.departure.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  ) : field.type === 'lotteon-return-select' ? (
+                    <select
+                      style={{ ...inputStyle, flex: 1 }}
+                      value={storeData[market.key]?.[field.name] || ''}
+                      onChange={(e) => updateStoreField(market.key, field.name, e.target.value)}
+                    >
+                      <option value=''>-- 불러오기 버튼으로 선택 --</option>
+                      {lotteonWarehouseOptions.return_.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                     </select>
                   ) : field.type === 'select' ? (
                     <select

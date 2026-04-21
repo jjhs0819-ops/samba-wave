@@ -258,6 +258,12 @@ class GMarketMarketPlugin(MarketPlugin):
                 product["_dispatch_policy_no"] = int(extras["dispatchPolicyNo"])
             if extras.get("shippingPlaceNo"):
                 product["_shipping_place_no"] = int(extras["shippingPlaceNo"])
+            if extras.get("returnPlaceNo"):
+                product["_return_place_no"] = int(extras["returnPlaceNo"])
+            if extras.get("shippingFeeType"):
+                product["_delivery_fee_type"] = extras["shippingFeeType"]
+            if extras.get("shippingFee"):
+                product["_delivery_base_fee"] = int(extras["shippingFee"])
 
         # 정책에서 배송비/재고 제한 읽기
         policy_id = product.get("applied_policy_id")

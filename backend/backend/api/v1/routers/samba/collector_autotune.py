@@ -46,6 +46,9 @@ _pending_cost_increase: dict[str, float] = {}
 _site_tasks: dict[str, asyncio.Task] = {}  # 소싱처별 asyncio 태스크
 _site_cycle_counts: dict[str, int] = {}  # 소싱처별 누적 사이클 수
 _site_last_ticks: dict[str, str] = {}  # 소싱처별 마지막 tick 시간
+_site_empty_hits: dict[str, int] = {}  # 소싱처별 연속 빈 products 횟수
+SITE_EMPTY_SKIP_THRESHOLD = 3  # N회 연속 빈 결과 시 해당 소싱처 60초 제외
+_site_empty_skip_until: dict[str, float] = {}  # {소싱처: 제외 해제 시각(time.time())}
 
 # Watchdog — stuck 감지/복구
 _site_heartbeats: dict[str, float] = {}  # {소싱처: time.time()}
@@ -1251,9 +1254,20 @@ async def _site_autotune_loop(site: str):
                             deleted_count,
                         )
                     else:
-                        log.info("[오토튠][%s] 대상 상품 없음 — 루프 종료", site)
+                        _site_empty_hits[site] = _site_empty_hits.get(site, 0) + 1
+                        if _site_empty_hits[site] >= SITE_EMPTY_SKIP_THRESHOLD:
+                            _site_empty_skip_until[site] = time.time() + 60
+                            log.info(
+                                "[오토튠][%s] 대상 상품 없음 (%d회 연속) — 60초 제외",
+                                site,
+                                _site_empty_hits[site],
+                            )
+                            _site_empty_hits[site] = 0
+                        else:
+                            log.info("[오토튠][%s] 대상 상품 없음 — 루프 종료", site)
                         break
 
+                    _site_empty_hits[site] = 0  # 정상 사이클 → 카운터 리셋
                     _site_cycle_counts[site] = _site_cycle_counts.get(site, 0) + 1
                     _site_last_ticks[site] = now.isoformat()
                     log.info(
@@ -1415,6 +1429,14 @@ async def _autotune_loop():
                     # 서킷브레이커 제외
                     active_sites = [
                         s for s in active_sites if not _site_breaker_tripped.get(s)
+                    ]
+
+                    # 연속 빈 결과 소싱처 일시 제외
+                    _now_skip = time.time()
+                    active_sites = [
+                        s
+                        for s in active_sites
+                        if _now_skip >= _site_empty_skip_until.get(s, 0)
                     ]
 
                 # 소싱처별 독립 루프 태스크 생성
@@ -1588,6 +1610,8 @@ async def auto_start_if_enabled():
                 _site_cycle_counts.clear()
                 _site_last_ticks.clear()
                 _site_tasks.clear()
+                _site_empty_hits.clear()
+                _site_empty_skip_until.clear()
                 clear_bulk_cancel()
                 _autotune_task = asyncio.create_task(_autotune_loop())
                 logger.info("[오토튠] 서버 시작 — DB 설정에 따라 자동 시작")
@@ -1847,6 +1871,8 @@ async def autotune_start(
     _site_last_ticks.clear()
     _site_tasks.clear()
     _site_heartbeats.clear()
+    _site_empty_hits.clear()
+    _site_empty_skip_until.clear()
     clear_bulk_cancel()
     _autotune_task = asyncio.create_task(_autotune_loop())
     if not body.target_product_no:
@@ -1869,6 +1895,8 @@ async def autotune_stop():
         if not _st.done():
             _st.cancel()
     _site_tasks.clear()
+    _site_empty_hits.clear()
+    _site_empty_skip_until.clear()
     if _autotune_task and not _autotune_task.done():
         _autotune_task.cancel()
     _autotune_task = None

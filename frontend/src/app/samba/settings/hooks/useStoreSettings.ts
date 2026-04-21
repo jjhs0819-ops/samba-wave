@@ -22,6 +22,10 @@ export interface StoreSettingsState {
   editingAccountId: string | null
   ssgShippingOptions: { value: string; label: string; divCd: number }[]
   ssgAddrOptions: { value: string; label: string }[]
+  esmPlaceOptions: Record<string, { value: string; label: string }[]>
+  esmDispatchOptions: Record<string, { value: string; label: string }[]>
+  lotteonDeliveryPolicyOptions: { value: string; label: string }[]
+  lotteonWarehouseOptions: { departure: { value: string; label: string }[]; return_: { value: string; label: string }[] }
   networkIps: { web: string; local: string }
   networkIpStatus: string
 }
@@ -39,6 +43,10 @@ export interface StoreSettingsActions {
   setStoreData: React.Dispatch<React.SetStateAction<Record<string, Record<string, string>>>>
   setSsgShippingOptions: React.Dispatch<React.SetStateAction<{ value: string; label: string; divCd: number }[]>>
   setSsgAddrOptions: React.Dispatch<React.SetStateAction<{ value: string; label: string }[]>>
+  setEsmPlaceOptions: React.Dispatch<React.SetStateAction<Record<string, { value: string; label: string }[]>>>
+  setEsmDispatchOptions: React.Dispatch<React.SetStateAction<Record<string, { value: string; label: string }[]>>>
+  setLotteonDeliveryPolicyOptions: React.Dispatch<React.SetStateAction<{ value: string; label: string }[]>>
+  setLotteonWarehouseOptions: React.Dispatch<React.SetStateAction<{ departure: { value: string; label: string }[]; return_: { value: string; label: string }[] }>>
   setEditingAccountId: (id: string | null) => void
   setVisiblePasswords: React.Dispatch<React.SetStateAction<Set<string>>>
   setNetworkIps: React.Dispatch<React.SetStateAction<{ web: string; local: string }>>
@@ -56,6 +64,10 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
   const [editingAccountId, setEditingAccountId] = useState<string | null>(null)
   const [ssgShippingOptions, setSsgShippingOptions] = useState<{ value: string; label: string; divCd: number }[]>([])
   const [ssgAddrOptions, setSsgAddrOptions] = useState<{ value: string; label: string }[]>([])
+  const [esmPlaceOptions, setEsmPlaceOptions] = useState<Record<string, { value: string; label: string }[]>>({})
+  const [esmDispatchOptions, setEsmDispatchOptions] = useState<Record<string, { value: string; label: string }[]>>({})
+  const [lotteonDeliveryPolicyOptions, setLotteonDeliveryPolicyOptions] = useState<{ value: string; label: string }[]>([])
+  const [lotteonWarehouseOptions, setLotteonWarehouseOptions] = useState<{ departure: { value: string; label: string }[]; return_: { value: string; label: string }[] }>({ departure: [], return_: [] })
   const [networkIps, setNetworkIps] = useState({ web: '', local: '' })
   const [networkIpStatus, setNetworkIpStatus] = useState('')
 
@@ -238,14 +250,14 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
       } else if (marketKey === 'lotteon') {
         const lotteonResult = await proxyApi.lotteonAuthTest()
         result = lotteonResult
-        // 인증 성공 시 배송인프라 값을 폼에 자동 반영
-        if (lotteonResult.success && lotteonResult.data) {
-          const infra = lotteonResult.data
-          const updated = { ...data }
-          if (infra.dvCstPolNo && !data.dvCstPolNo) updated.dvCstPolNo = infra.dvCstPolNo
-          if (infra.owhpNo && !data.owhpNo) updated.owhpNo = infra.owhpNo
-          if (infra.rtrpNo && !data.rtrpNo) updated.rtrpNo = infra.rtrpNo
-          setStoreData(prev => ({ ...prev, [marketKey]: updated }))
+        // 인증 성공 시 배송비정책/출고지/회수지 목록 자동 로드
+        if (lotteonResult.success) {
+          const [polRes, whRes] = await Promise.all([
+            proxyApi.lotteonDeliveryPolicies(),
+            proxyApi.lotteonWarehouses(),
+          ])
+          if (polRes.success) setLotteonDeliveryPolicyOptions(polRes.policies)
+          if (whRes.success) setLotteonWarehouseOptions({ departure: whRes.departure, return_: whRes.return_ })
         }
       } else if (marketKey === 'ssg') {
         result = await proxyApi.ssgAuthTest()
@@ -297,6 +309,19 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
     }).catch(() => {})
   }, [storeTab, savedStoreData, storeData, ssgShippingOptions.length, ssgAddrOptions.length])
 
+  // 롯데ON 탭 진입 시 배송비정책/출고지/회수지 자동 로드
+  useEffect(() => {
+    if (storeTab !== 'lotteon') return
+    if (lotteonDeliveryPolicyOptions.length > 0 || lotteonWarehouseOptions.departure.length > 0) return
+    const d = savedStoreData['lotteon'] || storeData['lotteon'] || {}
+    if (!d.apiKey) return
+    Promise.all([proxyApi.lotteonDeliveryPolicies(), proxyApi.lotteonWarehouses()])
+      .then(([polRes, whRes]) => {
+        if (polRes.success) setLotteonDeliveryPolicyOptions(polRes.policies)
+        if (whRes.success) setLotteonWarehouseOptions({ departure: whRes.departure, return_: whRes.return_ })
+      }).catch(() => {})
+  }, [storeTab, savedStoreData, storeData, lotteonDeliveryPolicyOptions.length, lotteonWarehouseOptions.departure.length])
+
   const handleAccountToggle = async (id: string) => { await accountApi.toggle(id); loadAccounts() }
   const handleAccountDelete = async (id: string) => {
     if (!await showConfirm('삭제하시겠습니까?')) return
@@ -322,6 +347,10 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
     editingAccountId,
     ssgShippingOptions,
     ssgAddrOptions,
+    esmPlaceOptions,
+    esmDispatchOptions,
+    lotteonDeliveryPolicyOptions,
+    lotteonWarehouseOptions,
     networkIps,
     networkIpStatus,
     loadAccounts,
@@ -337,6 +366,10 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
     setStoreData,
     setSsgShippingOptions,
     setSsgAddrOptions,
+    setEsmPlaceOptions,
+    setEsmDispatchOptions,
+    setLotteonDeliveryPolicyOptions,
+    setLotteonWarehouseOptions,
     setEditingAccountId,
     setVisiblePasswords,
     setNetworkIps,

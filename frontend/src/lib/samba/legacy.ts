@@ -917,6 +917,15 @@ export const proxyApi = {
   lotteonAuthTest: () =>
     request<{ success: boolean; message: string; data?: Record<string, string> }>(
       `${SAMBA_PREFIX}/proxy/lotteon/auth-test`, { method: 'POST' }),
+  lotteonDeliveryPolicies: () =>
+    request<{ success: boolean; policies: { value: string; label: string }[] }>(
+      `${SAMBA_PREFIX}/proxy/lotteon/delivery-policies`),
+  lotteonWarehouses: () =>
+    request<{
+      success: boolean
+      departure: { value: string; label: string }[]
+      return_: { value: string; label: string }[]
+    }>(`${SAMBA_PREFIX}/proxy/lotteon/warehouses`),
   ssgAuthTest: () =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/ssg/auth-test`, { method: 'POST' }),
@@ -926,6 +935,9 @@ export const proxyApi = {
   ssgAddresses: (accountId?: string) =>
     request<{ success: boolean; addresses: { grpAddrId: string; addrNm: string; bascAddr: string }[] }>(
       `${SAMBA_PREFIX}/proxy/ssg/addresses${accountId ? `?account_id=${encodeURIComponent(accountId)}` : ''}`),
+  esmDeliveryInfo: (market: string, accountId?: string) =>
+    request<{ success: boolean; places: { placeNo: number; placeNm: string; placeType: number }[]; dispatchPolicies: { dispatchPolicyNo: number; policyNm: string }[]; message?: string }>(
+      `${SAMBA_PREFIX}/proxy/esm/${market}/delivery-info${accountId ? `?account_id=${encodeURIComponent(accountId)}` : ''}`),
   gsshopAuthTest: () =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/gsshop/auth-test`, { method: 'POST' }),

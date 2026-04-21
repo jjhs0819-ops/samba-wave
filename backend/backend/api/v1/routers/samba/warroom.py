@@ -63,7 +63,7 @@ async def list_events(
 @router.get("/events/recent")
 async def list_recent_events(
     limit: int = Query(50, ge=1, le=100),
-    session: AsyncSession = Depends(get_read_session_dependency),
+    session: AsyncSession = Depends(get_write_session_dependency),
 ):
     """최근 이벤트 — scheduler_tick 최신 3건 보장."""
     repo = SambaMonitorEventRepository(session)
@@ -120,7 +120,7 @@ async def list_price_changes(
 @router.get("/events/site-changes")
 async def list_site_changes(
     limit: int = Query(5, ge=1, le=20),
-    session: AsyncSession = Depends(get_read_session_dependency),
+    session: AsyncSession = Depends(get_write_session_dependency),
 ):
     """소싱처별 최근 가격변동·재고변동 이벤트 (각 N건)."""
     repo = SambaMonitorEventRepository(session)

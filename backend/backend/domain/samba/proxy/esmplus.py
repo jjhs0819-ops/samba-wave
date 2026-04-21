@@ -204,6 +204,26 @@ class ESMPlusClient:
         )
 
     # ------------------------------------------------------------------
+    # 배송 (출고지/반품지/발송정책)
+    # ------------------------------------------------------------------
+
+    async def get_places(self) -> list[dict[str, Any]]:
+        """출고지/반품지 목록 — GET /shipping/v1/places"""
+        try:
+            result = await self._call_api("GET", "/shipping/v1/places")
+            return result.get("places", [])
+        except Exception:
+            return []
+
+    async def get_dispatch_policies(self) -> list[dict[str, Any]]:
+        """발송정책 목록 — GET /shipping/v1/dispatch-policies"""
+        try:
+            result = await self._call_api("GET", "/shipping/v1/dispatch-policies")
+            return result.get("dispatchPolicies", [])
+        except Exception:
+            return []
+
+    # ------------------------------------------------------------------
     # 카테고리
     # ------------------------------------------------------------------
 
@@ -394,6 +414,7 @@ class ESMPlusClient:
         company_no = int(product.get("_shipping_company_no", 0) or 0)
         dispatch_policy_no = int(product.get("_dispatch_policy_no", 0) or 0)
         place_no = int(product.get("_shipping_place_no", 0) or 0)
+        return_place_no = int(product.get("_return_place_no", 0) or 0)
 
         shipping: dict[str, Any] = {
             "type": shipping_type,
@@ -402,8 +423,13 @@ class ESMPlusClient:
             shipping["companyNo"] = company_no
         if dispatch_policy_no:
             shipping["dispatchPolicyNo"] = dispatch_policy_no
+        policy_obj: dict[str, Any] = {}
         if place_no:
-            shipping["policy"] = {"placeNo": place_no}
+            policy_obj["placeNo"] = place_no
+        if return_place_no:
+            policy_obj["returnPlaceNo"] = return_place_no
+        if policy_obj:
+            shipping["policy"] = policy_obj
 
         if delivery_fee_type == "PAID" and delivery_base_fee > 0:
             shipping["fee"] = delivery_base_fee

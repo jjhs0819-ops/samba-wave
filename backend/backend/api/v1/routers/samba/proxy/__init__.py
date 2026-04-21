@@ -9,6 +9,7 @@ from . import (
     ai_tools,
     cafe24_oauth,
     config,
+    esmplus,
     gsshop,
     image_filter,
     kream,
@@ -27,6 +28,7 @@ from ._helpers import _get_setting, _set_setting
 router = APIRouter(prefix="/proxy", tags=["samba-proxy"])
 
 router.include_router(config.router)
+router.include_router(esmplus.router)
 router.include_router(notifications.router)
 router.include_router(message_history.router)
 router.include_router(smartstore.router)
