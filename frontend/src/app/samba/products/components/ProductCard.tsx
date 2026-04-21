@@ -60,6 +60,21 @@ const MARKET_NAME_LIMITS: Record<string, number> = {
   '옥션': 100,
 }
 
+// byte 기준 제한 마켓 (한글 3byte 기준)
+const MARKET_NAME_BYTE_LIMITS: Record<string, number> = {
+  '롯데ON': 150,
+}
+
+function truncateToBytes(text: string, maxBytes: number): string {
+  const encoded = new TextEncoder().encode(text)
+  if (encoded.length <= maxBytes) return text
+  return new TextDecoder('utf-8', { fatal: false }).decode(encoded.slice(0, maxBytes))
+}
+
+function getByteLength(text: string): number {
+  return new TextEncoder().encode(text).length
+}
+
 // 숫자 포맷 유틸
 function fmt(n: number): string {
   return fmtNum(n)
@@ -1452,11 +1467,20 @@ const ProductCard = React.memo(function ProductCard({
               {marketPriceList.length > 0 ? marketPriceList.map((m) => {
                 const marketNames = (p.market_names || {}) as Record<string, string>
                 const nameLimit = MARKET_NAME_LIMITS[m.marketName] || 100
+                const byteLimit = MARKET_NAME_BYTE_LIMITS[m.marketName]
                 const composedName = composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id), deletionWords)
                 const currentMarketName = marketNames[m.marketName] || ''
-                // 마켓별 개별 상품명이 없으면 조합명을 글자수 제한에 맞게 자름
-                const displayName = currentMarketName || (composedName.length > nameLimit ? composedName.slice(0, nameLimit) : composedName)
-                const isOverLimit = (currentMarketName || composedName).length > nameLimit
+                const baseText = currentMarketName || composedName
+                const displayName = byteLimit
+                  ? truncateToBytes(baseText, byteLimit)
+                  : (currentMarketName || (composedName.length > nameLimit ? composedName.slice(0, nameLimit) : composedName))
+                const isOverLimit = byteLimit
+                  ? getByteLength(baseText) > byteLimit
+                  : baseText.length > nameLimit
+                const countLabel = byteLimit
+                  ? `${getByteLength(displayName)}/${byteLimit}B`
+                  : `${displayName.length}/${nameLimit}`
+                const placeholder = byteLimit ? truncateToBytes(composedName, byteLimit) : composedName.slice(0, nameLimit)
                 return (
                 <tr key={m.marketName} style={{ borderBottom: '1px solid #1E1E1E' }}>
                   <td style={tdLabel}>{m.marketName}</td>
@@ -1510,7 +1534,7 @@ const ProductCard = React.memo(function ProductCard({
                         <input
                           type="text"
                           defaultValue={currentMarketName}
-                          placeholder={composedName.slice(0, nameLimit)}
+                          placeholder={placeholder}
                           style={{
                             width: '100%', padding: '2px 6px', fontSize: '0.72rem',
                             background: '#1A1A1A', border: `1px solid ${isOverLimit ? '#FF6B6B' : '#2D2D2D'}`,
@@ -1535,7 +1559,7 @@ const ProductCard = React.memo(function ProductCard({
                           onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
                         />
                         <span style={{ fontSize: '0.65rem', color: isOverLimit ? '#FF6B6B' : '#555', whiteSpace: 'nowrap' }}>
-                          {displayName.length}/{nameLimit}
+                          {countLabel}
                         </span>
                       </div>
                     </div>
@@ -1569,9 +1593,19 @@ const ProductCard = React.memo(function ProductCard({
                   const mkt = MARKETS.find(m => m.id === rm.marketId)
                   const mktName = mkt?.name || rm.marketId
                   const nameLimit = MARKET_NAME_LIMITS[mktName] || 100
+                  const byteLimit = MARKET_NAME_BYTE_LIMITS[mktName]
                   const curName = _mktNames[mktName] || ''
-                  const dispName = curName || (_composed.length > nameLimit ? _composed.slice(0, nameLimit) : _composed)
-                  const isOver = (curName || _composed).length > nameLimit
+                  const baseText = curName || _composed
+                  const dispName = byteLimit
+                    ? truncateToBytes(baseText, byteLimit)
+                    : (curName || (_composed.length > nameLimit ? _composed.slice(0, nameLimit) : _composed))
+                  const isOver = byteLimit
+                    ? getByteLength(baseText) > byteLimit
+                    : baseText.length > nameLimit
+                  const cntLabel = byteLimit
+                    ? `${getByteLength(dispName)}/${byteLimit}B`
+                    : `${dispName.length}/${nameLimit}`
+                  const ph = byteLimit ? truncateToBytes(_composed, byteLimit) : _composed.slice(0, nameLimit)
                   return (
                     <tr key={`store-name-${rm.accId}`} style={{ borderBottom: '1px solid #1E1E1E' }}>
                       <td style={tdLabel}>{mktName}</td>
@@ -1580,7 +1614,7 @@ const ProductCard = React.memo(function ProductCard({
                           <input
                             type="text"
                             defaultValue={curName}
-                            placeholder={_composed.slice(0, nameLimit)}
+                            placeholder={ph}
                             style={{
                               width: '100%', padding: '2px 6px', fontSize: '0.72rem',
                               background: '#1A1A1A', border: `1px solid ${isOver ? '#FF6B6B' : '#2D2D2D'}`,
@@ -1604,7 +1638,7 @@ const ProductCard = React.memo(function ProductCard({
                             onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
                           />
                           <span style={{ fontSize: '0.65rem', color: isOver ? '#FF6B6B' : '#555', whiteSpace: 'nowrap' }}>
-                            {dispName.length}/{nameLimit}
+                            {cntLabel}
                           </span>
                         </div>
                       </td>
