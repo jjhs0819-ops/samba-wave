@@ -518,7 +518,7 @@ export const collectorApi = {
   dashboardStats: () =>
     request<{
       by_source: { source_site: string; total: number; registered: number; sold_out: number; brands: { brand: string; total: number; registered: number; sold_out: number }[] }[]
-      by_account: { account_id: string; market_name: string; account_label: string; registered: number; brands: { brand: string; registered: number }[] }[]
+      by_account: { account_id: string; market_name: string; account_label: string; registered: number; brands: { source_site: string; brand: string; registered: number }[] }[]
     }>(`${SAMBA_PREFIX}/collector/products/dashboard-stats`),
   categoryTree: () =>
     request<{ source_site: string; category: string; count: number }[]>(`${SAMBA_PREFIX}/collector/products/category-tree`),

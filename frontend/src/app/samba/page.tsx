@@ -11,7 +11,7 @@ function formatShortDate(d: Date) {
 
 type SourceBrand = { brand: string; total: number; registered: number; sold_out: number }
 type SourceStat = { source_site: string; total: number; registered: number; sold_out: number; brands: SourceBrand[] }
-type AccountBrand = { brand: string; registered: number }
+type AccountBrand = { source_site: string; brand: string; registered: number }
 type AccountStat = { account_id: string; market_name: string; account_label: string; registered: number; brands: AccountBrand[] }
 
 export default function SambaDashboard() {
@@ -359,7 +359,7 @@ export default function SambaDashboard() {
                     </tr>
                     {isExpanded && a.brands.map((b) => (
                       <tr key={`${a.account_id}-${b.brand}`} style={{ borderBottom: '1px solid rgba(45,45,45,0.15)', background: 'rgba(255,255,255,0.02)' }}>
-                        <td style={{ padding: '0.3rem 0 0.3rem 1.25rem', color: '#888', fontSize: '0.8125rem' }}>- {b.brand}</td>
+                        <td style={{ padding: '0.3rem 0 0.3rem 1.25rem', color: '#888', fontSize: '0.8125rem' }}>- {b.source_site} / {b.brand}</td>
                         <td style={{ padding: '0.3rem 0', color: '#666', fontSize: '0.8125rem' }}></td>
                         <td style={{ padding: '0.3rem 0', textAlign: 'right', color: '#CC7000', fontSize: '0.8125rem' }}>{fmtNum(b.registered)}</td>
                       </tr>

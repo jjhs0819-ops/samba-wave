@@ -1187,17 +1187,19 @@ async def product_dashboard_stats(
         # 계정별 브랜드 breakdown
         brand_acct_stmt = text("""
             SELECT aid,
+                   source_site,
                    COALESCE(NULLIF(TRIM(brand), ''), '기타') AS brand_name,
                    COUNT(*) AS cnt
             FROM (
                 SELECT jsonb_array_elements_text(registered_accounts::jsonb) AS aid,
+                       source_site,
                        brand
                 FROM samba_collected_product
                 WHERE registered_accounts IS NOT NULL
                   AND registered_accounts::text != 'null'
                   AND registered_accounts::text != '[]'
             ) sub
-            GROUP BY aid, COALESCE(NULLIF(TRIM(brand), ''), '기타')
+            GROUP BY aid, source_site, COALESCE(NULLIF(TRIM(brand), ''), '기타')
             ORDER BY aid, cnt DESC
         """)
         brand_acct_rows = (await session.execute(brand_acct_stmt)).all()
@@ -1206,6 +1208,7 @@ async def product_dashboard_stats(
         for r in brand_acct_rows:
             brand_by_acct[r.aid].append(
                 {
+                    "source_site": r.source_site,
                     "brand": r.brand_name,
                     "registered": r.cnt,
                 }
