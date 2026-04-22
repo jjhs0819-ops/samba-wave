@@ -74,10 +74,20 @@ async def _retransmit_if_changed(
                 if not account:
                     continue
                 m_nos = product.market_product_nos or {}
+                raw_no = m_nos.get(account_id, "")
+                # 스마트스토어: market_product_nos[account_id]가 dict로 저장됨
+                # service.py:2303 패치와 동일한 처리 (2143473a 누락분)
+                if account.market_type == "smartstore" and isinstance(raw_no, dict):
+                    raw_no = (
+                        raw_no.get("originProductNo")
+                        or raw_no.get("smartstoreChannelProductNo")
+                        or raw_no.get("groupProductNo")
+                        or ""
+                    )
                 pd = {
                     **product_dict,
                     "market_product_no": {
-                        account.market_type: m_nos.get(account_id, "")
+                        account.market_type: str(raw_no) if raw_no else ""
                     },
                 }
                 await delete_from_market(
