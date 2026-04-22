@@ -63,6 +63,27 @@ async def _fetch_new_order_numbers(session) -> dict[str, list[str]]:
                     if oid:
                         raw_order_numbers.append(oid)
 
+            elif market_type == "playauto":
+                from datetime import UTC, datetime, timedelta
+
+                from backend.domain.samba.proxy.playauto import PlayAutoClient
+
+                api_key = extras.get("apiKey", "") or account.api_key or ""
+                if not api_key:
+                    continue
+                start_date = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y%m%d")
+                client = PlayAutoClient(api_key)
+                try:
+                    raw_orders = await client.get_orders(
+                        start_date=start_date, count=200
+                    )
+                    for ro in raw_orders:
+                        oid = str(ro.get("OrderCode", "") or "")
+                        if oid:
+                            raw_order_numbers.append(oid)
+                finally:
+                    await client.close()
+
             else:
                 continue
 

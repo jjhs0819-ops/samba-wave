@@ -1,5 +1,6 @@
 """SambaWave Order API router."""
 
+import asyncio
 import re
 from datetime import datetime
 from typing import Any, Optional
@@ -2664,6 +2665,19 @@ async def sync_orders_from_markets(
         )
     except Exception as _upd_err:
         logger.warning(f"[주문동기화] 원주문 일괄 업데이트 실패: {_upd_err}")
+
+    if total_synced > 0:
+        from backend.utils.kakao_notify import send_kakao_message
+
+        synced_lines = [
+            f"  {r['account']}: {r.get('synced', 0)}건"
+            for r in results
+            if r.get("synced", 0) > 0
+        ]
+        msg = f"🛒 주문 {total_synced}건 동기화 완료"
+        if synced_lines:
+            msg += "\n" + "\n".join(synced_lines)
+        asyncio.create_task(send_kakao_message(msg))
 
     return {"total_synced": total_synced, "results": results}
 
