@@ -485,6 +485,7 @@ const ProductCard = React.memo(function ProductCard({
         return {
           marketId: acc.market_type,
           label: `${acc.market_name}(${acc.seller_id || acc.account_label || acc.business_name || '-'})`,
+          accountName: acc.account_label || acc.seller_id || acc.business_name || '-',
           url,
           accId: acc.id,
         }
@@ -1491,10 +1492,11 @@ const ProductCard = React.memo(function ProductCard({
                         {(() => {
                           const marketKey = MARKETS.find(mk => m.marketName.includes(mk.name))?.id
                             || m.marketName.toLowerCase().replace(/\s/g, '')
-                          const rm = registeredMarkets.find(r => r.marketId === marketKey)
+                          const rms = registeredMarkets.filter(r => r.marketId === marketKey)
                           const mappedCat = productCatMapping[marketKey] || ''
                           return (<>
-                            {rm && (<>
+                            {rms.map(rm => (
+                              <React.Fragment key={rm.accId}>
                               {rm.url ? (
                                 <button
                                   onClick={() => window.open(rm.url, '_blank')}
@@ -1502,12 +1504,12 @@ const ProductCard = React.memo(function ProductCard({
                                   onMouseEnter={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.2)' }}
                                   onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}
                                   title={`${rm.label} 판매페이지`}
-                                >판매페이지</button>
+                                >{rm.accountName}</button>
                               ) : (
                                 <span
                                   style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', whiteSpace: 'nowrap' }}
                                   title={`${rm.label} 등록됨`}
-                                >등록됨</span>
+                                >{rm.accountName}</span>
                               )}
                               {(() => {
                                 const sentAt = p.last_sent_data?.[rm.accId]?.sent_at
@@ -1519,7 +1521,8 @@ const ProductCard = React.memo(function ProductCard({
                                 const mi = String(d.getMinutes()).padStart(2, '0')
                                 return <span style={{ fontSize: '0.6rem', color: '#666', whiteSpace: 'nowrap' }}>{mm}-{dd} {hh}:{mi}</span>
                               })()}
-                            </>)}
+                              </React.Fragment>
+                            ))}
                             {mappedCat ? (
                               <span style={{ fontSize: '0.68rem', color: '#888', background: 'rgba(255,255,255,0.04)', padding: '1px 6px', borderRadius: '3px', border: '1px solid #2D2D2D' }}>{mappedCat}</span>
                             ) : (

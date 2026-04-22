@@ -12,9 +12,9 @@ function formatShortDate(d: Date) {
 type SourceBrand = { brand: string; total: number; registered: number; sold_out: number }
 type SourceStat = { source_site: string; total: number; registered: number; sold_out: number; brands: SourceBrand[] }
 type AccountBrand = { source_site: string; brand: string; registered: number }
-type AccountStat = { account_id: string; market_name: string; account_label: string; registered: number; brands: AccountBrand[] }
+type AccountStat = { account_id: string; market_name: string; account_label: string; registered: number; sold_products?: number; brands: AccountBrand[] }
 type MarketSourceStat = { source_site: string; registered: number; brands: { brand: string; registered: number }[] }
-type MarketAcctStat = { account_id: string; account_label: string; registered: number; sources: MarketSourceStat[] }
+type MarketAcctStat = { account_id: string; account_label: string; registered: number; sold_products?: number; sources: MarketSourceStat[] }
 type MarketStat = { market_name: string; registered: number; accounts: MarketAcctStat[] }
 
 export default function SambaDashboard() {
@@ -66,7 +66,7 @@ export default function SambaDashboard() {
       const mKey = acct.market_name
       const mEntry = marketMap.get(mKey) ?? { registered: 0, accts: new Map() }
       mEntry.registered += acct.registered
-      const aEntry = mEntry.accts.get(acct.account_id) ?? { account_id: acct.account_id, account_label: acct.account_label, registered: acct.registered, srcMap: new Map() }
+      const aEntry = mEntry.accts.get(acct.account_id) ?? { account_id: acct.account_id, account_label: acct.account_label, registered: acct.registered, sold_products: acct.sold_products ?? 0, srcMap: new Map() }
       for (const b of acct.brands) {
         const sEntry = aEntry.srcMap.get(b.source_site) ?? { registered: 0, brandMap: new Map() }
         sEntry.registered += b.registered
@@ -85,6 +85,7 @@ export default function SambaDashboard() {
             account_id: a.account_id,
             account_label: a.account_label,
             registered: a.registered,
+            sold_products: a.sold_products,
             sources: Array.from(a.srcMap.entries())
               .map(([source_site, sData]) => ({
                 source_site,
@@ -395,6 +396,7 @@ export default function SambaDashboard() {
             <thead>
               <tr style={{ borderBottom: '1px solid #2D2D2D' }}>
                 <th style={{ textAlign: 'left', padding: '0.5rem 0', color: '#888', fontWeight: 500 }}>마켓 / 계정 / 소싱처</th>
+                <th style={{ textAlign: 'right', padding: '0.5rem 0', color: '#888', fontWeight: 500 }}>판매비중</th>
                 <th style={{ textAlign: 'right', padding: '0.5rem 0', color: '#888', fontWeight: 500 }}>등록 상품</th>
               </tr>
             </thead>
@@ -412,6 +414,7 @@ export default function SambaDashboard() {
                         <span style={{ fontSize: '0.625rem', color: '#888', display: 'inline-block', transform: mExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>▶</span>
                         {m.market_name}
                       </td>
+                      <td style={{ padding: '0.5rem 0', textAlign: 'right' }} />
                       <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#FF8C00', fontWeight: 600 }}>{fmtNum(m.registered)}</td>
                     </tr>
                     {mExpanded && m.accounts.map((a) => {
@@ -428,6 +431,14 @@ export default function SambaDashboard() {
                               <span style={{ fontSize: '0.5625rem', color: '#666', display: 'inline-block', transform: aExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>▶</span>
                               {a.account_label || a.account_id}
                             </td>
+                            {(() => {
+                              const ratio = a.registered > 0 ? (a.sold_products ?? 0) / a.registered * 100 : 0
+                              return (
+                                <td style={{ padding: '0.4rem 0', textAlign: 'right', fontSize: '0.8125rem', color: ratio >= 3 ? '#4CAF50' : ratio >= 1 ? '#FF8C00' : '#FF4444' }}>
+                                  {a.registered > 0 ? `${ratio.toFixed(1)}%` : '-'}
+                                </td>
+                              )
+                            })()}
                             <td style={{ padding: '0.4rem 0', textAlign: 'right', color: '#FF8C00', fontSize: '0.8125rem' }}>{fmtNum(a.registered)}</td>
                           </tr>
                           {aExpanded && a.sources.map((s) => {
@@ -447,11 +458,13 @@ export default function SambaDashboard() {
                                     )}
                                     {s.source_site}
                                   </td>
+                                  <td style={{ padding: '0.35rem 0', textAlign: 'right' }} />
                                   <td style={{ padding: '0.35rem 0', textAlign: 'right', color: '#CC7000', fontSize: '0.8125rem' }}>{fmtNum(s.registered)}</td>
                                 </tr>
                                 {sExpanded && s.brands.map((b) => (
                                   <tr key={`${s.source_site}-${b.brand}`} style={{ borderBottom: '1px solid rgba(45,45,45,0.1)', background: 'rgba(255,255,255,0.04)' }}>
                                     <td style={{ padding: '0.3rem 0 0.3rem 3.75rem', color: '#888', fontSize: '0.75rem' }}>- {b.brand}</td>
+                                    <td style={{ padding: '0.3rem 0', textAlign: 'right' }} />
                                     <td style={{ padding: '0.3rem 0', textAlign: 'right', color: '#AA5F00', fontSize: '0.75rem' }}>{fmtNum(b.registered)}</td>
                                   </tr>
                                 ))}
@@ -467,11 +480,12 @@ export default function SambaDashboard() {
               {byMarket.length > 0 && (
                 <tr style={{ borderTop: '1px solid #2D2D2D' }}>
                   <td style={{ padding: '0.5rem 0', color: '#FF8C00', fontWeight: 600 }}>합계</td>
+                  <td style={{ padding: '0.5rem 0', textAlign: 'right' }} />
                   <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#FF8C00', fontWeight: 600 }}>{fmtNum(byMarket.reduce((a, m) => a + m.registered, 0))}</td>
                 </tr>
               )}
               {byMarket.length === 0 && (
-                <tr><td colSpan={2} style={{ padding: '1.5rem 0', textAlign: 'center', color: '#555' }}>데이터 없음</td></tr>
+                <tr><td colSpan={3} style={{ padding: '1.5rem 0', textAlign: 'center', color: '#555' }}>데이터 없음</td></tr>
               )}
             </tbody>
           </table>
