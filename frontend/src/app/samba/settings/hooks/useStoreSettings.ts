@@ -154,19 +154,10 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
         .filter(([k, v]) => v === '' && selectFields.has(k))
         .map(([k]) => k)
       const filtered = Object.fromEntries(Object.entries(current).filter(([, v]) => v !== ''))
-      const merged = { ...(savedStoreData[marketKey] || {}), ...filtered }
+      // 완전 분리: savedStoreData(Settings 공통) 병합 제거 — account.additional_fields 기반으로만 저장
+      const merged = { ...filtered }
       // select "설정안함" 선택 시 해당 키 삭제
       for (const k of clearKeys) delete merged[k]
-      // 마스킹된 password 필드(****xxxx)가 있으면 savedStoreData 원본으로 복원
-      const pwdFieldsForSave = new Set(
-        (marketCfgForMerge?.fields ?? []).filter(f => f.type === 'password').map(f => f.name)
-      )
-      const savedOrig = savedStoreData[marketKey] || {}
-      for (const field of pwdFieldsForSave) {
-        if (merged[field]?.startsWith('****') && savedOrig[field]) {
-          merged[field] = savedOrig[field]
-        }
-      }
       const data = merged
       await forbiddenApi.saveSetting(`store_${marketKey}`, data)
       const marketCfg = STORE_MARKETS.find(m => m.key === marketKey)
@@ -224,16 +215,17 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
     }
     setStoreStatus(prev => ({ ...prev, [marketKey]: '인증 확인 중...' }))
     try {
-      // 마스킹된 password 필드(****xxxx)가 있으면 savedStoreData 원본으로 복원
+      // password 필드가 비어있으면 editingAccount.additional_fields에서 복원 (완전 분리)
       const marketCfg = STORE_MARKETS.find(m => m.key === marketKey)
       const pwdFields = new Set(
         (marketCfg?.fields ?? []).filter(f => f.type === 'password').map(f => f.name)
       )
-      const saved = savedStoreData[marketKey] || {}
       const safeData = { ...data }
       for (const field of pwdFields) {
-        if (safeData[field]?.startsWith('****') && saved[field]) {
-          safeData[field] = saved[field]
+        if (!safeData[field] || safeData[field]?.startsWith('****')) {
+          const editingAcc = accounts.find(a => a.id === editingAccountId)
+          const origVal = (editingAcc?.additional_fields as Record<string, string> | null)?.[field]
+          if (origVal) safeData[field] = origVal
         }
       }
       // 먼저 설정 저장

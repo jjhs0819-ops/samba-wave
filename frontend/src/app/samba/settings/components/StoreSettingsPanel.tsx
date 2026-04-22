@@ -540,21 +540,12 @@ export function StoreSettingsPanel(props: Props) {
                       <button
                         onClick={() => {
                           setEditingAccountId(a.id)
-                          // password 타입 필드는 계정 API에서 마스킹(****xxxx)된 값이므로 제외
-                          // savedStoreData(설정 API 원본)의 값을 유지해야 DB 손상 방지
-                          const passwordFieldNames = new Set(
-                            market.fields.filter(f => f.type === 'password').map(f => f.name)
-                          )
-                          const accFields = Object.fromEntries(
-                            Object.entries((a.additional_fields || {}) as Record<string, string>)
-                              .filter(([k]) => !passwordFieldNames.has(k))
-                          )
-                          const savedFields = savedStoreData[market.key] || {}
+                          // 완전 분리: account.additional_fields로만 폼 초기화 (Settings 공통 무시)
+                          const accData = (a.additional_fields || {}) as Record<string, string>
                           const formData: Record<string, string> = {
                             businessName: a.business_name || '',
                             storeId: a.seller_id || '',
-                            ...savedFields,
-                            ...accFields,
+                            ...accData,
                           }
                           setStoreData(prev => ({ ...prev, [market.key]: formData }))
                         }}

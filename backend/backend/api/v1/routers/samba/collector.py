@@ -1123,7 +1123,7 @@ async def product_dashboard_stats(
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """대시보드 현황판 — 소싱처별 수집현황 + 마켓/계정별 등록현황 (브랜드별 breakdown 포함)."""
-    cached = await cache.get("products:dashboard-stats-v2")
+    cached = await cache.get("products:dashboard-stats-v3")
     if cached:
         return cached
 
@@ -1236,6 +1236,20 @@ async def product_dashboard_stats(
                 }
             )
 
+        # 계정별 30일 고유 판매 상품 수 (같은 상품 여러 번 팔려도 1개로 카운트)
+        sold_stmt = text("""
+            SELECT channel_id, COUNT(DISTINCT collected_product_id) AS sold_cnt
+            FROM samba_order
+            WHERE collected_product_id IS NOT NULL
+              AND channel_id IS NOT NULL
+              AND COALESCE(paid_at, created_at) >= NOW() - INTERVAL '30 days'
+            GROUP BY channel_id
+        """)
+        sold_rows = (await session.execute(sold_stmt)).all()
+        sold_by_acct: dict[str, int] = {
+            r.channel_id: int(r.sold_cnt) for r in sold_rows
+        }
+
         # 계정 ID → 마켓명/계정라벨 매핑
         acct_ids = [r.aid for r in acct_rows]
         acct_map: dict[str, dict[str, str]] = {}
@@ -1256,6 +1270,7 @@ async def product_dashboard_stats(
                 "market_name": acct_map.get(r.aid, {}).get("market_name", "알 수 없음"),
                 "account_label": acct_map.get(r.aid, {}).get("account_label", ""),
                 "registered": r.cnt,
+                "sold_products": sold_by_acct.get(r.aid, 0),
                 "brands": brand_by_acct.get(r.aid, []),
             }
             for r in acct_rows
@@ -1265,7 +1280,7 @@ async def product_dashboard_stats(
         by_account = []
 
     result = {"by_source": by_source, "by_account": by_account}
-    await cache.set("products:dashboard-stats-v2", result, ttl=60)
+    await cache.set("products:dashboard-stats-v3", result, ttl=60)
     return result
 
 
