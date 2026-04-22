@@ -394,6 +394,82 @@ class CoupangClient:
         )
 
     # ------------------------------------------------------------------
+    # 출고지 / 반품지 조회
+    # ------------------------------------------------------------------
+
+    async def get_outbound_shipping_places(self) -> list[dict[str, Any]]:
+        """쿠팡 출고지 목록 조회.
+
+        GET /v2/providers/marketplace_openapi/apis/api/v1/vendor/shipping-place/outbound
+        응답 구조: { content: [{ outboundShippingPlaceCode, shippingPlaceName, placeAddresses: [...], usable }] }
+        """
+        res = await self._call_api(
+            "GET",
+            "/v2/providers/marketplace_openapi/apis/api/v1/vendor/shipping-place/outbound",
+            params={"pageNum": "1", "pageSize": "50"},
+        )
+        items = res.get("content") if isinstance(res, dict) else None
+        items = items or []
+        result: list[dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            # usable 기본값 True (키가 없으면 사용가능으로 간주)
+            if not item.get("usable", True):
+                continue
+            addresses = item.get("placeAddresses") or []
+            first_addr = (
+                addresses[0] if addresses and isinstance(addresses[0], dict) else {}
+            )
+            result.append(
+                {
+                    "code": str(item.get("outboundShippingPlaceCode", "") or ""),
+                    "name": item.get("shippingPlaceName", "") or "",
+                    "address": first_addr.get("returnAddress", "")
+                    or first_addr.get("placeAddress", "")
+                    or "",
+                }
+            )
+        return result
+
+    async def get_return_shipping_centers(self) -> list[dict[str, Any]]:
+        """쿠팡 반품지(회수지) 목록 조회.
+
+        GET /v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/returnShippingCenters
+        응답 구조: { data: { content: [{ returnCenterCode, shippingPlaceName, placeAddresses: [...], usable }] } }
+        """
+        res = await self._call_api(
+            "GET",
+            f"/v2/providers/openapi/apis/api/v4/vendors/{self.vendor_id}/returnShippingCenters",
+            params={"pageNum": "1", "pageSize": "50"},
+        )
+        data = res.get("data") if isinstance(res, dict) else None
+        items: list[Any] = []
+        if isinstance(data, dict):
+            items = data.get("content") or []
+        result: list[dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if not item.get("usable", True):
+                continue
+            addresses = item.get("placeAddresses") or []
+            first_addr = (
+                addresses[0] if addresses and isinstance(addresses[0], dict) else {}
+            )
+            result.append(
+                {
+                    "code": item.get("returnCenterCode", "") or "",
+                    "name": item.get("shippingPlaceName", "") or "",
+                    "address": first_addr.get("returnAddress", "") or "",
+                    "address_detail": first_addr.get("returnAddressDetail", "") or "",
+                    "zipcode": first_addr.get("returnZipCode", "") or "",
+                    "phone": first_addr.get("companyContactNumber", "") or "",
+                }
+            )
+        return result
+
+    # ------------------------------------------------------------------
     # 상품 등록/수정
     # ------------------------------------------------------------------
 

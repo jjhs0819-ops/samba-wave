@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency
@@ -159,6 +160,88 @@ async def coupang_auth_test(
     except Exception as exc:
         logger.error(f"[쿠팡] 인증 테스트 실패: {exc}")
         return {"success": False, "message": f"인증 실패: {exc}"}
+
+
+# ═══════════════════════════════════════════════
+# 쿠팡 출고지/반품지 조회
+# ═══════════════════════════════════════════════
+
+
+class CoupangShippingPlacesRequest(BaseModel):
+    """쿠팡 출고지/반품지 조회 요청 바디."""
+
+    account_id: Optional[str] = None  # ma_xxxx — 없으면 store_coupang 폴백
+
+
+@router.post("/coupang/shipping-places")
+async def coupang_shipping_places(
+    body: CoupangShippingPlacesRequest,
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """쿠팡 출고지/반품지 전체 목록 조회 (계정별).
+
+    우선순위: SambaMarketAccount.additional_fields → account 컬럼 → store_coupang 전역 폴백
+    """
+    from backend.domain.samba.account.model import SambaMarketAccount
+    from backend.domain.samba.proxy.coupang import CoupangClient
+
+    creds: dict[str, Any] = {}
+
+    # 1) account_id 지정 시 계정별 인증정보 추출
+    if body.account_id:
+        account = await session.get(SambaMarketAccount, body.account_id)
+        if account:
+            extras = account.additional_fields or {}
+            if isinstance(extras, dict):
+                creds = {k: v for k, v in extras.items() if v}
+            # account 컬럼 폴백
+            if not creds.get("accessKey") and account.api_key:
+                creds["accessKey"] = account.api_key
+            if not creds.get("secretKey") and account.api_secret:
+                creds["secretKey"] = account.api_secret
+            if not creds.get("vendorId") and account.seller_id:
+                creds["vendorId"] = account.seller_id
+
+    # 2) 폴백: store_coupang (단일계정 환경 호환)
+    if not creds.get("accessKey"):
+        store = await _get_setting(session, "store_coupang")
+        if isinstance(store, dict):
+            creds = store
+
+    access_key = creds.get("accessKey", "")
+    secret_key = creds.get("secretKey", "")
+    vendor_id = creds.get("vendorId", "")
+
+    if not access_key or not secret_key or not vendor_id:
+        return {
+            "success": False,
+            "message": "쿠팡 인증정보(AccessKey/SecretKey/VendorId)가 없습니다.",
+            "data": None,
+        }
+
+    try:
+        client = CoupangClient(access_key, secret_key, vendor_id)
+        outbound = await client.get_outbound_shipping_places()
+        inbound = await client.get_return_shipping_centers()
+
+        if not outbound and not inbound:
+            return {
+                "success": False,
+                "message": "출고지/반품지 정보가 없습니다. Wing에서 먼저 등록해주세요.",
+                "data": {"outboundList": [], "inboundList": []},
+            }
+
+        return {
+            "success": True,
+            "message": "출고지/반품지 조회 성공",
+            "data": {
+                "outboundList": outbound,
+                "inboundList": inbound,
+            },
+        }
+    except Exception as exc:
+        logger.error(f"[쿠팡] 출고지/반품지 조회 실패: {exc}")
+        return {"success": False, "message": f"조회 실패: {exc}", "data": None}
 
 
 # ═══════════════════════════════════════════════
