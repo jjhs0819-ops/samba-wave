@@ -2063,9 +2063,11 @@ async def autotune_get_filters():
         saved_sources = await _get_setting(session, AUTOTUNE_FILTER_SOURCES_KEY)
         saved_markets = await _get_setting(session, AUTOTUNE_FILTER_MARKETS_KEY)
 
-        # 실제 수집된 소싱처 목록 (상품이 존재하는 것만)
+        # 마켓 등록 상품이 있는 소싱처만 (수집만 된 것은 제외)
         src_stmt = select(distinct(_CP.source_site)).where(
-            _CP.source_site != None, _CP.source_site != ""
+            _CP.source_site != None,
+            _CP.source_site != "",
+            _CP.status == "registered",
         )
         src_result = await session.execute(src_stmt)
         available_sources = sorted([r[0] for r in src_result.all() if r[0]])

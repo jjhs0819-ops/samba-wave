@@ -1395,7 +1395,10 @@ const ProductCard = React.memo(function ProductCard({
                 <td style={tdLabel}>등록 상품명</td>
                 <td style={tdVal}>
                   <span style={{ color: '#FFFFFF', fontSize: '0.8rem' }}>{
-                    composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id), deletionWords)
+                    renderRegisteredName(
+                      composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id)),
+                      deletionWords ?? []
+                    )
                   }</span>
                 </td>
               </tr>
@@ -1487,7 +1490,7 @@ const ProductCard = React.memo(function ProductCard({
                   <td style={tdLabel}>{m.marketName}</td>
                   <td style={tdVal}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                         <span style={{ color: '#FFB84D', fontWeight: 600 }}>₩{fmt(m.price)}</span>
                         {(() => {
                           const marketKey = MARKETS.find(mk => m.marketName.includes(mk.name))?.id

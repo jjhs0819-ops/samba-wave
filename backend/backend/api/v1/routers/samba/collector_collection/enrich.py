@@ -58,6 +58,9 @@ async def _retransmit_if_changed(
         try:
             from backend.domain.samba.shipment.dispatcher import delete_from_market
             from backend.domain.samba.account.model import SambaMarketAccount
+            from backend.domain.samba.collector.repository import (
+                SambaCollectedProductRepository,
+            )
 
             # 계정 배치 조회 (N+1 방지)
             _acc_stmt = select(SambaMarketAccount).where(
@@ -69,6 +72,7 @@ async def _retransmit_if_changed(
             # DB 변경사항 플러시 (재전송 시 최신 데이터 조회 보장)
             await session.flush()
             product_dict = {**product.model_dump(), **updates}
+            deleted_account_ids: list[str] = []
             for account_id in reg_accounts:
                 account = acc_map.get(account_id)
                 if not account:
@@ -94,10 +98,31 @@ async def _retransmit_if_changed(
                         account.market_type: str(raw_no) if raw_no else ""
                     },
                 }
-                await delete_from_market(
+                del_result = await delete_from_market(
                     session, account.market_type, pd, account=account
                 )
                 result["retransmit_accounts"] += 1
+                # soldout_fallback(플레이오토 등 삭제 불가 마켓)은 배지 유지 → 제외
+                if del_result.get("success") and not del_result.get("soldout_fallback"):
+                    deleted_account_ids.append(account_id)
+
+            # 삭제 성공 계정을 registered_accounts에서 제거
+            if deleted_account_ids:
+                m_nos_orig = product.market_product_nos or {}
+                new_reg = [a for a in reg_accounts if a not in deleted_account_ids]
+                remove_keys = set(deleted_account_ids) | {
+                    f"{aid}_origin" for aid in deleted_account_ids
+                }
+                new_nos = {k: v for k, v in m_nos_orig.items() if k not in remove_keys}
+                update_data: dict[str, Any] = {
+                    "registered_accounts": new_reg if new_reg else None,
+                    "market_product_nos": new_nos if new_nos else None,
+                }
+                if not new_reg:
+                    update_data["status"] = "collected"
+                product_repo = SambaCollectedProductRepository(session)
+                await product_repo.update_async(product.id, **update_data)
+
             result["retransmitted"] = True
         except Exception as e:
             logger.error(f"[enrich] {product.id} 마켓 판매중지 실패: {e}")

@@ -2077,35 +2077,36 @@ export default function ProductsPage() {
         /* Card / Compact view — 2열 그리드 */
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: viewMode === "compact" ? "4px" : "8px" }}>
           {products.map((p, idx) => (
-            <ProductCard
-              key={p.id}
-              product={p}
-              idx={idx}
-              compact={viewMode === "compact"}
-              expanded={expandedIds.has(p.id)}
-              onToggleExpand={() => handleToggleExpand(p.id)}
-              policies={policies}
-              accounts={accounts}
-              nameRules={nameRules}
-              selectedIds={selectedIds}
-              filterNameMap={filterNameMap}
-              deletionWords={deletionWords}
-              onCheckboxToggle={handleCheckboxToggle}
-              onDelete={handleDelete}
-              onPolicyChange={handlePolicyChange}
-              onToggleMarket={handleToggleMarket}
-              onEnrich={handleEnrich}
-              onLockToggle={handleLockToggle}
-              onBlockCollect={handleBlockCollect}
-              onMarketDelete={handleMarketDelete}
-              onAddTaskLog={addTaskLog}
-              onProductUpdate={handleProductUpdate}
-              onTagUpdate={handleTagUpdate}
-              logMessage={activeLog?.productId === p.id ? activeLog.message : undefined}
-              catMappingMap={catMappingMap}
-              filters={searchFilters}
-              detailTemplates={detailTemplates}
-            />
+            <div key={p.id} style={{ minWidth: 0 }}>
+              <ProductCard
+                product={p}
+                idx={idx}
+                compact={viewMode === "compact"}
+                expanded={expandedIds.has(p.id)}
+                onToggleExpand={() => handleToggleExpand(p.id)}
+                policies={policies}
+                accounts={accounts}
+                nameRules={nameRules}
+                selectedIds={selectedIds}
+                filterNameMap={filterNameMap}
+                deletionWords={deletionWords}
+                onCheckboxToggle={handleCheckboxToggle}
+                onDelete={handleDelete}
+                onPolicyChange={handlePolicyChange}
+                onToggleMarket={handleToggleMarket}
+                onEnrich={handleEnrich}
+                onLockToggle={handleLockToggle}
+                onBlockCollect={handleBlockCollect}
+                onMarketDelete={handleMarketDelete}
+                onAddTaskLog={addTaskLog}
+                onProductUpdate={handleProductUpdate}
+                onTagUpdate={handleTagUpdate}
+                logMessage={activeLog?.productId === p.id ? activeLog.message : undefined}
+                catMappingMap={catMappingMap}
+                filters={searchFilters}
+                detailTemplates={detailTemplates}
+              />
+            </div>
           ))}
         </div>
       )}
