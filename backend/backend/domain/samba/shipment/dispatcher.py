@@ -306,8 +306,9 @@ async def _delete_smartstore(
                         "success": True,
                         "message": "스마트스토어 삭제 완료 (이미 삭제됨)",
                     }
-                logger.info(
-                    f"[스마트스토어] 상품 {product_no} 이미 삭제됨 (404) → 성공 처리"
+                logger.error(
+                    f"[스마트스토어] 상품 {product_no} GET 실패 ({get_err}) — "
+                    f"삭제 여부 불명확, 성공으로 처리"
                 )
                 return {
                     "success": True,
