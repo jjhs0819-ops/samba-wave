@@ -105,7 +105,12 @@ export default function UsersPage() {
         setLicForm({ buyer_name: '', buyer_email: '', expires_at: '', notes: '' })
         await loadLicenses()
         showAlert('라이선스가 발급되었습니다', 'success')
+      } else {
+        const err = await res.json().catch(() => ({}))
+        showAlert(`발급 실패 (${res.status}): ${err.detail ?? '알 수 없는 오류'}`, 'error')
       }
+    } catch (e) {
+      showAlert(`발급 실패: ${e instanceof Error ? e.message : e}`, 'error')
     } finally {
       setLicCreating(false)
     }
