@@ -314,7 +314,7 @@ class LotteonClient:
         return await self._call_api(
             "POST",
             "/v1/openapi/contract/v1/dvl/getDvCstListSr",
-            body={"afflTrCd": self.tr_grp_cd, "afflLrtrCd": self.tr_no},
+            body={"trGrpCd": self.tr_grp_cd or "SR", "trNo": self.tr_no},
         )
 
     async def get_warehouses(self) -> dict[str, Any]:
@@ -322,7 +322,7 @@ class LotteonClient:
         return await self._call_api(
             "POST",
             "/v1/openapi/contract/v1/dvp/getDvpListSr",
-            body={"afflTrCd": self.tr_grp_cd, "afflLrtrCd": self.tr_no},
+            body={"trGrpCd": self.tr_grp_cd or "SR", "trNo": self.tr_no},
         )
 
     # ------------------------------------------------------------------

@@ -252,7 +252,15 @@ export function StoreSettingsPanel(props: Props) {
                           ])
                           if (polRes.success) setLotteonDeliveryPolicyOptions(polRes.policies)
                           if (whRes.success) setLotteonWarehouseOptions({ departure: whRes.departure, return_: whRes.return_ })
-                          showAlert('배송정책/출고지/회수지 정보를 불러왔습니다.', 'success')
+                          const polCount = polRes.success ? polRes.policies.length : 0
+                          const depCount = whRes.success ? whRes.departure.length : 0
+                          const retCount = whRes.success ? whRes.return_.length : 0
+                          if (polCount > 0 || depCount > 0 || retCount > 0) {
+                            showAlert(`배송정책 ${fmtNum(polCount)}건, 출고지 ${fmtNum(depCount)}건, 회수지 ${fmtNum(retCount)}건을 불러왔습니다.`, 'success')
+                          } else {
+                            const msg = (polRes as { message?: string }).message || (whRes as { message?: string }).message || ''
+                            showAlert(msg ? `불러오기 실패: ${msg}` : '설정된 배송정책/출고지가 없습니다. 롯데ON 셀러 센터에서 먼저 등록해주세요.', 'error')
+                          }
                         } catch { showAlert('불러오기 실패', 'error') }
                       }}
                       style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
