@@ -113,6 +113,22 @@ async def fix():
                 SELECT 1 FROM alembic_version WHERE version_num = \'z_lotteon_order_line_keys\'
               )
         ''')
+        # samba_license 테이블 (c58d77ec580e 마이그레이션 — stamp으로 skip됨, 수동 생성 필요)
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS samba_license (
+                id VARCHAR PRIMARY KEY NOT NULL,
+                license_key VARCHAR NOT NULL,
+                buyer_name VARCHAR NOT NULL,
+                buyer_email VARCHAR NOT NULL,
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                expires_at TIMESTAMPTZ,
+                notes VARCHAR,
+                last_verified_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL
+            )
+        ''')
+        await conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS ix_samba_license_license_key ON samba_license (license_key)')
         print('Emergency schema fixes applied.')
     finally:
         await conn.close()
