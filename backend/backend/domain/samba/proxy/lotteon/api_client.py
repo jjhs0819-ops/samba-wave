@@ -303,10 +303,14 @@ class LotteonClient:
     async def test_auth(self) -> dict[str, Any]:
         """거래처 정보 조회 (인증 테스트) — trGrpCd, trNo 자동 획득."""
         result = await self._call_api("GET", "/v1/openapi/common/v1/identity")
+        logger.info(f"[롯데ON] identity 전체 응답: {result}")
         data = result.get("data", {})
         if data:
             self.tr_grp_cd = data.get("trGrpCd", "")
             self.tr_no = data.get("trNo", "")
+        logger.info(
+            f"[롯데ON] 추출값 — tr_grp_cd={self.tr_grp_cd!r}, tr_no={self.tr_no!r}"
+        )
         return {"success": True, "message": "인증 성공", "data": data}
 
     async def get_delivery_policies(self) -> dict[str, Any]:
