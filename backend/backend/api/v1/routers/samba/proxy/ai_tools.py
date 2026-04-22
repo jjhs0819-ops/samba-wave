@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
@@ -269,15 +269,55 @@ async def transform_images(
         return {"success": False, "message": str(exc)[:300]}
 
 
+async def _verify_worker_token(token: str, session: AsyncSession) -> bool:
+    """X-Worker-Token 검증 — DB의 bg_worker.worker_token과 비교."""
+    if not token:
+        return False
+    cfg = await _get_setting(session, "bg_worker")
+    if not cfg or not isinstance(cfg, dict):
+        return False
+    return cfg.get("worker_token", "") == token
+
+
+@router.get("/bg-jobs/config")
+async def bg_jobs_config(
+    x_worker_token: str = Header(default=""),
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """워커 시작 시 호출 — 토큰 검증 후 R2 자격증명 반환."""
+
+    if not await _verify_worker_token(x_worker_token, session):
+        return {"success": False, "message": "Invalid worker token"}
+
+    r2 = await _get_setting(session, "cloudflare_r2")
+    if not r2 or not isinstance(r2, dict):
+        return {"success": False, "message": "R2 설정이 저장되지 않았습니다"}
+
+    return {
+        "success": True,
+        "r2": {
+            "account_id": r2.get("accountId", ""),
+            "access_key": r2.get("accessKey", ""),
+            "secret_key": r2.get("secretKey", ""),
+            "bucket": r2.get("bucketName", ""),
+            "public_url": r2.get("publicUrl", ""),
+        },
+    }
+
+
 @router.get("/bg-jobs/next")
 async def bg_jobs_next(
+    x_worker_token: str = Header(default=""),
     session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:
     """로컬 워커 폴링 — 대기 중인 배경제거 작업 1건 반환 (없으면 null)."""
     from sqlalchemy import select as sa_select
 
     from backend.domain.samba.collector.model import SambaCollectedProduct
-    from backend.domain.samba.job.model import SambaJob, JobStatus
+    from backend.domain.samba.job.model import JobStatus, SambaJob
+
+    if not await _verify_worker_token(x_worker_token, session):
+        return {"error": "Invalid worker token"}
 
     # 가장 오래된 pending 잡 1개 조회
     stmt = (
@@ -339,6 +379,7 @@ async def bg_jobs_next(
 async def bg_jobs_complete(
     job_id: str,
     request: dict[str, Any],
+    x_worker_token: str = Header(default=""),
     session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:
     """로컬 워커 완료 보고 — 각 상품 이미지 URL 업데이트 + 잡 상태 완료 처리."""
@@ -347,7 +388,10 @@ async def bg_jobs_complete(
     from sqlalchemy import select as sa_select
 
     from backend.domain.samba.collector.model import SambaCollectedProduct
-    from backend.domain.samba.job.model import SambaJob, JobStatus
+    from backend.domain.samba.job.model import JobStatus, SambaJob
+
+    if not await _verify_worker_token(x_worker_token, session):
+        return {"success": False, "message": "Invalid worker token"}
 
     stmt = sa_select(SambaJob).where(SambaJob.id == job_id)
     result = await session.execute(stmt)

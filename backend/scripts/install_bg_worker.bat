@@ -28,7 +28,7 @@ echo [2/3] Setting up .env config file...
 if not exist "%~dp0bg_worker.env" (
     copy "%~dp0bg_worker.env.example" "%~dp0bg_worker.env" > nul
     echo       Created .env file. Opening for editing...
-    echo       Fill in: SAMBA_TOKEN, R2_ACCOUNT_ID, R2_ACCESS_KEY, R2_SECRET_KEY, R2_BUCKET, R2_PUBLIC_URL
+    echo       Fill in WORKER_TOKEN only (get it from Settings ^> R2 ^> Local Worker Token)
     echo.
     notepad "%~dp0bg_worker.env"
 ) else (

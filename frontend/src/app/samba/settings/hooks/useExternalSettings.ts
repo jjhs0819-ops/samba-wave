@@ -150,6 +150,9 @@ export function useExternalSettings(): ExternalSettingsState & ExternalSettingsA
   const [r2BucketName, setR2BucketName] = useState('')
   const [r2PublicUrl, setR2PublicUrl] = useState('')
   const [r2Status, setR2Status] = useState('')
+  // 로컬 워커 토큰
+  const [workerToken, setWorkerToken] = useState('')
+  const [workerTokenStatus, setWorkerTokenStatus] = useState('')
   // 모델 프리셋
   const [presets, setPresets] = useState<{ key: string; label: string; desc: string; image: string | null }[]>([])
   const [editingPreset, setEditingPreset] = useState<string | null>(null)
@@ -296,6 +299,13 @@ export function useExternalSettings(): ExternalSettingsState & ExternalSettingsA
         setR2BucketName(String(r2.bucketName || ''))
         setR2PublicUrl(String(r2.publicUrl || ''))
         if (r2.accessKey) setR2Status('저장됨')
+      }
+    } catch { /* ignore */ }
+    try {
+      const bw = await forbiddenApi.getSetting('bg_worker').catch(() => null) as Record<string, unknown> | null
+      if (bw?.worker_token) {
+        setWorkerToken(String(bw.worker_token))
+        setWorkerTokenStatus('발급됨')
       }
     } catch { /* ignore */ }
   }, [])
@@ -481,6 +491,17 @@ export function useExternalSettings(): ExternalSettingsState & ExternalSettingsA
     } catch { showAlert('저장 실패', 'error') }
   }
 
+  // 로컬 워커 토큰 생성
+  const generateWorkerToken = async () => {
+    const token = Array.from(crypto.getRandomValues(new Uint8Array(24)))
+      .map(b => b.toString(16).padStart(2, '0')).join('')
+    try {
+      await forbiddenApi.saveSetting('bg_worker', { worker_token: token })
+      setWorkerToken(token)
+      setWorkerTokenStatus('생성 완료 — 워커 설정파일에 복사하세요')
+    } catch { setWorkerTokenStatus('저장 실패') }
+  }
+
   // Cloudflare R2 테스트
   const testR2 = async () => {
     if (!r2AccessKey || !r2SecretKey || !r2BucketName) {
@@ -578,6 +599,9 @@ export function useExternalSettings(): ExternalSettingsState & ExternalSettingsA
     handleRegeneratePreset,
     saveR2Settings,
     testR2,
+    workerToken,
+    workerTokenStatus,
+    generateWorkerToken,
     loadProbeStatus,
     runProbe,
     setSmsUserId,
