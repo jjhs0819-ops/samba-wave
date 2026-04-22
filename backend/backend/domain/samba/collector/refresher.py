@@ -728,6 +728,22 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
             else f"{_err_brand} {_err_name}".strip()
         )
         _err_msg = str(e).strip() or type(e).__name__
+        if "상품 데이터 없음" in _err_msg:
+            # 소싱처 영구 삭제 → 기존 sold_out 플로우와 동일하게 처리
+            _log_refresh(
+                "MUSINSA",
+                product.id,
+                _err_label,
+                "소싱처 삭제 감지(상품 없음) — 품절 처리",
+                level="warning",
+                idx=_idx,
+                total=_total,
+            )
+            return RefreshResult(
+                product_id=product.id,
+                new_sale_status="sold_out",
+                changed=True,  # 상태 변경이므로 변동으로 처리 (수동갱신 sold_out 플로우 진입)
+            )
         _log_refresh(
             "MUSINSA",
             product.id,
