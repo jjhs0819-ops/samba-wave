@@ -52,16 +52,16 @@ export default function SambaLayout({
       setAuthChecked(true);
       return;
     }
-    // 라이선스 키 미등록 시 라이선스 페이지로 이동 (SKIP 환경변수 시 우회)
-    const skipLicense = process.env.NEXT_PUBLIC_SKIP_LICENSE_CHECK === 'true'
-    if (!skipLicense && !getLicenseKey()) {
-      router.replace("/samba/license");
-      return;
-    }
     const raw = localStorage.getItem(STORAGE_KEYS.SAMBA_USER);
     if (raw) {
       try {
-        setCurrentUser(JSON.parse(raw) as SambaUser);
+        const user = JSON.parse(raw) as SambaUser;
+        setCurrentUser(user);
+        // 관리자는 라이선스 체크 우회
+        if (!user.is_admin && !getLicenseKey()) {
+          router.replace("/samba/license");
+          return;
+        }
       } catch {
         localStorage.removeItem(STORAGE_KEYS.SAMBA_USER);
         router.replace("/samba/login");
