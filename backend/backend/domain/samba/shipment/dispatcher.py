@@ -199,6 +199,9 @@ async def _delete_smartstore(
     from backend.domain.samba.proxy.smartstore import SmartStoreApiError
 
     client = SmartStoreClient(client_id, client_secret)
+    logger.info(
+        f"[스마트스토어] 삭제 시도 — clientId={client_id[:6]}*** account={getattr(account, 'seller_id', '?')}"
+    )
     product_no = product.get("market_product_no", {}).get("smartstore", "")
     if not product_no:
         return {"success": False, "message": "스마트스토어 상품번호 없음 (건너뜀)"}
