@@ -2494,7 +2494,7 @@ class LotteonPlugin(MarketPlugin):
                     logger.warning(f"[롯데ON] 살수록할인 설정 실패 (무시): {e}")
 
     async def delete(self, session, product_no: str, account) -> dict[str, Any]:
-        """롯데ON 상품 판매중지 (SOUT 상태 변경).
+        """롯데ON 상품 판매종료 (END 전환 → 판매페이지 즉시 차단 + 시스템 자동 삭제).
 
         _get_cached_client로 test_auth 캐싱 — 오토튠 품절 배치 시 인증 API 1회만 호출.
         """
@@ -2508,8 +2508,10 @@ class LotteonPlugin(MarketPlugin):
 
         try:
             client = await _get_cached_client(api_key)
-            # SOUT = 품절 처리 (롯데ON은 완전 삭제 API 없음, 품절 상태로 변경)
-            await client.change_status([{"spdNo": product_no, "slStatCd": "SOUT"}])
+            # END = 판매종료. 판매페이지가 "현재 판매 중인 상품이 아닙니다"로 즉시 차단되고,
+            # 롯데ON 시스템이 일정 기간 경과 후 자동 삭제한다. (SOUT은 품절 배지만 달고
+            # 판매페이지는 계속 노출되어 삼바 "품절→삭제" 원칙을 만족시키지 못함.)
+            await client.delete_product(product_no)
             return {"success": True, "message": "롯데ON 판매종료 완료"}
         except Exception as e:
             logger.error(f"[롯데ON] 판매종료 실패: {e}")
