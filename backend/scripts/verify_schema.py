@@ -40,6 +40,7 @@ def get_model_columns() -> dict[str, set[str]]:
     import backend.domain.samba.job.model  # noqa: F401
     import backend.domain.samba.store_care.model  # noqa: F401
     import backend.domain.samba.wholesale.model  # noqa: F401
+    import backend.domain.samba.license.model  # noqa: F401
 
     result: dict[str, set[str]] = {}
     for table in SQLModel.metadata.tables.values():
