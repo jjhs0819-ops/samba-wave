@@ -7,7 +7,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from backend.api.v1.routers.auth import router as auth_router
+from backend.api.v1.routers.license import router as license_router
 from backend.api.v1.routers.samba.account import router as samba_account_router
+from backend.api.v1.routers.samba.license_admin import router as license_admin_router
 from backend.api.v1.routers.samba.ai_sourcing import router as samba_ai_sourcing_router
 from backend.api.v1.routers.samba.analytics import router as samba_analytics_router
 from backend.api.v1.routers.samba.category import router as samba_category_router
@@ -91,6 +93,10 @@ def create_application() -> FastAPI:
     samba_auth = [Depends(get_user_id)]
 
     app.include_router(auth_router, prefix="/api/v1")
+    app.include_router(license_router, prefix="/api/v1")
+    app.include_router(
+        license_admin_router, prefix="/api/v1/samba", dependencies=samba_auth
+    )
     app.include_router(user_router, prefix="/api/v1", dependencies=samba_auth)
     app.include_router(samba_user_router, prefix="/api/v1/samba")
     app.include_router(

@@ -9,7 +9,12 @@ from starlette.responses import JSONResponse
 logger = logging.getLogger(__name__)
 
 # 키 검증을 건너뛸 경로 (health check, 루트)
-_EXEMPT_PATHS = {"/", "/api/v1/health", "/api/v1/samba/sourcing-accounts/extension-key"}
+_EXEMPT_PATHS = {
+    "/",
+    "/api/v1/health",
+    "/api/v1/samba/sourcing-accounts/extension-key",
+    "/api/v1/license/verify",
+}
 
 
 class ApiGatewayMiddleware(BaseHTTPMiddleware):
