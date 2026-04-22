@@ -52,8 +52,9 @@ export default function SambaLayout({
       setAuthChecked(true);
       return;
     }
-    // 라이선스 키 미등록 시 라이선스 페이지로 이동
-    if (!getLicenseKey()) {
+    // 라이선스 키 미등록 시 라이선스 페이지로 이동 (SKIP 환경변수 시 우회)
+    const skipLicense = process.env.NEXT_PUBLIC_SKIP_LICENSE_CHECK === 'true'
+    if (!skipLicense && !getLicenseKey()) {
       router.replace("/samba/license");
       return;
     }
