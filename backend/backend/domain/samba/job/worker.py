@@ -3444,16 +3444,19 @@ class JobWorker:
                 _use_max_discount = qs.get("maxDiscount", [""])[0] == "1"
                 _include_sold_out = qs.get("includeSoldOut", [""])[0] == "1"
                 # 소싱처별 키워드 파라미터: LOTTEON=q, GSShop=tq, SSG=query, FashionPlus=searchWord
-                keyword = qs.get(
-                    "q",
-                    qs.get(
-                        "tq",
+                # NAVERSTORE: URL 전체(스토어명 + /category/ 또는 /search?q= path)가 필요 —
+                # ?q= 추출로 치환하면 list_mixin에서 store_name 파싱 실패 → 수집 0건
+                if site != "NAVERSTORE":
+                    keyword = qs.get(
+                        "q",
                         qs.get(
-                            "query",
-                            qs.get("keyword", qs.get("searchWord", [keyword])),
+                            "tq",
+                            qs.get(
+                                "query",
+                                qs.get("keyword", qs.get("searchWord", [keyword])),
+                            ),
                         ),
-                    ),
-                )[0]
+                    )[0]
                 # 패션플러스 필터 파라미터
                 for k in (
                     "category1Id",
