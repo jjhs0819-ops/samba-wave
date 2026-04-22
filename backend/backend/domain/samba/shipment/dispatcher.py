@@ -233,7 +233,8 @@ async def _delete_smartstore(
             zeroed = 0
             for combo in combos:
                 combo["stockQuantity"] = 0
-                combo["usable"] = False
+                # usable=False 금지: SmartStore는 최소 1개 옵션이 usable=True+price=0이어야 함
+                # (진행중인 주문 있을 때 usable=False 전체 설정 시 400 에러)
                 zeroed += 1
             put_data: dict[str, Any] = {"originProduct": origin}
             if "smartstoreChannelProduct" in existing:
@@ -242,7 +243,7 @@ async def _delete_smartstore(
                 ]
             await client.update_product(target_no, put_data)
             logger.info(
-                f"[스마트스토어] 품절 폴백 완료: {target_no} (옵션 {zeroed}개 재고0+usable=False)"
+                f"[스마트스토어] 품절 폴백 완료: {target_no} (옵션 {zeroed}개 재고0)"
             )
             return {
                 "success": True,

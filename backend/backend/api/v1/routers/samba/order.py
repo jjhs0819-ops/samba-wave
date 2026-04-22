@@ -750,7 +750,7 @@ async def seller_cancel(
         try:
             await client.request_cancel(
                 product_order_id=order.order_number,
-                cancel_reason="SOLD_OUT",
+                cancel_reason="INTENT_CHANGED",
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"판매자 취소 실패: {e}")
@@ -759,7 +759,9 @@ async def seller_cancel(
             order_id,
             {"shipping_status": "취소완료", "status": "cancelled"},
         )
-        logger.info(f"[판매자취소] 스마트스토어 {order.order_number} 완료 (SOLD_OUT)")
+        logger.info(
+            f"[판매자취소] 스마트스토어 {order.order_number} 완료 (INTENT_CHANGED)"
+        )
         return {"ok": True, "message": "판매자 취소 완료"}
 
     elif account.market_type == "playauto":
