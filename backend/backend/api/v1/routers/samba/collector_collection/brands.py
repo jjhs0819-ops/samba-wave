@@ -250,7 +250,9 @@ async def brand_refresh(
                     _q_val = _fq.get("q", [""])[0]
                     if _brands_val:
                         # brands=A,B 형태 다중 브랜드 지원 — 쉼표 split + 트림 후 리스트로 비교.
-                        _f_brand_list = [b.strip() for b in _brands_val.split(",") if b.strip()]
+                        _f_brand_list = [
+                            b.strip() for b in _brands_val.split(",") if b.strip()
+                        ]
                     elif _q_val:
                         # 구형 q=나이키 또는 신형 q=나이키 운동화 → 첫 토큰 추출
                         _first = _q_val.split(" ", 1)[0] if " " in _q_val else _q_val
