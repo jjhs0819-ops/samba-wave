@@ -27,6 +27,8 @@ async def _get_cached_client(api_key: str):
         ts, client = _auth_cache[api_key]
         if now - ts < _AUTH_TTL:
             return client
+        # 만료된 클라이언트 연결 정리
+        await client.aclose()
     client = LotteonClient(api_key)
     await client.test_auth()
     _auth_cache[api_key] = (now, client)

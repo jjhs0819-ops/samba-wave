@@ -44,18 +44,25 @@ jobs:
       #    GitHub Secret이 하나라도 비면 DB 비밀번호가 날아감
       # ──────────────────────────────────────────────────────────
 
+      - name: Build via Cloud Build (캐시 + 카카오 알림 포함)
+        run: |
+          gcloud builds submit ./backend \
+            --config ./backend/cloudbuild.yaml \
+            --project fresh-sanctuary-489804-v4 \
+            --substitutions COMMIT_SHA=${{ github.sha }},BRANCH_NAME=main
+
       - name: Deploy to Cloud Run
         run: |
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
           TS=$(date +%m%d%H%M)
+          IMAGE="asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/cloud-run-source-deploy/samba-wave-api:${{ github.sha }}"
           # ⚠️ command/args override 주의:
           # Cloud Run service는 이전 revision의 container command/args를 persist 함.
           # 과거에 수동 설정된 "uv run -m gunicorn ..."이 Dockerfile ENTRYPOINT(entrypoint.sh)를 덮어써
           # 마이그레이션·검증이 수주간 스킵된 사고 발생 (2026-04-17).
-          # 이 override는 Cloud Run 콘솔 또는 CLI로 1회 clear 후 계속 유지되어야 함.
           # (--clear-command/--clear-args 플래그는 gcloud 버전에 따라 미지원 → workflow에는 명시 안 함)
           gcloud run deploy samba-wave-api \
-            --source ./backend \
+            --image "$IMAGE" \
             --region asia-northeast3 \
             --project fresh-sanctuary-489804-v4 \
             --revision-suffix="${SHORT_SHA}-${TS}" \

@@ -201,6 +201,26 @@ class LotteonClient:
         self.api_key = api_key.strip()
         self.tr_grp_cd: str = ""
         self.tr_no: str = ""
+        # 인스턴스 수준 공유 클라이언트 — Cloud NAT 포트 소진 방지
+        self._client: Optional[httpx.AsyncClient] = None
+
+    def _get_client(self) -> httpx.AsyncClient:
+        """공유 httpx 클라이언트 반환. 닫혔으면 재생성."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                timeout=settings.http_timeout_default,
+                limits=httpx.Limits(
+                    max_connections=5,
+                    max_keepalive_connections=3,
+                    keepalive_expiry=30.0,
+                ),
+            )
+        return self._client
+
+    async def aclose(self) -> None:
+        """클라이언트 명시적 종료 — 캐시 만료 시 호출."""
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -238,10 +258,7 @@ class LotteonClient:
         if _shared_client is not None:
             resp = await _do(_shared_client)
         else:
-            async with httpx.AsyncClient(
-                timeout=settings.http_timeout_default
-            ) as client:
-                resp = await _do(client)
+            resp = await _do(self._get_client())
 
         try:
             data = resp.json()

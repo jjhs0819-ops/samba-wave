@@ -1022,7 +1022,12 @@ class JobWorker:
                         prod = await retry_cp.get_async(pid)
                         site_pid = prod.site_product_id if prod else ""
                         _source = (prod.source_site or "").upper() if prod else ""
-                        prod_name = prod.name[:30] if prod and prod.name else pid[-8:]
+                        _brand = (prod.brand or "") if prod else ""
+                        _style = (prod.style_code or "") if prod else ""
+                        _raw_name = (prod.name or "") if prod else pid[-8:]
+                        prod_name = f"{_brand} {_raw_name}".strip()[:35]
+                        if _style:
+                            prod_name = f"{prod_name} {_style}"
                         if site_pid:
                             prod_name = f"{prod_name} ({site_pid})"
                         if _source:
