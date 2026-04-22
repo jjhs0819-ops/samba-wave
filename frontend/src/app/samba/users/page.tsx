@@ -80,6 +80,8 @@ export default function UsersPage() {
   const [licenses, setLicenses] = useState<License[]>([])
   const [licForm, setLicForm] = useState({ buyer_name: '', buyer_email: '', expires_at: '', notes: '' })
   const [licCreating, setLicCreating] = useState(false)
+  const [editingExpires, setEditingExpires] = useState<string | null>(null)
+  const [editExpiresValue, setEditExpiresValue] = useState('')
 
   const loadLicenses = useCallback(async () => {
     const res = await fetchWithAuth(`${SAMBA_PREFIX}/admin/licenses`)
@@ -122,6 +124,19 @@ export default function UsersPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ is_active: isActive }),
     })
+    await loadLicenses()
+  }
+
+  const saveExpires = async (id: string) => {
+    const body = editExpiresValue
+      ? { expires_at: new Date(editExpiresValue).toISOString() }
+      : { clear_expires_at: true }
+    await fetchWithAuth(`${SAMBA_PREFIX}/admin/licenses/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    setEditingExpires(null)
     await loadLicenses()
   }
 
@@ -267,7 +282,24 @@ export default function UsersPage() {
                       <div>{lic.buyer_name}</div>
                       <div style={{ color: '#666', fontSize: '0.72rem' }}>{lic.buyer_email}</div>
                     </td>
-                    <td style={{ ...tdStyle, textAlign: 'left' }}>{lic.expires_at ? lic.expires_at.slice(0, 10) : '영구'}</td>
+                    <td style={{ ...tdStyle, textAlign: 'left' }}>
+                      {editingExpires === lic.id ? (
+                        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                          <input type="date" value={editExpiresValue}
+                            onChange={e => setEditExpiresValue(e.target.value)}
+                            style={{ background: '#1A1A1A', border: '1px solid #444', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.75rem' }} />
+                          <button onClick={() => saveExpires(lic.id)}
+                            style={{ padding: '2px 8px', fontSize: '0.72rem', background: 'rgba(74,222,128,0.15)', color: '#4ADE80', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>저장</button>
+                          <button onClick={() => setEditingExpires(null)}
+                            style={{ padding: '2px 8px', fontSize: '0.72rem', background: '#2A2A2A', color: '#888', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>취소</button>
+                        </div>
+                      ) : (
+                        <span onClick={() => { setEditingExpires(lic.id); setEditExpiresValue(lic.expires_at ? lic.expires_at.slice(0, 10) : '') }}
+                          style={{ cursor: 'pointer', borderBottom: '1px dashed #444' }} title="클릭하여 수정">
+                          {lic.expires_at ? lic.expires_at.slice(0, 10) : '영구'}
+                        </span>
+                      )}
+                    </td>
                     <td style={{ ...tdStyle, textAlign: 'left', color: '#666', fontSize: '0.75rem' }}>
                       {lic.last_verified_at ? lic.last_verified_at.slice(0, 16).replace('T', ' ') : '-'}
                     </td>

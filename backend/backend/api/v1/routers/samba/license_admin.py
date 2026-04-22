@@ -20,7 +20,9 @@ class LicenseCreateRequest(BaseModel):
 
 
 class LicensePatchRequest(BaseModel):
-    is_active: bool
+    is_active: Optional[bool] = None
+    expires_at: Optional[datetime] = None
+    clear_expires_at: bool = False
 
 
 class LicenseResponse(BaseModel):
@@ -62,13 +64,19 @@ async def create_license(
 
 
 @router.patch("/{license_id}", response_model=LicenseResponse)
-async def toggle_license(
+async def patch_license(
     license_id: str,
     body: LicensePatchRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
     _admin_id: str = Depends(require_admin),
 ) -> LicenseResponse:
-    lic = await LicenseService(session).toggle_active(license_id, body.is_active)
+    expires_at = body.expires_at.replace(tzinfo=None) if body.expires_at else None
+    lic = await LicenseService(session).patch_license(
+        license_id,
+        is_active=body.is_active,
+        expires_at=expires_at,
+        clear_expires_at=body.clear_expires_at,
+    )
     if not lic:
         raise HTTPException(status_code=404, detail="라이선스를 찾을 수 없습니다.")
     return LicenseResponse.model_validate(lic.model_dump())

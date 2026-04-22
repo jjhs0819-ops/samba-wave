@@ -62,6 +62,24 @@ class LicenseService:
         lic.is_active = is_active
         return await self.repo.update(lic)
 
+    async def patch_license(
+        self,
+        license_id: str,
+        is_active: Optional[bool] = None,
+        expires_at: Optional[datetime] = None,
+        clear_expires_at: bool = False,
+    ) -> Optional[SambaLicense]:
+        lic = await self.repo.get_by_id(license_id)
+        if not lic:
+            return None
+        if is_active is not None:
+            lic.is_active = is_active
+        if clear_expires_at:
+            lic.expires_at = None
+        elif expires_at is not None:
+            lic.expires_at = expires_at
+        return await self.repo.update(lic)
+
     async def delete_license(self, license_id: str) -> bool:
         lic = await self.repo.get_by_id(license_id)
         if not lic:
