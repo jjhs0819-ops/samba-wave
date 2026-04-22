@@ -61,7 +61,7 @@ export default function SambaDashboard() {
   }
 
   const byMarket = useMemo((): MarketStat[] => {
-    const marketMap = new Map<string, { registered: number; accts: Map<string, { account_id: string; account_label: string; registered: number; srcMap: Map<string, { registered: number; brandMap: Map<string, number> }> }> }>()
+    const marketMap = new Map<string, { registered: number; accts: Map<string, { account_id: string; account_label: string; registered: number; sold_products: number; srcMap: Map<string, { registered: number; brandMap: Map<string, number> }> }> }>()
     for (const acct of byAccount) {
       const mKey = acct.market_name
       const mEntry = marketMap.get(mKey) ?? { registered: 0, accts: new Map() }
