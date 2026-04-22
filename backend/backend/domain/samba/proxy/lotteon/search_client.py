@@ -457,6 +457,10 @@ class SearchClientMixin:
         categories: list[dict[str, Any]] = []
         for path, info in sorted(path_merged.items(), key=lambda x: -x[1]["count"]):
             parts = path.split(" > ")
+            # qapi 2,100 상한 우회용 서브키워드 ({브랜드} + 카테고리 리프명)
+            # 예: keyword="나이키", path="스포츠 > 신발 > 운동화" → "나이키 운동화"
+            _leaf = next((p for p in reversed(parts) if p), "")
+            _sub_kw = f"{keyword} {_leaf}".strip() if _leaf else keyword
             categories.append(
                 {
                     "categoryCode": info["bc_codes"][0],
@@ -466,6 +470,8 @@ class SearchClientMixin:
                     "category1": parts[0] if len(parts) > 0 else "",
                     "category2": parts[1] if len(parts) > 1 else "",
                     "category3": parts[2] if len(parts) > 2 else "",
+                    "subKeyword": _sub_kw,
+                    "displayLabel": _sub_kw,
                 }
             )
 

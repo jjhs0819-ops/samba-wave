@@ -1217,11 +1217,25 @@ class JobWorker:
         except Exception as exc:
             logger.warning(f"[잡워커] 검색 URL 파싱 실패: {exc}")
 
+        # LOTTEON 서브키워드 모드 감지: q="{브랜드} {카테고리}"면 qapi total 기준 전수 수집
+        # (스캔 단계의 샘플 분포 count로 requested_count가 작게 잡혀도 cap에 걸리지 않도록)
+        # 수집 완료 시점에 실제 수집수로 requested_count가 자동 갱신되어 이후엔 정확해짐.
+        _lotteon_subkw_mode = False
+        if sf.source_site == "LOTTEON":
+            try:
+                _subkw_q = parse_qs(urlparse(sf.keyword or "").query).get("q", [""])[0]
+                if _subkw_q and " " in _subkw_q:
+                    _lotteon_subkw_mode = True
+            except Exception:
+                pass
+
         # 기존 수집 수 확인
         requested_count = sf.requested_count or 100
         count_stmt = select(_func.count()).where(CPModel.search_filter_id == filter_id)
         existing_count = (await session.execute(count_stmt)).scalar() or 0
-        remaining = max(0, requested_count - existing_count)
+        remaining = (
+            99999 if _lotteon_subkw_mode else max(0, requested_count - existing_count)
+        )
 
         if remaining <= 0:
             _add_job_log(
@@ -3496,10 +3510,24 @@ class JobWorker:
         except Exception as exc:
             logger.warning(f"[잡워커] 검색 URL 파싱 실패: {exc}")
 
+        # LOTTEON 서브키워드 모드 감지: q에 공백이 있으면 qapi total 기준 전수 수집
+        # (스캔 단계의 샘플 분포 count로 requested_count가 작게 잡혀도 cap에 걸리지 않도록.
+        # 수집 완료 시점에 실제 수집수로 requested_count가 자동 갱신되어 이후엔 정확해짐.)
+        _use_subkw_mode = False
+        if site == "LOTTEON":
+            try:
+                _sq_v = parse_qs(urlparse(sf.keyword or "").query).get("q", [""])[0]
+                if _sq_v and " " in _sq_v:
+                    _use_subkw_mode = True
+            except Exception:
+                pass
+
         # 기존 수집 수 확인
         count_stmt = select(_func.count()).where(CPModel.search_filter_id == filter_id)
         existing_count = (await session.execute(count_stmt)).scalar() or 0
-        remaining = max(0, requested_count - existing_count)
+        remaining = (
+            99999 if _use_subkw_mode else max(0, requested_count - existing_count)
+        )
         if remaining <= 0:
             _add_job_log(
                 job.id,
@@ -3622,21 +3650,30 @@ class JobWorker:
 
         else:
             # 직접 API 검색
-            # LOTTEON: brands 파라미터가 있으면 각 브랜드명을 키워드로 개별 검색해서 합침
-            # (qapi 검색은 키워드 관련도 기반이라 단일 키워드로 검색하면 서브브랜드가 누락됨)
+            # LOTTEON: 두 가지 모드 지원
+            #   1) 서브키워드 모드 (신): q="{브랜드} {카테고리}" 형태 (공백 포함)
+            #      → qapi 2,100 상한을 카테고리 단위로 회피
+            #   2) 브랜드별 모드 (구/하위호환): brands 파라미터로 각 브랜드 개별 검색
             _per_brand_keywords: list[str] = []
+            _use_subkw_mode = False
             if site == "LOTTEON":
                 try:
                     parsed_kw = urlparse(sf.keyword or "")
                     if parsed_kw.scheme:
                         _qs_kw = parse_qs(parsed_kw.query)
+                        _q_val = _qs_kw.get("q", [""])[0]
                         _bp = _qs_kw.get("brands", [""])[0]
-                        if _bp:
+                        if _q_val and " " in _q_val:
+                            _use_subkw_mode = True
+                            _per_brand_keywords = [_q_val]
+                        elif _bp:
                             _per_brand_keywords = [
                                 b.strip() for b in _bp.split(",") if b.strip()
                             ]
                 except Exception as exc:
-                    logger.warning(f"[잡워커] LOTTEON 브랜드 파라미터 파싱 실패: {exc}")
+                    logger.warning(
+                        f"[잡워커] LOTTEON 브랜드/서브키워드 파라미터 파싱 실패: {exc}"
+                    )
 
             try:
                 if _per_brand_keywords:
@@ -3663,16 +3700,16 @@ class JobWorker:
                                 if _pid:
                                     seen_pids.add(_pid)
                                 items_list.append(_it)
+                            _mode = "서브키워드" if _use_subkw_mode else "브랜드별"
                             logger.info(
-                                f"[잡워커] LOTTEON 브랜드별 검색 '{_kw}' → {len(_items)}건"
+                                f"[잡워커] LOTTEON {_mode} 검색 '{_kw}' → {len(_items)}건"
                             )
                         except Exception as _be:
-                            logger.warning(
-                                f"[잡워커] LOTTEON 브랜드 '{_kw}' 검색 실패: {_be}"
-                            )
+                            logger.warning(f"[잡워커] LOTTEON 검색 실패 '{_kw}': {_be}")
                     result = {"products": items_list, "total": len(items_list)}
+                    _mode = "서브키워드" if _use_subkw_mode else "브랜드별"
                     logger.info(
-                        f"[잡워커] LOTTEON 브랜드별 검색 합계 → {len(items_list)}건"
+                        f"[잡워커] LOTTEON {_mode} 검색 합계 → {len(items_list)}건"
                     )
                 else:
                     # 카테고리필터가 있는 소싱처: 전체 검색 후 사후 필터링
@@ -3691,8 +3728,8 @@ class JobWorker:
                         )
                     # 검색 캐시: 동일 브랜드 그룹 수집 시 전수 검색 1회만 실행
                     # ABCmart: DB 캐시 (다중 Cloud Run 인스턴스 공유), 나머지: 인메모리 캐시
-                    import time as _time
-
+                    # (module-level `import time as _time` 재활용 — 지역 재import 시 함수 전체의 _time이
+                    # 로컬로 shadow되어 상단 _time.time() 호출이 UnboundLocalError 발생)
                     _cache_key = (site, keyword)
                     _cached = self._search_cache.get(_cache_key)
                     _cache_ttl = 300  # 5분 (인메모리)
@@ -4040,9 +4077,12 @@ class JobWorker:
             if not _selected_brands and keyword:
                 _selected_brands = [keyword]
 
-            # 브랜드별로 직접 검색했다면 brand 정확일치 필터를 건너뛴다.
-            # (검색 결과의 brand 필드가 키워드와 다를 수 있으나 키워드 검색 결과를 신뢰)
-            if locals().get("_per_brand_keywords"):
+            # 브랜드별 검색 모드: brand 정확일치 필터 건너뛴다(키워드 검색 결과 신뢰).
+            # 서브키워드 모드("나이키 운동화"): q에 카테고리 명사가 포함되어 관련 브랜드가
+            # 섞일 수 있으므로 brands= 파라미터 기반 브랜드 필터 유지.
+            if locals().get("_per_brand_keywords") and not locals().get(
+                "_use_subkw_mode"
+            ):
                 _selected_brands = []
 
             if _selected_brands:
@@ -4113,11 +4153,15 @@ class JobWorker:
         # LOTTEON: 저장 전 10건 병렬로 상세 정보 선취합 (1단계 통합 수집)
         _lotteon_details: dict[str, dict[str, Any]] = {}
         if site == "LOTTEON" and client:
+            # LOTTEON 서브키워드 모드: 다른 필터에 이미 수집된 상품도 현재 필터로 소유권 교체
+            # (create_collected_product의 IntegrityError upsert 경로가 search_filter_id 갱신)
+            _lt_takeover = bool(locals().get("_use_subkw_mode", False))
+            _skip_ids = set() if _lt_takeover else existing_ids
             # 중복 제외한 신규 상품만 상세 조회
             new_items = [
                 it
                 for it in items_list
-                if str(it.get("site_product_id", "")) not in existing_ids
+                if str(it.get("site_product_id", "")) not in _skip_ids
             ][:remaining]
             if new_items:
                 logger.info(
@@ -4585,7 +4629,9 @@ class JobWorker:
                     return
 
             p_id = str(item.get("site_product_id", ""))
-            if p_id in existing_ids:
+            # LOTTEON 서브키워드 모드: 타 필터 보유 상품도 현재 필터로 소유권 교체
+            # (아래 create_collected_product의 upsert 경로가 search_filter_id 갱신)
+            if p_id in existing_ids and not locals().get("_use_subkw_mode", False):
                 continue
 
             # 품절 필터링
@@ -4832,7 +4878,10 @@ class JobWorker:
                 ],
             }
             try:
-                await svc.create_collected_product(product_data)
+                saved = await svc.create_collected_product(product_data)
+                # 동일 소싱처 내 동일 원 상품명 차단/블랙리스트 → None 반환 시 카운트 제외
+                if not saved:
+                    continue
                 total_saved += 1
                 _collect_last_progress[job.id] = _time.time()  # 진행 갱신
                 await repo.update_progress(
