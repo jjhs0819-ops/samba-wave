@@ -10,6 +10,7 @@ import { useStoreSettings } from './hooks/useStoreSettings'
 import { StoreSettingsPanel } from './components/StoreSettingsPanel'
 import { useSourcingAccounts } from './hooks/useSourcingAccounts'
 import { SourcingAccountsPanel } from './components/SourcingAccountsPanel'
+import { LicensePanel } from './components/LicensePanel'
 import { card, fmtNum } from '@/lib/samba/styles'
 
 export default function SettingsPage() {
@@ -106,6 +107,9 @@ export default function SettingsPage() {
 
       {/* 프록시 설정 */}
       <ProxySettingsPanel {...proxySettings} />
+
+      {/* 라이선스 */}
+      <LicensePanel />
     </div>
   )
 }

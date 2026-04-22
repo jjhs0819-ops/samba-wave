@@ -7,6 +7,7 @@ import SambaModal from "@/components/samba/Modal";
 import SambaBlockAlert from "@/components/samba/BlockAlert";
 import type { SambaUser } from "@/lib/samba/api/operations";
 import { STORAGE_KEYS } from "@/lib/samba/constants";
+import { getLicenseKey } from "@/hooks/useLicenseCheck";
 
 interface NavItem {
   href: string;
@@ -42,12 +43,18 @@ export default function SambaLayout({
   const [currentUser, setCurrentUser] = useState<SambaUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
 
-  // 로그인/회원가입 페이지는 인증 체크 없이 렌더링
+  // 로그인/회원가입/라이선스 페이지는 인증 체크 없이 렌더링
   const isLoginPage = pathname === "/samba/login" || pathname === "/samba/sign-up";
+  const isLicensePage = pathname === "/samba/license";
 
   useEffect(() => {
-    if (isLoginPage) {
+    if (isLoginPage || isLicensePage) {
       setAuthChecked(true);
+      return;
+    }
+    // 라이선스 키 미등록 시 라이선스 페이지로 이동
+    if (!getLicenseKey()) {
+      router.replace("/samba/license");
       return;
     }
     const raw = localStorage.getItem(STORAGE_KEYS.SAMBA_USER);
@@ -62,10 +69,10 @@ export default function SambaLayout({
       router.replace("/samba/login");
     }
     setAuthChecked(true);
-  }, [isLoginPage, router]);
+  }, [isLoginPage, isLicensePage, router]);
 
-  // 로그인 페이지면 레이아웃 헤더 없이 바로 렌더링
-  if (isLoginPage) {
+  // 로그인/라이선스 페이지는 레이아웃 헤더 없이 바로 렌더링
+  if (isLoginPage || isLicensePage) {
     return <>{children}</>;
   }
 
