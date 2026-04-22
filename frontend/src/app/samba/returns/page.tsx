@@ -91,7 +91,7 @@ export default function ReturnsPage() {
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
-  const [siteFilter, setSiteFilter] = useState('진행중')
+  const [siteFilter, setSiteFilter] = useState('')
   const [pageSize, setPageSize] = useState(50)
   const [searchCategory, setSearchCategory] = useState('product')
   const [searchText, setSearchText] = useState('')
@@ -513,7 +513,21 @@ export default function ReturnsPage() {
                 </tr>
               </thead>
               <tbody>
-                {returns.filter(r => !siteFilter || (r.completion_detail || '진행중') === siteFilter).map((r, idx) => {
+                {returns.filter(r => {
+                  if (siteFilter && (r.completion_detail || '진행중') !== siteFilter) return false
+                  if (marketFilter) {
+                    if (marketFilter.startsWith('type:')) {
+                      const mType = marketFilter.replace('type:', '')
+                      const mName = accounts.find(a => a.market_type === mType)?.market_name || ''
+                      if (mName && !r.market?.includes(mName)) return false
+                    } else if (marketFilter.startsWith('acc:')) {
+                      const accId = marketFilter.replace('acc:', '')
+                      const acc = accounts.find(a => a.id === accId)
+                      if (acc && !r.market?.includes(acc.market_name || '')) return false
+                    }
+                  }
+                  return true
+                }).map((r, idx) => {
                   const st = STATUS_MAP[r.status] || { label: r.status, bg: 'rgba(100,100,100,0.2)', text: '#888' }
                   return (
                     <Fragment key={r.id}>
