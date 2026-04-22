@@ -145,7 +145,16 @@ class AbcMartPlugin(SourcingPlugin):
             )
 
         try:
-            client = ARTSourcingClient(channel=None)
+            from backend.core.config import settings as _cfg
+
+            _proxies: list[str] = []
+            if _cfg.collect_proxy_url:
+                _proxies.append(_cfg.collect_proxy_url.strip())
+            if _cfg.proxy_urls:
+                _proxies.extend(
+                    [p.strip() for p in _cfg.proxy_urls.split(",") if p.strip()]
+                )
+            client = ARTSourcingClient(channel=None, proxy_pool=_proxies or None)
             detail = await self.safe_call(
                 client.get_product_detail(site_product_id, refresh_only=True)
             )
