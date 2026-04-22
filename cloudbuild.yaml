@@ -7,7 +7,7 @@ availableSecrets:
 
 steps:
   # Step 1: 마이그레이션 체크 (HEAD~1 없는 shallow clone 환경이면 스킵)
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  - name: 'alpine/git'
     id: migration-check
     entrypoint: 'bash'
     args:
