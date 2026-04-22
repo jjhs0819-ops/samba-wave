@@ -1,12 +1,12 @@
 from datetime import datetime
 from typing import Optional
 
-import ulid
+from ulid import ULID
 from sqlmodel import Field, SQLModel
 
 
 def _new_lk_id() -> str:
-    return f"lk_{ulid.new().str}"
+    return f"lk_{ULID()}"
 
 
 def generate_license_key() -> str:
