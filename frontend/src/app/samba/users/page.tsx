@@ -227,7 +227,7 @@ export default function UsersPage() {
           <input placeholder="구매자 이름" value={licForm.buyer_name}
             onChange={e => setLicForm(p => ({ ...p, buyer_name: e.target.value }))}
             style={{ ...inputStyle, fontSize: '0.85rem' }} />
-          <input placeholder="구매자 이메일" value={licForm.buyer_email}
+          <input placeholder="구매자 연락처" value={licForm.buyer_email}
             onChange={e => setLicForm(p => ({ ...p, buyer_email: e.target.value }))}
             style={{ ...inputStyle, fontSize: '0.85rem' }} />
           <input type="date" value={licForm.expires_at}

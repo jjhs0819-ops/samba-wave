@@ -92,7 +92,7 @@ export default function LicenseAdminPage() {
         <div className="grid grid-cols-2 gap-4 mb-4">
           {[
             { placeholder: '구매자 이름', field: 'buyer_name' as const },
-            { placeholder: '구매자 이메일', field: 'buyer_email' as const },
+            { placeholder: '구매자 연락처', field: 'buyer_email' as const },
           ].map(({ placeholder, field }) => (
             <input
               key={field}
