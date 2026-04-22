@@ -31,17 +31,21 @@ steps:
   # Docker 빌드 (레이어 캐시 활용)
   - name: 'gcr.io/cloud-builders/docker'
     id: build
+    env:
+      - 'DOCKER_BUILDKIT=1'
     args:
       - build
       - '--cache-from'
       - 'asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/cloud-run-source-deploy/samba-wave-api:latest'
+      - '--build-arg'
+      - 'BUILDKIT_INLINE_CACHE=1'
       - '-t'
       - 'asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/cloud-run-source-deploy/samba-wave-api:$COMMIT_SHA'
       - '-t'
       - 'asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/cloud-run-source-deploy/samba-wave-api:latest'
       - '.'
 
-  # 카카오톡 나에게 보내기 알림
+  # 카카오톡 나에게 보내기 알림 (refresh_token으로 access_token 자동 갱신)
   - name: 'bash'
     id: kakao-notify
     secretEnv: ['KAKAO_API_KEY', 'KAKAO_REFRESH_TOKEN']
@@ -55,8 +59,6 @@ steps:
           | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
 
         SHORT_SHA=$(echo "$COMMIT_SHA" | cut -c1-7)
-        MESSAGE="✅ 배포 완료%0A커밋: $${SHORT_SHA}%0A브랜치: $BRANCH_NAME"
-
         curl -s -X POST https://kapi.kakao.com/v2/api/talk/memo/default/send \
           -H "Authorization: Bearer $$ACCESS_TOKEN" \
           --data-urlencode "template_object={\"object_type\":\"text\",\"text\":\"✅ 배포 완료\n커밋: $${SHORT_SHA}\n브랜치: $BRANCH_NAME\",\"link\":{\"web_url\":\"https://console.cloud.google.com/cloud-build/builds?project=fresh-sanctuary-489804-v4\"}}"
