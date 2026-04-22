@@ -464,7 +464,7 @@ async def refresh_products(
                     result = await delete_from_market(
                         session, acc.market_type, pd, account=acc
                     )  # type: ignore[union-attr]
-                    if result.get("success"):
+                    if result.get("success") and not result.get("soldout_fallback"):
                         logger.info(
                             f"[refresh] {pid} → {acc.market_type} 판매중지 완료"
                         )  # type: ignore[union-attr]

@@ -391,7 +391,7 @@ class PlayAutoPlugin(MarketPlugin):
             return None
 
     async def delete(self, session, product_no: str, account) -> dict[str, Any]:
-        """상품 품절 처리 (EMP는 삭제 = 품절/취소대기 전환)."""
+        """상품 품절 처리: 재고 0 → 취소대기 순으로 처리 (EMP 상품 등록 전 상태 대응)."""
         creds = await self._load_auth(session, account)
         if not creds:
             return {"success": False, "message": "플레이오토 인증정보 없음"}
@@ -402,6 +402,16 @@ class PlayAutoPlugin(MarketPlugin):
 
         client = PlayAutoClient(api_key)
         try:
+            # 1단계: 재고 0으로 설정 (마켓 등록 전 상품은 soldout 불가이므로 선행 필요)
+            try:
+                await client.update_product([{"MasterCode": product_no, "Count": "0"}])
+                logger.info(f"[플레이오토] 재고 0 처리 완료: {product_no}")
+            except Exception as e:
+                logger.warning(
+                    f"[플레이오토] 재고 0 처리 실패 (soldout 계속 진행): {product_no} - {e}"
+                )
+
+            # 2단계: 취소대기 전환
             results = await client.soldout_product([product_no])
             if not results:
                 return {
@@ -413,7 +423,7 @@ class PlayAutoPlugin(MarketPlugin):
             msg = result.get("msg", "")
 
             if status == "true":
-                logger.info(f"[플레이오토] 품절 처리 성공: {product_no}")
+                logger.info(f"[플레이오토] 취소대기 전환 성공: {product_no}")
                 return {"success": True, "message": f"플레이오토 품절 처리 완료: {msg}"}
             else:
                 return {"success": False, "message": f"플레이오토 품절 실패: {msg}"}

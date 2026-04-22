@@ -484,7 +484,9 @@ async def _site_autotune_loop(site: str):
                                                     pd,
                                                     account=_del_acc,
                                                 )
-                                                if dr.get("success"):
+                                                if dr.get("success") and not dr.get(
+                                                    "soldout_fallback"
+                                                ):
                                                     deleted_count += 1
                                                     _ok_del_ids.append(_del_acc_id)
                                                     _log_line(
@@ -1104,7 +1106,9 @@ async def _site_autotune_loop(site: str):
                                                 _pd,
                                                 account=_del_acc,
                                             )
-                                            if _dr.get("success"):
+                                            if _dr.get("success") and not _dr.get(
+                                                "soldout_fallback"
+                                            ):
                                                 deleted_count += 1
                                                 _sp_deleted_ids.append(_del_acc_id)
                                                 _log_line(
