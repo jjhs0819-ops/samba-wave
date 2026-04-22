@@ -68,6 +68,9 @@ export interface ExternalSettingsState {
   // Probe
   probeData: Record<string, Record<string, Record<string, unknown>>>
   probeLoading: boolean
+  // 로컬 워커 토큰
+  workerToken: string
+  workerTokenStatus: string
 }
 
 export interface ExternalSettingsActions {
@@ -89,6 +92,7 @@ export interface ExternalSettingsActions {
   handleRegeneratePreset: (key: string, desc?: string, label?: string) => Promise<void>
   saveR2Settings: () => Promise<void>
   testR2: () => Promise<void>
+  generateWorkerToken: () => Promise<void>
   loadProbeStatus: () => Promise<void>
   runProbe: () => Promise<void>
   setSmsUserId: (v: string) => void
