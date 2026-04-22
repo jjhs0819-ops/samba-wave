@@ -249,7 +249,32 @@ async def _delete_smartstore(
             }
 
     try:
-        await client.delete_product(product_no)
+        del_result = await client.delete_product(product_no)
+        if del_result.get("already_deleted"):
+            # DELETE 404: 실제 삭제됐는지 vs 다른 계정 소유인지 GET으로 확인
+            try:
+                await client.get_product(product_no)
+                logger.error(
+                    f"[스마트스토어] 상품 {product_no} GET 200이지만 DELETE 404 — "
+                    f"다른 계정 소유 가능성. clientId={client_id[:6]}***, "
+                    f"account={getattr(account, 'seller_id', '?')}"
+                )
+                return await _soldout_fallback(
+                    product_no, "DELETE 404 but GET 200 (권한 없음)"
+                )
+            except SmartStoreApiError as get_err:
+                if "HTTP 404" in str(get_err):
+                    logger.info(
+                        f"[스마트스토어] 상품 {product_no} GET도 404 — 실제 삭제됨"
+                    )
+                else:
+                    logger.error(
+                        f"[스마트스토어] 상품 {product_no} GET 실패 ({get_err})"
+                    )
+                return {
+                    "success": True,
+                    "message": "스마트스토어 삭제 완료 (이미 삭제됨)",
+                }
         return {"success": True, "message": "스마트스토어 삭제 완료"}
     except SmartStoreApiError as e:
         err_str = str(e)
