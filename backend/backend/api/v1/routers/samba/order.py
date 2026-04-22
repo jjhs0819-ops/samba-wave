@@ -2475,7 +2475,18 @@ async def sync_orders_from_markets(
 
             # ── 클레임(취소/반품/교환) → SambaReturn 자동 생성 ──────────────
             returns_synced = 0
-            claim_statuses = {"취소요청", "반품요청", "교환요청", "취소처리중"}
+            claim_statuses = {
+                "취소요청",
+                "취소처리중",
+                "취소완료",
+                "반품요청",
+                "반품완료",
+                "반품거부",
+                "교환요청",
+                "교환회수완료",
+                "교환재배송",
+                "교환완료",
+            }
             claim_orders = [
                 od for od in orders_data if od.get("shipping_status") in claim_statuses
             ]
@@ -2492,34 +2503,68 @@ async def sync_orders_from_markets(
                 claim_type_map = {
                     "취소요청": "cancel",
                     "취소처리중": "cancel",
+                    "취소완료": "cancel",
                     "반품요청": "return",
+                    "반품완료": "return",
+                    "반품거부": "return",
                     "교환요청": "exchange",
+                    "교환회수완료": "exchange",
+                    "교환재배송": "exchange",
+                    "교환완료": "exchange",
+                }
+                claim_return_status_map = {
+                    "취소완료": "completed",
+                    "반품완료": "completed",
+                    "교환완료": "completed",
+                    "반품거부": "rejected",
+                }
+                claim_completion_detail_map = {
+                    "취소완료": "취소",
+                    "반품완료": "반품",
+                    "교환완료": "교환",
+                    "반품거부": "거부",
                 }
                 for od in claim_orders:
                     order_no = od.get("order_number", "")
                     if not order_no:
                         continue
+                    shipping_status = od.get("shipping_status", "")
+                    ret_type = claim_type_map.get(shipping_status, "return")
+                    return_status = claim_return_status_map.get(shipping_status)
+                    completion_detail = claim_completion_detail_map.get(shipping_status)
                     # 중복 체크
-                    existing_ret = await session.execute(
+                    existing_ret_result = await session.execute(
                         _sel(SambaReturn).where(SambaReturn.order_number == order_no)
                     )
-                    if existing_ret.scalar_one_or_none():
+                    existing_ret = existing_ret_result.scalar_one_or_none()
+                    if existing_ret:
+                        update_fields: dict[str, Any] = {
+                            "type": ret_type,
+                            "market_order_status": shipping_status,
+                        }
+                        if return_status:
+                            update_fields["status"] = return_status
+                        if completion_detail:
+                            update_fields["completion_detail"] = completion_detail
+                        if return_status in ("completed", "rejected"):
+                            from datetime import UTC, datetime as _dt
+
+                            update_fields["completion_date"] = _dt.now(UTC)
+                        await return_svc.repo.update_async(
+                            existing_ret.id, **update_fields
+                        )
                         continue
                     # 연결 주문 조회
                     linked_order = await svc.repo.find_by_async(order_number=order_no)
                     if not linked_order:
                         continue
-                    ret_type = claim_type_map.get(
-                        od.get("shipping_status", ""), "return"
-                    )
-                    await return_svc.create_return(
+                    ret = await return_svc.create_return(
                         {
                             "order_id": linked_order.id,
                             "order_number": order_no,
                             "type": ret_type,
-                            "status": "requested",
                             "market": label,
-                            "market_order_status": od.get("shipping_status", ""),
+                            "market_order_status": shipping_status,
                             "product_name": od.get("product_name", ""),
                             "product_image": od.get("product_image", ""),
                             "customer_name": od.get("customer_name", ""),
@@ -2528,6 +2573,17 @@ async def sync_orders_from_markets(
                             "requested_amount": od.get("sale_price", 0),
                         }
                     )
+                    if return_status or completion_detail:
+                        update_fields: dict[str, Any] = {}
+                        if return_status:
+                            update_fields["status"] = return_status
+                        if completion_detail:
+                            update_fields["completion_detail"] = completion_detail
+                        if return_status in ("completed", "rejected"):
+                            from datetime import UTC, datetime as _dt
+
+                            update_fields["completion_date"] = _dt.now(UTC)
+                        await return_svc.repo.update_async(ret.id, **update_fields)
                     returns_synced += 1
                 logger.info(
                     f"[주문동기화] {label}: 클레임 {len(claim_orders)}건 중 {returns_synced}건 반품교환 생성"
