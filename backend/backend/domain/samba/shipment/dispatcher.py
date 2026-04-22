@@ -251,6 +251,37 @@ async def _delete_smartstore(
     except SmartStoreApiError as e:
         err_str = str(e)
         if "HTTP 404" in err_str:
+            # 채널번호를 origin-products API에 잘못 호출한 경우도 404 → 역조회 먼저 시도
+            style_code = product.get("style_code", "") or product.get("styleCode", "")
+            if style_code:
+                logger.warning(
+                    f"[스마트스토어] 삭제 404 ({product_no}) → 채널번호 오호출 가능성, "
+                    f"sellerManagementCode({style_code})로 origin 역조회 시도"
+                )
+                found = await client.find_by_management_code(style_code)
+                if found:
+                    origin_no = str(
+                        found.get("originProductNo")
+                        or found.get("originProduct", {}).get("id", "")
+                        or ""
+                    )
+                    if origin_no and origin_no != product_no:
+                        logger.info(
+                            f"[스마트스토어] origin 역조회 성공: {product_no} → {origin_no}, 재시도"
+                        )
+                        try:
+                            await client.delete_product(origin_no)
+                            return {
+                                "success": True,
+                                "message": f"스마트스토어 삭제 완료 (origin={origin_no})",
+                            }
+                        except SmartStoreApiError as e2:
+                            if "HTTP 404" in str(e2):
+                                return {
+                                    "success": True,
+                                    "message": "스마트스토어 삭제 완료 (이미 삭제됨)",
+                                }
+                            return await _soldout_fallback(origin_no, str(e2))
             logger.info(
                 f"[스마트스토어] 상품 {product_no} 이미 삭제됨 (404) → 성공 처리"
             )
