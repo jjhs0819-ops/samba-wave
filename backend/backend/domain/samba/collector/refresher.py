@@ -139,6 +139,12 @@ async def _prepare_musinsa_cache() -> None:
 
 # IP 로테이션: 프록시 목록 순환 (동시요청 수 기준으로 교대)
 IP_ROTATE_EVERY = 20
+# 사이트별 독립 카운터 (무신사·ABCmart 등 소싱처 병렬 실행 시 각각 20건 단위로 로테이션)
+_ip_rotate_counters: dict[str, int] = {}
+_ip_rotate_idxs: dict[str, int] = {}
+_ip_rotate_labels: dict[str, str] = {}
+_ip_rotate_totals: dict[str, int] = {}
+# 하위호환 — 무신사 전용 단일 변수 (내부에서 딕셔너리로 위임)
 _ip_rotate_counter = 0
 _ip_rotate_idx = 0
 _ip_rotate_label: str = ""
@@ -201,14 +207,13 @@ def invalidate_db_proxy_cache():
     _db_proxy_cache_ts = 0
 
 
-def _get_rotated_proxy() -> str | None:
-    """메인 IP + 프록시 목록을 N건 단위로 순환. DB 프록시 우선, 없으면 환경변수 폴백."""
-    global \
-        _ip_rotate_counter, \
-        _ip_rotate_idx, \
-        _ip_rotate_label, \
-        _refresh_log_total, \
-        _ip_rotate_total
+def _get_rotated_proxy(site: str = "MUSINSA") -> str | None:
+    """메인 IP + 프록시 목록을 N건 단위로 순환. DB 프록시 우선, 없으면 환경변수 폴백.
+
+    site 파라미터로 소싱처별 독립 카운터를 관리한다.
+    """
+    global _ip_rotate_counters, _ip_rotate_idxs, _ip_rotate_labels, _ip_rotate_totals
+    global _refresh_log_total
     from backend.core.config import settings
 
     # DB 프록시 우선
@@ -225,33 +230,41 @@ def _get_rotated_proxy() -> str | None:
         return None
     # 프록시만 사용 (메인 IP 제외)
     pool: list[str | None] = proxies
-    _ip_rotate_counter += 1
-    _ip_rotate_total += 1
-    if _ip_rotate_counter >= IP_ROTATE_EVERY or _ip_rotate_label == "":
-        _ip_rotate_counter = 0
-        if _ip_rotate_label != "":
-            _ip_rotate_idx = (_ip_rotate_idx + 1) % len(pool)
-        selected = pool[_ip_rotate_idx]
+
+    # 사이트별 카운터 초기화
+    if site not in _ip_rotate_counters:
+        _ip_rotate_counters[site] = 0
+        _ip_rotate_idxs[site] = 0
+        _ip_rotate_labels[site] = ""
+        _ip_rotate_totals[site] = 0
+
+    _ip_rotate_counters[site] += 1
+    _ip_rotate_totals[site] += 1
+    if _ip_rotate_counters[site] >= IP_ROTATE_EVERY or _ip_rotate_labels[site] == "":
+        _ip_rotate_counters[site] = 0
+        if _ip_rotate_labels[site] != "":
+            _ip_rotate_idxs[site] = (_ip_rotate_idxs[site] + 1) % len(pool)
+        selected = pool[_ip_rotate_idxs[site]]
         label = (
             "main"
             if selected is None
             else (
                 selected.split("@")[-1]
                 if "@" in selected
-                else f"proxy-{_ip_rotate_idx}"
+                else f"proxy-{_ip_rotate_idxs[site]}"
             )
         )
-        _from = _ip_rotate_total
+        _from = _ip_rotate_totals[site]
         _to = _from + IP_ROTATE_EVERY - 1
-        _ip_rotate_label = label
+        _ip_rotate_labels[site] = label
         _msg = f"IP -> {label} ({_from}~{_to}건)"
-        logger.info(f"[autotune] {_msg}")
+        logger.info(f"[autotune][{site}] {_msg}")
         now = datetime.now(timezone.utc)
         kst = now + timedelta(hours=9)
         _refresh_log_buffer.append(
             {
                 "ts": now.isoformat(),
-                "site": "MUSINSA",
+                "site": site,
                 "product_id": "",
                 "name": "",
                 "msg": f"[{kst.strftime('%H:%M:%S')}] {_msg}",
@@ -260,7 +273,7 @@ def _get_rotated_proxy() -> str | None:
             }
         )
         _refresh_log_total += 1
-    return pool[_ip_rotate_idx]
+    return pool[_ip_rotate_idxs[site]]
 
 
 # 쿠키 로테이션: 100건마다 다음 쿠키로 전환

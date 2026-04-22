@@ -145,16 +145,20 @@ class AbcMartPlugin(SourcingPlugin):
             )
 
         try:
-            from backend.core.config import settings as _cfg
+            from backend.domain.samba.collector.refresher import (
+                _current_refresh_source,
+                _get_rotated_proxy,
+            )
 
-            _proxies: list[str] = []
-            if _cfg.collect_proxy_url:
-                _proxies.append(_cfg.collect_proxy_url.strip())
-            if _cfg.proxy_urls:
-                _proxies.extend(
-                    [p.strip() for p in _cfg.proxy_urls.split(",") if p.strip()]
-                )
-            client = ARTSourcingClient(channel=None, proxy_pool=_proxies or None)
+            # 오토튠 실행 시 무신사와 동일하게 20건마다 프록시 로테이션
+            _proxy = (
+                _get_rotated_proxy(site="ABCmart")
+                if _current_refresh_source.get() == "autotune"
+                else None
+            )
+            client = ARTSourcingClient(
+                channel=None, proxy_pool=[_proxy] if _proxy else None
+            )
             detail = await self.safe_call(
                 client.get_product_detail(site_product_id, refresh_only=True)
             )
