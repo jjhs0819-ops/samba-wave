@@ -146,12 +146,16 @@ async def delete_from_market(
     market_type: str,
     product: dict[str, Any],
     account: Any = None,
+    market_delete: bool = False,
 ) -> dict[str, Any]:
     """마켓에서 상품 판매중지/삭제.
 
     품절 감지 시 호출되어 마켓에 등록된 상품을 내린다.
     각 마켓 API에 판매중지 메서드가 있으면 호출하고,
     없으면 재고 0 업데이트로 대체한다.
+
+    market_delete=True: 수동 마켓삭제 (EMP 직접 삭제 후 DB 정리용) — PlayAuto는 API 생략
+    market_delete=False: 오토튠/리프레시 품절 처리 — PlayAuto는 EMP API 호출 + soldout_fallback
     """
     try:
         handler = MARKET_DELETE_HANDLERS.get(market_type)
@@ -162,6 +166,10 @@ async def delete_from_market(
                 "success": False,
                 "message": f"{market_type} 삭제 핸들러 미구현 (건너뜀)",
             }
+        if market_type == "playauto":
+            return await handler(
+                session, product, account=account, market_delete=market_delete
+            )
         return await handler(session, product, account=account)
     except Exception as exc:
         logger.error(f"[디스패처] {market_type} 상품 삭제 실패: {exc}")
@@ -565,9 +573,35 @@ async def _delete_playauto(
     session: AsyncSession,
     product: dict[str, Any],
     account: Any = None,
+    market_delete: bool = False,
 ) -> dict[str, Any]:
-    """플레이오토 마켓삭제 — EMP에서 직접 삭제 후 진행하므로 API 호출 없이 DB만 정리."""
-    return {"success": True, "message": "플레이오토: DB에서 제거"}
+    """플레이오토 삭제.
+
+    market_delete=True (수동 마켓삭제): EMP 직접 삭제 후 DB 정리 — API 호출 없이 성공 반환
+    market_delete=False (오토튠/리프레시 품절): EMP 재고0 → 취소대기 처리 후 soldout_fallback 유지
+    """
+    if market_delete:
+        return {"success": True, "message": "플레이오토: DB에서 제거"}
+
+    from backend.domain.samba.plugins.markets.playauto import PlayAutoPlugin
+
+    product_no = product.get("market_product_no", {}).get("playauto", "")
+    if not product_no:
+        return {
+            "success": True,
+            "soldout_fallback": True,
+            "message": "플레이오토: 상품번호 없음, 배지 유지",
+        }
+
+    plugin = PlayAutoPlugin()
+    result = await plugin.delete(session, product_no, account)
+    if result.get("success"):
+        return {
+            "success": True,
+            "soldout_fallback": True,
+            "message": result.get("message", "플레이오토 품절 처리 완료"),
+        }
+    return result
 
 
 # 마켓별 삭제 핸들러 매핑

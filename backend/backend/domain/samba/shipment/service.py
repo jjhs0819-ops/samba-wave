@@ -2292,6 +2292,10 @@ class SambaShipmentService:
             for account_id in target_account_ids:
                 # 이 상품에 등록된 계정만 삭제 대상
                 if account_id not in reg_accounts:
+                    # PlayAuto: API 삭제 불가 — DB 불일치 상태여도 성공 처리하여 프론트 배지 제거
+                    acc = _del_account_map.get(account_id)
+                    if acc and acc.market_type == "playauto":
+                        delete_results[account_id] = "success"
                     continue
 
                 account = _del_account_map.get(account_id)
@@ -2320,7 +2324,11 @@ class SambaShipmentService:
                 product_dict["market_product_no"] = {account.market_type: product_no}
 
                 result = await delete_from_market(
-                    self.session, account.market_type, product_dict, account=account
+                    self.session,
+                    account.market_type,
+                    product_dict,
+                    account=account,
+                    market_delete=True,
                 )
                 # 429 방지 — 삭제 요청 간 0.5초 딜레이
                 await asyncio.sleep(0.5)
