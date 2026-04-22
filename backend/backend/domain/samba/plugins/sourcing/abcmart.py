@@ -155,6 +155,15 @@ class AbcMartPlugin(SourcingPlugin):
                     product_id=product_id,
                     error=f"ABCmart 상세 조회 실패: {site_product_id}",
                 )
+            if detail.get("__product_not_found__"):
+                logger.warning(
+                    f"[ABCmart] 소싱처 삭제 감지(판매종료) — 품절 처리: {site_product_id}"
+                )
+                return RefreshResult(
+                    product_id=product_id,
+                    new_sale_status="sold_out",
+                    changed=True,
+                )
 
             new_sale_price = detail.get("salePrice", 0)
             new_original_price = detail.get("originalPrice", 0)

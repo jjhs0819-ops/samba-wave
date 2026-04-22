@@ -1540,7 +1540,7 @@ class ARTSourcingClient:
                 logger.warning(
                     f"{site_label} HTML 폴백도 상품명 없음 (삭제/비활성 상품): {product_id}"
                 )
-                return {}
+                return {"__product_not_found__": True}
             return result
 
         except RateLimitError:
