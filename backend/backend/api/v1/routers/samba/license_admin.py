@@ -51,10 +51,11 @@ async def create_license(
     session: AsyncSession = Depends(get_write_session_dependency),
     _admin_id: str = Depends(require_admin),
 ) -> LicenseResponse:
+    expires_at = body.expires_at.replace(tzinfo=None) if body.expires_at else None
     lic = await LicenseService(session).create_license(
         buyer_name=body.buyer_name,
         buyer_email=body.buyer_email,
-        expires_at=body.expires_at,
+        expires_at=expires_at,
         notes=body.notes,
     )
     return LicenseResponse.model_validate(lic.model_dump())
