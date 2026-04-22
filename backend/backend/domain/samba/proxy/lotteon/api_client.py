@@ -314,19 +314,25 @@ class LotteonClient:
         return {"success": True, "message": "인증 성공", "data": data}
 
     async def get_delivery_policies(self) -> dict[str, Any]:
-        """배송비정책 목록 조회 — test_auth() 선행 호출 필요."""
+        """배송비정책 목록 조회 — test_auth() 선행 호출 필요.
+
+        afflTrCd = 상위거래처번호 (identity API의 trNo, 예: LO10156909)
+        """
         return await self._call_api(
             "POST",
             "/v1/openapi/contract/v1/dvl/getDvCstListSr",
-            body={"trGrpCd": self.tr_grp_cd or "SR", "trNo": self.tr_no},
+            body={"afflTrCd": self.tr_no},
         )
 
     async def get_warehouses(self) -> dict[str, Any]:
-        """출고지/회수지 목록 조회 — test_auth() 선행 호출 필요."""
+        """출고지/회수지 목록 조회 — test_auth() 선행 호출 필요.
+
+        afflTrCd = 상위거래처번호 (identity API의 trNo, 예: LO10156909)
+        """
         return await self._call_api(
             "POST",
             "/v1/openapi/contract/v1/dvp/getDvpListSr",
-            body={"trGrpCd": self.tr_grp_cd or "SR", "trNo": self.tr_no},
+            body={"afflTrCd": self.tr_no},
         )
 
     # ------------------------------------------------------------------
