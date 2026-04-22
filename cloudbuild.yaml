@@ -1,6 +1,14 @@
+availableSecrets:
+  secretManager:
+    - versionName: projects/fresh-sanctuary-489804-v4/secrets/kakao-rest-api-key/versions/latest
+      env: KAKAO_API_KEY
+    - versionName: projects/fresh-sanctuary-489804-v4/secrets/kakao-refresh-token/versions/latest
+      env: KAKAO_REFRESH_TOKEN
+
 steps:
   # Step 1: 마이그레이션 체크 (HEAD~1 없는 shallow clone 환경이면 스킵)
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: migration-check
     entrypoint: 'bash'
     args:
       - '-c'
@@ -22,15 +30,50 @@ steps:
           echo "✅ 모델 변경 없음 — 스킵"
         fi
 
-  # Step 3: Cloud Run 배포
+  # Step 2: 이전 이미지 pull (캐시 소스)
+  - name: 'gcr.io/cloud-builders/docker'
+    id: pull-cache
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        docker pull asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/cloud-run-source-deploy/samba-wave-api:latest || true
+
+  # Step 3: Docker 빌드 (BuildKit inline cache 활용)
+  - name: 'gcr.io/cloud-builders/docker'
+    id: build
+    env:
+      - 'DOCKER_BUILDKIT=1'
+    args:
+      - build
+      - '--cache-from'
+      - 'asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/cloud-run-source-deploy/samba-wave-api:latest'
+      - '--build-arg'
+      - 'BUILDKIT_INLINE_CACHE=1'
+      - '-t'
+      - 'asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/cloud-run-source-deploy/samba-wave-api:$COMMIT_SHA'
+      - '-t'
+      - 'asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/cloud-run-source-deploy/samba-wave-api:latest'
+      - './backend'
+
+  # Step 4: 이미지 푸시
+  - name: 'gcr.io/cloud-builders/docker'
+    id: push
+    args:
+      - push
+      - '--all-tags'
+      - 'asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/cloud-run-source-deploy/samba-wave-api'
+
+  # Step 5: Cloud Run 배포 (빌드된 이미지 사용)
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: deploy
     entrypoint: 'bash'
     args:
       - '-c'
       - |
         SHORT_SHA=$$(echo "$COMMIT_SHA" | cut -c1-7)
         gcloud run deploy samba-wave-api \
-          --source ./backend \
+          --image "asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/cloud-run-source-deploy/samba-wave-api:$COMMIT_SHA" \
           --region asia-northeast3 \
           --project fresh-sanctuary-489804-v4 \
           --revision-suffix="$$SHORT_SHA" \
@@ -44,8 +87,9 @@ steps:
           --vpc-egress=all-traffic \
           --quiet
 
-  # Step 4: 트래픽 검증
+  # Step 6: 트래픽 검증
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: verify-traffic
     entrypoint: 'bash'
     args:
       - '-c'
@@ -72,8 +116,9 @@ steps:
           echo "✅ 최신 리비전으로 트래픽 전환 완료"
         fi
 
-  # Step 5: Health Check
+  # Step 7: Health Check
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: health-check
     entrypoint: 'bash'
     args:
       - '-c'
@@ -86,6 +131,28 @@ steps:
           exit 1
         fi
         echo "✅ Health check 통과"
+
+  # Step 8: 카카오톡 배포 알림
+  - name: 'bash'
+    id: kakao-notify
+    secretEnv: ['KAKAO_API_KEY', 'KAKAO_REFRESH_TOKEN']
+    args:
+      - '-c'
+      - |
+        ACCESS_TOKEN=$(curl -s -X POST https://kauth.kakao.com/oauth/token \
+          -d "grant_type=refresh_token" \
+          -d "client_id=$$KAKAO_API_KEY" \
+          -d "refresh_token=$$KAKAO_REFRESH_TOKEN" \
+          | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+
+        SHORT_SHA=$(echo "$COMMIT_SHA" | cut -c1-7)
+        curl -s -X POST https://kapi.kakao.com/v2/api/talk/memo/default/send \
+          -H "Authorization: Bearer $$ACCESS_TOKEN" \
+          --data-urlencode "template_object={\"object_type\":\"text\",\"text\":\"✅ 배포 완료\n커밋: $${SHORT_SHA}\n브랜치: $BRANCH_NAME\",\"link\":{\"web_url\":\"https://console.cloud.google.com/cloud-build/builds?project=fresh-sanctuary-489804-v4\"}}"
+
+images:
+  - 'asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/cloud-run-source-deploy/samba-wave-api:$COMMIT_SHA'
+  - 'asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/cloud-run-source-deploy/samba-wave-api:latest'
 
 options:
   logging: CLOUD_LOGGING_ONLY
