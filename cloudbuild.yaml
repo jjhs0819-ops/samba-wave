@@ -133,7 +133,7 @@ steps:
         echo "✅ Health check 통과"
 
   # Step 8: 카카오톡 배포 알림
-  - name: 'bash'
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     id: kakao-notify
     secretEnv: ['KAKAO_API_KEY', 'KAKAO_REFRESH_TOKEN']
     args:
