@@ -208,7 +208,7 @@ async def transform_images(
     request: dict[str, Any],
     session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:
-    """AI 이미지 변환 (rembg/FLUX) 후 R2/로컬 저장."""
+    """AI 이미지 변환 — background 모드는 로컬 워커 큐에 등록, 나머지는 Cloud Run 처리."""
     from backend.domain.samba.image.service import ImageTransformService
 
     svc = ImageTransformService(session)
@@ -235,11 +235,198 @@ async def transform_images(
     if not product_ids:
         return {"success": False, "message": "No products selected"}
 
+    # 배경제거는 로컬 워커 큐에 등록 (Cloud Run에서 처리 안 함)
+    if mode == "background":
+        from backend.domain.samba.job.model import SambaJob
+
+        job = SambaJob(
+            job_type="bg_remove",
+            status="pending",
+            payload={"product_ids": product_ids, "scope": scope},
+            total=len(product_ids),
+        )
+        session.add(job)
+        await session.commit()
+        await session.refresh(job)
+        logger.info(
+            f"[배경제거] 로컬 워커 큐 등록: job_id={job.id}, {len(product_ids)}개 상품"
+        )
+        return {
+            "success": True,
+            "status": "queued",
+            "job_id": job.id,
+            "message": f"로컬 워커 큐 등록 완료 ({len(product_ids)}개 상품)",
+            "total_transformed": 0,
+            "total_failed": 0,
+        }
+
     try:
         result = await svc.transform_products(product_ids, scope, mode, model_preset)
-        # 전부 실패했으면 success=False
         transformed = result.get("total_transformed", 0)
         return {"success": transformed > 0, **result}
     except Exception as exc:
         logger.error(f"[이미지변환] transform failed: {exc}")
         return {"success": False, "message": str(exc)[:300]}
+
+
+@router.get("/bg-jobs/next")
+async def bg_jobs_next(
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """로컬 워커 폴링 — 대기 중인 배경제거 작업 1건 반환 (없으면 null)."""
+    from sqlalchemy import select as sa_select
+
+    from backend.domain.samba.collector.model import SambaCollectedProduct
+    from backend.domain.samba.job.model import SambaJob, JobStatus
+
+    # 가장 오래된 pending 잡 1개 조회
+    stmt = (
+        sa_select(SambaJob)
+        .where(SambaJob.job_type == "bg_remove")
+        .where(SambaJob.status == JobStatus.PENDING)
+        .order_by(SambaJob.created_at)
+        .limit(1)
+    )
+    result = await session.execute(stmt)
+    job = result.scalar_one_or_none()
+
+    if not job:
+        return {"job": None}
+
+    # running으로 상태 전환
+    job.status = JobStatus.RUNNING
+    from datetime import datetime, timezone
+
+    job.started_at = datetime.now(timezone.utc)
+    session.add(job)
+
+    # 상품별 이미지 URL 조회
+    payload = job.payload or {}
+    product_ids: list[str] = payload.get("product_ids", [])
+    scope: dict = payload.get(
+        "scope", {"thumbnail": True, "additional": False, "detail": False}
+    )
+
+    products_data = []
+    if product_ids:
+        prod_stmt = sa_select(SambaCollectedProduct).where(
+            SambaCollectedProduct.id.in_(product_ids)
+        )
+        prod_result = await session.execute(prod_stmt)
+        prods = prod_result.scalars().all()
+        for p in prods:
+            products_data.append(
+                {
+                    "product_id": p.id,
+                    "images": p.images or [],
+                    "detail_images": p.detail_images or [],
+                    "tags": p.tags or [],
+                }
+            )
+
+    await session.commit()
+
+    return {
+        "job": {
+            "job_id": job.id,
+            "scope": scope,
+            "products": products_data,
+        }
+    }
+
+
+@router.post("/bg-jobs/{job_id}/complete")
+async def bg_jobs_complete(
+    job_id: str,
+    request: dict[str, Any],
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """로컬 워커 완료 보고 — 각 상품 이미지 URL 업데이트 + 잡 상태 완료 처리."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import select as sa_select
+
+    from backend.domain.samba.collector.model import SambaCollectedProduct
+    from backend.domain.samba.job.model import SambaJob, JobStatus
+
+    stmt = sa_select(SambaJob).where(SambaJob.id == job_id)
+    result = await session.execute(stmt)
+    job = result.scalar_one_or_none()
+    if not job:
+        return {"success": False, "message": "Job not found"}
+
+    results: list[dict] = request.get("results", [])
+    success_count = 0
+    fail_count = 0
+
+    for item in results:
+        pid = item.get("product_id")
+        if not pid:
+            continue
+        prod_stmt = sa_select(SambaCollectedProduct).where(
+            SambaCollectedProduct.id == pid
+        )
+        prod_result = await session.execute(prod_stmt)
+        product = prod_result.scalar_one_or_none()
+        if not product:
+            fail_count += 1
+            continue
+
+        if item.get("success"):
+            new_images = item.get("new_images")
+            new_detail = item.get("new_detail_images")
+            new_tags = list(
+                set((product.tags or []) + ["__ai_image__", "__img_edited__"])
+            )
+
+            if new_images is not None:
+                product.images = new_images
+            if new_detail is not None:
+                product.detail_images = new_detail
+            product.tags = new_tags
+            session.add(product)
+            success_count += 1
+        else:
+            fail_count += 1
+
+    job.status = JobStatus.COMPLETED
+    job.completed_at = datetime.now(timezone.utc)
+    job.current = success_count
+    job.result = {"total_transformed": success_count, "total_failed": fail_count}
+    session.add(job)
+    await session.commit()
+
+    logger.info(
+        f"[배경제거] 완료: job_id={job_id}, 성공={success_count}, 실패={fail_count}"
+    )
+    return {
+        "success": True,
+        "total_transformed": success_count,
+        "total_failed": fail_count,
+    }
+
+
+@router.get("/bg-jobs/{job_id}/status")
+async def bg_jobs_status(
+    job_id: str,
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """프론트엔드 폴링용 — 배경제거 잡 상태 조회."""
+    from sqlalchemy import select as sa_select
+
+    from backend.domain.samba.job.model import SambaJob
+
+    stmt = sa_select(SambaJob).where(SambaJob.id == job_id)
+    result = await session.execute(stmt)
+    job = result.scalar_one_or_none()
+    if not job:
+        return {"status": "not_found"}
+
+    res = job.result or {}
+    return {
+        "status": job.status,
+        "total": job.total,
+        "current": job.current,
+        "total_transformed": res.get("total_transformed", 0),
+        "total_failed": res.get("total_failed", 0),
+    }

@@ -654,12 +654,23 @@ class SambaShipmentService:
 
         # 업데이트 항목이 체크되어 있으면 소싱처 최신화 먼저 실행
         # skip_refresh=True면 오토튠에서 이미 최신화 완료 → 건너뜀
+        # 품절 상품만 최신화 — 재고 있는 상품은 불필요한 소싱처 API 호출 차단
         has_update = bool(update_items) and len(update_items) > 0
+        _opts_for_sold = product_dict.get("options") or []
+        _is_sold_out = (product_row.sale_status == "sold_out") or (
+            bool(_opts_for_sold)
+            and all(
+                (o.get("stock") or 0) <= 0
+                for o in _opts_for_sold
+                if isinstance(o, dict)
+            )
+        )
         refresh_status = ""  # 프론트 로그용
         pending_refresh_updates: dict[str, Any] = {}  # 최종 업데이트에 통합
         if (
             has_update
             and not skip_refresh
+            and _is_sold_out
             and product_row.source_site
             and product_row.site_product_id
         ):

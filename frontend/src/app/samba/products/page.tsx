@@ -1453,8 +1453,32 @@ export default function ProductsPage() {
                 }
                 try {
                   const res = await proxyApi.transformImages([ids[i]], aiImgScope, aiImgMode, aiModelPreset)
-                  if (res.success && res.total_transformed > 0) { success++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 완료 (${fmt(res.total_transformed)}장)`) }
-                  else { fail++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 실패: ${res.message || '변환된 이미지 0장'}`) }
+                  // 배경제거 모드: 로컬 워커 큐 등록 후 완료 폴링
+                  if (res.status === 'queued' && res.job_id) {
+                    addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 로컬 워커 대기 중...`)
+                    const jobId = res.job_id
+                    let completed = false
+                    for (let poll = 0; poll < 720; poll++) { // 최대 1시간 대기
+                      await new Promise(r => setTimeout(r, 5000))
+                      if (aiJobAbortRef.current) break
+                      try {
+                        const status = await proxyApi.bgJobStatus(jobId)
+                        if (status.status === 'completed') {
+                          if (status.total_transformed > 0) { success++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 완료 (${fmt(status.total_transformed)}장)`) }
+                          else { fail++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 실패: 변환된 이미지 0장`) }
+                          completed = true; break
+                        } else if (status.status === 'failed') {
+                          fail++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 실패`)
+                          completed = true; break
+                        }
+                      } catch { /* 폴링 일시 실패는 무시 */ }
+                    }
+                    if (!completed) { fail++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 타임아웃`) }
+                  } else if (res.success && res.total_transformed > 0) {
+                    success++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 완료 (${fmt(res.total_transformed)}장)`)
+                  } else {
+                    fail++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 실패: ${res.message || '변환된 이미지 0장'}`)
+                  }
                   done = true; break
                 } catch (e) {
                   if (attempt === 2) { fail++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }

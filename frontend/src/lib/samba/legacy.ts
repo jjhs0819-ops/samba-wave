@@ -989,11 +989,14 @@ export const proxyApi = {
     return res.json() as Promise<{ success: boolean; message: string; image?: string }>
   },
   transformImages: (productIds: string[], scope: { thumbnail: boolean; additional: boolean; detail: boolean }, mode: string, modelPreset?: string) =>
-    request<{ success: boolean; message: string; total_transformed: number; total_failed: number }>(
+    request<{ success: boolean; status?: string; job_id?: string; message: string; total_transformed: number; total_failed: number }>(
       `${SAMBA_PREFIX}/proxy/images/transform`, {
         method: 'POST',
         body: JSON.stringify({ product_ids: productIds, scope, mode, model_preset: modelPreset }),
       }),
+  bgJobStatus: (jobId: string) =>
+    request<{ status: string; total: number; current: number; total_transformed: number; total_failed: number }>(
+      `${SAMBA_PREFIX}/proxy/bg-jobs/${jobId}/status`),
   transformByGroups: (groupIds: string[], scope: { thumbnail: boolean; additional: boolean; detail: boolean }, mode: string, modelPreset?: string) =>
     request<{ success: boolean; message: string; total_transformed: number; total_failed: number }>(
       `${SAMBA_PREFIX}/proxy/images/transform`, {
