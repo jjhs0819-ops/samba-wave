@@ -361,6 +361,17 @@ async def _start_autotune_if_enabled() -> None:
     await auto_start_if_enabled()
 
 
+_order_poller_task: asyncio.Task | None = None
+
+
+async def _start_order_poller() -> None:
+    global _order_poller_task
+    from backend.domain.samba.order.poller import start_order_poller
+
+    _order_poller_task = asyncio.create_task(start_order_poller())
+    logging.getLogger("backend.lifecycle").info("[lifecycle] 주문 폴러 시작")
+
+
 def _validate_startup_settings() -> None:
     if sys.version_info[:3] != SUPPORTED_PYTHON_VERSION:
         current = ".".join(str(part) for part in sys.version_info[:3])
@@ -427,6 +438,7 @@ async def lifespan(app: FastAPI):
     await _recover_running_jobs(startup_logger)
     worker_runtime = await _start_worker_runtime()
     await _start_autotune_if_enabled()
+    await _start_order_poller()
     _validate_startup_settings()
 
     try:
@@ -442,6 +454,7 @@ async def lifespan(app: FastAPI):
         SourcingQueue.cancel_all()
         KreamClient.cancel_all()
         await _stop_autotune_and_refreshers()
+        await _cancel_task(_order_poller_task)
         await _shutdown_worker_runtime(worker_runtime)
         await _disconnect_cache()
         shutdown_logger.info("[shutdown] graceful shutdown complete")
