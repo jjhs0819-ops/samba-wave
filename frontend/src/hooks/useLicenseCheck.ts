@@ -6,7 +6,7 @@ import { verifyLicenseKey } from '@/lib/samba/api/license'
 
 const STORAGE_KEY = 'samba_license_key'
 const CACHE_KEY = 'samba_license_cache'
-const CACHE_TTL_MS = 60 * 60 * 1000
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000
 
 interface LicenseCache {
   valid: boolean

@@ -25,7 +25,7 @@ _IS_CLOUD = os.getenv("K_SERVICE") is not None  # Cloud Run 자동 설정 환경
 CONCURRENCY_PER_SITE = 10 if _IS_CLOUD else 5
 # 소싱처별 동시 요청 수 (개별 설정)
 SITE_CONCURRENCY: dict[str, int] = {
-    "MUSINSA": 40 if _IS_CLOUD else 10,  # 워커 8→4 축소로 메모리 여유 확보
+    "MUSINSA": 20 if _IS_CLOUD else 10,  # 워커 8→4 축소로 메모리 여유 확보
     "KREAM": 5 if _IS_CLOUD else 2,
     "DANAWA": 5 if _IS_CLOUD else 2,
     "FashionPlus": 10 if _IS_CLOUD else 3,
@@ -137,8 +137,8 @@ async def _prepare_musinsa_cache() -> None:
     )
 
 
-# IP 로테이션: 프록시 목록 순환 (100건마다 다음 프록시)
-IP_ROTATE_EVERY = 50
+# IP 로테이션: 프록시 목록 순환 (동시요청 수 기준으로 교대)
+IP_ROTATE_EVERY = 20
 _ip_rotate_counter = 0
 _ip_rotate_idx = 0
 _ip_rotate_label: str = ""
