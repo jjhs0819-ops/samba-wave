@@ -5,6 +5,18 @@ import { userApi, type SambaUser } from '@/lib/samba/api/operations'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { inputStyle } from '@/lib/samba/styles'
 import { fmtDate, fmtDateTime } from '@/lib/samba/utils'
+import { fetchWithAuth, SAMBA_PREFIX } from '@/lib/samba/legacy'
+
+interface License {
+  id: string
+  license_key: string
+  buyer_name: string
+  buyer_email: string
+  is_active: boolean
+  expires_at: string | null
+  last_verified_at: string | null
+  created_at: string
+}
 
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
   active: { label: '활성', color: '#51CF66' },
@@ -63,6 +75,56 @@ export default function UsersPage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState({ name: '', email: '', password: '', is_admin: false })
   const [showPassword, setShowPassword] = useState(false)
+
+  // 라이선스 관리
+  const [licenses, setLicenses] = useState<License[]>([])
+  const [licForm, setLicForm] = useState({ buyer_name: '', buyer_email: '', expires_at: '', notes: '' })
+  const [licCreating, setLicCreating] = useState(false)
+
+  const loadLicenses = useCallback(async () => {
+    const res = await fetchWithAuth(`${SAMBA_PREFIX}/admin/licenses`)
+    if (res.ok) setLicenses(await res.json())
+  }, [])
+
+  useEffect(() => { loadLicenses() }, [loadLicenses])
+
+  const createLicense = async () => {
+    setLicCreating(true)
+    try {
+      const res = await fetchWithAuth(`${SAMBA_PREFIX}/admin/licenses`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          buyer_name: licForm.buyer_name,
+          buyer_email: licForm.buyer_email,
+          expires_at: licForm.expires_at ? new Date(licForm.expires_at).toISOString() : null,
+          notes: licForm.notes || null,
+        }),
+      })
+      if (res.ok) {
+        setLicForm({ buyer_name: '', buyer_email: '', expires_at: '', notes: '' })
+        await loadLicenses()
+        showAlert('라이선스가 발급되었습니다', 'success')
+      }
+    } finally {
+      setLicCreating(false)
+    }
+  }
+
+  const toggleLicense = async (id: string, isActive: boolean) => {
+    await fetchWithAuth(`${SAMBA_PREFIX}/admin/licenses/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_active: isActive }),
+    })
+    await loadLicenses()
+  }
+
+  const deleteLicense = async (id: string, key: string) => {
+    if (!await showConfirm(`${key} 라이선스를 삭제하시겠습니까?`)) return
+    await fetchWithAuth(`${SAMBA_PREFIX}/admin/licenses/${id}`, { method: 'DELETE' })
+    await loadLicenses()
+  }
 
   // 로그인 기록
   const now = new Date()
@@ -158,6 +220,77 @@ export default function UsersPage() {
 
   return (
     <div style={{ color: '#E5E5E5' }}>
+      {/* 라이선스 발급 */}
+      <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '1.5rem', marginBottom: '2rem' }}>
+        <h2 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '1.25rem' }}>라이선스 발급</h2>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
+          <input placeholder="구매자 이름" value={licForm.buyer_name}
+            onChange={e => setLicForm(p => ({ ...p, buyer_name: e.target.value }))}
+            style={{ ...inputStyle, fontSize: '0.85rem' }} />
+          <input placeholder="구매자 이메일" value={licForm.buyer_email}
+            onChange={e => setLicForm(p => ({ ...p, buyer_email: e.target.value }))}
+            style={{ ...inputStyle, fontSize: '0.85rem' }} />
+          <input type="date" value={licForm.expires_at}
+            onChange={e => setLicForm(p => ({ ...p, expires_at: e.target.value }))}
+            title="만료일 (비워두면 영구)"
+            style={{ ...inputStyle, fontSize: '0.85rem' }} />
+          <input placeholder="메모 (선택)" value={licForm.notes}
+            onChange={e => setLicForm(p => ({ ...p, notes: e.target.value }))}
+            style={{ ...inputStyle, fontSize: '0.85rem' }} />
+        </div>
+        <button onClick={createLicense} disabled={licCreating || !licForm.buyer_name || !licForm.buyer_email}
+          style={{ padding: '0.5rem 1.25rem', background: '#FF8C00', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer', opacity: licCreating || !licForm.buyer_name || !licForm.buyer_email ? 0.5 : 1 }}>
+          {licCreating ? '발급 중...' : '발급'}
+        </button>
+
+        {/* 라이선스 목록 */}
+        {licenses.length > 0 && (
+          <div style={{ marginTop: '1.25rem', overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #2A2A2A' }}>
+                  {['키', '구매자', '만료일', '마지막 검증', '상태', ''].map(h => (
+                    <th key={h} style={{ ...thStyle, textAlign: 'left' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {licenses.map(lic => (
+                  <tr key={lic.id} style={{ borderBottom: '1px solid #1A1A1A' }}>
+                    <td style={{ ...tdStyle, textAlign: 'left', fontFamily: 'monospace', fontSize: '0.75rem', color: '#AAA' }}>{lic.license_key}</td>
+                    <td style={{ ...tdStyle, textAlign: 'left' }}>
+                      <div>{lic.buyer_name}</div>
+                      <div style={{ color: '#666', fontSize: '0.72rem' }}>{lic.buyer_email}</div>
+                    </td>
+                    <td style={{ ...tdStyle, textAlign: 'left' }}>{lic.expires_at ? lic.expires_at.slice(0, 10) : '영구'}</td>
+                    <td style={{ ...tdStyle, textAlign: 'left', color: '#666', fontSize: '0.75rem' }}>
+                      {lic.last_verified_at ? lic.last_verified_at.slice(0, 16).replace('T', ' ') : '-'}
+                    </td>
+                    <td style={tdStyle}>
+                      <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '0.72rem', background: lic.is_active ? 'rgba(74,222,128,0.15)' : 'rgba(255,107,107,0.15)', color: lic.is_active ? '#4ADE80' : '#FF6B6B' }}>
+                        {lic.is_active ? '활성' : '비활성'}
+                      </span>
+                    </td>
+                    <td style={tdStyle}>
+                      <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                        <button onClick={() => toggleLicense(lic.id, !lic.is_active)}
+                          style={{ padding: '3px 10px', fontSize: '0.72rem', background: '#2A2A2A', color: '#AAA', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
+                          {lic.is_active ? '비활성화' : '활성화'}
+                        </button>
+                        <button onClick={() => deleteLicense(lic.id, lic.license_key)}
+                          style={{ padding: '3px 10px', fontSize: '0.72rem', background: 'rgba(255,107,107,0.15)', color: '#FF6B6B', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
+                          삭제
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {/* 헤더 */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
         <div>
