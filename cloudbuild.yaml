@@ -135,6 +135,7 @@ steps:
   # Step 8: 카카오톡 배포 알림
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     id: kakao-notify
+    entrypoint: 'bash'
     secretEnv: ['KAKAO_API_KEY', 'KAKAO_REFRESH_TOKEN']
     args:
       - '-c'
