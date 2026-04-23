@@ -678,6 +678,7 @@ class SmartStorePlugin(MarketPlugin):
             return result
         except Exception as e:
             err_msg = str(e)
+            logger.info(f"[스마트스토어] fallback 검사 — err_msg 전체: {err_msg}")
             # 등록불가 단어 에러 → 해당 태그 제거 후 재시도 + DB 저장
             if "등록불가" in err_msg:
                 # 에러에서 금지 단어 추출: "등록불가인 단어(A,B,C)가"
