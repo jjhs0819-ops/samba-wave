@@ -519,7 +519,7 @@ class SmartStorePlugin(MarketPlugin):
                 or "certificationInfos" in err_str
             )
 
-        # 인증대상 아님 선언 payload 생성 (재시도용)
+        # 인증대상 아님 선언 payload 생성 (신규등록 재시도용 — 전체 재생성)
         def _build_cert_exclusion_payload(
             source_product: dict[str, Any], cat_id: str
         ) -> dict[str, Any]:
@@ -532,6 +532,17 @@ class SmartStorePlugin(MarketPlugin):
             exclude.setdefault("kcCertifiedProductExclusionYn", "TRUE")
             detail_attr.pop("productCertificationInfos", None)
             return retry_data
+
+        # 기존 payload에 인증 면제 플래그만 덧붙임 (PUT 수정 재시도용 — 구조 보존)
+        def _apply_cert_exclusion_inplace(payload: dict[str, Any]) -> dict[str, Any]:
+            detail_attr = payload.setdefault("originProduct", {}).setdefault(
+                "detailAttribute", {}
+            )
+            exclude = detail_attr.setdefault("certificationTargetExcludeContent", {})
+            exclude["childCertifiedProductExclusionYn"] = True
+            exclude.setdefault("kcCertifiedProductExclusionYn", "TRUE")
+            detail_attr.pop("productCertificationInfos", None)
+            return payload
 
         # register_product 호출을 공통 fallback으로 감싸는 헬퍼
         # leafCategoryId 에러 → 기본 카테고리 fallback
@@ -590,6 +601,25 @@ class SmartStorePlugin(MarketPlugin):
                         "data": r,
                     }
                 except Exception as e:
+                    # 어린이제품/KC 인증정보 요구 → 인증대상 아님으로 선언 후 수정 재시도
+                    if _is_kc_cert_error(e):
+                        logger.warning(
+                            f"[스마트스토어] PUT 인증대상 에러 감지 → childCertifiedProductExclusionYn=True 재시도: {e}"
+                        )
+                        try:
+                            _apply_cert_exclusion_inplace(d)
+                            r = await client.update_product(existing_no, d)
+                            return {
+                                "success": True,
+                                "message": "스마트스토어 수정 성공 (인증면제 fallback)",
+                                "data": r,
+                            }
+                        except Exception as _cert_retry_e:
+                            logger.error(
+                                f"[스마트스토어] PUT 인증면제 재시도도 실패: {_cert_retry_e}"
+                            )
+                            raise
+
                     if "404" in str(e):
                         # PATCH 404 → GET으로 상품 존재 여부 재확인
                         product_exists = False
