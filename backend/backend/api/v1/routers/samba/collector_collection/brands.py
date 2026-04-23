@@ -240,15 +240,31 @@ async def brand_refresh(
             except Exception:
                 continue
         elif site == "LOTTEON":
-            # LOTTEON: category_filter + keyword q 파라미터로 브랜드 검증
-            # category_filter만으로 매칭하면 다른 브랜드의 같은 BC코드 필터가 섞임
+            # LOTTEON: brands 파라미터(신) 우선, 없으면 q 첫 토큰(구) 폴백으로 브랜드 매칭.
+            # category_filter는 쉼표 구분 BC 배열일 수 있어 각 BC를 키로 등록.
             if f.category_filter:
                 try:
                     _fp = urlparse(f.keyword or "")
                     _fq = parse_qs(_fp.query)
-                    _f_kw = _fq.get("q", [""])[0]
-                    if _f_kw == keyword:
-                        existing_cat_codes[f.category_filter] = f
+                    _brands_val = _fq.get("brands", [""])[0]
+                    _q_val = _fq.get("q", [""])[0]
+                    if _brands_val:
+                        # brands=A,B 형태 다중 브랜드 지원 — 쉼표 split + 트림 후 리스트로 비교.
+                        _f_brand_list = [
+                            b.strip() for b in _brands_val.split(",") if b.strip()
+                        ]
+                    elif _q_val:
+                        # 구형 q=나이키 또는 신형 q=나이키 운동화 → 첫 토큰 추출
+                        _first = _q_val.split(" ", 1)[0] if " " in _q_val else _q_val
+                        _first = _first.strip()
+                        _f_brand_list = [_first] if _first else []
+                    else:
+                        _f_brand_list = []
+                    if keyword in _f_brand_list:
+                        for _bc in (f.category_filter or "").split(","):
+                            _bc = _bc.strip()
+                            if _bc:
+                                existing_cat_codes[_bc] = f
                 except Exception:
                     pass
         else:
@@ -332,9 +348,15 @@ async def brand_refresh(
             elif site == "LOTTEON":
                 path_tail = "_".join(segments) if segments else cat_code
                 group_name = f"LOTTEON_{keyword}_{path_tail}"
+                # qapi 2,100 상한 우회: q= 에 서브키워드({브랜드} {카테고리 리프}) 사용.
+                # brands= 는 사후 브랜드 정확일치 필터용 (worker.py가 읽음).
+                _sub_kw = cat.get("subKeyword") or (
+                    f"{keyword} {segments[-1]}".strip() if segments else keyword
+                )
                 keyword_url = (
                     f"https://www.lotteon.com/csearch/search/search"
-                    f"?render=search&platform=pc&q={_quote(keyword)}&mallId=2{_opt_suffix}"
+                    f"?render=search&platform=pc&q={_quote(_sub_kw)}"
+                    f"&brands={_quote(keyword)}&mallId=2{_opt_suffix}"
                 )
             elif site == "KREAM":
                 path_tail = "_".join(segments) if segments else cat_code
@@ -372,7 +394,13 @@ async def brand_refresh(
                     "requested_count": count,
                 }
                 if site != "MUSINSA":
-                    create_data["category_filter"] = cat_code
+                    # LOTTEON은 BC 묶음 전체 저장 (worker.py가 콤마 split로 처리).
+                    # 서브키워드 검색이 여러 BC를 포괄하므로 단일 BC만 저장하면 사후 필터에서 누락됨.
+                    if site == "LOTTEON":
+                        _bcs = cat.get("bc_codes") or [cat_code]
+                        create_data["category_filter"] = ",".join(_bcs)
+                    else:
+                        create_data["category_filter"] = cat_code
                 new_filter = await svc.create_filter(create_data)
                 new_groups += 1
                 if new_filter and hasattr(new_filter, "id"):
@@ -735,17 +763,26 @@ async def brand_create_groups(
             # 롯데백화점(mallId=2) 검색 URL로 저장 (가품 방지 목적)
             _md_lt = "&maxDiscount=1" if body.options.get("maxDiscount") else ""
             _so_lt = "&includeSoldOut=1" if _opts_include_sold_out else ""
-            if body.selected_brands:
-                _brands_q = _quote_lt(",".join(body.selected_brands))
-                keyword = (
-                    f"https://www.lotteon.com/csearch/search/search"
-                    f"?render=search&platform=pc&q={_quote_lt(_brand_label)}&mallId=2&brands={_brands_q}{_md_lt}{_so_lt}"
-                )
-            else:
-                keyword = (
-                    f"https://www.lotteon.com/csearch/search/search"
-                    f"?render=search&platform=pc&q={_quote_lt(_brand_label)}&mallId=2{_md_lt}{_so_lt}"
-                )
+            # qapi 2,100 상한 우회: q= 에 서브키워드({브랜드} {카테고리 리프}) 사용.
+            # scan_categories 응답의 subKeyword를 우선 사용, 없으면 path 리프에서 조합.
+            _path_lt = cat.get("path", "") or ""
+            _leaf_lt = ""
+            if _path_lt:
+                _parts_lt = [p for p in _path_lt.split(" > ") if p]
+                _leaf_lt = _parts_lt[-1] if _parts_lt else ""
+            _sub_kw_lt = cat.get("subKeyword") or (
+                f"{_brand_label} {_leaf_lt}".strip() if _leaf_lt else _brand_label
+            )
+            # brands= 는 사후 브랜드 정확일치 필터용 (worker.py가 읽음).
+            # selected_brands가 있으면 다중 브랜드 필터, 없으면 단일 브랜드명.
+            _brands_val_lt = (
+                ",".join(body.selected_brands) if body.selected_brands else _brand_label
+            )
+            keyword = (
+                f"https://www.lotteon.com/csearch/search/search"
+                f"?render=search&platform=pc&q={_quote_lt(_sub_kw_lt)}"
+                f"&brands={_quote_lt(_brands_val_lt)}&mallId=2{_md_lt}{_so_lt}"
+            )
             # 합산된 BC코드들을 콤마로 연결 (같은 path의 여러 BC코드)
             bc_codes = cat.get("bc_codes") or ([code] if code else [])
             category_filter = ",".join(bc_codes) if bc_codes else None
