@@ -38,7 +38,7 @@ export function ExternalIntegrationsPanel(props: Props) {
     r2AccountId, r2AccessKey, r2SecretKey, r2BucketName, r2PublicUrl, r2Status,
     setR2AccountId, setR2AccessKey, setR2SecretKey, setR2BucketName, setR2PublicUrl,
     saveR2Settings, testR2,
-    workerToken, workerTokenStatus, generateWorkerToken,
+    workerToken, workerTokenStatus, generateWorkerToken, downloadBgWorkerEnv,
     // Claude
     claudeApiKey, claudeModel, claudeStatus, aiFeatures,
     setClaudeApiKey, setClaudeModel,
@@ -272,10 +272,11 @@ export function ExternalIntegrationsPanel(props: Props) {
               <label style={{ color: '#888', minWidth: '120px', fontSize: '0.875rem' }}>로컬 워커 토큰</label>
               <input type='text' readOnly style={{ ...inputStyle, flex: 1, fontFamily: 'monospace', fontSize: '0.78rem', color: workerToken ? '#A3E635' : '#555' }} value={workerToken || '토큰 없음 — 아래 버튼으로 생성하세요'} />
               <button onClick={() => { if (workerToken) { navigator.clipboard.writeText(workerToken); } }} style={{ background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.3)', color: '#818CF8', padding: '0.35rem 0.75rem', borderRadius: '6px', fontSize: '0.78rem', cursor: 'pointer', whiteSpace: 'nowrap' }} disabled={!workerToken}>복사</button>
+              {workerToken && <button onClick={() => downloadBgWorkerEnv(workerToken)} style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.35)', color: '#4ADE80', padding: '0.35rem 0.75rem', borderRadius: '6px', fontSize: '0.78rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>↓ env 다운로드</button>}
               <button onClick={generateWorkerToken} style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.35)', color: '#F59E0B', padding: '0.35rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>토큰 생성</button>
             </div>
             {workerTokenStatus && <div style={{ fontSize: '0.78rem', color: '#7BAF7E', padding: '0.3rem 0 0 132px' }}>{workerTokenStatus}</div>}
-            <div style={{ fontSize: '0.75rem', color: '#555', padding: '0.3rem 0 0 132px' }}>배경제거 로컬 워커(backend/scripts/install_bg_worker.bat)에 입력하는 인증 토큰입니다.</div>
+            <div style={{ fontSize: '0.75rem', color: '#CCC', padding: '0.3rem 0 0 132px' }}>배경제거 로컬 워커(backend/scripts/install_bg_worker.bat)에 입력하는 인증 토큰입니다.</div>
           </div>
         </div>
       </div>

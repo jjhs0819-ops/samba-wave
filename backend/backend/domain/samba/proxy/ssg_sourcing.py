@@ -1249,7 +1249,7 @@ class SSGSourcingClient:
         seen: set[str] = set()
 
         item_pattern = re.compile(
-            r"itemView\.ssg\?itemId=(\d{10,13})",
+            r"/itemView\.ssg\?itemId=(\d{10,13})",
             re.IGNORECASE,
         )
 

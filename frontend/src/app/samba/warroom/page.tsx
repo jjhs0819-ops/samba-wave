@@ -791,11 +791,6 @@ export default function WarroomPage() {
                   const siteColor = SITE_COLORS[siteName] || '#888'
                   const fmtT = (iso: string) => {
                     const d = new Date(iso)
-                    const now = new Date()
-                    const isToday = d.toDateString() === now.toDateString()
-                    if (isToday) {
-                      return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
-                    }
                     return `${d.getMonth() + 1}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
                   }
                   const shortId = (id: string | null) => id ? id.slice(-8) : '-'

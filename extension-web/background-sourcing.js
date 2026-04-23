@@ -614,7 +614,7 @@ async function extractSearchResults(tabId, site, maxCount = 999) {
         'REXMONDE': /\/products\/detail\/(\d+)/,
         'LOTTEON': /\/product\/productDetail[^"]*spdNo=(\d+)/,
         'GSShop': /\/(?:prd\/prd\.gs\?prdid|deal\/deal\.gs\?dealNo)=(\d+)/,
-        'SSG': /itemView\.ssg\?itemId=(\d{10,13})/,
+        'SSG': /\/itemView\.ssg\?itemId=(\d{10,13})/,
         'ElandMall': /\/goods\/goods\.action\?goodsNo=(\d+)/,
         'SSF': /\/goods\/([A-Z0-9]+)/,
       }
