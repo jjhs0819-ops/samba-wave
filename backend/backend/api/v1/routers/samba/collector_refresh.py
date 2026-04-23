@@ -283,6 +283,7 @@ async def refresh_products(
                         "old_price": old_price,
                         "new_price": new_price,
                         "diff_pct": diff_pct,
+                        "site_product_id": getattr(product, "site_product_id", None),
                     },
                 )
 
@@ -327,6 +328,10 @@ async def refresh_products(
                     source_site=product.source_site,
                     product_id=r.product_id,
                     product_name=product.name,
+                    detail={
+                        "site_product_id": getattr(product, "site_product_id", None),
+                        "sale_status": "sold_out",
+                    },
                 )
         else:
             if r.stock_changed:

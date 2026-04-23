@@ -289,6 +289,8 @@ async def _site_autotune_loop(site: str):
                         price_changed_count = 0
                         _all_price_pids: set[str] = set()
                         _price_tx_items: list[dict] = []
+                        _stock_tx_items: list[dict] = []
+                        _price_change_events: list[dict] = []
                         _all_stock_pids: set[str] = set()
                         _cycle_deleted_pids: set[str] = (
                             set()
@@ -442,6 +444,42 @@ async def _site_autotune_loop(site: str):
                                     )
                                 ):
                                     updates["price_changed_at"] = now
+
+                                # per-product price_changed 이벤트 수집 (사이클 끝 배치 발행용)
+                                if (
+                                    r.changed
+                                    and r.new_sale_price is not None
+                                    and r.new_sale_price != (product.sale_price or 0)
+                                ):
+                                    _old_p = product.sale_price or 0
+                                    _new_p = r.new_sale_price or 0
+                                    _diff_pct = (
+                                        round((_new_p - _old_p) / _old_p * 100, 1)
+                                        if _old_p
+                                        else 0
+                                    )
+                                    _price_change_events.append(
+                                        {
+                                            "source_site": product.source_site,
+                                            "product_id": r.product_id,
+                                            "product_name": product.name,
+                                            "site_product_id": product.site_product_id,
+                                            "old_price": _old_p,
+                                            "new_price": _new_p,
+                                            "diff_pct": _diff_pct,
+                                        }
+                                    )
+
+                                # 재고변동 항목 수집 (scheduler_tick detail용)
+                                if r.stock_changed and len(_stock_tx_items) < 10:
+                                    _stock_tx_items.append(
+                                        {
+                                            "pid": r.product_id,
+                                            "site_product_id": product.site_product_id,
+                                            "name": (product.name or "")[:40],
+                                            "sale_status": r.new_sale_status,
+                                        }
+                                    )
 
                                 # 품절 → 서킷브레이커 + 즉시 마켓삭제
                                 if r.new_sale_status == "sold_out":
@@ -736,6 +774,7 @@ async def _site_autotune_loop(site: str):
                                             _price_tx_items.append(
                                                 {
                                                     "pid": r.product_id,
+                                                    "site_product_id": product.site_product_id,
                                                     "name": (product.name or "")[:40],
                                                     "old_price": last_price,
                                                     "new_price": expected_price,
@@ -857,7 +896,7 @@ async def _site_autotune_loop(site: str):
                                         f"{_idx_prefix}{_prod_label}: 스킵{_tail}",
                                     )
 
-                            # lock 밖: fire-and-forget 전송 (백그라운드 태스크)
+                            # lock 밖: 즉시 전송 (사이클 내 완료 보장 → last_sent_data.cost 정확성)
                             for (
                                 _tx_pid,
                                 _tx_items,
@@ -937,7 +976,7 @@ async def _site_autotune_loop(site: str):
                                         )
                                     await asyncio.sleep(0.3)
 
-                                asyncio.create_task(_fire_transmit())
+                                await _fire_transmit()
 
                         # DB 세션 복구 — 갱신 전 연결 확인
                         try:
@@ -1203,6 +1242,24 @@ async def _site_autotune_loop(site: str):
                         try:
                             async with get_write_session() as ev_session:
                                 monitor = SambaMonitorService(ev_session)
+                                # per-product price_changed 이벤트 배치 발행 (최대 50건)
+                                for _ev_item in _price_change_events[:50]:
+                                    await monitor.emit(
+                                        "price_changed",
+                                        "info",
+                                        summary=f"가격 변동 — {(_ev_item['product_name'] or '')[:30]} ₩{int(_ev_item['old_price']):,}→₩{int(_ev_item['new_price']):,}",
+                                        source_site=_ev_item["source_site"],
+                                        product_id=_ev_item["product_id"],
+                                        product_name=_ev_item["product_name"],
+                                        detail={
+                                            "old_price": _ev_item["old_price"],
+                                            "new_price": _ev_item["new_price"],
+                                            "diff_pct": _ev_item["diff_pct"],
+                                            "site_product_id": _ev_item[
+                                                "site_product_id"
+                                            ],
+                                        },
+                                    )
                                 await monitor.emit(
                                     "scheduler_tick",
                                     "info",
@@ -1220,6 +1277,7 @@ async def _site_autotune_loop(site: str):
                                         "price_transmit": len(_all_price_pids),
                                         "price_changed_items": _price_tx_items,
                                         "stock_transmit": len(_all_stock_pids),
+                                        "stock_changed_items": _stock_tx_items,
                                         "sold_out": summary.sold_out,
                                         "retransmitted": retransmitted,
                                         "synced": _synced_count,
