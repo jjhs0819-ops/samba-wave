@@ -699,6 +699,15 @@ async def _site_autotune_loop(site: str):
                                     acc = _account_cache[acc_id]
                                     if not acc:
                                         continue
+                                    # market_product_nos에 상품번호가 없는 계정은 스킵
+                                    # (등록된 적 없는 계정에 신규 등록 시도하는 것은 오토튠 역할 아님)
+                                    _m_nos = product.market_product_nos or {}
+                                    _has_pno = bool(
+                                        _m_nos.get(f"{acc_id}_origin")
+                                        or _m_nos.get(acc_id)
+                                    )
+                                    if not _has_pno:
+                                        continue
                                     acc_label = (
                                         f"{acc.market_name}({acc.seller_id or '-'})"
                                     )

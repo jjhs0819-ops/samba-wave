@@ -124,6 +124,69 @@ export default function OrdersPage() {
     setNotifications(prev => [...prev, { id, message, type }])
   }
 
+  const copyableTextStyle: React.CSSProperties = {
+    color: '#E5E5E5',
+    cursor: 'copy',
+    textDecoration: 'underline',
+    textDecorationColor: 'rgba(229, 229, 229, 0.35)',
+    textUnderlineOffset: '2px',
+  }
+
+  const handleCopyText = async (value: string | null | undefined) => {
+    const text = (value || '').trim()
+    if (!text) {
+      showAlert('복사할 내용이 없습니다', 'info')
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(text)
+      showAlert('복사되었습니다', 'success')
+    } catch {
+      showAlert('복사에 실패했습니다', 'error')
+    }
+  }
+
+  const renderCopyableText = (value: string | null | undefined, _label?: string, style?: React.CSSProperties) => {
+    const text = value || '-'
+    return (
+      <span
+        role="button"
+        tabIndex={0}
+        title="Copy"
+        onClick={() => handleCopyText(value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            handleCopyText(value)
+          }
+        }}
+        style={{ ...copyableTextStyle, ...style }}
+      >
+        {text}
+      </span>
+    )
+  }
+
+  const splitCustomerAddress = (address: string | null | undefined) => {
+    const normalized = (address || '').trim().replace(/\s+/g, ' ')
+    if (!normalized) return { base: '', detail: '' }
+
+    const parenEndIndex = normalized.indexOf(')')
+    if (parenEndIndex >= 0 && parenEndIndex < normalized.length - 1) {
+      return {
+        base: normalized.slice(0, parenEndIndex + 1).trim(),
+        detail: normalized.slice(parenEndIndex + 1).trim(),
+      }
+    }
+
+    const detailMatch = normalized.match(/^(.+?)\s+((?:\d+\s*동\s*)?\d+\s*(?:호|층|호실)\b.*)$/)
+    if (detailMatch) {
+      return { base: detailMatch[1].trim(), detail: detailMatch[2].trim() }
+    }
+
+    return { base: normalized, detail: '' }
+  }
+
   // 주문별 업데이트 로그 (주문 ID → 마지막 갱신 결과)
   const [refreshLog, setRefreshLog] = useState<Record<string, string>>({})
 
@@ -1147,6 +1210,7 @@ export default function OrdersPage() {
               const liveProfit = calcProfit(o)
               const liveProfitRate = calcProfitRate(o)
               const activeAction = activeActions[o.id] || null
+              const customerAddress = splitCustomerAddress(o.customer_address)
 
               return (
                 <tr key={o.id} style={{ borderBottom: '1px solid #1C2333', verticalAlign: 'top' }}>
@@ -1389,19 +1453,25 @@ export default function OrdersPage() {
                     <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.8rem', flexWrap: 'wrap' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
                         <span style={{ color: '#666' }}>주문자</span>
-                        <span style={{ color: '#E5E5E5' }}>{o.customer_name || '-'}</span>
+                        {renderCopyableText(o.customer_name, '주문자')}
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
                         <span style={{ color: '#666' }}>수령인</span>
-                        <span style={{ color: '#E5E5E5' }}>{o.customer_name || '-'}</span>
+                        {renderCopyableText(o.customer_name, '수령인')}
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
                         <span style={{ color: '#666' }}>연락처</span>
-                        <span style={{ color: '#E5E5E5' }}>{o.customer_phone || '-'}</span>
+                        {renderCopyableText(o.customer_phone, '연락처')}
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
                         <span style={{ color: '#666' }}>주소</span>
-                        <span style={{ color: '#E5E5E5' }}>{o.customer_address || '-'}</span>
+                        {renderCopyableText(customerAddress.base, '기본주소')}
+                        {customerAddress.detail && (
+                          <>
+                            <span style={{ color: '#555' }}>/</span>
+                            {renderCopyableText(customerAddress.detail, '상세주소')}
+                          </>
+                        )}
                       </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8rem' }}>
