@@ -1155,25 +1155,28 @@ async function extractDetailData(tabId, site, productId) {
         }
         if (!originalPrice) originalPrice = salePrice
 
-        // 옵션 (사이즈 등)
+        // 옵션 (사이즈별 재고) — 설계문서 §3.5 정밀 셀렉터 (2026-04-23 Phase 1 실측)
+        // 기존 [class*="option"] 셀렉터는 느슨해 가짜 매칭이 많아 교체.
+        // 구조: ul.selectLists[id^="select-bundleOpt-"] > li
+        //   └── .caption ("075" 또는 "[품절] 075")
+        //   └── .stock   ("6개 남음" | "품절" | "" — 빈 값은 10개+ 추정, 백엔드 기존값 유지)
+        //   └── li.disabled 클래스 → 품절 플래그 (가장 확실)
         const options = []
-        // 롯데ON: 옵션 select 또는 버튼 목록
-        document.querySelectorAll('[class*="option"] li, [class*="option"] button, select option').forEach(el => {
-          const t = el.textContent.trim()
-          if (!t || t === '선택하세요.' || t.length > 50) return
-          const isSoldOut = t.includes('품절')
-          // "N개 남음" 패턴에서 실재고 추출
-          const stockMatch = t.match(/(\d+)\s*개\s*남음/)
-          let stock = 0
-          if (isSoldOut) stock = 0
-          else if (stockMatch) stock = parseInt(stockMatch[1], 10)
-          else stock = 1 // 재고 있지만 수량 불명 → sentinel 1 (worker에서 99로 변환)
-          // 옵션명에서 "[품절]", "N개 남음", "(품절임박)" 제거
-          const cleanName = t.replace(/\[품절\]\s*/g, '').replace(/\s*\d+개\s*남음.*/, '').replace(/\s*\(품절임박\)/, '').trim()
-          if (cleanName) {
-            options.push({ name: cleanName, stock, isSoldOut })
-          }
-        })
+        const sizeUl = document.querySelector('ul.selectLists[id^="select-bundleOpt-"]')
+        if (sizeUl) {
+          sizeUl.querySelectorAll('li').forEach(li => {
+            const rawCaption = (li.querySelector('.caption')?.textContent || '').trim()
+            const cleanName = rawCaption.replace(/^\[품절\]\s*/, '').trim()
+            if (!cleanName) return
+            const stockText = (li.querySelector('.stock')?.textContent || '').trim()
+            const isSoldOut = li.classList.contains('disabled') || stockText === '품절'
+            const m = stockText.match(/(\d+)\s*개/)
+            // stock: 0=품절, 정수 N=실재고("N개 남음"), null=UI에 숫자 미노출(충분 재고)
+            // 백엔드 _merge_dom_stock()이 null인 경우 pbf 값을 유지하도록 처리한다.
+            const stock = isSoldOut ? 0 : (m ? parseInt(m[1], 10) : null)
+            options.push({ name: cleanName, stock, isSoldOut, raw: stockText })
+          })
+        }
 
         // 이미지
         const images = []
@@ -1185,7 +1188,12 @@ async function extractDetailData(tabId, site, productId) {
           }
         })
 
-        if (name || salePrice > 0) {
+        // 판매자 지점 (§3.5) — 단일 지점 고정 표기 (고객이 볼 수 있는 재고의 소속).
+        // 일부 상품에선 null — 필수 필드 아님, 로그/디버그 전용.
+        const sellerEl = document.querySelector('ul.sellerList > li.currentProduct .sellerGrade strong')
+        const seller = sellerEl?.textContent?.trim() || null
+
+        if (name || salePrice > 0 || options.length > 0) {
           return {
             success: true,
             site_product_id: prdId,
@@ -1197,6 +1205,8 @@ async function extractDetailData(tabId, site, productId) {
             source_site: siteName,
             category: '', category1: '', category2: '', category3: '',
             options,
+            seller,  // "롯데백화점 인천점" 등 — 지점 정보
+            pageTitle: document.title,  // 백엔드에서 product.name 정합성 검증용 (§12)
           }
         }
       }

@@ -23,6 +23,72 @@ _lotteon_safe_interval: float = 999.0  # 차단 없는 최소 인터벌 기록
 _sitm_no_cache: dict[str, str] = {}
 
 
+# ── Phase 4 helpers — DOM 재고 병합 + 상품명 정합성 검증 (설계문서 §3.5/§12) ──
+
+
+def _norm_opt_name(s: str) -> str:
+    """옵션명 정규화 — 공백 제거 + 소문자."""
+    return "".join(str(s or "").split()).lower()
+
+
+def _merge_dom_stock(pbf_options: list[dict], dom_options: list[dict]) -> int:
+    """DOM 사이즈별 재고를 pbf 옵션 리스트에 주입 (in-place). 변경 건수 반환.
+
+    규칙:
+      - DOM isSoldOut=True → pbf stock=0 + isSoldOut=True (품절 확정)
+      - DOM stock=정수 → pbf stock 덮어쓰기 (실재고)
+      - DOM stock=None (UI에 숫자 미노출, 충분 재고 추정) → pbf 값 유지
+      - 매칭 실패 (옵션명 정규화 후 다름) → pbf 값 유지
+
+    단위 테스트: backend/_tmp_lotteon_dom_merge_test.py — 12/12 PASS (2026-04-23).
+    """
+    if not pbf_options or not dom_options:
+        return 0
+    dom_map = {_norm_opt_name(o.get("name")): o for o in dom_options if o.get("name")}
+    changes = 0
+    for pbf in pbf_options:
+        key = _norm_opt_name(pbf.get("name"))
+        dom = dom_map.get(key)
+        if not dom:
+            continue
+        if dom.get("isSoldOut"):
+            if pbf.get("stock") != 0 or not pbf.get("isSoldOut"):
+                pbf["stock"] = 0
+                pbf["isSoldOut"] = True
+                changes += 1
+        else:
+            ds = dom.get("stock")
+            if isinstance(ds, int) and ds != pbf.get("stock"):
+                pbf["stock"] = ds
+                pbf["isSoldOut"] = False
+                changes += 1
+    return changes
+
+
+def _check_name_mismatch(
+    site_product_id: str, db_name: str, dom_title: str | None
+) -> None:
+    """§12 방어 로깅 — DOM이 다른 상품을 긁었을 가능성 조기 감지.
+
+    DB 상품명과 DOM pageTitle의 공통 문자 비율이 30% 미만이면 WARNING 로그.
+    호출자는 이 경우에도 pbf 값 그대로 사용 (추가 차단은 하지 않음 — 관측부터).
+    """
+    if not db_name or not dom_title:
+        return
+    db_n = _norm_opt_name(db_name)
+    dom_n = _norm_opt_name(dom_title)
+    if not db_n or not dom_n:
+        return
+    common = len(set(db_n) & set(dom_n))
+    total = max(len(set(db_n) | set(dom_n)), 1)
+    ratio = common / total
+    if ratio < 0.3:
+        logger.warning(
+            f"[LOTTEON][name-mismatch] id={site_product_id} "
+            f"db={db_name!r} dom={dom_title!r} similarity={ratio:.2f}"
+        )
+
+
 class LotteonSourcingPlugin(SourcingPlugin):
     """롯데ON 소싱처 플러그인.
 
@@ -134,15 +200,20 @@ class LotteonSourcingPlugin(SourcingPlugin):
         price_info = pbf.get("priceInfo") or {}
         sl_prc = int(price_info.get("slPrc", 0) or 0)
         immd_dc = int(price_info.get("immdDcAplyTotAmt", 0) or 0)
-        adtn_dc = int(price_info.get("adtnDcAplyTotAmt", 0) or 0)
+        # adtnDcAplyTotAmt(추가할인)는 판매가 반영 대상 아님.
+        # 롯데ON은 "즉시할인(immdDcAplyTotAmt)"만 판매가에 반영하고,
+        # "추가할인"은 결제 시 부가 혜택으로 노출되므로 bestBenefitPrice 계산에서 제외.
+        # 2026-04-23 S1 검증: 5개 롯데백화점 상품 모두 실노출가 == slPrc - immd_dc.
+        # 과거 `sl_prc - immd - adtn` 계산이 실노출가보다 낮은 값(예: PD56368597
+        # 59,000 - 8,850 - 5,010 = 45,140)을 만들어 50,150↔45,140 가격 핑퐁을 유발했음.
 
-        if immd_dc > 0 or adtn_dc > 0:
-            # PBF에 할인 정보 있음 → 최대혜택가 계산
-            best_benefit = sl_prc - immd_dc - adtn_dc if sl_prc > 0 else 0
+        if immd_dc > 0:
+            # PBF에 즉시할인 있음 → 즉시할인 차감만 수행
+            best_benefit = sl_prc - immd_dc if sl_prc > 0 else 0
             if best_benefit <= 0 or best_benefit >= sl_prc:
                 best_benefit = sl_prc
         else:
-            # PBF에 할인 정보 없음 → slPrc가 정상가(할인 전)일 수 있어
+            # PBF에 즉시할인 정보 없음 → slPrc가 정상가일 수 있어
             # bestBenefitPrice를 None으로 설정하여 HTML 폴백 유도
             best_benefit = None
 
@@ -430,6 +501,42 @@ class LotteonSourcingPlugin(SourcingPlugin):
             return RefreshResult(
                 product_id=product_id,
                 error=f"롯데ON 상세 조회 실패: {site_product_id}",
+            )
+
+        # ── DOM 재고 병합 (설계문서 §3.5) — 지점 단위 pbf 재고 이슈 해소 ──
+        # 확장앱이 롯데ON PDP를 열어 사이즈별 실재고(판매자 지점 기준)를 추출해
+        # pbf 옵션 리스트의 stock을 덮어쓴다. 미연결/타임아웃/파싱 실패 시 pbf 값 유지.
+        dom_ext: dict | None = None
+        try:
+            from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+
+            _dom_req, _dom_fut = SourcingQueue.add_detail_job(
+                "LOTTEON", site_product_id
+            )
+            dom_ext = await asyncio.wait_for(_dom_fut, timeout=25)
+            if not (isinstance(dom_ext, dict) and dom_ext.get("success")):
+                dom_ext = None
+        except asyncio.TimeoutError:
+            logger.debug(
+                f"[LOTTEON] DOM 위임 타임아웃: {site_product_id} (pbf 값 유지)"
+            )
+        except Exception as _dom_err:
+            logger.debug(f"[LOTTEON] DOM 위임 예외: {site_product_id} — {_dom_err}")
+
+        if dom_ext and dom_ext.get("options") and detail.get("options"):
+            _changes = _merge_dom_stock(detail["options"], dom_ext["options"])
+            if _changes:
+                logger.info(
+                    f"[LOTTEON] DOM 재고 병합: {site_product_id} {_changes}건 덮어씀 "
+                    f"(판매자={dom_ext.get('seller') or '-'})"
+                )
+
+        if dom_ext:
+            # §12 방어 로깅 — DOM이 다른 상품 긁었을 가능성 조기 감지
+            _check_name_mismatch(
+                site_product_id,
+                db_name=getattr(product, "name", "") or "",
+                dom_title=dom_ext.get("pageTitle"),
             )
 
         # ── qapi 프로모션가 보정 ──
