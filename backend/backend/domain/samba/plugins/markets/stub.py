@@ -4,29 +4,6 @@ from backend.domain.samba.plugins.market_base import MarketPlugin
 from typing import Any
 
 
-class EbayPlugin(MarketPlugin):
-    market_type = "ebay"
-    policy_key = "eBay"
-    required_fields = ["name", "sale_price"]
-
-    def transform(self, product: dict, category_id: str, **kwargs) -> dict:
-        return {}
-
-    async def execute(
-        self,
-        session,
-        product: dict,
-        creds: dict,
-        category_id: str,
-        account,
-        existing_no: str,
-    ) -> dict[str, Any]:
-        return {
-            "success": False,
-            "message": "eBay API 연동이 아직 구현되지 않았습니다.",
-        }
-
-
 class LazadaPlugin(MarketPlugin):
     market_type = "lazada"
     policy_key = "Lazada"

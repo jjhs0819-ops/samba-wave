@@ -683,9 +683,25 @@ export default function CSPage() {
                           </button>
                         </div>
 
-                        {/* 문의 내용 */}
+                        {/* 문의 내용 — eBay [sender] 형식은 색상 구분 */}
                         <div style={{ color: '#ccc', fontSize: '0.8125rem', lineHeight: '1.5', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                          {htmlToText(item.content)}
+                          {item.market === 'eBay' && item.content?.includes('[') ? (
+                            item.content.split('\n').map((line: string, li: number) => {
+                              const m = line.match(/^\[([^\]]+)\]\s*(.*)$/)
+                              if (m) {
+                                const isSeller = m[1] === 'seller'
+                                return (
+                                  <div key={li} style={{ marginBottom: '0.25rem' }}>
+                                    <span style={{ color: isSeller ? '#51CF66' : '#4C9AFF', fontWeight: 600, fontSize: '0.75rem' }}>[{m[1]}]</span>
+                                    <span style={{ marginLeft: '0.375rem' }}>{m[2]}</span>
+                                  </div>
+                                )
+                              }
+                              return <div key={li}>{line}</div>
+                            })
+                          ) : (
+                            htmlToText(item.content)
+                          )}
                         </div>
 
                         {/* 답변 내용 */}

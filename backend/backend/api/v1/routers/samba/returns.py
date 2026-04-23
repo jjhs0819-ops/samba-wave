@@ -290,8 +290,8 @@ async def list_returns(
             "Nike": "https://www.nike.com/kr/orders/{}",
         }
         for row in rows:
-            # 1순위: 타마켓주문링크
-            if row.ext_order_number:
+            # 1순위: 타마켓주문링크 (URL 형태만 — 순수 주문번호는 제외)
+            if row.ext_order_number and row.ext_order_number.startswith("http"):
                 link_map[row.id] = row.ext_order_number
             # 2순위: 소싱처 구매주문번호 + 소싱처별 URL
             elif row.source_site and row.sourcing_order_number:
@@ -325,8 +325,8 @@ async def list_returns(
     results = []
     for r in returns:
         data = r.model_dump() if hasattr(r, "model_dump") else r.__dict__.copy()
-        # 동적 생성 우선 → DB 값은 사용하지 않음 (하드코딩 방지)
-        data["return_link"] = link_map.get(r.order_id) or None
+        # 동적 생성 우선 → DB 값은 폴백
+        data["return_link"] = link_map.get(r.order_id) or r.return_link or None
         # business_name이 없으면 계정에서 동적 보정
         if not data.get("business_name"):
             cid = channel_id_map.get(r.order_id)
@@ -2002,6 +2002,162 @@ async def sync_returns_from_markets(
                         + len(return_items),
                         "synced": synced,
                     }
+                )
+
+            elif market_type == "ebay":
+                from backend.domain.samba.proxy.ebay import EbayClient
+
+                app_id = (
+                    extras.get("clientId")
+                    or extras.get("appId")
+                    or account.api_key
+                    or ""
+                )
+                cert_id = (
+                    extras.get("clientSecret")
+                    or extras.get("certId")
+                    or account.api_secret
+                    or ""
+                )
+                refresh_token = (
+                    extras.get("oauthToken") or extras.get("authToken", "") or ""
+                )
+                if not (app_id and cert_id and refresh_token):
+                    results.append(
+                        {
+                            "account": label,
+                            "status": "skip",
+                            "message": "eBay 인증정보 없음",
+                        }
+                    )
+                    continue
+
+                ebay_client = EbayClient(
+                    app_id=app_id,
+                    dev_id="",
+                    cert_id=cert_id,
+                    refresh_token=refresh_token,
+                    sandbox=bool(extras.get("sandbox", False)),
+                )
+                try:
+                    raw_returns = await ebay_client.get_returns(days=body.days)
+                except Exception as e:
+                    results.append(
+                        {"account": label, "status": "error", "message": str(e)[:150]}
+                    )
+                    continue
+
+                synced_ebay = 0
+                for ret in raw_returns:
+                    return_id = str(ret.get("returnId", ""))
+                    order_id_ebay = str(ret.get("orderId", ""))
+                    state = ret.get("state") or ret.get("status") or ""
+                    reason = (ret.get("creationInfo") or {}).get("reason", "") or ""
+                    buyer = str(ret.get("buyerLoginName", ""))
+                    item_info = ret.get("creationInfo", {}).get("item", {})
+                    item_title = str(item_info.get("itemTitle", ""))
+                    refund_amt = (
+                        (ret.get("sellerTotalRefund") or {})
+                        .get("estimatedRefundAmount", {})
+                        .get("value", 0)
+                    )
+                    creation_date = (
+                        (ret.get("creationInfo") or {})
+                        .get("creationDate", {})
+                        .get("value", "")
+                    )
+
+                    # 상태 매핑
+                    state_map = {
+                        "RETURN_REQUESTED": "반품요청",
+                        "RETURN_ACCEPTED": "반품승인",
+                        "RETURN_DELIVERED": "반품완료",
+                        "CLOSED": "반품완료",
+                        "ESCALATED": "반품요청",
+                    }
+                    market_status = state_map.get(state, state or "반품요청")
+
+                    # 기존 주문 찾기
+                    existing_order = await order_repo.find_by_async(
+                        order_number=order_id_ebay
+                    )
+                    order_db_id = existing_order.id if existing_order else ""
+
+                    # 중복 체크
+                    existing_ret = await svc.repo.find_by_async(
+                        order_number=order_id_ebay, type="return"
+                    )
+                    if existing_ret:
+                        # 상태 업데이트만
+                        await svc.repo.update_async(
+                            existing_ret.id,
+                            market_order_status=market_status,
+                            memo=return_id,
+                        )
+                        continue
+
+                    from datetime import datetime as _dt, timezone as _tz
+
+                    creation_dt = None
+                    if creation_date:
+                        try:
+                            creation_dt = _dt.fromisoformat(
+                                creation_date.replace("Z", "+00:00")
+                            )
+                        except Exception:
+                            creation_dt = _dt.now(_tz.utc)
+
+                    return_data = {
+                        "order_id": order_db_id,
+                        "order_number": order_id_ebay,
+                        "type": "return",
+                        "status": "requested",
+                        "reason": reason,
+                        "market": label,
+                        "market_order_status": market_status,
+                        "memo": return_id,
+                        "product_name": item_title
+                        or (existing_order.product_name if existing_order else ""),
+                        "product_image": existing_order.product_image
+                        if existing_order
+                        else "",
+                        "customer_name": buyer
+                        or (existing_order.customer_name if existing_order else ""),
+                        "customer_phone": existing_order.customer_phone
+                        if existing_order
+                        else "",
+                        "customer_address": existing_order.customer_address
+                        if existing_order
+                        else "",
+                        "requested_amount": float(refund_amt) if refund_amt else 0,
+                        "return_request_date": creation_dt,
+                        "return_link": f"https://www.ebay.com/mesh/ord/details?orderid={order_id_ebay}",
+                        "tenant_id": account.tenant_id or tenant_id,
+                    }
+                    await svc.repo.create_async(**return_data)
+                    synced_ebay += 1
+
+                    # 원주문 shipping_status 업데이트
+                    if existing_order:
+                        await order_repo.update_async(
+                            existing_order.id,
+                            shipping_status=market_status,
+                            status="return_requested"
+                            if "요청" in market_status
+                            else "returned",
+                        )
+
+                results.append(
+                    {
+                        "account": label,
+                        "status": "success",
+                        "fetched": len(raw_returns),
+                        "synced": synced_ebay,
+                    }
+                )
+                total_synced += synced_ebay
+                logger.info(
+                    f"[반품동기화][eBay] {label}: 반품 {len(raw_returns)}건 조회, {synced_ebay}건 신규"
                 )
 
             else:

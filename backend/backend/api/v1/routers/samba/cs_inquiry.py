@@ -341,6 +341,65 @@ async def reply_cs_inquiry(
                         market_sent = True
                         market_msg = "롯데ON Q&A 답변 전송 완료"
 
+            elif inquiry.market == "eBay":
+                from backend.domain.samba.account.model import SambaMarketAccount
+                from backend.domain.samba.proxy.ebay import EbayClient
+
+                if inquiry.account_id:
+                    acct_result = await session.execute(
+                        select(SambaMarketAccount).where(
+                            SambaMarketAccount.id == inquiry.account_id
+                        )
+                    )
+                    acct = acct_result.scalar_one_or_none()
+                    if acct:
+                        extras = acct.additional_fields or {}
+                        app_id = (
+                            extras.get("clientId")
+                            or extras.get("appId")
+                            or acct.api_key
+                            or ""
+                        )
+                        cert_id = (
+                            extras.get("clientSecret")
+                            or extras.get("certId")
+                            or acct.api_secret
+                            or ""
+                        )
+                        refresh_token = (
+                            extras.get("oauthToken")
+                            or extras.get("authToken", "")
+                            or ""
+                        )
+                        if app_id and cert_id and refresh_token:
+                            # ExternalMessageID 우선, 없으면 market_inquiry_no
+                            ext_id = inquiry.market_answer_no or ""
+                            if not ext_id:
+                                mid = inquiry.market_inquiry_no or ""
+                                if mid.startswith("msg_"):
+                                    mid = mid[4:]
+                                ext_id = mid
+                            if ext_id:
+                                ebay_client = EbayClient(
+                                    app_id=app_id,
+                                    dev_id="",
+                                    cert_id=cert_id,
+                                    refresh_token=refresh_token,
+                                    sandbox=bool(extras.get("sandbox", False)),
+                                )
+                                await ebay_client.reply_message(
+                                    parent_message_id=ext_id,
+                                    text=body.reply,
+                                    recipient=inquiry.questioner or "",
+                                    item_id=inquiry.market_product_no or "",
+                                )
+                                market_sent = True
+                                market_msg = "eBay 메시지 답장 전송 완료"
+                            else:
+                                market_msg = "eBay messageId 없음"
+                        else:
+                            market_msg = "eBay 인증정보 없음"
+
         except Exception as e:
             logger.warning(f"[CS답변] 마켓 전송 실패 (DB 저장은 진행): {e}")
             market_msg = f"마켓 전송 실패: {e}"
@@ -1255,6 +1314,181 @@ async def _do_sync_cs_from_markets(
             logger.error(f"[CS동기화] 스마트스토어 동기화 실패: {e}")
             errors.append(str(e))
 
+    # eBay CS 동기화 (Post-Order inquiry + Trading GetMyMessages)
+    if not market_name or market_name == "eBay":
+        try:
+            from backend.domain.samba.account.model import SambaMarketAccount
+            from backend.domain.samba.proxy.ebay import EbayClient
+
+            ebay_accts_result = await session.execute(
+                select(SambaMarketAccount).where(
+                    SambaMarketAccount.market_type == "ebay",
+                    SambaMarketAccount.is_active == True,  # noqa: E712
+                )
+            )
+            ebay_accts = ebay_accts_result.scalars().all()
+            for acct in ebay_accts:
+                extras = acct.additional_fields or {}
+                app_id = extras.get("clientId") or extras.get("appId") or acct.api_key
+                cert_id = (
+                    extras.get("clientSecret")
+                    or extras.get("certId")
+                    or acct.api_secret
+                )
+                refresh_token = extras.get("oauthToken") or extras.get("authToken", "")
+                # store_ebay 폴백
+                if not (app_id and cert_id and refresh_token):
+                    row_result = await session.execute(
+                        select(SambaSettings).where(SambaSettings.key == "store_ebay")
+                    )
+                    row = row_result.scalar_one_or_none()
+                    if row and isinstance(row.value, dict):
+                        app_id = (
+                            app_id
+                            or row.value.get("clientId", "")
+                            or row.value.get("appId", "")
+                        )
+                        cert_id = (
+                            cert_id
+                            or row.value.get("clientSecret", "")
+                            or row.value.get("certId", "")
+                        )
+                        refresh_token = (
+                            refresh_token
+                            or row.value.get("oauthToken", "")
+                            or row.value.get("authToken", "")
+                        )
+                if not (app_id and cert_id and refresh_token):
+                    continue
+
+                client = EbayClient(
+                    app_id=app_id,
+                    dev_id="",
+                    cert_id=cert_id,
+                    refresh_token=refresh_token,
+                    sandbox=bool(extras.get("sandbox", False)),
+                )
+
+                # ① INR 분쟁 문의 수집 (Post-Order inquiry)
+                try:
+                    inquiries = await client.get_inquiries(days=90)
+                except Exception as e:
+                    logger.warning(
+                        f"[CS동기화] eBay({acct.market_name}) 문의 조회 실패: {e}"
+                    )
+                    inquiries = []
+
+                inq_count = 0
+                for inq in inquiries:
+                    inq_id = str(inq.get("inquiryId", "") or "")
+                    if not inq_id:
+                        continue
+                    exists_q = await session.execute(
+                        select(SambaCSInquiry).where(
+                            SambaCSInquiry.market == "eBay",
+                            SambaCSInquiry.market_inquiry_no == inq_id,
+                        )
+                    )
+                    if exists_q.scalar_one_or_none():
+                        continue
+                    item_id = str(inq.get("itemId", "") or "")
+                    buyer = (inq.get("buyer") or {}).get("userId", "") or ""
+                    creation = inq.get("creationDate")
+                    if isinstance(creation, dict):
+                        creation = creation.get("value", "")
+                    inquiry_dt = None
+                    if isinstance(creation, str) and creation:
+                        try:
+                            inquiry_dt = datetime.fromisoformat(
+                                creation.replace("Z", "+00:00")
+                            )
+                        except Exception:
+                            inquiry_dt = None
+                    session.add(
+                        SambaCSInquiry(
+                            market="eBay",
+                            market_inquiry_no=inq_id,
+                            market_order_id=str(inq.get("orderId", "") or ""),
+                            market_product_no=item_id,
+                            account_id=acct.id,
+                            account_name=acct.market_name,
+                            inquiry_type="order_inquiry",
+                            questioner=buyer,
+                            product_name="",
+                            content=str(inq.get("reason", "") or "INR"),
+                            reply="",
+                            reply_status="pending",
+                            inquiry_date=inquiry_dt,
+                        )
+                    )
+                    inq_count += 1
+
+                # ② 구매자-판매자 메시지 수집 (Trading API GetMyMessages)
+                try:
+                    messages = await client.get_my_messages(days=90)
+                except Exception as e:
+                    logger.warning(
+                        f"[CS동기화] eBay({acct.market_name}) 메시지 조회 실패: {e}"
+                    )
+                    messages = []
+
+                msg_count = 0
+                for m in messages:
+                    msg_id = str(m.get("messageId", "") or "")
+                    if not msg_id:
+                        continue
+                    exists_m = await session.execute(
+                        select(SambaCSInquiry).where(
+                            SambaCSInquiry.market == "eBay",
+                            SambaCSInquiry.market_inquiry_no == f"msg_{msg_id}",
+                        )
+                    )
+                    if exists_m.scalar_one_or_none():
+                        continue
+                    recv = m.get("receiveDate") or ""
+                    recv_dt = None
+                    if isinstance(recv, str) and recv:
+                        try:
+                            recv_dt = datetime.fromisoformat(
+                                recv.replace("Z", "+00:00")
+                            )
+                        except Exception:
+                            recv_dt = None
+                    _item_id = str(m.get("itemId", "") or "")
+                    session.add(
+                        SambaCSInquiry(
+                            market="eBay",
+                            market_inquiry_no=f"msg_{msg_id}",
+                            market_answer_no=str(m.get("externalMessageId", "") or ""),
+                            market_order_id="",
+                            market_product_no=_item_id,
+                            product_link=(
+                                f"https://www.ebay.com/itm/{_item_id}"
+                                if _item_id
+                                else ""
+                            ),
+                            account_id=acct.id,
+                            account_name=acct.market_name,
+                            inquiry_type="message",
+                            questioner=str(m.get("sender", "") or ""),
+                            product_name=str(m.get("subject", "") or "")[:200],
+                            content=str(m.get("text", "") or ""),
+                            reply="",
+                            reply_status="pending",
+                            inquiry_date=recv_dt,
+                        )
+                    )
+                    msg_count += 1
+
+                await session.commit()
+                synced += inq_count + msg_count
+                logger.info(
+                    f"[CS동기화] eBay({acct.market_name}): INR {inq_count}건 + 메시지 {msg_count}건 신규"
+                )
+        except Exception as e:
+            logger.error(f"[CS동기화] eBay 동기화 실패: {e}")
+            errors.append(f"eBay: {e}")
+
     # 롯데ON Q&A 동기화 (market_name이 스마트스토어면 스킵)
     lo_settings_list = []
     if not market_name or market_name == "롯데ON":
@@ -1785,6 +2019,69 @@ async def send_reply_to_market(
             replied_at=datetime.now(timezone.utc),
         )
         return {"success": True, "message": "롯데ON Q&A 답변 전송 완료", "data": {}}
+
+    if inquiry.market == "eBay":
+        # eBay 메시지 답장 — Trading API AddMemberMessageRTQ
+        from backend.domain.samba.account.model import SambaMarketAccount
+        from backend.domain.samba.cs_inquiry.repository import SambaCSInquiryRepository
+        from backend.domain.samba.proxy.ebay import EbayApiError, EbayClient
+
+        if not inquiry.account_id:
+            raise HTTPException(400, "eBay 계정 ID 없음")
+        acct_result = await session.execute(
+            select(SambaMarketAccount).where(
+                SambaMarketAccount.id == inquiry.account_id
+            )
+        )
+        acct = acct_result.scalar_one_or_none()
+        if not acct:
+            raise HTTPException(400, "eBay 계정을 찾을 수 없음")
+        extras = acct.additional_fields or {}
+        app_id = extras.get("clientId") or extras.get("appId") or acct.api_key or ""
+        cert_id = (
+            extras.get("clientSecret") or extras.get("certId") or acct.api_secret or ""
+        )
+        refresh_token = extras.get("oauthToken") or extras.get("authToken", "") or ""
+        if not (app_id and cert_id and refresh_token):
+            raise HTTPException(400, "eBay 인증정보 없음")
+
+        # 답장용 ID = market_answer_no(ExternalMessageID) 우선, 없으면 market_inquiry_no
+        ext_msg_id = inquiry.market_answer_no or ""
+        if not ext_msg_id:
+            msg_id = inquiry.market_inquiry_no or ""
+            if msg_id.startswith("msg_"):
+                msg_id = msg_id[4:]
+            ext_msg_id = msg_id
+        if not ext_msg_id:
+            raise HTTPException(
+                400, "eBay messageId 없음 (INR inquiry는 API 답장 불가)"
+            )
+
+        client = EbayClient(
+            app_id=app_id,
+            dev_id="",
+            cert_id=cert_id,
+            refresh_token=refresh_token,
+            sandbox=bool(extras.get("sandbox", False)),
+        )
+        try:
+            await client.reply_message(
+                parent_message_id=ext_msg_id,
+                text=body.reply,
+                recipient=inquiry.questioner or "",
+                item_id=inquiry.market_product_no or "",
+            )
+        except EbayApiError as e:
+            raise HTTPException(500, f"eBay 메시지 답장 실패: {e}")
+
+        repo = SambaCSInquiryRepository(session)
+        await repo.update_async(
+            inquiry_id,
+            reply=body.reply,
+            reply_status="replied",
+            replied_at=datetime.now(timezone.utc),
+        )
+        return {"success": True, "message": "eBay 메시지 답장 완료", "data": {}}
 
     raise HTTPException(
         400, f"'{inquiry.market}' 마켓은 아직 답변 전송을 지원하지 않습니다"

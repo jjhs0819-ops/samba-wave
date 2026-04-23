@@ -1671,7 +1671,7 @@ export default function OrdersPage() {
                             if (co && tn && alreadyShipped) {
                               const ts = fmtTime
                               try { await orderApi.update(o.id, { shipping_company: co, tracking_number: tn }) } catch { /* ignore */ }
-                              setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 수정 저장완료 (${co} ${tn}) — 스마트스토어는 송장수정 API를 지원하지 않습니다. 판매자센터에서 직접 수정해주세요.`])
+                              setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 수정 저장완료 (${co} ${tn}) — 마켓에서는 송장수정이 반영되지 않습니다. 마켓 판매자센터에서 직접 수정해주세요.`])
                               loadOrders()
                             } else if (co && tn) {
                               const ts = fmtTime
@@ -1714,7 +1714,7 @@ export default function OrdersPage() {
                               // 이미 발송된 주문 — DB만 저장, 마켓 수정은 판매자센터에서
                               const ts = fmtTime
                               try { await orderApi.update(o.id, { shipping_company: co, tracking_number: tn }) } catch { /* ignore */ }
-                              setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 수정 저장완료 (${co} ${tn}) — 스마트스토어는 송장수정 API를 지원하지 않습니다. 판매자센터에서 직접 수정해주세요.`])
+                              setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 수정 저장완료 (${co} ${tn}) — 마켓에서는 송장수정이 반영되지 않습니다. 마켓 판매자센터에서 직접 수정해주세요.`])
                               loadOrders()
                             } else if (co && tn && (changed || retry)) {
                               const ts = fmtTime
