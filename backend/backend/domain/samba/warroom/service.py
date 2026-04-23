@@ -277,6 +277,103 @@ class SambaMonitorService:
             "recent_warnings": [_serialize(e) for e in recent_warnings],
         }
 
+    async def get_market_changes(
+        self,
+        per_market_limit: int = 5,
+        scan_limit: int = 300,
+    ) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
+        """판매처별 최근 가격변동/품절 이벤트 fan-out.
+
+        SambaMonitorEvent의 product_id → SambaCollectedProduct.registered_accounts/
+        market_product_nos → SambaMarketAccount(market_type, account_label) 로 펼친다.
+        같은 (market_type, event_type) 그룹 안에서 created_at DESC 상위 N건만 유지.
+        """
+        from backend.domain.samba.collector.model import SambaCollectedProduct
+        from backend.domain.samba.account.model import SambaMarketAccount
+
+        events = await self.repo.list_recent_changes_for_markets(
+            event_types=["price_changed", "sold_out"],
+            limit=scan_limit,
+        )
+        if not events:
+            return {}
+
+        # 1) 상품 일괄 조회 → registered_accounts / market_product_nos 매핑
+        pids = list({e.product_id for e in events if e.product_id})
+        prod_map: Dict[str, Dict[str, Any]] = {}
+        if pids:
+            prod_stmt = select(
+                SambaCollectedProduct.id,
+                SambaCollectedProduct.registered_accounts,
+                SambaCollectedProduct.market_product_nos,
+            ).where(SambaCollectedProduct.id.in_(pids))
+            prod_rows = (await self.session.execute(prod_stmt)).all()
+            for pid, regs, mpns in prod_rows:
+                prod_map[pid] = {
+                    "registered_accounts": regs or [],
+                    "market_product_nos": mpns or {},
+                }
+
+        # 2) 모든 account_id 모아서 일괄 조회 → market_type/account_label 매핑
+        all_account_ids: set[str] = set()
+        for v in prod_map.values():
+            for aid in v["registered_accounts"]:
+                if aid:
+                    all_account_ids.add(aid)
+            mpns = v["market_product_nos"]
+            if isinstance(mpns, dict):
+                for aid in mpns.keys():
+                    if aid:
+                        all_account_ids.add(aid)
+
+        acc_map: Dict[str, Dict[str, Any]] = {}
+        if all_account_ids:
+            acc_stmt = select(
+                SambaMarketAccount.id,
+                SambaMarketAccount.market_type,
+                SambaMarketAccount.account_label,
+                SambaMarketAccount.business_name,
+            ).where(SambaMarketAccount.id.in_(all_account_ids))
+            for aid, mt, label, biz in (await self.session.execute(acc_stmt)).all():
+                acc_map[aid] = {
+                    "market_type": mt,
+                    "account_label": label or biz or "",
+                }
+
+        # 3) fan-out: 이벤트 × 등록된 마켓계정
+        result: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+        for ev in events:
+            pinfo = prod_map.get(ev.product_id or "")
+            if not pinfo:
+                continue
+            account_ids = pinfo["registered_accounts"] or []
+            mpns = pinfo["market_product_nos"] or {}
+            for aid in account_ids:
+                ainfo = acc_map.get(aid)
+                if not ainfo:
+                    continue
+                market_type = ainfo["market_type"]
+                row = {
+                    "id": f"{ev.id}__{aid}",
+                    "event_id": ev.id,
+                    "created_at": ev.created_at.isoformat(),
+                    "source_site": ev.source_site,
+                    "market_product_no": (
+                        mpns.get(aid) if isinstance(mpns, dict) else None
+                    ),
+                    "account_id": aid,
+                    "account_label": ainfo["account_label"],
+                    "product_id": ev.product_id,
+                    "product_name": ev.product_name,
+                    "detail": ev.detail,
+                }
+                bucket = result.setdefault(market_type, {}).setdefault(
+                    ev.event_type, []
+                )
+                if len(bucket) < per_market_limit:
+                    bucket.append(row)
+        return result
+
     async def _get_hourly_changes(
         self,
         since_24h: datetime,

@@ -1812,6 +1812,41 @@ async def auto_start_if_enabled():
                     "[오토튠] 저장된 deviceId 없음 → 자동시작 건너뜀 "
                     "(브라우저에서 수동 시작 필요, 다른 PC 탭 열림 방지)"
                 )
+                # DB 상태를 실제 상태(중지)로 강제 동기화 — 유령 enabled=True 제거
+                # 이렇게 해야 프런트 UI 토글이 OFF로 보이고 사용자가 수동 재시작할 수 있다
+                try:
+                    from backend.db.orm import get_write_session as _get_ws
+                    from backend.api.v1.routers.samba.proxy import (
+                        _set_setting as _ss,
+                    )
+
+                    async with _get_ws() as _ws:
+                        await _ss(_ws, "autotune_enabled", False)
+                        await _ws.commit()
+                except Exception as _e:
+                    logger.warning(f"[오토튠] enabled=False 동기화 실패: {_e}")
+
+                # 워룸 타임라인에 경고 이벤트 발행 — 관리자가 UI에서 즉시 인지 가능
+                try:
+                    from backend.domain.samba.warroom.service import (
+                        SambaMonitorService,
+                    )
+                    from backend.db.orm import get_write_session as _get_ws2
+
+                    async with _get_ws2() as _ws2:
+                        _monitor = SambaMonitorService(_ws2)
+                        await _monitor.emit(
+                            "autotune_auto_stopped",
+                            "warning",
+                            summary=(
+                                "오토튠 자동복원 실패 — 저장된 deviceId 없음. "
+                                "워룸에서 수동으로 다시 시작하세요."
+                            ),
+                            detail={"reason": "missing_owner_device_id"},
+                        )
+                        await _ws2.commit()
+                except Exception as _e:
+                    logger.warning(f"[오토튠] 경고 이벤트 발행 실패: {_e}")
                 return
 
             # 전송 Job 존재 시 대기 (OOM 방지 — 전송과 동시 실행 차단)

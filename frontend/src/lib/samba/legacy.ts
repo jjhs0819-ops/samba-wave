@@ -1544,6 +1544,10 @@ export const monitorApi = {
     request<Record<string, Record<string, Array<{ id: string; product_id: string | null; product_name: string | null; detail: Record<string, unknown> | null; created_at: string }>>>>(
       `${SAMBA_PREFIX}/monitor/events/site-changes?limit=${limit}`,
     ),
+  marketChanges: (limit = 5) =>
+    request<Record<string, Record<string, Array<{ id: string; event_id: string; created_at: string; source_site: string | null; market_product_no: string | null; account_id: string; account_label: string; product_id: string | null; product_name: string | null; detail: Record<string, unknown> | null }>>>>(
+      `${SAMBA_PREFIX}/monitor/events/market-changes?limit=${limit}`,
+    ),
 }
 
 // ── S3 이미지 헬퍼 ──

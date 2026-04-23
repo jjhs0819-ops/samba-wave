@@ -192,6 +192,7 @@ export default function WarroomPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [events, setEvents] = useState<MonitorEvent[]>([])
   const [siteChanges, setSiteChanges] = useState<Record<string, Record<string, Array<{ id: string; product_id: string | null; product_name: string | null; detail: Record<string, unknown> | null; created_at: string }>>>>({})
+  const [marketChanges, setMarketChanges] = useState<Record<string, Record<string, Array<{ id: string; event_id: string; created_at: string; source_site: string | null; market_product_no: string | null; account_id: string; account_label: string; product_id: string | null; product_name: string | null; detail: Record<string, unknown> | null }>>>>({})
 
   const [loading, setLoading] = useState(true)
   const [lastFetched, setLastFetched] = useState<Date | null>(null)
@@ -342,6 +343,7 @@ export default function WarroomPage() {
       prevCyclesRef.current = cycles
       monitorApi.recentEvents(30).then(ev => setEvents(ev)).catch(() => {})
       monitorApi.siteChanges(5).then(c => { if (c && Object.keys(c).length > 0) setSiteChanges(c) }).catch(() => {})
+      monitorApi.marketChanges(5).then(c => { if (c && Object.keys(c).length > 0) setMarketChanges(c) }).catch(() => {})
     }
   }, [])
 
@@ -356,17 +358,19 @@ export default function WarroomPage() {
 
   const load = useCallback(async () => {
     try {
-      const [dashboard, recentEvents, probeStatus, atStatus, scores, changes] = await Promise.all([
+      const [dashboard, recentEvents, probeStatus, atStatus, scores, changes, mktChanges] = await Promise.all([
         monitorApi.dashboard().catch(() => null),
         monitorApi.recentEvents(30).catch(() => []),
         collectorApi.probeStatus().catch(() => ({})) as Promise<Record<string, Record<string, Record<string, unknown>>>>,
         collectorApi.autotuneStatus().catch(() => ({ running: false, last_tick: null, cycle_count: 0, restart_count: 0, target: 'registered', refreshed_count: 0, breaker_tripped: {} as Record<string, number> })) as ReturnType<typeof collectorApi.autotuneStatus>,
         monitorApi.storeScores().catch(() => ({})),
         monitorApi.siteChanges(5).catch(() => ({})),
+        monitorApi.marketChanges(5).catch(() => ({})),
       ])
       if (dashboard) setStats(dashboard)
       setEvents(recentEvents)
       if (changes && Object.keys(changes).length > 0) setSiteChanges(changes)
+      if (mktChanges && Object.keys(mktChanges).length > 0) setMarketChanges(mktChanges)
       if (probeStatus && Object.keys(probeStatus).length > 0) setProbeData(probeStatus)
       // 오토튠 상태는 handleAutotuneStatus를 통해 처리 (falseCountRef 가드 적용, 경쟁 상태 방지)
       handleAutotuneStatus(atStatus.running, atStatus.cycle_count, atStatus.last_tick, atStatus.refreshed_count || 0)
@@ -842,6 +846,86 @@ export default function WarroomPage() {
                     </div>
                   )
                 })}
+              </div>
+            )}
+            {/* 판매처별 최근 수정 상품 내역 (마켓 단위 fan-out) */}
+            {Object.keys(marketChanges).length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                {(() => {
+                  const MARKET_LABEL: Record<string, string> = { smartstore: '스마트스토어', coupang: '쿠팡', '11st': '11번가', auction: '옥션', gmarket: 'G마켓', lotteon: '롯데ON', ssg: 'SSG', tmon: '티몬', wemakeprice: '위메프', kream: 'KREAM', playauto: '플레이오토', gsshop: 'GS샵', elandmall: '이랜드몰', ssf: 'SSF샵' }
+                  const MARKET_COLOR: Record<string, string> = { smartstore: '#51CF66', coupang: '#FF6B6B', '11st': '#FFD93D', lotteon: '#FB923C', ssg: '#A78BFA', auction: '#4C9AFF', gmarket: '#34D399', kream: '#E5E5E5' }
+                  const fmtT = (iso: string) => {
+                    const d = new Date(iso)
+                    return `${d.getMonth() + 1}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+                  }
+                  return Object.entries(marketChanges).map(([marketType, byType]) => {
+                    const priceChanges = byType.price_changed ?? []
+                    const soldOuts = byType.sold_out ?? []
+                    if (priceChanges.length === 0 && soldOuts.length === 0) return null
+                    const label = MARKET_LABEL[marketType] || marketType
+                    const color = MARKET_COLOR[marketType] || '#888'
+                    return (
+                      <div key={`mkt-${marketType}`} style={{
+                        flex: '1 1 200px',
+                        padding: '0.5rem 0.6rem',
+                        borderRadius: '6px',
+                        border: '1px solid #2D2D2D',
+                        background: 'rgba(255,255,255,0.03)',
+                      }}>
+                        <div style={{ fontSize: '0.78rem', color, marginBottom: '0.3rem', fontWeight: 600 }}>
+                          {label} 점검
+                        </div>
+                        {soldOuts.map(ev => {
+                          const d = ev.detail || {}
+                          const reason = d.reason as string | undefined
+                          const oldS = d.old_stock as number | null | undefined
+                          const newS = d.new_stock as number | null | undefined
+                          const reasonLabel =
+                            reason === 'option_partial' ? '옵션품절'
+                            : reason === 'source_deleted' ? '소싱처삭제'
+                            : reason === 'all_soldout' ? '전체품절'
+                            : '품절'
+                          return (
+                            <div key={ev.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem', flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
+                              {ev.account_label && (
+                                <span style={{ fontSize: '0.72rem', color: '#9AA5C0' }}>({ev.account_label})</span>
+                              )}
+                              <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{ev.market_product_no || '-'}</span>
+                              <span style={{ fontSize: '0.72rem', color: '#A78BFA' }}>품절</span>
+                              <span style={{ fontSize: '0.68rem', color: '#888' }}>({reasonLabel})</span>
+                              {reason === 'option_partial' && oldS != null && newS != null && (
+                                <span style={{ fontSize: '0.72rem', color: '#bbb' }}>
+                                  {fmtNum(oldS)}→{fmtNum(newS)}
+                                </span>
+                              )}
+                            </div>
+                          )
+                        })}
+                        {priceChanges.map(ev => {
+                          const d = ev.detail || {}
+                          const oldP = d.old_price as number | undefined
+                          const newP = d.new_price as number | undefined
+                          return (
+                            <div key={ev.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem', flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
+                              {ev.account_label && (
+                                <span style={{ fontSize: '0.72rem', color: '#9AA5C0' }}>({ev.account_label})</span>
+                              )}
+                              <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{ev.market_product_no || '-'}</span>
+                              <span style={{ fontSize: '0.72rem', color: '#bbb' }}>가격변동</span>
+                              {oldP != null && newP != null && (
+                                <span style={{ fontSize: '0.72rem', color: '#bbb' }}>
+                                  ₩{fmtNum(oldP)}→₩{fmtNum(newP)}
+                                </span>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )
+                  })
+                })()}
               </div>
             )}
             {/* 기타 이벤트 (scheduler_tick 외) */}

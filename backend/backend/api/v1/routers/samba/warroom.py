@@ -149,6 +149,16 @@ async def list_site_changes(
     return result
 
 
+@router.get("/events/market-changes")
+async def list_market_changes(
+    limit: int = Query(5, ge=1, le=20),
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """판매처(마켓)별 최근 가격변동·품절 이벤트 fan-out (각 N건)."""
+    svc = SambaMonitorService(session)
+    return await svc.get_market_changes(per_market_limit=limit)
+
+
 @router.get("/site-health")
 async def get_site_health(
     session: AsyncSession = Depends(get_read_session_dependency),

@@ -885,11 +885,11 @@ def _process_musinsa_detail(
         new_sale_price != old_sale or new_sale_status != old_status or cost_changed
     )
 
-    # 옵션 재고 변동 건수 — 품절↔리스탁 전환 + 수량 델타 모두 카운트
-    # (소싱처 무관 공통 기준 — 신규 소싱처도 자동 포함)
+    # 옵션 재고 변동 건수 — 품절↔재고 전환(무↔유)만 카운트
+    # (단순 수량변화 제외, 공용 헬퍼 count_stock_transitions 사용)
     old_options = getattr(product, "options", None) or []
-    _stock_changes = 0
-    if new_options and old_options:
+    _stock_changes = count_stock_transitions(old_options, new_options)
+    if new_options and old_options and _stock_changes > 0:
         old_stock_map = {
             (o.get("name", "") or o.get("size", "")): o.get("stock", 0)
             for o in old_options
@@ -900,21 +900,17 @@ def _process_musinsa_detail(
             new_stock = o.get("stock", 0) or 0
             was_soldout = old_stock <= 0
             is_soldout = new_stock <= 0 or o.get("isSoldOut", False)
-            _transition = was_soldout != is_soldout
-            _qty_delta = (old_stock or 0) != (new_stock or 0)
-            if _transition or _qty_delta:
-                _stock_changes += 1
-                if _transition:
-                    logger.info(
-                        "[재고변동감지] %s %s: DB=%s(sold=%s) → API=%s(sold=%s)",
-                        site_product_id,
-                        key,
-                        old_stock,
-                        was_soldout,
-                        new_stock,
-                        is_soldout,
-                    )
-    else:
+            if was_soldout != is_soldout:
+                logger.info(
+                    "[재고변동감지] %s %s: DB=%s(sold=%s) → API=%s(sold=%s)",
+                    site_product_id,
+                    key,
+                    old_stock,
+                    was_soldout,
+                    new_stock,
+                    is_soldout,
+                )
+    if not (new_options and old_options):
         if not old_options and new_options:
             logger.warning(
                 "[재고변동] %s DB옵션없음(len=%d), API옵션=%d개",
@@ -1056,22 +1052,9 @@ async def _parse_kream(product: Any) -> RefreshResult:
         or new_sale_status != old_status
     )
 
-    # 옵션 재고 변동 — 품절↔리스탁 전환 + 수량 델타 모두 카운트
+    # 옵션 재고 변동 — 품절↔재고 전환(무↔유)만 카운트 (단순 수량변화 제외)
     old_options = getattr(product, "options", None) or []
-    _stock_changes = 0
-    if new_options and old_options:
-        old_stock_map = {
-            (o.get("name", "") or o.get("size", "")): o.get("stock", 0)
-            for o in old_options
-        }
-        for o in new_options:
-            key = o.get("name", "") or o.get("size", "")
-            old_stock = old_stock_map.get(key, 0) or 0
-            new_stock = o.get("stock", 0) or 0
-            was_soldout = old_stock <= 0
-            is_soldout = new_stock <= 0
-            if was_soldout != is_soldout or (old_stock or 0) != (new_stock or 0):
-                _stock_changes += 1
+    _stock_changes = count_stock_transitions(old_options, new_options)
 
     # 마켓 정보
     _reg_accounts = getattr(product, "registered_accounts", None) or []
@@ -1113,18 +1096,33 @@ async def _parse_kream(product: Any) -> RefreshResult:
 # ── 범용 HTTP 파서 (ABCmart, Nike 등 — 현재 stub) ──
 
 
-def _has_stock_diff(old_options: list | None, new_options: list | None) -> bool:
-    """옵션 재고 변동 여부 판별."""
+def count_stock_transitions(old_options: list | None, new_options: list | None) -> int:
+    """옵션별 품절↔재고 전환(무↔유) 건수만 카운트.
+
+    단순 수량 변화(예: 3→2)는 제외 — 자동튠 이벤트/전송 트리거 공용 기준.
+    신규 소싱처 파서는 반드시 이 함수를 통해 stock_changed 를 판정할 것.
+    """
     if not old_options or not new_options:
-        return False
+        return 0
     old_map = {
-        (o.get("name", "") or o.get("size", "")): o.get("stock", 0) for o in old_options
+        (o.get("name", "") or o.get("size", "")): (o.get("stock", 0) or 0)
+        for o in old_options
     }
+    cnt = 0
     for o in new_options:
         key = o.get("name", "") or o.get("size", "")
-        if o.get("stock", 0) != old_map.get(key, 0):
-            return True
-    return False
+        old_s = old_map.get(key, 0) or 0
+        new_s = o.get("stock", 0) or 0
+        was_soldout = old_s <= 0
+        is_soldout = new_s <= 0 or o.get("isSoldOut", False)
+        if was_soldout != is_soldout:
+            cnt += 1
+    return cnt
+
+
+def _has_stock_diff(old_options: list | None, new_options: list | None) -> bool:
+    """옵션 재고 품절↔재고 전환 여부 판별 (단순 수량변화 제외)."""
+    return count_stock_transitions(old_options, new_options) > 0
 
 
 async def _parse_fashionplus(product: Any) -> RefreshResult:

@@ -143,6 +143,24 @@ class SambaMonitorEventRepository(BaseRepository[SambaMonitorEvent]):
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
+    async def list_recent_changes_for_markets(
+        self,
+        event_types: List[str],
+        limit: int = 300,
+    ) -> List[SambaMonitorEvent]:
+        """판매처 fan-out 용 — 최근 가격변동/품절 이벤트 조회 (product_id 보유분만)."""
+        stmt = (
+            select(SambaMonitorEvent)
+            .where(
+                SambaMonitorEvent.event_type.in_(event_types),
+                SambaMonitorEvent.product_id.is_not(None),
+            )
+            .order_by(SambaMonitorEvent.created_at.desc())
+            .limit(limit)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
     async def cleanup_old(self, before: datetime) -> int:
         """오래된 이벤트 정리."""
         from sqlalchemy import delete as sa_delete

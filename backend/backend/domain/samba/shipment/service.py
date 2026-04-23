@@ -1097,22 +1097,15 @@ class SambaShipmentService:
                         if _sold_refresh.new_cost is not None
                         else _old_cost
                     )
+                    # 재고변동 건수 — 품절↔재고 전환(무↔유)만 카운트 (단순 수량변화 제외)
+                    from backend.domain.samba.collector.refresher import (
+                        count_stock_transitions,
+                    )
+
                     _old_opts = getattr(product_row, "options", None) or []
-                    _old_stocks = {
-                        o.get("name", ""): o.get("stock", 0) for o in _old_opts
-                    }
-                    _new_stocks = {
-                        o.get("name", ""): o.get("stock", 0)
-                        for o in _sold_refresh.new_options
-                    }
-                    _stock_changes = [
-                        k
-                        for k in set(
-                            list(_old_stocks.keys()) + list(_new_stocks.keys())
-                        )
-                        if _old_stocks.get(k) != _new_stocks.get(k)
-                    ]
-                    _stock_change_count = len(_stock_changes)
+                    _stock_change_count = count_stock_transitions(
+                        _old_opts, _sold_refresh.new_options
+                    )
                     # 가격/재고 이력 스냅샷 기록
                     _snap = {
                         "date": datetime.now(UTC).isoformat(),

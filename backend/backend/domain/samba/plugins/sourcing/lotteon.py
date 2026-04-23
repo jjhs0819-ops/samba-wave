@@ -626,14 +626,11 @@ class LotteonSourcingPlugin(SourcingPlugin):
         old_status = getattr(product, "sale_status", "in_stock")
         changed = new_sale_price != old_sale or new_sale_status != old_status
 
-        # 옵션 재고 변동 건수
+        # 옵션 재고 변동 건수 — 품절↔재고 전환(무↔유)만 카운트 (단순 수량변화 제외)
+        from backend.domain.samba.collector.refresher import count_stock_transitions
+
         old_options = getattr(product, "options", None) or []
-        _stock_changes = 0
-        if new_options and old_options:
-            old_stock_map = {o.get("name", ""): o.get("stock", 0) for o in old_options}
-            for o in new_options:
-                if o.get("stock", 0) != old_stock_map.get(o.get("name", ""), 0):
-                    _stock_changes += 1
+        _stock_changes = count_stock_transitions(old_options, new_options)
 
         # ── 갱신 로그 (오토튠 컨텍스트에서는 콜백이 담당 → 스킵) ──
         if _current_refresh_source.get() != "autotune":
