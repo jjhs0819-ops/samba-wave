@@ -625,7 +625,8 @@ class SmartStorePlugin(MarketPlugin):
                 try:
                     r = await client.register_product(d)
                 except Exception as _reg_e:
-                    if "leafCategoryId" in str(_reg_e):
+                    _reg_err_str = str(_reg_e)
+                    if "leafCategoryId" in _reg_err_str:
                         # 카테고리 ID 유효하지 않음 → 기본 카테고리로 fallback 재시도
                         # (첫 호출은 에러 응답 = 미생성 확정이므로 중복 위험 없음)
                         _default_cat = "50000803"
@@ -633,6 +634,31 @@ class SmartStorePlugin(MarketPlugin):
                             f"[스마트스토어] leafCategoryId 에러 → 기본 카테고리({_default_cat})로 재시도: {_reg_e}"
                         )
                         d["originProduct"]["leafCategoryId"] = _default_cat
+                        r = await client.register_product(d)
+                    elif "인증" in _reg_err_str and (
+                        "어린이" in _reg_err_str or "KC" in _reg_err_str
+                    ):
+                        # 어린이제품/KC 인증정보 요구 → 인증대상 아님으로 선언 후 재시도
+                        logger.warning(
+                            f"[스마트스토어] 인증대상 에러 감지 → childCertifiedProductExclusionYn=True 재시도: {_reg_e}"
+                        )
+                        # 1. product_copy에서 _certification_infos 제거
+                        product_copy.pop("_certification_infos", None)
+                        # 2. data 재생성 (인증정보 없이)
+                        d = SmartStoreClient.transform_product(
+                            product_copy, category_id
+                        )
+                        # 3. certificationTargetExcludeContent 설정
+                        detail_attr = d["originProduct"].setdefault(
+                            "detailAttribute", {}
+                        )
+                        exclude = detail_attr.setdefault(
+                            "certificationTargetExcludeContent", {}
+                        )
+                        exclude["childCertifiedProductExclusionYn"] = True
+                        exclude.setdefault("kcCertifiedProductExclusionYn", "FALSE")
+                        # 4. productCertificationInfos 비우기 (추가 안전장치)
+                        detail_attr.pop("productCertificationInfos", None)
                         r = await client.register_product(d)
                     else:
                         raise
@@ -678,7 +704,6 @@ class SmartStorePlugin(MarketPlugin):
             return result
         except Exception as e:
             err_msg = str(e)
-            logger.info(f"[스마트스토어] fallback 검사 — err_msg 전체: {err_msg}")
             # 등록불가 단어 에러 → 해당 태그 제거 후 재시도 + DB 저장
             if "등록불가" in err_msg:
                 # 에러에서 금지 단어 추출: "등록불가인 단어(A,B,C)가"
@@ -792,27 +817,6 @@ class SmartStorePlugin(MarketPlugin):
                             f"[스마트스토어] 금지 태그 {banned} 제거 후 재시도 ({len(old_tags)}→{len(new_tags)}개)"
                         )
                         return await _try_send(data)
-            elif "인증" in err_msg and (
-                "어린이" in err_msg or "KC" in err_msg or "childCertif" in err_msg
-            ):
-                # 어린이제품/KC 인증정보 요구 → 인증대상 아님으로 선언 후 재시도
-                logger.warning(
-                    "[스마트스토어] 인증대상 에러 감지 → childCertifiedProductExclusionYn=True 재시도"
-                )
-                # 1. product_copy에서 _certification_infos 제거 (재생성 방지)
-                product_copy.pop("_certification_infos", None)
-                # 2. data 재생성 (인증정보 없이)
-                data = SmartStoreClient.transform_product(product_copy, category_id)
-                # 3. certificationTargetExcludeContent 설정
-                detail_attr = data["originProduct"].setdefault("detailAttribute", {})
-                exclude = detail_attr.setdefault(
-                    "certificationTargetExcludeContent", {}
-                )
-                exclude["childCertifiedProductExclusionYn"] = True
-                exclude.setdefault("kcCertifiedProductExclusionYn", "FALSE")
-                # 4. productCertificationInfos 비우기 (추가 안전장치)
-                detail_attr.pop("productCertificationInfos", None)
-                return await _try_send(data)
             raise
         finally:
             # 공유 httpx 클라이언트 정리
