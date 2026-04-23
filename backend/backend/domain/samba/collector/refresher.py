@@ -469,6 +469,8 @@ class RefreshResult:
     # 소싱처 보조 API(쿠폰/혜택) 실패로 가격 데이터가 불확실한 경우 True
     # True이면 오토튠에서 cost 업데이트 및 전송을 보류함
     price_uncertain: bool = False
+    # 소싱처에서 상품 자체가 삭제되어 품절 처리된 경우 True (품절 이벤트 reason 구분용)
+    deleted_from_source: bool = False
 
 
 @dataclass
@@ -759,6 +761,7 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
                 product_id=product.id,
                 new_sale_status="sold_out",
                 changed=True,  # 상태 변경이므로 변동으로 처리 (수동갱신 sold_out 플로우 진입)
+                deleted_from_source=True,
             )
         _log_refresh(
             "MUSINSA",

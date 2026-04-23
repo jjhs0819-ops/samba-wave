@@ -176,6 +176,7 @@ class AbcMartPlugin(SourcingPlugin):
                     product_id=product_id,
                     new_sale_status="sold_out",
                     changed=True,
+                    deleted_from_source=True,
                 )
 
             new_sale_price = detail.get("salePrice", 0)
