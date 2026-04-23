@@ -100,8 +100,10 @@ class SSGPlugin(SourcingPlugin):
             detail: dict = {}
 
             # SSG는 서버사이드 직접 HTTP 차단 → 확장앱 위임 (worker.py 동일 패턴)
+            # 타임아웃 60초: owner deviceId 필터링 적용 후 실행 PC 1대만 처리하므로
+            # 병렬 처리(3개 탭) + reCAPTCHA/AJAX 지연을 감안해 충분한 여유 확보
             _req_id, _future = SourcingQueue.add_detail_job("SSG", site_product_id)
-            _ext_result = await asyncio.wait_for(_future, timeout=25)
+            _ext_result = await asyncio.wait_for(_future, timeout=60)
 
             if isinstance(_ext_result, dict) and _ext_result.get("success"):
                 _html = _ext_result.get("html", "")
@@ -194,10 +196,12 @@ class SSGPlugin(SourcingPlugin):
             )
 
         except asyncio.TimeoutError:
-            logger.warning(f"[SSG] 갱신 타임아웃 (확장앱 미연결): {site_product_id}")
+            logger.warning(
+                f"[SSG] 갱신 타임아웃 60초 (큐 적체/미연결): {site_product_id}"
+            )
             return RefreshResult(
                 product_id=product_id,
-                error=f"SSG 갱신 타임아웃 (확장앱이 연결되어 있지 않습니다): {site_product_id}",
+                error=f"SSG 갱신 타임아웃 60초 (확장앱 큐 적체 또는 미연결): {site_product_id}",
             )
         except Exception as e:
             logger.error(f"[SSG] 갱신 실패: {site_product_id} — {e}")

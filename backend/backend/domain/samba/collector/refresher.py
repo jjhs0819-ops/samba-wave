@@ -34,8 +34,10 @@ SITE_CONCURRENCY: dict[str, int] = {
     "ABCmart": 5 if _IS_CLOUD else 2,
     "GrandStage": 5 if _IS_CLOUD else 2,
     "REXMONDE": 5 if _IS_CLOUD else 2,
-    "SSG": 3,  # 탭 동시 접근으로 인한 reCAPTCHA 차단 방지 (7→3 축소)
-    "LOTTEON": 5 if _IS_CLOUD else 2,
+    # owner deviceId 필터링 적용 후 실행 PC 1대만 처리 → 큐 적체 방지 위해
+    # 동시 2건 + 3초 간격으로 통일 (SSG/LOTTEON 공통)
+    "SSG": 2,
+    "LOTTEON": 2,
     "GSShop": 5 if _IS_CLOUD else 2,
     "ElandMall": 5 if _IS_CLOUD else 2,
     "SSF": 5 if _IS_CLOUD else 2,
@@ -52,8 +54,9 @@ SITE_BASE_INTERVAL: dict[str, float] = {
     "ABCmart": 1.0,
     "GrandStage": 1.0,
     "REXMONDE": 1.0,
-    "SSG": 3.0,  # reCAPTCHA 방지를 위한 요청 간격 확대
-    "LOTTEON": 0.5,
+    # 실행 PC 1대 처리 기준 큐 적체 방지 (동시 2건 × 3초 간격 = 초당 0.67건 큐잉)
+    "SSG": 3.0,
+    "LOTTEON": 3.0,
     "GSShop": 1.0,
     "ElandMall": 1.0,
     "SSF": 1.0,

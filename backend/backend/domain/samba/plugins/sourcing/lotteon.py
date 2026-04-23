@@ -513,7 +513,9 @@ class LotteonSourcingPlugin(SourcingPlugin):
             _dom_req, _dom_fut = SourcingQueue.add_detail_job(
                 "LOTTEON", site_product_id
             )
-            dom_ext = await asyncio.wait_for(_dom_fut, timeout=25)
+            # 타임아웃 60초: owner deviceId 필터링 적용 후 실행 PC 1대만 처리하므로
+            # 확장앱 큐 적체 대비 충분한 여유 확보 (pbf 값이 유지되는 폴백 경로)
+            dom_ext = await asyncio.wait_for(_dom_fut, timeout=60)
             if not (isinstance(dom_ext, dict) and dom_ext.get("success")):
                 dom_ext = None
         except asyncio.TimeoutError:
