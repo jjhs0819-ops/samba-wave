@@ -187,9 +187,6 @@ const card: React.CSSProperties = {
   padding: '1.25rem',
 }
 
-type EventFilter = 'all' | 'critical' | 'price_changed' | 'sold_out' | 'system'
-const SYSTEM_TYPES = ['refresh_batch', 'scheduler_tick', 'rate_limited', 'api_structure_changed', 'probe_failed']
-
 type StoreScore = {
   account_id: string; account_label: string; market_type: string
   grade: string; grade_code: string
@@ -212,7 +209,6 @@ export default function WarroomPage() {
   const [showPenaltyGuide, setShowPenaltyGuide] = useState(false)
   const [scoreRefreshing, setScoreRefreshing] = useState(false)
   const nextPollRef = useRef(POLL_INTERVAL / 1000)
-  const [eventFilter, setEventFilter] = useState<EventFilter>('all')
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // 실시간 로그 상태
@@ -432,14 +428,7 @@ export default function WarroomPage() {
       }
       return true
     })
-    return deduped.filter(e => {
-      if (eventFilter === 'all') return true
-      if (eventFilter === 'critical') return e.severity === 'critical' || e.severity === 'warning'
-      if (eventFilter === 'price_changed') return e.event_type === 'price_changed'
-      if (eventFilter === 'sold_out') return e.event_type === 'sold_out'
-      if (eventFilter === 'system') return SYSTEM_TYPES.includes(e.event_type)
-      return true
-    })
+    return deduped
   })()
 
   // scheduler_tick 이벤트를 소싱처별로 그룹핑
@@ -651,33 +640,6 @@ export default function WarroomPage() {
       <div style={card}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
           <div style={{ fontSize: '0.96rem', fontWeight: 600, color: '#FF8C00' }}>이벤트 타임라인</div>
-          <div style={{ display: 'flex', gap: '0.25rem' }}>
-            {([
-              ['all', '전체'],
-              ['critical', '중요'],
-              ['price_changed', '가격변동'],
-              ['sold_out', '품절'],
-              ['system', '시스템'],
-            ] as [EventFilter, string][]).map(([key, label]) => (
-              <button
-                key={key}
-                onClick={() => setEventFilter(key)}
-                style={{
-                  padding: '0.25rem 0.75rem',
-                  fontSize: '0.84rem',
-                  borderRadius: '4px',
-                  border: '1px solid',
-                  borderColor: eventFilter === key ? '#FF8C00' : '#3D3D3D',
-                  background: eventFilter === key ? 'rgba(255,140,0,0.15)' : 'transparent',
-                  color: eventFilter === key ? '#FF8C00' : '#888',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s',
-                }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
         </div>
 
         {filteredEvents.length === 0 ? (
@@ -771,7 +733,7 @@ export default function WarroomPage() {
               </div>
             )}
             {/* 소싱처별 최근 수정 상품 내역 */}
-            {false && Object.keys(tickEventsBySite).length > 0 && (
+            {Object.keys(tickEventsBySite).length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.25rem' }}>
                 {Object.keys(tickEventsBySite).map(siteName => {
                   const sitePriceChanges = siteChanges[siteName]?.price_changed ?? []

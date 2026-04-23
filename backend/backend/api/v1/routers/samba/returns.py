@@ -36,11 +36,179 @@ def _write_service(session: AsyncSession):
     return SambaReturnService(SambaReturnRepository(session))
 
 
+def _claim_kind_from_order(
+    status: str | None, shipping_status: str | None
+) -> str | None:
+    status_text = (status or "").lower()
+    ship_text = shipping_status or ""
+    if (
+        status_text in {"cancel_requested", "cancelling", "cancelled"}
+        or "\ucde8\uc18c" in ship_text
+    ):
+        return "cancel"
+    if (
+        status_text in {"exchange_requested", "exchanging", "exchanged"}
+        or "\uad50\ud658" in ship_text
+    ):
+        return "exchange"
+    if (
+        status_text in {"return_requested", "returning", "returned"}
+        or "\ubc18\ud488" in ship_text
+    ):
+        return "return"
+    return None
+
+
+def _claim_status_from_order(status: str | None, shipping_status: str | None) -> str:
+    status_text = (status or "").lower()
+    ship_text = shipping_status or ""
+    if "\uac70\ubd80" in ship_text:
+        return "rejected"
+    if (
+        status_text in {"cancelled", "returned", "exchanged"}
+        or "\uc644\ub8cc" in ship_text
+        or "\ub9c8\uac10" in ship_text
+    ):
+        return "completed"
+    if status_text in {"cancelling", "returning", "exchanging"}:
+        return "approved"
+    return "requested"
+
+
+def _completion_detail(claim_type: str, claim_status: str) -> str:
+    if claim_status == "rejected":
+        return "\uac70\ubd80"
+    if claim_status != "completed":
+        return "\uc9c4\ud589\uc911"
+    return {
+        "cancel": "\ucde8\uc18c",
+        "return": "\ubc18\ud488",
+        "exchange": "\uad50\ud658",
+    }.get(claim_type, "\uc9c4\ud589\uc911")
+
+
+async def _backfill_returns_from_claim_orders(
+    session: AsyncSession,
+    tenant_id: Optional[str] = None,
+) -> int:
+    from datetime import UTC, datetime as _dt
+
+    from sqlalchemy import or_
+    from sqlmodel import col, select
+
+    from backend.domain.samba.order.model import SambaOrder
+    from backend.domain.samba.returns.model import SambaReturn
+    from backend.domain.samba.returns.repository import SambaReturnRepository
+    from backend.domain.samba.returns.service import SambaReturnService
+
+    claim_statuses = {
+        "cancel_requested",
+        "cancelling",
+        "cancelled",
+        "return_requested",
+        "returning",
+        "returned",
+        "exchange_requested",
+        "exchanging",
+        "exchanged",
+    }
+    claim_words = [
+        "\ucde8\uc18c",
+        "\ubc18\ud488",
+        "\uad50\ud658",
+    ]
+
+    stmt = select(SambaOrder).where(
+        or_(
+            col(SambaOrder.status).in_(claim_statuses),
+            *[SambaOrder.shipping_status.ilike(f"%{word}%") for word in claim_words],
+        )
+    )
+    if tenant_id is not None:
+        stmt = stmt.where(
+            or_(
+                SambaOrder.tenant_id == tenant_id,
+                SambaOrder.tenant_id == None,  # noqa: E711
+            )
+        )
+    orders = list((await session.execute(stmt.limit(5000))).scalars().all())
+    if not orders:
+        return 0
+
+    order_ids = [o.id for o in orders]
+    order_numbers = [o.order_number for o in orders if o.order_number]
+    existing_stmt = select(SambaReturn.order_id, SambaReturn.order_number).where(
+        or_(
+            col(SambaReturn.order_id).in_(order_ids),
+            col(SambaReturn.order_number).in_(order_numbers),
+        )
+    )
+    existing_rows = (await session.execute(existing_stmt)).all()
+    existing_order_ids = {row[0] for row in existing_rows if row[0]}
+    existing_order_numbers = {row[1] for row in existing_rows if row[1]}
+
+    svc = SambaReturnService(SambaReturnRepository(session))
+    created = 0
+    now = _dt.now(UTC)
+    for order in orders:
+        if (
+            order.id in existing_order_ids
+            or order.order_number in existing_order_numbers
+        ):
+            continue
+        claim_type = _claim_kind_from_order(order.status, order.shipping_status)
+        if not claim_type:
+            continue
+        claim_status = _claim_status_from_order(order.status, order.shipping_status)
+        timeline = [
+            {
+                "date": now.isoformat(),
+                "status": claim_status,
+                "message": f"{order.shipping_status or order.status} 상태를 주문 수집 정보에서 반영했습니다.",
+            }
+        ]
+        await svc.repo.create_async(
+            tenant_id=order.tenant_id,
+            order_id=order.id,
+            order_number=order.order_number,
+            product_image=order.product_image,
+            product_name=order.product_name,
+            customer_name=order.customer_name,
+            customer_phone=order.customer_phone,
+            customer_address=order.customer_address,
+            business_name=order.channel_name,
+            market=order.channel_name,
+            order_date=order.paid_at or order.created_at,
+            return_link=order.source_url or order.ext_order_number,
+            return_source=order.source_site,
+            product_location=_extract_city_district(order.customer_address),
+            region=_extract_city_district(order.customer_address),
+            return_request_date=order.updated_at or now,
+            market_order_status=order.shipping_status,
+            completion_detail=_completion_detail(claim_type, claim_status),
+            type=claim_type,
+            description=order.product_name,
+            quantity=order.quantity or 1,
+            requested_amount=order.sale_price,
+            status=claim_status,
+            completion_date=now if claim_status in {"completed", "rejected"} else None,
+            notes=[],
+            timeline=timeline,
+        )
+        created += 1
+
+    if created:
+        await session.commit()
+        logger.info("[returns] backfilled %s claim rows from samba_order", created)
+    return created
+
+
 @router.get("/stats")
 async def get_return_stats(
-    session: AsyncSession = Depends(get_read_session_dependency),
+    session: AsyncSession = Depends(get_write_session_dependency),
     tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
+    await _backfill_returns_from_claim_orders(session, tenant_id=tenant_id)
     svc = _read_service(session)
     return await svc.get_return_stats(tenant_id=tenant_id)
 
@@ -73,9 +241,10 @@ async def list_returns(
     type: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    session: AsyncSession = Depends(get_read_session_dependency),
+    session: AsyncSession = Depends(get_write_session_dependency),
     tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
+    await _backfill_returns_from_claim_orders(session, tenant_id=tenant_id)
     svc = _read_service(session)
     returns = await svc.list_returns(
         skip=skip,

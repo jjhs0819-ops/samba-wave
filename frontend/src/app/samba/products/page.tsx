@@ -108,8 +108,6 @@ export default function ProductsPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [viewMode, setViewMode] = useState<"card" | "compact" | "image">("card");
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
-  const [orderProductIds, setOrderProductIds] = useState<Set<string>>(new Set());
-
   // Selection
   const [selectAll, setSelectAll] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -163,16 +161,12 @@ export default function ProductsPage() {
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: string[]; label: string } | null>(null);
   const [marketDeleteModal, setMarketDeleteModal] = useState<MarketDeleteModalState | null>(null)
 
-  // 태그 일괄 입력
-  const [showBulkTag, setShowBulkTag] = useState(false)
-  const [bulkTagInput, setBulkTagInput] = useState('')
-
   // 카테고리 매핑 (source_site::source_category → { market: category })
   const [catMappingMap, setCatMappingMap] = useState<Map<string, Record<string, string>>>(new Map())
 
   // AI 태그 미리보기 모달
   const [showTagPreview, setShowTagPreview] = useState(false)
-  const [tagPreviews, setTagPreviews] = useState<{ group_id: string; group_name: string; product_count: number; rep_name: string; tags: string[]; seo_keywords: string[] }[]>([])
+  const [tagPreviews, setTagPreviews] = useState<{ group_id: string; group_name: string; product_count: number; product_ids?: string[]; rep_name: string; tags: string[]; seo_keywords: string[] }[]>([])
   const [tagPreviewCost, setTagPreviewCost] = useState<{ api_calls: number; input_tokens: number; output_tokens: number; cost_krw: number } | null>(null)
   const [tagPreviewLoading, setTagPreviewLoading] = useState(false)
   const [removedTags, setRemovedTags] = useState<string[]>([])
@@ -272,17 +266,15 @@ export default function ProductsPage() {
       collectorApi.listFilters().catch(() => [] as SambaSearchFilter[]),
       forbiddenApi.listWords('deletion').catch(() => [] as { word: string }[]),
       accountApi.listActive().catch(() => [] as SambaMarketAccount[]),
-      collectorApi.getProductIdsWithOrders().catch(() => [] as string[]),
       nameRuleApi.list().catch(() => [] as SambaNameRule[]),
       (categoryApi.listMappings() as Promise<{ source_site: string; source_category: string; target_mappings: Record<string, string> }[]>).catch(() => [] as { source_site: string; source_category: string; target_mappings: Record<string, string> }[]),
       detailTemplateApi.list().catch(() => [] as SambaDetailTemplate[]),
-    ]).then(([pol, flts, wds, accs, orderPids, rules, catMaps, tpls]) => {
+    ]).then(([pol, flts, wds, accs, rules, catMaps, tpls]) => {
       setPolicies(pol)
       setAccounts(accs)
       setDetailTemplates(tpls)
       setDeletionWords((wds as { word: string }[]).map(w => w.word))
       setNameRules(rules)
-      setOrderProductIds(new Set(orderPids))
       const nameMap: Record<string, string> = {}
       flts.forEach((f: SambaSearchFilter) => { nameMap[f.id] = f.name })
       setFilterNameMap(nameMap)
@@ -470,7 +462,6 @@ export default function ProductsPage() {
     setAiJobLogs([`${fmt(ids.length)}건 일괄 삭제 중...`])
     setAiJobDone(false)
     setAiJobModal(true)
-    const idSet = new Set(ids)
     try {
       const res = await collectorApi.bulkDeleteProducts(ids)
       setAiJobLogs(prev => [...prev, `${fmt(res.deleted)}건 삭제 완료 ✓`])
@@ -770,7 +761,8 @@ export default function ProductsPage() {
   const handleToggleExpand = useCallback((productId: string) => {
     setExpandedIds(prev => {
       const next = new Set(prev)
-      next.has(productId) ? next.delete(productId) : next.add(productId)
+      if (next.has(productId)) next.delete(productId)
+      else next.add(productId)
       return next
     })
   }, [])
@@ -1149,10 +1141,15 @@ export default function ProductsPage() {
                     }
                     setShowTagPreview(false)
                     setSelectedIds(new Set()); setSelectAll(false)
-                    // 태그 로컬 반영
-                    const tagMap = new Map(tagPreviews.map(tp => [tp.group_id, { tags: tp.tags, seo: tp.seo_keywords }]))
+                    // 태그 로컬 반영 — product_ids 배열로 매핑해 그룹 내 모든 상품에 반영
+                    const productTagMap = new Map<string, { tags: string[]; seo: string[] }>()
+                    tagPreviews.forEach(tp => {
+                      tp.product_ids?.forEach(pid => {
+                        productTagMap.set(pid, { tags: tp.tags, seo: tp.seo_keywords })
+                      })
+                    })
                     setAllProducts(prev => prev.map(pp => {
-                      const entry = pp.search_filter_id ? tagMap.get(pp.search_filter_id) : undefined
+                      const entry = productTagMap.get(pp.id)
                       if (!entry) return pp
                       const existing = (pp.tags || []).filter(t => t.startsWith('__'))
                       return { ...pp, tags: [...existing, '__ai_tagged__', ...entry.tags], seo_keywords: entry.seo } as SambaCollectedProduct
@@ -1452,7 +1449,6 @@ export default function ProductsPage() {
               const label = [brand, name, prodNo].filter(Boolean).join(' / ')
               setAiJobTitle(`AI 이미지변환 [${fmt(i + 1)}/${fmt(ids.length)}] ${label}`)
               const delays = [3000, 5000]
-              let done = false
               for (let attempt = 0; attempt <= 2; attempt++) {
                 if (attempt > 0) {
                   addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 재시도 ${attempt}/2`)
@@ -1463,7 +1459,7 @@ export default function ProductsPage() {
                     // WASM 브라우저 배경 제거 — 서버 워커 불필요
                     const { removeBgFromUrl, uploadBlobToR2 } = await import('@/lib/samba/bgRemoval')
                     const prod = productMap[ids[i]]
-                    if (!prod) { fail++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 상품 정보 없음`); done = true; break }
+                    if (!prod) { fail++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 상품 정보 없음`); break }
                     addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 배경 제거 중...`)
                     const thumbUrls = aiImgScope.thumbnail ? (prod.images || []).slice(0, 1) : []
                     const addlUrls = aiImgScope.additional ? (prod.images || []).slice(1) : []
@@ -1489,7 +1485,7 @@ export default function ProductsPage() {
                     await collectorApi.updateProduct(pid, updateData)
                     const cnt = newThumb.length + newAddl.length + newDetail.length
                     success++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 완료 (${fmt(cnt)}장)`)
-                    done = true; break
+                    break
                   } else {
                     const res = await proxyApi.transformImages([ids[i]], aiImgScope, aiImgMode, aiModelPreset)
                     if (res.success && res.total_transformed > 0) {
@@ -1497,7 +1493,7 @@ export default function ProductsPage() {
                     } else {
                       fail++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 실패: ${res.message || '변환된 이미지 0장'}`)
                     }
-                    done = true; break
+                    break
                   }
                 } catch (e) {
                   if (attempt === 2) { fail++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }

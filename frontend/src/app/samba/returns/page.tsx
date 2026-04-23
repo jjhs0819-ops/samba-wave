@@ -99,10 +99,8 @@ export default function ReturnsPage() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [data, st] = await Promise.all([
-      returnApi.list(undefined, filterStatus || undefined, filterType || undefined, 500, customStart || undefined, customEnd || undefined).catch(() => []),
-      returnApi.getStats().catch(() => ({})),
-    ])
+    const data = await returnApi.list(undefined, filterStatus || undefined, filterType || undefined, 500, customStart || undefined, customEnd || undefined).catch(() => [])
+    const st = await returnApi.getStats().catch(() => ({}))
     setReturns(data)
     setStats(st)
     setLoading(false)

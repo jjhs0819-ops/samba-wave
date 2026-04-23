@@ -1650,7 +1650,6 @@ export default function CollectorPage() {
                     const { removeBgFromUrl, uploadBlobToR2 } = await import('@/lib/samba/bgRemoval')
                     const item = productDetails.get(productIds[i])
                     if (!item) { fail++; addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 상품 정보 없음`); continue }
-                    addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 배경 제거 중...`)
                     const thumbUrls = aiImgScope.thumbnail ? item.images.slice(0, 1) : []
                     const addlUrls = aiImgScope.additional ? item.images.slice(1) : []
                     const detailUrls = aiImgScope.detail ? item.detail_images : []
