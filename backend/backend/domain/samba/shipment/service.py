@@ -1469,6 +1469,7 @@ class SambaShipmentService:
                             return res
 
                     logger.info(f"[메모리] 마켓전송 전: {_mem_mb()}MB")
+                    start_time = time.time()
                     result = await dispatch_to_market(
                         self.session,
                         market_type,
@@ -1476,6 +1477,10 @@ class SambaShipmentService:
                         category_id,
                         account=account,
                         existing_product_no=existing_product_no,
+                    )
+                    elapsed = time.time() - start_time
+                    logger.info(
+                        f"[마켓전송완료] {market_type} 소요시간: {elapsed:.1f}초 (상품: {product_row.name[:40]})"
                     )
                 finally:
                     account_sem.release()
