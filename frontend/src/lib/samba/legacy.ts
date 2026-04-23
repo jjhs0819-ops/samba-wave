@@ -477,7 +477,7 @@ export const collectorApi = {
       `${SAMBA_PREFIX}/collector/products/lookup-by-market-no/${marketProductNo}`),
   scrollProducts: (params: {
     skip?: number; limit?: number; search?: string; search_type?: string;
-    source_site?: string; status?: string; ai_filter?: string;
+    source_site?: string; status?: string; sold_out_filter?: string; ai_filter?: string;
     search_filter_id?: string; sort_by?: string;
   }) => {
     const p = new URLSearchParams()
@@ -487,6 +487,7 @@ export const collectorApi = {
     if (params.search_type) p.set('search_type', params.search_type)
     if (params.source_site) p.set('source_site', params.source_site)
     if (params.status) p.set('status', params.status)
+    if (params.sold_out_filter) p.set('sold_out_filter', params.sold_out_filter)
     if (params.ai_filter) p.set('ai_filter', params.ai_filter)
     if (params.search_filter_id) p.set('search_filter_id', params.search_filter_id)
     if (params.sort_by) p.set('sort_by', params.sort_by)
@@ -1281,10 +1282,10 @@ export const csInquiryApi = {
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/cs-inquiries/templates`, { method: 'POST', body: JSON.stringify({ key, name, content }) }),
   deleteTemplate: (key: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/cs-inquiries/templates/${key}`, { method: 'DELETE' }),
-  syncFromMarkets: (marketName?: string) =>
+  syncFromMarkets: (marketName?: string, accountId?: string) =>
     request<{ success: boolean; synced: number; errors: string[]; message: string }>(
       `${SAMBA_PREFIX}/cs-inquiries/sync-from-markets`,
-      { method: 'POST', body: JSON.stringify({ market_name: marketName || undefined }) }
+      { method: 'POST', body: JSON.stringify({ market_name: marketName || undefined, account_id: accountId || undefined }) }
     ),
   sendReply: (id: string, reply: string) =>
     request<{ success: boolean; message: string }>(

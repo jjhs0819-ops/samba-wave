@@ -613,6 +613,7 @@ async def scroll_products(
     source_site: Optional[str] = None,
     source_sites: Optional[str] = None,
     status: Optional[str] = None,
+    sold_out_filter: Optional[str] = None,
     ai_filter: Optional[str] = None,
     search_filter_id: Optional[str] = None,
     sort_by: str = Query("collect-desc"),
@@ -807,6 +808,19 @@ async def scroll_products(
         )
     elif status and status in _KNOWN_STATUS_VALUES:
         conditions.append(_CP.status == status)
+
+    # 품절 독립 필터 — status 필터와 AND 조합
+    if sold_out_filter == "sold_out":
+        conditions.append(
+            or_(_CP.sale_status == "sold_out", _all_options_sold_out(_CP))
+        )
+    elif sold_out_filter == "not_sold_out":
+        conditions.append(
+            and_(
+                _CP.sale_status != "sold_out",
+                ~_all_options_sold_out(_CP),
+            )
+        )
 
     # AI 필터 (JSON 태그/이미지 패턴)
     if ai_filter == "sold_out":

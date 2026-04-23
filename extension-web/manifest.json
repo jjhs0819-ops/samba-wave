@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SAMBA-WAVE (WEB)",
-  "version": "2.10.28",
+  "version": "2.10.29",
   "description": "무재고 위탁판매 솔루션 - 무신사/KREAM/소싱처 수집 연동",
   "permissions": [
     "cookies",

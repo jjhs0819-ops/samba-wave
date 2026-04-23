@@ -222,7 +222,12 @@ export default function CSPage() {
         csInquiryApi.list({
           skip: page * pageSize,
           limit: pageSize,
-          market: filterMarket || undefined,
+          market: (() => {
+            if (!filterMarket) return undefined
+            if (filterMarket.startsWith('type:')) return accounts.find(a => a.market_type === filterMarket.slice(5))?.market_name
+            if (filterMarket.startsWith('acc:')) return accounts.find(a => a.id === filterMarket.slice(4))?.market_name
+            return filterMarket
+          })(),
           inquiry_type: filterType || undefined,
           reply_status: filterStatus || undefined,
           search: search || undefined,
@@ -241,7 +246,7 @@ export default function CSPage() {
       // 에러 무시
     }
     setLoading(false)
-  }, [filterMarket, filterType, filterStatus, search, sortDesc, pageSize, page, csCustomStart, csCustomEnd])
+  }, [filterMarket, filterType, filterStatus, search, sortDesc, pageSize, page, csCustomStart, csCustomEnd, accounts])
 
   useEffect(() => { load() }, [load])
   useEffect(() => { accountApi.listActive().then(setAccounts).catch(() => {}) }, [])
@@ -249,29 +254,40 @@ export default function CSPage() {
   // 검색
   const handleSearch = async () => {
     const ts = fmtTime
-    // 드롭다운 value 파싱: "" = 전체, "market:XXX" = 마켓 단위, "account:ID" = 개별 계정
+    // 드롭다운 value 파싱: "" = 전체, "type:XXX" = 마켓 타입 단위, "{uuid}" = 개별 계정
     let selectedMarket: string | undefined
+    let selectedAccountId: string | undefined
     let label: string
     if (csSyncAccountId.startsWith('market:')) {
       selectedMarket = csSyncAccountId.slice(7)
       label = selectedMarket
+    } else if (csSyncAccountId.startsWith('type:')) {
+      const marketType = csSyncAccountId.slice(5)
+      selectedMarket = accounts.find(a => a.market_type === marketType)?.market_name
+      label = selectedMarket || marketType
     } else if (csSyncAccountId.startsWith('account:')) {
-      const accountId = csSyncAccountId.slice(8)
-      selectedMarket = accounts.find(a => a.id === accountId)?.market_name
-      label = selectedMarket || accountId
+      selectedAccountId = csSyncAccountId.slice(8)
+      const acc = accounts.find(a => a.id === selectedAccountId)
+      selectedMarket = acc?.market_name
+      label = acc?.account_label?.trim() || acc?.seller_id?.trim() || selectedMarket || selectedAccountId
+    } else if (csSyncAccountId) {
+      const acc = accounts.find(a => a.id === csSyncAccountId)
+      selectedAccountId = acc?.id
+      selectedMarket = acc?.market_name
+      label = acc?.account_label?.trim() || acc?.seller_id?.trim() || selectedMarket || csSyncAccountId
     } else {
       selectedMarket = undefined
       label = '전체마켓'
     }
     setCsLogMessages(prev => [...prev, `[${ts()}] ${label} CS 문의 동기화 중...`])
     try {
-      const result = await csInquiryApi.syncFromMarkets(selectedMarket)
+      const result = await csInquiryApi.syncFromMarkets(selectedMarket, selectedAccountId)
       setCsLogMessages(prev => [...prev, `[${ts()}] ${result.message}`])
       setPage(0)
       setSearch('')
       setSearchInput('')
       const [data, st, tpl] = await Promise.all([
-        csInquiryApi.list({ skip: 0, limit: pageSize, sort_desc: sortDesc, market: filterMarket || undefined, start_date: csCustomStart || undefined, end_date: csCustomEnd || undefined }).catch(() => ({ items: [], total: 0 })),
+        csInquiryApi.list({ skip: 0, limit: pageSize, sort_desc: sortDesc, market: (() => { if (!filterMarket) return undefined; if (filterMarket.startsWith('type:')) return accounts.find(a => a.market_type === filterMarket.slice(5))?.market_name; if (filterMarket.startsWith('acc:')) return accounts.find(a => a.id === filterMarket.slice(4))?.market_name; return filterMarket })(), start_date: csCustomStart || undefined, end_date: csCustomEnd || undefined }).catch(() => ({ items: [], total: 0 })),
         csInquiryApi.getStats().catch(() => ({})),
         csInquiryApi.getTemplates().catch(() => ({})),
       ])
@@ -418,18 +434,19 @@ export default function CSPage() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
           <select value={csSyncAccountId} onChange={e => setCsSyncAccountId(e.target.value)} style={{ ...inputStyle, padding: '0 0.4rem', fontSize: '0.75rem', height: '28px', minWidth: '140px' }}>
-            <option value="">전체 계정</option>
-            {[...new Set(accounts.map(a => a.market_name))].map(market => {
-              const marketAccounts = accounts.filter(a => a.market_name === market)
-              return (
-                <optgroup key={market} label={market}>
-                  <option key={`market:${market}`} value={`market:${market}`}>{market}</option>
-                  {marketAccounts.map(a => (
-                    <option key={a.id} value={`account:${a.id}`}>{a.seller_id || a.business_name || '-'}</option>
-                  ))}
-                </optgroup>
-              )
-            })}
+            <option value="">전체마켓보기</option>
+            {(() => {
+              const marketTypes = [...new Map(accounts.map(a => [a.market_type, a.market_name])).entries()]
+              return marketTypes.flatMap(([type, name]) => [
+                <option key={`type:${type}`} value={`type:${type}`}>{name}</option>,
+                ...accounts
+                  .filter(a => a.market_type === type)
+                  .map(a => {
+                    const accountName = a.account_label?.trim() || a.seller_id?.trim() || a.business_name?.trim() || a.market_name
+                    return <option key={a.id} value={a.id}>- {accountName}</option>
+                  }),
+              ])
+            })()}
           </select>
           <button onClick={handleSearch} style={{ padding: '0 0.65rem', fontSize: '0.75rem', height: '28px', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}>가져오기</button>
         </div>
@@ -454,9 +471,18 @@ export default function CSPage() {
         <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto', flexShrink: 0, alignItems: 'center' }}>
           <select style={{ ...inputStyle, width: '130px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={filterMarket} onChange={e => { setFilterMarket(e.target.value); setPage(0) }}>
             <option value="">전체마켓보기</option>
-            {[...new Map(accounts.map(a => [a.market_type, a.market_name])).values()].map(name => (
-              <option key={name} value={name}>{name}</option>
-            ))}
+            {(() => {
+              const marketTypes = [...new Map(accounts.map(a => [a.market_type, a.market_name])).entries()]
+              return marketTypes.flatMap(([type, name]) => [
+                <option key={`type:${type}`} value={`type:${type}`}>{name}</option>,
+                ...accounts
+                  .filter(a => a.market_type === type)
+                  .map(a => {
+                    const accountName = a.account_label?.trim() || a.seller_id?.trim() || a.business_name?.trim() || a.market_name
+                    return <option key={`acc:${a.id}`} value={`acc:${a.id}`}>- {accountName}</option>
+                  }),
+              ])
+            })()}
           </select>
           <select style={{ ...inputStyle, width: '94px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={csSiteFilter} onChange={e => setCsSiteFilter(e.target.value)}>
             <option value="">전체사이트보기</option>

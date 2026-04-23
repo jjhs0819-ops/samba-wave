@@ -100,6 +100,7 @@ export default function ProductsPage() {
   const [searchType, setSearchType] = useState(_initSearchType === "id" ? "name" : _initSearchType);
   const [searchQ, setSearchQ] = useState(_initSearchType === "id" ? "" : _initSearch);
   const [siteFilter, setSiteFilter] = useState("");
+  const [soldOutFilter, setSoldOutFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [aiFilter, setAiFilter] = useState("");
   const [sortBy, setSortBy] = useState("collect-desc");
@@ -200,6 +201,7 @@ export default function ProductsPage() {
         search_type: searchQ.trim() ? searchType : (_idFilter ? "id" : undefined),
         source_site: siteFilter || undefined,
         status: statusParam,
+        sold_out_filter: soldOutFilter || undefined,
         ai_filter: aiParam,
         search_filter_id: filterByGroupId || undefined,
         sort_by: sortBy,
@@ -1265,11 +1267,16 @@ export default function ProductsPage() {
             <option value="">소싱사이트</option>
             {allSites.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
+          <select value={soldOutFilter} onChange={(e) => setSoldOutFilter(e.target.value)}
+            style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: "rgba(22,22,22,0.95)", border: "1px solid #353535", color: "#C5C5C5", borderRadius: "6px" }}>
+            <option value="">품절여부</option>
+            <option value="sold_out">품절</option>
+            <option value="not_sold_out">비품절</option>
+          </select>
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
             style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: "rgba(22,22,22,0.95)", border: "1px solid #353535", color: "#C5C5C5", borderRadius: "6px" }}>
-            <option value="">판매현황</option>
+            <option value="">마켓현황</option>
             <optgroup label="── 전체 ──">
-              <option value="sold_out">품절상품</option>
               <option value="market_unregistered">미등록상품</option>
               <option value="market_registered">등록상품</option>
             </optgroup>

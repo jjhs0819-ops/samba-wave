@@ -631,6 +631,22 @@ async function handleSourcingJob(job) {
     } else if (job.type === 'detail' && job.site === 'NAVERSTORE') {
       // 네이버스토어 — 탭 컨텍스트에서 내부 JSON API 호출 (서비스 워커 직접 fetch는 429 차단됨)
       result = await fetchNaverstoreDetail(tabId, job.channelUid, job.productId)
+    } else if (job.type === 'detail' && job.site === 'SSG') {
+      // SSG: reCAPTCHA 감지 후 즉시 실패 반환 (25초 타임아웃 낭비 방지)
+      const [captchaCheck] = await chrome.scripting.executeScript({
+        target: { tabId },
+        world: 'MAIN',
+        func: () => {
+          const body = document.body?.innerText || ''
+          return body.includes('연속적인 접근') || body.includes('로봇이 아닙니다')
+        }
+      })
+      if (captchaCheck?.result) {
+        console.log(`[SSG] reCAPTCHA 차단 감지: ${job.productId}`)
+        result = { success: false, blocked: true, message: 'SSG reCAPTCHA 차단' }
+      } else {
+        result = await extractDetailData(tabId, job.site, job.productId)
+      }
     } else if (job.type === 'detail') {
       result = await extractDetailData(tabId, job.site, job.productId)
     }

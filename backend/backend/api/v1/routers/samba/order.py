@@ -1481,23 +1481,22 @@ async def ship_order(
 
             if account and account.market_type == "lotteon":
                 from backend.domain.samba.proxy.lotteon import LotteonClient
-                import json
-                from sqlmodel import select
-                from backend.domain.samba.forbidden.model import SambaSettings
-
-                config_result = await session.execute(
-                    select(SambaSettings).where(
-                        SambaSettings.key.like("store_lotteon%")
-                    )
+                from backend.domain.samba.forbidden.repository import (
+                    SambaSettingsRepository,
                 )
-                lo_settings = config_result.scalars().first()
-                if lo_settings:
-                    config = (
-                        json.loads(lo_settings.value)
-                        if isinstance(lo_settings.value, str)
-                        else lo_settings.value
-                    )
-                    client = LotteonClient(config["apiKey"])
+
+                lo_api_key = (
+                    (account.additional_fields or {}).get("apiKey", "")
+                    or account.api_key
+                    or ""
+                )
+                if not lo_api_key:
+                    _lo_repo = SambaSettingsRepository(session)
+                    _lo_row = await _lo_repo.find_by_async(key="store_lotteon")
+                    if _lo_row and isinstance(_lo_row.value, dict):
+                        lo_api_key = _lo_row.value.get("apiKey", "")
+                if lo_api_key:
+                    client = LotteonClient(lo_api_key)
                     await client.test_auth()
                     sent = await client.ship_order(
                         od_no=order.od_no or order.order_number,
@@ -1520,26 +1519,26 @@ async def ship_order(
                         market_msg = "롯데ON 송장 등록 실패 (로그 확인)"
 
             elif account and account.market_type == "smartstore":
-                import json
-                from sqlmodel import select
-                from backend.domain.samba.forbidden.model import SambaSettings
                 from backend.domain.samba.proxy.smartstore import SmartStoreClient
-
-                config_result = await session.execute(
-                    select(SambaSettings).where(
-                        SambaSettings.key.like("store_smartstore%")
-                    )
+                from backend.domain.samba.forbidden.repository import (
+                    SambaSettingsRepository,
                 )
-                ss_settings = config_result.scalars().first()
-                if ss_settings:
-                    config = (
-                        json.loads(ss_settings.value)
-                        if isinstance(ss_settings.value, str)
-                        else ss_settings.value
-                    )
-                    client = SmartStoreClient(
-                        config["clientId"], config["clientSecret"]
-                    )
+
+                _ss_extras = account.additional_fields or {}
+                ss_client_id = _ss_extras.get("clientId", "") or account.api_key or ""
+                ss_client_secret = (
+                    _ss_extras.get("clientSecret", "") or account.api_secret or ""
+                )
+                if not ss_client_id or not ss_client_secret:
+                    _ss_repo = SambaSettingsRepository(session)
+                    _ss_row = await _ss_repo.find_by_async(key="store_smartstore")
+                    if _ss_row and isinstance(_ss_row.value, dict):
+                        ss_client_id = ss_client_id or _ss_row.value.get("clientId", "")
+                        ss_client_secret = ss_client_secret or _ss_row.value.get(
+                            "clientSecret", ""
+                        )
+                if ss_client_id and ss_client_secret:
+                    client = SmartStoreClient(ss_client_id, ss_client_secret)
                     await client.ship_product_order(
                         order.order_number,
                         body.shipping_company,

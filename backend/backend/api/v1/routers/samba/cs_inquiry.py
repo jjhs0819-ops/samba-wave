@@ -150,6 +150,7 @@ async def create_cs_inquiry(
 
 class CSSyncBody(BaseModel):
     market_name: Optional[str] = None
+    account_id: Optional[str] = None
 
 
 @router.post("/sync-from-markets")
@@ -159,7 +160,10 @@ async def sync_cs_from_markets(
 ):
     """마켓에서 CS 문의 동기화. market_name 전달 시 해당 마켓만 동기화."""
     market_name = body.market_name if body else None
-    return await _do_sync_cs_from_markets(session, market_name=market_name)
+    account_id = body.account_id if body else None
+    return await _do_sync_cs_from_markets(
+        session, market_name=market_name, account_id=account_id
+    )
 
 
 @router.get("/{inquiry_id}")
@@ -861,6 +865,7 @@ async def _sync_lotteon_compensate(
 async def _do_sync_cs_from_markets(
     session: AsyncSession,
     market_name: Optional[str] = None,
+    account_id: Optional[str] = None,
 ):
     """마켓에서 CS 문의 동기화 실제 구현체.
 
@@ -877,6 +882,23 @@ async def _do_sync_cs_from_markets(
     svc = _write_service(session)
     synced = 0
     errors = []
+    target_account = None
+    target_market_type = None
+    if account_id:
+        from backend.domain.samba.account.model import SambaMarketAccount
+
+        account_result = await session.execute(
+            select(SambaMarketAccount).where(
+                SambaMarketAccount.id == account_id,
+                SambaMarketAccount.is_active == True,  # noqa: E712
+            )
+        )
+        target_account = account_result.scalar_one_or_none()
+        if not target_account:
+            raise HTTPException(404, "CS sync account not found")
+        target_market_type = (target_account.market_type or "").lower()
+        if not market_name:
+            market_name = target_account.market_name
 
     # 스마트스토어 계정 조회 (market_name이 롯데ON이면 스킵)
     ss_settings = []
@@ -890,6 +912,9 @@ async def _do_sync_cs_from_markets(
             raise HTTPException(500, f"설정 조회 실패: {e}")
 
     # SambaMarketAccount에서 smartstore 슬러그 미리 조회 (clientId → storeSlug 맵)
+    if account_id and target_market_type == "smartstore" and target_account is not None:
+        ss_settings = [target_account]
+
     _ss_slug_map: dict[str, str] = {}
     try:
         from backend.domain.samba.account.model import SambaMarketAccount
@@ -913,14 +938,32 @@ async def _do_sync_cs_from_markets(
         try:
             import json
 
-            config = (
-                json.loads(setting.value)
-                if isinstance(setting.value, str)
-                else setting.value
-            )
-            client_id = config.get("clientId", "")
-            client_secret = config.get("clientSecret", "")
-            account_name = config.get("businessName", "") or config.get("storeId", "")
+            if hasattr(setting, "additional_fields"):
+                config = dict(setting.additional_fields or {})
+                client_id = config.get("clientId", "") or setting.api_key or ""
+                client_secret = (
+                    config.get("clientSecret", "") or setting.api_secret or ""
+                )
+                account_name = (
+                    setting.account_label
+                    or setting.business_name
+                    or setting.seller_id
+                    or ""
+                )
+                sync_account_id = setting.id
+            else:
+                config = (
+                    json.loads(setting.value)
+                    if isinstance(setting.value, str)
+                    else setting.value
+                )
+                config = config or {}
+                client_id = config.get("clientId", "")
+                client_secret = config.get("clientSecret", "")
+                account_name = (
+                    config.get("businessName", "") or config.get("storeId", "")
+                )
+                sync_account_id = None
             # storeSlug 우선순위: SambaMarketAccount > settings.storeSlug
             # settings.storeId가 이메일 형태이면 슬러그로 사용 불가
             _raw_slug = config.get("storeSlug", "") or config.get("storeId", "")
@@ -977,6 +1020,7 @@ async def _do_sync_cs_from_markets(
                     select(SambaCSInquiry).where(
                         SambaCSInquiry.market == "스마트스토어",
                         SambaCSInquiry.market_inquiry_no == inquiry_no,
+                        SambaCSInquiry.account_id == sync_account_id,
                     )
                 )
                 if existing.scalar_one_or_none():
@@ -1022,6 +1066,7 @@ async def _do_sync_cs_from_markets(
                     "market_answer_no": None,
                     "market_order_id": None,
                     "market_product_no": market_product_no or None,
+                    "account_id": sync_account_id,
                     "account_name": account_name,
                     "inquiry_type": inquiry_type,
                     "questioner": item.get("maskedWriterId", ""),
@@ -1077,6 +1122,7 @@ async def _do_sync_cs_from_markets(
                         select(SambaCSInquiry).where(
                             SambaCSInquiry.market == "스마트스토어",
                             SambaCSInquiry.market_inquiry_no == inq_no,
+                            SambaCSInquiry.account_id == sync_account_id,
                         )
                     )
                     if existing.scalar_one_or_none():
@@ -1133,6 +1179,7 @@ async def _do_sync_cs_from_markets(
                             "orderId", item.get("productOrderIdList", None)
                         ),
                         "market_product_no": mpno or None,
+                        "account_id": sync_account_id,
                         "account_name": account_name,
                         "inquiry_type": mapped_type,
                         "questioner": item.get(
@@ -1179,21 +1226,35 @@ async def _do_sync_cs_from_markets(
         except Exception as e:
             logger.warning(f"[CS동기화] 롯데ON 설정 조회 실패: {e}")
 
+    if account_id and target_market_type == "lotteon" and target_account is not None:
+        lo_settings_list = [target_account]
+
     for lo_setting in lo_settings_list:
         try:
             import json as _json
 
-            lo_config = (
-                _json.loads(lo_setting.value)
-                if isinstance(lo_setting.value, str)
-                else lo_setting.value
-            )
-            api_key = lo_config.get("apiKey", "")
-            account_name = (
-                lo_config.get("businessName", "")
-                or lo_config.get("storeId", "")
-                or lo_setting.key
-            )
+            if hasattr(lo_setting, "additional_fields"):
+                lo_config = dict(lo_setting.additional_fields or {})
+                api_key = lo_config.get("apiKey", "") or lo_setting.api_key or ""
+                account_name = (
+                    lo_setting.account_label
+                    or lo_setting.business_name
+                    or lo_setting.seller_id
+                    or ""
+                )
+            else:
+                lo_config = (
+                    _json.loads(lo_setting.value)
+                    if isinstance(lo_setting.value, str)
+                    else lo_setting.value
+                )
+                lo_config = lo_config or {}
+                api_key = lo_config.get("apiKey", "")
+                account_name = (
+                    lo_config.get("businessName", "")
+                    or lo_config.get("storeId", "")
+                    or lo_setting.key
+                )
 
             if not api_key:
                 continue
@@ -1339,6 +1400,12 @@ async def _do_sync_cs_from_markets(
         )
         pa_result = await session.execute(pa_stmt)
         pa_accounts = pa_result.scalars().all()
+        if account_id:
+            pa_accounts = (
+                [acc for acc in pa_accounts if acc.id == account_id]
+                if target_market_type == "playauto"
+                else []
+            )
 
         for pa_acc in pa_accounts:
             pa_extras = pa_acc.additional_fields or {}
@@ -1472,6 +1539,12 @@ async def _do_sync_cs_from_markets(
         )
         ssg_result = await session.execute(ssg_stmt)
         ssg_accounts = ssg_result.scalars().all()
+        if account_id:
+            ssg_accounts = (
+                [acc for acc in ssg_accounts if acc.id == account_id]
+                if target_market_type == "ssg"
+                else []
+            )
 
         for ssg_acc in ssg_accounts:
             ssg_extras = ssg_acc.additional_fields or {}
