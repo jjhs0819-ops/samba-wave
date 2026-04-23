@@ -791,6 +791,20 @@ class SmartStorePlugin(MarketPlugin):
                             f"[스마트스토어] 금지 태그 {banned} 제거 후 재시도 ({len(old_tags)}→{len(new_tags)}개)"
                         )
                         return await _try_send(data)
+            elif "어린이제품" in err_msg or "childCertif" in err_msg:
+                # 어린이제품 인증정보 없음 → 인증대상 아님으로 선언 후 재시도
+                logger.warning(
+                    "[스마트스토어] 어린이제품 인증대상 에러 → childCertifiedProductExclusionYn=True 재시도"
+                )
+                detail_attr = data["originProduct"].setdefault("detailAttribute", {})
+                exclude = detail_attr.setdefault(
+                    "certificationTargetExcludeContent", {}
+                )
+                exclude["childCertifiedProductExclusionYn"] = True
+                exclude.setdefault("kcCertifiedProductExclusionYn", "FALSE")
+                # 기존 인증정보 제거 (충돌 방지)
+                detail_attr.pop("productCertificationInfos", None)
+                return await _try_send(data)
             raise
         finally:
             # 공유 httpx 클라이언트 정리
