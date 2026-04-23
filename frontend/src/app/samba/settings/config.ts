@@ -212,6 +212,9 @@ export const STORE_MARKETS: MarketConfig[] = [
     { name: 'exchangeFee', label: '교환배송비(왕복)', type: 'number', placeholder: '6000' },
     { name: 'jejuFee', label: '제주/도서산간 추가비', type: 'number', placeholder: '3000' },
     { name: 'stockQuantity', label: '재고수량', type: 'number', placeholder: '999 (기본값)' },
+    { name: '_divider_shipping_coupang', label: '출고지/반품지 (Wing API 조회)', type: 'divider' },
+    { name: 'outboundShippingPlaceCode', label: '출고지', type: 'coupang-outbound', placeholder: '버튼으로 불러오기' },
+    { name: 'returnCenterCode', label: '반품지', type: 'coupang-return', placeholder: '버튼으로 불러오기' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
   ]},
   { key: 'lotteon', label: '롯데ON', authField: 'apiKey', guideUrl: 'https://openapi.lotteon.com', fields: [

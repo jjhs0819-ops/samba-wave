@@ -17,6 +17,7 @@ type Props = StoreSettingsState & Pick<StoreSettingsActions,
   'setStoreTab' | 'setStoreData' | 'setSsgShippingOptions' | 'setSsgAddrOptions' |
   'setEsmPlaceOptions' | 'setEsmDispatchOptions' |
   'setLotteonDeliveryPolicyOptions' | 'setLotteonWarehouseOptions' |
+  'setCoupangOutboundList' | 'setCoupangInboundList' | 'loadCoupangShippingPlaces' |
   'setEditingAccountId' | 'setVisiblePasswords' | 'setNetworkIps' | 'saveNetworkIps'
 >
 
@@ -37,6 +38,8 @@ export function StoreSettingsPanel(props: Props) {
     lotteonWarehouseOptions,
     networkIps,
     networkIpStatus,
+    coupangOutboundList,
+    coupangInboundList,
     updateStoreField,
     saveNetworkIps,
     saveStoreSettings,
@@ -51,6 +54,9 @@ export function StoreSettingsPanel(props: Props) {
     setEsmDispatchOptions,
     setLotteonDeliveryPolicyOptions,
     setLotteonWarehouseOptions,
+    setCoupangOutboundList,
+    setCoupangInboundList,
+    loadCoupangShippingPlaces,
     setEditingAccountId,
     setNetworkIps,
   } = props
@@ -266,6 +272,12 @@ export function StoreSettingsPanel(props: Props) {
                       style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
                     >배송정책/출고지 불러오기</button>
                   )}
+                  {market.key === 'coupang' && field.name === '_divider_shipping_coupang' && (
+                    <button
+                      onClick={() => loadCoupangShippingPlaces(editingAccountId || undefined)}
+                      style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                    >출고지/반품지 조회</button>
+                  )}
                 </div>
               ) : field.type === 'info' ? (
                 <div key={field.name} style={{ padding: '0.4rem 0.6rem', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '4px' }}>
@@ -322,6 +334,40 @@ export function StoreSettingsPanel(props: Props) {
                     >
                       <option value=''>불러오기 버튼으로 선택</option>
                       {(esmDispatchOptions[market.key] || []).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  ) : field.type === 'coupang-outbound' ? (
+                    <select
+                      style={{ ...inputStyle, flex: 1 }}
+                      value={storeData[market.key]?.[field.name] || ''}
+                      onChange={(e) => {
+                        const sel = coupangOutboundList.find(o => o.code === e.target.value)
+                        updateStoreField(market.key, 'outboundShippingPlaceCode', sel?.code || '')
+                        updateStoreField(market.key, 'outboundShippingPlaceName', sel?.name || '')
+                      }}
+                    >
+                      <option value=''>버튼으로 불러오기</option>
+                      {coupangOutboundList.map(o => (
+                        <option key={o.code} value={o.code}>{o.name}{o.address ? ` (${o.address})` : ''}</option>
+                      ))}
+                    </select>
+                  ) : field.type === 'coupang-return' ? (
+                    <select
+                      style={{ ...inputStyle, flex: 1 }}
+                      value={storeData[market.key]?.[field.name] || ''}
+                      onChange={(e) => {
+                        const sel = coupangInboundList.find(i => i.code === e.target.value)
+                        updateStoreField(market.key, 'returnCenterCode', sel?.code || '')
+                        updateStoreField(market.key, 'returnCenterName', sel?.name || '')
+                        updateStoreField(market.key, 'returnCenterAddress', sel?.address || '')
+                        updateStoreField(market.key, 'returnCenterAddressDetail', sel?.address_detail || '')
+                        updateStoreField(market.key, 'returnCenterZipcode', sel?.zipcode || '')
+                        updateStoreField(market.key, 'returnCenterPhone', sel?.phone || '')
+                      }}
+                    >
+                      <option value=''>버튼으로 불러오기</option>
+                      {coupangInboundList.map(i => (
+                        <option key={i.code} value={i.code}>{i.name}{i.address ? ` (${i.address})` : ''}</option>
+                      ))}
                     </select>
                   ) : (field.type === 'ssg-shipping-select' || field.type === 'ssg-extra-select') ? (
                     <select
@@ -556,6 +602,19 @@ export function StoreSettingsPanel(props: Props) {
                             ...accData,
                           }
                           setStoreData(prev => ({ ...prev, [market.key]: formData }))
+                          // 쿠팡 계정 전환 시 출고지/반품지 목록 초기화 (다른 계정 목록 잔존 방지)
+                          if (market.key === 'coupang') {
+                            const outCode = formData.outboundShippingPlaceCode || ''
+                            const outName = formData.outboundShippingPlaceName || ''
+                            setCoupangOutboundList(outCode ? [{ code: outCode, name: outName, address: '' }] : [])
+                            const retCode = formData.returnCenterCode || ''
+                            const retName = formData.returnCenterName || ''
+                            const retAddr = formData.returnCenterAddress || ''
+                            const retAddrDetail = formData.returnCenterAddressDetail || ''
+                            const retZip = formData.returnCenterZipcode || ''
+                            const retPhone = formData.returnCenterPhone || ''
+                            setCoupangInboundList(retCode ? [{ code: retCode, name: retName, address: retAddr, address_detail: retAddrDetail, zipcode: retZip, phone: retPhone }] : [])
+                          }
                         }}
                         style={{
                           padding: '0.15rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem',

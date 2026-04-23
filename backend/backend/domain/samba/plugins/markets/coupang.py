@@ -146,42 +146,21 @@ class CoupangPlugin(MarketPlugin):
         if account:
             vendor_user_id = getattr(account, "seller_id", "") or ""
 
-        # 반품지 코드 조회 (API에서 동적 획득)
-        return_center_code = ""
-        rc_content: list = []
-        try:
-            rc_result = await client._call_api(
-                "GET",
-                f"/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/returnShippingCenters",
-            )
-            rc_data = rc_result.get("data", {})
-            rc_content = rc_data.get("content", []) if isinstance(rc_data, dict) else []
-            if rc_content:
-                rc = rc_content[0]
-                return_center_code = rc.get("returnCenterCode", "")
-        except Exception as e:
-            logger.warning(f"[쿠팡] 반품지 조회 실패 (vendor_id={vendor_id}): {e}")
+        # 계정별 사전 저장된 출고지/반품지 코드 읽기 (다계정 자연 지원)
+        extras = (account.additional_fields or {}) if account else {}
+        if not isinstance(extras, dict):
+            extras = {}
+        outbound_code = str(extras.get("outboundShippingPlaceCode", "") or "")
+        return_center_code = str(extras.get("returnCenterCode", "") or "")
+        return_address = str(extras.get("returnCenterAddress", "") or "")
+        return_address_detail = str(extras.get("returnCenterAddressDetail", "") or "")
+        return_zipcode = str(extras.get("returnCenterZipcode", "") or "")
+        return_phone = str(extras.get("returnCenterPhone", "") or "")
 
-        # 출고지 코드 조회
-        outbound_code = ""
-        try:
-            ob_result = await client._call_api(
-                "GET",
-                "/v2/providers/marketplace_openapi/apis/api/v1/vendor/shipping-place/outbound",
-                params={"pageNum": "1", "pageSize": "10"},
-            )
-            ob_content = (
-                ob_result.get("content", []) if isinstance(ob_result, dict) else []
-            )
-            if ob_content:
-                outbound_code = str(ob_content[0].get("outboundShippingPlaceCode", ""))
-        except Exception as e:
-            logger.warning(f"[쿠팡] 출고지 조회 실패 (vendor_id={vendor_id}): {e}")
-
-        if not return_center_code:
+        if not outbound_code or not return_center_code:
             return {
                 "success": False,
-                "message": "쿠팡 반품지 코드를 조회할 수 없습니다. Wing 센터에서 반품지를 등록해주세요.",
+                "message": "쿠팡 설정에서 출고지/반품지를 먼저 조회 후 선택해주세요.",
             }
 
         # AS 전화번호 주입은 base._apply_market_settings 에서 처리됨
@@ -194,15 +173,15 @@ class CoupangPlugin(MarketPlugin):
         data["vendorId"] = vendor_id
         data["vendorUserId"] = vendor_user_id or vendor_id
 
-        # 반품지 실제 주소 정보 덮어쓰기
-        if return_center_code and rc_content:
-            addrs = rc_content[0].get("placeAddresses", [])
-            if addrs:
-                addr = addrs[0]
-                data["returnZipCode"] = addr.get("returnZipCode", "")
-                data["returnAddress"] = addr.get("returnAddress", "")
-                data["returnAddressDetail"] = addr.get("returnAddressDetail", "")
-                data["companyContactNumber"] = addr.get("companyContactNumber", "")
+        # 반품지 실제 주소 정보 덮어쓰기 (캐시된 값 사용)
+        if return_zipcode:
+            data["returnZipCode"] = return_zipcode
+        if return_address:
+            data["returnAddress"] = return_address
+        if return_address_detail:
+            data["returnAddressDetail"] = return_address_detail
+        if return_phone:
+            data["companyContactNumber"] = return_phone
 
         # 기존 상품번호가 있으면 수정, 없으면 신규등록
         if existing_no:

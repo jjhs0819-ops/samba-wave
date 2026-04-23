@@ -28,6 +28,8 @@ export interface StoreSettingsState {
   lotteonWarehouseOptions: { departure: { value: string; label: string }[]; return_: { value: string; label: string }[] }
   networkIps: { web: string; local: string }
   networkIpStatus: string
+  coupangOutboundList: Array<{ code: string; name: string; address: string }>
+  coupangInboundList: Array<{ code: string; name: string; address: string; address_detail: string; zipcode: string; phone: string }>
 }
 
 export interface StoreSettingsActions {
@@ -47,6 +49,9 @@ export interface StoreSettingsActions {
   setEsmDispatchOptions: React.Dispatch<React.SetStateAction<Record<string, { value: string; label: string }[]>>>
   setLotteonDeliveryPolicyOptions: React.Dispatch<React.SetStateAction<{ value: string; label: string }[]>>
   setLotteonWarehouseOptions: React.Dispatch<React.SetStateAction<{ departure: { value: string; label: string }[]; return_: { value: string; label: string }[] }>>
+  setCoupangOutboundList: React.Dispatch<React.SetStateAction<Array<{ code: string; name: string; address: string }>>>
+  setCoupangInboundList: React.Dispatch<React.SetStateAction<Array<{ code: string; name: string; address: string; address_detail: string; zipcode: string; phone: string }>>>
+  loadCoupangShippingPlaces: (accountId?: string) => Promise<void>
   setEditingAccountId: (id: string | null) => void
   setVisiblePasswords: React.Dispatch<React.SetStateAction<Set<string>>>
   setNetworkIps: React.Dispatch<React.SetStateAction<{ web: string; local: string }>>
@@ -70,6 +75,8 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
   const [lotteonWarehouseOptions, setLotteonWarehouseOptions] = useState<{ departure: { value: string; label: string }[]; return_: { value: string; label: string }[] }>({ departure: [], return_: [] })
   const [networkIps, setNetworkIps] = useState({ web: '', local: '' })
   const [networkIpStatus, setNetworkIpStatus] = useState('')
+  const [coupangOutboundList, setCoupangOutboundList] = useState<Array<{ code: string; name: string; address: string }>>([])
+  const [coupangInboundList, setCoupangInboundList] = useState<Array<{ code: string; name: string; address: string; address_detail: string; zipcode: string; phone: string }>>([])
 
   const loadAccounts = useCallback(async () => {
     setAccountLoading(true)
@@ -275,6 +282,25 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
     }
   }
 
+  // 쿠팡 출고지/반품지 목록 조회
+  const loadCoupangShippingPlaces = useCallback(async (accountId?: string) => {
+    try {
+      // 인증정보 먼저 저장
+      await saveStoreSettings('coupang')
+      const res = await proxyApi.coupangShippingPlaces(accountId)
+      if (res.success && res.data) {
+        setCoupangOutboundList(res.data.outboundList || [])
+        setCoupangInboundList(res.data.inboundList || [])
+        showAlert('출고지/반품지 목록을 가져왔습니다.', 'success')
+      } else {
+        showAlert(res.message || '출고지/반품지 조회 실패', 'error')
+      }
+    } catch {
+      showAlert('출고지/반품지 조회 실패', 'error')
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [saveStoreSettings])
+
   // SSG 탭 진입 시 배송비/주소 옵션 자동 로드
   useEffect(() => {
     if (storeTab !== 'ssg') return
@@ -345,6 +371,8 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
     lotteonWarehouseOptions,
     networkIps,
     networkIpStatus,
+    coupangOutboundList,
+    coupangInboundList,
     loadAccounts,
     loadStoreSettings,
     updateStoreField,
@@ -362,6 +390,9 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
     setEsmDispatchOptions,
     setLotteonDeliveryPolicyOptions,
     setLotteonWarehouseOptions,
+    setCoupangOutboundList,
+    setCoupangInboundList,
+    loadCoupangShippingPlaces,
     setEditingAccountId,
     setVisiblePasswords,
     setNetworkIps,

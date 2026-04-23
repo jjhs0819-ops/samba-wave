@@ -919,6 +919,18 @@ export const proxyApi = {
   coupangAuthTest: () =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/coupang/auth-test`, { method: 'POST' }),
+  coupangShippingPlaces: (accountId?: string) =>
+    request<{
+      success: boolean
+      message: string
+      data?: {
+        outboundList: Array<{ code: string; name: string; address: string }>
+        inboundList: Array<{ code: string; name: string; address: string; address_detail: string; zipcode: string; phone: string }>
+      } | null
+    }>(
+      `${SAMBA_PREFIX}/proxy/coupang/shipping-places`,
+      { method: 'POST', body: JSON.stringify({ account_id: accountId || null }) }
+    ),
   lotteonAuthTest: () =>
     request<{ success: boolean; message: string; data?: Record<string, string> }>(
       `${SAMBA_PREFIX}/proxy/lotteon/auth-test`, { method: 'POST' }),
