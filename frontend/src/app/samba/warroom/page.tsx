@@ -777,16 +777,26 @@ export default function WarroomPage() {
                   const sitePriceChanges = siteChanges[siteName]?.price_changed ?? []
                   const siteSoldOuts = siteChanges[siteName]?.sold_out ?? []
                   // autotune 사이클 tick에서 가격변동 상품 추출 (LOTTEON 등 price_changed 이벤트 없는 소싱처)
-                  type TickPriceItem = { pid: string; name: string; old_price: number; new_price: number }
+                  type TickPriceItem = { pid: string; site_product_id?: string; name: string; old_price: number; new_price: number }
+                  type TickStockItem = { pid: string; site_product_id?: string; name: string; sale_status?: string }
                   const latestTick = tickEventsBySite[siteName]?.[0]
                   const latestTickDetail = latestTick?.detail as Record<string, unknown> | undefined
                   const tickPriceItems = (latestTickDetail?.price_changed_items as TickPriceItem[] | undefined) ?? []
+                  const tickStockItems = (latestTickDetail?.stock_changed_items as TickStockItem[] | undefined) ?? []
                   const tickEndedAt = latestTickDetail?.ended_at as string | undefined
-                  if (sitePriceChanges.length === 0 && siteSoldOuts.length === 0 && tickPriceItems.length === 0) return null
+                  // DB 이벤트에 없는 항목만 tick에서 보충 (중복 방지), 합산 5개 제한
+                  const tickPriceSlice = tickPriceItems.slice(0, Math.max(0, 5 - sitePriceChanges.length))
+                  const tickStockSlice = tickStockItems.slice(0, Math.max(0, 5 - siteSoldOuts.length))
+                  if (sitePriceChanges.length === 0 && siteSoldOuts.length === 0 && tickPriceSlice.length === 0 && tickStockSlice.length === 0) return null
                   const siteColor = SITE_COLORS[siteName] || '#888'
                   const fmtT = (iso: string) => {
                     const d = new Date(iso)
-                    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
+                    const now = new Date()
+                    const isToday = d.toDateString() === now.toDateString()
+                    if (isToday) {
+                      return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
+                    }
+                    return `${d.getMonth() + 1}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
                   }
                   const shortId = (id: string | null) => id ? id.slice(-8) : '-'
                   return (
@@ -802,11 +812,12 @@ export default function WarroomPage() {
                       </div>
                       {siteSoldOuts.map(ev => {
                         const d = ev.detail
+                        const sitePid = (d?.site_product_id as string | undefined) || shortId(ev.product_id)
                         const status = d?.sale_status as string | undefined
                         return (
                           <div key={ev.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
                             <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
-                            <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{shortId(ev.product_id)}</span>
+                            <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{sitePid}</span>
                             <span style={{ fontSize: '0.72rem', color: '#A78BFA' }}>재고변동</span>
                             <span style={{ fontSize: '0.72rem', color: status === 'SUSPENSION' ? '#FF6B6B' : '#51CF66' }}>
                               {status === 'SUSPENSION' ? '품절' : status ?? '변동'}
@@ -816,6 +827,7 @@ export default function WarroomPage() {
                       })}
                       {sitePriceChanges.map(ev => {
                         const d = ev.detail
+                        const sitePid = (d?.site_product_id as string | undefined) || shortId(ev.product_id)
                         const oldP = d?.old_price as number | undefined
                         const newP = d?.new_price as number | undefined
                         const pct = d?.diff_pct as number | undefined
@@ -823,7 +835,7 @@ export default function WarroomPage() {
                         return (
                           <div key={ev.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
                             <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
-                            <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{shortId(ev.product_id)}</span>
+                            <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{sitePid}</span>
                             <span style={{ fontSize: '0.72rem', color: '#FFB347' }}>가격변동</span>
                             {oldP != null && newP != null && (
                               <span style={{ fontSize: '0.72rem', color: (pct ?? 0) > 0 ? '#FF6B6B' : '#51CF66' }}>
@@ -833,28 +845,31 @@ export default function WarroomPage() {
                           </div>
                         )
                       })}
-                      {/* autotune 사이클 tick에서 추출한 가격변동 상품 (LOTTEON 등) */}
-                      {tickPriceItems.length > 0 && (
-                        <>
-                          {tickEndedAt && sitePriceChanges.length === 0 && (
-                            <div style={{ fontSize: '0.66rem', color: '#555', marginBottom: '0.2rem' }}>
-                              {fmtT(tickEndedAt)} 사이클
-                            </div>
-                          )}
-                          {tickPriceItems.map((item, i) => {
-                            const diff = item.old_price > 0 ? Math.round((item.new_price - item.old_price) / item.old_price * 100) : 0
-                            return (
-                              <div key={i} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
-                                <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{item.pid.slice(-8)}</span>
-                                <span style={{ fontSize: '0.72rem', color: '#FFB347' }}>가격변동</span>
-                                <span style={{ fontSize: '0.72rem', color: diff > 0 ? '#FF6B6B' : '#51CF66' }}>
-                                  ₩{fmtNum(item.old_price)}→₩{fmtNum(item.new_price)}{diff !== 0 ? ` (${diff > 0 ? '+' : ''}${diff}%)` : ''}
-                                </span>
-                              </div>
-                            )
-                          })}
-                        </>
-                      )}
+                      {/* tick 가격변동 (DB 이벤트로 채워지지 않은 소싱처 보충) */}
+                      {tickPriceSlice.map((item, i) => {
+                        const diff = item.old_price > 0 ? Math.round((item.new_price - item.old_price) / item.old_price * 100) : 0
+                        return (
+                          <div key={`tp-${i}`} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
+                            {tickEndedAt && <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(tickEndedAt)}</span>}
+                            <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{item.site_product_id || item.pid.slice(-8)}</span>
+                            <span style={{ fontSize: '0.72rem', color: '#FFB347' }}>가격변동</span>
+                            <span style={{ fontSize: '0.72rem', color: diff > 0 ? '#FF6B6B' : '#51CF66' }}>
+                              ₩{fmtNum(item.old_price)}→₩{fmtNum(item.new_price)}{diff !== 0 ? ` (${diff > 0 ? '+' : ''}${diff}%)` : ''}
+                            </span>
+                          </div>
+                        )
+                      })}
+                      {/* tick 재고변동 */}
+                      {tickStockSlice.map((item, i) => (
+                        <div key={`ts-${i}`} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
+                          {tickEndedAt && <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(tickEndedAt)}</span>}
+                          <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{item.site_product_id || item.pid.slice(-8)}</span>
+                          <span style={{ fontSize: '0.72rem', color: '#A78BFA' }}>재고변동</span>
+                          <span style={{ fontSize: '0.72rem', color: item.sale_status === 'sold_out' ? '#FF6B6B' : '#51CF66' }}>
+                            {item.sale_status === 'sold_out' ? '품절' : item.sale_status ?? '변동'}
+                          </span>
+                        </div>
+                      ))}
                     </div>
                   )
                 })}
