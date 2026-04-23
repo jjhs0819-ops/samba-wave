@@ -26,6 +26,11 @@ const nextConfig: NextConfig = {
     // CSS chunking for better parallel loading
     cssChunking: 'strict',
   },
+  webpack: (config) => {
+    // WASM 지원 (배경 제거 WASM 모델)
+    config.experiments = { ...config.experiments, asyncWebAssembly: true }
+    return config
+  },
   compress: true,
   poweredByHeader: false,
 };

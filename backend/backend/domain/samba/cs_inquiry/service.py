@@ -114,20 +114,25 @@ class SambaCSInquiryService:
     # ==================== 답변 ====================
 
     async def reply_inquiry(
-        self, inquiry_id: str, reply_content: str
+        self, inquiry_id: str, reply_content: str, mark_replied: bool = True
     ) -> Optional[SambaCSInquiry]:
-        """문의에 답변 등록."""
+        """문의에 답변 등록.
+        mark_replied=False: 답변 내용만 저장, reply_status는 pending 유지 (마켓 전송 실패 시)
+        """
         inquiry = await self.repo.get_async(inquiry_id)
         if not inquiry:
             return None
 
-        updated = await self.repo.update_async(
-            inquiry_id,
-            reply=reply_content,
-            reply_status="replied",
-            replied_at=datetime.now(UTC),
-        )
-        logger.info(f"CS 문의 {inquiry_id} 답변 완료")
+        update_fields: dict = {"reply": reply_content}
+        if mark_replied:
+            update_fields["reply_status"] = "replied"
+            update_fields["replied_at"] = datetime.now(UTC)
+
+        updated = await self.repo.update_async(inquiry_id, **update_fields)
+        if mark_replied:
+            logger.info(f"CS 문의 {inquiry_id} 답변 완료")
+        else:
+            logger.info(f"CS 문의 {inquiry_id} 답변 저장 (마켓 미전송 — pending 유지)")
         return updated or inquiry
 
     # ==================== 삭제 ====================

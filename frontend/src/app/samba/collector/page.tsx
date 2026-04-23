@@ -1607,7 +1607,9 @@ export default function CollectorPage() {
               if (activeIds.length === 0) { showAlert('현재 필터에 해당하는 그룹이 없습니다'); return }
               if (!aiImgScope.thumbnail && !aiImgScope.additional && !aiImgScope.detail) { showAlert('변환 대상 이미지를 선택해주세요 (대표/추가/상세)'); return }
               // 그룹에 속한 상품 조회 → AI 미변환 상품만 추출
+              type ProductItem = { id: string; images: string[]; detail_images: string[]; tags: string[] }
               const productIds: string[] = []
+              const productDetails = new Map<string, ProductItem>()
               let skippedAi = 0
               for (const gid of activeIds) {
                 try {
@@ -1616,6 +1618,7 @@ export default function CollectorPage() {
                     for (const p of products) {
                       if ((p.tags || []).includes('__ai_image__')) { skippedAi++; continue }
                       productIds.push(p.id)
+                      productDetails.set(p.id, { id: p.id, images: p.images || [], detail_images: p.detail_images || [], tags: p.tags || [] })
                     }
                   }
                 } catch { /* 스킵 */ }
@@ -1642,9 +1645,41 @@ export default function CollectorPage() {
                 const label = productIds[i].slice(-8)
                 setAiJobTitle(`AI 이미지변환 [${fmtNum(i + 1)}/${fmtNum(productIds.length)}]`)
                 try {
-                  const res = await proxyApi.transformImages([productIds[i]], aiImgScope, aiImgMode, aiModelPreset)
-                  if (res.success) { success++; addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 완료`) }
-                  else { fail++; addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 실패: ${res.message}`) }
+                  if (aiImgMode === 'background') {
+                    // WASM 브라우저 배경 제거
+                    const { removeBgFromUrl, uploadBlobToR2 } = await import('@/lib/samba/bgRemoval')
+                    const item = productDetails.get(productIds[i])
+                    if (!item) { fail++; addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 상품 정보 없음`); continue }
+                    addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 배경 제거 중...`)
+                    const thumbUrls = aiImgScope.thumbnail ? item.images.slice(0, 1) : []
+                    const addlUrls = aiImgScope.additional ? item.images.slice(1) : []
+                    const detailUrls = aiImgScope.detail ? item.detail_images : []
+                    const processUrls = async (urls: string[], prefix: string) => {
+                      const results: string[] = []
+                      for (let ui = 0; ui < urls.length; ui++) {
+                        const blob = await removeBgFromUrl(urls[ui])
+                        results.push(await uploadBlobToR2(blob, `${prefix}_${ui}_${Date.now()}.webp`))
+                      }
+                      return results
+                    }
+                    const pid = productIds[i]
+                    const newThumb = await processUrls(thumbUrls, `bg_${pid}_th`)
+                    const newAddl = await processUrls(addlUrls, `bg_${pid}_ad`)
+                    const newDetail = await processUrls(detailUrls, `bg_${pid}_dt`)
+                    const updateData: { images?: string[]; detail_images?: string[]; tags?: string[] } = {}
+                    if (aiImgScope.thumbnail || aiImgScope.additional) {
+                      updateData.images = [...newThumb, ...newAddl, ...(aiImgScope.additional ? [] : item.images.slice(1))]
+                    }
+                    if (aiImgScope.detail) updateData.detail_images = newDetail
+                    updateData.tags = [...new Set([...item.tags, '__ai_image__', '__img_edited__'])]
+                    await collectorApi.updateProduct(pid, updateData)
+                    const cnt = newThumb.length + newAddl.length + newDetail.length
+                    success++; addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 완료 (${fmtNum(cnt)}장)`)
+                  } else {
+                    const res = await proxyApi.transformImages([productIds[i]], aiImgScope, aiImgMode, aiModelPreset)
+                    if (res.success) { success++; addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 완료`) }
+                    else { fail++; addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 실패: ${res.message}`) }
+                  }
                 } catch (e) { fail++; addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
               }
               const endTime = ts()
@@ -2160,6 +2195,27 @@ export default function CollectorPage() {
             >
               {tagPreviewLoading ? '태그 생성중...' : 'AI태그'}
             </button>
+            <button onClick={async () => {
+              const checkedIds = selectAll ? displayedFilters.map(f => f.id) : [...selectedIds]
+              const targetFilters = displayedFilters.filter(f => checkedIds.includes(f.id))
+              if (targetFilters.length === 0) { showAlert('검색그룹을 선택해주세요'); return }
+              const ok = await showConfirm(`${fmtNum(targetFilters.length)}개 그룹의 AI 태그를 전체 삭제하시겠습니까?`)
+              if (!ok) return
+              try {
+                const groupIds = targetFilters.map(f => f.id)
+                const res = await proxyApi.clearAiTags(groupIds)
+                if (res.success) {
+                  showAlert(res.message, 'success')
+                  addLog(`[태그삭제] ${fmtNum(targetFilters.length)}개 그룹 AI 태그 삭제 완료`)
+                } else showAlert(res.message, 'error')
+              } catch (e) {
+                showAlert(`태그 삭제 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
+              }
+            }} style={{
+              background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)',
+              color: '#FF6B6B', padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem',
+              cursor: 'pointer',
+            }}>태그삭제</button>
           </div>
         </div>
 

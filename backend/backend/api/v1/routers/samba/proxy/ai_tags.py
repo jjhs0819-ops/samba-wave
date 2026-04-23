@@ -1196,3 +1196,45 @@ async def apply_ai_tags(
         "total_tagged": total_tagged,
         "banned_added": banned_added,
     }
+
+
+@router.post("/ai-tags/clear")
+async def clear_ai_tags(
+    request: dict[str, Any],
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """그룹 전체 상품의 AI 태그(tags, seo_keywords)를 초기화한다."""
+    from backend.domain.samba.collector.repository import (
+        SambaCollectedProductRepository,
+    )
+    from datetime import UTC as _utc
+    from datetime import datetime as _dt
+
+    from sqlalchemy.orm.attributes import flag_modified as _fm
+
+    group_ids = request.get("group_ids", [])
+    if not group_ids:
+        return {"success": False, "message": "대상 그룹이 없습니다"}
+
+    repo = SambaCollectedProductRepository(session)
+    total_cleared = 0
+
+    for gid in group_ids:
+        _, products = await _resolve_ai_tag_apply_products(repo, {"group_id": gid})
+        for p in products:
+            p.tags = None
+            p.seo_keywords = None
+            _fm(p, "tags")
+            _fm(p, "seo_keywords")
+            if hasattr(p, "updated_at"):
+                p.updated_at = _dt.now(_utc)
+            session.add(p)
+            total_cleared += 1
+
+    await session.commit()
+    logger.info(f"[AI태그] 태그 삭제: {len(group_ids)}개 그룹, {total_cleared}개 상품")
+    return {
+        "success": True,
+        "message": f"{len(group_ids)}개 그룹, {total_cleared}개 상품의 AI 태그 삭제 완료",
+        "total_cleared": total_cleared,
+    }

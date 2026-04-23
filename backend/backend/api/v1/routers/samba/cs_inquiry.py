@@ -210,21 +210,42 @@ async def reply_cs_inquiry(
     if inquiry.market_inquiry_no:
         try:
             if inquiry.market == "스마트스토어":
-                settings_result = await session.execute(
-                    select(SambaSettings).where(
-                        SambaSettings.key.like("store_smartstore%")
+                from backend.domain.samba.account.model import SambaMarketAccount
+
+                client = None
+                # inquiry.account_id → SambaMarketAccount 우선 조회
+                if inquiry.account_id:
+                    acc_result = await session.execute(
+                        select(SambaMarketAccount).where(
+                            SambaMarketAccount.id == inquiry.account_id,
+                            SambaMarketAccount.is_active == True,  # noqa: E712
+                        )
                     )
-                )
-                ss_settings = settings_result.scalars().first()
-                if ss_settings:
-                    config = (
-                        json.loads(ss_settings.value)
-                        if isinstance(ss_settings.value, str)
-                        else ss_settings.value
+                    acc = acc_result.scalar_one_or_none()
+                    if acc:
+                        af = acc.additional_fields or {}
+                        cid = af.get("clientId", "") or acc.api_key or ""
+                        csec = af.get("clientSecret", "") or acc.api_secret or ""
+                        if cid and csec:
+                            client = SmartStoreClient(cid, csec)
+                # account_id 없거나 SambaMarketAccount 미등록 → SambaSettings 폴백
+                if client is None:
+                    settings_result = await session.execute(
+                        select(SambaSettings).where(
+                            SambaSettings.key.like("store_smartstore%")
+                        )
                     )
-                    client = SmartStoreClient(
-                        config["clientId"], config["clientSecret"]
-                    )
+                    ss_settings = settings_result.scalars().first()
+                    if ss_settings:
+                        config = (
+                            json.loads(ss_settings.value)
+                            if isinstance(ss_settings.value, str)
+                            else ss_settings.value
+                        )
+                        client = SmartStoreClient(
+                            config["clientId"], config["clientSecret"]
+                        )
+                if client:
                     inq_no = int(inquiry.market_inquiry_no)
 
                     if inquiry.inquiry_type == "product_question":
@@ -250,33 +271,52 @@ async def reply_cs_inquiry(
                         market_msg = "고객문의 답변 전송 완료"
             elif inquiry.market == "롯데ON":
                 from backend.domain.samba.proxy.lotteon import LotteonClient
+                from backend.domain.samba.account.model import SambaMarketAccount
 
-                settings_result = await session.execute(
-                    select(SambaSettings).where(
-                        SambaSettings.key.like("store_lotteon%")
+                lo_client = None
+                # inquiry.account_id → SambaMarketAccount 우선 조회
+                if inquiry.account_id:
+                    acc_result = await session.execute(
+                        select(SambaMarketAccount).where(
+                            SambaMarketAccount.id == inquiry.account_id,
+                            SambaMarketAccount.is_active == True,  # noqa: E712
+                        )
                     )
-                )
-                lo_settings = settings_result.scalars().first()
-                if lo_settings:
-                    config = (
-                        json.loads(lo_settings.value)
-                        if isinstance(lo_settings.value, str)
-                        else lo_settings.value
+                    acc = acc_result.scalar_one_or_none()
+                    if acc:
+                        af = acc.additional_fields or {}
+                        api_key = af.get("apiKey", "") or acc.api_key or ""
+                        if api_key:
+                            lo_client = LotteonClient(api_key=api_key)
+                # account_id 없거나 SambaMarketAccount 미등록 → SambaSettings 폴백
+                if lo_client is None:
+                    settings_result = await session.execute(
+                        select(SambaSettings).where(
+                            SambaSettings.key.like("store_lotteon%")
+                        )
                     )
-                    client = LotteonClient(api_key=config["apiKey"])
-                    await client.test_auth()  # trGrpCd/trNo 획득 (필수)
+                    lo_settings = settings_result.scalars().first()
+                    if lo_settings:
+                        config = (
+                            json.loads(lo_settings.value)
+                            if isinstance(lo_settings.value, str)
+                            else lo_settings.value
+                        )
+                        lo_client = LotteonClient(api_key=config["apiKey"])
+                if lo_client:
+                    await lo_client.test_auth()  # trGrpCd/trNo 획득 (필수)
                     inq_no = inquiry.market_inquiry_no or ""
 
                     if inq_no.startswith("PQNA_"):
                         # 상품 Q&A 답변
                         pqna_no = inq_no[5:]
-                        await client.reply_product_qna(pqna_no, body.reply)
+                        await lo_client.reply_product_qna(pqna_no, body.reply)
                         market_sent = True
                         market_msg = "롯데ON 상품Q&A 답변 전송 완료"
                     elif inq_no.startswith("CNTC_"):
                         # 판매자 연락(Contact) 답변
                         cntc_no = inq_no[5:]
-                        await client.answer_contact(cntc_no, body.reply)
+                        await lo_client.answer_contact(cntc_no, body.reply)
                         market_sent = True
                         market_msg = "롯데ON 판매자연락 답변 전송 완료"
                     elif inq_no.startswith("COMP_"):
@@ -288,11 +328,11 @@ async def reply_cs_inquiry(
                     else:
                         # 일반 Q&A (Inquiry)
                         if inquiry.market_answer_no:
-                            await client.update_qna_answer(
+                            await lo_client.update_qna_answer(
                                 inq_no, inquiry.market_answer_no, body.reply
                             )
                         else:
-                            data = await client.answer_qna(inq_no, body.reply)
+                            data = await lo_client.answer_qna(inq_no, body.reply)
                             new_ans_no = str(
                                 data.get("ansNo", data.get("qnaAnsNo", ""))
                             )
@@ -305,8 +345,10 @@ async def reply_cs_inquiry(
             logger.warning(f"[CS답변] 마켓 전송 실패 (DB 저장은 진행): {e}")
             market_msg = f"마켓 전송 실패: {e}"
 
-    # DB 저장 (마켓 전송 성공 여부와 무관하게 항상 저장)
-    updated = await svc.reply_inquiry(inquiry_id, body.reply)
+    # DB 저장: 마켓 전송 성공 시에만 replied로 마킹, 실패 시 답변 내용만 저장
+    # market_inquiry_no 없는 문의(플레이오토 등)는 항상 replied로 마킹
+    mark_replied = market_sent or not inquiry.market_inquiry_no
+    updated = await svc.reply_inquiry(inquiry_id, body.reply, mark_replied=mark_replied)
     if answer_no and answer_no != (inquiry.market_answer_no or ""):
         from backend.domain.samba.cs_inquiry.repository import SambaCSInquiryRepository
 
@@ -960,8 +1002,8 @@ async def _do_sync_cs_from_markets(
                 config = config or {}
                 client_id = config.get("clientId", "")
                 client_secret = config.get("clientSecret", "")
-                account_name = (
-                    config.get("businessName", "") or config.get("storeId", "")
+                account_name = config.get("businessName", "") or config.get(
+                    "storeId", ""
                 )
                 sync_account_id = None
             # storeSlug 우선순위: SambaMarketAccount > settings.storeSlug
@@ -1609,20 +1651,39 @@ async def send_reply_to_market(
         )
 
     if inquiry.market == "스마트스토어":
-        # 스마트스토어 계정 조회
-        settings_result = await session.execute(
-            select(SambaSettings).where(SambaSettings.key.like("store_smartstore%"))
-        )
-        ss_settings = settings_result.scalars().first()
-        if not ss_settings:
-            raise HTTPException(400, "스마트스토어 계정 설정이 없습니다")
+        from backend.domain.samba.account.model import SambaMarketAccount
 
-        config = (
-            json.loads(ss_settings.value)
-            if isinstance(ss_settings.value, str)
-            else ss_settings.value
-        )
-        client = SmartStoreClient(config["clientId"], config["clientSecret"])
+        # inquiry.account_id → SambaMarketAccount 우선 조회
+        client = None
+        if inquiry.account_id:
+            acc_result = await session.execute(
+                select(SambaMarketAccount).where(
+                    SambaMarketAccount.id == inquiry.account_id,
+                    SambaMarketAccount.is_active == True,  # noqa: E712
+                )
+            )
+            acc = acc_result.scalar_one_or_none()
+            if acc:
+                af = acc.additional_fields or {}
+                cid = af.get("clientId", "") or acc.api_key or ""
+                csec = af.get("clientSecret", "") or acc.api_secret or ""
+                if cid and csec:
+                    client = SmartStoreClient(cid, csec)
+        # account_id 없거나 SambaMarketAccount 미등록 → SambaSettings 폴백
+        if client is None:
+            settings_result = await session.execute(
+                select(SambaSettings).where(SambaSettings.key.like("store_smartstore%"))
+            )
+            ss_settings = settings_result.scalars().first()
+            if ss_settings:
+                config = (
+                    json.loads(ss_settings.value)
+                    if isinstance(ss_settings.value, str)
+                    else ss_settings.value
+                )
+                client = SmartStoreClient(config["clientId"], config["clientSecret"])
+        if not client:
+            raise HTTPException(400, "스마트스토어 계정 설정이 없습니다")
 
         inquiry_no = int(inquiry.market_inquiry_no)
 
@@ -1667,29 +1728,50 @@ async def send_reply_to_market(
 
     if inquiry.market == "롯데ON":
         from backend.domain.samba.proxy.lotteon import LotteonClient
+        from backend.domain.samba.account.model import SambaMarketAccount
 
-        settings_result = await session.execute(
-            select(SambaSettings).where(SambaSettings.key.like("store_lotteon%"))
-        )
-        lo_settings = settings_result.scalars().first()
-        if not lo_settings:
+        # inquiry.account_id → SambaMarketAccount 우선 조회
+        lo_client = None
+        if inquiry.account_id:
+            acc_result = await session.execute(
+                select(SambaMarketAccount).where(
+                    SambaMarketAccount.id == inquiry.account_id,
+                    SambaMarketAccount.is_active == True,  # noqa: E712
+                )
+            )
+            acc = acc_result.scalar_one_or_none()
+            if acc:
+                af = acc.additional_fields or {}
+                api_key = af.get("apiKey", "") or acc.api_key or ""
+                if api_key:
+                    lo_client = LotteonClient(api_key=api_key)
+        # account_id 없거나 SambaMarketAccount 미등록 → SambaSettings 폴백
+        if lo_client is None:
+            settings_result = await session.execute(
+                select(SambaSettings).where(SambaSettings.key.like("store_lotteon%"))
+            )
+            lo_settings = settings_result.scalars().first()
+            if lo_settings:
+                config = (
+                    json.loads(lo_settings.value)
+                    if isinstance(lo_settings.value, str)
+                    else lo_settings.value
+                )
+                lo_client = LotteonClient(api_key=config["apiKey"])
+        if not lo_client:
             raise HTTPException(400, "롯데ON 계정 설정이 없습니다")
 
-        config = (
-            json.loads(lo_settings.value)
-            if isinstance(lo_settings.value, str)
-            else lo_settings.value
-        )
-        client = LotteonClient(api_key=config["apiKey"])
-        await client.test_auth()  # trGrpCd/trNo 획득 (필수)
+        await lo_client.test_auth()  # trGrpCd/trNo 획득 (필수)
 
         qna_no = inquiry.market_inquiry_no
         answer_no = ""
         if inquiry.market_answer_no:
-            await client.update_qna_answer(qna_no, inquiry.market_answer_no, body.reply)
+            await lo_client.update_qna_answer(
+                qna_no, inquiry.market_answer_no, body.reply
+            )
             answer_no = inquiry.market_answer_no
         else:
-            data = await client.answer_qna(qna_no, body.reply)
+            data = await lo_client.answer_qna(qna_no, body.reply)
             answer_no = str(data.get("ansNo", data.get("qnaAnsNo", "")))
 
         from backend.domain.samba.cs_inquiry.repository import SambaCSInquiryRepository

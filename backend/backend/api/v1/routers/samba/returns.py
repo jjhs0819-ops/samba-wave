@@ -456,7 +456,7 @@ def _parse_lotteon_return(
     # step_cd로 재분류하지 않음 — clmTpCd=RETN이면 반품, 교환 API면 교환
 
     if step_cd == "21":
-        status = "done"
+        status = "completed"
     elif step_cd == "22":
         status = "rejected"
     else:
@@ -575,8 +575,17 @@ async def sync_returns_from_markets(
                 for ro in raw_orders:
                     po = ro.get("productOrder", ro)
                     order_info = ro.get("order", {})
-                    claim_type = po.get("claimType", "")
-                    claim_status = po.get("claimStatus", "")
+                    claim_info = (
+                        ro.get("claim")
+                        if isinstance(ro.get("claim"), dict)
+                        else po.get("claim")
+                        if isinstance(po.get("claim"), dict)
+                        else {}
+                    )
+                    claim_type = claim_info.get("claimType") or po.get("claimType", "")
+                    claim_status = claim_info.get("claimStatus") or po.get(
+                        "claimStatus", ""
+                    )
 
                     return_type: str | None = None
                     status: str = ""
@@ -613,7 +622,11 @@ async def sync_returns_from_markets(
 
                     # 클레임 사유
                     claim_reason = (
-                        po.get("claimReason", "") or po.get("returnReason", "") or ""
+                        claim_info.get("claimReason", "")
+                        or claim_info.get("returnReason", "")
+                        or po.get("claimReason", "")
+                        or po.get("returnReason", "")
+                        or ""
                     )
 
                     claims_data.append(
@@ -692,6 +705,13 @@ async def sync_returns_from_markets(
                                 update_data["approval_date"] = datetime.now(UTC)
                             elif new_status == "completed":
                                 update_data["completion_date"] = datetime.now(UTC)
+                                update_data["completion_detail"] = {
+                                    "cancel": "취소",
+                                    "return": "반품",
+                                    "exchange": "교환",
+                                }.get(claim["type"], existing_ret.completion_detail)
+                            elif new_status == "rejected":
+                                update_data["completion_detail"] = "거부"
                             await svc.repo.update_async(existing_ret.id, **update_data)
                         # 이미지/전화번호/주소/주문일 보충
                         patch_fields: dict[str, Any] = {}
@@ -779,6 +799,17 @@ async def sync_returns_from_markets(
                         "order_date": existing_order.paid_at
                         or existing_order.created_at,
                         "status": claim["status"],
+                        "completion_detail": (
+                            {
+                                "cancel": "취소",
+                                "return": "반품",
+                                "exchange": "교환",
+                            }.get(claim["type"], "진행중")
+                            if claim["status"] == "completed"
+                            else "거부"
+                            if claim["status"] == "rejected"
+                            else "진행중"
+                        ),
                         "timeline": timeline_entries,
                         "notes": [],
                     }
@@ -828,6 +859,10 @@ async def sync_returns_from_markets(
                     parsed = _parse_lotteon_return(item, "return")
                     parsed["sitmNo"] = item.get("sitmNo", "")
                     claims_data_lo.append(parsed)
+                for item in raw_cancels:
+                    parsed = _parse_lotteon_return(item, "cancel")
+                    parsed["sitmNo"] = item.get("sitmNo", "")
+                    claims_data_lo.append(parsed)
                 _lo_od_nos = [c["order_number"] for c in claims_data_lo]
                 logger.warning(
                     f"[롯데ON] 반품 API 조회된 odNo 목록({len(_lo_od_nos)}건): {_lo_od_nos}"
@@ -858,7 +893,9 @@ async def sync_returns_from_markets(
                     logger.warning(
                         f"[롯데ON] 반품 주문 매칭 성공: {order_number} → DB order_id={order_id}"
                     )
-                    existing_returns = await svc.repo.filter_by_async(order_id=order_id)
+                    existing_returns = await svc.repo.filter_by_async(
+                        order_id=order_id, type=claim["return_type"]
+                    )
                     if existing_returns:
                         # 기존 레코드에 누락/오류 필드 보충
                         er = existing_returns[0]
@@ -891,6 +928,34 @@ async def sync_returns_from_markets(
                         # type이 없거나 잘못 저장된 경우 수정
                         if er.type != correct_type:
                             patch_lo["type"] = correct_type
+                        patch_lo["market_order_status"] = {
+                            "exchange": "교환요청",
+                            "return": "반품요청",
+                            "cancel": "취소요청",
+                        }.get(correct_type, "반품요청")
+                        status_priority = {
+                            "requested": 0,
+                            "approved": 1,
+                            "completed": 2,
+                            "rejected": 2,
+                            "cancelled": 2,
+                        }
+                        if status_priority.get(
+                            claim["status"], 0
+                        ) > status_priority.get(er.status, 0):
+                            from datetime import UTC, datetime
+
+                            patch_lo["status"] = claim["status"]
+                            if claim["status"] in ("completed", "rejected"):
+                                patch_lo["completion_date"] = datetime.now(UTC)
+                        if claim["status"] == "completed":
+                            patch_lo["completion_detail"] = {
+                                "cancel": "취소",
+                                "return": "반품",
+                                "exchange": "교환",
+                            }.get(correct_type, er.completion_detail)
+                        elif claim["status"] == "rejected":
+                            patch_lo["completion_detail"] = "거부"
                         if patch_lo:
                             await svc.repo.update_async(er.id, **patch_lo)
                             logger.warning(
@@ -904,6 +969,8 @@ async def sync_returns_from_markets(
                         new_order_ss = (
                             "교환요청" if correct_type == "exchange" else "반품요청"
                         )
+                        if correct_type == "cancel":
+                            new_order_ss = "취소요청"
                         if existing_order.shipping_status != new_order_ss:
                             await order_repo.update_async(
                                 existing_order.id, shipping_status=new_order_ss
@@ -943,6 +1010,17 @@ async def sync_returns_from_markets(
                         if claim["return_type"] == "exchange"
                         else "반품요청",
                         "status": claim["status"],
+                        "completion_detail": (
+                            {
+                                "cancel": "취소",
+                                "return": "반품",
+                                "exchange": "교환",
+                            }.get(claim["return_type"], "진행중")
+                            if claim["status"] == "completed"
+                            else "거부"
+                            if claim["status"] == "rejected"
+                            else "진행중"
+                        ),
                         "timeline": [
                             {
                                 "date": datetime.now(UTC).isoformat(),
@@ -952,11 +1030,18 @@ async def sync_returns_from_markets(
                         ],
                         "notes": [],
                     }
+                    return_data["market_order_status"] = {
+                        "exchange": "교환요청",
+                        "return": "반품요청",
+                        "cancel": "취소요청",
+                    }.get(claim["return_type"], "반품요청")
                     await svc.repo.create_async(**return_data)
                     # 원주문 shipping_status 동기화
                     new_order_ss = (
                         "교환요청" if claim["return_type"] == "exchange" else "반품요청"
                     )
+                    if claim["return_type"] == "cancel":
+                        new_order_ss = "취소요청"
                     await order_repo.update_async(
                         existing_order.id, shipping_status=new_order_ss
                     )
@@ -986,7 +1071,7 @@ async def sync_returns_from_markets(
                             continue
                         order_id = existing_order.id
                         existing_returns = await svc.repo.filter_by_async(
-                            order_id=order_id
+                            order_id=order_id, type="exchange"
                         )
                         if existing_returns:
                             # 기존 레코드 image 보충 (type은 변경 금지 — 교환취소 후 반품 재신청 케이스 보호)
@@ -1189,6 +1274,219 @@ async def sync_returns_from_markets(
                 )
                 logger.info(
                     f"[반품동기화][롯데ON] {label}: 반품 {len(raw_returns)}건, 취소 {len(raw_cancels)}건 조회, {synced_lo}건 신규 저장"
+                )
+
+            elif market_type == "coupang":
+                from datetime import UTC, datetime
+
+                from backend.domain.samba.proxy.coupang import CoupangClient
+
+                access_key = account.api_key or extras.get("accessKey", "")
+                secret_key = account.api_secret or extras.get("secretKey", "")
+                vendor_id = account.seller_id or extras.get("vendorId", "")
+                if not access_key or not secret_key or not vendor_id:
+                    results.append(
+                        {"account": label, "status": "skip", "message": "API 설정 없음"}
+                    )
+                    continue
+
+                client = CoupangClient(access_key, secret_key, vendor_id)
+
+                def _coupang_status(raw: Any) -> str:
+                    value = str(raw or "").upper()
+                    if any(x in value for x in ("COMPLETE", "DONE", "FINISH")):
+                        return "completed"
+                    if any(x in value for x in ("REJECT", "DENY", "FAIL")):
+                        return "rejected"
+                    if any(x in value for x in ("APPROVE", "RECEIVE", "COLLECT")):
+                        return "approved"
+                    return "requested"
+
+                def _coupang_order_candidates(item: dict[str, Any]) -> list[str]:
+                    candidates: list[str] = []
+                    for key in (
+                        "orderId",
+                        "orderNo",
+                        "orderNumber",
+                        "shipmentBoxId",
+                        "receiptId",
+                    ):
+                        value = item.get(key)
+                        if value:
+                            candidates.append(str(value))
+                    for nested_key in ("items", "returnItems", "exchangeItems"):
+                        nested = item.get(nested_key)
+                        if isinstance(nested, list):
+                            for child in nested:
+                                if not isinstance(child, dict):
+                                    continue
+                                for key in ("orderId", "orderNo", "shipmentBoxId"):
+                                    value = child.get(key)
+                                    if value:
+                                        candidates.append(str(value))
+                    return list(dict.fromkeys(candidates))
+
+                async def _sync_coupang_items(
+                    items: list[dict[str, Any]], return_type: str
+                ) -> int:
+                    synced_count = 0
+                    for item in items:
+                        existing_order = None
+                        for candidate in _coupang_order_candidates(item):
+                            existing_order = await order_repo.find_by_async(
+                                order_number=candidate
+                            )
+                            if existing_order:
+                                break
+                        if not existing_order:
+                            continue
+
+                        status_raw = (
+                            item.get("status")
+                            or item.get("receiptStatus")
+                            or item.get("returnStatus")
+                            or item.get("exchangeStatus")
+                        )
+                        status = _coupang_status(status_raw)
+                        existing_returns = await svc.repo.filter_by_async(
+                            order_id=existing_order.id, type=return_type
+                        )
+                        if existing_returns:
+                            patch: dict[str, Any] = {
+                                "order_date": existing_order.paid_at
+                                or existing_order.created_at,
+                                "market_order_status": {
+                                    "return": "반품요청",
+                                    "exchange": "교환요청",
+                                }.get(return_type, "반품요청"),
+                            }
+                            if status in ("approved", "completed", "rejected"):
+                                patch["status"] = status
+                            if status == "completed":
+                                patch["completion_detail"] = (
+                                    "교환" if return_type == "exchange" else "반품"
+                                )
+                                patch["completion_date"] = datetime.now(UTC)
+                            elif status == "rejected":
+                                patch["completion_detail"] = "거부"
+                                patch["completion_date"] = datetime.now(UTC)
+                            await svc.repo.update_async(existing_returns[0].id, **patch)
+                            continue
+
+                        first_item = {}
+                        for nested_key in ("items", "returnItems", "exchangeItems"):
+                            nested = item.get(nested_key)
+                            if isinstance(nested, list) and nested:
+                                first_item = (
+                                    nested[0] if isinstance(nested[0], dict) else {}
+                                )
+                                break
+
+                        order_number = str(
+                            item.get("orderId")
+                            or item.get("orderNo")
+                            or existing_order.order_number
+                        )
+                        return_data = {
+                            "order_id": existing_order.id,
+                            "order_number": order_number,
+                            "type": return_type,
+                            "reason": item.get("returnReason")
+                            or item.get("reason")
+                            or item.get("reasonCode")
+                            or None,
+                            "description": item.get("reasonDetail")
+                            or item.get("returnDetailedReason")
+                            or None,
+                            "quantity": int(
+                                item.get("returnCount")
+                                or item.get("exchangeCount")
+                                or first_item.get("quantity")
+                                or 1
+                            ),
+                            "requested_amount": float(
+                                item.get("returnDeliveryFee")
+                                or item.get("returnAmount")
+                                or existing_order.sale_price
+                                or 0
+                            ),
+                            "product_image": existing_order.product_image,
+                            "product_name": first_item.get("vendorItemName")
+                            or item.get("vendorItemName")
+                            or existing_order.product_name,
+                            "customer_name": existing_order.customer_name,
+                            "customer_phone": existing_order.customer_phone,
+                            "customer_address": existing_order.customer_address,
+                            "product_location": _extract_city_district(
+                                existing_order.customer_address
+                            ),
+                            "business_name": account.business_name
+                            or account.market_name
+                            or label,
+                            "market": "쿠팡",
+                            "market_order_status": {
+                                "return": "반품요청",
+                                "exchange": "교환요청",
+                            }.get(return_type, "반품요청"),
+                            "return_link": existing_order.source_url or "",
+                            "return_source": existing_order.source_site or "",
+                            "region": _extract_city_district(
+                                existing_order.customer_address
+                            ),
+                            "return_request_date": datetime.now(UTC),
+                            "order_date": existing_order.paid_at
+                            or existing_order.created_at,
+                            "status": status,
+                            "completion_detail": (
+                                "교환"
+                                if status == "completed" and return_type == "exchange"
+                                else "반품"
+                                if status == "completed"
+                                else "거부"
+                                if status == "rejected"
+                                else "진행중"
+                            ),
+                            "timeline": [
+                                {
+                                    "date": datetime.now(UTC).isoformat(),
+                                    "status": status,
+                                    "message": f"쿠팡 {return_type} 클레임 동기화",
+                                }
+                            ],
+                            "notes": [],
+                        }
+                        if status in ("approved", "completed"):
+                            return_data["approval_date"] = datetime.now(UTC)
+                        if status in ("completed", "rejected"):
+                            return_data["completion_date"] = datetime.now(UTC)
+                        await svc.repo.create_async(**return_data)
+                        await order_repo.update_async(
+                            existing_order.id,
+                            status=(
+                                "exchange_requested"
+                                if return_type == "exchange"
+                                else "return_requested"
+                            ),
+                            shipping_status=(
+                                "교환요청" if return_type == "exchange" else "반품요청"
+                            ),
+                        )
+                        synced_count += 1
+                    return synced_count
+
+                return_items = await client.get_return_requests(days=body.days)
+                exchange_items = await client.get_exchange_requests(days=body.days)
+                return_synced = await _sync_coupang_items(return_items, "return")
+                exchange_synced = await _sync_coupang_items(exchange_items, "exchange")
+                synced = return_synced + exchange_synced
+                total_synced += synced
+                results.append(
+                    {
+                        "account": label,
+                        "status": "success",
+                        "fetched": len(return_items) + len(exchange_items),
+                        "synced": synced,
+                    }
                 )
 
             elif market_type == "11st":

@@ -52,22 +52,32 @@ class MarketPlugin(ABC):
         return "unknown"
 
     async def _load_auth(self, session, account) -> dict | None:
-        """인증정보 로드 — account -> settings 폴백."""
+        """인증정보 로드 — account 우선, account 없을 때만 settings 폴백.
+        account가 명시됐는데 credentials가 없으면 None 반환 (다른 계정으로 오인 전송 방지).
+        """
         creds = {}
         if account:
             extras = account.additional_fields or {}
             creds = {k: v for k, v in extras.items() if v}
-        if not creds:
-            from backend.domain.samba.forbidden.model import SambaSettings
-            from sqlmodel import select
+            # additional_fields 비어있어도 api_key/api_secret 체크
+            if not creds:
+                if account.api_key:
+                    creds["apiKey"] = account.api_key
+                if account.api_secret:
+                    creds["apiSecret"] = account.api_secret
+            # account 지정됐으나 credentials 없으면 폴백 없이 None 반환
+            return creds or None
+        # account가 None인 경우에만 SambaSettings 폴백 (레거시 단일계정)
+        from backend.domain.samba.forbidden.model import SambaSettings
+        from sqlmodel import select
 
-            stmt = select(SambaSettings).where(
-                SambaSettings.key == f"store_{self.market_type}"
-            )
-            result = await session.execute(stmt)
-            row = result.scalars().first()
-            if row and isinstance(row.value, dict):
-                creds = row.value
+        stmt = select(SambaSettings).where(
+            SambaSettings.key == f"store_{self.market_type}"
+        )
+        result = await session.execute(stmt)
+        row = result.scalars().first()
+        if row and isinstance(row.value, dict):
+            creds = row.value
         return creds or None
 
     def _validate_category(self, category_id: str) -> str:

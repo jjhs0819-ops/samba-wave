@@ -218,7 +218,7 @@ export default function ProductsPage() {
     } finally {
       setLoading(false)
     }
-  }, [queryReady, currentPage, pageSize, searchQ, searchType, _idFilter, siteFilter, statusFilter, aiFilter, filterByGroupId, sortBy])
+  }, [queryReady, currentPage, pageSize, searchQ, searchType, _idFilter, siteFilter, soldOutFilter, statusFilter, aiFilter, filterByGroupId, sortBy])
 
   // 상품만 리로드 (삭제/수정 등 상품 변경 후 사용)
   const reloadProducts = useCallback(async () => {
@@ -245,6 +245,7 @@ export default function ProductsPage() {
         search_type: searchQ.trim() ? searchType : (_idFilter ? 'id' : undefined),
         source_site: siteFilter || undefined,
         status: statusParam,
+        sold_out_filter: soldOutFilter || undefined,
         ai_filter: aiParam,
         search_filter_id: filterByGroupId || undefined,
         sort_by: sortBy,
@@ -294,7 +295,7 @@ export default function ProductsPage() {
         setCatMappingMap(map)
       }
     }).catch(e => console.error('metadata load error:', e))
-  }, [queryReady, pageSize, searchQ, searchType, _idFilter, siteFilter, statusFilter, aiFilter, filterByGroupId, sortBy])
+  }, [queryReady, pageSize, searchQ, searchType, _idFilter, siteFilter, soldOutFilter, statusFilter, aiFilter, filterByGroupId, sortBy])
 
   useEffect(() => { load() }, [load])
 
@@ -308,7 +309,7 @@ export default function ProductsPage() {
       setFilterGroupName("")
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queryReady, siteFilter, statusFilter, aiFilter, sortBy])
+  }, [queryReady, siteFilter, soldOutFilter, statusFilter, aiFilter, sortBy])
 
   // 필터/정렬 변경 시 1페이지로 리셋 + 선택 초기화 (디바운싱 300ms, 초기 로드 제외)
   const filterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -326,7 +327,7 @@ export default function ProductsPage() {
     return () => { if (filterTimerRef.current) clearTimeout(filterTimerRef.current) }
   // searchType은 검색어가 있을 때만 재조회 트리거 (빈 검색어에서 드롭박스 변경 시 불필요한 로딩 방지)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queryReady, searchQ, searchQ.trim() ? searchType : '', siteFilter, statusFilter, aiFilter, sortBy, filterByGroupId])
+  }, [queryReady, searchQ, searchQ.trim() ? searchType : '', siteFilter, soldOutFilter, statusFilter, aiFilter, sortBy, filterByGroupId])
 
   // 페이지 변경 시 서버에서 해당 페이지 로드
   const totalPages = Math.max(1, Math.ceil(serverTotal / pageSize))
@@ -734,6 +735,7 @@ export default function ProductsPage() {
             search_type: searchQ.trim() ? searchType : undefined,
             source_site: siteFilter || undefined,
             status: statusParam,
+            sold_out_filter: soldOutFilter || undefined,
             ai_filter: aiParam,
             search_filter_id: filterByGroupId || undefined,
           })
@@ -1457,34 +1459,46 @@ export default function ProductsPage() {
                   await new Promise(r => setTimeout(r, delays[attempt - 1]))
                 }
                 try {
-                  const res = await proxyApi.transformImages([ids[i]], aiImgScope, aiImgMode, aiModelPreset)
-                  // 배경제거 모드: 로컬 워커 큐 등록 후 완료 폴링
-                  if (res.status === 'queued' && res.job_id) {
-                    addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 로컬 워커 대기 중...`)
-                    const jobId = res.job_id
-                    let completed = false
-                    for (let poll = 0; poll < 720; poll++) { // 최대 1시간 대기
-                      await new Promise(r => setTimeout(r, 5000))
-                      if (aiJobAbortRef.current) break
-                      try {
-                        const status = await proxyApi.bgJobStatus(jobId)
-                        if (status.status === 'completed') {
-                          if (status.total_transformed > 0) { success++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 완료 (${fmt(status.total_transformed)}장)`) }
-                          else { fail++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 실패: 변환된 이미지 0장`) }
-                          completed = true; break
-                        } else if (status.status === 'failed') {
-                          fail++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 실패`)
-                          completed = true; break
-                        }
-                      } catch { /* 폴링 일시 실패는 무시 */ }
+                  if (aiImgMode === 'background') {
+                    // WASM 브라우저 배경 제거 — 서버 워커 불필요
+                    const { removeBgFromUrl, uploadBlobToR2 } = await import('@/lib/samba/bgRemoval')
+                    const prod = productMap[ids[i]]
+                    if (!prod) { fail++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 상품 정보 없음`); done = true; break }
+                    addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 배경 제거 중...`)
+                    const thumbUrls = aiImgScope.thumbnail ? (prod.images || []).slice(0, 1) : []
+                    const addlUrls = aiImgScope.additional ? (prod.images || []).slice(1) : []
+                    const detailUrls = aiImgScope.detail ? (prod.detail_images || []) : []
+                    const processUrls = async (urls: string[], prefix: string) => {
+                      const results: string[] = []
+                      for (let ui = 0; ui < urls.length; ui++) {
+                        const blob = await removeBgFromUrl(urls[ui])
+                        results.push(await uploadBlobToR2(blob, `${prefix}_${ui}_${Date.now()}.webp`))
+                      }
+                      return results
                     }
-                    if (!completed) { fail++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 타임아웃`) }
-                  } else if (res.success && res.total_transformed > 0) {
-                    success++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 완료 (${fmt(res.total_transformed)}장)`)
+                    const pid = ids[i]
+                    const newThumb = await processUrls(thumbUrls, `bg_${pid}_th`)
+                    const newAddl = await processUrls(addlUrls, `bg_${pid}_ad`)
+                    const newDetail = await processUrls(detailUrls, `bg_${pid}_dt`)
+                    const updateData: Partial<SambaCollectedProduct> = {}
+                    if (aiImgScope.thumbnail || aiImgScope.additional) {
+                      updateData.images = [...newThumb, ...newAddl, ...(aiImgScope.additional ? [] : (prod.images || []).slice(1))]
+                    }
+                    if (aiImgScope.detail) updateData.detail_images = newDetail
+                    updateData.tags = [...new Set([...(prod.tags || []), '__ai_image__', '__img_edited__'])]
+                    await collectorApi.updateProduct(pid, updateData)
+                    const cnt = newThumb.length + newAddl.length + newDetail.length
+                    success++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 완료 (${fmt(cnt)}장)`)
+                    done = true; break
                   } else {
-                    fail++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 실패: ${res.message || '변환된 이미지 0장'}`)
+                    const res = await proxyApi.transformImages([ids[i]], aiImgScope, aiImgMode, aiModelPreset)
+                    if (res.success && res.total_transformed > 0) {
+                      success++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 완료 (${fmt(res.total_transformed)}장)`)
+                    } else {
+                      fail++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 실패: ${res.message || '변환된 이미지 0장'}`)
+                    }
+                    done = true; break
                   }
-                  done = true; break
                 } catch (e) {
                   if (attempt === 2) { fail++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
                 }
@@ -1708,6 +1722,36 @@ export default function ProductsPage() {
             border: "1px solid #3D3D3D", borderRadius: "5px",
             color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: tagPreviewLoading ? "wait" : "pointer", whiteSpace: "nowrap", opacity: tagPreviewLoading ? 0.5 : 1,
           }}>{tagPreviewLoading ? 'AI태그 생성중...' : 'AI태그'}</button>
+          <button onClick={async () => {
+            if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
+            const groupIds = [...new Set(
+              [...selectedIds].map(id => {
+                const p = products.find(pp => pp.id === id)
+                return p?.search_filter_id || `pid:${id}`
+              })
+            )]
+            const ok = await showConfirm(`선택된 상품이 속한 ${fmt(groupIds.length)}개 그룹의 AI 태그를 전체 삭제하시겠습니까?`)
+            if (!ok) return
+            try {
+              const res = await proxyApi.clearAiTags(groupIds)
+              if (res.success) {
+                showAlert(res.message, 'success')
+                const gidSet = new Set(groupIds)
+                setAllProducts(prev => prev.map(p =>
+                  (p.search_filter_id && gidSet.has(p.search_filter_id)) || gidSet.has(`pid:${p.id}`)
+                    ? { ...p, tags: null, seo_keywords: null }
+                    : p
+                ))
+                setSelectedIds(new Set()); setSelectAll(false)
+              } else showAlert(res.message, 'error')
+            } catch (e) {
+              showAlert(`태그 삭제 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
+            }
+          }} style={{
+            fontSize: "0.78rem", padding: "4px 12px",
+            border: "1px solid rgba(255,107,107,0.4)", borderRadius: "5px",
+            color: "#FF6B6B", background: "rgba(255,107,107,0.1)", cursor: "pointer", whiteSpace: "nowrap",
+          }}>태그삭제</button>
           <button
             onClick={() => {
               if (selectedIds.size === 0) { showAlert('전송할 상품을 선택해주세요'); return }

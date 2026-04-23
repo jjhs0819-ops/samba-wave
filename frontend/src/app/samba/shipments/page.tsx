@@ -308,7 +308,7 @@ export default function ShipmentsPage() {
       setPolicies(pol)
       setCategoryMappings(Array.isArray(cm) ? cm as typeof categoryMappings : [])
     })
-  }, [searchText, searchField, siteFilter, registrationFilter, sortBy, currentPage, pageSize]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [searchText, searchField, siteFilter, soldOutFilter, registrationFilter, sortBy, currentPage, pageSize]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load() }, [load])
   useEffect(() => { return () => { if (progressRef.current) clearInterval(progressRef.current) } }, [])
@@ -548,6 +548,7 @@ export default function ShipmentsPage() {
       allParams.search_type = typeMap[searchField] || 'name'
     }
     if (siteFilter !== '전체') allParams.source_site = siteFilter
+    if (soldOutFilter !== '전체') allParams.sold_out_filter = soldOutFilter === '품절' ? 'sold_out' : 'not_sold_out'
     if (registrationFilter !== '전체') {
       if (registrationFilter.startsWith('reg_') || registrationFilter.startsWith('unreg_') || registrationFilter.startsWith('mtype_')) {
         allParams.status = registrationFilter
@@ -1161,7 +1162,7 @@ export default function ShipmentsPage() {
                   const { API_BASE_URL: apiBase } = await import('@/config/api')
                   await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
                 } catch { /* ignore */ }
-                const idParams: { search?: string; search_type?: string; source_site?: string; source_sites?: string; status?: string } = {}
+                const idParams: { search?: string; search_type?: string; source_site?: string; source_sites?: string; status?: string; sold_out_filter?: string } = {}
                 if (searchText.trim()) {
                   idParams.search = searchText.trim()
                   const typeMap: Record<string, string> = { name: 'name', brand: 'brand', name_all: 'name_all', group: 'filter', no: 'no', policy: 'policy' }
@@ -1171,6 +1172,9 @@ export default function ShipmentsPage() {
                   idParams.source_site = siteFilter
                 } else if (selectedSites.length > 0) {
                   idParams.source_sites = selectedSites.join(',')
+                }
+                if (soldOutFilter !== '전체') {
+                  idParams.sold_out_filter = soldOutFilter === '품절' ? 'sold_out' : 'not_sold_out'
                 }
                 if (registrationFilter !== '전체') {
                   if (registrationFilter.startsWith('reg_') || registrationFilter.startsWith('unreg_') || registrationFilter.startsWith('mtype_')) {

@@ -503,7 +503,7 @@ export const collectorApi = {
   getProductIds: (params: {
     search?: string; search_type?: string;
     source_site?: string; source_sites?: string; status?: string;
-    ai_filter?: string; search_filter_id?: string;
+    sold_out_filter?: string; ai_filter?: string; search_filter_id?: string;
   }) => {
     const p = new URLSearchParams()
     p.set('ids_only', 'true')
@@ -512,6 +512,7 @@ export const collectorApi = {
     if (params.source_sites) p.set('source_sites', params.source_sites)
     else if (params.source_site) p.set('source_site', params.source_site)
     if (params.status) p.set('status', params.status)
+    if (params.sold_out_filter) p.set('sold_out_filter', params.sold_out_filter)
     if (params.ai_filter) p.set('ai_filter', params.ai_filter)
     if (params.search_filter_id) p.set('search_filter_id', params.search_filter_id)
     return request<{ ids: string[]; total: number }>(
@@ -1029,6 +1030,13 @@ export const proxyApi = {
       `${SAMBA_PREFIX}/proxy/ai-tags/apply`, {
         method: 'POST',
         body: JSON.stringify({ groups, removed_tags: removedTags || [] }),
+      }),
+  // 그룹 전체 AI 태그 초기화
+  clearAiTags: (groupIds: string[]) =>
+    request<{ success: boolean; message: string; total_cleared: number }>(
+      `${SAMBA_PREFIX}/proxy/ai-tags/clear`, {
+        method: 'POST',
+        body: JSON.stringify({ group_ids: groupIds }),
       }),
   // 이미지 필터링 (모델컷/연출컷/배너 자동 제거)
   filterProductImages: (productIds: string[], filterId?: string, scope?: string, filterMethod?: string) =>

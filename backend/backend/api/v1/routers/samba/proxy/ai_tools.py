@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, File, Header, Query, UploadFile
+from fastapi.responses import Response
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
@@ -161,6 +162,71 @@ async def r2_test(
     except Exception as exc:
         logger.error(f"[R2] test failed: {exc}")
         return {"success": False, "message": f"R2 connection failed: {str(exc)[:200]}"}
+
+
+@router.post("/r2/upload-image")
+async def r2_upload_image(
+    filename: str = Query(...),
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """브라우저 WASM 배경 제거 결과 이미지를 R2에 업로드."""
+    creds = await _get_setting(session, "cloudflare_r2")
+    if not creds or not isinstance(creds, dict):
+        return {"success": False, "message": "R2 설정이 저장되지 않았습니다"}
+
+    account_id = str(creds.get("accountId", "")).strip()
+    access_key = str(creds.get("accessKey", "")).strip()
+    secret_key = str(creds.get("secretKey", "")).strip()
+    bucket_name = str(creds.get("bucketName", "")).strip()
+    public_url_base = str(creds.get("publicUrl", "")).strip().rstrip("/")
+
+    if not access_key or not secret_key or not bucket_name:
+        return {
+            "success": False,
+            "message": "R2 설정 불완전 (Access Key, Secret Key, Bucket Name 필요)",
+        }
+
+    try:
+        import boto3
+
+        content = await file.read()
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=f"https://{account_id}.r2.cloudflarestorage.com",
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            region_name="auto",
+        )
+        key = f"transformed/{filename}"
+        s3.put_object(
+            Bucket=bucket_name, Key=key, Body=content, ContentType="image/webp"
+        )
+        return {"success": True, "public_url": f"{public_url_base}/{key}"}
+    except Exception as exc:
+        logger.error(f"[R2] upload-image 실패: {exc}")
+        return {"success": False, "message": str(exc)[:200]}
+
+
+@router.get("/image-fetch")
+async def image_fetch_proxy(url: str = Query(...)) -> Response:
+    """외부 이미지 URL을 서버에서 가져와 반환 (브라우저 CORS 우회)."""
+    if len(url) > 2000:
+        return Response(status_code=400, content=b"URL too long")
+    try:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            resp = await client.get(
+                url,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; SambaWave/1.0)"},
+            )
+            content = resp.content
+            if len(content) > 20 * 1024 * 1024:
+                return Response(status_code=413, content=b"Image too large")
+            content_type = resp.headers.get("content-type", "image/jpeg")
+            return Response(content=content, media_type=content_type)
+    except Exception as exc:
+        logger.error(f"[image-fetch] 실패: {url[:100]} — {exc}")
+        return Response(status_code=502, content=b"Fetch failed")
 
 
 @router.get("/fal/status")
