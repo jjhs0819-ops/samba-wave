@@ -174,7 +174,7 @@ class SambaNameRule(SQLModel, table=True):
     )
     # 중복단어 필터링 활성화
     dedup_enabled: bool = Field(
-        default=True, sa_column=Column(Boolean, nullable=False, server_default="false")
+        default=True, sa_column=Column(Boolean, nullable=False, server_default="true")
     )
 
     # Timestamps
