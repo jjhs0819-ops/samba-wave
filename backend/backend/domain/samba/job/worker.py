@@ -918,12 +918,13 @@ class JobWorker:
                             if isinstance(ur, dict) and ur.get("refresh")
                             else ""
                         )
-                        if acc_status == "success":
+                        if acc_status in ("success", "completed"):
                             any_success = True
                             success_count += 1
+                            label = "품절삭제" if acc_status == "completed" else "전송"
                             _add_job_log(
                                 job.id,
-                                f"[{i + 1}/{total:,}] {prod_name} → {acc_label}: 전송{rl}",
+                                f"[{i + 1}/{total:,}] {prod_name} → {acc_label}: {label}{rl}",
                             )
                         elif acc_status == "skipped":
                             skip_count += 1
@@ -938,7 +939,7 @@ class JobWorker:
                                 err = "전송 동시성 오류"
                             _add_job_log(
                                 job.id,
-                                f"[{i + 1}/{total:,}] {prod_name} → {acc_label}: {err}",
+                                f"[{i + 1}/{total:,}] {prod_name} → {acc_label}: {err}{rl}",
                             )
                     if not tx_result:
                         if status == "skipped":

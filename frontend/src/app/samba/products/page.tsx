@@ -619,8 +619,10 @@ export default function ProductsPage() {
             } else {
               totalFail++
             }
+            const mktNo = product.market_product_nos?.[accId]
+            const mktNoStr = mktNo ? ` (${mktNo})` : ''
             const logMsg = isOk ? '성공' : isSoldout ? '품절 처리 완료 (주문 완료 후 재삭제)' : status
-            logsRef.push(`[${ts()}] [${fmt(i + 1)}/${fmt(targetProducts.length)}] ${productName} -> ${label}: ${logMsg}`)
+            logsRef.push(`[${ts()}] [${fmt(i + 1)}/${fmt(targetProducts.length)}] ${productName}${mktNoStr} -> ${label}: ${logMsg}`)
           }
           if (successAccIds.length) successMap.set(product.id, successAccIds)
         } else {

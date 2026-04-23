@@ -1149,6 +1149,8 @@ class SambaShipmentService:
                         else "옵션 데이터 없음"
                     )
                     logger.info(f"[전송] 품절 최신화 실패 — {_err}")
+                    if not refresh_status:
+                        refresh_status = f"최신화실패:{_err[:50]}"
             except asyncio.TimeoutError:
                 logger.warning("[전송] 전 옵션 품절 소싱처 최신화 타임아웃 (30초)")
             except Exception as _sold_e:
