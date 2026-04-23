@@ -491,7 +491,8 @@ export default function WarroomPage() {
                 const { API_BASE_URL: apiBase } = await import('@/config/api')
                 await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
                 const pno = singleProductNo.trim() || undefined
-                const res = await collectorApi.autotuneStart('registered', pno)
+                const { getDeviceId } = await import('@/lib/samba/deviceId')
+                const res = await collectorApi.autotuneStart('registered', pno, getDeviceId())
                 if (!res.ok) {
                   const { showAlert } = await import('@/components/samba/Modal')
                   showAlert(res.error || '시작 실패', 'error')
@@ -766,15 +767,31 @@ export default function WarroomPage() {
                       {siteSoldOuts.map(ev => {
                         const d = ev.detail
                         const sitePid = (d?.site_product_id as string | undefined) || shortId(ev.product_id)
-                        const status = d?.sale_status as string | undefined
+                        const reason = d?.reason as string | undefined
+                        const oldS = d?.old_stock as number | null | undefined
+                        const newS = d?.new_stock as number | null | undefined
+                        const suspendedMarkets = (d?.suspended_markets as string[] | undefined) ?? []
+                        const reasonLabel =
+                          reason === 'option_partial' ? '옵션품절'
+                          : reason === 'source_deleted' ? '소싱처삭제'
+                          : reason === 'all_soldout' ? '전체품절'
+                          : '품절'
                         return (
                           <div key={ev.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
                             <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
                             <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{sitePid}</span>
-                            <span style={{ fontSize: '0.72rem', color: '#bbb' }}>재고변동</span>
-                            <span style={{ fontSize: '0.72rem', color: '#bbb' }}>
-                              {status === 'SUSPENSION' ? '품절' : status ?? '변동'}
-                            </span>
+                            <span style={{ fontSize: '0.72rem', color: '#A78BFA' }}>품절</span>
+                            <span style={{ fontSize: '0.68rem', color: '#888' }}>({reasonLabel})</span>
+                            {reason === 'option_partial' && oldS != null && newS != null && (
+                              <span style={{ fontSize: '0.72rem', color: '#bbb' }}>
+                                {fmtNum(oldS)}→{fmtNum(newS)}
+                              </span>
+                            )}
+                            {suspendedMarkets.length > 0 && (
+                              <span style={{ fontSize: '0.68rem', color: '#FFB347' }}>
+                                판매중지 {suspendedMarkets.length}
+                              </span>
+                            )}
                           </div>
                         )
                       })}
@@ -811,14 +828,14 @@ export default function WarroomPage() {
                           </div>
                         )
                       })}
-                      {/* tick 재고변동 */}
+                      {/* tick 품절 (DB 이벤트 보충) */}
                       {tickStockSlice.map((item, i) => (
                         <div key={`ts-${i}`} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
                           {tickEndedAt && <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(tickEndedAt)}</span>}
                           <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{item.site_product_id || item.pid.slice(-8)}</span>
-                          <span style={{ fontSize: '0.72rem', color: '#bbb' }}>재고변동</span>
-                          <span style={{ fontSize: '0.72rem', color: '#bbb' }}>
-                            {item.sale_status === 'sold_out' ? '품절' : item.sale_status ?? '변동'}
+                          <span style={{ fontSize: '0.72rem', color: '#A78BFA' }}>품절</span>
+                          <span style={{ fontSize: '0.68rem', color: '#888' }}>
+                            ({item.sale_status === 'sold_out' ? '전체품절' : '옵션품절'})
                           </span>
                         </div>
                       ))}

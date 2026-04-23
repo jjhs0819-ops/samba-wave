@@ -211,19 +211,21 @@ async def get_shipment_log_buffer(
     logs, current_idx = get_shipment_logs(since_idx)
 
     if current_idx == 0 and since_idx == 0:
+        # jsonb 캐스팅 오류 방지: left('[') 로 배열 여부 텍스트 레벨에서 먼저 확인
+        # (planner가 jsonb_array_length를 scalar 행에 먼저 평가해 터지던 버그 회피)
         result = await session.execute(
             _text(
                 "SELECT logs FROM samba_jobs"
                 " WHERE job_type='transmit' AND logs IS NOT NULL"
-                " AND jsonb_typeof(logs::jsonb) = 'array'"
-                " AND jsonb_array_length(logs::jsonb) > 0"
+                " AND left(trim(logs::text), 1) = '['"
                 " ORDER BY created_at DESC LIMIT 1"
             )
         )
         row = result.first()
         if row and row[0]:
             db_logs = row[0] if isinstance(row[0], list) else []
-            return {"logs": db_logs[-300:], "current_idx": len(db_logs)}
+            if db_logs:
+                return {"logs": db_logs[-300:], "current_idx": len(db_logs)}
 
     return {"logs": logs, "current_idx": current_idx}
 

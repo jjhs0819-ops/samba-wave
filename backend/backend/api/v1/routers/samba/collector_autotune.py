@@ -291,6 +291,9 @@ async def _site_autotune_loop(site: str):
                         _price_tx_items: list[dict] = []
                         _stock_tx_items: list[dict] = []
                         _price_change_events: list[dict] = []
+                        # 품절 이벤트(옵션별/전체/소싱처삭제 통합) — 사이클 끝에 배치 발행
+                        # reason: "option_partial"(옵션 일부 품절) | "all_soldout"(전체 품절) | "source_deleted"(소싱처 삭제)
+                        _soldout_events: list[dict] = []
                         _all_stock_pids: set[str] = set()
                         _cycle_deleted_pids: set[str] = (
                             set()
@@ -481,8 +484,59 @@ async def _site_autotune_loop(site: str):
                                         }
                                     )
 
+                                # per-product 품절 이벤트 수집 — 옵션별 품절(partial)
+                                # 전체 품절/소싱처삭제는 아래 L518 블록에서 append
+                                if r.stock_changed and r.new_sale_status != "sold_out":
+
+                                    def _sum_stock(opts):
+                                        if not opts:
+                                            return 0
+                                        total = 0
+                                        for _o in opts:
+                                            if isinstance(_o, dict):
+                                                try:
+                                                    total += int(_o.get("stock") or 0)
+                                                except (TypeError, ValueError):
+                                                    pass
+                                        return total
+
+                                    _old_stock = _sum_stock(product.options)
+                                    _new_stock = _sum_stock(r.new_options)
+                                    # 옵션 수량이 감소(0으로 전환 포함)한 경우만 "옵션 품절"로 간주
+                                    if _new_stock < _old_stock:
+                                        _soldout_events.append(
+                                            {
+                                                "source_site": product.source_site,
+                                                "product_id": r.product_id,
+                                                "product_name": product.name,
+                                                "site_product_id": product.site_product_id,
+                                                "old_stock": _old_stock,
+                                                "new_stock": _new_stock,
+                                                "sale_status": r.new_sale_status,
+                                                "reason": "option_partial",
+                                                "suspended_markets": [],
+                                            }
+                                        )
+
                                 # 품절 → 서킷브레이커 + 즉시 마켓삭제
                                 if r.new_sale_status == "sold_out":
+                                    # per-product 품절 이벤트 수집 (전체 품절 / 소싱처 삭제)
+                                    # suspended_markets는 아래 마켓삭제 루프에서 in-place 채움
+                                    _soldout_ev_entry = {
+                                        "source_site": product.source_site,
+                                        "product_id": r.product_id,
+                                        "product_name": product.name,
+                                        "site_product_id": product.site_product_id,
+                                        "old_stock": None,
+                                        "new_stock": 0,
+                                        "sale_status": "sold_out",
+                                        "reason": "source_deleted"
+                                        if getattr(r, "deleted_from_source", False)
+                                        else "all_soldout",
+                                        "suspended_markets": [],
+                                    }
+                                    _soldout_events.append(_soldout_ev_entry)
+
                                     _site_consecutive_soldout[site] = (
                                         _site_consecutive_soldout.get(site, 0) + 1
                                     )
@@ -551,6 +605,18 @@ async def _site_autotune_loop(site: str):
                                                     r.product_id,
                                                     e,
                                                 )
+                                        # 삭제 성공한 계정 → 품절 이벤트에 반영
+                                        if _ok_del_ids:
+                                            _suspended_labels = []
+                                            for _acc_id in _ok_del_ids:
+                                                _acc_obj = _account_cache.get(_acc_id)
+                                                if _acc_obj:
+                                                    _suspended_labels.append(
+                                                        f"{_acc_obj.market_name}({_acc_obj.seller_id or '-'})"
+                                                    )
+                                            _soldout_ev_entry["suspended_markets"] = (
+                                                _suspended_labels
+                                            )
                                         # 삭제 성공한 계정 → registered_accounts/market_product_nos 정리
                                         if _ok_del_ids:
                                             _cycle_deleted_pids.add(r.product_id)
@@ -1283,6 +1349,47 @@ async def _site_autotune_loop(site: str):
                                             ],
                                         },
                                     )
+                                # per-product 품절 이벤트 배치 발행 (옵션별/전체/소싱처삭제 통합, 최대 100건)
+                                _REASON_LABEL = {
+                                    "option_partial": "옵션품절",
+                                    "all_soldout": "전체품절",
+                                    "source_deleted": "소싱처삭제",
+                                }
+                                for _ev_item in _soldout_events[:100]:
+                                    _old_s = _ev_item.get("old_stock")
+                                    _new_s = _ev_item.get("new_stock")
+                                    _reason = _ev_item.get("reason", "all_soldout")
+                                    _reason_lbl = _REASON_LABEL.get(_reason, "품절")
+                                    _name_short = (_ev_item["product_name"] or "")[:30]
+                                    if (
+                                        _reason == "option_partial"
+                                        and _old_s is not None
+                                    ):
+                                        _summary = f"품절({_reason_lbl}) — {_name_short} {int(_old_s):,}→{int(_new_s or 0):,}"
+                                    else:
+                                        _summary = (
+                                            f"품절({_reason_lbl}) — {_name_short}"
+                                        )
+                                    await monitor.emit(
+                                        "sold_out",
+                                        "info",
+                                        summary=_summary,
+                                        source_site=_ev_item["source_site"],
+                                        product_id=_ev_item["product_id"],
+                                        product_name=_ev_item["product_name"],
+                                        detail={
+                                            "old_stock": _old_s,
+                                            "new_stock": _new_s,
+                                            "sale_status": _ev_item["sale_status"],
+                                            "site_product_id": _ev_item[
+                                                "site_product_id"
+                                            ],
+                                            "reason": _reason,
+                                            "suspended_markets": _ev_item.get(
+                                                "suspended_markets", []
+                                            ),
+                                        },
+                                    )
                                 await monitor.emit(
                                     "scheduler_tick",
                                     "info",
@@ -1647,16 +1754,30 @@ async def _autotune_loop():
 
 class AutotuneStartRequest(BaseModel):
     target_product_no: Optional[str] = None
+    # 오토튠을 시작하는 브라우저의 확장앱 deviceId.
+    # 이 deviceId와 일치하는 확장앱만 SSG/롯데온 등의 수집 탭 작업을 집어간다.
+    # 비어 있으면 레거시 동작(아무 확장앱이나 집어감)을 유지한다.
+    device_id: Optional[str] = None
 
 
-async def _save_autotune_state(enabled: bool):
-    """DB에 오토튠 ON/OFF 상태 저장."""
+async def _save_autotune_state(enabled: bool, device_id: str = ""):
+    """DB에 오토튠 ON/OFF 상태 + 소유자 deviceId 저장.
+
+    Cloud Run 인스턴스가 교체·스케일아웃될 때 auto_start_if_enabled가
+    복원하면서 소유자 deviceId까지 함께 복구해야, SSG/롯데온 탭 작업이
+    다른 PC의 확장앱으로 새나가지 않는다.
+    """
     try:
         from backend.db.orm import get_write_session
         from backend.api.v1.routers.samba.proxy import _set_setting
 
         async with get_write_session() as session:
             await _set_setting(session, "autotune_enabled", enabled)
+            if enabled:
+                # 시작 시에만 deviceId 갱신, 중지 시에는 기존값 유지하지 않고 초기화
+                await _set_setting(session, "autotune_owner_device_id", device_id or "")
+            else:
+                await _set_setting(session, "autotune_owner_device_id", "")
             await session.commit()
     except Exception as e:
         logger.warning(f"[오토튠] 상태 저장 실패: {e}")
@@ -1678,7 +1799,21 @@ async def auto_start_if_enabled():
 
         async with get_read_session() as session:
             enabled = await _get_setting(session, "autotune_enabled")
+            saved_device_id = (
+                await _get_setting(session, "autotune_owner_device_id") or ""
+            )
         if enabled:
+            # deviceId가 비어 있으면 자동시작을 건너뛴다.
+            # 그렇지 않으면 소싱큐 owner가 빈 값으로 세팅돼 모든 PC 확장앱이
+            # SSG/롯데온 탭 작업을 집어가게 된다 (다른 PC에서 탭이 계속 열리는 증상).
+            # 사용자가 브라우저에서 명시적으로 다시 시작하면 정상 owner와 함께 복구된다.
+            if not saved_device_id:
+                logger.warning(
+                    "[오토튠] 저장된 deviceId 없음 → 자동시작 건너뜀 "
+                    "(브라우저에서 수동 시작 필요, 다른 PC 탭 열림 방지)"
+                )
+                return
+
             # 전송 Job 존재 시 대기 (OOM 방지 — 전송과 동시 실행 차단)
             from backend.db.orm import get_read_session as _get_rs
             from sqlalchemy import text as _st
@@ -1706,6 +1841,16 @@ async def auto_start_if_enabled():
             from backend.domain.samba.collector.refresher import clear_bulk_cancel
 
             if not _autotune_running_event.is_set():
+                # 소싱큐 owner deviceId 복원 — 실행 브라우저에만 탭이 열리도록 함
+                try:
+                    from backend.domain.samba.proxy.sourcing_queue import (
+                        set_autotune_owner,
+                    )
+
+                    set_autotune_owner(saved_device_id)
+                except Exception:
+                    pass
+
                 _autotune_running_event.set()
                 _autotune_cycle_count = 0
                 _site_cycle_counts.clear()
@@ -1715,7 +1860,10 @@ async def auto_start_if_enabled():
                 _site_empty_skip_until.clear()
                 clear_bulk_cancel()
                 _autotune_task = asyncio.create_task(_autotune_loop())
-                logger.info("[오토튠] 서버 시작 — DB 설정에 따라 자동 시작")
+                logger.info(
+                    "[오토튠] 서버 시작 — DB 설정에 따라 자동 시작 (owner=%s)",
+                    saved_device_id[:8],
+                )
     except Exception as e:
         logger.warning(f"[오토튠] 자동 시작 실패: {e}")
 
@@ -1975,9 +2123,21 @@ async def autotune_start(
     _site_empty_hits.clear()
     _site_empty_skip_until.clear()
     clear_bulk_cancel()
+
+    # 오토튠을 시작한 브라우저(확장앱)의 deviceId를 소싱큐에 등록
+    # → SSG 등 확장앱 의존 플러그인이 add_detail_job 호출 시 자동으로 소유자로 태그
+    # → 동일 테넌트의 다른 브라우저는 collect-queue에서 해당 작업을 받지 못함
+    try:
+        from backend.domain.samba.proxy.sourcing_queue import set_autotune_owner
+
+        set_autotune_owner(body.device_id or "")
+    except Exception:
+        pass
+
     _autotune_task = asyncio.create_task(_autotune_loop())
     if not body.target_product_no:
-        await _save_autotune_state(True)
+        # Cloud Run 인스턴스 교체 시 복원 경로에서 deviceId를 다시 세팅할 수 있도록 함께 저장
+        await _save_autotune_state(True, body.device_id or "")
     return {"ok": True, "status": "started", "target": "registered"}
 
 
@@ -2001,6 +2161,15 @@ async def autotune_stop():
     if _autotune_task and not _autotune_task.done():
         _autotune_task.cancel()
     _autotune_task = None
+
+    # 소싱큐의 오토튠 소유자 deviceId 해제 — 이후 add_detail_job은 owner 없이 큐잉됨
+    try:
+        from backend.domain.samba.proxy.sourcing_queue import set_autotune_owner
+
+        set_autotune_owner("")
+    except Exception:
+        pass
+
     await _save_autotune_state(False)
     return {"ok": True, "status": "stopped"}
 

@@ -141,8 +141,8 @@ asyncio.run(fix())
   if [ "${RUN_MIGRATIONS:-1}" = "1" ]; then
     echo "Running database migrations..."
     # 롯데ON overlap 해소: 39f5332d495f + z_lotteon_order_line_keys 동시 존재 시 stamp으로 정리
-    echo "Stamping alembic to c58d77ec580e (overlap guard + license table)..."
-    uv run alembic stamp c58d77ec580e 2>/dev/null || true
+    echo "Stamping alembic to 202604232300_dedup_default_true (latest migration baseline)..."
+    uv run alembic stamp 202604232300_dedup_default_true 2>/dev/null || true
     _MIGRATION_OK=0
     for i in 1 2 3; do
       if uv run alembic upgrade heads; then

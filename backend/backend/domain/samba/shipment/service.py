@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from datetime import UTC, datetime
 from typing import Any, Optional
 
@@ -1290,7 +1291,11 @@ class SambaShipmentService:
                                 # API 호출은 성공했으나 soldout_fallback=True 또는 success=False
                                 res["error"] = "전 옵션 품절 (마켓삭제 실패)"
 
-                    # 마켓삭제 실패 케이스 반환
+                    # 품절 스킵 케이스: status를 skipped로 명시, error 기본값 보정
+                    # (res.status=="completed"는 마켓삭제 완료 → 이미 return된 상태이므로 여기 도달 안함)
+                    res["status"] = "skipped"
+                    if not res.get("error"):
+                        res["error"] = "전 옵션 품절"
                     logger.info(
                         f"[전송] 상품 {product_id} → {market_type} 전 옵션 품절 스킵"
                     )
@@ -1469,6 +1474,7 @@ class SambaShipmentService:
                             return res
 
                     logger.info(f"[메모리] 마켓전송 전: {_mem_mb()}MB")
+                    start_time = time.time()
                     result = await dispatch_to_market(
                         self.session,
                         market_type,
@@ -1476,6 +1482,10 @@ class SambaShipmentService:
                         category_id,
                         account=account,
                         existing_product_no=existing_product_no,
+                    )
+                    elapsed = time.time() - start_time
+                    logger.info(
+                        f"[마켓전송완료] {market_type} 소요시간: {elapsed:.1f}초 (상품: {product_row.name[:40]})"
                     )
                 finally:
                     account_sem.release()
@@ -1840,17 +1850,27 @@ class SambaShipmentService:
                 composed = re.sub(re.escape(dw), " ", composed, flags=re.IGNORECASE)
             composed = re.sub(r"\s{2,}", " ", composed).strip()
 
-        # 중복 단어 제거
+        # 중복 단어 제거 — 구두점 안에 묶인 부분단어까지 감지
         if name_rule.dedup_enabled:
-            words = composed.split()
             seen: set[str] = set()
-            deduped: list[str] = []
-            for w in words:
-                lower = w.lower()
-                if lower not in seen:
-                    seen.add(lower)
-                    deduped.append(w)
-            composed = " ".join(deduped)
+
+            def _dedup_replace(m: re.Match) -> str:
+                word = m.group(0)
+                lower = word.lower()
+                if lower in seen:
+                    return ""
+                seen.add(lower)
+                return word
+
+            # 2자 이상 한글/영문 + 하이픈 연결 숫자(품번) + 3자 이상 순수 숫자
+            composed = re.sub(
+                r"[^\W\d_]{2,}|\d+(?:-\d+)+|\d{3,}",
+                _dedup_replace,
+                composed,
+                flags=re.UNICODE,
+            )
+            # 연속 공백 정리
+            composed = re.sub(r"\s+", " ", composed).strip()
 
         # prefix/suffix 적용
         if name_rule.prefix:

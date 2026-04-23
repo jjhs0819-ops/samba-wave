@@ -1355,7 +1355,7 @@ export default function ShipmentsPage() {
                         onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
                         onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
                       >
-                        [{p.site_product_id || ''}] {p.name} {optCount > 0 ? <span style={{ color: '#DCE0E8' }}>[옵션수:{fmtNum(optCount)}]</span> : ''}
+                        [{p.site_product_id || ''}] {p.brand ? <span style={{ color: '#A78BFA', fontWeight: 600 }}>[{p.brand}]</span> : ''}{p.brand ? ' ' : ''}{p.name} {optCount > 0 ? <span style={{ color: '#DCE0E8' }}>[옵션수:{fmtNum(optCount)}]</span> : ''}
                       </a>
                     </div>
                     {regMarkets.length > 0 && (

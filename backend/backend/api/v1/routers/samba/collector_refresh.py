@@ -320,7 +320,12 @@ async def refresh_products(
 
             if r.new_sale_status == "sold_out":
                 soldout_ids.append(r.product_id)
-                # 모니터링: 품절 감지
+                # 모니터링: 품절 감지 (수동갱신 — autotune과 동일 스키마)
+                _reason_manual = (
+                    "source_deleted"
+                    if getattr(r, "deleted_from_source", False)
+                    else "all_soldout"
+                )
                 await monitor.emit(
                     "sold_out",
                     "warning",
@@ -331,12 +336,50 @@ async def refresh_products(
                     detail={
                         "site_product_id": getattr(product, "site_product_id", None),
                         "sale_status": "sold_out",
+                        "old_stock": None,
+                        "new_stock": 0,
+                        "reason": _reason_manual,
+                        "suspended_markets": [],
                     },
                 )
         else:
             if r.stock_changed:
-                # 가격/상태 동일, 옵션 재고만 변동
+                # 가격/상태 동일, 옵션 재고만 변동 → 옵션 품절 이벤트 발행
                 stock_only_ids.append(r.product_id)
+
+                def _sum_stock_manual(opts):
+                    if not opts:
+                        return 0
+                    total = 0
+                    for _o in opts:
+                        if isinstance(_o, dict):
+                            try:
+                                total += int(_o.get("stock") or 0)
+                            except (TypeError, ValueError):
+                                pass
+                    return total
+
+                _old_stock_m = _sum_stock_manual(product.options)
+                _new_stock_m = _sum_stock_manual(r.new_options)
+                if _new_stock_m < _old_stock_m:
+                    await monitor.emit(
+                        "sold_out",
+                        "info",
+                        summary=f"품절(옵션품절) — {(product.name or '')[:30]} {_old_stock_m:,}→{_new_stock_m:,}",
+                        source_site=product.source_site,
+                        product_id=r.product_id,
+                        product_name=product.name,
+                        detail={
+                            "site_product_id": getattr(
+                                product, "site_product_id", None
+                            ),
+                            "sale_status": r.new_sale_status or "in_stock",
+                            "old_stock": _old_stock_m,
+                            "new_stock": _new_stock_m,
+                            "reason": "option_partial",
+                            "suspended_markets": [],
+                        },
+                    )
                 refresh_details.append(
                     {
                         "time": kst_now.strftime("%H:%M:%S"),

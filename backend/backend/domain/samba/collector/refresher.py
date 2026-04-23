@@ -34,8 +34,10 @@ SITE_CONCURRENCY: dict[str, int] = {
     "ABCmart": 5 if _IS_CLOUD else 2,
     "GrandStage": 5 if _IS_CLOUD else 2,
     "REXMONDE": 5 if _IS_CLOUD else 2,
-    "SSG": 3,  # 탭 동시 접근으로 인한 reCAPTCHA 차단 방지 (7→3 축소)
-    "LOTTEON": 5 if _IS_CLOUD else 2,
+    # owner deviceId 필터링 적용 후 실행 PC 1대만 처리 → 큐 적체 방지 위해
+    # 동시 2건 + 3초 간격으로 통일 (SSG/LOTTEON 공통)
+    "SSG": 2,
+    "LOTTEON": 2,
     "GSShop": 5 if _IS_CLOUD else 2,
     "ElandMall": 5 if _IS_CLOUD else 2,
     "SSF": 5 if _IS_CLOUD else 2,
@@ -52,8 +54,9 @@ SITE_BASE_INTERVAL: dict[str, float] = {
     "ABCmart": 1.0,
     "GrandStage": 1.0,
     "REXMONDE": 1.0,
-    "SSG": 3.0,  # reCAPTCHA 방지를 위한 요청 간격 확대
-    "LOTTEON": 0.5,
+    # 실행 PC 1대 처리 기준 큐 적체 방지 (동시 2건 × 3초 간격 = 초당 0.67건 큐잉)
+    "SSG": 3.0,
+    "LOTTEON": 3.0,
     "GSShop": 1.0,
     "ElandMall": 1.0,
     "SSF": 1.0,
@@ -466,6 +469,8 @@ class RefreshResult:
     # 소싱처 보조 API(쿠폰/혜택) 실패로 가격 데이터가 불확실한 경우 True
     # True이면 오토튠에서 cost 업데이트 및 전송을 보류함
     price_uncertain: bool = False
+    # 소싱처에서 상품 자체가 삭제되어 품절 처리된 경우 True (품절 이벤트 reason 구분용)
+    deleted_from_source: bool = False
 
 
 @dataclass
@@ -756,6 +761,7 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
                 product_id=product.id,
                 new_sale_status="sold_out",
                 changed=True,  # 상태 변경이므로 변동으로 처리 (수동갱신 sold_out 플로우 진입)
+                deleted_from_source=True,
             )
         _log_refresh(
             "MUSINSA",
@@ -879,7 +885,8 @@ def _process_musinsa_detail(
         new_sale_price != old_sale or new_sale_status != old_status or cost_changed
     )
 
-    # 옵션 재고 변동 건수 — 품절↔리스탁 전환만 카운트
+    # 옵션 재고 변동 건수 — 품절↔리스탁 전환 + 수량 델타 모두 카운트
+    # (소싱처 무관 공통 기준 — 신규 소싱처도 자동 포함)
     old_options = getattr(product, "options", None) or []
     _stock_changes = 0
     if new_options and old_options:
@@ -893,17 +900,20 @@ def _process_musinsa_detail(
             new_stock = o.get("stock", 0) or 0
             was_soldout = old_stock <= 0
             is_soldout = new_stock <= 0 or o.get("isSoldOut", False)
-            if was_soldout != is_soldout:
+            _transition = was_soldout != is_soldout
+            _qty_delta = (old_stock or 0) != (new_stock or 0)
+            if _transition or _qty_delta:
                 _stock_changes += 1
-                logger.info(
-                    "[재고변동감지] %s %s: DB=%s(sold=%s) → API=%s(sold=%s)",
-                    site_product_id,
-                    key,
-                    old_stock,
-                    was_soldout,
-                    new_stock,
-                    is_soldout,
-                )
+                if _transition:
+                    logger.info(
+                        "[재고변동감지] %s %s: DB=%s(sold=%s) → API=%s(sold=%s)",
+                        site_product_id,
+                        key,
+                        old_stock,
+                        was_soldout,
+                        new_stock,
+                        is_soldout,
+                    )
     else:
         if not old_options and new_options:
             logger.warning(
@@ -1046,7 +1056,7 @@ async def _parse_kream(product: Any) -> RefreshResult:
         or new_sale_status != old_status
     )
 
-    # 옵션 재고 변동 — 품절↔리스탁 전환만 카운트
+    # 옵션 재고 변동 — 품절↔리스탁 전환 + 수량 델타 모두 카운트
     old_options = getattr(product, "options", None) or []
     _stock_changes = 0
     if new_options and old_options:
@@ -1060,7 +1070,7 @@ async def _parse_kream(product: Any) -> RefreshResult:
             new_stock = o.get("stock", 0) or 0
             was_soldout = old_stock <= 0
             is_soldout = new_stock <= 0
-            if was_soldout != is_soldout:
+            if was_soldout != is_soldout or (old_stock or 0) != (new_stock or 0):
                 _stock_changes += 1
 
     # 마켓 정보

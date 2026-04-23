@@ -608,8 +608,8 @@ export const collectorApi = {
     request<Record<string, unknown>>(`${SAMBA_PREFIX}/collector/probe/status`),
   probeRun: () =>
     request<Record<string, unknown>>(`${SAMBA_PREFIX}/collector/probe/run`, { method: 'POST' }),
-  autotuneStart: (target: string = 'all', targetProductNo?: string) =>
-    request<{ ok: boolean; status: string; error?: string }>(`${SAMBA_PREFIX}/collector/autotune/start`, { method: 'POST', body: JSON.stringify({ target, target_product_no: targetProductNo || undefined }) }),
+  autotuneStart: (target: string = 'all', targetProductNo?: string, deviceId?: string) =>
+    request<{ ok: boolean; status: string; error?: string }>(`${SAMBA_PREFIX}/collector/autotune/start`, { method: 'POST', body: JSON.stringify({ target, target_product_no: targetProductNo || undefined, device_id: deviceId || undefined }) }),
   autotuneRefreshOne: (productNo: string) =>
     request<{ ok: boolean; error?: string; product_id?: string; brand?: string; name?: string; time?: string; status?: string; detail?: string }>(`${SAMBA_PREFIX}/collector/autotune/refresh-one`, { method: 'POST', body: JSON.stringify({ product_no: productNo }) }),
   autotuneStop: () =>
