@@ -288,6 +288,7 @@ async def _site_autotune_loop(site: str):
                         deleted_count = 0
                         price_changed_count = 0
                         _all_price_pids: set[str] = set()
+                        _price_tx_items: list[dict] = []
                         _all_stock_pids: set[str] = set()
                         _cycle_deleted_pids: set[str] = (
                             set()
@@ -731,6 +732,15 @@ async def _site_autotune_loop(site: str):
                                     ):
                                         price_changed_count += 1
                                         _all_price_pids.add(r.product_id)
+                                        if len(_price_tx_items) < 10:
+                                            _price_tx_items.append(
+                                                {
+                                                    "pid": r.product_id,
+                                                    "name": (product.name or "")[:40],
+                                                    "old_price": last_price,
+                                                    "new_price": expected_price,
+                                                }
+                                            )
                                         _price_action_txt = f"가격변동 {last_price:,}→{expected_price:,} → {acc_label}"
                                         _acc_items.append("price")
                                         _acc_action_parts.append(_price_action_txt)
@@ -1208,6 +1218,7 @@ async def _site_autotune_loop(site: str):
                                         "timeouts": _timeout_count,
                                         "other_errors": _other_err,
                                         "price_transmit": len(_all_price_pids),
+                                        "price_changed_items": _price_tx_items,
                                         "stock_transmit": len(_all_stock_pids),
                                         "sold_out": summary.sold_out,
                                         "retransmitted": retransmitted,

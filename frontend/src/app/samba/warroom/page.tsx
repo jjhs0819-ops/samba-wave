@@ -650,7 +650,7 @@ export default function WarroomPage() {
       {/* 이벤트 타임라인 (로그 아래) */}
       <div style={card}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#FF8C00' }}>이벤트 타임라인</div>
+          <div style={{ fontSize: '0.96rem', fontWeight: 600, color: '#FF8C00' }}>이벤트 타임라인</div>
           <div style={{ display: 'flex', gap: '0.25rem' }}>
             {([
               ['all', '전체'],
@@ -664,7 +664,7 @@ export default function WarroomPage() {
                 onClick={() => setEventFilter(key)}
                 style={{
                   padding: '0.25rem 0.75rem',
-                  fontSize: '0.7rem',
+                  fontSize: '0.84rem',
                   borderRadius: '4px',
                   border: '1px solid',
                   borderColor: eventFilter === key ? '#FF8C00' : '#3D3D3D',
@@ -681,7 +681,7 @@ export default function WarroomPage() {
         </div>
 
         {filteredEvents.length === 0 ? (
-          <div style={{ fontSize: '0.8rem', color: '#666', padding: '1rem 0', textAlign: 'center' }}>이벤트 없음</div>
+          <div style={{ fontSize: '0.96rem', color: '#666', padding: '1rem 0', textAlign: 'center' }}>이벤트 없음</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', maxHeight: '420px', overflow: 'auto' }}>
             {/* 소싱처별 오토튠 사이클 그룹 */}
@@ -700,8 +700,8 @@ export default function WarroomPage() {
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.3rem' }}>
                         <span style={{ width: 8, height: 8, borderRadius: '50%', background: siteColor, flexShrink: 0 }} />
-                        <span style={{ fontSize: '0.75rem', fontWeight: 600, color: siteColor }}>{siteName}</span>
-                        <span style={{ fontSize: '0.65rem', color: '#666', marginLeft: 'auto' }}>
+                        <span style={{ fontSize: '0.9rem', fontWeight: 600, color: siteColor }}>{siteName}</span>
+                        <span style={{ fontSize: '0.78rem', color: '#666', marginLeft: 'auto' }}>
                           {cycles > 1 ? `최근 ${cycles}사이클` : ''}
                         </span>
                       </div>
@@ -726,37 +726,37 @@ export default function WarroomPage() {
                         return (
                           <div key={ci} style={{ marginBottom: ci < cycles - 1 ? '0.3rem' : 0, paddingBottom: ci < cycles - 1 ? '0.3rem' : 0, borderBottom: ci < cycles - 1 ? '1px solid #ffffff10' : 'none' }}>
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', alignItems: 'center' }}>
-                              {timeRange && <span style={{ fontSize: '0.6rem', color: '#999' }}>{timeRange}</span>}
+                              {timeRange && <span style={{ fontSize: '0.72rem', color: '#999' }}>{timeRange}</span>}
                               {total != null && (
-                                <span style={{ fontSize: '0.65rem', color: '#aaa' }}>대상 {fmtNum(total)}</span>
+                                <span style={{ fontSize: '0.78rem', color: '#aaa' }}>대상 {fmtNum(total)}</span>
                               )}
                               {ok != null && (
-                                <span style={{ fontSize: '0.65rem', color: '#51CF66' }}>성공 {fmtNum(ok)}</span>
+                                <span style={{ fontSize: '0.78rem', color: '#51CF66' }}>성공 {fmtNum(ok)}</span>
                               )}
                               {errs != null && errs > 0 && (
-                                <span style={{ fontSize: '0.65rem', color: '#FF6B6B' }}>실패 {fmtNum(errs)}</span>
+                                <span style={{ fontSize: '0.78rem', color: '#FF6B6B' }}>실패 {fmtNum(errs)}</span>
                               )}
                               {dur != null && (
-                                <span style={{ fontSize: '0.65rem', color: '#888' }}>{Math.round(dur)}초</span>
+                                <span style={{ fontSize: '0.78rem', color: '#888' }}>{Math.round(dur)}초</span>
                               )}
                               {rate != null && (
-                                <span style={{ fontSize: '0.65rem', color: '#51CF66', fontWeight: 600 }}>{fmtNum(rate)}건/초</span>
+                                <span style={{ fontSize: '0.78rem', color: '#51CF66', fontWeight: 600 }}>{fmtNum(rate)}건/초</span>
                               )}
                             </div>
                             {((priceTx && priceTx > 0) || (stockTx && stockTx > 0) || (deleted && deleted > 0)) && (
                               <div style={{ display: 'flex', gap: '0.3rem', marginTop: '0.2rem' }}>
                                 {priceTx != null && priceTx > 0 && (
-                                  <span style={{ fontSize: '0.6rem', padding: '0.05rem 0.3rem', borderRadius: '3px', background: '#FFB34715', color: '#FFB347', border: '1px solid #FFB34730' }}>
+                                  <span style={{ fontSize: '0.72rem', padding: '0.05rem 0.3rem', borderRadius: '3px', background: '#FFB34715', color: '#FFB347', border: '1px solid #FFB34730' }}>
                                     가격전송 {fmtNum(priceTx)}
                                   </span>
                                 )}
                                 {stockTx != null && stockTx > 0 && (
-                                  <span style={{ fontSize: '0.6rem', padding: '0.05rem 0.3rem', borderRadius: '3px', background: '#A78BFA15', color: '#A78BFA', border: '1px solid #A78BFA30' }}>
+                                  <span style={{ fontSize: '0.72rem', padding: '0.05rem 0.3rem', borderRadius: '3px', background: '#A78BFA15', color: '#A78BFA', border: '1px solid #A78BFA30' }}>
                                     재고전송 {fmtNum(stockTx)}
                                   </span>
                                 )}
                                 {deleted != null && deleted > 0 && (
-                                  <span style={{ fontSize: '0.6rem', padding: '0.05rem 0.3rem', borderRadius: '3px', background: '#FF6B6B15', color: '#FF6B6B', border: '1px solid #FF6B6B30' }}>
+                                  <span style={{ fontSize: '0.72rem', padding: '0.05rem 0.3rem', borderRadius: '3px', background: '#FF6B6B15', color: '#FF6B6B', border: '1px solid #FF6B6B30' }}>
                                     삭제 {fmtNum(deleted)}
                                   </span>
                                 )}
@@ -776,7 +776,13 @@ export default function WarroomPage() {
                 {Object.keys(tickEventsBySite).map(siteName => {
                   const sitePriceChanges = siteChanges[siteName]?.price_changed ?? []
                   const siteSoldOuts = siteChanges[siteName]?.sold_out ?? []
-                  if (sitePriceChanges.length === 0 && siteSoldOuts.length === 0) return null
+                  // autotune 사이클 tick에서 가격변동 상품 추출 (LOTTEON 등 price_changed 이벤트 없는 소싱처)
+                  type TickPriceItem = { pid: string; name: string; old_price: number; new_price: number }
+                  const latestTick = tickEventsBySite[siteName]?.[0]
+                  const latestTickDetail = latestTick?.detail as Record<string, unknown> | undefined
+                  const tickPriceItems = (latestTickDetail?.price_changed_items as TickPriceItem[] | undefined) ?? []
+                  const tickEndedAt = latestTickDetail?.ended_at as string | undefined
+                  if (sitePriceChanges.length === 0 && siteSoldOuts.length === 0 && tickPriceItems.length === 0) return null
                   const siteColor = SITE_COLORS[siteName] || '#888'
                   const fmtT = (iso: string) => {
                     const d = new Date(iso)
@@ -791,7 +797,7 @@ export default function WarroomPage() {
                       border: `1px solid ${siteColor}20`,
                       background: `${siteColor}05`,
                     }}>
-                      <div style={{ fontSize: '0.65rem', color: '#666', marginBottom: '0.3rem', fontWeight: 600 }}>
+                      <div style={{ fontSize: '0.78rem', color: '#666', marginBottom: '0.3rem', fontWeight: 600 }}>
                         {siteName} 점검
                       </div>
                       {siteSoldOuts.map(ev => {
@@ -799,10 +805,10 @@ export default function WarroomPage() {
                         const status = d?.sale_status as string | undefined
                         return (
                           <div key={ev.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
-                            <span style={{ fontSize: '0.6rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
-                            <span style={{ fontSize: '0.6rem', color: '#aaa', fontFamily: 'monospace' }}>{shortId(ev.product_id)}</span>
-                            <span style={{ fontSize: '0.6rem', color: '#A78BFA' }}>재고변동</span>
-                            <span style={{ fontSize: '0.6rem', color: status === 'SUSPENSION' ? '#FF6B6B' : '#51CF66' }}>
+                            <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
+                            <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{shortId(ev.product_id)}</span>
+                            <span style={{ fontSize: '0.72rem', color: '#A78BFA' }}>재고변동</span>
+                            <span style={{ fontSize: '0.72rem', color: status === 'SUSPENSION' ? '#FF6B6B' : '#51CF66' }}>
                               {status === 'SUSPENSION' ? '품절' : status ?? '변동'}
                             </span>
                           </div>
@@ -816,17 +822,39 @@ export default function WarroomPage() {
                         const sign = pct != null && pct > 0 ? '+' : ''
                         return (
                           <div key={ev.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
-                            <span style={{ fontSize: '0.6rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
-                            <span style={{ fontSize: '0.6rem', color: '#aaa', fontFamily: 'monospace' }}>{shortId(ev.product_id)}</span>
-                            <span style={{ fontSize: '0.6rem', color: '#FFB347' }}>가격변동</span>
+                            <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
+                            <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{shortId(ev.product_id)}</span>
+                            <span style={{ fontSize: '0.72rem', color: '#FFB347' }}>가격변동</span>
                             {oldP != null && newP != null && (
-                              <span style={{ fontSize: '0.6rem', color: (pct ?? 0) > 0 ? '#FF6B6B' : '#51CF66' }}>
+                              <span style={{ fontSize: '0.72rem', color: (pct ?? 0) > 0 ? '#FF6B6B' : '#51CF66' }}>
                                 ₩{fmtNum(oldP)}→₩{fmtNum(newP)}{pct != null ? ` (${sign}${pct}%)` : ''}
                               </span>
                             )}
                           </div>
                         )
                       })}
+                      {/* autotune 사이클 tick에서 추출한 가격변동 상품 (LOTTEON 등) */}
+                      {tickPriceItems.length > 0 && (
+                        <>
+                          {tickEndedAt && sitePriceChanges.length === 0 && (
+                            <div style={{ fontSize: '0.66rem', color: '#555', marginBottom: '0.2rem' }}>
+                              {fmtT(tickEndedAt)} 사이클
+                            </div>
+                          )}
+                          {tickPriceItems.map((item, i) => {
+                            const diff = item.old_price > 0 ? Math.round((item.new_price - item.old_price) / item.old_price * 100) : 0
+                            return (
+                              <div key={i} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
+                                <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{item.pid.slice(-8)}</span>
+                                <span style={{ fontSize: '0.72rem', color: '#FFB347' }}>가격변동</span>
+                                <span style={{ fontSize: '0.72rem', color: diff > 0 ? '#FF6B6B' : '#51CF66' }}>
+                                  ₩{fmtNum(item.old_price)}→₩{fmtNum(item.new_price)}{diff !== 0 ? ` (${diff > 0 ? '+' : ''}${diff}%)` : ''}
+                                </span>
+                              </div>
+                            )
+                          })}
+                        </>
+                      )}
                     </div>
                   )
                 })}
@@ -891,13 +919,13 @@ export default function WarroomPage() {
                       background: SEV_COLORS[e.severity] || '#666',
                       marginTop: '4px', flexShrink: 0,
                     }} />
-                    <span style={{ fontSize: '0.75rem', color: '#666', minWidth: '3rem', flexShrink: 0 }}>{timeStr}</span>
-                    <span style={{ fontSize: '0.8rem', color: '#E5E5E5', flex: 1 }}>
+                    <span style={{ fontSize: '0.9rem', color: '#666', minWidth: '3rem', flexShrink: 0 }}>{timeStr}</span>
+                    <span style={{ fontSize: '0.96rem', color: '#E5E5E5', flex: 1 }}>
                       {e.summary}
                     </span>
                     {e.source_site && (
                       <span style={{
-                        fontSize: '0.65rem', color: SITE_COLORS[e.source_site] || '#888',
+                        fontSize: '0.78rem', color: SITE_COLORS[e.source_site] || '#888',
                         padding: '0.1rem 0.3rem', borderRadius: '3px',
                         background: 'rgba(255,255,255,0.05)', flexShrink: 0,
                       }}>
@@ -909,7 +937,7 @@ export default function WarroomPage() {
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem', marginTop: '0.25rem', paddingLeft: '2.5rem' }}>
                       {detailTags.map((tag, i) => (
                         <span key={i} style={{
-                          fontSize: '0.65rem',
+                          fontSize: '0.78rem',
                           padding: '0.1rem 0.4rem',
                           borderRadius: '3px',
                           background: `${tag.color}15`,

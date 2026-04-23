@@ -381,23 +381,23 @@ export default function ProductsPage() {
     setDeleteConfirm({ ids: [id], label: p ? `"${p.name.slice(0, 30)}"` : "이 상품" });
   };
 
+  const fetchProductsByIds = useCallback(async (ids: string[]) => {
+    const result: SambaCollectedProduct[] = []
+    for (let i = 0; i < ids.length; i += 500) {
+      const chunk = ids.slice(i, i + 500)
+      const rows = await collectorApi.getProductsByIds(chunk)
+      if (Array.isArray(rows)) result.push(...rows)
+    }
+    return result
+  }, [])
+
   const handleBulkDelete = async () => {
     if (selectedIds.size === 0) return;
     // 전체선택 시 현재 페이지에 없는 상품도 서버에서 조회
     let selected = allProducts.filter(p => selectedIds.has(p.id))
     if (selected.length < selectedIds.size) {
       try {
-        const res = await collectorApi.scrollProducts({
-          skip: 0, limit: serverTotal,
-          search: searchQ.trim() || undefined,
-          search_type: searchQ.trim() ? searchType : undefined,
-          source_site: siteFilter || undefined,
-          status: statusFilter || undefined,
-          ai_filter: aiFilter || undefined,
-          search_filter_id: filterByGroupId || undefined,
-          sort_by: sortBy,
-        })
-        selected = (res.items as SambaCollectedProduct[]).filter(p => selectedIds.has(p.id))
+        selected = await fetchProductsByIds([...selectedIds])
       } catch { /* 폴백: 현재 페이지만 */ }
     }
     const locked = selected.filter(p => p.lock_delete)
@@ -727,17 +727,15 @@ export default function ProductsPage() {
         try {
           const statusParam = statusFilter || undefined
           const aiParam = aiFilter || undefined
-          const res = await collectorApi.scrollProducts({
-            skip: 0, limit: serverTotal,
+          const res = await collectorApi.getProductIds({
             search: searchQ.trim() || undefined,
             search_type: searchQ.trim() ? searchType : undefined,
             source_site: siteFilter || undefined,
             status: statusParam,
             ai_filter: aiParam,
             search_filter_id: filterByGroupId || undefined,
-            sort_by: sortBy,
           })
-          setSelectedIds(new Set(res.items.map((p: SambaCollectedProduct) => p.id)));
+          setSelectedIds(new Set(res.ids));
         } catch {
           setSelectedIds(new Set(products.map((p) => p.id)));
         }
@@ -1735,17 +1733,7 @@ export default function ProductsPage() {
               let marketPool: SambaCollectedProduct[] = allProducts.filter(p => selectedIds.has(p.id))
               if (marketPool.length < selectedIds.size) {
                 try {
-                  const res = await collectorApi.scrollProducts({
-                    skip: 0, limit: serverTotal,
-                    search: searchQ.trim() || undefined,
-                    search_type: searchQ.trim() ? searchType : undefined,
-                    source_site: siteFilter || undefined,
-                    status: statusFilter || undefined,
-                    ai_filter: aiFilter || undefined,
-                    search_filter_id: filterByGroupId || undefined,
-                    sort_by: sortBy,
-                  })
-                  marketPool = (res.items as SambaCollectedProduct[]).filter(p => selectedIds.has(p.id))
+                  marketPool = await fetchProductsByIds([...selectedIds])
                 } catch { /* 폴백: 현재 페이지만 */ }
               }
               const targets = marketPool.filter(p => (p.registered_accounts?.length ?? 0) > 0)

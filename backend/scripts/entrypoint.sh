@@ -115,7 +115,6 @@ async def fix():
         ''')
         # samba_license 테이블 (c58d77ec580e 마이그레이션 — stamp으로 skip됨, 수동 생성 필요)
         # TIMESTAMPTZ 대신 TIMESTAMP 사용 (asyncpg naive datetime 호환)
-        await conn.execute('DROP TABLE IF EXISTS samba_license')
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS samba_license (
                 id VARCHAR PRIMARY KEY NOT NULL,

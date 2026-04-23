@@ -502,6 +502,7 @@ export const collectorApi = {
   getProductIds: (params: {
     search?: string; search_type?: string;
     source_site?: string; source_sites?: string; status?: string;
+    ai_filter?: string; search_filter_id?: string;
   }) => {
     const p = new URLSearchParams()
     p.set('ids_only', 'true')
@@ -510,6 +511,8 @@ export const collectorApi = {
     if (params.source_sites) p.set('source_sites', params.source_sites)
     else if (params.source_site) p.set('source_site', params.source_site)
     if (params.status) p.set('status', params.status)
+    if (params.ai_filter) p.set('ai_filter', params.ai_filter)
+    if (params.search_filter_id) p.set('search_filter_id', params.search_filter_id)
     return request<{ ids: string[]; total: number }>(
       `${SAMBA_PREFIX}/collector/products/scroll?${p}`
     )

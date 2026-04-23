@@ -12,19 +12,20 @@ import { getLicenseKey } from "@/hooks/useLicenseCheck";
 interface NavItem {
   href: string;
   label: string;
+  planned?: boolean;
   children?: { href: string; label: string }[];
 }
 
 const NAV_ITEMS: NavItem[] = [
   { href: "/samba/collector", label: "상품수집" },
   { href: "/samba/products", label: "상품관리" },
-  { href: "/samba/manual-products", label: "수동등록" },
+  { href: "/samba/manual-products", label: "수동등록", planned: true },
   { href: "/samba/policies", label: "정책관리" },
   { href: "/samba/categories", label: "카테고리매핑" },
   { href: "/samba/shipments", label: "상품전송/삭제" },
   { href: "/samba/warroom", label: "오토튠" },
-  { href: "/samba/store-care", label: "스토어케어" },
-  { href: "/samba/sns", label: "SNS마케팅" },
+  { href: "/samba/store-care", label: "스토어케어", planned: true },
+  { href: "/samba/sns", label: "SNS마케팅", planned: true },
   { href: "/samba/orders", label: "주문" },
   { href: "/samba/returns", label: "반품교환" },
   { href: "/samba/cs", label: "CS" },
@@ -209,11 +210,17 @@ export default function SambaLayout({
                   <Link
                     href={item.href}
                     style={{
-                      display: "block",
-                      padding: "0.75rem 1.5rem",
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: item.planned ? "0.1rem" : 0,
+                      minHeight: "44px",
+                      padding: item.planned ? "0.35rem 1.5rem" : "0.75rem 1.5rem",
                       fontSize: "0.875rem",
                       fontWeight: 500,
                       color: isActive ? "#FF8C00" : "#E5E5E5",
+                      lineHeight: 1.1,
                       borderBottom: `2px solid ${isActive ? "#FF8C00" : "transparent"}`,
                       transition: "color 0.15s, border-color 0.15s",
                     }}
@@ -222,7 +229,12 @@ export default function SambaLayout({
                       if (!isActive) { e.currentTarget.style.color = "#E5E5E5"; e.currentTarget.style.borderBottomColor = "transparent"; }
                     }}
                   >
-                    {item.label}
+                    <span>{item.label}</span>
+                    {item.planned && (
+                      <span style={{ fontSize: "0.625rem", color: "#777", fontWeight: 500 }}>
+                        (개발예정)
+                      </span>
+                    )}
                   </Link>
                 </div>
               );
