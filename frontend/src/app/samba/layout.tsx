@@ -8,6 +8,7 @@ import SambaBlockAlert from "@/components/samba/BlockAlert";
 import type { SambaUser } from "@/lib/samba/api/operations";
 import { STORAGE_KEYS } from "@/lib/samba/constants";
 import { getLicenseKey } from "@/hooks/useLicenseCheck";
+import { attachDeviceIdListener } from "@/lib/samba/deviceId";
 
 interface NavItem {
   href: string;
@@ -72,6 +73,12 @@ export default function SambaLayout({
     }
     setAuthChecked(true);
   }, [isLoginPage, isLicensePage, router]);
+
+  // 확장앱이 보내는 deviceId postMessage를 세션 내내 수신
+  // → 오토튠 시작 시 이 deviceId를 백엔드에 전달해 "이 브라우저"에만 탭이 열리게 한다.
+  useEffect(() => {
+    return attachDeviceIdListener();
+  }, []);
 
   // 로그인/라이선스 페이지는 레이아웃 헤더 없이 바로 렌더링
   if (isLoginPage || isLicensePage) {

@@ -491,7 +491,8 @@ export default function WarroomPage() {
                 const { API_BASE_URL: apiBase } = await import('@/config/api')
                 await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
                 const pno = singleProductNo.trim() || undefined
-                const res = await collectorApi.autotuneStart('registered', pno)
+                const { getDeviceId } = await import('@/lib/samba/deviceId')
+                const res = await collectorApi.autotuneStart('registered', pno, getDeviceId())
                 if (!res.ok) {
                   const { showAlert } = await import('@/components/samba/Modal')
                   showAlert(res.error || '시작 실패', 'error')

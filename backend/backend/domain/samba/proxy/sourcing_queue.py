@@ -13,6 +13,23 @@ from typing import Any
 from backend.shutdown_state import is_shutting_down
 from backend.utils.logger import logger
 
+# 오토튠 등 백엔드 자동화 경로에서 add_detail_job을 호출할 때
+# 기본 소유자(작업을 처리해야 할 브라우저의 deviceId)를 설정하는 전역 저장소.
+# autotune_start에서 set_autotune_owner로 세팅하고, autotune_stop에서 리셋한다.
+# 이 deviceId와 일치하는 확장앱만 해당 작업을 집어가게 된다.
+_autotune_owner_device_id: str = ""
+
+
+def set_autotune_owner(device_id: str) -> None:
+    """오토튠이 발행하는 작업의 소유자 deviceId 설정."""
+    global _autotune_owner_device_id
+    _autotune_owner_device_id = (device_id or "").strip()
+
+
+def get_autotune_owner() -> str:
+    return _autotune_owner_device_id
+
+
 # 사이트별 검색 URL 템플릿
 SITE_SEARCH_URLS: dict[str, str] = {
     "ABCmart": "https://www.a-rt.com/display/search-word/result?searchWord={keyword}",
@@ -59,12 +76,15 @@ class SourcingQueue:
         keyword: str,
         url: str | None = None,
         max_count: int | None = None,
+        *,
+        owner_device_id: str | None = None,
     ) -> tuple[str, asyncio.Future[Any]]:
         """검색 작업 큐에 추가. (requestId, future) 반환.
 
         url: 호출자가 원본 검색 URL(파라미터 포함)을 직접 넘길 수 있음.
              없으면 SITE_SEARCH_URLS 템플릿에 keyword만 치환해서 사용.
         max_count: 확장앱에 최대 수집 건수 힌트 전달.
+        owner_device_id: 작업을 집어가야 할 확장앱 deviceId. None이면 오토튠 전역값을 사용.
         """
         cls._ensure_accepting_jobs()
         request_id = str(uuid.uuid4())[:8]
@@ -77,18 +97,25 @@ class SourcingQueue:
         loop = asyncio.get_event_loop()
         future: asyncio.Future[Any] = loop.create_future()
 
+        if owner_device_id is None:
+            owner_device_id = _autotune_owner_device_id
+
         job: dict[str, Any] = {
             "requestId": request_id,
             "site": site,
             "type": "search",
             "url": url,
             "keyword": keyword,
+            "ownerDeviceId": owner_device_id or "",
         }
         if max_count is not None:
             job["maxCount"] = max_count
         cls.queue.append(job)
         cls.resolvers[request_id] = future
-        logger.info(f"[소싱큐] 검색 추가: {site} '{keyword}' (id={request_id})")
+        _owner_tag = f" owner={owner_device_id[:8]}" if owner_device_id else ""
+        logger.info(
+            f"[소싱큐] 검색 추가: {site} '{keyword}' (id={request_id}){_owner_tag}"
+        )
         return request_id, future
 
     @classmethod
@@ -100,12 +127,14 @@ class SourcingQueue:
         sitm_no: str = "",
         url: str = "",
         extra: dict[str, Any] | None = None,
+        owner_device_id: str | None = None,
     ) -> tuple[str, asyncio.Future[Any]]:
         """상세조회 작업 큐에 추가. (requestId, future) 반환.
 
         sitm_no: LOTTEON sitmNo — 전달 시 확장앱이 탭 없이 pbf API 직접 호출.
         url: 비어있지 않으면 SITE_DETAIL_URLS 템플릿 대신 직접 사용 (NAVERSTORE 등 템플릿만으로 부족한 경우).
         extra: job dict에 병합할 추가 필드 (channelUid, storeName 등).
+        owner_device_id: 작업을 집어가야 할 확장앱 deviceId. None이면 오토튠 전역값을 사용.
         """
         cls._ensure_accepting_jobs()
         request_id = str(uuid.uuid4())[:8]
@@ -117,12 +146,16 @@ class SourcingQueue:
         loop = asyncio.get_event_loop()
         future: asyncio.Future[Any] = loop.create_future()
 
+        if owner_device_id is None:
+            owner_device_id = _autotune_owner_device_id
+
         job: dict[str, Any] = {
             "requestId": request_id,
             "site": site,
             "type": "detail",
             "url": url,
             "productId": product_id,
+            "ownerDeviceId": owner_device_id or "",
         }
         if sitm_no:
             job["sitmNo"] = sitm_no
@@ -130,17 +163,36 @@ class SourcingQueue:
             job.update(extra)
         cls.queue.append(job)
         cls.resolvers[request_id] = future
-        logger.info(f"[소싱큐] 상세 추가: {site} #{product_id} (id={request_id})")
+        _owner_tag = f" owner={owner_device_id[:8]}" if owner_device_id else ""
+        logger.info(
+            f"[소싱큐] 상세 추가: {site} #{product_id} (id={request_id}){_owner_tag}"
+        )
         return request_id, future
 
     @classmethod
-    def get_next_job(cls) -> dict[str, Any]:
-        """큐에서 다음 작업 가져오기 (확장앱 폴링용)."""
+    def get_next_job(cls, device_id: str | None = None) -> dict[str, Any]:
+        """큐에서 다음 작업 가져오기 (확장앱 폴링용).
+
+        device_id가 주어지면 해당 deviceId가 소유자인 작업만 반환한다.
+        소유자가 지정되지 않은(legacy) 작업은 deviceId가 있든 없든 누구나 집어갈 수 있다.
+        device_id가 비어 있으면(구버전 확장앱) 소유자 없는 작업만 반환 — 오토튠이 특정 PC로
+        라우팅한 작업이 엉뚱한 PC에서 열리는 현상을 방지한다.
+        """
         if is_shutting_down():
             return {"hasJob": False, "shuttingDown": True}
-        if cls.queue:
-            job = cls.queue.pop(0)
-            return {"hasJob": True, **job}
+        if not cls.queue:
+            return {"hasJob": False}
+
+        device_id = (device_id or "").strip()
+        for idx, job in enumerate(cls.queue):
+            owner = (job.get("ownerDeviceId") or "").strip()
+            if not owner:
+                # 소유자 미지정 작업 — 어느 확장앱이든 처리 가능 (기존 동작)
+                cls.queue.pop(idx)
+                return {"hasJob": True, **job}
+            if device_id and owner == device_id:
+                cls.queue.pop(idx)
+                return {"hasJob": True, **job}
         return {"hasJob": False}
 
     @classmethod

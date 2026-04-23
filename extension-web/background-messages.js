@@ -1,6 +1,19 @@
 // ==================== 메시지 리스너 ====================
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // content_script(삼바 프론트엔드 페이지)가 deviceId를 요청할 때 응답
+  if (msg.type === 'GET_DEVICE_ID') {
+    ;(async () => {
+      try {
+        const id = await SambaBackgroundCore.getOrCreateDeviceId()
+        sendResponse({ deviceId: id })
+      } catch {
+        sendResponse({ deviceId: '' })
+      }
+    })()
+    return true
+  }
+
   // 무신사 쿠키 동기화
   if (msg.type === 'SYNC_COOKIES') {
     getMusinsaCookies().then(async ({ cookies, cookieStr, isLoggedIn }) => {

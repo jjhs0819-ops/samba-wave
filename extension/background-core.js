@@ -10,6 +10,30 @@
     kream_normal_delivery: '????',
   }
 
+  // 이 브라우저(확장앱 인스턴스)의 고유 deviceId를 발급·캐시한다.
+  // 백엔드 collect-queue 폴링에 X-Device-Id 헤더로 첨부되어,
+  // 오토튠이 발행한 작업을 "오토튠을 시작한 브라우저"만 받아가게 한다.
+  // 크롬 계정 동기화로 다른 PC에 확장앱이 설치되어도, 그 PC는 다른 deviceId를 가지므로
+  // 집/사무실 간 중복 탭 오픈이 발생하지 않는다.
+  let _cachedDeviceId = ''
+  async function getOrCreateDeviceId() {
+    if (_cachedDeviceId) return _cachedDeviceId
+    try {
+      const cached = await chrome.storage.local.get('deviceId')
+      if (cached.deviceId) {
+        _cachedDeviceId = cached.deviceId
+        return _cachedDeviceId
+      }
+      const fresh = (globalThis.crypto?.randomUUID?.() || '')
+        || ('dev-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10))
+      await chrome.storage.local.set({ deviceId: fresh })
+      _cachedDeviceId = fresh
+      return fresh
+    } catch {
+      return ''
+    }
+  }
+
   async function loadApiKey(proxyUrl) {
     const cached = await chrome.storage.local.get('apiKey')
     if (cached.apiKey) return cached.apiKey
@@ -33,14 +57,23 @@
   async function apiFetch(url, init = {}) {
     const proxyData = await chrome.storage.local.get('proxyUrl')
     const apiKey = await loadApiKey(proxyData.proxyUrl)
-    const headers = { ...(init.headers || {}), 'X-Api-Key': apiKey }
+    const deviceId = await getOrCreateDeviceId()
+    const headers = {
+      ...(init.headers || {}),
+      'X-Api-Key': apiKey,
+      'X-Device-Id': deviceId,
+    }
     const res = await fetch(url, { ...init, headers })
     if (res.status === 403) {
       await chrome.storage.local.remove('apiKey')
       // 실제 요청 URL의 origin으로 키 재발급 (storage의 proxyUrl이 localhost일 수 있음)
       const serverBase = new URL(url).origin
       const newKey = await loadApiKey(serverBase)
-      const retryHeaders = { ...(init.headers || {}), 'X-Api-Key': newKey }
+      const retryHeaders = {
+        ...(init.headers || {}),
+        'X-Api-Key': newKey,
+        'X-Device-Id': deviceId,
+      }
       return fetch(url, { ...init, headers: retryHeaders })
     }
     return res
@@ -91,5 +124,6 @@
     apiFetch,
     loadSelectors,
     sendSiteCookieToProxy,
+    getOrCreateDeviceId,
   }
 })()

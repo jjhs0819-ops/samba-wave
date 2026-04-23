@@ -79,7 +79,12 @@ async def lotteon_set_cookie(
 
 @sourcing_queue_router.get("/sourcing/collect-queue", response_model=None)
 async def sourcing_collect_queue(request: Request) -> Any:
-    """확장앱이 폴링하는 소싱 수집 큐 (인증 불필요)."""
+    """확장앱이 폴링하는 소싱 수집 큐 (인증 불필요).
+
+    확장앱은 `X-Device-Id` 헤더로 자신의 고유 deviceId를 전달한다.
+    백엔드는 오토튠 소유자 deviceId와 일치하는 작업만 해당 확장앱에 반환하므로,
+    동일 사용자/테넌트의 여러 브라우저에서 중복으로 탭이 열리는 현상이 방지된다.
+    """
     if getattr(request.app.state, "is_shutting_down", False):
         return JSONResponse(
             status_code=503,
@@ -88,7 +93,8 @@ async def sourcing_collect_queue(request: Request) -> Any:
         )
     from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
 
-    return SourcingQueue.get_next_job()
+    device_id = request.headers.get("X-Device-Id", "").strip()
+    return SourcingQueue.get_next_job(device_id=device_id)
 
 
 @sourcing_queue_router.post("/sourcing/collect-result")

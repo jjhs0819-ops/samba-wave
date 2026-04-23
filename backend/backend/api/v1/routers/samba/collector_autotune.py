@@ -1647,6 +1647,10 @@ async def _autotune_loop():
 
 class AutotuneStartRequest(BaseModel):
     target_product_no: Optional[str] = None
+    # 오토튠을 시작하는 브라우저의 확장앱 deviceId.
+    # 이 deviceId와 일치하는 확장앱만 SSG/롯데온 등의 수집 탭 작업을 집어간다.
+    # 비어 있으면 레거시 동작(아무 확장앱이나 집어감)을 유지한다.
+    device_id: Optional[str] = None
 
 
 async def _save_autotune_state(enabled: bool):
@@ -1975,6 +1979,17 @@ async def autotune_start(
     _site_empty_hits.clear()
     _site_empty_skip_until.clear()
     clear_bulk_cancel()
+
+    # 오토튠을 시작한 브라우저(확장앱)의 deviceId를 소싱큐에 등록
+    # → SSG 등 확장앱 의존 플러그인이 add_detail_job 호출 시 자동으로 소유자로 태그
+    # → 동일 테넌트의 다른 브라우저는 collect-queue에서 해당 작업을 받지 못함
+    try:
+        from backend.domain.samba.proxy.sourcing_queue import set_autotune_owner
+
+        set_autotune_owner(body.device_id or "")
+    except Exception:
+        pass
+
     _autotune_task = asyncio.create_task(_autotune_loop())
     if not body.target_product_no:
         await _save_autotune_state(True)
@@ -2001,6 +2016,15 @@ async def autotune_stop():
     if _autotune_task and not _autotune_task.done():
         _autotune_task.cancel()
     _autotune_task = None
+
+    # 소싱큐의 오토튠 소유자 deviceId 해제 — 이후 add_detail_job은 owner 없이 큐잉됨
+    try:
+        from backend.domain.samba.proxy.sourcing_queue import set_autotune_owner
+
+        set_autotune_owner("")
+    except Exception:
+        pass
+
     await _save_autotune_state(False)
     return {"ok": True, "status": "stopped"}
 
