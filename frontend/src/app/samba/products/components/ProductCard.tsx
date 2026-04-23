@@ -1172,14 +1172,7 @@ const ProductCard = React.memo(function ProductCard({
               border: '1px solid rgba(100,130,255,0.25)',
             }}>판매예정</span>
           )}
-          {p.sale_status === 'sold_out' && (
-            <span style={{
-              padding: '2px 8px', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 500,
-              background: 'rgba(255,107,107,0.12)', color: '#FF6B6B',
-              border: '1px solid rgba(255,107,107,0.25)',
-            }}>품절</span>
-          )}
-          {!(p.sale_status) && p.is_sold_out && (
+          {(p.sale_status === 'sold_out' || p.is_sold_out) && (
             <span style={{
               padding: '2px 8px', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 500,
               background: 'rgba(255,107,107,0.12)', color: '#FF6B6B',

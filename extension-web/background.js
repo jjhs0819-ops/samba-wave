@@ -72,6 +72,11 @@ chrome.storage.local.get(['capturedCookie', 'capturedAt', 'kreamCookie', 'lotteo
   if (data.proxyUrl) {
     PROXY_URL = data.proxyUrl
     console.log(`[복원] 백엔드 URL: ${PROXY_URL}`)
+  } else {
+    // proxyUrl 미설정 시 웹 확장앱은 프로덕션 서버를 기본값으로 사용
+    PROXY_URL = CLOUD_URL
+    chrome.storage.local.set({ proxyUrl: CLOUD_URL })
+    console.log(`[초기화] 백엔드 URL 자동 설정: ${PROXY_URL}`)
   }
   // 무신사
   if (data.capturedCookie) {

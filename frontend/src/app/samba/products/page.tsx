@@ -1739,7 +1739,7 @@ export default function ProductsPage() {
                 const gidSet = new Set(groupIds)
                 setAllProducts(prev => prev.map(p =>
                   (p.search_filter_id && gidSet.has(p.search_filter_id)) || gidSet.has(`pid:${p.id}`)
-                    ? { ...p, tags: null, seo_keywords: null }
+                    ? { ...p, tags: [], seo_keywords: [] }
                     : p
                 ))
                 setSelectedIds(new Set()); setSelectAll(false)

@@ -453,7 +453,7 @@ export default function WarroomPage() {
     }
     return groups
   })()
-  const nonTickEvents = filteredEvents.filter(e => e.event_type !== 'scheduler_tick')
+  const nonTickEvents = [] as typeof filteredEvents
 
   if (loading || !stats) {
     return (
@@ -771,7 +771,7 @@ export default function WarroomPage() {
               </div>
             )}
             {/* 소싱처별 최근 수정 상품 내역 */}
-            {Object.keys(tickEventsBySite).length > 0 && (
+            {false && Object.keys(tickEventsBySite).length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.25rem' }}>
                 {Object.keys(tickEventsBySite).map(siteName => {
                   const sitePriceChanges = siteChanges[siteName]?.price_changed ?? []
@@ -967,7 +967,7 @@ export default function WarroomPage() {
       </div>
 
       {/* A-2. 마켓별 스토어 현황 분석 */}
-      {(() => {
+      {false && (() => {
         const MARKET_TABS = [
           { key: 'smartstore', label: '스마트스토어', color: '#51CF66' },
           { key: 'coupang', label: '쿠팡', color: '#FF6B6B' },
@@ -1148,7 +1148,7 @@ export default function WarroomPage() {
       </div>
 
       {/* C. 소싱처/마켓 헬스 */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+      <div style={{ display: 'none', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
         {/* 소싱처 헬스 */}
         <div style={card}>
           <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#FF8C00', marginBottom: '0.75rem' }}>소싱처 상태</div>
@@ -1405,7 +1405,7 @@ export default function WarroomPage() {
       </div>
 
       {/* 소싱처/마켓 상태 대시보드 */}
-      <div style={{ ...card, padding: '1.5rem' }}>
+      <div style={{ ...card, display: 'none', padding: '1.5rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
           <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#51CF66' }}>소싱처/마켓 상태</span>
           <span style={{ fontSize: '0.8125rem', color: '#666' }}>소싱처 API 구조 변경 및 마켓 인증 상태를 실시간으로 확인합니다.</span>

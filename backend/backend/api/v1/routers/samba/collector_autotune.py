@@ -109,11 +109,7 @@ async def _classify_products(session) -> dict[str, int]:
     r_cold = await session.execute(stmt_cold)
 
     # 2단계: 변동 있는 상품 → warm
-    stmt_warm = (
-        sa_update(_CP)
-        .where(*registered_cond, has_changes)
-        .values(monitor_priority="warm")
-    )
+    stmt_warm = sa_update(_CP).where(*registered_cond, has_changes).values(monitor_priority="warm")
     r_warm = await session.execute(stmt_warm)
 
     # 3단계: 변동 + 주문 있는 상품 → hot
@@ -185,13 +181,9 @@ async def _site_autotune_loop(site: str):
 
                     market_cond = build_market_registered_conditions(_CP)
 
-                    _priority_enabled = await _get_setting(
-                        session, AUTOTUNE_PRIORITY_ENABLED_KEY
-                    )
+                    _priority_enabled = await _get_setting(session, AUTOTUNE_PRIORITY_ENABLED_KEY)
                     _use_priority = (
-                        _priority_enabled
-                        if isinstance(_priority_enabled, bool)
-                        else True
+                        _priority_enabled if isinstance(_priority_enabled, bool) else True
                     )
 
                     if _use_priority:
@@ -260,9 +252,7 @@ async def _site_autotune_loop(site: str):
                         policy_repo = SambaPolicyRepository(session)
 
                         # 판매처 필터 사전 로드
-                        _enabled_markets = await _get_setting(
-                            session, AUTOTUNE_FILTER_MARKETS_KEY
-                        )
+                        _enabled_markets = await _get_setting(session, AUTOTUNE_FILTER_MARKETS_KEY)
                         _market_filter_active = bool(
                             _enabled_markets and isinstance(_enabled_markets, list)
                         )
@@ -292,17 +282,15 @@ async def _site_autotune_loop(site: str):
                         _stock_tx_items: list[dict] = []
                         _price_change_events: list[dict] = []
                         _all_stock_pids: set[str] = set()
-                        _cycle_deleted_pids: set[str] = (
-                            set()
-                        )  # 사이클 중 삭제된 상품 ID
+                        _cycle_deleted_pids: set[str] = set()  # 사이클 중 삭제된 상품 ID
                         _session_lock = asyncio.Lock()
                         _synced_count = 0
 
                         def _log_line(site, pid, msg, level="info"):
                             """오토튠 통합 로그 (한 줄)."""
-                            _kst_now = (
-                                datetime.now(timezone.utc) + timedelta(hours=9)
-                            ).strftime("%H:%M:%S")
+                            _kst_now = (datetime.now(timezone.utc) + timedelta(hours=9)).strftime(
+                                "%H:%M:%S"
+                            )
                             _ref_mod._refresh_log_buffer.append(
                                 {
                                     "ts": datetime.now(timezone.utc).isoformat(),
@@ -323,9 +311,7 @@ async def _site_autotune_loop(site: str):
                             )
 
                             vals["updated_at"] = datetime.now(timezone.utc)
-                            stmt = (
-                                sa_update(_PU_CP).where(_PU_CP.id == pid).values(**vals)
-                            )
+                            stmt = sa_update(_PU_CP).where(_PU_CP.id == pid).values(**vals)
                             await session.execute(stmt)
                             await session.commit()
 
@@ -340,14 +326,9 @@ async def _site_autotune_loop(site: str):
 
                             async with _session_lock:
                                 # heartbeat 갱신 — Watchdog stuck 오판 방지
-                                _site_heartbeats[product.source_site or "UNKNOWN"] = (
-                                    time.time()
-                                )
+                                _site_heartbeats[product.source_site or "UNKNOWN"] = time.time()
 
-                                if (
-                                    not _autotune_running_event.is_set()
-                                    or is_emergency_stopped()
-                                ):
+                                if not _autotune_running_event.is_set() or is_emergency_stopped():
                                     return
 
                                 site = product.source_site or "UNKNOWN"
@@ -360,13 +341,9 @@ async def _site_autotune_loop(site: str):
                                     else f"[{site}] {_prod_name}"
                                 )
                                 _prod_label = (
-                                    f"{_name_part} ({_site_pid})"
-                                    if _site_pid
-                                    else _name_part
+                                    f"{_name_part} ({_site_pid})" if _site_pid else _name_part
                                 )
-                                _idx_prefix = (
-                                    f"[{idx:,}/{total:,}] " if idx and total else ""
-                                )
+                                _idx_prefix = f"[{idx:,}/{total:,}] " if idx and total else ""
 
                                 # 원가: 항상 최신 계산값 사용
                                 if r.new_cost is not None:
@@ -389,9 +366,7 @@ async def _site_autotune_loop(site: str):
                                     "original_price": r.new_original_price
                                     if r.new_original_price is not None
                                     else product.original_price,
-                                    "cost": r.new_cost
-                                    if r.new_cost is not None
-                                    else product.cost,
+                                    "cost": r.new_cost if r.new_cost is not None else product.cost,
                                     "sale_status": r.new_sale_status,
                                     "changed": r.changed,
                                 }
@@ -401,9 +376,7 @@ async def _site_autotune_loop(site: str):
                                 if not _snap_options and product.options:
                                     if r.new_sale_status == "sold_out":
                                         _snap_options = [
-                                            {**o, "stock": 0}
-                                            if isinstance(o, dict)
-                                            else o
+                                            {**o, "stock": 0} if isinstance(o, dict) else o
                                             for o in product.options
                                         ]
                                     else:
@@ -424,9 +397,7 @@ async def _site_autotune_loop(site: str):
                                     updates["cost"] = r.new_cost
                                 if r.new_options is not None:
                                     updates["options"] = r.new_options
-                                elif (
-                                    r.new_sale_status == "sold_out" and product.options
-                                ):
+                                elif r.new_sale_status == "sold_out" and product.options:
                                     # new_options 없지만 품절 → 기존 옵션 재고를 0으로 강제 업데이트
                                     updates["options"] = [
                                         {**o, "stock": 0} if isinstance(o, dict) else o
@@ -439,8 +410,7 @@ async def _site_autotune_loop(site: str):
                                     or r.stock_changed
                                     or (
                                         r.new_cost is not None
-                                        and r.new_cost
-                                        != (getattr(product, "cost", None) or 0)
+                                        and r.new_cost != (getattr(product, "cost", None) or 0)
                                     )
                                 ):
                                     updates["price_changed_at"] = now
@@ -454,9 +424,7 @@ async def _site_autotune_loop(site: str):
                                     _old_p = product.sale_price or 0
                                     _new_p = r.new_sale_price or 0
                                     _diff_pct = (
-                                        round((_new_p - _old_p) / _old_p * 100, 1)
-                                        if _old_p
-                                        else 0
+                                        round((_new_p - _old_p) / _old_p * 100, 1) if _old_p else 0
                                     )
                                     _price_change_events.append(
                                         {
@@ -486,10 +454,7 @@ async def _site_autotune_loop(site: str):
                                     _site_consecutive_soldout[site] = (
                                         _site_consecutive_soldout.get(site, 0) + 1
                                     )
-                                    if (
-                                        _site_consecutive_soldout[site]
-                                        >= SOLDOUT_BREAK_THRESHOLD
-                                    ):
+                                    if _site_consecutive_soldout[site] >= SOLDOUT_BREAK_THRESHOLD:
                                         _site_breaker_tripped[site] = True
                                         log.error(
                                             "[오토튠] 서킷브레이커 작동! %s 연속 %d개 품절",
@@ -501,9 +466,7 @@ async def _site_autotune_loop(site: str):
                                     if not getattr(product, "lock_delete", False):
                                         product_dict = product.model_dump()
                                         _ok_del_ids: list[str] = []
-                                        for _del_acc_id in (
-                                            product.registered_accounts or []
-                                        ):
+                                        for _del_acc_id in product.registered_accounts or []:
                                             _del_acc = _account_cache.get(_del_acc_id)
                                             if not _del_acc:
                                                 continue
@@ -516,9 +479,7 @@ async def _site_autotune_loop(site: str):
                                                 pno = m_nos.get(_del_acc_id, "")
                                             pd = {
                                                 **product_dict,
-                                                "market_product_no": {
-                                                    _del_acc.market_type: pno
-                                                },
+                                                "market_product_no": {_del_acc.market_type: pno},
                                             }
                                             _del_label = f"{_del_acc.market_name}({_del_acc.seller_id or '-'})"
                                             try:
@@ -554,16 +515,10 @@ async def _site_autotune_loop(site: str):
                                         # 삭제 성공한 계정 → registered_accounts/market_product_nos 정리
                                         if _ok_del_ids:
                                             _cycle_deleted_pids.add(r.product_id)
-                                            _orig_reg = list(
-                                                product.registered_accounts or []
-                                            )
-                                            _orig_mnos = dict(
-                                                product.market_product_nos or {}
-                                            )
+                                            _orig_reg = list(product.registered_accounts or [])
+                                            _orig_mnos = dict(product.market_product_nos or {})
                                             _new_reg = [
-                                                a
-                                                for a in _orig_reg
-                                                if a not in _ok_del_ids
+                                                a for a in _orig_reg if a not in _ok_del_ids
                                             ]
                                             _new_mnos = {
                                                 k: v
@@ -613,9 +568,7 @@ async def _site_autotune_loop(site: str):
                                     if _prev is None or (
                                         abs(_prev - r.new_cost) / r.new_cost > 0.01
                                     ):
-                                        _pending_cost_increase[r.product_id] = (
-                                            r.new_cost
-                                        )
+                                        _pending_cost_increase[r.product_id] = r.new_cost
                                         _skip_price = True
                                         log.info(
                                             "[오토튠][가격상승확인] %s: "
@@ -624,16 +577,13 @@ async def _site_autotune_loop(site: str):
                                             _prod_label,
                                             int(product.cost),
                                             int(r.new_cost),
-                                            (r.new_cost - product.cost)
-                                            / product.cost
-                                            * 100,
+                                            (r.new_cost - product.cost) / product.cost * 100,
                                         )
                                     else:
                                         # 2사이클 연속 동일 상승 → 진짜 가격변동
                                         _pending_cost_increase.pop(r.product_id, None)
                                         log.info(
-                                            "[오토튠][가격상승확정] %s: "
-                                            "원가 상승 확인됨 (%s→%s)",
+                                            "[오토튠][가격상승확정] %s: 원가 상승 확인됨 (%s→%s)",
                                             _prod_label,
                                             int(product.cost),
                                             int(r.new_cost),
@@ -663,9 +613,7 @@ async def _site_autotune_loop(site: str):
                                         for a in reg_accounts
                                         if (
                                             _account_cache.get(a)
-                                            and getattr(
-                                                _account_cache[a], "market_type", ""
-                                            )
+                                            and getattr(_account_cache[a], "market_type", "")
                                             in _enabled_markets
                                         )
                                     ]
@@ -675,9 +623,7 @@ async def _site_autotune_loop(site: str):
                                     if product.applied_policy_id not in _policy_cache:
                                         _policy_cache[
                                             product.applied_policy_id
-                                        ] = await policy_repo.get_async(
-                                            product.applied_policy_id
-                                        )
+                                        ] = await policy_repo.get_async(product.applied_policy_id)
                                     policy = _policy_cache[product.applied_policy_id]
                                 else:
                                     policy = None
@@ -685,24 +631,20 @@ async def _site_autotune_loop(site: str):
                                 _tx_actions: list[
                                     str
                                 ] = []  # 전송 예정 액션 (_fire_transmit에서 결과와 함께 출력)
-                                _nontx_actions: list[
-                                    str
-                                ] = []  # 비전송 액션 (즉시 출력)
+                                _nontx_actions: list[str] = []  # 비전송 액션 (즉시 출력)
                                 _transmit_queue: list[
                                     tuple
                                 ] = []  # (pid, items, acc_id, label, action_text)
 
                                 for acc_id in reg_accounts:
                                     if acc_id not in _account_cache:
-                                        _account_cache[
+                                        _account_cache[acc_id] = await account_repo.get_async(
                                             acc_id
-                                        ] = await account_repo.get_async(acc_id)
+                                        )
                                     acc = _account_cache[acc_id]
                                     if not acc:
                                         continue
-                                    acc_label = (
-                                        f"{acc.market_name}({acc.seller_id or '-'})"
-                                    )
+                                    acc_label = f"{acc.market_name}({acc.seller_id or '-'})"
                                     market_type = acc.market_type or ""
 
                                     if policy and policy.pricing:
@@ -724,8 +666,7 @@ async def _site_autotune_loop(site: str):
 
                                     acc_last = last_sent.get(acc_id, {})
                                     last_price = (
-                                        (int(acc_last.get("sale_price", 0)) // 100)
-                                        * 100
+                                        (int(acc_last.get("sale_price", 0)) // 100) * 100
                                         if acc_last
                                         else 0
                                     )
@@ -735,18 +676,14 @@ async def _site_autotune_loop(site: str):
                                     import math as _m
 
                                     if market_type == "smartstore":
-                                        expected_price = (
-                                            _m.ceil(expected_price / 300) * 300
-                                        )
+                                        expected_price = _m.ceil(expected_price / 300) * 300
                                     else:
                                         expected_price = (expected_price // 100) * 100
 
                                     # 가격 이상치 방어: 원가 < 정상가 5%이면 재전송 차단
                                     _orig_p = getattr(product, "original_price", 0) or 0
                                     _price_blocked = (
-                                        _orig_p > 0
-                                        and new_cost > 0
-                                        and new_cost < _orig_p * 0.05
+                                        _orig_p > 0 and new_cost > 0 and new_cost < _orig_p * 0.05
                                     )
                                     if _price_blocked:
                                         _nontx_actions.append(
@@ -764,10 +701,7 @@ async def _site_autotune_loop(site: str):
                                     _acc_items: list[str] = []
                                     _acc_action_parts: list[str] = []
 
-                                    if (
-                                        expected_price != last_price
-                                        and not _price_blocked
-                                    ):
+                                    if expected_price != last_price and not _price_blocked:
                                         price_changed_count += 1
                                         _all_price_pids.add(r.product_id)
                                         if len(_price_tx_items) < 10:
@@ -787,9 +721,7 @@ async def _site_autotune_loop(site: str):
                                         # 가격 동일 스킵 — 다중 마켓 디버그 로그
                                         if len(reg_accounts) > 1:
                                             _last_cost_sent = (
-                                                int(acc_last.get("cost", 0) or 0)
-                                                if acc_last
-                                                else 0
+                                                int(acc_last.get("cost", 0) or 0) if acc_last else 0
                                             )
                                             log.info(
                                                 "[오토튠][가격스킵] %s %s: "
@@ -804,9 +736,7 @@ async def _site_autotune_loop(site: str):
                                             )
 
                                     # 재고 변동 → last_sent_data 옵션 vs API 옵션 비교
-                                    _sent_opts = (
-                                        acc_last.get("options") if acc_last else None
-                                    )
+                                    _sent_opts = acc_last.get("options") if acc_last else None
                                     _api_opts = r.new_options
                                     _stock_diff = False
                                     _stock_changes_acc = 0
@@ -822,20 +752,16 @@ async def _site_autotune_loop(site: str):
                                     if _sent_opts is None and _api_opts is not None:
                                         # 기준값 없음 → 첫 1회 무조건 전송
                                         _stock_diff = True
-                                        _stock_changes_acc = (
-                                            len(_api_opts) if _api_opts else 0
-                                        )
+                                        _stock_changes_acc = len(_api_opts) if _api_opts else 0
                                     elif _api_opts and _sent_opts:
                                         _sent_map = {
-                                            (
-                                                o.get("name", "") or o.get("size", "")
-                                            ): o.get("stock", 0)
+                                            (o.get("name", "") or o.get("size", "")): o.get(
+                                                "stock", 0
+                                            )
                                             for o in _sent_opts
                                         }
                                         for _o in _api_opts:
-                                            _k = _o.get("name", "") or _o.get(
-                                                "size", ""
-                                            )
+                                            _k = _o.get("name", "") or _o.get("size", "")
                                             _ss = _sent_map.get(_k, 0) or 0
                                             _ns = _o.get("stock", 0) or 0
                                             if (_ss <= 0) != (_ns <= 0):
@@ -843,16 +769,16 @@ async def _site_autotune_loop(site: str):
                                                 _stock_changes_acc += 1
                                     if _stock_diff:
                                         _all_stock_pids.add(r.product_id)
-                                        _stock_action_txt = f"재고전송({_stock_changes_acc}건) → {acc_label}"
+                                        _stock_action_txt = (
+                                            f"재고전송({_stock_changes_acc}건) → {acc_label}"
+                                        )
                                         _acc_items.append("stock")
                                         _acc_action_parts.append(_stock_action_txt)
 
                                     # 가격+재고 합산 단일 전송 (충돌 방지)
                                     if _acc_items:
                                         retransmitted += 1
-                                        _combined_action_txt = " + ".join(
-                                            _acc_action_parts
-                                        )
+                                        _combined_action_txt = " + ".join(_acc_action_parts)
                                         _tx_actions.append(_combined_action_txt)
                                         _transmit_queue.append(
                                             (
@@ -871,9 +797,7 @@ async def _site_autotune_loop(site: str):
                                     for a in reg_accounts
                                     if last_sent.get(a)
                                 ]
-                                _prev_cost = (
-                                    _prev_costs[0] if _prev_costs else _cost_int
-                                )
+                                _prev_cost = _prev_costs[0] if _prev_costs else _cost_int
                                 if _prev_cost != _cost_int:
                                     _cost_str = f"원가변동 {_prev_cost:,}→{_cost_int:,}"
                                 else:
@@ -947,18 +871,33 @@ async def _site_autotune_loop(site: str):
                                         )
                                         if _tx_ok:
                                             _synced_count += 1
-                                            _log_line(
-                                                _site,
-                                                _pid,
-                                                f"{_idx_pfx}{_label}: {_action_text} 전송완료{_t}",
+                                            # 실제 마켓삭제 여부 확인
+                                            _was_deleted = any(
+                                                v in ("deleted", "soldout_fallback")
+                                                for r in _tx_res_list
+                                                if isinstance(r, dict)
+                                                and isinstance(r.get("results"), dict)
+                                                for v in r["results"].values()
                                             )
+                                            if _was_deleted:
+                                                _log_line(
+                                                    _site,
+                                                    _pid,
+                                                    f"{_idx_pfx}{_label}: {_action_text} → 마켓삭제(품절){_t}",
+                                                )
+                                            else:
+                                                _log_line(
+                                                    _site,
+                                                    _pid,
+                                                    f"{_idx_pfx}{_label}: {_action_text} 전송완료{_t}",
+                                                )
                                         else:
                                             _fail_info = []
                                             for r in _tx_res_list:
                                                 if isinstance(r, dict):
-                                                    _e = r.get(
-                                                        "transmit_error"
-                                                    ) or r.get("error", "")
+                                                    _e = r.get("transmit_error") or r.get(
+                                                        "error", ""
+                                                    )
                                                     if _e:
                                                         _fail_info.append(str(_e)[:200])
                                             _log_line(
@@ -1000,9 +939,7 @@ async def _site_autotune_loop(site: str):
                         # _pending_cost_increase 고아 정리
                         # (이번 사이클에 포함되지 않은 상품의 pending 항목 제거)
                         _cycle_pids = set(product_map.keys())
-                        _orphan_pids = [
-                            k for k in _pending_cost_increase if k not in _cycle_pids
-                        ]
+                        _orphan_pids = [k for k in _pending_cost_increase if k not in _cycle_pids]
                         for _ok in _orphan_pids:
                             _pending_cost_increase.pop(_ok, None)
 
@@ -1014,10 +951,7 @@ async def _site_autotune_loop(site: str):
                                     try:
                                         await repo.update_async(
                                             r.product_id,
-                                            refresh_error_count=(
-                                                _ep.refresh_error_count or 0
-                                            )
-                                            + 1,
+                                            refresh_error_count=(_ep.refresh_error_count or 0) + 1,
                                             last_refreshed_at=now,
                                         )
                                     except Exception:
@@ -1029,22 +963,15 @@ async def _site_autotune_loop(site: str):
                         _err_count = sum(1 for r in results if r.error)
                         _ok_count = len(results) - _err_count
                         _no_pid_count = sum(
-                            1
-                            for r in results
-                            if r.error and "site_product_id" in r.error
+                            1 for r in results if r.error and "site_product_id" in r.error
                         )
-                        _blocked_count = sum(
-                            1 for r in results if r.error and "차단" in r.error
-                        )
+                        _blocked_count = sum(1 for r in results if r.error and "차단" in r.error)
                         _timeout_count = sum(
                             1
                             for r in results
-                            if r.error
-                            and ("타임아웃" in r.error or "Timeout" in r.error)
+                            if r.error and ("타임아웃" in r.error or "Timeout" in r.error)
                         )
-                        _other_err = (
-                            _err_count - _no_pid_count - _blocked_count - _timeout_count
-                        )
+                        _other_err = _err_count - _no_pid_count - _blocked_count - _timeout_count
                         _now = datetime.now(timezone.utc)
                         _kst = _now + timedelta(hours=9)
                         # 에러 상세 문자열 구성
@@ -1057,9 +984,7 @@ async def _site_autotune_loop(site: str):
                             _err_parts.append(f"타임아웃 {_timeout_count:,}")
                         if _other_err > 0:
                             _err_parts.append(f"기타 {_other_err:,}")
-                        _err_detail = (
-                            f" ({', '.join(_err_parts)})" if _err_parts else ""
-                        )
+                        _err_detail = f" ({', '.join(_err_parts)})" if _err_parts else ""
                         _ref_mod._refresh_log_buffer.append(
                             {
                                 "ts": _now.isoformat(),
@@ -1091,12 +1016,8 @@ async def _site_autotune_loop(site: str):
                             ]
                             # 사이클 중 이미 삭제된 상품 제외
                             if _cycle_deleted_pids:
-                                _soldout_where.append(
-                                    _CP.id.not_in(list(_cycle_deleted_pids))
-                                )
-                            _soldout_retry_stmt = (
-                                select(_CP).where(*_soldout_where).limit(50)
-                            )
+                                _soldout_where.append(_CP.id.not_in(list(_cycle_deleted_pids)))
+                            _soldout_retry_stmt = select(_CP).where(*_soldout_where).limit(50)
                             _soldout_result = await session.exec(_soldout_retry_stmt)
                             _soldout_products = _soldout_result.all()
 
@@ -1110,22 +1031,16 @@ async def _site_autotune_loop(site: str):
                                 for _sp in _soldout_products:
                                     if _sp.registered_accounts:
                                         _retry_acc_ids.update(_sp.registered_accounts)
-                                _missing_acc_ids = _retry_acc_ids - set(
-                                    _account_cache.keys()
-                                )
+                                _missing_acc_ids = _retry_acc_ids - set(_account_cache.keys())
                                 if _missing_acc_ids:
                                     from backend.domain.samba.account.model import (
                                         SambaMarketAccount,
                                     )
 
                                     _retry_acc_stmt = select(SambaMarketAccount).where(
-                                        SambaMarketAccount.id.in_(
-                                            list(_missing_acc_ids)
-                                        )
+                                        SambaMarketAccount.id.in_(list(_missing_acc_ids))
                                     )
-                                    _retry_acc_result = await session.exec(
-                                        _retry_acc_stmt
-                                    )
+                                    _retry_acc_result = await session.exec(_retry_acc_stmt)
                                     for _ra in _retry_acc_result.all():
                                         _account_cache[_ra.id] = _ra
 
@@ -1148,11 +1063,11 @@ async def _site_autotune_loop(site: str):
                                             _pno = _m_nos.get(_del_acc_id, "")
                                         _pd = {
                                             **_sp_dict,
-                                            "market_product_no": {
-                                                _del_acc.market_type: _pno
-                                            },
+                                            "market_product_no": {_del_acc.market_type: _pno},
                                         }
-                                        _del_label = f"{_del_acc.market_name}({_del_acc.seller_id or '-'})"
+                                        _del_label = (
+                                            f"{_del_acc.market_name}({_del_acc.seller_id or '-'})"
+                                        )
                                         try:
                                             _dr = await delete_from_market(
                                                 session,
@@ -1186,11 +1101,7 @@ async def _site_autotune_loop(site: str):
 
                                     # 삭제 성공한 계정 정리
                                     if _sp_deleted_ids:
-                                        _new_reg = [
-                                            a
-                                            for a in _sp_reg
-                                            if a not in _sp_deleted_ids
-                                        ]
+                                        _new_reg = [a for a in _sp_reg if a not in _sp_deleted_ids]
                                         _new_mnos = {
                                             k: v
                                             for k, v in _sp_mnos.items()
@@ -1200,12 +1111,8 @@ async def _site_autotune_loop(site: str):
                                             )
                                         }
                                         _cleanup: dict = {
-                                            "registered_accounts": _new_reg
-                                            if _new_reg
-                                            else [],
-                                            "market_product_nos": _new_mnos
-                                            if _new_mnos
-                                            else {},
+                                            "registered_accounts": _new_reg if _new_reg else [],
+                                            "market_product_nos": _new_mnos if _new_mnos else {},
                                         }
                                         if not _new_reg:
                                             _cleanup["status"] = "collected"
@@ -1219,9 +1126,7 @@ async def _site_autotune_loop(site: str):
                                         _retry_commit_err,
                                     )
                                     try:
-                                        await asyncio.wait_for(
-                                            session.rollback(), timeout=10
-                                        )
+                                        await asyncio.wait_for(session.rollback(), timeout=10)
                                     except Exception:
                                         pass
                         except Exception as _retry_err:
@@ -1234,11 +1139,7 @@ async def _site_autotune_loop(site: str):
                         # 이벤트 발행 (별도 세션)
                         _ended = datetime.now(timezone.utc)
                         _duration_sec = round((_ended - now).total_seconds(), 1)
-                        _rate = (
-                            round(filtered_count / _duration_sec, 1)
-                            if _duration_sec > 0
-                            else 0
-                        )
+                        _rate = round(filtered_count / _duration_sec, 1) if _duration_sec > 0 else 0
                         try:
                             async with get_write_session() as ev_session:
                                 monitor = SambaMonitorService(ev_session)
@@ -1255,9 +1156,7 @@ async def _site_autotune_loop(site: str):
                                             "old_price": _ev_item["old_price"],
                                             "new_price": _ev_item["new_price"],
                                             "diff_pct": _ev_item["diff_pct"],
-                                            "site_product_id": _ev_item[
-                                                "site_product_id"
-                                            ],
+                                            "site_product_id": _ev_item["site_product_id"],
                                         },
                                     )
                                 await monitor.emit(
@@ -1464,13 +1363,9 @@ async def _autotune_loop():
                         set_lotteon_cookie(str(_lt_cookie))
 
                     # 등급 분류
-                    _priority_enabled = await _get_setting(
-                        session, AUTOTUNE_PRIORITY_ENABLED_KEY
-                    )
+                    _priority_enabled = await _get_setting(session, AUTOTUNE_PRIORITY_ENABLED_KEY)
                     _use_priority = (
-                        _priority_enabled
-                        if isinstance(_priority_enabled, bool)
-                        else True
+                        _priority_enabled if isinstance(_priority_enabled, bool) else True
                     )
                     if _use_priority:
                         try:
@@ -1485,9 +1380,7 @@ async def _autotune_loop():
 
                     market_cond = build_market_registered_conditions(_CP)
 
-                    _enabled_sources = await _get_setting(
-                        session, AUTOTUNE_FILTER_SOURCES_KEY
-                    )
+                    _enabled_sources = await _get_setting(session, AUTOTUNE_FILTER_SOURCES_KEY)
 
                     site_stmt = select(func.distinct(_CP.source_site)).where(
                         *market_cond,
@@ -1500,21 +1393,15 @@ async def _autotune_loop():
 
                     # 소싱처 필터 적용
                     if _enabled_sources and isinstance(_enabled_sources, list):
-                        active_sites = [
-                            s for s in active_sites if s in _enabled_sources
-                        ]
+                        active_sites = [s for s in active_sites if s in _enabled_sources]
 
                     # 서킷브레이커 제외
-                    active_sites = [
-                        s for s in active_sites if not _site_breaker_tripped.get(s)
-                    ]
+                    active_sites = [s for s in active_sites if not _site_breaker_tripped.get(s)]
 
                     # 연속 빈 결과 소싱처 일시 제외
                     _now_skip = time.time()
                     active_sites = [
-                        s
-                        for s in active_sites
-                        if _now_skip >= _site_empty_skip_until.get(s, 0)
+                        s for s in active_sites if _now_skip >= _site_empty_skip_until.get(s, 0)
                     ]
 
                 # 소싱처별 독립 루프 태스크 생성
@@ -1731,11 +1618,7 @@ async def autotune_refresh_one(body: RefreshOneRequest):
         if not product:
             from sqlalchemy import cast, String
 
-            stmt = (
-                select(_CP)
-                .where(cast(_CP.market_product_nos, String).contains(pno))
-                .limit(5)
-            )
+            stmt = select(_CP).where(cast(_CP.market_product_nos, String).contains(pno)).limit(5)
             result = await session.execute(stmt)
             candidates = list(result.scalars().all())
             for c in candidates:
@@ -1893,11 +1776,7 @@ async def autotune_start(
     except Exception:
         pass  # 모듈 로드 실패 시 기존 동작 유지
 
-    global \
-        _autotune_task, \
-        _autotune_cycle_count, \
-        _autotune_restart_count, \
-        _autotune_target_ids
+    global _autotune_task, _autotune_cycle_count, _autotune_restart_count, _autotune_target_ids
     from backend.domain.samba.collector.refresher import clear_bulk_cancel
 
     if _autotune_running_event.is_set():
@@ -1999,9 +1878,7 @@ async def autotune_status():
     try:
         since_24h = datetime.now(timezone.utc) - timedelta(hours=24)
         async with get_read_session() as rs:
-            cnt_stmt = select(func.count(_CP2.id)).where(
-                _CP2.last_refreshed_at >= since_24h
-            )
+            cnt_stmt = select(func.count(_CP2.id)).where(_CP2.last_refreshed_at >= since_24h)
             refreshed_24h = (await rs.execute(cnt_stmt)).scalar() or 0
     except Exception:
         refreshed_24h = 0
