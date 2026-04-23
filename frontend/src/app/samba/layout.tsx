@@ -58,11 +58,11 @@ export default function SambaLayout({
       try {
         const user = JSON.parse(raw) as SambaUser;
         setCurrentUser(user);
-        // 관리자는 라이선스 체크 우회
-        if (!user.is_admin && !getLicenseKey()) {
-          router.replace("/samba/license");
-          return;
-        }
+        // 라이선스 체크 임시 비활성화 (복구 시 아래 주석 해제)
+        // if (!user.is_admin && !getLicenseKey()) {
+        //   router.replace("/samba/license");
+        //   return;
+        // }
       } catch {
         localStorage.removeItem(STORAGE_KEYS.SAMBA_USER);
         router.replace("/samba/login");
