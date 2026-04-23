@@ -100,17 +100,19 @@ class DetailParsersMixin:
         price_info = pbf.get("priceInfo") or {}
         sl_prc = self._safe_int(price_info.get("slPrc", 0))
 
-        # ── 최대혜택가 계산 (판매가 - 즉시할인 - 추가할인) ─────────
+        # ── 최대혜택가 계산 (판매가 - 즉시할인) ───────────────────
+        # adtnDcAplyTotAmt(추가할인)는 판매가 반영 대상 아님 — 결제 시 부가 혜택으로만 노출.
+        # 롯데ON은 즉시할인(immdDcAplyTotAmt)만 판매가에 반영하므로 bestBenefitPrice 계산에서 제외.
+        # 소싱 경로 _parse_pbf_to_detail(커밋 5ac0ef1e)과 로직 일치 — 가격 핑퐁 재발 방지.
         immd_dc = self._safe_int(price_info.get("immdDcAplyTotAmt", 0))
-        adtn_dc = self._safe_int(price_info.get("adtnDcAplyTotAmt", 0))
 
-        if immd_dc > 0 or adtn_dc > 0:
-            # PBF에 할인 정보 있음 → slPrc 기준으로 가격 갱신
+        if immd_dc > 0:
+            # PBF에 즉시할인 있음 → slPrc 기준으로 가격 갱신
             if sl_prc > 0:
                 detail["salePrice"] = sl_prc
             base_prc = sl_prc or detail.get("salePrice", 0)
             if base_prc > 0:
-                best_benefit = base_prc - immd_dc - adtn_dc
+                best_benefit = base_prc - immd_dc
                 if best_benefit > 0 and best_benefit < base_prc:
                     detail["bestBenefitPrice"] = best_benefit
                 else:
