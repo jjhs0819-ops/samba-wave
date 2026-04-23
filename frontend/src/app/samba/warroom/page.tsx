@@ -100,15 +100,6 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusCh
           <span style={{ fontSize: '0.65rem', color: '#666' }}>실시간</span>
         </div>
         <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-          {Object.keys(intervals).length > 0 && (
-            <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.7rem' }}>
-              {Object.entries(intervals).filter(([, v]) => (v as number) > 0).map(([site, interval]) => (
-                <span key={site} style={{ color: siteColors[site] || '#888' }}>
-                  {site} {(interval as number).toFixed(1)}s
-                </span>
-              ))}
-            </div>
-          )}
           <button onClick={() => {
             const text = logs.map(l => l.msg).join('\n')
             navigator.clipboard.writeText(text)
@@ -645,7 +636,7 @@ export default function WarroomPage() {
         {filteredEvents.length === 0 ? (
           <div style={{ fontSize: '0.96rem', color: '#666', padding: '1rem 0', textAlign: 'center' }}>이벤트 없음</div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', maxHeight: '420px', overflow: 'auto' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', maxHeight: '620px', overflow: 'auto' }}>
             {/* 소싱처별 오토튠 사이클 그룹 */}
             {Object.keys(tickEventsBySite).length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.25rem' }}>
