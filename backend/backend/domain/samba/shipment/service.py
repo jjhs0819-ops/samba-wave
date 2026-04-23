@@ -1291,7 +1291,11 @@ class SambaShipmentService:
                                 # API 호출은 성공했으나 soldout_fallback=True 또는 success=False
                                 res["error"] = "전 옵션 품절 (마켓삭제 실패)"
 
-                    # 마켓삭제 실패 케이스 반환
+                    # 품절 스킵 케이스: status를 skipped로 명시, error 기본값 보정
+                    # (res.status=="completed"는 마켓삭제 완료 → 이미 return된 상태이므로 여기 도달 안함)
+                    res["status"] = "skipped"
+                    if not res.get("error"):
+                        res["error"] = "전 옵션 품절"
                     logger.info(
                         f"[전송] 상품 {product_id} → {market_type} 전 옵션 품절 스킵"
                     )

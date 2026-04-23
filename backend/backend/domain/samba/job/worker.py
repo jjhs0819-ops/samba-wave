@@ -928,9 +928,13 @@ class JobWorker:
                             )
                         elif acc_status == "skipped":
                             skip_count += 1
+                            _skip_reason = str(tx_error.get(acc_id, "") or "")[:200]
+                            _reason_suffix = (
+                                f" ({_skip_reason})" if _skip_reason else ""
+                            )
                             _add_job_log(
                                 job.id,
-                                f"[{i + 1}/{total:,}] {prod_name} → {acc_label}: 스킵{rl}",
+                                f"[{i + 1}/{total:,}] {prod_name} → {acc_label}: 스킵{_reason_suffix}{rl}",
                             )
                         else:
                             fail_count += 1
