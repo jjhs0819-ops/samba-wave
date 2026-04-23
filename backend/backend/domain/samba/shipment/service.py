@@ -1845,18 +1845,24 @@ class SambaShipmentService:
                 composed = re.sub(re.escape(dw), " ", composed, flags=re.IGNORECASE)
             composed = re.sub(r"\s{2,}", " ", composed).strip()
 
-        # 중복 단어 제거
+        # 중복 단어 제거 — 구두점 안에 묶인 부분단어까지 감지
         if name_rule.dedup_enabled:
-            words = composed.split()
             seen: set[str] = set()
-            deduped: list[str] = []
-            for w in words:
-                # 영문/숫자만 추출해서 비교 (punctuation 무시)
-                base_word = re.sub(r"[^\w]", "", w, flags=re.UNICODE).lower()
-                if base_word and base_word not in seen:
-                    seen.add(base_word)
-                    deduped.append(w)
-            composed = " ".join(deduped)
+
+            def _dedup_replace(m: re.Match) -> str:
+                word = m.group(0)
+                lower = word.lower()
+                if lower in seen:
+                    return ""
+                seen.add(lower)
+                return word
+
+            # 2자 이상 한글/영문 시퀀스만 dedup 대상 (숫자/단일글자/구두점은 제외)
+            composed = re.sub(
+                r"[^\W\d_]{2,}", _dedup_replace, composed, flags=re.UNICODE
+            )
+            # 연속 공백 정리
+            composed = re.sub(r"\s+", " ", composed).strip()
 
         # prefix/suffix 적용
         if name_rule.prefix:

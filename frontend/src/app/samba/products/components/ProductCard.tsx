@@ -291,20 +291,17 @@ export function composeProductName(
       composed = composed.replace(delRegex, ' ').replace(/\s{2,}/g, ' ').trim()
     }
   }
-  // 중복 제거
+  // 중복 제거 — 구두점 안에 묶인 부분단어까지 감지
   if (nameRule.dedup_enabled) {
-    const words = composed.split(/\s+/)
     const seen = new Set<string>()
-    const deduped: string[] = []
-    for (const w of words) {
-      // 구두점/기호만 제거하고 비교 (한글, 영문, 숫자는 유지)
-      const baseWord = w.replace(/[\p{P}\p{S}]/gu, '').toLowerCase()
-      if (baseWord && !seen.has(baseWord)) {
-        seen.add(baseWord)
-        deduped.push(w)
-      }
-    }
-    composed = deduped.join(' ')
+    // 2자 이상 유니코드 문자(한글/영문) 시퀀스만 dedup 대상
+    composed = composed.replace(/\p{L}{2,}/gu, (match) => {
+      const lower = match.toLowerCase()
+      if (seen.has(lower)) return ''
+      seen.add(lower)
+      return match
+    })
+    composed = composed.replace(/\s+/g, ' ').trim()
   }
   // prefix/suffix 적용
   if (nameRule.prefix) composed = `${nameRule.prefix} ${composed}`
