@@ -578,15 +578,27 @@ async def _delete_playauto(
 ) -> dict[str, Any]:
     """플레이오토 삭제.
 
-    market_delete=True (수동 마켓삭제): EMP 직접 삭제 후 DB 정리 — API 호출 없이 성공 반환
+    market_delete=True (수동 마켓삭제): 재고 0 → 취소대기 처리 후 DB 정리
     market_delete=False (오토튠/리프레시 품절): EMP 재고0 → 취소대기 처리 후 soldout_fallback 유지
     """
-    if market_delete:
-        return {"success": True, "message": "플레이오토: DB에서 제거"}
-
     from backend.domain.samba.plugins.markets.playauto import PlayAutoPlugin
 
     product_no = product.get("market_product_no", {}).get("playauto", "")
+
+    if market_delete:
+        if not product_no:
+            return {
+                "success": False,
+                "message": "플레이오토 MasterCode(상품번호)를 찾을 수 없습니다. EMP에서 직접 확인해주세요.",
+            }
+        plugin = PlayAutoPlugin()
+        result = await plugin.delete(session, product_no, account)
+        if not result.get("success"):
+            logger.warning(
+                f"[플레이오토 마켓삭제] API 실패 (DB 정리 진행): {result.get('message', '')}"
+            )
+        return {"success": True, "message": "플레이오토: 취소대기 처리 후 DB 제거"}
+
     if not product_no:
         return {
             "success": True,

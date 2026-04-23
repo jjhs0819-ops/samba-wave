@@ -705,6 +705,12 @@ async def collect_by_url(
         from urllib.parse import urlparse, parse_qs
         from backend.domain.samba.proxy.ssg_sourcing import SSGSourcingClient
 
+        if "dealItemView" in url:
+            raise HTTPException(
+                400,
+                "모음전(기획전) 상품은 수집할 수 없습니다. 개별 상품 URL을 입력해주세요.",
+            )
+
         parsed = urlparse(url)
         is_search_url = "/search" in parsed.path or "query" in parsed.query
 

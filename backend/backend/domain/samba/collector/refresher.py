@@ -34,7 +34,7 @@ SITE_CONCURRENCY: dict[str, int] = {
     "ABCmart": 5 if _IS_CLOUD else 2,
     "GrandStage": 5 if _IS_CLOUD else 2,
     "REXMONDE": 5 if _IS_CLOUD else 2,
-    "SSG": 7 if _IS_CLOUD else 3,
+    "SSG": 3,  # 탭 동시 접근으로 인한 reCAPTCHA 차단 방지 (7→3 축소)
     "LOTTEON": 5 if _IS_CLOUD else 2,
     "GSShop": 5 if _IS_CLOUD else 2,
     "ElandMall": 5 if _IS_CLOUD else 2,
@@ -52,7 +52,7 @@ SITE_BASE_INTERVAL: dict[str, float] = {
     "ABCmart": 1.0,
     "GrandStage": 1.0,
     "REXMONDE": 1.0,
-    "SSG": 1.0,
+    "SSG": 3.0,  # reCAPTCHA 방지를 위한 요청 간격 확대
     "LOTTEON": 0.5,
     "GSShop": 1.0,
     "ElandMall": 1.0,

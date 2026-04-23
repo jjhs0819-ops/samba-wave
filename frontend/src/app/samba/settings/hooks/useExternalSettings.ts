@@ -93,6 +93,7 @@ export interface ExternalSettingsActions {
   saveR2Settings: () => Promise<void>
   testR2: () => Promise<void>
   generateWorkerToken: () => Promise<void>
+  downloadBgWorkerEnv: (token: string) => void
   loadProbeStatus: () => Promise<void>
   runProbe: () => Promise<void>
   setSmsUserId: (v: string) => void
@@ -495,6 +496,24 @@ export function useExternalSettings(): ExternalSettingsState & ExternalSettingsA
     } catch { showAlert('저장 실패', 'error') }
   }
 
+  // bg_worker.env 파일 다운로드
+  const downloadBgWorkerEnv = (token: string) => {
+    const content = [
+      '# Samba Wave Local BG Worker Config',
+      `SAMBA_API_URL=https://samba-wave-api-363598397345.asia-northeast3.run.app`,
+      `WORKER_TOKEN=${token}`,
+      'POLL_INTERVAL=5',
+      '',
+    ].join('\n')
+    const blob = new Blob([content], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'bg_worker.env'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   // 로컬 워커 토큰 생성
   const generateWorkerToken = async () => {
     const token = Array.from(crypto.getRandomValues(new Uint8Array(24)))
@@ -502,7 +521,8 @@ export function useExternalSettings(): ExternalSettingsState & ExternalSettingsA
     try {
       await forbiddenApi.saveSetting('bg_worker', { worker_token: token })
       setWorkerToken(token)
-      setWorkerTokenStatus('생성 완료 — 워커 설정파일에 복사하세요')
+      setWorkerTokenStatus('생성 완료')
+      downloadBgWorkerEnv(token)
     } catch { setWorkerTokenStatus('저장 실패') }
   }
 
@@ -606,6 +626,7 @@ export function useExternalSettings(): ExternalSettingsState & ExternalSettingsA
     workerToken,
     workerTokenStatus,
     generateWorkerToken,
+    downloadBgWorkerEnv,
     loadProbeStatus,
     runProbe,
     setSmsUserId,

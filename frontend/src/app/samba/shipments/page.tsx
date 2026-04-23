@@ -64,6 +64,7 @@ export default function ShipmentsPage() {
   const [pageSize, setPageSize] = useState(20)
   const [currentPage, setCurrentPage] = useState(1)
   const [siteFilter, setSiteFilter] = useState('전체')
+  const [soldOutFilter, setSoldOutFilter] = useState('전체')
   const [registrationFilter, setRegistrationFilter] = useState('미등록')
   const [sortBy, setSortBy] = useState('updated_at_desc')
   const [totalCount, setTotalCount] = useState(0)
@@ -272,11 +273,12 @@ export default function ShipmentsPage() {
       scrollParams.search_type = typeMap[searchField] || 'name'
     }
     if (siteFilter !== '전체') scrollParams.source_site = siteFilter
+    if (soldOutFilter !== '전체') scrollParams.sold_out_filter = soldOutFilter === '품절' ? 'sold_out' : 'not_sold_out'
     if (registrationFilter !== '전체') {
       if (registrationFilter.startsWith('reg_') || registrationFilter.startsWith('unreg_') || registrationFilter.startsWith('mtype_')) {
         scrollParams.status = registrationFilter
       } else {
-        scrollParams.status = registrationFilter === '등록' ? 'market_registered' : registrationFilter === '미등록' ? 'market_unregistered' : registrationFilter === '품절' ? 'sold_out' : ''
+        scrollParams.status = registrationFilter === '등록' ? 'market_registered' : registrationFilter === '미등록' ? 'market_unregistered' : ''
       }
     }
     if (sortBy) scrollParams.sort_by = sortBy
@@ -951,13 +953,21 @@ export default function ShipmentsPage() {
             {SOURCE_SITES.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
+        {/* 품절여부 */}
+        <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: '1px solid #181C28', gap: '8px' }}>
+          <span style={{ minWidth: '72px', color: '#666', fontSize: '0.78rem' }}>품절여부</span>
+          <select value={soldOutFilter} onChange={e => { onFilterChange(); setSoldOutFilter(e.target.value) }} style={{ ...inputStyle, width: '140px' }}>
+            <option value="전체">전체</option>
+            <option value="품절">품절</option>
+            <option value="비품절">비품절</option>
+          </select>
+        </div>
         {/* 마켓등록 */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: '1px solid #181C28', gap: '8px' }}>
           <span style={{ minWidth: '72px', color: '#666', fontSize: '0.78rem' }}>마켓등록</span>
           <select value={registrationFilter} onChange={e => { onFilterChange(); setRegistrationFilter(e.target.value) }} style={{ ...inputStyle, width: '180px' }}>
             <option value="전체">전체</option>
             <optgroup label="── 전체 ──">
-              <option value="품절">품절상품</option>
               <option value="미등록">미등록상품</option>
               <option value="등록">등록상품</option>
             </optgroup>
@@ -990,7 +1000,7 @@ export default function ShipmentsPage() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '2px solid #181C28', flexWrap: 'wrap', gap: '8px' }}>
           <div style={{ display: 'flex', gap: '8px' }}>
             <button onClick={load} style={{ padding: '6px 40px', fontSize: '0.875rem', fontWeight: 700, background: '#2A2F3E', border: '1px solid #3D4560', color: '#E5E5E5', borderRadius: '6px', cursor: 'pointer' }}>검색하기</button>
-            <button onClick={() => { onFilterChange(); setSearchText(''); setSiteFilter('전체'); setRegistrationFilter('전체'); setSearchField('name') }} style={{ padding: '6px 24px', fontSize: '0.875rem', background: 'transparent', border: '1px solid #2A3040', color: '#9AA5C0', borderRadius: '6px', cursor: 'pointer' }}>초기화</button>
+            <button onClick={() => { onFilterChange(); setSearchText(''); setSiteFilter('전체'); setSoldOutFilter('전체'); setRegistrationFilter('전체'); setSearchField('name') }} style={{ padding: '6px 24px', fontSize: '0.875rem', background: 'transparent', border: '1px solid #2A3040', color: '#9AA5C0', borderRadius: '6px', cursor: 'pointer' }}>초기화</button>
           </div>
         </div>
 

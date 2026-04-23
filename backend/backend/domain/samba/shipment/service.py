@@ -1242,7 +1242,7 @@ class SambaShipmentService:
                             )
 
                             del_result = await delete_from_market(
-                                self.session, market_type, product_dict, account_id
+                                self.session, market_type, product_dict, account=account
                             )
                             if del_result.get("success") and not del_result.get(
                                 "soldout_fallback"
@@ -2258,11 +2258,23 @@ class SambaShipmentService:
             for account_id in target_account_ids:
                 # 이 상품에 등록된 계정만 삭제 대상
                 if account_id not in reg_accounts:
-                    # PlayAuto: API 삭제 불가 — DB 불일치 상태여도 성공 처리하여 프론트 배지 제거
                     acc = _del_account_map.get(account_id)
-                    if acc and acc.market_type == "playauto":
+                    if not acc:
+                        continue
+                    # PlayAuto: API 삭제 불가 — DB 불일치 상태여도 성공 처리하여 프론트 배지 제거
+                    if acc.market_type == "playauto":
                         delete_results[account_id] = "success"
-                    continue
+                        continue
+                    # non-PlayAuto: 상품번호가 있으면 registered_accounts 불일치 상태 → 삭제 시도
+                    has_product_no = bool(
+                        market_product_nos.get(f"{account_id}_origin")
+                        or market_product_nos.get(account_id)
+                    )
+                    if not has_product_no:
+                        # 상품번호도 없음 → 이미 삭제된 상태로 간주, 배지 정리
+                        delete_results[account_id] = "success"
+                        continue
+                    # 상품번호 있음 → 아래 삭제 로직 fall-through
 
                 account = _del_account_map.get(account_id)
                 if not account:
