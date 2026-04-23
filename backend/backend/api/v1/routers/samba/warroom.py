@@ -125,7 +125,7 @@ async def list_site_changes(
     """소싱처별 최근 가격변동·재고변동 이벤트 (각 N건)."""
     repo = SambaMonitorEventRepository(session)
     events = await repo.list_changes_per_site(
-        event_types=["price_changed", "sold_out"],
+        event_types=["price_changed", "sold_out", "stock_changed"],
         per_site_limit=limit,
     )
 

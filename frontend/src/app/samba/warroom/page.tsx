@@ -736,6 +736,7 @@ export default function WarroomPage() {
                 {Object.keys(tickEventsBySite).map(siteName => {
                   const sitePriceChanges = siteChanges[siteName]?.price_changed ?? []
                   const siteSoldOuts = siteChanges[siteName]?.sold_out ?? []
+                  const siteStockChanges = siteChanges[siteName]?.stock_changed ?? []
                   // autotune 사이클 tick에서 가격변동 상품 추출 (LOTTEON 등 price_changed 이벤트 없는 소싱처)
                   type TickPriceItem = { pid: string; site_product_id?: string; name: string; old_price: number; new_price: number }
                   type TickStockItem = { pid: string; site_product_id?: string; name: string; sale_status?: string }
@@ -746,8 +747,8 @@ export default function WarroomPage() {
                   const tickEndedAt = latestTickDetail?.ended_at as string | undefined
                   // DB 이벤트에 없는 항목만 tick에서 보충 (중복 방지), 합산 5개 제한
                   const tickPriceSlice = tickPriceItems.slice(0, Math.max(0, 5 - sitePriceChanges.length))
-                  const tickStockSlice = tickStockItems.slice(0, Math.max(0, 5 - siteSoldOuts.length))
-                  if (sitePriceChanges.length === 0 && siteSoldOuts.length === 0 && tickPriceSlice.length === 0 && tickStockSlice.length === 0) return null
+                  const tickStockSlice = tickStockItems.slice(0, Math.max(0, 5 - siteSoldOuts.length - siteStockChanges.length))
+                  if (sitePriceChanges.length === 0 && siteSoldOuts.length === 0 && siteStockChanges.length === 0 && tickPriceSlice.length === 0 && tickStockSlice.length === 0) return null
                   const fmtT = (iso: string) => {
                     const d = new Date(iso)
                     return `${d.getMonth() + 1}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
@@ -776,6 +777,24 @@ export default function WarroomPage() {
                             <span style={{ fontSize: '0.72rem', color: '#bbb' }}>
                               {status === 'SUSPENSION' ? '품절' : status ?? '변동'}
                             </span>
+                          </div>
+                        )
+                      })}
+                      {siteStockChanges.map(ev => {
+                        const d = ev.detail
+                        const sitePid = (d?.site_product_id as string | undefined) || shortId(ev.product_id)
+                        const oldS = d?.old_stock as number | undefined
+                        const newS = d?.new_stock as number | undefined
+                        return (
+                          <div key={ev.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
+                            <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
+                            <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{sitePid}</span>
+                            <span style={{ fontSize: '0.72rem', color: '#bbb' }}>재고변동</span>
+                            {oldS != null && newS != null && (
+                              <span style={{ fontSize: '0.72rem', color: '#bbb' }}>
+                                {fmtNum(oldS)}→{fmtNum(newS)}
+                              </span>
+                            )}
                           </div>
                         )
                       })}

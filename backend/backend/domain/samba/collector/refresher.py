@@ -879,7 +879,8 @@ def _process_musinsa_detail(
         new_sale_price != old_sale or new_sale_status != old_status or cost_changed
     )
 
-    # 옵션 재고 변동 건수 — 품절↔리스탁 전환만 카운트
+    # 옵션 재고 변동 건수 — 품절↔리스탁 전환 + 수량 델타 모두 카운트
+    # (소싱처 무관 공통 기준 — 신규 소싱처도 자동 포함)
     old_options = getattr(product, "options", None) or []
     _stock_changes = 0
     if new_options and old_options:
@@ -893,17 +894,20 @@ def _process_musinsa_detail(
             new_stock = o.get("stock", 0) or 0
             was_soldout = old_stock <= 0
             is_soldout = new_stock <= 0 or o.get("isSoldOut", False)
-            if was_soldout != is_soldout:
+            _transition = was_soldout != is_soldout
+            _qty_delta = (old_stock or 0) != (new_stock or 0)
+            if _transition or _qty_delta:
                 _stock_changes += 1
-                logger.info(
-                    "[재고변동감지] %s %s: DB=%s(sold=%s) → API=%s(sold=%s)",
-                    site_product_id,
-                    key,
-                    old_stock,
-                    was_soldout,
-                    new_stock,
-                    is_soldout,
-                )
+                if _transition:
+                    logger.info(
+                        "[재고변동감지] %s %s: DB=%s(sold=%s) → API=%s(sold=%s)",
+                        site_product_id,
+                        key,
+                        old_stock,
+                        was_soldout,
+                        new_stock,
+                        is_soldout,
+                    )
     else:
         if not old_options and new_options:
             logger.warning(
@@ -1046,7 +1050,7 @@ async def _parse_kream(product: Any) -> RefreshResult:
         or new_sale_status != old_status
     )
 
-    # 옵션 재고 변동 — 품절↔리스탁 전환만 카운트
+    # 옵션 재고 변동 — 품절↔리스탁 전환 + 수량 델타 모두 카운트
     old_options = getattr(product, "options", None) or []
     _stock_changes = 0
     if new_options and old_options:
@@ -1060,7 +1064,7 @@ async def _parse_kream(product: Any) -> RefreshResult:
             new_stock = o.get("stock", 0) or 0
             was_soldout = old_stock <= 0
             is_soldout = new_stock <= 0
-            if was_soldout != is_soldout:
+            if was_soldout != is_soldout or (old_stock or 0) != (new_stock or 0):
                 _stock_changes += 1
 
     # 마켓 정보

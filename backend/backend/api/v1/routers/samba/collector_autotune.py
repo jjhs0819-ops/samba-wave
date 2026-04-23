@@ -291,6 +291,8 @@ async def _site_autotune_loop(site: str):
                         _price_tx_items: list[dict] = []
                         _stock_tx_items: list[dict] = []
                         _price_change_events: list[dict] = []
+                        # 재고 변동 이벤트(sold_out 전환 제외 — 수량 변동 전용) — 사이클 끝에 배치 발행
+                        _stock_change_events: list[dict] = []
                         _all_stock_pids: set[str] = set()
                         _cycle_deleted_pids: set[str] = (
                             set()
@@ -477,6 +479,37 @@ async def _site_autotune_loop(site: str):
                                             "pid": r.product_id,
                                             "site_product_id": product.site_product_id,
                                             "name": (product.name or "")[:40],
+                                            "sale_status": r.new_sale_status,
+                                        }
+                                    )
+
+                                # per-product stock_changed 이벤트 수집 (사이클 끝 배치 발행용)
+                                # sold_out 전환은 아래 서킷브레이커 블록에서 별도 처리되므로
+                                # 여기서는 "수량 변동" 이벤트만 기록한다.
+                                if r.stock_changed and r.new_sale_status != "sold_out":
+
+                                    def _sum_stock(opts):
+                                        if not opts:
+                                            return 0
+                                        total = 0
+                                        for _o in opts:
+                                            if isinstance(_o, dict):
+                                                try:
+                                                    total += int(_o.get("stock") or 0)
+                                                except (TypeError, ValueError):
+                                                    pass
+                                        return total
+
+                                    _old_stock = _sum_stock(product.options)
+                                    _new_stock = _sum_stock(r.new_options)
+                                    _stock_change_events.append(
+                                        {
+                                            "source_site": product.source_site,
+                                            "product_id": r.product_id,
+                                            "product_name": product.name,
+                                            "site_product_id": product.site_product_id,
+                                            "old_stock": _old_stock,
+                                            "new_stock": _new_stock,
                                             "sale_status": r.new_sale_status,
                                         }
                                     )
@@ -1283,6 +1316,26 @@ async def _site_autotune_loop(site: str):
                                             ],
                                         },
                                     )
+                                # per-product stock_changed 이벤트 배치 발행 (최대 50건)
+                                for _ev_item in _stock_change_events[:50]:
+                                    _old_s = int(_ev_item.get("old_stock") or 0)
+                                    _new_s = int(_ev_item.get("new_stock") or 0)
+                                    await monitor.emit(
+                                        "stock_changed",
+                                        "info",
+                                        summary=f"재고 변동 — {(_ev_item['product_name'] or '')[:30]} {_old_s:,}→{_new_s:,}",
+                                        source_site=_ev_item["source_site"],
+                                        product_id=_ev_item["product_id"],
+                                        product_name=_ev_item["product_name"],
+                                        detail={
+                                            "old_stock": _old_s,
+                                            "new_stock": _new_s,
+                                            "sale_status": _ev_item["sale_status"],
+                                            "site_product_id": _ev_item[
+                                                "site_product_id"
+                                            ],
+                                        },
+                                    )
                                 await monitor.emit(
                                     "scheduler_tick",
                                     "info",
@@ -1653,14 +1706,24 @@ class AutotuneStartRequest(BaseModel):
     device_id: Optional[str] = None
 
 
-async def _save_autotune_state(enabled: bool):
-    """DB에 오토튠 ON/OFF 상태 저장."""
+async def _save_autotune_state(enabled: bool, device_id: str = ""):
+    """DB에 오토튠 ON/OFF 상태 + 소유자 deviceId 저장.
+
+    Cloud Run 인스턴스가 교체·스케일아웃될 때 auto_start_if_enabled가
+    복원하면서 소유자 deviceId까지 함께 복구해야, SSG/롯데온 탭 작업이
+    다른 PC의 확장앱으로 새나가지 않는다.
+    """
     try:
         from backend.db.orm import get_write_session
         from backend.api.v1.routers.samba.proxy import _set_setting
 
         async with get_write_session() as session:
             await _set_setting(session, "autotune_enabled", enabled)
+            if enabled:
+                # 시작 시에만 deviceId 갱신, 중지 시에는 기존값 유지하지 않고 초기화
+                await _set_setting(session, "autotune_owner_device_id", device_id or "")
+            else:
+                await _set_setting(session, "autotune_owner_device_id", "")
             await session.commit()
     except Exception as e:
         logger.warning(f"[오토튠] 상태 저장 실패: {e}")
@@ -1682,7 +1745,21 @@ async def auto_start_if_enabled():
 
         async with get_read_session() as session:
             enabled = await _get_setting(session, "autotune_enabled")
+            saved_device_id = (
+                await _get_setting(session, "autotune_owner_device_id") or ""
+            )
         if enabled:
+            # deviceId가 비어 있으면 자동시작을 건너뛴다.
+            # 그렇지 않으면 소싱큐 owner가 빈 값으로 세팅돼 모든 PC 확장앱이
+            # SSG/롯데온 탭 작업을 집어가게 된다 (다른 PC에서 탭이 계속 열리는 증상).
+            # 사용자가 브라우저에서 명시적으로 다시 시작하면 정상 owner와 함께 복구된다.
+            if not saved_device_id:
+                logger.warning(
+                    "[오토튠] 저장된 deviceId 없음 → 자동시작 건너뜀 "
+                    "(브라우저에서 수동 시작 필요, 다른 PC 탭 열림 방지)"
+                )
+                return
+
             # 전송 Job 존재 시 대기 (OOM 방지 — 전송과 동시 실행 차단)
             from backend.db.orm import get_read_session as _get_rs
             from sqlalchemy import text as _st
@@ -1710,6 +1787,16 @@ async def auto_start_if_enabled():
             from backend.domain.samba.collector.refresher import clear_bulk_cancel
 
             if not _autotune_running_event.is_set():
+                # 소싱큐 owner deviceId 복원 — 실행 브라우저에만 탭이 열리도록 함
+                try:
+                    from backend.domain.samba.proxy.sourcing_queue import (
+                        set_autotune_owner,
+                    )
+
+                    set_autotune_owner(saved_device_id)
+                except Exception:
+                    pass
+
                 _autotune_running_event.set()
                 _autotune_cycle_count = 0
                 _site_cycle_counts.clear()
@@ -1719,7 +1806,10 @@ async def auto_start_if_enabled():
                 _site_empty_skip_until.clear()
                 clear_bulk_cancel()
                 _autotune_task = asyncio.create_task(_autotune_loop())
-                logger.info("[오토튠] 서버 시작 — DB 설정에 따라 자동 시작")
+                logger.info(
+                    "[오토튠] 서버 시작 — DB 설정에 따라 자동 시작 (owner=%s)",
+                    saved_device_id[:8],
+                )
     except Exception as e:
         logger.warning(f"[오토튠] 자동 시작 실패: {e}")
 
@@ -1992,7 +2082,8 @@ async def autotune_start(
 
     _autotune_task = asyncio.create_task(_autotune_loop())
     if not body.target_product_no:
-        await _save_autotune_state(True)
+        # Cloud Run 인스턴스 교체 시 복원 경로에서 deviceId를 다시 세팅할 수 있도록 함께 저장
+        await _save_autotune_state(True, body.device_id or "")
     return {"ok": True, "status": "started", "target": "registered"}
 
 
