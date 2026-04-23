@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from backend.api.v1.routers.auth import router as auth_router
+from backend.api.v1.routers.ebay import router as ebay_router
 from backend.api.v1.routers.license import router as license_router
 from backend.api.v1.routers.samba.account import router as samba_account_router
 from backend.api.v1.routers.samba.license_admin import router as license_admin_router
@@ -26,6 +27,9 @@ from backend.api.v1.routers.samba.collector_refresh import (
 )
 from backend.api.v1.routers.samba.contact import router as samba_contact_router
 from backend.api.v1.routers.samba.cs_inquiry import router as samba_cs_inquiry_router
+from backend.api.v1.routers.samba.ebay_mapping import (
+    router as samba_ebay_mapping_router,
+)
 from backend.api.v1.routers.samba.forbidden import router as samba_forbidden_router
 from backend.api.v1.routers.samba.job import router as samba_job_router
 from backend.api.v1.routers.samba.naverstore_sourcing import (
@@ -184,6 +188,12 @@ def create_application() -> FastAPI:
         samba_naverstore_sourcing_router,
         prefix="/api/v1/samba",
         dependencies=samba_auth,
+    )
+
+    # eBay 라우터 (포크 전용)
+    app.include_router(ebay_router, prefix="/api/v1", dependencies=samba_auth)
+    app.include_router(
+        samba_ebay_mapping_router, prefix="/api/v1/samba", dependencies=samba_auth
     )
 
     static_dir = Path(__file__).resolve().parent / "static" / "images"

@@ -626,6 +626,27 @@ async def approve_cancel(
         )
         logger.info(f"[취소승인] {order.order_number} 취소승인 완료")
         return {"ok": True, "message": "취소승인 완료"}
+
+    elif account.market_type == "ebay":
+        # eBay는 seller_cancel_order로 이미 취소 처리됨 → DB 상태만 동기화
+        await svc.update_order(
+            order_id,
+            {"shipping_status": "취소완료", "status": "cancelled"},
+        )
+        # samba_return 상태도 업데이트
+        from backend.domain.samba.returns.repository import SambaReturnRepository
+
+        ret_repo = SambaReturnRepository(session)
+        rets = await ret_repo.filter_by_async(order_id=order_id)
+        for ret in rets:
+            await ret_repo.update_async(
+                ret.id,
+                status="completed",
+                market_order_status="취소완료",
+            )
+        logger.info(f"[취소승인] eBay {order.order_number} 취소완료 동기화")
+        return {"ok": True, "message": "eBay 취소완료 처리"}
+
     else:
         raise HTTPException(
             status_code=400, detail=f"{account.market_type} 취소승인 미지원"
@@ -773,6 +794,53 @@ async def seller_cancel(
         )
         logger.info(f"[주문확인] 플레이오토 {order.order_number} 주문확인 완료 (DB)")
         return {"ok": True, "message": "주문확인 완료"}
+
+    elif account.market_type == "ebay":
+        from backend.domain.samba.proxy.ebay import EbayApiError, EbayClient
+
+        extras = account.additional_fields or {}
+        app_id = extras.get("clientId") or extras.get("appId") or account.api_key or ""
+        cert_id = (
+            extras.get("clientSecret")
+            or extras.get("certId")
+            or account.api_secret
+            or ""
+        )
+        refresh_token = extras.get("oauthToken") or extras.get("authToken", "") or ""
+        if not (app_id and cert_id and refresh_token):
+            raise HTTPException(status_code=400, detail="eBay 인증정보 없음")
+
+        client = EbayClient(
+            app_id=app_id,
+            dev_id="",
+            cert_id=cert_id,
+            refresh_token=refresh_token,
+            sandbox=bool(extras.get("sandbox", False)),
+        )
+        # order_number에 legacyOrderId 저장되어 있음
+        try:
+            reason_map = {
+                "111": "OUT_OF_STOCK_OR_CANNOT_FULFILL",
+                "SOLD_OUT": "OUT_OF_STOCK_OR_CANNOT_FULFILL",
+                "112": "BUYER_CANCEL_OR_ADDRESS_ISSUE",
+                "113": "BUYER_ASKED_CANCEL",
+            }
+            ebay_reason = reason_map.get(
+                body.reason_code, "OUT_OF_STOCK_OR_CANNOT_FULFILL"
+            )
+            await client.seller_cancel_order(
+                legacy_order_id=order.order_number,
+                reason=ebay_reason,
+            )
+        except EbayApiError as e:
+            raise HTTPException(status_code=500, detail=f"eBay 취소 실패: {e}")
+
+        await svc.update_order(
+            order_id,
+            {"shipping_status": "취소요청", "status": "cancel_requested"},
+        )
+        logger.info(f"[판매자취소] eBay {order.order_number} 취소 요청 완료")
+        return {"ok": True, "message": "eBay 판매자 취소 요청 완료"}
 
     raise HTTPException(
         status_code=400, detail=f"{account.market_type} 판매자 취소 미지원"
@@ -1429,6 +1497,66 @@ async def return_action(
         logger.info(f"[반품처리][롯데ON] {order.order_number} {label} 완료")
         return {"ok": True, "message": f"{label} 완료"}
 
+    elif account.market_type == "ebay":
+        # eBay 반품은 SambaReturn.market_order_status 에 저장된 returnId 필요
+        from backend.domain.samba.proxy.ebay import EbayApiError, EbayClient
+        from backend.domain.samba.returns.repository import SambaReturnRepository
+
+        extras = account.additional_fields or {}
+        app_id = extras.get("clientId") or extras.get("appId") or account.api_key or ""
+        cert_id = (
+            extras.get("clientSecret")
+            or extras.get("certId")
+            or account.api_secret
+            or ""
+        )
+        refresh_token = extras.get("oauthToken") or extras.get("authToken", "") or ""
+        if not (app_id and cert_id and refresh_token):
+            raise HTTPException(status_code=400, detail="eBay 인증정보 없음")
+
+        # returnId 는 samba_return.notes 또는 market_order_status에 저장 권장
+        ret_repo = SambaReturnRepository(session)
+        existing = await ret_repo.filter_by_async(order_id=order_id)
+        if not existing:
+            raise HTTPException(
+                status_code=400, detail="해당 주문에 반품 데이터가 없습니다"
+            )
+        return_id = existing[0].memo or existing[0].market_order_status or ""
+        # memo/market_order_status 에 returnId 저장 관례. 비어있으면 사용자 입력 필요
+        if not return_id:
+            raise HTTPException(
+                status_code=400,
+                detail="eBay returnId 없음 (samba_return.memo에 저장 필요)",
+            )
+
+        client = EbayClient(
+            app_id=app_id,
+            dev_id="",
+            cert_id=cert_id,
+            refresh_token=refresh_token,
+            sandbox=bool(extras.get("sandbox", False)),
+        )
+        try:
+            if body.action == "approve":
+                await client.approve_return(return_id)
+                new_status = "반품승인"
+                ret_update = {"status": "completed", "market_order_status": "반품승인"}
+            elif body.action == "reject":
+                await client.reject_return(return_id, body.reason or "Seller decline")
+                new_status = "반품거부"
+                ret_update = {"status": "rejected", "market_order_status": "반품거부"}
+            else:
+                raise HTTPException(
+                    status_code=400, detail=f"eBay 반품 액션 미지원: {body.action}"
+                )
+        except EbayApiError as e:
+            raise HTTPException(status_code=500, detail=f"eBay 반품처리 실패: {e}")
+
+        await svc.update_order(order_id, {"shipping_status": new_status})
+        await ret_repo.update_async(existing[0].id, **ret_update)
+        logger.info(f"[반품처리][eBay] {order.order_number} {body.action} 완료")
+        return {"ok": True, "message": f"eBay 반품 {body.action} 완료"}
+
     else:
         raise HTTPException(
             status_code=400, detail=f"{account.market_type} 반품처리 미지원"
@@ -1549,6 +1677,66 @@ async def ship_order(
                     await svc.update_order(
                         order_id, {"shipping_status": "송장전송완료"}
                     )
+
+            elif account and account.market_type == "ebay":
+                from backend.domain.samba.proxy.ebay import (
+                    EbayApiError,
+                    EbayClient,
+                )
+
+                extras = account.additional_fields or {}
+                app_id = (
+                    extras.get("clientId")
+                    or extras.get("appId")
+                    or account.api_key
+                    or ""
+                )
+                cert_id = (
+                    extras.get("clientSecret")
+                    or extras.get("certId")
+                    or account.api_secret
+                    or ""
+                )
+                refresh_token = (
+                    extras.get("oauthToken") or extras.get("authToken", "") or ""
+                )
+                if app_id and cert_id and refresh_token:
+                    ebay_client = EbayClient(
+                        app_id=app_id,
+                        dev_id="",
+                        cert_id=cert_id,
+                        refresh_token=refresh_token,
+                        sandbox=bool(extras.get("sandbox", False)),
+                    )
+                    # 배송사 한글→eBay carrier code 매핑
+                    # eBay US는 한국 택배사 미지원 — 전부 KoreaPost로 매핑
+                    # (USPS/UPS/FedEx/DHL만 공식 지원, 한국 택배사는 KoreaPost가 유일)
+                    carrier_map = {
+                        "USPS": "USPS",
+                        "UPS": "UPS",
+                        "FedEx": "FEDEX",
+                        "DHL": "DHL",
+                    }
+                    ebay_carrier = carrier_map.get(body.shipping_company, "KoreaPost")
+                    try:
+                        # ext_order_number에 orderId, order_number에 legacyOrderId
+                        ebay_order_id = order.ext_order_number or order.order_number
+                        await ebay_client.ship_order(
+                            order_id=ebay_order_id,
+                            tracking_number=body.tracking_number,
+                            carrier_code=ebay_carrier,
+                        )
+                        market_sent = True
+                        market_msg = "eBay 송장 전송 완료"
+                        await svc.update_order(
+                            order_id,
+                            {
+                                "shipping_status": "송장전송완료",
+                                "status": "shipping",
+                            },
+                        )
+                    except EbayApiError as e:
+                        market_msg = f"eBay 송장 실패: {e}"
     except Exception as e:
         market_msg = f"송장 전송 실패: {e}"
         logger.warning(f"[송장전송] {order.order_number}: {e}")
@@ -2101,6 +2289,204 @@ async def sync_orders_from_markets(
                     }
                 )
                 continue
+            elif market_type == "ebay":
+                from backend.domain.samba.proxy.ebay import (
+                    EbayApiError,
+                    EbayClient,
+                )
+
+                app_id = (
+                    extras.get("clientId") or extras.get("appId") or account["api_key"]
+                )
+                cert_id = (
+                    extras.get("clientSecret")
+                    or extras.get("certId")
+                    or account["api_secret"]
+                )
+                refresh_token = extras.get("oauthToken") or extras.get("authToken", "")
+                # SambaSettings 폴백
+                if not (app_id and cert_id and refresh_token):
+                    settings_repo = SambaSettingsRepository(session)
+                    row = await settings_repo.find_by_async(key="store_ebay")
+                    if row and isinstance(row.value, dict):
+                        app_id = (
+                            app_id
+                            or row.value.get("clientId", "")
+                            or row.value.get("appId", "")
+                        )
+                        cert_id = (
+                            cert_id
+                            or row.value.get("clientSecret", "")
+                            or row.value.get("certId", "")
+                        )
+                        refresh_token = (
+                            refresh_token
+                            or row.value.get("oauthToken", "")
+                            or row.value.get("authToken", "")
+                        )
+                if not (app_id and cert_id and refresh_token):
+                    results.append(
+                        {
+                            "account": label,
+                            "status": "skip",
+                            "message": "eBay 인증정보 없음",
+                        }
+                    )
+                    continue
+
+                ebay_client = EbayClient(
+                    app_id=app_id,
+                    dev_id="",
+                    cert_id=cert_id,
+                    refresh_token=refresh_token,
+                    sandbox=bool(extras.get("sandbox", False)),
+                )
+                try:
+                    raw_orders = await ebay_client.get_orders(days=body.days)
+                except EbayApiError as e:
+                    err = str(e)
+                    if (
+                        "scope" in err.lower()
+                        or "invalid_scope" in err.lower()
+                        or "insufficient" in err.lower()
+                    ):
+                        results.append(
+                            {
+                                "account": label,
+                                "status": "error",
+                                "message": "sell.fulfillment scope 누락 — eBay 재인증 필요",
+                            }
+                        )
+                    else:
+                        results.append(
+                            {
+                                "account": label,
+                                "status": "error",
+                                "message": err[:150],
+                            }
+                        )
+                    continue
+
+                logger.info(f"[주문동기화] {label}: eBay 주문 {len(raw_orders)}건 조회")
+
+                # USD → KRW 환율 (exchange_rate_service의 USD effectiveRate 우선)
+                ebay_exchange_rate = 1400.0
+                try:
+                    from backend.domain.samba.exchange_rate_service import (
+                        build_exchange_rate_response,
+                        get_exchange_rate_settings,
+                        get_latest_exchange_rates,
+                    )
+
+                    _er_settings = await get_exchange_rate_settings(
+                        session, account["tenant_id"] or tenant_id
+                    )
+                    _er_latest = await get_latest_exchange_rates()
+                    _er_resp = build_exchange_rate_response(_er_settings, _er_latest)
+                    _usd_info = _er_resp.get("currencies", {}).get("USD", {}) or {}
+                    _eff_rate = float(_usd_info.get("effectiveRate") or 0)
+                    if _eff_rate > 0:
+                        ebay_exchange_rate = _eff_rate
+                except Exception as e:
+                    logger.warning(
+                        f"[주문동기화] {label}: 환율 조회 실패, 폴백 1400 사용 — {e}"
+                    )
+
+                for ro in raw_orders:
+                    orders_data.append(
+                        _parse_ebay_order(ro, account["id"], label, ebay_exchange_rate)
+                    )
+
+                # Finance API 실제 정산액 조회 — orderId → (net_usd, fee_usd) 매핑
+                # sell.finances scope 필요. 방금 들어온 주문은 거래 미확정 상태라 매핑 없을 수 있음
+                try:
+                    tx_list = await ebay_client.get_transactions(days=body.days)
+                    # Finance API 응답 필드:
+                    #   amount                = net (이미 수수료 차감된 값)
+                    #   totalFeeBasisAmount   = gross (판매가)
+                    #   totalFeeAmount        = 실제 수수료
+                    # 같은 orderId에 여러 거래(SALE, SHIPPING_LABEL 등) 있을 수 있음 → 누적
+                    tx_map: dict[str, dict[str, float]] = {}
+                    for tx in tx_list:
+                        oid = tx.get("orderId", "") or ""
+                        if not oid:
+                            continue
+                        net = float((tx.get("amount") or {}).get("value", 0) or 0)
+                        gross = float(
+                            (tx.get("totalFeeBasisAmount") or {}).get("value", 0) or 0
+                        )
+                        fee = float(
+                            (tx.get("totalFeeAmount") or {}).get("value", 0) or 0
+                        )
+                        booking = tx.get("bookingEntry", "CREDIT")
+                        tx_type = tx.get("transactionType", "")
+                        tx_id = tx.get("transactionId", "")
+                        tx_status = tx.get("transactionStatus", "")
+                        logger.info(
+                            "[eBay Finance tx] order=%s type=%s book=%s status=%s "
+                            "gross=%.2f fee=%.2f net=%.2f id=%s",
+                            oid,
+                            tx_type,
+                            booking,
+                            tx_status,
+                            gross,
+                            fee,
+                            net,
+                            tx_id,
+                        )
+                        # DEBIT = 판매자 잔액 차감 (환불, 배송라벨 등)
+                        if booking == "DEBIT":
+                            net = -net
+                            gross = -gross
+                            fee = -fee
+                        cur = tx_map.setdefault(
+                            oid, {"net": 0.0, "gross": 0.0, "fee": 0.0}
+                        )
+                        cur["net"] += net
+                        cur["gross"] += gross
+                        cur["fee"] += fee
+
+                    matched = 0
+                    for od in orders_data:
+                        oid = od.get("ext_order_number") or ""
+                        if oid in tx_map:
+                            net_usd = tx_map[oid]["net"]
+                            gross_usd = tx_map[oid]["gross"]
+                            fee_usd = tx_map[oid]["fee"]
+                            od["revenue"] = int(round(net_usd * ebay_exchange_rate))
+                            if gross_usd > 0:
+                                od["fee_rate"] = round(fee_usd / gross_usd * 100, 2)
+                            od["notes"] = (
+                                f"gross ${gross_usd:.2f} - fee ${fee_usd:.2f} "
+                                f"= net ${net_usd:.2f} @ {ebay_exchange_rate:.2f}원/USD "
+                                f"(Finance API)"
+                            )
+                            matched += 1
+                    logger.info(
+                        f"[주문동기화] {label}: Finance 실제 정산 매칭 "
+                        f"{matched}/{len(orders_data)}건"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"[주문동기화] {label}: Finance API 조회 실패 "
+                        f"(예상 수수료 유지) — {e}"
+                    )
+
+                # 반품/취소 수집 (최근 90일 고정)
+                try:
+                    returns_raw = await ebay_client.get_returns(days=90)
+                    cancellations_raw = await ebay_client.get_cancellations(days=90)
+                    _apply_ebay_claims_to_orders(
+                        orders_data, returns_raw, cancellations_raw
+                    )
+                    logger.info(
+                        f"[주문동기화] {label}: eBay 반품 {len(returns_raw)}건 "
+                        f"+ 취소 {len(cancellations_raw)}건 매칭 (90일)"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"[주문동기화] {label}: eBay 반품/취소 조회 실패 — {e}"
+                    )
             # (dead code 제거: 두 번째 롯데ON 블록 → 첫 번째에 병합 완료)
             else:
                 results.append(
@@ -3064,3 +3450,168 @@ def _parse_playauto_order(
             else ""
         ),
     }
+
+
+def _parse_ebay_datetime(val) -> Optional[datetime]:
+    """eBay 날짜 필드는 문자열 또는 {"value": "..."} dict 형태."""
+    if val is None:
+        return None
+    if isinstance(val, dict):
+        val = val.get("value", "")
+    return _parse_iso_datetime(val if isinstance(val, str) else None)
+
+
+def _parse_ebay_order(
+    o: dict,
+    account_id: str,
+    account_label: str,
+    exchange_rate: float = 1400.0,
+) -> dict[str, Any]:
+    """eBay Fulfillment API 주문 dict → SambaOrder 필드 매핑.
+
+    eBay는 USD 결제이므로 ``exchange_rate``(USD→KRW)로 변환해 KRW로 저장한다.
+    다른 마켓(스마트스토어/롯데ON)과 통일된 KRW 체계 유지.
+    """
+    order_id = o.get("orderId", "") or ""
+    legacy_id = o.get("legacyOrderId", "") or order_id
+
+    line_items = o.get("lineItems") or []
+    first_item: dict[str, Any] = line_items[0] if line_items else {}
+
+    # 배송지
+    ship_to: dict[str, Any] = {}
+    for inst in o.get("fulfillmentStartInstructions") or []:
+        step = inst.get("shippingStep") or {}
+        ship_to = step.get("shipTo") or {}
+        if ship_to:
+            break
+    contact = ship_to.get("contactAddress") or {}
+    addr_parts = [
+        contact.get("addressLine1", ""),
+        contact.get("addressLine2", ""),
+        contact.get("city", ""),
+        contact.get("stateOrProvince", ""),
+        contact.get("postalCode", ""),
+        contact.get("countryCode", ""),
+    ]
+    customer_address = ", ".join([p for p in addr_parts if p])
+
+    # 가격 (USD → KRW 변환)
+    pricing = o.get("pricingSummary") or {}
+    total = pricing.get("total") or {}
+    sale_price_usd = float(total.get("value", 0) or 0)
+    sale_price_krw = int(round(sale_price_usd * exchange_rate))
+
+    # 수수료 (eBay 마켓플레이스 수수료, USD → KRW 변환)
+    marketplace_fee_usd = float(
+        (o.get("totalMarketplaceFee") or {}).get("value", 0) or 0
+    )
+    marketplace_fee_krw = int(round(marketplace_fee_usd * exchange_rate))
+    try:
+        fee_rate = (
+            round(marketplace_fee_usd / sale_price_usd * 100, 2)
+            if sale_price_usd > 0
+            else 0
+        )
+    except Exception:
+        fee_rate = 0
+    revenue = sale_price_krw - marketplace_fee_krw
+
+    # 상태 매핑
+    ff_status = o.get("orderFulfillmentStatus", "") or ""
+    cancel_state = (o.get("cancelStatus") or {}).get(
+        "cancelState", "NONE_REQUESTED"
+    ) or "NONE_REQUESTED"
+    if cancel_state != "NONE_REQUESTED":
+        status = "cancel_requested"
+        shipping_status = "취소요청"
+    elif ff_status == "FULFILLED":
+        status = "pending"
+        shipping_status = "배송중"
+    elif ff_status == "IN_PROGRESS":
+        status = "pending"
+        shipping_status = "발송대기"
+    else:
+        status = "pending"
+        shipping_status = "발주확인"
+
+    buyer_username = (o.get("buyer") or {}).get("username", "") or ""
+
+    return {
+        "order_number": legacy_id,
+        "ext_order_number": order_id,
+        "shipment_id": first_item.get("sku", ""),
+        "channel_id": account_id,
+        "channel_name": account_label,
+        "product_id": first_item.get("legacyItemId", "") or first_item.get("sku", ""),
+        "product_name": first_item.get("title", ""),
+        "product_option": first_item.get("legacyVariationId", "") or "",
+        "product_image": "",
+        "customer_name": ship_to.get("fullName", "") or buyer_username,
+        "customer_phone": (ship_to.get("primaryPhone") or {}).get("phoneNumber", "")
+        or "",
+        "customer_address": customer_address,
+        "quantity": int(first_item.get("quantity", 1) or 1),
+        "sale_price": sale_price_krw,
+        "cost": 0,
+        "fee_rate": fee_rate,
+        "revenue": revenue,
+        "status": status,
+        "shipping_status": shipping_status,
+        "shipping_company": "",
+        "tracking_number": "",
+        "paid_at": _parse_ebay_datetime(o.get("creationDate")),
+        "source": "ebay",
+        "notes": f"USD {sale_price_usd:.2f} @ {exchange_rate:.2f}원/USD",
+    }
+
+
+def _apply_ebay_claims_to_orders(
+    orders_data: list[dict[str, Any]],
+    returns_raw: list[dict[str, Any]],
+    cancellations_raw: list[dict[str, Any]],
+) -> None:
+    """eBay 반품/취소 데이터로 orders_data의 shipping_status 덮어쓰기.
+
+    return.state / cancellation.cancelState 를 기준으로 상태 매핑.
+    orders_data에 없는 주문이면 추가하지 않음 (sync 범위 내 주문만 반영).
+    """
+    # 반품
+    return_state_map = {
+        "OPEN": "반품요청",
+        "ESCALATED": "반품요청",
+        "CLOSED": "반품완료",
+    }
+    for r in returns_raw or []:
+        order_id = (
+            r.get("orderId")
+            or (r.get("itemInfo") or {}).get("orderId")
+            or (r.get("creationInfo") or {}).get("orderId")
+            or ""
+        )
+        state = (r.get("status") or {}).get("state", "") or ""
+        ss = return_state_map.get(state, "반품요청")
+        for od in orders_data:
+            if od.get("ext_order_number") == order_id or od.get("order_number") == str(
+                order_id
+            ):
+                od["shipping_status"] = ss
+                od["status"] = "returned" if ss == "반품완료" else "return_requested"
+                break
+
+    # 취소
+    cancel_state_map = {
+        "IN_PROGRESS": "취소요청",
+        "CANCEL_PENDING": "취소요청",
+        "CANCEL_CLOSED": "취소완료",
+        "CANCEL_CLOSED_FOR_COMMITMENT": "취소요청",
+    }
+    for c in cancellations_raw or []:
+        legacy_order_id = c.get("legacyOrderId", "") or ""
+        state = c.get("cancelState", "") or ""
+        ss = cancel_state_map.get(state, "취소요청")
+        for od in orders_data:
+            if od.get("order_number") == legacy_order_id:
+                od["shipping_status"] = ss
+                od["status"] = "cancelled" if ss == "취소완료" else "cancel_requested"
+                break
