@@ -200,15 +200,20 @@ class LotteonSourcingPlugin(SourcingPlugin):
         price_info = pbf.get("priceInfo") or {}
         sl_prc = int(price_info.get("slPrc", 0) or 0)
         immd_dc = int(price_info.get("immdDcAplyTotAmt", 0) or 0)
-        adtn_dc = int(price_info.get("adtnDcAplyTotAmt", 0) or 0)
+        # adtnDcAplyTotAmt(추가할인)는 판매가 반영 대상 아님.
+        # 롯데ON은 "즉시할인(immdDcAplyTotAmt)"만 판매가에 반영하고,
+        # "추가할인"은 결제 시 부가 혜택으로 노출되므로 bestBenefitPrice 계산에서 제외.
+        # 2026-04-23 S1 검증: 5개 롯데백화점 상품 모두 실노출가 == slPrc - immd_dc.
+        # 과거 `sl_prc - immd - adtn` 계산이 실노출가보다 낮은 값(예: PD56368597
+        # 59,000 - 8,850 - 5,010 = 45,140)을 만들어 50,150↔45,140 가격 핑퐁을 유발했음.
 
-        if immd_dc > 0 or adtn_dc > 0:
-            # PBF에 할인 정보 있음 → 최대혜택가 계산
-            best_benefit = sl_prc - immd_dc - adtn_dc if sl_prc > 0 else 0
+        if immd_dc > 0:
+            # PBF에 즉시할인 있음 → 즉시할인 차감만 수행
+            best_benefit = sl_prc - immd_dc if sl_prc > 0 else 0
             if best_benefit <= 0 or best_benefit >= sl_prc:
                 best_benefit = sl_prc
         else:
-            # PBF에 할인 정보 없음 → slPrc가 정상가(할인 전)일 수 있어
+            # PBF에 즉시할인 정보 없음 → slPrc가 정상가일 수 있어
             # bestBenefitPrice를 None으로 설정하여 HTML 폴백 유도
             best_benefit = None
 
