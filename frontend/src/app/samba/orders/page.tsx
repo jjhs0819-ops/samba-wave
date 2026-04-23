@@ -133,14 +133,14 @@ export default function OrdersPage() {
   }
 
   const handleCopyText = async (value: string | null | undefined) => {
-    const text = (value || '').trim()
+    let text = (value || '').trim()
+    text = text.replace(/\([^)]*\)/g, '').trim()
     if (!text) {
       showAlert('복사할 내용이 없습니다', 'info')
       return
     }
     try {
       await navigator.clipboard.writeText(text)
-      showAlert('복사되었습니다', 'success')
     } catch {
       showAlert('복사에 실패했습니다', 'error')
     }
