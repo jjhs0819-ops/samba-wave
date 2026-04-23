@@ -294,8 +294,8 @@ export function composeProductName(
   // 중복 제거 — 구두점 안에 묶인 부분단어까지 감지
   if (nameRule.dedup_enabled) {
     const seen = new Set<string>()
-    // 2자 이상 유니코드 문자(한글/영문) 시퀀스만 dedup 대상
-    composed = composed.replace(/\p{L}{2,}/gu, (match) => {
+    // 2자 이상 한글/영문 + 하이픈 연결 숫자(품번) + 3자 이상 순수 숫자
+    composed = composed.replace(/\p{L}{2,}|\d+(?:-\d+)+|\d{3,}/gu, (match) => {
       const lower = match.toLowerCase()
       if (seen.has(lower)) return ''
       seen.add(lower)

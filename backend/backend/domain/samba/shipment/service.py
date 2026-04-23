@@ -1857,9 +1857,12 @@ class SambaShipmentService:
                 seen.add(lower)
                 return word
 
-            # 2자 이상 한글/영문 시퀀스만 dedup 대상 (숫자/단일글자/구두점은 제외)
+            # 2자 이상 한글/영문 + 하이픈 연결 숫자(품번) + 3자 이상 순수 숫자
             composed = re.sub(
-                r"[^\W\d_]{2,}", _dedup_replace, composed, flags=re.UNICODE
+                r"[^\W\d_]{2,}|\d+(?:-\d+)+|\d{3,}",
+                _dedup_replace,
+                composed,
+                flags=re.UNICODE,
             )
             # 연속 공백 정리
             composed = re.sub(r"\s+", " ", composed).strip()
