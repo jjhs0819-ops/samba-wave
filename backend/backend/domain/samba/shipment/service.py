@@ -1846,9 +1846,10 @@ class SambaShipmentService:
             seen: set[str] = set()
             deduped: list[str] = []
             for w in words:
-                lower = w.lower()
-                if lower not in seen:
-                    seen.add(lower)
+                # 영문/숫자만 추출해서 비교 (punctuation 무시)
+                base_word = re.sub(r"[^\w]", "", w, flags=re.UNICODE).lower()
+                if base_word and base_word not in seen:
+                    seen.add(base_word)
                     deduped.append(w)
             composed = " ".join(deduped)
 

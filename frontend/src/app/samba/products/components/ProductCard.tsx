@@ -297,9 +297,10 @@ export function composeProductName(
     const seen = new Set<string>()
     const deduped: string[] = []
     for (const w of words) {
-      const lower = w.toLowerCase()
-      if (!seen.has(lower)) {
-        seen.add(lower)
+      // 영문/숫자만 추출해서 비교 (punctuation 무시)
+      const baseWord = w.replace(/[^\w]/g, '').toLowerCase()
+      if (baseWord && !seen.has(baseWord)) {
+        seen.add(baseWord)
         deduped.push(w)
       }
     }
