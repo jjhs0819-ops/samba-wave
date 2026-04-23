@@ -630,7 +630,7 @@ export default function WarroomPage() {
       {/* 이벤트 타임라인 (로그 아래) */}
       <div style={card}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-          <div style={{ fontSize: '0.96rem', fontWeight: 600, color: '#FF8C00' }}>이벤트 타임라인</div>
+          <div style={{ fontSize: '0.96rem', fontWeight: 600, color: '#E5E5E5' }}>이벤트 타임라인</div>
         </div>
 
         {filteredEvents.length === 0 ? (
@@ -648,12 +648,18 @@ export default function WarroomPage() {
                       flex: '1 1 200px',
                       padding: '0.5rem 0.6rem',
                       borderRadius: '6px',
-                      border: `1px solid ${siteColor}30`,
-                      background: `${siteColor}08`,
+                      border: '1px solid #2D2D2D',
+                      background: 'rgba(255,255,255,0.03)',
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.3rem' }}>
-                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: siteColor, flexShrink: 0 }} />
-                        <span style={{ fontSize: '0.9rem', fontWeight: 600, color: siteColor }}>{siteName}</span>
+                        <span style={{
+                          fontSize: '0.78rem', color: siteColor,
+                          padding: '0.1rem 0.3rem', borderRadius: '3px',
+                          background: 'rgba(255,255,255,0.05)',
+                          border: `1px solid ${siteColor}30`,
+                          flexShrink: 0,
+                        }}>{siteName}</span>
+
                         <span style={{ fontSize: '0.78rem', color: '#666', marginLeft: 'auto' }}>
                           {cycles > 1 ? `최근 ${cycles}사이클` : ''}
                         </span>
@@ -684,16 +690,16 @@ export default function WarroomPage() {
                                 <span style={{ fontSize: '0.78rem', color: '#aaa' }}>대상 {fmtNum(total)}</span>
                               )}
                               {ok != null && (
-                                <span style={{ fontSize: '0.78rem', color: '#51CF66' }}>성공 {fmtNum(ok)}</span>
+                                <span style={{ fontSize: '0.78rem', color: '#aaa' }}>성공 {fmtNum(ok)}</span>
                               )}
                               {errs != null && errs > 0 && (
-                                <span style={{ fontSize: '0.78rem', color: '#FF6B6B' }}>실패 {fmtNum(errs)}</span>
+                                <span style={{ fontSize: '0.78rem', color: '#aaa' }}>실패 {fmtNum(errs)}</span>
                               )}
                               {dur != null && (
                                 <span style={{ fontSize: '0.78rem', color: '#888' }}>{Math.round(dur)}초</span>
                               )}
                               {rate != null && (
-                                <span style={{ fontSize: '0.78rem', color: '#51CF66', fontWeight: 600 }}>{fmtNum(rate)}건/초</span>
+                                <span style={{ fontSize: '0.78rem', color: '#aaa', fontWeight: 600 }}>{fmtNum(rate)}건/초</span>
                               )}
                             </div>
                             {((priceTx && priceTx > 0) || (stockTx && stockTx > 0) || (deleted && deleted > 0)) && (
@@ -709,7 +715,7 @@ export default function WarroomPage() {
                                   </span>
                                 )}
                                 {deleted != null && deleted > 0 && (
-                                  <span style={{ fontSize: '0.72rem', padding: '0.05rem 0.3rem', borderRadius: '3px', background: '#FF6B6B15', color: '#FF6B6B', border: '1px solid #FF6B6B30' }}>
+                                  <span style={{ fontSize: '0.72rem', padding: '0.05rem 0.3rem', borderRadius: '3px', background: 'rgba(255,255,255,0.05)', color: '#bbb', border: '1px solid #ffffff15' }}>
                                     삭제 {fmtNum(deleted)}
                                   </span>
                                 )}
@@ -741,7 +747,6 @@ export default function WarroomPage() {
                   const tickPriceSlice = tickPriceItems.slice(0, Math.max(0, 5 - sitePriceChanges.length))
                   const tickStockSlice = tickStockItems.slice(0, Math.max(0, 5 - siteSoldOuts.length))
                   if (sitePriceChanges.length === 0 && siteSoldOuts.length === 0 && tickPriceSlice.length === 0 && tickStockSlice.length === 0) return null
-                  const siteColor = SITE_COLORS[siteName] || '#888'
                   const fmtT = (iso: string) => {
                     const d = new Date(iso)
                     return `${d.getMonth() + 1}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
@@ -752,8 +757,8 @@ export default function WarroomPage() {
                       flex: '1 1 200px',
                       padding: '0.5rem 0.6rem',
                       borderRadius: '6px',
-                      border: `1px solid ${siteColor}20`,
-                      background: `${siteColor}05`,
+                      border: '1px solid #2D2D2D',
+                      background: 'rgba(255,255,255,0.03)',
                     }}>
                       <div style={{ fontSize: '0.78rem', color: '#666', marginBottom: '0.3rem', fontWeight: 600 }}>
                         {siteName} 점검
@@ -766,8 +771,8 @@ export default function WarroomPage() {
                           <div key={ev.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
                             <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
                             <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{sitePid}</span>
-                            <span style={{ fontSize: '0.72rem', color: '#A78BFA' }}>재고변동</span>
-                            <span style={{ fontSize: '0.72rem', color: status === 'SUSPENSION' ? '#FF6B6B' : '#51CF66' }}>
+                            <span style={{ fontSize: '0.72rem', color: '#bbb' }}>재고변동</span>
+                            <span style={{ fontSize: '0.72rem', color: '#bbb' }}>
                               {status === 'SUSPENSION' ? '품절' : status ?? '변동'}
                             </span>
                           </div>
@@ -783,9 +788,9 @@ export default function WarroomPage() {
                           <div key={ev.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
                             <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
                             <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{sitePid}</span>
-                            <span style={{ fontSize: '0.72rem', color: '#FFB347' }}>가격변동</span>
+                            <span style={{ fontSize: '0.72rem', color: '#bbb' }}>가격변동</span>
                             {oldP != null && newP != null && (
-                              <span style={{ fontSize: '0.72rem', color: (pct ?? 0) > 0 ? '#FF6B6B' : '#51CF66' }}>
+                              <span style={{ fontSize: '0.72rem', color: '#bbb' }}>
                                 ₩{fmtNum(oldP)}→₩{fmtNum(newP)}
                               </span>
                             )}
@@ -799,8 +804,8 @@ export default function WarroomPage() {
                           <div key={`tp-${i}`} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
                             {tickEndedAt && <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(tickEndedAt)}</span>}
                             <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{item.site_product_id || item.pid.slice(-8)}</span>
-                            <span style={{ fontSize: '0.72rem', color: '#FFB347' }}>가격변동</span>
-                            <span style={{ fontSize: '0.72rem', color: diff > 0 ? '#FF6B6B' : '#51CF66' }}>
+                            <span style={{ fontSize: '0.72rem', color: '#bbb' }}>가격변동</span>
+                            <span style={{ fontSize: '0.72rem', color: '#bbb' }}>
                               ₩{fmtNum(item.old_price)}→₩{fmtNum(item.new_price)}
                             </span>
                           </div>
@@ -811,8 +816,8 @@ export default function WarroomPage() {
                         <div key={`ts-${i}`} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
                           {tickEndedAt && <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(tickEndedAt)}</span>}
                           <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{item.site_product_id || item.pid.slice(-8)}</span>
-                          <span style={{ fontSize: '0.72rem', color: '#A78BFA' }}>재고변동</span>
-                          <span style={{ fontSize: '0.72rem', color: item.sale_status === 'sold_out' ? '#FF6B6B' : '#51CF66' }}>
+                          <span style={{ fontSize: '0.72rem', color: '#bbb' }}>재고변동</span>
+                          <span style={{ fontSize: '0.72rem', color: '#bbb' }}>
                             {item.sale_status === 'sold_out' ? '품절' : item.sale_status ?? '변동'}
                           </span>
                         </div>
@@ -827,7 +832,7 @@ export default function WarroomPage() {
               const t = new Date(e.created_at)
               const timeStr = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}:${String(t.getSeconds()).padStart(2, '0')}`
               const d = e.detail as Record<string, unknown> | undefined
-              const detailTags: { label: string; value: string; color: string }[] = []
+              const detailTags: { label: string; value: string; color: string; accent?: boolean }[] = []
               if (d) {
                 if (d.old_price != null && d.new_price != null) {
                   const diff = d.diff_pct as number | undefined
@@ -845,9 +850,9 @@ export default function WarroomPage() {
                 if (typeof d.sold_out === 'number' && d.sold_out > 0)
                   detailTags.push({ label: '품절', value: `${fmtNum(d.sold_out)}건`, color: '#FF6B6B' })
                 if (typeof d.price_transmit === 'number' && d.price_transmit > 0)
-                  detailTags.push({ label: '가격전송', value: `${fmtNum(d.price_transmit)}건`, color: '#FFB347' })
+                  detailTags.push({ label: '가격전송', value: `${fmtNum(d.price_transmit)}건`, color: '#FFB347', accent: true })
                 if (typeof d.stock_transmit === 'number' && d.stock_transmit > 0)
-                  detailTags.push({ label: '재고전송', value: `${fmtNum(d.stock_transmit)}건`, color: '#A78BFA' })
+                  detailTags.push({ label: '재고전송', value: `${fmtNum(d.stock_transmit)}건`, color: '#A78BFA', accent: true })
                 if (typeof d.deleted === 'number' && d.deleted > 0)
                   detailTags.push({ label: '삭제', value: `${fmtNum(d.deleted)}건`, color: '#FF6B6B' })
                 if (typeof d.no_pid === 'number' && d.no_pid > 0)
@@ -871,14 +876,14 @@ export default function WarroomPage() {
                   style={{
                     padding: '0.4rem 0.5rem',
                     borderRadius: '6px',
-                    background: e.severity === 'critical' ? 'rgba(255,107,107,0.08)' : 'transparent',
+                    background: 'transparent',
                     borderBottom: '1px solid #1A1A1A',
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
                     <span style={{
                       width: 8, height: 8, borderRadius: '50%',
-                      background: SEV_COLORS[e.severity] || '#666',
+                      background: 'rgba(255,255,255,0.15)',
                       marginTop: '4px', flexShrink: 0,
                     }} />
                     <span style={{ fontSize: '0.9rem', color: '#666', minWidth: '3rem', flexShrink: 0 }}>{timeStr}</span>
@@ -902,9 +907,9 @@ export default function WarroomPage() {
                           fontSize: '0.78rem',
                           padding: '0.1rem 0.4rem',
                           borderRadius: '3px',
-                          background: `${tag.color}15`,
-                          color: tag.color,
-                          border: `1px solid ${tag.color}30`,
+                          background: tag.accent ? `${tag.color}15` : 'rgba(255,255,255,0.05)',
+                          color: tag.accent ? tag.color : '#bbb',
+                          border: tag.accent ? `1px solid ${tag.color}30` : '1px solid #ffffff15',
                         }}>
                           {tag.label}: {tag.value}
                         </span>
