@@ -798,13 +798,18 @@ class SmartStorePlugin(MarketPlugin):
                 logger.warning(
                     "[스마트스토어] 인증대상 에러 감지 → childCertifiedProductExclusionYn=True 재시도"
                 )
+                # 1. product_copy에서 _certification_infos 제거 (재생성 방지)
+                product_copy.pop("_certification_infos", None)
+                # 2. data 재생성 (인증정보 없이)
+                data = SmartStoreClient.transform_product(product_copy, category_id)
+                # 3. certificationTargetExcludeContent 설정
                 detail_attr = data["originProduct"].setdefault("detailAttribute", {})
                 exclude = detail_attr.setdefault(
                     "certificationTargetExcludeContent", {}
                 )
                 exclude["childCertifiedProductExclusionYn"] = True
                 exclude.setdefault("kcCertifiedProductExclusionYn", "FALSE")
-                # 기존 인증정보 제거 (충돌 방지)
+                # 4. productCertificationInfos 비우기 (추가 안전장치)
                 detail_attr.pop("productCertificationInfos", None)
                 return await _try_send(data)
             raise
