@@ -612,12 +612,18 @@ async def _delete_playauto(
 
     plugin = PlayAutoPlugin()
     result = await plugin.delete(session, product_no, account)
-    if result.get("success"):
-        return {
-            "success": True,
-            "message": result.get("message", "플레이오토 품절 처리 완료"),
-        }
-    return result
+    if not result.get("success"):
+        # EMP soldout API는 판매중/수정대기/종료대기 상태만 허용 —
+        # 이미 취소대기·종료·미전송 마스터는 실패하지만 재고 0은 1단계에서 시도됐고
+        # 플레이오토는 상품 삭제 API가 없어 DB 정리가 곧 "마켓삭제"와 동치이므로
+        # API 실패해도 DB 정리가 진행되도록 success=True 반환.
+        logger.warning(
+            f"[플레이오토 품절] API 실패 (DB 정리 진행): {result.get('message', '')}"
+        )
+    return {
+        "success": True,
+        "message": result.get("message", "플레이오토: 취소대기 시도 후 DB 제거"),
+    }
 
 
 # 마켓별 삭제 핸들러 매핑
