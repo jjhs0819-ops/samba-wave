@@ -2117,6 +2117,9 @@ async def sync_returns_from_markets(
     except Exception as _repair_err:
         logger.warning(f"[반품동기화] 롯데ON 반품 재분류 수정 실패: {_repair_err}")
 
+    # 마켓 API 동기화 후 samba_order 기반 백필 실행
+    await _backfill_returns_from_claim_orders(session, tenant_id=tenant_id)
+
     return {"total_synced": total_synced, "results": results}
 
 

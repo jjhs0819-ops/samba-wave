@@ -1397,11 +1397,11 @@ export default function OrdersPage() {
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
                         <span style={{ color: '#666' }}>연락처</span>
-                        <span style={{ color: '#888' }}>{o.customer_phone || '-'}</span>
+                        <span style={{ color: '#E5E5E5' }}>{o.customer_phone || '-'}</span>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
                         <span style={{ color: '#666' }}>주소</span>
-                        <span style={{ color: '#888' }}>{o.customer_address || '-'}</span>
+                        <span style={{ color: '#E5E5E5' }}>{o.customer_address || '-'}</span>
                       </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8rem' }}>

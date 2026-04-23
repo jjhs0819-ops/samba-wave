@@ -788,7 +788,6 @@ export default function WarroomPage() {
                         const oldP = d?.old_price as number | undefined
                         const newP = d?.new_price as number | undefined
                         const pct = d?.diff_pct as number | undefined
-                        const sign = pct != null && pct > 0 ? '+' : ''
                         return (
                           <div key={ev.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
                             <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
@@ -796,7 +795,7 @@ export default function WarroomPage() {
                             <span style={{ fontSize: '0.72rem', color: '#FFB347' }}>가격변동</span>
                             {oldP != null && newP != null && (
                               <span style={{ fontSize: '0.72rem', color: (pct ?? 0) > 0 ? '#FF6B6B' : '#51CF66' }}>
-                                ₩{fmtNum(oldP)}→₩{fmtNum(newP)}{pct != null ? ` (${sign}${pct}%)` : ''}
+                                ₩{fmtNum(oldP)}→₩{fmtNum(newP)}
                               </span>
                             )}
                           </div>
@@ -811,7 +810,7 @@ export default function WarroomPage() {
                             <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{item.site_product_id || item.pid.slice(-8)}</span>
                             <span style={{ fontSize: '0.72rem', color: '#FFB347' }}>가격변동</span>
                             <span style={{ fontSize: '0.72rem', color: diff > 0 ? '#FF6B6B' : '#51CF66' }}>
-                              ₩{fmtNum(item.old_price)}→₩{fmtNum(item.new_price)}{diff !== 0 ? ` (${diff > 0 ? '+' : ''}${diff}%)` : ''}
+                              ₩{fmtNum(item.old_price)}→₩{fmtNum(item.new_price)}
                             </span>
                           </div>
                         )

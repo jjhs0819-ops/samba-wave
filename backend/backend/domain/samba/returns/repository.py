@@ -54,10 +54,18 @@ class SambaReturnRepository(BaseRepository[SambaReturn]):
             stmt = stmt.where(SambaReturn.status == status)
         if type:
             stmt = stmt.where(SambaReturn.type == type)
+        # 날짜 필터를 order_date로 변경 — created_at은 record 생성 시점, order_date는 실제 주문일
+        # order_date가 null인 레거시 레코드는 항상 포함
         if start_dt:
-            stmt = stmt.where(SambaReturn.created_at >= start_dt)
+            stmt = stmt.where(
+                or_(
+                    SambaReturn.order_date >= start_dt, SambaReturn.order_date.is_(None)
+                )
+            )
         if end_dt:
-            stmt = stmt.where(SambaReturn.created_at <= end_dt)
+            stmt = stmt.where(
+                or_(SambaReturn.order_date <= end_dt, SambaReturn.order_date.is_(None))
+            )
         stmt = stmt.order_by(SambaReturn.created_at.desc())
         stmt = stmt.offset(skip).limit(limit)
         result = await self.session.execute(stmt)
