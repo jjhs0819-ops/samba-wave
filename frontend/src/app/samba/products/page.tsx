@@ -27,6 +27,7 @@ import { MARKETS } from './components/ProductCard'
 
 type MarketDeleteModalState = {
   mode: 'single' | 'bulk'
+  deleteMode: 'market' | 'force'
   title: string
   products: SambaCollectedProduct[]
   options: { accountId: string; label: string; marketType: string; productCount: number }[]
@@ -370,7 +371,7 @@ export default function ProductsPage() {
       return;
     }
     if ((p?.registered_accounts?.length ?? 0) > 0) {
-      showAlert('마켓에 등록된 상품입니다. 마켓삭제 후 진행하세요.')
+      openMarketDeleteModal([p], 'single', 'force')
       return;
     }
     setDeleteConfirm({ ids: [id], label: p ? `"${p.name.slice(0, 30)}"` : "이 상품" });
@@ -527,7 +528,7 @@ export default function ProductsPage() {
     } as SambaCollectedProduct
   }, [])
 
-  const openMarketDeleteModal = useCallback((targetProducts: SambaCollectedProduct[], mode: 'single' | 'bulk') => {
+  const openMarketDeleteModal = useCallback((targetProducts: SambaCollectedProduct[], mode: 'single' | 'bulk', deleteMode: 'market' | 'force' = 'market') => {
     const counts = new Map<string, number>()
     targetProducts.forEach(product => {
       ;(product.registered_accounts ?? []).forEach(accountId => {
@@ -555,18 +556,20 @@ export default function ProductsPage() {
       return
     }
 
+    const titlePrefix = deleteMode === 'force' ? '강제삭제' : '마켓삭제'
     setMarketDeleteModal({
       mode,
+      deleteMode,
       title: mode === 'single'
-        ? `마켓삭제 - ${(targetProducts[0]?.name || targetProducts[0]?.id || '').slice(0, 20)}`
-        : `마켓삭제 (${fmt(targetProducts.length)}건)`,
+        ? `${titlePrefix} - ${(targetProducts[0]?.name || targetProducts[0]?.id || '').slice(0, 20)}`
+        : `${titlePrefix} (${fmt(targetProducts.length)}건)`,
       products: targetProducts,
       options,
       selectedAccountIds: options.map(option => option.accountId),
     })
   }, [accountsMap])
 
-  const executeMarketDelete = useCallback(async (targetProducts: SambaCollectedProduct[], accountIds: string[], title: string) => {
+  const executeMarketDelete = useCallback(async (targetProducts: SambaCollectedProduct[], accountIds: string[], title: string, deleteMode: 'market' | 'force' = 'market') => {
     if (!accountIds.length) {
       showAlert('삭제할 판매처를 선택해주세요.')
       return
@@ -598,36 +601,51 @@ export default function ProductsPage() {
       if (!targetAccIds.length) continue
 
       try {
-        const res = await shipmentApi.marketDelete([product.id], targetAccIds)
-        const result = res?.results?.[0]
-        if (result?.delete_results) {
-          const entries = Object.entries(result.delete_results as Record<string, string>)
-          const successAccIds: string[] = []
-          for (const [accId, status] of entries) {
+        if (deleteMode === 'force') {
+          // 강제삭제: 마켓 API 호출 없이 DB만 정리
+          const successAccIds = targetAccIds
+          for (const accId of successAccIds) {
             const account = accountsMap.get(accId)
             const label = account
               ? (MARKETS.find(item => item.id === account.market_type)?.name || account.market_type)
               : accId.slice(0, 8)
-            const isOk = status === 'success' || status.includes('성공')
-            const isSoldout = status === 'soldout_fallback'
-            if (isOk) {
-              totalOk++
-              successAccIds.push(accId)
-            } else if (isSoldout) {
-              totalOk++
-              // 품절 처리 성공 — 등록 상태 유지 (successAccIds 미추가)
-            } else {
-              totalFail++
-            }
-            const mktNo = product.market_product_nos?.[accId]
-            const mktNoStr = mktNo ? ` (${mktNo})` : ''
-            const logMsg = isOk ? '성공' : isSoldout ? '품절 처리 완료 (주문 완료 후 재삭제)' : status
-            logsRef.push(`[${ts()}] [${fmt(i + 1)}/${fmt(targetProducts.length)}] ${productName}${mktNoStr} -> ${label}: ${logMsg}`)
+            totalOk++
+            logsRef.push(`[${ts()}] [${fmt(i + 1)}/${fmt(targetProducts.length)}] ${productName} -> ${label}: DB 정리`)
           }
-          if (successAccIds.length) successMap.set(product.id, successAccIds)
+          successMap.set(product.id, successAccIds)
         } else {
-          totalOk++
-          logsRef.push(`[${ts()}] [${fmt(i + 1)}/${fmt(targetProducts.length)}] ${productName} -> 성공`)
+          // 마켓삭제: 실제 마켓 API 호출
+          const res = await shipmentApi.marketDelete([product.id], targetAccIds)
+          const result = res?.results?.[0]
+          if (result?.delete_results) {
+            const entries = Object.entries(result.delete_results as Record<string, string>)
+            const successAccIds: string[] = []
+            for (const [accId, status] of entries) {
+              const account = accountsMap.get(accId)
+              const label = account
+                ? (MARKETS.find(item => item.id === account.market_type)?.name || account.market_type)
+                : accId.slice(0, 8)
+              const isOk = status === 'success' || status.includes('성공')
+              const isSoldout = status === 'soldout_fallback'
+              if (isOk) {
+                totalOk++
+                successAccIds.push(accId)
+              } else if (isSoldout) {
+                totalOk++
+                // 품절 처리 성공 — 등록 상태 유지 (successAccIds 미추가)
+              } else {
+                totalFail++
+              }
+              const mktNo = product.market_product_nos?.[accId]
+              const mktNoStr = mktNo ? ` (${mktNo})` : ''
+              const logMsg = isOk ? '성공' : isSoldout ? '품절 처리 완료 (주문 완료 후 재삭제)' : status
+              logsRef.push(`[${ts()}] [${fmt(i + 1)}/${fmt(targetProducts.length)}] ${productName}${mktNoStr} -> ${label}: ${logMsg}`)
+            }
+            if (successAccIds.length) successMap.set(product.id, successAccIds)
+          } else {
+            totalOk++
+            logsRef.push(`[${ts()}] [${fmt(i + 1)}/${fmt(targetProducts.length)}] ${productName} -> 성공`)
+          }
         }
       } catch {
         totalFail++
@@ -648,6 +666,7 @@ export default function ProductsPage() {
     logsRef.push(``, `성공 ${fmt(totalOk)} / 실패 ${fmt(totalFail)}`)
     flushLogs()
     setAiJobDone(true)
+    reloadProducts()
   }, [accountsMap, applyMarketDeleteSuccessState])
 
   const handleMarketDelete = async (productId: string) => {
@@ -860,7 +879,7 @@ export default function ProductsPage() {
                 }
                 const modal = marketDeleteModal
                 setMarketDeleteModal(null)
-                await executeMarketDelete(modal.products, modal.selectedAccountIds, modal.title)
+                await executeMarketDelete(modal.products, modal.selectedAccountIds, modal.title, modal.deleteMode)
               }} style={{
                 padding: '7px 16px', borderRadius: '6px', border: 'none',
                 background: '#FF6B6B', color: '#FFF', cursor: 'pointer', fontWeight: 700,
