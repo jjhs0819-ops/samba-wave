@@ -1,0 +1,18 @@
+# Linux/macOS에서 실행되는 파일들은 항상 LF 유지 (Windows CRLF 자동 변환 방지)
+*.sh    text eol=lf
+Dockerfile text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+Caddyfile text eol=lf
+
+# Windows 전용 파일
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# 바이너리
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.ico   binary
+*.pdf   binary

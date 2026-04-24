@@ -1,3 +1,4 @@
+importScripts('config.js')
 importScripts('background-core.js')
 
 // 삼바웨이브 쿠키 연동 - 백그라운드 서비스 워커

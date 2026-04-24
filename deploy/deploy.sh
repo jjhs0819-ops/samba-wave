@@ -23,7 +23,7 @@ AR_REGION="asia-northeast3"
 AR_REPO="cloud-run-source-deploy"
 IMAGE_NAME="samba-wave-api"
 VM_HOST="api.samba-wave.co.kr"
-VM_USER="ubuntu"
+VM_USER="sbk0674"
 SSH_KEY="$HOME/samba-vm-secrets/ssh/deploy_key"
 ENV_FILE="$HOME/samba-vm-secrets/deploy.env"
 
@@ -32,11 +32,15 @@ SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "local")
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 START_TIME=$(date +%s)
 
-# 카카오 토큰 로드 (옵션)
+# 옵션 파싱
 SKIP_KAKAO=false
-if [[ "$1" == "--skip-kakao" ]]; then
-  SKIP_KAKAO=true
-fi
+NO_CACHE=false
+for arg in "$@"; do
+  case "$arg" in
+    --skip-kakao) SKIP_KAKAO=true ;;
+    --no-cache)   NO_CACHE=true ;;
+  esac
+done
 
 if [[ -f "$ENV_FILE" ]] && [[ "$SKIP_KAKAO" == "false" ]]; then
   set +e
@@ -105,12 +109,17 @@ echo "   커밋: $SHA ($BRANCH)"
 echo "   이미지: $IMAGE"
 echo ""
 
-# 1. Docker 빌드 (캐시 활용)
+# 1. Docker 빌드 (캐시 활용, --no-cache 옵션 지원)
 log_step 1 4 "Docker 이미지 빌드 중..."
+BUILD_ARGS=(--platform linux/amd64 --build-arg BUILDKIT_INLINE_CACHE=1)
+if [[ "$NO_CACHE" == "true" ]]; then
+  echo "   ⚠️ --no-cache 모드: 전체 재빌드 (5~10분 소요)"
+  BUILD_ARGS+=(--no-cache)
+else
+  BUILD_ARGS+=(--cache-from "$IMAGE:latest")
+fi
 DOCKER_BUILDKIT=1 docker build \
-  --platform linux/amd64 \
-  --cache-from "$IMAGE:latest" \
-  --build-arg BUILDKIT_INLINE_CACHE=1 \
+  "${BUILD_ARGS[@]}" \
   -t "$IMAGE:$SHA" \
   -t "$IMAGE:latest" \
   ./backend
