@@ -365,10 +365,11 @@ async def get_collect_queue_status(
 async def get_transmit_queue_status(
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
-    """전송 Job 큐 상태 — 마켓명·계정·진행률 포함."""
+    """전송 Job 큐 상태 — 마켓명·계정·진행률·소싱처·브랜드 포함."""
     from sqlmodel import select, col
     from backend.domain.samba.job.model import SambaJob
     from backend.domain.samba.account.model import SambaMarketAccount
+    from backend.domain.samba.collector.model import SambaCollectedProduct
 
     stmt = (
         select(SambaJob)
@@ -398,6 +399,23 @@ async def get_transmit_queue_status(
         for aid, mname, alabel in acc_result.all():
             acc_map[aid] = f"{mname}({alabel})" if alabel else mname
 
+    # product_ids → 소싱처·브랜드 일괄 조회 (잡별 그룹핑)
+    all_pids: set[str] = set()
+    for j in jobs:
+        all_pids.update((j.payload or {}).get("product_ids", []))
+
+    product_meta: dict[str, tuple[str, str]] = {}
+    if all_pids:
+        p_result = await session.execute(
+            select(
+                SambaCollectedProduct.id,
+                SambaCollectedProduct.source_site,
+                SambaCollectedProduct.brand,
+            ).where(col(SambaCollectedProduct.id).in_(list(all_pids)))
+        )
+        for pid, psite, pbrand in p_result.all():
+            product_meta[pid] = (psite or "", pbrand or "")
+
     running = []
     pending = []
     for j in jobs:
@@ -406,11 +424,25 @@ async def get_transmit_queue_status(
         markets = ", ".join(
             dict.fromkeys(acc_map.get(a, "") for a in target_ids if acc_map.get(a))
         )
+        pids = payload.get("product_ids", [])
+        sites: list[str] = []
+        brands: list[str] = []
+        for pid in pids:
+            meta = product_meta.get(pid)
+            if not meta:
+                continue
+            s, b = meta
+            if s and s not in sites:
+                sites.append(s)
+            if b and b not in brands:
+                brands.append(b)
         item = {
             "id": j.id,
             "status": j.status,
             "markets": markets or "알 수 없음",
-            "product_count": len(payload.get("product_ids", [])),
+            "source_sites": sites,
+            "brands": brands,
+            "product_count": len(pids),
             "current": j.current or 0,
             "total": j.total or 0,
             "started_at": j.started_at.isoformat() if j.started_at else None,

@@ -158,12 +158,6 @@ const PRIORITY_COLORS: Record<string, string> = {
   cold: '#666',
 }
 
-const STATUS_COLORS: Record<string, string> = {
-  in_stock: '#51CF66',
-  sold_out: '#FF6B6B',
-  preorder: '#4C9AFF',
-}
-
 const LOG_LEVEL_COLORS: Record<string, string> = {
   info: '#4C9AFF',
   warning: '#FFD93D',
@@ -192,7 +186,7 @@ export default function WarroomPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [events, setEvents] = useState<MonitorEvent[]>([])
   const [siteChanges, setSiteChanges] = useState<Record<string, Record<string, Array<{ id: string; product_id: string | null; product_name: string | null; detail: Record<string, unknown> | null; created_at: string }>>>>({})
-  const [marketChanges, setMarketChanges] = useState<Record<string, Record<string, Array<{ id: string; event_id: string; created_at: string; source_site: string | null; market_product_no: string | null; account_id: string; account_label: string; product_id: string | null; product_name: string | null; detail: Record<string, unknown> | null }>>>>({})
+  const [marketChanges, setMarketChanges] = useState<Record<string, Record<string, Array<{ id: string; event_id: string; created_at: string; source_site: string | null; market_product_no: string | null; site_product_id: string | null; account_id: string; account_label: string; product_id: string | null; product_name: string | null; detail: Record<string, unknown> | null }>>>>({})
 
   const [loading, setLoading] = useState(true)
   const [lastFetched, setLastFetched] = useState<Date | null>(null)
@@ -239,18 +233,7 @@ export default function WarroomPage() {
   const [siteIntervals, setSiteIntervals] = useState<Record<string, string>>({})
   const intervalTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
-  // 마운트 시 서버에서 현재 인터벌 로드
-  useEffect(() => {
-    collectorApi.autotuneStatus().then(res => {
-      if (res.site_intervals) {
-        const init: Record<string, string> = {}
-        for (const [site, val] of Object.entries(res.site_intervals)) {
-          init[site] = String(val)
-        }
-        setSiteIntervals(init)
-      }
-    }).catch(() => {})
-  }, [])
+  // 현재 인터벌은 load()의 autotuneStatus 응답에서 함께 설정됨 — 중복 호출 제거
 
   const handleIntervalChange = useCallback((site: string, value: string) => {
     setSiteIntervals(prev => ({ ...prev, [site]: value }))
@@ -375,6 +358,18 @@ export default function WarroomPage() {
       // 오토튠 상태는 handleAutotuneStatus를 통해 처리 (falseCountRef 가드 적용, 경쟁 상태 방지)
       handleAutotuneStatus(atStatus.running, atStatus.cycle_count, atStatus.last_tick, atStatus.refreshed_count || 0)
       setAutotuneRestarts(atStatus.restart_count || 0)
+      // 소싱처 인터벌 동기화 (마운트 시 초기값 포함) — 별도 useEffect 제거하고 여기서 일원화
+      if (atStatus.site_intervals) {
+        setSiteIntervals(prev => {
+          // 사용자가 디바운스 중인 값을 덮어쓰지 않도록 — 빈 상태일 때만 초기화
+          if (Object.keys(prev).length > 0) return prev
+          const init: Record<string, string> = {}
+          for (const [site, val] of Object.entries(atStatus.site_intervals!)) {
+            init[site] = String(val)
+          }
+          return init
+        })
+      }
       if (scores && Object.keys(scores).length > 0) setStoreScores(scores)
       setLastFetched(new Date())
       nextPollRef.current = POLL_INTERVAL / 1000
@@ -450,7 +445,6 @@ export default function WarroomPage() {
   const { product_stats, refresh_stats, price_change_stats, site_health, market_health, event_summary, hourly_changes } = stats
 
   // 가로 바 차트 최대값
-  const maxBySource = Math.max(...Object.values(product_stats.by_source), 1)
   const maxHourly = Math.max(...hourly_changes, 1)
 
   return (
@@ -891,7 +885,7 @@ export default function WarroomPage() {
                               {ev.account_label && (
                                 <span style={{ fontSize: '0.72rem', color: '#9AA5C0' }}>({ev.account_label})</span>
                               )}
-                              <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{ev.market_product_no || '-'}</span>
+                              <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{ev.site_product_id || '-'}</span>
                               <span style={{ fontSize: '0.72rem', color: '#A78BFA' }}>품절</span>
                               <span style={{ fontSize: '0.68rem', color: '#888' }}>({reasonLabel})</span>
                               {reason === 'option_partial' && oldS != null && newS != null && (
@@ -912,7 +906,7 @@ export default function WarroomPage() {
                               {ev.account_label && (
                                 <span style={{ fontSize: '0.72rem', color: '#9AA5C0' }}>({ev.account_label})</span>
                               )}
-                              <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{ev.market_product_no || '-'}</span>
+                              <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{ev.site_product_id || '-'}</span>
                               <span style={{ fontSize: '0.72rem', color: '#bbb' }}>가격변동</span>
                               {oldP != null && newP != null && (
                                 <span style={{ fontSize: '0.72rem', color: '#bbb' }}>
@@ -1294,8 +1288,8 @@ export default function WarroomPage() {
         </div>
       </div>
 
-      {/* D. 가격 변동 추이 + TOP 10 */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+      {/* D. 24시간 가격 변동 추이 */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1rem' }}>
         {/* 24시간 세로 바 차트 */}
         <div style={card}>
           <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#FF8C00', marginBottom: '0.75rem' }}>24시간 가격 변동 추이</div>
@@ -1340,76 +1334,10 @@ export default function WarroomPage() {
           </div>
         </div>
 
-        {/* TOP 10 가격 변동 */}
-        <div style={card}>
-          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#FF8C00', marginBottom: '0.75rem' }}>가격 변동 TOP 10</div>
-          {price_change_stats.top_changes.length === 0 ? (
-            <div style={{ fontSize: '0.8rem', color: '#666', padding: '1rem 0' }}>최근 24시간 가격 변동 없음</div>
-          ) : (
-            <div style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-              {price_change_stats.top_changes.map((c, i) => (
-                <div
-                  key={i}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.5rem',
-                    padding: '0.3rem 0',
-                    borderBottom: '1px solid #1D1D1D',
-                  }}
-                >
-                  <span style={{ color: '#888', minWidth: '1rem' }}>{i + 1}</span>
-                  <span style={{ flex: 1, color: '#E5E5E5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {c.name || c.product_id}
-                  </span>
-                  <span style={{ color: '#888', whiteSpace: 'nowrap' }}>
-                    ₩{fmtNum(c.old)}
-                  </span>
-                  <span style={{ color: '#888' }}>→</span>
-                  <span style={{ color: '#E5E5E5', whiteSpace: 'nowrap' }}>
-                    ₩{fmtNum(c.new)}
-                  </span>
-                  <span style={{
-                    color: c.pct < 0 ? '#FF6B6B' : '#51CF66',
-                    fontWeight: 600,
-                    minWidth: '3rem',
-                    textAlign: 'right',
-                  }}>
-                    {c.pct > 0 ? '+' : ''}{c.pct}%
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
       </div>
 
-      {/* E. 상품 분포 (3개 가로 바) */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
-        {/* 소싱처별 */}
-        <div style={card}>
-          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#FF8C00', marginBottom: '0.75rem' }}>소싱처별 분포</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-            {Object.entries(product_stats.by_source)
-              .sort((a, b) => b[1] - a[1])
-              .map(([site, cnt]) => (
-                <div key={site} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span style={{ fontSize: '0.7rem', color: '#888', minWidth: '5rem' }}>{site}</span>
-                  <div style={{ flex: 1, height: '14px', background: '#1A1A1A', borderRadius: '3px', overflow: 'hidden' }}>
-                    <div style={{
-                      width: `${(cnt / maxBySource) * 100}%`,
-                      height: '100%',
-                      background: SITE_COLORS[site] || '#FF8C00',
-                      borderRadius: '3px',
-                      transition: 'width 0.3s',
-                    }} />
-                  </div>
-                  <span style={{ fontSize: '0.7rem', color: '#E5E5E5', minWidth: '2.5rem', textAlign: 'right' }}>{fmtNum(cnt)}</span>
-                </div>
-              ))}
-          </div>
-        </div>
-
+      {/* E. 우선순위별 분포 */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1rem' }}>
         {/* 우선순위별 */}
         <div style={card}>
           <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#FF8C00', marginBottom: '0.75rem' }}>우선순위별 분포</div>
@@ -1436,30 +1364,6 @@ export default function WarroomPage() {
           </div>
         </div>
 
-        {/* 상태별 */}
-        <div style={card}>
-          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#FF8C00', marginBottom: '0.75rem' }}>판매상태별 분포</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-            {Object.entries(product_stats.by_sale_status).map(([status, cnt]) => {
-              const maxS = Math.max(...Object.values(product_stats.by_sale_status), 1)
-              return (
-                <div key={status} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span style={{ fontSize: '0.7rem', color: STATUS_COLORS[status] || '#888', minWidth: '4.5rem' }}>{status}</span>
-                  <div style={{ flex: 1, height: '14px', background: '#1A1A1A', borderRadius: '3px', overflow: 'hidden' }}>
-                    <div style={{
-                      width: `${(cnt / maxS) * 100}%`,
-                      height: '100%',
-                      background: STATUS_COLORS[status] || '#666',
-                      borderRadius: '3px',
-                      transition: 'width 0.3s',
-                    }} />
-                  </div>
-                  <span style={{ fontSize: '0.7rem', color: '#E5E5E5', minWidth: '2.5rem', textAlign: 'right' }}>{fmtNum(cnt)}</span>
-                </div>
-              )
-            })}
-          </div>
-        </div>
       </div>
 
       {/* 소싱처/마켓 상태 대시보드 */}

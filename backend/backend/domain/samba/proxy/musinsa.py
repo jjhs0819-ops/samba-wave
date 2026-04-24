@@ -349,8 +349,8 @@ class MusinsaClient:
                 )
                 pre_discount = grade_point + save_point_value
 
-            # Musinsa product-page max benefit excludes earned-point/pre-point accrual.
-            best_benefit_price = display_benefit_price
+            # 무신사 상품페이지 최대혜택가는 선할인(savePoint)까지 포함
+            best_benefit_price = display_benefit_price - pre_discount
 
             logger.info(
                 f"[무신사 혜택가] {goods_no}: "

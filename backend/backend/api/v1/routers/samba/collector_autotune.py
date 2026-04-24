@@ -565,7 +565,23 @@ async def _site_autotune_loop(site: str):
                                             if _del_acc.market_type == "smartstore":
                                                 pno = m_nos.get(
                                                     f"{_del_acc_id}_origin", ""
-                                                ) or m_nos.get(_del_acc_id, "")
+                                                )
+                                                if not pno:
+                                                    _raw = m_nos.get(_del_acc_id, "")
+                                                    if isinstance(_raw, dict):
+                                                        pno = (
+                                                            _raw.get("originProductNo")
+                                                            or _raw.get(
+                                                                "smartstoreChannelProductNo"
+                                                            )
+                                                            or _raw.get(
+                                                                "groupProductNo"
+                                                            )
+                                                            or ""
+                                                        )
+                                                    else:
+                                                        pno = _raw
+                                                pno = str(pno) if pno else ""
                                             else:
                                                 pno = m_nos.get(_del_acc_id, "")
                                             pd = {
@@ -1232,7 +1248,21 @@ async def _site_autotune_loop(site: str):
                                         if _del_acc.market_type == "smartstore":
                                             _pno = _m_nos.get(
                                                 f"{_del_acc_id}_origin", ""
-                                            ) or _m_nos.get(_del_acc_id, "")
+                                            )
+                                            if not _pno:
+                                                _raw2 = _m_nos.get(_del_acc_id, "")
+                                                if isinstance(_raw2, dict):
+                                                    _pno = (
+                                                        _raw2.get("originProductNo")
+                                                        or _raw2.get(
+                                                            "smartstoreChannelProductNo"
+                                                        )
+                                                        or _raw2.get("groupProductNo")
+                                                        or ""
+                                                    )
+                                                else:
+                                                    _pno = _raw2
+                                            _pno = str(_pno) if _pno else ""
                                         else:
                                             _pno = _m_nos.get(_del_acc_id, "")
                                         _pd = {

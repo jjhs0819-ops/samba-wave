@@ -309,7 +309,12 @@ class SambaAnalyticsService:
         )
 
         for order in filtered:
-            pid = order.product_id or order.collected_product_id or "unknown"
+            # 수집상품 ID 우선(마켓·계정 무관한 안정 ID) → 마켓 product_id → 상품명 폴백
+            pid = (
+                order.collected_product_id
+                or order.product_id
+                or f"name:{order.product_name or 'unknown'}"
+            )
             agg[pid]["product_name"] = order.product_name or "기타"
             agg[pid]["source_site"] = order.source_site or ""
             agg[pid]["sales"] += order.sale_price * order.quantity
@@ -336,7 +341,12 @@ class SambaAnalyticsService:
         )
 
         for order in filtered:
-            pid = order.product_id or order.collected_product_id or "unknown"
+            # 수집상품 ID 우선(마켓·계정 무관한 안정 ID) → 마켓 product_id → 상품명 폴백
+            pid = (
+                order.collected_product_id
+                or order.product_id
+                or f"name:{order.product_name or 'unknown'}"
+            )
             agg[pid]["product_name"] = order.product_name or "기타"
             agg[pid]["source_site"] = order.source_site or ""
             agg[pid]["sales"] += order.sale_price * order.quantity

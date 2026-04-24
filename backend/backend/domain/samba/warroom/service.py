@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -9,6 +11,7 @@ from sqlalchemy import func, cast, String
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from backend.db.orm import get_read_session
 from backend.domain.samba.warroom.model import SambaMonitorEvent
 from backend.domain.samba.warroom.repository import SambaMonitorEventRepository
 from backend.utils.logger import logger
@@ -16,6 +19,12 @@ from backend.utils.logger import logger
 
 _RETENTION_DAYS = 30  # 이벤트 보존 기간
 _emit_counter = 0  # 100회마다 정리 실행
+
+# ── 대시보드 결과 인메모리 캐시 ──
+# 30초 폴링 대상 API이므로 15초 TTL 캐시로 대부분의 중복 연산을 회피.
+_DASHBOARD_CACHE_TTL = 15.0  # 초
+_dashboard_cache: Dict[str, Any] = {"ts": 0.0, "data": None}
+_dashboard_cache_lock = asyncio.Lock()
 
 
 class SambaMonitorService:
@@ -64,28 +73,70 @@ class SambaMonitorService:
             logger.warning(f"[monitor] 이벤트 기록 실패: {e}")
 
     async def get_dashboard_stats(self) -> Dict[str, Any]:
-        """대시보드 전체 통계 — 순차 호출 (AsyncSession 공유 제약)."""
-        now = datetime.now(timezone.utc)
-        since_24h = now - timedelta(hours=24)
-        since_1h = now - timedelta(hours=1)
+        """대시보드 전체 통계.
 
-        product_stats = await self._get_product_stats()
-        refresh_stats = await self._get_refresh_stats(since_1h, since_24h)
-        price_change_stats = await self._get_price_change_stats(since_24h)
-        site_health = await self._get_site_health()
-        market_health = await self._get_market_health()
-        event_summary = await self._get_event_summary(since_24h)
-        hourly_changes = await self._get_hourly_changes(since_24h)
+        개선 포인트:
+        1) 15초 TTL 인메모리 캐시 — 30초 폴링 대상이라 중복 연산을 회피.
+        2) 서브쿼리 7개를 독립 세션으로 asyncio.gather 병렬화 (직렬 → 병렬).
+        """
+        # 1) 캐시 히트 (짧은 lock으로 thundering-herd 방지)
+        now_ts = time.monotonic()
+        cached = _dashboard_cache.get("data")
+        if (
+            cached is not None
+            and (now_ts - _dashboard_cache["ts"]) < _DASHBOARD_CACHE_TTL
+        ):
+            return cached
 
-        return {
-            "product_stats": product_stats,
-            "refresh_stats": refresh_stats,
-            "price_change_stats": price_change_stats,
-            "site_health": site_health,
-            "market_health": market_health,
-            "event_summary": event_summary,
-            "hourly_changes": hourly_changes,
-        }
+        async with _dashboard_cache_lock:
+            # lock 획득 사이에 다른 요청이 이미 채웠을 수 있음
+            cached = _dashboard_cache.get("data")
+            if (
+                cached is not None
+                and (time.monotonic() - _dashboard_cache["ts"]) < _DASHBOARD_CACHE_TTL
+            ):
+                return cached
+
+            now = datetime.now(timezone.utc)
+            since_24h = now - timedelta(hours=24)
+            since_1h = now - timedelta(hours=1)
+
+            async def _run(coro_factory):
+                """각 서브쿼리를 독립된 read 세션으로 실행 — 커넥션 풀 내 병렬."""
+                async with get_read_session() as sess:
+                    svc = SambaMonitorService(sess)
+                    return await coro_factory(svc)
+
+            (
+                product_stats,
+                refresh_stats,
+                price_change_stats,
+                site_health,
+                market_health,
+                event_summary,
+                hourly_changes,
+            ) = await asyncio.gather(
+                _run(lambda s: s._get_product_stats()),
+                _run(lambda s: s._get_refresh_stats(since_1h, since_24h)),
+                _run(lambda s: s._get_price_change_stats(since_24h)),
+                _run(lambda s: s._get_site_health()),
+                _run(lambda s: s._get_market_health()),
+                _run(lambda s: s._get_event_summary(since_24h)),
+                _run(lambda s: s._get_hourly_changes(since_24h)),
+            )
+
+            data = {
+                "product_stats": product_stats,
+                "refresh_stats": refresh_stats,
+                "price_change_stats": price_change_stats,
+                "site_health": site_health,
+                "market_health": market_health,
+                "event_summary": event_summary,
+                "hourly_changes": hourly_changes,
+            }
+            _dashboard_cache["data"] = data
+            _dashboard_cache["ts"] = time.monotonic()
+            return data
 
     async def _get_product_stats(self) -> Dict[str, Any]:
         """상품 통계: 전체, 소싱처별, 우선순위별, 상태별 — 단일 쿼리."""
@@ -203,23 +254,27 @@ class SambaMonitorService:
         }
 
     async def _get_site_health(self) -> Dict[str, Any]:
-        """소싱처 헬스 상태."""
+        """소싱처 헬스 상태 — 'probe_%' 키 일괄 조회(N+1 제거)."""
         from backend.domain.samba.collector.refresher import (
             _site_intervals,
             _site_consecutive_errors,
         )
-        from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+        from backend.domain.samba.forbidden.model import SambaSettings
+
+        sites = ["MUSINSA", "KREAM", "LOTTEON"]
+        keys = [f"probe_{s}" for s in sites]
+        rows = (
+            await self.session.execute(
+                select(SambaSettings.key, SambaSettings.value).where(
+                    SambaSettings.key.in_(keys)
+                )
+            )
+        ).all()
+        kv = {k: v for k, v in rows}
 
         result: Dict[str, Any] = {}
-        repo = SambaSettingsRepository(self.session)
-
-        # probe 결과 조회
-        for site in ["MUSINSA", "KREAM", "LOTTEON"]:
-            probe_data = None
-            row = await repo.find_by_async(key=f"probe_{site}")
-            if row and row.value:
-                probe_data = row.value
-
+        for site in sites:
+            probe_data = kv.get(f"probe_{site}") or None
             result[site] = {
                 "interval": _site_intervals.get(site, 1.0),
                 "errors": _site_consecutive_errors.get(site, 0),
@@ -231,17 +286,24 @@ class SambaMonitorService:
         return result
 
     async def _get_market_health(self) -> Dict[str, Any]:
-        """마켓 헬스 상태."""
-        from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+        """마켓 헬스 상태 — 'probe_market_%' 키 일괄 조회(N+1 제거)."""
+        from backend.domain.samba.forbidden.model import SambaSettings
         from backend.domain.samba.probe.health_checker import MARKET_PROBES
 
-        result: Dict[str, Any] = {}
-        repo = SambaSettingsRepository(self.session)
+        keys = [f"probe_market_{mt}" for mt in MARKET_PROBES]
+        rows = (
+            await self.session.execute(
+                select(SambaSettings.key, SambaSettings.value).where(
+                    SambaSettings.key.in_(keys)
+                )
+            )
+        ).all()
+        kv = {k: v for k, v in rows if v}
 
+        result: Dict[str, Any] = {}
         for mt in MARKET_PROBES:
-            row = await repo.find_by_async(key=f"probe_market_{mt}")
-            if row and row.value:
-                d = row.value
+            d = kv.get(f"probe_market_{mt}")
+            if d:
                 result[mt] = {
                     "probe_ok": d.get("ok"),
                     "latency_ms": d.get("latency_ms", 0),
@@ -306,12 +368,14 @@ class SambaMonitorService:
                 SambaCollectedProduct.id,
                 SambaCollectedProduct.registered_accounts,
                 SambaCollectedProduct.market_product_nos,
+                SambaCollectedProduct.site_product_id,
             ).where(SambaCollectedProduct.id.in_(pids))
             prod_rows = (await self.session.execute(prod_stmt)).all()
-            for pid, regs, mpns in prod_rows:
+            for pid, regs, mpns, spid in prod_rows:
                 prod_map[pid] = {
                     "registered_accounts": regs or [],
                     "market_product_nos": mpns or {},
+                    "site_product_id": spid,
                 }
 
         # 2) 모든 account_id 모아서 일괄 조회 → market_type/account_label 매핑
@@ -361,6 +425,7 @@ class SambaMonitorService:
                     "market_product_no": (
                         mpns.get(aid) if isinstance(mpns, dict) else None
                     ),
+                    "site_product_id": pinfo.get("site_product_id"),
                     "account_id": aid,
                     "account_label": ainfo["account_label"],
                     "product_id": ev.product_id,
