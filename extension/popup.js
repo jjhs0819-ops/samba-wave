@@ -35,12 +35,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const status = $('status')
   const urlInput = $('proxyUrl')
-  const keyInput = $('apiKey')
 
   // 저장된 값 로드
-  const saved = await chrome.storage.local.get(['proxyUrl', 'apiKey'])
+  const saved = await chrome.storage.local.get(['proxyUrl'])
   urlInput.value = saved.proxyUrl || ''
-  keyInput.value = saved.apiKey || ''
 
   if (!saved.proxyUrl) {
     setStatus(status, '⚠️ 최초 1회 백엔드 URL을 입력하세요', 'err')
@@ -51,14 +49,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ============================================================
   $('btnSave').addEventListener('click', async () => {
     const url = normalizeUrl(urlInput.value)
-    const key = keyInput.value.trim()
 
     if (!url) {
       setStatus(status, '❌ 백엔드 URL은 필수입니다', 'err')
       return
     }
 
-    await chrome.storage.local.set({ proxyUrl: url, apiKey: key })
+    // URL 변경 시 이전 서버 키는 무효 → 새 서버에서 자동 재발급
+    await chrome.storage.local.set({ proxyUrl: url })
+    await chrome.storage.local.remove('apiKey')
     urlInput.value = url
     setStatus(status, '✅ 저장됨 — 확장앱이 이 백엔드를 사용합니다', 'ok')
   })
@@ -77,13 +76,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const btn = $('btnTest')
     btn.disabled = true
     try {
-      const key = keyInput.value.trim()
-      const headers = key ? { 'X-Api-Key': key } : {}
       const ctrl = new AbortController()
       const timer = setTimeout(() => ctrl.abort(), 8000)
       const res = await fetch(`${url}/api/v1/health`, {
         method: 'GET',
-        headers,
         signal: ctrl.signal,
       })
       clearTimeout(timer)
@@ -113,7 +109,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     btn.textContent = '수집 중...'
     setStatus(result, '')
 
-    const saved = await chrome.storage.local.get(['proxyUrl', 'apiKey'])
+    const saved = await chrome.storage.local.get(['proxyUrl'])
     if (!saved.proxyUrl) {
       setStatus(result, '❌ 백엔드 URL 미설정', 'err')
       btn.disabled = false
