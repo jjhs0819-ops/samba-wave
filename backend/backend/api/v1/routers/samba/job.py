@@ -407,10 +407,13 @@ async def get_transmit_queue_status(
             dict.fromkeys(acc_map.get(a, "") for a in target_ids if acc_map.get(a))
         )
         item = {
+            "id": j.id,
+            "status": j.status,
             "markets": markets or "알 수 없음",
             "product_count": len(payload.get("product_ids", [])),
             "current": j.current or 0,
             "total": j.total or 0,
+            "started_at": j.started_at.isoformat() if j.started_at else None,
         }
         if j.status == JobStatus.RUNNING:
             running.append(item)
@@ -498,9 +501,13 @@ async def cancel_all_jobs(
 async def get_last_resumable_transmit(
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
-    """재개 가능한 최근 transmit 잡 조회 (payload 포함)."""
+    """재개 가능한 최근 transmit 잡 조회 (payload 포함).
+
+    이어하기 대상은 일시정지(FAILED)만 — 명시적 취소(CANCELLED)는 제외.
+    사용자가 "작업취소"/개별 취소한 잡이 새로고침 후 이어하기로 부활하는 것 방지.
+    """
     from backend.domain.samba.job.model import SambaJob
-    from sqlmodel import select, col
+    from sqlmodel import select
 
     job = (
         (
@@ -508,7 +515,7 @@ async def get_last_resumable_transmit(
                 select(SambaJob)
                 .where(
                     SambaJob.job_type == "transmit",
-                    col(SambaJob.status).in_([JobStatus.FAILED, JobStatus.CANCELLED]),
+                    SambaJob.status == JobStatus.FAILED,
                     SambaJob.total > 0,
                     SambaJob.current > 0,
                     SambaJob.current < SambaJob.total,

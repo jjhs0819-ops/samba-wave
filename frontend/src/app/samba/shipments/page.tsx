@@ -98,9 +98,10 @@ export default function ShipmentsPage() {
 
   // 실시간 Job 큐 상태
   const [jobQueueStatus, setJobQueueStatus] = useState<{
-    running: { markets: string, product_count: number, current: number, total: number }[],
-    pending: { markets: string, product_count: number, current: number, total: number }[],
+    running: { id?: string, status?: string, markets: string, product_count: number, current: number, total: number, started_at?: string | null }[],
+    pending: { id?: string, status?: string, markets: string, product_count: number, current: number, total: number, started_at?: string | null }[],
   }>({ running: [], pending: [] })
+  const [cancellingJobIds, setCancellingJobIds] = useState<string[]>([])
   const jobQueuePollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const cancelledAtRef = useRef<number>(0) // 작업중지 후 폴링 업데이트 차단 (새 전송 시작 시 해제)
 
@@ -923,6 +924,41 @@ export default function ShipmentsPage() {
   // handleStart가 항상 최신 클로저를 참조하도록 ref 갱신
   handleStartRef.current = handleStart
 
+  // 개별 잡 취소 — 진행 중이거나 대기 중인 잡 하나만 CANCELLED 처리
+  const handleCancelSingleJob = async (jobId: string, label: string) => {
+    if (!jobId) return
+    const ok = window.confirm(`[${label}] 잡 1건을 취소합니다. 계속할까요?`)
+    if (!ok) return
+    setCancellingJobIds(prev => prev.includes(jobId) ? prev : [...prev, jobId])
+    const ts = fmtTime()
+    const log = (msg: string) => appendShipmentLog(setLogMessages, msg)
+    try {
+      const { API_BASE_URL: apiBase } = await import('@/config/api')
+      const res = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/${jobId}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const msg = await res.text().catch(() => '')
+        log(`[${ts}] 잡 취소 실패 (${label}) — ${msg || res.status}`)
+        return
+      }
+      // 낙관적 업데이트 — 서버 폴링이 반영될 때까지 미리 목록에서 제거
+      setJobQueueStatus(prev => ({
+        running: prev.running.filter(j => j.id !== jobId),
+        pending: prev.pending.filter(j => j.id !== jobId),
+      }))
+      log(`[${ts}] 잡 취소 완료 — ${label}`)
+      // 현재 활성 잡이면 로컬 상태도 정리
+      if (activeJobIdRef.current === jobId) {
+        activeJobIdRef.current = ''
+        if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
+        setTransmitting(false)
+      }
+    } catch (e) {
+      log(`[${ts}] 잡 취소 오류 — ${e instanceof Error ? e.message : '오류'}`)
+    } finally {
+      setCancellingJobIds(prev => prev.filter(id => id !== jobId))
+    }
+  }
+
   return (
     <div style={{ color: '#E5E5E5' }}>
       {/* 이전 단계 연결 */}
@@ -1068,28 +1104,68 @@ export default function ShipmentsPage() {
         </div>
       </div>
 
+      {/* 진행 중인 전송 Job 요약 */}
+      {(jobQueueStatus.running.length > 0 || jobQueueStatus.pending.length > 0) && (
+        <div style={{ background: 'rgba(8,10,16,0.98)', border: '1px solid #1C1E2A', borderRadius: '8px', marginBottom: '8px', overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 14px', background: '#0A0D14', borderBottom: '1px solid #1C1E2A' }}>
+            <span style={{ width: '6px', height: '6px', borderRadius: '50%',
+              background: jobQueueStatus.running.length > 0 ? '#51CF66' : '#FAB005' }} />
+            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#9AA5C0' }}>
+              Job 진행상황 — 전송 중 {fmtNum(jobQueueStatus.running.length)}건
+              {jobQueueStatus.pending.length > 0 && ` · 대기 ${fmtNum(jobQueueStatus.pending.length)}건`}
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '8px 14px' }}>
+            {jobQueueStatus.running.map((j, idx) => {
+              const started = j.started_at ? new Date(j.started_at) : null
+              const startedStr = started
+                ? `${String(started.getHours()).padStart(2,'0')}:${String(started.getMinutes()).padStart(2,'0')}:${String(started.getSeconds()).padStart(2,'0')}`
+                : '-'
+              const pct = j.total > 0 ? Math.floor((j.current / j.total) * 100) : 0
+              const busy = !!(j.id && cancellingJobIds.includes(j.id))
+              return (
+                <div key={`r-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: '#C4CAD8' }}>
+                  <span style={{ color: '#51CF66', fontWeight: 600, minWidth: '40px' }}>전송중</span>
+                  <span style={{ color: '#8A95B0', minWidth: '72px' }}>시작 {startedStr}</span>
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{j.markets}</span>
+                  <span style={{ color: '#9AA5C0', minWidth: '110px', textAlign: 'right' }}>
+                    {fmtNum(j.current)} / {fmtNum(j.total)} ({pct}%)
+                  </span>
+                  <button
+                    onClick={() => j.id && handleCancelSingleJob(j.id, j.markets)}
+                    disabled={!j.id || busy}
+                    title="이 잡만 취소"
+                    style={{ padding: '2px 8px', fontSize: '0.7rem', background: busy ? 'rgba(255,80,80,0.3)' : 'rgba(255,80,80,0.12)', color: '#FF6B6B', border: '1px solid rgba(255,80,80,0.4)', borderRadius: '3px', cursor: (!j.id || busy) ? 'not-allowed' : 'pointer', fontWeight: 600, minWidth: '44px' }}
+                  >{busy ? '취소중' : '취소'}</button>
+                </div>
+              )
+            })}
+            {jobQueueStatus.pending.map((j, idx) => {
+              const busy = !!(j.id && cancellingJobIds.includes(j.id))
+              return (
+                <div key={`p-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: '#8A95B0' }}>
+                  <span style={{ color: '#FAB005', fontWeight: 600, minWidth: '40px' }}>대기</span>
+                  <span style={{ minWidth: '72px' }}>—</span>
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{j.markets}</span>
+                  <span style={{ minWidth: '110px', textAlign: 'right' }}>{fmtNum(j.product_count)}건</span>
+                  <button
+                    onClick={() => j.id && handleCancelSingleJob(j.id, j.markets)}
+                    disabled={!j.id || busy}
+                    title="이 잡만 취소"
+                    style={{ padding: '2px 8px', fontSize: '0.7rem', background: busy ? 'rgba(255,80,80,0.3)' : 'rgba(255,80,80,0.12)', color: '#FF6B6B', border: '1px solid rgba(255,80,80,0.4)', borderRadius: '3px', cursor: (!j.id || busy) ? 'not-allowed' : 'pointer', fontWeight: 600, minWidth: '44px' }}
+                  >{busy ? '취소중' : '취소'}</button>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       {/* 전송 로그 */}
       <div style={{ background: 'rgba(8,10,16,0.98)', border: '1px solid #1C1E2A', borderRadius: '8px', marginBottom: '12px', overflow: 'hidden' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 14px', background: '#0A0D14', borderBottom: '1px solid #1C1E2A' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#9AA5C0' }}>전송 로그</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.72rem', flexWrap: 'wrap' }}>
-              <span style={{ width: '6px', height: '6px', borderRadius: '50%', flexShrink: 0,
-                background: jobQueueStatus.running.length > 0 ? '#51CF66' : jobQueueStatus.pending.length > 0 ? '#FAB005' : '#444',
-              }} />
-              {jobQueueStatus.running.length > 0 ? (
-                <span style={{ color: '#51CF66' }}>
-                  전송 중 {fmtNum(jobQueueStatus.running.length)}건 — {jobQueueStatus.running.map(j => `${j.markets} ${fmtNum(j.current)}/${fmtNum(j.total)}`).join(', ')}
-                </span>
-              ) : jobQueueStatus.pending.length > 0 ? (
-                <span style={{ color: '#FAB005' }}>대기 {fmtNum(jobQueueStatus.pending.length)}건</span>
-              ) : (
-                <span style={{ color: '#555' }}>대기 잡 없음</span>
-              )}
-              {jobQueueStatus.pending.length > 0 && jobQueueStatus.running.length > 0 && (
-                <span style={{ color: '#FAB005' }}>+ 대기 {fmtNum(jobQueueStatus.pending.length)}건 — {jobQueueStatus.pending.map(j => `${j.markets} ${fmtNum(j.product_count)}건`).join(', ')}</span>
-              )}
-            </div>
           </div>
           <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
             <button onClick={() => navigator.clipboard.writeText(logMessages.join('\n'))} style={{ padding: '3px 10px', fontSize: '0.72rem', background: 'transparent', border: '1px solid #252B3B', color: '#666', borderRadius: '4px', cursor: 'pointer' }}>복사</button>

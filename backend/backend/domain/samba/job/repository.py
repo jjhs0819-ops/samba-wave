@@ -146,9 +146,20 @@ class SambaJobRepository(BaseRepository[SambaJob]):
             await self.session.flush()
 
     async def fail_job(self, job_id: str, error: str):
-        """잡 실패 처리."""
+        """잡 실패 처리.
+
+        이미 CANCELLED 상태인 잡은 FAILED로 덮어쓰지 않음 —
+        명시적 취소(작업취소·개별취소) 상태가 이어하기 후보로 재등장하는 것 방지.
+        """
         job = await self.get_async(job_id)
         if job:
+            if job.status == JobStatus.CANCELLED:
+                # 사용자가 이미 취소한 잡 — 완료 시각만 보정하고 상태 유지
+                if job.completed_at is None:
+                    job.completed_at = datetime.now(UTC)
+                    self.session.add(job)
+                    await self.session.flush()
+                return
             job.status = JobStatus.FAILED
             job.error = error
             job.completed_at = datetime.now(UTC)
