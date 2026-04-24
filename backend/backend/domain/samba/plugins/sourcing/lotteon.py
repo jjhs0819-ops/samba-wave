@@ -622,7 +622,9 @@ class LotteonSourcingPlugin(SourcingPlugin):
                 {
                     "name": opt.get("name", ""),
                     "price": opt.get("price", 0),
-                    "stock": 0 if _is_soldout_flag(opt.get("isSoldOut")) else opt.get("stock", 1),
+                    "stock": 0
+                    if _is_soldout_flag(opt.get("isSoldOut"))
+                    else opt.get("stock", 1),
                     "isSoldOut": _is_soldout_flag(opt.get("isSoldOut")),
                 }
                 for opt in raw_options
@@ -631,11 +633,14 @@ class LotteonSourcingPlugin(SourcingPlugin):
         # 역검: stckInfo 품절이나 옵션 실재고 있으면 in_stock 복원
         if is_sold_out and raw_options and detail.get("_option_stock_live"):
             if any(
-                _safe_stock(o.get("stock")) > 0 and not _is_soldout_flag(o.get("isSoldOut"))
+                _safe_stock(o.get("stock")) > 0
+                and not _is_soldout_flag(o.get("isSoldOut"))
                 for o in raw_options
             ):
                 is_sold_out = False
-                _in_stock_cnt = sum(1 for o in raw_options if _safe_stock(o.get("stock")) > 0)
+                _in_stock_cnt = sum(
+                    1 for o in raw_options if _safe_stock(o.get("stock")) > 0
+                )
                 logger.info(
                     f"[LOTTEON] stckInfo 품절이나 옵션 실재고 존재 → in_stock 복원: "
                     f"{site_product_id} (재고옵션 {_in_stock_cnt}/{len(raw_options)}개)"
