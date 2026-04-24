@@ -59,6 +59,9 @@ class PlayAutoPlugin(MarketPlugin):
                 "message": "플레이오토 API Key가 비어있습니다. 설정에서 API Key를 입력해주세요.",
             }
 
+        # 모든 상품을 고정 카테고리(남성의류>긴팔티셔츠>맨투맨티셔츠)로 전송
+        category_id = "11020200"
+
         # 정책의 플레이오토 전용 설정 주입 (원산지, 시중가비율)
         policy_id = product.get("applied_policy_id")
         if policy_id:

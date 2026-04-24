@@ -1,6 +1,6 @@
 (function () {
-  const DEFAULT_PROXY_URL = 'https://samba-wave-api-363598397345.asia-northeast3.run.app'
-  const CLOUD_URL = 'https://samba-wave-api-363598397345.asia-northeast3.run.app'
+  const DEFAULT_PROXY_URL = 'https://api.samba-wave.co.kr'
+  const CLOUD_URL = 'https://api.samba-wave.co.kr'
   const API_PREFIX = '/api/v1/samba/proxy'
   const DEFAULT_SELECTORS = {
     kream_size_items: '.select_item',

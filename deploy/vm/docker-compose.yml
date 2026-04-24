@@ -1,0 +1,78 @@
+# VM 배포용 docker-compose
+# 구성: Caddy (HTTPS) → samba-wave-api (FastAPI) → Cloud SQL Proxy
+#
+# 사전 준비:
+# 1. /opt/samba/.env 에 환경변수 배치 (WRITE_DB_*, READ_DB_*, 기타 시크릿)
+# 2. /opt/samba/sa-key.json 에 Cloud SQL 접근 서비스 계정 키 배치
+# 3. sudo docker login ghcr.io (이미지 pull 권한)
+#
+# 실행:
+#   cd /opt/samba && sudo docker compose up -d
+#
+# 로그:
+#   sudo docker compose logs -f samba-api
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - samba-api
+    networks:
+      - samba-net
+
+  cloud-sql-proxy:
+    image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.14.1
+    restart: unless-stopped
+    command:
+      - "--credentials-file=/sa-key.json"
+      - "--address=0.0.0.0"
+      - "--port=5432"
+      - "fresh-sanctuary-489804-v4:asia-northeast3:samba-wave-db"
+    volumes:
+      - /opt/samba/sa-key.json:/sa-key.json:ro
+    networks:
+      - samba-net
+
+  samba-api:
+    # GitHub Actions가 최신 태그로 교체
+    image: asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/cloud-run-source-deploy/samba-wave-api:latest
+    restart: unless-stopped
+    depends_on:
+      - cloud-sql-proxy
+    env_file:
+      - /opt/samba/.env
+    environment:
+      ENVIRONMENT: production
+      # Cloud SQL Proxy 컨테이너를 host로 지정 (사이드카 대체)
+      WRITE_DB_HOST: cloud-sql-proxy
+      WRITE_DB_PORT: "5432"
+      READ_DB_HOST: cloud-sql-proxy
+      READ_DB_PORT: "5432"
+      # Gunicorn 타임아웃
+      GUNICORN_CMD_ARGS: "--timeout 300 --graceful-timeout 300"
+      WEB_CONCURRENCY: "1"
+    networks:
+      - samba-net
+    # 헬스체크 — Caddy가 백엔드 상태 감지
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+networks:
+  samba-net:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:
