@@ -635,7 +635,7 @@ export default function WarroomPage() {
         {filteredEvents.length === 0 ? (
           <div style={{ fontSize: '0.96rem', color: '#666', padding: '1rem 0', textAlign: 'center' }}>이벤트 없음</div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', maxHeight: '620px', overflow: 'auto' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
             {/* 소싱처별 오토튠 사이클 그룹 */}
             {Object.keys(tickEventsBySite).length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.25rem' }}>

@@ -1122,6 +1122,11 @@ export default function ShipmentsPage() {
                 ? `${String(started.getHours()).padStart(2,'0')}:${String(started.getMinutes()).padStart(2,'0')}:${String(started.getSeconds()).padStart(2,'0')}`
                 : '-'
               const pct = j.total > 0 ? Math.floor((j.current / j.total) * 100) : 0
+              const elapsedMs = started ? Math.max(0, Date.now() - started.getTime()) : 0
+              const perItemSec = j.current > 0 && elapsedMs > 0 ? elapsedMs / 1000 / j.current : 0
+              const perItemStr = perItemSec > 0
+                ? (perItemSec >= 10 ? `${Math.round(perItemSec)}초/1건` : `${perItemSec.toFixed(1)}초/1건`)
+                : '—'
               const busy = !!(j.id && cancellingJobIds.includes(j.id))
               const sites = j.source_sites ?? []
               const brands = j.brands ?? []
@@ -1143,6 +1148,9 @@ export default function ShipmentsPage() {
                   </span>
                   <span style={{ color: '#9AA5C0', minWidth: '110px', textAlign: 'right' }}>
                     {fmtNum(j.current)} / {fmtNum(j.total)} ({pct}%)
+                  </span>
+                  <span style={{ color: '#6E7A95', minWidth: '72px', textAlign: 'right', fontSize: '0.7rem' }}>
+                    {perItemStr}
                   </span>
                   <button
                     onClick={() => j.id && handleCancelSingleJob(j.id, j.markets)}
