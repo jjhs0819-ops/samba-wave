@@ -496,10 +496,15 @@ async def cancel_transmit_jobs(
     request_cancel_transmit()
     trigger_emergency_stop()
 
+    # 일시정지(FAILED) 상태도 포함 — 작업취소는 재개 가능 Job도 제거해야 함
     r = await session.execute(
         text(
             f"UPDATE samba_jobs SET status = '{JobStatus.CANCELLED.value}', completed_at = now() "
-            f"WHERE job_type = 'transmit' AND status IN ('{JobStatus.PENDING.value}', '{JobStatus.RUNNING.value}')"
+            f"WHERE job_type = 'transmit' AND status IN ("
+            f"'{JobStatus.PENDING.value}', "
+            f"'{JobStatus.RUNNING.value}', "
+            f"'{JobStatus.FAILED.value}'"
+            f")"
         )
     )
     await session.commit()

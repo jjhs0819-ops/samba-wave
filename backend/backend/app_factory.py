@@ -216,8 +216,16 @@ def create_application() -> FastAPI:
 
     @app.get("/api/v1/health")
     async def health() -> dict:
+        import os
+
         from backend.domain.samba.job.worker import get_worker_status
 
-        return {"status": "healthy", "worker": get_worker_status()}
+        commit = os.environ.get("COMMIT_SHA", "unknown")
+        return {
+            "status": "healthy",
+            "commit": commit[:7] if commit and commit != "unknown" else "unknown",
+            "deployed_at": os.environ.get("DEPLOYED_AT", ""),
+            "worker": get_worker_status(),
+        }
 
     return app

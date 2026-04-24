@@ -39,6 +39,12 @@ COPY scripts ./scripts
 COPY alembic.ini ./alembic.ini
 COPY alembic ./alembic
 
+# 배포 메타데이터 (헬스체크에 노출) — deploy.sh가 --build-arg 로 주입
+ARG COMMIT_SHA=unknown
+ARG DEPLOYED_AT=
+ENV COMMIT_SHA=$COMMIT_SHA
+ENV DEPLOYED_AT=$DEPLOYED_AT
+
 # 비루트 사용자로 실행 (보안 강화)
 RUN groupadd -r appuser && useradd -r -g appuser -d /app appuser \
     && chown -R appuser:appuser /app

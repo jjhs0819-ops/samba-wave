@@ -111,7 +111,13 @@ echo ""
 
 # 1. Docker 빌드 (캐시 활용, --no-cache 옵션 지원)
 log_step 1 4 "Docker 이미지 빌드 중..."
-BUILD_ARGS=(--platform linux/amd64 --build-arg BUILDKIT_INLINE_CACHE=1)
+DEPLOYED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+BUILD_ARGS=(
+  --platform linux/amd64
+  --build-arg BUILDKIT_INLINE_CACHE=1
+  --build-arg "COMMIT_SHA=$SHA"
+  --build-arg "DEPLOYED_AT=$DEPLOYED_AT"
+)
 if [[ "$NO_CACHE" == "true" ]]; then
   echo "   ⚠️ --no-cache 모드: 전체 재빌드 (5~10분 소요)"
   BUILD_ARGS+=(--no-cache)
@@ -140,22 +146,30 @@ ssh -i "$SSH_KEY" \
   "cd /opt/samba && sudo docker compose pull samba-api && sudo docker compose up -d samba-api && sudo docker compose ps --format 'table {{.Name}}\t{{.Status}}'"
 log_ok "VM 재시작 완료"
 
-# 4. 헬스체크 (최대 60초 대기)
+# 4. 헬스체크 (최대 60초 대기) — 커밋 SHA로 최신 리비전 서빙 중인지 검증
 log_step 4 4 "헬스체크 중..."
+HEALTH_OK=false
 for i in 1 2 3 4 5 6; do
   sleep 10
-  STATUS=$(curl -sS -m 10 -o /dev/null -w "%{http_code}" "https://${VM_HOST}/api/v1/health" || echo 000)
-  if [[ "$STATUS" == "200" ]]; then
-    log_ok "HTTP 200 응답 확인 (시도 $i)"
+  RESP=$(curl -sS -m 10 "https://${VM_HOST}/api/v1/health" 2>/dev/null || echo "")
+  STATUS=$(echo "$RESP" | grep -oE '"status":"[^"]*"' | head -1 | cut -d'"' -f4)
+  LIVE_SHA=$(echo "$RESP" | grep -oE '"commit":"[^"]*"' | head -1 | cut -d'"' -f4)
+  if [[ "$STATUS" == "healthy" ]]; then
+    if [[ "$LIVE_SHA" == "$SHA" ]]; then
+      log_ok "HTTP 200 + 커밋 $LIVE_SHA 확인 (최신 리비전 서빙 중, 시도 $i)"
+    else
+      log_ok "HTTP 200 응답 확인 (라이브 커밋: ${LIVE_SHA:-unknown}, 예상: $SHA, 시도 $i)"
+    fi
+    HEALTH_OK=true
     break
   fi
-  echo "   시도 $i/6: HTTP $STATUS — 재시도"
-  if [[ $i == 6 ]]; then
-    log_err "헬스체크 실패 (마지막 응답: HTTP $STATUS)"
-    kakao_notify "fail" "헬스체크 HTTP $STATUS"
-    exit 1
-  fi
+  echo "   시도 $i/6: status=${STATUS:-none} commit=${LIVE_SHA:-none} — 재시도"
 done
+if [[ "$HEALTH_OK" != "true" ]]; then
+  log_err "헬스체크 실패 — 최신 리비전이 서빙되지 않음"
+  kakao_notify "fail" "헬스체크 실패"
+  exit 1
+fi
 
 # 성공
 ELAPSED=$(($(date +%s) - START_TIME))
