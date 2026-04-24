@@ -52,12 +52,11 @@ class PlayAutoClient:
 
     @staticmethod
     def _get_proxy_url() -> str:
-        """수집용 프록시 URL 가져오기."""
+        """수집용 프록시 URL 가져오기 — DB 설정 페이지(/samba/settings) 기반."""
         try:
-            from backend.core.config import settings
+            from backend.domain.samba.collector.refresher import get_collect_proxy_url
 
-            url = settings.collect_proxy_url or ""
-            return url.strip()
+            return (get_collect_proxy_url() or "").strip()
         except Exception as e:
             logger.warning(f"[플레이오토] 프록시 설정 로드 실패: {e}")
             return ""

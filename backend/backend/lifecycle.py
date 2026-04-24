@@ -435,6 +435,17 @@ async def lifespan(app: FastAPI):
     startup_logger = _startup_logger()
     await _apply_startup_schema_fixes(startup_logger)
     await _sync_playauto_registered_accounts(startup_logger)
+
+    # DB 프록시 캐시를 워커/오토튠 시작 전에 프라임한다.
+    # async 컨텍스트에서는 _get_cached_proxies 가 백그라운드 태스크만 예약하므로,
+    # 프라임 없이는 첫 호출 시 빈 목록이 반환되어 프록시 없이 직접 트래픽이 나감.
+    try:
+        from backend.domain.samba.collector.refresher import refresh_db_proxy_cache
+
+        await refresh_db_proxy_cache()
+    except Exception as e:
+        startup_logger.warning(f"[startup] DB 프록시 캐시 프라임 실패: {e}")
+
     await _recover_running_jobs(startup_logger)
     worker_runtime = await _start_worker_runtime()
     await _start_autotune_if_enabled()

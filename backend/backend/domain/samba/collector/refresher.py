@@ -159,76 +159,117 @@ _db_proxy_cache: list[str] | None = None
 _db_proxy_cache_ts: float = 0
 
 
-def _load_db_proxies_for_autotune() -> list[str]:
-    """DB proxy_config에서 autotune/both 활성 프록시 URL 목록 반환 (5분 캐시)."""
-    global _db_proxy_cache, _db_proxy_cache_ts
+# purposes: "autotune" | "collect" | "transmit"
+_PROXY_PURPOSES = ("autotune", "collect", "transmit")
+_db_proxy_caches: dict[str, list[str]] = {p: [] for p in _PROXY_PURPOSES}
+
+
+async def _fetch_all_db_proxies() -> dict[str, list[str]]:
+    """DB의 proxy_config를 한 번 읽고 purpose별로 분류하여 반환."""
+    from sqlmodel import select
+    from backend.db.orm import get_read_session
+    from backend.domain.samba.forbidden.model import SambaSettings
+
+    buckets: dict[str, list[str]] = {p: [] for p in _PROXY_PURPOSES}
+    async with get_read_session() as session:
+        result = await session.execute(
+            select(SambaSettings).where(SambaSettings.key == "proxy_config")
+        )
+        row = result.scalar_one_or_none()
+        if not row or not row.value:
+            return buckets
+        for p in row.value:
+            if not (p.get("enabled") and p.get("url")):
+                continue
+            for purpose in p.get("purposes") or []:
+                if purpose in buckets:
+                    buckets[purpose].append(p["url"])
+    return buckets
+
+
+async def refresh_db_proxy_cache() -> dict[str, list[str]]:
+    """DB에서 프록시 목록을 즉시 읽어 purpose별 캐시에 저장.
+
+    FastAPI startup / 설정 변경 시 호출하여 캐시를 최신 상태로 유지한다.
+    """
+    global _db_proxy_caches, _db_proxy_cache, _db_proxy_cache_ts
+    import time
+
+    try:
+        buckets = await _fetch_all_db_proxies()
+    except Exception as e:
+        logger.warning(f"[proxy] DB 프록시 로드 실패: {e}")
+        buckets = {p: [] for p in _PROXY_PURPOSES}
+    _db_proxy_caches = buckets
+    _db_proxy_cache = buckets.get("autotune", [])  # 하위 호환
+    _db_proxy_cache_ts = time.monotonic()
+    return buckets
+
+
+def _get_cached_proxies(purpose: str) -> list[str]:
+    """purpose별 캐시된 프록시 URL 목록 반환. async 컨텍스트에서는 만료 시 백그라운드 갱신."""
+    global _db_proxy_caches, _db_proxy_cache_ts
+    import asyncio
     import time
 
     now = time.monotonic()
-    if _db_proxy_cache is not None and now - _db_proxy_cache_ts < 300:
-        return _db_proxy_cache
-
-    try:
-        import asyncio
-        from sqlmodel import select
-        from backend.db.orm import get_read_session
-        from backend.domain.samba.forbidden.model import SambaSettings
-
-        async def _fetch():
-            async with get_read_session() as session:
-                result = await session.execute(
-                    select(SambaSettings).where(SambaSettings.key == "proxy_config")
-                )
-                row = result.scalar_one_or_none()
-                if not row or not row.value:
-                    return []
-                return [
-                    p["url"]
-                    for p in row.value
-                    if p.get("enabled")
-                    and p.get("url")
-                    and "autotune" in (p.get("purposes") or [])
-                ]
-
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # 이미 이벤트 루프가 돌고 있으면 동기로는 불가 → 캐시 반환
-            return _db_proxy_cache or []
-        urls = loop.run_until_complete(_fetch())
-    except Exception:
-        urls = []
-
-    _db_proxy_cache = urls
-    _db_proxy_cache_ts = now
-    return urls
+    stale = now - _db_proxy_cache_ts > 300
+    if stale:
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(refresh_db_proxy_cache())
+        except RuntimeError:
+            try:
+                asyncio.run(refresh_db_proxy_cache())
+            except Exception:
+                pass
+    return list(_db_proxy_caches.get(purpose, []))
 
 
-def invalidate_db_proxy_cache():
+def get_autotune_proxies() -> list[str]:
+    """오토튠 용도로 사용할 활성 프록시 URL 목록 (DB 설정 기반)."""
+    return _get_cached_proxies("autotune")
+
+
+def get_collect_proxies() -> list[str]:
+    """수집 용도로 사용할 활성 프록시 URL 목록 (DB 설정 기반)."""
+    return _get_cached_proxies("collect")
+
+
+def get_transmit_proxies() -> list[str]:
+    """전송 용도로 사용할 활성 프록시 URL 목록 (DB 설정 기반)."""
+    return _get_cached_proxies("transmit")
+
+
+def get_collect_proxy_url() -> str | None:
+    """수집 용도 프록시 중 첫 번째 URL만 반환 (단일 프록시가 필요한 구 API 호환용)."""
+    urls = get_collect_proxies()
+    return urls[0] if urls else None
+
+
+def _load_db_proxies_for_autotune() -> list[str]:
+    """하위 호환 — 오토튠 프록시 목록 반환."""
+    return get_autotune_proxies()
+
+
+def invalidate_db_proxy_cache() -> None:
     """DB 프록시 캐시 무효화 — 설정 변경 시 호출."""
-    global _db_proxy_cache, _db_proxy_cache_ts
+    global _db_proxy_cache, _db_proxy_cache_ts, _db_proxy_caches
     _db_proxy_cache = None
+    _db_proxy_caches = {p: [] for p in _PROXY_PURPOSES}
     _db_proxy_cache_ts = 0
 
 
 def _get_rotated_proxy(site: str = "MUSINSA") -> str | None:
-    """메인 IP + 프록시 목록을 N건 단위로 순환. DB 프록시 우선, 없으면 환경변수 폴백.
+    """프록시 목록을 N건 단위로 순환 — DB 설정 페이지에 등록된 프록시만 사용.
 
-    site 파라미터로 소싱처별 독립 카운터를 관리한다.
+    site 파라미터로 소싱처별 독립 카운터를 관리한다. 환경변수/하드코딩 폴백 없음.
     """
     global _ip_rotate_counters, _ip_rotate_idxs, _ip_rotate_labels, _ip_rotate_totals
     global _refresh_log_total
-    from backend.core.config import settings
 
-    # DB 프록시 우선
-    db_proxies = _load_db_proxies_for_autotune()
-    if db_proxies:
-        proxies = db_proxies
-    else:
-        # 환경변수 폴백
-        proxy_urls = settings.proxy_urls
-        if not proxy_urls:
-            return None
-        proxies = [p.strip() for p in proxy_urls.split(",") if p.strip()]
+    # DB 설정 페이지(`/samba/settings`)에 등록된 autotune 용도 프록시만 사용
+    proxies = get_autotune_proxies()
     if not proxies:
         return None
     # 프록시만 사용 (메인 IP 제외)

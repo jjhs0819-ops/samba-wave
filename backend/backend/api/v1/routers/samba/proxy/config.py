@@ -70,9 +70,22 @@ async def save_proxy_config(
     session: AsyncSession = Depends(get_write_session_dependency),
     admin: str = Depends(require_admin),
 ):
-    """프록시 설정 저장 (전체 교체)."""
+    """프록시 설정 저장 (전체 교체) + 오토튠 프록시 캐시 즉시 갱신."""
     items = [p.model_dump() for p in payload.proxies]
     await _set_setting(session, PROXY_SETTINGS_KEY, items)
+
+    # 캐시 무효화 + 새 프록시 목록으로 즉시 갱신 (UI 저장과 실제 적용 사이 지연 제거)
+    try:
+        from backend.domain.samba.collector.refresher import (
+            invalidate_db_proxy_cache,
+            refresh_db_proxy_cache,
+        )
+
+        invalidate_db_proxy_cache()
+        await refresh_db_proxy_cache()
+    except Exception:
+        pass
+
     return {"ok": True, "count": len(items)}
 
 

@@ -1240,8 +1240,35 @@ class SambaShipmentService:
                                 delete_from_market,
                             )
 
+                            # 디스패처는 product["market_product_no"][market_type] 키를 읽음
+                            # product_dict는 model_dump 결과라 market_product_nos(복수형)만 있고
+                            # market_product_no(단수형)는 없음 → 명시적으로 주입 필요.
+                            # 스마트스토어는 삭제 API가 originProductNo를 요구하므로
+                            # {account_id}_origin 키 우선 (delete_from_markets 2347-2363과 동일 패턴)
+                            _m_nos = product_row.market_product_nos or {}
+                            if market_type == "smartstore":
+                                _pno = _m_nos.get(f"{account_id}_origin", "")
+                                if not _pno:
+                                    _raw = _m_nos.get(account_id, "")
+                                    if isinstance(_raw, dict):
+                                        _pno = (
+                                            _raw.get("originProductNo")
+                                            or _raw.get("smartstoreChannelProductNo")
+                                            or _raw.get("groupProductNo")
+                                            or ""
+                                        )
+                                    else:
+                                        _pno = _raw
+                                _pno = str(_pno) if _pno else ""
+                            else:
+                                _pno = _m_nos.get(account_id, "")
+                            _del_pd = {
+                                **product_dict,
+                                "market_product_no": {market_type: _pno},
+                            }
+
                             del_result = await delete_from_market(
-                                self.session, market_type, product_dict, account=account
+                                self.session, market_type, _del_pd, account=account
                             )
                         except Exception as _api_e:
                             logger.warning(

@@ -158,11 +158,11 @@ class PlayAutoPlugin(MarketPlugin):
 
     @staticmethod
     def _get_proxy_for_download() -> str:
-        """이미지 다운로드용 프록시 (Cloud Run에서 소싱처 직접 접근 차단 대응)."""
+        """이미지 다운로드용 프록시 (Cloud Run에서 소싱처 직접 접근 차단 대응) — DB 설정 페이지 기반."""
         try:
-            from backend.core.config import settings
+            from backend.domain.samba.collector.refresher import get_collect_proxy_url
 
-            return settings.collect_proxy_url or ""
+            return get_collect_proxy_url() or ""
         except Exception:
             return ""
 

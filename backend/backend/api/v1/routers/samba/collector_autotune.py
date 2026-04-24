@@ -290,7 +290,8 @@ async def _site_autotune_loop(site: str):
                         _all_price_pids: set[str] = set()
                         _price_tx_items: list[dict] = []
                         _stock_tx_items: list[dict] = []
-                        _price_change_events: list[dict] = []
+                        # product_id → event (사이클 끝 배치 발행용) — 상품당 1건 dedupe
+                        _price_change_events: dict[str, dict] = {}
                         # 품절 이벤트(옵션별/전체/소싱처삭제 통합) — 사이클 끝에 배치 발행
                         # reason: "option_partial"(옵션 일부 품절) | "all_soldout"(전체 품절) | "source_deleted"(소싱처 삭제)
                         _soldout_events: list[dict] = []
@@ -448,30 +449,8 @@ async def _site_autotune_loop(site: str):
                                 ):
                                     updates["price_changed_at"] = now
 
-                                # per-product price_changed 이벤트 수집 (사이클 끝 배치 발행용)
-                                if (
-                                    r.changed
-                                    and r.new_sale_price is not None
-                                    and r.new_sale_price != (product.sale_price or 0)
-                                ):
-                                    _old_p = product.sale_price or 0
-                                    _new_p = r.new_sale_price or 0
-                                    _diff_pct = (
-                                        round((_new_p - _old_p) / _old_p * 100, 1)
-                                        if _old_p
-                                        else 0
-                                    )
-                                    _price_change_events.append(
-                                        {
-                                            "source_site": product.source_site,
-                                            "product_id": r.product_id,
-                                            "product_name": product.name,
-                                            "site_product_id": product.site_product_id,
-                                            "old_price": _old_p,
-                                            "new_price": _new_p,
-                                            "diff_pct": _diff_pct,
-                                        }
-                                    )
+                                # price_changed 이벤트 수집은 아래 계정 루프의
+                                # expected_price != last_price(등록마켓 판매가 기준) 지점에서 수행
 
                                 # 재고변동 항목 수집 (scheduler_tick detail용)
                                 if r.stock_changed and len(_stock_tx_items) < 10:
@@ -484,26 +463,44 @@ async def _site_autotune_loop(site: str):
                                         }
                                     )
 
-                                # per-product 품절 이벤트 수집 — 옵션별 품절(partial)
-                                # 전체 품절/소싱처삭제는 아래 L518 블록에서 append
+                                # per-product 품절 이벤트 수집 — 옵션별 0 경계 전환 시에만
+                                # 오토튠 실전송 기준(옵션 stock이 0/양수 사이를 넘나드는 경우)과 동일
+                                # 전체 품절/소싱처삭제는 아래 블록에서 별도 append
                                 if r.stock_changed and r.new_sale_status != "sold_out":
 
-                                    def _sum_stock(opts):
+                                    def _opt_map(opts):
+                                        """옵션 key(name/size) → stock 맵."""
+                                        result: dict[str, int] = {}
                                         if not opts:
-                                            return 0
-                                        total = 0
+                                            return result
                                         for _o in opts:
-                                            if isinstance(_o, dict):
-                                                try:
-                                                    total += int(_o.get("stock") or 0)
-                                                except (TypeError, ValueError):
-                                                    pass
-                                        return total
+                                            if not isinstance(_o, dict):
+                                                continue
+                                            _k = _o.get("name", "") or _o.get(
+                                                "size", ""
+                                            )
+                                            try:
+                                                result[_k] = int(_o.get("stock") or 0)
+                                            except (TypeError, ValueError):
+                                                result[_k] = 0
+                                        return result
 
-                                    _old_stock = _sum_stock(product.options)
-                                    _new_stock = _sum_stock(r.new_options)
-                                    # 옵션 수량이 감소(0으로 전환 포함)한 경우만 "옵션 품절"로 간주
-                                    if _new_stock < _old_stock:
+                                    _old_map = _opt_map(product.options)
+                                    _new_map = _opt_map(r.new_options)
+                                    # 0 경계를 넘은 옵션 개수 (양수→0: 품절 전환, 0→양수: 재입고)
+                                    _boundary_crossed = 0
+                                    _went_soldout = 0
+                                    for _k in set(_old_map) | set(_new_map):
+                                        _os = _old_map.get(_k, 0)
+                                        _ns = _new_map.get(_k, 0)
+                                        if (_os <= 0) != (_ns <= 0):
+                                            _boundary_crossed += 1
+                                            if _ns <= 0:
+                                                _went_soldout += 1
+                                    # 0 경계 전환이 있고, 그중 품절 전환 옵션이 있을 때만 기록
+                                    if _boundary_crossed > 0 and _went_soldout > 0:
+                                        _old_stock = sum(_old_map.values())
+                                        _new_stock = sum(_new_map.values())
                                         _soldout_events.append(
                                             {
                                                 "source_site": product.source_site,
@@ -873,6 +870,28 @@ async def _site_autotune_loop(site: str):
                                         _price_action_txt = f"가격변동 {last_price:,}→{expected_price:,} → {acc_label}"
                                         _acc_items.append("price")
                                         _acc_action_parts.append(_price_action_txt)
+                                        # 워룸 타임라인용 이벤트 수집 — 등록마켓 판매가 변경 기준
+                                        # (오토튠의 실제 전송 트리거와 동일 기준, 상품당 1건)
+                                        if r.product_id not in _price_change_events:
+                                            _diff_pct = (
+                                                round(
+                                                    (expected_price - last_price)
+                                                    / last_price
+                                                    * 100,
+                                                    1,
+                                                )
+                                                if last_price
+                                                else 0
+                                            )
+                                            _price_change_events[r.product_id] = {
+                                                "source_site": product.source_site,
+                                                "product_id": r.product_id,
+                                                "product_name": product.name,
+                                                "site_product_id": product.site_product_id,
+                                                "old_price": last_price,
+                                                "new_price": expected_price,
+                                                "diff_pct": _diff_pct,
+                                            }
                                     elif expected_price == last_price:
                                         # 가격 동일 스킵 — 다중 마켓 디버그 로그
                                         if len(reg_accounts) > 1:
@@ -1361,8 +1380,11 @@ async def _site_autotune_loop(site: str):
                         try:
                             async with get_write_session() as ev_session:
                                 monitor = SambaMonitorService(ev_session)
-                                # per-product price_changed 이벤트 배치 발행 (최대 50건)
-                                for _ev_item in _price_change_events[:50]:
+                                # per-product price_changed 이벤트 배치 발행 (최대 500건)
+                                # dict → 최신 순으로 슬라이스 (상품당 1건 dedupe 완료)
+                                for _ev_item in list(_price_change_events.values())[
+                                    :500
+                                ]:
                                     await monitor.emit(
                                         "price_changed",
                                         "info",

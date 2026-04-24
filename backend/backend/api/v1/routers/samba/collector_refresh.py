@@ -260,32 +260,13 @@ async def refresh_products(
             if r.new_original_price is not None:
                 updates["original_price"] = r.new_original_price
 
-            # 가격 변동 추적
+            # 가격 변동 추적 (워룸 price_changed 이벤트는 오토튠에서 등록마켓 판매가 기준으로
+            # 발행하므로 수동갱신에서는 emit 하지 않는다 — 타임라인 기준 통일)
             old_price = product.sale_price or 0
             new_price = r.new_sale_price or 0
             if new_price != old_price:
                 updates["price_before_change"] = old_price
                 updates["price_changed_at"] = now
-                # 모니터링: 가격 변동
-                diff_pct = (
-                    round((new_price - old_price) / old_price * 100, 1)
-                    if old_price
-                    else 0
-                )
-                await monitor.emit(
-                    "price_changed",
-                    "info",
-                    summary=f"가격 변동 — {product.name[:30] if product.name else ''} ₩{int(old_price):,}→₩{int(new_price):,}",
-                    source_site=product.source_site,
-                    product_id=r.product_id,
-                    product_name=product.name,
-                    detail={
-                        "old_price": old_price,
-                        "new_price": new_price,
-                        "diff_pct": diff_pct,
-                        "site_product_id": getattr(product, "site_product_id", None),
-                    },
-                )
 
             changed_ids.append(r.product_id)
 
@@ -344,8 +325,23 @@ async def refresh_products(
                 )
         else:
             if r.stock_changed:
-                # 가격/상태 동일, 옵션 재고만 변동 → 옵션 품절 이벤트 발행
+                # 가격/상태 동일, 옵션 재고만 변동 → 옵션 품절 이벤트 발행 (0 경계 전환 기준)
                 stock_only_ids.append(r.product_id)
+
+                def _opt_map_manual(opts):
+                    """옵션 key(name/size) → stock 맵."""
+                    result: dict = {}
+                    if not opts:
+                        return result
+                    for _o in opts:
+                        if not isinstance(_o, dict):
+                            continue
+                        _k = _o.get("name", "") or _o.get("size", "")
+                        try:
+                            result[_k] = int(_o.get("stock") or 0)
+                        except (TypeError, ValueError):
+                            result[_k] = 0
+                    return result
 
                 def _sum_stock_manual(opts):
                     if not opts:
@@ -361,7 +357,16 @@ async def refresh_products(
 
                 _old_stock_m = _sum_stock_manual(product.options)
                 _new_stock_m = _sum_stock_manual(r.new_options)
-                if _new_stock_m < _old_stock_m:
+                # 0 경계 전환(양수→0: 품절 전환) 옵션이 있을 때만 이벤트 발행
+                _old_map_m = _opt_map_manual(product.options)
+                _new_map_m = _opt_map_manual(r.new_options)
+                _went_soldout_m = 0
+                for _k in set(_old_map_m) | set(_new_map_m):
+                    _os = _old_map_m.get(_k, 0)
+                    _ns = _new_map_m.get(_k, 0)
+                    if _os > 0 and _ns <= 0:
+                        _went_soldout_m += 1
+                if _went_soldout_m > 0:
                     await monitor.emit(
                         "sold_out",
                         "info",

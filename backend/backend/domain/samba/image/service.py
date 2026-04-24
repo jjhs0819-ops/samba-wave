@@ -358,6 +358,9 @@ class ImageTransformService:
         except Exception:
             return None
 
+    # NAT 데이터 요금 절감: 다운로드 최대 크기 5MB (고해상도 원본 차단)
+    _MAX_DOWNLOAD_SIZE = 5 * 1024 * 1024
+
     async def _download_image(
         self,
         url: str,
@@ -382,13 +385,25 @@ class ImageTransformService:
         async def _do_get(c: httpx.AsyncClient) -> bytes:
             for attempt in range(2):
                 try:
-                    resp = await c.get(url, headers=_headers)
-                    resp.raise_for_status()
-                    if len(resp.content) < 1000:
-                        raise ValueError(
-                            f"이미지가 비정상적으로 작음({len(resp.content)}B)"
-                        )
-                    return resp.content
+                    # Content-Length 사전 체크로 대용량 원본 바로 차단
+                    async with c.stream("GET", url, headers=_headers) as resp:
+                        resp.raise_for_status()
+                        cl = resp.headers.get("content-length")
+                        if cl and int(cl) > self._MAX_DOWNLOAD_SIZE:
+                            raise ValueError(
+                                f"이미지 용량 초과({int(cl)}B > {self._MAX_DOWNLOAD_SIZE}B)"
+                            )
+                        chunks: list[bytes] = []
+                        total = 0
+                        async for chunk in resp.aiter_bytes(chunk_size=65536):
+                            total += len(chunk)
+                            if total > self._MAX_DOWNLOAD_SIZE:
+                                raise ValueError(f"이미지 용량 초과(스트림 {total}B)")
+                            chunks.append(chunk)
+                        content = b"".join(chunks)
+                    if len(content) < 1000:
+                        raise ValueError(f"이미지가 비정상적으로 작음({len(content)}B)")
+                    return content
                 except Exception:
                     if attempt == 0:
                         await asyncio.sleep(1)
@@ -739,9 +754,15 @@ class ImageTransformService:
             raise ValueError("Gemini 응답에 이미지 없음")
 
     async def _save_image(self, image_bytes: bytes, original_url: str) -> str:
-        """R2 또는 로컬에 이미지 저장 후 URL 반환."""
-        url_hash = hashlib.md5(original_url.encode()).hexdigest()[:8]
-        filename = f"ai_{url_hash}_{uuid.uuid4().hex[:6]}.webp"
+        """R2 또는 로컬에 이미지 저장 후 URL 반환.
+
+        파일명을 결정적(content-hash)으로 생성하여 동일 바이트는 동일 경로에 저장한다.
+        R2에 이미 존재하면 업로드를 생략하여 NAT egress 비용을 절감한다.
+        """
+        # content-hash 기반 결정적 파일명 (중복 업로드 방지)
+        content_hash = hashlib.md5(image_bytes).hexdigest()[:16]
+        filename = f"ai_{content_hash}.webp"
+        key = f"transformed/{filename}"
 
         # R2 저장 시도
         r2 = await self._get_r2_client()
@@ -751,16 +772,27 @@ class ImageTransformService:
                 import asyncio as _aio
                 from functools import partial
 
+                # HeadObject로 기존 객체 확인 — 존재 시 업로드 스킵
+                def _exists() -> bool:
+                    try:
+                        client.head_object(Bucket=bucket_name, Key=key)
+                        return True
+                    except Exception:
+                        return False
+
+                if await _aio.to_thread(_exists):
+                    return f"{public_url}/{key}"
+
                 await _aio.to_thread(
                     partial(
                         client.upload_fileobj,
                         io.BytesIO(image_bytes),
                         bucket_name,
-                        f"transformed/{filename}",
+                        key,
                         ExtraArgs={"ContentType": "image/webp"},
                     ),
                 )
-                return f"{public_url}/transformed/{filename}"
+                return f"{public_url}/{key}"
             except Exception as e:
                 logger.warning(f"[이미지] R2 업로드 실패, 로컬 저장으로 전환: {e}")
 

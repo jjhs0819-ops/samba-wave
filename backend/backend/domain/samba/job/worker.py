@@ -1179,10 +1179,10 @@ class JobWorker:
             await repo.fail_job(job.id, "무신사 로그인(쿠키) 필요")
             return
 
-        # 수집용 프록시 적용
-        from backend.core.config import settings as _settings
+        # 수집용 프록시 적용 — DB 설정 페이지(/samba/settings)에 등록된 collect 프록시만 사용
+        from backend.domain.samba.collector.refresher import get_collect_proxy_url
 
-        _collect_proxy = _settings.collect_proxy_url or None
+        _collect_proxy = get_collect_proxy_url()
         client = MusinsaClient(cookie=cookie, proxy_url=_collect_proxy)
         if _collect_proxy:
             logger.info(
@@ -1646,9 +1646,9 @@ class JobWorker:
             await repo.fail_job(job.id, "무신사 로그인(쿠키) 필요")
             return
 
-        from backend.core.config import settings as _settings
+        from backend.domain.samba.collector.refresher import get_collect_proxy_url
 
-        _collect_proxy = _settings.collect_proxy_url or None
+        _collect_proxy = get_collect_proxy_url()
         client = MusinsaClient(cookie=cookie, proxy_url=_collect_proxy)
 
         # SearchFilter 목록 로드 + category_code → filter_id 맵 빌드
@@ -3173,16 +3173,10 @@ class JobWorker:
             job_type="collect",
         )
 
-        # GS 전체 상품 검색 (서버 직접 크롤링) — 프록시 풀 적용
-        from backend.core.config import settings as _gs_cfg2
+        # GS 전체 상품 검색 — DB 설정 페이지의 collect 프록시 풀 사용
+        from backend.domain.samba.collector.refresher import get_collect_proxies
 
-        _gs_proxies2: list[str] = []
-        if _gs_cfg2.collect_proxy_url:
-            _gs_proxies2.append(_gs_cfg2.collect_proxy_url.strip())
-        if _gs_cfg2.proxy_urls:
-            _gs_proxies2.extend(
-                [p.strip() for p in _gs_cfg2.proxy_urls.split(",") if p.strip()]
-            )
+        _gs_proxies2 = get_collect_proxies()
         gs_client = GsShopSourcingClient(proxy_pool=_gs_proxies2 or None)
         _add_job_log(
             job.id,
@@ -3568,31 +3562,19 @@ class JobWorker:
 
             client = LotteonSourcingClient()
         elif site == "ABCmart":
-            from backend.core.config import settings as _abc_cfg
+            from backend.domain.samba.collector.refresher import get_collect_proxies
             from backend.domain.samba.proxy.abcmart import ARTSourcingClient
 
-            # Cloud Run IP가 a-rt.com에 차단되는 현상 우회 — 무신사/GSShop과 동일 프록시 풀 공유
-            _abc_proxies: list[str] = []
-            if _abc_cfg.collect_proxy_url:
-                _abc_proxies.append(_abc_cfg.collect_proxy_url.strip())
-            if _abc_cfg.proxy_urls:
-                _abc_proxies.extend(
-                    [p.strip() for p in _abc_cfg.proxy_urls.split(",") if p.strip()]
-                )
+            # Cloud Run IP가 a-rt.com에 차단되는 현상 우회 — DB 설정 페이지의 collect 프록시 풀 사용
+            _abc_proxies = get_collect_proxies()
             client = ARTSourcingClient(proxy_pool=_abc_proxies or None)
         elif site == "GSShop":
-            from backend.core.config import settings as _gs_cfg
+            from backend.domain.samba.collector.refresher import get_collect_proxies
             from backend.domain.samba.proxy.gsshop_sourcing import (
                 GsShopSourcingClient,
             )
 
-            _gs_proxies: list[str] = []
-            if _gs_cfg.collect_proxy_url:
-                _gs_proxies.append(_gs_cfg.collect_proxy_url.strip())
-            if _gs_cfg.proxy_urls:
-                _gs_proxies.extend(
-                    [p.strip() for p in _gs_cfg.proxy_urls.split(",") if p.strip()]
-                )
+            _gs_proxies = get_collect_proxies()
             client = GsShopSourcingClient(proxy_pool=_gs_proxies or None)
         elif site == "SSG":
             from backend.domain.samba.proxy.ssg_sourcing import SSGSourcingClient
@@ -3817,23 +3799,15 @@ class JobWorker:
                                 logger.info(f"[잡워커] {site} 검색 취소: {job.id}")
                                 _clear_cc2()
                                 return
-                            from backend.core.config import settings as _gs_cfg2
+                            from backend.domain.samba.collector.refresher import (
+                                get_collect_proxies,
+                            )
                             from backend.domain.samba.proxy.abcmart import (
                                 ARTSourcingClient as _ART,
                             )
 
-                            # GrandStage도 동일 프록시 풀 사용 (a-rt.com 차단 우회)
-                            _gs_proxies2: list[str] = []
-                            if _gs_cfg2.collect_proxy_url:
-                                _gs_proxies2.append(_gs_cfg2.collect_proxy_url.strip())
-                            if _gs_cfg2.proxy_urls:
-                                _gs_proxies2.extend(
-                                    [
-                                        p.strip()
-                                        for p in _gs_cfg2.proxy_urls.split(",")
-                                        if p.strip()
-                                    ]
-                                )
+                            # GrandStage도 DB 설정 페이지의 collect 프록시 풀 공유 (a-rt.com 차단 우회)
+                            _gs_proxies2 = get_collect_proxies()
                             _gs = _ART("10002", proxy_pool=_gs_proxies2 or None)
                             # 프로덕션(Cloud Run IP)에서 a-rt.com이 응답을 씹는 경우 대비 120초 가드
                             try:

@@ -92,9 +92,10 @@ class BackendSettings(BaseSettings):
     http_timeout_default: int = 30  # 기본 API (등록, 수정)
     http_timeout_upload: int = 60  # 이미지 업로드 등 느린 작업
 
-    # 프록시 URL (오토튠용, 콤마 구분 — 로테이션)
+    # [DEPRECATED] 환경변수 프록시 설정. 더 이상 참조되지 않음 —
+    # 수집/전송/오토튠 프록시는 `/samba/settings` 페이지에서 DB에 등록한다.
+    # 필드 자체는 .env 변수 호환성을 위해 남겨두되 코드 어디에서도 읽지 않는다.
     proxy_urls: str = ""
-    # 프록시 URL (수집용)
     collect_proxy_url: str = ""
 
     # ===========================================

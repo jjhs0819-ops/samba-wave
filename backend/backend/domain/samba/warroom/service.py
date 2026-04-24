@@ -435,8 +435,19 @@ class SambaMonitorService:
                 bucket = result.setdefault(market_type, {}).setdefault(
                     ev.event_type, []
                 )
-                if len(bucket) < per_market_limit:
-                    bucket.append(row)
+                bucket.append(row)
+
+        # 각 (market_type, event_type)별로 최신순 정렬 후 상위 N개만 유지
+        for market_type in result:
+            for event_type in result[market_type]:
+                # created_at DESC로 정렬하여 최신순 우선
+                result[market_type][event_type].sort(
+                    key=lambda x: x["created_at"], reverse=True
+                )
+                # 상위 per_market_limit개만 유지
+                result[market_type][event_type] = result[market_type][event_type][
+                    :per_market_limit
+                ]
         return result
 
     async def _get_hourly_changes(
