@@ -1225,6 +1225,95 @@ class JobWorker:
         except Exception as exc:
             logger.warning(f"[잡워커] 검색 URL 파싱 실패: {exc}")
 
+        # 1상품 직접 URL 감지 (/products/{goods_no} 패턴 — collect_single_musinsa에서 생성)
+        _product_url_match = re.search(r"/products/(\d+)", keyword_or_url)
+        if _product_url_match:
+            _direct_goods_no = _product_url_match.group(1)
+            _add_job_log(
+                job.id,
+                f"{_prefix} [{sf.name}] 상품 직접 URL 감지 → goods_no={_direct_goods_no}",
+                job_type="collect",
+            )
+            # 이미 수집된 상품 체크
+            _existing_direct_count = (
+                await session.execute(
+                    select(_func.count()).where(
+                        CPModel.search_filter_id == filter_id,
+                        CPModel.site_product_id == _direct_goods_no,
+                    )
+                )
+            ).scalar() or 0
+            if _existing_direct_count > 0:
+                _add_job_log(
+                    job.id,
+                    f"{_prefix} [{sf.name}] 수집 완료: 이미 수집됨 (신규 0건)",
+                    job_type="collect",
+                )
+                await repo.complete_job(job.id, "이미 수집됨")
+                return
+            # 상품 상세 API 직접 호출
+            try:
+                _direct_detail = await client.get_goods_detail(_direct_goods_no)
+            except Exception as _de:
+                await repo.fail_job(job.id, f"상품 상세 조회 실패: {_de}")
+                return
+            if not _direct_detail or not _direct_detail.get("name"):
+                await repo.fail_job(job.id, "상품 상세 조회 실패: 데이터 없음")
+                return
+            # 상품 저장
+            from backend.api.v1.routers.samba.collector_common import (
+                _get_services as _get_services_direct,
+                _build_product_data as _build_product_data_direct,
+            )
+
+            _d_svc = _get_services_direct(session)
+            _d_raw_cat = _direct_detail.get("category", "") or ""
+            _d_cat_parts = (
+                [c.strip() for c in _d_raw_cat.split(">") if c.strip()]
+                if _d_raw_cat
+                else []
+            )
+            _d_sale = _direct_detail.get("salePrice", 0)
+            _d_orig = _direct_detail.get("originalPrice", 0)
+            _d_cost = _direct_detail.get("bestBenefitPrice") or _d_sale
+            _d_raw_html = _direct_detail.get("detailHtml", "")
+            if not _d_raw_html:
+                _d_dimgs = _direct_detail.get("detailImages") or []
+                if _d_dimgs:
+                    _d_raw_html = "\n".join(
+                        f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
+                        for img in _d_dimgs
+                    )
+            _d_pdata = _build_product_data_direct(
+                _direct_detail,
+                _direct_goods_no,
+                filter_id,
+                "MUSINSA",
+                _d_cost,
+                _d_sale,
+                _d_orig,
+                _d_raw_cat,
+                _d_cat_parts,
+                _d_raw_html,
+            )
+            await _d_svc.create_collected_product(_d_pdata)
+            # SearchFilter last_collected_at 갱신
+            from sqlalchemy import update as _sa_upd_direct
+
+            await session.execute(
+                _sa_upd_direct(SambaSearchFilter)
+                .where(SambaSearchFilter.id == filter_id)
+                .values(last_collected_at=datetime.now(UTC))
+            )
+            await session.commit()
+            _add_job_log(
+                job.id,
+                f"{_prefix} [{sf.name}] 수집 완료: 신규 1건",
+                job_type="collect",
+            )
+            await repo.complete_job(job.id, "수집 완료: 신규 1건")
+            return
+
         # LOTTEON 서브키워드 모드 감지: q="{브랜드} {카테고리}"면 qapi total 기준 전수 수집
         # (스캔 단계의 샘플 분포 count로 requested_count가 작게 잡혀도 cap에 걸리지 않도록)
         # 수집 완료 시점에 실제 수집수로 requested_count가 자동 갱신되어 이후엔 정확해짐.

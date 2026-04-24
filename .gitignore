@@ -6,6 +6,12 @@ tmp_*
 tmp_captures/
 .push-approved
 
+# VM 배포 시크릿 (절대 커밋 금지)
+deploy/vm/.env
+deploy/vm/sa-key.json
+sa-key.json
+*.sa-key.json
+
 # Claude IDE 전체 (프로덕션 무관)
 .claude/
 backend/.claude/
