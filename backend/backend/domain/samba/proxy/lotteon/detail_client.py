@@ -298,27 +298,64 @@ class DetailClientMixin:
             if not opt_list or not mapping:
                 return None
 
-            # optionList의 options → value로 mapping에서 stkQty 조회
+            # optionList → mapping에서 stkQty 조회
+            # 1D: key = value ("100(M)100(M)")
+            # 2D: key = "v1_v2" ("블랙블랙_100(M)100(M)")  ← 2차원 옵션(색상×사이즈)
+            #   실측 확인 2026-04-24: LE1219878538 기준 optionMappingInfo 키가
+            #   단순 flat 순회(각 group value 단독)로는 miss → 모든 옵션 stkQty=0으로
+            #   떨어져 리프레시 시 전 옵션 품절 승격 버그 발생. 조합 key 경로 분기.
             options: list[dict[str, Any]] = []
             price_info = pbf_data.get("priceInfo") or {}
             sl_prc = self._safe_int(price_info.get("slPrc", 0))  # type: ignore[attr-defined]
 
-            for group in opt_list:
-                for opt in group.get("options", []):
-                    label = opt.get("label", "").strip()
-                    value = str(opt.get("value", ""))
-                    disabled = bool(opt.get("disabled", False))
-                    m = mapping.get(value, {})
-                    stk_qty = int(m.get("stkQty", 0) or 0)
-                    is_sold_out = disabled or stk_qty == 0
-                    options.append(
-                        {
-                            "name": label,
-                            "price": sl_prc,
-                            "stock": 0 if is_sold_out else stk_qty,
-                            "isSoldOut": is_sold_out,
-                        }
-                    )
+            if len(opt_list) >= 2:
+                g1_opts = opt_list[0].get("options", [])
+                g2_opts = opt_list[1].get("options", [])
+                for g1 in g1_opts:
+                    for g2 in g2_opts:
+                        v1 = str(g1.get("value", ""))
+                        v2 = str(g2.get("value", ""))
+                        combined_key = f"{v1}_{v2}"
+                        # optionMappingInfo는 sparse 가능 — 없는 키는
+                        # "판매하지 않는 조합"이지 품절이 아니므로 스킵.
+                        # full Cartesian을 전부 방출하면 팔지도 않는 유령 품절
+                        # 옵션이 DB에 박힌다.
+                        if combined_key not in mapping:
+                            continue
+                        m = mapping.get(combined_key) or {}
+                        l1 = g1.get("label", "").strip()
+                        l2 = g2.get("label", "").strip()
+                        disabled = bool(g1.get("disabled", False)) or bool(
+                            g2.get("disabled", False)
+                        )
+                        combined_label = f"{l1} / {l2}".strip(" /")
+                        stk_qty = int(m.get("stkQty", 0) or 0)
+                        is_sold_out = disabled or stk_qty == 0
+                        options.append(
+                            {
+                                "name": combined_label,
+                                "price": sl_prc,
+                                "stock": 0 if is_sold_out else stk_qty,
+                                "isSoldOut": is_sold_out,
+                            }
+                        )
+            else:
+                for group in opt_list:
+                    for opt in group.get("options", []):
+                        label = opt.get("label", "").strip()
+                        value = str(opt.get("value", ""))
+                        disabled = bool(opt.get("disabled", False))
+                        m = mapping.get(value, {})
+                        stk_qty = int(m.get("stkQty", 0) or 0)
+                        is_sold_out = disabled or stk_qty == 0
+                        options.append(
+                            {
+                                "name": label,
+                                "price": sl_prc,
+                                "stock": 0 if is_sold_out else stk_qty,
+                                "isSoldOut": is_sold_out,
+                            }
+                        )
 
             if options:
                 logger.info(
