@@ -446,10 +446,30 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         startup_logger.warning(f"[startup] DB 프록시 캐시 프라임 실패: {e}")
 
-    await _recover_running_jobs(startup_logger)
-    worker_runtime = await _start_worker_runtime()
-    await _start_autotune_if_enabled()
-    await _start_order_poller()
+    # VM 마이그레이션 병행 운영 지원 — API 전용 모드:
+    # DISABLE_BACKGROUND_WORKERS=1 이면 JobWorker/오토튠/주문폴러를 시작하지 않는다.
+    # 두 인스턴스가 동일 DB에 연결된 동안 백그라운드 작업 중복 실행을 방지한다.
+    import os
+
+    _disable_bg = os.environ.get("DISABLE_BACKGROUND_WORKERS", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+    if _disable_bg:
+        startup_logger.warning(
+            "[startup] DISABLE_BACKGROUND_WORKERS=1 — "
+            "JobWorker/오토튠/주문폴러를 비활성화한다 (API 전용 모드)"
+        )
+        worker_runtime = WorkerRuntime(
+            worker=None, worker_task=None, watchdog_task=None
+        )
+    else:
+        await _recover_running_jobs(startup_logger)
+        worker_runtime = await _start_worker_runtime()
+        await _start_autotune_if_enabled()
+        await _start_order_poller()
     _validate_startup_settings()
 
     try:

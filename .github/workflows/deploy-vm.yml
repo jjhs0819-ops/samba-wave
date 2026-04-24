@@ -1,21 +1,23 @@
 # VM 배포 워크플로우 — main 브랜치 푸시 시 자동 실행
 #
 # 사전 설정 (Settings → Secrets → Actions):
-# - GCP_SA_KEY: GCP 서비스 계정 키 (Artifact Registry Writer + Compute SSH)
-# - VM_SSH_PRIVATE_KEY: VM 접속용 SSH 개인키
-# - VM_HOST: VM 외부 IP 또는 도메인
-# - VM_USER: SSH 사용자 (보통 ubuntu)
-#
-# 현재 비활성화 — 수동 트리거만. main 푸시 자동 배포는 Cloud Build가 담당 (당분간 병행).
-# VM 전환 완료 후 on.push 활성화 예정.
+# - GCP_SA_KEY: GCP 서비스 계정 키 (Artifact Registry Writer 권한 필수)
+# - VM_SSH_PRIVATE_KEY: VM 접속용 SSH 개인키 (~/.ssh/deploy_key 등)
+# - VM_HOST: VM 외부 IP (34.47.122.131) 또는 도메인 (api.samba-wave.co.kr)
+# - VM_USER: SSH 사용자 — ubuntu
 
 name: Deploy to GCE VM
 
 on:
-  workflow_dispatch: # 수동 실행만. VM 전환 후 push 활성화.
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy-vm.yml"
+  workflow_dispatch:
     inputs:
       reason:
-        description: "배포 사유"
+        description: "수동 배포 사유"
         required: false
         default: "manual"
 
