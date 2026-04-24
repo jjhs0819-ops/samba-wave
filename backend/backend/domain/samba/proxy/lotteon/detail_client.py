@@ -165,6 +165,18 @@ class DetailClientMixin:
                 # 임시 폴백 키 정리
                 detail.pop("_scatCategoryFallback", None)
 
+                # 최종 salePrice/freeShipping 기반 배송비 재계산 (롯데온 임시 정책 폴백)
+                # - pbf 보완으로 salePrice가 갱신된 뒤 계산해야 정확
+                # - Follow-up: pbf/__NEXT_DATA__에서 실제 배송비 필드 파싱으로 대체 예정
+                from backend.domain.samba.proxy.lotteon.detail_parsers import (
+                    _lotteon_shipping_fee,
+                )
+
+                detail["shipping_fee"] = _lotteon_shipping_fee(
+                    detail.get("salePrice"),
+                    bool(detail.get("freeShipping", False)),
+                )
+
                 return detail
 
         except RateLimitError:

@@ -4759,9 +4759,12 @@ class JobWorker:
             else:
                 cost = int(item.get("cost", 0)) or sale_price
             # 배송비 원가 가산 (무료배송 아닌 경우)
+            # detail에는 파서 경로에 따라 freeShipping(camelCase) 또는 free_shipping(snake_case)이 올 수 있음
             _sourcing_ship_fee = 0
-            _is_free_ship = item.get("free_shipping", False) or detail.get(
-                "free_shipping", False
+            _is_free_ship = (
+                item.get("free_shipping", False)
+                or detail.get("free_shipping", False)
+                or detail.get("freeShipping", False)
             )
             if not _is_free_ship:
                 _sourcing_ship_fee = int(detail.get("shipping_fee", 3000))
