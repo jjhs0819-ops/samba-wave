@@ -15,7 +15,10 @@ from collections import deque
 from datetime import datetime, timezone
 from typing import Any
 
-from backend.domain.samba.collector.model import generate_search_cache_id
+from backend.domain.samba.collector.model import (
+    FIXED_REQUESTED_COUNT,
+    generate_search_cache_id,
+)
 
 logger = logging.getLogger(__name__)
 UTC = timezone.utc
@@ -1235,7 +1238,7 @@ class JobWorker:
                 pass
 
         # 기존 수집 수 확인
-        requested_count = sf.requested_count or 100
+        requested_count = FIXED_REQUESTED_COUNT
         count_stmt = select(_func.count()).where(CPModel.search_filter_id == filter_id)
         existing_count = (await session.execute(count_stmt)).scalar() or 0
         remaining = (
@@ -1527,6 +1530,7 @@ class JobWorker:
             logger.info(
                 f"[잡워커] 실제 {_actual}건 < 요청 {requested_count}건 (축소 방지로 유지)"
             )
+        _upd_vals.pop("requested_count", None)
         await session.execute(
             _sa_upd(SambaSearchFilter)
             .where(SambaSearchFilter.id == filter_id)
@@ -2008,7 +2012,7 @@ class JobWorker:
                 await session.execute(
                     _sa_upd(SambaSearchFilter)
                     .where(SambaSearchFilter.id == f.id)
-                    .values(requested_count=actual, last_collected_at=datetime.now(UTC))
+                    .values(last_collected_at=datetime.now(UTC))
                 )
 
         _add_job_log(
@@ -2358,7 +2362,7 @@ class JobWorker:
                 await session.execute(
                     _sa_upd(SambaSearchFilter)
                     .where(SambaSearchFilter.id == f.id)
-                    .values(requested_count=actual, last_collected_at=datetime.now(UTC))
+                    .values(last_collected_at=datetime.now(UTC))
                 )
 
         _add_job_log(
@@ -3075,7 +3079,7 @@ class JobWorker:
                 await session.execute(
                     _sa_upd(SambaSearchFilter)
                     .where(SambaSearchFilter.id == f.id)
-                    .values(requested_count=actual, last_collected_at=datetime.now(UTC))
+                    .values(last_collected_at=datetime.now(UTC))
                 )
 
         if _empty_filter_ids:
@@ -3405,7 +3409,7 @@ class JobWorker:
                 await session.execute(
                     _sa_upd(SambaSearchFilter)
                     .where(SambaSearchFilter.id == f.id)
-                    .values(requested_count=actual, last_collected_at=datetime.now(UTC))
+                    .values(last_collected_at=datetime.now(UTC))
                 )
 
         _add_job_log(
@@ -3438,7 +3442,7 @@ class JobWorker:
         filter_id = sf.id
         keyword = sf.keyword or ""
         _original_url = keyword  # URL 원본 보존 (카테고리 필터 포함)
-        requested_count = max(sf.requested_count or 100, 10)
+        requested_count = FIXED_REQUESTED_COUNT
         _payload = job.payload or {}
         _dgi = _payload.get("group_index")
         _dgt = _payload.get("group_total")
@@ -4889,8 +4893,6 @@ class JobWorker:
             )
         ).scalar() or 0
         update_vals: dict = {"last_collected_at": datetime.now(UTC)}
-        if actual_count > 0:
-            update_vals["requested_count"] = actual_count
         from backend.domain.samba.collector.model import SambaSearchFilter as _SF
 
         await session.execute(

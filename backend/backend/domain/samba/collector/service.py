@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
 from backend.domain.samba.collector.model import (
+    FIXED_REQUESTED_COUNT,
     SambaCollectedProduct,
     SambaSearchFilter,
 )
@@ -60,11 +61,15 @@ class SambaCollectorService:
         )
 
     async def create_filter(self, data: Dict[str, Any]) -> SambaSearchFilter:
+        if not data.get("is_folder"):
+            data["requested_count"] = FIXED_REQUESTED_COUNT
         return await self.filter_repo.create_async(**data)
 
     async def update_filter(
         self, filter_id: str, data: Dict[str, Any]
     ) -> Optional[SambaSearchFilter]:
+        if "requested_count" in data and data["requested_count"] is not None:
+            data["requested_count"] = FIXED_REQUESTED_COUNT
         return await self.filter_repo.update_async(filter_id, **data)
 
     async def delete_filter(self, filter_id: str) -> bool:

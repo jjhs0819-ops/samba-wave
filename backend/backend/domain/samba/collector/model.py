@@ -9,6 +9,9 @@ from sqlmodel import Column, DateTime, Field, JSON, SQLModel, Text
 from ulid import ULID
 
 
+FIXED_REQUESTED_COUNT = 1000
+
+
 def generate_search_filter_id() -> str:
     return f"sf_{ULID()}"
 
@@ -65,8 +68,12 @@ class SambaSearchFilter(SQLModel, table=True):
 
     # 요청 상품수 (기본 100)
     requested_count: int = Field(
-        default=100,
-        sa_column=Column(Integer, nullable=False, server_default="100"),
+        default=FIXED_REQUESTED_COUNT,
+        sa_column=Column(
+            Integer,
+            nullable=False,
+            server_default=str(FIXED_REQUESTED_COUNT),
+        ),
     )
 
     # 적용 정책

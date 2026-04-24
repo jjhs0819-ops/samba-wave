@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
+from backend.domain.samba.collector.model import FIXED_REQUESTED_COUNT
 
 from backend.api.v1.routers.samba.collector_common import (
     _get_services,
@@ -52,7 +53,7 @@ class BrandCreateGroupsRequest(BaseModel):
     brand_name: str = ""
     gf: str = "A"
     categories: list[dict] = []
-    requested_count_per_group: int = 0
+    requested_count_per_group: int = FIXED_REQUESTED_COUNT
     applied_policy_id: Optional[str] = None
     options: dict = {}
     source_site: str = "MUSINSA"
@@ -637,9 +638,7 @@ async def brand_create_groups(
             group_name = f"{body.source_site}_{label}_{path_tail}"
 
         # 수집 요청 수: 0 이하이면 스캔 카운트(실제 상품수) 사용
-        req_count = body.requested_count_per_group
-        if req_count <= 0:
-            req_count = max(count, 1)
+        req_count = FIXED_REQUESTED_COUNT
 
         # 소싱처별 keyword 및 category_filter 결정
         # 공통 옵션: 품절상품 포함

@@ -15,6 +15,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
 from backend.domain.samba.cache import cache
+from backend.domain.samba.collector.model import FIXED_REQUESTED_COUNT
 from backend.domain.user.auth_service import get_user_id
 from backend.domain.samba.tenant.middleware import get_optional_tenant_id
 
@@ -55,7 +56,7 @@ class SearchFilterCreate(BaseModel):
     min_price: Optional[float] = None
     max_price: Optional[float] = None
     exclude_sold_out: bool = True
-    requested_count: int = 100
+    requested_count: int = FIXED_REQUESTED_COUNT
     parent_id: Optional[str] = None
     is_folder: bool = False
 
@@ -297,6 +298,7 @@ async def list_filters(session: AsyncSession = Depends(get_write_session_depende
     result = []
     for f in filters:
         data = {c.key: getattr(f, c.key) for c in f.__table__.columns}
+        data["requested_count"] = FIXED_REQUESTED_COUNT
         counts = count_map.get(f.id, {})
         data["collected_count"] = counts.get("collected_count", 0)
         data["market_registered_count"] = counts.get("market_registered_count", 0)
@@ -455,6 +457,9 @@ async def get_filter_tree(session: AsyncSession = Depends(get_read_session_depen
     """검색그룹 트리 구조 반환. 사이트 > 폴더 > 리프 그룹."""
     svc = _get_services(session)
     all_filters = await svc.list_filters(limit=10000)
+    for f in all_filters:
+        if not f.is_folder:
+            f.requested_count = FIXED_REQUESTED_COUNT
 
     # 각 필터별 수집상품 카운트 — 단일 쿼리로 일괄 조회
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
