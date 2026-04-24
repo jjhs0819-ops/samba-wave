@@ -370,7 +370,7 @@ export default function ProductsPage() {
       showAlert('삭제잠금이 설정된 상품입니다. 잠금을 해제한 후 삭제하세요.')
       return;
     }
-    if ((p?.registered_accounts?.length ?? 0) > 0) {
+    if (p && (p.registered_accounts?.length ?? 0) > 0) {
       openMarketDeleteModal([p], 'single', 'force')
       return;
     }
