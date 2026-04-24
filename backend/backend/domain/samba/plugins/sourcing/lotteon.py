@@ -89,6 +89,23 @@ def _check_name_mismatch(
         )
 
 
+def _safe_stock(v) -> int:
+    try:
+        if isinstance(v, str):
+            v = v.replace(",", "").strip()
+        return int(v or 0)
+    except (ValueError, TypeError):
+        return 0
+
+
+def _is_soldout_flag(v) -> bool:
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str):
+        return v.strip().lower() in ("true", "y", "yes", "1", "sold_out")
+    return bool(v)
+
+
 class LotteonSourcingPlugin(SourcingPlugin):
     """롯데ON 소싱처 플러그인.
 
@@ -183,6 +200,7 @@ class LotteonSourcingPlugin(SourcingPlugin):
             detail["price_uncertain"] = True
         if opt_stock:
             detail["options"] = opt_stock
+            detail["_option_stock_live"] = True
 
         # 옵션 가격을 혜택가/판매가로 보정 (sl_prc 정가 대신)
         _eff_price = detail.get("bestBenefitPrice") or detail.get("salePrice") or 0
@@ -219,8 +237,9 @@ class LotteonSourcingPlugin(SourcingPlugin):
 
         # 재고
         stck = pbf.get("stckInfo") or {}
-        stk_qty = stck.get("stkQty")
-        is_out = stk_qty is not None and stk_qty == 0
+        stk_qty_raw = stck.get("stkQty")
+        stk_qty = _safe_stock(stk_qty_raw)
+        is_out = stk_qty_raw is not None and stk_qty <= 0
 
         # 옵션
         opt_info = pbf.get("optionInfo") or {}
@@ -341,6 +360,7 @@ class LotteonSourcingPlugin(SourcingPlugin):
                                 "isSoldOut",
                                 "saleStatus",
                                 "options",
+                                "_option_stock_live",
                             ):
                                 if k in raw and raw[k] is not None:
                                     html_detail[k] = raw[k]
@@ -384,6 +404,8 @@ class LotteonSourcingPlugin(SourcingPlugin):
                             if _pbf_enrich:
                                 if _pbf_enrich.get("options"):
                                     detail["options"] = _pbf_enrich["options"]
+                                if _pbf_enrich.get("_option_stock_live"):
+                                    detail["_option_stock_live"] = True
                                 _bbp = _pbf_enrich.get("bestBenefitPrice")
                                 if _bbp and _bbp > 0:
                                     detail["bestBenefitPrice"] = _bbp
@@ -532,6 +554,8 @@ class LotteonSourcingPlugin(SourcingPlugin):
                     f"[LOTTEON] DOM 재고 병합: {site_product_id} {_changes}건 덮어씀 "
                     f"(판매자={dom_ext.get('seller') or '-'})"
                 )
+            if any(_safe_stock(o.get("stock")) > 0 for o in detail["options"]):
+                detail["_option_stock_live"] = True
 
         if dom_ext:
             # §12 방어 로깅 — DOM이 다른 상품 긁었을 가능성 조기 감지
@@ -598,18 +622,31 @@ class LotteonSourcingPlugin(SourcingPlugin):
                 {
                     "name": opt.get("name", ""),
                     "price": opt.get("price", 0),
-                    "stock": 0 if opt.get("isSoldOut") else opt.get("stock", 1),
-                    "isSoldOut": opt.get("isSoldOut", False),
+                    "stock": 0 if _is_soldout_flag(opt.get("isSoldOut")) else opt.get("stock", 1),
+                    "isSoldOut": _is_soldout_flag(opt.get("isSoldOut")),
                 }
                 for opt in raw_options
             ]
+
+        # 역검: stckInfo 품절이나 옵션 실재고 있으면 in_stock 복원
+        if is_sold_out and raw_options and detail.get("_option_stock_live"):
+            if any(
+                _safe_stock(o.get("stock")) > 0 and not _is_soldout_flag(o.get("isSoldOut"))
+                for o in raw_options
+            ):
+                is_sold_out = False
+                _in_stock_cnt = sum(1 for o in raw_options if _safe_stock(o.get("stock")) > 0)
+                logger.info(
+                    f"[LOTTEON] stckInfo 품절이나 옵션 실재고 존재 → in_stock 복원: "
+                    f"{site_product_id} (재고옵션 {_in_stock_cnt}/{len(raw_options)}개)"
+                )
 
         # 전 옵션 품절 → sold_out 승격
         # 롯데ON pbf API는 상품 overall isOutOfStock을 정확히 반환하지 않아
         # 옵션 단위 disabled/stock 플래그로만 판단 가능한 경우가 있음
         if not is_sold_out and raw_options:
             _all_opts_sold = all(
-                (int(o.get("stock", 0) or 0) <= 0) or bool(o.get("isSoldOut"))
+                _safe_stock(o.get("stock")) <= 0 or _is_soldout_flag(o.get("isSoldOut"))
                 for o in raw_options
             )
             if _all_opts_sold:
