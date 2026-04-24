@@ -2008,12 +2008,11 @@ class JobWorker:
                     select(_func.count()).where(CPModel.search_filter_id == f.id)
                 )
             ).scalar() or 0
-            if actual > (f.requested_count or 0):
-                await session.execute(
-                    _sa_upd(SambaSearchFilter)
-                    .where(SambaSearchFilter.id == f.id)
-                    .values(last_collected_at=datetime.now(UTC))
-                )
+            await session.execute(
+                _sa_upd(SambaSearchFilter)
+                .where(SambaSearchFilter.id == f.id)
+                .values(last_collected_at=datetime.now(UTC))
+            )
 
         _add_job_log(
             job.id,
@@ -2358,12 +2357,11 @@ class JobWorker:
                     select(_func.count()).where(CPModel.search_filter_id == f.id)
                 )
             ).scalar() or 0
-            if actual > (f.requested_count or 0):
-                await session.execute(
-                    _sa_upd(SambaSearchFilter)
-                    .where(SambaSearchFilter.id == f.id)
-                    .values(last_collected_at=datetime.now(UTC))
-                )
+            await session.execute(
+                _sa_upd(SambaSearchFilter)
+                .where(SambaSearchFilter.id == f.id)
+                .values(last_collected_at=datetime.now(UTC))
+            )
 
         _add_job_log(
             job.id,
@@ -3075,7 +3073,7 @@ class JobWorker:
             ).scalar() or 0
             if actual == 0:
                 _empty_filter_ids.append(f.id)
-            elif actual > (f.requested_count or 0):
+            else:
                 await session.execute(
                     _sa_upd(SambaSearchFilter)
                     .where(SambaSearchFilter.id == f.id)
@@ -3405,12 +3403,11 @@ class JobWorker:
                     select(_func.count()).where(CPModel.search_filter_id == f.id)
                 )
             ).scalar() or 0
-            if actual > (f.requested_count or 0):
-                await session.execute(
-                    _sa_upd(SambaSearchFilter)
-                    .where(SambaSearchFilter.id == f.id)
-                    .values(last_collected_at=datetime.now(UTC))
-                )
+            await session.execute(
+                _sa_upd(SambaSearchFilter)
+                .where(SambaSearchFilter.id == f.id)
+                .values(last_collected_at=datetime.now(UTC))
+            )
 
         _add_job_log(
             job.id,

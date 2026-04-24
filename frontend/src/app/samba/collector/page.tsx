@@ -31,6 +31,7 @@ import LotteOnBrandModal from './components/LotteOnBrandModal'
 import DuplicatesModal from './components/DuplicatesModal'
 
 const fmtDate = (iso: string | undefined | null) => _fmtDate(iso, '.')
+const FIXED_REQUESTED_COUNT = 1000
 
 export default function CollectorPage() {
   useEffect(() => { document.title = 'SAMBA-상품수집' }, [])
@@ -438,11 +439,11 @@ export default function CollectorPage() {
         keywordUrl = u.toString()
       }
 
-      let requestedCount = 100
+      const requestedCount = FIXED_REQUESTED_COUNT
       try {
         const countResult = await proxyApi.searchCount(site, keyword, keywordUrl)
         if (countResult.totalCount > 0) {
-          requestedCount = countResult.totalCount
+          void countResult.totalCount
           addLog(`검색 결과: ${fmtNum(requestedCount)}개 상품`)
         }
       } catch { /* 조회 실패 시 기본값 100 유지 */ }
@@ -799,25 +800,8 @@ export default function CollectorPage() {
   }
 
   // 요청수 ↔ 수집수 자동 동기화 (수집한 그룹만)
-  const syncRequestedCounts = async (groupIds?: string[]) => {
-    try {
-      const latestFilters = await collectorApi.listFilters()
-      // groupIds가 주어지면 해당 그룹만, 아니면 전체
-      const scope = groupIds
-        ? latestFilters.filter((f: SambaSearchFilter) => groupIds.includes(f.id))
-        : latestFilters
-      // collected_count가 requested_count보다 클 때만 요청수 상향 (절대 감소 금지)
-      const mismatch = scope.filter(
-        (f: SambaSearchFilter) => !f.is_folder && ((f as unknown as Record<string, number>).collected_count || 0) > (f.requested_count || 0)
-      )
-      for (const f of mismatch) {
-        const cc = (f as unknown as Record<string, number>).collected_count || 0
-        if (cc > 0) {
-          await collectorApi.updateFilter(f.id, { requested_count: cc })
-        }
-      }
-      if (mismatch.length > 0) addLog(`[동기화] ${fmtNum(mismatch.length)}개 그룹 요청수 → 수집수 자동 동기화`)
-    } catch { /* 동기화 실패해도 수집 흐름은 유지 */ }
+  const syncRequestedCounts = async (_groupIds?: string[]) => {
+    // 자동 동기화 제거 — 사용자 설정값 보존
   }
 
   const handleStopCollect = async () => {
@@ -1314,7 +1298,7 @@ export default function CollectorPage() {
                   const res = await collectorApi.brandCreateGroups({
                     brand, brand_name: pendingKeyword || keyword || brand, gf,
                     categories: selected,
-                    requested_count_per_group: -1,
+                    requested_count_per_group: FIXED_REQUESTED_COUNT,
                     real_total: brandTotal,
                     options: checkedOptions,
                     source_site: selectedSite,
@@ -1887,32 +1871,7 @@ export default function CollectorPage() {
             >
               상품수집
             </button>
-            <button
-              onClick={async () => {
-                const targets = selectedIds.size > 0
-                  ? displayedFilters.filter(f => selectedIds.has(f.id))
-                  : displayedFilters
-                if (targets.length === 0) { showAlert('동기화할 그룹이 없습니다'); return }
-                const mismatch = targets.filter(f => (f.requested_count || 0) !== (f.collected_count || 0))
-                if (mismatch.length === 0) { showAlert('모든 그룹이 이미 동기화되어 있습니다', 'info'); return }
-                if (!await showConfirm(`${fmtNum(mismatch.length)}개 그룹의 요청수를 수집수로 동기화하시겠습니까?`)) return
-                let synced = 0
-                for (const f of mismatch) {
-                  try {
-                    await collectorApi.updateFilter(f.id, { requested_count: f.collected_count || 0 })
-                    synced++
-                  } catch { /* skip */ }
-                }
-                showAlert(`${fmtNum(synced)}개 그룹 동기화 완료`, 'success')
-                load(); loadTree()
-              }}
-              style={{
-                background: 'rgba(100,200,255,0.1)', border: '1px solid rgba(100,200,255,0.3)',
-                color: '#64C8FF', padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem', cursor: 'pointer',
-              }}
-            >
-              수집동기화
-            </button>
+            {/* 수집동기화 버튼 제거 — 사용자가 요청수를 자유롭게 설정하도록 변경 */}
             <button
                 onClick={async () => {
                   // 표시된 그룹에서 브랜드 정보 추출
@@ -2532,12 +2491,12 @@ export default function CollectorPage() {
                 <div style={detColStyle(6)}>
                   {selectedFilter ? (
                     <input
-                      key={selectedFilter.id + (selectedFilter.requested_count ?? 100)}
+                      key={selectedFilter.id}
                       type="text" inputMode="numeric" pattern="[0-9]*"
-                      defaultValue={selectedFilter.requested_count ?? 100}
+                      defaultValue={selectedFilter.requested_count ?? FIXED_REQUESTED_COUNT}
                       onBlur={e => {
                         const v = parseInt(e.target.value, 10)
-                        if (!isNaN(v) && v !== (selectedFilter.requested_count ?? 100)) handleUpdateRequestedCount(selectedFilter.id, v)
+                        if (!isNaN(v) && v > 0) handleUpdateRequestedCount(selectedFilter.id, v)
                       }}
                       style={{
                         width: '50px', textAlign: 'center', background: 'transparent',
