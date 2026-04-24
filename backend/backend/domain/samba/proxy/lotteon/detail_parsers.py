@@ -13,6 +13,26 @@ from typing import Any, Optional
 from backend.domain.samba.proxy.lotteon.category_map import _LOTTEON_SCAT_NAMES
 from backend.utils.logger import logger
 
+# 롯데ON 배송비 정책 (임시 판매가 기반 폴백)
+# - 신뢰할 수 있는 freeShipping 파싱이 구축되기 전까지 판매가 임계값으로 결정
+# - 판매가 30,000원 미만 AND freeShipping=False → 3,000원 (소싱 원가에 가산)
+# - 판매가 30,000원 이상 OR freeShipping=True → 0원
+# Follow-up: __NEXT_DATA__/pbf 응답에서 실제 배송비·무료배송 필드 파싱으로 대체 예정
+LOTTEON_FREE_SHIPPING_THRESHOLD = 30000
+LOTTEON_DEFAULT_SHIPPING_FEE = 3000
+
+
+def _lotteon_shipping_fee(sale_price: Any, free_shipping: bool) -> int:
+    """롯데온 상품의 기본 배송비(원가 가산용) 계산."""
+    if free_shipping:
+        return 0
+    try:
+        if int(sale_price or 0) >= LOTTEON_FREE_SHIPPING_THRESHOLD:
+            return 0
+    except (TypeError, ValueError):
+        pass
+    return LOTTEON_DEFAULT_SHIPPING_FEE
+
 
 class DetailParsersMixin:
     """상세 페이지 파싱 + 공통 유틸리티 메서드 믹스인."""
