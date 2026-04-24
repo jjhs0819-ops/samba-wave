@@ -1,7 +1,7 @@
 importScripts('config.js')
 importScripts('background-core.js')
 
-// ????? ?? ?? - ????? ??? ??
+// 삼바웨이브 쿠키 연동 - 백그라운드 서비스 워커
 
 const {
   API_PREFIX,
@@ -15,7 +15,7 @@ const {
 
 let PROXY_URL = DEFAULT_PROXY_URL
 
-// ==================== KREAM ??? ?? (???? ?? ?? ??) ====================
+// ==================== KREAM 셀렉터 설정 (서버에서 동적 변경 가능) ====================
 
 let selectors = { ...DEFAULT_SELECTORS }
 loadSelectors(PROXY_URL).then(nextSelectors => {
@@ -73,6 +73,11 @@ chrome.storage.local.get(['capturedCookie', 'capturedAt', 'kreamCookie', 'lotteo
   if (data.proxyUrl) {
     PROXY_URL = data.proxyUrl
     console.log(`[복원] 백엔드 URL: ${PROXY_URL}`)
+  } else {
+    // proxyUrl 미설정 시 웹 확장앱은 프로덕션 서버를 기본값으로 사용
+    PROXY_URL = CLOUD_URL
+    chrome.storage.local.set({ proxyUrl: CLOUD_URL })
+    console.log(`[초기화] 백엔드 URL 자동 설정: ${PROXY_URL}`)
   }
   // 무신사
   if (data.capturedCookie) {
@@ -181,9 +186,14 @@ scheduleLotteonCookieSync = makeScheduleSync('롯데ON', () => lotteonCookie, se
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === 'musinsaBalance') {
-    const { money, mileage, username } = msg
-    console.log(`[잔액] 무신사 잔액 수신: 머니 ${money?.toLocaleString()} / 적립금 ${mileage?.toLocaleString()} / 유저: ${username}`)
-    findMusinsaIdAndSend({ money, mileage, username })
+    const { money, mileage, username, expired } = msg
+    if (expired) {
+      console.log(`[잔액] 쿠키 만료 감지 — 재로그인 필요`)
+      getProfileEmailAndSend({ money: -1, mileage: -1, username, expired: true })
+    } else {
+      console.log(`[잔액] 무신사 잔액 수신: 머니 ${money?.toLocaleString()} / 적립금 ${mileage?.toLocaleString()} / 유저: ${username}`)
+      getProfileEmailAndSend({ money, mileage, username })
+    }
     sendResponse({ ok: true })
   }
   if (msg.action === 'abcmartBalance') {
@@ -206,28 +216,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return false
 })
 
-async function findMusinsaIdAndSend({ money, mileage, username }) {
-  let musinsaId = ''
+// ==================== 무신사 아이디 추출 (웹: chrome.identity 방식) ====================
+
+async function getProfileEmailAndSend({ money, mileage, username, expired: isExpired } = {}) {
+  let profileEmail = ''
   try {
-    const allCookies = await chrome.cookies.getAll({ domain: 'musinsa.com' })
-    for (const c of allCookies) {
-      if (['mu_id', 'userId', 'member_srl', 'UID', 'uid', 'login_id', 'musinsa_id'].includes(c.name)) {
-        musinsaId = decodeURIComponent(c.value)
-        break
-      }
-    }
-    if (!musinsaId) {
-      for (const c of allCookies) {
-        if (/^[a-zA-Z][a-zA-Z0-9]{3,19}$/.test(c.value) && !['JSESSIONID', 'SCOUTER'].includes(c.name)) {
-          console.log(`[잔액] 아이디 후보 쿠키: ${c.name}=${c.value}`)
-        }
-      }
-    }
+    const info = await chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' })
+    profileEmail = info.email || ''
+    console.log(`[잔액] 크롬 프로필 이메일: ${profileEmail}`)
   } catch (e) {
-    console.log(`[잔액] 쿠키 조회 실패: ${e.message}`)
+    console.log(`[잔액] 프로필 이메일 조회 실패: ${e.message}`)
   }
-  console.log(`[잔액] 무신사 아이디: ${musinsaId || '(쿠키에서 못 찾음)'}`)
-  sendMusinsaBalance({ money, mileage, musinsaId, username, cookie: capturedCookie })
+  sendMusinsaBalance({ money, mileage, profileEmail, username, cookie: capturedCookie, expired: !!isExpired })
 }
 
 async function sendMusinsaBalance(data) {

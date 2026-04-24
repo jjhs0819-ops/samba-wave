@@ -5,9 +5,7 @@
 //    - CLOUD_URL 을 본인의 백엔드 API URL로 변경
 //    - manifest.json 의 host_permissions 에도 같은 도메인 추가
 //
-// 🧪 로컬 개발 테스트:
-//    - 크롬 팝업에서 설정한 PROXY_URL 이 있으면 그 값 우선 사용됨
-//    - config.js 는 "팝업 설정이 없을 때의 기본값" 역할
+// 🧑‍💻 팝업에서 URL 입력하면 chrome.storage.proxyUrl 이 우선 적용됨.
 // ============================================================
 
 self.SAMBA_CONFIG = {

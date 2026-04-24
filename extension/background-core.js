@@ -1,16 +1,17 @@
 (function () {
-  const DEFAULT_PROXY_URL = 'http://localhost:28080'
-  // CLOUD_URL 은 extension/config.js 에서 주입. 누락 시 기본값 폴백.
-  const CLOUD_URL =
+  // CLOUD_URL 은 extension-web/config.js 에서 주입. 누락 시 기본값 폴백.
+  const _CFG_URL =
     (typeof self !== 'undefined' && self.SAMBA_CONFIG && self.SAMBA_CONFIG.CLOUD_URL) ||
     'https://api.samba-wave.co.kr'
+  const DEFAULT_PROXY_URL = _CFG_URL
+  const CLOUD_URL = _CFG_URL
   const API_PREFIX = '/api/v1/samba/proxy'
   const DEFAULT_SELECTORS = {
     kream_size_items: '.select_item',
     kream_bottom_sheet: '.layer_bottom_sheet--open',
-    kream_buy_button_text: '????',
-    kream_fast_delivery: '????',
-    kream_normal_delivery: '????',
+    kream_buy_button_text: '구매하기',
+    kream_fast_delivery: '빠른배송',
+    kream_normal_delivery: '일반배송',
   }
 
   // 이 브라우저(확장앱 인스턴스)의 고유 deviceId를 발급·캐시한다.
