@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -300,6 +301,11 @@ async def _site_autotune_loop(site: str):
                         )  # 사이클 중 삭제된 상품 ID
                         _session_lock = asyncio.Lock()
                         _synced_count = 0
+                        # LOTTEON slPrc 재동기화 — 사이클당 최대 검증 건수 (환경변수로 튜닝)
+                        _lot_verify_count = 0
+                        _lot_verify_cap = int(
+                            os.environ.get("LOTTEON_VERIFY_SLPRC_BATCH", "50")
+                        )
 
                         def _log_line(site, pid, msg, level="info"):
                             """오토튠 통합 로그 (한 줄)."""
@@ -339,7 +345,8 @@ async def _site_autotune_loop(site: str):
                                 deleted_count, \
                                 price_changed_count, \
                                 _cycle_deleted_pids, \
-                                _synced_count
+                                _synced_count, \
+                                _lot_verify_count
 
                             async with _session_lock:
                                 # heartbeat 갱신 — Watchdog stuck 오판 방지
@@ -819,6 +826,99 @@ async def _site_autotune_loop(site: str):
                                         if acc_last
                                         else 0
                                     )
+
+                                    # ── LOTTEON slPrc 재동기화 훅 ───────────────────
+                                    # 과거 update_price 페이로드 스펙 오류(INVALID_INPUT)로
+                                    # last_sent_data.sale_price와 실제 LOTTEON slPrc가 불일치
+                                    # 가능성. 미검증 상품에 한해 get_product로 실제 slPrc 조회 →
+                                    # last_price 대체 → expected_price와 다르면 재전송 트리거.
+                                    # 검증 후 slprc_verified_at 기록해 다음 사이클부터 스킵.
+                                    # 비활성화: 환경변수 LOTTEON_VERIFY_SLPRC=false
+                                    # 배치 상한: LOTTEON_VERIFY_SLPRC_BATCH (기본 50, 사이클당)
+                                    if (
+                                        site == "LOTTEON"
+                                        and os.environ.get(
+                                            "LOTTEON_VERIFY_SLPRC", "true"
+                                        ).lower()
+                                        != "false"
+                                        and acc_last
+                                        and not acc_last.get("slprc_verified_at")
+                                        and _lot_verify_count < _lot_verify_cap
+                                    ):
+                                        _spd_no = str(
+                                            (product.market_product_nos or {}).get(
+                                                acc_id, ""
+                                            )
+                                            or ""
+                                        )
+                                        _api_key_verify = (
+                                            (acc.additional_fields or {}).get("apiKey")
+                                            or acc.api_key
+                                            or ""
+                                        )
+                                        if _spd_no.startswith("LO") and _api_key_verify:
+                                            try:
+                                                from backend.domain.samba.proxy.lotteon import (
+                                                    LotteonClient as _LOTClient,
+                                                )
+
+                                                _lc = _LOTClient(
+                                                    api_key=_api_key_verify
+                                                )
+                                                await _lc.test_auth()
+                                                _pr = await _lc.get_product(_spd_no)
+                                                _d = _pr.get("data", _pr)
+                                                _sp = _d.get("spdLst") or [_d]
+                                                if isinstance(_sp, list) and _sp:
+                                                    _sp = _sp[0]
+                                                _it = (
+                                                    (_sp.get("itmLst") or [{}])[0]
+                                                    if isinstance(_sp, dict)
+                                                    else {}
+                                                )
+                                                _actual_slprc = int(
+                                                    _it.get("slPrc") or 0
+                                                )
+                                                if _actual_slprc > 0:
+                                                    last_price = (
+                                                        _actual_slprc // 100
+                                                    ) * 100
+                                                await _lc.aclose()
+                                                _lot_verify_count += 1
+                                                # 검증 완료 플래그 기록 (일치/불일치 무관)
+                                                _lsd_up = dict(
+                                                    updates.get("last_sent_data")
+                                                    or product.last_sent_data
+                                                    or {}
+                                                )
+                                                _snap = dict(
+                                                    _lsd_up.get(acc_id)
+                                                    or acc_last
+                                                    or {}
+                                                )
+                                                _snap["slprc_verified_at"] = (
+                                                    datetime.now(
+                                                        timezone.utc
+                                                    ).isoformat()
+                                                )
+                                                _lsd_up[acc_id] = _snap
+                                                updates["last_sent_data"] = _lsd_up
+                                                log.info(
+                                                    "[오토튠][LOTTEON][slPrc검증] "
+                                                    "pid=%s acc=%s actual=%s expected=%s",
+                                                    r.product_id,
+                                                    acc_id[:20],
+                                                    _actual_slprc,
+                                                    expected_price,
+                                                )
+                                            except Exception as _ev:
+                                                log.warning(
+                                                    "[오토튠][LOTTEON][slPrc검증실패]"
+                                                    " pid=%s acc=%s: %s",
+                                                    r.product_id,
+                                                    acc_id[:20],
+                                                    str(_ev)[:100],
+                                                )
 
                                     # 가격 변동 → 전송 예약
                                     # 스마트스토어: 300원 올림 (25% 역산 시 100원 단위 보장)
