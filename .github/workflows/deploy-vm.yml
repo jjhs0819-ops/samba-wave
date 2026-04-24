@@ -1,19 +1,15 @@
-# VM 배포 워크플로우 — main 브랜치 푸시 시 자동 실행
+# VM 배포 워크플로우 — 긴급 배포용 수동 트리거만 (일반 배포는 로컬 scripts/deploy.sh)
+#
+# 로컬 스크립트 대신 GitHub Actions 필요한 경우:
+# - 본인 PC 접속 불가 상황에서 모바일로 배포
+# - 협업자가 배포 트리거
 #
 # 사전 설정 (Settings → Secrets → Actions):
-# - GCP_SA_KEY: GCP 서비스 계정 키 (Artifact Registry Writer 권한 필수)
-# - VM_SSH_PRIVATE_KEY: VM 접속용 SSH 개인키 (~/.ssh/deploy_key 등)
-# - VM_HOST: VM 외부 IP (34.47.122.131) 또는 도메인 (api.samba-wave.co.kr)
-# - VM_USER: SSH 사용자 — ubuntu
+# - GCP_SA_KEY, VM_SSH_PRIVATE_KEY, VM_HOST, VM_USER
 
 name: Deploy to GCE VM
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "backend/**"
-      - ".github/workflows/deploy-vm.yml"
   workflow_dispatch:
     inputs:
       reason:
