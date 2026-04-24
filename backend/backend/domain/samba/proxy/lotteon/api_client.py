@@ -671,11 +671,29 @@ class LotteonClient:
         )
 
     async def update_price(self, itm_prc_lst: list[dict[str, Any]]) -> dict[str, Any]:
-        """단품 가격 변경."""
+        """단품 가격 변경.
+
+        itm_prc_lst 각 항목 필수 필드: sitmNo, spdNo, slPrc
+        자동 주입: trGrpCd, trNo, hstStrtDttm(현재), hstEndDttm(now+365일 yyyymmdd235959)
+        LOTTEON 스펙: itmPrcLst[].(trNo|trGrpCd|spdNo|sitmNo|hstStrtDttm|hstEndDttm|slPrc)
+        """
+        now = now_kst()
+        start_dt = now.strftime("%Y%m%d%H%M%S")
+        end_dt = (now + timedelta(days=365)).strftime("%Y%m%d235959")
+        enriched = [
+            {
+                "trGrpCd": self.tr_grp_cd or "SR",
+                "trNo": self.tr_no,
+                "hstStrtDttm": start_dt,
+                "hstEndDttm": end_dt,
+                **item,
+            }
+            for item in itm_prc_lst
+        ]
         return await self._call_api(
             "POST",
             "/v1/openapi/product/v1/item/price/change",
-            body={"itmPrcLst": itm_prc_lst},
+            body={"itmPrcLst": enriched},
         )
 
     async def change_status(self, spd_lst: list[dict[str, Any]]) -> dict[str, Any]:

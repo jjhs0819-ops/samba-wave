@@ -1172,6 +1172,8 @@ class LotteonPlugin(MarketPlugin):
                     }
 
                     # 가격 변경 요청
+                    # LOTTEON update_price 스펙: sitmNo + spdNo + slPrc 필수
+                    # (trNo/trGrpCd/hstStrtDttm/hstEndDttm은 client 래퍼에서 자동 주입)
                     itm_prc_lst = []
                     itm_stk_lst = []
                     for itm in itm_lst:
@@ -1182,7 +1184,8 @@ class LotteonPlugin(MarketPlugin):
                         if new_price > 0:
                             itm_prc_lst.append(
                                 {
-                                    "itmNo": str(itm_no),
+                                    "sitmNo": str(itm.get("sitmNo") or itm_no),
+                                    "spdNo": existing_no,
                                     "slPrc": new_price,
                                 }
                             )
