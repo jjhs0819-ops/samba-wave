@@ -450,8 +450,20 @@ async function fetchAbcmartBenefitPrice(productId, site) {
             credentials: 'include',
             headers: { 'Accept': 'application/json' }
           })
-          const data = await resp.json()
-          if (!data || !data.prdtName) return null
+          const status = resp.status
+          const text = await resp.text()
+          let data = null
+          try { data = JSON.parse(text) } catch {}
+          // 디버그: prdtName 없거나 파싱 실패 시 raw 응답 일부 반환
+          if (!data || !data.prdtName) {
+            return {
+              __debug: true,
+              status,
+              textPrefix: (text || '').slice(0, 300),
+              hasData: !!data,
+              dataKeys: data ? Object.keys(data).slice(0, 20) : [],
+            }
+          }
           const pi = data.productPrice || {}
           return {
             name: (data.prdtName || '').trim(),
@@ -463,15 +475,15 @@ async function fetchAbcmartBenefitPrice(productId, site) {
             coupons: data.maxBenefitCoupon || data.coupon || [],
           }
         } catch (e) {
-          return { error: e.message }
+          return { error: e.message, errorStack: (e.stack || '').slice(0, 200) }
         }
       },
       args: [productId],
     })
 
     const apiData = result?.result
-    if (!apiData || apiData.error) {
-      console.log(`[${site}] in-tab fetch: 탭 내 API 실패 (${productId})`, apiData?.error || '')
+    if (!apiData || apiData.error || apiData.__debug) {
+      console.log(`[${site}] in-tab fetch: 탭 내 API 실패 (${productId}) DEBUG:`, JSON.stringify(apiData)?.slice(0, 400))
       return null
     }
 
