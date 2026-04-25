@@ -571,8 +571,9 @@ _SIIL_CODE_MAP: dict[str, str] = {
     "cosmetic": "35",
     "food": "35",
     "electronics": "35",
-    "sports": "35",
-    "etc": "35",
+    # sports/etc는 의류·신발·가방 아닌 패션 관련 용품 → 잡화(04)로 등록
+    "sports": "04",
+    "etc": "04",
 }
 
 

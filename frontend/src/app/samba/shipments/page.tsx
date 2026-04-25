@@ -19,6 +19,10 @@ import { SITE_COLORS } from '@/lib/samba/constants'
 import { inputStyle, fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
 import { fmtTime } from '@/lib/samba/utils'
 
+const JOB_POLL_INTERVAL_MS = 1000
+const DELETE_POLL_INTERVAL_MS = 1000
+const BG_LOG_POLL_INTERVAL_MS = 5000
+
 const SOURCE_SITES = ['전체', 'MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'REXMONDE', 'SSG', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF']
 
 function appendShipmentLog(
@@ -39,6 +43,29 @@ function appendShipmentLog(
   })
 }
 // 영문 market_type → 한글 정책 키 (markets.ts에서 import)
+
+function appendShipmentLogs(
+  setLogMessages: React.Dispatch<React.SetStateAction<string[]>>,
+  messages: string[],
+) {
+  if (messages.length === 0) return
+
+  setLogMessages(prev => {
+    const next = [...prev]
+    for (const msg of messages) next.push(fmtTextNumbers(msg))
+    return next.slice(-30)
+  })
+}
+
+async function fetchProductsByIdsChunked(ids: string[]) {
+  const result: SambaCollectedProduct[] = []
+  for (let i = 0; i < ids.length; i += 500) {
+    const chunk = ids.slice(i, i + 500)
+    const rows = await collectorApi.getProductsByIds(chunk)
+    if (Array.isArray(rows)) result.push(...rows)
+  }
+  return result
+}
 
 export default function ShipmentsPage() {
   useEffect(() => { document.title = 'SAMBA-상품전송삭제' }, [])
@@ -175,9 +202,7 @@ export default function ShipmentsPage() {
             setProgress({ current: j.current || 0, total: j.total || 0 })
             const newLogs = (logData.logs || []) as string[]
             sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
-            if (newLogs.length > 0) {
-              for (const log of newLogs) setLogMessages(prev => [...prev, log].slice(-30))
-            }
+            appendShipmentLogs(setLogMessages, newLogs)
             if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
               if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
               // Job 결과를 프론트 로그에 직접 표시 (링 버퍼 인스턴스 격리 시 누락 방지)
@@ -193,7 +218,7 @@ export default function ShipmentsPage() {
           polling = false
         }
         poll()
-        jobPollRef.current = setInterval(poll, 500)
+        jobPollRef.current = setInterval(poll, JOB_POLL_INTERVAL_MS)
       } catch { /* ignore */ }
     })()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -214,13 +239,11 @@ export default function ShipmentsPage() {
         const logData = await lr.json()
         const newLogs = (logData.logs || []) as string[]
         sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
-        if (newLogs.length > 0) {
-          for (const log of newLogs) setLogMessages(prev => [...prev, log].slice(-30))
-        }
+        appendShipmentLogs(setLogMessages, newLogs)
       } catch { /* ignore */ }
       polling = false
     }
-    bgPollRef.current = setInterval(bgPoll, 5000)
+    bgPollRef.current = setInterval(bgPoll, BG_LOG_POLL_INTERVAL_MS)
     return () => { if (bgPollRef.current) clearInterval(bgPollRef.current) }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -233,6 +256,17 @@ export default function ShipmentsPage() {
 
   // 카테고리 매핑 데이터
   const [categoryMappings, setCategoryMappings] = useState<{ source_site: string; source_category: string; target_mappings: Record<string, string> }[]>([])
+  const productsById = useMemo(() => new Map(products.map(product => [product.id, product] as const)), [products])
+  const accountsById = useMemo(() => new Map(accounts.map(account => [account.id, account] as const)), [accounts])
+  const policiesById = useMemo(() => new Map(policies.map(policy => [policy.id, policy] as const)), [policies])
+  const categoryMappingByKey = useMemo(() => {
+    const map = new Map<string, Record<string, string>>()
+    for (const mapping of categoryMappings) {
+      map.set(`${mapping.source_site}::${mapping.source_category}`, mapping.target_mappings || {})
+    }
+    return map
+  }, [categoryMappings])
+  const availableMarketTypes = useMemo(() => new Set(accounts.map(account => account.market_type)), [accounts])
 
   // 검색 필터가 사용자에 의해 변경되었는지 추적
   const userFilterChangedRef = useRef(false)
@@ -285,7 +319,7 @@ export default function ShipmentsPage() {
 
     // 선택된 상품이 있으면 해당 상품만 조회, 없으면 scroll API
     const productPromise = preIds.length > 0
-      ? collectorApi.getProductsByIds(preIds).catch(() => [] as SambaCollectedProduct[])
+      ? fetchProductsByIdsChunked(preIds).catch(() => [] as SambaCollectedProduct[])
       : collectorApi.scrollProducts(scrollParams).then(r => { setTotalCount(r.total || 0); return r.items }).catch(() => [] as SambaCollectedProduct[])
 
     // 필수 데이터(상품+계정)만 먼저 로드 → 즉시 화면 표시
@@ -327,7 +361,7 @@ export default function ShipmentsPage() {
   const importedSelectionRef = useRef<string[]>([])
   useEffect(() => {
     if (initializedRef.current) return
-    if (products.length === 0 || policies.length === 0) return
+    if (products.length === 0 || policiesById.size === 0) return
     initializedRef.current = true
     // sessionStorage 정리
     if (fromStorage) {
@@ -339,7 +373,7 @@ export default function ShipmentsPage() {
     }
 
     if (preSelectedIds.length > 0) {
-      const ids = preSelectedIds.filter(id => products.some(p => p.id === id))
+      const ids = preSelectedIds.filter(id => productsById.has(id))
       if (ids.length > 0) {
         importedSelectionRef.current = ids
         setSelectedProducts(ids)
@@ -354,19 +388,18 @@ export default function ShipmentsPage() {
         : { all: false, price: false, thumb: false, detail: false }
       )
       // 선택된 상품의 카테고리 매핑에 연결된 마켓만 체크
-      const selectedProds = preSelectedIds.map(id => products.find(p => p.id === id)).filter(Boolean)
+      const selectedProds = preSelectedIds
+        .map(id => productsById.get(id))
+        .filter((product): product is SambaCollectedProduct => Boolean(product))
       const mappedMarketTypes = new Set<string>()
       for (const prod of selectedProds) {
-        if (!prod) continue
         const cats = [prod.category1, prod.category2, prod.category3, prod.category4].filter(Boolean)
         const catPath = cats.join(' > ')
         if (!catPath) continue
-        const mapping = categoryMappings.find(m =>
-          m.source_site === prod.source_site && m.source_category === catPath
-        )
-        if (mapping?.target_mappings) {
-          for (const marketKey of Object.keys(mapping.target_mappings)) {
-            if (mapping.target_mappings[marketKey]) {
+        const targetMappings = categoryMappingByKey.get(`${prod.source_site}::${catPath}`)
+        if (targetMappings) {
+          for (const marketKey of Object.keys(targetMappings)) {
+            if (targetMappings[marketKey]) {
               mappedMarketTypes.add(marketKey)
             }
           }
@@ -375,7 +408,7 @@ export default function ShipmentsPage() {
       // 정책에 연결된 마켓: 카테고리 매핑 불필요 — 정책에 연결되어 있으면 자동 체크
       for (const prod of selectedProds) {
         if (!prod?.applied_policy_id) continue
-        const policy = policies.find(p => p.id === prod.applied_policy_id)
+        const policy = policiesById.get(prod.applied_policy_id)
         if (!policy?.market_policies || typeof policy.market_policies !== 'object') continue
         const mp = policy.market_policies as Record<string, { accountId?: string; accountIds?: string[] }>
         for (const marketPolicy of Object.values(mp)) {
@@ -383,18 +416,18 @@ export default function ShipmentsPage() {
             ? marketPolicy.accountIds
             : marketPolicy.accountId ? [marketPolicy.accountId] : []
           for (const aid of ids) {
-            const acc = accounts.find(a => a.id === aid)
+            const acc = accountsById.get(aid)
             if (acc?.market_type) mappedMarketTypes.add(acc.market_type)
           }
         }
       }
       const targetTypes = mappedMarketTypes.size > 0
-        ? [...mappedMarketTypes].filter(t => accounts.some(a => a.market_type === t))
-        : [...new Set(accounts.map(a => a.market_type))]
+        ? [...mappedMarketTypes].filter(type => availableMarketTypes.has(type))
+        : [...availableMarketTypes]
       setSelectedMarkets(targetTypes)
       setSelectedAccounts(getAccountIdsByMarkets(targetTypes))
     }
-  }, [products, accounts, policies, categoryMappings]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [products, accounts, fromStorage, preSelectedIds, preSelectedSites, autoAll, priceOnly, productsById, categoryMappingByKey, policiesById, accountsById, availableMarketTypes, getAccountIdsByMarkets])
 
   const toggleProduct = (id: string) => setSelectedProducts(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
   const toggleAllProducts = () => {
@@ -490,12 +523,10 @@ export default function ShipmentsPage() {
         const logData = await lr.json()
         const newLogs = (logData.logs || []) as string[]
         sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
-        if (newLogs.length > 0) {
-          for (const log of newLogs) setLogMessages(prev => [...prev, log].slice(-30))
-        }
+        appendShipmentLogs(setLogMessages, newLogs)
       } catch { /* ignore */ }
       delPolling = false
-    }, 500)
+    }, DELETE_POLL_INTERVAL_MS)
 
     let cancelledMid = false
     for (let i = 0; i < targetProducts.length; i++) {
@@ -532,12 +563,10 @@ export default function ShipmentsPage() {
         const logData = await lr.json()
         const newLogs = (logData.logs || []) as string[]
         sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
-        if (newLogs.length > 0) {
-          for (const log of newLogs) setLogMessages(prev => [...prev, log].slice(-30))
-        }
+        appendShipmentLogs(setLogMessages, newLogs)
       } catch { /* ignore */ }
       bgPolling = false
-    }, 2000)
+    }, BG_LOG_POLL_INTERVAL_MS)
 
     await load()
     setDeleting(false)
@@ -629,12 +658,10 @@ export default function ShipmentsPage() {
         const logData = await lr.json()
         const newLogs = (logData.logs || []) as string[]
         sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
-        if (newLogs.length > 0) {
-          for (const log of newLogs) setLogMessages(prev => [...prev, log].slice(-30))
-        }
+        appendShipmentLogs(setLogMessages, newLogs)
       } catch { /* ignore */ }
       delPollingSearch = false
-    }, 500)
+    }, DELETE_POLL_INTERVAL_MS)
 
     let cancelledMidSearch = false
     for (let i = 0; i < targetProducts.length; i++) {
@@ -669,12 +696,10 @@ export default function ShipmentsPage() {
         const logData = await lr.json()
         const newLogs = (logData.logs || []) as string[]
         sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
-        if (newLogs.length > 0) {
-          for (const log of newLogs) setLogMessages(prev => [...prev, log].slice(-30))
-        }
+        appendShipmentLogs(setLogMessages, newLogs)
       } catch { /* ignore */ }
       bgPollingSearch = false
-    }, 2000)
+    }, BG_LOG_POLL_INTERVAL_MS)
 
     await load()
     setDeleting(false)
@@ -840,11 +865,7 @@ export default function ShipmentsPage() {
           setProgress({ current: cur, total: tot })
           const newLogs = (logData.logs || []) as string[]
           sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
-          if (newLogs.length > 0) {
-            for (const log of newLogs) {
-              setLogMessages(prev => [...prev, log].slice(-30))
-            }
-          }
+          appendShipmentLogs(setLogMessages, newLogs)
           if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
             if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
             const _ts = fmtTime()
@@ -860,7 +881,7 @@ export default function ShipmentsPage() {
           }
         } catch { /* ignore */ }
         polling = false
-      }, 500)
+      }, JOB_POLL_INTERVAL_MS)
     } catch (e) {
       addLog(`[${ts()}] 전송 실패: ${e instanceof Error ? e.message : '오류'}`)
       setTransmitting(false)
@@ -916,11 +937,7 @@ export default function ShipmentsPage() {
           setProgress({ current: cur, total: tot })
           const newLogs = (logData.logs || []) as string[]
           sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
-          if (newLogs.length > 0) {
-            for (const log of newLogs) {
-              setLogMessages(prev => [...prev, log].slice(-30))
-            }
-          }
+          appendShipmentLogs(setLogMessages, newLogs)
           if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
             if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
             const _ts = fmtTime()
@@ -935,7 +952,7 @@ export default function ShipmentsPage() {
           }
         } catch { /* ignore */ }
         polling = false
-      }, 500)
+      }, JOB_POLL_INTERVAL_MS)
     } catch (e) {
       addLog(`[${ts()}] 이어하기 실패: ${e instanceof Error ? e.message : '오류'}`)
       setTransmitting(false)
@@ -1405,9 +1422,7 @@ export default function ShipmentsPage() {
                       setProgress({ current: j.current || 0, total: j.total || allIds.length })
                       const newLogs = (logData.logs || []) as string[]
                       sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
-                      if (newLogs.length > 0) {
-                        for (const log of newLogs) setLogMessages(prev => [...prev, log].slice(-30))
-                      }
+                      appendShipmentLogs(setLogMessages, newLogs)
                       if (j.status === 'completed' || j.status === 'failed') {
                         if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
                         // Job 결과를 프론트 로그에 직접 표시 (링 버퍼 인스턴스 격리 시 누락 방지)
@@ -1421,7 +1436,7 @@ export default function ShipmentsPage() {
                       }
                     } catch { /* ignore */ }
                     polling = false
-                  }, 500)
+                  }, JOB_POLL_INTERVAL_MS)
                 } catch (e) { showAlert(e instanceof Error ? e.message : '전송 실패', 'error') }
               }}
                 style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}

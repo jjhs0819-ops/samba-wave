@@ -66,6 +66,10 @@ _CATEGORY_GROUP: dict[str, str] = {
     "등산화": "shoes",
     "트레킹화": "shoes",
     "등산화/트레킹화": "shoes",
+    # 스포츠 신발 복합 카테고리 (SSG 등 소싱처)
+    "스포츠 슈즈": "shoes",
+    "슈즈": "shoes",
+    "워킹화": "shoes",
     # 가방
     "가방": "bag",
     "백팩": "bag",

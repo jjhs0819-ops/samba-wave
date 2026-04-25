@@ -50,6 +50,7 @@ export default function ProductsPage() {
     if (gid) {
       setFilterByGroupId(gid)
       setFilterGroupName(gname)
+      setAppliedFilterByGroupId(gid)
       // URL에서 그룹 필터 파라미터 제거 (새로고침 시 풀리도록)
       // router.replace 대신 window.history.replaceState 사용 — Next.js 리내비게이션 방지
       // router.replace는 Next.js 내비게이션을 트리거해 컴포넌트 리마운트 → filterByGroupId 초기화 버그 유발
@@ -105,6 +106,14 @@ export default function ProductsPage() {
   const [statusFilter, setStatusFilter] = useState("");
   const [aiFilter, setAiFilter] = useState("");
   const [sortBy, setSortBy] = useState("collect-desc");
+  const [appliedSearchType, setAppliedSearchType] = useState(_initSearchType === "id" ? "name" : _initSearchType);
+  const [appliedSearchQ, setAppliedSearchQ] = useState(_initSearchType === "id" ? "" : _initSearch);
+  const [appliedSiteFilter, setAppliedSiteFilter] = useState("");
+  const [appliedSoldOutFilter, setAppliedSoldOutFilter] = useState("");
+  const [appliedStatusFilter, setAppliedStatusFilter] = useState("");
+  const [appliedAiFilter, setAppliedAiFilter] = useState("");
+  const [appliedSortBy, setAppliedSortBy] = useState("collect-desc");
+  const [appliedFilterByGroupId, setAppliedFilterByGroupId] = useState(searchParams.get("search_filter_id") || "")
   const [pageSize, setPageSize] = useState(20);
   const [currentPage, setCurrentPage] = useState(1);
   const [viewMode, setViewMode] = useState<"card" | "compact" | "image">("card");
@@ -186,20 +195,20 @@ export default function ProductsPage() {
       const skip = (targetPage - 1) * pageSize
       // status 필터에서 특수값 분리
       const knownStatus = ['has_orders', 'free_ship', 'same_day', 'free_same', 'market_registered', 'market_unregistered', 'sold_out']
-      const statusParam = (knownStatus.includes(statusFilter) || statusFilter.startsWith('reg_') || statusFilter.startsWith('unreg_'))
-        ? statusFilter : statusFilter || undefined
-      const aiParam = (aiFilter === 'has_orders') ? aiFilter : aiFilter || undefined
+      const statusParam = (knownStatus.includes(appliedStatusFilter) || appliedStatusFilter.startsWith('reg_') || appliedStatusFilter.startsWith('unreg_'))
+        ? appliedStatusFilter : appliedStatusFilter || undefined
+      const aiParam = (appliedAiFilter === 'has_orders') ? appliedAiFilter : appliedAiFilter || undefined
       const res = await collectorApi.scrollProducts({
         skip,
         limit: pageSize,
-        search: searchQ.trim() || _idFilter || undefined,
-        search_type: searchQ.trim() ? searchType : (_idFilter ? "id" : undefined),
-        source_site: siteFilter || undefined,
+        search: appliedSearchQ.trim() || _idFilter || undefined,
+        search_type: appliedSearchQ.trim() ? appliedSearchType : (_idFilter ? "id" : undefined),
+        source_site: appliedSiteFilter || undefined,
         status: statusParam,
-        sold_out_filter: soldOutFilter || undefined,
+        sold_out_filter: appliedSoldOutFilter || undefined,
         ai_filter: aiParam,
-        search_filter_id: filterByGroupId || undefined,
-        sort_by: sortBy,
+        search_filter_id: appliedFilterByGroupId || undefined,
+        sort_by: appliedSortBy,
       })
       setLoadError(false)
       setAllProducts(res.items)
@@ -213,7 +222,7 @@ export default function ProductsPage() {
     } finally {
       setLoading(false)
     }
-  }, [queryReady, currentPage, pageSize, searchQ, searchType, _idFilter, siteFilter, soldOutFilter, statusFilter, aiFilter, filterByGroupId, sortBy])
+  }, [queryReady, currentPage, pageSize, appliedSearchQ, appliedSearchType, _idFilter, appliedSiteFilter, appliedSoldOutFilter, appliedStatusFilter, appliedAiFilter, appliedFilterByGroupId, appliedSortBy])
 
   // 상품만 리로드 (삭제/수정 등 상품 변경 후 사용)
   const reloadProducts = useCallback(async () => {
@@ -226,9 +235,9 @@ export default function ProductsPage() {
   const load = useCallback(async () => {
     if (!queryReady) return
     const knownStatus2 = ['has_orders', 'free_ship', 'same_day', 'free_same', 'market_registered', 'market_unregistered', 'sold_out']
-    const statusParam = (knownStatus2.includes(statusFilter) || statusFilter.startsWith('reg_') || statusFilter.startsWith('unreg_'))
-      ? statusFilter : statusFilter || undefined
-    const aiParam = (aiFilter === 'has_orders') ? aiFilter : aiFilter || undefined
+    const statusParam = (knownStatus2.includes(appliedStatusFilter) || appliedStatusFilter.startsWith('reg_') || appliedStatusFilter.startsWith('unreg_'))
+      ? appliedStatusFilter : appliedStatusFilter || undefined
+    const aiParam = (appliedAiFilter === 'has_orders') ? appliedAiFilter : appliedAiFilter || undefined
 
     // Phase 1: 상품 목록만 먼저 (빠른 초기 렌더링)
     setLoading(true)
@@ -236,14 +245,14 @@ export default function ProductsPage() {
       const productsRes = await collectorApi.scrollProducts({
         skip: 0,
         limit: pageSize,
-        search: searchQ.trim() || _idFilter || undefined,
-        search_type: searchQ.trim() ? searchType : (_idFilter ? 'id' : undefined),
-        source_site: siteFilter || undefined,
+        search: appliedSearchQ.trim() || _idFilter || undefined,
+        search_type: appliedSearchQ.trim() ? appliedSearchType : (_idFilter ? 'id' : undefined),
+        source_site: appliedSiteFilter || undefined,
         status: statusParam,
-        sold_out_filter: soldOutFilter || undefined,
+        sold_out_filter: appliedSoldOutFilter || undefined,
         ai_filter: aiParam,
-        search_filter_id: filterByGroupId || undefined,
-        sort_by: sortBy,
+        search_filter_id: appliedFilterByGroupId || undefined,
+        sort_by: appliedSortBy,
       }).catch(() => null)
       if (productsRes) {
         setLoadError(false)
@@ -288,15 +297,15 @@ export default function ProductsPage() {
         setCatMappingMap(map)
       }
     }).catch(e => console.error('metadata load error:', e))
-  }, [queryReady, pageSize, searchQ, searchType, _idFilter, siteFilter, soldOutFilter, statusFilter, aiFilter, filterByGroupId, sortBy])
+  }, [queryReady, pageSize, appliedSearchQ, appliedSearchType, _idFilter, appliedSiteFilter, appliedSoldOutFilter, appliedStatusFilter, appliedAiFilter, appliedFilterByGroupId, appliedSortBy])
 
   useEffect(() => { load() }, [load])
 
   // 드롭다운 필터/정렬 변경 시 그룹 필터 자동 해제
-  const groupClearInitRef = useRef(true)
+  const groupClearInitRef = useRef(false)
   useEffect(() => {
     if (!queryReady) return
-    if (groupClearInitRef.current) { groupClearInitRef.current = false; return }
+    if (!groupClearInitRef.current) return
     if (filterByGroupId) {
       setFilterByGroupId("")
       setFilterGroupName("")
@@ -306,10 +315,10 @@ export default function ProductsPage() {
 
   // 필터/정렬 변경 시 1페이지로 리셋 + 선택 초기화 (디바운싱 300ms, 초기 로드 제외)
   const filterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const filterInitRef = useRef(true)
+  const filterInitRef = useRef(false)
   useEffect(() => {
     if (!queryReady) return
-    if (filterInitRef.current) { filterInitRef.current = false; return }
+    if (!filterInitRef.current) return
     setSelectAll(false)
     setSelectedIds(new Set())
     setCurrentPage(1)
@@ -355,12 +364,23 @@ export default function ProductsPage() {
   const allSites = serverSites
 
   const handleSearch = () => {
+    const nextGroupId = filterByGroupId ? "" : filterByGroupId
     // highlight + 그룹 필터 무조건 해제
     if (highlightProductId) setHighlightProductId("")
     if (filterByGroupId) {
       setFilterByGroupId("")
       setFilterGroupName("")
     }
+    setAppliedSearchType(searchType)
+    setAppliedSearchQ(searchQ)
+    setAppliedSiteFilter(siteFilter)
+    setAppliedSoldOutFilter(soldOutFilter)
+    setAppliedStatusFilter(statusFilter)
+    setAppliedAiFilter(aiFilter)
+    setAppliedSortBy(sortBy)
+    setAppliedFilterByGroupId(nextGroupId)
+    setSelectAll(false)
+    setSelectedIds(new Set())
     setCurrentPage(1)
   };
 
@@ -740,16 +760,16 @@ export default function ProductsPage() {
       // 전체 검색 결과 ID를 서버에서 조회
       if (serverTotal > products.length) {
         try {
-          const statusParam = statusFilter || undefined
-          const aiParam = aiFilter || undefined
+          const statusParam = appliedStatusFilter || undefined
+          const aiParam = appliedAiFilter || undefined
           const res = await collectorApi.getProductIds({
-            search: searchQ.trim() || undefined,
-            search_type: searchQ.trim() ? searchType : undefined,
-            source_site: siteFilter || undefined,
+            search: appliedSearchQ.trim() || undefined,
+            search_type: appliedSearchQ.trim() ? appliedSearchType : undefined,
+            source_site: appliedSiteFilter || undefined,
             status: statusParam,
-            sold_out_filter: soldOutFilter || undefined,
+            sold_out_filter: appliedSoldOutFilter || undefined,
             ai_filter: aiParam,
-            search_filter_id: filterByGroupId || undefined,
+            search_filter_id: appliedFilterByGroupId || undefined,
           })
           setSelectedIds(new Set(res.ids));
         } catch {
@@ -1908,7 +1928,7 @@ export default function ProductsPage() {
               setAiJobModal(true)
 
               try {
-                const syncAccountId = statusFilter.startsWith('reg_') ? statusFilter.replace('reg_', '') : undefined
+                const syncAccountId = appliedStatusFilter.startsWith('reg_') ? appliedStatusFilter.replace('reg_', '') : undefined
                 const res = await shipmentApi.cleanupSmartstoreOrphans(true, 50, syncAccountId)
                 const dbCount = res.db_no_count ?? 0
                 const staleCount = res.total_stale_db ?? 0
