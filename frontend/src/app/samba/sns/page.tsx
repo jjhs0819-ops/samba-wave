@@ -1,160 +1,20 @@
 'use client'
 
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { fetchWithAuth } from '@/lib/samba/api/shared'
 import { snsApi, wholesaleApi } from '@/lib/samba/api/operations'
-import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
+import { fmtNum } from '@/lib/samba/styles'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtDate as _fmtDate } from '@/lib/samba/utils'
-
-// ── 타입 ──
-
-type TabType = 'overview' | 'auto-posting' | 'posts' | 'products' | 'revenue' | 'settings'
-
-interface DashboardData {
-  today_posts: number
-  total_posts: number
-  success_rate: number
-  auto_status: 'running' | 'stopped'
-}
-
-interface PostItem {
-  id: string
-  title: string
-  category: string
-  keyword: string
-  status: 'published' | 'failed' | 'pending'
-  published_at: string
-}
-
-interface PostsResponse {
-  items: PostItem[]
-  total: number
-  page: number
-  pages: number
-}
-
-interface WpSite {
-  id: string
-  site_url: string
-  site_name: string
-  status: string
-  created_at: string
-}
-
-interface KeywordGroup {
-  id: string
-  name: string
-  category: string
-  keywords: string[]
-}
-
-interface SseLog {
-  event: 'log' | 'success' | 'fail' | 'done' | 'error'
-  message: string
-  timestamp?: string
-}
-
-interface WholesaleProduct {
-  id: string
-  name: string
-  price: number
-  image?: string
-  source: string
-}
-
-interface WholesaleSearchResult {
-  items: WholesaleProduct[]
-  total: number
-}
-
-// ── 상수 ──
-
-const TAB_LIST: { key: TabType; label: string }[] = [
-  { key: 'overview', label: '종합현황' },
-  { key: 'auto-posting', label: '자동 포스팅' },
-  { key: 'posts', label: '게시물 관리' },
-  { key: 'products', label: '상품 연동' },
-  { key: 'revenue', label: '수익 대시보드' },
-  { key: 'settings', label: '채널 설정' },
-]
-
-const ISSUE_CATEGORIES = [
-  { value: 'politics', label: '정치' },
-  { value: 'economy', label: '경제' },
-  { value: 'sports', label: '스포츠' },
-  { value: 'tech', label: '기술' },
-  { value: 'fashion', label: '패션' },
-  { value: 'food', label: '음식' },
-  { value: 'entertainment', label: '엔터테인먼트' },
-  { value: 'health', label: '건강' },
-]
-
-const cardPad = { ...card, padding: '20px' }
-
-// ── 유틸 ──
+import {
+  type TabType, type DashboardData, type PostItem, type PostsResponse,
+  type WpSite, type KeywordGroup, type SseLog,
+  type WholesaleProduct, type WholesaleSearchResult,
+  TAB_LIST, ISSUE_CATEGORIES, cardPad, getStatusBadge,
+  btnPrimary, btnDanger, btnOutline, thStyle, tdStyle, sectionTitle, inputBox, selectStyle,
+} from './constants'
 
 const fmtDate = (iso: string | undefined | null) => _fmtDate(iso, '.')
-
-function getStatusBadge(status: string) {
-  const map: Record<string, { bg: string; color: string; label: string }> = {
-    published: { bg: 'rgba(81,207,102,0.15)', color: '#51CF66', label: '발행됨' },
-    failed: { bg: 'rgba(255,107,107,0.15)', color: '#FF6B6B', label: '실패' },
-    pending: { bg: 'rgba(138,149,176,0.15)', color: '#8A95B0', label: '대기' },
-    running: { bg: 'rgba(81,207,102,0.15)', color: '#51CF66', label: '실행중' },
-    stopped: { bg: 'rgba(255,107,107,0.15)', color: '#FF6B6B', label: '중지' },
-    connected: { bg: 'rgba(81,207,102,0.15)', color: '#51CF66', label: '연결됨' },
-    disconnected: { bg: 'rgba(138,149,176,0.15)', color: '#8A95B0', label: '미연결' },
-  }
-  const s = map[status] || map.pending
-  return (
-    <span style={{ fontSize: '0.68rem', padding: '2px 8px', borderRadius: '8px', background: s.bg, color: s.color, fontWeight: 600, whiteSpace: 'nowrap' }}>
-      {s.label}
-    </span>
-  )
-}
-
-// ── 스타일 ──
-
-const btnPrimary: React.CSSProperties = {
-  padding: '6px 14px', fontSize: '0.78rem', background: '#FF8C00', color: '#000',
-  border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap',
-}
-
-const btnDanger: React.CSSProperties = {
-  padding: '4px 10px', fontSize: '0.72rem', background: 'rgba(255,107,107,0.15)', color: '#FF6B6B',
-  border: '1px solid rgba(255,107,107,0.3)', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap',
-}
-
-const btnOutline: React.CSSProperties = {
-  padding: '6px 14px', fontSize: '0.78rem', background: 'rgba(255,140,0,0.15)', color: '#FF8C00',
-  border: '1px solid rgba(255,140,0,0.3)', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap',
-}
-
-const thStyle: React.CSSProperties = {
-  padding: '10px', textAlign: 'left', fontSize: '0.75rem', color: '#8A95B0', fontWeight: 500,
-}
-
-const tdStyle: React.CSSProperties = {
-  padding: '10px', fontSize: '0.8rem', color: '#E5E5E5',
-}
-
-const sectionTitle: React.CSSProperties = {
-  fontSize: '0.9rem', fontWeight: 600, color: '#E5E5E5', margin: 0, marginBottom: '16px',
-}
-
-const inputBox: React.CSSProperties = {
-  ...inputStyle,
-  background: 'rgba(255,255,255,0.05)',
-  border: '1px solid #3D3D3D',
-  borderRadius: '8px',
-}
-
-const selectStyle: React.CSSProperties = {
-  ...inputBox,
-  appearance: 'none' as const,
-  cursor: 'pointer',
-}
 
 // ── 메인 컴포넌트 ──
 

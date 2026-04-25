@@ -15,150 +15,39 @@ import {
   type ExchangeRateResponse,
 } from '../config'
 import { fmtNum, parseNum } from '@/lib/samba/styles'
+import type { ExternalSettingsState, ExternalSettingsActions } from './useExternalSettings.types'
 
-export interface ExternalSettingsState {
-  // SMS
-  smsUserId: string
-  smsApiKey: string
-  smsSender: string
-  smsStatus: string
-  // 카카오 알림톡
-  kakaoUserId: string
-  kakaoApiKey: string
-  kakaoSenderKey: string
-  kakaoSender: string
-  kakaoStatus: string
-  // Claude AI
-  claudeApiKey: string
-  claudeModel: string
-  claudeStatus: string
-  aiFeatures: Record<string, boolean>
-  // Gemini AI
-  geminiApiKey: string
-  geminiModel: string
-  geminiStatus: string
-  // Cloudflare R2
-  r2AccountId: string
-  r2AccessKey: string
-  r2SecretKey: string
-  r2BucketName: string
-  r2PublicUrl: string
-  r2Status: string
-  // 모델 프리셋
-  presets: { key: string; label: string; desc: string; image: string | null }[]
-  editingPreset: string | null
-  editingDesc: string
-  editingLabel: string
-  regenerating: string | null
-  presetZoom: string | null
-  // 금지어/삭제어
-  forbiddenText: string
-  deletionText: string
-  initialForbiddenText: string
-  initialDeletionText: string
-  optionDeletionText: string
-  initialOptionDeletionText: string
-  wordsSaving: boolean
-  // 태그 금지어
-  tagBanned: { rejected: string[]; brands: string[]; source_sites: string[] }
-  // 환율
-  exchangeRates: ExchangeRateResponse
-  exchangeStatus: string
-  exchangeSaving: boolean
-  // Probe
-  probeData: Record<string, Record<string, Record<string, unknown>>>
-  probeLoading: boolean
-}
-
-export interface ExternalSettingsActions {
-  loadExternalSettings: () => Promise<void>
-  loadExchangeRates: (forceRefresh?: boolean) => Promise<void>
-  saveExchangeSettings: () => Promise<void>
-  updateExchangeField: (code: ExchangeCurrencyCode, field: 'adjustment' | 'fixedRate', value: string) => void
-  saveSmsSettings: () => Promise<void>
-  testSmsKey: () => Promise<void>
-  saveKakaoSettings: () => Promise<void>
-  testKakaoKey: () => Promise<void>
-  saveClaudeSettings: () => Promise<void>
-  testClaudeApi: () => Promise<void>
-  toggleAiFeature: (key: string) => void
-  testGeminiApi: () => Promise<void>
-  saveGeminiSettings: () => Promise<void>
-  loadPresets: () => Promise<void>
-  handleSavePreset: (key: string, label: string, desc: string) => Promise<void>
-  handleRegeneratePreset: (key: string, desc?: string, label?: string) => Promise<void>
-  saveR2Settings: () => Promise<void>
-  testR2: () => Promise<void>
-  loadProbeStatus: () => Promise<void>
-  runProbe: () => Promise<void>
-  setSmsUserId: (v: string) => void
-  setSmsApiKey: (v: string) => void
-  setSmsSender: (v: string) => void
-  setKakaoUserId: (v: string) => void
-  setKakaoApiKey: (v: string) => void
-  setKakaoSenderKey: (v: string) => void
-  setKakaoSender: (v: string) => void
-  setClaudeApiKey: (v: string) => void
-  setClaudeModel: (v: string) => void
-  setGeminiApiKey: (v: string) => void
-  setGeminiModel: (v: string) => void
-  setR2AccountId: (v: string) => void
-  setR2AccessKey: (v: string) => void
-  setR2SecretKey: (v: string) => void
-  setR2BucketName: (v: string) => void
-  setR2PublicUrl: (v: string) => void
-  setEditingPreset: (key: string | null) => void
-  setEditingDesc: (v: string) => void
-  setEditingLabel: (v: string) => void
-  setRegenerating: (key: string | null) => void
-  setPresetZoom: (url: string | null) => void
-  setForbiddenText: (v: string) => void
-  setDeletionText: (v: string) => void
-  setOptionDeletionText: (v: string) => void
-  setTagBanned: React.Dispatch<React.SetStateAction<ExternalSettingsState['tagBanned']>>
-  setWordsSaving: (v: boolean) => void
-  setInitialForbiddenText: (v: string) => void
-  setInitialDeletionText: (v: string) => void
-  setInitialOptionDeletionText: (v: string) => void
-}
+export type { ExternalSettingsState, ExternalSettingsActions }
 
 export function useExternalSettings(): ExternalSettingsState & ExternalSettingsActions {
-  // SMS
   const [smsUserId, setSmsUserId] = useState('')
   const [smsApiKey, setSmsApiKey] = useState('')
   const [smsSender, setSmsSender] = useState('')
   const [smsStatus, setSmsStatus] = useState('')
-  // 카카오 알림톡
   const [kakaoUserId, setKakaoUserId] = useState('')
   const [kakaoApiKey, setKakaoApiKey] = useState('')
   const [kakaoSenderKey, setKakaoSenderKey] = useState('')
   const [kakaoSender, setKakaoSender] = useState('')
   const [kakaoStatus, setKakaoStatus] = useState('')
-  // Claude AI
   const [claudeApiKey, setClaudeApiKey] = useState('')
   const [claudeModel, setClaudeModel] = useState('claude-sonnet-4-6')
   const [claudeStatus, setClaudeStatus] = useState('')
   const [aiFeatures, setAiFeatures] = useState<Record<string, boolean>>({ productName: true })
-  // Gemini AI
   const [geminiApiKey, setGeminiApiKey] = useState('')
   const [geminiModel, setGeminiModel] = useState('gemini-2.5-flash-lite')
   const [geminiStatus, setGeminiStatus] = useState('')
-  // Cloudflare R2
   const [r2AccountId, setR2AccountId] = useState('')
   const [r2AccessKey, setR2AccessKey] = useState('')
   const [r2SecretKey, setR2SecretKey] = useState('')
   const [r2BucketName, setR2BucketName] = useState('')
   const [r2PublicUrl, setR2PublicUrl] = useState('')
   const [r2Status, setR2Status] = useState('')
-  // 로컬 워커 토큰
-  // 모델 프리셋
   const [presets, setPresets] = useState<{ key: string; label: string; desc: string; image: string | null }[]>([])
   const [editingPreset, setEditingPreset] = useState<string | null>(null)
   const [editingDesc, setEditingDesc] = useState('')
   const [editingLabel, setEditingLabel] = useState('')
   const [regenerating, setRegenerating] = useState<string | null>(null)
   const [presetZoom, setPresetZoom] = useState<string | null>(null)
-  // 금지어/삭제어
   const [forbiddenText, setForbiddenText] = useState('')
   const [deletionText, setDeletionText] = useState('')
   const [initialForbiddenText, setInitialForbiddenText] = useState('')
@@ -166,17 +55,13 @@ export function useExternalSettings(): ExternalSettingsState & ExternalSettingsA
   const [optionDeletionText, setOptionDeletionText] = useState('')
   const [initialOptionDeletionText, setInitialOptionDeletionText] = useState('')
   const [wordsSaving, setWordsSaving] = useState(false)
-  // 태그 금지어
   const [tagBanned, setTagBanned] = useState<{ rejected: string[]; brands: string[]; source_sites: string[] }>({ rejected: [], brands: [], source_sites: [] })
-  // 환율
   const [exchangeRates, setExchangeRates] = useState<ExchangeRateResponse>(EMPTY_EXCHANGE_RATES)
   const [exchangeStatus, setExchangeStatus] = useState('')
   const [exchangeSaving, setExchangeSaving] = useState(false)
-  // Probe
   const [probeData, setProbeData] = useState<Record<string, Record<string, Record<string, unknown>>>>({})
   const [probeLoading, setProbeLoading] = useState(false)
 
-  // 환율 로드
   const loadExchangeRates = useCallback(async (forceRefresh = false) => {
     try {
       const data = await forbiddenApi.getExchangeRates(forceRefresh)

@@ -8,54 +8,11 @@ import { card, inputStyle, fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
 import { PERIOD_BUTTONS } from '@/lib/samba/constants'
 import { fmtTime, getPeriodStart, getPeriodEnd } from '@/lib/samba/utils'
 
-const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
-  requested: { label: '요청됨', bg: 'rgba(255,211,61,0.15)', text: '#FFD93D' },
-  approved:  { label: '승인됨', bg: 'rgba(76,154,255,0.15)', text: '#4C9AFF' },
-  rejected:  { label: '거절됨', bg: 'rgba(255,107,107,0.15)', text: '#FF6B6B' },
-  completed: { label: '완료됨', bg: 'rgba(81,207,102,0.15)', text: '#51CF66' },
-  cancelled: { label: '취소됨', bg: 'rgba(100,100,100,0.2)', text: '#888' },
-  collecting:    { label: '수거중', bg: 'rgba(255,165,0,0.15)', text: '#FFA500' },
-  collected:     { label: '수거완료', bg: 'rgba(81,207,102,0.15)', text: '#51CF66' },
-  not_collected: { label: '미수거', bg: 'rgba(255,107,107,0.15)', text: '#FF6B6B' },
-}
-
-const TYPE_LABELS: Record<string, { label: string; color: string }> = {
-  return:   { label: '반품', color: '#FF6B6B' },
-  exchange: { label: '교환', color: '#4C9AFF' },
-  cancel:   { label: '취소', color: '#888' },
-}
-
-// 구버전 반품사유 목록
-const RETURN_REASONS = [
-  { value: '', label: '직접입력' },
-  { value: '상품 불량/파손', label: '상품 불량/파손' },
-  { value: '사이즈 불일치', label: '사이즈 불일치' },
-  { value: '색상/디자인 불일치', label: '색상/디자인 불일치' },
-  { value: '배송 중 파손', label: '배송 중 파손' },
-  { value: '오배송 (다른 상품)', label: '오배송 (다른 상품)' },
-  { value: '단순 변심', label: '단순 변심' },
-  { value: '상품 설명과 다름', label: '상품 설명과 다름' },
-  { value: '배송 지연', label: '배송 지연' },
-  { value: '주문 실수', label: '주문 실수' },
-  { value: '품질 불만족', label: '품질 불만족' },
-]
-
-// 날짜 → M/D 포맷 (예: "2026-03-25" → "3/25")
-const fmtMD = (d?: string | null) => {
-  if (!d) return '-'
-  const dt = new Date(d)
-  if (isNaN(dt.getTime())) return '-'
-  return `${dt.getMonth() + 1}/${dt.getDate()}`
-}
-
-const getAccountOptionLabel = (account: SambaMarketAccount) => (
-  account.account_label?.trim()
-  || account.seller_id?.trim()
-  || account.business_name?.trim()
-  || account.market_name
-)
-
-const tdCenter = { padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' as const, textAlign: 'center' as const, verticalAlign: 'middle' as const }
+import {
+  STATUS_MAP, TYPE_LABELS, RETURN_REASONS,
+  fmtMD, getAccountOptionLabel, tdCenter,
+} from './constants'
+import { ReturnDetailModal } from './components/ReturnDetailModal'
 
 export default function ReturnsPage() {
   useEffect(() => { document.title = 'SAMBA-반품관리' }, [])
@@ -854,70 +811,7 @@ export default function ReturnsPage() {
         </div>
       )}
 
-      {/* 상세 모달 + 타임라인 */}
-      {detailItem && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '520px', maxWidth: '90vw', maxHeight: '80vh', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
-              <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#E5E5E5' }}>
-                {TYPE_LABELS[detailItem.type]?.label || detailItem.type} 상세
-              </h3>
-              <button onClick={() => setDetailItem(null)} style={{ background: 'none', border: 'none', color: '#888', fontSize: '1.25rem', cursor: 'pointer' }}>✕</button>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
-              {[
-                { label: '주문 ID', value: detailItem.order_id },
-                { label: '유형', value: TYPE_LABELS[detailItem.type]?.label || detailItem.type },
-                { label: '수량', value: String(detailItem.quantity) },
-                { label: '요청금액', value: detailItem.requested_amount ? `₩${fmtNum(detailItem.requested_amount)}` : '-' },
-                { label: '상태', value: STATUS_MAP[detailItem.status]?.label || detailItem.status },
-                { label: '등록일', value: detailItem.created_at?.slice(0, 10) || '-' },
-              ].map(({ label, value }) => (
-                <div key={label}>
-                  <p style={{ fontSize: '0.75rem', color: '#666', marginBottom: '0.25rem' }}>{label}</p>
-                  <p style={{ fontSize: '0.875rem', color: '#E5E5E5' }}>{value}</p>
-                </div>
-              ))}
-              {detailItem.reason && (
-                <div style={{ gridColumn: '1 / -1' }}>
-                  <p style={{ fontSize: '0.75rem', color: '#666', marginBottom: '0.25rem' }}>사유</p>
-                  <p style={{ fontSize: '0.875rem', color: '#E5E5E5' }}>{detailItem.reason}</p>
-                </div>
-              )}
-            </div>
-
-            {/* 타임라인 */}
-            {detailItem.timeline && detailItem.timeline.length > 0 && (
-              <div>
-                <h4 style={{ fontSize: '0.8125rem', color: '#888', fontWeight: 600, marginBottom: '1rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>처리 이력</h4>
-                <div style={{ position: 'relative' }}>
-                  {detailItem.timeline.map((t, i) => {
-                    const st = STATUS_MAP[t.status]
-                    return (
-                      <div key={i} style={{ display: 'flex', gap: '1rem', marginBottom: i < detailItem.timeline!.length - 1 ? '1rem' : 0 }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.25rem' }}>
-                          <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: st?.text || '#555', flexShrink: 0 }} />
-                          {i < detailItem.timeline!.length - 1 && (
-                            <div style={{ width: '2px', flex: 1, background: '#2D2D2D', minHeight: '20px' }} />
-                          )}
-                        </div>
-                        <div style={{ paddingBottom: i < detailItem.timeline!.length - 1 ? '0.5rem' : 0 }}>
-                          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '0.25rem' }}>
-                            <span style={{ fontSize: '0.8125rem', color: st?.text || '#888', fontWeight: 600 }}>{st?.label || t.status}</span>
-                            <span style={{ fontSize: '0.75rem', color: '#555' }}>{t.date?.slice(0, 16) || ''}</span>
-                          </div>
-                          {t.message && <p style={{ fontSize: '0.8125rem', color: '#888' }}>{t.message}</p>}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      <ReturnDetailModal detailItem={detailItem} onClose={() => setDetailItem(null)} />
     </div>
   )
 }

@@ -120,6 +120,12 @@ export function useOrderActions(args: Args) {
     return o.sale_price > 0 ? ((profit / o.sale_price) * 100).toFixed(1) : '0'
   }
 
+  const calcFeeRate = (o: SambaOrder) => {
+    const paymentAmount = o.total_payment_amount ?? o.sale_price
+    if (paymentAmount <= 0) return '0.0'
+    return (((paymentAmount - o.revenue) / paymentAmount) * 100).toFixed(1)
+  }
+
   const handleCopyOrderNumber = (orderNumber: string) => {
     navigator.clipboard.writeText(orderNumber)
     showAlert('주문번호가 복사되었습니다', 'success')
@@ -189,7 +195,7 @@ export function useOrderActions(args: Args) {
   return {
     handleSubmit, handleStatusChange, handleDelete,
     handleCostSave, handleShipFeeSave,
-    calcProfit, calcProfitRate,
+    calcProfit, calcProfitRate, calcFeeRate,
     handleCopyOrderNumber, handleDanawa, handleNaver, handleTracking,
     toggleAction, handleBulkAction, fmtNumStr,
     bulkUpdating,

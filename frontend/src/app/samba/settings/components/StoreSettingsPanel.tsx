@@ -10,6 +10,7 @@ import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { NumInputStr as NumInput } from '@/components/samba/NumInput'
 import { STORE_MARKETS } from '../config'
 import type { StoreSettingsState, StoreSettingsActions } from '../hooks/useStoreSettings'
+import { ConnectedAccountsList } from './ConnectedAccountsList'
 
 type Props = StoreSettingsState & Pick<StoreSettingsActions,
   'updateStoreField' | 'saveStoreSettings' | 'testStoreAuth' |
@@ -23,42 +24,20 @@ type Props = StoreSettingsState & Pick<StoreSettingsActions,
 
 export function StoreSettingsPanel(props: Props) {
   const {
-    accounts,
-    storeTab,
-    visiblePasswords,
-    storeData,
-    savedStoreData,
-    storeStatus,
-    editingAccountId,
-    ssgShippingOptions,
-    ssgAddrOptions,
-    esmPlaceOptions,
-    esmDispatchOptions,
-    lotteonDeliveryPolicyOptions,
-    lotteonWarehouseOptions,
-    networkIps,
-    networkIpStatus,
-    coupangOutboundList,
-    coupangInboundList,
-    updateStoreField,
-    saveNetworkIps,
-    saveStoreSettings,
-    testStoreAuth,
-    handleAccountDelete,
-    togglePasswordVisibility,
-    setStoreTab,
-    setStoreData,
-    setSsgShippingOptions,
-    setSsgAddrOptions,
-    setEsmPlaceOptions,
-    setEsmDispatchOptions,
-    setLotteonDeliveryPolicyOptions,
-    setLotteonWarehouseOptions,
-    setCoupangOutboundList,
-    setCoupangInboundList,
-    loadCoupangShippingPlaces,
-    setEditingAccountId,
-    setNetworkIps,
+    accounts, storeTab, visiblePasswords, storeData, savedStoreData,
+    storeStatus, editingAccountId,
+    ssgShippingOptions, ssgAddrOptions,
+    esmPlaceOptions, esmDispatchOptions,
+    lotteonDeliveryPolicyOptions, lotteonWarehouseOptions,
+    networkIps, networkIpStatus, coupangOutboundList, coupangInboundList,
+    updateStoreField, saveNetworkIps, saveStoreSettings, testStoreAuth,
+    handleAccountDelete, togglePasswordVisibility,
+    setStoreTab, setStoreData,
+    setSsgShippingOptions, setSsgAddrOptions,
+    setEsmPlaceOptions, setEsmDispatchOptions,
+    setLotteonDeliveryPolicyOptions, setLotteonWarehouseOptions,
+    setCoupangOutboundList, setCoupangInboundList, loadCoupangShippingPlaces,
+    setEditingAccountId, setNetworkIps,
   } = props
 
   return (
@@ -570,74 +549,16 @@ export function StoreSettingsPanel(props: Props) {
             </div>
           </div>
 
-          {/* 우측: 해당 마켓 연결계정 */}
-          <div style={{ width: '260px', flexShrink: 0 }}>
-            <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#888', marginBottom: '0.5rem' }}>연결 계정</div>
-            {(() => {
-              const marketAccounts = accounts.filter(a => a.market_type === market.key)
-              if (marketAccounts.length === 0) return (
-                <div style={{ fontSize: '0.78rem', color: '#555', padding: '0.5rem 0' }}>등록된 계정 없음</div>
-              )
-              return (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
-                  {marketAccounts.map(a => (
-                    <div
-                      key={a.id}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: '0.5rem',
-                        padding: '0.4rem 0.625rem', background: 'rgba(255,255,255,0.02)',
-                        borderRadius: '6px', border: '1px solid rgba(45,45,45,0.5)',
-                      }}>
-                      <div style={{ flex: 1, minWidth: 0, fontSize: '0.8rem', color: '#E5E5E5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {a.account_label}
-                      </div>
-                      <button
-                        onClick={() => {
-                          setEditingAccountId(a.id)
-                          // 완전 분리: account.additional_fields로만 폼 초기화 (Settings 공통 무시)
-                          const accData = (a.additional_fields || {}) as Record<string, string>
-                          const formData: Record<string, string> = {
-                            businessName: a.business_name || '',
-                            storeId: a.seller_id || '',
-                            ...accData,
-                          }
-                          setStoreData(prev => ({ ...prev, [market.key]: formData }))
-                          // 쿠팡 계정 전환 시 출고지/반품지 목록 초기화 (다른 계정 목록 잔존 방지)
-                          if (market.key === 'coupang') {
-                            const outCode = formData.outboundShippingPlaceCode || ''
-                            const outName = formData.outboundShippingPlaceName || ''
-                            setCoupangOutboundList(outCode ? [{ code: outCode, name: outName, address: '' }] : [])
-                            const retCode = formData.returnCenterCode || ''
-                            const retName = formData.returnCenterName || ''
-                            const retAddr = formData.returnCenterAddress || ''
-                            const retAddrDetail = formData.returnCenterAddressDetail || ''
-                            const retZip = formData.returnCenterZipcode || ''
-                            const retPhone = formData.returnCenterPhone || ''
-                            setCoupangInboundList(retCode ? [{ code: retCode, name: retName, address: retAddr, address_detail: retAddrDetail, zipcode: retZip, phone: retPhone }] : [])
-                          }
-                        }}
-                        style={{
-                          padding: '0.15rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem',
-                          background: editingAccountId === a.id ? 'rgba(255,140,0,0.15)' : 'rgba(60,60,60,0.8)',
-                          color: editingAccountId === a.id ? '#FF8C00' : '#C5C5C5',
-                          border: editingAccountId === a.id ? '1px solid #FF8C00' : '1px solid #3D3D3D',
-                          cursor: 'pointer', whiteSpace: 'nowrap',
-                        }}
-                      >{editingAccountId === a.id ? '수정중' : '수정'}</button>
-                      <button
-                        onClick={() => handleAccountDelete(a.id)}
-                        style={{
-                          padding: '0.15rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem',
-                          background: 'rgba(255,80,80,0.15)', color: '#FF6B6B', border: '1px solid rgba(255,80,80,0.3)',
-                          cursor: 'pointer', whiteSpace: 'nowrap',
-                        }}
-                      >삭제</button>
-                    </div>
-                  ))}
-                </div>
-              )
-            })()}
-          </div>
+          <ConnectedAccountsList
+            marketKey={market.key}
+            accounts={accounts}
+            editingAccountId={editingAccountId}
+            setEditingAccountId={setEditingAccountId}
+            setStoreData={setStoreData}
+            setCoupangOutboundList={setCoupangOutboundList}
+            setCoupangInboundList={setCoupangInboundList}
+            handleAccountDelete={handleAccountDelete}
+          />
         </div>
       ))}
     </div>

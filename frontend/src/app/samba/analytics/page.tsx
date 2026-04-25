@@ -1,67 +1,21 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
-import { accountApi, collectorApi, orderApi, type SambaMarketAccount, type SambaOrder } from '@/lib/samba/api/commerce'
-import { analyticsApi, type SourcingRoi, type ProductPerformance, type BrandSales } from '@/lib/samba/api/operations'
+import { useEffect, useCallback } from 'react'
+import { type SambaOrder } from '@/lib/samba/api/commerce'
 import { useLocalStorageState } from '@/hooks/useLocalStorageState'
 import { STORAGE_KEYS } from '@/lib/samba/constants'
 import { card, fmtNum } from '@/lib/samba/styles'
 import { RevenueTrendLine, SalesBarChart } from '@/components/samba/AnalyticsCharts'
+import {
+  SOURCE_SITES, ORDER_STATUSES, DEFAULT_STATUSES,
+  type AnalyticsSearch, type MonthlyCell,
+} from './constants'
+import { useAnalyticsData } from './hooks/useAnalyticsData'
 
-const SOURCE_SITES = ['MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'REXMONDE', 'SSG', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF']
-
-// 주문상태 목록 (배송중/배송완료는 가장 우측)
-const ORDER_STATUSES = [
-  { key: 'pending', label: '주문접수' },
-  { key: 'wait_ship', label: '배송대기중' },
-  { key: 'arrived', label: '사무실도착' },
-  { key: 'ship_failed', label: '송장전송실패' },
-  { key: 'cancelling', label: '취소중' },
-  { key: 'returning', label: '반품중' },
-  { key: 'exchanging', label: '교환중' },
-  { key: 'exchange_requested', label: '교환요청' },
-  { key: 'cancel_requested', label: '취소요청' },
-  { key: 'return_requested', label: '반품요청' },
-  { key: 'cancelled', label: '취소완료' },
-  { key: 'returned', label: '반품완료' },
-  { key: 'exchanged', label: '교환완료' },
-  { key: 'shipping', label: '배송중' },
-  { key: 'delivered', label: '배송완료' },
-]
-// 기본 선택 상태
-const DEFAULT_STATUSES = ['pending', 'wait_ship', 'arrived', 'shipping', 'delivered', 'exchanged', 'exchanging', 'exchange_requested']
-
-/** 검색 조건 저장 구조 */
-interface AnalyticsSearch {
-  year: number
-  month: number
-  markets: string[]
-  sites: string[]
-  statuses: string[]
-}
-
-// 월별 집계 셀
-interface MonthlyCell {
-  sales: number
-  orders: number
-}
-
-// 숫자 포맷 — fmtNum (styles.ts)
 const fmt = fmtNum
 
 export default function AnalyticsPage() {
   useEffect(() => { document.title = 'SAMBA-분석' }, [])
-  const [loading, setLoading] = useState(true)
-  const [marketAccounts, setMarketAccounts] = useState<SambaMarketAccount[]>([])
-  const [orders, setOrders] = useState<SambaOrder[]>([])
-
-  // 추가 분석 데이터
-  const [, setChannelData] = useState<{ channel_name: string; sales: number; orders: number; profit: number }[]>([])
-  const [dailyData, setDailyData] = useState<{ date: string; sales: number; orders: number; profit: number }[]>([])
-  const [sourcingRoi, setSourcingRoi] = useState<SourcingRoi[]>([])
-  const [bestSellers, setBestSellers] = useState<ProductPerformance[]>([])
-  const [brandData, setBrandData] = useState<BrandSales[]>([])
-
   // 검색 조건 (localStorage 자동 복원/저장)
   const now = new Date()
   const defaultSearch: AnalyticsSearch = {
@@ -90,70 +44,10 @@ export default function AnalyticsPage() {
     setArr(arr.includes(item) ? arr.filter(x => x !== item) : [...arr, item])
   }
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const start = searchMonth > 0
-        ? `${searchYear}-${String(searchMonth).padStart(2, '0')}-01`
-        : `${searchYear}-01-01`
-      const end = searchMonth > 0
-        ? `${searchYear}-${String(searchMonth).padStart(2, '0')}-${new Date(searchYear, searchMonth, 0).getDate()}`
-        : `${searchYear}-12-31`
-      const allOrders = await orderApi.listByDateRange(start, end).catch(() => [])
-      setOrders(allOrders)
-
-      // 추가 분석 데이터 병렬 로드
-      const [ch, daily, roi, best, brands] = await Promise.all([
-        analyticsApi.channels().catch(() => []),
-        analyticsApi.daily(30).catch(() => []),
-        analyticsApi.sourcingRoi(start, end).catch(() => []),
-        analyticsApi.bestSellers(10, 30).catch(() => []),
-        analyticsApi.brands(start, end).catch(() => []),
-      ])
-      setChannelData(ch)
-      setDailyData(daily)
-      setSourcingRoi(roi)
-      setBestSellers(best)
-      setBrandData(brands)
-    } catch {}
-    setLoading(false)
-  }, [searchYear, searchMonth])
-
-  useEffect(() => { load() }, [load])
-  // 마켓 계정 목록 + 소싱사이트 기본값
-  useEffect(() => {
-    const init = async () => {
-      const accounts = await accountApi.listActive().catch(() => [] as SambaMarketAccount[])
-      setMarketAccounts(accounts)
-
-      // 소싱사이트 기본값: 상품 데이터에서 추출
-      const allData = await collectorApi.scrollProducts({ limit: 1 }).catch(() => null)
-      if (allData) {
-        const collectedSites = (allData.sites || []).filter((s: string) => SOURCE_SITES.includes(s))
-        if (collectedSites.length > 0) setSelectedSites(collectedSites)
-      }
-    }
-    init()
-  }, [setSelectedSites])
-
-  // 마켓 기본값: 주문 데이터에서 마켓 추출
-  const initialMarketSet = useRef(false)
-  useEffect(() => {
-    if (!initialMarketSet.current && orders.length > 0) {
-      initialMarketSet.current = true
-      const orderMarkets = new Set<string>()
-      for (const o of orders) {
-        if (o.channel_name) {
-          const name = o.channel_name
-          const idx = name.indexOf('(')
-          orderMarkets.add(idx > 0 ? name.substring(0, idx) : name)
-        }
-      }
-      if (orderMarkets.size > 0) {
-        setSelectedMarkets([...orderMarkets])
-      }
-    }
-  }, [orders, setSelectedMarkets])
+  const {
+    loading, marketAccounts, orders,
+    dailyData, sourcingRoi, bestSellers, brandData, load,
+  } = useAnalyticsData({ searchYear, searchMonth, setSelectedSites, setSelectedMarkets })
 
   // 기간 + 주문상태 필터링 (고객결제일 기준)
   const filteredOrders = orders.filter(o => {

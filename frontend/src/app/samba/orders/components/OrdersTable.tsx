@@ -54,6 +54,7 @@ interface OrdersTableProps {
   fmtNumStr: (v: string) => string
   calcProfit: (o: SambaOrder) => number
   calcProfitRate: (o: SambaOrder) => string
+  calcFeeRate: (o: SambaOrder) => string
   splitCustomerAddress: (address: string | null | undefined) => { base: string; detail: string }
   renderCopyableText: (
     value: string | null | undefined,
@@ -91,7 +92,7 @@ export default function OrdersTable(props: OrdersTableProps) {
     sentFlags, siteAliasMap, sourcingAccounts,
     setPriceHistoryProduct, setPriceHistoryData, setPriceHistoryModal,
     setLogMessages,
-    fmtNumStr, calcProfit, calcProfitRate, splitCustomerAddress,
+    fmtNumStr, calcProfit, calcProfitRate, calcFeeRate, splitCustomerAddress,
     renderCopyableText,
     handleDelete, handleImageClick, handleCopyOrderNumber, openMsgModal,
     handleDanawa, handleNaver, handleSourceLink, handleMarketLink,
@@ -122,6 +123,8 @@ export default function OrdersTable(props: OrdersTableProps) {
             const shipFeeDisplay = editingShipFees[o.id] !== undefined ? fmtNumStr(editingShipFees[o.id]) : (o.shipping_fee != null ? fmtNum(o.shipping_fee) : '')
             const liveProfit = calcProfit(o)
             const liveProfitRate = calcProfitRate(o)
+            const liveFeeRate = calcFeeRate(o)
+            const liveCost = editingCosts[o.id] !== undefined ? Number(editingCosts[o.id]) || 0 : (o.cost ?? 0)
             const activeAction = activeActions[o.id] || null
             const customerAddress = splitCustomerAddress(o.customer_address)
 
@@ -163,10 +166,12 @@ export default function OrdersTable(props: OrdersTableProps) {
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>결제</span><span>{fmtNum(o.total_payment_amount ?? o.sale_price)}</span></div>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>정산</span><span>{fmtNum(Math.round(o.revenue))}</span></div>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>실수익</span><span>{liveProfit >= 0 ? '+' : ''}{fmtNum(Math.round(liveProfit))}</span></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>수수료율</span><span style={{ color: '#888' }}>{liveFeeRate}%</span></div>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>수익률</span><span style={{ color: '#888' }}>{liveProfitRate}%</span></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>원가</span><span style={{ color: '#888' }}>원가 : {fmtNum(liveCost)}</span></div>
                   </div>
                   {/* 주문취소 + 가격X/재고X/직배/까대기/선물 */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '0.375rem', borderTop: '1px solid #1C2333', paddingTop: '0.375rem' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '4px', marginTop: '0.375rem', borderTop: '1px solid #1C2333', paddingTop: '0.375rem' }}>
                     <button
                       onClick={async () => {
                         const isPlayauto = (o.source === 'playauto' || o.channel_name?.toLowerCase().includes('플레이오토'))
