@@ -1598,9 +1598,13 @@ class ARTSourcingClient:
                         product_id, client=session_client
                     )
                 if info_data and info_data.get("prdtName"):
-                    # 고시정보 API를 동일 세션으로 호출 (소재/재질, 실제 제조국명 수집)
-                    detail_extra = await self.get_product_detail_api(
-                        product_id, client=session_client
+                    # refresh_only=True 시 가격/재고만 필요 — 고시정보 API 호출 생략
+                    detail_extra = (
+                        None
+                        if refresh_only
+                        else await self.get_product_detail_api(
+                            product_id, client=session_client
+                        )
                     )
                     result = self._parse_info_api(
                         info_data, product_id, now_iso, detail_extra
