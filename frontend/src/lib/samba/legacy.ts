@@ -117,6 +117,11 @@ export interface SambaOrder {
   customer_address?: string;
   quantity: number;
   sale_price: number;
+  /**
+   * 고객결제금액 (할인 적용 후 실제 결제). 미설정이면 sale_price 폴백.
+   * 롯데ON: slAmt − fvrAmtSum
+   */
+  total_payment_amount?: number | null;
   cost: number;
   shipping_fee: number;
   fee_rate: number;

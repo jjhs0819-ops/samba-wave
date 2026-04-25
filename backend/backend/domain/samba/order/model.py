@@ -102,6 +102,10 @@ class SambaOrder(SQLModel, table=True):
     # 수량/금액
     quantity: int = Field(default=1)
     sale_price: float = Field(default=0)
+    # 고객결제금액 (할인 적용 후 실제 고객이 결제한 금액)
+    # 롯데ON: slAmt - fvrAmtSum
+    # 다른 마켓: 미설정 시 sale_price 폴백 사용 (UI 단)
+    total_payment_amount: Optional[float] = Field(default=None)
     cost: float = Field(default=0)
     shipping_fee: float = Field(default=0)
     fee_rate: float = Field(default=0)
