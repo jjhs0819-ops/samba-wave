@@ -202,8 +202,39 @@ class PlayAutoPlugin(MarketPlugin):
                         uploaded.append(url)
             product["images"] = uploaded
 
+        # detail_html 보강: detail_images 리스트가 detail_html의 <img>보다 많으면 재구성.
+        # ABC마트/롯데ON 등 lazy-load 사이트는 detail_html에 placeholder src 1개만 들어있어
+        # Content가 183자 등 매우 짧게 저장되는 경우가 있다. 이때 detail_images 리스트(파서가
+        # data-src까지 모두 추출)를 기반으로 HTML을 재구성해 모든 이미지가 EMP에 표시되도록 보장.
+        detail_html = product.get("detail_html", "") or ""
+        detail_imgs = product.get("detail_images") or []
+        if isinstance(detail_imgs, list) and detail_imgs:
+            existing_srcs = re.findall(
+                r'<img[^>]+src=["\']([^"\']+)["\']', detail_html, re.IGNORECASE
+            )
+            if len(existing_srcs) < len(detail_imgs):
+                logger.info(
+                    f"[플레이오토] detail_html 재구성: 기존 src={len(existing_srcs)}개 < "
+                    f"detail_images={len(detail_imgs)}개 → 이미지 리스트 기반 재생성"
+                )
+                rebuilt_parts = []
+                for u in detail_imgs:
+                    url_str = (
+                        u
+                        if isinstance(u, str)
+                        else (u.get("url", "") if isinstance(u, dict) else "")
+                    )
+                    if not url_str:
+                        continue
+                    if url_str.startswith("//"):
+                        url_str = f"https:{url_str}"
+                    rebuilt_parts.append(
+                        f'<p style="text-align:center"><img src="{url_str}" /></p>'
+                    )
+                if rebuilt_parts:
+                    detail_html = "\n".join(rebuilt_parts)
+
         # 상세설명 HTML 내 이미지도 동일 처리 + lazy loading 삽입
-        detail_html = product.get("detail_html", "")
         if detail_html:
             replaced = await self._replace_detail_images(
                 detail_html, s3_client, bucket_name, public_url, proxy
