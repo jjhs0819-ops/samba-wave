@@ -68,11 +68,11 @@ export default function CSPage() {
 
   // 로그 + 기간 + 필터 추가 상태
   const [csLogMessages, setCsLogMessages] = useState<string[]>(['[대기] CS 문의 가져오기 결과가 여기에 표시됩니다...'])
-  const [csPeriod, setCsPeriod] = useState('thisyear')
+  const [csPeriod, setCsPeriod] = useState('5days')
   const [csSyncAccountId, setCsSyncAccountId] = useState('')
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
-  const [csCustomStart, setCsCustomStart] = useState(`${new Date().getFullYear()}-01-01`)
-  const [csCustomEnd, setCsCustomEnd] = useState(new Date().toLocaleDateString('sv-SE'))
+  const [csCustomStart, setCsCustomStart] = useState((getPeriodStart('5days') ?? new Date()).toLocaleDateString('sv-SE'))
+  const [csCustomEnd, setCsCustomEnd] = useState(getPeriodEnd('5days').toLocaleDateString('sv-SE'))
   const [csStartLocked, setCsStartLocked] = useState(false)
   const [csDateLocked, setCsDateLocked] = useState(false)
   const [searchCategory, setSearchCategory] = useState('customer')

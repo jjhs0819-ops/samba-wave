@@ -404,7 +404,7 @@ export default function OrdersPage() {
       const marketType = syncAccountId.replace('type:', '')
       const marketAccs = accounts.filter(a => a.market_type === marketType)
       const marketName = marketAccs[0]?.market_name || marketType
-      setLogMessages(prev => [...prev, `[${ts()}] ${marketName} 전체 계정 주문 동기화 시작 (${fmtNum(marketAccs.length)}개 계정, 최근 ${days}일)...`])
+      setLogMessages(prev => [...prev, `[${ts()}] ${marketName} 전체 계정 주문수집 시작 (${fmtNum(marketAccs.length)}개 계정, 최근 ${days}일)...`])
       let totalSynced = 0
       let totalCancelRequested = 0
       for (const acc of marketAccs) {
@@ -426,7 +426,7 @@ export default function OrdersPage() {
           setLogMessages(prev => [...prev, `[${ts()}] ${label} 오류: ${e}`])
         }
       }
-      setLogMessages(prev => [...prev, `[${ts()}] ${marketName} 동기화 완료 — 총 ${fmtNum(totalSynced)}건 신규 저장`])
+      setLogMessages(prev => [...prev, `[${ts()}] ${marketName} 주문수집 완료 — 총 ${fmtNum(totalSynced)}건 신규 저장`])
       if (totalCancelRequested > 0) {
         showNotification(`주문 취소요청 ${fmtNum(totalCancelRequested)}건이 감지되었습니다. 확인이 필요합니다.`)
       }
@@ -439,7 +439,7 @@ export default function OrdersPage() {
     const isAll = !syncAccountId
     const acc = isAll ? null : accounts.find(a => a.id === syncAccountId)
     const label = isAll ? '전체마켓' : (acc ? `${acc.market_name}(${acc.seller_id || '-'})` : syncAccountId)
-    setLogMessages(prev => [...prev, `[${ts()}] ${label} 주문 동기화 시작 (최근 ${days}일)...`])
+    setLogMessages(prev => [...prev, `[${ts()}] ${label} 주문수집 시작 (최근 ${days}일)...`])
     try {
       const res = await orderApi.syncFromMarkets(days, isAll ? undefined : syncAccountId)
       for (const r of res.results) {
@@ -451,7 +451,7 @@ export default function OrdersPage() {
           setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: 오류 — ${r.message}`])
         }
       }
-      setLogMessages(prev => [...prev, `[${ts()}] 동기화 완료 — 총 ${fmtNum(res.total_synced)}건 신규 저장`])
+      setLogMessages(prev => [...prev, `[${ts()}] 주문수집 완료 — 총 ${fmtNum(res.total_synced)}건 신규 저장`])
       let totalCancelRequested = 0
       for (const r of res.results) {
         totalCancelRequested += ((r as Record<string, unknown>).cancel_requested as number) || 0
@@ -1089,7 +1089,7 @@ export default function OrdersPage() {
               ])
             })()}
           </select>
-          <button onClick={handleFetch} disabled={syncing} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: syncing ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>{syncing ? '동기화 중...' : '가져오기'}</button>
+          <button onClick={handleFetch} disabled={syncing} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: syncing ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>{syncing ? '주문수집 중...' : '가져오기'}</button>
           <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 2px' }} />
           <select value={bulkStatus} onChange={e => setBulkStatus(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.72rem', minWidth: '110px' }}>
             <option value="">일괄 작업 선택</option>

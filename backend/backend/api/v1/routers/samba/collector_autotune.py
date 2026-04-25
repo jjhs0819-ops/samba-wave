@@ -1382,7 +1382,7 @@ async def _site_autotune_loop(site: str):
                         # ③ 소싱처별 병렬 갱신 + 결과 즉시 처리 (콜백)
                         results, summary = await refresh_products_bulk(
                             products,
-                            max_concurrency={"MUSINSA": 2},
+                            max_concurrency={"MUSINSA": 3},
                             on_result=_on_result,
                         )
 

@@ -85,6 +85,9 @@ _collect_log_flush_counter: dict[str, int] = {}
 # ── 전송 로그 전용 링 버퍼 (오토튠과 동일 방식) ──
 _shipment_log_buffer: deque[str] = deque(maxlen=300)
 _shipment_log_total: int = 0  # 누적 카운터
+# 사용자가 명시적으로 초기화했는지 여부 — DB fallback 억제용
+# (clear 직후 폴링이 옛 DB 로그를 다시 끌어오는 버그 방지)
+_shipment_log_cleared: bool = False
 
 
 def get_shipment_logs(since_idx: int = 0) -> tuple[list[str], int]:
@@ -102,18 +105,26 @@ def get_shipment_logs(since_idx: int = 0) -> tuple[list[str], int]:
     return logs, _shipment_log_total
 
 
+def is_shipment_log_cleared() -> bool:
+    """사용자가 명시적으로 로그 초기화한 직후인지 여부."""
+    return _shipment_log_cleared
+
+
 def _add_shipment_log(msg: str):
     """전송 로그를 링 버퍼에 추가."""
-    global _shipment_log_total
+    global _shipment_log_total, _shipment_log_cleared
     _shipment_log_buffer.append(msg)
     _shipment_log_total += 1
+    # 새 로그가 들어오면 cleared 플래그 자동 해제
+    _shipment_log_cleared = False
 
 
 def clear_shipment_logs():
     """전송 로그 링 버퍼 초기화 (사용자 요청 시만)."""
-    global _shipment_log_total
+    global _shipment_log_total, _shipment_log_cleared
     _shipment_log_buffer.clear()
     _shipment_log_total = 0
+    _shipment_log_cleared = True
 
 
 # ── 수집 로그 전용 링 버퍼 (전송과 동일 방식) ──

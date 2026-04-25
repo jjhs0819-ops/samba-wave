@@ -531,8 +531,16 @@ class PlayAutoClient:
                 data["OptSelectType"] = "SM" if has_two_axes else "SS"
 
         # 품목정보고시 — 카테고리별로 code 분기 (01의류/02구두신발/03가방/04패션잡화/35기타)
-        # GS샵 등 품목 분류 필수 마켓 대응
-        data["SiilData"] = [_build_siil_entry(product, data)]
+        # GS샵 등 품목 분류 필수 마켓 대응. 35(기타재화)로는 등록하지 않는다 — 차단.
+        siil_entry = _build_siil_entry(product, data)
+        if siil_entry.get("code") == "35":
+            raise PlayAutoApiError(
+                "[플레이오토] 의류/신발/가방/잡화가 아닌 카테고리는 등록 차단 "
+                "(GS샵 품목 4분류 미해당, 기타재화 35 등록 방지). "
+                f"category={product.get('category1', '')} / "
+                f"{product.get('category2', '')} / {product.get('category3', '')}"
+            )
+        data["SiilData"] = [siil_entry]
 
         # 인증정보 (기본: 해당없음)
         data["CertType"] = "C"

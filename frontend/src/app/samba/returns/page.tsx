@@ -76,10 +76,10 @@ export default function ReturnsPage() {
     const next = typeof v === 'function' ? v(prev) : v
     return next.slice(-30)
   })
-  const [period, setPeriod] = useState('thisyear')
+  const [period, setPeriod] = useState('5days')
   const [syncAccountId, setSyncAccountId] = useState('')
-  const [customStart, setCustomStart] = useState(`${new Date().getFullYear()}-01-01`)
-  const [customEnd, setCustomEnd] = useState(new Date().toLocaleDateString('sv-SE'))
+  const [customStart, setCustomStart] = useState((getPeriodStart('5days') ?? new Date()).toLocaleDateString('sv-SE'))
+  const [customEnd, setCustomEnd] = useState(getPeriodEnd('5days').toLocaleDateString('sv-SE'))
   const [startLocked, setStartLocked] = useState(false)
   const [dateLocked, setDateLocked] = useState(false)
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
@@ -117,7 +117,7 @@ export default function ReturnsPage() {
       const marketType = syncAccountId.replace('type:', '')
       const marketAccs = accounts.filter(a => a.market_type === marketType)
       const marketName = marketAccs[0]?.market_name || marketType
-      setLogMessages(prev => [...prev, `[${ts()}] ${marketName} 반품교환 동기화 시작 (${fmtNum(marketAccs.length)}개 계정)...`])
+      setLogMessages(prev => [...prev, `[${ts()}] ${marketName} 반품교환 수집 시작 (${fmtNum(marketAccs.length)}개 계정)...`])
       let totalSynced = 0
       for (const acc of marketAccs) {
         try {
@@ -134,7 +134,7 @@ export default function ReturnsPage() {
           setLogMessages(prev => [...prev, `[${ts()}] ${acc.market_name}(${acc.seller_id || '-'}) 오류: ${e}`])
         }
       }
-      setLogMessages(prev => [...prev, `[${ts()}] ${marketName} 동기화 완료 (신규 ${fmtNum(totalSynced)}건)`])
+      setLogMessages(prev => [...prev, `[${ts()}] ${marketName} 반품교환 수집 완료 (신규 ${fmtNum(totalSynced)}건)`])
       await load()
       return
     }
@@ -142,7 +142,7 @@ export default function ReturnsPage() {
     // 전체마켓 또는 개별 계정 동기화
     const isAll = !syncAccountId
     const label = isAll ? '전체마켓' : (accounts.find(a => a.id === syncAccountId)?.market_name || syncAccountId)
-    setLogMessages(prev => [...prev, `[${ts()}] ${label} 반품교환 동기화 중...`])
+    setLogMessages(prev => [...prev, `[${ts()}] ${label} 반품교환 수집 중...`])
     try {
       const syncResult = await returnApi.syncFromMarkets(30, isAll ? undefined : syncAccountId)
       for (const r of syncResult.results) {
@@ -152,9 +152,9 @@ export default function ReturnsPage() {
           setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: 오류 — ${r.message}`])
         }
       }
-      setLogMessages(prev => [...prev, `[${ts()}] 동기화 완료 (신규 ${fmtNum(syncResult.total_synced)}건)`])
+      setLogMessages(prev => [...prev, `[${ts()}] 반품교환 수집 완료 (신규 ${fmtNum(syncResult.total_synced)}건)`])
     } catch (e) {
-      setLogMessages(prev => [...prev, `[오류] 동기화 실패: ${e}`])
+      setLogMessages(prev => [...prev, `[오류] 반품교환 수집 실패: ${e}`])
     }
     await load()
   }

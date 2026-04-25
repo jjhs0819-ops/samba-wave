@@ -227,12 +227,16 @@ async def get_shipment_log_buffer(
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """전송 로그 링 버퍼 조회 — 창 닫아도 유지. 버퍼 비어있으면 DB fallback."""
-    from backend.domain.samba.job.worker import get_shipment_logs
+    from backend.domain.samba.job.worker import (
+        get_shipment_logs,
+        is_shipment_log_cleared,
+    )
     from sqlalchemy import text as _text
 
     logs, current_idx = get_shipment_logs(since_idx)
 
-    if current_idx == 0 and since_idx == 0:
+    # 사용자가 방금 초기화 했다면 DB fallback 건너뜀 (옛 로그 재유입 차단)
+    if current_idx == 0 and since_idx == 0 and not is_shipment_log_cleared():
         # jsonb 캐스팅 오류 방지: left('[') 로 배열 여부 텍스트 레벨에서 먼저 확인
         # (planner가 jsonb_array_length를 scalar 행에 먼저 평가해 터지던 버그 회피)
         result = await session.execute(

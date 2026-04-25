@@ -40,6 +40,15 @@ _CATEGORY_GROUP: dict[str, str] = {
     "여성스포츠의류": "wear",
     "아웃도어의류": "wear",
     "골프웨어": "wear",
+    "유니폼": "wear",
+    "레플리카": "wear",
+    "져지": "wear",
+    "트레이닝복": "wear",
+    "트레이닝웨어": "wear",
+    "트랙수트": "wear",
+    "축구의류": "wear",
+    "농구의류": "wear",
+    "야구의류": "wear",
     # 신발
     "신발": "shoes",
     "스니커즈": "shoes",
@@ -120,25 +129,42 @@ def detect_notice_group(product: dict[str, Any]) -> str:
     Returns: "wear" | "shoes" | "bag" | "accessories" | "cosmetic" | "food" | "electronics" | "sports" | "etc"
     """
     cat1 = (product.get("category1") or "").strip()
+    cat2 = (product.get("category2") or "").strip()
+    cat3 = (product.get("category3") or "").strip()
 
-    # "스포츠/레저", "소품" 등 복합 카테고리는 category2/category3로 세분화
-    if cat1 in ("스포츠/레저", "소품"):
-        cat2 = (product.get("category2") or "").strip()
-        if cat2 in _CATEGORY_GROUP:
-            return _CATEGORY_GROUP[cat2]
-        # cat3 정확 매칭 — "남성등산의류" / "등산화/트레킹화" 등 세분류에서 wear/shoes 검출
-        cat3 = (product.get("category3") or "").strip()
-        if cat3 in _CATEGORY_GROUP:
-            return _CATEGORY_GROUP[cat3]
-        for keyword, group in _CATEGORY_GROUP.items():
-            if keyword in cat2:
-                return group
-        return "etc"  # 기구/용품/장비 등 → 기타 재화
+    # 의류/신발/가방/잡화는 GS샵 등 품목 필수 마켓에서 정확히 분기되어야 한다.
+    # cat1이 "스포츠웨어/슈즈" 같은 복합 카테고리면 cat1 부분키워드 매칭에서 "스포츠"로
+    # sports(=35 기타재화)에 빠지는 문제 → cat2/cat3 정확 매칭을 cat1 부분 매칭보다 먼저.
+    PRIORITY_GROUPS = ("wear", "shoes", "bag", "accessories")
 
+    # 1) cat2 / cat3 정확 매칭 (가장 구체적인 분류)
+    for cat in (cat2, cat3):
+        if cat and cat in _CATEGORY_GROUP:
+            return _CATEGORY_GROUP[cat]
+
+    # 2) cat1 정확 매칭
     if cat1 in _CATEGORY_GROUP:
         return _CATEGORY_GROUP[cat1]
 
-    # category1에 키워드가 포함된 경우 (예: "남성신발" → "신발" 포함)
+    # 3) "스포츠/레저", "소품" 등 복합 cat1: cat2 키워드 부분 매칭 후 etc 폴백
+    if cat1 in ("스포츠/레저", "소품"):
+        for keyword, group in _CATEGORY_GROUP.items():
+            if cat2 and keyword in cat2:
+                return group
+        return "etc"
+
+    # 4) cat2/cat3에서 의류/신발/가방/잡화 키워드 우선 부분 매칭 (sports로 빠지지 않도록)
+    for cat in (cat2, cat3):
+        if not cat:
+            continue
+        for keyword, group in _CATEGORY_GROUP.items():
+            if group in PRIORITY_GROUPS and keyword in cat:
+                return group
+
+    # 5) cat1 키워드 부분 매칭 (의류/신발/가방/잡화 우선, 그 외는 그다음)
+    for keyword, group in _CATEGORY_GROUP.items():
+        if group in PRIORITY_GROUPS and keyword in cat1:
+            return group
     for keyword, group in _CATEGORY_GROUP.items():
         if keyword in cat1:
             return group

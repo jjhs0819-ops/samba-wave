@@ -333,8 +333,47 @@ class PlayAutoPlugin(MarketPlugin):
         public_url: str,
         proxy: str = "",
     ) -> str:
-        """상세설명 HTML 내 외부 이미지 URL을 R2 URL로 교체."""
-        img_pattern = re.compile(r'src=["\']([^"\']+)["\']')
+        """상세설명 HTML 내 외부 이미지 URL을 R2 URL로 교체.
+
+        ABC마트/롯데ON 등은 lazy-load 패턴(`<img src="placeholder.gif" data-src="진짜.jpg">`)
+        을 사용. EMP는 src 속성만 인식하므로:
+        1) data-src/data-lazy/data-original 값을 src로 승격 (placeholder 제거)
+        2) src + data-* 속성에 들어있는 모든 외부 URL을 R2로 업로드 후 치환
+        """
+
+        # 1) lazy-load 속성을 src로 승격 — img 태그 단위로 처리
+        def _promote_lazy(m: re.Match) -> str:
+            tag = m.group(0)
+            lazy_match = re.search(
+                r'(?:data-src|data-lazy|data-lazy-src|data-original)=["\']([^"\']+)["\']',
+                tag,
+                re.IGNORECASE,
+            )
+            if not lazy_match:
+                return tag
+            real_url = lazy_match.group(1)
+            if not real_url:
+                return tag
+            # 기존 src=... 가 있으면 진짜 URL로 교체, 없으면 추가
+            if re.search(r"\ssrc=", tag, re.IGNORECASE):
+                tag = re.sub(
+                    r'(\ssrc=)(["\'])[^"\']*\2',
+                    lambda mm: f"{mm.group(1)}{mm.group(2)}{real_url}{mm.group(2)}",
+                    tag,
+                    count=1,
+                    flags=re.IGNORECASE,
+                )
+            else:
+                tag = tag.replace("<img", f'<img src="{real_url}"', 1)
+            return tag
+
+        html = re.sub(r"<img\b[^>]*>", _promote_lazy, html, flags=re.IGNORECASE)
+
+        # 2) src + 잔여 data-* 속성 모두에서 외부 URL 추출
+        img_pattern = re.compile(
+            r'(?:src|data-src|data-lazy|data-lazy-src|data-original)=["\']([^"\']+)["\']',
+            re.IGNORECASE,
+        )
         urls = img_pattern.findall(html)
 
         if not urls:
