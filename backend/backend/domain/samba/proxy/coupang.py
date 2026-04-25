@@ -211,6 +211,53 @@ def _build_content_details(detail_html: str) -> list[dict[str, Any]]:
     return details if details else [{"content": detail_html, "detailType": "TEXT"}]
 
 
+# GSShop 자사 CDN 화이트리스트 — 쿠팡 검증 거절(외부 호스트 이미지) 방지용
+_GSSHOP_ALLOWED_DOMAINS: tuple[str, ...] = (
+    "asset.m-gs.kr",
+    "static.m-gs.kr",
+    "static.gsshop.com",
+)
+
+
+def _filter_gsshop_domain(urls: list[str]) -> list[str]:
+    """GSShop 자사 CDN 화이트리스트에 속한 URL만 통과시킨다.
+
+    쿠팡 검증 거절(외부 호스트 / 비공개 CDN 이미지) 방지를 위해
+    asset.m-gs.kr / static.m-gs.kr / static.gsshop.com 만 허용.
+    빈 문자열·외부 호스트는 모두 제거된다.
+    """
+    result: list[str] = []
+    for u in urls:
+        if not u:
+            continue
+        if any(host in u for host in _GSSHOP_ALLOWED_DOMAINS):
+            result.append(u)
+    return result
+
+
+def _filter_html_external_images(html: str) -> str:
+    """detail_html의 <img> 태그에서 GSShop CDN 외 외부 호스트 src/data-src를 가진 태그를 제거.
+
+    예: akplaza.com, speedgabia.com 등 외부 호스트 이미지는 태그 통째로 제거.
+    화이트리스트(_GSSHOP_ALLOWED_DOMAINS)에 속한 src/data-src 만 남는다.
+    """
+    if not html:
+        return html
+
+    img_re = re.compile(
+        r'<img[^>]*?(?:src|data-src)=["\']([^"\']+)["\'][^>]*?>',
+        re.IGNORECASE,
+    )
+
+    def _sub(match: re.Match[str]) -> str:
+        url = match.group(1)
+        if any(host in url for host in _GSSHOP_ALLOWED_DOMAINS):
+            return match.group(0)
+        return ""
+
+    return img_re.sub(_sub, html)
+
+
 class CoupangClient:
     """쿠팡 Wing API 클라이언트."""
 
@@ -529,8 +576,18 @@ class CoupangClient:
         """
         from datetime import datetime as dt, timezone as tz
 
-        images_raw = product.get("images") or []
-        coupang_main = product.get("coupang_main_image") or ""
+        # 외부 호스트(GSShop 자사 CDN 화이트리스트 외) URL 제거 — 쿠팡 검증 거절 방지
+        _images_orig = product.get("images") or []
+        images_raw = _filter_gsshop_domain(_images_orig)
+        # 필터링 후 빈 배열이면 원본 첫 URL 1개는 유지 (대표 이미지 보장)
+        if not images_raw and _images_orig:
+            images_raw = [_images_orig[0]]
+
+        detail_images = _filter_gsshop_domain(product.get("detail_images") or [])
+
+        _main_raw = product.get("coupang_main_image") or ""
+        _main_filtered = _filter_gsshop_domain([_main_raw]) if _main_raw else []
+        coupang_main = _main_filtered[0] if _main_filtered else ""
         default_color = product.get("color", "") or "상세 이미지 참조"
         detail_html = (
             product.get("detail_html", "") or f"<p>{product.get('name', '')}</p>"
@@ -548,6 +605,9 @@ class CoupangClient:
         from backend.domain.samba.proxy.notice_utils import build_coupang_notices
 
         notices = build_coupang_notices(product)
+
+        # detail_html 안의 외부 호스트 <img> 태그 제거 (쿠팡 검증 거절 방지)
+        detail_html = _filter_html_external_images(detail_html)
 
         # 상세 컨텐츠 (IMAGE/TEXT 혼합)
         content_details = _build_content_details(detail_html)
@@ -663,9 +723,9 @@ class CoupangClient:
             "returnAddress": "상세페이지 참조",
             "returnAddressDetail": "상세페이지 참조",
             "returnCharge": 2500,
-            "outboundShippingPlaceCode": int(outbound_shipping_place_code)
-            if outbound_shipping_place_code
-            else 0,
+            "outboundShippingPlaceCode": (
+                int(outbound_shipping_place_code) if outbound_shipping_place_code else 0
+            ),
             "vendorUserId": "",  # 런타임에 디스패처에서 채움
             "requested": True,
             "items": items,
