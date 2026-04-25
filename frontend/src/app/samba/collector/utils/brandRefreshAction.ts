@@ -176,21 +176,31 @@ export async function performBrandRefresh(args: BrandRefreshArgs) {
             } else {
               const { job_id } = await r.json()
               addLog(`[브랜드전체수집] Job 생성 완료 — 백그라운드 실행 중 (페이지 이탈해도 계속 수집됩니다)`)
+              let _pollFailCount = 0
               while (!abort.signal.aborted) {
                 await new Promise(resolve => setTimeout(resolve, 2000))
                 if (abort.signal.aborted) break
-                const jr = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
-                if (!jr.ok) break
-                const jobData = await jr.json() as { status: string; current: number; total: number; result?: Record<string, number>; error?: string }
-                if (jobData.status === 'completed') {
-                  addLog(`[브랜드전체수집] 완료 — 저장 ${fmtNum(jobData.result?.saved ?? 0)}건`)
-                  await load(); await loadTree()
-                  break
-                }
-                if (jobData.status === 'failed') {
-                  addLog(`[브랜드전체수집] 실패: ${jobData.error || '오류'}`)
-                  await load(); await loadTree()
-                  break
+                try {
+                  const jr = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
+                  if (!jr.ok) break
+                  _pollFailCount = 0
+                  const jobData = await jr.json() as { status: string; current: number; total: number; result?: Record<string, number>; error?: string }
+                  if (jobData.status === 'completed') {
+                    addLog(`[브랜드전체수집] 완료 — 저장 ${fmtNum(jobData.result?.saved ?? 0)}건`)
+                    await load(); await loadTree()
+                    break
+                  }
+                  if (jobData.status === 'failed') {
+                    addLog(`[브랜드전체수집] 실패: ${jobData.error || '오류'}`)
+                    await load(); await loadTree()
+                    break
+                  }
+                } catch {
+                  _pollFailCount++
+                  if (_pollFailCount >= 3) {
+                    addLog('[브랜드전체수집] 서버 응답 없음 — 백그라운드 수집은 계속됩니다')
+                    break
+                  }
                 }
               }
             }

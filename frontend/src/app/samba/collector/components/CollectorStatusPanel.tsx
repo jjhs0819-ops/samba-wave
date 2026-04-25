@@ -8,7 +8,7 @@ import { fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
 type StatusState = 'checking' | 'ok' | 'error'
 
 // 수집 큐 상태 타입
-type CollectQueueItem = { filter_name: string; source_site: string }
+type CollectQueueItem = { id: string; filter_name: string; source_site: string; started_at: string | null; current: number; total: number }
 type CollectQueueStatus = {
   running: CollectQueueItem[]
   pending: CollectQueueItem[]
@@ -34,11 +34,13 @@ type LogProps = {
   collectLog: string[]
   collecting: boolean
   collectQueueStatus: CollectQueueStatus
+  cancellingJobIds: string[]
   logRef: RefObject<HTMLDivElement | null>
   handleStopCollect: () => void | Promise<void>
+  handleCancelCollectJob: (jobId: string) => void
   handleCopyLog: () => void
   handleClearLog: () => void
-  parseGroupName: (name: string, site: string) => ParsedGroup
+  parseGroupName?: (name: string, site: string) => ParsedGroup
 }
 
 type Props = StatusProps | LogProps
@@ -97,102 +99,123 @@ export default function CollectorStatusPanel(props: Props) {
     collectLog,
     collecting,
     collectQueueStatus,
+    cancellingJobIds,
     logRef,
     handleStopCollect,
+    handleCancelCollectJob,
     handleCopyLog,
     handleClearLog,
-    parseGroupName,
   } = props
+  const { running, pending } = collectQueueStatus
+  const hasJobs = running.length > 0 || pending.length > 0
   return (
-    // 로그현황
-    <div style={{
-      background: "rgba(30,30,30,0.5)", border: "1px solid #2D2D2D", borderRadius: "8px",
-      overflow: "hidden", marginBottom: "1rem",
-    }}>
+    <>
+      {/* 수집 잡 진행상황 섹션 */}
+      {hasJobs && (
+        <div style={{ background: 'rgba(8,10,16,0.98)', border: '1px solid #1C1E2A', borderRadius: '8px', marginBottom: '8px', overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 14px', background: '#0A0D14', borderBottom: '1px solid #1C1E2A' }}>
+            <span style={{ width: '6px', height: '6px', borderRadius: '50%',
+              background: running.length > 0 ? '#51CF66' : '#FAB005' }} />
+            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#9AA5C0' }}>
+              수집 잡 진행상황
+              {running.length > 0 && ` — 수집 중 ${fmtNum(running.length)}건`}
+              {pending.length > 0 && `${running.length > 0 ? ' · ' : ' — '}대기 ${fmtNum(pending.length)}건`}
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '8px 14px' }}>
+            {running.map((j, idx) => {
+              const started = j.started_at ? new Date(j.started_at) : null
+              const startedStr = started
+                ? `${String(started.getHours()).padStart(2,'0')}:${String(started.getMinutes()).padStart(2,'0')}:${String(started.getSeconds()).padStart(2,'0')}`
+                : '-'
+              const pct = j.total > 0 ? Math.floor((j.current / j.total) * 100) : 0
+              const busy = cancellingJobIds.includes(j.id)
+              return (
+                <div key={`rc-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: '#C4CAD8' }}>
+                  <span style={{ color: '#51CF66', fontWeight: 600, minWidth: '40px' }}>수집중</span>
+                  <span style={{ color: '#8A95B0', minWidth: '72px' }}>시작 {startedStr}</span>
+                  <span style={{ color: '#7BB0FF', minWidth: '64px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{j.source_site}</span>
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{j.filter_name || '—'}</span>
+                  <span style={{ color: '#9AA5C0', minWidth: '110px', textAlign: 'right' }}>
+                    {j.total > 0 ? `${fmtNum(j.current)} / ${fmtNum(j.total)} (${pct}%)` : '—'}
+                  </span>
+                  <button
+                    onClick={() => handleCancelCollectJob(j.id)}
+                    disabled={busy}
+                    style={{ padding: '2px 8px', fontSize: '0.7rem', background: busy ? 'rgba(255,80,80,0.3)' : 'rgba(255,80,80,0.12)', color: '#FF6B6B', border: '1px solid rgba(255,80,80,0.4)', borderRadius: '3px', cursor: busy ? 'not-allowed' : 'pointer', fontWeight: 600, minWidth: '44px' }}
+                  >{busy ? '취소중' : '취소'}</button>
+                </div>
+              )
+            })}
+            {pending.map((j, idx) => {
+              const busy = cancellingJobIds.includes(j.id)
+              return (
+                <div key={`pc-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: '#8A95B0' }}>
+                  <span style={{ color: '#FAB005', fontWeight: 600, minWidth: '40px' }}>대기</span>
+                  <span style={{ minWidth: '72px' }}>—</span>
+                  <span style={{ color: '#7BB0FF', minWidth: '64px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{j.source_site}</span>
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{j.filter_name || '—'}</span>
+                  <span style={{ minWidth: '110px', textAlign: 'right' }}>—</span>
+                  <button
+                    onClick={() => handleCancelCollectJob(j.id)}
+                    disabled={busy}
+                    style={{ padding: '2px 8px', fontSize: '0.7rem', background: busy ? 'rgba(255,80,80,0.3)' : 'rgba(255,80,80,0.12)', color: '#FF6B6B', border: '1px solid rgba(255,80,80,0.4)', borderRadius: '3px', cursor: busy ? 'not-allowed' : 'pointer', fontWeight: 600, minWidth: '44px' }}
+                  >{busy ? '취소중' : '취소'}</button>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 로그현황 */}
       <div style={{
-        padding: "8px 16px", borderBottom: "1px solid #2D2D2D",
-        display: "flex", alignItems: "center", justifyContent: "space-between",
+        background: "rgba(30,30,30,0.5)", border: "1px solid #2D2D2D", borderRadius: "8px",
+        overflow: "hidden", marginBottom: "1rem",
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <div style={{
+          padding: "8px 16px", borderBottom: "1px solid #2D2D2D",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+        }}>
           <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "#C5C5C5" }}>로그현황</span>
-          {(() => {
-            const { running, pending } = collectQueueStatus
-            const hasActivity = running.length > 0 || pending.length > 0
-            // 브랜드별 그룹핑
-            const groupByBrand = (items: Array<{ filter_name: string; source_site: string }>) => {
-              const brands = new Map<string, number>()
-              for (const item of items) {
-                const parsed = parseGroupName(item.filter_name, item.source_site)
-                const brand = parsed.brand || item.source_site || '알수없음'
-                brands.set(brand, (brands.get(brand) || 0) + 1)
-              }
-              return brands
-            }
-            const runBrands = groupByBrand(running)
-            const penBrands = groupByBrand(pending)
-            const formatBrands = (brands: Map<string, number>) => {
-              const entries = [...brands.entries()]
-              if (entries.length === 0) return ''
-              if (entries.length <= 2) return entries.map(([b, c]) => c > 1 ? `${b} ${fmtNum(c)}건` : b).join('/')
-              return `${entries[0][0]} 외 ${fmtNum(entries.length - 1)}개`
-            }
-            return (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.72rem' }}>
-                <span style={{ width: '6px', height: '6px', borderRadius: '50%', flexShrink: 0,
-                  background: running.length > 0 ? '#51CF66' : pending.length > 0 ? '#FAB005' : '#444',
-                }} />
-                {running.length > 0 && (
-                  <span style={{ color: '#51CF66' }}>
-                    {formatBrands(runBrands)} 진행 {fmtNum(running.length)}건
-                  </span>
-                )}
-                {pending.length > 0 && (
-                  <span style={{ color: '#FAB005' }}>
-                    {running.length > 0 ? '+ ' : ''}{formatBrands(penBrands)} 대기 {fmtNum(pending.length)}건
-                  </span>
-                )}
-                {!hasActivity && <span style={{ color: '#555' }}>대기 잡 없음</span>}
-              </div>
-            )
-          })()}
+          <div style={{ display: "flex", gap: "4px" }}>
+            {collecting && (
+              <button onClick={handleStopCollect} style={{
+                fontSize: "0.75rem", color: "#FF6B6B", background: "rgba(255,100,100,0.1)",
+                border: "1px solid rgba(255,100,100,0.4)", padding: "2px 10px", borderRadius: "4px", cursor: "pointer",
+              }}>수집 중단</button>
+            )}
+            <button onClick={handleCopyLog} style={{
+              fontSize: "0.75rem", color: "#888", background: "transparent",
+              border: "1px solid #3D3D3D", padding: "2px 10px", borderRadius: "4px", cursor: "pointer",
+            }}>복사</button>
+            <button onClick={handleClearLog} style={{
+              fontSize: "0.75rem", color: "#888", background: "transparent",
+              border: "1px solid #3D3D3D", padding: "2px 10px", borderRadius: "4px", cursor: "pointer",
+            }}>초기화</button>
+          </div>
         </div>
-        <div style={{ display: "flex", gap: "4px" }}>
-          {collecting && (
-            <button onClick={handleStopCollect} style={{
-              fontSize: "0.75rem", color: "#FF6B6B", background: "rgba(255,100,100,0.1)",
-              border: "1px solid rgba(255,100,100,0.4)", padding: "2px 10px", borderRadius: "4px", cursor: "pointer",
-            }}>수집 중단</button>
-          )}
-          <button onClick={handleCopyLog} style={{
-            fontSize: "0.75rem", color: "#888", background: "transparent",
-            border: "1px solid #3D3D3D", padding: "2px 10px", borderRadius: "4px", cursor: "pointer",
-          }}>복사</button>
-          <button onClick={handleClearLog} style={{
-            fontSize: "0.75rem", color: "#888", background: "transparent",
-            border: "1px solid #3D3D3D", padding: "2px 10px", borderRadius: "4px", cursor: "pointer",
-          }}>초기화</button>
+        <div
+          ref={logRef}
+          style={{
+            height: "160px", overflowY: "auto", padding: "10px 16px",
+            fontFamily: "monospace", fontSize: "0.78rem", color: "#8A95B0", zoom: "0.7",
+            background: "#080A10", lineHeight: 1.6,
+          }}
+        >
+          {collectLog.map((line, i) => (
+            <p key={i} style={{
+              color: line.includes("완료") ? "#51CF66"
+                : line.includes("실패") || line.includes("오류") ? "#FF6B6B"
+                : line.includes("대기") || line.includes("초기화") ? "#555"
+                : "#8A95B0",
+              margin: 0,
+            }}>
+              {fmtTextNumbers(line)}
+            </p>
+          ))}
         </div>
       </div>
-      <div
-        ref={logRef}
-        style={{
-          height: "160px", overflowY: "auto", padding: "10px 16px",
-          fontFamily: "monospace", fontSize: "0.78rem", color: "#8A95B0", zoom: "0.7",
-          background: "#080A10", lineHeight: 1.6,
-        }}
-      >
-        {collectLog.map((line, i) => (
-          <p key={i} style={{
-            color: line.includes("완료") ? "#51CF66"
-              : line.includes("실패") || line.includes("오류") ? "#FF6B6B"
-              : line.includes("대기") || line.includes("초기화") ? "#555"
-              : "#8A95B0",
-            margin: 0,
-          }}>
-            {fmtTextNumbers(line)}
-          </p>
-        ))}
-      </div>
-    </div>
+    </>
   )
 }

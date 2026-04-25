@@ -414,7 +414,14 @@ async def get_collect_queue_status(
         payload = j.payload or {}
         fid = payload.get("filter_id", "")
         fname, fsite = filter_map.get(fid, ("", payload.get("source_site", "")))
-        item = {"filter_name": fname, "source_site": fsite}
+        item = {
+            "id": j.id,
+            "filter_name": fname,
+            "source_site": fsite,
+            "started_at": j.started_at.isoformat() if j.started_at else None,
+            "current": j.current or 0,
+            "total": j.total or 0,
+        }
         if j.status == JobStatus.RUNNING:
             running.append(item)
         else:

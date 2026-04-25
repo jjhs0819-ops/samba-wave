@@ -35,6 +35,8 @@ interface Props {
   setSyncAccountId: Dispatch<SetStateAction<string>>
   syncing: boolean
   handleFetch: () => void | Promise<void>
+  backgroundMode: boolean
+  setBackgroundMode: Dispatch<SetStateAction<boolean>>
   bulkStatus: string
   setBulkStatus: Dispatch<SetStateAction<string>>
   bulkUpdating: boolean
@@ -75,6 +77,7 @@ export default function OrdersFilterBar(props: Props) {
     period, setPeriod, customStart, setCustomStart, customEnd, setCustomEnd,
     startLocked, setStartLocked, dateLocked, setDateLocked,
     syncAccountId, setSyncAccountId, syncing, handleFetch,
+    backgroundMode, setBackgroundMode,
     bulkStatus, setBulkStatus, bulkUpdating, handleBulkAction, selectedIdsSize,
     filteredOrdersCount, filteredOrdersTotalSale,
     searchCategory, setSearchCategory, searchText, setSearchText, loadOrders,
@@ -145,6 +148,20 @@ export default function OrdersFilterBar(props: Props) {
             })()}
           </select>
           <button onClick={handleFetch} disabled={syncing} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: syncing ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>{syncing ? '주문수집 중...' : '가져오기'}</button>
+          {/* 백그라운드 모드 토글 — 전체마켓 선택 시에만 활성화 (개별/마켓타입은 짧아서 불필요) */}
+          <label
+            title="백그라운드 잡으로 실행 — 페이지 이탈해도 계속 진행. 전체마켓 선택 시에만 적용."
+            style={{ display: 'flex', alignItems: 'center', gap: '3px', fontSize: '0.7rem', color: syncAccountId ? '#555' : '#888', cursor: syncAccountId ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}
+          >
+            <input
+              type="checkbox"
+              checked={backgroundMode}
+              disabled={syncing || !!syncAccountId}
+              onChange={e => setBackgroundMode(e.target.checked)}
+              style={{ cursor: syncing || syncAccountId ? 'not-allowed' : 'pointer' }}
+            />
+            백그라운드
+          </label>
           <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 2px' }} />
           <select value={bulkStatus} onChange={e => setBulkStatus(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.72rem', minWidth: '110px' }}>
             <option value="">일괄 작업 선택</option>

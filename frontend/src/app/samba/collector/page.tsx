@@ -208,7 +208,17 @@ export default function CollectorPage() {
     collecting, brandScanning, setCollecting, setCollectLog, load, logRef, manualCollectRef,
   })
 
-  const collectQueueStatus = useCollectQueuePolling(collecting)
+  const collectQueueStatus = useCollectQueuePolling()
+  const [cancellingCollectJobIds, setCancellingCollectJobIds] = useState<string[]>([])
+
+  const handleCancelCollectJob = async (jobId: string) => {
+    setCancellingCollectJobIds(prev => [...prev, jobId])
+    try {
+      await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/${jobId}`, { method: 'DELETE' })
+    } catch { /* 무시 */ } finally {
+      setCancellingCollectJobIds(prev => prev.filter(id => id !== jobId))
+    }
+  }
 
   const executeCreateGroup = (brandCode?: string) => performCreateGroup({
     brandCode, collectUrl, selectedSite, checkedOptions,
@@ -358,8 +368,10 @@ export default function CollectorPage() {
         collectLog={collectLog}
         collecting={collecting}
         collectQueueStatus={collectQueueStatus}
+        cancellingJobIds={cancellingCollectJobIds}
         logRef={logRef}
         handleStopCollect={handleStopCollect}
+        handleCancelCollectJob={handleCancelCollectJob}
         handleCopyLog={handleCopyLog}
         handleClearLog={handleClearLog}
         parseGroupName={parseGroupName}
