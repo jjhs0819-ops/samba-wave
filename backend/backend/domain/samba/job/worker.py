@@ -1978,7 +1978,10 @@ class JobWorker:
                     _parent = filters[0]
                     _brand_nm = _parent.source_brand_name or keyword
                     _cat_path_str = " > ".join(_name_parts)
-                    _new_name = f"MUSINSA_{_brand_nm}_" + "_".join(_name_parts)
+                    # 플레이오토 MyCateName은 '/'가 트리 구분자 — 필터명에 '/' 금지
+                    _new_name = (
+                        f"MUSINSA_{_brand_nm}_" + "_".join(_name_parts)
+                    ).replace("/", "_")
                     # keyword URL: 기존 filter에서 category param만 교체
                     _new_keyword = None
                     try:
@@ -2322,7 +2325,10 @@ class JobWorker:
                     _parent = filters[0]
                     _brand_nm = _parent.source_brand_name or keyword
                     _cat_path_str = " > ".join(_parts)
-                    _new_name = f"ABCmart_{_brand_nm}_" + "_".join(_parts)
+                    # 플레이오토 MyCateName은 '/'가 트리 구분자 — 필터명에 '/' 금지
+                    _new_name = (f"ABCmart_{_brand_nm}_" + "_".join(_parts)).replace(
+                        "/", "_"
+                    )
                     _new_filter = SambaSearchFilter(
                         source_site=_parent.source_site or "ABCmart",
                         name=_new_name,
@@ -2869,7 +2875,10 @@ class JobWorker:
                             or _std_parts
                             or [detail.get("dispCtgNm", "기타")]
                         )
-                        _new_name = f"SSG_{_brand_nm}_" + "_".join(_cat_parts_for_name)
+                        # 플레이오토 MyCateName은 '/'가 트리 구분자 — 필터명에 '/' 금지
+                        _new_name = (
+                            f"SSG_{_brand_nm}_" + "_".join(_cat_parts_for_name)
+                        ).replace("/", "_")
                         # 동일 이름 필터 중복 방지
                         _existing = next(
                             (f for f in filters if f.name == _new_name), None
@@ -3371,7 +3380,10 @@ class JobWorker:
                     _parent = filters[0]
                     _brand_nm = _parent.source_brand_name or keyword
                     _cat_path_str = " > ".join(_c_parts)
-                    _new_name = f"GSShop_{_brand_nm}_" + "_".join(_c_parts)
+                    # 플레이오토 MyCateName은 '/'가 트리 구분자 — 필터명에 '/' 금지
+                    _new_name = (f"GSShop_{_brand_nm}_" + "_".join(_c_parts)).replace(
+                        "/", "_"
+                    )
                     _new_filter = SambaSearchFilter(
                         source_site="GSShop",
                         name=_new_name,

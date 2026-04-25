@@ -538,9 +538,12 @@ class PlayAutoClient:
         data["CertType"] = "C"
 
         # 사용자 임의분류 (검색필터명 기반)
+        # EMP MyCateName은 '/'가 트리 구분자 — 필터명에 '/' 있으면 _로 치환
+        # (신규 필터는 worker.py에서 차단하나 레거시 데이터 방어)
         filter_name = product.get("_search_filter_name", "")
         if filter_name:
-            data["MyCateName"] = f"SAMBA-WAVE/{filter_name}"
+            safe_name = filter_name.replace("/", "_")
+            data["MyCateName"] = f"SAMBA-WAVE/{safe_name}"
 
         return data
 
