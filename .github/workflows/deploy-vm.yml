@@ -72,6 +72,8 @@ jobs:
             echo "=== 배포 후 5초 대기 ==="
             sleep 5
             sudo docker compose ps
+            echo "=== 미사용 이미지 정리 ==="
+            sudo docker image prune -a -f | tail -3
           ENDSSH
 
       - name: 헬스체크

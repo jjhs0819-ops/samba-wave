@@ -142,7 +142,7 @@ ssh -i "$SSH_KEY" \
   -o StrictHostKeyChecking=accept-new \
   -o ConnectTimeout=10 \
   "${VM_USER}@${VM_HOST}" \
-  "cd /opt/samba && sudo docker compose pull samba-api && sudo docker compose up -d samba-api && sudo docker compose ps --format 'table {{.Name}}\t{{.Status}}'"
+  "cd /opt/samba && sudo docker compose pull samba-api && sudo docker compose up -d samba-api && sudo docker compose ps --format 'table {{.Name}}\t{{.Status}}' && echo '--- 미사용 이미지 정리 ---' && sudo docker image prune -a -f | tail -3"
 log_ok "VM 재시작 완료"
 
 # 4. 헬스체크 (최대 180초 대기) — 커밋 SHA로 최신 리비전 서빙 중인지 검증
