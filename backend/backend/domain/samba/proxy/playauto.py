@@ -601,17 +601,22 @@ def _build_siil_entry(product: dict, data: dict) -> dict:
 
     entry: dict[str, str] = {"code": code}
 
+    # 누락 방지: 모든 의류/신발/가방/잡화 코드는 data1~data20을 fallback으로 베이스 채움.
+    # 플레이오토 EMP는 code별 필요한 위치만 사용하므로 초과 키는 무시되고, 누락(빈 값)만 차단.
+    # GS샵 등 품목정보 필수 마켓에서 (01)/(02)/(03)/(04) 누락 거부 대응.
+    if code in ("01", "02", "03", "04"):
+        for i in range(1, 21):
+            entry[f"data{i}"] = fallback
+
     if code == "01":
         # 의류: 소재/색상/치수/제조자/제조국/세탁방법/제조년월/품질보증/AS
         entry.update(
             {
                 "data1": material,
                 "data2": color,
-                "data3": fallback,
                 "data4": maker,
                 "data5": siil_origin,
                 "data6": care,
-                "data7": fallback,
                 "data8": quality,
                 "data9": as_phone,
             }
@@ -622,11 +627,9 @@ def _build_siil_entry(product: dict, data: dict) -> dict:
             {
                 "data1": material,
                 "data2": color,
-                "data3": fallback,
                 "data4": maker,
                 "data5": siil_origin,
                 "data6": care,
-                "data7": fallback,
                 "data8": quality,
                 "data9": as_phone,
             }
@@ -635,14 +638,11 @@ def _build_siil_entry(product: dict, data: dict) -> dict:
         # 가방: 종류/소재/색상/크기/제조자/제조국/취급시주의/제조년월/품질보증/AS
         entry.update(
             {
-                "data1": fallback,
                 "data2": material,
                 "data3": color,
-                "data4": fallback,
                 "data5": maker,
                 "data6": siil_origin,
                 "data7": care,
-                "data8": fallback,
                 "data9": quality,
                 "data10": as_phone,
             }
@@ -651,13 +651,10 @@ def _build_siil_entry(product: dict, data: dict) -> dict:
         # 패션잡화: 종류/소재/치수/제조자/제조국/취급시주의/제조년월/품질보증/AS
         entry.update(
             {
-                "data1": fallback,
                 "data2": material,
-                "data3": fallback,
                 "data4": maker,
                 "data5": siil_origin,
                 "data6": care,
-                "data7": fallback,
                 "data8": quality,
                 "data9": as_phone,
             }

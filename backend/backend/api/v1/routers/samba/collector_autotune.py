@@ -138,6 +138,43 @@ async def _classify_products(session) -> dict[str, int]:
     return counts
 
 
+async def _stream_event(
+    event_type: str,
+    severity: str,
+    *,
+    summary: str,
+    source_site: Optional[str] = None,
+    product_id: Optional[str] = None,
+    product_name: Optional[str] = None,
+    detail: Optional[dict] = None,
+) -> None:
+    """사이클 도중 변동 감지 시 즉시 DB에 이벤트 저장.
+
+    사이클 완료를 기다리지 않고 바로 커밋하므로, 서버 재시작이 발생해도
+    감지된 변동은 유실되지 않는다. 별도 세션을 열어 본 사이클 세션에 영향 없음.
+    """
+    try:
+        from backend.db.orm import get_write_session
+        from backend.domain.samba.warroom.service import SambaMonitorService
+
+        async with get_write_session() as _sess:
+            _mon = SambaMonitorService(_sess)
+            await _mon.emit(
+                event_type,
+                severity,
+                summary=summary,
+                source_site=source_site,
+                product_id=product_id,
+                product_name=product_name,
+                detail=detail or {},
+            )
+            await _sess.commit()
+    except Exception as _err:
+        logging.getLogger("autotune").warning(
+            "[오토튠] 이벤트 스트리밍 실패(%s): %s", event_type, _err
+        )
+
+
 async def _site_autotune_loop(site: str):
     """소싱처별 독립 오토튠 루프 — 작업 완료 즉시 다음 사이클 재시작."""
     log = logging.getLogger("autotune")
@@ -521,11 +558,34 @@ async def _site_autotune_loop(site: str):
                                                 "suspended_markets": [],
                                             }
                                         )
+                                        # 변동 감지 즉시 DB 저장 — 사이클 미완주에도 유실 없음
+                                        _name_short = (product.name or "")[:30]
+                                        await _stream_event(
+                                            "sold_out",
+                                            "info",
+                                            summary=f"품절(옵션품절) — {_name_short} {int(_old_stock):,}→{int(_new_stock):,}",
+                                            source_site=product.source_site,
+                                            product_id=r.product_id,
+                                            product_name=product.name,
+                                            detail={
+                                                "old_stock": _old_stock,
+                                                "new_stock": _new_stock,
+                                                "sale_status": r.new_sale_status,
+                                                "site_product_id": product.site_product_id,
+                                                "reason": "option_partial",
+                                                "suspended_markets": [],
+                                            },
+                                        )
 
                                 # 품절 → 서킷브레이커 + 즉시 마켓삭제
                                 if r.new_sale_status == "sold_out":
                                     # per-product 품절 이벤트 수집 (전체 품절 / 소싱처 삭제)
                                     # suspended_markets는 아래 마켓삭제 루프에서 in-place 채움
+                                    _soldout_reason = (
+                                        "source_deleted"
+                                        if getattr(r, "deleted_from_source", False)
+                                        else "all_soldout"
+                                    )
                                     _soldout_ev_entry = {
                                         "source_site": product.source_site,
                                         "product_id": r.product_id,
@@ -534,12 +594,34 @@ async def _site_autotune_loop(site: str):
                                         "old_stock": None,
                                         "new_stock": 0,
                                         "sale_status": "sold_out",
-                                        "reason": "source_deleted"
-                                        if getattr(r, "deleted_from_source", False)
-                                        else "all_soldout",
+                                        "reason": _soldout_reason,
                                         "suspended_markets": [],
                                     }
                                     _soldout_events.append(_soldout_ev_entry)
+                                    # 변동 감지 즉시 DB 저장 — 사이클 미완주에도 유실 없음
+                                    # suspended_markets는 이후 마켓삭제 루프에서 채워지므로 초기값 []로 기록
+                                    _reason_lbl = (
+                                        "소싱처삭제"
+                                        if _soldout_reason == "source_deleted"
+                                        else "전체품절"
+                                    )
+                                    _name_short = (product.name or "")[:30]
+                                    await _stream_event(
+                                        "sold_out",
+                                        "info",
+                                        summary=f"품절({_reason_lbl}) — {_name_short}",
+                                        source_site=product.source_site,
+                                        product_id=r.product_id,
+                                        product_name=product.name,
+                                        detail={
+                                            "old_stock": None,
+                                            "new_stock": 0,
+                                            "sale_status": "sold_out",
+                                            "site_product_id": product.site_product_id,
+                                            "reason": _soldout_reason,
+                                            "suspended_markets": [],
+                                        },
+                                    )
 
                                     _site_consecutive_soldout[site] = (
                                         _site_consecutive_soldout.get(site, 0) + 1
@@ -992,6 +1074,22 @@ async def _site_autotune_loop(site: str):
                                                 "new_price": expected_price,
                                                 "diff_pct": _diff_pct,
                                             }
+                                            # 변동 감지 즉시 DB 저장 — 사이클 미완주에도 유실 없음
+                                            _name_short = (product.name or "")[:30]
+                                            await _stream_event(
+                                                "price_changed",
+                                                "info",
+                                                summary=f"가격 변동 — {_name_short} ₩{int(last_price):,}→₩{int(expected_price):,}",
+                                                source_site=product.source_site,
+                                                product_id=r.product_id,
+                                                product_name=product.name,
+                                                detail={
+                                                    "old_price": last_price,
+                                                    "new_price": expected_price,
+                                                    "diff_pct": _diff_pct,
+                                                    "site_product_id": product.site_product_id,
+                                                },
+                                            )
                                     elif expected_price == last_price:
                                         # 가격 동일 스킵 — 다중 마켓 디버그 로그
                                         if len(reg_accounts) > 1:
@@ -1477,71 +1575,12 @@ async def _site_autotune_loop(site: str):
                             if _duration_sec > 0
                             else 0
                         )
+                        # per-product price_changed / sold_out 이벤트는
+                        # 감지 즉시 _stream_event로 DB에 이미 저장됨 (유실 방지)
+                        # 여기서는 사이클 완료 요약 tick만 발행한다.
                         try:
                             async with get_write_session() as ev_session:
                                 monitor = SambaMonitorService(ev_session)
-                                # per-product price_changed 이벤트 배치 발행 (최대 500건)
-                                # dict → 최신 순으로 슬라이스 (상품당 1건 dedupe 완료)
-                                for _ev_item in list(_price_change_events.values())[
-                                    :500
-                                ]:
-                                    await monitor.emit(
-                                        "price_changed",
-                                        "info",
-                                        summary=f"가격 변동 — {(_ev_item['product_name'] or '')[:30]} ₩{int(_ev_item['old_price']):,}→₩{int(_ev_item['new_price']):,}",
-                                        source_site=_ev_item["source_site"],
-                                        product_id=_ev_item["product_id"],
-                                        product_name=_ev_item["product_name"],
-                                        detail={
-                                            "old_price": _ev_item["old_price"],
-                                            "new_price": _ev_item["new_price"],
-                                            "diff_pct": _ev_item["diff_pct"],
-                                            "site_product_id": _ev_item[
-                                                "site_product_id"
-                                            ],
-                                        },
-                                    )
-                                # per-product 품절 이벤트 배치 발행 (옵션별/전체/소싱처삭제 통합, 최대 100건)
-                                _REASON_LABEL = {
-                                    "option_partial": "옵션품절",
-                                    "all_soldout": "전체품절",
-                                    "source_deleted": "소싱처삭제",
-                                }
-                                for _ev_item in _soldout_events[:100]:
-                                    _old_s = _ev_item.get("old_stock")
-                                    _new_s = _ev_item.get("new_stock")
-                                    _reason = _ev_item.get("reason", "all_soldout")
-                                    _reason_lbl = _REASON_LABEL.get(_reason, "품절")
-                                    _name_short = (_ev_item["product_name"] or "")[:30]
-                                    if (
-                                        _reason == "option_partial"
-                                        and _old_s is not None
-                                    ):
-                                        _summary = f"품절({_reason_lbl}) — {_name_short} {int(_old_s):,}→{int(_new_s or 0):,}"
-                                    else:
-                                        _summary = (
-                                            f"품절({_reason_lbl}) — {_name_short}"
-                                        )
-                                    await monitor.emit(
-                                        "sold_out",
-                                        "info",
-                                        summary=_summary,
-                                        source_site=_ev_item["source_site"],
-                                        product_id=_ev_item["product_id"],
-                                        product_name=_ev_item["product_name"],
-                                        detail={
-                                            "old_stock": _old_s,
-                                            "new_stock": _new_s,
-                                            "sale_status": _ev_item["sale_status"],
-                                            "site_product_id": _ev_item[
-                                                "site_product_id"
-                                            ],
-                                            "reason": _reason,
-                                            "suspended_markets": _ev_item.get(
-                                                "suspended_markets", []
-                                            ),
-                                        },
-                                    )
                                 await monitor.emit(
                                     "scheduler_tick",
                                     "info",

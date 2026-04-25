@@ -145,10 +145,10 @@ ssh -i "$SSH_KEY" \
   "cd /opt/samba && sudo docker compose pull samba-api && sudo docker compose up -d samba-api && sudo docker compose ps --format 'table {{.Name}}\t{{.Status}}'"
 log_ok "VM 재시작 완료"
 
-# 4. 헬스체크 (최대 120초 대기) — 커밋 SHA로 최신 리비전 서빙 중인지 검증
+# 4. 헬스체크 (최대 180초 대기) — 커밋 SHA로 최신 리비전 서빙 중인지 검증
 log_step 4 4 "헬스체크 중..."
 HEALTH_OK=false
-for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18; do
   sleep 10
   RESP=$(curl -sS -m 10 "https://${VM_HOST}/api/v1/health" 2>/dev/null || echo "")
   STATUS=$(echo "$RESP" | grep -oE '"status":"[^"]*"' | head -1 | cut -d'"' -f4)
@@ -162,7 +162,7 @@ for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
     HEALTH_OK=true
     break
   fi
-  echo "   시도 $i/6: status=${STATUS:-none} commit=${LIVE_SHA:-none} — 재시도"
+  echo "   시도 $i/18: status=${STATUS:-none} commit=${LIVE_SHA:-none} — 재시도"
 done
 if [[ "$HEALTH_OK" != "true" ]]; then
   ELAPSED=$(($(date +%s) - START_TIME))

@@ -545,6 +545,10 @@ async def get_last_resumable_transmit(
 
     이어하기 대상은 일시정지(FAILED)만 — 명시적 취소(CANCELLED)는 제외.
     사용자가 "작업취소"/개별 취소한 잡이 새로고침 후 이어하기로 부활하는 것 방지.
+
+    또한 해당 paused 잡 이후에 정상 완료(COMPLETED)된 transmit 잡이 있으면
+    옛 paused 잡은 무시 — 새 전송이 한 번이라도 끝났으면 이어하기 버튼이
+    유령처럼 켜져 있는 것을 방지한다.
     """
     from backend.domain.samba.job.model import SambaJob
     from sqlmodel import select
@@ -568,6 +572,21 @@ async def get_last_resumable_transmit(
         .first()
     )
     if not job:
+        return None
+
+    # paused 잡 이후 COMPLETED 된 transmit 잡이 존재하면 이어하기 후보에서 제외
+    newer_completed = (
+        await session.execute(
+            select(SambaJob.id)
+            .where(
+                SambaJob.job_type == "transmit",
+                SambaJob.status == JobStatus.COMPLETED,
+                SambaJob.created_at > job.created_at,
+            )
+            .limit(1)
+        )
+    ).first()
+    if newer_completed:
         return None
     return {
         "id": job.id,
