@@ -9,7 +9,6 @@ Create Date: 2026-04-25 11:30:00.000000
 from typing import Sequence, Union
 
 from alembic import op
-import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
@@ -20,7 +19,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column("samba_order", sa.Column("customer_note", sa.Text(), nullable=True))
+    op.execute("ALTER TABLE samba_order ADD COLUMN IF NOT EXISTS customer_note TEXT")
     op.execute(
         """
         UPDATE samba_order
