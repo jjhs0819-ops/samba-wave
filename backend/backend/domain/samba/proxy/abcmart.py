@@ -729,9 +729,10 @@ class ARTSourcingClient:
         site_label = f"[{self._source_site}]"
         subdomain = self.SUBDOMAIN_MAP.get(self.channel, self.SUBDOMAIN_MAP["10001"])
 
-        # 캐시 미초기화 시 1회 로드 — 단일 갱신/수집/주문/오토튠 모든 진입점 보장
-        # (오토튠은 refresher.py에서 강제 리셋 후 호출하므로 매 잡 새로 로드)
-        if not self._bulk_cache.get("loaded"):
+        # 캐시 미초기화 OR 만료 마킹 시 재로드 — 진입점 어디서든 회복 가능
+        # (오토튠/상품관리/주문페이지 enrich는 진입점에서 강제 리셋 후 호출하므로 매 잡 새로 로드)
+        # expired=True 마킹 후 확장앱이 새 쿠키 sync한 경우, 다음 호출에서 자동 회복.
+        if not self._bulk_cache.get("loaded") or self._bulk_cache.get("expired"):
             try:
                 await prepare_abcmart_cache()
             except Exception as e:

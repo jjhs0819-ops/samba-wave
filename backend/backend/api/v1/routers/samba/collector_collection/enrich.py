@@ -461,6 +461,18 @@ async def enrich_product(
                     if _lt_ck:
                         set_lotteon_cookie(str(_lt_ck))
 
+            # ABCmart/GrandStage: 확장앱이 sync한 로그인 쿠키 강제 재로드
+            # refresher.py:1366-1377(상품관리/오토튠 경로)와 동일 패턴 — 진입점 어디서든
+            # alwaysDscntAmt 정확값 수신을 보장. 누락 시 익명 폴백으로 멤버십 할인 미반영.
+            if _src in ("ABCmart", "GrandStage"):
+                from backend.domain.samba.proxy.abcmart import (
+                    ARTSourcingClient,
+                    prepare_abcmart_cache,
+                )
+
+                ARTSourcingClient._bulk_cache = {}
+                await prepare_abcmart_cache()
+
             result = await plugin.refresh(product)
             updates: dict[str, Any] = {}
             if result.new_sale_price is not None:
