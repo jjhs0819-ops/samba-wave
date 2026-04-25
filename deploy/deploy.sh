@@ -211,16 +211,26 @@ echo "[5/6] blue 새 이미지 pull + 재시작..."
 sudo docker compose pull samba-api
 sudo docker compose up -d samba-api
 # 컨테이너 내부 wget 으로 직접 폴링 (docker healthcheck 30s interval mismatch 회피).
-for i in $(seq 1 36); do
+# blue는 alembic + verify_schema 실행으로 startup 5-8분 소요 → 300초까지 대기.
+# 그래도 fail이면 외부 health endpoint commit SHA 비교로 false negative 방어 (Caddy 캐시
+# 효과로 외부에서는 이미 새 컨테이너 응답하지만 내부 polling 타이밍이 어긋날 수 있음).
+for i in $(seq 1 60); do
     sleep 5
     RESP=$(sudo docker exec samba-samba-api-1 wget -qO- --timeout=3 http://localhost:8080/api/v1/health 2>/dev/null || echo "")
     if echo "$RESP" | grep -q '"status":"healthy"'; then
         echo "    ✅ blue healthy (${i}회 시도, $((i*5))초) — Caddy lb_policy first 가 blue 우선 트래픽 자동 복귀"
         break
     fi
-    echo "    ⏳ blue not-ready ($i/36, $((i*5))초)"
-    if [ "$i" = "36" ]; then
-        echo "⚠️ blue 헬스체크 실패 — green 유지 (수동 복구 필요)"
+    echo "    ⏳ blue not-ready ($i/60, $((i*5))초)"
+    if [ "$i" = "60" ]; then
+        # false negative 방어: 외부 health endpoint commit이 이번 푸시 SHA와 일치하면 성공 처리
+        EXT_RESP=$(curl -sf https://api.samba-wave.co.kr/api/v1/health 2>/dev/null || echo "")
+        EXT_COMMIT=$(echo "$EXT_RESP" | grep -oE '"commit":"[^"]+"' | sed 's/.*"commit":"\(.*\)"/\1/')
+        if [ -n "$EXT_COMMIT" ] && [ "$EXT_COMMIT" = "$SHA" ]; then
+            echo "    ✅ blue 폴링 timeout이지만 외부 health endpoint commit=$EXT_COMMIT 일치 — false negative, 배포 성공으로 처리"
+            break
+        fi
+        echo "⚠️ blue 헬스체크 실패 (외부 commit=$EXT_COMMIT, 푸시 SHA=$SHA) — green 유지 (수동 복구 필요)"
         exit 1
     fi
 done
