@@ -311,6 +311,26 @@ class GMarketClient:
                 if img_url not in images:
                     images.append(img_url)
 
+            # 고시정보 파싱 (상품정보제공고시 테이블)
+            manufacturer = (
+                self._extract_notify_value(html, "제조사")
+                or self._extract_notify_value(html, "브랜드")
+                or brand.strip()
+                or ""
+            )
+            origin = self._extract_notify_value(html, "원산지") or ""
+            material = (
+                self._extract_notify_value(html, "소재")
+                or self._extract_notify_value(html, "재질")
+                or self._extract_notify_value(html, "혼용률")
+                or ""
+            )
+            care_instructions = (
+                self._extract_notify_value(html, "취급주의사항")
+                or self._extract_notify_value(html, "세탁방법")
+                or ""
+            )
+
             return {
                 "siteProductId": goods_code,
                 "name": name.strip(),
@@ -330,6 +350,10 @@ class GMarketClient:
                 "options": options,
                 "isSoldOut": is_sold_out,
                 "isStarDelivery": is_star_delivery,
+                "manufacturer": manufacturer,
+                "origin": origin,
+                "material": material,
+                "careInstructions": care_instructions,
                 "sourceSite": "GMARKET",
                 "sourceUrl": url,
                 "collectedAt": now_iso,
@@ -377,6 +401,24 @@ class GMarketClient:
             digits = re.sub(r"[^\d]", "", m.group(1))
             return int(digits) if digits else 0
         return 0
+
+    @staticmethod
+    def _extract_notify_value(html: str, label: str) -> str:
+        """상품정보제공고시 테이블에서 라벨에 해당하는 값 추출.
+
+        지마켓 고시정보는 <th>라벨</th><td>값</td> 또는
+        <td>라벨</td><td>값</td> 형태의 테이블로 제공됨.
+        파싱 실패 시 빈 문자열 반환 (전송 차단 없음).
+        """
+        # th/td 라벨 → 다음 td 값 패턴
+        pattern = (
+            rf"(?:<th|<td)[^>]*>\s*{re.escape(label)}\s*</t[dh]>\s*"
+            rf"(?:<td|<th)[^>]*>([^<]+)</t"
+        )
+        m = re.search(pattern, html, re.IGNORECASE)
+        if m:
+            return m.group(1).strip()
+        return ""
 
     @staticmethod
     def _parse_options(html: str) -> list[dict[str, Any]]:
