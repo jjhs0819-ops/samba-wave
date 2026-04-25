@@ -2860,6 +2860,10 @@ async def sync_orders_from_markets(
                         update_fields["source_site"] = order_data["source_site"]
                     if order_data.get("source_url") and not existing.source_url:
                         update_fields["source_url"] = order_data["source_url"]
+                    if order_data.get("customer_note") and order_data[
+                        "customer_note"
+                    ] != str(existing.customer_note or ""):
+                        update_fields["customer_note"] = order_data["customer_note"]
                     if order_data.get("shipment_id") and order_data[
                         "shipment_id"
                     ] != str(existing.shipment_id or ""):

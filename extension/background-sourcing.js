@@ -1268,7 +1268,7 @@ async function extractDetailData(tabId, site, productId) {
         const sizeUl = document.querySelector('ul.selectLists[id^="select-bundleOpt-"]')
         if (sizeUl) {
           sizeUl.querySelectorAll('li').forEach(li => {
-            const rawCaption = (li.querySelector('.caption')?.textContent || '').trim()
+            const rawCaption = (li.querySelector('.txt, .caption')?.textContent || '').trim()
             const cleanName = rawCaption.replace(/^\[품절\]\s*/, '').replace(/\s*\(남은수량\s*\d+\)/, '').trim()
             if (!cleanName) return
             const stockText = (li.querySelector('.stock')?.textContent || '').trim()
