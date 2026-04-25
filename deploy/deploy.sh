@@ -136,6 +136,12 @@ docker push "$IMAGE:$SHA"
 docker push "$IMAGE:latest"
 log_ok "푸시 완료"
 
+# 2-1. 로컬 Docker 이미지 정리 — latest + 현재 SHA 외 이전 빌드 태그 제거 (디스크 누적 방지)
+# Build Cache는 보존 (다음 build 속도 — BUILDKIT_INLINE_CACHE 활용)
+docker images --filter reference="$IMAGE" --format "{{.ID}} {{.Tag}}" \
+    | grep -vE "latest|$SHA" | awk '{print $1}' | sort -u \
+    | xargs -r docker rmi -f > /dev/null 2>&1 || true
+
 # 3. VM 배포 — Blue/Green 무중단
 #    흐름: green 띄우기 → green 헬스OK → blue stop(Caddy 자동 fallback) → blue 새 이미지로 재시작
 #         → blue 헬스OK(Caddy first 우선이라 자동 복귀) → green stop → 미사용 이미지 정리
