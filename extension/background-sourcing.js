@@ -425,13 +425,18 @@ async function fetchAbcmartBenefitPriceServiceWorker(productId, site) {
   }
 }
 
-// ABCmart/GrandStage: 쿠키 기반 info API 직접 호출로 혜택가 수집 (탭 불필요)
+// ABCmart/GrandStage: 사이트별 서브도메인 탭에서 in-tab fetch로 혜택가 수집 (매번 새 탭 X)
+// alwaysDscntAmt(멤버십 상시할인) + maxBenefitCoupon 모두 활용해 정확한 best_benefit_price 산출.
+// Cross-subdomain CORS 차단되므로 site에 맞는 서브도메인 탭만 사용.
 async function fetchAbcmartBenefitPrice(productId, site) {
   try {
-    // 기존 a-rt.com 탭에서 info API 호출 (페이지 컨텍스트 = 세션+인증 자동 포함)
-    const tabs = await chrome.tabs.query({ url: '*://*.a-rt.com/*' })
+    // ABCmart 상품은 abcmart.a-rt.com, GrandStage 상품은 grandstage.a-rt.com 탭에서만 호출 가능
+    const subdomainPattern = site === 'GrandStage'
+      ? '*://grandstage.a-rt.com/*'
+      : '*://abcmart.a-rt.com/*'
+    const tabs = await chrome.tabs.query({ url: subdomainPattern })
     if (!tabs.length) {
-      console.log(`[${site}] maxBenefitCoupon: a-rt.com 탭 없음 → DOM 폴백 (${productId})`)
+      console.log(`[${site}] in-tab fetch: ${subdomainPattern} 탭 없음 → DOM 폴백 (${productId})`)
       return null
     }
 
@@ -450,8 +455,11 @@ async function fetchAbcmartBenefitPrice(productId, site) {
           const pi = data.productPrice || {}
           return {
             name: (data.prdtName || '').trim(),
-            salePrice: parseInt(pi.sellAmt || 0),
+            displayPrice: parseInt(data.displayProductPrice || 0),
+            sellAmt: parseInt(pi.sellAmt || 0),
             normalAmt: parseInt(pi.normalAmt || 0),
+            alwaysDscntAmt: parseInt(data.alwaysDscntAmt || 0),
+            loginYn: (data.loginYn || '').toUpperCase(),
             coupons: data.maxBenefitCoupon || data.coupon || [],
           }
         } catch (e) {
@@ -462,46 +470,58 @@ async function fetchAbcmartBenefitPrice(productId, site) {
     })
 
     const apiData = result?.result
-    if (!apiData || apiData.error || !apiData.salePrice) {
-      console.log(`[${site}] maxBenefitCoupon: 탭 내 API 실패 (${productId})`, apiData?.error || '')
+    if (!apiData || apiData.error) {
+      console.log(`[${site}] in-tab fetch: 탭 내 API 실패 (${productId})`, apiData?.error || '')
       return null
     }
 
-    const { name, salePrice, normalAmt, coupons } = apiData
-    let totalDiscount = 0
+    const { name, displayPrice, sellAmt, normalAmt, alwaysDscntAmt, loginYn, coupons } = apiData
+    const salePrice = displayPrice > 0 ? displayPrice : sellAmt
+    if (!salePrice) {
+      console.log(`[${site}] in-tab fetch: salePrice 0 (${productId})`)
+      return null
+    }
+
+    // 비로그인 응답이면 alwaysDscntAmt 못 받음 — null 반환해서 다음 폴백으로
+    if (loginYn !== 'Y') {
+      console.log(`[${site}] in-tab fetch: 비로그인(loginYn=${loginYn}) → DOM 폴백 (${productId})`)
+      return null
+    }
+
+    let couponDiscount = 0
     for (const c of coupons) {
-      totalDiscount += parseInt(c.dscntAmt || 0)
+      const d = parseInt(c.dscntAmt || 0)
+      if (d > couponDiscount) couponDiscount = d
     }
 
-    let benefitPrice = totalDiscount > 0 ? salePrice - totalDiscount : 0
-    if (benefitPrice <= 0 || benefitPrice >= salePrice) benefitPrice = 0
+    let benefitPrice = salePrice - alwaysDscntAmt - couponDiscount
+    if (benefitPrice <= 0 || benefitPrice > salePrice) benefitPrice = salePrice
 
-    console.log(`[${site}] maxBenefitCoupon: ${productId} sale=${salePrice}, discount=${totalDiscount}, benefit=${benefitPrice}`)
-    console.log(`[${site}] maxBenefitCoupon 상세:`, JSON.stringify(coupons))
+    console.log(`[${site}] in-tab fetch 성공: ${productId} sale=${salePrice} membership=${alwaysDscntAmt} coupon=${couponDiscount} benefit=${benefitPrice}`)
 
-    if (benefitPrice > 0) {
-      return {
-        success: true,
-        site_product_id: productId,
-        name,
-        original_price: normalAmt || salePrice,
-        sale_price: salePrice,
-        best_benefit_price: benefitPrice,
-        source_site: site,
-      }
+    return {
+      success: true,
+      site_product_id: productId,
+      name,
+      original_price: normalAmt || salePrice,
+      sale_price: salePrice,
+      best_benefit_price: benefitPrice,
+      source_site: site,
     }
-    return null
   } catch (err) {
-    console.error(`[${site}] maxBenefitCoupon 실패:`, err.message)
+    console.error(`[${site}] in-tab fetch 실패:`, err.message)
     return null
   }
 }
 
 // 소싱 작업 처리 — 탭 열기 → DOM 파싱 → 결과 전송
 async function handleSourcingJob(job) {
-  // ABCmart/GrandStage detail: 서비스워커 fetch로 우선 시도 (탭 불필요)
-  // 성공 시 탭 안 띄우고 결과 전송. 실패 시 아래 DOM 파싱 폴백 진행.
+  // ABCmart/GrandStage detail: 폴백 chain 우선 시도
+  //   1) 서비스워커 fetch (탭 0개) — 동작하면 best
+  //   2) 사이트별 서브도메인 탭에서 in-tab fetch — 사용자가 a-rt.com 백그라운드 탭 켜놨으면 탭 안 띄움
+  //   3) 둘 다 실패 시 아래 DOM 파싱 폴백 (매번 새 탭 — LOTTEON과 동일 운영 방식)
   if (job.type === 'detail' && (job.site === 'ABCmart' || job.site === 'GrandStage')) {
+    // 1) SW fetch
     const swResult = await fetchAbcmartBenefitPriceServiceWorker(job.productId, job.site)
     if (swResult && swResult.success) {
       try {
@@ -512,7 +532,18 @@ async function handleSourcingJob(job) {
       }
       return
     }
-    console.log(`[${job.site}] SW fetch 실패 → DOM 폴백 (탭 띄움): ${job.productId}`)
+    // 2) in-tab fetch (사이트별 서브도메인 탭 활용)
+    const inTabResult = await fetchAbcmartBenefitPrice(job.productId, job.site)
+    if (inTabResult && inTabResult.success) {
+      try {
+        await postResult('sourcing/collect-result', { requestId: job.requestId, data: inTabResult })
+        console.log(`[${job.site}] in-tab fetch로 완료 (기존 탭 활용): ${job.productId}`)
+      } catch (e) {
+        console.error(`[${job.site}] in-tab 결과 전송 실패:`, e.message)
+      }
+      return
+    }
+    console.log(`[${job.site}] SW + in-tab 모두 실패 → DOM 폴백 (탭 띄움): ${job.productId}`)
   }
 
   let tabId = null
