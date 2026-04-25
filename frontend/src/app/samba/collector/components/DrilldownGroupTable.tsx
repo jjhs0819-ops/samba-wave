@@ -14,40 +14,19 @@ import { fmtNum } from '@/lib/samba/styles'
 const fmtDate = (iso: string | undefined | null) => _fmtDate(iso, '.')
 const FIXED_REQUESTED_COUNT = 1000
 
-// 검색그룹 드릴다운 컴포넌트 props
 export interface DrilldownGroupTableProps {
-  // 데이터
-  filters: SambaSearchFilter[]
-  tree: SambaSearchFilter[]
-  policies: SambaPolicy[]
-  // 드릴다운 상태
-  drillSite: string | null
-  drillBrand: string | null
-  drillGroup: string | null
-  drillEntry: 'site' | 'brand' | null
-  setDrillSite: Dispatch<SetStateAction<string | null>>
-  setDrillBrand: Dispatch<SetStateAction<string | null>>
-  setDrillGroup: Dispatch<SetStateAction<string | null>>
-  setDrillEntry: Dispatch<SetStateAction<'site' | 'brand' | null>>
-  // 필터 드롭박스
-  collectFilter: string
-  marketRegFilter: string
-  tagRegFilter: string
-  policyRegFilter: string
-  setCollectFilter: Dispatch<SetStateAction<string>>
-  setMarketRegFilter: Dispatch<SetStateAction<string>>
-  setTagRegFilter: Dispatch<SetStateAction<string>>
-  setPolicyRegFilter: Dispatch<SetStateAction<string>>
-  // 선택 상태
+  filters: SambaSearchFilter[]; tree: SambaSearchFilter[]; policies: SambaPolicy[]
+  drillSite: string | null; drillBrand: string | null; drillGroup: string | null; drillEntry: 'site' | 'brand' | null
+  setDrillSite: Dispatch<SetStateAction<string | null>>; setDrillBrand: Dispatch<SetStateAction<string | null>>
+  setDrillGroup: Dispatch<SetStateAction<string | null>>; setDrillEntry: Dispatch<SetStateAction<'site' | 'brand' | null>>
+  collectFilter: string; marketRegFilter: string; tagRegFilter: string; policyRegFilter: string
+  setCollectFilter: Dispatch<SetStateAction<string>>; setMarketRegFilter: Dispatch<SetStateAction<string>>
+  setTagRegFilter: Dispatch<SetStateAction<string>>; setPolicyRegFilter: Dispatch<SetStateAction<string>>
   setSelectedIds: Dispatch<SetStateAction<Set<string>>>
-  // 모달 setter
-  setShowDuplicatesModal: Dispatch<SetStateAction<boolean>>
-  setShowMappingModal: Dispatch<SetStateAction<boolean>>
+  setShowDuplicatesModal: Dispatch<SetStateAction<boolean>>; setShowMappingModal: Dispatch<SetStateAction<boolean>>
   setMappingFilter: Dispatch<SetStateAction<SambaSearchFilter | null>>
   setMappingData: Dispatch<SetStateAction<Record<string, string>>>
-  // 로딩
   tagPreviewLoading: boolean
-  // 핸들러
   handleDeleteSelectedGroups: () => void | Promise<void>
   handleCollectGroups: () => void | Promise<void>
   handlePolicyApply: (filterId: string, policyId: string) => void | Promise<void>
@@ -57,54 +36,27 @@ export interface DrilldownGroupTableProps {
   handleAiTagPreview: () => void | Promise<void>
   handleClearAiTags: () => void | Promise<void>
   parseGroupName: (name: string, site: string) => { brand: string; category: string }
-  // 데이터 갱신 (그룹/상품 삭제 후 재조회)
-  load: () => void | Promise<void>
-  loadTree: () => void | Promise<void>
+  load: () => void | Promise<void>; loadTree: () => void | Promise<void>
 }
 
 export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
   const {
-    filters,
-    tree,
-    policies,
-    drillSite,
-    drillBrand,
-    drillGroup,
-    drillEntry,
-    setDrillSite,
-    setDrillBrand,
-    setDrillGroup,
-    setDrillEntry,
-    collectFilter,
-    marketRegFilter,
-    tagRegFilter,
-    policyRegFilter,
-    setCollectFilter,
-    setMarketRegFilter,
-    setTagRegFilter,
-    setPolicyRegFilter,
+    filters, tree, policies,
+    drillSite, drillBrand, drillGroup, drillEntry,
+    setDrillSite, setDrillBrand, setDrillGroup, setDrillEntry,
+    collectFilter, marketRegFilter, tagRegFilter, policyRegFilter,
+    setCollectFilter, setMarketRegFilter, setTagRegFilter, setPolicyRegFilter,
     setSelectedIds,
-    setShowDuplicatesModal,
-    setShowMappingModal,
-    setMappingFilter,
-    setMappingData,
+    setShowDuplicatesModal, setShowMappingModal, setMappingFilter, setMappingData,
     tagPreviewLoading,
-    handleDeleteSelectedGroups,
-    handleCollectGroups,
-    handlePolicyApply,
-    handleUpdateRequestedCount,
-    handleGoToProducts,
-    handleBrandRefresh,
-    handleAiTagPreview,
-    handleClearAiTags,
-    parseGroupName,
-    load,
-    loadTree,
+    handleDeleteSelectedGroups, handleCollectGroups,
+    handlePolicyApply, handleUpdateRequestedCount, handleGoToProducts,
+    handleBrandRefresh, handleAiTagPreview, handleClearAiTags,
+    parseGroupName, load, loadTree,
   } = props
 
   return (
     <>
-      {/* 검색그룹 드릴다운 */}
       <div style={{ marginTop: '1rem' }}>
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -166,11 +118,7 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
             >
               상품수집
             </button>
-            {/* 수집동기화 버튼 제거 — 사용자가 요청수를 자유롭게 설정하도록 변경 */}
-            <button
-                onClick={handleBrandRefresh}
-                style={{ display: 'none' }}
-              >추가수집</button>
+            <button onClick={handleBrandRefresh} style={{ display: 'none' }}>추가수집</button>
             <button
               disabled={tagPreviewLoading}
               onClick={handleAiTagPreview}
@@ -203,9 +151,7 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
           </span>
         </div>
 
-        {/* 검색그룹 드릴다운 — 사이트 > 브랜드 > 카테고리 > 상세(링크/정책/스스브랜드/수집/요청/생성일) */}
         {(() => {
-          // 헬퍼: 사이트 하위 모든 리프 그룹
           const getAllLeaves = (node: SambaSearchFilter | undefined): SambaSearchFilter[] => {
             if (!node) return []
             const result: SambaSearchFilter[] = []
@@ -290,8 +236,6 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
           const selectedFilter = drillGroup ? filters.find(fl => fl.id === drillGroup) : null
           const selectedCount = selectedFilter ? ((selectedFilter as unknown as Record<string, number>).collected_count ?? 0) : 0
 
-          // 헤더·본문 너비 통일 (합계 100%)
-          // 사이트12 브랜드13 카테고리22 링크15 정책10 수집8 요청6 생성일11 매핑3
           const colW = ['12%', '13%', '22%', '15%', '10%', '8%', '6%', '11%', '3%']
           const colBase = { borderRight: '1px solid #2D2D2D', maxHeight: '320px', overflowY: 'auto' as const, boxSizing: 'border-box' as const, textAlign: 'left' as const }
           const colStyle = (i: number) => ({ ...colBase, width: colW[i], flexShrink: 0 })
@@ -329,9 +273,7 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
                 ))}
               </div>
 
-              {/* 컬럼 */}
               <div style={{ display: 'flex' }}>
-                {/* 1. 사이트: 사이트 헤더 클릭 시 전체 표시 / 브랜드 선택 시 연관만 표시 */}
                 <div style={colStyle(0)}>
                   {(drillEntry === 'site' || drillBrand) ? (
                     filteredSites.length === 0 ? (
@@ -354,7 +296,6 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
                     ))
                   ) : null}
                 </div>
-                {/* 2. 브랜드: 브랜드 헤더 클릭 시 전체 표시 / 사이트 선택 시 연관만 표시 */}
                 <div style={colStyle(1)}>
                   {(drillEntry === 'brand' || drillSite) ? (
                     brands.length > 0 ? brands.map(([brand, info]) => (
@@ -382,7 +323,6 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
                     )) : <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8rem' }}>브랜드 없음</div>
                   ) : null}
                 </div>
-                {/* 3. 카테고리: 사이트 또는 브랜드 선택 후 연관 표시 */}
                 <div style={colStyle(2)}>
                   {(drillSite || drillBrand) ? (catGroups.length > 0 ? (<>
                     {catGroups.map(g => (
@@ -401,7 +341,6 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
                   </>) : <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8rem' }}>항목 없음</div>
                   ) : null}
                 </div>
-                {/* 4. 링크 + 삭제 체크 */}
                 <div style={detColStyle(3)}>
                   {selectedFilter ? (() => {
                     // 소싱 URL 결정: category_filter(저장된 URL) > 사이트별 검색URL 생성
@@ -448,7 +387,6 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
                     )
                   })() : <span style={{ color: '#444', fontSize: '0.75rem' }}>선택</span>}
                 </div>
-                {/* 5. 정책 */}
                 <div style={detColStyle(4)}>
                   {selectedFilter ? (
                     <select

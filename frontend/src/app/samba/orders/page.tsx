@@ -309,7 +309,7 @@ export default function OrdersPage() {
         bulkUpdating={bulkUpdating} handleBulkAction={handleBulkAction}
         selectedIdsSize={selectedIds.size}
         filteredOrdersCount={filteredOrders.length}
-        filteredOrdersTotalSale={filteredOrders.reduce((s, o) => s + (o.sale_price || 0), 0)}
+        filteredOrdersTotalSale={filteredOrders.reduce((s, o) => s + (o.total_payment_amount ?? o.sale_price ?? 0), 0)}
         searchCategory={searchCategory} setSearchCategory={setSearchCategory}
         searchText={searchText} setSearchText={setSearchText}
         loadOrders={loadOrders}

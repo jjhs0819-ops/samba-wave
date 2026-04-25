@@ -8,35 +8,19 @@ import { SITES, SITE_OPTIONS } from '../constants'
 import MusinsaBrandModal from './MusinsaBrandModal'
 import LotteOnBrandModal from './LotteOnBrandModal'
 
-// 카테고리 스캔 결과 타입
-export type BrandCategory = {
-  categoryCode: string
-  path: string
-  count: number
-  category1: string
-  category2: string
-  category3: string
-}
-
-// 브랜드 모달 리스트 타입
+export type BrandCategory = { categoryCode: string; path: string; count: number; category1: string; category2: string; category3: string }
 type BrandModalEntry = { name: string; count: number; id?: string }
 type BrandModalParsed = { brand: string; keyword: string; gf: string } | null
-
-// 무신사 브랜드 검색 결과 타입
 type MusinsaBrand = { brandCode: string; brandName: string }
-
 const FIXED_REQUESTED_COUNT = 1000
 
 interface SourcingUrlPanelProps {
-  // 소싱처/URL 상태
   selectedSite: string
   setSelectedSite: Dispatch<SetStateAction<string>>
   collectUrl: string
   setCollectUrl: Dispatch<SetStateAction<string>>
   checkedOptions: Record<string, boolean>
   setCheckedOptions: Dispatch<SetStateAction<Record<string, boolean>>>
-
-  // 카테고리 스캔
   brandScanning: boolean
   setBrandScanning: Dispatch<SetStateAction<boolean>>
   brandCategories: BrandCategory[]

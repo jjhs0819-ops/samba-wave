@@ -160,7 +160,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                 {/* 금액 */}
                 <td style={{ padding: '0.75rem', borderRight: '1px solid #1C2333', fontSize: '0.8rem' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>결제</span><span>{fmtNum(o.sale_price)}</span></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>결제</span><span>{fmtNum(o.total_payment_amount ?? o.sale_price)}</span></div>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>정산</span><span>{fmtNum(Math.round(o.revenue))}</span></div>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>실수익</span><span>{liveProfit >= 0 ? '+' : ''}{fmtNum(Math.round(liveProfit))}</span></div>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>수익률</span><span style={{ color: '#888' }}>{liveProfitRate}%</span></div>
