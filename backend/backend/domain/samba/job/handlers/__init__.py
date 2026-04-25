@@ -1,0 +1,4 @@
+"""Job handlers — 신규 job_type별 실행 로직 모음.
+
+worker.py 거대 클래스 분해 금지(CLAUDE.md) — 신규 job_type만 별도 파일로 시작.
+"""

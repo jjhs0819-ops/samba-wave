@@ -646,6 +646,12 @@ class JobWorker:
                         await self._run_stub(fresh_job, repo, "갱신")
                     elif _job_type == "ai_tag":
                         await self._run_stub(fresh_job, repo, "AI태그")
+                    elif _job_type == "order_sync":
+                        from backend.domain.samba.job.handlers.order_sync import (
+                            run as run_order_sync,
+                        )
+
+                        await run_order_sync(fresh_job, repo, session, self)
                     else:
                         await repo.fail_job(_job_id, f"알 수 없는 잡 타입: {_job_type}")
 

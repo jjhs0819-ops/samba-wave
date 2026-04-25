@@ -2,6 +2,7 @@
 
 import { useState, Dispatch, SetStateAction } from 'react'
 import { orderApi, type SambaMarketAccount } from '@/lib/samba/api/commerce'
+import { jobApi } from '@/lib/samba/api/operations'
 import { fmtNum } from '@/lib/samba/styles'
 import { fmtTime } from '@/lib/samba/utils'
 
@@ -16,6 +17,8 @@ interface UseOrderSyncArgs {
 export function useOrderSync({ accounts, period, setLogMessages, showNotification, loadOrders }: UseOrderSyncArgs) {
   const [syncing, setSyncing] = useState(false)
   const [syncAccountId, setSyncAccountId] = useState('')
+  // 백그라운드 모드: 백엔드 잡 큐로 위임 + 진행률 폴링 (페이지 이탈해도 계속)
+  const [backgroundMode, setBackgroundMode] = useState(false)
 
   const handleFetch = async () => {
     setSyncing(true)
@@ -26,6 +29,43 @@ export function useOrderSync({ accounts, period, setLogMessages, showNotificatio
       thisyear: Math.ceil((Date.now() - new Date(new Date().getFullYear(), 0, 1).getTime()) / 86400000) + 1, all: 365,
     }
     const days = daysMap[period] || 7
+
+    // 백그라운드 모드 — 전체마켓에서만 활성화 (개별 계정/마켓타입은 짧아서 불필요)
+    if (backgroundMode && !syncAccountId) {
+      try {
+        const created = await jobApi.create({ job_type: 'order_sync', payload: { days } })
+        const jobId = created.id
+        const reused = created.duplicate
+        setLogMessages(prev => [...prev, `[${ts()}] 백그라운드 잡 ${reused ? '재사용' : '시작'} (${jobId.slice(0, 12)}...)`])
+        // 폴링 — 잡 끝날 때까지. 페이지 이탈/새로고침해도 백엔드 잡은 계속 돌아감
+        let logSince = 0
+        let done = false
+        while (!done) {
+          await new Promise(r => setTimeout(r, 2000))
+          try {
+            const logsRes = await jobApi.jobLogs(jobId, logSince)
+            if (logsRes.logs && logsRes.logs.length > 0) {
+              setLogMessages(prev => [...prev, ...logsRes.logs])
+              logSince += logsRes.logs.length
+            }
+            const job = await jobApi.get(jobId)
+            const status = (job as unknown as { status?: string }).status
+            if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+              setLogMessages(prev => [...prev, `[${ts()}] 잡 ${status === 'completed' ? '완료' : status === 'failed' ? '실패' : '취소'}`])
+              done = true
+            }
+          } catch (e) {
+            setLogMessages(prev => [...prev, `[${ts()}] 폴링 오류: ${e}`])
+          }
+        }
+      } catch (e) {
+        setLogMessages(prev => [...prev, `[${ts()}] 백그라운드 잡 생성 실패: ${e}`])
+      } finally {
+        await loadOrders()
+        setSyncing(false)
+      }
+      return
+    }
 
     // 마켓타입 선택 시 해당 마켓 계정들만 순회 동기화
     if (syncAccountId.startsWith('type:')) {
@@ -131,6 +171,7 @@ export function useOrderSync({ accounts, period, setLogMessages, showNotificatio
   return {
     syncing,
     syncAccountId, setSyncAccountId,
+    backgroundMode, setBackgroundMode,
     handleFetch,
   }
 }

@@ -239,7 +239,7 @@ export default function OrdersPage() {
     }).catch(() => {})
   }, [])
 
-  const { syncing, syncAccountId, setSyncAccountId, handleFetch } = useOrderSync({
+  const { syncing, syncAccountId, setSyncAccountId, backgroundMode, setBackgroundMode, handleFetch } = useOrderSync({
     accounts, period, setLogMessages, showNotification, loadOrders,
   })
 
@@ -328,6 +328,7 @@ export default function OrdersPage() {
         dateLocked={dateLocked} setDateLocked={setDateLocked}
         syncAccountId={syncAccountId} setSyncAccountId={setSyncAccountId}
         syncing={syncing} handleFetch={handleFetch}
+        backgroundMode={backgroundMode} setBackgroundMode={setBackgroundMode}
         bulkStatus={bulkStatus} setBulkStatus={setBulkStatus}
         bulkUpdating={bulkUpdating} handleBulkAction={handleBulkAction}
         selectedIdsSize={selectedIds.size}

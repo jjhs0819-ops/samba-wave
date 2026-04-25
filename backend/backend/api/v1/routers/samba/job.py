@@ -15,7 +15,7 @@ router = APIRouter(prefix="/jobs", tags=["samba-jobs"])
 
 
 class JobCreate(BaseModel):
-    job_type: str  # transmit | collect | refresh | ai_tag
+    job_type: str  # transmit | collect | refresh | ai_tag | order_sync
     payload: dict = {}
     tenant_id: Optional[str] = None
 
@@ -51,6 +51,39 @@ async def create_job(
                     )
                 ).scalar()
             ) or 0
+
+    # 주문 동기화 잡: 같은 tenant 에서 동시 실행 1개만 허용 — 이중 호출 방지
+    if body.job_type == "order_sync":
+        from backend.domain.samba.job.model import SambaJob
+        from sqlmodel import select, col
+
+        active = (
+            (
+                await session.execute(
+                    select(SambaJob)
+                    .where(
+                        SambaJob.job_type == "order_sync",
+                        col(SambaJob.status).in_(
+                            [JobStatus.PENDING, JobStatus.RUNNING]
+                        ),
+                        SambaJob.tenant_id == body.tenant_id,
+                    )
+                    .order_by(SambaJob.created_at.desc())
+                    .limit(1)
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if active:
+            return {
+                "id": active.id,
+                "status": active.status,
+                "job_type": "order_sync",
+                "duplicate": True,
+                "current": active.current,
+                "total": active.total,
+            }
 
     # 전송 잡: 중복 클릭/요청 차단 + 이어하기
     if body.job_type == "transmit":

@@ -39,7 +39,7 @@ class SambaJob(SQLModel, table=True):
     )
     job_type: str = Field(
         sa_column=Column(String(30), nullable=False, index=True)
-    )  # transmit | collect | refresh | ai_tag
+    )  # transmit | collect | refresh | ai_tag | order_sync
     status: str = Field(
         default=JobStatus.PENDING,
         sa_column=Column(

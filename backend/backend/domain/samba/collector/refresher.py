@@ -16,11 +16,6 @@ from typing import Any, Dict, List, Optional
 
 from backend.utils.logger import logger
 
-# 환경: Cloud Run이면 동시 요청 높게, 로컬이면 낮게
-import os
-
-_IS_CLOUD = os.getenv("K_SERVICE") is not None  # Cloud Run 자동 설정 환경변수
-
 # 소싱처당 동시 요청 제한 (프로덕션 기준 단일값)
 CONCURRENCY_PER_SITE = 10
 # 소싱처별 동시 요청 수 (프로덕션 기준 단일값, 확장앱/워커 BATCH와 통일)
@@ -183,12 +178,6 @@ _ip_rotate_counters: dict[str, int] = {}
 _ip_rotate_idxs: dict[str, int] = {}
 _ip_rotate_labels: dict[str, str] = {}
 _ip_rotate_totals: dict[str, int] = {}
-# 하위호환 — 무신사 전용 단일 변수 (내부에서 딕셔너리로 위임)
-_ip_rotate_counter = 0
-_ip_rotate_idx = 0
-_ip_rotate_label: str = ""
-_ip_rotate_total = 0
-
 
 # DB 프록시 캐시 (autotune 용도)
 _db_proxy_cache: list[str] | None = None
@@ -281,11 +270,6 @@ def get_collect_proxy_url() -> str | None:
     """수집 용도 프록시 중 첫 번째 URL만 반환 (단일 프록시가 필요한 구 API 호환용)."""
     urls = get_collect_proxies()
     return urls[0] if urls else None
-
-
-def _load_db_proxies_for_autotune() -> list[str]:
-    """하위 호환 — 오토튠 프록시 목록 반환."""
-    return get_autotune_proxies()
 
 
 def invalidate_db_proxy_cache() -> None:

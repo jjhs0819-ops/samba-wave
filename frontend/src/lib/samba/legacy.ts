@@ -1518,6 +1518,13 @@ export const jobApi = {
     return request<SambaJob[]>(`${SAMBA_PREFIX}/jobs?${p}`)
   },
   get: (id: string) => request<SambaJob>(`${SAMBA_PREFIX}/jobs/${id}`),
+  create: (body: { job_type: string; payload?: Record<string, unknown>; tenant_id?: string | null }) =>
+    request<{ id: string; status: string; job_type: string; duplicate?: boolean; current?: number; total?: number }>(
+      `${SAMBA_PREFIX}/jobs`,
+      { method: 'POST', body: JSON.stringify({ payload: {}, ...body }) },
+    ),
+  jobLogs: (jobId: string, since = 0) =>
+    request<{ logs: string[] }>(`${SAMBA_PREFIX}/jobs/${jobId}/logs?since=${since}`),
   cancel: (id: string) => request<{ ok: boolean }>(`${SAMBA_PREFIX}/jobs/${id}`, { method: 'DELETE' }),
   cancelAll: () => request<{ ok: boolean }>(`${SAMBA_PREFIX}/jobs/cancel-all`, { method: 'POST' }),
   collectQueue: () => request<QueueStatus>(`${SAMBA_PREFIX}/jobs/collect-queue-status`),

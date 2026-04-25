@@ -48,9 +48,8 @@ async def _disconnect_cache() -> None:
 
 def _startup_logger() -> logging.Logger:
     logger = logging.getLogger("backend.startup")
-    revision = os.environ.get("K_REVISION", "local")
     commit = os.environ.get("COMMIT_SHA", "unknown")
-    logger.info("[startup] revision=%s commit=%s", revision, commit)
+    logger.info("[startup] commit=%s", commit)
     return logger
 
 
