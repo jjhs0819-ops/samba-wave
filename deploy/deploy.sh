@@ -223,7 +223,7 @@ for i in $(seq 1 120); do
     sleep 5
     EXT_RESP=$(curl -sf -m 3 https://api.samba-wave.co.kr/api/v1/health 2>/dev/null || echo "")
     EXT_COMMIT=$(echo "$EXT_RESP" | grep -oE '"commit":"[^"]+"' | head -1 | cut -d'"' -f4)
-    if [ -n "$EXT_COMMIT" ] && [ "$EXT_COMMIT" = "$SHA" ]; then
+    if [ -n "$EXT_COMMIT" ] && echo "$SHA" | grep -q "^$EXT_COMMIT"; then
         echo "    ✅ blue healthy + Caddy 라우팅 복귀 (${i}회 시도, $((i*5))초, commit=$EXT_COMMIT)"
         break
     fi
