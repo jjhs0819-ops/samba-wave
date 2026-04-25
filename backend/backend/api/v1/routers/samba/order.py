@@ -3130,6 +3130,46 @@ async def sync_orders_from_markets(
                         f"[주문동기화] {label}: 플레이오토 paid_at 백필 실패 — {_bf_err}"
                     )
 
+            # ── paid_at 백필 — 롯데ON NULL paid_at 주문 → 동기화 데이터에서 매칭 ──
+            # order_number = "{od_no}_{od_seq}_{proc_seq}" 합성키 기반 (order.py:3406)
+            elif market_type == "lotteon":
+                try:
+                    _lo_paid_map: dict[str, datetime] = {}
+                    for od in orders_data:
+                        if od.get("paid_at") and od.get("order_number"):
+                            _lo_paid_map[od["order_number"]] = od["paid_at"]
+                    if _lo_paid_map:
+                        _null_rows = await session.execute(
+                            _sa_text(
+                                "SELECT order_number FROM samba_order "
+                                "WHERE paid_at IS NULL AND source = 'lotteon' "
+                                "AND channel_id = :cid LIMIT 200"
+                            ),
+                            {"cid": account["id"]},
+                        )
+                        _null_ons = [r[0] for r in _null_rows.fetchall()]
+                        _backfilled = 0
+                        for _on in _null_ons:
+                            _paid = _lo_paid_map.get(_on)
+                            if _paid:
+                                await session.execute(
+                                    _sa_text(
+                                        "UPDATE samba_order SET paid_at = :paid "
+                                        "WHERE order_number = :on AND paid_at IS NULL"
+                                    ),
+                                    {"paid": _paid, "on": _on},
+                                )
+                                _backfilled += 1
+                        if _backfilled:
+                            await session.commit()
+                            logger.info(
+                                f"[주문동기화] {label}: 롯데ON paid_at 백필 {_backfilled}건"
+                            )
+                except Exception as _bf_err:
+                    logger.warning(
+                        f"[주문동기화] {label}: 롯데ON paid_at 백필 실패 — {_bf_err}"
+                    )
+
         except Exception as e:
             await session.rollback()  # 세션 복구 — 다음 계정 연쇄 실패 방지
             logger.error(f"[주문동기화] {label} 실패: {e}")
@@ -3373,18 +3413,16 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
             f"→ 반품요청으로 재매핑: odNo={item.get('odNo')}"
         )
 
-    # 결제일시 파싱 (yyyymmddHHmmss) — 롯데ON은 KST 기준
-    # 응답 키명이 단일하지 않을 수 있어 다중 시도. 모두 비면 paid_at=None
-    # (이전 datetime.now() 폴백은 동일 sync 배치의 모든 row paid_at을 sync 시각으로 통일시키는 버그였음)
+    # 결제일시 파싱 — 롯데ON 응답 실측 키는 odCmptDttm (yyyymmddHHmmss, KST)
+    # 참고: owhoDttm(발주확인, ISO 포맷)은 결제 이후 시각이라 결제시각 폴백으로 부적합
     from backend.utils import kst_str_to_utc
 
-    order_dttm_str = (
-        item.get("odDttm") or item.get("pymtCmptnDttm") or item.get("aprvDttm") or ""
-    )
+    order_dttm_str = item.get("odCmptDttm") or ""
     paid_at = kst_str_to_utc(order_dttm_str)
     if not paid_at:
         logger.warning(
             f"[롯데ON][주문파싱] 결제일시 키 없음 odNo={item.get('odNo')} "
+            f"odCmptDttm={item.get('odCmptDttm')!r} "
             f"키후보={[k for k in item.keys() if 'tt' in k.lower() or 'dt' in k.lower()]}"
         )
 

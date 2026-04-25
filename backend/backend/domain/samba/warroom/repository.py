@@ -169,6 +169,35 @@ class SambaMonitorEventRepository(BaseRepository[SambaMonitorEvent]):
         result = await self.session.execute(stmt)
         return result.rowcount or 0
 
+    async def update_event_detail(
+        self,
+        event_id: str,
+        patch: Dict[str, Any],
+    ) -> bool:
+        """이벤트 detail JSONB 필드 부분 update (merge).
+
+        마켓 판매중지 결과 등 발행 이후 결정되는 값을 기존 이벤트에 반영할 때 사용.
+        존재하지 않는 event_id 또는 빈 patch는 무시된다.
+        """
+        from sqlalchemy.orm.attributes import flag_modified
+
+        if not event_id or not patch:
+            return False
+
+        stmt = select(SambaMonitorEvent).where(SambaMonitorEvent.id == event_id)
+        result = await self.session.execute(stmt)
+        row = result.scalar_one_or_none()
+        if row is None:
+            return False
+
+        merged = dict(row.detail or {})
+        merged.update(patch)
+        row.detail = merged
+        flag_modified(row, "detail")
+        self.session.add(row)
+        await self.session.flush()
+        return True
+
     async def count_hourly_since(
         self,
         event_type: str,

@@ -757,9 +757,10 @@ export default function WarroomPage() {
                 {Object.keys(tickEventsBySite).map(siteName => {
                   const sitePriceChanges = siteChanges[siteName]?.price_changed ?? []
                   const siteSoldOuts = siteChanges[siteName]?.sold_out ?? []
+                  const siteRestocks = siteChanges[siteName]?.restock ?? []
                   // autotune 사이클 tick에서 가격변동 상품 추출 (LOTTEON 등 price_changed 이벤트 없는 소싱처)
                   type TickPriceItem = { pid: string; site_product_id?: string; name: string; old_price: number; new_price: number }
-                  type TickStockItem = { pid: string; site_product_id?: string; name: string; sale_status?: string }
+                  type TickStockItem = { pid: string; site_product_id?: string; name: string; sale_status?: string; direction?: string }
                   const latestTick = tickEventsBySite[siteName]?.[0]
                   const latestTickDetail = latestTick?.detail as Record<string, unknown> | undefined
                   const tickPriceItems = (latestTickDetail?.price_changed_items as TickPriceItem[] | undefined) ?? []
@@ -767,8 +768,14 @@ export default function WarroomPage() {
                   const tickEndedAt = latestTickDetail?.ended_at as string | undefined
                   // DB 이벤트에 없는 항목만 tick에서 보충 (중복 방지), 합산 5개 제한
                   const tickPriceSlice = tickPriceItems.slice(0, Math.max(0, 5 - sitePriceChanges.length))
-                  const tickStockSlice = tickStockItems.slice(0, Math.max(0, 5 - siteSoldOuts.length))
-                  if (sitePriceChanges.length === 0 && siteSoldOuts.length === 0 && tickPriceSlice.length === 0 && tickStockSlice.length === 0) return null
+                  const tickStockSlice = tickStockItems.slice(0, Math.max(0, 5 - siteSoldOuts.length - siteRestocks.length))
+                  if (
+                    sitePriceChanges.length === 0
+                    && siteSoldOuts.length === 0
+                    && siteRestocks.length === 0
+                    && tickPriceSlice.length === 0
+                    && tickStockSlice.length === 0
+                  ) return null
                   const fmtT = (iso: string) => {
                     const d = new Date(iso)
                     return `${d.getMonth() + 1}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
@@ -789,8 +796,7 @@ export default function WarroomPage() {
                         const d = ev.detail
                         const sitePid = (d?.site_product_id as string | undefined) || shortId(ev.product_id)
                         const reason = d?.reason as string | undefined
-                        const oldS = d?.old_stock as number | null | undefined
-                        const newS = d?.new_stock as number | null | undefined
+                        const soldOutOptions = (d?.sold_out_options as string[] | undefined) ?? []
                         const suspendedMarkets = (d?.suspended_markets as string[] | undefined) ?? []
                         const reasonLabel =
                           reason === 'option_partial' ? '옵션품절'
@@ -803,14 +809,34 @@ export default function WarroomPage() {
                             <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{sitePid}</span>
                             <span style={{ fontSize: '0.72rem', color: '#A78BFA' }}>품절</span>
                             <span style={{ fontSize: '0.68rem', color: '#888' }}>({reasonLabel})</span>
-                            {reason === 'option_partial' && oldS != null && newS != null && (
-                              <span style={{ fontSize: '0.72rem', color: '#bbb' }}>
-                                {fmtNum(oldS)}→{fmtNum(newS)}
+                            {reason === 'option_partial' && soldOutOptions.length > 0 && (
+                              <span style={{ fontSize: '0.72rem', color: '#A78BFA' }}>
+                                {soldOutOptions.slice(0, 5).join(', ')}
+                                {soldOutOptions.length > 5 ? ` 외 ${fmtNum(soldOutOptions.length - 5)}` : ''}
                               </span>
                             )}
                             {suspendedMarkets.length > 0 && (
                               <span style={{ fontSize: '0.68rem', color: '#FFB347' }}>
                                 판매중지 {suspendedMarkets.length}
+                              </span>
+                            )}
+                          </div>
+                        )
+                      })}
+                      {siteRestocks.map(ev => {
+                        const d = ev.detail
+                        const sitePid = (d?.site_product_id as string | undefined) || shortId(ev.product_id)
+                        const restockedOptions = (d?.restocked_options as string[] | undefined) ?? []
+                        return (
+                          <div key={ev.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
+                            <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
+                            <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{sitePid}</span>
+                            <span style={{ fontSize: '0.72rem', color: '#51CF66' }}>재입고</span>
+                            <span style={{ fontSize: '0.68rem', color: '#888' }}>(옵션리스탁)</span>
+                            {restockedOptions.length > 0 && (
+                              <span style={{ fontSize: '0.72rem', color: '#51CF66' }}>
+                                {restockedOptions.slice(0, 5).join(', ')}
+                                {restockedOptions.length > 5 ? ` 외 ${fmtNum(restockedOptions.length - 5)}` : ''}
                               </span>
                             )}
                           </div>
@@ -847,17 +873,28 @@ export default function WarroomPage() {
                           </div>
                         )
                       })}
-                      {/* tick 품절 (DB 이벤트 보충) */}
-                      {tickStockSlice.map((item, i) => (
-                        <div key={`ts-${i}`} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
-                          {tickEndedAt && <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(tickEndedAt)}</span>}
-                          <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{item.site_product_id || item.pid.slice(-8)}</span>
-                          <span style={{ fontSize: '0.72rem', color: '#A78BFA' }}>품절</span>
-                          <span style={{ fontSize: '0.68rem', color: '#888' }}>
-                            ({item.sale_status === 'sold_out' ? '전체품절' : '옵션품절'})
-                          </span>
-                        </div>
-                      ))}
+                      {/* tick 재고변동 (DB 이벤트 보충) — direction에 따라 품절/재입고 구분 */}
+                      {tickStockSlice.map((item, i) => {
+                        const isRestock = item.direction === 'restock'
+                        const isMixed = item.direction === 'mixed'
+                        const labelText = isRestock ? '재입고' : '품절'
+                        const labelColor = isRestock ? '#51CF66' : '#A78BFA'
+                        const reasonLabel =
+                          isMixed ? '재고변동'
+                          : isRestock ? '옵션리스탁'
+                          : item.sale_status === 'sold_out' ? '전체품절'
+                          : '옵션품절'
+                        return (
+                          <div key={`ts-${i}`} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
+                            {tickEndedAt && <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(tickEndedAt)}</span>}
+                            <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{item.site_product_id || item.pid.slice(-8)}</span>
+                            <span style={{ fontSize: '0.72rem', color: labelColor }}>{labelText}</span>
+                            <span style={{ fontSize: '0.68rem', color: '#888' }}>
+                              ({reasonLabel})
+                            </span>
+                          </div>
+                        )
+                      })}
                     </div>
                   )
                 })}
@@ -876,7 +913,8 @@ export default function WarroomPage() {
                   return Object.entries(marketChanges).map(([marketType, byType]) => {
                     const priceChanges = byType.price_changed ?? []
                     const soldOuts = byType.sold_out ?? []
-                    if (priceChanges.length === 0 && soldOuts.length === 0) return null
+                    const restocks = byType.restock ?? []
+                    if (priceChanges.length === 0 && soldOuts.length === 0 && restocks.length === 0) return null
                     const label = MARKET_LABEL[marketType] || marketType
                     const color = MARKET_COLOR[marketType] || '#888'
                     return (
@@ -893,8 +931,7 @@ export default function WarroomPage() {
                         {soldOuts.map(ev => {
                           const d = ev.detail || {}
                           const reason = d.reason as string | undefined
-                          const oldS = d.old_stock as number | null | undefined
-                          const newS = d.new_stock as number | null | undefined
+                          const soldOutOptions = (d.sold_out_options as string[] | undefined) ?? []
                           const reasonLabel =
                             reason === 'option_partial' ? '옵션품절'
                             : reason === 'source_deleted' ? '소싱처삭제'
@@ -909,9 +946,31 @@ export default function WarroomPage() {
                               <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{ev.site_product_id || '-'}</span>
                               <span style={{ fontSize: '0.72rem', color: '#A78BFA' }}>품절</span>
                               <span style={{ fontSize: '0.68rem', color: '#888' }}>({reasonLabel})</span>
-                              {reason === 'option_partial' && oldS != null && newS != null && (
-                                <span style={{ fontSize: '0.72rem', color: '#bbb' }}>
-                                  {fmtNum(oldS)}→{fmtNum(newS)}
+                              {reason === 'option_partial' && soldOutOptions.length > 0 && (
+                                <span style={{ fontSize: '0.72rem', color: '#A78BFA' }}>
+                                  {soldOutOptions.slice(0, 5).join(', ')}
+                                  {soldOutOptions.length > 5 ? ` 외 ${fmtNum(soldOutOptions.length - 5)}` : ''}
+                                </span>
+                              )}
+                            </div>
+                          )
+                        })}
+                        {restocks.map(ev => {
+                          const d = ev.detail || {}
+                          const restockedOptions = (d.restocked_options as string[] | undefined) ?? []
+                          return (
+                            <div key={ev.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem', flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
+                              {ev.account_label && (
+                                <span style={{ fontSize: '0.72rem', color: '#9AA5C0' }}>({ev.account_label})</span>
+                              )}
+                              <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{ev.site_product_id || '-'}</span>
+                              <span style={{ fontSize: '0.72rem', color: '#51CF66' }}>재입고</span>
+                              <span style={{ fontSize: '0.68rem', color: '#888' }}>(옵션리스탁)</span>
+                              {restockedOptions.length > 0 && (
+                                <span style={{ fontSize: '0.72rem', color: '#51CF66' }}>
+                                  {restockedOptions.slice(0, 5).join(', ')}
+                                  {restockedOptions.length > 5 ? ` 외 ${fmtNum(restockedOptions.length - 5)}` : ''}
                                 </span>
                               )}
                             </div>

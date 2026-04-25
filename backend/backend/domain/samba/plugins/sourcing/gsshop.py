@@ -106,6 +106,19 @@ class GsShopSourcingPlugin(SourcingPlugin):
                     for opt in raw_options
                 ]
 
+            from backend.domain.samba.collector.refresher import (
+                count_stock_transitions,
+            )
+
+            old_options_gs = getattr(product, "options", None) or []
+            _stock_changes = count_stock_transitions(old_options_gs, new_options or [])
+            old_sale = getattr(product, "sale_price", 0) or 0
+            old_status = getattr(product, "sale_status", "in_stock")
+            new_sale_status = "sold_out" if is_sold_out else "in_stock"
+            changed = (float(new_sale_price or 0) != float(old_sale or 0)) or (
+                new_sale_status != old_status
+            )
+
             return RefreshResult(
                 product_id=product_id,
                 new_sale_price=float(new_sale_price) if new_sale_price else None,
@@ -113,13 +126,14 @@ class GsShopSourcingPlugin(SourcingPlugin):
                     float(new_original_price) if new_original_price else None
                 ),
                 new_cost=float(best_benefit_price) if best_benefit_price else None,
-                new_sale_status="sold_out" if is_sold_out else "in_stock",
+                new_sale_status=new_sale_status,
                 new_options=new_options,
                 new_images=detail.get("images"),
                 new_detail_images=detail.get("detailImages"),
                 new_free_shipping=detail.get("freeShipping"),
                 new_same_day_delivery=detail.get("sameDayDelivery"),
-                changed=True,
+                changed=changed,
+                stock_changed=_stock_changes > 0,
             )
 
         except Exception as e:

@@ -19,17 +19,18 @@ import {
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtTime } from '@/lib/samba/utils'
 import { fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
-import { SITES, SITE_OPTIONS } from './constants'
 import AiJobModal from './components/AiJobModal'
 import DeleteJobModal from './components/DeleteJobModal'
 import MappingModal from './components/MappingModal'
-import TagPreviewModal, { type TagPreview, type TagPreviewCost } from './components/TagPreviewModal'
+import TagPreviewModal from './components/TagPreviewModal'
 import AiSourcingModal from './components/AiSourcingModal'
-import MusinsaBrandModal from './components/MusinsaBrandModal'
-import LotteOnBrandModal from './components/LotteOnBrandModal'
 import SourcingUrlPanel from './components/SourcingUrlPanel'
 import DuplicatesModal from './components/DuplicatesModal'
 import DrilldownGroupTable from './components/DrilldownGroupTable'
+import AiToolsPanel from './components/AiToolsPanel'
+import CollectorStatusPanel from './components/CollectorStatusPanel'
+import useProxyAuth from './hooks/useProxyAuth'
+import useAiTools from './hooks/useAiTools'
 
 const FIXED_REQUESTED_COUNT = 1000
 
@@ -81,28 +82,25 @@ export default function CollectorPage() {
   // 일괄 갱신
   const [refreshResult] = useState<RefreshResult | null>(null)
   const [showRefreshModal, setShowRefreshModal] = useState(false)
-  // AI 비용 추적
-  const [lastAiUsage, setLastAiUsage] = useState<{ calls: number; tokens: number; cost: number; date: string } | null>(null)
-
-  // AI 태그 미리보기 모달
-  const [showTagPreview, setShowTagPreview] = useState(false)
-  const [tagPreviews, setTagPreviews] = useState<TagPreview[]>([])
-  const [tagPreviewCost, setTagPreviewCost] = useState<TagPreviewCost | null>(null)
-  const [tagPreviewLoading, setTagPreviewLoading] = useState(false)
-  const [removedTags, setRemovedTags] = useState<string[]>([])
-
-  // AI 이미지 변환
-  const [aiImgScope, setAiImgScope] = useState({ thumbnail: true, additional: true, detail: false })
-  const [aiImgMode, setAiImgMode] = useState('background')
-  const [aiModelPreset, setAiModelPreset] = useState('auto')
-  const [aiImgTransforming, setAiImgTransforming] = useState(false)
-  const [aiPresetList, setAiPresetList] = useState<{ key: string; label: string; desc: string; image: string | null }[]>([])
-  // AI 작업 진행 모달
-  const [aiJobModal, setAiJobModal] = useState(false)
-  const [aiJobTitle, setAiJobTitle] = useState('')
-  const [aiJobLogs, setAiJobLogs] = useState<string[]>([])
-  const [aiJobDone, setAiJobDone] = useState(false)
-  const aiJobAbortRef = useRef(false)
+  // AI 도구 관련 상태(태그 미리보기/이미지 변환/작업 진행 모달/AI 비용)는 useAiTools 훅으로 추출
+  const {
+    lastAiUsage, setLastAiUsage,
+    showTagPreview, setShowTagPreview,
+    tagPreviews, setTagPreviews,
+    tagPreviewCost, setTagPreviewCost,
+    tagPreviewLoading, setTagPreviewLoading,
+    removedTags, setRemovedTags,
+    aiImgScope, setAiImgScope,
+    aiImgMode, setAiImgMode,
+    aiModelPreset, setAiModelPreset,
+    aiImgTransforming, setAiImgTransforming,
+    aiPresetList,
+    aiJobModal, setAiJobModal,
+    aiJobTitle, setAiJobTitle,
+    aiJobLogs, setAiJobLogs,
+    aiJobDone, setAiJobDone,
+    aiJobAbortRef,
+  } = useAiTools()
 
   // 그룹 삭제 진행 모달
   const [deleteJobModal, setDeleteJobModal] = useState(false)
@@ -124,10 +122,14 @@ export default function CollectorPage() {
   const [, setAccounts] = useState<SambaMarketAccount[]>([])
 
   // Proxy & auth status
-  const [proxyStatus, setProxyStatus] = useState<"checking" | "ok" | "error">("checking");
-  const [proxyText, setProxyText] = useState("프록시 서버 확인 중...");
-  const [musinsaAuth, setMusinsaAuth] = useState<"checking" | "ok" | "error">("checking");
-  const [musinsaAuthText, setMusinsaAuthText] = useState("인증 상태 확인 중...");
+  const {
+    proxyStatus,
+    proxyText,
+    musinsaAuth,
+    musinsaAuthText,
+    setProxyStatus,
+    setProxyText,
+  } = useProxyAuth();
 
   // 트리 + 드릴다운
   const [tree, setTree] = useState<SambaSearchFilter[]>([])
@@ -190,28 +192,8 @@ export default function CollectorPage() {
 
   useEffect(() => { load(); loadTree(); }, [load, loadTree]);
   useEffect(() => {
-    proxyApi.listPresets().then(res => { if (res.success) setAiPresetList(res.presets) }).catch(() => {})
     accountApi.list().then(setAccounts).catch(() => {})
   }, [])
-  // 프록시 & 무신사 인증 상태 확인
-  useEffect(() => {
-    fetchWithAuth(`${API_BASE}/api/v1/samba/collector/proxy-status`)
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.status === "ok") { setProxyStatus("ok"); setProxyText(data.message || "프록시 서버 정상 작동 중"); }
-        else { setProxyStatus("error"); setProxyText(data.message || "프록시 서버 연결 실패"); }
-      })
-      .catch(() => { setProxyStatus("error"); setProxyText("백엔드 서버 연결 실패"); });
-
-    fetchWithAuth(`${API_BASE}/api/v1/samba/collector/musinsa-auth-status`)
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.status === "ok") { setMusinsaAuth("ok"); setMusinsaAuthText(data.message || "무신사 인증 완료"); }
-        else { setMusinsaAuth("error"); setMusinsaAuthText(data.message || "무신사 인증 필요"); }
-      })
-      .catch(() => { setMusinsaAuth("error"); setMusinsaAuthText("백엔드 서버 연결 실패"); });
-  }, []);
-
   const addLog = useCallback((msg: string) => {
     const time = fmtTime();
     const line = `[${time}] ${msg}`
@@ -1252,40 +1234,15 @@ export default function CollectorPage() {
   return (
     <div style={{ color: '#E5E5E5' }}>
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0', padding: '0.5rem 1rem' }}>
-      {/* 프록시 + 무신사 인증 상태 (1줄) */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: '16px', padding: '6px 14px',
-        borderRadius: '8px', marginBottom: '12px',
-        background: 'rgba(255,140,0,0.07)', border: '1px solid rgba(255,140,0,0.2)',
-        fontSize: '0.78rem',
-      }}>
-        <span style={{ width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0,
-          background: proxyStatus === 'ok' ? '#51CF66' : proxyStatus === 'error' ? '#FF6B6B' : '#555',
-        }} />
-        <span style={{ color: proxyStatus === 'ok' ? '#51CF66' : '#888' }}>{proxyText}</span>
-        <span style={{ color: '#2D2D2D' }}>|</span>
-        <span style={{ width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0,
-          background: musinsaAuth === 'ok' ? '#51CF66' : musinsaAuth === 'error' ? '#FF6B6B' : '#555',
-        }} />
-        <span style={{ color: musinsaAuth === 'ok' ? '#51CF66' : '#888' }}>{musinsaAuthText}</span>
-        <button
-          onClick={() => {
-            setProxyStatus('checking')
-            setProxyText('프록시 서버 확인 중...')
-            fetchWithAuth(`${API_BASE}/api/v1/samba/collector/proxy-status`)
-              .then(r => r.json())
-              .then(data => {
-                if (data.status === 'ok') { setProxyStatus('ok'); setProxyText(data.message || '프록시 서버 정상 작동 중') }
-                else { setProxyStatus('error'); setProxyText(data.message || '프록시 서버 연결 실패') }
-              })
-              .catch(() => { setProxyStatus('error'); setProxyText('백엔드 서버 연결 실패') })
-          }}
-          style={{
-            marginLeft: 'auto', background: 'transparent', border: '1px solid #3D3D3D',
-            color: '#888', padding: '2px 10px', borderRadius: '4px', fontSize: '0.72rem', cursor: 'pointer',
-          }}
-        >재확인</button>
-      </div>
+      <CollectorStatusPanel
+        section="status"
+        proxyStatus={proxyStatus}
+        proxyText={proxyText}
+        musinsaAuth={musinsaAuth}
+        musinsaAuthText={musinsaAuthText}
+        setProxyStatus={setProxyStatus}
+        setProxyText={setProxyText}
+      />
 
       <SourcingUrlPanel
         selectedSite={selectedSite}
@@ -1340,381 +1297,47 @@ export default function CollectorPage() {
         addLog={addLog}
       />
 
-      {/* 로그현황 */}
-      <div style={{
-        background: "rgba(30,30,30,0.5)", border: "1px solid #2D2D2D", borderRadius: "8px",
-        overflow: "hidden", marginBottom: "1rem",
-      }}>
-        <div style={{
-          padding: "8px 16px", borderBottom: "1px solid #2D2D2D",
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "#C5C5C5" }}>로그현황</span>
-            {(() => {
-              const { running, pending } = collectQueueStatus
-              const hasActivity = running.length > 0 || pending.length > 0
-              // 브랜드별 그룹핑
-              const groupByBrand = (items: Array<{ filter_name: string; source_site: string }>) => {
-                const brands = new Map<string, number>()
-                for (const item of items) {
-                  const parsed = parseGroupName(item.filter_name, item.source_site)
-                  const brand = parsed.brand || item.source_site || '알수없음'
-                  brands.set(brand, (brands.get(brand) || 0) + 1)
-                }
-                return brands
-              }
-              const runBrands = groupByBrand(running)
-              const penBrands = groupByBrand(pending)
-              const formatBrands = (brands: Map<string, number>) => {
-                const entries = [...brands.entries()]
-                if (entries.length === 0) return ''
-                if (entries.length <= 2) return entries.map(([b, c]) => c > 1 ? `${b} ${fmtNum(c)}건` : b).join('/')
-                return `${entries[0][0]} 외 ${fmtNum(entries.length - 1)}개`
-              }
-              return (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.72rem' }}>
-                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', flexShrink: 0,
-                    background: running.length > 0 ? '#51CF66' : pending.length > 0 ? '#FAB005' : '#444',
-                  }} />
-                  {running.length > 0 && (
-                    <span style={{ color: '#51CF66' }}>
-                      {formatBrands(runBrands)} 진행 {fmtNum(running.length)}건
-                    </span>
-                  )}
-                  {pending.length > 0 && (
-                    <span style={{ color: '#FAB005' }}>
-                      {running.length > 0 ? '+ ' : ''}{formatBrands(penBrands)} 대기 {fmtNum(pending.length)}건
-                    </span>
-                  )}
-                  {!hasActivity && <span style={{ color: '#555' }}>대기 잡 없음</span>}
-                </div>
-              )
-            })()}
-          </div>
-          <div style={{ display: "flex", gap: "4px" }}>
-            {collecting && (
-              <button onClick={handleStopCollect} style={{
-                fontSize: "0.75rem", color: "#FF6B6B", background: "rgba(255,100,100,0.1)",
-                border: "1px solid rgba(255,100,100,0.4)", padding: "2px 10px", borderRadius: "4px", cursor: "pointer",
-              }}>수집 중단</button>
-            )}
-            <button onClick={handleCopyLog} style={{
-              fontSize: "0.75rem", color: "#888", background: "transparent",
-              border: "1px solid #3D3D3D", padding: "2px 10px", borderRadius: "4px", cursor: "pointer",
-            }}>복사</button>
-            <button onClick={handleClearLog} style={{
-              fontSize: "0.75rem", color: "#888", background: "transparent",
-              border: "1px solid #3D3D3D", padding: "2px 10px", borderRadius: "4px", cursor: "pointer",
-            }}>초기화</button>
-          </div>
-        </div>
-        <div
-          ref={logRef}
-          style={{
-            height: "160px", overflowY: "auto", padding: "10px 16px",
-            fontFamily: "monospace", fontSize: "0.78rem", color: "#8A95B0", zoom: "0.7",
-            background: "#080A10", lineHeight: 1.6,
-          }}
-        >
-          {collectLog.map((line, i) => (
-            <p key={i} style={{
-              color: line.includes("완료") ? "#51CF66"
-                : line.includes("실패") || line.includes("오류") ? "#FF6B6B"
-                : line.includes("대기") || line.includes("초기화") ? "#555"
-                : "#8A95B0",
-              margin: 0,
-            }}>
-              {fmtTextNumbers(line)}
-            </p>
-          ))}
-        </div>
-      </div>
+      <CollectorStatusPanel
+        section="log"
+        collectLog={collectLog}
+        collecting={collecting}
+        collectQueueStatus={collectQueueStatus}
+        logRef={logRef}
+        handleStopCollect={handleStopCollect}
+        handleCopyLog={handleCopyLog}
+        handleClearLog={handleClearLog}
+        parseGroupName={parseGroupName}
+      />
 
-      {/* AI비용 + AI이미지변환 + 이미지필터링 — 3단 나란히 배치 */}
-      <div style={{ display: 'grid', gridTemplateColumns: '0.7fr 1.3fr 1fr', gap: '8px', marginTop: '1.25rem' }}>
-        {/* AI 비용 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(81,207,102,0.08)', border: '1px solid rgba(81,207,102,0.2)', borderRadius: '8px', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '0.8125rem', color: '#51CF66', fontWeight: 600 }}>AI 비용</span>
-          {lastAiUsage ? (
-            <>
-              <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>{fmtNum(lastAiUsage.calls)}건</span>
-              <span style={{ fontSize: '0.78rem', color: '#888' }}>·</span>
-              <span style={{ fontSize: '0.78rem', color: '#FFB84D' }}>₩{fmtNum(lastAiUsage.cost)}</span>
-              <span style={{ fontSize: '0.7rem', color: '#555' }}>{lastAiUsage.date}</span>
-            </>
-          ) : (
-            <span style={{ fontSize: '0.78rem', color: '#555' }}>사용 내역 없음</span>
-          )}
-        </div>
-        {/* AI 이미지 변환 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '8px', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '0.8125rem', color: '#FF8C00', fontWeight: 600 }}>AI 이미지 변환</span>
-          {([['thumbnail', '대표'], ['additional', '추가'], ['detail', '상세']] as const).map(([key, label]) => (
-            <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-              <input type="checkbox" checked={aiImgScope[key]}
-                onChange={() => setAiImgScope(prev => ({ ...prev, [key]: !prev[key] }))}
-                style={{ accentColor: '#FF8C00', width: '13px', height: '13px' }} />
-              <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>{label}</span>
-            </label>
-          ))}
-          <select value={aiImgMode} onChange={e => setAiImgMode(e.target.value)} style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}>
-            <option value="background">배경 제거</option>
-            <option value="model_to_product">모델→상품</option>
-            <option value="scene">연출컷</option>
-            <option value="model">모델 착용</option>
-          </select>
-          {aiImgMode === 'model' && (
-            <select
-              value={aiModelPreset}
-              onChange={e => setAiModelPreset(e.target.value)}
-              style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}
-            >
-              <option value="auto">자동 (성별·연령 판별)</option>
-              {['여성', '남성', '키즈 여아', '키즈 남아'].map(group => {
-                const groupPresets = aiPresetList.filter(p => {
-                  if (group === '여성') return p.key.startsWith('female_')
-                  if (group === '남성') return p.key.startsWith('male_')
-                  if (group === '키즈 여아') return p.key.startsWith('kids_girl_')
-                  return p.key.startsWith('kids_boy_')
-                })
-                if (!groupPresets.length) return null
-                return (
-                  <optgroup key={group} label={group}>
-                    {groupPresets.map(p => (
-                      <option key={p.key} value={p.key}>{p.label.replace(/^.*—\s*/, '')}</option>
-                    ))}
-                  </optgroup>
-                )
-              })}
-            </select>
-          )}
-          <span style={{ fontSize: '0.78rem', color: '#888' }}>({fmtNum(selectedIds.size)}개 그룹)</span>
-          <button
-            onClick={async () => {
-              if (selectedIds.size === 0) { showAlert('검색그룹을 선택해주세요'); return }
-              // displayedFilters와 교집합으로 실제 대상 결정
-              const activeIds = [...selectedIds].filter(id => displayedFilters.some(f => f.id === id))
-              if (activeIds.length === 0) { showAlert('현재 필터에 해당하는 그룹이 없습니다'); return }
-              if (!aiImgScope.thumbnail && !aiImgScope.additional && !aiImgScope.detail) { showAlert('변환 대상 이미지를 선택해주세요 (대표/추가/상세)'); return }
-              // 그룹에 속한 상품 조회 → AI 미변환 상품만 추출
-              type ProductItem = { id: string; images: string[]; detail_images: string[]; tags: string[] }
-              const productIds: string[] = []
-              const productDetails = new Map<string, ProductItem>()
-              let skippedAi = 0
-              for (const gid of activeIds) {
-                try {
-                  const products = await collectorApi.listProducts(0, 10000, gid)
-                  if (Array.isArray(products)) {
-                    for (const p of products) {
-                      if ((p.tags || []).includes('__ai_image__')) { skippedAi++; continue }
-                      productIds.push(p.id)
-                      productDetails.set(p.id, { id: p.id, images: p.images || [], detail_images: p.detail_images || [], tags: p.tags || [] })
-                    }
-                  }
-                } catch { /* 스킵 */ }
-              }
-              if (productIds.length === 0) { showAlert(skippedAi > 0 ? `모든 상품이 이미 AI 변환 완료 (${fmtNum(skippedAi)}건 스킵)` : '선택된 그룹에 상품이 없습니다'); return }
-              const skipMsg = skippedAi > 0 ? `\n(AI 변환 완료 ${fmtNum(skippedAi)}건 스킵)` : ''
-              const scopeLabel = [aiImgScope.thumbnail && '대표', aiImgScope.additional && '추가', aiImgScope.detail && '상세'].filter(Boolean).join('+')
-              const ok = await showConfirm(`${fmtNum(activeIds.length)}개 그룹 (${fmtNum(productIds.length)}개 상품)의 ${scopeLabel} 이미지를 변환하시겠습니까?${skipMsg}`)
-              if (!ok) return
-              const ts = fmtTime
-              setAiImgTransforming(true)
-              aiJobAbortRef.current = false
-              setAiJobTitle(`AI 이미지변환 (${fmtNum(productIds.length)}개)`)
-              setAiJobLogs([])
-              setAiJobDone(false)
-              setAiJobModal(true)
-              const addLog = (msg: string) => setAiJobLogs(prev => [...prev, msg])
-              const startTime = ts()
-              addLog(`시작: ${startTime} (${fmtNum(productIds.length)}개 상품)`)
-              let success = 0
-              let fail = 0
-              for (let i = 0; i < productIds.length; i++) {
-                if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${fmtNum(i)}/${fmtNum(productIds.length)})`); break }
-                const label = productIds[i].slice(-8)
-                setAiJobTitle(`AI 이미지변환 [${fmtNum(i + 1)}/${fmtNum(productIds.length)}]`)
-                try {
-                  if (aiImgMode === 'background') {
-                    // WASM 브라우저 배경 제거
-                    const { removeBgFromUrl, uploadBlobToR2 } = await import('@/lib/samba/bgRemoval')
-                    const item = productDetails.get(productIds[i])
-                    if (!item) { fail++; addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 상품 정보 없음`); continue }
-                    const thumbUrls = aiImgScope.thumbnail ? item.images.slice(0, 1) : []
-                    const addlUrls = aiImgScope.additional ? item.images.slice(1) : []
-                    const detailUrls = aiImgScope.detail ? item.detail_images : []
-                    const processUrls = async (urls: string[], prefix: string) => {
-                      const results: string[] = []
-                      for (let ui = 0; ui < urls.length; ui++) {
-                        const blob = await removeBgFromUrl(urls[ui])
-                        results.push(await uploadBlobToR2(blob, `${prefix}_${ui}_${Date.now()}.webp`))
-                      }
-                      return results
-                    }
-                    const pid = productIds[i]
-                    const newThumb = await processUrls(thumbUrls, `bg_${pid}_th`)
-                    const newAddl = await processUrls(addlUrls, `bg_${pid}_ad`)
-                    const newDetail = await processUrls(detailUrls, `bg_${pid}_dt`)
-                    const updateData: { images?: string[]; detail_images?: string[]; tags?: string[] } = {}
-                    if (aiImgScope.thumbnail || aiImgScope.additional) {
-                      updateData.images = [...newThumb, ...newAddl, ...(aiImgScope.additional ? [] : item.images.slice(1))]
-                    }
-                    if (aiImgScope.detail) updateData.detail_images = newDetail
-                    updateData.tags = [...new Set([...item.tags, '__ai_image__', '__img_edited__'])]
-                    await collectorApi.updateProduct(pid, updateData)
-                    const cnt = newThumb.length + newAddl.length + newDetail.length
-                    success++; addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 완료 (${fmtNum(cnt)}장)`)
-                  } else {
-                    const res = await proxyApi.transformImages([productIds[i]], aiImgScope, aiImgMode, aiModelPreset)
-                    if (res.success) { success++; addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 완료`) }
-                    else { fail++; addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 실패: ${res.message}`) }
-                  }
-                } catch (e) { fail++; addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
-              }
-              const endTime = ts()
-              setAiJobTitle(`AI 이미지변환 완료 (${fmtNum(success)}/${fmtNum(productIds.length)})`)
-              addLog(`\n완료: 성공 ${fmtNum(success)}개 / 실패 ${fmtNum(fail)}개`)
-              addLog(`시작 ${startTime} → 종료 ${endTime}`)
-              setAiJobDone(true)
-              setAiImgTransforming(false)
-              const cnt = success
-              setLastAiUsage({ calls: cnt, tokens: cnt * 2000, cost: cnt * 3, date: new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit' }) })
-              setSelectedIds(new Set()); setSelectAll(false)
-            }}
-            disabled={aiImgTransforming || selectedIds.size === 0}
-            style={{ marginLeft: 'auto', background: aiImgTransforming ? '#333' : 'rgba(255,140,0,0.15)', border: '1px solid rgba(255,140,0,0.35)', color: aiImgTransforming ? '#888' : '#FF8C00', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', cursor: aiImgTransforming ? 'not-allowed' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
-          >{aiImgTransforming ? '변환중...' : '변환 실행'}</button>
-        </div>
-
-        {/* 이미지 필터링 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: '8px', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '0.8125rem', color: '#818CF8', fontWeight: 600 }}>이미지 필터링</span>
-          {([['images', '대표'], ['detail_images', '추가'], ['detail', '상세']] as const).map(([key, label]) => (
-            <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-              <input type="checkbox" checked={imgFilterScopes.has(key)}
-                onChange={() => setImgFilterScopes(prev => {
-                  const next = new Set(prev)
-                  if (next.has(key)) next.delete(key); else next.add(key)
-                  return next
-                })}
-                style={{ accentColor: '#818CF8', width: '13px', height: '13px' }} />
-              <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>{label}</span>
-            </label>
-          ))}
-          <button
-            onClick={async () => {
-              if (selectedIds.size === 0) { showAlert('검색그룹을 선택해주세요'); return }
-              if (imgFilterScopes.size === 0) { showAlert('필터링 대상을 선택해주세요'); return }
-              // displayedFilters와 교집합으로 실제 대상 결정
-              const activeGroupIds = [...selectedIds].filter(id => displayedFilters.some(f => f.id === id))
-              if (activeGroupIds.length === 0) { showAlert('현재 필터에 해당하는 그룹이 없습니다'); return }
-              const scopeLabel = [...imgFilterScopes].map(s => s === 'images' ? '대표' : s === 'detail_images' ? '추가' : '상세').join('+')
-              const ok = await showConfirm(`선택된 ${fmtNum(activeGroupIds.length)}개 그룹의 ${scopeLabel} 이미지를 필터링하시겠습니까?\n(모델컷/연출컷/배너를 자동 제거합니다)`)
-              if (!ok) return
-              const scope = imgFilterScopes.has('images') && imgFilterScopes.has('detail_images') && imgFilterScopes.has('detail') ? 'all' : imgFilterScopes.has('images') && imgFilterScopes.has('detail_images') ? 'images' : imgFilterScopes.has('detail') ? 'detail' : [...imgFilterScopes][0] || 'images'
-              setImgFiltering(true)
-              aiJobAbortRef.current = false
-              setAiJobTitle(`이미지 필터링 (${fmtNum(activeGroupIds.length)}개 그룹)`)
-              setAiJobLogs([])
-              setAiJobDone(false)
-              setAiJobModal(true)
-              const addLog = (msg: string) => setAiJobLogs(prev => [...prev, msg])
-              const ts = fmtTime
-              const startTime = ts()
-              let success = 0
-              let fail = 0
-              let totalTall = 0
-              let totalVisionRemoved = 0
-              try {
-                // 그룹별로 상품 목록을 가져와 상품관리와 동일하게 개별 처리
-                const groupIds = activeGroupIds
-                let totalProducts = 0
-                let processedProducts = 0
-                for (let gi = 0; gi < groupIds.length; gi++) {
-                  if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단`); break }
-                  const gid = groupIds[gi]
-                  const groupLabel = tree.find(t => t.id === gid)?.keyword?.slice(0, 20) || gid.slice(-8)
-                  addLog(`\n[그룹 ${fmtNum(gi + 1)}/${fmtNum(groupIds.length)}] ${groupLabel} — 상품 조회중...`)
-                  try {
-                    const { items: products } = await collectorApi.scrollProducts({ search_filter_id: gid, limit: 10000 })
-                    totalProducts += products.length
-                    addLog(`[그룹 ${fmtNum(gi + 1)}/${fmtNum(groupIds.length)}] ${groupLabel} — ${fmtNum(products.length)}개 상품`)
-                    if (gi === 0 && products.length > 0) addLog(`\n시작: ${startTime} (${fmtNum(totalProducts)}개 상품)\n`)
-                    for (let i = 0; i < products.length; i++) {
-                      if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${fmtNum(processedProducts)}/${fmtNum(totalProducts)})`); break }
-                      const prod = products[i]
-                      const prodName = prod.name?.slice(0, 25) || '이름없음'
-                      const prodNo = prod.site_product_id || prod.id.slice(-8)
-                      const prodBrand = prod.brand || '-'
-                      const label = `${prodBrand} / ${prodNo} / ${prodName}${prod.name && prod.name.length > 25 ? '...' : ''}`
-                      processedProducts++
-                      setAiJobTitle(`이미지 필터링 [${fmtNum(processedProducts)}/${fmtNum(totalProducts)}] ${prodBrand} / ${prodNo}`)
-                      try {
-                        const steps: string[] = []
-                        // 1) 프론트에서 추가이미지 비율 체크 (세로 2배 이상 → 제거)
-                        if (scope === 'detail_images' || scope === 'images' || scope === 'all') {
-                          const imgs = prod.images || []
-                          if (imgs.length > 1) {
-                            const tallCheck = await Promise.all(imgs.slice(1).map(url =>
-                              new Promise<boolean>(resolve => {
-                                const img = new window.Image()
-                                img.onload = () => {
-                                  const isTall = img.naturalHeight > img.naturalWidth * 2
-                                  resolve(isTall)
-                                }
-                                img.onerror = () => resolve(false)
-                                img.src = url
-                                setTimeout(() => resolve(false), 10000)
-                              })
-                            ))
-                            const tallUrls = imgs.slice(1).filter((_, idx) => tallCheck[idx])
-                            if (tallUrls.length > 0) {
-                              const kept = imgs.filter(u => !tallUrls.includes(u))
-                              await collectorApi.updateProduct(prod.id, { images: kept })
-                              totalTall += tallUrls.length
-                              steps.push(`긴이미지 ${fmtNum(tallUrls.length)}장 제거`)
-                            }
-                          }
-                        }
-                        // 2) 백엔드 이미지 필터링 (CLIP)
-                        const r = await proxyApi.filterProductImages([prod.id], '', scope)
-                        if (r.success) {
-                          success++
-                          const removed = r.total_removed || 0
-                          totalVisionRemoved += removed
-                          if (removed > 0) steps.push(`CLIP ${removed}장 제거`)
-                          else steps.push('CLIP 변동없음')
-                          addLog(`[${ts()}] [${fmtNum(processedProducts)}/${fmtNum(totalProducts)}] ${label} — ${steps.join(' → ')}`)
-                        } else { fail++; addLog(`[${ts()}] [${fmtNum(processedProducts)}/${fmtNum(totalProducts)}] ${label} — ${steps.length > 0 ? steps.join(' → ') + ' → ' : ''}실패`) }
-                      } catch (e) { fail++; addLog(`[${ts()}] [${fmtNum(processedProducts)}/${fmtNum(totalProducts)}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
-                    }
-                  } catch (e) {
-                    addLog(`[그룹 ${fmtNum(gi + 1)}/${fmtNum(groupIds.length)}] ${groupLabel} — 상품 조회 실패: ${e instanceof Error ? e.message : ''}`)
-                  }
-                }
-                const summary = [`성공 ${fmtNum(success)}개`, `실패 ${fmtNum(fail)}개`]
-                if (totalTall > 0) summary.push(`긴이미지 ${fmtNum(totalTall)}장 제거`)
-                if (totalVisionRemoved > 0) summary.push(`CLIP ${fmtNum(totalVisionRemoved)}장 제거`)
-                const endTime = ts()
-                setAiJobTitle(`이미지 필터링 완료 (${fmtNum(success)}/${fmtNum(totalProducts)})`)
-                addLog(`\n완료: ${summary.join(' / ')}`)
-                addLog(`시작 ${startTime} → 종료 ${endTime}`)
-              } catch (e) { addLog(`오류: ${e instanceof Error ? e.message : '오류'}`) }
-              finally {
-                setAiJobDone(true)
-                setImgFiltering(false)
-                const apiCalls = success + fail
-                setLastAiUsage({ calls: apiCalls, tokens: apiCalls * 1000, cost: apiCalls * 15, date: new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit' }) })
-                setSelectedIds(new Set()); setSelectAll(false)
-                load(); loadTree()
-              }
-            }}
-            disabled={imgFiltering || selectedIds.size === 0}
-            style={{ marginLeft: 'auto', background: imgFiltering ? '#333' : 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.35)', color: imgFiltering ? '#888' : '#818CF8', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', cursor: imgFiltering ? 'not-allowed' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
-          >{imgFiltering ? '필터링중...' : `필터링 실행 (${fmtNum(selectedIds.size)}개)`}</button>
-        </div>
-      </div>
+      <AiToolsPanel
+        lastAiUsage={lastAiUsage}
+        aiImgScope={aiImgScope}
+        aiImgMode={aiImgMode}
+        aiModelPreset={aiModelPreset}
+        aiPresetList={aiPresetList}
+        aiImgTransforming={aiImgTransforming}
+        imgFiltering={imgFiltering}
+        imgFilterScopes={imgFilterScopes}
+        selectedIds={selectedIds}
+        displayedFilters={displayedFilters}
+        tree={tree}
+        aiJobAbortRef={aiJobAbortRef}
+        setAiImgScope={setAiImgScope}
+        setAiImgMode={setAiImgMode}
+        setAiModelPreset={setAiModelPreset}
+        setAiImgTransforming={setAiImgTransforming}
+        setImgFiltering={setImgFiltering}
+        setImgFilterScopes={setImgFilterScopes}
+        setSelectedIds={setSelectedIds}
+        setSelectAll={setSelectAll}
+        setLastAiUsage={setLastAiUsage}
+        setAiJobModal={setAiJobModal}
+        setAiJobTitle={setAiJobTitle}
+        setAiJobLogs={setAiJobLogs}
+        setAiJobDone={setAiJobDone}
+        load={load}
+        loadTree={loadTree}
+      />
 
       <DrilldownGroupTable
         filters={filters}

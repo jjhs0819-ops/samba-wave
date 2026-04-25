@@ -42,8 +42,12 @@ class SambaMonitorService:
         product_id: Optional[str] = None,
         product_name: Optional[str] = None,
         detail: Optional[Any] = None,
-    ) -> None:
-        """이벤트 기록 — 메인 로직을 방해하지 않도록 try/except 감싸기."""
+    ) -> Optional[str]:
+        """이벤트 기록 — 메인 로직을 방해하지 않도록 try/except 감싸기.
+
+        Returns:
+            생성된 이벤트 id. 실패 시 None.
+        """
         global _emit_counter
         try:
             event = SambaMonitorEvent(
@@ -69,8 +73,10 @@ class SambaMonitorService:
                     logger.info(
                         f"[monitor] {_RETENTION_DAYS}일 이전 이벤트 {deleted}건 정리"
                     )
+            return event.id
         except Exception as e:
             logger.warning(f"[monitor] 이벤트 기록 실패: {e}")
+            return None
 
     async def get_dashboard_stats(self) -> Dict[str, Any]:
         """대시보드 전체 통계.
@@ -354,7 +360,7 @@ class SambaMonitorService:
         from backend.domain.samba.account.model import SambaMarketAccount
 
         events = await self.repo.list_recent_changes_for_markets(
-            event_types=["price_changed", "sold_out"],
+            event_types=["price_changed", "sold_out", "restock"],
             limit=scan_limit,
         )
         if not events:

@@ -183,16 +183,19 @@ sudo docker compose --profile staging pull samba-api-staging
 echo "[2/6] green 컨테이너 시작..."
 sudo docker compose --profile staging up -d samba-api-staging
 
-echo "[3/6] green 헬스체크 대기 (최대 90초)..."
-for i in $(seq 1 18); do
+echo "[3/6] green 헬스체크 대기 (최대 180초)..."
+# docker healthcheck status 가 아닌 컨테이너 내부 wget 으로 직접 폴링.
+# 이유: docker healthcheck는 interval=30s + start_period=60s 라서 첫 healthy 갱신까지 90~150초 걸림.
+# 직접 wget 은 startup 즉시 응답하므로 실제 readiness 와 일치.
+for i in $(seq 1 36); do
     sleep 5
-    STATUS=$(sudo docker inspect --format='{{.State.Health.Status}}' samba-samba-api-staging-1 2>/dev/null || echo "missing")
-    if [ "$STATUS" = "healthy" ]; then
-        echo "    ✅ green healthy (${i}회 시도)"
+    RESP=$(sudo docker exec samba-samba-api-staging-1 wget -qO- --timeout=3 http://localhost:8080/api/v1/health 2>/dev/null || echo "")
+    if echo "$RESP" | grep -q '"status":"healthy"'; then
+        echo "    ✅ green healthy (${i}회 시도, $((i*5))초)"
         break
     fi
-    echo "    ⏳ green status=$STATUS ($i/18)"
-    if [ "$i" = "18" ]; then
+    echo "    ⏳ green not-ready ($i/36, $((i*5))초)"
+    if [ "$i" = "36" ]; then
         echo "❌ green 헬스체크 실패 — green 컨테이너 정리 후 종료"
         sudo docker compose --profile staging stop samba-api-staging
         sudo docker compose --profile staging rm -f samba-api-staging
@@ -207,15 +210,16 @@ sleep 3
 echo "[5/6] blue 새 이미지 pull + 재시작..."
 sudo docker compose pull samba-api
 sudo docker compose up -d samba-api
-for i in $(seq 1 18); do
+# 컨테이너 내부 wget 으로 직접 폴링 (docker healthcheck 30s interval mismatch 회피).
+for i in $(seq 1 36); do
     sleep 5
-    STATUS=$(sudo docker inspect --format='{{.State.Health.Status}}' samba-samba-api-1 2>/dev/null || echo "missing")
-    if [ "$STATUS" = "healthy" ]; then
-        echo "    ✅ blue healthy (${i}회 시도) — Caddy lb_policy first 가 blue 우선 트래픽 자동 복귀"
+    RESP=$(sudo docker exec samba-samba-api-1 wget -qO- --timeout=3 http://localhost:8080/api/v1/health 2>/dev/null || echo "")
+    if echo "$RESP" | grep -q '"status":"healthy"'; then
+        echo "    ✅ blue healthy (${i}회 시도, $((i*5))초) — Caddy lb_policy first 가 blue 우선 트래픽 자동 복귀"
         break
     fi
-    echo "    ⏳ blue status=$STATUS ($i/18)"
-    if [ "$i" = "18" ]; then
+    echo "    ⏳ blue not-ready ($i/36, $((i*5))초)"
+    if [ "$i" = "36" ]; then
         echo "⚠️ blue 헬스체크 실패 — green 유지 (수동 복구 필요)"
         exit 1
     fi

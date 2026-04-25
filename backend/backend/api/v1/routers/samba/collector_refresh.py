@@ -143,6 +143,9 @@ async def refresh_products(
     soldout_ids: list[str] = []
     stock_only_ids: list[str] = []  # 가격 동일, 재고만 변동
     refresh_details: list[dict] = []  # 개별 상품 갱신 결과
+    # 품절 감지 시 즉시 발행한 monitor 이벤트 id — 마켓삭제 완료 후
+    # detail.suspended_markets를 사후 update 하기 위한 매핑.
+    soldout_event_ids: dict[str, str] = {}
 
     for r in results:
         if r.error:
@@ -307,7 +310,7 @@ async def refresh_products(
                     if getattr(r, "deleted_from_source", False)
                     else "all_soldout"
                 )
-                await monitor.emit(
+                _emitted_id = await monitor.emit(
                     "sold_out",
                     "warning",
                     summary=f"품절 감지 — {product.name[:30] if product.name else r.product_id}",
@@ -323,6 +326,8 @@ async def refresh_products(
                         "suspended_markets": [],
                     },
                 )
+                if _emitted_id:
+                    soldout_event_ids[r.product_id] = _emitted_id
         else:
             if r.stock_changed:
                 # 가격/상태 동일, 옵션 재고만 변동 → 옵션 품절 이벤트 발행 (0 경계 전환 기준)
@@ -357,20 +362,29 @@ async def refresh_products(
 
                 _old_stock_m = _sum_stock_manual(product.options)
                 _new_stock_m = _sum_stock_manual(r.new_options)
-                # 0 경계 전환(양수→0: 품절 전환) 옵션이 있을 때만 이벤트 발행
+                # 옵션별 0 경계 전환을 방향별로 분리
                 _old_map_m = _opt_map_manual(product.options)
                 _new_map_m = _opt_map_manual(r.new_options)
-                _went_soldout_m = 0
+                _sold_out_keys_m: list[str] = []
+                _restocked_keys_m: list[str] = []
                 for _k in set(_old_map_m) | set(_new_map_m):
                     _os = _old_map_m.get(_k, 0)
                     _ns = _new_map_m.get(_k, 0)
-                    if _os > 0 and _ns <= 0:
-                        _went_soldout_m += 1
-                if _went_soldout_m > 0:
+                    if (_os <= 0) != (_ns <= 0):
+                        if _ns <= 0:
+                            _sold_out_keys_m.append(_k)
+                        else:
+                            _restocked_keys_m.append(_k)
+                _sold_out_keys_m = [k or "(이름없음)" for k in _sold_out_keys_m]
+                _restocked_keys_m = [k or "(이름없음)" for k in _restocked_keys_m]
+
+                # 옵션 품절 이벤트
+                if _sold_out_keys_m:
+                    _opts_join_m = ", ".join(_sold_out_keys_m[:5])
                     await monitor.emit(
                         "sold_out",
                         "info",
-                        summary=f"품절(옵션품절) — {(product.name or '')[:30]} {_old_stock_m:,}→{_new_stock_m:,}",
+                        summary=f"품절(옵션품절) — {(product.name or '')[:30]} {_opts_join_m}",
                         source_site=product.source_site,
                         product_id=r.product_id,
                         product_name=product.name,
@@ -382,6 +396,28 @@ async def refresh_products(
                             "old_stock": _old_stock_m,
                             "new_stock": _new_stock_m,
                             "reason": "option_partial",
+                            "sold_out_options": _sold_out_keys_m,
+                            "suspended_markets": [],
+                        },
+                    )
+
+                # 옵션 재입고 이벤트
+                if _restocked_keys_m:
+                    _opts_join_r = ", ".join(_restocked_keys_m[:5])
+                    await monitor.emit(
+                        "restock",
+                        "info",
+                        summary=f"재입고(옵션리스탁) — {(product.name or '')[:30]} {_opts_join_r}",
+                        source_site=product.source_site,
+                        product_id=r.product_id,
+                        product_name=product.name,
+                        detail={
+                            "site_product_id": getattr(
+                                product, "site_product_id", None
+                            ),
+                            "sale_status": r.new_sale_status or "in_stock",
+                            "reason": "option_restock",
+                            "restocked_options": _restocked_keys_m,
                             "suspended_markets": [],
                         },
                     )
@@ -536,6 +572,35 @@ async def refresh_products(
                     for pid, pd, account_id, acc in delete_targets
                 ]
             )
+
+        # 마켓 판매중지 결과 → 이미 발행된 품절 이벤트 detail에 사후 반영
+        # (suspended_markets 라벨이 워룸 타임라인에 표시되도록)
+        if market_delete_success and soldout_event_ids:
+            from backend.domain.samba.warroom.repository import (
+                SambaMonitorEventRepository,
+            )
+
+            _ev_repo = SambaMonitorEventRepository(session)
+            for _pid, _ok_acc_ids in market_delete_success.items():
+                _event_id = soldout_event_ids.get(_pid)
+                if not _event_id or not _ok_acc_ids:
+                    continue
+                _labels: list[str] = []
+                for _acc_id in _ok_acc_ids:
+                    _acc = acc_map.get(_acc_id)
+                    if _acc is None:
+                        continue
+                    _labels.append(f"{_acc.market_name}({_acc.seller_id or '-'})")
+                if _labels:
+                    try:
+                        await _ev_repo.update_event_detail(
+                            _event_id,
+                            {"suspended_markets": _labels},
+                        )
+                    except Exception as _patch_err:
+                        logger.warning(
+                            f"[refresh] {_pid} suspended_markets 업데이트 실패: {_patch_err}"
+                        )
 
         # 3단계: 품절 상품 상태 업데이트 (DB 삭제 대신 보존)
         deleted_ids: list[str] = []

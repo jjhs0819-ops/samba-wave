@@ -163,16 +163,30 @@ class NaverStorePlugin(SourcingPlugin):
                     for combo in raw_combos
                 ]
 
+            from backend.domain.samba.collector.refresher import (
+                count_stock_transitions,
+            )
+
+            old_options_ns = getattr(product, "options", None) or []
+            _stock_changes = count_stock_transitions(old_options_ns, new_options or [])
+            old_sale = getattr(product, "sale_price", 0) or 0
+            old_status = getattr(product, "sale_status", "in_stock")
+            new_sale_status = "sold_out" if is_sold_out else "in_stock"
+            changed = (float(new_sale_price or 0) != float(old_sale or 0)) or (
+                new_sale_status != old_status
+            )
+
             return RefreshResult(
                 product_id=product_id,
                 new_sale_price=(float(new_sale_price) if new_sale_price else None),
                 new_original_price=(
                     float(new_original_price) if new_original_price else None
                 ),
-                new_sale_status=("sold_out" if is_sold_out else "in_stock"),
+                new_sale_status=new_sale_status,
                 new_options=new_options,
                 new_images=detail.get("images"),
-                changed=True,
+                changed=changed,
+                stock_changed=_stock_changes > 0,
             )
 
         except Exception as e:

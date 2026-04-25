@@ -87,8 +87,13 @@ class NikePlugin(SourcingPlugin):
         else:
             new_sale_status = "in_stock"
 
+        # 옵션별 0 경계 전환을 stock_changed로 인정 — 일부 옵션만 품절/재입고된 경우도 감지
+        from backend.domain.samba.collector.refresher import count_stock_transitions
+
+        old_options = getattr(product, "options", None) or []
+        _stock_changes = count_stock_transitions(old_options, new_options or [])
         old_sale_status = getattr(product, "sale_status", "in_stock")
-        stock_changed = new_sale_status != old_sale_status
+        stock_changed = _stock_changes > 0 or new_sale_status != old_sale_status
 
         return RefreshResult(
             product_id=product_id,

@@ -147,11 +147,14 @@ async def _stream_event(
     product_id: Optional[str] = None,
     product_name: Optional[str] = None,
     detail: Optional[dict] = None,
-) -> None:
+) -> Optional[str]:
     """사이클 도중 변동 감지 시 즉시 DB에 이벤트 저장.
 
     사이클 완료를 기다리지 않고 바로 커밋하므로, 서버 재시작이 발생해도
     감지된 변동은 유실되지 않는다. 별도 세션을 열어 본 사이클 세션에 영향 없음.
+
+    Returns:
+        생성된 이벤트 id. 실패 시 None.
     """
     try:
         from backend.db.orm import get_write_session
@@ -159,7 +162,7 @@ async def _stream_event(
 
         async with get_write_session() as _sess:
             _mon = SambaMonitorService(_sess)
-            await _mon.emit(
+            _eid = await _mon.emit(
                 event_type,
                 severity,
                 summary=summary,
@@ -169,9 +172,35 @@ async def _stream_event(
                 detail=detail or {},
             )
             await _sess.commit()
+            return _eid
     except Exception as _err:
         logging.getLogger("autotune").warning(
             "[오토튠] 이벤트 스트리밍 실패(%s): %s", event_type, _err
+        )
+        return None
+
+
+async def _patch_event_detail(event_id: str, patch: dict) -> None:
+    """기 발행된 이벤트의 detail JSONB를 사후 update (merge).
+
+    예: 품절 이벤트를 즉시 스트리밍해 둔 뒤, 마켓 판매중지가 끝났을 때
+    suspended_markets 라벨을 채우기 위해 호출한다. 별도 세션을 사용한다.
+    """
+    if not event_id:
+        return
+    try:
+        from backend.db.orm import get_write_session
+        from backend.domain.samba.warroom.repository import (
+            SambaMonitorEventRepository,
+        )
+
+        async with get_write_session() as _sess:
+            _repo = SambaMonitorEventRepository(_sess)
+            await _repo.update_event_detail(event_id, patch)
+            await _sess.commit()
+    except Exception as _err:
+        logging.getLogger("autotune").warning(
+            "[오토튠] 이벤트 detail 업데이트 실패(%s): %s", event_id, _err
         )
 
 
@@ -330,9 +359,6 @@ async def _site_autotune_loop(site: str):
                         _stock_tx_items: list[dict] = []
                         # product_id → event (사이클 끝 배치 발행용) — 상품당 1건 dedupe
                         _price_change_events: dict[str, dict] = {}
-                        # 품절 이벤트(옵션별/전체/소싱처삭제 통합) — 사이클 끝에 배치 발행
-                        # reason: "option_partial"(옵션 일부 품절) | "all_soldout"(전체 품절) | "source_deleted"(소싱처 삭제)
-                        _soldout_events: list[dict] = []
                         _all_stock_pids: set[str] = set()
                         _cycle_deleted_pids: set[str] = (
                             set()
@@ -496,20 +522,10 @@ async def _site_autotune_loop(site: str):
                                 # price_changed 이벤트 수집은 아래 계정 루프의
                                 # expected_price != last_price(등록마켓 판매가 기준) 지점에서 수행
 
-                                # 재고변동 항목 수집 (scheduler_tick detail용)
-                                if r.stock_changed and len(_stock_tx_items) < 10:
-                                    _stock_tx_items.append(
-                                        {
-                                            "pid": r.product_id,
-                                            "site_product_id": product.site_product_id,
-                                            "name": (product.name or "")[:40],
-                                            "sale_status": r.new_sale_status,
-                                        }
-                                    )
-
-                                # per-product 품절 이벤트 수집 — 옵션별 0 경계 전환 시에만
+                                # per-product 옵션품절/리스탁 이벤트 — 옵션별 0 경계 전환 시에만
                                 # 오토튠 실전송 기준(옵션 stock이 0/양수 사이를 넘나드는 경우)과 동일
                                 # 전체 품절/소싱처삭제는 아래 블록에서 별도 append
+                                _direction_for_tick: str | None = None
                                 if r.stock_changed and r.new_sale_status != "sold_out":
 
                                     def _opt_map(opts):
@@ -531,39 +547,44 @@ async def _site_autotune_loop(site: str):
 
                                     _old_map = _opt_map(product.options)
                                     _new_map = _opt_map(r.new_options)
-                                    # 0 경계를 넘은 옵션 개수 (양수→0: 품절 전환, 0→양수: 재입고)
-                                    _boundary_crossed = 0
-                                    _went_soldout = 0
+                                    # 0 경계를 넘은 옵션을 방향별로 분리
+                                    # 양수→0: 품절 전환, 0→양수: 재입고
+                                    _sold_out_keys: list[str] = []
+                                    _restocked_keys: list[str] = []
                                     for _k in set(_old_map) | set(_new_map):
                                         _os = _old_map.get(_k, 0)
                                         _ns = _new_map.get(_k, 0)
                                         if (_os <= 0) != (_ns <= 0):
-                                            _boundary_crossed += 1
                                             if _ns <= 0:
-                                                _went_soldout += 1
-                                    # 0 경계 전환이 있고, 그중 품절 전환 옵션이 있을 때만 기록
-                                    if _boundary_crossed > 0 and _went_soldout > 0:
+                                                _sold_out_keys.append(_k)
+                                            else:
+                                                _restocked_keys.append(_k)
+                                    # 빈 키는 안정적 라벨로 치환
+                                    _sold_out_keys = [
+                                        k or "(이름없음)" for k in _sold_out_keys
+                                    ]
+                                    _restocked_keys = [
+                                        k or "(이름없음)" for k in _restocked_keys
+                                    ]
+
+                                    if _sold_out_keys and _restocked_keys:
+                                        _direction_for_tick = "mixed"
+                                    elif _sold_out_keys:
+                                        _direction_for_tick = "sold_out"
+                                    elif _restocked_keys:
+                                        _direction_for_tick = "restock"
+
+                                    # 옵션 품절(양수→0) 이벤트
+                                    if _sold_out_keys:
                                         _old_stock = sum(_old_map.values())
                                         _new_stock = sum(_new_map.values())
-                                        _soldout_events.append(
-                                            {
-                                                "source_site": product.source_site,
-                                                "product_id": r.product_id,
-                                                "product_name": product.name,
-                                                "site_product_id": product.site_product_id,
-                                                "old_stock": _old_stock,
-                                                "new_stock": _new_stock,
-                                                "sale_status": r.new_sale_status,
-                                                "reason": "option_partial",
-                                                "suspended_markets": [],
-                                            }
-                                        )
+                                        _opts_join = ", ".join(_sold_out_keys[:5])
                                         # 변동 감지 즉시 DB 저장 — 사이클 미완주에도 유실 없음
                                         _name_short = (product.name or "")[:30]
                                         await _stream_event(
                                             "sold_out",
                                             "info",
-                                            summary=f"품절(옵션품절) — {_name_short} {int(_old_stock):,}→{int(_new_stock):,}",
+                                            summary=f"품절(옵션품절) — {_name_short} {_opts_join}",
                                             source_site=product.source_site,
                                             product_id=r.product_id,
                                             product_name=product.name,
@@ -573,40 +594,64 @@ async def _site_autotune_loop(site: str):
                                                 "sale_status": r.new_sale_status,
                                                 "site_product_id": product.site_product_id,
                                                 "reason": "option_partial",
+                                                "sold_out_options": _sold_out_keys,
                                                 "suspended_markets": [],
                                             },
                                         )
 
+                                    # 옵션 재입고(0→양수) 이벤트
+                                    if _restocked_keys:
+                                        _name_short = (product.name or "")[:30]
+                                        _opts_join = ", ".join(_restocked_keys[:5])
+                                        await _stream_event(
+                                            "restock",
+                                            "info",
+                                            summary=f"재입고(옵션리스탁) — {_name_short} {_opts_join}",
+                                            source_site=product.source_site,
+                                            product_id=r.product_id,
+                                            product_name=product.name,
+                                            detail={
+                                                "sale_status": r.new_sale_status,
+                                                "site_product_id": product.site_product_id,
+                                                "reason": "option_restock",
+                                                "restocked_options": _restocked_keys,
+                                                "suspended_markets": [],
+                                            },
+                                        )
+
+                                # 재고변동 항목 수집 (scheduler_tick detail용) — direction 포함
+                                if r.stock_changed and len(_stock_tx_items) < 10:
+                                    _stock_tx_items.append(
+                                        {
+                                            "pid": r.product_id,
+                                            "site_product_id": product.site_product_id,
+                                            "name": (product.name or "")[:40],
+                                            "sale_status": r.new_sale_status,
+                                            "direction": _direction_for_tick
+                                            or (
+                                                "sold_out"
+                                                if r.new_sale_status == "sold_out"
+                                                else None
+                                            ),
+                                        }
+                                    )
+
                                 # 품절 → 서킷브레이커 + 즉시 마켓삭제
                                 if r.new_sale_status == "sold_out":
-                                    # per-product 품절 이벤트 수집 (전체 품절 / 소싱처 삭제)
-                                    # suspended_markets는 아래 마켓삭제 루프에서 in-place 채움
+                                    # 변동 감지 즉시 DB 저장 — 사이클 미완주에도 유실 없음
+                                    # suspended_markets는 마켓삭제 완료 후 _patch_event_detail로 사후 반영
                                     _soldout_reason = (
                                         "source_deleted"
                                         if getattr(r, "deleted_from_source", False)
                                         else "all_soldout"
                                     )
-                                    _soldout_ev_entry = {
-                                        "source_site": product.source_site,
-                                        "product_id": r.product_id,
-                                        "product_name": product.name,
-                                        "site_product_id": product.site_product_id,
-                                        "old_stock": None,
-                                        "new_stock": 0,
-                                        "sale_status": "sold_out",
-                                        "reason": _soldout_reason,
-                                        "suspended_markets": [],
-                                    }
-                                    _soldout_events.append(_soldout_ev_entry)
-                                    # 변동 감지 즉시 DB 저장 — 사이클 미완주에도 유실 없음
-                                    # suspended_markets는 이후 마켓삭제 루프에서 채워지므로 초기값 []로 기록
                                     _reason_lbl = (
                                         "소싱처삭제"
                                         if _soldout_reason == "source_deleted"
                                         else "전체품절"
                                     )
                                     _name_short = (product.name or "")[:30]
-                                    await _stream_event(
+                                    _soldout_event_id = await _stream_event(
                                         "sold_out",
                                         "info",
                                         summary=f"품절({_reason_lbl}) — {_name_short}",
@@ -707,8 +752,8 @@ async def _site_autotune_loop(site: str):
                                                     r.product_id,
                                                     e,
                                                 )
-                                        # 삭제 성공한 계정 → 품절 이벤트에 반영
-                                        if _ok_del_ids:
+                                        # 삭제 성공한 계정 → 이미 발행된 품절 이벤트의 detail에 사후 반영
+                                        if _ok_del_ids and _soldout_event_id:
                                             _suspended_labels = []
                                             for _acc_id in _ok_del_ids:
                                                 _acc_obj = _account_cache.get(_acc_id)
@@ -716,9 +761,13 @@ async def _site_autotune_loop(site: str):
                                                     _suspended_labels.append(
                                                         f"{_acc_obj.market_name}({_acc_obj.seller_id or '-'})"
                                                     )
-                                            _soldout_ev_entry["suspended_markets"] = (
-                                                _suspended_labels
-                                            )
+                                            if _suspended_labels:
+                                                await _patch_event_detail(
+                                                    _soldout_event_id,
+                                                    {
+                                                        "suspended_markets": _suspended_labels,
+                                                    },
+                                                )
                                         # 삭제 성공한 계정 → registered_accounts/market_product_nos 정리
                                         if _ok_del_ids:
                                             _cycle_deleted_pids.add(r.product_id)

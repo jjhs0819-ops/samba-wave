@@ -69,7 +69,6 @@ class AdidasPlugin(SourcingPlugin):
         price_changed = new_sale_price is not None and new_sale_price != old_sale_price
 
         new_options = fresh.get("options")
-        stock_changed = False
         new_sale_status = "in_stock"
         if new_options is not None and len(new_options) > 0:
             all_sold_out = all(
@@ -77,7 +76,14 @@ class AdidasPlugin(SourcingPlugin):
             )
             if all_sold_out:
                 new_sale_status = "sold_out"
-                stock_changed = True
+
+        # 옵션별 0 경계 전환을 stock_changed로 인정 — 일부 옵션만 품절/재입고된 경우도 감지
+        from backend.domain.samba.collector.refresher import count_stock_transitions
+
+        old_options = getattr(product, "options", None) or []
+        _stock_changes = count_stock_transitions(old_options, new_options or [])
+        old_sale_status = getattr(product, "sale_status", "in_stock")
+        stock_changed = _stock_changes > 0 or new_sale_status != old_sale_status
 
         return RefreshResult(
             product_id=product_id,
