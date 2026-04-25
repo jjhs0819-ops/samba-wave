@@ -56,7 +56,10 @@ class GsShopSourcingPlugin(SourcingPlugin):
     async def refresh(self, product) -> "RefreshResult":
         """가격/재고 갱신 — 상세 페이지 재조회로 최신 데이터 추출."""
         from backend.domain.samba.collector.refresher import RefreshResult
-        from backend.domain.samba.proxy.gsshop_sourcing import GsShopSourcingClient
+        from backend.domain.samba.proxy.gsshop_sourcing import (
+            GsShopSourcingClient,
+            ProductNotFoundError,
+        )
 
         product_id = getattr(product, "id", "")
         site_product_id = getattr(product, "site_product_id", "") or getattr(
@@ -98,9 +101,9 @@ class GsShopSourcingPlugin(SourcingPlugin):
                     {
                         "name": opt.get("name", ""),
                         "price": opt.get("price", 0),
-                        "stock": 0
-                        if opt.get("isSoldOut")
-                        else (opt.get("stock") or 99),
+                        "stock": (
+                            0 if opt.get("isSoldOut") else (opt.get("stock") or 99)
+                        ),
                         "isSoldOut": opt.get("isSoldOut", False),
                     }
                     for opt in raw_options
@@ -122,6 +125,16 @@ class GsShopSourcingPlugin(SourcingPlugin):
                 changed=True,
             )
 
+        except ProductNotFoundError:
+            logger.warning(
+                f"[GSSHOP] 영구 삭제 감지: {site_product_id} — sold_out 처리"
+            )
+            return RefreshResult(
+                product_id=product_id,
+                new_sale_status="sold_out",
+                changed=True,
+                deleted_from_source=True,
+            )
         except Exception as e:
             logger.error(f"[GSSHOP] 갱신 실패: {site_product_id} — {e}")
             return RefreshResult(
