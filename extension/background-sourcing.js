@@ -350,6 +350,81 @@ async function fetchLotteonBenefitPrice(productId, sitmNo) {
   }
 }
 
+// ABCmart/GrandStage: 서비스워커에서 직접 fetch — 탭 없이 사용자 IP+세션으로 호출
+// LOTTEON pbf 패턴과 동일. 백엔드 IP는 IP-bound 세션 차단당해 alwaysDscntAmt=0 받음.
+// 확장앱이 사용자 PC에서 호출하면 loginYn=Y + 정확한 alwaysDscntAmt 수신.
+async function fetchAbcmartBenefitPriceServiceWorker(productId, site) {
+  try {
+    // 1. .a-rt.com 쿠키 수집 (브라우저가 first-party로 저장한 사용자 세션)
+    const cookies = await chrome.cookies.getAll({ domain: 'a-rt.com' })
+    const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ')
+    if (!cookieStr) {
+      console.log(`[${site}] SW fetch: 쿠키 없음 — 스킵 (${productId})`)
+      return null
+    }
+
+    // 2. info API 호출 (수동 Cookie 헤더 — 서비스워커에서 credentials:'include' 무효)
+    const subdomain = site === 'GrandStage' ? 'grandstage.a-rt.com' : 'abcmart.a-rt.com'
+    const resp = await fetch(`https://${subdomain}/product/info?prdtNo=${productId}`, {
+      headers: {
+        'Cookie': cookieStr,
+        'Accept': 'application/json, text/plain, */*',
+        'Origin': 'https://www.a-rt.com',
+        'Referer': 'https://www.a-rt.com/',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+    })
+    if (!resp.ok) {
+      console.log(`[${site}] SW fetch: HTTP ${resp.status} — 폴백 (${productId})`)
+      return null
+    }
+    const data = await resp.json()
+    if (!data || !data.prdtName) {
+      console.log(`[${site}] SW fetch: 빈 응답 — 폴백 (${productId})`)
+      return null
+    }
+
+    const loginYn = (data.loginYn || '').toUpperCase()
+    if (loginYn !== 'Y') {
+      console.log(`[${site}] SW fetch: 비로그인 응답(loginYn=${loginYn}) — 폴백 (${productId})`)
+      return null
+    }
+
+    // 3. 가격 계산: sale_price - alwaysDscntAmt - max(coupon discount)
+    const pi = data.productPrice || {}
+    const sellAmt = parseInt(pi.sellAmt || 0)
+    const displayPrice = parseInt(data.displayProductPrice || 0)
+    const salePrice = displayPrice > 0 ? displayPrice : sellAmt
+    const normalAmt = parseInt(pi.normalAmt || 0) || salePrice
+
+    const membershipDiscount = parseInt(data.alwaysDscntAmt || 0)
+    const coupons = data.maxBenefitCoupon || data.coupon || []
+    let couponDiscount = 0
+    for (const c of coupons) {
+      const d = parseInt(c.dscntAmt || 0)
+      if (d > couponDiscount) couponDiscount = d
+    }
+
+    let benefitPrice = salePrice - membershipDiscount - couponDiscount
+    if (benefitPrice <= 0 || benefitPrice > salePrice) benefitPrice = salePrice
+
+    console.log(`[${site}] SW fetch 성공: ${productId} sale=${salePrice} membership=${membershipDiscount} coupon=${couponDiscount} benefit=${benefitPrice}`)
+
+    return {
+      success: true,
+      site_product_id: productId,
+      name: (data.prdtName || '').trim(),
+      original_price: normalAmt,
+      sale_price: salePrice,
+      best_benefit_price: benefitPrice,
+      source_site: site,
+    }
+  } catch (err) {
+    console.error(`[${site}] SW fetch 실패:`, err.message)
+    return null
+  }
+}
+
 // ABCmart/GrandStage: 쿠키 기반 info API 직접 호출로 혜택가 수집 (탭 불필요)
 async function fetchAbcmartBenefitPrice(productId, site) {
   try {
@@ -424,6 +499,22 @@ async function fetchAbcmartBenefitPrice(productId, site) {
 
 // 소싱 작업 처리 — 탭 열기 → DOM 파싱 → 결과 전송
 async function handleSourcingJob(job) {
+  // ABCmart/GrandStage detail: 서비스워커 fetch로 우선 시도 (탭 불필요)
+  // 성공 시 탭 안 띄우고 결과 전송. 실패 시 아래 DOM 파싱 폴백 진행.
+  if (job.type === 'detail' && (job.site === 'ABCmart' || job.site === 'GrandStage')) {
+    const swResult = await fetchAbcmartBenefitPriceServiceWorker(job.productId, job.site)
+    if (swResult && swResult.success) {
+      try {
+        await postResult('sourcing/collect-result', { requestId: job.requestId, data: swResult })
+        console.log(`[${job.site}] SW fetch로 완료 (탭 0개): ${job.productId}`)
+      } catch (e) {
+        console.error(`[${job.site}] SW 결과 전송 실패:`, e.message)
+      }
+      return
+    }
+    console.log(`[${job.site}] SW fetch 실패 → DOM 폴백 (탭 띄움): ${job.productId}`)
+  }
+
   let tabId = null
   try {
     // active:false — 병렬 처리 시 여러 탭 동시 오픈 (백그라운드 탭도 JS 렌더링 됨)

@@ -488,6 +488,35 @@ async def enrich_product(
             if result.error:
                 return {"success": False, "message": result.error}
 
+            # ABCmart/GrandStage: IP-bound 세션이라 백엔드 cookie sync 무력
+            # 확장앱 service worker가 사용자 IP에서 fetch → alwaysDscntAmt 정확값 수신
+            if _src in ("ABCmart", "GrandStage") and product.site_product_id:
+                try:
+                    from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+
+                    _req_id, _future = SourcingQueue.add_detail_job(
+                        _src, product.site_product_id
+                    )
+                    _ext_result = await asyncio.wait_for(_future, timeout=25)
+                    if isinstance(_ext_result, dict) and _ext_result.get("success"):
+                        _ext_benefit = int(
+                            _ext_result.get("best_benefit_price", 0) or 0
+                        )
+                        if _ext_benefit > 0:
+                            updates["cost"] = _ext_benefit
+                            logger.info(
+                                f"[{_src}] enrich 확장앱 혜택가: "
+                                f"{product.site_product_id} → {_ext_benefit:,}"
+                            )
+                except asyncio.TimeoutError:
+                    logger.info(
+                        f"[{_src}] enrich 확장앱 타임아웃: {product.site_product_id}"
+                    )
+                except Exception as _ext_err:
+                    logger.debug(
+                        f"[{_src}] enrich 확장앱 실패: {product.site_product_id} — {_ext_err}"
+                    )
+
             # LOTTEON: 확장앱 DOM 파싱으로 최대혜택가 수집
             if _src.upper() == "LOTTEON" and product.site_product_id:
                 try:

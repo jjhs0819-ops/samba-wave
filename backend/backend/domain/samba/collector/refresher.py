@@ -647,6 +647,37 @@ async def _refresh_product_inner(
                 error=str(e),
             )
 
+        # ABCmart/GrandStage: IP-bound 세션이라 백엔드 cookie sync로는 멤버십 할인 못 받음
+        # 확장앱 service worker가 사용자 IP에서 fetch → alwaysDscntAmt 정확값 → cost 보정
+        if (
+            not result.error
+            and source_site in ("ABCmart", "GrandStage")
+            and getattr(product, "site_product_id", "")
+        ):
+            try:
+                from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+
+                _req_id, _future = SourcingQueue.add_detail_job(
+                    source_site, product.site_product_id
+                )
+                _ext_result = await asyncio.wait_for(_future, timeout=25)
+                if isinstance(_ext_result, dict) and _ext_result.get("success"):
+                    _ext_benefit = int(_ext_result.get("best_benefit_price", 0) or 0)
+                    if _ext_benefit > 0:
+                        result.new_cost = float(_ext_benefit)
+                        logger.info(
+                            f"[{source_site}] refresh 확장앱 혜택가: "
+                            f"{product.site_product_id} → {_ext_benefit:,}"
+                        )
+            except asyncio.TimeoutError:
+                logger.info(
+                    f"[{source_site}] refresh 확장앱 타임아웃: {product.site_product_id}"
+                )
+            except Exception as _ext_err:
+                logger.debug(
+                    f"[{source_site}] refresh 확장앱 실패: {product.site_product_id} — {_ext_err}"
+                )
+
         # LOTTEON: benefits API(혜택가) + option/mapping API(재고) 모두
         # 플러그인 refresh()에서 처리 완료 — 확장앱 불필요
 
