@@ -44,8 +44,11 @@ SITE_SEARCH_URLS: dict[str, str] = {
 
 # 사이트별 상품 상세 URL 템플릿
 SITE_DETAIL_URLS: dict[str, str] = {
-    "ABCmart": "https://www.a-rt.com/product?prdtNo={product_id}",
-    "GrandStage": "https://www.a-rt.com/product?prdtNo={product_id}&tChnnlNo=10002",
+    # 서브도메인별로 cookie 격리 — www.a-rt.com에서 열면 abcmart/grandstage cookie
+    # 자동 포함 안 됨 → 비로그인 페이지 → "최대 혜택가" 미표시 → DOM 파싱 fallback으로
+    # sale_price를 best_benefit_price로 보내 cost가 멤버십 할인 미반영된 값으로 박힘.
+    "ABCmart": "https://abcmart.a-rt.com/product?prdtNo={product_id}",
+    "GrandStage": "https://grandstage.a-rt.com/product?prdtNo={product_id}&tChnnlNo=10002",
     "REXMONDE": "https://www.okmall.com/products/detail/{product_id}",
     "LOTTEON": "https://www.lotteon.com/p/product/{product_id}",
     "GSShop": "https://www.gsshop.com/prd/prd.gs?prdid={product_id}",
