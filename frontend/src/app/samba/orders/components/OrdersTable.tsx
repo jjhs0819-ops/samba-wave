@@ -1,6 +1,6 @@
 'use client'
 
-import React, { Dispatch, SetStateAction } from 'react'
+import React, { Dispatch, SetStateAction, useState } from 'react'
 import {
   orderApi,
   type SambaOrder,
@@ -34,6 +34,7 @@ interface OrdersTableProps {
   editingOrderNumbers: Record<string, string>
   setEditingOrderNumbers: Dispatch<SetStateAction<Record<string, string>>>
   activeActions: Record<string, string | null>
+  collectedProductCosts: Record<string, number>
 
   // 부가 상태
   refreshLog: Record<string, string>
@@ -88,6 +89,7 @@ export default function OrdersTable(props: OrdersTableProps) {
     editingTrackings, setEditingTrackings,
     editingOrderNumbers, setEditingOrderNumbers,
     activeActions,
+    collectedProductCosts,
     refreshLog, setRefreshLog,
     sentFlags, siteAliasMap, sourcingAccounts,
     setPriceHistoryProduct, setPriceHistoryData, setPriceHistoryModal,
@@ -99,6 +101,7 @@ export default function OrdersTable(props: OrdersTableProps) {
     openUrlModal, handleTracking, loadOrders, patchOrder,
     handleStatusChange, handleCostSave, handleShipFeeSave, toggleAction,
   } = props
+  const [editingNotes, setEditingNotes] = useState<Record<string, string>>({})
 
   return (
     <div style={{ border: '1px solid #2D2D2D', borderRadius: '8px', overflowX: 'auto' }}>
@@ -124,7 +127,9 @@ export default function OrdersTable(props: OrdersTableProps) {
             const liveProfit = calcProfit(o)
             const liveProfitRate = calcProfitRate(o)
             const liveFeeRate = calcFeeRate(o)
-            const liveCost = editingCosts[o.id] !== undefined ? Number(editingCosts[o.id]) || 0 : (o.cost ?? 0)
+            const displayCost = o.collected_product_id
+              ? (collectedProductCosts[o.collected_product_id] ?? o.cost ?? 0)
+              : (o.cost ?? 0)
             const activeAction = activeActions[o.id] || null
             const customerAddress = splitCustomerAddress(o.customer_address)
 
@@ -168,7 +173,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>실수익</span><span>{liveProfit >= 0 ? '+' : ''}{fmtNum(Math.round(liveProfit))}</span></div>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>수수료율</span><span style={{ color: '#888' }}>{liveFeeRate}%</span></div>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>수익률</span><span style={{ color: '#888' }}>{liveProfitRate}%</span></div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>원가</span><span style={{ color: '#888' }}>원가 : {fmtNum(liveCost)}</span></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>원가</span><span style={{ color: '#888' }}>{fmtNum(displayCost)}</span></div>
                   </div>
                   {/* 주문취소 + 가격X/재고X/직배/까대기/선물 */}
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '4px', marginTop: '0.375rem', borderTop: '1px solid #1C2333', paddingTop: '0.375rem' }}>
@@ -414,12 +419,21 @@ export default function OrdersTable(props: OrdersTableProps) {
                     <textarea
                       style={{ ...inputStyle, fontSize: '0.72rem', resize: 'none', height: '5.38rem', lineHeight: '1.4' }}
                       placeholder="간단메모"
-                      defaultValue={o.notes || ''}
+                      value={editingNotes[o.id] ?? o.notes ?? ''}
+                      onChange={e => setEditingNotes(prev => ({ ...prev, [o.id]: e.target.value }))}
                       onBlur={async e => {
                         const val = e.target.value.trim()
                         if (val !== (o.notes || '')) {
-                          try { await orderApi.update(o.id, { notes: val }) } catch { /* ignore */ }
+                          try {
+                            await orderApi.update(o.id, { notes: val })
+                            patchOrder(o.id, { notes: val })
+                          } catch { /* ignore */ }
                         }
+                        setEditingNotes(prev => {
+                          const next = { ...prev }
+                          delete next[o.id]
+                          return next
+                        })
                       }}
                     />
                   </div>

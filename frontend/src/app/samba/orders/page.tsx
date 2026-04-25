@@ -89,6 +89,7 @@ export default function OrdersPage() {
   const [editingOrderNumbers, setEditingOrderNumbers] = useState<Record<string, string>>({})
   // 직배/까대기/선물 토글 상태
   const [activeActions, setActiveActions] = useState<Record<string, string | null>>({})
+  const [collectedProductCosts, setCollectedProductCosts] = useState<Record<string, number>>({})
   // 우측상단 알람
   const [notifications, setNotifications] = useState<{id: number, message: string, type: string}[]>([])
 
@@ -175,6 +176,28 @@ export default function OrdersPage() {
   // 플레이오토 마켓번호 별칭 매핑
   const [siteAliasMap, setSiteAliasMap] = useState<Record<string, string>>({})
   useEffect(() => { loadOrders() }, [loadOrders])
+  useEffect(() => {
+    const ids = [...new Set(orders.map(o => o.collected_product_id).filter((id): id is string => !!id))]
+    if (ids.length === 0) {
+      setCollectedProductCosts({})
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const rows = await collectorApi.getProductsByIds(ids)
+        if (cancelled) return
+        const next: Record<string, number> = {}
+        for (const row of rows) {
+          next[row.id] = row.cost ?? row.sale_price ?? row.original_price ?? 0
+        }
+        setCollectedProductCosts(next)
+      } catch {
+        if (!cancelled) setCollectedProductCosts({})
+      }
+    })()
+    return () => { cancelled = true }
+  }, [orders])
   // 취소알람 설정 불러오기
   useEffect(() => {
     orderApi.getAlarmSettings().then(d => {
@@ -342,6 +365,7 @@ export default function OrdersPage() {
         editingOrderNumbers={editingOrderNumbers}
         setEditingOrderNumbers={setEditingOrderNumbers}
         activeActions={activeActions}
+        collectedProductCosts={collectedProductCosts}
         refreshLog={refreshLog}
         setRefreshLog={setRefreshLog}
         sentFlags={sentFlags}

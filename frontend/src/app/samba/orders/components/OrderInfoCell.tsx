@@ -50,6 +50,19 @@ export default function OrderInfoCell(props: Props) {
     openUrlModal, handleTracking, loadOrders,
   } = props
 
+  const handleCopyCustomerMemo = async () => {
+    const text = (o.notes || '').trim()
+    if (!text) {
+      showAlert('복사할 메모가 없습니다', 'info')
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      showAlert('메모 복사에 실패했습니다', 'error')
+    }
+  }
+
   return (
     <td style={{ padding: '0.75rem', borderRight: '1px solid #1C2333', fontSize: '0.8125rem', position: 'relative' }}>
       {/* 우측 상단: 주문일 + 수량 + 삭제 */}
@@ -297,6 +310,33 @@ export default function OrderInfoCell(props: Props) {
           )}
         </div>
       </div>
+      {!!o.notes?.trim() && (
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.25rem', fontSize: '0.8rem', marginTop: '0.25rem', marginBottom: '0.25rem' }}>
+          <span style={{ color: '#666', whiteSpace: 'nowrap' }}>고객메모</span>
+          <span
+            role="button"
+            tabIndex={0}
+            title="클릭하여 복사"
+            onClick={handleCopyCustomerMemo}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                handleCopyCustomerMemo()
+              }
+            }}
+            style={{
+              color: '#E5E5E5',
+              cursor: 'copy',
+              textDecoration: 'underline',
+              textDecorationColor: 'rgba(229, 229, 229, 0.35)',
+              textUnderlineOffset: '2px',
+              wordBreak: 'break-word',
+            }}
+          >
+            {o.notes.trim()}
+          </span>
+        </div>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8rem' }}>
         <span style={{ color: '#666', whiteSpace: 'nowrap' }}>타마켓주문링크</span>
         <input
