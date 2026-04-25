@@ -425,22 +425,36 @@ async function fetchAbcmartBenefitPriceServiceWorker(productId, site) {
   }
 }
 
+// ABCmart/GrandStage 자동 탭 보장 — 사용자가 매번 직접 안 켜도 되게.
+// 백그라운드 + 핀 탭으로 1회 생성, 이후 재사용. 사용자가 닫으면 다음 호출에서 재생성.
+// 사용자가 a-rt.com에 1번 로그인은 필요 (인증은 사용자만 가능 — IP-bound 세션).
+async function ensureArtTab(site) {
+  const subdomainPattern = site === 'GrandStage'
+    ? '*://grandstage.a-rt.com/*'
+    : '*://abcmart.a-rt.com/*'
+  let tabs = await chrome.tabs.query({ url: subdomainPattern })
+  if (tabs.length) return tabs[0].id
+
+  const homeUrl = site === 'GrandStage' ? 'https://grandstage.a-rt.com/' : 'https://abcmart.a-rt.com/'
+  console.log(`[${site}] 백그라운드 탭 자동 생성: ${homeUrl}`)
+  const tab = await chrome.tabs.create({ url: homeUrl, active: false, pinned: true })
+  try { await waitForTabLoad(tab.id, 30000) } catch {}
+  await wait(2000)  // SPA hydration
+  return tab.id
+}
+
 // ABCmart/GrandStage: 사이트별 서브도메인 탭에서 in-tab fetch로 혜택가 수집 (매번 새 탭 X)
 // alwaysDscntAmt(멤버십 상시할인) + maxBenefitCoupon 모두 활용해 정확한 best_benefit_price 산출.
 // Cross-subdomain CORS 차단되므로 site에 맞는 서브도메인 탭만 사용.
 async function fetchAbcmartBenefitPrice(productId, site) {
   try {
     // ABCmart 상품은 abcmart.a-rt.com, GrandStage 상품은 grandstage.a-rt.com 탭에서만 호출 가능
-    const subdomainPattern = site === 'GrandStage'
-      ? '*://grandstage.a-rt.com/*'
-      : '*://abcmart.a-rt.com/*'
-    const tabs = await chrome.tabs.query({ url: subdomainPattern })
-    if (!tabs.length) {
-      console.log(`[${site}] in-tab fetch: ${subdomainPattern} 탭 없음 → DOM 폴백 (${productId})`)
+    // 탭 없으면 자동으로 백그라운드 + 핀 탭 1개 생성 (사용자 부담 제거)
+    const tabId = await ensureArtTab(site)
+    if (!tabId) {
+      console.log(`[${site}] in-tab fetch: 탭 생성 실패 → DOM 폴백 (${productId})`)
       return null
     }
-
-    const tabId = tabs[0].id
     const [result] = await chrome.scripting.executeScript({
       target: { tabId },
       world: 'MAIN',
