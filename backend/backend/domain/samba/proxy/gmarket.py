@@ -353,7 +353,7 @@ class GMarketClient:
                 "manufacturer": manufacturer,
                 "origin": origin,
                 "material": material,
-                "careInstructions": care_instructions,
+                "care_instructions": care_instructions,
                 "sourceSite": "GMARKET",
                 "sourceUrl": url,
                 "collectedAt": now_iso,
