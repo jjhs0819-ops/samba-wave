@@ -2118,29 +2118,34 @@ async def sync_orders_from_markets(
                     except Exception as ce:
                         logger.warning(f"[주문동기화] {label}: 주문확인 실패 — {ce}")
 
-                # ── 판매자 분담 할인 집계 — 주문 즉시 예상 정산 계산용 ─────────
-                # SellerDeliveryOrdersSearch 응답(raw_orders)에 판매자 부담 할인 관련
-                # 필드 2종이 포함되어 별도 API 호출 불필요.
-                #   prEntpShrAmtSum: 업체(셀러) 분담 할인 합계
-                #   sptDcPgmCmsnSum: 지원 DC 프로그램 커미션 (이벤트/쿠폰 등 롯데ON이
-                #     지원한 할인에 대해 셀러에게 전가되는 수수료 — 실질적 셀러 부담)
-                # 정산 공식: revenue = 판매가 × (1 - 수수료율) - (entp + sptCmsn)
-                seller_discount_map: dict[str, int] = {}
+                # ── 정산예상 계산용 raw 필드 매핑 (샵마인 공식 채택) ─────────
+                # SellerDeliveryOrdersSearch 응답에서 정산 계산에 필요한 4개 필드 추출.
+                # 샵마인 공식:
+                #   공급금액   = slAmt − sptDcPgmCmsnSum
+                #   실주문금액 = slAmt − fvrAmtSum  (= actualAmt)
+                #   정산예상   = 공급금액 − fvrAmtSum
+                # 멀티아이템 주문은 동일 odNo로 여러 라인 — 라인별 합계로 내려오므로 max 보존.
+                sl_amt_map: dict[str, int] = {}  # 총주문금액
+                spt_cmsn_map: dict[
+                    str, int
+                ] = {}  # 마켓수수료 (셀러부담 프로그램 커미션)
+                fvr_amt_map: dict[str, int] = {}  # 할인금액 합계
                 for ro in raw_orders:
                     _od_no = str(ro.get("odNo") or "")
                     if not _od_no:
                         continue
-                    _entp = int(float(ro.get("prEntpShrAmtSum") or 0))
+                    _slamt = int(float(ro.get("slAmt") or 0))
                     _spt = int(float(ro.get("sptDcPgmCmsnSum") or 0))
-                    _seller_dc = _entp + _spt
-                    # 멀티아이템 주문은 동일 odNo로 여러 라인 반환 — 각 라인에 이미
-                    # 라인별(line-level) 합계로 내려오므로 덧셈 누적이 아닌 max 보존.
-                    prev = seller_discount_map.get(_od_no, 0)
-                    if _seller_dc > prev:
-                        seller_discount_map[_od_no] = _seller_dc
+                    _fvr = int(float(ro.get("fvrAmtSum") or 0))
+                    if _slamt > sl_amt_map.get(_od_no, 0):
+                        sl_amt_map[_od_no] = _slamt
+                    if _spt > spt_cmsn_map.get(_od_no, 0):
+                        spt_cmsn_map[_od_no] = _spt
+                    if _fvr > fvr_amt_map.get(_od_no, 0):
+                        fvr_amt_map[_od_no] = _fvr
                 logger.info(
-                    f"[주문동기화] {label}: 판매자분담할인 매핑 "
-                    f"{len(seller_discount_map)}건 (raw_orders {len(raw_orders)}건 중 DC>0)"
+                    f"[주문동기화] {label}: 정산필드 매핑 {len(sl_amt_map)}건 "
+                    f"(raw_orders {len(raw_orders)}건)"
                 )
 
                 # ── 정산금액 매칭 (SettleItmdSales) ─────────────────────────
@@ -2618,25 +2623,36 @@ async def sync_orders_from_markets(
                         "original_link"
                     ):
                         order_data["source_url"] = _matched["original_link"]
-                # 롯데ON 예상 정산금액 계산 — 정산 API 매칭 실패 시에도 주문 즉시 값 표시
-                #   revenue = 판매가 × (1 - 카테고리 수수료) - 판매자부담 할인 총액
-                # 정산 API 매칭 성공(pymtAmt)이 이미 있으면 건드리지 않음.
-                if order_data.get("source") == "lotteon" and not order_data.get(
-                    "revenue"
-                ):
-                    from backend.domain.samba.proxy.lotteon.category_fees import (
-                        get_fee_rate_for_category,
-                    )
-
-                    _cat_for_fee = _matched.get("category", "") if _matched else ""
-                    _fee = get_fee_rate_for_category(_cat_for_fee)
-                    _sp = int(order_data.get("sale_price", 0) or 0)
-                    # order_number는 합성키(odNo_odSeq_procSeq)이므로 순수 od_no로 조회
+                # 롯데ON 예상 정산금액 계산 (샵마인 공식)
+                #   공급금액   = slAmt − sptDcPgmCmsnSum
+                #   실주문금액 = slAmt − fvrAmtSum (= actualAmt)
+                #   정산예상   = 공급금액 − fvrAmtSum
+                #   실수수료율 = sptDcPgmCmsnSum / 실주문금액
+                # 정산 API 매칭 성공(pymtAmt) 시 이후 라인 2178에서 확정값으로 덮어씀.
+                if order_data.get("source") == "lotteon":
                     _od_no = str(order_data.get("od_no") or "")
-                    _seller_dc = int(seller_discount_map.get(_od_no, 0))
-                    _after_fee = int(_sp * (1 - _fee / 100))
-                    order_data["fee_rate"] = _fee
-                    order_data["revenue"] = max(0, _after_fee - _seller_dc)
+                    _slamt = int(sl_amt_map.get(_od_no, 0))
+                    _spt_cmsn = int(spt_cmsn_map.get(_od_no, 0))
+                    _fvr = int(fvr_amt_map.get(_od_no, 0))
+                    if _slamt > 0:
+                        _supply = _slamt - _spt_cmsn
+                        _revenue = max(0, _supply - _fvr)
+                        _actual = _slamt - _fvr
+                        order_data["revenue"] = _revenue
+                        order_data["fee_rate"] = (
+                            round(_spt_cmsn / _actual * 100, 2) if _actual > 0 else 0
+                        )
+                    elif not order_data.get("revenue"):
+                        # raw 매핑 실패 폴백 — 카테고리 수수료 공식
+                        from backend.domain.samba.proxy.lotteon.category_fees import (
+                            get_fee_rate_for_category,
+                        )
+
+                        _cat_for_fee = _matched.get("category", "") if _matched else ""
+                        _fee = get_fee_rate_for_category(_cat_for_fee)
+                        _sp = int(order_data.get("sale_price", 0) or 0)
+                        order_data["fee_rate"] = _fee
+                        order_data["revenue"] = max(0, int(_sp * (1 - _fee / 100)))
                 # 미등록 입력 자동 적용: 동일 상품의 기존 source_url/product_image 복사
                 _ukey = f"{_pid}|{order_data.get('channel_name', '')}"
                 _unreg_matched = _unreg_cache.get(_ukey)
