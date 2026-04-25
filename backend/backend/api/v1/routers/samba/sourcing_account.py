@@ -350,7 +350,7 @@ async def _sync_abcmart_cookie_to_settings(
         logger.warning(f"[ABCmart쿠키동기화] SambaSettings 업데이트 실패 (무시): {e}")
 
 
-@router.post("/sync-membership")
+@extension_router.post("/sync-membership")
 async def sync_membership_from_extension(
     body: SyncMembershipRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
