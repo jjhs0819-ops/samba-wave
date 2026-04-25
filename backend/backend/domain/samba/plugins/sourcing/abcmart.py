@@ -156,12 +156,44 @@ class AbcMartPlugin(SourcingPlugin):
                 if _current_refresh_source.get() == "autotune"
                 else None
             )
-            client = ARTSourcingClient(
-                channel=None, proxy_pool=[_proxy] if _proxy else None
+
+            # 채널 결정: source_url에 tChnnlNo=10002가 있으면 GrandStage 우선
+            # (ABCmart/GrandStage는 동일 도메인이지만 채널별로 가격/혜택가가 다를 수 있음)
+            _src_url = (getattr(product, "source_url", "") or "").lower()
+            _prefer_grandstage = (
+                "tchnnlno=10002" in _src_url or "grandstage" in _src_url
             )
-            detail = await self.safe_call(
-                client.get_product_detail(site_product_id, refresh_only=True)
+
+            async def _fetch(channel: str | None) -> dict:
+                _client = ARTSourcingClient(
+                    channel=channel, proxy_pool=[_proxy] if _proxy else None
+                )
+                return await self.safe_call(
+                    _client.get_product_detail(site_product_id, refresh_only=True)
+                )
+
+            primary_channel = "10002" if _prefer_grandstage else None
+            fallback_channel = None if _prefer_grandstage else "10002"
+
+            detail = await _fetch(primary_channel)
+
+            # 응답이 없거나 sale_price=0이면 다른 채널로 폴백
+            # (ABCmart 채널이 GrandStage 전용 상품에 빈 응답을 주는 케이스 등 대응)
+            _needs_fallback = (
+                not detail
+                or detail.get("__product_not_found__")
+                or int(detail.get("salePrice", 0) or 0) <= 0
             )
+            if _needs_fallback:
+                logger.info(
+                    f"[ABCmart] 채널 폴백: {site_product_id} "
+                    f"({primary_channel or '10001'} → {fallback_channel or '10001'})"
+                )
+                _alt_detail = await _fetch(fallback_channel)
+                if _alt_detail and not _alt_detail.get("__product_not_found__"):
+                    _alt_sale = int(_alt_detail.get("salePrice", 0) or 0)
+                    if _alt_sale > 0:
+                        detail = _alt_detail
 
             if not detail:
                 return RefreshResult(

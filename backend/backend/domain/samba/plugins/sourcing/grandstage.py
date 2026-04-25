@@ -101,10 +101,29 @@ class GrandStagePlugin(SourcingPlugin):
             )
 
         try:
-            client = ARTSourcingClient(channel="10002")
-            detail = await self.safe_call(
-                client.get_product_detail(site_product_id, refresh_only=True)
+
+            async def _fetch(channel: str | None) -> dict:
+                _client = ARTSourcingClient(channel=channel)
+                return await self.safe_call(
+                    _client.get_product_detail(site_product_id, refresh_only=True)
+                )
+
+            detail = await _fetch("10002")
+
+            # GrandStage 채널 응답이 비거나 sale_price=0이면 ABCmart 채널 폴백
+            _needs_fallback = (
+                not detail
+                or detail.get("__product_not_found__")
+                or int(detail.get("salePrice", 0) or 0) <= 0
             )
+            if _needs_fallback:
+                logger.info(
+                    f"[GrandStage] 채널 폴백: {site_product_id} (10002 → 10001)"
+                )
+                _alt = await _fetch(None)
+                if _alt and not _alt.get("__product_not_found__"):
+                    if int(_alt.get("salePrice", 0) or 0) > 0:
+                        detail = _alt
 
             if not detail:
                 return RefreshResult(

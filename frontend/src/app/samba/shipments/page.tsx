@@ -118,6 +118,8 @@ export default function ShipmentsPage() {
   // Job 큐 상태 폴링 (5초 간격)
   useEffect(() => {
     const fetchJobQueue = async () => {
+      // 탭이 백그라운드면 폴링 스킵 — 다른 탭/창에서 부하 누적 방지
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
       try {
         const { API_BASE_URL: apiBase } = await import('@/config/api')
         const res = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/transmit-queue-status`)
@@ -207,6 +209,8 @@ export default function ShipmentsPage() {
     const bgPoll = async () => {
       // 전송/삭제 전용 폴링이 이미 실행 중이면 중복 실행 생략
       if (jobPollRef.current || deletePollRef.current) return
+      // 탭이 백그라운드면 스킵 — 다른 탭에서 부하 누적 방지
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
       if (polling) return
       polling = true
       try {
@@ -221,7 +225,7 @@ export default function ShipmentsPage() {
       } catch { /* ignore */ }
       polling = false
     }
-    bgPollRef.current = setInterval(bgPoll, 2000)
+    bgPollRef.current = setInterval(bgPoll, 5000)
     return () => { if (bgPollRef.current) clearInterval(bgPollRef.current) }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 

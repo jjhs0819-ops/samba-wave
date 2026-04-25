@@ -84,7 +84,7 @@ export default function OrdersPage() {
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
   const [sourcingAccounts, setSourcingAccounts] = useState<SambaSourcingAccount[]>([])
   const [loading, setLoading] = useState(true)
-  const [period, setPeriod] = useState('1month')
+  const [period, setPeriod] = useState('5days')
   const [marketFilter, setMarketFilter] = useState('')
   const [marketStatus, setMarketStatus] = useState('')
   const [siteFilter, setSiteFilter] = useState('')
@@ -305,7 +305,7 @@ export default function OrdersPage() {
   const [dateLocked, setDateLocked] = useState(false)
   const [customStart, setCustomStart] = useState(() => {
     const d = new Date()
-    d.setDate(d.getDate() - 29)
+    d.setDate(d.getDate() - 4)
     return d.toLocaleDateString('sv-SE')
   })
   const [startLocked, setStartLocked] = useState(false)
@@ -393,7 +393,7 @@ export default function OrdersPage() {
     setSyncing(true)
     const ts = () => fmtTime()
     const daysMap: Record<string, number> = {
-      yesterday: 1, today: 1, thisweek: 7, lastweek: 14, '1week': 7, '15days': 15,
+      yesterday: 1, today: 1, thisweek: 7, lastweek: 14, '5days': 5, '1week': 7, '15days': 15,
       thismonth: 31, lastmonth: 60, '1month': 30, '3months': 90, '6months': 180,
       thisyear: Math.ceil((Date.now() - new Date(new Date().getFullYear(), 0, 1).getTime()) / 86400000) + 1, all: 365,
     }
