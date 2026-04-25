@@ -1380,9 +1380,13 @@ async def _site_autotune_loop(site: str):
                                 pass
 
                         # ③ 소싱처별 병렬 갱신 + 결과 즉시 처리 (콜백)
+                        from backend.domain.samba.collector.refresher import (
+                            SITE_AUTOTUNE_CONCURRENCY as _SAC,
+                        )
+
                         results, summary = await refresh_products_bulk(
                             products,
-                            max_concurrency={"MUSINSA": 4},
+                            max_concurrency=dict(_SAC),
                             on_result=_on_result,
                         )
 
@@ -2048,9 +2052,13 @@ async def auto_start_if_enabled():
     """
     try:
         # 저장된 인터벌 설정 복원
-        from backend.domain.samba.collector.refresher import load_site_intervals_from_db
+        from backend.domain.samba.collector.refresher import (
+            load_site_autotune_concurrency_from_db,
+            load_site_intervals_from_db,
+        )
 
         await load_site_intervals_from_db()
+        await load_site_autotune_concurrency_from_db()
 
         from backend.db.orm import get_read_session
         from backend.api.v1.routers.samba.proxy import _get_setting
@@ -2492,7 +2500,10 @@ async def autotune_status():
         refreshed_24h = 0
 
     # 소싱처별 인터벌 정보
-    from backend.domain.samba.collector.refresher import get_site_intervals_info
+    from backend.domain.samba.collector.refresher import (
+        SITE_AUTOTUNE_CONCURRENCY,
+        get_site_intervals_info,
+    )
 
     intervals_info = get_site_intervals_info()
 
@@ -2530,6 +2541,7 @@ async def autotune_status():
         "target": "registered",
         "breaker_tripped": tripped,
         "site_intervals": intervals_info.get("base_intervals", {}),
+        "site_autotune_concurrency": dict(SITE_AUTOTUNE_CONCURRENCY),
         "priority_enabled": priority_enabled,
         "site_loops": _active_site_loops,
         "stuck_timeout": STUCK_TIMEOUT_SECONDS,
@@ -2551,6 +2563,31 @@ async def autotune_update_interval(body: AutotuneIntervalRequest):
     await set_site_base_interval(body.site, body.interval)
     logger.info("[오토튠] 인터벌 변경: %s → %.1f초", body.site, body.interval)
     return {"ok": True, "site": body.site, "interval": body.interval}
+
+
+class AutotuneConcurrencyRequest(BaseModel):
+    site: str
+    value: int  # 동시 처리 상품 수
+
+
+@router.post("/autotune/concurrency")
+async def autotune_update_concurrency(body: AutotuneConcurrencyRequest):
+    """소싱처별 오토튠 동시성(병렬도) 동적 변경."""
+    from backend.domain.samba.collector.refresher import set_site_autotune_concurrency
+
+    if body.value < 1 or body.value > 50:
+        return {"ok": False, "error": "동시성은 1~50 범위만 가능합니다"}
+    await set_site_autotune_concurrency(body.site, body.value)
+    logger.info("[오토튠] 동시성 변경: %s → %d", body.site, body.value)
+    return {"ok": True, "site": body.site, "value": body.value}
+
+
+@router.get("/autotune/concurrency")
+async def autotune_get_concurrency():
+    """소싱처별 오토튠 동시성 조회."""
+    from backend.domain.samba.collector.refresher import SITE_AUTOTUNE_CONCURRENCY
+
+    return {"ok": True, "concurrency": dict(SITE_AUTOTUNE_CONCURRENCY)}
 
 
 @router.post("/autotune/breaker-reset")

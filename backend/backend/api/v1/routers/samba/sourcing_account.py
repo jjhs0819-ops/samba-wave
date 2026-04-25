@@ -308,6 +308,46 @@ class SyncMembershipRequest(BaseModel):
     site_name: str
     membership_rate: float
     membership_grade: str = ""
+    # 확장앱이 추출한 a-rt.com 로그인 쿠키 (옵션)
+    # 'k1=v1; k2=v2' 형식. 잡 시작 시 ABCmart 호출에 주입되어 alwaysDscntAmt 등 정확값 수신
+    cookie: Optional[str] = None
+    expired: bool = False
+
+
+async def _sync_abcmart_cookie_to_settings(
+    session: AsyncSession,
+    accounts: list,
+) -> None:
+    """ABCmart 모든 계정의 만료되지 않은 쿠키 → SambaSettings.abcmart_cookies 동기화.
+
+    proxy/abcmart.py의 prepare_abcmart_cache()가 SambaSettings만 읽으므로,
+    확장앱이 sync한 쿠키가 잡에 반영되려면 이 동기화가 필요.
+    """
+    import json
+
+    from backend.domain.samba.forbidden.model import SambaSettings
+
+    cookies: list[str] = []
+    for a in accounts:
+        af = a.additional_fields or {}
+        cookie_val = af.get("abcmart_cookie", "")
+        if cookie_val and not af.get("cookie_expired"):
+            cookies.append(cookie_val)
+
+    try:
+        result = await session.execute(
+            select(SambaSettings).where(SambaSettings.key == "abcmart_cookies")
+        )
+        row = result.scalar_one_or_none()
+        if row:
+            row.value = json.dumps(cookies)
+        else:
+            session.add(SambaSettings(key="abcmart_cookies", value=json.dumps(cookies)))
+        logger.info(
+            f"[ABCmart쿠키동기화] SambaSettings.abcmart_cookies 업데이트: {len(cookies)}개"
+        )
+    except Exception as e:
+        logger.warning(f"[ABCmart쿠키동기화] SambaSettings 업데이트 실패 (무시): {e}")
 
 
 @router.post("/sync-membership")
@@ -315,9 +355,11 @@ async def sync_membership_from_extension(
     body: SyncMembershipRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    """확장앱에서 멤버십 등급 수신 → 소싱처 계정에 저장 + 캐시 갱신."""
-    from backend.domain.samba.proxy.abcmart import ARTSourcingClient
+    """확장앱에서 멤버십 등급 + 로그인 쿠키 수신 → 소싱처 계정에 저장.
 
+    멤버십 rate는 더 이상 곱셈 계산에 쓰지 않음 (참고용 메타데이터).
+    실제 cost 계산은 잡 시작 시 로딩한 쿠키로 API 호출 → alwaysDscntAmt 사용.
+    """
     svc = _write_service(session)
     accounts = await svc.list_accounts(site_name=body.site_name)
 
@@ -325,18 +367,33 @@ async def sync_membership_from_extension(
         extra = dict(account.additional_fields or {})
         extra["membership_rate"] = body.membership_rate
         extra["membership_grade"] = body.membership_grade
+
+        if body.expired:
+            extra["cookie_expired"] = True
+            extra["cookie_expired_at"] = datetime.now(timezone.utc).isoformat()
+        elif body.cookie:
+            extra["abcmart_cookie"] = body.cookie
+            extra["cookie_expired"] = False
+            extra["cookie_updated_at"] = datetime.now(timezone.utc).isoformat()
+
         await svc.repo.update_async(account.id, additional_fields=extra)
 
-    # 인메모리 캐시 갱신
-    ARTSourcingClient.set_membership_rate(body.membership_rate)
+    # ABCmart 쿠키가 있으면 SambaSettings에도 동기화 (잡 캐시가 읽음)
+    if body.site_name == "ABCmart" and (body.cookie or body.expired):
+        # 최신 상태 다시 읽어서 동기화
+        accounts = await svc.list_accounts(site_name=body.site_name)
+        await _sync_abcmart_cookie_to_settings(session, accounts)
 
     logger.info(
-        f"[멤버십동기화] {body.site_name}: {body.membership_grade} ({body.membership_rate}%)"
+        f"[멤버십동기화] {body.site_name}: {body.membership_grade} "
+        f"({body.membership_rate}%) cookie={'expired' if body.expired else ('set' if body.cookie else 'none')}"
     )
     return {
         "ok": True,
         "rate": body.membership_rate,
         "grade": body.membership_grade,
+        "cookie_synced": bool(body.cookie),
+        "expired": body.expired,
     }
 
 

@@ -42,6 +42,11 @@ SITE_CONCURRENCY: dict[str, int] = {
     "SSF": 5,
     "NAVERSTORE": 5,
 }
+# 오토튠 전용 동시성 오버라이드 (값 없으면 SITE_CONCURRENCY 기본값 사용)
+# 24시간 백그라운드 실행 → 차단 방지를 위해 일반 갱신/수집보다 보수적 운영
+SITE_AUTOTUNE_CONCURRENCY: dict[str, int] = {
+    "MUSINSA": 4,  # 일반 갱신은 SITE_CONCURRENCY=20, 오토튠만 4
+}
 # 소싱처별 기본 인터벌 (초)
 SITE_BASE_INTERVAL: dict[str, float] = {
     "MUSINSA": 1.0,
@@ -116,6 +121,38 @@ def get_interval_key(site: str, feature: str = "refresh") -> str:
 
 # 벌크 갱신용 캐시 (배치 시작 시 1회 조회)
 _bulk_musinsa_cache: dict[str, Any] = {}
+
+# 무신사 오토튠 전용 공유 HTTP 클라이언트 풀 (프록시 URL별로 1개씩 유지)
+# TCP 연결 풀링 + TLS 재사용으로 핸드셰이크 부담 감소, 봇 시그널 완화
+# 키: 프록시 URL 문자열 (None=메인 IP)
+_musinsa_shared_clients: dict[str | None, Any] = {}
+
+
+def _get_musinsa_shared_client(proxy_url: str | None) -> Any:
+    """오토튠 전용 공유 httpx.AsyncClient 반환 (프록시별 풀링)."""
+    import httpx as _httpx
+
+    existing = _musinsa_shared_clients.get(proxy_url)
+    if existing is not None and not existing.is_closed:
+        return existing
+    _kwargs: dict[str, Any] = {
+        "timeout": _httpx.Timeout(45, connect=10.0),
+    }
+    if proxy_url:
+        _kwargs["proxy"] = proxy_url
+    new_client = _httpx.AsyncClient(**_kwargs)
+    _musinsa_shared_clients[proxy_url] = new_client
+    return new_client
+
+
+async def reset_musinsa_shared_clients() -> None:
+    """공유 클라이언트 전체 폐기 (차단 누적 시 connection 재시작용)."""
+    for c in list(_musinsa_shared_clients.values()):
+        try:
+            await c.aclose()
+        except Exception:
+            pass
+    _musinsa_shared_clients.clear()
 
 
 async def _prepare_musinsa_cache() -> None:
@@ -485,6 +522,43 @@ async def load_site_intervals_from_db() -> None:
         pass  # 로드 실패 시 기본값 유지
 
 
+async def set_site_autotune_concurrency(site: str, value: int) -> None:
+    """오토튠 동시성 동적 변경. DB에 영속화."""
+    SITE_AUTOTUNE_CONCURRENCY[site] = int(value)
+    await _persist_autotune_concurrency_to_db()
+
+
+async def _persist_autotune_concurrency_to_db() -> None:
+    """현재 SITE_AUTOTUNE_CONCURRENCY를 DB에 저장."""
+    try:
+        from backend.db.orm import get_write_session
+        from backend.api.v1.routers.samba.proxy import _set_setting
+
+        async with get_write_session() as session:
+            await _set_setting(
+                session, "autotune_concurrency", dict(SITE_AUTOTUNE_CONCURRENCY)
+            )
+            await session.commit()
+    except Exception as e:
+        logger.warning("[오토튠] 동시성 DB 저장 실패: %s", e)
+
+
+async def load_site_autotune_concurrency_from_db() -> None:
+    """서버 시작 시 DB에서 저장된 오토튠 동시성을 로드."""
+    try:
+        from backend.db.orm import get_read_session
+        from backend.api.v1.routers.samba.proxy import _get_setting
+
+        async with get_read_session() as session:
+            saved = await _get_setting(session, "autotune_concurrency")
+        if saved and isinstance(saved, dict):
+            for site, val in saved.items():
+                if isinstance(val, (int, float)) and 1 <= val <= 50:
+                    SITE_AUTOTUNE_CONCURRENCY[site] = int(val)
+    except Exception:
+        pass  # 로드 실패 시 기본값 유지
+
+
 @dataclass
 class RefreshResult:
     """단일 상품 갱신 결과."""
@@ -672,10 +746,11 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
     else:
         cookie = _bulk_musinsa_cache.get("cookie") or await _get_musinsa_cookie()
     # 오토튠이면 메인↔프록시 IP 로테이션
-    _proxy = (
-        _get_rotated_proxy() if _current_refresh_source.get() == "autotune" else None
-    )
+    _is_autotune = _current_refresh_source.get() == "autotune"
+    _proxy = _get_rotated_proxy() if _is_autotune else None
     client = MusinsaClient(cookie, proxy_url=_proxy)
+    # 오토튠은 프록시별 공유 HTTP 클라이언트 재사용 (TCP/TLS 핸드셰이크 절감)
+    _shared = _get_musinsa_shared_client(_proxy) if _is_autotune else None
     cached_grade_rate = _bulk_musinsa_cache.get("grade_rate")
     warnings: list[str] = []
     # 방어적 초기화: RateLimitError 재시도 경로에서 UnboundLocalError 방지
@@ -687,6 +762,7 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
                 site_product_id,
                 member_grade_rate=cached_grade_rate,
                 refresh_only=True,
+                _shared_client=_shared,
             ),
             timeout=45,
         )
@@ -747,6 +823,7 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
                     site_product_id,
                     member_grade_rate=cached_grade_rate,
                     refresh_only=True,
+                    _shared_client=_shared,
                 )
                 _site_consecutive_errors["MUSINSA"] = 0
             except Exception:
@@ -1281,6 +1358,12 @@ async def refresh_products_bulk(
         # 소싱처별 사전 캐싱 (배치 시작 시 1회)
         if site == "MUSINSA":
             await _prepare_musinsa_cache()
+        elif site in ("ABCmart", "GrandStage"):
+            # 확장앱이 sync한 로그인 쿠키 1회 로딩 → 잡 내내 재사용
+            # 쿠키 있으면 alwaysDscntAmt(등급별 정확값) 받아 cost 계산
+            from backend.domain.samba.proxy.abcmart import prepare_abcmart_cache
+
+            await prepare_abcmart_cache()
         if isinstance(max_concurrency, dict):
             concurrency = max_concurrency.get(
                 site, SITE_CONCURRENCY.get(site, CONCURRENCY_PER_SITE)

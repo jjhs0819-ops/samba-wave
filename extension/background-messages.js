@@ -216,17 +216,47 @@ async function sendAbcmartBalance(data) {
 // ==================== ABCmart 멤버십 등급 동기화 ====================
 
 async function syncAbcmartMembership(rate, grade) {
+  // 호환성 stub — 등급만 전송 (쿠키 없이)
+  return handleAbcmartMembershipSync({ rate, grade, needsCookie: false, expired: false })
+}
+
+async function handleAbcmartMembershipSync({ rate, grade, needsCookie, expired }) {
   try {
+    let cookieStr = ''
+    if (needsCookie && !expired) {
+      // .a-rt.com 도메인 모든 쿠키 추출 → 'k=v; k=v' 형식 직렬화
+      try {
+        const cookies = await chrome.cookies.getAll({ domain: 'a-rt.com' })
+        cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ')
+        console.log(`[ABCmart] 쿠키 ${cookies.length}개 추출 (${cookieStr.length} bytes)`)
+      } catch (e) {
+        console.log(`[ABCmart] 쿠키 추출 실패: ${e.message}`)
+      }
+    }
+
+    const payload = {
+      site_name: 'ABCmart',
+      membership_rate: rate,
+      membership_grade: grade,
+      expired: !!expired,
+    }
+    if (cookieStr) payload.cookie = cookieStr
+
     const res = await apiFetch(`${PROXY_URL}/api/v1/samba/sourcing-accounts/sync-membership`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ site_name: 'ABCmart', membership_rate: rate, membership_grade: grade }),
+      body: JSON.stringify(payload),
     })
     if (res.ok) {
-      console.log(`[ABCmart] 멤버십 서버 저장 완료: ${grade} (${rate}%)`)
+      console.log(`[ABCmart] 서버 저장 완료: ${grade} (${rate}%) cookie=${cookieStr ? 'sent' : 'no'} expired=${expired}`)
+      if (cookieStr) {
+        chrome.storage.local.set({ abcmart_cookie_synced_at: Date.now() })
+      }
+    } else {
+      console.warn(`[ABCmart] 서버 저장 실패: HTTP ${res.status}`)
     }
   } catch (e) {
-    console.log(`[ABCmart] 멤버십 서버 전송 실패 (무시): ${e.message}`)
+    console.log(`[ABCmart] 서버 전송 실패 (무시): ${e.message}`)
   }
 }
 

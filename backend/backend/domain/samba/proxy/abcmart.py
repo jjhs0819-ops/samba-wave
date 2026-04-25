@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import math
 import re
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -37,6 +36,66 @@ class RateLimitError(Exception):
         super().__init__(f"HTTP {status} (retry_after={retry_after})")
 
 
+async def get_abcmart_cookies() -> list[str]:
+    """DB에서 ABCmart 로그인 쿠키 목록 조회.
+
+    SambaSettings.abcmart_cookies(JSON 배열) → 만료되지 않은 계정 쿠키들.
+    잡 시작 시 1회 호출 → 잡 내내 재사용.
+    """
+    try:
+        import json as _json
+
+        from sqlmodel import select as _sel
+
+        from backend.db.orm import get_read_session
+        from backend.domain.samba.forbidden.model import SambaSettings
+
+        async with get_read_session() as session:
+            result = await session.execute(
+                _sel(SambaSettings).where(SambaSettings.key == "abcmart_cookies")
+            )
+            row = result.scalar_one_or_none()
+            if row and row.value:
+                val = (
+                    _json.loads(row.value) if isinstance(row.value, str) else row.value
+                )
+                if isinstance(val, list):
+                    return [c for c in val if c]
+            return []
+    except Exception as e:
+        logger.warning(f"[ABCmart] 쿠키 조회 실패: {e}")
+        return []
+
+
+async def prepare_abcmart_cache() -> None:
+    """ABCmart 벌크 갱신 전 쿠키 캐싱 (잡 시작 시 1회 호출).
+
+    DB의 abcmart_cookies(만료되지 않은 계정 쿠키 목록) → ARTSourcingClient._bulk_cache.
+    이후 모든 _acquire_session_client() 호출이 이 캐시를 사용.
+    """
+    cookies = await get_abcmart_cookies()
+    ARTSourcingClient._bulk_cache = {
+        "cookies": cookies,
+        "cookie": cookies[0] if cookies else "",
+        "idx": 0,
+        "expired": False,
+    }
+    logger.info(f"[ABCmart] 잡 시작 쿠키 로딩: {len(cookies)}개")
+
+
+def _mark_abcmart_cookie_expired() -> None:
+    """현재 사용 중인 쿠키를 만료로 마킹 (loginYn != Y 응답 시 호출).
+
+    캐시에서만 마킹 — DB에는 다음 sync 때 확장앱이 직접 expired=True로 알림.
+    """
+    cache = ARTSourcingClient._bulk_cache
+    if cache.get("cookie") and not cache.get("expired"):
+        cache["expired"] = True
+        logger.warning(
+            "[ABCmart] 로그인 쿠키 만료 감지 — 익명 폴백으로 전환 (다음 sync까지 보수적 cost)"
+        )
+
+
 class ARTSourcingClient:
     """ABC마트 / 그랜드스테이지 소싱용 웹 스크래핑 클라이언트.
 
@@ -51,13 +110,19 @@ class ARTSourcingClient:
     DETAIL_PATH = "/product"
     API_FAILURE_COST_FALLBACK = 200_000
 
-    # 멤버십 할인률 캐시 (확장앱에서 감지 → sync-membership으로 갱신)
-    _cached_membership_rate: float = 3.0  # 기본 수집가 등급
+    # 잡 단위 쿠키 캐시 (확장앱이 sync한 로그인 쿠키 → 잡 시작 시 1회 로딩)
+    # _prepare_abcmart_cache()에서 채움. 키: "cookie"(현재값), "cookies"(전체), "expired"(bool)
+    _bulk_cache: dict = {}
 
     @classmethod
     def set_membership_rate(cls, rate: float) -> None:
-        cls._cached_membership_rate = rate
-        logger.info(f"[ABCmart] 멤버십 할인률 갱신: {rate}%")
+        """[Deprecated] 멤버십 rate는 더 이상 캐시하지 않는다.
+
+        이전 설계(rate × sale_price 곱셈)는 "상시 할인 제외 상품"을 구분 못 하는
+        구조적 결함이 있었음. 현재는 로그인 쿠키 sync로 API의 alwaysDscntAmt를
+        직접 사용하므로 rate 캐시 불필요. 호환성 위해 stub으로 남김.
+        """
+        logger.info(f"[ABCmart] 멤버십 rate 수신(미사용, deprecated): {rate}%")
 
     # ABC마트: channel=10001, 그랜드스테이지: channel=10002
     CHANNEL_ABCMART = "10001"
@@ -650,8 +715,9 @@ class ARTSourcingClient:
     ) -> httpx.AsyncClient:
         """상품 상세 페이지를 방문해 JSESSIONID 쿠키를 획득한 클라이언트를 반환한다.
 
-        a-rt.com API는 JSESSIONID 쿠키 없이 호출 시 빈 응답({})을 반환하므로
-        홈 → 상품 상세 페이지 순으로 방문해 세션을 확보해야 한다.
+        잡 시작 시 prepare_abcmart_cache()가 로드한 로그인 쿠키가 있으면
+        그 쿠키를 주입한 클라이언트를 즉시 반환(홈/상세 방문 스킵).
+        없거나 만료 마킹된 경우 익명 세션 폴백으로 진행한다.
 
         Args:
           product_id: 세션 획득에 사용할 상품 ID. 제공 시 해당 상품 상세 페이지 방문.
@@ -661,6 +727,25 @@ class ARTSourcingClient:
         """
         site_label = f"[{self._source_site}]"
         subdomain = self.SUBDOMAIN_MAP.get(self.channel, self.SUBDOMAIN_MAP["10001"])
+
+        # 1. 캐시된 로그인 쿠키 우선 (확장앱이 sync한 사용자 인증 쿠키)
+        cache = self._bulk_cache
+        cached_cookie = cache.get("cookie") if not cache.get("expired") else None
+        if cached_cookie:
+            client = httpx.AsyncClient(
+                timeout=self._timeout,
+                follow_redirects=True,
+                proxy=self._next_proxy(),
+            )
+            # 쿠키 문자열을 클라이언트에 주입
+            try:
+                self._inject_cookie_string(client, cached_cookie, subdomain)
+                return client
+            except Exception as e:
+                logger.warning(f"{site_label} 쿠키 주입 실패, 익명 폴백: {e}")
+                await client.aclose()
+
+        # 2. 익명 세션 폴백 (기존 동작)
         client = httpx.AsyncClient(
             timeout=self._timeout, follow_redirects=True, proxy=self._next_proxy()
         )
@@ -693,6 +778,25 @@ class ARTSourcingClient:
             # 세션 획득 실패해도 이후 API 호출 시도는 계속 진행 (JSESSIONID 없이 요청)
             logger.warning(f"{site_label} 세션 획득 실패 (쿠키 없이 진행): {e}")
         return client
+
+    def _inject_cookie_string(
+        self, client: httpx.AsyncClient, cookie_str: str, subdomain: str
+    ) -> None:
+        """확장앱이 보낸 'k1=v1; k2=v2' 형식 쿠키 문자열을 클라이언트에 주입.
+
+        a-rt.com 도메인 모든 서브에 적용 (.a-rt.com).
+        """
+        if not cookie_str:
+            return
+        for part in cookie_str.split(";"):
+            kv = part.strip()
+            if not kv or "=" not in kv:
+                continue
+            name, _, value = kv.partition("=")
+            name = name.strip()
+            value = value.strip()
+            if name:
+                client.cookies.set(name, value, domain=".a-rt.com", path="/")
 
     async def get_product_info_api(
         self,
@@ -893,33 +997,40 @@ class ARTSourcingClient:
             brand = ""
         brand_code = (brand_info.get("brandEnName") or "").strip()
 
-        # 가격
+        # 로그인 만료 감지: 캐시된 쿠키로 호출했는데 응답에 loginYn=Y가 없으면 만료
+        # → 다음 호출부터 익명 폴백으로 전환
+        _login_yn = (data.get("loginYn") or "").upper()
+        if self._bulk_cache.get("cookie") and not self._bulk_cache.get("expired"):
+            if _login_yn != "Y":
+                _mark_abcmart_cookie_expired()
+
+        # 가격: displayProductPrice(페이지 실제 표시가)가 있으면 우선 사용
+        # productPrice.sellAmt는 ERP 가격(할인 미반영)이라 페이지가와 다를 수 있음
+        # 예: prdtNo=1020115314 → sellAmt=89,000, displayProductPrice=74,000
         price_info = data.get("productPrice") or {}
         original_price = self._safe_int(price_info.get("normalAmt") or 0)
-        sale_price = self._safe_int(price_info.get("sellAmt") or 0)
+        _sell_amt = self._safe_int(price_info.get("sellAmt") or 0)
+        _display_price = self._safe_int(data.get("displayProductPrice") or 0)
+        sale_price = _display_price if _display_price > 0 else _sell_amt
         discount_rate = self._safe_int(data.get("displayDiscountRate") or 0)
 
         if original_price == 0:
             original_price = sale_price
 
-        # 최대혜택가: 쿠폰 할인 + 멤버십 상시 할인 적용
+        # 최대혜택가: 멤버십 상시 할인 + 쿠폰 할인
+        # 멤버십 할인은 API의 alwaysDscntAmt를 그대로 사용
+        # (alwaysDscntYn=Y면 등급별 실제 할인액, N이면 0 — "상시 할인 제외 상품" 자동 처리)
+        # 로그인 쿠키 sync 안 됨 → 비로그인 응답 → alwaysDscntAmt=0 → 보수적 cost
+        _membership_discount = self._safe_int(data.get("alwaysDscntAmt") or 0)
+
+        # 쿠폰 할인: 로그인 시 받을 수 있는 추가 쿠폰 (없으면 0)
         _benefit_coupons = data.get("maxBenefitCoupon") or data.get("coupon") or []
         _coupon_discount = max(
             (self._safe_int(c.get("dscntAmt", 0)) for c in _benefit_coupons),
             default=0,
         )
-        _after_coupon = (
-            sale_price - _coupon_discount if _coupon_discount > 0 else sale_price
-        )
 
-        # 멤버십 상시 할인 (alwaysDscntRate: 쿠폰 후 가격 기준, 100원 단위 올림)
-        # 비로그인 API → alwaysDscntRate=0 → 확장앱에서 감지한 캐시값 사용
-        _always_rate = float(data.get("alwaysDscntRate") or 0)
-        if _always_rate <= 0:
-            _always_rate = self._cached_membership_rate
-        _membership_discount = math.ceil(_after_coupon * _always_rate / 100 / 100) * 100
-
-        best_benefit_price = _after_coupon - _membership_discount
+        best_benefit_price = sale_price - _membership_discount - _coupon_discount
         if best_benefit_price <= 0 or best_benefit_price > sale_price:
             best_benefit_price = sale_price
 

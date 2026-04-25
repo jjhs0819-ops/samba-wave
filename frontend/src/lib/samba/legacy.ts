@@ -615,9 +615,13 @@ export const collectorApi = {
   autotuneStop: () =>
     request<{ ok: boolean; status: string }>(`${SAMBA_PREFIX}/collector/autotune/stop`, { method: 'POST' }),
   autotuneStatus: () =>
-    request<{ running: boolean; last_tick: string | null; cycle_count: number; restart_count: number; target: string; refreshed_count: number; breaker_tripped: Record<string, number>; site_intervals?: Record<string, number>; traffic?: { collecting: boolean; transmitting: boolean; busy: boolean } }>(`${SAMBA_PREFIX}/collector/autotune/status`),
+    request<{ running: boolean; last_tick: string | null; cycle_count: number; restart_count: number; target: string; refreshed_count: number; breaker_tripped: Record<string, number>; site_intervals?: Record<string, number>; site_autotune_concurrency?: Record<string, number>; traffic?: { collecting: boolean; transmitting: boolean; busy: boolean } }>(`${SAMBA_PREFIX}/collector/autotune/status`),
   autotuneUpdateInterval: (site: string, interval: number) =>
     request<{ ok: boolean; site: string; interval: number }>(`${SAMBA_PREFIX}/collector/autotune/interval`, { method: 'POST', body: JSON.stringify({ site, interval }) }),
+  autotuneGetConcurrency: () =>
+    request<{ ok: boolean; concurrency: Record<string, number> }>(`${SAMBA_PREFIX}/collector/autotune/concurrency`),
+  autotuneUpdateConcurrency: (site: string, value: number) =>
+    request<{ ok: boolean; site: string; value: number }>(`${SAMBA_PREFIX}/collector/autotune/concurrency`, { method: 'POST', body: JSON.stringify({ site, value }) }),
   autotuneGetFilters: () =>
     request<{
       enabled_sources: string[] | null

@@ -203,10 +203,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({ ok: true })
   }
   if (msg.action === 'abcmartMembership') {
-    const { membershipRate, membershipGrade } = msg
-    console.log(`[ABCmart] 멤버십 감지: ${membershipGrade} (${membershipRate}%)`)
-    chrome.storage.local.set({ abcmart_membership_rate: membershipRate, abcmart_membership_grade: membershipGrade })
-    syncAbcmartMembership(membershipRate, membershipGrade)
+    const { membershipRate, membershipGrade, needsCookie, expired } = msg
+    console.log(`[ABCmart] 멤버십 감지: ${membershipGrade} (${membershipRate}%) cookie=${needsCookie ? 'fetch' : 'skip'} expired=${!!expired}`)
+    if (!expired) {
+      chrome.storage.local.set({ abcmart_membership_rate: membershipRate, abcmart_membership_grade: membershipGrade })
+    }
+    handleAbcmartMembershipSync({ rate: membershipRate, grade: membershipGrade, needsCookie: !!needsCookie, expired: !!expired })
     sendResponse({ ok: true })
   }
   if (msg.type === 'SCRAPE_SSG_SCORES') {

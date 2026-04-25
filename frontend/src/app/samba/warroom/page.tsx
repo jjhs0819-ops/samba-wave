@@ -232,8 +232,11 @@ export default function WarroomPage() {
   ]
   const [siteIntervals, setSiteIntervals] = useState<Record<string, string>>({})
   const intervalTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  const [siteConcurrency, setSiteConcurrency] = useState<Record<string, string>>({})
+  const concurrencyTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
   // 현재 인터벌은 load()의 autotuneStatus 응답에서 함께 설정됨 — 중복 호출 제거
+  // 동시성도 status 응답에 포함됨
 
   const handleIntervalChange = useCallback((site: string, value: string) => {
     setSiteIntervals(prev => ({ ...prev, [site]: value }))
@@ -244,6 +247,18 @@ export default function WarroomPage() {
       if (isNaN(num) || num < 0 || num > 60) return
       try {
         await collectorApi.autotuneUpdateInterval(site, num)
+      } catch { /* ignore */ }
+    }, 500)
+  }, [])
+
+  const handleConcurrencyChange = useCallback((site: string, value: string) => {
+    setSiteConcurrency(prev => ({ ...prev, [site]: value }))
+    if (concurrencyTimerRef.current[site]) clearTimeout(concurrencyTimerRef.current[site])
+    concurrencyTimerRef.current[site] = setTimeout(async () => {
+      const num = parseInt(value, 10)
+      if (isNaN(num) || num < 1 || num > 50) return
+      try {
+        await collectorApi.autotuneUpdateConcurrency(site, num)
       } catch { /* ignore */ }
     }, 500)
   }, [])
@@ -365,6 +380,16 @@ export default function WarroomPage() {
           if (Object.keys(prev).length > 0) return prev
           const init: Record<string, string> = {}
           for (const [site, val] of Object.entries(atStatus.site_intervals!)) {
+            init[site] = String(val)
+          }
+          return init
+        })
+      }
+      if (atStatus.site_autotune_concurrency) {
+        setSiteConcurrency(prev => {
+          if (Object.keys(prev).length > 0) return prev
+          const init: Record<string, string> = {}
+          for (const [site, val] of Object.entries(atStatus.site_autotune_concurrency!)) {
             init[site] = String(val)
           }
           return init
@@ -616,6 +641,34 @@ export default function WarroomPage() {
             </span>
           ))}
           <span style={{ fontSize: '0.65rem', color: '#666' }}>초</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.4rem' }}>
+          <span style={{ fontSize: '0.75rem', color: '#9AA5C0', fontWeight: 600, whiteSpace: 'nowrap' }}>동시실행</span>
+          {INTERVAL_SITES.map(({ key, label }) => (
+            <span key={key} style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+              <span style={{ fontSize: '0.7rem', color: '#aaa', whiteSpace: 'nowrap' }}>{label}</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={siteConcurrency[key] ?? ''}
+                onChange={e => handleConcurrencyChange(key, e.target.value)}
+                style={{
+                  width: '2.5rem',
+                  padding: '0.1rem 0.25rem',
+                  background: 'rgba(255,255,255,0.06)',
+                  border: '1px solid rgba(255,255,255,0.15)',
+                  borderRadius: '4px',
+                  color: '#4C9AFF',
+                  fontSize: '0.75rem',
+                  textAlign: 'center',
+                  outline: 'none',
+                }}
+                onFocus={e => { e.target.style.borderColor = '#4C9AFF' }}
+                onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.15)' }}
+              />
+            </span>
+          ))}
+          <span style={{ fontSize: '0.65rem', color: '#666' }}>병렬</span>
         </div>
       </div>
 
