@@ -37,6 +37,14 @@ class RateLimitError(Exception):
         super().__init__(f"HTTP {status} (retry_after={retry_after})")
 
 
+class ProductNotFoundError(Exception):
+    """GS샵 상품 영구 삭제(404) 감지."""
+
+    def __init__(self, product_id: str):
+        self.product_id = product_id
+        super().__init__(f"GS샵 상품 데이터 없음: {product_id}")
+
+
 class GsShopSourcingClient:
     """GS샵 소싱용 웹 스크래핑 클라이언트 (검색, 상세).
 
@@ -608,6 +616,9 @@ class GsShopSourcingClient:
                     f"[GSSHOP] 차단 감지 HTTP {resp.status_code}: {product_id}"
                 )
                 raise RateLimitError(resp.status_code, retry_after)
+            if resp.status_code == 404:
+                logger.warning(f"[GSSHOP] 상품 영구 삭제 감지 (404): {product_id}")
+                raise ProductNotFoundError(product_id)
             if resp.status_code != 200:
                 logger.warning(
                     f"[GSSHOP] 모바일 상세 HTTP {resp.status_code}: {product_id}"
@@ -697,6 +708,8 @@ class GsShopSourcingClient:
                         self._enrich_from_pc_html(result, pc_html)
                     return result
 
+            except ProductNotFoundError:
+                raise  # 재시도 없이 호출자에게 전달
             except RateLimitError as e:
                 last_exc = e
                 wait = min(e.retry_after, 15) if e.retry_after else (2**attempt)
