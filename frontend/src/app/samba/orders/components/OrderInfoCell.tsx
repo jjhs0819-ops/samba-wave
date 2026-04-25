@@ -310,33 +310,32 @@ export default function OrderInfoCell(props: Props) {
           )}
         </div>
       </div>
-      {!!o.customer_note?.trim() && (
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.25rem', fontSize: '0.8rem', marginTop: '0.25rem', marginBottom: '0.25rem' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.25rem', fontSize: '0.8rem', marginTop: '0.25rem', marginBottom: '0.25rem' }}>
           <span style={{ color: '#666', whiteSpace: 'nowrap' }}>고객메모</span>
           <span
-            role="button"
-            tabIndex={0}
+            role={o.customer_note?.trim() ? 'button' : undefined}
+            tabIndex={o.customer_note?.trim() ? 0 : undefined}
             title="클릭하여 복사"
-            onClick={handleCopyCustomerMemo}
+            onClick={o.customer_note?.trim() ? handleCopyCustomerMemo : undefined}
             onKeyDown={(e) => {
+              if (!o.customer_note?.trim()) return
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault()
                 handleCopyCustomerMemo()
               }
             }}
             style={{
-              color: '#E5E5E5',
-              cursor: 'copy',
-              textDecoration: 'underline',
+              color: o.customer_note?.trim() ? '#E5E5E5' : '#666',
+              cursor: o.customer_note?.trim() ? 'copy' : 'default',
+              textDecoration: o.customer_note?.trim() ? 'underline' : 'none',
               textDecorationColor: 'rgba(229, 229, 229, 0.35)',
               textUnderlineOffset: '2px',
               wordBreak: 'break-word',
             }}
           >
-            {o.customer_note.trim()}
+            {o.customer_note?.trim() || '-'}
           </span>
         </div>
-      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8rem' }}>
         <span style={{ color: '#666', whiteSpace: 'nowrap' }}>타마켓주문링크</span>
         <input
