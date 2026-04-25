@@ -96,6 +96,7 @@ def _parse_detail_product(
     origin = origin_info.get("content", "") if isinstance(origin_info, dict) else ""
 
     material = ""
+    care_instructions = ""
     color = ""
     sex = ""
     season = ""
@@ -127,6 +128,8 @@ def _parse_detail_product(
             continue
         if "재질" in k_low or "material" in k_low or "소재" in k_low:
             material = material or v_str
+        elif "세탁" in k_low or "취급" in k_low or "care" in k_low or "wash" in k_low:
+            care_instructions = care_instructions or v_str
         elif "색상" in k_low or "color" in k_low:
             color = color or v_str
         elif "성별" in k_low or "sex" in k_low:
@@ -207,6 +210,7 @@ def _parse_detail_product(
         "category4": cat4,
         "origin": origin,
         "material": material,
+        "care_instructions": care_instructions,
         "color": color,
         "sex": sex,
         "season": season,

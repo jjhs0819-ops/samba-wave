@@ -396,8 +396,47 @@ class NaverStoreDetailMixin:
         # A/S 정보
         as_info = data.get("afterServiceInfo", {})
 
-        # 상품정보고시
+        # 상품정보고시 — 고시정보에서 세탁/취급 방법 추출
         product_notice = data.get("productInfoProvidedNoticeView", {})
+        care_instructions = ""
+        if product_notice:
+            pairs: list[tuple[str, str]] = []
+
+            def _collect_kv(obj: object, out: list[tuple[str, str]]) -> None:
+                if isinstance(obj, list):
+                    for item in obj:
+                        _collect_kv(item, out)
+                elif isinstance(obj, dict):
+                    title = (
+                        obj.get("title") or obj.get("name") or obj.get("label")  # type: ignore[union-attr]
+                    )
+                    content = (
+                        obj.get("content") or obj.get("value") or obj.get("text")  # type: ignore[union-attr]
+                    )
+                    if isinstance(title, str) and isinstance(
+                        content, (str, int, float)
+                    ):
+                        out.append((title, str(content)))
+                        return
+                    for _k, _v in obj.items():  # type: ignore[union-attr]
+                        if isinstance(_v, (dict, list)):
+                            _collect_kv(_v, out)
+                        elif isinstance(_v, (str, int, float)):
+                            out.append((str(_k), str(_v)))
+
+            _collect_kv(product_notice, pairs)
+            for _pk, _pv in pairs:
+                _pk_low = str(_pk).lower()
+                _pv_str = str(_pv).strip() if _pv else ""
+                if not _pv_str or _pv_str in (
+                    "해당없음",
+                    "상세설명참조",
+                    "상세페이지참조",
+                ):
+                    continue
+                if any(kw in _pk_low for kw in ("세탁", "취급", "care", "wash")):
+                    care_instructions = _pv_str
+                    break
 
         # 채널 정보
         channel = data.get("channel", {})
@@ -442,6 +481,7 @@ class NaverStoreDetailMixin:
             "optionUsable": data.get("optionUsable", False),
             "delivery": delivery,
             "origin": origin,
+            "care_instructions": care_instructions,
             "afterServiceInfo": {
                 "telephone": as_info.get("afterServiceTelephoneNumber", ""),
                 "guide": as_info.get("afterServiceGuideContent", ""),
