@@ -1,18 +1,27 @@
-# Caddy 리버스 프록시 — 자동 HTTPS + Let's Encrypt
+# Caddy 리버스 프록시 — 자동 HTTPS + Let's Encrypt + Blue/Green 무중단 배포
 #
-# 사용법:
-# 1. 도메인을 VM 외부 IP로 A 레코드 설정
-# 2. {DOMAIN} 자리에 실제 도메인 입력 (예: api.samba-wave.com)
-# 3. 재시작: sudo docker compose restart caddy
+# Blue/Green 동작:
+#   - 평소: samba-api(blue) 만 떠있음. Caddy는 active health check로 blue 정상 확인 후 trbutfic 전달.
+#   - 배포 시: deploy.sh가 samba-api-staging(green)을 띄움 → green healthy 되면 blue stop
+#     → Caddy 가 fail 감지(health_interval 2s)하고 자동으로 green 으로 전환 (lb_policy first 의 next 우선순위)
+#     → blue 새 이미지로 재시작 → blue healthy 복귀 시 first 우선이라 자동 blue 복귀 → green stop
 #
-# HTTPS 인증서는 자동 발급/갱신. 사람이 할 일 없음.
+# 재시작: sudo docker compose restart caddy
 
-api.samba-wave.com {
-    reverse_proxy samba-api:8080 {
-        # 업스트림 헬스체크 — API가 ready 상태일 때만 트래픽 전달
+api.samba-wave.co.kr {
+    reverse_proxy samba-api:8080 samba-api-staging:8080 {
+        # 첫번째(blue) 우선 — fail 시에만 두번째(green)로 fallback
+        lb_policy first
+
+        # Active 헬스체크 — Caddy가 능동 폴링하여 빠르게 fail 감지(배포 다운타임 최소화)
         health_uri /api/v1/health
-        health_interval 30s
-        health_timeout 5s
+        health_interval 2s
+        health_timeout 1s
+
+        # Passive 헬스체크 — 요청 실패 시 즉시 다음 upstream 으로 전환, 5초 unhealthy 처리
+        fail_duration 5s
+        max_fails 1
+        unhealthy_status 5xx
 
         # 타임아웃 — 마켓 전송 Job 등 긴 요청 대응
         transport http {
@@ -22,7 +31,6 @@ api.samba-wave.com {
         }
     }
 
-    # 요청/응답 로그 (용량 제한)
     log {
         output file /var/log/caddy/access.log {
             roll_size 10mb
@@ -31,7 +39,6 @@ api.samba-wave.com {
         format json
     }
 
-    # 보안 헤더
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
         X-Content-Type-Options "nosniff"
@@ -39,7 +46,7 @@ api.samba-wave.com {
     }
 }
 
-# 헬스체크 전용 엔드포인트 (로드밸런서/모니터링용)
+# 헬스체크 전용 엔드포인트
 :80 {
     respond /health "OK" 200
     redir https://{host}{uri} permanent

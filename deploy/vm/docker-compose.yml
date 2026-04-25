@@ -41,8 +41,8 @@ services:
     networks:
       - samba-net
 
+  # Blue (메인) — 평소 활성. Caddy lb_policy first 의 우선 upstream.
   samba-api:
-    # GitHub Actions가 최신 태그로 교체
     image: asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/cloud-run-source-deploy/samba-wave-api:latest
     restart: unless-stopped
     depends_on:
@@ -51,17 +51,41 @@ services:
       - /opt/samba/.env
     environment:
       ENVIRONMENT: production
-      # Cloud SQL Proxy 컨테이너를 host로 지정 (사이드카 대체)
       WRITE_DB_HOST: cloud-sql-proxy
       WRITE_DB_PORT: "5432"
       READ_DB_HOST: cloud-sql-proxy
       READ_DB_PORT: "5432"
-      # Gunicorn 타임아웃
       GUNICORN_CMD_ARGS: "--timeout 300 --graceful-timeout 300"
       WEB_CONCURRENCY: "1"
     networks:
       - samba-net
-    # 헬스체크 — Caddy가 백엔드 상태 감지
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  # Green (스테이징) — 평소 stopped. 무중단 배포 시 임시 활성화되어 Caddy 자동 fallback 대상.
+  # 'staging' profile 로 격리해 평상시 'docker compose up -d' 에 포함되지 않음.
+  samba-api-staging:
+    image: asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/cloud-run-source-deploy/samba-wave-api:latest
+    restart: "no"
+    profiles: ["staging"]
+    depends_on:
+      - cloud-sql-proxy
+    env_file:
+      - /opt/samba/.env
+    environment:
+      ENVIRONMENT: production
+      WRITE_DB_HOST: cloud-sql-proxy
+      WRITE_DB_PORT: "5432"
+      READ_DB_HOST: cloud-sql-proxy
+      READ_DB_PORT: "5432"
+      GUNICORN_CMD_ARGS: "--timeout 300 --graceful-timeout 300"
+      WEB_CONCURRENCY: "1"
+    networks:
+      - samba-net
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/v1/health"]
       interval: 30s

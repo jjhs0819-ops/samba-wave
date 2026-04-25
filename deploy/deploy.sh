@@ -136,14 +136,102 @@ docker push "$IMAGE:$SHA"
 docker push "$IMAGE:latest"
 log_ok "푸시 완료"
 
-# 3. VM 배포 (pull + restart)
-log_step 3 4 "VM 배포 중 (${VM_HOST})..."
+# 3. VM 배포 — Blue/Green 무중단
+#    흐름: green 띄우기 → green 헬스OK → blue stop(Caddy 자동 fallback) → blue 새 이미지로 재시작
+#         → blue 헬스OK(Caddy first 우선이라 자동 복귀) → green stop → 미사용 이미지 정리
+
+# 3-0. VM 설정 파일 동기화 (docker-compose.yml + Caddyfile)
+log_step 3 4 "VM 설정 파일 동기화 중..."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+scp -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new \
+    "$SCRIPT_DIR/vm/docker-compose.yml" \
+    "$SCRIPT_DIR/vm/Caddyfile" \
+    "${VM_USER}@${VM_HOST}:/tmp/" > /dev/null
+ssh -i "$SSH_KEY" "${VM_USER}@${VM_HOST}" '
+    set -e
+    if ! sudo cmp -s /tmp/docker-compose.yml /opt/samba/docker-compose.yml; then
+        sudo cp /tmp/docker-compose.yml /opt/samba/docker-compose.yml
+        sudo chown ubuntu:ubuntu /opt/samba/docker-compose.yml
+        echo "    docker-compose.yml 갱신됨"
+    fi
+    CADDY_CHANGED=false
+    if ! sudo cmp -s /tmp/Caddyfile /opt/samba/Caddyfile; then
+        sudo cp /tmp/Caddyfile /opt/samba/Caddyfile
+        sudo chown ubuntu:ubuntu /opt/samba/Caddyfile
+        CADDY_CHANGED=true
+        echo "    Caddyfile 갱신됨 — reload 예정"
+    fi
+    if [ "$CADDY_CHANGED" = "true" ]; then
+        sudo docker exec samba-caddy-1 caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+        echo "    ✅ Caddy reload 완료"
+    fi
+'
+log_ok "설정 파일 동기화 완료"
+
+log_step 3 4 "VM Blue/Green 배포 중 (${VM_HOST})..."
 ssh -i "$SSH_KEY" \
   -o StrictHostKeyChecking=accept-new \
   -o ConnectTimeout=10 \
   "${VM_USER}@${VM_HOST}" \
-  "cd /opt/samba && sudo docker compose pull samba-api && sudo docker compose up -d samba-api && sudo docker compose ps --format 'table {{.Name}}\t{{.Status}}' && echo '--- 미사용 이미지 정리 ---' && sudo docker image prune -a -f | tail -3"
-log_ok "VM 재시작 완료"
+  "bash -s" << 'REMOTE_SCRIPT'
+set -e
+cd /opt/samba
+
+echo "[1/6] green(staging) 이미지 pull..."
+sudo docker compose --profile staging pull samba-api-staging
+
+echo "[2/6] green 컨테이너 시작..."
+sudo docker compose --profile staging up -d samba-api-staging
+
+echo "[3/6] green 헬스체크 대기 (최대 90초)..."
+for i in $(seq 1 18); do
+    sleep 5
+    STATUS=$(sudo docker inspect --format='{{.State.Health.Status}}' samba-samba-api-staging-1 2>/dev/null || echo "missing")
+    if [ "$STATUS" = "healthy" ]; then
+        echo "    ✅ green healthy (${i}회 시도)"
+        break
+    fi
+    echo "    ⏳ green status=$STATUS ($i/18)"
+    if [ "$i" = "18" ]; then
+        echo "❌ green 헬스체크 실패 — green 컨테이너 정리 후 종료"
+        sudo docker compose --profile staging stop samba-api-staging
+        sudo docker compose --profile staging rm -f samba-api-staging
+        exit 1
+    fi
+done
+
+echo "[4/6] blue stop (Caddy 자동으로 green으로 fallback)..."
+sudo docker compose stop samba-api
+sleep 3
+
+echo "[5/6] blue 새 이미지 pull + 재시작..."
+sudo docker compose pull samba-api
+sudo docker compose up -d samba-api
+for i in $(seq 1 18); do
+    sleep 5
+    STATUS=$(sudo docker inspect --format='{{.State.Health.Status}}' samba-samba-api-1 2>/dev/null || echo "missing")
+    if [ "$STATUS" = "healthy" ]; then
+        echo "    ✅ blue healthy (${i}회 시도) — Caddy lb_policy first 가 blue 우선 트래픽 자동 복귀"
+        break
+    fi
+    echo "    ⏳ blue status=$STATUS ($i/18)"
+    if [ "$i" = "18" ]; then
+        echo "⚠️ blue 헬스체크 실패 — green 유지 (수동 복구 필요)"
+        exit 1
+    fi
+done
+
+echo "[6/6] green 컨테이너 정리 + 미사용 이미지 prune..."
+sleep 5
+sudo docker compose --profile staging stop samba-api-staging
+sudo docker compose --profile staging rm -f samba-api-staging
+sudo docker image prune -a -f | tail -3
+
+echo ""
+echo "=== 최종 상태 ==="
+sudo docker compose ps --format 'table {{.Name}}\t{{.Status}}'
+REMOTE_SCRIPT
+log_ok "VM Blue/Green 배포 완료"
 
 # 4. 헬스체크 (최대 180초 대기) — 커밋 SHA로 최신 리비전 서빙 중인지 검증
 log_step 4 4 "헬스체크 중..."
