@@ -39,9 +39,9 @@ export function ExternalIntegrationsPanel(props: Props) {
     setR2AccountId, setR2AccessKey, setR2SecretKey, setR2BucketName, setR2PublicUrl,
     saveR2Settings, testR2,
     // Claude
-    claudeApiKey, claudeModel, claudeStatus, aiFeatures,
+    claudeApiKey, claudeModel, claudeStatus,
     setClaudeApiKey, setClaudeModel,
-    saveClaudeSettings, testClaudeApi, toggleAiFeature,
+    saveClaudeSettings, testClaudeApi,
     // 프리셋
     presets, editingPreset, editingDesc, editingLabel, regenerating, presetZoom,
     setEditingPreset, setEditingDesc, setEditingLabel, setRegenerating, setPresetZoom,

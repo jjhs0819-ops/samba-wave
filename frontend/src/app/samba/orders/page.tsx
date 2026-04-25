@@ -467,17 +467,6 @@ export default function OrdersPage() {
     }
   }
 
-  const openEdit = (o: SambaOrder) => {
-    setEditingId(o.id)
-    setForm({
-      channel_id: o.channel_id || '', product_name: o.product_name || '',
-      customer_name: o.customer_name || '', customer_phone: o.customer_phone || '',
-      customer_address: o.customer_address || '', sale_price: o.sale_price, cost: o.cost,
-      fee_rate: o.fee_rate, shipping_company: o.shipping_company || '',
-      tracking_number: o.tracking_number || '', notes: o.notes || '',
-    })
-    setShowForm(true)
-  }
 
   const handleSubmit = async () => {
     try {

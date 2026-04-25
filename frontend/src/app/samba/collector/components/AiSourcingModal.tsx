@@ -536,7 +536,7 @@ export default function AiSourcingModal({
                       <input type='checkbox'
                         checked={(() => {
                           const selectable = aiResult.combinations.filter(c => !aiExcludedBrands.has(c.brand) && !aiExcludedBrands.has(`__kw__${c.keyword || c.category}`) && c.estimated_count >= aiMinCount)
-                          const selectedSelectable = selectable.filter((c, i) => aiSelectedCombos.has(aiResult.combinations.indexOf(c)))
+                          const selectedSelectable = selectable.filter((c) => aiSelectedCombos.has(aiResult.combinations.indexOf(c)))
                           return selectable.length > 0 && selectedSelectable.length === selectable.length
                         })()}
                         onChange={e => {

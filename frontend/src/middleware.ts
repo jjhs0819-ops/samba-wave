@@ -10,9 +10,6 @@ import type { NextRequest } from "next/server";
 // Samba 경로 인증 필수 (로그인 없이 접근 차단)
 const PROTECTED_PATHS: string[] = ["/samba"];
 
-// Routes that should redirect to home if already authenticated
-const AUTH_PATHS = ["/login", "/signup"];
-
 // Public paths that don't require any checks
 const PUBLIC_PATHS = [
   "/",

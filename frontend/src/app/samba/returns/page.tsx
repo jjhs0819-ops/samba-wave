@@ -61,12 +61,12 @@ export default function ReturnsPage() {
   useEffect(() => { document.title = 'SAMBA-반품관리' }, [])
   const [returns, setReturns] = useState<SambaReturn[]>([])
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [stats, setStats] = useState<Record<string, any>>({})
+  const [, setStats] = useState<Record<string, any>>({})
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [detailItem, setDetailItem] = useState<SambaReturn | null>(null)
-  const [filterStatus, setFilterStatus] = useState<string>('')
-  const [filterType, setFilterType] = useState<string>('')
+  const [filterStatus] = useState<string>('')
+  const [filterType] = useState<string>('')
   const [form, setForm] = useState({ order_id: '', type: 'return', reason: '', customReason: '', quantity: 1, requested_amount: 0 })
 
   // 로그 + 검색/필터 상태
@@ -184,9 +184,6 @@ export default function ReturnsPage() {
   const [rejectModal, setRejectModal] = useState<{ id: string; reason: string } | null>(null)
   const [locationModal, setLocationModal] = useState<{ id: string; value: string; address: string } | null>(null)
 
-  const handleReject = (id: string) => {
-    setRejectModal({ id, reason: '' })
-  }
   const submitReject = async () => {
     if (!rejectModal || !rejectModal.reason.trim()) {
       showAlert('거절 사유를 입력해주세요', 'error')
@@ -198,12 +195,6 @@ export default function ReturnsPage() {
       load()
     } catch (e) { showAlert(e instanceof Error ? e.message : '거절 처리 실패', 'error') }
   }
-  const handleCancel = async (id: string) => {
-    if (!await showConfirm('취소하시겠습니까?')) return
-    try { await returnApi.cancel(id); load() }
-    catch (e) { showAlert(e instanceof Error ? e.message : '취소 실패', 'error') }
-  }
-
   const handleBatchDelete = async () => {
     if (selectedIds.size === 0) {
       showAlert('삭제할 항목을 선택해주세요', 'info')
@@ -526,7 +517,6 @@ export default function ReturnsPage() {
                   }
                   return true
                 }).map((r, idx) => {
-                  const st = STATUS_MAP[r.status] || { label: r.status, bg: 'rgba(100,100,100,0.2)', text: '#888' }
                   return (
                     <Fragment key={r.id}>
                       <tr>

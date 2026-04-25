@@ -2154,7 +2154,6 @@ export default function ProductsPage() {
                 onLockToggle={handleLockToggle}
                 onBlockCollect={handleBlockCollect}
                 onMarketDelete={handleMarketDelete}
-                onAddTaskLog={addTaskLog}
                 onProductUpdate={handleProductUpdate}
                 onTagUpdate={handleTagUpdate}
                 logMessage={activeLog?.productId === p.id ? activeLog.message : undefined}

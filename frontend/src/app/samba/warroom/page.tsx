@@ -11,13 +11,12 @@ const POLL_INTERVAL = 30_000
 const LOG_POLL_INTERVAL = 500
 
 // 오토튠 실시간 로그 (독립 컴포넌트 — 대시보드 리렌더링 영향 없음)
-const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusChange, externalRunning }: {
-  siteColors: Record<string, string>
+const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, externalRunning }: {
   onStatusChange?: (running: boolean, cycles: number, lastTick: string | null, refreshed: number) => void
   externalRunning?: boolean
 }) {
   const [logs, setLogs] = useState<RefreshLogEntry[]>([])
-  const [intervals, setIntervals] = useState<Record<string, number>>({})
+  const [, setIntervals] = useState<Record<string, number>>({})
   const sinceIdxRef = useRef(0)
   const containerRef = useRef<HTMLDivElement>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -146,22 +145,10 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusCh
 })
 
 // 색상 상수
-const SEV_COLORS: Record<string, string> = {
-  critical: '#FF6B6B',
-  warning: '#FFD93D',
-  info: '#4C9AFF',
-}
-
 const PRIORITY_COLORS: Record<string, string> = {
   hot: '#FF6B6B',
   warm: '#FFD93D',
   cold: '#666',
-}
-
-const LOG_LEVEL_COLORS: Record<string, string> = {
-  info: '#4C9AFF',
-  warning: '#FFD93D',
-  error: '#FF6B6B',
 }
 
 const card: React.CSSProperties = {
@@ -189,13 +176,12 @@ export default function WarroomPage() {
   const [marketChanges, setMarketChanges] = useState<Record<string, Record<string, Array<{ id: string; event_id: string; created_at: string; source_site: string | null; market_product_no: string | null; site_product_id: string | null; account_id: string; account_label: string; product_id: string | null; product_name: string | null; detail: Record<string, unknown> | null }>>>>({})
 
   const [loading, setLoading] = useState(true)
-  const [lastFetched, setLastFetched] = useState<Date | null>(null)
+  const [, setLastFetched] = useState<Date | null>(null)
   const [storeScores, setStoreScores] = useState<Record<string, StoreScore>>({})
   const [scoreTab, setScoreTab] = useState('smartstore')
   const [showPenaltyGuide, setShowPenaltyGuide] = useState(false)
   const [scoreRefreshing, setScoreRefreshing] = useState(false)
   const nextPollRef = useRef(POLL_INTERVAL / 1000)
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // 실시간 로그 상태
 
@@ -208,9 +194,8 @@ export default function WarroomPage() {
   const [autotuneCycles, setAutotuneCycles] = useState(0)
   const [autotuneRestarts, setAutotuneRestarts] = useState(0)
   const [singleProductNo, setSingleProductNo] = useState('')
-  const [singleRefreshing, setSingleRefreshing] = useState(false)
   const [autotuneRefreshed, setAutotuneRefreshed] = useState(0)
-  const [autotuneLastTick, setAutotuneLastTick] = useState<string | null>(null)
+  const [, setAutotuneLastTick] = useState<string | null>(null)
   const prevCyclesRef = useRef(0)
   const falseCountRef = useRef(0)
 
@@ -413,20 +398,6 @@ export default function WarroomPage() {
     return () => clearInterval(poll)
   }, [load])
 
-  // 시간 차이 표시
-  const timeAgo = (date: Date | null) => {
-    if (!date) return '-'
-    const diff = Math.floor((Date.now() - date.getTime()) / 1000)
-    if (diff < 60) return `${diff}초 전`
-    if (diff < 3600) return `${Math.floor(diff / 60)}분 전`
-    return `${Math.floor(diff / 3600)}시간 전`
-  }
-
-  const isoTimeAgo = (iso: string | null) => {
-    if (!iso) return '-'
-    return timeAgo(new Date(iso))
-  }
-
   // 이벤트 필터링 — scheduler_tick 소싱처별 최신 2건 표시
   const filteredEvents = (() => {
     const mapped = events.map(e => ({
@@ -467,7 +438,7 @@ export default function WarroomPage() {
     )
   }
 
-  const { product_stats, refresh_stats, price_change_stats, site_health, market_health, event_summary, hourly_changes } = stats
+  const { product_stats, refresh_stats, price_change_stats, site_health, market_health, hourly_changes } = stats
 
   // 가로 바 차트 최대값
   const maxHourly = Math.max(...hourly_changes, 1)
@@ -674,7 +645,6 @@ export default function WarroomPage() {
 
       {/* 오토튠 실시간 로그 (시작/강제중단 버튼 바로 아래) */}
       <AutotuneLogPanel
-        siteColors={SITE_COLORS}
         onStatusChange={handleAutotuneStatus}
         externalRunning={autotuneRunning}
       />
@@ -851,7 +821,6 @@ export default function WarroomPage() {
                         const sitePid = (d?.site_product_id as string | undefined) || shortId(ev.product_id)
                         const oldP = d?.old_price as number | undefined
                         const newP = d?.new_price as number | undefined
-                        const pct = d?.diff_pct as number | undefined
                         return (
                           <div key={ev.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
                             <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
@@ -867,7 +836,6 @@ export default function WarroomPage() {
                       })}
                       {/* tick 가격변동 (DB 이벤트로 채워지지 않은 소싱처 보충) */}
                       {tickPriceSlice.map((item, i) => {
-                        const diff = item.old_price > 0 ? Math.round((item.new_price - item.old_price) / item.old_price * 100) : 0
                         return (
                           <div key={`tp-${i}`} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
                             {tickEndedAt && <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(tickEndedAt)}</span>}
@@ -976,7 +944,7 @@ export default function WarroomPage() {
               </div>
             )}
             {/* 기타 이벤트 (scheduler_tick 외) */}
-            {nonTickEvents.map((e, ei) => {
+            {nonTickEvents.map((e) => {
               const t = new Date(e.created_at)
               const timeStr = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}:${String(t.getSeconds()).padStart(2, '0')}`
               const d = e.detail as Record<string, unknown> | undefined

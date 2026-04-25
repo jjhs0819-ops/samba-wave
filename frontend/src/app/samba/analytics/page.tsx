@@ -56,7 +56,7 @@ export default function AnalyticsPage() {
   const [orders, setOrders] = useState<SambaOrder[]>([])
 
   // 추가 분석 데이터
-  const [channelData, setChannelData] = useState<{ channel_name: string; sales: number; orders: number; profit: number }[]>([])
+  const [, setChannelData] = useState<{ channel_name: string; sales: number; orders: number; profit: number }[]>([])
   const [dailyData, setDailyData] = useState<{ date: string; sales: number; orders: number; profit: number }[]>([])
   const [sourcingRoi, setSourcingRoi] = useState<SourcingRoi[]>([])
   const [bestSellers, setBestSellers] = useState<ProductPerformance[]>([])

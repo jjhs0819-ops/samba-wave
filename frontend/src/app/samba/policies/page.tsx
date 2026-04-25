@@ -112,7 +112,7 @@ export default function PoliciesPage() {
   useEffect(() => { document.title = 'SAMBA-정책관리' }, [])
   const searchParams = useSearchParams()
   const [policies, setPolicies] = useState<SambaPolicy[]>([])
-  const [loading, setLoading] = useState(true)
+  const [, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(true)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [name, setName] = useState("새 정책")
@@ -137,7 +137,6 @@ export default function PoliciesPage() {
   const [selectedDetailTemplateId, setSelectedDetailTemplateId] = useState('')
   const [marketDetailTemplates, setMarketDetailTemplates] = useState<Record<string, string>>({})
   const [selectedNameRuleId, setSelectedNameRuleId] = useState('')
-  const [showTemplateEditor, setShowTemplateEditor] = useState(false)
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [imgChecks, setImgChecks] = useState<Record<string, boolean>>({
     main: true, sub: true, title: false, option: false, detail: false, topImg: false, bottomImg: false,
@@ -156,7 +155,7 @@ export default function PoliciesPage() {
   const [lastAiUsage, setLastAiUsage] = useState<{ calls: number; tokens: number; cost: number; date: string } | null>(null)
 
   // 마켓 계정 목록 (설정에서 등록한 계정)
-  const [storeAccounts, setStoreAccounts] = useState<Record<string, Record<string, string>>>({})
+  const [, setStoreAccounts] = useState<Record<string, Record<string, string>>>({})
   // 실제 마켓 계정 목록 (DB에서 로드 — 다중 계정 지원)
   const [marketAccounts, setMarketAccounts] = useState<SambaMarketAccount[]>([])
 
@@ -403,8 +402,6 @@ export default function PoliciesPage() {
   }
 
   // 현재 마켓 탭에 해당하는 스토어 계정 목록 가져오기
-  const currentMarketKey = MARKET_KEY_MAP[marketPolicyTab] || ''
-  const currentStoreAccount = storeAccounts[currentMarketKey]
   const mp = getCurrentMarketPolicy()
 
   return (

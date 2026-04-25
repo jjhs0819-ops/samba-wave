@@ -522,6 +522,13 @@ async def load_site_intervals_from_db() -> None:
         pass  # 로드 실패 시 기본값 유지
 
 
+def get_effective_autotune_concurrency() -> dict[str, int]:
+    """오토튠 실효 동시성 — SITE_CONCURRENCY 베이스 + SITE_AUTOTUNE_CONCURRENCY 오버라이드 머지."""
+    merged: dict[str, int] = dict(SITE_CONCURRENCY)
+    merged.update(SITE_AUTOTUNE_CONCURRENCY)
+    return merged
+
+
 async def set_site_autotune_concurrency(site: str, value: int) -> None:
     """오토튠 동시성 동적 변경. DB에 영속화."""
     SITE_AUTOTUNE_CONCURRENCY[site] = int(value)

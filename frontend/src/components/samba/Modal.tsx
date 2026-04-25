@@ -22,10 +22,8 @@ type ModalState = AlertState | ConfirmState | null
 
 type Listener = (state: ModalState) => void
 const listeners = new Set<Listener>()
-let currentState: ModalState = null
 
 function emit(state: ModalState) {
-  currentState = state
   listeners.forEach(fn => fn(state))
 }
 

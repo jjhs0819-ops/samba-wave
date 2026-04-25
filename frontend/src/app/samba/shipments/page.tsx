@@ -14,19 +14,10 @@ import {
   type SambaPolicy,
 } from '@/lib/samba/api/commerce'
 import { fetchWithAuth } from '@/lib/samba/api/shared'
-import { MARKET_TYPE_TO_POLICY_KEY } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { SITE_COLORS } from '@/lib/samba/constants'
 import { inputStyle, fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
 import { fmtTime } from '@/lib/samba/utils'
-
-const STATUS_CONFIG: Record<string, { bg: string; text: string; label: string }> = {
-  pending:      { bg: 'rgba(100,100,100,0.15)', text: '#888', label: '대기중' },
-  transmitting: { bg: 'rgba(255,211,61,0.15)', text: '#FFD93D', label: '전송중' },
-  completed:    { bg: 'rgba(81,207,102,0.15)', text: '#51CF66', label: '완료' },
-  partial:      { bg: 'rgba(255,140,0,0.15)', text: '#FF8C00', label: '부분완료' },
-  failed:       { bg: 'rgba(255,107,107,0.15)', text: '#FF6B6B', label: '실패' },
-}
 
 const SOURCE_SITES = ['전체', 'MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'REXMONDE', 'SSG', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF']
 
@@ -54,7 +45,7 @@ export default function ShipmentsPage() {
   const searchParams = useSearchParams()
   const [products, setProducts] = useState<SambaCollectedProduct[]>([])
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
-  const [filters, setFilters] = useState<SambaSearchFilter[]>([])
+  const [, setFilters] = useState<SambaSearchFilter[]>([])
   const [policies, setPolicies] = useState<SambaPolicy[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -78,7 +69,7 @@ export default function ShipmentsPage() {
     accounts.filter(a => marketTypes.includes(a.market_type)).map(a => a.id),
   [accounts])
   const [updateItems, setUpdateItems] = useState({ all: true, price: true, thumb: true, detail: true })
-  const [skipEnabled, setSkipEnabled] = useState(false)
+  const [skipEnabled] = useState(false)
   const [selectedSites, setSelectedSites] = useState<string[]>([])
 
   // 전송 로그
@@ -87,7 +78,7 @@ export default function ShipmentsPage() {
   const [deleting, setDeleting] = useState(false)
   const [stopping, setStopping] = useState('')  // '' | 'cancel' | 'emergency'
   const [pausedJobPayload, setPausedJobPayload] = useState<Record<string, unknown> | null>(null)
-  const [progress, setProgress] = useState({ current: 0, total: 0 })
+  const [, setProgress] = useState({ current: 0, total: 0 })
   const progressRef = useRef<NodeJS.Timeout | null>(null)
   const abortRef = useRef(false)
   const activeJobIdRef = useRef('')
@@ -411,17 +402,9 @@ export default function ShipmentsPage() {
     const allChecked = pageIds.every(id => selectedProducts.includes(id))
     setSelectedProducts(allChecked ? [] : pageIds)
   }
-  const toggleAccount = (id: string) => setSelectedAccounts(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
   const allSites = SOURCE_SITES.filter(s => s !== '전체')
   const toggleSite = (site: string) => setSelectedSites(prev => prev.includes(site) ? prev.filter(x => x !== site) : [...prev, site])
   const toggleAllSites = () => setSelectedSites(prev => prev.length === allSites.length ? [] : [...allSites])
-
-  // 필터 이름 맵 (매 렌더마다 재생성 방지)
-  const filterNameMap = useMemo(() => {
-    const map: Record<string, string> = {}
-    for (const f of filters) map[f.id] = f.name
-    return map
-  }, [filters])
 
   // 서버에서 필터/정렬/페이지네이션 완료된 상태 — 프론트 필터링 불필요
   const filteredProducts = products

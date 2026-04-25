@@ -3,8 +3,6 @@
 import React, { useState, useMemo, useCallback } from 'react'
 import {
   collectorApi,
-  shipmentApi,
-  proxyApi,
   type SambaCollectedProduct,
   type SambaPolicy,
   type SambaMarketAccount,
@@ -342,7 +340,6 @@ interface ProductCardProps {
   onBlockCollect: (productId: string) => Promise<void>
   onTagUpdate: (productId: string, tags: string[]) => void
   onMarketDelete: (productId: string) => void
-  onAddTaskLog: (msg: string) => void
   onProductUpdate: (productId: string, data: Partial<SambaCollectedProduct>) => void
   logMessage?: string
   catMappingMap: Map<string, Record<string, string>>
@@ -355,7 +352,7 @@ interface ProductCardProps {
 
 const ProductCard = React.memo(function ProductCard({
   product: p, idx, policies, accounts, nameRules, selectedIds, filterNameMap, deletionWords,
-  onCheckboxToggle, onDelete, onPolicyChange, onToggleMarket, onEnrich, onLockToggle, onBlockCollect, onTagUpdate, onMarketDelete, onAddTaskLog, onProductUpdate, logMessage,
+  onCheckboxToggle, onDelete, onPolicyChange, onToggleMarket, onEnrich, onLockToggle, onBlockCollect, onTagUpdate, onMarketDelete, onProductUpdate, logMessage,
   catMappingMap, filters, detailTemplates, compact, expanded, onToggleExpand,
 }: ProductCardProps) {
   const accMap = useMemo(() => new Map(accounts.map(a => [a.id, a])), [accounts])
@@ -408,11 +405,10 @@ const ProductCard = React.memo(function ProductCard({
   const ssMAmount = ssmData.marginAmount || 0
 
   // 공통 가격 계산 (useMemo 캐싱)
-  const { price: marketPrice, marginAmt: calcMarginAmt, usedMin: usedMinMargin, feeAmt: feeAmount, calcStr } = useMemo(
+  const { price: marketPrice, calcStr } = useMemo(
     () => calcPrice(cost, marginRate, shippingCost, feeRate, extraCharge, minMarginAmount, ssMRate, ssMAmount),
     [cost, marginRate, shippingCost, feeRate, extraCharge, minMarginAmount, ssMRate, ssMAmount],
   )
-  const profit = marketPrice - cost
 
   const isActive = p.status === 'registered' || p.status === 'saved'
   const statusColor = isActive ? '#51CF66' : '#888'

@@ -52,13 +52,13 @@ export default function CSPage() {
   // 데이터
   const [inquiries, setInquiries] = useState<SambaCSInquiry[]>([])
   const [total, setTotal] = useState(0)
-  const [stats, setStats] = useState<Record<string, unknown>>({})
+  const [, setStats] = useState<Record<string, unknown>>({})
   const [templates, setTemplates] = useState<Record<string, CSReplyTemplate>>({})
   const [loading, setLoading] = useState(true)
 
   // 필터
   const [filterMarket, setFilterMarket] = useState('')
-  const [filterType, setFilterType] = useState('')
+  const [filterType] = useState('')
   const [filterStatus, setFilterStatus] = useState('pending')
   const [search, setSearch] = useState('')
   const [searchInput, setSearchInput] = useState('')
@@ -75,7 +75,6 @@ export default function CSPage() {
   const [csCustomEnd, setCsCustomEnd] = useState(getPeriodEnd('5days').toLocaleDateString('sv-SE'))
   const [csStartLocked, setCsStartLocked] = useState(false)
   const [csDateLocked, setCsDateLocked] = useState(false)
-  const [searchCategory, setSearchCategory] = useState('customer')
   const [csSiteFilter, setCsSiteFilter] = useState('')
 
   // 선택
@@ -381,7 +380,6 @@ export default function CSPage() {
   }
 
   const totalPages = Math.ceil(total / pageSize)
-  const pendingCount = (stats.pending as number) || 0
 
   return (
     <div style={{ color: '#E5E5E5' }}>

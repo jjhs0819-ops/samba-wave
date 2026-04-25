@@ -7,7 +7,6 @@ import SambaModal from "@/components/samba/Modal";
 import SambaBlockAlert from "@/components/samba/BlockAlert";
 import type { SambaUser } from "@/lib/samba/api/operations";
 import { STORAGE_KEYS } from "@/lib/samba/constants";
-import { getLicenseKey } from "@/hooks/useLicenseCheck";
 import { attachDeviceIdListener } from "@/lib/samba/deviceId";
 
 interface NavItem {

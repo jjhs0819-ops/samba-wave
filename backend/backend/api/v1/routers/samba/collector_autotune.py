@@ -2501,7 +2501,7 @@ async def autotune_status():
 
     # 소싱처별 인터벌 정보
     from backend.domain.samba.collector.refresher import (
-        SITE_AUTOTUNE_CONCURRENCY,
+        get_effective_autotune_concurrency,
         get_site_intervals_info,
     )
 
@@ -2541,7 +2541,7 @@ async def autotune_status():
         "target": "registered",
         "breaker_tripped": tripped,
         "site_intervals": intervals_info.get("base_intervals", {}),
-        "site_autotune_concurrency": dict(SITE_AUTOTUNE_CONCURRENCY),
+        "site_autotune_concurrency": get_effective_autotune_concurrency(),
         "priority_enabled": priority_enabled,
         "site_loops": _active_site_loops,
         "stuck_timeout": STUCK_TIMEOUT_SECONDS,
@@ -2585,9 +2585,11 @@ async def autotune_update_concurrency(body: AutotuneConcurrencyRequest):
 @router.get("/autotune/concurrency")
 async def autotune_get_concurrency():
     """소싱처별 오토튠 동시성 조회."""
-    from backend.domain.samba.collector.refresher import SITE_AUTOTUNE_CONCURRENCY
+    from backend.domain.samba.collector.refresher import (
+        get_effective_autotune_concurrency,
+    )
 
-    return {"ok": True, "concurrency": dict(SITE_AUTOTUNE_CONCURRENCY)}
+    return {"ok": True, "concurrency": get_effective_autotune_concurrency()}
 
 
 @router.post("/autotune/breaker-reset")
