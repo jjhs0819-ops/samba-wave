@@ -699,7 +699,7 @@ export default function PoliciesPage() {
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', gridColumn: '1 / -1' }}>
                 <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>연결 계정</span>
                 {(() => {
-                  const accsForMarket = marketAccounts.filter(a => a.market_type === currentMarketKey)
+                  const accsForMarket = marketAccounts.filter(a => a.market_type === MARKET_KEY_MAP[marketPolicyTab])
                   // 현재 존재하는 계정 ID만 필터 (삭제된 계정의 오래된 ID 제거)
                   const rawIds = mp.accountIds?.length ? mp.accountIds : (mp.accountId ? [mp.accountId] : [])
                   const linkedIds = rawIds.filter((id: string) => accsForMarket.some(a => a.id === id))
