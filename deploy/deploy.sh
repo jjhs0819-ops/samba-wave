@@ -203,9 +203,13 @@ for i in $(seq 1 36); do
     fi
 done
 
-echo "[4/6] blue stop (Caddy 자동으로 green으로 fallback)..."
+echo "[4/6] blue drain → stop (Caddy가 503 감지 후 green으로 사전 전환)..."
+# graceful drain: blue 가 503 반환하도록 신호 → Caddy active health 가 즉시 fail 감지 →
+# 트래픽이 미리 green 으로 전환된 후 stop → 진정한 무중단 (in-flight 요청 5xx 0건)
+sudo docker exec samba-samba-api-1 touch /tmp/draining 2>/dev/null || true
+sleep 5  # Caddy active health_interval(2s) × 2회 + 여유 = 5초 — 확실히 unhealthy 처리
 sudo docker compose stop samba-api
-sleep 3
+sleep 2
 
 echo "[5/6] blue 새 이미지 pull + 재시작..."
 sudo docker compose pull samba-api

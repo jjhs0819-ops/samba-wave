@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -215,10 +215,18 @@ def create_application() -> FastAPI:
         return {"name": "Backend API", "version": "1.0.0"}
 
     @app.get("/api/v1/health")
-    async def health() -> dict:
+    async def health(response: Response) -> dict:
         import os
 
         from backend.domain.samba.job.worker import get_worker_status
+
+        # Blue/Green 배포 graceful drain 신호:
+        # deploy.sh 가 stop 직전 /tmp/draining 을 touch 하면 503 반환 →
+        # Caddy active health check 가 즉시 fail 감지 → 다른 upstream 으로 트래픽 전환 →
+        # 이후 실제 stop 시점에는 트래픽 0 상태 (무중단 보장)
+        if os.path.exists("/tmp/draining"):
+            response.status_code = 503
+            return {"status": "draining"}
 
         commit = os.environ.get("COMMIT_SHA", "unknown")
         return {
