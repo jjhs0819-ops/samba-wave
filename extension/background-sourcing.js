@@ -1011,6 +1011,20 @@ async function extractDetailData(tabId, site, productId) {
                 isSoldOut: (parseInt(u.usablInvQty) || 0) === 0,
               })).filter(u => u.name)
             : []
+          // DOM 파싱 실재고 — JS 렌더링 후 "남은수량 N" 텍스트에서 추출
+          const domSizeUl = document.querySelector('ul.selectLists[id^="select-bundleOpt-"]')
+          const domOptions = []
+          if (domSizeUl) {
+            domSizeUl.querySelectorAll('li').forEach(function(li) {
+              const rawTxt = (li.querySelector('.txt, .caption') ? li.querySelector('.txt, .caption').textContent : '').trim()
+              const cleanName = rawTxt.replace(/^\[품절\]\s*/, '').replace(/\s*\(남은수량\s*\d+\)/, '').trim()
+              if (!cleanName) return
+              const isSoldOut = li.classList.contains('disabled')
+              const mCnt = rawTxt.match(/남은수량\s*(\d+)/)
+              const stock = isSoldOut ? 0 : (mCnt ? parseInt(mCnt[1], 10) : null)
+              domOptions.push({ name: cleanName, stock: stock, isSoldOut: isSoldOut })
+            })
+          }
           return {
             success: true,
             site_product_id: prdId,
@@ -1019,6 +1033,7 @@ async function extractDetailData(tabId, site, productId) {
             resultItemObj: safeObj,  // 1차 평면 구조
             ctgFields: ctgFields,  // 카테고리 관련 전체 필드
             uitemOptions: uitemOptions,  // 옵션별 실제 재고 (AJAX 후 값)
+            domOptions: domOptions,  // DOM 파싱 실재고 (JS 렌더링 후, 우선순위 최상)
             url: location.href,
           }
         } catch (e) {

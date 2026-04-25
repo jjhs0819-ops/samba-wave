@@ -136,17 +136,33 @@ class SSGPlugin(SourcingPlugin):
                             "isOutOfStock": _sold,
                             "isSoldOut": _sold,
                         }
-                # uitemOptions(AJAX 후 실제 재고)로 옵션 품절 상태 보정
+                # domOptions(JS 렌더링 후 DOM 파싱) 또는 uitemOptions로 실재고 보정
                 _uitem_opts = _ext_result.get("uitemOptions", [])
-                if _uitem_opts and detail.get("options"):
-                    _soldout_names = {
-                        o["name"] for o in _uitem_opts if o.get("isSoldOut")
-                    }
-                    if _soldout_names:
+                _dom_opts = _ext_result.get("domOptions", [])
+                if detail.get("options"):
+                    if _dom_opts:
+                        # DOM 파싱 결과 우선 — "남은수량 N" 실재고 반영
+                        _dom_map = {o["name"]: o for o in _dom_opts if o.get("name")}
                         for _opt in detail["options"]:
-                            if _opt.get("name") in _soldout_names:
-                                _opt["isSoldOut"] = True
-                                _opt["stock"] = 0
+                            _dom = _dom_map.get(_opt.get("name", ""))
+                            if _dom:
+                                if _dom.get("isSoldOut"):
+                                    _opt["isSoldOut"] = True
+                                    _opt["stock"] = 0
+                                elif _dom.get("stock") is not None:
+                                    _opt["isSoldOut"] = False
+                                    _opt["stock"] = _dom["stock"]
+                    elif _uitem_opts:
+                        # DOM 파싱 없을 때 uitemOptions의 usablInvQty 폴백
+                        _stock_map = {
+                            o["name"]: o for o in _uitem_opts if o.get("name")
+                        }
+                        for _opt in detail["options"]:
+                            _u = _stock_map.get(_opt.get("name", ""))
+                            if _u:
+                                _qty = _u.get("usablInvQty", 0)
+                                _opt["isSoldOut"] = _qty == 0
+                                _opt["stock"] = _qty if _qty > 0 else 0
 
             if not detail:
                 return RefreshResult(
