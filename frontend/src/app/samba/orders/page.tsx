@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useSearchParams } from 'next/navigation'
 import {
   orderApi,
@@ -12,11 +12,9 @@ import {
   type SambaOrder,
   type SambaChannel,
   type SambaMarketAccount,
-  type MessageLog,
 } from '@/lib/samba/api/commerce'
 import { sourcingAccountApi, type SambaSourcingAccount } from '@/lib/samba/api/operations'
-import { showAlert, showConfirm } from '@/components/samba/Modal'
-import { DELIVERY_TRACKING_URLS } from '@/lib/samba/constants'
+import { showAlert } from '@/components/samba/Modal'
 import { fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
 import { fmtTime } from '@/lib/samba/utils'
 import OrdersTable from './components/OrdersTable'
@@ -36,8 +34,6 @@ import OrderEditModal from './components/OrderEditModal'
 import UrlInputModal from './components/UrlInputModal'
 import SmsTemplateEditModal from './components/SmsTemplateEditModal'
 import AlarmSettingModal from './components/AlarmSettingModal'
-
-const TRACKING_URLS = DELIVERY_TRACKING_URLS
 
 interface OrderForm {
   channel_id: string; product_name: string; customer_name: string; customer_phone: string
@@ -278,7 +274,7 @@ export default function OrdersPage() {
     }
   }
 
-  const pendingCount = filteredOrders.filter(o => o.status === 'pending').length
+  const pendingCount = filteredOrders.filter(o => o.status === 'pending' || o.status === 'preparing').length
 
   return (
     <div style={{ color: '#E5E5E5' }}>

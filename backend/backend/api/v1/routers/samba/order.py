@@ -2077,12 +2077,15 @@ async def sync_orders_from_markets(
                 logger.info(
                     f"[주문동기화] {label}: 롯데ON 주문 {len(raw_orders)}건 조회"
                 )
-                # 발주확인대기(odPrgsStepCd=10) 주문 자동 주문확인 대상 수집
+                # 신규주문(odPrgsStepCd=11=출고지시) 자동 연동완료 통보 대상 수집
+                # SellerDeliveryOrdersSearch는 11(출고지시)/23(회수지시)만 반환 — "10"은 영원히 안 잡힘(공식 문서 기준)
+                # SellerIfCompleteInform(ifCplYN=Y) 호출 시 롯데ON에서 자동으로 11→12(상품준비)로 전이됨
+                lotteon_confirmed_count = 0
                 unconfirmed_items: list[dict] = []
                 for ro in raw_orders:
                     orders_data.append(_parse_lotteon_order(ro, account["id"], label))
                     step_cd = str(ro.get("odPrgsStepCd", "") or "")
-                    if step_cd == "10":
+                    if step_cd == "11":
                         unconfirmed_items.append(
                             {
                                 "odNo": ro.get("odNo", ""),
@@ -2091,15 +2094,16 @@ async def sync_orders_from_markets(
                             }
                         )
 
-                # 주문확인(SellerIfCompleteInform, ifCplYN=Y) 일괄 실행
+                # 주문확인(SellerIfCompleteInform, ifCplYN=Y) 일괄 실행 — 호출 후 셀러센터에서 상품준비중 자동 전이
                 if unconfirmed_items:
                     try:
                         ok = await lotteon_client.confirm_orders(unconfirmed_items)
                         if ok:
+                            lotteon_confirmed_count = len(unconfirmed_items)
                             logger.info(
-                                f"[주문동기화] {label}: {len(unconfirmed_items)}건 주문확인 완료"
+                                f"[주문동기화] {label}: {len(unconfirmed_items)}건 주문확인 완료 (출고지시→상품준비중 자동 전이)"
                             )
-                            # 로컬 표시 상태도 발주확인대기 → 출고지시로 즉시 갱신
+                            # 로컬 표시도 즉시 상품준비중으로 갱신 (다음 sync까지 기다리지 않음)
                             _confirmed_keys = {
                                 f"{it['odNo']}_{it['odSeq']}_{it['procSeq']}"
                                 for it in unconfirmed_items
@@ -2108,9 +2112,11 @@ async def sync_orders_from_markets(
                                 if (
                                     od.get("source") == "lotteon"
                                     and od.get("order_number") in _confirmed_keys
-                                    and od.get("shipping_status") == "발주확인대기"
+                                    and od.get("shipping_status")
+                                    in ("발주확인대기", "출고지시")
                                 ):
-                                    od["shipping_status"] = "출고지시"
+                                    od["shipping_status"] = "상품준비"
+                                    od["status"] = "preparing"
                         else:
                             logger.warning(
                                 f"[주문동기화] {label}: 주문확인 API 응답 실패(rsltCd != 0000)"
@@ -2913,7 +2919,12 @@ async def sync_orders_from_markets(
                 synced += 1
 
             total_synced += synced
-            confirmed_count = len(unconfirmed_ids) if market_type == "smartstore" else 0
+            if market_type == "smartstore":
+                confirmed_count = len(unconfirmed_ids)
+            elif market_type == "lotteon":
+                confirmed_count = lotteon_confirmed_count
+            else:
+                confirmed_count = 0
 
             # ── 클레임(취소/반품/교환) → SambaReturn 자동 생성 ──────────────
             returns_synced = 0
@@ -3367,8 +3378,8 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
     step_cd = str(item.get("odPrgsStepCd", "") or "")
     status_map = {
         "10": "pending",  # 발주확인대기
-        "11": "pending",  # 발주확인완료(출고지시)
-        "12": "pending",  # 상품준비
+        "11": "preparing",  # 발주확인완료(출고지시) — sync에서 자동 ifCplYN=Y 호출되어 12로 전이
+        "12": "preparing",  # 상품준비
         "13": "shipping",  # 발송완료
         "14": "delivered",  # 배송완료
         "20": "pending",  # 발주확인

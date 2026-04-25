@@ -1,5 +1,6 @@
 export const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
   pending:    { label: '주문접수', bg: 'rgba(255,211,61,0.15)', text: '#FFD93D' },
+  preparing:  { label: '상품준비중', bg: 'rgba(135,206,250,0.15)', text: '#87CEFA' },
   wait_ship:  { label: '배송대기중', bg: 'rgba(100,149,237,0.15)', text: '#6495ED' },
   arrived:    { label: '사무실도착', bg: 'rgba(72,209,204,0.15)', text: '#48D1CC' },
   ship_failed: { label: '송장전송실패', bg: 'rgba(255,50,50,0.2)', text: '#FF3232' },
