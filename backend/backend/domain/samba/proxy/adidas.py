@@ -34,6 +34,8 @@ def _extract_adidas_material(raw: dict[str, Any]) -> str:
     """Adidas API attributeList 또는 유사 구조에서 소재 추출."""
     attrs = raw.get("attributeList") or raw.get("attributes") or []
     for a in attrs:
+        if not isinstance(a, dict):
+            continue
         name = (a.get("name") or a.get("label") or "").lower()
         if "material" in name or "소재" in name or "fabric" in name:
             return a.get("value") or a.get("displayValue") or ""
