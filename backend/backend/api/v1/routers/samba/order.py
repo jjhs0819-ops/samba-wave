@@ -2628,8 +2628,10 @@ async def sync_orders_from_markets(
                 #   실주문금액 = slAmt − fvrAmtSum (= actualAmt)
                 #   정산예상   = 공급금액 − fvrAmtSum
                 #   실수수료율 = sptDcPgmCmsnSum / 실주문금액
-                # 정산 API 매칭 성공(pymtAmt) 시 이후 라인 2178에서 확정값으로 덮어씀.
-                if order_data.get("source") == "lotteon":
+                # 정산 API 매칭(라인 2178)으로 이미 revenue가 세팅됐으면 확정값이므로 건드리지 않음.
+                if order_data.get("source") == "lotteon" and not order_data.get(
+                    "revenue"
+                ):
                     _od_no = str(order_data.get("od_no") or "")
                     _slamt = int(sl_amt_map.get(_od_no, 0))
                     _spt_cmsn = int(spt_cmsn_map.get(_od_no, 0))
@@ -2642,7 +2644,7 @@ async def sync_orders_from_markets(
                         order_data["fee_rate"] = (
                             round(_spt_cmsn / _actual * 100, 2) if _actual > 0 else 0
                         )
-                    elif not order_data.get("revenue"):
+                    else:
                         # raw 매핑 실패 폴백 — 카테고리 수수료 공식
                         from backend.domain.samba.proxy.lotteon.category_fees import (
                             get_fee_rate_for_category,

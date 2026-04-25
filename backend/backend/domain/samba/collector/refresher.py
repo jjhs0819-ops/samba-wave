@@ -21,27 +21,26 @@ import os
 
 _IS_CLOUD = os.getenv("K_SERVICE") is not None  # Cloud Run 자동 설정 환경변수
 
-# 소싱처당 동시 요청 제한 (기본값)
-CONCURRENCY_PER_SITE = 10 if _IS_CLOUD else 5
-# 소싱처별 동시 요청 수 (개별 설정)
+# 소싱처당 동시 요청 제한 (프로덕션 기준 단일값)
+CONCURRENCY_PER_SITE = 10
+# 소싱처별 동시 요청 수 (프로덕션 기준 단일값, 확장앱/워커 BATCH와 통일)
 SITE_CONCURRENCY: dict[str, int] = {
-    "MUSINSA": 20 if _IS_CLOUD else 10,  # 워커 8→4 축소로 메모리 여유 확보
-    "KREAM": 5 if _IS_CLOUD else 2,
-    "DANAWA": 5 if _IS_CLOUD else 2,
-    "FashionPlus": 10 if _IS_CLOUD else 3,
-    "Nike": 5 if _IS_CLOUD else 2,
-    "Adidas": 5 if _IS_CLOUD else 2,
-    "ABCmart": 5 if _IS_CLOUD else 2,
-    "GrandStage": 5 if _IS_CLOUD else 2,
-    "REXMONDE": 5 if _IS_CLOUD else 2,
-    # owner deviceId 필터링 적용 후 실행 PC 1대만 처리 → 큐 적체 방지 위해
-    # 동시 2건 + 3초 간격으로 통일 (SSG/LOTTEON 공통)
-    "SSG": 2,
-    "LOTTEON": 2,
-    "GSShop": 5 if _IS_CLOUD else 2,
-    "ElandMall": 5 if _IS_CLOUD else 2,
-    "SSF": 5 if _IS_CLOUD else 2,
-    "NAVERSTORE": 5 if _IS_CLOUD else 2,
+    "MUSINSA": 20,  # 벌크 갱신용 (오토튠은 collector_autotune.py에서 별도 4로 제한)
+    "KREAM": 5,
+    "DANAWA": 5,
+    "FashionPlus": 10,
+    "Nike": 5,
+    "Adidas": 5,
+    "ABCmart": 5,  # worker._ABC_BATCH=5와 통일
+    "GrandStage": 5,
+    "REXMONDE": 5,
+    # SSG/LOTTEON: 확장앱 경로 — owner deviceId 필터링 적용 후 실행 PC 1대만 처리
+    "SSG": 3,  # worker._SSG_BATCH=3과 통일
+    "LOTTEON": 2,  # worker BATCH 별도 미정의 — 보수값 유지
+    "GSShop": 5,
+    "ElandMall": 5,
+    "SSF": 5,
+    "NAVERSTORE": 5,
 }
 # 소싱처별 기본 인터벌 (초)
 SITE_BASE_INTERVAL: dict[str, float] = {
