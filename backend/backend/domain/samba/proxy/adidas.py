@@ -30,6 +30,16 @@ HEADERS = {
 }
 
 
+def _extract_adidas_material(raw: dict[str, Any]) -> str:
+    """Adidas API attributeList 또는 유사 구조에서 소재 추출."""
+    attrs = raw.get("attributeList") or raw.get("attributes") or []
+    for a in attrs:
+        name = (a.get("name") or a.get("label") or "").lower()
+        if "material" in name or "소재" in name or "fabric" in name:
+            return a.get("value") or a.get("displayValue") or ""
+    return raw.get("material") or raw.get("fabric") or ""
+
+
 class AdidasClient:
     """Adidas KR 소싱 클라이언트."""
 
@@ -124,4 +134,16 @@ class AdidasClient:
             "options": [],
             "detail_html": "",
             "is_sold_out": not item.get("orderable", True),
+            # 고시정보
+            "manufacturer": "Adidas",
+            "origin": (
+                item.get("country_of_origin")
+                or item.get("origin")
+                or item.get("producedCountry")
+                or ""
+            ),
+            "material": _extract_adidas_material(item),
+            "care_instructions": (
+                item.get("careInstructions") or item.get("care_instructions") or ""
+            ),
         }
