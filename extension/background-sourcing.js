@@ -446,9 +446,14 @@ async function fetchAbcmartBenefitPrice(productId, site) {
       world: 'MAIN',
       func: async (prdtNo) => {
         try {
+          // ABC마트 API가 SPA 표준 헤더 검증 — 일반 헤더로 호출 시 500 "잘못된 접근"
+          // X-Requested-With + Accept 확장 추가로 SPA fetch 흉내
           const resp = await fetch(`/product/info?prdtNo=${prdtNo}`, {
             credentials: 'include',
-            headers: { 'Accept': 'application/json' }
+            headers: {
+              'Accept': 'application/json, text/plain, */*',
+              'X-Requested-With': 'XMLHttpRequest',
+            }
           })
           const status = resp.status
           const text = await resp.text()
