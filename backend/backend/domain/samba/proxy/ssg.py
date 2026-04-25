@@ -1599,7 +1599,7 @@ class SSGClient:
         return {
             "order_number": ord_no,
             "shipment_id": shipment_id,
-            "notes": str(raw.get("ordMemoCntt", "") or ""),
+            "customer_note": str(raw.get("ordMemoCntt", "") or ""),
             "channel_id": account_id,
             "channel_name": label,
             "product_id": item_id_str,

@@ -1238,14 +1238,14 @@ async function extractDetailData(tabId, site, productId) {
         if (sizeUl) {
           sizeUl.querySelectorAll('li').forEach(li => {
             const rawCaption = (li.querySelector('.caption')?.textContent || '').trim()
-            const cleanName = rawCaption.replace(/^\[품절\]\s*/, '').trim()
+            const cleanName = rawCaption.replace(/^\[품절\]\s*/, '').replace(/\s*\(남은수량\s*\d+\)/, '').trim()
             if (!cleanName) return
             const stockText = (li.querySelector('.stock')?.textContent || '').trim()
             const isSoldOut = li.classList.contains('disabled') || stockText === '품절'
-            const m = stockText.match(/(\d+)\s*개/)
-            // stock: 0=품절, 정수 N=실재고("N개 남음"), null=UI에 숫자 미노출(충분 재고)
-            // 백엔드 _merge_dom_stock()이 null인 경우 pbf 값을 유지하도록 처리한다.
-            const stock = isSoldOut ? 0 : (m ? parseInt(m[1], 10) : null)
+            const mStock = stockText.match(/(\d+)\s*개/)
+            const mCaption = rawCaption.match(/남은수량\s*(\d+)/)
+            // stock: 0=품절, 정수 N=실재고("N개 남음" 또는 caption의 "남은수량 N"), null=UI에 숫자 미노출(충분 재고)
+            const stock = isSoldOut ? 0 : (mStock ? parseInt(mStock[1], 10) : (mCaption ? parseInt(mCaption[1], 10) : null))
             options.push({ name: cleanName, stock, isSoldOut, raw: stockText })
           })
         }

@@ -140,6 +140,7 @@ export interface SambaOrder {
   source?: string;
   shipment_id?: string;
   action_tag?: string;
+  customer_note?: string;
   paid_at?: string;
   created_at: string;
   updated_at: string;

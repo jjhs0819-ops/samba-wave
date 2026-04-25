@@ -804,12 +804,10 @@ async def _site_autotune_loop(site: str):
                                 else:
                                     _site_consecutive_soldout[site] = 0
 
-                                # ═══ 가격 불확실성 방어 (2계층) ═══
-                                _skip_price = False
-
-                                # 계층1: 소싱처 보조 API 부분실패 → 가격 데이터 불확실
+                                # 소싱처 보조 API 부분실패 → 가격 데이터 불확실
                                 if getattr(r, "price_uncertain", False):
-                                    _skip_price = True
+                                    updates.pop("cost", None)
+                                    snapshot["price_uncertain"] = True
                                     log.warning(
                                         "[오토튠][가격불확실] %s: "
                                         "API 부분실패 → 가격갱신/전송 보류 "
@@ -818,51 +816,6 @@ async def _site_autotune_loop(site: str):
                                         _cost_int,
                                         int(product.cost or 0),
                                     )
-
-                                # 계층2: 원가 3%+ 상승 시 1사이클 확인 대기 (범용)
-                                elif (
-                                    r.new_cost is not None
-                                    and product.cost
-                                    and product.cost > 0
-                                    and r.new_cost > product.cost * 1.03
-                                ):
-                                    _prev = _pending_cost_increase.get(r.product_id)
-                                    if _prev is None or (
-                                        abs(_prev - r.new_cost) / r.new_cost > 0.01
-                                    ):
-                                        _pending_cost_increase[r.product_id] = (
-                                            r.new_cost
-                                        )
-                                        _skip_price = True
-                                        log.info(
-                                            "[오토튠][가격상승확인] %s: "
-                                            "원가 %s→%s (+%.1f%%) "
-                                            "→ 다음 사이클 재확인 대기",
-                                            _prod_label,
-                                            int(product.cost),
-                                            int(r.new_cost),
-                                            (r.new_cost - product.cost)
-                                            / product.cost
-                                            * 100,
-                                        )
-                                    else:
-                                        # 2사이클 연속 동일 상승 → 진짜 가격변동
-                                        _pending_cost_increase.pop(r.product_id, None)
-                                        log.info(
-                                            "[오토튠][가격상승확정] %s: 원가 상승 확인됨 (%s→%s)",
-                                            _prod_label,
-                                            int(product.cost),
-                                            int(r.new_cost),
-                                        )
-                                else:
-                                    # 원가 유지 또는 하락 → pending 제거
-                                    _pending_cost_increase.pop(r.product_id, None)
-
-                                # 가격 보류 시: DB cost 업데이트 스킵 + 전송 스킵
-                                if _skip_price:
-                                    updates.pop("cost", None)
-                                    if getattr(r, "price_uncertain", False):
-                                        snapshot["price_uncertain"] = True
                                     await _partial_update(r.product_id, updates)
                                     return
 
@@ -1438,15 +1391,6 @@ async def _site_autotune_loop(site: str):
                             max_concurrency=dict(_SAC),
                             on_result=_on_result,
                         )
-
-                        # _pending_cost_increase 고아 정리
-                        # (이번 사이클에 포함되지 않은 상품의 pending 항목 제거)
-                        _cycle_pids = set(product_map.keys())
-                        _orphan_pids = [
-                            k for k in _pending_cost_increase if k not in _cycle_pids
-                        ]
-                        for _ok in _orphan_pids:
-                            _pending_cost_increase.pop(_ok, None)
 
                         # 에러 결과 후처리 (콜백에서 처리 안 된 에러 건)
                         for r in results:
@@ -2341,8 +2285,9 @@ async def autotune_refresh_one(body: RefreshOneRequest):
                     updates["sale_price"] = r.new_sale_price
                 if r.new_original_price is not None:
                     updates["original_price"] = r.new_original_price
-                if r.new_cost is not None:
-                    updates["cost"] = r.new_cost
+            # cost는 changed 여부와 무관하게 항상 반영 (혜택가 단독 변경 대응)
+            if r.new_cost is not None:
+                updates["cost"] = r.new_cost
             await repo.update_async(product.id, **updates)
             await session.commit()
         elif r and r.error:

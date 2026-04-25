@@ -173,7 +173,7 @@ class SSGPlugin(SourcingPlugin):
                         "price": opt.get("price", 0),
                         "stock": 0
                         if opt.get("isSoldOut")
-                        else (opt.get("stock") or 99),
+                        else (opt.get("stock") if opt.get("stock") is not None else 99),
                         "isSoldOut": opt.get("isSoldOut", False),
                     }
                     for opt in raw_options

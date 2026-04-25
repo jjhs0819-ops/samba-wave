@@ -51,7 +51,7 @@ export default function OrderInfoCell(props: Props) {
   } = props
 
   const handleCopyCustomerMemo = async () => {
-    const text = (o.notes || '').trim()
+    const text = (o.customer_note || '').trim()
     if (!text) {
       showAlert('복사할 메모가 없습니다', 'info')
       return
@@ -310,7 +310,7 @@ export default function OrderInfoCell(props: Props) {
           )}
         </div>
       </div>
-      {!!o.notes?.trim() && (
+      {!!o.customer_note?.trim() && (
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.25rem', fontSize: '0.8rem', marginTop: '0.25rem', marginBottom: '0.25rem' }}>
           <span style={{ color: '#666', whiteSpace: 'nowrap' }}>고객메모</span>
           <span
@@ -333,7 +333,7 @@ export default function OrderInfoCell(props: Props) {
               wordBreak: 'break-word',
             }}
           >
-            {o.notes.trim()}
+            {o.customer_note.trim()}
           </span>
         </div>
       )}

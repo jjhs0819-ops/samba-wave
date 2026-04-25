@@ -20,6 +20,7 @@ class OrderCreate(BaseModel):
     cost: float = 0
     shipping_fee: float = 0
     fee_rate: float = 0
+    customer_note: Optional[str] = None
     notes: Optional[str] = None
     source: Optional[str] = None
     shipment_id: Optional[str] = None
@@ -42,6 +43,7 @@ class OrderUpdate(BaseModel):
     fee_rate: Optional[float] = None
     shipping_company: Optional[str] = None
     tracking_number: Optional[str] = None
+    customer_note: Optional[str] = None
     notes: Optional[str] = None
     sourcing_order_number: Optional[str] = None
     sourcing_account_id: Optional[str] = None

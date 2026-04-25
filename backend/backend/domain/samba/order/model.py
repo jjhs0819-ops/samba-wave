@@ -139,6 +139,9 @@ class SambaOrder(SQLModel, table=True):
     tracking_number: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)
     )
+    customer_note: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
     notes: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
     # 타마켓 주문번호

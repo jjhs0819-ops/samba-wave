@@ -3423,6 +3423,7 @@ def _parse_smartstore_order(
         "customer_address": (
             shipping.get("baseAddress", "") + " " + shipping.get("detailedAddress", "")
         ).strip(),
+        "customer_note": po.get("shippingMemo", "") or "",
         "quantity": quantity,
         "sale_price": sale_price,
         "cost": 0,
@@ -3551,7 +3552,7 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
         or item.get("mphnNo", "")
         or "",
         "customer_address": full_addr,
-        "notes": item.get("dvMsg", "") or "",
+        "customer_note": item.get("dvMsg", "") or "",
         "paid_at": paid_at,
         # created_at은 명시 X — DB default_factory(now)가 실제 삽입 시각 기록
     }
