@@ -434,9 +434,8 @@ class NaverStoreDetailMixin:
                     "상세페이지참조",
                 ):
                     continue
-                if any(kw in _pk_low for kw in ("세탁", "취급", "care", "wash")):
-                    care_instructions = _pv_str
-                    break
+                elif any(kw in _pk_low for kw in ("세탁", "취급", "care", "wash")):
+                    care_instructions = care_instructions or _pv_str
 
         # 채널 정보
         channel = data.get("channel", {})
