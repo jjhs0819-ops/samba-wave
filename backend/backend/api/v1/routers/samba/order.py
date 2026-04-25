@@ -3823,11 +3823,29 @@ def _parse_coupang_order(
     order_items = order.get("orderItems") or []
     first_item = order_items[0] if order_items else {}
     product_name = first_item.get("sellerProductName", "") or ""
-    option_name = first_item.get("vendorItemName", "") or ""
+    # 쿠팡 옵션 없음 placeholder 패턴 (대소문자/공백/구두점 변형 허용)
+    _NO_OPTION_PATTERNS = ("옵션없음", "no option")
+
+    option_name = (
+        first_item.get("sellerProductItemName", "")
+        or first_item.get("firstSellerProductItemName", "")
+        or ""
+    ).strip()
+
+    # placeholder 텍스트 정규화 (예: "옵션없음. 옵션없음." → "FREE")
+    _normalized = option_name.lower().replace(" ", "").replace(".", "")
+    if not option_name or any(
+        p.replace(" ", "") in _normalized for p in _NO_OPTION_PATTERNS
+    ):
+        option_name = "FREE"
     sales_price = int(first_item.get("salesPrice", 0) or 0)
     quantity = int(first_item.get("orderQuantity", 1) or 1)
     shipping_price = int(order.get("shippingPrice", 0) or 0)
     sale_price = sales_price + shipping_price
+
+    # 쿠팡 정률 수수료 10.5% + VAT 10% = 실효 11.55%
+    fee_rate = 11.55
+    revenue = round(sale_price * (1 - fee_rate / 100))
 
     receiver_addr = (
         order.get("receiverAddr1", "") or order.get("receiverAddress", "") or ""
@@ -3853,8 +3871,13 @@ def _parse_coupang_order(
         "shipment_id": str(order_id) if order_id else "",
         "channel_id": account_id,
         "channel_name": account_label,
-        "product_id": str(first_item.get("sellerProductId", "") or ""),
+        "product_id": str(
+            first_item.get("productId", "")
+            or first_item.get("sellerProductId", "")
+            or ""
+        ),
         "product_name": product_name,
+        "coupang_display_name": first_item.get("vendorItemPackageName", "") or "",
         "product_option": option_name,
         "product_image": "",
         "customer_name": orderer_name,
@@ -3863,8 +3886,8 @@ def _parse_coupang_order(
         "quantity": quantity,
         "sale_price": sale_price,
         "cost": 0,
-        "fee_rate": 0,
-        "revenue": sale_price,
+        "fee_rate": fee_rate,
+        "revenue": revenue,
         "status": internal_status,
         "shipping_status": market_order_status,
         "shipping_company": order.get("deliveryCompanyName", "") or "",

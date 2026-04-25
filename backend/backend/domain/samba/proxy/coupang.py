@@ -771,8 +771,10 @@ class CoupangClient:
 
         now = datetime.now(timezone.utc)
         since = now - timedelta(days=days)
+        # createdAtTo는 exclusive로 처리되므로 +1일 추가 (당일 주문 누락 방지)
+        until = now + timedelta(days=1)
         created_at_from = since.strftime("%Y-%m-%d")
-        created_at_to = now.strftime("%Y-%m-%d")
+        created_at_to = until.strftime("%Y-%m-%d")
 
         path = f"/v2/providers/openapi/apis/api/v4/vendors/{self.vendor_id}/ordersheets"
         seen_ids: set[int] = set()
