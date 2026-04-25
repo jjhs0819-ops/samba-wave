@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import re
@@ -753,46 +754,71 @@ class CoupangClient:
         """최근 N일간 주문시트 조회.
 
         쿠팡 Wing API: GET /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/ordersheets
-        페이징: nextToken 기반 커서 방식
+        - 날짜 형식: yyyy-MM-dd (시간 X)
+        - status 파라미터 필수 → status 미지정 시 6개 상태를 순회 후 shipmentBoxId 기준 dedup
+        - 페이징: nextToken 기반 커서 방식
         """
+        # 쿠팡 ordersheets API에서 인식되는 status 5개
+        # CANCEL은 별도 API (취소 조회)에서 처리해야 하므로 제외
+        STATUSES = [
+            "ACCEPT",
+            "INSTRUCT",
+            "DEPARTURE",
+            "DELIVERING",
+            "FINAL_DELIVERY",
+        ]
+        targets = [status] if status else STATUSES
 
         now = datetime.now(timezone.utc)
         since = now - timedelta(days=days)
-        created_at_from = since.strftime("%Y-%m-%dT00:00:00")
-        created_at_to = now.strftime("%Y-%m-%dT23:59:59")
+        created_at_from = since.strftime("%Y-%m-%d")
+        created_at_to = now.strftime("%Y-%m-%d")
 
+        path = f"/v2/providers/openapi/apis/api/v4/vendors/{self.vendor_id}/ordersheets"
+        seen_ids: set[int] = set()
         all_orders: list[dict[str, Any]] = []
-        next_token = ""
 
-        for _ in range(100):  # 무한루프 방지
-            params: dict[str, str] = {
-                "createdAtFrom": created_at_from,
-                "createdAtTo": created_at_to,
-                "maxPerPage": str(max_per_page),
-            }
-            if status:
-                params["status"] = status
-            if next_token:
-                params["nextToken"] = next_token
+        for idx, target_status in enumerate(targets):
+            if idx > 0:
+                await asyncio.sleep(1.5)  # 쿠팡 API rate limit 회피 (HTTP 429)
+            next_token = ""
+            for _ in range(100):  # 무한루프 방지
+                params: dict[str, str] = {
+                    "createdAtFrom": created_at_from,
+                    "createdAtTo": created_at_to,
+                    "status": target_status,
+                    "maxPerPage": str(max_per_page),
+                }
+                if next_token:
+                    params["nextToken"] = next_token
 
-            path = f"/v2/providers/openapi/apis/api/v4/vendors/{self.vendor_id}/ordersheets"
-            result = await self._call_api("GET", path, params=params)
+                result = await self._call_api("GET", path, params=params)
 
-            data = result.get("data", []) if isinstance(result, dict) else []
-            if isinstance(data, list):
-                all_orders.extend(data)
-            elif isinstance(data, dict):
-                # data가 dict인 경우 orderSheets 키에서 추출
-                sheets = data.get("orderSheets", data.get("content", []))
-                if isinstance(sheets, list):
-                    all_orders.extend(sheets)
+                data = result.get("data", []) if isinstance(result, dict) else []
+                extracted: list[dict[str, Any]] = []
+                if isinstance(data, list):
+                    extracted = data
+                elif isinstance(data, dict):
+                    sheets = data.get("orderSheets", data.get("content", []))
+                    if isinstance(sheets, list):
+                        extracted = sheets
 
-            # 다음 페이지 토큰
-            next_token = result.get("nextToken", "") if isinstance(result, dict) else ""
-            if not next_token:
-                break
+                for order in extracted:
+                    box_id = order.get("shipmentBoxId")
+                    if box_id and box_id not in seen_ids:
+                        seen_ids.add(box_id)
+                        all_orders.append(order)
 
-        logger.info(f"[쿠팡] 주문 조회 완료: {len(all_orders)}건 (최근 {days}일)")
+                next_token = (
+                    result.get("nextToken", "") if isinstance(result, dict) else ""
+                )
+                if not next_token:
+                    break
+
+        logger.info(
+            f"[쿠팡] 주문 조회 완료: {len(all_orders)}건 "
+            f"(최근 {days}일, status={status or 'ALL'})"
+        )
         return all_orders
 
     async def confirm_orders(

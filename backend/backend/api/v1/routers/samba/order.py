@@ -128,7 +128,9 @@ async def dashboard_stats(
                 else_=0,
             )
         ).label("fulfillment_count"),
-    ).where(SambaOrder.paid_at != None, order_date >= this_month_start)  # noqa: E711
+    ).where(
+        SambaOrder.paid_at != None, order_date >= this_month_start
+    )  # noqa: E711
     if tenant_id is not None:
         this_month_q = this_month_q.where(
             or_(
@@ -2270,15 +2272,44 @@ async def sync_orders_from_markets(
                 finally:
                     await pa_client.close()
             elif market_type == "coupang":
-                # 쿠팡 주문 조회 (구현 대기)
-                results.append(
-                    {
-                        "account": label,
-                        "status": "skip",
-                        "message": "쿠팡 주문 조회 미구현",
-                    }
+                from backend.domain.samba.proxy.coupang import CoupangClient
+
+                access_key = (
+                    extras.get("accessKey", "") or account.get("api_key", "") or ""
                 )
-                continue
+                secret_key = (
+                    extras.get("secretKey", "") or account.get("api_secret", "") or ""
+                )
+                vendor_id = extras.get("vendorId", "") or seller_id or ""
+
+                if not all([access_key, secret_key, vendor_id]):
+                    results.append(
+                        {
+                            "account": label,
+                            "status": "skip",
+                            "message": "쿠팡 인증정보 없음 (accessKey/secretKey/vendorId)",
+                        }
+                    )
+                    continue
+
+                client = CoupangClient(access_key, secret_key, vendor_id)
+                try:
+                    raw_orders = await client.get_orders(days=body.days)
+                    logger.info(f"[주문동기화] 쿠팡({label}): {len(raw_orders)}건 조회")
+                    for ro in raw_orders:
+                        try:
+                            orders_data.append(
+                                _parse_coupang_order(ro, account["id"], label)
+                            )
+                        except Exception as parse_err:
+                            logger.warning(f"[주문동기화] 쿠팡 파싱 실패: {parse_err}")
+                            continue
+                except Exception as e:
+                    logger.warning(f"[주문동기화] {label}: 쿠팡 조회 실패 — {e}")
+                    results.append(
+                        {"account": label, "status": "error", "message": str(e)[:100]}
+                    )
+                    continue
             elif market_type == "11st":
                 # 11번가 주문 조회 (구현 대기)
                 results.append(
@@ -3084,7 +3115,8 @@ async def sync_orders_from_markets(
         from sqlalchemy import text as _sa_text_upd
 
         await session.execute(
-            _sa_text_upd("""
+            _sa_text_upd(
+                """
             UPDATE samba_order o
             SET shipping_status = CASE
                 WHEN r.type = 'exchange' THEN '교환요청'
@@ -3100,7 +3132,8 @@ async def sync_orders_from_markets(
                   '반품요청', '반품완료', '반품거부',
                   '취소완료'
               )
-        """)
+        """
+            )
         )
         await session.commit()
         logger.info(
@@ -3245,13 +3278,19 @@ def _parse_smartstore_order(
         "status": (
             "cancel_requested"
             if claim_status in ("CANCEL_REQUEST", "CANCELING")
-            else "cancelled"
-            if claim_status == "CANCEL_DONE"
-            else "return_requested"
-            if claim_status in ("RETURN_REQUEST", "COLLECTING", "COLLECT_DONE")
-            else "returned"
-            if claim_status == "RETURN_DONE"
-            else status_map.get(naver_status, "pending")
+            else (
+                "cancelled"
+                if claim_status == "CANCEL_DONE"
+                else (
+                    "return_requested"
+                    if claim_status in ("RETURN_REQUEST", "COLLECTING", "COLLECT_DONE")
+                    else (
+                        "returned"
+                        if claim_status == "RETURN_DONE"
+                        else status_map.get(naver_status, "pending")
+                    )
+                )
+            )
         ),
         "shipping_status": market_order_status,
         "shipping_company": po.get("deliveryCompany", ""),
@@ -3260,6 +3299,100 @@ def _parse_smartstore_order(
             order_info.get("paymentDate") or po.get("paymentDate")
         ),
         "source": "smartstore",
+    }
+
+
+def _parse_coupang_order(
+    order: dict,
+    account_id: str,
+    account_label: str,
+) -> dict[str, Any]:
+    """쿠팡 ordersheet 1건 → SambaOrder 데이터 변환."""
+    status_map = {
+        "ACCEPT": "pending",
+        "INSTRUCT": "pending",
+        "DEPARTURE": "shipped",
+        "DELIVERING": "shipped",
+        "FINAL_DELIVERY": "delivered",
+        "CANCEL": "cancelled",
+    }
+    market_status_map = {
+        "ACCEPT": "결제완료",
+        "INSTRUCT": "상품준비중",
+        "DEPARTURE": "배송중",
+        "DELIVERING": "배송중",
+        "FINAL_DELIVERY": "배송완료",
+        "CANCEL": "취소완료",
+    }
+
+    coupang_status = (order.get("status") or "").upper()
+    shipment_box_id = order.get("shipmentBoxId") or 0
+    order_id = order.get("orderId") or 0
+
+    # 클레임 (취소/반품 요청) 우선
+    cancel_requests = order.get("cancelRequests") or []
+    return_requests = order.get("returnRequests") or []
+    if cancel_requests:
+        market_order_status = "취소요청"
+        internal_status = "cancel_requested"
+    elif return_requests:
+        market_order_status = "반품요청"
+        internal_status = "return_requested"
+    else:
+        market_order_status = market_status_map.get(coupang_status, coupang_status)
+        internal_status = status_map.get(coupang_status, "pending")
+
+    order_items = order.get("orderItems") or []
+    first_item = order_items[0] if order_items else {}
+    product_name = first_item.get("sellerProductName", "") or ""
+    option_name = first_item.get("vendorItemName", "") or ""
+    sales_price = int(first_item.get("salesPrice", 0) or 0)
+    quantity = int(first_item.get("orderQuantity", 1) or 1)
+    shipping_price = int(order.get("shippingPrice", 0) or 0)
+    sale_price = sales_price + shipping_price
+
+    receiver_addr = (
+        order.get("receiverAddr1", "") or order.get("receiverAddress", "") or ""
+    )
+    receiver_addr_detail = (
+        order.get("receiverAddr2", "") or order.get("receiverAddrDetail", "") or ""
+    )
+    customer_address = (receiver_addr + " " + receiver_addr_detail).strip()
+
+    orderer_name = order.get("ordererName", "") or order.get("receiverName", "") or ""
+    orderer_tel = (
+        order.get("ordererPhoneNumber", "")
+        or order.get("orderPhoneNumber", "")
+        or order.get("receiverPhoneNumber", "")
+        or ""
+    )
+
+    # shipmentBoxId 우선 (배송단위 안정 ID), orderId fallback
+    order_number = str(shipment_box_id or order_id or "")
+
+    return {
+        "order_number": order_number,
+        "shipment_id": str(order_id) if order_id else "",
+        "channel_id": account_id,
+        "channel_name": account_label,
+        "product_id": str(first_item.get("sellerProductId", "") or ""),
+        "product_name": product_name,
+        "product_option": option_name,
+        "product_image": "",
+        "customer_name": orderer_name,
+        "customer_phone": orderer_tel,
+        "customer_address": customer_address,
+        "quantity": quantity,
+        "sale_price": sale_price,
+        "cost": 0,
+        "fee_rate": 0,
+        "revenue": sale_price,
+        "status": internal_status,
+        "shipping_status": market_order_status,
+        "shipping_company": order.get("deliveryCompanyName", "") or "",
+        "tracking_number": order.get("invoiceNumber", "") or "",
+        "paid_at": _parse_iso_datetime(order.get("paidAt") or order.get("orderedAt")),
+        "source": "coupang",
     }
 
 
@@ -3445,9 +3578,7 @@ def _parse_playauto_order(
         "source_site": (
             f"{site_name}({alias_map[site_id]})"
             if alias_map and site_id in alias_map and site_name
-            else f"{site_name}({site_id})"
-            if site_name
-            else ""
+            else f"{site_name}({site_id})" if site_name else ""
         ),
     }
 
