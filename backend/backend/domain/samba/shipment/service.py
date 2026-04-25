@@ -1661,7 +1661,15 @@ class SambaShipmentService:
             merged_nos.update(ar.get("product_nos", {}))
             # 스냅샷 병합
             if ar.get("sent_snapshot"):
+                # 전송 성공 — sent_snapshot으로 덮어써서 기존 failed_at 마킹 자동 제거
                 merged_sent[aid] = ar["sent_snapshot"]
+            elif ar.get("status") == "failed":
+                # 전송 실패 — 기존 last_sent 보존 + failed_at 마킹 (오토튠이 다음 cycle에서
+                # 무조건 재시도 트리거. last_sent.sale_price는 안 갱신해 expected==last
+                # 비교는 그대로 동작하지만 failed_at 존재 여부로 강제 전송)
+                _existing = dict(merged_sent.get(aid, {}) or {})
+                _existing["failed_at"] = datetime.now(UTC).isoformat()
+                merged_sent[aid] = _existing
 
         # DB 1회 업데이트
         try:

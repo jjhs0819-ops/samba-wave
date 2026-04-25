@@ -1035,10 +1035,17 @@ async def _site_autotune_loop(site: str):
                                     _acc_items: list[str] = []
                                     _acc_action_parts: list[str] = []
 
+                                    # failed_at 마킹: 이전 cycle에서 마켓 전송 실패 → 무조건 재시도
+                                    # (사용자 케이스: cost 124,000 cycle에서 fail → cost 원복 후
+                                    # expected==last로 영구 스킵되는 버그 해결)
+                                    _has_failed_mark = (
+                                        bool(acc_last.get("failed_at"))
+                                        if acc_last
+                                        else False
+                                    )
                                     if (
-                                        expected_price != last_price
-                                        and not _price_blocked
-                                    ):
+                                        expected_price != last_price or _has_failed_mark
+                                    ) and not _price_blocked:
                                         price_changed_count += 1
                                         _all_price_pids.add(r.product_id)
                                         if len(_price_tx_items) < 10:
