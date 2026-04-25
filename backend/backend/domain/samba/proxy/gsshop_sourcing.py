@@ -1158,7 +1158,12 @@ class GsShopSourcingClient:
             return []
 
         detail_images: list[str] = []
-        for m in re.finditer(r'<img[^>]+src=["\']([^"\']+)["\']', desc_html, re.I):
+        # src + data-src + data-lazy + data-original 전부 캡처 (lazy-load 대응)
+        pattern = re.compile(
+            r'<img[^>]+(?:src|data-src|data-lazy|data-original)=["\']([^"\']+)["\']',
+            re.I,
+        )
+        for m in pattern.finditer(desc_html):
             src = m.group(1).strip()
             if not src:
                 continue

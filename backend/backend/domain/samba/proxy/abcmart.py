@@ -1918,17 +1918,40 @@ class ARTSourcingClient:
         return images[:9]
 
     def _parse_detail_images(self, html: str) -> list[str]:
-        """상세 설명 영역에서 이미지 추출."""
+        """상세 설명 영역에서 이미지 추출.
+
+        ABC마트 상세영역은 lazy-load라 실제 URL이 data-src/data-lazy에 있음.
+        1차: 상세영역 컨테이너를 특정하여 내부 이미지 모두 추출
+        2차: 컨테이너 매칭 실패 시 a-rt.com/abcmart CDN 이미지를 전체에서 수집
+        """
         images: list[str] = []
 
+        # 상세영역 컨테이너 탐색 — id/class에 detail 포함
         detail_area = re.search(
-            r'(?:id="[^"]*detail[^"]*"|class="[^"]*detail[_-]?(?:cont|desc|info)[^"]*")[^>]*>(.*)',
+            r'(?:id="[^"]*detail[^"]*"|class="[^"]*detail[_-]?(?:cont|desc|info|area|section)[^"]*")[^>]*>(.*)',
             html,
             re.DOTALL | re.IGNORECASE,
         )
+        # src + data-src + data-lazy 전부 캡처 (lazy-load 대응)
+        img_pattern = re.compile(
+            r'<img[^>]+(?:src|data-src|data-lazy|data-original)=["\']([^"\']+)["\']',
+            re.IGNORECASE,
+        )
+
         if detail_area:
-            img_pattern = re.compile(r'<img[^>]+src="([^"]+)"', re.IGNORECASE)
             for m in img_pattern.finditer(detail_area.group(1)):
+                img_url = self._normalize_image(m.group(1))
+                if img_url and img_url not in images:
+                    images.append(img_url)
+
+        # 컨테이너 매칭 실패/부족 시 CDN 패턴 기반 전체 스캔 fallback
+        if len(images) < 2:
+            cdn_pattern = re.compile(
+                r'(?:src|data-src|data-lazy|data-original)=["\']'
+                r'([^"\']*(?:a-rt\.com|abcmart)[^"\']+\.(?:jpg|jpeg|png|webp|gif))["\']',
+                re.IGNORECASE,
+            )
+            for m in cdn_pattern.finditer(html):
                 img_url = self._normalize_image(m.group(1))
                 if img_url and img_url not in images:
                     images.append(img_url)

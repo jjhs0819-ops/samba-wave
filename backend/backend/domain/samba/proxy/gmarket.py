@@ -418,7 +418,10 @@ class GMarketClient:
 
     @staticmethod
     def _parse_detail_images(html: str) -> list[str]:
-        """상세 설명 영역에서 이미지 URL 추출."""
+        """상세 설명 영역에서 이미지 URL 추출.
+
+        G마켓 상세영역은 lazy-load라 실제 URL이 data-src/data-lazy에 있을 수 있음.
+        """
         images: list[str] = []
         # 상세 설명 영역
         detail_area = re.search(
@@ -426,8 +429,12 @@ class GMarketClient:
             html,
             re.DOTALL | re.IGNORECASE,
         )
+        # src + data-src + data-lazy + data-original 전부 캡처 (lazy-load 대응)
+        img_pattern = re.compile(
+            r'<img[^>]+(?:src|data-src|data-lazy|data-original)=["\']([^"\']+)["\']',
+            re.IGNORECASE,
+        )
         if detail_area:
-            img_pattern = re.compile(r'<img[^>]+src="([^"]+)"', re.IGNORECASE)
             for m in img_pattern.finditer(detail_area.group(1)):
                 img_url = m.group(1)
                 if img_url.startswith("//"):

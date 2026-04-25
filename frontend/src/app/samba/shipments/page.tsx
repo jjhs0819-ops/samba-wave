@@ -97,10 +97,14 @@ export default function ShipmentsPage() {
   const sinceIdxRef = useRef(0)  // 링 버퍼 폴링용
 
   // 실시간 Job 큐 상태
+  type JobQueueItem = { id?: string, status?: string, kind?: 'transmit' | 'delete', markets: string, source_sites?: string[], brands?: string[], product_count: number, current: number, total: number, started_at?: string | null }
   const [jobQueueStatus, setJobQueueStatus] = useState<{
-    running: { id?: string, status?: string, markets: string, source_sites?: string[], brands?: string[], product_count: number, current: number, total: number, started_at?: string | null }[],
-    pending: { id?: string, status?: string, markets: string, source_sites?: string[], brands?: string[], product_count: number, current: number, total: number, started_at?: string | null }[],
+    running: JobQueueItem[],
+    pending: JobQueueItem[],
   }>({ running: [], pending: [] })
+  // 로컬(프론트엔드 루프 기반) 마켓삭제 잡 — 백엔드 Job이 아니므로 별도 상태로 관리해 잡진행상황에 합쳐 표시
+  const [localDeleteJobs, setLocalDeleteJobs] = useState<JobQueueItem[]>([])
+  const cancelLocalDeleteIdsRef = useRef<Set<string>>(new Set())
   const [cancellingJobIds, setCancellingJobIds] = useState<string[]>([])
   const jobQueuePollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const cancelledAtRef = useRef<number>(0) // 작업중지 후 폴링 업데이트 차단 (새 전송 시작 시 해제)
@@ -481,6 +485,14 @@ export default function ShipmentsPage() {
     const targetAccLabels = effectiveDeleteList.map(aid => accLabelMap[aid] || aid).join(', ')
     addLog(`[${ts()}] 마켓삭제 시작 — 상품 ${fmtNum(targetProducts.length)}개, ${targetAccLabels}`)
 
+    // 가상 잡 등록 — 잡진행상황 패널에 전송잡과 동일한 형태로 노출
+    const localJobId = `local-delete-${Date.now()}`
+    setLocalDeleteJobs(prev => [...prev, {
+      id: localJobId, kind: 'delete', markets: targetAccLabels, source_sites: [], brands: [],
+      product_count: targetProducts.length, current: 0, total: targetProducts.length,
+      started_at: new Date().toISOString(),
+    }])
+
     // 삭제 중 500ms 링 버퍼 폴링 시작 — 다른 창에서도 실시간 로그 공유
     if (bgPollRef.current) { clearInterval(bgPollRef.current); bgPollRef.current = null }
     if (deletePollRef.current) { clearInterval(deletePollRef.current); deletePollRef.current = null }
@@ -502,7 +514,9 @@ export default function ShipmentsPage() {
       delPolling = false
     }, 500)
 
+    let cancelledMid = false
     for (let i = 0; i < targetProducts.length; i++) {
+      if (cancelLocalDeleteIdsRef.current.has(localJobId)) { cancelledMid = true; break }
       const pid = targetProducts[i]
       const prod = products.find(p => p.id === pid)
       // 이 상품에 등록된 계정만 삭제 대상
@@ -512,13 +526,18 @@ export default function ShipmentsPage() {
         // log_to_buffer=true: 이 페이지의 링 버퍼 폴링으로 실시간 로그 표시
         await shipmentApi.marketDelete([pid], prodAccIds, i + 1, targetProducts.length, true)
       } catch { /* 개별 실패는 백엔드가 링 버퍼에 기록 */ }
+      setLocalDeleteJobs(prev => prev.map(j => j.id === localJobId ? { ...j, current: i + 1 } : j))
     }
+
+    // 가상 잡 정리
+    setLocalDeleteJobs(prev => prev.filter(j => j.id !== localJobId))
+    cancelLocalDeleteIdsRef.current.delete(localJobId)
 
     // 폴링 종료 후 백그라운드 폴링 복원
     delPollActive = false
     if (deletePollRef.current) { clearInterval(deletePollRef.current); deletePollRef.current = null }
 
-    addLog(`[${ts()}] 마켓삭제 완료`)
+    addLog(`[${ts()}] 마켓삭제 ${cancelledMid ? '중지됨' : '완료'}`)
 
     // 백그라운드 폴링 재시작
     let bgPolling = false
@@ -605,6 +624,14 @@ export default function ShipmentsPage() {
     const addLog = (msg: string) => appendShipmentLog(setLogMessages, msg)
     addLog(`[${ts()}] 검색결과 마켓삭제 시작 — 상품 ${fmtNum(targetProducts.length)}개, ${targetLabels}`)
 
+    // 가상 잡 등록 — 잡진행상황 패널에 전송잡과 동일한 형태로 노출
+    const localJobIdSearch = `local-delete-${Date.now()}`
+    setLocalDeleteJobs(prev => [...prev, {
+      id: localJobIdSearch, kind: 'delete', markets: targetLabels, source_sites: [], brands: [],
+      product_count: targetProducts.length, current: 0, total: targetProducts.length,
+      started_at: new Date().toISOString(),
+    }])
+
     // 삭제 중 500ms 링 버퍼 폴링 시작 — 다른 창에서도 실시간 로그 공유
     if (bgPollRef.current) { clearInterval(bgPollRef.current); bgPollRef.current = null }
     if (deletePollRef.current) { clearInterval(deletePollRef.current); deletePollRef.current = null }
@@ -626,7 +653,9 @@ export default function ShipmentsPage() {
       delPollingSearch = false
     }, 500)
 
+    let cancelledMidSearch = false
     for (let i = 0; i < targetProducts.length; i++) {
+      if (cancelLocalDeleteIdsRef.current.has(localJobIdSearch)) { cancelledMidSearch = true; break }
       const prod = targetProducts[i]
       const prodAccIds = (prod.registered_accounts || []).filter(aid => selectedSet.has(aid))
       if (prodAccIds.length === 0) continue
@@ -634,13 +663,18 @@ export default function ShipmentsPage() {
         // log_to_buffer=true: 이 페이지의 링 버퍼 폴링으로 실시간 로그 표시
         await shipmentApi.marketDelete([prod.id], prodAccIds, i + 1, targetProducts.length, true)
       } catch { /* 개별 실패는 백엔드가 링 버퍼에 기록 */ }
+      setLocalDeleteJobs(prev => prev.map(j => j.id === localJobIdSearch ? { ...j, current: i + 1 } : j))
     }
+
+    // 가상 잡 정리
+    setLocalDeleteJobs(prev => prev.filter(j => j.id !== localJobIdSearch))
+    cancelLocalDeleteIdsRef.current.delete(localJobIdSearch)
 
     // 폴링 종료 후 백그라운드 폴링 복원
     delPollActiveSearch = false
     if (deletePollRef.current) { clearInterval(deletePollRef.current); deletePollRef.current = null }
 
-    addLog(`[${ts()}] 검색결과 마켓삭제 완료`)
+    addLog(`[${ts()}] 검색결과 마켓삭제 ${cancelledMidSearch ? '중지됨' : '완료'}`)
 
     // 백그라운드 폴링 재시작
     let bgPollingSearch = false
@@ -931,8 +965,19 @@ export default function ShipmentsPage() {
   // 개별 잡 취소 — 진행 중이거나 대기 중인 잡 하나만 CANCELLED 처리
   const handleCancelSingleJob = async (jobId: string, label: string) => {
     if (!jobId) return
-    const ok = window.confirm(`[${label}] 잡 1건을 취소합니다. 계속할까요?`)
+    const ok = await showConfirm(`[${label}] 잡 1건을 취소합니다. 계속할까요?`)
     if (!ok) return
+    // 로컬(프론트엔드 루프) 마켓삭제 잡은 백엔드 Job이 아니므로 인메모리 플래그로 중단
+    if (jobId.startsWith('local-delete-')) {
+      cancelLocalDeleteIdsRef.current.add(jobId)
+      setCancellingJobIds(prev => prev.includes(jobId) ? prev : [...prev, jobId])
+      const tsLocal = fmtTime()
+      appendShipmentLog(setLogMessages, `[${tsLocal}] 마켓삭제 중지 요청 — ${label}`)
+      // UI 즉시 제거 (다음 루프 반복 시 실제 break)
+      setLocalDeleteJobs(prev => prev.filter(j => j.id !== jobId))
+      setCancellingJobIds(prev => prev.filter(id => id !== jobId))
+      return
+    }
     setCancellingJobIds(prev => prev.includes(jobId) ? prev : [...prev, jobId])
     const ts = fmtTime()
     const log = (msg: string) => appendShipmentLog(setLogMessages, msg)
@@ -1108,19 +1153,28 @@ export default function ShipmentsPage() {
         </div>
       </div>
 
-      {/* 진행 중인 전송 Job 요약 */}
-      {(jobQueueStatus.running.length > 0 || jobQueueStatus.pending.length > 0) && (
+      {/* 진행 중인 전송/삭제 Job 요약 */}
+      {(jobQueueStatus.running.length > 0 || jobQueueStatus.pending.length > 0 || localDeleteJobs.length > 0) && (() => {
+        const runningAll: JobQueueItem[] = [
+          ...jobQueueStatus.running.map(j => ({ ...j, kind: (j.kind || 'transmit') as 'transmit' | 'delete' })),
+          ...localDeleteJobs,
+        ]
+        const transmitCount = runningAll.filter(j => j.kind !== 'delete').length
+        const deleteCount = runningAll.filter(j => j.kind === 'delete').length
+        return (
         <div style={{ background: 'rgba(8,10,16,0.98)', border: '1px solid #1C1E2A', borderRadius: '8px', marginBottom: '8px', overflow: 'hidden' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 14px', background: '#0A0D14', borderBottom: '1px solid #1C1E2A' }}>
             <span style={{ width: '6px', height: '6px', borderRadius: '50%',
-              background: jobQueueStatus.running.length > 0 ? '#51CF66' : '#FAB005' }} />
+              background: runningAll.length > 0 ? '#51CF66' : '#FAB005' }} />
             <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#9AA5C0' }}>
-              Job 진행상황 — 전송 중 {fmtNum(jobQueueStatus.running.length)}건
+              Job 진행상황
+              {transmitCount > 0 && ` — 전송 중 ${fmtNum(transmitCount)}건`}
+              {deleteCount > 0 && `${transmitCount > 0 ? ' · ' : ' — '}삭제 중 ${fmtNum(deleteCount)}건`}
               {jobQueueStatus.pending.length > 0 && ` · 대기 ${fmtNum(jobQueueStatus.pending.length)}건`}
             </span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '8px 14px' }}>
-            {jobQueueStatus.running.map((j, idx) => {
+            {runningAll.map((j, idx) => {
               const started = j.started_at ? new Date(j.started_at) : null
               const startedStr = started
                 ? `${String(started.getHours()).padStart(2,'0')}:${String(started.getMinutes()).padStart(2,'0')}:${String(started.getSeconds()).padStart(2,'0')}`
@@ -1138,7 +1192,7 @@ export default function ShipmentsPage() {
               const brandsStr = brands.length > 0 ? (brands.length <= 3 ? brands.join('·') : `${brands.slice(0,3).join('·')} 외 ${fmtNum(brands.length - 3)}`) : ''
               return (
                 <div key={`r-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: '#C4CAD8' }}>
-                  <span style={{ color: '#51CF66', fontWeight: 600, minWidth: '40px' }}>전송중</span>
+                  <span style={{ color: j.kind === 'delete' ? '#FF6B6B' : '#51CF66', fontWeight: 600, minWidth: '40px' }}>{j.kind === 'delete' ? '삭제중' : '전송중'}</span>
                   <span style={{ color: '#8A95B0', minWidth: '72px' }}>시작 {startedStr}</span>
                   <span style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '2px', overflow: 'hidden' }}>
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{j.markets}</span>
@@ -1197,7 +1251,8 @@ export default function ShipmentsPage() {
             })}
           </div>
         </div>
-      )}
+        )
+      })()}
 
       {/* 전송 로그 */}
       <div style={{ background: 'rgba(8,10,16,0.98)', border: '1px solid #1C1E2A', borderRadius: '8px', marginBottom: '12px', overflow: 'hidden' }}>

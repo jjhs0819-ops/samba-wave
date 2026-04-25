@@ -64,29 +64,28 @@ log_err()  { echo -e "${RED}❌ $1${NC}"; }
 # ─────────────────────────────────────
 # 카카오 알림 함수
 # ─────────────────────────────────────
+# Git Bash(Windows) CP949 이슈로 쉘에서 한글 전달이 깨져서 오므로
+# 한글 라벨은 deploy/kakao_notify.py 내부에 두고, 쉘에서는 ASCII 인자만 전달한다.
 kakao_notify() {
-  local status="$1"
-  local message="$2"
+  local status="$1"            # success | fail
+  local failure_reason="${2:-}"  # healthcheck | build | push | ssh | generic | ""
+  local exit_code="${3:-0}"
+  local elapsed="${4:-0}"
+
   if [[ "$SKIP_KAKAO" == "true" ]] || [[ -z "${KAKAO_API_KEY:-}" ]] || [[ -z "${KAKAO_REFRESH_TOKEN:-}" ]]; then
     return 0
   fi
 
-  local access_token
-  access_token=$(curl -s -X POST https://kauth.kakao.com/oauth/token \
-    -d "grant_type=refresh_token" \
-    -d "client_id=$KAKAO_API_KEY" \
-    -d "refresh_token=$KAKAO_REFRESH_TOKEN" \
-    | python -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null)
-
-  [[ -z "$access_token" ]] && return 0
-
-  local icon="✅"
-  [[ "$status" == "fail" ]] && icon="❌"
-
-  curl -s -X POST https://kapi.kakao.com/v2/api/talk/memo/default/send \
-    -H "Authorization: Bearer $access_token" \
-    --data-urlencode "template_object={\"object_type\":\"text\",\"text\":\"${icon} 배포 ${status}\n커밋: ${SHA}\n브랜치: ${BRANCH}\n\n${message}\",\"link\":{\"web_url\":\"https://api.samba-wave.co.kr/api/v1/health\"}}" \
-    > /dev/null
+  python "$(dirname "${BASH_SOURCE[0]}")/kakao_notify.py" \
+    --status "$status" \
+    --sha "$SHA" \
+    --branch "$BRANCH" \
+    --failure-reason "$failure_reason" \
+    --exit-code "$exit_code" \
+    --elapsed "$elapsed" \
+    --api-key "$KAKAO_API_KEY" \
+    --refresh-token "$KAKAO_REFRESH_TOKEN" \
+    > /dev/null 2>&1 || true
 }
 
 # ─────────────────────────────────────
@@ -97,7 +96,7 @@ on_error() {
   local exit_code=$1
   local elapsed=$(($(date +%s) - START_TIME))
   log_err "배포 실패 (exit $exit_code, ${elapsed}초)"
-  kakao_notify "fail" "종료 코드 $exit_code, 소요 ${elapsed}초"
+  kakao_notify "fail" "generic" "$exit_code" "$elapsed"
   exit "$exit_code"
 }
 
@@ -146,10 +145,10 @@ ssh -i "$SSH_KEY" \
   "cd /opt/samba && sudo docker compose pull samba-api && sudo docker compose up -d samba-api && sudo docker compose ps --format 'table {{.Name}}\t{{.Status}}'"
 log_ok "VM 재시작 완료"
 
-# 4. 헬스체크 (최대 60초 대기) — 커밋 SHA로 최신 리비전 서빙 중인지 검증
+# 4. 헬스체크 (최대 120초 대기) — 커밋 SHA로 최신 리비전 서빙 중인지 검증
 log_step 4 4 "헬스체크 중..."
 HEALTH_OK=false
-for i in 1 2 3 4 5 6; do
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
   sleep 10
   RESP=$(curl -sS -m 10 "https://${VM_HOST}/api/v1/health" 2>/dev/null || echo "")
   STATUS=$(echo "$RESP" | grep -oE '"status":"[^"]*"' | head -1 | cut -d'"' -f4)
@@ -166,8 +165,9 @@ for i in 1 2 3 4 5 6; do
   echo "   시도 $i/6: status=${STATUS:-none} commit=${LIVE_SHA:-none} — 재시도"
 done
 if [[ "$HEALTH_OK" != "true" ]]; then
+  ELAPSED=$(($(date +%s) - START_TIME))
   log_err "헬스체크 실패 — 최신 리비전이 서빙되지 않음"
-  kakao_notify "fail" "헬스체크 실패"
+  kakao_notify "fail" "healthcheck" "1" "$ELAPSED"
   exit 1
 fi
 
@@ -176,4 +176,4 @@ ELAPSED=$(($(date +%s) - START_TIME))
 echo ""
 echo -e "${GREEN}🎉 배포 완료 (총 ${ELAPSED}초)${NC}"
 echo "   https://${VM_HOST}"
-kakao_notify "성공" "소요 ${ELAPSED}초"
+kakao_notify "success" "" "0" "$ELAPSED"

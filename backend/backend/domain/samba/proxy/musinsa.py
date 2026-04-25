@@ -1217,12 +1217,21 @@ class MusinsaClient:
 
     @staticmethod
     def _extract_detail_images(desc_html: str) -> list[str]:
-        """상세 HTML에서 이미지 URL 추출."""
+        """상세 HTML에서 이미지 URL 추출.
+
+        무신사 desc_html은 API 응답으로 대체로 정규화되어 있지만,
+        일부 상품은 lazy-load(data-src/data-lazy)가 섞여있어 함께 처리.
+        """
         detail_images: list[str] = []
-        for match in re.finditer(r'<img[^>]+src=["\']([^"\']+)["\']', desc_html, re.I):
+        pattern = re.compile(
+            r'<img[^>]+(?:src|data-src|data-lazy|data-original)=["\']([^"\']+)["\']',
+            re.I,
+        )
+        for match in pattern.finditer(desc_html):
             src = MusinsaClient._to_image_url(match.group(1))
             if src and "icon" not in src and "btn_" not in src:
-                detail_images.append(src)
+                if src not in detail_images:
+                    detail_images.append(src)
         return detail_images
 
     # ------------------------------------------------------------------

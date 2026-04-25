@@ -2077,8 +2077,46 @@ async def sync_orders_from_markets(
                 logger.info(
                     f"[주문동기화] {label}: 롯데ON 주문 {len(raw_orders)}건 조회"
                 )
+                # 발주확인대기(odPrgsStepCd=10) 주문 자동 주문확인 대상 수집
+                unconfirmed_items: list[dict] = []
                 for ro in raw_orders:
                     orders_data.append(_parse_lotteon_order(ro, account["id"], label))
+                    step_cd = str(ro.get("odPrgsStepCd", "") or "")
+                    if step_cd == "10":
+                        unconfirmed_items.append(
+                            {
+                                "odNo": ro.get("odNo", ""),
+                                "odSeq": ro.get("odSeq", 1) or 1,
+                                "procSeq": ro.get("procSeq", 1) or 1,
+                            }
+                        )
+
+                # 주문확인(SellerIfCompleteInform, ifCplYN=Y) 일괄 실행
+                if unconfirmed_items:
+                    try:
+                        ok = await lotteon_client.confirm_orders(unconfirmed_items)
+                        if ok:
+                            logger.info(
+                                f"[주문동기화] {label}: {len(unconfirmed_items)}건 주문확인 완료"
+                            )
+                            # 로컬 표시 상태도 발주확인대기 → 출고지시로 즉시 갱신
+                            _confirmed_keys = {
+                                f"{it['odNo']}_{it['odSeq']}_{it['procSeq']}"
+                                for it in unconfirmed_items
+                            }
+                            for od in orders_data:
+                                if (
+                                    od.get("source") == "lotteon"
+                                    and od.get("order_number") in _confirmed_keys
+                                    and od.get("shipping_status") == "발주확인대기"
+                                ):
+                                    od["shipping_status"] = "출고지시"
+                        else:
+                            logger.warning(
+                                f"[주문동기화] {label}: 주문확인 API 응답 실패(rsltCd != 0000)"
+                            )
+                    except Exception as ce:
+                        logger.warning(f"[주문동기화] {label}: 주문확인 실패 — {ce}")
 
                 # ── 판매자 분담 할인 집계 — 주문 즉시 예상 정산 계산용 ─────────
                 # SellerDeliveryOrdersSearch 응답(raw_orders)에 판매자 부담 할인 관련

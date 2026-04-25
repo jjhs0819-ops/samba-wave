@@ -1232,9 +1232,26 @@ class DetailParsersMixin:
             html,
             re.DOTALL | re.IGNORECASE,
         )
+        # src + data-src + data-lazy + data-original 전부 캡처 (lazy-load 대응)
+        img_pattern = re.compile(
+            r'<img[^>]+(?:src|data-src|data-lazy|data-original)=["\']([^"\']+)["\']',
+            re.IGNORECASE,
+        )
         if detail_area:
-            img_pattern = re.compile(r'<img[^>]+src="([^"]+)"', re.IGNORECASE)
             for m in img_pattern.finditer(detail_area.group(1)):
+                img_url = self._normalize_image(m.group(1))
+                if img_url and img_url not in images:
+                    images.append(img_url)
+
+        # 컨테이너 매칭 실패/부족 시 롯데ON CDN 패턴 기반 전체 스캔 fallback
+        if len(images) < 2:
+            cdn_pattern = re.compile(
+                r'(?:src|data-src|data-lazy|data-original)=["\']'
+                r'([^"\']*(?:contents\.lotteon\.com|lotteon\.com/p/img)[^"\']+'
+                r'\.(?:jpg|jpeg|png|webp|gif))["\']',
+                re.IGNORECASE,
+            )
+            for m in cdn_pattern.finditer(html):
                 img_url = self._normalize_image(m.group(1))
                 if img_url and img_url not in images:
                     images.append(img_url)

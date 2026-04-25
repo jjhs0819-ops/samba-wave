@@ -393,7 +393,7 @@ class PlayAutoClient:
         product: dict,
         category_id: str = "",
         stock_qty: int = 999,
-        deliv_method: str = "선결제",
+        deliv_method: str = "무료",
         deliv_price: str = "0",
     ) -> dict[str, Any]:
         """삼바웨이브 상품 → 플레이오토 EMP API 포맷 변환.
@@ -530,30 +530,9 @@ class PlayAutoClient:
                 has_two_axes = any(o.get("title2") for o in emp_opts)
                 data["OptSelectType"] = "SM" if has_two_axes else "SS"
 
-        # 품목정보고시 — 상품 데이터로 채우기 (code=35: 기타재화)
-        as_phone = product.get("_as_phone", "")
-        # 품목정보의 원산지는 국가명만 (예: "중국", 비어있으면 "상세설명참조")
-        raw_origin = product.get("origin") or ""
-        siil_origin = (
-            raw_origin.strip()
-            if raw_origin.strip() not in ("기타", "국내", "")
-            else "[상세설명참조]"
-        )
-        maker = data.get("Maker", "")
-        data["SiilData"] = [
-            {
-                "code": "35",
-                "data1": str(product.get("name", ""))[:100] or "[상세설명참조]",
-                "data2": data.get("Model", "[상세설명참조]"),
-                "data3": "[상세설명참조]",
-                "data4": siil_origin,
-                "data5": maker or "[상세설명참조]",
-                # 수입품 여부: 원산지가 해외면 Y, 국내/기타면 N
-                "data6": "Y" if data.get("MadeIn", "").startswith("해외") else "N",
-                "data7": maker or "[상세설명참조]",
-                "data8": as_phone or "[상세설명참조]",
-            }
-        ]
+        # 품목정보고시 — 카테고리별로 code 분기 (01의류/02구두신발/03가방/04패션잡화/35기타)
+        # GS샵 등 품목 분류 필수 마켓 대응
+        data["SiilData"] = [_build_siil_entry(product, data)]
 
         # 인증정보 (기본: 해당없음)
         data["CertType"] = "C"
@@ -564,6 +543,141 @@ class PlayAutoClient:
             data["MyCateName"] = f"SAMBA-WAVE/{filter_name}"
 
         return data
+
+
+# ────────────────────────────────────────────────────────────
+# SiilData (품목정보고시) 빌더
+# ────────────────────────────────────────────────────────────
+
+# 카테고리 그룹 → EMP 품목정보코드
+# 01: 의류, 02: 구두/신발, 03: 가방, 04: 패션잡화, 35: 기타재화
+_SIIL_CODE_MAP: dict[str, str] = {
+    "wear": "01",
+    "shoes": "02",
+    "bag": "03",
+    "accessories": "04",
+    # cosmetic/food/electronics 등은 GS샵 품목 4분류에 없으므로 기타재화로 유지
+    "cosmetic": "35",
+    "food": "35",
+    "electronics": "35",
+    "sports": "35",
+    "etc": "35",
+}
+
+
+def _build_siil_entry(product: dict, data: dict) -> dict:
+    """상품 카테고리에 맞는 품목정보고시 엔트리를 생성한다.
+
+    GS샵 등은 품목정보가 의류/구두·신발/가방/패션잡화/기타재화 중 하나로
+    정확히 분류되어야 등록 가능하다. category1 기반으로 code를 판별하고
+    data 필드는 수집값(소재/색상/치수/원산지/제조사/AS) + [상세설명참조]로 채운다.
+
+    주의: EMP SiilData의 data1~data24 각 필드 의미는 code별로 다르지만,
+    playauto 공식 스펙(openapi.json)에는 위치별 매핑이 명시되어 있지 않고
+    외부 가이드 페이지에서만 안내된다. 의류/신발/가방/잡화는 롯데ON·스마트스토어의
+    품목정보고시 표준 필드 순서(소재-색상-치수-제조자-제조국-취급-제조년월-보증-AS)를 참고한다.
+    """
+    from backend.domain.samba.proxy.notice_utils import detect_notice_group
+
+    group = detect_notice_group(product)
+    code = _SIIL_CODE_MAP.get(group, "35")
+
+    fallback = "[상세설명참조]"
+    as_phone = (product.get("_as_phone", "") or "").strip() or fallback
+    raw_origin = (product.get("origin") or "").strip()
+    siil_origin = (
+        raw_origin if raw_origin and raw_origin not in ("기타", "국내") else fallback
+    )
+    maker = data.get("Maker", "") or product.get("brand", "") or fallback
+    material = (product.get("material") or "").strip() or fallback
+    color = (product.get("color") or "").strip() or fallback
+    care = (
+        product.get("care_instructions") or product.get("careInstructions") or ""
+    ).strip() or fallback
+    is_imported_y = "Y" if data.get("MadeIn", "").startswith("해외") else "N"
+    quality = (
+        product.get("quality_guarantee") or product.get("qualityGuarantee") or ""
+    ).strip() or "관련 법 및 소비자 분쟁해결 규정에 따름"
+
+    entry: dict[str, str] = {"code": code}
+
+    if code == "01":
+        # 의류: 소재/색상/치수/제조자/제조국/세탁방법/제조년월/품질보증/AS
+        entry.update(
+            {
+                "data1": material,
+                "data2": color,
+                "data3": fallback,
+                "data4": maker,
+                "data5": siil_origin,
+                "data6": care,
+                "data7": fallback,
+                "data8": quality,
+                "data9": as_phone,
+            }
+        )
+    elif code == "02":
+        # 구두/신발: 소재(겉/안감)/색상/치수/제조자/제조국/취급시주의/제조년월/품질보증/AS
+        entry.update(
+            {
+                "data1": material,
+                "data2": color,
+                "data3": fallback,
+                "data4": maker,
+                "data5": siil_origin,
+                "data6": care,
+                "data7": fallback,
+                "data8": quality,
+                "data9": as_phone,
+            }
+        )
+    elif code == "03":
+        # 가방: 종류/소재/색상/크기/제조자/제조국/취급시주의/제조년월/품질보증/AS
+        entry.update(
+            {
+                "data1": fallback,
+                "data2": material,
+                "data3": color,
+                "data4": fallback,
+                "data5": maker,
+                "data6": siil_origin,
+                "data7": care,
+                "data8": fallback,
+                "data9": quality,
+                "data10": as_phone,
+            }
+        )
+    elif code == "04":
+        # 패션잡화: 종류/소재/치수/제조자/제조국/취급시주의/제조년월/품질보증/AS
+        entry.update(
+            {
+                "data1": fallback,
+                "data2": material,
+                "data3": fallback,
+                "data4": maker,
+                "data5": siil_origin,
+                "data6": care,
+                "data7": fallback,
+                "data8": quality,
+                "data9": as_phone,
+            }
+        )
+    else:
+        # 35 기타재화: 품명/모델/제조자/제조국/수입여부/제조자/AS — 기존 매핑 유지
+        entry.update(
+            {
+                "data1": str(product.get("name", ""))[:100] or fallback,
+                "data2": data.get("Model", fallback),
+                "data3": fallback,
+                "data4": siil_origin,
+                "data5": maker,
+                "data6": is_imported_y,
+                "data7": maker,
+                "data8": as_phone,
+            }
+        )
+
+    return entry
 
 
 def _build_options(options: list[dict], default_stock: int = 999) -> list[dict]:
