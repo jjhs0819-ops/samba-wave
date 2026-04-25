@@ -156,24 +156,6 @@ def _format_phone(phone: str) -> str:
     return phone
 
 
-def _safe_build_ss_notice(product: dict, **kwargs: Any) -> dict:
-    """고시정보 생성 — 실패 시 기본 ETC 타입으로 폴백."""
-    try:
-        return _build_ss_notice(product, **kwargs)
-    except Exception as e:
-        logger.warning(f"[스마트스토어] 고시정보 생성 실패, ETC 폴백: {e}")
-        return {
-            "productInfoProvidedNoticeType": "ETC",
-            "etcInfo": {
-                "returnCostReason": "상세설명 참조",
-                "noRefundReason": "상세설명 참조",
-                "qualityAssuranceStandard": "상세설명 참조",
-                "compensationProcedure": "상세설명 참조",
-                "troubleShootingContents": "상세설명 참조",
-            },
-        }
-
-
 def _validate_as_phone(phone: str) -> str:
     """AS 전화번호 검증 — 전화번호 형식이 아니면 기본값 반환."""
     formatted = _format_phone(phone)
@@ -2254,16 +2236,6 @@ class SmartStoreClient:
             await _asyncio.sleep(wait)
             attempt += 1
         raise TimeoutError("그룹상품 등록 타임아웃 (2분 초과)")
-
-    async def update_group_product(self, group_no: int, payload: dict) -> dict:
-        """그룹상품 수정."""
-        return await self._call_api(
-            "PUT", f"/v2/standard-group-products/{group_no}", body=payload
-        )
-
-    async def delete_group_product(self, group_no: int) -> dict:
-        """그룹상품 삭제."""
-        return await self._call_api("DELETE", f"/v2/standard-group-products/{group_no}")
 
     @staticmethod
     def transform_group_product(

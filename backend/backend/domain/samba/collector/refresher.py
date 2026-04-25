@@ -1359,10 +1359,14 @@ async def refresh_products_bulk(
         if site == "MUSINSA":
             await _prepare_musinsa_cache()
         elif site in ("ABCmart", "GrandStage"):
-            # 확장앱이 sync한 로그인 쿠키 1회 로딩 → 잡 내내 재사용
-            # 쿠키 있으면 alwaysDscntAmt(등급별 정확값) 받아 cost 계산
-            from backend.domain.samba.proxy.abcmart import prepare_abcmart_cache
+            # 확장앱이 sync한 로그인 쿠키 → 잡 시작 시 강제 재로드
+            # (lazy-load는 1회만 동작하므로 잡 사이 새 sync 반영 위해 강제 리셋)
+            from backend.domain.samba.proxy.abcmart import (
+                ARTSourcingClient,
+                prepare_abcmart_cache,
+            )
 
+            ARTSourcingClient._bulk_cache = {}
             await prepare_abcmart_cache()
         if isinstance(max_concurrency, dict):
             concurrency = max_concurrency.get(

@@ -2779,12 +2779,13 @@ async def sync_orders_from_markets(
                         "shipment_id"
                     ] != str(existing.shipment_id or ""):
                         update_fields["shipment_id"] = order_data["shipment_id"]
-                    # 결제일 갱신 (마켓 API 값이 정확하므로 항상 갱신)
-                    if (
-                        order_data.get("paid_at")
-                        and order_data["paid_at"] != existing.paid_at
+                    # 결제일 갱신: 기존이 NULL이거나 더 이른 값일 때만 채택
+                    # (고객 결제시각은 변하지 않음 — 더 늦은 값은 마켓이 sync/처리시각을 결제칸으로 돌려준 케이스로 간주하고 무시)
+                    new_paid = order_data.get("paid_at")
+                    if new_paid and (
+                        existing.paid_at is None or new_paid < existing.paid_at
                     ):
-                        update_fields["paid_at"] = order_data["paid_at"]
+                        update_fields["paid_at"] = new_paid
                     # 주소 보충 (기존 주문에 없으면 채움)
                     if (
                         order_data.get("customer_address")
@@ -3321,7 +3322,6 @@ def _parse_smartstore_order(
 
 def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
     """롯데ON 주문 데이터 → SambaOrder dict 변환."""
-    from datetime import datetime, timezone
 
     # 주문 진행 단계 코드 → 내부 status/shipping_status 매핑
     step_cd = str(item.get("odPrgsStepCd", "") or "")
@@ -3373,13 +3373,20 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
             f"→ 반품요청으로 재매핑: odNo={item.get('odNo')}"
         )
 
-    # 주문 생성일 파싱 (yyyymmddHHmmss) — 롯데ON은 KST 기준
+    # 결제일시 파싱 (yyyymmddHHmmss) — 롯데ON은 KST 기준
+    # 응답 키명이 단일하지 않을 수 있어 다중 시도. 모두 비면 paid_at=None
+    # (이전 datetime.now() 폴백은 동일 sync 배치의 모든 row paid_at을 sync 시각으로 통일시키는 버그였음)
     from backend.utils import kst_str_to_utc
 
-    created_str = item.get("odDttm", "") or ""
-    created_at = kst_str_to_utc(created_str)
-    if not created_at:
-        created_at = datetime.now(timezone.utc)
+    order_dttm_str = (
+        item.get("odDttm") or item.get("pymtCmptnDttm") or item.get("aprvDttm") or ""
+    )
+    paid_at = kst_str_to_utc(order_dttm_str)
+    if not paid_at:
+        logger.warning(
+            f"[롯데ON][주문파싱] 결제일시 키 없음 odNo={item.get('odNo')} "
+            f"키후보={[k for k in item.keys() if 'tt' in k.lower() or 'dt' in k.lower()]}"
+        )
 
     # 배송지 주소 조합 (dvpStnmZipAddr=도로명기본주소, dvpStnmDtlAddr=상세주소)
     addr1 = item.get("dvpStnmZipAddr") or ""
@@ -3417,8 +3424,8 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
         or "",
         "customer_address": full_addr,
         "notes": item.get("dvMsg", "") or "",
-        "paid_at": created_at,
-        "created_at": created_at,
+        "paid_at": paid_at,
+        # created_at은 명시 X — DB default_factory(now)가 실제 삽입 시각 기록
     }
 
 

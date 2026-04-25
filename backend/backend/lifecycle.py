@@ -115,6 +115,15 @@ async def _apply_startup_schema_fixes(logger: logging.Logger) -> None:
                     "OR product_name LIKE '%★교환주문%'"
                 )
             )
+            # 롯데ON paid_at 오염 정리 — 이전 datetime.now() 폴백 버그로 paid_at이
+            # sync 시각으로 통일 박힌 row를 NULL로 되돌려 백필 로직(order.py:3092-3129)이
+            # 재채움할 수 있게 한다. idempotent (정상 데이터는 paid_at <= created_at).
+            paid_at_fix_result = await session.execute(
+                text(
+                    "UPDATE samba_order SET paid_at = NULL "
+                    "WHERE source = 'lotteon' AND paid_at > created_at"
+                )
+            )
             await session.commit()
 
         if fix_result.rowcount:
@@ -126,6 +135,11 @@ async def _apply_startup_schema_fixes(logger: logging.Logger) -> None:
             logger.info(
                 "[startup] deleted derived samba_order rows=%s",
                 delete_result.rowcount,
+            )
+        if paid_at_fix_result.rowcount:
+            logger.info(
+                "[startup] reset lotteon paid_at (오염 데이터 NULL화) rows=%s",
+                paid_at_fix_result.rowcount,
             )
         logger.info(
             "[startup] schema bootstrap complete (%s migrations)", len(migrations)

@@ -563,30 +563,6 @@ _CLAIM_STATUS_LABEL: dict[str, str] = {
 }
 
 
-def _parse_lotteon_return(
-    item: dict[str, str],
-    return_type: str,  # "return" | "cancel"
-) -> dict[str, Any]:
-    """롯데홈쇼핑 반품/취소 데이터 → SambaReturn dict 변환.
-
-    item: _parse_xml_list()가 반환한 단일 반품/취소 dict
-    return_type: "return"(반품) 또는 "cancel"(취소)
-    """
-    return {
-        "source": "lotteon",
-        "order_number": item.get("OrdProdCode", "") or item.get("OrdNo", ""),
-        "shipment_id": item.get("OrdNo", ""),
-        "ord_dtl_sn": item.get("OrdDtlSn", ""),  # 반품 처리용 상세번호
-        "return_type": return_type,
-        "reason_code": item.get("ClmCausCd", ""),
-        "reason": item.get("ClmCausNm", ""),
-        "quantity": int(item.get("WhsgQty", "") or item.get("CnclQty", "") or "1"),
-        "product_name": item.get("GoodsNm", ""),
-        "product_id": item.get("GoodNo", ""),
-        "status": "requested",
-    }
-
-
 def _extract_city_district(address: Optional[str]) -> Optional[str]:
     """주소에서 시/군 단위를 추출한다.
     - '경기도 수원시 팔달구...' → '수원시'

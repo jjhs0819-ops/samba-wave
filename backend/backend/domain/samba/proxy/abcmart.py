@@ -79,8 +79,9 @@ async def prepare_abcmart_cache() -> None:
         "cookie": cookies[0] if cookies else "",
         "idx": 0,
         "expired": False,
+        "loaded": True,  # 빈 결과여도 lazy-load 재시도 폭주 방지
     }
-    logger.info(f"[ABCmart] 잡 시작 쿠키 로딩: {len(cookies)}개")
+    logger.info(f"[ABCmart] 쿠키 캐시 로딩: {len(cookies)}개")
 
 
 def _mark_abcmart_cookie_expired() -> None:
@@ -727,6 +728,15 @@ class ARTSourcingClient:
         """
         site_label = f"[{self._source_site}]"
         subdomain = self.SUBDOMAIN_MAP.get(self.channel, self.SUBDOMAIN_MAP["10001"])
+
+        # 캐시 미초기화 시 1회 로드 — 단일 갱신/수집/주문/오토튠 모든 진입점 보장
+        # (오토튠은 refresher.py에서 강제 리셋 후 호출하므로 매 잡 새로 로드)
+        if not self._bulk_cache.get("loaded"):
+            try:
+                await prepare_abcmart_cache()
+            except Exception as e:
+                logger.warning(f"{site_label} 쿠키 캐시 lazy-load 실패: {e}")
+                ARTSourcingClient._bulk_cache["loaded"] = True  # 재시도 폭주 방지
 
         # 1. 캐시된 로그인 쿠키 우선 (확장앱이 sync한 사용자 인증 쿠키)
         cache = self._bulk_cache

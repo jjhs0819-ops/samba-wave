@@ -32,12 +32,6 @@ def _fmt_num(value: Any) -> str:
 
 
 _LOG_NUMBER_PATTERN = re.compile(r"(?<![\d/])(\d{4,})(?=(건|개|원|회|토큰|페이지))")
-
-
-def _normalize_job_log_numbers(msg: str) -> str:
-    return _LOG_NUMBER_PATTERN.sub(lambda m: f"{int(m.group(1)):,}", msg)
-
-
 _LOG_FRACTION_PATTERN = re.compile(r"\[(\d+)/(\d+)\]")
 _LOG_UNIT_NUMBER_PATTERN = re.compile(
     r"(?<![\d,])(\d{4,})(?=(건|개|원|회|토큰|페이지))"
