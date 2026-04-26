@@ -12,10 +12,14 @@ export default function useProxyAuth() {
   const [musinsaAuth, setMusinsaAuth] = useState<ProxyAuthStatus>('checking')
   const [musinsaAuthText, setMusinsaAuthText] = useState('인증 상태 확인 중...')
 
-  // 프록시 서버 상태 확인
-  const checkProxyStatus = () => {
+  // 프록시 서버 상태 확인 — 502/네트워크 오류 시 1회 재시도(1.5초 지연)
+  // Caddy fail_duration 윈도우(5s) 내 단발성 502를 흡수하기 위함
+  const checkProxyStatus = (retried = false) => {
     fetchWithAuth(`${API_BASE}/api/v1/samba/collector/proxy-status`)
-      .then((r) => r.json())
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
       .then((data) => {
         if (data.status === 'ok') {
           setProxyStatus('ok')
@@ -26,15 +30,22 @@ export default function useProxyAuth() {
         }
       })
       .catch(() => {
+        if (!retried) {
+          setTimeout(() => checkProxyStatus(true), 1500)
+          return
+        }
         setProxyStatus('error')
         setProxyText('백엔드 서버 연결 실패')
       })
   }
 
-  // 무신사 인증 상태 확인
-  const checkMusinsaAuth = () => {
+  // 무신사 인증 상태 확인 — 동일하게 1회 재시도
+  const checkMusinsaAuth = (retried = false) => {
     fetchWithAuth(`${API_BASE}/api/v1/samba/collector/musinsa-auth-status`)
-      .then((r) => r.json())
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
       .then((data) => {
         if (data.status === 'ok') {
           setMusinsaAuth('ok')
@@ -45,6 +56,10 @@ export default function useProxyAuth() {
         }
       })
       .catch(() => {
+        if (!retried) {
+          setTimeout(() => checkMusinsaAuth(true), 1500)
+          return
+        }
         setMusinsaAuth('error')
         setMusinsaAuthText('백엔드 서버 연결 실패')
       })
