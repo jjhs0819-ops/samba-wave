@@ -61,7 +61,7 @@ class SambaCollectorService:
         )
 
     async def create_filter(self, data: Dict[str, Any]) -> SambaSearchFilter:
-        if not data.get("is_folder"):
+        if not data.get("is_folder") and "requested_count" not in data:
             data["requested_count"] = FIXED_REQUESTED_COUNT
         return await self.filter_repo.create_async(**data)
 

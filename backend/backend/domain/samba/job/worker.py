@@ -653,6 +653,12 @@ class JobWorker:
                         )
 
                         await run_order_sync(fresh_job, repo, session, self)
+                    elif _job_type == "cs_sync":
+                        from backend.domain.samba.job.handlers.cs_sync import (
+                            run as run_cs_sync,
+                        )
+
+                        await run_cs_sync(fresh_job, repo, session, self)
                     else:
                         await repo.fail_job(_job_id, f"알 수 없는 잡 타입: {_job_type}")
 

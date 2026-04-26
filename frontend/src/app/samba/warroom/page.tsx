@@ -779,7 +779,12 @@ export default function WarroomPage() {
                   const tickEndedAt = latestTickDetail?.ended_at as string | undefined
                   // DB 이벤트에 없는 항목만 tick에서 보충 (중복 방지), 합산 5개 제한
                   const tickPriceSlice = tickPriceItems.slice(0, Math.max(0, 5 - sitePriceChanges.length))
-                  const tickStockSlice = tickStockItems.slice(0, Math.max(0, 5 - siteSoldOuts.length - siteRestocks.length))
+                  // 품절+재입고 통합 타임라인 (created_at 내림차순, 최대 5개)
+                  const allStockEvents = [
+                    ...siteSoldOuts.map(ev => ({ ...ev, _type: 'soldout' as const })),
+                    ...siteRestocks.map(ev => ({ ...ev, _type: 'restock' as const })),
+                  ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 5)
+                  const tickStockSlice = tickStockItems.slice(0, Math.max(0, 5 - allStockEvents.length))
                   if (
                     sitePriceChanges.length === 0
                     && siteSoldOuts.length === 0
@@ -803,55 +808,55 @@ export default function WarroomPage() {
                       <div style={{ fontSize: '0.78rem', color: '#666', marginBottom: '0.3rem', fontWeight: 600 }}>
                         {siteName} 점검
                       </div>
-                      {siteSoldOuts.map(ev => {
+                      {/* 품절+재입고 통합 타임라인 (최근순 5개) */}
+                      {allStockEvents.map(ev => {
                         const d = ev.detail
                         const sitePid = (d?.site_product_id as string | undefined) || shortId(ev.product_id)
-                        const reason = d?.reason as string | undefined
-                        const soldOutOptions = (d?.sold_out_options as string[] | undefined) ?? []
-                        const suspendedMarkets = (d?.suspended_markets as string[] | undefined) ?? []
-                        const reasonLabel =
-                          reason === 'option_partial' ? '옵션품절'
-                          : reason === 'source_deleted' ? '소싱처삭제'
-                          : reason === 'all_soldout' ? '전체품절'
-                          : '품절'
-                        return (
-                          <div key={ev.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
-                            <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
-                            <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{sitePid}</span>
-                            <span style={{ fontSize: '0.72rem', color: '#A78BFA' }}>품절</span>
-                            <span style={{ fontSize: '0.68rem', color: '#888' }}>({reasonLabel})</span>
-                            {reason === 'option_partial' && soldOutOptions.length > 0 && (
-                              <span style={{ fontSize: '0.72rem', color: '#A78BFA' }}>
-                                {soldOutOptions.slice(0, 5).join(', ')}
-                                {soldOutOptions.length > 5 ? ` 외 ${fmtNum(soldOutOptions.length - 5)}` : ''}
-                              </span>
-                            )}
-                            {suspendedMarkets.length > 0 && (
-                              <span style={{ fontSize: '0.68rem', color: '#FFB347' }}>
-                                판매중지 {suspendedMarkets.length}
-                              </span>
-                            )}
-                          </div>
-                        )
-                      })}
-                      {siteRestocks.map(ev => {
-                        const d = ev.detail
-                        const sitePid = (d?.site_product_id as string | undefined) || shortId(ev.product_id)
-                        const restockedOptions = (d?.restocked_options as string[] | undefined) ?? []
-                        return (
-                          <div key={ev.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
-                            <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
-                            <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{sitePid}</span>
-                            <span style={{ fontSize: '0.72rem', color: '#51CF66' }}>재입고</span>
-                            <span style={{ fontSize: '0.68rem', color: '#888' }}>(옵션리스탁)</span>
-                            {restockedOptions.length > 0 && (
-                              <span style={{ fontSize: '0.72rem', color: '#51CF66' }}>
-                                {restockedOptions.slice(0, 5).join(', ')}
-                                {restockedOptions.length > 5 ? ` 외 ${fmtNum(restockedOptions.length - 5)}` : ''}
-                              </span>
-                            )}
-                          </div>
-                        )
+                        if (ev._type === 'soldout') {
+                          const reason = d?.reason as string | undefined
+                          const soldOutOptions = (d?.sold_out_options as string[] | undefined) ?? []
+                          const suspendedMarkets = (d?.suspended_markets as string[] | undefined) ?? []
+                          const reasonLabel =
+                            reason === 'option_partial' ? '옵션품절'
+                            : reason === 'source_deleted' ? '소싱처삭제'
+                            : reason === 'all_soldout' ? '전체품절'
+                            : '품절'
+                          return (
+                            <div key={ev.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
+                              <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
+                              <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{sitePid}</span>
+                              <span style={{ fontSize: '0.72rem', color: '#A78BFA' }}>품절</span>
+                              <span style={{ fontSize: '0.68rem', color: '#888' }}>({reasonLabel})</span>
+                              {soldOutOptions.length > 0 && (
+                                <span style={{ fontSize: '0.72rem', color: '#A78BFA' }}>
+                                  {soldOutOptions.slice(0, 5).join(', ')}
+                                  {soldOutOptions.length > 5 ? ` 외 ${fmtNum(soldOutOptions.length - 5)}` : ''}
+                                </span>
+                              )}
+                              {suspendedMarkets.length > 0 && (
+                                <span style={{ fontSize: '0.68rem', color: '#FFB347' }}>
+                                  판매중지 {suspendedMarkets.length}
+                                </span>
+                              )}
+                            </div>
+                          )
+                        } else {
+                          const restockedOptions = (d?.restocked_options as string[] | undefined) ?? []
+                          return (
+                            <div key={ev.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
+                              <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
+                              <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{sitePid}</span>
+                              <span style={{ fontSize: '0.72rem', color: '#51CF66' }}>재입고</span>
+                              <span style={{ fontSize: '0.68rem', color: '#888' }}>(옵션리스탁)</span>
+                              {restockedOptions.length > 0 && (
+                                <span style={{ fontSize: '0.72rem', color: '#51CF66' }}>
+                                  {restockedOptions.slice(0, 5).join(', ')}
+                                  {restockedOptions.length > 5 ? ` 외 ${fmtNum(restockedOptions.length - 5)}` : ''}
+                                </span>
+                              )}
+                            </div>
+                          )
+                        }
                       })}
                       {sitePriceChanges.map(ev => {
                         const d = ev.detail

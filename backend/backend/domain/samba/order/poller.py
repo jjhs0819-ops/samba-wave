@@ -162,6 +162,46 @@ async def _create_order_sync_job(session, tenant_id: str | None) -> None:
     logger.info("[주문폴러] order_sync 잡 생성 (tenant=%s, job=%s)", tenant_id, job.id)
 
 
+async def _create_cs_sync_job(session, tenant_id: str | None) -> None:
+    """cs_sync 잡 생성 (중복 실행 방지 포함)."""
+    from sqlmodel import col, select
+
+    from backend.domain.samba.job.model import JobStatus, SambaJob, generate_job_id
+
+    active = (
+        (
+            await session.execute(
+                select(SambaJob)
+                .where(
+                    SambaJob.job_type == "cs_sync",
+                    col(SambaJob.status).in_([JobStatus.PENDING, JobStatus.RUNNING]),
+                    SambaJob.tenant_id == tenant_id,
+                )
+                .limit(1)
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if active:
+        logger.info(
+            "[주문폴러] cs_sync 잡 이미 실행 중 (tenant=%s, job=%s)",
+            tenant_id,
+            active.id,
+        )
+        return
+
+    job = SambaJob(
+        id=generate_job_id(),
+        tenant_id=tenant_id,
+        job_type="cs_sync",
+        payload={},
+    )
+    session.add(job)
+    await session.flush()
+    logger.info("[주문폴러] cs_sync 잡 생성 (tenant=%s, job=%s)", tenant_id, job.id)
+
+
 async def start_order_poller() -> None:
     """백그라운드 주문 폴링 루프 (lifecycle.py에서 asyncio.create_task로 실행)."""
     from backend.db.orm import get_write_session
@@ -179,10 +219,13 @@ async def start_order_poller() -> None:
             async with get_write_session() as session:
                 new_by_market, tenant_ids = await _fetch_new_order_numbers(session)
 
-                if new_by_market and not is_night:
-                    # 8~24시: 테넌트별 order_sync 잡 자동 생성
-                    for tenant_id in tenant_ids:
-                        await _create_order_sync_job(session, tenant_id)
+                if not is_night:
+                    if new_by_market:
+                        # 8~24시: 신규 주문 있으면 테넌트별 order_sync 잡 생성
+                        for tenant_id in tenant_ids:
+                            await _create_order_sync_job(session, tenant_id)
+                    # CS는 주문 감지 여부와 무관하게 30분마다 전체 동기화
+                    await _create_cs_sync_job(session, tenant_id=None)
 
             if new_by_market:
                 total = sum(len(v) for v in new_by_market.values())

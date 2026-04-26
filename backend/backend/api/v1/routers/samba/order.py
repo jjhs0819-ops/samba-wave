@@ -312,9 +312,7 @@ async def dashboard_stats(
                 else_=0,
             )
         ).label("fulfillment_count"),
-    ).where(
-        SambaOrder.paid_at != None, order_date >= this_month_start
-    )  # noqa: E711
+    ).where(SambaOrder.paid_at != None, order_date >= this_month_start)  # noqa: E711
     if tenant_id is not None:
         this_month_q = this_month_q.where(
             or_(
@@ -4083,7 +4081,9 @@ def _parse_playauto_order(
         "source_site": (
             f"{site_name}({alias_map[site_id]})"
             if alias_map and site_id in alias_map and site_name
-            else f"{site_name}({site_id})" if site_name else ""
+            else f"{site_name}({site_id})"
+            if site_name
+            else ""
         ),
     }
 
