@@ -273,9 +273,17 @@ class BaseRepository(Generic[ModelType]):
                 if hasattr(self.model, field):
                     statement = statement.where(getattr(self.model, field) == value)
 
-            result = await self.session.execute(statement)
-            entity: Optional[ModelType] = result.scalar_one_or_none()
-            return entity
+            # Caller contract is "first matching entity or None". Some tables may
+            # contain legacy duplicates, so avoid raising on multi-row matches.
+            result = await self.session.execute(statement.limit(2))
+            entities = list(result.scalars().all())
+            if len(entities) > 1:
+                logger.warning(
+                    "Multiple %s rows matched find_by_async(%s); returning the first row",
+                    self.model.__name__,
+                    kwargs,
+                )
+            return entities[0] if entities else None
 
         except SQLAlchemyError as e:
             logger.exception(f"Error finding {self.model.__name__}: {e}")

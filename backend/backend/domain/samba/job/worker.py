@@ -2593,8 +2593,8 @@ class JobWorker:
         total_unmatched = 0
         # 재시도 큐 — 상세조회/매핑 실패 상품 누수 방지
         _failed_queue: list[dict] = []
-        # 병렬 배치 처리 (배치당 4개 동시)
-        _SSG_BATCH = 3
+        # 병렬 배치 처리 — SSG rate-limit 완화를 위해 2개 동시로 제한
+        _SSG_BATCH = 2
         _ssg_page = 1
         # 필터 requested_count 합산 → 총 예상 건수 (진행률 표시용)
         _ssg_total_est = sum(f.requested_count or 0 for f in filters) or 1
@@ -2753,7 +2753,7 @@ class JobWorker:
                         for _it in _non_bl
                     ]
                     _gathered_ext = await asyncio.gather(
-                        *[asyncio.wait_for(f, timeout=45) for _, f in _bl_futs],
+                        *[asyncio.wait_for(f, timeout=55) for _, f in _bl_futs],
                         return_exceptions=True,
                     )
                     for _bl_it2, _bl_ext in zip(_non_bl, _gathered_ext):

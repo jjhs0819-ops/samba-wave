@@ -2802,8 +2802,24 @@ async def sync_orders_from_markets(
                     _lo_id = (_lo_row.fetchone() or [None])[0]
                     existing = await svc.repo.get_async(_lo_id) if _lo_id else None
                 else:
-                    existing = await svc.repo.find_by_async(
-                        order_number=order_data["order_number"]
+                    _existing_row = await session.execute(
+                        _sa_text(
+                            "SELECT id FROM samba_order "
+                            "WHERE order_number = :order_number "
+                            "AND tenant_id IS NOT DISTINCT FROM :tid "
+                            "AND channel_id IS NOT DISTINCT FROM :cid "
+                            "ORDER BY created_at DESC "
+                            "LIMIT 1"
+                        ),
+                        {
+                            "order_number": order_data["order_number"],
+                            "tid": order_data.get("tenant_id"),
+                            "cid": order_data.get("channel_id"),
+                        },
+                    )
+                    _existing_id = (_existing_row.fetchone() or [None])[0]
+                    existing = (
+                        await svc.repo.get_async(_existing_id) if _existing_id else None
                     )
                 if (
                     not existing

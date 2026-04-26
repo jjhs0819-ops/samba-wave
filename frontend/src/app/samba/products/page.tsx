@@ -1481,53 +1481,65 @@ export default function ProductsPage() {
             addLog(`시작: ${startTime} (${fmt(ids.length)}개 상품)`)
             let success = 0
             let fail = 0
-            for (let i = 0; i < ids.length; i++) {
-              if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${fmt(i)}/${fmt(ids.length)})`); break }
-              const prod = productMap[ids[i]] || allProducts.find(p => p.id === ids[i])
-              const brand = prod?.brand || ''
-              const name = prod?.name?.slice(0, 30) || ''
-              const prodNo = prod?.site_product_id || ids[i].slice(-8)
-              const label = [brand, name, prodNo].filter(Boolean).join(' / ')
-              setAiJobTitle(`AI 이미지변환 [${fmt(i + 1)}/${fmt(ids.length)}] ${label}`)
-              const delays = [3000, 5000]
-              for (let attempt = 0; attempt <= 2; attempt++) {
-                if (attempt > 0) {
-                  addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 재시도 ${attempt}/2`)
-                  await new Promise(r => setTimeout(r, delays[attempt - 1]))
-                }
-                try {
-                  if (aiImgMode === 'background') {
-                    // WASM 브라우저 배경 제거 — 서버 워커 불필요
-                    const { removeBgFromUrl, uploadBlobToR2 } = await import('@/lib/samba/bgRemoval')
-                    const prod = productMap[ids[i]]
-                    if (!prod) { fail++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 상품 정보 없음`); break }
-                    addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 배경 제거 중...`)
-                    const thumbUrls = aiImgScope.thumbnail ? (prod.images || []).slice(0, 1) : []
-                    const addlUrls = aiImgScope.additional ? (prod.images || []).slice(1) : []
-                    const detailUrls = aiImgScope.detail ? (prod.detail_images || []) : []
-                    const processUrls = async (urls: string[], prefix: string) => {
-                      const results: string[] = []
-                      for (let ui = 0; ui < urls.length; ui++) {
-                        const blob = await removeBgFromUrl(urls[ui])
-                        results.push(await uploadBlobToR2(blob, `${prefix}_${ui}_${Date.now()}.webp`))
+            if (aiImgMode === 'background') {
+              // 배경제거: 백엔드 job queue 일괄 제출 + 폴링
+              addLog(`[${ts()}] 배경 제거 큐 제출 중... (${fmt(ids.length)}개 상품)`)
+              try {
+                const batchRes = await proxyApi.transformImages(ids, aiImgScope, 'background')
+                if (!batchRes.success || !batchRes.job_id) {
+                  fail = ids.length
+                  addLog(`큐 등록 실패: ${batchRes.message}`)
+                } else {
+                  const jid = batchRes.job_id
+                  addLog(`[${ts()}] 큐 등록 완료 (job: ${jid.slice(-8)}) — 로컬 워커 처리 대기 중...`)
+                  addLog(`※ 로컬 워커(local_bg_worker.py)가 실행 중이어야 처리됩니다`)
+                  let pollCount = 0
+                  const maxPolls = 720 // 최대 60분 (5초 간격)
+                  while (pollCount < maxPolls && !aiJobAbortRef.current) {
+                    await new Promise(r => setTimeout(r, 5000))
+                    pollCount++
+                    try {
+                      const st = await proxyApi.bgJobStatus(jid)
+                      const cur = st.current ?? 0
+                      const tot = st.total ?? ids.length
+                      setAiJobTitle(`배경제거 [${fmt(cur)}/${fmt(tot)}]`)
+                      if (pollCount % 12 === 0) addLog(`[${ts()}] 진행중... ${fmt(cur)}/${fmt(tot)}`)
+                      if (st.status === 'completed') {
+                        success = st.total_transformed || 0
+                        fail = st.total_failed || 0
+                        addLog(`[${ts()}] 완료 — 성공 ${fmt(success)}개 / 실패 ${fmt(fail)}개`)
+                        break
                       }
-                      return results
-                    }
-                    const pid = ids[i]
-                    const newThumb = await processUrls(thumbUrls, `bg_${pid}_th`)
-                    const newAddl = await processUrls(addlUrls, `bg_${pid}_ad`)
-                    const newDetail = await processUrls(detailUrls, `bg_${pid}_dt`)
-                    const updateData: Partial<SambaCollectedProduct> = {}
-                    if (aiImgScope.thumbnail || aiImgScope.additional) {
-                      updateData.images = [...newThumb, ...newAddl, ...(aiImgScope.additional ? [] : (prod.images || []).slice(1))]
-                    }
-                    if (aiImgScope.detail) updateData.detail_images = newDetail
-                    updateData.tags = [...new Set([...(prod.tags || []), '__ai_image__', '__img_edited__'])]
-                    await collectorApi.updateProduct(pid, updateData)
-                    const cnt = newThumb.length + newAddl.length + newDetail.length
-                    success++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 완료 (${fmt(cnt)}장)`)
-                    break
-                  } else {
+                      if (st.status === 'failed' || st.status === 'not_found') {
+                        fail = ids.length
+                        addLog(`[${ts()}] 워커 처리 실패`)
+                        break
+                      }
+                    } catch { /* 폴링 오류 무시 */ }
+                  }
+                  if (aiJobAbortRef.current) addLog(`⛔ 사용자 중단`)
+                  else if (pollCount >= maxPolls) { addLog(`타임아웃 (60분 초과)`); fail = ids.length - success }
+                }
+              } catch (e) {
+                fail = ids.length
+                addLog(`오류: ${e instanceof Error ? e.message : ''}`)
+              }
+            } else {
+              for (let i = 0; i < ids.length; i++) {
+                if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${fmt(i)}/${fmt(ids.length)})`); break }
+                const prod = productMap[ids[i]] || allProducts.find(p => p.id === ids[i])
+                const brand = prod?.brand || ''
+                const name = prod?.name?.slice(0, 30) || ''
+                const prodNo = prod?.site_product_id || ids[i].slice(-8)
+                const label = [brand, name, prodNo].filter(Boolean).join(' / ')
+                setAiJobTitle(`AI 이미지변환 [${fmt(i + 1)}/${fmt(ids.length)}] ${label}`)
+                const delays = [3000, 5000]
+                for (let attempt = 0; attempt <= 2; attempt++) {
+                  if (attempt > 0) {
+                    addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 재시도 ${attempt}/2`)
+                    await new Promise(r => setTimeout(r, delays[attempt - 1]))
+                  }
+                  try {
                     const res = await proxyApi.transformImages([ids[i]], aiImgScope, aiImgMode, aiModelPreset)
                     if (res.success && res.total_transformed > 0) {
                       success++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 완료 (${fmt(res.total_transformed)}장)`)
@@ -1535,9 +1547,9 @@ export default function ProductsPage() {
                       fail++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 실패: ${res.message || '변환된 이미지 0장'}`)
                     }
                     break
+                  } catch (e) {
+                    if (attempt === 2) { fail++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
                   }
-                } catch (e) {
-                  if (attempt === 2) { fail++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
                 }
               }
             }

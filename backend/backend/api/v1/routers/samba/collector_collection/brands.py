@@ -637,8 +637,7 @@ async def brand_create_groups(
         else:
             group_name = f"{body.source_site}_{label}_{path_tail}"
 
-        # 수집 요청 수: 0 이하이면 스캔 카운트(실제 상품수) 사용
-        req_count = FIXED_REQUESTED_COUNT
+        req_count = count if count > 0 else FIXED_REQUESTED_COUNT
 
         # 소싱처별 keyword 및 category_filter 결정
         # 공통 옵션: 품절상품 포함

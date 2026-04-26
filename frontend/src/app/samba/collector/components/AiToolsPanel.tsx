@@ -181,46 +181,60 @@ export default function AiToolsPanel(props: Props) {
             addLog(`시작: ${startTime} (${fmtNum(productIds.length)}개 상품)`)
             let success = 0
             let fail = 0
-            for (let i = 0; i < productIds.length; i++) {
-              if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${fmtNum(i)}/${fmtNum(productIds.length)})`); break }
-              const label = productIds[i].slice(-8)
-              setAiJobTitle(`AI 이미지변환 [${fmtNum(i + 1)}/${fmtNum(productIds.length)}]`)
+            if (aiImgMode === 'background') {
+              // 배경제거: 백엔드 job queue 일괄 제출 + 폴링
+              addLog(`[${ts()}] 배경 제거 큐 제출 중... (${fmtNum(productIds.length)}개 상품)`)
               try {
-                if (aiImgMode === 'background') {
-                  // WASM 브라우저 배경 제거
-                  const { removeBgFromUrl, uploadBlobToR2 } = await import('@/lib/samba/bgRemoval')
-                  const item = productDetails.get(productIds[i])
-                  if (!item) { fail++; addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 상품 정보 없음`); continue }
-                  const thumbUrls = aiImgScope.thumbnail ? item.images.slice(0, 1) : []
-                  const addlUrls = aiImgScope.additional ? item.images.slice(1) : []
-                  const detailUrls = aiImgScope.detail ? item.detail_images : []
-                  const processUrls = async (urls: string[], prefix: string) => {
-                    const results: string[] = []
-                    for (let ui = 0; ui < urls.length; ui++) {
-                      const blob = await removeBgFromUrl(urls[ui])
-                      results.push(await uploadBlobToR2(blob, `${prefix}_${ui}_${Date.now()}.webp`))
-                    }
-                    return results
-                  }
-                  const pid = productIds[i]
-                  const newThumb = await processUrls(thumbUrls, `bg_${pid}_th`)
-                  const newAddl = await processUrls(addlUrls, `bg_${pid}_ad`)
-                  const newDetail = await processUrls(detailUrls, `bg_${pid}_dt`)
-                  const updateData: { images?: string[]; detail_images?: string[]; tags?: string[] } = {}
-                  if (aiImgScope.thumbnail || aiImgScope.additional) {
-                    updateData.images = [...newThumb, ...newAddl, ...(aiImgScope.additional ? [] : item.images.slice(1))]
-                  }
-                  if (aiImgScope.detail) updateData.detail_images = newDetail
-                  updateData.tags = [...new Set([...item.tags, '__ai_image__', '__img_edited__'])]
-                  await collectorApi.updateProduct(pid, updateData)
-                  const cnt = newThumb.length + newAddl.length + newDetail.length
-                  success++; addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 완료 (${fmtNum(cnt)}장)`)
+                const batchRes = await proxyApi.transformImages(productIds, aiImgScope, 'background')
+                if (!batchRes.success || !batchRes.job_id) {
+                  fail = productIds.length
+                  addLog(`큐 등록 실패: ${batchRes.message}`)
                 } else {
+                  const jid = batchRes.job_id
+                  addLog(`[${ts()}] 큐 등록 완료 (job: ${jid.slice(-8)}) — 로컬 워커 처리 대기 중...`)
+                  addLog(`※ 로컬 워커(local_bg_worker.py)가 실행 중이어야 처리됩니다`)
+                  let pollCount = 0
+                  const maxPolls = 720
+                  while (pollCount < maxPolls && !aiJobAbortRef.current) {
+                    await new Promise(r => setTimeout(r, 5000))
+                    pollCount++
+                    try {
+                      const st = await proxyApi.bgJobStatus(jid)
+                      const cur = st.current ?? 0
+                      const tot = st.total ?? productIds.length
+                      setAiJobTitle(`배경제거 [${fmtNum(cur)}/${fmtNum(tot)}]`)
+                      if (pollCount % 12 === 0) addLog(`[${ts()}] 진행중... ${fmtNum(cur)}/${fmtNum(tot)}`)
+                      if (st.status === 'completed') {
+                        success = st.total_transformed || 0
+                        fail = st.total_failed || 0
+                        addLog(`[${ts()}] 완료 — 성공 ${fmtNum(success)}개 / 실패 ${fmtNum(fail)}개`)
+                        break
+                      }
+                      if (st.status === 'failed' || st.status === 'not_found') {
+                        fail = productIds.length
+                        addLog(`[${ts()}] 워커 처리 실패`)
+                        break
+                      }
+                    } catch { /* 폴링 오류 무시 */ }
+                  }
+                  if (aiJobAbortRef.current) addLog(`⛔ 사용자 중단`)
+                  else if (pollCount >= maxPolls) { addLog(`타임아웃 (60분 초과)`); fail = productIds.length - success }
+                }
+              } catch (e) {
+                fail = productIds.length
+                addLog(`오류: ${e instanceof Error ? e.message : ''}`)
+              }
+            } else {
+              for (let i = 0; i < productIds.length; i++) {
+                if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${fmtNum(i)}/${fmtNum(productIds.length)})`); break }
+                const label = productIds[i].slice(-8)
+                setAiJobTitle(`AI 이미지변환 [${fmtNum(i + 1)}/${fmtNum(productIds.length)}]`)
+                try {
                   const res = await proxyApi.transformImages([productIds[i]], aiImgScope, aiImgMode, aiModelPreset)
                   if (res.success) { success++; addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 완료`) }
                   else { fail++; addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 실패: ${res.message}`) }
-                }
-              } catch (e) { fail++; addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
+                } catch (e) { fail++; addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
+              }
             }
             const endTime = ts()
             setAiJobTitle(`AI 이미지변환 완료 (${fmtNum(success)}/${fmtNum(productIds.length)})`)

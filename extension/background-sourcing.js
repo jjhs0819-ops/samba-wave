@@ -590,7 +590,7 @@ async function handleSourcingJob(job) {
     } else if (job.type === 'search' && job.site === 'GSShop') {
       await waitForGSShopSearchResults(tabId, 6000)
     } else if (job.type === 'detail' && job.site === 'SSG') {
-      await wait(10000) // SSG Next.js hydration 대기
+      await wait(6000) // SSG Next.js hydration 대기
     } else {
       await wait(5000) // SPA 렌더링 대기
     }

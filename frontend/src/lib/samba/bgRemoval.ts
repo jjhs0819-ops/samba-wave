@@ -8,9 +8,11 @@ export async function removeBgFromUrl(imageUrl: string): Promise<Blob> {
   if (!resp.ok) throw new Error(`이미지 로드 실패: ${resp.status}`)
   const imgBlob = await resp.blob()
 
-  // 첫 실행 시 모델 ~50MB CDN 다운로드, 이후 브라우저 캐시 사용
+  // jsdelivr CDN에서 모델 다운로드 (unpkg 대비 국내 안정적)
   const { removeBackground } = await import('@imgly/background-removal')
-  const transparentBlob = await removeBackground(imgBlob)
+  const transparentBlob = await removeBackground(imgBlob, {
+    publicPath: 'https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/dist/',
+  })
 
   const bitmap = await createImageBitmap(transparentBlob)
   const canvas = document.createElement('canvas')
