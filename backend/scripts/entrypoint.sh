@@ -26,6 +26,7 @@ echo "Running in $ENVIRONMENT mode"
 
 if [ "$ENVIRONMENT" = "production" ]; then
   # Cloud SQL Auth Proxy 사이드카 대기 — 재시도로 확실히 연결 확인
+  # 첫 retry는 1s (proxy가 보통 1~2초 내 ready), 이후 5s로 점증 (배포시간 최적화)
   echo "Waiting for Cloud SQL proxy..."
   for i in 1 2 3 4 5 6; do
     if uv run python -c "
@@ -46,8 +47,13 @@ exit(0 if r else 1)
       echo "Cloud SQL proxy ready (attempt $i)."
       break
     fi
-    echo "Cloud SQL proxy not ready, retrying in 5s... (attempt $i/6)"
-    sleep 5
+    if [ "$i" = "1" ] || [ "$i" = "2" ]; then
+      echo "Cloud SQL proxy not ready, retrying in 1s... (attempt $i/6)"
+      sleep 1
+    else
+      echo "Cloud SQL proxy not ready, retrying in 5s... (attempt $i/6)"
+      sleep 5
+    fi
   done
 
   # Emergency schema fixes — alembic_version=873871a20399 stamp 상태에서 누락된 테이블/컬럼 수동 보완

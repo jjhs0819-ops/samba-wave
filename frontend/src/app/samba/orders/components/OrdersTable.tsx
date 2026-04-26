@@ -121,7 +121,7 @@ export default function OrdersTable(props: OrdersTableProps) {
             <tr><td colSpan={4} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>로딩 중...</td></tr>
           ) : filteredOrders.length === 0 ? (
             <tr><td colSpan={4} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>주문이 없습니다</td></tr>
-          ) : filteredOrders.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((o, index) => {
+          ) : filteredOrders.map((o, index) => {
             const costDisplay = editingCosts[o.id] !== undefined ? fmtNumStr(editingCosts[o.id]) : (o.cost != null ? fmtNum(o.cost) : '')
             const shipFeeDisplay = editingShipFees[o.id] !== undefined ? fmtNumStr(editingShipFees[o.id]) : (o.shipping_fee != null ? fmtNum(o.shipping_fee) : '')
             const liveProfit = calcProfit(o)

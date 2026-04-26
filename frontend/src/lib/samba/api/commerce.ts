@@ -13,6 +13,7 @@ export {
 
 export type {
   OrderDashboardStats,
+  PaginatedOrderList,
   SambaOrder,
   SambaChannel,
   SambaPolicy,

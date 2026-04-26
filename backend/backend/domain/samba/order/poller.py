@@ -1,17 +1,25 @@
-"""주문 자동 폴링 — 새 주문 감지 시 카카오톡 알림 발송."""
+"""주문 자동 폴링 — 새 주문 감지 시 자동 동기화 (8~24시) 또는 카카오톡 알림 발송."""
 
 import asyncio
 import logging
 import os
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
 ORDER_POLL_INTERVAL = int(os.environ.get("ORDER_POLL_INTERVAL_SECONDS", str(30 * 60)))
+KST = timezone(timedelta(hours=9))
 
 
-async def _fetch_new_order_numbers(session) -> dict[str, list[str]]:
-    """각 마켓 계정에서 최근 1일치 주문 번호를 조회하고, DB에 없는 신규 건만 반환."""
+async def _fetch_new_order_numbers(
+    session,
+) -> tuple[dict[str, list[str]], set[str | None]]:
+    """각 마켓 계정에서 최근 1일치 주문 번호를 조회하고, DB에 없는 신규 건만 반환.
+
+    Returns:
+        (new_by_market, tenant_ids_with_new_orders)
+    """
     from sqlalchemy import text as _text
     from sqlmodel import select
 
@@ -23,6 +31,7 @@ async def _fetch_new_order_numbers(session) -> dict[str, list[str]]:
     accounts = result.all()
 
     new_by_market: dict[str, list[str]] = defaultdict(list)
+    tenant_ids_with_new: set[str | None] = set()
 
     for account in accounts:
         market_type = account.market_type
@@ -103,12 +112,54 @@ async def _fetch_new_order_numbers(session) -> dict[str, list[str]]:
 
             if fresh:
                 new_by_market[label].extend(fresh)
+                tenant_ids_with_new.add(account.tenant_id)
                 logger.info("[주문폴러] %s: 신규 주문 %d건 감지", label, len(fresh))
 
         except Exception as exc:
             logger.warning("[주문폴러] %s 조회 실패: %s", label, exc)
 
-    return dict(new_by_market)
+    return dict(new_by_market), tenant_ids_with_new
+
+
+async def _create_order_sync_job(session, tenant_id: str | None) -> None:
+    """order_sync 잡 생성 (중복 실행 방지 포함)."""
+    from sqlmodel import col, select
+
+    from backend.domain.samba.job.model import JobStatus, SambaJob, generate_job_id
+
+    # 이미 대기/실행 중인 잡이 있으면 재사용
+    active = (
+        (
+            await session.execute(
+                select(SambaJob)
+                .where(
+                    SambaJob.job_type == "order_sync",
+                    col(SambaJob.status).in_([JobStatus.PENDING, JobStatus.RUNNING]),
+                    SambaJob.tenant_id == tenant_id,
+                )
+                .limit(1)
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if active:
+        logger.info(
+            "[주문폴러] order_sync 잡 이미 실행 중 (tenant=%s, job=%s)",
+            tenant_id,
+            active.id,
+        )
+        return
+
+    job = SambaJob(
+        id=generate_job_id(),
+        tenant_id=tenant_id,
+        job_type="order_sync",
+        payload={"days": 1},
+    )
+    session.add(job)
+    await session.flush()
+    logger.info("[주문폴러] order_sync 잡 생성 (tenant=%s, job=%s)", tenant_id, job.id)
 
 
 async def start_order_poller() -> None:
@@ -122,15 +173,28 @@ async def start_order_poller() -> None:
 
     while True:
         try:
+            now_kst = datetime.now(KST)
+            is_night = 0 <= now_kst.hour < 8  # 0~8시 제외
+
             async with get_write_session() as session:
-                new_by_market = await _fetch_new_order_numbers(session)
+                new_by_market, tenant_ids = await _fetch_new_order_numbers(session)
+
+                if new_by_market and not is_night:
+                    # 8~24시: 테넌트별 order_sync 잡 자동 생성
+                    for tenant_id in tenant_ids:
+                        await _create_order_sync_job(session, tenant_id)
 
             if new_by_market:
                 total = sum(len(v) for v in new_by_market.values())
                 lines = [f"🛒 새 주문 {total}건 감지"]
                 for market, nums in new_by_market.items():
                     lines.append(f"  {market}: {len(nums)}건")
-                lines.append("\n동기화 버튼을 눌러 주문을 확인하세요.")
+
+                if is_night:
+                    lines.append("\n동기화 버튼을 눌러 주문을 확인하세요.")
+                else:
+                    lines.append("\n자동 동기화를 시작했습니다.")
+
                 await send_kakao_message("\n".join(lines))
 
         except asyncio.CancelledError:

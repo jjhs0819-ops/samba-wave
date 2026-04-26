@@ -24,6 +24,23 @@ from backend.utils.logger import logger
 
 router = APIRouter(prefix="/orders", tags=["samba-orders"])
 
+ACTIVE_ORDER_STATUSES = (
+    "new_order",
+    "invoice_printed",
+    "pending",
+    "preparing",
+    "wait_ship",
+    "arrived",
+)
+PENDING_ORDER_STATUSES = ("pending", "preparing")
+
+
+class PaginatedOrdersResponse(BaseModel):
+    items: list[SambaOrder]
+    total_count: int
+    total_sale: float
+    pending_count: int
+
 
 def _read_service(session: AsyncSession) -> SambaOrderService:
     return SambaOrderService(SambaOrderRepository(session))
@@ -31,6 +48,173 @@ def _read_service(session: AsyncSession) -> SambaOrderService:
 
 def _write_service(session: AsyncSession) -> SambaOrderService:
     return SambaOrderService(SambaOrderRepository(session))
+
+
+async def _resolve_market_filter_channel_ids(
+    session: AsyncSession,
+    market_filter: Optional[str],
+    tenant_id: Optional[str],
+) -> list[str]:
+    if not market_filter or not market_filter.startswith("type:"):
+        return []
+
+    from sqlalchemy import or_, select
+
+    from backend.domain.samba.account.model import SambaMarketAccount
+
+    market_type = market_filter[5:]
+    stmt = select(SambaMarketAccount.id).where(
+        SambaMarketAccount.market_type == market_type
+    )
+    if tenant_id is not None:
+        stmt = stmt.where(
+            or_(
+                SambaMarketAccount.tenant_id == tenant_id,
+                SambaMarketAccount.tenant_id == None,  # noqa: E711
+            )
+        )
+    result = await session.execute(stmt)
+    return [row[0] for row in result.all() if row[0]]
+
+
+async def _build_order_filters(
+    session: AsyncSession,
+    tenant_id: Optional[str],
+    *,
+    market_filter: str = "",
+    site_filter: str = "",
+    account_filter: str = "",
+    market_status: str = "",
+    status_filter: str = "",
+    input_filter: str = "",
+    search_text: str = "",
+    search_category: str = "customer",
+) -> list[Any]:
+    from sqlalchemy import and_, or_
+
+    filters: list[Any] = []
+
+    if tenant_id is not None:
+        filters.append(
+            or_(
+                SambaOrder.tenant_id == tenant_id,
+                SambaOrder.tenant_id == None,  # noqa: E711
+            )
+        )
+
+    if market_filter:
+        if market_filter.startswith("acc:"):
+            filters.append(SambaOrder.channel_id == market_filter[4:])
+        elif market_filter.startswith("type:"):
+            channel_ids = await _resolve_market_filter_channel_ids(
+                session, market_filter, tenant_id
+            )
+            if channel_ids:
+                filters.append(SambaOrder.channel_id.in_(channel_ids))
+            else:
+                filters.append(SambaOrder.channel_id == "__no_matching_channel__")
+
+    if site_filter:
+        filters.append(SambaOrder.source_site == site_filter)
+    if account_filter:
+        filters.append(SambaOrder.sourcing_account_id == account_filter)
+    if market_status:
+        filters.append(SambaOrder.shipping_status == market_status)
+
+    if status_filter:
+        if status_filter == "active":
+            filters.append(SambaOrder.status.in_(ACTIVE_ORDER_STATUSES))
+        elif status_filter == "pending":
+            filters.append(SambaOrder.status.in_(PENDING_ORDER_STATUSES))
+        else:
+            filters.append(SambaOrder.status == status_filter)
+
+    if input_filter == "has_order":
+        filters.append(
+            and_(
+                SambaOrder.sourcing_order_number != None,  # noqa: E711
+                SambaOrder.sourcing_order_number != "",
+            )
+        )
+    elif input_filter == "no_order":
+        filters.append(
+            or_(
+                SambaOrder.sourcing_order_number == None,  # noqa: E711
+                SambaOrder.sourcing_order_number == "",
+            )
+        )
+    elif input_filter in {"direct", "kkadaegi", "gift"}:
+        filters.append(SambaOrder.action_tag == input_filter)
+
+    normalized_search = search_text.strip()
+    if normalized_search:
+        lower_q = f"%{normalized_search.lower()}%"
+        if search_category == "product":
+            filters.append(SambaOrder.product_name.ilike(lower_q))
+        elif search_category == "product_id":
+            filters.append(SambaOrder.product_id.ilike(lower_q))
+        elif search_category == "order_number":
+            filters.append(SambaOrder.order_number.ilike(lower_q))
+        else:
+            filters.append(SambaOrder.customer_name.ilike(lower_q))
+
+    return filters
+
+
+def _build_order_sort(sort_by: str):
+    from sqlalchemy import func
+
+    date_col = func.coalesce(SambaOrder.paid_at, SambaOrder.created_at)
+    sort_map = {
+        "date_asc": date_col.asc(),
+        "profit_desc": SambaOrder.profit.desc(),
+        "profit_asc": SambaOrder.profit.asc(),
+        "price_desc": SambaOrder.sale_price.desc(),
+        "price_asc": SambaOrder.sale_price.asc(),
+    }
+    return sort_map.get(sort_by, date_col.desc())
+
+
+async def _run_paginated_order_query(
+    session: AsyncSession,
+    base_filters: list[Any],
+    *,
+    skip: int,
+    limit: int,
+    sort_by: str,
+    extra_filters: Optional[list[Any]] = None,
+) -> PaginatedOrdersResponse:
+    from sqlalchemy import case, func, select
+
+    sale_expr = func.coalesce(SambaOrder.total_payment_amount, SambaOrder.sale_price, 0)
+    query_filters = [*base_filters, *(extra_filters or [])]
+
+    total_stmt = select(
+        func.count().label("total_count"),
+        func.coalesce(func.sum(sale_expr), 0).label("total_sale"),
+        func.coalesce(
+            func.sum(case((SambaOrder.status.in_(PENDING_ORDER_STATUSES), 1), else_=0)),
+            0,
+        ).label("pending_count"),
+    )
+    if query_filters:
+        total_stmt = total_stmt.where(*query_filters)
+    total_row = (await session.execute(total_stmt)).one()
+
+    items_stmt = select(SambaOrder)
+    if query_filters:
+        items_stmt = items_stmt.where(*query_filters)
+    items_stmt = (
+        items_stmt.order_by(_build_order_sort(sort_by)).offset(skip).limit(limit)
+    )
+    items = list((await session.execute(items_stmt)).scalars().all())
+
+    return PaginatedOrdersResponse(
+        items=items,
+        total_count=int(total_row.total_count or 0),
+        total_sale=float(total_row.total_sale or 0),
+        pending_count=int(total_row.pending_count or 0),
+    )
 
 
 @router.get("", response_model=list[SambaOrder])
@@ -311,6 +495,92 @@ async def search_orders(
 ):
     svc = _read_service(session)
     return await svc.search_orders(q)
+
+
+@router.get("/by-date-range-paged", response_model=PaginatedOrdersResponse)
+async def list_orders_by_date_range_paged(
+    start: str = Query(..., description="start date YYYY-MM-DD"),
+    end: str = Query(..., description="end date YYYY-MM-DD"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=500),
+    market_filter: str = Query(""),
+    site_filter: str = Query(""),
+    account_filter: str = Query(""),
+    market_status: str = Query(""),
+    status_filter: str = Query(""),
+    input_filter: str = Query(""),
+    search_text: str = Query(""),
+    search_category: str = Query("customer"),
+    sort_by: str = Query("date_desc"),
+    session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+):
+    from backend.utils import kst_date_range_to_utc
+
+    start_dt, end_dt = kst_date_range_to_utc(start, end)
+    filters = await _build_order_filters(
+        session,
+        tenant_id,
+        market_filter=market_filter,
+        site_filter=site_filter,
+        account_filter=account_filter,
+        market_status=market_status,
+        status_filter=status_filter,
+        input_filter=input_filter,
+        search_text=search_text,
+        search_category=search_category,
+    )
+    return await _run_paginated_order_query(
+        session,
+        filters,
+        skip=skip,
+        limit=limit,
+        sort_by=sort_by,
+        extra_filters=[
+            SambaOrder.paid_at != None,  # noqa: E711
+            SambaOrder.paid_at >= start_dt,
+            SambaOrder.paid_at <= end_dt,
+        ],
+    )
+
+
+@router.get("/by-collected-product-paged", response_model=PaginatedOrdersResponse)
+async def list_orders_by_collected_product_paged(
+    collected_product_id: str = Query(..., description="collected product ID"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=500),
+    market_filter: str = Query(""),
+    site_filter: str = Query(""),
+    account_filter: str = Query(""),
+    market_status: str = Query(""),
+    status_filter: str = Query(""),
+    input_filter: str = Query(""),
+    search_text: str = Query(""),
+    search_category: str = Query("customer"),
+    sort_by: str = Query("date_desc"),
+    session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+):
+    filters = await _build_order_filters(
+        session,
+        tenant_id,
+        market_filter=market_filter,
+        site_filter=site_filter,
+        account_filter=account_filter,
+        market_status=market_status,
+        status_filter=status_filter,
+        input_filter=input_filter,
+        search_text=search_text,
+        search_category=search_category,
+    )
+    return await _run_paginated_order_query(
+        session,
+        filters,
+        skip=skip,
+        limit=limit,
+        sort_by=sort_by,
+        extra_filters=[SambaOrder.collected_product_id == collected_product_id],
+    )
 
 
 @router.get("/by-date-range", response_model=list[SambaOrder])

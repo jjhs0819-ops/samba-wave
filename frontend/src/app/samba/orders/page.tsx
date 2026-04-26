@@ -21,7 +21,6 @@ import OrdersTable from './components/OrdersTable'
 import { useSmsMessage } from './hooks/useSmsMessage'
 import { useOrderSync } from './hooks/useOrderSync'
 import { useOrderLinks } from './hooks/useOrderLinks'
-import { useFilteredOrders } from './hooks/useFilteredOrders'
 import { useOrderActions } from './hooks/useOrderActions'
 import { useUrlModal } from './hooks/useUrlModal'
 import { renderCopyableText, splitCustomerAddress } from './utils/copyHelpers'
@@ -48,9 +47,9 @@ const emptyForm: OrderForm = {
 }
 
 export default function OrdersPage() {
-  useEffect(() => { document.title = 'SAMBA-주문관리' }, [])
+  useEffect(() => { document.title = 'SAMBA-?낅슣?뽪룇??㉱?? }, [])
   const searchParams = useSearchParams()
-  // 상품별 주문이력 조회 모드
+  // ??⑤갭????낅슣?뽪룇??????브퀗???嶺뚮ㅄ維獄?
   const cpId = searchParams.get('cpId')
   const cpName = searchParams.get('cpName')
   const isProductMode = !!cpId
@@ -67,13 +66,17 @@ export default function OrdersPage() {
   const [inputFilter, setInputFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [searchText, setSearchText] = useState('')
+  const [appliedSearchText, setAppliedSearchText] = useState('')
   const [pageSize, setPageSize] = useState(20)
   const [currentPage, setCurrentPage] = useState(1)
+  const [totalCount, setTotalCount] = useState(0)
+  const [totalSale, setTotalSale] = useState(0)
+  const [pendingCount, setPendingCount] = useState(0)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkStatus, setBulkStatus] = useState('')
   const [bulkUpdating, setBulkUpdating] = useState(false)
   const [sortBy, setSortBy] = useState('date_desc')
-  const [logMessages, _setLogMessagesRaw] = useState<string[]>(['[대기] 주문 가져오기 결과가 여기에 표시됩니다...'])
+  const [logMessages, _setLogMessagesRaw] = useState<string[]>(['[???? ?낅슣?뽪룇 ?띠럾??筌뤾쑴沅롧뼨??롪퍒???쒖쾸? ???????戮?뻣??紐껊퉵??..'])
   const setLogMessages: typeof _setLogMessagesRaw = (v) => _setLogMessagesRaw(prev => {
     const next = typeof v === 'function' ? v(prev) : v
     return next.slice(-30)
@@ -82,15 +85,15 @@ export default function OrdersPage() {
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState<OrderForm>({ ...emptyForm })
-  // 인라인 원가/배송비/송장 수정용 상태
+  // ?筌뤾퍔逾?????/?꾩룄????쑏????뚯궋 ??瑜곸젧????⑤객臾?
   const [editingCosts, setEditingCosts] = useState<Record<string, string>>({})
   const [editingTrackings, setEditingTrackings] = useState<Record<string, string>>({})
   const [editingShipFees, setEditingShipFees] = useState<Record<string, string>>({})
   const [editingOrderNumbers, setEditingOrderNumbers] = useState<Record<string, string>>({})
-  // 직배/까대기/선물 토글 상태
+  // 嶺뚯쉳??첎?濚밸Ŧ??????ル뱼???? ??⑤객臾?
   const [activeActions, setActiveActions] = useState<Record<string, string | null>>({})
   const [collectedProductCosts, setCollectedProductCosts] = useState<Record<string, number>>({})
-  // 우측상단 알람
+  // ??⑥???⑤８堉????肉?
   const [notifications, setNotifications] = useState<{id: number, message: string, type: string}[]>([])
 
   const showNotification = (message: string, type: string = 'warning') => {
@@ -98,15 +101,15 @@ export default function OrdersPage() {
     setNotifications(prev => [...prev, { id, message, type }])
   }
 
-  // 주문별 업데이트 로그 (주문 ID → 마지막 갱신 결과)
+  // ?낅슣?뽪룇?????낆몥??袁⑤콦 ?β돦裕??(?낅슣?뽪룇 ID ??嶺뚮씭??嶺??띠룄????롪퍒???
   const [refreshLog, setRefreshLog] = useState<Record<string, string>>({})
 
-  // 가격이력 모달
+  // ?띠럾??롪봇維???嶺뚮ㅄ維??
   const [priceHistoryModal, setPriceHistoryModal] = useState(false)
   const [priceHistoryData, setPriceHistoryData] = useState<Record<string, unknown>[]>([])
   const [priceHistoryProduct, setPriceHistoryProduct] = useState<{ name: string; source_site: string }>({ name: '', source_site: '' })
 
-  // SMS/카카오 발송 + 템플릿 관리 (hook으로 통합)
+  // SMS/?곸궠?삭맱???꾩룇裕??+ ???ロ깵????㉱??(hook??怨쀬Ŧ ????)
   const sms = useSmsMessage(accounts)
   const {
     msgModal, setMsgModal,
@@ -120,16 +123,16 @@ export default function OrdersPage() {
     insertMsgTag, openMsgModal, handleSendMsg,
   } = sms
 
-  // 취소 알림 설정 (URL 파라미터 alarm=1이면 자동 오픈)
+  // ???쳛?????逾????깆젧 (URL ???逾ф쾬?롮구??alarm=1????????吏????덊깯)
   const [showAlarmSetting, setShowAlarmSetting] = useState(searchParams.get('alarm') === '1')
   const [alarmHour, setAlarmHour] = useState('0')
   const [alarmMin, setAlarmMin] = useState('5')
   const [sleepStart, setSleepStart] = useState('00:00')
   const [sleepEnd, setSleepEnd] = useState('09:00')
 
-  // 검색 카테고리
+  // ?롪틵????곸궠??誘ㅒ?μ쪚??
   const [searchCategory, setSearchCategory] = useState('customer')
-  // 일자 고정
+  // ??源놁겱 ??μ쪠??
   const [dateLocked, setDateLocked] = useState(false)
   const [customStart, setCustomStart] = useState(() => {
     const d = new Date()
@@ -143,29 +146,60 @@ export default function OrdersPage() {
     setLoading(true)
     try {
       const data = isProductMode
-        ? await orderApi.listByCollectedProduct(cpId!)
-        : await orderApi.listByDateRange(customStart, customEnd)
-      setOrders(data)
-      setCurrentPage(1)
+        ? await orderApi.listByCollectedProductPaged({
+            collectedProductId: cpId!,
+            skip: (currentPage - 1) * pageSize,
+            limit: pageSize,
+            market_filter: marketFilter,
+            site_filter: siteFilter,
+            account_filter: accountFilter,
+            market_status: marketStatus,
+            status_filter: statusFilter,
+            input_filter: inputFilter,
+            search_text: appliedSearchText,
+            search_category: searchCategory,
+            sort_by: sortBy,
+          })
+        : await orderApi.listByDateRangePaged({
+            start: customStart,
+            end: customEnd,
+            skip: (currentPage - 1) * pageSize,
+            limit: pageSize,
+            market_filter: marketFilter,
+            site_filter: siteFilter,
+            account_filter: accountFilter,
+            market_status: marketStatus,
+            status_filter: statusFilter,
+            input_filter: inputFilter,
+            search_text: appliedSearchText,
+            search_category: searchCategory,
+            sort_by: sortBy,
+          })
+      setOrders(data.items)
+      setTotalCount(data.total_count)
+      setTotalSale(data.total_sale)
+      setPendingCount(data.pending_count)
       setEditingTrackings({})
-      // 서버에서 받은 action_tag로 activeActions 초기화
+      // ??類ㅼ뮅??????꾩룇猷? action_tag??activeActions ?貫?껆뵳??
       const actions: Record<string, string | null> = {}
-      for (const o of data) {
+      for (const o of data.items) {
         if (o.action_tag) actions[o.id] = o.action_tag
       }
       setActiveActions(actions)
-      // SMS/카카오 발송 여부 플래그 조회
-      if (data.length > 0) {
-        proxyApi.fetchSentFlags(data.map(o => o.id)).then(flags => {
+      // SMS/?곸궠?삭맱???꾩룇裕????? ????뗥윜??브퀗???
+      if (data.items.length > 0) {
+        proxyApi.fetchSentFlags(data.items.map(o => o.id)).then(flags => {
           setSentFlags(flags)
         }).catch(() => {})
+      } else {
+        setSentFlags({})
       }
     } catch (e) {
-      console.error('주문 로딩 실패:', e)
-      setLogMessages(prev => [...prev, `[에러] 주문 데이터 로딩 실패: ${e instanceof Error ? e.message : '서버 오류'}`])
+      console.error('?낅슣?뽪룇 ?β돦裕녽????덉넮:', e)
+      setLogMessages(prev => [...prev, `[????? ?낅슣?뽪룇 ??⑥щ턄???β돦裕녽????덉넮: ${e instanceof Error ? e.message : '??類ㅼ뮅 ???댁쾼'}`])
     }
     setLoading(false)
-  }, [isProductMode, cpId, customStart, customEnd])
+  }, [isProductMode, cpId, currentPage, pageSize, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, appliedSearchText, searchCategory, sortBy, customStart, customEnd, setSentFlags])
 
   const patchOrder = useCallback((id: string, patch: Partial<SambaOrder>) => {
     setOrders(prev => prev.map(order => (
@@ -173,9 +207,17 @@ export default function OrdersPage() {
     )))
   }, [])
 
-  // 플레이오토 마켓번호 별칭 매핑
+  const applySearch = useCallback(() => {
+    setCurrentPage(1)
+    setAppliedSearchText(searchText.trim())
+  }, [searchText])
+
+  // ??????怨멸텕??嶺뚮씭???삳┛??녾퉰 ?곌랙?닺눧?嶺뚮씞?뗩뇡?
   const [siteAliasMap, setSiteAliasMap] = useState<Record<string, string>>({})
   useEffect(() => { loadOrders() }, [loadOrders])
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [pageSize, customStart, customEnd, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, searchCategory, sortBy, isProductMode, cpId])
   useEffect(() => {
     const ids = [...new Set(orders.map(o => o.collected_product_id).filter((id): id is string => !!id))]
     if (ids.length === 0) {
@@ -198,7 +240,7 @@ export default function OrdersPage() {
     })()
     return () => { cancelled = true }
   }, [orders])
-  // 취소알람 설정 불러오기
+  // ???쳛????肉????깆젧 ?釉띾쐞???釉띯뵛
   useEffect(() => {
     orderApi.getAlarmSettings().then(d => {
       setAlarmHour(String(d.hour))
@@ -207,11 +249,11 @@ export default function OrdersPage() {
       setSleepEnd(d.sleep_end)
     }).catch(() => {})
   }, [])
-  // URL 파라미터 alarm=1 변경 감지 (다른 페이지에서 링크로 이동 시)
+  // URL ???逾ф쾬?롮구??alarm=1 ?곌떠????띠룆흮? (???섎???瑜곷턄嶺뚯솘??????嶺뚮씧?긷칰類욎뿉????????
   useEffect(() => {
     if (searchParams.get('alarm') === '1') setShowAlarmSetting(true)
   }, [searchParams])
-  // CustomEvent 감지 (이미 주문 페이지에 있을 때 헤더 벨 클릭 시)
+  // CustomEvent ?띠룆흮? (???? ?낅슣?뽪룇 ??瑜곷턄嶺뚯솘??????깅굵 ?????녹맠 ?????????
   useEffect(() => {
     const handler = () => setShowAlarmSetting(true)
     window.addEventListener('open-alarm-setting', handler)
@@ -275,20 +317,10 @@ export default function OrdersPage() {
     if (o.product_image && o.product_image.startsWith('http')) window.open(o.product_image, '_blank')
   }
 
-  // 필터링된 주문 목록
-  const filteredOrders = useFilteredOrders({
-    orders, accounts, isProductMode,
-    customStart, customEnd, marketFilter, siteFilter, accountFilter,
-    marketStatus, statusFilter, inputFilter, searchText, searchCategory,
-    sortBy, activeActions,
-  })
+  // ?熬곥굤?꿰춯?삳궙筌??낅슣?뽪룇 嶺뚮ㅄ維뽨빳?
+  const currentPageIds = useMemo(() => orders.map(o => o.id), [orders])
 
-  // 현재 페이지 주문 ID 목록
-  const currentPageIds = useMemo(() =>
-    filteredOrders.slice((currentPage - 1) * pageSize, currentPage * pageSize).map(o => o.id),
-    [filteredOrders, currentPage, pageSize])
-
-  // 전체 선택/해제
+  // ?熬곣뫕????ルㅎ臾???怨몄젷
   const toggleSelectAll = () => {
     if (currentPageIds.every(id => selectedIds.has(id))) {
       setSelectedIds(prev => { const next = new Set(prev); currentPageIds.forEach(id => next.delete(id)); return next })
@@ -297,8 +329,7 @@ export default function OrdersPage() {
     }
   }
 
-  const pendingCount = filteredOrders.filter(o => o.status === 'pending' || o.status === 'preparing').length
-
+  
   return (
     <div style={{ color: '#E5E5E5' }}>
       <OrdersTopBar
@@ -312,7 +343,7 @@ export default function OrdersPage() {
         isProductMode={isProductMode}
         cpId={cpId}
         cpName={cpName}
-        filteredOrdersCount={filteredOrders.length}
+        filteredOrdersCount={totalCount}
         pendingCount={pendingCount}
         smsRemain={smsRemain}
         logMessages={logMessages}
@@ -332,11 +363,11 @@ export default function OrdersPage() {
         bulkStatus={bulkStatus} setBulkStatus={setBulkStatus}
         bulkUpdating={bulkUpdating} handleBulkAction={handleBulkAction}
         selectedIdsSize={selectedIds.size}
-        filteredOrdersCount={filteredOrders.length}
-        filteredOrdersTotalSale={filteredOrders.reduce((s, o) => s + (o.total_payment_amount ?? o.sale_price ?? 0), 0)}
+        filteredOrdersCount={totalCount}
+        filteredOrdersTotalSale={totalSale}
         searchCategory={searchCategory} setSearchCategory={setSearchCategory}
         searchText={searchText} setSearchText={setSearchText}
-        loadOrders={loadOrders}
+        loadOrders={applySearch}
         marketFilter={marketFilter} setMarketFilter={setMarketFilter}
         siteFilter={siteFilter} setSiteFilter={setSiteFilter}
         accountFilter={accountFilter} setAccountFilter={setAccountFilter}
@@ -347,10 +378,10 @@ export default function OrdersPage() {
         pageSize={pageSize} setPageSize={setPageSize}
         accounts={accounts} sourcingAccounts={sourcingAccounts}
       />
-      {/* 주문 테이블 */}
+      {/* ?낅슣?뽪룇 ???逾??*/}
       <OrdersTable
         loading={loading}
-        filteredOrders={filteredOrders}
+        filteredOrders={orders}
         currentPage={currentPage}
         pageSize={pageSize}
         currentPageIds={currentPageIds}
@@ -400,15 +431,15 @@ export default function OrdersPage() {
         toggleAction={toggleAction}
       />
 
-      {/* 페이지네이션 */}
+      {/* ??瑜곷턄嶺뚯솘????깅턄??*/}
       <OrdersPagination
-        totalCount={filteredOrders.length}
+        totalCount={totalCount}
         pageSize={pageSize}
         currentPage={currentPage}
         setCurrentPage={setCurrentPage}
       />
 
-      {/* 주문 수정 모달 */}
+      {/* ?낅슣?뽪룇 ??瑜곸젧 嶺뚮ㅄ維??*/}
       <OrderEditModal
         open={showForm}
         editingId={editingId}
@@ -418,7 +449,7 @@ export default function OrdersPage() {
         onSubmit={handleSubmit}
       />
 
-      {/* 미등록 입력 URL 모달 */}
+      {/* 亦껋꼶梨띈린臾됱뿉????놁졑 URL 嶺뚮ㅄ維??*/}
       <UrlInputModal
         open={showUrlModal}
         urlInput={urlModalInput}
@@ -430,7 +461,7 @@ export default function OrdersPage() {
         onSubmit={handleUrlSubmit}
       />
 
-      {/* 가격/재고 이력 모달 */}
+      {/* ?띠럾????????????嶺뚮ㅄ維??*/}
       <PriceHistoryModal
         open={priceHistoryModal}
         product={priceHistoryProduct}
@@ -438,7 +469,7 @@ export default function OrdersPage() {
         onClose={() => setPriceHistoryModal(false)}
       />
 
-      {/* SMS/카카오 발송 모달 */}
+      {/* SMS/?곸궠?삭맱???꾩룇裕??嶺뚮ㅄ維??*/}
       <MessageModal
         msgModal={msgModal}
         setMsgModal={setMsgModal}
@@ -455,7 +486,7 @@ export default function OrdersPage() {
         handleSendMsg={handleSendMsg}
       />
 
-      {/* SMS 템플릿 편집 모달 */}
+      {/* SMS ???ロ깵???筌뤾쑴異?嶺뚮ㅄ維??*/}
       <SmsTemplateEditModal
         template={templateEditModal}
         setTemplate={setTemplateEditModal}
@@ -463,7 +494,7 @@ export default function OrdersPage() {
         onSave={saveTemplate}
       />
 
-      {/* 취소 알림 설정 모달 */}
+      {/* ???쳛?????逾????깆젧 嶺뚮ㅄ維??*/}
       <AlarmSettingModal
         open={showAlarmSetting}
         onClose={() => setShowAlarmSetting(false)}
@@ -479,3 +510,4 @@ export default function OrdersPage() {
     </div>
   )
 }
+

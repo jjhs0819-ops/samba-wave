@@ -21,8 +21,9 @@ _RETENTION_DAYS = 30  # 이벤트 보존 기간
 _emit_counter = 0  # 100회마다 정리 실행
 
 # ── 대시보드 결과 인메모리 캐시 ──
-# 30초 폴링 대상 API이므로 15초 TTL 캐시로 대부분의 중복 연산을 회피.
-_DASHBOARD_CACHE_TTL = 15.0  # 초
+# 30초 폴링 대상 API이므로 30초 TTL 캐시로 대부분의 중복 연산을 회피.
+# (15초였을 때는 폴링 주기와 어긋나 캐시 미스율이 약 50%였음)
+_DASHBOARD_CACHE_TTL = 30.0  # 초
 _dashboard_cache: Dict[str, Any] = {"ts": 0.0, "data": None}
 _dashboard_cache_lock = asyncio.Lock()
 

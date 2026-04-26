@@ -340,55 +340,66 @@ export default function WarroomPage() {
   }
 
   const load = useCallback(async () => {
-    try {
-      const [dashboard, recentEvents, probeStatus, atStatus, scores, changes, mktChanges] = await Promise.all([
-        monitorApi.dashboard().catch(() => null),
-        monitorApi.recentEvents(30).catch(() => []),
-        collectorApi.probeStatus().catch(() => ({})) as Promise<Record<string, Record<string, Record<string, unknown>>>>,
-        collectorApi.autotuneStatus().catch(() => ({ running: false, last_tick: null, cycle_count: 0, restart_count: 0, target: 'registered', refreshed_count: 0, breaker_tripped: {} as Record<string, number> })) as ReturnType<typeof collectorApi.autotuneStatus>,
-        monitorApi.storeScores().catch(() => ({})),
-        monitorApi.siteChanges(5).catch(() => ({})),
-        monitorApi.marketChanges(5).catch(() => ({})),
-      ])
-      if (dashboard) setStats(dashboard)
-      setEvents(recentEvents)
-      if (changes && Object.keys(changes).length > 0) setSiteChanges(changes)
-      if (mktChanges && Object.keys(mktChanges).length > 0) setMarketChanges(mktChanges)
-      if (probeStatus && Object.keys(probeStatus).length > 0) setProbeData(probeStatus)
-      // 오토튠 상태는 handleAutotuneStatus를 통해 처리 (falseCountRef 가드 적용, 경쟁 상태 방지)
-      handleAutotuneStatus(atStatus.running, atStatus.cycle_count, atStatus.last_tick, atStatus.refreshed_count || 0)
-      setAutotuneRestarts(atStatus.restart_count || 0)
-      // 소싱처 인터벌 동기화 (마운트 시 초기값 포함) — 별도 useEffect 제거하고 여기서 일원화
-      if (atStatus.site_intervals) {
-        setSiteIntervals(prev => {
-          // 사용자가 디바운스 중인 값을 덮어쓰지 않도록 — 빈 상태일 때만 초기화
-          if (Object.keys(prev).length > 0) return prev
-          const init: Record<string, string> = {}
-          for (const [site, val] of Object.entries(atStatus.site_intervals!)) {
-            init[site] = String(val)
-          }
-          return init
-        })
-      }
-      if (atStatus.site_autotune_concurrency) {
-        setSiteConcurrency(prev => {
-          if (Object.keys(prev).length > 0) return prev
-          const init: Record<string, string> = {}
-          for (const [site, val] of Object.entries(atStatus.site_autotune_concurrency!)) {
-            init[site] = String(val)
-          }
-          return init
-        })
-      }
-      if (scores && Object.keys(scores).length > 0) setStoreScores(scores)
-      setLastFetched(new Date())
-      nextPollRef.current = POLL_INTERVAL / 1000
-    } catch {
-      // 무시
-    } finally {
-      setLoading(false)
-    }
-  }, [])
+    // 각 API를 독립 발사 — 도착하는 대로 setState (Promise.all 블로킹 제거).
+    // dashboard만 도착하면 setLoading(false) → 가장 무거운 API에 묶이지 않고
+    // 화면이 즉시 표시되고, 나머지 영역은 자기 데이터가 도착하는 대로 채워진다.
+    monitorApi.dashboard()
+      .then(d => { if (d) setStats(d) })
+      .catch(() => { /* ignore */ })
+      .finally(() => setLoading(false))
+
+    monitorApi.recentEvents(30)
+      .then(setEvents)
+      .catch(() => { /* ignore */ })
+
+    monitorApi.siteChanges(5)
+      .then(c => { if (c && Object.keys(c).length > 0) setSiteChanges(c) })
+      .catch(() => { /* ignore */ })
+
+    monitorApi.marketChanges(5)
+      .then(c => { if (c && Object.keys(c).length > 0) setMarketChanges(c) })
+      .catch(() => { /* ignore */ })
+
+    monitorApi.storeScores()
+      .then(s => { if (s && Object.keys(s).length > 0) setStoreScores(s) })
+      .catch(() => { /* ignore */ })
+
+    ;(collectorApi.probeStatus().catch(() => ({})) as Promise<Record<string, Record<string, Record<string, unknown>>>>)
+      .then(p => { if (p && Object.keys(p).length > 0) setProbeData(p) })
+
+    collectorApi.autotuneStatus()
+      .then(atStatus => {
+        // 오토튠 상태는 handleAutotuneStatus를 통해 처리 (falseCountRef 가드 적용, 경쟁 상태 방지)
+        handleAutotuneStatus(atStatus.running, atStatus.cycle_count, atStatus.last_tick, atStatus.refreshed_count || 0)
+        setAutotuneRestarts(atStatus.restart_count || 0)
+        // 소싱처 인터벌 동기화 (마운트 시 초기값 포함) — 별도 useEffect 제거하고 여기서 일원화
+        if (atStatus.site_intervals) {
+          setSiteIntervals(prev => {
+            // 사용자가 디바운스 중인 값을 덮어쓰지 않도록 — 빈 상태일 때만 초기화
+            if (Object.keys(prev).length > 0) return prev
+            const init: Record<string, string> = {}
+            for (const [site, val] of Object.entries(atStatus.site_intervals!)) {
+              init[site] = String(val)
+            }
+            return init
+          })
+        }
+        if (atStatus.site_autotune_concurrency) {
+          setSiteConcurrency(prev => {
+            if (Object.keys(prev).length > 0) return prev
+            const init: Record<string, string> = {}
+            for (const [site, val] of Object.entries(atStatus.site_autotune_concurrency!)) {
+              init[site] = String(val)
+            }
+            return init
+          })
+        }
+      })
+      .catch(() => { /* ignore */ })
+
+    setLastFetched(new Date())
+    nextPollRef.current = POLL_INTERVAL / 1000
+  }, [handleAutotuneStatus])
 
   // 로그 폴링은 AutotuneLogPanel 내부에서 독립적으로 처리
 

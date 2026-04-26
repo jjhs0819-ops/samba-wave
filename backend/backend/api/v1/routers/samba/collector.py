@@ -298,7 +298,6 @@ async def list_filters(session: AsyncSession = Depends(get_write_session_depende
     result = []
     for f in filters:
         data = {c.key: getattr(f, c.key) for c in f.__table__.columns}
-        data["requested_count"] = FIXED_REQUESTED_COUNT
         counts = count_map.get(f.id, {})
         data["collected_count"] = counts.get("collected_count", 0)
         data["market_registered_count"] = counts.get("market_registered_count", 0)
@@ -370,6 +369,73 @@ async def update_filter(
         asyncio.create_task(_propagate())
 
     return result
+
+
+class BulkApplyPolicyRequest(BaseModel):
+    filter_ids: list[str]
+    policy_id: str
+
+
+@router.post("/filters/bulk-apply-policy")
+async def bulk_apply_policy(
+    body: BulkApplyPolicyRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """여러 그룹에 정책을 한 번에 적용 — 단일 UPDATE + 단일 백그라운드 전파."""
+    from sqlalchemy import update as sa_update
+    from backend.domain.samba.collector.model import SambaSearchFilter as _SF
+
+    if not body.filter_ids:
+        return {"applied": 0}
+
+    # 모든 필터 정책을 단일 쿼리로 일괄 업데이트
+    stmt = (
+        sa_update(_SF)
+        .where(_SF.id.in_(body.filter_ids))
+        .values(applied_policy_id=body.policy_id)
+    )
+    result = await session.exec(stmt)  # type: ignore[arg-type]
+    await session.commit()
+    applied_count = result.rowcount
+
+    # 단일 백그라운드 태스크로 상품 전파 (개별 호출 시 풀 고갈 방지)
+    policy_id = body.policy_id
+    filter_ids = list(body.filter_ids)
+
+    async def _propagate_all():
+        try:
+            from backend.db.orm import get_write_session
+            from backend.domain.samba.policy.repository import SambaPolicyRepository
+
+            async with get_write_session() as bg_session:
+                policy_repo = SambaPolicyRepository(bg_session)
+                policy = await policy_repo.get_async(policy_id)
+                policy_data = None
+                if policy and policy.pricing:
+                    pr = policy.pricing if isinstance(policy.pricing, dict) else {}
+                    policy_data = {
+                        "margin_rate": pr.get("marginRate", 15),
+                        "shipping_cost": pr.get("shippingCost", 0),
+                        "extra_charge": pr.get("extraCharge", 0),
+                        "source_site_margins": pr.get("sourceSiteMargins", {}),
+                    }
+                bg_svc = _get_services(bg_session)
+                for fid in filter_ids:
+                    try:
+                        await bg_svc.apply_policy_to_filter_products(
+                            fid, policy_id, policy_data
+                        )
+                    except Exception as e:
+                        logger.warning(f"정책 전파 실패 (필터 {fid}): {e}")
+                await bg_session.commit()
+                logger.info(
+                    f"정책 일괄 전파 완료: {len(filter_ids)}개 필터 → policy {policy_id}"
+                )
+        except Exception as e:
+            logger.error(f"정책 일괄 전파 실패: {e}", exc_info=True)
+
+    asyncio.create_task(_propagate_all())
+    return {"applied": applied_count}
 
 
 @router.delete("/filters/{filter_id}")
@@ -459,9 +525,6 @@ async def get_filter_tree(
     """검색그룹 트리 구조 반환. 사이트 > 폴더 > 리프 그룹."""
     svc = _get_services(session)
     all_filters = await svc.list_filters(limit=10000)
-    for f in all_filters:
-        if not f.is_folder:
-            f.requested_count = FIXED_REQUESTED_COUNT
 
     # 각 필터별 수집상품 카운트 — 단일 쿼리로 일괄 조회
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
@@ -917,9 +980,21 @@ async def scroll_products(
 
         counts_stmt = select(
             func.count().label("total"),
-            func.count(case((_CP.status == "registered", literal(1)))).label(
-                "registered"
-            ),
+            func.count(
+                case(
+                    (
+                        and_(
+                            _CP.registered_accounts.isnot(None),
+                            cast(_CP.registered_accounts, String) != "null",
+                            cast(_CP.registered_accounts, String) != "[]",
+                            _CP.market_product_nos.isnot(None),
+                            cast(_CP.market_product_nos, String) != "null",
+                            cast(_CP.market_product_nos, String) != "{}",
+                        ),
+                        literal(1),
+                    )
+                )
+            ).label("registered"),
             func.count(case((_CP.applied_policy_id != None, literal(1)))).label(
                 "policy_applied"
             ),
@@ -1102,13 +1177,25 @@ async def product_counts(
         return cached
 
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
-    from sqlalchemy import func, case, literal
+    from sqlalchemy import func, case, literal, and_, cast, String
 
     stmt = select(
         func.count().label("total"),
-        func.count(case((_CP.registered_accounts != None, literal(1)))).label(
-            "registered"
-        ),
+        func.count(
+            case(
+                (
+                    and_(
+                        _CP.registered_accounts.isnot(None),
+                        cast(_CP.registered_accounts, String) != "null",
+                        cast(_CP.registered_accounts, String) != "[]",
+                        _CP.market_product_nos.isnot(None),
+                        cast(_CP.market_product_nos, String) != "null",
+                        cast(_CP.market_product_nos, String) != "{}",
+                    ),
+                    literal(1),
+                )
+            )
+        ).label("registered"),
         func.count(case((_CP.applied_policy_id != None, literal(1)))).label(
             "policy_applied"
         ),

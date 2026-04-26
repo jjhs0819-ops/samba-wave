@@ -951,25 +951,32 @@ async def test_rate_limit(body: RateLimitTestRequest = RateLimitTestRequest()):
 async def probe_status(
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
-    """최근 probe 결과 조회."""
-    from backend.domain.samba.forbidden.repository import SambaSettingsRepository
-
-    repo = SambaSettingsRepository(session)
-    results: dict = {"sources": {}, "markets": {}}
-
-    # 소싱처 probe 결과
+    """최근 probe 결과 조회 — IN 일괄 쿼리 1회로 N+1 제거."""
+    from backend.domain.samba.forbidden.model import SambaSettings
     from backend.domain.samba.probe.health_checker import PROBE_TARGETS, MARKET_PROBES
 
-    for site in PROBE_TARGETS:
-        row = await repo.find_by_async(key=f"probe_{site}")
-        if row and row.value:
-            results["sources"][site] = row.value
+    source_keys = [f"probe_{s}" for s in PROBE_TARGETS]
+    market_keys = [f"probe_market_{m}" for m in MARKET_PROBES]
+    all_keys = source_keys + market_keys
 
-    # 마켓 probe 결과
+    rows = (
+        await session.execute(
+            select(SambaSettings.key, SambaSettings.value).where(
+                SambaSettings.key.in_(all_keys)
+            )
+        )
+    ).all()
+    kv = {k: v for k, v in rows if v}
+
+    results: dict = {"sources": {}, "markets": {}}
+    for site in PROBE_TARGETS:
+        v = kv.get(f"probe_{site}")
+        if v:
+            results["sources"][site] = v
     for mt in MARKET_PROBES:
-        row = await repo.find_by_async(key=f"probe_market_{mt}")
-        if row and row.value:
-            results["markets"][mt] = row.value
+        v = kv.get(f"probe_market_{mt}")
+        if v:
+            results["markets"][mt] = v
 
     return results
 

@@ -99,6 +99,13 @@ export interface OrderDashboardStats {
   monthly: { month: number; sales: number; fulfillmentSales: number }[]
 }
 
+export interface PaginatedOrderList {
+  items: SambaOrder[]
+  total_count: number
+  total_sale: number
+  pending_count: number
+}
+
 export interface SambaOrder {
   id: string;
   order_number: string;
@@ -166,8 +173,70 @@ export const orderApi = {
   },
   listByDateRange: (start: string, end: string) =>
     request<SambaOrder[]>(`${SAMBA_PREFIX}/orders/by-date-range?start=${start}&end=${end}`),
+  listByDateRangePaged: (params: {
+    start: string
+    end: string
+    skip?: number
+    limit?: number
+    market_filter?: string
+    site_filter?: string
+    account_filter?: string
+    market_status?: string
+    status_filter?: string
+    input_filter?: string
+    search_text?: string
+    search_category?: string
+    sort_by?: string
+  }) => {
+    const q = new URLSearchParams({
+      start: params.start,
+      end: params.end,
+      skip: String(params.skip ?? 0),
+      limit: String(params.limit ?? 20),
+      market_filter: params.market_filter ?? '',
+      site_filter: params.site_filter ?? '',
+      account_filter: params.account_filter ?? '',
+      market_status: params.market_status ?? '',
+      status_filter: params.status_filter ?? '',
+      input_filter: params.input_filter ?? '',
+      search_text: params.search_text ?? '',
+      search_category: params.search_category ?? 'customer',
+      sort_by: params.sort_by ?? 'date_desc',
+    })
+    return request<PaginatedOrderList>(`${SAMBA_PREFIX}/orders/by-date-range-paged?${q}`)
+  },
   listByCollectedProduct: (collectedProductId: string) =>
     request<SambaOrder[]>(`${SAMBA_PREFIX}/orders/by-collected-product?collected_product_id=${encodeURIComponent(collectedProductId)}`),
+  listByCollectedProductPaged: (params: {
+    collectedProductId: string
+    skip?: number
+    limit?: number
+    market_filter?: string
+    site_filter?: string
+    account_filter?: string
+    market_status?: string
+    status_filter?: string
+    input_filter?: string
+    search_text?: string
+    search_category?: string
+    sort_by?: string
+  }) => {
+    const q = new URLSearchParams({
+      collected_product_id: params.collectedProductId,
+      skip: String(params.skip ?? 0),
+      limit: String(params.limit ?? 20),
+      market_filter: params.market_filter ?? '',
+      site_filter: params.site_filter ?? '',
+      account_filter: params.account_filter ?? '',
+      market_status: params.market_status ?? '',
+      status_filter: params.status_filter ?? '',
+      input_filter: params.input_filter ?? '',
+      search_text: params.search_text ?? '',
+      search_category: params.search_category ?? 'customer',
+      sort_by: params.sort_by ?? 'date_desc',
+    })
+    return request<PaginatedOrderList>(`${SAMBA_PREFIX}/orders/by-collected-product-paged?${q}`)
+  },
   dashboardStats: () => request<OrderDashboardStats>(`${SAMBA_PREFIX}/orders/dashboard-stats`),
   get: (id: string) => request<SambaOrder>(`${SAMBA_PREFIX}/orders/${id}`),
   search: (q: string) => request<SambaOrder[]>(`${SAMBA_PREFIX}/orders/search?q=${encodeURIComponent(q)}`),
@@ -441,6 +510,10 @@ export const collectorApi = {
     request<SambaSearchFilter>(`${SAMBA_PREFIX}/collector/filters/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteFilter: (id: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/filters/${id}`, { method: "DELETE" }),
+  bulkApplyPolicy: (filterIds: string[], policyId: string) =>
+    request<{ applied: number }>(`${SAMBA_PREFIX}/collector/filters/bulk-apply-policy`, {
+      method: 'POST', body: JSON.stringify({ filter_ids: filterIds, policy_id: policyId }),
+    }),
 
   // Brand Sourcing
   brandDiscover: (keyword: string, source_site?: string) =>

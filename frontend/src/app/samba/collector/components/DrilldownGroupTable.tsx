@@ -419,14 +419,12 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
                       if (!policyId) return
                       const policyName = policies.find(p => p.id === policyId)?.name || ''
                       if (!await showConfirm(`${drillBrand} 브랜드의 ${fmtNum(catGroups.length)}개 그룹에 "${policyName}" 정책을 일괄 적용하시겠습니까?`)) { e.target.value = ''; return }
-                      let applied = 0
-                      for (const g of catGroups) {
-                        try {
-                          await collectorApi.updateFilter(g.id, { applied_policy_id: policyId } as Partial<SambaSearchFilter>)
-                          applied++
-                        } catch { /* 무시 */ }
+                      try {
+                        const res = await collectorApi.bulkApplyPolicy(catGroups.map(g => g.id), policyId)
+                        showAlert(`${fmtNum(res.applied)}/${fmtNum(catGroups.length)}개 그룹에 정책 적용 완료`, 'success')
+                      } catch (err) {
+                        showAlert(`정책 적용 실패: ${err instanceof Error ? err.message : '오류'}`, 'error')
                       }
-                      showAlert(`${fmtNum(applied)}/${fmtNum(catGroups.length)}개 그룹에 정책 적용 완료`, 'success')
                       e.target.value = ''
                       load(); loadTree()
                     }} style={{

@@ -65,23 +65,38 @@ export async function performDeleteSelectedGroups(args: DeleteGroupsArgs) {
   for (const id of allIdsArr) {
     const groupName = nameMap.get(id) || id
     setDeleteJobLogs(prev => [...prev, `[${fmtNum(doneCount + skipCount + 1)}/${fmtNum(allIdsArr.length)}] "${groupName}" 처리 중...`])
+    let shouldSkip = false
     try {
       const res = await collectorApi.scrollProducts({ skip: 0, limit: 10000, search_filter_id: id })
-      const registered = res.items.filter(p => p.market_product_nos && Object.keys(p.market_product_nos).length > 0)
+      // 백엔드와 동일하게 registered_accounts 기준으로 마켓등록 여부 판별
+      const registered = res.items.filter(p => {
+        const accs = (p as unknown as Record<string, unknown>).registered_accounts
+        if (Array.isArray(accs)) return accs.length > 0
+        if (typeof accs === 'string') return accs !== '[]' && accs !== 'null' && accs !== ''
+        return accs != null
+      })
       if (registered.length > 0) {
         setDeleteJobLogs(prev => [...prev, `  ⚠️ 마켓등록 상품 ${fmtNum(registered.length)}건 — 삭제 건너뜀`])
         skipCount++
-        continue
+        shouldSkip = true
+      } else {
+        const productIds = res.items.map(p => p.id)
+        if (productIds.length > 0) {
+          setDeleteJobLogs(prev => [...prev, `  상품 ${fmtNum(productIds.length)}건 삭제 중...`])
+          await collectorApi.bulkDeleteProducts(productIds)
+        }
       }
-      const productIds = res.items.map(p => p.id)
-      if (productIds.length > 0) {
-        setDeleteJobLogs(prev => [...prev, `  상품 ${fmtNum(productIds.length)}건 삭제 중...`])
-        await collectorApi.bulkDeleteProducts(productIds)
-      }
-    } catch { /* 상품 없으면 무시 */ }
-    await collectorApi.deleteFilter(id).catch(() => {})
-    doneCount++
-    setDeleteJobLogs(prev => [...prev, `  ✅ 삭제 완료`])
+    } catch { /* 상품 조회 실패 시 deleteFilter에서 재처리 */ }
+    if (shouldSkip) continue
+    try {
+      await collectorApi.deleteFilter(id)
+      doneCount++
+      setDeleteJobLogs(prev => [...prev, `  ✅ 삭제 완료`])
+    } catch (e) {
+      skipCount++
+      const msg = e instanceof Error ? e.message : '삭제 실패'
+      setDeleteJobLogs(prev => [...prev, `  ❌ 삭제 실패: ${msg}`])
+    }
   }
 
   setDeleteJobLogs(prev => [...prev, ``, `🎉 완료 — ${fmtNum(doneCount)}개 삭제${skipCount > 0 ? `, ${fmtNum(skipCount)}개 건너뜀` : ''}`])
