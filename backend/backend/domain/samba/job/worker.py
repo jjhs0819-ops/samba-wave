@@ -2784,8 +2784,13 @@ class JobWorker:
                     elif isinstance(_ext_result, dict) and _ext_result.get("success"):
                         _html = _ext_result.get("html", "")
                         if _html:
-                            detail = (
-                                client._parse_result_item_obj(_html, spid, False) or {}
+                            _loop = asyncio.get_event_loop()
+                            detail = await _loop.run_in_executor(
+                                None,
+                                lambda: client._parse_result_item_obj(
+                                    _html, spid, False
+                                )
+                                or {},
                             )
                         # _parse_result_item_obj 실패 시 (dept.ssg.com AJAX 로드):
                         # 확장앱 safeObj의 itemNm + HTML select 직접 파싱으로 폴백
@@ -2793,7 +2798,9 @@ class JobWorker:
                             _ext_obj = _ext_result.get("resultItemObj", {})
                             _item_nm = _ext_obj.get("itemNm", "")
                             if _item_nm and _html:
-                                _opts = client._parse_select_options(_html)
+                                _opts = await _loop.run_in_executor(
+                                    None, lambda: client._parse_select_options(_html)
+                                )
                                 _sold = (
                                     all(o.get("isSoldOut", False) for o in _opts)
                                     if _opts
@@ -3065,15 +3072,23 @@ class JobWorker:
                         if isinstance(_r_ext, dict) and _r_ext.get("success"):
                             _r_html = _r_ext.get("html", "")
                             if _r_html:
-                                _det = (
-                                    client._parse_result_item_obj(_r_html, _spid, False)
-                                    or {}
+                                _r_loop = asyncio.get_event_loop()
+                                _det = await _r_loop.run_in_executor(
+                                    None,
+                                    lambda: client._parse_result_item_obj(
+                                        _r_html, _spid, False
+                                    )
+                                    or {},
                                 )
                             if not _det:
                                 _r_obj = _r_ext.get("resultItemObj", {})
                                 _r_nm = _r_obj.get("itemNm", "")
                                 if _r_nm and _r_html:
-                                    _r_opts = client._parse_select_options(_r_html)
+                                    _r_loop = asyncio.get_event_loop()
+                                    _r_opts = await _r_loop.run_in_executor(
+                                        None,
+                                        lambda: client._parse_select_options(_r_html),
+                                    )
                                     _det = {
                                         "itemNm": _r_nm,
                                         "name": _r_nm,
@@ -4527,15 +4542,22 @@ class JobWorker:
                         ):
                             _html = _ext_result.get("html", "")
                             if _html:
-                                det = (
-                                    client._parse_result_item_obj(_html, spid, False)
-                                    or {}
+                                _s_loop = asyncio.get_event_loop()
+                                det = await _s_loop.run_in_executor(
+                                    None,
+                                    lambda: client._parse_result_item_obj(
+                                        _html, spid, False
+                                    )
+                                    or {},
                                 )
                                 if not det:
                                     _ext_obj2 = _ext_result.get("resultItemObj", {})
                                     _nm2 = _ext_obj2.get("itemNm", "")
                                     if _nm2:
-                                        _opts2 = client._parse_select_options(_html)
+                                        _opts2 = await _s_loop.run_in_executor(
+                                            None,
+                                            lambda: client._parse_select_options(_html),
+                                        )
                                         det = {
                                             "itemNm": _nm2,
                                             "name": _nm2,

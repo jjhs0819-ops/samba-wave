@@ -447,7 +447,9 @@ async def lifespan(app: FastAPI):
     await _connect_cache()
     startup_logger = _startup_logger()
     await _apply_startup_schema_fixes(startup_logger)
-    await _sync_playauto_registered_accounts(startup_logger)
+    # PlayAuto 동기화는 외부 API + 대용량 DB 스캔으로 5~10분 소요 가능
+    # yield 이전에 실행하면 health check가 그만큼 지연되므로 백그라운드 태스크로 분리
+    asyncio.create_task(_sync_playauto_registered_accounts(startup_logger))
 
     # DB 프록시 캐시를 워커/오토튠 시작 전에 프라임한다.
     # async 컨텍스트에서는 _get_cached_proxies 가 백그라운드 태스크만 예약하므로,
