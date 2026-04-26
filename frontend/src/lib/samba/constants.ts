@@ -69,7 +69,7 @@ export const SOURCING_ORDER_URLS: Record<string, string> = {
 export const DELIVERY_TRACKING_URLS: Record<string, string> = {
   'CJ대한통운': 'https://trace.cjlogistics.com/next/tracking.html?wblNo=',
   '한진택배': 'https://www.hanjin.com/kor/CMS/DeliveryMgr/WaybillResult.do?mession=&searchType=General&wblnumText2=',
-  '롯데택배': 'https://www.lotteglogis.com/home/reservation/tracking/link498?InvNo=',
+  '롯데택배': 'https://www.lotteglogis.com/home/reservation/tracking/index?InvNo=',
   '로젠택배': 'https://www.ilogen.com/web/personal/trace/',
   '우체국택배': 'https://service.epost.go.kr/trace.RetrieveDomRi498.postal?sid1=',
   '경동택배': 'https://kdexp.com/deliverySearch?barcode=',
