@@ -604,11 +604,22 @@ async def move_filter(
 # ── Collected Products ──
 
 
+def _split_product_ids(q: str) -> list[str] | None:
+    """검색어에 콤마(,) 가 있으면 다중 상품번호로 분할.
+
+    Returns: 콤마 split 결과(공백 strip + 빈 항목 제외) 또는 None(콤마 없음/유효 항목 0개).
+    """
+    if "," not in q:
+        return None
+    ids = [s.strip() for s in q.split(",") if s.strip()]
+    return ids if ids else None
+
+
 @router.get("/products/scroll")
 async def scroll_products(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=10000),
-    search: str = Query("", max_length=200),
+    search: str = Query("", max_length=2000),
     search_type: str = Query("name"),
     source_site: Optional[str] = None,
     source_sites: Optional[str] = None,
@@ -644,6 +655,14 @@ async def scroll_products(
     # 텍스트 검색
     q = search.strip()
     if q:
+        # 상품번호 다중 입력(콤마) 지원 — split 결과가 있으면 IN, 없으면 단일 ilike
+        _multi_ids = _split_product_ids(q)
+        _site_id_clause = (
+            _CP.site_product_id.in_(_multi_ids)
+            if _multi_ids
+            else _CP.site_product_id.ilike(f"%{q}%")
+        )
+
         if search_type == "name":
             # 원상품명 + 등록상품명 + 마켓등록명 통합 부분 일치 (공백 무시)
             q_no_space = q.replace(" ", "")
@@ -658,7 +677,7 @@ async def scroll_products(
                     func.coalesce(cast(_CP.market_names, String), "").ilike(f"%{q}%"),
                     func.coalesce(_CP.brand, "").ilike(f"%{q}%"),
                     func.coalesce(_CP.style_code, "").ilike(f"%{q}%"),
-                    _CP.site_product_id.ilike(f"%{q}%"),
+                    _site_id_clause,
                 )
             )
         elif search_type == "name_all":
@@ -676,11 +695,11 @@ async def scroll_products(
                     func.coalesce(cast(_CP.market_names, String), "").ilike(f"%{q}%"),
                     func.coalesce(_CP.brand, "").ilike(f"%{q}%"),
                     func.coalesce(_CP.style_code, "").ilike(f"%{q}%"),
-                    _CP.site_product_id.ilike(f"%{q}%"),
+                    _site_id_clause,
                 )
             )
         elif search_type == "no":
-            conditions.append(_CP.site_product_id.ilike(f"%{q}%"))
+            conditions.append(_site_id_clause)
         elif search_type == "filter":
             # 검색필터 이름으로 검색 → search_filter_id 서브쿼리
             from backend.domain.samba.collector.model import SambaSearchFilter as _SF
