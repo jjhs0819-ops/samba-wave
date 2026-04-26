@@ -9,17 +9,22 @@ import { getPeriodStart, getPeriodEnd } from '@/lib/samba/utils'
 import { STATUS_MAP } from '../constants'
 
 const MARKET_STATUS_OPTIONS = [
-  '諛쒖＜誘명솗??, '諛쒖넚?湲?, '寃곗젣?꾨즺', '二쇰Ц?묒닔', '諛곗넚?湲곗쨷',
-  '諛곗넚以?, '諛곗넚?꾨즺', '援щℓ?뺤젙', '?≪옣異쒕젰', '?≪옣?낅젰', '異쒓퀬', '?뺤궛?꾨즺',
-  '痍⑥냼?붿껌', '痍⑥냼泥섎━以?, '痍⑥냼?꾨즺', '痍⑥냼嫄곕?', '痍⑥냼以?,
-  '諛섑뭹?붿껌', '?섍굅以?, '?섍굅?꾨즺', '諛섑뭹?꾨즺', '諛섑뭹嫄곕?',
-  '援먰솚?붿껌', '援먰솚泥섎━以?, '援먰솚?꾨즺', '援먰솚嫄곕?',
-  '蹂대쪟', '?≪옣?꾩넚?꾨즺',
+  '주문접수',
+  '배송대기중',
+  '상품준비',
+  '출고지시',
+  '배송중',
+  '배송완료',
+  '취소요청',
+  '취소완료',
+  '반품요청',
+  '반품완료',
+  '교환요청',
+  '교환완료',
 ]
 
 interface Props {
   isProductMode: boolean
-  // 湲곌컙 ?꾪꽣
   period: string
   setPeriod: Dispatch<SetStateAction<string>>
   customStart: string
@@ -30,7 +35,6 @@ interface Props {
   setStartLocked: Dispatch<SetStateAction<boolean>>
   dateLocked: boolean
   setDateLocked: Dispatch<SetStateAction<boolean>>
-  // 媛?몄삤湲?/ ?쇨큵
   syncAccountId: string
   setSyncAccountId: Dispatch<SetStateAction<string>>
   syncing: boolean
@@ -42,7 +46,6 @@ interface Props {
   bulkUpdating: boolean
   handleBulkAction: () => void | Promise<void>
   selectedIdsSize: number
-  // 硫붿씤 ?꾪꽣
   filteredOrdersCount: number
   filteredOrdersTotalSale: number
   searchCategory: string
@@ -66,7 +69,7 @@ interface Props {
   setSortBy: Dispatch<SetStateAction<string>>
   pageSize: number
   setPageSize: Dispatch<SetStateAction<number>>
-  // ?곗씠??  accounts: SambaMarketAccount[]
+  accounts: SambaMarketAccount[]
   sourcingAccounts: SambaSourcingAccount[]
 }
 
@@ -89,114 +92,94 @@ export default function OrdersFilterBar(props: Props) {
 
   return (
     <>
-      {/* 湲곌컙 ?꾪꽣 諛????곹뭹蹂?紐⑤뱶?먯꽌???④? */}
-      {!isProductMode && <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.625rem 0.875rem', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
-        <div style={{ display: 'flex', gap: '4px', flexWrap: 'nowrap', alignItems: 'center' }}>
-          {PERIOD_BUTTONS.map(pb => (
-            <button key={pb.key} onClick={() => {
-              if (dateLocked) return
-              setPeriod(pb.key)
-              if (!startLocked) {
-                const start = getPeriodStart(pb.key)
-                setCustomStart(start ? start.toLocaleDateString('sv-SE') : '')
-              }
-              setCustomEnd(getPeriodEnd(pb.key).toLocaleDateString('sv-SE'))
-            }}
-              style={{ padding: '0.22rem 0.55rem', borderRadius: '5px', fontSize: '0.75rem', background: period === pb.key ? 'rgba(80,80,80,0.8)' : 'rgba(50,50,50,0.8)', border: period === pb.key ? '1px solid #666' : '1px solid #3D3D3D', color: period === pb.key ? '#fff' : '#C5C5C5', cursor: dateLocked ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', opacity: dateLocked && period !== pb.key ? 0.5 : 1 }}
-            >{pb.label}</button>
-          ))}
-          <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 4px' }} />
-          <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)}
-            style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem', ...(startLocked ? { borderColor: '#C0392B', color: '#FF8C00' } : {}) }} />
-          <button
-            onClick={() => setStartLocked(prev => !prev)}
-            style={{
-              padding: '0.22rem 0.5rem', fontSize: '0.72rem', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap',
-              background: startLocked ? '#8B1A1A' : 'rgba(50,50,50,0.8)',
-              border: startLocked ? '1px solid #C0392B' : '1px solid #3D3D3D',
-              color: startLocked ? '#fff' : '#C5C5C5',
-            }}
-          >怨좎젙</button>
-          <span style={{ color: '#555', fontSize: '0.75rem' }}>~</span>
-          <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)}
-            style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} />
-          <button
-            onClick={() => setDateLocked(prev => !prev)}
-            style={{
-              padding: '0.22rem 0.5rem', fontSize: '0.72rem', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap',
-              background: dateLocked ? '#8B1A1A' : 'rgba(50,50,50,0.8)',
-              border: dateLocked ? '1px solid #C0392B' : '1px solid #3D3D3D',
-              color: dateLocked ? '#fff' : '#C5C5C5',
-            }}
-          >怨좎젙</button>
+      {!isProductMode && (
+        <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.625rem 0.875rem', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' }}>
+            {PERIOD_BUTTONS.map(pb => (
+              <button
+                key={pb.key}
+                onClick={() => {
+                  if (dateLocked) return
+                  setPeriod(pb.key)
+                  if (!startLocked) {
+                    const start = getPeriodStart(pb.key)
+                    setCustomStart(start ? start.toLocaleDateString('sv-SE') : '')
+                  }
+                  setCustomEnd(getPeriodEnd(pb.key).toLocaleDateString('sv-SE'))
+                }}
+                style={{
+                  padding: '0.22rem 0.55rem',
+                  borderRadius: '5px',
+                  fontSize: '0.75rem',
+                  background: period === pb.key ? 'rgba(80,80,80,0.8)' : 'rgba(50,50,50,0.8)',
+                  border: period === pb.key ? '1px solid #666' : '1px solid #3D3D3D',
+                  color: period === pb.key ? '#fff' : '#C5C5C5',
+                  cursor: dateLocked ? 'not-allowed' : 'pointer',
+                  opacity: dateLocked && period !== pb.key ? 0.5 : 1,
+                }}
+              >
+                {pb.label}
+              </button>
+            ))}
+            <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem', ...(startLocked ? { borderColor: '#C0392B', color: '#FF8C00' } : {}) }} />
+            <button onClick={() => setStartLocked(prev => !prev)} style={{ padding: '0.22rem 0.5rem', fontSize: '0.72rem', borderRadius: '4px', cursor: 'pointer', background: startLocked ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: startLocked ? '1px solid #C0392B' : '1px solid #3D3D3D', color: startLocked ? '#fff' : '#C5C5C5' }}>시작고정</button>
+            <span style={{ color: '#555', fontSize: '0.75rem' }}>~</span>
+            <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} />
+            <button onClick={() => setDateLocked(prev => !prev)} style={{ padding: '0.22rem 0.5rem', fontSize: '0.72rem', borderRadius: '4px', cursor: 'pointer', background: dateLocked ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: dateLocked ? '1px solid #C0392B' : '1px solid #3D3D3D', color: dateLocked ? '#fff' : '#C5C5C5' }}>날짜고정</button>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+            <select value={syncAccountId} onChange={e => setSyncAccountId(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.72rem', minWidth: '200px' }}>
+              <option value="">전체 계정 동기화</option>
+              {(() => {
+                const marketTypes = [...new Map(accounts.map(a => [a.market_type, a.market_name])).entries()]
+                return marketTypes.flatMap(([type, name]) => [
+                  <option key={`type:${type}`} value={`type:${type}`}>{name}</option>,
+                  ...accounts
+                    .filter(a => a.market_type === type)
+                    .map(a => {
+                      const accountName = a.account_label?.trim() || a.seller_id?.trim() || a.business_name?.trim() || a.market_name
+                      return <option key={a.id} value={a.id}>- {accountName}</option>
+                    }),
+                ])
+              })()}
+            </select>
+            <button onClick={handleFetch} disabled={syncing} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: syncing ? 'not-allowed' : 'pointer' }}>{syncing ? '동기화 중...' : '주문 동기화'}</button>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.72rem', color: syncAccountId ? '#555' : '#888', cursor: syncAccountId ? 'not-allowed' : 'pointer' }}>
+              <input type="checkbox" checked={backgroundMode} disabled={syncing || !!syncAccountId} onChange={e => setBackgroundMode(e.target.checked)} />
+              백그라운드
+            </label>
+            <select value={bulkStatus} onChange={e => setBulkStatus(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.72rem', minWidth: '130px' }}>
+              <option value="">일괄 작업</option>
+              <option value="pending">상태: 대기</option>
+              <option value="wait_ship">상태: 배송대기</option>
+              <option value="arrived">상태: 도착</option>
+              <option value="shipped">상태: 발송완료</option>
+              <option value="delivered">상태: 배송완료</option>
+              <option value="cancelled">상태: 취소완료</option>
+              <option value="confirm">주문확인</option>
+              <option value="approve_cancel">취소승인</option>
+              <option value="delete">삭제</option>
+            </select>
+            <button onClick={handleBulkAction} disabled={bulkUpdating || !bulkStatus || selectedIdsSize === 0} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: selectedIdsSize > 0 && bulkStatus ? '#C0392B' : 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: selectedIdsSize > 0 && bulkStatus ? '#fff' : '#666', borderRadius: '4px', cursor: bulkUpdating || !bulkStatus || selectedIdsSize === 0 ? 'not-allowed' : 'pointer' }}>{bulkUpdating ? '처리 중...' : `일괄 실행 (${fmtNum(selectedIdsSize)})`}</button>
+          </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-          <select value={syncAccountId} onChange={e => setSyncAccountId(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.72rem', minWidth: '200px' }}>
-            <option value="">?꾩껜留덉폆蹂닿린</option>
-            {(() => {
-              const marketTypes = [...new Map(accounts.map(a => [a.market_type, a.market_name])).entries()]
-              return marketTypes.flatMap(([type, name]) => [
-                <option key={`type:${type}`} value={`type:${type}`}>{name}</option>,
-                ...accounts
-                  .filter(a => a.market_type === type)
-                  .map(a => {
-                    const accountName = a.account_label?.trim() || a.seller_id?.trim() || a.business_name?.trim() || a.market_name
-                    return <option key={a.id} value={a.id}>- {accountName}</option>
-                  }),
-              ])
-            })()}
-          </select>
-          <button onClick={handleFetch} disabled={syncing} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: syncing ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>{syncing ? '二쇰Ц?섏쭛 以?..' : '媛?몄삤湲?}</button>
-          {/* 諛깃렇?쇱슫??紐⑤뱶 ?좉? ???꾩껜留덉폆 ?좏깮 ?쒖뿉留??쒖꽦??(媛쒕퀎/留덉폆??낆? 吏㏃븘??遺덊븘?? */}
-          <label
-            title="諛깃렇?쇱슫???≪쑝濡??ㅽ뻾 ???섏씠吏 ?댄깉?대룄 怨꾩냽 吏꾪뻾. ?꾩껜留덉폆 ?좏깮 ?쒖뿉留??곸슜."
-            style={{ display: 'flex', alignItems: 'center', gap: '3px', fontSize: '0.7rem', color: syncAccountId ? '#555' : '#888', cursor: syncAccountId ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}
-          >
-            <input
-              type="checkbox"
-              checked={backgroundMode}
-              disabled={syncing || !!syncAccountId}
-              onChange={e => setBackgroundMode(e.target.checked)}
-              style={{ cursor: syncing || syncAccountId ? 'not-allowed' : 'pointer' }}
-            />
-            諛깃렇?쇱슫??          </label>
-          <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 2px' }} />
-          <select value={bulkStatus} onChange={e => setBulkStatus(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.72rem', minWidth: '110px' }}>
-            <option value="">?쇨큵 ?묒뾽 ?좏깮</option>
-            <optgroup label="?곹깭 蹂寃?>
-              <option value="pending">??二쇰Ц?묒닔</option>
-              <option value="wait_ship">??諛곗넚?湲?/option>
-              <option value="arrived">???щТ?ㅻ룄李?/option>
-              <option value="shipped">??異쒓퀬?꾨즺</option>
-              <option value="delivered">??諛곗넚?꾨즺</option>
-              <option value="cancelled">??痍⑥냼?꾨즺</option>
-            </optgroup>
-            <optgroup label="二쇰Ц 泥섎━">
-              <option value="confirm">諛쒖＜?뺤씤</option>
-              <option value="approve_cancel">痍⑥냼?뱀씤</option>
-              <option value="delete">??젣 ?좑툘</option>
-            </optgroup>
-          </select>
-          <button onClick={handleBulkAction} disabled={bulkUpdating || !bulkStatus || selectedIdsSize === 0} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: selectedIdsSize > 0 && bulkStatus ? (bulkStatus === 'delete' ? '#7B2D00' : '#C0392B') : 'rgba(50,50,50,0.9)', border: `1px solid ${selectedIdsSize > 0 && bulkStatus === 'delete' ? '#A83200' : '#3D3D3D'}`, color: selectedIdsSize > 0 && bulkStatus ? '#fff' : '#666', borderRadius: '4px', cursor: bulkUpdating || !bulkStatus || selectedIdsSize === 0 ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>{bulkUpdating ? '泥섎━ 以?..' : `?ㅽ뻾 (${fmtNum(selectedIdsSize)}嫄?`}</button>
-        </div>
-      </div>}
+      )}
 
-      {/* ?꾪꽣 諛?*/}
-      <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
-        <span style={{ fontSize: '0.72rem', color: '#aaa', whiteSpace: 'nowrap', marginRight: '4px' }}>
-          <span style={{ color: '#FF8C00', fontWeight: 600 }}>{fmtNum(filteredOrdersCount)}</span>嫄?/ ??span style={{ color: '#FF8C00', fontWeight: 600 }}>{fmtNum(filteredOrdersTotalSale)}</span>
+      <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '0.72rem', color: '#aaa' }}>
+          <span style={{ color: '#FF8C00', fontWeight: 600 }}>{fmtNum(filteredOrdersCount)}</span>건 / ₩<span style={{ color: '#FF8C00', fontWeight: 600 }}>{fmtNum(filteredOrdersTotalSale)}</span>
         </span>
-        <select style={{ ...inputStyle, width: '80px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
-          <option value="product">?곹뭹</option>
-          <option value="customer">怨좉컼</option>
-          <option value="product_id">?곹뭹踰덊샇</option>
-          <option value="order_number">二쇰Ц踰덊샇</option>
+        <select style={{ ...inputStyle, width: '90px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
+          <option value="product">상품명</option>
+          <option value="customer">고객명</option>
+          <option value="product_id">상품ID</option>
+          <option value="order_number">주문번호</option>
         </select>
-        <input style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadOrders() }} />
-        <button onClick={loadOrders} style={{ background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', padding: '0.22rem 0.75rem', borderRadius: '5px', fontSize: '0.75rem', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>寃??/button>
-        <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto', flexShrink: 0, alignItems: 'center' }}>
-          <select style={{ ...inputStyle, width: '130px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
-            <option value="">?꾩껜留덉폆蹂닿린</option>
+        <input style={{ ...inputStyle, width: '160px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadOrders() }} />
+        <button onClick={loadOrders} style={{ background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', padding: '0.22rem 0.75rem', borderRadius: '5px', fontSize: '0.75rem', border: 'none', cursor: 'pointer' }}>검색</button>
+        <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto', flexWrap: 'wrap' }}>
+          <select style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
+            <option value="">전체 마켓</option>
             {(() => {
               const marketTypes = [...new Map(accounts.map(a => [a.market_type, a.market_name])).entries()]
               return marketTypes.flatMap(([type, name]) => [
@@ -210,48 +193,51 @@ export default function OrdersFilterBar(props: Props) {
               ])
             })()}
           </select>
-          <select style={{ ...inputStyle, width: '110px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}><option value="">?꾩껜?ъ씠?몃낫湲?/option>{['MUSINSA','KREAM','FashionPlus','Nike','Adidas','ABCmart','REXMONDE','SSG','LOTTEON','GSShop','ElandMall','SSF'].map(s => <option key={s} value={s}>{s}</option>)}</select>
-          <select style={{ ...inputStyle, width: '130px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={accountFilter} onChange={e => setAccountFilter(e.target.value)}>
-            <option value="">二쇰Ц怨꾩젙</option>
-            {(() => {
-              const allSites = [...new Set(sourcingAccounts.map(sa => sa.site_name))]
-              return allSites.sort().map(site => (
-                <optgroup key={site} label={site}>
-                  {sourcingAccounts.filter(sa => sa.site_name === site).map(sa => (
-                    <option key={sa.id} value={sa.id}>{sa.account_label ? `${sa.account_label}(${sa.username})` : sa.username}</option>
-                  ))}
-                </optgroup>
-              ))
-            })()}
+          <select style={{ ...inputStyle, width: '120px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}>
+            <option value="">전체 소싱처</option>
+            {['MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'REXMONDE', 'SSG', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF'].map(s => <option key={s} value={s}>{s}</option>)}
           </select>
-          <select style={{ ...inputStyle, width: '112px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketStatus} onChange={e => setMarketStatus(e.target.value)}>
-            <option value="">留덉폆?곹깭 蹂닿린</option>
-            {MARKET_STATUS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+          <select style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={accountFilter} onChange={e => setAccountFilter(e.target.value)}>
+            <option value="">전체 소싱계정</option>
+            {[...new Set(sourcingAccounts.map(sa => sa.site_name))].sort().map(site => (
+              <optgroup key={site} label={site}>
+                {sourcingAccounts.filter(sa => sa.site_name === site).map(sa => (
+                  <option key={sa.id} value={sa.id}>{sa.account_label ? `${sa.account_label}(${sa.username})` : sa.username}</option>
+                ))}
+              </optgroup>
+            ))}
           </select>
-          <select style={{ ...inputStyle, width: '118px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={inputFilter} onChange={e => setInputFilter(e.target.value)}>
-            <option value="">?낅젰媛?/option>
-            <option value="has_order">二쇰Ц踰덊샇?낅젰</option>
-            <option value="no_order">二쇰Ц踰덊샇 誘몄엯??/option>
-            <option value="direct">吏곷같</option>
-            <option value="kkadaegi">源뚮?湲?/option>
-            <option value="gift">?좊Ъ</option>
+          <select style={{ ...inputStyle, width: '120px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketStatus} onChange={e => setMarketStatus(e.target.value)}>
+            <option value="">배송상태</option>
+            {MARKET_STATUS_OPTIONS.map(status => <option key={status} value={status}>{status}</option>)}
           </select>
-          <select style={{ ...inputStyle, width: '130px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-            <option value="active">?묒닔/?湲??щТ??/option>
-            <option value="">?꾩껜 二쇰Ц?곹깭</option>
-            {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k} style={k === 'ship_failed' ? { color: '#FF3232' } : {}}>{v.label}</option>)}
+          <select style={{ ...inputStyle, width: '120px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={inputFilter} onChange={e => setInputFilter(e.target.value)}>
+            <option value="">입력필터</option>
+            <option value="has_order">소싱주문번호 있음</option>
+            <option value="no_order">소싱주문번호 없음</option>
+            <option value="direct">직배송</option>
+            <option value="kkadaegi">까대기</option>
+            <option value="gift">사은품</option>
           </select>
-          <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 2px' }} />
-          <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ ...inputStyle, width: '92px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }}>
-            <option value="date_desc">二쇰Ц?쇱옄??/option>
-            <option value="date_asc">二쇰Ц?쇱옄??/option>
-            <option value="profit_desc">?섏씡??/option>
-            <option value="profit_asc">?섏씡??/option>
-            <option value="price_desc">?먮ℓ媛??/option>
-            <option value="price_asc">?먮ℓ媛??/option>
+          <select style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+            <option value="active">진행중</option>
+            <option value="">전체 주문상태</option>
+            {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          </select>
+          <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ ...inputStyle, width: '100px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }}>
+            <option value="date_desc">최신순</option>
+            <option value="date_asc">오래된순</option>
+            <option value="profit_desc">이익높음</option>
+            <option value="profit_asc">이익낮음</option>
+            <option value="price_desc">매출높음</option>
+            <option value="price_asc">매출낮음</option>
           </select>
           <select style={{ ...inputStyle, width: '92px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={pageSize} onChange={e => setPageSize(Number(e.target.value))}>
-            <option value={20}>20媛?蹂닿린</option><option value={50}>50媛?蹂닿린</option><option value={100}>100媛?蹂닿린</option><option value={200}>200媛?蹂닿린</option><option value={500}>500媛?蹂닿린</option>
+            <option value={20}>20개</option>
+            <option value={50}>50개</option>
+            <option value={100}>100개</option>
+            <option value={200}>200개</option>
+            <option value={500}>500개</option>
           </select>
         </div>
       </div>
