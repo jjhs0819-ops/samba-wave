@@ -494,6 +494,7 @@ class JobWorker:
             job = await repo.claim_pending_job(
                 exclude_sources=_excl_sources or None,
                 exclude_brand_all=self._brand_all_running,
+                exclude_types={"bg_remove"},  # 로컬 워커 전용 — Cloud Run에서 처리 금지
             )
             if not job:
                 return bool(self._active_tasks)

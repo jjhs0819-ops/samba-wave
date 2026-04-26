@@ -35,6 +35,7 @@ export interface DrilldownGroupTableProps {
   handleBrandRefresh: () => void | Promise<void>
   handleAiTagPreview: () => void | Promise<void>
   handleClearAiTags: () => void | Promise<void>
+  handleSyncRequestedCounts: () => void | Promise<void>
   parseGroupName: (name: string, site: string) => { brand: string; category: string }
   load: () => void | Promise<void>; loadTree: () => void | Promise<void>
 }
@@ -51,7 +52,7 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
     tagPreviewLoading,
     handleDeleteSelectedGroups, handleCollectGroups,
     handlePolicyApply, handleUpdateRequestedCount, handleGoToProducts,
-    handleBrandRefresh, handleAiTagPreview, handleClearAiTags,
+    handleBrandRefresh, handleAiTagPreview, handleClearAiTags, handleSyncRequestedCounts,
     parseGroupName, load, loadTree,
   } = props
 
@@ -119,6 +120,16 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
               상품수집
             </button>
             <button onClick={handleBrandRefresh} style={{ display: 'none' }}>추가수집</button>
+            <button
+              onClick={handleSyncRequestedCounts}
+              title="선택된(없으면 전체) 그룹의 요청수를 현재 수집수로 일괄 맞춥니다"
+              style={{
+                background: 'rgba(100,200,255,0.1)', border: '1px solid rgba(100,200,255,0.3)',
+                color: '#64C8FF', padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem', cursor: 'pointer',
+              }}
+            >
+              수집동기화
+            </button>
             <button
               disabled={tagPreviewLoading}
               onClick={handleAiTagPreview}

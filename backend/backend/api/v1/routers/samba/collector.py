@@ -453,7 +453,9 @@ async def delete_orphan_products(
 
 
 @router.get("/filters/tree")
-async def get_filter_tree(session: AsyncSession = Depends(get_read_session_dependency)):
+async def get_filter_tree(
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
     """검색그룹 트리 구조 반환. 사이트 > 폴더 > 리프 그룹."""
     svc = _get_services(session)
     all_filters = await svc.list_filters(limit=10000)
@@ -880,19 +882,15 @@ async def scroll_products(
 
         conditions.extend(await build_has_orders_conditions(session, _CP))
 
-    # ids_only 모드: ID + total만 반환 (검색결과전송 최적화)
+    # ids_only 모드: ID만 반환 (검색결과전송 최적화)
+    # COUNT 쿼리 제거 — 프론트는 ids만 사용, total은 len(ids)로 계산
     if ids_only:
-        count_stmt = select(func.count()).select_from(_CP)
-        for c in conditions:
-            count_stmt = count_stmt.where(c)
         id_stmt = select(_CP.id)
         for c in conditions:
             id_stmt = id_stmt.where(c)
-        count_result = await session.execute(count_stmt)
-        total = count_result.scalar() or 0
         ids_result = await session.execute(id_stmt)
         ids = [r[0] for r in ids_result.all()]
-        return {"ids": ids, "total": total}
+        return {"ids": ids, "total": len(ids)}
 
     # 목록에 필요한 컬럼 선택 (heavy 필드만 제외)
     list_cols = [c for c in mapper.columns if c.key not in _HEAVY_FIELDS]

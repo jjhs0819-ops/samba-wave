@@ -81,6 +81,11 @@ def create_application() -> FastAPI:
 
     register_exception_handlers(app)
 
+    from backend.middleware.api_gateway import ApiGatewayMiddleware
+
+    # CORS가 가장 바깥쪽에 있어야 Gateway 403 같은 오류 응답에도 CORS 헤더가 붙음
+    # add_middleware는 나중에 추가할수록 바깥쪽(outermost)이므로 순서 주의
+    app.add_middleware(ApiGatewayMiddleware, api_key=settings.api_gateway_key)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -89,10 +94,6 @@ def create_application() -> FastAPI:
         allow_headers=["*"],
         allow_origin_regex=settings.cors_origin_regex,
     )
-
-    from backend.middleware.api_gateway import ApiGatewayMiddleware
-
-    app.add_middleware(ApiGatewayMiddleware, api_key=settings.api_gateway_key)
 
     samba_auth = [Depends(get_user_id)]
 

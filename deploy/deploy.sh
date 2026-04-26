@@ -221,27 +221,27 @@ sleep 2
 echo "[5/6] blue 새 이미지 pull + 재시작..."
 sudo docker compose pull samba-api
 sudo docker compose up -d samba-api
-# 외부 https health endpoint 로 SHA 매칭 폴링 (docker exec wget 의존성 제거).
-# Caddy lb_policy first → blue healthy 시 자동 blue 라우팅 →
-# 외부에서 보이는 commit이 새 SHA가 되면 진정한 ready.
+# blue 컨테이너 직접 폴링 (docker exec wget) — 외부 polling은 green이 응답해도 통과되어
+# blue ready 판별 불가능했음(둘 다 latest 이미지라 SHA 동일).
 # blue startup 5-10분 소요 가능 (alembic + verify_schema + worker 초기화) → 600초 대기.
 for i in $(seq 1 120); do
     sleep 5
-    EXT_RESP=$(curl -sf -m 3 https://api.samba-wave.co.kr/api/v1/health 2>/dev/null || echo "")
-    EXT_COMMIT=$(echo "$EXT_RESP" | grep -oE '"commit":"[^"]+"' | head -1 | cut -d'"' -f4)
-    if [ -n "$EXT_COMMIT" ] && echo "$SHA" | grep -q "^$EXT_COMMIT"; then
-        echo "    ✅ blue healthy + Caddy 라우팅 복귀 (${i}회 시도, $((i*5))초, commit=$EXT_COMMIT)"
+    RESP=$(sudo docker exec samba-samba-api-1 wget -qO- --timeout=3 http://localhost:8080/api/v1/health 2>/dev/null || echo "")
+    if echo "$RESP" | grep -q '"status":"healthy"'; then
+        echo "    ✅ blue healthy (${i}회 시도, $((i*5))초)"
         break
     fi
-    echo "    ⏳ blue not-ready ($i/120, $((i*5))초, 외부 commit=${EXT_COMMIT:-none}, 푸시 SHA=$SHA)"
+    echo "    ⏳ blue not-ready ($i/120, $((i*5))초)"
     if [ "$i" = "120" ]; then
-        echo "⚠️ blue 헬스체크 실패 (외부 commit=$EXT_COMMIT, 푸시 SHA=$SHA) — green 유지 (수동 복구 필요)"
+        echo "⚠️ blue 헬스체크 실패 — green 유지 (수동 복구 필요)"
         exit 1
     fi
 done
 
 echo "[6/6] green 컨테이너 정리 + 미사용 이미지 prune..."
-sleep 5
+# blue healthy 후 Caddy active health(interval 2s)가 blue로 라우팅 복귀할 시간 확보 —
+# 5초로는 부족해 green stop 시점에 Caddy가 아직 green 우선이면 503 윈도우 발생.
+sleep 10
 sudo docker compose --profile staging stop samba-api-staging
 sudo docker compose --profile staging rm -f samba-api-staging
 sudo docker image prune -a -f | tail -3

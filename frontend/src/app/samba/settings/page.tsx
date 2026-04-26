@@ -47,6 +47,10 @@ export default function SettingsPage() {
   return (
     <div style={{ color: '#E5E5E5' }}>
       <StoreSettingsPanel {...storeSettings} />
+
+      {/* 소싱처 계정 관리 */}
+      <SourcingAccountsPanel {...sourcingAccountsHook} />
+
       {/* 플랜 / 사용량 */}
       {tenantUsage?.usage && (() => {
         const PLAN_LABELS: Record<string, string> = { free: 'Free', basic: 'Basic', pro: 'Pro', enterprise: 'Enterprise' }
@@ -100,10 +104,6 @@ export default function SettingsPage() {
         visiblePasswords={storeSettings.visiblePasswords}
         togglePasswordVisibility={storeSettings.togglePasswordVisibility}
       />
-
-
-      {/* 소싱처 계정 관리 */}
-      <SourcingAccountsPanel {...sourcingAccountsHook} />
 
       {/* 프록시 설정 */}
       <ProxySettingsPanel {...proxySettings} />

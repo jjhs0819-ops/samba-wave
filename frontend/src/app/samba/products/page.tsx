@@ -755,31 +755,42 @@ export default function ProductsPage() {
   };
 
   const handleSelectAll = async (checked: boolean) => {
-    setSelectAll(checked);
-    if (checked) {
-      // 전체 검색 결과 ID를 서버에서 조회
-      if (serverTotal > products.length) {
-        try {
-          const statusParam = appliedStatusFilter || undefined
-          const aiParam = appliedAiFilter || undefined
-          const res = await collectorApi.getProductIds({
-            search: appliedSearchQ.trim() || undefined,
-            search_type: appliedSearchQ.trim() ? appliedSearchType : undefined,
-            source_site: appliedSiteFilter || undefined,
-            status: statusParam,
-            sold_out_filter: appliedSoldOutFilter || undefined,
-            ai_filter: aiParam,
-            search_filter_id: appliedFilterByGroupId || undefined,
-          })
-          setSelectedIds(new Set(res.ids));
-        } catch {
-          setSelectedIds(new Set(products.map((p) => p.id)));
-        }
-      } else {
-        setSelectedIds(new Set(products.map((p) => p.id)));
-      }
-    } else {
+    if (!checked) {
+      setSelectAll(false);
       setSelectedIds(new Set());
+      return;
+    }
+    // 단일 페이지면 현재 페이지 ID로 충분
+    if (serverTotal <= products.length) {
+      setSelectAll(true);
+      setSelectedIds(new Set(products.map((p) => p.id)));
+      return;
+    }
+    // 검색결과 전체 ID 조회 (1회 자동 재시도, 실패 시 무음 폴백 금지)
+    setSelectAll(true);
+    const fetchIds = () =>
+      collectorApi.getProductIds({
+        search: appliedSearchQ.trim() || undefined,
+        search_type: appliedSearchQ.trim() ? appliedSearchType : undefined,
+        source_site: appliedSiteFilter || undefined,
+        status: appliedStatusFilter || undefined,
+        sold_out_filter: appliedSoldOutFilter || undefined,
+        ai_filter: appliedAiFilter || undefined,
+        search_filter_id: appliedFilterByGroupId || undefined,
+      })
+    try {
+      const res = await fetchIds()
+      setSelectedIds(new Set(res.ids))
+    } catch {
+      await new Promise((r) => setTimeout(r, 600))
+      try {
+        const res = await fetchIds()
+        setSelectedIds(new Set(res.ids))
+      } catch {
+        setSelectAll(false)
+        setSelectedIds(new Set())
+        showAlert('전체선택 실패: 잠시 후 다시 시도해주세요', 'error')
+      }
     }
   };
 

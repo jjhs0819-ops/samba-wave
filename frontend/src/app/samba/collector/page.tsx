@@ -37,6 +37,7 @@ import { performCreateGroup } from './utils/createGroupAction'
 import { performDeleteSelectedGroups } from './utils/groupActions'
 import { useDisplayedFilters, parseGroupName } from './hooks/useDisplayedFilters'
 import { performAiTagPreview, performClearAiTags } from './utils/aiTagActions'
+import { performSyncRequestedCounts } from './utils/syncRequestedCountsAction'
 import { useCollectLogPolling } from './hooks/useCollectLogPolling'
 import { performHandleCreateGroup, performHandleBrandConfirm } from './utils/groupCreateHandlers'
 import { useCollectQueuePolling } from './hooks/useCollectQueuePolling'
@@ -320,6 +321,9 @@ export default function CollectorPage() {
   const handleClearAiTags = () => performClearAiTags({
     selectAll, selectedIds, displayedFilters, addLog,
   })
+  const handleSyncRequestedCounts = () => performSyncRequestedCounts({
+    selectedIds, displayedFilters, load, loadTree,
+  })
 
   return (
     <div style={{ color: '#E5E5E5' }}>
@@ -415,6 +419,7 @@ export default function CollectorPage() {
         handleGoToProducts={handleGoToProducts}
         handleBrandRefresh={handleBrandRefresh}
         handleAiTagPreview={handleAiTagPreview} handleClearAiTags={handleClearAiTags}
+        handleSyncRequestedCounts={handleSyncRequestedCounts}
         parseGroupName={parseGroupName} load={load} loadTree={loadTree}
       />
 
