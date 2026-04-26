@@ -17,6 +17,11 @@ class SSGPlugin(MarketPlugin):
     policy_key = "신세계몰"
     required_fields = ["name", "sale_price"]
 
+    def _validate_category(self, category_id: str) -> str:
+        # SSG 전시카테고리 ID(dispCtgId)는 숫자이지만, base의 isdigit 검사가
+        # 비정상 매핑값을 잘못 차단할 수 있으므로 롯데ON과 동일하게 pass-through.
+        return category_id or ""
+
     def transform(self, product: dict, category_id: str, **kwargs) -> dict:
         """SSGClient.transform_product 위임."""
         from backend.domain.samba.proxy.ssg import SSGClient

@@ -2162,6 +2162,12 @@ class SambaShipmentService:
             mapping_repo, SambaCategoryTreeRepository(self.session)
         )
         for market_type in code_required_markets:
+            # SSG는 전시카테고리(dispCtgId)와 표준카테고리(stdCtgId)가 별도 체계.
+            # cat2 트리는 표준카테고리(stdCtgDclsId)만 담고 있으므로
+            # 전시카테고리 ID가 저장된 result["ssg"]를 변환하면 잘못된 값이 주입되거나
+            # 삭제되어 전송 실패가 발생한다. → SSG는 변환 루프에서 완전 제외.
+            if market_type == "ssg":
+                continue
             if market_type in result:
                 cat_path = result[market_type]
                 if cat_path and not cat_path.isdigit():
