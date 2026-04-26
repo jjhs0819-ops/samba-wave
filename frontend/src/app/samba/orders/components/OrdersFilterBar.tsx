@@ -39,8 +39,6 @@ interface Props {
   setSyncAccountId: Dispatch<SetStateAction<string>>
   syncing: boolean
   handleFetch: () => void | Promise<void>
-  backgroundMode: boolean
-  setBackgroundMode: Dispatch<SetStateAction<boolean>>
   bulkStatus: string
   setBulkStatus: Dispatch<SetStateAction<string>>
   bulkUpdating: boolean
@@ -79,7 +77,6 @@ export default function OrdersFilterBar(props: Props) {
     period, setPeriod, customStart, setCustomStart, customEnd, setCustomEnd,
     startLocked, setStartLocked, dateLocked, setDateLocked,
     syncAccountId, setSyncAccountId, syncing, handleFetch,
-    backgroundMode, setBackgroundMode,
     bulkStatus, setBulkStatus, bulkUpdating, handleBulkAction, selectedIdsSize,
     filteredOrdersCount, filteredOrdersTotalSale,
     searchCategory, setSearchCategory, searchText, setSearchText, loadOrders,
@@ -129,7 +126,7 @@ export default function OrdersFilterBar(props: Props) {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
             <select value={syncAccountId} onChange={e => setSyncAccountId(e.target.value)} style={{ ...inputStyle, width: '200px', padding: '0.22rem 0.4rem', fontSize: '0.72rem', minWidth: '200px' }}>
-              <option value="">전체 계정 동기화</option>
+              <option value="">전체마켓보기</option>
               {(() => {
                 const marketTypes = [...new Map(accounts.map(a => [a.market_type, a.market_name])).entries()]
                 return marketTypes.flatMap(([type, name]) => [
@@ -143,13 +140,9 @@ export default function OrdersFilterBar(props: Props) {
                 ])
               })()}
             </select>
-            <button onClick={handleFetch} disabled={syncing} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: syncing ? 'not-allowed' : 'pointer' }}>{syncing ? '동기화 중...' : '주문 동기화'}</button>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.72rem', color: syncAccountId ? '#555' : '#888', cursor: syncAccountId ? 'not-allowed' : 'pointer' }}>
-              <input type="checkbox" checked={backgroundMode} disabled={syncing || !!syncAccountId} onChange={e => setBackgroundMode(e.target.checked)} />
-              백그라운드
-            </label>
+            <button onClick={handleFetch} disabled={syncing} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: syncing ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>{syncing ? '주문수집 중...' : '가져오기'}</button>
             <select value={bulkStatus} onChange={e => setBulkStatus(e.target.value)} style={{ ...inputStyle, width: '130px', padding: '0.22rem 0.4rem', fontSize: '0.72rem', minWidth: '130px' }}>
-              <option value="">일괄 작업</option>
+              <option value="">일괄 작업 선택</option>
               <option value="pending">상태: 대기</option>
               <option value="wait_ship">상태: 배송대기</option>
               <option value="arrived">상태: 도착</option>
