@@ -40,6 +40,8 @@ _CATEGORY_GROUP: dict[str, str] = {
     "여성스포츠의류": "wear",
     "아웃도어의류": "wear",
     "골프웨어": "wear",
+    "바람막이": "wear",
+    "자켓": "wear",
     # 신발
     "신발": "shoes",
     "스니커즈": "shoes",
@@ -66,6 +68,8 @@ _CATEGORY_GROUP: dict[str, str] = {
     "클러치": "bag",
     "에코백": "bag",
     "캐리어": "bag",
+    "등산가방": "bag",
+    "등산배낭": "bag",
     # 잡화/액세서리
     "모자": "accessories",
     "벨트": "accessories",
@@ -87,6 +91,7 @@ _CATEGORY_GROUP: dict[str, str] = {
     "스카프/머플러/숄": "accessories",
     "손수건": "accessories",
     "보석/잡화": "accessories",
+    "등산모자": "accessories",
     "양말/패션소품": "accessories",
     "기타패션소품": "accessories",
     "필드용품": "accessories",
@@ -277,7 +282,7 @@ def detect_notice_group(product: dict[str, Any]) -> str:
 # 쿠팡 noticeCategoryName 매핑
 _COUPANG_NOTICE_CATEGORY: dict[str, str] = {
     "wear": "의류",
-    "shoes": "신발",
+    "shoes": "구두/신발",
     "bag": "가방",
     "accessories": "패션잡화(모자/벨트/액세서리 등)",
     "cosmetic": "화장품(기능성화장품 포함)",
@@ -301,7 +306,7 @@ _COUPANG_NOTICE_FIELDS: dict[str, list[str]] = {
         "품질보증기준",
         "A/S 책임자와 전화번호",
     ],
-    "신발": [
+    "구두/신발": [
         "제품 소재",
         "색상",
         "치수",
@@ -389,7 +394,7 @@ def build_coupang_notices(product: dict[str, Any]) -> list[dict[str, str]]:
     fallback = "상세페이지 참조"
     _caution_defaults: dict[str, str] = {
         "의류": "세탁 시 뒤집어서 단독 손세탁, 표백제 사용 금지, 직사광선을 피해 그늘에서 건조",
-        "신발": "물세탁 불가, 직사광선 및 고온 다습한 곳 보관 금지, 벤젠/신나 등 화학제품 사용 금지",
+        "구두/신발": "물세탁 불가, 직사광선 및 고온 다습한 곳 보관 금지, 벤젠/신나 등 화학제품 사용 금지",
         "가방": "직사광선 및 고온 다습한 환경을 피해 보관, 마찰에 의한 색 이염 주의",
     }
     caution_text = (
