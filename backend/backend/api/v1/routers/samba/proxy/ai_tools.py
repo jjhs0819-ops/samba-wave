@@ -523,6 +523,32 @@ async def bg_jobs_complete(
     }
 
 
+@router.patch("/bg-jobs/{job_id}/progress")
+async def bg_jobs_progress(
+    job_id: str,
+    x_worker_token: str = Header(default=""),
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """워커가 상품 1건 완료 시 호출 — current 증가."""
+    from sqlalchemy import select as sa_select
+
+    from backend.domain.samba.job.model import SambaJob
+
+    if not await _verify_worker_token(x_worker_token, session):
+        return {"success": False, "message": "Invalid worker token"}
+
+    stmt = sa_select(SambaJob).where(SambaJob.id == job_id)
+    result = await session.execute(stmt)
+    job = result.scalar_one_or_none()
+    if not job:
+        return {"success": False, "message": "Job not found"}
+
+    job.current = min(job.current + 1, job.total)
+    session.add(job)
+    await session.commit()
+    return {"success": True, "current": job.current, "total": job.total}
+
+
 @router.get("/bg-jobs/{job_id}/status")
 async def bg_jobs_status(
     job_id: str,

@@ -111,7 +111,10 @@ async def process_image(client: httpx.AsyncClient, url: str) -> str | None:
         processed = await asyncio.to_thread(remove_background, resp.content)
         md5 = hashlib.md5(resp.content).hexdigest()[:8]
         filename = f"ai_{md5}_{uuid.uuid4().hex[:6]}.webp"
-        return upload_to_r2(processed, filename)
+        result_url = upload_to_r2(processed, filename)
+        if result_url is None:
+            print(f"[Worker]   R2 업로드 실패 — R2 설정(bg_worker.env)을 확인하세요")
+        return result_url
     except Exception as e:
         print(f"[Worker]   Image error ({url[:60]}): {e}")
         return None
@@ -173,6 +176,14 @@ async def process_job(job: dict) -> None:
             print(
                 f"[Worker]   [{i}/{len(products)}] {pid} -> {transformed} images done"
             )
+            # 상품 1건 완료 시 진행률 즉시 보고
+            try:
+                await client.patch(
+                    f"{SAMBA_API_URL}/api/v1/samba/proxy/bg-jobs/{job_id}/progress",
+                    headers=HEADERS,
+                )
+            except Exception:
+                pass  # 진행률 보고 실패는 무시 (complete에서 최종 반영됨)
 
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(

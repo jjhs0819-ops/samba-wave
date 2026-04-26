@@ -213,7 +213,12 @@ export default function AiToolsPanel(props: Props) {
                       const cur = st.current ?? 0
                       const tot = st.total ?? productIds.length
                       setAiJobTitle(`배경제거 [${fmtNum(cur)}/${fmtNum(tot)}]`)
-                      if (pollCount % 12 === 0) addLog(`[${ts()}] 진행중... ${fmtNum(cur)}/${fmtNum(tot)}`)
+                      // pending 상태 감지 — 워커 미실행 경고
+                      if (st.status === 'pending') {
+                        if (pollCount === 6) addLog(`[${ts()}] ⚠️ 워커가 아직 작업을 수신하지 못했습니다`)
+                        if (pollCount === 18) addLog(`[${ts()}] ❌ 워커가 응답하지 않습니다. local_bg_worker.py 실행 여부를 확인해주세요`)
+                      }
+                      if (pollCount % 3 === 0) addLog(`[${ts()}] 진행중... ${fmtNum(cur)}/${fmtNum(tot)}${st.status === 'pending' ? ' (대기중)' : ''}`)
                       if (st.status === 'completed') {
                         success = st.total_transformed || 0
                         fail = st.total_failed || 0
