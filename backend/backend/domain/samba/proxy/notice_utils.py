@@ -50,7 +50,7 @@ _CATEGORY_GROUP: dict[str, str] = {
     "농구의류": "wear",
     "야구의류": "wear",
     "바람막이": "wear",
-    "자켓": "wear"
+    "자켓": "wear",
     # 신발
     "신발": "shoes",
     "스니커즈": "shoes",
