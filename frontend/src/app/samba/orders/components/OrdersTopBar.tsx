@@ -16,7 +16,6 @@ interface SmsRemain {
 }
 
 interface Props {
-  // 알림 모달
   notifications: Notification[]
   setNotifications: Dispatch<SetStateAction<Notification[]>>
   setStatusFilter: Dispatch<SetStateAction<string>>
@@ -24,15 +23,12 @@ interface Props {
   setCustomStart: Dispatch<SetStateAction<string>>
   setCustomEnd: Dispatch<SetStateAction<string>>
   setPeriod: Dispatch<SetStateAction<string>>
-  // 상품별 모드
   isProductMode: boolean
   cpId: string | null
   cpName: string | null
   filteredOrdersCount: number
-  // 헤더
   pendingCount: number
   smsRemain: SmsRemain | null
-  // 주문 로그
   logMessages: string[]
   setLogMessages: (v: string[] | ((prev: string[]) => string[])) => void
 }
@@ -48,7 +44,6 @@ export default function OrdersTopBar(props: Props) {
 
   return (
     <>
-      {/* 취소/반품/교환 요청 경고 — 클릭 전 사라지지 않는 모달 */}
       {notifications.length > 0 && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ background: '#1A1A1A', border: '2px solid #FF4444', borderRadius: '16px', padding: '2rem', maxWidth: '420px', width: '90%', boxShadow: '0 8px 32px rgba(255,68,68,0.3)' }}>
@@ -78,7 +73,6 @@ export default function OrdersTopBar(props: Props) {
         </div>
       )}
 
-      {/* 스피너 제거 CSS */}
       <style>{`
         input[type=number]::-webkit-outer-spin-button,
         input[type=number]::-webkit-inner-spin-button {
@@ -91,13 +85,8 @@ export default function OrdersTopBar(props: Props) {
         }
       `}</style>
 
-      {/* 상품별 주문이력 모드 배너 */}
       {isProductMode && (
-        <div style={{
-          background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.25)',
-          borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '0.75rem',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        }}>
+        <div style={{ background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.25)', borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '0.85rem', color: '#FF8C00', fontWeight: 600 }}>상품별 판매이력</span>
             <span style={{ fontSize: '0.85rem', color: '#E5E5E5', fontWeight: 500, maxWidth: '400px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -105,15 +94,10 @@ export default function OrdersTopBar(props: Props) {
             </span>
             <span style={{ fontSize: '0.75rem', color: '#888' }}>({fmtNum(filteredOrdersCount)}건)</span>
           </div>
-          <a href='/samba/orders' style={{
-            fontSize: '0.75rem', color: '#4C9AFF', textDecoration: 'none',
-            padding: '4px 10px', border: '1px solid rgba(76,154,255,0.3)',
-            borderRadius: '5px', background: 'rgba(76,154,255,0.08)', whiteSpace: 'nowrap',
-          }}>전체 주문 보기 →</a>
+          <a href='/samba/orders' style={{ fontSize: '0.75rem', color: '#4C9AFF', textDecoration: 'none', padding: '4px 10px', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '5px', background: 'rgba(76,154,255,0.08)', whiteSpace: 'nowrap' }}>전체 주문 보기 →</a>
         </div>
       )}
 
-      {/* 헤더 */}
       <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
         <div>
           <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.25rem' }}>{isProductMode ? '상품 판매이력' : '주문 상황'}</h2>
@@ -124,20 +108,13 @@ export default function OrdersTopBar(props: Props) {
         {smsRemain && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(76,154,255,0.08)', border: '1px solid rgba(76,154,255,0.2)', borderRadius: '8px' }}>
             <span style={{ fontSize: '0.8125rem', color: '#4C9AFF', fontWeight: 600 }}>SMS 잔여</span>
-            <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>
-              SMS <span style={{ color: '#51CF66', fontWeight: 700 }}>{fmtNum(smsRemain.SMS_CNT)}</span>건
-            </span>
-            <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>
-              LMS <span style={{ color: '#FFB84D', fontWeight: 700 }}>{fmtNum(smsRemain.LMS_CNT)}</span>건
-            </span>
-            <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>
-              MMS <span style={{ color: '#CC5DE8', fontWeight: 700 }}>{fmtNum(smsRemain.MMS_CNT)}</span>건
-            </span>
+            <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>SMS <span style={{ color: '#51CF66', fontWeight: 700 }}>{fmtNum(smsRemain.SMS_CNT)}</span>건</span>
+            <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>LMS <span style={{ color: '#FFB84D', fontWeight: 700 }}>{fmtNum(smsRemain.LMS_CNT)}</span>건</span>
+            <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>MMS <span style={{ color: '#CC5DE8', fontWeight: 700 }}>{fmtNum(smsRemain.MMS_CNT)}</span>건</span>
           </div>
         )}
       </div>
 
-      {/* 주문 로그 */}
       <div style={{ border: '1px solid #1C2333', borderRadius: '8px', overflow: 'hidden', marginBottom: '0.75rem' }}>
         <div style={{ padding: '6px 14px', background: '#0D1117', borderBottom: '1px solid #1C2333', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#94A3B8' }}>주문 로그</span>

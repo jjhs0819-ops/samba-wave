@@ -16,7 +16,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 
 def _env(key: str) -> str:
-    return os.environ.get(key) or os.environ.get(key.lower()) or os.environ.get(key.upper()) or ""
+    return (
+        os.environ.get(key)
+        or os.environ.get(key.lower())
+        or os.environ.get(key.upper())
+        or ""
+    )
 
 
 def get_model_columns() -> dict[str, set[str]]:
@@ -49,7 +54,9 @@ def get_model_columns() -> dict[str, set[str]]:
     return result
 
 
-async def get_db_columns(host: str, user: str, password: str, database: str, port: int) -> dict[str, set[str]]:
+async def get_db_columns(
+    host: str, user: str, password: str, database: str, port: int
+) -> dict[str, set[str]]:
     """프로덕션 DB의 information_schema에서 실제 컬럼 목록 조회."""
     import asyncpg
 

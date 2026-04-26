@@ -153,6 +153,14 @@ scp -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new \
     "$SCRIPT_DIR/vm/docker-compose.yml" \
     "$SCRIPT_DIR/vm/Caddyfile" \
     "${VM_USER}@${VM_HOST}:/tmp/" > /dev/null
+ssh -i "$SSH_KEY" "${VM_USER}@${VM_HOST}" 'bash -s' << 'INIT_SCRIPT'
+# BG_WORKER_TOKEN 자동 생성 (최초 1회)
+if ! grep -q "BG_WORKER_TOKEN" /opt/samba/.env 2>/dev/null; then
+    TOKEN=$(python3 -c "import uuid; print(uuid.uuid4())")
+    echo "BG_WORKER_TOKEN=${TOKEN}" >> /opt/samba/.env
+    echo "    BG_WORKER_TOKEN 자동 생성 완료"
+fi
+INIT_SCRIPT
 ssh -i "$SSH_KEY" "${VM_USER}@${VM_HOST}" '
     set -e
     if ! sudo cmp -s /tmp/docker-compose.yml /opt/samba/docker-compose.yml; then

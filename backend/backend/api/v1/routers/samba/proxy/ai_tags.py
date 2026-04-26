@@ -476,8 +476,16 @@ def _extract_seo_keywords(
     return seo
 
 
+# 모듈 레벨 SmartStore 클라이언트 캐시 — 같은 계정 키면 인스턴스를 재사용해 토큰 재발급 최소화
+_ss_client_cache: dict[tuple[str, str], object] = {}
+
+
 async def _get_smartstore_tag_client(session: AsyncSession):
-    """활성 스마트스토어 계정으로 태그사전 검증용 클라이언트 생성. 없으면 None."""
+    """활성 스마트스토어 계정으로 태그사전 검증용 클라이언트 반환.
+
+    동일 (client_id, client_secret)이면 캐시된 인스턴스를 반환하므로
+    SmartStore OAuth 토큰(1시간 유효)이 요청 간 재사용된다.
+    """
     try:
         from backend.domain.samba.account.repository import SambaMarketAccountRepository
         from backend.domain.samba.proxy.smartstore import SmartStoreClient
@@ -492,8 +500,13 @@ async def _get_smartstore_tag_client(session: AsyncSession):
             _cid = additional.get("clientId") or acc.api_key
             _csec = additional.get("clientSecret") or acc.api_secret
             if _cid and _csec:
-                logger.info("[AI태그] 스마트스토어 태그사전 검증 활성화")
-                return SmartStoreClient(_cid, _csec)
+                cache_key = (_cid, _csec)
+                if cache_key not in _ss_client_cache:
+                    _ss_client_cache[cache_key] = SmartStoreClient(_cid, _csec)
+                    logger.info("[AI태그] 스마트스토어 클라이언트 신규 생성")
+                else:
+                    logger.info("[AI태그] 스마트스토어 클라이언트 캐시 재사용")
+                return _ss_client_cache[cache_key]
     except Exception as e:
         logger.warning(
             f"[AI태그] 스마트스토어 클라이언트 초기화 실패 (태그사전 검증 비활성): {e}"

@@ -4,8 +4,6 @@
 """
 
 import asyncio
-import json
-import re
 import sys
 from pathlib import Path
 from urllib.parse import quote
@@ -27,16 +25,18 @@ HEADERS = {
 BASE = "https://department.ssg.com/search"
 KEYWORD = "나이키"
 REP_BRAND = "2000004827"
-CTG_BOLCAP = "6000201147"     # 모자 > 볼캡/야구모자
-CTG_BINI = "6000201151"       # 모자 > 비니
-CTG_BELT = "6000201142"       # 벨트 > 남성벨트
+CTG_BOLCAP = "6000201147"  # 모자 > 볼캡/야구모자
+CTG_BINI = "6000201151"  # 모자 > 비니
+CTG_BELT = "6000201142"  # 벨트 > 남성벨트
 
 
 def extract_items(html: str) -> list[dict]:
     items = _ssg._parse_search_html(html, KEYWORD)
     out = []
     for it in items:
-        out.append({"pid": it.get("siteProductId", ""), "name": (it.get("name") or "")[:60]})
+        out.append(
+            {"pid": it.get("siteProductId", ""), "name": (it.get("name") or "")[:60]}
+        )
     return out
 
 
@@ -61,22 +61,38 @@ async def probe(client: httpx.AsyncClient, label: str, url: str) -> list[dict]:
 async def main():
     # 점검할 URL 조합
     probes = [
-        ("A. 기준 (repBrandId+ctgId+ctgLv+maxDiscount, 볼캡)",
-            f"{BASE}?query={quote(KEYWORD)}&page=1&repBrandId={REP_BRAND}&ctgId={CTG_BOLCAP}&ctgLv=3&maxDiscount=1"),
-        ("B. 기준 (repBrandId+ctgId+ctgLv+maxDiscount, 비니)",
-            f"{BASE}?query={quote(KEYWORD)}&page=1&repBrandId={REP_BRAND}&ctgId={CTG_BINI}&ctgLv=3&maxDiscount=1"),
-        ("C. repBrandId 제거 (ctgId+ctgLv+maxDiscount, 볼캡)",
-            f"{BASE}?query={quote(KEYWORD)}&page=1&ctgId={CTG_BOLCAP}&ctgLv=3&maxDiscount=1"),
-        ("D. query 제거 (repBrandId+ctgId+ctgLv, 볼캡)",
-            f"{BASE}?page=1&repBrandId={REP_BRAND}&ctgId={CTG_BOLCAP}&ctgLv=3"),
-        ("E. query+ctgId만 (repBrandId 없음, 볼캡)",
-            f"{BASE}?query={quote(KEYWORD)}&page=1&ctgId={CTG_BOLCAP}&ctgLv=3"),
-        ("F. maxDiscount 제거 (볼캡)",
-            f"{BASE}?query={quote(KEYWORD)}&page=1&repBrandId={REP_BRAND}&ctgId={CTG_BOLCAP}&ctgLv=3"),
-        ("G. ctgId만 (repBrandId/query/maxDiscount 전부 제거, 볼캡)",
-            f"{BASE}?page=1&ctgId={CTG_BOLCAP}&ctgLv=3"),
-        ("H. ctgPath 경로 추가 (볼캡)",
-            f"{BASE}?query={quote(KEYWORD)}&page=1&repBrandId={REP_BRAND}&ctgId={CTG_BOLCAP}&ctgLv=3&ctgPath={quote('모자/장갑/ACC > 모자 > 볼캡/야구모자')}&maxDiscount=1"),
+        (
+            "A. 기준 (repBrandId+ctgId+ctgLv+maxDiscount, 볼캡)",
+            f"{BASE}?query={quote(KEYWORD)}&page=1&repBrandId={REP_BRAND}&ctgId={CTG_BOLCAP}&ctgLv=3&maxDiscount=1",
+        ),
+        (
+            "B. 기준 (repBrandId+ctgId+ctgLv+maxDiscount, 비니)",
+            f"{BASE}?query={quote(KEYWORD)}&page=1&repBrandId={REP_BRAND}&ctgId={CTG_BINI}&ctgLv=3&maxDiscount=1",
+        ),
+        (
+            "C. repBrandId 제거 (ctgId+ctgLv+maxDiscount, 볼캡)",
+            f"{BASE}?query={quote(KEYWORD)}&page=1&ctgId={CTG_BOLCAP}&ctgLv=3&maxDiscount=1",
+        ),
+        (
+            "D. query 제거 (repBrandId+ctgId+ctgLv, 볼캡)",
+            f"{BASE}?page=1&repBrandId={REP_BRAND}&ctgId={CTG_BOLCAP}&ctgLv=3",
+        ),
+        (
+            "E. query+ctgId만 (repBrandId 없음, 볼캡)",
+            f"{BASE}?query={quote(KEYWORD)}&page=1&ctgId={CTG_BOLCAP}&ctgLv=3",
+        ),
+        (
+            "F. maxDiscount 제거 (볼캡)",
+            f"{BASE}?query={quote(KEYWORD)}&page=1&repBrandId={REP_BRAND}&ctgId={CTG_BOLCAP}&ctgLv=3",
+        ),
+        (
+            "G. ctgId만 (repBrandId/query/maxDiscount 전부 제거, 볼캡)",
+            f"{BASE}?page=1&ctgId={CTG_BOLCAP}&ctgLv=3",
+        ),
+        (
+            "H. ctgPath 경로 추가 (볼캡)",
+            f"{BASE}?query={quote(KEYWORD)}&page=1&repBrandId={REP_BRAND}&ctgId={CTG_BOLCAP}&ctgLv=3&ctgPath={quote('모자/장갑/ACC > 모자 > 볼캡/야구모자')}&maxDiscount=1",
+        ),
     ]
 
     async with httpx.AsyncClient() as client:

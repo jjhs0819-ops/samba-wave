@@ -43,11 +43,16 @@ SAMPLE_SIZE = 50  # 상세 조회 테스트 샘플 수
 async def fetch_search_page(client: httpx.AsyncClient, pg: int) -> str:
     if pg == 1:
         eh = base64.b64encode(
-            json.dumps({"part": "DEPT", "selected": "opt-part"}, separators=(",", ":")).encode()
+            json.dumps(
+                {"part": "DEPT", "selected": "opt-part"}, separators=(",", ":")
+            ).encode()
         ).decode()
     else:
         eh = base64.b64encode(
-            json.dumps({"pageNumber": pg, "part": "DEPT", "selected": "opt-page"}, separators=(",", ":")).encode()
+            json.dumps(
+                {"pageNumber": pg, "part": "DEPT", "selected": "opt-page"},
+                separators=(",", ":"),
+            ).encode()
         ).decode()
 
     resp = await client.get(
@@ -100,7 +105,9 @@ async def collect_search_ids() -> tuple[list[str], list[str]]:
                 print(f"  페이지 {pg}: 새 상품 없음, 중단")
                 break
 
-            print(f"  페이지 {pg}: prd+{new_prd} deal+{new_deal} (누적 prd={len(prd_ids)} deal={len(deal_ids)})")
+            print(
+                f"  페이지 {pg}: prd+{new_prd} deal+{new_deal} (누적 prd={len(prd_ids)} deal={len(deal_ids)})"
+            )
             await asyncio.sleep(0.2)
 
     return prd_ids, deal_ids
@@ -110,7 +117,9 @@ async def test_prd_url(client: httpx.AsyncClient, product_id: str) -> str:
     """prd URL로 상세 조회 시 결과 분류."""
     url = f"https://m.gsshop.com/prd/prd.gs?prdid={product_id}"
     try:
-        resp = await client.get(url, headers=HEADERS_MOBILE, timeout=20.0, follow_redirects=True)
+        resp = await client.get(
+            url, headers=HEADERS_MOBILE, timeout=20.0, follow_redirects=True
+        )
         if resp.status_code == 429:
             return "429"
         if resp.status_code == 403:
@@ -122,7 +131,7 @@ async def test_prd_url(client: httpx.AsyncClient, product_id: str) -> str:
             return "OK_renderJson"
         if '"@type":"Product"' in html or '"@type": "Product"' in html:
             return "OK_jsonld"
-        if 'og:title' in html:
+        if "og:title" in html:
             return "OK_ogmeta"
         return "OK_empty"
     except httpx.TimeoutException:
@@ -135,7 +144,9 @@ async def test_deal_url(client: httpx.AsyncClient, deal_id: str) -> str:
     """deal URL로 상세 조회 시 결과 분류."""
     url = f"https://m.gsshop.com/deal/deal.gs?dealNo={deal_id}"
     try:
-        resp = await client.get(url, headers=HEADERS_MOBILE, timeout=20.0, follow_redirects=True)
+        resp = await client.get(
+            url, headers=HEADERS_MOBILE, timeout=20.0, follow_redirects=True
+        )
         if resp.status_code in (429, 403):
             return f"HTTP_{resp.status_code}"
         if resp.status_code != 200:
@@ -145,7 +156,7 @@ async def test_deal_url(client: httpx.AsyncClient, deal_id: str) -> str:
             return "OK_renderJson"
         if '"@type":"Product"' in html:
             return "OK_jsonld"
-        if 'og:title' in html:
+        if "og:title" in html:
             return "OK_ogmeta"
         return "OK_empty"
     except httpx.TimeoutException:
@@ -158,7 +169,9 @@ async def test_deal_via_prd(client: httpx.AsyncClient, deal_id: str) -> str:
     """deal ID를 prd URL로 조회하면 어떻게 되는지 (현재 버그 재현)."""
     url = f"https://m.gsshop.com/prd/prd.gs?prdid={deal_id}"
     try:
-        resp = await client.get(url, headers=HEADERS_MOBILE, timeout=20.0, follow_redirects=True)
+        resp = await client.get(
+            url, headers=HEADERS_MOBILE, timeout=20.0, follow_redirects=True
+        )
         if resp.status_code != 200:
             return f"HTTP_{resp.status_code}"
         html = resp.text
@@ -182,8 +195,8 @@ async def main():
     total = len(prd_ids) + len(deal_ids)
 
     print(f"\n총 {total}건 수집")
-    print(f"  - prd 상품: {len(prd_ids)}건 ({len(prd_ids)/total*100:.1f}%)")
-    print(f"  - deal 상품: {len(deal_ids)}건 ({len(deal_ids)/total*100:.1f}%)")
+    print(f"  - prd 상품: {len(prd_ids)}건 ({len(prd_ids) / total * 100:.1f}%)")
+    print(f"  - deal 상품: {len(deal_ids)}건 ({len(deal_ids) / total * 100:.1f}%)")
 
     if not prd_ids and not deal_ids:
         print("검색 결과 없음. 종료.")
@@ -200,46 +213,56 @@ async def main():
             result = await test_prd_url(client, pid)
             prd_results.append(result)
             if (i + 1) % 10 == 0:
-                print(f"  {i+1}/{len(sample_prd)} 완료...")
+                print(f"  {i + 1}/{len(sample_prd)} 완료...")
             await asyncio.sleep(0.3)
 
     prd_counter = Counter(prd_results)
     print(f"  결과: {dict(prd_counter)}")
     prd_success = sum(v for k, v in prd_counter.items() if k.startswith("OK"))
-    print(f"  성공률: {prd_success}/{len(sample_prd)} = {prd_success/max(len(sample_prd),1)*100:.1f}%")
+    print(
+        f"  성공률: {prd_success}/{len(sample_prd)} = {prd_success / max(len(sample_prd), 1) * 100:.1f}%"
+    )
 
     if sample_deal:
         # 3단계: deal ID를 현재 방식(prd URL)으로 조회 → 버그 재현
-        print(f"\n[3단계] deal ID {len(sample_deal)}건 → prd URL로 조회 (현재 버그 재현)")
+        print(
+            f"\n[3단계] deal ID {len(sample_deal)}건 → prd URL로 조회 (현재 버그 재현)"
+        )
         deal_via_prd_results: list[str] = []
         async with httpx.AsyncClient() as client:
             for i, did in enumerate(sample_deal):
                 result = await test_deal_via_prd(client, did)
                 deal_via_prd_results.append(result)
                 if (i + 1) % 10 == 0:
-                    print(f"  {i+1}/{len(sample_deal)} 완료...")
+                    print(f"  {i + 1}/{len(sample_deal)} 완료...")
                 await asyncio.sleep(0.3)
 
         dvp_counter = Counter(deal_via_prd_results)
         print(f"  결과: {dict(dvp_counter)}")
         dvp_success = sum(v for k, v in dvp_counter.items() if k.startswith("OK"))
-        print(f"  성공률: {dvp_success}/{len(sample_deal)} = {dvp_success/max(len(sample_deal),1)*100:.1f}%")
+        print(
+            f"  성공률: {dvp_success}/{len(sample_deal)} = {dvp_success / max(len(sample_deal), 1) * 100:.1f}%"
+        )
 
         # 4단계: deal ID를 deal URL로 조회 → 올바른 방법
-        print(f"\n[4단계] deal ID {len(sample_deal)}건 → deal URL로 조회 (수정 후 예상)")
+        print(
+            f"\n[4단계] deal ID {len(sample_deal)}건 → deal URL로 조회 (수정 후 예상)"
+        )
         deal_results: list[str] = []
         async with httpx.AsyncClient() as client:
             for i, did in enumerate(sample_deal):
                 result = await test_deal_url(client, did)
                 deal_results.append(result)
                 if (i + 1) % 10 == 0:
-                    print(f"  {i+1}/{len(sample_deal)} 완료...")
+                    print(f"  {i + 1}/{len(sample_deal)} 완료...")
                 await asyncio.sleep(0.3)
 
         deal_counter = Counter(deal_results)
         print(f"  결과: {dict(deal_counter)}")
         deal_success = sum(v for k, v in deal_counter.items() if k.startswith("OK"))
-        print(f"  성공률: {deal_success}/{len(sample_deal)} = {deal_success/max(len(sample_deal),1)*100:.1f}%")
+        print(
+            f"  성공률: {deal_success}/{len(sample_deal)} = {deal_success / max(len(sample_deal), 1) * 100:.1f}%"
+        )
 
     # 최종 요약
     print("\n" + "=" * 60)
@@ -247,7 +270,7 @@ async def main():
     print("=" * 60)
     print(f"검색 결과: 총 {total}건 (prd {len(prd_ids)}건 / deal {len(deal_ids)}건)")
     if total > 0:
-        print(f"deal 비율: {len(deal_ids)/total*100:.1f}%")
+        print(f"deal 비율: {len(deal_ids) / total * 100:.1f}%")
         print()
         if len(deal_ids) / total > 0.15:
             print("★ deal vs prd 혼재 버그가 실패의 주원인으로 추정됩니다.")

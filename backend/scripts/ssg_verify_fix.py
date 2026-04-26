@@ -62,7 +62,7 @@ async def test_filter(client: httpx.AsyncClient, f: dict, scenario: str, url: st
         name = it.get("name", "")
         ok = any(kw in name for kw in f["keywords"])
         mark = "✓" if ok else "✗"
-        print(f"    [{i:2}] {mark} {it.get('siteProductId','')} {name[:60]}")
+        print(f"    [{i:2}] {mark} {it.get('siteProductId', '')} {name[:60]}")
         if ok:
             match += 1
     print(f"  → 일치 {match}/{len(items)}")
@@ -73,7 +73,9 @@ async def main():
     async with httpx.AsyncClient() as client:
         for f in FILTERS:
             print(f"\n{'=' * 78}")
-            print(f"[필터] {f['name']} (ctgId={f['ctg_id']}, 기대 키워드: {f['keywords']})")
+            print(
+                f"[필터] {f['name']} (ctgId={f['ctg_id']}, 기대 키워드: {f['keywords']})"
+            )
 
             # 현재(버그)
             cur = f"{BASE}?query={quote(KEYWORD)}&page=1&repBrandId=2000004827&ctgId={f['ctg_id']}&ctgLv=3&maxDiscount=1"

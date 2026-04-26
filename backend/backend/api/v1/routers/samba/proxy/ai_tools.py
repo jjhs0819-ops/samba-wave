@@ -336,9 +336,16 @@ async def transform_images(
 
 
 async def _verify_worker_token(token: str, session: AsyncSession) -> bool:
-    """X-Worker-Token 검증 — DB의 bg_worker.worker_token과 비교."""
+    """X-Worker-Token 검증 — 환경변수 BG_WORKER_TOKEN 또는 DB bg_worker.worker_token과 비교."""
+    import os
+
     if not token:
         return False
+    # docker-compose 내부 통신용: 환경변수 직접 매칭
+    env_token = os.environ.get("BG_WORKER_TOKEN", "")
+    if env_token and token == env_token:
+        return True
+    # DB 설정 확인 (레거시/수동 설정)
     cfg = await _get_setting(session, "bg_worker")
     if not cfg or not isinstance(cfg, dict):
         return False

@@ -27,8 +27,8 @@ if _env_file.exists():
             k, _, v = _line.partition("=")
             os.environ.setdefault(k.strip(), v.strip())
 
-SAMBA_API_URL = os.environ.get("SAMBA_API_URL", "https://samba-wave-api-363598397345.asia-northeast3.run.app")
-WORKER_TOKEN = os.environ.get("WORKER_TOKEN", "")
+SAMBA_API_URL = os.environ.get("SAMBA_API_URL", "https://api.samba-wave.co.kr")
+WORKER_TOKEN = os.environ.get("WORKER_TOKEN") or os.environ.get("BG_WORKER_TOKEN", "")
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "5"))
 
 HEADERS = {"X-Worker-Token": WORKER_TOKEN}
@@ -45,6 +45,7 @@ def get_rembg_session():
     if _rembg_session is None:
         print("[Worker] Loading rembg model... (first time only, ~30s)")
         from rembg import new_session
+
         _rembg_session = new_session("silueta")
         print("[Worker] rembg model loaded.")
     return _rembg_session
@@ -56,6 +57,7 @@ def upload_to_r2(image_bytes: bytes, filename: str) -> str | None:
         return None
     try:
         import boto3
+
         s3 = boto3.client(
             "s3",
             endpoint_url=f"https://{_r2['account_id']}.r2.cloudflarestorage.com",
@@ -64,7 +66,9 @@ def upload_to_r2(image_bytes: bytes, filename: str) -> str | None:
             region_name="auto",
         )
         key = f"transformed/{filename}"
-        s3.put_object(Bucket=_r2["bucket"], Key=key, Body=image_bytes, ContentType="image/webp")
+        s3.put_object(
+            Bucket=_r2["bucket"], Key=key, Body=image_bytes, ContentType="image/webp"
+        )
         return f"{_r2['public_url'].rstrip('/')}/transformed/{filename}"
     except Exception as e:
         print(f"[Worker]   R2 upload failed: {e}")
@@ -79,12 +83,18 @@ def remove_background(image_bytes: bytes) -> bytes:
     src = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
     if max(src.size) > 1024:
         ratio = 1024 / max(src.size)
-        src = src.resize((int(src.width * ratio), int(src.height * ratio)), Image.LANCZOS)
+        src = src.resize(
+            (int(src.width * ratio), int(src.height * ratio)), Image.LANCZOS
+        )
 
-    result = remove(src, session=session, alpha_matting=True,
-                    alpha_matting_foreground_threshold=240,
-                    alpha_matting_background_threshold=10,
-                    alpha_matting_erode_size=10)
+    result = remove(
+        src,
+        session=session,
+        alpha_matting=True,
+        alpha_matting_foreground_threshold=240,
+        alpha_matting_background_threshold=10,
+        alpha_matting_erode_size=10,
+    )
 
     bg = Image.new("RGBA", result.size, (255, 255, 255, 255))
     bg.paste(result, mask=result.split()[3])
@@ -110,7 +120,9 @@ async def process_image(client: httpx.AsyncClient, url: str) -> str | None:
 # ── Process one job ──────────────────────────────────────
 async def process_job(job: dict) -> None:
     job_id = job["job_id"]
-    scope: dict = job.get("scope", {"thumbnail": True, "additional": False, "detail": False})
+    scope: dict = job.get(
+        "scope", {"thumbnail": True, "additional": False, "detail": False}
+    )
     products: list[dict] = job.get("products", [])
     print(f"\n[Worker] Job start: {job_id} ({len(products)} products)")
 
@@ -149,14 +161,18 @@ async def process_job(job: dict) -> None:
                         new_detail[j] = url
                         transformed += 1
 
-            results.append({
-                "product_id": pid,
-                "success": transformed > 0,
-                "new_images": new_images,
-                "new_detail_images": new_detail,
-                "transformed_count": transformed,
-            })
-            print(f"[Worker]   [{i}/{len(products)}] {pid} -> {transformed} images done")
+            results.append(
+                {
+                    "product_id": pid,
+                    "success": transformed > 0,
+                    "new_images": new_images,
+                    "new_detail_images": new_detail,
+                    "transformed_count": transformed,
+                }
+            )
+            print(
+                f"[Worker]   [{i}/{len(products)}] {pid} -> {transformed} images done"
+            )
 
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(
@@ -202,7 +218,9 @@ async def main() -> None:
 
     if not WORKER_TOKEN:
         print("\n[Error] WORKER_TOKEN is not set.")
-        print("Fill in bg_worker.env with the token from Settings > R2 > Local Worker Token.")
+        print(
+            "Fill in bg_worker.env with the token from Settings > R2 > Local Worker Token."
+        )
         return
 
     print("\n[Worker] Connecting to backend...")

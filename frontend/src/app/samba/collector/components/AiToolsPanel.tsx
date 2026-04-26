@@ -185,12 +185,22 @@ export default function AiToolsPanel(props: Props) {
               // 배경제거: 백엔드 job queue 일괄 제출 + 폴링
               addLog(`[${ts()}] 배경 제거 큐 제출 중... (${fmtNum(productIds.length)}개 상품)`)
               try {
-                const batchRes = await proxyApi.transformImages(productIds, aiImgScope, 'background')
-                if (!batchRes.success || !batchRes.job_id) {
+                let batchRes: Awaited<ReturnType<typeof proxyApi.transformImages>> | null = null
+                for (let attempt = 0; attempt <= 2; attempt++) {
+                  if (attempt > 0) {
+                    const delay = attempt === 1 ? 2000 : 4000
+                    addLog(`[${ts()}] 큐 등록 재시도 ${attempt}/2 (${delay / 1000}초 후)...`)
+                    await new Promise(r => setTimeout(r, delay))
+                  }
+                  try { batchRes = await proxyApi.transformImages(productIds, aiImgScope, 'background'); break }
+                  catch { if (attempt === 2) throw new Error('Failed to fetch') }
+                }
+                const batchResVal = batchRes!
+                if (!batchResVal.success || !batchResVal.job_id) {
                   fail = productIds.length
-                  addLog(`큐 등록 실패: ${batchRes.message}`)
+                  addLog(`큐 등록 실패: ${batchResVal.message}`)
                 } else {
-                  const jid = batchRes.job_id
+                  const jid = batchResVal.job_id
                   addLog(`[${ts()}] 큐 등록 완료 (job: ${jid.slice(-8)}) — 로컬 워커 처리 대기 중...`)
                   addLog(`※ 로컬 워커(local_bg_worker.py)가 실행 중이어야 처리됩니다`)
                   let pollCount = 0

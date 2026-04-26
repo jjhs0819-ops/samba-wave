@@ -47,16 +47,20 @@ def classify_html(html: str, product_id: str) -> str:
         return "OK_renderJson"
     if '"@type":"Product"' in html or '"@type": "Product"' in html:
         return "OK_jsonld"
-    if 'og:title' in html:
+    if "og:title" in html:
         return "OK_ogmeta"
     return "FAIL_no_data"
 
 
-async def fetch_product(client: httpx.AsyncClient, product_id: str, timeout: float = 20.0) -> tuple[str, str]:
+async def fetch_product(
+    client: httpx.AsyncClient, product_id: str, timeout: float = 20.0
+) -> tuple[str, str]:
     """단일 상품 상세 조회. (product_id, 결과) 반환."""
     url = f"https://m.gsshop.com/prd/prd.gs?prdid={product_id}"
     try:
-        resp = await client.get(url, headers=HEADERS_MOBILE, timeout=timeout, follow_redirects=True)
+        resp = await client.get(
+            url, headers=HEADERS_MOBILE, timeout=timeout, follow_redirects=True
+        )
         if resp.status_code == 429:
             return product_id, "429"
         if resp.status_code == 403:
@@ -70,14 +74,16 @@ async def fetch_product(client: httpx.AsyncClient, product_id: str, timeout: flo
         return product_id, f"ERR_{type(e).__name__}"
 
 
-async def fetch_with_retry(client: httpx.AsyncClient, product_id: str, max_retry: int = 2) -> tuple[str, str, int]:
+async def fetch_with_retry(
+    client: httpx.AsyncClient, product_id: str, max_retry: int = 2
+) -> tuple[str, str, int]:
     """재시도 포함 상세 조회. (product_id, 결과, 시도횟수) 반환."""
     for attempt in range(max_retry + 1):
         pid, result = await fetch_product(client, product_id)
         if result.startswith("OK"):
             return product_id, result, attempt + 1
         if result in ("429", "403"):
-            wait = 2.0 * (2 ** attempt)
+            wait = 2.0 * (2**attempt)
             await asyncio.sleep(wait)
         elif result == "TIMEOUT":
             if attempt < max_retry:
@@ -90,7 +96,9 @@ async def fetch_with_retry(client: httpx.AsyncClient, product_id: str, max_retry
 async def get_sample_ids(n: int = 100) -> list[str]:
     """검색 결과에서 n개 ID 수집."""
     prd_pattern = re.compile(r"/prd/prd\.gs\?prdid=(\d+)")
-    prd_section_re = re.compile(r'<section[^>]+class="prd-list"[^>]*>(.*?)</section>', re.DOTALL)
+    prd_section_re = re.compile(
+        r'<section[^>]+class="prd-list"[^>]*>(.*?)</section>', re.DOTALL
+    )
     ids: list[str] = []
     seen: set[str] = set()
 
@@ -98,8 +106,9 @@ async def get_sample_ids(n: int = 100) -> list[str]:
         for pg in range(1, 10):
             eh = base64.b64encode(
                 json.dumps(
-                    {"part": "DEPT", "selected": "opt-part"} if pg == 1 else
-                    {"pageNumber": pg, "part": "DEPT", "selected": "opt-page"},
+                    {"part": "DEPT", "selected": "opt-part"}
+                    if pg == 1
+                    else {"pageNumber": pg, "part": "DEPT", "selected": "opt-page"},
                     separators=(",", ":"),
                 ).encode()
             ).decode()
@@ -124,7 +133,13 @@ async def get_sample_ids(n: int = 100) -> list[str]:
     return ids[:n]
 
 
-async def test_batch(ids: list[str], batch_size: int, inter_batch_sleep: float, label: str, use_retry: bool = False) -> dict:
+async def test_batch(
+    ids: list[str],
+    batch_size: int,
+    inter_batch_sleep: float,
+    label: str,
+    use_retry: bool = False,
+) -> dict:
     """배치 병렬 요청 테스트."""
     results: list[str] = []
     total_attempts = 0
@@ -132,7 +147,7 @@ async def test_batch(ids: list[str], batch_size: int, inter_batch_sleep: float, 
 
     async with httpx.AsyncClient() as client:
         for i in range(0, len(ids), batch_size):
-            batch = ids[i:i + batch_size]
+            batch = ids[i : i + batch_size]
             if use_retry:
                 tasks = [fetch_with_retry(client, pid) for pid in batch]
                 batch_results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -162,12 +177,19 @@ async def test_batch(ids: list[str], batch_size: int, inter_batch_sleep: float, 
     rate = success / total * 100 if total else 0
 
     print(f"\n  [{label}]")
-    print(f"  배치 크기: {batch_size}, 배치 간 딜레이: {inter_batch_sleep}s, 재시도: {'O' if use_retry else 'X'}")
+    print(
+        f"  배치 크기: {batch_size}, 배치 간 딜레이: {inter_batch_sleep}s, 재시도: {'O' if use_retry else 'X'}"
+    )
     print(f"  결과: {dict(counter)}")
     print(f"  성공률: {success}/{total} = {rate:.1f}%")
-    print(f"  소요: {elapsed:.1f}초, 평균 시도: {total_attempts/total:.2f}회")
+    print(f"  소요: {elapsed:.1f}초, 평균 시도: {total_attempts / total:.2f}회")
 
-    return {"label": label, "success_rate": rate, "counter": dict(counter), "elapsed": elapsed}
+    return {
+        "label": label,
+        "success_rate": rate,
+        "counter": dict(counter),
+        "elapsed": elapsed,
+    }
 
 
 async def main():
@@ -189,27 +211,48 @@ async def main():
     results = []
 
     # 현재 방식: 배치5, 딜레이0 (브랜드전체수집)
-    r = await test_batch(ids[:50], batch_size=5, inter_batch_sleep=0, label="현재방식(배치5, 딜레이없음)")
+    r = await test_batch(
+        ids[:50], batch_size=5, inter_batch_sleep=0, label="현재방식(배치5, 딜레이없음)"
+    )
     results.append(r)
     await asyncio.sleep(3)
 
     # 현재 방식: 배치20, 딜레이0 (일반수집 선취합)
-    r = await test_batch(ids[:50], batch_size=20, inter_batch_sleep=0, label="현재방식(배치20, 딜레이없음)")
+    r = await test_batch(
+        ids[:50],
+        batch_size=20,
+        inter_batch_sleep=0,
+        label="현재방식(배치20, 딜레이없음)",
+    )
     results.append(r)
     await asyncio.sleep(3)
 
     # 개선안1: 배치5, 딜레이0.5s
-    r = await test_batch(ids[:50], batch_size=5, inter_batch_sleep=0.5, label="개선1(배치5, 딜레이0.5s)")
+    r = await test_batch(
+        ids[:50], batch_size=5, inter_batch_sleep=0.5, label="개선1(배치5, 딜레이0.5s)"
+    )
     results.append(r)
     await asyncio.sleep(3)
 
     # 개선안2: 배치5, 딜레이0.5s + 재시도2회
-    r = await test_batch(ids[:50], batch_size=5, inter_batch_sleep=0.5, label="개선2(배치5, 딜레이0.5s+재시도)", use_retry=True)
+    r = await test_batch(
+        ids[:50],
+        batch_size=5,
+        inter_batch_sleep=0.5,
+        label="개선2(배치5, 딜레이0.5s+재시도)",
+        use_retry=True,
+    )
     results.append(r)
     await asyncio.sleep(3)
 
     # 개선안3: 배치3, 딜레이0.3s + 재시도2회
-    r = await test_batch(ids[:50], batch_size=3, inter_batch_sleep=0.3, label="개선3(배치3, 딜레이0.3s+재시도)", use_retry=True)
+    r = await test_batch(
+        ids[:50],
+        batch_size=3,
+        inter_batch_sleep=0.3,
+        label="개선3(배치3, 딜레이0.3s+재시도)",
+        use_retry=True,
+    )
     results.append(r)
 
     print("\n" + "=" * 60)

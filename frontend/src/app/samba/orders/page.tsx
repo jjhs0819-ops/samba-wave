@@ -75,7 +75,7 @@ export default function OrdersPage() {
   const [bulkStatus, setBulkStatus] = useState('')
   const [bulkUpdating, setBulkUpdating] = useState(false)
   const [sortBy, setSortBy] = useState('date_desc')
-  const [logMessages, _setLogMessagesRaw] = useState<string[]>(['[???? ???녿뮝?筌믡굥利???醫딆쓧??癲ル슢???몄쒜嚥▲룗???嚥▲굧?????戮곗?? ???????嶺?筌??嶺뚮ㅎ????..'])
+  const [logMessages, _setLogMessagesRaw] = useState<string[]>(['[대기] 주문 가져오기 결과가 여기에 표시됩니다...'])
   const setLogMessages: typeof _setLogMessagesRaw = (v) => _setLogMessagesRaw(prev => {
     const next = typeof v === 'function' ? v(prev) : v
     return next.slice(-30)
@@ -84,15 +84,15 @@ export default function OrdersPage() {
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState<OrderForm>({ ...emptyForm })
-  // ?癲ル슢??遺셋?????/?熬곣뫖利?????????????????볥궚???????븐뻤??
+
   const [editingCosts, setEditingCosts] = useState<Record<string, string>>({})
   const [editingTrackings, setEditingTrackings] = useState<Record<string, string>>({})
   const [editingShipFees, setEditingShipFees] = useState<Record<string, string>>({})
   const [editingOrderNumbers, setEditingOrderNumbers] = useState<Record<string, string>>({})
-  // ?꿔꺂????筌??μ떜媛?걫????????リ뎬???? ????븐뻤??
+
   const [activeActions, setActiveActions] = useState<Record<string, string | null>>({})
   const [collectedProductCosts, setCollectedProductCosts] = useState<Record<string, number>>({})
-  // ??????????욱룏???????
+
   const [notifications, setNotifications] = useState<{id: number, message: string, type: string}[]>([])
 
   const showNotification = (message: string, type: string = 'warning') => {
@@ -100,15 +100,15 @@ export default function OrdersPage() {
     setNotifications(prev => [...prev, { id, message, type }])
   }
 
-  // ???녿뮝?筌믡굥利???????욍걛???ш끽維???汝??吏??(???녿뮝?筌믡굥利?ID ???꿔꺂????????醫딆┣????嚥▲굧????
+
   const [refreshLog, setRefreshLog] = useState<Record<string, string>>({})
 
-  // ??醫딆쓧??嚥▲굥?멩납????꿔꺂??袁ㅻ븶???
+
   const [priceHistoryModal, setPriceHistoryModal] = useState(false)
   const [priceHistoryData, setPriceHistoryData] = useState<Record<string, unknown>[]>([])
   const [priceHistoryProduct, setPriceHistoryProduct] = useState<{ name: string; source_site: string }>({ name: '', source_site: '' })
 
-  // SMS/??⑤㈇????????熬곣뫖利든뜏??+ ?????萸?????援온??(hook????Β??????)
+
   const sms = useSmsMessage(accounts)
   const {
     msgModal, setMsgModal,
@@ -122,16 +122,16 @@ export default function OrdersPage() {
     insertMsgTag, openMsgModal, handleSendMsg,
   } = sms
 
-  // ??????????????繹먮냱??(URL ?????쀪쑴??嚥????alarm=1????????嶺??????꾨Щ)
+
   const [showAlarmSetting, setShowAlarmSetting] = useState(searchParams.get('alarm') === '1')
   const [alarmHour, setAlarmHour] = useState('0')
   const [alarmMin, setAlarmMin] = useState('5')
   const [sleepStart, setSleepStart] = useState('00:00')
   const [sleepEnd, setSleepEnd] = useState('09:00')
 
-  // ?嚥▲굧??????⑤㈇???亦껋꼨????쒙쭫??
+
   const [searchCategory, setSearchCategory] = useState('customer')
-  // ??濚밸Ŧ?긷칰????쒙쭫??
+
   const [dateLocked, setDateLocked] = useState(false)
   const [customStart, setCustomStart] = useState(() => {
     const d = new Date()
@@ -179,13 +179,13 @@ export default function OrdersPage() {
       setTotalSale(data.total_sale)
       setPendingCount(data.pending_count)
       setEditingTrackings({})
-      // ??嶺뚮Ĳ?됭짆??????熬곣뫖利?? action_tag??activeActions ?潁??용끏???
+
       const actions: Record<string, string | null> = {}
       for (const o of data.items) {
         if (o.action_tag) actions[o.id] = o.action_tag
       }
       setActiveActions(actions)
-      // SMS/??⑤㈇????????熬곣뫖利든뜏????? ?????關????됰슦????
+
       if (data.items.length > 0) {
         proxyApi.fetchSentFlags(data.items.map(o => o.id)).then(flags => {
           setSentFlags(flags)
@@ -194,8 +194,8 @@ export default function OrdersPage() {
         setSentFlags({})
       }
     } catch (e) {
-      console.error('???녿뮝?筌믡굥利??汝??吏??뮤??????곌숯:', e)
-      setLogMessages(prev => [...prev, `[????? ???녿뮝?筌믡굥利???????????汝??吏??뮤??????곌숯: ${e instanceof Error ? e.message : '??嶺뚮Ĳ?됭짆?????怨몄뵒'}`])
+      console.error('주문 조회 실패:', e)
+      setLogMessages(prev => [...prev, `[${fmtTime()}] 주문 조회 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`])
     }
     setLoading(false)
   }, [isProductMode, cpId, currentPage, pageSize, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, appliedSearchText, searchCategory, sortBy, customStart, customEnd, setSentFlags])
@@ -211,7 +211,7 @@ export default function OrdersPage() {
     setAppliedSearchText(searchText.trim())
   }, [searchText])
 
-  // ????????ㅳ늾????꿔꺂???????꾨탿????⑸룺 ??⑤슢???釉띾떛??꿔꺂?????몃??
+
   const [siteAliasMap, setSiteAliasMap] = useState<Record<string, string>>({})
   useEffect(() => { loadOrders() }, [loadOrders])
   useEffect(() => {
@@ -239,7 +239,7 @@ export default function OrdersPage() {
     })()
     return () => { cancelled = true }
   }, [orders])
-  // ?????????????繹먮냱?????곗뵯??????곗뵚??
+
   useEffect(() => {
     orderApi.getAlarmSettings().then(d => {
       setAlarmHour(String(d.hour))
@@ -248,11 +248,11 @@ export default function OrdersPage() {
       setSleepEnd(d.sleep_end)
     }).catch(() => {})
   }, [])
-  // URL ?????쀪쑴??嚥????alarm=1 ??⑤슢堉?????醫딆┫?? (?????봔?????볥궙?袁р뵾??????????꿔꺂???疫뀀９臾쇘춯癒?돵?????????
+
   useEffect(() => {
     if (searchParams.get('alarm') === '1') setShowAlarmSetting(true)
   }, [searchParams])
-  // CustomEvent ??醫딆┫?? (???? ???녿뮝?筌믡굥利?????볥궙?袁р뵾?????????繹먮굛????????諛몄? ?????????
+
   useEffect(() => {
     const handler = () => setShowAlarmSetting(true)
     window.addEventListener('open-alarm-setting', handler)
@@ -316,10 +316,10 @@ export default function OrdersPage() {
     if (o.product_image && o.product_image.startsWith('http')) window.open(o.product_image, '_blank')
   }
 
-  // ????꾣뤃?饔낃퀣????좏뀮癲????녿뮝?筌믡굥利??꿔꺂??袁ㅻ븶筌믠뫀萸?
+
   const currentPageIds = useMemo(() => orders.map(o => o.id), [orders])
 
-  // ????썹땟??????ｋ??????ㅼ굣??
+
   const toggleSelectAll = () => {
     if (currentPageIds.every(id => selectedIds.has(id))) {
       setSelectedIds(prev => { const next = new Set(prev); currentPageIds.forEach(id => next.delete(id)); return next })
@@ -377,7 +377,7 @@ export default function OrdersPage() {
         pageSize={pageSize} setPageSize={setPageSize}
         accounts={accounts} sourcingAccounts={sourcingAccounts}
       />
-      {/* ???녿뮝?筌믡굥利???????*/}
+
       <OrdersTable
         loading={loading}
         filteredOrders={orders}
@@ -430,7 +430,7 @@ export default function OrdersPage() {
         toggleAction={toggleAction}
       />
 
-      {/* ????볥궙?袁р뵾???????繹먮굟瑗??*/}
+
       <OrdersPagination
         totalCount={totalCount}
         pageSize={pageSize}
@@ -438,7 +438,7 @@ export default function OrdersPage() {
         setCurrentPage={setCurrentPage}
       />
 
-      {/* ???녿뮝?筌믡굥利?????볥궚???꿔꺂??袁ㅻ븶???*/}
+
       <OrderEditModal
         open={showForm}
         editingId={editingId}
@@ -448,7 +448,7 @@ export default function OrdersPage() {
         onSubmit={handleSubmit}
       />
 
-      {/* ???붺몭?겹럷??댿뵛??쒕㎥??????怨몄７ URL ?꿔꺂??袁ㅻ븶???*/}
+
       <UrlInputModal
         open={showUrlModal}
         urlInput={urlModalInput}
@@ -460,7 +460,7 @@ export default function OrdersPage() {
         onSubmit={handleUrlSubmit}
       />
 
-      {/* ??醫딆쓧?????????????꿔꺂??袁ㅻ븶???*/}
+
       <PriceHistoryModal
         open={priceHistoryModal}
         product={priceHistoryProduct}
@@ -468,7 +468,7 @@ export default function OrdersPage() {
         onClose={() => setPriceHistoryModal(false)}
       />
 
-      {/* SMS/??⑤㈇????????熬곣뫖利든뜏???꿔꺂??袁ㅻ븶???*/}
+
       <MessageModal
         msgModal={msgModal}
         setMsgModal={setMsgModal}
@@ -485,7 +485,7 @@ export default function OrdersPage() {
         handleSendMsg={handleSendMsg}
       />
 
-      {/* SMS ?????萸???癲ル슢???밸퉲??꿔꺂??袁ㅻ븶???*/}
+
       <SmsTemplateEditModal
         template={templateEditModal}
         setTemplate={setTemplateEditModal}
@@ -493,7 +493,7 @@ export default function OrdersPage() {
         onSave={saveTemplate}
       />
 
-      {/* ??????????????繹먮냱???꿔꺂??袁ㅻ븶???*/}
+
       <AlarmSettingModal
         open={showAlarmSetting}
         onClose={() => setShowAlarmSetting(false)}

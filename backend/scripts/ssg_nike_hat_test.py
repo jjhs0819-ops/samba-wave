@@ -61,7 +61,15 @@ def parse_keyword_url(keyword_url: str) -> tuple[str, dict]:
     qs = parse_qs(parsed.query)
     keyword = qs.get("query", [keyword])[0]
 
-    for k in ("category1Id", "category2Id", "category3Id", "sort", "minPrice", "maxPrice", "maxDiscount"):
+    for k in (
+        "category1Id",
+        "category2Id",
+        "category3Id",
+        "sort",
+        "minPrice",
+        "maxPrice",
+        "maxDiscount",
+    ):
         v = qs.get(k, [""])[0]
         if v:
             kwargs[k] = v
@@ -131,7 +139,15 @@ async def test_filter_with_client(
             continue
 
         cat_path = " > ".join(
-            filter(None, [d.get("category1", ""), d.get("category2", ""), d.get("category3", ""), d.get("category4", "")])
+            filter(
+                None,
+                [
+                    d.get("category1", ""),
+                    d.get("category2", ""),
+                    d.get("category3", ""),
+                    d.get("category4", ""),
+                ],
+            )
         )
         name = (d.get("name", "") or src_name)[:60]
         print(f"  [{i:2}] {site_pid} {name}")
@@ -170,7 +186,9 @@ async def main():
         await conn.close()
 
     if len(filters) != len(TARGET_FILTER_IDS):
-        print(f"[!!] 로컬 DB에서 필터 {len(filters)}/{len(TARGET_FILTER_IDS)}개만 조회됨")
+        print(
+            f"[!!] 로컬 DB에서 필터 {len(filters)}/{len(TARGET_FILTER_IDS)}개만 조회됨"
+        )
         print("    누락된 ID 확인 필요.")
         for r in filters:
             print(f"    found: {r['id']} {r['name']}")
@@ -186,7 +204,9 @@ async def main():
     ) as shared:
         results = []
         for r in filters:
-            res = await test_filter_with_client(client, shared, r["id"], r["name"], r["keyword"])
+            res = await test_filter_with_client(
+                client, shared, r["id"], r["name"], r["keyword"]
+            )
             results.append(res)
             await asyncio.sleep(3)
 
@@ -194,7 +214,9 @@ async def main():
     print(f"\n{'=' * 78}")
     print("[요약]")
     for r in results:
-        print(f"  {r.get('filter_name', r['filter_id'])}: status={r['status']}, hits={r['hits']}, 상세={len(r['details'])}")
+        print(
+            f"  {r.get('filter_name', r['filter_id'])}: status={r['status']}, hits={r['hits']}, 상세={len(r['details'])}"
+        )
 
 
 if __name__ == "__main__":

@@ -16,6 +16,15 @@ _EXEMPT_PATHS = {
     "/api/v1/license/verify",
 }
 
+# 키 검증을 건너뛸 prefix (정적 자산 — 모델 프리셋 PNG 등)
+# 화이트리스트 누락 시 프론트가 무한 재요청하며 워커 event loop 소모 → health timeout 유발
+_EXEMPT_PREFIXES = (
+    "/static/",
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+)
+
 
 class ApiGatewayMiddleware(BaseHTTPMiddleware):
     """X-Api-Key 헤더를 검증하여 허가된 클라이언트만 API 접근 허용."""
@@ -31,6 +40,8 @@ class ApiGatewayMiddleware(BaseHTTPMiddleware):
 
         # 면제 경로는 통과
         if request.url.path in _EXEMPT_PATHS:
+            return await call_next(request)
+        if request.url.path.startswith(_EXEMPT_PREFIXES):
             return await call_next(request)
 
         # 키가 설정되지 않은 경우(개발환경) 통과
