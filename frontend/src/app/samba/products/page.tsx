@@ -1364,7 +1364,7 @@ export default function ProductsPage() {
             <option value="no">상품번호</option>
             <option value="policy">정책</option>
           </select>
-          <input type="text" placeholder="검색어" value={searchQ}
+          <input type="text" placeholder={searchType === "no" ? "상품번호 검색 (콤마로 다중)" : "검색어"} value={searchQ}
             onChange={(e) => setSearchQ(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSearch()}
             style={{

@@ -1030,7 +1030,7 @@ export default function ShipmentsPage() {
             <option value="no">상품번호</option>
             <option value="policy">정책</option>
           </select>
-          <input type="text" value={searchText} onChange={e => { onFilterChange(); setSearchText(e.target.value) }} placeholder={searchField === 'name' ? '상품명 검색' : searchField === 'no' ? '상품번호 검색' : '그룹명 검색'} style={{ ...inputStyle, width: '200px' }} />
+          <input type="text" value={searchText} onChange={e => { onFilterChange(); setSearchText(e.target.value) }} placeholder={searchField === 'name' ? '상품명 검색' : searchField === 'no' ? '상품번호 검색 (콤마로 다중)' : '그룹명 검색'} style={{ ...inputStyle, width: '200px' }} />
         </div>
         {/* 소싱사이트 필터 */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: '1px solid #181C28', gap: '8px' }}>

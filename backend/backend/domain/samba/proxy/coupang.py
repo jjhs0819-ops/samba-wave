@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import re
@@ -209,6 +210,53 @@ def _build_content_details(detail_html: str) -> list[dict[str, Any]]:
                 url = "https:" + url
             details.append({"content": url, "detailType": "IMAGE"})
     return details if details else [{"content": detail_html, "detailType": "TEXT"}]
+
+
+# GSShop 자사 CDN 화이트리스트 — 쿠팡 검증 거절(외부 호스트 이미지) 방지용
+_GSSHOP_ALLOWED_DOMAINS: tuple[str, ...] = (
+    "asset.m-gs.kr",
+    "static.m-gs.kr",
+    "static.gsshop.com",
+)
+
+
+def _filter_gsshop_domain(urls: list[str]) -> list[str]:
+    """GSShop 자사 CDN 화이트리스트에 속한 URL만 통과시킨다.
+
+    쿠팡 검증 거절(외부 호스트 / 비공개 CDN 이미지) 방지를 위해
+    asset.m-gs.kr / static.m-gs.kr / static.gsshop.com 만 허용.
+    빈 문자열·외부 호스트는 모두 제거된다.
+    """
+    result: list[str] = []
+    for u in urls:
+        if not u:
+            continue
+        if any(host in u for host in _GSSHOP_ALLOWED_DOMAINS):
+            result.append(u)
+    return result
+
+
+def _filter_html_external_images(html: str) -> str:
+    """detail_html의 <img> 태그에서 GSShop CDN 외 외부 호스트 src/data-src를 가진 태그를 제거.
+
+    예: akplaza.com, speedgabia.com 등 외부 호스트 이미지는 태그 통째로 제거.
+    화이트리스트(_GSSHOP_ALLOWED_DOMAINS)에 속한 src/data-src 만 남는다.
+    """
+    if not html:
+        return html
+
+    img_re = re.compile(
+        r'<img[^>]*?(?:src|data-src)=["\']([^"\']+)["\'][^>]*?>',
+        re.IGNORECASE,
+    )
+
+    def _sub(match: re.Match[str]) -> str:
+        url = match.group(1)
+        if any(host in url for host in _GSSHOP_ALLOWED_DOMAINS):
+            return match.group(0)
+        return ""
+
+    return img_re.sub(_sub, html)
 
 
 class CoupangClient:
@@ -529,8 +577,28 @@ class CoupangClient:
         """
         from datetime import datetime as dt, timezone as tz
 
-        images_raw = product.get("images") or []
-        coupang_main = product.get("coupang_main_image") or ""
+        _is_gsshop = (product.get("source_site") or "").upper() == "GSSHOP"
+
+        # 외부 호스트(GSShop 자사 CDN 화이트리스트 외) URL 제거 — 쿠팡 검증 거절 방지
+        _images_orig = product.get("images") or []
+        images_raw = _filter_gsshop_domain(_images_orig) if _is_gsshop else _images_orig
+        # 필터링 후 빈 배열이면 원본 첫 URL 1개는 유지 (대표 이미지 보장)
+        if not images_raw and _images_orig:
+            images_raw = [_images_orig[0]]
+
+        detail_images = (
+            _filter_gsshop_domain(product.get("detail_images") or [])
+            if _is_gsshop
+            else (product.get("detail_images") or [])
+        )
+
+        _main_raw = product.get("coupang_main_image") or ""
+        _main_filtered = (
+            _filter_gsshop_domain([_main_raw])
+            if (_is_gsshop and _main_raw)
+            else ([_main_raw] if _main_raw else [])
+        )
+        coupang_main = _main_filtered[0] if _main_filtered else ""
         default_color = product.get("color", "") or "상세 이미지 참조"
         detail_html = (
             product.get("detail_html", "") or f"<p>{product.get('name', '')}</p>"
@@ -548,6 +616,11 @@ class CoupangClient:
         from backend.domain.samba.proxy.notice_utils import build_coupang_notices
 
         notices = build_coupang_notices(product)
+
+        # detail_html 안의 외부 호스트 <img> 태그 제거 (쿠팡 검증 거절 방지, GSShop 전용)
+        detail_html = (
+            _filter_html_external_images(detail_html) if _is_gsshop else detail_html
+        )
 
         # 상세 컨텐츠 (IMAGE/TEXT 혼합)
         content_details = _build_content_details(detail_html)
@@ -663,9 +736,9 @@ class CoupangClient:
             "returnAddress": "상세페이지 참조",
             "returnAddressDetail": "상세페이지 참조",
             "returnCharge": 2500,
-            "outboundShippingPlaceCode": int(outbound_shipping_place_code)
-            if outbound_shipping_place_code
-            else 0,
+            "outboundShippingPlaceCode": (
+                int(outbound_shipping_place_code) if outbound_shipping_place_code else 0
+            ),
             "vendorUserId": "",  # 런타임에 디스패처에서 채움
             "requested": True,
             "items": items,
@@ -693,46 +766,73 @@ class CoupangClient:
         """최근 N일간 주문시트 조회.
 
         쿠팡 Wing API: GET /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/ordersheets
-        페이징: nextToken 기반 커서 방식
+        - 날짜 형식: yyyy-MM-dd (시간 X)
+        - status 파라미터 필수 → status 미지정 시 6개 상태를 순회 후 shipmentBoxId 기준 dedup
+        - 페이징: nextToken 기반 커서 방식
         """
+        # 쿠팡 ordersheets API에서 인식되는 status 5개
+        # CANCEL은 별도 API (취소 조회)에서 처리해야 하므로 제외
+        STATUSES = [
+            "ACCEPT",
+            "INSTRUCT",
+            "DEPARTURE",
+            "DELIVERING",
+            "FINAL_DELIVERY",
+        ]
+        targets = [status] if status else STATUSES
 
         now = datetime.now(timezone.utc)
         since = now - timedelta(days=days)
-        created_at_from = since.strftime("%Y-%m-%dT00:00:00")
-        created_at_to = now.strftime("%Y-%m-%dT23:59:59")
+        # createdAtTo는 exclusive로 처리되므로 +1일 추가 (당일 주문 누락 방지)
+        until = now + timedelta(days=1)
+        created_at_from = since.strftime("%Y-%m-%d")
+        created_at_to = until.strftime("%Y-%m-%d")
 
+        path = f"/v2/providers/openapi/apis/api/v4/vendors/{self.vendor_id}/ordersheets"
+        seen_ids: set[int] = set()
         all_orders: list[dict[str, Any]] = []
-        next_token = ""
 
-        for _ in range(100):  # 무한루프 방지
-            params: dict[str, str] = {
-                "createdAtFrom": created_at_from,
-                "createdAtTo": created_at_to,
-                "maxPerPage": str(max_per_page),
-            }
-            if status:
-                params["status"] = status
-            if next_token:
-                params["nextToken"] = next_token
+        for idx, target_status in enumerate(targets):
+            if idx > 0:
+                await asyncio.sleep(1.5)  # 쿠팡 API rate limit 회피 (HTTP 429)
+            next_token = ""
+            for _ in range(100):  # 무한루프 방지
+                params: dict[str, str] = {
+                    "createdAtFrom": created_at_from,
+                    "createdAtTo": created_at_to,
+                    "status": target_status,
+                    "maxPerPage": str(max_per_page),
+                }
+                if next_token:
+                    params["nextToken"] = next_token
 
-            path = f"/v2/providers/openapi/apis/api/v4/vendors/{self.vendor_id}/ordersheets"
-            result = await self._call_api("GET", path, params=params)
+                result = await self._call_api("GET", path, params=params)
 
-            data = result.get("data", []) if isinstance(result, dict) else []
-            if isinstance(data, list):
-                all_orders.extend(data)
-            elif isinstance(data, dict):
-                # data가 dict인 경우 orderSheets 키에서 추출
-                sheets = data.get("orderSheets", data.get("content", []))
-                if isinstance(sheets, list):
-                    all_orders.extend(sheets)
+                data = result.get("data", []) if isinstance(result, dict) else []
+                extracted: list[dict[str, Any]] = []
+                if isinstance(data, list):
+                    extracted = data
+                elif isinstance(data, dict):
+                    sheets = data.get("orderSheets", data.get("content", []))
+                    if isinstance(sheets, list):
+                        extracted = sheets
 
-            # 다음 페이지 토큰
-            next_token = result.get("nextToken", "") if isinstance(result, dict) else ""
-            if not next_token:
-                break
+                for order in extracted:
+                    box_id = order.get("shipmentBoxId")
+                    if box_id and box_id not in seen_ids:
+                        seen_ids.add(box_id)
+                        all_orders.append(order)
 
-        logger.info(f"[쿠팡] 주문 조회 완료: {len(all_orders)}건 (최근 {days}일)")
+                next_token = (
+                    result.get("nextToken", "") if isinstance(result, dict) else ""
+                )
+                if not next_token:
+                    break
+
+        logger.info(
+            f"[쿠팡] 주문 조회 완료: {len(all_orders)}건 "
+            f"(최근 {days}일, status={status or 'ALL'})"
+        )
         return all_orders
 
     async def confirm_orders(
