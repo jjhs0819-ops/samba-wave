@@ -148,7 +148,7 @@ export default function AiToolsPanel(props: Props) {
             if (activeIds.length === 0) { showAlert('현재 필터에 해당하는 그룹이 없습니다'); return }
             if (!aiImgScope.thumbnail && !aiImgScope.additional && !aiImgScope.detail) { showAlert('변환 대상 이미지를 선택해주세요 (대표/추가/상세)'); return }
             // 그룹에 속한 상품 조회 → AI 미변환 상품만 추출
-            type ProductItem = { id: string; images: string[]; detail_images: string[]; tags: string[] }
+            type ProductItem = { id: string; name?: string; images: string[]; detail_images: string[]; tags: string[] }
             const productIds: string[] = []
             const productDetails = new Map<string, ProductItem>()
             let skippedAi = 0
