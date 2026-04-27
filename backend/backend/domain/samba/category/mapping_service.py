@@ -14,6 +14,77 @@ from backend.domain.samba.category.rules import _OVERSEAS_KEYWORDS
 logger = logging.getLogger(__name__)
 
 
+async def rebuild_exported_rules() -> None:
+    """별도 세션으로 rules_exported.py 재생성 (라우터 dependency 세션과 무관).
+
+    이 함수는 fire-and-forget 백그라운드 태스크로 실행되어야 한다.
+    같은 dependency 세션을 공유하면 라우터 응답이 이 작업의 select+commit 종료를 기다리게 됨.
+    """
+    import asyncio
+    from datetime import UTC, datetime
+    from pathlib import Path
+    from sqlmodel import select
+    from backend.db.orm import get_write_sessionmaker
+
+    Session = get_write_sessionmaker()
+    try:
+        async with Session() as session:
+            result = await session.execute(select(SambaCategoryMapping))
+            rows = result.scalars().all()
+
+        exported: dict[tuple[str, str], dict[str, str]] = {}
+        skipped = 0
+        for row in rows:
+            if not row.target_mappings or not isinstance(row.target_mappings, dict):
+                continue
+            site = (row.source_site or "").strip()
+            src_cat = (row.source_category or "").strip()
+            if not site or not src_cat:
+                continue
+            for market, tgt_cat in row.target_mappings.items():
+                if not tgt_cat or not isinstance(tgt_cat, str):
+                    continue
+                tgt_cat = tgt_cat.strip()
+                if " > " not in tgt_cat:
+                    skipped += 1
+                    continue
+                key = (site, market)
+                if key not in exported:
+                    exported[key] = {}
+                exported[key][src_cat] = tgt_cat
+
+        total = sum(len(v) for v in exported.values())
+        out_path = Path(__file__).parent / "rules_exported.py"
+
+        lines = [
+            '"""프로덕션 카테고리 매핑 학습 데이터.',
+            "",
+            "매핑 저장 시 자동 생성됨. 직접 편집 금지.",
+            "",
+            f"생성 일시: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}",
+            f"총 건수: {total}",
+            '"""',
+            "",
+            "# (source_site, target_market) → {source_category: target_category}",
+            "EXPORTED_RULES: dict[tuple[str, str], dict[str, str]] = {",
+        ]
+        for (site, market), mapping in sorted(exported.items()):
+            lines.append(f"    # {site} → {market} ({len(mapping)}건)")
+            lines.append(f"    ({site!r}, {market!r}): {{")
+            for src, tgt in sorted(mapping.items()):
+                lines.append(f"        {src!r}: {tgt!r},")
+            lines.append("    },")
+        lines.append("}")
+        lines.append("")
+
+        await asyncio.to_thread(out_path.write_text, "\n".join(lines), "utf-8")
+        logger.info(
+            "[rules_exported] %d건 재생성 완료 (대분류 제외: %d)", total, skipped
+        )
+    except Exception as e:
+        logger.error("[rules_exported] 재생성 실패: %s", e)
+
+
 class CategoryMappingMixin:
     """카테고리 매핑 CRUD + 코드 해결 + 불량 매핑 수정."""
 
@@ -43,73 +114,8 @@ class CategoryMappingMixin:
         )
 
     async def _rebuild_exported_rules(self) -> None:
-        """DB 전체 매핑을 읽어 rules_exported.py 재생성 (백그라운드 실행용).
-
-        매핑 저장/수정/벌크매핑 완료 시 자동 호출됨.
-        깃허브 코드를 받은 사람도 이 파일을 통해 매핑 데이터를 즉시 활용한다.
-        """
-        import asyncio
-        from datetime import UTC, datetime
-        from pathlib import Path
-        from sqlmodel import select
-
-        try:
-            result = await self.mapping_repo.session.execute(
-                select(SambaCategoryMapping)
-            )
-            rows = result.scalars().all()
-
-            exported: dict[tuple[str, str], dict[str, str]] = {}
-            skipped = 0
-            for row in rows:
-                if not row.target_mappings or not isinstance(row.target_mappings, dict):
-                    continue
-                site = (row.source_site or "").strip()
-                src_cat = (row.source_category or "").strip()
-                if not site or not src_cat:
-                    continue
-                for market, tgt_cat in row.target_mappings.items():
-                    if not tgt_cat or not isinstance(tgt_cat, str):
-                        continue
-                    tgt_cat = tgt_cat.strip()
-                    if " > " not in tgt_cat:
-                        skipped += 1
-                        continue
-                    key = (site, market)
-                    if key not in exported:
-                        exported[key] = {}
-                    exported[key][src_cat] = tgt_cat
-
-            total = sum(len(v) for v in exported.values())
-            out_path = Path(__file__).parent / "rules_exported.py"
-
-            lines = [
-                '"""프로덕션 카테고리 매핑 학습 데이터.',
-                "",
-                "매핑 저장 시 자동 생성됨. 직접 편집 금지.",
-                "",
-                f"생성 일시: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}",
-                f"총 건수: {total}",
-                '"""',
-                "",
-                "# (source_site, target_market) → {source_category: target_category}",
-                "EXPORTED_RULES: dict[tuple[str, str], dict[str, str]] = {",
-            ]
-            for (site, market), mapping in sorted(exported.items()):
-                lines.append(f"    # {site} → {market} ({len(mapping)}건)")
-                lines.append(f"    ({site!r}, {market!r}): {{")
-                for src, tgt in sorted(mapping.items()):
-                    lines.append(f"        {src!r}: {tgt!r},")
-                lines.append("    },")
-            lines.append("}")
-            lines.append("")
-
-            await asyncio.to_thread(out_path.write_text, "\n".join(lines), "utf-8")
-            logger.info(
-                "[rules_exported] %d건 재생성 완료 (대분류 제외: %d)", total, skipped
-            )
-        except Exception as e:
-            logger.error("[rules_exported] 재생성 실패: %s", e)
+        """기존 호출 호환을 위한 wrapper — 실제 로직은 모듈 레벨 함수에서 별도 세션으로 처리."""
+        await rebuild_exported_rules()
 
     async def create_mapping(self, data: Dict[str, Any]) -> SambaCategoryMapping:
         result = await self.mapping_repo.create_async(**data)
