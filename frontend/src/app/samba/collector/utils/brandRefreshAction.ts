@@ -224,13 +224,15 @@ export async function performBrandRefresh(args: BrandRefreshArgs) {
               while (!abort.signal.aborted) {
                 await new Promise(r => setTimeout(r, 1000))
                 if (abort.signal.aborted) break
-                const jr = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
-                if (!jr.ok) break
-                const job = await jr.json()
-                if (job.status === 'completed') break
-                if (job.status === 'failed') { addLog(`${gp} [${f.name}] 수집 실패: ${job.error || '오류'}`); break }
+                try {
+                  const jr = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
+                  if (!jr.ok) break
+                  const job = await jr.json()
+                  if (job.status === 'completed') break
+                  if (job.status === 'failed') { addLog(`${gp} [${f.name}] 수집 실패: ${job.error || '오류'}`); break }
+                } catch { /* 네트워크 일시 오류 — 재시도 */ }
               }
-            } catch (e) { addLog(`${gp} [${f.name}] 수집 오류: ${(e as Error).message}`) }
+            } catch (e) { addLog(`${gp} [${f.name}] 수집 시작 실패: ${(e as Error).message}`) }
           }
         }
 

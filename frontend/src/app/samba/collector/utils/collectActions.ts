@@ -118,33 +118,43 @@ export async function performCollectGroups(args: CollectGroupsArgs) {
         const { job_id } = await r.json() as { job_id: string }
         addLog(`[브랜드전체수집] Job 생성 완료 — 백그라운드 실행 중 (페이지 이탈해도 계속 수집됩니다)`)
         let _pendingLoggedAt = 0
+        let _pollFailCount = 0
         while (!abort.signal.aborted) {
           await new Promise(resolve => setTimeout(resolve, 2000))
           if (abort.signal.aborted) break
-          const jr = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
-          if (!jr.ok) break
-          const jobData = await jr.json() as { status: string; result?: Record<string, number>; error?: string }
-          if (jobData.status === 'pending') {
-            const now = Date.now()
-            if (now - _pendingLoggedAt > 10000) {
-              addLog(`[브랜드전체수집] 대기 중 — 다른 브랜드수집 완료 후 자동 시작...`)
-              _pendingLoggedAt = now
+          try {
+            const jr = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
+            if (!jr.ok) break
+            _pollFailCount = 0
+            const jobData = await jr.json() as { status: string; result?: Record<string, number>; error?: string }
+            if (jobData.status === 'pending') {
+              const now = Date.now()
+              if (now - _pendingLoggedAt > 10000) {
+                addLog(`[브랜드전체수집] 대기 중 — 다른 브랜드수집 완료 후 자동 시작...`)
+                _pendingLoggedAt = now
+              }
+              continue
             }
-            continue
-          }
-          if (jobData.status === 'completed') {
-            addLog(`[브랜드전체수집] 완료 — 저장 ${fmtNum(jobData.result?.saved ?? 0)}건`)
-            await load(); await loadTree()
-            break
-          }
-          if (jobData.status === 'failed') {
-            addLog(`[브랜드전체수집] 실패: ${jobData.error || '오류'}`)
-            await load(); await loadTree()
-            break
+            if (jobData.status === 'completed') {
+              addLog(`[브랜드전체수집] 완료 — 저장 ${fmtNum(jobData.result?.saved ?? 0)}건`)
+              await load(); await loadTree()
+              break
+            }
+            if (jobData.status === 'failed') {
+              addLog(`[브랜드전체수집] 실패: ${jobData.error || '오류'}`)
+              await load(); await loadTree()
+              break
+            }
+          } catch {
+            _pollFailCount++
+            if (_pollFailCount >= 5) {
+              addLog(`[브랜드전체수집] 연결이 끊겼습니다. 수집은 백그라운드에서 계속 진행 중이며 새로고침으로 결과를 확인할 수 있습니다.`)
+              break
+            }
           }
         }
       }
-    } catch (e) { addLog(`[브랜드전체수집] 오류: ${(e as Error).message}`) }
+    } catch (e) { addLog(`[브랜드전체수집] 시작 실패: ${(e as Error).message}`) }
   } else {
     addLog(`${fmtNum(targetIds.length)}개 그룹 상품수집 시작...`)
     for (let gi = 0; gi < targetIds.length; gi++) {

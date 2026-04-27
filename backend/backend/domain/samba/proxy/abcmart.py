@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import re
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -1029,10 +1030,11 @@ class ARTSourcingClient:
             original_price = sale_price
 
         # 최대혜택가: 멤버십 상시 할인 + 쿠폰 할인
-        # 멤버십 할인은 API의 alwaysDscntAmt를 그대로 사용
-        # (alwaysDscntYn=Y면 등급별 실제 할인액, N이면 0 — "상시 할인 제외 상품" 자동 처리)
-        # 로그인 쿠키 sync 안 됨 → 비로그인 응답 → alwaysDscntAmt=0 → 보수적 cost
+        # API의 alwaysDscntAmt는 풀 가격 기준으로 계산됨
+        # 사이트는 쿠폰 후 가격 기준으로 멤버십 할인 적용 → 400원 내외 차이 발생
+        # 해결: alwaysDscntAmt로 비율을 역산 후 쿠폰 후 가격에 재적용 (100원 단위 올림)
         _membership_discount = self._safe_int(data.get("alwaysDscntAmt") or 0)
+        _always_rate = float(data.get("alwaysDscntRate") or 0)
 
         # 쿠폰 할인: 로그인 시 받을 수 있는 추가 쿠폰 (없으면 0)
         _benefit_coupons = data.get("maxBenefitCoupon") or data.get("coupon") or []
@@ -1041,7 +1043,18 @@ class ARTSourcingClient:
             default=0,
         )
 
-        best_benefit_price = sale_price - _membership_discount - _coupon_discount
+        _after_coupon = sale_price - _coupon_discount
+        if _membership_discount > 0 and sale_price > 0:
+            # alwaysDscntRate가 없으면 alwaysDscntAmt에서 비율 역산 (단위: %)
+            if _always_rate <= 0:
+                _always_rate = _membership_discount / sale_price * 100
+            _membership_on_post_coupon = (
+                math.ceil(_after_coupon * _always_rate / 100 / 100) * 100
+            )
+            best_benefit_price = _after_coupon - _membership_on_post_coupon
+        else:
+            best_benefit_price = _after_coupon
+
         if best_benefit_price <= 0 or best_benefit_price > sale_price:
             best_benefit_price = sale_price
 
