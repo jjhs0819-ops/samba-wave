@@ -112,6 +112,21 @@ function buildMarketProductUrl(marketType: string, sellerId: string, productNo: 
   }
 }
 
+// 가격범위별 마진 매칭 (백엔드 policy/service.py:_calculate_range_margin과 동일 로직)
+// cost >= min && cost < max 인 첫 번째 범위의 rate를 반환, 매칭 실패 시 fallback
+export function pickRangeMargin(
+  cost: number,
+  ranges: Array<{ min?: number; max?: number; rate?: number }>,
+  fallback: number,
+): number {
+  for (const r of ranges) {
+    const min = r.min ?? 0
+    const max = r.max || 9999999999
+    if (cost >= min && cost < max) return r.rate ?? fallback
+  }
+  return fallback
+}
+
 // 가격 계산 공통 함수 (ProductCard 내 2곳 중복 제거)
 export function calcPrice(
   cost: number, mRate: number, ship: number, fee: number, extra: number, minMargin: number,
@@ -393,7 +408,13 @@ const ProductCard = React.memo(function ProductCard({
   const cost = p.cost || p.sale_price || p.original_price || 0
   const policy = policies.find((pol) => pol.id === p.applied_policy_id)
   const pricing = (policy?.pricing || {}) as Record<string, unknown>
-  const marginRate = (pricing.marginRate as number) || 15
+  const baseMarginRate = (pricing.marginRate as number) || 15
+  // 가격범위별 마진 매칭 (백엔드 _calculate_range_margin과 동일: cost >= min && cost < max)
+  const useRangeMargin = Boolean(pricing.useRangeMargin)
+  const rangeMargins = (pricing.rangeMargins as Array<{ min?: number; max?: number; rate?: number }>) || []
+  const marginRate = useRangeMargin && rangeMargins.length > 0
+    ? pickRangeMargin(cost, rangeMargins, baseMarginRate)
+    : baseMarginRate
   const extraCharge = (pricing.extraCharge as number) || 0
   const shippingCost = (pricing.shippingCost as number) || 0
   const feeRate = (pricing.feeRate as number) || 0
