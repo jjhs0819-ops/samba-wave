@@ -198,7 +198,7 @@ async def process_job(job: dict) -> None:
 
 # ── Fetch R2 config from API ─────────────────────────────
 async def fetch_config() -> bool:
-    global _r2
+    global _r2, WORKER_TOKEN, HEADERS
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
@@ -210,6 +210,11 @@ async def fetch_config() -> bool:
         if not data.get("success"):
             print(f"[Worker] Config error: {data.get('message')}")
             return False
+        # 백엔드가 자동 생성한 토큰을 받아서 사용
+        if data.get("worker_token"):
+            WORKER_TOKEN = data["worker_token"]
+            HEADERS = {"X-Worker-Token": WORKER_TOKEN}
+            print("[Worker] 토큰 자동 수신 완료")
         _r2 = data["r2"]
         print(f"[Worker] R2 config loaded: bucket={_r2.get('bucket')}")
         return True
@@ -226,13 +231,6 @@ async def main() -> None:
     print(f"Poll interval: {POLL_INTERVAL}s")
     print("Stop: Ctrl+C")
     print("=" * 50)
-
-    if not WORKER_TOKEN:
-        print("\n[Error] WORKER_TOKEN is not set.")
-        print(
-            "Fill in bg_worker.env with the token from Settings > R2 > Local Worker Token."
-        )
-        return
 
     print("\n[Worker] Connecting to backend...")
     if not await fetch_config():

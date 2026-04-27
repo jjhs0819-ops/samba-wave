@@ -355,9 +355,40 @@ async def _verify_worker_token(token: str, session: AsyncSession) -> bool:
 @router.get("/bg-jobs/config")
 async def bg_jobs_config(
     x_worker_token: str = Header(default=""),
-    session: AsyncSession = Depends(get_read_session_dependency),
+    session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:
-    """워커 시작 시 호출 — 토큰 검증 후 R2 자격증명 반환."""
+    """워커 시작 시 호출 — 토큰 검증 후 R2 자격증명 반환.
+    토큰 미설정 상태에서 토큰 없이 요청 시 자동 부트스트랩 (최초 1회).
+    """
+    import os
+    import secrets
+
+    from ._helpers import _set_setting
+
+    env_token = os.environ.get("BG_WORKER_TOKEN", "")
+    cfg = await _get_setting(session, "bg_worker")
+    db_token = (cfg or {}).get("worker_token", "") if isinstance(cfg, dict) else ""
+
+    # 토큰 미설정 상태 + 토큰 없이 요청 → 자동 생성 후 워커에게 반환 (최초 1회)
+    if not env_token and not db_token and not x_worker_token:
+        new_token = secrets.token_hex(32)
+        await _set_setting(session, "bg_worker", {"worker_token": new_token})
+        os.environ["BG_WORKER_TOKEN"] = new_token
+        logger.info("[배경제거] 워커 토큰 자동 생성 완료")
+        r2 = await _get_setting(session, "cloudflare_r2")
+        if not r2 or not isinstance(r2, dict):
+            return {"success": False, "message": "R2 설정이 저장되지 않았습니다"}
+        return {
+            "success": True,
+            "worker_token": new_token,
+            "r2": {
+                "account_id": r2.get("accountId", ""),
+                "access_key": r2.get("accessKey", ""),
+                "secret_key": r2.get("secretKey", ""),
+                "bucket": r2.get("bucketName", ""),
+                "public_url": r2.get("publicUrl", ""),
+            },
+        }
 
     if not await _verify_worker_token(x_worker_token, session):
         return {"success": False, "message": "Invalid worker token"}

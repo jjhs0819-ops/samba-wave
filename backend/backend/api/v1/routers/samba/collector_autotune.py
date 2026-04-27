@@ -584,7 +584,7 @@ async def _site_autotune_loop(site: str):
                                         await _stream_event(
                                             "sold_out",
                                             "info",
-                                            summary=f"품절(옵션품절) — {_name_short} {_opts_join}",
+                                            summary=f"옵션품절 — {_name_short} {_opts_join}",
                                             source_site=product.source_site,
                                             product_id=r.product_id,
                                             product_name=product.name,

@@ -384,7 +384,7 @@ async def refresh_products(
                     await monitor.emit(
                         "sold_out",
                         "info",
-                        summary=f"품절(옵션품절) — {(product.name or '')[:30]} {_opts_join_m}",
+                        summary=f"옵션품절 — {(product.name or '')[:30]} {_opts_join_m}",
                         source_site=product.source_site,
                         product_id=r.product_id,
                         product_name=product.name,
