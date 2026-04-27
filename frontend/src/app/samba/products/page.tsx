@@ -1359,7 +1359,7 @@ export default function ProductsPage() {
             style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: "#1E1E1E", border: "1px solid #3D3D3D", borderRadius: "6px", color: "#C5C5C5", width: "90px" }}>
             <option value="name">검색항목</option>
             <option value="brand">브랜드</option>
-            <option value="name_all">상품명+등록명</option>
+            <option value="name_all">상품명</option>
             <option value="filter">그룹</option>
             <option value="no">상품번호</option>
             <option value="policy">정책</option>
