@@ -198,20 +198,21 @@ sudo docker compose --profile staging pull samba-api-staging
 echo "[2/6] green 컨테이너 시작..."
 sudo docker compose --profile staging up -d samba-api-staging
 
-echo "[3/6] green 헬스체크 대기 (최대 120초)..."
+echo "[3/6] green 헬스체크 대기 (최대 180초)..."
 # docker healthcheck status 가 아닌 컨테이너 내부 wget 으로 직접 폴링.
 # 이유: docker healthcheck는 interval=30s + start_period=60s 라서 첫 healthy 갱신까지 90~150초 걸림.
 # 직접 wget 은 startup 즉시 응답하므로 실제 readiness 와 일치.
 # 폴링 간격 5s→2s로 단축 (배포시간 최적화 — startup 50s 가정 시 평균 20~30초 절감)
-for i in $(seq 1 60); do
+# 타임아웃 120s→180s: Alembic 마이그레이션이 많을 때 120s 초과 케이스 대응
+for i in $(seq 1 90); do
     sleep 2
     RESP=$(sudo docker exec samba-samba-api-staging-1 wget -qO- --timeout=3 http://localhost:8080/api/v1/health 2>/dev/null || echo "")
     if echo "$RESP" | grep -q '"status":"healthy"'; then
         echo "    ✅ green healthy (${i}회 시도, $((i*2))초)"
         break
     fi
-    echo "    ⏳ green not-ready ($i/60, $((i*2))초)"
-    if [ "$i" = "60" ]; then
+    echo "    ⏳ green not-ready ($i/90, $((i*2))초)"
+    if [ "$i" = "90" ]; then
         echo "❌ green 헬스체크 실패 — green 컨테이너 정리 후 종료"
         sudo docker compose --profile staging stop samba-api-staging
         sudo docker compose --profile staging rm -f samba-api-staging
