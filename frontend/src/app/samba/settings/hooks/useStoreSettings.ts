@@ -157,10 +157,21 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
       const selectFields = new Set(
         (marketCfgForMerge?.fields ?? []).filter(f => f.type === 'select').map(f => f.name)
       )
+      const passwordFieldsForMerge = new Set(
+        (marketCfgForMerge?.fields ?? []).filter(f => f.type === 'password').map(f => f.name)
+      )
       const clearKeys = Object.entries(current)
         .filter(([k, v]) => v === '' && selectFields.has(k))
         .map(([k]) => k)
-      const filtered = Object.fromEntries(Object.entries(current).filter(([, v]) => v !== ''))
+      // password 필드는 빈 값이면 payload에서 제거 → 백엔드가 기존 값 유지
+      // 마스킹값(****XXXX)도 동일하게 제거 (defense-in-depth, 백엔드 가드와 이중 방어)
+      const filtered = Object.fromEntries(
+        Object.entries(current).filter(([k, v]) => {
+          if (v === '') return false
+          if (passwordFieldsForMerge.has(k) && /^\*{4}.{0,4}$/.test(String(v))) return false
+          return true
+        })
+      )
       // 완전 분리: savedStoreData(Settings 공통) 병합 제거 — account.additional_fields 기반으로만 저장
       const merged = { ...filtered }
       // select "설정안함" 선택 시 해당 키 삭제
@@ -222,17 +233,18 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
     }
     setStoreStatus(prev => ({ ...prev, [marketKey]: '인증 확인 중...' }))
     try {
-      // password 필드가 비어있으면 editingAccount.additional_fields에서 복원 (완전 분리)
+      // password 필드 가드: 빈 값 또는 마스킹값(****XXXX)은 payload에서 제거
+      // 백엔드 store_* save_setting 가드가 누락된 키는 기존 DB 값으로 머지함
+      // (과거 editingAccount.additional_fields에서 복원하려 했으나 그 값도 이미 마스킹된 응답이라 의미 없었음)
       const marketCfg = STORE_MARKETS.find(m => m.key === marketKey)
       const pwdFields = new Set(
         (marketCfg?.fields ?? []).filter(f => f.type === 'password').map(f => f.name)
       )
       const safeData = { ...data }
       for (const field of pwdFields) {
-        if (!safeData[field] || safeData[field]?.startsWith('****')) {
-          const editingAcc = accounts.find(a => a.id === editingAccountId)
-          const origVal = (editingAcc?.additional_fields as Record<string, string> | null)?.[field]
-          if (origVal) safeData[field] = origVal
+        const v = safeData[field]
+        if (!v || /^\*{4}.{0,4}$/.test(String(v))) {
+          delete safeData[field]
         }
       }
       // 먼저 설정 저장

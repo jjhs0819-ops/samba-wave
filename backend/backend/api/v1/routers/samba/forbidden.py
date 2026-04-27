@@ -218,6 +218,7 @@ async def save_setting(
     from datetime import UTC, datetime
 
     from backend.domain.samba.forbidden.model import SambaSettings
+    from backend.utils.masking import drop_masked_secret_fields
 
     value = body.get("value")
     # tenant_id가 있으면 테넌트 전용 키(tenant_id:key)로 upsert
@@ -226,6 +227,25 @@ async def save_setting(
     existing_stmt = select(SambaSettings).where(SambaSettings.key == effective_key)
     result = await session.execute(existing_stmt)
     existing = result.scalars().first()
+    # store_* 키이면 마켓 인증정보가 들어감 → 마스킹값(****XXXX) 덮어쓰기 차단
+    # dispatcher/proxy/order/cs_inquiry 가 이 settings를 직접 읽으므로 마스킹값이 들어가면
+    # 발송/주문 동기화/CS 호출 모두 인증 실패로 무력화됨.
+    # 단, 전체 merge는 select "설정안함"으로 키 삭제하려는 의도를 깨므로 REPLACE 시맨틱 유지하고
+    # 마스킹값으로 들어온 secret 키만 existing에서 복원.
+    if (
+        isinstance(value, dict)
+        and key.startswith("store_")
+        and key != "store_network_ips"
+    ):
+        from backend.utils.masking import ALL_NESTED_SECRET_KEYS
+
+        cleaned = drop_masked_secret_fields(value)
+        if existing and isinstance(existing.value, dict):
+            for sk in ALL_NESTED_SECRET_KEYS:
+                # incoming에 마스킹값으로 들어와 drop된 secret 키만 기존값으로 복원
+                if sk in value and sk not in cleaned and sk in existing.value:
+                    cleaned[sk] = existing.value[sk]
+        value = cleaned
     if existing:
         existing.value = value
         existing.updated_at = datetime.now(UTC)

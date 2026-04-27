@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, File, Header, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import Response
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -15,9 +15,6 @@ from backend.utils.logger import logger
 from ._helpers import _get_setting
 
 router = APIRouter(tags=["samba-proxy"])
-
-# JWT 인증 없이 워커 토큰만으로 접근하는 bg-jobs 전용 라우터
-bg_worker_router = APIRouter(prefix="/proxy", tags=["samba-proxy-worker"])
 
 
 # ═══════════════════════════════════════════════
@@ -277,7 +274,9 @@ async def transform_images(
     request: dict[str, Any],
     session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:
-    """AI 이미지 변환 — background 모드는 로컬 워커 큐에 등록, 나머지는 Cloud Run 처리."""
+    """AI 이미지 변환 — background 모드는 백엔드 백그라운드 태스크, 나머지는 Cloud Run 처리."""
+    import asyncio
+
     from backend.domain.samba.image.service import ImageTransformService
 
     svc = ImageTransformService(session)
@@ -304,8 +303,10 @@ async def transform_images(
     if not product_ids:
         return {"success": False, "message": "No products selected"}
 
-    # 배경제거는 로컬 워커 큐에 등록 (Cloud Run에서 처리 안 함)
+    # 배경제거는 백엔드에서 fire-and-forget 백그라운드 태스크로 직접 처리
+    # (이전: 사용자 PC의 local_bg_worker.py 폴링 — 워커 미실행 시 정체)
     if mode == "background":
+        from backend.domain.samba.image.bg_remove import process_bg_remove_job
         from backend.domain.samba.job.model import SambaJob
 
         job = SambaJob(
@@ -317,14 +318,17 @@ async def transform_images(
         session.add(job)
         await session.commit()
         await session.refresh(job)
+        # 요청 세션은 곧 닫히므로 태스크는 자체 세션을 새로 생성함
+        asyncio.create_task(process_bg_remove_job(job.id))
         logger.info(
-            f"[배경제거] 로컬 워커 큐 등록: job_id={job.id}, {len(product_ids)}개 상품"
+            f"[배경제거] 백그라운드 태스크 시작: job_id={job.id}, "
+            f"{len(product_ids)}개 상품"
         )
         return {
             "success": True,
             "status": "queued",
             "job_id": job.id,
-            "message": f"로컬 워커 큐 등록 완료 ({len(product_ids)}개 상품)",
+            "message": f"배경제거 시작 ({len(product_ids)}개 상품)",
             "total_transformed": 0,
             "total_failed": 0,
         }
@@ -336,276 +340,6 @@ async def transform_images(
     except Exception as exc:
         logger.error(f"[이미지변환] transform failed: {exc}")
         return {"success": False, "message": str(exc)[:300]}
-
-
-async def _verify_worker_token(token: str, session: AsyncSession) -> bool:
-    """X-Worker-Token 검증 — 환경변수 BG_WORKER_TOKEN 또는 DB bg_worker.worker_token과 비교."""
-    import os
-
-    if not token:
-        return False
-    # docker-compose 내부 통신용: 환경변수 직접 매칭
-    env_token = os.environ.get("BG_WORKER_TOKEN", "")
-    if env_token and token == env_token:
-        return True
-    # DB 설정 확인 (레거시/수동 설정)
-    cfg = await _get_setting(session, "bg_worker")
-    if not cfg or not isinstance(cfg, dict):
-        return False
-    return cfg.get("worker_token", "") == token
-
-
-@bg_worker_router.get("/bg-jobs/config")
-async def bg_jobs_config(
-    x_worker_token: str = Header(default=""),
-    session: AsyncSession = Depends(get_write_session_dependency),
-) -> dict[str, Any]:
-    """워커 시작 시 호출 — 토큰 검증 후 R2 자격증명 반환.
-    토큰 미설정 상태에서 토큰 없이 요청 시 자동 부트스트랩 (최초 1회).
-    """
-    import os
-    import secrets
-
-    from ._helpers import _set_setting
-
-    env_token = os.environ.get("BG_WORKER_TOKEN", "")
-    cfg = await _get_setting(session, "bg_worker")
-    db_token = (cfg or {}).get("worker_token", "") if isinstance(cfg, dict) else ""
-
-    # 로컬 워커용 토큰 미설정 + 토큰 없이 요청 → 자동 생성 후 워커에게 반환 (최초 1회)
-    # env_token은 VM 워커용이므로 체크 제외
-    if not db_token and not x_worker_token:
-        new_token = secrets.token_hex(32)
-        await _set_setting(session, "bg_worker", {"worker_token": new_token})
-        os.environ["BG_WORKER_TOKEN"] = new_token
-        logger.info("[배경제거] 워커 토큰 자동 생성 완료")
-        r2 = await _get_setting(session, "cloudflare_r2")
-        if not r2 or not isinstance(r2, dict):
-            return {"success": False, "message": "R2 설정이 저장되지 않았습니다"}
-        return {
-            "success": True,
-            "worker_token": new_token,
-            "r2": {
-                "account_id": r2.get("accountId", ""),
-                "access_key": r2.get("accessKey", ""),
-                "secret_key": r2.get("secretKey", ""),
-                "bucket": r2.get("bucketName", ""),
-                "public_url": r2.get("publicUrl", ""),
-            },
-        }
-
-    if not await _verify_worker_token(x_worker_token, session):
-        return {"success": False, "message": "Invalid worker token"}
-
-    r2 = await _get_setting(session, "cloudflare_r2")
-    if not r2 or not isinstance(r2, dict):
-        return {"success": False, "message": "R2 설정이 저장되지 않았습니다"}
-
-    return {
-        "success": True,
-        "r2": {
-            "account_id": r2.get("accountId", ""),
-            "access_key": r2.get("accessKey", ""),
-            "secret_key": r2.get("secretKey", ""),
-            "bucket": r2.get("bucketName", ""),
-            "public_url": r2.get("publicUrl", ""),
-        },
-    }
-
-
-@bg_worker_router.get("/bg-jobs/next")
-async def bg_jobs_next(
-    x_worker_token: str = Header(default=""),
-    session: AsyncSession = Depends(get_write_session_dependency),
-) -> dict[str, Any]:
-    """로컬 워커 폴링 — 대기 중인 배경제거 작업 1건 반환 (없으면 null)."""
-    from sqlalchemy import select as sa_select
-
-    from backend.domain.samba.collector.model import SambaCollectedProduct
-    from backend.domain.samba.job.model import JobStatus, SambaJob
-
-    if not await _verify_worker_token(x_worker_token, session):
-        return {"error": "Invalid worker token"}
-
-    # 가장 오래된 pending 잡 1개 조회
-    stmt = (
-        sa_select(SambaJob)
-        .where(SambaJob.job_type == "bg_remove")
-        .where(SambaJob.status == JobStatus.PENDING)
-        .order_by(SambaJob.created_at)
-        .limit(1)
-    )
-    result = await session.execute(stmt)
-    job = result.scalar_one_or_none()
-
-    if not job:
-        return {"job": None}
-
-    # running으로 상태 전환
-    job.status = JobStatus.RUNNING
-    from datetime import datetime, timezone
-
-    job.started_at = datetime.now(timezone.utc)
-    session.add(job)
-
-    # 상품별 이미지 URL 조회
-    payload = job.payload or {}
-    product_ids: list[str] = payload.get("product_ids", [])
-    scope: dict = payload.get(
-        "scope", {"thumbnail": True, "additional": False, "detail": False}
-    )
-
-    products_data = []
-    if product_ids:
-        prod_stmt = sa_select(SambaCollectedProduct).where(
-            SambaCollectedProduct.id.in_(product_ids)
-        )
-        prod_result = await session.execute(prod_stmt)
-        prods = prod_result.scalars().all()
-        for p in prods:
-            products_data.append(
-                {
-                    "product_id": p.id,
-                    "images": p.images or [],
-                    "detail_images": p.detail_images or [],
-                    "tags": p.tags or [],
-                }
-            )
-
-    await session.commit()
-
-    return {
-        "job": {
-            "job_id": job.id,
-            "scope": scope,
-            "products": products_data,
-        }
-    }
-
-
-@bg_worker_router.post("/bg-jobs/{job_id}/complete")
-async def bg_jobs_complete(
-    job_id: str,
-    request: dict[str, Any],
-    x_worker_token: str = Header(default=""),
-    session: AsyncSession = Depends(get_write_session_dependency),
-) -> dict[str, Any]:
-    """로컬 워커 완료 보고 — 각 상품 이미지 URL 업데이트 + 잡 상태 완료 처리."""
-    from datetime import datetime, timezone
-
-    from sqlalchemy import select as sa_select
-
-    from backend.domain.samba.collector.model import SambaCollectedProduct
-    from backend.domain.samba.job.model import JobStatus, SambaJob
-
-    if not await _verify_worker_token(x_worker_token, session):
-        return {"success": False, "message": "Invalid worker token"}
-
-    stmt = sa_select(SambaJob).where(SambaJob.id == job_id)
-    result = await session.execute(stmt)
-    job = result.scalar_one_or_none()
-    if not job:
-        return {"success": False, "message": "Job not found"}
-
-    results: list[dict] = request.get("results", [])
-    success_count = 0
-    fail_count = 0
-
-    for item in results:
-        pid = item.get("product_id")
-        if not pid:
-            continue
-        prod_stmt = sa_select(SambaCollectedProduct).where(
-            SambaCollectedProduct.id == pid
-        )
-        prod_result = await session.execute(prod_stmt)
-        product = prod_result.scalar_one_or_none()
-        if not product:
-            fail_count += 1
-            continue
-
-        if item.get("success"):
-            new_images = item.get("new_images")
-            new_detail = item.get("new_detail_images")
-            new_tags = list(
-                set((product.tags or []) + ["__ai_image__", "__img_edited__"])
-            )
-
-            if new_images is not None:
-                product.images = new_images
-            if new_detail is not None:
-                product.detail_images = new_detail
-            product.tags = new_tags
-            session.add(product)
-            success_count += 1
-        else:
-            fail_count += 1
-
-    job.status = JobStatus.COMPLETED
-    job.completed_at = datetime.now(timezone.utc)
-    job.current = success_count
-    job.result = {"total_transformed": success_count, "total_failed": fail_count}
-    session.add(job)
-    await session.commit()
-
-    logger.info(
-        f"[배경제거] 완료: job_id={job_id}, 성공={success_count}, 실패={fail_count}"
-    )
-    return {
-        "success": True,
-        "total_transformed": success_count,
-        "total_failed": fail_count,
-    }
-
-
-@bg_worker_router.patch("/bg-jobs/{job_id}/progress")
-async def bg_jobs_progress(
-    job_id: str,
-    request: dict[str, Any] | None = None,
-    x_worker_token: str = Header(default=""),
-    session: AsyncSession = Depends(get_write_session_dependency),
-) -> dict[str, Any]:
-    """워커 진행률 보고.
-
-    body 없음 → 상품 1건 완료(current +1)
-    body에 image_current/image_total 있음 → 사진 단위 진행률만 갱신
-      (current는 증가시키지 않음 — 상품 완료는 별도 호출 또는 complete에서 처리)
-    """
-    from sqlalchemy import select as sa_select
-
-    from backend.domain.samba.job.model import SambaJob
-
-    if not await _verify_worker_token(x_worker_token, session):
-        return {"success": False, "message": "Invalid worker token"}
-
-    stmt = sa_select(SambaJob).where(SambaJob.id == job_id)
-    result = await session.execute(stmt)
-    job = result.scalar_one_or_none()
-    if not job:
-        return {"success": False, "message": "Job not found"}
-
-    body = request or {}
-    img_cur = body.get("image_current")
-    img_tot = body.get("image_total")
-    cur_pid = body.get("current_product_id")
-    bump_product = bool(body.get("bump_product", img_cur is None))
-
-    if bump_product:
-        job.current = min(job.current + 1, job.total)
-
-    # 사진 단위 진행률은 result JSON에 임시 저장(스키마 변경 없이 status에서 노출)
-    res = dict(job.result or {})
-    if img_cur is not None:
-        res["image_current"] = int(img_cur)
-    if img_tot is not None:
-        res["image_total"] = int(img_tot)
-    if cur_pid is not None:
-        res["current_product_id"] = str(cur_pid)
-    job.result = res
-
-    session.add(job)
-    await session.commit()
-    return {"success": True, "current": job.current, "total": job.total}
 
 
 @router.get("/bg-jobs/{job_id}/status")

@@ -43,6 +43,29 @@ class SambaSourcingAccountService:
         account_id: str,
         data: Dict[str, Any],
     ) -> Optional[SambaSourcingAccount]:
+        from backend.utils.masking import (
+            drop_masked_secret_fields,
+            sanitize_top_level_secrets,
+        )
+
+        # 클라이언트가 GET 응답의 마스킹값(****XXXX)을 그대로 돌려보낼 때
+        # 진짜 password/secret 값을 덮어쓰는 사고를 차단.
+        # 최상위 password 컬럼 + additional_fields 내부 민감 키 모두 가드.
+        data = sanitize_top_level_secrets(data)
+        if "additional_fields" in data and isinstance(data["additional_fields"], dict):
+            cleaned_incoming = drop_masked_secret_fields(data["additional_fields"])
+            existing = await self.repo.get_async(account_id)
+            if existing:
+                existing_af = existing.additional_fields or {}
+                if isinstance(existing_af, dict):
+                    data["additional_fields"] = {
+                        **existing_af,
+                        **cleaned_incoming,
+                    }
+                else:
+                    data["additional_fields"] = cleaned_incoming
+            else:
+                data["additional_fields"] = cleaned_incoming
         data["updated_at"] = datetime.now(timezone.utc)
         return await self.repo.update_async(account_id, **data)
 

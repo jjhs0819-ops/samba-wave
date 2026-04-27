@@ -248,7 +248,16 @@ export default function AiToolsPanel(props: Props) {
                       }
                     } catch { /* 폴링 오류 무시 */ }
                   }
-                  if (aiJobAbortRef.current) addLog(`⛔ 사용자 중단`)
+                  if (aiJobAbortRef.current) {
+                    addLog(`⛔ 사용자 중단`)
+                    // 중단 시점까지 워커가 처리한 진행분 카운트 반영
+                    try {
+                      const stFinal = await proxyApi.bgJobStatus(jid)
+                      success = stFinal.total_transformed || 0
+                      fail = stFinal.total_failed || 0
+                      addLog(`[${ts()}] 중단 시점 진행분 — 성공 ${fmtNum(success)}개 / 실패 ${fmtNum(fail)}개`)
+                    } catch { /* 조회 실패 시 0 유지 */ }
+                  }
                   else if (pollCount >= maxPolls) { addLog(`타임아웃 (60분 초과)`); fail = productIds.length - success }
                 }
               } catch (e) {

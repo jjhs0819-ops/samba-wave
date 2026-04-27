@@ -2,9 +2,16 @@
 
 import { Dispatch, SetStateAction } from 'react'
 import type { SambaMarketAccount } from '@/lib/samba/api/commerce'
+import { STORE_MARKETS } from '../config'
 
 type OutboundPlace = { code: string; name: string; address: string }
 type InboundPlace = { code: string; name: string; address: string; address_detail: string; zipcode: string; phone: string }
+
+// 마스킹된 secret 값(****XXXX)이 form에 들어가 그대로 저장되면 DB의 진짜 값을
+// 마스킹 문자열로 덮어쓰는 사고가 발생 → 수정 모드 진입 시 password 필드는 빈 값으로 주입.
+// 사용자가 비워두면 백엔드 가드가 기존 값을 유지하고, 변경 시에만 새 값으로 업데이트됨.
+const isMaskedSecret = (v: unknown): boolean =>
+  typeof v === 'string' && /^\*{4}.{0,4}$/.test(v)
 
 interface Props {
   marketKey: string
@@ -44,10 +51,20 @@ export function ConnectedAccountsList(props: Props) {
                 onClick={() => {
                   setEditingAccountId(a.id)
                   const accData = (a.additional_fields || {}) as Record<string, string>
+                  // 마켓 설정상 password 타입 필드는 form에 빈 값으로 주입 (마스킹값 덮어쓰기 사고 차단)
+                  const marketCfg = STORE_MARKETS.find(m => m.key === marketKey)
+                  const passwordFields = new Set(
+                    (marketCfg?.fields ?? []).filter(f => f.type === 'password').map(f => f.name)
+                  )
+                  const sanitized: Record<string, string> = {}
+                  for (const [k, v] of Object.entries(accData)) {
+                    if (passwordFields.has(k) || isMaskedSecret(v)) continue
+                    sanitized[k] = v
+                  }
                   const formData: Record<string, string> = {
                     businessName: a.business_name || '',
                     storeId: a.seller_id || '',
-                    ...accData,
+                    ...sanitized,
                   }
                   setStoreData(prev => ({ ...prev, [marketKey]: formData }))
                   if (marketKey === 'coupang') {

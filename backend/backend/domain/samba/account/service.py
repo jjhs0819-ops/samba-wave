@@ -174,17 +174,31 @@ class SambaAccountService:
     async def update_account(
         self, account_id: str, data: Dict[str, Any]
     ) -> Optional[SambaMarketAccount]:
+        from backend.utils.masking import (
+            drop_masked_secret_fields,
+            sanitize_top_level_secrets,
+        )
+
+        # 클라이언트가 GET 응답의 마스킹값(****XXXX)을 그대로 돌려보낼 때
+        # 진짜 secret 값을 마스킹 문자열로 덮어쓰는 사고를 차단.
+        # 마스킹값은 키 자체를 incoming에서 제거 → merge 단계에서 기존 DB 값이 살아남음
+        data = sanitize_top_level_secrets(data)
         # additional_fields는 기존 값과 merge — 클라가 보내지 않은 키(OAuth 토큰 등) 보존
         # 전체 교체 방식이면 카페24 OAuth 직후 설정 저장 시 accessToken/refreshToken이 증발함
         if "additional_fields" in data and isinstance(data["additional_fields"], dict):
+            cleaned_incoming = drop_masked_secret_fields(data["additional_fields"])
             existing = await self.repo.get_async(account_id)
             if existing:
                 existing_af = existing.additional_fields or {}
                 if isinstance(existing_af, dict):
                     data["additional_fields"] = {
                         **existing_af,
-                        **data["additional_fields"],
+                        **cleaned_incoming,
                     }
+                else:
+                    data["additional_fields"] = cleaned_incoming
+            else:
+                data["additional_fields"] = cleaned_incoming
         return await self.repo.update_async(account_id, **data)
 
     async def delete_account(self, account_id: str) -> bool:

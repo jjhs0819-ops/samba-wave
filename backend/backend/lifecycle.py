@@ -336,6 +336,42 @@ async def _recover_running_jobs(logger: logging.Logger) -> None:
                 await asyncio.sleep(2)
 
 
+async def _resume_pending_bg_remove_jobs(logger: logging.Logger) -> None:
+    """기동 시 PENDING 상태의 배경제거 잡을 백그라운드 태스크로 재개.
+
+    배경제거는 JobWorker가 처리하지 않고 transform_images 호출 시점에
+    asyncio.create_task로 처리한다. 따라서 이전 인스턴스가 종료되거나
+    재배포로 중단된 PENDING 잡은 누군가 다시 호출하기 전까지 영원히 멈춘다.
+    이 함수가 그 누락분을 회수한다. (RUNNING은 _recover_running_jobs가 이미
+    PENDING으로 리셋하므로 여기서 같이 픽업된다.)
+    """
+    from sqlalchemy import select as sa_select
+
+    from backend.db.orm import get_write_session
+    from backend.domain.samba.image.bg_remove import process_bg_remove_job
+    from backend.domain.samba.job.model import JobStatus, SambaJob
+
+    try:
+        async with get_write_session() as session:
+            res = await session.execute(
+                sa_select(SambaJob).where(
+                    SambaJob.job_type == "bg_remove",
+                    SambaJob.status == JobStatus.PENDING.value,
+                )
+            )
+            jobs = list(res.scalars().all())
+        for j in jobs:
+            asyncio.create_task(process_bg_remove_job(j.id))
+        if jobs:
+            logger.info(
+                "[startup] resumed bg_remove jobs=%s (ids=%s)",
+                len(jobs),
+                [j.id for j in jobs],
+            )
+    except Exception as exc:
+        logger.warning("[startup] bg_remove resume failed: %s", exc)
+
+
 async def _start_worker_runtime() -> WorkerRuntime:
     from backend.domain.samba.job.worker import JobWorker
 
@@ -482,6 +518,7 @@ async def lifespan(app: FastAPI):
         )
     else:
         await _recover_running_jobs(startup_logger)
+        await _resume_pending_bg_remove_jobs(startup_logger)
         worker_runtime = await _start_worker_runtime()
         await _start_autotune_if_enabled()
         await _start_order_poller()
