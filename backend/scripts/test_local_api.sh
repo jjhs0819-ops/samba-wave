@@ -84,6 +84,19 @@ else
   check_status "analytics" "$BASE/api/v1/samba/analytics/summary" 200
 fi
 
+# ── 4. bg-worker 엔드포인트 (워커 토큰) ───────
+echo ""
+echo "[ 4. BG Worker 엔드포인트 ]"
+WORKER_TOKEN="${WORKER_TOKEN:-test-token}"
+WS=$(curl -s -o /dev/null -w "%{http_code}" \
+  -H "X-Worker-Token: $WORKER_TOKEN" \
+  "$BASE/api/v1/samba/proxy/bg-jobs/config" 2>/dev/null || echo "000")
+if [[ "$WS" == "200" || "$WS" == "403" ]]; then
+  pass "bg-jobs/config 응답 → HTTP $WS"
+else
+  fail "bg-jobs/config → HTTP $WS (기대: 200 또는 403)"
+fi
+
 # ── 결과 ──────────────────────────────────────
 echo ""
 echo "═══════════════════════════════════════════"

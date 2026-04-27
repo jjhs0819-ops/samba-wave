@@ -23,6 +23,7 @@ _EXEMPT_PREFIXES = (
     "/docs",
     "/redoc",
     "/openapi.json",
+    "/api/v1/samba/proxy/bg-jobs/",  # bg-worker 내부 호출 — 워커 토큰으로 자체 인증
 )
 
 

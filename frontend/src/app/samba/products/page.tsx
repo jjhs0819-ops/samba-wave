@@ -1512,7 +1512,8 @@ export default function ProductsPage() {
                   addLog(`큐 등록 실패: ${batchResVal.message}`)
                 } else {
                   const jid = batchResVal.job_id
-                  addLog(`[${ts()}] 배경제거 시작 (job: ${jid.slice(-8)})`)
+                  addLog(`[${ts()}] 큐 등록 완료 (job: ${jid.slice(-8)}) — 로컬 워커 처리 대기 중...`)
+                  addLog(`※ 로컬 워커(local_bg_worker.py)가 실행 중이어야 처리됩니다`)
                   let pollCount = 0
                   const maxPolls = 720 // 최대 60분 (5초 간격)
                   let lastLoggedCur = -1
@@ -1530,6 +1531,11 @@ export default function ProductsPage() {
                       const imgTot = st.image_total ?? 0
                       const stPid = st.current_product_id || ''
                       setAiJobTitle(`배경제거 [${fmt(cur)}/${fmt(tot)}]`)
+                      // pending 상태 감지 — 워커 미실행 경고
+                      if (st.status === 'pending') {
+                        if (pollCount === 6) addLog(`[${ts()}] ⚠️ 워커가 아직 작업을 수신하지 못했습니다`)
+                        if (pollCount === 18) addLog(`[${ts()}] ❌ 워커가 응답하지 않습니다. local_bg_worker.py 실행 여부를 확인해주세요`)
+                      }
                       // 진행 중일 때만 — 상품/사진 인덱스/상태가 바뀐 시점에만 로그(상품명+상품번호+사진진행률)
                       const changed = cur !== lastLoggedCur || st.status !== lastLoggedStatus || imgCur !== lastLoggedImgCur || stPid !== lastLoggedPid
                       if (st.status === 'running' && changed) {
@@ -1559,16 +1565,7 @@ export default function ProductsPage() {
                       }
                     } catch { /* 폴링 오류 무시 */ }
                   }
-                  if (aiJobAbortRef.current) {
-                    addLog(`⛔ 사용자 중단`)
-                    // 중단 시점까지 워커가 처리한 진행분 카운트 반영
-                    try {
-                      const stFinal = await proxyApi.bgJobStatus(jid)
-                      success = stFinal.total_transformed || 0
-                      fail = stFinal.total_failed || 0
-                      addLog(`[${ts()}] 중단 시점 진행분 — 성공 ${fmt(success)}개 / 실패 ${fmt(fail)}개`)
-                    } catch { /* 조회 실패 시 0 유지 */ }
-                  }
+                  if (aiJobAbortRef.current) addLog(`⛔ 사용자 중단`)
                   else if (pollCount >= maxPolls) { addLog(`타임아웃 (60분 초과)`); fail = ids.length - success }
                 }
               } catch (e) {
