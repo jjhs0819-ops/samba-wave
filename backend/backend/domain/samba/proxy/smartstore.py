@@ -844,9 +844,10 @@ class SmartStoreClient:
     ) -> list[dict[str, str]]:
         """태그를 태그사전 검색 + 제한태그 필터링하여 사용 가능한 태그만 반환.
 
-        1) 각 태그를 recommend-tags API로 병렬 정확 매치 확인 (공유 HTTP 클라이언트)
-        2) 매치된 태그를 restricted-tags API로 제한 여부 확인
-        3) 둘 다 통과한 태그만 max_count개까지 반환
+        1) 각 태그를 recommend-tags API로 정확 매치 확인
+        2) 응답에 들어온 다른 등재 태그를 풀로 누적 (정확매치가 부족할 때 보충)
+        3) 정확매치 우선 + 풀 보충 후 restricted-tags API로 제한 여부 확인
+        4) 모두 통과한 태그만 max_count개까지 반환
         """
         import asyncio
 
@@ -861,14 +862,16 @@ class SmartStoreClient:
 
         async def _match_one(
             client: httpx.AsyncClient, tag: str
-        ) -> dict[str, str] | None:
+        ) -> tuple[dict[str, str] | None, list[dict[str, str]]]:
+            """반환: (정확매치 dict 또는 None, 응답에 함께 들어온 등재 태그 풀)."""
             async with sem:
                 # 태그사전 캐시 조회 (TTL 10분)
                 from backend.domain.samba.cache import cache
 
                 cached = await cache.get(f"tags:search:{tag}")
                 if cached is not None:
-                    return cached if cached else None  # False = 미등록 태그
+                    # 캐시 히트 시 풀은 비움 (응답 본문 미보존)
+                    return (cached if cached else None), []
 
                 # 429 재시도: 최대 3회, 지수 백오프 (1초 → 2초 → 4초)
                 for attempt in range(3):
@@ -888,12 +891,12 @@ class SmartStoreClient:
                                 continue
                             logger.warning(f"[스마트스토어] 태그 429 최종 실패: {tag}")
                             # 429 에러 시 캐싱하지 않음 (재시도 필요)
-                            return None
+                            return None, []
                         if resp.status_code != 200:
                             logger.warning(
                                 f"[스마트스토어] 태그 검색 HTTP {resp.status_code}: {tag}"
                             )
-                            return None
+                            return None, []
                         data = resp.json()
                         results = (
                             data
@@ -905,53 +908,69 @@ class SmartStoreClient:
                                 or []
                             )
                         )
+                        matched: dict[str, str] | None = None
+                        discovered: list[dict[str, str]] = []
                         for r in results:
-                            if r.get("text") == tag or r.get("tag") == tag:
-                                matched = {
-                                    "code": str(r.get("code", 0)),
-                                    "text": r.get("text") or r.get("tag") or tag,
-                                }
-                                # 매치 결과 캐싱
-                                await cache.set(f"tags:search:{tag}", matched, ttl=600)
-                                return matched
-                        logger.info(
-                            f"[스마트스토어] 태그사전 미등록: {tag} (결과 {len(results)}건)"
-                        )
-                        # 미등록 태그도 캐싱 (False로 구분)
-                        await cache.set(f"tags:search:{tag}", False, ttl=600)
-                        return None
+                            text = r.get("text") or r.get("tag")
+                            if not text:
+                                continue
+                            item = {"code": str(r.get("code", 0)), "text": text}
+                            if matched is None and text == tag:
+                                matched = item
+                            else:
+                                discovered.append(item)
+                        if matched is not None:
+                            # 정확매치만 캐싱 — 풀은 호출별 누적
+                            await cache.set(f"tags:search:{tag}", matched, ttl=600)
+                        else:
+                            logger.info(
+                                f"[스마트스토어] 태그사전 미등록: {tag} "
+                                f"(결과 {len(results)}건, 풀 {len(discovered)}개 발굴)"
+                            )
+                            # 미등록 태그도 캐싱 (False로 구분)
+                            await cache.set(f"tags:search:{tag}", False, ttl=600)
+                        return matched, discovered
                     except Exception as e:
                         logger.warning(f"[스마트스토어] 태그 검색 실패: {tag} — {e}")
-                        return None
-                return None
+                        return None, []
+                return None, []
 
         # 후보 풀 확대 (429 탈락 대비)
         search_tags = tags[: max_count * 3]
-        # 순차 실행 + 요청 간 딜레이로 429 방지
-        match_results: list[dict[str, str] | None] = []
+        matched_tags: list[dict[str, str]] = []
+        discovered_pool: list[dict[str, str]] = []
+        pool_seen: set[str] = set()
         async with httpx.AsyncClient(timeout=60) as client:
             for i, t in enumerate(search_tags):
                 if i > 0:
                     await asyncio.sleep(0.3)
-                result = await _match_one(client, t)
-                match_results.append(result)
-                # 이미 충분히 모았으면 조기 종료
-                valid_so_far = sum(1 for r in match_results if r is not None)
-                if valid_so_far >= max_count + 2:
+                exact, discovered = await _match_one(client, t)
+                if exact is not None:
+                    matched_tags.append(exact)
+                    pool_seen.add(exact["text"])
+                for d in discovered:
+                    if d["text"] in pool_seen:
+                        continue
+                    pool_seen.add(d["text"])
+                    discovered_pool.append(d)
+                # 정확매치 + 풀이 충분히 모이면 조기 종료
+                if len(matched_tags) + len(discovered_pool) >= max_count * 3:
                     break
-        matched_tags = [r for r in match_results if r is not None]
 
-        if not matched_tags:
+        # 정확매치 우선, 부족 시 풀로 보충
+        combined: list[dict[str, str]] = list(matched_tags) + list(discovered_pool)
+
+        if not combined:
             logger.warning(
                 f"[스마트스토어] 태그사전 매치 0건 (후보 {len(search_tags)}개)"
             )
             return []
 
-        # 2단계: 제한 태그 필터링
-        tag_texts = [t["text"] for t in matched_tags]
+        # 2단계: 제한 태그 필터링 (정확매치 + 풀 통합 검사)
+        tag_texts = [t["text"] for t in combined]
         restricted = await self.check_restricted_tags(tag_texts)
         valid_tags: list[dict[str, str]] = []
-        for t in matched_tags:
+        for t in combined:
             if restricted.get(t["text"], False):
                 logger.info(f"[스마트스토어] 제한 태그 제외: {t['text']}")
                 continue
@@ -960,7 +979,9 @@ class SmartStoreClient:
                 break
 
         logger.info(
-            f"[스마트스토어] 태그 검증 완료: {len(tags)}개 후보 → {len(matched_tags)}개 사전등록 → {len(valid_tags)}개 사용가능"
+            f"[스마트스토어] 태그 검증 완료: {len(tags)}개 후보 → "
+            f"정확매치 {len(matched_tags)}개 + 풀 {len(discovered_pool)}개 "
+            f"→ {len(valid_tags)}개 사용가능"
         )
         return valid_tags
 

@@ -194,7 +194,6 @@ export default function WarroomPage() {
   const [autotuneCycles, setAutotuneCycles] = useState(0)
   const [autotuneRestarts, setAutotuneRestarts] = useState(0)
   const [singleProductNo, setSingleProductNo] = useState('')
-  const [autotuneRefreshed, setAutotuneRefreshed] = useState(0)
   const [, setAutotuneLastTick] = useState<string | null>(null)
   const prevCyclesRef = useRef(0)
   const falseCountRef = useRef(0)
@@ -320,7 +319,6 @@ export default function WarroomPage() {
     setAutotuneRunning(running)
     setAutotuneCycles(cycles)
     setAutotuneLastTick(lastTick)
-    setAutotuneRefreshed(refreshed)
     // 사이클 완료 시 이벤트 타임라인 갱신
     if (cycles > prevCyclesRef.current) {
       prevCyclesRef.current = cycles
@@ -449,7 +447,7 @@ export default function WarroomPage() {
     )
   }
 
-  const { product_stats, refresh_stats, price_change_stats, site_health, market_health, hourly_changes } = stats
+  const { product_stats, site_health, market_health, hourly_changes } = stats
 
   // 가로 바 차트 최대값
   const maxHourly = Math.max(...hourly_changes, 1)
@@ -472,8 +470,8 @@ export default function WarroomPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <span style={{ width: 8, height: 8, borderRadius: '50%', background: autotuneRunning ? '#51CF66' : '#FF6B6B', display: 'inline-block' }} />
             <span style={{ fontWeight: 700, color: '#FF8C00', fontSize: '0.875rem' }}>오토튠 실시간 모니터링</span>
-            {autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#51CF66' }}>실행 중 ({autotuneCycles}회)</span>}
-            {autotuneRunning && autotuneRestarts > 0 && <span style={{ fontSize: '0.75rem', color: '#FF6B6B' }}>재시작 {autotuneRestarts}회</span>}
+            {autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#51CF66' }}>실행 중 ({fmtNum(autotuneCycles)}회)</span>}
+            {autotuneRunning && autotuneRestarts > 0 && <span style={{ fontSize: '0.75rem', color: '#FF6B6B' }}>재시작 {fmtNum(autotuneRestarts)}회</span>}
             {!autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#FF6B6B' }}>정지</span>}
           </div>
           <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', color: '#888', alignItems: 'center' }}>
@@ -694,7 +692,7 @@ export default function WarroomPage() {
                         }}>{siteName}</span>
 
                         <span style={{ fontSize: '0.78rem', color: '#666', marginLeft: 'auto' }}>
-                          {cycles > 1 ? `최근 ${cycles}사이클` : ''}
+                          {cycles > 1 ? `최근 ${fmtNum(cycles)}사이클` : ''}
                         </span>
                       </div>
                       {siteEvents.map((ev, ci) => {
@@ -729,7 +727,7 @@ export default function WarroomPage() {
                                 <span style={{ fontSize: '0.78rem', color: '#aaa' }}>실패 {fmtNum(errs)}</span>
                               )}
                               {dur != null && (
-                                <span style={{ fontSize: '0.78rem', color: '#888' }}>{Math.round(dur)}초</span>
+                                <span style={{ fontSize: '0.78rem', color: '#888' }}>{fmtNum(Math.round(dur))}초</span>
                               )}
                               {rate != null && (
                                 <span style={{ fontSize: '0.78rem', color: '#aaa', fontWeight: 600 }}>{fmtNum(rate)}건/초</span>
@@ -817,9 +815,9 @@ export default function WarroomPage() {
                           const soldOutOptions = (d?.sold_out_options as string[] | undefined) ?? []
                           const suspendedMarkets = (d?.suspended_markets as string[] | undefined) ?? []
                           const reasonLabel =
-                            reason === 'option_partial' ? '옵션품절'
+                            reason === 'option_partial' ? '옵션'
                             : reason === 'source_deleted' ? '소싱처삭제'
-                            : reason === 'all_soldout' ? '전체품절'
+                            : reason === 'all_soldout' ? '전체'
                             : '품절'
                           return (
                             <div key={ev.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
@@ -835,7 +833,7 @@ export default function WarroomPage() {
                               )}
                               {suspendedMarkets.length > 0 && (
                                 <span style={{ fontSize: '0.68rem', color: '#FFB347' }}>
-                                  판매중지 {suspendedMarkets.length}
+                                  판매중지 {fmtNum(suspendedMarkets.length)}
                                 </span>
                               )}
                             </div>
@@ -847,7 +845,7 @@ export default function WarroomPage() {
                               <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
                               <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{sitePid}</span>
                               <span style={{ fontSize: '0.72rem', color: '#51CF66' }}>재입고</span>
-                              <span style={{ fontSize: '0.68rem', color: '#888' }}>(옵션리스탁)</span>
+                              <span style={{ fontSize: '0.68rem', color: '#888' }}>(옵션)</span>
                               {restockedOptions.length > 0 && (
                                 <span style={{ fontSize: '0.72rem', color: '#51CF66' }}>
                                   {restockedOptions.slice(0, 5).join(', ')}
@@ -897,9 +895,9 @@ export default function WarroomPage() {
                         const labelColor = isRestock ? '#51CF66' : '#A78BFA'
                         const reasonLabel =
                           isMixed ? '재고변동'
-                          : isRestock ? '옵션리스탁'
-                          : item.sale_status === 'sold_out' ? '전체품절'
-                          : '옵션품절'
+                          : isRestock ? '옵션'
+                          : item.sale_status === 'sold_out' ? '전체'
+                          : '옵션'
                         return (
                           <div key={`ts-${i}`} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem' }}>
                             {tickEndedAt && <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(tickEndedAt)}</span>}
@@ -949,9 +947,9 @@ export default function WarroomPage() {
                           const reason = d.reason as string | undefined
                           const soldOutOptions = (d.sold_out_options as string[] | undefined) ?? []
                           const reasonLabel =
-                            reason === 'option_partial' ? '옵션품절'
+                            reason === 'option_partial' ? '옵션'
                             : reason === 'source_deleted' ? '소싱처삭제'
-                            : reason === 'all_soldout' ? '전체품절'
+                            : reason === 'all_soldout' ? '전체'
                             : '품절'
                           return (
                             <div key={ev.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem', flexWrap: 'wrap' }}>
@@ -982,7 +980,7 @@ export default function WarroomPage() {
                               )}
                               <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{ev.site_product_id || '-'}</span>
                               <span style={{ fontSize: '0.72rem', color: '#51CF66' }}>재입고</span>
-                              <span style={{ fontSize: '0.68rem', color: '#888' }}>(옵션리스탁)</span>
+                              <span style={{ fontSize: '0.68rem', color: '#888' }}>(옵션)</span>
                               {restockedOptions.length > 0 && (
                                 <span style={{ fontSize: '0.72rem', color: '#51CF66' }}>
                                   {restockedOptions.slice(0, 5).join(', ')}
@@ -1243,57 +1241,6 @@ export default function WarroomPage() {
           </div>
         )
       })()}
-
-      {/* B. KPI 카드 행 */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
-        {/* 전체 상품 */}
-        <div style={card}>
-          <div style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.5rem' }}>전체 상품</div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 700, color: '#E5E5E5' }}>
-            {fmtNum(product_stats.total)}
-          </div>
-          <div style={{ fontSize: '0.7rem', color: '#888', marginTop: '0.25rem', display: 'flex', gap: '0.5rem' }}>
-            {Object.entries(product_stats.by_priority).map(([k, v]) => (
-              <span key={k} style={{ color: PRIORITY_COLORS[k] || '#888' }}>
-                {k} {v}
-              </span>
-            ))}
-          </div>
-        </div>
-
-        {/* 등록상품 / 오토튠 */}
-        <div style={card}>
-          <div style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.5rem' }}>등록상품 / 오토튠</div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 700, color: '#4C9AFF' }}>
-            {fmtNum(product_stats.registered ?? 0)}
-          </div>
-          <div style={{ fontSize: '0.7rem', color: '#888', marginTop: '0.25rem' }}>
-            24h 갱신 {fmtNum(autotuneRefreshed)}건
-          </div>
-        </div>
-
-        {/* 가격 변동 */}
-        <div style={card}>
-          <div style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.5rem' }}>가격 변동</div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 700, color: '#FFD93D' }}>
-            {fmtNum(price_change_stats.changes_24h)}건
-          </div>
-          <div style={{ fontSize: '0.7rem', color: price_change_stats.avg_change_pct < 0 ? '#FF6B6B' : '#51CF66', marginTop: '0.25rem' }}>
-            평균 {price_change_stats.avg_change_pct > 0 ? '+' : ''}{fmtNum(price_change_stats.avg_change_pct)}%
-          </div>
-        </div>
-
-        {/* 에러 상품 */}
-        <div style={card}>
-          <div style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.5rem' }}>에러 상품</div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 700, color: refresh_stats.error_products > 0 ? '#FF6B6B' : '#51CF66' }}>
-            {fmtNum(refresh_stats.error_products)}
-          </div>
-          <div style={{ fontSize: '0.7rem', color: '#888', marginTop: '0.25rem' }}>
-            연속실패
-          </div>
-        </div>
-      </div>
 
       {/* C. 소싱처/마켓 헬스 */}
       <div style={{ display: 'none', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>

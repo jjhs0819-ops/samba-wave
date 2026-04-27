@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { fmtNum } from '@/lib/samba/styles'
 
 interface Props {
   images: string[]
@@ -69,8 +70,8 @@ export default function ImageManagerModal({ images, detailImages, onSave, onClos
 
   const TAB_LABELS: { key: Tab; label: string }[] = [
     { key: 'main', label: '대표이미지' },
-    { key: 'extra', label: `추가이미지 (${extraImgs.length})` },
-    { key: 'detail', label: `상세이미지 (${details.length})` },
+    { key: 'extra', label: `추가이미지 (${fmtNum(extraImgs.length)})` },
+    { key: 'detail', label: `상세이미지 (${fmtNum(details.length)})` },
   ]
 
   return (

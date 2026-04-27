@@ -178,7 +178,7 @@ export function StoreSettingsPanel(props: Props) {
                           }))
                           setEsmPlaceOptions(prev => ({ ...prev, [market.key]: places }))
                           setEsmDispatchOptions(prev => ({ ...prev, [market.key]: dispatches }))
-                          showAlert(`출고지/반품지 ${places.length}개, 발송정책 ${dispatches.length}개를 불러왔습니다.`, 'success')
+                          showAlert(`출고지/반품지 ${fmtNum(places.length)}개, 발송정책 ${fmtNum(dispatches.length)}개를 불러왔습니다.`, 'success')
                         } catch {
                           showAlert('배송정보 조회 실패', 'error')
                         }

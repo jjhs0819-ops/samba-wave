@@ -1,7 +1,8 @@
 """
 Samba Wave Local BG Worker
 - Polls backend every 5s for pending watermark removal jobs
-- 우측 상단 브랜드 워터마크 영역(95% 케이스)을 PIL 흰박스로 덮음
+- 우상단 영역이 "흰배경 + 로고" 패턴 → PIL 흰박스 (빠름, 95% 케이스)
+- 그 외 (사진 컨텐츠 — Jordan/Nike 등) → rembg 전체 배경 제거 (느리지만 정확)
 - Run: python local_bg_worker.py
 """
 
@@ -11,6 +12,7 @@ import asyncio
 import hashlib
 import io
 import os
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -65,15 +67,79 @@ def upload_to_r2(image_bytes: bytes, filename: str) -> str | None:
 # 우측 상단 워터마크 박스 비율 (이미지 가로/세로 기준)
 _WM_BOX_W_RATIO = 0.22
 _WM_BOX_H_RATIO = 0.18
-# 워터마크 유무 판정 임계값 (영역 평균 RGB가 이 값 미만이면 워터마크 있음)
-_WM_DETECT_THRESHOLD = 240
+# 영역이 이 값 이상으로 평균 RGB가 밝으면 "워터마크 없음"으로 보고 skip
+_WM_NO_LOGO_THRESHOLD = 240
+# "흰배경 + 작은 로고" 패턴 판정용 — near-white 픽셀(채널별 ≥230) 비율 기준
+_NEAR_WHITE_CHANNEL = 230
+_WHITE_BG_LOGO_RATIO = 0.75
+
+# rembg 세션 lazy 캐시 (모델 200MB, 매 호출마다 로드 방지)
+_rembg_session = None
+_rembg_lock = threading.Lock()
+
+
+def _get_rembg_session():
+    """rembg 세션 1회 생성 후 재사용 (스레드 안전)."""
+    global _rembg_session
+    if _rembg_session is None:
+        with _rembg_lock:
+            if _rembg_session is None:
+                from rembg import new_session
+
+                _rembg_session = new_session("u2net")
+                print("[Worker] rembg 세션 초기화 완료 (u2net)")
+    return _rembg_session
+
+
+def _is_white_background_logo(crop: Image.Image) -> bool:
+    """우상단 영역이 '흰배경 + 작은 로고' 패턴인지 판정.
+
+    near-white 픽셀(R/G/B 모두 ≥230) 비율이 75% 이상이면 → 워터마크 케이스.
+    그 외(모델/사진 컨텐츠)는 rembg로 처리해야 함.
+    """
+    pixels = list(crop.getdata())
+    if not pixels:
+        return False
+    near_white = sum(
+        1
+        for r, g, b in pixels
+        if r >= _NEAR_WHITE_CHANNEL
+        and g >= _NEAR_WHITE_CHANNEL
+        and b >= _NEAR_WHITE_CHANNEL
+    )
+    return near_white / len(pixels) >= _WHITE_BG_LOGO_RATIO
+
+
+def _rembg_full(src: Image.Image) -> bytes:
+    """rembg로 전체 배경 제거 후 흰배경 합성 → WEBP 반환."""
+    from rembg import remove
+
+    buf_in = io.BytesIO()
+    src.save(buf_in, format="PNG")
+    result = remove(
+        buf_in.getvalue(),
+        session=_get_rembg_session(),
+        alpha_matting=True,
+        alpha_matting_foreground_threshold=250,
+        alpha_matting_background_threshold=30,
+        alpha_matting_erode_size=15,
+    )
+    out = Image.open(io.BytesIO(result)).convert("RGBA")
+    r, g, b, a = out.split()
+    a = a.point(lambda x: 0 if x < 20 else x)
+    out = Image.merge("RGBA", (r, g, b, a))
+    white_bg = Image.new("RGBA", out.size, (255, 255, 255, 255))
+    composite = Image.alpha_composite(white_bg, out).convert("RGB")
+    buf = io.BytesIO()
+    composite.save(buf, format="WEBP", quality=90)
+    return buf.getvalue()
 
 
 def remove_watermark(image_bytes: bytes) -> bytes:
-    """우측 상단 브랜드 워터마크 영역만 흰색으로 덮어 제거.
-
-    rembg(silueta + alpha matting) → PIL 그리기.
-    CPU 사용량 ~95% 감소, 처리 시간 수십초 → 즉시.
+    """우상단 패턴에 따라 분기:
+    - 흰배경(워터마크 없음) → 원본 그대로
+    - 흰배경 + 로고 패턴 → PIL 흰박스로 가림 (빠른 경로)
+    - 사진 컨텐츠(모델/배경) → rembg 전체 배경 제거 (느린 경로)
     """
     src = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     if max(src.size) > 1024:
@@ -86,16 +152,30 @@ def remove_watermark(image_bytes: bytes) -> bytes:
     box_w = int(w * _WM_BOX_W_RATIO)
     box_h = int(h * _WM_BOX_H_RATIO)
     box = (w - box_w, 0, w, box_h)
-
-    # 영역이 이미 흰색에 가까우면 워터마크 없음으로 보고 skip → 5% 케이스 보호
     crop = src.crop(box)
-    avg = ImageStat.Stat(crop).mean
-    if any(c < _WM_DETECT_THRESHOLD for c in avg[:3]):
-        ImageDraw.Draw(src).rectangle(box, fill="white")
 
-    buf = io.BytesIO()
-    src.save(buf, format="WEBP", quality=90)
-    return buf.getvalue()
+    # 1) 우상단이 거의 순백 → 워터마크 없음, skip
+    avg = ImageStat.Stat(crop).mean
+    if all(c >= _WM_NO_LOGO_THRESHOLD for c in avg[:3]):
+        buf = io.BytesIO()
+        src.save(buf, format="WEBP", quality=90)
+        return buf.getvalue()
+
+    # 2) 흰배경 + 로고 패턴 → PIL 흰박스 (빠른 경로)
+    if _is_white_background_logo(crop):
+        ImageDraw.Draw(src).rectangle(box, fill="white")
+        buf = io.BytesIO()
+        src.save(buf, format="WEBP", quality=90)
+        return buf.getvalue()
+
+    # 3) 사진 컨텐츠 → rembg 전체 배경 제거 (실패 시 원본 반환)
+    try:
+        return _rembg_full(src)
+    except Exception as e:
+        print(f"[Worker]   rembg 실패, 원본 반환: {e}")
+        buf = io.BytesIO()
+        src.save(buf, format="WEBP", quality=90)
+        return buf.getvalue()
 
 
 # ── Process one image URL ─────────────────────────────────

@@ -1092,7 +1092,7 @@ export default function PoliciesPage() {
                         </div>
                       ) : /* 상세이미지 */ isDetail && previewProduct?.detail_images?.length ? (
                         <div>
-                          <span style={{ color: item.color, fontSize: '0.75rem', display: 'block', marginBottom: '0.375rem' }}>상세이미지 ({previewProduct.detail_images.length}장)</span>
+                          <span style={{ color: item.color, fontSize: '0.75rem', display: 'block', marginBottom: '0.375rem' }}>상세이미지 ({fmtNum(previewProduct.detail_images.length)}장)</span>
                           <div style={{ display: 'flex', gap: '0.375rem', justifyContent: 'center', flexWrap: 'wrap' }}>
                             {previewProduct.detail_images.slice(0, 4).map((url, i) => (
                               <img key={i} src={url} alt={`상세${i + 1}`} style={{ width: '60px', height: '60px', borderRadius: '4px', objectFit: 'cover' }} />

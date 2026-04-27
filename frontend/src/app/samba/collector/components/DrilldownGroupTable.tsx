@@ -432,7 +432,7 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
                       background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.3)',
                       color: '#FF8C00', borderRadius: '4px', cursor: 'pointer', fontWeight: 600,
                     }}>
-                      <option value="">일괄적용 ({catGroups.length})</option>
+                      <option value="">일괄적용 ({fmtNum(catGroups.length)})</option>
                       {policies.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
                   ) : <span style={{ color: '#444', fontSize: '0.75rem' }}>선택</span>}

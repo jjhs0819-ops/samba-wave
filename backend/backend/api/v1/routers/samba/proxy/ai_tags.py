@@ -571,6 +571,7 @@ async def generate_ai_tags(
     total_tagged = 0
     total_groups = len(group_products)
     failed_groups = 0
+    shortage_groups = 0  # 등재 태그 10개 미달 그룹 수
     api_calls = 0
     total_input_tokens = 0
     total_output_tokens = 0
@@ -612,7 +613,7 @@ async def generate_ai_tags(
                 f"- 브랜드: {brand}\n"
                 f"- 카테고리: {category}\n"
                 f"- 대표 상품명 (샘플 {len(sample_names)}개):\n{sample_str}\n\n"
-                f"이 그룹의 모든 상품에 공통 적용할 검색용 태그를 25개 생성해주세요.\n"
+                f"이 그룹의 모든 상품에 공통 적용할 검색용 태그를 50개 생성해주세요.\n"
                 f"규칙:\n"
                 f"1. 소비자가 네이버에서 실제로 검색할 만한 인기 키워드\n"
                 f"2. 브랜드명('{brand}')은 제외\n"
@@ -643,7 +644,7 @@ async def generate_ai_tags(
                             json={
                                 "contents": [{"parts": [{"text": prompt}]}],
                                 "generationConfig": {
-                                    "maxOutputTokens": 400,
+                                    "maxOutputTokens": 800,
                                     **(
                                         {"thinkingConfig": {"thinkingBudget": 0}}
                                         if not model.endswith("-image")
@@ -662,7 +663,7 @@ async def generate_ai_tags(
                             },
                             json={
                                 "model": model,
-                                "max_tokens": 400,
+                                "max_tokens": 800,
                                 "messages": [{"role": "user", "content": prompt}],
                             },
                         )
@@ -727,36 +728,44 @@ async def generate_ai_tags(
                 if not candidate_tags:
                     continue
 
-                # 태그사전 검증: 12개 선정 → 상위 2개 SEO + 나머지 10개 태그
+                # 태그사전 검증: 등재 태그만 사용 (미등록 보충 금지)
+                # 12개 확보 시 상위 2개 SEO + 나머지 10개 태그
                 top12: list[str] = []
                 if ss_client and candidate_tags:
                     try:
                         validated = await ss_client.validate_tags(
                             candidate_tags, max_count=15
                         )
-                        top12 = [v["text"] for v in validated][:12]
-                        if len(top12) < 12:
-                            tag_set = set(top12)
-                            for ct in candidate_tags:
-                                if ct not in tag_set:
-                                    top12.append(ct)
-                                    tag_set.add(ct)
-                                    if len(top12) >= 12:
-                                        break
+                        # 안전망: 검증 결과에도 브랜드/사이트/사용자금지어 재필터
+                        for v in validated:
+                            text = v.get("text", "")
+                            if _is_valid_tag(
+                                text, banned, name_words, ss_banned, brand_words
+                            ):
+                                top12.append(text)
+                                if len(top12) >= 12:
+                                    break
                         total_tag_dict_validated += len(top12)
-                        total_tag_dict_rejected += len(candidate_tags) - len(top12)
+                        total_tag_dict_rejected += max(
+                            0, len(candidate_tags) - len(top12)
+                        )
                         logger.info(
-                            f"[AI태그] 그룹 {gid}: 후보 {len(candidate_tags)}개 → 검증 {len(top12)}개"
+                            f"[AI태그] 그룹 {gid}: 후보 {len(candidate_tags)}개 → 등재 {len(top12)}개"
                         )
                     except Exception as ve:
                         logger.error(
-                            f"[AI태그] 태그사전 검증 예외 — 후보 태그 사용: {ve}"
+                            f"[AI태그] 태그사전 검증 예외 — 등재 태그 0개로 처리: {ve}"
                         )
-                        top12 = candidate_tags[:12]
+                        top12 = []
                 else:
-                    top12 = candidate_tags[:12]
+                    if not ss_client:
+                        logger.warning(
+                            "[AI태그] 스마트스토어 클라이언트 없음 — 태그사전 검증 불가, 태그 미적용"
+                        )
+                    top12 = []
 
                 if not top12:
+                    failed_groups += 1
                     continue
 
                 # 상위 2개 = SEO, 접미어 중복 시 앞 단어에서 공통 접미어 제거
@@ -775,6 +784,11 @@ async def generate_ai_tags(
                         if len(prefix) >= 1:
                             seo_kws[0] = prefix
                 tags = top12[2:12]
+                if len(tags) < 10:
+                    shortage_groups += 1
+                    logger.warning(
+                        f"[AI태그] 그룹 {gid}: 등재 태그 부족 — 태그 {len(tags)}개/10개"
+                    )
 
                 # 태그 생성 후 그룹 전체 상품 조회 → 벌크 적용
                 for p in products:
@@ -802,11 +816,15 @@ async def generate_ai_tags(
         else ""
     )
     fail_msg = f", 실패 {failed_groups}개 그룹" if failed_groups else ""
+    shortage_msg = (
+        f", 등재태그 부족 {shortage_groups}개 그룹" if shortage_groups else ""
+    )
     return {
         "success": True,
-        "message": f"태그 생성 완료 — {total_groups}개 그룹, {total_tagged}개 상품에 복사{fail_msg} (₩{total_cost}{validated_msg})",
+        "message": f"태그 생성 완료 — {total_groups}개 그룹, {total_tagged}개 상품에 복사{fail_msg}{shortage_msg} (₩{total_cost}{validated_msg})",
         "total_tagged": total_tagged,
         "failed_groups": failed_groups,
+        "shortage_groups": shortage_groups,
         "api_calls": api_calls,
         "input_tokens": total_input_tokens,
         "output_tokens": total_output_tokens,
@@ -911,7 +929,7 @@ async def preview_ai_tags(
                 f"- 브랜드: {brand}\n"
                 f"- 카테고리: {category}\n"
                 f"- 대표 상품명 (샘플 {len(sample_names)}개):\n{sample_str}\n\n"
-                f"이 그룹의 모든 상품에 공통 적용할 검색용 태그를 25개 생성해주세요.\n"
+                f"이 그룹의 모든 상품에 공통 적용할 검색용 태그를 50개 생성해주세요.\n"
                 f"규칙:\n"
                 f"1. 소비자가 네이버에서 실제로 검색할 만한 인기 키워드\n"
                 f"2. 브랜드명('{brand}')은 제외\n"
@@ -942,7 +960,7 @@ async def preview_ai_tags(
                             json={
                                 "contents": [{"parts": [{"text": prompt}]}],
                                 "generationConfig": {
-                                    "maxOutputTokens": 400,
+                                    "maxOutputTokens": 800,
                                     **(
                                         {"thinkingConfig": {"thinkingBudget": 0}}
                                         if not model.endswith("-image")
@@ -961,7 +979,7 @@ async def preview_ai_tags(
                             },
                             json={
                                 "model": model,
-                                "max_tokens": 400,
+                                "max_tokens": 800,
                                 "messages": [{"role": "user", "content": prompt}],
                             },
                         )
@@ -1020,8 +1038,8 @@ async def preview_ai_tags(
                         seen.add(tl)
                         candidate_tags.append(t)
 
-                # 태그사전 검증 — 10개 필수
-                # 태그사전 검증: 12개 선정 → 상위 2개 SEO + 나머지 10개 태그
+                # 태그사전 검증: 등재 태그만 사용 (미등록 보충 금지)
+                # 12개 확보 시 상위 2개 SEO + 나머지 10개 태그
                 top12_preview: list[str] = []
                 rejected_tags: list[str] = []
                 tag_validation_error = ""
@@ -1030,26 +1048,36 @@ async def preview_ai_tags(
                         validated = await ss_client_preview.validate_tags(
                             candidate_tags, max_count=15
                         )
-                        top12_preview = [v["text"] for v in validated][:12]
-                        if len(top12_preview) < 12:
-                            vt_set = set(top12_preview)
-                            for ct in candidate_tags:
-                                if ct not in vt_set:
-                                    top12_preview.append(ct)
-                                    vt_set.add(ct)
-                                    if len(top12_preview) >= 12:
-                                        break
+                        # 안전망: 검증 결과에도 브랜드/사이트/사용자금지어 재필터
+                        for v in validated:
+                            text = v.get("text", "")
+                            if _is_valid_tag(
+                                text, banned, name_words, ss_banned, brand_words
+                            ):
+                                top12_preview.append(text)
+                                if len(top12_preview) >= 12:
+                                    break
+                        accepted_set = set(top12_preview)
                         rejected_tags = [
-                            t for t in candidate_tags if t not in set(top12_preview)
+                            t for t in candidate_tags if t not in accepted_set
                         ]
                     except Exception as ve:
                         tag_validation_error = str(ve)
                         logger.error(
-                            f"[AI태그] 태그사전 검증 예외 — 후보 태그 사용: {ve}"
+                            f"[AI태그] 태그사전 검증 예외 — 등재 태그 0개로 처리: {ve}"
                         )
-                        top12_preview = candidate_tags[:12]
+                        top12_preview = []
+                        rejected_tags = list(candidate_tags)
                 else:
-                    top12_preview = candidate_tags[:12]
+                    if not ss_client_preview:
+                        tag_validation_error = (
+                            "스마트스토어 계정 미연동 — 태그사전 검증 불가"
+                        )
+                        logger.warning(
+                            "[AI태그 미리보기] 스마트스토어 클라이언트 없음 — 태그 미적용"
+                        )
+                    top12_preview = []
+                    rejected_tags = list(candidate_tags)
 
                 # 상위 2개 = SEO, 접미어 중복 시 앞 단어에서 공통 접미어 제거
                 seo_preview = top12_preview[:2]
@@ -1066,6 +1094,7 @@ async def preview_ai_tags(
                         if len(_prefix) >= 1:
                             seo_preview[0] = _prefix
                 validated_tags = top12_preview[2:12]
+                tag_shortage = len(validated_tags) < 10
 
                 preview_results.append(
                     {
@@ -1081,6 +1110,9 @@ async def preview_ai_tags(
                         "candidate_count": len(candidate_tags),
                         "candidates": candidate_tags[:15],
                         "validation_error": tag_validation_error,
+                        "tag_shortage": tag_shortage,
+                        "tag_count": len(validated_tags),
+                        "tag_target": 10,
                     }
                 )
 
@@ -1097,11 +1129,14 @@ async def preview_ai_tags(
     total_cost = round(input_cost + output_cost, 1)
 
     fail_msg = f", 실패 {failed_groups}개 그룹" if failed_groups else ""
+    shortage_count = sum(1 for r in preview_results if r.get("tag_shortage"))
+    shortage_msg = f", 등재태그 부족 {shortage_count}개 그룹" if shortage_count else ""
     return {
         "success": True,
-        "message": f"{len(preview_results)}개 그룹 태그 미리보기 생성 완료{fail_msg} (₩{total_cost})",
+        "message": f"{len(preview_results)}개 그룹 태그 미리보기 생성 완료{fail_msg}{shortage_msg} (₩{total_cost})",
         "previews": preview_results,
         "failed_groups": failed_groups,
+        "shortage_groups": shortage_count,
         "api_calls": api_calls,
         "input_tokens": total_input_tokens,
         "output_tokens": total_output_tokens,

@@ -2464,10 +2464,15 @@ async def autotune_stop():
         _autotune_task.cancel()
     _autotune_task = None
 
-    # 소싱큐의 오토튠 소유자 deviceId 해제 — 이후 add_detail_job은 owner 없이 큐잉됨
+    # 소싱큐 즉시 비움 — 누적된 detail job(SSG/롯데온/ABC 등)이 그대로 살아있으면
+    # 확장앱이 계속 폴링·탭 오픈하므로, 큐를 비우고 in-flight future도 RuntimeError로 종료
     try:
-        from backend.domain.samba.proxy.sourcing_queue import set_autotune_owner
+        from backend.domain.samba.proxy.sourcing_queue import (
+            SourcingQueue,
+            set_autotune_owner,
+        )
 
+        SourcingQueue.cancel_all("autotune stopped by user")
         set_autotune_owner("")
     except Exception:
         pass

@@ -610,7 +610,7 @@ export default function ProductsPage() {
 
     for (let i = 0; i < targetProducts.length; i++) {
       if (aiJobAbortRef.current) {
-        logsRef.push(``, `중단됨 (${i}/${targetProducts.length})`)
+        logsRef.push(``, `중단됨 (${fmt(i)}/${fmt(targetProducts.length)})`)
         flushLogs()
         break
       }
@@ -722,7 +722,7 @@ export default function ProductsPage() {
           const isOk = status === 'success' || status.includes('성공')
           return `[${ts()}] ${productName} → ${label}: ${isOk ? '✓' : '✗'}`
         })
-        logs.push(`[${ts()}] 완료 — 성공 ${result.success_count}/${entries.length}`)
+        logs.push(`[${ts()}] 완료 — 성공 ${fmt(result.success_count)}/${fmt(entries.length)}`)
         setAiJobLogs(logs)
         const successAccIds = entries.filter(([, s]) => s === 'success' || (s as string).includes('성공')).map(([id]) => id)
         setAllProducts(prev => prev.map(pp => {
@@ -1693,7 +1693,7 @@ export default function ProductsPage() {
                       const kept = imgs.filter(u => !tallUrls.includes(u))
                       await collectorApi.updateProduct(ids[i], { images: kept })
                       totalTall += tallUrls.length
-                      steps.push(`긴이미지 ${tallUrls.length}장 제거`)
+                      steps.push(`긴이미지 ${fmt(tallUrls.length)}장 제거`)
                     }
                   }
                 }
@@ -1718,7 +1718,7 @@ export default function ProductsPage() {
                       const kept = detailImgs.filter(u => !tallUrls.includes(u))
                       await collectorApi.updateProduct(ids[i], { detail_images: kept })
                       totalTall += tallUrls.length
-                      steps.push(`상세 긴이미지 ${tallUrls.length}장 제거`)
+                      steps.push(`상세 긴이미지 ${fmt(tallUrls.length)}장 제거`)
                     }
                   }
                 }
@@ -1902,7 +1902,7 @@ export default function ProductsPage() {
               const successMap = new Map<string, string[]>()
               const ts = fmtTime
               for (let i = 0; i < targets.length; i++) {
-                if (aiJobAbortRef.current) { logsRef.push(`\n⛔ 사용자 중단 (${i}/${targets.length})`); flushLogs(); break }
+                if (aiJobAbortRef.current) { logsRef.push(`\n⛔ 사용자 중단 (${fmt(i)}/${fmt(targets.length)})`); flushLogs(); break }
                 const t = targets[i]
                 const name = t.name.slice(0, 20)
                 try {
