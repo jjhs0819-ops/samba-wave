@@ -35,6 +35,32 @@ async def _get_cached_client(api_key: str):
     return client
 
 
+def _pick_lotteon_itm_label(itm: dict) -> str:
+    """롯데ON product/detail 응답의 itm 객체에서 옵션 라벨 후보 선택.
+
+    우선순위: itmNm > sitmNm > itmOptLst[0].optVal > optNm
+    각 후보가 None/빈/공백 문자열이면 다음 후보로 폴백 (공백 하드닝).
+    optNm은 축 이름("사이즈" 등)이라 값으로 쓰기 부적절 → 마지막 폴백.
+
+    배경: 2026-04-26 LO2664562602 외 다수에서 itmNm/optNm 빈 문자열 → 매칭 0건 →
+    stkQty=0 강제 → 전 옵션 SOUT_STK 잠김. sitmNm 또는 itmOptLst[0].optVal에
+    실제 라벨이 들어있어 폴백 필요.
+    """
+    candidates: list[Any] = [itm.get("itmNm"), itm.get("sitmNm")]
+    opt_lst = itm.get("itmOptLst") or []
+    if opt_lst and isinstance(opt_lst[0], dict):
+        candidates.append(opt_lst[0].get("optVal"))
+    candidates.append(itm.get("optNm"))
+
+    for c in candidates:
+        if c is None:
+            continue
+        s = str(c).strip()
+        if s:
+            return s
+    return ""
+
+
 # 브랜드명 접미사 목록 — 검색 전 자동 제거
 _BRAND_SUFFIXES = [
     "키즈",
@@ -1189,8 +1215,8 @@ class LotteonPlugin(MarketPlugin):
                                     "slPrc": new_price,
                                 }
                             )
-                        # 재고 업데이트 (옵션명 정규화 매칭)
-                        itm_name = _norm_opt(itm.get("itmNm") or itm.get("optNm") or "")
+                        # 재고 업데이트 (옵션명 정규화 매칭) — 라벨 후보 선택은 헬퍼 참조
+                        itm_name = _norm_opt(_pick_lotteon_itm_label(itm))
                         if itm_name in opt_info_map:
                             raw_s, sold = opt_info_map[itm_name]
                             stk = _apply_stock_cap(raw_s, sold)
