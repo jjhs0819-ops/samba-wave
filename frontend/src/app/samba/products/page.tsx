@@ -1531,12 +1531,15 @@ export default function ProductsPage() {
                         if (pollCount === 6) addLog(`[${ts()}] ⚠️ 워커가 아직 작업을 수신하지 못했습니다`)
                         if (pollCount === 18) addLog(`[${ts()}] ❌ 워커가 응답하지 않습니다. local_bg_worker.py 실행 여부를 확인해주세요`)
                       }
-                      // 진행 중일 때만 — cur 또는 status가 바뀐 시점에만 로그(상품명+진행률)
+                      // 진행 중일 때만 — cur 또는 status가 바뀐 시점에만 로그(상품명/상품번호+진행률)
                       if (st.status === 'running' && (cur !== lastLoggedCur || st.status !== lastLoggedStatus)) {
                         const curId = ids[cur] ?? ids[cur - 1]
                         const curProd = productMap[curId] || allProducts.find(p => p.id === curId)
-                        const curName = (curProd?.name || curId || '').slice(0, 20)
-                        addLog(`[${ts()}] ${curName} ${fmt(cur)}/${fmt(tot)} 진행중`)
+                        const curBrand = curProd?.brand || ''
+                        const curName = (curProd?.name || '').slice(0, 30)
+                        const curNo = curProd?.site_product_id || curId?.slice(-8) || ''
+                        const label = [curBrand, curName, curNo].filter(Boolean).join(' / ')
+                        addLog(`[${ts()}] ${label} ${fmt(cur)}/${fmt(tot)} 진행중`)
                         lastLoggedCur = cur
                         lastLoggedStatus = st.status
                       }
