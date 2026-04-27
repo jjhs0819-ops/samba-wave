@@ -256,6 +256,10 @@ sudo docker compose --profile staging stop samba-api-staging
 sudo docker compose --profile staging rm -f samba-api-staging
 sudo docker image prune -a -f | tail -3
 
+echo "[+] bg-worker 이미지 갱신 및 재시작..."
+sudo docker compose up -d --force-recreate samba-bg-worker
+echo "    ✅ bg-worker 재시작 완료"
+
 echo ""
 echo "=== 최종 상태 ==="
 sudo docker compose ps --format 'table {{.Name}}\t{{.Status}}'

@@ -3387,7 +3387,7 @@ async def sync_orders_from_markets(
                     existing_ret_result = await session.execute(
                         _sel(SambaReturn).where(SambaReturn.order_number == order_no)
                     )
-                    existing_ret = existing_ret_result.scalar_one_or_none()
+                    existing_ret = existing_ret_result.scalars().first()
                     if existing_ret:
                         update_fields: dict[str, Any] = {
                             "type": ret_type,
