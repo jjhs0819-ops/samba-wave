@@ -242,29 +242,37 @@ class SSGClient:
     # ------------------------------------------------------------------
 
     async def register_product(self, product_data: dict[str, Any]) -> dict[str, Any]:
-        """상품 등록 — insertItem 래퍼 자동 적용.
+        """상품 전체 등록.
 
-        SSG Open API: POST /item/0.5/insertItem.ssg
+        SSG Open API v0.1: POST /item/0.1/online
+        구버전 /item/0.5/insertItem.ssg 는 2026-04-01 종료됨.
+        product_data 는 online_registration 래퍼 없이 도메인 dict 를 전달하면 됨.
         """
         import json as _json
 
-        body = {"insertItem": product_data}
+        body = {"online_registration": product_data}
         logger.info(
-            f"[SSG DEBUG] insertItem 페이로드:\n{_json.dumps(body, ensure_ascii=False, indent=2)}"
+            f"[SSG DEBUG] online 등록 페이로드:\n{_json.dumps(body, ensure_ascii=False, indent=2)}"
         )
         result = await self._call_api(
             "POST",
-            "/item/0.5/insertItem.ssg",
+            "/item/0.1/online",
             body=body,
         )
         return {"success": True, "data": result}
 
     async def update_product(self, product_data: dict[str, Any]) -> dict[str, Any]:
-        """상품 수정."""
-        body = {"updateItem": product_data}
+        """상품 전체 수정.
+
+        SSG Open API v0.1: POST /item/0.1/online/{itemId}
+        구버전 /item/0.4/updateItem.ssg 는 2026-04-01 종료됨.
+        product_data 에 itemId 가 포함되어야 함.
+        """
+        item_id = product_data.get("itemId") or product_data.get("itemBase", {}).get("itemId", "")
+        body = {"online_registration": product_data}
         result = await self._call_api(
             "POST",
-            "/item/0.4/updateItem.ssg",
+            f"/item/0.1/online/{item_id}",
             body=body,
         )
         return {"success": True, "data": result}
@@ -348,6 +356,47 @@ class SSGClient:
                 raise SSGApiError(f"SSG 영구판매중지 실패: {msg}")
 
         return {"success": True, "data": result}
+
+    async def get_settlement_items(self, days: int = 7) -> list[dict[str, Any]]:
+        """위수탁 마감리스트 조회 (정산 API).
+
+        SSG Open API: GET /api/settle/v1/ven/sales/list.ssg
+        critnDt(정산일자) 기준으로 days만큼 반복 조회하여 합산 반환.
+        settIAmt(정산금액), sellFeeRt(판매수수료율), ordNo+ordItemSeq 로 주문 매칭.
+        """
+        KST = timezone(timedelta(hours=9))
+        now = datetime.now(KST)
+        result_items: list[dict[str, Any]] = []
+        actual_days = min(days, 30)
+
+        for i in range(actual_days):
+            critn_dt = (now - timedelta(days=i)).strftime("%Y%m%d")
+            page = 1
+            while True:
+                try:
+                    resp = await self._call_api(
+                        "GET",
+                        "/api/settle/v1/ven/sales/list.ssg",
+                        params={"critnDt": critn_dt, "page": str(page), "pageSize": "1000"},
+                    )
+                    res = resp.get("result", {})
+                    if not isinstance(res, dict):
+                        break
+                    data = res.get("resultData") or []
+                    if not isinstance(data, list):
+                        data = [data] if isinstance(data, dict) else []
+                    result_items.extend(data)
+                    # 다음 페이지 없으면 종료
+                    total_cnt = int(res.get("totalCnt", 0) or 0)
+                    if page * 1000 >= total_cnt:
+                        break
+                    page += 1
+                except Exception as e:
+                    logger.warning(f"[SSG][정산] {critn_dt} page={page} 조회 실패: {e}")
+                    break
+
+        logger.info(f"[SSG][정산] {actual_days}일 총 {len(result_items)}건")
+        return result_items
 
     async def get_item_sales_status(self, item_id: str) -> dict[str, Any]:
         """상품 판매상태 조회.
@@ -1843,7 +1892,8 @@ class SSGClient:
         ):
             logger.warning(f"[SSG] Q&A 목록 조회 실패 (전체응답): {res}")
             return []
-        qna_list = result.get("qnaList") or {}
+        data = result.get("resultData", {})
+        qna_list = data.get("qnaList") or {}
         # 실제 응답 구조: {"qnaList": [{"qna": [{...}, {...}]}]}
         # qnaList가 list → 첫 번째 원소의 "qna" 키에서 실제 목록 추출
         if isinstance(qna_list, list):

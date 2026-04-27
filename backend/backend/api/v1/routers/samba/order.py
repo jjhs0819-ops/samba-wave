@@ -3458,17 +3458,40 @@ async def sync_orders_from_markets(
                     continue
 
                 _ssg_client = SSGClient(_ssg_api_key)
+                # 정산 API 호출: (ordNo, ordItemSeq) → settIAmt(정산금액), sellFeeRt(수수료율)
+                _ssg_settle_map: dict[str, dict] = {}
+                try:
+                    _ssg_settle_items = await _ssg_client.get_settlement_items(days=body.days)
+                    for _si in _ssg_settle_items:
+                        _key = f"{_si.get('ordNo', '')}|{_si.get('ordItemSeq', '')}"
+                        if _key and _key != "|":
+                            _ssg_settle_map[_key] = _si
+                    logger.info(
+                        f"[주문동기화] {label}: SSG 정산 {len(_ssg_settle_map)}건 조회"
+                    )
+                except Exception as _ssg_se:
+                    logger.warning(
+                        f"[주문동기화] {label}: SSG 정산 조회 실패 (무시) — {_ssg_se}"
+                    )
                 try:
                     _ssg_raw_orders = await _ssg_client.get_orders(days=body.days)
                     logger.info(
                         f"[주문동기화] {label}: SSG 주문 {len(_ssg_raw_orders)}건 조회"
                     )
                     for _ssg_ro in _ssg_raw_orders:
-                        orders_data.append(
-                            _ssg_client.parse_order(
-                                _ssg_ro, account["id"], label, fee_rate=0
-                            )
+                        _ord = _ssg_client.parse_order(
+                            _ssg_ro, account["id"], label, fee_rate=0
                         )
+                        # 정산 API 매칭: settIAmt(정산금액), sellFeeRt(판매수수료율)로 revenue/fee_rate 확정
+                        _ssg_key = f"{_ssg_ro.get('ordNo', '')}|{_ssg_ro.get('ordItemSeq', '')}"
+                        _ssg_si = _ssg_settle_map.get(_ssg_key)
+                        if _ssg_si:
+                            _settl_amt = float(_ssg_si.get("settIAmt", 0) or 0)
+                            _fee_rt = float(_ssg_si.get("sellFeeRt", 0) or 0)
+                            if _settl_amt > 0:
+                                _ord["revenue"] = _settl_amt
+                                _ord["fee_rate"] = _fee_rt
+                        orders_data.append(_ord)
                 except Exception as _ssg_e:
                     logger.warning(
                         f"[주문동기화] {label}: SSG 주문 조회 실패 — {_ssg_e}"
