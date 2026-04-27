@@ -16,6 +16,9 @@ from ._helpers import _get_setting
 
 router = APIRouter(tags=["samba-proxy"])
 
+# JWT 인증 없이 워커 토큰만으로 접근하는 bg-jobs 전용 라우터
+bg_worker_router = APIRouter(prefix="/proxy", tags=["samba-proxy-worker"])
+
 
 # ═══════════════════════════════════════════════
 # Claude AI API 인증 테스트
@@ -352,7 +355,7 @@ async def _verify_worker_token(token: str, session: AsyncSession) -> bool:
     return cfg.get("worker_token", "") == token
 
 
-@router.get("/bg-jobs/config")
+@bg_worker_router.get("/bg-jobs/config")
 async def bg_jobs_config(
     x_worker_token: str = Header(default=""),
     session: AsyncSession = Depends(get_write_session_dependency),
@@ -369,8 +372,9 @@ async def bg_jobs_config(
     cfg = await _get_setting(session, "bg_worker")
     db_token = (cfg or {}).get("worker_token", "") if isinstance(cfg, dict) else ""
 
-    # 토큰 미설정 상태 + 토큰 없이 요청 → 자동 생성 후 워커에게 반환 (최초 1회)
-    if not env_token and not db_token and not x_worker_token:
+    # 로컬 워커용 토큰 미설정 + 토큰 없이 요청 → 자동 생성 후 워커에게 반환 (최초 1회)
+    # env_token은 VM 워커용이므로 체크 제외
+    if not db_token and not x_worker_token:
         new_token = secrets.token_hex(32)
         await _set_setting(session, "bg_worker", {"worker_token": new_token})
         os.environ["BG_WORKER_TOKEN"] = new_token
@@ -409,7 +413,7 @@ async def bg_jobs_config(
     }
 
 
-@router.get("/bg-jobs/next")
+@bg_worker_router.get("/bg-jobs/next")
 async def bg_jobs_next(
     x_worker_token: str = Header(default=""),
     session: AsyncSession = Depends(get_write_session_dependency),
@@ -479,7 +483,7 @@ async def bg_jobs_next(
     }
 
 
-@router.post("/bg-jobs/{job_id}/complete")
+@bg_worker_router.post("/bg-jobs/{job_id}/complete")
 async def bg_jobs_complete(
     job_id: str,
     request: dict[str, Any],
@@ -554,7 +558,7 @@ async def bg_jobs_complete(
     }
 
 
-@router.patch("/bg-jobs/{job_id}/progress")
+@bg_worker_router.patch("/bg-jobs/{job_id}/progress")
 async def bg_jobs_progress(
     job_id: str,
     x_worker_token: str = Header(default=""),
