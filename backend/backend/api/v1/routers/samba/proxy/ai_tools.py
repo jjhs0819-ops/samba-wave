@@ -561,10 +561,16 @@ async def bg_jobs_complete(
 @bg_worker_router.patch("/bg-jobs/{job_id}/progress")
 async def bg_jobs_progress(
     job_id: str,
+    request: dict[str, Any] | None = None,
     x_worker_token: str = Header(default=""),
     session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:
-    """워커가 상품 1건 완료 시 호출 — current 증가."""
+    """워커 진행률 보고.
+
+    body 없음 → 상품 1건 완료(current +1)
+    body에 image_current/image_total 있음 → 사진 단위 진행률만 갱신
+      (current는 증가시키지 않음 — 상품 완료는 별도 호출 또는 complete에서 처리)
+    """
     from sqlalchemy import select as sa_select
 
     from backend.domain.samba.job.model import SambaJob
@@ -578,7 +584,25 @@ async def bg_jobs_progress(
     if not job:
         return {"success": False, "message": "Job not found"}
 
-    job.current = min(job.current + 1, job.total)
+    body = request or {}
+    img_cur = body.get("image_current")
+    img_tot = body.get("image_total")
+    cur_pid = body.get("current_product_id")
+    bump_product = bool(body.get("bump_product", img_cur is None))
+
+    if bump_product:
+        job.current = min(job.current + 1, job.total)
+
+    # 사진 단위 진행률은 result JSON에 임시 저장(스키마 변경 없이 status에서 노출)
+    res = dict(job.result or {})
+    if img_cur is not None:
+        res["image_current"] = int(img_cur)
+    if img_tot is not None:
+        res["image_total"] = int(img_tot)
+    if cur_pid is not None:
+        res["current_product_id"] = str(cur_pid)
+    job.result = res
+
     session.add(job)
     await session.commit()
     return {"success": True, "current": job.current, "total": job.total}
@@ -607,4 +631,7 @@ async def bg_jobs_status(
         "current": job.current,
         "total_transformed": res.get("total_transformed", 0),
         "total_failed": res.get("total_failed", 0),
+        "image_current": res.get("image_current"),
+        "image_total": res.get("image_total"),
+        "current_product_id": res.get("current_product_id"),
     }

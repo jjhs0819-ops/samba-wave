@@ -1518,6 +1518,8 @@ export default function ProductsPage() {
                   const maxPolls = 720 // 최대 60분 (5초 간격)
                   let lastLoggedCur = -1
                   let lastLoggedStatus = ''
+                  let lastLoggedImgCur = -1
+                  let lastLoggedPid = ''
                   while (pollCount < maxPolls && !aiJobAbortRef.current) {
                     await new Promise(r => setTimeout(r, 5000))
                     pollCount++
@@ -1525,23 +1527,30 @@ export default function ProductsPage() {
                       const st = await proxyApi.bgJobStatus(jid)
                       const cur = st.current ?? 0
                       const tot = st.total ?? ids.length
+                      const imgCur = st.image_current ?? -1
+                      const imgTot = st.image_total ?? 0
+                      const stPid = st.current_product_id || ''
                       setAiJobTitle(`배경제거 [${fmt(cur)}/${fmt(tot)}]`)
                       // pending 상태 감지 — 워커 미실행 경고
                       if (st.status === 'pending') {
                         if (pollCount === 6) addLog(`[${ts()}] ⚠️ 워커가 아직 작업을 수신하지 못했습니다`)
                         if (pollCount === 18) addLog(`[${ts()}] ❌ 워커가 응답하지 않습니다. local_bg_worker.py 실행 여부를 확인해주세요`)
                       }
-                      // 진행 중일 때만 — cur 또는 status가 바뀐 시점에만 로그(상품명/상품번호+진행률)
-                      if (st.status === 'running' && (cur !== lastLoggedCur || st.status !== lastLoggedStatus)) {
-                        const curId = ids[cur] ?? ids[cur - 1]
+                      // 진행 중일 때만 — 상품/사진 인덱스/상태가 바뀐 시점에만 로그(상품명+상품번호+사진진행률)
+                      const changed = cur !== lastLoggedCur || st.status !== lastLoggedStatus || imgCur !== lastLoggedImgCur || stPid !== lastLoggedPid
+                      if (st.status === 'running' && changed) {
+                        const curId = stPid || ids[cur] || ids[cur - 1]
                         const curProd = productMap[curId] || allProducts.find(p => p.id === curId)
                         const curBrand = curProd?.brand || ''
                         const curName = (curProd?.name || '').slice(0, 30)
                         const curNo = curProd?.site_product_id || curId?.slice(-8) || ''
                         const label = [curBrand, curName, curNo].filter(Boolean).join(' / ')
-                        addLog(`[${ts()}] ${label} ${fmt(cur)}/${fmt(tot)} 진행중`)
+                        const progress = imgTot > 0 ? `${fmt(Math.max(imgCur, 0))}/${fmt(imgTot)}` : `${fmt(cur)}/${fmt(tot)}`
+                        addLog(`[${ts()}] ${label} ${progress} 진행중`)
                         lastLoggedCur = cur
                         lastLoggedStatus = st.status
+                        lastLoggedImgCur = imgCur
+                        lastLoggedPid = stPid
                       }
                       if (st.status === 'completed') {
                         success = st.total_transformed || 0

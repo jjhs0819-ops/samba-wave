@@ -148,7 +148,7 @@ export default function AiToolsPanel(props: Props) {
             if (activeIds.length === 0) { showAlert('현재 필터에 해당하는 그룹이 없습니다'); return }
             if (!aiImgScope.thumbnail && !aiImgScope.additional && !aiImgScope.detail) { showAlert('변환 대상 이미지를 선택해주세요 (대표/추가/상세)'); return }
             // 그룹에 속한 상품 조회 → AI 미변환 상품만 추출
-            type ProductItem = { id: string; name?: string; images: string[]; detail_images: string[]; tags: string[] }
+            type ProductItem = { id: string; name?: string; brand?: string; site_product_id?: string; images: string[]; detail_images: string[]; tags: string[] }
             const productIds: string[] = []
             const productDetails = new Map<string, ProductItem>()
             let skippedAi = 0
@@ -159,7 +159,7 @@ export default function AiToolsPanel(props: Props) {
                   for (const p of products) {
                     if ((p.tags || []).includes('__ai_image__')) { skippedAi++; continue }
                     productIds.push(p.id)
-                    productDetails.set(p.id, { id: p.id, name: p.name || '', images: p.images || [], detail_images: p.detail_images || [], tags: p.tags || [] })
+                    productDetails.set(p.id, { id: p.id, name: p.name || '', brand: p.brand || '', site_product_id: p.site_product_id || '', images: p.images || [], detail_images: p.detail_images || [], tags: p.tags || [] })
                   }
                 }
               } catch { /* 스킵 */ }
@@ -206,6 +206,8 @@ export default function AiToolsPanel(props: Props) {
                   const maxPolls = 720
                   let lastLoggedCur = -1
                   let lastLoggedStatus = ''
+                  let lastLoggedImgCur = -1
+                  let lastLoggedPid = ''
                   while (pollCount < maxPolls && !aiJobAbortRef.current) {
                     await new Promise(r => setTimeout(r, 5000))
                     pollCount++
@@ -213,14 +215,25 @@ export default function AiToolsPanel(props: Props) {
                       const st = await proxyApi.bgJobStatus(jid)
                       const cur = st.current ?? 0
                       const tot = st.total ?? productIds.length
+                      const imgCur = st.image_current ?? -1
+                      const imgTot = st.image_total ?? 0
+                      const stPid = st.current_product_id || ''
                       setAiJobTitle(`배경제거 [${fmtNum(cur)}/${fmtNum(tot)}]`)
-                      // 진행 중일 때만 — 상태 또는 current가 바뀔 때만 로그
-                      if (st.status === 'running' && (cur !== lastLoggedCur || st.status !== lastLoggedStatus)) {
-                        const curId = productIds[cur] ?? productIds[cur - 1]
-                        const curName = (productDetails.get(curId)?.name || curId || '').slice(0, 20)
-                        addLog(`[${ts()}] ${curName} ${fmtNum(cur)}/${fmtNum(tot)} 진행중`)
+                      // 진행 중일 때만 — 상품/사진 인덱스/상태가 바뀐 시점에만 로그
+                      const changed = cur !== lastLoggedCur || st.status !== lastLoggedStatus || imgCur !== lastLoggedImgCur || stPid !== lastLoggedPid
+                      if (st.status === 'running' && changed) {
+                        const curId = stPid || productIds[cur] || productIds[cur - 1]
+                        const det = productDetails.get(curId)
+                        const curBrand = det?.brand || ''
+                        const curName = (det?.name || '').slice(0, 30)
+                        const curNo = det?.site_product_id || curId?.slice(-8) || ''
+                        const label = [curBrand, curName, curNo].filter(Boolean).join(' / ')
+                        const progress = imgTot > 0 ? `${fmtNum(Math.max(imgCur, 0))}/${fmtNum(imgTot)}` : `${fmtNum(cur)}/${fmtNum(tot)}`
+                        addLog(`[${ts()}] ${label} ${progress} 진행중`)
                         lastLoggedCur = cur
                         lastLoggedStatus = st.status
+                        lastLoggedImgCur = imgCur
+                        lastLoggedPid = stPid
                       }
                       if (st.status === 'completed') {
                         success = st.total_transformed || 0

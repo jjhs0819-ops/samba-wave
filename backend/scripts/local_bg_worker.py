@@ -113,7 +113,7 @@ async def process_image(client: httpx.AsyncClient, url: str) -> str | None:
         filename = f"ai_{md5}_{uuid.uuid4().hex[:6]}.webp"
         result_url = upload_to_r2(processed, filename)
         if result_url is None:
-            print(f"[Worker]   R2 업로드 실패 — R2 설정(bg_worker.env)을 확인하세요")
+            print("[Worker]   R2 업로드 실패 — R2 설정(bg_worker.env)을 확인하세요")
         return result_url
     except Exception as e:
         print(f"[Worker]   Image error ({url[:60]}): {e}")
@@ -138,17 +138,49 @@ async def process_job(job: dict) -> None:
             pid = prod["product_id"]
             images: list[str] = prod.get("images") or []
             detail_images: list[str] = prod.get("detail_images") or []
-            print(f"[Worker]   [{i}/{len(products)}] {pid}")
+
+            # 처리 대상 이미지 총개수 미리 계산 (사진 인덱스 진행률 표시용)
+            img_total = 0
+            if scope.get("thumbnail") and images:
+                img_total += 1
+            if scope.get("additional") and len(images) > 1:
+                img_total += len(images) - 1
+            if scope.get("detail") and detail_images:
+                img_total += len(detail_images)
+
+            print(f"[Worker]   [{i}/{len(products)}] {pid} ({img_total} images)")
 
             new_images = list(images)
             new_detail = list(detail_images)
             transformed = 0
+            img_done = 0
+
+            async def _report_progress(bump_product: bool = False) -> None:
+                """사진 단위 진행률 즉시 보고 (실패 무시)."""
+                try:
+                    await client.patch(
+                        f"{SAMBA_API_URL}/api/v1/samba/proxy/bg-jobs/{job_id}/progress",
+                        headers=HEADERS,
+                        json={
+                            "image_current": img_done,
+                            "image_total": img_total,
+                            "current_product_id": pid,
+                            "bump_product": bump_product,
+                        },
+                    )
+                except Exception:
+                    pass
+
+            # 시작 직후 0/img_total 한 번 보고 → 프론트 폴링이 곧바로 인식
+            await _report_progress(bump_product=False)
 
             if scope.get("thumbnail") and images:
                 url = await process_image(client, images[0])
                 if url:
                     new_images[0] = url
                     transformed += 1
+                img_done += 1
+                await _report_progress(bump_product=False)
 
             if scope.get("additional") and len(images) > 1:
                 for j, orig in enumerate(images[1:], 1):
@@ -156,6 +188,8 @@ async def process_job(job: dict) -> None:
                     if url:
                         new_images[j] = url
                         transformed += 1
+                    img_done += 1
+                    await _report_progress(bump_product=False)
 
             if scope.get("detail") and detail_images:
                 for j, orig in enumerate(detail_images):
@@ -163,6 +197,8 @@ async def process_job(job: dict) -> None:
                     if url:
                         new_detail[j] = url
                         transformed += 1
+                    img_done += 1
+                    await _report_progress(bump_product=False)
 
             results.append(
                 {
@@ -176,14 +212,8 @@ async def process_job(job: dict) -> None:
             print(
                 f"[Worker]   [{i}/{len(products)}] {pid} -> {transformed} images done"
             )
-            # 상품 1건 완료 시 진행률 즉시 보고
-            try:
-                await client.patch(
-                    f"{SAMBA_API_URL}/api/v1/samba/proxy/bg-jobs/{job_id}/progress",
-                    headers=HEADERS,
-                )
-            except Exception:
-                pass  # 진행률 보고 실패는 무시 (complete에서 최종 반영됨)
+            # 상품 1건 완료 — current 증가
+            await _report_progress(bump_product=True)
 
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(

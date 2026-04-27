@@ -1095,7 +1095,7 @@ export const proxyApi = {
         body: JSON.stringify({ product_ids: productIds, scope, mode, model_preset: modelPreset }),
       }),
   bgJobStatus: (jobId: string) =>
-    request<{ status: string; total: number; current: number; total_transformed: number; total_failed: number }>(
+    request<{ status: string; total: number; current: number; total_transformed: number; total_failed: number; image_current?: number; image_total?: number; current_product_id?: string }>(
       `${SAMBA_PREFIX}/proxy/bg-jobs/${jobId}/status`),
   transformByGroups: (groupIds: string[], scope: { thumbnail: boolean; additional: boolean; detail: boolean }, mode: string, modelPreset?: string) =>
     request<{ success: boolean; message: string; total_transformed: number; total_failed: number }>(
