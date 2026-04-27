@@ -3438,6 +3438,41 @@ async def sync_orders_from_markets(
                         f"[주문동기화] {label}: eBay 반품/취소 조회 실패 — {e}"
                     )
             # (dead code 제거: 두 번째 롯데ON 블록 → 첫 번째에 병합 완료)
+            elif market_type == "ssg":
+                from backend.domain.samba.proxy.ssg import SSGClient
+
+                _ssg_api_key = extras.get("apiKey", "") or account["api_key"] or ""
+                if not _ssg_api_key:
+                    settings_repo = SambaSettingsRepository(session)
+                    _ssg_setting = await settings_repo.find_by_async(key="store_ssg")
+                    if _ssg_setting and isinstance(_ssg_setting.value, dict):
+                        _ssg_api_key = _ssg_setting.value.get("apiKey", "") or ""
+                if not _ssg_api_key:
+                    results.append(
+                        {
+                            "account": label,
+                            "status": "skip",
+                            "message": "SSG API Key 없음",
+                        }
+                    )
+                    continue
+
+                _ssg_client = SSGClient(_ssg_api_key)
+                try:
+                    _ssg_raw_orders = await _ssg_client.get_orders(days=body.days)
+                    logger.info(
+                        f"[주문동기화] {label}: SSG 주문 {len(_ssg_raw_orders)}건 조회"
+                    )
+                    for _ssg_ro in _ssg_raw_orders:
+                        orders_data.append(
+                            _ssg_client.parse_order(
+                                _ssg_ro, account["id"], label, fee_rate=0
+                            )
+                        )
+                except Exception as _ssg_e:
+                    logger.warning(
+                        f"[주문동기화] {label}: SSG 주문 조회 실패 — {_ssg_e}"
+                    )
             else:
                 results.append(
                     {
