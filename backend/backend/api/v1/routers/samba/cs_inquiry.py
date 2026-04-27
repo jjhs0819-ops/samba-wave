@@ -2219,7 +2219,7 @@ async def _do_sync_cs_from_markets(
             try:
                 result = await svc.collect_from_ssg(
                     ssg_client,
-                    days_back=7,
+                    days_back=30,
                     account_id=ssg_acc.id,
                     account_label=ssg_label,
                 )
