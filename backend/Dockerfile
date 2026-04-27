@@ -26,8 +26,12 @@ ENV UV_SYSTEM_PYTHON=1
 ENV UV_COMPILE_BYTECODE=1
 
 # 비루트 사용자 미리 생성 — COPY --chown 플래그로 권한 부여 (chown -R /app 118초 절감)
-# -m: 홈 디렉토리(/app) 자동 생성 + appuser 소유로 — 런타임 uv cache(/app/.cache/uv) 생성 가능
+# -m: 홈 디렉토리(/app) 자동 생성 + appuser 소유 (런타임 uv cache 생성 가능)
 RUN groupadd -r appuser && useradd -r -m -g appuser -d /app appuser
+
+# uv sync 이전에 USER 전환 — .venv / .egg-info 메타데이터를 appuser 소유로 생성해
+# 런타임 build_editable 시점의 touch 권한 오류 방지
+USER appuser
 
 # Set the application's working directory.
 WORKDIR /app/backend
@@ -48,7 +52,5 @@ ARG COMMIT_SHA=unknown
 ARG DEPLOYED_AT=
 ENV COMMIT_SHA=$COMMIT_SHA
 ENV DEPLOYED_AT=$DEPLOYED_AT
-
-USER appuser
 
 ENTRYPOINT ["./scripts/entrypoint.sh"]
