@@ -368,7 +368,9 @@ class CategorySyncMixin:
                 len(leaf_ids),
             )
 
-            # 3단계: 필요한 카테고리만 선택적으로 조회
+            # 3단계: SKIP 키워드 제외 모든 비리프 카테고리 조회
+            # 화이트리스트(_NEED_KEYWORDS) 방식은 누락 카테고리 발생(예: 구기/라켓>축구 하위 미수집).
+            # SKIP 키워드만 차단하고 나머지는 끝까지 탐색.
             _SKIP_KEYWORDS = (
                 "e쿠폰",
                 "티켓",
@@ -379,30 +381,6 @@ class CategorySyncMixin:
                 "항공",
                 "렌터카",
             )
-            _NEED_KEYWORDS = (
-                "패션",
-                "의류",
-                "신발",
-                "가방",
-                "잡화",
-                "스포츠",
-                "레저",
-                "아웃도어",
-                "뷰티",
-                "화장품",
-                "헬스",
-                "생활",
-                "홈",
-                "주방",
-                "식품",
-                "전자",
-                "완구",
-                "도서",
-                "반려",
-                "유아",
-                "남성",
-                "여성",
-            )
             depth2_to_fetch: List[str] = []
             for d2id in depth2_non_leaf:
                 nm = node_map.get(d2id, "")
@@ -410,10 +388,8 @@ class CategorySyncMixin:
                 path_nm = f"{parent_nm} {nm}"
                 if any(kw in path_nm for kw in _SKIP_KEYWORDS):
                     leaf_ids.append(d2id)
-                elif any(kw in path_nm for kw in _NEED_KEYWORDS):
-                    depth2_to_fetch.append(d2id)
                 else:
-                    leaf_ids.append(d2id)
+                    depth2_to_fetch.append(d2id)
 
             logger.info("[롯데ON 동기화] depth=3 대상: %d개", len(depth2_to_fetch))
 
