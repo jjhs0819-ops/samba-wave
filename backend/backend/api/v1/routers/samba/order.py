@@ -3473,6 +3473,14 @@ async def sync_orders_from_markets(
                     logger.warning(
                         f"[주문동기화] {label}: SSG 주문 조회 실패 — {_ssg_e}"
                     )
+                    results.append(
+                        {
+                            "account": label,
+                            "status": "error",
+                            "message": f"SSG 주문 조회 실패: {_ssg_e}",
+                        }
+                    )
+                    continue
             else:
                 results.append(
                     {
