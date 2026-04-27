@@ -25,32 +25,29 @@ RUN sh /uv-installer.sh && rm /uv-installer.sh \
 ENV UV_SYSTEM_PYTHON=1
 ENV UV_COMPILE_BYTECODE=1
 
-# 비루트 사용자 미리 생성 — COPY --chown 플래그로 권한 부여 (chown -R /app 118초 절감)
-# -m: 홈 디렉토리(/app) 자동 생성 + appuser 소유 (런타임 uv cache 생성 가능)
-RUN groupadd -r appuser && useradd -r -m -g appuser -d /app appuser
-
-# uv sync 이전에 USER 전환 — .venv / .egg-info 메타데이터를 appuser 소유로 생성해
-# 런타임 build_editable 시점의 touch 권한 오류 방지
-USER appuser
-
 # Set the application's working directory.
 WORKDIR /app/backend
-COPY --chown=appuser:appuser backend/__init__.py ./backend/__init__.py
-COPY --chown=appuser:appuser pyproject.toml ./pyproject.toml
-COPY --chown=appuser:appuser README.md ./README.md
-COPY --chown=appuser:appuser uv.lock ./uv.lock
+COPY backend/__init__.py ./backend/__init__.py
+COPY pyproject.toml ./pyproject.toml
+COPY README.md ./README.md
+COPY uv.lock ./uv.lock
 RUN uv sync --compile-bytecode --no-dev
 
 
-COPY --chown=appuser:appuser backend ./backend
-COPY --chown=appuser:appuser scripts ./scripts
-COPY --chown=appuser:appuser alembic.ini ./alembic.ini
-COPY --chown=appuser:appuser alembic ./alembic
+COPY backend ./backend
+COPY scripts ./scripts
+COPY alembic.ini ./alembic.ini
+COPY alembic ./alembic
 
 # 배포 메타데이터 (헬스체크에 노출) — deploy.sh가 --build-arg 로 주입
 ARG COMMIT_SHA=unknown
 ARG DEPLOYED_AT=
 ENV COMMIT_SHA=$COMMIT_SHA
 ENV DEPLOYED_AT=$DEPLOYED_AT
+
+# 비루트 사용자로 실행 (보안 강화)
+RUN groupadd -r appuser && useradd -r -g appuser -d /app appuser \
+    && chown -R appuser:appuser /app
+USER appuser
 
 ENTRYPOINT ["./scripts/entrypoint.sh"]
