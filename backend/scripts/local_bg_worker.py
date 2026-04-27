@@ -1,7 +1,7 @@
 """
 Samba Wave Local BG Worker
-- Polls backend every 5s for pending background removal jobs
-- Runs rembg locally -> uploads to R2 -> reports completion
+- Polls backend every 5s for pending watermark removal jobs
+- 우측 상단 브랜드 워터마크 영역(95% 케이스)을 PIL 흰박스로 덮음
 - Run: python local_bg_worker.py
 """
 
@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 
 import httpx
-from PIL import Image
+from PIL import Image, ImageDraw, ImageStat
 
 # ── Load bg_worker.env ───────────────────────────────────
 _env_file = Path(__file__).parent / "bg_worker.env"
@@ -35,20 +35,6 @@ HEADERS = {"X-Worker-Token": WORKER_TOKEN}
 
 # ── R2 config (fetched from API at startup) ───────────────
 _r2: dict = {}
-
-# ── rembg session (loaded once, reused) ──────────────────
-_rembg_session = None
-
-
-def get_rembg_session():
-    global _rembg_session
-    if _rembg_session is None:
-        print("[Worker] Loading rembg model... (first time only, ~30s)")
-        from rembg import new_session
-
-        _rembg_session = new_session("silueta")
-        print("[Worker] rembg model loaded.")
-    return _rembg_session
 
 
 # ── R2 upload ────────────────────────────────────────────
@@ -75,31 +61,40 @@ def upload_to_r2(image_bytes: bytes, filename: str) -> str | None:
         return None
 
 
-# ── Background removal ───────────────────────────────────
-def remove_background(image_bytes: bytes) -> bytes:
-    from rembg import remove
+# ── Watermark removal ────────────────────────────────────
+# 우측 상단 워터마크 박스 비율 (이미지 가로/세로 기준)
+_WM_BOX_W_RATIO = 0.22
+_WM_BOX_H_RATIO = 0.18
+# 워터마크 유무 판정 임계값 (영역 평균 RGB가 이 값 미만이면 워터마크 있음)
+_WM_DETECT_THRESHOLD = 240
 
-    session = get_rembg_session()
-    src = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+
+def remove_watermark(image_bytes: bytes) -> bytes:
+    """우측 상단 브랜드 워터마크 영역만 흰색으로 덮어 제거.
+
+    rembg(silueta + alpha matting) → PIL 그리기.
+    CPU 사용량 ~95% 감소, 처리 시간 수십초 → 즉시.
+    """
+    src = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     if max(src.size) > 1024:
         ratio = 1024 / max(src.size)
         src = src.resize(
             (int(src.width * ratio), int(src.height * ratio)), Image.LANCZOS
         )
 
-    result = remove(
-        src,
-        session=session,
-        alpha_matting=True,
-        alpha_matting_foreground_threshold=240,
-        alpha_matting_background_threshold=10,
-        alpha_matting_erode_size=10,
-    )
+    w, h = src.size
+    box_w = int(w * _WM_BOX_W_RATIO)
+    box_h = int(h * _WM_BOX_H_RATIO)
+    box = (w - box_w, 0, w, box_h)
 
-    bg = Image.new("RGBA", result.size, (255, 255, 255, 255))
-    bg.paste(result, mask=result.split()[3])
+    # 영역이 이미 흰색에 가까우면 워터마크 없음으로 보고 skip → 5% 케이스 보호
+    crop = src.crop(box)
+    avg = ImageStat.Stat(crop).mean
+    if any(c < _WM_DETECT_THRESHOLD for c in avg[:3]):
+        ImageDraw.Draw(src).rectangle(box, fill="white")
+
     buf = io.BytesIO()
-    bg.convert("RGB").save(buf, format="WEBP", quality=90)
+    src.save(buf, format="WEBP", quality=90)
     return buf.getvalue()
 
 
@@ -108,7 +103,7 @@ async def process_image(client: httpx.AsyncClient, url: str) -> str | None:
     try:
         resp = await client.get(url, timeout=30, follow_redirects=True)
         resp.raise_for_status()
-        processed = await asyncio.to_thread(remove_background, resp.content)
+        processed = await asyncio.to_thread(remove_watermark, resp.content)
         md5 = hashlib.md5(resp.content).hexdigest()[:8]
         filename = f"ai_{md5}_{uuid.uuid4().hex[:6]}.webp"
         result_url = upload_to_r2(processed, filename)

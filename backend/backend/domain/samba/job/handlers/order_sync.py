@@ -72,6 +72,7 @@ async def run(
         sync_orders_from_markets,
         SyncOrdersRequest,
     )
+    from backend.db.orm import get_write_session
 
     total_synced = 0
     all_results: list[dict[str, Any]] = []
@@ -85,11 +86,15 @@ async def run(
 
         label = f"{acc.market_name}({acc.seller_id or '-'})"
         try:
-            res = await sync_orders_from_markets(
-                body=SyncOrdersRequest(days=days, account_id=acc.id),
-                session=session,
-                tenant_id=job.tenant_id,
-            )
+            # 계정마다 독립 세션 — 앞 계정의 commit/rollback 잔류 상태로 인한 오염 차단
+            # (특히 스마트스토어 분기는 last-changed-statuses 13×2 호출로 26초+ 걸려
+            #  공유 세션에서 트랜잭션 abort 시 후속 분기들이 silent 실패하는 사고가 있었다)
+            async with get_write_session() as acc_session:
+                res = await sync_orders_from_markets(
+                    body=SyncOrdersRequest(days=days, account_id=acc.id),
+                    session=acc_session,
+                    tenant_id=job.tenant_id,
+                )
             total_synced += int(res.get("total_synced") or 0)
             results = res.get("results") or []
             for r in results:
@@ -116,13 +121,9 @@ async def run(
             all_results.append(
                 {"account": label, "status": "error", "message": str(e)[:500]}
             )
-            # 라우터 함수가 자체 rollback 하지만 핸들러에서도 안전 보장
-            try:
-                await session.rollback()
-            except Exception:
-                pass
+            # acc_session 은 컨텍스트 매니저가 자체 rollback — 워커 세션은 노출 안 됐으므로 별도 롤백 불필요
 
-        # 진행률 갱신 — 매 계정 처리 후
+        # 진행률 갱신 — 매 계정 처리 후 (워커 세션, 계정 세션과 분리)
         await repo.update_progress(job.id, idx + 1, total)
 
     _add_job_log(job.id, f"전체마켓 주문수집 완료 — 총 {total_synced}건 신규 저장")
