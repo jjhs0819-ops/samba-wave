@@ -1331,6 +1331,17 @@ class SambaShipmentService:
                 # 마켓별 판매가 계산 (product_dict 원본 보호를 위해 복사본 사용)
                 acct_product = dict(product_dict)
 
+                # SSG 표준카테고리(stdCtgId) 주입 — ssg_std 매핑값을 _std_category_id로 전달
+                if market_type == "ssg":
+                    _std_cat = mapped_categories.get("ssg_std", "")
+                    if _std_cat:
+                        acct_product["_std_category_id"] = _std_cat
+                        logger.info(
+                            f"[SSG] 표준카테고리 주입: dispCtgId={mapped_categories.get('ssg', '')!r}, stdCtgId={_std_cat!r}"
+                        )
+                    else:
+                        logger.warning("[SSG] ssg_std 매핑 없음 — 표준카테고리 미전송")
+
                 # 마켓별 상세페이지 템플릿 오버라이드
                 # 프론트엔드는 market_type(영문 ID: "playauto")을 키로 저장
                 if policy and policy.extras:
@@ -2141,10 +2152,15 @@ class SambaShipmentService:
         _cat_accounts = _res_cat.scalars().all()
         market_types = {a.market_type for a in _cat_accounts}
 
+        # ssg 계정이 있으면 ssg_std 카테고리 매핑도 함께 조회
+        mapping_market_types = set(market_types)
+        if "ssg" in market_types:
+            mapping_market_types.add("ssg_std")
+
         # cat2 코드맵이 있는 모든 마켓에서 경로 → 숫자 코드 변환 시도
         code_required_markets = market_types  # 전체 대상 마켓
 
-        for market_type in market_types:
+        for market_type in mapping_market_types:
             # 카테고리매핑 페이지 설정만 사용
             if mapping and mapping.target_mappings:
                 target = mapping.target_mappings.get(market_type, "")
@@ -2166,7 +2182,7 @@ class SambaShipmentService:
             # cat2 트리는 표준카테고리(stdCtgDclsId)만 담고 있으므로
             # 전시카테고리 ID가 저장된 result["ssg"]를 변환하면 잘못된 값이 주입되거나
             # 삭제되어 전송 실패가 발생한다. → SSG는 변환 루프에서 완전 제외.
-            if market_type == "ssg":
+            if market_type in ("ssg", "ssg_std"):
                 continue
             if market_type in result:
                 cat_path = result[market_type]

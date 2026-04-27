@@ -12,6 +12,8 @@ export interface MarketDef {
   group: 'domestic' | 'domestic_home' | 'domestic_fashion' | 'solution' | 'overseas' | 'overseas_fashion'
   /** 카테고리 매핑 대상 여부 (false면 카테고리 매핑에서 제외) */
   hasCategory?: boolean
+  /** true면 카테고리 트리 전용 가상 마켓 — 설정/계정/정책 선택 목록에서 제외 */
+  categoryOnly?: boolean
 }
 
 export const MARKETS: MarketDef[] = [
@@ -21,7 +23,8 @@ export const MARKETS: MarketDef[] = [
   { id: 'smartstore', label: '스마트스토어', group: 'domestic', hasCategory: true },
   { id: 'coupang', label: '쿠팡', group: 'domestic', hasCategory: true },
   { id: '11st', label: '11번가', group: 'domestic', hasCategory: true },
-  { id: 'ssg', label: '신세계몰', group: 'domestic', hasCategory: true },
+  { id: 'ssg', label: '신세계몰(전시)', group: 'domestic', hasCategory: true },
+  { id: 'ssg_std', label: '신세계몰(표준)', group: 'domestic', hasCategory: true, categoryOnly: true },
   { id: 'lotteon', label: '롯데ON', group: 'domestic', hasCategory: true },
   { id: 'toss', label: '토스', group: 'domestic', hasCategory: true },
   // 국내 홈쇼핑/종합몰
@@ -66,20 +69,20 @@ export const MARKET_ID_BY_LABEL: Record<string, string> = Object.fromEntries(
 /** id → 한글 라벨 (정책 키 호환) */
 export const MARKET_TYPE_TO_POLICY_KEY: Record<string, string> = { ...MARKET_LABELS }
 
-/** 설정 페이지용 셀렉트 옵션 */
+/** 설정 페이지용 셀렉트 옵션 (categoryOnly 마켓 제외) */
 export const MARKET_SELECT_OPTIONS = [
   { value: '', label: '── 국내 오픈마켓 ──', disabled: true },
-  ...MARKETS.filter(m => m.group === 'domestic').map(m => ({ value: m.id, label: m.label })),
+  ...MARKETS.filter(m => m.group === 'domestic' && !m.categoryOnly).map(m => ({ value: m.id, label: m.label })),
   { value: '', label: '── 국내 홈쇼핑/종합몰 ──', disabled: true },
-  ...MARKETS.filter(m => m.group === 'domestic_home').map(m => ({ value: m.id, label: m.label })),
+  ...MARKETS.filter(m => m.group === 'domestic_home' && !m.categoryOnly).map(m => ({ value: m.id, label: m.label })),
   { value: '', label: '── 국내 패션/리셀 ──', disabled: true },
-  ...MARKETS.filter(m => m.group === 'domestic_fashion').map(m => ({ value: m.id, label: m.label })),
+  ...MARKETS.filter(m => m.group === 'domestic_fashion' && !m.categoryOnly).map(m => ({ value: m.id, label: m.label })),
   { value: '', label: '── 국내 종합솔루션 ──', disabled: true },
-  ...MARKETS.filter(m => m.group === 'solution').map(m => ({ value: m.id, label: m.label })),
+  ...MARKETS.filter(m => m.group === 'solution' && !m.categoryOnly).map(m => ({ value: m.id, label: m.label })),
   { value: '', label: '── 해외 마켓 ──', disabled: true },
-  ...MARKETS.filter(m => m.group === 'overseas').map(m => ({ value: m.id, label: m.label })),
+  ...MARKETS.filter(m => m.group === 'overseas' && !m.categoryOnly).map(m => ({ value: m.id, label: m.label })),
   { value: '', label: '── 해외 패션/리셀 ──', disabled: true },
-  ...MARKETS.filter(m => m.group === 'overseas_fashion').map(m => ({ value: m.id, label: m.label })),
+  ...MARKETS.filter(m => m.group === 'overseas_fashion' && !m.categoryOnly).map(m => ({ value: m.id, label: m.label })),
 ] as const
 
 // ── 그룹별 목록 ──
@@ -87,9 +90,9 @@ export const MARKET_SELECT_OPTIONS = [
 const DOMESTIC_GROUPS = new Set(['domestic', 'domestic_home', 'domestic_fashion'])
 const OVERSEAS_GROUPS = new Set(['overseas', 'overseas_fashion'])
 
-/** 국내 마켓 라벨 목록 (정책 탭용) */
+/** 국내 마켓 라벨 목록 (정책 탭용, categoryOnly 제외) */
 export const POLICY_MARKETS_DOMESTIC: string[] = MARKETS
-  .filter(m => DOMESTIC_GROUPS.has(m.group) || m.group === 'solution')
+  .filter(m => (DOMESTIC_GROUPS.has(m.group) || m.group === 'solution') && !m.categoryOnly)
   .map(m => m.label)
 
 /** 해외 마켓 라벨 목록 (정책 탭용) */
@@ -97,3 +100,11 @@ export const POLICY_MARKETS_OVERSEAS: string[] = MARKETS
   .filter(m => OVERSEAS_GROUPS.has(m.group))
   .map(m => m.label)
 
+/**
+ * 카테고리 동기화 시 연관 마켓 확장
+ * ssg 선택 시 ssg_std(표준카테고리)도 함께 동기화
+ */
+export function expandSyncMarkets(marketId: string): string[] {
+  if (marketId === 'ssg') return ['ssg', 'ssg_std']
+  return [marketId]
+}

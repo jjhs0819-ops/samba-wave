@@ -268,7 +268,9 @@ class SSGClient:
         구버전 /item/0.4/updateItem.ssg 는 2026-04-01 종료됨.
         product_data 에 itemId 가 포함되어야 함.
         """
-        item_id = product_data.get("itemId") or product_data.get("itemBase", {}).get("itemId", "")
+        item_id = product_data.get("itemId") or product_data.get("itemBase", {}).get(
+            "itemId", ""
+        )
         body = {"online_registration": product_data}
         result = await self._call_api(
             "POST",
@@ -377,7 +379,11 @@ class SSGClient:
                     resp = await self._call_api(
                         "GET",
                         "/api/settle/v1/ven/sales/list.ssg",
-                        params={"critnDt": critn_dt, "page": str(page), "pageSize": "1000"},
+                        params={
+                            "critnDt": critn_dt,
+                            "page": str(page),
+                            "pageSize": "1000",
+                        },
                     )
                     res = resp.get("result", {})
                     if not isinstance(res, dict):

@@ -48,7 +48,9 @@ class CategorySyncMixin:
 
         계정관리 테이블(SambaMarketAccount)에서 인증 정보를 직접 읽는다.
         """
-        account = await self._get_account(market_type, session)
+        # ssg_std는 ssg 계정을 공유 — "ssg" market_type으로 계정 조회
+        account_market_type = "ssg" if market_type == "ssg_std" else market_type
+        account = await self._get_account(account_market_type, session)
         categories: List[str] = []
         code_map: Optional[Dict[str, str]] = None
 
@@ -56,7 +58,8 @@ class CategorySyncMixin:
         sync_methods = {
             "smartstore": self._sync_smartstore,
             "lotteon": self._sync_lotteon,
-            "ssg": self._sync_ssg,
+            "ssg": self._sync_ssg_display,  # 전시카테고리
+            "ssg_std": self._sync_ssg,  # 표준카테고리 (계정은 "ssg"로 조회)
             "gsshop": self._sync_gsshop,
             "coupang": self._sync_coupang,
             "11st": self._sync_elevenst,
@@ -114,6 +117,7 @@ class CategorySyncMixin:
             "lotteon",
             "lottehome",
             "ssg",
+            "ssg_std",
             "gsshop",
             "cafe24",
         ]
@@ -625,8 +629,90 @@ class CategorySyncMixin:
                 categories.append(item)
         return categories, code_map if code_map else None
 
+    async def _sync_ssg_display(self, account) -> tuple:
+        """SSG 전시카테고리 동기화. (카테고리목록, 코드맵) 반환.
+
+        GET /common/0.1/displayCategory.ssg → result.displayCategorys[].category
+        dispCtgPathNm(경로), dispCtgId(코드) 파싱.
+        """
+        from backend.domain.samba.proxy.ssg import SSGClient, SSGApiError
+
+        extra = account.additional_fields or {}
+        api_key = extra.get("apiKey") or account.api_key or ""
+        if not api_key:
+            raise ValueError("SSG API Key가 없습니다")
+        store_id = extra.get("storeId") or "6004"
+        client = SSGClient(api_key=api_key, site_no=store_id)
+
+        categories: List[str] = []
+        code_map: Dict[str, str] = {}
+        page = 1
+        page_size = 500
+
+        while True:
+            try:
+                raw = await client.get_display_categories_all(
+                    site_no=store_id, page=page, page_size=page_size
+                )
+            except SSGApiError as exc:
+                if page == 1:
+                    raise ValueError(f"SSG 전시카테고리 조회 실패: {exc}") from exc
+                logger.warning(
+                    "[SSG 전시카테고리] page %d 조회 실패, 기존 %d건 저장: %s",
+                    page,
+                    len(categories),
+                    exc,
+                )
+                break
+
+            result_obj = raw.get("result", {})
+            if not isinstance(result_obj, dict):
+                result_obj = {}
+            display_categorys = result_obj.get("displayCategorys", [])
+            items: list = []
+            if isinstance(display_categorys, list):
+                for wrapper in display_categorys:
+                    if isinstance(wrapper, dict):
+                        cat = wrapper.get("category", [])
+                        if isinstance(cat, list):
+                            items.extend(cat)
+                        elif isinstance(cat, dict):
+                            items.append(cat)
+
+            if not items:
+                if page == 1:
+                    raise ValueError(
+                        "SSG 전시카테고리 응답이 비어있습니다. API Key 및 사이트번호를 확인해주세요."
+                    )
+                break
+
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                path = item.get("dispCtgPathNm", "")
+                cat_id = str(item.get("dispCtgId") or "")
+                if not path:
+                    path = item.get("dispCtgNm", "")
+                if not path:
+                    continue
+                normalized = " > ".join(
+                    seg.strip() for seg in path.split(">") if seg.strip()
+                )
+                categories.append(normalized)
+                if cat_id:
+                    code_map[normalized] = cat_id
+
+            logger.info(
+                f"[SSG 전시카테고리] page {page}: {len(items)}건, 누적 {len(categories)}개"
+            )
+            if len(items) < page_size:
+                break
+            page += 1
+
+        return categories, code_map if code_map else None
+
     async def _sync_ssg(self, account) -> tuple:
-        """SSG 카테고리 동기화 v2 (페이징 + 경로 포함). (카테고리목록, 코드맵) 반환."""
+        """SSG 표준카테고리 동기화 v2 (페이징 + 경로 포함). (카테고리목록, 코드맵) 반환."""
         from backend.domain.samba.proxy.ssg import SSGClient, SSGApiError
 
         extra = account.additional_fields or {}

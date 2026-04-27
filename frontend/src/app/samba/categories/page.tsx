@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useRouter } from 'next/navigation'
 import { collectorApi, categoryApi, accountApi, type SambaCollectedProduct } from '@/lib/samba/api/commerce'
-import { MARKET_LABELS } from '@/lib/samba/markets'
+import { MARKET_LABELS, MARKETS, expandSyncMarkets } from '@/lib/samba/markets'
 import { showAlert } from '@/components/samba/Modal'
 import { card, fmtNum } from '@/lib/samba/styles'
 import { fmtTime } from '@/lib/samba/utils'
@@ -983,7 +983,7 @@ export default function CategoriesPage() {
         <button
           onClick={() => {
             const initial: Record<string, boolean> = {}
-            Object.keys(MARKET_LABELS).forEach(mk => { initial[mk] = true })
+            MARKETS.filter(m => !m.categoryOnly).forEach(m => { initial[m.id] = true })
             setSyncSelected(initial)
             setSyncProgress({})
             setSyncModalOpen(true)
@@ -1907,7 +1907,7 @@ export default function CategoriesPage() {
               <button
                 onClick={() => {
                   const all: Record<string, boolean> = {}
-                  Object.keys(MARKET_LABELS).forEach(mk => { all[mk] = true })
+                  MARKETS.filter(m => !m.categoryOnly).forEach(m => { all[m.id] = true })
                   setSyncSelected(all)
                 }}
                 style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', background: 'transparent', border: '1px solid #3D3D3D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}
@@ -1919,7 +1919,7 @@ export default function CategoriesPage() {
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '1.25rem' }}>
-              {Object.entries(MARKET_LABELS).map(([mk, label]) => (
+              {Object.entries(MARKET_LABELS).filter(([mk]) => !MARKETS.find(m => m.id === mk)?.categoryOnly).map(([mk, label]) => (
                 <label key={mk} style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', cursor: 'pointer', padding: '0.375rem 0.5rem', background: syncSelected[mk] ? 'rgba(81,207,102,0.1)' : 'rgba(30,30,30,0.5)', border: `1px solid ${syncSelected[mk] ? 'rgba(81,207,102,0.3)' : '#2D2D2D'}`, borderRadius: '6px' }}>
                   <input
                     type="checkbox"
@@ -1972,20 +1972,22 @@ export default function CategoriesPage() {
                   let okCount = 0
                   let failCount = 0
                   for (const mk of selected) {
-                    setSyncProgress(prev => ({ ...prev, [mk]: { status: 'loading' } }))
+                    for (const actual of expandSyncMarkets(mk)) {
+                    setSyncProgress(prev => ({ ...prev, [actual]: { status: 'loading' } }))
                     try {
-                      const res = await categoryApi.syncMarket(mk)
+                      const res = await categoryApi.syncMarket(actual)
                       if (res.ok) {
-                        setSyncProgress(prev => ({ ...prev, [mk]: { status: 'ok', count: res.count } }))
-                        setMarketCatCounts(prev => ({ ...prev, [mk]: res.count }))
+                        setSyncProgress(prev => ({ ...prev, [actual]: { status: 'ok', count: res.count } }))
+                        setMarketCatCounts(prev => ({ ...prev, [actual]: res.count }))
                         okCount++
                       } else {
-                        setSyncProgress(prev => ({ ...prev, [mk]: { status: 'fail', error: '응답 오류' } }))
+                        setSyncProgress(prev => ({ ...prev, [actual]: { status: 'fail', error: '응답 오류' } }))
                         failCount++
                       }
                     } catch (err) {
-                      setSyncProgress(prev => ({ ...prev, [mk]: { status: 'fail', error: err instanceof Error ? err.message : '실패' } }))
+                      setSyncProgress(prev => ({ ...prev, [actual]: { status: 'fail', error: err instanceof Error ? err.message : '실패' } }))
                       failCount++
+                    }
                     }
                   }
                   setSeedLoading(false)

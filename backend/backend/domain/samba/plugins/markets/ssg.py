@@ -126,6 +126,10 @@ class SSGPlugin(MarketPlugin):
 
         # category_id = 전시카테고리 ID, _std_category_id = 표준카테고리 ID
         std_category_id = product.get("_std_category_id", "") or ""
+        if not std_category_id:
+            logger.warning(
+                "[SSG] _std_category_id 없음 — stdCtgId 빈값으로 전송. 등록 실패 가능."
+            )
         logger.info(
             f"[SSG] 전시카테고리={category_id!r}, 표준카테고리={std_category_id!r}"
         )

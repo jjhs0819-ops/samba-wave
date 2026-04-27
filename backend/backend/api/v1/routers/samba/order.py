@@ -3461,7 +3461,9 @@ async def sync_orders_from_markets(
                 # 정산 API 호출: (ordNo, ordItemSeq) → settIAmt(정산금액), sellFeeRt(수수료율)
                 _ssg_settle_map: dict[str, dict] = {}
                 try:
-                    _ssg_settle_items = await _ssg_client.get_settlement_items(days=body.days)
+                    _ssg_settle_items = await _ssg_client.get_settlement_items(
+                        days=body.days
+                    )
                     for _si in _ssg_settle_items:
                         _key = f"{_si.get('ordNo', '')}|{_si.get('ordItemSeq', '')}"
                         if _key and _key != "|":
