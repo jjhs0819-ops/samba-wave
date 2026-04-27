@@ -61,6 +61,88 @@ def _pick_lotteon_itm_label(itm: dict) -> str:
     return ""
 
 
+def _norm_opt_label(name: str) -> str:
+    """옵션 라벨 정규화 — 공백/슬래시 차이 흡수.
+
+    경량 분기의 nested ``_norm_opt``와 동일 규칙을 모듈 레벨로 추출.
+    """
+    s = (name or "").strip()
+    s = re.sub(r"\s*/\s*", "/", s)
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+
+def _build_lotteon_price_payload(
+    saved_itm_lst: list[dict],
+    target_itm_lst: list[dict],
+    spd_no: str,
+) -> list[dict]:
+    """수정 API(update_product) 후 itm 가격 보정용 itm_prc_lst 생성.
+
+    update_product는 spd 헤더만 반영하고 itm 가격(slPrc)은 무시한다.
+    별도 update_price(itm_prc_lst) 호출이 필요한데, sitmNo는 기존 옵션
+    번호(target_itm_lst)에서, slPrc는 새 가격(saved_itm_lst)에서 가져와야 한다.
+
+    매칭 키: itmOptLst[0].optVal (옵션 라벨, 정규화 적용)
+    - 옵션 있는 itm: 정규화된 optVal 매칭 실패 시 **스킵** (다른 variant 가격으로
+      덮어쓰는 위험 방지 — codex P1 지적). 정규화로 "240 / Beige" vs "240/Beige"
+      같은 포맷 차이는 흡수.
+    - 옵션 없는 단품(itmOptLst 생략): fallback_slprc 사용.
+    """
+    new_prc_map: dict[str, int] = {}
+    fallback_slprc = 0
+    for new_itm in saved_itm_lst or []:
+        new_opts = new_itm.get("itmOptLst") or []
+        opt_val = (
+            new_opts[0].get("optVal", "")
+            if new_opts and isinstance(new_opts[0], dict)
+            else ""
+        )
+        try:
+            slprc = int(new_itm.get("slPrc") or 0)
+        except (TypeError, ValueError):
+            slprc = 0
+        if slprc <= 0:
+            continue
+        opt_val_norm = _norm_opt_label(opt_val)
+        if opt_val_norm:
+            new_prc_map[opt_val_norm] = slprc
+        if slprc > fallback_slprc:
+            fallback_slprc = slprc
+
+    itm_prc_lst: list[dict] = []
+    for old_itm in target_itm_lst or []:
+        sitm_no = old_itm.get("sitmNo") or old_itm.get("itmNo")
+        if not sitm_no:
+            continue
+        old_opts = old_itm.get("itmOptLst") or []
+        opt_val = (
+            old_opts[0].get("optVal", "")
+            if old_opts and isinstance(old_opts[0], dict)
+            else ""
+        )
+        opt_val_norm = _norm_opt_label(opt_val)
+        if opt_val_norm:
+            slprc = new_prc_map.get(opt_val_norm) or 0
+            # 옵션 있는 itm은 매칭 실패 시 스킵 — fallback으로 다른 variant 가격을
+            # silently 덮어쓰는 위험 방지 (codex P1).
+            if slprc <= 0:
+                continue
+        else:
+            # 옵션 없는 단품: fallback_slprc 사용
+            slprc = fallback_slprc
+            if slprc <= 0:
+                continue
+        itm_prc_lst.append(
+            {
+                "sitmNo": str(sitm_no),
+                "spdNo": spd_no,
+                "slPrc": slprc,
+            }
+        )
+    return itm_prc_lst
+
+
 # 브랜드명 접미사 목록 — 검색 전 자동 제거
 _BRAND_SUFFIXES = [
     "키즈",
@@ -1994,6 +2076,53 @@ class LotteonPlugin(MarketPlugin):
                     except Exception as _stk_e:
                         logger.warning(
                             f"[롯데ON] 수정 후 재고 동기화 실패 (무시): {_stk_e}"
+                        )
+
+                # ── 수정 후 가격 동기화 ───────────────────────────────────
+                # update_product는 spd 헤더만 반영하고 itm 가격(slPrc)은 무시한다.
+                # 별도 update_price 호출 없이는 정상가/판매가 변경이 셀러 페이지에
+                # 반영되지 않아 sale_price와 실제 노출가가 어긋나는 사고가 발생.
+                # 경량 분기(line ~1217)는 이미 update_price를 호출하지만 일반 수정
+                # 경로에는 빠져있어 같은 패턴으로 보강 (collector_autotune.py:828-830
+                # 의 동일 사고 주석 참조).
+                if _saved_itm_lst:
+                    try:
+                        # 새 spdNo가 발급된 경우 itm_lst_raw의 sitmNo는 old spd
+                        # 소속이라 update_price가 no-op이 되므로 effective_no로
+                        # 재조회 (codex P2 지적).
+                        _itm_for_price = itm_lst_raw
+                        if new_spd_no and new_spd_no != existing_no:
+                            try:
+                                _new_prod = await client.get_product(effective_no)
+                                _new_inner = _new_prod.get("data", _new_prod)
+                                _new_spd = (
+                                    _new_inner.get("spdLst")
+                                    or _new_inner.get("spdInfo")
+                                    or _new_inner
+                                )
+                                if isinstance(_new_spd, list) and _new_spd:
+                                    _new_spd = _new_spd[0]
+                                if isinstance(_new_spd, dict):
+                                    _itm_for_price = (
+                                        _new_spd.get("itmLst") or itm_lst_raw
+                                    )
+                            except Exception as _refetch_e:
+                                logger.warning(
+                                    f"[롯데ON] 새 spdNo itm 재조회 실패, 기존 itm으로 시도: {_refetch_e}"
+                                )
+
+                        _itm_prc_lst = _build_lotteon_price_payload(
+                            _saved_itm_lst, _itm_for_price, effective_no
+                        )
+                        if _itm_prc_lst:
+                            await client.update_price(_itm_prc_lst)
+                            logger.info(
+                                f"[롯데ON] 수정 후 가격 동기화 완료: {effective_no} — "
+                                f"{len(_itm_prc_lst)}건 (slPrc={_itm_prc_lst[0].get('slPrc'):,})"
+                            )
+                    except Exception as _prc_e:
+                        logger.warning(
+                            f"[롯데ON] 수정 후 가격 동기화 실패 (무시): {_prc_e}"
                         )
 
                 # ── 수정 후 프로모션 재설정 ──────────────────────────────
