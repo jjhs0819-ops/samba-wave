@@ -518,7 +518,12 @@ async def lifespan(app: FastAPI):
         )
     else:
         await _recover_running_jobs(startup_logger)
-        await _resume_pending_bg_remove_jobs(startup_logger)
+        # _resume_pending_bg_remove_jobs는 lifespan yield 전 PENDING 잡을
+        # asyncio.create_task로 spawn하면서 startup 단계의 DB connection 경쟁을
+        # 일으켜 health endpoint 응답을 막음 (배포 시 green health 180초 타임아웃 발생).
+        # 자동 회수 기능은 차후 yield 후 별도 background task로 재구조화 예정.
+        # 현재는 사용자가 다시 클릭하면 새 잡이 정상 처리됨.
+        # await _resume_pending_bg_remove_jobs(startup_logger)
         worker_runtime = await _start_worker_runtime()
         await _start_autotune_if_enabled()
         await _start_order_poller()
