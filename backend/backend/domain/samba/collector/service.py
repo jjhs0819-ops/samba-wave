@@ -25,10 +25,67 @@ _BRAND_PLACEHOLDERS = {
     "상세 참조",
 }
 
+# 제조사 필드에 잘못 들어가는 국가명 (소싱처가 제조사 칸에 국가를 입력한 케이스)
+# 예: 무신사 HOKA 상품의 경우 essential API가 제조사="베트남"으로 잘못 반환
+_COUNTRY_NAMES = {
+    "한국",
+    "대한민국",
+    "중국",
+    "중화인민공화국",
+    "베트남",
+    "일본",
+    "미국",
+    "인도",
+    "인도네시아",
+    "방글라데시",
+    "캄보디아",
+    "태국",
+    "미얀마",
+    "파키스탄",
+    "필리핀",
+    "말레이시아",
+    "싱가포르",
+    "홍콩",
+    "대만",
+    "스리랑카",
+    "터키",
+    "튀르키예",
+    "이탈리아",
+    "독일",
+    "프랑스",
+    "영국",
+    "스페인",
+    "포르투갈",
+    "폴란드",
+    "체코",
+    "헝가리",
+    "루마니아",
+    "스위스",
+    "네덜란드",
+    "벨기에",
+    "오스트리아",
+    "러시아",
+    "우크라이나",
+    "멕시코",
+    "브라질",
+    "페루",
+    "캐나다",
+    "호주",
+    "뉴질랜드",
+    "모로코",
+    "이집트",
+    "남아프리카공화국",
+}
+
 
 def _is_placeholder(value: str) -> bool:
     """브랜드/제조사 필드의 플레이스홀더 값 여부 판별."""
     return value.strip() in _BRAND_PLACEHOLDERS
+
+
+def _looks_like_country(value: str) -> bool:
+    """제조사 필드에 잘못 들어간 국가명인지 판별."""
+    return value.strip() in _COUNTRY_NAMES
 
 
 def _derive_sale_status(data: Dict[str, Any]) -> None:
@@ -414,7 +471,9 @@ class SambaCollectorService:
 
     @staticmethod
     def _clean_company_names(data: Dict[str, Any]) -> None:
-        """브랜드/제조사에서 (주), ㈜, (株) 제거."""
+        """브랜드/제조사에서 (주), ㈜, (株) 제거.
+        제조사가 국가명이거나 제조국과 동일하면 비워서 brand fallback이 동작하게 함.
+        """
 
         _pattern = re.compile(r"\(주\)|㈜|\(株\)")
         for field in ("brand", "manufacturer"):
@@ -423,6 +482,12 @@ class SambaCollectorService:
                 cleaned = _pattern.sub("", val).strip()
                 if cleaned:
                     data[field] = cleaned
+
+        # 무신사 등 일부 소싱처가 제조사 칸에 국가명을 잘못 넣는 케이스 보정
+        mfr = (data.get("manufacturer") or "").strip()
+        origin = (data.get("origin") or "").strip()
+        if mfr and (_looks_like_country(mfr) or (origin and mfr == origin)):
+            data["manufacturer"] = ""
 
     @staticmethod
     def _fill_optional_images(data: Dict[str, Any]) -> None:
