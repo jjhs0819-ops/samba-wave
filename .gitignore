@@ -548,6 +548,19 @@ backend/deploy.sh
 backend/scripts/*_prod_*.py
 backend/scripts/bg_worker.env
 
+# 개발용 임시 테스트·디버그 스크립트 (배포 무관)
+backend/scripts/test_*.py
+backend/scripts/*_test.py
+backend/scripts/debug_*.py
+backend/scripts/debug_*.sh
+backend/scripts/_tmp*.py
+backend/scripts/init_test_db.py
+backend/scripts/reset_test_db.py
+backend/scripts/drop_samba_jobs.py
+backend/scripts/fix_requested_count.py
+backend/scripts/ssg_ctg_probe.py
+backend/scripts/ssg_verify_fix.py
+
 dev-debug.log
 # Environment variables
 # Editor directories and files
