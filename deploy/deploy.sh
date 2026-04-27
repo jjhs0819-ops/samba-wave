@@ -213,7 +213,16 @@ for i in $(seq 1 90); do
     fi
     echo "    ⏳ green not-ready ($i/90, $((i*2))초)"
     if [ "$i" = "90" ]; then
-        echo "❌ green 헬스체크 실패 — green 컨테이너 정리 후 종료"
+        echo "❌ green 헬스체크 실패"
+        echo ""
+        echo "─── staging 컨테이너 상태 ─────────────────────────────"
+        sudo docker inspect samba-samba-api-staging-1 \
+          --format 'status={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} startedAt={{.State.StartedAt}}' 2>&1 || true
+        echo ""
+        echo "─── staging 컨테이너 로그 (마지막 200줄) ──────────────"
+        sudo docker logs samba-samba-api-staging-1 --tail 200 2>&1 || true
+        echo "─────────────────────────────────────────────────────"
+        echo "정리 후 종료"
         sudo docker compose --profile staging stop samba-api-staging
         sudo docker compose --profile staging rm -f samba-api-staging
         exit 1
