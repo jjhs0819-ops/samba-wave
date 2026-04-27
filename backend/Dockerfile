@@ -26,7 +26,8 @@ ENV UV_SYSTEM_PYTHON=1
 ENV UV_COMPILE_BYTECODE=1
 
 # 비루트 사용자 미리 생성 — COPY --chown 플래그로 권한 부여 (chown -R /app 118초 절감)
-RUN groupadd -r appuser && useradd -r -g appuser -d /app appuser
+# -m: 홈 디렉토리(/app) 자동 생성 + appuser 소유로 — 런타임 uv cache(/app/.cache/uv) 생성 가능
+RUN groupadd -r appuser && useradd -r -m -g appuser -d /app appuser
 
 # Set the application's working directory.
 WORKDIR /app/backend
