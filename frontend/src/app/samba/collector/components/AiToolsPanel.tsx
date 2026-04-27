@@ -159,7 +159,7 @@ export default function AiToolsPanel(props: Props) {
                   for (const p of products) {
                     if ((p.tags || []).includes('__ai_image__')) { skippedAi++; continue }
                     productIds.push(p.id)
-                    productDetails.set(p.id, { id: p.id, images: p.images || [], detail_images: p.detail_images || [], tags: p.tags || [] })
+                    productDetails.set(p.id, { id: p.id, name: p.name || '', images: p.images || [], detail_images: p.detail_images || [], tags: p.tags || [] })
                   }
                 }
               } catch { /* 스킵 */ }
@@ -201,10 +201,11 @@ export default function AiToolsPanel(props: Props) {
                   addLog(`큐 등록 실패: ${batchResVal.message}`)
                 } else {
                   const jid = batchResVal.job_id
-                  addLog(`[${ts()}] 큐 등록 완료 (job: ${jid.slice(-8)}) — 로컬 워커 처리 대기 중...`)
-                  addLog(`※ 로컬 워커(local_bg_worker.py)가 실행 중이어야 처리됩니다`)
+                  addLog(`[${ts()}] 큐 등록 완료 — 워커 처리 대기 중...`)
                   let pollCount = 0
                   const maxPolls = 720
+                  let lastLoggedCur = -1
+                  let lastLoggedStatus = ''
                   while (pollCount < maxPolls && !aiJobAbortRef.current) {
                     await new Promise(r => setTimeout(r, 5000))
                     pollCount++
@@ -213,12 +214,14 @@ export default function AiToolsPanel(props: Props) {
                       const cur = st.current ?? 0
                       const tot = st.total ?? productIds.length
                       setAiJobTitle(`배경제거 [${fmtNum(cur)}/${fmtNum(tot)}]`)
-                      // pending 상태 감지 — 워커 미실행 경고
-                      if (st.status === 'pending') {
-                        if (pollCount === 6) addLog(`[${ts()}] ⚠️ 워커가 아직 작업을 수신하지 못했습니다`)
-                        if (pollCount === 18) addLog(`[${ts()}] ❌ 워커가 응답하지 않습니다. local_bg_worker.py 실행 여부를 확인해주세요`)
+                      // 진행 중일 때만 — 상태 또는 current가 바뀔 때만 로그
+                      if (st.status === 'running' && (cur !== lastLoggedCur || st.status !== lastLoggedStatus)) {
+                        const curId = productIds[cur] ?? productIds[cur - 1]
+                        const curName = (productDetails.get(curId)?.name || curId || '').slice(0, 20)
+                        addLog(`[${ts()}] ${curName} ${fmtNum(cur)}/${fmtNum(tot)} 진행중`)
+                        lastLoggedCur = cur
+                        lastLoggedStatus = st.status
                       }
-                      if (pollCount % 3 === 0) addLog(`[${ts()}] 진행중... ${fmtNum(cur)}/${fmtNum(tot)}${st.status === 'pending' ? ' (대기중)' : ''}`)
                       if (st.status === 'completed') {
                         success = st.total_transformed || 0
                         fail = st.total_failed || 0
