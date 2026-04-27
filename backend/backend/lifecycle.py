@@ -54,97 +54,114 @@ def _startup_logger() -> logging.Logger:
 
 
 async def _apply_startup_schema_fixes(logger: logging.Logger) -> None:
-    migrations = [
-        ("samba_order", "paid_at", "TIMESTAMPTZ"),
-        ("samba_search_filter", "source_brand_name", "TEXT"),
+    """Bootstrap schema fixes — 각 SQL은 lock_timeout=5s / statement_timeout=30s 보호.
+
+    2026-04-28 근본 수정: blue/green 배포 중 idle connection이 잡고 있는
+    ACCESS EXCLUSIVE LOCK 또는 samba_order 등 큰 테이블 풀스캔으로 startup이
+    3분 5초 hang하던 문제 → SET LOCAL timeout으로 fail-fast 처리.
+    실패해도 다음 startup에서 재시도 (모든 SQL idempotent).
+    """
+    import time
+
+    from sqlalchemy import text
+
+    from backend.db.orm import get_write_session
+
+    statements: list[tuple[str, str]] = [
+        (
+            "alter_order_paid_at",
+            "ALTER TABLE samba_order ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ",
+        ),
+        (
+            "alter_search_filter_source_brand",
+            "ALTER TABLE samba_search_filter "
+            "ADD COLUMN IF NOT EXISTS source_brand_name TEXT",
+        ),
+        (
+            "drop_market_account_sort_order",
+            "ALTER TABLE samba_market_account DROP COLUMN IF EXISTS sort_order",
+        ),
+        (
+            "create_login_history",
+            """
+            CREATE TABLE IF NOT EXISTS samba_login_history (
+                id VARCHAR(30) PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                email TEXT NOT NULL,
+                ip_address TEXT,
+                region TEXT,
+                user_agent TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """,
+        ),
+        (
+            "idx_login_history_user_id",
+            "CREATE INDEX IF NOT EXISTS ix_samba_login_history_user_id "
+            "ON samba_login_history (user_id)",
+        ),
+        (
+            "update_abcmart_shipping_fee",
+            "UPDATE samba_collected_product "
+            "SET sourcing_shipping_fee = 0 "
+            "WHERE source_site = 'ABCmart' AND sourcing_shipping_fee > 0",
+        ),
+        (
+            "delete_derived_orders",
+            "DELETE FROM samba_order "
+            "WHERE product_name LIKE '[사본-%' "
+            "OR product_name LIKE '%★교환주문%'",
+        ),
+        # 롯데ON paid_at 오염 정리 — 이전 datetime.now() 폴백 버그로 paid_at이
+        # sync 시각으로 통일 박힌 row를 NULL로 되돌려 백필 로직(order.py:3092-3129)이
+        # 재채움할 수 있게 한다. idempotent (정상 데이터는 paid_at <= created_at).
+        (
+            "reset_lotteon_paid_at",
+            "UPDATE samba_order SET paid_at = NULL "
+            "WHERE source = 'lotteon' AND paid_at > created_at",
+        ),
     ]
 
-    try:
-        from sqlalchemy import text
+    total_start = time.time()
+    ok = 0
+    skipped = 0
 
-        from backend.db.orm import get_write_session
+    for label, sql in statements:
+        stmt_start = time.time()
+        try:
+            # 각 SQL을 별도 트랜잭션으로 분리 — 한 SQL이 fail해도 다른 SQL 진행
+            async with get_write_session() as session:
+                # SET LOCAL은 현재 트랜잭션에만 적용됨 — 트랜잭션 자동 시작 후 적용
+                await session.execute(text("SET LOCAL lock_timeout = '5s'"))
+                await session.execute(text("SET LOCAL statement_timeout = '30s'"))
+                result = await session.execute(text(sql))
+                await session.commit()
+            elapsed = time.time() - stmt_start
+            rowcount = getattr(result, "rowcount", -1)
+            if rowcount is not None and rowcount >= 0:
+                logger.info(
+                    "[startup] [%s] OK (%.2fs) rows=%d", label, elapsed, rowcount
+                )
+            else:
+                logger.info("[startup] [%s] OK (%.2fs)", label, elapsed)
+            ok += 1
+        except Exception as exc:
+            elapsed = time.time() - stmt_start
+            logger.warning(
+                "[startup] [%s] SKIP (%.2fs) — %s: %s",
+                label,
+                elapsed,
+                type(exc).__name__,
+                exc,
+            )
+            skipped += 1
 
-        async with get_write_session() as session:
-            for table_name, column_name, column_type in migrations:
-                await session.execute(
-                    text(
-                        f"ALTER TABLE {table_name} "
-                        f"ADD COLUMN IF NOT EXISTS {column_name} {column_type}"
-                    )
-                )
-
-            await session.execute(
-                text(
-                    "ALTER TABLE samba_market_account DROP COLUMN IF EXISTS sort_order"
-                )
-            )
-            await session.execute(
-                text(
-                    """
-                    CREATE TABLE IF NOT EXISTS samba_login_history (
-                        id VARCHAR(30) PRIMARY KEY,
-                        user_id TEXT NOT NULL,
-                        email TEXT NOT NULL,
-                        ip_address TEXT,
-                        region TEXT,
-                        user_agent TEXT,
-                        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-                    )
-                    """
-                )
-            )
-            await session.execute(
-                text(
-                    "CREATE INDEX IF NOT EXISTS ix_samba_login_history_user_id "
-                    "ON samba_login_history (user_id)"
-                )
-            )
-
-            fix_result = await session.execute(
-                text(
-                    "UPDATE samba_collected_product "
-                    "SET sourcing_shipping_fee = 0 "
-                    "WHERE source_site = 'ABCmart' AND sourcing_shipping_fee > 0"
-                )
-            )
-            delete_result = await session.execute(
-                text(
-                    "DELETE FROM samba_order "
-                    "WHERE product_name LIKE '[사본-%' "
-                    "OR product_name LIKE '%★교환주문%'"
-                )
-            )
-            # 롯데ON paid_at 오염 정리 — 이전 datetime.now() 폴백 버그로 paid_at이
-            # sync 시각으로 통일 박힌 row를 NULL로 되돌려 백필 로직(order.py:3092-3129)이
-            # 재채움할 수 있게 한다. idempotent (정상 데이터는 paid_at <= created_at).
-            paid_at_fix_result = await session.execute(
-                text(
-                    "UPDATE samba_order SET paid_at = NULL "
-                    "WHERE source = 'lotteon' AND paid_at > created_at"
-                )
-            )
-            await session.commit()
-
-        if fix_result.rowcount:
-            logger.info(
-                "[startup] reset ABCmart sourcing_shipping_fee rows=%s",
-                fix_result.rowcount,
-            )
-        if delete_result.rowcount:
-            logger.info(
-                "[startup] deleted derived samba_order rows=%s",
-                delete_result.rowcount,
-            )
-        if paid_at_fix_result.rowcount:
-            logger.info(
-                "[startup] reset lotteon paid_at (오염 데이터 NULL화) rows=%s",
-                paid_at_fix_result.rowcount,
-            )
-        logger.info(
-            "[startup] schema bootstrap complete (%s migrations)", len(migrations)
-        )
-    except Exception as exc:
-        logger.error("[startup] schema bootstrap failed: %s", exc, exc_info=True)
+    logger.info(
+        "[startup] schema bootstrap complete — ok=%d skip=%d total=%.2fs",
+        ok,
+        skipped,
+        time.time() - total_start,
+    )
 
 
 async def _sync_playauto_registered_accounts(logger: logging.Logger) -> None:
