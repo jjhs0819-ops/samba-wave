@@ -925,10 +925,15 @@ export default function WarroomPage() {
                     return `${d.getMonth() + 1}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
                   }
                   return Object.entries(marketChanges).map(([marketType, byType]) => {
-                    const priceChanges = byType.price_changed ?? []
                     const soldOuts = byType.sold_out ?? []
                     const restocks = byType.restock ?? []
-                    if (priceChanges.length === 0 && soldOuts.length === 0 && restocks.length === 0) return null
+                    // 품절+재입고 통합 타임라인 (created_at 내림차순, 최대 5개) — 소싱처 카드와 동일 규칙
+                    const allStockEvents = [
+                      ...soldOuts.map(ev => ({ ...ev, _type: 'soldout' as const })),
+                      ...restocks.map(ev => ({ ...ev, _type: 'restock' as const })),
+                    ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 5)
+                    const priceChanges = (byType.price_changed ?? []).slice(0, 5)
+                    if (priceChanges.length === 0 && allStockEvents.length === 0) return null
                     const label = MARKET_LABEL[marketType] || marketType
                     const color = MARKET_COLOR[marketType] || '#888'
                     return (
@@ -942,53 +947,53 @@ export default function WarroomPage() {
                         <div style={{ fontSize: '0.78rem', color, marginBottom: '0.3rem', fontWeight: 600 }}>
                           {label} 점검
                         </div>
-                        {soldOuts.map(ev => {
+                        {allStockEvents.map(ev => {
                           const d = ev.detail || {}
-                          const reason = d.reason as string | undefined
-                          const soldOutOptions = (d.sold_out_options as string[] | undefined) ?? []
-                          const reasonLabel =
-                            reason === 'option_partial' ? '옵션'
-                            : reason === 'source_deleted' ? '소싱처삭제'
-                            : reason === 'all_soldout' ? '전체'
-                            : '품절'
-                          return (
-                            <div key={ev.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem', flexWrap: 'wrap' }}>
-                              <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
-                              {ev.account_label && (
-                                <span style={{ fontSize: '0.72rem', color: '#9AA5C0' }}>({ev.account_label})</span>
-                              )}
-                              <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{ev.site_product_id || '-'}</span>
-                              <span style={{ fontSize: '0.72rem', color: '#A78BFA' }}>품절</span>
-                              <span style={{ fontSize: '0.68rem', color: '#888' }}>({reasonLabel})</span>
-                              {reason === 'option_partial' && soldOutOptions.length > 0 && (
-                                <span style={{ fontSize: '0.72rem', color: '#A78BFA' }}>
-                                  {soldOutOptions.slice(0, 5).join(', ')}
-                                  {soldOutOptions.length > 5 ? ` 외 ${fmtNum(soldOutOptions.length - 5)}` : ''}
-                                </span>
-                              )}
-                            </div>
-                          )
-                        })}
-                        {restocks.map(ev => {
-                          const d = ev.detail || {}
-                          const restockedOptions = (d.restocked_options as string[] | undefined) ?? []
-                          return (
-                            <div key={ev.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem', flexWrap: 'wrap' }}>
-                              <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
-                              {ev.account_label && (
-                                <span style={{ fontSize: '0.72rem', color: '#9AA5C0' }}>({ev.account_label})</span>
-                              )}
-                              <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{ev.site_product_id || '-'}</span>
-                              <span style={{ fontSize: '0.72rem', color: '#51CF66' }}>재입고</span>
-                              <span style={{ fontSize: '0.68rem', color: '#888' }}>(옵션)</span>
-                              {restockedOptions.length > 0 && (
-                                <span style={{ fontSize: '0.72rem', color: '#51CF66' }}>
-                                  {restockedOptions.slice(0, 5).join(', ')}
-                                  {restockedOptions.length > 5 ? ` 외 ${fmtNum(restockedOptions.length - 5)}` : ''}
-                                </span>
-                              )}
-                            </div>
-                          )
+                          if (ev._type === 'soldout') {
+                            const reason = d.reason as string | undefined
+                            const soldOutOptions = (d.sold_out_options as string[] | undefined) ?? []
+                            const reasonLabel =
+                              reason === 'option_partial' ? '옵션'
+                              : reason === 'source_deleted' ? '소싱처삭제'
+                              : reason === 'all_soldout' ? '전체'
+                              : '품절'
+                            return (
+                              <div key={ev.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem', flexWrap: 'wrap' }}>
+                                <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
+                                {ev.account_label && (
+                                  <span style={{ fontSize: '0.72rem', color: '#9AA5C0' }}>({ev.account_label})</span>
+                                )}
+                                <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{ev.site_product_id || '-'}</span>
+                                <span style={{ fontSize: '0.72rem', color: '#A78BFA' }}>품절</span>
+                                <span style={{ fontSize: '0.68rem', color: '#888' }}>({reasonLabel})</span>
+                                {reason === 'option_partial' && soldOutOptions.length > 0 && (
+                                  <span style={{ fontSize: '0.72rem', color: '#A78BFA' }}>
+                                    {soldOutOptions.slice(0, 5).join(', ')}
+                                    {soldOutOptions.length > 5 ? ` 외 ${fmtNum(soldOutOptions.length - 5)}` : ''}
+                                  </span>
+                                )}
+                              </div>
+                            )
+                          } else {
+                            const restockedOptions = (d.restocked_options as string[] | undefined) ?? []
+                            return (
+                              <div key={ev.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.15rem', flexWrap: 'wrap' }}>
+                                <span style={{ fontSize: '0.72rem', color: '#666', flexShrink: 0 }}>{fmtT(ev.created_at)}</span>
+                                {ev.account_label && (
+                                  <span style={{ fontSize: '0.72rem', color: '#9AA5C0' }}>({ev.account_label})</span>
+                                )}
+                                <span style={{ fontSize: '0.72rem', color: '#aaa', fontFamily: 'monospace' }}>{ev.site_product_id || '-'}</span>
+                                <span style={{ fontSize: '0.72rem', color: '#51CF66' }}>재입고</span>
+                                <span style={{ fontSize: '0.68rem', color: '#888' }}>(옵션)</span>
+                                {restockedOptions.length > 0 && (
+                                  <span style={{ fontSize: '0.72rem', color: '#51CF66' }}>
+                                    {restockedOptions.slice(0, 5).join(', ')}
+                                    {restockedOptions.length > 5 ? ` 외 ${fmtNum(restockedOptions.length - 5)}` : ''}
+                                  </span>
+                                )}
+                              </div>
+                            )
+                          }
                         })}
                         {priceChanges.map(ev => {
                           const d = ev.detail || {}

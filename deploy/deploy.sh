@@ -198,21 +198,23 @@ sudo docker compose --profile staging pull samba-api-staging
 echo "[2/6] green 컨테이너 시작..."
 sudo docker compose --profile staging up -d samba-api-staging
 
-echo "[3/6] green 헬스체크 대기 (최대 180초)..."
+echo "[3/6] green 헬스체크 대기 (최대 360초)..."
 # docker healthcheck status 가 아닌 컨테이너 내부 wget 으로 직접 폴링.
 # 이유: docker healthcheck는 interval=30s + start_period=60s 라서 첫 healthy 갱신까지 90~150초 걸림.
 # 직접 wget 은 startup 즉시 응답하므로 실제 readiness 와 일치.
 # 폴링 간격 5s→2s로 단축 (배포시간 최적화 — startup 50s 가정 시 평균 20~30초 절감)
-# 타임아웃 120s→180s: Alembic 마이그레이션이 많을 때 120s 초과 케이스 대응
-for i in $(seq 1 90); do
+# 타임아웃 180s→360s (2026-04-28): emergency schema fix가 blue idle connection lock 대기로
+#   4분 41초 hang하던 사례 발생. entrypoint.sh에 lock_timeout=5s 보호 적용으로 즉시 fail-fast
+#   되긴 하지만, 마이그레이션 누적분 + verify_schema + lifespan startup 합산 안전 마진 위해 360s.
+for i in $(seq 1 180); do
     sleep 2
     RESP=$(sudo docker exec samba-samba-api-staging-1 wget -qO- --timeout=3 http://localhost:8080/api/v1/health 2>/dev/null || echo "")
     if echo "$RESP" | grep -q '"status":"healthy"'; then
         echo "    ✅ green healthy (${i}회 시도, $((i*2))초)"
         break
     fi
-    echo "    ⏳ green not-ready ($i/90, $((i*2))초)"
-    if [ "$i" = "90" ]; then
+    echo "    ⏳ green not-ready ($i/180, $((i*2))초)"
+    if [ "$i" = "180" ]; then
         echo "❌ green 헬스체크 실패"
         echo ""
         echo "─── staging 컨테이너 상태 ─────────────────────────────"

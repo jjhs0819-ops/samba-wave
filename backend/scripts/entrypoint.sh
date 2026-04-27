@@ -58,9 +58,13 @@ exit(0 if r else 1)
 
   # Emergency schema fixes — alembic_version=873871a20399 stamp 상태에서 누락된 테이블/컬럼 수동 보완
   # (2026-04-17 사고 이후 stamp-DB 간극 해소용. 신규 누락 항목은 여기 추가)
+  #
+  # 2026-04-28 근본 수정: blue 컨테이너 idle connection이 잡고 있는 ACCESS EXCLUSIVE LOCK 때문에
+  # 일부 ALTER TABLE이 무한 대기(>5분)하던 문제 → lock_timeout/statement_timeout으로 fail-fast 처리.
+  # lock 못 잡으면 즉시 에러 → except에서 로깅 후 다음 SQL 진행 (다음 startup에서 재시도).
   echo "Applying emergency schema fixes..."
   uv run python -c "
-import asyncio, os, sys
+import asyncio, os, sys, time
 def _env(key):
     return os.environ.get(key) or os.environ.get(key.lower()) or os.environ.get(key.upper()) or ''
 async def fix():
@@ -68,37 +72,37 @@ async def fix():
     host = _env('WRITE_DB_HOST')
     if not host:
         print('WRITE_DB_HOST not set, skip emergency fix'); return
-    kw = dict(user=_env('WRITE_DB_USER') or 'postgres', password=_env('WRITE_DB_PASSWORD'), database=_env('WRITE_DB_NAME') or 'railway')
+    kw = dict(
+        user=_env('WRITE_DB_USER') or 'postgres',
+        password=_env('WRITE_DB_PASSWORD'),
+        database=_env('WRITE_DB_NAME') or 'railway',
+        # lock_timeout=5s: ACCESS EXCLUSIVE LOCK 5초 못 잡으면 즉시 fail
+        # statement_timeout=30s: 쿼리 실행 자체도 30초 안에 끝나야 함 (큰 테이블 CREATE INDEX 마진)
+        # blue 컨테이너 idle connection이 락을 쥐고 있어도 startup 차단 안 됨
+        server_settings={'lock_timeout': '5s', 'statement_timeout': '30s'},
+    )
     if host.startswith('/'):
         kw['host'] = host
     else:
         kw['host'] = host; kw['port'] = int(_env('WRITE_DB_PORT') or 5432)
     conn = await asyncpg.connect(**kw)
-    try:
-        # 배포 시 TooManyConnectionsError 방지 — alembic 실행 전 idle 연결 선제 정리 (권한 없어도 non-fatal)
-        try:
-            terminated = await conn.fetchval(
-                'SELECT COUNT(*) FROM pg_stat_activity'
-                ' WHERE state = \'idle\' AND datname = current_database()'
-                ' AND pid <> pg_backend_pid() AND pg_terminate_backend(pid)'
-            )
-            print(f'Cleared {terminated} idle connections before alembic.')
-        except Exception as _te:
-            print(f'terminate_backend skipped (non-fatal): {_te}')
-        await conn.execute('ALTER TABLE samba_search_filter ADD COLUMN IF NOT EXISTS source_brand_name TEXT')
-        await conn.execute('ALTER TABLE samba_market_account DROP COLUMN IF EXISTS sort_order')
-        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS clm_req_seq TEXT')
-        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS ord_prd_seq TEXT')
-        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_retrieval_status TEXT')
-        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_retrieved_at TIMESTAMPTZ')
-        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_reship_company TEXT')
-        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_reship_tracking TEXT')
-        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_delivered_at TIMESTAMPTZ')
-        await conn.execute('ALTER TABLE samba_order ADD COLUMN IF NOT EXISTS collected_product_id TEXT')
-        await conn.execute('CREATE INDEX IF NOT EXISTS ix_samba_order_collected_product_id ON samba_order (collected_product_id) WHERE collected_product_id IS NOT NULL')
-        # samba_search_cache (2b3042f4d3b6 마이그레이션 — stamp로 skip됨, 수동 생성 필요)
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS samba_search_cache (
+    # 각 SQL을 (라벨, sql) 튜플로 묶어 단계별 시간 측정 + 개별 실패 격리
+    statements = [
+        ('terminate_idle', 'SELECT COUNT(*) FROM pg_stat_activity'
+                           ' WHERE state = \'idle\' AND datname = current_database()'
+                           ' AND pid <> pg_backend_pid() AND pg_terminate_backend(pid)'),
+        ('alter_search_filter', 'ALTER TABLE samba_search_filter ADD COLUMN IF NOT EXISTS source_brand_name TEXT'),
+        ('drop_market_account_sort_order', 'ALTER TABLE samba_market_account DROP COLUMN IF EXISTS sort_order'),
+        ('alter_return_clm_req_seq', 'ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS clm_req_seq TEXT'),
+        ('alter_return_ord_prd_seq', 'ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS ord_prd_seq TEXT'),
+        ('alter_return_exch_retrieval_status', 'ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_retrieval_status TEXT'),
+        ('alter_return_exch_retrieved_at', 'ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_retrieved_at TIMESTAMPTZ'),
+        ('alter_return_exch_reship_company', 'ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_reship_company TEXT'),
+        ('alter_return_exch_reship_tracking', 'ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_reship_tracking TEXT'),
+        ('alter_return_exch_delivered_at', 'ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_delivered_at TIMESTAMPTZ'),
+        ('alter_order_collected_product_id', 'ALTER TABLE samba_order ADD COLUMN IF NOT EXISTS collected_product_id TEXT'),
+        ('idx_order_collected_product_id', 'CREATE INDEX IF NOT EXISTS ix_samba_order_collected_product_id ON samba_order (collected_product_id) WHERE collected_product_id IS NOT NULL'),
+        ('create_search_cache', '''CREATE TABLE IF NOT EXISTS samba_search_cache (
                 id VARCHAR(30) PRIMARY KEY NOT NULL,
                 tenant_id VARCHAR(100),
                 source_site VARCHAR(50) NOT NULL,
@@ -106,23 +110,15 @@ async def fix():
                 products JSON,
                 ttl_minutes INTEGER NOT NULL DEFAULT 60,
                 created_at TIMESTAMPTZ NOT NULL
-            )
-        ''')
-        await conn.execute('CREATE INDEX IF NOT EXISTS ix_samba_search_cache_source_site ON samba_search_cache (source_site)')
-        await conn.execute('CREATE INDEX IF NOT EXISTS ix_samba_search_cache_tenant_id ON samba_search_cache (tenant_id)')
-        # alembic_version 충돌 수정: 롯데ON 라인키 마이그레이션이 이미 적용된 경우
-        # 39f5332d495f(부모)와 z_lotteon_order_line_keys(자식)가 동시에 존재하면 overlaps 에러 발생
-        await conn.execute('''
-            DELETE FROM alembic_version
+            )'''),
+        ('idx_search_cache_source_site', 'CREATE INDEX IF NOT EXISTS ix_samba_search_cache_source_site ON samba_search_cache (source_site)'),
+        ('idx_search_cache_tenant_id', 'CREATE INDEX IF NOT EXISTS ix_samba_search_cache_tenant_id ON samba_search_cache (tenant_id)'),
+        ('alembic_version_dedup', '''DELETE FROM alembic_version
             WHERE version_num = \'39f5332d495f\'
               AND EXISTS (
                 SELECT 1 FROM alembic_version WHERE version_num = \'z_lotteon_order_line_keys\'
-              )
-        ''')
-        # samba_license 테이블 (c58d77ec580e 마이그레이션 — stamp으로 skip됨, 수동 생성 필요)
-        # TIMESTAMPTZ 대신 TIMESTAMP 사용 (asyncpg naive datetime 호환)
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS samba_license (
+              )'''),
+        ('create_license', '''CREATE TABLE IF NOT EXISTS samba_license (
                 id VARCHAR PRIMARY KEY NOT NULL,
                 license_key VARCHAR NOT NULL,
                 buyer_name VARCHAR NOT NULL,
@@ -133,10 +129,25 @@ async def fix():
                 last_verified_at TIMESTAMP,
                 created_at TIMESTAMP NOT NULL,
                 updated_at TIMESTAMP NOT NULL
-            )
-        ''')
-        await conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS ix_samba_license_license_key ON samba_license (license_key)')
-        print('Emergency schema fixes applied.')
+            )'''),
+        ('idx_license_key', 'CREATE UNIQUE INDEX IF NOT EXISTS ix_samba_license_license_key ON samba_license (license_key)'),
+    ]
+    try:
+        total_start = time.time()
+        for label, sql in statements:
+            stmt_start = time.time()
+            try:
+                if label == 'terminate_idle':
+                    val = await conn.fetchval(sql)
+                    print(f'  [{label}] OK ({time.time()-stmt_start:.2f}s) terminated={val}')
+                else:
+                    await conn.execute(sql)
+                    print(f'  [{label}] OK ({time.time()-stmt_start:.2f}s)')
+            except Exception as exc:
+                # lock_timeout/statement_timeout 시 즉시 빠져나와 다음 SQL 진행
+                # (마이그레이션이 같은 작업을 다시 시도하므로 fail-safe)
+                print(f'  [{label}] SKIP ({time.time()-stmt_start:.2f}s) — {type(exc).__name__}: {exc}')
+        print(f'Emergency schema fixes applied. (total {time.time()-total_start:.2f}s)')
     finally:
         await conn.close()
 asyncio.run(fix())
