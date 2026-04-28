@@ -1001,20 +1001,36 @@ async def _do_sync_cs_from_markets(
         if not market_name:
             market_name = target_account.market_name
 
-    # 스마트스토어 계정 조회 (market_name이 롯데ON이면 스킵)
-    ss_settings = []
-    if not market_name or market_name == "스마트스토어":
-        try:
-            settings_result = await session.execute(
-                select(SambaSettings).where(SambaSettings.key.like("store_smartstore%"))
-            )
-            ss_settings = settings_result.scalars().all()
-        except Exception as e:
-            raise HTTPException(500, f"설정 조회 실패: {e}")
-
-    # SambaMarketAccount에서 smartstore 슬러그 미리 조회 (clientId → storeSlug 맵)
+    # 스마트스토어 계정 조회 — SambaMarketAccount 1차, SambaSettings 레거시 폴백
+    ss_settings: list[Any] = []
     if account_id and target_market_type == "smartstore" and target_account is not None:
+        # 단일 계정 지정
         ss_settings = [target_account]
+    elif not market_name or market_name == "스마트스토어":
+        try:
+            from backend.domain.samba.account.model import SambaMarketAccount
+
+            ss_acc_result = await session.execute(
+                select(SambaMarketAccount).where(
+                    SambaMarketAccount.market_type == "smartstore",
+                    SambaMarketAccount.is_active == True,  # noqa: E712
+                )
+            )
+            ss_settings = list(ss_acc_result.scalars().all())
+        except Exception as e:
+            logger.warning(f"[CS동기화] 스마트스토어 SambaMarketAccount 조회 실패: {e}")
+
+        # SambaMarketAccount가 비어있을 때만 레거시 SambaSettings 폴백
+        if not ss_settings:
+            try:
+                settings_result = await session.execute(
+                    select(SambaSettings).where(
+                        SambaSettings.key.like("store_smartstore%")
+                    )
+                )
+                ss_settings = list(settings_result.scalars().all())
+            except Exception as e:
+                raise HTTPException(500, f"설정 조회 실패: {e}")
 
     _ss_slug_map: dict[str, str] = {}
     try:
@@ -1309,6 +1325,7 @@ async def _do_sync_cs_from_markets(
                 )
             except Exception as e:
                 logger.warning(f"[CS동기화] 스마트스토어 구매문의 조회 실패: {e}")
+                errors.append(f"스마트스토어({account_name}) 구매문의: {str(e)}")
 
         except Exception as e:
             logger.error(f"[CS동기화] 스마트스토어 동기화 실패: {e}")
@@ -1489,21 +1506,45 @@ async def _do_sync_cs_from_markets(
             logger.error(f"[CS동기화] eBay 동기화 실패: {e}")
             errors.append(f"eBay: {e}")
 
-    # 롯데ON Q&A 동기화 (market_name이 스마트스토어면 스킵)
-    lo_settings_list = []
-    if not market_name or market_name == "롯데ON":
-        try:
-            from backend.domain.samba.proxy.lotteon import LotteonClient
-
-            lo_settings_result = await session.execute(
-                select(SambaSettings).where(SambaSettings.key.like("store_lotteon%"))
-            )
-            lo_settings_list = lo_settings_result.scalars().all()
-        except Exception as e:
-            logger.warning(f"[CS동기화] 롯데ON 설정 조회 실패: {e}")
-
+    # 롯데ON Q&A 동기화 — SambaMarketAccount 1차, SambaSettings 레거시 폴백
+    lo_settings_list: list[Any] = []
     if account_id and target_market_type == "lotteon" and target_account is not None:
+        # 단일 계정 지정
         lo_settings_list = [target_account]
+    elif not market_name or market_name == "롯데ON":
+        try:
+            from backend.domain.samba.account.model import SambaMarketAccount
+
+            lo_acc_result = await session.execute(
+                select(SambaMarketAccount).where(
+                    SambaMarketAccount.market_type == "lotteon",
+                    SambaMarketAccount.is_active == True,  # noqa: E712
+                )
+            )
+            lo_settings_list = list(lo_acc_result.scalars().all())
+        except Exception as e:
+            logger.warning(f"[CS동기화] 롯데ON SambaMarketAccount 조회 실패: {e}")
+
+        # SambaMarketAccount가 비어있을 때만 레거시 SambaSettings 폴백
+        if not lo_settings_list:
+            try:
+                lo_settings_result = await session.execute(
+                    select(SambaSettings).where(
+                        SambaSettings.key.like("store_lotteon%")
+                    )
+                )
+                lo_settings_list = list(lo_settings_result.scalars().all())
+            except Exception as e:
+                logger.warning(f"[CS동기화] 롯데ON 설정 조회 실패: {e}")
+
+    # 롯데ON 클라이언트 import (for 루프 진입 전 보장)
+    LotteonClient = None  # type: ignore[assignment]
+    if lo_settings_list:
+        try:
+            from backend.domain.samba.proxy.lotteon import LotteonClient  # noqa: F811
+        except Exception as e:
+            logger.warning(f"[CS동기화] 롯데ON 클라이언트 import 실패: {e}")
+            lo_settings_list = []
 
     for lo_setting in lo_settings_list:
         try:
