@@ -766,7 +766,13 @@ def _similarity_match_smartstore(
             best_leaf_match_len = leaf_match_len
             best_path_len = len(c)
             best = c
-    return best if best is not None and best_score > 0 else None
+    # leaf 토큰 매칭이 전혀 없으면 신뢰도 낮음 — AI에 위임 (예: '남성등산의류>패딩' → '셔바이벌의류' 같이
+    # 의류 키워드만 걸려 부모 경로가 엉뚱한 카테고리로 매칭되는 사고 방지)
+    if best is None or best_score <= 0:
+        return None
+    if best_leaf_match_len == 0:
+        return None
+    return best
 
 
 # 소싱↔마켓 용어 차이 보완용 동의어 맵

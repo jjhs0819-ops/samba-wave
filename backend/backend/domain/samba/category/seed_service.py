@@ -688,8 +688,14 @@ JSON만 응답:
                                     )
                                     continue
                                 # 동기화된 카테고리 목록에 있는지 검증
+                                # 트리 미동기화(빈 목록) 시 AI 응답 무검증 통과 방지 — 유령 카테고리 차단
                                 market_cat_list = market_cat_lists.get(market, [])
-                                if not market_cat_list or suggested in market_cat_list:
+                                if not market_cat_list:
+                                    logger.warning(
+                                        f"[벌크매핑] {market} 카테고리 트리 미동기화 → '{suggested}' 스킵"
+                                    )
+                                    continue
+                                if suggested in market_cat_list:
                                     validated[market] = suggested
                                 else:
                                     # 유사매칭 시도
