@@ -1158,12 +1158,15 @@ async def _do_sync_cs_from_markets(
                     except Exception:
                         parsed_date = None
 
-                # 마켓 상품번호로 수집상품 매칭 (스마트스토어: productId)
+                # 마켓 상품번호로 수집상품 매칭 (스마트스토어 qnas 응답 다양한 필드 대응)
+                # /v1/contents/qnas 는 보통 channelProductNo / originProductNo 를 반환
                 market_product_no = str(
-                    item.get(
-                        "productId",
-                        item.get("productNo", item.get("originProductNo", "")),
-                    )
+                    item.get("channelProductNo")
+                    or item.get("smartstoreChannelProductNo")
+                    or item.get("productId")
+                    or item.get("productNo")
+                    or item.get("originProductNo")
+                    or ""
                 )
                 matched = await _find_collected_product_by_market_product_no(
                     session, market_product_no
@@ -1276,7 +1279,15 @@ async def _do_sync_cs_from_markets(
                         except Exception:
                             parsed_date = None
 
-                    mpno = str(item.get("productNo", item.get("productId", "")))
+                    # /v1/pay-user/inquiries 응답 필드 다양성 대응
+                    mpno = str(
+                        item.get("channelProductNo")
+                        or item.get("smartstoreChannelProductNo")
+                        or item.get("productNo")
+                        or item.get("originProductNo")
+                        or item.get("productId")
+                        or ""
+                    )
                     matched = await _find_collected_product_by_market_product_no(
                         session, mpno
                     )
@@ -1286,15 +1297,24 @@ async def _do_sync_cs_from_markets(
                         else ""
                     )
 
+                    # market_order_id 결정: 주문관리(samba_order.order_number)가
+                    # 상품주문번호(productOrderId)로 저장되므로 검색/연결을 위해
+                    # productOrderIdList[0]을 우선 사용하고, 없으면 orderId로 폴백
+                    _po_list = item.get("productOrderIdList")
+                    if isinstance(_po_list, list) and _po_list:
+                        _market_order_id = str(_po_list[0])
+                    elif isinstance(_po_list, str) and _po_list:
+                        _market_order_id = _po_list
+                    else:
+                        _market_order_id = str(item.get("orderId", "")) or None
+
                     inquiry_data = {
                         "market": "스마트스토어",
                         "market_inquiry_no": inq_no,
                         "market_answer_no": str(item["answerContentId"])
                         if item.get("answerContentId")
                         else None,
-                        "market_order_id": item.get(
-                            "orderId", item.get("productOrderIdList", None)
-                        ),
+                        "market_order_id": _market_order_id,
                         "market_product_no": mpno or None,
                         "account_id": sync_account_id,
                         "account_name": account_name,

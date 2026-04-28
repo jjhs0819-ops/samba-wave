@@ -579,9 +579,35 @@ export default function CSPage() {
 
                       {/* 주문번호 + 링크버튼 */}
                       <td style={{ padding: '0.75rem 1rem', verticalAlign: 'top' }}>
-                        <div style={{ fontSize: '0.8125rem', color: '#AAA', textAlign: 'center' }}>
-                          {item.market_order_id || '-'}
-                        </div>
+                        {(() => {
+                          const ordId = item.market_order_id
+                          if (!ordId) {
+                            return <div style={{ fontSize: '0.8125rem', color: '#AAA', textAlign: 'center' }}>-</div>
+                          }
+                          // 스마트스토어는 상품주문번호 기반이라 주문관리 페이지로 바로 이동 가능
+                          const isSmartstore = item.market === '스마트스토어' || item.market === 'smartstore'
+                          return (
+                            <div
+                              onClick={() => {
+                                window.open(
+                                  `/samba/orders?search=${encodeURIComponent(ordId)}&search_type=order_number`,
+                                  '_blank',
+                                )
+                              }}
+                              title={isSmartstore ? '주문관리에서 이 상품주문번호 검색 (새 탭)' : '주문관리에서 이 주문번호 검색 (새 탭)'}
+                              style={{
+                                fontSize: '0.8125rem',
+                                color: '#4C9AFF',
+                                textAlign: 'center',
+                                cursor: 'pointer',
+                                textDecoration: 'underline',
+                                wordBreak: 'break-all',
+                              }}
+                            >
+                              {ordId}
+                            </div>
+                          )
+                        })()}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', marginTop: '0.375rem', alignItems: 'center' }}>
                           <button
                             onClick={() => {
