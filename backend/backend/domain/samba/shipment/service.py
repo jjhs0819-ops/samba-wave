@@ -2055,7 +2055,9 @@ class SambaShipmentService:
         images = product.get("images") or []
         detail_images = product.get("detail_images") or []
         # 추가이미지(sub)에서 출력된 URL을 추적 → detail에서 중복 제외
-        sub_set = set(images[1:]) if len(images) > 1 else set()
+        # 단, sub가 실제로 출력되는 경우에만 필터링(detail만 단독 사용일 때 무필터 정상 노출)
+        sub_will_emit = img_checks.get("sub", False) and len(images) > 1
+        sub_set = set(images[1:]) if sub_will_emit else set()
 
         # img_order 순서대로, img_checks가 True인 항목만 생성
         for item_id in img_order:
@@ -2075,9 +2077,22 @@ class SambaShipmentService:
                         f'<div style="text-align:center;padding:1rem 0;"><h2 style="color:#333;font-size:1.25rem;">{name}</h2></div>'
                     )
             elif item_id == "detail":
+                detail_emitted = 0
                 for d_img in detail_images:
-                    if d_img not in sub_set:
-                        parts.append(img_tag.format(url=d_img))
+                    if d_img in sub_set:
+                        continue
+                    parts.append(img_tag.format(url=d_img))
+                    detail_emitted += 1
+                # 폴백: detail에 1장도 안 들어갔으면 추가이미지(images[1:])로 채움
+                # — detail_images 비어있거나 모두 sub_set와 중복인 경우 대비
+                if detail_emitted == 0:
+                    fallback_imgs = images[1:] or images[:1]
+                    for s_img in fallback_imgs:
+                        parts.append(img_tag.format(url=s_img))
+                    if fallback_imgs:
+                        logger.info(
+                            f"[상세HTML] detail 비어있음 → 추가이미지 {len(fallback_imgs)}장 폴백"
+                        )
             elif item_id == "bottomImg" and bottom_img:
                 parts.append(img_tag.format(url=bottom_img))
 
