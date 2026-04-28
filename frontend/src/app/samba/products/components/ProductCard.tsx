@@ -816,8 +816,9 @@ const ProductCard = React.memo(function ProductCard({
                   onOk: async () => {
                     setCardConfirm(null)
                     try {
-                      const field = list === detailImgList ? 'detail_images' : 'images'
-                      const res = await collectorApi.bulkRemoveImage(img, [field])
+                      // 상세페이지 이미지는 detail_images 배열 + detail_html 본문 두 곳 모두 처리
+                      const fields = list === detailImgList ? ['detail_images', 'detail_html'] : ['images']
+                      const res = await collectorApi.bulkRemoveImage(img, fields)
                       setList(list.filter((_, j) => j !== i))
                       setCardAlert({ msg: `${fmtNum(res.removed)}개 상품에서 삭제 완료`, type: 'success' })
                     } catch (e) { setCardAlert({ msg: '추적삭제 실패: ' + (e instanceof Error ? e.message : String(e)), type: 'error' }) }

@@ -158,7 +158,9 @@ class MoveFilterRequest(BaseModel):
 class BulkImageRemoveRequest(BaseModel):
     image_url: str
     field: str = "images"  # 하위호환
-    fields: Optional[list[str]] = None  # ['images', 'detail_images'] 선택 가능
+    fields: Optional[list[str]] = (
+        None  # ['images', 'detail_images', 'detail_html'] 선택 가능
+    )
 
 
 class BulkTagUpdateRequest(BaseModel):
@@ -1633,9 +1635,17 @@ async def bulk_remove_image(
     body: BulkImageRemoveRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    """특정 이미지 URL을 모든 상품에서 일괄 삭제 (추적삭제)."""
+    """특정 이미지 URL을 모든 상품에서 일괄 삭제 (추적삭제).
+
+    대상 필드:
+      - images: 대표/추가 이미지 배열
+      - detail_images: 상세페이지 이미지 배열
+      - detail_html: 상세페이지 HTML 본문 — 해당 URL을 포함한 <img> 태그 통째 제거
+    """
+    import re
+
     from backend.domain.samba.collector.model import SambaCollectedProduct
-    from sqlalchemy import cast, String
+    from sqlalchemy import String, cast
     from sqlmodel import select
 
     # fields 우선, 없으면 기존 field 하위호환
@@ -1652,8 +1662,19 @@ async def bulk_remove_image(
         conditions.append(
             cast(SambaCollectedProduct.detail_images, String).like(f"%{image_url}%")
         )
+    if "detail_html" in target_fields:
+        conditions.append(SambaCollectedProduct.detail_html.like(f"%{image_url}%"))
     if not conditions:
         return {"removed": 0}
+
+    # detail_html에서 해당 URL을 포함한 <img> 태그를 통째로 제거
+    img_tag_re = re.compile(r"<img\b[^>]*>", flags=re.IGNORECASE)
+
+    def _strip_img_tags(html: str, url: str) -> str:
+        def _repl(m: re.Match) -> str:
+            return "" if url in m.group(0) else m.group(0)
+
+        return img_tag_re.sub(_repl, html)
 
     stmt = select(SambaCollectedProduct).where(or_(*conditions))
     result = await session.exec(stmt)
@@ -1670,6 +1691,15 @@ async def bulk_remove_image(
         ):
             p.detail_images = [u for u in p.detail_images if u != image_url]
             found = True
+        if (
+            "detail_html" in target_fields
+            and p.detail_html
+            and image_url in p.detail_html
+        ):
+            new_html = _strip_img_tags(p.detail_html, image_url)
+            if new_html != p.detail_html:
+                p.detail_html = new_html
+                found = True
         if found:
             tags = list(p.tags or [])
             if "__img_edited__" not in tags:
