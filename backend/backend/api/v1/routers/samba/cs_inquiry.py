@@ -422,33 +422,57 @@ async def reply_cs_inquiry(
 
 
 async def _find_collected_product_by_market_product_no(
-    session: AsyncSession, market_product_no: str
+    session: AsyncSession,
+    market_product_no: str,
+    product_name: str = "",
 ) -> "dict | None":
     """마켓 상품번호로 수집상품을 찾아 연결 정보를 반환하는 공통 함수.
 
-    market_product_nos JSON 컬럼에서 해당 상품번호를 검색한다.
-    모든 마켓(스마트스토어/쿠팡/11번가 등) 공통으로 사용.
+    1차: market_product_nos JSON 컬럼에서 해당 상품번호 검색 (PostgreSQL JSON 연산)
+    2차(매칭 실패 시): product_name 끝 토큰이 4자리 이상 숫자면 site_product_id로 fallback 매칭
+        — 우리 시스템은 등록 시 상품명 끝에 site_product_id를 붙이므로
+        registered_accounts/market_product_nos가 NULL이거나 cleanup된 케이스도 매칭 가능
 
     Returns:
         { id, source_site, site_product_id, name, images, original_link, product_link } or None
     """
-    if not market_product_no:
-        return None
     from sqlalchemy import text as sa_text
 
-    # market_product_nos JSON에서 값으로 검색 (PostgreSQL JSON 연산)
-    sql = sa_text(
-        "SELECT id, source_site, site_product_id, name, images "
-        "FROM samba_collected_product "
-        "WHERE market_product_nos::text LIKE :pattern "
-        "LIMIT 1"
-    )
-    result = await session.execute(sql, {"pattern": f'%"{market_product_no}"%'})
-    row = result.fetchone()
-    if not row:
-        return None
+    pid = source_site = site_product_id = name = None
+    images = None
 
-    pid, source_site, site_product_id, name, images = row
+    # ── 1차: market_product_nos LIKE 매칭 (정수형 저장 케이스도 잡히도록 따옴표 제외) ──
+    if market_product_no:
+        sql = sa_text(
+            "SELECT id, source_site, site_product_id, name, images "
+            "FROM samba_collected_product "
+            "WHERE market_product_nos::text LIKE :pattern "
+            "LIMIT 1"
+        )
+        result = await session.execute(sql, {"pattern": f"%{market_product_no}%"})
+        row = result.fetchone()
+        if row:
+            pid, source_site, site_product_id, name, images = row
+
+    # ── 2차: product_name 끝 site_product_id로 fallback 매칭 ──
+    if pid is None and product_name:
+        tokens = str(product_name).strip().split()
+        if tokens:
+            last = tokens[-1]
+            if last.isdigit() and len(last) >= 4:
+                sql2 = sa_text(
+                    "SELECT id, source_site, site_product_id, name, images "
+                    "FROM samba_collected_product "
+                    "WHERE site_product_id = :sp_id "
+                    "LIMIT 1"
+                )
+                result2 = await session.execute(sql2, {"sp_id": last})
+                row2 = result2.fetchone()
+                if row2:
+                    pid, source_site, site_product_id, name, images = row2
+
+    if pid is None:
+        return None
 
     # 소싱처 URL 생성
     sourcing_urls = {
@@ -588,8 +612,9 @@ async def _sync_lotteon_qna(
                     parsed_date = None
 
         # 수집 상품 매칭
+        _pd_nm = str(item.get("pdNm", "") or "")
         matched = await _find_collected_product_by_market_product_no(
-            session, market_product_no
+            session, market_product_no, _pd_nm
         )
         product_link = (
             _build_market_product_url("롯데ON", market_product_no)
@@ -694,8 +719,9 @@ async def _sync_lotteon_product_qna(
                     parsed_date = None
 
         # 수집 상품 매칭
+        _pd_nm = str(item.get("pdNm", "") or "")
         matched = await _find_collected_product_by_market_product_no(
-            session, market_product_no
+            session, market_product_no, _pd_nm
         )
         product_link = (
             _build_market_product_url("롯데ON", market_product_no)
@@ -819,8 +845,9 @@ async def _sync_lotteon_contact(
             except Exception:
                 pass
 
+        _pd_nm = str(item.get("pdNm") or "")
         matched = await _find_collected_product_by_market_product_no(
-            session, market_product_no
+            session, market_product_no, _pd_nm
         )
         product_link = (
             _build_market_product_url("롯데ON", market_product_no)
@@ -925,8 +952,9 @@ async def _sync_lotteon_compensate(
             except Exception:
                 pass
 
+        _pd_nm = str(item.get("pdNm") or "")
         matched = await _find_collected_product_by_market_product_no(
-            session, market_product_no
+            session, market_product_no, _pd_nm
         )
         product_link = (
             _build_market_product_url("롯데ON", market_product_no)
@@ -1168,8 +1196,9 @@ async def _do_sync_cs_from_markets(
                     or item.get("originProductNo")
                     or ""
                 )
+                _pd_nm = str(item.get("productName", "") or "")
                 matched = await _find_collected_product_by_market_product_no(
-                    session, market_product_no
+                    session, market_product_no, _pd_nm
                 )
 
                 product_link = (
@@ -1288,8 +1317,9 @@ async def _do_sync_cs_from_markets(
                         or item.get("productId")
                         or ""
                     )
+                    _pd_nm = str(item.get("productName", "") or "")
                     matched = await _find_collected_product_by_market_product_no(
-                        session, mpno
+                        session, mpno, _pd_nm
                     )
                     product_link = (
                         _build_market_product_url("스마트스토어", mpno, store_slug)
@@ -1660,13 +1690,30 @@ async def _do_sync_cs_from_markets(
             )
             cp_rows = cp_result.fetchall()
 
-            # 마켓상품번호 → 수집상품 매핑
+            # 마켓상품번호 → 수집상품 매핑 (+ site_product_id 매핑)
             mpn_map: dict[str, tuple] = {}
+            spid_map: dict[str, tuple] = {}
             for row in cp_rows:
                 pid, site, spid, imgs, mpnos = row
+                # site_product_id 매핑 — product_name 끝 토큰 fallback용
+                if spid:
+                    spid_map[str(spid)] = (pid, site, spid, imgs, mpnos)
                 if mpnos and isinstance(mpnos, dict):
                     for k, v in mpnos.items():
-                        if v:
+                        if not v:
+                            continue
+                        # 그룹전송 시 dict 형태({"originProductNo": ..., "smartstoreChannelProductNo": ...})
+                        if isinstance(v, dict):
+                            for inner_v in v.values():
+                                if inner_v:
+                                    mpn_map[str(inner_v)] = (
+                                        pid,
+                                        site,
+                                        spid,
+                                        imgs,
+                                        mpnos,
+                                    )
+                        else:
                             mpn_map[str(v)] = (pid, site, spid, imgs, mpnos)
 
             sourcing_urls = {
@@ -1686,11 +1733,19 @@ async def _do_sync_cs_from_markets(
             }
 
             for inq in unlinked_items:
-                # market_product_no로 매칭 (유일한 기준)
+                # 1차: market_product_no로 매칭
+                matched = None
                 mpno = inq.market_product_no
-                if not mpno:
-                    continue
-                matched = mpn_map.get(str(mpno))
+                if mpno:
+                    matched = mpn_map.get(str(mpno))
+                # 2차: product_name 끝 토큰(site_product_id)으로 fallback 매칭
+                # — 등록 후 cleanup으로 market_product_nos가 NULL이 된 케이스 대응
+                if not matched and inq.product_name:
+                    tokens = str(inq.product_name).strip().split()
+                    if tokens:
+                        last = tokens[-1]
+                        if last.isdigit() and len(last) >= 4:
+                            matched = spid_map.get(last)
                 if not matched:
                     continue
 

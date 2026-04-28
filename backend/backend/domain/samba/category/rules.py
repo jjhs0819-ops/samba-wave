@@ -607,17 +607,15 @@ def _similarity_match_smartstore(
     # 특수 대분류 제외된 후보
     candidates = [c for c in market_cats if not _is_restricted_top(c.split(" > ")[0])]
 
-    # 전체 세그먼트의 키워드 + 동의어 (최종 점수 계산용)
-    all_keywords = set()
-    for seg in segs:
-        all_keywords |= _expand_synonyms({seg})
+    # 세그먼트별 토큰(분해 + 동의어 + 한국어 복합어 토큰)
+    seg_tokens_list: list[set[str]] = [_seg_tokens(seg) for seg in segs]
 
     # 마켓 대분류 목록 수집 (세그먼트가 대분류에 직접 일치하면 후보 보존용)
     market_top_set = {c.split(" > ")[0] for c in candidates}
 
-    # ── 대분류부터 순차 필터링 ──
+    # ── 대분류부터 순차 필터링 (분해된 토큰 사용) ──
     for i, seg in enumerate(segs):
-        seg_keywords = _expand_synonyms({seg})
+        seg_keywords = seg_tokens_list[i]
         narrowed = []
         for c in candidates:
             c_parts = [s.strip() for s in c.split(" > ")]
@@ -635,8 +633,8 @@ def _similarity_match_smartstore(
 
     # ── 소싱 하위 세그먼트가 마켓 대분류와 직접 일치하면 해당 대분류도 후보에 추가 ──
     # 예: "패션잡화 > 신발 > 스니커즈" → "신발"이 G마켓 대분류에 있으면 "신발 > ..." 카테고리도 포함
-    for seg in segs[1:]:
-        seg_kws = _expand_synonyms({seg})
+    for i in range(1, len(segs)):
+        seg_kws = seg_tokens_list[i]
         for top in market_top_set:
             if any(
                 kw == top or (len(kw) >= 2 and kw in top and len(kw) / len(top) > 0.5)
@@ -668,15 +666,107 @@ def _similarity_match_smartstore(
     if fashion:
         candidates = fashion
 
-    # 전체 키워드 매칭 점수로 최적 카테고리 선택
-    best = None
-    best_score = 0
+    # ── 세그먼트별 가중치 부여 (leaf=가장 하위가 가장 중요) ──
+    # 4단계: [1, 2, 3, 5], 3단계: [1, 3, 5], 2단계: [3, 5], 1단계: [5]
+    n = len(segs)
+    if n >= 4:
+        seg_weights = [1] * (n - 3) + [2, 3, 5]
+    elif n == 3:
+        seg_weights = [1, 3, 5]
+    elif n == 2:
+        seg_weights = [3, 5]
+    else:
+        seg_weights = [5]
+
+    # 품목성 토큰: 서로 다르면 다른 종류의 상품(예: 양말 vs 가방) → 감점 대상
+    _SPECIFIC_ITEM_TOKENS: tuple[str, ...] = (
+        "양말",
+        "장갑",
+        "모자",
+        "신발",
+        "가방",
+        "배낭",
+        "백팩",
+        "지갑",
+        "벨트",
+        "시계",
+        "스카프",
+        "양산",
+        "우산",
+        "타월",
+        "수통",
+        "물병",
+        "텐트",
+        "침낭",
+        "랜턴",
+        "스틱",
+        "원피스",
+        "스커트",
+        "코트",
+        "재킷",
+        "자켓",
+        "패딩",
+        "팬츠",
+        "바지",
+        "셔츠",
+        "티셔츠",
+        "후드",
+        "맨투맨",
+        "니트",
+    )
+
+    leaf_tokens = seg_tokens_list[-1]
+    source_specific = {tok for tok in _SPECIFIC_ITEM_TOKENS if tok in leaf_tokens}
+
+    # leaf-우선 점수 계산: candidate의 leaf 매칭은 ×3, 상위 경로 매칭은 ×1
+    best: Optional[str] = None
+    best_score = -(10**6)
+    best_leaf_match_len = -1
+    best_path_len = 10**6
     for c in candidates:
-        score = sum(1 for kw in all_keywords if kw in c)
+        c_parts = [s.strip() for s in c.split(" > ")]
+        if not c_parts:
+            continue
+        c_leaf = c_parts[-1]
+        c_rest = " > ".join(c_parts[:-1]) if len(c_parts) > 1 else ""
+
+        score = 0
+        # source leaf 토큰이 candidate leaf에 매칭된 가장 긴 길이 (tiebreaker)
+        leaf_match_len = 0
+        for i, tokens in enumerate(seg_tokens_list):
+            w = seg_weights[i]
+            # leaf 매칭 (가중치 ×3)
+            matched_lens = [len(tok) for tok in tokens if tok in c_leaf]
+            if matched_lens:
+                score += w * 3
+                if i == len(seg_tokens_list) - 1:
+                    leaf_match_len = max(leaf_match_len, max(matched_lens))
+            # 상위 경로 매칭 (가중치 ×1)
+            elif c_rest and any(tok in c_rest for tok in tokens):
+                score += w
+
+        # 품목 불일치 패널티: source leaf의 specific 토큰이 candidate leaf와 다르고,
+        # candidate leaf가 다른 specific 품목을 갖고 있다면 감점
+        if source_specific:
+            cand_specific = {tok for tok in _SPECIFIC_ITEM_TOKENS if tok in c_leaf}
+            if cand_specific and not (source_specific & cand_specific):
+                score -= seg_weights[-1] * 2
+
+        # 우선순위: 점수 > leaf 매칭 길이 > 짧은 경로
+        replace = False
         if score > best_score:
+            replace = True
+        elif score == best_score:
+            if leaf_match_len > best_leaf_match_len:
+                replace = True
+            elif leaf_match_len == best_leaf_match_len and len(c) < best_path_len:
+                replace = True
+        if replace:
             best_score = score
+            best_leaf_match_len = leaf_match_len
+            best_path_len = len(c)
             best = c
-    return best
+    return best if best is not None and best_score > 0 else None
 
 
 # 소싱↔마켓 용어 차이 보완용 동의어 맵
@@ -720,7 +810,15 @@ _SYNONYM_MAP: dict[str, list[str]] = {
     "메이크업": ["메이크업", "색조", "베이스메이크업"],
     "패션잡화": ["패션잡화", "잡화", "액세서리"],
     "신발": ["신발", "슈즈", "구두", "풋웨어"],
-    "가방": ["가방", "백", "백팩"],
+    "가방": ["가방", "백", "백팩", "배낭"],
+    "배낭": ["배낭", "가방", "백팩", "백"],
+    "백팩": ["백팩", "배낭", "가방"],
+    "양말": ["양말", "삭스"],
+    "장갑": ["장갑", "글러브"],
+    "모자": ["모자", "캡", "비니", "햇"],
+    "용품": ["용품", "소품", "잡화", "기타"],
+    "소품": ["소품", "용품", "잡화"],
+    "잡화": ["잡화", "용품", "소품", "액세서리"],
 }
 
 
@@ -736,6 +834,85 @@ def _expand_synonyms(keywords: set[str]) -> set[str]:
             if syn_key in kw:
                 expanded.update(syn_values)
     return expanded
+
+
+# 한국어 복합어 안에서 추출할 상품 토큰 (구분자가 없는 합성어 대응)
+# 예: "등산양말" → "양말", "소형배낭" → "배낭", "등산화/트레킹화" → "등산화"+"트레킹화"
+_KO_PRODUCT_TOKENS: tuple[str, ...] = (
+    "양말",
+    "배낭",
+    "잡화",
+    "장갑",
+    "신발",
+    "가방",
+    "모자",
+    "장비",
+    "용품",
+    "소품",
+    "의류",
+    "코트",
+    "재킷",
+    "자켓",
+    "패딩",
+    "팬츠",
+    "바지",
+    "청바지",
+    "셔츠",
+    "티셔츠",
+    "원피스",
+    "스커트",
+    "스카프",
+    "벨트",
+    "지갑",
+    "시계",
+    "스니커즈",
+    "운동화",
+    "워킹화",
+    "등산화",
+    "트레킹화",
+    "러닝화",
+    "구두",
+    "샌들",
+    "부츠",
+    "슬리퍼",
+    "파우치",
+    "케이스",
+    "텐트",
+    "침낭",
+    "랜턴",
+    "스틱",
+    "수통",
+    "물병",
+    "지팡이",
+    "후드",
+    "맨투맨",
+    "니트",
+    "조끼",
+    "점퍼",
+    "양산",
+    "우산",
+    "타월",
+)
+
+
+def _seg_tokens(seg: str) -> set[str]:
+    """세그먼트를 슬래시·콤마·공백·하이픈으로 분해하고, 한국어 복합어 안의 상품 토큰까지 추출 + 동의어 확장.
+
+    예:
+      "등산배낭/잡화" → {"등산배낭/잡화", "등산배낭", "잡화", "배낭"} (+ 동의어)
+      "등산양말"     → {"등산양말", "양말"} (+ 동의어)
+      "소형배낭"     → {"소형배낭", "배낭", "가방"...}
+    """
+    tokens: set[str] = {seg}
+    for part in re.split(r"[/,\s\-]+", seg):
+        part = part.strip()
+        if len(part) >= 2:
+            tokens.add(part)
+    # 한국어 복합어 안의 상품 토큰 추출
+    for prod in _KO_PRODUCT_TOKENS:
+        if prod != seg and prod in seg:
+            tokens.add(prod)
+    return _expand_synonyms(tokens)
 
 
 # 마켓별 카테고리 데이터 (검색/추천용 참조 목록)

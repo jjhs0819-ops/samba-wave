@@ -528,6 +528,9 @@ export default function CSPage() {
                 {inquiries.map(item => {
                   const st = REPLY_STATUS_MAP[item.reply_status] || REPLY_STATUS_MAP.pending
                   const tp = INQUIRY_TYPE_MAP[item.inquiry_type] || { label: item.inquiry_type, color: '#888' }
+                  // 본 시스템이 등록하지 않은 외부 상품 — original_link/product_image/collected_product_id 모두 미상
+                  const isExternal = !item.collected_product_id
+                  const externalTooltip = '본 시스템에 수집되지 않은 외부 등록 상품입니다'
                   return (
                     <tr
                       key={item.id}
@@ -552,14 +555,16 @@ export default function CSPage() {
                             src={item.product_image}
                             alt=""
                             onClick={() => item.product_link && window.open(item.product_link, '_blank')}
+                            title={isExternal ? externalTooltip : ''}
                             style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #2D2D2D', cursor: item.product_link ? 'pointer' : 'default' }}
                           />
                         ) : (
                           <div
                             onClick={() => item.product_link && window.open(item.product_link, '_blank')}
-                            style={{ width: '60px', height: '60px', background: '#1A1A1A', borderRadius: '6px', border: '1px solid #2D2D2D', display: 'flex', alignItems: 'center', justifyContent: 'center', color: item.product_link ? '#4C9AFF' : '#444', fontSize: '0.625rem', cursor: item.product_link ? 'pointer' : 'default', textDecoration: item.product_link ? 'underline' : 'none', margin: '0 auto' }}
+                            title={isExternal ? externalTooltip : ''}
+                            style={{ width: '60px', height: '60px', background: '#1A1A1A', borderRadius: '6px', border: '1px solid #2D2D2D', display: 'flex', alignItems: 'center', justifyContent: 'center', color: isExternal ? '#888' : (item.product_link ? '#4C9AFF' : '#444'), fontSize: '0.625rem', cursor: item.product_link ? 'pointer' : 'default', textDecoration: !isExternal && item.product_link ? 'underline' : 'none', margin: '0 auto' }}
                           >
-                            {item.product_link ? '링크' : 'No IMG'}
+                            {isExternal ? '외부' : (item.product_link ? '링크' : 'No IMG')}
                           </div>
                         )}
                         {item.market_inquiry_no && (
@@ -611,13 +616,17 @@ export default function CSPage() {
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', marginTop: '0.375rem', alignItems: 'center' }}>
                           <button
                             onClick={() => {
-                              if (!item.original_link) { showAlert('소싱처 원문링크가 없습니다', 'info'); return }
+                              if (!item.original_link) {
+                                showAlert(isExternal ? externalTooltip : '소싱처 원문링크가 없습니다', 'info')
+                                return
+                              }
                               const link = item.original_link.replace(
                                 /https?:\/\/www\.lotteon\.com\/product\/productDetail\.lotte\?spdNo=([^&\s]+).*/,
                                 'https://www.lotteon.com/p/product/$1'
                               )
                               window.open(link, '_blank')
                             }}
+                            title={isExternal && !item.original_link ? externalTooltip : ''}
                             style={{ fontSize: '0.72rem', padding: '0.15rem 0.375rem', border: '1px solid #444', borderRadius: '3px', color: item.original_link ? '#4C9AFF' : '#555', background: 'transparent', cursor: 'pointer', width: '100%', textAlign: 'center' }}
                           >원문링크</button>
                           <button
@@ -631,12 +640,11 @@ export default function CSPage() {
                             onClick={() => {
                               if (item.collected_product_id) {
                                 window.open(`/samba/products?search=${encodeURIComponent(item.collected_product_id)}&search_type=id&highlight=${item.collected_product_id}`, '_blank')
-                              } else if (item.product_name) {
-                                window.open(`/samba/products?search=${encodeURIComponent(item.product_name)}`, '_blank')
                               } else {
-                                showAlert('연결된 상품 정보가 없습니다', 'info')
+                                showAlert(externalTooltip, 'info')
                               }
                             }}
+                            title={isExternal ? externalTooltip : ''}
                             style={{ fontSize: '0.72rem', padding: '0.15rem 0.375rem', border: '1px solid #444', borderRadius: '3px', color: item.collected_product_id ? '#FF8C00' : '#555', background: 'transparent', cursor: 'pointer', width: '100%', textAlign: 'center' }}
                           >상품정보</button>
                         </div>

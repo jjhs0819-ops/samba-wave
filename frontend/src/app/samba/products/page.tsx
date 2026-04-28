@@ -1858,7 +1858,7 @@ export default function ProductsPage() {
               )].join(',')
               sessionStorage.setItem('shipment_selected', ids)
               sessionStorage.setItem('shipment_sites', sites)
-              window.location.href = '/samba/shipments?fromStorage=1&autoAll=1'
+              window.open('/samba/shipments?fromStorage=1&autoAll=1', '_blank')
             }}
             style={{
               fontSize: "0.78rem", padding: "4px 12px",
