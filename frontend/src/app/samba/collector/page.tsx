@@ -408,7 +408,7 @@ export default function CollectorPage() {
         tagRegFilter={tagRegFilter} policyRegFilter={policyRegFilter}
         setCollectFilter={setCollectFilter} setMarketRegFilter={setMarketRegFilter}
         setTagRegFilter={setTagRegFilter} setPolicyRegFilter={setPolicyRegFilter}
-        setSelectedIds={setSelectedIds}
+        selectedIds={selectedIds} setSelectedIds={setSelectedIds}
         setShowDuplicatesModal={setShowDuplicatesModal} setShowMappingModal={setShowMappingModal}
         setMappingFilter={setMappingFilter} setMappingData={setMappingData}
         tagPreviewLoading={tagPreviewLoading}

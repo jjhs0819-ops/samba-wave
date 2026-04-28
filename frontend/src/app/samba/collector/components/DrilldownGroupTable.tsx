@@ -22,7 +22,7 @@ export interface DrilldownGroupTableProps {
   collectFilter: string; marketRegFilter: string; tagRegFilter: string; policyRegFilter: string
   setCollectFilter: Dispatch<SetStateAction<string>>; setMarketRegFilter: Dispatch<SetStateAction<string>>
   setTagRegFilter: Dispatch<SetStateAction<string>>; setPolicyRegFilter: Dispatch<SetStateAction<string>>
-  setSelectedIds: Dispatch<SetStateAction<Set<string>>>
+  selectedIds: Set<string>; setSelectedIds: Dispatch<SetStateAction<Set<string>>>
   setShowDuplicatesModal: Dispatch<SetStateAction<boolean>>; setShowMappingModal: Dispatch<SetStateAction<boolean>>
   setMappingFilter: Dispatch<SetStateAction<SambaSearchFilter | null>>
   setMappingData: Dispatch<SetStateAction<Record<string, string>>>
@@ -47,7 +47,7 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
     setDrillSite, setDrillBrand, setDrillGroup, setDrillEntry,
     collectFilter, marketRegFilter, tagRegFilter, policyRegFilter,
     setCollectFilter, setMarketRegFilter, setTagRegFilter, setPolicyRegFilter,
-    setSelectedIds,
+    selectedIds, setSelectedIds,
     setShowDuplicatesModal, setShowMappingModal, setMappingFilter, setMappingData,
     tagPreviewLoading,
     handleDeleteSelectedGroups, handleCollectGroups,
@@ -337,10 +337,25 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
                 <div style={colStyle(2)}>
                   {(drillSite || drillBrand) ? (catGroups.length > 0 ? (<>
                     {catGroups.map(g => (
-                      <div key={g.id} style={itemSt(drillGroup === g.id)}
-                        onClick={() => { setDrillGroup(g.id); setSelectedIds(new Set([g.id])) }}
-                        onMouseEnter={e => { if (drillGroup !== g.id) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
-                        onMouseLeave={e => { if (drillGroup !== g.id) e.currentTarget.style.background = 'transparent' }}
+                      <div key={g.id} style={itemSt(drillGroup === g.id || selectedIds.has(g.id))}
+                        onClick={(e) => {
+                          // Ctrl(Win) / Meta(Mac) 누른 상태: 다중 선택 토글
+                          if (e.ctrlKey || e.metaKey) {
+                            setSelectedIds(prev => {
+                              const next = new Set(prev)
+                              if (next.has(g.id)) next.delete(g.id)
+                              else next.add(g.id)
+                              return next
+                            })
+                            setDrillGroup(g.id)
+                            return
+                          }
+                          // 일반 클릭: 단일 선택
+                          setDrillGroup(g.id)
+                          setSelectedIds(new Set([g.id]))
+                        }}
+                        onMouseEnter={e => { if (drillGroup !== g.id && !selectedIds.has(g.id)) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
+                        onMouseLeave={e => { if (drillGroup !== g.id && !selectedIds.has(g.id)) e.currentTarget.style.background = 'transparent' }}
                       >
                         {g._category || g.name}
                         {(g as unknown as Record<string, number>).ai_tagged_count > 0 && (
