@@ -154,7 +154,14 @@ async def _build_order_filters(
         elif search_category == "product_id":
             filters.append(SambaOrder.product_id.ilike(lower_q))
         elif search_category == "order_number":
-            filters.append(SambaOrder.order_number.ilike(lower_q))
+            # 상품주문번호(order_number) + 묶음주문번호(shipment_id) + 외부주문번호(ext_order_number) 모두 매칭
+            filters.append(
+                or_(
+                    SambaOrder.order_number.ilike(lower_q),
+                    SambaOrder.shipment_id.ilike(lower_q),
+                    SambaOrder.ext_order_number.ilike(lower_q),
+                )
+            )
         else:
             filters.append(SambaOrder.customer_name.ilike(lower_q))
 

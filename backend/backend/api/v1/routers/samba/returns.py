@@ -564,27 +564,44 @@ _CLAIM_STATUS_LABEL: dict[str, str] = {
 
 
 def _extract_city_district(address: Optional[str]) -> Optional[str]:
-    """주소에서 시/군 단위를 추출한다.
-    - '경기도 수원시 팔달구...' → '수원시'
-    - '부산광역시 남동구...' → '부산시'
-    - '서울특별시 강남구...' → '서울시'
+    """주소에서 시/군/구 단위를 추출한다.
+    - '경기도 수원시 팔달구...' → '수원시 팔달구'
+    - '부산광역시 남동구...' → '부산 남동구'
+    - '서울특별시 강남구...' → '서울 강남구'
     - '세종특별자치시...' → '세종시'
+    - '충남 아산시 ...' → '아산시'
     """
     if not address:
         return None
     parts = address.split()
-    # 광역시/특별시/특별자치시 → "XX시" 형태로 변환
-    first = parts[0] if parts else ""
-    if first.endswith(("광역시", "특별시", "특별자치시")):
-        city_name = (
-            first.replace("광역시", "").replace("특별자치시", "").replace("특별시", "")
-        )
-        return f"{city_name}시"
-    # 도 다음의 시/군 반환
+    if not parts:
+        return None
+    first = parts[0]
+    # 광역시/특별시 → "XX 구이름" (구 단위까지 표기)
+    if first.endswith(("광역시", "특별시")):
+        city_short = first.replace("광역시", "").replace("특별시", "")
+        for p in parts[1:]:
+            if p.endswith(("구", "군")):
+                return f"{city_short} {p}"
+        return f"{city_short}시"
+    # 특별자치시(세종) → 세종시
+    if first.endswith("특별자치시"):
+        return f"{first.replace('특별자치시', '')}시"
+    # 도 단위 시작 → 시/군 + 구가 있으면 함께
+    city_or_gun: Optional[str] = None
+    gu: Optional[str] = None
     for p in parts[1:]:
-        if p.endswith(("시", "군")):
-            return p
-    return parts[0] if parts else None
+        if not city_or_gun and p.endswith(("시", "군")):
+            city_or_gun = p
+            continue
+        if city_or_gun and p.endswith("구"):
+            gu = p
+            break
+    if city_or_gun and gu:
+        return f"{city_or_gun} {gu}"
+    if city_or_gun:
+        return city_or_gun
+    return first
 
 
 def _parse_lotteon_return(

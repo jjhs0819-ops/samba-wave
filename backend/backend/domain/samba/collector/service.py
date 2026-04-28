@@ -491,12 +491,19 @@ class SambaCollectorService:
 
     @staticmethod
     def _fill_optional_images(data: Dict[str, Any]) -> None:
-        """추가이미지가 부족하면 상세이미지로 보충 (최대 9장)."""
+        """추가이미지가 부족하면 상세이미지로 보충 (최대 9장).
+
+        단, 추가이미지(images[1:])가 1장이라도 존재하면 보충하지 않는다.
+        소싱처가 제공한 추가이미지 원본 의도를 우선 보존하기 위함.
+        """
         images = data.get("images")
         detail_images = data.get("detail_images")
         if not isinstance(images, list) or not isinstance(detail_images, list):
             return
         if len(images) >= 9:
+            return
+        # 추가이미지가 1장이라도 있으면 상세이미지로 보강하지 않음
+        if len(images) > 1:
             return
         existing = set(images)
         for di in detail_images:

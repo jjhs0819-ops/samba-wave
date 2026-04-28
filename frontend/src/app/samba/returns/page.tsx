@@ -140,6 +140,7 @@ export default function ReturnsPage() {
 
   const [rejectModal, setRejectModal] = useState<{ id: string; reason: string } | null>(null)
   const [locationModal, setLocationModal] = useState<{ id: string; value: string; address: string } | null>(null)
+  const [addressModal, setAddressModal] = useState<{ region: string; address: string; phone: string; customer: string } | null>(null)
 
   const submitReject = async () => {
     if (!rejectModal || !rejectModal.reason.trim()) {
@@ -667,7 +668,15 @@ export default function ReturnsPage() {
                         {r.return_link ? <a href={r.return_link} target="_blank" rel="noopener noreferrer" style={{ color: '#4C9AFF', textDecoration: 'none' }}>링크</a> : '-'}
                       </td>
                       <td style={{ ...tdCenter, color: '#888' }}>{fmtMD(r.return_request_date || r.created_at)}</td>
-                      <td style={tdCenter}>{r.region || '-'}</td>
+                      <td style={tdCenter}>
+                        {r.region ? (
+                          <span
+                            onClick={() => setAddressModal({ region: r.region || '', address: r.customer_address || '', phone: r.customer_phone || '', customer: r.customer_name || '' })}
+                            style={{ color: '#E5E5E5', cursor: 'pointer', textDecoration: 'underline', textDecorationColor: '#3D3D3D', textUnderlineOffset: '3px' }}
+                            title={r.customer_address || '주소 정보 없음'}
+                          >{r.region}</span>
+                        ) : '-'}
+                      </td>
                       <td style={{ ...tdCenter, padding: '0.375rem' }}>
                         <select
                           value={r.product_location || '고객'}
@@ -765,7 +774,44 @@ export default function ReturnsPage() {
         </div>
       )}
 
-{/* 상품위치 수정 모달 */}      {locationModal && (        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '420px', maxWidth: '90vw' }}>            <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '1rem' }}>상품위치 수정</h3>            {locationModal.address && (              <div style={{ padding: '0.75rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', marginBottom: '1rem', fontSize: '0.85rem', color: '#4C9AFF', lineHeight: 1.5 }}>                <span style={{ color: '#888', fontSize: '0.75rem' }}>전체 주소</span><br/>                {locationModal.address}              </div>            )}            <input style={inputStyle} placeholder="시/군/구 입력" value={locationModal.value} onChange={e => setLocationModal({ ...locationModal, value: e.target.value })} onKeyDown={async e => { if (e.key === 'Enter') { const val = locationModal.value.trim(); setReturns(prev => prev.map(x => x.id === locationModal.id ? { ...x, product_location: val } : x)); try { await returnApi.patch(locationModal.id, { product_location: val }) } catch (_e) { /* */ } setLocationModal(null) } }} autoFocus />            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '1rem' }}>              <button onClick={() => setLocationModal(null)} style={{ padding: '0.625rem 1.25rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}>취소</button>              <button onClick={async () => { const val = locationModal.value.trim(); setReturns(prev => prev.map(x => x.id === locationModal.id ? { ...x, product_location: val } : x)); try { await returnApi.patch(locationModal.id, { product_location: val }) } catch (_e) { /* */ } setLocationModal(null) }} style={{ padding: '0.625rem 1.25rem', background: '#FF8C00', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>저장</button>            </div>          </div>        </div>      )}
+{/* 고객 주소 보기 모달 */}
+      {addressModal && (
+        <div onClick={() => setAddressModal(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '1.75rem', width: '460px', maxWidth: '90vw' }}>
+            <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '1rem' }}>고객 주소</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginBottom: '1.25rem' }}>
+              {addressModal.customer && (
+                <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.85rem' }}>
+                  <span style={{ color: '#888', minWidth: '64px' }}>고객명</span>
+                  <span style={{ color: '#E5E5E5' }}>{addressModal.customer}</span>
+                </div>
+              )}
+              {addressModal.phone && (
+                <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.85rem' }}>
+                  <span style={{ color: '#888', minWidth: '64px' }}>전화</span>
+                  <span style={{ color: '#E5E5E5' }}>{addressModal.phone}</span>
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.85rem' }}>
+                <span style={{ color: '#888', minWidth: '64px' }}>지역</span>
+                <span style={{ color: '#E5E5E5' }}>{addressModal.region || '-'}</span>
+              </div>
+              <div style={{ padding: '0.75rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', fontSize: '0.85rem', color: '#4C9AFF', lineHeight: 1.5 }}>
+                <div style={{ color: '#888', fontSize: '0.72rem', marginBottom: '0.25rem' }}>전체 주소</div>
+                {addressModal.address || '주소 정보 없음'}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              {addressModal.address && (
+                <button onClick={() => { navigator.clipboard.writeText(addressModal.address); showAlert('주소가 복사되었습니다', 'success') }} style={{ padding: '0.55rem 1.1rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#C5C5C5', fontSize: '0.85rem', cursor: 'pointer' }}>복사</button>
+              )}
+              <button onClick={() => setAddressModal(null)} style={{ padding: '0.55rem 1.1rem', background: '#FF8C00', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer' }}>닫기</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 상품위치 수정 모달 */}      {locationModal && (        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '420px', maxWidth: '90vw' }}>            <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '1rem' }}>상품위치 수정</h3>            {locationModal.address && (              <div style={{ padding: '0.75rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', marginBottom: '1rem', fontSize: '0.85rem', color: '#4C9AFF', lineHeight: 1.5 }}>                <span style={{ color: '#888', fontSize: '0.75rem' }}>전체 주소</span><br/>                {locationModal.address}              </div>            )}            <input style={inputStyle} placeholder="시/군/구 입력" value={locationModal.value} onChange={e => setLocationModal({ ...locationModal, value: e.target.value })} onKeyDown={async e => { if (e.key === 'Enter') { const val = locationModal.value.trim(); setReturns(prev => prev.map(x => x.id === locationModal.id ? { ...x, product_location: val } : x)); try { await returnApi.patch(locationModal.id, { product_location: val }) } catch (_e) { /* */ } setLocationModal(null) } }} autoFocus />            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '1rem' }}>              <button onClick={() => setLocationModal(null)} style={{ padding: '0.625rem 1.25rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}>취소</button>              <button onClick={async () => { const val = locationModal.value.trim(); setReturns(prev => prev.map(x => x.id === locationModal.id ? { ...x, product_location: val } : x)); try { await returnApi.patch(locationModal.id, { product_location: val }) } catch (_e) { /* */ } setLocationModal(null) }} style={{ padding: '0.625rem 1.25rem', background: '#FF8C00', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>저장</button>            </div>          </div>        </div>      )}
       {/* 교환 액션 선택 모달 */}
       {exchangeActionItem && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
