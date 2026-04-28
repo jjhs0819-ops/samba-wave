@@ -341,6 +341,42 @@ async def reply_cs_inquiry(
                         market_sent = True
                         market_msg = "롯데ON Q&A 답변 전송 완료"
 
+            elif inquiry.market == "11번가":
+                from backend.domain.samba.account.model import SambaMarketAccount
+                from backend.domain.samba.proxy.elevenst import ElevenstClient
+
+                acc_stmt = select(SambaMarketAccount).where(
+                    SambaMarketAccount.market_type == "11st",
+                    SambaMarketAccount.is_active == True,  # noqa: E712
+                )
+                acc_result = await session.execute(acc_stmt)
+                elevenst_acc = acc_result.scalars().first()
+                if elevenst_acc:
+                    elevenst_extras = elevenst_acc.additional_fields or {}
+                    elevenst_api_key = (
+                        elevenst_extras.get("apiKey", "") or elevenst_acc.api_key or ""
+                    )
+                    if elevenst_api_key:
+                        elevenst_client = ElevenstClient(elevenst_api_key)
+                        if inquiry.inquiry_type == "urgent_inquiry":
+                            # 긴급알리미는 답변 불가 → 확인처리(상태 03)로 처리
+                            await elevenst_client.confirm_alimi(
+                                inquiry.market_inquiry_no
+                            )
+                            market_sent = True
+                            market_msg = "확인처리완료"
+                        else:
+                            prd_no = (
+                                inquiry.market_answer_no
+                                or inquiry.market_product_no
+                                or ""
+                            )
+                            await elevenst_client.reply_qna(
+                                inquiry.market_inquiry_no, prd_no, body.reply
+                            )
+                            market_sent = True
+                            market_msg = "11번가 Q&A 답변 전송 완료"
+
             elif inquiry.market == "eBay":
                 from backend.domain.samba.account.model import SambaMarketAccount
                 from backend.domain.samba.proxy.ebay import EbayClient
@@ -1919,6 +1955,241 @@ async def _do_sync_cs_from_markets(
     except Exception as e:
         logger.warning(f"[CS동기화] 플레이오토 계정 조회 실패: {e}")
 
+    # ── 11번가 Q&A 동기화 ──
+    if not market_name or market_name == "11번가":
+        try:
+            from backend.domain.samba.account.model import SambaMarketAccount
+            from backend.domain.samba.proxy.elevenst import ElevenstClient
+
+            elevenst_stmt = select(SambaMarketAccount).where(
+                SambaMarketAccount.market_type == "11st",
+                SambaMarketAccount.is_active == True,  # noqa: E712
+            )
+            elevenst_result = await session.execute(elevenst_stmt)
+            elevenst_accounts = elevenst_result.scalars().all()
+
+            for elevenst_acc in elevenst_accounts:
+                elevenst_extras = elevenst_acc.additional_fields or {}
+                elevenst_api_key = (
+                    elevenst_extras.get("apiKey", "") or elevenst_acc.api_key or ""
+                )
+                if not elevenst_api_key:
+                    continue
+                elevenst_label = (
+                    elevenst_acc.account_label or elevenst_acc.business_name or "11번가"
+                )
+                elevenst_client = ElevenstClient(elevenst_api_key)
+                try:
+                    from zoneinfo import ZoneInfo
+
+                    kst = ZoneInfo("Asia/Seoul")
+                    now_kst_dt = datetime.now(kst)
+                    es_start = (now_kst_dt - timedelta(days=7)).strftime("%Y%m%d")
+                    es_end = now_kst_dt.strftime("%Y%m%d")
+
+                    qna_items = await elevenst_client.get_qna_list(es_start, es_end)
+                    es_synced = 0
+                    for qna in qna_items:
+                        brd_info_no = str(qna.get("brdInfoNo", "") or "")
+                        if not brd_info_no:
+                            continue
+
+                        existing_result = await session.execute(
+                            select(SambaCSInquiry).where(
+                                SambaCSInquiry.market == "11번가",
+                                SambaCSInquiry.market_inquiry_no == brd_info_no,
+                                SambaCSInquiry.is_hidden == False,  # noqa: E712
+                            )
+                        )
+                        if existing_result.scalar_one_or_none():
+                            continue
+
+                        is_answered = str(qna.get("answerYn", "N")).upper() == "Y"
+                        subj = str(qna.get("brdInfoSbjct", "") or "")
+                        is_urgent = "긴급" in subj
+                        # 긴급알림은 답변완료여도 수집, 일반 Q&A는 답변완료 제외
+                        if is_answered and not is_urgent:
+                            continue
+                        reply_content = str(qna.get("answerCont", "") or "")
+                        prd_no = str(
+                            qna.get("brdInfoClfNo", "") or qna.get("prdNo", "") or ""
+                        )
+                        prd_nm = str(qna.get("prdNm", "") or "")
+                        content = str(qna.get("brdInfoCont", "") or "")
+                        questioner = str(
+                            qna.get("buyMbrNo", "") or qna.get("brdMbrNo", "") or ""
+                        )
+
+                        raw_date_str = str(qna.get("brdInfoDt", "") or "")
+                        from datetime import datetime as _dt
+                        from datetime import timezone as _tz
+
+                        parsed_date = None
+                        if raw_date_str and len(raw_date_str) >= 8:
+                            try:
+                                parsed_date = _dt.strptime(
+                                    raw_date_str[:14], "%Y%m%d%H%M%S"
+                                )
+                            except Exception:
+                                try:
+                                    parsed_date = _dt.strptime(
+                                        raw_date_str[:8], "%Y%m%d"
+                                    )
+                                except Exception:
+                                    parsed_date = None
+                        if parsed_date is None:
+                            parsed_date = _dt.now(_tz.utc)
+
+                        matched = await _find_collected_product_by_market_product_no(
+                            session, prd_no
+                        )
+                        product_link = (
+                            _build_market_product_url("11번가", prd_no)
+                            if prd_no
+                            else ""
+                        )
+
+                        inquiry_data = {
+                            "market": "11번가",
+                            "market_inquiry_no": brd_info_no,
+                            "market_answer_no": prd_no or None,
+                            "market_order_id": None,
+                            "market_product_no": prd_no or None,
+                            "account_name": elevenst_label,
+                            "inquiry_type": (
+                                "urgent_inquiry" if is_urgent else "product_question"
+                            ),
+                            "questioner": questioner,
+                            "product_name": prd_nm,
+                            "product_image": matched["product_image"]
+                            if matched
+                            else "",
+                            "product_link": product_link,
+                            "original_link": matched["original_link"]
+                            if matched
+                            else "",
+                            "collected_product_id": matched["id"] if matched else None,
+                            "content": content,
+                            "reply": reply_content if is_answered else None,
+                            "reply_status": "replied" if is_answered else "pending",
+                            "inquiry_date": parsed_date,
+                            "replied_at": None,
+                        }
+                        try:
+                            await svc.create_inquiry(inquiry_data)
+                            es_synced += 1
+                        except Exception as _qe:
+                            logger.warning(
+                                f"[CS동기화] 11번가 Q&A {brd_info_no} 저장 실패: {_qe}"
+                            )
+
+                    if es_synced > 0:
+                        logger.info(
+                            f"[CS동기화] 11번가({elevenst_label}): {es_synced}건 동기화"
+                        )
+                    synced += es_synced
+
+                    # ── 긴급알림 수집 ──
+                    try:
+                        urgent_items = await elevenst_client.get_urgent_inquiry_list(
+                            es_start, es_end
+                        )
+                        for uq in urgent_items:
+                            inq_no = str(uq.get("emerNtceSeq", "") or "")
+                            if not inq_no:
+                                continue
+                            existing_result = await session.execute(
+                                select(SambaCSInquiry).where(
+                                    SambaCSInquiry.market == "11번가",
+                                    SambaCSInquiry.market_inquiry_no == inq_no,
+                                    SambaCSInquiry.is_hidden == False,  # noqa: E712
+                                )
+                            )
+                            existing = existing_result.scalar_one_or_none()
+                            if existing:
+                                continue
+                            prd_no_u = str(uq.get("prdNo", "") or "")
+                            prd_nm_u = str(uq.get("prdNm", "") or "")
+                            content_u = str(uq.get("emerCtnt", "") or "")
+                            questioner_u = str(uq.get("memId", "") or "")
+                            ord_no_u = str(uq.get("ordNo", "") or "")
+                            create_dt = str(uq.get("createDt", "") or "")
+                            create_tm = str(uq.get("createTm", "") or "").replace(
+                                ":", ""
+                            )
+                            raw_date_u = create_dt + create_tm
+                            from datetime import datetime as _dt
+                            from datetime import timezone as _tz
+
+                            parsed_date_u = None
+                            if raw_date_u and len(raw_date_u) >= 8:
+                                try:
+                                    parsed_date_u = _dt.strptime(
+                                        raw_date_u[:14], "%Y%m%d%H%M%S"
+                                    )
+                                except Exception:
+                                    try:
+                                        parsed_date_u = _dt.strptime(
+                                            raw_date_u[:8], "%Y%m%d"
+                                        )
+                                    except Exception:
+                                        parsed_date_u = None
+                            if parsed_date_u is None:
+                                parsed_date_u = _dt.now(_tz.utc)
+                            matched_u = (
+                                await _find_collected_product_by_market_product_no(
+                                    session, prd_no_u
+                                )
+                            )
+                            product_link_u = (
+                                _build_market_product_url("11번가", prd_no_u)
+                                if prd_no_u
+                                else ""
+                            )
+                            urgent_data = {
+                                "market": "11번가",
+                                "market_inquiry_no": inq_no,
+                                "market_answer_no": None,
+                                "market_order_id": ord_no_u or None,
+                                "market_product_no": prd_no_u or None,
+                                "account_name": elevenst_label,
+                                "inquiry_type": "urgent_inquiry",
+                                "questioner": questioner_u,
+                                "product_name": prd_nm_u,
+                                "product_image": (
+                                    matched_u["product_image"] if matched_u else ""
+                                ),
+                                "product_link": product_link_u,
+                                "original_link": (
+                                    matched_u["original_link"] if matched_u else ""
+                                ),
+                                "collected_product_id": (
+                                    matched_u["id"] if matched_u else None
+                                ),
+                                "content": content_u,
+                                "reply": None,
+                                "reply_status": "pending",
+                                "inquiry_date": parsed_date_u,
+                                "replied_at": None,
+                            }
+                            await svc.create_inquiry(urgent_data)
+                            es_synced += 1
+                            synced += 1
+                        if urgent_items:
+                            logger.info(
+                                f"[CS동기화] 11번가({elevenst_label}) 긴급알림 처리 완료"
+                            )
+                    except Exception as ue:
+                        logger.warning(
+                            f"[CS동기화] 11번가({elevenst_label}) 긴급알림 실패: {ue}"
+                        )
+
+                except Exception as e:
+                    logger.warning(f"[CS동기화] 11번가({elevenst_label}) Q&A 실패: {e}")
+                    errors.append(f"11번가({elevenst_label}): {e}")
+        except Exception as e:
+            logger.warning(f"[CS동기화] 11번가 계정 조회 실패: {e}")
+
     # ── SSG 쪽지/Q&A 수집 ──
     try:
         from backend.domain.samba.account.model import SambaMarketAccount
@@ -2135,6 +2406,44 @@ async def send_reply_to_market(
             replied_at=datetime.now(timezone.utc),
         )
         return {"success": True, "message": "롯데ON Q&A 답변 전송 완료", "data": {}}
+
+    if inquiry.market == "11번가":
+        from datetime import timezone
+
+        from sqlmodel import select as _sel
+
+        from backend.domain.samba.account.model import SambaMarketAccount
+        from backend.domain.samba.cs_inquiry.repository import SambaCSInquiryRepository
+        from backend.domain.samba.proxy.elevenst import ElevenstClient
+
+        acc_stmt = _sel(SambaMarketAccount).where(
+            SambaMarketAccount.market_type == "11st",
+            SambaMarketAccount.is_active == True,  # noqa: E712
+        )
+        acc_result = await session.execute(acc_stmt)
+        elevenst_acc = acc_result.scalars().first()
+        if not elevenst_acc:
+            raise HTTPException(400, "11번가 계정 설정이 없습니다")
+
+        elevenst_extras = elevenst_acc.additional_fields or {}
+        elevenst_api_key = (
+            elevenst_extras.get("apiKey", "") or elevenst_acc.api_key or ""
+        )
+        if not elevenst_api_key:
+            raise HTTPException(400, "11번가 API 키가 없습니다")
+
+        elevenst_client = ElevenstClient(elevenst_api_key)
+        prd_no = inquiry.market_answer_no or inquiry.market_product_no or ""
+        await elevenst_client.reply_qna(inquiry.market_inquiry_no, prd_no, body.reply)
+
+        repo = SambaCSInquiryRepository(session)
+        await repo.update_async(
+            inquiry_id,
+            reply=body.reply,
+            reply_status="replied",
+            replied_at=datetime.now(timezone.utc),
+        )
+        return {"success": True, "message": "11번가 Q&A 답변 전송 완료", "data": {}}
 
     if inquiry.market == "eBay":
         # eBay 메시지 답장 — Trading API AddMemberMessageRTQ

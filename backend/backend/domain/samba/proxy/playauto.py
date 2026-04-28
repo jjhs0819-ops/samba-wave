@@ -43,8 +43,10 @@ class PlayAutoClient:
                 )
             else:
                 logger.warning("[플레이오토] 프록시 미설정 — 직접 연결")
+            # read 타임아웃을 30초로 단축 — 세마포어 대기(120초)와 차등화하여
+            # 한 건이 느려도 동반 타임아웃 폭주를 방지
             self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(60.0, connect=15.0),
+                timeout=httpx.Timeout(30.0, connect=15.0),
                 follow_redirects=True,
                 proxy=proxy if proxy else None,
             )
@@ -89,8 +91,21 @@ class PlayAutoClient:
         if params is not None:
             kwargs["params"] = params
 
+        # 연결 단계 실패(ConnectError/ConnectTimeout/PoolTimeout)는 서버 도달 전이라
+        # 재시도 안전 → 1회 재시도. ReadTimeout 등 응답 단계 실패는 등록 중복 우려로 재시도 안 함.
+        async def _send_once():
+            return await client.request(method, url, **kwargs)
+
         try:
-            resp = await client.request(method, url, **kwargs)
+            try:
+                resp = await _send_once()
+            except (
+                httpx.ConnectError,
+                httpx.ConnectTimeout,
+                httpx.PoolTimeout,
+            ) as e:
+                logger.warning(f"[플레이오토] 연결 단계 실패 → 1회 재시도: {e}")
+                resp = await _send_once()
         except httpx.TimeoutException as e:
             raise PlayAutoApiError(f"[플레이오토] 타임아웃: {e}") from e
         except httpx.ConnectError as e:

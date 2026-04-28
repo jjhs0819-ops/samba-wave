@@ -105,6 +105,8 @@ async def dispatch_to_market(
             "message": f"필수필드 누락: {', '.join(missing)}",
         }
 
+    from backend.domain.samba.proxy.elevenst import ElevenstRateLimitError
+
     try:
         return await plugin.handle(
             session,
@@ -113,6 +115,8 @@ async def dispatch_to_market(
             account=account,
             existing_no=existing_product_no,
         )
+    except ElevenstRateLimitError:
+        raise  # worker까지 전파
     except Exception as e:
         logger.error(f"[디스패처] {market_type} 전송 예외: {e}")
         return {"success": False, "message": str(e)}
