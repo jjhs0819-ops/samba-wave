@@ -301,6 +301,55 @@ async def _site_autotune_loop(site: str):
                             _seen_ids.add(p.id)
                             products.append(p)
 
+                    # ── 판매처 필터 사전 적용 ──
+                    # _enabled_markets 활성 시, 활성 마켓 타입에 등록된 계정이 하나라도
+                    # 있는 상품만 통과시킨다. (refresh 전에 잘라서 ABC/무신사 등 대용량
+                    # 소싱처에서 마켓 등록 안 된 상품까지 무의미하게 갱신되는 낭비를 차단)
+                    # _on_result(833-845)의 per-account 필터는 다중 마켓 등록 상품의
+                    # 송신 계정 좁히기 용도로 별개 — 그대로 유지한다.
+                    _enabled_markets = await _get_setting(
+                        session, AUTOTUNE_FILTER_MARKETS_KEY
+                    )
+                    _market_filter_active = bool(
+                        _enabled_markets and isinstance(_enabled_markets, list)
+                    )
+                    if _market_filter_active and products:
+                        _enabled_markets_set = set(_enabled_markets)
+                        _pre_acc_ids: set[str] = set()
+                        for _p in products:
+                            if _p.registered_accounts:
+                                _pre_acc_ids.update(_p.registered_accounts)
+                        _eligible_acc_ids: set[str] = set()
+                        if _pre_acc_ids:
+                            from backend.domain.samba.account.model import (
+                                SambaMarketAccount as _PreAcc,
+                            )
+
+                            _pre_acc_stmt = select(
+                                _PreAcc.id, _PreAcc.market_type
+                            ).where(_PreAcc.id.in_(list(_pre_acc_ids)))
+                            _pre_acc_res = await session.execute(_pre_acc_stmt)
+                            for _aid, _mt in _pre_acc_res.all():
+                                if _mt in _enabled_markets_set:
+                                    _eligible_acc_ids.add(_aid)
+                        _before_cnt = len(products)
+                        products = [
+                            _p
+                            for _p in products
+                            if _p.registered_accounts
+                            and any(
+                                _a in _eligible_acc_ids for _a in _p.registered_accounts
+                            )
+                        ]
+                        if len(products) < _before_cnt:
+                            log.info(
+                                "[오토튠][%s] 판매처 필터: %d→%d건 (활성 %s)",
+                                site,
+                                _before_cnt,
+                                len(products),
+                                ",".join(_enabled_markets),
+                            )
+
                     if products:
                         filtered_count = len(products)
 
@@ -325,14 +374,6 @@ async def _site_autotune_loop(site: str):
                         _account_cache: dict[str, object] = {}
                         account_repo = SambaMarketAccountRepository(session)
                         policy_repo = SambaPolicyRepository(session)
-
-                        # 판매처 필터 사전 로드
-                        _enabled_markets = await _get_setting(
-                            session, AUTOTUNE_FILTER_MARKETS_KEY
-                        )
-                        _market_filter_active = bool(
-                            _enabled_markets and isinstance(_enabled_markets, list)
-                        )
 
                         # 계정 사전 로드
                         _all_account_ids: set[str] = set()
