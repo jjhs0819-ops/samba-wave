@@ -258,6 +258,181 @@ async function handleAiSourcingJob(job) {
 // 안전 상한 — 실제 동시 실행 수는 백엔드 _SSG_BATCH로 제어
 const SOURCING_MAX_POLL_LIMIT = 10
 
+// 사이트별 동시 처리 세마포어 — 폴링이 받은 작업을 사이트별 캡까지만 병렬 처리
+// (프론트 "동시실행" 설정값을 백엔드 status API에서 받아 적용)
+const _siteSemaphores = new Map() // site → { active: number }
+let _siteConcurrencyCache = { value: null, at: 0 }
+const _SITE_CONC_CACHE_MS = 5000
+
+const _SITE_CAP_DEFAULTS = {
+  ABCmart: 5, GrandStage: 5, LOTTEON: 2, SSG: 2, MUSINSA: 4, KREAM: 5, GSShop: 1, REXMONDE: 3,
+}
+
+async function _getSiteConcurrencyMap() {
+  const now = Date.now()
+  if (_siteConcurrencyCache.value && now - _siteConcurrencyCache.at < _SITE_CONC_CACHE_MS) {
+    return _siteConcurrencyCache.value
+  }
+  try {
+    const stored = await chrome.storage.local.get('proxyUrl')
+    const proxyUrl = stored.proxyUrl || 'https://api.samba-wave.co.kr'
+    const res = await fetch(`${proxyUrl}/api/v1/samba/collector/autotune/status`, { method: 'GET' })
+    if (!res.ok) return _siteConcurrencyCache.value || _SITE_CAP_DEFAULTS
+    const data = await res.json()
+    const conc = { ..._SITE_CAP_DEFAULTS, ...(data.site_autotune_concurrency || {}) }
+    _siteConcurrencyCache = { value: conc, at: now }
+    return conc
+  } catch {
+    return _siteConcurrencyCache.value || _SITE_CAP_DEFAULTS
+  }
+}
+
+function _normalizeSiteForCap(site) {
+  // GrandStage는 a-rt.com 동일 인프라 → ABCmart 캡 공유
+  if (site === 'GrandStage') return 'ABCmart'
+  return site
+}
+
+async function _siteSemAcquire(site) {
+  const key = _normalizeSiteForCap(site)
+  const concMap = await _getSiteConcurrencyMap()
+  const cap = concMap[key] || _SITE_CAP_DEFAULTS[key] || 3
+  let sem = _siteSemaphores.get(key)
+  if (!sem) {
+    sem = { active: 0 }
+    _siteSemaphores.set(key, sem)
+  }
+  // 캡 도달 시 대기 (200ms 폴링)
+  let waited = 0
+  while (sem.active >= cap) {
+    if (waited === 0) console.log(`[동시실행] ${key} 캡 도달(${sem.active}/${cap}) — 슬롯 대기`)
+    await wait(200)
+    waited += 200
+    if (waited > 60000) {
+      console.log(`[동시실행] ${key} 60초 대기 후에도 캡 도달 — 강제 진행`)
+      break
+    }
+  }
+  sem.active++
+}
+
+function _siteSemRelease(site) {
+  const key = _normalizeSiteForCap(site)
+  const sem = _siteSemaphores.get(key)
+  if (sem) sem.active = Math.max(0, sem.active - 1)
+}
+
+async function _processJobWithCap(job) {
+  const site = job.site || 'unknown'
+  await _siteSemAcquire(site)
+  try {
+    return await handleSourcingJob(job)
+  } finally {
+    _siteSemRelease(site)
+  }
+}
+
+// 사이트별 인증 실패 카운트 — 임계값 도달 시 자동로그인 트리거 (탭 폭주 방지)
+// background-autologin.js의 ensureLoggedIn 호출
+const _alFailureCount = {}
+const _AL_FAILURE_THRESHOLD = 3
+
+// immediate=true면 1회 실패만으로 즉시 트리거 (명시적 비로그인 감지 같은 확정 신호용)
+function reportLoginFailure(externalSite, immediate = false) {
+  if (!externalSite) return
+  _alFailureCount[externalSite] = (_alFailureCount[externalSite] || 0) + 1
+  const threshold = immediate ? 1 : _AL_FAILURE_THRESHOLD
+  if (_alFailureCount[externalSite] >= threshold) {
+    const key = (typeof alExternalSiteToKey === 'function') ? alExternalSiteToKey(externalSite) : null
+    if (key && typeof ensureLoggedIn === 'function') {
+      console.log(`[로그인감지] ${externalSite} ${immediate ? '비로그인 확정' : `연속 ${threshold}회 인증 실패`} → 자동로그인 트리거`)
+      _alFailureCount[externalSite] = 0
+      ensureLoggedIn(key).catch(e => console.error('[자동로그인] 호출 오류:', e?.message || e))
+    } else {
+      _alFailureCount[externalSite] = 0
+    }
+  }
+}
+
+function reportLoginSuccess(externalSite) {
+  if (_alFailureCount[externalSite]) {
+    _alFailureCount[externalSite] = 0
+  }
+}
+
+// 전 사이트 공통 로그인 상태 감지 — 헤더 영역의 로그인/로그아웃 링크로 판단
+// 비로그인 페이지에 노출되는 마케팅 가격(예: LOTTEON "나의 혜택가") false-positive 차단용
+// 반환: true(로그인) | false(비로그인) | null(판단 불가, 안전상 로그인으로 간주)
+async function _detectLoginStatus(tabId, site) {
+  try {
+    const [r] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (siteName) => {
+        // 사이트별 로그인/로그아웃 식별 패턴
+        const cfg = {
+          ABCmart:    { login: ['/login', 'member/login'], logout: ['/logout', '/mypage', '/myinfo'] },
+          GrandStage: { login: ['/login', 'member/login'], logout: ['/logout', '/mypage', '/myinfo'] },
+          LOTTEON:    { login: ['/member/login', '/login'], logout: ['/logout', '/mypage'] },
+          SSG:        { login: ['login.ssg', '/member/login'], logout: ['logout.ssg', '/myssg'] },
+          GSShop:     { login: ['login.gs', '/login'], logout: ['logout.gs', '/mypage', '/myinfo'] },
+          MUSINSA:    { login: ['/auth/login', 'member.one.musinsa.com/login'], logout: ['/logout', '/mypage'] },
+          KREAM:      { login: ['/login'], logout: ['/logout', 'kream.co.kr/my'] },
+        }
+        const c = cfg[siteName]
+        if (!c) return { isLoggedIn: null, reason: 'unsupported' }
+
+        // 헤더 영역 우선 (본문 내 마케팅 링크 노이즈 차단)
+        const headerEl = document.querySelector('header, #header, .header, nav, #gnb, .gnb, [class*="gnb"], [class*="header"]')
+        const scope = headerEl || document.body
+
+        let hasLoginLink = false
+        let hasLogoutLink = false
+
+        const elements = scope.querySelectorAll('a[href], button')
+        for (const el of elements) {
+          const href = (el.getAttribute('href') || '').toLowerCase()
+          const txt = (el.textContent || '').trim()
+
+          // 로그아웃 신호 — 가장 강한 확정 신호
+          if (href.includes('logout') || txt === '로그아웃' || txt === 'Logout' || txt === 'LOGOUT') {
+            hasLogoutLink = true
+            continue
+          }
+
+          // 로그인 신호 — 텍스트가 정확히 "로그인"이거나 href에 login 패턴
+          if (txt === '로그인' || txt === 'Login' || txt === 'LOGIN') {
+            hasLoginLink = true
+            continue
+          }
+          for (const p of c.login) {
+            if (href.includes(p.toLowerCase()) && !href.includes('logout')) {
+              // href만으로는 약한 신호 — 텍스트가 짧거나 로그인 관련 표시면 인정
+              if (txt.length < 20 && (txt.includes('로그인') || txt.includes('Login') || txt === '' || el.querySelector('img[alt*="로그인"], img[alt*="login"]'))) {
+                hasLoginLink = true
+              }
+              break
+            }
+          }
+        }
+
+        if (hasLogoutLink && !hasLoginLink) return { isLoggedIn: true }
+        if (hasLoginLink) return { isLoggedIn: false, reason: 'login link present' }
+        // 둘 다 없으면 헤더 selector가 안 잡혔거나 사이트 구조 변경 — 보수적으로 null
+        return { isLoggedIn: null, reason: 'no signal' }
+      },
+      args: [site],
+    })
+    const out = r?.result
+    if (out && out.isLoggedIn === false) {
+      console.log(`[로그인감지] ${site} 비로그인 (${out.reason || ''})`)
+    }
+    return out?.isLoggedIn
+  } catch (e) {
+    console.log(`[로그인감지] ${site} 검사 오류 (무시): ${e.message}`)
+    return null
+  }
+}
+
 async function pollSourcingOnce() {
   // 백엔드가 배치 크기만큼만 큐에 넣으므로 자연히 그 수만큼 처리됨
   const jobs = []
@@ -283,10 +458,10 @@ async function pollSourcingOnce() {
   }
   if (jobs.length === 0) return false
   if (jobs.length === 1) {
-    await handleSourcingJob(jobs[0])
+    await _processJobWithCap(jobs[0])
   } else {
-    console.log(`[소싱] 병렬 처리: ${jobs.length}개`)
-    await Promise.all(jobs.map(job => handleSourcingJob(job)))
+    console.log(`[소싱] 병렬 처리: ${jobs.length}개 (사이트별 동시실행 캡 적용)`)
+    await Promise.all(jobs.map(job => _processJobWithCap(job)))
   }
   return true
 }
@@ -409,6 +584,7 @@ async function fetchAbcmartBenefitPriceServiceWorker(productId, site) {
     if (benefitPrice <= 0 || benefitPrice > salePrice) benefitPrice = salePrice
 
     console.log(`[${site}] SW fetch 성공: ${productId} sale=${salePrice} membership=${membershipDiscount} coupon=${couponDiscount} benefit=${benefitPrice}`)
+    reportLoginSuccess(site)
 
     return {
       success: true,
@@ -529,6 +705,7 @@ async function fetchAbcmartBenefitPrice(productId, site) {
     if (benefitPrice <= 0 || benefitPrice > salePrice) benefitPrice = salePrice
 
     console.log(`[${site}] in-tab fetch 성공: ${productId} sale=${salePrice} membership=${alwaysDscntAmt} coupon=${couponDiscount} benefit=${benefitPrice}`)
+    reportLoginSuccess(site)
 
     return {
       success: true,
@@ -575,6 +752,7 @@ async function handleSourcingJob(job) {
       return
     }
     console.log(`[${job.site}] SW + in-tab 모두 실패 → DOM 폴백 (탭 띄움): ${job.productId}`)
+    reportLoginFailure(job.site)
   }
 
   let tabId = null
@@ -719,8 +897,10 @@ async function handleSourcingJob(job) {
       if (result?.best_benefit_price) {
         console.log(`[LOTTEON] DOM 혜택가: ${job.productId} → ${result.best_benefit_price}`)
       } else {
-        console.log(`[LOTTEON] 혜택가 없음 (로그인 필요?): ${job.productId}`)
+        console.log(`[LOTTEON] 혜택가 없음: ${job.productId}`)
       }
+      // 비로그인 검증 + 자동로그인 트리거는 아래 공통 처리에서 일괄 수행
+      // (LOTTEON DOM 파싱이 추가한 _loginRequired 플래그도 공통 처리에서 인식)
     } else if (job.type === 'detail' && (job.site === 'ABCmart' || job.site === 'GrandStage')) {
       // ABCmart/GrandStage SPA 렌더링 대기 후 최대혜택가 파싱
       result = await extractDetailData(tabId, job.site, job.productId)
@@ -752,6 +932,24 @@ async function handleSourcingJob(job) {
       }
     } else if (job.type === 'detail') {
       result = await extractDetailData(tabId, job.site, job.productId)
+    }
+
+    // 전 사이트 공통 — detail 작업 결과 전송 전 로그인 상태 검증
+    // 비로그인 페이지에 마케팅 가격(혜택가/판매가)이 노출되어 잘못된 가격 수집되는 것을 차단
+    // 비로그인 감지 시: 결과 전송 차단 + 자동로그인 즉시 트리거
+    if (job.type === 'detail' && tabId && result && result.success !== false) {
+      let loginNeeded = result?._loginRequired
+      if (loginNeeded === undefined) {
+        const isLoggedIn = await _detectLoginStatus(tabId, job.site)
+        if (isLoggedIn === false) loginNeeded = true
+      }
+      if (loginNeeded) {
+        console.log(`[${job.site}] 비로그인 확정 → 결과 전송 차단 + 자동로그인 즉시 트리거: ${job.productId}`)
+        reportLoginFailure(job.site, true)
+        result = { success: false, login_required: true, message: '비로그인 — 자동로그인 후 재시도 필요' }
+      } else {
+        reportLoginSuccess(job.site)
+      }
     }
 
     try { await chrome.tabs.remove(tabId) } catch {}
@@ -1230,7 +1428,32 @@ async function extractDetailData(tabId, site, productId) {
 
       // ── 롯데ON 전용 파싱 (렌더된 DOM에서 프로모션가/혜택가 추출) ──
       if (siteName === 'LOTTEON') {
-        // 프로모션 판매가 (65,400원 등)
+        // 로그인 상태 감지 — 헤더의 "로그인" 링크/버튼 존재 여부로 판단
+        // 비로그인이면 자동로그인 트리거 신호로 사용 (LOTTEON 페이지에 "나의 혜택가"가 마케팅 텍스트로 노출되어
+        // 비로그인 상태에서도 가격이 추출되는 false-positive를 명시적으로 차단)
+        const loginAnchors = document.querySelectorAll('a[href*="/login"], a[href*="member/login"], button[class*="login"], a[class*="login"]')
+        const logoutAnchors = document.querySelectorAll('a[href*="/logout"], a[href*="member/logout"], a[href*="/myPage"]')
+        let hasLoginLink = false
+        let hasLogoutLink = false
+        for (const a of loginAnchors) {
+          const href = (a.getAttribute('href') || '').toLowerCase()
+          if (href.includes('logout')) continue
+          const txt = (a.textContent || '').trim()
+          if (txt === '로그인' || txt === 'Login' || href.includes('/login') || href.includes('member/login')) {
+            hasLoginLink = true
+            break
+          }
+        }
+        for (const a of logoutAnchors) {
+          const href = (a.getAttribute('href') || '').toLowerCase()
+          const txt = (a.textContent || '').trim()
+          if (href.includes('logout') || txt === '로그아웃' || href.includes('mypage')) {
+            hasLogoutLink = true
+            break
+          }
+        }
+        const isLoggedIn = hasLogoutLink && !hasLoginLink
+
         let salePrice = 0
         let originalPrice = 0
         let benefitPrice = 0
@@ -1325,6 +1548,7 @@ async function extractDetailData(tabId, site, productId) {
             options,
             seller,  // "롯데백화점 인천점" 등 — 지점 정보
             pageTitle: document.title,  // 백엔드에서 product.name 정합성 검증용 (§12)
+            _loginRequired: !isLoggedIn,  // 비로그인 감지 — handleSourcingJob에서 자동로그인 트리거 신호로 사용
           }
         }
       }

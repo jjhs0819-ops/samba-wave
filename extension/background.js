@@ -207,6 +207,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     console.log(`[ABCmart] 멤버십 감지: ${membershipGrade} (${membershipRate}%) cookie=${needsCookie ? 'fetch' : 'skip'} expired=${!!expired}`)
     if (!expired) {
       chrome.storage.local.set({ abcmart_membership_rate: membershipRate, abcmart_membership_grade: membershipGrade })
+    } else {
+      // ABC마트 만료 확정 신호 — 즉시 자동로그인 트리거 (상품 처리 큐 대기 안 함)
+      if (typeof reportLoginFailure === 'function') {
+        reportLoginFailure('ABCmart', true)
+      }
     }
     handleAbcmartMembershipSync({ rate: membershipRate, grade: membershipGrade, needsCookie: !!needsCookie, expired: !!expired })
     sendResponse({ ok: true })
@@ -294,6 +299,7 @@ async function getMusinsaCookies() {
 
 
 importScripts('background-kream.js')
+importScripts('background-autologin.js')
 importScripts('background-sourcing.js')
 importScripts('background-bootstrap.js')
 importScripts('background-messages.js')
