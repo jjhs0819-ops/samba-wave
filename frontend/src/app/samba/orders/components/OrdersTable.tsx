@@ -71,7 +71,7 @@ interface OrdersTableProps {
   handleSourceLink: (o: SambaOrder) => void | Promise<void>
   handleMarketLink: (o: SambaOrder) => void
   openUrlModal: (orderId: string) => void
-  handleTracking: (shippingCompany: string, trackingNumber: string) => void
+  handleTracking: (order: SambaOrder) => void
   loadOrders: () => void | Promise<void>
   patchOrder: (id: string, patch: Partial<SambaOrder>) => void
   handleStatusChange: (id: string, status: string) => void | Promise<void>

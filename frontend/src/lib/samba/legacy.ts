@@ -293,7 +293,27 @@ export const orderApi = {
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/orders/alarm-settings`, {
       method: 'POST', body: JSON.stringify(data),
     }),
+  getTracking: (carrier: string, invoice: string) =>
+    request<TrackingInfo>(`${SAMBA_PREFIX}/orders/tracking?carrier=${encodeURIComponent(carrier)}&invoice=${encodeURIComponent(invoice)}`),
 };
+
+export interface TrackingEvent {
+  time: string | null
+  status: string | null
+  status_code: string | null
+  location: string | null
+  description: string | null
+}
+
+export interface TrackingInfo {
+  carrier_name: string
+  carrier_id: string
+  invoice: string
+  from_name: string | null
+  to_name: string | null
+  state: string | null
+  events: TrackingEvent[]
+}
 
 // ── Channels ──
 

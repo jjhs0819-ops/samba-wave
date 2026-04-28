@@ -32,4 +32,6 @@ export type {
   ProxyPurpose,
   ProxyConfigItem,
   MessageLog,
+  TrackingEvent,
+  TrackingInfo,
 } from '../legacy'

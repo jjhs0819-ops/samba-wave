@@ -36,7 +36,7 @@ interface Props {
   handleSourceLink: (o: SambaOrder) => void | Promise<void>
   handleMarketLink: (o: SambaOrder) => void
   openUrlModal: (orderId: string) => void
-  handleTracking: (shippingCompany: string, trackingNumber: string) => void
+  handleTracking: (order: SambaOrder) => void
   loadOrders: () => void | Promise<void>
 }
 
@@ -205,7 +205,7 @@ export default function OrderInfoCell(props: Props) {
         <button onClick={() => handleSourceLink(o)} style={{ fontSize: '0.6875rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>원문링크</button>
         <button onClick={() => handleMarketLink(o)} style={{ fontSize: '0.6875rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>판매링크</button>
         <button onClick={() => openUrlModal(o.id)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>미등록 입력</button>
-        <button onClick={() => handleTracking(o.shipping_company || '', o.tracking_number || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>배송조회</button>
+        <button onClick={() => handleTracking(o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>배송조회</button>
         <button onClick={async () => {
           const ts = fmtTime()
           setRefreshLog(prev => ({ ...prev, [o.id]: `[${ts}] 가격재고 갱신 중...` }))

@@ -642,6 +642,89 @@ async def list_orders_by_collected_product(
     return list(result.scalars().all())
 
 
+# 한국어 택배사명 → 딜리버리트래커 carrier ID 매핑
+SHIPPING_COMPANY_TO_CARRIER_ID: dict[str, str] = {
+    "CJ대한통운": "kr.cjlogistics",
+    "한진택배": "kr.hanjin",
+    "롯데택배": "kr.lotte",
+    "로젠택배": "kr.logen",
+    "우체국택배": "kr.epost",
+    "경동택배": "kr.kdexp",
+    "대신택배": "kr.daesin",
+    "일양로지스": "kr.ilyanglogis",
+    "편의점택배": "kr.cvsnet",
+    "합동택배": "kr.hdexp",
+    "쿠팡택배": "kr.coupangls",
+    "DHL": "de.dhl",
+}
+
+
+@router.get("/tracking")
+async def get_tracking(
+    carrier: str = Query(..., description="택배사 한국어명 (예: CJ대한통운)"),
+    invoice: str = Query(..., description="운송장번호"),
+):
+    """딜리버리트래커 v1 API를 프록시하여 통합 배송조회 결과를 반환."""
+    import httpx
+
+    carrier_id = SHIPPING_COMPANY_TO_CARRIER_ID.get(carrier)
+    if not carrier_id:
+        raise HTTPException(400, f"지원하지 않는 택배사: {carrier}")
+
+    invoice_clean = re.sub(r"[^0-9A-Za-z]", "", invoice or "")
+    if not invoice_clean:
+        raise HTTPException(400, "유효하지 않은 송장번호입니다")
+
+    url = f"https://apis.tracker.delivery/carriers/{carrier_id}/tracks/{invoice_clean}"
+    try:
+        async with httpx.AsyncClient(timeout=10) as hc:
+            resp = await hc.get(url)
+    except httpx.HTTPError as e:
+        logger.warning(
+            "[tracking] 외부 API 통신 실패 %s/%s: %s", carrier, invoice_clean, e
+        )
+        raise HTTPException(502, "택배 조회 서비스에 연결할 수 없습니다")
+
+    if resp.status_code == 404:
+        raise HTTPException(
+            404, "조회 결과가 없습니다 (송장번호/택배사를 확인해주세요)"
+        )
+    if resp.status_code >= 400:
+        logger.warning(
+            "[tracking] 비정상 응답 %s/%s status=%s body=%s",
+            carrier,
+            invoice_clean,
+            resp.status_code,
+            resp.text[:200],
+        )
+        raise HTTPException(502, "택배 조회 결과를 불러오지 못했습니다")
+
+    try:
+        data = resp.json()
+    except ValueError:
+        raise HTTPException(502, "택배 조회 응답 형식 오류")
+
+    progresses = data.get("progresses") or []
+    return {
+        "carrier_name": carrier,
+        "carrier_id": carrier_id,
+        "invoice": invoice_clean,
+        "from_name": (data.get("from") or {}).get("name"),
+        "to_name": (data.get("to") or {}).get("name"),
+        "state": (data.get("state") or {}).get("text"),
+        "events": [
+            {
+                "time": p.get("time"),
+                "status": (p.get("status") or {}).get("text"),
+                "status_code": (p.get("status") or {}).get("id"),
+                "location": (p.get("location") or {}).get("name"),
+                "description": p.get("description"),
+            }
+            for p in progresses
+        ],
+    }
+
+
 @router.get("/find-by-number")
 async def find_by_order_number(
     order_number: str = Query(...),

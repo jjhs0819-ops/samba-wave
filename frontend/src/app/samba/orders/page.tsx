@@ -33,6 +33,7 @@ import OrderEditModal from './components/OrderEditModal'
 import UrlInputModal from './components/UrlInputModal'
 import SmsTemplateEditModal from './components/SmsTemplateEditModal'
 import AlarmSettingModal from './components/AlarmSettingModal'
+import TrackingModal from './components/TrackingModal'
 
 interface OrderForm {
   channel_id: string; product_name: string; customer_name: string; customer_phone: string
@@ -64,8 +65,10 @@ export default function OrdersPage() {
   const [accountFilter, setAccountFilter] = useState('')
   const [inputFilter, setInputFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
-  const [searchText, setSearchText] = useState('')
-  const [appliedSearchText, setAppliedSearchText] = useState('')
+  // CS 페이지 등 외부에서 ?search=...&search_type=... 로 진입 시 자동 검색
+  const initialSearch = searchParams.get('search') || ''
+  const [searchText, setSearchText] = useState(initialSearch)
+  const [appliedSearchText, setAppliedSearchText] = useState(initialSearch)
   const [pageSize, setPageSize] = useState(20)
   const [currentPage, setCurrentPage] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
@@ -130,7 +133,8 @@ export default function OrdersPage() {
   const [sleepEnd, setSleepEnd] = useState('09:00')
 
 
-  const [searchCategory, setSearchCategory] = useState('customer')
+  const initialSearchType = searchParams.get('search_type') || 'customer'
+  const [searchCategory, setSearchCategory] = useState(initialSearchType)
 
   const [dateLocked, setDateLocked] = useState(false)
   const [customStart, setCustomStart] = useState(() => {
@@ -299,7 +303,9 @@ export default function OrdersPage() {
     bulkStatus, setBulkStatus, bulkUpdating, setBulkUpdating,
     selectedIds, setSelectedIds,
     setLogMessages,
+    openTrackingModal: (o: SambaOrder) => setTrackingOrder(o),
   })
+  const [trackingOrder, setTrackingOrder] = useState<SambaOrder | null>(null)
   const { handleSourceLink, handleMarketLink } = useOrderLinks(accounts)
 
   const {
@@ -504,6 +510,12 @@ export default function OrdersPage() {
         setSleepStart={setSleepStart}
         sleepEnd={sleepEnd}
         setSleepEnd={setSleepEnd}
+      />
+
+      <TrackingModal
+        open={!!trackingOrder}
+        order={trackingOrder}
+        onClose={() => setTrackingOrder(null)}
       />
     </div>
   )

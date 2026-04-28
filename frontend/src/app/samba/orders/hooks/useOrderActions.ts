@@ -8,7 +8,6 @@ import {
 } from '@/lib/samba/api/commerce'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtNum } from '@/lib/samba/styles'
-import { DELIVERY_TRACKING_URLS } from '@/lib/samba/constants'
 
 interface OrderForm {
   channel_id: string
@@ -48,6 +47,8 @@ interface Args {
   selectedIds: Set<string>
   setSelectedIds: Dispatch<SetStateAction<Set<string>>>
   setLogMessages: Dispatch<SetStateAction<string[]>>
+  // 배송조회 모달 오픈 콜백
+  openTrackingModal: (order: SambaOrder) => void
 }
 
 export function useOrderActions(args: Args) {
@@ -61,6 +62,7 @@ export function useOrderActions(args: Args) {
     bulkStatus, setBulkStatus, bulkUpdating, setBulkUpdating,
     selectedIds, setSelectedIds,
     setLogMessages,
+    openTrackingModal,
   } = args
 
   const handleSubmit = async () => {
@@ -136,13 +138,16 @@ export function useOrderActions(args: Args) {
   const handleNaver = (productName: string) => {
     window.open(`https://search.shopping.naver.com/search/all?query=${encodeURIComponent(productName || '')}`, '_blank')
   }
-  const handleTracking = (shippingCompany: string, trackingNumber: string) => {
-    if (!trackingNumber) {
+  const handleTracking = (order: SambaOrder) => {
+    if (!order.tracking_number) {
       showAlert('송장번호가 없습니다', 'error')
       return
     }
-    const baseUrl = DELIVERY_TRACKING_URLS[shippingCompany] || DELIVERY_TRACKING_URLS['CJ대한통운']
-    window.open(`${baseUrl}${trackingNumber}`, '_blank')
+    if (!order.shipping_company) {
+      showAlert('택배사 정보가 없습니다', 'error')
+      return
+    }
+    openTrackingModal(order)
   }
 
   const toggleAction = async (orderId: string, actionKey: string) => {
