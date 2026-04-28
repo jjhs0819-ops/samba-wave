@@ -186,31 +186,36 @@ class ElevenstExchangeClient:
         clm_req_seq: str,
         ord_no: str,
         ord_prd_seq: str,
-        reason: str = "판매자 교환 거부",
+        refs_rsn_cd: str = "204",
+        refs_rsn: str = "기타",
     ) -> bool:
         """교환 거부 처리.
 
         11번가 클레임 서비스 API:
-          GET /rest/claimservice/exchangereqrej/{clmReqSeq}/{ordNo}/{ordPrdSeq}
+          GET /rest/claimservice/exchangereqreject/{ordNo}/{ordPrdSeq}/{clmReqSeq}/{refsRsnCd}/{refsRsn}
 
         Args:
             clm_req_seq:  클레임번호 (교환요청코드)
             ord_no:       주문번호
             ord_prd_seq:  주문순번
-            reason:       거부 사유 (내부 기록용 — 11번가 API 사유 파라미터 미지원)
+            refs_rsn_cd:  사유코드 (201=교환상품미입고, 202=고객교환신청청취대행, 203=교환불가상품, 204=기타)
+            refs_rsn:     사유텍스트
 
         Returns:
             True if 교환거부 성공
         """
+        import urllib.parse
+
+        encoded_rsn = urllib.parse.quote(refs_rsn, safe="")
         url = (
-            f"https://api.11st.co.kr/rest/claimservice/exchangereqrej"
-            f"/{clm_req_seq}/{ord_no}/{ord_prd_seq}"
+            f"https://api.11st.co.kr/rest/claimservice/exchangereqreject"
+            f"/{ord_no}/{ord_prd_seq}/{clm_req_seq}/{refs_rsn_cd}/{encoded_rsn}"
         )
         logger.info(
-            "[11번가 교환] 교환거부 clmReqSeq=%s ordNo=%s reason=%s",
+            "[11번가 교환] 교환거부 clmReqSeq=%s ordNo=%s refsRsnCd=%s",
             clm_req_seq,
             ord_no,
-            reason,
+            refs_rsn_cd,
         )
         text = await self._get_euc_kr(url)
         return self._parse_action_xml(text, "교환거부")

@@ -22,6 +22,43 @@ from backend.core.config import settings
 from backend.utils.logger import logger
 
 
+class ElevenstRateLimitError(Exception):
+    """11번가 API Rate Limit 초과 시 발생하는 예외"""
+
+    def __init__(self, retry_after: int = 5):
+        self.retry_after = retry_after
+        super().__init__(f"11번가 Rate Limit 초과 (retry_after={retry_after}s)")
+
+
+_elevenst_clients: dict[str, httpx.AsyncClient] = {}
+
+
+def _get_elevenst_http_client(api_key: str) -> httpx.AsyncClient:
+    """api_key별 httpx 클라이언트 재사용 — 연결 풀 유지로 SSL 핸드셰이크 반복 방지.
+
+    닫힌 클라이언트가 캐시에 남아 있으면 새로 생성한다.
+    """
+    existing = _elevenst_clients.get(api_key)
+    if existing is None or existing.is_closed:
+        _elevenst_clients[api_key] = httpx.AsyncClient(
+            timeout=settings.http_timeout_default,
+            limits=httpx.Limits(max_keepalive_connections=20, max_connections=40),
+        )
+    return _elevenst_clients[api_key]
+
+
+def _get_elevenst_stat_client(api_key: str) -> httpx.AsyncClient:
+    """판매중지(prodstatservice) 전용 클라이언트.
+
+    keepalive 풀 고갈로 인한 'All connection attempts failed' 방지를 위해
+    매 호출마다 새 클라이언트를 생성한다 (context manager로 닫아야 함).
+    """
+    return httpx.AsyncClient(
+        timeout=httpx.Timeout(30.0, connect=10.0),
+        limits=httpx.Limits(max_keepalive_connections=0, max_connections=1),
+    )
+
+
 class ElevenstClient:
     """11번가 셀러 API 클라이언트."""
 
@@ -59,46 +96,72 @@ class ElevenstClient:
         except ET.ParseError:
             return {"raw": text}
 
+    async def _do_request(
+        self,
+        client: httpx.AsyncClient,
+        method: str,
+        url: str,
+        headers: dict,
+        body: Optional[str],
+    ) -> httpx.Response:
+        if method == "GET":
+            return await client.get(url, headers=headers)
+        elif method == "POST":
+            return await client.post(url, headers=headers, content=body)
+        elif method == "PUT":
+            return await client.put(url, headers=headers, content=body)
+        elif method == "DELETE":
+            return await client.delete(url, headers=headers)
+        else:
+            raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
+
     async def _call_api(
         self,
         method: str,
         path: str,
         body: Optional[str] = None,
     ) -> dict[str, Any]:
-        """공통 API 호출 (XML 기반)."""
+        """공통 API 호출 (XML 기반). ConnectError 시 클라이언트 재생성 후 1회 재시도."""
         url = f"{self.BASE_URL}{path}"
         headers = self._headers()
 
-        async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
-            if method == "GET":
-                resp = await client.get(url, headers=headers)
-            elif method == "POST":
-                resp = await client.post(url, headers=headers, content=body)
-            elif method == "PUT":
-                resp = await client.put(url, headers=headers, content=body)
-            elif method == "DELETE":
-                resp = await client.delete(url, headers=headers)
-            else:
-                raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
+        client = _get_elevenst_http_client(self.api_key)
+        try:
+            resp = await self._do_request(client, method, url, headers, body)
+        except (httpx.ConnectError, httpx.RemoteProtocolError) as conn_err:
+            # 캐시된 클라이언트 연결이 끊겼을 수 있음 — 제거 후 새 클라이언트로 1회 재시도
+            logger.warning(
+                f"[11번가] 연결 오류, 클라이언트 재생성 후 재시도: {conn_err}"
+            )
+            _elevenst_clients.pop(self.api_key, None)
+            client = _get_elevenst_http_client(self.api_key)
+            resp = await self._do_request(client, method, url, headers, body)
 
-            logger.info(f"[11번가] {method} {path} → {resp.status_code}")
-            if body:
-                logger.info(f"[11번가] 요청 XML (전체 {len(body)}자): {body}")
-            logger.info(f"[11번가] 응답 본문: {resp.text[:800]}")
+        logger.info(f"[11번가] {method} {path} → {resp.status_code}")
 
-            data = self._parse_xml(resp.text)
+        data = self._parse_xml(resp.text)
 
-            if not resp.is_success:
-                msg = data.get("message", "") or data.get("raw", "") or resp.text[:300]
-                raise ElevenstApiError(f"HTTP {resp.status_code}: {msg}")
+        # ⚠️ 반드시 "if not resp.is_success:" 블록보다 앞에 위치
+        if resp.status_code == 429:
+            try:
+                retry_after = int(resp.headers.get("Retry-After", "5"))
+            except ValueError:
+                retry_after = 5
+            raise ElevenstRateLimitError(retry_after=retry_after)
+        if resp.status_code in (503, 504):
+            raise ElevenstRateLimitError(retry_after=10)
 
-            # 에러코드 체크
-            result_code = data.get("resultCode", "") or data.get("ResultCode", "")
-            if result_code and str(result_code) != "200" and str(result_code) != "0":
-                msg = data.get("resultMessage", "") or data.get("message", "")
-                raise ElevenstApiError(f"API 에러 ({result_code}): {msg}")
+        if not resp.is_success:
+            msg = data.get("message", "") or data.get("raw", "") or resp.text[:300]
+            raise ElevenstApiError(f"HTTP {resp.status_code}: {msg}")
 
-            return data
+        # 에러코드 체크
+        result_code = data.get("resultCode", "") or data.get("ResultCode", "")
+        if result_code and str(result_code) != "200" and str(result_code) != "0":
+            msg = data.get("resultMessage", "") or data.get("message", "")
+            raise ElevenstApiError(f"API 에러 ({result_code}): {msg}")
+
+        return data
 
     # ------------------------------------------------------------------
     # 카테고리 조회
@@ -108,30 +171,29 @@ class ElevenstClient:
         """전체 카테고리 조회. (cateservice 엔드포인트 사용)"""
         url = "https://api.11st.co.kr/rest/cateservice/category"
         headers = self._headers()
-        async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
-            resp = await client.get(url, headers=headers)
-            logger.info(f"[11번가] GET /cateservice/category → {resp.status_code}")
-            logger.debug(f"[11번가] 카테고리 응답: {resp.text[:500]}")
-            data = self._parse_xml(resp.text)
-            if not resp.is_success:
-                msg = data.get("message", "") or data.get("raw", "") or resp.text[:300]
-                raise ElevenstApiError(f"HTTP {resp.status_code}: {msg}")
-            return data
+        client = _get_elevenst_http_client(self.api_key)
+        resp = await client.get(url, headers=headers)
+        logger.info(f"[11번가] GET /cateservice/category → {resp.status_code}")
+        data = self._parse_xml(resp.text)
+        if not resp.is_success:
+            msg = data.get("message", "") or data.get("raw", "") or resp.text[:300]
+            raise ElevenstApiError(f"HTTP {resp.status_code}: {msg}")
+        return data
 
     async def get_category_by_id(self, category_id: str) -> dict[str, Any]:
         """특정 카테고리 하위 조회. (cateservice 엔드포인트 사용)"""
         url = f"https://api.11st.co.kr/rest/cateservice/category/{category_id}"
         headers = self._headers()
-        async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
-            resp = await client.get(url, headers=headers)
-            logger.info(
-                f"[11번가] GET /cateservice/category/{category_id} → {resp.status_code}"
-            )
-            data = self._parse_xml(resp.text)
-            if not resp.is_success:
-                msg = data.get("message", "") or data.get("raw", "") or resp.text[:300]
-                raise ElevenstApiError(f"HTTP {resp.status_code}: {msg}")
-            return data
+        client = _get_elevenst_http_client(self.api_key)
+        resp = await client.get(url, headers=headers)
+        logger.info(
+            f"[11번가] GET /cateservice/category/{category_id} → {resp.status_code}"
+        )
+        data = self._parse_xml(resp.text)
+        if not resp.is_success:
+            msg = data.get("message", "") or data.get("raw", "") or resp.text[:300]
+            raise ElevenstApiError(f"HTTP {resp.status_code}: {msg}")
+        return data
 
     # ------------------------------------------------------------------
     # 상품 등록/수정
@@ -143,7 +205,11 @@ class ElevenstClient:
         11번가 셀러 API: POST /rest/prodservices/product
         """
         result = await self._call_api("POST", "/product", body=xml_data)
-        return {"success": True, "data": result}
+        prd_no = result.get("prdNo", "") if isinstance(result, dict) else ""
+        logger.info(
+            f"[11번가] 상품 등록 완료 — prdNo={prd_no}, keys={list(result.keys()) if isinstance(result, dict) else type(result)}"
+        )
+        return {"success": True, "prd_no": prd_no, "data": result}
 
     async def update_product(self, prd_no: str, xml_data: str) -> dict[str, Any]:
         """상품 수정."""
@@ -151,13 +217,71 @@ class ElevenstClient:
         return {"success": True, "data": result}
 
     async def delete_product(self, prd_no: str) -> dict[str, Any]:
-        """상품 삭제 (리스트에서 완전 제거)."""
-        result = await self._call_api("DELETE", f"/product/{prd_no}")
-        return {"success": True, "data": result}
+        """상품 판매중지(전시중지).
+
+        11번가 공식 API: PUT /rest/prodstatservice/stat/stopdisplay/{prdNo}
+        성공 시 resultCode=200, message에 STAT 코드 포함.
+        """
+        import asyncio as _asyncio
+
+        url = f"https://api.11st.co.kr/rest/prodstatservice/stat/stopdisplay/{prd_no}"
+        headers = self._headers()
+
+        status_code: int = 0
+        resp_text: str = ""
+        resp_headers: dict = {}
+
+        for attempt in range(3):
+            try:
+                async with _get_elevenst_stat_client(self.api_key) as client:
+                    resp = await client.put(url, headers=headers)
+                    status_code = resp.status_code
+                    resp_text = resp.text
+                    resp_headers = dict(resp.headers)
+                break
+            except httpx.HTTPError as conn_err:
+                logger.warning(
+                    f"[11번가] 판매중지 연결 오류 (attempt {attempt + 1}/3): {conn_err}"
+                )
+                if attempt < 2:
+                    await _asyncio.sleep(2**attempt)
+                else:
+                    raise ElevenstApiError(
+                        f"판매중지 연결 실패 (3회 시도): {conn_err}"
+                    ) from conn_err
+
+        logger.info(
+            f"[11번가] PUT /prodstatservice/stat/stopdisplay/{prd_no} → {status_code}"
+        )
+        data = self._parse_xml(resp_text)
+
+        if status_code == 429:
+            try:
+                retry_after = int(resp_headers.get("retry-after", "5"))
+            except ValueError:
+                retry_after = 5
+            raise ElevenstRateLimitError(retry_after=retry_after)
+
+        result_code = str(data.get("resultCode", "") or data.get("ResultCode", ""))
+        if result_code != "200":
+            msg = data.get("message", "") or data.get("raw", "") or resp_text[:300]
+            raise ElevenstApiError(
+                f"HTTP {status_code} / resultCode={result_code}: {msg}"
+            )
+
+        return {"success": True, "data": data}
 
     async def get_product(self, prd_no: str) -> dict[str, Any]:
         """상품 조회."""
         return await self._call_api("GET", f"/product/{prd_no}")
+
+    async def test_auth(self) -> bool:
+        """API 키 유효성 확인 — 카테고리 조회로 인증 테스트."""
+        try:
+            await self.get_categories()
+            return True
+        except Exception:
+            return False
 
     # ------------------------------------------------------------------
     # 주문 조회 / 처리
@@ -235,19 +359,22 @@ class ElevenstClient:
         )
         headers = self._headers()
 
-        async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
+        client = _get_elevenst_http_client(self.api_key)
+        try:
             resp = await client.get(url, headers=headers)
-            logger.info(
-                "[11번가] GET /ordservices/packaging/%s/%s → %s",
-                start_time,
-                end_time,
-                resp.status_code,
-            )
+        except (httpx.ConnectError, httpx.RemoteProtocolError) as conn_err:
+            logger.warning(f"[11번가] 배송준비중 주문 연결 오류, 재시도: {conn_err}")
+            _elevenst_clients.pop(self.api_key, None)
+            client = _get_elevenst_http_client(self.api_key)
+            resp = await client.get(url, headers=headers)
+        logger.info(
+            "[11번가] GET /ordservices/packaging/%s/%s → %s",
+            start_time,
+            end_time,
+            resp.status_code,
+        )
 
-        if not resp.is_success:
-            raise ElevenstApiError(f"HTTP {resp.status_code}: {resp.text[:300]}")
-
-        # EUC-KR 인코딩 처리
+        # EUC-KR 인코딩 처리 (HTTP 에러 여부와 무관하게 먼저 디코딩)
         try:
             text = resp.content.decode("euc-kr")
         except Exception:
@@ -256,6 +383,24 @@ class ElevenstClient:
         # 네임스페이스 + XML 선언 제거 (ET가 euc-kr 멀티바이트 인코딩 미지원)
         xml_text = text.replace("ns2:", "")
         xml_text = _re.sub(r"<\?xml[^?]*\?>", "", xml_text, count=1).strip()
+
+        if not resp.is_success:
+            try:
+                _err_root = ET.fromstring(xml_text)
+                _rc = _err_root.findtext("resultCode", "") or _err_root.findtext(
+                    "result_code", ""
+                )
+                _rt = _err_root.findtext("resultText", "") or _err_root.findtext(
+                    "result_text", ""
+                )
+                raise ElevenstApiError(
+                    f"API 오류 ({_rc}): {_rt}"
+                    if _rc
+                    else f"HTTP {resp.status_code}: {text[:200]}"
+                )
+            except ET.ParseError:
+                raise ElevenstApiError(f"HTTP {resp.status_code}: {text[:200]}")
+
         try:
             root = ET.fromstring(xml_text)
         except ET.ParseError as e:
@@ -292,19 +437,22 @@ class ElevenstClient:
         )
         headers = self._headers()
 
-        async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
+        client = _get_elevenst_http_client(self.api_key)
+        try:
             resp = await client.get(url, headers=headers)
-            logger.info(
-                "[11번가] GET /ordservices/complete/%s/%s → %s",
-                start_time,
-                end_time,
-                resp.status_code,
-            )
+        except (httpx.ConnectError, httpx.RemoteProtocolError) as conn_err:
+            logger.warning(f"[11번가] 주문 조회 연결 오류, 재시도: {conn_err}")
+            _elevenst_clients.pop(self.api_key, None)
+            client = _get_elevenst_http_client(self.api_key)
+            resp = await client.get(url, headers=headers)
+        logger.info(
+            "[11번가] GET /ordservices/complete/%s/%s → %s",
+            start_time,
+            end_time,
+            resp.status_code,
+        )
 
-        if not resp.is_success:
-            raise ElevenstApiError(f"HTTP {resp.status_code}: {resp.text[:300]}")
-
-        # EUC-KR 인코딩 처리
+        # EUC-KR 인코딩 처리 (HTTP 에러 여부와 무관하게 먼저 디코딩)
         try:
             text = resp.content.decode("euc-kr")
         except Exception:
@@ -313,6 +461,29 @@ class ElevenstClient:
         # 네임스페이스 + XML 선언 제거 (ET가 euc-kr 멀티바이트 인코딩 미지원)
         xml_text = text.replace("ns2:", "")
         xml_text = _re.sub(r"<\?xml[^?]*\?>", "", xml_text, count=1).strip()
+
+        if not resp.is_success:
+            # HTTP 에러이더라도 XML 본문에서 실제 오류 메시지 추출 시도
+            logger.error("[11번가] 오류 응답 원문: %s", text[:500])
+            try:
+                _err_root = ET.fromstring(xml_text)
+                _rc = _err_root.findtext("resultCode", "") or _err_root.findtext(
+                    "result_code", ""
+                )
+                _rt = (
+                    _err_root.findtext("resultText", "")
+                    or _err_root.findtext("result_text", "")
+                    or _err_root.findtext("resultMessage", "")
+                    or text[:300]
+                )
+                raise ElevenstApiError(
+                    f"API 오류 ({_rc}): {_rt}"
+                    if _rc
+                    else f"HTTP {resp.status_code}: {text[:200]}"
+                )
+            except ET.ParseError:
+                raise ElevenstApiError(f"HTTP {resp.status_code}: {text[:200]}")
+
         try:
             root = ET.fromstring(xml_text)
         except ET.ParseError as e:
@@ -364,14 +535,14 @@ class ElevenstClient:
         )
         headers = self._headers()
 
-        async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
-            resp = await client.get(url, headers=headers)
-            logger.info(
-                "[11번가] 발주확인 ordNo=%s ordPrdSeq=%s → %s",
-                ord_no,
-                ord_prd_seq,
-                resp.status_code,
-            )
+        client = _get_elevenst_http_client(self.api_key)
+        resp = await client.get(url, headers=headers)
+        logger.info(
+            "[11번가] 발주확인 ordNo=%s ordPrdSeq=%s → %s",
+            ord_no,
+            ord_prd_seq,
+            resp.status_code,
+        )
 
         if not resp.is_success:
             raise ElevenstApiError(
@@ -431,14 +602,14 @@ class ElevenstClient:
         )
         headers = self._headers()
 
-        async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
-            resp = await client.get(url, headers=headers)
-            logger.info(
-                "[11번가] 발송처리 dlvNo=%s invcNo=%s → %s",
-                dlv_no,
-                invc_no,
-                resp.status_code,
-            )
+        client = _get_elevenst_http_client(self.api_key)
+        resp = await client.get(url, headers=headers)
+        logger.info(
+            "[11번가] 발송처리 dlvNo=%s invcNo=%s → %s",
+            dlv_no,
+            invc_no,
+            resp.status_code,
+        )
 
         if not resp.is_success:
             raise ElevenstApiError(
@@ -489,11 +660,9 @@ class ElevenstClient:
         url = f"https://api.11st.co.kr/rest/claimservice/orderlistalladdr/{ord_no}"
         headers = self._headers()
 
-        async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
-            resp = await client.get(url, headers=headers)
-            logger.info(
-                "[11번가] 주문상태 조회 ordNo=%s → %s", ord_no, resp.status_code
-            )
+        client = _get_elevenst_http_client(self.api_key)
+        resp = await client.get(url, headers=headers)
+        logger.info("[11번가] 주문상태 조회 ordNo=%s → %s", ord_no, resp.status_code)
 
         if not resp.is_success:
             raise ElevenstApiError(
@@ -532,11 +701,9 @@ class ElevenstClient:
 
         url = f"https://api.11st.co.kr/rest/areaservice/{area_type}"
         headers = self._headers()
-        async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
-            resp = await client.get(url, headers=headers)
-            logger.info(
-                "[11번가] GET /areaservice/%s → %s", area_type, resp.status_code
-            )
+        client = _get_elevenst_http_client(self.api_key)
+        resp = await client.get(url, headers=headers)
+        logger.info("[11번가] GET /areaservice/%s → %s", area_type, resp.status_code)
 
         if not resp.is_success:
             logger.warning(
@@ -631,14 +798,14 @@ class ElevenstClient:
         )
         headers = self._headers()
 
-        async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
-            resp = await client.get(url, headers=headers)
-            logger.info(
-                "[11번가] 취소승인 ordPrdCnSeq=%s ordNo=%s → %s",
-                ord_prd_cn_seq,
-                ord_no,
-                resp.status_code,
-            )
+        client = _get_elevenst_http_client(self.api_key)
+        resp = await client.get(url, headers=headers)
+        logger.info(
+            "[11번가] 취소승인 ordPrdCnSeq=%s ordNo=%s → %s",
+            ord_prd_cn_seq,
+            ord_no,
+            resp.status_code,
+        )
 
         if not resp.is_success:
             raise ElevenstApiError(
@@ -709,14 +876,14 @@ class ElevenstClient:
         headers = self._headers()
 
         logger.info("[11번가] 취소거절 URL: %s", url)
-        async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
-            resp = await client.get(url, headers=headers)
-            logger.info(
-                "[11번가] 취소거절 ordPrdCnSeq=%s ordNo=%s → %s",
-                ord_prd_cn_seq,
-                ord_no,
-                resp.status_code,
-            )
+        client = _get_elevenst_http_client(self.api_key)
+        resp = await client.get(url, headers=headers)
+        logger.info(
+            "[11번가] 취소거절 ordPrdCnSeq=%s ordNo=%s → %s",
+            ord_prd_cn_seq,
+            ord_no,
+            resp.status_code,
+        )
 
         if not resp.is_success:
             logger.warning("[11번가] 취소거절 응답: %s", resp.text[:500])
@@ -811,14 +978,14 @@ class ElevenstClient:
         )
         headers = self._headers()
 
-        async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
-            resp = await client.get(url, headers=headers)
-            logger.info(
-                "[11번가] 반품승인 clmReqSeq=%s ordNo=%s → %s",
-                clm_req_seq,
-                ord_no,
-                resp.status_code,
-            )
+        client = _get_elevenst_http_client(self.api_key)
+        resp = await client.get(url, headers=headers)
+        logger.info(
+            "[11번가] 반품승인 clmReqSeq=%s ordNo=%s → %s",
+            clm_req_seq,
+            ord_no,
+            resp.status_code,
+        )
 
         if not resp.is_success:
             raise ElevenstApiError(
@@ -853,33 +1020,41 @@ class ElevenstClient:
         clm_req_seq: str,
         ord_no: str,
         ord_prd_seq: str,
+        refs_rsn_cd: str = "104",
+        refs_rsn: str = "기타",
     ) -> bool:
         """반품 거부 처리.
 
+        11번가 API: GET /rest/claimservice/returnreqreject/{ordNo}/{ordPrdSeq}/{clmReqSeq}/{refsRsnCd}/{refsRsn}
+
         Args:
-            clm_req_seq:  클레임번호 (반품요청코드)
+            clm_req_seq:  클레임번호
             ord_no:       주문번호
             ord_prd_seq:  주문순번
+            refs_rsn_cd:  사유코드 (101=반품상품미입고, 102=고객반품청취대행, 103=반품불가상품, 104=기타)
+            refs_rsn:     사유텍스트
 
         Returns:
             True if 반품거부 성공
         """
         import re as _re
+        import urllib.parse
 
+        encoded_rsn = urllib.parse.quote(refs_rsn, safe="")
         url = (
             f"https://api.11st.co.kr/rest/claimservice/returnreqreject"
-            f"/{clm_req_seq}/{ord_no}/{ord_prd_seq}"
+            f"/{ord_no}/{ord_prd_seq}/{clm_req_seq}/{refs_rsn_cd}/{encoded_rsn}"
         )
         headers = self._headers()
 
-        async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
-            resp = await client.get(url, headers=headers)
-            logger.info(
-                "[11번가] 반품거부 clmReqSeq=%s ordNo=%s → %s",
-                clm_req_seq,
-                ord_no,
-                resp.status_code,
-            )
+        client = _get_elevenst_http_client(self.api_key)
+        resp = await client.get(url, headers=headers)
+        logger.info(
+            "[11번가] 반품거부 clmReqSeq=%s ordNo=%s → %s",
+            clm_req_seq,
+            ord_no,
+            resp.status_code,
+        )
 
         if not resp.is_success:
             raise ElevenstApiError(
@@ -899,8 +1074,14 @@ class ElevenstClient:
         except ET.ParseError:
             raise ElevenstApiError(f"반품거부 응답 XML 파싱 실패: {text[:200]}")
 
-        result_code = root.findtext("result_code", "")
-        result_text = root.findtext("result_text", "")
+        # 응답 루트가 ResultOrder인 경우 처리
+        result_node = root if root.tag != "ResultOrder" else root
+        result_code = result_node.findtext("result_code", "") or result_node.findtext(
+            "ResultCode", ""
+        )
+        result_text = result_node.findtext("result_text", "") or result_node.findtext(
+            "ResultText", ""
+        )
         logger.info(
             "[11번가] 반품거부 결과: code=%s, text=%s", result_code, result_text
         )
@@ -938,9 +1119,9 @@ class ElevenstClient:
         url = f"https://api.11st.co.kr/rest/prodqnaservices/prodqnalist/{start_dt}/{end_dt}/00"
         headers = self._headers()
 
-        async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
-            resp = await client.get(url, headers=headers)
-            logger.info("[11번가] Q&A 목록 조회 → %s", resp.status_code)
+        client = _get_elevenst_http_client(self.api_key)
+        resp = await client.get(url, headers=headers)
+        logger.info("[11번가] Q&A 목록 조회 → %s", resp.status_code)
 
         if not resp.is_success:
             raise ElevenstApiError(
@@ -966,7 +1147,11 @@ class ElevenstClient:
         result_code = root.findtext("result_code", "")
         if result_code:
             result_text = root.findtext("result_text", "")
-            if result_code in ("0", "-1") and "없습니다" in (result_text or ""):
+            logger.info(
+                "[11번가] Q&A result_code=%s, result_text=%s", result_code, result_text
+            )
+            # "0" 또는 "-1"은 정상 응답(결과 없음 포함) → 빈 리스트 반환
+            if result_code in ("0", "-1"):
                 return []
             raise ElevenstApiError(f"Q&A 조회 에러 ({result_code}): {result_text}")
 
@@ -978,6 +1163,88 @@ class ElevenstClient:
             items.append(item)
 
         logger.info("[11번가] Q&A %d건 조회", len(items))
+        return items
+
+    async def get_urgent_inquiry_list(
+        self, start_dt: Optional[str] = None, end_dt: Optional[str] = None
+    ) -> list[dict[str, Any]]:
+        """긴급알림(긴급문의) 목록 조회.
+
+        Args:
+            start_dt: 검색시작일 YYYYMMDD
+            end_dt:   검색종료일 YYYYMMDD
+
+        Returns:
+            긴급알림 항목 리스트
+        """
+        import re as _re
+        from datetime import timedelta
+
+        if not end_dt:
+            end_dt = now_kst().strftime("%Y%m%d")
+        if not start_dt:
+            start_dt = (now_kst() - timedelta(days=7)).strftime("%Y%m%d")
+
+        # 미확인(01) + 답변대기(02) 상태 수집
+        # API: GET /rest/alimi/getalimilist/{startTime}/{endTime}/{emerNtceCrntCd}/
+        headers = self._headers()
+        items: list[dict[str, Any]] = []
+
+        for status_cd in ("01", "02"):
+            url = f"https://api.11st.co.kr/rest/alimi/getalimilist/{start_dt}/{end_dt}/{status_cd}"
+            try:
+                client = _get_elevenst_http_client(self.api_key)
+                resp = await client.get(url, headers=headers)
+                logger.info(
+                    "[11번가] 긴급알리미(%s) 조회 → %s", status_cd, resp.status_code
+                )
+            except Exception as e:
+                logger.warning("[11번가] 긴급알리미 API 요청 실패: %s", e)
+                continue
+
+            if not resp.is_success:
+                logger.warning(
+                    "[11번가] 긴급알리미 HTTP %s: %s", resp.status_code, resp.text[:300]
+                )
+                continue
+
+            try:
+                text = resp.content.decode("euc-kr")
+            except Exception:
+                text = resp.text
+
+            xml_text = text.replace("ns2:", "").replace("s2:", "")
+            xml_text = _re.sub(r"<\?xml[^?]*\?>", "", xml_text, count=1).strip()
+            logger.info(
+                "[11번가] 긴급알리미(%s) 원시 응답(500자): %s",
+                status_cd,
+                xml_text[:500],
+            )
+
+            try:
+                root = ET.fromstring(xml_text)
+            except ET.ParseError as e:
+                logger.error("[11번가] 긴급알리미 XML 파싱 실패: %s", e)
+                continue
+
+            # result_code 존재 시 결과 없음(0) 또는 에러 → 건너뜀
+            result_code = root.findtext("result_code", "")
+            if result_code:
+                logger.info(
+                    "[11번가] 긴급알리미(%s) result_code=%s", status_cd, result_code
+                )
+                continue
+
+            for el in root.findall("alimListInfo"):
+                item: dict[str, Any] = {}
+                for child in el:
+                    val = (child.text or "").strip()
+                    if child.tag == "emerCtnt":
+                        val = _clean_alimi_content(val)
+                    item[child.tag] = val
+                items.append(item)
+
+        logger.info("[11번가] 긴급알리미 총 %d건 조회", len(items))
         return items
 
     async def reply_qna(self, brd_info_no: str, prd_no: str, answer: str) -> bool:
@@ -997,13 +1264,11 @@ class ElevenstClient:
         headers = self._headers()
         xml_body = f"<?xml version='1.0' encoding='UTF-8'?><ProductQna><answerCont>{answer}</answerCont></ProductQna>"
 
-        async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
-            resp = await client.put(
-                url, headers=headers, content=xml_body.encode("utf-8")
-            )
-            logger.info(
-                "[11번가] Q&A 답변 brdInfoNo=%s → %s", brd_info_no, resp.status_code
-            )
+        client = _get_elevenst_http_client(self.api_key)
+        resp = await client.put(url, headers=headers, content=xml_body.encode("utf-8"))
+        logger.info(
+            "[11번가] Q&A 답변 brdInfoNo=%s → %s", brd_info_no, resp.status_code
+        )
 
         if not resp.is_success:
             raise ElevenstApiError(
@@ -1030,6 +1295,53 @@ class ElevenstClient:
 
         return True
 
+    async def confirm_alimi(self, emer_ntce_seq: str) -> bool:
+        """긴급알리미 확인처리.
+
+        API: PUT https://api.11st.co.kr/rest/alimi/alimianswer
+        result_code 100(공지확인) / 200(답변확인) = 성공
+        """
+        import re as _re2
+
+        url = "https://api.11st.co.kr/rest/alimi/alimianswer"
+        headers = {**self._headers(), "Content-Type": "application/xml; charset=UTF-8"}
+        xml_body = (
+            f"<?xml version='1.0' encoding='UTF-8'?>"
+            f"<request><confirmYn>Y</confirmYn><emerNtceSeq>{emer_ntce_seq}</emerNtceSeq></request>"
+        )
+        client = _get_elevenst_http_client(self.api_key)
+        resp = await client.put(url, headers=headers, content=xml_body.encode("utf-8"))
+        logger.info(
+            "[11번가] 긴급알리미 확인처리 seq=%s → %s", emer_ntce_seq, resp.status_code
+        )
+
+        try:
+            resp_text = resp.content.decode("euc-kr")
+        except Exception:
+            resp_text = resp.text
+
+        if not resp.is_success:
+            raise ElevenstApiError(
+                f"긴급알리미 확인처리 HTTP {resp.status_code}: {resp_text[:300]}"
+            )
+
+        xml_clean = _re2.sub(r"<\?xml[^?]*\?>", "", resp_text, count=1).strip()
+        try:
+            root = ET.fromstring(xml_clean)
+            result_code = root.findtext("result_code", "")
+            # 100(공지확인성공), 200(답변확인성공), -10005(이미처리됨) → 모두 성공으로 간주
+            if result_code and result_code not in ("100", "200", "-10005"):
+                result_text = root.findtext("result_text", "")
+                raise ElevenstApiError(
+                    f"긴급알리미 확인처리 에러 ({result_code}): {result_text}"
+                )
+        except ElevenstApiError:
+            raise
+        except Exception:
+            pass
+
+        return True
+
     async def _fetch_claim_list(
         self, claim_type: str, start_time: str, end_time: str
     ) -> list[dict[str, Any]]:
@@ -1045,15 +1357,15 @@ class ElevenstClient:
         url = f"https://api.11st.co.kr/rest/claimservice/{claim_type}/{start_time}/{end_time}"
         headers = self._headers()
 
-        async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
-            resp = await client.get(url, headers=headers)
-            logger.info(
-                "[11번가] GET /claimservice/%s/%s/%s → %s",
-                claim_type,
-                start_time,
-                end_time,
-                resp.status_code,
-            )
+        client = _get_elevenst_http_client(self.api_key)
+        resp = await client.get(url, headers=headers)
+        logger.info(
+            "[11번가] GET /claimservice/%s/%s/%s → %s",
+            claim_type,
+            start_time,
+            end_time,
+            resp.status_code,
+        )
 
         if not resp.is_success:
             raise ElevenstApiError(f"HTTP {resp.status_code}: {resp.text[:300]}")
@@ -1328,7 +1640,6 @@ class ElevenstClient:
   <maktPrc>{makt_prc}</maktPrc>
   <selPrc>{sale_price}</selPrc>
   <selMthdCd>01</selMthdCd>
-  <aplBgnDy>{now_kst().strftime("%Y%m%d")}</aplBgnDy>
   <selTermUseYn>N</selTermUseYn>
   <prdWeight>0</prdWeight>
   <rmaterialTypCd>04</rmaterialTypCd>
@@ -1628,6 +1939,27 @@ def _resolve_origin(origin: str) -> tuple[str, str, str]:
 
     # 매핑 없는 국가명은 기타로 처리
     return ("03", "", origin.strip())
+
+
+def _clean_alimi_content(raw: str) -> str:
+    """긴급알리미 emerCtnt 필드 정제: 이중 HTML 엔티티 디코딩 → 줄바꿈 보존 → 나머지 태그 제거."""
+    import html as _html
+    import re as _re2
+
+    # 이중 인코딩 디코딩 (&amp;lt; → &lt; → <)
+    text = _html.unescape(_html.unescape(raw))
+    # <br>, <BR>, <p>, </p> → 줄바꿈으로 변환 (가독성 보존)
+    text = _re2.sub(r"<br\s*/?>|<BR\s*/?>", "\n", text, flags=_re2.IGNORECASE)
+    text = _re2.sub(r"</?p\s*>", "\n", text, flags=_re2.IGNORECASE)
+    # 나머지 HTML 태그 제거
+    text = _re2.sub(r"<[^>]+>", "", text)
+    # javascript: 링크 텍스트 제거
+    text = _re2.sub(r"javascript:[^\s\"']+", "", text)
+    # 3줄 이상 연속 빈줄 → 2줄로 정리
+    text = _re2.sub(r"\n{3,}", "\n\n", text)
+    # 각 줄 앞뒤 공백 제거
+    text = "\n".join(line.strip() for line in text.splitlines())
+    return text.strip()
 
 
 def _escape_xml(text: str) -> str:
