@@ -498,6 +498,11 @@ async def _site_autotune_loop(site: str):
                                     updates["cost"] = r.new_cost
                                 if r.new_options is not None:
                                     updates["options"] = r.new_options
+                                # 적립금 사용 제한 여부 (무신사 등) — 오토튠에서 함께 갱신
+                                if r.new_is_point_restricted is not None:
+                                    updates["is_point_restricted"] = (
+                                        r.new_is_point_restricted
+                                    )
                                 elif (
                                     r.new_sale_status == "sold_out" and product.options
                                 ):
@@ -896,6 +901,11 @@ async def _site_autotune_loop(site: str):
                                             market_type,
                                             policy.market_policies,
                                             source_site=site,
+                                            is_point_restricted=getattr(
+                                                product,
+                                                "is_point_restricted",
+                                                None,
+                                            ),
                                         )
                                     else:
                                         expected_price = int(new_cost)

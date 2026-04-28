@@ -566,6 +566,7 @@ class RefreshResult:
     new_color: Optional[str] = None
     new_free_shipping: Optional[bool] = None
     new_same_day_delivery: Optional[bool] = None
+    new_is_point_restricted: Optional[bool] = None
     changed: bool = False
     stock_changed: bool = False
     needs_extension: bool = False
@@ -1090,6 +1091,7 @@ def _process_musinsa_detail(
         new_color=new_color,
         new_free_shipping=detail.get("freeShipping", False),
         new_same_day_delivery=detail.get("sameDayDelivery", False),
+        new_is_point_restricted=detail.get("isPointRestricted"),
         changed=changed,
         stock_changed=_stock_changes > 0,
         warnings=warnings,

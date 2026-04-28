@@ -614,10 +614,15 @@ class SambaCollectorService:
                 _ssm = ssm_data.get(p.source_site, {})
                 _ss_rate = _ssm.get("marginRate", 0)
                 _ss_amount = _ssm.get("marginAmount", 0)
-                if _ss_rate > 0:
-                    source_margin += round(base * _ss_rate / 100)
-                if _ss_amount > 0:
-                    source_margin += _ss_amount
+                # pointOnly=true: 적립금 사용 가능 상품(is_point_restricted=False)에만 적용
+                _point_only = bool(_ssm.get("pointOnly"))
+                _is_pr = getattr(p, "is_point_restricted", None)
+                _apply_ssm = (not _point_only) or (_is_pr is False)
+                if _apply_ssm:
+                    if _ss_rate > 0:
+                        source_margin += round(base * _ss_rate / 100)
+                    if _ss_amount > 0:
+                        source_margin += _ss_amount
             calculated = int(
                 base * (1 + margin_rate / 100) + source_margin + shipping + extra
             )

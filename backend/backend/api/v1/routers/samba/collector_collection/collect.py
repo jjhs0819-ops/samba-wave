@@ -482,6 +482,7 @@ async def collect_by_url(
                 "sale_status": sale_status,
                 "free_shipping": data.get("freeShipping", False),
                 "same_day_delivery": data.get("sameDayDelivery", False),
+                "is_point_restricted": data.get("isPointRestricted"),
                 "price_history": [initial_snapshot],
             }
 
@@ -1539,6 +1540,7 @@ async def collect_single_musinsa(
         "sale_status": sale_status,
         "free_shipping": data.get("freeShipping", False),
         "same_day_delivery": data.get("sameDayDelivery", False),
+        "is_point_restricted": data.get("isPointRestricted"),
         "price_history": [initial_snapshot],
     }
 

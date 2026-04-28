@@ -181,6 +181,12 @@ class SambaCollectedProduct(SQLModel, table=True):
     sale_price: float = Field(default=0)
     cost: Optional[float] = Field(default=None)
 
+    # 적립금 사용 제한 여부 (무신사 isRestictedUsePoint 등)
+    # True = 적립금 사용 불가 상품, False = 사용 가능, None = 미수집/지원 안 됨
+    is_point_restricted: Optional[bool] = Field(
+        default=None, sa_column=Column(Boolean, nullable=True)
+    )
+
     # 이미지/옵션 (JSON)
     images: Optional[List[str]] = Field(
         default=None, sa_column=Column(JSON, nullable=True)

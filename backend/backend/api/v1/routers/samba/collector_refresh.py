@@ -244,6 +244,9 @@ async def refresh_products(
             updates["free_shipping"] = r.new_free_shipping
         if r.new_same_day_delivery is not None:
             updates["same_day_delivery"] = r.new_same_day_delivery
+        # 적립금 사용 제한 여부 갱신 (무신사 등)
+        if r.new_is_point_restricted is not None:
+            updates["is_point_restricted"] = r.new_is_point_restricted
 
         # 옵션은 가격 변동과 무관하게 항상 갱신
         if r.new_options is not None:
@@ -709,6 +712,7 @@ async def refresh_products(
                         _acc.market_type,
                         _pm_data,
                         source_site=_source_site,
+                        is_point_restricted=getattr(p, "is_point_restricted", None),
                     )
                     _old_sent = _last_sent.get(_acc_id, {})
                     _old_price = (int(_old_sent.get("sale_price") or 0) // 100) * 100

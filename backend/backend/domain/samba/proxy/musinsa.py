@@ -521,6 +521,8 @@ class MusinsaClient:
                 # 쿠폰 API 실패 + goodsPrice.couponPrice도 0이면 가격 불확실
                 # (쿠폰 API가 유일한 쿠폰 정보원인 경우)
                 "price_uncertain": _coupon_api_failed and coupon_price_raw == 0,
+                # 적립금 사용 제한 여부 (True=불가, False=가능)
+                "isPointRestricted": bool(d.get("isRestictedUsePoint")),
             }
             # saleStatus=sold_out이면 모든 옵션 재고 강제 0 (API가 outOfStock=False로 내려와도)
             if _result.get("saleStatus") == "sold_out" and _result.get("options"):

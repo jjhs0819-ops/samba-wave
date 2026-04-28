@@ -54,6 +54,7 @@ class SambaPolicyService:
         fee_rate: float = 0,
         source_site: str = "",
         tenant_id: str | None = None,
+        is_point_restricted: Optional[bool] = None,
     ) -> int:
         policy = await self.repo.get_async(policy_id)
         if not policy or not policy.pricing:
@@ -81,10 +82,15 @@ class SambaPolicyService:
 
         if source_site:
             site_margin = pricing.get("sourceSiteMargins", {}).get(source_site, {})
-            if site_margin.get("marginRate", 0) > 0:
-                price += effective_cost * site_margin["marginRate"] / 100
-            if site_margin.get("marginAmount", 0) > 0:
-                price += site_margin["marginAmount"]
+            # pointOnly=true일 때는 적립금 사용 가능 상품(is_point_restricted=False)만 추가 마진 적용
+            # is_point_restricted=True(불가) 또는 None(미수집)이면 추가 마진 스킵
+            point_only = bool(site_margin.get("pointOnly"))
+            apply_site_margin = (not point_only) or (is_point_restricted is False)
+            if apply_site_margin:
+                if site_margin.get("marginRate", 0) > 0:
+                    price += effective_cost * site_margin["marginRate"] / 100
+                if site_margin.get("marginAmount", 0) > 0:
+                    price += site_margin["marginAmount"]
 
         price += pricing.get("extraCharge", 0)
 
@@ -118,13 +124,19 @@ class SambaPolicyService:
         fee_rate: float = 0,
         source_site: str = "",
         tenant_id: str | None = None,
+        is_point_restricted: Optional[bool] = None,
     ) -> Dict[str, Any]:
         cost_info = await convert_cost_by_source_site(
             self.repo.session, cost, source_site, tenant_id
         )
         effective_cost = cost_info["convertedCost"]
         market_price = await self.calculate_market_price(
-            policy_id, cost, fee_rate, source_site, tenant_id
+            policy_id,
+            cost,
+            fee_rate,
+            source_site,
+            tenant_id,
+            is_point_restricted=is_point_restricted,
         )
         profit = market_price - effective_cost
         profit_rate = round((profit / market_price) * 100, 1) if market_price > 0 else 0

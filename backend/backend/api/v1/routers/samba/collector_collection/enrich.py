@@ -214,6 +214,7 @@ async def enrich_product(
             "sale_price": new_sale_price,
             "cost": new_cost,
             "sale_status": new_sale_status,
+            "is_point_restricted": detail.get("isPointRestricted"),
         }
 
         # 가격 변동 추적
@@ -645,6 +646,7 @@ async def enrich_all_products(
                 "sale_price": new_sale_price,
                 "cost": new_cost,
                 "sale_status": new_sale_status,
+                "is_point_restricted": detail.get("isPointRestricted"),
             }
 
             # 가격 변동 추적

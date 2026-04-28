@@ -52,11 +52,13 @@ def calc_market_price(
     market_type: str,
     market_policies: dict | None = None,
     source_site: str = "",
+    is_point_restricted: Optional[bool] = None,
 ) -> int:
     """정책 기반 마켓 최종 판매가 계산.
 
     원가 + 마진 + 배송비 → 소싱처 추가 마진 → 수수료 역산 → 추가요금.
     마켓별 오버라이드 적용. 범위 마진 지원. 소싱처별 추가 마진 지원.
+    pointOnly=true 옵션이면 적립금 사용 가능 상품(is_point_restricted=False)에만 추가 마진 적용.
     """
     if not policy_pricing:
         return int(cost)
@@ -83,10 +85,14 @@ def calc_market_price(
         _ssm = pr.get("sourceSiteMargins", {}).get(source_site, {})
         _ss_rate = _ssm.get("marginRate", 0)
         _ss_amount = _ssm.get("marginAmount", 0)
-        if _ss_rate > 0:
-            calc_price += round(cost * _ss_rate / 100)
-        if _ss_amount > 0:
-            calc_price += _ss_amount
+        # pointOnly=true: 적립금 사용 가능 상품(is_point_restricted=False)에만 적용
+        _point_only = bool(_ssm.get("pointOnly"))
+        _apply_ssm = (not _point_only) or (is_point_restricted is False)
+        if _apply_ssm:
+            if _ss_rate > 0:
+                calc_price += round(cost * _ss_rate / 100)
+            if _ss_amount > 0:
+                calc_price += _ss_amount
 
     if m_fee > 0 and calc_price > 0:
         calc_price = math.ceil(calc_price / (1 - m_fee / 100))
@@ -432,6 +438,7 @@ class SambaShipmentService:
                         "smartstore",
                         policy_market_data,
                         source_site=p.source_site or "",
+                        is_point_restricted=getattr(p, "is_point_restricted", None),
                     )
 
                     # 가격 이상치 방어: 원가가 정상가의 5% 미만이면 전송 차단
@@ -1376,6 +1383,9 @@ class SambaShipmentService:
                         market_type,
                         policy_market_data,
                         source_site=product_row.source_site or "",
+                        is_point_restricted=getattr(
+                            product_row, "is_point_restricted", None
+                        ),
                     )
 
                     # 가격 이상치 방어: 원가가 정상가의 5% 미만이면 전송 차단
