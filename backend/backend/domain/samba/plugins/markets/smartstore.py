@@ -695,6 +695,85 @@ class SmartStorePlugin(MarketPlugin):
                                 "message": f"상품 #{existing_no} 수정/등록 실패: {reg_e}",
                                 "_clear_product_no": True,
                             }
+
+                    # 대분류(leafCategoryId) 변경 거부 → 기존 상품 마켓삭제 후 신규등록 전환
+                    # SmartStore는 등록 후 대분류 변경 불가 정책 → 기존 originProductNo 폐기 필수
+                    err_str = str(e)
+                    if "대분류" in err_str and "변경" in err_str:
+                        price_only = product.get("_price_stock_only", False)
+                        if skip_image or price_only:
+                            logger.warning(
+                                f"[스마트스토어] 대분류 변경 불가(origin={existing_no}) — "
+                                f"가격/재고 전용 모드라 신규등록 차단"
+                            )
+                            return {
+                                "success": False,
+                                "error_type": "category_locked",
+                                "message": (
+                                    f"상품 #{existing_no} 대분류 변경 불가. "
+                                    "전체 전송 모드로 다시 시도해주세요."
+                                ),
+                            }
+
+                        logger.warning(
+                            f"[스마트스토어] 대분류 변경 거부 감지 → "
+                            f"마켓삭제({existing_no}) 후 신규등록 전환: {err_str[:120]}"
+                        )
+                        # 1) 기존 origin 마켓삭제 (404는 이미 삭제로 간주하여 진행)
+                        try:
+                            await client.delete_product(str(existing_no))
+                            logger.info(
+                                f"[스마트스토어] 대분류 fallback — 기존 상품 마켓삭제 성공: {existing_no}"
+                            )
+                        except Exception as del_e:
+                            del_err_str = str(del_e)
+                            if "HTTP 404" in del_err_str:
+                                logger.info(
+                                    f"[스마트스토어] 대분류 fallback — {existing_no} 이미 삭제됨(404) → 신규등록 진행"
+                                )
+                            else:
+                                logger.error(
+                                    f"[스마트스토어] 대분류 fallback — 마켓삭제 실패({existing_no}): {del_e}"
+                                )
+                                return {
+                                    "success": False,
+                                    "error_type": "category_locked",
+                                    "message": (
+                                        f"상품 #{existing_no} 대분류 변경 거부 — "
+                                        f"마켓삭제 실패: {del_err_str[:120]}"
+                                    ),
+                                }
+
+                        # 2) 신규등록 전환 (sellerManagementCode 잔여 매칭 시 update 무한루프 방지를 위해
+                        #    find_by_management_code 우회: 직접 register_product 호출)
+                        try:
+                            full_copy = dict(product_copy)
+                            full_data = SmartStoreClient.transform_product(
+                                full_copy, category_id
+                            )
+                            r = await _register_product_with_fallback(
+                                full_data, full_copy, category_id
+                            )
+                            return {
+                                "success": True,
+                                "message": "스마트스토어 등록 성공 (대분류변경→마켓삭제 후 신규전환)",
+                                "data": r,
+                                "_clear_product_no": True,
+                            }
+                        except Exception as reg_e:
+                            logger.error(
+                                f"[스마트스토어] 대분류 fallback — 신규등록 실패: {reg_e}"
+                            )
+                            return {
+                                "success": False,
+                                "error_type": "category_locked",
+                                "message": (
+                                    f"상품 #{existing_no} 대분류 변경 거부 — "
+                                    f"삭제 후 재등록 실패: {str(reg_e)[:120]}"
+                                ),
+                                "_clear_product_no": True,
+                            }
+
                     raise
             else:
                 # 중복 등록 방지: 이미 Naver에 등록된 상품인지 sellerManagementCode로 사전 확인

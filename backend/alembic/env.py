@@ -92,6 +92,12 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection):
+    # 2026-04-28 사고 예방: 마이그레이션이 lock 못 잡으면 30초만에 fail-fast.
+    # 무한 대기로 connection pool 도미노 고갈을 막아 deploy.sh가 즉시 실패 감지하고
+    # blue 컨테이너 unhealthy로 처리 → staging(green) 유지로 사용자 피해 차단.
+    from sqlalchemy import text as _sa_text
+
+    connection.execute(_sa_text("SET lock_timeout = '30s'"))
     context.configure(
         connection=connection,
         target_metadata=target_metadata,

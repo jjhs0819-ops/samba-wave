@@ -88,9 +88,21 @@ async def fix():
     conn = await asyncpg.connect(**kw)
     # 각 SQL을 (라벨, sql) 튜플로 묶어 단계별 시간 측정 + 개별 실패 격리
     statements = [
+        # 2026-04-28 사고 보강: idle 외에 idle in transaction (5분+ 방치)도 강제 종료.
+        # PID 637179가 30분간 idle in transaction 상태로 ACCESS EXCLUSIVE LOCK 보유 →
+        # 이후 ALTER TABLE 무한 대기 → connection pool 도미노 고갈 → 1시간 다운.
+        # 'idle'은 즉시, 'idle in transaction*'은 5분 이상 방치된 것만 종료(정상 짧은 트랜잭션 보호).
         ('terminate_idle', 'SELECT COUNT(*) FROM pg_stat_activity'
-                           ' WHERE state = \'idle\' AND datname = current_database()'
-                           ' AND pid <> pg_backend_pid() AND pg_terminate_backend(pid)'),
+                           ' WHERE datname = current_database()'
+                           ' AND pid <> pg_backend_pid()'
+                           ' AND ('
+                             'state = \'idle\''
+                             ' OR ('
+                               'state IN (\'idle in transaction\', \'idle in transaction (aborted)\')'
+                               ' AND now() - state_change > interval \'5 minutes\''
+                             ')'
+                           ')'
+                           ' AND pg_terminate_backend(pid)'),
         ('alter_search_filter', 'ALTER TABLE samba_search_filter ADD COLUMN IF NOT EXISTS source_brand_name TEXT'),
         ('drop_market_account_sort_order', 'ALTER TABLE samba_market_account DROP COLUMN IF EXISTS sort_order'),
         ('alter_return_clm_req_seq', 'ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS clm_req_seq TEXT'),

@@ -58,13 +58,13 @@ function appendShipmentLogs(
 }
 
 async function fetchProductsByIdsChunked(ids: string[]) {
-  const result: SambaCollectedProduct[] = []
-  for (let i = 0; i < ids.length; i += 500) {
-    const chunk = ids.slice(i, i + 500)
-    const rows = await collectorApi.getProductsByIds(chunk)
-    if (Array.isArray(rows)) result.push(...rows)
-  }
-  return result
+  // 500개씩 청크 분할 후 병렬 호출 (1000개면 2개 청크 동시 요청)
+  const chunks: string[][] = []
+  for (let i = 0; i < ids.length; i += 500) chunks.push(ids.slice(i, i + 500))
+  const results = await Promise.all(chunks.map(c => collectorApi.getProductsByIds(c)))
+  const merged: SambaCollectedProduct[] = []
+  for (const rows of results) if (Array.isArray(rows)) merged.push(...rows)
+  return merged
 }
 
 export default function ShipmentsPage() {
@@ -270,10 +270,13 @@ export default function ShipmentsPage() {
 
   // 검색 필터가 사용자에 의해 변경되었는지 추적
   const userFilterChangedRef = useRef(false)
+  // by-ids 모드(상품관리에서 N개 선택 후 진입) 1회 로드 완료 여부 — 페이지 이동 시 재로드 방지
+  const byIdsLoadedRef = useRef(false)
 
   // 필터 변경 시 URL selected 파라미터 무시 + 선택 초기화
   const onFilterChange = useCallback(() => {
     userFilterChangedRef.current = true
+    byIdsLoadedRef.current = false  // 일반 검색 모드 전환 → 재로드 허용
     setSelectedProducts([])
     // URL에서 selected 파라미터 제거
     const url = new URL(window.location.href)
@@ -290,7 +293,6 @@ export default function ShipmentsPage() {
   }, [])
 
   const load = useCallback(async () => {
-    setLoading(true)
     // URL에서 선택된 상품 ID 먼저 확인 (단, 사용자가 필터를 변경했으면 무시)
     const urlParams = new URLSearchParams(window.location.search)
     const preIds = userFilterChangedRef.current
@@ -298,6 +300,13 @@ export default function ShipmentsPage() {
       : urlParams.get('selected')?.split(',').filter(Boolean)
         || (urlParams.get('fromStorage') === '1' ? sessionStorage.getItem('shipment_selected')?.split(',').filter(Boolean) : null)
         || []
+
+    // by-ids 모드 페이지 이동 시: 이미 1회 로드 완료 → 서버 재호출 스킵 (클라이언트 슬라이스만 사용)
+    if (byIdsLoadedRef.current && preIds.length === 0 && !userFilterChangedRef.current) {
+      return
+    }
+
+    setLoading(true)
 
     // 검색 조건에 따라 서버 API 파라미터 구성
     const scrollParams: Record<string, string | number> = { skip: (currentPage - 1) * pageSize, limit: pageSize }
@@ -327,7 +336,10 @@ export default function ShipmentsPage() {
       productPromise,
       accountApi.listActive().catch(() => []),
     ])
-    if (preIds.length > 0) setTotalCount(p.length)
+    if (preIds.length > 0) {
+      setTotalCount(p.length)
+      byIdsLoadedRef.current = true  // 페이지 이동 시 재로드 방지
+    }
     setProducts(p)
     setAccounts(a)
     setLoading(false)
@@ -442,15 +454,18 @@ export default function ShipmentsPage() {
   // 서버에서 필터/정렬/페이지네이션 완료된 상태 — 프론트 필터링 불필요
   const filteredProducts = products
 
-  // 서버 페이지네이션 — products가 이미 현재 페이지분
-  const pageProducts = filteredProducts
+  // by-ids 진입(상품관리에서 N개 선택 후 이동) 시 products에 전체가 한 번에 들어옴 → 클라이언트에서 페이지 슬라이스
+  const pageProducts = useMemo(
+    () => filteredProducts.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+    [filteredProducts, currentPage, pageSize],
+  )
 
   // 등록된 마켓 목록 (동적)
   const registeredMarkets = useMemo(() => {
     const marketSet = new Set<string>()
     for (const p of products) {
       for (const aid of (p.registered_accounts || [])) {
-        const acc = accounts.find(a => a.id === aid)
+        const acc = accountsById.get(aid)
         if (acc) marketSet.add(acc.market_type)
       }
     }
@@ -459,7 +474,7 @@ export default function ShipmentsPage() {
       if (!marketNameMap[acc.market_type]) marketNameMap[acc.market_type] = acc.market_name
     }
     return [...marketSet].map(type => ({ type, name: marketNameMap[type] || type }))
-  }, [products, accounts])
+  }, [products, accounts, accountsById])
 
   const handleMarketDelete = async () => {
     if (selectedAccounts.length === 0) { showAlert('마켓 계정을 선택해주세요'); return }
@@ -469,24 +484,24 @@ export default function ShipmentsPage() {
       await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
     } catch { /* ignore */ }
     // 등록된 마켓이 있는 상품만 필터
+    const selectedAccountSet = new Set(selectedAccounts)
     const targetProducts = selectedProducts.filter(pid => {
-      const p = products.find(x => x.id === pid)
-      return p && (p.registered_accounts || []).some(aid => selectedAccounts.includes(aid))
+      const p = productsById.get(pid)
+      return p && (p.registered_accounts || []).some(aid => selectedAccountSet.has(aid))
     })
     if (targetProducts.length === 0) { showAlert('선택된 소싱사이트/마켓에 해당하는 등록 상품이 없습니다'); return }
 
     // 실제 등록된 계정만 추출 (선택 계정 ∩ 상품별 registered_accounts)
-    const selectedSet = new Set(selectedAccounts)
     const effectiveDeleteAccIds = new Set<string>()
     for (const pid of targetProducts) {
-      const p = products.find(x => x.id === pid)
+      const p = productsById.get(pid)
       for (const aid of (p?.registered_accounts || [])) {
-        if (selectedSet.has(aid)) effectiveDeleteAccIds.add(aid)
+        if (selectedAccountSet.has(aid)) effectiveDeleteAccIds.add(aid)
       }
     }
     const effectiveDeleteList = [...effectiveDeleteAccIds]
     const targetLabels = effectiveDeleteList.map(aid => {
-      const acc = accounts.find(a => a.id === aid)
+      const acc = accountsById.get(aid)
       return acc ? `${acc.market_name}(${acc.seller_id || '-'})` : aid
     }).join(', ')
     if (!await showConfirm(`${fmtNum(targetProducts.length)}개 상품을 ${targetLabels || '선택 계정'}에서 마켓삭제하시겠습니까?`)) return
@@ -532,9 +547,9 @@ export default function ShipmentsPage() {
     for (let i = 0; i < targetProducts.length; i++) {
       if (cancelLocalDeleteIdsRef.current.has(localJobId)) { cancelledMid = true; break }
       const pid = targetProducts[i]
-      const prod = products.find(p => p.id === pid)
+      const prod = productsById.get(pid)
       // 이 상품에 등록된 계정만 삭제 대상
-      const prodAccIds = (prod?.registered_accounts || []).filter(aid => selectedSet.has(aid))
+      const prodAccIds = (prod?.registered_accounts || []).filter(aid => selectedAccountSet.has(aid))
       if (prodAccIds.length === 0) continue
       try {
         // log_to_buffer=true: 이 페이지의 링 버퍼 폴링으로 실시간 로그 표시
@@ -725,7 +740,7 @@ export default function ShipmentsPage() {
     const filteredSet = new Set(filteredProducts.map(p => p.id))
     const visibleSelected = (targetIds || inputIds).filter(id => {
       if (!targetIds && !filteredSet.has(id)) return false
-      const prod = products.find(p => p.id === id)
+      const prod = productsById.get(id)
       return prod ? siteSet.has(prod.source_site) : false
     })
     if (visibleSelected.length === 0) { showAlert('선택된 소싱사이트에 해당하는 상품이 없습니다'); return }
@@ -744,7 +759,7 @@ export default function ShipmentsPage() {
 
     // 정책 적용된 상품만 전송 대상 (미적용 상품은 사전 제외)
     const policyProducts = visibleSelected.filter(pid => {
-      const prod = products.find(p => p.id === pid)
+      const prod = productsById.get(pid)
       return !!prod?.applied_policy_id
     })
     const noPolicyCount = visibleSelected.length - policyProducts.length
@@ -766,8 +781,8 @@ export default function ShipmentsPage() {
     const selectedSet = new Set(selectedAccounts)
     const effectiveAccountSet = new Set<string>()
     for (const pid of policyProducts) {
-      const prod = products.find(p => p.id === pid)
-      const policy = policies.find(p => p.id === prod?.applied_policy_id)
+      const prod = productsById.get(pid)
+      const policy = prod?.applied_policy_id ? policiesById.get(prod.applied_policy_id) : undefined
       if (!policy?.market_policies || typeof policy.market_policies !== 'object') continue
       const mp = policy.market_policies as Record<string, { accountId?: string; accountIds?: string[] }>
       for (const marketPolicy of Object.values(mp)) {
@@ -794,9 +809,9 @@ export default function ShipmentsPage() {
     let skipCount = 0
     for (let i = 0; i < policyProducts.length; i++) {
       const pid = policyProducts[i]
-      const prod = products.find(p => p.id === pid)
+      const prod = productsById.get(pid)
       const prodName = prod?.name || pid
-      const policy = policies.find(p => p.id === prod?.applied_policy_id)
+      const policy = prod?.applied_policy_id ? policiesById.get(prod.applied_policy_id) : undefined
       const targetAccIds: string[] = []
       if (policy?.market_policies && typeof policy.market_policies === 'object') {
         const mp = policy.market_policies as Record<string, { accountId?: string; accountIds?: string[] }>
@@ -1378,7 +1393,7 @@ export default function ShipmentsPage() {
                   const effectiveAccIds = new Set<string>()
                   for (const prod of products) {
                     if (!prod.applied_policy_id) continue
-                    const policy = policies.find(p => p.id === prod.applied_policy_id)
+                    const policy = policiesById.get(prod.applied_policy_id)
                     if (!policy?.market_policies || typeof policy.market_policies !== 'object') continue
                     const mp = policy.market_policies as Record<string, { accountId?: string; accountIds?: string[] }>
                     for (const marketPolicy of Object.values(mp)) {
@@ -1390,7 +1405,7 @@ export default function ShipmentsPage() {
                   }
                   const effectiveAccList = effectiveAccIds.size > 0 ? [...effectiveAccIds] : [...selectedSet]
                   const accLabels = effectiveAccList.map(aid => {
-                    const acc = accounts.find(a => a.id === aid)
+                    const acc = accountsById.get(aid)
                     return acc ? `${acc.market_name}(${acc.seller_id || '-'})` : aid
                   }).join(', ')
                   addLog(`[${ts()}] 전송 시작 — 상품 ${fmtNum(allIds.length)}개, ${accLabels || '연결 계정 없음'}`)
@@ -1499,9 +1514,9 @@ export default function ShipmentsPage() {
               <tr><td colSpan={7} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>로딩 중...</td></tr>
             ) : products.length === 0 ? (
               <tr><td colSpan={7} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>상품이 없습니다</td></tr>
-            ) : filteredProducts.map((p, idx) => {
+            ) : pageProducts.map((p, idx) => {
               const regAccounts = p.registered_accounts || []
-              const regMarkets = regAccounts.map(aid => accounts.find(a => a.id === aid)?.market_name).filter(Boolean)
+              const regMarkets = regAccounts.map(aid => accountsById.get(aid)?.market_name).filter(Boolean)
               const optCount = (p.options || []).length
               return (
                 <tr key={p.id} style={{ borderBottom: '1px solid rgba(45,45,45,0.5)', verticalAlign: 'top' }}
@@ -1547,7 +1562,7 @@ export default function ShipmentsPage() {
                       if (regAccs.length === 0) return <span style={{ color: '#555' }}>-</span>
                       const sent = p.last_sent_data || {}
                       return regAccs.map(aid => {
-                        const acc = accounts.find(a => a.id === aid)
+                        const acc = accountsById.get(aid)
                         if (!acc) return null
                         const sentAt = sent[aid]?.sent_at
                         const timeLabel = sentAt ? (() => {
