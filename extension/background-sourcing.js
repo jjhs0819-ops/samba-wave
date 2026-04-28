@@ -372,7 +372,7 @@ async function _detectLoginStatus(tabId, site) {
         const cfg = {
           ABCmart:    { login: ['/login', 'member/login'], logout: ['/logout', '/mypage', '/myinfo'] },
           GrandStage: { login: ['/login', 'member/login'], logout: ['/logout', '/mypage', '/myinfo'] },
-          LOTTEON:    { login: ['/member/login', '/login'], logout: ['/logout', '/mypage'] },
+          LOTTEON:    { login: ['/member/login/common'], logout: ['/logout', '/mypage', '/p/member/logout'] },
           SSG:        { login: ['login.ssg', '/member/login'], logout: ['logout.ssg', '/myssg'] },
           GSShop:     { login: ['login.gs', '/login'], logout: ['logout.gs', '/mypage', '/myinfo'] },
           MUSINSA:    { login: ['/auth/login', 'member.one.musinsa.com/login'], logout: ['/logout', '/mypage'] },
