@@ -13,11 +13,16 @@ Create Date: 2026-04-28 15:30:00.000000
   - True  : 적립금 사용 불가 상품
   - False : 적립금 사용 가능 상품
   - NULL  : 미수집 또는 지원하지 않는 소싱처
+
+idempotent 처리:
+  entrypoint.sh가 부팅 시 'alembic stamp <baseline>' 후 'alembic upgrade heads'를
+  매번 실행하므로 두 번째 컨테이너(blue/green) 부팅 시 이미 적용된 컬럼을 다시
+  추가하려다 DuplicateColumnError 발생. 이를 방지하기 위해 raw SQL의 IF NOT EXISTS
+  패턴을 사용한다 (이전 마이그레이션 add_customer_note와 동일 방식).
 """
 
 from typing import Sequence, Union
 
-import sqlalchemy as sa
 from alembic import op
 
 
@@ -28,11 +33,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "samba_collected_product",
-        sa.Column("is_point_restricted", sa.Boolean(), nullable=True),
+    op.execute(
+        "ALTER TABLE samba_collected_product "
+        "ADD COLUMN IF NOT EXISTS is_point_restricted BOOLEAN"
     )
 
 
 def downgrade() -> None:
-    op.drop_column("samba_collected_product", "is_point_restricted")
+    op.execute(
+        "ALTER TABLE samba_collected_product DROP COLUMN IF EXISTS is_point_restricted"
+    )
