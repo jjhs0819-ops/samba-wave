@@ -817,7 +817,8 @@ const ProductCard = React.memo(function ProductCard({
                     setCardConfirm(null)
                     try {
                       // 상세페이지 이미지는 detail_images 배열 + detail_html 본문 두 곳 모두 처리
-                      const fields = list === detailImgList ? ['detail_images', 'detail_html'] : ['images']
+                      // (탭 상태로 판별 — detailImgs는 .map()으로 복사된 새 배열이라 detailImgList와 참조 불일치)
+                      const fields = imageTab === 'detail' ? ['detail_images', 'detail_html'] : ['images']
                       const res = await collectorApi.bulkRemoveImage(img, fields)
                       setList(list.filter((_, j) => j !== i))
                       setCardAlert({ msg: `${fmtNum(res.removed)}개 상품에서 삭제 완료`, type: 'success' })
