@@ -929,6 +929,41 @@ async def _site_autotune_loop(site: str):
                                     )
                                     market_type = acc.market_type or ""
 
+                                    # 롯데홈쇼핑: MD 승인 대기 중이면 API로 실시간 확인
+                                    if market_type == "lottehome":
+                                        _qa_status = _m_nos.get(f"{acc_id}_qa", "")
+                                        if _qa_status == "pending":
+                                            _goods_no = _m_nos.get(acc_id, "")
+                                            _approved = False
+                                            if _goods_no:
+                                                try:
+                                                    from backend.domain.samba.proxy.lottehome import LotteHomeClient
+                                                    from backend.domain.samba.forbidden.model import SambaSettings
+                                                    from sqlmodel import select as _sel
+                                                    _cr = await session.exec(_sel(SambaSettings).where(SambaSettings.key == "lottehome_credentials"))
+                                                    _creds = (_cr.first() or type("", (), {"value": {}})()).value or {}
+                                                    _lh = LotteHomeClient(_creds.get("userId", ""), _creds.get("password", ""), _creds.get("agncNo", ""), _creds.get("env", "prod"))
+                                                    _detail = await _lh.search_goods_view(_goods_no)
+                                                    _d = _detail.get("data", {})
+                                                    _result = _d.get("Result", _d)
+                                                    _goods_info = _result.get("GoodsInfo", _result) if isinstance(_result, dict) else _result
+                                                    _sale_stat = str(_goods_info.get("SaleStatCd", "") or "")
+                                                    _qa_rslt = str(_goods_info.get("QaRsltCd", "") or "")
+                                                    if _sale_stat == "10" or _qa_rslt in ("10", "15", "30"):
+                                                        _approved = True
+                                                        _new_nos = dict(_m_nos)
+                                                        _new_nos[f"{acc_id}_qa"] = "approved"
+                                                        from sqlalchemy import update as _sa_upd
+                                                        from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
+                                                        await session.execute(_sa_upd(_CP).where(_CP.id == product.id).values(market_product_nos=_new_nos))
+                                                        await session.commit()
+                                                        log.info("[오토튠] %s 롯데홈쇼핑 승인 확인 → approved 처리", product.id)
+                                                except Exception as _qa_e:
+                                                    log.warning("[오토튠] %s 롯데홈쇼핑 QA 확인 실패: %s", product.id, _qa_e)
+                                            if not _approved:
+                                                log.info("[오토튠] %s → 롯데홈쇼핑 MD 승인 대기 중, 스킵", product.id)
+                                                continue
+
                                     if policy and policy.pricing:
                                         cost_info = await convert_cost_by_source_site(
                                             session,
@@ -1205,7 +1240,12 @@ async def _site_autotune_loop(site: str):
                                             )
                                             _ss = _sent_map.get(_k, 0) or 0
                                             _ns = _o.get("stock", 0) or 0
-                                            if (_ss <= 0) != (_ns <= 0):
+                                            if market_type == "lottehome":
+                                                # 롯데홈쇼핑: 정확한 수량 비교 (1→2도 감지)
+                                                if _ss != _ns:
+                                                    _stock_diff = True
+                                                    _stock_changes_acc += 1
+                                            elif (_ss <= 0) != (_ns <= 0):
                                                 _stock_diff = True
                                                 _stock_changes_acc += 1
                                     if _stock_diff:

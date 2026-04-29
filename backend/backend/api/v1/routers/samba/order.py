@@ -3918,6 +3918,8 @@ async def sync_orders_from_markets(
                             "반품요청",
                             "반품완료",
                             "반품거부",
+                            "회수확정",
+                            "취소완료",
                         ):
                             update_fields["shipping_status"] = new_ship_status
                     # 정산금액(revenue) / 수수료율 갱신

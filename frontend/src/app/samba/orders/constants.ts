@@ -14,6 +14,8 @@ export const STATUS_MAP: Record<string, { label: string; bg: string; text: strin
   cancelled: { label: '취소완료', bg: 'rgba(255,107,107,0.15)', text: '#FF6B6B' },
   returned: { label: '반품완료', bg: 'rgba(180,80,180,0.15)', text: '#B44EB4' },
   exchanged: { label: '교환완료', bg: 'rgba(144,238,144,0.15)', text: '#90EE90' },
+  return_completed: { label: '회수확정', bg: 'rgba(160,60,160,0.15)', text: '#A03CA0' },
+  undeliverable: { label: '발송불가', bg: 'rgba(217,119,6,0.15)', text: '#F59E0B' },
 }
 
 export const SHIPPING_COMPANIES = ['CJ대한통운', '한진택배', '롯데택배', '로젠택배', '우체국택배', '경동택배', '대신택배', '일양로지스', '편의점택배', 'DHL', '직접배송', '기타']

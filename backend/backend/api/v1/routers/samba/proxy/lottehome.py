@@ -25,6 +25,27 @@ class LotteAuthRequest(BaseModel):
     env: Optional[str] = "test"
 
 
+@router.get("/lottehome/policy")
+async def get_lottehome_policy(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """롯데홈쇼핑 정책 조회."""
+    from ._helpers import _get_setting
+    policy = await _get_setting(session, "lottehome_policy") or {}
+    return {"success": True, "data": policy}
+
+
+@router.post("/lottehome/policy")
+async def save_lottehome_policy(
+    body: dict,
+    write_session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """롯데홈쇼핑 정책 저장."""
+    from ._helpers import _set_setting
+    await _set_setting(write_session, "lottehome_policy", body)
+    return {"success": True}
+
+
 @router.post("/lottehome/auth")
 async def lottehome_auth(
     body: LotteAuthRequest,
@@ -36,16 +57,34 @@ async def lottehome_auth(
         raise HTTPException(
             status_code=400, detail="협력업체ID와 비밀번호를 입력해주세요."
         )
-    # DB에 자격증명 저장
+    # 기존 credentials와 정책 로드 (정책의 배송지/MD상품군/카테고리 병합)
+    from ._helpers import _get_setting
+    existing_creds = await _get_setting(write_session, "lottehome_credentials") or {}
+    policy = await _get_setting(write_session, "lottehome_policy") or {}
+
+    creds_to_save = dict(existing_creds)
+    creds_to_save.update({
+        "userId": body.userId,
+        "password": body.password,
+        "agncNo": body.agncNo or "",
+        "env": body.env or "test",
+    })
+
+    # 정책의 배송지/MD상품군/카테고리 정보 병합
+    if policy:
+        creds_to_save.update({
+            "disp_no": policy.get("disp_no", creds_to_save.get("disp_no", "")),
+            "md_gsgr_no": policy.get("md_gsgr_no", creds_to_save.get("md_gsgr_no", "")),
+            "dlv_polc_no": policy.get("dlv_polc_no", creds_to_save.get("dlv_polc_no", "")),
+            "corp_dlvp_sn": policy.get("corp_dlvp_sn", creds_to_save.get("corp_dlvp_sn", "")),
+            "corp_rls_pl_sn": policy.get("corp_rls_pl_sn", creds_to_save.get("corp_rls_pl_sn", "")),
+        })
+
+    # DB에 자격증명 저장 (정책 정보 포함)
     await _set_setting(
         write_session,
         "lottehome_credentials",
-        {
-            "userId": body.userId,
-            "password": body.password,
-            "agncNo": body.agncNo or "",
-            "env": body.env or "test",
-        },
+        creds_to_save,
     )
     client = LotteHomeClient(
         user_id=body.userId,
@@ -117,6 +156,23 @@ async def lottehome_md_groups(
         return {"success": False, "message": str(exc), "code": exc.code}
 
 
+@router.get("/lottehome/standard-categories")
+async def lottehome_standard_categories(
+    disp_no: str = Query(""),
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """전시카테고리에 매핑된 표준카테고리 목록 조회."""
+    if not disp_no:
+        return {"success": False, "message": "disp_no가 필요합니다.", "code": "0005"}
+    client = await _get_lotte_client(session)
+    try:
+        result = await client.search_standard_categories(disp_no)
+        return {"success": True, "data": result.get("data")}
+    except LotteApiError as exc:
+        logger.warning(f"[롯데홈] 표준카테고리 조회 실패: {exc}")
+        return {"success": False, "message": str(exc), "code": exc.code}
+
+
 @router.get("/lottehome/delivery-policies")
 async def lottehome_delivery_policies(
     session: AsyncSession = Depends(get_read_session_dependency),
@@ -135,11 +191,10 @@ async def lottehome_delivery_policies(
 async def lottehome_delivery_places(
     session: AsyncSession = Depends(get_read_session_dependency),
 ) -> dict[str, Any]:
-    """롯데홈쇼핑 배송지 조회."""
+    """롯데홈쇼핑 배송지 조회 — shipping_places(출고지) / return_places(반품지) 구조로 반환."""
     client = await _get_lotte_client(session)
     try:
-        result = await client.search_return_places()
-        return {"success": True, "data": result.get("data")}
+        return await client.search_return_places()
     except LotteApiError as exc:
         logger.warning(f"[롯데홈] 배송지 조회 실패: {exc}")
         return {"success": False, "message": str(exc), "code": exc.code}
@@ -246,3 +301,67 @@ async def lottehome_search_stock(
     except LotteApiError as exc:
         logger.warning(f"[롯데홈] 재고 조회 실패 (goods_no={goods_no}): {exc}")
         return {"success": False, "message": str(exc), "code": exc.code}
+
+
+@router.post("/lottehome/qa/sync")
+async def lottehome_qa_sync(
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """롯데홈쇼핑 승인 대기 상품 상태 동기화.
+
+    market_product_nos에 {account_id}_qa=pending 인 상품을 조회하여
+    승인 완료된 상품은 approved로 업데이트.
+    """
+    from sqlmodel import select
+    from backend.domain.samba.collector.model import SambaCollectedProduct
+    from backend.domain.samba.account.model import SambaMarketAccount
+
+    client = await _get_lotte_client(session)
+
+    # pending 상품 조회
+    stmt = select(SambaCollectedProduct).where(
+        SambaCollectedProduct.market_product_nos != None
+    )
+    result = await session.execute(stmt)
+    products = result.scalars().all()
+
+    updated = 0
+    checked = 0
+
+    for product in products:
+        m_nos = product.market_product_nos or {}
+        pending_accounts = [
+            k.replace("_qa", "") for k, v in m_nos.items()
+            if k.endswith("_qa") and v == "pending"
+        ]
+        if not pending_accounts:
+            continue
+
+        for acc_id in pending_accounts:
+            goods_no = m_nos.get(acc_id, "")
+            if not goods_no:
+                continue
+            checked += 1
+            try:
+                detail = await client.search_goods_view(goods_no)
+                data = detail.get("data", {})
+                result = data.get("Result", data)
+                goods_info = result.get("GoodsInfo", result) if isinstance(result, dict) else result
+                sale_stat = str(goods_info.get("SaleStatCd", "") or "")
+                qa_result = str(goods_info.get("QaRsltCd", "") or "")
+                # 판매진행(10) 또는 QA 합격(10/15/30) → 승인 완료
+                if sale_stat == "10" or qa_result in ("10", "15", "30"):
+                    new_nos = dict(m_nos)
+                    new_nos[f"{acc_id}_qa"] = "approved"
+                    from sqlalchemy import update as sa_update
+                    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
+                    await session.execute(
+                        sa_update(_CP).where(_CP.id == product.id).values(market_product_nos=new_nos)
+                    )
+                    await session.commit()
+                    updated += 1
+                    logger.info(f"[롯데홈쇼핑 QA] {product.id} → approved (goods_no={goods_no})")
+            except Exception as e:
+                logger.warning(f"[롯데홈쇼핑 QA] {goods_no} 체크 실패: {e}")
+
+    return {"success": True, "checked": checked, "updated": updated}

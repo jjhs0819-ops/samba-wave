@@ -392,6 +392,7 @@ async def _start_autotune_if_enabled() -> None:
 
 
 _order_poller_task: asyncio.Task | None = None
+_lottehome_qa_poller_task: asyncio.Task | None = None
 
 
 async def _start_order_poller() -> None:
@@ -400,6 +401,14 @@ async def _start_order_poller() -> None:
 
     _order_poller_task = asyncio.create_task(start_order_poller())
     logging.getLogger("backend.lifecycle").info("[lifecycle] 주문 폴러 시작")
+
+
+async def _start_lottehome_qa_poller() -> None:
+    global _lottehome_qa_poller_task
+    from backend.domain.samba.order.lottehome_qa_poller import start_lottehome_qa_poller
+
+    _lottehome_qa_poller_task = asyncio.create_task(start_lottehome_qa_poller())
+    logging.getLogger("backend.lifecycle").info("[lifecycle] 롯데홈 QA 폴러 시작")
 
 
 def _validate_startup_settings() -> None:
@@ -502,6 +511,7 @@ async def lifespan(app: FastAPI):
         worker_runtime = await _start_worker_runtime()
         await _start_autotune_if_enabled()
         await _start_order_poller()
+        await _start_lottehome_qa_poller()
     _validate_startup_settings()
 
     try:
@@ -518,6 +528,7 @@ async def lifespan(app: FastAPI):
         KreamClient.cancel_all()
         await _stop_autotune_and_refreshers()
         await _cancel_task(_order_poller_task)
+        await _cancel_task(_lottehome_qa_poller_task)
         await _shutdown_worker_runtime(worker_runtime)
         await _disconnect_cache()
         shutdown_logger.info("[shutdown] graceful shutdown complete")

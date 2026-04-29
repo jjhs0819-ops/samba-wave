@@ -11,6 +11,7 @@ EUC-KR 인코딩 요청 / XML 응답 처리를 지원한다.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -20,6 +21,82 @@ import httpx
 
 from backend.core.config import settings
 from backend.utils.logger import logger
+
+# 모듈 레벨 인증키 캐시 — 같은 계정/환경이면 인증 API 재호출 방지
+# key: "user_id:env" → (cert_key, expires_at)
+_cert_cache: dict[str, tuple[str, datetime]] = {}
+# 동시 인증 방지 Lock
+_auth_locks: dict[str, asyncio.Lock] = {}
+
+
+async def _persist_cert_to_db(user_id: str, env: str, cert_key: str, expires_iso: str) -> None:
+    """인증키를 DB에 저장 — 재시작 후에도 유지."""
+    try:
+        from backend.db.orm import get_write_session
+        from backend.domain.samba.forbidden.model import SambaSettings
+        from sqlmodel import select as _sel
+        db_key = f"lottehome_cert_{user_id}_{env}"
+        async with get_write_session() as session:
+            row = (await session.execute(_sel(SambaSettings).where(SambaSettings.key == db_key))).scalars().first()
+            val = {"cert_key": cert_key, "expires_at": expires_iso}
+            if row:
+                row.value = val
+            else:
+                session.add(SambaSettings(key=db_key, value=val))
+            await session.commit()
+    except Exception as e:
+        logger.warning(f"[롯데홈쇼핑] 인증키 DB 저장 실패: {e}")
+
+
+async def _persist_cert_to_lottehome_credentials(cert_key: str, expires_iso: str) -> None:
+    """재발급된 인증키를 lottehome_credentials에도 저장 — 서버 재시작 후 즉시 복구."""
+    try:
+        from backend.db.orm import get_write_session
+        from backend.domain.samba.forbidden.model import SambaSettings
+        from sqlmodel import select as _sel
+        async with get_write_session() as session:
+            row = (await session.execute(_sel(SambaSettings).where(SambaSettings.key == "lottehome_credentials"))).scalars().first()
+            if row and isinstance(row.value, dict):
+                row.value = {**row.value, "certKey": cert_key, "certExpiresAt": expires_iso}
+                await session.commit()
+    except Exception as e:
+        logger.warning(f"[롯데홈쇼핑] lottehome_credentials 인증키 업데이트 실패: {e}")
+
+
+async def _load_cert_from_db(user_id: str, env: str) -> tuple[str, datetime] | None:
+    """DB에서 인증키 로드 — 재시작 후 캐시 복구용."""
+    try:
+        from backend.db.orm import get_read_session
+        from backend.domain.samba.forbidden.model import SambaSettings
+        from sqlmodel import select as _sel
+        async with get_read_session() as session:
+            # 1순위: 새 형식 키 (lottehome_cert_{user_id}_{env})
+            db_key = f"lottehome_cert_{user_id}_{env}"
+            row = (await session.execute(_sel(SambaSettings).where(SambaSettings.key == db_key))).scalars().first()
+            if row and isinstance(row.value, dict):
+                val = row.value
+                cert_key = val.get("cert_key", "")
+                expires_iso = val.get("expires_at", "")
+                if cert_key and expires_iso:
+                    expires_at = datetime.fromisoformat(expires_iso)
+                    if expires_at.tzinfo is None:
+                        expires_at = expires_at.replace(tzinfo=timezone.utc)
+                    return cert_key, expires_at
+            # 2순위: 설정 페이지 인증 테스트가 저장한 lottehome_credentials
+            row2 = (await session.execute(_sel(SambaSettings).where(SambaSettings.key == "lottehome_credentials"))).scalars().first()
+            if row2 and isinstance(row2.value, dict):
+                val2 = row2.value
+                cert_key = val2.get("certKey", "")
+                expires_iso = val2.get("certExpiresAt", "")
+                if cert_key and expires_iso:
+                    expires_at = datetime.fromisoformat(expires_iso)
+                    if expires_at.tzinfo is None:
+                        expires_at = expires_at.replace(tzinfo=timezone.utc)
+                    return cert_key, expires_at
+            return None
+    except Exception as e:
+        logger.warning(f"[롯데홈쇼핑] 인증키 DB 로드 실패: {e}")
+        return None
 
 
 class LotteHomeClient:
@@ -34,15 +111,32 @@ class LotteHomeClient:
         password: str,
         agnc_no: str = "",
         env: str = "test",
+        hp_no: str = "",
+        cert_key: str = "",
+        cert_expires_at_iso: str = "",
     ) -> None:
         self.user_id = user_id
         self.password = password
         self.agnc_no = agnc_no
         self.env = env
+        self.hp_no = hp_no
 
         # 인증 캐시 (메모리)
         self._cert_key: str = ""
         self._cert_expires_at: Optional[datetime] = None
+
+        # DB에서 전달된 cert key 사전 주입 (서버 리로드 후에도 유효)
+        if cert_key and cert_expires_at_iso:
+            try:
+                expires_at = datetime.fromisoformat(cert_expires_at_iso)
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                self._cert_key = cert_key
+                self._cert_expires_at = expires_at
+                _cert_cache[f"{user_id}:{env}"] = (cert_key, expires_at)
+                logger.debug(f"[롯데홈쇼핑] DB에서 인증키 주입 (key={cert_key[:8]}..., env={env})")
+            except Exception as e:
+                logger.warning(f"[롯데홈쇼핑] DB 인증키 주입 실패: {e}")
 
     @property
     def base_url(self) -> str:
@@ -202,43 +296,104 @@ class LotteHomeClient:
     # Authentication
     # ------------------------------------------------------------------
 
-    async def _ensure_auth(self) -> str:
-        """인증키 자동 관리 - 캐시 유효하면 재사용, 만료 30분 전이면 갱신."""
+    async def _call_api_auto_retry(
+        self,
+        endpoint: str,
+        method: str = "POST",
+        params: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        """인증키 오류([0001],[5001]) 시 자동 재인증 후 1회 재시도."""
+        try:
+            return await self._call_api(endpoint, method, params)
+        except LotteApiError as e:
+            if e.code in ("0001", "5001"):
+                logger.info(f"[롯데홈쇼핑] 인증키 무효 감지 → 강제 재인증 후 재시도 (endpoint={endpoint})")
+                _cert_cache.pop(f"{self.user_id}:{self.env}", None)
+                self._cert_key = ""
+                self._cert_expires_at = None
+                new_key = await self._ensure_auth(force=True)
+                if params and "subscriptionId" in params:
+                    params = {**params, "subscriptionId": new_key}
+                return await self._call_api(endpoint, method, params)
+            raise
+
+    async def _ensure_auth(self, force: bool = False) -> str:
+        """인증키 자동 관리.
+        force=True: 캐시/DB 무시하고 무조건 createCertification.lotte 새 발급.
+        """
         now = datetime.now(tz=timezone.utc)
         refresh_before = timedelta(minutes=30)
+        cache_key = f"{self.user_id}:{self.env}"
 
-        if (
-            self._cert_key
-            and self._cert_expires_at
-            and (self._cert_expires_at - now) > refresh_before
-        ):
+        if not force:
+            # 모듈 캐시 유효하면 바로 반환
+            cached = _cert_cache.get(cache_key)
+            if cached:
+                cert_key, expires_at = cached
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                if (expires_at - now) > refresh_before:
+                    self._cert_key = cert_key
+                    self._cert_expires_at = expires_at
+                    return cert_key
+
+        # 동시 인증 방지
+        if cache_key not in _auth_locks:
+            _auth_locks[cache_key] = asyncio.Lock()
+        async with _auth_locks[cache_key]:
+            if not force:
+                # Lock 획득 후 재확인
+                cached = _cert_cache.get(cache_key)
+                if cached:
+                    cert_key, expires_at = cached
+                    if expires_at.tzinfo is None:
+                        expires_at = expires_at.replace(tzinfo=timezone.utc)
+                    if (expires_at - now) > refresh_before:
+                        self._cert_key = cert_key
+                        self._cert_expires_at = expires_at
+                        return cert_key
+
+                # 메모리 캐시 미스 → DB에서 복구 시도 (재시작 후 재인증 방지)
+                db_cached = await _load_cert_from_db(self.user_id, self.env)
+                if db_cached:
+                    cert_key, expires_at = db_cached
+                    if (expires_at - now) > refresh_before:
+                        self._cert_key = cert_key
+                        self._cert_expires_at = expires_at
+                        _cert_cache[cache_key] = (cert_key, expires_at)
+                        logger.info(f"[롯데홈쇼핑] DB에서 인증키 복구 (만료: {expires_at.isoformat()})")
+                        return cert_key
+
+            params: dict[str, Any] = {
+                "strUserId": self.user_id,
+                "strPassWd": self.password,
+            }
+            if self.agnc_no:
+                params["strAgncNo"] = self.agnc_no
+            if self.hp_no:
+                params["strHpNo"] = self.hp_no
+
+            result = await self._call_api("createCertification.lotte", "POST", params)
+            data = result.get("data", {})
+
+            cert_key = self._find_cert_key(data)
+            if not cert_key:
+                raise LotteApiError(
+                    code="AUTH_FAILED",
+                    message=f"인증키를 응답에서 찾을 수 없습니다. 응답 구조: {data}",
+                )
+
+            expires_at = now + timedelta(hours=23, minutes=55)
+            expires_iso = expires_at.isoformat()
+            self._cert_key = cert_key
+            self._cert_expires_at = expires_at
+            _cert_cache[cache_key] = (cert_key, expires_at)
+            # DB 저장 (비동기 — 등록 흐름 지연 없음)
+            asyncio.create_task(_persist_cert_to_db(self.user_id, self.env, cert_key, expires_iso))
+            asyncio.create_task(_persist_cert_to_lottehome_credentials(cert_key, expires_iso))
+
+            logger.info(f"[롯데홈쇼핑] 인증키 발급 완료 (만료: {expires_at.isoformat()})")
             return self._cert_key
-
-        params: dict[str, Any] = {
-            "strUserId": self.user_id,
-            "strPassWd": self.password,
-        }
-        if self.agnc_no:
-            params["strAgncNo"] = self.agnc_no
-
-        result = await self._call_api("createCertification.lotte", "POST", params)
-        data = result.get("data", {})
-
-        cert_key = self._find_cert_key(data)
-        if not cert_key:
-            raise LotteApiError(
-                code="AUTH_FAILED",
-                message=f"인증키를 응답에서 찾을 수 없습니다. 응답 구조: {data}",
-            )
-
-        # 24시간 유효 (23시간 55분)
-        self._cert_key = cert_key
-        self._cert_expires_at = now + timedelta(hours=23, minutes=55)
-
-        logger.info(
-            f"[롯데홈쇼핑] 인증키 발급 완료 (만료: {self._cert_expires_at.isoformat()})"
-        )
-        return self._cert_key
 
     async def authenticate(self) -> dict[str, Any]:
         """인증키 발급 (명시적 호출)."""
@@ -296,7 +451,7 @@ class LotteHomeClient:
     async def search_brands(self, brand_name: str = "") -> dict[str, Any]:
         """브랜드 목록 조회."""
         cert_key = await self._ensure_auth()
-        return await self._call_api(
+        return await self._call_api_auto_retry(
             "searchBrandListOpenApi.lotte",
             "GET",
             {"subscriptionId": cert_key, "brnd_nm": brand_name},
@@ -305,17 +460,39 @@ class LotteHomeClient:
     async def search_categories(
         self, disp_tp_cd: str = "", md_gsgr_no: str = ""
     ) -> dict[str, Any]:
-        """전시카테고리 목록 조회."""
+        """전시카테고리 목록 조회. disp_tp_cd 필수 — 미지정 시 10/20 각각 호출 후 병합."""
         cert_key = await self._ensure_auth()
-        return await self._call_api(
-            "searchDispCatListOpenApi.lotte",
-            "GET",
-            {
-                "subscriptionId": cert_key,
-                "disp_tp_cd": disp_tp_cd,
-                "md_gsgr_no": md_gsgr_no,
-            },
-        )
+        if disp_tp_cd:
+            return await self._call_api_auto_retry(
+                "searchDispCatListOpenApi.lotte", "GET",
+                {"subscriptionId": cert_key, "disp_tp_cd": disp_tp_cd, "md_gsgr_no": md_gsgr_no},
+            )
+        # disp_tp_cd 미지정: 10(필수)과 20(추가) 각각 호출 후 CategoryInfo 병합
+        results: list[dict] = []
+        for tp in ("10", "20"):
+            try:
+                res = await self._call_api_auto_retry(
+                    "searchDispCatListOpenApi.lotte", "GET",
+                    {"subscriptionId": cert_key, "disp_tp_cd": tp, "md_gsgr_no": md_gsgr_no},
+                )
+                results.append(res)
+            except LotteApiError:
+                pass
+        if not results:
+            raise LotteApiError(code="0005", message="전시카테고리 조회 실패")
+        merged: dict[str, Any] = results[0].get("data") or {}
+        if len(results) > 1:
+            second = results[1].get("data") or {}
+            def _get_cat_list(d: dict) -> list:
+                res_block = d.get("Result", d)
+                cat_list = res_block.get("CategoryInfoList", {})
+                cats = cat_list.get("CategoryInfo", []) if isinstance(cat_list, dict) else cat_list
+                return cats if isinstance(cats, list) else ([cats] if cats else [])
+            cats = _get_cat_list(merged) + _get_cat_list(second)
+            merged_result = dict(merged.get("Result", merged))
+            merged_result["CategoryInfoList"] = {"CategoryInfo": cats}
+            merged = {"Result": merged_result}
+        return {"success": True, "data": merged}
 
     async def search_md_list(self, md_nm: str = "", md_id: str = "") -> dict[str, Any]:
         """매입담당자(MD) 목록 조회."""
@@ -325,7 +502,7 @@ class LotteHomeClient:
             params["md_nm"] = md_nm
         if md_id:
             params["md_id"] = md_id
-        return await self._call_api(
+        return await self._call_api_auto_retry(
             "searchMDListOpenApi.lotte",
             "GET",
             params,
@@ -335,11 +512,9 @@ class LotteHomeClient:
         """MD관리상품군 조회. md_id 필수."""
         cert_key = await self._ensure_auth()
         if not md_id:
-            # md_id 미지정 시 자동으로 첫 번째 MD 코드 조회
             md_result = await self.search_md_list()
             md_data = md_result.get("data", {})
             md_list = md_data.get("Result", md_data)
-            # MDInfoList > MDInfo에서 첫 번째 MDCode 추출
             info_list = (
                 md_list.get("MDInfoList", {}) if isinstance(md_list, dict) else {}
             )
@@ -351,18 +526,26 @@ class LotteHomeClient:
             if not md_id:
                 return {"success": False, "message": "배정된 MD가 없습니다"}
             logger.info(f"[롯데홈쇼핑] MD코드 자동 조회: {md_id}")
-        return await self._call_api(
+            cert_key = self._cert_key  # search_md_list 이후 갱신된 cert 사용
+        return await self._call_api_auto_retry(
             "searchMDGsgrListOpenApi.lotte",
             "GET",
             {"subscriptionId": cert_key, "md_id": md_id},
         )
 
-    async def search_delivery_policies(self) -> dict[str, Any]:
-        """배송비정책 목록 조회.
-        수정: searchDlvPolcListOpenApi → searchDlvPolcInfoListOpenApi (롯데홈쇼핑 담당자 확인)
-        """
+    async def search_standard_categories(self, disp_no: str = "") -> dict[str, Any]:
+        """전시카테고리에 매핑된 표준카테고리 목록 조회 (loadStdCatsByDispNo.lotte)."""
         cert_key = await self._ensure_auth()
-        return await self._call_api(
+        return await self._call_api_auto_retry(
+            "loadStdCatsByDispNo.lotte",
+            "GET",
+            {"subscriptionId": cert_key, "disp_no": disp_no},
+        )
+
+    async def search_delivery_policies(self) -> dict[str, Any]:
+        """배송비정책 목록 조회."""
+        cert_key = await self._ensure_auth()
+        return await self._call_api_auto_retry(
             "searchDlvPolcInfoListOpenApi.lotte",
             "GET",
             {"subscriptionId": cert_key},
@@ -373,43 +556,57 @@ class LotteHomeClient:
     ) -> dict[str, Any]:
         """배송비정책 등록."""
         cert_key = await self._ensure_auth()
-        return await self._call_api(
+        return await self._call_api_auto_retry(
             "registApiDlvPolcInfo.lotte",
             "POST",
             {"subscriptionId": cert_key, **policy_data},
         )
 
     async def search_return_places(self) -> dict[str, Any]:
-        """출고지/반품배송지 목록 조회.
-        수정: searchDlvPlcListOpenApi → searchReturnListOpenApi (롯데홈쇼핑 담당자 확인)
-        """
+        """출고지/반품배송지 목록 조회. dlvp_tp_cd: 10=출고지, 20=반품지 — 각각 호출 후 병합."""
         cert_key = await self._ensure_auth()
-        return await self._call_api(
-            "searchReturnListOpenApi.lotte",
-            "GET",
-            {"subscriptionId": cert_key},
-        )
+        shipping_places: list[dict[str, Any]] = []
+        return_places: list[dict[str, Any]] = []
+        for tp, target in (("10", shipping_places), ("20", return_places)):
+            try:
+                res = await self._call_api_auto_retry(
+                    "searchReturnListOpenApi.lotte", "GET",
+                    {"subscriptionId": cert_key, "dlvp_tp_cd": tp},
+                )
+                data = res.get("data", {})
+                result = data.get("Result", data)
+                items_wrap = result.get("ReturnInfoList", {})
+                info = items_wrap.get("ReturnInfo", []) if isinstance(items_wrap, dict) else []
+                if isinstance(info, dict):
+                    info = [info]
+                for item in (info if isinstance(info, list) else []):
+                    target.append({
+                        "code": item.get("ReturnCode", ""),
+                        "name": item.get("ReturnName", ""),
+                        "address": item.get("ReturnAddress", ""),
+                    })
+            except LotteApiError:
+                continue
+        return {"success": True, "data": {"shipping_places": shipping_places, "return_places": return_places}}
 
     async def register_delivery_place(
         self, place_data: dict[str, Any]
     ) -> dict[str, Any]:
-        """출고지/반품배송지 등록. (권한 부여 완료: 037800LT)"""
+        """출고지/반품배송지 등록."""
         cert_key = await self._ensure_auth()
-        return await self._call_api(
+        return await self._call_api_auto_retry(
             "registDlvpOpenApi.lotte",
             "POST",
             {"subscriptionId": cert_key, **place_data},
         )
 
     async def search_goods_article_codes(self, artc_cd: str = "") -> dict[str, Any]:
-        """품목별 항목코드정보 조회.
-        수정: searchGoodsArtcOpenApi → searchGoodsArtcItemCdListOpenApi (롯데홈쇼핑 담당자 확인)
-        """
+        """품목별 항목코드정보 조회."""
         cert_key = await self._ensure_auth()
         params: dict[str, Any] = {"subscriptionId": cert_key}
         if artc_cd:
             params["artc_cd"] = artc_cd
-        return await self._call_api(
+        return await self._call_api_auto_retry(
             "searchGoodsArtcItemCdListOpenApi.lotte",
             "GET",
             params,
@@ -422,7 +619,7 @@ class LotteHomeClient:
     async def register_goods(self, goods_data: dict[str, Any]) -> dict[str, Any]:
         """신규상품등록."""
         cert_key = await self._ensure_auth()
-        return await self._call_api(
+        return await self._call_api_auto_retry(
             "registApiGoodsInfo.lotte",
             "POST",
             {"subscriptionId": cert_key, **goods_data},
@@ -433,7 +630,7 @@ class LotteHomeClient:
     ) -> dict[str, Any]:
         """신규상품수정 (승인 전)."""
         cert_key = await self._ensure_auth()
-        return await self._call_api(
+        return await self._call_api_auto_retry(
             "upateApiNewGoodsInfo.lotte",
             "POST",
             {"subscriptionId": cert_key, "goods_req_no": goods_req_no, **goods_data},
@@ -444,7 +641,7 @@ class LotteHomeClient:
     ) -> dict[str, Any]:
         """전시상품수정 (승인 후)."""
         cert_key = await self._ensure_auth()
-        return await self._call_api(
+        return await self._call_api_auto_retry(
             "upateApiDisplayGoodsInfo.lotte",
             "POST",
             {"subscriptionId": cert_key, "goods_no": goods_no, **goods_data},
@@ -455,7 +652,7 @@ class LotteHomeClient:
     ) -> dict[str, Any]:
         """판매상태 변경. sale_stat_cd: 10=판매진행, 20=품절, 30=영구중단."""
         cert_key = await self._ensure_auth()
-        return await self._call_api(
+        return await self._call_api_auto_retry(
             "updateGoodsSaleStat.lotte",
             "POST",
             {
@@ -474,7 +671,7 @@ class LotteHomeClient:
     ) -> dict[str, Any]:
         """재고수정."""
         cert_key = await self._ensure_auth()
-        return await self._call_api(
+        return await self._call_api_auto_retry(
             "registStock.lotte",
             "POST",
             {
@@ -485,14 +682,143 @@ class LotteHomeClient:
             },
         )
 
+    async def search_goods_view(self, goods_no: str) -> dict[str, Any]:
+        """전시상품 상세 조회 (승인 상태 확인용)."""
+        cert_key = await self._ensure_auth()
+        return await self._call_api(
+            "searchGoodsViewListOpenApi.lotte",
+            "GET",
+            {"subscriptionId": cert_key, "goods_no": goods_no},
+        )
+
+    async def update_price(self, goods_no: str, sale_price: int, margin_rate: int = 0) -> dict[str, Any]:
+        """판매가 수정 (updateGoodsSalePrcOpenApi)."""
+        cert_key = await self._ensure_auth()
+        params: dict[str, Any] = {
+            "subscriptionId": cert_key,
+            "strGoodsNo": goods_no,
+            "strReqSalePrc": str(sale_price),
+        }
+        if margin_rate > 0:
+            params["mrgnRt"] = str(margin_rate)
+        return await self._call_api_auto_retry("updateGoodsSalePrcOpenApi.lotte", "POST", params)
+
     async def search_stock(self, goods_no: str = "") -> dict[str, Any]:
         """재고 목록 조회."""
         cert_key = await self._ensure_auth()
-        return await self._call_api(
+        return await self._call_api_auto_retry(
             "searchStockList.lotte",
             "GET",
             {"subscriptionId": cert_key, "goods_no": goods_no},
         )
+
+    # ------------------------------------------------------------------
+    # 주문
+    # ------------------------------------------------------------------
+
+    async def search_new_orders(
+        self, start_date: str, end_date: str, sel_option: str = "01"
+    ) -> list[dict[str, Any]]:
+        """신규주문조회 (searchNewOrdLstOpenApi.lotte).
+
+        sel_option:
+            01 = 미발주(신규)
+            02 = 발주확인(출하지시)
+            03 = 발송약정
+        """
+        cert_key = await self._ensure_auth()
+        result = await self._call_api_auto_retry(
+            "searchNewOrdLstOpenApi.lotte",
+            "GET",
+            {
+                "subscriptionId": cert_key,
+                "start_date": start_date,
+                "end_date": end_date,
+                "SelOption": sel_option,
+            },
+        )
+        data = result.get("data", {})
+        result_data = data.get("Result", data)
+        # 응답 키: OrderInfo (단건이면 dict, 다건이면 list)
+        orders = result_data.get("OrderInfo", result_data.get("OrdList", []))
+        if isinstance(orders, dict):
+            orders = [orders]
+        return orders if isinstance(orders, list) else []
+
+    async def search_deliver_list(
+        self,
+        start_date: str,
+        end_date: str,
+        ord_dtl_stat_cd: str = "17",
+        date_gubun: str = "rlor_dtime",
+    ) -> list[dict[str, Any]]:
+        """배송조회 (searchDeliverList.lotte) — 출고확정/배송완료 등 상태 주문 조회."""
+        cert_key = await self._ensure_auth()
+        result = await self._call_api_auto_retry(
+            "searchDeliverList.lotte",
+            "GET",
+            {
+                "subscriptionId": cert_key,
+                "date_gubun": date_gubun,
+                "start_date": start_date,
+                "end_date": end_date,
+                "ord_dtl_stat_cd": ord_dtl_stat_cd,
+            },
+        )
+        data = result.get("data", {})
+        result_data = data.get("Result", data)
+        orders = result_data.get("OrderInfo", result_data.get("OrdList", []))
+        if isinstance(orders, dict):
+            orders = [orders]
+        return orders if isinstance(orders, list) else []
+
+    async def search_cancel_orders(
+        self, start_date: str, end_date: str
+    ) -> list[dict[str, Any]]:
+        """주문취소조회 (searchCnclList.lotte)."""
+        cert_key = await self._ensure_auth()
+        result = await self._call_api_auto_retry(
+            "searchCnclList.lotte",
+            "GET",
+            {
+                "subscriptionId": cert_key,
+                "start_date": start_date,
+                "end_date": end_date,
+            },
+        )
+        data = result.get("data", {})
+        result_data = data.get("Result", data)
+        orders = result_data.get("OrderInfo", result_data.get("OrdList", []))
+        if isinstance(orders, dict):
+            orders = [orders]
+        return orders if isinstance(orders, list) else []
+
+    async def search_return_orders(
+        self, start_date: str, end_date: str, ord_dtl_stat_cd: str = "20"
+    ) -> list[dict[str, Any]]:
+        """반품조회 (searchReturnList.lotte).
+
+        ord_dtl_stat_cd:
+            20 = 반품진행
+            21 = 회수확정
+        """
+        cert_key = await self._ensure_auth()
+        result = await self._call_api_auto_retry(
+            "searchReturnList.lotte",
+            "GET",
+            {
+                "subscriptionId": cert_key,
+                "start_date": start_date,
+                "end_date": end_date,
+                "ord_dtl_stat_cd": ord_dtl_stat_cd,
+            },
+        )
+        data = result.get("data", {})
+        result_data = data.get("Result", data)
+        orders = result_data.get("OrderInfo", result_data.get("OrdList", []))
+        if isinstance(orders, dict):
+            orders = [orders]
+        return orders if isinstance(orders, list) else []
 
 
 class LotteApiError(Exception):
