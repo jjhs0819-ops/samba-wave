@@ -1690,6 +1690,12 @@ class ElevenstClient:
             mnp_buy_yn = "Y"
         else:
             mnp_buy_yn = "N"
+            if _mnp_enabled:
+                # '설정함'인데 값 누락 — silent disable 가시화 (UX 함정 방어)
+                logger.warning(
+                    "[11번가] 복수구매할인 '설정함'이지만 값 누락 — PLU OFF로 등록 "
+                    f"(qty={mnp_buy_qty}, amt={mnp_buy_amt}). 스토어 설정에서 'N개 이상'과 '개당 할인값'을 입력하세요."
+                )
         mnp_period_yn = (
             "Y"
             if cfg.get("multiPurchasePeriodEnabled")

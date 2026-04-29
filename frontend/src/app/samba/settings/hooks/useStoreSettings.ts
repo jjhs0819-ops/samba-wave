@@ -159,6 +159,21 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
       // 기존 저장 데이터와 현재 입력 데이터 병합
       // select 필드에서 ''(설정안함)을 선택한 경우 해당 키 삭제
       const current = storeData[marketKey] || {}
+      // 복수구매할인 '설정함' + 값 미입력 시 silent disable 방지 — 저장 차단
+      if (
+        String(current.multiPurchaseDiscount || '').toLowerCase() === 'true'
+      ) {
+        const qty = String(current.multiPurchaseQty || '').trim()
+        const amtKey = marketKey === '11st' ? 'multiPurchaseAmt' : 'multiPurchaseRate'
+        const amt = String(current[amtKey] || '').trim()
+        if (!qty || qty === '0' || !amt || amt === '0') {
+          showAlert(
+            `복수구매할인을 '설정함'으로 선택했으면 'N개 이상' 과 '${marketKey === '11st' ? '개당 할인값' : '할인율'}' 을 모두 입력해야 합니다.`,
+            'error'
+          )
+          return
+        }
+      }
       const marketCfgForMerge = STORE_MARKETS.find(m => m.key === marketKey)
       const selectFields = new Set(
         (marketCfgForMerge?.fields ?? []).filter(f => f.type === 'select').map(f => f.name)
