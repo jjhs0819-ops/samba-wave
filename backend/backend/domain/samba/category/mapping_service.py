@@ -118,6 +118,18 @@ class CategoryMappingMixin:
         "문구/사무",
     )
 
+    # 경로 어디에든 등장하면 불량 처리 (KC인증 이슈로 성인 매핑에서 제외)
+    _BAD_CATEGORY_ANYWHERE = (
+        "주니어",
+        "아동",
+        "유아",
+        "베이비",
+        "키즈",
+        "kids",
+        "junior",
+        "baby",
+    )
+
     # ==================== Category Mappings ====================
 
     async def list_mappings(
@@ -434,10 +446,13 @@ class CategoryMappingMixin:
     # ==================== 불량 카테고리 감지 & 재매핑 ====================
 
     def _is_bad_mapping(self, path: str) -> bool:
-        """카테고리 경로가 금지 카테고리로 시작하는지 확인."""
+        """카테고리 경로가 금지 카테고리로 시작하거나, 주니어/아동 키워드를 포함하는지 확인."""
         if not path:
             return False
-        return any(path.startswith(prefix) for prefix in self._BAD_CATEGORY_PREFIXES)
+        if any(path.startswith(prefix) for prefix in self._BAD_CATEGORY_PREFIXES):
+            return True
+        path_lower = path.lower()
+        return any(kw in path_lower for kw in self._BAD_CATEGORY_ANYWHERE)
 
     async def fix_bad_mappings(
         self,

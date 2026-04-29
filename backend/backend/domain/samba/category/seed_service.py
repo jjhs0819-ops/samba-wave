@@ -465,6 +465,18 @@ class CategorySeedMixin:
 
         # DB에서 마켓별 실제 카테고리 목록 조회 (AI가 이 중에서만 선택, 리프만 허용)
         market_cat_lists: Dict[str, List[str]] = {}
+        # 경로 어디에든 등장하면 제외할 키워드 (주니어/아동 KC인증 이슈 차단)
+        # — 11번가 "주니어의류 (9~14세) > ..." 등 prefix가 아닌 형태도 잡기 위해 contains 사용
+        _exclude_anywhere = (
+            "주니어",
+            "아동",
+            "유아",
+            "베이비",
+            "키즈",
+            "kids",
+            "junior",
+            "baby",
+        )
         for m in target_markets:
             try:
                 cats = _filter_to_leaves(await self._get_market_categories(m))
@@ -483,6 +495,7 @@ class CategorySeedMixin:
                         c
                         for c in cats
                         if not any(c.startswith(p) for p in _exclude_prefixes)
+                        and not any(kw in c.lower() for kw in _exclude_anywhere)
                     ]
                     market_cat_lists[m] = cats
             except Exception:
@@ -680,7 +693,7 @@ class CategorySeedMixin:
 - 소싱 카테고리 경로에 "여성", "우먼즈", "여자" 단어가 있으면 반드시 여성 카테고리로 매핑.
 - 성별 근거가 전혀 없을 때만 남녀공용/성별무관 카테고리 선택 가능.
 - 패션 상품(의류/신발/가방/액세서리)은 "패션의류"·"패션잡화" 대분류 우선. "스포츠/레저" 대분류는 소싱 카테고리에 "스포츠", "아웃도어", "골프", "등산", "런닝", "요가", "축구", "농구", "야구", "스키", "자전거" 등 스포츠 키워드가 있을 때만 선택.
-- 주니어/아동/유아 카테고리는 절대 선택 금지. KC인증 문제가 있음.
+- 경로에 "주니어", "아동", "유아", "베이비", "키즈", "kids", "junior", "baby" 단어가 단 한 번이라도 등장하는 카테고리는 절대 선택 금지 (KC인증 이슈, 성인 의류는 성인용 카테고리만 사용). 예 금지: "주니어의류 (9~14세) > ...", "패션 > 주니어 > ...".
 - 도서/음반/교재/학술 카테고리는 절대 선택 금지. 의류학 교재도 포함.
 - 의류/패션과 무관한 카테고리(식품, 인테리어, 여행, 자동차, 반려동물 등)는 절대 선택 금지.
 - 키워드 단순 매칭 금지. '웨이스트 백'은 허리에 차는 가방이지 바지가 아님. '기타'는 악기가 아닌 기타 등등을 의미함. 상품의 실제 의미를 파악하여 매핑.
@@ -744,16 +757,31 @@ JSON만 응답:
                                     "e쿠폰/티켓",
                                     "취미/컬렉션",
                                     "수입명품",
-                                    "주니어의류",
-                                    "아동의류",
-                                    "유아의류",
-                                    "베이비의류",
+                                )
+                                # 경로 어디에든 등장하면 차단 (주니어/아동 KC인증 이슈)
+                                _age_exclude_anywhere = (
+                                    "주니어",
+                                    "아동",
+                                    "유아",
+                                    "베이비",
+                                    "키즈",
+                                    "kids",
+                                    "junior",
+                                    "baby",
                                 )
                                 if any(
                                     suggested.startswith(p) for p in _fashion_exclude
                                 ):
                                     logger.warning(
                                         f"[벌크매핑] '{suggested}' 패션 무관 카테고리 → 스킵"
+                                    )
+                                    continue
+                                if any(
+                                    kw in suggested.lower()
+                                    for kw in _age_exclude_anywhere
+                                ):
+                                    logger.warning(
+                                        f"[벌크매핑] '{suggested}' 주니어/아동 카테고리 → 스킵 (KC인증)"
                                     )
                                     continue
                                 # 대분류 단독 거부 — ' > ' 없으면 1단계 대분류
@@ -889,11 +917,28 @@ JSON만 응답:
         import anthropic
 
         # DB 우선 조회 후 하드코딩 fallback (리프만 허용 — 비-리프 매핑 방지)
+        # 경로 어디에든 주니어/아동/유아/베이비/키즈가 등장하면 제외 (KC인증)
+        _age_exclude_anywhere = (
+            "주니어",
+            "아동",
+            "유아",
+            "베이비",
+            "키즈",
+            "kids",
+            "junior",
+            "baby",
+        )
         market_cats: Dict[str, List[str]] = {}
         for m in remaining_markets:
             cats = _filter_to_leaves(await self._get_market_categories(m))
             if cats:
-                market_cats[m] = cats
+                cats = [
+                    c
+                    for c in cats
+                    if not any(kw in c.lower() for kw in _age_exclude_anywhere)
+                ]
+                if cats:
+                    market_cats[m] = cats
 
         if not market_cats:
             return {}
