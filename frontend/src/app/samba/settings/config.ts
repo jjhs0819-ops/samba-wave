@@ -279,6 +279,7 @@ export const STORE_MARKETS: MarketConfig[] = [
     { name: 'deliveryFee', label: '배송비', type: 'number', placeholder: '0' },
     { name: 'asPhone', label: 'A/S 전화번호', type: 'text', placeholder: '010-1234-5678' },
     { name: 'asMessage', label: 'A/S안내', type: 'text', placeholder: '상세페이지 참조' },
+    { name: 'promotionMessage', label: '상품홍보문구', type: 'text', placeholder: '홍보 문구 입력 (한글 최대 14자)' },
     { name: 'discountRate', label: '즉시할인율(%)', type: 'number', placeholder: '0 (미설정)' },
     { name: 'returnFee', label: '반품배송비(편도)', type: 'number', placeholder: '4000' },
     { name: 'exchangeFee', label: '교환배송비(왕복)', type: 'number', placeholder: '8000' },

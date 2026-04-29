@@ -1621,8 +1621,11 @@ class ElevenstClient:
     <colCount>999</colCount>
   </ProductOption>"""
 
-        # 홍보문구 자동 생성 (advrtStmt — 한글 14자/영문 28자 제한)
-        promo_text = _generate_promo_text(product, name)
+        # 홍보문구 — 스토어설정 값 우선, 없으면 카테고리 기반 자동 생성
+        # (advrtStmt 제한: 한글 14자/영문 28자)
+        promo_text = _generate_promo_text(
+            product, name, (cfg.get("promotionMessage") or "").strip()
+        )
 
         # 상품정보 제공고시 XML (카테고리별 동적 생성)
         notice_xml = _build_elevenst_notice_xml(product)
@@ -2145,11 +2148,18 @@ def _validate_promo_clean(promo: str, name: str) -> bool:
     return True
 
 
-def _generate_promo_text(product: dict, name: str) -> str:
-    """카테고리 기반 홍보문구 자동 생성 (한글 14자 이내).
+def _generate_promo_text(product: dict, name: str, custom: str = "") -> str:
+    """홍보문구 결정 (한글 14자 이내).
 
-    우선순위: 세부 카테고리 키워드 → 그룹 기본 템플릿 → fallback
+    우선순위: 사용자 지정(custom) → 세부 카테고리 키워드 → 그룹 기본 템플릿 → fallback
     """
+    # 사용자가 스토어설정에서 지정한 값이 있으면 14자 절단 후 그대로 사용
+    # (clean 검증은 사용자 책임 — 자동 매칭과 달리 의도된 문구이므로 강제 검증 X)
+    if custom:
+        trimmed = custom.strip()[:14]
+        if trimmed:
+            return trimmed
+
     from backend.domain.samba.proxy.notice_utils import detect_notice_group
 
     group = detect_notice_group(product)

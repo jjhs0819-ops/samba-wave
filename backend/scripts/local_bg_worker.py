@@ -41,26 +41,35 @@ _r2: dict = {}
 
 # ── R2 upload ────────────────────────────────────────────
 def upload_to_r2(image_bytes: bytes, filename: str) -> str | None:
+    """R2 업로드 — 일시 장애 대비 3회 재시도(1.5s/3s 백오프)."""
     if not _r2.get("bucket"):
         return None
-    try:
-        import boto3
+    import boto3
 
-        s3 = boto3.client(
-            "s3",
-            endpoint_url=f"https://{_r2['account_id']}.r2.cloudflarestorage.com",
-            aws_access_key_id=_r2["access_key"],
-            aws_secret_access_key=_r2["secret_key"],
-            region_name="auto",
-        )
-        key = f"transformed/{filename}"
-        s3.put_object(
-            Bucket=_r2["bucket"], Key=key, Body=image_bytes, ContentType="image/webp"
-        )
-        return f"{_r2['public_url'].rstrip('/')}/transformed/{filename}"
-    except Exception as e:
-        print(f"[Worker]   R2 upload failed: {e}")
-        return None
+    last_err: Exception | None = None
+    for attempt in range(3):
+        try:
+            s3 = boto3.client(
+                "s3",
+                endpoint_url=f"https://{_r2['account_id']}.r2.cloudflarestorage.com",
+                aws_access_key_id=_r2["access_key"],
+                aws_secret_access_key=_r2["secret_key"],
+                region_name="auto",
+            )
+            key = f"transformed/{filename}"
+            s3.put_object(
+                Bucket=_r2["bucket"],
+                Key=key,
+                Body=image_bytes,
+                ContentType="image/webp",
+            )
+            return f"{_r2['public_url'].rstrip('/')}/transformed/{filename}"
+        except Exception as e:
+            last_err = e
+            if attempt < 2:
+                time.sleep(1.5 * (attempt + 1))
+    print(f"[Worker]   [upload] R2 업로드 3회 실패: {last_err}")
+    return None
 
 
 # ── Watermark removal ────────────────────────────────────
@@ -110,20 +119,26 @@ def _is_white_background_logo(crop: Image.Image) -> bool:
     return near_white / len(pixels) >= _WHITE_BG_LOGO_RATIO
 
 
-def _rembg_full(src: Image.Image) -> bytes:
-    """rembg로 전체 배경 제거 후 흰배경 합성 → WEBP 반환."""
+def _rembg_full(src: Image.Image, *, use_alpha_matting: bool = True) -> bytes:
+    """rembg로 전체 배경 제거 후 흰배경 합성 → WEBP 반환.
+
+    use_alpha_matting=False 폴백 모드: 알파매팅 끄면 가장자리 거칠지만 더 안정적.
+    """
     from rembg import remove
 
     buf_in = io.BytesIO()
     src.save(buf_in, format="PNG")
-    result = remove(
-        buf_in.getvalue(),
-        session=_get_rembg_session(),
-        alpha_matting=True,
-        alpha_matting_foreground_threshold=250,
-        alpha_matting_background_threshold=30,
-        alpha_matting_erode_size=15,
-    )
+    if use_alpha_matting:
+        result = remove(
+            buf_in.getvalue(),
+            session=_get_rembg_session(),
+            alpha_matting=True,
+            alpha_matting_foreground_threshold=250,
+            alpha_matting_background_threshold=30,
+            alpha_matting_erode_size=15,
+        )
+    else:
+        result = remove(buf_in.getvalue(), session=_get_rembg_session())
     out = Image.open(io.BytesIO(result)).convert("RGBA")
     r, g, b, a = out.split()
     a = a.point(lambda x: 0 if x < 20 else x)
@@ -133,6 +148,33 @@ def _rembg_full(src: Image.Image) -> bytes:
     buf = io.BytesIO()
     composite.save(buf, format="WEBP", quality=90)
     return buf.getvalue()
+
+
+def _is_bg_removed(result_bytes: bytes) -> bool:
+    """결과 이미지의 가장자리가 충분히 흰색인지 검증.
+
+    rembg 실패 시 결과 가장자리에 원본 배경 색이 그대로 남음 → 흰픽셀 비율로 판정.
+    가장자리 픽셀의 85% 이상이 near-white(R/G/B≥240)면 배경제거 성공으로 간주.
+    """
+    try:
+        result = Image.open(io.BytesIO(result_bytes)).convert("RGB")
+        w, h = result.size
+        # 상하단 1px + 좌우 1px = 가장자리 픽셀
+        pixels: list[tuple[int, int, int]] = []
+        pixels.extend(result.getpixel((x, 0)) for x in range(0, w, max(1, w // 100)))
+        pixels.extend(
+            result.getpixel((x, h - 1)) for x in range(0, w, max(1, w // 100))
+        )
+        pixels.extend(result.getpixel((0, y)) for y in range(0, h, max(1, h // 100)))
+        pixels.extend(
+            result.getpixel((w - 1, y)) for y in range(0, h, max(1, h // 100))
+        )
+        if not pixels:
+            return False
+        white = sum(1 for r, g, b in pixels if r >= 240 and g >= 240 and b >= 240)
+        return white / len(pixels) >= 0.85
+    except Exception:
+        return False
 
 
 def remove_watermark(image_bytes: bytes) -> bytes:
@@ -168,11 +210,23 @@ def remove_watermark(image_bytes: bytes) -> bytes:
         src.save(buf, format="WEBP", quality=90)
         return buf.getvalue()
 
-    # 3) 사진 컨텐츠 → rembg 전체 배경 제거 (실패 시 원본 반환)
+    # 3) 사진 컨텐츠 → rembg 전체 배경 제거
+    #    1차: alpha_matting=True (고품질) → 결과 검증
+    #    실패/저품질 시 2차: alpha_matting=False (안정적 폴백)
     try:
-        return _rembg_full(src)
+        result = _rembg_full(src, use_alpha_matting=True)
+        if _is_bg_removed(result):
+            return result
+        print("[Worker]   [rembg] 1차 결과 가장자리 비흰색 → alpha_matting off 폴백")
+        result2 = _rembg_full(src, use_alpha_matting=False)
+        if _is_bg_removed(result2):
+            return result2
+        print("[Worker]   [rembg] 2차도 실패 — 원본 반환")
+        buf = io.BytesIO()
+        src.save(buf, format="WEBP", quality=90)
+        return buf.getvalue()
     except Exception as e:
-        print(f"[Worker]   rembg 실패, 원본 반환: {e}")
+        print(f"[Worker]   [rembg] 예외, 원본 반환: {e}")
         buf = io.BytesIO()
         src.save(buf, format="WEBP", quality=90)
         return buf.getvalue()
@@ -180,18 +234,34 @@ def remove_watermark(image_bytes: bytes) -> bytes:
 
 # ── Process one image URL ─────────────────────────────────
 async def process_image(client: httpx.AsyncClient, url: str) -> str | None:
+    """이미지 다운로드 → 배경제거 → R2 업로드.
+
+    다운로드는 3회 재시도(1.5s/3s 백오프) — 일시적 네트워크/소싱처 장애 회복.
+    """
+    resp = None
+    last_err: Exception | None = None
+    for attempt in range(3):
+        try:
+            resp = await client.get(url, timeout=30, follow_redirects=True)
+            resp.raise_for_status()
+            break
+        except Exception as e:
+            last_err = e
+            resp = None
+            if attempt < 2:
+                await asyncio.sleep(1.5 * (attempt + 1))
+    if resp is None:
+        print(f"[Worker]   [download] 3회 실패 ({url[:60]}): {last_err}")
+        return None
+
     try:
-        resp = await client.get(url, timeout=30, follow_redirects=True)
-        resp.raise_for_status()
         processed = await asyncio.to_thread(remove_watermark, resp.content)
         md5 = hashlib.md5(resp.content).hexdigest()[:8]
         filename = f"ai_{md5}_{uuid.uuid4().hex[:6]}.webp"
         result_url = upload_to_r2(processed, filename)
-        if result_url is None:
-            print("[Worker]   R2 업로드 실패 — R2 설정(bg_worker.env)을 확인하세요")
         return result_url
     except Exception as e:
-        print(f"[Worker]   Image error ({url[:60]}): {e}")
+        print(f"[Worker]   [process] 처리 실패 ({url[:60]}): {e}")
         return None
 
 
@@ -254,6 +324,10 @@ async def process_job(job: dict) -> None:
                     )
                 except Exception:
                     pass
+
+            # 새 상품 시작 즉시 image_total 보고 — 프론트 fallback("0/2"=상품 진행) 방지
+            if img_total > 0:
+                await _report_progress(bump_product=False)
 
             if scope.get("thumbnail") and images:
                 url = await process_image(client, images[0])

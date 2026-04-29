@@ -145,6 +145,31 @@ class ElevenstPlugin(MarketPlugin):
                 # 폴백: 아래 전체 로직으로 계속 진행
 
         account_settings = (account.additional_fields or {}) if account else {}
+
+        # 무신사 등 referer 차단 CDN URL을 R2로 미러링
+        # — 11번가는 등록 URL을 자체 서버가 fetch하므로 핫링크 차단 시 워터마크 이미지로 캐싱됨
+        try:
+            from backend.domain.samba.image.service import ImageTransformService
+
+            _img_svc = ImageTransformService(session)
+            _images = product.get("images") or []
+            _detail_images = product.get("detail_images") or []
+            if _images or _detail_images:
+                product = dict(product)  # 원본 dict 변형 방지
+                if _images:
+                    product["images"] = await _img_svc.mirror_external_to_r2(_images)
+                if _detail_images:
+                    product["detail_images"] = await _img_svc.mirror_external_to_r2(
+                        _detail_images
+                    )
+                if not product.get("images"):
+                    return {
+                        "success": False,
+                        "message": "11번가 등록 실패: 이미지 미러링 후 사용 가능한 이미지가 없습니다.",
+                    }
+        except Exception as e:
+            logger.warning(f"[11번가] 이미지 미러링 단계 오류 — 원본 URL 유지: {e}")
+
         xml_data = ElevenstClient.transform_product(
             product, cat_code, settings=account_settings
         )

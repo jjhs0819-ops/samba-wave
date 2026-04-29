@@ -807,6 +807,85 @@ class ImageTransformService:
         )
         return f"{base_url}/static/images/{filename}"
 
+    # 외부 CDN(referer 차단) → R2 미러링: 마켓 등록 시 핫링크 워터마크 방지용
+    # 무신사 image.msscdn.net 등은 외부 도메인이 fetch하면 워터마크 응답
+    _HOTLINK_BLOCKED_HOSTS = (
+        "msscdn.net",
+        "image.musinsa.com",
+    )
+
+    async def mirror_external_to_r2(self, urls: list[str]) -> list[str]:
+        """차단 도메인의 이미지 URL을 R2로 미러링하여 R2 URL로 치환.
+
+        - msscdn.net 등 referer/hotlink 차단 도메인만 다운로드 후 R2 업로드
+        - 이미 R2 publicUrl 도메인이거나 차단 대상이 아니면 원본 URL 유지
+        - 다운로드/업로드 실패 시 해당 URL은 결과에서 제외(드롭)
+        - 원본 포맷(MIME) 보존: webp 변환 없이 그대로 저장
+        """
+        from urllib.parse import urlparse
+
+        if not urls:
+            return []
+
+        r2 = await self._get_r2_client()
+        if not r2:
+            # R2 설정이 없으면 미러 불가 — 원본 그대로 반환
+            return list(urls)
+        client, bucket_name, public_url = r2
+        public_host = urlparse(public_url).netloc if public_url else ""
+
+        result: list[str] = []
+        for url in urls:
+            if not url:
+                continue
+            try:
+                parsed = urlparse(url)
+                host = (parsed.netloc or "").lower()
+                # 이미 R2(publicUrl) 호스트면 그대로 사용
+                if public_host and host == public_host:
+                    result.append(url)
+                    continue
+                # 차단 도메인이 아니면 원본 유지
+                if not any(blocked in host for blocked in self._HOTLINK_BLOCKED_HOSTS):
+                    result.append(url)
+                    continue
+
+                # 차단 도메인 — 다운로드 후 R2 업로드
+                image_bytes = await self._download_image(url)
+                mime = self._detect_mime(image_bytes)
+                ext = {
+                    "image/png": "png",
+                    "image/webp": "webp",
+                    "image/jpeg": "jpg",
+                }.get(mime, "jpg")
+                content_hash = hashlib.md5(image_bytes).hexdigest()[:16]
+                key = f"mirror/{content_hash}.{ext}"
+
+                # HeadObject로 기존 객체 확인 → 존재 시 업로드 스킵
+                def _exists(_key: str = key) -> bool:
+                    try:
+                        client.head_object(Bucket=bucket_name, Key=_key)
+                        return True
+                    except Exception:
+                        return False
+
+                if not await asyncio.to_thread(_exists):
+                    await asyncio.to_thread(
+                        partial(
+                            client.upload_fileobj,
+                            io.BytesIO(image_bytes),
+                            bucket_name,
+                            key,
+                            ExtraArgs={"ContentType": mime},
+                        ),
+                    )
+                result.append(f"{public_url}/{key}")
+            except Exception as e:
+                logger.warning(f"[이미지미러] 실패로 드롭: {url} — {e}")
+                continue
+
+        return result
+
     async def transform_single_image(
         self,
         product_id: str,
