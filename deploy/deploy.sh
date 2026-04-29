@@ -57,8 +57,19 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-log_step() { echo -e "${BLUE}[$(date +%H:%M:%S)] [$1/$2]${NC} $3"; }
-log_ok()   { echo -e "${GREEN}✅ $1${NC}"; }
+# 단계별 소요시간 추적 — log_step 호출 시점에 STAGE_START 갱신, log_ok에서 delta 표기
+STAGE_START=$(date +%s)
+log_step() {
+  STAGE_START=$(date +%s)
+  local total_elapsed=$((STAGE_START - START_TIME))
+  echo -e "${BLUE}[$(date +%H:%M:%S)] [+${total_elapsed}s] [$1/$2]${NC} $3"
+}
+log_ok() {
+  local now=$(date +%s)
+  local stage_elapsed=$((now - STAGE_START))
+  local total_elapsed=$((now - START_TIME))
+  echo -e "${GREEN}✅ $1 (단계 ${stage_elapsed}s, 누적 ${total_elapsed}s)${NC}"
+}
 log_err()  { echo -e "${RED}❌ $1${NC}"; }
 
 # ─────────────────────────────────────
@@ -191,14 +202,20 @@ ssh -i "$SSH_KEY" \
 set -e
 SHA="$1"  # 로컬 deploy.sh 에서 인자로 전달 (heredoc single-quote 라 변수 확장 안 됨)
 cd /opt/samba
+REMOTE_START=$(date +%s)
+remote_step() {
+  local now=$(date +%s)
+  local elapsed=$((now - REMOTE_START))
+  echo "[$(date +%H:%M:%S)] [+${elapsed}s] $1"
+}
 
-echo "[1/6] green(staging) 이미지 pull..."
+remote_step "[1/6] green(staging) 이미지 pull..."
 sudo docker compose --profile staging pull samba-api-staging
 
-echo "[2/6] green 컨테이너 시작..."
+remote_step "[2/6] green 컨테이너 시작..."
 sudo docker compose --profile staging up -d samba-api-staging
 
-echo "[3/6] green 헬스체크 대기 (최대 360초)..."
+remote_step "[3/6] green 헬스체크 대기 (최대 360초)..."
 # docker healthcheck status 가 아닌 컨테이너 내부 wget 으로 직접 폴링.
 # 이유: docker healthcheck는 interval=30s + start_period=60s 라서 첫 healthy 갱신까지 90~150초 걸림.
 # 직접 wget 은 startup 즉시 응답하므로 실제 readiness 와 일치.
@@ -231,7 +248,7 @@ for i in $(seq 1 180); do
     fi
 done
 
-echo "[4/6] blue drain → stop (Caddy가 503 감지 후 green으로 사전 전환)..."
+remote_step "[4/6] blue drain → stop (Caddy가 503 감지 후 green으로 사전 전환)..."
 # graceful drain: blue 가 503 반환하도록 신호 → Caddy active health 가 즉시 fail 감지 →
 # 트래픽이 미리 green 으로 전환된 후 stop → 진정한 무중단 (in-flight 요청 5xx 0건)
 sudo docker exec samba-samba-api-1 touch /tmp/draining 2>/dev/null || true
@@ -239,7 +256,7 @@ sleep 3  # Caddy active health_interval(2s) × 1회 + 여유 = 3초로 단축 (5
 sudo docker compose stop samba-api
 sleep 2
 
-echo "[5/6] blue 새 이미지 pull + 재시작..."
+remote_step "[5/6] blue 새 이미지 pull + 재시작..."
 sudo docker compose pull samba-api
 sudo docker compose up -d samba-api
 # /tmp/draining 잔존 시 health 영구 503 → blue 무한 not-ready (2026-04-29 사고).
@@ -265,7 +282,7 @@ for i in $(seq 1 300); do
     fi
 done
 
-echo "[6/6] green 컨테이너 정리 + 미사용 이미지 prune..."
+remote_step "[6/6] green 컨테이너 정리 + 미사용 이미지 prune..."
 # blue healthy 후 Caddy active health(interval 2s)가 blue로 라우팅 복귀할 시간 확보 —
 # active health interval(2s) × 2회 = 4초면 first-priority blue로 복귀 충분 (10s→4s).
 sleep 4
