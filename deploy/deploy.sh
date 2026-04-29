@@ -268,9 +268,13 @@ sudo docker compose --profile staging stop samba-api-staging
 sudo docker compose --profile staging rm -f samba-api-staging
 sudo docker image prune -a -f | tail -3
 
-echo "[+] bg-worker 이미지 갱신 및 재시작..."
-sudo docker compose up -d --force-recreate samba-bg-worker
-echo "    ✅ bg-worker 재시작 완료"
+# bg-worker 컨테이너가 남아있다면 정리 (2026-04-29 부터 VM에서 미운영, 로컬PC에서 실행)
+if sudo docker ps -a --format '{{.Names}}' | grep -q '^samba-samba-bg-worker-1$'; then
+  echo "[+] 잔여 bg-worker 컨테이너 정리..."
+  sudo docker stop samba-samba-bg-worker-1 >/dev/null 2>&1 || true
+  sudo docker rm -f samba-samba-bg-worker-1 >/dev/null 2>&1 || true
+  echo "    ✅ bg-worker 정리 완료"
+fi
 
 echo ""
 echo "=== 최종 상태 ==="

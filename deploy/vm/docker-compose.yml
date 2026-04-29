@@ -93,21 +93,10 @@ services:
       retries: 3
       start_period: 60s
 
-  # 배경제거 워커 — rembg를 VM에서 로컬 실행, API와 내부 네트워크로 통신
-  samba-bg-worker:
-    image: asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/cloud-run-source-deploy/samba-wave-api:latest
-    restart: unless-stopped
-    entrypoint: ["uv", "run", "python", "scripts/local_bg_worker.py"]
-    env_file:
-      - /opt/samba/.env
-    environment:
-      SAMBA_API_URL: http://samba-api:8080
-      WORKER_TOKEN: ${BG_WORKER_TOKEN:-}
-      POLL_INTERVAL: "5"
-    networks:
-      - samba-net
-    depends_on:
-      - samba-api
+  # 배경제거 워커는 VM에서 실행하지 않는다 — local_bg_worker.py는 사용자 로컬 PC에서
+  # 직접 실행하여 PC 자원을 활용한다 (cd backend && uv run python scripts/local_bg_worker.py).
+  # VM에서 함께 돌릴 경우 rembg/pymatting이 CPU 200%를 점유하여 api gunicorn worker가
+  # starvation으로 SIGKILL/timeout 되는 사고가 반복되어 제거함 (2026-04-29).
 
 networks:
   samba-net:
