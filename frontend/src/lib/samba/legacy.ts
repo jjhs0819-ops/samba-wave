@@ -660,8 +660,11 @@ export const collectorApi = {
       `${SAMBA_PREFIX}/collector/products/block-and-delete`, { method: "POST", body: JSON.stringify({ product_ids: productIds }) }),
   resetRegistration: (id: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/products/${id}/reset-registration`, { method: "POST" }),
-  bulkResetRegistration: (ids: string[]) =>
-    request<{ reset: number }>(`${SAMBA_PREFIX}/collector/products/bulk-reset-registration`, { method: "POST", body: JSON.stringify({ ids }) }),
+  bulkResetRegistration: (ids: string[], accountIds?: string[]) =>
+    request<{ reset: number }>(`${SAMBA_PREFIX}/collector/products/bulk-reset-registration`, {
+      method: "POST",
+      body: JSON.stringify(accountIds && accountIds.length ? { ids, account_ids: accountIds } : { ids }),
+    }),
   bulkRemoveImage: (imageUrl: string, fields: string[] = ['images']) =>
     request<{ removed: number }>(`${SAMBA_PREFIX}/collector/products/images/bulk-remove`, { method: "POST", body: JSON.stringify({ image_url: imageUrl, fields }) }),
   bulkUpdateTags: (ids: string[], tags: string[] | null, seoKeywords: string[] | null) =>

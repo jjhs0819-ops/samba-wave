@@ -1855,24 +1855,74 @@ async def block_and_delete_products(
     return {"ok": True, "blocked": added, "deleted": del_result.rowcount}
 
 
+class BulkResetRegistrationRequest(BaseModel):
+    ids: list[str]
+    # 지정된 account_id만 등록 정보에서 제거 (None/빈 리스트 → 전체 초기화)
+    account_ids: Optional[list[str]] = None
+
+
 @router.post("/products/bulk-reset-registration")
 async def bulk_reset_registration(
-    body: BulkProductIdsRequest,
+    body: BulkResetRegistrationRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    """상품 마켓 등록 정보 일괄 초기화 — 단일 UPDATE 쿼리."""
+    """상품 마켓 등록 정보 일괄 초기화.
+
+    account_ids 미지정 → 전체 초기화 (단일 UPDATE).
+    account_ids 지정 → 각 상품에서 해당 계정만 제거 (per-row).
+    """
     from sqlalchemy import update as sa_update
-    from sqlmodel import col
+    from sqlmodel import col, select
     from backend.domain.samba.collector.model import SambaCollectedProduct
 
-    stmt = (
-        sa_update(SambaCollectedProduct)
-        .where(col(SambaCollectedProduct.id).in_(body.ids))
-        .values(registered_accounts=None, market_product_nos=None, status="collected")
+    if not body.account_ids:
+        stmt = (
+            sa_update(SambaCollectedProduct)
+            .where(col(SambaCollectedProduct.id).in_(body.ids))
+            .values(
+                registered_accounts=None, market_product_nos=None, status="collected"
+            )
+        )
+        result = await session.exec(stmt)  # type: ignore[arg-type]
+        await session.commit()
+        return {"reset": result.rowcount}
+
+    # 선택된 계정만 제거 — 각 상품의 JSON 필드를 갱신
+    remove_set = set(body.account_ids)
+    rows = (
+        (
+            await session.execute(
+                select(SambaCollectedProduct).where(
+                    col(SambaCollectedProduct.id).in_(body.ids)
+                )
+            )
+        )
+        .scalars()
+        .all()
     )
-    result = await session.exec(stmt)  # type: ignore[arg-type]
+
+    reset = 0
+    for product in rows:
+        regs = list(product.registered_accounts or [])
+        remaining = [aid for aid in regs if aid not in remove_set]
+        if len(remaining) == len(regs):
+            continue  # 변경 없음
+        product.registered_accounts = remaining or None
+
+        nos = dict(product.market_product_nos or {})
+        for aid in remove_set:
+            nos.pop(aid, None)
+            nos.pop(f"{aid}_origin", None)
+        product.market_product_nos = nos or None
+
+        if not remaining:
+            product.status = "collected"
+
+        session.add(product)
+        reset += 1
+
     await session.commit()
-    return {"reset": result.rowcount}
+    return {"reset": reset}
 
 
 @router.post("/products/fix-nike-categories")

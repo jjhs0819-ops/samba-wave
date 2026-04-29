@@ -665,7 +665,8 @@ export default function ProductsPage() {
 
       try {
         if (deleteMode === 'force') {
-          // 강제삭제: 마켓 API 호출 없이 DB만 정리
+          // 강제삭제: 마켓 API 호출 없이 DB의 등록 정보만 제거
+          await collectorApi.bulkResetRegistration([product.id], targetAccIds)
           const successAccIds = targetAccIds
           for (const accId of successAccIds) {
             const account = accountsMap.get(accId)
@@ -2045,23 +2046,16 @@ export default function ProductsPage() {
           <button
             onClick={async () => {
               if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
-              if (!await showConfirm(`${fmt(selectedIds.size)}개 상품의 마켓 등록 정보를 초기화하시겠습니까?\n(마켓에서 이미 삭제된 상품의 등록 상태만 정리합니다)`)) return
-              const ids = Array.from(selectedIds)
-              setAiJobTitle(`강제삭제 (${fmt(ids.length)}건)`)
-              setAiJobLogs([`${fmt(ids.length)}건 초기화 중...`])
-              setAiJobDone(false)
-              setAiJobModal(true)
-              const idSet = new Set(ids)
-              try {
-                const res = await collectorApi.bulkResetRegistration(ids)
-                setAiJobLogs(prev => [...prev, `${fmt(res.reset)}건 초기화 완료 ✓`])
-                setAllProducts(prev => prev.map(p =>
-                  idSet.has(p.id) ? { ...p, registered_accounts: null, market_product_nos: null, status: 'collected' } as unknown as SambaCollectedProduct : p
-                ))
-              } catch {
-                setAiJobLogs(prev => [...prev, `초기화 실패 ✗`])
+              // 전체선택 시 현재 페이지에 없는 상품도 서버에서 조회
+              let pool: SambaCollectedProduct[] = allProducts.filter(p => selectedIds.has(p.id))
+              if (pool.length < selectedIds.size) {
+                try {
+                  pool = await fetchProductsByIds([...selectedIds])
+                } catch { /* 폴백: 현재 페이지만 */ }
               }
-              setAiJobDone(true)
+              const targets = pool.filter(p => (p.registered_accounts?.length ?? 0) > 0)
+              if (!targets.length) { showAlert('마켓에 등록된 상품이 없습니다.'); return }
+              openMarketDeleteModal(targets, 'bulk', 'force')
             }}
             title="판매마켓에서 직접 삭제 후 연결 끊긴 상품 판매처 기록 삭제"
             style={{
