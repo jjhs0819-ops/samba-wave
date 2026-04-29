@@ -53,7 +53,6 @@ export const MARKETS = [
 const MARKET_NAME_LIMITS: Record<string, number> = {
   '스마트스토어': 49,
   '쿠팡': 100,
-  '11번가': 100,
   '지마켓': 100,
   '옥션': 100,
 }
@@ -61,6 +60,7 @@ const MARKET_NAME_LIMITS: Record<string, number> = {
 // byte 기준 제한 마켓 (한글 3byte 기준)
 const MARKET_NAME_BYTE_LIMITS: Record<string, number> = {
   '롯데ON': 149,
+  '11번가': 99,
 }
 
 function truncateToBytes(text: string, maxBytes: number): string {

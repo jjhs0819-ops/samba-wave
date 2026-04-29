@@ -1516,9 +1516,6 @@ export default function ProductsPage() {
                   addLog(`※ 로컬 워커(local_bg_worker.py)가 실행 중이어야 처리됩니다`)
                   let pollCount = 0
                   const maxPolls = 720 // 최대 60분 (5초 간격)
-                  let lastLoggedCur = -1
-                  let lastLoggedStatus = ''
-                  let lastLoggedImgCur = -1
                   let lastLoggedPid = ''
                   while (pollCount < maxPolls && !aiJobAbortRef.current) {
                     await new Promise(r => setTimeout(r, 5000))
@@ -1527,29 +1524,30 @@ export default function ProductsPage() {
                       const st = await proxyApi.bgJobStatus(jid)
                       const cur = st.current ?? 0
                       const tot = st.total ?? ids.length
-                      const imgCur = st.image_current ?? -1
+                      const imgCur = st.image_current ?? 0
                       const imgTot = st.image_total ?? 0
                       const stPid = st.current_product_id || ''
-                      setAiJobTitle(`배경제거 [${fmt(cur)}/${fmt(tot)}]`)
+                      // 진행률은 모달 타이틀에만 표시 — 로그는 상품 단위 1줄만
+                      const titleProgress = imgTot > 0
+                        ? ` (${fmt(Math.max(imgCur, 0))}/${fmt(imgTot)}장)`
+                        : ''
+                      setAiJobTitle(`배경제거 [${fmt(Math.min(cur + 1, tot))}/${fmt(tot)}]${titleProgress}`)
                       // pending 상태 감지 — 워커 미실행 경고
                       if (st.status === 'pending') {
                         if (pollCount === 6) addLog(`[${ts()}] ⚠️ 워커가 아직 작업을 수신하지 못했습니다`)
                         if (pollCount === 18) addLog(`[${ts()}] ❌ 워커가 응답하지 않습니다. local_bg_worker.py 실행 여부를 확인해주세요`)
                       }
-                      // 진행 중일 때만 — 상품/사진 인덱스/상태가 바뀐 시점에만 로그(상품명+상품번호+사진진행률)
-                      const changed = cur !== lastLoggedCur || st.status !== lastLoggedStatus || imgCur !== lastLoggedImgCur || stPid !== lastLoggedPid
-                      if (st.status === 'running' && changed) {
-                        const curId = stPid || ids[cur] || ids[cur - 1]
-                        const curProd = productMap[curId] || allProducts.find(p => p.id === curId)
+                      // 새 상품 진입 시점에만 1줄 로그 — 이미지 진행은 타이틀에 위임
+                      if (st.status === 'running' && stPid && stPid !== lastLoggedPid) {
+                        const curProd = productMap[stPid]
+                          || allProducts.find(p => p.id === stPid)
+                          || allProducts.find(p => p.site_product_id === stPid)
                         const curBrand = curProd?.brand || ''
                         const curName = (curProd?.name || '').slice(0, 30)
-                        const curNo = curProd?.site_product_id || curId?.slice(-8) || ''
+                        const curNo = curProd?.site_product_id || stPid.slice(-8)
                         const label = [curBrand, curName, curNo].filter(Boolean).join(' / ')
-                        const progress = imgTot > 0 ? `${fmt(Math.max(imgCur, 0))}/${fmt(imgTot)}` : `${fmt(cur)}/${fmt(tot)}`
-                        addLog(`[${ts()}] ${label} ${progress} 진행중`)
-                        lastLoggedCur = cur
-                        lastLoggedStatus = st.status
-                        lastLoggedImgCur = imgCur
+                        const totalImg = imgTot > 0 ? ` — ${fmt(imgTot)}장` : ''
+                        addLog(`[${ts()}] [${fmt(Math.min(cur + 1, tot))}/${fmt(tot)}] ${label}${totalImg}`)
                         lastLoggedPid = stPid
                       }
                       if (st.status === 'completed') {

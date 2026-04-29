@@ -947,9 +947,10 @@ export default function CategoriesPage() {
 
   // 마켓 키 목록
   const sourceAdjacentMarkets = ['smartstore', 'lotteon']
+  const orderedAdjacentMarkets = ['smartstore', 'lotteon', 'elevenst']
   const marketKeys = [
-    ...sourceAdjacentMarkets.filter(mk => MARKET_LABELS[mk]),
-    ...Object.keys(MARKET_LABELS).filter(mk => !sourceAdjacentMarkets.includes(mk)),
+    ...orderedAdjacentMarkets.filter(mk => MARKET_LABELS[mk]),
+    ...Object.keys(MARKET_LABELS).filter(mk => !orderedAdjacentMarkets.includes(mk)),
   ]
   const gridCols = `80px 299px ${marketKeys.map(mk => sourceAdjacentMarkets.includes(mk) ? '300px' : '150px').join(' ')} 40px`
 

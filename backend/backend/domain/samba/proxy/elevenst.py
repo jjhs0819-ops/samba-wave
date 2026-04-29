@@ -1975,7 +1975,7 @@ def _escape_xml(text: str) -> str:
 
 # ──────────────────────────────────────────────────────────────
 # 상품명 정제 + 홍보문구 자동 생성
-# 공식 필드: prdNm(100자), advrtStmt(한글 14자/영문 28자)
+# 공식 필드: prdNm(99바이트), advrtStmt(한글 14자/영문 28자)
 # ──────────────────────────────────────────────────────────────
 
 # 세부 카테고리 키워드 → 홍보문구 템플릿 (한글 14자 이내)
@@ -2084,14 +2084,22 @@ _NAME_REMOVE_PATTERNS = [
 ]
 
 
+def _truncate_to_bytes(text: str, max_bytes: int) -> str:
+    """UTF-8 바이트 기준 안전 절단 (멀티바이트 경계 보존)."""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    return encoded[:max_bytes].decode("utf-8", errors="ignore")
+
+
 def _clean_product_name(name: str) -> str:
-    """11번가 등록용 상품명 정제 (금지어 제거 + 100자 제한)."""
+    """11번가 등록용 상품명 정제 (금지어 제거 + 99바이트 제한)."""
     for pattern in _NAME_REMOVE_PATTERNS:
         name = re.sub(pattern, "", name, flags=re.IGNORECASE)
     # 연속 공백 정리
     name = re.sub(r"\s+", " ", name).strip()
-    # 100자 제한
-    return name[:100].strip()
+    # 99바이트 제한 (UTF-8)
+    return _truncate_to_bytes(name, 99).strip()
 
 
 def _validate_promo_clean(promo: str, name: str) -> bool:
