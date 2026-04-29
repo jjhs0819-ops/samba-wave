@@ -952,7 +952,7 @@ export default function CategoriesPage() {
     ...orderedAdjacentMarkets.filter(mk => MARKET_LABELS[mk]),
     ...Object.keys(MARKET_LABELS).filter(mk => !orderedAdjacentMarkets.includes(mk)),
   ]
-  const gridCols = `80px 299px ${marketKeys.map(mk => sourceAdjacentMarkets.includes(mk) ? '300px' : '150px').join(' ')} 40px`
+  const gridCols = `80px 299px ${marketKeys.map(() => '300px').join(' ')} 40px`
 
   const colStyle = {
     flex: 1,
@@ -1165,14 +1165,14 @@ export default function CategoriesPage() {
           </h3>
           <div ref={tableScrollRef} style={{ ...card, overflow: 'auto', maxHeight: 'calc(100vh - 260px)' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
-              <thead>
-                <tr style={{ display: 'grid', gridTemplateColumns: gridCols, borderBottom: '1px solid #2D2D2D', background: 'rgba(255,255,255,0.03)' }}>
-                  <th style={{ padding: '0.625rem 0.75rem', textAlign: 'left', color: '#888', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden' }}>사이트</th>
+              <thead style={{ position: 'sticky', top: 0, zIndex: 2 }}>
+                <tr style={{ display: 'grid', gridTemplateColumns: gridCols, borderBottom: '1px solid #2D2D2D', background: '#1F1F1F' }}>
+                  <th style={{ padding: '0.625rem 0.75rem', textAlign: 'center', color: '#888', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden' }}>사이트</th>
                   <th style={{ padding: '0.625rem 0.75rem', textAlign: 'center', color: '#888', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden' }}>소싱 카테고리</th>
                   {marketKeys.map(mk => (
-                    <th key={mk} style={{ padding: '0.625rem 0.5rem', textAlign: 'left', color: '#888', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', minWidth: 0 }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.125rem' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                    <th key={mk} style={{ padding: '0.625rem 0.5rem', textAlign: 'center', color: '#888', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', minWidth: 0 }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.125rem', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem' }}>
                         <span>{MARKET_LABELS[mk]}</span>
                         {/* ESM 크로스매핑 버튼: 옥션은 G→A, 지마켓은 A→G */}
                         {mk === 'auction' && (
@@ -1260,7 +1260,7 @@ export default function CategoriesPage() {
                           title={`${MARKET_LABELS[mk]} 카테고리 일괄 삭제 (${fmtNum(filteredMappings.length)}건)`}
                         >✕</button>
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.375rem' }}>
                         <span style={{ fontSize: '0.625rem', color: (marketCatCounts[mk] || 0) >= 1000 ? '#51CF66' : '#FF6B6B' }}>
                           {fmtNum(marketCatCounts[mk] || 0)}개
                         </span>
