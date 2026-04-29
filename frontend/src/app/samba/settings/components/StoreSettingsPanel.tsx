@@ -508,7 +508,12 @@ export function StoreSettingsPanel(props: Props) {
                             if (d.returnAddress) updateStoreField('11st', 'returnAddress', d.returnAddress)
                             if (d.returnFee) updateStoreField('11st', 'returnFee', d.returnFee)
                             if (d.exchangeFee) updateStoreField('11st', 'exchangeFee', d.exchangeFee)
-                            showAlert('출고지/반품지 정보를 가져왔습니다.', 'success')
+                            if (d.dispatchTemplateNo) updateStoreField('11st', 'dispatchTemplateNo', d.dispatchTemplateNo)
+                            const tplCount = Array.isArray(d.dispatchTemplateList) ? d.dispatchTemplateList.length : 0
+                            const tplMsg = tplCount > 0
+                              ? ` (발송정책 템플릿 ${fmtNum(tplCount)}건${d.dispatchTemplateName ? ` — 대표: ${d.dispatchTemplateName}` : ''})`
+                              : ''
+                            showAlert(`출고지/반품지 정보를 가져왔습니다.${tplMsg}`, 'success')
                           } else {
                             showAlert(res.message || '정보를 가져올 수 없습니다.', 'error')
                           }

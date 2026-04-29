@@ -695,6 +695,96 @@ class ElevenstClient:
         """반품/교환지 주소 목록 조회. GET /rest/areaservice/inboundarea"""
         return await self._get_area_addresses("inboundarea")
 
+    async def get_dispatch_templates(self) -> list[dict[str, str]]:
+        """발송예정일 템플릿 목록 조회 (베스트 에포트).
+
+        11번가 셀러오피스 > 상품관리 > 상품정보 템플릿 관리에 등록된
+        '발송예정일 템플릿' 목록을 가져온다.
+
+        주의: 공식 OpenAPI 엔드포인트가 코드베이스/문서에서 미확인 상태.
+        몇 가지 추정 URL을 순차 시도하고, 모두 실패 시 빈 리스트 반환.
+        404/실패는 정상 동작으로 간주(상위 호출자가 graceful 처리).
+
+        반환 항목 구조 (확정 후 정제 예정):
+            - tmpltNo: 템플릿 번호
+            - tmpltNm: 템플릿명
+            - reprYn:  대표 여부(Y/N)
+        """
+        from xml.etree import ElementTree as ET
+
+        # 후보 URL — 11번가 OpenAPI 패턴 기반 추정. 첫 성공 응답 사용.
+        candidates = [
+            "https://api.11st.co.kr/rest/prodtmplmst/prdshipscheduletmpl",
+            "https://api.11st.co.kr/rest/prodtmplservices/prdshipscheduletmpl",
+            "https://api.11st.co.kr/rest/prodtmplmst/shipscheduletmpl",
+        ]
+        headers = self._headers()
+        client = _get_elevenst_http_client(self.api_key)
+
+        for url in candidates:
+            try:
+                resp = await client.get(url, headers=headers)
+            except Exception as exc:
+                logger.warning("[11번가] 발송템플릿 후보 호출 실패 %s: %s", url, exc)
+                continue
+            logger.info(
+                "[11번가] GET %s → %s",
+                url.replace("https://api.11st.co.kr", ""),
+                resp.status_code,
+            )
+            if not resp.is_success:
+                continue
+            xml_text = resp.text.replace("ns2:", "")
+            try:
+                root = ET.fromstring(xml_text)
+            except ET.ParseError:
+                continue
+            # 결과 코드 검증
+            result_msg = root.findtext("result_message", "") or root.findtext(
+                "resultMessage", ""
+            )
+            if result_msg and result_msg.upper() not in ("SUCCESS", "OK"):
+                continue
+            # 후보 노드명들 — 첫 매칭 사용
+            templates: list[dict[str, str]] = []
+            for tag in (
+                "shipScheduleTmplt",
+                "prdshipscheduletmpl",
+                "shipscheduletmpl",
+                "tmplt",
+            ):
+                for el in root.findall(f".//{tag}"):
+                    item = {
+                        "tmpltNo": (
+                            el.findtext("tmpltNo")
+                            or el.findtext("prdshipscheduletmpltNo")
+                            or el.findtext("schdlTmpltNo")
+                            or ""
+                        ).strip(),
+                        "tmpltNm": (
+                            el.findtext("tmpltNm")
+                            or el.findtext("prdshipscheduletmpltNm")
+                            or el.findtext("schdlTmpltNm")
+                            or ""
+                        ).strip(),
+                        "reprYn": (
+                            el.findtext("reprYn") or el.findtext("dprstYn") or "N"
+                        ).strip(),
+                    }
+                    if item["tmpltNo"]:
+                        templates.append(item)
+                if templates:
+                    break
+            if templates:
+                logger.info(
+                    "[11번가] 발송예정일 템플릿 %d건 (URL=%s)",
+                    len(templates),
+                    url,
+                )
+                return templates
+        logger.info("[11번가] 발송예정일 템플릿 조회 미지원 — 모든 후보 URL 실패")
+        return []
+
     async def _get_area_addresses(self, area_type: str) -> list[dict[str, str]]:
         """출고지/반품지 주소 조회 공통 메서드."""
         from xml.etree import ElementTree as ET
@@ -1549,11 +1639,19 @@ class ElevenstClient:
         mnp_buy_dsc_method = str(cfg.get("multiPurchaseDiscountMethod", "02") or "02")
         mnp_buy_qty = int(float(cfg.get("multiPurchaseQty") or 2))
         mnp_buy_amt = int(float(cfg.get("multiPurchaseAmt") or 0))
-        # 복수구매할인: 정액(won) 방식일 때만 활성화, 정률(%) 방식은 값 검증 어려워 비활성화
-        # pluDscMthdCd=01=정률(%), 02=정액(원) — 정액 방식(02)이고 10원 초과일 때만 허용
-        # 복수구매할인(PLU): 계정 설정 오류 시 등록 실패 원인이 되므로 기본 비활성화
-        # 11번가 셀러오피스에서 직접 설정 권장
-        mnp_buy_yn = "N"
+        # 복수구매할인(PLU): 스토어 설정 multiPurchaseDiscount='true' 시 활성화
+        # 활성 조건: 기준값(qty) >= 1, 할인값(amt) > 0 충족 시에만 ON. 미충족이면 등록 실패 방지 위해 OFF
+        _mnp_enabled_raw = cfg.get("multiPurchaseDiscount")
+        _mnp_enabled = bool(_mnp_enabled_raw) and str(_mnp_enabled_raw).lower() not in (
+            "",
+            "false",
+            "0",
+            "n",
+        )
+        if _mnp_enabled and mnp_buy_qty >= 1 and mnp_buy_amt > 0:
+            mnp_buy_yn = "Y"
+        else:
+            mnp_buy_yn = "N"
         mnp_period_yn = (
             "Y"
             if cfg.get("multiPurchasePeriodEnabled")
@@ -1646,7 +1744,7 @@ class ElevenstClient:
   <prdTypCd>01</prdTypCd>
   <dispCtgrNo>{category_code}</dispCtgrNo>
   <brand>{_escape_xml(brand)}</brand>
-  <modelCd>{_escape_xml(_resolve_model_nm(product))}</modelCd>
+  {f"<modelCd>{_escape_xml(_resolve_model_nm(product))}</modelCd>" if _resolve_model_nm(product) else ""}
   <maktPrc>{makt_prc}</maktPrc>
   <selPrc>{sale_price}</selPrc>
   <selMthdCd>01</selMthdCd>
@@ -1658,6 +1756,7 @@ class ElevenstClient:
   {f"<orgnNmVal>{_escape_xml(orgn_nm_val)}</orgnNmVal>" if orgn_nm_val else ""}
   <dlvCnFee>{delivery_fee}</dlvCnFee>
   <dlvGrntYn>Y</dlvGrntYn>
+  {f"<dlvSendCloseTmpltNo>{_escape_xml(str(cfg.get('dispatchTemplateNo', '')).strip())}</dlvSendCloseTmpltNo>" if str(cfg.get("dispatchTemplateNo", "")).strip() else ""}
   <dlvCstInstBasiCd>{delivery_type}</dlvCstInstBasiCd>
   <rtngdDlvCst>{return_fee}</rtngdDlvCst>
   <exchDlvCst>{exchange_fee}</exchDlvCst>
@@ -2055,19 +2154,29 @@ _PROMO_GROUP_TEMPLATES: dict[str, list[str]] = {
 
 
 def _resolve_model_nm(product: dict) -> str:
-    """상품정보 제공고시용 모델명 반환.
+    """11번가 modelCd/modelNm용 품번 반환.
 
-    우선순위: style_code → 상품명에서 '/ 모델코드' 패턴 추출 → '없음'
+    11번가 카탈로그 자동 매칭 키이므로 정확한 품번 추출이 중요.
+    우선순위:
+      1) style_code (수집기가 채운 품번)
+      2) 상품명 끝 토큰 — 하이픈 포함 품번 (예: IF0217-010, 623869-01)
+      3) 상품명 끝 토큰 — 6자 이상 영숫자 코드 (예: SQBAB9401, GZ8950)
+    매칭 실패 시 빈 문자열 반환 → 호출부에서 modelCd 엘리먼트 자체 생략.
+    ('없음' 같은 더미값 전송 시 11번가 카탈로그 매칭이 차단됨)
     """
     style_code = (product.get("style_code", "") or "").strip()
     if style_code:
         return style_code
-    # 상품명 패턴: "... / IF0217-010 6088997" → "IF0217-010"
     raw_name = product.get("name", "") or ""
-    m = re.search(r"/\s*([A-Z0-9]+-[A-Z0-9]+)", raw_name)
+    # 하이픈 포함 품번 (예: "/ IF0217-010", " 623869-01")
+    m = re.search(r"(?:^|[\s/(\[])([A-Za-z0-9]+-[A-Za-z0-9]+)\b", raw_name)
     if m:
         return m.group(1)
-    return "없음"
+    # 하이픈 없는 6자 이상 영숫자 코드 (예: "GZ8950", "AT5301")
+    m2 = re.search(r"(?:^|[\s/(\[])([A-Z][A-Z0-9]{5,})\b", raw_name)
+    if m2:
+        return m2.group(1)
+    return ""
 
 
 # 상품명 금지 패턴 (배송/이벤트/할인 관련)
@@ -2341,7 +2450,7 @@ def _build_elevenst_notice_xml(product: dict[str, Any]) -> str:
     return f"""<ProductNotification>
   <type>{type_code}</type>{items_xml}
   <company>{_escape_xml(company)}</company>
-  <modelNm>{_escape_xml(_resolve_model_nm(product))}</modelNm>
+  <modelNm>{_escape_xml(_resolve_model_nm(product) or "없음")}</modelNm>
 </ProductNotification>"""
 
 

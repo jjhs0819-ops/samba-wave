@@ -798,7 +798,8 @@ export default function PoliciesPage() {
                 <NumInput value={mp.onceMaxQty || 5} onChange={(v) => { setCurrentMarketPolicy({ ...mp, onceMaxQty: v }); triggerAutoSave() }} style={{ width: '60px' }} suffix="개" />
               </div>
               )}
-              {marketPolicyTab !== '플레이오토' && marketPolicyTab !== '스마트스토어' && (
+              {/* 11번가는 판매자 계정의 발송예정일 템플릿을 사용하므로 정책 출고일 미사용 */}
+              {marketPolicyTab !== '플레이오토' && marketPolicyTab !== '스마트스토어' && marketPolicyTab !== '11번가' && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>출고일</span>
                 <NumInput value={mp.shippingDays || 3} onChange={(v) => { setCurrentMarketPolicy({ ...mp, shippingDays: v }); triggerAutoSave() }} style={{ width: '60px' }} suffix="일" />

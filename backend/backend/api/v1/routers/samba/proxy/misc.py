@@ -118,6 +118,20 @@ async def elevenst_seller_info(
         result["outboundList"] = outbound
         result["inboundList"] = inbound
 
+        # 발송예정일 템플릿 (베스트 에포트, 실패해도 출고지 응답은 정상 반환)
+        try:
+            templates = await client.get_dispatch_templates()
+            if templates:
+                # 대표(reprYn=Y) 우선, 없으면 첫 번째
+                rep = next(
+                    (t for t in templates if t.get("reprYn") == "Y"), templates[0]
+                )
+                result["dispatchTemplateNo"] = rep.get("tmpltNo", "")
+                result["dispatchTemplateName"] = rep.get("tmpltNm", "")
+                result["dispatchTemplateList"] = templates
+        except Exception as exc:
+            logger.warning(f"[11번가] 발송예정일 템플릿 조회 스킵: {exc}")
+
         return {"success": True, "message": "출고지/반품지 조회 성공", "data": result}
     except Exception as exc:
         logger.error(f"[11번가] 출고지/반품지 조회 실패: {exc}")
