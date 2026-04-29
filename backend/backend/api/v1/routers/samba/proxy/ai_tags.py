@@ -791,9 +791,14 @@ async def generate_ai_tags(
                     )
 
                 # 태그 생성 후 그룹 전체 상품 조회 → 벌크 적용
+                # 기존 태그는 __센티넬만 보존하고 새 태그로 교체 (누적 방지)
                 for p in products:
-                    existing = p.tags or []
-                    merged = list(set(existing + tags + ["__ai_tagged__"]))
+                    preserved = [
+                        t
+                        for t in (p.tags or [])
+                        if isinstance(t, str) and t.startswith("__")
+                    ]
+                    merged = list(dict.fromkeys([*preserved, "__ai_tagged__", *tags]))
                     update_data: dict = {"tags": merged}
                     if seo_kws:
                         update_data["seo_keywords"] = seo_kws
@@ -1224,8 +1229,11 @@ async def apply_ai_tags(
         from datetime import datetime as _dt, UTC as _utc
 
         for p in products:
-            existing = p.tags or []
-            merged = list(set(existing + tags + ["__ai_tagged__"]))
+            # 기존 태그는 __센티넬만 보존하고 새 태그로 교체 (누적 방지)
+            preserved = [
+                t for t in (p.tags or []) if isinstance(t, str) and t.startswith("__")
+            ]
+            merged = list(dict.fromkeys([*preserved, "__ai_tagged__", *tags]))
             p.tags = merged
             _fm(p, "tags")
             if seo_kws:
