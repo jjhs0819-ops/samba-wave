@@ -117,13 +117,13 @@ async def refresh_products(
         from backend.api.v1.routers.samba.proxy import _get_setting
         from backend.domain.samba.proxy.lotteon_sourcing import (
             set_lotteon_cookie,
-            _lotteon_cookie_cache,
         )
 
-        if not _lotteon_cookie_cache:
-            _lt_ck = await _get_setting(session, "lotteon_cookie")
-            if _lt_ck:
-                set_lotteon_cookie(str(_lt_ck))
+        # 상품관리 갱신은 1개 상품 단위로 호출되므로 매번 강제 재로드
+        # (오토튠과 동일하게 만료 쿠키가 캐시에 남는 문제 방지)
+        _lt_ck = await _get_setting(session, "lotteon_cookie")
+        if _lt_ck:
+            set_lotteon_cookie(str(_lt_ck))
 
     # 벌크 갱신 실행 (수동 갱신 — 오토튠 로그에 노출되지 않음)
     results, summary = await refresh_products_bulk(products, source="manual")

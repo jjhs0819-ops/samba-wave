@@ -31,6 +31,7 @@ async def get_lottehome_policy(
 ) -> dict[str, Any]:
     """롯데홈쇼핑 정책 조회."""
     from ._helpers import _get_setting
+
     policy = await _get_setting(session, "lottehome_policy") or {}
     return {"success": True, "data": policy}
 
@@ -42,6 +43,7 @@ async def save_lottehome_policy(
 ) -> dict[str, Any]:
     """롯데홈쇼핑 정책 저장."""
     from ._helpers import _set_setting
+
     await _set_setting(write_session, "lottehome_policy", body)
     return {"success": True}
 
@@ -59,26 +61,39 @@ async def lottehome_auth(
         )
     # 기존 credentials와 정책 로드 (정책의 배송지/MD상품군/카테고리 병합)
     from ._helpers import _get_setting
+
     existing_creds = await _get_setting(write_session, "lottehome_credentials") or {}
     policy = await _get_setting(write_session, "lottehome_policy") or {}
 
     creds_to_save = dict(existing_creds)
-    creds_to_save.update({
-        "userId": body.userId,
-        "password": body.password,
-        "agncNo": body.agncNo or "",
-        "env": body.env or "test",
-    })
+    creds_to_save.update(
+        {
+            "userId": body.userId,
+            "password": body.password,
+            "agncNo": body.agncNo or "",
+            "env": body.env or "test",
+        }
+    )
 
     # 정책의 배송지/MD상품군/카테고리 정보 병합
     if policy:
-        creds_to_save.update({
-            "disp_no": policy.get("disp_no", creds_to_save.get("disp_no", "")),
-            "md_gsgr_no": policy.get("md_gsgr_no", creds_to_save.get("md_gsgr_no", "")),
-            "dlv_polc_no": policy.get("dlv_polc_no", creds_to_save.get("dlv_polc_no", "")),
-            "corp_dlvp_sn": policy.get("corp_dlvp_sn", creds_to_save.get("corp_dlvp_sn", "")),
-            "corp_rls_pl_sn": policy.get("corp_rls_pl_sn", creds_to_save.get("corp_rls_pl_sn", "")),
-        })
+        creds_to_save.update(
+            {
+                "disp_no": policy.get("disp_no", creds_to_save.get("disp_no", "")),
+                "md_gsgr_no": policy.get(
+                    "md_gsgr_no", creds_to_save.get("md_gsgr_no", "")
+                ),
+                "dlv_polc_no": policy.get(
+                    "dlv_polc_no", creds_to_save.get("dlv_polc_no", "")
+                ),
+                "corp_dlvp_sn": policy.get(
+                    "corp_dlvp_sn", creds_to_save.get("corp_dlvp_sn", "")
+                ),
+                "corp_rls_pl_sn": policy.get(
+                    "corp_rls_pl_sn", creds_to_save.get("corp_rls_pl_sn", "")
+                ),
+            }
+        )
 
     # DB에 자격증명 저장 (정책 정보 포함)
     await _set_setting(
@@ -314,7 +329,6 @@ async def lottehome_qa_sync(
     """
     from sqlmodel import select
     from backend.domain.samba.collector.model import SambaCollectedProduct
-    from backend.domain.samba.account.model import SambaMarketAccount
 
     client = await _get_lotte_client(session)
 
@@ -331,7 +345,8 @@ async def lottehome_qa_sync(
     for product in products:
         m_nos = product.market_product_nos or {}
         pending_accounts = [
-            k.replace("_qa", "") for k, v in m_nos.items()
+            k.replace("_qa", "")
+            for k, v in m_nos.items()
             if k.endswith("_qa") and v == "pending"
         ]
         if not pending_accounts:
@@ -346,7 +361,11 @@ async def lottehome_qa_sync(
                 detail = await client.search_goods_view(goods_no)
                 data = detail.get("data", {})
                 result = data.get("Result", data)
-                goods_info = result.get("GoodsInfo", result) if isinstance(result, dict) else result
+                goods_info = (
+                    result.get("GoodsInfo", result)
+                    if isinstance(result, dict)
+                    else result
+                )
                 sale_stat = str(goods_info.get("SaleStatCd", "") or "")
                 qa_result = str(goods_info.get("QaRsltCd", "") or "")
                 # 판매진행(10) 또는 QA 합격(10/15/30) → 승인 완료
@@ -354,13 +373,20 @@ async def lottehome_qa_sync(
                     new_nos = dict(m_nos)
                     new_nos[f"{acc_id}_qa"] = "approved"
                     from sqlalchemy import update as sa_update
-                    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
+                    from backend.domain.samba.collector.model import (
+                        SambaCollectedProduct as _CP,
+                    )
+
                     await session.execute(
-                        sa_update(_CP).where(_CP.id == product.id).values(market_product_nos=new_nos)
+                        sa_update(_CP)
+                        .where(_CP.id == product.id)
+                        .values(market_product_nos=new_nos)
                     )
                     await session.commit()
                     updated += 1
-                    logger.info(f"[롯데홈쇼핑 QA] {product.id} → approved (goods_no={goods_no})")
+                    logger.info(
+                        f"[롯데홈쇼핑 QA] {product.id} → approved (goods_no={goods_no})"
+                    )
             except Exception as e:
                 logger.warning(f"[롯데홈쇼핑 QA] {goods_no} 체크 실패: {e}")
 

@@ -1464,7 +1464,22 @@ export default function CategoriesPage() {
           overflowY: 'auto',
           boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
         }}>
-          {(suggestions.length > 0 ? suggestions : inlineSuggestions).map((s, i) => (
+          {(() => {
+            const list = suggestions.length > 0 ? suggestions : inlineSuggestions
+            // 대분류 > 중분류 > 소분류 순으로 정렬
+            const sorted = [...list].sort((a, b) => {
+              const pa = a.split('>').map(s => s.trim())
+              const pb = b.split('>').map(s => s.trim())
+              const len = Math.max(pa.length, pb.length)
+              for (let i = 0; i < len; i++) {
+                const av = pa[i] ?? ''
+                const bv = pb[i] ?? ''
+                const cmp = av.localeCompare(bv, 'ko')
+                if (cmp !== 0) return cmp
+              }
+              return 0
+            })
+            return sorted.map((s, i) => (
             <div
               key={i}
               onMouseDown={e => {
@@ -1488,7 +1503,8 @@ export default function CategoriesPage() {
               onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,140,0,0.1)'; e.currentTarget.style.color = '#FF8C00' }}
               onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#C5C5C5' }}
             >{s}</div>
-          ))}
+            ))
+          })()}
         </div>
       )}
 

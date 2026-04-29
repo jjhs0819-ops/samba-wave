@@ -34,7 +34,9 @@ def _transform_for_lottehome(
     API 문서: registApiGoodsInfo.lotte 파라미터 기준.
     """
     creds = creds or {}
-    logger.info(f"[롯데홈쇼핑 변환] 정책=ec_goods_artc_cd:{creds.get('ec_goods_artc_cd')}, product.material:{product.get('material')}, product.sizeInfo:{product.get('sizeInfo')}, product.quality_guarantee:{product.get('quality_guarantee')}")
+    logger.info(
+        f"[롯데홈쇼핑 변환] 정책=ec_goods_artc_cd:{creds.get('ec_goods_artc_cd')}, product.material:{product.get('material')}, product.sizeInfo:{product.get('sizeInfo')}, product.quality_guarantee:{product.get('quality_guarantee')}"
+    )
     images = product.get("images") or []
     sale_price = int(product.get("sale_price", 0) or 0)
     # 판매가 끝자리 0 필수 (API 에러 1062)
@@ -42,7 +44,9 @@ def _transform_for_lottehome(
         sale_price = (sale_price // 10 + 1) * 10
 
     # 마진율 (정수, 1~99) — product 우선, 없으면 정책/credentials 기본값 사용
-    margin_rate = int(product.get("margin_rate", 0) or creds.get("margin_rate", 0) or 20)
+    margin_rate = int(
+        product.get("margin_rate", 0) or creds.get("margin_rate", 0) or 20
+    )
     if margin_rate <= 0:
         margin_rate = 20
 
@@ -71,7 +75,7 @@ def _transform_for_lottehome(
         "disp_no": real_category_id or creds.get("disp_no", ""),
         "inv_mgmt_yn": "Y",
         "item_mgmt_yn": "N",  # 옵션 있으면 아래에서 "Y"로 변경
-        "inv_qty": "999",     # 옵션 있으면 제거
+        "inv_qty": "999",  # 옵션 있으면 제거
         "dlv_proc_tp_cd": "1",  # 업체배송
         "gift_pkg_yn": "N",
         "exch_rtgs_sct_cd": "20",  # 교환/반품 가능
@@ -104,7 +108,9 @@ def _transform_for_lottehome(
         opt_group_name = product.get("option_group_name") or "옵션"
         item_parts = []
         max_stock = int(product.get("_max_stock") or 0)
-        logger.info(f"[롯데홈쇼핑 옵션] options 개수={len(options)}, max_stock={max_stock}")
+        logger.info(
+            f"[롯데홈쇼핑 옵션] options 개수={len(options)}, max_stock={max_stock}"
+        )
 
         # 사이즈 순서대로 정렬 (영어/숫자/한글 모두 지원)
         def get_size_order_key(opt_name):
@@ -133,7 +139,22 @@ def _transform_for_lottehome(
                 return get_size_order_key(first_part)
 
             # 한글 사이즈 (소, 중, 대, ...)
-            KR_SIZE = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL", "소", "중", "대", "특"]
+            KR_SIZE = [
+                "XXS",
+                "XS",
+                "S",
+                "M",
+                "L",
+                "XL",
+                "XXL",
+                "3XL",
+                "4XL",
+                "5XL",
+                "소",
+                "중",
+                "대",
+                "특",
+            ]
             if opt_name in KR_SIZE:
                 return (2, KR_SIZE.index(opt_name), opt_name)
 
@@ -143,12 +164,18 @@ def _transform_for_lottehome(
         # 옵션을 사이즈 순서대로 정렬
         sorted_options = sorted(
             options,
-            key=lambda o: get_size_order_key(str(o.get("name") or o.get("size") or o.get("value") or "").strip())
+            key=lambda o: get_size_order_key(
+                str(o.get("name") or o.get("size") or o.get("value") or "").strip()
+            ),
         )
 
         for opt in sorted_options:
             opt_name = str(
-                opt.get("name") or opt.get("value") or opt.get("size") or opt.get("optionName") or ""
+                opt.get("name")
+                or opt.get("value")
+                or opt.get("size")
+                or opt.get("optionName")
+                or ""
             ).strip()
             if not opt_name:
                 continue
@@ -157,14 +184,19 @@ def _transform_for_lottehome(
             stock_val = max(0, int(raw_stock)) if raw_stock is not None else None
             # 품절이거나 재고 0이면 옵션 제외
             if is_sold_out or (stock_val is not None and stock_val == 0):
-                logger.info(f"[롯데홈쇼핑 옵션 제외] {opt_name}: isSoldOut={is_sold_out}, stock={stock_val}")
+                logger.info(
+                    f"[롯데홈쇼핑 옵션 제외] {opt_name}: isSoldOut={is_sold_out}, stock={stock_val}"
+                )
                 continue
             if stock_val is not None:
                 stock = str(min(stock_val, max_stock) if max_stock > 0 else stock_val)
             else:
                 stock = str(max_stock) if max_stock > 0 else "999"
             managed_code = str(
-                opt.get("managedCode") or opt.get("managed_code") or opt.get("itemCode") or opt_name
+                opt.get("managedCode")
+                or opt.get("managed_code")
+                or opt.get("itemCode")
+                or opt_name
             ).strip()
             logger.info(f"[롯데홈쇼핑 옵션 등록] {opt_name}: stock={stock}")
             item_parts.append(f"{opt_name},{stock},{managed_code}")
@@ -185,12 +217,30 @@ def _transform_for_lottehome(
 
     # 품목별 항목정보 (구두/신발 102 기본값)
     if ec_goods_artc_cd == "102":
-        color = product.get("color", "") or creds.get("item_color", "") or "상세페이지 참조"
-        material = product.get("material", "") or creds.get("item_material", "") or "상세페이지 참조"
-        size = product.get("sizeInfo", "") or creds.get("item_size", "") or "상세페이지 참조"
-        washing = product.get("care_instructions", "") or creds.get("item_washing", "") or "상세페이지 참조"
+        color = (
+            product.get("color", "") or creds.get("item_color", "") or "상세페이지 참조"
+        )
+        material = (
+            product.get("material", "")
+            or creds.get("item_material", "")
+            or "상세페이지 참조"
+        )
+        size = (
+            product.get("sizeInfo", "")
+            or creds.get("item_size", "")
+            or "상세페이지 참조"
+        )
+        washing = (
+            product.get("care_instructions", "")
+            or creds.get("item_washing", "")
+            or "상세페이지 참조"
+        )
         import_yn = creds.get("item_import", "Y")
-        quality = product.get("quality_guarantee", "") or creds.get("item_quality", "") or "관련 법 및 소비자 분쟁 해결 기준을 따름"
+        quality = (
+            product.get("quality_guarantee", "")
+            or creds.get("item_quality", "")
+            or "관련 법 및 소비자 분쟁 해결 기준을 따름"
+        )
         as_info = creds.get("item_as", "") or "상세페이지 참조"
 
         data["10030"] = color
@@ -203,16 +253,36 @@ def _transform_for_lottehome(
         data["10116"] = quality
         data["10001"] = as_info
     elif ec_goods_artc_cd == "101":  # 의류
-        material = product.get("material", "") or creds.get("item_material", "") or "상세페이지 참조"
-        color = product.get("color", "") or creds.get("item_color", "") or "상세페이지 참조"
-        size = product.get("sizeInfo", "") or creds.get("item_size", "") or "상세페이지 참조"
-        washing = product.get("care_instructions", "") or creds.get("item_washing", "") or "상세페이지 참조"
+        material = (
+            product.get("material", "")
+            or creds.get("item_material", "")
+            or "상세페이지 참조"
+        )
+        color = (
+            product.get("color", "") or creds.get("item_color", "") or "상세페이지 참조"
+        )
+        size = (
+            product.get("sizeInfo", "")
+            or creds.get("item_size", "")
+            or "상세페이지 참조"
+        )
+        washing = (
+            product.get("care_instructions", "")
+            or creds.get("item_washing", "")
+            or "상세페이지 참조"
+        )
         import_yn = creds.get("item_import", "Y")
         mfg_date = creds.get("item_mfg_date", "") or "상세페이지 참조"
-        quality = product.get("quality_guarantee", "") or creds.get("item_quality", "") or "관련 법 및 소비자 분쟁 해결 기준을 따름"
+        quality = (
+            product.get("quality_guarantee", "")
+            or creds.get("item_quality", "")
+            or "관련 법 및 소비자 분쟁 해결 기준을 따름"
+        )
         as_info = creds.get("item_as", "") or "상세페이지 참조"
 
-        logger.info(f"[의류 품목정보] material={material}, color={color}, size={size}, quality={quality}")
+        logger.info(
+            f"[의류 품목정보] material={material}, color={color}, size={size}, quality={quality}"
+        )
 
         data["10030"] = color
         data["10078"] = material
@@ -225,7 +295,9 @@ def _transform_for_lottehome(
         data["10116"] = quality
         data["10001"] = as_info
 
-    logger.info(f"[롯데홈쇼핑 최종 데이터] 10078(재질)={data.get('10078')}, 10104(사이즈)={data.get('10104')}, 10116(품질)={data.get('10116')}, ismr_dlv_polc_no={data.get('ismr_dlv_polc_no')}")
+    logger.info(
+        f"[롯데홈쇼핑 최종 데이터] 10078(재질)={data.get('10078')}, 10104(사이즈)={data.get('10104')}, 10116(품질)={data.get('10116')}, ismr_dlv_polc_no={data.get('ismr_dlv_polc_no')}"
+    )
     return data
 
 
@@ -289,7 +361,8 @@ class LotteHomePlugin(MarketPlugin):
                 "corp_dlvp_sn": policy.get("corpDlvpSn", ""),
                 "brnd_no": policy.get("brndNo", ""),
                 "margin_rate": policy.get("marginRate", ""),
-                "ec_goods_artc_cd": policy.get("ecGoodsArtcCd", "") or auth_creds.get("ec_goods_artc_cd", ""),
+                "ec_goods_artc_cd": policy.get("ecGoodsArtcCd", "")
+                or auth_creds.get("ec_goods_artc_cd", ""),
                 "item_material": policy.get("itemMaterial", ""),
                 "item_color": policy.get("itemColor", ""),
                 "item_size": policy.get("itemSize", ""),
@@ -302,7 +375,9 @@ class LotteHomePlugin(MarketPlugin):
                 "item_quality_rd": policy.get("itemQualityRd", "1"),
                 "item_as": policy.get("itemAs", ""),
             }
-            logger.info(f"[롯데홈쇼핑 정책 로드] ec_goods_artc_cd={auth_creds.get('ec_goods_artc_cd')}, md_gsgr_no={auth_creds.get('md_gsgr_no')}, disp_no={auth_creds.get('disp_no')}, dlv_polc_no={auth_creds.get('dlv_polc_no')}, add_dlv_polc_no={auth_creds.get('add_dlv_polc_no')}, item_material={auth_creds.get('item_material')}, item_size={auth_creds.get('item_size')}, item_quality={auth_creds.get('item_quality')}")
+            logger.info(
+                f"[롯데홈쇼핑 정책 로드] ec_goods_artc_cd={auth_creds.get('ec_goods_artc_cd')}, md_gsgr_no={auth_creds.get('md_gsgr_no')}, disp_no={auth_creds.get('disp_no')}, dlv_polc_no={auth_creds.get('dlv_polc_no')}, add_dlv_polc_no={auth_creds.get('add_dlv_polc_no')}, item_material={auth_creds.get('item_material')}, item_size={auth_creds.get('item_size')}, item_quality={auth_creds.get('item_quality')}"
+            )
 
         if not auth_creds:
             setting = await _get_setting(session, "store_lottehome")
@@ -337,12 +412,18 @@ class LotteHomePlugin(MarketPlugin):
             if sale_price > 0:
                 try:
                     margin_rate = int(product.get("margin_rate", 0) or 0) or 20
-                    price_result = await client.update_price(existing_no, sale_price, margin_rate)
+                    price_result = await client.update_price(
+                        existing_no, sale_price, margin_rate
+                    )
                     if price_result.get("success"):
                         results["updated"].append("price")
-                        logger.info(f"[롯데홈쇼핑] 가격 업데이트 완료: {existing_no} → {sale_price}원")
+                        logger.info(
+                            f"[롯데홈쇼핑] 가격 업데이트 완료: {existing_no} → {sale_price}원"
+                        )
                     else:
-                        logger.warning(f"[롯데홈쇼핑] 가격 업데이트 실패: {price_result.get('message')}")
+                        logger.warning(
+                            f"[롯데홈쇼핑] 가격 업데이트 실패: {price_result.get('message')}"
+                        )
                 except Exception as e:
                     logger.error(f"[롯데홈쇼핑] 가격 업데이트 오류: {e}")
 
@@ -356,14 +437,15 @@ class LotteHomePlugin(MarketPlugin):
                     result_data = stock_data.get("Result", stock_data)
                     all_items = result_data.get(
                         "GoodsInfoList",
-                        result_data.get("ItemInfo", result_data.get("items", []))
+                        result_data.get("ItemInfo", result_data.get("items", [])),
                     )
                     if isinstance(all_items, dict):
                         all_items = [all_items]
 
                     # 해당 goods_no 아이템만 필터링
                     lotte_items = [
-                        it for it in (all_items if isinstance(all_items, list) else [])
+                        it
+                        for it in (all_items if isinstance(all_items, list) else [])
                         if str(it.get("GoodNo", "")) == str(existing_no)
                     ]
 
@@ -377,34 +459,59 @@ class LotteHomePlugin(MarketPlugin):
                         item_no_map[opt_name] = item_no
                         lotte_opt_names.add(opt_name)
 
-                    logger.info(f"[롯데홈쇼핑] 롯데 등록 옵션: {lotte_opt_names}, item_no_map: {item_no_map}")
+                    logger.info(
+                        f"[롯데홈쇼핑] 롯데 등록 옵션: {lotte_opt_names}, item_no_map: {item_no_map}"
+                    )
 
                     if not item_no_map:
-                        logger.warning(f"[롯데홈쇼핑] item_no_map 비어있음 — 재고 업데이트 건너뜀 ({existing_no})")
+                        logger.warning(
+                            f"[롯데홈쇼핑] item_no_map 비어있음 — 재고 업데이트 건너뜀 ({existing_no})"
+                        )
                     else:
                         # 소싱사이트 옵션명 → stock 맵핑
                         source_opt_map: dict[str, int] = {}
                         for opt in source_options:
-                            opt_name = str(opt.get("name") or opt.get("value") or opt.get("size") or "").strip()
+                            opt_name = str(
+                                opt.get("name")
+                                or opt.get("value")
+                                or opt.get("size")
+                                or ""
+                            ).strip()
                             if not opt_name:
                                 continue
-                            is_sold_out = bool(opt.get("isSoldOut") or opt.get("sold_out"))
+                            is_sold_out = bool(
+                                opt.get("isSoldOut") or opt.get("sold_out")
+                            )
                             raw_stock = opt.get("stock")
-                            stock_val = 0 if is_sold_out else (max(0, int(raw_stock)) if raw_stock is not None else 0)
+                            stock_val = (
+                                0
+                                if is_sold_out
+                                else (
+                                    max(0, int(raw_stock))
+                                    if raw_stock is not None
+                                    else 0
+                                )
+                            )
                             source_opt_map[opt_name] = stock_val
 
                         # 1. 롯데에 있는 옵션 → 소싱사이트 재고로 업데이트
                         # 2. 롯데에 있지만 소싱사이트에 없는 옵션 → 재고 0 (품절)
                         stock_updated = False
                         for lotte_opt, item_no in item_no_map.items():
-                            stock_val = source_opt_map.get(lotte_opt, 0)  # 소싱에 없으면 0
-                            logger.info(f"[롯데홈쇼핑] 재고 전송: {lotte_opt} item_no={item_no} stock={stock_val}")
+                            stock_val = source_opt_map.get(
+                                lotte_opt, 0
+                            )  # 소싱에 없으면 0
+                            logger.info(
+                                f"[롯데홈쇼핑] 재고 전송: {lotte_opt} item_no={item_no} stock={stock_val}"
+                            )
                             await client.update_stock(existing_no, item_no, stock_val)
                             stock_updated = True
 
                         if stock_updated:
                             results["updated"].append("stock")
-                            logger.info(f"[롯데홈쇼핑] 재고 업데이트 완료: {existing_no}")
+                            logger.info(
+                                f"[롯데홈쇼핑] 재고 업데이트 완료: {existing_no}"
+                            )
 
                         # 소싱사이트 신규 옵션은 자동 추가 안 함 — 롯데 기등록 옵션만 관리
 
@@ -445,7 +552,9 @@ class LotteHomePlugin(MarketPlugin):
                         logger.info(f"[롯데홈쇼핑] 출고지 자동 조회: {sn}")
                 # 배송정책 조회
                 policies = None
-                if not auth_creds.get("dlv_polc_no") or not auth_creds.get("add_dlv_polc_no"):
+                if not auth_creds.get("dlv_polc_no") or not auth_creds.get(
+                    "add_dlv_polc_no"
+                ):
                     policies = await client.search_delivery_policies()
                     pol_data = policies.get("data", {})
                     pol_result = pol_data.get("Result", pol_data)
@@ -461,12 +570,16 @@ class LotteHomePlugin(MarketPlugin):
                         pol_items = [pol_items]
                     if isinstance(pol_items, list) and pol_items:
                         if not auth_creds.get("dlv_polc_no"):
-                            auth_creds["dlv_polc_no"] = pol_items[0].get("dlv_polc_no", "")
+                            auth_creds["dlv_polc_no"] = pol_items[0].get(
+                                "dlv_polc_no", ""
+                            )
                             logger.info(
                                 f"[롯데홈쇼핑] 배송정책 자동 조회: {auth_creds['dlv_polc_no']}"
                             )
                         if not auth_creds.get("add_dlv_polc_no") and len(pol_items) > 1:
-                            auth_creds["add_dlv_polc_no"] = pol_items[1].get("dlv_polc_no", "") or pol_items[1].get("add_dlv_polc_no", "")
+                            auth_creds["add_dlv_polc_no"] = pol_items[1].get(
+                                "dlv_polc_no", ""
+                            ) or pol_items[1].get("add_dlv_polc_no", "")
                             logger.info(
                                 f"[롯데홈쇼핑] 추가배송비 자동 조회: {auth_creds['add_dlv_polc_no']}"
                             )
@@ -487,7 +600,6 @@ class LotteHomePlugin(MarketPlugin):
         if goods_no and account:
             try:
                 from backend.domain.samba.collector.model import SambaCollectedProduct
-                from sqlalchemy import update as sa_update
                 from sqlmodel import select
 
                 # 현재 상품 조회

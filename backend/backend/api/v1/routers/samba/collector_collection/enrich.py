@@ -486,6 +486,14 @@ async def enrich_product(
                 updates["sale_status"] = result.new_sale_status
             if result.new_options is not None:
                 updates["options"] = result.new_options
+            # 수집 시점 빈 문자열로 저장된 name/brand 백필.
+            # 사용자 수동 편집 보존을 위해 현재 값이 비어있을 때만 적용.
+            if result.new_name and not (product.name or "").strip():
+                updates["name"] = result.new_name
+            if result.new_brand and not (product.brand or "").strip():
+                updates["brand"] = result.new_brand
+                if not (product.manufacturer or "").strip():
+                    updates["manufacturer"] = result.new_brand
             if result.error:
                 return {"success": False, "message": result.error}
 

@@ -578,6 +578,10 @@ class RefreshResult:
     new_cost: Optional[float] = None
     new_sale_status: str = "in_stock"  # in_stock / sold_out
     new_options: Optional[list] = None
+    # 수집 시점 일부 경로 버그로 name/brand 가 빈 문자열로 저장된 케이스 백필용.
+    # enrich 에서 product.name/brand 가 비어있을 때만 적용 (수동 편집 덮어쓰기 방지).
+    new_name: Optional[str] = None
+    new_brand: Optional[str] = None
     new_images: Optional[list] = None
     new_detail_images: Optional[list] = None
     new_material: Optional[str] = None

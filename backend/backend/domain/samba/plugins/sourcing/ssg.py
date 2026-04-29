@@ -209,6 +209,10 @@ class SSGPlugin(SourcingPlugin):
                 new_sale_status != old_status
             )
 
+            # 수집 시점 retry 경로 버그로 name/brand 가 빈 문자열인 상품 백필용.
+            # detail 에서 추출한 값을 RefreshResult 에 담아 enrich 가 조건부 적용.
+            _det_name = detail.get("name") or detail.get("itemNm") or None
+            _det_brand = detail.get("brand") or detail.get("repBrandNm") or None
             return RefreshResult(
                 product_id=product_id,
                 new_sale_price=float(new_sale_price) if new_sale_price else None,
@@ -218,6 +222,8 @@ class SSGPlugin(SourcingPlugin):
                 new_cost=float(best_benefit_price) if best_benefit_price else None,
                 new_sale_status=new_sale_status,
                 new_options=new_options,
+                new_name=_det_name,
+                new_brand=_det_brand,
                 new_images=detail.get("images"),
                 new_detail_images=detail.get("detailImages"),
                 new_free_shipping=detail.get("freeShipping"),

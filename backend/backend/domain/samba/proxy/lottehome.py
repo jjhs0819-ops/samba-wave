@@ -29,15 +29,26 @@ _cert_cache: dict[str, tuple[str, datetime]] = {}
 _auth_locks: dict[str, asyncio.Lock] = {}
 
 
-async def _persist_cert_to_db(user_id: str, env: str, cert_key: str, expires_iso: str) -> None:
+async def _persist_cert_to_db(
+    user_id: str, env: str, cert_key: str, expires_iso: str
+) -> None:
     """인증키를 DB에 저장 — 재시작 후에도 유지."""
     try:
         from backend.db.orm import get_write_session
         from backend.domain.samba.forbidden.model import SambaSettings
         from sqlmodel import select as _sel
+
         db_key = f"lottehome_cert_{user_id}_{env}"
         async with get_write_session() as session:
-            row = (await session.execute(_sel(SambaSettings).where(SambaSettings.key == db_key))).scalars().first()
+            row = (
+                (
+                    await session.execute(
+                        _sel(SambaSettings).where(SambaSettings.key == db_key)
+                    )
+                )
+                .scalars()
+                .first()
+            )
             val = {"cert_key": cert_key, "expires_at": expires_iso}
             if row:
                 row.value = val
@@ -48,16 +59,33 @@ async def _persist_cert_to_db(user_id: str, env: str, cert_key: str, expires_iso
         logger.warning(f"[롯데홈쇼핑] 인증키 DB 저장 실패: {e}")
 
 
-async def _persist_cert_to_lottehome_credentials(cert_key: str, expires_iso: str) -> None:
+async def _persist_cert_to_lottehome_credentials(
+    cert_key: str, expires_iso: str
+) -> None:
     """재발급된 인증키를 lottehome_credentials에도 저장 — 서버 재시작 후 즉시 복구."""
     try:
         from backend.db.orm import get_write_session
         from backend.domain.samba.forbidden.model import SambaSettings
         from sqlmodel import select as _sel
+
         async with get_write_session() as session:
-            row = (await session.execute(_sel(SambaSettings).where(SambaSettings.key == "lottehome_credentials"))).scalars().first()
+            row = (
+                (
+                    await session.execute(
+                        _sel(SambaSettings).where(
+                            SambaSettings.key == "lottehome_credentials"
+                        )
+                    )
+                )
+                .scalars()
+                .first()
+            )
             if row and isinstance(row.value, dict):
-                row.value = {**row.value, "certKey": cert_key, "certExpiresAt": expires_iso}
+                row.value = {
+                    **row.value,
+                    "certKey": cert_key,
+                    "certExpiresAt": expires_iso,
+                }
                 await session.commit()
     except Exception as e:
         logger.warning(f"[롯데홈쇼핑] lottehome_credentials 인증키 업데이트 실패: {e}")
@@ -69,10 +97,19 @@ async def _load_cert_from_db(user_id: str, env: str) -> tuple[str, datetime] | N
         from backend.db.orm import get_read_session
         from backend.domain.samba.forbidden.model import SambaSettings
         from sqlmodel import select as _sel
+
         async with get_read_session() as session:
             # 1순위: 새 형식 키 (lottehome_cert_{user_id}_{env})
             db_key = f"lottehome_cert_{user_id}_{env}"
-            row = (await session.execute(_sel(SambaSettings).where(SambaSettings.key == db_key))).scalars().first()
+            row = (
+                (
+                    await session.execute(
+                        _sel(SambaSettings).where(SambaSettings.key == db_key)
+                    )
+                )
+                .scalars()
+                .first()
+            )
             if row and isinstance(row.value, dict):
                 val = row.value
                 cert_key = val.get("cert_key", "")
@@ -83,7 +120,17 @@ async def _load_cert_from_db(user_id: str, env: str) -> tuple[str, datetime] | N
                         expires_at = expires_at.replace(tzinfo=timezone.utc)
                     return cert_key, expires_at
             # 2순위: 설정 페이지 인증 테스트가 저장한 lottehome_credentials
-            row2 = (await session.execute(_sel(SambaSettings).where(SambaSettings.key == "lottehome_credentials"))).scalars().first()
+            row2 = (
+                (
+                    await session.execute(
+                        _sel(SambaSettings).where(
+                            SambaSettings.key == "lottehome_credentials"
+                        )
+                    )
+                )
+                .scalars()
+                .first()
+            )
             if row2 and isinstance(row2.value, dict):
                 val2 = row2.value
                 cert_key = val2.get("certKey", "")
@@ -134,7 +181,9 @@ class LotteHomeClient:
                 self._cert_key = cert_key
                 self._cert_expires_at = expires_at
                 _cert_cache[f"{user_id}:{env}"] = (cert_key, expires_at)
-                logger.debug(f"[롯데홈쇼핑] DB에서 인증키 주입 (key={cert_key[:8]}..., env={env})")
+                logger.debug(
+                    f"[롯데홈쇼핑] DB에서 인증키 주입 (key={cert_key[:8]}..., env={env})"
+                )
             except Exception as e:
                 logger.warning(f"[롯데홈쇼핑] DB 인증키 주입 실패: {e}")
 
@@ -307,7 +356,9 @@ class LotteHomeClient:
             return await self._call_api(endpoint, method, params)
         except LotteApiError as e:
             if e.code in ("0001", "5001"):
-                logger.info(f"[롯데홈쇼핑] 인증키 무효 감지 → 강제 재인증 후 재시도 (endpoint={endpoint})")
+                logger.info(
+                    f"[롯데홈쇼핑] 인증키 무효 감지 → 강제 재인증 후 재시도 (endpoint={endpoint})"
+                )
                 _cert_cache.pop(f"{self.user_id}:{self.env}", None)
                 self._cert_key = ""
                 self._cert_expires_at = None
@@ -361,7 +412,9 @@ class LotteHomeClient:
                         self._cert_key = cert_key
                         self._cert_expires_at = expires_at
                         _cert_cache[cache_key] = (cert_key, expires_at)
-                        logger.info(f"[롯데홈쇼핑] DB에서 인증키 복구 (만료: {expires_at.isoformat()})")
+                        logger.info(
+                            f"[롯데홈쇼핑] DB에서 인증키 복구 (만료: {expires_at.isoformat()})"
+                        )
                         return cert_key
 
             params: dict[str, Any] = {
@@ -389,10 +442,16 @@ class LotteHomeClient:
             self._cert_expires_at = expires_at
             _cert_cache[cache_key] = (cert_key, expires_at)
             # DB 저장 (비동기 — 등록 흐름 지연 없음)
-            asyncio.create_task(_persist_cert_to_db(self.user_id, self.env, cert_key, expires_iso))
-            asyncio.create_task(_persist_cert_to_lottehome_credentials(cert_key, expires_iso))
+            asyncio.create_task(
+                _persist_cert_to_db(self.user_id, self.env, cert_key, expires_iso)
+            )
+            asyncio.create_task(
+                _persist_cert_to_lottehome_credentials(cert_key, expires_iso)
+            )
 
-            logger.info(f"[롯데홈쇼핑] 인증키 발급 완료 (만료: {expires_at.isoformat()})")
+            logger.info(
+                f"[롯데홈쇼핑] 인증키 발급 완료 (만료: {expires_at.isoformat()})"
+            )
             return self._cert_key
 
     async def authenticate(self) -> dict[str, Any]:
@@ -464,16 +523,26 @@ class LotteHomeClient:
         cert_key = await self._ensure_auth()
         if disp_tp_cd:
             return await self._call_api_auto_retry(
-                "searchDispCatListOpenApi.lotte", "GET",
-                {"subscriptionId": cert_key, "disp_tp_cd": disp_tp_cd, "md_gsgr_no": md_gsgr_no},
+                "searchDispCatListOpenApi.lotte",
+                "GET",
+                {
+                    "subscriptionId": cert_key,
+                    "disp_tp_cd": disp_tp_cd,
+                    "md_gsgr_no": md_gsgr_no,
+                },
             )
         # disp_tp_cd 미지정: 10(필수)과 20(추가) 각각 호출 후 CategoryInfo 병합
         results: list[dict] = []
         for tp in ("10", "20"):
             try:
                 res = await self._call_api_auto_retry(
-                    "searchDispCatListOpenApi.lotte", "GET",
-                    {"subscriptionId": cert_key, "disp_tp_cd": tp, "md_gsgr_no": md_gsgr_no},
+                    "searchDispCatListOpenApi.lotte",
+                    "GET",
+                    {
+                        "subscriptionId": cert_key,
+                        "disp_tp_cd": tp,
+                        "md_gsgr_no": md_gsgr_no,
+                    },
                 )
                 results.append(res)
             except LotteApiError:
@@ -483,11 +552,17 @@ class LotteHomeClient:
         merged: dict[str, Any] = results[0].get("data") or {}
         if len(results) > 1:
             second = results[1].get("data") or {}
+
             def _get_cat_list(d: dict) -> list:
                 res_block = d.get("Result", d)
                 cat_list = res_block.get("CategoryInfoList", {})
-                cats = cat_list.get("CategoryInfo", []) if isinstance(cat_list, dict) else cat_list
+                cats = (
+                    cat_list.get("CategoryInfo", [])
+                    if isinstance(cat_list, dict)
+                    else cat_list
+                )
                 return cats if isinstance(cats, list) else ([cats] if cats else [])
+
             cats = _get_cat_list(merged) + _get_cat_list(second)
             merged_result = dict(merged.get("Result", merged))
             merged_result["CategoryInfoList"] = {"CategoryInfo": cats}
@@ -570,24 +645,37 @@ class LotteHomeClient:
         for tp, target in (("10", shipping_places), ("20", return_places)):
             try:
                 res = await self._call_api_auto_retry(
-                    "searchReturnListOpenApi.lotte", "GET",
+                    "searchReturnListOpenApi.lotte",
+                    "GET",
                     {"subscriptionId": cert_key, "dlvp_tp_cd": tp},
                 )
                 data = res.get("data", {})
                 result = data.get("Result", data)
                 items_wrap = result.get("ReturnInfoList", {})
-                info = items_wrap.get("ReturnInfo", []) if isinstance(items_wrap, dict) else []
+                info = (
+                    items_wrap.get("ReturnInfo", [])
+                    if isinstance(items_wrap, dict)
+                    else []
+                )
                 if isinstance(info, dict):
                     info = [info]
-                for item in (info if isinstance(info, list) else []):
-                    target.append({
-                        "code": item.get("ReturnCode", ""),
-                        "name": item.get("ReturnName", ""),
-                        "address": item.get("ReturnAddress", ""),
-                    })
+                for item in info if isinstance(info, list) else []:
+                    target.append(
+                        {
+                            "code": item.get("ReturnCode", ""),
+                            "name": item.get("ReturnName", ""),
+                            "address": item.get("ReturnAddress", ""),
+                        }
+                    )
             except LotteApiError:
                 continue
-        return {"success": True, "data": {"shipping_places": shipping_places, "return_places": return_places}}
+        return {
+            "success": True,
+            "data": {
+                "shipping_places": shipping_places,
+                "return_places": return_places,
+            },
+        }
 
     async def register_delivery_place(
         self, place_data: dict[str, Any]
@@ -691,7 +779,9 @@ class LotteHomeClient:
             {"subscriptionId": cert_key, "goods_no": goods_no},
         )
 
-    async def update_price(self, goods_no: str, sale_price: int, margin_rate: int = 0) -> dict[str, Any]:
+    async def update_price(
+        self, goods_no: str, sale_price: int, margin_rate: int = 0
+    ) -> dict[str, Any]:
         """판매가 수정 (updateGoodsSalePrcOpenApi)."""
         cert_key = await self._ensure_auth()
         params: dict[str, Any] = {
@@ -701,7 +791,9 @@ class LotteHomeClient:
         }
         if margin_rate > 0:
             params["mrgnRt"] = str(margin_rate)
-        return await self._call_api_auto_retry("updateGoodsSalePrcOpenApi.lotte", "POST", params)
+        return await self._call_api_auto_retry(
+            "updateGoodsSalePrcOpenApi.lotte", "POST", params
+        )
 
     async def search_stock(self, goods_no: str = "") -> dict[str, Any]:
         """재고 목록 조회."""

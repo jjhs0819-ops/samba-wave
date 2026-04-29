@@ -70,7 +70,11 @@ async def _run_lottehome_qa_sync() -> tuple[int, int]:
                     detail = await client.search_goods_view(goods_no)
                     data = detail.get("data", {})
                     result = data.get("Result", data)
-                    goods_info = result.get("GoodsInfo", result) if isinstance(result, dict) else result
+                    goods_info = (
+                        result.get("GoodsInfo", result)
+                        if isinstance(result, dict)
+                        else result
+                    )
                     sale_stat = str(goods_info.get("SaleStatCd", "") or "")
                     qa_result = str(goods_info.get("QaRsltCd", "") or "")
                     # 판매진행(10) 또는 QA 합격(10/15/30) → 승인 완료
@@ -105,9 +109,7 @@ async def start_lottehome_qa_poller() -> None:
         try:
             checked, updated = await _run_lottehome_qa_sync()
             if checked:
-                logger.info(
-                    "[롯데QA폴러] 점검 %d건, 승인처리 %d건", checked, updated
-                )
+                logger.info("[롯데QA폴러] 점검 %d건, 승인처리 %d건", checked, updated)
         except asyncio.CancelledError:
             logger.info("[롯데QA폴러] 종료")
             return

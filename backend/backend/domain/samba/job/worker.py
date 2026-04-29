@@ -2397,7 +2397,16 @@ class JobWorker:
                     "freeShipping", False
                 )
                 if not _is_free_ship:
-                    _cost += int(detail.get("shippingFee", 3000) or 3000)
+                    _cost += int(detail.get("shippingFee", 0) or 0)
+
+                # 원가 수집 실패 시 100,000원 sentinel — 배송비만 남는 사고 방지
+                if _cost <= 0:
+                    _add_job_log(
+                        job.id,
+                        f"[원가수집실패] ABCmart spid={spid} → 100,000원 fallback 적용",
+                        job_type="collect",
+                    )
+                    _cost = 100000
 
                 raw_cat = detail.get("category", "") or it.get("category", "")
                 cat_parts = [
@@ -2953,7 +2962,16 @@ class JobWorker:
                         "free_shipping", False
                     )
                     if not _is_free:
-                        _cost += int(detail.get("shippingFee", 3000) or 3000)
+                        _cost += int(detail.get("shippingFee", 0) or 0)
+
+                    # 원가 수집 실패 시 100,000원 sentinel — 배송비만 남는 사고 방지
+                    if _cost <= 0:
+                        _add_job_log(
+                            job.id,
+                            f"[원가수집실패] SSG spid={spid} → 100,000원 fallback 적용",
+                            job_type="collect",
+                        )
+                        _cost = 100000
 
                     _raw_cat = " > ".join(_cat_parts)
                     detail_for_build: dict = {
@@ -3131,30 +3149,42 @@ class JobWorker:
                     _co = (_bbp if _bbp > 0 else _sp) if _use_max_discount else _sp
                     _fs = _det.get("freeShipping", False)
                     if not _fs:
-                        _co += int(_det.get("shippingFee", 3000) or 3000)
+                        _co += int(_det.get("shippingFee", 0) or 0)
+                    # 원가 수집 실패 시 100,000원 sentinel
+                    if _co <= 0:
+                        _add_job_log(
+                            job.id,
+                            "[원가수집실패] SSG refresh → 100,000원 fallback 적용",
+                            job_type="collect",
+                        )
+                        _co = 100000
                     _cat_parts_r = [
                         _det.get("dispCtgLclsNm", "") or "",
                         _det.get("dispCtgMclsNm", "") or "",
                         _det.get("dispCtgSclsNm", "") or "",
                     ]
                     _cat_parts_r = [c for c in _cat_parts_r if c]
+                    # 키 fallback — _parse_result_item_obj 산출물은 최상위 키가
+                    # "name"/"brand" 이고, 폴백 fallback dict 는 itemNm/repBrandNm 도 포함.
+                    # 두 형태 모두 안전하게 받기 위해 메인 경로(2978~)와 동일하게 확장.
                     _d4build = {
-                        "name": _det.get("itemNm", ""),
-                        "brand": _det.get("repBrandNm", ""),
+                        "name": _det.get("itemNm") or _det.get("name", ""),
+                        "brand": _det.get("repBrandNm") or _det.get("brand", ""),
                         "images": _det.get("images") or [],
                         "detailImages": _det.get("detailImages") or [],
                         "options": _det.get("options") or [],
                         "sourceUrl": _det.get("sourceUrl")
                         or f"https://www.ssg.com/item/itemView.ssg?itemId={_spid}",
                         "category": " > ".join(_cat_parts_r),
-                        "manufacturer": _det.get("repBrandNm", ""),
+                        "manufacturer": _det.get("repBrandNm") or _det.get("brand", ""),
                         "origin": _det.get("origin", ""),
                         "material": _det.get("material", ""),
                         "color": _det.get("color", ""),
                         "care_instructions": _det.get("care_instructions", ""),
                         "saleStatus": "in_stock",
                         "freeShipping": _fs,
-                        "styleNo": _det.get("style_code", "")
+                        "styleNo": _det.get("styleNo")
+                        or _det.get("style_code", "")
                         or _det.get("modelNo", ""),
                     }
                     _pd = _build_product_data(
@@ -3469,7 +3499,16 @@ class JobWorker:
                     "free_shipping", False
                 )
                 if not _is_free_ship:
-                    _cost += int(detail.get("shippingFee", 3000) or 3000)
+                    _cost += int(detail.get("shippingFee", 0) or 0)
+
+                # 원가 수집 실패 시 100,000원 sentinel
+                if _cost <= 0:
+                    _add_job_log(
+                        job.id,
+                        f"[원가수집실패] GSShop spid={spid} → 100,000원 fallback 적용",
+                        job_type="collect",
+                    )
+                    _cost = 100000
 
                 _cat_parts_clean = [
                     detail.get("category1", "") or "",
@@ -4883,8 +4922,16 @@ class JobWorker:
                 or detail.get("freeShipping", False)
             )
             if not _is_free_ship:
-                _sourcing_ship_fee = int(detail.get("shipping_fee", 3000))
+                _sourcing_ship_fee = int(detail.get("shipping_fee", 0) or 0)
                 cost += _sourcing_ship_fee
+            # 원가 수집 실패 시 100,000원 sentinel — 배송비만 남는 사고 방지
+            if cost <= 0:
+                _add_job_log(
+                    job.id,
+                    f"[원가수집실패] {site} → 100,000원 fallback 적용",
+                    job_type="collect",
+                )
+                cost = 100000
             _style_code = detail.get("style_code") or item.get("style_code", "")
             # Nike: scan(item)의 parse_subtitle이 더 구체적이므로 item 우선
             # 다른 소싱처: 기존 detail 우선 로직 유지

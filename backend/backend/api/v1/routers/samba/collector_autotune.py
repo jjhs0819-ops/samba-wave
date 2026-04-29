@@ -937,31 +937,94 @@ async def _site_autotune_loop(site: str):
                                             _approved = False
                                             if _goods_no:
                                                 try:
-                                                    from backend.domain.samba.proxy.lottehome import LotteHomeClient
-                                                    from backend.domain.samba.forbidden.model import SambaSettings
+                                                    from backend.domain.samba.proxy.lottehome import (
+                                                        LotteHomeClient,
+                                                    )
+                                                    from backend.domain.samba.forbidden.model import (
+                                                        SambaSettings,
+                                                    )
                                                     from sqlmodel import select as _sel
-                                                    _cr = await session.exec(_sel(SambaSettings).where(SambaSettings.key == "lottehome_credentials"))
-                                                    _creds = (_cr.first() or type("", (), {"value": {}})()).value or {}
-                                                    _lh = LotteHomeClient(_creds.get("userId", ""), _creds.get("password", ""), _creds.get("agncNo", ""), _creds.get("env", "prod"))
-                                                    _detail = await _lh.search_goods_view(_goods_no)
+
+                                                    _cr = await session.exec(
+                                                        _sel(SambaSettings).where(
+                                                            SambaSettings.key
+                                                            == "lottehome_credentials"
+                                                        )
+                                                    )
+                                                    _creds = (
+                                                        _cr.first()
+                                                        or type("", (), {"value": {}})()
+                                                    ).value or {}
+                                                    _lh = LotteHomeClient(
+                                                        _creds.get("userId", ""),
+                                                        _creds.get("password", ""),
+                                                        _creds.get("agncNo", ""),
+                                                        _creds.get("env", "prod"),
+                                                    )
+                                                    _detail = (
+                                                        await _lh.search_goods_view(
+                                                            _goods_no
+                                                        )
+                                                    )
                                                     _d = _detail.get("data", {})
                                                     _result = _d.get("Result", _d)
-                                                    _goods_info = _result.get("GoodsInfo", _result) if isinstance(_result, dict) else _result
-                                                    _sale_stat = str(_goods_info.get("SaleStatCd", "") or "")
-                                                    _qa_rslt = str(_goods_info.get("QaRsltCd", "") or "")
-                                                    if _sale_stat == "10" or _qa_rslt in ("10", "15", "30"):
+                                                    _goods_info = (
+                                                        _result.get(
+                                                            "GoodsInfo", _result
+                                                        )
+                                                        if isinstance(_result, dict)
+                                                        else _result
+                                                    )
+                                                    _sale_stat = str(
+                                                        _goods_info.get(
+                                                            "SaleStatCd", ""
+                                                        )
+                                                        or ""
+                                                    )
+                                                    _qa_rslt = str(
+                                                        _goods_info.get("QaRsltCd", "")
+                                                        or ""
+                                                    )
+                                                    if (
+                                                        _sale_stat == "10"
+                                                        or _qa_rslt
+                                                        in ("10", "15", "30")
+                                                    ):
                                                         _approved = True
                                                         _new_nos = dict(_m_nos)
-                                                        _new_nos[f"{acc_id}_qa"] = "approved"
-                                                        from sqlalchemy import update as _sa_upd
-                                                        from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
-                                                        await session.execute(_sa_upd(_CP).where(_CP.id == product.id).values(market_product_nos=_new_nos))
+                                                        _new_nos[f"{acc_id}_qa"] = (
+                                                            "approved"
+                                                        )
+                                                        from sqlalchemy import (
+                                                            update as _sa_upd,
+                                                        )
+                                                        from backend.domain.samba.collector.model import (
+                                                            SambaCollectedProduct as _CP,
+                                                        )
+
+                                                        await session.execute(
+                                                            _sa_upd(_CP)
+                                                            .where(_CP.id == product.id)
+                                                            .values(
+                                                                market_product_nos=_new_nos
+                                                            )
+                                                        )
                                                         await session.commit()
-                                                        log.info("[오토튠] %s 롯데홈쇼핑 승인 확인 → approved 처리", product.id)
+                                                        log.info(
+                                                            "[오토튠] %s 롯데홈쇼핑 승인 확인 → approved 처리",
+                                                            product.id,
+                                                        )
                                                 except Exception as _qa_e:
-                                                    log.warning("[오토튠] %s 롯데홈쇼핑 QA 확인 실패: %s", product.id, _qa_e)
+                                                    log.warning(
+                                                        "[오토튠] %s 롯데홈쇼핑 QA 확인 실패: %s",
+                                                        product.id,
+                                                        _qa_e,
+                                                    )
                                             if not _approved:
-                                                log.info("[오토튠] %s → 롯데홈쇼핑 MD 승인 대기 중, 스킵", product.id)
+                                                log.info(
+                                                    "[오토튠] %s → 롯데홈쇼핑 MD 승인 대기 중, 스킵",
+                                                    product.id,
+                                                )
                                                 continue
 
                                     if policy and policy.pricing:
