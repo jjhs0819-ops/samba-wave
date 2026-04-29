@@ -1721,6 +1721,23 @@ class LotteonPlugin(MarketPlugin):
             f"_order_cutoff_hour={product_copy.get('_order_cutoff_hour')!r} "
             f"extras.shippingType={extras.get('shippingType')!r}"
         )
+
+        # ── 외부 이미지 URL 사전 검증 (9999 회피) ──
+        # 죽은 URL 또는 거부 확장자가 origImgFileNm에 들어가면 롯데ON이
+        # "URL 형식이 올바르지 않습니다(9999)"로 응답한다.
+        # image_validator로 HEAD 사전 검증 — R2 등 외부 인프라 의존 없음.
+        from backend.domain.samba.image.image_validator import filter_alive_urls
+
+        if product_copy.get("images"):
+            _orig_imgs = product_copy["images"]
+            product_copy["images"] = await filter_alive_urls(_orig_imgs)
+            _kept_count = len(product_copy["images"])
+            _excluded = len(_orig_imgs) - _kept_count
+            logger.info(
+                f"[롯데ON] 이미지 사전검증: 원본 {len(_orig_imgs)}장 → "
+                f"통과 {_kept_count}장 (제외 {_excluded}장)"
+            )
+
         data = LotteonClient.transform_product(
             product_copy,
             category_id,
