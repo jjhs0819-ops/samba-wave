@@ -32,6 +32,10 @@ if _env_file.exists():
 SAMBA_API_URL = os.environ.get("SAMBA_API_URL", "https://api.samba-wave.co.kr")
 WORKER_TOKEN = os.environ.get("WORKER_TOKEN") or os.environ.get("BG_WORKER_TOKEN", "")
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "5"))
+# stuck/잘못 큐잉된 잡을 워커 단에서 즉시 skip하기 위한 화이트아웃 리스트(콤마 구분)
+SKIP_JOB_IDS: set[str] = {
+    s.strip() for s in os.environ.get("BG_SKIP_JOB_IDS", "").split(",") if s.strip()
+}
 
 HEADERS = {"X-Worker-Token": WORKER_TOKEN}
 
@@ -177,11 +181,12 @@ def _is_bg_removed(result_bytes: bytes) -> bool:
         return False
 
 
-def remove_watermark(image_bytes: bytes) -> bytes:
+def remove_watermark(image_bytes: bytes) -> bytes | None:
     """우상단 패턴에 따라 분기:
-    - 흰배경(워터마크 없음) → 원본 그대로
-    - 흰배경 + 로고 패턴 → PIL 흰박스로 가림 (빠른 경로)
+    - 흰배경(워터마크 없음) → 원본 그대로 (변환 불필요로 간주, bytes 반환)
+    - 흰배경 + 로고 패턴 → PIL 흰박스로 가림 (빠른 경로, bytes 반환)
     - 사진 컨텐츠(모델/배경) → rembg 전체 배경 제거 (느린 경로)
+      → rembg 1·2차 모두 실패하면 None 반환 (원본 그대로 업로드 + AI 배지 부착 방지)
     """
     src = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     if max(src.size) > 1024:
@@ -221,15 +226,11 @@ def remove_watermark(image_bytes: bytes) -> bytes:
         result2 = _rembg_full(src, use_alpha_matting=False)
         if _is_bg_removed(result2):
             return result2
-        print("[Worker]   [rembg] 2차도 실패 — 원본 반환")
-        buf = io.BytesIO()
-        src.save(buf, format="WEBP", quality=90)
-        return buf.getvalue()
+        print("[Worker]   [rembg] 2차도 실패 — 변환 실패 처리 (원본 유지)")
+        return None
     except Exception as e:
-        print(f"[Worker]   [rembg] 예외, 원본 반환: {e}")
-        buf = io.BytesIO()
-        src.save(buf, format="WEBP", quality=90)
-        return buf.getvalue()
+        print(f"[Worker]   [rembg] 예외, 변환 실패 처리: {e}")
+        return None
 
 
 # ── Process one image URL ─────────────────────────────────
@@ -256,6 +257,9 @@ async def process_image(client: httpx.AsyncClient, url: str) -> str | None:
 
     try:
         processed = await asyncio.to_thread(remove_watermark, resp.content)
+        if processed is None:
+            # rembg 폴백 실패 — 원본 유지, 변환된 것으로 카운트하지 않음
+            return None
         md5 = hashlib.md5(resp.content).hexdigest()[:8]
         filename = f"ai_{md5}_{uuid.uuid4().hex[:6]}.webp"
         result_url = upload_to_r2(processed, filename)
@@ -268,6 +272,9 @@ async def process_image(client: httpx.AsyncClient, url: str) -> str | None:
 # ── Process one job ──────────────────────────────────────
 async def process_job(job: dict) -> None:
     job_id = job["job_id"]
+    if job_id in SKIP_JOB_IDS:
+        print(f"\n[Worker] ⏭ SKIP job (BG_SKIP_JOB_IDS): {job_id}")
+        return
     scope: dict = job.get(
         "scope", {"thumbnail": True, "additional": False, "detail": False}
     )
