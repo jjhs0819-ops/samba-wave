@@ -14,11 +14,14 @@ from backend.domain.samba.category.rules import _OVERSEAS_KEYWORDS
 logger = logging.getLogger(__name__)
 
 
-async def rebuild_exported_rules() -> None:
+async def rebuild_exported_rules() -> dict:
     """별도 세션으로 rules_exported.py 재생성 (라우터 dependency 세션과 무관).
 
-    이 함수는 fire-and-forget 백그라운드 태스크로 실행되어야 한다.
+    이 함수는 fire-and-forget 백그라운드 태스크 또는 수동 트리거로 실행된다.
     같은 dependency 세션을 공유하면 라우터 응답이 이 작업의 select+commit 종료를 기다리게 됨.
+
+    Returns:
+        {"ok": bool, "total": int, "skipped": int, "error": str | None}
     """
     import asyncio
     from datetime import UTC, datetime
@@ -79,10 +82,21 @@ async def rebuild_exported_rules() -> None:
 
         await asyncio.to_thread(out_path.write_text, "\n".join(lines), "utf-8")
         logger.info(
-            "[rules_exported] %d건 재생성 완료 (대분류 제외: %d)", total, skipped
+            "[rules_exported] %d건 재생성 완료 (대분류 제외: %d, 페어=%d)",
+            total,
+            skipped,
+            len(exported),
         )
+        return {
+            "ok": True,
+            "total": total,
+            "skipped": skipped,
+            "pairs": len(exported),
+            "error": None,
+        }
     except Exception as e:
-        logger.error("[rules_exported] 재생성 실패: %s", e)
+        logger.error("[rules_exported] 재생성 실패: %s", e, exc_info=True)
+        return {"ok": False, "total": 0, "skipped": 0, "error": str(e)}
 
 
 class CategoryMappingMixin:
@@ -114,8 +128,21 @@ class CategoryMappingMixin:
         )
 
     async def _rebuild_exported_rules(self) -> None:
-        """기존 호출 호환을 위한 wrapper — 실제 로직은 모듈 레벨 함수에서 별도 세션으로 처리."""
-        await rebuild_exported_rules()
+        """기존 호출 호환을 위한 wrapper — 실제 로직은 모듈 레벨 함수에서 별도 세션으로 처리.
+
+        백그라운드 태스크 silent failure 방지: 결과를 명시적으로 로깅한다.
+        """
+        try:
+            result = await rebuild_exported_rules()
+            if not result.get("ok"):
+                logger.warning(
+                    "[rules_exported] 백그라운드 재생성 실패: %s",
+                    result.get("error"),
+                )
+        except Exception as e:
+            logger.error(
+                "[rules_exported] 백그라운드 태스크 예외: %s", e, exc_info=True
+            )
 
     async def create_mapping(self, data: Dict[str, Any]) -> SambaCategoryMapping:
         result = await self.mapping_repo.create_async(**data)

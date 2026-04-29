@@ -228,6 +228,21 @@ async def sync_smartstore_categories(
     return result
 
 
+@router.post("/mappings/rebuild-exported")
+async def rebuild_exported_rules_endpoint():
+    """수동 rebuild — DB의 모든 카테고리 매핑을 rules_exported.py로 재생성.
+
+    포크 유저에게 매핑 학습 데이터를 코드로 배포하기 위한 트리거.
+    매핑 저장 시 fire-and-forget으로 자동 갱신되지만, 실패 시 수동 재실행 용도.
+    """
+    from backend.domain.samba.category.mapping_service import rebuild_exported_rules
+
+    result = await rebuild_exported_rules()
+    if not result.get("ok"):
+        raise HTTPException(500, f"재생성 실패: {result.get('error')}")
+    return result
+
+
 class MarketCheckRequest(BaseModel):
     """마켓 등록 상품 확인 요청."""
 

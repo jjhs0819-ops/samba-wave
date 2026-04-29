@@ -94,12 +94,14 @@ class CategorySeedMixin:
     ) -> str:
         """DB 매핑 데이터에서 few-shot 예시 추출.
 
-        같은 소싱처의 기존 매핑을 조회해 AI 프롬프트에 주입할 문자열 반환.
-        대분류 단독(' > ' 없음)은 제외.
+        타겟 마켓에 기존 매핑이 부족하면(예: 11번가 첫 매핑) 크로스마켓 패턴을 폴백으로 사용.
+        — 같은 소싱처의 다른 마켓 매핑(스스/롯데ON 등)을 동일 소싱카테고리 기준으로 묶어 보여주어
+          AI가 "스스가 X면 11번가도 비슷한 의미"로 추론하게 한다.
         """
         from sqlmodel import select
         from backend.domain.samba.category.model import SambaCategoryMapping
 
+        # ── 1차: 타겟 마켓 직접 매핑 (기존 동작) ──
         examples: list[str] = []
         seen: set[str] = set()
 
@@ -107,7 +109,7 @@ class CategorySeedMixin:
             stmt = (
                 select(SambaCategoryMapping)
                 .where(SambaCategoryMapping.source_site == site)
-                .limit(100)
+                .limit(200)
             )
             result = await self.mapping_repo.session.execute(stmt)
             rows = result.scalars().all()
@@ -133,14 +135,83 @@ class CategorySeedMixin:
             if len(examples) >= limit:
                 break
 
-        if not examples:
+        # ── 2차: 크로스마켓 폴백 ──
+        # 타겟 매핑이 적으면(첫 매핑 케이스), 같은 소싱카테고리에 대한 다른 마켓 매핑을
+        # 묶어서 보여줘 패턴 학습 유도. 예: "[GSShop] 신발>운동화 → smartstore: A | lotteon: B"
+        cross_examples: list[str] = []
+        if len(examples) < limit:
+            cross_seen: set[str] = set()
+            cross_limit = limit - len(examples)
+            for site in source_sites:
+                stmt = (
+                    select(SambaCategoryMapping)
+                    .where(SambaCategoryMapping.source_site == site)
+                    .limit(300)
+                )
+                result = await self.mapping_repo.session.execute(stmt)
+                rows = result.scalars().all()
+                for row in rows:
+                    if not row.target_mappings or not isinstance(
+                        row.target_mappings, dict
+                    ):
+                        continue
+                    src_cat = (row.source_category or "").strip()
+                    if not src_cat or src_cat == exclude_cat:
+                        continue
+                    # 타겟 마켓에 매핑이 이미 있으면 1차에서 처리됨 — 패턴 학습용으론 미매핑 케이스 활용
+                    has_target = any(
+                        row.target_mappings.get(m)
+                        and " > " in row.target_mappings.get(m)
+                        for m in target_markets
+                    )
+                    if has_target:
+                        continue
+                    # 다른 마켓 매핑 2개 이상 있어야 패턴 학습 가치 있음
+                    other_pairs = []
+                    for mk, val in row.target_mappings.items():
+                        if (
+                            mk not in target_markets
+                            and val
+                            and isinstance(val, str)
+                            and " > " in val
+                        ):
+                            other_pairs.append(f"{mk}:{val}")
+                    if len(other_pairs) < 2:
+                        continue
+                    key = f"{site}|{src_cat}"
+                    if key in cross_seen:
+                        continue
+                    cross_seen.add(key)
+                    cross_examples.append(
+                        f"  [{site}] {src_cat} → " + " | ".join(other_pairs[:4])
+                    )
+                    if len(cross_examples) >= cross_limit:
+                        break
+                if len(cross_examples) >= cross_limit:
+                    break
+
+        if not examples and not cross_examples:
             return ""
-        logger.info("[AI매핑] DB few-shot %d건 주입", len(examples))
-        return (
-            "\n[기존 매핑 참고 예시 — 동일 소싱처의 확정된 매핑]\n"
-            + "\n".join(examples)
-            + "\n"
+
+        logger.info(
+            "[AI매핑] DB few-shot 직접=%d, 크로스마켓=%d 주입",
+            len(examples),
+            len(cross_examples),
         )
+        out = ""
+        if examples:
+            out += (
+                "\n[기존 매핑 참고 예시 — 동일 소싱처의 확정된 매핑]\n"
+                + "\n".join(examples)
+                + "\n"
+            )
+        if cross_examples:
+            out += (
+                "\n[크로스마켓 패턴 — 다른 마켓 매핑을 참고해 동일 의미·동일 깊이로 매핑]\n"
+                + "\n".join(cross_examples)
+                + "\n"
+            )
+        return out
 
     # ==================== Market Category Seed ====================
 
