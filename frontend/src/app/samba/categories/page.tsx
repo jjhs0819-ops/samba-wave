@@ -63,6 +63,10 @@ export default function CategoriesPage() {
   const [aiEdits, setAiEdits] = useState<Record<string, string>>({})
   // 벌크 매핑 결과
   const [bulkResult, setBulkResult] = useState<{ mapped: number; updated: number; skipped: number; errors: string[] } | null>(null)
+  // AI 매핑 실패 알림 (모달 내 표시)
+  const [aiFailMessage, setAiFailMessage] = useState<string | null>(null)
+  // AI 매핑 중단용 AbortController
+  const aiAbortRef = useRef<AbortController | null>(null)
 
   // 매핑 현황
   const [mappings, setMappings] = useState<MappingRow[]>([])
@@ -303,13 +307,67 @@ export default function CategoriesPage() {
     setAiResult({})
     setAiEdits({})
     setBulkResult(null)
+    setAiFailMessage(null)
+
+    // AI 호출 실패 메시지 정규화 — 401/인증 오류 → 사용자 친화적 메시지
+    const normalizeFailMsg = (raw: string): string => {
+      const s = (raw || '').toLowerCase()
+      if (s.includes('401') || s.includes('invalid x-api-key') || s.includes('authentication')) {
+        return 'Claude API 키가 유효하지 않습니다. 설정 페이지에서 API 키를 확인하거나 갱신해주세요.'
+      }
+      if (s.includes('claude api key가 설정되지') || s.includes('api key가 설정되지')) {
+        return 'Claude API 키가 설정되지 않았습니다. 설정 페이지에서 등록해주세요.'
+      }
+      if (s.includes('429') || s.includes('rate limit')) {
+        return 'Claude API 호출 한도(rate limit)에 걸렸습니다. 잠시 후 다시 시도해주세요.'
+      }
+      if (s.includes('credit') || s.includes('quota') || s.includes('balance')) {
+        return 'Claude API 크레딧/한도가 부족합니다. 결제 정보를 확인해주세요.'
+      }
+      if (s.includes('timeout') || s.includes('timed out')) {
+        return 'Claude API 응답이 지연되어 시간 초과되었습니다. 다시 시도해주세요.'
+      }
+      return `AI 매핑 호출 실패: ${raw}`
+    }
+
+    // 결과 분석 — 매핑 0건 + 에러만 가득이면 AI 실패로 간주
+    const detectFailure = (res: { mapped: number; updated: number; errors: string[] }): string | null => {
+      if (res.mapped + res.updated > 0) return null
+      if (!res.errors || res.errors.length === 0) {
+        return 'AI 매핑이 완료되었으나 새로 매핑된 항목이 없습니다. (이미 모두 매핑되었거나 대상이 없을 수 있습니다)'
+      }
+      // errors 패턴에서 공통 원인 추정
+      const allErr = res.errors.join(' ').toLowerCase()
+      if (allErr.includes('api key') || allErr.includes('authentication') || allErr.includes('401')) {
+        return 'Claude API 키 인증에 실패했습니다. 설정 페이지에서 API 키를 확인해주세요.'
+      }
+      if (allErr.includes('rate limit') || allErr.includes('429')) {
+        return 'Claude API 호출 한도에 걸려 매핑되지 않았습니다. 잠시 후 다시 시도해주세요.'
+      }
+      if (allErr.includes('빈 응답') || allErr.includes('ai 폴백 실패')) {
+        return `AI가 ${fmtNum(res.errors.length)}건 모두 빈 응답을 반환했습니다. 마켓 카테고리 트리 동기화 또는 기존 매핑 보충이 필요할 수 있습니다.`
+      }
+      return `AI 매핑 실패: ${fmtNum(res.errors.length)}건이 매핑되지 않았습니다.`
+    }
+
+    // 새 호출 시작 — 이전 controller가 있으면 중단 처리
+    aiAbortRef.current?.abort()
+    const controller = new AbortController()
+    aiAbortRef.current = controller
+
+    const isAbort = (e: unknown): boolean => {
+      const name = (e as { name?: string })?.name
+      return name === 'AbortError' || controller.signal.aborted
+    }
 
     if (selectedSite && selectedCat1) {
       // 선택된 사이트+카테고리 범위의 하위 전체를 벌크 매핑 (1회 API 호출)
       const categoryPrefix = getSourceCategory()
       try {
-        const result = await categoryApi.aiSuggestBulk(targetMarkets, selectedSite, categoryPrefix)
+        const result = await categoryApi.aiSuggestBulk(targetMarkets, selectedSite, categoryPrefix, controller.signal)
         setBulkResult(result)
+        const failMsg = detectFailure(result)
+        if (failMsg) setAiFailMessage(failMsg)
         const totalCalls = result.mapped + result.updated
         setLastAiUsage({ calls: totalCalls, tokens: totalCalls * 1800, cost: totalCalls * COST_PER_CALL_KRW, date: fmtTime() })
         // 매핑 현황 새로고침
@@ -318,26 +376,53 @@ export default function CategoriesPage() {
           setMappings(refreshed)
         }
       } catch (e) {
-        const msg = e instanceof Error ? e.message : '알 수 없는 오류'
-        showAlert(`AI 매핑 실패: ${msg}`, 'error')
-        setAiModalOpen(false)
+        if (isAbort(e)) {
+          setAiFailMessage('AI 매핑이 사용자에 의해 중단되었습니다. 일부 항목은 이미 저장되었을 수 있어요.')
+          // 부분 결과 반영을 위해 매핑 새로고침
+          try {
+            const refreshed = await categoryApi.listMappings() as MappingRow[]
+            setMappings(refreshed)
+          } catch { /* ignore */ }
+        } else {
+          const msg = e instanceof Error ? e.message : '알 수 없는 오류'
+          setAiFailMessage(normalizeFailMsg(msg))
+        }
       } finally {
+        if (aiAbortRef.current === controller) aiAbortRef.current = null
         setAiLoading(false)
       }
     } else {
       // 벌크 모드: 선택된 마켓만 미매핑 자동 매핑
       try {
-        const result = await categoryApi.aiSuggestBulk(targetMarkets)
+        const result = await categoryApi.aiSuggestBulk(targetMarkets, undefined, undefined, controller.signal)
         setBulkResult(result)
+        const failMsg = detectFailure(result)
+        if (failMsg) setAiFailMessage(failMsg)
         const totalCalls = result.mapped + result.updated
         setLastAiUsage({ calls: totalCalls, tokens: totalCalls * 1800, cost: totalCalls * COST_PER_CALL_KRW, date: fmtTime() })
       } catch (e) {
-        const msg = e instanceof Error ? e.message : '알 수 없는 오류'
-        showAlert(`벌크 매핑 실패: ${msg}`, 'error')
-        setAiModalOpen(false)
+        if (isAbort(e)) {
+          setAiFailMessage('AI 매핑이 사용자에 의해 중단되었습니다. 일부 항목은 이미 저장되었을 수 있어요.')
+          try {
+            const refreshed = await categoryApi.listMappings() as MappingRow[]
+            setMappings(refreshed)
+          } catch { /* ignore */ }
+        } else {
+          const msg = e instanceof Error ? e.message : '알 수 없는 오류'
+          setAiFailMessage(normalizeFailMsg(msg))
+        }
       } finally {
+        if (aiAbortRef.current === controller) aiAbortRef.current = null
         setAiLoading(false)
       }
+    }
+  }
+
+  // AI 매핑 중단
+  const handleAiAbort = () => {
+    if (aiAbortRef.current) {
+      aiAbortRef.current.abort()
+      aiAbortRef.current = null
     }
   }
 
@@ -1601,10 +1686,73 @@ export default function CategoriesPage() {
                       ? 'Claude가 미매핑 카테고리를 일괄 분석하고 있어요...'
                       : 'Claude가 카테고리를 분석하고 있어요...'}
                   </p>
+                  <p style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.5rem' }}>
+                    중단해도 이미 저장된 매핑은 유지됩니다
+                  </p>
+                  <button
+                    onClick={handleAiAbort}
+                    style={{
+                      marginTop: '1.25rem',
+                      padding: '0.5rem 1.25rem',
+                      fontSize: '0.8125rem',
+                      fontWeight: 600,
+                      borderRadius: '6px',
+                      border: '1px solid rgba(239,68,68,0.4)',
+                      background: 'rgba(239,68,68,0.1)',
+                      color: '#FCA5A5',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    ⏹ 중단
+                  </button>
+                </div>
+              ) : aiFailMessage && !bulkResult ? (
+                /* AI 호출 자체가 실패한 경우 (인증/네트워크/예외) — 결과 없음 */
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  textAlign: 'center',
+                  padding: '1.5rem 1rem',
+                  gap: '0.75rem',
+                }}>
+                  <div style={{ fontSize: '2rem' }}>⚠️</div>
+                  <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#EF4444' }}>
+                    AI 매핑을 실행할 수 없습니다
+                  </div>
+                  <div style={{
+                    fontSize: '0.8125rem',
+                    color: '#E5E5E5',
+                    background: 'rgba(239,68,68,0.08)',
+                    border: '1px solid rgba(239,68,68,0.25)',
+                    borderRadius: '8px',
+                    padding: '0.75rem 1rem',
+                    lineHeight: 1.6,
+                    width: '100%',
+                  }}>
+                    {aiFailMessage}
+                  </div>
                 </div>
               ) : bulkResult ? (
                 /* 벌크 모드 결과 */
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                  {/* AI 부분 실패 메시지 */}
+                  {aiFailMessage && (
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: '0.5rem',
+                      padding: '0.75rem 1rem',
+                      background: 'rgba(239,68,68,0.08)',
+                      border: '1px solid rgba(239,68,68,0.25)',
+                      borderRadius: '8px',
+                    }}>
+                      <span style={{ fontSize: '1rem' }}>⚠️</span>
+                      <div style={{ fontSize: '0.8125rem', color: '#FECACA', lineHeight: 1.6 }}>
+                        {aiFailMessage}
+                      </div>
+                    </div>
+                  )}
                   {/* 요약 카드 */}
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem' }}>
                     <div style={{ padding: '1rem', background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)', borderRadius: '8px', textAlign: 'center' }}>
@@ -1682,7 +1830,7 @@ export default function CategoriesPage() {
             </div>
 
             {/* 모달 하단 버튼 */}
-            {!aiLoading && (bulkResult || Object.keys(aiResult).length > 0) && (
+            {!aiLoading && (bulkResult || aiFailMessage || Object.keys(aiResult).length > 0) && (
               <div style={{
                 padding: '1rem 1.5rem',
                 borderTop: '1px solid #2D2D2D',
@@ -1696,6 +1844,14 @@ export default function CategoriesPage() {
                       border: 'none', background: '#FF8C00', color: '#FFF', cursor: 'pointer', fontWeight: 600,
                     }}
                   >확인</button>
+                ) : aiFailMessage ? (
+                  <button
+                    onClick={() => { setAiModalOpen(false); setAiFailMessage(null) }}
+                    style={{
+                      padding: '0.5rem 1.25rem', fontSize: '0.8125rem', borderRadius: '6px',
+                      border: '1px solid #3D3D3D', background: '#2A2A2A', color: '#E5E5E5', cursor: 'pointer', fontWeight: 600,
+                    }}
+                  >닫기</button>
                 ) : (
                   <>
                     <button

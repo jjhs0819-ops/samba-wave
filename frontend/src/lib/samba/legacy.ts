@@ -1222,7 +1222,7 @@ export const categoryApi = {
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/categories/tree/${siteName}`, { method: "DELETE" }),
   aiSuggest: (data: { source_site: string; source_category: string; sample_products: string[]; sample_tags?: string[]; target_markets?: string[] }) =>
     request<Record<string, string>>(`${SAMBA_PREFIX}/categories/ai-suggest`, { method: "POST", body: JSON.stringify(data) }),
-  aiSuggestBulk: (targetMarkets?: string[], sourceSite?: string, categoryPrefix?: string) =>
+  aiSuggestBulk: (targetMarkets?: string[], sourceSite?: string, categoryPrefix?: string, signal?: AbortSignal) =>
     request<{ mapped: number; updated: number; skipped: number; errors: string[] }>(
       `${SAMBA_PREFIX}/categories/ai-suggest-bulk`, {
         method: 'POST',
@@ -1231,6 +1231,7 @@ export const categoryApi = {
           ...(sourceSite ? { source_site: sourceSite } : {}),
           ...(categoryPrefix ? { category_prefix: categoryPrefix } : {}),
         }),
+        signal,
       }),
   seedMarketCategories: () =>
     request<{ ok: boolean; markets: Record<string, number> }>(

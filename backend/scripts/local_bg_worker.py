@@ -79,13 +79,16 @@ def upload_to_r2(image_bytes: bytes, filename: str) -> str | None:
 
 # ── Watermark removal ────────────────────────────────────
 # 우측 상단 워터마크 박스 비율 (이미지 가로/세로 기준)
-_WM_BOX_W_RATIO = 0.22
-_WM_BOX_H_RATIO = 0.18
+# 0.30/0.22 — 로고가 박스 경계에 살짝 걸치는 케이스까지 안전 커버
+_WM_BOX_W_RATIO = 0.30
+_WM_BOX_H_RATIO = 0.22
 # 영역이 이 값 이상으로 평균 RGB가 밝으면 "워터마크 없음"으로 보고 skip
-_WM_NO_LOGO_THRESHOLD = 240
+# 250 — 작은 로고 한 점도 평균을 떨어뜨려 1단계 통과 못함 → 원본 그대로 반환되는 케이스 차단
+_WM_NO_LOGO_THRESHOLD = 250
 # "흰배경 + 작은 로고" 패턴 판정용 — near-white 픽셀(채널별 ≥230) 비율 기준
 _NEAR_WHITE_CHANNEL = 230
-_WHITE_BG_LOGO_RATIO = 0.75
+# 0.70 — 로고가 살짝 커도 흰배경+로고 패턴으로 인정해 박스 덮음
+_WHITE_BG_LOGO_RATIO = 0.70
 
 # rembg 세션 lazy 캐시 (모델 200MB, 매 호출마다 로드 방지)
 _rembg_session = None
@@ -440,6 +443,15 @@ async def process_job(job: dict) -> None:
                         headers=HEADERS,
                         json=payload,
                     )
+                    # 잡 처리 중에도 heartbeat 갱신 — 모달 30초 임계 "응답없음" 오판 방지
+                    try:
+                        await client.patch(
+                            f"{SAMBA_API_URL}/api/v1/samba/proxy/bg-jobs/heartbeat",
+                            headers=HEADERS,
+                            timeout=5,
+                        )
+                    except Exception:
+                        pass
                 except Exception:
                     pass
 

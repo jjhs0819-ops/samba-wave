@@ -483,8 +483,16 @@ async def sync_balance_from_extension(
         logger.warning(
             f"[잔액동기화] 매칭 실패: email={body.profileEmail}, username={body.username}"
         )
+        # 매칭 실패해도 쿠키는 refresher 풀(SambaSettings.musinsa_cookies)에 저장
+        # — 소싱처 계정 미등록 상태(포크/신규 인스턴스)에서도 최대혜택가 계산 가능하도록
+        if body.cookie and not body.expired:
+            await _sync_musinsa_cookie_to_settings(session, body.cookie, accounts)
+            logger.info(
+                "[잔액동기화] 매칭 실패 — 쿠키만 SambaSettings.musinsa_cookies에 저장"
+            )
         return {
             "ok": False,
+            "cookie_saved": bool(body.cookie and not body.expired),
             "message": f"계정을 찾을 수 없습니다: {body.profileEmail or body.username}",
         }
 

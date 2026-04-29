@@ -1588,6 +1588,24 @@ export default function ProductsPage() {
             let success = 0
             let fail = 0
             if (aiImgMode === 'background') {
+              // 워커가 죽어있으면 → 자동 설치/재기동 안내 후 다운로드 트리거
+              if (bgActiveLoaded && !bgWorkerAlive) {
+                setAiImgTransforming(false)
+                setAiJobModal(false)
+                const goInstall = await showConfirm(
+                  '배경제거 워커가 실행되지 않습니다.\n\n' +
+                  '[확인]을 누르면 설치 패키지(samba-bg-worker.zip)가 다운로드됩니다.\n' +
+                  '1) ZIP 압축 해제 → 2) install.bat 더블클릭 → 끝.\n\n' +
+                  '자동 등록되어 PC 재부팅 후에도 자동 실행되며,\n' +
+                  '워커가 죽으면 1분 안에 자동 부활합니다.\n' +
+                  '(Python 미설치 시 install.bat 이 자동 설치 시도)'
+                )
+                if (goInstall) {
+                  const { API_BASE_URL: apiBase } = await import('@/config/api')
+                  window.location.href = `${apiBase}/api/v1/samba/proxy/bg-jobs/installer`
+                }
+                return
+              }
               // 배경제거: 백엔드 job queue 일괄 제출 + 폴링
               addLog(`[${ts()}] 배경 제거 큐 제출 중... (${fmt(ids.length)}개 상품)`)
               try {

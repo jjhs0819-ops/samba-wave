@@ -828,3 +828,87 @@ async def bg_jobs_heartbeat(
     now = datetime.now(timezone.utc).isoformat()
     await _set_setting(session, "bg_worker_last_seen", now)
     return {"success": True, "last_seen": now}
+
+
+# ═══════════════════════════════════════════════
+# 워커 자동 설치 — install_bg_worker.bat 다운로드
+# ═══════════════════════════════════════════════
+
+
+@bg_worker_router.get("/bg-jobs/installer")
+async def bg_jobs_installer() -> Response:
+    """배경제거 워커 설치 패키지(ZIP) 다운로드.
+
+    프론트의 '배경제거' 버튼 클릭 시 워커가 죽어있으면 이 엔드포인트로 안내.
+    ZIP 안에:
+      - install.bat          : Python 자동설치 + 표준 경로 복사 + 작업 스케줄러 등록 + 즉시 실행
+      - local_bg_worker.py   : 워커 본체
+      - bg_worker.env        : 사용자별 백엔드 URL이 자동 주입된 설정
+    사용자는 ZIP 다운로드 → 압축 풀기 → install.bat 더블클릭 1회로 영구 구동.
+    """
+    import io
+    import os
+    import zipfile
+    from pathlib import Path
+
+    scripts_dir = Path(__file__).resolve().parents[6] / "scripts"
+    worker_py = scripts_dir / "local_bg_worker.py"
+    install_bat = scripts_dir / "install_bg_worker.bat"
+    watchdog_ps1 = scripts_dir / "bg_worker_watchdog_template.ps1"
+    watchdog_vbs = scripts_dir / "bg_worker_watchdog_template.vbs"
+
+    if not worker_py.exists() or not install_bat.exists():
+        return Response(
+            content="installer files not found",
+            status_code=404,
+            media_type="text/plain",
+        )
+
+    api_url = os.environ.get(
+        "PUBLIC_API_URL",
+        os.environ.get("SAMBA_API_URL", "https://api.samba-wave.co.kr"),
+    )
+    env_text = (
+        "# Samba Wave Local BG Worker Config\n"
+        "# 자동 생성된 설정 — 백엔드 URL은 다운로드 시점에 주입됨\n"
+        f"SAMBA_API_URL={api_url}\n"
+        "WORKER_TOKEN=\n"
+        "POLL_INTERVAL=5\n"
+    )
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("install.bat", install_bat.read_text(encoding="utf-8"))
+        z.writestr("local_bg_worker.py", worker_py.read_text(encoding="utf-8"))
+        z.writestr("bg_worker.env", env_text)
+        # 워치독 템플릿 — install.bat이 표준 경로 치환 후 사용
+        if watchdog_ps1.exists():
+            z.writestr(
+                "bg_worker_watchdog.ps1",
+                watchdog_ps1.read_text(encoding="utf-8"),
+            )
+        if watchdog_vbs.exists():
+            # VBS는 ASCII만 (wscript 한글 주석 파싱 실패 이슈)
+            z.writestr(
+                "bg_worker_watchdog.vbs",
+                watchdog_vbs.read_text(encoding="ascii", errors="ignore"),
+            )
+        z.writestr(
+            "README.txt",
+            "Samba Wave 배경제거 워커 설치\n"
+            "\n"
+            "1. 이 ZIP을 원하는 폴더에 압축 해제하세요.\n"
+            "2. install.bat 을 더블클릭하세요.\n"
+            "3. 끝. 워커는 자동 등록되어 PC 재부팅 후에도 자동 실행됩니다.\n"
+            "\n"
+            "필요사항: Python 3.10 이상 (없으면 install.bat 이 자동 설치 시도)\n"
+            "설치 위치: %LOCALAPPDATA%\\SambaWave\\bg-worker\\\n"
+            "\n"
+            "제거: 작업스케줄러에서 SambaWaveBgWorkerWatchdog 삭제\n",
+        )
+    buf.seek(0)
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="samba-bg-worker.zip"'},
+    )
