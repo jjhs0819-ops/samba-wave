@@ -219,37 +219,19 @@ class ElevenstClient:
             client = _get_elevenst_http_client(self.api_key)
             resp = await self._do_request(client, "POST", url, headers, xml_data)
 
-        # cert 필드 검증용 — 요청/응답 raw XML 발췌 로그
+        # cert 검증용 — ProductCertGroup 구조 echo 확인
         import re as _re
 
-        req_cert = {
-            t: (
-                _re.search(rf"<{t}>([^<]*)</{t}>", xml_data).group(1)
-                if _re.search(rf"<{t}>([^<]*)</{t}>", xml_data)
-                else "(없음)"
-            )
-            for t in (
-                "crtfGrpObjClfCd01",
-                "crtfGrpObjClfCd02",
-                "crtfGrpObjClfCd03",
-                "crtfGrpObjClfCd04",
-            )
-        }
-        resp_cert = {
-            t: (
-                _re.search(rf"<{t}>([^<]*)</{t}>", resp.text).group(1)
-                if _re.search(rf"<{t}>([^<]*)</{t}>", resp.text)
-                else "(없음)"
-            )
-            for t in (
-                "crtfGrpObjClfCd01",
-                "crtfGrpObjClfCd02",
-                "crtfGrpObjClfCd03",
-                "crtfGrpObjClfCd04",
-            )
-        }
-        logger.info(f"[11번가] 등록요청 cert: {req_cert}")
-        logger.info(f"[11번가] 등록응답 cert: {resp_cert}")
+        req_groups = _re.findall(
+            r"<ProductCertGroup>\s*<crtfGrpTypCd>([^<]+)</crtfGrpTypCd>\s*<crtfGrpObjClfCd>([^<]+)</crtfGrpObjClfCd>\s*</ProductCertGroup>",
+            xml_data,
+        )
+        resp_groups = _re.findall(
+            r"<ProductCertGroup>\s*<crtfGrpTypCd>([^<]+)</crtfGrpTypCd>\s*<crtfGrpObjClfCd>([^<]+)</crtfGrpObjClfCd>\s*</ProductCertGroup>",
+            resp.text,
+        )
+        logger.info(f"[11번가] 등록요청 cert groups: {req_groups}")
+        logger.info(f"[11번가] 등록응답 cert groups: {resp_groups}")
         logger.info(
             f"[11번가] 등록응답 raw (앞 1500자): {resp.text[:1500].replace(chr(10), ' ')}"
         )
