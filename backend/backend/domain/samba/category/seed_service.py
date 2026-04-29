@@ -635,8 +635,19 @@ class CategorySeedMixin:
                                 return True
                     return False
 
+                # 마켓별로 독립적으로 후보 풀 구성 — 한 마켓이 sparse해도 다른 마켓은 영향 받지 않음
+                # 키워드 매칭 부족 시 점진적 폴백: leaf → leaf+parent → 대분류(cat1) prefix → top-N
+                # 항상 최소 후보를 제공해야 AI가 빈 응답을 안 냄
                 lines = []
-                has_enough_matches = True
+                # 배치의 소싱 대분류(cat1) 모음 — 폴백 풀 구성용
+                batch_cat1s: set[str] = set()
+                for item in batch:
+                    segs = [
+                        s.strip() for s in item["leaf_path"].split(">") if s.strip()
+                    ]
+                    if segs:
+                        batch_cat1s.add(segs[0])
+
                 for m, cats in market_cat_lists.items():
                     # ESM 마켓은 특수 대분류 제외 적용
                     if m in ("gmarket", "auction"):
@@ -645,25 +656,52 @@ class CategorySeedMixin:
                             for c in cats
                             if not _ai_filter_restricted(c.split(" > ")[0])
                         ]
+                    if not cats:
+                        continue
+
+                    # 1단계: leaf 키워드 매칭
                     leaf_matches = [c for c in cats if any(kw in c for kw in leaf_kw)]
-                    if len(leaf_matches) >= 5:
-                        # 성별 균등 — AI가 받는 후보 풀이 한 성별로 도배되지 않도록
-                        relevant = _gender_balanced_cap(leaf_matches, limit=30)
-                    else:
+                    relevant = (
+                        _gender_balanced_cap(leaf_matches, limit=30)
+                        if len(leaf_matches) >= 3
+                        else []
+                    )
+
+                    # 2단계: leaf+parent 키워드 매칭
+                    if not relevant:
                         all_kw = leaf_kw | parent_kw
-                        relevant = [c for c in cats if any(kw in c for kw in all_kw)]
-                        if len(relevant) < 3:
-                            has_enough_matches = False
-                        relevant = (
-                            _gender_balanced_cap(relevant, limit=30) if relevant else []
-                        )
+                        kw_matches = [c for c in cats if any(kw in c for kw in all_kw)]
+                        if kw_matches:
+                            relevant = _gender_balanced_cap(kw_matches, limit=30)
+
+                    # 3단계: 소싱 대분류(cat1) 키워드를 마켓 카테고리에 매핑 (의류↔패션, 신발↔패션잡화 등)
+                    if not relevant:
+                        # 대분류 동의어로 마켓 패션/뷰티/스포츠 대분류 매칭
+                        broad_kws = set()
+                        for c1 in batch_cat1s:
+                            broad_kws.add(c1)
+                            broad_kws.update(_split_kw(c1))
+                        broad_kws = _expand_synonyms(broad_kws)
+                        # 패션 키워드 fallback — 항상 추가
+                        broad_kws.update(["패션", "의류", "잡화", "신발", "가방"])
+                        broad_matches = [
+                            c for c in cats if any(kw in c for kw in broad_kws)
+                        ]
+                        if broad_matches:
+                            relevant = _gender_balanced_cap(broad_matches, limit=30)
+
+                    # 4단계 최후 폴백: 마켓 카테고리 임의 30개 (AI에게 문맥이라도 제공)
+                    if not relevant:
+                        relevant = _gender_balanced_cap(cats[:200], limit=30)
+
                     if relevant:
                         lines.append(
                             f"- {market_labels.get(m, m)}:\n"
                             + "\n".join(f"  {c}" for c in relevant)
                         )
+                        logger.info("[벌크매핑] %s 후보 풀: %d개", m, len(relevant))
 
-                if lines and has_enough_matches:
+                if lines:
                     cat_list_section = (
                         "\n[허용된 마켓 카테고리 — 이 중에서만 선택]\n"
                         + "\n".join(lines)
