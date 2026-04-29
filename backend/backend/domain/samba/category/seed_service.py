@@ -463,11 +463,8 @@ class CategorySeedMixin:
         }
         market_names = ", ".join(market_labels.get(m, m) for m in target_markets)
 
-        # DB에서 마켓별 실제 카테고리 목록 조회 (AI가 이 중에서만 선택, 리프만 허용)
-        market_cat_lists: Dict[str, List[str]] = {}
-        # 경로 어디에든 등장하면 제외할 키워드 (주니어/아동 KC인증 이슈 차단)
-        # — 11번가 "주니어의류 (9~14세) > ..." 등 prefix가 아닌 형태도 잡기 위해 contains 사용
-        _exclude_anywhere = (
+        # 키즈/주니어 키워드 — 소싱·후보 양쪽에서 동일하게 식별
+        _kids_keywords = (
             "주니어",
             "아동",
             "유아",
@@ -477,6 +474,15 @@ class CategorySeedMixin:
             "junior",
             "baby",
         )
+
+        def _is_kids(text: str) -> bool:
+            t = (text or "").lower()
+            return any(kw in t for kw in _kids_keywords)
+
+        # DB에서 마켓별 실제 카테고리 목록 조회 (AI가 이 중에서만 선택, 리프만 허용)
+        # 키즈 카테고리는 전역 차단하지 않음 — 소싱이 키즈면 키즈 매핑이 정답이기 때문.
+        # 후보 풀 구성 시 소싱-키즈 여부에 맞춰 동적으로 필터링한다.
+        market_cat_lists: Dict[str, List[str]] = {}
         for m in target_markets:
             try:
                 cats = _filter_to_leaves(await self._get_market_categories(m))
@@ -495,7 +501,6 @@ class CategorySeedMixin:
                         c
                         for c in cats
                         if not any(c.startswith(p) for p in _exclude_prefixes)
-                        and not any(kw in c.lower() for kw in _exclude_anywhere)
                     ]
                     market_cat_lists[m] = cats
             except Exception:
@@ -510,11 +515,20 @@ class CategorySeedMixin:
         # DB 기존 매핑 few-shot — 배치 전체에 공통 적용 (한 번만 조회)
         batch_sites = list({item["site"] for item in items})
         _db_fewshot_global = await self._get_db_fewshot_examples(
-            batch_sites, target_markets, limit=8
+            batch_sites, target_markets, limit=16
         )
 
         for batch_start in range(0, len(items), batch_size):
             batch = items[batch_start : batch_start + batch_size]
+
+            # 배치 내 키즈 소싱 비율 — 모두 키즈/모두 어른/혼합 판별
+            batch_kids_flags = [
+                _is_kids(item.get("leaf_path", ""))
+                or any(_is_kids(r) for r in (item.get("mapped_refs") or {}).values())
+                for item in batch
+            ]
+            batch_all_kids = all(batch_kids_flags) and len(batch_kids_flags) > 0
+            batch_any_kids = any(batch_kids_flags)
 
             cat_entries = []
             for idx, item in enumerate(batch):
@@ -529,7 +543,10 @@ class CategorySeedMixin:
                 }.get(item.get("gender", ""), "")
                 ss_hint = item.get("ss_mapped", "")
                 mapped_refs = item.get("mapped_refs", {})
+                is_kids = batch_kids_flags[idx]
+                age_hint = "키즈/주니어" if is_kids else "성인"
                 entry = f"{idx + 1}. [{item['site']}] {item['leaf_path']}"
+                entry += f" | 연령: {age_hint}"
                 if gender_hint:
                     entry += f" | 성별: {gender_hint}"
                 if sample_names:
@@ -656,6 +673,14 @@ class CategorySeedMixin:
                             for c in cats
                             if not _ai_filter_restricted(c.split(" > ")[0])
                         ]
+                    # 키즈 동적 필터:
+                    # - 배치 전체가 키즈 → 키즈 카테고리만 (성인 카테고리 제거)
+                    # - 배치 전체가 성인 → 키즈 카테고리 제거 (KC인증)
+                    # - 혼합 → 둘 다 유지하되 프롬프트 규칙에 의존
+                    if batch_all_kids:
+                        cats = [c for c in cats if _is_kids(c)]
+                    elif not batch_any_kids:
+                        cats = [c for c in cats if not _is_kids(c)]
                     if not cats:
                         continue
 
@@ -731,7 +756,7 @@ class CategorySeedMixin:
 - 소싱 카테고리 경로에 "여성", "우먼즈", "여자" 단어가 있으면 반드시 여성 카테고리로 매핑.
 - 성별 근거가 전혀 없을 때만 남녀공용/성별무관 카테고리 선택 가능.
 - 패션 상품(의류/신발/가방/액세서리)은 "패션의류"·"패션잡화" 대분류 우선. "스포츠/레저" 대분류는 소싱 카테고리에 "스포츠", "아웃도어", "골프", "등산", "런닝", "요가", "축구", "농구", "야구", "스키", "자전거" 등 스포츠 키워드가 있을 때만 선택.
-- 경로에 "주니어", "아동", "유아", "베이비", "키즈", "kids", "junior", "baby" 단어가 단 한 번이라도 등장하는 카테고리는 절대 선택 금지 (KC인증 이슈, 성인 의류는 성인용 카테고리만 사용). 예 금지: "주니어의류 (9~14세) > ...", "패션 > 주니어 > ...".
+- 연령 매칭 최우선: 항목 "연령: 키즈/주니어"면 키즈/주니어/아동/유아/베이비 카테고리로만 매핑. "연령: 성인"이면 키즈/주니어/아동/유아/베이비/키즈/kids/junior/baby 단어가 등장하는 카테고리 절대 금지 (KC인증 이슈). "기존매핑참고"의 다른 마켓 매핑이 키즈면 11번가도 키즈로 매핑.
 - 도서/음반/교재/학술 카테고리는 절대 선택 금지. 의류학 교재도 포함.
 - 의류/패션과 무관한 카테고리(식품, 인테리어, 여행, 자동차, 반려동물 등)는 절대 선택 금지.
 - 키워드 단순 매칭 금지. '웨이스트 백'은 허리에 차는 가방이지 바지가 아님. '기타'는 악기가 아닌 기타 등등을 의미함. 상품의 실제 의미를 파악하여 매핑.
@@ -776,6 +801,7 @@ JSON만 응답:
                 target_set = set(target_markets)
                 for idx in range(len(batch)):
                     key_str = str(idx + 1)
+                    item_is_kids = batch_kids_flags[idx]
                     if key_str in result and isinstance(result[key_str], dict):
                         validated: Dict[str, str] = {}
                         for market, suggested in result[key_str].items():
@@ -796,17 +822,6 @@ JSON만 응답:
                                     "취미/컬렉션",
                                     "수입명품",
                                 )
-                                # 경로 어디에든 등장하면 차단 (주니어/아동 KC인증 이슈)
-                                _age_exclude_anywhere = (
-                                    "주니어",
-                                    "아동",
-                                    "유아",
-                                    "베이비",
-                                    "키즈",
-                                    "kids",
-                                    "junior",
-                                    "baby",
-                                )
                                 if any(
                                     suggested.startswith(p) for p in _fashion_exclude
                                 ):
@@ -814,12 +829,18 @@ JSON만 응답:
                                         f"[벌크매핑] '{suggested}' 패션 무관 카테고리 → 스킵"
                                     )
                                     continue
-                                if any(
-                                    kw in suggested.lower()
-                                    for kw in _age_exclude_anywhere
-                                ):
+                                # 연령 매칭 검증:
+                                # - 소싱이 성인 + 추천이 키즈 → 차단 (KC인증)
+                                # - 소싱이 키즈 + 추천이 성인 → 차단 (잘못된 카테고리)
+                                suggested_is_kids = _is_kids(suggested)
+                                if not item_is_kids and suggested_is_kids:
                                     logger.warning(
-                                        f"[벌크매핑] '{suggested}' 주니어/아동 카테고리 → 스킵 (KC인증)"
+                                        f"[벌크매핑] '{suggested}' 키즈 카테고리 (소싱은 성인) → 스킵 (KC인증)"
+                                    )
+                                    continue
+                                if item_is_kids and not suggested_is_kids:
+                                    logger.warning(
+                                        f"[벌크매핑] '{suggested}' 성인 카테고리 (소싱은 키즈) → 스킵"
                                     )
                                     continue
                                 # 대분류 단독 거부 — ' > ' 없으면 1단계 대분류
@@ -955,8 +976,8 @@ JSON만 응답:
         import anthropic
 
         # DB 우선 조회 후 하드코딩 fallback (리프만 허용 — 비-리프 매핑 방지)
-        # 경로 어디에든 주니어/아동/유아/베이비/키즈가 등장하면 제외 (KC인증)
-        _age_exclude_anywhere = (
+        # 소싱이 키즈인지 판별 — 키즈면 키즈 카테고리만, 성인이면 성인만
+        _kids_keywords = (
             "주니어",
             "아동",
             "유아",
@@ -966,15 +987,22 @@ JSON만 응답:
             "junior",
             "baby",
         )
+
+        def _is_kids_text(text: str) -> bool:
+            t = (text or "").lower()
+            return any(kw in t for kw in _kids_keywords)
+
+        source_is_kids = _is_kids_text(source_category) or any(
+            _is_kids_text(n) for n in (sample_products or [])
+        )
         market_cats: Dict[str, List[str]] = {}
         for m in remaining_markets:
             cats = _filter_to_leaves(await self._get_market_categories(m))
             if cats:
-                cats = [
-                    c
-                    for c in cats
-                    if not any(kw in c.lower() for kw in _age_exclude_anywhere)
-                ]
+                if source_is_kids:
+                    cats = [c for c in cats if _is_kids_text(c)]
+                else:
+                    cats = [c for c in cats if not _is_kids_text(c)]
                 if cats:
                     market_cats[m] = cats
 

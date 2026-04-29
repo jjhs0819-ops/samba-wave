@@ -445,14 +445,26 @@ class CategoryMappingMixin:
 
     # ==================== 불량 카테고리 감지 & 재매핑 ====================
 
-    def _is_bad_mapping(self, path: str) -> bool:
-        """카테고리 경로가 금지 카테고리로 시작하거나, 주니어/아동 키워드를 포함하는지 확인."""
+    def _is_bad_mapping(self, path: str, source_category: str = "") -> bool:
+        """카테고리 경로가 금지 카테고리거나 연령 미스매치인지 확인.
+
+        - 절대 금지 prefix(도서/식품 등)
+        - 연령 미스매치: 소싱이 성인인데 추천이 키즈 (또는 그 반대)
+        """
         if not path:
             return False
         if any(path.startswith(prefix) for prefix in self._BAD_CATEGORY_PREFIXES):
             return True
         path_lower = path.lower()
-        return any(kw in path_lower for kw in self._BAD_CATEGORY_ANYWHERE)
+        target_is_kids = any(kw in path_lower for kw in self._BAD_CATEGORY_ANYWHERE)
+        if not source_category:
+            # 소싱 정보 없으면 키즈만으로 판단 안 함
+            return False
+        source_is_kids = any(
+            kw in source_category.lower() for kw in self._BAD_CATEGORY_ANYWHERE
+        )
+        # 연령 미스매치
+        return target_is_kids != source_is_kids
 
     async def fix_bad_mappings(
         self,
@@ -477,7 +489,9 @@ class CategoryMappingMixin:
         for mapping in all_mappings:
             targets: Dict[str, str] = mapping.target_mappings or {}
             bad_markets = [
-                market for market, path in targets.items() if self._is_bad_mapping(path)
+                market
+                for market, path in targets.items()
+                if self._is_bad_mapping(path, mapping.source_category or "")
             ]
             if not bad_markets:
                 continue
