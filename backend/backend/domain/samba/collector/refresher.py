@@ -749,21 +749,21 @@ async def _get_musinsa_cookie() -> str:
 
 
 async def _get_musinsa_cookies() -> list[str]:
-    """DB에서 무신사 쿠키 목록 조회 (musinsa_cookies JSON 배열 또는 musinsa_cookie 단일)."""
+    """DB에서 무신사 쿠키 목록 조회 (musinsa_cookies JSON 배열 또는 musinsa_cookie 단일).
+
+    반드시 _get_setting을 통해 읽어 암호화 키 자동 복호화. 직접 SQL select 금지
+    (암호화된 토큰을 그대로 무신사에 전송해 비로그인 처리되는 이슈 방지).
+    """
     try:
         from backend.db.orm import get_read_session
-        from backend.domain.samba.forbidden.model import SambaSettings
-        from sqlmodel import select as _sel
+        from backend.api.v1.routers.samba.proxy._helpers import _get_setting
         import json
 
         async with get_read_session() as session:
-            # 먼저 복수 쿠키 키 확인
-            result = await session.execute(
-                _sel(SambaSettings).where(SambaSettings.key == "musinsa_cookies")
-            )
-            row = result.scalar_one_or_none()
-            if row and row.value:
-                val = json.loads(row.value) if isinstance(row.value, str) else row.value
+            # 먼저 복수 쿠키 키 확인 (_get_setting이 암호화 자동 복호화)
+            raw = await _get_setting(session, "musinsa_cookies")
+            if raw:
+                val = json.loads(raw) if isinstance(raw, str) else raw
                 if isinstance(val, list) and val:
                     return [c for c in val if c]
             # 없으면 단일 쿠키 폴백

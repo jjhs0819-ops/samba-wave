@@ -413,12 +413,14 @@ async def _sync_musinsa_cookie_to_settings(
 ) -> None:
     """SambaSourcingAccount 쿠키를 SambaSettings.musinsa_cookies 배열에 동기화.
 
-    refresher.py의 _get_musinsa_cookies()는 SambaSettings만 읽으므로,
+    refresher.py의 _get_musinsa_cookies()는 SambaSettings를 읽으므로,
     확장앱이 자동 갱신한 쿠키가 오토튠에 반영되려면 이 동기화가 필요.
+    반드시 _set_setting을 통해 저장해 암호화 키 자동 적용 (직접 SQL 금지 —
+    암호화/복호화 경로 불일치로 무신사가 쿠키를 못 읽는 이슈 방지).
     """
     import json
 
-    from backend.domain.samba.forbidden.model import SambaSettings
+    from backend.api.v1.routers.samba.proxy._helpers import _set_setting
 
     # 모든 활성 무신사 계정의 쿠키 수집 (만료되지 않은 것만)
     cookies: list[str] = []
@@ -436,14 +438,7 @@ async def _sync_musinsa_cookie_to_settings(
         return
 
     try:
-        result = await session.execute(
-            select(SambaSettings).where(SambaSettings.key == "musinsa_cookies")
-        )
-        row = result.scalar_one_or_none()
-        if row:
-            row.value = json.dumps(cookies)
-        else:
-            session.add(SambaSettings(key="musinsa_cookies", value=json.dumps(cookies)))
+        await _set_setting(session, "musinsa_cookies", json.dumps(cookies))
         logger.info(
             f"[쿠키동기화] SambaSettings.musinsa_cookies 업데이트: {len(cookies)}개"
         )
