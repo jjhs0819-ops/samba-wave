@@ -947,7 +947,7 @@ export default function CategoriesPage() {
 
   // 마켓 키 목록
   const sourceAdjacentMarkets = ['smartstore', 'lotteon']
-  const orderedAdjacentMarkets = ['smartstore', 'lotteon', 'elevenst']
+  const orderedAdjacentMarkets = ['smartstore', 'lotteon', '11st']
   const marketKeys = [
     ...orderedAdjacentMarkets.filter(mk => MARKET_LABELS[mk]),
     ...Object.keys(MARKET_LABELS).filter(mk => !orderedAdjacentMarkets.includes(mk)),
