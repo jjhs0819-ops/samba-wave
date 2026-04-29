@@ -18,6 +18,7 @@ import uuid
 from pathlib import Path
 
 import httpx
+import numpy as np
 from PIL import Image, ImageDraw, ImageStat
 
 # ── Load bg_worker.env ───────────────────────────────────
@@ -189,8 +190,9 @@ def remove_watermark(image_bytes: bytes) -> bytes | None:
       → rembg 1·2차 모두 실패하면 None 반환 (원본 그대로 업로드 + AI 배지 부착 방지)
     """
     src = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    if max(src.size) > 1024:
-        ratio = 1024 / max(src.size)
+    # 다운스케일 768px — alpha matting 메모리 폭발 회피 (1024px도 numpy 단편화로 1.86GiB 단일 할당 실패)
+    if max(src.size) > 768:
+        ratio = 768 / max(src.size)
         src = src.resize(
             (int(src.width * ratio), int(src.height * ratio)), Image.LANCZOS
         )
@@ -216,20 +218,29 @@ def remove_watermark(image_bytes: bytes) -> bytes | None:
         return buf.getvalue()
 
     # 3) 사진 컨텐츠 → rembg 전체 배경 제거
-    #    1차: alpha_matting=True (고품질) → 결과 검증
-    #    실패/저품질 시 2차: alpha_matting=False (안정적 폴백)
+    #    1차: alpha_matting=False (안정적/메모리 적음) → 대부분 케이스에서 충분
+    #    가장자리 품질 부족 시 2차: alpha_matting=True (고품질, 메모리 무거움)
     try:
-        result = _rembg_full(src, use_alpha_matting=True)
+        result = _rembg_full(src, use_alpha_matting=False)
         if _is_bg_removed(result):
             return result
-        print("[Worker]   [rembg] 1차 결과 가장자리 비흰색 → alpha_matting off 폴백")
-        result2 = _rembg_full(src, use_alpha_matting=False)
-        if _is_bg_removed(result2):
-            return result2
-        print("[Worker]   [rembg] 2차도 실패 — 변환 실패 처리 (원본 유지)")
+        print(
+            "[Worker]   [rembg] 1차(alpha_matting=False) 가장자리 비흰색 → matting on 재시도"
+        )
+        try:
+            result2 = _rembg_full(src, use_alpha_matting=True)
+            if _is_bg_removed(result2):
+                return result2
+        except (MemoryError, np.linalg.LinAlgError) as me:  # type: ignore[name-defined]
+            print(f"[Worker]   [rembg] 2차 메모리 폭발 — 1차 결과로 폴백: {me}")
+            return result
+        except Exception as e:
+            print(f"[Worker]   [rembg] 2차 예외 — 1차 결과 사용: {e}")
+            return result
+        print("[Worker]   [rembg] 2차도 가장자리 품질 부족 — 변환 실패 처리")
         return None
     except Exception as e:
-        print(f"[Worker]   [rembg] 예외, 변환 실패 처리: {e}")
+        print(f"[Worker]   [rembg] 1차 예외, 변환 실패 처리: {e}")
         return None
 
 
@@ -463,9 +474,36 @@ async def main() -> None:
         print("[Error] Cannot connect or token is invalid. Check WORKER_TOKEN.")
         return
 
+    # 부팅 시 stuck running 잡 자동 정리 (이전 워커가 비정상 종료된 경우)
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                f"{SAMBA_API_URL}/api/v1/samba/proxy/bg-jobs/worker-reset-running",
+                headers=HEADERS,
+            )
+            if r.status_code == 200:
+                rj = r.json()
+                cnt = rj.get("reset_count", 0)
+                if cnt > 0:
+                    print(f"[Worker] 부팅 stuck 잡 정리: {cnt}건 cancelled")
+                else:
+                    print("[Worker] stuck running 잡 없음")
+    except Exception as e:
+        print(f"[Worker] reset-running 실패(무시): {e}")
+
     while True:
         try:
             async with httpx.AsyncClient(timeout=10) as client:
+                # 헬스체크 — 모달이 30초 임계로 워커 alive 판단
+                try:
+                    await client.patch(
+                        f"{SAMBA_API_URL}/api/v1/samba/proxy/bg-jobs/heartbeat",
+                        headers=HEADERS,
+                        timeout=5,
+                    )
+                except Exception:
+                    pass
+
                 resp = await client.get(
                     f"{SAMBA_API_URL}/api/v1/samba/proxy/bg-jobs/next",
                     headers=HEADERS,

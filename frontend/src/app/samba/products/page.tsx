@@ -157,13 +157,20 @@ export default function ProductsPage() {
   type BgActiveJob = { job_id: string; status: string; total: number; current: number; created_at: string | null; started_at: string | null }
   const [bgActiveJobs, setBgActiveJobs] = useState<BgActiveJob[]>([])
   const [bgActiveLoaded, setBgActiveLoaded] = useState(false)
+  const [bgWorkerAlive, setBgWorkerAlive] = useState(true)
+  const [bgWorkerLastSeen, setBgWorkerLastSeen] = useState<string | null>(null)
   useEffect(() => {
     if (!aiJobModal) return
     let alive = true
     const tick = async () => {
       try {
         const res = await proxyApi.bgJobsActive()
-        if (alive) { setBgActiveJobs(res.jobs || []); setBgActiveLoaded(true) }
+        if (alive) {
+          setBgActiveJobs(res.jobs || [])
+          setBgActiveLoaded(true)
+          setBgWorkerAlive(!!res.worker_alive)
+          setBgWorkerLastSeen(res.worker_last_seen)
+        }
       } catch { /* 일시 오류 무시 */ }
     }
     tick()
@@ -560,7 +567,7 @@ export default function ProductsPage() {
           setAllProducts(prev => prev.map(item => item.id === productId ? { ...item, ...p } : item))
         }
       } else {
-        setActiveLog({ productId, message: `[실패] ${productName} → ${data.detail || '상세 보강 실패'}` })
+        setActiveLog({ productId, message: `[실패] ${productName} → ${data.message || data.detail || '상세 보강 실패'}` })
       }
     } catch {
       setActiveLog({ productId, message: `[오류] ${productName} → 서버 연결 실패` })
@@ -976,6 +983,21 @@ export default function ProductsPage() {
                 }}>✕</button>
               )}
             </div>
+            {/* 워커 다운 경고 — 30초 이상 heartbeat 끊김 */}
+            {bgActiveLoaded && !bgWorkerAlive && (
+              <div style={{
+                padding: '8px 14px', borderBottom: '1px solid #2D2D2D',
+                background: 'rgba(255,107,107,0.12)', color: '#FF6B6B',
+                fontSize: '0.72rem', fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              }}>
+                <span>⚠ 로컬 배경제거 워커 다운 — local_bg_worker.py 실행 필요</span>
+                {bgWorkerLastSeen && (
+                  <span style={{ fontSize: '0.65rem', color: '#A8A8A8', fontWeight: 400 }}>
+                    last: {new Date(bgWorkerLastSeen).toLocaleTimeString('ko-KR')}
+                  </span>
+                )}
+              </div>
+            )}
             {/* 배경제거 큐 — 현재 진행/대기 중인 잡 목록 */}
             {bgActiveLoaded && bgActiveJobs.length > 0 && (
               <div style={{

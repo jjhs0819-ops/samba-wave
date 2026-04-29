@@ -12,7 +12,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
 from backend.utils.logger import logger
 
-from ._helpers import _get_setting
+from ._helpers import _get_setting, _set_setting
 
 router = APIRouter(tags=["samba-proxy"])
 
@@ -687,7 +687,9 @@ async def bg_jobs_status(
 async def bg_jobs_active(
     session: AsyncSession = Depends(get_read_session_dependency),
 ) -> dict[str, Any]:
-    """현재 진행 중(pending/running)인 배경제거 잡 목록 — 모달에서 표시용."""
+    """현재 진행 중(pending/running)인 배경제거 잡 목록 + 워커 헬스 — 모달 표시용."""
+    from datetime import datetime, timezone
+
     from sqlalchemy import select as sa_select
 
     from backend.domain.samba.job.model import JobStatus, SambaJob
@@ -701,6 +703,17 @@ async def bg_jobs_active(
     result = await session.execute(stmt)
     jobs = result.scalars().all()
 
+    # 워커 헬스 — 30초 안에 heartbeat 있으면 alive
+    last_seen_str = await _get_setting(session, "bg_worker_last_seen") or ""
+    worker_alive = False
+    if last_seen_str:
+        try:
+            last_seen_dt = datetime.fromisoformat(last_seen_str)
+            now = datetime.now(timezone.utc)
+            worker_alive = (now - last_seen_dt).total_seconds() <= 30
+        except (ValueError, TypeError):
+            worker_alive = False
+
     return {
         "jobs": [
             {
@@ -712,7 +725,9 @@ async def bg_jobs_active(
                 "started_at": j.started_at.isoformat() if j.started_at else None,
             }
             for j in jobs
-        ]
+        ],
+        "worker_alive": worker_alive,
+        "worker_last_seen": last_seen_str or None,
     }
 
 
@@ -747,3 +762,69 @@ async def bg_jobs_cancel(
 
     logger.info(f"[배경제거] 잡 취소: job_id={job_id}")
     return {"success": True, "job_id": job_id, "status": "cancelled"}
+
+
+# ═══════════════════════════════════════════════
+# 워커 부팅 시 stuck running 잡 정리 + heartbeat
+# ═══════════════════════════════════════════════
+
+
+@bg_worker_router.post("/bg-jobs/worker-reset-running")
+async def bg_jobs_worker_reset_running(
+    x_worker_token: str = Header(default=""),
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """워커 부팅 시 호출 — running 상태로 잔존한 bg_remove 잡을 cancelled로 정리.
+
+    워커가 잡 픽업 후 비정상 종료(OOM/프로세스 강제 kill)되면 status=running으로 영구 잔존.
+    워커 1대 운영 환경에서는 새 워커 부팅 시 이전 stuck 잡은 무조건 죽은 것으로 간주 가능.
+    """
+    from datetime import datetime, timezone
+
+    from sqlalchemy import select as sa_select
+
+    from backend.domain.samba.job.model import JobStatus, SambaJob
+
+    if not await _verify_worker_token(x_worker_token, session):
+        return {"success": False, "message": "Invalid worker token"}
+
+    stmt = (
+        sa_select(SambaJob)
+        .where(SambaJob.job_type == "bg_remove")
+        .where(SambaJob.status == JobStatus.RUNNING)
+    )
+    result = await session.execute(stmt)
+    stuck_jobs = result.scalars().all()
+
+    now = datetime.now(timezone.utc)
+    reset_ids: list[str] = []
+    for j in stuck_jobs:
+        j.status = JobStatus.CANCELLED
+        j.completed_at = now
+        j.error = "worker restart — stuck running 자동 정리"
+        session.add(j)
+        reset_ids.append(j.id)
+
+    if reset_ids:
+        await session.commit()
+        logger.info(
+            f"[배경제거] 워커 부팅 stuck 잡 정리: {len(reset_ids)}건 — {reset_ids}"
+        )
+
+    return {"success": True, "reset_count": len(reset_ids), "reset_ids": reset_ids}
+
+
+@bg_worker_router.patch("/bg-jobs/heartbeat")
+async def bg_jobs_heartbeat(
+    x_worker_token: str = Header(default=""),
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """워커 헬스체크 — 매 폴링마다 호출되어 last_seen 갱신."""
+    from datetime import datetime, timezone
+
+    if not await _verify_worker_token(x_worker_token, session):
+        return {"success": False, "message": "Invalid worker token"}
+
+    now = datetime.now(timezone.utc).isoformat()
+    await _set_setting(session, "bg_worker_last_seen", now)
+    return {"success": True, "last_seen": now}
