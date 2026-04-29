@@ -124,15 +124,17 @@ def _is_white_background_logo(crop: Image.Image) -> bool:
     return near_white / len(pixels) >= _WHITE_BG_LOGO_RATIO
 
 
-def _rembg_full(src: Image.Image, *, use_alpha_matting: bool = True) -> bytes:
-    """rembg로 전체 배경 제거 후 흰배경 합성 → WEBP 반환.
+def _rembg_alpha(
+    small_src: Image.Image, *, use_alpha_matting: bool = True
+) -> Image.Image:
+    """rembg로 alpha mask 추출 (L 모드, small_src 크기). 메모리 절약형 핵심 함수.
 
-    use_alpha_matting=False 폴백 모드: 알파매팅 끄면 가장자리 거칠지만 더 안정적.
+    use_alpha_matting=False: 알파매팅 끄면 가장자리 거칠지만 안정적 + 메모리 적음.
     """
     from rembg import remove
 
     buf_in = io.BytesIO()
-    src.save(buf_in, format="PNG")
+    small_src.save(buf_in, format="PNG")
     if use_alpha_matting:
         result = remove(
             buf_in.getvalue(),
@@ -145,14 +147,38 @@ def _rembg_full(src: Image.Image, *, use_alpha_matting: bool = True) -> bytes:
     else:
         result = remove(buf_in.getvalue(), session=_get_rembg_session())
     out = Image.open(io.BytesIO(result)).convert("RGBA")
-    r, g, b, a = out.split()
-    a = a.point(lambda x: 0 if x < 20 else x)
-    out = Image.merge("RGBA", (r, g, b, a))
-    white_bg = Image.new("RGBA", out.size, (255, 255, 255, 255))
-    composite = Image.alpha_composite(white_bg, out).convert("RGB")
-    buf = io.BytesIO()
-    composite.save(buf, format="WEBP", quality=90)
-    return buf.getvalue()
+    _, _, _, a = out.split()
+    # 매우 약한 alpha는 0으로 클램프 (잔잔한 회색 배경 잡티 제거)
+    return a.point(lambda x: 0 if x < 20 else x)
+
+
+def _composite_with_alpha(
+    full_src: Image.Image, small_alpha: Image.Image
+) -> Image.Image:
+    """원본 해상도 RGB + 작은 alpha mask → 업스케일 후 흰배경 합성, 원본 크기 RGB 반환."""
+    if small_alpha.size != full_src.size:
+        big_alpha = small_alpha.resize(full_src.size, Image.LANCZOS)
+    else:
+        big_alpha = small_alpha
+    rgba = Image.new("RGBA", full_src.size)
+    rgba.paste(full_src.convert("RGBA"))
+    rgba.putalpha(big_alpha)
+    white_bg = Image.new("RGBA", full_src.size, (255, 255, 255, 255))
+    return Image.alpha_composite(white_bg, rgba).convert("RGB")
+
+
+def _alpha_edge_ratio(alpha: Image.Image) -> float:
+    """alpha mask 가장자리에서 투명(=배경 제거 성공) 픽셀 비율 — 1.0에 가까울수록 깨끗."""
+    w, h = alpha.size
+    samples: list[int] = []
+    samples.extend(alpha.getpixel((x, 0)) for x in range(0, w, max(1, w // 100)))
+    samples.extend(alpha.getpixel((x, h - 1)) for x in range(0, w, max(1, w // 100)))
+    samples.extend(alpha.getpixel((0, y)) for y in range(0, h, max(1, h // 100)))
+    samples.extend(alpha.getpixel((w - 1, y)) for y in range(0, h, max(1, h // 100)))
+    if not samples:
+        return 0.0
+    transparent = sum(1 for v in samples if v < 30)
+    return transparent / len(samples)
 
 
 def _is_bg_removed(result_bytes: bytes) -> bool:
@@ -183,60 +209,85 @@ def _is_bg_removed(result_bytes: bytes) -> bool:
 
 
 def remove_watermark(image_bytes: bytes) -> bytes | None:
-    """우상단 패턴에 따라 분기:
-    - 흰배경(워터마크 없음) → 원본 그대로 (변환 불필요로 간주, bytes 반환)
-    - 흰배경 + 로고 패턴 → PIL 흰박스로 가림 (빠른 경로, bytes 반환)
-    - 사진 컨텐츠(모델/배경) → rembg 전체 배경 제거 (느린 경로)
-      → rembg 1·2차 모두 실패하면 None 반환 (원본 그대로 업로드 + AI 배지 부착 방지)
-    """
-    src = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    # 다운스케일 768px — alpha matting 메모리 폭발 회피 (1024px도 numpy 단편화로 1.86GiB 단일 할당 실패)
-    if max(src.size) > 768:
-        ratio = 768 / max(src.size)
-        src = src.resize(
-            (int(src.width * ratio), int(src.height * ratio)), Image.LANCZOS
-        )
+    """우상단 패턴에 따라 분기 — 결과는 항상 원본 해상도 유지(마켓 업로드 화질 보존):
 
-    w, h = src.size
+    - 흰배경(워터마크 없음)        → 원본 그대로 webp 저장
+    - 흰배경 + 로고 패턴            → 원본에 흰박스 덮어 저장 (rembg 미사용)
+    - 사진 컨텐츠(모델/배경)        → 768px로 다운스케일해 rembg alpha mask 추출 →
+                                      mask를 원본 크기로 업스케일 → 원본 RGB와 흰배경 합성
+    rembg 1·2차 모두 실패하면 None 반환 (원본 유지 + AI 배지 부착 방지).
+    """
+    src_orig = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    # 패턴 감지/rembg용 작은 사본 — 원본은 합성 시 보존
+    if max(src_orig.size) > 768:
+        ratio = 768 / max(src_orig.size)
+        src_small = src_orig.resize(
+            (int(src_orig.width * ratio), int(src_orig.height * ratio)),
+            Image.LANCZOS,
+        )
+    else:
+        src_small = src_orig
+
+    w, h = src_small.size
     box_w = int(w * _WM_BOX_W_RATIO)
     box_h = int(h * _WM_BOX_H_RATIO)
-    box = (w - box_w, 0, w, box_h)
-    crop = src.crop(box)
+    box_small = (w - box_w, 0, w, box_h)
+    crop = src_small.crop(box_small)
 
-    # 1) 우상단이 거의 순백 → 워터마크 없음, skip
+    # 1) 우상단이 거의 순백 → 워터마크 없음, 원본 그대로 저장
     avg = ImageStat.Stat(crop).mean
     if all(c >= _WM_NO_LOGO_THRESHOLD for c in avg[:3]):
         buf = io.BytesIO()
-        src.save(buf, format="WEBP", quality=90)
+        src_orig.save(buf, format="WEBP", quality=90)
         return buf.getvalue()
 
-    # 2) 흰배경 + 로고 패턴 → PIL 흰박스 (빠른 경로)
+    # 2) 흰배경 + 로고 패턴 → 원본 좌표로 box 환산해 흰박스 덮음 (rembg 미사용)
     if _is_white_background_logo(crop):
-        ImageDraw.Draw(src).rectangle(box, fill="white")
+        W, H = src_orig.size
+        box_orig = (
+            W - int(W * _WM_BOX_W_RATIO),
+            0,
+            W,
+            int(H * _WM_BOX_H_RATIO),
+        )
+        out = src_orig.copy()
+        ImageDraw.Draw(out).rectangle(box_orig, fill="white")
         buf = io.BytesIO()
-        src.save(buf, format="WEBP", quality=90)
+        out.save(buf, format="WEBP", quality=90)
         return buf.getvalue()
 
-    # 3) 사진 컨텐츠 → rembg 전체 배경 제거
-    #    1차: alpha_matting=False (안정적/메모리 적음) → 대부분 케이스에서 충분
-    #    가장자리 품질 부족 시 2차: alpha_matting=True (고품질, 메모리 무거움)
+    # 3) 사진 컨텐츠 → rembg는 작은 src로만 돌리고 alpha mask만 추출
+    #    1차: alpha_matting=False (안정적/메모리 적음)
+    #    가장자리 품질 부족 시 2차: alpha_matting=True (고품질, 메모리 폭발 가능)
     try:
-        result = _rembg_full(src, use_alpha_matting=False)
-        if _is_bg_removed(result):
-            return result
+        alpha_small = _rembg_alpha(src_small, use_alpha_matting=False)
+        if _alpha_edge_ratio(alpha_small) >= 0.85:
+            composite = _composite_with_alpha(src_orig, alpha_small)
+            buf = io.BytesIO()
+            composite.save(buf, format="WEBP", quality=90)
+            return buf.getvalue()
         print(
-            "[Worker]   [rembg] 1차(alpha_matting=False) 가장자리 비흰색 → matting on 재시도"
+            "[Worker]   [rembg] 1차(alpha_matting=False) 가장자리 품질 부족 → matting on 재시도"
         )
         try:
-            result2 = _rembg_full(src, use_alpha_matting=True)
-            if _is_bg_removed(result2):
-                return result2
-        except (MemoryError, np.linalg.LinAlgError) as me:  # type: ignore[name-defined]
+            alpha_small2 = _rembg_alpha(src_small, use_alpha_matting=True)
+            if _alpha_edge_ratio(alpha_small2) >= 0.85:
+                composite = _composite_with_alpha(src_orig, alpha_small2)
+                buf = io.BytesIO()
+                composite.save(buf, format="WEBP", quality=90)
+                return buf.getvalue()
+        except (MemoryError, np.linalg.LinAlgError) as me:
             print(f"[Worker]   [rembg] 2차 메모리 폭발 — 1차 결과로 폴백: {me}")
-            return result
+            composite = _composite_with_alpha(src_orig, alpha_small)
+            buf = io.BytesIO()
+            composite.save(buf, format="WEBP", quality=90)
+            return buf.getvalue()
         except Exception as e:
             print(f"[Worker]   [rembg] 2차 예외 — 1차 결과 사용: {e}")
-            return result
+            composite = _composite_with_alpha(src_orig, alpha_small)
+            buf = io.BytesIO()
+            composite.save(buf, format="WEBP", quality=90)
+            return buf.getvalue()
         print("[Worker]   [rembg] 2차도 가장자리 품질 부족 — 변환 실패 처리")
         return None
     except Exception as e:
