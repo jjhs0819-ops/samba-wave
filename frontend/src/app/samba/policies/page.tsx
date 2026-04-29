@@ -1122,6 +1122,10 @@ export default function PoliciesPage() {
                       <span style={{ fontSize: '0.75rem', color: '#666', paddingLeft: '76px' }}>- 적용함 선택 시 상품 등록 시 이미지를 롯데홈쇼핑 규격에 맞게 자동 리사이징합니다.</span>
                       <span style={{ fontSize: '0.75rem', color: '#666', paddingLeft: '76px' }}>- 등록하시려는 이미지가 1024 x 1024 보다 클 경우, 1024 x 1024 사이즈로 리사이징 합니다.</span>
                     </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>출고일</span>
+                      <NumInput value={mp.shippingDays || 3} onChange={(v) => { setCurrentMarketPolicy({ ...mp, shippingDays: v }); triggerAutoSave() }} style={{ width: '60px' }} suffix="일" />
+                    </div>
                   </div>
                   <span style={{ fontSize: '0.75rem', color: '#FF8C00', fontWeight: 600 }}>품목정보</span>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxWidth: '50%' }}>
@@ -1190,8 +1194,8 @@ export default function PoliciesPage() {
                 <NumInput value={mp.onceMaxQty || 5} onChange={(v) => { setCurrentMarketPolicy({ ...mp, onceMaxQty: v }); triggerAutoSave() }} style={{ width: '60px' }} suffix="개" />
               </div>
               )}
-              {/* 11번가는 판매자 계정의 발송예정일 템플릿을 사용하므로 정책 출고일 미사용 */}
-              {marketPolicyTab !== '플레이오토' && marketPolicyTab !== '스마트스토어' && marketPolicyTab !== '11번가' && (
+              {/* 11번가는 판매자 계정의 발송예정일 템플릿을 사용하므로 정책 출고일 미사용 / 롯데홈쇼핑은 자체 블록에서 출고일 표시 */}
+              {marketPolicyTab !== '플레이오토' && marketPolicyTab !== '스마트스토어' && marketPolicyTab !== '11번가' && marketPolicyTab !== '롯데홈쇼핑' && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>출고일</span>
                 <NumInput value={mp.shippingDays || 3} onChange={(v) => { setCurrentMarketPolicy({ ...mp, shippingDays: v }); triggerAutoSave() }} style={{ width: '60px' }} suffix="일" />
