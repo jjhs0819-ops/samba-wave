@@ -1043,7 +1043,13 @@ export default function CategoriesPage() {
       mk => !orderedAdjacentMarkets.includes(mk) && !noCategoryMarkets.has(mk),
     ),
   ]
-  const gridCols = `80px 299px ${marketKeys.map(() => '300px').join(' ')} 40px`
+  const marketColWidth = (mk: string) => (mk === 'coupang' || mk === 'ssg' || mk === 'ssg_std' ? '330px' : '300px')
+  const gridCols = `80px 299px ${marketKeys.map(mk => marketColWidth(mk)).join(' ')} 40px`
+  // 가로 스크롤 시 사이트/소싱카테고리 컬럼 고정
+  const stickyColA = { position: 'sticky' as const, left: 0, zIndex: 1 }
+  const stickyColB = { position: 'sticky' as const, left: 80, zIndex: 1 }
+  const stickyHeadA = { position: 'sticky' as const, left: 0, zIndex: 3, background: '#1F1F1F' }
+  const stickyHeadB = { position: 'sticky' as const, left: 80, zIndex: 3, background: '#1F1F1F' }
 
   const colStyle = {
     flex: 1,
@@ -1258,8 +1264,8 @@ export default function CategoriesPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
               <thead style={{ position: 'sticky', top: 0, zIndex: 2 }}>
                 <tr style={{ display: 'grid', gridTemplateColumns: gridCols, borderBottom: '1px solid #2D2D2D', background: '#1F1F1F' }}>
-                  <th style={{ padding: '0.625rem 0.75rem', textAlign: 'center', color: '#888', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden' }}>사이트</th>
-                  <th style={{ padding: '0.625rem 0.75rem', textAlign: 'center', color: '#888', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden' }}>소싱 카테고리</th>
+                  <th style={{ padding: '0.625rem 0.75rem', textAlign: 'center', color: '#888', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', ...stickyHeadA }}>사이트</th>
+                  <th style={{ padding: '0.625rem 0.75rem', textAlign: 'center', color: '#888', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', ...stickyHeadB }}>소싱 카테고리</th>
                   {marketKeys.map(mk => (
                     <th key={mk} style={{ padding: '0.625rem 0.5rem', textAlign: 'center', color: '#888', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', minWidth: 0 }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.125rem', alignItems: 'center' }}>
@@ -1397,8 +1403,8 @@ export default function CategoriesPage() {
                 {/* 최하단 카테고리 선택 + 매핑 없음 → 신규 편집 행 */}
                 {isLeafCategory && filteredMappings.length === 0 && (
                   <tr style={{ display: 'grid', gridTemplateColumns: gridCols, borderBottom: '1px solid #2D2D2D', background: 'rgba(255,140,0,0.04)', alignItems: 'center' }}>
-                    <td style={{ padding: '0.5rem 0.75rem', color: '#FFB84D', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden' }}>{selectedSite}</td>
-                    <td style={{ padding: '0.5rem 0.75rem', color: '#E5E5E5', whiteSpace: 'nowrap', overflow: 'hidden' }}>{getSourceCategory()}</td>
+                    <td style={{ padding: '0.5rem 0.75rem', color: '#FFB84D', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', ...stickyColA, background: '#1F1612' }}>{selectedSite}</td>
+                    <td style={{ padding: '0.5rem 0.75rem', color: '#E5E5E5', whiteSpace: 'nowrap', overflow: 'hidden', ...stickyColB, background: '#1F1612' }}>{getSourceCategory()}</td>
                     {marketKeys.map(mk => {
                       const isEditing = inlineFocusedMarket === mk || editingCell?.id === '__new__' && editingCell?.market === mk
                       return (
@@ -1451,8 +1457,8 @@ export default function CategoriesPage() {
                   const row = filteredMappings[virtualRow.index]
                   return (
                     <tr key={row.id} style={{ display: 'grid', gridTemplateColumns: gridCols, borderBottom: '1px solid #2D2D2D', alignItems: 'center' }}>
-                      <td style={{ padding: '0.5rem 0.75rem', color: '#FFB84D', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden' }}>{row.source_site}</td>
-                      <td style={{ padding: '0.5rem 0.75rem', color: '#E5E5E5', whiteSpace: 'nowrap', overflow: 'hidden' }}>{row.source_category}</td>
+                      <td style={{ padding: '0.5rem 0.75rem', color: '#FFB84D', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', ...stickyColA, background: '#161616' }}>{row.source_site}</td>
+                      <td style={{ padding: '0.5rem 0.75rem', color: '#E5E5E5', whiteSpace: 'nowrap', overflow: 'hidden', ...stickyColB, background: '#161616' }}>{row.source_category}</td>
                       {marketKeys.map(mk => {
                         const val = row.target_mappings?.[mk] || ''
                         const isEditing = editingCell?.id === row.id && editingCell?.market === mk
