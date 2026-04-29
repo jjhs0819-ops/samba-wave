@@ -8,31 +8,18 @@ import { MARKET_LABELS, MARKETS, expandSyncMarkets } from '@/lib/samba/markets'
 import { showAlert } from '@/components/samba/Modal'
 import { card, fmtNum } from '@/lib/samba/styles'
 import { fmtTime } from '@/lib/samba/utils'
-
-// 카테고리 계층 구조 타입
-interface CatLevel {
-  name: string
-  children: Record<string, CatLevel>
-  products: SambaCollectedProduct[]
-}
-
-// 매핑 현황 행 타입
-interface MappingRow {
-  id: string
-  source_site: string
-  source_category: string
-  target_mappings: Record<string, string>
-}
-
-// MARKET_LABELS는 @/lib/samba/markets에서 import
-
-// AI 매핑 비용 추정 근거:
-// Claude Sonnet 4 ($3/M input, $15/M output, 환율 ₩1,450)
-// 1회 호출: ~1,500 input tokens × $3/M = $0.0045 = ₩6.5
-//         + ~300 output tokens × $15/M = $0.0045 = ₩6.5
-// 합계: ~₩13, 여유분 포함 ₩15
-const COST_PER_CALL_KRW = 15
-const COST_BASIS = 'Sonnet4 $3/M in + $15/M out × ₩1,450'
+import type { CatLevel, MappingRow } from './types'
+import { COST_PER_CALL_KRW, COST_BASIS, MARKET_KEYS } from './constants'
+import {
+  GRID_COLS,
+  stickyColA,
+  stickyColB,
+  stickyHeadA,
+  stickyHeadB,
+  colStyle,
+  itemStyle,
+} from './styles'
+import { buildCategoryTree, getCatList } from './categoryTree'
 
 export default function CategoriesPage() {
   useEffect(() => { document.title = 'SAMBA-카테고리' }, [])
@@ -114,7 +101,9 @@ export default function CategoriesPage() {
     // 카테고리 트리 (GROUP BY — 상품 전체 로드 불필요)
     if (treeResult.status === 'fulfilled' && Array.isArray(treeResult.value)) {
       setTreeRows(treeResult.value)
-      buildTreeFromApi(treeResult.value)
+      const { tree, sites: siteList } = buildCategoryTree(treeResult.value)
+      setCatTree(tree)
+      setSites(siteList)
     }
     // 매핑 현황
     if (mappingResult.status === 'fulfilled') {
@@ -136,30 +125,6 @@ export default function CategoriesPage() {
   }, [])
 
   useEffect(() => { load() }, [load])
-
-  // category-tree API 응답으로 트리 구성 (상품 전체 로드 없이)
-  const buildTreeFromApi = (rows: { source_site: string; category: string; count: number }[]) => {
-    const tree: Record<string, CatLevel> = {}
-    const siteSet = new Set<string>()
-
-    rows.forEach(({ source_site, category }) => {
-      const site = source_site || '기타'
-      siteSet.add(site)
-      if (!tree[site]) tree[site] = { name: site, children: {}, products: [] }
-
-      const cats = category ? category.split('>').map(c => c.trim()).filter(Boolean) : []
-      let current = tree[site]
-      cats.forEach((cat) => {
-        if (!current.children[cat]) {
-          current.children[cat] = { name: cat, children: {}, products: [] }
-        }
-        current = current.children[cat]
-      })
-    })
-
-    setCatTree(tree)
-    setSites(Array.from(siteSet).sort())
-  }
 
   const handleSiteClick = (site: string) => {
     setSelectedSite(selectedSite === site ? null : site)
@@ -268,14 +233,14 @@ export default function CategoriesPage() {
     }
     // 단건 모드 — 마켓 선택 단계
     const initial: Record<string, boolean> = {}
-    marketKeys.forEach(mk => { initial[mk] = true })
+    MARKET_KEYS.forEach(mk => { initial[mk] = true })
     setAiSelectedMarkets(initial)
     setAiMarketSelectOpen(true)
   }
 
   const handleAiMarketSelectAll = (checked: boolean) => {
     const updated: Record<string, boolean> = {}
-    marketKeys.forEach(mk => { updated[mk] = checked })
+    MARKET_KEYS.forEach(mk => { updated[mk] = checked })
     setAiSelectedMarkets(updated)
   }
 
@@ -291,7 +256,7 @@ export default function CategoriesPage() {
       handleAiMapping(selected)
     } else {
       // 단건 모드
-      const selected = marketKeys.filter(mk => aiSelectedMarkets[mk])
+      const selected = MARKET_KEYS.filter(mk => aiSelectedMarkets[mk])
       if (selected.length === 0) {
         showAlert('최소 1개 마켓을 선택해주세요', 'info')
         return
@@ -484,22 +449,10 @@ export default function CategoriesPage() {
 
   // 5단 드릴다운 데이터 (catTree 기반 — 상품 전체 순회 불필요)
   const getCrossSites = () => sites
-  const getCat1List = () => {
-    if (!selectedSite || !catTree[selectedSite]) return []
-    return Object.keys(catTree[selectedSite].children).sort()
-  }
-  const getCat2List = () => {
-    if (!selectedSite || !selectedCat1 || !catTree[selectedSite]?.children[selectedCat1]) return []
-    return Object.keys(catTree[selectedSite].children[selectedCat1].children).sort()
-  }
-  const getCat3List = () => {
-    if (!selectedSite || !selectedCat1 || !selectedCat2 || !catTree[selectedSite]?.children[selectedCat1]?.children[selectedCat2]) return []
-    return Object.keys(catTree[selectedSite].children[selectedCat1].children[selectedCat2].children).sort()
-  }
-  const getCat4List = () => {
-    if (!selectedSite || !selectedCat1 || !selectedCat2 || !selectedCat3 || !catTree[selectedSite]?.children[selectedCat1]?.children[selectedCat2]?.children[selectedCat3]) return []
-    return Object.keys(catTree[selectedSite].children[selectedCat1].children[selectedCat2].children[selectedCat3].children).sort()
-  }
+  const getCat1List = () => getCatList(catTree, selectedSite, selectedCat1, selectedCat2, selectedCat3, 1)
+  const getCat2List = () => getCatList(catTree, selectedSite, selectedCat1, selectedCat2, selectedCat3, 2)
+  const getCat3List = () => getCatList(catTree, selectedSite, selectedCat1, selectedCat2, selectedCat3, 3)
+  const getCat4List = () => getCatList(catTree, selectedSite, selectedCat1, selectedCat2, selectedCat3, 4)
 
   // ── 최하단 카테고리 감지 (하위 자식이 없는 노드) ──
 
@@ -1030,44 +983,6 @@ export default function CategoriesPage() {
     }
   }
 
-  // 마켓 키 목록
-  const sourceAdjacentMarkets = ['smartstore', 'lotteon']
-  const orderedAdjacentMarkets = ['smartstore', 'lotteon', '11st']
-  // 카테고리 매핑 미지원 마켓 제외 (예: 무신사 — hasCategory: false)
-  const noCategoryMarkets = new Set(
-    MARKETS.filter(m => m.hasCategory === false).map(m => m.id),
-  )
-  const marketKeys = [
-    ...orderedAdjacentMarkets.filter(mk => MARKET_LABELS[mk] && !noCategoryMarkets.has(mk)),
-    ...Object.keys(MARKET_LABELS).filter(
-      mk => !orderedAdjacentMarkets.includes(mk) && !noCategoryMarkets.has(mk),
-    ),
-  ]
-  const marketColWidth = (mk: string) => (mk === 'coupang' || mk === 'ssg' || mk === 'ssg_std' ? '330px' : '300px')
-  const gridCols = `80px 299px ${marketKeys.map(mk => marketColWidth(mk)).join(' ')} 40px`
-  // 가로 스크롤 시 사이트/소싱카테고리 컬럼 고정
-  const stickyColA = { position: 'sticky' as const, left: 0, zIndex: 1 }
-  const stickyColB = { position: 'sticky' as const, left: 80, zIndex: 1 }
-  const stickyHeadA = { position: 'sticky' as const, left: 0, zIndex: 3, background: '#1F1F1F' }
-  const stickyHeadB = { position: 'sticky' as const, left: 80, zIndex: 3, background: '#1F1F1F' }
-
-  const colStyle = {
-    flex: 1,
-    minWidth: '140px',
-    borderRight: '1px solid #2D2D2D',
-    maxHeight: '280px',
-    overflowY: 'auto' as const,
-  }
-
-  const itemStyle = (isSelected: boolean) => ({
-    padding: '0.5rem 0.75rem',
-    fontSize: '0.8125rem',
-    color: isSelected ? '#FF8C00' : '#C5C5C5',
-    cursor: 'pointer',
-    background: isSelected ? 'rgba(255,140,0,0.08)' : 'transparent',
-    transition: 'background 0.15s',
-  })
-
   return (
     <div style={{ color: '#E5E5E5' }}>
       {/* 단계 연결 */}
@@ -1263,10 +1178,10 @@ export default function CategoriesPage() {
           <div ref={tableScrollRef} style={{ ...card, overflow: 'auto', maxHeight: 'calc(100vh - 260px)' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
               <thead style={{ position: 'sticky', top: 0, zIndex: 2 }}>
-                <tr style={{ display: 'grid', gridTemplateColumns: gridCols, borderBottom: '1px solid #2D2D2D', background: '#1F1F1F' }}>
+                <tr style={{ display: 'grid', gridTemplateColumns: GRID_COLS, borderBottom: '1px solid #2D2D2D', background: '#1F1F1F' }}>
                   <th style={{ padding: '0.625rem 0.75rem', textAlign: 'center', color: '#888', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', ...stickyHeadA }}>사이트</th>
                   <th style={{ padding: '0.625rem 0.75rem', textAlign: 'center', color: '#888', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', ...stickyHeadB }}>소싱 카테고리</th>
-                  {marketKeys.map(mk => (
+                  {MARKET_KEYS.map(mk => (
                     <th key={mk} style={{ padding: '0.625rem 0.5rem', textAlign: 'center', color: '#888', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', minWidth: 0 }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.125rem', alignItems: 'center' }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem' }}>
@@ -1402,10 +1317,10 @@ export default function CategoriesPage() {
                 ) : null}
                 {/* 최하단 카테고리 선택 + 매핑 없음 → 신규 편집 행 */}
                 {isLeafCategory && filteredMappings.length === 0 && (
-                  <tr style={{ display: 'grid', gridTemplateColumns: gridCols, borderBottom: '1px solid #2D2D2D', background: 'rgba(255,140,0,0.04)', alignItems: 'center' }}>
+                  <tr style={{ display: 'grid', gridTemplateColumns: GRID_COLS, borderBottom: '1px solid #2D2D2D', background: 'rgba(255,140,0,0.04)', alignItems: 'center' }}>
                     <td style={{ padding: '0.5rem 0.75rem', color: '#FFB84D', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', ...stickyColA, background: '#1F1612' }}>{selectedSite}</td>
                     <td style={{ padding: '0.5rem 0.75rem', color: '#E5E5E5', whiteSpace: 'nowrap', overflow: 'hidden', ...stickyColB, background: '#1F1612' }}>{getSourceCategory()}</td>
-                    {marketKeys.map(mk => {
+                    {MARKET_KEYS.map(mk => {
                       const isEditing = inlineFocusedMarket === mk || editingCell?.id === '__new__' && editingCell?.market === mk
                       return (
                         <td key={mk} style={{ padding: '0.25rem 0.5rem', minWidth: 0 }}>
@@ -1456,10 +1371,10 @@ export default function CategoriesPage() {
                 {rowVirtualizer.getVirtualItems().map(virtualRow => {
                   const row = filteredMappings[virtualRow.index]
                   return (
-                    <tr key={row.id} style={{ display: 'grid', gridTemplateColumns: gridCols, borderBottom: '1px solid #2D2D2D', alignItems: 'center' }}>
+                    <tr key={row.id} style={{ display: 'grid', gridTemplateColumns: GRID_COLS, borderBottom: '1px solid #2D2D2D', alignItems: 'center' }}>
                       <td style={{ padding: '0.5rem 0.75rem', color: '#FFB84D', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', ...stickyColA, background: '#161616' }}>{row.source_site}</td>
                       <td style={{ padding: '0.5rem 0.75rem', color: '#E5E5E5', whiteSpace: 'nowrap', overflow: 'hidden', ...stickyColB, background: '#161616' }}>{row.source_category}</td>
-                      {marketKeys.map(mk => {
+                      {MARKET_KEYS.map(mk => {
                         const val = row.target_mappings?.[mk] || ''
                         const isEditing = editingCell?.id === row.id && editingCell?.market === mk
                         return (
@@ -2042,14 +1957,14 @@ export default function CategoriesPage() {
                   <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', cursor: 'pointer' }}>
                     <input
                       type="checkbox"
-                      checked={marketKeys.every(mk => aiSelectedMarkets[mk])}
+                      checked={MARKET_KEYS.every(mk => aiSelectedMarkets[mk])}
                       onChange={e => handleAiMarketSelectAll(e.target.checked)}
                       style={{ accentColor: '#FF8C00' }}
                     />
                     <span style={{ fontSize: '0.8125rem', color: '#E5E5E5', fontWeight: 600 }}>전체 선택</span>
                   </label>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' }}>
-                    {marketKeys.map(mk => (
+                    {MARKET_KEYS.map(mk => (
                       <label key={mk} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.625rem', background: aiSelectedMarkets[mk] ? 'rgba(255,140,0,0.08)' : 'transparent', border: `1px solid ${aiSelectedMarkets[mk] ? 'rgba(255,140,0,0.3)' : '#2D2D2D'}`, borderRadius: '6px', cursor: 'pointer', transition: 'all 0.15s' }}>
                         <input
                           type="checkbox"
@@ -2062,7 +1977,7 @@ export default function CategoriesPage() {
                     ))}
                   </div>
                   <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.75rem' }}>
-                    선택: {fmtNum(marketKeys.filter(mk => aiSelectedMarkets[mk]).length)}개 마켓 · 예상 비용 ₩{fmtNum(COST_PER_CALL_KRW)}
+                    선택: {fmtNum(MARKET_KEYS.filter(mk => aiSelectedMarkets[mk]).length)}개 마켓 · 예상 비용 ₩{fmtNum(COST_PER_CALL_KRW)}
                   </div>
                 </div>
               </>
