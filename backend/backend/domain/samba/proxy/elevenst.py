@@ -1816,10 +1816,26 @@ class ElevenstClient:
   {f"<pluDscCd>{mnp_buy_basis_type}</pluDscCd><pluDscMthdCd>{mnp_buy_dsc_method}</pluDscMthdCd><pluDscBasis>{mnp_buy_qty}</pluDscBasis><pluDscAmtPercnt>{mnp_buy_amt}</pluDscAmtPercnt>" if mnp_buy_yn == "Y" else ""}
   {f"<pluUseLmtDyYn>Y</pluUseLmtDyYn><pluIssStartDy>{mnp_start_dy}</pluIssStartDy><pluIssEndDy>{mnp_end_dy}</pluIssEndDy>" if mnp_buy_yn == "Y" and mnp_period_yn == "Y" and mnp_start_dy and mnp_end_dy else ""}
   {f"<cuponcheck>Y</cuponcheck><dscAmtPercnt>{_discount_rate}</dscAmtPercnt><cupnDscMthdCd>02</cupnDscMthdCd>" if instant_dsc_yn == "Y" else ""}
-  <crtfGrpObjClfCd01>{kc_kids_code}</crtfGrpObjClfCd01>
-  <crtfGrpObjClfCd02>03</crtfGrpObjClfCd02>
-  <crtfGrpObjClfCd03>03</crtfGrpObjClfCd03>
-  <crtfGrpObjClfCd04>05</crtfGrpObjClfCd04>
+  <ProductCertGroup>
+    <crtfGrpTypCd>01</crtfGrpTypCd>
+    <crtfGrpObjClfCd>03</crtfGrpObjClfCd>
+  </ProductCertGroup>
+  <ProductCertGroup>
+    <crtfGrpTypCd>02</crtfGrpTypCd>
+    <crtfGrpObjClfCd>03</crtfGrpObjClfCd>
+  </ProductCertGroup>
+  <ProductCertGroup>
+    <crtfGrpTypCd>03</crtfGrpTypCd>
+    <crtfGrpObjClfCd>03</crtfGrpObjClfCd>
+  </ProductCertGroup>
+  <ProductCertGroup>
+    <crtfGrpTypCd>04</crtfGrpTypCd>
+    <crtfGrpObjClfCd>05</crtfGrpObjClfCd>
+  </ProductCertGroup>
+  <ProductCert>
+    <certTypeCd>131</certTypeCd>
+    <certKey></certKey>
+  </ProductCert>
   {image_xml}
   <htmlDetail><![CDATA[{detail_html.replace("]]>", "]]]]><![CDATA[>")}]]></htmlDetail>
   {option_xml}

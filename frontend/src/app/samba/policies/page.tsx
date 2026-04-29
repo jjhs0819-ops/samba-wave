@@ -1315,6 +1315,26 @@ export default function PoliciesPage() {
             }} style={{ padding: '0.3rem 0.75rem', fontSize: '0.78rem', background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.3)', borderRadius: '6px', color: '#FF8C00', cursor: 'pointer', whiteSpace: 'nowrap' }}>저장</button>
             <button onClick={async () => {
               if (!selectedDetailTemplateId) return
+              const src = detailTemplates.find(x => x.id === selectedDetailTemplateId)
+              if (!src) return
+              try {
+                const created = await detailTemplateApi.create({
+                  name: `${src.name} (복사)`,
+                  main_image_index: src.main_image_index,
+                  top_html: src.top_html,
+                  bottom_html: src.bottom_html,
+                  top_image_s3_key: src.top_image_s3_key,
+                  bottom_image_s3_key: src.bottom_image_s3_key,
+                  img_checks: src.img_checks,
+                  img_order: src.img_order,
+                })
+                setDetailTemplates(prev => [created, ...prev])
+                setSelectedDetailTemplateId(created.id)
+                showAlert('템플릿이 복사되었습니다.', 'success')
+              } catch { showAlert('복사 실패', 'error') }
+            }} style={{ padding: '0.3rem 0.75rem', fontSize: '0.78rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', color: '#4C9AFF', cursor: 'pointer', whiteSpace: 'nowrap' }}>복사</button>
+            <button onClick={async () => {
+              if (!selectedDetailTemplateId) return
               await detailTemplateApi.delete(selectedDetailTemplateId).catch(() => {})
               setDetailTemplates(prev => prev.filter(x => x.id !== selectedDetailTemplateId))
               setSelectedDetailTemplateId('')
@@ -1656,6 +1676,28 @@ export default function PoliciesPage() {
                 }
               } catch { showAlert('저장 실패', 'error') }
             }} style={{ padding: '0.3rem 0.75rem', fontSize: '0.78rem', background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.3)', borderRadius: '6px', color: '#FF8C00', cursor: 'pointer', whiteSpace: 'nowrap' }}>저장</button>
+            <button onClick={async () => {
+              if (!selectedNameRuleId) return
+              const src = nameRulesRef.current.find(x => x.id === selectedNameRuleId)
+              if (!src) return
+              try {
+                const created = await nameRuleApi.create({
+                  name: `${src.name} (복사)`,
+                  prefix: src.prefix,
+                  suffix: src.suffix,
+                  replacements: src.replacements,
+                  replace_mode: src.replace_mode,
+                  option_rules: src.option_rules,
+                  name_composition: src.name_composition,
+                  market_name_compositions: src.market_name_compositions,
+                  brand_display: src.brand_display,
+                  dedup_enabled: src.dedup_enabled,
+                })
+                setNameRules(prev => [created, ...prev])
+                setSelectedNameRuleId(created.id)
+                showAlert('규칙이 복사되었습니다.', 'success')
+              } catch { showAlert('복사 실패', 'error') }
+            }} style={{ padding: '0.3rem 0.75rem', fontSize: '0.78rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', color: '#4C9AFF', cursor: 'pointer', whiteSpace: 'nowrap' }}>복사</button>
             <button onClick={async () => {
               if (!selectedNameRuleId) return
               await nameRuleApi.delete(selectedNameRuleId).catch(() => {})
