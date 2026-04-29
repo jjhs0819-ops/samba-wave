@@ -343,12 +343,16 @@ export default function ProductsPage() {
   }, [totalPages, loadProducts])
 
   // pageSize 변경 시 1페이지로 리셋 (초기 로드 제외)
+  // loadProducts를 deps에 넣으면 currentPage 변경 → loadProducts 재생성 → 이 effect가 발화하여
+  // 2/3페이지로 이동해도 강제로 1페이지로 되돌리는 버그가 발생. pageSize만 감지해야 함.
   const pageSizeInitRef = useRef(true)
   useEffect(() => {
     if (!queryReady) return
     if (pageSizeInitRef.current) { pageSizeInitRef.current = false; return }
+    setCurrentPage(1)
     loadProducts(1)
-  }, [queryReady, pageSize, loadProducts])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queryReady, pageSize])
 
   // highlight 시 해당 상품만 표시, 아니면 전체
   const products = highlightProductId
