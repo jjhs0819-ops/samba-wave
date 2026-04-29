@@ -814,27 +814,35 @@ class ImageTransformService:
         "image.musinsa.com",
     )
 
-    async def mirror_external_to_r2(self, urls: list[str]) -> list[str]:
+    async def mirror_external_to_r2(
+        self, urls: list[str]
+    ) -> tuple[list[str], dict[str, str]]:
         """차단 도메인의 이미지 URL을 R2로 미러링하여 R2 URL로 치환.
 
         - msscdn.net 등 referer/hotlink 차단 도메인만 다운로드 후 R2 업로드
         - 이미 R2 publicUrl 도메인이거나 차단 대상이 아니면 원본 URL 유지
         - 다운로드/업로드 실패 시 해당 URL은 결과에서 제외(드롭)
         - 원본 포맷(MIME) 보존: webp 변환 없이 그대로 저장
+
+        반환:
+            - list[str]: 치환 결과 URL 리스트 (실패는 드롭)
+            - dict[str, str]: (원본 → R2) 매핑. 실제 미러링된 항목만 포함.
+              상세 HTML 문자열 안의 차단 URL을 일괄 치환할 때 사용.
         """
         from urllib.parse import urlparse
 
         if not urls:
-            return []
+            return [], {}
 
         r2 = await self._get_r2_client()
         if not r2:
-            # R2 설정이 없으면 미러 불가 — 원본 그대로 반환
-            return list(urls)
+            # R2 설정이 없으면 미러 불가 — 원본 그대로 반환, 매핑 없음
+            return list(urls), {}
         client, bucket_name, public_url = r2
         public_host = urlparse(public_url).netloc if public_url else ""
 
         result: list[str] = []
+        url_map: dict[str, str] = {}
         for url in urls:
             if not url:
                 continue
@@ -879,12 +887,55 @@ class ImageTransformService:
                             ExtraArgs={"ContentType": mime},
                         ),
                     )
-                result.append(f"{public_url}/{key}")
+                mirrored = f"{public_url}/{key}"
+                result.append(mirrored)
+                url_map[url] = mirrored
             except Exception as e:
                 logger.warning(f"[이미지미러] 실패로 드롭: {url} — {e}")
                 continue
 
-        return result
+        return result, url_map
+
+    @staticmethod
+    def is_hotlink_blocked_url(url: str) -> bool:
+        """detail_html 문자열에서 차단 도메인 URL을 식별할 때 사용."""
+        if not url:
+            return False
+        from urllib.parse import urlparse
+
+        host = (urlparse(url).netloc or "").lower()
+        return any(
+            blocked in host for blocked in ImageTransformService._HOTLINK_BLOCKED_HOSTS
+        )
+
+    async def mirror_urls_in_html(self, html: str) -> str:
+        """HTML 문자열 내부의 차단 도메인 이미지 URL을 R2 미러 URL로 치환.
+
+        detail_html처럼 사전 생성된 HTML 안의 <img src="..."> URL이 미러링을
+        우회하여 11번가 서버에 워터마크 응답을 받는 것을 방지.
+        """
+        if not html:
+            return html
+        import re as _re
+
+        # src="...", src='...' 매칭 — 양쪽 따옴표 모두 처리
+        pattern = _re.compile(r'src=(["\'])(https?://[^"\']+)\1', _re.IGNORECASE)
+        candidates: list[str] = []
+        for m in pattern.finditer(html):
+            url = m.group(2)
+            if self.is_hotlink_blocked_url(url) and url not in candidates:
+                candidates.append(url)
+        if not candidates:
+            return html
+
+        _, url_map = await self.mirror_external_to_r2(candidates)
+        if not url_map:
+            return html
+
+        new_html = html
+        for orig, new in url_map.items():
+            new_html = new_html.replace(orig, new)
+        return new_html
 
     async def transform_single_image(
         self,

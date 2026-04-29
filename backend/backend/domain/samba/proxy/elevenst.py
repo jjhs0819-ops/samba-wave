@@ -696,94 +696,61 @@ class ElevenstClient:
         return await self._get_area_addresses("inboundarea")
 
     async def get_dispatch_templates(self) -> list[dict[str, str]]:
-        """발송예정일 템플릿 목록 조회 (베스트 에포트).
+        """발송마감 템플릿 목록 조회.
 
-        11번가 셀러오피스 > 상품관리 > 상품정보 템플릿 관리에 등록된
-        '발송예정일 템플릿' 목록을 가져온다.
+        11번가 OpenAPI 공식 스펙:
+          GET /rest/prodservices/sendCloseList
+          응답: <productInformationTemplateList><templateBOList>...
 
-        주의: 공식 OpenAPI 엔드포인트가 코드베이스/문서에서 미확인 상태.
-        몇 가지 추정 URL을 순차 시도하고, 모두 실패 시 빈 리스트 반환.
-        404/실패는 정상 동작으로 간주(상위 호출자가 graceful 처리).
-
-        반환 항목 구조 (확정 후 정제 예정):
-            - tmpltNo: 템플릿 번호
-            - tmpltNm: 템플릿명
-            - reprYn:  대표 여부(Y/N)
+        반환 항목 구조 (호출부 호환을 위해 키명 유지):
+            - tmpltNo: 템플릿번호 (prdInfoTmpltNo)
+            - tmpltNm: 템플릿명 (prdInfoTmpltNm)
+            - reprYn:  대표마감시간 설정 유무 (repCloseTimeYn, Y/N)
         """
         from xml.etree import ElementTree as ET
 
-        # 후보 URL — 11번가 OpenAPI 패턴 기반 추정. 첫 성공 응답 사용.
-        candidates = [
-            "https://api.11st.co.kr/rest/prodtmplmst/prdshipscheduletmpl",
-            "https://api.11st.co.kr/rest/prodtmplservices/prdshipscheduletmpl",
-            "https://api.11st.co.kr/rest/prodtmplmst/shipscheduletmpl",
-        ]
+        url = "https://api.11st.co.kr/rest/prodservices/sendCloseList"
         headers = self._headers()
         client = _get_elevenst_http_client(self.api_key)
 
-        for url in candidates:
-            try:
-                resp = await client.get(url, headers=headers)
-            except Exception as exc:
-                logger.warning("[11번가] 발송템플릿 후보 호출 실패 %s: %s", url, exc)
+        try:
+            resp = await client.get(url, headers=headers)
+        except Exception as exc:
+            logger.warning("[11번가] 발송마감 템플릿 호출 실패: %s", exc)
+            return []
+
+        logger.info(
+            "[11번가] GET /rest/prodservices/sendCloseList → %s", resp.status_code
+        )
+        if not resp.is_success:
+            return []
+
+        xml_text = resp.text.replace("ns2:", "")
+        try:
+            root = ET.fromstring(xml_text)
+        except ET.ParseError as exc:
+            logger.warning("[11번가] 발송마감 템플릿 XML 파싱 실패: %s", exc)
+            return []
+
+        templates: list[dict[str, str]] = []
+        for el in root.findall(".//templateBOList"):
+            tmplt_no = (el.findtext("prdInfoTmpltNo") or "").strip()
+            if not tmplt_no:
                 continue
+            templates.append(
+                {
+                    "tmpltNo": tmplt_no,
+                    "tmpltNm": (el.findtext("prdInfoTmpltNm") or "").strip(),
+                    "reprYn": (el.findtext("repCloseTimeYn") or "N").strip(),
+                }
+            )
+        if templates:
+            logger.info("[11번가] 발송마감 템플릿 %d건", len(templates))
+        else:
             logger.info(
-                "[11번가] GET %s → %s",
-                url.replace("https://api.11st.co.kr", ""),
-                resp.status_code,
+                "[11번가] 발송마감 템플릿 0건 — 셀러오피스에 등록된 템플릿 없음"
             )
-            if not resp.is_success:
-                continue
-            xml_text = resp.text.replace("ns2:", "")
-            try:
-                root = ET.fromstring(xml_text)
-            except ET.ParseError:
-                continue
-            # 결과 코드 검증
-            result_msg = root.findtext("result_message", "") or root.findtext(
-                "resultMessage", ""
-            )
-            if result_msg and result_msg.upper() not in ("SUCCESS", "OK"):
-                continue
-            # 후보 노드명들 — 첫 매칭 사용
-            templates: list[dict[str, str]] = []
-            for tag in (
-                "shipScheduleTmplt",
-                "prdshipscheduletmpl",
-                "shipscheduletmpl",
-                "tmplt",
-            ):
-                for el in root.findall(f".//{tag}"):
-                    item = {
-                        "tmpltNo": (
-                            el.findtext("tmpltNo")
-                            or el.findtext("prdshipscheduletmpltNo")
-                            or el.findtext("schdlTmpltNo")
-                            or ""
-                        ).strip(),
-                        "tmpltNm": (
-                            el.findtext("tmpltNm")
-                            or el.findtext("prdshipscheduletmpltNm")
-                            or el.findtext("schdlTmpltNm")
-                            or ""
-                        ).strip(),
-                        "reprYn": (
-                            el.findtext("reprYn") or el.findtext("dprstYn") or "N"
-                        ).strip(),
-                    }
-                    if item["tmpltNo"]:
-                        templates.append(item)
-                if templates:
-                    break
-            if templates:
-                logger.info(
-                    "[11번가] 발송예정일 템플릿 %d건 (URL=%s)",
-                    len(templates),
-                    url,
-                )
-                return templates
-        logger.info("[11번가] 발송예정일 템플릿 조회 미지원 — 모든 후보 URL 실패")
-        return []
+        return templates
 
     async def _get_area_addresses(self, area_type: str) -> list[dict[str, str]]:
         """출고지/반품지 주소 조회 공통 메서드."""
@@ -1597,6 +1564,9 @@ class ElevenstClient:
         delivery_fee = int(cfg.get("deliveryFee", 0) or 0)
         return_fee = int(cfg.get("returnFee", 4000) or 4000)
         exchange_fee = int(cfg.get("exchangeFee", 8000) or 8000)
+        # 제주/도서산간 추가배송비 — 11번가 등록 XML 필수 항목
+        jeju_fee = int(cfg.get("jejuFee", 0) or 0)
+        island_fee = int(cfg.get("islandFee", 0) or 0)
         ship_from = cfg.get("shipFromAddress", "")
         return_addr = cfg.get("returnAddress", "")
         # 계정 설정 origin이 '기타'이면 무시하고 상품 실제 원산지 우선 사용
@@ -1758,6 +1728,8 @@ class ElevenstClient:
   <dlvGrntYn>Y</dlvGrntYn>
   {f"<dlvSendCloseTmpltNo>{_escape_xml(str(cfg.get('dispatchTemplateNo', '')).strip())}</dlvSendCloseTmpltNo>" if str(cfg.get("dispatchTemplateNo", "")).strip() else ""}
   <dlvCstInstBasiCd>{delivery_type}</dlvCstInstBasiCd>
+  <jejuDlvCst>{jeju_fee}</jejuDlvCst>
+  <islandDlvCst>{island_fee}</islandDlvCst>
   <rtngdDlvCst>{return_fee}</rtngdDlvCst>
   <exchDlvCst>{exchange_fee}</exchDlvCst>
   <dlvBsPlc>{_escape_xml(ship_from)}</dlvBsPlc>

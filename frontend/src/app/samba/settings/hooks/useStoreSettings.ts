@@ -26,6 +26,7 @@ export interface StoreSettingsState {
   esmDispatchOptions: Record<string, { value: string; label: string }[]>
   lotteonDeliveryPolicyOptions: { value: string; label: string }[]
   lotteonWarehouseOptions: { departure: { value: string; label: string }[]; return_: { value: string; label: string }[] }
+  elevenstDispatchTemplateOptions: { value: string; label: string }[]
   networkIps: { web: string; local: string }
   networkIpStatus: string
   coupangOutboundList: Array<{ code: string; name: string; address: string }>
@@ -49,6 +50,7 @@ export interface StoreSettingsActions {
   setEsmDispatchOptions: React.Dispatch<React.SetStateAction<Record<string, { value: string; label: string }[]>>>
   setLotteonDeliveryPolicyOptions: React.Dispatch<React.SetStateAction<{ value: string; label: string }[]>>
   setLotteonWarehouseOptions: React.Dispatch<React.SetStateAction<{ departure: { value: string; label: string }[]; return_: { value: string; label: string }[] }>>
+  setElevenstDispatchTemplateOptions: React.Dispatch<React.SetStateAction<{ value: string; label: string }[]>>
   setCoupangOutboundList: React.Dispatch<React.SetStateAction<Array<{ code: string; name: string; address: string }>>>
   setCoupangInboundList: React.Dispatch<React.SetStateAction<Array<{ code: string; name: string; address: string; address_detail: string; zipcode: string; phone: string }>>>
   loadCoupangShippingPlaces: (accountId?: string) => Promise<void>
@@ -73,6 +75,7 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
   const [esmDispatchOptions, setEsmDispatchOptions] = useState<Record<string, { value: string; label: string }[]>>({})
   const [lotteonDeliveryPolicyOptions, setLotteonDeliveryPolicyOptions] = useState<{ value: string; label: string }[]>([])
   const [lotteonWarehouseOptions, setLotteonWarehouseOptions] = useState<{ departure: { value: string; label: string }[]; return_: { value: string; label: string }[] }>({ departure: [], return_: [] })
+  const [elevenstDispatchTemplateOptions, setElevenstDispatchTemplateOptions] = useState<{ value: string; label: string }[]>([])
   const [networkIps, setNetworkIps] = useState({ web: '', local: '' })
   const [networkIpStatus, setNetworkIpStatus] = useState('')
   const [coupangOutboundList, setCoupangOutboundList] = useState<Array<{ code: string; name: string; address: string }>>([])
@@ -120,8 +123,11 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
       }
       withDefaults[market.key] = base
     }
+    // [근본수정] storeData(폼)는 mount 시 빈 상태로 시작 — store_${marketKey} 싱글톤은
+    // 다계정일 때 마지막 저장값만 갖고 있어서 폼 prefill 시 다른 계정을 silent overwrite하는 사고 원인.
+    // 기존 계정 편집은 ConnectedAccountsList의 "수정" 버튼으로만 진입. 빈 폼 = 신규 등록.
+    // savedStoreData는 SSG/롯데ON/11번가 탭 진입 시 apiKey 체크용으로만 유지.
     setSavedStoreData(withDefaults)
-    setStoreData(withDefaults)
     setStoreStatus(statuses)
   }, [])
 
@@ -200,23 +206,20 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
         }
 
         if (editingAccountId) {
-          // 수정 모드: 해당 계정 업데이트
+          // 수정 모드: 해당 계정만 업데이트
           await accountApi.update(editingAccountId, accountData)
-          setEditingAccountId(null)
         } else {
-          // 신규: 동일 seller_id 계정이 있으면 업데이트, 없으면 생성
-          const existing = accounts.find(a => a.market_type === marketKey && a.seller_id === sellerId)
-          if (existing) {
-            await accountApi.update(existing.id, accountData)
-          } else {
-            await accountApi.create(accountData)
-          }
+          // [근본수정] 신규 모드: 무조건 CREATE.
+          // 과거 find-by-seller_id 휴리스틱은 다계정 운영 시 stale state로 다른 계정을 덮어쓰는 사고를 일으킴
+          // (가디·도놀 동시 등록 시 도놀 record가 가디 값으로 silent UPDATE되는 버그)
+          await accountApi.create(accountData)
         }
         await loadAccounts()
       }
-      // 저장 후 savedStoreData 갱신 + 폼에 저장된 값 유지
+      // [근본수정] 저장 후 폼·편집상태 완전 비움 → 빈 폼 = 다음 신규 등록 진입점
+      // 직전 저장값을 폼에 유지하면 사용자가 일부 필드만 바꿔 저장 시 silent overwrite 위험
       setSavedStoreData(prev => ({ ...prev, [marketKey]: { ...data } }))
-      setStoreData(prev => ({ ...prev, [marketKey]: { ...data } }))
+      setStoreData(prev => { const next = { ...prev }; delete next[marketKey]; return next })
       setStoreStatus(prev => ({ ...prev, [marketKey]: '연결됨' }))
       setEditingAccountId(null)
 
@@ -352,10 +355,45 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
       }).catch(() => {})
   }, [storeTab, savedStoreData, storeData, lotteonDeliveryPolicyOptions.length, lotteonWarehouseOptions.departure.length])
 
-  const handleAccountToggle = async (id: string) => { await accountApi.toggle(id); loadAccounts() }
+  // 11번가 탭 진입 시 발송마감 템플릿 자동 로드 (출고지 정보 응답에 포함)
+  useEffect(() => {
+    if (storeTab !== '11st') return
+    if (elevenstDispatchTemplateOptions.length > 0) return
+    const d = savedStoreData['11st'] || storeData['11st'] || {}
+    if (!d.apiKey) return
+    proxyApi.elevenstSellerInfo()
+      .then((res) => {
+        const list = res.success ? res.data?.dispatchTemplateList : null
+        if (Array.isArray(list)) {
+          setElevenstDispatchTemplateOptions(
+            list.map((t) => ({
+              value: t.tmpltNo,
+              label: t.reprYn === 'Y' ? `${t.tmpltNm} (대표)` : t.tmpltNm,
+            }))
+          )
+        }
+      }).catch(() => {})
+  }, [storeTab, savedStoreData, storeData, elevenstDispatchTemplateOptions.length])
+
+  const handleAccountToggle = async (id: string) => {
+    await accountApi.toggle(id)
+    // 낙관적: 토글 즉시 로컬에서 is_active 반전 → UI 즉시 갱신
+    setAccounts(prev => prev.map(a => a.id === id ? { ...a, is_active: !a.is_active } : a))
+    await loadAccounts()
+  }
   const handleAccountDelete = async (id: string) => {
     if (!await showConfirm('삭제하시겠습니까?')) return
-    await accountApi.delete(id); loadAccounts()
+    await accountApi.delete(id)
+    // [근본수정] 낙관적 갱신: 삭제 즉시 로컬에서 제거 → 새로고침 없이 UI 반영.
+    // 기존엔 loadAccounts()를 await 없이 호출했고, 읽기 복제본 lag으로 막 삭제된 row가 list에 그대로
+    // 잡혀 새로고침 전까지 카드가 안 사라지는 버그.
+    setAccounts(prev => prev.filter(a => a.id !== id))
+    // 편집 중이던 계정이 삭제되면 폼·편집상태도 비움
+    if (editingAccountId === id) {
+      setEditingAccountId(null)
+      setStoreData(prev => { const next = { ...prev }; delete next[storeTab]; return next })
+    }
+    await loadAccounts()
   }
 
   const togglePasswordVisibility = (key: string) => {
@@ -381,6 +419,7 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
     esmDispatchOptions,
     lotteonDeliveryPolicyOptions,
     lotteonWarehouseOptions,
+    elevenstDispatchTemplateOptions,
     networkIps,
     networkIpStatus,
     coupangOutboundList,
@@ -402,6 +441,7 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
     setEsmDispatchOptions,
     setLotteonDeliveryPolicyOptions,
     setLotteonWarehouseOptions,
+    setElevenstDispatchTemplateOptions,
     setCoupangOutboundList,
     setCoupangInboundList,
     loadCoupangShippingPlaces,

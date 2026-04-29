@@ -448,6 +448,14 @@ async def enrich_product(
     _src = product.source_site or ""
     plugin = SOURCING_PLUGINS.get(_src) or SOURCING_PLUGINS.get(_src.upper())
     if plugin and product.site_product_id:
+        # 수동 enrich 컨텍스트 마킹 — SSG 등 plugin.refresh 내부에서
+        # owner_device_id="" 분기 트리거 (어떤 PC 확장앱이든 처리 가능).
+        # ContextVar 기본값은 "autotune"이므로 명시 set 필수.
+        from backend.domain.samba.collector.refresher import (
+            _current_refresh_source,
+        )
+
+        _ctx_token = _current_refresh_source.set("manual")
         try:
             # 롯데ON: benefits API 쿠키 캐시 로드
             if _src.upper() == "LOTTEON":
@@ -592,6 +600,8 @@ async def enrich_product(
             }
         except Exception as e:
             raise HTTPException(502, f"{product.source_site} 갱신 실패: {e}")
+        finally:
+            _current_refresh_source.reset(_ctx_token)
 
     raise HTTPException(
         400, f"'{product.source_site}' 상세 보강은 아직 지원하지 않습니다"

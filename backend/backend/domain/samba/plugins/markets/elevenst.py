@@ -148,19 +148,27 @@ class ElevenstPlugin(MarketPlugin):
 
         # 무신사 등 referer 차단 CDN URL을 R2로 미러링
         # — 11번가는 등록 URL을 자체 서버가 fetch하므로 핫링크 차단 시 워터마크 이미지로 캐싱됨
+        # — detail_html은 shipment service에서 미러링 이전에 생성되므로
+        #   문자열 내부 <img src="..."> 도 같이 치환해야 워터마크 회피가 완성됨.
         try:
             from backend.domain.samba.image.service import ImageTransformService
 
             _img_svc = ImageTransformService(session)
             _images = product.get("images") or []
             _detail_images = product.get("detail_images") or []
-            if _images or _detail_images:
+            _detail_html = product.get("detail_html") or ""
+            if _images or _detail_images or _detail_html:
                 product = dict(product)  # 원본 dict 변형 방지
                 if _images:
-                    product["images"] = await _img_svc.mirror_external_to_r2(_images)
+                    product["images"], _ = await _img_svc.mirror_external_to_r2(_images)
                 if _detail_images:
-                    product["detail_images"] = await _img_svc.mirror_external_to_r2(
-                        _detail_images
+                    (
+                        product["detail_images"],
+                        _,
+                    ) = await _img_svc.mirror_external_to_r2(_detail_images)
+                if _detail_html:
+                    product["detail_html"] = await _img_svc.mirror_urls_in_html(
+                        _detail_html
                     )
                 if not product.get("images"):
                     return {

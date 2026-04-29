@@ -101,10 +101,17 @@ class SSGPlugin(SourcingPlugin):
 
             # SSG는 서버사이드 직접 HTTP 차단 → 확장앱 위임 (worker.py 동일 패턴)
             # 타임아웃 60초: 병렬 처리(3개 탭) + reCAPTCHA/AJAX 지연을 감안해 충분한 여유 확보
-            # owner_device_id="" 강제 — 수동 enrich(상품관리 업데이트)는 오토튠 글로벌
-            # owner 잔존 영향을 받지 않도록 어떤 확장앱이든 처리 가능하게 한다.
+            # 호출 컨텍스트에 따라 owner 분기:
+            #   - manual(상품관리 업데이트 버튼) → owner_device_id="" (어느 PC든 처리 가능)
+            #   - autotune/transmit → None(=오토튠 글로벌 owner) → 실행 PC 1대만 처리
+            #     → 모든 PC 확장앱이 동시에 SSG 탭 여는 현상 방지
+            from backend.domain.samba.collector.refresher import (
+                _current_refresh_source,
+            )
+
+            _owner = "" if _current_refresh_source.get() == "manual" else None
             _req_id, _future = SourcingQueue.add_detail_job(
-                "SSG", site_product_id, owner_device_id=""
+                "SSG", site_product_id, owner_device_id=_owner
             )
             _ext_result = await asyncio.wait_for(_future, timeout=60)
 

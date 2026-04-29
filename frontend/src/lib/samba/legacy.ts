@@ -1017,7 +1017,21 @@ export const proxyApi = {
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/11st/auth-test`, { method: 'POST' }),
   elevenstSellerInfo: () =>
-    request<{ success: boolean; message: string; data?: Record<string, string> }>(
+    request<{
+      success: boolean
+      message: string
+      data?: {
+        shipFromAddress?: string
+        returnAddress?: string
+        returnFee?: string
+        exchangeFee?: string
+        dispatchTemplateNo?: string
+        dispatchTemplateName?: string
+        dispatchTemplateList?: Array<{ tmpltNo: string; tmpltNm: string; reprYn?: string }>
+        outboundList?: unknown
+        inboundList?: unknown
+      }
+    }>(
       `${SAMBA_PREFIX}/proxy/11st/seller-info`, { method: 'POST' }),
   coupangAuthTest: () =>
     request<{ success: boolean; message: string }>(

@@ -287,7 +287,7 @@ export const STORE_MARKETS: MarketConfig[] = [
     { name: 'islandFee', label: '도서지역 추가배송비', type: 'number', placeholder: '5000' },
     { name: 'shipFromAddress', label: '출고지 주소', type: 'text', placeholder: '출고지 주소 입력' },
     { name: 'returnAddress', label: '반품지 주소', type: 'text', placeholder: '반품지 주소 입력' },
-    { name: 'dispatchTemplateNo', label: '발송정책', type: 'text', placeholder: '발송예정일 템플릿 번호 (셀러오피스 > 상품정보 템플릿 관리)' },
+    { name: 'dispatchTemplateNo', label: '발송정책', type: 'elevenst-dispatch-select' },
     { name: 'origin', label: '원산지', type: 'text', placeholder: '기타' },
     { name: 'returnExchangeGuide', label: '반품/교환 안내', type: 'text', placeholder: '상세페이지 참조' },
     { name: 'minorRestrict', label: '청소년구매불가', type: 'select', options: [

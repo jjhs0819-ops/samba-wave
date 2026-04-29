@@ -18,6 +18,7 @@ type Props = StoreSettingsState & Pick<StoreSettingsActions,
   'setStoreTab' | 'setStoreData' | 'setSsgShippingOptions' | 'setSsgAddrOptions' |
   'setEsmPlaceOptions' | 'setEsmDispatchOptions' |
   'setLotteonDeliveryPolicyOptions' | 'setLotteonWarehouseOptions' |
+  'setElevenstDispatchTemplateOptions' |
   'setCoupangOutboundList' | 'setCoupangInboundList' | 'loadCoupangShippingPlaces' |
   'setEditingAccountId' | 'setVisiblePasswords' | 'setNetworkIps' | 'saveNetworkIps'
 >
@@ -29,6 +30,7 @@ export function StoreSettingsPanel(props: Props) {
     ssgShippingOptions, ssgAddrOptions,
     esmPlaceOptions, esmDispatchOptions,
     lotteonDeliveryPolicyOptions, lotteonWarehouseOptions,
+    elevenstDispatchTemplateOptions,
     networkIps, networkIpStatus, coupangOutboundList, coupangInboundList,
     updateStoreField, saveNetworkIps, saveStoreSettings, testStoreAuth,
     handleAccountDelete, togglePasswordVisibility,
@@ -36,6 +38,7 @@ export function StoreSettingsPanel(props: Props) {
     setSsgShippingOptions, setSsgAddrOptions,
     setEsmPlaceOptions, setEsmDispatchOptions,
     setLotteonDeliveryPolicyOptions, setLotteonWarehouseOptions,
+    setElevenstDispatchTemplateOptions,
     setCoupangOutboundList, setCoupangInboundList, loadCoupangShippingPlaces,
     setEditingAccountId, setNetworkIps,
   } = props
@@ -401,6 +404,15 @@ export function StoreSettingsPanel(props: Props) {
                       <option value=''>-- 불러오기 버튼으로 선택 --</option>
                       {lotteonWarehouseOptions.return_.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                     </select>
+                  ) : field.type === 'elevenst-dispatch-select' ? (
+                    <select
+                      style={{ ...inputStyle, flex: 1 }}
+                      value={storeData[market.key]?.[field.name] || ''}
+                      onChange={(e) => updateStoreField(market.key, field.name, e.target.value)}
+                    >
+                      <option value=''>-- 출고지정보 가져오기로 자동 로드 --</option>
+                      {elevenstDispatchTemplateOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
                   ) : field.type === 'select' ? (
                     <select
                       style={{ ...inputStyle, flex: 1 }}
@@ -509,7 +521,16 @@ export function StoreSettingsPanel(props: Props) {
                             if (d.returnFee) updateStoreField('11st', 'returnFee', d.returnFee)
                             if (d.exchangeFee) updateStoreField('11st', 'exchangeFee', d.exchangeFee)
                             if (d.dispatchTemplateNo) updateStoreField('11st', 'dispatchTemplateNo', d.dispatchTemplateNo)
-                            const tplCount = Array.isArray(d.dispatchTemplateList) ? d.dispatchTemplateList.length : 0
+                            const tplList = Array.isArray(d.dispatchTemplateList) ? d.dispatchTemplateList : []
+                            if (tplList.length > 0) {
+                              setElevenstDispatchTemplateOptions(
+                                tplList.map((t) => ({
+                                  value: t.tmpltNo,
+                                  label: t.reprYn === 'Y' ? `${t.tmpltNm} (대표)` : t.tmpltNm,
+                                }))
+                              )
+                            }
+                            const tplCount = tplList.length
                             const tplMsg = tplCount > 0
                               ? ` (발송정책 템플릿 ${fmtNum(tplCount)}건${d.dispatchTemplateName ? ` — 대표: ${d.dispatchTemplateName}` : ''})`
                               : ''
