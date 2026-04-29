@@ -1632,6 +1632,8 @@ export default function ProductsPage() {
                   const maxPolls = Math.min(Math.max(720, ids.length * 60 + 360), 17280)
                   let lastLoggedPid = ''
                   let lastLoggedCur = -1
+                  let lastImgLogPoll = 0  // 이미지 진행 로그(상품 정체 시) 마지막 추가 pollCount
+                  let lastImgCur = -1
                   while (pollCount < maxPolls && !aiJobAbortRef.current) {
                     await new Promise(r => setTimeout(r, 5000))
                     pollCount++
@@ -1647,10 +1649,10 @@ export default function ProductsPage() {
                         ? ` (${fmt(Math.max(imgCur, 0))}/${fmt(imgTot)}장)`
                         : ''
                       setAiJobTitle(`배경제거 [${fmt(Math.min(cur + 1, tot))}/${fmt(tot)}]${titleProgress}`)
-                      // pending 상태 감지 — 워커 미실행 경고
-                      if (st.status === 'pending') {
-                        if (pollCount === 6) addLog(`[${ts()}] ⚠️ 워커가 아직 작업을 수신하지 못했습니다`)
-                        if (pollCount === 18) addLog(`[${ts()}] ❌ 워커가 응답하지 않습니다. local_bg_worker.py 실행 여부를 확인해주세요`)
+                      // pending 상태 감지 — 워커 자체가 죽었을 때만 경고 (다른 잡 처리 중이면 heartbeat 신선해서 bgWorkerAlive=true)
+                      if (st.status === 'pending' && bgActiveLoaded && !bgWorkerAlive) {
+                        if (pollCount === 6) addLog(`[${ts()}] ⚠️ 로컬 워커가 응답하지 않습니다 — 워치독이 1분 안에 자동 부활합니다`)
+                        if (pollCount === 18) addLog(`[${ts()}] ❌ 워커 부활 실패 — install.bat 재실행 필요할 수 있음`)
                       }
                       // 새 상품 진입 시점에 1줄 로그 — pid 변경 또는 cur 증가 둘 중 하나만 되어도 로그
                       const pidChanged = !!stPid && stPid !== lastLoggedPid
@@ -1667,6 +1669,18 @@ export default function ProductsPage() {
                         addLog(`[${ts()}] [${fmt(Math.min(cur + 1, tot))}/${fmt(tot)}] ${label}${totalImg}`)
                         lastLoggedPid = stPid
                         lastLoggedCur = cur
+                        lastImgLogPoll = pollCount
+                        lastImgCur = imgCur
+                      } else if (
+                        st.status === 'running'
+                        && imgCur > lastImgCur
+                        && pollCount - lastImgLogPoll >= 6  // 같은 상품 처리 30초 이상 정체 시
+                        && imgTot > 0
+                      ) {
+                        // 한 상품에서 이미지 처리가 길어질 때 진행 표시 (rembg 폴백 등)
+                        addLog(`[${ts()}] ⏳ 처리 중 — ${fmt(imgCur)}/${fmt(imgTot)}장`)
+                        lastImgLogPoll = pollCount
+                        lastImgCur = imgCur
                       }
                       if (st.status === 'completed') {
                         success = st.total_transformed || 0

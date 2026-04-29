@@ -1033,9 +1033,15 @@ export default function CategoriesPage() {
   // 마켓 키 목록
   const sourceAdjacentMarkets = ['smartstore', 'lotteon']
   const orderedAdjacentMarkets = ['smartstore', 'lotteon', '11st']
+  // 카테고리 매핑 미지원 마켓 제외 (예: 무신사 — hasCategory: false)
+  const noCategoryMarkets = new Set(
+    MARKETS.filter(m => m.hasCategory === false).map(m => m.id),
+  )
   const marketKeys = [
-    ...orderedAdjacentMarkets.filter(mk => MARKET_LABELS[mk]),
-    ...Object.keys(MARKET_LABELS).filter(mk => !orderedAdjacentMarkets.includes(mk)),
+    ...orderedAdjacentMarkets.filter(mk => MARKET_LABELS[mk] && !noCategoryMarkets.has(mk)),
+    ...Object.keys(MARKET_LABELS).filter(
+      mk => !orderedAdjacentMarkets.includes(mk) && !noCategoryMarkets.has(mk),
+    ),
   ]
   const gridCols = `80px 299px ${marketKeys.map(() => '300px').join(' ')} 40px`
 

@@ -1504,39 +1504,10 @@ JSON만:
                             f"[매핑-룰] {site} > {leaf_path} → {mk}: {rule_result} (성별:{gender})"
                         )
 
-            # ── 2단계: 유사도 매칭 (룰에서 못 찾은 마켓만, MUSINSA→롯데ON 제외) ──
-            # ESM(지마켓/옥션): SS 매핑이 있으면 SS 결과를 브릿지로 사용
-            # MUSINSA 소싱처는 카테고리 어휘 차이로 유사도 오류 유발 → 룰 미스 시 AI 위임
-            # 그 외 소싱처(GSSHOP, ABCmart 등)는 롯데ON 유사도 매칭 허용
-            ss_mapped = current_targets.get("smartstore") or resolved.get(
-                "smartstore", ""
-            )
-            for mk in list(missing_markets):
-                if mk in resolved:
-                    continue
-                if mk == "lotteon" and site == "MUSINSA":
-                    continue
-                mk_cats = (
-                    ss_cats
-                    if mk == "smartstore"
-                    else _filter_to_leaves(await self._get_market_categories(mk))
-                )
-                if mk_cats:
-                    # ESM 마켓은 SS 매핑 결과를 브릿지로 사용 (SS 카테고리 이름이 ESM과 더 유사)
-                    if mk in ("gmarket", "auction") and ss_mapped:
-                        sim_result = _similarity_match_smartstore(ss_mapped, mk_cats)
-                        if sim_result:
-                            resolved[mk] = sim_result
-                            logger.info(
-                                f"[매핑-SS브릿지] {leaf_path} → SS:{ss_mapped[:30]} → {mk}: {sim_result}"
-                            )
-                            continue
-                    sim_result = _similarity_match_smartstore(leaf_path, mk_cats)
-                    if sim_result:
-                        resolved[mk] = sim_result
-                        logger.info(
-                            f"[매핑-유사도] {site} > {leaf_path} → {mk}: {sim_result}"
-                        )
+            # ── 2단계: 유사도 매칭 비활성화 ──
+            # _similarity_match_smartstore는 키워드 표면 매칭으로 도메인 무관 카테고리 다수 생성.
+            # 예: "원피스" → 완구/원피스피규어, "재킷" → 영아완구/점퍼루, "캡" → 단열에어캡 등.
+            # 룰 미스 시 모두 3단계 AI에 위임하여 정확도 보장. (검증된 priority_kw 후보 풀 사용)
 
             # 1~2단계에서 해결된 마켓 저장
             if resolved:
@@ -1653,11 +1624,56 @@ JSON만:
                     if len(part) >= 2:
                         ref_keywords.add(part)
 
+            # AI 폴백 결과에서 절대 선택 금지할 패션 무관 카테고리 prefix
+            # — _batch_ai_suggest 응답 검증과 동일 로직을 폴백에도 적용해 도서/완구/생활용품 등으로 잘못 매핑 방지.
+            _fallback_exclude_prefixes = (
+                "인테리어",
+                "식품",
+                "완구",
+                "출산/육아 > 기저귀",
+                "도서",
+                "음반",
+                "생활용품 > 보수",
+                "디지털/가전",
+                "여행",
+                "취미",
+                "수입명품",
+                "자동차",
+                "반려동물",
+                "심판용품",
+                "응원용품",
+            )
+            # 패션 무관 키워드 (카테고리 어디든 포함되면 차단)
+            _fallback_exclude_keywords = (
+                "기저귀가방",
+                "단열에어캡",
+                "점퍼루",
+                "원피스피규어",
+                "랫풀다운",
+                "파티코스튬",
+                "할로윈",
+                "응원용품",
+                "심판",
+                "기타스포츠화",
+            )
+
+            def _is_safe_candidate(c: str) -> bool:
+                if any(c.startswith(p) for p in _fallback_exclude_prefixes):
+                    return False
+                low = c
+                if any(kw in low for kw in _fallback_exclude_keywords):
+                    return False
+                return True
+
             patched: Dict[str, str] = dict(ai_result) if ai_result else {}
             for mk in target_markets_item:
                 if patched.get(mk):
                     continue
                 cats = all_market_cats.get(mk, [])
+                if not cats:
+                    continue
+                # 패션 무관 카테고리 1차 차단
+                cats = [c for c in cats if _is_safe_candidate(c)]
                 if not cats:
                     continue
                 # 연령 매칭
@@ -1671,12 +1687,12 @@ JSON만:
                 ]
                 if not cands:
                     cands = cats
-                # 키워드 점수 매칭
+                # 키워드 점수 매칭 — 최소 점수 2 이상만 신뢰 (1점은 노이즈 매칭일 가능성 큼)
                 if ref_keywords:
                     scored = [
                         (sum(1 for kw in ref_keywords if kw in c), c) for c in cands
                     ]
-                    scored = [s for s in scored if s[0] > 0]
+                    scored = [s for s in scored if s[0] >= 2]
                     if scored:
                         scored.sort(key=lambda x: -x[0])
                         best = scored[0][1]
@@ -1689,6 +1705,13 @@ JSON만:
                             best,
                             len(mapped_refs),
                             scored[0][0],
+                        )
+                    else:
+                        logger.warning(
+                            "[벌크매핑-AI폴백] %s > %s → %s: 점수 1점 이하만 매칭 → 스킵",
+                            site,
+                            leaf_path,
+                            mk,
                         )
             return patched
 
