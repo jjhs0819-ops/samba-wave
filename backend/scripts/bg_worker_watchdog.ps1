@@ -12,8 +12,11 @@ $running = Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
 if (-not $running) {
     $env:PYTHONIOENCODING = 'utf-8'
     $env:PYTHONUTF8 = '1'
+    $logFile = Join-Path $workerDir 'bgworker.log'
     Start-Process -WindowStyle Hidden `
         -WorkingDirectory $workerDir `
         -FilePath $python `
-        -ArgumentList '-u', $workerScript
+        -ArgumentList '-u', $workerScript `
+        -RedirectStandardOutput $logFile `
+        -RedirectStandardError "$logFile.err"
 }

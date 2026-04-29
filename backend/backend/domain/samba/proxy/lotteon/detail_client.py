@@ -125,6 +125,71 @@ class DetailClientMixin:
                         logger.info(
                             f"[LOTTEON] pbf 보완 완료: {product_no} (sitmNo={sitm_no}, pdNo={pd_no_from_pbf})"
                         )
+
+                        # ── 최대혜택가 보강: refresh 경로와 동일하게 benefits + qapi 적용 ──
+                        # 수집 시점에도 AG쿠폰/카드 즉시할인 등 실제 최대혜택가를 cost에 반영하기 위함.
+                        # refresh의 _fetch_pbf_refresh / qapi 보정 로직 미러링.
+                        import asyncio as _asyncio
+
+                        _spd_no = sitm_no.split("_")[0] if "_" in sitm_no else sitm_no
+                        try:
+                            _benefit, _qapi = await _asyncio.gather(
+                                self.fetch_benefit_price(  # type: ignore[attr-defined]
+                                    pbf_data, spd_no=_spd_no, sitm_no=sitm_no
+                                ),
+                                self.fetch_qapi_price(_spd_no),  # type: ignore[attr-defined]
+                                return_exceptions=True,
+                            )
+                            if isinstance(_benefit, Exception):
+                                logger.debug(
+                                    f"[LOTTEON] benefits 예외: {product_no} — {_benefit}"
+                                )
+                                _benefit = None
+                            if isinstance(_qapi, Exception):
+                                logger.debug(
+                                    f"[LOTTEON] qapi 예외: {product_no} — {_qapi}"
+                                )
+                                _qapi = None
+
+                            if _benefit and _benefit > 0:
+                                detail["bestBenefitPrice"] = int(_benefit)
+                                logger.info(
+                                    f"[LOTTEON] benefits 최대혜택가 적용: {product_no} → {int(_benefit):,}"
+                                )
+
+                            if _qapi:
+                                _final = int(_qapi.get("final", 0) or 0)
+                                _original = int(_qapi.get("original", 0) or 0)
+                                _pbf_sale = int(detail.get("salePrice") or 0)
+                                if _final > 0 and _final < _pbf_sale:
+                                    detail["salePrice"] = _final
+                                    _existing_benefit = int(
+                                        detail.get("bestBenefitPrice") or 0
+                                    )
+                                    if (
+                                        _existing_benefit <= 0
+                                        or _existing_benefit >= _final
+                                    ):
+                                        detail["bestBenefitPrice"] = _final
+                                    if _original > 0:
+                                        detail["originalPrice"] = _original
+                                    logger.info(
+                                        f"[LOTTEON] qapi 프로모션가 보정: {product_no} "
+                                        f"pbf={_pbf_sale:,} → final={_final:,}, "
+                                        f"bestBenefit={detail.get('bestBenefitPrice', 0):,}"
+                                    )
+
+                            # 옵션 가격을 실제 판매가/혜택가로 통일 (sl_prc 정가 대신)
+                            _effective = int(
+                                detail.get("bestBenefitPrice") or 0
+                            ) or int(detail.get("salePrice") or 0)
+                            if _effective > 0 and detail.get("options"):
+                                for _opt in detail["options"]:
+                                    _opt["price"] = _effective
+                        except Exception as _be:
+                            logger.debug(
+                                f"[LOTTEON] 최대혜택가 보강 실패: {product_no} — {_be}"
+                            )
                     else:
                         logger.debug(f"[LOTTEON] pbf 데이터 없음: {sitm_no}")
                 else:
