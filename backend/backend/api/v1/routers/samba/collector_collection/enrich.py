@@ -503,8 +503,9 @@ async def enrich_product(
                 try:
                     from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
 
+                    # owner_device_id="" — 수동 enrich 는 오토튠 owner 글로벌 영향 차단
                     _req_id, _future = SourcingQueue.add_detail_job(
-                        _src, product.site_product_id
+                        _src, product.site_product_id, owner_device_id=""
                     )
                     _ext_result = await asyncio.wait_for(_future, timeout=25)
                     if isinstance(_ext_result, dict) and _ext_result.get("success"):
@@ -536,8 +537,12 @@ async def enrich_product(
                         or getattr(product, "sitm_no", "")
                         or (product.extra_data or {}).get("sitmNo", "")
                     )
+                    # owner_device_id="" — 수동 enrich 는 오토튠 owner 글로벌 영향 차단
                     _req_id, _future = SourcingQueue.add_detail_job(
-                        "LOTTEON", product.site_product_id, sitm_no=_sitm
+                        "LOTTEON",
+                        product.site_product_id,
+                        sitm_no=_sitm,
+                        owner_device_id="",
                     )
                     _ext_result = await asyncio.wait_for(_future, timeout=25)
                     if isinstance(_ext_result, dict) and _ext_result.get("success"):
