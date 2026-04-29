@@ -99,6 +99,24 @@ SITE_INTERVAL_STEP: dict[str, float] = {
 }
 # KREAM 확장앱 대기 타임아웃 (초)
 KREAM_TIMEOUT = 90
+# 소싱처별 상품 1건 전체 처리 타임아웃 (초)
+# 확장앱 의존 마켓(LOTTEON/SSG)은 내부 단계(HTML+pbf+DOM 위임) 합산이 60초를 초과할 수
+# 있어 wrapper 한계와 충돌하면 안전망이 무력화된다. 단계별 합산 + 안전마진 기준으로
+# 마켓별 분기.
+PRODUCT_TIMEOUT_DEFAULT: int = 60
+SITE_PRODUCT_TIMEOUT: dict[str, int] = {
+    # LOTTEON: HTML 폴백(45) + pbf 보강(15) + DOM 위임(60) + qapi(~5) 흡수
+    "LOTTEON": 120,
+    # SSG: 확장앱 의존 동일 구조
+    "SSG": 120,
+}
+
+
+def get_product_timeout(site: str) -> int:
+    """소싱처별 상품 1건 전체 처리 타임아웃(초) 조회."""
+    return SITE_PRODUCT_TIMEOUT.get(site, PRODUCT_TIMEOUT_DEFAULT)
+
+
 # 소싱처별 적응형 인터벌 관리 (기능별 격리)
 # 키 형식: "MUSINSA" (워룸/갱신), "MUSINSA_collect" (수집)
 _site_intervals: dict[str, float] = {}
@@ -1413,22 +1431,23 @@ async def refresh_products_bulk(
                     )
                 _counter["i"] += 1
                 _idx = _counter["i"]
+                _product_timeout = get_product_timeout(site)
                 try:
                     r = await asyncio.wait_for(
                         refresh_product(p, idx=_idx, total=_site_total, source=source),
-                        timeout=60,
+                        timeout=_product_timeout,
                     )
                 except asyncio.TimeoutError:
                     _log_refresh(
                         site,
                         getattr(p, "id", "unknown"),
                         getattr(p, "name", ""),
-                        "전체 처리 타임아웃 (60초) — 건너뜀",
+                        f"전체 처리 타임아웃 ({_product_timeout}초) — 건너뜀",
                         level="warning",
                     )
                     r = RefreshResult(
                         product_id=getattr(p, "id", "unknown"),
-                        error="전체 처리 타임아웃: 60초",
+                        error=f"전체 처리 타임아웃: {_product_timeout}초",
                     )
                 # 실패 시 1회 재시도 (오토튠만)
                 if r.error and source == "autotune":
@@ -1439,7 +1458,7 @@ async def refresh_products_bulk(
                             refresh_product(
                                 p, idx=_idx, total=_site_total, source=source
                             ),
-                            timeout=60,
+                            timeout=_product_timeout,
                         )
                         if not r.error:
                             _rb = getattr(p, "brand", "") or ""

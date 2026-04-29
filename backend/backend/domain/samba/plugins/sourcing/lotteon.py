@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from backend.domain.samba.plugins.sourcing_base import SourcingPlugin
@@ -311,6 +312,8 @@ class LotteonSourcingPlugin(SourcingPlugin):
 
         _idx = getattr(product, "_refresh_idx", 0)
         _total = getattr(product, "_refresh_total", 0)
+        # wrapper 잔여 예산 계산용 시작 시각
+        _started_at = time.monotonic()
 
         product_id = getattr(product, "id", "")
         site_product_id = getattr(product, "site_product_id", "") or getattr(
@@ -528,24 +531,39 @@ class LotteonSourcingPlugin(SourcingPlugin):
         # ── DOM 재고 병합 (설계문서 §3.5) — 지점 단위 pbf 재고 이슈 해소 ──
         # 확장앱이 롯데ON PDP를 열어 사이즈별 실재고(판매자 지점 기준)를 추출해
         # pbf 옵션 리스트의 stock을 덮어쓴다. 미연결/타임아웃/파싱 실패 시 pbf 값 유지.
+        # DOM 본래 상한 60초: owner deviceId 필터링 적용 후 실행 PC 1대만 처리하므로
+        # 확장앱 큐 적체 대비 충분한 여유. 단, wrapper 전체 예산을 초과하면 안전망이
+        # 무력화되므로 잔여 예산 안에서만 대기 (부족 시 스킵하여 pbf 값 유지).
         dom_ext: dict | None = None
-        try:
-            from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+        from backend.domain.samba.collector.refresher import get_product_timeout
 
-            _dom_req, _dom_fut = SourcingQueue.add_detail_job(
-                "LOTTEON", site_product_id
+        _wrapper_budget = get_product_timeout("LOTTEON")
+        _safety = 5  # qapi 보정 + 후처리 + IO 진동 여유
+        _elapsed = time.monotonic() - _started_at
+        _remaining = _wrapper_budget - _elapsed - _safety
+        _dom_timeout = min(60, max(0, int(_remaining)))
+        if _dom_timeout <= 0:
+            logger.info(
+                f"[LOTTEON] DOM 위임 스킵 (예산 부족): {site_product_id} "
+                f"elapsed={_elapsed:.1f}s, 잔여={_remaining:.1f}s (pbf 값 유지)"
             )
-            # 타임아웃 60초: owner deviceId 필터링 적용 후 실행 PC 1대만 처리하므로
-            # 확장앱 큐 적체 대비 충분한 여유 확보 (pbf 값이 유지되는 폴백 경로)
-            dom_ext = await asyncio.wait_for(_dom_fut, timeout=60)
-            if not (isinstance(dom_ext, dict) and dom_ext.get("success")):
-                dom_ext = None
-        except asyncio.TimeoutError:
-            logger.debug(
-                f"[LOTTEON] DOM 위임 타임아웃: {site_product_id} (pbf 값 유지)"
-            )
-        except Exception as _dom_err:
-            logger.debug(f"[LOTTEON] DOM 위임 예외: {site_product_id} — {_dom_err}")
+        else:
+            try:
+                from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+
+                _dom_req, _dom_fut = SourcingQueue.add_detail_job(
+                    "LOTTEON", site_product_id
+                )
+                dom_ext = await asyncio.wait_for(_dom_fut, timeout=_dom_timeout)
+                if not (isinstance(dom_ext, dict) and dom_ext.get("success")):
+                    dom_ext = None
+            except asyncio.TimeoutError:
+                logger.debug(
+                    f"[LOTTEON] DOM 위임 타임아웃 ({_dom_timeout}s): "
+                    f"{site_product_id} (pbf 값 유지)"
+                )
+            except Exception as _dom_err:
+                logger.debug(f"[LOTTEON] DOM 위임 예외: {site_product_id} — {_dom_err}")
 
         if dom_ext and dom_ext.get("options") and detail.get("options"):
             _changes = _merge_dom_stock(detail["options"], dom_ext["options"])
