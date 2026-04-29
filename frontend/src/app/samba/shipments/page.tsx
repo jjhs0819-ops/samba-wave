@@ -1549,12 +1549,14 @@ export default function ShipmentsPage() {
                     )}
                   </td>
                   <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center', fontSize: '0.72rem' }}>
-                    {p.updated_at ? (() => {
-                      const d = new Date(p.updated_at)
+                    {(() => {
+                      const ts = p.last_refreshed_at || p.updated_at
+                      if (!ts) return '-'
+                      const d = new Date(ts)
                       return (
                         <span style={{ color: '#AAB0BC' }}>{d.getFullYear()}-{String(d.getMonth() + 1).padStart(2, '0')}-{String(d.getDate()).padStart(2, '0')} {String(d.getHours()).padStart(2, '0')}:{String(d.getMinutes()).padStart(2, '0')}:{String(d.getSeconds()).padStart(2, '0')}</span>
                       )
-                    })() : '-'}
+                    })()}
                   </td>
                   <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center', fontSize: '0.72rem' }}>
                     {(() => {

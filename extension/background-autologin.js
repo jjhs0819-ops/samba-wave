@@ -162,6 +162,10 @@ async function ensureLoggedIn(siteKey) {
     if (ok) {
       autoLoginState.failedAttempts[siteKey] = 0
       autoLoginState.cooldownUntil[siteKey] = 0
+      // 자동로그인 성공 시각 기록 — sourcing detail의 _detectLoginStatus false-positive 방지용
+      // (LOTTEON 상세페이지처럼 헤더 셀렉터로 로그인 판정 어려운 사이트의 무한 트리거 차단)
+      try { globalThis._lastAutoLoginSuccessAt = globalThis._lastAutoLoginSuccessAt || {} } catch {}
+      try { globalThis._lastAutoLoginSuccessAt[siteKey] = Date.now() } catch {}
       console.log(`[자동로그인] ✅ ${site.name} 성공 — 폴링 자동 재개`)
     } else {
       autoLoginState.failedAttempts[siteKey] = (autoLoginState.failedAttempts[siteKey] || 0) + 1
@@ -196,7 +200,20 @@ async function _ensureLoggedInSingle(siteKey) {
 
   try {
     // 1) checkUrl(마이페이지)로 이동 → 비로그인이면 로그인 페이지로 자동 리다이렉트
-    const tab = await chrome.tabs.create({ url: site.checkUrl, active: true })
+    // [중요] 사용자 메인 창의 active 탭을 뺏지 않도록 별도 minimized window로 띄움
+    // (chrome.debugger triple-click은 비활성/최소화 창에서도 정상 동작 — 포커스 불필요)
+    let win = null
+    try {
+      win = await chrome.windows.create({ url: site.checkUrl, focused: false, state: 'minimized', type: 'normal' })
+    } catch (e) {
+      console.log(`[자동로그인] ${site.name} windows.create 실패 → 탭 폴백: ${e?.message || e}`)
+    }
+    let tab = null
+    if (win && Array.isArray(win.tabs) && win.tabs.length) {
+      tab = win.tabs[0]
+    } else {
+      tab = await chrome.tabs.create({ url: site.checkUrl, active: false })
+    }
     tabId = tab.id
     tabCreated = true
 

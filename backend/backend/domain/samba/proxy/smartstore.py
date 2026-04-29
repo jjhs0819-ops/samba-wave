@@ -1945,12 +1945,10 @@ class SmartStoreClient:
                 "saleType": "NEW",
                 "leafCategoryId": category_id or "50000803",
                 "name": product_name,
-                # 품번 → sellerCodeInfo.sellerManagementCode
-                **(
-                    {"sellerCodeInfo": {"sellerManagementCode": style_code}}
-                    if style_code
-                    else {}
-                ),
+                # 판매자상품코드 — 삼바 내부 product.id로 통일 (주문 역매칭 키)
+                "sellerCodeInfo": {
+                    "sellerManagementCode": str(product.get("id") or style_code or "")
+                },
                 "detailContent": product.get("detail_html", "")
                 or f'<div style="text-align:center; padding:30px 0;"><p style="font-size:18px; font-weight:bold;">{product_name}</p><p style="margin-top:10px; color:#666;">상세 정보는 상품 이미지를 참조해주세요.</p></div>',
                 "images": {
@@ -2378,10 +2376,11 @@ class SmartStoreClient:
                 },
             }
 
-            # 셀러 관리 코드
+            # 판매자상품코드 — 삼바 내부 product.id로 통일 (주문 역매칭 키)
             style_code = p.get("style_code", "")
-            if style_code:
-                sp["sellerCodeInfo"] = {"sellerManagementCode": style_code}
+            sp["sellerCodeInfo"] = {
+                "sellerManagementCode": str(p.get("id") or style_code or "")
+            }
 
             # 기존 상품번호 (수정용)
             existing_no = p.get("_origin_product_no")

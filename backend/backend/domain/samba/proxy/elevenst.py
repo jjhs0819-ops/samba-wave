@@ -1627,9 +1627,12 @@ class ElevenstClient:
         # 상품정보 제공고시 XML (카테고리별 동적 생성)
         notice_xml = _build_elevenst_notice_xml(product)
 
+        # 판매자상품코드 — 삼바 내부 product.id로 통일 (주문 역매칭 키)
+        seller_prd_cd = str(product.get("id") or "").strip()
+
         xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Product>
-  <sellerPrdCd></sellerPrdCd>
+  <sellerPrdCd>{_escape_xml(seller_prd_cd)}</sellerPrdCd>
   <prdNm>{_escape_xml(name)}</prdNm>
   <advrtStmt>{_escape_xml(promo_text)}</advrtStmt>
   <prdStatCd>01</prdStatCd>

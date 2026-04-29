@@ -1042,12 +1042,15 @@ async def scroll_products(
     if sort_by == "collect-asc":
         data_stmt = data_stmt.order_by(_CP.created_at.asc())
     elif sort_by == "update-desc":
+        # 오토튠 점검 시각(last_refreshed_at) 기준 — 가격/재고 변경이 없어도 매 사이클 갱신
         data_stmt = data_stmt.order_by(
-            _CP.updated_at.desc().nullslast(), _CP.created_at.desc()
+            func.coalesce(_CP.last_refreshed_at, _CP.updated_at).desc().nullslast(),
+            _CP.created_at.desc(),
         )
     elif sort_by == "update-asc":
         data_stmt = data_stmt.order_by(
-            _CP.updated_at.asc().nullsfirst(), _CP.created_at.asc()
+            func.coalesce(_CP.last_refreshed_at, _CP.updated_at).asc().nullsfirst(),
+            _CP.created_at.asc(),
         )
     else:
         data_stmt = data_stmt.order_by(_CP.created_at.desc())

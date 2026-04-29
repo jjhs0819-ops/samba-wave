@@ -940,8 +940,17 @@ async function handleSourcingJob(job) {
     if (job.type === 'detail' && tabId && result && result.success !== false) {
       let loginNeeded = result?._loginRequired
       if (loginNeeded === undefined) {
-        const isLoggedIn = await _detectLoginStatus(tabId, job.site)
-        if (isLoggedIn === false) loginNeeded = true
+        // 자동로그인 성공 직후 N분간 detect 스킵 — _detectLoginStatus false-positive 방지
+        // (LOTTEON 상세페이지처럼 헤더 셀렉터로 로그아웃 링크 판정 어려운 사이트의 무한 트리거 차단)
+        const AL_GRACE_MS = 30 * 60 * 1000  // 30분
+        const siteKey = (typeof alExternalSiteToKey === 'function') ? alExternalSiteToKey(job.site) : null
+        const lastAt = (siteKey && globalThis._lastAutoLoginSuccessAt) ? globalThis._lastAutoLoginSuccessAt[siteKey] : 0
+        if (lastAt && Date.now() - lastAt < AL_GRACE_MS) {
+          // 최근 자동로그인 성공 — detect 스킵 (로그인 상태로 간주)
+        } else {
+          const isLoggedIn = await _detectLoginStatus(tabId, job.site)
+          if (isLoggedIn === false) loginNeeded = true
+        }
       }
       if (loginNeeded) {
         console.log(`[${job.site}] 비로그인 확정 → 결과 전송 차단 + 자동로그인 즉시 트리거: ${job.productId}`)
