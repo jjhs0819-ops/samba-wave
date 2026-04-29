@@ -612,9 +612,20 @@ class CategorySeedMixin:
                         for part in name.replace("/", " ").replace("-", " ").split():
                             if len(part) >= 2:
                                 leaf_kw.add(part)
-                    # mapped_refs(이미 매핑된 타 마켓 카테고리)의 모든 segment를 키워드로 추가
-                    # — 11번가 등 후보 풀 구성 시 다른 마켓 매핑과 동일 의미 영역으로 좁히는 핵심 신호.
-                    # 60건 ad-hoc 검증에서 100% 매핑 성공 결정 요인.
+                # priority_kw — 후보 풀 구성 시 가중치 3점으로 점수 매칭하여 후보 상위에 배치.
+                # 두 신호 합산: (a) source category leaf — 상품 유형(축구복/상하복세트 등) 정확 매칭
+                # (b) mapped_refs leaf — 다른 마켓 매핑과 동일 의미 영역
+                # refs가 빈약/잘못된 경우(예: '축구용품')에도 source 신호로 보정 가능.
+                priority_kw: set[str] = set()
+                for item in batch:
+                    # (a) source category leaf
+                    src_segs = [
+                        s.strip() for s in item["leaf_path"].split(">") if s.strip()
+                    ]
+                    if src_segs:
+                        priority_kw.add(src_segs[-1])
+                        priority_kw.update(_split_kw(src_segs[-1]))
+                    # (b) mapped_refs leaf
                     for ref_path in (item.get("mapped_refs") or {}).values():
                         if not ref_path:
                             continue
@@ -623,7 +634,8 @@ class CategorySeedMixin:
                         ]
                         if not ref_segs:
                             continue
-                        # leaf segment(마지막)는 leaf_kw로
+                        priority_kw.add(ref_segs[-1])
+                        priority_kw.update(_split_kw(ref_segs[-1]))
                         leaf_kw.add(ref_segs[-1])
                         leaf_kw.update(_split_kw(ref_segs[-1]))
                         # parent segments(성별/연령 매칭용)는 parent_kw로
@@ -635,6 +647,7 @@ class CategorySeedMixin:
                 # 동의어 확장 — 소싱 키워드와 마켓 카테고리 용어 차이 보완
                 leaf_kw = _expand_synonyms(leaf_kw)
                 parent_kw = _expand_synonyms(parent_kw)
+                priority_kw = _expand_synonyms(priority_kw)
 
                 # 배치 내 소싱 카테고리 원문 (특수 대분류 제외 판별용)
                 batch_source_text = " ".join(
@@ -710,20 +723,56 @@ class CategorySeedMixin:
                     if not cats:
                         continue
 
-                    # 1단계: leaf 키워드 매칭
-                    leaf_matches = [c for c in cats if any(kw in c for kw in leaf_kw)]
-                    relevant = (
-                        _gender_balanced_cap(leaf_matches, limit=30)
-                        if len(leaf_matches) >= 3
-                        else []
-                    )
+                    # 성별 hard 필터: batch 단일 item일 때(batch_size=1), source category의
+                    # 성별 키워드(남아/여아/남성/여성)와 반대 성별 카테고리 후보 풀에서 제거.
+                    # 유아동 남아/여아/공용 카테고리 혼동 방지.
+                    if batch_size == 1 and len(batch) == 1:
+                        src_text = batch[0]["leaf_path"]
+                        src_male = any(
+                            kw in src_text for kw in ("남아", "남성", "맨즈")
+                        )
+                        src_female = any(
+                            kw in src_text for kw in ("여아", "여성", "우먼")
+                        )
+                        if src_male and not src_female:
+                            cats = [
+                                c
+                                for c in cats
+                                if not any(kw in c for kw in ("여아", "여성"))
+                            ]
+                        elif src_female and not src_male:
+                            cats = [
+                                c
+                                for c in cats
+                                if not any(kw in c for kw in ("남아", "남성", "맨즈"))
+                            ]
 
-                    # 2단계: leaf+parent 키워드 매칭
-                    if not relevant:
+                    # 1단계: priority_kw(소싱 leaf + refs leaf)로만 점수 매칭 → 후보 60개 추출.
+                    # — leaf_kw/parent_kw는 일반 키워드(남성/운동 등) noise 유발 → 1단계 점수에서 제외.
+                    # — 60개로 확대해 정확한 카테고리(상하복세트/점퍼/축구복 등)도 후보에 포함되도록.
+                    relevant: list[str] = []
+                    if priority_kw:
+                        scored = []
+                        for c in cats:
+                            score = sum(1 for kw in priority_kw if kw in c)
+                            if score > 0:
+                                scored.append((score, c))
+                        scored.sort(key=lambda x: -x[0])
+                        relevant = _gender_balanced_cap(
+                            [c for _, c in scored], limit=60
+                        )
+
+                    # 2단계: priority 매칭 부족 시 leaf_kw 보강 (refs/source 둘 다 약한 케이스)
+                    if len(relevant) < 10 and leaf_kw:
                         all_kw = leaf_kw | parent_kw
-                        kw_matches = [c for c in cats if any(kw in c for kw in all_kw)]
-                        if kw_matches:
-                            relevant = _gender_balanced_cap(kw_matches, limit=30)
+                        kw_matches = [
+                            c
+                            for c in cats
+                            if c not in set(relevant) and any(kw in c for kw in all_kw)
+                        ]
+                        relevant = relevant + _gender_balanced_cap(
+                            kw_matches, limit=60 - len(relevant)
+                        )
 
                     # 3단계: 소싱 대분류(cat1) 키워드를 마켓 카테고리에 매핑 (의류↔패션, 신발↔패션잡화 등)
                     if not relevant:
@@ -770,8 +819,10 @@ class CategorySeedMixin:
 
             prompt = f"""소싱 카테고리를 판매 마켓 카테고리에 매핑.
 
-★최우선 규칙★ 항목에 "기존매핑참고"가 있으면, 그 다른 마켓 매핑의 **상품유형·성별·연령·세분화 깊이**를 그대로 따라가서 같은 의미의 카테고리를 [허용된 마켓 카테고리] 목록에서 골라라.
-예: 기존매핑참고가 "smartstore:패션의류 > 여성의류 > 티셔츠, lotteon:여성의류 > 티셔츠/맨투맨"이면, 11번가도 "여성의류 > 티셔츠/맨투맨"에 해당하는 11번가 path를 골라라. 임의로 키즈/스포츠/주니어로 바꾸지 마라.
+★최우선 규칙★
+1. **소싱 카테고리의 마지막 segment(상품 유형)를 절대 변경 금지**. 예: 소싱이 "축구복"이면 11번가도 축구복/축구의류여야지, 트레이닝복으로 바꾸면 안됨. 소싱이 "상하복세트"면 상하복/세트여야지 단품 티셔츠로 바꾸면 안됨. 소싱이 "점퍼"면 점퍼/재킷이어야지 청재킷으로 바꾸면 안됨.
+2. "기존매핑참고"가 있으면 그 다른 마켓 매핑의 **상품유형·성별·연령·세분화 깊이**를 따라가되, 1번 규칙(소싱 상품 유형 유지)이 우선이다.
+예: 기존매핑참고가 "smartstore:패션의류 > 여성의류 > 티셔츠"이고 소싱이 "축구복"이면, refs 무시하고 11번가에서 축구복/축구의류 트리를 찾아라.
 {fewshot_block}
 {chr(10).join(cat_entries)}
 {cat_list_section}
