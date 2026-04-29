@@ -1449,17 +1449,21 @@ class ElevenstClient:
             return True
 
         _img_tag = '<div style="text-align:center;"><img src="{url}" style="max-width:860px;width:100%;" /></div>'
-        _html_parts = [
-            _img_tag.format(url=u) for u in images if _is_valid_detail_image(u)
-        ]
-        _html_parts += [
-            _img_tag.format(url=u) for u in detail_images if _is_valid_detail_image(u)
-        ]
-        detail_html = (
-            "\n".join(_html_parts)
-            if _html_parts
-            else (product.get("detail_html", "") or f"<p>{name}</p>")
-        )
+        # 정책 기반으로 shipment service가 사전 생성한 detail_html을 최우선 사용
+        # (상단/하단 템플릿 이미지·순서·체크옵션 반영). 없을 때만 이미지로 폴백.
+        _policy_detail_html = (product.get("detail_html") or "").strip()
+        if _policy_detail_html:
+            detail_html = _policy_detail_html
+        else:
+            _html_parts = [
+                _img_tag.format(url=u) for u in images if _is_valid_detail_image(u)
+            ]
+            _html_parts += [
+                _img_tag.format(url=u)
+                for u in detail_images
+                if _is_valid_detail_image(u)
+            ]
+            detail_html = "\n".join(_html_parts) if _html_parts else f"<p>{name}</p>"
         brand = product.get("brand", "")
 
         # 아동 의류 여부 판별 (KC인증 분기용)

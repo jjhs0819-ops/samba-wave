@@ -11,6 +11,7 @@ from backend.domain.samba.category.rules import (
     MARKET_CATEGORIES,
     _filter_overseas,
     _filter_to_leaves,
+    _gender_balanced_cap,
 )
 
 logger = logging.getLogger(__name__)
@@ -95,7 +96,9 @@ class CategorySuggestionMixin:
                 scored.append((cat, score))
 
         scored.sort(key=lambda x: (-x[1], len(x[0])))
-        return [cat for cat, _ in scored[:10]]
+        # 성별 균등 노출 — 11번가처럼 한 성별 leaf 세분화가 더 많은 마켓에서
+        # 상위 N개가 한 성별로 도배되는 편향 방지 (rules._gender_balanced_cap)
+        return _gender_balanced_cap([cat for cat, _ in scored], limit=50)
 
     async def _ai_suggest_categories(
         self, keyword: str, target_market: str

@@ -17,6 +17,7 @@ from backend.domain.samba.category.rules import (
     _expand_synonyms,
     _filter_overseas,
     _filter_to_leaves,
+    _gender_balanced_cap,
     _rule_match,
     _similarity_match_smartstore,
 )
@@ -562,13 +563,16 @@ class CategorySeedMixin:
                         ]
                     leaf_matches = [c for c in cats if any(kw in c for kw in leaf_kw)]
                     if len(leaf_matches) >= 5:
-                        relevant = leaf_matches[:30]
+                        # 성별 균등 — AI가 받는 후보 풀이 한 성별로 도배되지 않도록
+                        relevant = _gender_balanced_cap(leaf_matches, limit=30)
                     else:
                         all_kw = leaf_kw | parent_kw
                         relevant = [c for c in cats if any(kw in c for kw in all_kw)]
                         if len(relevant) < 3:
                             has_enough_matches = False
-                        relevant = relevant[:30] if relevant else []
+                        relevant = (
+                            _gender_balanced_cap(relevant, limit=30) if relevant else []
+                        )
                     if relevant:
                         lines.append(
                             f"- {market_labels.get(m, m)}:\n"
@@ -856,9 +860,10 @@ JSON만 응답:
                 if total > 0:
                     scored.append((total, c))
             scored.sort(key=lambda x: -x[0])
-            relevant = [c for _, c in scored[:20]]
+            # 성별 균등 — 단건 AI 후보 풀도 한 성별 편중 방지
+            relevant = _gender_balanced_cap([c for _, c in scored], limit=20)
             if not relevant:
-                relevant = cats[:10]
+                relevant = _gender_balanced_cap(cats, limit=10)
             market_list_parts.append(
                 f"- {market}: {json.dumps(relevant, ensure_ascii=False)}"
             )

@@ -62,6 +62,55 @@ def _filter_to_leaves(categories: list[str]) -> list[str]:
     return [c for c in categories if c not in parent_set]
 
 
+# 성별 버킷 키워드 (드롭다운/AI 후보 풀의 성별 편중 방지용 공용)
+_BUCKET_MALE_KW = ("남성", "맨즈", "남자", "men")
+_BUCKET_FEMALE_KW = ("여성", "우먼", "여자", "women", "걸즈", "ladies")
+
+
+def _gender_bucket(category: str) -> str:
+    """카테고리 경로 문자열을 보고 'male'|'female'|'unisex' 분류."""
+    low = category.lower()
+    has_m = any(k in low for k in _BUCKET_MALE_KW)
+    has_f = any(k in low for k in _BUCKET_FEMALE_KW)
+    if has_m and not has_f:
+        return "male"
+    if has_f and not has_m:
+        return "female"
+    return "unisex"
+
+
+def _gender_balanced_cap(categories: list[str], limit: int) -> list[str]:
+    """입력 순서를 우선도로 간주하고, 성별(남/여/공용) 라운드로빈으로 상위 N개 선택.
+
+    11번가처럼 한 성별의 leaf가 훨씬 잘게 쪼개진 마켓에서
+    상위 N개가 한 성별로 도배되어 매핑 결과가 편중되는 현상을 방지한다.
+    각 버킷 내부 순서는 입력 순서를 그대로 유지(=점수/관련도순).
+    """
+    if limit <= 0 or not categories:
+        return []
+    male_q: list[str] = []
+    female_q: list[str] = []
+    unisex_q: list[str] = []
+    for c in categories:
+        b = _gender_bucket(c)
+        if b == "male":
+            male_q.append(c)
+        elif b == "female":
+            female_q.append(c)
+        else:
+            unisex_q.append(c)
+    merged: list[str] = []
+    i = 0
+    while len(merged) < limit and (
+        i < len(male_q) or i < len(female_q) or i < len(unisex_q)
+    ):
+        for q in (male_q, female_q, unisex_q):
+            if i < len(q) and len(merged) < limit:
+                merged.append(q[i])
+        i += 1
+    return merged
+
+
 # ══════════════════════════════════════════════
 # 성별 감지
 # ══════════════════════════════════════════════
