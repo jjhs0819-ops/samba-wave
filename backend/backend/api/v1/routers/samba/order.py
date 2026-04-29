@@ -143,6 +143,20 @@ async def _build_order_filters(
                 SambaOrder.sourcing_order_number == "",
             )
         )
+    elif input_filter == "has_invoice":
+        filters.append(
+            and_(
+                SambaOrder.tracking_number != None,  # noqa: E711
+                SambaOrder.tracking_number != "",
+            )
+        )
+    elif input_filter == "no_invoice":
+        filters.append(
+            or_(
+                SambaOrder.tracking_number == None,  # noqa: E711
+                SambaOrder.tracking_number == "",
+            )
+        )
     elif input_filter in {"direct", "kkadaegi", "gift"}:
         filters.append(SambaOrder.action_tag == input_filter)
 
@@ -3816,14 +3830,24 @@ async def sync_orders_from_markets(
                         existing.paid_at is None or new_paid < existing.paid_at
                     ):
                         update_fields["paid_at"] = new_paid
-                    # 주소 보충 (기존 주문에 없으면 채움)
-                    if (
-                        order_data.get("customer_address")
-                        and not existing.customer_address
+                    # 수령인 정보 갱신 — 선물하기 주문 등에서 보내는 사람으로 잘못 저장된
+                    # customer_name/phone을 다시 가져오기로 수령인 기준으로 교정.
+                    # 마켓 응답에 값이 있고 기존과 다르면 덮어쓴다.
+                    new_cust_name = order_data.get("customer_name")
+                    if new_cust_name and new_cust_name != str(
+                        existing.customer_name or ""
                     ):
-                        update_fields["customer_address"] = order_data[
-                            "customer_address"
-                        ]
+                        update_fields["customer_name"] = new_cust_name
+                    new_cust_phone = order_data.get("customer_phone")
+                    if new_cust_phone and new_cust_phone != str(
+                        existing.customer_phone or ""
+                    ):
+                        update_fields["customer_phone"] = new_cust_phone
+                    new_cust_addr = order_data.get("customer_address")
+                    if new_cust_addr and new_cust_addr != str(
+                        existing.customer_address or ""
+                    ):
+                        update_fields["customer_address"] = new_cust_addr
                     # 마켓 상품번호 보충 (기존 주문에 없으면 채움)
                     if order_data.get("product_id") and not existing.product_id:
                         update_fields["product_id"] = order_data["product_id"]
@@ -4349,9 +4373,14 @@ def _parse_smartstore_order(
 
     # 배송지 정보
     shipping = po.get("shippingAddress", {})
-    # 주문자 정보 (order 객체에서 추출)
-    orderer_name = order_info.get("ordererName", "") or shipping.get("name", "")
-    orderer_tel = order_info.get("ordererTel", "") or shipping.get("tel1", "")
+    # 수령인(배송지) 우선 — 선물하기 주문은 주문자(보내는 사람) ≠ 수령인(받는 사람)이므로
+    # CS/배송 단위에서 의미있는 customer는 수령인. 일반 주문은 둘이 동일하므로 영향 없음.
+    customer_name = shipping.get("name", "") or order_info.get("ordererName", "")
+    customer_tel = (
+        shipping.get("tel1", "")
+        or shipping.get("tel2", "")
+        or order_info.get("ordererTel", "")
+    )
 
     # 마켓 상품번호 (구매페이지 URL 생성용)
     channel_product_no = str(
@@ -4367,8 +4396,8 @@ def _parse_smartstore_order(
         "product_name": po.get("productName", ""),
         "product_option": po.get("productOption", "") or "",
         "product_image": po.get("imageUrl", ""),
-        "customer_name": orderer_name,
-        "customer_phone": orderer_tel,
+        "customer_name": customer_name,
+        "customer_phone": customer_tel,
         "customer_address": (
             shipping.get("baseAddress", "") + " " + shipping.get("detailedAddress", "")
         ).strip(),

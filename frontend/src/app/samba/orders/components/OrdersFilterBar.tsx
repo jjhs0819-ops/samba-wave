@@ -208,6 +208,8 @@ export default function OrdersFilterBar(props: Props) {
             <option value="">입력필터</option>
             <option value="has_order">소싱주문번호 있음</option>
             <option value="no_order">소싱주문번호 없음</option>
+            <option value="has_invoice">송장입력</option>
+            <option value="no_invoice">송장미입력</option>
             <option value="direct">직배송</option>
             <option value="kkadaegi">까대기</option>
             <option value="gift">사은품</option>
