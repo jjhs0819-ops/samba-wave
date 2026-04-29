@@ -2098,6 +2098,19 @@ async def _autotune_loop():
                             )
                         del _site_tasks[_s]
 
+                # 필터에서 빠진 site의 살아있는 task 종료
+                # — 사용자가 소싱처/판매처 체크 해제 시 다음 watchdog 틱에 정지
+                _active_set = set(active_sites)
+                for _s in list(_site_tasks.keys()):
+                    if _s in _active_set:
+                        continue
+                    _t = _site_tasks[_s]
+                    if not _t.done():
+                        log.info("[오토튠][%s] 필터 제외 — 루프 종료", _s)
+                        _t.cancel()
+                    del _site_tasks[_s]
+                    _site_heartbeats.pop(_s, None)
+
                 # Watchdog — stuck 소싱처 루프 강제 재시작
                 _now_ts = time.time()
                 for _s, _t in list(_site_tasks.items()):
