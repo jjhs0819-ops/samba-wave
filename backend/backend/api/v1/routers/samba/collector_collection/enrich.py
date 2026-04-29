@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -161,6 +161,7 @@ async def _retransmit_if_changed(
 @router.post("/enrich/{product_id}")
 async def enrich_product(
     product_id: str,
+    request: Request,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
     """수집 상품의 상세 정보를 소싱사이트 API에서 보강 (카테고리, 옵션, 상세이미지 등)."""
@@ -511,9 +512,15 @@ async def enrich_product(
                 try:
                     from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
 
-                    # owner_device_id="" — 수동 enrich 는 오토튠 owner 글로벌 영향 차단
+                    # 수동 enrich 는 트리거 PC 의 deviceId 로 owner 박아 해당 PC 에서만 탭이 열리게 함.
+                    # 헤더 누락 시 빈값 → SourcingQueue 글로벌 폴백.
+                    _enrich_owner = (
+                        request.headers.get("X-Device-Id", "").strip() or None
+                    )
                     _req_id, _future = SourcingQueue.add_detail_job(
-                        _src, product.site_product_id, owner_device_id=""
+                        _src,
+                        product.site_product_id,
+                        owner_device_id=_enrich_owner,
                     )
                     _ext_result = await asyncio.wait_for(_future, timeout=25)
                     if isinstance(_ext_result, dict) and _ext_result.get("success"):
@@ -545,12 +552,15 @@ async def enrich_product(
                         or getattr(product, "sitm_no", "")
                         or (product.extra_data or {}).get("sitmNo", "")
                     )
-                    # owner_device_id="" — 수동 enrich 는 오토튠 owner 글로벌 영향 차단
+                    # 수동 enrich 는 트리거 PC 의 deviceId 로 owner 박아 해당 PC 에서만 탭이 열리게 함.
+                    _enrich_owner_lt = (
+                        request.headers.get("X-Device-Id", "").strip() or None
+                    )
                     _req_id, _future = SourcingQueue.add_detail_job(
                         "LOTTEON",
                         product.site_product_id,
                         sitm_no=_sitm,
-                        owner_device_id="",
+                        owner_device_id=_enrich_owner_lt,
                     )
                     _ext_result = await asyncio.wait_for(_future, timeout=25)
                     if isinstance(_ext_result, dict) and _ext_result.get("success"):

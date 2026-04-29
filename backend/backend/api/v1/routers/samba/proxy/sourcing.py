@@ -111,6 +111,7 @@ async def sourcing_collect_result(body: dict[str, Any]) -> dict[str, Any]:
 @router.get("/sourcing/{site}/search")
 async def sourcing_search(
     site: str,
+    request: Request,
     keyword: str = Query("", min_length=1),
     page: int = Query(1, ge=1),
 ) -> dict[str, Any]:
@@ -124,8 +125,13 @@ async def sourcing_search(
     if site in EXTENSION_SITES:
         from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
 
+        # 트리거 PC 의 deviceId 로 owner 박아 해당 PC 확장앱에서만 탭이 열리도록 라우팅.
+        # 헤더 누락 시 빈값 → SourcingQueue 내부에서 오토튠 글로벌 폴백.
+        _trigger_device_id = request.headers.get("X-Device-Id", "").strip()
         try:
-            request_id, future = SourcingQueue.add_search_job(site, keyword)
+            request_id, future = SourcingQueue.add_search_job(
+                site, keyword, owner_device_id=_trigger_device_id or None
+            )
             result = await asyncio.wait_for(future, timeout=60)
             return result
         except asyncio.TimeoutError:
@@ -143,6 +149,7 @@ async def sourcing_search(
 async def sourcing_detail(
     site: str,
     product_id: str,
+    request: Request,
 ) -> dict[str, Any]:
     """소싱처 상품 상세 조회 API."""
     # 패션플러스: 직접 API
@@ -154,8 +161,12 @@ async def sourcing_detail(
     if site in EXTENSION_SITES:
         from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
 
+        # 트리거 PC 의 deviceId 로 owner 박아 해당 PC 확장앱에서만 탭이 열리도록 라우팅.
+        _trigger_device_id = request.headers.get("X-Device-Id", "").strip()
         try:
-            request_id, future = SourcingQueue.add_detail_job(site, product_id)
+            request_id, future = SourcingQueue.add_detail_job(
+                site, product_id, owner_device_id=_trigger_device_id or None
+            )
             result = await asyncio.wait_for(future, timeout=60)
             return result
         except asyncio.TimeoutError:

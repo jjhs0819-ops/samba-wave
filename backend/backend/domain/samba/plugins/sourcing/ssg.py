@@ -101,12 +101,12 @@ class SSGPlugin(SourcingPlugin):
 
             # SSG는 서버사이드 직접 HTTP 차단 → 확장앱 위임 (worker.py 동일 패턴)
             # 타임아웃 60초: 병렬 처리(3개 탭) + reCAPTCHA/AJAX 지연을 감안해 충분한 여유 확보
-            # owner_device_id="" — 어느 PC 확장앱이든 처리 가능
-            # (autotune 글로벌 owner로 묶으면 그 PC 확장앱이 꺼졌을 때 SSG 전건 타임아웃)
-            # SourcingQueue는 requestId 단위 단일 resolver라 콜백 중복 자체는 없음
-            _req_id, _future = SourcingQueue.add_detail_job(
-                "SSG", site_product_id, owner_device_id=""
-            )
+            # owner_device_id 미전달 → SourcingQueue가 _autotune_owner_device_id(글로벌) 폴백 →
+            # 오토튠 가동 중에는 실행 개시 PC 확장앱에서만 탭이 열리고 다른 PC 는 로그만 보게 됨.
+            # 이전엔 owner_device_id="" 로 강제해 어떤 PC든 탭이 열리는 누수가 있었으나
+            # "실행 개시 PC 만 창" 요구사항과 충돌하여 제거함(2026-04-29).
+            # SourcingQueue는 requestId 단위 단일 resolver라 콜백 중복 자체는 없음.
+            _req_id, _future = SourcingQueue.add_detail_job("SSG", site_product_id)
             _ext_result = await asyncio.wait_for(_future, timeout=60)
 
             if isinstance(_ext_result, dict) and _ext_result.get("success"):

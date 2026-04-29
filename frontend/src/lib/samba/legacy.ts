@@ -4,6 +4,7 @@
 
 import { API_BASE_URL, API_GATEWAY_KEY } from '@/config/api'
 import { STORAGE_KEYS } from '@/lib/samba/constants'
+import { getDeviceId } from '@/lib/samba/deviceId'
 
 export const API_BASE = API_BASE_URL
 
@@ -59,6 +60,13 @@ export async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const token = getAccessToken()
   if (token) {
     headers['Authorization'] = `Bearer ${token}`
+  }
+  // 트리거 PC 의 확장앱 deviceId 자동 첨부 — 백엔드 enrich/sourcing 엔드포인트가
+  // 이 헤더로 owner 박아 해당 PC 확장앱에서만 SSG/롯데온 등 탭이 열리도록 라우팅한다.
+  // 헤더가 이미 명시 설정되어 있으면 덮어쓰지 않는다.
+  if (!headers['X-Device-Id']) {
+    const _did = getDeviceId()
+    if (_did) headers['X-Device-Id'] = _did
   }
 
   const res = await fetch(url, {
