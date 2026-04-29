@@ -26,9 +26,15 @@ async def main() -> None:
         sys.exit(2)
     prd_no = sys.argv[1].strip()
 
-    url = (
-        f"postgresql+asyncpg://{settings.write_db_user}:{settings.write_db_password}"
-        f"@{settings.write_db_host}:{settings.write_db_port}/{settings.write_db_name}"
+    # 프로덕션은 /cloudsql/ 유닉스소켓 / 로컬은 host:port — orm._build_db_url 재사용
+    from backend.db.orm import _build_db_url
+
+    url = _build_db_url(
+        settings.write_db_user,
+        settings.write_db_password,
+        settings.write_db_host,
+        settings.write_db_port,
+        settings.write_db_name,
     )
     engine = create_async_engine(url, echo=False)
     async with engine.connect() as conn:
@@ -61,6 +67,56 @@ async def main() -> None:
         sys.exit(1)
     print(f"[ACC] id={acc_id} label={label} key=****{api_key[-4:]}")
 
+    # 동일 계정으로 등록된 11번가 prdNo 1건 추출 (검증용)
+    engine2 = create_async_engine(_build_db_url_pre, echo=False) if False else None
+    from backend.db.orm import _build_db_url as _bd
+    engine2 = create_async_engine(_bd(settings.write_db_user, settings.write_db_password, settings.write_db_host, settings.write_db_port, settings.write_db_name), echo=False)
+    async with engine2.connect() as c2:
+        r2 = (await c2.execute(text(
+            "SELECT id, market_product_nos FROM samba_collected_product "
+            "WHERE market_product_nos::text LIKE :acc "
+            "ORDER BY updated_at DESC LIMIT 5"
+        ), {"acc": f"%{acc_id}%"})).fetchall()
+    await engine2.dispose()
+    print(f"\n[등록 prdNo 후보 — {len(r2)}건]")
+    candidate_prds = []
+    for cp_id, mpn in r2:
+        if isinstance(mpn, str):
+            try:
+                mpn = json.loads(mpn)
+            except Exception:
+                continue
+        if isinstance(mpn, dict):
+            v = mpn.get(acc_id)
+            if v and str(v).isdigit():
+                print(f"  cp={cp_id} prdNo={v}")
+                candidate_prds.append(str(v))
+    if candidate_prds:
+        prd_no = candidate_prds[0]
+        print(f"\n[교체] prd_no → 등록된 prdNo {prd_no} 로 검증 진행")
+
+    # 프로젝트 클라이언트로 정식 호출 (헤더/엔드포인트 정확)
+    cli = ElevenstClient(api_key=api_key)
+    print("\n[AUTH TEST get_categories]")
+    try:
+        cat = await cli.get_categories()
+        print(f"  OK keys={list(cat.keys())[:3] if isinstance(cat, dict) else type(cat)}")
+    except Exception as e:
+        print(f"  FAIL: {str(e)[:200]}")
+
+    print("\n[GET via ElevenstClient.get_product]")
+    try:
+        d = await cli.get_product(prd_no)
+        raw = d.get("raw", "") if isinstance(d, dict) else ""
+        print(f"  OK keys={list(d.keys())[:10] if isinstance(d, dict) else type(d)}")
+        print(f"  raw_len={len(raw)}")
+        for tag in ("crtfGrpObjClfCd01","crtfGrpObjClfCd02","crtfGrpObjClfCd03","crtfGrpObjClfCd04"):
+            m = re.search(rf"<{tag}>([^<]*)</{tag}>", raw)
+            print(f"  {tag} = {m.group(1) if m else '(없음)'}")
+    except Exception as e:
+        print(f"  FAIL: {str(e)[:300]}")
+
+    sys.exit(0)
     import httpx
     headers = {
         "openapikey": api_key,

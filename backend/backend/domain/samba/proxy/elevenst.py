@@ -204,7 +204,75 @@ class ElevenstClient:
 
         11번가 셀러 API: POST /rest/prodservices/product
         """
-        result = await self._call_api("POST", "/product", body=xml_data)
+        # KC인증 cert 필드(03/03/03/05) 검증용 — 응답 전체를 1회 로깅
+        # 11번가가 echo하는 cert 필드 raw값 + 무시되는지 여부 확인 목적
+        url = f"{self.BASE_URL}/product"
+        headers = self._headers()
+        client = _get_elevenst_http_client(self.api_key)
+        try:
+            resp = await self._do_request(client, "POST", url, headers, xml_data)
+        except (httpx.ConnectError, httpx.RemoteProtocolError) as conn_err:
+            logger.warning(
+                f"[11번가] 연결 오류, 클라이언트 재생성 후 재시도: {conn_err}"
+            )
+            _elevenst_clients.pop(self.api_key, None)
+            client = _get_elevenst_http_client(self.api_key)
+            resp = await self._do_request(client, "POST", url, headers, xml_data)
+
+        # cert 필드 검증용 — 요청/응답 raw XML 발췌 로그
+        import re as _re
+
+        req_cert = {
+            t: (
+                _re.search(rf"<{t}>([^<]*)</{t}>", xml_data).group(1)
+                if _re.search(rf"<{t}>([^<]*)</{t}>", xml_data)
+                else "(없음)"
+            )
+            for t in (
+                "crtfGrpObjClfCd01",
+                "crtfGrpObjClfCd02",
+                "crtfGrpObjClfCd03",
+                "crtfGrpObjClfCd04",
+            )
+        }
+        resp_cert = {
+            t: (
+                _re.search(rf"<{t}>([^<]*)</{t}>", resp.text).group(1)
+                if _re.search(rf"<{t}>([^<]*)</{t}>", resp.text)
+                else "(없음)"
+            )
+            for t in (
+                "crtfGrpObjClfCd01",
+                "crtfGrpObjClfCd02",
+                "crtfGrpObjClfCd03",
+                "crtfGrpObjClfCd04",
+            )
+        }
+        logger.info(f"[11번가] 등록요청 cert: {req_cert}")
+        logger.info(f"[11번가] 등록응답 cert: {resp_cert}")
+        logger.info(
+            f"[11번가] 등록응답 raw (앞 1500자): {resp.text[:1500].replace(chr(10), ' ')}"
+        )
+
+        # 기존 _call_api 후처리(에러코드/예외) 재현
+        data = self._parse_xml(resp.text)
+        if resp.status_code == 429:
+            try:
+                retry_after = int(resp.headers.get("Retry-After", "5"))
+            except ValueError:
+                retry_after = 5
+            raise ElevenstRateLimitError(retry_after=retry_after)
+        if resp.status_code in (503, 504):
+            raise ElevenstRateLimitError(retry_after=10)
+        if not resp.is_success:
+            msg = data.get("message", "") or data.get("raw", "") or resp.text[:300]
+            raise ElevenstApiError(f"HTTP {resp.status_code}: {msg}")
+        result_code = data.get("resultCode", "") or data.get("ResultCode", "")
+        if result_code and str(result_code) != "200" and str(result_code) != "0":
+            msg = data.get("resultMessage", "") or data.get("message", "")
+            raise ElevenstApiError(f"API 에러 ({result_code}): {msg}")
+
+        result = data
         prd_no = result.get("prdNo", "") if isinstance(result, dict) else ""
         logger.info(
             f"[11번가] 상품 등록 완료 — prdNo={prd_no}, keys={list(result.keys()) if isinstance(result, dict) else type(result)}"
