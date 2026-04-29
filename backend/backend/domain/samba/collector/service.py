@@ -1,7 +1,10 @@
 """SambaWave Collector service."""
 
+import logging
 import re
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
@@ -590,53 +593,69 @@ class SambaCollectorService:
         policy_id: str,
         policy_data: Optional[Dict[str, Any]] = None,
     ) -> int:
-        """그룹(필터)에 적용된 정책을 해당 그룹의 모든 상품에 전파."""
+        """그룹(필터)에 적용된 정책을 해당 그룹의 모든 상품에 전파.
+
+        - 가격 계산 불필요(`policy_data=None`): 단일 UPDATE
+        - 가격 계산 필요: cursor 페이지네이션으로 10,000개 limit 없이 전체 순회
+        - 상품별 try/except: 1건 실패해도 다음 상품 계속 처리, 실패 ID 로깅
+        """
         if not policy_data:
-            # 가격 계산 불필요 → bulk update로 한 번에 처리
             return await self.product_repo.bulk_update_by_filter(
                 filter_id, applied_policy_id=policy_id
             )
-        # 가격 계산 필요 → 상품별 처리 (sale_price가 다름)
-        products = await self.product_repo.list_by_filter(filter_id)
+
         use_range = policy_data.get("use_range_margin", False)
         range_margins = policy_data.get("range_margins", [])
         default_margin = policy_data.get("margin_rate", 15)
         shipping = policy_data.get("shipping_cost", 0)
         extra = policy_data.get("extra_charge", 0)
+        ssm_data = policy_data.get("source_site_margins") or {}
+
         updated = 0
-        for p in products:
-            base = p.sale_price or p.original_price or 0
-            # 범위 마진: 원가 구간별 마진율 적용
-            margin_rate = default_margin
-            if use_range and range_margins:
-                for r in range_margins:
-                    max_val = r.get("max") or 9999999999
-                    if base >= r.get("min", 0) and base < max_val:
-                        margin_rate = r.get("rate", 15)
-                        break
-            # 소싱처별 추가 마진
-            source_margin = 0
-            ssm_data = policy_data.get("source_site_margins") or {}
-            if ssm_data and p.source_site:
-                _ssm = ssm_data.get(p.source_site, {})
-                _ss_rate = _ssm.get("marginRate", 0)
-                _ss_amount = _ssm.get("marginAmount", 0)
-                # pointOnly=true: 적립금 사용 가능 상품(is_point_restricted=False)에만 적용
-                _point_only = bool(_ssm.get("pointOnly"))
-                _is_pr = getattr(p, "is_point_restricted", None)
-                _apply_ssm = (not _point_only) or (_is_pr is False)
-                if _apply_ssm:
-                    if _ss_rate > 0:
-                        source_margin += round(base * _ss_rate / 100)
-                    if _ss_amount > 0:
-                        source_margin += _ss_amount
-            calculated = int(
-                base * (1 + margin_rate / 100) + source_margin + shipping + extra
+        failed_ids: list[str] = []
+
+        async for p in self.product_repo.iter_by_filter(filter_id):
+            try:
+                base = p.sale_price or p.original_price or 0
+                # 범위 마진: 원가 구간별 마진율 적용
+                margin_rate = default_margin
+                if use_range and range_margins:
+                    for r in range_margins:
+                        max_val = r.get("max") or 9999999999
+                        if base >= r.get("min", 0) and base < max_val:
+                            margin_rate = r.get("rate", 15)
+                            break
+                # 소싱처별 추가 마진
+                source_margin = 0
+                if ssm_data and p.source_site:
+                    _ssm = ssm_data.get(p.source_site, {})
+                    _ss_rate = _ssm.get("marginRate", 0)
+                    _ss_amount = _ssm.get("marginAmount", 0)
+                    # pointOnly=true: 적립금 사용 가능 상품(is_point_restricted=False)에만 적용
+                    _point_only = bool(_ssm.get("pointOnly"))
+                    _is_pr = getattr(p, "is_point_restricted", None)
+                    _apply_ssm = (not _point_only) or (_is_pr is False)
+                    if _apply_ssm:
+                        if _ss_rate > 0:
+                            source_margin += round(base * _ss_rate / 100)
+                        if _ss_amount > 0:
+                            source_margin += _ss_amount
+                calculated = int(
+                    base * (1 + margin_rate / 100) + source_margin + shipping + extra
+                )
+                await self.product_repo.update_async(
+                    p.id,
+                    applied_policy_id=policy_id,
+                    market_prices={"default": calculated},
+                )
+                updated += 1
+            except Exception as e:
+                failed_ids.append(p.id)
+                logger.warning(f"정책 전파 실패 (상품 {p.id}, 필터 {filter_id}): {e}")
+
+        if failed_ids:
+            logger.error(
+                f"정책 전파 부분 실패: 필터 {filter_id} → 성공 {updated}건, "
+                f"실패 {len(failed_ids)}건 (id 일부: {failed_ids[:10]})"
             )
-            await self.product_repo.update_async(
-                p.id,
-                applied_policy_id=policy_id,
-                market_prices={"default": calculated},
-            )
-            updated += 1
         return updated

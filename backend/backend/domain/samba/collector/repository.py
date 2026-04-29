@@ -58,7 +58,11 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
     async def list_by_filter(
         self, search_filter_id: str, skip: int = 0, limit: int = 10000
     ) -> List[SambaCollectedProduct]:
-        """필터에 속한 전체 상품 조회 (정책 전파 등에 사용)."""
+        """필터에 속한 전체 상품 조회 (정책 전파 등에 사용).
+
+        주의: 정책 전파 등 전체 순회가 필요한 경우 iter_by_filter() 사용 권장
+        (10,000개 limit 우회 + 메모리 절약).
+        """
         return await self.filter_by_async(
             search_filter_id=search_filter_id,
             skip=skip,
@@ -66,6 +70,30 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
             order_by="created_at",
             order_by_desc=True,
         )
+
+    async def iter_by_filter(self, search_filter_id: str, batch_size: int = 1000):
+        """필터에 속한 모든 상품을 id 기준 cursor 페이지네이션으로 yield.
+
+        list_by_filter 의 10,000개 limit 우회용. 정책 전파 등 전체 순회 시 사용.
+        """
+        last_id = ""
+        while True:
+            stmt = (
+                select(SambaCollectedProduct)
+                .where(
+                    SambaCollectedProduct.search_filter_id == search_filter_id,
+                    SambaCollectedProduct.id > last_id,
+                )
+                .order_by(SambaCollectedProduct.id.asc())
+                .limit(batch_size)
+            )
+            result = await self.session.execute(stmt)
+            batch = list(result.scalars().all())
+            if not batch:
+                return
+            for p in batch:
+                yield p
+            last_id = batch[-1].id
 
     @staticmethod
     def _tenant_filter(tenant_id):
