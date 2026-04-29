@@ -673,14 +673,17 @@ class CategorySeedMixin:
                             for c in cats
                             if not _ai_filter_restricted(c.split(" > ")[0])
                         ]
-                    # 키즈 동적 필터:
-                    # - 배치 전체가 키즈 → 키즈 카테고리만 (성인 카테고리 제거)
-                    # - 배치 전체가 성인 → 키즈 카테고리 제거 (KC인증)
-                    # - 혼합 → 둘 다 유지하되 프롬프트 규칙에 의존
-                    if batch_all_kids:
-                        cats = [c for c in cats if _is_kids(c)]
-                    elif not batch_any_kids:
+                    # 키즈 SOFT 필터:
+                    # - 배치 전체 성인 → 키즈 카테고리 hard 제거 (KC인증)
+                    # - 배치 전체 키즈 → 키즈 우선이지만, 키즈 없으면 성인 fallback (해당 마켓에 키즈 트리 없는 경우 대비)
+                    # - 혼합 → 그대로
+                    if not batch_any_kids:
                         cats = [c for c in cats if not _is_kids(c)]
+                    elif batch_all_kids:
+                        kids_cats = [c for c in cats if _is_kids(c)]
+                        # 키즈 카테고리가 충분히 있으면 키즈만, 없으면 전체 유지(프롬프트가 매핑 결정)
+                        if len(kids_cats) >= 5:
+                            cats = kids_cats
                     if not cats:
                         continue
 
@@ -1519,6 +1522,91 @@ JSON만:
                 "errors": errors,
             }
 
+        def _ai_fallback_for_item(
+            item: Dict[str, Any], ai_result: Dict[str, str]
+        ) -> Dict[str, str]:
+            """AI가 빈 응답한 마켓을 mapped_refs/leaf_path 키워드로 결정론적 매칭.
+
+            AI가 ""만 반환한 마켓에 대해, 다음 우선순위로 11번가 등 후보 검색:
+            1. mapped_refs(스스/롯데ON 매핑) 경로의 leaf 키워드로 유사매칭
+            2. 소싱 leaf_path 키워드로 유사매칭
+            연령(키즈/성인) 미스매치 카테고리는 제외.
+            """
+            site = item["site"]
+            leaf_path = item["leaf_path"]
+            mapped_refs = item.get("mapped_refs") or {}
+            target_markets_item = item.get("target_markets") or []
+            item_is_kids = any(
+                kw in leaf_path.lower() for kw in _kids_keywords_const
+            ) or any(
+                any(kw in v.lower() for kw in _kids_keywords_const)
+                for v in mapped_refs.values()
+            )
+
+            # 키워드 후보군 구성: mapped_refs 경로 leaf + 소싱 leaf
+            ref_keywords: set[str] = set()
+            for v in mapped_refs.values():
+                if v and " > " in v:
+                    last_seg = v.split(" > ")[-1]
+                    for part in last_seg.replace("/", " ").split():
+                        if len(part) >= 2:
+                            ref_keywords.add(part)
+            src_segs = [s.strip() for s in leaf_path.split(">") if s.strip()]
+            if src_segs:
+                for part in src_segs[-1].replace("/", " ").split():
+                    if len(part) >= 2:
+                        ref_keywords.add(part)
+
+            patched: Dict[str, str] = dict(ai_result) if ai_result else {}
+            for mk in target_markets_item:
+                if patched.get(mk):
+                    continue
+                cats = all_market_cats.get(mk, [])
+                if not cats:
+                    continue
+                # 연령 매칭
+                cands = [
+                    c
+                    for c in cats
+                    if (
+                        any(kw in c.lower() for kw in _kids_keywords_const)
+                        == item_is_kids
+                    )
+                ]
+                if not cands:
+                    cands = cats
+                # 키워드 점수 매칭
+                if ref_keywords:
+                    scored = [
+                        (sum(1 for kw in ref_keywords if kw in c), c) for c in cands
+                    ]
+                    scored = [s for s in scored if s[0] > 0]
+                    if scored:
+                        scored.sort(key=lambda x: -x[0])
+                        best = scored[0][1]
+                        patched[mk] = best
+                        logger.info(
+                            "[벌크매핑-AI폴백] %s > %s → %s: %s (refs=%d, score=%d)",
+                            site,
+                            leaf_path,
+                            mk,
+                            best,
+                            len(mapped_refs),
+                            scored[0][0],
+                        )
+            return patched
+
+        _kids_keywords_const = (
+            "주니어",
+            "아동",
+            "유아",
+            "베이비",
+            "키즈",
+            "kids",
+            "junior",
+            "baby",
+        )
+
         # 배치 AI 호출 + 빈 결과 재시도 (최대 2회)
         remaining_items = batch_items
         for round_num in range(2):
@@ -1544,10 +1632,19 @@ JSON만:
                             f"[벌크매핑] 에러 → 재시도 대기: {site} > {leaf_path}: {ai_result}"
                         )
                     else:
-                        errors.append(
-                            f"[{item['mode']}] {site} > {leaf_path}: {ai_result}"
-                        )
-                    continue
+                        # 2회 실패한 경우라도 AI 폴백 시도
+                        ai_result = _ai_fallback_for_item(item, {})
+                        if not ai_result:
+                            errors.append(
+                                f"[{item['mode']}] {site} > {leaf_path}: AI 폴백 실패"
+                            )
+                            continue
+                    if isinstance(ai_result, str):
+                        continue
+
+                # 2라운드에서 AI 빈 응답 → mapped_refs 폴백 적용
+                if round_num == 1 and isinstance(ai_result, dict):
+                    ai_result = _ai_fallback_for_item(item, ai_result)
 
                 if item["mode"] == "update":
                     existing = item["existing"]
