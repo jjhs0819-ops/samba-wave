@@ -1610,8 +1610,10 @@ export default function ProductsPage() {
                   addLog(`[${ts()}] 큐 등록 완료 (job: ${jid.slice(-8)}) — 로컬 워커 처리 대기 중...`)
                   addLog(`※ 로컬 워커(local_bg_worker.py)가 실행 중이어야 처리됩니다`)
                   let pollCount = 0
-                  const maxPolls = 720 // 최대 60분 (5초 간격)
+                  // 큰 잡에서도 안 끊기도록 잡 크기에 비례 — 잡당 최대 5분 + 여유 30분, 24h 캡
+                  const maxPolls = Math.min(Math.max(720, ids.length * 60 + 360), 17280)
                   let lastLoggedPid = ''
+                  let lastLoggedCur = -1
                   while (pollCount < maxPolls && !aiJobAbortRef.current) {
                     await new Promise(r => setTimeout(r, 5000))
                     pollCount++
@@ -1632,8 +1634,10 @@ export default function ProductsPage() {
                         if (pollCount === 6) addLog(`[${ts()}] ⚠️ 워커가 아직 작업을 수신하지 못했습니다`)
                         if (pollCount === 18) addLog(`[${ts()}] ❌ 워커가 응답하지 않습니다. local_bg_worker.py 실행 여부를 확인해주세요`)
                       }
-                      // 새 상품 진입 시점에만 1줄 로그 — 이미지 진행은 타이틀에 위임
-                      if (st.status === 'running' && stPid && stPid !== lastLoggedPid) {
+                      // 새 상품 진입 시점에 1줄 로그 — pid 변경 또는 cur 증가 둘 중 하나만 되어도 로그
+                      const pidChanged = !!stPid && stPid !== lastLoggedPid
+                      const curAdvanced = cur > lastLoggedCur
+                      if (st.status === 'running' && (pidChanged || curAdvanced)) {
                         const curProd = productMap[stPid]
                           || allProducts.find(p => p.id === stPid)
                           || allProducts.find(p => p.site_product_id === stPid)
@@ -1644,6 +1648,7 @@ export default function ProductsPage() {
                         const totalImg = imgTot > 0 ? ` — ${fmt(imgTot)}장` : ''
                         addLog(`[${ts()}] [${fmt(Math.min(cur + 1, tot))}/${fmt(tot)}] ${label}${totalImg}`)
                         lastLoggedPid = stPid
+                        lastLoggedCur = cur
                       }
                       if (st.status === 'completed') {
                         success = st.total_transformed || 0
@@ -1659,7 +1664,7 @@ export default function ProductsPage() {
                     } catch { /* 폴링 오류 무시 */ }
                   }
                   if (aiJobAbortRef.current) addLog(`⛔ 사용자 중단`)
-                  else if (pollCount >= maxPolls) { addLog(`타임아웃 (60분 초과)`); fail = ids.length - success }
+                  else if (pollCount >= maxPolls) { addLog(`타임아웃 — 잡 크기 대비 한도 초과`); fail = ids.length - success }
                 }
               } catch (e) {
                 fail = ids.length
