@@ -275,11 +275,31 @@ async def process_job(job: dict) -> None:
     print(f"\n[Worker] Job start: {job_id} ({len(products)} products)")
 
     results = []
+    cancelled = False
     async with httpx.AsyncClient(
         timeout=30,
         limits=httpx.Limits(max_connections=5, max_keepalive_connections=2),
     ) as client:
+
+        async def _is_cancelled() -> bool:
+            """잡 상태 조회 — cancelled면 즉시 중단."""
+            try:
+                r = await client.get(
+                    f"{SAMBA_API_URL}/api/v1/samba/proxy/bg-jobs/{job_id}/status",
+                    timeout=5,
+                )
+                if r.status_code == 200:
+                    return r.json().get("status") == "cancelled"
+            except Exception:
+                pass
+            return False
+
         for i, prod in enumerate(products, 1):
+            # 매 상품 시작 전 취소 신호 확인
+            if await _is_cancelled():
+                print(f"[Worker]   ✋ 잡 취소 감지 — {i - 1}/{len(products)}에서 중단")
+                cancelled = True
+                break
             pid = prod["product_id"]
             images: list[str] = prod.get("images") or []
             detail_images: list[str] = prod.get("detail_images") or []
@@ -368,6 +388,21 @@ async def process_job(job: dict) -> None:
             )
             # 상품 1건 완료 — current 증가 + 결과 즉시 DB 반영
             await _report_progress(bump_product=True, product_result=product_result)
+
+    if cancelled:
+        # 취소된 잡: 부분 결과까지만 반영 후 종료 (백엔드 status는 이미 cancelled)
+        if results:
+            try:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    await client.post(
+                        f"{SAMBA_API_URL}/api/v1/samba/proxy/bg-jobs/{job_id}/complete",
+                        headers=HEADERS,
+                        json={"results": results, "cancelled": True},
+                    )
+            except Exception as e:
+                print(f"[Worker] cancelled job report 실패(무시): {e}")
+        print(f"[Worker] Job cancelled: {len(results)}/{len(products)} 처리됨")
+        return
 
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(

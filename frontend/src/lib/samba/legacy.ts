@@ -1117,6 +1117,12 @@ export const proxyApi = {
   bgJobStatus: (jobId: string) =>
     request<{ status: string; total: number; current: number; total_transformed: number; total_failed: number; image_current?: number; image_total?: number; current_product_id?: string }>(
       `${SAMBA_PREFIX}/proxy/bg-jobs/${jobId}/status`),
+  bgJobsActive: () =>
+    request<{ jobs: { job_id: string; status: string; total: number; current: number; created_at: string | null; started_at: string | null }[] }>(
+      `${SAMBA_PREFIX}/proxy/bg-jobs/active`),
+  bgJobCancel: (jobId: string) =>
+    request<{ success: boolean; job_id?: string; status?: string; message?: string }>(
+      `${SAMBA_PREFIX}/proxy/bg-jobs/${jobId}/cancel`, { method: 'POST', body: JSON.stringify({}) }),
   transformByGroups: (groupIds: string[], scope: { thumbnail: boolean; additional: boolean; detail: boolean }, mode: string, modelPreset?: string) =>
     request<{ success: boolean; message: string; total_transformed: number; total_failed: number }>(
       `${SAMBA_PREFIX}/proxy/images/transform`, {

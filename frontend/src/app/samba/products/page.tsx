@@ -153,6 +153,38 @@ export default function ProductsPage() {
     if (aiJobLogRef.current) aiJobLogRef.current.scrollTop = aiJobLogRef.current.scrollHeight
   }, [aiJobLogs])
 
+  // 배경제거 큐 — 현재 진행/대기 중인 잡 표시 (모달 열림 시 5초 폴링)
+  type BgActiveJob = { job_id: string; status: string; total: number; current: number; created_at: string | null; started_at: string | null }
+  const [bgActiveJobs, setBgActiveJobs] = useState<BgActiveJob[]>([])
+  const [bgActiveLoaded, setBgActiveLoaded] = useState(false)
+  useEffect(() => {
+    if (!aiJobModal) return
+    let alive = true
+    const tick = async () => {
+      try {
+        const res = await proxyApi.bgJobsActive()
+        if (alive) { setBgActiveJobs(res.jobs || []); setBgActiveLoaded(true) }
+      } catch { /* 일시 오류 무시 */ }
+    }
+    tick()
+    const t = setInterval(tick, 5000)
+    return () => { alive = false; clearInterval(t) }
+  }, [aiJobModal])
+  const cancelBgJob = async (jobId: string) => {
+    if (!await showConfirm(`작업 ${jobId.slice(-8)}을 취소하시겠습니까?\n(진행 중이면 다음 상품 진입 전 중단됩니다)`)) return
+    try {
+      const res = await proxyApi.bgJobCancel(jobId)
+      if (res.success) {
+        showAlert('취소 완료 — 곧 워커가 다음 잡으로 넘어갑니다', 'success')
+        try { const r = await proxyApi.bgJobsActive(); setBgActiveJobs(r.jobs || []) } catch { /* noop */ }
+      } else {
+        showAlert(`취소 실패: ${res.message || ''}`, 'error')
+      }
+    } catch (e) {
+      showAlert(`취소 실패: ${e instanceof Error ? e.message : ''}`, 'error')
+    }
+  }
+
   // 가격재고갱신 모달
   const [refreshModal, setRefreshModal] = useState(false)
   const [refreshLoading, setRefreshLoading] = useState(false)
@@ -944,6 +976,42 @@ export default function ProductsPage() {
                 }}>✕</button>
               )}
             </div>
+            {/* 배경제거 큐 — 현재 진행/대기 중인 잡 목록 */}
+            {bgActiveLoaded && bgActiveJobs.length > 0 && (
+              <div style={{
+                padding: '10px 14px', borderBottom: '1px solid #2D2D2D',
+                background: '#0F0F0F', maxHeight: '180px', overflowY: 'auto',
+              }}>
+                <div style={{ fontSize: '0.72rem', color: '#FFB84D', marginBottom: '6px', fontWeight: 600 }}>
+                  배경제거 큐 ({fmt(bgActiveJobs.length)}건 진행/대기)
+                </div>
+                {bgActiveJobs.map(j => {
+                  const isRunning = j.status === 'running'
+                  const pct = j.total > 0 ? Math.floor((j.current / j.total) * 100) : 0
+                  return (
+                    <div key={j.job_id} style={{
+                      display: 'flex', alignItems: 'center', gap: '8px',
+                      padding: '6px 8px', marginBottom: '4px',
+                      background: '#1A1A1A', border: `1px solid ${isRunning ? '#FF8C00' : '#2D2D2D'}`,
+                      borderRadius: '4px', fontSize: '0.7rem',
+                    }}>
+                      <span style={{
+                        color: isRunning ? '#FF8C00' : '#888', fontWeight: 700, minWidth: '52px',
+                      }}>{isRunning ? '▶ 진행중' : '⏸ 대기'}</span>
+                      <span style={{ color: '#8A95B0', fontFamily: 'monospace' }}>{j.job_id.slice(-8)}</span>
+                      <span style={{ color: '#E5E5E5', flex: 1 }}>
+                        {fmt(j.current)}/{fmt(j.total)} ({fmt(pct)}%)
+                      </span>
+                      <button onClick={() => cancelBgJob(j.job_id)} style={{
+                        padding: '3px 10px', borderRadius: '4px', fontSize: '0.65rem',
+                        background: 'rgba(255,107,107,0.12)', border: '1px solid rgba(255,107,107,0.4)',
+                        color: '#FF6B6B', cursor: 'pointer', fontWeight: 600,
+                      }}>취소</button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
             <div
               ref={aiJobLogRef}
               style={{

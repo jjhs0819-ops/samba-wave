@@ -544,7 +544,12 @@ async def bg_jobs_complete(
         else:
             fail_count += 1
 
-    job.status = JobStatus.COMPLETED
+    # 취소된 잡은 상태 유지(cancelled), 결과만 누적
+    is_cancelled_report = (
+        bool(request.get("cancelled")) or job.status == JobStatus.CANCELLED
+    )
+    if not is_cancelled_report:
+        job.status = JobStatus.COMPLETED
     job.completed_at = datetime.now(timezone.utc)
     job.current = success_count
     job.result = {"total_transformed": success_count, "total_failed": fail_count}
@@ -553,6 +558,7 @@ async def bg_jobs_complete(
 
     logger.info(
         f"[배경제거] 완료: job_id={job_id}, 성공={success_count}, 실패={fail_count}"
+        f"{', 취소됨' if is_cancelled_report else ''}"
     )
     return {
         "success": True,
@@ -670,3 +676,74 @@ async def bg_jobs_status(
         "image_total": res.get("image_total"),
         "current_product_id": res.get("current_product_id"),
     }
+
+
+# ═══════════════════════════════════════════════
+# 배경제거 잡 큐 — 활성 잡 목록 + 취소
+# ═══════════════════════════════════════════════
+
+
+@router.get("/bg-jobs/active")
+async def bg_jobs_active(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """현재 진행 중(pending/running)인 배경제거 잡 목록 — 모달에서 표시용."""
+    from sqlalchemy import select as sa_select
+
+    from backend.domain.samba.job.model import JobStatus, SambaJob
+
+    stmt = (
+        sa_select(SambaJob)
+        .where(SambaJob.job_type == "bg_remove")
+        .where(SambaJob.status.in_([JobStatus.PENDING, JobStatus.RUNNING]))
+        .order_by(SambaJob.created_at)
+    )
+    result = await session.execute(stmt)
+    jobs = result.scalars().all()
+
+    return {
+        "jobs": [
+            {
+                "job_id": j.id,
+                "status": j.status,
+                "total": j.total,
+                "current": j.current,
+                "created_at": j.created_at.isoformat() if j.created_at else None,
+                "started_at": j.started_at.isoformat() if j.started_at else None,
+            }
+            for j in jobs
+        ]
+    }
+
+
+@router.post("/bg-jobs/{job_id}/cancel")
+async def bg_jobs_cancel(
+    job_id: str,
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """배경제거 잡 취소 — pending이면 즉시, running이면 워커가 다음 상품 진입 전 중단."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import select as sa_select
+
+    from backend.domain.samba.job.model import JobStatus, SambaJob
+
+    stmt = sa_select(SambaJob).where(SambaJob.id == job_id)
+    result = await session.execute(stmt)
+    job = result.scalar_one_or_none()
+    if not job:
+        return {"success": False, "message": "잡을 찾을 수 없습니다"}
+
+    if job.status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
+        return {
+            "success": False,
+            "message": f"이미 종료된 잡입니다 (status={job.status})",
+        }
+
+    job.status = JobStatus.CANCELLED
+    job.completed_at = datetime.now(timezone.utc)
+    session.add(job)
+    await session.commit()
+
+    logger.info(f"[배경제거] 잡 취소: job_id={job_id}")
+    return {"success": True, "job_id": job_id, "status": "cancelled"}
