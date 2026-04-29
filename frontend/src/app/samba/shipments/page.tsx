@@ -84,7 +84,7 @@ export default function ShipmentsPage() {
   const [siteFilter, setSiteFilter] = useState('전체')
   const [soldOutFilter, setSoldOutFilter] = useState('전체')
   const [registrationFilter, setRegistrationFilter] = useState('미등록')
-  const [sortBy, setSortBy] = useState('updated_at_desc')
+  const [sortBy, setSortBy] = useState('update-desc')
   const [totalCount, setTotalCount] = useState(0)
 
   // 선택
@@ -1480,10 +1480,10 @@ export default function ShipmentsPage() {
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', background: 'rgba(255,255,255,0.02)', borderBottom: '1px solid #2D2D2D', gap: '8px' }}>
           <span style={{ fontSize: '0.8rem', color: '#888' }}>총 <span style={{ color: '#FF8C00', fontWeight: 600 }}>{fmtNum(totalCount)}</span> 개의 상품이 검색되었습니다.</span>
           <select value={sortBy} onChange={e => { onFilterChange(); setSortBy(e.target.value) }} style={{ ...inputStyle, width: '250px', marginLeft: 'auto' }}>
-            <option value="updated_at_desc">상품업데이트 날짜순 ▼</option>
-            <option value="updated_at_asc">상품업데이트 날짜순 ▲</option>
-            <option value="collected_at_desc">상품수집 날짜순 ▼</option>
-            <option value="collected_at_asc">상품수집 날짜순 ▲</option>
+            <option value="update-desc">상품업데이트 날짜순 ▼</option>
+            <option value="update-asc">상품업데이트 날짜순 ▲</option>
+            <option value="collect-desc">상품수집 날짜순 ▼</option>
+            <option value="collect-asc">상품수집 날짜순 ▲</option>
             {registeredMarkets.flatMap(m => [
               <option key={`${m.type}_asc`} value={`market_${m.type}_asc`}>{m.name} ▲</option>,
               <option key={`${m.type}_desc`} value={`market_${m.type}_desc`}>{m.name} ▼</option>,
