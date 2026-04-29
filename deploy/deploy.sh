@@ -242,6 +242,11 @@ sleep 2
 echo "[5/6] blue 새 이미지 pull + 재시작..."
 sudo docker compose pull samba-api
 sudo docker compose up -d samba-api
+# /tmp/draining 잔존 시 health 영구 503 → blue 무한 not-ready (2026-04-29 사고).
+# 컨테이너 재시작 시 동일 이미지 SHA면 recreate 안 되어 /tmp/draining 살아남음.
+# 컨테이너가 PID 1까지 올라올 때까지 잠깐 대기 후 명시적 삭제.
+sleep 1
+sudo docker exec samba-samba-api-1 rm -f /tmp/draining 2>/dev/null || true
 # blue 컨테이너 직접 폴링 (docker exec wget) — 외부 polling은 green이 응답해도 통과되어
 # blue ready 판별 불가능했음(둘 다 latest 이미지라 SHA 동일).
 # blue startup 5-10분 소요 가능 (alembic + verify_schema + worker 초기화) → 600초 대기.
