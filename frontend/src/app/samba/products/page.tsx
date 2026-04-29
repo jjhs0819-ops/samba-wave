@@ -1693,6 +1693,12 @@ export default function ProductsPage() {
                         addLog(`[${ts()}] 워커 처리 실패`)
                         break
                       }
+                      if (st.status === 'cancelled') {
+                        success = st.total_transformed || 0
+                        fail = (st.total ?? ids.length) - success
+                        addLog(`[${ts()}] 잡 취소됨 (워커 재시작 또는 사용자 취소) — 처리: ${fmt(success)}/${fmt(ids.length)}`)
+                        break
+                      }
                     } catch { /* 폴링 오류 무시 */ }
                   }
                   if (aiJobAbortRef.current) addLog(`⛔ 사용자 중단`)
