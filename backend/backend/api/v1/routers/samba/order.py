@@ -157,6 +157,10 @@ async def _build_order_filters(
                 SambaOrder.tracking_number == "",
             )
         )
+    elif input_filter == "registered":
+        filters.append(SambaOrder.collected_product_id != None)  # noqa: E711
+    elif input_filter == "unregistered":
+        filters.append(SambaOrder.collected_product_id == None)  # noqa: E711
     elif input_filter in {"direct", "kkadaegi", "gift"}:
         filters.append(SambaOrder.action_tag == input_filter)
 

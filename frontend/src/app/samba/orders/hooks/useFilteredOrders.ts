@@ -82,6 +82,8 @@ export function useFilteredOrders(args: Args) {
         case 'no_order': if (o.sourcing_order_number) return false; break
         case 'has_invoice': if (!o.tracking_number) return false; break
         case 'no_invoice': if (o.tracking_number) return false; break
+        case 'registered': if (!o.collected_product_id) return false; break
+        case 'unregistered': if (o.collected_product_id) return false; break
         case 'direct': if (action !== 'direct') return false; break
         case 'kkadaegi': if (action !== 'kkadaegi') return false; break
         case 'gift': if (action !== 'gift') return false; break
