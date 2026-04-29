@@ -257,38 +257,67 @@ def remove_watermark(image_bytes: bytes) -> bytes | None:
         return buf.getvalue()
 
     # 3) 사진 컨텐츠 → rembg는 작은 src로만 돌리고 alpha mask만 추출
-    #    1차: alpha_matting=False (안정적/메모리 적음)
-    #    가장자리 품질 부족 시 2차: alpha_matting=True (고품질, 메모리 폭발 가능)
+    #    임계값 정책 (A+B):
+    #      - HIGH(0.85): 1차에서 통과하면 즉시 반환 (가장자리 깨끗)
+    #      - MID(0.60): 1차 미달 시 2차 정밀 시도, 2차도 미달 시 1차 결과 사용
+    #      - LOW(0.30): 1차/2차 모두 MID 미달이지만 LOW 이상이면 더 좋은 쪽으로 합성 반환
+    #                   (모델컷 컬러 배경처럼 가장자리 거칠어도 원본보다 나은 케이스)
+    #      - LOW 미만: 둘 다 모델 윤곽조차 못 잡음 → 변환 실패 (원본 유지)
+    HIGH, MID, LOW = 0.85, 0.60, 0.30
+
+    def _save_composite(alpha: Image.Image) -> bytes:
+        composite = _composite_with_alpha(src_orig, alpha)
+        buf = io.BytesIO()
+        composite.save(buf, format="WEBP", quality=90)
+        return buf.getvalue()
+
     try:
-        alpha_small = _rembg_alpha(src_small, use_alpha_matting=False)
-        if _alpha_edge_ratio(alpha_small) >= 0.85:
-            composite = _composite_with_alpha(src_orig, alpha_small)
-            buf = io.BytesIO()
-            composite.save(buf, format="WEBP", quality=90)
-            return buf.getvalue()
+        alpha1 = _rembg_alpha(src_small, use_alpha_matting=False)
+        ratio1 = _alpha_edge_ratio(alpha1)
+        if ratio1 >= HIGH:
+            return _save_composite(alpha1)
+
+        # 1차가 HIGH 미만 — 2차 정밀 시도
         print(
-            "[Worker]   [rembg] 1차(alpha_matting=False) 가장자리 품질 부족 → matting on 재시도"
+            f"[Worker]   [rembg] 1차 가장자리 비율={ratio1:.2f} (HIGH={HIGH}) → matting on 재시도"
         )
+        alpha2: Image.Image | None = None
+        ratio2 = 0.0
         try:
-            alpha_small2 = _rembg_alpha(src_small, use_alpha_matting=True)
-            if _alpha_edge_ratio(alpha_small2) >= 0.85:
-                composite = _composite_with_alpha(src_orig, alpha_small2)
-                buf = io.BytesIO()
-                composite.save(buf, format="WEBP", quality=90)
-                return buf.getvalue()
+            alpha2 = _rembg_alpha(src_small, use_alpha_matting=True)
+            ratio2 = _alpha_edge_ratio(alpha2)
+            if ratio2 >= HIGH:
+                return _save_composite(alpha2)
         except (MemoryError, np.linalg.LinAlgError) as me:
-            print(f"[Worker]   [rembg] 2차 메모리 폭발 — 1차 결과로 폴백: {me}")
-            composite = _composite_with_alpha(src_orig, alpha_small)
-            buf = io.BytesIO()
-            composite.save(buf, format="WEBP", quality=90)
-            return buf.getvalue()
+            print(f"[Worker]   [rembg] 2차 메모리 폭발: {me}")
+            alpha2 = None
         except Exception as e:
-            print(f"[Worker]   [rembg] 2차 예외 — 1차 결과 사용: {e}")
-            composite = _composite_with_alpha(src_orig, alpha_small)
-            buf = io.BytesIO()
-            composite.save(buf, format="WEBP", quality=90)
-            return buf.getvalue()
-        print("[Worker]   [rembg] 2차도 가장자리 품질 부족 — 변환 실패 처리")
+            print(f"[Worker]   [rembg] 2차 예외: {e}")
+            alpha2 = None
+
+        # B: 더 좋은 쪽 선택 (HIGH 미만이지만 활용 가능 범위)
+        best_alpha = alpha1
+        best_ratio = ratio1
+        if alpha2 is not None and ratio2 > best_ratio:
+            best_alpha = alpha2
+            best_ratio = ratio2
+
+        if best_ratio >= MID:
+            print(
+                f"[Worker]   [rembg] HIGH 미달이나 MID({MID}) 통과 — 결과 사용 (ratio={best_ratio:.2f})"
+            )
+            return _save_composite(best_alpha)
+
+        # A: MID도 미달이지만 LOW 이상이면 어쨌든 사용 (모델컷 컬러 배경 케이스)
+        if best_ratio >= LOW:
+            print(
+                f"[Worker]   [rembg] MID 미달이나 LOW({LOW}) 통과 — 거친 가장자리 감수하고 사용 (ratio={best_ratio:.2f})"
+            )
+            return _save_composite(best_alpha)
+
+        print(
+            f"[Worker]   [rembg] 모델 윤곽조차 못 잡음 (ratio={best_ratio:.2f}) — 변환 실패 처리"
+        )
         return None
     except Exception as e:
         print(f"[Worker]   [rembg] 1차 예외, 변환 실패 처리: {e}")
