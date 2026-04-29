@@ -508,12 +508,15 @@ async def bg_jobs_complete(
         return {"success": False, "message": "Job not found"}
 
     results: list[dict] = request.get("results", [])
-    success_count = 0
-    fail_count = 0
+    # progress 단계에서 이미 즉시 반영된 상품은 skip (idempotent)
+    existing_res = dict(job.result or {})
+    already_processed: set[str] = set(existing_res.get("processed_product_ids", []))
+    success_count = int(existing_res.get("total_transformed", 0))
+    fail_count = int(existing_res.get("total_failed", 0))
 
     for item in results:
         pid = item.get("product_id")
-        if not pid:
+        if not pid or pid in already_processed:
             continue
         prod_stmt = sa_select(SambaCollectedProduct).where(
             SambaCollectedProduct.id == pid
@@ -570,9 +573,12 @@ async def bg_jobs_progress(
     body 없음 → 상품 1건 완료(current +1)
     body에 image_current/image_total 있음 → 사진 단위 진행률만 갱신
       (current는 증가시키지 않음 — 상품 완료는 별도 호출 또는 complete에서 처리)
+    body.product_result 있음 → 상품 1건 완료를 즉시 DB 반영
+      (이미지 URL/태그 즉시 커밋 + total_transformed/total_failed 누적)
     """
     from sqlalchemy import select as sa_select
 
+    from backend.domain.samba.collector.model import SambaCollectedProduct
     from backend.domain.samba.job.model import SambaJob
 
     if not await _verify_worker_token(x_worker_token, session):
@@ -589,6 +595,7 @@ async def bg_jobs_progress(
     img_tot = body.get("image_total")
     cur_pid = body.get("current_product_id")
     bump_product = bool(body.get("bump_product", img_cur is None))
+    product_result = body.get("product_result")
 
     if bump_product:
         job.current = min(job.current + 1, job.total)
@@ -601,6 +608,34 @@ async def bg_jobs_progress(
         res["image_total"] = int(img_tot)
     if cur_pid is not None:
         res["current_product_id"] = str(cur_pid)
+
+    # 상품 단위 즉시 DB 반영 — 잡 종료 전이라도 새로고침 시 반영되도록
+    if isinstance(product_result, dict):
+        pid = product_result.get("product_id")
+        if pid:
+            prod_stmt = sa_select(SambaCollectedProduct).where(
+                SambaCollectedProduct.id == pid
+            )
+            prod_result = await session.execute(prod_stmt)
+            product = prod_result.scalar_one_or_none()
+            if product and product_result.get("success"):
+                new_images = product_result.get("new_images")
+                new_detail = product_result.get("new_detail_images")
+                if new_images is not None:
+                    product.images = new_images
+                if new_detail is not None:
+                    product.detail_images = new_detail
+                product.tags = list(
+                    set((product.tags or []) + ["__ai_image__", "__img_edited__"])
+                )
+                session.add(product)
+                res["total_transformed"] = int(res.get("total_transformed", 0)) + 1
+            else:
+                res["total_failed"] = int(res.get("total_failed", 0)) + 1
+            res["processed_product_ids"] = list(
+                set(res.get("processed_product_ids", []) + [pid])
+            )
+
     job.result = res
 
     session.add(job)

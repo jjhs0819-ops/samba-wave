@@ -230,24 +230,30 @@ async def process_job(job: dict) -> None:
             transformed = 0
             img_done = 0
 
-            async def _report_progress(bump_product: bool = False) -> None:
-                """사진 단위 진행률 즉시 보고 (실패 무시)."""
+            async def _report_progress(
+                bump_product: bool = False,
+                product_result: dict | None = None,
+            ) -> None:
+                """사진 단위 진행률 즉시 보고 (실패 무시).
+
+                product_result 전달 시 상품 1건의 결과를 즉시 DB에 반영하도록 요청.
+                """
                 try:
+                    payload = {
+                        "image_current": img_done,
+                        "image_total": img_total,
+                        "current_product_id": pid,
+                        "bump_product": bump_product,
+                    }
+                    if product_result is not None:
+                        payload["product_result"] = product_result
                     await client.patch(
                         f"{SAMBA_API_URL}/api/v1/samba/proxy/bg-jobs/{job_id}/progress",
                         headers=HEADERS,
-                        json={
-                            "image_current": img_done,
-                            "image_total": img_total,
-                            "current_product_id": pid,
-                            "bump_product": bump_product,
-                        },
+                        json=payload,
                     )
                 except Exception:
                     pass
-
-            # 시작 직후 0/img_total 한 번 보고 → 프론트 폴링이 곧바로 인식
-            await _report_progress(bump_product=False)
 
             if scope.get("thumbnail") and images:
                 url = await process_image(client, images[0])
@@ -275,20 +281,19 @@ async def process_job(job: dict) -> None:
                     img_done += 1
                     await _report_progress(bump_product=False)
 
-            results.append(
-                {
-                    "product_id": pid,
-                    "success": transformed > 0,
-                    "new_images": new_images,
-                    "new_detail_images": new_detail,
-                    "transformed_count": transformed,
-                }
-            )
+            product_result = {
+                "product_id": pid,
+                "success": transformed > 0,
+                "new_images": new_images,
+                "new_detail_images": new_detail,
+                "transformed_count": transformed,
+            }
+            results.append(product_result)
             print(
                 f"[Worker]   [{i}/{len(products)}] {pid} -> {transformed} images done"
             )
-            # 상품 1건 완료 — current 증가
-            await _report_progress(bump_product=True)
+            # 상품 1건 완료 — current 증가 + 결과 즉시 DB 반영
+            await _report_progress(bump_product=True, product_result=product_result)
 
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(

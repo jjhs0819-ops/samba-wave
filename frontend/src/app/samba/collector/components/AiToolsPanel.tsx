@@ -203,13 +203,13 @@ export default function AiToolsPanel(props: Props) {
                   const jid = batchResVal.job_id
                   addLog(`[${ts()}] 큐 등록 완료 — 워커 처리 대기 중...`)
                   let pollCount = 0
-                  const maxPolls = 720
+                  const maxPolls = 2400
                   let lastLoggedCur = -1
                   let lastLoggedStatus = ''
                   let lastLoggedImgCur = -1
                   let lastLoggedPid = ''
                   while (pollCount < maxPolls && !aiJobAbortRef.current) {
-                    await new Promise(r => setTimeout(r, 5000))
+                    await new Promise(r => setTimeout(r, 1500))
                     pollCount++
                     try {
                       const st = await proxyApi.bgJobStatus(jid)
