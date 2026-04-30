@@ -79,9 +79,11 @@ async function _isAutotuneActive() {
   try {
     const stored = await chrome.storage.local.get('proxyUrl')
     const proxyUrl = stored.proxyUrl || 'https://api.samba-wave.co.kr'
-    const res = await fetch(`${proxyUrl}/api/v1/samba/collector/autotune/status`, {
-      method: 'GET',
-    })
+    // X-Api-Key 헤더 자동 부착하는 apiFetch 사용 (raw fetch는 ApiGatewayMiddleware에 의해 403)
+    const apiFetch = globalThis.SambaBackgroundCore?.apiFetch
+    const res = apiFetch
+      ? await apiFetch(`${proxyUrl}/api/v1/samba/collector/autotune/status`, { method: 'GET' })
+      : await fetch(`${proxyUrl}/api/v1/samba/collector/autotune/status`, { method: 'GET' })
     if (!res.ok) return _alAutotuneActiveCache.value
     const data = await res.json()
     const active = !!data.running
