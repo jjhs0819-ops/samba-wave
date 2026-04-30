@@ -122,8 +122,10 @@ export default function OrdersTable(props: OrdersTableProps) {
           ) : filteredOrders.length === 0 ? (
             <tr><td colSpan={4} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>주문이 없습니다</td></tr>
           ) : filteredOrders.map((o, index) => {
-            const costDisplay = editingCosts[o.id] !== undefined ? fmtNumStr(editingCosts[o.id]) : (o.cost != null ? fmtNum(o.cost) : '')
-            const shipFeeDisplay = editingShipFees[o.id] !== undefined ? fmtNumStr(editingShipFees[o.id]) : (o.shipping_fee != null ? fmtNum(o.shipping_fee) : '')
+            // 편집 중에는 사용자 입력을 그대로 표시 (콤마 자동삽입으로 인한 커서 꼬임/계산식 깨짐 방지)
+            // Blur 후 editingCosts에서 제거되면 저장값(o.cost)에 콤마 포맷 적용
+            const costDisplay = editingCosts[o.id] !== undefined ? editingCosts[o.id] : (o.cost != null ? fmtNum(o.cost) : '')
+            const shipFeeDisplay = editingShipFees[o.id] !== undefined ? editingShipFees[o.id] : (o.shipping_fee != null ? fmtNum(o.shipping_fee) : '')
             const liveProfit = calcProfit(o)
             const liveProfitRate = calcProfitRate(o)
             const liveFeeRate = calcFeeRate(o)
@@ -299,9 +301,10 @@ export default function OrdersTable(props: OrdersTableProps) {
                         type="text"
                         style={{ ...inputStyle, flex: 1, fontSize: '0.75rem', textAlign: 'right' }}
                         value={costDisplay}
-                        placeholder="실구매가"
+                        placeholder="실구매가 (식 가능: 30000*.973+2300)"
                         onChange={e => {
-                          const raw = e.target.value.replace(/[^\d]/g, '')
+                          // 숫자/사칙연산자/괄호/소수점/공백만 허용 (콤마는 입력 중 제거하여 식 평가 가능)
+                          const raw = e.target.value.replace(/[^\d+\-*/.() ]/g, '')
                           setEditingCosts(prev => ({ ...prev, [o.id]: raw }))
                         }}
                         onBlur={() => handleCostSave(o.id)}
@@ -316,9 +319,9 @@ export default function OrdersTable(props: OrdersTableProps) {
                         type="text"
                         style={{ ...inputStyle, flex: 1, fontSize: '0.75rem', textAlign: 'right' }}
                         value={shipFeeDisplay}
-                        placeholder="배송비"
+                        placeholder="배송비 (식 가능)"
                         onChange={e => {
-                          const raw = e.target.value.replace(/[^\d]/g, '')
+                          const raw = e.target.value.replace(/[^\d+\-*/.() ]/g, '')
                           setEditingShipFees(prev => ({ ...prev, [o.id]: raw }))
                         }}
                         onBlur={() => handleShipFeeSave(o.id)}

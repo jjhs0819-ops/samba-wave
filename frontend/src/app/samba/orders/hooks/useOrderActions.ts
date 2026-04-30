@@ -89,11 +89,32 @@ export function useOrderActions(args: Args) {
     catch (e) { showAlert(e instanceof Error ? e.message : '삭제 실패', 'error') }
   }
 
+  // 입력값 평가: 숫자/사칙연산자/괄호/소수점만 허용된 안전한 식 평가
+  // - "30000*.973+2300" → 31490
+  // - 빈값 → 0, 잘못된 식 → null (저장 무시)
+  const evalExpr = (raw: string): number | null => {
+    const expr = raw.replace(/,/g, '').trim()
+    if (!expr) return 0
+    if (!/^[\d+\-*/.() ]+$/.test(expr)) return null
+    try {
+      const result = Function(`"use strict";return (${expr})`)()
+      if (typeof result !== 'number' || !Number.isFinite(result) || result < 0) return null
+      return Math.round(result)
+    } catch {
+      return null
+    }
+  }
+
   const handleCostSave = async (id: string) => {
     const val = editingCosts[id]
     if (val === undefined) return
+    const nextCost = evalExpr(val)
+    if (nextCost === null) {
+      // 잘못된 식이면 편집상태만 제거하여 원래 저장값 표시 복원
+      setEditingCosts(prev => { const n = { ...prev }; delete n[id]; return n })
+      return
+    }
     try {
-      const nextCost = Number(val) || 0
       await orderApi.update(id, { cost: nextCost })
       patchOrder(id, { cost: nextCost })
       setEditingCosts(prev => { const n = { ...prev }; delete n[id]; return n })
@@ -103,8 +124,12 @@ export function useOrderActions(args: Args) {
   const handleShipFeeSave = async (id: string) => {
     const val = editingShipFees[id]
     if (val === undefined) return
+    const nextShippingFee = evalExpr(val)
+    if (nextShippingFee === null) {
+      setEditingShipFees(prev => { const n = { ...prev }; delete n[id]; return n })
+      return
+    }
     try {
-      const nextShippingFee = Number(val) || 0
       await orderApi.update(id, { shipping_fee: nextShippingFee })
       patchOrder(id, { shipping_fee: nextShippingFee })
       setEditingShipFees(prev => { const n = { ...prev }; delete n[id]; return n })
