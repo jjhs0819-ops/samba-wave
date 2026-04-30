@@ -192,7 +192,11 @@ async function _ensureLoggedInSingle(siteKey) {
   if (!site) return false
 
   // 무신사/KREAM/ABC마트는 보안 스크립트가 무거워 타임아웃 30초
-  const LOGIN_TIMEOUT = (siteKey === 'musinsa' || siteKey === 'kream' || siteKey === 'abcmart') ? 30000 : 15000
+  // 롯데ON은 Vue SPA로 폼 동적 렌더링 + 로그인 후 리다이렉트가 느림 → 30초
+  const LOGIN_TIMEOUT = (siteKey === 'musinsa' || siteKey === 'kream' || siteKey === 'abcmart' || siteKey === 'lotteon') ? 30000 : 15000
+  // SPA 사이트는 로그인 페이지 HTML이 빈 div 뿐, JS로 input이 동적 렌더링됨
+  // → reload하면 Chrome autofill 후보 0개로 결정되어 영구 미발동 → reload 스킵하고 동적 렌더링 대기
+  const IS_SPA_LOGIN = (siteKey === 'lotteon')
   const POLL_INTERVAL = 2000
 
   let tabId = null
@@ -236,11 +240,45 @@ async function _ensureLoggedInSingle(siteKey) {
       try { await waitForTabLoad(tabId, 30000) } catch {}
     }
 
-    // STEP A: autocomplete 차단 강제 해제 → 페이지 리로드하여 Chrome 자동완성 재평가
+    // STEP A-pre: SPA 사이트는 input이 동적 렌더링될 때까지 폴링 대기 (최대 10초)
+    // 롯데ON 등 Vue/React SPA는 로드 직후 <div id="app"></div>만 있음 → input 등장 대기 필수
+    if (IS_SPA_LOGIN) {
+      const SPA_WAIT_MAX = 10000
+      const SPA_POLL = 300
+      const spaStart = Date.now()
+      let inputAppeared = false
+      while (Date.now() - spaStart < SPA_WAIT_MAX) {
+        try {
+          const [r] = await chrome.scripting.executeScript({
+            target: { tabId },
+            func: () => {
+              const visible = (el) => el && el.offsetParent !== null
+              const id = document.querySelector('input[type="email"], input[type="text"]:not([type="hidden"])')
+              const pw = document.querySelector('input[type="password"]')
+              return { idVisible: visible(id), pwVisible: visible(pw) }
+            },
+          })
+          if (r?.result?.idVisible && r?.result?.pwVisible) {
+            inputAppeared = true
+            console.log(`[자동로그인] ${site.name} SPA input 렌더링 감지 (${Date.now() - spaStart}ms)`)
+            break
+          }
+        } catch {}
+        await wait(SPA_POLL)
+      }
+      if (!inputAppeared) {
+        console.log(`[자동로그인] ${site.name} SPA input 렌더링 타임아웃 (10초) — 진행은 계속`)
+      }
+    }
+
+    // STEP A: autocomplete 차단 강제 해제
+    // 일반 사이트: 속성 수정 후 reload → Chrome이 새 autocomplete 보고 autofill 재평가
+    // SPA 사이트(롯데ON): reload 금지 — reload하면 input이 사라져 Chrome autofill 후보 0개로 결정되어 영구 미발동
+    //   대신 input.dispatchEvent로 mutation 트리거하여 Chrome이 동적 변경을 감지하도록 유도
     try {
       const [acResult] = await chrome.scripting.executeScript({
         target: { tabId },
-        func: () => {
+        func: (isSpa) => {
           let changed = 0
           document.querySelectorAll('input[autocomplete="off"]').forEach(inp => {
             if (inp.type === 'email' || inp.type === 'text') {
@@ -267,15 +305,30 @@ async function _ensureLoggedInSingle(siteKey) {
               changed++
             }
           })
+          // SPA: 속성 변경 후 input event 발화로 Chrome autofill 재평가 유도
+          if (isSpa && changed > 0) {
+            document.querySelectorAll('input[type="text"], input[type="email"], input[type="password"]').forEach(inp => {
+              try {
+                inp.dispatchEvent(new Event('focus', { bubbles: true }))
+                inp.dispatchEvent(new Event('blur', { bubbles: true }))
+              } catch {}
+            })
+          }
           return changed
         },
+        args: [IS_SPA_LOGIN],
       })
       const acChanged = acResult?.result || 0
       if (acChanged > 0) {
-        console.log(`[자동로그인] ${site.name} autocomplete ${acChanged}개 필드 강제 해제 → 리로드`)
-        await chrome.tabs.reload(tabId)
-        try { await waitForTabLoad(tabId, 30000) } catch {}
-        await wait(1500)
+        if (IS_SPA_LOGIN) {
+          console.log(`[자동로그인] ${site.name} autocomplete ${acChanged}개 필드 강제 해제 (SPA: reload 스킵, mutation 이벤트로 유도)`)
+          await wait(1500)
+        } else {
+          console.log(`[자동로그인] ${site.name} autocomplete ${acChanged}개 필드 강제 해제 → 리로드`)
+          await chrome.tabs.reload(tabId)
+          try { await waitForTabLoad(tabId, 30000) } catch {}
+          await wait(1500)
+        }
       }
     } catch (e) {
       console.log(`[자동로그인] autocomplete 해제 실패 (무시): ${e.message}`)
@@ -348,8 +401,8 @@ async function _ensureLoggedInSingle(siteKey) {
       console.log(`[자동로그인] 비밀번호 필드 클릭 실패 (무시): ${e.message}`)
     }
 
-    // 자동완성 값 반영 대기
-    const autoFillWait = (siteKey === 'musinsa' || siteKey === 'kream' || siteKey === 'abcmart') ? 4000 : 2500
+    // 자동완성 값 반영 대기 (SPA는 더 길게)
+    const autoFillWait = (siteKey === 'musinsa' || siteKey === 'kream' || siteKey === 'abcmart') ? 4000 : (IS_SPA_LOGIN ? 4000 : 2500)
     await wait(autoFillWait)
 
     // input/change 이벤트 강제 발화 — 사이트 유효성 검사가 자동완성 값을 인식하도록 유도
@@ -365,6 +418,24 @@ async function _ensureLoggedInSingle(siteKey) {
           })
         },
       })
+    } catch {}
+
+    // 진단: 로그인 버튼 클릭 직전 input 상태 로그 (다음 디버깅 시 즉시 원인 판별용)
+    try {
+      const [diag] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const af = (el) => { try { return !!el?.matches?.(':-webkit-autofill') } catch { return false } }
+          const id = document.querySelector('input[type="email"], input#id, input[name="id"], input[name="userId"], input[name="username"], input#username')
+          const pw = document.querySelector('input[type="password"]')
+          return {
+            id_found: !!id, id_vlen: id?.value?.length || 0, id_af: af(id),
+            pw_found: !!pw, pw_vlen: pw?.value?.length || 0, pw_af: af(pw),
+          }
+        },
+      })
+      const d = diag?.result || {}
+      console.log(`[자동로그인][진단] ${site.name} 클릭 직전 — id(found=${d.id_found},vlen=${d.id_vlen},af=${d.id_af}) pw(found=${d.pw_found},vlen=${d.pw_vlen},af=${d.pw_af})`)
     } catch {}
 
     // STEP D: :-webkit-autofill 감지 → form POST 폴백 (.value 빈 경우 ABC마트 등)

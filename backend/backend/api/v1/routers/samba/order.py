@@ -2828,19 +2828,25 @@ async def sync_orders_from_markets(
                     except Exception as ce:
                         logger.warning(f"[주문동기화] {label}: 주문확인 실패 — {ce}")
 
-                # ── 정산예상 계산용 raw 필드 매핑 (샵마인 정산공식 채택) ─────────
-                # 샵마인 분해표 검증으로 확정된 공식(2026-04-25):
-                #   고객결제금액   = slAmt − fvrAmtSum
-                #   중개수수료총합 = bseCmsn(기본) + pcsCmsn(제휴) + dvCmsn(배송비) − ajstDcAmt(조정=롯데부담)
-                #   정산예정      = 고객결제금액 − 중개수수료총합
-                # 기존 sptDcPgmCmsnSum 차감 로직은 셀러부담할인을 이중 차감하는 버그였음.
-                # raw 응답 필드명이 미확정인 항목은 후보 키 폴백으로 호환.
+                # ── 정산예상 계산용 raw 필드 매핑 (롯데ON 공식 정산공식, 2026-04-30 재확인) ─
+                # SellerDeliveryOrdersSearch 실제 응답 키:
+                #   slAmt            = 총판매금액 (= 판매단가 × 수량)
+                #   actualAmt        = 고객결제금액 (= 슬amt − 전체할인)
+                #   prSfcoShrAmtSum  = 당사(롯데/이커머스) 부담 할인 합 (= ajstDcAmt 역할)
+                #   prEntpShrAmtSum  = 제휴몰 부담 할인 합
+                #   sptDcPgmCmsnSum  = 셀러 부담 할인 합 (지원할인 PGM)
+                #   fvrAmtSum        = 전체 할인합 (= prSfco + prEntp + sptDcPgm)
+                # → bseCmsn/pcsCmsn/dvCmsn/ajstDcAmt 필드는 이 API에 존재하지 않음.
+                #   기본수수료는 카테고리 fee_rate × slAmt, PCS는 가격비교 채널만 부과,
+                #   조정(당사부담환급)은 prSfcoShrAmtSum 으로 대체.
+                # 정산공식: pymtAmt = actualAmt − (bseCmsn + pcsCmsn + dvCmsn − ajstDcAmt)
                 sl_amt_map: dict[str, int] = {}  # 총판매금액 (slAmt)
-                fvr_amt_map: dict[str, int] = {}  # 전체 할인합 (셀러+롯데)
-                bse_cmsn_map: dict[str, int] = {}  # 기본수수료
-                pcs_cmsn_map: dict[str, int] = {}  # PCS/제휴 수수료
-                dv_cmsn_map: dict[str, int] = {}  # 배송비 수수료
-                ajst_dc_map: dict[str, int] = {}  # 조정(할인) = 롯데부담
+                fvr_amt_map: dict[str, int] = {}  # 전체 할인합
+                actual_amt_map: dict[str, int] = {}  # 고객결제금액 (actualAmt)
+                lotte_dc_map: dict[str, int] = {}  # 당사부담할인 (prSfcoShrAmtSum)
+                ch_no_map: dict[
+                    str, str
+                ] = {}  # 채널번호 (chNo) — PCS 수수료 부과 판단용
 
                 def _pick(d: dict, *keys: str) -> int:
                     for k in keys:
@@ -2857,38 +2863,24 @@ async def sync_orders_from_markets(
                     if not _od_no:
                         continue
                     _slamt = _pick(ro, "slAmt", "slPrc")
-                    _fvr = _pick(ro, "fvrAmtSum", "tdscAmtSum", "totDcAmt")
-                    _bse = _pick(ro, "bseCmsn", "bseCmsnAmt")
-                    _pcs = _pick(ro, "pcsCmsn", "pcsCmsnAmt", "pgCmsnAmt")
-                    _dv = _pick(ro, "dvCmsn", "dvCstCmsnAmt")
-                    _ajst = _pick(ro, "ajstDcAmt", "ajstDcSptAmt")
+                    _fvr = _pick(ro, "fvrAmtSum")
+                    _actual = _pick(ro, "actualAmt")
+                    _lotte_dc = _pick(ro, "prSfcoShrAmtSum")
+                    _ch_no = str(ro.get("chNo") or "")
                     if _slamt > sl_amt_map.get(_od_no, 0):
                         sl_amt_map[_od_no] = _slamt
                     if _fvr > fvr_amt_map.get(_od_no, 0):
                         fvr_amt_map[_od_no] = _fvr
-                    if _bse > bse_cmsn_map.get(_od_no, 0):
-                        bse_cmsn_map[_od_no] = _bse
-                    if _pcs > pcs_cmsn_map.get(_od_no, 0):
-                        pcs_cmsn_map[_od_no] = _pcs
-                    if _dv > dv_cmsn_map.get(_od_no, 0):
-                        dv_cmsn_map[_od_no] = _dv
-                    if _ajst > ajst_dc_map.get(_od_no, 0):
-                        ajst_dc_map[_od_no] = _ajst
+                    if _actual > actual_amt_map.get(_od_no, 0):
+                        actual_amt_map[_od_no] = _actual
+                    if _lotte_dc > lotte_dc_map.get(_od_no, 0):
+                        lotte_dc_map[_od_no] = _lotte_dc
+                    if _ch_no:
+                        ch_no_map[_od_no] = _ch_no
                 logger.info(
                     f"[주문동기화] {label}: 정산필드 매핑 {len(sl_amt_map)}건 "
                     f"(raw_orders {len(raw_orders)}건)"
                 )
-                # raw 응답에 수수료 필드가 실제로 존재하는지 1회 디버그 출력
-                if raw_orders:
-                    _sample = raw_orders[0]
-                    _cmsn_keys = [
-                        k
-                        for k in _sample.keys()
-                        if any(t in k.lower() for t in ("cmsn", "fvr", "ajst", "dc"))
-                    ]
-                    logger.info(
-                        f"[주문동기화] {label}: 정산필드 후보 키 = {_cmsn_keys}"
-                    )
 
                 # ── 정산금액 매칭 (SettleItmdSales) ─────────────────────────
                 # 정산 데이터는 배송완료 → 구매확정 후 수일 지나서 생성되므로
@@ -3698,44 +3690,50 @@ async def sync_orders_from_markets(
                         "original_link"
                     ):
                         order_data["source_url"] = _matched["original_link"]
-                # 롯데ON 예상 정산금액 계산 (샵마인 정산공식, 2026-04-25 교체)
-                #   고객결제금액   = slAmt − fvrAmtSum
-                #   중개수수료총합 = bseCmsn + pcsCmsn + dvCmsn − ajstDcAmt
-                #   정산예정      = 고객결제금액 − 중개수수료총합
+                # 롯데ON 예상 정산금액 계산 (롯데ON 공식 정산공식, 2026-04-30 재확인)
+                #   pymtAmt = actualAmt − (bseCmsn + pcsCmsn + dvCmsn − ajstDcAmt)
+                # raw 응답엔 수수료 필드가 없으므로:
+                #   기본수수료 = slAmt × 카테고리 fee_rate
+                #   PCS수수료  = slAmt × 2% (가격비교 채널 유입 주문만)
+                #   조정(환급) = prSfcoShrAmtSum (당사부담할인)
                 # 정산 API(SettleItmdSales) 매칭으로 이미 revenue가 세팅됐으면 확정값이므로 건드리지 않음.
                 if order_data.get("source") == "lotteon":
                     _od_no = str(order_data.get("od_no") or "")
                     _slamt = int(sl_amt_map.get(_od_no, 0))
-                    _fvr = int(fvr_amt_map.get(_od_no, 0))
-                    _bse = int(bse_cmsn_map.get(_od_no, 0))
-                    _pcs = int(pcs_cmsn_map.get(_od_no, 0))
-                    _dv = int(dv_cmsn_map.get(_od_no, 0))
-                    _ajst = int(ajst_dc_map.get(_od_no, 0))
+                    _actual = int(actual_amt_map.get(_od_no, 0))
+                    _lotte_dc = int(lotte_dc_map.get(_od_no, 0))
+                    _ch_no = ch_no_map.get(_od_no, "")
+
+                    # 가격비교 채널 = PCS 수수료 부과 대상
+                    # 운영 데이터로 확장 필요 — 가디 계정 chNo=100065 표본 기준
+                    _PRICE_COMPARE_CHANNELS = {"100065"}
+                    _pcs_rate = 2.0 if _ch_no in _PRICE_COMPARE_CHANNELS else 0.0
 
                     if _slamt > 0:
-                        _customer_paid = max(0, _slamt - _fvr)
+                        # 고객결제금액 우선 actualAmt 사용, 없으면 slAmt − fvrAmtSum 폴백
+                        _customer_paid = (
+                            _actual
+                            if _actual > 0
+                            else max(0, _slamt - int(fvr_amt_map.get(_od_no, 0)))
+                        )
                         order_data["total_payment_amount"] = _customer_paid
 
-                        # revenue가 정산 API로 이미 채워진 경우 fee_rate만 재계산하여 일관성 유지
                         if not order_data.get("revenue"):
-                            # 중개수수료: raw 응답에 수수료 필드가 있으면 정확 계산, 없으면 카테고리 폴백
-                            if _bse > 0 or _pcs > 0 or _dv > 0:
-                                _total_cmsn = max(0, _bse + _pcs + _dv - _ajst)
-                            else:
-                                from backend.domain.samba.proxy.lotteon.category_fees import (
-                                    get_fee_rate_for_category,
-                                )
+                            from backend.domain.samba.proxy.lotteon.category_fees import (
+                                get_fee_rate_for_category,
+                            )
 
-                                _cat_for_fee = (
-                                    _matched.get("category", "") if _matched else ""
-                                )
-                                _fee = get_fee_rate_for_category(_cat_for_fee)
-                                _total_cmsn = int(_customer_paid * _fee / 100)
-
-                            _revenue = max(0, _customer_paid - _total_cmsn)
+                            _cat_for_fee = (
+                                _matched.get("category", "") if _matched else ""
+                            )
+                            _fee = get_fee_rate_for_category(_cat_for_fee)
+                            _bse_cmsn = int(_slamt * _fee / 100)
+                            _pcs_cmsn = int(_slamt * _pcs_rate / 100)
+                            _net_cmsn = max(0, _bse_cmsn + _pcs_cmsn - _lotte_dc)
+                            _revenue = max(0, _customer_paid - _net_cmsn)
                             order_data["revenue"] = _revenue
                             order_data["fee_rate"] = (
-                                round(_total_cmsn / _customer_paid * 100, 2)
+                                round(_net_cmsn / _customer_paid * 100, 2)
                                 if _customer_paid > 0
                                 else 0
                             )

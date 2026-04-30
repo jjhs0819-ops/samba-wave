@@ -1422,6 +1422,14 @@ class LotteonClient:
             logger.info(
                 f"[롯데ON][정산] {start_date}~{end_date} SettleItmdSales={len(data)}건"
             )
+            # 매칭 키 진단: 첫 1건의 키 형식 출력 (odNo/odSeq/procSeq 비교용)
+            if data:
+                _s = data[0]
+                logger.info(
+                    f"[롯데ON][정산] 샘플 키: odNo={_s.get('odNo')} "
+                    f"odSeq={_s.get('odSeq')} procSeq={_s.get('procSeq')}"
+                )
+                logger.info(f"[롯데ON][정산] 샘플 전체 필드: {list(_s.keys())}")
             return data
         except Exception as e:
             logger.warning(f"[롯데ON][정산] 조회 실패 ({start_date}~{end_date}): {e}")
