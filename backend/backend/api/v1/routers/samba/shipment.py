@@ -341,17 +341,30 @@ async def cleanup_smartstore_orphans(
         deleted_here: list[str] = []
         failed: list[dict] = []
         if not dry_run and orphans:
-            # max_delete 한도 적용
+            # max_delete 한도 적용 + Naver 429 레이트리밋 대응
+            # (직전 search 페이징 직후 delete 폭주 시 429 다발 → 33/50 실패 사례)
             remaining = max_delete - total_deleted
-            if remaining <= 0:
-                pass
-            else:
+            if remaining > 0:
                 for o in orphans[:remaining]:
-                    try:
-                        await client.delete_product(o["origin_no"])
-                        deleted_here.append(o["origin_no"])
-                    except Exception as e:
-                        failed.append({"origin_no": o["origin_no"], "error": str(e)})
+                    last_err: str | None = None
+                    for attempt in range(4):  # 최초 1회 + 재시도 3회
+                        try:
+                            await client.delete_product(o["origin_no"])
+                            deleted_here.append(o["origin_no"])
+                            last_err = None
+                            break
+                        except Exception as e:
+                            err_msg = str(e)
+                            last_err = err_msg
+                            if "429" in err_msg and attempt < 3:
+                                # 1s, 2s, 4s 지수 백오프 (총 7초까지)
+                                await asyncio.sleep(2**attempt)
+                                continue
+                            break
+                    if last_err is not None:
+                        failed.append({"origin_no": o["origin_no"], "error": last_err})
+                    # 다음 삭제 호출 사이 0.3초 간격 → RPS ≈ 3 (Naver 안전권)
+                    await asyncio.sleep(0.3)
                 total_deleted += len(deleted_here)
 
         per_account.append(
