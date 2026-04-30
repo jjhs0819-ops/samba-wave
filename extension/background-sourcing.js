@@ -724,42 +724,14 @@ async function fetchAbcmartBenefitPrice(productId, site) {
 
 // 소싱 작업 처리 — 탭 열기 → DOM 파싱 → 결과 전송
 async function handleSourcingJob(job) {
-  // ABCmart/GrandStage detail: 폴백 chain — 사용자 부담(탭) 최소화 + 정확함 양립.
-  //   1) SW fetch (탭 0개) — 사용자 쿠키 자동 포함, loginYn=Y면 멤버십 등급 반영된
-  //      정확한 best_benefit_price 응답 (API의 alwaysDscntAmt가 등급별 할인 동적 반환).
-  //      loginYn≠Y면 null 반환 → 다음 단계로.
-  //   2) in-tab fetch (a-rt.com 핀 탭 자동 보장) — 같은 API를 핀 탭 내에서 호출해
-  //      사용자 세션을 더 확실히 사용. loginYn≠Y면 null 반환.
-  //   3) DOM 파싱 (새 백그라운드 탭, active=false) — 1·2 모두 실패 시 최후 수단.
-  //      페이지 렌더링 후 "최대 혜택가" 텍스트를 그대로 추출 (100% 페이지 표시값).
-  //      비로그인 감지 시 자동로그인 트리거 + reportLoginFailure.
-  if (job.type === 'detail' && (job.site === 'ABCmart' || job.site === 'GrandStage')) {
-    // 1) SW fetch — 탭 0개
-    const swResult = await fetchAbcmartBenefitPriceServiceWorker(job.productId, job.site)
-    if (swResult && swResult.success) {
-      try {
-        await postResult('sourcing/collect-result', { requestId: job.requestId, data: swResult })
-        console.log(`[${job.site}] SW fetch로 완료 (탭 0개): ${job.productId}`)
-      } catch (e) {
-        console.error(`[${job.site}] SW 결과 전송 실패:`, e.message)
-      }
-      return
-    }
-    // 2) in-tab fetch — 핀 탭 활용, 새 탭 X
-    const inTabResult = await fetchAbcmartBenefitPrice(job.productId, job.site)
-    if (inTabResult && inTabResult.success) {
-      try {
-        await postResult('sourcing/collect-result', { requestId: job.requestId, data: inTabResult })
-        console.log(`[${job.site}] in-tab fetch로 완료 (기존 탭 활용): ${job.productId}`)
-      } catch (e) {
-        console.error(`[${job.site}] in-tab 결과 전송 실패:`, e.message)
-      }
-      return
-    }
-    // 3) DOM 파싱 — 아래 일반 흐름으로 떨어짐 (탭 띄움)
-    console.log(`[${job.site}] SW + in-tab 모두 실패(비로그인 추정) → DOM 파싱 폴백: ${job.productId}`)
-    reportLoginFailure(job.site)
-  }
+  // ABCmart/GrandStage detail: DOM 파싱 1순위 (A안).
+  // 검증 결과 ABCmart `/product/info` API는 멤버십 상시할인을 일관성 있게 응답하지 않고
+  // 페이지 JS가 별도 처리해 표시. SW/in-tab fetch가 사용자 쿠키 컨텍스트에서
+  // 부분 응답을 받아 success 반환할 경우 DOM 파싱이 차단되어 페이지 표시값과 다른
+  // 가격이 박히는 문제가 있었음(예: 페이지 77,600 → 시스템 77,300, 멤버십 계산 차이).
+  // → fast-path 제거. DOM 파싱이 무조건 1순위.
+  // SW/in-tab fetch는 페이지에 "최대 혜택가" 표기 자체가 없는 상품(쿠폰/멤버십 0)에
+  // 한해서 DOM 파싱 후 fallback으로만 사용 (904 라인 흐름).
 
   let tabId = null
   try {
@@ -908,8 +880,8 @@ async function handleSourcingJob(job) {
       // 비로그인 검증 + 자동로그인 트리거는 아래 공통 처리에서 일괄 수행
       // (LOTTEON DOM 파싱이 추가한 _loginRequired 플래그도 공통 처리에서 인식)
     } else if (job.type === 'detail' && (job.site === 'ABCmart' || job.site === 'GrandStage')) {
-      // 여기 도달 = SW + in-tab fetch 모두 실패 (비로그인/쿠키 만료) → 새 탭 DOM 파싱
-      // 페이지 렌더링 후 "최대 혜택가" 텍스트로 사용자 등급별 정확한 가격 추출
+      // ABCmart/GrandStage: 백그라운드 탭(active=false) DOM 파싱 1순위 — 페이지에
+      // 표시된 "최대 혜택가"가 사용자 등급별 멤버십+쿠폰 모두 반영된 100% 정확한 값.
       result = await extractDetailData(tabId, job.site, job.productId)
       if (!result?.best_benefit_price) {
         console.log(`[${job.site}] 혜택가 미수집 — 3초 후 재시도: ${job.productId}`)
@@ -919,7 +891,27 @@ async function handleSourcingJob(job) {
       if (result?.best_benefit_price) {
         console.log(`[${job.site}] DOM 혜택가: ${job.productId} → ${result.best_benefit_price}`)
       } else {
-        console.log(`[${job.site}] 혜택가 없음: ${job.productId}`)
+        // DOM에 "최대 혜택가" 표기 자체가 없는 상품(쿠폰/멤버십 모두 0) — SW/in-tab으로 fallback
+        // 이 경우엔 sale_price = best_benefit_price이므로 API 계산값으로도 정확
+        console.log(`[${job.site}] DOM 혜택가 없음 → API fallback: ${job.productId}`)
+        const swResult = await fetchAbcmartBenefitPriceServiceWorker(job.productId, job.site)
+        if (swResult && swResult.success) {
+          result = result && result.success !== false
+            ? { ...result, best_benefit_price: swResult.best_benefit_price, sale_price: result.sale_price || swResult.sale_price, original_price: result.original_price || swResult.original_price }
+            : swResult
+          console.log(`[${job.site}] SW fetch fallback 성공: ${job.productId} → ${swResult.best_benefit_price}`)
+        } else {
+          const inTabResult = await fetchAbcmartBenefitPrice(job.productId, job.site)
+          if (inTabResult && inTabResult.success) {
+            result = result && result.success !== false
+              ? { ...result, best_benefit_price: inTabResult.best_benefit_price, sale_price: result.sale_price || inTabResult.sale_price, original_price: result.original_price || inTabResult.original_price }
+              : inTabResult
+            console.log(`[${job.site}] in-tab fetch fallback 성공: ${job.productId} → ${inTabResult.best_benefit_price}`)
+          } else {
+            console.log(`[${job.site}] DOM + SW + in-tab 모두 미수집: ${job.productId}`)
+            reportLoginFailure(job.site)
+          }
+        }
       }
     } else if (job.type === 'detail' && job.site === 'SSG') {
       // SSG: reCAPTCHA 감지 후 즉시 실패 반환 (25초 타임아웃 낭비 방지)

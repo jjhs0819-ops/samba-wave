@@ -215,46 +215,41 @@ class AbcMartPlugin(SourcingPlugin):
             new_original_price = detail.get("originalPrice", 0)
             is_sold_out = detail.get("isOutOfStock", False)
             best_benefit_price = detail.get("bestBenefitPrice", 0)
-            _login_yn = (detail.get("loginYn") or "").upper()
 
             logger.info(
                 f"[ABCmart] API 최대혜택가: {site_product_id} → {best_benefit_price:,}원, "
-                f"loginYn={_login_yn or 'N/A'}, 옵션={len(detail.get('options', []))}개"
+                f"옵션={len(detail.get('options', []))}개"
             )
 
-            # ── DOM 위임 (조건부 fallback) ──
-            # ABCmart 페이지의 "최대 혜택가"는 사용자 등급별 멤버십 상시할인이 반영된 값.
-            # API 응답이 로그인 상태(loginYn=Y)면 alwaysDscntAmt가 등급별 할인을 그대로 줘
-            # 페이지 표시값과 동일하게 계산되므로 DOM 위임 불필요(탭 0개 운영).
-            # loginYn≠Y인 경우만 익스텐션을 통해 사용자 브라우저 DOM에서 표시값을 받아온다.
-            if _login_yn != "Y":
-                _dom_site = "GrandStage" if _prefer_grandstage else "ABCmart"
-                logger.info(
-                    f"[ABCmart] 비로그인 API 응답 → DOM 위임: {site_product_id} (site={_dom_site})"
-                )
-                try:
-                    from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+            # ── DOM 위임 (무조건, A안) ──
+            # ABCmart `/product/info` API는 멤버십 상시할인을 일관성 있게 응답하지 않고
+            # 페이지 JS가 별도 처리해 표시(검증됨). 사용자 쿠키 컨텍스트 호출 시에도
+            # alwaysDscntAmt 응답값이 페이지 표시값과 미세하게 달라(예: 페이지 -2,400 vs
+            # 응답 -2,700) best_benefit_price 300원 오차 발생.
+            # → 익스텐션이 사용자 브라우저 페이지 DOM에서 "최대 혜택가" 텍스트를 그대로
+            #   추출한 값을 무조건 우선 적용. 익스텐션 응답이 없을 때만 API 값으로 fallback.
+            _dom_site = "GrandStage" if _prefer_grandstage else "ABCmart"
+            try:
+                from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
 
-                    _dom_req, _dom_fut = SourcingQueue.add_detail_job(
-                        _dom_site, site_product_id
-                    )
-                    _dom_ext = await asyncio.wait_for(_dom_fut, timeout=45)
-                    if isinstance(_dom_ext, dict) and _dom_ext.get("success"):
-                        _bp = int(_dom_ext.get("best_benefit_price") or 0)
-                        if _bp > 0:
-                            logger.info(
-                                f"[ABCmart] DOM 혜택가 적용: {site_product_id} "
-                                f"API={best_benefit_price:,} → DOM={_bp:,}"
-                            )
-                            best_benefit_price = _bp
-                except asyncio.TimeoutError:
-                    logger.debug(
-                        f"[ABCmart] DOM 위임 타임아웃(45s): {site_product_id} — API 값 유지"
-                    )
-                except Exception as _dom_err:
-                    logger.debug(
-                        f"[ABCmart] DOM 위임 예외: {site_product_id} — {_dom_err}"
-                    )
+                _dom_req, _dom_fut = SourcingQueue.add_detail_job(
+                    _dom_site, site_product_id
+                )
+                _dom_ext = await asyncio.wait_for(_dom_fut, timeout=45)
+                if isinstance(_dom_ext, dict) and _dom_ext.get("success"):
+                    _bp = int(_dom_ext.get("best_benefit_price") or 0)
+                    if _bp > 0:
+                        logger.info(
+                            f"[ABCmart] DOM 혜택가 적용: {site_product_id} "
+                            f"API={best_benefit_price:,} → DOM={_bp:,}"
+                        )
+                        best_benefit_price = _bp
+            except asyncio.TimeoutError:
+                logger.debug(
+                    f"[ABCmart] DOM 위임 타임아웃(45s): {site_product_id} — API 값 유지"
+                )
+            except Exception as _dom_err:
+                logger.debug(f"[ABCmart] DOM 위임 예외: {site_product_id} — {_dom_err}")
 
             # 옵션 데이터 변환
             new_options = None
