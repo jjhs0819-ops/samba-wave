@@ -181,10 +181,13 @@ def create_application() -> FastAPI:
     app.include_router(
         samba_sns_posting_router, prefix="/api/v1/samba", dependencies=samba_auth
     )
+    # extension_router를 먼저 등록 — `@router.get("/{account_id}")` 같은 catch-all보다
+    # specific 라우트(GET /login-credential)가 우선 매칭되도록 함.
+    # 등록 순서 바꾸지 않으면 GET /login-credential이 /{account_id}로 매칭되어 samba_auth JWT 401 발생.
+    app.include_router(samba_sourcing_account_extension_router, prefix="/api/v1/samba")
     app.include_router(
         samba_sourcing_account_router, prefix="/api/v1/samba", dependencies=samba_auth
     )
-    app.include_router(samba_sourcing_account_extension_router, prefix="/api/v1/samba")
     app.include_router(
         samba_naverstore_sourcing_router,
         prefix="/api/v1/samba",
