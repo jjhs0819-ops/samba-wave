@@ -205,6 +205,7 @@ async def cleanup_smartstore_orphans(
             if origin_no_for_p:
                 db_origin_map[origin_no_for_p] = {
                     "db_id": str(p.id),
+                    "site_product_id": str(getattr(p, "site_product_id", "") or ""),
                     "style_code": str(p.style_code or ""),
                     "mapped_origin_no": origin_no_for_p,
                     "product_name": (p.name or "")[:80],

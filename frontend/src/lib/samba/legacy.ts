@@ -910,7 +910,7 @@ export const shipmentApi = {
         orphan_count?: number
         orphans?: { origin_no: string; name: string; mgmt_code?: string }[]
         stale_db_count?: number
-        stale_db?: { db_id: string; style_code: string; mapped_origin_no: string; product_name: string }[]
+        stale_db?: { db_id: string; site_product_id?: string; style_code: string; mapped_origin_no: string; product_name: string }[]
         deleted?: string[]
         failed?: { origin_no: string; error: string }[]
         failed_pages?: number[]

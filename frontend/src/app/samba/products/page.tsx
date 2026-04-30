@@ -2165,7 +2165,8 @@ export default function ProductsPage() {
                     logs.push(`  ... 외 ${(a.orphans!.length - 30).toLocaleString()}개`)
                   }
                   for (const s of (a.stale_db ?? []).slice(0, 30)) {
-                    logs.push(`  [역고아] originNo=${s.mapped_origin_no}  ${s.product_name}  (style=${s.style_code})`)
+                    const sid = s.site_product_id ? ` 상품번호=${s.site_product_id}` : ''
+                    logs.push(`  [역고아]${sid}  originNo=${s.mapped_origin_no}  ${s.product_name}  (style=${s.style_code})`)
                   }
                   if ((a.stale_db?.length ?? 0) > 30) {
                     logs.push(`  ... 외 ${(a.stale_db!.length - 30).toLocaleString()}개`)
