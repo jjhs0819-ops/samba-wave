@@ -2481,61 +2481,191 @@ class LotteonPlugin(MarketPlugin):
             logger.error(f"[롯데ON] {action} 실패: {e}")
             return {"success": False, "message": f"롯데ON {action} 실패: {e}"}
 
+    @staticmethod
+    def _parse_lotteon_spd_info(resp: dict | None) -> dict:
+        """get_product 응답을 envelope 변형(data.itmLst / spdLst[0] / spdInfo) 모두 폴백 파싱.
+
+        다른 경로(경량 분기 L1224, 일반 update L1758, sweep 스크립트)는 spdLst/spdInfo
+        폴백을 하는데 _restore_sout_to_sale만 data.itmLst만 봤음. 통일.
+        """
+        if not isinstance(resp, dict):
+            return {}
+        inner = resp.get("data", resp)
+        if isinstance(inner, dict):
+            spd_info = inner.get("spdLst") or inner.get("spdInfo") or inner
+            if isinstance(spd_info, list) and spd_info:
+                spd_info = spd_info[0]
+            if isinstance(spd_info, dict):
+                return spd_info
+        return {}
+
+    @staticmethod
+    def _verify_change_status_response(result: dict | None) -> tuple[bool, str]:
+        """change_status 응답의 outer code + data[].resultCode 직접 검증.
+
+        api_client.change_status는 outer-code 검사만 하고 item-level resultCode는 보지 않음.
+        delete_product가 별도로 검증하는 패턴 재사용.
+
+        Returns:
+            (success, message): 성공 여부와 실패 시 사유.
+        """
+        if not isinstance(result, dict):
+            return False, f"non-dict response: {type(result).__name__}"
+        ok_codes = ("0000", "00", "SUCCESS", "")
+        outer_code = (
+            result.get("returnCode")
+            or result.get("code")
+            or result.get("resultCode")
+            or ""
+        )
+        if outer_code not in ok_codes:
+            return (
+                False,
+                f"outer code {outer_code!r}: {result.get('message') or result}",
+            )
+        items = result.get("data") or []
+        if isinstance(items, list):
+            for itm in items:
+                if not isinstance(itm, dict):
+                    continue
+                code = itm.get("resultCode", "")
+                if code and code not in ok_codes:
+                    return (
+                        False,
+                        f"item code {code!r}: {itm.get('resultMessage') or itm}",
+                    )
+        return True, ""
+
+    async def _restore_items_to_sale(
+        self,
+        client: Any,
+        spd_no: str,
+        spd_info: dict,
+        itm_stk_lst: list[dict],
+    ) -> bool:
+        """ITEM phase — stkQty>0 + slStatRsnCd=SOUT_STK 옵션을 SALE로 복구.
+
+        update_stock(item/stock/change)는 stkQty만 반영하고 slStatCd는 무시하므로,
+        재고 0→양수 회복 시 옵션 slStatCd가 SOUT 고착. item/status/change로 명시적 SALE 전환.
+
+        Returns:
+            bool: 1건 이상 복구되면 True (호출자가 spd_info 재조회 여부 판단용).
+        """
+        positive_stk_sitms = {
+            str(it.get("sitmNo"))
+            for it in itm_stk_lst or []
+            if it.get("sitmNo") and int(it.get("stkQty") or 0) > 0
+        }
+        if not positive_stk_sitms:
+            return False
+
+        cur_itm = spd_info.get("itmLst") or []
+        to_recover: list[dict] = []
+        for itm in cur_itm:
+            if not isinstance(itm, dict):
+                continue
+            sitm_no = str(itm.get("sitmNo") or "")
+            if sitm_no not in positive_stk_sitms:
+                continue
+            if itm.get("slStatCd") != "SOUT":
+                continue
+            # SOUT_STK만 복구 — 사람이 수동 잠근 다른 사유는 보존
+            if itm.get("slStatRsnCd") != "SOUT_STK":
+                continue
+            to_recover.append(
+                {
+                    "sitmNo": sitm_no,
+                    "spdNo": spd_no,
+                    "slStatCd": "SALE",
+                }
+            )
+
+        if not to_recover:
+            return False
+
+        await client.change_item_status(to_recover)
+        logger.info(
+            f"[롯데ON] item SOUT→SALE 복구: {spd_no} — "
+            f"{len(to_recover)}건 ({[t['sitmNo'] for t in to_recover]})"
+        )
+        return True
+
+    async def _restore_spd_to_sale(
+        self,
+        client: Any,
+        spd_no: str,
+        spd_info: dict,
+    ) -> None:
+        """SPD phase — slStatRsnCd=SOUT_ITM 잠긴 SPD 헤더를 SALE로 복구.
+
+        롯데ON은 옵션이 모두 stkQty=0이 되면 SPD를 SOUT/SOUT_ITM으로 자동 escalate한다.
+        옵션을 SALE+재고 양수로 복구해도 SPD 헤더는 자동 해제되지 않아 소비자 페이지에서
+        '품절된 상품입니다'가 유지된다(2026-04-30 LO2665417627 사례). product/status/change로
+        SPD 단위 SALE 전환이 별도 필요.
+
+        가드:
+        - SPD slStatCd=='SOUT' AND slStatRsnCd=='SOUT_ITM' (셀러 수동 SOUT 등 다른 사유는 보존)
+        - itmLst 중 ≥1개가 slStatCd=='SALE' AND stkQty>0 (실제 판매 가능한 옵션 존재)
+
+        검증: change_status 응답의 data[].resultCode를 직접 검사 (래퍼는 outer만 봄).
+        """
+        if spd_info.get("slStatCd") != "SOUT":
+            return
+        if spd_info.get("slStatRsnCd") != "SOUT_ITM":
+            return
+        cur_itm = spd_info.get("itmLst") or []
+        sellable = any(
+            isinstance(itm, dict)
+            and itm.get("slStatCd") == "SALE"
+            and int(itm.get("stkQty") or 0) > 0
+            for itm in cur_itm
+        )
+        if not sellable:
+            return
+
+        # 최소 페이로드 — trGrpCd/trNo는 client가 자동 prepend
+        result = await client.change_status([{"spdNo": spd_no, "slStatCd": "SALE"}])
+        ok, msg = self._verify_change_status_response(result)
+        if ok:
+            logger.info(f"[롯데ON] SPD SOUT_ITM→SALE 복구: {spd_no}")
+        else:
+            logger.warning(f"[롯데ON] SPD SOUT_ITM→SALE 복구 실패: {spd_no} — {msg}")
+
     async def _restore_sout_to_sale(
         self,
         client: Any,
         spd_no: str,
         itm_stk_lst: list[dict],
     ) -> None:
-        """재고 양수인데 SOUT_STK로 잠긴 옵션을 SALE로 자동 복구.
+        """재고 회복 후 SOUT 잠금 해제 — item phase + SPD phase orchestrator.
 
-        update_stock(item/stock/change)는 stkQty만 반영하고 slStatCd는 무시한다.
-        재고가 0→양수로 회복돼도 옵션 slStatCd는 SOUT 그대로 고착되어
-        소비자 페이지에서 [품절] 배지가 유지되는 문제 발생.
-        item/status/change 엔드포인트로 명시적 SALE 전환이 필요하다.
+        item phase:
+        - stkQty>0 + slStatRsnCd=SOUT_STK 옵션을 SALE로 (item/status/change)
 
-        안전 장치:
-        - stkQty>0인 옵션만 대상 (재고 0 옵션은 건드리지 않음)
-        - slStatRsnCd='SOUT_STK' 인 옵션만 복구 (사람이 수동 잠근 다른 사유는 보존)
-        - 실패해도 결과에 영향 없음 (warning 로그만)
+        SPD phase:
+        - SPD slStatRsnCd=SOUT_ITM이고 sellable item이 있으면 SPD SALE로 (product/status/change)
+        - item phase가 옵션을 살린 직후이므로 race 방지를 위해 spd_info 재조회
+
+        실패해도 결과에 영향 없음 (warning 로그만 — 등록/수정 흐름은 정상 종료).
         """
         try:
-            positive_stk_sitms = {
-                str(it.get("sitmNo"))
-                for it in itm_stk_lst or []
-                if it.get("sitmNo") and int(it.get("stkQty") or 0) > 0
-            }
-            if not positive_stk_sitms:
+            spd_info = self._parse_lotteon_spd_info(await client.get_product(spd_no))
+            if not spd_info:
                 return
 
-            cur = await client.get_product(spd_no)
-            cur_itm = (cur.get("data") or {}).get("itmLst") or []
-
-            to_recover: list[dict] = []
-            for itm in cur_itm:
-                sitm_no = str(itm.get("sitmNo") or "")
-                if sitm_no not in positive_stk_sitms:
-                    continue
-                if itm.get("slStatCd") != "SOUT":
-                    continue
-                if itm.get("slStatRsnCd") != "SOUT_STK":
-                    continue
-                to_recover.append(
-                    {
-                        "sitmNo": sitm_no,
-                        "spdNo": spd_no,
-                        "slStatCd": "SALE",
-                    }
-                )
-
-            if not to_recover:
-                return
-
-            await client.change_item_status(to_recover)
-            logger.info(
-                f"[롯데ON] SOUT→SALE 자동복구: {spd_no} — "
-                f"{len(to_recover)}건 ({[t['sitmNo'] for t in to_recover]})"
+            items_changed = await self._restore_items_to_sale(
+                client, spd_no, spd_info, itm_stk_lst
             )
+
+            # item 복구가 있었다면 spd_info를 다시 받아 SPD phase 가드를 갱신된 상태로 평가
+            if items_changed:
+                spd_info = self._parse_lotteon_spd_info(
+                    await client.get_product(spd_no)
+                )
+                if not spd_info:
+                    return
+
+            await self._restore_spd_to_sale(client, spd_no, spd_info)
         except Exception as e:
             logger.warning(f"[롯데ON] SOUT→SALE 복구 실패 (무시): {spd_no} — {e}")
 
