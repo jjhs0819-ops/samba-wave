@@ -428,20 +428,9 @@ async function _ensureLoggedInSingle(siteKey) {
 
   try {
     // 1) checkUrl(마이페이지)로 이동 → 비로그인이면 로그인 페이지로 자동 리다이렉트
-    // [중요] 사용자 메인 창의 active 탭을 뺏지 않도록 별도 minimized window로 띄움
-    // (chrome.debugger triple-click은 비활성/최소화 창에서도 정상 동작 — 포커스 불필요)
-    let win = null
-    try {
-      win = await chrome.windows.create({ url: site.checkUrl, focused: false, state: 'minimized', type: 'normal' })
-    } catch (e) {
-      console.log(`[자동로그인] ${site.name} windows.create 실패 → 탭 폴백: ${e?.message || e}`)
-    }
-    let tab = null
-    if (win && Array.isArray(win.tabs) && win.tabs.length) {
-      tab = win.tabs[0]
-    } else {
-      tab = await chrome.tabs.create({ url: site.checkUrl, active: false })
-    }
+    // 기존 브라우저의 백그라운드 탭으로 오픈 (사용자 요구사항 — 별도 minimized window 띄우지 말것)
+    // active: false로 사용자 현재 작업을 방해하지 않음
+    const tab = await chrome.tabs.create({ url: site.checkUrl, active: false })
     tabId = tab.id
     tabCreated = true
 
