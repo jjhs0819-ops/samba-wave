@@ -297,7 +297,9 @@ async def cleanup_smartstore_orphans(
         total_naver += len(naver_products)
 
         # Naver 상품의 originProductNo / channelProductNo 전체 집합 (stale 역방향 판정용)
+        # + sellerManagementCode 집합 → DB의 style_code와 매칭해 stale 오판 방지
         account_naver_nos: set[str] = set()
+        account_naver_mgmt_codes: set[str] = set()
         for np in naver_products:
             on = str(
                 np.get("originProductNo")
@@ -310,6 +312,9 @@ async def cleanup_smartstore_orphans(
                 cn = cp.get("channelProductNo")
                 if cn:
                     account_naver_nos.add(str(cn))
+            mgmt = str(np.get("sellerManagementCode") or "")
+            if mgmt:
+                account_naver_mgmt_codes.add(mgmt)
 
         orphans = []
         for np in naver_products:
@@ -341,12 +346,17 @@ async def cleanup_smartstore_orphans(
 
         total_orphans += len(orphans)
 
-        # DB→Naver 역고아: DB에 매핑은 있지만 Naver 목록에 없는 상품
-        stale_db = [
-            info
-            for origin_no, info in db_origin_map.items()
-            if origin_no not in account_naver_nos
-        ]
+        # DB→Naver 역고아: DB 매핑이 Naver originNo/channelNo 집합에 모두 없고,
+        # 추가로 style_code(=sellerManagementCode)도 Naver에 없을 때만 진짜 역고아.
+        # (originProductNo가 재등록 등으로 바뀐 경우 sellerManagementCode 매칭이 보호)
+        stale_db = []
+        for origin_no, info in db_origin_map.items():
+            if origin_no in account_naver_nos:
+                continue
+            style = info.get("style_code", "")
+            if style and style in account_naver_mgmt_codes:
+                continue
+            stale_db.append(info)
         total_stale_db += len(stale_db)
 
         deleted_here: list[str] = []

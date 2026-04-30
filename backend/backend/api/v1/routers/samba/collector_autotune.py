@@ -1207,7 +1207,21 @@ async def _site_autotune_loop(site: str):
                                                     "new_price": expected_price,
                                                 }
                                             )
-                                        _price_action_txt = f"가격변동 {last_price:,}→{expected_price:,} → {acc_label}"
+                                        _last_cost_v = (
+                                            int(acc_last.get("cost", 0) or 0)
+                                            if acc_last
+                                            else 0
+                                        )
+                                        if _has_failed_mark:
+                                            _reason_lbl = "(재시도)"
+                                        elif (
+                                            _last_cost_v > 0
+                                            and int(new_cost) == _last_cost_v
+                                        ):
+                                            _reason_lbl = "(정책변경)"
+                                        else:
+                                            _reason_lbl = ""
+                                        _price_action_txt = f"가격변동{_reason_lbl} {last_price:,}→{expected_price:,} → {acc_label}"
                                         _acc_items.append("price")
                                         _acc_action_parts.append(_price_action_txt)
                                         # 워룸 타임라인용 이벤트 수집 — 등록마켓 판매가 변경 기준

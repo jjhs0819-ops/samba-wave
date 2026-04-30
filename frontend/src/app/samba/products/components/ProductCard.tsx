@@ -1478,6 +1478,16 @@ const ProductCard = React.memo(function ProductCard({
                       (상품가 {fmt(cost - (p.sourcing_shipping_fee ?? 0))}+배송비 {fmt(p.sourcing_shipping_fee ?? 0)})
                     </span>
                   )}
+                  {p.source_site === 'MUSINSA' && p.is_point_restricted === false && (
+                    <span style={{ marginLeft: '0.4rem', fontSize: '0.65rem', padding: '1px 6px', borderRadius: '3px', background: 'rgba(81,207,102,0.12)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.3)' }}>
+                      적립금 사용
+                    </span>
+                  )}
+                  {p.source_site === 'MUSINSA' && p.is_point_restricted === true && (
+                    <span style={{ marginLeft: '0.4rem', fontSize: '0.65rem', padding: '1px 6px', borderRadius: '3px', background: 'rgba(150,150,150,0.12)', color: '#888', border: '1px solid rgba(150,150,150,0.3)' }}>
+                      적립금 사용불가
+                    </span>
+                  )}
                 </td>
               </tr>
               {/* Market price — 마켓별 또는 공통 */}

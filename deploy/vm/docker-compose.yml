@@ -55,7 +55,7 @@ services:
       WRITE_DB_PORT: "5432"
       READ_DB_HOST: cloud-sql-proxy
       READ_DB_PORT: "5432"
-      GUNICORN_CMD_ARGS: "--timeout 300 --graceful-timeout 300"
+      GUNICORN_CMD_ARGS: "--timeout 600 --graceful-timeout 600"
       WEB_CONCURRENCY: "1"
     networks:
       - samba-net
@@ -82,7 +82,7 @@ services:
       WRITE_DB_PORT: "5432"
       READ_DB_HOST: cloud-sql-proxy
       READ_DB_PORT: "5432"
-      GUNICORN_CMD_ARGS: "--timeout 300 --graceful-timeout 300"
+      GUNICORN_CMD_ARGS: "--timeout 600 --graceful-timeout 600"
       WEB_CONCURRENCY: "1"
     networks:
       - samba-net

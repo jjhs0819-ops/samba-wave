@@ -61,11 +61,10 @@ async def _fetch_new_order_numbers(
             elif market_type == "lotteon":
                 from backend.domain.samba.proxy.lotteon import LotteonClient
 
-                vendor_id = extras.get("vendorId", "") or account.seller_id or ""
                 api_key = extras.get("apiKey", "") or account.api_key or ""
-                if not vendor_id or not api_key:
+                if not api_key:
                     continue
-                client = LotteonClient(vendor_id, api_key)
+                client = LotteonClient(api_key)
                 raw_orders = await client.get_delivery_orders(days=1)
                 for ro in raw_orders:
                     oid = str(ro.get("ordNo", "") or ro.get("order_number", ""))
@@ -121,45 +120,53 @@ async def _fetch_new_order_numbers(
     return dict(new_by_market), tenant_ids_with_new
 
 
-async def _create_order_sync_job(session, tenant_id: str | None) -> None:
-    """order_sync 잡 생성 (중복 실행 방지 포함)."""
-    from sqlmodel import col, select
+async def _run_direct_order_sync(tenant_ids: set[str | None]) -> None:
+    """신규 주문 감지 시 잡 큐 없이 직접 동기화 실행 (전송 잡에 밀리지 않도록)."""
+    from sqlmodel import select
 
-    from backend.domain.samba.job.model import JobStatus, SambaJob, generate_job_id
+    from backend.api.v1.routers.samba.order import (
+        SyncOrdersRequest,
+        sync_orders_from_markets,
+    )
+    from backend.db.orm import get_write_session
+    from backend.domain.samba.account.model import SambaMarketAccount
 
-    # 이미 대기/실행 중인 잡이 있으면 재사용
-    active = (
-        (
-            await session.execute(
-                select(SambaJob)
-                .where(
-                    SambaJob.job_type == "order_sync",
-                    col(SambaJob.status).in_([JobStatus.PENDING, JobStatus.RUNNING]),
-                    SambaJob.tenant_id == tenant_id,
+    logger.info("[주문폴러] 직접 동기화 시작 (테넌트 수: %d)", len(tenant_ids))
+
+    async with get_write_session() as session:
+        result = await session.exec(
+            select(SambaMarketAccount).where(SambaMarketAccount.is_active == True)  # noqa: E712
+        )
+        all_accounts = result.all()
+
+    for tenant_id in tenant_ids:
+        accounts = (
+            [a for a in all_accounts if a.tenant_id == tenant_id or a.tenant_id is None]
+            if tenant_id is not None
+            else list(all_accounts)
+        )
+
+        for acc in accounts:
+            try:
+                async with get_write_session() as acc_session:
+                    res = await sync_orders_from_markets(
+                        body=SyncOrdersRequest(days=1, account_id=acc.id),
+                        session=acc_session,
+                        tenant_id=tenant_id,
+                    )
+                synced = res.get("total_synced", 0) if isinstance(res, dict) else 0
+                if synced:
+                    logger.info(
+                        "[주문폴러] %s: %d건 신규 저장",
+                        acc.market_name or acc.market_type,
+                        synced,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "[주문폴러] %s 동기화 실패: %s",
+                    acc.market_name or acc.market_type,
+                    exc,
                 )
-                .limit(1)
-            )
-        )
-        .scalars()
-        .first()
-    )
-    if active:
-        logger.info(
-            "[주문폴러] order_sync 잡 이미 실행 중 (tenant=%s, job=%s)",
-            tenant_id,
-            active.id,
-        )
-        return
-
-    job = SambaJob(
-        id=generate_job_id(),
-        tenant_id=tenant_id,
-        job_type="order_sync",
-        payload={"days": 1},
-    )
-    session.add(job)
-    await session.flush()
-    logger.info("[주문폴러] order_sync 잡 생성 (tenant=%s, job=%s)", tenant_id, job.id)
 
 
 async def _create_cs_sync_job(session, tenant_id: str | None) -> None:
@@ -220,12 +227,12 @@ async def start_order_poller() -> None:
                 new_by_market, tenant_ids = await _fetch_new_order_numbers(session)
 
                 if not is_night:
-                    if new_by_market:
-                        # 8~24시: 신규 주문 있으면 테넌트별 order_sync 잡 생성
-                        for tenant_id in tenant_ids:
-                            await _create_order_sync_job(session, tenant_id)
                     # CS는 주문 감지 여부와 무관하게 30분마다 전체 동기화
                     await _create_cs_sync_job(session, tenant_id=None)
+
+            if new_by_market and not is_night:
+                # 잡 큐 대신 직접 동기화 — 전송 잡에 밀리지 않도록
+                asyncio.create_task(_run_direct_order_sync(tenant_ids))
 
             if new_by_market:
                 total = sum(len(v) for v in new_by_market.values())

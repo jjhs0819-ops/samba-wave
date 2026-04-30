@@ -494,6 +494,7 @@ export interface SambaCollectedProduct {
   free_shipping?: boolean;
   same_day_delivery?: boolean;
   sourcing_shipping_fee?: number;
+  is_point_restricted?: boolean | null;
   model_no?: string;
   collected_at?: string;
   created_at: string;
