@@ -62,14 +62,17 @@
     const proxyData = await chrome.storage.local.get(['proxyUrl', 'allowedSites'])
     const apiKey = await loadApiKey(proxyData.proxyUrl)
     const deviceId = await getOrCreateDeviceId()
-    // 사이트 필터 (PC 분담) — popup에서 설정. 미체크면 빈 헤더 → 백엔드는 모든 사이트 작업 반환.
-    const allowedSites = Array.isArray(proxyData.allowedSites) ? proxyData.allowedSites : []
+    // 사이트 필터 (PC 분담) — chrome.storage.allowedSites:
+    //   - undefined/null = 미설정(전체 처리, 디폴트) → 헤더 미부착
+    //   - 배열 (빈 배열 포함) = 명시적 설정. 빈 배열 = "이 PC는 아무 작업도 안 받음"
+    //   - 헤더 'X-Allowed-Sites'는 값이 빈 문자열이어도 부착되어 백엔드가 명시적 0개로 인식
+    const allowedSites = Array.isArray(proxyData.allowedSites) ? proxyData.allowedSites : null
     const headers = {
       ...(init.headers || {}),
       'X-Api-Key': apiKey,
       'X-Device-Id': deviceId,
     }
-    if (allowedSites.length > 0) {
+    if (allowedSites !== null) {
       headers['X-Allowed-Sites'] = allowedSites.join(',')
     }
     const res = await fetch(url, { ...init, headers })
@@ -83,7 +86,7 @@
         'X-Api-Key': newKey,
         'X-Device-Id': deviceId,
       }
-      if (allowedSites.length > 0) {
+      if (allowedSites !== null) {
         retryHeaders['X-Allowed-Sites'] = allowedSites.join(',')
       }
       return fetch(url, { ...init, headers: retryHeaders })

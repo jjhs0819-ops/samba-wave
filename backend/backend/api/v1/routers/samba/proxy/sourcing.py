@@ -99,10 +99,15 @@ async def sourcing_collect_queue(request: Request) -> Any:
     from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
 
     device_id = request.headers.get("X-Device-Id", "").strip()
-    raw_sites = request.headers.get("X-Allowed-Sites", "").strip()
-    allowed_sites = (
-        [s.strip() for s in raw_sites.split(",") if s.strip()] if raw_sites else None
-    )
+    # X-Allowed-Sites 헤더 의미:
+    #   - 헤더 미부착(None) = 디폴트 '전체 처리' (단일 PC 운영)
+    #   - 빈 문자열 ""     = 명시적 '아무 작업도 안 받음' (분담 외 PC)
+    #   - "ABCmart,..."    = 그 사이트 작업만 받음
+    raw_sites = request.headers.get("X-Allowed-Sites")
+    if raw_sites is None:
+        allowed_sites: list[str] | None = None
+    else:
+        allowed_sites = [s.strip() for s in raw_sites.split(",") if s.strip()]
     return SourcingQueue.get_next_job(device_id=device_id, allowed_sites=allowed_sites)
 
 

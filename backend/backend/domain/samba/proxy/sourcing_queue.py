@@ -236,14 +236,15 @@ class SourcingQueue:
 
         device_id: 매칭 시 해당 deviceId가 소유자인 작업만 반환.
                    미지정(legacy) 작업은 누구나 집어갈 수 있다.
-        allowed_sites: 확장앱 popup의 "이 PC가 처리할 사이트" 필터.
-                       비어있으면 모든 사이트 작업 가능.
-                       값이 있으면 그 사이트의 작업만 반환 — PC별 분담용.
+        allowed_sites: 화면 소싱처 체크박스 = "이 PC가 처리할 사이트" 필터.
+                   - None  = 헤더 미부착(미설정) → 모든 사이트 처리 (단일 PC 디폴트)
+                   - []    = 명시적 0개(체크 모두 해제) → 작업 안 받음 (분담 외 PC)
+                   - [...] = 명시된 사이트 작업만 받음 (PC별 분담)
 
         분담 시나리오:
-          PC A popup: ABCmart, MUSINSA → A 익스텐션은 그 사이트 작업만 가져감
-          PC B popup: LOTTEON, SSG     → B 익스텐션은 그 사이트 작업만 가져감
-          나머지 사이트는 둘 중 먼저 폴링한 PC가 가져감 (자연 분산)
+          PC A 화면: ABC,무신사 체크 → A는 그 사이트 작업만 처리
+          PC B 화면: 롯데ON,SSG 체크 → B는 그 사이트 작업만 처리
+          PC C 화면: 모두 해제(빈 배열) → C는 작업 안 받음
         """
         if is_shutting_down():
             return {"hasJob": False, "shuttingDown": True}
@@ -251,18 +252,21 @@ class SourcingQueue:
             return {"hasJob": False}
 
         device_id = (device_id or "").strip()
-        # 정규화: 대소문자 차이로 매칭 실패하지 않도록 lower-case 비교
-        allowed_set: set[str] = {
-            s.strip() for s in (allowed_sites or []) if s and s.strip()
-        } or set()
+        # allowed_sites is None: 미설정(전체 처리)
+        # allowed_sites == []  : 명시적 0개(아무것도 처리 안 함) → 항상 매칭 실패
+        # allowed_sites == [..]: 그 사이트만
+        if allowed_sites is None:
+            allowed_set: set[str] | None = None  # 필터 미적용
+        else:
+            allowed_set = {s.strip() for s in allowed_sites if s and s.strip()}
         for idx, job in enumerate(cls.queue):
             site = (job.get("site") or "").strip()
-            # 사이트 필터 검증 (popup 설정)
-            if allowed_set and site not in allowed_set:
+            # 사이트 필터 — None이면 통과, set이면 매칭 검사 (빈 set이면 무조건 fail)
+            if allowed_set is not None and site not in allowed_set:
                 continue
             owner = (job.get("ownerDeviceId") or "").strip()
             if not owner:
-                # 소유자 미지정 작업 — 사이트 필터만 통과하면 가져감
+                # 소유자 미지정 작업 — 사이트 필터 통과한 경우만 가져감
                 cls.queue.pop(idx)
                 return {"hasJob": True, **job}
             if device_id and owner == device_id:
