@@ -264,36 +264,22 @@ class PlayAutoClient:
         result = await self._call_api("GET", url, params={"number": number})
         return result if isinstance(result, list) else [result]
 
-    # ── 주문 상태변경 API ──
-
-    async def confirm_order(self, numbers: list[int]) -> list[dict]:
-        """신규주문 → 주문확인 상태 변경 (PATCH /orders/state).
-
-        Args:
-            numbers: 주문번호(number) 리스트
-
-        Returns:
-            [{code, status, msg}, ...]
-        """
-        url = f"{EMP_BASE_URL}/orders/state"
-        body = {"state": "주문확인", "data": [{"number": n} for n in numbers]}
-        result = await self._call_api("PATCH", url, body=body)
-        logger.info(f"[플레이오토] 주문확인 응답: {result}")
-        return result if isinstance(result, list) else [result]
-
     # ── 송장 API ──
 
     async def send_invoice(
         self,
         invoices: list[dict],
-        change_state: bool = True,
+        change_state: bool = False,
         overwrite: bool = True,
     ) -> list[dict]:
         """송장 입력 (PATCH /senders).
 
+        EMP API는 신규주문 → 송장입력 전이만 공식 지원.
+        change_state=False로 호출하면 신규주문 → 송장입력으로 상태 자동 변경.
+
         Args:
-            invoices: [{number, sender(택배사코드), senderno(송장번호)}, ...]
-            change_state: True=출고로 변경, False=송장입력으로 변경
+            invoices: [{number, sender(택배사코드 T-code), senderno(송장번호)}, ...]
+            change_state: False=송장입력으로 변경(기본), True=출고로 변경
             overwrite: True=기존 송장 덮어쓰기
         """
         url = f"{EMP_BASE_URL}/senders"

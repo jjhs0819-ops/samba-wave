@@ -2359,6 +2359,88 @@ async def ship_order(
                         )
                     except EbayApiError as e:
                         market_msg = f"eBay 송장 실패: {e}"
+
+            elif account and account.market_type == "playauto":
+                # 플레이오토 EMP는 신규주문 → 송장입력 전이만 지원 (PATCH /senders, changeState=false)
+                from backend.domain.samba.proxy.playauto import PlayAutoClient
+
+                pa_extras = account.additional_fields or {}
+                pa_api_key = pa_extras.get("apiKey", "") or account.api_key or ""
+                if not pa_api_key:
+                    market_msg = "플레이오토 API Key가 없습니다."
+                elif not order.shipment_id:
+                    market_msg = (
+                        "플레이오토 주문 Number가 없습니다. 주문을 다시 수집해주세요."
+                    )
+                else:
+                    pa_client = PlayAutoClient(pa_api_key)
+                    try:
+                        # 택배사 한글명 → 플레이오토 T-code 매핑 (런타임 조회)
+                        deliv_codes = await pa_client.get_deliv_codes()
+                        sender_code = ""
+                        for row in deliv_codes:
+                            if row.get("name") == body.shipping_company:
+                                sender_code = row.get("code", "")
+                                break
+                        if not sender_code:
+                            market_msg = f"플레이오토 택배사 코드 미매칭: {body.shipping_company}"
+                        else:
+                            try:
+                                pa_number = int(order.shipment_id)
+                            except (TypeError, ValueError):
+                                pa_number = 0
+                            if not pa_number:
+                                market_msg = (
+                                    f"플레이오토 Number 형식 오류: {order.shipment_id}"
+                                )
+                            else:
+                                results = await pa_client.send_invoice(
+                                    invoices=[
+                                        {
+                                            "number": pa_number,
+                                            "sender": sender_code,
+                                            "senderno": body.tracking_number,
+                                        }
+                                    ],
+                                    change_state=False,  # 신규주문 → 송장입력
+                                    overwrite=True,
+                                )
+                                # 응답 파싱: 직접 {status,msg} 또는 {"성공 유형N":{...}} 래핑 모두 대응
+                                ok = False
+                                err = ""
+                                for r in results:
+                                    if not isinstance(r, dict):
+                                        continue
+                                    candidates = (
+                                        [r]
+                                        if "status" in r
+                                        else [
+                                            v
+                                            for v in r.values()
+                                            if isinstance(v, dict) and "status" in v
+                                        ]
+                                    )
+                                    for c in candidates:
+                                        if str(c.get("status", "")).lower() == "true":
+                                            ok = True
+                                        else:
+                                            err = c.get("msg", "") or err
+                                if ok:
+                                    market_sent = True
+                                    market_msg = "플레이오토 송장 전송 완료 (신규주문 → 송장입력)"
+                                    await svc.update_order(
+                                        order_id,
+                                        {
+                                            "shipping_status": "송장전송완료",
+                                            "status": "shipping",
+                                        },
+                                    )
+                                else:
+                                    market_msg = (
+                                        f"플레이오토 송장 실패: {err or '응답 미상'}"
+                                    )
+                    except Exception as e:
+                        market_msg = f"플레이오토 송장 실패: {e}"
     except Exception as e:
         market_msg = f"송장 전송 실패: {e}"
         logger.warning(f"[송장전송] {order.order_number}: {e}")
