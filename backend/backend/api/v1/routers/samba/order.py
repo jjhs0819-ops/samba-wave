@@ -3315,21 +3315,23 @@ async def sync_orders_from_markets(
                     )
                     continue
 
-                # 취소/반품/교환 클레임 → 주문 상태 업데이트
+                # 취소/반품/교환 클레임 → 주문 상태 업데이트 (3종 병렬 조회)
                 try:
+                    import asyncio as _asyncio
+
                     from backend.domain.samba.proxy.elevenst_exchange import (
                         ElevenstExchangeClient,
                     )
 
-                    _cancel_claims = await _11st_client.get_cancel_requests(
-                        _start_time, _end_time
-                    )
-                    _return_claims = await _11st_client.get_return_requests(
-                        _start_time, _end_time
-                    )
                     _exchange_client = ElevenstExchangeClient(api_key)
-                    _exchange_claims = await _exchange_client.get_exchange_requests(
-                        _start_time, _end_time
+                    (
+                        _cancel_claims,
+                        _return_claims,
+                        _exchange_claims,
+                    ) = await _asyncio.gather(
+                        _11st_client.get_cancel_requests(_start_time, _end_time),
+                        _11st_client.get_return_requests(_start_time, _end_time),
+                        _exchange_client.get_exchange_requests(_start_time, _end_time),
                     )
                     logger.info(
                         f"[주문동기화] {label}: 취소 {len(_cancel_claims)}건, "

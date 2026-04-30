@@ -182,25 +182,30 @@ class PlayAutoPlugin(MarketPlugin):
         # 대표/추가 이미지 R2 업로드
         images = product.get("images") or []
         if images:
-            uploaded = []
             async with httpx.AsyncClient(
                 timeout=30, follow_redirects=True, proxy=proxy if proxy else None
             ) as dl_client:
-                for img_url in images[:10]:
+
+                async def _upload_one(img_entry):
                     url = (
-                        img_url if isinstance(img_url, str) else img_url.get("url", "")
+                        img_entry
+                        if isinstance(img_entry, str)
+                        else img_entry.get("url", "")
                     )
                     if not url:
-                        continue
+                        return None
                     try:
-                        final_url = await self._ensure_accessible(
+                        return await self._ensure_accessible(
                             dl_client, s3_client, bucket_name, public_url, url
                         )
-                        uploaded.append(final_url)
                     except Exception as e:
                         logger.warning(f"[플레이오토] 이미지 처리 실패: {e}")
-                        uploaded.append(url)
-            product["images"] = uploaded
+                        return url
+
+                results = await asyncio.gather(
+                    *[_upload_one(img) for img in images[:10]]
+                )
+            product["images"] = [r for r in results if r]
 
         # detail_html 보강: detail_images 리스트가 detail_html의 <img>보다 많으면 재구성.
         # ABC마트/롯데ON 등 lazy-load 사이트는 detail_html에 placeholder src 1개만 들어있어
@@ -413,18 +418,26 @@ class PlayAutoPlugin(MarketPlugin):
         async with httpx.AsyncClient(
             timeout=30, follow_redirects=True, proxy=proxy if proxy else None
         ) as dl_client:
-            for url in urls:
+
+            async def _replace_one(url):
                 if not url or url.startswith("data:"):
-                    continue
+                    return url, url
                 if public_url and public_url in url:
-                    continue
+                    return url, url
                 try:
                     r2_url = await self._ensure_accessible(
                         dl_client, s3_client, bucket_name, public_url, url
                     )
-                    html = html.replace(url, r2_url)
+                    return url, r2_url
                 except Exception as e:
                     logger.warning(f"[플레이오토] 상세 이미지 R2 업로드 실패: {e}")
+                    return url, url
+
+            replacements = await asyncio.gather(*[_replace_one(u) for u in urls])
+
+        for orig_url, r2_url in replacements:
+            if orig_url != r2_url:
+                html = html.replace(orig_url, r2_url)
 
         return html
 

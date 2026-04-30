@@ -67,32 +67,32 @@ export function useOrderSync({ accounts, period, setLogMessages, showNotificatio
       return
     }
 
-    // 마켓타입 선택 시 해당 마켓 계정들만 순회 동기화
+    // 마켓타입 선택 시 해당 마켓 계정들만 병렬 동기화
     if (syncAccountId.startsWith('type:')) {
       const marketType = syncAccountId.replace('type:', '')
       const marketAccs = accounts.filter(a => a.market_type === marketType)
       const marketName = marketAccs[0]?.market_name || marketType
       setLogMessages(prev => [...prev, `[${ts()}] ${marketName} 전체 계정 주문수집 시작 (${fmtNum(marketAccs.length)}개 계정, 최근 ${days}일)...`])
+      const settled = await Promise.allSettled(marketAccs.map(acc => orderApi.syncFromMarkets(days, acc.id)))
       let totalSynced = 0
       let totalCancelRequested = 0
-      for (const acc of marketAccs) {
-        const label = `${acc.market_name}(${acc.seller_id || '-'})`
-        try {
-          const res = await orderApi.syncFromMarkets(days, acc.id)
-          for (const r of res.results) {
-            if (r.status === 'success') {
-              setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${fmtNum(r.fetched)}건 조회, ${fmtNum(r.synced)}건 신규 저장${(r as Record<string, unknown>).confirmed ? `, ${fmtNum((r as Record<string, unknown>).confirmed as number)}건 발주확인` : ''}`])
-            } else if (r.status === 'skip') {
-              setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${r.message}`])
-            } else {
-              setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: 오류 — ${r.message}`])
-            }
-            totalCancelRequested += ((r as Record<string, unknown>).cancel_requested as number) || 0
-          }
-          totalSynced += res.total_synced
-        } catch (e) {
-          setLogMessages(prev => [...prev, `[${ts()}] ${label} 오류: ${e}`])
+      for (const outcome of settled) {
+        if (outcome.status === 'rejected') {
+          setLogMessages(prev => [...prev, `[${ts()}] 오류: ${outcome.reason}`])
+          continue
         }
+        const res = outcome.value
+        for (const r of res.results) {
+          if (r.status === 'success') {
+            setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${fmtNum(r.fetched)}건 조회, ${fmtNum(r.synced)}건 신규 저장${(r as Record<string, unknown>).confirmed ? `, ${fmtNum((r as Record<string, unknown>).confirmed as number)}건 발주확인` : ''}`])
+          } else if (r.status === 'skip') {
+            setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${r.message}`])
+          } else {
+            setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: 오류 — ${r.message}`])
+          }
+          totalCancelRequested += ((r as Record<string, unknown>).cancel_requested as number) || 0
+        }
+        totalSynced += res.total_synced
       }
       setLogMessages(prev => [...prev, `[${ts()}] ${marketName} 주문수집 완료 — 총 ${fmtNum(totalSynced)}건 신규 저장`])
       if (totalCancelRequested > 0) {
@@ -103,30 +103,30 @@ export function useOrderSync({ accounts, period, setLogMessages, showNotificatio
       return
     }
 
-    // 전체마켓: Caddy response_header_timeout(120s) 회피 위해 계정별 개별 호출로 분할
+    // 전체마켓: 계정별 개별 호출로 분할 + 병렬 실행 (Caddy 120s 타임아웃은 계정 단위 요청이라 문제없음)
     const isAll = !syncAccountId
     if (isAll) {
       setLogMessages(prev => [...prev, `[${ts()}] 전체마켓 주문수집 시작 (${fmtNum(accounts.length)}개 계정, 최근 ${days}일)...`])
+      const settled = await Promise.allSettled(accounts.map(acc => orderApi.syncFromMarkets(days, acc.id)))
       let totalSynced = 0
       let totalCancelRequested = 0
-      for (const acc of accounts) {
-        const label = `${acc.market_name}(${acc.seller_id || '-'})`
-        try {
-          const res = await orderApi.syncFromMarkets(days, acc.id)
-          for (const r of res.results) {
-            if (r.status === 'success') {
-              setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${fmtNum(r.fetched)}건 조회, ${fmtNum(r.synced)}건 신규 저장${(r as Record<string, unknown>).confirmed ? `, ${fmtNum((r as Record<string, unknown>).confirmed as number)}건 발주확인` : ''}`])
-            } else if (r.status === 'skip') {
-              setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${r.message}`])
-            } else {
-              setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: 오류 — ${r.message}`])
-            }
-            totalCancelRequested += ((r as Record<string, unknown>).cancel_requested as number) || 0
-          }
-          totalSynced += res.total_synced
-        } catch (e) {
-          setLogMessages(prev => [...prev, `[${ts()}] ${label} 오류: ${e}`])
+      for (const outcome of settled) {
+        if (outcome.status === 'rejected') {
+          setLogMessages(prev => [...prev, `[${ts()}] 오류: ${outcome.reason}`])
+          continue
         }
+        const res = outcome.value
+        for (const r of res.results) {
+          if (r.status === 'success') {
+            setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${fmtNum(r.fetched)}건 조회, ${fmtNum(r.synced)}건 신규 저장${(r as Record<string, unknown>).confirmed ? `, ${fmtNum((r as Record<string, unknown>).confirmed as number)}건 발주확인` : ''}`])
+          } else if (r.status === 'skip') {
+            setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${r.message}`])
+          } else {
+            setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: 오류 — ${r.message}`])
+          }
+          totalCancelRequested += ((r as Record<string, unknown>).cancel_requested as number) || 0
+        }
+        totalSynced += res.total_synced
       }
       setLogMessages(prev => [...prev, `[${ts()}] 전체마켓 주문수집 완료 — 총 ${fmtNum(totalSynced)}건 신규 저장`])
       if (totalCancelRequested > 0) {

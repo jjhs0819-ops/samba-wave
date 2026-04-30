@@ -255,7 +255,7 @@ class ElevenstClient:
             raise ElevenstApiError(f"API 에러 ({result_code}): {msg}")
 
         result = data
-        prd_no = result.get("prdNo", "") if isinstance(result, dict) else ""
+        prd_no = result.get("productNo", "") if isinstance(result, dict) else ""
         logger.info(
             f"[11번가] 상품 등록 완료 — prdNo={prd_no}, keys={list(result.keys()) if isinstance(result, dict) else type(result)}"
         )
@@ -1701,7 +1701,18 @@ class ElevenstClient:
 
         # 이미지 XML — 공식 필드명: prdImage01~04 (imageUrl 아님)
         # _is_valid_detail_image와 동일한 필터 적용 (notice + 고해상도 원본 제외)
-        product_images = [u for u in images if _is_valid_detail_image(u)]
+        # 무신사 msscdn.net 썸네일(_125/_250/_500)은 11번가 300x300 최소 요구사항 미달
+        # → _1100으로 업스케일 (eBay와 동일 패턴, ebay.py:75-78)
+        import re as _re_img
+
+        def _upscale_msscdn(u: str) -> str:
+            if "msscdn.net" in u:
+                return _re_img.sub(r"_(125|250|500)\.(jpg|png|webp)", r"_1100.\2", u)
+            return u
+
+        product_images = [
+            _upscale_msscdn(u) for u in images if _is_valid_detail_image(u)
+        ]
         image_xml = ""
         if product_images:
             image_xml += f"<prdImage01>{_escape_xml(product_images[0])}</prdImage01>"

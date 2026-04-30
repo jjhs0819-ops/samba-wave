@@ -17,6 +17,12 @@ from backend.utils.logger import logger
 _auth_cache: dict[str, tuple[float, Any]] = {}  # {api_key: (timestamp, client)}
 _AUTH_TTL = 60  # 초
 
+# ── 카테고리 캐싱 (10분 TTL) — 동일 카테고리 반복 전송 시 API 3회 호출 방지 ──
+_category_cache: dict[
+    str, tuple[float, dict]
+] = {}  # {category_id: (timestamp, cache_data)}
+_CAT_TTL = 600  # 초 (10분)
+
 
 async def _get_cached_client(api_key: str):
     """test_auth 결과를 60초간 캐싱하여 재사용."""
@@ -1327,11 +1333,19 @@ class LotteonPlugin(MarketPlugin):
                         )
 
                     _updated = []
+                    # 가격 + 재고 병렬 업데이트
+                    import asyncio as _asyncio
+
+                    _tasks = []
                     if itm_prc_lst:
-                        await client.update_price(itm_prc_lst)
+                        _tasks.append(client.update_price(itm_prc_lst))
+                    if itm_stk_lst:
+                        _tasks.append(client.update_stock(itm_stk_lst))
+                    if _tasks:
+                        await _asyncio.gather(*_tasks, return_exceptions=True)
+                    if itm_prc_lst:
                         _updated.append(f"가격({new_price:,}원)")
                     if itm_stk_lst:
-                        await client.update_stock(itm_stk_lst)
                         _updated.append(f"재고({len(itm_stk_lst)}건)")
                         # 재고 양수인데 SOUT_STK로 잠긴 옵션을 SALE로 자동 복구
                         await self._restore_sout_to_sale(
@@ -1648,64 +1662,83 @@ class LotteonPlugin(MarketPlugin):
                     logger.warning(f"[롯데ON] 하위 카테고리 조회 실패 (무시): {e}")
                     break
 
-        # 전시카테고리(FC...) + attr_list 자동 조회 (1번 API 호출로 통합)
+        # 전시카테고리(FC...) + attr_list 자동 조회 (10분 캐시)
         disp_cat_id = ""
         category_attr_ids: list[str] = []
-        try:
-            cat_result = await client.get_categories(cat_id=category_id)
-            items = cat_result.get("itemList") or []
-            if items:
-                d = items[0].get("data", {})
-                disp_list = d.get("disp_list", [])
-                if disp_list:
-                    disp_cat_id = disp_list[0].get("disp_cat_id", "")
-                # 속성 attr_id + attr_nm 목록 추출 (scatAttrLst 생성용)
-                _attr_raw = d.get("attr_list") or []
-                category_attr_ids = [
-                    str(a.get("attr_id", "")) for a in _attr_raw if a.get("attr_id")
-                ]
-                logger.info(
-                    f"[롯데ON] attr_list 상세: "
-                    f"{[(str(a.get('attr_id', '')), a.get('attr_nm', '')) for a in _attr_raw]}"
-                )
-                if _attr_raw:
-                    logger.info(
-                        f"[롯데ON] attr_list[0] 원시키: {list(_attr_raw[0].keys())}"
-                    )
-                    logger.info(
-                        f"[롯데ON] attr_list pi_type: "
-                        f"{[(str(a.get('attr_id', '')), a.get('attr_pi_type', '')) for a in _attr_raw]}"
-                    )
+        _attr_raw: list = []
+        _cat_cache_key = category_id
+        _cat_cached = _category_cache.get(_cat_cache_key)
+        if _cat_cached and (time.time() - _cat_cached[0] < _CAT_TTL):
+            _cached_data = _cat_cached[1]
+            disp_cat_id = _cached_data["disp_cat_id"]
+            category_attr_ids = _cached_data["category_attr_ids"]
+            _attr_raw = _cached_data["_attr_raw"]
             logger.info(
-                f"[롯데ON] 전시카테고리 조회: {category_id} → {disp_cat_id}, attr_ids={len(category_attr_ids)}개"
+                f"[롯데ON] 카테고리 캐시 히트: {category_id} → disp={disp_cat_id}, attr_ids={len(category_attr_ids)}개"
             )
-            # 속성값 목록 상세 조회 (attr_id별 이름 + val 목록 파악용)
-            for _scat_key in [category_id, disp_cat_id]:
-                if not _scat_key:
-                    continue
+        else:
+            try:
+                cat_result = await client.get_categories(cat_id=category_id)
+                items = cat_result.get("itemList") or []
+                if items:
+                    d = items[0].get("data", {})
+                    disp_list = d.get("disp_list", [])
+                    if disp_list:
+                        disp_cat_id = disp_list[0].get("disp_cat_id", "")
+                    _attr_raw = d.get("attr_list") or []
+                    category_attr_ids = [
+                        str(a.get("attr_id", "")) for a in _attr_raw if a.get("attr_id")
+                    ]
+                    logger.info(
+                        f"[롯데ON] attr_list 상세: "
+                        f"{[(str(a.get('attr_id', '')), a.get('attr_nm', '')) for a in _attr_raw]}"
+                    )
+                    if _attr_raw:
+                        logger.info(
+                            f"[롯데ON] attr_list[0] 원시키: {list(_attr_raw[0].keys())}"
+                        )
+                        logger.info(
+                            f"[롯데ON] attr_list pi_type: "
+                            f"{[(str(a.get('attr_id', '')), a.get('attr_pi_type', '')) for a in _attr_raw]}"
+                        )
+                logger.info(
+                    f"[롯데ON] 전시카테고리 조회: {category_id} → {disp_cat_id}, attr_ids={len(category_attr_ids)}개"
+                )
+                _category_cache[_cat_cache_key] = (
+                    time.time(),
+                    {
+                        "disp_cat_id": disp_cat_id,
+                        "category_attr_ids": category_attr_ids,
+                        "_attr_raw": _attr_raw,
+                    },
+                )
+                # 속성값 목록 상세 조회 (디버그 로깅 전용 — 캐시 미적용)
+                for _scat_key in [category_id, disp_cat_id]:
+                    if not _scat_key:
+                        continue
+                    try:
+                        _attr_detail = await client.get_category_attributes(
+                            scat_no=_scat_key
+                        )
+                        logger.info(
+                            f"[롯데ON] cheetahScatAttr({_scat_key}) 응답: {_attr_detail}"
+                        )
+                        break
+                    except Exception as _e:
+                        logger.debug(
+                            f"[롯데ON] cheetahScatAttr({_scat_key}) 조회 실패: {_e}"
+                        )
                 try:
-                    _attr_detail = await client.get_category_attributes(
-                        scat_no=_scat_key
+                    _attr_detail2 = await client.get_category_attribute_list(
+                        category_id=category_id
                     )
                     logger.info(
-                        f"[롯데ON] cheetahScatAttr({_scat_key}) 응답: {_attr_detail}"
+                        f"[롯데ON] openapi attr_list({category_id}) 응답: {_attr_detail2}"
                     )
-                    break
                 except Exception as _e:
-                    logger.debug(
-                        f"[롯데ON] cheetahScatAttr({_scat_key}) 조회 실패: {_e}"
-                    )
-            try:
-                _attr_detail2 = await client.get_category_attribute_list(
-                    category_id=category_id
-                )
-                logger.info(
-                    f"[롯데ON] openapi attr_list({category_id}) 응답: {_attr_detail2}"
-                )
-            except Exception as _e:
-                logger.debug(f"[롯데ON] openapi attr_list 조회 실패: {_e}")
-        except Exception as e:
-            logger.warning(f"[롯데ON] 전시카테고리 조회 실패 (무시): {e}")
+                    logger.debug(f"[롯데ON] openapi attr_list 조회 실패: {_e}")
+            except Exception as e:
+                logger.warning(f"[롯데ON] 전시카테고리 조회 실패 (무시): {e}")
 
         # 속성정보(scatAttrLst) 생성 — 무신사 소싱 데이터 → 롯데ON 속성값 매핑
         if category_attr_ids:
