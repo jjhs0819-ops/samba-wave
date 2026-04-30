@@ -1730,12 +1730,39 @@ class LotteonPlugin(MarketPlugin):
 
         if product_copy.get("images"):
             _orig_imgs = product_copy["images"]
-            product_copy["images"] = await filter_alive_urls(_orig_imgs)
+            _alive_imgs = await filter_alive_urls(_orig_imgs)
+            # 경로에 괄호/공백/한글 등이 들어있으면 롯데ON URL 형식 검증에서
+            # "URL 형식이 올바르지 않습니다(9999)"로 거부됨 (예: yswholesale
+            # `..._1000px(1).jpg`). HEAD 200이라도 등록 API는 별도로 strict 파싱하므로
+            # 경로 부분만 퍼센트 인코딩 (이미 인코딩된 %XX 시퀀스는 보존).
+            from urllib.parse import quote, urlsplit, urlunsplit
+
+            def _normalize_for_lotteon(u: str) -> str:
+                if not u or not u.startswith(("http://", "https://")):
+                    return u
+                try:
+                    p = urlsplit(u)
+                    return urlunsplit(
+                        (
+                            p.scheme,
+                            p.netloc,
+                            quote(p.path, safe="/%-._~"),
+                            p.query,
+                            p.fragment,
+                        )
+                    )
+                except Exception:
+                    return u
+
+            product_copy["images"] = [_normalize_for_lotteon(u) for u in _alive_imgs]
             _kept_count = len(product_copy["images"])
             _excluded = len(_orig_imgs) - _kept_count
+            _changed = sum(
+                1 for o, n in zip(_alive_imgs, product_copy["images"]) if o != n
+            )
             logger.info(
                 f"[롯데ON] 이미지 사전검증: 원본 {len(_orig_imgs)}장 → "
-                f"통과 {_kept_count}장 (제외 {_excluded}장)"
+                f"통과 {_kept_count}장 (제외 {_excluded}장, URL 정규화 {_changed}장)"
             )
 
         data = LotteonClient.transform_product(
