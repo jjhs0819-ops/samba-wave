@@ -874,6 +874,12 @@ _FASHION_TO_SPORTS: dict[str, str] = {
     "패션의류 > 남성의류 > 아우터": "스포츠의류/운동화 > 남성스포츠의류 > 점퍼",
 }
 
+# 거래처 미허용 카테고리 → 대체 카테고리 강제 변환 (경로형 category_id 대상)
+_BLOCKED_PATHS: dict[str, str] = {
+    "스포츠의류/운동화 > 남성스포츠의류 > 다운/패딩": "스포츠의류/운동화 > 남성스포츠의류 > 점퍼",
+    "스포츠의류/운동화 > 여성스포츠의류 > 다운/패딩": "스포츠의류/운동화 > 여성스포츠의류 > 점퍼",
+}
+
 # BC23 패션의류 → BC41 스포츠의류 BC코드 변환
 _BC23_TO_BC41: dict[str, str] = {
     "BC23110400": "BC41101800",  # 여성의류>스커트 → 여성스포츠의류>스커트
@@ -1392,6 +1398,12 @@ class LotteonPlugin(MarketPlugin):
                     f"[롯데ON] 남성 강제 변환(BC): {category_id} → {candidate} (sex={_sex_val})"
                 )
                 category_id = candidate
+
+        # ── 거래처 미허용 카테고리 강제 대체 ─────────────────────────────────────────
+        if category_id and category_id in _BLOCKED_PATHS:
+            alt = _BLOCKED_PATHS[category_id]
+            logger.info(f"[롯데ON] 미허용 카테고리 대체: {category_id!r} → {alt!r}")
+            category_id = alt
 
         # ── FC05 권한없음 방지: 패션의류 경로/BC23코드 → 스포츠의류 강제 변환 ──────────
         if category_id and category_id in _FASHION_TO_SPORTS:
