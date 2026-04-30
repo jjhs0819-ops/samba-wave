@@ -2201,6 +2201,17 @@ class AutotuneStartRequest(BaseModel):
     # 이 deviceId와 일치하는 확장앱만 SSG/롯데온 등의 수집 탭 작업을 집어간다.
     # 비어 있으면 레거시 동작(아무 확장앱이나 집어감)을 유지한다.
     device_id: Optional[str] = None
+    # 사이트별 owner 매핑 — PC 분산용 (선택).
+    # 예) {"ABCmart": "device_A", "LOTTEON": "device_B"}
+    # 매핑된 사이트는 해당 deviceId로만 작업 발행, 나머지는 device_id로 fallback.
+    # 익스텐션 부담 분산 + 사이트 간 진짜 병렬 처리를 위해 PC 2대 운영 시 활용.
+    site_owners: Optional[dict[str, str]] = None
+
+
+class AutotuneSiteOwnersRequest(BaseModel):
+    """오토튠 실행 중 사이트별 owner 매핑 동적 변경용."""
+
+    site_owners: dict[str, str]
 
 
 async def _save_autotune_state(enabled: bool, device_id: str = ""):
@@ -2610,10 +2621,19 @@ async def autotune_start(
     # 오토튠을 시작한 브라우저(확장앱)의 deviceId를 소싱큐에 등록
     # → SSG 등 확장앱 의존 플러그인이 add_detail_job 호출 시 자동으로 소유자로 태그
     # → 동일 테넌트의 다른 브라우저는 collect-queue에서 해당 작업을 받지 못함
+    # site_owners가 함께 전달되면 해당 사이트는 별도 PC로 작업 분배 (PC 분산).
     try:
-        from backend.domain.samba.proxy.sourcing_queue import set_autotune_owner
+        from backend.domain.samba.proxy.sourcing_queue import (
+            clear_autotune_owners,
+            set_autotune_owner,
+            set_autotune_owner_for_site,
+        )
 
+        clear_autotune_owners()  # 이전 매핑 잔재 제거
         set_autotune_owner(body.device_id or "")
+        if body.site_owners:
+            for _site, _dev in body.site_owners.items():
+                set_autotune_owner_for_site(_site, _dev or "")
     except Exception:
         pass
 
@@ -2650,16 +2670,41 @@ async def autotune_stop():
     try:
         from backend.domain.samba.proxy.sourcing_queue import (
             SourcingQueue,
-            set_autotune_owner,
+            clear_autotune_owners,
         )
 
         SourcingQueue.cancel_all("autotune stopped by user")
-        set_autotune_owner("")
+        clear_autotune_owners()  # 기본 owner + 사이트별 매핑 모두 리셋
     except Exception:
         pass
 
     await _save_autotune_state(False)
     return {"ok": True, "status": "stopped"}
+
+
+@router.get("/autotune/site-owners")
+async def autotune_site_owners_get():
+    """현재 사이트별 owner 매핑 + 기본 owner 조회 (PC 분산 모니터링용)."""
+    from backend.domain.samba.proxy.sourcing_queue import get_autotune_owner_mapping
+
+    return get_autotune_owner_mapping()
+
+
+@router.post("/autotune/site-owners")
+async def autotune_site_owners_set(body: AutotuneSiteOwnersRequest):
+    """오토튠 실행 중 사이트별 owner 매핑 동적 변경 (PC 분산).
+
+    예) {"site_owners": {"ABCmart": "device_A", "LOTTEON": "device_B"}}
+    빈 deviceId 전달 시 해당 사이트 매핑 제거(기본 owner로 fallback).
+    """
+    from backend.domain.samba.proxy.sourcing_queue import (
+        get_autotune_owner_mapping,
+        set_autotune_owner_for_site,
+    )
+
+    for _site, _dev in body.site_owners.items():
+        set_autotune_owner_for_site(_site, _dev or "")
+    return {"ok": True, "mapping": get_autotune_owner_mapping()}
 
 
 @router.get("/autotune/status")

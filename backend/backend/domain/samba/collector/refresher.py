@@ -109,6 +109,10 @@ SITE_PRODUCT_TIMEOUT: dict[str, int] = {
     "LOTTEON": 120,
     # SSG: 확장앱 의존 동일 구조
     "SSG": 120,
+    # ABCmart/GrandStage: A안 적용 후 무조건 DOM 위임 — 탭 생성(~2)+ load(~10)+
+    # SPA hydration(5)+ DOM 파싱(~2)+ 재시도(3)+ API(~5) + 큐 대기 시간 흡수
+    "ABCmart": 120,
+    "GrandStage": 120,
 }
 
 

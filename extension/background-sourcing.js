@@ -734,6 +734,17 @@ async function handleSourcingJob(job) {
   // 한해서 DOM 파싱 후 fallback으로만 사용 (904 라인 흐름).
 
   let tabId = null
+  let cleanedUp = false
+  // hang 방어 timer — try 안 await가 영원히 대기(예: chrome.scripting.executeScript
+  // 페이지 컨텍스트 죽음 감지 못함)해도 강제 cleanup. 100초는 백엔드 wrapper(120초)
+  // 보다 짧게 잡아 wrapper 만료 전에 탭 정리되게 함.
+  const hangTimer = setTimeout(async () => {
+    if (!cleanedUp && tabId) {
+      console.warn(`[${job.site}] hang 감지(100s) → 강제 탭 닫기: ${job.productId || job.keyword || ''}`)
+      try { await chrome.tabs.remove(tabId) } catch {}
+      cleanedUp = true
+    }
+  }, 100000)
   try {
     // active:false — 병렬 처리 시 여러 탭 동시 오픈 (백그라운드 탭도 JS 렌더링 됨)
     const tab = await chrome.tabs.create({ url: job.url, active: false })
@@ -963,16 +974,25 @@ async function handleSourcingJob(job) {
       }
     }
 
-    try { await chrome.tabs.remove(tabId) } catch {}
+    if (tabId && !cleanedUp) {
+      try { await chrome.tabs.remove(tabId) } catch {}
+      cleanedUp = true
+    }
 
     await postResult('sourcing/collect-result', { requestId: job.requestId, data: result || { success: false, message: '파싱 실패' } })
     console.log(`[소싱] ${job.site} 완료: ${result?.products?.length || 0}건`)
   } catch (err) {
     console.error(`[소싱] ${job.site} 오류:`, err)
-    if (tabId) try { await chrome.tabs.remove(tabId) } catch {}
     try {
       await postResult('sourcing/collect-result', { requestId: job.requestId, data: { success: false, message: err.message } })
     } catch {}
+  } finally {
+    // 정상/예외 모든 경로에서 hang timer 해제 + 탭 강제 cleanup 보장
+    clearTimeout(hangTimer)
+    if (tabId && !cleanedUp) {
+      try { await chrome.tabs.remove(tabId) } catch {}
+      cleanedUp = true
+    }
   }
 }
 

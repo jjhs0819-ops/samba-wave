@@ -105,10 +105,17 @@ class TestSitePtoMapping:
 
         assert SITE_PRODUCT_TIMEOUT["SSG"] == 120
 
+    def test_abcmart_in_map(self) -> None:
+        # ABCmart/GrandStage는 A안(DOM 위임 1순위) 적용 후 확장앱 의존이므로
+        # LOTTEON/SSG와 동일하게 120s wrapper 필요 (DOM 위임 45s + 큐 대기 흡수)
+        from backend.domain.samba.collector.refresher import SITE_PRODUCT_TIMEOUT
+
+        assert SITE_PRODUCT_TIMEOUT["ABCmart"] == 120
+        assert SITE_PRODUCT_TIMEOUT["GrandStage"] == 120
+
     def test_musinsa_not_overridden(self) -> None:
-        # 비-확장앱 마켓이 잘못 추가되지 않았는지 확인
+        # 순수 백엔드 처리(확장앱 무관) 마켓이 잘못 추가되지 않았는지 확인
         from backend.domain.samba.collector.refresher import SITE_PRODUCT_TIMEOUT
 
         assert "MUSINSA" not in SITE_PRODUCT_TIMEOUT
-        assert "ABCmart" not in SITE_PRODUCT_TIMEOUT
         assert "KREAM" not in SITE_PRODUCT_TIMEOUT
