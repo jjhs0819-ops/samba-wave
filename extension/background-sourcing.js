@@ -724,12 +724,17 @@ async function fetchAbcmartBenefitPrice(productId, site) {
 
 // 소싱 작업 처리 — 탭 열기 → DOM 파싱 → 결과 전송
 async function handleSourcingJob(job) {
-  // ABCmart/GrandStage detail: 폴백 chain 우선 시도
-  //   1) 서비스워커 fetch (탭 0개) — 동작하면 best
-  //   2) 사이트별 서브도메인 탭에서 in-tab fetch — 사용자가 a-rt.com 백그라운드 탭 켜놨으면 탭 안 띄움
-  //   3) 둘 다 실패 시 아래 DOM 파싱 폴백 (매번 새 탭 — LOTTEON과 동일 운영 방식)
+  // ABCmart/GrandStage detail: 폴백 chain — 사용자 부담(탭) 최소화 + 정확함 양립.
+  //   1) SW fetch (탭 0개) — 사용자 쿠키 자동 포함, loginYn=Y면 멤버십 등급 반영된
+  //      정확한 best_benefit_price 응답 (API의 alwaysDscntAmt가 등급별 할인 동적 반환).
+  //      loginYn≠Y면 null 반환 → 다음 단계로.
+  //   2) in-tab fetch (a-rt.com 핀 탭 자동 보장) — 같은 API를 핀 탭 내에서 호출해
+  //      사용자 세션을 더 확실히 사용. loginYn≠Y면 null 반환.
+  //   3) DOM 파싱 (새 백그라운드 탭, active=false) — 1·2 모두 실패 시 최후 수단.
+  //      페이지 렌더링 후 "최대 혜택가" 텍스트를 그대로 추출 (100% 페이지 표시값).
+  //      비로그인 감지 시 자동로그인 트리거 + reportLoginFailure.
   if (job.type === 'detail' && (job.site === 'ABCmart' || job.site === 'GrandStage')) {
-    // 1) SW fetch
+    // 1) SW fetch — 탭 0개
     const swResult = await fetchAbcmartBenefitPriceServiceWorker(job.productId, job.site)
     if (swResult && swResult.success) {
       try {
@@ -740,7 +745,7 @@ async function handleSourcingJob(job) {
       }
       return
     }
-    // 2) in-tab fetch (사이트별 서브도메인 탭 활용)
+    // 2) in-tab fetch — 핀 탭 활용, 새 탭 X
     const inTabResult = await fetchAbcmartBenefitPrice(job.productId, job.site)
     if (inTabResult && inTabResult.success) {
       try {
@@ -751,7 +756,8 @@ async function handleSourcingJob(job) {
       }
       return
     }
-    console.log(`[${job.site}] SW + in-tab 모두 실패 → DOM 폴백 (탭 띄움): ${job.productId}`)
+    // 3) DOM 파싱 — 아래 일반 흐름으로 떨어짐 (탭 띄움)
+    console.log(`[${job.site}] SW + in-tab 모두 실패(비로그인 추정) → DOM 파싱 폴백: ${job.productId}`)
     reportLoginFailure(job.site)
   }
 
@@ -902,7 +908,8 @@ async function handleSourcingJob(job) {
       // 비로그인 검증 + 자동로그인 트리거는 아래 공통 처리에서 일괄 수행
       // (LOTTEON DOM 파싱이 추가한 _loginRequired 플래그도 공통 처리에서 인식)
     } else if (job.type === 'detail' && (job.site === 'ABCmart' || job.site === 'GrandStage')) {
-      // ABCmart/GrandStage SPA 렌더링 대기 후 최대혜택가 파싱
+      // 여기 도달 = SW + in-tab fetch 모두 실패 (비로그인/쿠키 만료) → 새 탭 DOM 파싱
+      // 페이지 렌더링 후 "최대 혜택가" 텍스트로 사용자 등급별 정확한 가격 추출
       result = await extractDetailData(tabId, job.site, job.productId)
       if (!result?.best_benefit_price) {
         console.log(`[${job.site}] 혜택가 미수집 — 3초 후 재시도: ${job.productId}`)
@@ -1585,15 +1592,30 @@ async function extractDetailData(tabId, site, productId) {
           const nameEl = document.querySelector('h2[class*="name"], [class*="prd-name"], [class*="product_name"]')
           name = nameEl?.textContent?.trim() || document.querySelector('meta[property="og:title"]')?.content || ''
 
-          // 판매가: "N원 [N%]" 패턴
-          const priceMatch = bodyText.match(/([\d,]+)\s*원\s*\[\d+%\]/)
-          if (priceMatch) salePrice = parseInt(priceMatch[1].replace(/,/g, ''), 10)
+          // 정상가/판매가: "최대 혜택가" 이전 영역에서만 추출
+          // (이후 영역에는 관련상품/추천상품 카드의 가격이 섞여 있어 잘못 매칭됨)
+          // ABCmart 표기 규칙:
+          //   - 정상가만: "79,000원" (단독, [%] 미포함)
+          //   - 정상가+할인된 판매가: "69,000 55,000원 [20%]" (strikethrough + 할인 후 + 할인율)
+          //   - 혜택가는 "최대 혜택가 N원 [P%]" 형태로 [%] 포함 → salePrice/originalPrice 후보에서 제외
+          const benefitIdx = bodyText.search(/최대\s*혜택가/)
+          const beforeBenefit = benefitIdx > 0 ? bodyText.slice(0, benefitIdx) : bodyText
 
-          // 정가
-          const origMatch = bodyText.match(/([\d,]+)\s*원\s+([\d,]+)\s*원/)
-          if (origMatch) {
-            originalPrice = parseInt(origMatch[1].replace(/,/g, ''), 10)
-            if (!salePrice) salePrice = parseInt(origMatch[2].replace(/,/g, ''), 10)
+          // 패턴 A: "정상가 할인가 원 [%]" — 정상가+할인된 판매가
+          const discountedMatch = beforeBenefit.match(/(\d{1,3}(?:,\d{3})+)\s+(\d{1,3}(?:,\d{3})+)\s*원\s*\[\d+%\]/)
+          if (discountedMatch) {
+            originalPrice = parseInt(discountedMatch[1].replace(/,/g, ''), 10)
+            salePrice = parseInt(discountedMatch[2].replace(/,/g, ''), 10)
+          } else {
+            // 패턴 B: 단독 "N,NNN원" 중 가장 큰 값 = 정상가 (할인 없음 → 정상가=판매가)
+            // [%] 표기가 따라오는 가격은 제외 (혜택가/할인가)
+            const standaloneMatches = [...beforeBenefit.matchAll(/(\d{1,3}(?:,\d{3})+)\s*원(?!\s*\[)/g)]
+              .map(m => parseInt(m[1].replace(/,/g, ''), 10))
+              .filter(n => n >= 1000)  // 배송비 0원, 적립 100P 등 노이즈 제외
+            if (standaloneMatches.length > 0) {
+              originalPrice = Math.max(...standaloneMatches)
+              salePrice = originalPrice
+            }
           }
 
           return {

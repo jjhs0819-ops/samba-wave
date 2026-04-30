@@ -2796,10 +2796,10 @@ class JobWorker:
                             _loop = asyncio.get_event_loop()
                             detail = await _loop.run_in_executor(
                                 None,
-                                lambda: client._parse_result_item_obj(
-                                    _html, spid, False
-                                )
-                                or {},
+                                lambda: (
+                                    client._parse_result_item_obj(_html, spid, False)
+                                    or {}
+                                ),
                             )
                         # _parse_result_item_obj 실패 시 (dept.ssg.com AJAX 로드):
                         # 확장앱 safeObj의 itemNm + HTML select 직접 파싱으로 폴백
@@ -3093,10 +3093,12 @@ class JobWorker:
                                 _r_loop = asyncio.get_event_loop()
                                 _det = await _r_loop.run_in_executor(
                                     None,
-                                    lambda: client._parse_result_item_obj(
-                                        _r_html, _spid, False
-                                    )
-                                    or {},
+                                    lambda: (
+                                        client._parse_result_item_obj(
+                                            _r_html, _spid, False
+                                        )
+                                        or {}
+                                    ),
                                 )
                             if not _det:
                                 _r_obj = _r_ext.get("resultItemObj", {})
@@ -4584,10 +4586,12 @@ class JobWorker:
                                 _s_loop = asyncio.get_event_loop()
                                 det = await _s_loop.run_in_executor(
                                     None,
-                                    lambda: client._parse_result_item_obj(
-                                        _html, spid, False
-                                    )
-                                    or {},
+                                    lambda: (
+                                        client._parse_result_item_obj(
+                                            _html, spid, False
+                                        )
+                                        or {}
+                                    ),
                                 )
                                 if not det:
                                     _ext_obj2 = _ext_result.get("resultItemObj", {})

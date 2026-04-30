@@ -1334,6 +1334,10 @@ class ARTSourcingClient:
             "cost": sale_price + shipping_fee,
             "shippingFee": shipping_fee,
             "bestBenefitPrice": best_benefit_price,
+            # 호출 시점 사용자 쿠키의 로그인 상태 — refresh()에서 DOM 위임 결정에 사용
+            # "Y"면 멤버십 상시할인이 응답에 반영된 정확한 best_benefit_price (DOM 위임 스킵)
+            # 그 외(빈값/N)면 비로그인 응답 → 멤버십 누락 → DOM 위임 fallback 필요
+            "loginYn": _login_yn,
             "discountRate": discount_rate,
             "saleStatus": sale_status,
             "isOutOfStock": is_out_of_stock,
