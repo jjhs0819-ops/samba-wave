@@ -158,9 +158,35 @@ async def _build_order_filters(
             )
         )
     elif input_filter == "registered":
-        filters.append(SambaOrder.collected_product_id != None)  # noqa: E711
+        # collected_product_id가 있거나, "미등록 입력"으로 source_url/product_image를 채운 주문도 등록된 것으로 간주
+        filters.append(
+            or_(
+                SambaOrder.collected_product_id != None,  # noqa: E711
+                and_(
+                    SambaOrder.source_url != None,  # noqa: E711
+                    SambaOrder.source_url != "",
+                ),
+                and_(
+                    SambaOrder.product_image != None,  # noqa: E711
+                    SambaOrder.product_image != "",
+                ),
+            )
+        )
     elif input_filter == "unregistered":
-        filters.append(SambaOrder.collected_product_id == None)  # noqa: E711
+        # collected_product_id가 없고 source_url/product_image도 모두 비어있어야 미등록
+        filters.append(
+            and_(
+                SambaOrder.collected_product_id == None,  # noqa: E711
+                or_(
+                    SambaOrder.source_url == None,  # noqa: E711
+                    SambaOrder.source_url == "",
+                ),
+                or_(
+                    SambaOrder.product_image == None,  # noqa: E711
+                    SambaOrder.product_image == "",
+                ),
+            )
+        )
     elif input_filter in {"direct", "kkadaegi", "gift"}:
         filters.append(SambaOrder.action_tag == input_filter)
 
@@ -2933,6 +2959,65 @@ async def sync_orders_from_markets(
                         f"[주문동기화] {label}: 정산 매칭 {matched}/{len(raw_orders)}건 "
                         f"(정산 API {len(settle_items)}건)"
                     )
+
+                    # ── 기존 DB 주문 보정 (구매확정 후 정산 데이터로 정확값 덮어쓰기) ─
+                    # raw_orders는 odPrgsStepCd=11/23만 반환하므로,
+                    # 이미 발주확인되어 raw에서 빠진 주문은 위 in-memory 매칭으로 보정 안 됨.
+                    # 정산 API에 있는 모든 키에 대해 DB를 직접 UPDATE 한다.
+                    db_updated = 0
+                    from sqlalchemy import text as _sa_text
+
+                    for (od_no_k, od_seq_k, proc_seq_k), si in settle_map.items():
+                        if not od_no_k:
+                            continue
+                        pymt_amt = float(si.get("pymtAmt", 0) or 0)
+                        if pymt_amt <= 0:
+                            continue
+                        sl_amt = float(si.get("slAmt", 0) or 0)
+                        sl_qty = float(si.get("slQty", 1) or 1)
+                        gross = sl_amt * sl_qty
+                        slr_dc = float(si.get("slrDcAmt", 0) or 0)
+                        pd_dc_slr = float(si.get("pdDcSlrAmt", 0) or 0)
+                        pd_dc_oco = float(si.get("pdDcOcoAmt", 0) or 0)
+                        customer_paid = max(0.0, gross - slr_dc - pd_dc_slr - pd_dc_oco)
+                        base = customer_paid if customer_paid > 0 else gross
+                        if base <= 0:
+                            continue
+                        new_fee_rate = round((1 - pymt_amt / base) * 100, 2)
+                        # od_seq/proc_seq는 SambaOrder에 Text로 저장되어 있음
+                        # 동일 odNo + odSeq + procSeq 매칭 (account 무관 — odNo는 전역 유일)
+                        try:
+                            res = await session.execute(
+                                _sa_text(
+                                    "UPDATE samba_order "
+                                    "SET revenue = :rev, fee_rate = :fr, "
+                                    "    total_payment_amount = COALESCE(NULLIF(:cp, 0), total_payment_amount), "
+                                    "    updated_at = now() "
+                                    "WHERE source = 'lotteon' "
+                                    "  AND od_no = :od "
+                                    "  AND COALESCE(od_seq, '1') = :os "
+                                    "  AND COALESCE(proc_seq, '1') = :ps "
+                                    "  AND (revenue IS NULL OR revenue <> :rev)"
+                                ),
+                                {
+                                    "rev": pymt_amt,
+                                    "fr": new_fee_rate,
+                                    "cp": customer_paid,
+                                    "od": od_no_k,
+                                    "os": od_seq_k or "1",
+                                    "ps": proc_seq_k or "1",
+                                },
+                            )
+                            db_updated += res.rowcount or 0
+                        except Exception as ue:
+                            logger.warning(
+                                f"[주문동기화] {label}: 정산 DB UPDATE 실패 odNo={od_no_k} — {ue}"
+                            )
+                    if db_updated:
+                        logger.info(
+                            f"[주문동기화] {label}: 정산 API → DB 보정 {db_updated}건 "
+                            "(구매확정된 기존 주문 revenue/fee_rate 갱신)"
+                        )
                 except Exception as se:
                     logger.warning(f"[주문동기화] {label}: 정산 조회 실패 — {se}")
 
