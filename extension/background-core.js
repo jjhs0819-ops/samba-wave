@@ -59,13 +59,18 @@
   }
 
   async function apiFetch(url, init = {}) {
-    const proxyData = await chrome.storage.local.get('proxyUrl')
+    const proxyData = await chrome.storage.local.get(['proxyUrl', 'allowedSites'])
     const apiKey = await loadApiKey(proxyData.proxyUrl)
     const deviceId = await getOrCreateDeviceId()
+    // 사이트 필터 (PC 분담) — popup에서 설정. 미체크면 빈 헤더 → 백엔드는 모든 사이트 작업 반환.
+    const allowedSites = Array.isArray(proxyData.allowedSites) ? proxyData.allowedSites : []
     const headers = {
       ...(init.headers || {}),
       'X-Api-Key': apiKey,
       'X-Device-Id': deviceId,
+    }
+    if (allowedSites.length > 0) {
+      headers['X-Allowed-Sites'] = allowedSites.join(',')
     }
     const res = await fetch(url, { ...init, headers })
     if (res.status === 403) {
@@ -77,6 +82,9 @@
         ...(init.headers || {}),
         'X-Api-Key': newKey,
         'X-Device-Id': deviceId,
+      }
+      if (allowedSites.length > 0) {
+        retryHeaders['X-Allowed-Sites'] = allowedSites.join(',')
       }
       return fetch(url, { ...init, headers: retryHeaders })
     }

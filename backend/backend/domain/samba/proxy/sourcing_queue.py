@@ -227,13 +227,23 @@ class SourcingQueue:
         return request_id, future
 
     @classmethod
-    def get_next_job(cls, device_id: str | None = None) -> dict[str, Any]:
+    def get_next_job(
+        cls,
+        device_id: str | None = None,
+        allowed_sites: list[str] | None = None,
+    ) -> dict[str, Any]:
         """큐에서 다음 작업 가져오기 (확장앱 폴링용).
 
-        device_id가 주어지면 해당 deviceId가 소유자인 작업만 반환한다.
-        소유자가 지정되지 않은(legacy) 작업은 deviceId가 있든 없든 누구나 집어갈 수 있다.
-        device_id가 비어 있으면(구버전 확장앱) 소유자 없는 작업만 반환 — 오토튠이 특정 PC로
-        라우팅한 작업이 엉뚱한 PC에서 열리는 현상을 방지한다.
+        device_id: 매칭 시 해당 deviceId가 소유자인 작업만 반환.
+                   미지정(legacy) 작업은 누구나 집어갈 수 있다.
+        allowed_sites: 확장앱 popup의 "이 PC가 처리할 사이트" 필터.
+                       비어있으면 모든 사이트 작업 가능.
+                       값이 있으면 그 사이트의 작업만 반환 — PC별 분담용.
+
+        분담 시나리오:
+          PC A popup: ABCmart, MUSINSA → A 익스텐션은 그 사이트 작업만 가져감
+          PC B popup: LOTTEON, SSG     → B 익스텐션은 그 사이트 작업만 가져감
+          나머지 사이트는 둘 중 먼저 폴링한 PC가 가져감 (자연 분산)
         """
         if is_shutting_down():
             return {"hasJob": False, "shuttingDown": True}
@@ -241,10 +251,18 @@ class SourcingQueue:
             return {"hasJob": False}
 
         device_id = (device_id or "").strip()
+        # 정규화: 대소문자 차이로 매칭 실패하지 않도록 lower-case 비교
+        allowed_set: set[str] = {
+            s.strip() for s in (allowed_sites or []) if s and s.strip()
+        } or set()
         for idx, job in enumerate(cls.queue):
+            site = (job.get("site") or "").strip()
+            # 사이트 필터 검증 (popup 설정)
+            if allowed_set and site not in allowed_set:
+                continue
             owner = (job.get("ownerDeviceId") or "").strip()
             if not owner:
-                # 소유자 미지정 작업 — 어느 확장앱이든 처리 가능 (기존 동작)
+                # 소유자 미지정 작업 — 사이트 필터만 통과하면 가져감
                 cls.queue.pop(idx)
                 return {"hasJob": True, **job}
             if device_id and owner == device_id:

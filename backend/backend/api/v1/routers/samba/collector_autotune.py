@@ -2618,10 +2618,12 @@ async def autotune_start(
     _site_empty_skip_until.clear()
     clear_bulk_cancel()
 
-    # 오토튠을 시작한 브라우저(확장앱)의 deviceId를 소싱큐에 등록
-    # → SSG 등 확장앱 의존 플러그인이 add_detail_job 호출 시 자동으로 소유자로 태그
-    # → 동일 테넌트의 다른 브라우저는 collect-queue에서 해당 작업을 받지 못함
-    # site_owners가 함께 전달되면 해당 사이트는 별도 PC로 작업 분배 (PC 분산).
+    # 오토튠 작업 owner 정책:
+    # - 기본 owner는 비움(""): 작업 큐에 ownerDeviceId 없이 발행되어 어느 PC의
+    #   확장앱이든 자기 차례에 작업을 집어가 자연 분산된다 (PC 1대만 켜져 있으면
+    #   그 PC가 다 처리, 2대 이상이면 서로 나눠 가져감).
+    # - site_owners가 명시 등록된 경우만 해당 사이트는 그 deviceId의 PC로만 라우팅
+    #   (자동로그인 격리 등 특수 목적). 보통은 빈 dict로 두고 자연 분산 활용.
     try:
         from backend.domain.samba.proxy.sourcing_queue import (
             clear_autotune_owners,
@@ -2630,7 +2632,7 @@ async def autotune_start(
         )
 
         clear_autotune_owners()  # 이전 매핑 잔재 제거
-        set_autotune_owner(body.device_id or "")
+        set_autotune_owner("")  # 기본 owner 비움 → 자연 분산
         if body.site_owners:
             for _site, _dev in body.site_owners.items():
                 set_autotune_owner_for_site(_site, _dev or "")

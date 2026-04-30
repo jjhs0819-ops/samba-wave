@@ -81,9 +81,14 @@ async def lotteon_set_cookie(
 async def sourcing_collect_queue(request: Request) -> Any:
     """확장앱이 폴링하는 소싱 수집 큐 (인증 불필요).
 
-    확장앱은 `X-Device-Id` 헤더로 자신의 고유 deviceId를 전달한다.
-    백엔드는 오토튠 소유자 deviceId와 일치하는 작업만 해당 확장앱에 반환하므로,
-    동일 사용자/테넌트의 여러 브라우저에서 중복으로 탭이 열리는 현상이 방지된다.
+    확장앱은 다음 헤더를 전달한다:
+      - `X-Device-Id`: 확장앱 고유 deviceId (owner 매칭용)
+      - `X-Allowed-Sites`: 이 PC가 처리할 사이트 콤마 구분 목록 (popup 설정)
+        예) "ABCmart,MUSINSA" — 그 사이트의 작업만 받음. 비어있으면 모든 사이트.
+
+    PC 분담 시나리오:
+      PC A popup: ABCmart, MUSINSA → A 익스텐션은 그 사이트 작업만 처리
+      PC B popup: LOTTEON, SSG     → B 익스텐션은 그 사이트 작업만 처리
     """
     if getattr(request.app.state, "is_shutting_down", False):
         return JSONResponse(
@@ -94,7 +99,11 @@ async def sourcing_collect_queue(request: Request) -> Any:
     from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
 
     device_id = request.headers.get("X-Device-Id", "").strip()
-    return SourcingQueue.get_next_job(device_id=device_id)
+    raw_sites = request.headers.get("X-Allowed-Sites", "").strip()
+    allowed_sites = (
+        [s.strip() for s in raw_sites.split(",") if s.strip()] if raw_sites else None
+    )
+    return SourcingQueue.get_next_job(device_id=device_id, allowed_sites=allowed_sites)
 
 
 @sourcing_queue_router.post("/sourcing/collect-result")

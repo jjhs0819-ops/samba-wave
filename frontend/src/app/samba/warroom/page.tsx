@@ -262,6 +262,11 @@ export default function WarroomPage() {
   }, [priorityEnabled])
 
   // ── 오토튠 필터 (소싱처/판매처 체크박스) ──
+  // 소싱처 체크박스 = 이 PC가 처리할 사이트 (PC별 분담).
+  //   체크 변경 시 익스텐션 chrome.storage.allowedSites에 저장 → 폴링 헤더로 전송 →
+  //   백엔드 collect-queue에서 그 사이트 작업만 그 PC에 반환.
+  //   PC A가 ABC,무신사 체크하고 PC B가 LOTTEON,SSG 체크하면 자동 분담된다.
+  // 판매처 체크박스는 기존 백엔드 글로벌 enabled_markets 그대로.
   const [filterSources, setFilterSources] = useState<string[] | null>(null) // null=전체
   const [filterMarkets, setFilterMarkets] = useState<string[] | null>(null) // null=전체
   const [availSources, setAvailSources] = useState<string[]>([])
@@ -269,19 +274,47 @@ export default function WarroomPage() {
   const filterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
+    // 1) 사용 가능 사이트/마켓 목록 + 마켓 활성 상태는 백엔드에서
     collectorApi.autotuneGetFilters().then(res => {
       setAvailSources(res.available_sources)
       setAvailMarkets(res.available_markets)
-      setFilterSources(res.enabled_sources)
       setFilterMarkets(res.enabled_markets)
     }).catch(() => {})
+
+    // 2) 소싱처 체크 상태는 익스텐션 chrome.storage(PC별)에서 받음
+    //    content-samba-deviceid.js가 페이지 mount 시 ALLOWED_SITES 메시지를 보내준다.
+    const onMessage = (e: MessageEvent) => {
+      if (e.source !== window) return
+      const msg = e.data
+      if (!msg || typeof msg !== 'object') return
+      if (msg.source !== 'samba-extension') return
+      if (msg.type !== 'ALLOWED_SITES') return
+      const sites: string[] = Array.isArray(msg.sites) ? msg.sites : []
+      // 빈 배열 = 전체 처리 → null로 표현 (모두 체크된 시각 효과)
+      setFilterSources(sites.length === 0 ? null : sites)
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
   }, [])
 
-  const saveFilters = useCallback((sources: string[] | null, markets: string[] | null) => {
+  // 소싱처 체크 변경 시 익스텐션 chrome.storage 동기화 (PC별 분담)
+  const syncAllowedSitesToExtension = useCallback((sites: string[] | null) => {
+    try {
+      // null = 전체 처리 → 빈 배열 전송 (헤더 미부착 → 모든 사이트 작업 받음)
+      const list: string[] = sites === null ? [] : sites
+      window.postMessage(
+        { source: 'samba-page', type: 'SET_ALLOWED_SITES', sites: list },
+        window.location.origin,
+      )
+    } catch { /* ignore */ }
+  }, [])
+
+  const saveMarketFilter = useCallback((markets: string[] | null) => {
     if (filterTimerRef.current) clearTimeout(filterTimerRef.current)
     filterTimerRef.current = setTimeout(async () => {
       try {
-        await collectorApi.autotuneSetFilters(sources, markets)
+        // 소싱처는 PC별 chrome.storage라 백엔드 동기화 불필요 → null 전달
+        await collectorApi.autotuneSetFilters(null, markets)
       } catch { /* ignore */ }
     }, 500)
   }, [])
@@ -292,10 +325,11 @@ export default function WarroomPage() {
       const current = prev ?? [...all]
       const next = current.includes(site) ? current.filter(s => s !== site) : [...current, site]
       const result = next.length === all.length ? null : next.length === 0 ? null : next
-      saveFilters(result, filterMarkets)
+      // 익스텐션에 PC별 분담 즉시 반영
+      syncAllowedSitesToExtension(result)
       return result
     })
-  }, [availSources, filterMarkets, saveFilters])
+  }, [availSources, syncAllowedSitesToExtension])
 
   const toggleMarket = useCallback((marketType: string) => {
     setFilterMarkets(prev => {
@@ -303,10 +337,10 @@ export default function WarroomPage() {
       const current = prev ?? [...all]
       const next = current.includes(marketType) ? current.filter(m => m !== marketType) : [...current, marketType]
       const result = next.length === all.length ? null : next.length === 0 ? null : next
-      saveFilters(filterSources, result)
+      saveMarketFilter(result)
       return result
     })
-  }, [availMarkets, filterSources, saveFilters])
+  }, [availMarkets, saveMarketFilter])
 
   const handleAutotuneStatus = useCallback((running: boolean, cycles: number, lastTick: string | null, refreshed: number) => {
     // 별도 스레드 타이밍 차이 대응 — 3회 연속 false일 때만 정지 표시

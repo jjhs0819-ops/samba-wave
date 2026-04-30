@@ -3,6 +3,12 @@
 // sessionStorage에 저장하고, 오토튠 시작 시 백엔드로 전송한다.
 // 이 deviceId를 가진 확장앱만 collect-queue에서 오토튠 작업을 받아가므로,
 // 동일 계정으로 접속한 다른 PC의 브라우저에서는 탭이 열리지 않는다.
+//
+// 추가: 오토튠 화면의 소싱처 체크박스 = "이 PC가 처리할 사이트" 분담 표시.
+// 프론트엔드가 toggleSource 시 window.postMessage로 변경된 사이트 목록을 보내면,
+// content script가 chrome.storage.local.allowedSites에 저장한다.
+// 익스텐션이 collect-queue 폴링 시 그 값을 X-Allowed-Sites 헤더로 전송하여
+// 그 PC가 체크한 사이트의 작업만 받게 된다 (PC별 자동 분담).
 (function () {
   function sendDeviceId(deviceId) {
     if (!deviceId) return
@@ -16,8 +22,17 @@
     }
   }
 
+  function sendAllowedSites(sites) {
+    try {
+      window.postMessage(
+        { source: 'samba-extension', type: 'ALLOWED_SITES', sites: sites || [] },
+        window.location.origin,
+      )
+    } catch {}
+  }
+
   // content_script는 chrome.storage.local 접근 가능
-  chrome.storage.local.get('deviceId', (data) => {
+  chrome.storage.local.get(['deviceId', 'allowedSites'], (data) => {
     if (data && data.deviceId) {
       sendDeviceId(data.deviceId)
       // 페이지가 이후에 mount되는 React 컴포넌트에서도 받을 수 있도록 재전송 스케줄
@@ -30,5 +45,22 @@
         if (resp && resp.deviceId) sendDeviceId(resp.deviceId)
       })
     }
+    // 페이지 mount 후 현재 저장된 allowedSites도 전달 → 화면 체크박스 초기화에 사용
+    const sites = Array.isArray(data && data.allowedSites) ? data.allowedSites : []
+    sendAllowedSites(sites)
+    setTimeout(() => sendAllowedSites(sites), 800)
+    setTimeout(() => sendAllowedSites(sites), 2500)
+  })
+
+  // 화면(프론트엔드)이 체크박스 변경을 알릴 때 chrome.storage 동기화
+  // 메시지 형식: { source: 'samba-page', type: 'SET_ALLOWED_SITES', sites: [...] }
+  window.addEventListener('message', (event) => {
+    if (event.source !== window) return
+    const msg = event.data
+    if (!msg || typeof msg !== 'object') return
+    if (msg.source !== 'samba-page') return
+    if (msg.type !== 'SET_ALLOWED_SITES') return
+    const sites = Array.isArray(msg.sites) ? msg.sites : []
+    chrome.storage.local.set({ allowedSites: sites })
   })
 })()
