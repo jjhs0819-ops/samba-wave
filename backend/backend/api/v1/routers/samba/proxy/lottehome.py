@@ -178,6 +178,10 @@ async def lottehome_md_groups(
     client = await _get_lotte_client(session)
     try:
         result = await client.search_md_groups()
+        if not result.get("success"):
+            msg = result.get("message", "MD상품군 조회 실패")
+            logger.warning(f"[롯데홈] MD상품군 조회 실패: {msg}")
+            return {"success": False, "message": msg}
         return {"success": True, "data": result.get("data")}
     except LotteApiError as exc:
         logger.warning(f"[롯데홈] MD상품군 조회 실패: {exc}")
