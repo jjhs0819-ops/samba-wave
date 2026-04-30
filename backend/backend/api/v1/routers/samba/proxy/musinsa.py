@@ -11,7 +11,6 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
 from backend.domain.samba.proxy.musinsa import MusinsaClient
-from backend.domain.samba.tenant.middleware import require_admin
 from backend.utils.logger import logger
 
 from ._helpers import _get_musinsa_client, _get_setting, _set_setting
@@ -184,13 +183,34 @@ class MusinsaSetCookieRequest(BaseModel):
 async def musinsa_set_cookie(
     body: MusinsaSetCookieRequest,
     write_session: AsyncSession = Depends(get_write_session_dependency),
-    admin: str = Depends(require_admin),
 ) -> dict[str, Any]:
-    """브라우저 확장에서 쿠키 직접 전달."""
+    """브라우저 확장에서 쿠키 직접 전달.
+
+    인증: X-Api-Key (확장앱 공통). require_admin 제거 사유 — 확장앱은 Bearer JWT를
+    가지지 않아 로그인 갱신마다 401이 발생, settings.musinsa_cookie가 한 달째
+    정지하는 사고가 발생함 (2026-04-30 진단). refresher가 사용하는 복수 쿠키 풀
+    musinsa_cookies도 같이 갱신해 잔액 페이지 미진입 시에도 풀이 살아있도록 한다.
+    """
+    import json
+
     client = MusinsaClient(cookie=body.cookie)
     result = await client.set_cookie_and_verify(body.cookie)
-    # DB에 저장
+    # 단수 쿠키 저장 (기존 호출지점 호환)
     await _set_setting(write_session, "musinsa_cookie", body.cookie)
+
+    # refresher가 우선 참조하는 복수 쿠키 풀에도 머지 (중복 제거 + 최신 맨 앞)
+    try:
+        raw = await _get_setting(write_session, "musinsa_cookies")
+        existing: list[str] = []
+        if raw:
+            parsed = json.loads(raw) if isinstance(raw, str) else raw
+            if isinstance(parsed, list):
+                existing = [c for c in parsed if isinstance(c, str) and c]
+        merged = [body.cookie] + [c for c in existing if c != body.cookie]
+        await _set_setting(write_session, "musinsa_cookies", json.dumps(merged))
+    except Exception as exc:  # pragma: no cover — fallback 실패해도 단수는 저장됨
+        logger.warning(f"[set-cookie] musinsa_cookies 풀 갱신 실패 (무시): {exc}")
+
     return result
 
 
