@@ -600,20 +600,34 @@ async def get_extension_key():
 async def get_login_credential(
     site_name: str = Query(..., description="사이트 ID (예: LOTTEON, ABCmart, SSG)"),
     session: AsyncSession = Depends(get_read_session_dependency),
-    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     """확장앱 자동로그인 전용 — site_name으로 is_login_default 계정의 평문 자격증명 반환.
 
     is_active=true + is_login_default=true 조건 만족하는 계정 1개 조회.
-    찾지 못하면 404 반환 — 확장앱은 백엔드 미설정으로 간주하고 기존 chrome.debugger 폴백 시도.
+    찾지 못하면 404 반환.
+
+    인증/테넌트 정책:
+    - extension_router는 X-Api-Key 헤더 인증만 사용 (JWT 토큰 없음)
+    - tenant_id Depends 제거 — 다른 extension 엔드포인트(sync-membership 등)와 동일 패턴
+    - 단일 사용자 환경 또는 NULL tenant 범위에서 작동.
+      멀티테넌트 환경에서는 X-Api-Key가 동일하게 글로벌이므로 모든 활성 default 계정 중
+      첫 번째를 가져옴 (운영상 site_name당 1개만 존재한다는 전제).
 
     보안 메모:
-    - X-Api-Key 헤더 인증 필수 (extension_router 정책)
     - 평문 username/password 노출 (Chrome 자동완성 불가능한 SPA 사이트의 직접 .value 설정용)
     - DB 자체에 평문 저장된 자격증명을 그대로 전달 — 새로운 보안 위험 추가 없음.
     """
-    svc = _read_service(session)
-    account = await svc.get_login_default(site_name=site_name, tenant_id=tenant_id)
+    from sqlalchemy import select as sa_select
+    from backend.domain.samba.sourcing_account.model import SambaSourcingAccount
+
+    stmt = sa_select(SambaSourcingAccount).where(
+        SambaSourcingAccount.site_name == site_name,
+        SambaSourcingAccount.is_login_default.is_(True),
+        SambaSourcingAccount.is_active.is_(True),
+    )
+    result = await session.execute(stmt)
+    account = result.scalars().first()
+
     if not account:
         raise HTTPException(
             404,

@@ -153,17 +153,8 @@ async function _spaDirectLogin(siteKey, username, password) {
   let tabCreated = false
 
   try {
-    // 로그인 페이지 minimized window로 오픈
-    let win = null
-    try {
-      win = await chrome.windows.create({ url: site.loginUrl, focused: false, state: 'minimized', type: 'normal' })
-    } catch {}
-    let tab = null
-    if (win && Array.isArray(win.tabs) && win.tabs.length) {
-      tab = win.tabs[0]
-    } else {
-      tab = await chrome.tabs.create({ url: site.loginUrl, active: false })
-    }
+    // 로그인 페이지 — 기존 브라우저 새 탭으로 오픈 (minimized window 사용 X, 사용자 요구사항)
+    const tab = await chrome.tabs.create({ url: site.loginUrl, active: false })
     tabId = tab.id
     tabCreated = true
 
@@ -401,21 +392,27 @@ async function _ensureLoggedInSingle(siteKey) {
   const site = AUTO_LOGIN_SITES[siteKey]
   if (!site) return false
 
-  // [SPA 분기] LOTTEON / ABCmart / SSG는 백엔드 라디오 지정 계정 우선 시도
-  // 사용자가 설정 페이지에서 자동로그인용 계정 라디오 지정해 두면 .value 직접 설정 + click() 사용
-  // (Chrome 자동완성 보안 정책 우회 + SPA form 없는 사이트 대응)
-  // 라디오 미지정 시 (404) 기존 chrome.debugger triple-click 흐름으로 폴백
+  // [SPA 분기] LOTTEON / ABCmart / SSG는 백엔드 라디오 지정 계정으로만 자동로그인
+  // 사용자 요구 — 소싱처계정의 username/password를 직접 .value 설정 (Chrome 자동완성 드롭다운 사용 X)
+  // 백엔드 자격증명 없으면 즉시 실패. chrome.debugger triple-click 폴백 제거 (드롭다운 노출 방지).
   const SPA_DIRECT_LOGIN_SITES = ['lotteon', 'abcmart', 'ssg']
   if (SPA_DIRECT_LOGIN_SITES.includes(siteKey)) {
     const credential = await _fetchLoginCredential(siteKey)
     if (credential?.username && credential?.password) {
       console.log(`[자동로그인] ${site.name} 백엔드 자격증명 사용 (${credential.account_label}) — SPA 직접 로그인 시도`)
-      const ok = await _spaDirectLogin(siteKey, credential.username, credential.password)
-      if (ok) return true
-      console.log(`[자동로그인] ${site.name} SPA 직접 로그인 실패 — chrome.debugger 폴백 시도`)
-    } else {
-      console.log(`[자동로그인] ${site.name} 백엔드 자격증명 미지정 — chrome.debugger 폴백 사용`)
+      return await _spaDirectLogin(siteKey, credential.username, credential.password)
     }
+    // 폴백 없이 즉시 중단 — 사용자가 설정 페이지에서 라디오 지정 필요
+    console.log(`[자동로그인] ❌ ${site.name} 백엔드 자격증명 없음 — 자동로그인 중단. 설정 페이지에서 자동로그인 계정 라디오 지정 필요`)
+    try {
+      chrome.notifications?.create?.(`autologin-no-credential-${siteKey}-${Date.now()}`, {
+        type: 'basic',
+        iconUrl: 'icon128.png',
+        title: 'SAMBA-WAVE 자동로그인 설정 필요',
+        message: `${site.name} 자동로그인 계정이 지정되지 않았습니다. 설정 페이지 → 소싱처 계정에서 라디오 버튼으로 계정을 선택해주세요.`,
+      })
+    } catch {}
+    return false
   }
 
   // 무신사/KREAM/ABC마트는 보안 스크립트가 무거워 타임아웃 30초
