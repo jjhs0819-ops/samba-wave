@@ -144,8 +144,14 @@ export function calcPrice(
   // 100원 단위 절사 (백엔드 calc_market_price와 동일)
   price = Math.floor(price / 100) * 100
   const feeAmt = fee > 0 && price > 0 ? Math.round(price * fee / 100) : 0
+  const ssAmt = Math.round(cost * ssMRate / 100) + ssMAmount
+  const ssRateLabel = ssMRate > 0 && ssMAmount > 0
+    ? ` (${ssMRate}% + ${fmt(ssMAmount)})`
+    : ssMRate > 0
+      ? ` (${ssMRate}%)`
+      : ''
   const ssExtra = ssMRate > 0 || ssMAmount > 0
-    ? ` + 소싱추가마진 ${fmt(Math.round(cost * ssMRate / 100) + ssMAmount)}`
+    ? ` + 소싱추가마진 ${fmt(ssAmt)}${ssRateLabel}`
     : ''
   const parts = [
     `원가 ${fmt(cost)}`,

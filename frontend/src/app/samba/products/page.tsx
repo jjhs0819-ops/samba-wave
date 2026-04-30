@@ -1422,33 +1422,20 @@ export default function ProductsPage() {
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
             style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: "rgba(22,22,22,0.95)", border: "1px solid #353535", color: "#C5C5C5", borderRadius: "6px" }}>
             <option value="">마켓현황</option>
-            <optgroup label="── 전체 ──">
-              <option value="market_unregistered">미등록상품</option>
-              <option value="market_registered">등록상품</option>
-            </optgroup>
-            {(() => {
-              const marketTypes = [...new Map(accounts.map(a => [a.market_type, a.market_name] as const)).entries()]
-              return marketTypes.length > 0 ? (
-                <optgroup label="── 마켓구분 ──">
-                  {marketTypes.map(([type, name]) => (
-                    <React.Fragment key={type}>
-                      <option value={`mtype_reg_${type}`}>{name} 등록</option>
-                      <option value={`mtype_unreg_${type}`}>{name} 미등록</option>
-                    </React.Fragment>
-                  ))}
-                </optgroup>
-              ) : null
-            })()}
-            {accounts.length > 0 && (
-              <optgroup label="── 계정구분 ──">
-                {accounts.map(a => (
-                  <React.Fragment key={a.id}>
-                    <option value={`reg_${a.id}`}>{a.market_name}({a.account_label}) 등록</option>
-                    <option value={`unreg_${a.id}`}>{a.market_name}({a.account_label}) 미등록</option>
-                  </React.Fragment>
-                ))}
-              </optgroup>
-            )}
+            <option value="market_unregistered">미등록상품</option>
+            <option value="market_registered">등록상품</option>
+            {[...new Map(accounts.map(a => [a.market_type, a.market_name] as const)).entries()].map(([type, name]) => (
+              <React.Fragment key={type}>
+                <option value={`mtype_reg_${type}`}>{name} 등록</option>
+                <option value={`mtype_unreg_${type}`}>{name} 미등록</option>
+              </React.Fragment>
+            ))}
+            {[...accounts].sort((a, b) => a.market_type.localeCompare(b.market_type)).map(a => (
+              <React.Fragment key={a.id}>
+                <option value={`reg_${a.id}`}>{a.market_name}({a.account_label}) 등록</option>
+                <option value={`unreg_${a.id}`}>{a.market_name}({a.account_label}) 미등록</option>
+              </React.Fragment>
+            ))}
           </select>
           <select value={searchType} onChange={(e) => setSearchType(e.target.value)}
             style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: "#1E1E1E", border: "1px solid #3D3D3D", borderRadius: "6px", color: "#C5C5C5", width: "90px" }}>
@@ -2183,7 +2170,9 @@ export default function ProductsPage() {
 
                 const totalToDelete = res.total_orphans
                 const estSec = Math.ceil(totalToDelete * 0.4)
-                if (!await showConfirm(`고아 상품 ${fmt(totalToDelete)}개를 전부 삭제하시겠습니까?\n(예상 소요 ${fmt(estSec)}초 — 호출당 0.3초 throttle + 429 재시도)`)) {
+                const staleN = res.total_stale_db ?? 0
+                const staleMsg = staleN > 0 ? `\n+ 역고아 ${fmt(staleN)}개 DB 매핑 자동 정리 (Naver 호출 없음)` : ''
+                if (!await showConfirm(`고아 상품 ${fmt(totalToDelete)}개를 전부 삭제하시겠습니까?\n(예상 소요 ${fmt(estSec)}초 — 호출당 0.3초 throttle + 429 재시도)${staleMsg}`)) {
                   logs.push('', '삭제 취소됨.')
                   setAiJobLogs([...logs])
                   return
@@ -2194,7 +2183,10 @@ export default function ProductsPage() {
                 setAiJobDone(false)
 
                 const del = await shipmentApi.cleanupSmartstoreOrphans(false, totalToDelete, syncAccountId, filteredIds)
-                logs.push(`삭제 완료: ${del.total_deleted.toLocaleString()}개`)
+                logs.push(`고아 삭제 완료: ${fmt(del.total_deleted)}개`)
+                if ((del.total_stale_cleared ?? 0) > 0) {
+                  logs.push(`역고아 DB 매핑 정리: ${fmt(del.total_stale_cleared!)}개`)
+                }
                 for (const a of del.accounts) {
                   if (a.failed && a.failed.length > 0) {
                     logs.push(`[${a.account_id}] 실패 ${fmt(a.failed.length)}건:`)
@@ -2204,7 +2196,7 @@ export default function ProductsPage() {
                   }
                 }
                 if (del.total_orphans > del.total_deleted) {
-                  logs.push('', `남은 고아 상품 ${(del.total_orphans - del.total_deleted).toLocaleString()}개 — 동기화 다시 실행하세요.`)
+                  logs.push('', `남은 고아 상품 ${fmt(del.total_orphans - del.total_deleted)}개 — 동기화 다시 실행하세요.`)
                 }
                 setAiJobLogs([...logs])
               } catch (e) {

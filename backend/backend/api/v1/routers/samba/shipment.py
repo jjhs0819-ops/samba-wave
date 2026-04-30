@@ -388,6 +388,44 @@ async def cleanup_smartstore_orphans(
                     await asyncio.sleep(0.3)
                 total_deleted += len(deleted_here)
 
+        # 역고아(stale_db) 정리 — Naver 호출 없이 DB의 해당 계정 매핑만 제거
+        # market_product_nos[account.id] / market_product_nos[f"{account.id}_origin"] 삭제 +
+        # registered_accounts 배열에서 account.id 제거
+        stale_cleared: list[str] = []
+        if not dry_run and stale_db:
+            from sqlalchemy.orm.attributes import flag_modified
+
+            db_ids_to_clear = [s["db_id"] for s in stale_db if s.get("db_id")]
+            if db_ids_to_clear:
+                clear_q = select(SambaCollectedProduct).where(
+                    SambaCollectedProduct.id.in_(db_ids_to_clear)
+                )
+                clear_result = await session.exec(clear_q)
+                for prod in clear_result.all():
+                    nos = dict(prod.market_product_nos or {})
+                    changed = False
+                    for k in (account.id, f"{account.id}_origin"):
+                        if k in nos:
+                            nos.pop(k, None)
+                            changed = True
+                    if changed:
+                        prod.market_product_nos = nos
+                        flag_modified(prod, "market_product_nos")
+                    regs = list(prod.registered_accounts or [])
+                    if account.id in regs:
+                        regs = [a for a in regs if a != account.id]
+                        prod.registered_accounts = regs
+                        flag_modified(prod, "registered_accounts")
+                        changed = True
+                    if changed:
+                        session.add(prod)
+                        stale_cleared.append(str(prod.id))
+                if stale_cleared:
+                    await session.commit()
+                    logger.info(
+                        f"[고아정리] {account.id}: 역고아 DB 매핑 정리 {len(stale_cleared)}건"
+                    )
+
         per_account.append(
             {
                 "account_id": account.id,
@@ -396,6 +434,7 @@ async def cleanup_smartstore_orphans(
                 "orphans": orphans,
                 "stale_db_count": len(stale_db),
                 "stale_db": stale_db[:50],
+                "stale_cleared": stale_cleared,
                 "deleted": deleted_here,
                 "failed": failed,
                 "failed_pages": failed_pages,
@@ -409,6 +448,9 @@ async def cleanup_smartstore_orphans(
         "db_no_count": len(all_db_products),
         "style_code_count": len(all_style_codes),
         "total_stale_db": total_stale_db,
+        "total_stale_cleared": sum(
+            len(a.get("stale_cleared") or []) for a in per_account
+        ),
         "total_naver": total_naver,
         "total_orphans": total_orphans,
         "total_deleted": total_deleted,

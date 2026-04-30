@@ -903,6 +903,7 @@ export const shipmentApi = {
       total_naver: number
       total_orphans: number
       total_stale_db: number
+      total_stale_cleared?: number
       total_deleted: number
       max_delete: number
       accounts: {
@@ -912,6 +913,7 @@ export const shipmentApi = {
         orphans?: { origin_no: string; name: string; mgmt_code?: string }[]
         stale_db_count?: number
         stale_db?: { db_id: string; site_product_id?: string; style_code: string; mapped_origin_no: string; product_name: string }[]
+        stale_cleared?: string[]
         deleted?: string[]
         failed?: { origin_no: string; error: string }[]
         failed_pages?: number[]
