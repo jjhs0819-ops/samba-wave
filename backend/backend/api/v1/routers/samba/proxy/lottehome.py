@@ -192,11 +192,29 @@ async def lottehome_standard_categories(
 async def lottehome_delivery_policies(
     session: AsyncSession = Depends(get_read_session_dependency),
 ) -> dict[str, Any]:
-    """롯데홈쇼핑 배송비정책 조회."""
+    """롯데홈쇼핑 배송비정책 조회 — policies 리스트로 파싱해서 반환."""
     client = await _get_lotte_client(session)
     try:
         result = await client.search_delivery_policies()
-        return {"success": True, "data": result.get("data")}
+        data = result.get("data", {})
+        logger.info(f"[롯데홈] 배송비정책 raw data keys: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+        result_root = data.get("Result", data) if isinstance(data, dict) else {}
+        logger.info(f"[롯데홈] 배송비정책 result_root keys: {list(result_root.keys()) if isinstance(result_root, dict) else type(result_root)}")
+        pol_list = result_root.get("DlvPolcList", result_root.get("DlvPolcInfo", {}))
+        logger.info(f"[롯데홈] 배송비정책 pol_list type={type(pol_list)}, value={str(pol_list)[:300]}")
+        if isinstance(pol_list, dict):
+            items = pol_list.get("DlvPolcInfo", [])
+        else:
+            items = pol_list
+        if isinstance(items, dict):
+            items = [items]
+        logger.info(f"[롯데홈] 배송비정책 items count={len(items) if isinstance(items, list) else 'N/A'}, sample={str(items[:1])[:300] if isinstance(items, list) else items}")
+        policies = [
+            {"no": str(item.get("dlv_polc_no", "")), "nm": str(item.get("dlv_polc_nm", item.get("dlv_polc_no", "")))}
+            for item in (items if isinstance(items, list) else [])
+            if item.get("dlv_polc_no")
+        ]
+        return {"success": True, "policies": policies}
     except LotteApiError as exc:
         logger.warning(f"[롯데홈] 배송비정책 조회 실패: {exc}")
         return {"success": False, "message": str(exc), "code": exc.code}

@@ -1100,6 +1100,10 @@ export const proxyApi = {
   lottehomeAuth: (body: { userId: string; password: string; agncNo?: string; env?: string }) =>
     request<{ success: boolean; message: string; certKey?: string }>(
       `${SAMBA_PREFIX}/proxy/lottehome/auth`, { method: 'POST', body: JSON.stringify(body) }),
+  lottehomeDeliveryPolicies: () =>
+    request<{ success: boolean; policies?: { no: string; nm: string }[] }>(`${SAMBA_PREFIX}/proxy/lottehome/delivery-policies`),
+  lottehomePlaces: () =>
+    request<{ success: boolean; data: { shipping_places: { code: string; name: string; address?: string }[]; return_places: { code: string; name: string; address?: string }[] } }>(`${SAMBA_PREFIX}/proxy/lottehome/delivery-places`),
   claudeTest: () =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/claude/test`, { method: 'POST' }),
