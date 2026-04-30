@@ -446,7 +446,7 @@ async def _sync_musinsa_cookie_to_settings(
         logger.warning(f"[쿠키동기화] SambaSettings 업데이트 실패 (무시): {e}")
 
 
-@router.post("/sync-balance")
+@extension_router.post("/sync-balance")
 async def sync_balance_from_extension(
     body: SyncBalanceRequest,
     session: AsyncSession = Depends(get_write_session_dependency),

@@ -1,5 +1,6 @@
 """SambaWave Shipment API router."""
 
+import asyncio
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -195,26 +196,61 @@ async def cleanup_smartstore_orphans(
 
         client = SmartStoreClient(client_id, client_secret)
 
-        # 페이징 수집
+        # 페이징 수집 — 1페이지로 totalPages 파악 후 나머지 페이지 동시 조회
+        # (순차 호출 시 8천개 기준 100s+ 소요 → Caddy 120s 타임아웃으로 502 발생)
         naver_products: list[dict] = []
-        page = 1
-        while True:
-            r = await client._call_api(
-                "POST",
-                "/v1/products/search",
-                body={"page": page, "size": 100},
+
+        def _extract_contents(resp: object) -> list[dict]:
+            if isinstance(resp, list):
+                return resp
+            if isinstance(resp, dict):
+                v = resp.get("contents") or resp.get("data") or []
+                return v if isinstance(v, list) else []
+            return []
+
+        r1 = await client._call_api(
+            "POST",
+            "/v1/products/search",
+            body={"page": 1, "size": 100},
+        )
+        page1_contents = _extract_contents(r1)
+        naver_products.extend(page1_contents)
+
+        # 전체 페이지 수 확인 — totalPages 우선, 없으면 totalElements 기반 산출
+        total_pages = 0
+        if isinstance(r1, dict):
+            tp = r1.get("totalPages")
+            if isinstance(tp, int) and tp > 0:
+                total_pages = tp
+            else:
+                te = r1.get("totalElements")
+                if isinstance(te, int) and te > 0:
+                    total_pages = (te + 99) // 100
+        if total_pages <= 0:
+            # 메타 정보 없으면 페이지가 가득 찼는지로 추정 (단일 페이지로 종료)
+            total_pages = 1 if len(page1_contents) < 100 else 200
+        total_pages = min(total_pages, 200)  # 20,000개 상한 유지
+
+        if total_pages > 1:
+            sem = asyncio.Semaphore(5)  # Naver API 레이트리밋 보호용 동시성 제한
+
+            async def _fetch_page(pno: int) -> list[dict]:
+                async with sem:
+                    rr = await client._call_api(
+                        "POST",
+                        "/v1/products/search",
+                        body={"page": pno, "size": 100},
+                    )
+                return _extract_contents(rr)
+
+            results = await asyncio.gather(
+                *[_fetch_page(p) for p in range(2, total_pages + 1)],
+                return_exceptions=True,
             )
-            contents = r.get("contents") or r.get("data") or []
-            if isinstance(r, list):
-                contents = r
-            if not contents:
-                break
-            naver_products.extend(contents)
-            if len(contents) < 100:
-                break
-            page += 1
-            if page > 200:  # 20,000개 상한 — 무한루프 방지
-                break
+            for rr in results:
+                if isinstance(rr, BaseException):
+                    continue
+                naver_products.extend(rr)
 
         total_naver += len(naver_products)
 
