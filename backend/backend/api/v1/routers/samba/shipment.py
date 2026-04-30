@@ -109,7 +109,9 @@ async def cleanup_smartstore_orphans(
     body: CleanupOrphansRequest = CleanupOrphansRequest(),
     dry_run: bool = Query(True, description="true면 목록만, false면 실제 삭제"),
     account_id: Optional[str] = Query(None, description="특정 계정만 정리"),
-    max_delete: int = Query(50, ge=0, le=500, description="한 번에 삭제할 최대 개수"),
+    max_delete: int = Query(
+        50, ge=0, le=100000, description="한 번에 삭제할 최대 개수"
+    ),
     session: AsyncSession = Depends(get_write_session_dependency),
     admin: str = Depends(require_admin),
 ):

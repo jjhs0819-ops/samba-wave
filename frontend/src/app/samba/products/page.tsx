@@ -2180,17 +2180,19 @@ export default function ProductsPage() {
                   return
                 }
 
-                if (!await showConfirm(`고아 상품 ${res.total_orphans.toLocaleString()}개를 실제로 삭제하시겠습니까?\n(한 번에 최대 ${res.max_delete}개까지 삭제됩니다)`)) {
+                const totalToDelete = res.total_orphans
+                const estSec = Math.ceil(totalToDelete * 0.4)
+                if (!await showConfirm(`고아 상품 ${fmt(totalToDelete)}개를 전부 삭제하시겠습니까?\n(예상 소요 ${fmt(estSec)}초 — 호출당 0.3초 throttle + 429 재시도)`)) {
                   logs.push('', '삭제 취소됨.')
                   setAiJobLogs([...logs])
                   return
                 }
 
-                logs.push('', '삭제 실행 중...')
+                logs.push('', `삭제 실행 중... (${fmt(totalToDelete)}개, 예상 ${fmt(estSec)}초)`)
                 setAiJobLogs([...logs])
                 setAiJobDone(false)
 
-                const del = await shipmentApi.cleanupSmartstoreOrphans(false, res.max_delete, syncAccountId, filteredIds)
+                const del = await shipmentApi.cleanupSmartstoreOrphans(false, totalToDelete, syncAccountId, filteredIds)
                 logs.push(`삭제 완료: ${del.total_deleted.toLocaleString()}개`)
                 for (const a of del.accounts) {
                   if (a.failed && a.failed.length > 0) {
