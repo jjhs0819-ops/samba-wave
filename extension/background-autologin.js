@@ -373,27 +373,38 @@ async function _ensureLoggedInSingle(siteKey) {
         await _alTripleClick(tabId, idPos.x, idPos.y)
         console.log(`[자동로그인] ${site.name} 아이디 필드 triple-click 완료`)
 
-        // SPA(롯데ON): Chrome이 ID는 채우지만 PW는 별도 Vue 컴포넌트라 propagation 안 됨
-        // → ID autofill 직후 Tab 키 이벤트로 "username 입력 완료 + 다음 필드 이동" 신호를 줘서
-        //   Chrome 비밀번호 매니저가 PW 필드까지 자동 채움 (표준 트리거)
+        // SPA(롯데ON): 여러 계정이 저장되어 있어 Chrome autofill 드롭다운이 표시됨
+        // ID 필드에 표시된 "edelvise06"은 preview일 뿐, 항목 선택 전에는 PW가 채워지지 않음
+        // → ArrowDown(첫 항목 하이라이트) + Enter(선택 확정)로 드롭다운 키보드 선택
+        // → Chrome이 ID + PW 모두 확정 입력
         if (IS_SPA_LOGIN) {
-          await wait(800) // ID autofill 안정화 대기
+          await wait(800) // 드롭다운 렌더링 대기
           try {
             const target = { tabId }
             await chrome.debugger.attach(target, '1.3')
+            // ArrowDown: 드롭다운 첫 항목 하이라이트 (이미 첫 항목이 preview로 ID 채웠음)
             await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
-              type: 'keyDown', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9, key: 'Tab', code: 'Tab',
+              type: 'rawKeyDown', windowsVirtualKeyCode: 40, nativeVirtualKeyCode: 40, key: 'ArrowDown', code: 'ArrowDown',
             })
             await wait(50)
             await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
-              type: 'keyUp', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9, key: 'Tab', code: 'Tab',
+              type: 'keyUp', windowsVirtualKeyCode: 40, nativeVirtualKeyCode: 40, key: 'ArrowDown', code: 'ArrowDown',
+            })
+            await wait(200)
+            // Enter: 선택 확정 → Chrome 비번 매니저가 ID + PW 모두 채움
+            await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
+              type: 'rawKeyDown', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, key: 'Enter', code: 'Enter',
+            })
+            await wait(50)
+            await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
+              type: 'keyUp', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, key: 'Enter', code: 'Enter',
             })
             await chrome.debugger.detach(target)
-            console.log(`[자동로그인] ${site.name} Tab 키 이벤트 발화 (PW autofill propagation 유도)`)
-            await wait(1500) // Chrome PW autofill 처리 대기
-          } catch (tabErr) {
+            console.log(`[자동로그인] ${site.name} ArrowDown+Enter 발화 (autofill 드롭다운 첫 항목 선택)`)
+            await wait(1500) // Chrome 비번 매니저가 ID+PW 채우는 시간
+          } catch (kbErr) {
             try { await chrome.debugger.detach({ tabId }) } catch {}
-            console.log(`[자동로그인] Tab 키 이벤트 실패 (무시): ${tabErr.message}`)
+            console.log(`[자동로그인] 드롭다운 선택 실패 (무시): ${kbErr.message}`)
           }
         }
       } else {
