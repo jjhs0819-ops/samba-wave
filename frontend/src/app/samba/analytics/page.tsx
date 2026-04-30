@@ -123,6 +123,10 @@ export default function AnalyticsPage() {
     borderRight: '1px solid #2D2D2D',
     textAlign: 'center',
     whiteSpace: 'nowrap',
+    position: 'sticky',
+    top: 0,
+    background: '#1A1A1A',
+    zIndex: 2,
   }
   const tdStyle: React.CSSProperties = {
     padding: '6px 10px',
@@ -183,7 +187,7 @@ export default function AnalyticsPage() {
           <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: `${(columns.length + 2) * 120}px` }}>
             <thead>
               <tr>
-                <th style={{ ...thStyle, position: 'sticky', left: 0, background: '#1A1A1A', zIndex: 1 }}></th>
+                <th style={{ ...thStyle, left: 0, zIndex: 3 }}></th>
                 {columns.map(col => (
                   <th key={col} style={thStyle}>{col}</th>
                 ))}

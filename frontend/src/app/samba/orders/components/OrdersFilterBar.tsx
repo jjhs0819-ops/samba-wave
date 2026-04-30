@@ -214,7 +214,7 @@ export default function OrdersFilterBar(props: Props) {
             <option value="unregistered">미등록상품</option>
             <option value="direct">직배송</option>
             <option value="kkadaegi">까대기</option>
-            <option value="gift">사은품</option>
+            <option value="gift">선물</option>
           </select>
           <select style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
             <option value="active">진행중</option>

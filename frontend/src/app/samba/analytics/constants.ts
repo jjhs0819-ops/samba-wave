@@ -4,6 +4,7 @@ export const SOURCE_SITES = ['MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas'
 export const ORDER_STATUSES = [
   { key: 'pending', label: '주문접수' },
   { key: 'wait_ship', label: '배송대기중' },
+  { key: 'preparing', label: '상품준비중' },
   { key: 'arrived', label: '사무실도착' },
   { key: 'ship_failed', label: '송장전송실패' },
   { key: 'cancelling', label: '취소중' },
@@ -17,9 +18,10 @@ export const ORDER_STATUSES = [
   { key: 'exchanged', label: '교환완료' },
   { key: 'shipping', label: '배송중' },
   { key: 'delivered', label: '배송완료' },
+  { key: 'confirmed', label: '구매확정' },
 ]
 // 기본 선택 상태
-export const DEFAULT_STATUSES = ['pending', 'wait_ship', 'arrived', 'shipping', 'delivered', 'exchanged', 'exchanging', 'exchange_requested']
+export const DEFAULT_STATUSES = ['pending', 'wait_ship', 'preparing', 'arrived', 'shipping', 'delivered', 'confirmed', 'exchanged', 'exchanging', 'exchange_requested']
 
 export interface AnalyticsSearch {
   year: number

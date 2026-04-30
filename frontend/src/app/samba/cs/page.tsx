@@ -149,12 +149,45 @@ export default function CSPage() {
     } catch (e) { showAlert(e instanceof Error ? e.message : '취소승인 실패', 'error') }
   }
 
-  // 템플릿 관리 모달
-  const [showTemplateManager, setShowTemplateManager] = useState(false)
-  const [tplName, setTplName] = useState('')
-  const [tplContent, setTplContent] = useState('')
+  // 인라인 템플릿 편집 모달 (SMS 템플릿과 동일한 UX)
+  const [templateEditModal, setTemplateEditModal] = useState<{ key: string; name: string; content: string } | null>(null)
+  const [isNewTemplate, setIsNewTemplate] = useState(false)
   const tplContentRef = useRef<HTMLTextAreaElement>(null)
   const replyTextRef = useRef<HTMLTextAreaElement>(null)
+
+  const openNewTemplate = () => {
+    setIsNewTemplate(true)
+    setTemplateEditModal({ key: `t_${Date.now()}`, name: '', content: '' })
+  }
+  const openEditTemplate = (key: string, tpl: CSReplyTemplate) => {
+    setIsNewTemplate(false)
+    setTemplateEditModal({ key, name: tpl.name, content: tpl.content })
+  }
+  const saveTemplate = async () => {
+    if (!templateEditModal) return
+    const name = templateEditModal.name.trim()
+    const content = templateEditModal.content.trim()
+    if (!name || !content) {
+      showAlert('이름과 내용을 입력해주세요', 'error')
+      return
+    }
+    try {
+      await csInquiryApi.addTemplate(templateEditModal.key, name, content)
+      setTemplateEditModal(null)
+      load()
+    } catch (e) {
+      showAlert(e instanceof Error ? e.message : '템플릿 저장 실패', 'error')
+    }
+  }
+  const deleteTemplate = async (key: string, name: string) => {
+    if (!await showConfirm(`"${name}" 템플릿을 삭제하시겠습니까?`)) return
+    try {
+      await csInquiryApi.deleteTemplate(key)
+      load()
+    } catch (e) {
+      showAlert(e instanceof Error ? e.message : '삭제 실패', 'error')
+    }
+  }
 
   // 변수 태그 목록 (CS/SMS/카카오 공통)
   const VARIABLE_TAGS = [
@@ -436,12 +469,6 @@ export default function CSPage() {
       <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
         <input style={{ ...inputStyle, width: '150px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={searchInput} onChange={e => setSearchInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleSearch() }} placeholder='고객/주문번호 검색' />
         <button onClick={handleSearch} style={{ background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', padding: '0 0.6rem', borderRadius: '4px', fontSize: '0.75rem', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap', height: '28px' }}>검색</button>
-        <button
-          onClick={() => setShowTemplateManager(true)}
-          style={{ padding: '0 0.6rem', fontSize: '0.75rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#C5C5C5', cursor: 'pointer', whiteSpace: 'nowrap', marginLeft: '4px', height: '28px', lineHeight: '26px' }}
-        >
-          답변템플릿 관리
-        </button>
         <button
           onClick={handleBatchDelete}
           style={{ padding: '0 0.6rem', fontSize: '0.75rem', background: 'transparent', border: '1px solid #FF6B6B33', borderRadius: '4px', color: '#FF6B6B', cursor: 'pointer', whiteSpace: 'nowrap', height: '28px', lineHeight: '26px' }}
@@ -829,20 +856,49 @@ export default function CSPage() {
               <div style={{ color: '#ccc', lineHeight: '1.5', whiteSpace: 'pre-wrap' }}>{htmlToText(replyModal.content || '')}</div>
             </div>
 
-            {/* 템플릿 카드 그리드 */}
+            {/* 템플릿 카드 그리드 — 추가/수정/삭제 인라인 */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '0.75rem' }}>
               {Object.entries(templates).map(([key, tpl]) => (
                 <div
                   key={key}
-                  onClick={() => { setSelectedTemplate(key); setReplyText(sanitizeReplyTextForInquiry(tpl.content, replyModal)) }}
-                  style={{ background: selectedTemplate === key ? 'rgba(255,140,0,0.08)' : '#111', border: `1px solid ${selectedTemplate === key ? '#FF8C00' : '#2D2D2D'}`, borderRadius: '8px', padding: '0.625rem', cursor: 'pointer', transition: 'border-color 0.15s' }}
+                  style={{ background: selectedTemplate === key ? 'rgba(255,140,0,0.08)' : '#111', border: `1px solid ${selectedTemplate === key ? '#FF8C00' : '#2D2D2D'}`, borderRadius: '8px', padding: '0.625rem', transition: 'border-color 0.15s', position: 'relative' }}
                   onMouseEnter={e => { if (selectedTemplate !== key) e.currentTarget.style.borderColor = '#444' }}
                   onMouseLeave={e => { if (selectedTemplate !== key) e.currentTarget.style.borderColor = '#2D2D2D' }}
                 >
-                  <div style={{ fontSize: '0.75rem', fontWeight: 600, color: selectedTemplate === key ? '#FF8C00' : '#E5E5E5', marginBottom: '0.375rem' }}>{tpl.name}</div>
-                  <div style={{ fontSize: '0.625rem', color: '#777', lineHeight: '1.4', maxHeight: '3.5rem', overflow: 'hidden', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{tpl.content.slice(0, 80)}...</div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.375rem' }}>
+                    <div
+                      style={{ fontSize: '0.75rem', fontWeight: 600, color: selectedTemplate === key ? '#FF8C00' : '#E5E5E5', cursor: 'pointer', flex: 1 }}
+                      onClick={() => { setSelectedTemplate(key); setReplyText(sanitizeReplyTextForInquiry(tpl.content, replyModal)) }}
+                    >{tpl.name}</div>
+                    <div style={{ display: 'flex', gap: '0.25rem', flexShrink: 0 }}>
+                      <button
+                        onClick={e => { e.stopPropagation(); openEditTemplate(key, tpl) }}
+                        style={{ background: 'none', border: 'none', color: '#888', fontSize: '0.65rem', cursor: 'pointer', padding: '0.1rem 0.25rem', lineHeight: 1 }}
+                        title='수정'
+                      >✏</button>
+                      <button
+                        onClick={e => { e.stopPropagation(); deleteTemplate(key, tpl.name) }}
+                        style={{ background: 'none', border: 'none', color: '#666', fontSize: '0.65rem', cursor: 'pointer', padding: '0.1rem 0.25rem', lineHeight: 1 }}
+                        title='삭제'
+                      >✕</button>
+                    </div>
+                  </div>
+                  <div
+                    style={{ fontSize: '0.625rem', color: '#777', lineHeight: '1.4', maxHeight: '3.5rem', overflow: 'hidden', whiteSpace: 'pre-wrap', wordBreak: 'break-word', cursor: 'pointer' }}
+                    onClick={() => { setSelectedTemplate(key); setReplyText(sanitizeReplyTextForInquiry(tpl.content, replyModal)) }}
+                  >{tpl.content.slice(0, 80)}...</div>
                 </div>
               ))}
+              {/* 새 템플릿 추가 카드 */}
+              <div
+                onClick={openNewTemplate}
+                style={{ background: '#111', border: '1px dashed #3D3D3D', borderRadius: '8px', padding: '0.625rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.375rem', transition: 'border-color 0.15s', minHeight: '72px' }}
+                onMouseEnter={e => (e.currentTarget.style.borderColor = '#FF8C00')}
+                onMouseLeave={e => (e.currentTarget.style.borderColor = '#3D3D3D')}
+              >
+                <span style={{ fontSize: '1rem', color: '#555' }}>+</span>
+                <span style={{ fontSize: '0.75rem', color: '#666' }}>새 템플릿</span>
+              </div>
             </div>
 
             {/* 변수 태그 버튼 */}
@@ -875,98 +931,51 @@ export default function CSPage() {
         </div>
       )}
 
-      {/* 답변 템플릿 관리 모달 */}
-      {showTemplateManager && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '600px', maxWidth: '90vw', maxHeight: '80vh', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
-              <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#E5E5E5' }}>답변 템플릿 관리</h3>
-              <button onClick={() => setShowTemplateManager(false)} style={{ background: 'none', border: 'none', color: '#888', fontSize: '1.25rem', cursor: 'pointer' }}>✕</button>
+      {/* 답변 템플릿 추가/수정 모달 — SMS 템플릿과 동일한 UX */}
+      {templateEditModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}>
+          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '1.5rem', width: '520px', maxWidth: '90vw' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
+              <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#E5E5E5' }}>{isNewTemplate ? '새 템플릿 추가' : '템플릿 수정'}</h3>
+              <button onClick={() => setTemplateEditModal(null)} style={{ background: 'none', border: 'none', color: '#888', fontSize: '1.25rem', cursor: 'pointer' }}>✕</button>
             </div>
-
-            {/* 템플릿 추가 폼 */}
-            <div style={{ background: '#111', borderRadius: '8px', padding: '1rem', border: '1px solid #2A2A2A', marginBottom: '1rem' }}>
-              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                <input
-                  placeholder="템플릿 이름"
-                  value={tplName}
-                  onChange={e => setTplName(e.target.value)}
-                  style={{ ...inputStyle, flex: 1 }}
-                />
-              </div>
-              <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+            <div style={{ marginBottom: '0.75rem' }}>
+              <label style={{ fontSize: '0.8125rem', color: '#888', display: 'block', marginBottom: '0.375rem' }}>템플릿 이름</label>
+              <input
+                type='text'
+                value={templateEditModal.name}
+                onChange={e => setTemplateEditModal({ ...templateEditModal, name: e.target.value })}
+                placeholder='예: 배송지연안내'
+                style={{ width: '100%', padding: '0.5rem 0.75rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#E5E5E5', fontSize: '0.875rem', outline: 'none', boxSizing: 'border-box' }}
+              />
+            </div>
+            <div style={{ marginBottom: '0.5rem' }}>
+              <label style={{ fontSize: '0.8125rem', color: '#888', display: 'block', marginBottom: '0.375rem' }}>답변 내용</label>
+              <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap', marginBottom: '0.375rem' }}>
                 {VARIABLE_TAGS.map(v => (
                   <button
                     key={v.tag}
-                    type="button"
-                    onClick={() => insertTag(tplContentRef, setTplContent, tplContent, v.tag)}
+                    type='button'
+                    onClick={() => insertTag(tplContentRef, val => setTemplateEditModal(prev => prev ? { ...prev, content: val } : prev), templateEditModal.content, v.tag)}
                     style={{ padding: '0.2rem 0.5rem', fontSize: '0.6875rem', background: '#1A1A1A', border: '1px solid #444', borderRadius: '4px', color: '#FF8C00', cursor: 'pointer' }}
                   >{v.tag} <span style={{ color: '#888' }}>{v.label}</span></button>
                 ))}
               </div>
               <textarea
                 ref={tplContentRef}
-                placeholder="템플릿 내용"
-                value={tplContent}
-                onChange={e => setTplContent(e.target.value)}
-                rows={5}
-                style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.5', marginBottom: '0.5rem' }}
+                value={templateEditModal.content}
+                onChange={e => setTemplateEditModal({ ...templateEditModal, content: e.target.value })}
+                rows={8}
+                style={{ width: '100%', padding: '0.625rem 0.75rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#E5E5E5', fontSize: '0.8125rem', outline: 'none', resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.5', boxSizing: 'border-box' }}
               />
-              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                <button
-                  onClick={async () => {
-                    if (!tplName.trim() || !tplContent.trim()) {
-                      showAlert('이름과 내용을 입력해주세요', 'error')
-                      return
-                    }
-                    const key = tplName.trim().replace(/\s+/g, '_').toLowerCase()
-                    try {
-                      await csInquiryApi.addTemplate(key, tplName.trim(), tplContent.trim())
-                      setTplName('')
-                      setTplContent('')
-                      load()
-                    } catch (e) {
-                      showAlert(e instanceof Error ? e.message : '템플릿 추가 실패', 'error')
-                    }
-                  }}
-                  style={{ padding: '0.4rem 1rem', background: '#FF8C00', border: 'none', borderRadius: '6px', color: '#fff', fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer' }}
-                >추가</button>
-              </div>
             </div>
-
-            {/* 기존 템플릿 목록 */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              {Object.entries(templates).map(([key, tpl]) => (
-                <div key={key} style={{ background: '#111', borderRadius: '8px', padding: '0.75rem 1rem', border: '1px solid #2A2A2A' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.375rem' }}>
-                    <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#FF8C00' }}>{tpl.name}</span>
-                    <button
-                      onClick={async () => {
-                        if (!await showConfirm(`"${tpl.name}" 템플릿을 삭제하시겠습니까?`)) return
-                        try {
-                          await csInquiryApi.deleteTemplate(key)
-                          load()
-                        } catch (e) {
-                          showAlert(e instanceof Error ? e.message : '삭제 실패', 'error')
-                        }
-                      }}
-                      style={{ padding: '0.15rem 0.5rem', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.2)', borderRadius: '4px', color: '#FF6B6B', fontSize: '0.6875rem', cursor: 'pointer' }}
-                    >삭제</button>
-                  </div>
-                  <p style={{ fontSize: '0.8125rem', color: '#aaa', lineHeight: '1.5', whiteSpace: 'pre-wrap', margin: 0 }}>
-                    {tpl.content}
-                  </p>
-                </div>
-              ))}
-              {Object.keys(templates).length === 0 && (
-                <div style={{ padding: '2rem', textAlign: 'center', color: '#555' }}>
-                  등록된 템플릿이 없습니다
-                </div>
-              )}
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
-              <button onClick={() => setShowTemplateManager(false)} style={{ padding: '0.625rem 1.25rem', background: '#FF8C00', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>닫기</button>
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
+              <button onClick={() => setTemplateEditModal(null)} style={{ padding: '0.5rem 1rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}>취소</button>
+              <button
+                onClick={saveTemplate}
+                disabled={!templateEditModal.name.trim() || !templateEditModal.content.trim()}
+                style={{ padding: '0.5rem 1rem', background: '#FF8C00', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer', opacity: (!templateEditModal.name.trim() || !templateEditModal.content.trim()) ? 0.5 : 1 }}
+              >저장</button>
             </div>
           </div>
         </div>
