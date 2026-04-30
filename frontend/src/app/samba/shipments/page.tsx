@@ -125,7 +125,6 @@ export default function ShipmentsPage() {
   const cancelLocalDeleteIdsRef = useRef<Set<string>>(new Set())
   const [cancellingJobIds, setCancellingJobIds] = useState<string[]>([])
   const jobQueuePollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const cancelledAtRef = useRef<number>(0) // 작업중지 후 폴링 업데이트 차단 (새 전송 시작 시 해제)
 
   // 컴포넌트 언마운트 시 잡 폴링 정리
   useEffect(() => {
@@ -146,8 +145,6 @@ export default function ShipmentsPage() {
         const { API_BASE_URL: apiBase } = await import('@/config/api')
         const res = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/transmit-queue-status`)
         const data = await res.json()
-        // 작업중지 후 폴링 업데이트 영구 차단 (새 전송 시작 시 해제)
-        if (cancelledAtRef.current) return
         setJobQueueStatus({
           running: Array.isArray(data.running) ? data.running : [],
           pending: Array.isArray(data.pending) ? data.pending : [],
@@ -171,17 +168,7 @@ export default function ShipmentsPage() {
         const res = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs?status=running&limit=1`)
         const jobs = await res.json()
         const job = Array.isArray(jobs) ? jobs.find((j: Record<string, unknown>) => j.job_type === 'transmit') : null
-        if (!job) {
-          // 실행 중 잡이 없으면 → 재개 가능한 최근 잡 확인
-          try {
-            const resumableRes = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/last-resumable-transmit`)
-            const resumable = await resumableRes.json()
-            if (resumable && resumable.payload) {
-              setPausedJobPayload({ job_type: 'transmit', payload: resumable.payload })
-            }
-          } catch { /* ignore */ }
-          return
-        }
+        if (!job) return
         if (jobPollRef.current || activeJobIdRef.current) return
         const jobId = job.id as string
         activeJobIdRef.current = jobId
@@ -795,7 +782,6 @@ export default function ShipmentsPage() {
     }
     const effectiveLabels = [...effectiveAccountSet].map(aid => accountLabelMap[aid] || aid)
     abortRef.current = false
-    cancelledAtRef.current = 0 // 폴링 업데이트 재허용
     addLog(`[${ts()}] 전송 시작 — 상품 ${fmtNum(total)}개, ${effectiveLabels.length > 0 ? effectiveLabels.join(', ') : '연결 계정 없음'}`)
 
     const items: string[] = []
@@ -889,7 +875,7 @@ export default function ShipmentsPage() {
             const r = (j.result || {}) as Record<string, number>
             const statusLabel = j.status === 'completed' ? '전송 완료' : j.status === 'failed' ? '전송 실패' : '전송 중단'
             appendShipmentLog(setLogMessages, `[${_ts}] ${statusLabel} — 성공 ${fmtNum(r.success || 0)}건, 스킵 ${fmtNum(r.skipped || 0)}건, 실패 ${fmtNum(r.failed || 0)}건`)
-            if (j.status === 'completed') setPausedJobPayload(null)
+            setPausedJobPayload(null)
             setTransmitting(false)
             activeJobIdRef.current = ''
             load()
@@ -914,7 +900,6 @@ export default function ShipmentsPage() {
 
     setTransmitting(true)
     abortRef.current = false
-    cancelledAtRef.current = 0 // 폴링 업데이트 재허용
     const ts = fmtTime
     const addLog = (msg: string) => appendShipmentLog(setLogMessages, msg)
 
@@ -960,7 +945,7 @@ export default function ShipmentsPage() {
             const r = (j.result || {}) as Record<string, number>
             const statusLabel = j.status === 'completed' ? '전송 완료' : j.status === 'failed' ? '전송 실패' : '작업중지됨'
             appendShipmentLog(setLogMessages, `[${_ts}] ${statusLabel} — 성공 ${fmtNum(r.success || 0)}건, 스킵 ${fmtNum(r.skipped || 0)}건, 실패 ${fmtNum(r.failed || 0)}건`)
-            if (j.status === 'completed') setPausedJobPayload(null)
+            setPausedJobPayload(null)
             setTransmitting(false)
             activeJobIdRef.current = ''
             load()
@@ -1298,7 +1283,6 @@ export default function ShipmentsPage() {
                   await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/cancel`, { method: 'POST' })
                   activeJobIdRef.current = ''
                   setJobQueueStatus({ running: [], pending: [] })
-                  cancelledAtRef.current = Date.now()
                   setLogMessages(prev => [...prev, `[${ts}] 일시정지 완료 — 이어하기로 재개 가능`].slice(-30))
                 } catch {
                   setLogMessages(prev => [...prev, `[${ts}] 일시정지 실패`].slice(-30))
@@ -1324,7 +1308,6 @@ export default function ShipmentsPage() {
                   activeJobIdRef.current = ''
                   setPausedJobPayload(null)
                   setJobQueueStatus({ running: [], pending: [] })
-                  cancelledAtRef.current = Date.now()
                   setLogMessages(prev => [...prev, `[${ts}] 작업중지 완료`].slice(-30))
                 } catch {
                   setLogMessages(prev => [...prev, `[${ts}] 작업중지 실패`].slice(-30))
