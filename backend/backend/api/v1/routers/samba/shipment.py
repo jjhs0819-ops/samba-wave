@@ -245,16 +245,18 @@ async def cleanup_smartstore_orphans(
             total_pages = 1 if len(page1_contents) < 100 else 200
         total_pages = min(total_pages, 200)  # 20,000개 상한 유지
 
-        # 동시성 5는 Naver Commerce API 레이트리밋에 걸려 다수 페이지가 silent drop
-        # 되는 사고가 있어 2로 축소 + 지수 백오프 재시도 + 실패 카운트 노출.
+        # Naver Commerce API /products/search는 RPS 한도가 매우 낮아
+        # sem=2도 36/99 페이지 실패 사고. 동시성 1(순차)로 낮추고 호출 사이
+        # 강제 0.4s 간격(=최대 2.5 RPS) + 5회 재시도(2/4/8/16/32s 백오프).
+        # 99페이지 × ~0.5s = ~50s, 200페이지 상한이어도 ~100s로 Caddy 120s 안전권.
         failed_pages: list[int] = []
         if total_pages > 1:
-            sem = asyncio.Semaphore(2)
+            sem = asyncio.Semaphore(1)
 
             async def _fetch_page(pno: int) -> tuple[int, list[dict], bool]:
                 """returns (page_no, contents, success)."""
                 last_err: Exception | None = None
-                for attempt in range(3):
+                for attempt in range(5):
                     try:
                         async with sem:
                             rr = await client._call_api(
@@ -262,12 +264,18 @@ async def cleanup_smartstore_orphans(
                                 "/v1/products/search",
                                 body={"page": pno, "size": 100},
                             )
+                            # 다음 호출까지 최소 간격 보장 (sem 보유 상태에서 sleep)
+                            await asyncio.sleep(0.4)
                         return pno, _extract_contents(rr), True
                     except Exception as e:
                         last_err = e
-                        # 0.5s, 1s, 2s 지수 백오프
-                        await asyncio.sleep(0.5 * (2**attempt))
-                logger.warning(f"[고아정리] page {pno} 3회 재시도 실패: {last_err}")
+                        err_msg = str(e)
+                        # 429일 때만 길게 백오프, 그 외엔 짧게
+                        if "429" in err_msg or "Too Many" in err_msg:
+                            await asyncio.sleep(2 * (2**attempt))  # 2/4/8/16/32s
+                        else:
+                            await asyncio.sleep(0.5 * (2**attempt))  # 0.5/1/2/4/8s
+                logger.warning(f"[고아정리] page {pno} 5회 재시도 실패: {last_err}")
                 return pno, [], False
 
             results = await asyncio.gather(

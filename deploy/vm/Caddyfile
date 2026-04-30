@@ -31,11 +31,14 @@ api.samba-wave.co.kr {
         max_fails 3
         unhealthy_status 5xx
 
-        # 타임아웃 — 마켓 전송 Job 등 긴 요청 대응
+        # 타임아웃 — 마켓 전송 Job/스마트스토어 동기화 등 긴 요청 대응
+        # response_header_timeout 120s → 600s: 유령삭제 페이징(99페이지×~0.5s + 재시도)이
+        # 120s를 넘어 'Failed to fetch' 발생 → 600s로 상향(단일 워커가 장시간 점유될 수 있으나
+        # cleanup-orphans는 관리자 수동 트리거이므로 수용)
         transport http {
             dial_timeout 10s
-            response_header_timeout 120s
-            read_timeout 300s
+            response_header_timeout 600s
+            read_timeout 600s
         }
     }
 
