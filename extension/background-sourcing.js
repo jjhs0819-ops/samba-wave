@@ -332,26 +332,69 @@ async function _processJobWithCap(job) {
   }
 }
 
-// 사이트별 인증 실패 카운트 — 임계값 도달 시 자동로그인 트리거 (탭 폭주 방지)
-// background-autologin.js의 ensureLoggedIn 호출
+// 사이트별 인증 실패 카운트 — 매우 보수적인 자동로그인 트리거 정책 (사용자 직접 로그인 신뢰)
+// 정책:
+//   - immediate=true(비로그인 확정 신호)여도 1회만으론 트리거 X — 10회 누적 후 트리거
+//   - 일반 인증 실패도 10회 누적 후 트리거
+//   - 한 번 트리거되면 1시간 쿨다운 (그 안에는 추가 트리거 X)
+//   - DOM hydration false-positive로 매 작업 트리거되던 폭주 차단 + 사용자 직접 로그인
+//     상태를 함부로 덮지 않음
 const _alFailureCount = {}
-const _AL_FAILURE_THRESHOLD = 3
+const _AL_FAILURE_THRESHOLD = 10  // 5 → 10 (사용자 직접 로그인 신뢰 강화)
+// 사이트별 마지막 자동로그인 트리거 시각 — 1시간 쿨다운
+const _alLastTriggerAt = {}
+const _AL_TRIGGER_COOLDOWN_MS = 60 * 60 * 1000  // 5분 → 1시간
 
-// immediate=true면 1회 실패만으로 즉시 트리거 (명시적 비로그인 감지 같은 확정 신호용)
+// 사용자가 명시적으로 자동로그인을 끄고 싶을 때 chrome.storage.disableAutoLogin = true
+// 또는 사이트별 chrome.storage.disableAutoLoginSites = ['LOTTEON','SSG'] 가능
+async function _isAutoLoginDisabled(externalSite) {
+  try {
+    const data = await chrome.storage.local.get(['disableAutoLogin', 'disableAutoLoginSites'])
+    if (data.disableAutoLogin === true) return true
+    if (Array.isArray(data.disableAutoLoginSites) && data.disableAutoLoginSites.includes(externalSite)) {
+      return true
+    }
+  } catch {}
+  return false
+}
+
+// immediate 인자는 이제 의미 약화 — 모든 신호에 누적 카운트 적용 (DOM false-positive 차단)
 function reportLoginFailure(externalSite, immediate = false) {
   if (!externalSite) return
   _alFailureCount[externalSite] = (_alFailureCount[externalSite] || 0) + 1
-  const threshold = immediate ? 1 : _AL_FAILURE_THRESHOLD
-  if (_alFailureCount[externalSite] >= threshold) {
-    const key = (typeof alExternalSiteToKey === 'function') ? alExternalSiteToKey(externalSite) : null
-    if (key && typeof ensureLoggedIn === 'function') {
-      console.log(`[로그인감지] ${externalSite} ${immediate ? '비로그인 확정' : `연속 ${threshold}회 인증 실패`} → 자동로그인 트리거`)
-      _alFailureCount[externalSite] = 0
-      ensureLoggedIn(key).catch(e => console.error('[자동로그인] 호출 오류:', e?.message || e))
-    } else {
-      _alFailureCount[externalSite] = 0
+  // 누적 임계값 미도달이면 silent (로그도 적당히)
+  if (_alFailureCount[externalSite] < _AL_FAILURE_THRESHOLD) {
+    if (_alFailureCount[externalSite] === 1 || _alFailureCount[externalSite] % 5 === 0) {
+      console.log(`[로그인감지] ${externalSite} 비로그인 신호 누적 ${_alFailureCount[externalSite]}/${_AL_FAILURE_THRESHOLD} (자동로그인 미트리거)`)
     }
+    return
   }
+  const key = (typeof alExternalSiteToKey === 'function') ? alExternalSiteToKey(externalSite) : null
+  if (!key || typeof ensureLoggedIn !== 'function') {
+    _alFailureCount[externalSite] = 0
+    return
+  }
+  // 자동로그인 비활성 옵션 검사 (사용자 명시적 OFF)
+  _isAutoLoginDisabled(externalSite).then(disabled => {
+    if (disabled) {
+      console.log(`[로그인감지] ${externalSite} 자동로그인 비활성 옵션 켜짐 — 트리거 스킵`)
+      _alFailureCount[externalSite] = 0
+      return
+    }
+    // 쿨다운 검사 (1시간) — 병렬 작업 + 누적 임계값 동시 트리거 방지
+    const lastAt = _alLastTriggerAt[externalSite] || 0
+    const elapsed = Date.now() - lastAt
+    if (lastAt && elapsed < _AL_TRIGGER_COOLDOWN_MS) {
+      const remainingMin = Math.ceil((_AL_TRIGGER_COOLDOWN_MS - elapsed) / 60000)
+      console.log(`[로그인감지] ${externalSite} 자동로그인 쿨다운 중 (잔여 ${remainingMin}분) — 트리거 스킵`)
+      _alFailureCount[externalSite] = 0
+      return
+    }
+    console.log(`[로그인감지] ${externalSite} 비로그인 누적 ${_alFailureCount[externalSite]}회 → 자동로그인 트리거`)
+    _alFailureCount[externalSite] = 0
+    _alLastTriggerAt[externalSite] = Date.now()
+    ensureLoggedIn(key).catch(e => console.error('[자동로그인] 호출 오류:', e?.message || e))
+  })
 }
 
 function reportLoginSuccess(externalSite) {
@@ -601,22 +644,72 @@ async function fetchAbcmartBenefitPriceServiceWorker(productId, site) {
   }
 }
 
-// ABCmart/GrandStage 자동 탭 보장 — 사용자가 매번 직접 안 켜도 되게.
-// 백그라운드 + 핀 탭으로 1회 생성, 이후 재사용. 사용자가 닫으면 다음 호출에서 재생성.
-// 사용자가 a-rt.com에 1번 로그인은 필요 (인증은 사용자만 가능 — IP-bound 세션).
-async function ensureArtTab(site) {
-  const subdomainPattern = site === 'GrandStage'
-    ? '*://grandstage.a-rt.com/*'
-    : '*://abcmart.a-rt.com/*'
-  let tabs = await chrome.tabs.query({ url: subdomainPattern })
+// LOTTEON 로그인 검증 — 다중 쿠키 후보로 판정.
+// 후보 중 하나라도 의미있는 값이면 로그인. false-positive(DOM 비로그인 false 알림) 차단.
+// 반환: true=로그인 / false=비로그인 / null=판단 불가
+async function _checkLotteonLoggedInByCookies() {
+  // LOTTEON 로그인 식별 가능 후보들 (사이트 변경에 견고하게 다중 검증)
+  const candidates = ['fo_at_yn', 'fo_mlin', 'fo_ac_tkn', 'fo_sso_tkn', 'fo_mno']
+  let anyChecked = false
+  for (const name of candidates) {
+    try {
+      const c = await chrome.cookies.get({ url: 'https://www.lotteon.com', name })
+      if (!c) continue
+      anyChecked = true
+      const v = (c.value || '').trim()
+      // 의미없는 값(빈/0/N/null) → 다음 후보로
+      if (!v || v === '0' || v === 'null' || v.toUpperCase() === 'N') continue
+      // 의미있는 값 = 로그인 식별 가능
+      console.log(`[LOTTEON] 로그인 인정: ${name}=${v.length > 20 ? v.slice(0, 8) + '...' : v}`)
+      return true
+    } catch {}
+  }
+  // 후보 모두 검사했는데 의미있는 값 없음 → 비로그인 추정
+  if (anyChecked) {
+    console.log(`[LOTTEON] 모든 쿠키 후보 의미없음 — 비로그인 추정`)
+    return false
+  }
+  // 쿠키 자체 접근 실패 → 판단 불가 (DOM 결과 유지)
+  return null
+}
+
+// 사이트별 백그라운드 세션 탭 자동 보장 — 웨일/Chrome 모두 호환.
+// pinned:true 의존 X (웨일에서 핀탭이 세션 컨테이너 역할 못 하는 케이스 회피).
+// 일반 탭(active:false)으로 1회 생성, 이후 재사용. 사용자가 닫으면 다음 호출에서 재생성.
+// 사용자가 해당 사이트에 1번 직접 로그인 필요 (IP-bound 세션, 자동로그인 보조 가능).
+const SITE_HOME_URLS = {
+  ABCmart: 'https://abcmart.a-rt.com/',
+  GrandStage: 'https://grandstage.a-rt.com/',
+  LOTTEON: 'https://www.lotteon.com/',
+  SSG: 'https://www.ssg.com/',
+}
+const SITE_URL_PATTERNS = {
+  ABCmart: '*://abcmart.a-rt.com/*',
+  GrandStage: '*://grandstage.a-rt.com/*',
+  LOTTEON: '*://*.lotteon.com/*',
+  SSG: '*://*.ssg.com/*',
+}
+
+async function ensureSiteSessionTab(site) {
+  const pattern = SITE_URL_PATTERNS[site]
+  const homeUrl = SITE_HOME_URLS[site]
+  if (!pattern || !homeUrl) return null
+  // 이미 해당 사이트의 탭이 어디든 떠 있으면 그걸 재사용 (사용자 직접 연 탭 포함)
+  let tabs = []
+  try { tabs = await chrome.tabs.query({ url: pattern }) } catch { tabs = [] }
   if (tabs.length) return tabs[0].id
 
-  const homeUrl = site === 'GrandStage' ? 'https://grandstage.a-rt.com/' : 'https://abcmart.a-rt.com/'
-  console.log(`[${site}] 백그라운드 탭 자동 생성: ${homeUrl}`)
-  const tab = await chrome.tabs.create({ url: homeUrl, active: false, pinned: true })
+  console.log(`[${site}] 백그라운드 세션 탭 자동 생성: ${homeUrl}`)
+  // pinned:true 안 씀 — 웨일 호환. active:false로 사용자 화면 방해 X.
+  const tab = await chrome.tabs.create({ url: homeUrl, active: false })
   try { await waitForTabLoad(tab.id, 30000) } catch {}
-  await wait(2000)  // SPA hydration
+  await wait(2000) // SPA hydration
   return tab.id
+}
+
+// 하위 호환 — 기존 호출자(fetchAbcmartBenefitPrice 등) 그대로 동작
+async function ensureArtTab(site) {
+  return ensureSiteSessionTab(site)
 }
 
 // ABCmart/GrandStage: 사이트별 서브도메인 탭에서 in-tab fetch로 혜택가 수집 (매번 새 탭 X)
@@ -888,8 +981,23 @@ async function handleSourcingJob(job) {
       } else {
         console.log(`[LOTTEON] 혜택가 없음: ${job.productId}`)
       }
-      // 비로그인 검증 + 자동로그인 트리거는 아래 공통 처리에서 일괄 수행
-      // (LOTTEON DOM 파싱이 추가한 _loginRequired 플래그도 공통 처리에서 인식)
+      // 로그인 검증 — 다중 쿠키 후보로 판정 (단일 fo_at_yn은 의미 불명확).
+      // DOM hydration 타이밍 false-positive를 차단하고, 쿠키 이름이 변경되어도 견고.
+      // 후보 중 하나라도 의미있는 값이 있으면 로그인 상태로 간주 (사용자 직접 로그인 신뢰).
+      try {
+        const _isLoggedInByCookie = await _checkLotteonLoggedInByCookies()
+        if (result && typeof result === 'object') {
+          // _isLoggedInByCookie가 true면 로그인 (DOM의 _loginRequired 무시)
+          // false면 비로그인 (자동로그인 신호 유지). null이면 판단 불가 → DOM 결과 유지.
+          if (_isLoggedInByCookie === true) {
+            result._loginRequired = false
+          } else if (_isLoggedInByCookie === false) {
+            result._loginRequired = true
+          }
+        }
+      } catch (e) {
+        console.log(`[LOTTEON] 쿠키 검증 실패: ${e.message} — DOM 결과 유지`)
+      }
     } else if (job.type === 'detail' && (job.site === 'ABCmart' || job.site === 'GrandStage')) {
       // ABCmart/GrandStage: 백그라운드 탭(active=false) DOM 파싱 1순위 — 페이지에
       // 표시된 "최대 혜택가"가 사용자 등급별 멤버십+쿠폰 모두 반영된 100% 정확한 값.

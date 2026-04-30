@@ -142,18 +142,44 @@ async function syncChromeProfile() {
   }
 }
 
+// 사이트별 백그라운드 세션 탭 자동 보장 — 익스텐션 시작 시 1회 실행.
+// 사용자가 popup의 "이 PC가 처리할 사이트"에 체크한 사이트에 한해 백그라운드 탭 자동 생성.
+// 웨일/Chrome 모두 호환 (pinned:true 의존 X). 핀탭 대신 일반 탭(active:false) 활용.
+async function ensureBackgroundSessionTabs() {
+  try {
+    const data = await chrome.storage.local.get(['allowedSites'])
+    const sites = Array.isArray(data.allowedSites) ? data.allowedSites : null
+    // allowedSites 미설정(null) → 단일 PC 디폴트, 자동 생성 X (사용자가 명시 선택해야 함)
+    // 빈 배열 → 작업 안 받는 PC, 자동 생성 X
+    if (!sites || sites.length === 0) return
+    if (typeof ensureSiteSessionTab !== 'function') return
+    for (const site of sites) {
+      try {
+        await ensureSiteSessionTab(site)
+      } catch (e) {
+        console.warn(`[세션탭] ${site} 생성 실패: ${e.message}`)
+      }
+    }
+  } catch (e) {
+    console.warn('[세션탭] 초기화 실패:', e.message)
+  }
+}
+
 // 설치/업데이트 시
 chrome.runtime.onInstalled.addListener(() => {
   setupCookieSyncAlarm()
   startCollectPolling()
   syncChromeProfile()
+  ensureBackgroundSessionTabs()
 })
 chrome.runtime.onStartup.addListener(() => {
   setupCookieSyncAlarm()
   startCollectPolling()
   syncChromeProfile()
+  ensureBackgroundSessionTabs()
 })
 setupCookieSyncAlarm()
 startCollectPolling()
 pollChromeProfileSyncRequest()
 syncChromeProfile()
+ensureBackgroundSessionTabs()

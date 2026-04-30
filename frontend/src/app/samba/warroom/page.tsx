@@ -262,10 +262,12 @@ export default function WarroomPage() {
   }, [priorityEnabled])
 
   // ── 오토튠 필터 (소싱처/판매처 체크박스) ──
-  // 소싱처 체크박스 = 이 PC가 처리할 사이트 (PC별 분담).
-  //   체크 변경 시 익스텐션 chrome.storage.allowedSites에 저장 → 폴링 헤더로 전송 →
-  //   백엔드 collect-queue에서 그 사이트 작업만 그 PC에 반환.
-  //   PC A가 ABC,무신사 체크하고 PC B가 LOTTEON,SSG 체크하면 자동 분담된다.
+  // 소싱처 체크박스 = AND 조건 (체크된 사이트만 갱신 + 이 PC가 처리):
+  //   1) 백엔드 enabled_sources(글로벌 갱신 사이트) 업데이트 → 그 사이트만 큐에 작업 발행
+  //   2) chrome.storage.allowedSites(이 PC 분담) 업데이트 → 익스텐션 폴링 헤더로 전송
+  //   3) 백엔드는 enabled_sources 사이트 작업만 발행 + 익스텐션은 allowedSites 사이트 작업만 받음
+  //      → 단일 PC: 화면 체크 = 갱신 = 처리 (사용자 의도)
+  //      → 다중 PC: 마지막 변경한 PC의 값이 백엔드 글로벌로 살아남음 (사용자 합의 필요)
   // 판매처 체크박스는 기존 백엔드 글로벌 enabled_markets 그대로.
   const [filterSources, setFilterSources] = useState<string[] | null>(null) // null=전체
   const [filterMarkets, setFilterMarkets] = useState<string[] | null>(null) // null=전체
@@ -275,29 +277,30 @@ export default function WarroomPage() {
 
   useEffect(() => {
     // 1) 사용 가능 사이트/마켓 목록 + 마켓 활성 상태는 백엔드에서
+    //    소싱처 enabled_sources도 받아 초기 화면 상태로 사용 (백엔드 글로벌 = 마지막 설정값)
     collectorApi.autotuneGetFilters().then(res => {
       setAvailSources(res.available_sources)
       setAvailMarkets(res.available_markets)
       setFilterMarkets(res.enabled_markets)
+      // 백엔드 enabled_sources를 우선 화면에 표시 (글로벌 일관성)
+      setFilterSources(res.enabled_sources)
     }).catch(() => {})
 
-    // 2) 소싱처 체크 상태는 익스텐션 chrome.storage(PC별)에서 받음
-    //    content-samba-deviceid.js가 페이지 mount 시 ALLOWED_SITES 메시지를 보내준다.
+    // 2) 익스텐션 chrome.storage 값도 받음 — 백엔드 값과 다르면 백엔드 우선,
+    //    동기화는 toggleSource 시 양쪽 동시 갱신해서 일관성 유지
     const onMessage = (e: MessageEvent) => {
       if (e.source !== window) return
       const msg = e.data
       if (!msg || typeof msg !== 'object') return
       if (msg.source !== 'samba-extension') return
       if (msg.type !== 'ALLOWED_SITES') return
-      const sites: string[] = Array.isArray(msg.sites) ? msg.sites : []
-      // 빈 배열 = 전체 처리 → null로 표현 (모두 체크된 시각 효과)
-      setFilterSources(sites.length === 0 ? null : sites)
+      // 별도 처리 X — 백엔드 우선 표시. chrome.storage 값은 polling 헤더에만 사용됨.
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
   }, [])
 
-  // 소싱처 체크 변경 시 익스텐션 chrome.storage 동기화 (PC별 분담)
+  // 소싱처 체크 변경 시 익스텐션 chrome.storage 동기화 (PC별 분담 헤더용)
   const syncAllowedSitesToExtension = useCallback((sites: string[] | null) => {
     try {
       // null = 전체 처리 → 빈 배열 전송 (헤더 미부착 → 모든 사이트 작업 받음)
@@ -309,15 +312,19 @@ export default function WarroomPage() {
     } catch { /* ignore */ }
   }, [])
 
-  const saveMarketFilter = useCallback((markets: string[] | null) => {
+  // 백엔드 + 익스텐션 동시 저장 (debounce 500ms)
+  const saveFilters = useCallback((sources: string[] | null, markets: string[] | null) => {
     if (filterTimerRef.current) clearTimeout(filterTimerRef.current)
     filterTimerRef.current = setTimeout(async () => {
       try {
-        // 소싱처는 PC별 chrome.storage라 백엔드 동기화 불필요 → null 전달
-        await collectorApi.autotuneSetFilters(null, markets)
+        await collectorApi.autotuneSetFilters(sources, markets)
       } catch { /* ignore */ }
     }, 500)
   }, [])
+
+  const saveMarketFilter = useCallback((markets: string[] | null) => {
+    saveFilters(filterSources, markets)
+  }, [filterSources, saveFilters])
 
   const toggleSource = useCallback((site: string) => {
     setFilterSources(prev => {
@@ -325,11 +332,13 @@ export default function WarroomPage() {
       const current = prev ?? [...all]
       const next = current.includes(site) ? current.filter(s => s !== site) : [...current, site]
       const result = next.length === all.length ? null : next.length === 0 ? null : next
-      // 익스텐션에 PC별 분담 즉시 반영
+      // 1) 익스텐션 chrome.storage (이 PC 분담 헤더용)
       syncAllowedSitesToExtension(result)
+      // 2) 백엔드 enabled_sources (글로벌 갱신 사이트) — 체크 안 된 사이트는 큐에 작업 발행 X
+      saveFilters(result, filterMarkets)
       return result
     })
-  }, [availSources, syncAllowedSitesToExtension])
+  }, [availSources, filterMarkets, saveFilters, syncAllowedSitesToExtension])
 
   const toggleMarket = useCallback((marketType: string) => {
     setFilterMarkets(prev => {
