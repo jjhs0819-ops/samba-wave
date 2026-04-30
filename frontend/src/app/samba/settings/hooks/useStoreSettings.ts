@@ -199,6 +199,23 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
       for (const k of clearKeys) delete merged[k]
       const data = merged
       await forbiddenApi.saveSetting(`store_${marketKey}`, data)
+
+      // lottehome: proxy client는 lottehome_credentials 키를 읽으므로 함께 동기화
+      if (marketKey === 'lottehome') {
+        try {
+          const existingCreds = await forbiddenApi.getSetting('lottehome_credentials').catch(() => null)
+          const existingCredsObj = (existingCreds && typeof existingCreds === 'object') ? existingCreds as Record<string, unknown> : {}
+          const lotteCreds: Record<string, unknown> = {
+            ...existingCredsObj,
+            userId: data.storeId || existingCredsObj.userId || '',
+            agncNo: data.agncNo || existingCredsObj.agncNo || '',
+            env: data.env || String(existingCredsObj.env || '') || 'prod',
+          }
+          if (data.password) lotteCreds.password = data.password
+          await forbiddenApi.saveSetting('lottehome_credentials', lotteCreds)
+        } catch { /* credentials 동기화 실패는 무시 */ }
+      }
+
       const marketCfg = STORE_MARKETS.find(m => m.key === marketKey)
       const label = marketCfg?.label || marketKey
 
@@ -292,6 +309,15 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
         result = await proxyApi.ssgAuthTest()
       } else if (marketKey === 'gsshop') {
         result = await proxyApi.gsshopAuthTest()
+      } else if (marketKey === 'lottehome') {
+        const userId = safeData.storeId || ''
+        const password = safeData.password || ''
+        const agncNo = safeData.agncNo || ''
+        if (!userId || !password) {
+          result = { success: false, message: '로그인 ID와 비밀번호를 입력해주세요.' }
+        } else {
+          result = await proxyApi.lottehomeAuth({ userId, password, agncNo, env: safeData.env || 'prod' })
+        }
       } else {
         result = await proxyApi.marketAuthTest(marketKey)
       }

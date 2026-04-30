@@ -407,6 +407,7 @@ export const STORE_MARKETS: MarketConfig[] = [
     { name: 'jejuFee', label: '제주/도서산간 추가비', type: 'number', placeholder: '3000' },
     { name: 'stockQuantity', label: '재고수량', type: 'number', placeholder: '999 (기본값)' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
+    { name: 'env', label: 'API 환경', type: 'select', options: [{ value: 'prod', label: '운영(prod)' }, { value: 'dev', label: '개발(dev)' }] },
   ]},
   { key: 'homeand', label: '홈앤쇼핑', authField: 'apiKey', guideUrl: 'https://partner.home-and.com', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
@@ -852,4 +853,5 @@ export const STORE_MARKETS: MarketConfig[] = [
 // ※ 의도치 않은 정책 변경(예: dispatchDays) 방지를 위해 화이트리스트 방식으로 관리.
 export const SAFE_SELECT_DEFAULTS: Record<string, string> = {
   bundleDelivery: 'N',   // 롯데ON 합배송 — 보수적 기본값("불가능")
+  env: 'prod',           // 롯데홈쇼핑 API 환경 — 기본값 운영
 }
