@@ -212,22 +212,55 @@ async def lottehome_delivery_policies(
         data = result.get("data", {})
         logger.info(f"[롯데홈] 배송비정책 raw data keys: {list(data.keys()) if isinstance(data, dict) else type(data)}")
         result_root = data.get("Result", data) if isinstance(data, dict) else {}
-        logger.info(f"[롯데홈] 배송비정책 result_root keys: {list(result_root.keys()) if isinstance(result_root, dict) else type(result_root)}")
-        pol_list = result_root.get("DlvPolcList", result_root.get("DlvPolcInfo", {}))
-        logger.info(f"[롯데홈] 배송비정책 pol_list type={type(pol_list)}, value={str(pol_list)[:300]}")
+        pol_list = result_root.get("DlvPolcInfoList", result_root.get("DlvPolcList", result_root.get("DlvPolcInfo", {})))
         if isinstance(pol_list, dict):
             items = pol_list.get("DlvPolcInfo", [])
         else:
             items = pol_list
         if isinstance(items, dict):
             items = [items]
-        logger.info(f"[롯데홈] 배송비정책 items count={len(items) if isinstance(items, list) else 'N/A'}, sample={str(items[:1])[:300] if isinstance(items, list) else items}")
+        logger.info(f"[롯데홈] 배송비정책 items count={len(items) if isinstance(items, list) else 'N/A'}, sample={str(items[:1])[:400] if isinstance(items, list) else items}")
+        def _policy_label(item: dict) -> str:
+            no = str(item.get("DlvPolcNo", item.get("dlv_polc_no", "")))
+            nm = item.get("DlvPolcNm") or item.get("dlv_polc_nm") or item.get("LwstEntrNm") or ""
+            dlex = item.get("Dlex", "")
+            rtgs = item.get("RtgsDlex", "")
+            parts = [nm] if nm else []
+            if dlex:
+                parts.append(f"기본 {dlex}원")
+            if rtgs:
+                parts.append(f"반품 {rtgs}원")
+            return f"[{no}] {' / '.join(parts)}" if parts else no
         policies = [
-            {"no": str(item.get("dlv_polc_no", "")), "nm": str(item.get("dlv_polc_nm", item.get("dlv_polc_no", "")))}
+            {"no": str(item.get("DlvPolcNo", item.get("dlv_polc_no", ""))), "nm": _policy_label(item)}
             for item in (items if isinstance(items, list) else [])
-            if item.get("dlv_polc_no")
+            if item.get("DlvPolcNo") or item.get("dlv_polc_no")
         ]
-        return {"success": True, "policies": policies}
+        # 추가배송비정책 (도서산간) — IsmrDlvPolcInfoList
+        ismr_wrap = result_root.get("IsmrDlvPolcInfoList", {})
+        if isinstance(ismr_wrap, dict):
+            ismr_items = ismr_wrap.get("IsmrDlvPolcInfo", ismr_wrap.get("DlvPolcInfo", []))
+        else:
+            ismr_items = ismr_wrap
+        if isinstance(ismr_items, dict):
+            ismr_items = [ismr_items]
+        logger.info(f"[롯데홈] 추가배송비정책 ismr_items count={len(ismr_items) if isinstance(ismr_items, list) else 'N/A'}, sample={str(ismr_items[:1])[:400] if isinstance(ismr_items, list) else ismr_items}")
+        def _extra_policy_label(item: dict) -> str:
+            no = str(item.get("IsmrDlvPolcNo", item.get("DlvPolcNo", "")))
+            ismr = item.get("IsmrDlex", "")
+            jeju = item.get("JejuDlex", "")
+            parts = []
+            if ismr:
+                parts.append(f"도서산간 {ismr}원")
+            if jeju:
+                parts.append(f"제주 {jeju}원")
+            return f"[{no}] {' / '.join(parts)}" if parts else no
+        extra_policies = [
+            {"no": str(item.get("IsmrDlvPolcNo", item.get("DlvPolcNo", item.get("dlv_polc_no", "")))), "nm": _extra_policy_label(item)}
+            for item in (ismr_items if isinstance(ismr_items, list) else [])
+            if item.get("IsmrDlvPolcNo") or item.get("DlvPolcNo") or item.get("dlv_polc_no")
+        ]
+        return {"success": True, "policies": policies, "extra_policies": extra_policies}
     except LotteApiError as exc:
         logger.warning(f"[롯데홈] 배송비정책 조회 실패: {exc}")
         return {"success": False, "message": str(exc), "code": exc.code}

@@ -20,7 +20,7 @@ type Props = StoreSettingsState & Pick<StoreSettingsActions,
   'setLotteonDeliveryPolicyOptions' | 'setLotteonWarehouseOptions' |
   'setElevenstDispatchTemplateOptions' |
   'setCoupangOutboundList' | 'setCoupangInboundList' | 'loadCoupangShippingPlaces' |
-  'setLotteHomeDeliveryPolicyOptions' | 'setLotteHomeShippingPlaceOptions' | 'setLotteHomeReturnPlaceOptions' |
+  'setLotteHomeDeliveryPolicyOptions' | 'setLotteHomeExtraPolicyOptions' | 'setLotteHomeShippingPlaceOptions' | 'setLotteHomeReturnPlaceOptions' |
   'setEditingAccountId' | 'setVisiblePasswords' | 'setNetworkIps' | 'saveNetworkIps'
 >
 
@@ -33,7 +33,7 @@ export function StoreSettingsPanel(props: Props) {
     lotteonDeliveryPolicyOptions, lotteonWarehouseOptions,
     elevenstDispatchTemplateOptions,
     networkIps, networkIpStatus, coupangOutboundList, coupangInboundList,
-    lotteHomeDeliveryPolicyOptions, lotteHomeShippingPlaceOptions, lotteHomeReturnPlaceOptions,
+    lotteHomeDeliveryPolicyOptions, lotteHomeExtraPolicyOptions, lotteHomeShippingPlaceOptions, lotteHomeReturnPlaceOptions,
     updateStoreField, saveNetworkIps, saveStoreSettings, testStoreAuth,
     handleAccountDelete, togglePasswordVisibility,
     setStoreTab, setStoreData,
@@ -42,7 +42,7 @@ export function StoreSettingsPanel(props: Props) {
     setLotteonDeliveryPolicyOptions, setLotteonWarehouseOptions,
     setElevenstDispatchTemplateOptions,
     setCoupangOutboundList, setCoupangInboundList, loadCoupangShippingPlaces,
-    setLotteHomeDeliveryPolicyOptions, setLotteHomeShippingPlaceOptions, setLotteHomeReturnPlaceOptions,
+    setLotteHomeDeliveryPolicyOptions, setLotteHomeExtraPolicyOptions, setLotteHomeShippingPlaceOptions, setLotteHomeReturnPlaceOptions,
     setEditingAccountId, setNetworkIps,
   } = props
 
@@ -265,11 +265,16 @@ export function StoreSettingsPanel(props: Props) {
                             proxyApi.lottehomeDeliveryPolicies(),
                             proxyApi.lottehomePlaces(),
                           ])
-                          let polCount = 0, shpCount = 0, retCount = 0
+                          let polCount = 0, extraCount = 0, shpCount = 0, retCount = 0
                           if (polRes.policies) {
-                            const polOpts = polRes.policies.map(p => ({ value: p.no, label: p.nm || p.no }))
-                            setLotteHomeDeliveryPolicyOptions(polOpts)
-                            polCount = polOpts.length
+                            const opts = polRes.policies.map(p => ({ value: p.no, label: p.nm || p.no }))
+                            setLotteHomeDeliveryPolicyOptions(opts)
+                            polCount = opts.length
+                          }
+                          if (polRes.extra_policies) {
+                            const opts = polRes.extra_policies.map(p => ({ value: p.no, label: p.nm || p.no }))
+                            setLotteHomeExtraPolicyOptions(opts)
+                            extraCount = opts.length
                           }
                           if (plcRes.data) {
                             const shpOpts = (plcRes.data.shipping_places || []).map(p => ({ value: p.code, label: p.name + (p.address ? ` (${p.address})` : '') }))
@@ -279,7 +284,7 @@ export function StoreSettingsPanel(props: Props) {
                             shpCount = shpOpts.length
                             retCount = retOpts.length
                           }
-                          showAlert(`배송정책 ${polCount}건, 출고지 ${shpCount}건, 반품지 ${retCount}건을 불러왔습니다.`, 'success')
+                          showAlert(`배송정책 ${polCount}건, 추가배송비정책 ${extraCount}건, 출고지 ${shpCount}건, 반품지 ${retCount}건을 불러왔습니다.`, 'success')
                         } catch { showAlert('불러오기 실패', 'error') }
                       }}
                       style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
@@ -438,16 +443,25 @@ export function StoreSettingsPanel(props: Props) {
                   ) : field.type === 'lottehome-policy-select' ? (
                     <select
                       style={{ ...inputStyle, flex: 1 }}
-                      value={storeData[market.key]?.[field.name] || ''}
+                      value={storeData[market.key]?.[field.name] ?? savedStoreData[market.key]?.[field.name] ?? ''}
                       onChange={(e) => updateStoreField(market.key, field.name, e.target.value)}
                     >
                       <option value=''>-- 불러오기 버튼으로 선택 --</option>
                       {lotteHomeDeliveryPolicyOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                     </select>
+                  ) : field.type === 'lottehome-extra-policy-select' ? (
+                    <select
+                      style={{ ...inputStyle, flex: 1 }}
+                      value={storeData[market.key]?.[field.name] ?? savedStoreData[market.key]?.[field.name] ?? ''}
+                      onChange={(e) => updateStoreField(market.key, field.name, e.target.value)}
+                    >
+                      <option value=''>-- 불러오기 버튼으로 선택 --</option>
+                      {lotteHomeExtraPolicyOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
                   ) : field.type === 'lottehome-shipping-select' ? (
                     <select
                       style={{ ...inputStyle, flex: 1 }}
-                      value={storeData[market.key]?.[field.name] || ''}
+                      value={storeData[market.key]?.[field.name] ?? savedStoreData[market.key]?.[field.name] ?? ''}
                       onChange={(e) => updateStoreField(market.key, field.name, e.target.value)}
                     >
                       <option value=''>-- 불러오기 버튼으로 선택 --</option>
@@ -456,7 +470,7 @@ export function StoreSettingsPanel(props: Props) {
                   ) : field.type === 'lottehome-return-select' ? (
                     <select
                       style={{ ...inputStyle, flex: 1 }}
-                      value={storeData[market.key]?.[field.name] || ''}
+                      value={storeData[market.key]?.[field.name] ?? savedStoreData[market.key]?.[field.name] ?? ''}
                       onChange={(e) => updateStoreField(market.key, field.name, e.target.value)}
                     >
                       <option value=''>-- 불러오기 버튼으로 선택 --</option>

@@ -28,6 +28,7 @@ export interface StoreSettingsState {
   lotteonWarehouseOptions: { departure: { value: string; label: string }[]; return_: { value: string; label: string }[] }
   elevenstDispatchTemplateOptions: { value: string; label: string }[]
   lotteHomeDeliveryPolicyOptions: { value: string; label: string }[]
+  lotteHomeExtraPolicyOptions: { value: string; label: string }[]
   lotteHomeShippingPlaceOptions: { value: string; label: string }[]
   lotteHomeReturnPlaceOptions: { value: string; label: string }[]
   networkIps: { web: string; local: string }
@@ -58,6 +59,7 @@ export interface StoreSettingsActions {
   setCoupangInboundList: React.Dispatch<React.SetStateAction<Array<{ code: string; name: string; address: string; address_detail: string; zipcode: string; phone: string }>>>
   loadCoupangShippingPlaces: (accountId?: string) => Promise<void>
   setLotteHomeDeliveryPolicyOptions: React.Dispatch<React.SetStateAction<{ value: string; label: string }[]>>
+  setLotteHomeExtraPolicyOptions: React.Dispatch<React.SetStateAction<{ value: string; label: string }[]>>
   setLotteHomeShippingPlaceOptions: React.Dispatch<React.SetStateAction<{ value: string; label: string }[]>>
   setLotteHomeReturnPlaceOptions: React.Dispatch<React.SetStateAction<{ value: string; label: string }[]>>
   setEditingAccountId: (id: string | null) => void
@@ -87,6 +89,7 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
   const [coupangOutboundList, setCoupangOutboundList] = useState<Array<{ code: string; name: string; address: string }>>([])
   const [coupangInboundList, setCoupangInboundList] = useState<Array<{ code: string; name: string; address: string; address_detail: string; zipcode: string; phone: string }>>([])
   const [lotteHomeDeliveryPolicyOptions, setLotteHomeDeliveryPolicyOptions] = useState<{ value: string; label: string }[]>([])
+  const [lotteHomeExtraPolicyOptions, setLotteHomeExtraPolicyOptions] = useState<{ value: string; label: string }[]>([])
   const [lotteHomeShippingPlaceOptions, setLotteHomeShippingPlaceOptions] = useState<{ value: string; label: string }[]>([])
   const [lotteHomeReturnPlaceOptions, setLotteHomeReturnPlaceOptions] = useState<{ value: string; label: string }[]>([])
 
@@ -206,6 +209,14 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
       const merged = { ...filtered }
       // select "설정안함" 선택 시 해당 키 삭제
       for (const k of clearKeys) delete merged[k]
+      // lottehome 배송정책/출고지/반품지 필드: 폼에서 안 건드렸으면 savedStoreData 값 보존
+      if (marketKey === 'lottehome') {
+        const lhSettingFields = ['dlvPolcNo', 'addDlvPolcNo', 'corpRlsPlSn', 'corpDlvpSn']
+        const savedLh = savedStoreData['lottehome'] || {}
+        for (const f of lhSettingFields) {
+          if (!merged[f] && savedLh[f]) merged[f] = savedLh[f]
+        }
+      }
       const data = merged
       await forbiddenApi.saveSetting(`store_${marketKey}`, data)
 
@@ -405,24 +416,7 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
       }).catch(() => {})
   }, [storeTab, savedStoreData, storeData, lotteonDeliveryPolicyOptions.length, lotteonWarehouseOptions.departure.length])
 
-  // 롯데홈쇼핑 탭 진입 시 배송비정책/출고지/반품지 자동 로드
-  useEffect(() => {
-    if (storeTab !== 'lottehome') return
-    if (lotteHomeDeliveryPolicyOptions.length > 0 || lotteHomeShippingPlaceOptions.length > 0) return
-    const d = savedStoreData['lottehome'] || storeData['lottehome'] || {}
-    if (!d.storeId) return
-    Promise.all([proxyApi.lottehomeDeliveryPolicies(), proxyApi.lottehomePlaces()])
-      .then(([polRes, plcRes]) => {
-        if (polRes.policies) {
-          setLotteHomeDeliveryPolicyOptions(polRes.policies.map(p => ({ value: p.no, label: p.nm || p.no })))
-        }
-        if (plcRes.data) {
-          setLotteHomeShippingPlaceOptions((plcRes.data.shipping_places || []).map(p => ({ value: p.code, label: p.name + (p.address ? ` (${p.address})` : '') })))
-          setLotteHomeReturnPlaceOptions((plcRes.data.return_places || []).map(p => ({ value: p.code, label: p.name + (p.address ? ` (${p.address})` : '') })))
-        }
-      }).catch(() => {})
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storeTab, savedStoreData, storeData, lotteHomeDeliveryPolicyOptions.length, lotteHomeShippingPlaceOptions.length])
+  // 롯데홈쇼핑 배송비정책/출고지/반품지는 버튼 클릭 시에만 로드 (자동 로드 제거 — 동시 호출 시 롯데 API 오류 방지)
 
   // 11번가 탭 진입 시 발송마감 템플릿 자동 로드 (출고지 정보 응답에 포함)
   useEffect(() => {
@@ -494,6 +488,7 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
     coupangOutboundList,
     coupangInboundList,
     lotteHomeDeliveryPolicyOptions,
+    lotteHomeExtraPolicyOptions,
     lotteHomeShippingPlaceOptions,
     lotteHomeReturnPlaceOptions,
     loadAccounts,
@@ -518,6 +513,7 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
     setCoupangInboundList,
     loadCoupangShippingPlaces,
     setLotteHomeDeliveryPolicyOptions,
+    setLotteHomeExtraPolicyOptions,
     setLotteHomeShippingPlaceOptions,
     setLotteHomeReturnPlaceOptions,
     setEditingAccountId,

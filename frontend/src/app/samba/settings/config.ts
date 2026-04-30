@@ -409,7 +409,7 @@ export const STORE_MARKETS: MarketConfig[] = [
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
     { name: '_divider_lottehome_shipping', label: '배송정책/출고지 설정', type: 'divider' },
     { name: 'dlvPolcNo', label: '배송비정책', type: 'lottehome-policy-select' },
-    { name: 'addDlvPolcNo', label: '추가배송비정책', type: 'lottehome-policy-select' },
+    { name: 'addDlvPolcNo', label: '추가배송비정책', type: 'lottehome-extra-policy-select' },
     { name: 'corpRlsPlSn', label: '출고지', type: 'lottehome-shipping-select' },
     { name: 'corpDlvpSn', label: '반품지', type: 'lottehome-return-select' },
   ]},
