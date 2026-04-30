@@ -66,7 +66,7 @@ async def _get_lotte_client(session: AsyncSession) -> LotteHomeClient:
         user_id=creds.get("userId", ""),
         password=creds.get("password", ""),
         agnc_no=creds.get("agncNo", ""),
-        env=creds.get("env", "test"),
+        env=creds.get("env", "prod"),
     )
 
 
