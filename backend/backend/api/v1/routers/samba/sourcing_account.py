@@ -285,6 +285,29 @@ async def toggle_sourcing_account(
     return result
 
 
+@router.put("/{account_id}/set-login-default")
+async def set_login_default_account(
+    account_id: str,
+    session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+):
+    """자동로그인 기본 계정 지정 — 사이트당 1개 라디오 동작.
+    같은 site_name의 다른 계정은 자동으로 is_login_default=false 처리됨.
+    """
+    svc = _write_service(session)
+    # tenant_id가 있으면 소유권 검증
+    if tenant_id is not None:
+        existing = await svc.get_account(account_id)
+        if not existing:
+            raise HTTPException(404, "소싱처 계정을 찾을 수 없습니다")
+        if existing.tenant_id != tenant_id:
+            raise HTTPException(403, "해당 계정에 대한 권한이 없습니다")
+    result = await svc.set_login_default(account_id, tenant_id=tenant_id)
+    if not result:
+        raise HTTPException(404, "소싱처 계정을 찾을 수 없습니다")
+    return mask_model_secrets(result.model_dump())
+
+
 @router.delete("/{account_id}")
 async def delete_sourcing_account(
     account_id: str,
@@ -571,6 +594,38 @@ async def get_extension_key():
     from backend.core.config import settings
 
     return {"api_key": settings.api_gateway_key}
+
+
+@extension_router.get("/login-credential")
+async def get_login_credential(
+    site_name: str = Query(..., description="사이트 ID (예: LOTTEON, ABCmart, SSG)"),
+    session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+):
+    """확장앱 자동로그인 전용 — site_name으로 is_login_default 계정의 평문 자격증명 반환.
+
+    is_active=true + is_login_default=true 조건 만족하는 계정 1개 조회.
+    찾지 못하면 404 반환 — 확장앱은 백엔드 미설정으로 간주하고 기존 chrome.debugger 폴백 시도.
+
+    보안 메모:
+    - X-Api-Key 헤더 인증 필수 (extension_router 정책)
+    - 평문 username/password 노출 (Chrome 자동완성 불가능한 SPA 사이트의 직접 .value 설정용)
+    - DB 자체에 평문 저장된 자격증명을 그대로 전달 — 새로운 보안 위험 추가 없음.
+    """
+    svc = _read_service(session)
+    account = await svc.get_login_default(site_name=site_name, tenant_id=tenant_id)
+    if not account:
+        raise HTTPException(
+            404,
+            f"{site_name} 자동로그인 기본 계정 없음 — 설정 페이지에서 라디오 지정 필요",
+        )
+    return {
+        "id": account.id,
+        "site_name": account.site_name,
+        "account_label": account.account_label,
+        "username": account.username,
+        "password": account.password,
+    }
 
 
 @extension_router.post("/sync-chrome-profile")

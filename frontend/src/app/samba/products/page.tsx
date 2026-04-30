@@ -2118,15 +2118,33 @@ export default function ProductsPage() {
 
               try {
                 const syncAccountId = appliedStatusFilter.startsWith('reg_') ? appliedStatusFilter.replace('reg_', '') : undefined
-                const res = await shipmentApi.cleanupSmartstoreOrphans(true, 50, syncAccountId)
+                // 화면 필터에 매칭되는 모든 product_id 조회 (8,785개) — 백엔드 분석 범위 한정
+                let filteredIds: string[] = []
+                try {
+                  const idRes = await collectorApi.getProductIds({
+                    search: appliedSearchQ.trim() || undefined,
+                    search_type: appliedSearchQ.trim() ? appliedSearchType : undefined,
+                    source_site: appliedSiteFilter || undefined,
+                    status: appliedStatusFilter || undefined,
+                    sold_out_filter: appliedSoldOutFilter || undefined,
+                    ai_filter: appliedAiFilter || undefined,
+                    search_filter_id: appliedFilterByGroupId || undefined,
+                  })
+                  filteredIds = idRes.ids ?? []
+                } catch (idErr) {
+                  setAiJobLogs([`필터 ID 조회 실패: ${idErr instanceof Error ? idErr.message : String(idErr)}`])
+                  setAiJobDone(true)
+                  return
+                }
+                const res = await shipmentApi.cleanupSmartstoreOrphans(true, 50, syncAccountId, filteredIds)
                 const dbCount = res.db_no_count ?? 0
                 const staleCount = res.total_stale_db ?? 0
                 const logs: string[] = [
                   syncAccountId ? `계정 필터: ${syncAccountId}` : '전체 계정',
-                  `DB 등록 상품: ${dbCount.toLocaleString()}개`,
-                  `Naver 등록 상품: ${res.total_naver.toLocaleString()}개`,
-                  `Naver→DB 고아: ${res.total_orphans.toLocaleString()}개 (Naver엔 있는데 DB 매핑 없음)`,
-                  `DB→Naver 역고아: ${staleCount.toLocaleString()}개 (DB엔 판매중인데 Naver에 없음)`,
+                  `DB 등록 상품: ${fmt(dbCount)}개 (화면 필터)`,
+                  `Naver 등록 상품: ${fmt(res.total_naver)}개`,
+                  `Naver→DB 고아: ${fmt(res.total_orphans)}개 (Naver엔 있는데 DB 매핑 없음)`,
+                  `DB→Naver 역고아: ${fmt(staleCount)}개 (DB엔 판매중인데 Naver에 없음)`,
                   '',
                 ]
                 for (const a of res.accounts) {
@@ -2134,7 +2152,12 @@ export default function ProductsPage() {
                     logs.push(`[${a.account_id}] ${a.error}`)
                     continue
                   }
-                  logs.push(`[${a.account_id}] Naver ${(a.naver_count ?? 0).toLocaleString()}개 / 고아 ${(a.orphan_count ?? 0).toLocaleString()}개 / 역고아 ${(a.stale_db_count ?? 0).toLocaleString()}개`)
+                  const failedPages = a.failed_pages ?? []
+                  const totalP = a.total_pages ?? 0
+                  const fpSuffix = failedPages.length > 0
+                    ? ` ⚠ 페이지 누락 ${fmt(failedPages.length)}/${fmt(totalP)}`
+                    : ''
+                  logs.push(`[${a.account_id}] Naver ${fmt(a.naver_count ?? 0)}개 / 고아 ${fmt(a.orphan_count ?? 0)}개 / 역고아 ${fmt(a.stale_db_count ?? 0)}개${fpSuffix}`)
                   for (const o of (a.orphans ?? []).slice(0, 30)) {
                     logs.push(`  [고아] ${o.origin_no}  ${o.name}`)
                   }
@@ -2167,7 +2190,7 @@ export default function ProductsPage() {
                 setAiJobLogs([...logs])
                 setAiJobDone(false)
 
-                const del = await shipmentApi.cleanupSmartstoreOrphans(false, res.max_delete, syncAccountId)
+                const del = await shipmentApi.cleanupSmartstoreOrphans(false, res.max_delete, syncAccountId, filteredIds)
                 logs.push(`삭제 완료: ${del.total_deleted.toLocaleString()}개`)
                 for (const a of del.accounts) {
                   if (a.failed && a.failed.length > 0) {

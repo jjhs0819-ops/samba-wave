@@ -65,6 +65,13 @@ class SambaSourcingAccount(SQLModel, table=True):
         default=True,
         sa_column=Column(Boolean, nullable=False, server_default="true", index=True),
     )
+    # 자동로그인 기본 계정 플래그 — 사이트당 1개만 true (Service 레벨에서 강제)
+    # 확장앱이 ensureLoggedIn 시 site_name으로 is_login_default=true인 계정 조회해
+    # username/password를 직접 .value 설정 (Chrome 자동완성 의존 제거 + SPA 대응).
+    is_login_default: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default="false"),
+    )
     additional_fields: Optional[Any] = Field(
         default=None, sa_column=Column(JSON, nullable=True)
     )

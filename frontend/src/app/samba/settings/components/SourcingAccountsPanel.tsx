@@ -171,13 +171,33 @@ export function SourcingAccountsPanel(props: Props) {
                 {siteAccounts.map((a: SambaSourcingAccount) => (
                   <div key={a.id} style={{
                     padding: '0.5rem 0.625rem',
-                    background: sourcingEditId === a.id ? 'rgba(255,140,0,0.08)' : 'rgba(255,255,255,0.02)',
+                    background: sourcingEditId === a.id
+                      ? 'rgba(255,140,0,0.08)'
+                      : a.is_login_default
+                        ? 'rgba(81,207,102,0.06)'
+                        : 'rgba(255,255,255,0.02)',
                     borderRadius: '6px',
-                    border: sourcingEditId === a.id ? '1px solid rgba(255,140,0,0.3)' : '1px solid rgba(45,45,45,0.5)',
+                    border: sourcingEditId === a.id
+                      ? '1px solid rgba(255,140,0,0.3)'
+                      : a.is_login_default
+                        ? '1px solid rgba(81,207,102,0.4)'
+                        : '1px solid rgba(45,45,45,0.5)',
                     opacity: a.is_active ? 1 : 0.5,
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                      {/* 자동로그인 기본 계정 라디오 — 사이트당 1개만 선택 가능 (백엔드가 다른 계정 자동 false 처리) */}
+                      <input
+                        type="radio"
+                        name={`login-default-${sourcingTab}`}
+                        checked={!!a.is_login_default}
+                        onChange={() => sourcingAccountApi.setLoginDefault(a.id).then(() => loadSourcingAccounts())}
+                        title="자동로그인 기본 계정"
+                        style={{ cursor: 'pointer', accentColor: '#51CF66', flexShrink: 0 }}
+                      />
                       <span style={{ flex: 1, fontSize: '0.8rem', fontWeight: 600, color: '#E5E5E5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.account_label}({a.username})</span>
+                      {a.is_login_default && (
+                        <span style={{ fontSize: '0.65rem', color: '#51CF66', fontWeight: 700, background: 'rgba(81,207,102,0.12)', padding: '0.1rem 0.35rem', borderRadius: '3px' }}>자동로그인</span>
+                      )}
                       {sourcingTab === 'MUSINSA' && a.chrome_profile && <span style={{ fontSize: '0.68rem', color: '#888', fontFamily: 'monospace' }}>{a.chrome_profile}</span>}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem', fontSize: '0.7rem' }}>

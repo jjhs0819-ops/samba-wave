@@ -23,6 +23,7 @@ class SourcingAccountUpdate(BaseModel):
     chrome_profile: Optional[str] = None
     memo: Optional[str] = None
     is_active: Optional[bool] = None
+    is_login_default: Optional[bool] = None
     additional_fields: Optional[Any] = None
 
 
@@ -40,6 +41,17 @@ class SourcingAccountOut(BaseModel):
     balance: Optional[float] = None
     balance_updated_at: Optional[datetime] = None
     is_active: bool = True
+    is_login_default: bool = False
     additional_fields: Optional[Any] = None
     created_at: datetime
     updated_at: datetime
+
+
+class LoginCredentialOut(BaseModel):
+    """확장앱 자동로그인 전용 — site_name으로 is_login_default 계정의 평문 자격증명 반환."""
+
+    id: str
+    site_name: str
+    account_label: str
+    username: str
+    password: str  # 평문 (확장앱 전용 엔드포인트, X-Api-Key 인증 필요)

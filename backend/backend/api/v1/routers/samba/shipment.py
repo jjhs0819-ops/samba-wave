@@ -1,7 +1,10 @@
 """SambaWave Shipment API router."""
 
 import asyncio
+import logging
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -96,8 +99,14 @@ async def emergency_clear(admin: str = Depends(require_admin)):
     return {"ok": True, "message": "비상정지 해제"}
 
 
+class CleanupOrphansRequest(BaseModel):
+    # 화면 필터로 좁혀진 product_id 목록 — 비어있으면 tenant 전체 (호환)
+    product_ids: Optional[list[str]] = None
+
+
 @router.post("/smartstore/cleanup-orphans")
 async def cleanup_smartstore_orphans(
+    body: CleanupOrphansRequest = CleanupOrphansRequest(),
     dry_run: bool = Query(True, description="true면 목록만, false면 실제 삭제"),
     account_id: Optional[str] = Query(None, description="특정 계정만 정리"),
     max_delete: int = Query(50, ge=0, le=500, description="한 번에 삭제할 최대 개수"),
@@ -108,6 +117,7 @@ async def cleanup_smartstore_orphans(
 
     DB `market_product_nos`에 없는 Naver 등록 상품을 탐지/삭제.
     최초 호출 시 dry_run=true로 목록 확인 후 dry_run=false로 실제 삭제.
+    `body.product_ids`가 주어지면 화면 필터 결과만 분석 대상으로 한정한다.
     """
     from sqlmodel import select
 
@@ -127,12 +137,16 @@ async def cleanup_smartstore_orphans(
     if not accounts:
         raise HTTPException(status_code=404, detail="활성 스마트스토어 계정 없음")
 
-    # 2. DB 상품 로드 — tenant_id 필터 + NULL 포함 (멀티테넌시 도입 전 상품 누락 방지)
+    # 2. DB 상품 로드 — 화면 필터 product_ids 우선, 없으면 tenant_id 범위
     from sqlalchemy import or_
 
     tenant_ids = list({a.tenant_id for a in accounts if a.tenant_id})
     prod_query = select(SambaCollectedProduct)
-    if tenant_ids:
+    if body.product_ids:
+        # 화면 필터 결과로 분석 범위 한정
+        prod_query = prod_query.where(SambaCollectedProduct.id.in_(body.product_ids))
+    elif tenant_ids:
+        # 호환: 필터 없으면 tenant 전체 (멀티테넌시 도입 전 NULL 포함)
         prod_query = prod_query.where(
             or_(
                 SambaCollectedProduct.tenant_id.in_(tenant_ids),
@@ -231,17 +245,30 @@ async def cleanup_smartstore_orphans(
             total_pages = 1 if len(page1_contents) < 100 else 200
         total_pages = min(total_pages, 200)  # 20,000개 상한 유지
 
+        # 동시성 5는 Naver Commerce API 레이트리밋에 걸려 다수 페이지가 silent drop
+        # 되는 사고가 있어 2로 축소 + 지수 백오프 재시도 + 실패 카운트 노출.
+        failed_pages: list[int] = []
         if total_pages > 1:
-            sem = asyncio.Semaphore(5)  # Naver API 레이트리밋 보호용 동시성 제한
+            sem = asyncio.Semaphore(2)
 
-            async def _fetch_page(pno: int) -> list[dict]:
-                async with sem:
-                    rr = await client._call_api(
-                        "POST",
-                        "/v1/products/search",
-                        body={"page": pno, "size": 100},
-                    )
-                return _extract_contents(rr)
+            async def _fetch_page(pno: int) -> tuple[int, list[dict], bool]:
+                """returns (page_no, contents, success)."""
+                last_err: Exception | None = None
+                for attempt in range(3):
+                    try:
+                        async with sem:
+                            rr = await client._call_api(
+                                "POST",
+                                "/v1/products/search",
+                                body={"page": pno, "size": 100},
+                            )
+                        return pno, _extract_contents(rr), True
+                    except Exception as e:
+                        last_err = e
+                        # 0.5s, 1s, 2s 지수 백오프
+                        await asyncio.sleep(0.5 * (2**attempt))
+                logger.warning(f"[고아정리] page {pno} 3회 재시도 실패: {last_err}")
+                return pno, [], False
 
             results = await asyncio.gather(
                 *[_fetch_page(p) for p in range(2, total_pages + 1)],
@@ -250,7 +277,11 @@ async def cleanup_smartstore_orphans(
             for rr in results:
                 if isinstance(rr, BaseException):
                     continue
-                naver_products.extend(rr)
+                pno, contents, ok = rr
+                if ok:
+                    naver_products.extend(contents)
+                else:
+                    failed_pages.append(pno)
 
         total_naver += len(naver_products)
 
@@ -333,6 +364,8 @@ async def cleanup_smartstore_orphans(
                 "stale_db": stale_db[:50],
                 "deleted": deleted_here,
                 "failed": failed,
+                "failed_pages": failed_pages,
+                "total_pages": total_pages,
             }
         )
 

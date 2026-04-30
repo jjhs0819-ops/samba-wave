@@ -78,6 +78,66 @@ class SambaSourcingAccountService:
             return None
         return await self.repo.update_async(account_id, is_active=not account.is_active)
 
+    async def set_login_default(
+        self,
+        account_id: str,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[SambaSourcingAccount]:
+        """자동로그인 기본 계정으로 지정 — 같은 site_name의 다른 계정은 모두 false로 강제.
+
+        라디오 버튼 동작 (사이트당 1개만 true). tenant_id가 주어지면 같은 테넌트 범위로 한정.
+        """
+        account = await self.repo.get_async(account_id)
+        if not account:
+            return None
+
+        # 같은 site_name의 다른 계정 모두 is_login_default=false 처리
+        # (tenant_id가 None이면 NULL tenant 범위, 아니면 해당 tenant 범위)
+        from sqlalchemy import update as sa_update
+        from backend.domain.samba.sourcing_account.model import SambaSourcingAccount
+
+        stmt = (
+            sa_update(SambaSourcingAccount)
+            .where(SambaSourcingAccount.site_name == account.site_name)
+            .where(SambaSourcingAccount.id != account_id)
+        )
+        if tenant_id is not None:
+            stmt = stmt.where(SambaSourcingAccount.tenant_id == tenant_id)
+        else:
+            stmt = stmt.where(SambaSourcingAccount.tenant_id.is_(None))
+
+        stmt = stmt.values(
+            is_login_default=False, updated_at=datetime.now(timezone.utc)
+        )
+        await self.repo.session.execute(stmt)
+
+        # 대상 계정만 true로 설정
+        return await self.repo.update_async(account_id, is_login_default=True)
+
+    async def get_login_default(
+        self,
+        site_name: str,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[SambaSourcingAccount]:
+        """site_name + tenant_id로 자동로그인 기본 계정 조회 (확장앱 fetch용)."""
+        from sqlalchemy import or_, select as sa_select
+        from backend.domain.samba.sourcing_account.model import SambaSourcingAccount
+
+        stmt = sa_select(SambaSourcingAccount).where(
+            SambaSourcingAccount.site_name == site_name,
+            SambaSourcingAccount.is_login_default.is_(True),
+            SambaSourcingAccount.is_active.is_(True),
+        )
+        if tenant_id is not None:
+            stmt = stmt.where(
+                or_(
+                    SambaSourcingAccount.tenant_id == tenant_id,
+                    SambaSourcingAccount.tenant_id.is_(None),
+                )
+            )
+        result = await self.repo.session.execute(stmt)
+        return result.scalars().first()
+
     async def update_balance(
         self,
         account_id: str,

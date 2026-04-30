@@ -937,7 +937,10 @@ async function handleSourcingJob(job) {
     // 전 사이트 공통 — detail 작업 결과 전송 전 로그인 상태 검증
     // 비로그인 페이지에 마케팅 가격(혜택가/판매가)이 노출되어 잘못된 가격 수집되는 것을 차단
     // 비로그인 감지 시: 결과 전송 차단 + 자동로그인 즉시 트리거
-    if (job.type === 'detail' && tabId && result && result.success !== false) {
+    // [버그수정] 가드 변경: result &&  →  (result == null || result.success !== false)
+    // LOTTEON 비로그인 페이지는 extractDetailData가 undefined 반환 → result &&로 인해
+    // 로그인 감지 블록이 스킵되어 자동로그인이 트리거 안 되던 문제. result null/undefined도 처리.
+    if (job.type === 'detail' && tabId && (result == null || result.success !== false)) {
       let loginNeeded = result?._loginRequired
       if (loginNeeded === undefined) {
         // 자동로그인 성공 직후 N분간 detect 스킵 — _detectLoginStatus false-positive 방지

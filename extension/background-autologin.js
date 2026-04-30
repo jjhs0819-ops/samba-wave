@@ -110,6 +110,214 @@ function alExternalSiteToKey(externalSite) {
   return map[externalSite] || null
 }
 
+// 자동로그인 키 → 백엔드 SambaSourcingAccount.site_name 매핑 (라디오로 지정한 기본 계정 조회용)
+const _AL_SITE_NAME_MAP = {
+  lotteon: 'LOTTEON',
+  abcmart: 'ABCmart',
+  ssg: 'SSG',
+  musinsa: 'MUSINSA',
+  kream: 'KREAM',
+  gs: 'GSShop',
+}
+
+// 백엔드 fetch — site_name으로 is_login_default 계정의 평문 자격증명 조회
+// 사용자가 설정 페이지에서 라디오 지정해 둔 경우만 200 반환, 미지정이면 404
+async function _fetchLoginCredential(siteKey) {
+  const siteName = _AL_SITE_NAME_MAP[siteKey]
+  if (!siteName) return null
+  try {
+    const stored = await chrome.storage.local.get('proxyUrl')
+    const proxyUrl = stored.proxyUrl || 'https://api.samba-wave.co.kr'
+    const apiFetch = globalThis.SambaBackgroundCore?.apiFetch
+    if (!apiFetch) return null
+    const res = await apiFetch(
+      `${proxyUrl}/api/v1/samba/sourcing-accounts/login-credential?site_name=${encodeURIComponent(siteName)}`,
+      { method: 'GET' }
+    )
+    if (!res.ok) return null  // 404면 라디오 미지정 — 기존 chrome.debugger 폴백
+    return await res.json()
+  } catch (e) {
+    console.log(`[자동로그인] 자격증명 조회 실패 (무시): ${e.message}`)
+    return null
+  }
+}
+
+// SPA 직접 로그인 — Chrome 자동완성 의존 없이 .value 직접 설정 + button.click()
+// LOTTEON / ABCmart / SSG처럼 vanilla input + form submit 구조의 사이트에서 작동
+// (검증 완료: 가짜 자격증명으로도 click()이 서버 응답까지 도달함을 확인)
+async function _spaDirectLogin(siteKey, username, password) {
+  const site = AUTO_LOGIN_SITES[siteKey]
+  if (!site) return false
+
+  let tabId = null
+  let tabCreated = false
+
+  try {
+    // 로그인 페이지 minimized window로 오픈
+    let win = null
+    try {
+      win = await chrome.windows.create({ url: site.loginUrl, focused: false, state: 'minimized', type: 'normal' })
+    } catch {}
+    let tab = null
+    if (win && Array.isArray(win.tabs) && win.tabs.length) {
+      tab = win.tabs[0]
+    } else {
+      tab = await chrome.tabs.create({ url: site.loginUrl, active: false })
+    }
+    tabId = tab.id
+    tabCreated = true
+
+    try { await waitForTabLoad(tabId, 30000) } catch {}
+    await wait(2000)
+
+    // alert dialog 자동 닫기 핸들러 — chrome.debugger Page.handleJavaScriptDialog
+    // (가짜 자격증명 또는 잘못된 자격증명 시 alert로 에러 메시지 노출됨, freeze 방지용)
+    const target = { tabId }
+    let dialogAttached = false
+    let dialogMessage = null
+    try {
+      await chrome.debugger.attach(target, '1.3')
+      await chrome.debugger.sendCommand(target, 'Page.enable', {})
+      dialogAttached = true
+      const dialogHandler = (src, method, params) => {
+        if (src.tabId === tabId && method === 'Page.javascriptDialogOpening') {
+          dialogMessage = params?.message || ''
+          console.log(`[자동로그인][SPA] alert 닫기: "${dialogMessage.substring(0, 80)}"`)
+          chrome.debugger.sendCommand(target, 'Page.handleJavaScriptDialog', { accept: true }).catch(() => {})
+        }
+      }
+      chrome.debugger.onEvent.addListener(dialogHandler)
+
+      // 사이트별 셀렉터 + .value 직접 설정 + event dispatch + button.click()
+      const [scriptResult] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (siteKeyArg, usernameArg, passwordArg) => {
+          // 사이트별 input/button 셀렉터
+          const SELECTORS = {
+            lotteon: {
+              id: ['#inId', 'input[name="inId"]'],
+              pw: ['#Password', 'input[type="password"]'],
+              btnText: '로그인하기',
+            },
+            abcmart: {
+              id: ['#username', 'input[name="username"]'],
+              pw: ['#password', 'input[type="password"]'],
+              btnId: '#login',
+            },
+            ssg: {
+              id: ['#userId', 'input[name="userId"]', 'input[name="usrId"]', 'input[type="email"]'],
+              pw: ['input[type="password"]'],
+              btnId: '#btn_login, .btn_login, button[type="submit"]',
+            },
+          }
+          const sel = SELECTORS[siteKeyArg]
+          if (!sel) return { success: false, error: 'unsupported site' }
+
+          // ID/PW 필드 찾기 — 첫 매칭 셀렉터 사용
+          let idField = null
+          for (const s of sel.id) { idField = document.querySelector(s); if (idField) break }
+          let pwField = null
+          for (const s of sel.pw) { pwField = document.querySelector(s); if (pwField) break }
+          if (!idField || !pwField) return { success: false, error: 'fields not found', idFound: !!idField, pwFound: !!pwField }
+
+          // .value 직접 설정 + 풀 이벤트 dispatch (input/change/keydown/keyup) — SPA 검증 통과
+          idField.focus()
+          idField.value = usernameArg
+          idField.dispatchEvent(new Event('input', { bubbles: true }))
+          idField.dispatchEvent(new Event('change', { bubbles: true }))
+          idField.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }))
+          idField.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }))
+
+          pwField.focus()
+          pwField.value = passwordArg
+          pwField.dispatchEvent(new Event('input', { bubbles: true }))
+          pwField.dispatchEvent(new Event('change', { bubbles: true }))
+          pwField.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }))
+          pwField.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }))
+
+          // 로그인 버튼 찾기 — id 셀렉터 또는 버튼 텍스트로
+          let btn = null
+          if (sel.btnId) {
+            btn = document.querySelector(sel.btnId)
+          } else if (sel.btnText) {
+            btn = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"]'))
+              .find(b => {
+                const txt = (b.textContent || b.value || '').trim()
+                return b.type === 'submit' && txt === sel.btnText && b.offsetParent !== null
+              })
+          }
+          if (!btn) return { success: false, error: 'login button not found' }
+
+          // disabled 풀고 click
+          btn.disabled = false
+          btn.classList?.remove('disabled')
+          btn.click()
+          return { success: true, idValue: idField.value.length, pwLen: pwField.value.length }
+        },
+        args: [siteKey, username, password],
+      })
+
+      const r = scriptResult?.result
+      if (!r?.success) {
+        console.log(`[자동로그인][SPA] ${site.name} 스크립트 실행 실패:`, r)
+        chrome.debugger.onEvent.removeListener(dialogHandler)
+        return false
+      }
+      console.log(`[자동로그인][SPA] ${site.name} .value 설정 + click() 완료 — 응답 폴링`)
+
+      // 응답 폴링 — URL 변경 감지 (로그인 성공 시 isLoginPage=false)
+      const POLL_INTERVAL = 1500
+      const TIMEOUT = 15000
+      const startTime = Date.now()
+      while (Date.now() - startTime < TIMEOUT) {
+        await wait(POLL_INTERVAL)
+
+        // alert로 에러 떴으면 즉시 실패 (가짜/잘못된 자격증명)
+        if (dialogMessage && dialogMessage.length > 0) {
+          console.log(`[자동로그인][SPA] ${site.name} 자격증명 오류 alert: "${dialogMessage.substring(0, 60)}"`)
+          chrome.debugger.onEvent.removeListener(dialogHandler)
+          return false
+        }
+
+        // 오토튠 진행 중 취소 감지
+        const stillActive = await _isAutotuneActive()
+        if (stillActive === false) {
+          console.log(`[자동로그인][SPA] ${site.name} 오토튠 취소 — 중단`)
+          chrome.debugger.onEvent.removeListener(dialogHandler)
+          return false
+        }
+
+        try {
+          const tabInfo = await chrome.tabs.get(tabId)
+          if (!site.isLoginPage(tabInfo.url || '')) {
+            console.log(`[자동로그인][SPA] ✅ ${site.name} 로그인 성공 — URL: ${tabInfo.url}`)
+            chrome.debugger.onEvent.removeListener(dialogHandler)
+            return true
+          }
+        } catch {
+          chrome.debugger.onEvent.removeListener(dialogHandler)
+          return false
+        }
+      }
+
+      console.log(`[자동로그인][SPA] ${site.name} 타임아웃 (${TIMEOUT / 1000}초) — 로그인 페이지 잔존`)
+      chrome.debugger.onEvent.removeListener(dialogHandler)
+      return false
+    } catch (err) {
+      console.error(`[자동로그인][SPA] ${site.name} 예외:`, err.message)
+      return false
+    } finally {
+      if (dialogAttached) {
+        try { await chrome.debugger.detach(target) } catch {}
+      }
+    }
+  } finally {
+    if (tabCreated && tabId) {
+      try { await chrome.tabs.remove(tabId) } catch {}
+    }
+  }
+}
+
 // 진입점 — 외부에서 자동로그인을 트리거할 때 호출 (3회 재시도)
 async function ensureLoggedIn(siteKey) {
   const site = AUTO_LOGIN_SITES[siteKey]
@@ -192,6 +400,23 @@ async function ensureLoggedIn(siteKey) {
 async function _ensureLoggedInSingle(siteKey) {
   const site = AUTO_LOGIN_SITES[siteKey]
   if (!site) return false
+
+  // [SPA 분기] LOTTEON / ABCmart / SSG는 백엔드 라디오 지정 계정 우선 시도
+  // 사용자가 설정 페이지에서 자동로그인용 계정 라디오 지정해 두면 .value 직접 설정 + click() 사용
+  // (Chrome 자동완성 보안 정책 우회 + SPA form 없는 사이트 대응)
+  // 라디오 미지정 시 (404) 기존 chrome.debugger triple-click 흐름으로 폴백
+  const SPA_DIRECT_LOGIN_SITES = ['lotteon', 'abcmart', 'ssg']
+  if (SPA_DIRECT_LOGIN_SITES.includes(siteKey)) {
+    const credential = await _fetchLoginCredential(siteKey)
+    if (credential?.username && credential?.password) {
+      console.log(`[자동로그인] ${site.name} 백엔드 자격증명 사용 (${credential.account_label}) — SPA 직접 로그인 시도`)
+      const ok = await _spaDirectLogin(siteKey, credential.username, credential.password)
+      if (ok) return true
+      console.log(`[자동로그인] ${site.name} SPA 직접 로그인 실패 — chrome.debugger 폴백 시도`)
+    } else {
+      console.log(`[자동로그인] ${site.name} 백엔드 자격증명 미지정 — chrome.debugger 폴백 사용`)
+    }
+  }
 
   // 무신사/KREAM/ABC마트는 보안 스크립트가 무거워 타임아웃 30초
   // 롯데ON은 Vue SPA로 폼 동적 렌더링 + 로그인 후 리다이렉트가 느림 → 30초

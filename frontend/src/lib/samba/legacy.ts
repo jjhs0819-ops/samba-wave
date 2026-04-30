@@ -889,7 +889,7 @@ export const shipmentApi = {
     }),
 
   // 스마트스토어 고아 상품 정리 (DB에 없는 Naver 등록 상품 탐지/삭제)
-  cleanupSmartstoreOrphans: (dryRun = true, maxDelete = 50, accountId?: string) => {
+  cleanupSmartstoreOrphans: (dryRun = true, maxDelete = 50, accountId?: string, productIds?: string[]) => {
     const params = new URLSearchParams()
     params.set('dry_run', String(dryRun))
     params.set('max_delete', String(maxDelete))
@@ -913,10 +913,13 @@ export const shipmentApi = {
         stale_db?: { db_id: string; style_code: string; mapped_origin_no: string; product_name: string }[]
         deleted?: string[]
         failed?: { origin_no: string; error: string }[]
+        failed_pages?: number[]
+        total_pages?: number
         error?: string
       }[]
     }>(`${SAMBA_PREFIX}/shipments/smartstore/cleanup-orphans?${params.toString()}`, {
       method: 'POST',
+      body: JSON.stringify({ product_ids: productIds && productIds.length > 0 ? productIds : null }),
     })
   },
 };
@@ -1982,6 +1985,7 @@ export interface SambaSourcingAccount {
   balance?: number
   balance_updated_at?: string
   is_active: boolean
+  is_login_default?: boolean
   additional_fields?: Record<string, unknown>
   created_at: string
   updated_at: string
@@ -2018,6 +2022,8 @@ export const sourcingAccountApi = {
     request<SambaSourcingAccount>(`${SAMBA_PREFIX}/sourcing-accounts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   toggle: (id: string) =>
     request<SambaSourcingAccount>(`${SAMBA_PREFIX}/sourcing-accounts/${id}/toggle`, { method: 'PUT' }),
+  setLoginDefault: (id: string) =>
+    request<SambaSourcingAccount>(`${SAMBA_PREFIX}/sourcing-accounts/${id}/set-login-default`, { method: 'PUT' }),
   delete: (id: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/sourcing-accounts/${id}`, { method: 'DELETE' }),
   getBalance: (id: string) =>
