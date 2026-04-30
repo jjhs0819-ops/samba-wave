@@ -372,6 +372,30 @@ async function _ensureLoggedInSingle(siteKey) {
       if (idPos?.found) {
         await _alTripleClick(tabId, idPos.x, idPos.y)
         console.log(`[자동로그인] ${site.name} 아이디 필드 triple-click 완료`)
+
+        // SPA(롯데ON): Chrome이 ID는 채우지만 PW는 별도 Vue 컴포넌트라 propagation 안 됨
+        // → ID autofill 직후 Tab 키 이벤트로 "username 입력 완료 + 다음 필드 이동" 신호를 줘서
+        //   Chrome 비밀번호 매니저가 PW 필드까지 자동 채움 (표준 트리거)
+        if (IS_SPA_LOGIN) {
+          await wait(800) // ID autofill 안정화 대기
+          try {
+            const target = { tabId }
+            await chrome.debugger.attach(target, '1.3')
+            await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
+              type: 'keyDown', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9, key: 'Tab', code: 'Tab',
+            })
+            await wait(50)
+            await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
+              type: 'keyUp', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9, key: 'Tab', code: 'Tab',
+            })
+            await chrome.debugger.detach(target)
+            console.log(`[자동로그인] ${site.name} Tab 키 이벤트 발화 (PW autofill propagation 유도)`)
+            await wait(1500) // Chrome PW autofill 처리 대기
+          } catch (tabErr) {
+            try { await chrome.debugger.detach({ tabId }) } catch {}
+            console.log(`[자동로그인] Tab 키 이벤트 실패 (무시): ${tabErr.message}`)
+          }
+        }
       } else {
         console.log(`[자동로그인] ${site.name} 아이디 필드 미발견`)
       }
