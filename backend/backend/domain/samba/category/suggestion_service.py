@@ -24,8 +24,32 @@ class CategorySuggestionMixin:
         """DB에서 마켓 카테고리를 조회하고, 없으면 하드코딩 fallback. 해외 카테고리 제외."""
         tree = await self.tree_repo.get_by_site(market)
         if tree and tree.cat1:
-            return _filter_overseas(tree.cat1)
-        return _filter_overseas(MARKET_CATEGORIES.get(market, []))
+            cats = _filter_overseas(tree.cat1)
+        else:
+            cats = _filter_overseas(MARKET_CATEGORIES.get(market, []))
+        # 마켓별 거래처 미허용 카테고리 원천 차단 (AI 매핑 후보에서 제거)
+        return _apply_market_blocklist(market, cats)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 마켓별 차단 카테고리 (AI 매핑 후보에서 원천 제거)
+# 추가 시 lotteon plugin의 런타임 우회 코드와 동기화 필요
+# ──────────────────────────────────────────────────────────────────────────
+def _apply_market_blocklist(market: str, cats: List[str]) -> List[str]:
+    """거래처 권한·정책으로 사용 불가한 카테고리를 후보 목록에서 제거."""
+    if market != "lotteon":
+        return cats
+    filtered: List[str] = []
+    for c in cats:
+        # FC05 패션의류 권한 없음 — AI는 스포츠의류로만 매핑하도록 강제
+        if c.startswith("패션의류"):
+            continue
+        # 거래처 미허용 다운/패딩 (FC08090202 등) — 마지막 세그먼트 키워드 검사
+        last = c.split(">")[-1].strip() if ">" in c else c
+        if any(kw in last for kw in ("패딩", "다운")):
+            continue
+        filtered.append(c)
+    return filtered
 
     async def suggest_category(
         self, source_category: str, target_market: str
