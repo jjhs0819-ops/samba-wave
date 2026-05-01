@@ -97,12 +97,17 @@ async def sourcing_collect_queue(request: Request) -> Any:
             headers={"Connection": "close"},
         )
     # 오토튠 강제 stop 직후 — 확장앱 in-flight 작업 즉시 중단 신호
+    # 단, 멀티워커 환경에서 stop을 받은 워커만 flag=True가 되고 start는 다른 워커에서
+    # 처리될 수 있으므로, 같은 워커에서 오토튠이 다시 실행 중이면 stale flag로 간주해 무시.
+    # (이렇게 안 하면 일부 워커의 잔재 flag 때문에 SSG/롯데ON 등 확장앱 의존 사이트의
+    #  작업이 폴링마다 forceStop으로 버려져 탭이 영영 안 열리는 회귀 발생)
     try:
         from backend.api.v1.routers.samba.collector_autotune import (
             _autotune_force_stopped,
+            _autotune_running_event,
         )
 
-        if _autotune_force_stopped:
+        if _autotune_force_stopped and not _autotune_running_event.is_set():
             return {"hasJob": False, "forceStop": True}
     except Exception:
         pass
