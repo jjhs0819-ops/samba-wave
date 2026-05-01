@@ -356,12 +356,58 @@ async function _triggerStartLogin() {
     const key = (typeof alExternalSiteToKey === 'function') ? alExternalSiteToKey(site) : null
     if (!key || triggered.has(key)) continue
     triggered.add(key)
+    // 사전 로그인 체크 — 이미 로그인 쿠키 있으면 SPA 로그인 건너뜀 (사용자 보고:
+    // "ABC마트 로그인 되어있는데 계속 로그인 페이지 삽질하네" 차단)
+    const already = await _isAlreadyLoggedIn(key)
+    if (already === true) {
+      console.log(`[startLogin] ${site} 이미 로그인 상태 — SPA 로그인 건너뜀`)
+      continue
+    }
     if (typeof globalThis.ensureLoggedIn === 'function') {
-      console.log(`[startLogin] ${site} 자동로그인 트리거 (오토튠 시작 시점)`)
+      console.log(`[startLogin] ${site} 자동로그인 트리거 (오토튠 시작 시점, 쿠키 상태=${already})`)
       // fire-and-forget — ensureLoggedIn 내부에서 pauseCollectPolling이 즉시 동기 호출됨
       globalThis.ensureLoggedIn(key).catch(e => console.warn(`[startLogin] ${site} 실패: ${e.message}`))
     }
   }
+}
+
+// 사이트별 "이미 로그인됨" 빠른 체크 — chrome.cookies로 의미있는 세션 쿠키 존재 확인.
+// 반환: true (로그인 확정), false (쿠키 없음 — 로그인 필요), null (판단 불가)
+async function _isAlreadyLoggedIn(siteKey) {
+  try {
+    if (siteKey === 'lotteon') {
+      // 기존 _checkLotteonLoggedInByCookies 재사용
+      if (typeof _checkLotteonLoggedInByCookies === 'function') {
+        return await _checkLotteonLoggedInByCookies()
+      }
+      return null
+    }
+    if (siteKey === 'abcmart') {
+      // a-rt.com 도메인 세션 쿠키 후보 — JSESSIONID 또는 mb 관련
+      const candidates = ['JSESSIONID', 'mberLoginCookie', 'mberNoCookie', 'mberIdCookie']
+      const cookies = await chrome.cookies.getAll({ domain: '.a-rt.com' })
+      for (const c of cookies) {
+        if (!candidates.includes(c.name)) continue
+        const v = (c.value || '').trim()
+        if (v && v !== '0' && v.toUpperCase() !== 'N') {
+          return true
+        }
+      }
+      // 후보 못 찾았으면 모든 a-rt.com 쿠키 중 의미있는 값 1개라도 있으면 로그인으로 간주 (보수적)
+      const hasAny = cookies.some(c => c.name && c.value && c.value.length > 10)
+      return hasAny ? true : false
+    }
+    if (siteKey === 'musinsa') {
+      const cookies = await chrome.cookies.getAll({ domain: '.musinsa.com' })
+      // 무신사: 토큰 쿠키 후보 (보수적 매칭)
+      const hasToken = cookies.some(c =>
+        c.name && (c.name.includes('TOKEN') || c.name.includes('SESSION') || c.name.includes('member'))
+        && c.value && c.value.length > 20
+      )
+      return hasToken
+    }
+  } catch {}
+  return null
 }
 
 async function _checkAutotuneStartTransition() {
