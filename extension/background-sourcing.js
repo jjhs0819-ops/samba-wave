@@ -689,9 +689,14 @@ async function _preCheckLoginGate(site, productId) {
   }
 
   if (loggedIn === true) return true
-  if (loggedIn === null) return true  // 판단 불가 — 진행 (사후 검증으로 보완)
+  // null(판단 불가)도 자동로그인 시도하도록 변경 — 쿠키 자체가 없는 프로필
+  // (처음 사용 / 클리어 직후)에서 비로그인으로 진행해 회원가 누락되는 사고 방지.
+  // 자격증명 없으면 자동로그인이 즉시 false 리턴해서 잡 보류로 안전하게 끝남.
+  if (loggedIn === null) {
+    console.log(`[${site}] 사전 로그인 게이트: 판단 불가 → 자동로그인 시도 (안전 측 — 회원가 누락 차단)`)
+  }
 
-  // 비로그인 확정 — 자동로그인 시도
+  // 비로그인 확정 또는 판단 불가 — 자동로그인 시도
   console.log(`[${site}] 사전 로그인 게이트: 비로그인 → 자동로그인 시도 (${productId})`)
   const siteKey = (typeof alExternalSiteToKey === 'function') ? alExternalSiteToKey(site) : null
   if (!siteKey || typeof ensureLoggedIn !== 'function') return false
