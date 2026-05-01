@@ -795,7 +795,7 @@ export default function WarroomPage() {
                                 <span style={{ fontSize: '0.78rem', color: '#aaa', fontWeight: 600 }}>{fmtNum(rate)}건/초</span>
                               )}
                             </div>
-                            {((priceTx && priceTx > 0) || (stockTx && stockTx > 0) || (deleted && deleted > 0)) && (
+                            {((priceTx ?? 0) > 0 || (stockTx ?? 0) > 0 || (deleted ?? 0) > 0) && (
                               <div style={{ display: 'flex', gap: '0.3rem', marginTop: '0.2rem' }}>
                                 {priceTx != null && priceTx > 0 && (
                                   <span style={{ fontSize: '0.72rem', padding: '0.05rem 0.3rem', borderRadius: '3px', background: '#FFB34715', color: '#FFB347', border: '1px solid #FFB34730' }}>

@@ -1700,12 +1700,17 @@ class ElevenstClient:
         instant_dsc_yn = "Y" if _discount_rate > 0 else "N"
 
         # 이미지 XML — 공식 필드명: prdImage01~04 (imageUrl 아님)
-        # _is_valid_detail_image와 동일한 필터 적용 (notice + 고해상도 원본 제외)
-        # 무신사 msscdn.net: 과거 `_1100.jpg`로 업스케일했으나 현재 msscdn에 _1100 사이즈가
-        # 존재하지 않아(404) 11번가가 이미지 fetch 실패 → "잘못된 이미지" 에러 발생(2026-05-01).
-        # → /images/.../_500.jpg → /thumbnails/images/.../_500.jpg?w=1100 으로 전환
-        # (thumbnails 엔드포인트는 1100px 리사이즈를 정상 제공)
-        # 또한 webp는 11번가가 거부하므로 jpg로 정규화.
+        # 11번가 요구사항: 300x300 이상, jpg/png/gif (webp 거부), URL fetch 가능해야 함.
+        #
+        # 무신사 케이스 처리(2026-05-01):
+        #   1) `_1100.jpg` 업스케일은 msscdn에 해당 사이즈 부재(404) → "잘못된 이미지" 에러
+        #      → /images/.../IMG_500.jpg → /thumbnails/images/.../IMG_500.jpg?w=1100 으로 전환
+        #        (thumbnails 엔드포인트가 1100px 리사이즈를 정상 제공)
+        #   2) goodsImages가 부족하면 musinsa proxy가 detail_images(상세 desc_html에서 추출한
+        #      배너/사이즈표 등)로 `images` 슬롯을 9개까지 채움. 이 중 작은 배너는 300x300 미달
+        #      → "300x300 이상" 에러
+        #      → prdImage01~04는 정품 상품 이미지(/images/goods_img/)만 허용
+        #   3) webp는 11번가가 거부하므로 jpg로 정규화.
         import re as _re_img
 
         def _normalize_msscdn(u: str) -> str:
@@ -1719,8 +1724,25 @@ class ElevenstClient:
                 u = u + ("&" if "?" in u else "?") + "w=1100"
             return u
 
+        def _is_safe_main_image(url: str) -> bool:
+            """prdImage01~04용 안전 필터 — 300x300 보장 가능한 정품 이미지만 허용."""
+            if not url or not url.lower().startswith("https://"):
+                return False
+            lower = url.lower()
+            # 무신사: 정품 상품 이미지(/images/goods_img/)만 허용. 배너/사이즈표/공지 제외
+            if "msscdn.net" in lower:
+                if "/images/goods_img/" not in lower:
+                    return False
+            # 확장자 검증 (svg/webp 제외)
+            path = lower.split("?", 1)[0]
+            if not any(path.endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".gif")):
+                return False
+            return True
+
         product_images = [
-            _normalize_msscdn(u) for u in images if _is_valid_detail_image(u)
+            _normalize_msscdn(u)
+            for u in images
+            if _is_valid_detail_image(u) and _is_safe_main_image(u)
         ]
         image_xml = ""
         if product_images:
