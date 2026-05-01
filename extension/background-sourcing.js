@@ -371,42 +371,77 @@ async function _triggerStartLogin() {
   }
 }
 
-// 사이트별 "이미 로그인됨" 빠른 체크 — chrome.cookies로 의미있는 세션 쿠키 존재 확인.
-// 반환: true (로그인 확정), false (쿠키 없음 — 로그인 필요), null (판단 불가)
+// 사이트별 "실제 로그인됨" 활성 체크 — 회원 전용 페이지 fetch로 실제 세션 유효성 확인.
+// 쿠키 존재만으로는 부족 (좀비 쿠키 false-positive 사고 다발). 서버 응답으로 판정.
+// 반환: true (로그인 확정), false (비로그인 확정), null (판단 불가 — 네트워크 오류 등)
 async function _isAlreadyLoggedIn(siteKey) {
   try {
     if (siteKey === 'lotteon') {
-      // 기존 _checkLotteonLoggedInByCookies 재사용
-      if (typeof _checkLotteonLoggedInByCookies === 'function') {
-        return await _checkLotteonLoggedInByCookies()
+      // 회원 전용 마이페이지 — 비로그인이면 /member/login으로 302 redirect
+      const resp = await fetch('https://www.lotteon.com/p/myLotte/main', {
+        method: 'GET',
+        credentials: 'include',
+        redirect: 'manual',  // redirect 직접 감지
+      })
+      // redirect=manual에서 status 0 + type='opaqueredirect' 또는 Location 헤더 검사
+      if (resp.type === 'opaqueredirect' || resp.status === 302 || resp.status === 301) {
+        return false  // redirect 발생 = 비로그인
+      }
+      if (resp.status === 200) {
+        // 추가 검증 — 응답 본문에 로그인 링크가 있는지 (좀비 쿠키로 200 받는 경우)
+        const text = await resp.text()
+        if (text.includes('/member/login') || text.includes('로그인/회원가입')) {
+          return false
+        }
+        return true
       }
       return null
     }
     if (siteKey === 'abcmart') {
-      // a-rt.com 도메인 세션 쿠키 후보 — JSESSIONID 또는 mb 관련
-      const candidates = ['JSESSIONID', 'mberLoginCookie', 'mberNoCookie', 'mberIdCookie']
-      const cookies = await chrome.cookies.getAll({ domain: '.a-rt.com' })
-      for (const c of cookies) {
-        if (!candidates.includes(c.name)) continue
-        const v = (c.value || '').trim()
-        if (v && v !== '0' && v.toUpperCase() !== 'N') {
-          return true
-        }
+      // 회원 전용 마이페이지 — 비로그인이면 로그인 페이지로 redirect
+      const resp = await fetch('https://abcmart.a-rt.com/mypage', {
+        method: 'GET',
+        credentials: 'include',
+        redirect: 'manual',
+      })
+      if (resp.type === 'opaqueredirect' || resp.status === 302 || resp.status === 301) {
+        return false
       }
-      // 후보 못 찾았으면 모든 a-rt.com 쿠키 중 의미있는 값 1개라도 있으면 로그인으로 간주 (보수적)
-      const hasAny = cookies.some(c => c.name && c.value && c.value.length > 10)
-      return hasAny ? true : false
+      if (resp.status === 200) {
+        const text = await resp.text()
+        if (text.includes('/login') && (text.includes('로그인') || text.includes('Login'))) {
+          // 로그인 페이지 자체일 수 있음 — DOM 시그널 추가 검증
+          // 마이페이지면 '주문내역' 같은 멤버 전용 키워드 노출
+          if (!text.includes('주문내역') && !text.includes('마이쿠폰')) {
+            return false
+          }
+        }
+        return true
+      }
+      return null
     }
     if (siteKey === 'musinsa') {
-      const cookies = await chrome.cookies.getAll({ domain: '.musinsa.com' })
-      // 무신사: 토큰 쿠키 후보 (보수적 매칭)
-      const hasToken = cookies.some(c =>
-        c.name && (c.name.includes('TOKEN') || c.name.includes('SESSION') || c.name.includes('member'))
-        && c.value && c.value.length > 20
-      )
-      return hasToken
+      // 회원 전용 마이페이지 — JSON API 또는 HTML
+      const resp = await fetch('https://www.musinsa.com/mypage', {
+        method: 'GET',
+        credentials: 'include',
+        redirect: 'manual',
+      })
+      if (resp.type === 'opaqueredirect' || resp.status === 302 || resp.status === 301) {
+        return false
+      }
+      if (resp.status === 200) {
+        const text = await resp.text()
+        if (text.includes('member.one.musinsa.com/login') || text.includes('/auth/login')) {
+          return false
+        }
+        return true
+      }
+      return null
     }
-  } catch {}
+  } catch (e) {
+    console.log(`[startLogin] ${siteKey} 로그인 체크 네트워크 오류 — null 반환: ${e.message}`)
+  }
   return null
 }
 
