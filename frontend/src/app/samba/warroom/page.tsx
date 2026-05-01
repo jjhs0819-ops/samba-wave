@@ -26,6 +26,8 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, extern
 
   // 마운트 시 오토튠 상태 자동 감지 (탭 재진입 대응)
   const [selfDetectedRunning, setSelfDetectedRunning] = useState(false)
+  // 일시적 running:false 무시 — 3회 연속 false일 때만 selfDetectedRunning 해제
+  const selfFalseCountRef = useRef(0)
   const isRunning = externalRunning || selfDetectedRunning
 
   useEffect(() => {
@@ -33,10 +35,22 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, extern
     collectorApi.autotuneStatus().then(st => {
       if (st) {
         if (onStatusChange) onStatusChange(st.running, st.cycle_count, st.last_tick, st.refreshed_count || 0)
-        if (st.running) setSelfDetectedRunning(true)
+        if (st.running) { selfFalseCountRef.current = 0; setSelfDetectedRunning(true) }
       }
     }).catch(() => {})
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 폴링 중단 시 자체 복구 타이머 — 백엔드 재시작 후 running:true가 되면 10초 내 자동 재개
+  useEffect(() => {
+    if (isRunning) return
+    const recoveryTimer = setInterval(async () => {
+      try {
+        const st = await collectorApi.autotuneStatus()
+        if (st?.running) { selfFalseCountRef.current = 0; setSelfDetectedRunning(true) }
+      } catch { /* 무시 */ }
+    }, 10_000)
+    return () => clearInterval(recoveryTimer)
+  }, [isRunning])
 
   useEffect(() => {
     // 오토튠 꺼져있으면 폴링 안 함
@@ -55,7 +69,12 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, extern
         const atStatus = await collectorApi.autotuneStatus().catch(() => null)
         if (atStatus) {
           if (onStatusChange) onStatusChange(atStatus.running, atStatus.cycle_count, atStatus.last_tick, atStatus.refreshed_count || 0)
-          if (!atStatus.running) setSelfDetectedRunning(false)
+          if (atStatus.running) {
+            selfFalseCountRef.current = 0
+          } else {
+            selfFalseCountRef.current++
+            if (selfFalseCountRef.current >= 3) setSelfDetectedRunning(false)
+          }
         }
         // running 상태와 무관하게 로그 폴링 유지 (별도 스레드 타이밍 차이 대응)
         const idx = sinceIdxRef.current

@@ -4898,7 +4898,7 @@ def _parse_playauto_order(
         "customer_address": ro.get("RecipientAddress", ""),
         "quantity": quantity,
         "sale_price": sale_price,
-        "cost": int(ro.get("CostPrice", 0) or 0),
+        "cost": 0,
         "fee_rate": 0,
         "revenue": supply_price if supply_price else sale_price,
         "status": status_map.get(order_state, "pending"),

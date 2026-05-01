@@ -575,6 +575,18 @@ class LotteonSourcingPlugin(SourcingPlugin):
             if any(_safe_stock(o.get("stock")) > 0 for o in detail["options"]):
                 detail["_option_stock_live"] = True
 
+        # DOM에서 직접 파싱한 "나의 혜택가" — benefits API / qapi 실패 시 폴백으로 사용
+        if dom_ext:
+            _dom_benefit = dom_ext.get("best_benefit_price") or 0
+            if _dom_benefit > 0:
+                _existing = detail.get("bestBenefitPrice") or 0
+                if _existing <= 0:
+                    detail["bestBenefitPrice"] = _dom_benefit
+                    logger.info(
+                        f"[LOTTEON] DOM 혜택가 폴백 적용: {site_product_id} "
+                        f"dom={_dom_benefit:,} (benefits/qapi 미수집)"
+                    )
+
         if dom_ext:
             # §12 방어 로깅 — DOM이 다른 상품 긁었을 가능성 조기 감지
             _check_name_mismatch(

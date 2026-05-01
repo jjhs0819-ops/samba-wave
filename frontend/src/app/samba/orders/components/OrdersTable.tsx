@@ -124,8 +124,8 @@ export default function OrdersTable(props: OrdersTableProps) {
           ) : filteredOrders.map((o, index) => {
             // 편집 중에는 사용자 입력을 그대로 표시 (콤마 자동삽입으로 인한 커서 꼬임/계산식 깨짐 방지)
             // Blur 후 editingCosts에서 제거되면 저장값(o.cost)에 콤마 포맷 적용
-            const costDisplay = editingCosts[o.id] !== undefined ? editingCosts[o.id] : (o.cost != null ? fmtNum(o.cost) : '')
-            const shipFeeDisplay = editingShipFees[o.id] !== undefined ? editingShipFees[o.id] : (o.shipping_fee != null ? fmtNum(o.shipping_fee) : '')
+            const costDisplay = editingCosts[o.id] !== undefined ? editingCosts[o.id] : (o.cost ? fmtNum(o.cost) : '')
+            const shipFeeDisplay = editingShipFees[o.id] !== undefined ? editingShipFees[o.id] : (o.shipping_fee ? fmtNum(o.shipping_fee) : '')
             const liveProfit = calcProfit(o)
             const liveProfitRate = calcProfitRate(o)
             const liveFeeRate = calcFeeRate(o)

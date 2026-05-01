@@ -1701,17 +1701,26 @@ class ElevenstClient:
 
         # 이미지 XML — 공식 필드명: prdImage01~04 (imageUrl 아님)
         # _is_valid_detail_image와 동일한 필터 적용 (notice + 고해상도 원본 제외)
-        # 무신사 msscdn.net 썸네일(_125/_250/_500)은 11번가 300x300 최소 요구사항 미달
-        # → _1100으로 업스케일 (eBay와 동일 패턴, ebay.py:75-78)
+        # 무신사 msscdn.net: 과거 `_1100.jpg`로 업스케일했으나 현재 msscdn에 _1100 사이즈가
+        # 존재하지 않아(404) 11번가가 이미지 fetch 실패 → "잘못된 이미지" 에러 발생(2026-05-01).
+        # → /images/.../_500.jpg → /thumbnails/images/.../_500.jpg?w=1100 으로 전환
+        # (thumbnails 엔드포인트는 1100px 리사이즈를 정상 제공)
+        # 또한 webp는 11번가가 거부하므로 jpg로 정규화.
         import re as _re_img
 
-        def _upscale_msscdn(u: str) -> str:
-            if "msscdn.net" in u:
-                return _re_img.sub(r"_(125|250|500)\.(jpg|png|webp)", r"_1100.\2", u)
+        def _normalize_msscdn(u: str) -> str:
+            if "msscdn.net" not in u:
+                return u
+            # webp → jpg (11번가는 webp 거부)
+            u = _re_img.sub(r"(_\d+)\.webp(\?|$)", r"\1.jpg\2", u)
+            # /images/goods_img/... → /thumbnails/images/goods_img/...?w=1100
+            if "/thumbnails/" not in u and "/images/goods_img/" in u:
+                u = u.replace("/images/goods_img/", "/thumbnails/images/goods_img/")
+                u = u + ("&" if "?" in u else "?") + "w=1100"
             return u
 
         product_images = [
-            _upscale_msscdn(u) for u in images if _is_valid_detail_image(u)
+            _normalize_msscdn(u) for u in images if _is_valid_detail_image(u)
         ]
         image_xml = ""
         if product_images:
