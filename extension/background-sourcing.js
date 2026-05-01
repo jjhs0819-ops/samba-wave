@@ -532,7 +532,8 @@ async function _detectLoginStatus(tabId, site) {
           }
         }
 
-        if (hasLogoutLink && !hasLoginLink) return { isLoggedIn: true }
+        // 로그아웃 링크 발견 = 로그인 확정 (로그인 링크도 함께 있어도 무시 — 숨겨진 요소 오탐 방지)
+        if (hasLogoutLink) return { isLoggedIn: true }
         if (hasLoginLink) return { isLoggedIn: false, reason: 'login link present' }
         // 둘 다 없으면 헤더 selector가 안 잡혔거나 사이트 구조 변경 — 보수적으로 null
         return { isLoggedIn: null, reason: 'no signal' }
@@ -1185,8 +1186,9 @@ async function handleSourcingJob(job) {
             result._loginRequired = true
             console.log(`[LOTTEON] DOM=비로그인 확정(login_link) — 쿠키 무시`)
           } else if (sig === 'logout_link') {
-            // DOM에 로그아웃 링크 명시 — 로그인 확정
+            // DOM에 로그아웃 링크 명시 — 로그인 확정 기록
             result._loginRequired = false
+            _siteLoginConfirmed.add(job.site)
           } else {
             // ambiguous — extractDetailData의 bodyText 텍스트 검사도 못 찾은 경우
             // (완전 미렌더링) → 로그인으로 간주 (false-positive 차단 우선)
@@ -1257,16 +1259,19 @@ async function handleSourcingJob(job) {
     if (job.type === 'detail' && tabId && job.site !== 'SSG' && (result == null || result.success !== false)) {
       let loginNeeded = result?._loginRequired
       if (loginNeeded === undefined) {
-        // 자동로그인 성공 직후 N분간 detect 스킵 — _detectLoginStatus false-positive 방지
-        // (LOTTEON 상세페이지처럼 헤더 셀렉터로 로그아웃 링크 판정 어려운 사이트의 무한 트리거 차단)
-        const AL_GRACE_MS = 30 * 60 * 1000  // 30분
-        const siteKey = (typeof alExternalSiteToKey === 'function') ? alExternalSiteToKey(job.site) : null
-        const lastAt = (siteKey && globalThis._lastAutoLoginSuccessAt) ? globalThis._lastAutoLoginSuccessAt[siteKey] : 0
-        if (lastAt && Date.now() - lastAt < AL_GRACE_MS) {
-          // 최근 자동로그인 성공 — detect 스킵 (로그인 상태로 간주)
+        if (_siteLoginConfirmed.has(job.site)) {
+          // 이 세션에서 이미 로그인 확인됨 — detectLoginStatus 스킵 (숨겨진 login link 오탐 방지)
         } else {
-          const isLoggedIn = await _detectLoginStatus(tabId, job.site)
-          if (isLoggedIn === false) loginNeeded = true
+          // 자동로그인 성공 직후 N분간 detect 스킵 — _detectLoginStatus false-positive 방지
+          const AL_GRACE_MS = 30 * 60 * 1000  // 30분
+          const siteKey = (typeof alExternalSiteToKey === 'function') ? alExternalSiteToKey(job.site) : null
+          const lastAt = (siteKey && globalThis._lastAutoLoginSuccessAt) ? globalThis._lastAutoLoginSuccessAt[siteKey] : 0
+          if (lastAt && Date.now() - lastAt < AL_GRACE_MS) {
+            // 최근 자동로그인 성공 — detect 스킵 (로그인 상태로 간주)
+          } else {
+            const isLoggedIn = await _detectLoginStatus(tabId, job.site)
+            if (isLoggedIn === false) loginNeeded = true
+          }
         }
       }
       if (loginNeeded) {
