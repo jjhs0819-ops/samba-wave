@@ -19,15 +19,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sqlalchemy import text  # noqa: E402
 
 from backend.core.config import settings  # noqa: E402
-from sqlalchemy.ext.asyncio import create_async_engine  # noqa: E402
+from backend.db.orm import get_write_engine  # noqa: E402
 
 
 def _get_engine():
-    url = (
-        f"postgresql+asyncpg://{settings.write_db_user}:{settings.write_db_password}"
-        f"@{settings.write_db_host}:{settings.write_db_port}/{settings.write_db_name}"
-    )
-    return create_async_engine(url, echo=False)
+    return get_write_engine()
 
 
 def _replace_lotteon_path(path: str) -> str | None:
@@ -64,6 +60,30 @@ def _replace_lotteon_path(path: str) -> str | None:
                 "스포츠의류/운동화 > 여성스포츠의류 > 후드"
                 if is_female
                 else "스포츠의류/운동화 > 남성스포츠의류 > 후드"
+            )
+        if "트레이닝" in last:
+            return (
+                "스포츠의류/운동화 > 여성스포츠의류 > 트레이닝복"
+                if is_female
+                else "스포츠의류/운동화 > 남성스포츠의류 > 트레이닝복"
+            )
+        if "니트" in last or "스웨터" in last:
+            return (
+                "스포츠의류/운동화 > 여성스포츠의류 > 니트"
+                if is_female
+                else "스포츠의류/운동화 > 남성스포츠의류 > 니트"
+            )
+        if "가디건" in last or "카디건" in last:
+            return (
+                "스포츠의류/운동화 > 여성스포츠의류 > 가디건"
+                if is_female
+                else "스포츠의류/운동화 > 남성스포츠의류 > 가디건"
+            )
+        if "셔츠" in last or "블라우스" in last:
+            return (
+                "스포츠의류/운동화 > 여성스포츠의류 > 긴팔티셔츠"
+                if is_female
+                else "스포츠의류/운동화 > 남성스포츠의류 > 긴팔티셔츠"
             )
         if "스커트" in last:
             return "스포츠의류/운동화 > 여성스포츠의류 > 스커트"
