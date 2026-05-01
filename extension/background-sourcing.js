@@ -398,34 +398,31 @@ async function _isAlreadyLoggedIn(siteKey) {
       return null
     }
     if (siteKey === 'abcmart') {
-      // ABCmart와 GrandStage는 같은 자동로그인 키('abcmart')지만 서브도메인 세션이 분리됨.
-      // 사용자 사고 보고 — abcmart는 로그인 OK인데 grandstage는 비로그인 → 비회원가 수집.
-      // 두 도메인 모두 로그인 OK여야만 true 반환. 하나라도 비로그인이면 false → SPA 로그인 트리거.
-      for (const subdomain of ['abcmart.a-rt.com', 'grandstage.a-rt.com']) {
-        try {
-          const resp = await fetch(`https://${subdomain}/mypage`, {
-            method: 'GET',
-            credentials: 'include',
-            redirect: 'manual',
-          })
-          if (resp.type === 'opaqueredirect' || resp.status === 302 || resp.status === 301) {
-            console.log(`[startLogin] ${subdomain} 비로그인 (302) — abcmart 키 false`)
+      // abcmart 로그인 시 .a-rt.com 도메인 쿠키가 grandstage에도 자동 공유됨.
+      // → abcmart.a-rt.com/mypage 한 곳만 체크하면 충분 (사용자 확인).
+      // 사용자 보고: GrandStage 별도 체크 추가했더니 grandstage.a-rt.com/mypage가 false 응답 →
+      // 불필요한 SPA 로그인 트리거 → 멤버 세션이 sourcing-account 세션으로 덮어써짐 → 비회원가.
+      try {
+        const resp = await fetch('https://abcmart.a-rt.com/mypage', {
+          method: 'GET',
+          credentials: 'include',
+          redirect: 'manual',
+        })
+        if (resp.type === 'opaqueredirect' || resp.status === 302 || resp.status === 301) {
+          return false
+        }
+        if (resp.status === 200) {
+          const text = await resp.text()
+          if (text.includes('/login') && !text.includes('주문내역') && !text.includes('마이쿠폰')) {
             return false
           }
-          if (resp.status === 200) {
-            const text = await resp.text()
-            // 로그인 페이지로 fallback된 경우 멤버 전용 키워드(주문내역/마이쿠폰) 부재 → 비로그인
-            if (text.includes('/login') && !text.includes('주문내역') && !text.includes('마이쿠폰')) {
-              console.log(`[startLogin] ${subdomain} 비로그인 (DOM 키워드) — abcmart 키 false`)
-              return false
-            }
-          }
-        } catch (e) {
-          console.log(`[startLogin] ${subdomain} 체크 실패 — null 반환: ${e.message}`)
-          return null  // 네트워크 오류 — 보수적으로 ensureLoggedIn 호출하도록 null
+          return true
         }
+        return null
+      } catch (e) {
+        console.log(`[startLogin] abcmart.a-rt.com 체크 실패 — null 반환: ${e.message}`)
+        return null
       }
-      return true  // abcmart + grandstage 둘 다 통과
     }
     if (siteKey === 'musinsa') {
       // 회원 전용 마이페이지 — JSON API 또는 HTML
