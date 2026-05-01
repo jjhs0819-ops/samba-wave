@@ -1773,36 +1773,16 @@ async function extractDetailData(tabId, site, productId) {
         // 로그인 상태 감지 — 헤더의 "로그인" 링크/버튼 존재 여부로 판단
         // 비로그인이면 자동로그인 트리거 신호로 사용 (LOTTEON 페이지에 "나의 혜택가"가 마케팅 텍스트로 노출되어
         // 비로그인 상태에서도 가격이 추출되는 false-positive를 명시적으로 차단)
-        // 로그아웃 링크 셀렉터 — /myPage 대소문자 변형 모두 포함
-        const logoutAnchors = document.querySelectorAll('a[href*="/logout"], a[href*="member/logout"], a[href*="/myPage"], a[href*="/mypage"]')
-        let hasLoginLink = false
-        let hasLogoutLink = false
-        for (const a of logoutAnchors) {
-          const href = (a.getAttribute('href') || '').toLowerCase()
-          const txt = (a.textContent || '').trim()
-          if (href.includes('logout') || txt === '로그아웃' || href.includes('mypage')) {
-            hasLogoutLink = true
-            break
+        // 로그인 판단 — #memInfo hidden input의 mbNo 존재 여부 (가장 확실한 신호)
+        let isLoggedIn = false
+        try {
+          const memInfoEl = document.querySelector('#memInfo')
+          if (memInfoEl) {
+            const memInfo = JSON.parse(memInfoEl.value || '{}')
+            isLoggedIn = !!(memInfo.mbNo)
           }
-        }
-        // bodyText에서 "로그아웃" 확인 — 셀렉터 미매칭 보완 (로그아웃이 있으면 로그인 링크 무시)
-        const _bodySlice = (document.body?.innerText || '').slice(0, 3000)
-        if (!hasLogoutLink && _bodySlice.includes('로그아웃')) hasLogoutLink = true
-        // 로그아웃 확인 안 됐을 때만 로그인 링크 검사 (숨겨진 /login href 오탐 방지)
-        if (!hasLogoutLink) {
-          const loginAnchors = document.querySelectorAll('a[href*="member/login/common"], button[class*="login"]')
-          for (const a of loginAnchors) {
-            const href = (a.getAttribute('href') || '').toLowerCase()
-            if (href.includes('logout')) continue
-            const txt = (a.textContent || '').trim()
-            if (txt === '로그인' || txt === 'Login') { hasLoginLink = true; break }
-          }
-          // bodyText '로그인' 텍스트 폴백 제거 — 상품 페이지의 마케팅 문구 오탐 방지
-          // CSS 셀렉터로만 login_link 판정, 못 찾으면 ambiguous → 차단 안 함
-        }
-        // 로그아웃 링크 = 로그인 확정 (로그인 링크 공존해도 무시)
-        const isLoggedIn = hasLogoutLink
-        const _domLoginSignal = hasLogoutLink ? 'logout_link' : (hasLoginLink ? 'login_link' : 'ambiguous')
+        } catch {}
+        const _domLoginSignal = isLoggedIn ? 'logout_link' : 'login_link'
 
         let salePrice = 0
         let originalPrice = 0
