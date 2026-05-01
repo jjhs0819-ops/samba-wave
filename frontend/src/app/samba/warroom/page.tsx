@@ -57,12 +57,13 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, extern
   externalRunning?: boolean
   filterSources?: string[] | null
 }) {
-  // 로그에 클라이언트 부여 시퀀스 번호 — slice(-30)으로 인덱스가 매번 바뀌어
-  // React key가 흔들리고 30개 항목이 unmount+remount하며 깜빡이던 문제 해결.
+  // 로그에 클라이언트 부여 시퀀스 번호 — React key 안정화용
   const [logs, setLogs] = useState<Array<RefreshLogEntry & { __seq: number }>>([])
   const [, setIntervals] = useState<Record<string, number>>({})
   const sinceIdxRef = useRef(0)
   const seqRef = useRef(0)
+  // filterSources를 폴링 클로저에서 최신값으로 읽기 위한 ref
+  const filterSourcesRef = useRef(filterSources)
   const containerRef = useRef<HTMLDivElement>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -74,6 +75,8 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, extern
   // 일시적 running:false 무시 — 3회 연속 false일 때만 selfDetectedRunning 해제
   const selfFalseCountRef = useRef(0)
   const isRunning = externalRunning || selfDetectedRunning
+
+  useEffect(() => { filterSourcesRef.current = filterSources }, [filterSources])
 
   useEffect(() => {
     // 마운트 직후 서버 상태 확인 — running이면 자동 폴링 시작
@@ -134,7 +137,10 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, extern
           setLogs(prev => {
             const tagged = res.logs.map(l => ({ ...l, __seq: ++seqRef.current }))
             const next = [...prev, ...tagged]
-            return next.slice(-30)
+            // slice 전에 선택된 소싱처 필터 적용 — 다른 소싱처 로그가 30개 버퍼 채워 밀려나는 현상 방지
+            const fs = filterSourcesRef.current
+            const kept = fs && fs.length > 0 ? next.filter(l => shouldShowLog(l.msg, fs)) : next
+            return kept.slice(-30)
           })
           requestAnimationFrame(() => {
             if (containerRef.current) {
@@ -382,6 +388,8 @@ export default function WarroomPage() {
             const dev = getDeviceId()
             if (!dev) return
             const { API_BASE_URL: apiBase } = await import('@/config/api')
+            // null(전체선택)이면 availSources로 명시 등록 — 레거시 모드 차단
+            // availSources는 아직 비어있을 수 있으므로 null 그대로 전달 (초기화 후 toggleSource에서 재등록됨)
             await fetchWithAuth(`${apiBase}/api/v1/samba/collector/autotune/pc-allowed-sites`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -394,6 +402,14 @@ export default function WarroomPage() {
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
   }, [])
+
+  // availSources 로드 완료 후 전체선택(null) 상태면 명시 목록으로 PC분담 재등록
+  // 초기 ALLOWED_SITES 수신 시 availSources가 아직 비어 null로 등록됐을 경우 보정
+  useEffect(() => {
+    if (availSources.length === 0) return
+    if (filterSources !== null) return  // 부분선택 상태는 이미 올바르게 등록됨
+    registerPcAllowedSites([...availSources])
+  }, [availSources]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 소싱처 체크 변경 시 익스텐션 chrome.storage 동기화 (PC별 분담 헤더용)
   // null=전체처리(미설정), []=전체해제, [...]=부분선택 — 구분 그대로 전달
@@ -451,7 +467,8 @@ export default function WarroomPage() {
       // 3) sessionStorage: 새로고침 즉시 복원 (1프레임 leak 방지)
       // 4) saveFilters(null, ...): legacy 글로벌 enabled_sources는 항상 null로 비활성화
       syncAllowedSitesToExtension(result)
-      registerPcAllowedSites(result)
+      // 전체선택(null)이어도 availSources 명시 전달 — DB에만 있고 UI에 없는 소싱처 레거시 모드 실행 차단
+      registerPcAllowedSites(result === null ? [...all] : result)
       saveFilterSourcesToSession(result)
       saveFilters(null, filterMarkets)
       return result

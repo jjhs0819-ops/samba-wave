@@ -1280,6 +1280,8 @@ async function handleSourcingJob(job) {
         result = { success: false, login_required: true, message: '비로그인 — 자동로그인 후 재시도 필요' }
       } else {
         reportLoginSuccess(job.site)
+        // 로그인 통과 확정 — 이후 동일 소싱처는 _detectLoginStatus 스킵
+        _siteLoginConfirmed.add(job.site)
       }
     }
 
@@ -1795,7 +1797,8 @@ async function extractDetailData(tabId, site, productId) {
             const txt = (a.textContent || '').trim()
             if (txt === '로그인' || txt === 'Login') { hasLoginLink = true; break }
           }
-          if (!hasLoginLink && _bodySlice.includes('로그인') && !_bodySlice.includes('로그아웃')) hasLoginLink = true
+          // bodyText '로그인' 텍스트 폴백 제거 — 상품 페이지의 마케팅 문구 오탐 방지
+          // CSS 셀렉터로만 login_link 판정, 못 찾으면 ambiguous → 차단 안 함
         }
         // 로그아웃 링크 = 로그인 확정 (로그인 링크 공존해도 무시)
         const isLoggedIn = hasLogoutLink
@@ -1881,23 +1884,23 @@ async function extractDetailData(tabId, site, productId) {
         const sellerEl = document.querySelector('ul.sellerList > li.currentProduct .sellerGrade strong')
         const seller = sellerEl?.textContent?.trim() || null
 
-        if (name || salePrice > 0 || options.length > 0) {
-          return {
-            success: true,
-            site_product_id: prdId,
-            name, brand,
-            original_price: originalPrice,
-            sale_price: salePrice || benefitPrice,
-            best_benefit_price: benefitPrice,
-            images: images.slice(0, 9),
-            source_site: siteName,
-            category: '', category1: '', category2: '', category3: '',
-            options,
-            seller,  // "롯데백화점 인천점" 등 — 지점 정보
-            pageTitle: document.title,  // 백엔드에서 product.name 정합성 검증용 (§12)
-            _loginRequired: !isLoggedIn,  // 비로그인 감지 — handleSourcingJob에서 자동로그인 트리거 신호로 사용
-            _domLoginSignal,  // 'login_link' | 'logout_link' | 'ambiguous'
-          }
+        // 데이터 유무와 무관하게 항상 _domLoginSignal 포함 반환
+        // — 데이터 없어도 undefined 반환 시 공통 블록 _detectLoginStatus 오탐 차단 방지
+        return {
+          success: name || salePrice > 0 || options.length > 0,
+          site_product_id: prdId,
+          name, brand,
+          original_price: originalPrice,
+          sale_price: salePrice || benefitPrice,
+          best_benefit_price: benefitPrice,
+          images: images.slice(0, 9),
+          source_site: siteName,
+          category: '', category1: '', category2: '', category3: '',
+          options,
+          seller,
+          pageTitle: document.title,
+          _loginRequired: !isLoggedIn,
+          _domLoginSignal,
         }
       }
 

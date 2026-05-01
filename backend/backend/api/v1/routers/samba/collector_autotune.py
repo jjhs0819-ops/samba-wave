@@ -110,7 +110,7 @@ async def _run_transmit_in_background(coro_factory):
 # 폴링 시점에 갱신되며 PC_LAST_SEEN_TTL 동안 폴링 없으면 자동 제거.
 _pc_allowed_sites: dict[str, set[str]] = {}
 _pc_last_seen: dict[str, float] = {}
-PC_LAST_SEEN_TTL = 120.0  # 2분 무폴링 → stale로 간주하고 union에서 제외
+PC_LAST_SEEN_TTL = 86400.0  # 24시간 — 오토튠 중단까지 등록 유지
 # 현재 오토튠에 합류한 PC 집합 — 시작 시 추가, 개별 중지(leave) 시 제거.
 # 모든 PC가 나가면 오토튠 백엔드 자동 중지.
 _pc_joined_set: set[str] = set()
