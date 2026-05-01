@@ -209,8 +209,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       chrome.storage.local.set({ abcmart_membership_rate: membershipRate, abcmart_membership_grade: membershipGrade })
     } else {
       // ABC마트 만료 확정 신호 — 즉시 자동로그인 트리거 (상품 처리 큐 대기 안 함)
-      if (typeof reportLoginFailure === 'function') {
+      const abcActive = typeof isSiteActiveForSourcing === 'function'
+        && (isSiteActiveForSourcing('ABCmart') || isSiteActiveForSourcing('GrandStage'))
+      if (abcActive && typeof reportLoginFailure === 'function') {
         reportLoginFailure('ABCmart', true)
+      } else {
+        console.log('[ABCmart] expired membership signal ignored - no active ABCmart/GrandStage sourcing job')
       }
     }
     handleAbcmartMembershipSync({ rate: membershipRate, grade: membershipGrade, needsCookie: !!needsCookie, expired: !!expired })

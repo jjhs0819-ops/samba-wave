@@ -265,10 +265,37 @@ let _sourcingForceStop = false
 const _siteSemaphores = new Map() // site → { active: number }
 let _siteConcurrencyCache = { value: null, at: 0 }
 const _SITE_CONC_CACHE_MS = 5000
+const _activeSourcingSites = new Map()
 
 const _SITE_CAP_DEFAULTS = {
   ABCmart: 5, GrandStage: 5, LOTTEON: 2, SSG: 2, MUSINSA: 4, KREAM: 5, GSShop: 1, REXMONDE: 3,
 }
+
+function _getActiveTrackingSites(site) {
+  if (site === 'ABCmart' || site === 'GrandStage') return ['ABCmart', 'GrandStage']
+  return [site]
+}
+
+function _markSourcingSiteActive(site) {
+  for (const key of _getActiveTrackingSites(site)) {
+    _activeSourcingSites.set(key, (_activeSourcingSites.get(key) || 0) + 1)
+  }
+}
+
+function _markSourcingSiteInactive(site) {
+  for (const key of _getActiveTrackingSites(site)) {
+    const next = Math.max(0, (_activeSourcingSites.get(key) || 0) - 1)
+    if (next === 0) _activeSourcingSites.delete(key)
+    else _activeSourcingSites.set(key, next)
+  }
+}
+
+function isSiteActiveForSourcing(site) {
+  if (!site) return false
+  return _getActiveTrackingSites(site).some(key => (_activeSourcingSites.get(key) || 0) > 0)
+}
+
+globalThis.isSiteActiveForSourcing = isSiteActiveForSourcing
 
 async function _getSiteConcurrencyMap() {
   const now = Date.now()
@@ -327,9 +354,11 @@ function _siteSemRelease(site) {
 async function _processJobWithCap(job) {
   const site = job.site || 'unknown'
   await _siteSemAcquire(site)
+  _markSourcingSiteActive(site)
   try {
     return await handleSourcingJob(job)
   } finally {
+    _markSourcingSiteInactive(site)
     _siteSemRelease(site)
   }
 }
@@ -342,14 +371,22 @@ let _lastAutotuneRunning = false
 let _lastTriggerStartLoginAt = 0
 const _START_LOGIN_COOLDOWN_MS = 60_000
 
-async function _triggerStartLogin() {
+// activeSites: 현재 오토튠에서 선택된 소싱처 목록 (백엔드 status.sourcing_filter).
+// null이면 allowedSites 전체 적용 (기존 동작).
+async function _triggerStartLogin(activeSites = null) {
   const now = Date.now()
   if (now - _lastTriggerStartLoginAt < _START_LOGIN_COOLDOWN_MS) return
   _lastTriggerStartLoginAt = now
 
   const data = await chrome.storage.local.get('allowedSites')
-  const sites = Array.isArray(data.allowedSites) ? data.allowedSites : null
+  let sites = Array.isArray(data.allowedSites) ? data.allowedSites : null
   if (!sites || sites.length === 0) return  // 미설정 또는 전체해제 PC
+
+  // 현재 선택된 소싱처만 체크 — 선택 안 된 사이트 로그인 시도로 폴링 90초 정지 방지
+  if (Array.isArray(activeSites) && activeSites.length > 0) {
+    sites = sites.filter(s => activeSites.includes(s))
+    if (sites.length === 0) return
+  }
 
   const LOGIN_REQUIRED = new Set(['ABCmart', 'GrandStage', 'LOTTEON', 'MUSINSA'])
   const triggered = new Set()
@@ -469,7 +506,9 @@ async function _checkAutotuneStartTransition() {
     if (running && !_lastAutotuneRunning) {
       console.log('[startLogin] 오토튠 시작 감지 (false→true)')
       _sourcingForceStop = false  // 작업취소 플래그 초기화
-      await _triggerStartLogin()
+      // sourcing_filter: 현재 선택된 소싱처 목록 — 미선택 사이트 로그인 체크로 폴링 90초 정지 방지
+      const activeSites = Array.isArray(data.sourcing_filter) ? data.sourcing_filter : null
+      await _triggerStartLogin(activeSites)
     }
     _lastAutotuneRunning = running
   } catch { /* 무시 — 다음 사이클에서 재시도 */ }
@@ -504,6 +543,10 @@ async function _isAutoLoginDisabled(externalSite) {
 // immediate 인자는 이제 의미 약화 — 모든 신호에 누적 카운트 적용 (DOM false-positive 차단)
 function reportLoginFailure(externalSite, immediate = false) {
   if (!externalSite) return
+  if (typeof isSiteActiveForSourcing === 'function' && !isSiteActiveForSourcing(externalSite)) {
+    console.log(`[로그인감지] ${externalSite} 비로그인 신호 무시 - 현재 활성 수집 사이트 아님`)
+    return
+  }
   _alFailureCount[externalSite] = (_alFailureCount[externalSite] || 0) + 1
   // 누적 임계값 미도달이면 silent (로그도 적당히)
   if (_alFailureCount[externalSite] < _AL_FAILURE_THRESHOLD) {
@@ -1615,7 +1658,7 @@ async function extractDetailData(tabId, site, productId) {
             success: true,
             site_product_id: prdId,
             source_site: 'SSG',
-            html: document.documentElement.outerHTML,
+            html: Array.from(document.querySelectorAll('script:not([src])')).map(function(s){return s.textContent}).join('\n'),
             resultItemObj: safeObj,  // 1차 평면 구조
             ctgFields: ctgFields,  // 카테고리 관련 전체 필드
             uitemOptions: uitemOptions,  // 옵션별 실제 재고 (AJAX 후 값)

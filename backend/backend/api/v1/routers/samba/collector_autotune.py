@@ -92,8 +92,12 @@ async def _run_transmit_in_background(coro_factory):
     coro_factory: 호출 시 코루틴을 반환하는 callable.
     예외는 로그로만 남김 (refresher 본 흐름에 영향 없음).
     """
+    from backend.domain.samba.collector.refresher import is_bulk_cancelled
+
     sem = _get_transmit_sem()
     async with sem:
+        if is_bulk_cancelled("transmit"):
+            return
         try:
             await coro_factory()
         except Exception as exc:
@@ -2090,7 +2094,8 @@ async def _autotune_loop():
                 # 이전 취소/비상정지 플래그 잔존 방지
                 from backend.domain.samba.collector.refresher import clear_bulk_cancel
 
-                clear_bulk_cancel()
+                clear_bulk_cancel("autotune")
+                clear_bulk_cancel("transmit")
                 from backend.domain.samba.emergency import (
                     clear_emergency_stop,
                     is_emergency_stopped as _is_es,
@@ -2456,7 +2461,8 @@ async def auto_start_if_enabled():
                 _site_tasks.clear()
                 _site_empty_hits.clear()
                 _site_empty_skip_until.clear()
-                clear_bulk_cancel()
+                clear_bulk_cancel("autotune")
+                clear_bulk_cancel("transmit")
                 _autotune_task = asyncio.create_task(_autotune_loop())
                 logger.info(
                     "[오토튠] 서버 시작 — DB 설정에 따라 자동 시작 (owner=%s)",
@@ -2757,14 +2763,14 @@ async def autotune_start(
 async def autotune_stop():
     """오토튠 무한 루프 정지 — 진행 중인 갱신도 즉시 중단."""
     global _autotune_task
-    from backend.domain.samba.collector.refresher import request_bulk_cancel
+    from backend.domain.samba.collector.refresher import request_bulk_cancel_all
 
     if not _autotune_running_event.is_set():
         return {"ok": True, "status": "already_stopped"}
     global _autotune_force_stopped
     _autotune_force_stopped = True  # 확장앱 in-flight 작업 즉시 중단 신호
     _autotune_running_event.clear()
-    request_bulk_cancel("autotune")  # 오토튠 갱신만 즉시 중단
+    request_bulk_cancel_all()  # 갱신 + 전송 잡 모두 즉시 중단
     # 소싱처별 태스크 전부 취소
     for _st in list(_site_tasks.values()):
         if not _st.done():
@@ -2908,6 +2914,18 @@ async def autotune_status():
         for s, t in _site_tasks.items()
     }
 
+    # 현재 선택된 소싱처 필터 (확장앱 _triggerStartLogin에서 사용)
+    _sourcing_filter: list[str] | None = None
+    try:
+        from backend.api.v1.routers.samba.proxy import _get_setting
+
+        async with get_read_session() as _rs_sf:
+            _sf = await _get_setting(_rs_sf, AUTOTUNE_FILTER_SOURCES_KEY)
+        if isinstance(_sf, list):
+            _sourcing_filter = _sf
+    except Exception:
+        pass
+
     return {
         "running": _autotune_running_event.is_set()
         and _autotune_task is not None
@@ -2924,6 +2942,7 @@ async def autotune_status():
         "priority_enabled": priority_enabled,
         "site_loops": _active_site_loops,
         "stuck_timeout": STUCK_TIMEOUT_SECONDS,
+        "sourcing_filter": _sourcing_filter,
     }
 
 
