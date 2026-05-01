@@ -1771,19 +1771,10 @@ async function extractDetailData(tabId, site, productId) {
         // 로그인 상태 감지 — 헤더의 "로그인" 링크/버튼 존재 여부로 판단
         // 비로그인이면 자동로그인 트리거 신호로 사용 (LOTTEON 페이지에 "나의 혜택가"가 마케팅 텍스트로 노출되어
         // 비로그인 상태에서도 가격이 추출되는 false-positive를 명시적으로 차단)
-        const loginAnchors = document.querySelectorAll('a[href*="/login"], a[href*="member/login"], button[class*="login"], a[class*="login"]')
-        const logoutAnchors = document.querySelectorAll('a[href*="/logout"], a[href*="member/logout"], a[href*="/myPage"]')
+        // 로그아웃 링크 셀렉터 — /myPage 대소문자 변형 모두 포함
+        const logoutAnchors = document.querySelectorAll('a[href*="/logout"], a[href*="member/logout"], a[href*="/myPage"], a[href*="/mypage"]')
         let hasLoginLink = false
         let hasLogoutLink = false
-        for (const a of loginAnchors) {
-          const href = (a.getAttribute('href') || '').toLowerCase()
-          if (href.includes('logout')) continue
-          const txt = (a.textContent || '').trim()
-          if (txt === '로그인' || txt === 'Login' || href.includes('/login') || href.includes('member/login')) {
-            hasLoginLink = true
-            break
-          }
-        }
         for (const a of logoutAnchors) {
           const href = (a.getAttribute('href') || '').toLowerCase()
           const txt = (a.textContent || '').trim()
@@ -1792,16 +1783,23 @@ async function extractDetailData(tabId, site, productId) {
             break
           }
         }
-        // 셀렉터로 못 찾으면 bodyText에서 "로그인"/"로그아웃" 단어 직접 검사
-        if (!hasLoginLink && !hasLogoutLink) {
-          const _slice = (document.body?.innerText || '').slice(0, 3000)
-          if (_slice.includes('로그아웃')) hasLogoutLink = true
-          else if (_slice.includes('로그인')) hasLoginLink = true
+        // bodyText에서 "로그아웃" 확인 — 셀렉터 미매칭 보완 (로그아웃이 있으면 로그인 링크 무시)
+        const _bodySlice = (document.body?.innerText || '').slice(0, 3000)
+        if (!hasLogoutLink && _bodySlice.includes('로그아웃')) hasLogoutLink = true
+        // 로그아웃 확인 안 됐을 때만 로그인 링크 검사 (숨겨진 /login href 오탐 방지)
+        if (!hasLogoutLink) {
+          const loginAnchors = document.querySelectorAll('a[href*="member/login/common"], button[class*="login"]')
+          for (const a of loginAnchors) {
+            const href = (a.getAttribute('href') || '').toLowerCase()
+            if (href.includes('logout')) continue
+            const txt = (a.textContent || '').trim()
+            if (txt === '로그인' || txt === 'Login') { hasLoginLink = true; break }
+          }
+          if (!hasLoginLink && _bodySlice.includes('로그인') && !_bodySlice.includes('로그아웃')) hasLoginLink = true
         }
-        const isLoggedIn = hasLogoutLink && !hasLoginLink
-        const _domLoginSignal = hasLoginLink
-          ? 'login_link'
-          : (hasLogoutLink ? 'logout_link' : 'ambiguous')
+        // 로그아웃 링크 = 로그인 확정 (로그인 링크 공존해도 무시)
+        const isLoggedIn = hasLogoutLink
+        const _domLoginSignal = hasLogoutLink ? 'logout_link' : (hasLoginLink ? 'login_link' : 'ambiguous')
 
         let salePrice = 0
         let originalPrice = 0
