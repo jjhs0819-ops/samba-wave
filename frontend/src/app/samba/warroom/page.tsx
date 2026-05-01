@@ -20,14 +20,35 @@ const extractSiteFromLog = (msg: string): string | null => {
 
 // PC분담 필터: filterSources 기준으로 로그 표시 여부 결정
 // - null = 전체 표시 (단일 PC 또는 미설정)
-// - [] = 아무것도 표시 안 함 (전체해제 PC)
-// - [...] = 해당 사이트만 표시
+// - [] = 아무것도 표시 안 함 (전체해제 PC) — 태그 무관 메시지(사이클 완료 등)도 숨김
+// - [...] = 해당 사이트만 표시 (태그 없는 글로벌 메시지는 표시 — A/B PC가 사이클 진행 알림 보도록)
 const shouldShowLog = (msg: string, filterSources: string[] | null): boolean => {
   if (filterSources === null) return true
-  if (filterSources.length === 0) return false
+  if (filterSources.length === 0) return false  // C PC: 글로벌 메시지도 숨김
   const site = extractSiteFromLog(msg)
-  if (!site) return true  // 사이클 완료 등 사이트 무관 메시지는 항상 표시
+  if (!site) return true  // A/B PC: 사이클 완료/쿠키 로테이션 등 글로벌 메시지는 보임
   return filterSources.includes(site)
+}
+
+// sessionStorage 키 — 새로고침 시 filterSources 즉시 복원 (chrome.storage 메시지 도착 전 leak 방지)
+const FILTER_SOURCES_KEY = 'samba.warroom.filterSources'
+const loadInitialFilterSources = (): string[] | null => {
+  if (typeof window === 'undefined') return null
+  try {
+    const v = window.sessionStorage.getItem(FILTER_SOURCES_KEY)
+    if (v === null) return null
+    const parsed = JSON.parse(v)
+    return Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+const saveFilterSourcesToSession = (v: string[] | null): void => {
+  if (typeof window === 'undefined') return
+  try {
+    if (v === null) window.sessionStorage.removeItem(FILTER_SOURCES_KEY)
+    else window.sessionStorage.setItem(FILTER_SOURCES_KEY, JSON.stringify(v))
+  } catch { /* ignore */ }
 }
 
 // 오토튠 실시간 로그 (독립 컴포넌트 — 대시보드 리렌더링 영향 없음)
@@ -313,7 +334,9 @@ export default function WarroomPage() {
   //      → 단일 PC: 화면 체크 = 갱신 = 처리 (사용자 의도)
   //      → 다중 PC: 마지막 변경한 PC의 값이 백엔드 글로벌로 살아남음 (사용자 합의 필요)
   // 판매처 체크박스는 기존 백엔드 글로벌 enabled_markets 그대로.
-  const [filterSources, setFilterSources] = useState<string[] | null>(null) // null=전체
+  // sessionStorage에서 동기 복원 — 새로고침 시 chrome.storage 메시지 도착 전 1프레임 leak 방지.
+  // 같은 탭이 살아있는 동안 유지되며 탭 닫으면 자동 비움(다른 PC 설정 누수 방지).
+  const [filterSources, setFilterSources] = useState<string[] | null>(loadInitialFilterSources)
   const [filterMarkets, setFilterMarkets] = useState<string[] | null>(null) // null=전체
   const [availSources, setAvailSources] = useState<string[]>([])
   const [availMarkets, setAvailMarkets] = useState<string[]>([])
@@ -342,6 +365,7 @@ export default function WarroomPage() {
       const sites = msg.sites
       const next = Array.isArray(sites) ? sites : null
       setFilterSources(next)
+      saveFilterSourcesToSession(next)
       // 첫 수신 시 백엔드 PC분담 등록 (heartbeat 시작) — 폴링으로 last_seen 자동 갱신됨
       if (!registered) {
         registered = true
@@ -415,12 +439,14 @@ export default function WarroomPage() {
       const current = prev ?? [...all]
       const next = current.includes(site) ? current.filter(s => s !== site) : [...current, site]
       const result = next.length === all.length ? null : next
-      // 3중 동기화:
+      // 4중 동기화:
       // 1) chrome.storage.allowedSites: 확장앱이 X-Allowed-Sites 헤더로 잡 dispatch 필터
       // 2) 백엔드 PC분담 등록: 모든 PC의 합집합으로 백엔드 active_sites 계산
-      // 3) saveFilters(null, ...): legacy 글로벌 enabled_sources는 항상 null로 비활성화
+      // 3) sessionStorage: 새로고침 즉시 복원 (1프레임 leak 방지)
+      // 4) saveFilters(null, ...): legacy 글로벌 enabled_sources는 항상 null로 비활성화
       syncAllowedSitesToExtension(result)
       registerPcAllowedSites(result)
+      saveFilterSourcesToSession(result)
       saveFilters(null, filterMarkets)
       return result
     })
