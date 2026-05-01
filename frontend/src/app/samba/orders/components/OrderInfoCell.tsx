@@ -99,7 +99,9 @@ export default function OrderInfoCell(props: Props) {
             <span style={{ fontSize: '0.75rem', color: '#B0B0B0', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px' }}>{o.channel_name || '마켓'}</span>
             {o.source_site && <span style={{ fontSize: '0.75rem', color: '#B0B0B0', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px', border: '1px solid #2D2D2D' }}>{(() => {
               const m = o.source_site.match(/^(.+)\(([^)]+)\)$/)
-              if (m && siteAliasMap[m[2]]) return `${m[1]}(${siteAliasMap[m[2]]})`
+              const siteName = m?.[1]?.trim()
+              const siteCode = m?.[2]?.trim()
+              if (siteName && siteCode && siteAliasMap[siteCode]) return `${siteName}(${siteAliasMap[siteCode]})`
               return o.source_site
             })()}</span>}
             <button onClick={() => handleCopyOrderNumber(o.order_number)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>주문번호복사</button>

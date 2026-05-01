@@ -1159,7 +1159,7 @@ async function handleSourcingJob(job) {
       // DOM 파싱으로 "나의 혜택가" 수집
       result = await extractDetailData(tabId, job.site, job.productId)
       // 혜택가 미수집 시 3초 대기 후 재시도 (렌더링 지연 대비)
-      if (!result?.best_benefit_price) {
+      if (!result?.best_benefit_price && !((result?.sale_price || 0) > 0 || (Array.isArray(result?.options) && result.options.length > 0))) {
         console.log(`[LOTTEON] 혜택가 미수집 — 3초 후 재시도: ${job.productId}`)
         await wait(3000)
         result = await extractDetailData(tabId, job.site, job.productId)
@@ -1195,7 +1195,7 @@ async function handleSourcingJob(job) {
       // ABCmart/GrandStage: 백그라운드 탭(active=false) DOM 파싱 1순위 — 페이지에
       // 표시된 "최대 혜택가"가 사용자 등급별 멤버십+쿠폰 모두 반영된 100% 정확한 값.
       result = await extractDetailData(tabId, job.site, job.productId)
-      if (!result?.best_benefit_price) {
+      if (!result?.best_benefit_price && !((result?.sale_price || 0) > 0 || (Array.isArray(result?.options) && result.options.length > 0))) {
         console.log(`[${job.site}] 혜택가 미수집 — 3초 후 재시도: ${job.productId}`)
         await wait(3000)
         result = await extractDetailData(tabId, job.site, job.productId)

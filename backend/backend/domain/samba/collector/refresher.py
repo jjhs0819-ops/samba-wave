@@ -1067,12 +1067,6 @@ def _process_musinsa_detail(
     _prod_label = _prod_label.strip()
     # 로그는 콜백(_on_result)에서 통합 출력 — refresher에서는 생략
 
-    # 이미지/소재/색상 (빈 값이 아닌 경우만 업데이트)
-    new_images = detail.get("images") or None
-    new_detail_images = detail.get("detailImages") or None
-    new_material = detail.get("material") or None
-    new_color = detail.get("color") or None
-
     return RefreshResult(
         product_id=product.id,
         new_sale_price=new_sale_price,
@@ -1080,12 +1074,6 @@ def _process_musinsa_detail(
         new_cost=new_cost,
         new_sale_status=new_sale_status,
         new_options=new_options,
-        new_images=new_images,
-        new_detail_images=new_detail_images,
-        new_material=new_material,
-        new_color=new_color,
-        new_free_shipping=detail.get("freeShipping", False),
-        new_same_day_delivery=detail.get("sameDayDelivery", False),
         new_is_point_restricted=detail.get("isPointRestricted"),
         changed=changed,
         stock_changed=_stock_changes > 0,
@@ -1277,7 +1265,6 @@ async def _parse_fashionplus(product: Any) -> RefreshResult:
 
     new_sale = detail.get("sale_price", 0) or 0
     new_orig = detail.get("original_price", 0) or new_sale
-    new_images = detail.get("images") or None
     shipping_fee = detail.get("shipping_fee", 0) or 0
     new_cost = new_sale + shipping_fee
 

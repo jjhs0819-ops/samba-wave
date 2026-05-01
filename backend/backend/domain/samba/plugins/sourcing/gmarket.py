@@ -111,8 +111,6 @@ class GMarketPlugin(SourcingPlugin):
                 else None,
                 new_sale_status=new_sale_status,
                 new_options=new_options,
-                new_images=detail.get("images"),
-                new_detail_images=detail.get("detailImages"),
                 changed=changed,
                 stock_changed=_stock_changes > 0,
             )

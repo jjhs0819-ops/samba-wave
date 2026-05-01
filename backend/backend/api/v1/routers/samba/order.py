@@ -3323,7 +3323,10 @@ async def sync_orders_from_markets(
                             av = pa_setting.value.get(ak, "")
                             if av and "-" in av:
                                 code, nick = av.split("-", 1)
-                                alias_map[code.strip()] = nick.strip()
+                                code = str(code).strip()
+                                nick = str(nick).strip()
+                                if code and nick:
+                                    alias_map[code] = nick
                 except Exception:
                     pass
                 pa_client = PlayAutoClient(api_key)
@@ -5089,8 +5092,8 @@ def _parse_playauto_order(
     sale_price = int(ro.get("Price", 0) or 0)
     quantity = int(ro.get("Count", 1) or 1)
 
-    site_name = ro.get("SiteName", "")
-    site_id = ro.get("SiteId", "")
+    site_name = str(ro.get("SiteName", "") or "").strip()
+    site_id = str(ro.get("SiteId", "") or "").strip()
     supply_price = int(ro.get("SupplyPrice", 0) or 0)
 
     # 결제일 파싱 — 플레이오토는 KST 기준

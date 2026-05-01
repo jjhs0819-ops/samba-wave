@@ -277,7 +277,9 @@ export default function OrdersPage() {
         const v = d[k] || ''
         if (v.includes('-')) {
           const [code, ...rest] = v.split('-')
-          map[code.trim()] = rest.join('-').trim()
+          const normalizedCode = code.trim()
+          const nick = rest.join('-').trim()
+          if (normalizedCode && nick) map[normalizedCode] = nick
         }
       }
       setSiteAliasMap(map)

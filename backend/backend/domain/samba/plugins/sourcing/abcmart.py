@@ -295,8 +295,6 @@ class AbcMartPlugin(SourcingPlugin):
                 new_cost=float(best_benefit_price) if best_benefit_price else None,
                 new_sale_status=new_sale_status,
                 new_options=new_options,
-                new_images=detail.get("images"),
-                new_free_shipping=detail.get("freeShipping"),
                 changed=changed,
                 stock_changed=_stock_changes > 0,
             )
