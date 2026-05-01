@@ -69,6 +69,37 @@ AUTOTUNE_FILTER_SOURCES_KEY = "autotune_enabled_sources"
 AUTOTUNE_FILTER_MARKETS_KEY = "autotune_enabled_markets"
 AUTOTUNE_PRIORITY_ENABLED_KEY = "autotune_priority_enabled"
 
+# 오토튠 전송 글로벌 동시실행 제한 — refresher가 fire-and-forget으로 띄운 transmit task가
+# OOM 일으키지 않도록 상한. 너무 낮으면 backlog, 너무 높으면 메모리 폭주.
+# 정책 변경 직후 폭주 시 backlog는 이벤트 루프가 자연스럽게 흡수 (백프레셔).
+_AUTOTUNE_TRANSMIT_MAX_CONCURRENCY = int(
+    os.environ.get("AUTOTUNE_TRANSMIT_MAX_CONCURRENCY", "10")
+)
+_autotune_transmit_sem: Optional[asyncio.Semaphore] = None
+
+
+def _get_transmit_sem() -> asyncio.Semaphore:
+    """이벤트 루프에 바인딩된 세마포어 lazy init (모듈 import 시점엔 루프 없음)."""
+    global _autotune_transmit_sem
+    if _autotune_transmit_sem is None:
+        _autotune_transmit_sem = asyncio.Semaphore(_AUTOTUNE_TRANSMIT_MAX_CONCURRENCY)
+    return _autotune_transmit_sem
+
+
+async def _run_transmit_in_background(coro_factory):
+    """fire-and-forget으로 전송 실행 — 세마포어로 동시 실행 제한.
+
+    coro_factory: 호출 시 코루틴을 반환하는 callable.
+    예외는 로그로만 남김 (refresher 본 흐름에 영향 없음).
+    """
+    sem = _get_transmit_sem()
+    async with sem:
+        try:
+            await coro_factory()
+        except Exception as exc:
+            logger.warning(f"[오토튠][백그라운드전송] 실패: {exc}")
+
+
 # PC별 분담 등록: device_id → set of sites this PC will process.
 # - 빈 set = 이 PC는 아무 작업 안 받음 (전체해제)
 # - 미등록 PC = 무관 (백엔드는 등록된 PC들의 합집합만 처리)
@@ -1600,7 +1631,13 @@ async def _site_autotune_loop(site: str):
                                             )
                                     await asyncio.sleep(0.3)
 
-                                await _fire_transmit_group()
+                                # 전송을 fire-and-forget으로 띄움 — 갱신은 즉시 다음 상품으로 진행.
+                                # 세마포어로 동시 transmit 수 제한해 OOM 방지.
+                                # 정책 변경 직후 폭주(수천 건)에서도 refresher가 await에 막혀
+                                # throughput이 1/min으로 떨어지던 문제 해결.
+                                asyncio.create_task(
+                                    _run_transmit_in_background(_fire_transmit_group)
+                                )
 
                         # DB 세션 복구 — 갱신 전 연결 확인
                         try:
