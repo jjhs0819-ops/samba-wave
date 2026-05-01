@@ -74,6 +74,12 @@ class PlayAutoPlugin(MarketPlugin):
         # 모든 상품을 고정 카테고리(남성의류>긴팔티셔츠>맨투맨티셔츠)로 전송
         category_id = "11020200"
 
+        # 계정 재고수량 설정 주입 (_max_stock 상한으로 사용)
+        extras = (account.additional_fields or {}) if account else {}
+        if extras.get("stockQuantity"):
+            product = dict(product)
+            product["_max_stock"] = int(extras["stockQuantity"])
+
         # 정책의 플레이오토 전용 설정 주입 (원산지, 시중가비율)
         policy_id = product.get("applied_policy_id")
         if policy_id:

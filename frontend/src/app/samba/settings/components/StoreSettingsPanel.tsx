@@ -60,6 +60,7 @@ export function StoreSettingsPanel(props: Props) {
               onChange={(e) => setNetworkIps(prev => ({ ...prev, web: e.target.value }))}
               placeholder="예: 123.123.123.123"
             />
+            </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '180px', flexShrink: 0 }}>로컬 IP</label>
@@ -559,19 +560,6 @@ export function StoreSettingsPanel(props: Props) {
                 onClick={() => saveStoreSettings(market.key)}
                 style={{ padding: '0.625rem 1.75rem', background: '#FF8C00', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 700, fontSize: '0.875rem', cursor: 'pointer' }}
               >설정 저장</button>
-              {market.key === 'playauto' && (
-                <button
-                  onClick={async () => {
-                    if (!await showConfirm('플레이오토 API에서 등록상품을 조회하여 DB 상품과 매칭 후 registered_accounts에 추가합니다.')) return
-                    try {
-                      const res = await collectorApi.bulkAddAccount()
-                      showAlert(`플레이오토 상품 ${fmtNum(res.pa_products)}개 중 ${fmtNum(res.matched)}개 매칭, ${fmtNum(res.updated)}개 추가 (이미등록 ${fmtNum(res.already)}개)`, 'success')
-                    } catch (e) { showAlert(`실패: ${e}`, 'error') }
-                  }}
-                  style={{ padding: '0.625rem 1.25rem', background: 'rgba(81,207,102,0.1)', border: '1px solid rgba(81,207,102,0.3)', borderRadius: '6px', fontSize: '0.8rem', color: '#51CF66', cursor: 'pointer', fontWeight: 600 }}
-                >등록상품 일괄매칭</button>
-              )}
-            </div>
           </div>
 
           <ConnectedAccountsList
