@@ -86,6 +86,7 @@ export default function ShipmentsPage() {
   const [registrationFilter, setRegistrationFilter] = useState('미등록')
   const [sortBy, setSortBy] = useState('update-desc')
   const [totalCount, setTotalCount] = useState(0)
+  const [clientPagingMode, setClientPagingMode] = useState(false)
 
   // 적용된 필터 (검색버튼 클릭 시점에만 갱신 — 실제 서버 조회/하위 동작은 이 값 사용)
   const [appliedSearchField, setAppliedSearchField] = useState('group')
@@ -334,6 +335,11 @@ export default function ShipmentsPage() {
       setTotalCount(p.length)
       byIdsLoadedRef.current = true  // 페이지 이동 시 재로드 방지
     }
+    if (preIds.length > 0) {
+      setClientPagingMode(true)
+    } else {
+      setClientPagingMode(false)
+    }
     setProducts(p)
     setAccounts(a)
     setLoading(false)
@@ -477,8 +483,10 @@ export default function ShipmentsPage() {
 
   // by-ids 진입(상품관리에서 N개 선택 후 이동) 시 products에 전체가 한 번에 들어옴 → 클라이언트에서 페이지 슬라이스
   const pageProducts = useMemo(
-    () => filteredProducts.slice((currentPage - 1) * pageSize, currentPage * pageSize),
-    [filteredProducts, currentPage, pageSize],
+    () => clientPagingMode
+      ? filteredProducts.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+      : filteredProducts,
+    [clientPagingMode, filteredProducts, currentPage, pageSize],
   )
 
   // 등록된 마켓 목록 (동적)
