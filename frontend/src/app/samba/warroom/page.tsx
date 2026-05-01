@@ -165,7 +165,9 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, extern
         </div>
         <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
           <button onClick={() => {
-            const text = logs.map(l => l.msg).join('\n')
+            const text = logs
+              .filter(l => shouldShowLog(l.msg, filterSources ?? null))
+              .map(l => l.msg).join('\n')
             navigator.clipboard.writeText(text)
           }} style={{ padding: '2px 8px', fontSize: '0.65rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', color: '#4C9AFF', borderRadius: '4px', cursor: 'pointer' }}>복사</button>
           <button onClick={async () => {
@@ -660,6 +662,8 @@ export default function WarroomPage() {
                   showAlert(res.error || '시작 실패', 'error')
                   return
                 }
+                // 이 PC의 확장앱에만 폴링 합류 신호 전달 (다른 PC는 자동 편승 안 함)
+                window.postMessage({ source: 'samba-page', type: 'AUTOTUNE_SET_JOIN', joined: true }, window.location.origin)
                 falseCountRef.current = 0
                 setAutotuneRunning(true)
                 setAutotuneCycles(0)
@@ -681,7 +685,13 @@ export default function WarroomPage() {
             onClick={async () => {
               try {
                 const { API_BASE_URL: apiBase } = await import('@/config/api')
-                await fetchWithAuth(`${apiBase}/api/v1/samba/collector/autotune/stop`, { method: 'POST' })
+                const { getDeviceId } = await import('@/lib/samba/deviceId')
+                await fetchWithAuth(`${apiBase}/api/v1/samba/collector/autotune/leave`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ device_id: getDeviceId() }),
+                })
+                window.postMessage({ source: 'samba-page', type: 'AUTOTUNE_SET_JOIN', joined: false }, window.location.origin)
                 setAutotuneRunning(false)
               } catch { /* ignore */ }
             }}
@@ -696,6 +706,26 @@ export default function WarroomPage() {
               cursor: 'pointer',
             }}
             >작업취소</button>
+          <button
+            onClick={async () => {
+              try {
+                const { API_BASE_URL: apiBase } = await import('@/config/api')
+                await fetchWithAuth(`${apiBase}/api/v1/samba/collector/autotune/stop`, { method: 'POST' })
+                window.postMessage({ source: 'samba-page', type: 'AUTOTUNE_SET_JOIN', joined: false }, window.location.origin)
+                setAutotuneRunning(false)
+              } catch { /* ignore */ }
+            }}
+            style={{
+              padding: '0.25rem 0.75rem',
+              background: 'rgba(239,68,68,0.06)',
+              border: '1px solid rgba(239,68,68,0.5)',
+              borderRadius: '6px',
+              color: '#EF4444',
+              fontSize: '0.8125rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+          >전체 중지</button>
             <button
               onClick={handlePriorityToggle}
               style={{

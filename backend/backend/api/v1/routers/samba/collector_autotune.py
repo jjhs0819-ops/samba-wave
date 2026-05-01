@@ -111,6 +111,11 @@ async def _run_transmit_in_background(coro_factory):
 _pc_allowed_sites: dict[str, set[str]] = {}
 _pc_last_seen: dict[str, float] = {}
 PC_LAST_SEEN_TTL = 120.0  # 2분 무폴링 → stale로 간주하고 union에서 제외
+# 현재 오토튠에 합류한 PC 집합 — 시작 시 추가, 개별 중지(leave) 시 제거.
+# 모든 PC가 나가면 오토튠 백엔드 자동 중지.
+_pc_joined_set: set[str] = set()
+# 다음 폴링 시 해당 PC에게만 forceStop 신호를 전달할 집합 (개별 중지용)
+_pc_force_stop_set: set[str] = set()
 
 
 def update_pc_last_seen(device_id: str) -> None:
@@ -2731,6 +2736,11 @@ async def autotune_start(
     _site_empty_skip_until.clear()
     clear_bulk_cancel()
 
+    # 시작 PC를 합류 집합에 추가 (개별 중지 추적용)
+    if body.device_id:
+        _pc_joined_set.add(body.device_id.strip())
+        _pc_force_stop_set.discard(body.device_id.strip())
+
     # 오토튠 작업 owner 정책:
     # - 기본 owner는 비움(""): 작업 큐에 ownerDeviceId 없이 발행되어 어느 PC의
     #   확장앱이든 자기 차례에 작업을 집어가 자연 분산된다 (PC 1대만 켜져 있으면
@@ -2796,7 +2806,60 @@ async def autotune_stop():
         pass
 
     await _save_autotune_state(False)
+    _pc_joined_set.clear()
+    _pc_force_stop_set.clear()
     return {"ok": True, "status": "stopped"}
+
+
+class AutotuneLeaveRequest(BaseModel):
+    device_id: str = ""
+
+
+@router.post("/autotune/leave")
+async def autotune_leave(body: AutotuneLeaveRequest):
+    """이 PC만 오토튠 참여 해제 — 다른 PC는 계속 동작.
+
+    해당 device_id의 확장앱이 다음 collect-queue 폴링 시 forceStop을 수신해 즉시 중단.
+    합류 중인 모든 PC가 나갔거나 없으면 백엔드도 자동 중지.
+    """
+    dev = (body.device_id or "").strip()
+    if dev:
+        _pc_joined_set.discard(dev)
+        _pc_force_stop_set.add(dev)
+
+    # 합류 PC가 모두 나갔으면 백엔드 전체 중지
+    if not _pc_joined_set and _autotune_running_event.is_set():
+        global _autotune_force_stopped
+        _autotune_force_stopped = True
+        _autotune_running_event.clear()
+        from backend.domain.samba.collector.refresher import request_bulk_cancel_all
+
+        request_bulk_cancel_all()
+        for _st in list(_site_tasks.values()):
+            if not _st.done():
+                _st.cancel()
+        _site_tasks.clear()
+        if _autotune_task and not _autotune_task.done():
+            _autotune_task.cancel()
+        try:
+            from backend.domain.samba.proxy.sourcing_queue import (
+                SourcingQueue,
+                clear_autotune_owners,
+            )
+
+            SourcingQueue.cancel_all("all PCs left")
+            clear_autotune_owners()
+        except Exception:
+            pass
+        await _save_autotune_state(False)
+        logger.info(f"[오토튠] 모든 PC 이탈 → 백엔드 자동 중지 (마지막 PC: {dev})")
+        return {"ok": True, "status": "stopped", "reason": "all_pcs_left"}
+
+    logger.info(
+        f"[오토튠] PC 이탈: {dev[:8] if dev else '?'} "
+        f"(남은 PC: {len(_pc_joined_set)}개)"
+    )
+    return {"ok": True, "status": "left", "remaining_pcs": len(_pc_joined_set)}
 
 
 @router.get("/autotune/site-owners")
@@ -2914,18 +2977,6 @@ async def autotune_status():
         for s, t in _site_tasks.items()
     }
 
-    # 현재 선택된 소싱처 필터 (확장앱 _triggerStartLogin에서 사용)
-    _sourcing_filter: list[str] | None = None
-    try:
-        from backend.api.v1.routers.samba.proxy import _get_setting
-
-        async with get_read_session() as _rs_sf:
-            _sf = await _get_setting(_rs_sf, AUTOTUNE_FILTER_SOURCES_KEY)
-        if isinstance(_sf, list):
-            _sourcing_filter = _sf
-    except Exception:
-        pass
-
     return {
         "running": _autotune_running_event.is_set()
         and _autotune_task is not None
@@ -2942,7 +2993,6 @@ async def autotune_status():
         "priority_enabled": priority_enabled,
         "site_loops": _active_site_loops,
         "stuck_timeout": STUCK_TIMEOUT_SECONDS,
-        "sourcing_filter": _sourcing_filter,
     }
 
 

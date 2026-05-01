@@ -259,6 +259,9 @@ async function handleAiSourcingJob(job) {
 const SOURCING_MAX_POLL_LIMIT = 10
 // 오토튠 작업취소 시 in-flight 탭 즉시 종료용 플래그
 let _sourcingForceStop = false
+// 이 PC가 현재 오토튠에 참여 중인지 여부 — 시작 버튼 클릭 시 true, 중지/forceStop 시 false.
+// false이면 collect-queue 폴링 자체를 건너뜀 → 다른 PC의 시작에 자동으로 편승하지 않음.
+let _localAutotuneJoined = false
 
 // 사이트별 동시 처리 세마포어 — 폴링이 받은 작업을 사이트별 캡까지만 병렬 처리
 // (프론트 "동시실행" 설정값을 백엔드 status API에서 받아 적용)
@@ -363,132 +366,7 @@ async function _processJobWithCap(job) {
   }
 }
 
-// "오토튠 시작" 트랜지션 감지 + 자동로그인 트리거.
-// 첫 batch가 비로그인으로 처리되어 가격이 틀리는 사고 차단을 위해 시작 시점에 즉시 발동.
-// ensureLoggedIn 내부에서 pauseCollectPolling(90s)이 동기 호출되므로 폴링이 즉시 멈춰
-// 로그인 완료 후 신선한 쿠키로 첫 잡 처리됨.
 let _lastAutotuneRunning = false
-let _lastTriggerStartLoginAt = 0
-const _START_LOGIN_COOLDOWN_MS = 60_000
-
-// activeSites: 현재 오토튠에서 선택된 소싱처 목록 (백엔드 status.sourcing_filter).
-// null이면 allowedSites 전체 적용 (기존 동작).
-async function _triggerStartLogin(activeSites = null) {
-  const now = Date.now()
-  if (now - _lastTriggerStartLoginAt < _START_LOGIN_COOLDOWN_MS) return
-  _lastTriggerStartLoginAt = now
-
-  const data = await chrome.storage.local.get('allowedSites')
-  let sites = Array.isArray(data.allowedSites) ? data.allowedSites : null
-  if (!sites || sites.length === 0) return  // 미설정 또는 전체해제 PC
-
-  // 현재 선택된 소싱처만 체크 — 선택 안 된 사이트 로그인 시도로 폴링 90초 정지 방지
-  if (Array.isArray(activeSites) && activeSites.length > 0) {
-    sites = sites.filter(s => activeSites.includes(s))
-    if (sites.length === 0) return
-  }
-
-  const LOGIN_REQUIRED = new Set(['ABCmart', 'GrandStage', 'LOTTEON', 'MUSINSA'])
-  const triggered = new Set()
-  for (const site of sites) {
-    if (!LOGIN_REQUIRED.has(site)) continue
-    const key = (typeof alExternalSiteToKey === 'function') ? alExternalSiteToKey(site) : null
-    if (!key || triggered.has(key)) continue
-    triggered.add(key)
-    // 사전 로그인 체크 — 이미 로그인 쿠키 있으면 SPA 로그인 건너뜀 (사용자 보고:
-    // "ABC마트 로그인 되어있는데 계속 로그인 페이지 삽질하네" 차단)
-    const already = await _isAlreadyLoggedIn(key)
-    // 서비스워커는 브라우저 쿠키를 신뢰할 수 없어 false-positive 리다이렉트 발생 →
-    // 확실히 비로그인(false)일 때만 자동로그인 트리거. null(판단불가)은 스킵.
-    if (already !== false) {
-      console.log(`[startLogin] ${site} 로그인 상태(${already}) — SPA 로그인 건너뜀`)
-      continue
-    }
-    if (typeof globalThis.ensureLoggedIn === 'function') {
-      console.log(`[startLogin] ${site} 자동로그인 트리거 (오토튠 시작 시점, 쿠키 상태=${already})`)
-      // fire-and-forget — ensureLoggedIn 내부에서 pauseCollectPolling이 즉시 동기 호출됨
-      globalThis.ensureLoggedIn(key).catch(e => console.warn(`[startLogin] ${site} 실패: ${e.message}`))
-    }
-  }
-}
-
-// 사이트별 "실제 로그인됨" 활성 체크 — 회원 전용 페이지 fetch로 실제 세션 유효성 확인.
-// 쿠키 존재만으로는 부족 (좀비 쿠키 false-positive 사고 다발). 서버 응답으로 판정.
-// 반환: true (로그인 확정), false (비로그인 확정), null (판단 불가 — 네트워크 오류 등)
-async function _isAlreadyLoggedIn(siteKey) {
-  try {
-    if (siteKey === 'lotteon') {
-      // 회원 전용 마이페이지 — 비로그인이면 /member/login으로 302 redirect
-      const resp = await fetch('https://www.lotteon.com/p/myLotte/main', {
-        method: 'GET',
-        credentials: 'include',
-        redirect: 'manual',  // redirect 직접 감지
-      })
-      // redirect=manual에서 status 0 + type='opaqueredirect' 또는 Location 헤더 검사
-      if (resp.type === 'opaqueredirect' || resp.status === 302 || resp.status === 301) {
-        return false  // redirect 발생 = 비로그인
-      }
-      if (resp.status === 200) {
-        // 추가 검증 — 응답 본문에 로그인 링크가 있는지 (좀비 쿠키로 200 받는 경우)
-        const text = await resp.text()
-        if (text.includes('/member/login') || text.includes('로그인/회원가입')) {
-          return false
-        }
-        return true
-      }
-      return null
-    }
-    if (siteKey === 'abcmart') {
-      // abcmart 로그인 시 .a-rt.com 도메인 쿠키가 grandstage에도 자동 공유됨.
-      // → abcmart.a-rt.com/mypage 한 곳만 체크하면 충분 (사용자 확인).
-      // 사용자 보고: GrandStage 별도 체크 추가했더니 grandstage.a-rt.com/mypage가 false 응답 →
-      // 불필요한 SPA 로그인 트리거 → 멤버 세션이 sourcing-account 세션으로 덮어써짐 → 비회원가.
-      try {
-        const resp = await fetch('https://abcmart.a-rt.com/mypage', {
-          method: 'GET',
-          credentials: 'include',
-          redirect: 'manual',
-        })
-        if (resp.type === 'opaqueredirect' || resp.status === 302 || resp.status === 301) {
-          return false
-        }
-        if (resp.status === 200) {
-          const text = await resp.text()
-          if (text.includes('/login') && !text.includes('주문내역') && !text.includes('마이쿠폰')) {
-            return false
-          }
-          return true
-        }
-        return null
-      } catch (e) {
-        console.log(`[startLogin] abcmart.a-rt.com 체크 실패 — null 반환: ${e.message}`)
-        return null
-      }
-    }
-    if (siteKey === 'musinsa') {
-      // 회원 전용 마이페이지 — JSON API 또는 HTML
-      const resp = await fetch('https://www.musinsa.com/mypage', {
-        method: 'GET',
-        credentials: 'include',
-        redirect: 'manual',
-      })
-      if (resp.type === 'opaqueredirect' || resp.status === 302 || resp.status === 301) {
-        return false
-      }
-      if (resp.status === 200) {
-        const text = await resp.text()
-        if (text.includes('member.one.musinsa.com/login') || text.includes('/auth/login')) {
-          return false
-        }
-        return true
-      }
-      return null
-    }
-  } catch (e) {
-    console.log(`[startLogin] ${siteKey} 로그인 체크 네트워크 오류 — null 반환: ${e.message}`)
-  }
-  return null
-}
 
 async function _checkAutotuneStartTransition() {
   // /autotune/status 직접 호출 (background-autologin.js의 _isAutotuneActive 캐시와 분리해
@@ -504,17 +382,22 @@ async function _checkAutotuneStartTransition() {
     const data = await res.json()
     const running = !!data.running
     if (running && !_lastAutotuneRunning) {
-      console.log('[startLogin] 오토튠 시작 감지 (false→true)')
-      _sourcingForceStop = false  // 작업취소 플래그 초기화
-      // sourcing_filter: 현재 선택된 소싱처 목록 — 미선택 사이트 로그인 체크로 폴링 90초 정지 방지
-      const activeSites = Array.isArray(data.sourcing_filter) ? data.sourcing_filter : null
-      await _triggerStartLogin(activeSites)
+      console.log('[오토튠] 백엔드 시작 감지 — 이 PC의 시작 버튼 클릭 시에만 폴링 합류')
     }
     _lastAutotuneRunning = running
   } catch { /* 무시 — 다음 사이클에서 재시도 */ }
 }
 
 globalThis._checkAutotuneStartTransition = _checkAutotuneStartTransition
+globalThis._setLocalAutotuneJoined = (joined) => {
+  _localAutotuneJoined = !!joined
+  if (joined) {
+    _sourcingForceStop = false  // 합류 시 in-flight 중단 플래그도 초기화
+    console.log('[오토튠] 이 PC 폴링 합류')
+  } else {
+    console.log('[오토튠] 이 PC 폴링 탈퇴')
+  }
+}
 
 // 사이트별 인증 실패 카운트 — 비로그인 가격 수집 차단 정책 (즉시 트리거)
 // 정책:
@@ -663,6 +546,9 @@ async function _detectLoginStatus(tabId, site) {
 }
 
 async function pollSourcingOnce() {
+  // 이 PC가 오토튠에 참여 신청하지 않은 경우 폴링 자체를 건너뜀
+  // (다른 PC의 시작 버튼에 자동으로 편승하는 사고 방지)
+  if (!_localAutotuneJoined) return false
   // 백엔드가 배치 크기만큼만 큐에 넣으므로 자연히 그 수만큼 처리됨
   const jobs = []
   for (let i = 0; i < SOURCING_MAX_POLL_LIMIT; i++) {
@@ -680,6 +566,7 @@ async function pollSourcingOnce() {
       if (job.forceStop) {
         // 오토튠 stop 직후 — 이미 받은 작업 포함 전부 버리고 즉시 중단
         _sourcingForceStop = true
+        _localAutotuneJoined = false  // 이 PC 참여 종료
         jobs.length = 0
         break
       }

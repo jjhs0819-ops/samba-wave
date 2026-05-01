@@ -65,7 +65,7 @@ const autoLoginState = {
 
 const AUTO_LOGIN_MAX_RETRIES = 3
 const AUTO_LOGIN_COOLDOWN_MS = 5 * 60 * 1000 // 5분간 재시도 차단 (실패 누적 후)
-const AUTO_LOGIN_PAUSE_MS = 90 * 1000 // 자동로그인 진행 중 폴링 일시중지 시간
+const AUTO_LOGIN_PAUSE_MS = 15 * 1000 // 자동로그인 진행 중 폴링 일시중지 시간
 
 // 오토튠 활성 상태 캐시 — 자동로그인 트리거 전에 체크하여 오토튠 OFF 상태에서는 작동 안 함
 let _alAutotuneActiveCache = { value: null, at: 0 }

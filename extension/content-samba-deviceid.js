@@ -61,9 +61,17 @@
     const msg = event.data
     if (!msg || typeof msg !== 'object') return
     if (msg.source !== 'samba-page') return
-    if (msg.type !== 'SET_ALLOWED_SITES') return
-    // null=전체처리(헤더 미부착), []=전체해제, [...]=부분선택 — 구분 그대로 저장
-    const sites = msg.sites === null ? null : Array.isArray(msg.sites) ? msg.sites : null
-    chrome.storage.local.set({ allowedSites: sites })
+    if (msg.type === 'SET_ALLOWED_SITES') {
+      // null=전체처리(헤더 미부착), []=전체해제, [...]=부분선택 — 구분 그대로 저장
+      const sites = msg.sites === null ? null : Array.isArray(msg.sites) ? msg.sites : null
+      chrome.storage.local.set({ allowedSites: sites })
+      return
+    }
+    // 오토튠 시작/중지 시 이 PC의 폴링 참여 여부 설정
+    // joined:true = 이 PC의 시작 버튼을 눌렀음 → 이 PC만 폴링 합류
+    // joined:false = 중지 → 이 PC 폴링 탈퇴
+    if (msg.type === 'AUTOTUNE_SET_JOIN') {
+      chrome.runtime.sendMessage({ type: 'AUTOTUNE_JOIN_LOCAL', joined: !!msg.joined })
+    }
   })
 })()

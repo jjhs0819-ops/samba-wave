@@ -96,11 +96,23 @@ async def sourcing_collect_queue(request: Request) -> Any:
             content={"hasJob": False, "shuttingDown": True},
             headers={"Connection": "close"},
         )
-    # 오토튠 강제 stop 직후 — 확장앱 in-flight 작업 즉시 중단 신호
+    from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+
+    device_id = request.headers.get("X-Device-Id", "").strip()
+
+    # PC 개별 중지 신호 — 이 PC에게만 forceStop (다른 PC는 계속 동작)
+    try:
+        from backend.api.v1.routers.samba.collector_autotune import _pc_force_stop_set
+
+        if device_id and device_id in _pc_force_stop_set:
+            _pc_force_stop_set.discard(device_id)
+            return {"hasJob": False, "forceStop": True}
+    except Exception:
+        pass
+
+    # 오토튠 전체 강제 stop 직후 — 확장앱 in-flight 작업 즉시 중단 신호
     # 단, 멀티워커 환경에서 stop을 받은 워커만 flag=True가 되고 start는 다른 워커에서
     # 처리될 수 있으므로, 같은 워커에서 오토튠이 다시 실행 중이면 stale flag로 간주해 무시.
-    # (이렇게 안 하면 일부 워커의 잔재 flag 때문에 SSG/롯데ON 등 확장앱 의존 사이트의
-    #  작업이 폴링마다 forceStop으로 버려져 탭이 영영 안 열리는 회귀 발생)
     try:
         from backend.api.v1.routers.samba.collector_autotune import (
             _autotune_force_stopped,
@@ -111,10 +123,6 @@ async def sourcing_collect_queue(request: Request) -> Any:
             return {"hasJob": False, "forceStop": True}
     except Exception:
         pass
-
-    from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
-
-    device_id = request.headers.get("X-Device-Id", "").strip()
     # PC 분담 last_seen 갱신 — stale PC 자동 제거에 사용
     try:
         from backend.api.v1.routers.samba.collector_autotune import (

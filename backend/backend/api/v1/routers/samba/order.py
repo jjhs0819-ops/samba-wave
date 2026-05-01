@@ -32,6 +32,17 @@ ACTIVE_ORDER_STATUSES = (
     "wait_ship",
     "arrived",
 )
+EXCLUDED_ORDER_STATUSES = (
+    "cancel_requested",
+    "cancelled",
+    "return_requested",
+    "returned",
+    "exchange_requested",
+    "exchange_pending",
+    "exchange_done",
+    "ship_failed",
+    "undeliverable",
+)
 PENDING_ORDER_STATUSES = (
     "pending",
     "preparing",
@@ -131,6 +142,8 @@ async def _build_order_filters(
     if status_filter:
         if status_filter == "active":
             filters.append(SambaOrder.status.in_(ACTIVE_ORDER_STATUSES))
+        elif status_filter == "cancel_return_excluded":
+            filters.append(~SambaOrder.status.in_(EXCLUDED_ORDER_STATUSES))
         elif status_filter == "pending":
             filters.append(SambaOrder.status.in_(PENDING_ORDER_STATUSES))
         else:

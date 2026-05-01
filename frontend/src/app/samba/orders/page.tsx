@@ -64,7 +64,7 @@ export default function OrdersPage() {
   const [siteFilter, setSiteFilter] = useState('')
   const [accountFilter, setAccountFilter] = useState('')
   const [inputFilter, setInputFilter] = useState('')
-  const [statusFilter, setStatusFilter] = useState('')
+  const [statusFilter, setStatusFilter] = useState('cancel_return_excluded')
   // CS 페이지 등 외부에서 ?search=...&search_type=... 로 진입 시 자동 검색
   const initialSearch = searchParams.get('search') || ''
   const [searchText, setSearchText] = useState(initialSearch)

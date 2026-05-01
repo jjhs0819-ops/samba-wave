@@ -71,6 +71,8 @@ export function useFilteredOrders(args: Args) {
         if (!['new_order', 'invoice_printed', 'pending', 'preparing', 'wait_ship', 'arrived'].includes(o.status)) return false
         const ss = o.shipping_status || ''
         if (['취소중', '취소요청', '취소완료', '취소처리중', '반품요청', '반품완료', '교환요청', '교환완료'].includes(ss)) return false
+      } else if (statusFilter === 'cancel_return_excluded') {
+        if (['cancel_requested', 'cancelled', 'return_requested', 'returned', 'exchange_requested', 'exchange_pending', 'exchange_done', 'ship_failed', 'undeliverable'].includes(o.status)) return false
       } else if (statusFilter === 'pending') {
         if (!['pending', 'preparing', 'new_order', 'invoice_printed'].includes(o.status)) return false
       } else if (o.status !== statusFilter) return false

@@ -45,6 +45,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true
   }
 
+  // 오토튠 이 PC 참여/탈퇴 — 시작 버튼 클릭 시 joined:true, 중지 시 false
+  if (msg.type === 'AUTOTUNE_JOIN_LOCAL') {
+    const joined = !!msg.joined
+    if (typeof globalThis._setLocalAutotuneJoined === 'function') {
+      globalThis._setLocalAutotuneJoined(joined)
+    }
+    sendResponse({ success: true })
+    return false
+  }
+
   // 백엔드 URL 변경
   if (msg.type === 'SET_PROXY_URL') {
     const url = (msg.url || '').trim().replace(/\/$/, '')
