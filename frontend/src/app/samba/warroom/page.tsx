@@ -182,7 +182,7 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, extern
             else if (log.msg.includes('성공')) color = '#7BAF7E'
             return <div key={`${log.ts}-${i}`} style={{ color, fontWeight }}>{fmtTextNumbers(log.msg)}</div>
           })
-        )}
+        })()}
       </div>
     </div>
   )
@@ -745,6 +745,7 @@ export default function WarroomPage() {
       <AutotuneLogPanel
         onStatusChange={handleAutotuneStatus}
         externalRunning={autotuneRunning}
+        filterSources={filterSources}
       />
 
       {/* 이벤트 타임라인 (로그 아래) */}
