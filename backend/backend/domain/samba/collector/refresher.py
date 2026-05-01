@@ -1378,7 +1378,9 @@ async def refresh_products_bulk(
         _ip_rotate_counters[site] = 0
         _ip_rotate_totals[site] = 0
         _ip_rotate_labels[site] = ""
-        # _ip_rotate_idxs 는 유지 (프록시 순서 연속성 보존)
+        # _ip_rotate_idxs 는 유지 (프록시 순서 연속성 보존) — 최초 실행 시만 0으로 초기화
+        if site not in _ip_rotate_idxs:
+            _ip_rotate_idxs[site] = 0
         # 소싱처별 사전 캐싱 (배치 시작 시 1회)
         if site == "MUSINSA":
             await _prepare_musinsa_cache()
