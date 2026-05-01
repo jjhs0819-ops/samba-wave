@@ -188,20 +188,10 @@ class SambaCollectorService:
         await self._fill_source_brand(data)
         await self._inherit_group_attributes(data)
         _derive_sale_status(data)
-        # 동일 소싱처 내 동일 원 상품명 존재 시 수집 차단
-        # ABCmart/GrandStage는 같은 모델의 색상별 SKU가 별개 prdtNo로 등록되며
-        # PRDT_NAME이 동일하므로 차단 우회 (site_product_id 유니크로 중복 방지 충분)
-        _NAME_DUP_BYPASS_SITES = {"ABCmart", "GrandStage"}
-        name_val = (data.get("name") or "").strip()
-        _src_site = (data.get("source_site") or "").strip()
-        if name_val and _src_site not in _NAME_DUP_BYPASS_SITES:
-            if await self._exists_by_name(
-                tenant_id=data.get("tenant_id"),
-                source_site=_src_site,
-                name=name_val,
-                exclude_site_product_id=data.get("site_product_id"),
-            ):
-                return None
+        # 동일 소싱처 내 동일 원 상품명 차단은 비활성화 — 색상/사이즈별 SKU가
+        # 별개 site_product_id로 등록되는 소싱처(ABCmart/MUSINSA/LOTTEON/SSG/Nike 등)에서
+        # 동명 상품이 정상이며, 차단 시 수집량이 크게 줄어 누락 발생.
+        # 진짜 중복은 (source_site, site_product_id) 유니크 제약 + IntegrityError 핸들러로 처리.
         # 블랙리스트 체크 — 수집차단된 상품 재수집 방지 (모든 소싱처 공통)
         _src = data.get("source_site", "")
         _spid = data.get("site_product_id", "")
