@@ -273,7 +273,7 @@ export default function OrdersPage() {
       const d = data as Record<string, string> | null
       if (!d) return
       const map: Record<string, string> = {}
-      for (const k of ['alias1', 'alias2', 'alias3']) {
+      for (const k of ['alias1', 'alias2', 'alias3', 'alias4', 'alias5']) {
         const v = d[k] || ''
         if (v.includes('-')) {
           const [code, ...rest] = v.split('-')

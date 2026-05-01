@@ -1037,7 +1037,7 @@ async def _do_sync_cs_from_markets(
     market_name 전달 시 해당 마켓만 동기화 (예: "롯데ON", "스마트스토어"), 없으면 전체 동기화.
     """
     import logging
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
     from sqlmodel import select
     from backend.domain.samba.forbidden.model import SambaSettings
     from backend.domain.samba.proxy.smartstore import SmartStoreClient
@@ -1045,8 +1045,10 @@ async def _do_sync_cs_from_markets(
 
     logger = logging.getLogger(__name__)
     svc = _write_service(session)
+    sync_started_at = datetime.now(timezone.utc)
     synced = 0
     errors = []
+    result_labels: list[str] = []
     target_account = None
     target_market_type = None
     if account_id:
@@ -1064,6 +1066,50 @@ async def _do_sync_cs_from_markets(
         target_market_type = (target_account.market_type or "").lower()
         if not market_name:
             market_name = target_account.market_name
+        result_labels = [
+            target_account.account_label
+            or target_account.seller_id
+            or target_account.business_name
+            or target_account.market_name
+            or account_id
+        ]
+    elif market_name:
+        try:
+            from backend.domain.samba.account.model import SambaMarketAccount
+
+            label_rows = await session.execute(
+                select(SambaMarketAccount).where(
+                    SambaMarketAccount.market_name == market_name,
+                    SambaMarketAccount.is_active == True,  # noqa: E712
+                )
+            )
+            result_labels = [
+                acc.account_label
+                or acc.seller_id
+                or acc.business_name
+                or acc.market_name
+                for acc in label_rows.scalars().all()
+            ]
+        except Exception:
+            result_labels = []
+    else:
+        try:
+            from backend.domain.samba.account.model import SambaMarketAccount
+
+            label_rows = await session.execute(
+                select(SambaMarketAccount).where(
+                    SambaMarketAccount.is_active == True  # noqa: E712
+                )
+            )
+            result_labels = [
+                acc.account_label
+                or acc.seller_id
+                or acc.business_name
+                or acc.market_name
+                for acc in label_rows.scalars().all()
+            ]
+        except Exception:
+            result_labels = []
 
     # 스마트스토어 계정 조회 — SambaMarketAccount 1차, SambaSettings 레거시 폴백
     ss_settings: list[Any] = []
@@ -2237,10 +2283,58 @@ async def _do_sync_cs_from_markets(
     except Exception as e:
         logger.warning(f"[CS동기화] SSG 계정 조회 실패: {e}")
 
+    results: list[dict[str, Any]] = []
+    try:
+        from sqlalchemy import func as sa_func
+
+        created_rows = await session.execute(
+            select(
+                SambaCSInquiry.account_name,
+                sa_func.count(SambaCSInquiry.id),
+            )
+            .where(SambaCSInquiry.created_at >= sync_started_at)
+            .group_by(SambaCSInquiry.account_name)
+        )
+        created_count_map = {
+            str(account_name or "").strip(): int(count or 0)
+            for account_name, count in created_rows.all()
+            if str(account_name or "").strip()
+        }
+
+        error_map: dict[str, str] = {}
+        for err in errors:
+            label = str(err).split(":", 1)[0].strip()
+            if label and label not in error_map:
+                error_map[label] = str(err)
+
+        ordered_labels: list[str] = []
+        for label in result_labels:
+            clean = str(label or "").strip()
+            if clean and clean not in ordered_labels:
+                ordered_labels.append(clean)
+        for label in created_count_map.keys():
+            if label not in ordered_labels:
+                ordered_labels.append(label)
+        for label in error_map.keys():
+            if label not in ordered_labels:
+                ordered_labels.append(label)
+
+        results = [
+            {
+                "account": label,
+                "synced": created_count_map.get(label, 0),
+                "error": error_map.get(label, ""),
+            }
+            for label in ordered_labels
+        ]
+    except Exception as e:
+        logger.warning(f"[CS동기화] 계정별 결과 집계 실패: {e}")
+
     return {
         "success": True,
         "synced": synced,
         "linked": linked,
+        "results": results,
         "errors": errors,
         "message": f"CS 문의 {synced}건 동기화 완료"
         + (f", {linked}건 상품연결" if linked else "")

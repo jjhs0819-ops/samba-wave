@@ -10,6 +10,7 @@ export type {
   SambaCSInquiry,
   CSInquiryListResponse,
   CSReplyTemplate,
+  CSSyncResultItem,
   AnalyticsStats,
   SambaDetailTemplate,
   SambaNameRule,

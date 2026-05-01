@@ -467,9 +467,11 @@ class MusinsaClient:
                     )
                 ),
                 # 품절 판단: isSale=False(판매안함/판매예정) + soldOut + 모든옵션품절
+                # isRestock=True: 재입고 알림 활성 = 무조건 품절 (재고 있으면 불가능한 상태)
                 "isOutOfStock": bool(
                     str(d.get("goodsSaleType", "")).upper()
                     in ("STOP_SALE", "PROHIBITED", "CLOSE", "SOLD_OUT")
+                    or d.get("isRestock") is True
                     or d.get("isSoldOut")
                     or (d.get("goodsPrice") or {}).get("isSoldOut")
                     or d.get("isOutOfStock", False)
@@ -482,6 +484,7 @@ class MusinsaClient:
                 # 판매 상태: sold_out(품절) → preorder(판매예정) → in_stock 순서로 판단
                 # sold_out을 먼저 체크해야 preorder 상태였다가 품절된 경우를 올바르게 처리
                 # canBuy=False / isOfflineGoods=True: 오프라인 전용 상품 sold_out 처리
+                # isRestock=True: 재입고 알림 활성 = 무조건 품절
                 "saleStatus": (
                     "sold_out"
                     if bool(
@@ -489,6 +492,7 @@ class MusinsaClient:
                         in ("STOP_SALE", "PROHIBITED", "CLOSE", "SOLD_OUT")
                         or d.get("canBuy") is False
                         or d.get("isOfflineGoods") is True
+                        or d.get("isRestock") is True
                         or d.get("isSoldOut")
                         or (d.get("goodsPrice") or {}).get("isSoldOut")
                         or d.get("isOutOfStock", False)
@@ -805,6 +809,7 @@ class MusinsaClient:
                     is_sold_out = bool(
                         str(d.get("goodsSaleType", "")).upper()
                         in ("STOP_SALE", "PROHIBITED", "CLOSE", "SOLD_OUT")
+                        or d.get("isRestock") is True
                         or d.get("isSoldOut")
                         or (d.get("goodsPrice") or {}).get("isSoldOut")
                     )
@@ -886,6 +891,7 @@ class MusinsaClient:
                             "isSoldOut": bool(
                                 str(d.get("goodsSaleType", "")).upper()
                                 in ("STOP_SALE", "PROHIBITED", "CLOSE", "SOLD_OUT")
+                                or d.get("isRestock") is True
                                 or d.get("isSoldOut")
                                 or gp_inner.get("isSoldOut")
                             ),

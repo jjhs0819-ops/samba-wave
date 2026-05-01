@@ -3306,7 +3306,7 @@ async def sync_orders_from_markets(
                     settings_repo = SambaSettingsRepository(session)
                     pa_setting = await settings_repo.find_by_async(key="store_playauto")
                     if pa_setting and isinstance(pa_setting.value, dict):
-                        for ak in ("alias1", "alias2", "alias3"):
+                        for ak in ("alias1", "alias2", "alias3", "alias4", "alias5"):
                             av = pa_setting.value.get(ak, "")
                             if av and "-" in av:
                                 code, nick = av.split("-", 1)
@@ -4191,6 +4191,8 @@ async def sync_orders_from_markets(
                         "shipment_id"
                     ] != str(existing.shipment_id or ""):
                         update_fields["shipment_id"] = order_data["shipment_id"]
+                    if order_data.get("ord_prd_seq") and not existing.ord_prd_seq:
+                        update_fields["ord_prd_seq"] = order_data["ord_prd_seq"]
                     # 결제일 갱신: 기존이 NULL이거나 더 이른 값일 때만 채택
                     # (고객 결제시각은 변하지 않음 — 더 늦은 값은 마켓이 sync/처리시각을 결제칸으로 돌려준 케이스로 간주하고 무시)
                     new_paid = order_data.get("paid_at")

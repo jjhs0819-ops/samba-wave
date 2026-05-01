@@ -1404,6 +1404,12 @@ export interface CSReplyTemplate {
   content: string
 }
 
+export interface CSSyncResultItem {
+  account: string
+  synced: number
+  error?: string
+}
+
 export const csInquiryApi = {
   list: (params?: {
     skip?: number
@@ -1448,7 +1454,7 @@ export const csInquiryApi = {
   deleteTemplate: (key: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/cs-inquiries/templates/${key}`, { method: 'DELETE' }),
   syncFromMarkets: (marketName?: string, accountId?: string) =>
-    request<{ success: boolean; synced: number; errors: string[]; message: string }>(
+    request<{ success: boolean; synced: number; errors: string[]; message: string; results?: CSSyncResultItem[] }>(
       `${SAMBA_PREFIX}/cs-inquiries/sync-from-markets`,
       { method: 'POST', body: JSON.stringify({ market_name: marketName || undefined, account_id: accountId || undefined }) }
     ),

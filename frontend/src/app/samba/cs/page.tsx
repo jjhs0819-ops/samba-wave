@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { orderApi, accountApi } from '@/lib/samba/api/commerce'
-import { returnApi, csInquiryApi, type SambaCSInquiry, type CSReplyTemplate } from '@/lib/samba/api/support'
+import { returnApi, csInquiryApi, type SambaCSInquiry, type CSReplyTemplate, type CSSyncResultItem } from '@/lib/samba/api/support'
 import type { SambaMarketAccount } from '@/lib/samba/api/commerce'
 
 import { showAlert, showConfirm } from '@/components/samba/Modal'
@@ -21,11 +21,27 @@ function htmlToText(html: string): string {
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 }
-import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
+import { card, inputStyle, fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
 import { PERIOD_BUTTONS } from '@/lib/samba/constants'
 import { fmtDate, fmtTime, getPeriodStart, getPeriodEnd } from '@/lib/samba/utils'
 
 import { REPLY_STATUS_MAP, INQUIRY_TYPE_MAP } from './constants'
+
+
+function renderCsLogMessage(message: string) {
+  const formatted = fmtTextNumbers(message)
+  const parts = formatted.split(/(\d[\d,]*)(건)/g)
+
+  if (parts.length === 1) return formatted
+
+  return parts.map((part, index) => {
+    const isCount = index % 3 === 1
+    if (isCount && Number(part.replace(/,/g, '')) > 0) {
+      return <span key={`${part}-${index}`} style={{ color: '#FFFFFF', fontWeight: 700 }}>{part}</span>
+    }
+    return <span key={`${part}-${index}`}>{part}</span>
+  })
+}
 
 
 
@@ -296,7 +312,16 @@ export default function CSPage() {
     setCsLogMessages(prev => [...prev, `[${ts()}] ${label} CS 문의 동기화 중...`])
     try {
       const result = await csInquiryApi.syncFromMarkets(selectedMarket, selectedAccountId)
-      setCsLogMessages(prev => [...prev, `[${ts()}] ${result.message}`])
+      const resultLogs: string[] = []
+      for (const item of (result.results || []) as CSSyncResultItem[]) {
+        const errorDetail = item.error?.includes(':') ? item.error.split(':').slice(1).join(':').trim() : item.error
+        resultLogs.push(`[${ts()}] ${item.account}: ${fmtNum(item.synced || 0)}건 동기화${errorDetail ? ` (${errorDetail})` : ''}`)
+      }
+      if (resultLogs.length === 0 && result.errors?.length) {
+        for (const err of result.errors) resultLogs.push(`[${ts()}] ${err}`)
+      }
+      resultLogs.push(`[${ts()}] ${result.message}`)
+      setCsLogMessages(prev => [...prev, ...resultLogs])
       setPage(0)
       setSearch('')
       setSearchInput('')
@@ -418,7 +443,7 @@ export default function CSPage() {
           </div>
         </div>
         <div ref={el => { if (el) el.scrollTop = el.scrollHeight }} style={{ height: '144px', overflowY: 'auto', padding: '8px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.788rem', color: '#8A95B0', background: '#080A10', lineHeight: 1.8 }}>
-          {csLogMessages.map((msg, i) => <p key={i} style={{ color: '#8A95B0', fontSize: 'inherit', margin: 0 }}>{msg}</p>)}
+          {csLogMessages.map((msg, i) => <p key={i} style={{ color: '#8A95B0', fontSize: 'inherit', margin: 0 }}>{renderCsLogMessage(msg)}</p>)}
         </div>
       </div>
 

@@ -815,6 +815,8 @@ export const STORE_MARKETS: MarketConfig[] = [
     { name: 'alias1', label: '계정 1', type: 'alias', placeholder: '037800LT' },
     { name: 'alias2', label: '계정 2', type: 'alias', placeholder: '마켓번호' },
     { name: 'alias3', label: '계정 3', type: 'alias', placeholder: '마켓번호' },
+    { name: 'alias4', label: '계정 4', type: 'alias', placeholder: '마켓번호' },
+    { name: 'alias5', label: '계정 5', type: 'alias', placeholder: '마켓번호' },
   ]},
   { key: 'cafe24', label: '카페24', authField: 'accessToken', guideUrl: 'https://developers.cafe24.com', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
