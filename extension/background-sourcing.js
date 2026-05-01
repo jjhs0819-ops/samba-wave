@@ -271,6 +271,14 @@ const _siteLoginConfirmed = new Set()
 const _siteSemaphores = new Map() // site → { active: number }
 let _siteConcurrencyCache = { value: null, at: 0 }
 const _SITE_CONC_CACHE_MS = 5000
+
+function _hasRecentLoginProof(site) {
+  if (_siteLoginConfirmed.has(site)) return true
+  const siteKey = (typeof alExternalSiteToKey === 'function') ? alExternalSiteToKey(site) : null
+  const lastAt = (siteKey && globalThis._lastAutoLoginSuccessAt) ? globalThis._lastAutoLoginSuccessAt[siteKey] : 0
+  const AL_GRACE_MS = 30 * 60 * 1000
+  return !!(lastAt && Date.now() - lastAt < AL_GRACE_MS)
+}
 const _activeSourcingSites = new Map()
 
 const _SITE_CAP_DEFAULTS = {
@@ -1218,14 +1226,15 @@ async function handleSourcingJob(job) {
         //   - 'login_link' → 확실 비로그인 → 잡 보류 + 자동로그인 트리거
         const _signal = result?._domLoginSignal
         if (_signal === 'logout_link') _siteLoginConfirmed.add(job.site)
-        if ((_signal === 'logout_link' || _signal === 'ambiguous') && result?.success && result?.sale_price > 0) {
-          result.best_benefit_price = result.sale_price
-          result._loginRequired = false  // 공통 _detectLoginStatus 체크 스킵
-          console.log(`[${job.site}] 혜택가 없음 — sale_price 사용 (${_signal}): ${job.productId} → ${result.sale_price}`)
-        } else if (_signal === 'ambiguous' && _siteLoginConfirmed.has(job.site)) {
-          // 이미 로그인 확인된 사이트 — ambiguous는 렌더링 실패, 로그인 차단 스킵
-          console.log(`[${job.site}] DOM 미수집(ambiguous) — 로그인 확인됨, 렌더링 실패로 간주: ${job.productId}`)
-          result = { success: false, message: 'ABCmart DOM 미수집(렌더링 실패)' }
+        if (_signal === 'logout_link' && result?.success && result?.sale_price > 0) {
+          result._loginRequired = false
+          _siteLoginConfirmed.add(job.site)
+          console.log(`[${job.site}] 혜택가 없음 — logout 확인됨, 원가 갱신 없이 통과: ${job.productId}`)
+        } else if (_signal === 'ambiguous' && _hasRecentLoginProof(job.site)) {
+          // 이미 로그인 확인된 사이트는 ambiguous를 재로그인 사유로 보지 않는다.
+          // 다만 혜택가를 sale_price로 덮어쓰지는 않는다.
+          result._loginRequired = false
+          console.log(`[${job.site}] DOM ambiguous — 로그인 확인 이력 있음, 재로그인 차단 스킵: ${job.productId}`)
         } else {
           console.log(`[${job.site}] DOM 혜택가 미수집 + 로그인 미확정(${_signal || 'null'}) → 잡 보류`)
           result = { success: false, login_required: true, message: 'ABCmart DOM 미수집 — 로그인 후 재시도' }
@@ -1259,7 +1268,7 @@ async function handleSourcingJob(job) {
     if (job.type === 'detail' && tabId && job.site !== 'SSG' && (result == null || result.success !== false)) {
       let loginNeeded = result?._loginRequired
       if (loginNeeded === undefined) {
-        if (_siteLoginConfirmed.has(job.site)) {
+        if (_hasRecentLoginProof(job.site)) {
           // 이 세션에서 이미 로그인 확인됨 — detectLoginStatus 스킵 (숨겨진 login link 오탐 방지)
         } else {
           // 자동로그인 성공 직후 N분간 detect 스킵 — _detectLoginStatus false-positive 방지
@@ -1546,7 +1555,7 @@ async function extractDetailData(tabId, site, productId) {
           // uitemObjList에서 실제 재고 추출 (AJAX 업데이트 후 값, safeObj는 배열 절삭)
           const uitemOptions = Array.isArray(obj.uitemObjList)
             ? obj.uitemObjList.map(u => ({
-                name: u.optnDisplayNm || u.optnNm || u.uitemOptnNm1 || u.uitemNm || '',
+                name: [u.uitemOptnNm1, u.uitemOptnNm2, u.uitemOptnNm3].filter(Boolean).join('/') || u.optnDisplayNm || u.optnNm || u.uitemNm || '',
                 usablInvQty: parseInt(u.usablInvQty) || 0,
                 isSoldOut: (parseInt(u.usablInvQty) || 0) === 0,
               })).filter(u => u.name)

@@ -125,7 +125,8 @@ class SSGPlugin(SourcingPlugin):
                 _rob_best = int(_rob.get("bestAmt", 0) or 0)
                 if detail and _rob_sell > 0:
                     detail["salePrice"] = _rob_sell
-                    detail["bestBenefitPrice"] = _rob_best or _rob_sell
+                    if not int(detail.get("bestBenefitPrice", 0) or 0):
+                        detail["bestBenefitPrice"] = _rob_best or _rob_sell
                     _rob_orig = int(_rob.get("norprc", 0) or _rob.get("orgPrc", 0) or 0)
                     if _rob_orig > 0:
                         detail["originalPrice"] = _rob_orig
@@ -158,9 +159,54 @@ class SSGPlugin(SourcingPlugin):
                 _uitem_opts = _ext_result.get("uitemOptions", [])
                 _dom_opts = _ext_result.get("domOptions", [])
                 if detail.get("options"):
+                    _has_layered_uitem_names = any(
+                        "/" in str(o.get("name", "")) for o in _uitem_opts
+                    )
+                    _has_layered_detail_names = any(
+                        "/" in str(o.get("name", "")) for o in detail["options"]
+                    )
+                    if (
+                        _uitem_opts
+                        and _has_layered_uitem_names
+                        and (
+                            not _has_layered_detail_names
+                            or len(detail["options"]) < len(_uitem_opts)
+                        )
+                    ):
+                        _price_fallback = int(detail.get("salePrice", 0) or 0)
+                        detail["options"] = [
+                            {
+                                "name": _opt.get("name", ""),
+                                "price": int(_opt.get("price", 0) or 0)
+                                or _price_fallback,
+                                "stock": _opt.get("usablInvQty", 0),
+                                "isSoldOut": _opt.get("isSoldOut", False),
+                            }
+                            for _opt in _uitem_opts
+                            if _opt.get("name")
+                        ]
                     if _dom_opts:
                         # DOM 파싱 결과 우선 — "남은수량 N" 실재고 반영
                         _dom_map = {o["name"]: o for o in _dom_opts if o.get("name")}
+                        if not any(
+                            _name in _dom_map
+                            for _name in (
+                                _opt.get("name", "") for _opt in detail["options"]
+                            )
+                        ):
+                            _prefixes = {
+                                _name.split("/", 1)[0]
+                                for _name in (
+                                    _opt.get("name", "") for _opt in detail["options"]
+                                )
+                                if "/" in _name
+                            }
+                            if len(_prefixes) == 1:
+                                _prefix = next(iter(_prefixes))
+                                _dom_map = {
+                                    f"{_prefix}/{_name}": _opt
+                                    for _name, _opt in _dom_map.items()
+                                }
                         for _opt in detail["options"]:
                             _dom = _dom_map.get(_opt.get("name", ""))
                             if _dom:
@@ -181,6 +227,19 @@ class SSGPlugin(SourcingPlugin):
                                 _qty = _u.get("usablInvQty", 0)
                                 _opt["isSoldOut"] = _qty == 0
                                 _opt["stock"] = _qty if _qty > 0 else 0
+                    _has_saleable_option = any(
+                        (not _opt.get("isSoldOut", False))
+                        and (_opt.get("stock") or 0) > 0
+                        for _opt in detail["options"]
+                    )
+                    if _has_saleable_option:
+                        detail["isOutOfStock"] = False
+                        detail["isSoldOut"] = False
+                    elif all(
+                        _opt.get("isSoldOut", False) for _opt in detail["options"]
+                    ):
+                        detail["isOutOfStock"] = True
+                        detail["isSoldOut"] = True
 
             if not detail:
                 return RefreshResult(

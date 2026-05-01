@@ -1623,7 +1623,7 @@ class SSGSourcingClient:
         # <select id="ordOpt1">의 "(매진)" 텍스트로 실제 품절 상태 보완
         options = self._parse_uitem_options(obj)
         if not options:
-            options = self._parse_select_options(html, base_price=sell_price)
+            options = self._parse_layered_select_options(html, base_price=sell_price)
             # 가격 정보 없는 옵션(추가가=0 등)에 sell_price 채움
             for _opt in options:
                 if not _opt.get("price"):
@@ -1631,7 +1631,7 @@ class SSGSourcingClient:
         else:
             # uitemObjList가 있어도 select의 "(매진)" 정보로 실제 품절 상태 보완
             # (SSR HTML의 uitemObjList는 실시간 재고 미반영)
-            _select_opts = self._parse_select_options(html)
+            _select_opts = self._parse_layered_select_options(html)
             if _select_opts:
                 _soldout_names = {o["name"] for o in _select_opts if o.get("isSoldOut")}
                 if _soldout_names:
@@ -1639,9 +1639,17 @@ class SSGSourcingClient:
                         if _opt.get("name") in _soldout_names:
                             _opt["isSoldOut"] = True
                             _opt["stock"] = 0
-        # 품절 재확인: 모든 옵션이 품절이면 품절
-        if options and all(opt.get("isSoldOut", False) for opt in options):
-            is_sold_out = True
+        # 옵션 재고가 있으면 상품 전체 품절 플래그보다 옵션 재고를 우선한다.
+        # SSG soldOut/Y 또는 soldOutMessage가 stale인 경우가 있어 옵션 보정 후 재계산이 필요하다.
+        if options:
+            has_saleable_option = any(
+                (not opt.get("isSoldOut", False)) and (opt.get("stock") or 0) > 0
+                for opt in options
+            )
+            if has_saleable_option:
+                is_sold_out = False
+            elif all(opt.get("isSoldOut", False) for opt in options):
+                is_sold_out = True
 
         # 배송 정보
         shpp_type = str(obj.get("shppTypeDtlCd", ""))
@@ -2369,6 +2377,105 @@ class SSGSourcingClient:
             )
 
         return options
+
+    @staticmethod
+    def _parse_layered_select_options(html: str, base_price: int = 0) -> list[dict]:
+        """2단 옵션이 있는 SSG select 구조를 최대한 보존해 옵션을 추출한다."""
+
+        def _extract_select_options(select_id: str) -> list[dict]:
+            m = re.search(
+                rf'<select[^>]+id=["\']{re.escape(select_id)}["\'][^>]*>(.*?)</select>',
+                html,
+                re.DOTALL | re.IGNORECASE,
+            )
+            if not m:
+                return []
+
+            parsed: list[dict] = []
+            for opt_m in re.finditer(
+                r"<option([^>]*)>(.*?)</option>",
+                m.group(1),
+                re.DOTALL | re.IGNORECASE,
+            ):
+                attrs_raw = opt_m.group(1)
+                text = re.sub(r"<[^>]+>", "", opt_m.group(2)).strip()
+                val_m = re.search(r'value=["\']([^"\']*)["\']', attrs_raw)
+                val = val_m.group(1).strip() if val_m else ""
+                if not val:
+                    continue
+
+                price = 0
+                dp_m = re.search(r'data-price=["\'](\d+)["\']', attrs_raw)
+                if dp_m:
+                    price = int(dp_m.group(1))
+                else:
+                    dap_m = re.search(r'data-add-price=["\'](\d+)["\']', attrs_raw)
+                    if dap_m:
+                        add = int(dap_m.group(1))
+                        price = base_price + add if add > 0 else 0
+                    else:
+                        plus_m = re.search(r"\(\+([\d,]+)", text)
+                        abs_m = re.search(r"\(([\d,]+)", text)
+                        if plus_m:
+                            price = base_price + int(plus_m.group(1).replace(",", ""))
+                        elif abs_m:
+                            price = int(abs_m.group(1).replace(",", ""))
+
+                is_soldout = any(
+                    token in text for token in ("매진", "품절", "留ㅼ쭊", "?덉젅")
+                )
+                clean_name = (
+                    (text or val)
+                    .replace("(매진)", "")
+                    .replace("[매진]", "")
+                    .replace("(품절)", "")
+                    .replace("[품절]", "")
+                    .replace("(留ㅼ쭊)", "")
+                    .replace("[留ㅼ쭊]", "")
+                    .replace("(?덉젅)", "")
+                    .replace("[?덉젅]", "")
+                    .strip()
+                )
+                parsed.append(
+                    {
+                        "name": clean_name,
+                        "price": price,
+                        "stock": 0 if is_soldout else 99,
+                        "isSoldOut": is_soldout,
+                        "_selected": "selected" in attrs_raw.lower(),
+                    }
+                )
+            return parsed
+
+        level1 = _extract_select_options("ordOpt1")
+        level2 = _extract_select_options("ordOpt2")
+        if level2:
+            active_level1 = [opt for opt in level1 if opt.get("_selected")]
+            if not active_level1 and len(level1) == 1:
+                active_level1 = [level1[0]]
+            prefix = active_level1[0]["name"] if len(active_level1) == 1 else ""
+            combined = []
+            for opt in level2:
+                combined.append(
+                    {
+                        "name": f"{prefix}/{opt['name']}" if prefix else opt["name"],
+                        "price": opt["price"],
+                        "stock": opt["stock"],
+                        "isSoldOut": opt["isSoldOut"],
+                    }
+                )
+            if combined:
+                return combined
+
+        return [
+            {
+                "name": opt["name"],
+                "price": opt["price"],
+                "stock": opt["stock"],
+                "isSoldOut": opt["isSoldOut"],
+            }
+            for opt in level1
+        ]
 
     @staticmethod
     def _js_literal_to_json(js_str: str) -> str:
