@@ -52,11 +52,15 @@ cafe24_oauth_router = cafe24_oauth.cafe24_oauth_router
 # bg-worker 전용 라우터 (인증 불필요, 워커 토큰으로 자체 검증) — app_factory.py에서 별도 등록
 bg_worker_router = ai_tools.bg_worker_router
 
+# 무신사 확장앱 전용 라우터 (JWT 면제, X-Api-Key만) — app_factory.py에서 별도 등록
+musinsa_extension_router = musinsa.extension_router
+
 __all__ = [
     "router",
     "sourcing_queue_router",
     "cafe24_oauth_router",
     "bg_worker_router",
+    "musinsa_extension_router",
     "_get_setting",
     "_set_setting",
 ]

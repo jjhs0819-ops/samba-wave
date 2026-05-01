@@ -279,8 +279,15 @@ async def get_musinsa_cookie(session: AsyncSession | None = None) -> str:
 
     session이 주어지면 해당 세션으로 조회하고,
     없으면 새 읽기 세션을 열어 조회한다.
+
+    SambaSettings.musinsa_cookie는 _set_setting을 통해 Fernet 암호화 상태로 저장되므로
+    조회 시 반드시 decrypt_value로 복호화해야 한다. 복호화 누락 시 무신사 API에 암호화
+    토큰('gAAAAA...')이 그대로 전달되어 인증 안 된 요청으로 인식, 등급 할인이 0%로
+    응답되는 문제가 발생함 (2026-05-01 진단). decrypt_value는 평문 폴백을 지원해
+    마이그레이션 기간 동안 평문 데이터도 안전하게 처리한다.
     """
     from backend.domain.samba.forbidden.model import SambaSettings
+    from backend.utils.crypto import decrypt_value
     from sqlmodel import select as _sel
 
     if session is not None:
@@ -289,7 +296,8 @@ async def get_musinsa_cookie(session: AsyncSession | None = None) -> str:
                 _sel(SambaSettings).where(SambaSettings.key == "musinsa_cookie")
             )
             row = result.scalar_one_or_none()
-            return (row.value if row and row.value else "") or ""
+            raw = (row.value if row and row.value else "") or ""
+            return decrypt_value(raw) if raw else ""
         except Exception:
             logger.warning(
                 "[get_musinsa_cookie] 쿠키 조회 실패 (세션 전달)", exc_info=True
@@ -305,7 +313,8 @@ async def get_musinsa_cookie(session: AsyncSession | None = None) -> str:
                 _sel(SambaSettings).where(SambaSettings.key == "musinsa_cookie")
             )
             row = result.scalar_one_or_none()
-            return (row.value if row and row.value else "") or ""
+            raw = (row.value if row and row.value else "") or ""
+            return decrypt_value(raw) if raw else ""
     except Exception:
         logger.warning("[get_musinsa_cookie] 쿠키 조회 실패 (신규 세션)", exc_info=True)
         return ""

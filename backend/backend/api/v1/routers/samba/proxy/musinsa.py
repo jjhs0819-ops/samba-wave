@@ -17,6 +17,11 @@ from ._helpers import _get_musinsa_client, _get_setting, _set_setting
 
 router = APIRouter(tags=["samba-proxy"])
 
+# 확장앱 전용 라우터 — JWT(samba_auth) 면제. X-Api-Key만으로 호출 가능.
+# 라우터 레벨 samba_auth가 적용된 main router에 두면 'Missing authentication token'
+# 401로 차단되어 settings.musinsa_cookie 갱신 경로가 막힘 (2026-04-09 사고).
+extension_router = APIRouter(tags=["samba-proxy-extension"])
+
 
 @router.get("/musinsa/goods/{goods_no}")
 async def musinsa_goods_detail(
@@ -179,17 +184,18 @@ class MusinsaSetCookieRequest(BaseModel):
     cookie: str
 
 
-@router.post("/musinsa/set-cookie")
+@extension_router.post("/musinsa/set-cookie")
 async def musinsa_set_cookie(
     body: MusinsaSetCookieRequest,
     write_session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:
     """브라우저 확장에서 쿠키 직접 전달.
 
-    인증: X-Api-Key (확장앱 공통). require_admin 제거 사유 — 확장앱은 Bearer JWT를
-    가지지 않아 로그인 갱신마다 401이 발생, settings.musinsa_cookie가 한 달째
-    정지하는 사고가 발생함 (2026-04-30 진단). refresher가 사용하는 복수 쿠키 풀
-    musinsa_cookies도 같이 갱신해 잔액 페이지 미진입 시에도 풀이 살아있도록 한다.
+    인증: X-Api-Key (확장앱 공통). extension_router로 분리 — main router의
+    라우터 레벨 samba_auth(JWT)가 확장앱 호출(X-Api-Key만 전송)을 401로 차단해
+    2026-04-09부터 settings.musinsa_cookie 갱신 정지가 발생함. JWT 면제 라우터로
+    옮겨 X-Api-Key만으로 호출 가능하게 한다. refresher가 사용하는 복수 쿠키 풀
+    musinsa_cookies도 함께 갱신해 잔액 페이지 미진입 시에도 풀이 살아있도록 한다.
     """
     import json
 

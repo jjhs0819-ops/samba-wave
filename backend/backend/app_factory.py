@@ -41,6 +41,7 @@ from backend.api.v1.routers.samba.product import router as samba_product_router
 from backend.api.v1.routers.samba.proxy import (
     bg_worker_router as samba_bg_worker_router,
     cafe24_oauth_router as samba_cafe24_oauth_router,
+    musinsa_extension_router as samba_musinsa_extension_router,
     router as samba_proxy_router,
     sourcing_queue_router as samba_sourcing_queue_router,
 )
@@ -153,6 +154,10 @@ def create_application() -> FastAPI:
     app.include_router(
         samba_proxy_router, prefix="/api/v1/samba", dependencies=samba_auth
     )
+    # 무신사 확장앱 전용 — JWT(samba_auth) 면제, X-Api-Key만으로 호출.
+    # main proxy router의 라우터 레벨 JWT가 확장앱 set-cookie 호출을 401로 막아
+    # 2026-04-09부터 settings.musinsa_cookie 갱신 정지가 발생한 사고의 fix.
+    app.include_router(samba_musinsa_extension_router, prefix="/api/v1/samba/proxy")
     app.include_router(samba_sourcing_queue_router, prefix="/api/v1/samba")
     # 카페24 OAuth 콜백은 외부 서버 리다이렉트라 JWT 헤더 불가 → 별도 라우터로 JWT 예외
     app.include_router(samba_cafe24_oauth_router, prefix="/api/v1/samba")
