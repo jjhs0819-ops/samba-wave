@@ -559,6 +559,7 @@ export function StoreSettingsPanel(props: Props) {
                 onClick={() => saveStoreSettings(market.key)}
                 style={{ padding: '0.625rem 1.75rem', background: '#FF8C00', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 700, fontSize: '0.875rem', cursor: 'pointer' }}
               >설정 저장</button>
+            </div>
           </div>
 
           <ConnectedAccountsList
