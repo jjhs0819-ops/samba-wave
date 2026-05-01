@@ -1,6 +1,6 @@
 """롯데ON 교환 클레임 status 잘못 매핑된 기존 데이터 보정
 
-Revision ID: 202605011300_fix_lotteon_exchange
+Revision ID: 202605011300_fix_lt_exchg
 Revises: 202605011200_addr_detail
 Create Date: 2026-05-01
 
@@ -15,7 +15,7 @@ from typing import Sequence, Union
 from alembic import op
 
 
-revision: str = "202605011300_fix_lotteon_exchange"
+revision: str = "202605011300_fix_lt_exchg"
 down_revision: Union[str, Sequence[str]] = "202605011200_addr_detail"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
