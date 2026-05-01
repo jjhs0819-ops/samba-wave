@@ -10,10 +10,31 @@ import { fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
 const POLL_INTERVAL = 30_000
 const LOG_POLL_INTERVAL = 500
 
+// 로그 메시지 앞부분의 [SITE] 태그 추출 — 예: "[12:34:56] [1/100] [MUSINSA] ..." → "MUSINSA"
+const extractSiteFromLog = (msg: string): string | null => {
+  // 첫 [...] 두 개는 시간/카운터, 세 번째 [...]가 사이트 태그
+  const matches = msg.match(/\[([^\]]+)\]/g)
+  if (!matches || matches.length < 3) return null
+  return matches[2].slice(1, -1)
+}
+
+// PC분담 필터: filterSources 기준으로 로그 표시 여부 결정
+// - null = 전체 표시 (단일 PC 또는 미설정)
+// - [] = 아무것도 표시 안 함 (전체해제 PC)
+// - [...] = 해당 사이트만 표시
+const shouldShowLog = (msg: string, filterSources: string[] | null): boolean => {
+  if (filterSources === null) return true
+  if (filterSources.length === 0) return false
+  const site = extractSiteFromLog(msg)
+  if (!site) return true  // 사이클 완료 등 사이트 무관 메시지는 항상 표시
+  return filterSources.includes(site)
+}
+
 // 오토튠 실시간 로그 (독립 컴포넌트 — 대시보드 리렌더링 영향 없음)
-const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, externalRunning }: {
+const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, externalRunning, filterSources }: {
   onStatusChange?: (running: boolean, cycles: number, lastTick: string | null, refreshed: number) => void
   externalRunning?: boolean
+  filterSources?: string[] | null
 }) {
   const [logs, setLogs] = useState<RefreshLogEntry[]>([])
   const [, setIntervals] = useState<Record<string, number>>({})
@@ -135,12 +156,16 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, extern
         ref={containerRef}
         style={{ height: '250px', overflowY: 'auto', padding: '10px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.73rem', lineHeight: 1.8, color: '#4A5568' }}
       >
-        {logs.length === 0 ? (
-          <div style={{ color: '#555', textAlign: 'center', padding: '1.5rem 0' }}>
-            갱신 로그 대기 중...
-          </div>
-        ) : (
-          logs.map((log, i) => {
+        {(() => {
+          const visibleLogs = logs.filter(l => shouldShowLog(l.msg, filterSources ?? null))
+          if (visibleLogs.length === 0) {
+            return (
+              <div style={{ color: '#555', textAlign: 'center', padding: '1.5rem 0' }}>
+                {logs.length > 0 ? '이 PC가 담당한 소싱처 로그 없음' : '갱신 로그 대기 중...'}
+              </div>
+            )
+          }
+          return visibleLogs.map((log, i) => {
             let color = '#DCE0E8'
             let fontWeight: number | string = 400
             if (log.msg.includes('쿠키 로테이션')) { color = '#FFFFFF'; fontWeight = 700 }
