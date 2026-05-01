@@ -189,11 +189,15 @@ class SambaCollectorService:
         await self._inherit_group_attributes(data)
         _derive_sale_status(data)
         # 동일 소싱처 내 동일 원 상품명 존재 시 수집 차단
+        # ABCmart/GrandStage는 같은 모델의 색상별 SKU가 별개 prdtNo로 등록되며
+        # PRDT_NAME이 동일하므로 차단 우회 (site_product_id 유니크로 중복 방지 충분)
+        _NAME_DUP_BYPASS_SITES = {"ABCmart", "GrandStage"}
         name_val = (data.get("name") or "").strip()
-        if name_val:
+        _src_site = (data.get("source_site") or "").strip()
+        if name_val and _src_site not in _NAME_DUP_BYPASS_SITES:
             if await self._exists_by_name(
                 tenant_id=data.get("tenant_id"),
-                source_site=data.get("source_site", ""),
+                source_site=_src_site,
                 name=name_val,
                 exclude_site_product_id=data.get("site_product_id"),
             ):

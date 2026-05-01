@@ -13,7 +13,7 @@ import threading
 import time as _time
 from collections import deque
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 from backend.domain.samba.collector.model import (
     FIXED_REQUESTED_COUNT,
@@ -2212,6 +2212,36 @@ class JobWorker:
                 if len(_nm_parts) > 2:
                     cat_name_map[" > ".join(_nm_parts[2:])] = f.id
 
+        # 자동생성 시 사용할 사이트 폴더 ID — 기존 leaf의 parent_id 우선,
+        # 없으면 source_site 사이트 폴더(is_folder=true) 직접 조회
+        _auto_parent_id: Optional[str] = None
+        for _f in filters:
+            if _f.parent_id:
+                _auto_parent_id = _f.parent_id
+                break
+        if not _auto_parent_id:
+            _site_folder_row = (
+                await session.execute(
+                    select(SambaSearchFilter.id)
+                    .where(
+                        SambaSearchFilter.source_site.in_(["ABCmart", "GrandStage"]),
+                        SambaSearchFilter.is_folder == True,  # noqa: E712
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if _site_folder_row:
+                _auto_parent_id = _site_folder_row
+
+        # 자동생성 시 사용할 tenant_id — job.tenant_id 우선, 없으면 NOT NULL인 filter
+        # (멀티테넌시 격리 화면에서 NULL tenant 행이 누락되는 문제 방지)
+        _auto_tenant_id: Optional[str] = getattr(job, "tenant_id", None)
+        if not _auto_tenant_id:
+            for _f in filters:
+                if _f.tenant_id:
+                    _auto_tenant_id = _f.tenant_id
+                    break
+
         if not cat_filter_map:
             await repo.fail_job(
                 job.id,
@@ -2363,8 +2393,8 @@ class JobWorker:
                     _new_filter = SambaSearchFilter(
                         source_site=_parent.source_site or "ABCmart",
                         name=_new_name,
-                        parent_id=_parent.parent_id,
-                        tenant_id=_parent.tenant_id,
+                        parent_id=_parent.parent_id or _auto_parent_id,
+                        tenant_id=_parent.tenant_id or _auto_tenant_id,
                         keyword=_parent.keyword,
                         category_filter=cat_code or None,
                         source_brand_name=_brand_nm,
