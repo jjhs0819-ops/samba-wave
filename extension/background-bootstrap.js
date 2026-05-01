@@ -153,17 +153,13 @@ async function ensureBackgroundSessionTabs() {
     // 빈 배열 → 작업 안 받는 PC, 자동 생성 X
     if (!sites || sites.length === 0) return
     if (typeof ensureSiteSessionTab !== 'function') return
-    // SSG는 카드혜택가가 비로그인에서도 동일하게 노출되어 세션 탭 불필요
-    // (사용자가 메인 페이지가 자동으로 뜨는 게 거슬린다고 보고 — 구매페이지만 띄우면 충분)
-    const SESSION_TAB_REQUIRED_SITES = new Set(['ABCmart', 'GrandStage', 'LOTTEON'])
-    for (const site of sites) {
-      if (!SESSION_TAB_REQUIRED_SITES.has(site)) continue
-      try {
-        await ensureSiteSessionTab(site)
-      } catch (e) {
-        console.warn(`[세션탭] ${site} 생성 실패: ${e.message}`)
-      }
-    }
+    // 사용자 보고 — 확장앱 설치/업데이트만 했는데 메인 페이지 자동으로 뜨는 게 거슬림.
+    // 모든 사이트의 세션 탭을 lazy 생성으로 변경:
+    //   - ABCmart 멤버십가 in-tab fetch 필요 시 fetchAbcmartBenefitPrice → ensureArtTab → 자동 생성
+    //   - LOTTEON 자동로그인 / 쿠키 동기화 시 자동 생성
+    //   - SSG는 비로그인 무관 (애초에 불필요)
+    // 즉 사전 생성 없이 실제 작업 시점에만 탭 1개 생성 — 사용자 눈에 띄는 깜빡임 최소화.
+    // (필요한 사이트가 추가되면 ensureSiteSessionTab을 호출하는 코드 경로에서 자동 처리)
   } catch (e) {
     console.warn('[세션탭] 초기화 실패:', e.message)
   }
