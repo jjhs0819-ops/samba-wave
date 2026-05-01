@@ -1037,10 +1037,10 @@ class ARTSourcingClient:
         _always_rate = float(data.get("alwaysDscntRate") or 0)
 
         # 쿠폰 할인: 로그인 시 받을 수 있는 추가 쿠폰 (없으면 0)
+        # maxBenefitCoupon은 중복적용 가능한 쿠폰 묶음(일반+플러스 등) — 전부 합산해야 페이지 표시값과 일치
         _benefit_coupons = data.get("maxBenefitCoupon") or data.get("coupon") or []
-        _coupon_discount = max(
-            (self._safe_int(c.get("dscntAmt", 0)) for c in _benefit_coupons),
-            default=0,
+        _coupon_discount = sum(
+            self._safe_int(c.get("dscntAmt", 0)) for c in _benefit_coupons
         )
 
         _after_coupon = sale_price - _coupon_discount

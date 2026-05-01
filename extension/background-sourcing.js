@@ -332,15 +332,13 @@ async function _processJobWithCap(job) {
   }
 }
 
-// 사이트별 인증 실패 카운트 — 매우 보수적인 자동로그인 트리거 정책 (사용자 직접 로그인 신뢰)
+// 사이트별 인증 실패 카운트 — 비로그인 가격 수집 차단 정책 (즉시 트리거)
 // 정책:
-//   - immediate=true(비로그인 확정 신호)여도 1회만으론 트리거 X — 10회 누적 후 트리거
-//   - 일반 인증 실패도 10회 누적 후 트리거
+//   - 비로그인 신호 1회로 즉시 자동로그인 트리거 (10건 비로그인 가격 통과 차단)
 //   - 한 번 트리거되면 1시간 쿨다운 (그 안에는 추가 트리거 X)
-//   - DOM hydration false-positive로 매 작업 트리거되던 폭주 차단 + 사용자 직접 로그인
-//     상태를 함부로 덮지 않음
+//   - DOM false-positive 차단은 사이트별 사전 게이트(_preCheckLogin)로 처리
 const _alFailureCount = {}
-const _AL_FAILURE_THRESHOLD = 10  // 5 → 10 (사용자 직접 로그인 신뢰 강화)
+const _AL_FAILURE_THRESHOLD = 1  // 10 → 1 (비로그인 가격 수집 즉시 차단)
 // 사이트별 마지막 자동로그인 트리거 시각 — 1시간 쿨다운
 const _alLastTriggerAt = {}
 const _AL_TRIGGER_COOLDOWN_MS = 60 * 60 * 1000  // 5분 → 1시간
@@ -622,10 +620,10 @@ async function fetchAbcmartBenefitPriceServiceWorker(productId, site) {
 
     const membershipDiscount = parseInt(data.alwaysDscntAmt || 0)
     const coupons = data.maxBenefitCoupon || data.coupon || []
+    // maxBenefitCoupon은 중복적용 가능한 쿠폰 묶음(일반+플러스 등) — 전부 합산해야 정확
     let couponDiscount = 0
     for (const c of coupons) {
-      const d = parseInt(c.dscntAmt || 0)
-      if (d > couponDiscount) couponDiscount = d
+      couponDiscount += parseInt(c.dscntAmt || 0)
     }
 
     let benefitPrice = salePrice - membershipDiscount - couponDiscount
@@ -646,6 +644,68 @@ async function fetchAbcmartBenefitPriceServiceWorker(productId, site) {
   } catch (err) {
     console.error(`[${site}] SW fetch 실패:`, err.message)
     return null
+  }
+}
+
+// ABCmart/GrandStage 로그인 검증 — info API의 loginYn 응답으로 판정.
+// 사용자 PC 쿠키로 호출하므로 IP-bound 세션 정상 동작. loginYn=Y면 멤버십+쿠폰 응답 보장.
+async function _checkAbcmartLoggedInByApi(productId, site) {
+  try {
+    const cookies = await chrome.cookies.getAll({ domain: 'a-rt.com' })
+    if (!cookies.length) return false
+    const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ')
+    const subdomain = site === 'GrandStage' ? 'grandstage.a-rt.com' : 'abcmart.a-rt.com'
+    const resp = await fetch(`https://${subdomain}/product/info?prdtNo=${productId}`, {
+      headers: {
+        'Cookie': cookieStr,
+        'Accept': 'application/json, text/plain, */*',
+        'Origin': 'https://www.a-rt.com',
+        'Referer': 'https://www.a-rt.com/',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+    })
+    if (!resp.ok) return null  // 판단 불가
+    const data = await resp.json()
+    if (!data || !data.prdtName) return null
+    const loginYn = (data.loginYn || '').toUpperCase()
+    return loginYn === 'Y'
+  } catch (err) {
+    console.log(`[${site}] 로그인 사전체크 실패 (무시): ${err.message}`)
+    return null  // 판단 불가 — 진행
+  }
+}
+
+// 사이트별 사전 로그인 게이트 — detail 잡 진입 시 비로그인이면 자동로그인 완료까지 대기.
+// 비로그인 상태 그대로 가격 수집되는 것을 원천 차단 (사후 검증 정책의 한계 보완).
+// 반환: true(로그인됨/판단불가, 진행) / false(비로그인, 잡 보류 필요)
+async function _preCheckLoginGate(site, productId) {
+  let loggedIn = null
+  if (site === 'LOTTEON') {
+    loggedIn = await _checkLotteonLoggedInByCookies()
+  } else if (site === 'ABCmart' || site === 'GrandStage') {
+    loggedIn = await _checkAbcmartLoggedInByApi(productId, site)
+  } else {
+    return true  // 미지원 사이트 — 진행
+  }
+
+  if (loggedIn === true) return true
+  if (loggedIn === null) return true  // 판단 불가 — 진행 (사후 검증으로 보완)
+
+  // 비로그인 확정 — 자동로그인 시도
+  console.log(`[${site}] 사전 로그인 게이트: 비로그인 → 자동로그인 시도 (${productId})`)
+  const siteKey = (typeof alExternalSiteToKey === 'function') ? alExternalSiteToKey(site) : null
+  if (!siteKey || typeof ensureLoggedIn !== 'function') return false
+  try {
+    const ok = await ensureLoggedIn(siteKey)
+    if (!ok) {
+      console.log(`[${site}] 사전 로그인 게이트: 자동로그인 실패 — 잡 보류 (${productId})`)
+      return false
+    }
+    console.log(`[${site}] 사전 로그인 게이트: 자동로그인 성공 — 잡 진행 (${productId})`)
+    return true
+  } catch (err) {
+    console.error(`[${site}] 사전 로그인 게이트 예외:`, err?.message || err)
+    return false
   }
 }
 
@@ -793,10 +853,10 @@ async function fetchAbcmartBenefitPrice(productId, site) {
       return null
     }
 
+    // maxBenefitCoupon은 중복적용 가능한 쿠폰 묶음 — 전부 합산해야 페이지 표시값과 일치
     let couponDiscount = 0
     for (const c of coupons) {
-      const d = parseInt(c.dscntAmt || 0)
-      if (d > couponDiscount) couponDiscount = d
+      couponDiscount += parseInt(c.dscntAmt || 0)
     }
 
     let benefitPrice = salePrice - alwaysDscntAmt - couponDiscount
@@ -844,6 +904,20 @@ async function handleSourcingJob(job) {
     }
   }, 100000)
   try {
+    // 사전 로그인 게이트 — detail 잡 진입 시 비로그인 확정이면 자동로그인 완료까지 대기.
+    // 비로그인 상태 그대로 가격 수집되는 것을 원천 차단 (사후 검증의 한계 보완).
+    if (job.type === 'detail' && ['ABCmart', 'GrandStage', 'LOTTEON'].includes(job.site)) {
+      const gateOk = await _preCheckLoginGate(job.site, job.productId)
+      if (!gateOk) {
+        clearTimeout(hangTimer)
+        await postResult('sourcing/collect-result', {
+          requestId: job.requestId,
+          data: { success: false, login_required: true, message: '비로그인 — 자동로그인 후 재시도 필요' }
+        })
+        return
+      }
+    }
+
     // active:false — 병렬 처리 시 여러 탭 동시 오픈 (백그라운드 탭도 JS 렌더링 됨)
     const tab = await chrome.tabs.create({ url: job.url, active: false })
     tabId = tab.id
