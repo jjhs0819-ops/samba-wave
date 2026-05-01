@@ -94,8 +94,30 @@ export const splitCustomerAddress = (
     }
   }
 
-  // 2-c) 동/호/층/호실 패턴
-  const detailMatch = normalized.match(/^(.+?)\s+((?:\d+\s*동\s*)?\d+\s*(?:호|층|호실)\b.*)$/)
+  // 2-c) 끝에 메타 괄호 `(법정동, 건물명)` 가 있고 그 앞에 동/호/층 패턴이 있는 케이스
+  //      예) "...덕영대로 1462-14 119동 2804호 (망포동 728 힐스테이트 영통)"
+  //      → base="...덕영대로 1462-14 (망포동 728 힐스테이트 영통)", detail="119동 2804호"
+  //      플레이오토 EMP RecipientAddress 단일 문자열 케이스에서 자주 등장
+  const trailingMeta = normalized.match(/^(.*?)\s*(\([^)]*\))\s*$/)
+  if (trailingMeta) {
+    const beforeMeta = trailingMeta[1].trim()
+    const meta = trailingMeta[2]
+    const dongHoMatch = beforeMeta.match(
+      /^(.+?)\s+((?:\d+\s*동\s*)?\d+\s*(?:호|층|호실))$/,
+    )
+    if (dongHoMatch) {
+      return {
+        base: `${dongHoMatch[1].trim()} ${meta}`,
+        detail: dongHoMatch[2].trim(),
+      }
+    }
+  }
+
+  // 2-d) 동/호/층/호실 패턴 (괄호 없이 끝나는 일반 케이스)
+  //      `\b` 제거 — 한글은 ASCII word boundary와 어울리지 않아 매칭 누락
+  const detailMatch = normalized.match(
+    /^(.+?)\s+((?:\d+\s*동\s*)?\d+\s*(?:호|층|호실)(?:\s.*)?)$/,
+  )
   if (detailMatch) {
     return { base: detailMatch[1].trim(), detail: detailMatch[2].trim() }
   }

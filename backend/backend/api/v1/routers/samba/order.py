@@ -1291,6 +1291,53 @@ async def seller_cancel(
         logger.info(f"[판매자취소] eBay {order.order_number} 취소 요청 완료")
         return {"ok": True, "message": "eBay 판매자 취소 요청 완료"}
 
+    elif account.market_type == "11st":
+        # 11번가 판매불가처리 (재고부족 등 판매자 주도 취소)
+        # 사유코드 10(고객변심) 고정 — 신용점수 차감 회피
+        # 운영 가이드: 고객 동의 후 진행
+        from backend.domain.samba.proxy.elevenst import (
+            ElevenstApiError,
+            ElevenstClient,
+        )
+
+        api_key = (
+            (account.additional_fields or {}).get("apiKey", "") or account.api_key or ""
+        )
+        if not api_key:
+            raise HTTPException(status_code=400, detail="11번가 API Key 없음")
+
+        if not order.ord_prd_seq:
+            raise HTTPException(
+                status_code=400,
+                detail="11번가 ordPrdSeq 미수집 — 주문 동기화 후 다시 시도해주세요",
+            )
+
+        client = ElevenstClient(api_key)
+        try:
+            await client.reject_order(
+                ord_no=order.order_number,
+                ord_prd_seq=order.ord_prd_seq,
+                ord_cn_rsn_cd="10",  # 고객변심
+                ord_cn_dtls_rsn="구매자 요청으로 취소 처리",
+            )
+        except ElevenstApiError as e:
+            raise HTTPException(
+                status_code=500, detail=f"11번가 판매불가처리 실패: {e}"
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, detail=f"11번가 판매불가처리 실패: {e}"
+            )
+
+        await svc.update_order(
+            order_id,
+            {"shipping_status": "취소완료", "status": "cancelled"},
+        )
+        logger.info(
+            f"[판매자취소] 11번가 {order.order_number} 판매불가처리 완료 (사유=10/고객변심)"
+        )
+        return {"ok": True, "message": "11번가 판매불가처리 완료"}
+
     raise HTTPException(
         status_code=400, detail=f"{account.market_type} 판매자 취소 미지원"
     )
@@ -5149,6 +5196,7 @@ def _parse_elevenst_order(item: dict, account_id: str, label: str) -> dict:
         "channel_name": label,
         "source": "11st",
         "order_number": str(item.get("ordNo", "") or ""),
+        "ord_prd_seq": str(item.get("ordPrdSeq", "") or ""),
         "shipment_id": str(item.get("dlvNo", "") or ""),
         "product_id": str(item.get("prdNo", "") or ""),
         "product_name": str(item.get("prdNm", "") or ""),

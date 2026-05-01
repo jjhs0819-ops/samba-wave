@@ -1028,6 +1028,91 @@ class ElevenstClient:
 
         return True
 
+    async def reject_order(
+        self,
+        ord_no: str,
+        ord_prd_seq: str,
+        ord_cn_rsn_cd: str = "10",
+        ord_cn_dtls_rsn: str = "구매자 요청으로 취소 처리",
+    ) -> bool:
+        """판매불가처리 (판매자 주도 주문 취소).
+
+        공식 API: GET /rest/claimservice/reqrejectorder/{ordNo}/{ordPrdSeq}/{ordCnRsnCd}/{ordCnDtlsRsn}
+
+        Args:
+            ord_no:          주문번호
+            ord_prd_seq:     주문상품순번
+            ord_cn_rsn_cd:   취소사유코드
+                             06=배송지연예상, 07=상품/가격정보오류,
+                             08=상품품절(전체옵션), 09=옵션품절(해당옵션),
+                             10=고객변심(신용점수 차감 없음, 기본값), 99=기타
+            ord_cn_dtls_rsn: 사유 텍스트
+
+        Returns:
+            True if 판매불가처리 성공
+
+        Note:
+            사유코드 10(고객변심) 외에는 신용점수 -1점 차감.
+            구매자 동의 없이 악의적 취소 시 -5점 + 고객센터 제재.
+        """
+        import re as _re
+        import urllib.parse
+
+        encoded_reason = urllib.parse.quote(ord_cn_dtls_rsn, safe="")
+        url = (
+            f"https://api.11st.co.kr/rest/claimservice/reqrejectorder"
+            f"/{ord_no}/{ord_prd_seq}/{ord_cn_rsn_cd}/{encoded_reason}"
+        )
+        headers = self._headers()
+
+        logger.info(
+            "[11번가] 판매불가처리 ordNo=%s ordPrdSeq=%s rsnCd=%s",
+            ord_no,
+            ord_prd_seq,
+            ord_cn_rsn_cd,
+        )
+        client = _get_elevenst_http_client(self.api_key)
+        resp = await client.get(url, headers=headers)
+
+        if not resp.is_success:
+            logger.warning("[11번가] 판매불가처리 응답: %s", resp.text[:500])
+            raise ElevenstApiError(
+                f"판매불가처리 HTTP {resp.status_code}: {resp.text[:300]}"
+            )
+
+        try:
+            text = resp.content.decode("euc-kr")
+        except Exception:
+            text = resp.text
+
+        xml_text = text.replace("ns2:", "").replace("s2:", "")
+        xml_text = _re.sub(r"<\?xml[^?]*\?>", "", xml_text, count=1).strip()
+        try:
+            root = ET.fromstring(xml_text)
+        except ET.ParseError:
+            raise ElevenstApiError(f"판매불가처리 응답 XML 파싱 실패: {text[:200]}")
+
+        result_code = root.findtext("result_code", "")
+        result_text = root.findtext("result_text", "")
+        logger.info(
+            "[11번가] 판매불가처리 결과: code=%s, text=%s", result_code, result_text
+        )
+
+        if result_code and result_code != "0":
+            # 이미 취소된 주문이면 성공 처리
+            if any(
+                k in (result_text or "")
+                for k in ["이미", "취소완료", "처리 가능한 주문이 아닙니다"]
+            ):
+                logger.info(
+                    "[11번가] 판매불가처리: 이미 처리된 주문 — 성공 처리 (ordNo=%s)",
+                    ord_no,
+                )
+                return True
+            raise ElevenstApiError(f"판매불가처리 에러 ({result_code}): {result_text}")
+
+        return True
+
     # ------------------------------------------------------------------
     # 반품 처리
     # ------------------------------------------------------------------

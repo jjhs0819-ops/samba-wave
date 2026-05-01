@@ -175,6 +175,11 @@ class SambaOrder(SQLModel, table=True):
     proc_seq: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     sitm_no: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
+    # 11번가 라인 키 (판매불가처리/취소승인 등 클레임 API 필수 파라미터)
+    ord_prd_seq: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
     # 출처
     source: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     shipment_id: Optional[str] = Field(
