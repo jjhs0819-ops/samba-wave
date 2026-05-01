@@ -60,7 +60,6 @@ export function StoreSettingsPanel(props: Props) {
               onChange={(e) => setNetworkIps(prev => ({ ...prev, web: e.target.value }))}
               placeholder="예: 123.123.123.123"
             />
-            </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '180px', flexShrink: 0 }}>로컬 IP</label>
