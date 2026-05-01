@@ -1847,6 +1847,8 @@ async function extractDetailData(tabId, site, productId) {
             best_benefit_price: benefitPrice,
             images: [],
             source_site: siteName,
+            _loginRequired: !isLoggedIn,
+            _domLoginSignal,
           }
         }
       }
