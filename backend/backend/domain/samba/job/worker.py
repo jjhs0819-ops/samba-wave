@@ -131,6 +131,9 @@ from contextvars import ContextVar  # noqa: E402
 _current_collect_job_id: ContextVar[str] = ContextVar(
     "current_collect_job_id", default=""
 )
+_current_transmit_job_id: ContextVar[str] = ContextVar(
+    "current_transmit_job_id", default=""
+)
 
 
 def get_collect_logs(since_idx: int = 0) -> tuple[list[str], int]:
@@ -219,9 +222,12 @@ def _add_job_log(job_id: str, msg: str, job_type: str = ""):
     if len(buf) > _MAX_JOB_LOGS:
         _job_logs[job_id] = buf[-_MAX_JOB_LOGS:]
     # 수집/전송 링 버퍼 분기 — job_type 미지정 시 ContextVar로 자동 감지
-    effective_type = job_type or (
-        "collect" if _current_collect_job_id.get() == job_id else ""
-    )
+    effective_type = job_type
+    if not effective_type:
+        if _current_collect_job_id.get() == job_id:
+            effective_type = "collect"
+        elif _current_transmit_job_id.get() == job_id:
+            effective_type = "transmit"
     if effective_type == "collect":
         _add_collect_log(msg)
         # 20줄마다 DB 플러시 — Cloud Run 멀티 인스턴스에서도 로그 조회 가능하도록
@@ -237,7 +243,7 @@ def _add_job_log(job_id: str, msg: str, job_type: str = ""):
                 _loop.create_task(_flush_job_logs(job_id, _cur_logs, "수집"))
             except RuntimeError:
                 pass
-    else:
+    elif effective_type == "transmit":
         _add_shipment_log(msg)
         # 20줄마다 DB 플러시 — Cloud Run 멀티 인스턴스에서도 로그 조회 가능하도록
         _collect_log_flush_counter[job_id] = (
@@ -758,6 +764,7 @@ class JobWorker:
         from backend.domain.samba.shipment.service import clear_account_semaphores
 
         clear_account_semaphores()
+        _ctx_token = _current_transmit_job_id.set(job_id)
 
         try:
             async with get_write_session() as session:
@@ -790,6 +797,8 @@ class JobWorker:
             logger.error(f"[잡워커] 전송 세션 에러: {job_id} — {e}")
         finally:
             await _flush_job_logs(job_id, list(_shipment_log_buffer), "전송")
+
+            _current_transmit_job_id.reset(_ctx_token)
 
     async def _run_transmit(self, job, repo, session):
         """전송 잡 실행 — 기존 shipment_service 호출."""

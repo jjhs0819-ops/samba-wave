@@ -557,6 +557,13 @@ function pauseCollectPolling(ms, reason) {
     console.log(`[수집] 폴링 일시중지 ${Math.ceil(ms / 1000)}초: ${reason}`)
   }
 }
+function resumeCollectPolling() {
+  if (pollPausedUntil > Date.now()) {
+    pollPausedUntil = 0
+    console.log('[수집] 폴링 즉시 재개 (자동로그인 완료)')
+  }
+}
+globalThis.resumeCollectPolling = resumeCollectPolling
 const MAX_EMPTY_POLLS = 300 // 1초 × 300 = 5분간 빈 결과 → 중지
 
 async function runPollCycle() {

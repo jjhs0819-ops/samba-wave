@@ -1246,14 +1246,14 @@ async function handleSourcingJob(job) {
       } else {
         // DOM 혜택가 미수집 — DOM 신호 분기:
         //   - 'login_link' → 확실 비로그인 → 잡 보류 + 자동로그인 트리거
-        //   - 'logout_link' / 'ambiguous' + sale_price > 0 → 탭은 열림 → sale_price 폴백
-        //   - 나머지(sale_price 없음 등) → login_required
+        //   - 'logout_link' + sale_price > 0 → 로그인 확정 + 혜택가 없는 상품 → sale_price 사용
+        //   - 'ambiguous' → 로그인 여부 불확실 → login_required (비회원가 저장 방지)
         const _signal = result?._domLoginSignal
-        if ((_signal === 'logout_link' || _signal === 'ambiguous') && result?.success && result?.sale_price > 0) {
+        if (_signal === 'logout_link' && result?.success && result?.sale_price > 0) {
           result.best_benefit_price = result.sale_price
-          console.log(`[${job.site}] 혜택가 없음 — sale_price 폴백(${_signal}): ${job.productId} → ${result.sale_price}`)
+          console.log(`[${job.site}] 혜택가 없음 — sale_price 사용 (로그인 확정): ${job.productId} → ${result.sale_price}`)
         } else {
-          console.log(`[${job.site}] DOM 혜택가 미수집 + 비로그인 감지(${_signal || 'null'}) → 잡 보류`)
+          console.log(`[${job.site}] DOM 혜택가 미수집 + 로그인 미확정(${_signal || 'null'}) → 잡 보류`)
           result = { success: false, login_required: true, message: 'ABCmart DOM 미수집 — 로그인 후 재시도' }
           reportLoginFailure(job.site, true)
         }
@@ -1926,6 +1926,19 @@ async function extractDetailData(tabId, site, productId) {
 
       // ── ABCmart/GrandStage 전용 파싱 (최대혜택가 추출) ──
       if (siteName === 'ABCmart' || siteName === 'GrandStage') {
+        // 로그인 상태 감지 — 헤더에서 로그인/로그아웃 링크 확인
+        const _abcHeader = document.querySelector('header, #header, .header, nav, #gnb, .gnb, [class*="gnb"], [class*="header"]') || document.body
+        let _abcHasLogin = false
+        let _abcHasLogout = false
+        for (const el of _abcHeader.querySelectorAll('a[href], button')) {
+          const href = (el.getAttribute('href') || '').toLowerCase()
+          const txt = (el.textContent || '').trim()
+          if (href.includes('logout') || txt === '로그아웃') { _abcHasLogout = true; continue }
+          if (txt === '로그인' || (href.includes('/login') && !href.includes('logout'))) { _abcHasLogin = true }
+        }
+        const isLoggedIn = _abcHasLogout && !_abcHasLogin
+        const _domLoginSignal = _abcHasLogin ? 'login_link' : (_abcHasLogout ? 'logout_link' : 'ambiguous')
+
         const bodyText = document.body?.innerText || ''
         let benefitPrice = 0
 

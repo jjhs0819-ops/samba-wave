@@ -384,6 +384,12 @@ async function ensureLoggedIn(siteKey) {
     return ok
   } finally {
     autoLoginState.inProgress[siteKey] = false
+    // 자동로그인 완료 시 폴링 즉시 재개 (90초 대기 없이)
+    try {
+      if (typeof globalThis.resumeCollectPolling === 'function') {
+        globalThis.resumeCollectPolling()
+      }
+    } catch {}
   }
 }
 
