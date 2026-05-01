@@ -531,13 +531,20 @@ class LotteonSourcingPlugin(SourcingPlugin):
             )
             dom_ext = await asyncio.wait_for(_dom_fut, timeout=60)
             if isinstance(dom_ext, dict) and dom_ext.get("login_required"):
-                logger.warning(
-                    f"[LOTTEON] 비로그인 감지 → 갱신 차단: {site_product_id}"
+                if dom_ext.get("gate_blocked"):
+                    # 창 미오픈 — 비회원가 저장 위험 → 전체 차단
+                    logger.warning(
+                        f"[LOTTEON] 창 미오픈(gate_blocked) → 갱신 차단: {site_product_id}"
+                    )
+                    return RefreshResult(
+                        product_id=product_id,
+                        error="LOTTEON 창 미오픈 — 갱신 차단",
+                    )
+                # 창은 열었지만 DOM ambiguous — 혜택가 스킵, PBF 가격/재고로 진행
+                logger.info(
+                    f"[LOTTEON] DOM ambiguous — 혜택가 스킵, PBF 값으로 진행: {site_product_id}"
                 )
-                return RefreshResult(
-                    product_id=product_id,
-                    error="LOTTEON 비로그인 — 확장앱 로그인 필요",
-                )
+                dom_ext = None
             if not (isinstance(dom_ext, dict) and dom_ext.get("success")):
                 dom_ext = None
         except asyncio.TimeoutError:

@@ -227,13 +227,20 @@ class AbcMartPlugin(SourcingPlugin):
                 )
                 _dom_ext = await asyncio.wait_for(_dom_fut, timeout=45)
                 if isinstance(_dom_ext, dict) and _dom_ext.get("login_required"):
-                    logger.warning(
-                        f"[ABCmart] 비로그인 감지 → 갱신 차단: {site_product_id}"
+                    if _dom_ext.get("gate_blocked"):
+                        # 창 미오픈 — 비회원가 저장 위험 → 전체 차단
+                        logger.warning(
+                            f"[ABCmart] 창 미오픈(gate_blocked) → 갱신 차단: {site_product_id}"
+                        )
+                        return RefreshResult(
+                            product_id=product_id,
+                            error="ABCmart 창 미오픈 — 갱신 차단",
+                        )
+                    # 창은 열었지만 DOM ambiguous — 원가 스킵, 나머지는 저장
+                    logger.info(
+                        f"[ABCmart] DOM ambiguous — 원가 스킵, 나머지 저장: {site_product_id}"
                     )
-                    return RefreshResult(
-                        product_id=product_id,
-                        error="ABCmart 비로그인 — 확장앱 로그인 필요",
-                    )
+                    best_benefit_price = 0
                 if isinstance(_dom_ext, dict) and _dom_ext.get("success"):
                     _bp = int(_dom_ext.get("best_benefit_price") or 0)
                     if _bp > 0:

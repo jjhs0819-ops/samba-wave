@@ -35,12 +35,13 @@ interface Props {
 
 function renderLogMessage(message: string) {
   const formatted = fmtTextNumbers(message)
-  const parts = formatted.split(/(\d[\d,]*)(건 신규 저장)/g)
+  const savedLabel = '\uAC74 \uC2E0\uADDC \uC800\uC7A5'
+  const parts = formatted.split(new RegExp(`(\\d[\\d,]*)(${savedLabel})`, 'g'))
 
   if (parts.length === 1) return formatted
 
   return parts.map((part, index) => {
-    if (index % 3 === 1) {
+    if (index % 3 === 1 && Number(part.replace(/,/g, '')) > 0) {
       return (
         <span key={`${part}-${index}`} style={{ color: '#FFFFFF', fontWeight: 700 }}>
           {part}

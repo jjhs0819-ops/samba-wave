@@ -1374,6 +1374,11 @@ async def refresh_products_bulk(
         # 소싱처별 카운터 (번호 건너뜀 방지)
         _counter = {"i": 0}
         _site_total = len(items)
+        # IP 로테이션 카운터 초기화 — 사이클마다 1~N건으로 리셋 (누적 방지)
+        _ip_rotate_counters[site] = 0
+        _ip_rotate_totals[site] = 0
+        _ip_rotate_labels[site] = ""
+        # _ip_rotate_idxs 는 유지 (프록시 순서 연속성 보존)
         # 소싱처별 사전 캐싱 (배치 시작 시 1회)
         if site == "MUSINSA":
             await _prepare_musinsa_cache()

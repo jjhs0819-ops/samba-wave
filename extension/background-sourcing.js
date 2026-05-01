@@ -1057,7 +1057,7 @@ async function handleSourcingJob(job) {
         clearTimeout(hangTimer)
         await postResult('sourcing/collect-result', {
           requestId: job.requestId,
-          data: { success: false, login_required: true, message: '비로그인 — 자동로그인 후 재시도 필요' }
+          data: { success: false, login_required: true, gate_blocked: true, message: '비로그인 — 자동로그인 후 재시도 필요' }
         })
         return
       }
@@ -1244,17 +1244,16 @@ async function handleSourcingJob(job) {
       if (result?.best_benefit_price) {
         console.log(`[${job.site}] DOM 혜택가: ${job.productId} → ${result.best_benefit_price}`)
       } else {
-        // DOM 혜택가 미수집 — SW/in-tab fetch fallback 폐기 (비로그인 sale_price 노출 사고 차단).
-        // 사용자 보고: ABCmart가 "창안띄우고 수집"되어 가격이 다 틀림. SW fetch는 비로그인 결과 그대로 사용.
-        // DOM 신호 분기:
-        //   - 'login_link' / 'ambiguous' → 비로그인/판단불가 → 잡 보류 + 자동로그인 트리거
-        //   - 'logout_link' + sale_price > 0 → 로그인 OK + 진짜 혜택가 없는 상품 → sale_price 사용
+        // DOM 혜택가 미수집 — DOM 신호 분기:
+        //   - 'login_link' → 확실 비로그인 → 잡 보류 + 자동로그인 트리거
+        //   - 'logout_link' / 'ambiguous' + sale_price > 0 → 탭은 열림 → sale_price 폴백
+        //   - 나머지(sale_price 없음 등) → login_required
         const _signal = result?._domLoginSignal
-        if (_signal === 'logout_link' && result?.success && result?.sale_price > 0) {
+        if ((_signal === 'logout_link' || _signal === 'ambiguous') && result?.success && result?.sale_price > 0) {
           result.best_benefit_price = result.sale_price
-          console.log(`[${job.site}] 혜택가 없음 — sale_price 사용 (로그인 확정): ${job.productId} → ${result.sale_price}`)
+          console.log(`[${job.site}] 혜택가 없음 — sale_price 폴백(${_signal}): ${job.productId} → ${result.sale_price}`)
         } else {
-          console.log(`[${job.site}] DOM 혜택가 미수집 + 로그인 미확정(${_signal || 'null'}) → 잡 보류 (fallback 폐기)`)
+          console.log(`[${job.site}] DOM 혜택가 미수집 + 비로그인 감지(${_signal || 'null'}) → 잡 보류`)
           result = { success: false, login_required: true, message: 'ABCmart DOM 미수집 — 로그인 후 재시도' }
           reportLoginFailure(job.site, true)
         }
