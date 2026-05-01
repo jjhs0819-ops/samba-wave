@@ -693,16 +693,30 @@ class CoupangClient:
 
         # 옵션 처리 — 색상/사이즈 분리
         options = product.get("options") or []
+        _max_stock_cap = int(product.get("_max_stock") or 0)
         items = []
         if options:
             for opt in options:
                 opt_name = opt.get("name", "") or opt.get("size", "") or "기본"
-                opt_stock = opt.get("stock", 999)
+                _raw = opt.get("stock")
+                if _raw is None:
+                    opt_stock = _max_stock_cap if _max_stock_cap > 0 else 99
+                elif int(_raw) <= 0:
+                    opt_stock = 0
+                else:
+                    opt_stock = (
+                        min(int(_raw), _max_stock_cap)
+                        if _max_stock_cap > 0
+                        else int(_raw)
+                    )
                 opt_color, size_val = _parse_option_color_size(opt_name, default_color)
                 items.append(_build_item(opt_name, opt_stock, size_val, opt_color))
         else:
+            _no_opt_stock = _max_stock_cap if _max_stock_cap > 0 else 99
             items.append(
-                _build_item(product.get("name", "기본"), 999, "FREE", default_color)
+                _build_item(
+                    product.get("name", "기본"), _no_opt_stock, "FREE", default_color
+                )
             )
 
         # SEO 최적화: 노출상품명 + 검색태그

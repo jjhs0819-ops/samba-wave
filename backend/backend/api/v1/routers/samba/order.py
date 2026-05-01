@@ -5215,7 +5215,9 @@ def _parse_elevenst_order(item: dict, account_id: str, label: str) -> dict:
         ),
         "customer_address": addr_base,
         "customer_address_detail": addr_detail,
-        "notes": str(item.get("ordDlvReqCont", "") or item.get("dlvMsg", "") or ""),
+        "customer_note": str(
+            item.get("ordDlvReqCont", "") or item.get("dlvMsg", "") or ""
+        ),
         "paid_at": paid_at,
         "created_at": paid_at,
     }

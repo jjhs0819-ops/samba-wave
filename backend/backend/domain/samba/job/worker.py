@@ -660,7 +660,11 @@ class JobWorker:
 
                 try:
                     if _job_type == "transmit":
-                        await self._run_transmit(fresh_job, repo, session)
+                        _tx_token = _current_transmit_job_id.set(_job_id)
+                        try:
+                            await self._run_transmit(fresh_job, repo, session)
+                        finally:
+                            _current_transmit_job_id.reset(_tx_token)
                     elif _job_type == "refresh":
                         await self._run_stub(fresh_job, repo, "갱신")
                     elif _job_type == "ai_tag":

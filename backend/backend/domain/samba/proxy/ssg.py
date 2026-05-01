@@ -1299,11 +1299,19 @@ class SSGClient:
                 opt_name = (
                     opt.get("name", "") or opt.get("size", "") or f"옵션{idx + 1}"
                 )
-                # stock이 None/"" 이면 999(무한재고), 0은 그대로 유지 (품절 0과 미제공 구분)
+                # stock이 None/"" 이면 설정값(또는 99), 0은 품절 그대로, 양수면 min(실재고, 설정값)
                 _raw_stock = opt.get("stock")
-                opt_stock = (
-                    _raw_stock if (_raw_stock is not None and _raw_stock != "") else 999
-                )
+                _max_stock_cap = int(product.get("_max_stock") or 0)
+                if _raw_stock is None or _raw_stock == "":
+                    opt_stock = _max_stock_cap if _max_stock_cap > 0 else 99
+                elif int(_raw_stock) <= 0:
+                    opt_stock = 0
+                else:
+                    opt_stock = (
+                        min(int(_raw_stock), _max_stock_cap)
+                        if _max_stock_cap > 0
+                        else int(_raw_stock)
+                    )
                 is_sold_out = opt.get("isSoldOut", False)
                 temp_id = str(idx + 1)
 

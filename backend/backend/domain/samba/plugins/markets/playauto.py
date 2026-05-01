@@ -35,7 +35,19 @@ class PlayAutoPlugin(MarketPlugin):
 
     def transform(self, product: dict, category_id: str, **kwargs) -> dict:
         """삼바웨이브 상품 → 플레이오토 EMP 포맷 변환."""
-        stock_qty = int(product.get("_max_stock", 999))
+        max_stock = int(product.get("_max_stock") or 0)
+        options = product.get("options") or []
+        real_stock = sum(
+            int(o.get("stock") or 0) for o in options if not o.get("isSoldOut")
+        )
+        if max_stock > 0 and real_stock > 0:
+            stock_qty = min(real_stock, max_stock)
+        elif max_stock > 0:
+            stock_qty = max_stock
+        elif real_stock > 0:
+            stock_qty = real_stock
+        else:
+            stock_qty = 99
         return PlayAutoClient.transform_product(
             product=product,
             category_id=category_id if category_id != "__SKIP__" else "",

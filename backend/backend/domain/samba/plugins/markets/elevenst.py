@@ -61,6 +61,12 @@ class ElevenstPlugin(MarketPlugin):
 
         client = ElevenstClient(api_key)
 
+        # 스토어설정 재고수량 상한 (전체 경로 공통)
+        _acct_extras = (account.additional_fields or {}) if account else {}
+        _max_stock_cap = int(
+            _acct_extras.get("stockQuantity") or product.get("_max_stock") or 0
+        )
+
         # ── 경량 가격/재고 업데이트 (오토튠 최적화) ──────────────────────
         # _skip_image_upload=True → price/stock만 변경된 경우
         # 전체 XML 변환 없이 가격/재고만 포함된 최소 XML로 수정
@@ -86,9 +92,19 @@ class ElevenstPlugin(MarketPlugin):
                     )
                     for opt in options:
                         opt_name = opt.get("name", "") or opt.get("size", "") or "기본"
-                        opt_stock = opt.get("stock", 999)
-                        use_yn = "N" if int(opt_stock) <= 0 else "Y"
-                        stock_qty = max(0, int(opt_stock))
+                        _raw = opt.get("stock")
+                        if _raw is None or _raw == "":
+                            opt_stock = _max_stock_cap if _max_stock_cap > 0 else 99
+                        elif int(_raw) <= 0:
+                            opt_stock = 0
+                        else:
+                            opt_stock = (
+                                min(int(_raw), _max_stock_cap)
+                                if _max_stock_cap > 0
+                                else int(_raw)
+                            )
+                        use_yn = "N" if opt_stock <= 0 else "Y"
+                        stock_qty = max(0, opt_stock)
                         stock_code = opt.get("managedCode", "") or ""
                         # XML 특수문자 이스케이프
                         safe_name = (

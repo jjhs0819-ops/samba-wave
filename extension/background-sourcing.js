@@ -819,9 +819,10 @@ async function _checkAbcmartLoggedInByApi(productId, site) {
 // 비로그인 상태 그대로 가격 수집되는 것을 원천 차단 (사후 검증 정책의 한계 보완).
 // 반환: true(로그인됨/판단불가, 진행) / false(비로그인, 잡 보류 필요)
 async function _preCheckLoginGate(site, productId) {
+  // LOTTEON: 쿠키 신뢰 불가 — 사전 게이트 스킵, 탭 오픈 후 DOM 텍스트로만 판단
   let loggedIn = null
   if (site === 'LOTTEON') {
-    loggedIn = await _checkLotteonLoggedInByCookies()
+    return true
   } else if (site === 'ABCmart' || site === 'GrandStage') {
     loggedIn = await _checkAbcmartLoggedInByApi(productId, site)
   } else {
@@ -1219,14 +1220,9 @@ async function handleSourcingJob(job) {
             // DOM에 로그아웃 링크 명시 — 로그인 확정
             result._loginRequired = false
           } else {
-            // sig === 'ambiguous' (DOM 하이드레이션 미완료 등) → 쿠키로 보조 판정
-            const _isLoggedInByCookie = await _checkLotteonLoggedInByCookies()
-            if (_isLoggedInByCookie === true) {
-              result._loginRequired = false
-            } else if (_isLoggedInByCookie === false) {
-              result._loginRequired = true
-            }
-            // null이면 DOM 결과(_loginRequired=!isLoggedIn) 유지
+            // ambiguous — extractDetailData의 bodyText 텍스트 검사도 못 찾은 경우
+            // (완전 미렌더링) → 로그인으로 간주 (false-positive 차단 우선)
+            result._loginRequired = false
           }
         }
       } catch (e) {
@@ -1247,11 +1243,13 @@ async function handleSourcingJob(job) {
         // DOM 혜택가 미수집 — DOM 신호 분기:
         //   - 'login_link' → 확실 비로그인 → 잡 보류 + 자동로그인 트리거
         //   - 'logout_link' + sale_price > 0 → 로그인 확정 + 혜택가 없는 상품 → sale_price 사용
-        //   - 'ambiguous' → 로그인 여부 불확실 → login_required (비회원가 저장 방지)
+        //   - 'ambiguous' → 백그라운드 탭 미렌더링 가능성 — sale_price 있으면 로그인으로 간주
+        //   - 'login_link' → 확실 비로그인 → 잡 보류
         const _signal = result?._domLoginSignal
-        if (_signal === 'logout_link' && result?.success && result?.sale_price > 0) {
+        if ((_signal === 'logout_link' || _signal === 'ambiguous') && result?.success && result?.sale_price > 0) {
           result.best_benefit_price = result.sale_price
-          console.log(`[${job.site}] 혜택가 없음 — sale_price 사용 (로그인 확정): ${job.productId} → ${result.sale_price}`)
+          result._loginRequired = false  // 공통 _detectLoginStatus 체크 스킵
+          console.log(`[${job.site}] 혜택가 없음 — sale_price 사용 (${_signal}): ${job.productId} → ${result.sale_price}`)
         } else {
           console.log(`[${job.site}] DOM 혜택가 미수집 + 로그인 미확정(${_signal || 'null'}) → 잡 보류`)
           result = { success: false, login_required: true, message: 'ABCmart DOM 미수집 — 로그인 후 재시도' }
@@ -1815,11 +1813,13 @@ async function extractDetailData(tabId, site, productId) {
             break
           }
         }
+        // 셀렉터로 못 찾으면 bodyText에서 "로그인"/"로그아웃" 단어 직접 검사
+        if (!hasLoginLink && !hasLogoutLink) {
+          const _slice = (document.body?.innerText || '').slice(0, 3000)
+          if (_slice.includes('로그아웃')) hasLogoutLink = true
+          else if (_slice.includes('로그인')) hasLoginLink = true
+        }
         const isLoggedIn = hasLogoutLink && !hasLoginLink
-        // DOM 신호 세분화 — 좀비 쿠키 false-positive 차단용
-        // 'login_link' = 로그인/회원가입 링크 명시 발견 → 비로그인 확정
-        // 'logout_link' = 로그아웃/마이페이지 링크 명시 발견 → 로그인 확정
-        // 'ambiguous' = 둘 다 못 찾음 → DOM 하이드레이션 미완료 가능성, 쿠키 보조 판정 허용
         const _domLoginSignal = hasLoginLink
           ? 'login_link'
           : (hasLogoutLink ? 'logout_link' : 'ambiguous')
@@ -1935,6 +1935,12 @@ async function extractDetailData(tabId, site, productId) {
           const txt = (el.textContent || '').trim()
           if (href.includes('logout') || txt === '로그아웃') { _abcHasLogout = true; continue }
           if (txt === '로그인' || (href.includes('/login') && !href.includes('logout'))) { _abcHasLogin = true }
+        }
+        // 셀렉터로 못 찾으면 bodyText에서 "LOGIN"/"LOGOUT" 단어 직접 검사 (ABCmart 영문 UI)
+        if (!_abcHasLogin && !_abcHasLogout) {
+          const _slice = (document.body?.innerText || '').slice(0, 3000).toUpperCase()
+          if (_slice.includes('LOGOUT')) _abcHasLogout = true
+          else if (_slice.includes('LOGIN')) _abcHasLogin = true
         }
         const isLoggedIn = _abcHasLogout && !_abcHasLogin
         const _domLoginSignal = _abcHasLogin ? 'login_link' : (_abcHasLogout ? 'logout_link' : 'ambiguous')

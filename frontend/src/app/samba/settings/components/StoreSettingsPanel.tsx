@@ -2,7 +2,6 @@
 
 import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
 import {
-  collectorApi,
   forbiddenApi,
   proxyApi,
 } from '@/lib/samba/api/commerce'

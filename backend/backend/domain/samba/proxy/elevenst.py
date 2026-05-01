@@ -1857,21 +1857,26 @@ class ElevenstClient:
         # 옵션 처리 (싱글옵션 방식 — 옵션개편 이후 공식 포맷)
         # 공식 예제: http://openapi.11st.co.kr/example/singleOption1.txt
         options = product.get("options") or []
+        # 스토어설정 재고수량 상한: _stock_quantity(계정설정) > _max_stock(정책) 우선
+        _max_stock_cap = int(cfg.get("stockQuantity") or product.get("_max_stock") or 0)
         if options:
             option_xml = "<optSelectYn>Y</optSelectYn>\n  <txtColCnt>1</txtColCnt>\n  <colTitle>사이즈</colTitle>\n  <prdExposeClfCd>00</prdExposeClfCd>"
             for opt in options:
                 opt_name = opt.get("name", "") or opt.get("size", "") or "기본"
                 raw_stock = opt.get("stock")
                 is_sold_out = opt.get("isSoldOut", False)
-                # stock이 None이면 재고미상(999), 0이면 품절(useYn=N), 양수면 그대로
                 if raw_stock is None:
-                    stock_qty = 999
+                    # 재고 미제공 → 설정값 사용, 없으면 99
+                    stock_qty = _max_stock_cap if _max_stock_cap > 0 else 99
                     use_yn = "Y"
                 elif raw_stock <= 0 or is_sold_out:
                     stock_qty = 0
                     use_yn = "N"
                 else:
-                    stock_qty = int(raw_stock)
+                    real = int(raw_stock)
+                    stock_qty = (
+                        min(real, _max_stock_cap) if _max_stock_cap > 0 else real
+                    )
                     use_yn = "Y"
                 stock_code = opt.get("managedCode", "") or ""
                 option_xml += f"""
@@ -1883,8 +1888,9 @@ class ElevenstClient:
     <colSellerStockCd>{_escape_xml(stock_code)}</colSellerStockCd>
   </ProductOption>"""
         else:
-            # 옵션 없는 상품: 기본 옵션 1개 등록 (재고 999)
-            option_xml = """<optSelectYn>Y</optSelectYn>
+            # 옵션 없는 상품: 기본 옵션 1개 등록
+            _no_opt_stock = _max_stock_cap if _max_stock_cap > 0 else 99
+            option_xml = f"""<optSelectYn>Y</optSelectYn>
   <txtColCnt>1</txtColCnt>
   <colTitle>옵션</colTitle>
   <prdExposeClfCd>00</prdExposeClfCd>
@@ -1892,7 +1898,7 @@ class ElevenstClient:
     <useYn>Y</useYn>
     <colOptPrice>0</colOptPrice>
     <colValue0>기본</colValue0>
-    <colCount>999</colCount>
+    <colCount>{_no_opt_stock}</colCount>
   </ProductOption>"""
 
         # 홍보문구 — 스토어설정 값 우선, 없으면 카테고리 기반 자동 생성
