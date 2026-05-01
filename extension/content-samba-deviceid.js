@@ -24,8 +24,9 @@
 
   function sendAllowedSites(sites) {
     try {
+      // null = 미설정(전체처리), [] = 전체해제, [...] = 부분선택 — 구분 유지
       window.postMessage(
-        { source: 'samba-extension', type: 'ALLOWED_SITES', sites: sites || [] },
+        { source: 'samba-extension', type: 'ALLOWED_SITES', sites: sites },
         window.location.origin,
       )
     } catch {}
@@ -46,7 +47,8 @@
       })
     }
     // 페이지 mount 후 현재 저장된 allowedSites도 전달 → 화면 체크박스 초기화에 사용
-    const sites = Array.isArray(data && data.allowedSites) ? data.allowedSites : []
+    // null(미설정)과 [](전체해제)를 구분해서 전달
+    const sites = data && Array.isArray(data.allowedSites) ? data.allowedSites : null
     sendAllowedSites(sites)
     setTimeout(() => sendAllowedSites(sites), 800)
     setTimeout(() => sendAllowedSites(sites), 2500)
@@ -60,7 +62,8 @@
     if (!msg || typeof msg !== 'object') return
     if (msg.source !== 'samba-page') return
     if (msg.type !== 'SET_ALLOWED_SITES') return
-    const sites = Array.isArray(msg.sites) ? msg.sites : []
+    // null=전체처리(헤더 미부착), []=전체해제, [...]=부분선택 — 구분 그대로 저장
+    const sites = msg.sites === null ? null : Array.isArray(msg.sites) ? msg.sites : null
     chrome.storage.local.set({ allowedSites: sites })
   })
 })()

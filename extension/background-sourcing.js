@@ -491,6 +491,11 @@ async function pollSourcingOnce() {
         pauseCollectPolling(30000, 'backend shutting down')
         break
       }
+      if (job.forceStop) {
+        // 오토튠 stop 직후 — 이미 받은 작업 포함 전부 버리고 즉시 중단
+        jobs.length = 0
+        break
+      }
       if (!job.hasJob) break
       console.log(`[소싱] ${job.url || '작업 수신'} (${jobs.length + 1}/${SOURCING_MAX_POLL_LIMIT})`)
       jobs.push(job)

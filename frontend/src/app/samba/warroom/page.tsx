@@ -295,37 +295,38 @@ export default function WarroomPage() {
   const filterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
-    // 1) 사용 가능 사이트/마켓 목록 + 마켓 활성 상태는 백엔드에서
-    //    소싱처 enabled_sources도 받아 초기 화면 상태로 사용 (백엔드 글로벌 = 마지막 설정값)
+    // 1) 사용 가능 사이트/마켓 목록은 백엔드에서, 소싱처 체크 상태는 chrome.storage 우선
     collectorApi.autotuneGetFilters().then(res => {
       setAvailSources(res.available_sources)
       setAvailMarkets(res.available_markets)
       setFilterMarkets(res.enabled_markets)
-      // 백엔드 enabled_sources를 우선 화면에 표시 (글로벌 일관성)
-      setFilterSources(res.enabled_sources)
+      // enabled_sources는 항상 null(전체)로 오므로 기본값만 세팅
+      // chrome.storage ALLOWED_SITES 수신 후 덮어씀 (PC별 독립 체크 상태 유지)
+      setFilterSources(null)
     }).catch(() => {})
 
-    // 2) 익스텐션 chrome.storage 값도 받음 — 백엔드 값과 다르면 백엔드 우선,
-    //    동기화는 toggleSource 시 양쪽 동시 갱신해서 일관성 유지
+    // 2) 이 PC의 chrome.storage.allowedSites로 체크박스 초기화
+    //    null=미설정(전체처리), []=전체해제, [...]=부분선택
     const onMessage = (e: MessageEvent) => {
       if (e.source !== window) return
       const msg = e.data
       if (!msg || typeof msg !== 'object') return
       if (msg.source !== 'samba-extension') return
       if (msg.type !== 'ALLOWED_SITES') return
-      // 별도 처리 X — 백엔드 우선 표시. chrome.storage 값은 polling 헤더에만 사용됨.
+      const sites = msg.sites
+      // null(미설정) → null(전체체크), 배열 → 그대로
+      setFilterSources(Array.isArray(sites) ? sites : null)
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
   }, [])
 
   // 소싱처 체크 변경 시 익스텐션 chrome.storage 동기화 (PC별 분담 헤더용)
+  // null=전체처리(미설정), []=전체해제, [...]=부분선택 — 구분 그대로 전달
   const syncAllowedSitesToExtension = useCallback((sites: string[] | null) => {
     try {
-      // null = 전체 처리 → 빈 배열 전송 (헤더 미부착 → 모든 사이트 작업 받음)
-      const list: string[] = sites === null ? [] : sites
       window.postMessage(
-        { source: 'samba-page', type: 'SET_ALLOWED_SITES', sites: list },
+        { source: 'samba-page', type: 'SET_ALLOWED_SITES', sites },
         window.location.origin,
       )
     } catch { /* ignore */ }
@@ -351,10 +352,10 @@ export default function WarroomPage() {
       const current = prev ?? [...all]
       const next = current.includes(site) ? current.filter(s => s !== site) : [...current, site]
       const result = next.length === all.length ? null : next
-      // 1) 익스텐션 chrome.storage (이 PC 분담 헤더용)
+      // 체크박스 = 이 PC 분담(chrome.storage)만 제어
+      // 백엔드 enabled_sources는 null(전체)로 고정 — PC별 덮어쓰기 충돌 방지
       syncAllowedSitesToExtension(result)
-      // 2) 백엔드 enabled_sources (글로벌 갱신 사이트) — 체크 안 된 사이트는 큐에 작업 발행 X
-      saveFilters(result, filterMarkets)
+      saveFilters(null, filterMarkets)
       return result
     })
   }, [availSources, filterMarkets, saveFilters, syncAllowedSitesToExtension])

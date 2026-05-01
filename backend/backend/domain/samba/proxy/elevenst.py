@@ -1724,26 +1724,45 @@ class ElevenstClient:
                 u = u + ("&" if "?" in u else "?") + "w=1100"
             return u
 
-        def _is_safe_main_image(url: str) -> bool:
-            """prdImage01~04용 안전 필터 — 300x300 보장 가능한 정품 이미지만 허용."""
+        def _ext_ok(url: str) -> bool:
+            """확장자 검증 (svg/webp/gif 등 제외 — 11번가는 jpg/png 우선)."""
             if not url or not url.lower().startswith("https://"):
                 return False
-            lower = url.lower()
-            # 무신사: 정품 상품 이미지(/images/goods_img/)만 허용. 배너/사이즈표/공지 제외
-            if "msscdn.net" in lower:
-                if "/images/goods_img/" not in lower:
-                    return False
-            # 확장자 검증 (svg/webp 제외)
-            path = lower.split("?", 1)[0]
-            if not any(path.endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".gif")):
-                return False
-            return True
+            path = url.lower().split("?", 1)[0]
+            return any(path.endswith(ext) for ext in (".jpg", ".jpeg", ".png"))
 
-        product_images = [
-            _normalize_msscdn(u)
-            for u in images
-            if _is_valid_detail_image(u) and _is_safe_main_image(u)
-        ]
+        def _host_of(url: str) -> str:
+            try:
+                from urllib.parse import urlparse
+
+                return (urlparse(url).hostname or "").lower()
+            except Exception:
+                return ""
+
+        def _is_msscdn_product(url: str) -> bool:
+            """msscdn의 정품 상품 이미지 path만 인정 (배너/공지 제외)."""
+            lower = url.lower()
+            return "msscdn.net" in lower and "/images/goods_img/" in lower
+
+        # prdImage 후보: 1차로 _is_valid_detail_image + 확장자 OK
+        # 무신사(msscdn)인 경우 detail_images에 cafe24 등 hotlink 차단 호스트 배너가 섞이므로
+        # /images/goods_img/ 경로만 허용 (배너/사이즈표는 detail_html에만 노출)
+        # 그 외 소싱처는 첫 이미지 호스트와 일치하는 URL만 허용 (호스트 일치 = 동일 CDN의 정품 이미지일 확률 높음)
+        _candidates = [u for u in images if _is_valid_detail_image(u) and _ext_ok(u)]
+        if _candidates:
+            _first_host = _host_of(_candidates[0])
+            _first_is_msscdn = "msscdn.net" in _first_host
+            if _first_is_msscdn:
+                _filtered = [u for u in _candidates if _is_msscdn_product(u)]
+            else:
+                # 비-무신사 소싱처: 첫 이미지 호스트와 일치하는 것만 (Referer 없이 fetch 가능 가정)
+                _filtered = [u for u in _candidates if _host_of(u) == _first_host]
+            # 안전 폴백: 필터 결과가 비면 최소한 첫 이미지 1장은 살림
+            product_images = [
+                _normalize_msscdn(u) for u in (_filtered or _candidates[:1])
+            ]
+        else:
+            product_images = []
         image_xml = ""
         if product_images:
             image_xml += f"<prdImage01>{_escape_xml(product_images[0])}</prdImage01>"

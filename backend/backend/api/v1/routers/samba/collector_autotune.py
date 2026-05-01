@@ -33,6 +33,7 @@ _autotune_running_event = threading.Event()  # 스레드 간 동기화
 _autotune_last_tick: Optional[str] = None
 _autotune_cycle_count = 0
 _autotune_restart_count = 0  # 사이클 재시작 횟수 추적
+_autotune_force_stopped = False  # stop 직후 확장앱 in-flight 작업 즉시 중단용
 
 # 소싱처별 품절 서킷브레이커
 SOLDOUT_BREAK_THRESHOLD = 10  # 연속 품절 N개 → 해당 소싱처 중단
@@ -2607,6 +2608,8 @@ async def autotune_start(
                     }
                 _autotune_target_ids = {row}
 
+    global _autotune_force_stopped
+    _autotune_force_stopped = False
     _autotune_running_event.set()
     _autotune_cycle_count = 0
     _autotune_restart_count = 0
@@ -2654,6 +2657,8 @@ async def autotune_stop():
 
     if not _autotune_running_event.is_set():
         return {"ok": True, "status": "already_stopped"}
+    global _autotune_force_stopped
+    _autotune_force_stopped = True  # 확장앱 in-flight 작업 즉시 중단 신호
     _autotune_running_event.clear()
     request_bulk_cancel("autotune")  # 오토튠 갱신만 즉시 중단
     # 소싱처별 태스크 전부 취소

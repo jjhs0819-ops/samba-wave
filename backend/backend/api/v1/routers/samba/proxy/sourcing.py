@@ -96,6 +96,17 @@ async def sourcing_collect_queue(request: Request) -> Any:
             content={"hasJob": False, "shuttingDown": True},
             headers={"Connection": "close"},
         )
+    # 오토튠 강제 stop 직후 — 확장앱 in-flight 작업 즉시 중단 신호
+    try:
+        from backend.api.v1.routers.samba.collector_autotune import (
+            _autotune_force_stopped,
+        )
+
+        if _autotune_force_stopped:
+            return {"hasJob": False, "forceStop": True}
+    except Exception:
+        pass
+
     from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
 
     device_id = request.headers.get("X-Device-Id", "").strip()
