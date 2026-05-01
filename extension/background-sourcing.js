@@ -1065,22 +1065,32 @@ async function handleSourcingJob(job) {
       } else {
         console.log(`[LOTTEON] 혜택가 없음: ${job.productId}`)
       }
-      // 로그인 검증 — 다중 쿠키 후보로 판정 (단일 fo_at_yn은 의미 불명확).
-      // DOM hydration 타이밍 false-positive를 차단하고, 쿠키 이름이 변경되어도 견고.
-      // 후보 중 하나라도 의미있는 값이 있으면 로그인 상태로 간주 (사용자 직접 로그인 신뢰).
+      // 로그인 검증 — DOM 신호 우선, 쿠키는 DOM이 'ambiguous'일 때만 보조.
+      // 좀비 쿠키(만료된 fo_mlin 등) 때문에 DOM의 비로그인 판정이 뒤집혀
+      // 비회원가로 처리되던 사고 차단. DOM에 "로그인/회원가입" 링크가 보이면 무조건 비로그인.
       try {
-        const _isLoggedInByCookie = await _checkLotteonLoggedInByCookies()
         if (result && typeof result === 'object') {
-          // _isLoggedInByCookie가 true면 로그인 (DOM의 _loginRequired 무시)
-          // false면 비로그인 (자동로그인 신호 유지). null이면 판단 불가 → DOM 결과 유지.
-          if (_isLoggedInByCookie === true) {
-            result._loginRequired = false
-          } else if (_isLoggedInByCookie === false) {
+          const sig = result._domLoginSignal
+          if (sig === 'login_link') {
+            // DOM에 로그인 링크 명시 — 좀비 쿠키 무시하고 비로그인 확정
             result._loginRequired = true
+            console.log(`[LOTTEON] DOM=비로그인 확정(login_link) — 쿠키 무시`)
+          } else if (sig === 'logout_link') {
+            // DOM에 로그아웃 링크 명시 — 로그인 확정
+            result._loginRequired = false
+          } else {
+            // sig === 'ambiguous' (DOM 하이드레이션 미완료 등) → 쿠키로 보조 판정
+            const _isLoggedInByCookie = await _checkLotteonLoggedInByCookies()
+            if (_isLoggedInByCookie === true) {
+              result._loginRequired = false
+            } else if (_isLoggedInByCookie === false) {
+              result._loginRequired = true
+            }
+            // null이면 DOM 결과(_loginRequired=!isLoggedIn) 유지
           }
         }
       } catch (e) {
-        console.log(`[LOTTEON] 쿠키 검증 실패: ${e.message} — DOM 결과 유지`)
+        console.log(`[LOTTEON] 로그인 검증 실패: ${e.message} — DOM 결과 유지`)
       }
     } else if (job.type === 'detail' && (job.site === 'ABCmart' || job.site === 'GrandStage')) {
       // ABCmart/GrandStage: 백그라운드 탭(active=false) DOM 파싱 1순위 — 페이지에
@@ -1674,6 +1684,13 @@ async function extractDetailData(tabId, site, productId) {
           }
         }
         const isLoggedIn = hasLogoutLink && !hasLoginLink
+        // DOM 신호 세분화 — 좀비 쿠키 false-positive 차단용
+        // 'login_link' = 로그인/회원가입 링크 명시 발견 → 비로그인 확정
+        // 'logout_link' = 로그아웃/마이페이지 링크 명시 발견 → 로그인 확정
+        // 'ambiguous' = 둘 다 못 찾음 → DOM 하이드레이션 미완료 가능성, 쿠키 보조 판정 허용
+        const _domLoginSignal = hasLoginLink
+          ? 'login_link'
+          : (hasLogoutLink ? 'logout_link' : 'ambiguous')
 
         let salePrice = 0
         let originalPrice = 0
@@ -1770,6 +1787,7 @@ async function extractDetailData(tabId, site, productId) {
             seller,  // "롯데백화점 인천점" 등 — 지점 정보
             pageTitle: document.title,  // 백엔드에서 product.name 정합성 검증용 (§12)
             _loginRequired: !isLoggedIn,  // 비로그인 감지 — handleSourcingJob에서 자동로그인 트리거 신호로 사용
+            _domLoginSignal,  // 'login_link' | 'logout_link' | 'ambiguous'
           }
         }
       }
