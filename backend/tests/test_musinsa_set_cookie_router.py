@@ -16,9 +16,7 @@ def test_set_cookie_route_lives_in_extension_router():
     """set-cookie 경로는 extension_router에만 등록되어야 한다."""
     from backend.api.v1.routers.samba.proxy.musinsa import extension_router, router
 
-    extension_paths = {
-        getattr(route, "path", "") for route in extension_router.routes
-    }
+    extension_paths = {getattr(route, "path", "") for route in extension_router.routes}
     main_paths = {getattr(route, "path", "") for route in router.routes}
 
     assert "/musinsa/set-cookie" in extension_paths, (

@@ -364,6 +364,9 @@ class JobWorker:
         ] = {}  # job_id → Task (수집+전송 병렬용)
         # 소싱처별 동시 실행 제어 — 같은 소싱처는 순차, 다른 소싱처는 병렬
         self._active_collect_sources: set[str] = set()
+        # 마켓 계정별 transmit 동시 실행 제어 — 같은 계정은 순차, 다른 계정은 병렬
+        # job_id → list[account_id]
+        self._active_transmit_accounts: dict[str, list[str]] = {}
         # brand_all 잡 직렬화 — SSG+MUSINSA 동시 실행 시 DB/메모리 고갈 방지
         self._brand_all_running: bool = False
         self._poll_count = 0
@@ -480,6 +483,7 @@ class JobWorker:
         for jid in done_ids:
             task = self._active_tasks.pop(jid)
             self._active_job_ids.discard(jid)
+            self._active_transmit_accounts.pop(jid, None)
             exc = task.exception()
             if exc:
                 logger.error(f"[잡워커] 전송 Task 예외: {jid} — {exc}")
@@ -491,10 +495,15 @@ class JobWorker:
             repo = SambaJobRepository(session)
             # 현재 실행 중인 소싱처는 제외 — 같은 소싱처 순차, 다른 소싱처 병렬
             _excl_sources = set(self._active_collect_sources)
+            # 현재 실행 중인 transmit 잡의 계정 합집합 — 같은 계정 순차 보장
+            _excl_accounts: set[str] = set()
+            for _aids in self._active_transmit_accounts.values():
+                _excl_accounts.update(_aids)
             job = await repo.claim_pending_job(
                 exclude_sources=_excl_sources or None,
                 exclude_brand_all=self._brand_all_running,
                 exclude_types={"bg_remove"},  # 로컬 워커 전용 — Cloud Run에서 처리 금지
+                exclude_accounts=_excl_accounts or None,
             )
             if not job:
                 return bool(self._active_tasks)
@@ -504,6 +513,8 @@ class JobWorker:
 
         # 전송: asyncio.Task로 백그라운드 병렬 실행
         if job.job_type == "transmit":
+            _tx_accounts = list((job.payload or {}).get("target_account_ids") or [])
+            self._active_transmit_accounts[job.id] = _tx_accounts
             task = asyncio.create_task(
                 self._execute_job(job),
                 name=f"transmit-{job.id}",
@@ -511,7 +522,8 @@ class JobWorker:
             self._active_tasks[job.id] = task
             logger.info(
                 f"[잡워커] 전송 Task 생성: {job.id} "
-                f"(동시 실행: {len(self._active_tasks)}개)"
+                f"(동시 실행: {len(self._active_tasks)}개, "
+                f"계정={_tx_accounts})"
             )
             return True
 
@@ -675,6 +687,7 @@ class JobWorker:
         finally:
             self._active_job_ids.discard(_job_id)
             self._active_tasks.pop(_job_id, None)
+            self._active_transmit_accounts.pop(_job_id, None)
             if _job_type == "collect":
                 _collect_site = (_job_payload or {}).get("source_site") or ""
                 if _collect_site:

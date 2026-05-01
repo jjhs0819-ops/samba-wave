@@ -23,6 +23,7 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         exclude_types: set[str] | None = None,
         exclude_sources: set[str] | None = None,
         exclude_brand_all: bool = False,
+        exclude_accounts: set[str] | None = None,
     ) -> Optional[SambaJob]:
         """Pending 잡 1개를 원자적으로 claim (FOR UPDATE SKIP LOCKED).
 
@@ -36,6 +37,9 @@ class SambaJobRepository(BaseRepository[SambaJob]):
                              다른 소싱처 잡은 계속 pick 가능 → 소싱처별 동시 실행 허용.
             exclude_brand_all: True면 brand_all collect 잡을 skip — 1개씩 직렬 실행 보장.
                                SSG+MUSINSA 동시 실행 시 DB 커넥션 고갈/OOM 방지.
+            exclude_accounts: 제외할 마켓 계정 ID 집합 — 현재 실행 중인 transmit 잡의 계정.
+                              payload->'target_account_ids' 배열 중 하나라도 이 셋과 겹치는
+                              transmit 잡은 건너뜀 → 같은 계정은 순차 실행 보장.
         """
         from sqlalchemy import and_, or_
 
@@ -69,6 +73,20 @@ class SambaJobRepository(BaseRepository[SambaJob]):
                     SambaJob.payload.op("->>")("brand_all") == "true",
                 )
             )
+        if exclude_accounts:
+            # transmit 잡 중 target_account_ids 배열에 exclude_accounts 와 겹치는 항목이
+            # 하나라도 있으면 skip — 같은 계정 순차 실행 보장.
+            # payload 컬럼은 JSON 타입이므로 json_array_elements_text 사용.
+            from sqlalchemy import text as _sa_text
+
+            _excl_acc_list = list(exclude_accounts)
+            _no_overlap = _sa_text(
+                "(samba_jobs.job_type <> 'transmit' OR NOT EXISTS ("
+                "SELECT 1 FROM json_array_elements_text("
+                "COALESCE(samba_jobs.payload->'target_account_ids', '[]'::json)"
+                ") AS v WHERE v = ANY(:excl_accs)))"
+            ).bindparams(excl_accs=_excl_acc_list)
+            stmt = stmt.where(_no_overlap)
 
         result = await self.session.execute(stmt)
         job = result.scalars().first()
