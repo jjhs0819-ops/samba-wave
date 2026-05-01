@@ -1028,7 +1028,13 @@ async function handleSourcingJob(job) {
           await wait(500)
           const [_chk] = await chrome.scripting.executeScript({
             target: { tabId }, world: 'MAIN',
-            func: () => !!(window.resultItemObj && window.resultItemObj.itemNm),
+            func: () => {
+              if (window.resultItemObj && window.resultItemObj.itemNm) return true
+              if (document.querySelector('ul.selectLists[id^="select-bundleOpt-"] li')) return true
+              return Array.from(document.querySelectorAll('script:not([src])')).some(
+                (script) => script.textContent.includes('var resultItemObj')
+              )
+            },
           }).catch(() => [{ result: false }])
           if (_chk?.result) break
         }

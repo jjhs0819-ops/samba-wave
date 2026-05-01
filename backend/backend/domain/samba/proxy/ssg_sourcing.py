@@ -1166,18 +1166,12 @@ class SSGSourcingClient:
                 skipped_other_site += 1
                 continue
 
-            # 모음전(기획전) 제외: salestrNo가 채워져 있거나 itemDetailLink가
-            # /dealItemView 경로면 단일 상품이 아닌 모음전이므로 수집 대상 아님.
-            # (단일 URL 가드는 collector_collection/collect.py에 있고, 여기는
-            # 검색·브랜드전체수집·카테고리스캔 경로에서 API JSON으로 들어오는
-            # 모음전을 막는다.)
-            _salestr_no = str(item.get("salestrNo", "") or "").strip()
+            # 모음전(기획전) 제외: itemDetailLink가 /dealItemView 경로인 경우만 제외.
+            # salestrNo는 SSG가 일반 상품에도 채워 반환하기 시작했으므로 판별 기준에서 제거.
             _detail_link = str(
                 item.get("itemDetailLink", "") or item.get("itemUrl", "") or ""
             )
-            _is_deal_item = "dealItemView" in _detail_link or (
-                _salestr_no and _salestr_no != "0"
-            )
+            _is_deal_item = "dealItemView" in _detail_link
             if _is_deal_item:
                 skipped_deal_item += 1
                 continue

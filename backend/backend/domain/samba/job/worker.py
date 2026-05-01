@@ -2762,11 +2762,12 @@ class JobWorker:
                     _item_bid and _item_bid in _allowed_brand_ids
                 )
                 _match_name = (not _keyword_norm) or (_item_bname == _keyword_norm)
-                # brandId가 없으면 name 매칭만으로 판정, brandId가 있으면 id 매칭 우선
+                # brandId가 있으면 id 매칭으로 하위브랜드 필터링
+                # brandId가 없으면 어느 브랜드인지 알 수 없으므로 통과 (SSG는 brandId 미제공)
                 if _item_bid:
                     _keep = _match_id
                 else:
-                    _keep = _match_name
+                    _keep = True
                 if not _keep:
                     _brand_dropped += 1
                     continue

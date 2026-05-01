@@ -823,7 +823,8 @@ class SambaShipmentService:
             product_dict["_skip_image_upload"] = True
 
         # 상세 HTML은 항상 정책 기반으로 재생성 (원문 상세이미지 유출 방지)
-        product_dict["detail_html"] = await self._build_detail_html(product_dict)
+        if not is_price_stock_only:
+            product_dict["detail_html"] = await self._build_detail_html(product_dict)
 
         # 3. 카테고리 매핑 자동 조회 — product.category(전체 경로) 우선
         #    category1~4 개별 필드는 일부 소싱처에서 불완전할 수 있으므로
