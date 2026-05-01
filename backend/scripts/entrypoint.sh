@@ -114,6 +114,7 @@ async def fix():
         ('alter_return_exch_delivered_at', 'ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_delivered_at TIMESTAMPTZ'),
         ('alter_order_collected_product_id', 'ALTER TABLE samba_order ADD COLUMN IF NOT EXISTS collected_product_id TEXT'),
         ('alter_order_customer_address_detail', 'ALTER TABLE samba_order ADD COLUMN IF NOT EXISTS customer_address_detail TEXT'),
+        ('alter_order_ord_prd_seq', 'ALTER TABLE samba_order ADD COLUMN IF NOT EXISTS ord_prd_seq TEXT'),
         ('idx_order_collected_product_id', 'CREATE INDEX IF NOT EXISTS ix_samba_order_collected_product_id ON samba_order (collected_product_id) WHERE collected_product_id IS NOT NULL'),
         ('create_search_cache', '''CREATE TABLE IF NOT EXISTS samba_search_cache (
                 id VARCHAR(30) PRIMARY KEY NOT NULL,
