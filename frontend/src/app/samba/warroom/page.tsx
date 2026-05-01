@@ -352,8 +352,9 @@ export default function WarroomPage() {
       const current = prev ?? [...all]
       const next = current.includes(site) ? current.filter(s => s !== site) : [...current, site]
       const result = next.length === all.length ? null : next
-      // 체크박스 = 이 PC 분담(chrome.storage)만 제어
-      // 백엔드 enabled_sources는 null(전체)로 고정 — PC별 덮어쓰기 충돌 방지
+      // 체크박스 = 이 PC 분담만 제어 (chrome.storage + 화면 로그 필터)
+      // 백엔드 enabled_sources는 항상 null(전체) — A·B·C PC 합집합으로 백엔드는 모두 처리
+      // 로그 격리는 프론트엔드 클라이언트 필터링이 담당
       syncAllowedSitesToExtension(result)
       saveFilters(null, filterMarkets)
       return result

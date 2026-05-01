@@ -831,7 +831,7 @@ export default function ReturnsPage() {
                   onChange={e => setReshipForm(f => ({ ...f, shipping_company: e.target.value }))}
                   style={{ padding: '0.5rem 0.75rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#E5E5E5', fontSize: '0.875rem' }}
                 >
-                  {['CJ대한통운','한진택배','롯데택배','로젠택배','우체국택배','경동택배','대신택배','일양로지스'].map(c => (
+                  {['CJ대한통운','한진택배','롯데택배','로젠택배','우체국택배','경동택배','대신택배','일양로지스','딜리박스'].map(c => (
                     <option key={c} value={c}>{c}</option>
                   ))}
                 </select>

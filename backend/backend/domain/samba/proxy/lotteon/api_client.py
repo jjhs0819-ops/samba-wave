@@ -1578,6 +1578,7 @@ class LotteonClient:
         "일양로지스": "0007",
         "편의점택배": "0016",
         "DHL": "0009",
+        "딜리박스": "0159",
     }
 
     async def ship_order(

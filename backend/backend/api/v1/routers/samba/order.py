@@ -706,6 +706,7 @@ SHIPPING_COMPANY_TO_CARRIER_ID: dict[str, str] = {
     "편의점택배": "kr.cvsnet",
     "합동택배": "kr.hdexp",
     "쿠팡택배": "kr.coupangls",
+    "딜리박스": "kr.dilibox",
     "DHL": "de.dhl",
 }
 
@@ -2292,6 +2293,7 @@ async def ship_order(
                     "GS포스트박스": "00015",
                     "경동택배": "00004",
                     "합동택배": "00005",
+                    "딜리박스": "00133",
                 }
                 api_key = account.api_key or ""
                 if not api_key and isinstance(account.additional_fields, dict):

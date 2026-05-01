@@ -562,6 +562,7 @@ backend/scripts/ssg_ctg_probe.py
 backend/scripts/ssg_verify_fix.py
 
 dev-debug.log
+*.log.err
 # Environment variables
 # Editor directories and files
 .idea
