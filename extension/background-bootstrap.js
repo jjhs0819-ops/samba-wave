@@ -153,13 +153,25 @@ async function ensureBackgroundSessionTabs() {
     // 빈 배열 → 작업 안 받는 PC, 자동 생성 X
     if (!sites || sites.length === 0) return
     if (typeof ensureSiteSessionTab !== 'function') return
-    // 사용자 보고 — 확장앱 설치/업데이트만 했는데 메인 페이지 자동으로 뜨는 게 거슬림.
-    // 모든 사이트의 세션 탭을 lazy 생성으로 변경:
-    //   - ABCmart 멤버십가 in-tab fetch 필요 시 fetchAbcmartBenefitPrice → ensureArtTab → 자동 생성
-    //   - LOTTEON 자동로그인 / 쿠키 동기화 시 자동 생성
-    //   - SSG는 비로그인 무관 (애초에 불필요)
-    // 즉 사전 생성 없이 실제 작업 시점에만 탭 1개 생성 — 사용자 눈에 띄는 깜빡임 최소화.
-    // (필요한 사이트가 추가되면 ensureSiteSessionTab을 호출하는 코드 경로에서 자동 처리)
+    // 메인 페이지 사전 생성 대신 ensureLoggedIn 직접 호출 — 로그인 페이지만 잠깐 떴다 닫힘.
+    // 사용자 보고: 메인 탭 자동으로 떠서 거슬림 (이전 변경) + 로그인 안 된 채 처리 (회귀).
+    // 해결: 백엔드 자격증명 → SPA 직접 로그인 → 쿠키만 확보 → 메인 탭 유지 X.
+    // 결과: 확장앱 설치 직후 로그인 페이지만 잠깐 보였다 닫힘, 이후 잡 처리는 로그인 상태로 진행.
+    if (typeof globalThis.ensureLoggedIn !== 'function') return
+    const LOGIN_REQUIRED_SITES = { ABCmart: 'abcmart', GrandStage: 'abcmart', LOTTEON: 'lotteon', MUSINSA: 'musinsa' }
+    const triggeredKeys = new Set()
+    for (const site of sites) {
+      const siteKey = LOGIN_REQUIRED_SITES[site]
+      if (!siteKey || triggeredKeys.has(siteKey)) continue
+      triggeredKeys.add(siteKey)
+      try {
+        // fire-and-forget — 확장앱 부팅 차단하지 않음. 실패해도 잡 처리 시점에 재시도됨.
+        globalThis.ensureLoggedIn(siteKey).catch(e => console.warn(`[부팅로그인] ${site} 실패: ${e.message}`))
+        console.log(`[부팅로그인] ${site} 자동로그인 트리거`)
+      } catch (e) {
+        console.warn(`[부팅로그인] ${site} 호출 실패: ${e.message}`)
+      }
+    }
   } catch (e) {
     console.warn('[세션탭] 초기화 실패:', e.message)
   }
