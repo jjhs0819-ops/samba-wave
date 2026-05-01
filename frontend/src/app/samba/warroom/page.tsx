@@ -300,9 +300,9 @@ export default function WarroomPage() {
       setAvailSources(res.available_sources)
       setAvailMarkets(res.available_markets)
       setFilterMarkets(res.enabled_markets)
-      // enabled_sources는 항상 null(전체)로 오므로 기본값만 세팅
-      // chrome.storage ALLOWED_SITES 수신 후 덮어씀 (PC별 독립 체크 상태 유지)
-      setFilterSources(null)
+      // filterSources는 useState 초기값 null로 이미 세팅됨 — 여기서 또 setFilterSources(null) 하면
+      // 동시에 도착한 chrome.storage ALLOWED_SITES 메시지 결과([] 등)를 덮어쓰는 race 발생.
+      // C PC가 전체해제해도 새로고침마다 전체체크로 되돌아가는 버그의 원인이었음.
     }).catch(() => {})
 
     // 2) 이 PC의 chrome.storage.allowedSites로 체크박스 초기화

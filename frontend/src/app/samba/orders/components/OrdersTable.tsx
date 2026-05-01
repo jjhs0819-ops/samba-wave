@@ -56,7 +56,10 @@ interface OrdersTableProps {
   calcProfit: (o: SambaOrder) => number
   calcProfitRate: (o: SambaOrder) => string
   calcFeeRate: (o: SambaOrder) => string
-  splitCustomerAddress: (address: string | null | undefined) => { base: string; detail: string }
+  splitCustomerAddress: (
+    address: string | null | undefined,
+    detailColumn?: string | null,
+  ) => { base: string; detail: string }
   renderCopyableText: (
     value: string | null | undefined,
     _label?: string,
@@ -133,7 +136,7 @@ export default function OrdersTable(props: OrdersTableProps) {
               ? (collectedProductCosts[o.collected_product_id] ?? o.cost ?? 0)
               : (o.cost ?? 0)
             const activeAction = activeActions[o.id] || null
-            const customerAddress = splitCustomerAddress(o.customer_address)
+            const customerAddress = splitCustomerAddress(o.customer_address, o.customer_address_detail)
 
             return (
               <tr key={o.id} style={{ borderBottom: '1px solid #1C2333', verticalAlign: 'top' }}>

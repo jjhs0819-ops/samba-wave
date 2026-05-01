@@ -130,6 +130,7 @@ export interface SambaOrder {
   customer_name?: string;
   customer_phone?: string;
   customer_address?: string;
+  customer_address_detail?: string;
   quantity: number;
   sale_price: number;
   /**

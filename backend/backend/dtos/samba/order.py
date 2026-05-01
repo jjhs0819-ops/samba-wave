@@ -15,6 +15,7 @@ class OrderCreate(BaseModel):
     customer_name: Optional[str] = None
     customer_phone: Optional[str] = None
     customer_address: Optional[str] = None
+    customer_address_detail: Optional[str] = None
     quantity: int = 1
     sale_price: float = 0
     cost: float = 0
@@ -36,6 +37,7 @@ class OrderUpdate(BaseModel):
     customer_name: Optional[str] = None
     customer_phone: Optional[str] = None
     customer_address: Optional[str] = None
+    customer_address_detail: Optional[str] = None
     quantity: Optional[int] = None
     sale_price: Optional[float] = None
     cost: Optional[float] = None

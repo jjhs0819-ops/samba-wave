@@ -98,6 +98,11 @@ class SambaOrder(SQLModel, table=True):
     customer_address: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)
     )
+    # 상세주소(동/호/층 등) — 마켓 API가 base/detail 분리 제공하는 경우 별도 저장
+    # 분리 미제공 마켓(eBay, 플레이오토 EMP)은 NULL 유지하고 customer_address에 단일 문자열 저장
+    customer_address_detail: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
 
     # 수량/금액
     quantity: int = Field(default=1)

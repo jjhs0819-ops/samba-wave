@@ -3057,8 +3057,10 @@ async def sync_orders_from_markets(
                                     new_p = exchange_priority.get(ex_status, 0)
                                     if cur_p == 0 or new_p >= cur_p:
                                         od["shipping_status"] = ex_status
-                                        if step_cd in ("21", "22", "23"):
-                                            od["status"] = "return_requested"
+                                        if step_cd in ("21", "22", "23", "24"):
+                                            od["status"] = "exchanging"
+                                        elif step_cd == "25":
+                                            od["status"] = "exchanged"
                                     found_in_data = True
                                     break
                             if not found_in_data and ex_od_no:
@@ -3084,14 +3086,153 @@ async def sync_orders_from_markets(
                                         update_ex: dict[str, Any] = {
                                             "shipping_status": ex_status
                                         }
-                                        if step_cd in ("21", "22", "23"):
-                                            update_ex["status"] = "return_requested"
+                                        if step_cd in ("21", "22", "23", "24"):
+                                            update_ex["status"] = "exchanging"
+                                        elif step_cd == "25":
+                                            update_ex["status"] = "exchanged"
                                         await svc.update_order(existing.id, update_ex)
                                         logger.info(
                                             f"[롯데ON][교환클레임] DB 직접 업데이트: {ex_od_no} → {ex_status}"
                                         )
                 except Exception as ex_err:
                     logger.warning(f"[롯데ON] 교환 클레임 조회 실패: {ex_err}")
+
+                # 취소 클레임 조회 → samba_order.status 갱신
+                # step_cd: 11=취소요청, 12=취소처리중, 13=취소완료
+                try:
+                    cancel_claims = await lotteon_client.get_cancel_orders(
+                        days=body.days
+                    )
+                    logger.info(f"[롯데ON] 취소 클레임 조회: {len(cancel_claims)}건")
+                    cancel_step_map = {
+                        "11": ("취소요청", "cancel_requested"),
+                        "12": ("취소처리중", "cancel_requested"),
+                        "13": ("취소완료", "cancelled"),
+                    }
+                    cancel_priority = {
+                        "취소요청": 1,
+                        "취소처리중": 2,
+                        "취소완료": 3,
+                    }
+                    for claim in cancel_claims:
+                        cn_od_no = claim.get("odNo", "")
+                        step_cd_c = str(claim.get("odPrgsStepCd", "") or "")
+                        mapped = cancel_step_map.get(step_cd_c)
+                        if not mapped or not cn_od_no:
+                            continue
+                        cn_ship_status, cn_status = mapped
+                        found_in_data_c = False
+                        for od in orders_data:
+                            if od.get("od_no") == cn_od_no:
+                                cur_p = cancel_priority.get(
+                                    od.get("shipping_status", ""), 0
+                                )
+                                new_p = cancel_priority.get(cn_ship_status, 0)
+                                if cur_p == 0 or new_p >= cur_p:
+                                    od["shipping_status"] = cn_ship_status
+                                    od["status"] = cn_status
+                                found_in_data_c = True
+                                break
+                        if not found_in_data_c:
+                            from sqlalchemy import text as _sa_text_cn
+
+                            _cn_row = await session.execute(
+                                _sa_text_cn(
+                                    "SELECT id FROM samba_order "
+                                    "WHERE source = 'lotteon' AND od_no = :od_no LIMIT 1"
+                                ),
+                                {"od_no": cn_od_no},
+                            )
+                            _cn_id = (_cn_row.fetchone() or [None])[0]
+                            existing_c = (
+                                await svc.repo.get_async(_cn_id) if _cn_id else None
+                            )
+                            if existing_c:
+                                cur_p = cancel_priority.get(
+                                    existing_c.shipping_status, 0
+                                )
+                                new_p = cancel_priority.get(cn_ship_status, 0)
+                                if cur_p == 0 or new_p >= cur_p:
+                                    await svc.update_order(
+                                        existing_c.id,
+                                        {
+                                            "shipping_status": cn_ship_status,
+                                            "status": cn_status,
+                                        },
+                                    )
+                                    logger.info(
+                                        f"[롯데ON][취소클레임] DB 직접 업데이트: {cn_od_no} → {cn_ship_status}"
+                                    )
+                except Exception as cn_err:
+                    logger.warning(f"[롯데ON] 취소 클레임 조회 실패: {cn_err}")
+
+                # 반품 클레임 조회 → samba_order.status 갱신
+                # step_cd: 11=반품요청, 12=반품수거중, 13=반품완료, 14=반품거부
+                try:
+                    return_claims = await lotteon_client.get_returns(days=body.days)
+                    logger.info(f"[롯데ON] 반품 클레임 조회: {len(return_claims)}건")
+                    return_step_map = {
+                        "11": ("반품요청", "return_requested"),
+                        "12": ("반품요청", "returning"),
+                        "13": ("반품완료", "returned"),
+                        "14": ("반품거부", "return_requested"),
+                    }
+                    return_priority = {
+                        "반품요청": 1,
+                        "반품거부": 1,
+                        "반품완료": 2,
+                    }
+                    for claim in return_claims:
+                        rt_od_no = claim.get("odNo", "")
+                        step_cd_r = str(claim.get("odPrgsStepCd", "") or "")
+                        mapped_r = return_step_map.get(step_cd_r)
+                        if not mapped_r or not rt_od_no:
+                            continue
+                        rt_ship_status, rt_status = mapped_r
+                        found_in_data_r = False
+                        for od in orders_data:
+                            if od.get("od_no") == rt_od_no:
+                                cur_p = return_priority.get(
+                                    od.get("shipping_status", ""), 0
+                                )
+                                new_p = return_priority.get(rt_ship_status, 0)
+                                if cur_p == 0 or new_p >= cur_p:
+                                    od["shipping_status"] = rt_ship_status
+                                    od["status"] = rt_status
+                                found_in_data_r = True
+                                break
+                        if not found_in_data_r:
+                            from sqlalchemy import text as _sa_text_rt
+
+                            _rt_row = await session.execute(
+                                _sa_text_rt(
+                                    "SELECT id FROM samba_order "
+                                    "WHERE source = 'lotteon' AND od_no = :od_no LIMIT 1"
+                                ),
+                                {"od_no": rt_od_no},
+                            )
+                            _rt_id = (_rt_row.fetchone() or [None])[0]
+                            existing_r = (
+                                await svc.repo.get_async(_rt_id) if _rt_id else None
+                            )
+                            if existing_r:
+                                cur_p = return_priority.get(
+                                    existing_r.shipping_status, 0
+                                )
+                                new_p = return_priority.get(rt_ship_status, 0)
+                                if cur_p == 0 or new_p >= cur_p:
+                                    await svc.update_order(
+                                        existing_r.id,
+                                        {
+                                            "shipping_status": rt_ship_status,
+                                            "status": rt_status,
+                                        },
+                                    )
+                                    logger.info(
+                                        f"[롯데ON][반품클레임] DB 직접 업데이트: {rt_od_no} → {rt_ship_status}"
+                                    )
+                except Exception as rt_err:
+                    logger.warning(f"[롯데ON] 반품 클레임 조회 실패: {rt_err}")
             elif market_type == "playauto":
                 from datetime import UTC, datetime, timedelta
 
@@ -4019,6 +4160,11 @@ async def sync_orders_from_markets(
                         existing.customer_address or ""
                     ):
                         update_fields["customer_address"] = new_cust_addr
+                    new_cust_addr_dtl = order_data.get("customer_address_detail")
+                    if new_cust_addr_dtl is not None and new_cust_addr_dtl != str(
+                        existing.customer_address_detail or ""
+                    ):
+                        update_fields["customer_address_detail"] = new_cust_addr_dtl
                     # 마켓 상품번호 보충 (기존 주문에 없으면 채움)
                     if order_data.get("product_id") and not existing.product_id:
                         update_fields["product_id"] = order_data["product_id"]
@@ -4571,9 +4717,8 @@ def _parse_smartstore_order(
         "product_image": po.get("imageUrl", ""),
         "customer_name": customer_name,
         "customer_phone": customer_tel,
-        "customer_address": (
-            shipping.get("baseAddress", "") + " " + shipping.get("detailedAddress", "")
-        ).strip(),
+        "customer_address": (shipping.get("baseAddress", "") or "").strip(),
+        "customer_address_detail": (shipping.get("detailedAddress", "") or "").strip(),
         "customer_note": po.get("shippingMemo", "") or "",
         "quantity": quantity,
         "sale_price": sale_price,
@@ -4681,7 +4826,8 @@ def _parse_coupang_order(
     receiver_addr_detail = (
         order.get("receiverAddr2", "") or order.get("receiverAddrDetail", "") or ""
     )
-    customer_address = (receiver_addr + " " + receiver_addr_detail).strip()
+    customer_address = receiver_addr.strip()
+    customer_address_detail = receiver_addr_detail.strip()
 
     orderer_name = order.get("ordererName", "") or order.get("receiverName", "") or ""
     orderer_tel = (
@@ -4711,6 +4857,7 @@ def _parse_coupang_order(
         "customer_name": orderer_name,
         "customer_phone": orderer_tel,
         "customer_address": customer_address,
+        "customer_address_detail": customer_address_detail,
         "quantity": quantity,
         "sale_price": sale_price,
         "cost": 0,
@@ -4791,10 +4938,9 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
             f"키후보={[k for k in item.keys() if 'tt' in k.lower() or 'dt' in k.lower()]}"
         )
 
-    # 배송지 주소 조합 (dvpStnmZipAddr=도로명기본주소, dvpStnmDtlAddr=상세주소)
-    addr1 = item.get("dvpStnmZipAddr") or ""
-    addr2 = item.get("dvpStnmDtlAddr") or ""
-    full_addr = f"{addr1} {addr2}".strip()
+    # 배송지 주소 분리 저장 (dvpStnmZipAddr=도로명기본주소, dvpStnmDtlAddr=상세주소)
+    addr_base = (item.get("dvpStnmZipAddr") or "").strip()
+    addr_detail = (item.get("dvpStnmDtlAddr") or "").strip()
 
     _od_no = str(item.get("odNo", "") or "")
     _od_seq = str(item.get("odSeq", "1") or "1")
@@ -4825,7 +4971,8 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
         or item.get("dvpTelNo", "")
         or item.get("mphnNo", "")
         or "",
-        "customer_address": full_addr,
+        "customer_address": addr_base,
+        "customer_address_detail": addr_detail,
         "customer_note": item.get("dvMsg", "") or "",
         "paid_at": paid_at,
         # created_at은 명시 X — DB default_factory(now)가 실제 삽입 시각 기록
@@ -4978,10 +5125,9 @@ def _parse_elevenst_order(item: dict, account_id: str, label: str) -> dict:
     except Exception:
         paid_at = datetime.now(timezone.utc)
 
-    # 수령인 주소 조합 (실제 API 필드: rcvrBaseAddr, rcvrDtlsAddr)
-    addr1 = str(item.get("rcvrBaseAddr", "") or "").strip()
-    addr2 = str(item.get("rcvrDtlsAddr", "") or "").strip()
-    full_addr = " ".join(part for part in (addr1, addr2) if part)
+    # 수령인 주소 분리 저장 (실제 API 필드: rcvrBaseAddr=기본, rcvrDtlsAddr=상세)
+    addr_base = str(item.get("rcvrBaseAddr", "") or "").strip()
+    addr_detail = str(item.get("rcvrDtlsAddr", "") or "").strip()
 
     # 판매금액: selPrc(단가) 우선, 없으면 ordAmt(주문금액)
     sale_price = _to_int(item.get("selPrc"), _to_int(item.get("ordAmt")))
@@ -5008,7 +5154,8 @@ def _parse_elevenst_order(item: dict, account_id: str, label: str) -> dict:
         "customer_phone": str(
             item.get("rcvrPrtblNo", "") or item.get("ordPrtblTel", "") or ""
         ),
-        "customer_address": full_addr,
+        "customer_address": addr_base,
+        "customer_address_detail": addr_detail,
         "notes": str(item.get("ordDlvReqCont", "") or item.get("dlvMsg", "") or ""),
         "paid_at": paid_at,
         "created_at": paid_at,
