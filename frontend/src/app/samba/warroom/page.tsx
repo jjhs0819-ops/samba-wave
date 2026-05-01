@@ -57,9 +57,12 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, extern
   externalRunning?: boolean
   filterSources?: string[] | null
 }) {
-  const [logs, setLogs] = useState<RefreshLogEntry[]>([])
+  // 로그에 클라이언트 부여 시퀀스 번호 — slice(-30)으로 인덱스가 매번 바뀌어
+  // React key가 흔들리고 30개 항목이 unmount+remount하며 깜빡이던 문제 해결.
+  const [logs, setLogs] = useState<Array<RefreshLogEntry & { __seq: number }>>([])
   const [, setIntervals] = useState<Record<string, number>>({})
   const sinceIdxRef = useRef(0)
+  const seqRef = useRef(0)
   const containerRef = useRef<HTMLDivElement>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -129,7 +132,8 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, extern
         if (res.logs.length > 0 && res.current_idx > idx) {
           sinceIdxRef.current = res.current_idx
           setLogs(prev => {
-            const next = [...prev, ...res.logs]
+            const tagged = res.logs.map(l => ({ ...l, __seq: ++seqRef.current }))
+            const next = [...prev, ...tagged]
             return next.slice(-30)
           })
           requestAnimationFrame(() => {
@@ -186,7 +190,7 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, extern
               </div>
             )
           }
-          return visibleLogs.map((log, i) => {
+          return visibleLogs.map(log => {
             let color = '#DCE0E8'
             let fontWeight: number | string = 400
             if (log.msg.includes('쿠키 로테이션')) { color = '#FFFFFF'; fontWeight = 700 }
@@ -201,7 +205,7 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, extern
             else if (log.msg.includes('스킵')) color = '#888'
             else if (log.msg.includes('재고변동')) color = '#FFD93D'
             else if (log.msg.includes('성공')) color = '#7BAF7E'
-            return <div key={`${log.ts}-${i}`} style={{ color, fontWeight }}>{fmtTextNumbers(log.msg)}</div>
+            return <div key={log.__seq} style={{ color, fontWeight }}>{fmtTextNumbers(log.msg)}</div>
           })
         })()}
       </div>
