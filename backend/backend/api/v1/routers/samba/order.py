@@ -32,7 +32,14 @@ ACTIVE_ORDER_STATUSES = (
     "wait_ship",
     "arrived",
 )
-PENDING_ORDER_STATUSES = ("pending", "preparing")
+PENDING_ORDER_STATUSES = (
+    "pending",
+    "preparing",
+    "wait_ship",
+    "arrived",
+    "ship_failed",
+    "undeliverable",
+)
 
 
 class PaginatedOrdersResponse(BaseModel):

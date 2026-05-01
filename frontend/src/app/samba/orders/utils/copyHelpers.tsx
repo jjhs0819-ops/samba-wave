@@ -72,21 +72,25 @@ export const splitCustomerAddress = (
 
   if (!normalized) return { base: '', detail: '' }
 
-  // 2-a) 콤마 구분자 (도로명주소 표준)
+  // 2-a) 마지막 `)` 기준 (법정동/건물명 괄호 뒤에 상세주소가 오는 패턴)
+  //      콤마보다 먼저 — `(풍동, 성원아파트)` 처럼 괄호 안 콤마가 있어도 안전
+  const lastParenIdx = normalized.lastIndexOf(')')
+  if (lastParenIdx > 0 && lastParenIdx < normalized.length - 1) {
+    const after = normalized.slice(lastParenIdx + 1).trim()
+    if (after) {
+      return {
+        base: normalized.slice(0, lastParenIdx + 1).trim(),
+        detail: after,
+      }
+    }
+  }
+
+  // 2-b) 콤마 구분자 (괄호가 없는 도로명주소)
   const commaIdx = normalized.indexOf(',')
   if (commaIdx > 0 && commaIdx < normalized.length - 1) {
     return {
       base: normalized.slice(0, commaIdx).trim(),
       detail: normalized.slice(commaIdx + 1).trim(),
-    }
-  }
-
-  // 2-b) 마지막 `)` 기준 (법정동/건물명 괄호 뒤에 상세주소가 오는 패턴)
-  const lastParenIdx = normalized.lastIndexOf(')')
-  if (lastParenIdx > 0 && lastParenIdx < normalized.length - 1) {
-    return {
-      base: normalized.slice(0, lastParenIdx + 1).trim(),
-      detail: normalized.slice(lastParenIdx + 1).trim(),
     }
   }
 
