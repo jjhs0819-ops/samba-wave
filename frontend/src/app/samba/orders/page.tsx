@@ -217,6 +217,34 @@ export default function OrdersPage() {
 
 
   const [siteAliasMap, setSiteAliasMap] = useState<Record<string, string>>({})
+  const siteOptions = useMemo(() => {
+    const knownSites = ['MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'REXMONDE', 'SSG', 'LOTTEON', 'GSShop', 'GS이숍', 'ElandMall', 'SSF']
+    const options = new Map<string, string>()
+
+    const formatSiteLabel = (site: string) => {
+      const match = site.match(/^(.+)\(([^)]+)\)$/)
+      const siteName = match?.[1]?.trim()
+      const siteCode = match?.[2]?.trim()
+      if (siteName && siteCode && siteAliasMap[siteCode]) return `${siteName}(${siteAliasMap[siteCode]})`
+      if (site === 'GS이숍') return 'GS샵 배지 주문건'
+      return site
+    }
+
+    for (const site of knownSites) {
+      options.set(site, formatSiteLabel(site))
+    }
+    for (const order of orders) {
+      const site = order.source_site?.trim()
+      if (!site) continue
+      options.set(site, formatSiteLabel(site))
+      const baseSite = site.match(/^(.+?)\(/)?.[1]?.trim()
+      if (baseSite) options.set(baseSite, formatSiteLabel(baseSite))
+    }
+
+    return [...options.entries()]
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'ko'))
+  }, [orders, siteAliasMap])
   useEffect(() => { loadOrders() }, [loadOrders])
   useEffect(() => {
     setCurrentPage(1)
@@ -383,6 +411,7 @@ export default function OrdersPage() {
         sortBy={sortBy} setSortBy={setSortBy}
         pageSize={pageSize} setPageSize={setPageSize}
         accounts={accounts} sourcingAccounts={sourcingAccounts}
+        siteOptions={siteOptions}
       />
 
       <OrdersTable

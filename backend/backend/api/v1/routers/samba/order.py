@@ -108,7 +108,7 @@ async def _build_order_filters(
     search_text: str = "",
     search_category: str = "customer",
 ) -> list[Any]:
-    from sqlalchemy import and_, or_
+    from sqlalchemy import and_, func, or_
 
     filters: list[Any] = []
 
@@ -133,7 +133,19 @@ async def _build_order_filters(
                 filters.append(SambaOrder.channel_id == "__no_matching_channel__")
 
     if site_filter:
-        filters.append(SambaOrder.source_site == site_filter)
+        normalized_site_filter = site_filter.replace(" ", "")
+        normalized_source_site = func.replace(
+            func.coalesce(SambaOrder.source_site, ""), " ", ""
+        )
+        if "(" in normalized_site_filter:
+            filters.append(normalized_source_site == normalized_site_filter)
+        else:
+            filters.append(
+                or_(
+                    normalized_source_site == normalized_site_filter,
+                    normalized_source_site.like(f"{normalized_site_filter}(%"),
+                )
+            )
     if account_filter:
         filters.append(SambaOrder.sourcing_account_id == account_filter)
     if market_status:

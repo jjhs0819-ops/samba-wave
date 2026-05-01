@@ -262,6 +262,9 @@ let _sourcingForceStop = false
 // 이 PC가 현재 오토튠에 참여 중인지 여부 — 시작 버튼 클릭 시 true, 중지/forceStop 시 false.
 // false이면 collect-queue 폴링 자체를 건너뜀 → 다른 PC의 시작에 자동으로 편승하지 않음.
 let _localAutotuneJoined = false
+// 사이트별 로그인 확인 완료 플래그 — logout_link 감지 시 set, 오토튠 탈퇴 시 clear
+// 한 번 확인된 사이트는 ambiguous여도 login_required 차단 안 함
+const _siteLoginConfirmed = new Set()
 
 // 사이트별 동시 처리 세마포어 — 폴링이 받은 작업을 사이트별 캡까지만 병렬 처리
 // (프론트 "동시실행" 설정값을 백엔드 status API에서 받아 적용)
@@ -393,8 +396,10 @@ globalThis._setLocalAutotuneJoined = (joined) => {
   _localAutotuneJoined = !!joined
   if (joined) {
     _sourcingForceStop = false  // 합류 시 in-flight 중단 플래그도 초기화
+    _siteLoginConfirmed.clear()  // 새 세션 시작 — 로그인 확인 초기화
     console.log('[오토튠] 이 PC 폴링 합류')
   } else {
+    _siteLoginConfirmed.clear()
     console.log('[오토튠] 이 PC 폴링 탈퇴')
   }
 }
@@ -1201,18 +1206,24 @@ async function handleSourcingJob(job) {
         result = await extractDetailData(tabId, job.site, job.productId)
       }
       if (result?.best_benefit_price) {
+        if (result._domLoginSignal === 'logout_link') _siteLoginConfirmed.add(job.site)
         console.log(`[${job.site}] DOM 혜택가: ${job.productId} → ${result.best_benefit_price}`)
       } else {
         // DOM 혜택가 미수집 — DOM 신호 분기:
+        //   - 'logout_link' → 로그인 확정 기록 + sale_price 사용
+        //   - 'ambiguous' + 이미 로그인 확인됨 → 렌더링 실패로 간주, 로그인 차단 스킵
+        //   - 'ambiguous' + 미확인 → sale_price 있으면 로그인 간주, 없으면 login_required
         //   - 'login_link' → 확실 비로그인 → 잡 보류 + 자동로그인 트리거
-        //   - 'logout_link' + sale_price > 0 → 로그인 확정 + 혜택가 없는 상품 → sale_price 사용
-        //   - 'ambiguous' → 백그라운드 탭 미렌더링 가능성 — sale_price 있으면 로그인으로 간주
-        //   - 'login_link' → 확실 비로그인 → 잡 보류
         const _signal = result?._domLoginSignal
+        if (_signal === 'logout_link') _siteLoginConfirmed.add(job.site)
         if ((_signal === 'logout_link' || _signal === 'ambiguous') && result?.success && result?.sale_price > 0) {
           result.best_benefit_price = result.sale_price
           result._loginRequired = false  // 공통 _detectLoginStatus 체크 스킵
           console.log(`[${job.site}] 혜택가 없음 — sale_price 사용 (${_signal}): ${job.productId} → ${result.sale_price}`)
+        } else if (_signal === 'ambiguous' && _siteLoginConfirmed.has(job.site)) {
+          // 이미 로그인 확인된 사이트 — ambiguous는 렌더링 실패, 로그인 차단 스킵
+          console.log(`[${job.site}] DOM 미수집(ambiguous) — 로그인 확인됨, 렌더링 실패로 간주: ${job.productId}`)
+          result = { success: false, message: 'ABCmart DOM 미수집(렌더링 실패)' }
         } else {
           console.log(`[${job.site}] DOM 혜택가 미수집 + 로그인 미확정(${_signal || 'null'}) → 잡 보류`)
           result = { success: false, login_required: true, message: 'ABCmart DOM 미수집 — 로그인 후 재시도' }

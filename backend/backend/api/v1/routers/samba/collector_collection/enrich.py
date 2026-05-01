@@ -146,6 +146,7 @@ async def _retransmit_if_changed(
             ["price", "stock"],
             list(product.registered_accounts),
             skip_unchanged=False,
+            skip_refresh=True,
         )
         result["retransmitted"] = True
         result["retransmit_accounts"] = len(product.registered_accounts)

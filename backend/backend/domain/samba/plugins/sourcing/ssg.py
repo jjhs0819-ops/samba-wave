@@ -117,6 +117,19 @@ class SSGPlugin(SourcingPlugin):
                         client._parse_result_item_obj(_html, site_product_id, True)
                         or {}
                     )
+                # resultItemObj.sellprc/bestAmt = AJAX 실시간 값 (script 텍스트 파싱보다 정확)
+                # _parse_result_item_obj가 성공해도 _extract_dept_sale_price/card 가격은
+                # script 템플릿의 다른 상품 가격을 잡을 수 있으므로 항상 덮어씌운다.
+                _rob = _ext_result.get("resultItemObj", {})
+                _rob_sell = int(_rob.get("sellprc", 0) or 0)
+                _rob_best = int(_rob.get("bestAmt", 0) or 0)
+                if detail and _rob_sell > 0:
+                    detail["salePrice"] = _rob_sell
+                    detail["bestBenefitPrice"] = _rob_best or _rob_sell
+                    _rob_orig = int(_rob.get("norprc", 0) or _rob.get("orgPrc", 0) or 0)
+                    if _rob_orig > 0:
+                        detail["originalPrice"] = _rob_orig
+
                 # _parse_result_item_obj 실패 시 (dept.ssg.com AJAX 로드): resultItemObj 폴백
                 if not detail:
                     _ext_obj = _ext_result.get("resultItemObj", {})

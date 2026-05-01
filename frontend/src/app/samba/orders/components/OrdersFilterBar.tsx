@@ -69,6 +69,7 @@ interface Props {
   setPageSize: Dispatch<SetStateAction<number>>
   accounts: SambaMarketAccount[]
   sourcingAccounts: SambaSourcingAccount[]
+  siteOptions: Array<{ value: string; label: string }>
 }
 
 export default function OrdersFilterBar(props: Props) {
@@ -84,7 +85,7 @@ export default function OrdersFilterBar(props: Props) {
     accountFilter, setAccountFilter, marketStatus, setMarketStatus,
     inputFilter, setInputFilter, statusFilter, setStatusFilter,
     sortBy, setSortBy, pageSize, setPageSize,
-    accounts, sourcingAccounts,
+    accounts, sourcingAccounts, siteOptions,
   } = props
 
   return (
@@ -188,7 +189,7 @@ export default function OrdersFilterBar(props: Props) {
           </select>
           <select style={{ ...inputStyle, width: '120px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}>
             <option value="">전체 소싱처</option>
-            {['MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'REXMONDE', 'SSG', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF'].map(s => <option key={s} value={s}>{s}</option>)}
+            {siteOptions.map(site => <option key={site.value} value={site.value}>{site.label}</option>)}
           </select>
           <select style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={accountFilter} onChange={e => setAccountFilter(e.target.value)}>
             <option value="">전체 소싱계정</option>
