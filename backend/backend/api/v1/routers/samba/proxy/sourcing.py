@@ -115,6 +115,15 @@ async def sourcing_collect_queue(request: Request) -> Any:
     from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
 
     device_id = request.headers.get("X-Device-Id", "").strip()
+    # PC 분담 last_seen 갱신 — stale PC 자동 제거에 사용
+    try:
+        from backend.api.v1.routers.samba.collector_autotune import (
+            update_pc_last_seen,
+        )
+
+        update_pc_last_seen(device_id)
+    except Exception:
+        pass
     # X-Allowed-Sites 헤더 의미:
     #   - 헤더 미부착(None) = 디폴트 '전체 처리' (단일 PC 운영)
     #   - 빈 문자열 ""     = 명시적 '아무 작업도 안 받음' (분담 외 PC)

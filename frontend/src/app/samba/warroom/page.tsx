@@ -332,6 +332,7 @@ export default function WarroomPage() {
 
     // 2) 이 PC의 chrome.storage.allowedSites로 체크박스 초기화
     //    null=미설정(전체처리), []=전체해제, [...]=부분선택
+    let registered = false
     const onMessage = (e: MessageEvent) => {
       if (e.source !== window) return
       const msg = e.data
@@ -339,8 +340,26 @@ export default function WarroomPage() {
       if (msg.source !== 'samba-extension') return
       if (msg.type !== 'ALLOWED_SITES') return
       const sites = msg.sites
-      // null(미설정) → null(전체체크), 배열 → 그대로
-      setFilterSources(Array.isArray(sites) ? sites : null)
+      const next = Array.isArray(sites) ? sites : null
+      setFilterSources(next)
+      // 첫 수신 시 백엔드 PC분담 등록 (heartbeat 시작) — 폴링으로 last_seen 자동 갱신됨
+      if (!registered) {
+        registered = true
+        // 직접 호출 (registerPcAllowedSites는 useCallback이라 effect 의존성 충돌 회피)
+        ;(async () => {
+          try {
+            const { getDeviceId } = await import('@/lib/samba/deviceId')
+            const dev = getDeviceId()
+            if (!dev) return
+            const { API_BASE_URL: apiBase } = await import('@/config/api')
+            await fetchWithAuth(`${apiBase}/api/v1/samba/collector/autotune/pc-allowed-sites`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ device_id: dev, sites: next }),
+            })
+          } catch { /* ignore */ }
+        })()
+      }
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
@@ -371,20 +390,41 @@ export default function WarroomPage() {
     saveFilters(filterSources, markets)
   }, [filterSources, saveFilters])
 
+  const registerPcAllowedSites = useCallback(async (sites: string[] | null) => {
+    try {
+      const { getDeviceId } = await import('@/lib/samba/deviceId')
+      const dev = getDeviceId()
+      if (!dev) return
+      const { API_BASE_URL: apiBase } = await import('@/config/api')
+      // sites=null(전체체크)은 등록 자체를 제거(다른 PC들의 union이 그대로 사용됨)
+      // sites=[](전체해제)는 빈 분담으로 명시 등록
+      // sites=[...]는 명시 사이트만 등록
+      // 백엔드는 모든 등록 PC의 합집합으로 active_sites 결정.
+      // 단일 PC 운영 + 모두 체크 = 등록 0개 → 백엔드 legacy 동작(전체 처리) 유지
+      await fetchWithAuth(`${apiBase}/api/v1/samba/collector/autotune/pc-allowed-sites`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_id: dev, sites }),
+      })
+    } catch { /* ignore */ }
+  }, [])
+
   const toggleSource = useCallback((site: string) => {
     setFilterSources(prev => {
       const all = availSources
       const current = prev ?? [...all]
       const next = current.includes(site) ? current.filter(s => s !== site) : [...current, site]
       const result = next.length === all.length ? null : next
-      // 체크박스 = 이 PC 분담만 제어 (chrome.storage + 화면 로그 필터)
-      // 백엔드 enabled_sources는 항상 null(전체) — A·B·C PC 합집합으로 백엔드는 모두 처리
-      // 로그 격리는 프론트엔드 클라이언트 필터링이 담당
+      // 3중 동기화:
+      // 1) chrome.storage.allowedSites: 확장앱이 X-Allowed-Sites 헤더로 잡 dispatch 필터
+      // 2) 백엔드 PC분담 등록: 모든 PC의 합집합으로 백엔드 active_sites 계산
+      // 3) saveFilters(null, ...): legacy 글로벌 enabled_sources는 항상 null로 비활성화
       syncAllowedSitesToExtension(result)
+      registerPcAllowedSites(result)
       saveFilters(null, filterMarkets)
       return result
     })
-  }, [availSources, filterMarkets, saveFilters, syncAllowedSitesToExtension])
+  }, [availSources, filterMarkets, saveFilters, syncAllowedSitesToExtension, registerPcAllowedSites])
 
   const toggleMarket = useCallback((marketType: string) => {
     setFilterMarkets(prev => {

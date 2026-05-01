@@ -69,6 +69,63 @@ AUTOTUNE_FILTER_SOURCES_KEY = "autotune_enabled_sources"
 AUTOTUNE_FILTER_MARKETS_KEY = "autotune_enabled_markets"
 AUTOTUNE_PRIORITY_ENABLED_KEY = "autotune_priority_enabled"
 
+# PC별 분담 등록: device_id → set of sites this PC will process.
+# - 빈 set = 이 PC는 아무 작업 안 받음 (전체해제)
+# - 미등록 PC = 무관 (백엔드는 등록된 PC들의 합집합만 처리)
+# 폴링 시점에 갱신되며 PC_LAST_SEEN_TTL 동안 폴링 없으면 자동 제거.
+_pc_allowed_sites: dict[str, set[str]] = {}
+_pc_last_seen: dict[str, float] = {}
+PC_LAST_SEEN_TTL = 120.0  # 2분 무폴링 → stale로 간주하고 union에서 제외
+
+
+def update_pc_last_seen(device_id: str) -> None:
+    """확장앱 폴링 도착 시 호출 — 해당 PC가 살아있다는 표시."""
+    if device_id:
+        _pc_last_seen[device_id.strip()] = time.time()
+
+
+def register_pc_allowed_sites(device_id: str, sites: list[str] | None) -> None:
+    """PC 분담 등록/갱신.
+
+    sites=None → PC 등록 자체를 제거 (오토튠 전체에서 빠짐, 합집합 비기여)
+    sites=[] → 등록은 유지하되 빈 set (이 PC는 아무 사이트 안 받음 = 전체해제)
+    sites=[...] → 명시된 사이트만 받음
+    """
+    dev = (device_id or "").strip()
+    if not dev:
+        return
+    if sites is None:
+        _pc_allowed_sites.pop(dev, None)
+        _pc_last_seen.pop(dev, None)
+        return
+    _pc_allowed_sites[dev] = {s.strip() for s in sites if s and s.strip()}
+    _pc_last_seen[dev] = time.time()
+
+
+def get_active_pcs() -> dict[str, set[str]]:
+    """stale PC 정리 후 살아있는 PC들의 분담 매핑 반환."""
+    now = time.time()
+    stale = [d for d, ts in _pc_last_seen.items() if now - ts > PC_LAST_SEEN_TTL]
+    for d in stale:
+        _pc_last_seen.pop(d, None)
+        _pc_allowed_sites.pop(d, None)
+    return {d: sites for d, sites in _pc_allowed_sites.items() if d in _pc_last_seen}
+
+
+def get_union_active_sites() -> set[str] | None:
+    """모든 살아있는 PC의 분담 사이트 합집합. 등록 PC 0개면 None(전체).
+
+    None 반환 = 단일 PC 모드 또는 등록 미사용 → 백엔드는 DB 활성 사이트 모두 처리.
+    set() 반환 = 모든 PC가 빈 분담(전체해제) → 백엔드는 아무것도 처리 안 함.
+    """
+    pcs = get_active_pcs()
+    if not pcs:
+        return None
+    union: set[str] = set()
+    for sites in pcs.values():
+        union |= sites
+    return union
+
 
 async def _classify_products(session) -> dict[str, int]:
     """마켓등록상품 대상 hot/warm/cold 자동 분류 (벌크 SQL 3건).
@@ -2059,11 +2116,19 @@ async def _autotune_loop():
                     site_result = await session.execute(site_stmt)
                     active_sites = [r[0] for r in site_result.all() if r[0]]
 
-                    # 소싱처 필터 적용
+                    # 소싱처 필터 적용 (legacy 글로벌 필터)
                     if _enabled_sources and isinstance(_enabled_sources, list):
                         active_sites = [
                             s for s in active_sites if s in _enabled_sources
                         ]
+
+                    # PC별 분담 합집합 적용 — 등록된 PC들의 union으로 제한
+                    # 등록 PC 없음(None) → legacy 동작 유지(active_sites 그대로)
+                    # 등록 PC 있음 → union에 포함된 사이트만 처리
+                    # union이 빈 set → 모든 PC가 전체해제 → active_sites=[]
+                    pc_union = get_union_active_sites()
+                    if pc_union is not None:
+                        active_sites = [s for s in active_sites if s in pc_union]
 
                     # 서킷브레이커 제외
                     active_sites = [
@@ -2335,13 +2400,15 @@ async def auto_start_if_enabled():
             from backend.domain.samba.collector.refresher import clear_bulk_cancel
 
             if not _autotune_running_event.is_set():
-                # 소싱큐 owner deviceId 복원 — 실행 브라우저에만 탭이 열리도록 함
+                # 소싱큐 owner는 빈 문자열로 복원 — fresh autotune_start와 정책 통일.
+                # PC 분담은 _pc_allowed_sites 등록값(폴링으로 자동 채워짐)으로 처리되므로
+                # owner를 saved_device_id에 묶으면 다른 PC가 작업을 못 받아 PC분담이 깨진다.
                 try:
                     from backend.domain.samba.proxy.sourcing_queue import (
                         set_autotune_owner,
                     )
 
-                    set_autotune_owner(saved_device_id)
+                    set_autotune_owner("")
                 except Exception:
                     pass
 
@@ -2712,6 +2779,42 @@ async def autotune_site_owners_set(body: AutotuneSiteOwnersRequest):
     for _site, _dev in body.site_owners.items():
         set_autotune_owner_for_site(_site, _dev or "")
     return {"ok": True, "mapping": get_autotune_owner_mapping()}
+
+
+class PcAllowedSitesRequest(BaseModel):
+    """PC 분담 등록/갱신 요청.
+
+    sites=null → 등록 자체 제거 (오토튠 합집합에서 빠짐)
+    sites=[] → 빈 분담 (이 PC는 작업 안 받음)
+    sites=[...] → 명시 사이트만 받음
+    """
+
+    device_id: str
+    sites: Optional[list[str]] = None
+
+
+@router.post("/autotune/pc-allowed-sites")
+async def autotune_pc_allowed_sites_set(body: PcAllowedSitesRequest):
+    """PC 분담 등록 — 백엔드 사이클이 합집합으로 active_sites 결정."""
+    register_pc_allowed_sites(body.device_id, body.sites)
+    pcs = get_active_pcs()
+    return {
+        "ok": True,
+        "registered_pcs": len(pcs),
+        "union": sorted(get_union_active_sites() or []),
+        "this_pc": sorted(pcs.get(body.device_id.strip(), set())),
+    }
+
+
+@router.get("/autotune/pc-allowed-sites")
+async def autotune_pc_allowed_sites_get():
+    """현재 등록된 모든 PC 분담 매핑 조회 (디버그용)."""
+    pcs = get_active_pcs()
+    return {
+        "registered_pcs": len(pcs),
+        "union": sorted(get_union_active_sites() or []),
+        "by_device": {dev: sorted(sites) for dev, sites in pcs.items()},
+    }
 
 
 @router.get("/autotune/status")
