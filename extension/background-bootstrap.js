@@ -153,7 +153,11 @@ async function ensureBackgroundSessionTabs() {
     // 빈 배열 → 작업 안 받는 PC, 자동 생성 X
     if (!sites || sites.length === 0) return
     if (typeof ensureSiteSessionTab !== 'function') return
+    // SSG는 카드혜택가가 비로그인에서도 동일하게 노출되어 세션 탭 불필요
+    // (사용자가 메인 페이지가 자동으로 뜨는 게 거슬린다고 보고 — 구매페이지만 띄우면 충분)
+    const SESSION_TAB_REQUIRED_SITES = new Set(['ABCmart', 'GrandStage', 'LOTTEON'])
     for (const site of sites) {
+      if (!SESSION_TAB_REQUIRED_SITES.has(site)) continue
       try {
         await ensureSiteSessionTab(site)
       } catch (e) {
