@@ -214,20 +214,10 @@ class AbcMartPlugin(SourcingPlugin):
             new_sale_price = detail.get("salePrice", 0)
             new_original_price = detail.get("originalPrice", 0)
             is_sold_out = detail.get("isOutOfStock", False)
-            best_benefit_price = detail.get("bestBenefitPrice", 0)
+            # 최대혜택가는 확장앱 DOM에서만 수집 — API 값 사용 안 함
+            best_benefit_price = 0
 
-            logger.info(
-                f"[ABCmart] API 최대혜택가: {site_product_id} → {best_benefit_price:,}원, "
-                f"옵션={len(detail.get('options', []))}개"
-            )
-
-            # ── DOM 위임 (무조건, A안) ──
-            # ABCmart `/product/info` API는 멤버십 상시할인을 일관성 있게 응답하지 않고
-            # 페이지 JS가 별도 처리해 표시(검증됨). 사용자 쿠키 컨텍스트 호출 시에도
-            # alwaysDscntAmt 응답값이 페이지 표시값과 미세하게 달라(예: 페이지 -2,400 vs
-            # 응답 -2,700) best_benefit_price 300원 오차 발생.
-            # → 익스텐션이 사용자 브라우저 페이지 DOM에서 "최대 혜택가" 텍스트를 그대로
-            #   추출한 값을 무조건 우선 적용. 익스텐션 응답이 없을 때만 API 값으로 fallback.
+            # ── DOM 위임 필수 — 최대혜택가는 DOM에서만 정확히 수집 가능 ──
             _dom_site = "GrandStage" if _prefer_grandstage else "ABCmart"
             try:
                 from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
@@ -236,17 +226,28 @@ class AbcMartPlugin(SourcingPlugin):
                     _dom_site, site_product_id
                 )
                 _dom_ext = await asyncio.wait_for(_dom_fut, timeout=45)
+                if isinstance(_dom_ext, dict) and _dom_ext.get("login_required"):
+                    logger.warning(
+                        f"[ABCmart] 비로그인 감지 → 갱신 차단: {site_product_id}"
+                    )
+                    return RefreshResult(
+                        product_id=product_id,
+                        error="ABCmart 비로그인 — 확장앱 로그인 필요",
+                    )
                 if isinstance(_dom_ext, dict) and _dom_ext.get("success"):
                     _bp = int(_dom_ext.get("best_benefit_price") or 0)
                     if _bp > 0:
                         logger.info(
-                            f"[ABCmart] DOM 혜택가 적용: {site_product_id} "
-                            f"API={best_benefit_price:,} → DOM={_bp:,}"
+                            f"[ABCmart] DOM 혜택가 수집: {site_product_id} → {_bp:,}원"
                         )
                         best_benefit_price = _bp
             except asyncio.TimeoutError:
-                logger.debug(
-                    f"[ABCmart] DOM 위임 타임아웃(45s): {site_product_id} — API 값 유지"
+                logger.warning(
+                    f"[ABCmart] 확장앱 미응답(45s) → 갱신 차단: {site_product_id}"
+                )
+                return RefreshResult(
+                    product_id=product_id,
+                    error="ABCmart 확장앱 미응답 (45s 타임아웃) — 갱신 차단",
                 )
             except Exception as _dom_err:
                 logger.debug(f"[ABCmart] DOM 위임 예외: {site_product_id} — {_dom_err}")

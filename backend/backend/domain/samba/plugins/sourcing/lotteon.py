@@ -186,25 +186,15 @@ class LotteonSourcingPlugin(SourcingPlugin):
         # spdNo 추출 (sitmNo: LE1220771485_1325086305 → spdNo: LE1220771485)
         _spd = sitm_no.split("_")[0] if "_" in sitm_no else sitm_no
 
-        # benefits + option 병렬 호출 (순차 대비 ~1초 절감)
-        import asyncio
+        # 최대혜택가는 확장앱 DOM에서만 수집 — benefits API 사용 안 함
 
-        benefit, opt_stock = await asyncio.gather(
-            client.fetch_benefit_price(pbf, spd_no=_spd, sitm_no=sitm_no),
-            client.fetch_option_stock(pbf, spd_no=_spd, sitm_no=sitm_no),
-        )
-        _benefit_failed = not benefit or benefit <= 0
-        if benefit and benefit > 0:
-            detail["bestBenefitPrice"] = benefit
-        # benefits API 실패 + PBF 자체에도 혜택가 없음 → 가격 불확실
-        if _benefit_failed and not detail.get("bestBenefitPrice"):
-            detail["price_uncertain"] = True
+        opt_stock = await client.fetch_option_stock(pbf, spd_no=_spd, sitm_no=sitm_no)
         if opt_stock:
             detail["options"] = opt_stock
             detail["_option_stock_live"] = True
 
-        # 옵션 가격을 혜택가/판매가로 보정 (sl_prc 정가 대신)
-        _eff_price = detail.get("bestBenefitPrice") or detail.get("salePrice") or 0
+        # 옵션 가격을 판매가로 보정 (sl_prc 정가 대신)
+        _eff_price = detail.get("salePrice") or 0
         if _eff_price > 0 and detail.get("options"):
             for _opt in detail["options"]:
                 _opt["price"] = _eff_price
@@ -531,39 +521,35 @@ class LotteonSourcingPlugin(SourcingPlugin):
         # ── DOM 재고 병합 (설계문서 §3.5) — 지점 단위 pbf 재고 이슈 해소 ──
         # 확장앱이 롯데ON PDP를 열어 사이즈별 실재고(판매자 지점 기준)를 추출해
         # pbf 옵션 리스트의 stock을 덮어쓴다. 미연결/타임아웃/파싱 실패 시 pbf 값 유지.
-        # DOM 본래 상한 60초: owner deviceId 필터링 적용 후 실행 PC 1대만 처리하므로
-        # 확장앱 큐 적체 대비 충분한 여유. 단, wrapper 전체 예산을 초과하면 안전망이
-        # 무력화되므로 잔여 예산 안에서만 대기 (부족 시 스킵하여 pbf 값 유지).
+        # ── DOM 위임 필수 — 최대혜택가/실재고는 DOM에서만 수집 가능 ──
         dom_ext: dict | None = None
-        from backend.domain.samba.collector.refresher import get_product_timeout
+        from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
 
-        _wrapper_budget = get_product_timeout("LOTTEON")
-        _safety = 5  # qapi 보정 + 후처리 + IO 진동 여유
-        _elapsed = time.monotonic() - _started_at
-        _remaining = _wrapper_budget - _elapsed - _safety
-        _dom_timeout = min(60, max(0, int(_remaining)))
-        if _dom_timeout <= 0:
-            logger.info(
-                f"[LOTTEON] DOM 위임 스킵 (예산 부족): {site_product_id} "
-                f"elapsed={_elapsed:.1f}s, 잔여={_remaining:.1f}s (pbf 값 유지)"
+        try:
+            _dom_req, _dom_fut = SourcingQueue.add_detail_job(
+                "LOTTEON", site_product_id
             )
-        else:
-            try:
-                from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
-
-                _dom_req, _dom_fut = SourcingQueue.add_detail_job(
-                    "LOTTEON", site_product_id
+            dom_ext = await asyncio.wait_for(_dom_fut, timeout=60)
+            if isinstance(dom_ext, dict) and dom_ext.get("login_required"):
+                logger.warning(
+                    f"[LOTTEON] 비로그인 감지 → 갱신 차단: {site_product_id}"
                 )
-                dom_ext = await asyncio.wait_for(_dom_fut, timeout=_dom_timeout)
-                if not (isinstance(dom_ext, dict) and dom_ext.get("success")):
-                    dom_ext = None
-            except asyncio.TimeoutError:
-                logger.debug(
-                    f"[LOTTEON] DOM 위임 타임아웃 ({_dom_timeout}s): "
-                    f"{site_product_id} (pbf 값 유지)"
+                return RefreshResult(
+                    product_id=product_id,
+                    error="LOTTEON 비로그인 — 확장앱 로그인 필요",
                 )
-            except Exception as _dom_err:
-                logger.debug(f"[LOTTEON] DOM 위임 예외: {site_product_id} — {_dom_err}")
+            if not (isinstance(dom_ext, dict) and dom_ext.get("success")):
+                dom_ext = None
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"[LOTTEON] 확장앱 미응답(60s) → 갱신 차단: {site_product_id}"
+            )
+            return RefreshResult(
+                product_id=product_id,
+                error="LOTTEON 확장앱 미응답 (60s 타임아웃) — 갱신 차단",
+            )
+        except Exception as _dom_err:
+            logger.debug(f"[LOTTEON] DOM 위임 예외: {site_product_id} — {_dom_err}")
 
         if dom_ext and dom_ext.get("options") and detail.get("options"):
             _changes = _merge_dom_stock(detail["options"], dom_ext["options"])
@@ -575,17 +561,14 @@ class LotteonSourcingPlugin(SourcingPlugin):
             if any(_safe_stock(o.get("stock")) > 0 for o in detail["options"]):
                 detail["_option_stock_live"] = True
 
-        # DOM에서 직접 파싱한 "나의 혜택가" — benefits API / qapi 실패 시 폴백으로 사용
+        # DOM에서 직접 파싱한 "나의 혜택가" — 유일한 혜택가 출처
         if dom_ext:
             _dom_benefit = dom_ext.get("best_benefit_price") or 0
             if _dom_benefit > 0:
-                _existing = detail.get("bestBenefitPrice") or 0
-                if _existing <= 0:
-                    detail["bestBenefitPrice"] = _dom_benefit
-                    logger.info(
-                        f"[LOTTEON] DOM 혜택가 폴백 적용: {site_product_id} "
-                        f"dom={_dom_benefit:,} (benefits/qapi 미수집)"
-                    )
+                detail["bestBenefitPrice"] = _dom_benefit
+                logger.info(
+                    f"[LOTTEON] DOM 혜택가 적용: {site_product_id} → {_dom_benefit:,}원"
+                )
 
         if dom_ext:
             # §12 방어 로깅 — DOM이 다른 상품 긁었을 가능성 조기 감지
@@ -611,16 +594,11 @@ class LotteonSourcingPlugin(SourcingPlugin):
                 _original = _qapi_price.get("original", 0)
                 if _final > 0 and _final < _pbf_sale:
                     detail["salePrice"] = _final
-                    # benefits API가 이미 더 낮은 혜택가를 설정했으면 보존
-                    _existing_benefit = detail.get("bestBenefitPrice") or 0
-                    if _existing_benefit <= 0 or _existing_benefit >= _final:
-                        detail["bestBenefitPrice"] = _final
                     if _original > 0:
                         detail["originalPrice"] = _original
                     logger.info(
                         f"[LOTTEON] qapi 프로모션가 보정: {site_product_id} "
-                        f"pbf={_pbf_sale:,} → final={_final:,}, "
-                        f"bestBenefit={detail.get('bestBenefitPrice', 0):,}"
+                        f"pbf={_pbf_sale:,} → final={_final:,}"
                     )
         except Exception as e:
             logger.debug(

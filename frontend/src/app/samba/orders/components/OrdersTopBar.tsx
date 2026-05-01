@@ -33,6 +33,24 @@ interface Props {
   setLogMessages: (v: string[] | ((prev: string[]) => string[])) => void
 }
 
+function renderLogMessage(message: string) {
+  const formatted = fmtTextNumbers(message)
+  const parts = formatted.split(/(\d[\d,]*)(건 신규 저장)/g)
+
+  if (parts.length === 1) return formatted
+
+  return parts.map((part, index) => {
+    if (index % 3 === 1) {
+      return (
+        <span key={`${part}-${index}`} style={{ color: '#FFFFFF', fontWeight: 700 }}>
+          {part}
+        </span>
+      )
+    }
+    return <React.Fragment key={`${part}-${index}`}>{part}</React.Fragment>
+  })
+}
+
 export default function OrdersTopBar(props: Props) {
   const {
     notifications, setNotifications, setStatusFilter, setMarketStatus,
@@ -124,7 +142,7 @@ export default function OrdersTopBar(props: Props) {
           </div>
         </div>
         <div ref={el => { if (el) el.scrollTop = el.scrollHeight }} style={{ height: '144px', overflowY: 'auto', padding: '8px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.788rem', color: '#8A95B0', background: '#080A10', lineHeight: 1.8 }}>
-          {logMessages.map((msg, i) => <p key={i} style={{ color: '#8A95B0', fontSize: 'inherit', margin: 0 }}>{fmtTextNumbers(msg)}</p>)}
+          {logMessages.map((msg, i) => <p key={i} style={{ color: '#8A95B0', fontSize: 'inherit', margin: 0 }}>{renderLogMessage(msg)}</p>)}
         </div>
       </div>
     </>
