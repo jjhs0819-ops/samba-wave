@@ -350,7 +350,7 @@ export default function WarroomPage() {
       const all = availSources
       const current = prev ?? [...all]
       const next = current.includes(site) ? current.filter(s => s !== site) : [...current, site]
-      const result = next.length === all.length ? null : next.length === 0 ? null : next
+      const result = next.length === all.length ? null : next
       // 1) 익스텐션 chrome.storage (이 PC 분담 헤더용)
       syncAllowedSitesToExtension(result)
       // 2) 백엔드 enabled_sources (글로벌 갱신 사이트) — 체크 안 된 사이트는 큐에 작업 발행 X
@@ -364,7 +364,7 @@ export default function WarroomPage() {
       const all = availMarkets
       const current = prev ?? [...all]
       const next = current.includes(marketType) ? current.filter(m => m !== marketType) : [...current, marketType]
-      const result = next.length === all.length ? null : next.length === 0 ? null : next
+      const result = next.length === all.length ? null : next
       saveMarketFilter(result)
       return result
     })

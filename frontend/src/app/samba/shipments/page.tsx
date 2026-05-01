@@ -76,7 +76,7 @@ export default function ShipmentsPage() {
   const [policies, setPolicies] = useState<SambaPolicy[]>([])
   const [loading, setLoading] = useState(true)
 
-  // 필터
+  // 필터 (입력 단계 — 검색버튼 누르기 전 사용자가 편집 중인 값)
   const [searchField, setSearchField] = useState('group')
   const [searchText, setSearchText] = useState('')
   const [pageSize, setPageSize] = useState(20)
@@ -86,6 +86,13 @@ export default function ShipmentsPage() {
   const [registrationFilter, setRegistrationFilter] = useState('미등록')
   const [sortBy, setSortBy] = useState('update-desc')
   const [totalCount, setTotalCount] = useState(0)
+
+  // 적용된 필터 (검색버튼 클릭 시점에만 갱신 — 실제 서버 조회/하위 동작은 이 값 사용)
+  const [appliedSearchField, setAppliedSearchField] = useState('group')
+  const [appliedSearchText, setAppliedSearchText] = useState('')
+  const [appliedSiteFilter, setAppliedSiteFilter] = useState('전체')
+  const [appliedSoldOutFilter, setAppliedSoldOutFilter] = useState('전체')
+  const [appliedRegistrationFilter, setAppliedRegistrationFilter] = useState('미등록')
 
   // 선택
   const [selectedProducts, setSelectedProducts] = useState<string[]>([])
@@ -295,20 +302,20 @@ export default function ShipmentsPage() {
 
     setLoading(true)
 
-    // 검색 조건에 따라 서버 API 파라미터 구성
+    // 검색 조건에 따라 서버 API 파라미터 구성 — 입력 중 값이 아닌 "검색버튼으로 적용된 값" 사용
     const scrollParams: Record<string, string | number> = { skip: (currentPage - 1) * pageSize, limit: pageSize }
-    if (searchText.trim()) {
-      scrollParams.search = searchText.trim()
+    if (appliedSearchText.trim()) {
+      scrollParams.search = appliedSearchText.trim()
       const typeMap: Record<string, string> = { name: 'name', brand: 'brand', name_all: 'name_all', group: 'filter', no: 'no', policy: 'policy' }
-      scrollParams.search_type = typeMap[searchField] || 'name'
+      scrollParams.search_type = typeMap[appliedSearchField] || 'name'
     }
-    if (siteFilter !== '전체') scrollParams.source_site = siteFilter
-    if (soldOutFilter !== '전체') scrollParams.sold_out_filter = soldOutFilter === '품절' ? 'sold_out' : 'not_sold_out'
-    if (registrationFilter !== '전체') {
-      if (registrationFilter.startsWith('reg_') || registrationFilter.startsWith('unreg_') || registrationFilter.startsWith('mtype_')) {
-        scrollParams.status = registrationFilter
+    if (appliedSiteFilter !== '전체') scrollParams.source_site = appliedSiteFilter
+    if (appliedSoldOutFilter !== '전체') scrollParams.sold_out_filter = appliedSoldOutFilter === '품절' ? 'sold_out' : 'not_sold_out'
+    if (appliedRegistrationFilter !== '전체') {
+      if (appliedRegistrationFilter.startsWith('reg_') || appliedRegistrationFilter.startsWith('unreg_') || appliedRegistrationFilter.startsWith('mtype_')) {
+        scrollParams.status = appliedRegistrationFilter
       } else {
-        scrollParams.status = registrationFilter === '등록' ? 'market_registered' : registrationFilter === '미등록' ? 'market_unregistered' : ''
+        scrollParams.status = appliedRegistrationFilter === '등록' ? 'market_registered' : appliedRegistrationFilter === '미등록' ? 'market_unregistered' : ''
       }
     }
     if (sortBy) scrollParams.sort_by = sortBy
@@ -341,9 +348,36 @@ export default function ShipmentsPage() {
       setPolicies(pol)
       setCategoryMappings(Array.isArray(cm) ? cm as typeof categoryMappings : [])
     })
-  }, [searchText, searchField, siteFilter, soldOutFilter, registrationFilter, sortBy, currentPage, pageSize]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [appliedSearchText, appliedSearchField, appliedSiteFilter, appliedSoldOutFilter, appliedRegistrationFilter, sortBy, currentPage, pageSize]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load() }, [load])
+
+  // 검색버튼 클릭 시 입력값을 적용값으로 복사 + 선택/URL 초기화 + 1페이지로 리셋
+  const handleSearch = useCallback(() => {
+    onFilterChange()
+    setAppliedSearchField(searchField)
+    setAppliedSearchText(searchText)
+    setAppliedSiteFilter(siteFilter)
+    setAppliedSoldOutFilter(soldOutFilter)
+    setAppliedRegistrationFilter(registrationFilter)
+    setCurrentPage(1)
+  }, [onFilterChange, searchField, searchText, siteFilter, soldOutFilter, registrationFilter])
+
+  // 초기화 — 입력값/적용값 모두 리셋 후 즉시 재조회
+  const handleResetSearch = useCallback(() => {
+    onFilterChange()
+    setSearchField('name')
+    setSearchText('')
+    setSiteFilter('전체')
+    setSoldOutFilter('전체')
+    setRegistrationFilter('전체')
+    setAppliedSearchField('name')
+    setAppliedSearchText('')
+    setAppliedSiteFilter('전체')
+    setAppliedSoldOutFilter('전체')
+    setAppliedRegistrationFilter('전체')
+    setCurrentPage(1)
+  }, [onFilterChange])
   useEffect(() => { return () => { if (progressRef.current) clearInterval(progressRef.current) } }, [])
 
   // sessionStorage 또는 URL에서 선택된 상품 ID 자동 적용 + 필터링
@@ -578,20 +612,20 @@ export default function ShipmentsPage() {
     if (selectedAccounts.length === 0) { showAlert('마켓 계정을 선택해주세요'); return }
     if (selectedSites.length === 0) { showAlert('소싱사이트를 선택해주세요'); return }
 
-    // 현재 검색 조건으로 전체 상품 조회
+    // 현재 검색 조건(적용된 값)으로 전체 상품 조회
     const allParams: Record<string, string | number> = { skip: 0, limit: 10000 }
-    if (searchText.trim()) {
-      allParams.search = searchText.trim()
+    if (appliedSearchText.trim()) {
+      allParams.search = appliedSearchText.trim()
       const typeMap: Record<string, string> = { name: 'name', brand: 'brand', name_all: 'name_all', group: 'filter', no: 'no', policy: 'policy' }
-      allParams.search_type = typeMap[searchField] || 'name'
+      allParams.search_type = typeMap[appliedSearchField] || 'name'
     }
-    if (siteFilter !== '전체') allParams.source_site = siteFilter
-    if (soldOutFilter !== '전체') allParams.sold_out_filter = soldOutFilter === '품절' ? 'sold_out' : 'not_sold_out'
-    if (registrationFilter !== '전체') {
-      if (registrationFilter.startsWith('reg_') || registrationFilter.startsWith('unreg_') || registrationFilter.startsWith('mtype_')) {
-        allParams.status = registrationFilter
+    if (appliedSiteFilter !== '전체') allParams.source_site = appliedSiteFilter
+    if (appliedSoldOutFilter !== '전체') allParams.sold_out_filter = appliedSoldOutFilter === '품절' ? 'sold_out' : 'not_sold_out'
+    if (appliedRegistrationFilter !== '전체') {
+      if (appliedRegistrationFilter.startsWith('reg_') || appliedRegistrationFilter.startsWith('unreg_') || appliedRegistrationFilter.startsWith('mtype_')) {
+        allParams.status = appliedRegistrationFilter
       } else {
-        allParams.status = registrationFilter === '등록' ? 'market_registered' : registrationFilter === '미등록' ? 'market_unregistered' : registrationFilter === '품절' ? 'sold_out' : ''
+        allParams.status = appliedRegistrationFilter === '등록' ? 'market_registered' : appliedRegistrationFilter === '미등록' ? 'market_unregistered' : appliedRegistrationFilter === '품절' ? 'sold_out' : ''
       }
     }
 
@@ -1022,7 +1056,7 @@ export default function ShipmentsPage() {
         {/* 검색항목 */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: '1px solid #181C28', gap: '8px' }}>
           <span style={{ minWidth: '72px', color: '#666', fontSize: '0.78rem' }}>검색항목</span>
-          <select value={searchField} onChange={e => { onFilterChange(); setSearchField(e.target.value) }} style={{ ...inputStyle, width: '100px' }}>
+          <select value={searchField} onChange={e => setSearchField(e.target.value)} style={{ ...inputStyle, width: '100px' }}>
             <option value="name">검색항목</option>
             <option value="brand">브랜드</option>
             <option value="name_all">상품명+등록명</option>
@@ -1030,19 +1064,19 @@ export default function ShipmentsPage() {
             <option value="no">상품번호</option>
             <option value="policy">정책</option>
           </select>
-          <input type="text" value={searchText} onChange={e => { onFilterChange(); setSearchText(e.target.value) }} placeholder={searchField === 'name' ? '상품명 검색' : searchField === 'no' ? '상품번호 검색 (콤마로 다중)' : '그룹명 검색'} style={{ ...inputStyle, width: '200px' }} />
+          <input type="text" value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleSearch() }} placeholder={searchField === 'name' ? '상품명 검색' : searchField === 'no' ? '상품번호 검색 (콤마로 다중)' : '그룹명 검색'} style={{ ...inputStyle, width: '200px' }} />
         </div>
         {/* 소싱사이트 필터 */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: '1px solid #181C28', gap: '8px' }}>
           <span style={{ minWidth: '72px', color: '#666', fontSize: '0.78rem' }}>소싱사이트</span>
-          <select value={siteFilter} onChange={e => { onFilterChange(); setSiteFilter(e.target.value) }} style={{ ...inputStyle, width: '140px' }}>
+          <select value={siteFilter} onChange={e => setSiteFilter(e.target.value)} style={{ ...inputStyle, width: '140px' }}>
             {SOURCE_SITES.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
         {/* 품절여부 */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: '1px solid #181C28', gap: '8px' }}>
           <span style={{ minWidth: '72px', color: '#666', fontSize: '0.78rem' }}>품절여부</span>
-          <select value={soldOutFilter} onChange={e => { onFilterChange(); setSoldOutFilter(e.target.value) }} style={{ ...inputStyle, width: '140px' }}>
+          <select value={soldOutFilter} onChange={e => setSoldOutFilter(e.target.value)} style={{ ...inputStyle, width: '140px' }}>
             <option value="전체">전체</option>
             <option value="품절">품절</option>
             <option value="비품절">비품절</option>
@@ -1051,7 +1085,7 @@ export default function ShipmentsPage() {
         {/* 마켓등록 */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: '1px solid #181C28', gap: '8px' }}>
           <span style={{ minWidth: '72px', color: '#666', fontSize: '0.78rem' }}>마켓등록</span>
-          <select value={registrationFilter} onChange={e => { onFilterChange(); setRegistrationFilter(e.target.value) }} style={{ ...inputStyle, width: '180px' }}>
+          <select value={registrationFilter} onChange={e => setRegistrationFilter(e.target.value)} style={{ ...inputStyle, width: '180px' }}>
             <option value="전체">전체</option>
             <optgroup label="── 전체 ──">
               <option value="미등록">미등록상품</option>
@@ -1085,8 +1119,8 @@ export default function ShipmentsPage() {
         {/* 검색하기 버튼 */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '2px solid #181C28', flexWrap: 'wrap', gap: '8px' }}>
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button onClick={load} style={{ padding: '6px 40px', fontSize: '0.875rem', fontWeight: 700, background: '#2A2F3E', border: '1px solid #3D4560', color: '#E5E5E5', borderRadius: '6px', cursor: 'pointer' }}>검색하기</button>
-            <button onClick={() => { onFilterChange(); setSearchText(''); setSiteFilter('전체'); setSoldOutFilter('전체'); setRegistrationFilter('전체'); setSearchField('name') }} style={{ padding: '6px 24px', fontSize: '0.875rem', background: 'transparent', border: '1px solid #2A3040', color: '#9AA5C0', borderRadius: '6px', cursor: 'pointer' }}>초기화</button>
+            <button onClick={handleSearch} style={{ padding: '6px 40px', fontSize: '0.875rem', fontWeight: 700, background: '#2A2F3E', border: '1px solid #3D4560', color: '#E5E5E5', borderRadius: '6px', cursor: 'pointer' }}>검색하기</button>
+            <button onClick={handleResetSearch} style={{ padding: '6px 24px', fontSize: '0.875rem', background: 'transparent', border: '1px solid #2A3040', color: '#9AA5C0', borderRadius: '6px', cursor: 'pointer' }}>초기화</button>
           </div>
         </div>
 
@@ -1330,24 +1364,24 @@ export default function ShipmentsPage() {
                   await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
                 } catch { /* ignore */ }
                 const idParams: { search?: string; search_type?: string; source_site?: string; source_sites?: string; status?: string; sold_out_filter?: string } = {}
-                if (searchText.trim()) {
-                  idParams.search = searchText.trim()
+                if (appliedSearchText.trim()) {
+                  idParams.search = appliedSearchText.trim()
                   const typeMap: Record<string, string> = { name: 'name', brand: 'brand', name_all: 'name_all', group: 'filter', no: 'no', policy: 'policy' }
-                  idParams.search_type = typeMap[searchField] || 'name'
+                  idParams.search_type = typeMap[appliedSearchField] || 'name'
                 }
-                if (siteFilter !== '전체') {
-                  idParams.source_site = siteFilter
+                if (appliedSiteFilter !== '전체') {
+                  idParams.source_site = appliedSiteFilter
                 } else if (selectedSites.length > 0) {
                   idParams.source_sites = selectedSites.join(',')
                 }
-                if (soldOutFilter !== '전체') {
-                  idParams.sold_out_filter = soldOutFilter === '품절' ? 'sold_out' : 'not_sold_out'
+                if (appliedSoldOutFilter !== '전체') {
+                  idParams.sold_out_filter = appliedSoldOutFilter === '품절' ? 'sold_out' : 'not_sold_out'
                 }
-                if (registrationFilter !== '전체') {
-                  if (registrationFilter.startsWith('reg_') || registrationFilter.startsWith('unreg_') || registrationFilter.startsWith('mtype_')) {
-                    idParams.status = registrationFilter
+                if (appliedRegistrationFilter !== '전체') {
+                  if (appliedRegistrationFilter.startsWith('reg_') || appliedRegistrationFilter.startsWith('unreg_') || appliedRegistrationFilter.startsWith('mtype_')) {
+                    idParams.status = appliedRegistrationFilter
                   } else {
-                    idParams.status = registrationFilter === '등록' ? 'market_registered' : registrationFilter === '미등록' ? 'market_unregistered' : registrationFilter === '품절' ? 'sold_out' : ''
+                    idParams.status = appliedRegistrationFilter === '등록' ? 'market_registered' : appliedRegistrationFilter === '미등록' ? 'market_unregistered' : appliedRegistrationFilter === '품절' ? 'sold_out' : ''
                   }
                 }
                 try {
