@@ -170,20 +170,19 @@ async function ensureBackgroundSessionTabs() {
 }
 
 // 설치/업데이트 시
+// 사용자 보고 — install/load 시점에 ABCmart/LOTTEON 메인 탭이 자동으로 떠서 거슬림.
+// ensureBackgroundSessionTabs() 호출 제거 — "오토튠 시작" 클릭 시점에만 로그인 트리거 (background-sourcing.js의 _checkAutotuneStartTransition 참조).
 chrome.runtime.onInstalled.addListener(() => {
   setupCookieSyncAlarm()
   startCollectPolling()
   syncChromeProfile()
-  ensureBackgroundSessionTabs()
 })
 chrome.runtime.onStartup.addListener(() => {
   setupCookieSyncAlarm()
   startCollectPolling()
   syncChromeProfile()
-  ensureBackgroundSessionTabs()
 })
 setupCookieSyncAlarm()
 startCollectPolling()
 pollChromeProfileSyncRequest()
 syncChromeProfile()
-ensureBackgroundSessionTabs()

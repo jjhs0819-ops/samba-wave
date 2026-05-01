@@ -561,6 +561,12 @@ const MAX_EMPTY_POLLS = 300 // 1초 × 300 = 5분간 빈 결과 → 중지
 
 async function runPollCycle() {
   if (Date.now() < pollPausedUntil) return
+  // 자동로그인 트랜지션 감지를 잡 fetch보다 FIRST — 첫 batch가 비로그인으로 처리되는 사고 차단.
+  // 시작 감지 시 ensureLoggedIn 내부의 pauseCollectPolling(90s)이 동기 발동 → 폴링 즉시 정지.
+  if (typeof globalThis._checkAutotuneStartTransition === 'function') {
+    await globalThis._checkAutotuneStartTransition().catch(() => {})
+    if (Date.now() < pollPausedUntil) return  // login 트리거로 pause 걸렸으면 즉시 종료
+  }
   // KREAM(pollCollectOnce, pollSearchOnce), AI소싱(pollAiSourcingOnce) 폴링 비활성화 — 401 오류 방지
   const hadSourcing = await pollSourcingOnce()
   if (hadSourcing) {

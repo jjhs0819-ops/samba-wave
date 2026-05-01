@@ -332,6 +332,61 @@ async function _processJobWithCap(job) {
   }
 }
 
+// "오토튠 시작" 트랜지션 감지 + 자동로그인 트리거.
+// 첫 batch가 비로그인으로 처리되어 가격이 틀리는 사고 차단을 위해 시작 시점에 즉시 발동.
+// ensureLoggedIn 내부에서 pauseCollectPolling(90s)이 동기 호출되므로 폴링이 즉시 멈춰
+// 로그인 완료 후 신선한 쿠키로 첫 잡 처리됨.
+let _lastAutotuneRunning = false
+let _lastTriggerStartLoginAt = 0
+const _START_LOGIN_COOLDOWN_MS = 60_000
+
+async function _triggerStartLogin() {
+  const now = Date.now()
+  if (now - _lastTriggerStartLoginAt < _START_LOGIN_COOLDOWN_MS) return
+  _lastTriggerStartLoginAt = now
+
+  const data = await chrome.storage.local.get('allowedSites')
+  const sites = Array.isArray(data.allowedSites) ? data.allowedSites : null
+  if (!sites || sites.length === 0) return  // 미설정 또는 전체해제 PC
+
+  const LOGIN_REQUIRED = new Set(['ABCmart', 'GrandStage', 'LOTTEON', 'MUSINSA'])
+  const triggered = new Set()
+  for (const site of sites) {
+    if (!LOGIN_REQUIRED.has(site)) continue
+    const key = (typeof alExternalSiteToKey === 'function') ? alExternalSiteToKey(site) : null
+    if (!key || triggered.has(key)) continue
+    triggered.add(key)
+    if (typeof globalThis.ensureLoggedIn === 'function') {
+      console.log(`[startLogin] ${site} 자동로그인 트리거 (오토튠 시작 시점)`)
+      // fire-and-forget — ensureLoggedIn 내부에서 pauseCollectPolling이 즉시 동기 호출됨
+      globalThis.ensureLoggedIn(key).catch(e => console.warn(`[startLogin] ${site} 실패: ${e.message}`))
+    }
+  }
+}
+
+async function _checkAutotuneStartTransition() {
+  // /autotune/status 직접 호출 (background-autologin.js의 _isAutotuneActive 캐시와 분리해
+  // 트랜지션 감지 정확도 우선)
+  try {
+    const stored = await chrome.storage.local.get('proxyUrl')
+    const proxyUrl = stored.proxyUrl || 'https://api.samba-wave.co.kr'
+    const apiFetch = globalThis.SambaBackgroundCore?.apiFetch
+    const res = apiFetch
+      ? await apiFetch(`${proxyUrl}/api/v1/samba/collector/autotune/status`, { method: 'GET' })
+      : await fetch(`${proxyUrl}/api/v1/samba/collector/autotune/status`, { method: 'GET' })
+    if (!res.ok) return
+    const data = await res.json()
+    const running = !!data.running
+    if (running && !_lastAutotuneRunning) {
+      console.log('[startLogin] 오토튠 시작 감지 (false→true)')
+      await _triggerStartLogin()
+    }
+    _lastAutotuneRunning = running
+  } catch { /* 무시 — 다음 사이클에서 재시도 */ }
+}
+
+globalThis._checkAutotuneStartTransition = _checkAutotuneStartTransition
+
 // 사이트별 인증 실패 카운트 — 비로그인 가격 수집 차단 정책 (즉시 트리거)
 // 정책:
 //   - 비로그인 신호 1회로 즉시 자동로그인 트리거 (10건 비로그인 가격 통과 차단)
@@ -1104,26 +1159,19 @@ async function handleSourcingJob(job) {
       if (result?.best_benefit_price) {
         console.log(`[${job.site}] DOM 혜택가: ${job.productId} → ${result.best_benefit_price}`)
       } else {
-        // DOM에 "최대 혜택가" 표기 자체가 없는 상품(쿠폰/멤버십 모두 0) — SW/in-tab으로 fallback
-        // 이 경우엔 sale_price = best_benefit_price이므로 API 계산값으로도 정확
-        console.log(`[${job.site}] DOM 혜택가 없음 → API fallback: ${job.productId}`)
-        const swResult = await fetchAbcmartBenefitPriceServiceWorker(job.productId, job.site)
-        if (swResult && swResult.success) {
-          result = result && result.success !== false
-            ? { ...result, best_benefit_price: swResult.best_benefit_price, sale_price: result.sale_price || swResult.sale_price, original_price: result.original_price || swResult.original_price }
-            : swResult
-          console.log(`[${job.site}] SW fetch fallback 성공: ${job.productId} → ${swResult.best_benefit_price}`)
+        // DOM 혜택가 미수집 — SW/in-tab fetch fallback 폐기 (비로그인 sale_price 노출 사고 차단).
+        // 사용자 보고: ABCmart가 "창안띄우고 수집"되어 가격이 다 틀림. SW fetch는 비로그인 결과 그대로 사용.
+        // DOM 신호 분기:
+        //   - 'login_link' / 'ambiguous' → 비로그인/판단불가 → 잡 보류 + 자동로그인 트리거
+        //   - 'logout_link' + sale_price > 0 → 로그인 OK + 진짜 혜택가 없는 상품 → sale_price 사용
+        const _signal = result?._domLoginSignal
+        if (_signal === 'logout_link' && result?.success && result?.sale_price > 0) {
+          result.best_benefit_price = result.sale_price
+          console.log(`[${job.site}] 혜택가 없음 — sale_price 사용 (로그인 확정): ${job.productId} → ${result.sale_price}`)
         } else {
-          const inTabResult = await fetchAbcmartBenefitPrice(job.productId, job.site)
-          if (inTabResult && inTabResult.success) {
-            result = result && result.success !== false
-              ? { ...result, best_benefit_price: inTabResult.best_benefit_price, sale_price: result.sale_price || inTabResult.sale_price, original_price: result.original_price || inTabResult.original_price }
-              : inTabResult
-            console.log(`[${job.site}] in-tab fetch fallback 성공: ${job.productId} → ${inTabResult.best_benefit_price}`)
-          } else {
-            console.log(`[${job.site}] DOM + SW + in-tab 모두 미수집: ${job.productId}`)
-            reportLoginFailure(job.site)
-          }
+          console.log(`[${job.site}] DOM 혜택가 미수집 + 로그인 미확정(${_signal || 'null'}) → 잡 보류 (fallback 폐기)`)
+          result = { success: false, login_required: true, message: 'ABCmart DOM 미수집 — 로그인 후 재시도' }
+          reportLoginFailure(job.site, true)
         }
       }
     } else if (job.type === 'detail' && job.site === 'SSG') {
