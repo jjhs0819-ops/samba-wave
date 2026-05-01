@@ -1422,6 +1422,21 @@ class LotteonPlugin(MarketPlugin):
             logger.info(f"[롯데ON] 미허용 카테고리 대체: {category_id!r} → {alt!r}")
             category_id = alt
 
+        # ── 패딩/다운 키워드 기반 차단(거래처 FC08090202 등 미허용 대응) ─────────────
+        # 스포츠의류 경로 마지막 세그먼트에 다운/패딩 키워드가 있으면 점퍼로 강제 변환
+        if category_id and ">" in category_id and "스포츠의류" in category_id:
+            _segs = [s.strip() for s in category_id.split(">")]
+            _last = _segs[-1] if _segs else ""
+            if any(kw in _last for kw in ("패딩", "다운")):
+                if "여성스포츠의류" in category_id:
+                    _alt = "스포츠의류/운동화 > 여성스포츠의류 > 점퍼"
+                else:
+                    _alt = "스포츠의류/운동화 > 남성스포츠의류 > 점퍼"
+                logger.info(
+                    f"[롯데ON] 패딩/다운 거래처미허용 회피: {category_id!r} → {_alt!r}"
+                )
+                category_id = _alt
+
         # ── FC05 권한없음 방지: 패션의류 경로/BC23코드 → 스포츠의류 강제 변환 ──────────
         if category_id and category_id in _FASHION_TO_SPORTS:
             mapped = _FASHION_TO_SPORTS[category_id]
