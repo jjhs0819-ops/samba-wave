@@ -257,6 +257,8 @@ async function handleAiSourcingJob(job) {
 
 // 안전 상한 — 실제 동시 실행 수는 백엔드 _SSG_BATCH로 제어
 const SOURCING_MAX_POLL_LIMIT = 10
+// 오토튠 작업취소 시 in-flight 탭 즉시 종료용 플래그
+let _sourcingForceStop = false
 
 // 사이트별 동시 처리 세마포어 — 폴링이 받은 작업을 사이트별 캡까지만 병렬 처리
 // (프론트 "동시실행" 설정값을 백엔드 status API에서 받아 적용)
@@ -359,8 +361,10 @@ async function _triggerStartLogin() {
     // 사전 로그인 체크 — 이미 로그인 쿠키 있으면 SPA 로그인 건너뜀 (사용자 보고:
     // "ABC마트 로그인 되어있는데 계속 로그인 페이지 삽질하네" 차단)
     const already = await _isAlreadyLoggedIn(key)
-    if (already === true) {
-      console.log(`[startLogin] ${site} 이미 로그인 상태 — SPA 로그인 건너뜀`)
+    // 서비스워커는 브라우저 쿠키를 신뢰할 수 없어 false-positive 리다이렉트 발생 →
+    // 확실히 비로그인(false)일 때만 자동로그인 트리거. null(판단불가)은 스킵.
+    if (already !== false) {
+      console.log(`[startLogin] ${site} 로그인 상태(${already}) — SPA 로그인 건너뜀`)
       continue
     }
     if (typeof globalThis.ensureLoggedIn === 'function') {
@@ -464,6 +468,7 @@ async function _checkAutotuneStartTransition() {
     const running = !!data.running
     if (running && !_lastAutotuneRunning) {
       console.log('[startLogin] 오토튠 시작 감지 (false→true)')
+      _sourcingForceStop = false  // 작업취소 플래그 초기화
       await _triggerStartLogin()
     }
     _lastAutotuneRunning = running
@@ -631,6 +636,7 @@ async function pollSourcingOnce() {
       }
       if (job.forceStop) {
         // 오토튠 stop 직후 — 이미 받은 작업 포함 전부 버리고 즉시 중단
+        _sourcingForceStop = true
         jobs.length = 0
         break
       }
@@ -824,7 +830,7 @@ async function _preCheckLoginGate(site, productId) {
   if (site === 'LOTTEON') {
     return true
   } else if (site === 'ABCmart' || site === 'GrandStage') {
-    loggedIn = await _checkAbcmartLoggedInByApi(productId, site)
+    return true  // API/쿠키 신뢰 불가 — 탭 오픈 후 DOM LOGIN/LOGOUT 텍스트로만 판단
   } else {
     return true  // 미지원 사이트 — 진행
   }
@@ -1064,10 +1070,21 @@ async function handleSourcingJob(job) {
       }
     }
 
+    // 작업취소 직후 탭 생성 막기
+    if (_sourcingForceStop) { clearTimeout(hangTimer); return }
+
     // active:false — 병렬 처리 시 여러 탭 동시 오픈 (백그라운드 탭도 JS 렌더링 됨)
     const tab = await chrome.tabs.create({ url: job.url, active: false })
     tabId = tab.id
     await waitForTabLoad(tabId, 30000)
+
+    // 탭 로드 후 재확인 — 로드 중 취소된 경우 즉시 탭 닫고 종료
+    if (_sourcingForceStop) {
+      try { await chrome.tabs.remove(tabId) } catch {}
+      cleanedUp = true
+      clearTimeout(hangTimer)
+      return
+    }
 
     // GSShop: 동적 DOM 감지 (고정 8초 → 평균 2~3초)
     if (job.type === 'category-scan' && job.site === 'GSShop') {
@@ -1075,7 +1092,17 @@ async function handleSourcingJob(job) {
     } else if (job.type === 'search' && job.site === 'GSShop') {
       await waitForGSShopSearchResults(tabId, 6000)
     } else if (job.type === 'detail' && job.site === 'SSG') {
-      await wait(6000) // SSG Next.js hydration 대기
+      // resultItemObj가 AJAX로 늦게 세팅되므로 폴링으로 대기 (최대 15초)
+      await (async () => {
+        for (let _i = 0; _i < 30; _i++) {
+          await wait(500)
+          const [_chk] = await chrome.scripting.executeScript({
+            target: { tabId }, world: 'MAIN',
+            func: () => !!(window.resultItemObj && window.resultItemObj.itemNm),
+          }).catch(() => [{ result: false }])
+          if (_chk?.result) break
+        }
+      })()
     } else {
       await wait(5000) // SPA 렌더링 대기
     }
