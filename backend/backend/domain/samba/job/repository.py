@@ -73,12 +73,29 @@ class SambaJobRepository(BaseRepository[SambaJob]):
                     SambaJob.payload.op("->>")("brand_all") == "true",
                 )
             )
-        if exclude_accounts:
-            # transmit 잡 중 target_account_ids 배열에 exclude_accounts 와 겹치는 항목이
-            # 하나라도 있으면 skip — 같은 계정 순차 실행 보장.
-            # payload 컬럼은 JSON 타입이므로 json_array_elements_text 사용.
-            from sqlalchemy import text as _sa_text
+        # ── 같은 마켓 계정 순차 실행 (DB self-join, 멀티워커 안전) ──
+        # transmit 잡은 항상 검사: 현재 running 상태인 다른 transmit 잡과
+        # target_account_ids 배열이 하나라도 겹치면 SKIP.
+        # 인메모리 exclude_accounts(같은 워커 내) + DB self-join(워커 간) 이중 방어.
+        from sqlalchemy import text as _sa_text
 
+        _db_account_lock = _sa_text(
+            "(samba_jobs.job_type <> 'transmit' OR NOT EXISTS ("
+            "SELECT 1 FROM samba_jobs r "
+            "WHERE r.status = 'running' "
+            "AND r.job_type = 'transmit' "
+            "AND r.id <> samba_jobs.id "
+            "AND ARRAY(SELECT json_array_elements_text("
+            "COALESCE(samba_jobs.payload->'target_account_ids', '[]'::json))) "
+            "&& "
+            "ARRAY(SELECT json_array_elements_text("
+            "COALESCE(r.payload->'target_account_ids', '[]'::json)))"
+            "))"
+        )
+        stmt = stmt.where(_db_account_lock)
+
+        if exclude_accounts:
+            # 같은 워커 내 인메모리 추적 — DB 검사 전에 빠르게 거름.
             _excl_acc_list = list(exclude_accounts)
             _no_overlap = _sa_text(
                 "(samba_jobs.job_type <> 'transmit' OR NOT EXISTS ("
