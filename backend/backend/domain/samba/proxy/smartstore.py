@@ -1521,7 +1521,7 @@ class SmartStoreClient:
         "대신택배": "DAESIN",
         "일양로지스": "ILYANG",
         "편의점택배": "CVSNET",
-        "딜리박스": "DLV_COM_ETC",
+        "딜리박스": "JMNP",
         "DHL": "DHL",
         "직접배송": "ONSLF_DLV",
         "기타": "DLV_COM_ETC",
