@@ -3335,7 +3335,7 @@ async def sync_orders_from_markets(
                             av = pa_setting.value.get(ak, "")
                             if av and "-" in av:
                                 code, nick = av.split("-", 1)
-                                code = str(code).strip()
+                                code = _normalize_playauto_alias_code(code)
                                 nick = str(nick).strip()
                                 if code and nick:
                                     alias_map[code] = nick
@@ -5065,6 +5065,16 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
     }
 
 
+def _normalize_playauto_alias_code(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    upper = raw.upper()
+    if re.fullmatch(r"\d+\.0+", upper):
+        return re.sub(r"\.0+$", "", upper)
+    return upper
+
+
 def _parse_playauto_order(
     ro: dict,
     account_id: str,
@@ -5072,6 +5082,7 @@ def _parse_playauto_order(
     alias_map: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """플레이오토 EMP 주문 → SambaOrder 데이터 변환."""
+
     status_map = {
         "신규주문": "pending",
         "송장출력": "wait_ship",
@@ -5105,7 +5116,7 @@ def _parse_playauto_order(
     quantity = int(ro.get("Count", 1) or 1)
 
     site_name = str(ro.get("SiteName", "") or "").strip()
-    site_id = str(ro.get("SiteId", "") or "").strip()
+    site_id = _normalize_playauto_alias_code(ro.get("SiteId", ""))
     supply_price = int(ro.get("SupplyPrice", 0) or 0)
 
     # 결제일 파싱 — 플레이오토는 KST 기준

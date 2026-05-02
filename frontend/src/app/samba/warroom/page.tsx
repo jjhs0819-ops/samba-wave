@@ -673,6 +673,9 @@ export default function WarroomPage() {
                 await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
                 const pno = singleProductNo.trim() || undefined
                 const { getDeviceId } = await import('@/lib/samba/deviceId')
+                // PC분담 먼저 등록 — 오토튠 첫 사이클에서 올바른 소싱처만 실행되도록 보장
+                // (등록 없이 시작하면 첫 사이클에서 union=None → 전체 소싱처 루프 생성됨)
+                await registerPcAllowedSites(filterSources === null ? [...availSources] : filterSources)
                 const res = await collectorApi.autotuneStart('registered', pno, getDeviceId())
                 if (!res.ok) {
                   const { showAlert } = await import('@/components/samba/Modal')

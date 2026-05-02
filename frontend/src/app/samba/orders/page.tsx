@@ -24,6 +24,7 @@ import { useOrderLinks } from './hooks/useOrderLinks'
 import { useOrderActions } from './hooks/useOrderActions'
 import { useUrlModal } from './hooks/useUrlModal'
 import { renderCopyableText, splitCustomerAddress } from './utils/copyHelpers'
+import { formatSourceSiteLabel, normalizePlayautoAliasCode } from './utils/siteAlias'
 import OrdersFilterBar from './components/OrdersFilterBar'
 import OrdersTopBar from './components/OrdersTopBar'
 import OrdersPagination from './components/OrdersPagination'
@@ -222,10 +223,8 @@ export default function OrdersPage() {
     const options = new Map<string, string>()
 
     const formatSiteLabel = (site: string) => {
-      const match = site.match(/^(.+)\(([^)]+)\)$/)
-      const siteName = match?.[1]?.trim()
-      const siteCode = match?.[2]?.trim()
-      if (siteName && siteCode && siteAliasMap[siteCode]) return `${siteName}(${siteAliasMap[siteCode]})`
+      const formatted = formatSourceSiteLabel(site, siteAliasMap)
+      if (formatted) return formatted
       if (site === 'GS이숍') return 'GS샵 배지 주문건'
       return site
     }
@@ -305,7 +304,7 @@ export default function OrdersPage() {
         const v = d[k] || ''
         if (v.includes('-')) {
           const [code, ...rest] = v.split('-')
-          const normalizedCode = code.trim()
+          const normalizedCode = normalizePlayautoAliasCode(code)
           const nick = rest.join('-').trim()
           if (normalizedCode && nick) map[normalizedCode] = nick
         }

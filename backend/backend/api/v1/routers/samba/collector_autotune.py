@@ -2260,8 +2260,8 @@ async def _autotune_loop():
                 if _ticks:
                     _autotune_last_tick = max(_ticks)
 
-                # 30초 대기 (1초 단위로 중지 확인)
-                for _ in range(30):
+                # 5초 대기 (1초 단위로 중지 확인) — 소싱처 체크 해제 후 빠르게 반영
+                for _ in range(5):
                     if not _autotune_running_event.is_set():
                         break
                     await asyncio.sleep(1)

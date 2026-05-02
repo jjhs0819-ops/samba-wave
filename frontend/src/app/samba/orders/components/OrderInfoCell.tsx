@@ -10,6 +10,7 @@ import { fetchWithAuth } from '@/lib/samba/api/shared'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtNum } from '@/lib/samba/styles'
 import { fmtDate, fmtTime } from '@/lib/samba/utils'
+import { formatSourceSiteLabel } from '../utils/siteAlias'
 
 interface Props {
   o: SambaOrder
@@ -97,13 +98,7 @@ export default function OrderInfoCell(props: Props) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '0.75rem', color: '#B0B0B0', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px' }}>{o.channel_name || '마켓'}</span>
-            {o.source_site && <span style={{ fontSize: '0.75rem', color: '#B0B0B0', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px', border: '1px solid #2D2D2D' }}>{(() => {
-              const m = o.source_site.match(/^(.+)\(([^)]+)\)$/)
-              const siteName = m?.[1]?.trim()
-              const siteCode = m?.[2]?.trim()
-              if (siteName && siteCode && siteAliasMap[siteCode]) return `${siteName}(${siteAliasMap[siteCode]})`
-              return o.source_site
-            })()}</span>}
+            {o.source_site && <span style={{ fontSize: '0.75rem', color: '#B0B0B0', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px', border: '1px solid #2D2D2D' }}>{formatSourceSiteLabel(o.source_site, siteAliasMap) || o.source_site}</span>}
             <button onClick={() => handleCopyOrderNumber(o.order_number)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>주문번호복사</button>
             <button onClick={() => openMsgModal('sms', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: sentFlags[o.id]?.sms ? '#1F3A24' : 'transparent', border: `1px solid ${sentFlags[o.id]?.sms ? '#51CF66' : '#2D2D2D'}`, borderRadius: '4px', color: sentFlags[o.id]?.sms ? '#51CF66' : '#B0B0B0', cursor: 'pointer' }}>SMS</button>
             <button onClick={() => openMsgModal('kakao', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: sentFlags[o.id]?.kakao ? '#3A320F' : 'transparent', border: `1px solid ${sentFlags[o.id]?.kakao ? '#FFD93D' : '#2D2D2D'}`, borderRadius: '4px', color: sentFlags[o.id]?.kakao ? '#FFD93D' : '#B0B0B0', cursor: 'pointer' }}>KAKAO</button>
