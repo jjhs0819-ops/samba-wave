@@ -266,6 +266,7 @@ let _localAutotuneJoined = false
 // 한 번 확인된 사이트는 ambiguous여도 login_required 차단 안 함
 const _siteLoginConfirmed = new Set()
 let _abcLoginCheckTimer = null  // ABCmart 1시간 주기 재체크 타이머
+let _lotteonLoginCheckTimer = null  // LOTTEON 1시간 주기 재체크 타이머
 
 // 사이트별 동시 처리 세마포어 — 폴링이 받은 작업을 사이트별 캡까지만 병렬 처리
 // (프론트 "동시실행" 설정값을 백엔드 status API에서 받아 적용)
@@ -402,8 +403,8 @@ globalThis._checkAutotuneStartTransition = _checkAutotuneStartTransition
 // a-rt.com 메인 페이지를 백그라운드 탭으로 열어 LOGOUT 버튼 감지 (최대 3분 대기)
 async function _checkAbcmartLogin() {
   console.log('[ABCmart] 로그인 체크 시작 (최대 3분)')
-  _siteLoginConfirmed.delete('ABCmart')
-  _siteLoginConfirmed.delete('GrandStage')
+  // 체크 시작 시점에 clear하지 않음 — 처리 중인 아이템과의 race condition 방지
+  // 실패(3분 타임아웃) 확정 시에만 clear (아래 return false 직전)
   let tabId = null
   try {
     const tab = await chrome.tabs.create({ url: 'https://www.a-rt.com/', active: false })
@@ -434,6 +435,8 @@ async function _checkAbcmartLogin() {
       } catch { /* 탭 로딩 중 — 재시도 */ }
     }
     console.warn('[ABCmart] 3분 내 로그인 미확인 — 확장앱에서 a-rt.com 로그인 필요')
+    _siteLoginConfirmed.delete('ABCmart')
+    _siteLoginConfirmed.delete('GrandStage')
     return false
   } catch (e) {
     console.error('[ABCmart] 로그인 체크 오류:', e.message)
@@ -443,6 +446,8 @@ async function _checkAbcmartLogin() {
   }
 }
 
+// ABCmart pre-login 대기 Promise — pollSourcingOnce 진입 시 완료까지 블로킹 (LOTTEON과 동일 패턴)
+let _abcPreLoginPromise = null
 // LOTTEON pre-login 대기 Promise — pollSourcingOnce 진입 시 완료까지 블로킹
 let _lotteonPreLoginPromise = null
 
@@ -464,14 +469,19 @@ globalThis._setLocalAutotuneJoined = (joined) => {
     _siteLoginConfirmed.clear()
     console.log('[오토튠] 이 PC 폴링 합류')
     // 시작 시 1회 로그인 체크 + 1시간마다 재체크
-    _checkAbcmartLogin()
+    // _abcPreLoginPromise: 첫 pollSourcingOnce를 로그인 확인 완료까지 블로킹 (race condition 방지)
+    _abcPreLoginPromise = _checkAbcmartLogin()
     if (_abcLoginCheckTimer) clearInterval(_abcLoginCheckTimer)
     _abcLoginCheckTimer = setInterval(() => { _checkAbcmartLogin() }, 60 * 60 * 1000)
-    // LOTTEON pre-login — 첫 pollSourcingOnce 전에 완료 보장
+    // LOTTEON pre-login — 첫 pollSourcingOnce 전에 완료 보장 + 1시간마다 재체크
     _lotteonPreLoginPromise = _runLotteonPreLogin()
+    if (_lotteonLoginCheckTimer) clearInterval(_lotteonLoginCheckTimer)
+    _lotteonLoginCheckTimer = setInterval(() => { _runLotteonPreLogin() }, 60 * 60 * 1000)
   } else {
     _siteLoginConfirmed.clear()
     if (_abcLoginCheckTimer) { clearInterval(_abcLoginCheckTimer); _abcLoginCheckTimer = null }
+    if (_lotteonLoginCheckTimer) { clearInterval(_lotteonLoginCheckTimer); _lotteonLoginCheckTimer = null }
+    _abcPreLoginPromise = null
     _lotteonPreLoginPromise = null
     console.log('[오토튠] 이 PC 폴링 탈퇴')
   }
@@ -625,6 +635,11 @@ async function _detectLoginStatus(tabId, site) {
 }
 
 async function pollSourcingOnce() {
+  // ABCmart pre-login 완료 대기 — 합류 직후 첫 폴링만 블로킹 (race condition 방지)
+  if (_abcPreLoginPromise) {
+    try { await _abcPreLoginPromise } catch {}
+    _abcPreLoginPromise = null
+  }
   // LOTTEON pre-login 완료 대기 — 합류 직후 첫 폴링만 블로킹 (이후엔 null)
   if (_lotteonPreLoginPromise) {
     try { await _lotteonPreLoginPromise } catch {}
@@ -1293,12 +1308,19 @@ async function handleSourcingJob(job) {
       // 표시된 "최대 혜택가"가 사용자 등급별 멤버십+쿠폰 모두 반영된 100% 정확한 값.
       result = await extractDetailData(tabId, job.site, job.productId)
       if (!result?.best_benefit_price && !((result?.sale_price || 0) > 0 || (Array.isArray(result?.options) && result.options.length > 0))) {
+        // 가격/재고 정보 전혀 없음 — 3초 후 전체 재시도
         console.log(`[${job.site}] 혜택가 미수집 — 3초 후 재시도: ${job.productId}`)
         await wait(3000)
         result = await extractDetailData(tabId, job.site, job.productId)
+      } else if (!result?.best_benefit_price && (result?.sale_price || 0) > 0) {
+        // 판매가는 있지만 최대혜택가 없음 — AJAX 아직 미로딩 가능성 — 3초 후 재시도
+        console.log(`[${job.site}] 혜택가 미수집(판매가만 있음, AJAX 대기) — 3초 후 재시도: ${job.productId}`)
+        await wait(3000)
+        const _retry = await extractDetailData(tabId, job.site, job.productId)
+        if (_retry?.best_benefit_price > 0) result = _retry
       } else if (result?.best_benefit_price > 0) {
-        // 혜택가 수집됐어도 쿠폰/할인이 AJAX 로딩 중일 수 있음 — 2초 후 재확인
-        await wait(2000)
+        // 혜택가 수집됐어도 쿠폰/할인이 AJAX 로딩 중일 수 있음 — 4초 후 재확인 (2s→4s)
+        await wait(4000)
         const _verify = await extractDetailData(tabId, job.site, job.productId)
         if ((_verify?.best_benefit_price > 0) && (_verify.best_benefit_price < result.best_benefit_price)) {
           console.log(`[${job.site}] 혜택가 안정화: ${result.best_benefit_price.toLocaleString()}→${_verify.best_benefit_price.toLocaleString()}: ${job.productId}`)

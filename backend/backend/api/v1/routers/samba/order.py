@@ -2485,8 +2485,17 @@ async def ship_order(
                         # 택배사 한글명 → 플레이오토 T-code 매핑 (런타임 조회)
                         deliv_codes = await pa_client.get_deliv_codes()
                         sender_code = ""
+                        wanted_names = set(
+                            _playauto_carrier_candidates(body.shipping_company)
+                        )
                         for row in deliv_codes:
-                            if row.get("name") == body.shipping_company:
+                            row_name = (
+                                row.get("name")
+                                or row.get("Name")
+                                or row.get("deliveryCompanyName")
+                                or ""
+                            )
+                            if _normalize_carrier_name(row_name) in wanted_names:
                                 sender_code = row.get("code", "")
                                 break
                         if not sender_code:
@@ -5073,6 +5082,37 @@ def _normalize_playauto_alias_code(value: Any) -> str:
     if re.fullmatch(r"\d+\.0+", upper):
         return re.sub(r"\.0+$", "", upper)
     return upper
+
+
+def _normalize_carrier_name(value: Any) -> str:
+    raw = str(value or "").strip().upper()
+    if not raw:
+        return ""
+    normalized = re.sub(r"[\s()\-_/]", "", raw)
+    normalized = normalized.replace("주식회사", "").replace("(주)", "")
+    return normalized
+
+
+def _playauto_carrier_candidates(value: Any) -> list[str]:
+    normalized = _normalize_carrier_name(value)
+    if not normalized:
+        return []
+    variants = {normalized}
+    alias_map = {
+        "CJ대한통운": ["대한통운", "CJ택배", "씨제이대한통운", "CJGLS"],
+        "대한통운": ["CJ대한통운", "CJ택배", "씨제이대한통운", "CJGLS"],
+        "한진택배": ["한진", "HANJIN"],
+        "롯데택배": ["롯데", "현대택배"],
+        "로젠택배": ["로젠"],
+        "우체국택배": ["우체국", "우체국소포"],
+        "경동택배": ["경동"],
+        "대신택배": ["대신"],
+        "일양로지스": ["일양택배", "ILYANG"],
+        "편의점택배": ["CU편의점택배", "GS25편의점택배", "CVSNET"],
+    }
+    for alias in alias_map.get(str(value or "").strip(), []):
+        variants.add(_normalize_carrier_name(alias))
+    return [v for v in variants if v]
 
 
 def _parse_playauto_order(
