@@ -508,6 +508,7 @@ export interface RefreshDetail {
   name: string
   status: 'changed' | 'unchanged' | 'error' | 'stock_changed'
   detail: string
+  retransmitted?: boolean
 }
 
 export interface RefreshResult {

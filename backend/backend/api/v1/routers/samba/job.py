@@ -1,5 +1,6 @@
 """작업 큐 API."""
 
+from datetime import UTC, datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -13,11 +14,30 @@ from backend.domain.samba.job.service import SambaJobService
 
 router = APIRouter(prefix="/jobs", tags=["samba-jobs"])
 
+ORDER_SYNC_PENDING_STALE_SEC = 45
+ORDER_SYNC_RUNNING_STALE_SEC = 180
+
 
 class JobCreate(BaseModel):
     job_type: str  # transmit | collect | refresh | ai_tag | order_sync
     payload: dict = {}
     tenant_id: Optional[str] = None
+
+
+def _is_stale_order_sync_job(active) -> bool:
+    now = datetime.now(UTC)
+
+    if active.status == JobStatus.PENDING:
+        base = active.created_at or now
+        return (now - base) > timedelta(seconds=ORDER_SYNC_PENDING_STALE_SEC)
+
+    if active.status == JobStatus.RUNNING:
+        base = active.started_at or active.created_at or now
+        if active.current > 0:
+            return False
+        return (now - base) > timedelta(seconds=ORDER_SYNC_RUNNING_STALE_SEC)
+
+    return False
 
 
 @router.post("", status_code=201)
@@ -76,14 +96,21 @@ async def create_job(
             .first()
         )
         if active:
-            return {
-                "id": active.id,
-                "status": active.status,
-                "job_type": "order_sync",
-                "duplicate": True,
-                "current": active.current,
-                "total": active.total,
-            }
+            if _is_stale_order_sync_job(active):
+                active.status = JobStatus.FAILED
+                active.error = "stale order_sync job auto-failed before restart"
+                active.completed_at = datetime.now(UTC)
+                session.add(active)
+                await session.flush()
+            else:
+                return {
+                    "id": active.id,
+                    "status": active.status,
+                    "job_type": "order_sync",
+                    "duplicate": True,
+                    "current": active.current,
+                    "total": active.total,
+                }
 
     # 전송 잡: 중복 클릭/요청 차단 + 이어하기
     if body.job_type == "transmit":
@@ -663,11 +690,27 @@ async def get_job(
 async def get_job_logs(
     job_id: str,
     since: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """Job 실시간 로그 조회."""
     from backend.domain.samba.job.worker import get_job_logs
+    from sqlalchemy import text as _text
 
-    return {"logs": get_job_logs(job_id, since)}
+    logs = get_job_logs(job_id, since)
+    if logs:
+        return {"logs": logs}
+
+    row = (
+        await session.execute(
+            _text("SELECT logs FROM samba_jobs WHERE id = :jid"),
+            {"jid": job_id},
+        )
+    ).first()
+    if not row or not isinstance(row[0], list):
+        return {"logs": []}
+
+    db_logs = row[0]
+    return {"logs": db_logs[since:] if since > 0 else db_logs}
 
 
 @router.delete("/{job_id}")

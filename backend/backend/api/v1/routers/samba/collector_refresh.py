@@ -477,6 +477,10 @@ async def refresh_products(
                     pids, ["price"], acc_ids, skip_unchanged=False
                 )
                 retransmitted += len(pids)
+                _pid_set = set(pids)
+                for _d in refresh_details:
+                    if _d.get("product_id") in _pid_set:
+                        _d["retransmitted"] = True
             except Exception as e:
                 logger.error(f"[refresh] 재전송 실패 ({len(pids)}건): {e}")
 
@@ -494,6 +498,10 @@ async def refresh_products(
                     pids, ["stock"], acc_ids, skip_unchanged=False
                 )
                 retransmitted += len(pids)
+                _pid_set = set(pids)
+                for _d in refresh_details:
+                    if _d.get("product_id") in _pid_set:
+                        _d["retransmitted"] = True
             except Exception as e:
                 logger.error(f"[refresh] 재고 재전송 실패 ({len(pids)}건): {e}")
 

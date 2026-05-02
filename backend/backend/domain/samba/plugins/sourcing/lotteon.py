@@ -534,7 +534,7 @@ class LotteonSourcingPlugin(SourcingPlugin):
                 _reason = (
                     "창 미오픈"
                     if dom_ext.get("gate_blocked")
-                    else "로그인 미확인(DOM ambiguous)"
+                    else "비로그인 확정(#memInfo 없음)"
                 )
                 logger.warning(f"[LOTTEON] {_reason} → 갱신 차단: {site_product_id}")
                 return RefreshResult(

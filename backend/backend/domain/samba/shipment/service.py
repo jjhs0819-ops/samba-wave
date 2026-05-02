@@ -46,6 +46,23 @@ def _resolve_margin_rate(cost: float, pricing: dict) -> float:
     return pricing.get("marginRate", 15)
 
 
+def _get_source_site_margin(pricing: dict, source_site: str) -> dict:
+    margins = pricing.get("sourceSiteMargins", {}) or {}
+    if not source_site:
+        return {}
+    if source_site in margins:
+        return margins[source_site] or {}
+
+    aliases = {
+        "GSShop": ("GSSHOP",),
+        "GSSHOP": ("GSShop",),
+    }
+    for alias in aliases.get(source_site, ()):
+        if alias in margins:
+            return margins[alias] or {}
+    return {}
+
+
 def calc_market_price(
     cost: float,
     policy_pricing: dict,
@@ -82,16 +99,16 @@ def calc_market_price(
 
     # 소싱처별 추가 마진 (수수료 역산 전 적용 — 수수료에도 자동 반영됨)
     if source_site:
-        _ssm = pr.get("sourceSiteMargins", {}).get(source_site, {})
+        _ssm = _get_source_site_margin(pr, source_site)
         _ss_rate = _ssm.get("marginRate", 0)
         _ss_amount = _ssm.get("marginAmount", 0)
         # pointOnly=true: 적립금 사용 가능 상품(is_point_restricted=False)에만 적용
         _point_only = bool(_ssm.get("pointOnly"))
         _apply_ssm = (not _point_only) or (is_point_restricted is False)
         if _apply_ssm:
-            if _ss_rate > 0:
+            if _ss_rate != 0:
                 calc_price += round(cost * _ss_rate / 100)
-            if _ss_amount > 0:
+            if _ss_amount != 0:
                 calc_price += _ss_amount
 
     if m_fee > 0 and calc_price > 0:

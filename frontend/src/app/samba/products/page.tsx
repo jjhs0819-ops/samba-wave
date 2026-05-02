@@ -1084,7 +1084,7 @@ export default function ProductsPage() {
         }}>
           <div style={{
             background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px',
-            width: '620px', maxHeight: '70vh', display: 'flex', flexDirection: 'column',
+            width: '860px', maxHeight: '70vh', display: 'flex', flexDirection: 'column',
           }} onClick={e => e.stopPropagation()}>
             <div style={{
               padding: '14px 20px', borderBottom: '1px solid #2D2D2D',
@@ -1116,12 +1116,17 @@ export default function ProductsPage() {
                     {refreshDetails.map((d, i) => (
                       <tr key={i} style={{ borderBottom: '1px solid #1E1E1E' }}>
                         <td style={{ padding: '6px 12px', color: '#888', whiteSpace: 'nowrap' }}>{d.time}</td>
-                        <td style={{ padding: '6px 12px', color: '#B0B0B0', whiteSpace: 'nowrap', maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.brand}</td>
-                        <td style={{ padding: '6px 12px', color: '#E5E5E5', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.name}</td>
+                        <td style={{ padding: '6px 12px', color: '#B0B0B0', whiteSpace: 'nowrap' }} title={d.brand}>{d.brand}</td>
+                        <td style={{ padding: '6px 12px', color: '#E5E5E5', whiteSpace: 'nowrap' }} title={d.name}>{d.name}</td>
                         <td style={{
                           padding: '6px 12px', whiteSpace: 'nowrap',
                           color: d.status === 'changed' ? '#51CF66' : d.status === 'error' ? '#FF6B6B' : '#666',
-                        }}>{d.detail}</td>
+                        }}>
+                          {d.detail}
+                          {d.retransmitted && (
+                            <span style={{ marginLeft: '8px', color: '#4DABF7', fontSize: '0.7rem' }}>→재전송</span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                     {refreshDetails.length === 0 && !refreshLoading && (

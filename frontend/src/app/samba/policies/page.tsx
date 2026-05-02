@@ -764,9 +764,9 @@ export default function PoliciesPage() {
               >
                 <span style={{ color: '#888', fontSize: '0.75rem' }}>{showSourceSiteMargins ? '▼' : '▶'}</span>
                 <span style={{ color: '#C5C5C5', fontSize: '0.8125rem', fontWeight: 600 }}>소싱처별 추가 마진 설정</span>
-                {Object.values(pricing.sourceSiteMargins).some(v => v.marginRate > 0 || v.marginAmount > 0) && (
+                {Object.values(pricing.sourceSiteMargins).some(v => v.marginRate !== 0 || v.marginAmount !== 0) && (
                   <span style={{ fontSize: '0.7rem', color: '#FF8C00' }}>
-                    ({fmtNum(Object.values(pricing.sourceSiteMargins).filter(v => v.marginRate > 0 || v.marginAmount > 0).length)}개 설정됨)
+                    ({fmtNum(Object.values(pricing.sourceSiteMargins).filter(v => v.marginRate !== 0 || v.marginAmount !== 0).length)}개 설정됨)
                   </span>
                 )}
                 <span style={{ fontSize: '0.7rem', color: '#555', marginLeft: '0.25rem' }}>— 기본 마진에 추가로 가산 (수수료 역산 전 적용)</span>
@@ -781,7 +781,7 @@ export default function PoliciesPage() {
                   </div>
                   {Object.keys(SOURCING_SITE_LABELS).map(siteId => {
                     const ssm = pricing.sourceSiteMargins[siteId] || { marginRate: 0, marginAmount: 0 }
-                    const isSet = ssm.marginRate > 0 || ssm.marginAmount > 0
+                    const isSet = ssm.marginRate !== 0 || ssm.marginAmount !== 0
                     // 적립금 제한 정보를 수집하는 소싱처만 활성화 (현재 무신사만)
                     const supportsPointOnly = siteId === 'MUSINSA'
                     return (
@@ -829,7 +829,7 @@ export default function PoliciesPage() {
                         </label>
                         {isSet && (
                           <span style={{ fontSize: '0.7rem', color: '#FF8C00' }}>
-                            +{ssm.marginRate > 0 ? `${ssm.marginRate}%` : ''}{ssm.marginRate > 0 && ssm.marginAmount > 0 ? ' + ' : ''}{ssm.marginAmount > 0 ? `${fmtNum(ssm.marginAmount)}원` : ''}
+                            {ssm.marginRate > 0 ? '+' : ''}{ssm.marginRate !== 0 ? `${ssm.marginRate}%` : ''}{ssm.marginRate !== 0 && ssm.marginAmount !== 0 ? ' + ' : ''}{ssm.marginAmount > 0 ? '+' : ''}{ssm.marginAmount !== 0 ? `${fmtNum(ssm.marginAmount)}원` : ''}
                             {ssm.pointOnly && supportsPointOnly ? ' · 적립금가능만' : ''}
                           </span>
                         )}

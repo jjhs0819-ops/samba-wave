@@ -137,20 +137,20 @@ export function calcPrice(
   if (usedMin) marginAmt = minMargin
   let price = cost + marginAmt + ship
   // 소싱처별 추가 마진 (수수료 역산 전 적용 — 백엔드 calc_market_price와 동일)
-  if (ssMRate > 0) price += Math.round(cost * ssMRate / 100)
-  if (ssMAmount > 0) price += ssMAmount
+  if (ssMRate !== 0) price += Math.round(cost * ssMRate / 100)
+  if (ssMAmount !== 0) price += ssMAmount
   if (fee > 0 && price > 0) price = Math.ceil(price / (1 - fee / 100))
   if (extra > 0) price += extra
   // 100원 단위 절사 (백엔드 calc_market_price와 동일)
   price = Math.floor(price / 100) * 100
   const feeAmt = fee > 0 && price > 0 ? Math.round(price * fee / 100) : 0
   const ssAmt = Math.round(cost * ssMRate / 100) + ssMAmount
-  const ssRateLabel = ssMRate > 0 && ssMAmount > 0
+  const ssRateLabel = ssMRate !== 0 && ssMAmount !== 0
     ? ` (${ssMRate}% + ${fmt(ssMAmount)})`
-    : ssMRate > 0
+    : ssMRate !== 0
       ? ` (${ssMRate}%)`
       : ''
-  const ssExtra = ssMRate > 0 || ssMAmount > 0
+  const ssExtra = ssMRate !== 0 || ssMAmount !== 0
     ? ` + 소싱추가마진 ${fmt(ssAmt)}${ssRateLabel}`
     : ''
   const parts = [
@@ -199,6 +199,16 @@ function getDeletionRegex(deletionWords: string[]): RegExp | null {
   const regex = new RegExp(`(${escaped.join('|')})`, 'gi')
   _deletionRegexCache = { words: deletionWords, regex }
   return regex
+}
+
+function getSourceSiteMargin(
+  sourceSiteMargins: Record<string, { marginRate?: number; marginAmount?: number }>,
+  sourceSite: string,
+): { marginRate?: number; marginAmount?: number } {
+  if (sourceSiteMargins[sourceSite]) return sourceSiteMargins[sourceSite]
+  if (sourceSite === 'GSSHOP' && sourceSiteMargins.GSShop) return sourceSiteMargins.GSShop
+  if (sourceSite === 'GSShop' && sourceSiteMargins.GSSHOP) return sourceSiteMargins.GSSHOP
+  return {}
 }
 
 // 모듈 레벨 캐시: 치환어 정규식
@@ -427,7 +437,7 @@ const ProductCard = React.memo(function ProductCard({
   const minMarginAmount = (pricing.minMarginAmount as number) || 0
   // 소싱처별 추가 마진 추출
   const sourceSiteMargins = (pricing.sourceSiteMargins || {}) as Record<string, { marginRate?: number; marginAmount?: number }>
-  const ssmData = sourceSiteMargins[p.source_site] || {}
+  const ssmData = getSourceSiteMargin(sourceSiteMargins, p.source_site)
   const ssMRate = ssmData.marginRate || 0
   const ssMAmount = ssmData.marginAmount || 0
 

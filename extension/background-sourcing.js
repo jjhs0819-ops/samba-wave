@@ -281,9 +281,6 @@ function _hasRecentLoginProof(site) {
 }
 const _activeSourcingSites = new Map()
 
-const _SITE_CAP_DEFAULTS = {
-  ABCmart: 5, GrandStage: 5, LOTTEON: 2, SSG: 2, MUSINSA: 4, KREAM: 5, GSShop: 1, REXMONDE: 3,
-}
 
 function _getActiveTrackingSites(site) {
   if (site === 'ABCmart' || site === 'GrandStage') return ['ABCmart', 'GrandStage']
@@ -320,13 +317,13 @@ async function _getSiteConcurrencyMap() {
     const stored = await chrome.storage.local.get('proxyUrl')
     const proxyUrl = stored.proxyUrl || 'https://api.samba-wave.co.kr'
     const res = await fetch(`${proxyUrl}/api/v1/samba/collector/autotune/status`, { method: 'GET' })
-    if (!res.ok) return _siteConcurrencyCache.value || _SITE_CAP_DEFAULTS
+    if (!res.ok) return _siteConcurrencyCache.value || {}
     const data = await res.json()
-    const conc = { ..._SITE_CAP_DEFAULTS, ...(data.site_autotune_concurrency || {}) }
+    const conc = { ...(data.site_autotune_concurrency || {}) }
     _siteConcurrencyCache = { value: conc, at: now }
     return conc
   } catch {
-    return _siteConcurrencyCache.value || _SITE_CAP_DEFAULTS
+    return _siteConcurrencyCache.value || {}
   }
 }
 
@@ -339,7 +336,7 @@ function _normalizeSiteForCap(site) {
 async function _siteSemAcquire(site) {
   const key = _normalizeSiteForCap(site)
   const concMap = await _getSiteConcurrencyMap()
-  const cap = concMap[key] || _SITE_CAP_DEFAULTS[key] || 3
+  const cap = concMap[key] || 99
   let sem = _siteSemaphores.get(key)
   if (!sem) {
     sem = { active: 0 }
@@ -560,10 +557,9 @@ async function _detectLoginStatus(tabId, site) {
 }
 
 async function pollSourcingOnce() {
-  // 이 PC가 오토튠에 참여 신청하지 않은 경우 폴링 자체를 건너뜀
-  // (다른 PC의 시작 버튼에 자동으로 편승하는 사고 방지)
-  if (!_localAutotuneJoined) return false
   // 백엔드가 배치 크기만큼만 큐에 넣으므로 자연히 그 수만큼 처리됨
+  // ownerDeviceId 매칭은 백엔드 get_next_job()이 보장하므로 여기서 별도 가드 불필요
+  // (수동 업데이트: ownerDeviceId="" → 오토튠 off 상태에서도 처리 가능)
   const jobs = []
   for (let i = 0; i < SOURCING_MAX_POLL_LIMIT; i++) {
     try {
@@ -1190,9 +1186,17 @@ async function handleSourcingJob(job) {
         if (result && typeof result === 'object') {
           const sig = result._domLoginSignal
           if (sig === 'login_link') {
-            // DOM에 로그인 링크 명시 — 좀비 쿠키 무시하고 비로그인 확정
-            result._loginRequired = true
-            console.log(`[LOTTEON] DOM=비로그인 확정(login_link) — 쿠키 무시`)
+            // DOM에 로그인 링크 명시 — 단, 오토로그인 성공 직후 쿠키 전파 지연으로
+            // 다음 탭에서 #memInfo.mbNo 가 아직 비어있는 레이스 컨디션 존재.
+            // 최근 30분 이내 로그인 증거가 있으면 로그인 상태로 간주하여 갱신 차단 방지.
+            if (_hasRecentLoginProof(job.site)) {
+              result._loginRequired = false
+              _siteLoginConfirmed.add(job.site)
+              console.log(`[LOTTEON] DOM=login_link이나 최근 로그인 증거 있음 — 로그인 상태로 처리`)
+            } else {
+              result._loginRequired = true
+              console.log(`[LOTTEON] DOM=비로그인 확정(login_link) — 쿠키 무시`)
+            }
           } else if (sig === 'logout_link') {
             // DOM에 로그아웃 링크 명시 — 로그인 확정 기록
             result._loginRequired = false

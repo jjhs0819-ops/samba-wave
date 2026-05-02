@@ -260,6 +260,21 @@ def _add_job_log(job_id: str, msg: str, job_type: str = ""):
                 pass
 
 
+    elif effective_type == "order_sync":
+        _collect_log_flush_counter[job_id] = (
+            _collect_log_flush_counter.get(job_id, 0) + 1
+        )
+        if _collect_log_flush_counter[job_id] % 5 == 0:
+            import asyncio as _asyncio
+
+            try:
+                _loop = _asyncio.get_running_loop()
+                _cur_logs = list(_job_logs.get(job_id, []))
+                _loop.create_task(_flush_job_logs(job_id, _cur_logs, "order_sync"))
+            except RuntimeError:
+                pass
+
+
 def clear_job_logs(job_id: str):
     """완료된 잡 로그 삭제 — 메모리 해제 (링 버퍼는 유지)."""
     _job_logs.pop(job_id, None)

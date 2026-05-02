@@ -8,6 +8,7 @@ Caddy `response_header_timeout 120s` 우회 + 진행률 폴링 + 취소 가능.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -18,6 +19,10 @@ from backend.domain.samba.job.repository import SambaJobRepository
 from backend.domain.samba.job.worker import _add_job_log
 
 logger = logging.getLogger(__name__)
+
+
+def _per_account_timeout_seconds(days: int) -> int:
+    return max(180, min(900, days * 90))
 
 
 async def run(
@@ -76,6 +81,7 @@ async def run(
 
     total_synced = 0
     all_results: list[dict[str, Any]] = []
+    per_account_timeout = _per_account_timeout_seconds(days)
 
     for idx, acc in enumerate(accs):
         # 사용자 취소 체크 — 매 계정 시작 전
@@ -85,15 +91,22 @@ async def run(
             return
 
         label = f"{acc.market_name}({acc.seller_id or '-'})"
+        _add_job_log(
+            job.id,
+            f"{label}: 주문수집 시작 ({idx + 1}/{total}, 최근 {days}일, 제한 {per_account_timeout}초)",
+        )
         try:
             # 계정마다 독립 세션 — 앞 계정의 commit/rollback 잔류 상태로 인한 오염 차단
             # (특히 스마트스토어 분기는 last-changed-statuses 13×2 호출로 26초+ 걸려
             #  공유 세션에서 트랜잭션 abort 시 후속 분기들이 silent 실패하는 사고가 있었다)
             async with get_write_session() as acc_session:
-                res = await sync_orders_from_markets(
-                    body=SyncOrdersRequest(days=days, account_id=acc.id),
-                    session=acc_session,
-                    tenant_id=job.tenant_id,
+                res = await asyncio.wait_for(
+                    sync_orders_from_markets(
+                        body=SyncOrdersRequest(days=days, account_id=acc.id),
+                        session=acc_session,
+                        tenant_id=job.tenant_id,
+                    ),
+                    timeout=per_account_timeout,
                 )
             total_synced += int(res.get("total_synced") or 0)
             results = res.get("results") or []
@@ -115,6 +128,21 @@ async def run(
                         job.id,
                         f"{r.get('account', label)}: 오류 — {r.get('message', '')}",
                     )
+        except asyncio.TimeoutError:
+            logger.error(
+                f"[order_sync] {label} timeout after {per_account_timeout}s"
+            )
+            _add_job_log(
+                job.id,
+                f"{label} 오류: {per_account_timeout}초 동안 응답이 없어 다음 계정으로 넘어갑니다",
+            )
+            all_results.append(
+                {
+                    "account": label,
+                    "status": "error",
+                    "message": f"timeout after {per_account_timeout}s",
+                }
+            )
         except Exception as e:
             logger.error(f"[order_sync] {label} 실패: {e}")
             _add_job_log(job.id, f"{label} 오류: {e}")

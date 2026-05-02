@@ -47,6 +47,25 @@ class SambaPolicyService:
     async def delete_policy(self, policy_id: str) -> bool:
         return await self.repo.delete_async(policy_id)
 
+    @staticmethod
+    def _get_source_site_margin(
+        pricing: Dict[str, Any], source_site: str
+    ) -> Dict[str, Any]:
+        margins = pricing.get("sourceSiteMargins", {}) or {}
+        if not source_site:
+            return {}
+        if source_site in margins:
+            return margins[source_site] or {}
+
+        aliases = {
+            "GSShop": ("GSSHOP",),
+            "GSSHOP": ("GSShop",),
+        }
+        for alias in aliases.get(source_site, ()):
+            if alias in margins:
+                return margins[alias] or {}
+        return {}
+
     async def calculate_market_price(
         self,
         policy_id: str,
@@ -81,15 +100,15 @@ class SambaPolicyService:
             price += pricing["marginAmount"]
 
         if source_site:
-            site_margin = pricing.get("sourceSiteMargins", {}).get(source_site, {})
+            site_margin = self._get_source_site_margin(pricing, source_site)
             # pointOnly=true일 때는 적립금 사용 가능 상품(is_point_restricted=False)만 추가 마진 적용
             # is_point_restricted=True(불가) 또는 None(미수집)이면 추가 마진 스킵
             point_only = bool(site_margin.get("pointOnly"))
             apply_site_margin = (not point_only) or (is_point_restricted is False)
             if apply_site_margin:
-                if site_margin.get("marginRate", 0) > 0:
+                if site_margin.get("marginRate", 0) != 0:
                     price += effective_cost * site_margin["marginRate"] / 100
-                if site_margin.get("marginAmount", 0) > 0:
+                if site_margin.get("marginAmount", 0) != 0:
                     price += site_margin["marginAmount"]
 
         price += pricing.get("extraCharge", 0)
