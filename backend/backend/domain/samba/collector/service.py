@@ -362,7 +362,7 @@ class SambaCollectorService:
                 )
             ).all()
             for row_name, row_spid in rows:
-                k = (tid, ss, (row_name or "").strip())
+                k = (str(tid or ""), ss, (row_name or "").strip())
                 existing_name_spids.setdefault(k, set()).add(row_spid)
         seen_names: set = set()
         filtered_items: list = []
@@ -575,6 +575,9 @@ class SambaCollectorService:
 
     async def delete_collected_product(self, product_id: str) -> bool:
         return await self.product_repo.delete_async(product_id)
+
+    async def bulk_delete_collected_products(self, product_ids: list[str]) -> int:
+        return await self.product_repo.bulk_delete(product_ids)
 
     async def search_collected_products(
         self, query: str, limit: int = 100

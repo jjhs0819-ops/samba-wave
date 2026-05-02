@@ -21,6 +21,19 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
     def __init__(self, session):
         super().__init__(session, SambaCollectedProduct)
 
+    async def bulk_delete(self, ids: list[str]) -> int:
+        """Delete products through the ORM path so single/bulk behavior matches."""
+        if not ids:
+            return 0
+
+        stmt = select(SambaCollectedProduct).where(SambaCollectedProduct.id.in_(ids))
+        result = await self.session.execute(stmt)
+        products = list(result.scalars().all())
+        for product in products:
+            await self.session.delete(product)
+        await self.session.commit()
+        return len(products)
+
     async def search(self, query: str, limit: int = 100) -> List[SambaCollectedProduct]:
         lower_q = f"%{query.lower()}%"
         stmt = (

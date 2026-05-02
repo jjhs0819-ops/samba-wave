@@ -2888,7 +2888,8 @@ class JobWorker:
                             _item_nm = _ext_obj.get("itemNm", "")
                             if _item_nm and _html:
                                 _opts = await _loop.run_in_executor(
-                                    None, lambda: client._parse_select_options(_html)
+                                    None,
+                                    lambda: client._parse_layered_select_options(_html),
                                 )
                                 _sold = (
                                     all(o.get("isSoldOut", False) for o in _opts)
@@ -2907,17 +2908,47 @@ class JobWorker:
                                     "dispCtgSclsNm": "",
                                     "dispCtgId": "",
                                 }
-                        # 확장앱 uitemOptions(AJAX 후 실제 재고)로 옵션 품절 상태 보정
+                        # 확장앱 uitemOptions(AJAX 후 실재고+이중옵션)로 옵션 교체 또는 보정
+                        # ssg.py refresh와 동일 로직: 이중옵션이면 전체 교체, 아니면 품절만 보정
                         _uitem_opts = _ext_result.get("uitemOptions", [])
-                        if _uitem_opts and detail.get("options"):
-                            _soldout_names = {
-                                o["name"] for o in _uitem_opts if o.get("isSoldOut")
-                            }
-                            if _soldout_names:
-                                for _opt in detail["options"]:
-                                    if _opt.get("name") in _soldout_names:
-                                        _opt["isSoldOut"] = True
-                                        _opt["stock"] = 0
+                        if _uitem_opts:
+                            _detail_opts = detail.get("options") or []
+                            _has_layered_uitem = any(
+                                "/" in str(o.get("name", "")) for o in _uitem_opts
+                            )
+                            _has_layered_detail = any(
+                                "/" in str(o.get("name", "")) for o in _detail_opts
+                            )
+                            if _has_layered_uitem and (
+                                not _detail_opts
+                                or not _has_layered_detail
+                                or len(_detail_opts) < len(_uitem_opts)
+                            ):
+                                # 이중옵션(색상/사이즈) 전체 교체
+                                _price_fallback = int(detail.get("salePrice", 0) or 0)
+                                detail["options"] = [
+                                    {
+                                        "name": _uo.get("name", ""),
+                                        "price": int(_uo.get("price", 0) or 0)
+                                        or _price_fallback,
+                                        "stock": _uo.get("usablInvQty", 0)
+                                        if not _uo.get("isSoldOut")
+                                        else 0,
+                                        "isSoldOut": _uo.get("isSoldOut", False),
+                                    }
+                                    for _uo in _uitem_opts
+                                    if _uo.get("name")
+                                ]
+                            elif _detail_opts:
+                                # 단일 옵션: 품절 상태만 보정
+                                _soldout_names = {
+                                    o["name"] for o in _uitem_opts if o.get("isSoldOut")
+                                }
+                                if _soldout_names:
+                                    for _opt in _detail_opts:
+                                        if _opt.get("name") in _soldout_names:
+                                            _opt["isSoldOut"] = True
+                                            _opt["stock"] = 0
 
                     if not detail or not (detail.get("itemNm") or detail.get("name")):
                         _failed_queue.append(it)

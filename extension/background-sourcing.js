@@ -443,6 +443,20 @@ async function _checkAbcmartLogin() {
   }
 }
 
+// LOTTEON pre-login 대기 Promise — pollSourcingOnce 진입 시 완료까지 블로킹
+let _lotteonPreLoginPromise = null
+
+async function _runLotteonPreLogin() {
+  try {
+    if (typeof ensureLoggedIn !== 'function') return
+    console.log('[LOTTEON] pre-login 시작 (첫 폴링 전 — 비로그인 시 오토로그인 완료 후 폴링 개시)')
+    await ensureLoggedIn('lotteon')
+    console.log('[LOTTEON] pre-login 완료')
+  } catch (e) {
+    console.log('[LOTTEON] pre-login 오류:', e?.message)
+  }
+}
+
 globalThis._setLocalAutotuneJoined = (joined) => {
   _localAutotuneJoined = !!joined
   if (joined) {
@@ -453,9 +467,12 @@ globalThis._setLocalAutotuneJoined = (joined) => {
     _checkAbcmartLogin()
     if (_abcLoginCheckTimer) clearInterval(_abcLoginCheckTimer)
     _abcLoginCheckTimer = setInterval(() => { _checkAbcmartLogin() }, 60 * 60 * 1000)
+    // LOTTEON pre-login — 첫 pollSourcingOnce 전에 완료 보장
+    _lotteonPreLoginPromise = _runLotteonPreLogin()
   } else {
     _siteLoginConfirmed.clear()
     if (_abcLoginCheckTimer) { clearInterval(_abcLoginCheckTimer); _abcLoginCheckTimer = null }
+    _lotteonPreLoginPromise = null
     console.log('[오토튠] 이 PC 폴링 탈퇴')
   }
 }
@@ -608,6 +625,11 @@ async function _detectLoginStatus(tabId, site) {
 }
 
 async function pollSourcingOnce() {
+  // LOTTEON pre-login 완료 대기 — 합류 직후 첫 폴링만 블로킹 (이후엔 null)
+  if (_lotteonPreLoginPromise) {
+    try { await _lotteonPreLoginPromise } catch {}
+    _lotteonPreLoginPromise = null
+  }
   // 백엔드가 배치 크기만큼만 큐에 넣으므로 자연히 그 수만큼 처리됨
   // ownerDeviceId 매칭은 백엔드 get_next_job()이 보장하므로 여기서 별도 가드 불필요
   // (수동 업데이트: ownerDeviceId="" → 오토튠 off 상태에서도 처리 가능)
@@ -1246,8 +1268,8 @@ async function handleSourcingJob(job) {
             result._loginRequired = false
             _siteLoginConfirmed.add(job.site)
           } else {
-            // ambiguous — #memInfo 요소 자체가 없음 (렌더링 지연 or 구조 변경)
-            // DOM만으로 로그인 여부 판단 불가 → 최근 로그인 증거로 보조 판단
+            // ambiguous — bodyText 감지도 불명확 (페이지 미렌더링 등 극단 케이스)
+            // _hasRecentLoginProof로 최종 판단
             if (_hasRecentLoginProof(job.site)) {
               result._loginRequired = false
               console.log(`[LOTTEON] DOM=ambiguous — 최근 로그인 증거 있음, 통과`)
@@ -1870,8 +1892,25 @@ async function extractDetailData(tabId, site, productId) {
             isLoggedIn = !!(memInfo.mbNo)
           }
         } catch {}
-        // #memInfo 미발견 → ambiguous (렌더링 지연 또는 구조 변경); 비로그인 단정 금지
-        const _domLoginSignal = !memInfoFound ? 'ambiguous' : (isLoggedIn ? 'logout_link' : 'login_link')
+        // #memInfo 미발견(항상) → bodyText "로그인/회원가입" 텍스트로 보조 감지
+        // 비로그인: 헤더에 "로그인/회원가입" 노출 확인됨 (CDP 테스트 2026-05-02)
+        // 로그인: "로그인/회원가입" 사라짐 → 없으면 로그인 상태로 간주
+        let _domLoginSignal
+        if (memInfoFound) {
+          _domLoginSignal = isLoggedIn ? 'logout_link' : 'login_link'
+        } else {
+          // 헤더 영역만 검사 — 상품 설명에 "로그인/회원가입" 텍스트가 있으면 false-positive 발생
+          // 비로그인 테스트: bodyText 앞 60자 이내에 노출 확인 → 300자로 여유 있게 자름
+          const _headerText = document.querySelector('header, #header')?.innerText
+            || (document.body?.innerText || '').substring(0, 300)
+          if (_headerText.includes('로그인/회원가입')) {
+            _domLoginSignal = 'login_link'
+            isLoggedIn = false
+          } else {
+            _domLoginSignal = 'logout_link'
+            isLoggedIn = true
+          }
+        }
 
         let salePrice = 0
         let originalPrice = 0

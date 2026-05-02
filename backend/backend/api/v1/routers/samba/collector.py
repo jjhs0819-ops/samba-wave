@@ -1774,18 +1774,11 @@ async def bulk_delete_products(
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
     """상품 일괄 삭제 — 단일 DELETE 쿼리."""
-    from sqlalchemy import delete as sa_delete
-    from sqlmodel import col
-    from backend.domain.samba.collector.model import SambaCollectedProduct
-
-    stmt = sa_delete(SambaCollectedProduct).where(
-        col(SambaCollectedProduct.id).in_(body.ids)
-    )
-    result = await session.exec(stmt)  # type: ignore[arg-type]
-    await session.commit()
+    svc = _get_services(session)
+    deleted = await svc.bulk_delete_collected_products(body.ids)
     # 상품 삭제 시 캐시 무효화
     await cache.clear_pattern("products:*")
-    return {"deleted": result.rowcount}
+    return {"deleted": deleted}
 
 
 @router.post("/products/block-and-delete")
