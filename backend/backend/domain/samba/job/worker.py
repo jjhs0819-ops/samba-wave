@@ -134,6 +134,9 @@ _current_collect_job_id: ContextVar[str] = ContextVar(
 _current_transmit_job_id: ContextVar[str] = ContextVar(
     "current_transmit_job_id", default=""
 )
+_current_order_sync_job_id: ContextVar[str] = ContextVar(
+    "current_order_sync_job_id", default=""
+)
 
 
 def get_collect_logs(since_idx: int = 0) -> tuple[list[str], int]:
@@ -228,6 +231,8 @@ def _add_job_log(job_id: str, msg: str, job_type: str = ""):
             effective_type = "collect"
         elif _current_transmit_job_id.get() == job_id:
             effective_type = "transmit"
+        elif _current_order_sync_job_id.get() == job_id:
+            effective_type = "order_sync"
     if effective_type == "collect":
         _add_collect_log(msg)
         # 20줄마다 DB 플러시 — Cloud Run 멀티 인스턴스에서도 로그 조회 가능하도록
@@ -689,7 +694,11 @@ class JobWorker:
                             run as run_order_sync,
                         )
 
-                        await run_order_sync(fresh_job, repo, session, self)
+                        _os_token = _current_order_sync_job_id.set(_job_id)
+                        try:
+                            await run_order_sync(fresh_job, repo, session, self)
+                        finally:
+                            _current_order_sync_job_id.reset(_os_token)
                     elif _job_type == "cs_sync":
                         from backend.domain.samba.job.handlers.cs_sync import (
                             run as run_cs_sync,
