@@ -1926,7 +1926,7 @@ async function extractDetailData(tabId, site, productId) {
         for (const el of _abcHeader.querySelectorAll('a[href], button')) {
           const href = (el.getAttribute('href') || '').toLowerCase()
           const txt = (el.textContent || '').trim()
-          if (href.includes('logout') || txt === '로그아웃') { _abcHasLogout = true; continue }
+          if (href.includes('logout') || txt === '로그아웃' || txt === 'Logout' || txt === 'LOGOUT') { _abcHasLogout = true; continue }
           if (txt === '로그인' || (href.includes('/login') && !href.includes('logout'))) { _abcHasLogin = true }
         }
         // 셀렉터로 못 찾으면 bodyText에서 "LOGIN"/"LOGOUT" 단어 직접 검사 (ABCmart 영문 UI)
