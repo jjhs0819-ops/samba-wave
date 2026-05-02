@@ -1574,6 +1574,20 @@ async function extractDetailData(tabId, site, productId) {
               domOptions.push({ name: cleanName, stock: stock, isSoldOut: isSoldOut })
             })
           }
+          // 카드혜택가 DOM 직접 추출 (html 필드는 script 태그만이라 정규식 매칭 불가)
+          let domCardPrice = 0
+          const dts = document.querySelectorAll('dt')
+          for (const dt of dts) {
+            if (dt.textContent.trim() === '카드혜택가') {
+              const em = dt.parentElement?.querySelector('em.ssg_price')
+                || dt.nextElementSibling?.querySelector('em.ssg_price, .ssg_price')
+                || dt.closest('dl')?.querySelector('em.ssg_price')
+              if (em) {
+                domCardPrice = parseInt(em.textContent.replace(/[^\d]/g, ''), 10) || 0
+              }
+              break
+            }
+          }
           return {
             success: true,
             site_product_id: prdId,
@@ -1583,6 +1597,7 @@ async function extractDetailData(tabId, site, productId) {
             ctgFields: ctgFields,  // 카테고리 관련 전체 필드
             uitemOptions: uitemOptions,  // 옵션별 실제 재고 (AJAX 후 값)
             domOptions: domOptions,  // DOM 파싱 실재고 (JS 렌더링 후, 우선순위 최상)
+            domCardPrice: domCardPrice,  // 카드혜택가 DOM 직접 추출값
             url: location.href,
           }
         } catch (e) {
@@ -1784,14 +1799,17 @@ async function extractDetailData(tabId, site, productId) {
         // 비로그인 상태에서도 가격이 추출되는 false-positive를 명시적으로 차단)
         // 로그인 판단 — #memInfo hidden input의 mbNo 존재 여부 (가장 확실한 신호)
         let isLoggedIn = false
+        let memInfoFound = false
         try {
           const memInfoEl = document.querySelector('#memInfo')
           if (memInfoEl) {
+            memInfoFound = true
             const memInfo = JSON.parse(memInfoEl.value || '{}')
             isLoggedIn = !!(memInfo.mbNo)
           }
         } catch {}
-        const _domLoginSignal = isLoggedIn ? 'logout_link' : 'login_link'
+        // #memInfo 미발견 → ambiguous (렌더링 지연 또는 구조 변경); 비로그인 단정 금지
+        const _domLoginSignal = !memInfoFound ? 'ambiguous' : (isLoggedIn ? 'logout_link' : 'login_link')
 
         let salePrice = 0
         let originalPrice = 0
@@ -1888,7 +1906,7 @@ async function extractDetailData(tabId, site, productId) {
           options,
           seller,
           pageTitle: document.title,
-          _loginRequired: !isLoggedIn,
+          _loginRequired: memInfoFound && !isLoggedIn,  // #memInfo 없으면 비로그인 단정 금지
           _domLoginSignal,
         }
       }

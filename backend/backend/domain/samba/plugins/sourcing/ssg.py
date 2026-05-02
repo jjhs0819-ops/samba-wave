@@ -123,9 +123,13 @@ class SSGPlugin(SourcingPlugin):
                 _rob = _ext_result.get("resultItemObj", {})
                 _rob_sell = int(_rob.get("sellprc", 0) or 0)
                 _rob_best = int(_rob.get("bestAmt", 0) or 0)
+                _dom_card = int(_ext_result.get("domCardPrice", 0) or 0)
                 if detail and _rob_sell > 0:
                     detail["salePrice"] = _rob_sell
-                    if not int(detail.get("bestBenefitPrice", 0) or 0):
+                    # domCardPrice(DOM 직접 추출 카드혜택가) 최우선 — bestAmt 없는 상품 보정
+                    if _dom_card > 0:
+                        detail["bestBenefitPrice"] = _dom_card
+                    elif not int(detail.get("bestBenefitPrice", 0) or 0):
                         detail["bestBenefitPrice"] = _rob_best or _rob_sell
                     _rob_orig = int(_rob.get("norprc", 0) or _rob.get("orgPrc", 0) or 0)
                     if _rob_orig > 0:

@@ -2453,17 +2453,37 @@ class SSGSourcingClient:
             active_level1 = [opt for opt in level1 if opt.get("_selected")]
             if not active_level1 and len(level1) == 1:
                 active_level1 = [level1[0]]
-            prefix = active_level1[0]["name"] if len(active_level1) == 1 else ""
-            combined = []
-            for opt in level2:
-                combined.append(
+
+            if len(active_level1) == 1:
+                # 단일 선택 색상에 사이즈 붙이기 (기존 로직)
+                prefix = active_level1[0]["name"]
+                combined = [
                     {
-                        "name": f"{prefix}/{opt['name']}" if prefix else opt["name"],
+                        "name": f"{prefix}/{opt['name']}",
                         "price": opt["price"],
                         "stock": opt["stock"],
                         "isSoldOut": opt["isSoldOut"],
                     }
-                )
+                    for opt in level2
+                ]
+            else:
+                # 선택된 1차 옵션 없음(또는 복수) → level1 × level2 전체 크로스프로덕트
+                # 예: 색상 3개 × 사이즈 4개 = 12개 옵션
+                base_l1 = active_level1 if active_level1 else level1
+                combined = []
+                for l1 in base_l1:
+                    for l2 in level2:
+                        combined.append(
+                            {
+                                "name": f"{l1['name']}/{l2['name']}",
+                                "price": l2["price"] or l1["price"],
+                                "stock": 0
+                                if (l1["isSoldOut"] or l2["isSoldOut"])
+                                else 99,
+                                "isSoldOut": l1["isSoldOut"] or l2["isSoldOut"],
+                            }
+                        )
+
             if combined:
                 return combined
 
