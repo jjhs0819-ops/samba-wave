@@ -265,6 +265,7 @@ let _localAutotuneJoined = false
 // 사이트별 로그인 확인 완료 플래그 — logout_link 감지 시 set, 오토튠 탈퇴 시 clear
 // 한 번 확인된 사이트는 ambiguous여도 login_required 차단 안 함
 const _siteLoginConfirmed = new Set()
+let _abcLoginCheckTimer = null  // ABCmart 1시간 주기 재체크 타이머
 
 // 사이트별 동시 처리 세마포어 — 폴링이 받은 작업을 사이트별 캡까지만 병렬 처리
 // (프론트 "동시실행" 설정값을 백엔드 status API에서 받아 적용)
@@ -397,14 +398,64 @@ async function _checkAutotuneStartTransition() {
 }
 
 globalThis._checkAutotuneStartTransition = _checkAutotuneStartTransition
+// ABCmart 로그인 체크 — 오토튠 시작 시 1회, 이후 1시간마다 실행
+// a-rt.com 메인 페이지를 백그라운드 탭으로 열어 LOGOUT 버튼 감지 (최대 3분 대기)
+async function _checkAbcmartLogin() {
+  console.log('[ABCmart] 로그인 체크 시작 (최대 3분)')
+  _siteLoginConfirmed.delete('ABCmart')
+  _siteLoginConfirmed.delete('GrandStage')
+  let tabId = null
+  try {
+    const tab = await chrome.tabs.create({ url: 'https://www.a-rt.com/', active: false })
+    tabId = tab.id
+    const deadline = Date.now() + 3 * 60 * 1000
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 5000))
+      try {
+        const [r] = await chrome.scripting.executeScript({
+          target: { tabId },
+          world: 'MAIN',
+          func: () => {
+            const scope = document.querySelector('header, #header, .header, nav, #gnb, .gnb, [class*="gnb"], [class*="header"]') || document.body
+            for (const el of scope.querySelectorAll('a[href], button')) {
+              const href = (el.getAttribute('href') || '').toLowerCase()
+              const txt = (el.textContent || '').trim()
+              if (href.includes('logout') || txt === '로그아웃' || txt === 'Logout' || txt === 'LOGOUT') return true
+            }
+            return false
+          }
+        })
+        if (r?.result) {
+          _siteLoginConfirmed.add('ABCmart')
+          _siteLoginConfirmed.add('GrandStage')
+          console.log('[ABCmart] 로그인 확인 완료 — 오토튠 중 재체크 없음')
+          return true
+        }
+      } catch { /* 탭 로딩 중 — 재시도 */ }
+    }
+    console.warn('[ABCmart] 3분 내 로그인 미확인 — 확장앱에서 a-rt.com 로그인 필요')
+    return false
+  } catch (e) {
+    console.error('[ABCmart] 로그인 체크 오류:', e.message)
+    return false
+  } finally {
+    if (tabId) try { await chrome.tabs.remove(tabId) } catch {}
+  }
+}
+
 globalThis._setLocalAutotuneJoined = (joined) => {
   _localAutotuneJoined = !!joined
   if (joined) {
-    _sourcingForceStop = false  // 합류 시 in-flight 중단 플래그도 초기화
-    _siteLoginConfirmed.clear()  // 새 세션 시작 — 로그인 확인 초기화
+    _sourcingForceStop = false
+    _siteLoginConfirmed.clear()
     console.log('[오토튠] 이 PC 폴링 합류')
+    // 시작 시 1회 로그인 체크 + 1시간마다 재체크
+    _checkAbcmartLogin()
+    if (_abcLoginCheckTimer) clearInterval(_abcLoginCheckTimer)
+    _abcLoginCheckTimer = setInterval(() => { _checkAbcmartLogin() }, 60 * 60 * 1000)
   } else {
     _siteLoginConfirmed.clear()
+    if (_abcLoginCheckTimer) { clearInterval(_abcLoginCheckTimer); _abcLoginCheckTimer = null }
     console.log('[오토튠] 이 PC 폴링 탈퇴')
   }
 }
@@ -1226,25 +1277,21 @@ async function handleSourcingJob(job) {
       } else {
         // DOM 혜택가 미수집 — DOM 신호 분기:
         //   - 'logout_link' → 로그인 확정 기록 + sale_price 사용
-        //   - 'ambiguous' + 이미 로그인 확인됨 OR sale_price>0 → 렌더링 실패로 간주, 로그인 차단 스킵
-        //   - 'ambiguous' + 미확인 + sale_price 없음 → login_required
-        //   - 'login_link' → 확실 비로그인 → 잡 보류 + 자동로그인 트리거
+        //   - 'ambiguous'   → 로그인 여부 불명 = 비로그인 확정 아님 → 통과 (차단 금지)
+        //   - 'login_link'  → 비로그인 확정 → 잡 보류 + 자동로그인 트리거
         const _signal = result?._domLoginSignal
-        if (_signal === 'logout_link') _siteLoginConfirmed.add(job.site)
-        if (_signal === 'logout_link' && result?.success && result?.sale_price > 0) {
+        if (_signal === 'logout_link') {
           result._loginRequired = false
           _siteLoginConfirmed.add(job.site)
           console.log(`[${job.site}] 혜택가 없음 — logout 확인됨, 원가 갱신 없이 통과: ${job.productId}`)
-        } else if (_signal === 'ambiguous' && (_hasRecentLoginProof(job.site) || (result?.sale_price > 0))) {
-          // 로그인 확인 이력 있거나 sale_price 수집됐으면 로그인 상태로 간주 (DOM 렌더링 미완 대응)
-          result._loginRequired = false
-          _siteLoginConfirmed.add(job.site)
-          const _reason = _hasRecentLoginProof(job.site) ? '로그인 이력' : 'sale_price 수집됨'
-          console.log(`[${job.site}] DOM ambiguous — 로그인 간주(${_reason}), 차단 스킵: ${job.productId}`)
-        } else {
-          console.log(`[${job.site}] DOM 혜택가 미수집 + 로그인 미확정(${_signal || 'null'}) → 잡 보류`)
-          result = { success: false, login_required: true, message: 'ABCmart DOM 미수집 — 로그인 후 재시도' }
+        } else if (_signal === 'login_link') {
+          console.log(`[${job.site}] 비로그인 확정(login_link) → 잡 보류: ${job.productId}`)
+          result = { success: false, login_required: true, message: 'ABCmart 비로그인 확정 — 로그인 후 재시도' }
           reportLoginFailure(job.site, true)
+        } else {
+          // ambiguous: 헤더 미렌더 등 로그인 여부 불명 → 비로그인 확정 아니므로 통과
+          result._loginRequired = false
+          console.log(`[${job.site}] DOM ambiguous — 비로그인 미확정, 차단 스킵: ${job.productId}`)
         }
       }
     } else if (job.type === 'detail' && job.site === 'SSG') {
