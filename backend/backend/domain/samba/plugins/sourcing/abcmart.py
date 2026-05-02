@@ -211,13 +211,13 @@ class AbcMartPlugin(SourcingPlugin):
                     deleted_from_source=True,
                 )
 
-            new_sale_price = detail.get("salePrice", 0)
-            new_original_price = detail.get("originalPrice", 0)
+            # API는 품절/옵션 재고만 사용 — 가격은 DOM에서 수집 (API 가격 오류 방지)
             is_sold_out = detail.get("isOutOfStock", False)
-            # 최대혜택가는 확장앱 DOM에서만 수집 — API 값 사용 안 함
             best_benefit_price = 0
+            new_sale_price = 0
+            new_original_price = 0
 
-            # ── DOM 위임 필수 — 최대혜택가는 DOM에서만 정확히 수집 가능 ──
+            # ── DOM 위임 — 가격·혜택가 모두 DOM에서 수집 ──
             _dom_site = "GrandStage" if _prefer_grandstage else "ABCmart"
             try:
                 from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
@@ -246,6 +246,13 @@ class AbcMartPlugin(SourcingPlugin):
                             f"[ABCmart] DOM 혜택가 수집: {site_product_id} → {_bp:,}원"
                         )
                         best_benefit_price = _bp
+                    # 판매가·정상가도 DOM 값 사용 (API 가격은 사용하지 않음)
+                    _dom_sale = int(_dom_ext.get("sale_price") or 0)
+                    _dom_orig = int(_dom_ext.get("original_price") or 0)
+                    if _dom_sale > 0:
+                        new_sale_price = _dom_sale
+                    if _dom_orig > 0:
+                        new_original_price = _dom_orig
             except asyncio.TimeoutError:
                 logger.warning(
                     f"[ABCmart] 확장앱 미응답(45s) → 갱신 차단: {site_product_id}"
@@ -257,7 +264,7 @@ class AbcMartPlugin(SourcingPlugin):
             except Exception as _dom_err:
                 logger.debug(f"[ABCmart] DOM 위임 예외: {site_product_id} — {_dom_err}")
 
-            # 옵션 데이터 변환
+            # 옵션 데이터 변환 (재고는 API에서 수집)
             new_options = None
             raw_options = detail.get("options", [])
             if raw_options:

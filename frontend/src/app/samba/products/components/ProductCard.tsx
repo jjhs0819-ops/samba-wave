@@ -536,10 +536,10 @@ const ProductCard = React.memo(function ProductCard({
         <div style={{
           padding: '6px 14px', fontSize: '0.75rem', color: '#FFB84D',
           background: 'rgba(255,140,0,0.08)', borderBottom: '1px solid rgba(255,140,0,0.15)',
-          display: 'flex', alignItems: 'center', gap: '6px',
+          display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden',
         }}>
-          <span style={{ opacity: 0.7 }}>&#9654;</span>
-          {logMessage}
+          <span style={{ opacity: 0.7, flexShrink: 0 }}>&#9654;</span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{logMessage}</span>
         </div>
       )}
       {/* 가격/재고 이력 모달 */}

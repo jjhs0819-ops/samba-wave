@@ -188,7 +188,7 @@ async function _spaDirectLogin(siteKey, username, password) {
             lotteon: {
               id: ['#inId', 'input[name="inId"]'],
               pw: ['#Password', 'input[type="password"]'],
-              btnText: '로그인하기',
+              btnId: '[data-cmpnt-name="login_btn_select"]',
             },
             abcmart: {
               id: ['#username', 'input[name="username"]'],
@@ -211,20 +211,18 @@ async function _spaDirectLogin(siteKey, username, password) {
           for (const s of sel.pw) { pwField = document.querySelector(s); if (pwField) break }
           if (!idField || !pwField) return { success: false, error: 'fields not found', idFound: !!idField, pwFound: !!pwField }
 
-          // .value 직접 설정 + 풀 이벤트 dispatch (input/change/keydown/keyup) — SPA 검증 통과
+          // Vue 3 reactive 필드는 .value 직접 설정이 v-model에 안 잡힘.
+          // native setter로 값 주입 후 input 이벤트 dispatch — Vue/React 공통 패턴.
+          const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
           idField.focus()
-          idField.value = usernameArg
+          nativeSetter.call(idField, usernameArg)
           idField.dispatchEvent(new Event('input', { bubbles: true }))
           idField.dispatchEvent(new Event('change', { bubbles: true }))
-          idField.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }))
-          idField.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }))
 
           pwField.focus()
-          pwField.value = passwordArg
+          nativeSetter.call(pwField, passwordArg)
           pwField.dispatchEvent(new Event('input', { bubbles: true }))
           pwField.dispatchEvent(new Event('change', { bubbles: true }))
-          pwField.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }))
-          pwField.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }))
 
           // 로그인 버튼 찾기 — id 셀렉터 또는 버튼 텍스트로
           let btn = null
@@ -281,9 +279,35 @@ async function _spaDirectLogin(siteKey, username, password) {
         try {
           const tabInfo = await chrome.tabs.get(tabId)
           if (!site.isLoginPage(tabInfo.url || '')) {
-            console.log(`[자동로그인][SPA] ✅ ${site.name} 로그인 성공 — URL: ${tabInfo.url}`)
-            chrome.debugger.onEvent.removeListener(dialogHandler)
-            return true
+            // LOTTEON: URL 이탈만으로 부족 — #memInfo.mbNo 실제 확인 (비로그인 리다이렉트 오판 방지)
+            if (siteKey === 'lotteon') {
+              await wait(2000)
+              try {
+                const [ck] = await chrome.scripting.executeScript({
+                  target: { tabId },
+                  func: () => {
+                    const el = document.querySelector('#memInfo')
+                    if (!el) return null
+                    try { return JSON.parse(el.value || '{}')?.mbNo || null } catch { return null }
+                  },
+                })
+                const mbNo = ck?.result
+                if (mbNo) {
+                  console.log(`[자동로그인][SPA] ✅ ${site.name} 로그인 확인 — mbNo: ${String(mbNo).slice(0, 4)}****`)
+                  chrome.debugger.onEvent.removeListener(dialogHandler)
+                  return true
+                }
+                console.log(`[자동로그인][SPA] ${site.name} URL 이탈했으나 #memInfo.mbNo 없음 — DOM 로딩 중, 폴링 계속`)
+              } catch (e) {
+                console.log(`[자동로그인][SPA] ${site.name} mbNo 체크 오류: ${e.message} — URL 이탈로 성공 처리`)
+                chrome.debugger.onEvent.removeListener(dialogHandler)
+                return true
+              }
+            } else {
+              console.log(`[자동로그인][SPA] ✅ ${site.name} 로그인 성공 — URL: ${tabInfo.url}`)
+              chrome.debugger.onEvent.removeListener(dialogHandler)
+              return true
+            }
           }
         } catch {
           chrome.debugger.onEvent.removeListener(dialogHandler)

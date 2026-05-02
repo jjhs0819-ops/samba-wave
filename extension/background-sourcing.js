@@ -1237,25 +1237,24 @@ async function handleSourcingJob(job) {
         if (result && typeof result === 'object') {
           const sig = result._domLoginSignal
           if (sig === 'login_link') {
-            // DOM에 로그인 링크 명시 — 단, 오토로그인 성공 직후 쿠키 전파 지연으로
-            // 다음 탭에서 #memInfo.mbNo 가 아직 비어있는 레이스 컨디션 존재.
-            // 최근 30분 이내 로그인 증거가 있으면 로그인 상태로 간주하여 갱신 차단 방지.
-            if (_hasRecentLoginProof(job.site)) {
-              result._loginRequired = false
-              _siteLoginConfirmed.add(job.site)
-              console.log(`[LOTTEON] DOM=login_link이나 최근 로그인 증거 있음 — 로그인 상태로 처리`)
-            } else {
-              result._loginRequired = true
-              console.log(`[LOTTEON] DOM=비로그인 확정(login_link) — 쿠키 무시`)
-            }
+            // DOM에 로그인 링크 명시 — 좀비 쿠키 무시하고 비로그인 확정
+            // #memInfo.mbNo 비어있음 = 비회원가 수집 위험 → 무조건 차단
+            result._loginRequired = true
+            console.log(`[LOTTEON] DOM=비로그인 확정(login_link) — 쿠키 무시`)
           } else if (sig === 'logout_link') {
             // DOM에 로그아웃 링크 명시 — 로그인 확정 기록
             result._loginRequired = false
             _siteLoginConfirmed.add(job.site)
           } else {
-            // ambiguous — extractDetailData의 bodyText 텍스트 검사도 못 찾은 경우
-            // (완전 미렌더링) → 로그인으로 간주 (false-positive 차단 우선)
-            result._loginRequired = false
+            // ambiguous — #memInfo 요소 자체가 없음 (렌더링 지연 or 구조 변경)
+            // DOM만으로 로그인 여부 판단 불가 → 최근 로그인 증거로 보조 판단
+            if (_hasRecentLoginProof(job.site)) {
+              result._loginRequired = false
+              console.log(`[LOTTEON] DOM=ambiguous — 최근 로그인 증거 있음, 통과`)
+            } else {
+              result._loginRequired = true
+              console.log(`[LOTTEON] DOM=ambiguous — 로그인 증거 없음, 차단`)
+            }
           }
         }
       } catch (e) {
@@ -1271,9 +1270,19 @@ async function handleSourcingJob(job) {
         result = await extractDetailData(tabId, job.site, job.productId)
       }
       if (result?.best_benefit_price) {
-        // 혜택가 수집 성공 = 로그인 확정 (DOM 신호 무관 — ABCmart 최대혜택가는 회원 전용)
-        _siteLoginConfirmed.add(job.site)
-        console.log(`[${job.site}] DOM 혜택가: ${job.productId} → ${result.best_benefit_price}`)
+        // 혜택가 신뢰 조건: 로그인 확인 이력 있음(세션 내 이미 확인) 또는 logout_link 신호 명시
+        // ambiguous 상태에서 로그인 미확인 시: 비로그인 페이지가 판매가를 혜택가로 노출해 오수집 가능
+        // → 이 경우 혜택가만 무효화(0), 결과 자체는 통과(차단 금지)
+        const _bp_signal = result?._domLoginSignal
+        const _bp_loginOK = _siteLoginConfirmed.has(job.site) || _bp_signal === 'logout_link'
+        if (_bp_loginOK) {
+          _siteLoginConfirmed.add(job.site)
+          console.log(`[${job.site}] DOM 혜택가: ${job.productId} → ${result.best_benefit_price}`)
+        } else {
+          result.best_benefit_price = 0
+          console.log(`[${job.site}] 혜택가 무효화 (로그인 미확인+ambiguous): ${job.productId}`)
+        }
+        result._loginRequired = false
       } else {
         // DOM 혜택가 미수집 — DOM 신호 분기:
         //   - 'logout_link' → 로그인 확정 기록 + sale_price 사용
@@ -1982,8 +1991,10 @@ async function extractDetailData(tabId, site, productId) {
           if (_slice.includes('LOGOUT')) _abcHasLogout = true
           else if (_slice.includes('LOGIN')) _abcHasLogin = true
         }
-        const isLoggedIn = _abcHasLogout && !_abcHasLogin
-        const _domLoginSignal = _abcHasLogin ? 'login_link' : (_abcHasLogout ? 'logout_link' : 'ambiguous')
+        // LOGOUT 버튼 존재 = 로그인 확정 (login 링크 공존 무관)
+        // 상품 페이지에 '/login' URL 포함 링크(포인트 적립, 혜택 안내 등)가 있어도 logout이 우선
+        const isLoggedIn = _abcHasLogout
+        const _domLoginSignal = _abcHasLogout ? 'logout_link' : (_abcHasLogin ? 'login_link' : 'ambiguous')
 
         const bodyText = document.body?.innerText || ''
         let benefitPrice = 0

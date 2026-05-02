@@ -548,8 +548,8 @@ export default function ProductsPage() {
 
   const handleEnrich = async (productId: string) => {
     const product = allProducts.find((p) => p.id === productId)
-    const productName = (product?.name || productId).slice(0, 25)
-    setActiveLog({ productId, message: `[업데이트 중] ${productName}...` })
+    const productName = (product?.name || productId).slice(0, 50)
+    setActiveLog({ productId, message: `[업데이트 중] ${productName}` })
     try {
       const { API_BASE_URL: apiBase } = await import('@/config/api')
       const res = await fetchWithAuth(`${apiBase}/api/v1/samba/collector/enrich/${productId}`, { method: "POST" });

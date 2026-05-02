@@ -264,7 +264,6 @@ def _add_job_log(job_id: str, msg: str, job_type: str = ""):
             except RuntimeError:
                 pass
 
-
     elif effective_type == "order_sync":
         _collect_log_flush_counter[job_id] = (
             _collect_log_flush_counter.get(job_id, 0) + 1

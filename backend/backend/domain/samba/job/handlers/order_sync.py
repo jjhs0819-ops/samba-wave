@@ -129,9 +129,7 @@ async def run(
                         f"{r.get('account', label)}: 오류 — {r.get('message', '')}",
                     )
         except asyncio.TimeoutError:
-            logger.error(
-                f"[order_sync] {label} timeout after {per_account_timeout}s"
-            )
+            logger.error(f"[order_sync] {label} timeout after {per_account_timeout}s")
             _add_job_log(
                 job.id,
                 f"{label} 오류: {per_account_timeout}초 동안 응답이 없어 다음 계정으로 넘어갑니다",
