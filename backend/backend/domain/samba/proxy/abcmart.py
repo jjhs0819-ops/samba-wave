@@ -8,9 +8,9 @@
   GET /display/search-word/result-total/list
   파라미터: searchWord, page, perPage, sort, channel, pageColumn
 
-상세 URL:
-  https://www.a-rt.com/product?prdtNo={product_id}
-  https://www.a-rt.com/product?prdtNo={product_id}&tChnnlNo=10002
+상세 URL (신형 /product/new 사용 — 구형 /product는 최대혜택가 미반영):
+  https://abcmart.a-rt.com/product/new?prdtNo={product_id}
+  https://grandstage.a-rt.com/product/new?prdtNo={product_id}&tChnnlNo=10002
 """
 
 from __future__ import annotations
@@ -772,7 +772,7 @@ class ARTSourcingClient:
             # 2단계: 상품 상세 페이지 방문으로 JSESSIONID 완전히 획득
             # (홈만 방문하면 API 호출 시 빈 응답({})이 반환되는 경우가 있음)
             if product_id:
-                detail_page_url = f"{subdomain}/product?prdtNo={product_id}"
+                detail_page_url = f"{subdomain}/product/new?prdtNo={product_id}"
                 if self.channel == self.CHANNEL_GRANDSTAGE:
                     detail_page_url += f"&tChnnlNo={self.channel}"
                 detail_resp = await client.get(detail_page_url, headers=self.HEADERS)
