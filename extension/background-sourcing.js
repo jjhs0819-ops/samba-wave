@@ -277,7 +277,7 @@ function _hasRecentLoginProof(site) {
   if (_siteLoginConfirmed.has(site)) return true
   const siteKey = (typeof alExternalSiteToKey === 'function') ? alExternalSiteToKey(site) : null
   const lastAt = (siteKey && globalThis._lastAutoLoginSuccessAt) ? globalThis._lastAutoLoginSuccessAt[siteKey] : 0
-  const AL_GRACE_MS = 30 * 60 * 1000
+  const AL_GRACE_MS = 60 * 60 * 1000
   return !!(lastAt && Date.now() - lastAt < AL_GRACE_MS)
 }
 const _activeSourcingSites = new Map()
@@ -1259,10 +1259,16 @@ async function handleSourcingJob(job) {
         if (result && typeof result === 'object') {
           const sig = result._domLoginSignal
           if (sig === 'login_link') {
-            // DOM에 로그인 링크 명시 — 좀비 쿠키 무시하고 비로그인 확정
-            // #memInfo.mbNo 비어있음 = 비회원가 수집 위험 → 무조건 차단
-            result._loginRequired = true
-            console.log(`[LOTTEON] DOM=비로그인 확정(login_link) — 쿠키 무시`)
+            // bodyText "로그인/회원가입" 감지 — 최근 오토로그인 성공 증거 있으면 오탐 처리
+            // (SPA 렌더링 타이밍에 따라 헤더 텍스트가 일시적으로 비로그인처럼 보일 수 있음)
+            if (_hasRecentLoginProof(job.site)) {
+              result._loginRequired = false
+              _siteLoginConfirmed.add(job.site)
+              console.log(`[LOTTEON] login_link — 최근 로그인 증거 있음, 오탐 처리`)
+            } else {
+              result._loginRequired = true
+              console.log(`[LOTTEON] DOM=비로그인 확정(login_link) — 갱신 차단`)
+            }
           } else if (sig === 'logout_link') {
             // DOM에 로그아웃 링크 명시 — 로그인 확정 기록
             result._loginRequired = false
@@ -1290,6 +1296,14 @@ async function handleSourcingJob(job) {
         console.log(`[${job.site}] 혜택가 미수집 — 3초 후 재시도: ${job.productId}`)
         await wait(3000)
         result = await extractDetailData(tabId, job.site, job.productId)
+      } else if (result?.best_benefit_price > 0) {
+        // 혜택가 수집됐어도 쿠폰/할인이 AJAX 로딩 중일 수 있음 — 2초 후 재확인
+        await wait(2000)
+        const _verify = await extractDetailData(tabId, job.site, job.productId)
+        if ((_verify?.best_benefit_price > 0) && (_verify.best_benefit_price < result.best_benefit_price)) {
+          console.log(`[${job.site}] 혜택가 안정화: ${result.best_benefit_price.toLocaleString()}→${_verify.best_benefit_price.toLocaleString()}: ${job.productId}`)
+          result = _verify
+        }
       }
       if (result?.best_benefit_price) {
         // 혜택가 신뢰 조건: 로그인 확인 이력 있음(세션 내 이미 확인) 또는 logout_link 신호 명시
@@ -1315,14 +1329,19 @@ async function handleSourcingJob(job) {
           result._loginRequired = false
           _siteLoginConfirmed.add(job.site)
           console.log(`[${job.site}] 혜택가 없음 — logout 확인됨, 원가 갱신 없이 통과: ${job.productId}`)
-        } else if (_signal === 'login_link') {
+        } else if (_signal === 'login_link' && !_siteLoginConfirmed.has(job.site)) {
+          // 로그인 이력 없는 상태에서 login_link → 비로그인 확정, 잡 보류
           console.log(`[${job.site}] 비로그인 확정(login_link) → 잡 보류: ${job.productId}`)
           result = { success: false, login_required: true, message: 'ABCmart 비로그인 확정 — 로그인 후 재시도' }
           reportLoginFailure(job.site, true)
         } else {
-          // ambiguous: 헤더 미렌더 등 로그인 여부 불명 → 비로그인 확정 아니므로 통과
+          // ambiguous 또는 login_link+로그인이력있음 → 헤더 미렌더/오탐 → 통과
           result._loginRequired = false
-          console.log(`[${job.site}] DOM ambiguous — 비로그인 미확정, 차단 스킵: ${job.productId}`)
+          if (_signal === 'login_link') {
+            console.log(`[${job.site}] login_link 감지 but 로그인 이력 있음(오탐) — 차단 스킵: ${job.productId}`)
+          } else {
+            console.log(`[${job.site}] DOM ambiguous — 비로그인 미확정, 차단 스킵: ${job.productId}`)
+          }
         }
       }
     } else if (job.type === 'detail' && job.site === 'SSG') {
@@ -1356,7 +1375,7 @@ async function handleSourcingJob(job) {
           // 이 세션에서 이미 로그인 확인됨 — detectLoginStatus 스킵 (숨겨진 login link 오탐 방지)
         } else {
           // 자동로그인 성공 직후 N분간 detect 스킵 — _detectLoginStatus false-positive 방지
-          const AL_GRACE_MS = 30 * 60 * 1000  // 30분
+          const AL_GRACE_MS = 60 * 60 * 1000  // 30분
           const siteKey = (typeof alExternalSiteToKey === 'function') ? alExternalSiteToKey(job.site) : null
           const lastAt = (siteKey && globalThis._lastAutoLoginSuccessAt) ? globalThis._lastAutoLoginSuccessAt[siteKey] : 0
           if (lastAt && Date.now() - lastAt < AL_GRACE_MS) {
@@ -2053,14 +2072,15 @@ async function extractDetailData(tabId, site, productId) {
           const nameEl = document.querySelector('h2[class*="name"], [class*="prd-name"], [class*="product_name"]')
           name = nameEl?.textContent?.trim() || document.querySelector('meta[property="og:title"]')?.content || ''
 
-          // 정상가/판매가: "최대 혜택가" 이전 영역에서만 추출
-          // (이후 영역에는 관련상품/추천상품 카드의 가격이 섞여 있어 잘못 매칭됨)
+          // 정상가/판매가: "최대 혜택가" 직전 800자만 탐색
+          // (전체 이전 영역은 배너/관련상품 가격이 섞여 오매칭됨 — lookback 방식으로 교체)
           // ABCmart 표기 규칙:
           //   - 정상가만: "79,000원" (단독, [%] 미포함)
           //   - 정상가+할인된 판매가: "69,000 55,000원 [20%]" (strikethrough + 할인 후 + 할인율)
           //   - 혜택가는 "최대 혜택가 N원 [P%]" 형태로 [%] 포함 → salePrice/originalPrice 후보에서 제외
           const benefitIdx = bodyText.search(/최대\s*혜택가/)
-          const beforeBenefit = benefitIdx > 0 ? bodyText.slice(0, benefitIdx) : bodyText
+          const _lookbackStart = benefitIdx > 0 ? Math.max(0, benefitIdx - 800) : 0
+          const beforeBenefit = bodyText.slice(_lookbackStart, benefitIdx > 0 ? benefitIdx : undefined)
 
           // 패턴 A: "정상가 할인가 원 [%]" — 정상가+할인된 판매가
           const discountedMatch = beforeBenefit.match(/(\d{1,3}(?:,\d{3})+)\s+(\d{1,3}(?:,\d{3})+)\s*원\s*\[\d+%\]/)
