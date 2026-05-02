@@ -4216,8 +4216,17 @@ async def sync_orders_from_markets(
                             )
                     if order_data.get("product_image") and not existing.product_image:
                         update_fields["product_image"] = order_data["product_image"]
-                    if order_data.get("source_site") and not existing.source_site:
-                        update_fields["source_site"] = order_data["source_site"]
+                    new_source_site = str(order_data.get("source_site") or "").strip()
+                    existing_source_site = str(existing.source_site or "").strip()
+                    if new_source_site and not existing_source_site:
+                        update_fields["source_site"] = new_source_site
+                    elif (
+                        order_data.get("source") == "playauto"
+                        and new_source_site
+                        and new_source_site != existing_source_site
+                        and "(" in new_source_site
+                    ):
+                        update_fields["source_site"] = new_source_site
                     if order_data.get("source_url") and not existing.source_url:
                         update_fields["source_url"] = order_data["source_url"]
                     if order_data.get("customer_note") and order_data[

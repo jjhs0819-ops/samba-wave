@@ -6,7 +6,6 @@ import {
   collectorApi,
   type SambaOrder,
 } from '@/lib/samba/api/commerce'
-import { type SambaSourcingAccount } from '@/lib/samba/api/operations'
 import { fetchWithAuth } from '@/lib/samba/api/shared'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtNum } from '@/lib/samba/styles'
@@ -19,7 +18,6 @@ interface Props {
   setRefreshLog: Dispatch<SetStateAction<Record<string, string>>>
   sentFlags: Record<string, { sms: boolean; kakao: boolean }>
   siteAliasMap: Record<string, string>
-  sourcingAccounts: SambaSourcingAccount[]
   activeActions: Record<string, string | null>
   setPriceHistoryProduct: Dispatch<SetStateAction<{ name: string; source_site: string }>>
   setPriceHistoryData: Dispatch<SetStateAction<Record<string, unknown>[]>>
@@ -45,14 +43,13 @@ interface Props {
 
 export default function OrderInfoCell(props: Props) {
   const {
-    o, refreshLog, setRefreshLog, sentFlags, siteAliasMap, sourcingAccounts, activeActions,
+    o, refreshLog, setRefreshLog, sentFlags, siteAliasMap, activeActions,
     setPriceHistoryProduct, setPriceHistoryData, setPriceHistoryModal,
     customerAddress, renderCopyableText,
     handleDelete, handleImageClick, handleCopyOrderNumber, openMsgModal,
     handleDanawa, handleNaver, handleSourceLink, handleMarketLink,
     openUrlModal, handleTracking, loadOrders,
   } = props
-  const sourcingAccountLabel = sourcingAccounts.find(sa => sa.id === o.sourcing_account_id)?.account_label?.trim()
 
   const handleCopyCustomerMemo = async () => {
     const text = (o.customer_note || '').trim()
@@ -102,7 +99,6 @@ export default function OrderInfoCell(props: Props) {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '0.75rem', color: '#B0B0B0', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px' }}>{o.channel_name || '마켓'}</span>
             {o.source_site && <span style={{ fontSize: '0.75rem', color: '#B0B0B0', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px', border: '1px solid #2D2D2D' }}>{formatSourceSiteLabel(o.source_site, siteAliasMap) || o.source_site}</span>}
-            {sourcingAccountLabel && <span style={{ fontSize: '0.75rem', color: '#8FD3FF', background: 'rgba(44, 123, 229, 0.12)', padding: '0.125rem 0.5rem', borderRadius: '4px', border: '1px solid rgba(76, 154, 255, 0.45)' }}>{sourcingAccountLabel}</span>}
             <button onClick={() => handleCopyOrderNumber(o.order_number)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>주문번호복사</button>
             <button onClick={() => openMsgModal('sms', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: sentFlags[o.id]?.sms ? '#1F3A24' : 'transparent', border: `1px solid ${sentFlags[o.id]?.sms ? '#51CF66' : '#2D2D2D'}`, borderRadius: '4px', color: sentFlags[o.id]?.sms ? '#51CF66' : '#B0B0B0', cursor: 'pointer' }}>SMS</button>
             <button onClick={() => openMsgModal('kakao', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: sentFlags[o.id]?.kakao ? '#3A320F' : 'transparent', border: `1px solid ${sentFlags[o.id]?.kakao ? '#FFD93D' : '#2D2D2D'}`, borderRadius: '4px', color: sentFlags[o.id]?.kakao ? '#FFD93D' : '#B0B0B0', cursor: 'pointer' }}>KAKAO</button>

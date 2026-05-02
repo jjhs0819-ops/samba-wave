@@ -152,7 +152,6 @@ export default function OrdersTable(props: OrdersTableProps) {
                   setRefreshLog={setRefreshLog}
                   sentFlags={sentFlags}
                   siteAliasMap={siteAliasMap}
-                  sourcingAccounts={sourcingAccounts}
                   activeActions={activeActions}
                   setPriceHistoryProduct={setPriceHistoryProduct}
                   setPriceHistoryData={setPriceHistoryData}

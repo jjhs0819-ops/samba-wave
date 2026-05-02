@@ -1274,15 +1274,30 @@ async function handleSourcingJob(job) {
         if (result && typeof result === 'object') {
           const sig = result._domLoginSignal
           if (sig === 'login_link') {
-            // bodyText "로그인/회원가입" 감지 — 최근 오토로그인 성공 증거 있으면 오탐 처리
-            // (SPA 렌더링 타이밍에 따라 헤더 텍스트가 일시적으로 비로그인처럼 보일 수 있음)
+            // bodyText "로그인/회원가입" 감지.
+            // 최근 로그인 증거 있으면 SPA 렌더링 오탐 → 바로 통과.
+            // 증거 없으면(서비스 워커 재시작으로 메모리 초기화 포함) ensureLoggedIn으로 즉시 자가복구.
+            // 차단 전 로그인 시도 — "첫 번째에만 체크" 정책을 재시작 후에도 보장.
             if (_hasRecentLoginProof(job.site)) {
               result._loginRequired = false
               _siteLoginConfirmed.add(job.site)
               console.log(`[LOTTEON] login_link — 최근 로그인 증거 있음, 오탐 처리`)
             } else {
-              result._loginRequired = true
-              console.log(`[LOTTEON] DOM=비로그인 확정(login_link) — 갱신 차단`)
+              console.log(`[LOTTEON] login_link — 로그인 증거 없음(서비스워커 재시작 가능성), ensureLoggedIn 즉시 호출`)
+              try {
+                if (typeof ensureLoggedIn === 'function') {
+                  await ensureLoggedIn('lotteon')
+                  result._loginRequired = false
+                  _siteLoginConfirmed.add(job.site)
+                  console.log(`[LOTTEON] login_link — ensureLoggedIn 성공, 갱신 재개`)
+                } else {
+                  result._loginRequired = true
+                  console.log(`[LOTTEON] DOM=비로그인 확정(login_link) — 갱신 차단`)
+                }
+              } catch (e) {
+                result._loginRequired = true
+                console.log(`[LOTTEON] ensureLoggedIn 실패: ${e?.message} — 갱신 차단`)
+              }
             }
           } else if (sig === 'logout_link') {
             // DOM에 로그아웃 링크 명시 — 로그인 확정 기록
@@ -1290,13 +1305,25 @@ async function handleSourcingJob(job) {
             _siteLoginConfirmed.add(job.site)
           } else {
             // ambiguous — bodyText 감지도 불명확 (페이지 미렌더링 등 극단 케이스)
-            // _hasRecentLoginProof로 최종 판단
+            // _hasRecentLoginProof로 최종 판단, 없으면 ensureLoggedIn으로 복구
             if (_hasRecentLoginProof(job.site)) {
               result._loginRequired = false
               console.log(`[LOTTEON] DOM=ambiguous — 최근 로그인 증거 있음, 통과`)
             } else {
-              result._loginRequired = true
-              console.log(`[LOTTEON] DOM=ambiguous — 로그인 증거 없음, 차단`)
+              console.log(`[LOTTEON] DOM=ambiguous — 로그인 증거 없음, ensureLoggedIn 호출`)
+              try {
+                if (typeof ensureLoggedIn === 'function') {
+                  await ensureLoggedIn('lotteon')
+                  result._loginRequired = false
+                  _siteLoginConfirmed.add(job.site)
+                  console.log(`[LOTTEON] ambiguous — ensureLoggedIn 성공, 통과`)
+                } else {
+                  result._loginRequired = true
+                }
+              } catch (e) {
+                result._loginRequired = true
+                console.log(`[LOTTEON] ambiguous — ensureLoggedIn 실패: ${e?.message}, 차단`)
+              }
             }
           }
         }
@@ -1319,12 +1346,19 @@ async function handleSourcingJob(job) {
         const _retry = await extractDetailData(tabId, job.site, job.productId)
         if (_retry?.best_benefit_price > 0) result = _retry
       } else if (result?.best_benefit_price > 0) {
-        // 혜택가 수집됐어도 쿠폰/할인이 AJAX 로딩 중일 수 있음 — 4초 후 재확인 (2s→4s)
-        await wait(4000)
-        const _verify = await extractDetailData(tabId, job.site, job.productId)
-        if ((_verify?.best_benefit_price > 0) && (_verify.best_benefit_price < result.best_benefit_price)) {
-          console.log(`[${job.site}] 혜택가 안정화: ${result.best_benefit_price.toLocaleString()}→${_verify.best_benefit_price.toLocaleString()}: ${job.productId}`)
-          result = _verify
+        // 혜택가 수집됐어도 AJAX 쿠폰이 순차 로딩되어 값이 계속 내려갈 수 있음
+        // 가격이 더 이상 내려가지 않을 때까지 2초마다 폴링 (최대 3회 = 6초)
+        let _prevBp = result.best_benefit_price
+        for (let _i = 0; _i < 3; _i++) {
+          await wait(2000)
+          const _check = await extractDetailData(tabId, job.site, job.productId)
+          if ((_check?.best_benefit_price > 0) && (_check.best_benefit_price < _prevBp)) {
+            console.log(`[${job.site}] 혜택가 갱신(${_i + 1}/3): ${_prevBp.toLocaleString()}→${_check.best_benefit_price.toLocaleString()}: ${job.productId}`)
+            _prevBp = _check.best_benefit_price
+            result = _check
+          } else {
+            break
+          }
         }
       }
       if (result?.best_benefit_price) {
@@ -1351,7 +1385,7 @@ async function handleSourcingJob(job) {
           result._loginRequired = false
           _siteLoginConfirmed.add(job.site)
           console.log(`[${job.site}] 혜택가 없음 — logout 확인됨, 원가 갱신 없이 통과: ${job.productId}`)
-        } else if (_signal === 'login_link' && !_siteLoginConfirmed.has(job.site)) {
+        } else if (_signal === 'login_link' && !_hasRecentLoginProof(job.site)) {
           // 로그인 이력 없는 상태에서 login_link → 비로그인 확정, 잡 보류
           console.log(`[${job.site}] 비로그인 확정(login_link) → 잡 보류: ${job.productId}`)
           result = { success: false, login_required: true, message: 'ABCmart 비로그인 확정 — 로그인 후 재시도' }
