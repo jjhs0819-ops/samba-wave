@@ -1409,7 +1409,10 @@ class SSGSourcingClient:
         js_block = html[start:end]
 
         # uitemObjList 원본 블록에서 먼저 추출 (옵션 목록)
+        # uitemObjArr.push 패턴은 resultItemObj 블록 밖에 있으므로 js_block 실패 시 html 전체 재시도
         uitem_list = self._extract_uitem_list(js_block)
+        if not uitem_list:
+            uitem_list = self._extract_uitem_list(html)
 
         # 중첩된 객체/배열 제거 — 연관상품(itemAssocList), 비교상품(cmptItemObjMap) 등의
         # dispCtgLclsNm 등 내부 필드가 상위 필드보다 먼저 매칭되어 카테고리 오염되는
@@ -2196,8 +2199,20 @@ class SSGSourcingClient:
         return 0
 
     def _extract_uitem_list(self, js_block: str) -> list[dict]:
-        """uitemObjList 배열에서 옵션 목록 추출."""
-        # uitemObjList 배열 시작 탐색
+        """uitemObjList 배열 또는 uitemObjArr push 패턴에서 옵션 목록 추출.
+
+        department.ssg.com 서버사이드 스크립트는 uitemObjList: [] 초기 선언 후
+        var uitemObjArr = []; uitemObj = {...}; uitemObjArr.push(uitemObj); ... 형태로
+        개별 아이템을 push하고 마지막에 resultItemObj.uitemObjList = uitemObjArr 로 할당.
+        기존 파서는 초기 빈 배열만 파싱해 0개 반환하므로 push 패턴도 지원.
+        """
+        # uitemObj = {...}; uitemObjArr.push 패턴 — department.ssg.com 서버사이드
+        if "uitemObjArr" in js_block and "uitemObjArr.push" in js_block:
+            raw_blocks = self._collect_uitem_obj_blocks(js_block)
+            if raw_blocks:
+                return self._parse_raw_uitem_blocks(raw_blocks)
+
+        # 기존 패턴: uitemObjList : [...] 인라인 배열
         m = re.search(r"uitemObjList\s*:\s*\[", js_block)
         if not m:
             return []
@@ -2231,9 +2246,38 @@ class SSGSourcingClient:
             return []
 
         array_block = js_block[start:end]
+        raw_blocks = self._collect_brace_blocks(array_block)
+        return self._parse_raw_uitem_blocks(raw_blocks)
 
-        # 각 객체({...}) 추출 — 브라켓 카운팅으로 중첩 {} 처리
-        items = []
+    @staticmethod
+    def _collect_uitem_obj_blocks(js_block: str) -> list[str]:
+        """uitemObj = {...}; uitemObjArr.push(uitemObj) 패턴에서 객체 블록 수집."""
+        raw_blocks: list[str] = []
+        for m in re.finditer(r"uitemObj\s*=\s*\{", js_block):
+            start = m.end() - 1  # '{' 위치
+            depth, i = 1, m.end()
+            while i < len(js_block) and depth > 0:
+                ch = js_block[i]
+                if ch == "\\":
+                    i += 2
+                    continue
+                if ch in ('"', "'"):
+                    q, i = ch, i + 1
+                    while i < len(js_block) and js_block[i] != q:
+                        if js_block[i] == "\\":
+                            i += 1
+                        i += 1
+                elif ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                i += 1
+            raw_blocks.append(js_block[start:i])
+        return raw_blocks
+
+    @staticmethod
+    def _collect_brace_blocks(array_block: str) -> list[str]:
+        """배열 텍스트에서 최상위 {..} 블록 목록 추출."""
         raw_blocks: list[str] = []
         _i = 0
         while _i < len(array_block):
@@ -2260,7 +2304,12 @@ class SSGSourcingClient:
                 raw_blocks.append(array_block[_obj_start:_i])
             else:
                 _i += 1
+        return raw_blocks
 
+    @staticmethod
+    def _parse_raw_uitem_blocks(raw_blocks: list[str]) -> list[dict]:
+        """uitemObj 블록 목록에서 옵션 정보 파싱."""
+        items = []
         for block in raw_blocks:
 
             def gs(k: str, _b: str = block) -> str:
@@ -2279,7 +2328,6 @@ class SSGSourcingClient:
                     return int(v) if v else 0
                 return 0
 
-            # isSoldout 불리언
             soldout_m = re.search(r"isSoldout\s*:\s*(true|false)", block)
             is_soldout = soldout_m.group(1) == "true" if soldout_m else False
 
