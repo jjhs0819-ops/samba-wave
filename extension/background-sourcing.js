@@ -1220,13 +1220,14 @@ async function handleSourcingJob(job) {
         result = await extractDetailData(tabId, job.site, job.productId)
       }
       if (result?.best_benefit_price) {
-        if (result._domLoginSignal === 'logout_link') _siteLoginConfirmed.add(job.site)
+        // 혜택가 수집 성공 = 로그인 확정 (DOM 신호 무관 — ABCmart 최대혜택가는 회원 전용)
+        _siteLoginConfirmed.add(job.site)
         console.log(`[${job.site}] DOM 혜택가: ${job.productId} → ${result.best_benefit_price}`)
       } else {
         // DOM 혜택가 미수집 — DOM 신호 분기:
         //   - 'logout_link' → 로그인 확정 기록 + sale_price 사용
-        //   - 'ambiguous' + 이미 로그인 확인됨 → 렌더링 실패로 간주, 로그인 차단 스킵
-        //   - 'ambiguous' + 미확인 → sale_price 있으면 로그인 간주, 없으면 login_required
+        //   - 'ambiguous' + 이미 로그인 확인됨 OR sale_price>0 → 렌더링 실패로 간주, 로그인 차단 스킵
+        //   - 'ambiguous' + 미확인 + sale_price 없음 → login_required
         //   - 'login_link' → 확실 비로그인 → 잡 보류 + 자동로그인 트리거
         const _signal = result?._domLoginSignal
         if (_signal === 'logout_link') _siteLoginConfirmed.add(job.site)
@@ -1234,11 +1235,12 @@ async function handleSourcingJob(job) {
           result._loginRequired = false
           _siteLoginConfirmed.add(job.site)
           console.log(`[${job.site}] 혜택가 없음 — logout 확인됨, 원가 갱신 없이 통과: ${job.productId}`)
-        } else if (_signal === 'ambiguous' && _hasRecentLoginProof(job.site)) {
-          // 이미 로그인 확인된 사이트는 ambiguous를 재로그인 사유로 보지 않는다.
-          // 다만 혜택가를 sale_price로 덮어쓰지는 않는다.
+        } else if (_signal === 'ambiguous' && (_hasRecentLoginProof(job.site) || (result?.sale_price > 0))) {
+          // 로그인 확인 이력 있거나 sale_price 수집됐으면 로그인 상태로 간주 (DOM 렌더링 미완 대응)
           result._loginRequired = false
-          console.log(`[${job.site}] DOM ambiguous — 로그인 확인 이력 있음, 재로그인 차단 스킵: ${job.productId}`)
+          _siteLoginConfirmed.add(job.site)
+          const _reason = _hasRecentLoginProof(job.site) ? '로그인 이력' : 'sale_price 수집됨'
+          console.log(`[${job.site}] DOM ambiguous — 로그인 간주(${_reason}), 차단 스킵: ${job.productId}`)
         } else {
           console.log(`[${job.site}] DOM 혜택가 미수집 + 로그인 미확정(${_signal || 'null'}) → 잡 보류`)
           result = { success: false, login_required: true, message: 'ABCmart DOM 미수집 — 로그인 후 재시도' }
