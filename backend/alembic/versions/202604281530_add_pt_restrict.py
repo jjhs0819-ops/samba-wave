@@ -33,9 +33,21 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # DO 블록으로 사전 확인: 컬럼이 이미 존재하면 ALTER TABLE 자체를 건너뜀
+    # (ALTER TABLE은 IF NOT EXISTS여도 AccessExclusiveLock 필요 → 바쁜 테이블에서 lock timeout 유발)
     op.execute(
-        "ALTER TABLE samba_collected_product "
-        "ADD COLUMN IF NOT EXISTS is_point_restricted BOOLEAN"
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'samba_collected_product'
+                  AND column_name = 'is_point_restricted'
+            ) THEN
+                ALTER TABLE samba_collected_product ADD COLUMN is_point_restricted BOOLEAN;
+            END IF;
+        END $$;
+        """
     )
 
 

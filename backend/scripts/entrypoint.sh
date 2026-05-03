@@ -171,9 +171,11 @@ asyncio.run(fix())
   # 기본값 1 (미설정 포함) → 실행 + 실패 시 exit 1. 스킵해도 verify_schema는 아래에서 실행됨.
   if [ "${RUN_MIGRATIONS:-1}" = "1" ]; then
     echo "Running database migrations..."
-    # 롯데ON overlap 해소: 39f5332d495f + z_lotteon_order_line_keys 동시 존재 시 stamp으로 정리
-    echo "Stamping alembic to 202604232300_dedup_default_true (latest migration baseline)..."
-    uv run alembic stamp 202604232300_dedup_default_true 2>/dev/null || true
+    # 두 현재 HEAD로 stamp (2026-05-04 기준: z_add_sourcing_recipes, z_add_tetris_assignment)
+    # 각 배포마다 최신 HEAD를 반영하여 alembic upgrade heads가 이전 마이그레이션을 재실행하지 않도록 함
+    echo "Stamping alembic to current heads..."
+    uv run alembic stamp --purge z_add_sourcing_recipes 2>/dev/null || true
+    uv run alembic stamp z_add_tetris_assignment 2>/dev/null || true
     _MIGRATION_OK=0
     for i in 1 2 3; do
       if uv run alembic upgrade heads; then
