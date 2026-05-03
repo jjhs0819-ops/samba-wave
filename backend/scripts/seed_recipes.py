@@ -40,32 +40,42 @@ MUSINSA_RANKING_STEPS = [
     # 3. DOM 스크립트 실행 — world: MAIN (JS 변수 접근 가능)
     {
         "type": "evaluate",
+        "resultKey": "items",
         "world": "MAIN",
-        "note": "chrome.scripting.executeScript 방식. 아래 logic 필드가 실제 실행 코드.",
-        "logic": {
-            "step1_extract_goods_nos": {
-                "selector": "a[href*='/products/']",
-                "regex": "/products/(\\d+)",
-                "note": "goodsNo 목록 — href 에서 숫자 ID 추출, 중복 제거",
-            },
-            "step2_parse_body_text": {
-                "source": "document.body.innerText",
-                "split_by": "\\n",
-                "pattern": {
-                    "rank": "^\\d{1,3}$ (1~200 범위)",
-                    "brand": "rank 다음 줄 — 30자 미만, 가격/% 패턴 아닌 텍스트",
-                    "name": "brand 다음 줄 — 3자 이상, 가격/% 패턴 아닌 텍스트",
-                    "price": "name 이후 5줄 이내 '{숫자,}원' 패턴 최초 매칭 → 숫자만 추출",
-                },
-                "output_item": {
-                    "rank": "int",
-                    "brand": "str",
-                    "name": "str",
-                    "price": "int (원 단위)",
-                    "goodsNo": "str (step1 배열에서 items.length 인덱스로 매핑)",
-                },
-            },
-        },
+        "expression": (
+            "(() => {"
+            "  const links = Array.from(document.querySelectorAll('a[href*=\"/products/\"]'));"
+            "  const seen = new Set();"
+            "  const goodsNos = [];"
+            "  links.forEach(a => {"
+            "    const m = a.href.match(/\\/products\\/(\\d+)/);"
+            "    if (m && !seen.has(m[1])) { seen.add(m[1]); goodsNos.push(m[1]); }"
+            "  });"
+            "  const lines = document.body.innerText.split('\\n').map(l => l.trim()).filter(Boolean);"
+            "  const items = [];"
+            "  let i = 0;"
+            "  while (i < lines.length && items.length < 200) {"
+            "    const rankMatch = lines[i].match(/^(\\d{1,3})$/);"
+            "    if (rankMatch) {"
+            "      const rank = parseInt(rankMatch[1], 10);"
+            "      if (rank >= 1 && rank <= 200) {"
+            "        const brand = (lines[i+1] || '').length < 30 && !/[\\d,]+원|%/.test(lines[i+1] || '') ? lines[i+1] : '';"
+            "        const nameIdx = brand ? i+2 : i+1;"
+            "        const name = (lines[nameIdx] || '').length >= 3 && !/[\\d,]+원|%/.test(lines[nameIdx] || '') ? lines[nameIdx] : '';"
+            "        let price = 0;"
+            "        for (let j = nameIdx+1; j <= nameIdx+5 && j < lines.length; j++) {"
+            "          const pm = lines[j].match(/([\\d,]+)원/);"
+            "          if (pm) { price = parseInt(pm[1].replace(/,/g, ''), 10); break; }"
+            "        }"
+            "        const goodsNo = goodsNos[items.length] || '';"
+            "        if (name) items.push({ rank, brand, name, price, goodsNo });"
+            "      }"
+            "    }"
+            "    i++;"
+            "  }"
+            "  return items;"
+            "})()"
+        ),
     },
     # 4. 결과 전송 (확장앱 → 백엔드 POST)
     {
@@ -106,21 +116,28 @@ MUSINSA_KEYWORDS_STEPS = [
     # 3. 검색 입력창 클릭 — 인기검색어 드롭다운 트리거
     {
         "type": "evaluate",
+        "resultKey": "clickResult",
         "world": "MAIN",
-        "note": "여러 셀렉터 순서대로 시도 (무신사 UI 변경 대응 fallback 포함)",
-        "logic": {
-            "selectors_tried": [
-                "input[type='search']",
-                "input[placeholder*='검색']",
-                "input[name*='search']",
-                "input[aria-label*='검색']",
-                ".search-bar input",
-                "#search-input",
-                "header input",
-            ],
-            "fallback": "[class*='search'] button, button[aria-label*='검색']",
-            "action": "focus() + click()",
-        },
+        "expression": (
+            "(() => {"
+            "  const selectors = ["
+            "    \"input[type='search']\","
+            "    \"input[placeholder*='검색']\","
+            "    \"input[name*='search']\","
+            "    \"input[aria-label*='검색']\","
+            "    '.search-bar input',"
+            "    '#search-input',"
+            "    'header input',"
+            "    \"[class*='search'] button\","
+            "    \"button[aria-label*='검색']\""
+            "  ];"
+            "  for (const sel of selectors) {"
+            "    const el = document.querySelector(sel);"
+            "    if (el) { el.focus(); el.click(); return sel; }"
+            "  }"
+            "  return null;"
+            "})()"
+        ),
     },
     # 4. 드롭다운 렌더링 대기
     {
@@ -130,27 +147,34 @@ MUSINSA_KEYWORDS_STEPS = [
     # 5. 키워드 추출
     {
         "type": "evaluate",
+        "resultKey": "keywordItems",
         "world": "MAIN",
-        "logic": {
-            "method1_text_parse": {
-                "source": "document.body.innerText",
-                "popular_section_regex": "인기\\s*검색어([\\s\\S]*?)(?:급상승\\s*검색어|$)",
-                "trending_section_regex": "급상승\\s*검색어([\\s\\S]*?)(?:어바웃|회사|무신사 스토어|$)",
-                "item_regex": "^(\\d{1,2})\\s+(.+)$ — 2자~30자 이내",
-            },
-            "method2_dom_fallback": {
-                "note": "method1 결과 0개일 때만 실행",
-                "selectors": "li, [class*='keyword'], [class*='search-rank'], [class*='popular']",
-                "item_regex": "^(\\d{1,2})\\s*(.{2,25})$",
-                "exclude": "MUSINSA|BEAUTY|SPORTS|OUTLET|BOUTIQUE|KICKS|KIDS|USED|SNAP",
-                "max_items": 20,
-            },
-            "output_item": {
-                "rank": "int",
-                "keyword": "str",
-                "type": "'popular' | 'trending'",
-            },
-        },
+        "expression": (
+            "(() => {"
+            "  const text = document.body.innerText;"
+            "  const results = [];"
+            "  const popularMatch = text.match(/인기\\s*검색어([\\s\\S]*?)(?:급상승\\s*검색어|$)/);"
+            "  const trendingMatch = text.match(/급상승\\s*검색어([\\s\\S]*?)(?:어바웃|회사|무신사 스토어|$)/);"
+            "  const parseSection = (section, type) => {"
+            "    if (!section) return;"
+            "    section.split('\\n').forEach(line => {"
+            "      const m = line.trim().match(/^(\\d{1,2})\\s+(.{2,30})$/);"
+            "      if (m) results.push({ rank: parseInt(m[1], 10), keyword: m[2].trim(), type });"
+            "    });"
+            "  };"
+            "  parseSection(popularMatch ? popularMatch[1] : null, 'popular');"
+            "  parseSection(trendingMatch ? trendingMatch[1] : null, 'trending');"
+            "  if (results.length === 0) {"
+            "    const exclude = /MUSINSA|BEAUTY|SPORTS|OUTLET|BOUTIQUE|KICKS|KIDS|USED|SNAP/i;"
+            "    document.querySelectorAll(\"li, [class*='keyword'], [class*='search-rank'], [class*='popular']\").forEach(el => {"
+            "      const m = el.innerText.trim().match(/^(\\d{1,2})\\s*(.{2,25})$/);"
+            "      if (m && !exclude.test(m[2]) && results.length < 20)"
+            "        results.push({ rank: parseInt(m[1], 10), keyword: m[2].trim(), type: 'popular' });"
+            "    });"
+            "  }"
+            "  return results;"
+            "})()"
+        ),
     },
     # 6. 결과 전송
     {
