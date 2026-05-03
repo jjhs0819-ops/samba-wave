@@ -1,0 +1,193 @@
+"""AI 소싱 랭킹 수집 레시피를 로컬 DB에 삽입한다.
+
+무신사 랭킹 스크래핑 방식 (background-sourcing.js 분석 결과):
+- URL: https://www.musinsa.com/ranking/archive?date={YYYYMM}&categoryCode={code}&gf=A
+- 수집 방식: 탭을 active로 열고 chrome.scripting.executeScript(world='MAIN') 실행
+- DOM 파싱 전략:
+  1. document.querySelectorAll('a[href*="/products/"]') → goodsNo 추출
+  2. document.body.innerText 를 줄 단위로 파싱 → 순위(숫자 1~200) / 브랜드 / 상품명 / 가격 순서로 패턴 매칭
+- 키워드 수집: https://www.musinsa.com/search 로 이동 → 검색창 클릭 후
+  body.innerText 에서 "인기 검색어" / "급상승 검색어" 섹션 텍스트 파싱
+"""
+
+import asyncio
+import sys
+from pathlib import Path
+
+# 프로젝트 루트(backend/)를 모듈 경로에 추가
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from backend.db.orm import get_write_session
+from backend.domain.samba.sourcing_recipe.repository import SourcingRecipeRepository
+
+# ──────────────────────────────────────────────
+# 무신사 랭킹 레시피 스텝 정의
+# extension/background-sourcing.js 의 handleAiSourcingJob('ranking') 로직 그대로 기술
+# ──────────────────────────────────────────────
+MUSINSA_RANKING_STEPS = [
+    # 1. 랭킹 아카이브 페이지 열기 (확장앱이 active 탭으로 직접 오픈)
+    {
+        "type": "goto",
+        "url": "https://www.musinsa.com/ranking/archive?date={{date}}&categoryCode={{categoryCode}}&gf=A",
+        "note": "date=YYYYMM, categoryCode=000(전체) 등 — job 파라미터로 치환",
+    },
+    # 2. 페이지 렌더링 대기 (waitForTabLoad + 3초 여유)
+    {
+        "type": "wait",
+        "ms": 3000,
+        "note": "SPA 렌더링 완료 대기",
+    },
+    # 3. DOM 스크립트 실행 — world: MAIN (JS 변수 접근 가능)
+    {
+        "type": "evaluate",
+        "world": "MAIN",
+        "note": "chrome.scripting.executeScript 방식. 아래 logic 필드가 실제 실행 코드.",
+        "logic": {
+            "step1_extract_goods_nos": {
+                "selector": "a[href*='/products/']",
+                "regex": "/products/(\\d+)",
+                "note": "goodsNo 목록 — href 에서 숫자 ID 추출, 중복 제거",
+            },
+            "step2_parse_body_text": {
+                "source": "document.body.innerText",
+                "split_by": "\\n",
+                "pattern": {
+                    "rank": "^\\d{1,3}$ (1~200 범위)",
+                    "brand": "rank 다음 줄 — 30자 미만, 가격/% 패턴 아닌 텍스트",
+                    "name": "brand 다음 줄 — 3자 이상, 가격/% 패턴 아닌 텍스트",
+                    "price": "name 이후 5줄 이내 '{숫자,}원' 패턴 최초 매칭 → 숫자만 추출",
+                },
+                "output_item": {
+                    "rank": "int",
+                    "brand": "str",
+                    "name": "str",
+                    "price": "int (원 단위)",
+                    "goodsNo": "str (step1 배열에서 items.length 인덱스로 매핑)",
+                },
+            },
+        },
+    },
+    # 4. 결과 전송 (확장앱 → 백엔드 POST)
+    {
+        "type": "post_result",
+        "endpoint": "/api/v1/samba/ai-sourcing/collect-result",
+        "body": {
+            "requestId": "{{job.requestId}}",
+            "type": "ranking",
+            "data": {
+                "items": "{{extracted_items}}",
+                "debug": {
+                    "title": "document.title",
+                    "productLinks": "goodsNos.length",
+                    "totalItems": "items.length",
+                },
+            },
+        },
+    },
+]
+
+# ──────────────────────────────────────────────
+# 무신사 인기/급상승 키워드 레시피 스텝 정의
+# extension/background-sourcing.js 의 handleAiSourcingJob('keywords') 로직 그대로 기술
+# ──────────────────────────────────────────────
+MUSINSA_KEYWORDS_STEPS = [
+    # 1. 검색 페이지 열기 (active 탭 필요 — 인기검색어는 포커스 없으면 미표시)
+    {
+        "type": "goto",
+        "url": "https://www.musinsa.com/search",
+        "active": True,
+        "note": "active:true 필수 — 검색창 클릭 이벤트가 포커스 없으면 무시됨",
+    },
+    # 2. 페이지 로드 대기
+    {
+        "type": "wait",
+        "ms": 2000,
+    },
+    # 3. 검색 입력창 클릭 — 인기검색어 드롭다운 트리거
+    {
+        "type": "evaluate",
+        "world": "MAIN",
+        "note": "여러 셀렉터 순서대로 시도 (무신사 UI 변경 대응 fallback 포함)",
+        "logic": {
+            "selectors_tried": [
+                "input[type='search']",
+                "input[placeholder*='검색']",
+                "input[name*='search']",
+                "input[aria-label*='검색']",
+                ".search-bar input",
+                "#search-input",
+                "header input",
+            ],
+            "fallback": "[class*='search'] button, button[aria-label*='검색']",
+            "action": "focus() + click()",
+        },
+    },
+    # 4. 드롭다운 렌더링 대기
+    {
+        "type": "wait",
+        "ms": 4000,
+    },
+    # 5. 키워드 추출
+    {
+        "type": "evaluate",
+        "world": "MAIN",
+        "logic": {
+            "method1_text_parse": {
+                "source": "document.body.innerText",
+                "popular_section_regex": "인기\\s*검색어([\\s\\S]*?)(?:급상승\\s*검색어|$)",
+                "trending_section_regex": "급상승\\s*검색어([\\s\\S]*?)(?:어바웃|회사|무신사 스토어|$)",
+                "item_regex": "^(\\d{1,2})\\s+(.+)$ — 2자~30자 이내",
+            },
+            "method2_dom_fallback": {
+                "note": "method1 결과 0개일 때만 실행",
+                "selectors": "li, [class*='keyword'], [class*='search-rank'], [class*='popular']",
+                "item_regex": "^(\\d{1,2})\\s*(.{2,25})$",
+                "exclude": "MUSINSA|BEAUTY|SPORTS|OUTLET|BOUTIQUE|KICKS|KIDS|USED|SNAP",
+                "max_items": 20,
+            },
+            "output_item": {
+                "rank": "int",
+                "keyword": "str",
+                "type": "'popular' | 'trending'",
+            },
+        },
+    },
+    # 6. 결과 전송
+    {
+        "type": "post_result",
+        "endpoint": "/api/v1/samba/ai-sourcing/collect-result",
+        "body": {
+            "requestId": "{{job.requestId}}",
+            "type": "keywords",
+            "data": {"keywordItems": "{{extracted_keywords}}"},
+        },
+    },
+]
+
+
+async def main() -> None:
+    """레시피 2개를 DB에 upsert."""
+    async with get_write_session() as session:
+        repo = SourcingRecipeRepository(session)
+
+        # 무신사 랭킹 레시피
+        ranking = await repo.upsert(
+            "musinsa_ranking",
+            "1.0.0",
+            MUSINSA_RANKING_STEPS,
+        )
+        print(f"[OK] {ranking.site_name} v{ranking.version} (id={ranking.id})")
+
+        # 무신사 키워드 레시피
+        keywords = await repo.upsert(
+            "musinsa_keywords",
+            "1.0.0",
+            MUSINSA_KEYWORDS_STEPS,
+        )
+        print(f"[OK] {keywords.site_name} v{keywords.version} (id={keywords.id})")
+
+    print("seed 완료.")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
