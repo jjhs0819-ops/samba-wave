@@ -1,5 +1,5 @@
 'use client'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { fmtNum } from '@/lib/samba/styles'
 import { useTetris } from './useTetris'
 import MarketColumn from './MarketColumn'
@@ -9,6 +9,7 @@ import type { TetrisBrandBlock } from '@/lib/samba/api/tetris'
 // ─── TetrisBoard 컴포넌트 ─────────────────────────────────────────────────────
 
 export default function TetrisBoard() {
+  const [tetrisEnabled, setTetrisEnabled] = useState(false)
   const {
     board,
     loading,
@@ -20,7 +21,7 @@ export default function TetrisBoard() {
     handleRemove,
     handlePolicyChange,
     refresh,
-  } = useTetris()
+  } = useTetris(tetrisEnabled)
 
   // board에서 unique 정책 목록 추출
   const policies = useMemo(() => {
@@ -71,6 +72,43 @@ export default function TetrisBoard() {
 
   return (
     <div>
+      {/* 테트리스 매칭 ON/OFF 토글 */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        marginBottom: 20,
+        padding: '12px 14px',
+        background: 'rgba(255,140,0,0.08)',
+        border: '1px solid rgba(255,140,0,0.2)',
+        borderRadius: 6,
+      }}>
+        <span style={{ fontSize: 12, color: '#ccc', fontWeight: 600 }}>
+          테트리스 매칭
+        </span>
+        <button
+          onClick={() => setTetrisEnabled(!tetrisEnabled)}
+          style={{
+            padding: '4px 12px',
+            fontSize: 12,
+            fontWeight: 600,
+            border: '1px solid',
+            borderColor: tetrisEnabled ? '#FF8C00' : '#444',
+            background: tetrisEnabled ? '#FF8C00' : '#2a2a2a',
+            color: tetrisEnabled ? '#fff' : '#888',
+            borderRadius: 4,
+            cursor: 'pointer',
+          }}
+        >
+          {tetrisEnabled ? 'ON' : 'OFF'}
+        </button>
+        {!tetrisEnabled && (
+          <span style={{ fontSize: 11, color: '#FF8C00', marginLeft: 'auto' }}>
+            ⚠️ 비활성화 상태 — 배치 기능이 작동하지 않습니다
+          </span>
+        )}
+      </div>
+
       {/* 컨트롤 바 */}
       <div style={{
         display: 'flex',

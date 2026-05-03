@@ -24,6 +24,7 @@ import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
 import { SITE_COLORS } from '@/lib/samba/constants'
 import { fmtTime } from '@/lib/samba/utils'
 import NumInput from '@/components/samba/NumInput'
+import TetrisBoard from './tetris/TetrisBoard'
 
 
 interface RangeMargin {
@@ -194,6 +195,9 @@ export default function PoliciesPage() {
 
   // 정책 선택 드롭다운
   const [selectedPolicyId, setSelectedPolicyId] = useState<string | null>(null)
+
+  // 메인 탭: 정책관리 / 테트리스 매칭
+  const [mainTab, setMainTab] = useState<'정책관리' | '테트리스 매칭'>('정책관리')
 
   // 소싱처별 추가 마진 UI 토글
   const [showSourceSiteMargins, setShowSourceSiteMargins] = useState(false)
@@ -843,6 +847,43 @@ export default function PoliciesPage() {
 
 
 
+          {/* === 메인 탭: 정책관리 / 테트리스 매칭 === */}
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', borderBottom: '1px solid #2D2D2D', paddingBottom: '12px' }}>
+            <button
+              onClick={() => setMainTab('정책관리')}
+              style={{
+                padding: '8px 16px',
+                fontSize: '13px',
+                fontWeight: mainTab === '정책관리' ? 700 : 400,
+                border: 'none',
+                background: mainTab === '정책관리' ? '#FF8C00' : 'transparent',
+                color: mainTab === '정책관리' ? '#FFF' : '#888',
+                borderRadius: '6px',
+                cursor: 'pointer',
+              }}
+            >
+              정책관리
+            </button>
+            <button
+              onClick={() => setMainTab('테트리스 매칭')}
+              style={{
+                padding: '8px 16px',
+                fontSize: '13px',
+                fontWeight: mainTab === '테트리스 매칭' ? 700 : 400,
+                border: 'none',
+                background: mainTab === '테트리스 매칭' ? '#FF8C00' : 'transparent',
+                color: mainTab === '테트리스 매칭' ? '#FFF' : '#888',
+                borderRadius: '6px',
+                cursor: 'pointer',
+              }}
+            >
+              테트리스 매칭
+            </button>
+          </div>
+
+          {/* === 정책관리 탭 === */}
+          {mainTab === '정책관리' && (
+            <>
           {/* 마켓정책 설정 */}
           <div style={{ ...card, padding: '1.5rem', marginBottom: '1.25rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
@@ -2096,6 +2137,15 @@ export default function PoliciesPage() {
             )}
           </div>
         </div>
+            </>
+          )}
+
+          {/* === 테트리스 매칭 탭 === */}
+          {mainTab === '테트리스 매칭' && (
+            <div style={{ ...card, padding: '1.5rem' }}>
+              <TetrisBoard />
+            </div>
+          )}
       )}
     </div>
   )
