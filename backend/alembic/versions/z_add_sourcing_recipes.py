@@ -26,10 +26,6 @@ def upgrade() -> None:
             updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
     """)
-    op.execute("""
-        CREATE INDEX IF NOT EXISTS ix_sourcing_recipes_site_name
-        ON sourcing_recipes (site_name)
-    """)
 
 
 def downgrade() -> None:
