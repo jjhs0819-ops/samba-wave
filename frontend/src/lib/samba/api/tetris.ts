@@ -1,0 +1,98 @@
+import { request, SAMBA_PREFIX } from './shared'
+
+const BASE = `${SAMBA_PREFIX}/tetris`
+
+// ─── 타입 정의 ───────────────────────────────────────────────────────────────
+
+export interface TetrisBrandBlock {
+  id: string | null
+  source_site: string
+  brand_name: string
+  policy_id: string | null
+  policy_name: string | null
+  policy_color: string
+  registered_count: number
+  collected_count: number
+  position_order: number
+  is_legacy: boolean
+}
+
+export interface TetrisAccountBlock {
+  account_id: string
+  account_label: string
+  max_count: number
+  total_registered: number
+  total_collected: number
+  assignments: TetrisBrandBlock[]
+}
+
+export interface TetrisMarketGroup {
+  market_type: string
+  market_name: string
+  accounts: TetrisAccountBlock[]
+}
+
+export interface TetrisUnassigned {
+  source_site: string
+  brand_name: string
+  collected_count: number
+}
+
+export interface TetrisBoardResponse {
+  markets: TetrisMarketGroup[]
+  unassigned: TetrisUnassigned[]
+}
+
+export interface TetrisAssignRequest {
+  source_site: string
+  brand_name: string
+  market_account_id: string
+  policy_id: string | null
+  position_order: number
+}
+
+export interface TetrisAssignResponse {
+  id: string
+  source_site: string
+  brand_name: string
+  market_account_id: string
+  policy_id: string | null
+  position_order: number
+}
+
+export interface TetrisMoveRequest {
+  market_account_id: string
+  policy_id: string | null
+  position_order: number
+}
+
+// ─── API 클라이언트 ───────────────────────────────────────────────────────────
+
+export const tetrisApi = {
+  getBoard: () =>
+    request<TetrisBoardResponse>(`${BASE}/board`),
+
+  assign: (body: TetrisAssignRequest) =>
+    request<TetrisAssignResponse>(`${BASE}/assign`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json' },
+    }),
+
+  remove: (id: string) =>
+    request<void>(`${BASE}/assign/${id}`, { method: 'DELETE' }),
+
+  move: (id: string, body: TetrisMoveRequest) =>
+    request<TetrisAssignResponse>(`${BASE}/assign/${id}/move`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json' },
+    }),
+
+  reorder: (id: string, body: { position_order: number }) =>
+    request<TetrisAssignResponse>(`${BASE}/assign/${id}/reorder`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json' },
+    }),
+}

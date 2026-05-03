@@ -140,7 +140,7 @@ class SSGPlugin(SourcingPlugin):
                     _ext_obj = _ext_result.get("resultItemObj", {})
                     _item_nm = _ext_obj.get("itemNm", "")
                     if _item_nm and _html:
-                        _opts = client._parse_select_options(_html)
+                        _opts = client._parse_layered_select_options(_html)
                         _sold = (
                             all(o.get("isSoldOut", False) for o in _opts)
                             if _opts
@@ -266,6 +266,7 @@ class SSGPlugin(SourcingPlugin):
             if raw_options:
                 new_options = [
                     {
+                        **{k: v for k, v in opt.items() if not str(k).startswith("_")},
                         "name": opt.get("name", ""),
                         "price": opt.get("price", 0),
                         "stock": 0

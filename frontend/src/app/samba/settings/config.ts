@@ -812,6 +812,7 @@ export const STORE_MARKETS: MarketConfig[] = [
     { name: 'apiKey', label: 'API Key', type: 'text' },
     { name: 'apiSecret', label: '솔루션코드', type: 'password' },
     { name: 'stockQuantity', label: '재고수량', type: 'number', placeholder: '99 (기본값)' },
+    { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
     { name: '_divider_alias', label: '마켓번호 별칭 (주문페이지 표시용)', type: 'divider' },
     { name: 'alias1', label: '계정 1', type: 'alias', placeholder: '037800LT' },
     { name: 'alias2', label: '계정 2', type: 'alias', placeholder: '마켓번호' },

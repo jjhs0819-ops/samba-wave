@@ -3218,7 +3218,9 @@ class JobWorker:
                                     _r_loop = asyncio.get_event_loop()
                                     _r_opts = await _r_loop.run_in_executor(
                                         None,
-                                        lambda: client._parse_select_options(_r_html),
+                                        lambda: client._parse_layered_select_options(
+                                            _r_html
+                                        ),
                                     )
                                     _det = {
                                         "itemNm": _r_nm,
@@ -4710,7 +4712,9 @@ class JobWorker:
                                     if _nm2:
                                         _opts2 = await _s_loop.run_in_executor(
                                             None,
-                                            lambda: client._parse_select_options(_html),
+                                            lambda: client._parse_layered_select_options(
+                                                _html
+                                            ),
                                         )
                                         det = {
                                             "itemNm": _nm2,

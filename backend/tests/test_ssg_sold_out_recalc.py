@@ -35,9 +35,33 @@ def test_ssg_layered_select_parser_combines_color_and_size() -> None:
     options = SSGSourcingClient._parse_layered_select_options(html, base_price=125100)
 
     assert options == [
-        {"name": "01(레드)/200", "price": 0, "stock": 99, "isSoldOut": False},
-        {"name": "01(레드)/210", "price": 0, "stock": 99, "isSoldOut": False},
-        {"name": "01(레드)/215", "price": 0, "stock": 0, "isSoldOut": True},
+        {
+            "name": "01(레드)/200",
+            "optionName1": "01(레드)",
+            "optionName2": "200",
+            "optionDepth": 2,
+            "price": 0,
+            "stock": 99,
+            "isSoldOut": False,
+        },
+        {
+            "name": "01(레드)/210",
+            "optionName1": "01(레드)",
+            "optionName2": "210",
+            "optionDepth": 2,
+            "price": 0,
+            "stock": 99,
+            "isSoldOut": False,
+        },
+        {
+            "name": "01(레드)/215",
+            "optionName1": "01(레드)",
+            "optionName2": "215",
+            "optionDepth": 2,
+            "price": 0,
+            "stock": 0,
+            "isSoldOut": True,
+        },
     ]
 
 

@@ -24,6 +24,7 @@ import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
 import { SITE_COLORS } from '@/lib/samba/constants'
 import { fmtTime } from '@/lib/samba/utils'
 import NumInput from '@/components/samba/NumInput'
+import TetrisBoard from './tetris/TetrisBoard'
 
 
 interface RangeMargin {
@@ -197,6 +198,9 @@ export default function PoliciesPage() {
 
   // 소싱처별 추가 마진 UI 토글
   const [showSourceSiteMargins, setShowSourceSiteMargins] = useState(false)
+
+  // 메인 탭 (정책관리 / 테트리스 매칭)
+  const [activeMainTab, setActiveMainTab] = useState<'정책관리' | '테트리스매칭'>('정책관리')
 
   // 마켓정책 설정
   const [marketPolicyTab, setMarketPolicyTab] = useState('쿠팡')
@@ -577,6 +581,40 @@ export default function PoliciesPage() {
         )}
         <span style={{ fontSize: '0.625rem', color: '#555', marginLeft: 'auto', cursor: 'help' }} title={'산정 근거: Sonnet4 $3/M in + $15/M out × ₩1,450\n1회: ~1,500 in + ~300 out = ~₩15'}>근거</span>
       </div>
+
+      {/* 메인 탭: 정책관리 / 테트리스 매칭 */}
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+        <button onClick={() => setActiveMainTab('정책관리')}
+          style={{
+            padding: '0.5rem 1rem',
+            borderRadius: '6px',
+            fontSize: '0.8125rem',
+            cursor: 'pointer',
+            border: activeMainTab === '정책관리' ? '1px solid #FF8C00' : '1px solid #2D2D2D',
+            background: activeMainTab === '정책관리' ? 'rgba(255,140,0,0.12)' : 'transparent',
+            color: activeMainTab === '정책관리' ? '#FF8C00' : '#888',
+            fontWeight: activeMainTab === '정책관리' ? 600 : 400,
+          }}
+        >정책관리</button>
+        <button onClick={() => setActiveMainTab('테트리스매칭')}
+          style={{
+            padding: '0.5rem 1rem',
+            borderRadius: '6px',
+            fontSize: '0.8125rem',
+            cursor: 'pointer',
+            border: activeMainTab === '테트리스매칭' ? '1px solid #FF8C00' : '1px solid #2D2D2D',
+            background: activeMainTab === '테트리스매칭' ? 'rgba(255,140,0,0.12)' : 'transparent',
+            color: activeMainTab === '테트리스매칭' ? '#FF8C00' : '#888',
+            fontWeight: activeMainTab === '테트리스매칭' ? 600 : 400,
+          }}
+        >테트리스 매칭</button>
+      </div>
+
+      {/* 테트리스 매칭 또는 정책관리 */}
+      {activeMainTab === '테트리스매칭' ? (
+        <TetrisBoard />
+      ) : (
+      <>
 
       {/* 정책 선택 */}
       <div style={{ ...card, padding: '1rem 1.25rem', marginBottom: '1.5rem' }}>
@@ -2096,6 +2134,7 @@ export default function PoliciesPage() {
             )}
           </div>
         </div>
+      </>
       )}
     </div>
   )

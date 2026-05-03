@@ -2336,16 +2336,22 @@ class SSGSourcingClient:
             if stock == 0 and not is_soldout:
                 is_soldout = True
 
-            opt_name = "/".join(
+            option_values = [
                 p
                 for p in [gs("uitemOptnNm1"), gs("uitemOptnNm2"), gs("uitemOptnNm3")]
                 if p
-            ) or gs("uitemNm")
+            ]
+            opt_name = "/".join(option_values) or gs("uitemNm")
 
             items.append(
                 {
                     "_uitemId": uitem_id,
                     "name": opt_name,
+                    **{
+                        f"optionName{idx}": value
+                        for idx, value in enumerate(option_values, start=1)
+                    },
+                    "optionDepth": len(option_values) if option_values else 1,
                     "price": gn("sellprc"),
                     "stock": stock,
                     "isSoldOut": is_soldout,
@@ -2418,6 +2424,8 @@ class SSGSourcingClient:
             options.append(
                 {
                     "name": clean_name,
+                    "optionName1": clean_name,
+                    "optionDepth": 1,
                     "price": price,
                     "stock": 0 if is_soldout else 99,
                     "isSoldOut": is_soldout,
@@ -2487,6 +2495,8 @@ class SSGSourcingClient:
                 parsed.append(
                     {
                         "name": clean_name,
+                        "optionName1": clean_name,
+                        "optionDepth": 1,
                         "price": price,
                         "stock": 0 if is_soldout else 99,
                         "isSoldOut": is_soldout,
@@ -2508,6 +2518,9 @@ class SSGSourcingClient:
                 combined = [
                     {
                         "name": f"{prefix}/{opt['name']}",
+                        "optionName1": prefix,
+                        "optionName2": opt["name"],
+                        "optionDepth": 2,
                         "price": opt["price"],
                         "stock": opt["stock"],
                         "isSoldOut": opt["isSoldOut"],
@@ -2524,6 +2537,9 @@ class SSGSourcingClient:
                         combined.append(
                             {
                                 "name": f"{l1['name']}/{l2['name']}",
+                                "optionName1": l1["name"],
+                                "optionName2": l2["name"],
+                                "optionDepth": 2,
                                 "price": l2["price"] or l1["price"],
                                 "stock": 0
                                 if (l1["isSoldOut"] or l2["isSoldOut"])
@@ -2538,6 +2554,8 @@ class SSGSourcingClient:
         return [
             {
                 "name": opt["name"],
+                "optionName1": opt["name"],
+                "optionDepth": 1,
                 "price": opt["price"],
                 "stock": opt["stock"],
                 "isSoldOut": opt["isSoldOut"],
