@@ -33,7 +33,27 @@ async function handleAiSourcingJob(job) {
 
   try {
     if (jobType === 'ranking') {
-      // 랭킹 아카이브 수집 — API 가로채기 방식
+      // 레시피 방식 우선 시도 — 레시피 없거나 실패 시 하드코딩 로직으로 fallback
+      const rankingRecipe = await globalThis.SambaRecipeCache?.getRecipe('musinsa_ranking')
+      if (rankingRecipe) {
+        try {
+          const date = job.date || '202503'
+          const categoryCode = job.categoryCode || '000'
+          console.log('[AI소싱] 랭킹 수집 (레시피 방식)')
+          const data = await globalThis.SambaRecipeExecutor.executeRecipe(
+            rankingRecipe,
+            { date, categoryCode },
+            null,
+          )
+          await postAiSourcingResult({ requestId: job.requestId, type: 'ranking', data })
+          return
+        } catch (recipeErr) {
+          console.warn('[레시피] musinsa_ranking 실행 실패, fallback:', recipeErr.message)
+          // 외부 catch로 전파하지 않고 아래 하드코딩 로직으로 이어서 실행
+        }
+      }
+
+      // 랭킹 아카이브 수집 — API 가로채기 방식 (fallback)
       const date = job.date || '202503'
       const categoryCode = job.categoryCode || '000'
       const url = `https://www.musinsa.com/ranking/archive?date=${date}&categoryCode=${categoryCode}&gf=A`
@@ -124,7 +144,27 @@ async function handleAiSourcingJob(job) {
       })
 
     } else if (jobType === 'keywords') {
-      // 인기/급상승 검색어 수집 — 검색 페이지를 active 탭으로 열어서 키워드 표시
+      // 레시피 방식 우선 시도 — 레시피 없거나 실패 시 하드코딩 로직으로 fallback
+      // 주의: 레시피 executor는 active:false 탭으로 생성하므로, 검색 팝업 트리거가 안 될 수 있음
+      //       musinsa_keywords 레시피 작성 시 active:true 탭이 필요한 점을 감안해야 함
+      const keywordsRecipe = await globalThis.SambaRecipeCache?.getRecipe('musinsa_keywords')
+      if (keywordsRecipe) {
+        try {
+          console.log('[AI소싱] 검색 키워드 수집 (레시피 방식)')
+          const data = await globalThis.SambaRecipeExecutor.executeRecipe(
+            keywordsRecipe,
+            {},
+            null,
+          )
+          await postAiSourcingResult({ requestId: job.requestId, type: 'keywords', data })
+          return
+        } catch (recipeErr) {
+          console.warn('[레시피] musinsa_keywords 실행 실패, fallback:', recipeErr.message)
+          // 외부 catch로 전파하지 않고 아래 하드코딩 로직으로 이어서 실행
+        }
+      }
+
+      // 인기/급상승 검색어 수집 — 검색 페이지를 active 탭으로 열어서 키워드 표시 (fallback)
       console.log('[AI소싱] 검색 키워드 수집 시작')
       // 현재 활성 탭 기억 (복원용)
       const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
@@ -1270,65 +1310,27 @@ async function handleSourcingJob(job) {
       // 로그인 검증 — DOM 신호 우선, 쿠키는 DOM이 'ambiguous'일 때만 보조.
       // 좀비 쿠키(만료된 fo_mlin 등) 때문에 DOM의 비로그인 판정이 뒤집혀
       // 비회원가로 처리되던 사고 차단. DOM에 "로그인/회원가입" 링크가 보이면 무조건 비로그인.
+      // LOTTEON 로그인 상태는 오토튠 시작 시 1회 + 1시간 주기로만 체크.
+      // 중간에 login_link 감지돼도 절대 차단하지 않음 (서비스워커 재시작 false-positive 가능).
+      // login_link 시 백그라운드 ensureLoggedIn 트리거 후 진행.
       try {
         if (result && typeof result === 'object') {
           const sig = result._domLoginSignal
-          if (sig === 'login_link') {
-            // bodyText "로그인/회원가입" 감지.
-            // 최근 로그인 증거 있으면 SPA 렌더링 오탐 → 바로 통과.
-            // 증거 없으면(서비스 워커 재시작으로 메모리 초기화 포함) ensureLoggedIn으로 즉시 자가복구.
-            // 차단 전 로그인 시도 — "첫 번째에만 체크" 정책을 재시작 후에도 보장.
-            if (_hasRecentLoginProof(job.site)) {
-              result._loginRequired = false
-              _siteLoginConfirmed.add(job.site)
-              console.log(`[LOTTEON] login_link — 최근 로그인 증거 있음, 오탐 처리`)
-            } else {
-              console.log(`[LOTTEON] login_link — 로그인 증거 없음(서비스워커 재시작 가능성), ensureLoggedIn 즉시 호출`)
-              try {
-                if (typeof ensureLoggedIn === 'function') {
-                  await ensureLoggedIn('lotteon')
-                  result._loginRequired = false
-                  _siteLoginConfirmed.add(job.site)
-                  console.log(`[LOTTEON] login_link — ensureLoggedIn 성공, 갱신 재개`)
-                } else {
-                  result._loginRequired = true
-                  console.log(`[LOTTEON] DOM=비로그인 확정(login_link) — 갱신 차단`)
-                }
-              } catch (e) {
-                result._loginRequired = true
-                console.log(`[LOTTEON] ensureLoggedIn 실패: ${e?.message} — 갱신 차단`)
-              }
-            }
-          } else if (sig === 'logout_link') {
-            // DOM에 로그아웃 링크 명시 — 로그인 확정 기록
-            result._loginRequired = false
+          if (sig === 'logout_link') {
             _siteLoginConfirmed.add(job.site)
-          } else {
-            // ambiguous — bodyText 감지도 불명확 (페이지 미렌더링 등 극단 케이스)
-            // _hasRecentLoginProof로 최종 판단, 없으면 ensureLoggedIn으로 복구
-            if (_hasRecentLoginProof(job.site)) {
-              result._loginRequired = false
-              console.log(`[LOTTEON] DOM=ambiguous — 최근 로그인 증거 있음, 통과`)
-            } else {
-              console.log(`[LOTTEON] DOM=ambiguous — 로그인 증거 없음, ensureLoggedIn 호출`)
-              try {
-                if (typeof ensureLoggedIn === 'function') {
-                  await ensureLoggedIn('lotteon')
-                  result._loginRequired = false
-                  _siteLoginConfirmed.add(job.site)
-                  console.log(`[LOTTEON] ambiguous — ensureLoggedIn 성공, 통과`)
-                } else {
-                  result._loginRequired = true
-                }
-              } catch (e) {
-                result._loginRequired = true
-                console.log(`[LOTTEON] ambiguous — ensureLoggedIn 실패: ${e?.message}, 차단`)
-              }
+          } else if (sig === 'login_link' && !_hasRecentLoginProof(job.site)) {
+            // 비로그인 신호 감지 — 백그라운드 로그인 시도 (fire-and-forget, 차단 없음)
+            console.log(`[LOTTEON] login_link 감지 — 백그라운드 ensureLoggedIn 트리거 (차단 없이 진행)`)
+            if (typeof ensureLoggedIn === 'function') {
+              ensureLoggedIn('lotteon').catch(e => console.log(`[LOTTEON] bg ensureLoggedIn 오류: ${e?.message}`))
             }
           }
+          // 어떤 sig 값이든 _loginRequired = false (차단 금지)
+          result._loginRequired = false
         }
       } catch (e) {
-        console.log(`[LOTTEON] 로그인 검증 실패: ${e.message} — DOM 결과 유지`)
+        console.log(`[LOTTEON] 로그인 신호 처리 오류 (차단 없이 진행): ${e.message}`)
+        if (result && typeof result === 'object') result._loginRequired = false
       }
     } else if (job.type === 'detail' && (job.site === 'ABCmart' || job.site === 'GrandStage')) {
       // ABCmart/GrandStage: 백그라운드 탭(active=false) DOM 파싱 1순위 — 페이지에
@@ -1385,11 +1387,19 @@ async function handleSourcingJob(job) {
           result._loginRequired = false
           _siteLoginConfirmed.add(job.site)
           console.log(`[${job.site}] 혜택가 없음 — logout 확인됨, 원가 갱신 없이 통과: ${job.productId}`)
-        } else if (_signal === 'login_link' && !_hasRecentLoginProof(job.site)) {
-          // 로그인 이력 없는 상태에서 login_link → 비로그인 확정, 잡 보류
-          console.log(`[${job.site}] 비로그인 확정(login_link) → 잡 보류: ${job.productId}`)
-          result = { success: false, login_required: true, message: 'ABCmart 비로그인 확정 — 로그인 후 재시도' }
-          reportLoginFailure(job.site, true)
+        } else if (_signal === 'login_link') {
+          // login_link — 아이템별 차단 금지. 백그라운드 ensureLoggedIn만 트리거
+          // GrandStage도 abcmart 키로 매핑 (AUTO_LOGIN_SITES에 grandstage 없음)
+          result._loginRequired = false
+          if (!_hasRecentLoginProof(job.site)) {
+            const _loginKey = (typeof alExternalSiteToKey === 'function') ? alExternalSiteToKey(job.site) : job.site.toLowerCase()
+            console.log(`[${job.site}] login_link 감지 — bg ensureLoggedIn(${_loginKey}) 트리거 (차단 없이 진행): ${job.productId}`)
+            if (typeof ensureLoggedIn === 'function' && _loginKey) {
+              ensureLoggedIn(_loginKey).catch(e => console.log(`[${job.site}] bg ensureLoggedIn 오류: ${e?.message}`))
+            }
+          } else {
+            console.log(`[${job.site}] login_link 감지 but 로그인 이력 있음(오탐) — 차단 스킵: ${job.productId}`)
+          }
         } else {
           // ambiguous 또는 login_link+로그인이력있음 → 헤더 미렌더/오탐 → 통과
           result._loginRequired = false
@@ -1424,7 +1434,7 @@ async function handleSourcingJob(job) {
     // 비로그인 페이지에 마케팅 가격(혜택가/판매가)이 노출되어 잘못된 가격 수집되는 것을 차단
     // 비로그인 감지 시: 결과 전송 차단 + 자동로그인 즉시 트리거
     // SSG: 카드혜택가는 비로그인에서도 동일하게 표시 → 로그인 검증 불필요, 제외
-    if (job.type === 'detail' && tabId && job.site !== 'SSG' && (result == null || result.success !== false)) {
+    if (job.type === 'detail' && tabId && job.site !== 'SSG' && job.site !== 'LOTTEON' && (result == null || result.success !== false)) {
       let loginNeeded = result?._loginRequired
       if (loginNeeded === undefined) {
         if (_hasRecentLoginProof(job.site)) {
