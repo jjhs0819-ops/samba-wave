@@ -29,6 +29,41 @@ extension_router = APIRouter(
 )
 
 
+def _normalize_sourcing_site_name(site_name: str | None) -> str:
+    raw = (site_name or "").strip()
+    if not raw:
+        return ""
+
+    compact = raw.replace(" ", "").replace("_", "").replace("-", "").upper()
+    alias_map = {
+        "LOTTEON": "LOTTEON",
+        "롯데ON": "LOTTEON",
+        "롯데온": "LOTTEON",
+        "GSSHOP": "GSShop",
+        "GS샵": "GSShop",
+        "ABCMART": "ABCmart",
+        "ABC마트": "ABCmart",
+        "SSG": "SSG",
+        "MUSINSA": "MUSINSA",
+        "무신사": "MUSINSA",
+        "KREAM": "KREAM",
+        "크림": "KREAM",
+        "NIKE": "Nike",
+        "나이키": "Nike",
+        "ADIDAS": "Adidas",
+        "아디다스": "Adidas",
+        "FASHIONPLUS": "FashionPlus",
+        "패션플러스": "FashionPlus",
+        "OLIVEYOUNG": "OliveYoung",
+        "올리브영": "OliveYoung",
+        "DANAWA": "DANAWA",
+        "다나와": "DANAWA",
+        "NAVERSTORE": "NAVERSTORE",
+        "네이버스토어": "NAVERSTORE",
+    }
+    return alias_map.get(compact, raw)
+
+
 def _read_service(session: AsyncSession):
     from backend.domain.samba.sourcing_account.repository import (
         SambaSourcingAccountRepository,
@@ -620,10 +655,29 @@ async def get_login_credential(
     from sqlalchemy import select as sa_select
     from backend.domain.samba.sourcing_account.model import SambaSourcingAccount
 
-    stmt = sa_select(SambaSourcingAccount).where(
-        SambaSourcingAccount.site_name == site_name,
-        SambaSourcingAccount.is_login_default.is_(True),
-        SambaSourcingAccount.is_active.is_(True),
+    normalized_site_name = _normalize_sourcing_site_name(site_name)
+    site_candidates = [
+        candidate
+        for candidate in dict.fromkeys(
+            [
+                site_name,
+                normalized_site_name,
+                site_name.upper(),
+                site_name.lower(),
+            ]
+        )
+        if candidate
+    ]
+
+    stmt = (
+        sa_select(SambaSourcingAccount)
+        .where(SambaSourcingAccount.site_name.in_(site_candidates))
+        .where(SambaSourcingAccount.is_active.is_(True))
+        .order_by(
+            SambaSourcingAccount.is_login_default.desc(),
+            SambaSourcingAccount.updated_at.desc(),
+            SambaSourcingAccount.created_at.desc(),
+        )
     )
     result = await session.execute(stmt)
     account = result.scalars().first()
@@ -631,7 +685,7 @@ async def get_login_credential(
     if not account:
         raise HTTPException(
             404,
-            f"{site_name} 자동로그인 기본 계정 없음 — 설정 페이지에서 라디오 지정 필요",
+            f"{normalized_site_name or site_name} 자동로그인 기본 계정 없음 — 설정 페이지에서 기본 계정을 지정해 주세요.",
         )
     return {
         "id": account.id,
