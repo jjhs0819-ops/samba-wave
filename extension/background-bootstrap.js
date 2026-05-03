@@ -190,11 +190,13 @@ async function ensureBackgroundSessionTabs() {
 // ensureBackgroundSessionTabs() 호출 제거 — "오토튠 시작" 클릭 시점에만 로그인 트리거 (background-sourcing.js의 _checkAutotuneStartTransition 참조).
 chrome.runtime.onInstalled.addListener(() => {
   setupCookieSyncAlarm()
+  setupRecipeSyncAlarm()
   startCollectPolling()
   syncChromeProfile()
 })
 chrome.runtime.onStartup.addListener(() => {
   setupCookieSyncAlarm()
+  setupRecipeSyncAlarm()
   startCollectPolling()
   syncChromeProfile()
 })
