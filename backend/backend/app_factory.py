@@ -54,6 +54,10 @@ from backend.api.v1.routers.samba.sourcing_account import (
 from backend.api.v1.routers.samba.sourcing_account import (
     router as samba_sourcing_account_router,
 )
+from backend.api.v1.routers.samba.sourcing_recipe import (
+    extension_router as samba_sourcing_recipe_extension_router,
+    router as samba_sourcing_recipe_router,
+)
 from backend.api.v1.routers.samba.store_care import router as samba_store_care_router
 from backend.api.v1.routers.samba.tenant import router as samba_tenant_router
 from backend.api.v1.routers.samba.user import router as samba_user_router
@@ -192,6 +196,10 @@ def create_application() -> FastAPI:
     app.include_router(samba_sourcing_account_extension_router, prefix="/api/v1/samba")
     app.include_router(
         samba_sourcing_account_router, prefix="/api/v1/samba", dependencies=samba_auth
+    )
+    app.include_router(samba_sourcing_recipe_extension_router, prefix="/api/v1/samba")
+    app.include_router(
+        samba_sourcing_recipe_router, prefix="/api/v1/samba", dependencies=samba_auth
     )
     app.include_router(
         samba_naverstore_sourcing_router,
