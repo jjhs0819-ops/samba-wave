@@ -9,6 +9,16 @@ function setupCookieSyncAlarm() {
   })
 }
 
+// 레시피 동기화 alarm (5분 주기)
+function setupRecipeSyncAlarm() {
+  chrome.alarms.get('recipeSync', (alarm) => {
+    if (!alarm) {
+      chrome.alarms.create('recipeSync', { periodInMinutes: 5 })
+      console.log('[레시피] chrome.alarms 설정: 5분 주기 동기화')
+    }
+  })
+}
+
 // alarm 이벤트 핸들러
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'collectPoll') {
@@ -18,6 +28,12 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     if (capturedCookie) sendCookiesToProxy(capturedCookie).catch(() => {})
     if (kreamCookie) sendKreamCookiesToProxy(kreamCookie).catch(() => {})
     if (lotteonCookie) sendLotteonCookiesToProxy(lotteonCookie).catch(() => {})
+  }
+  if (alarm.name === 'recipeSync') {
+    chrome.storage.local.get('proxyUrl').then(data => {
+      const proxyUrl = data.proxyUrl || PROXY_URL
+      globalThis.SambaRecipeCache.syncRecipes(proxyUrl).catch(() => {})
+    })
   }
   if (alarm.name === 'balanceCheckPoll') {
     pollBalanceCheckRequest()
@@ -183,6 +199,12 @@ chrome.runtime.onStartup.addListener(() => {
   syncChromeProfile()
 })
 setupCookieSyncAlarm()
+setupRecipeSyncAlarm()
+// 즉시 1회 동기화
+chrome.storage.local.get('proxyUrl').then(data => {
+  const proxyUrl = data.proxyUrl || PROXY_URL
+  globalThis.SambaRecipeCache.syncRecipes(proxyUrl).catch(() => {})
+})
 startCollectPolling()
 pollChromeProfileSyncRequest()
 syncChromeProfile()

@@ -69,7 +69,7 @@ chrome.storage.onChanged.addListener((changes) => {
 })
 
 // Service Worker 시작 시 저장된 쿠키 + 설정 복원
-chrome.storage.local.get(['capturedCookie', 'capturedAt', 'kreamCookie', 'lotteonCookie', 'proxyUrl']).then(async data => {
+chrome.storage.local.get(['capturedCookie', 'capturedAt', 'kreamCookie', 'lotteonCookie', 'proxyUrl', '_lastAutoLoginSuccessAt']).then(async data => {
   if (data.proxyUrl) {
     PROXY_URL = data.proxyUrl
     console.log(`[복원] 백엔드 URL: ${PROXY_URL}`)
@@ -97,6 +97,14 @@ chrome.storage.local.get(['capturedCookie', 'capturedAt', 'kreamCookie', 'lotteo
     lotteonCookie = data.lotteonCookie
     console.log(`[복원] 롯데ON 쿠키 복원: ${lotteonCookie.split(';').length}개`)
     try { await sendLotteonCookiesToProxy(lotteonCookie) } catch {}
+  }
+  // 자동로그인 성공 시각 복원 — 서비스 워커 재시작 후에도 1시간 이내 로그인 이력 유지
+  if (data._lastAutoLoginSuccessAt && typeof data._lastAutoLoginSuccessAt === 'object') {
+    try {
+      globalThis._lastAutoLoginSuccessAt = data._lastAutoLoginSuccessAt
+      const entries = Object.entries(data._lastAutoLoginSuccessAt).map(([k, v]) => `${k}:${Math.round((Date.now()-v)/60000)}분전`).join(', ')
+      console.log(`[복원] 자동로그인 성공시각 복원: ${entries}`)
+    } catch {}
   }
 })
 
@@ -304,6 +312,8 @@ async function getMusinsaCookies() {
 
 importScripts('background-kream.js')
 importScripts('background-autologin.js')
+importScripts('recipe-cache.js')
+importScripts('recipe-executor.js')
 importScripts('background-sourcing.js')
 importScripts('background-bootstrap.js')
 importScripts('background-messages.js')
