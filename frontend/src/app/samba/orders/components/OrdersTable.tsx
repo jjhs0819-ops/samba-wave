@@ -192,7 +192,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                           const res = await orderApi.sellerCancel(o.id, 'SOLD_OUT')
                           showAlert(res.message || '처리 완료', 'success')
                           loadOrders()
-                        } catch {
+                        } catch (err) {
                           showAlert(err instanceof Error ? err.message : '처리 실패', 'error')
                         }
                       }}
