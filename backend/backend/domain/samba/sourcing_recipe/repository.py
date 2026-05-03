@@ -42,6 +42,7 @@ class SourcingRecipeRepository:
         if recipe:
             recipe.version = version
             recipe.steps = steps
+            recipe.is_active = True
         else:
             recipe = SourcingRecipe(site_name=site_name, version=version, steps=steps)
         self.session.add(recipe)
