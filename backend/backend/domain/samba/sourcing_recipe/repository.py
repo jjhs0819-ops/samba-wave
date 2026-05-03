@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 
 from sqlmodel import select
@@ -43,7 +42,6 @@ class SourcingRecipeRepository:
         if recipe:
             recipe.version = version
             recipe.steps = steps
-            recipe.updated_at = datetime.now(timezone.utc)
         else:
             recipe = SourcingRecipe(site_name=site_name, version=version, steps=steps)
         self.session.add(recipe)
