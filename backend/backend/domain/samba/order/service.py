@@ -11,6 +11,36 @@ class SambaOrderService:
     def __init__(self, repo: SambaOrderRepository):
         self.repo = repo
 
+    @staticmethod
+    def _compute_financials(
+        *,
+        sale_price: float,
+        total_payment_amount: float | None = None,
+        cost: float,
+        shipping_fee: float,
+        fee_rate: float,
+        revenue: float | None = None,
+    ) -> Dict[str, Any]:
+        resolved_revenue = (
+            float(revenue)
+            if revenue is not None
+            else float(sale_price) * (1 - float(fee_rate) / 100)
+        )
+        profit = resolved_revenue - float(cost) - float(shipping_fee)
+        payment_amount = (
+            float(total_payment_amount)
+            if total_payment_amount is not None
+            else float(sale_price)
+        )
+        profit_rate = (
+            f"{(profit / payment_amount * 100):.2f}" if payment_amount > 0 else "0.00"
+        )
+        return {
+            "revenue": resolved_revenue,
+            "profit": profit,
+            "profit_rate": profit_rate,
+        }
+
     async def list_orders(
         self, skip: int = 0, limit: int = 50, status: Optional[str] = None
     ) -> List[SambaOrder]:
@@ -25,22 +55,76 @@ class SambaOrderService:
 
     async def create_order(self, data: Dict[str, Any]) -> SambaOrder:
         sale_price = float(data.get("sale_price", 0))
+        total_payment_amount = (
+            float(data["total_payment_amount"])
+            if data.get("total_payment_amount") is not None
+            else None
+        )
         cost = float(data.get("cost", 0))
+        shipping_fee = float(data.get("shipping_fee", 0))
         fee_rate = float(data.get("fee_rate", 0))
-
-        revenue = data.get("revenue") or (sale_price * (1 - fee_rate / 100))
-        profit = revenue - cost
-        profit_rate = f"{(profit / revenue * 100):.2f}" if revenue > 0 else "0.00"
-
-        data["revenue"] = revenue
-        data["profit"] = profit
-        data["profit_rate"] = profit_rate
+        revenue = float(data["revenue"]) if data.get("revenue") is not None else None
+        data.update(
+            self._compute_financials(
+                sale_price=sale_price,
+                total_payment_amount=total_payment_amount,
+                cost=cost,
+                shipping_fee=shipping_fee,
+                fee_rate=fee_rate,
+                revenue=revenue,
+            )
+        )
 
         return await self.repo.create_async(**data)
 
     async def update_order(
         self, order_id: str, data: Dict[str, Any]
     ) -> Optional[SambaOrder]:
+        order = await self.repo.get_async(order_id)
+        if not order:
+            return None
+
+        financial_keys = {
+            "sale_price",
+            "total_payment_amount",
+            "cost",
+            "shipping_fee",
+            "fee_rate",
+            "revenue",
+        }
+        if financial_keys.intersection(data):
+            sale_price = float(data.get("sale_price", order.sale_price) or 0)
+            total_payment_amount = (
+                float(data["total_payment_amount"])
+                if data.get("total_payment_amount") is not None
+                else (
+                    float(order.total_payment_amount)
+                    if order.total_payment_amount is not None
+                    else None
+                )
+            )
+            cost = float(data.get("cost", order.cost) or 0)
+            shipping_fee = float(data.get("shipping_fee", order.shipping_fee) or 0)
+            fee_rate = float(data.get("fee_rate", order.fee_rate) or 0)
+            revenue = (
+                float(data["revenue"])
+                if data.get("revenue") is not None
+                else (
+                    None
+                    if ("sale_price" in data or "fee_rate" in data)
+                    else float(order.revenue or 0)
+                )
+            )
+            data.update(
+                self._compute_financials(
+                    sale_price=sale_price,
+                    total_payment_amount=total_payment_amount,
+                    cost=cost,
+                    shipping_fee=shipping_fee,
+                    fee_rate=fee_rate,
+                    revenue=revenue,
+                )
+            )
         return await self.repo.update_async(order_id, **data)
 
     async def update_order_status(

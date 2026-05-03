@@ -24,7 +24,8 @@ import { useOrderLinks } from './hooks/useOrderLinks'
 import { useOrderActions } from './hooks/useOrderActions'
 import { useUrlModal } from './hooks/useUrlModal'
 import { renderCopyableText, splitCustomerAddress } from './utils/copyHelpers'
-import { formatSourceSiteLabel, normalizePlayautoAliasCode } from './utils/siteAlias'
+import { formatSourceSiteLabel } from './utils/siteAlias'
+import { parsePlayautoAliasEntry } from '@/lib/samba/playautoAlias'
 import OrdersFilterBar from './components/OrdersFilterBar'
 import OrdersTopBar from './components/OrdersTopBar'
 import OrdersPagination from './components/OrdersPagination'
@@ -64,7 +65,7 @@ export default function OrdersPage() {
   const [marketStatus, setMarketStatus] = useState('')
   const [siteFilter, setSiteFilter] = useState('')
   const [accountFilter, setAccountFilter] = useState('')
-  const [inputFilter, setInputFilter] = useState('')
+  const [inputFilter, setInputFilter] = useState('registered')
   const [statusFilter, setStatusFilter] = useState('cancel_return_excluded')
   // CS 페이지 등 외부에서 ?search=...&search_type=... 로 진입 시 자동 검색
   const initialSearch = searchParams.get('search') || ''
@@ -302,12 +303,8 @@ export default function OrdersPage() {
       const map: Record<string, string> = {}
       for (const k of ['alias1', 'alias2', 'alias3', 'alias4', 'alias5']) {
         const v = d[k] || ''
-        if (v.includes('-')) {
-          const [code, ...rest] = v.split('-')
-          const normalizedCode = normalizePlayautoAliasCode(code)
-          const nick = rest.join('-').trim()
-          if (normalizedCode && nick) map[normalizedCode] = nick
-        }
+        const { code, alias } = parsePlayautoAliasEntry(v)
+        if (code && alias) map[code] = alias
       }
       setSiteAliasMap(map)
     }).catch(() => {})

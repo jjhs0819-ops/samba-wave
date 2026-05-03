@@ -198,8 +198,8 @@ async def _delete_smartstore(
             extras.get("clientSecret", "") or getattr(account, "api_secret", "") or ""
         )
 
-    # fallback: Settings 테이블
-    if not client_id or not client_secret:
+    # 계정이 명시된 삭제에서는 다른 계정의 전역 설정으로 폴백하지 않는다.
+    if (not client_id or not client_secret) and account is None:
         creds = await _get_setting(session, "store_smartstore")
         if creds and isinstance(creds, dict):
             client_id = client_id or creds.get("clientId", "")
@@ -410,7 +410,7 @@ async def _delete_coupang(
             extras.get("vendorId", "") or getattr(account, "seller_id", "") or ""
         )
 
-    if not access_key or not secret_key:
+    if (not access_key or not secret_key) and account is None:
         creds = await _get_setting(session, "store_coupang")
         if creds and isinstance(creds, dict):
             access_key = access_key or creds.get("accessKey", "")
@@ -432,9 +432,20 @@ async def _delete_lottehome(
     """롯데홈쇼핑 상품 삭제 (영구중단)."""
     from backend.domain.samba.proxy.lottehome import LotteHomeClient
 
-    creds = await _get_setting(session, "lottehome_credentials")
-    if not creds or not isinstance(creds, dict):
-        creds = await _get_setting(session, "store_lottehome")
+    creds: dict[str, Any] | None = None
+    if account:
+        extra = getattr(account, "additional_fields", None) or {}
+        if isinstance(extra, dict) and (
+            extra.get("userId")
+            or extra.get("password")
+            or extra.get("agncNo")
+            or extra.get("env")
+        ):
+            creds = extra
+    else:
+        creds = await _get_setting(session, "lottehome_credentials")
+        if not creds or not isinstance(creds, dict):
+            creds = await _get_setting(session, "store_lottehome")
     if not creds or not isinstance(creds, dict):
         return {"success": False, "message": "롯데홈쇼핑 설정 없음"}
 
@@ -463,18 +474,21 @@ async def _delete_gsshop(
 
     from backend.domain.samba.proxy.gsshop import GsShopClient
 
-    creds = await _get_setting(session, "gsshop_credentials")
-    if not creds or not isinstance(creds, dict):
-        creds = await _get_setting(session, "store_gsshop")
-    if (not creds or not isinstance(creds, dict)) and account:
+    creds: dict[str, Any] | None = None
+    if account:
         extra = getattr(account, "additional_fields", None) or {}
-        if (
+        if isinstance(extra, dict) and (
             extra.get("supCd")
             or extra.get("aesKey")
             or extra.get("apiKeyProd")
             or extra.get("apiKeyDev")
+            or extra.get("env")
         ):
             creds = extra
+    else:
+        creds = await _get_setting(session, "gsshop_credentials")
+        if not creds or not isinstance(creds, dict):
+            creds = await _get_setting(session, "store_gsshop")
     if not creds or not isinstance(creds, dict):
         return {"success": False, "message": "GS샵 설정 없음"}
 
@@ -511,8 +525,12 @@ async def _delete_11st(
 
     api_key = ""
     if account:
-        api_key = getattr(account, "api_key", "") or ""
-    if not api_key:
+        extra = getattr(account, "additional_fields", None) or {}
+        api_key = extra.get("apiKey", "") or getattr(account, "api_key", "") or ""
+    # 계정이 명시된 삭제에서는 다른 계정의 전역 설정으로 폴백하지 않는다.
+    # 11번가 계정 API Key는 additional_fields.apiKey에 저장되는 경로가 기본이므로,
+    # 여기서 전역 store_11st를 섞으면 다계정 환경에서 오삭제가 날 수 있다.
+    if not api_key and account is None:
         creds = await _get_setting(session, "store_11st")
         if creds and isinstance(creds, dict):
             api_key = creds.get("apiKey", "")
@@ -546,15 +564,28 @@ async def _delete_ssg(
     """SSG(신세계몰) 상품 삭제."""
     from backend.domain.samba.proxy.ssg import SSGClient
 
-    creds = await _get_setting(session, "store_ssg")
+    creds: dict[str, Any] | None = None
+    if account:
+        extra = getattr(account, "additional_fields", None) or {}
+        if isinstance(extra, dict) and (
+            extra.get("apiKey") or extra.get("storeId") or extra.get("mallId")
+        ):
+            creds = extra
+    else:
+        creds = await _get_setting(session, "store_ssg")
     if not creds or not isinstance(creds, dict):
         return {"success": False, "message": "SSG 설정 없음"}
 
-    api_key = creds.get("apiKey", "")
+    api_key = creds.get("apiKey", "") or getattr(account, "api_key", "") or ""
     if not api_key:
         return {"success": False, "message": "SSG 인증키 없음"}
 
-    store_id = creds.get("storeId", SSGClient.DEFAULT_SITE_NO)
+    store_id = (
+        creds.get("storeId", "")
+        or creds.get("mallId", "")
+        or getattr(account, "seller_id", "")
+        or SSGClient.DEFAULT_SITE_NO
+    )
     client = SSGClient(api_key, site_no=store_id)
     return await _safe_delete("SSG", "ssg", product, client.delete_product)
 

@@ -12,6 +12,10 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
 from backend.domain.samba.tenant.middleware import get_optional_tenant_id
 from backend.domain.samba.order.model import SambaOrder
+from backend.domain.samba.order.playauto_alias import (
+    normalize_playauto_alias_code,
+    parse_playauto_alias_entry,
+)
 from backend.domain.samba.order.repository import SambaOrderRepository
 from backend.domain.samba.order.service import SambaOrderService
 from backend.dtos.samba.order import (
@@ -219,7 +223,7 @@ async def _build_order_filters(
                 ),
             )
         )
-    elif input_filter in {"direct", "kkadaegi", "gift"}:
+    elif input_filter in {"direct", "kkadaegi", "gift", "staff_a", "staff_b"}:
         filters.append(SambaOrder.action_tag == input_filter)
 
     normalized_search = search_text.strip()
@@ -3518,12 +3522,9 @@ async def sync_orders_from_markets(
                     if pa_setting and isinstance(pa_setting.value, dict):
                         for ak in ("alias1", "alias2", "alias3", "alias4", "alias5"):
                             av = pa_setting.value.get(ak, "")
-                            if av and "-" in av:
-                                code, nick = av.split("-", 1)
-                                code = _normalize_playauto_alias_code(code)
-                                nick = str(nick).strip()
-                                if code and nick:
-                                    alias_map[code] = nick
+                            code, nick = parse_playauto_alias_entry(av)
+                            if code and nick:
+                                alias_map[code] = nick
                 except Exception:
                     pass
                 pa_client = PlayAutoClient(api_key)
@@ -4193,7 +4194,9 @@ async def sync_orders_from_markets(
                         ]
                     if not order_data.get("product_image"):
                         order_data["product_image"] = _matched["product_image"]
-                    if not order_data.get("source_site"):
+                    if not order_data.get(
+                        "source_site"
+                    ) and _can_override_source_site_from_sourcing(order_data):
                         order_data["source_site"] = _matched["source_site"]
                     if not order_data.get("source_url") and _matched.get(
                         "original_link"
@@ -4288,7 +4291,8 @@ async def sync_orders_from_markets(
                         if _cp_row:
                             if not order_data.get("collected_product_id"):
                                 order_data["collected_product_id"] = _cp_row[0]
-                            order_data["source_site"] = _cp_row[1]
+                            if _can_override_source_site_from_sourcing(order_data):
+                                order_data["source_site"] = _cp_row[1]
                             order_data["source_url"] = _sourcing_urls.get(
                                 _cp_row[1], ""
                             ).format(_sid)
@@ -4301,16 +4305,19 @@ async def sync_orders_from_markets(
                         else:
                             # 2차: DB에 없어도 상품명 패턴으로 소싱처 추론
                             if len(_sid) >= 9:  # 패션플러스 상품번호는 9자리 이상
-                                order_data["source_site"] = "FashionPlus"
+                                if _can_override_source_site_from_sourcing(order_data):
+                                    order_data["source_site"] = "FashionPlus"
                                 order_data["source_url"] = (
                                     f"https://www.fashionplus.co.kr/goods/detail/{_sid}"
                                 )
                             elif len(_sid) >= 7:  # 무신사 상품번호는 7자리
-                                order_data["source_site"] = "MUSINSA"
+                                if _can_override_source_site_from_sourcing(order_data):
+                                    order_data["source_site"] = "MUSINSA"
                                 order_data["source_url"] = (
                                     f"https://www.musinsa.com/products/{_sid}"
                                 )
                 # 중복 체크: 롯데ON은 od_no+od_seq+proc_seq 기반, 기타는 order_number 기반
+                _normalize_synced_order_status(order_data)
                 if order_data.get("source") == "lotteon" and order_data.get("od_no"):
                     _lo_row = await session.execute(
                         _sa_text(
@@ -5272,13 +5279,16 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
 
 
 def _normalize_playauto_alias_code(value: Any) -> str:
-    raw = str(value or "").strip()
-    if not raw:
-        return ""
-    upper = raw.upper()
-    if re.fullmatch(r"\d+\.0+", upper):
-        return re.sub(r"\.0+$", "", upper)
-    return upper
+    return normalize_playauto_alias_code(value)
+
+
+def _normalize_synced_order_status(order_data: dict[str, Any]) -> None:
+    """Market sync must only drive shipping_status; status stays user-managed."""
+    order_data["status"] = "pending"
+
+
+def _can_override_source_site_from_sourcing(order_data: dict[str, Any]) -> bool:
+    return str(order_data.get("source") or "").strip().lower() != "playauto"
 
 
 def _normalize_carrier_name(value: Any) -> str:

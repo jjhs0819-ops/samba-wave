@@ -10,6 +10,25 @@
 // 익스텐션이 collect-queue 폴링 시 그 값을 X-Allowed-Sites 헤더로 전송하여
 // 그 PC가 체크한 사이트의 작업만 받게 된다 (PC별 자동 분담).
 (function () {
+  function getPreferredProxyUrl() {
+    const { protocol, hostname } = window.location
+    if (protocol === 'http:' && hostname === 'localhost') {
+      return 'http://localhost:28080'
+    }
+    return ''
+  }
+
+  async function syncProxyUrlForPage() {
+    const preferred = getPreferredProxyUrl()
+    if (!preferred) return
+    try {
+      const data = await chrome.storage.local.get(['proxyUrl'])
+      if (data.proxyUrl !== preferred) {
+        await chrome.storage.local.set({ proxyUrl: preferred })
+      }
+    } catch {}
+  }
+
   function sendDeviceId(deviceId) {
     if (!deviceId) return
     try {
@@ -33,6 +52,7 @@
   }
 
   // content_script는 chrome.storage.local 접근 가능
+  syncProxyUrlForPage()
   chrome.storage.local.get(['deviceId', 'allowedSites'], (data) => {
     if (data && data.deviceId) {
       sendDeviceId(data.deviceId)

@@ -7,6 +7,7 @@ import {
 } from '@/lib/samba/api/commerce'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { NumInputStr as NumInput } from '@/components/samba/NumInput'
+import { formatPlayautoAliasEntry, parsePlayautoAliasEntry } from '@/lib/samba/playautoAlias'
 import { STORE_MARKETS } from '../config'
 import type { StoreSettingsState, StoreSettingsActions } from '../hooks/useStoreSettings'
 import { ConnectedAccountsList } from './ConnectedAccountsList'
@@ -272,11 +273,11 @@ export function StoreSettingsPanel(props: Props) {
                     style={{ ...inputStyle, flex: 1 }}
                     value={(() => {
                       const v = storeData[market.key]?.[field.name] || ''
-                      return v.includes('-') ? v.split('-')[0] : v
+                      return parsePlayautoAliasEntry(v).code
                     })()}
                     onChange={(e) => {
-                      const nick = (storeData[market.key]?.[field.name] || '').split('-').slice(1).join('-')
-                      updateStoreField(market.key, field.name, nick ? `${e.target.value}-${nick}` : e.target.value)
+                      const nick = parsePlayautoAliasEntry(storeData[market.key]?.[field.name] || '').alias
+                      updateStoreField(market.key, field.name, formatPlayautoAliasEntry(e.target.value, nick))
                     }}
                     placeholder={field.placeholder || '마켓번호'}
                   />
@@ -286,11 +287,11 @@ export function StoreSettingsPanel(props: Props) {
                     style={{ ...inputStyle, width: '120px', flexShrink: 0 }}
                     value={(() => {
                       const v = storeData[market.key]?.[field.name] || ''
-                      return v.includes('-') ? v.split('-').slice(1).join('-') : ''
+                      return parsePlayautoAliasEntry(v).alias
                     })()}
                     onChange={(e) => {
-                      const code = (storeData[market.key]?.[field.name] || '').split('-')[0]
-                      updateStoreField(market.key, field.name, e.target.value ? `${code}-${e.target.value}` : code)
+                      const code = parsePlayautoAliasEntry(storeData[market.key]?.[field.name] || '').code
+                      updateStoreField(market.key, field.name, formatPlayautoAliasEntry(code, e.target.value))
                     }}
                     placeholder="사업자"
                   />

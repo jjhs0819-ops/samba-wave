@@ -32,11 +32,13 @@ for _, _modname, _ in pkgutil.walk_packages(
 config = context.config
 
 # DB URL을 .env에서 설정
-db_user = os.getenv("WRITE_DB_USER") or os.getenv("write_db_user", "postgres")
-db_password = os.getenv("WRITE_DB_PASSWORD") or os.getenv("write_db_password", "")
+db_user = os.getenv("WRITE_DB_USER") or os.getenv("write_db_user", "test_user")
+db_password = os.getenv("WRITE_DB_PASSWORD") or os.getenv(
+    "write_db_password", "test_password"
+)
 db_host = os.getenv("WRITE_DB_HOST") or os.getenv("write_db_host", "localhost")
-db_port = os.getenv("WRITE_DB_PORT") or os.getenv("write_db_port", "5432")
-db_name = os.getenv("WRITE_DB_NAME") or os.getenv("write_db_name", "samba_wave")
+db_port = os.getenv("WRITE_DB_PORT") or os.getenv("write_db_port", "5433")
+db_name = os.getenv("WRITE_DB_NAME") or os.getenv("write_db_name", "test_little_boy")
 
 # ── 운영 DB 직접 마이그레이션 차단 ──
 # Cloud Run(ENVIRONMENT=production)에서는 허용, 로컬 개발 환경에서만 차단
@@ -114,6 +116,7 @@ async def run_async_migrations() -> None:
     )
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
+        await connection.commit()
     await connectable.dispose()
 
 

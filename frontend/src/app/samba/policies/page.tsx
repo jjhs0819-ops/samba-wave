@@ -182,6 +182,7 @@ function extractMdGroups(data: unknown): LotteMdGroup[] {
 
 
 export default function PoliciesPage() {
+  const TETRIS_MATCHING_ENABLED_KEY = 'tetris_matching_enabled'
   useEffect(() => { document.title = 'SAMBA-정책관리' }, [])
   const searchParams = useSearchParams()
   const [policies, setPolicies] = useState<SambaPolicy[]>([])
@@ -200,6 +201,8 @@ export default function PoliciesPage() {
 
   // 메인 탭 (정책관리 vs 테트리스 매칭)
   const [mainTab, setMainTab] = useState<'정책관리' | '테트리스 매칭'>('정책관리')
+  const [tetrisMatchingEnabled, setTetrisMatchingEnabled] = useState(false)
+  const [tetrisMatchingSaving, setTetrisMatchingSaving] = useState(false)
 
   // 마켓정책 설정
   const [marketPolicyTab, setMarketPolicyTab] = useState('쿠팡')
@@ -296,6 +299,18 @@ export default function PoliciesPage() {
       if (list.length > 0) setPreviewProduct(list[0])
     }).catch(() => {})
   }, [loadPolicies, loadStoreAccounts])
+
+  useEffect(() => {
+    forbiddenApi.getSetting(TETRIS_MATCHING_ENABLED_KEY)
+      .then(data => {
+        if (typeof data === 'boolean') {
+          setTetrisMatchingEnabled(data)
+        } else if (data && typeof data === 'object' && 'enabled' in data) {
+          setTetrisMatchingEnabled(Boolean((data as { enabled?: unknown }).enabled))
+        }
+      })
+      .catch(() => {})
+  }, [TETRIS_MATCHING_ENABLED_KEY])
 
 
   // URL highlight 파라미터로 정책 자동 선택
@@ -551,6 +566,20 @@ export default function PoliciesPage() {
   }
 
   // 현재 마켓 탭에 해당하는 스토어 계정 목록 가져오기
+  const handleToggleTetrisMatching = async () => {
+    const nextValue = !tetrisMatchingEnabled
+    setTetrisMatchingEnabled(nextValue)
+    setTetrisMatchingSaving(true)
+    try {
+      await forbiddenApi.saveSetting(TETRIS_MATCHING_ENABLED_KEY, nextValue)
+    } catch (error) {
+      setTetrisMatchingEnabled(!nextValue)
+      showAlert('테트리스 매칭 사용 설정 저장에 실패했습니다: ' + String(error))
+    } finally {
+      setTetrisMatchingSaving(false)
+    }
+  }
+
   const mp = getCurrentMarketPolicy()
 
   return (
@@ -2140,7 +2169,47 @@ export default function PoliciesPage() {
 
       {/* 테트리스 매칭 탭 */}
       {mainTab === '테트리스 매칭' && (
-        <TetrisBoard />
+        <div>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '1rem',
+            padding: '0.875rem 1rem',
+            marginBottom: '0.875rem',
+            background: tetrisMatchingEnabled ? 'rgba(34,197,94,0.08)' : 'rgba(255,140,0,0.08)',
+            border: tetrisMatchingEnabled ? '1px solid rgba(34,197,94,0.25)' : '1px solid rgba(255,140,0,0.25)',
+            borderRadius: '10px',
+          }}>
+            <div>
+              <div style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.25rem' }}>
+                테트리스 매칭 실제 상품등록 반영
+              </div>
+              <div style={{ fontSize: '0.75rem', color: '#888' }}>
+                OFF면 배치 현황 확인용으로만 사용하고, ON이면 상품등록 시 테트리스 매칭을 실제로 적용합니다.
+              </div>
+            </div>
+            <button
+              onClick={handleToggleTetrisMatching}
+              disabled={tetrisMatchingSaving}
+              style={{
+                minWidth: '92px',
+                padding: '0.5rem 0.875rem',
+                borderRadius: '999px',
+                border: tetrisMatchingEnabled ? '1px solid rgba(34,197,94,0.35)' : '1px solid rgba(255,140,0,0.35)',
+                background: tetrisMatchingEnabled ? '#22C55E' : '#2A2A2A',
+                color: tetrisMatchingEnabled ? '#06130A' : '#FFB84D',
+                fontSize: '0.8125rem',
+                fontWeight: 700,
+                cursor: tetrisMatchingSaving ? 'wait' : 'pointer',
+                opacity: tetrisMatchingSaving ? 0.7 : 1,
+              }}
+            >
+              {tetrisMatchingSaving ? '저장 중...' : tetrisMatchingEnabled ? 'ON' : 'OFF'}
+            </button>
+          </div>
+          <TetrisBoard />
+        </div>
       )}
     </div>
   )

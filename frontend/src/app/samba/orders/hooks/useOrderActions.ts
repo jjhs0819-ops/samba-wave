@@ -105,6 +105,12 @@ export function useOrderActions(args: Args) {
     }
   }
 
+  const resolveEditingNumber = (raw: string | undefined, fallback: number) => {
+    if (raw === undefined) return fallback
+    const parsed = evalExpr(raw)
+    return parsed === null ? fallback : parsed
+  }
+
   const handleCostSave = async (id: string) => {
     const val = editingCosts[id]
     if (val === undefined) return
@@ -137,14 +143,15 @@ export function useOrderActions(args: Args) {
   }
 
   const calcProfit = (o: SambaOrder) => {
-    const costVal = editingCosts[o.id] !== undefined ? Number(editingCosts[o.id]) || 0 : o.cost
-    const shipFeeVal = editingShipFees[o.id] !== undefined ? Number(editingShipFees[o.id]) || 0 : o.shipping_fee
+    const costVal = resolveEditingNumber(editingCosts[o.id], o.cost)
+    const shipFeeVal = resolveEditingNumber(editingShipFees[o.id], o.shipping_fee)
     return o.revenue - costVal - shipFeeVal
   }
 
   const calcProfitRate = (o: SambaOrder) => {
     const profit = calcProfit(o)
-    return o.sale_price > 0 ? ((profit / o.sale_price) * 100).toFixed(1) : '0'
+    const paymentAmount = o.total_payment_amount ?? o.sale_price
+    return paymentAmount > 0 ? ((profit / paymentAmount) * 100).toFixed(1) : '0'
   }
 
   const calcFeeRate = (o: SambaOrder) => {

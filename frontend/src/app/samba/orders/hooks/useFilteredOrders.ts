@@ -89,6 +89,8 @@ export function useFilteredOrders(args: Args) {
         case 'direct': if (action !== 'direct') return false; break
         case 'kkadaegi': if (action !== 'kkadaegi') return false; break
         case 'gift': if (action !== 'gift') return false; break
+        case 'staff_a': if (action !== 'staff_a') return false; break
+        case 'staff_b': if (action !== 'staff_b') return false; break
       }
     }
     if (searchText) {

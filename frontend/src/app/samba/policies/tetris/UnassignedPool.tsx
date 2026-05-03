@@ -2,26 +2,24 @@
 import { fmtNum } from '@/lib/samba/styles'
 import type { TetrisUnassigned, TetrisBrandBlock } from '@/lib/samba/api/tetris'
 
-// ─── 타입 ─────────────────────────────────────────────────────────────────────
+const MIN_BLOCK_PX = 28
 
 interface Props {
   unassigned: TetrisUnassigned[]
-  blockHeight: number
+  blockHeight?: number  // unused — kept for backward-compat
+  pixelsPerUnit: number
   onDragStart: (block: TetrisBrandBlock) => void
 }
 
-// ─── 미배치 풀 블럭 (단일 아이템) ────────────────────────────────────────────
-
 function UnassignedItem({
   item,
-  blockHeight,
+  itemHeight,
   onDragStart,
 }: {
   item: TetrisUnassigned
-  blockHeight: number
+  itemHeight: number
   onDragStart: (block: TetrisBrandBlock) => void
 }) {
-  // TetrisUnassigned → TetrisBrandBlock 형태로 변환 (id/policy 없음)
   const block: TetrisBrandBlock = {
     id: null,
     source_site: item.source_site,
@@ -40,46 +38,61 @@ function UnassignedItem({
       draggable
       onDragStart={() => onDragStart(block)}
       style={{
-        height: blockHeight,
-        background: 'rgba(40,40,40,0.7)',
-        border: '1px solid #3a3a3a',
+        height: itemHeight,
+        minHeight: itemHeight,
+        background: 'rgba(28,28,28,0.9)',
+        border: '1px solid #3a3a3a50',
         borderLeft: '3px solid #6B7280',
         borderRadius: 4,
-        padding: '4px 6px',
+        marginBottom: 2,
         cursor: 'grab',
+        position: 'relative',
+        overflow: 'hidden',
+        userSelect: 'none',
+        boxSizing: 'border-box',
+        flexShrink: 0,
+      }}
+    >
+      <div style={{
+        position: 'relative',
+        height: '100%',
+        padding: '4px 6px',
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'space-between',
-        userSelect: 'none',
-        overflow: 'hidden',
-      }}
-    >
-      {/* 소싱처 + 브랜드명 */}
-      <div style={{
-        fontSize: 11,
-        overflow: 'hidden',
-        whiteSpace: 'nowrap',
-        textOverflow: 'ellipsis',
       }}>
-        <span style={{ color: '#666', marginRight: 4 }}>
-          {item.source_site.toLowerCase()}
-        </span>
-        <span style={{ color: '#ccc', fontWeight: 600 }}>
+        <div style={{
+          fontSize: 11,
+          color: '#ddd',
+          fontWeight: 600,
+          overflow: 'hidden',
+          whiteSpace: 'nowrap',
+          textOverflow: 'ellipsis',
+        }}>
           {item.brand_name}
-        </span>
+        </div>
+        {itemHeight > 36 && (
+          <div style={{ fontSize: 10, color: '#666' }}>
+            {fmtNum(item.collected_count)}
+          </div>
+        )}
       </div>
-      {/* 수집 수 */}
-      <div style={{ fontSize: 10, color: '#666' }}>
-        수집 {fmtNum(item.collected_count)}
+      <div style={{
+        position: 'absolute',
+        bottom: 2,
+        right: 4,
+        fontSize: 9,
+        color: '#444',
+        whiteSpace: 'nowrap',
+        pointerEvents: 'none',
+      }}>
+        {item.source_site}
       </div>
     </div>
   )
 }
 
-// ─── UnassignedPool 컴포넌트 ──────────────────────────────────────────────────
-
-export default function UnassignedPool({ unassigned, blockHeight, onDragStart }: Props) {
-  // 소싱처별 그룹화
+export default function UnassignedPool({ unassigned, pixelsPerUnit, onDragStart }: Props) {
   const grouped = unassigned.reduce<Record<string, TetrisUnassigned[]>>((acc, item) => {
     const key = item.source_site
     if (!acc[key]) acc[key] = []
@@ -88,40 +101,50 @@ export default function UnassignedPool({ unassigned, blockHeight, onDragStart }:
   }, {})
 
   return (
-    <div style={{
-      background: 'rgba(20,20,20,0.5)',
-      border: '1px solid #2a2a2a',
-      borderRadius: 6,
-      padding: '10px 12px',
-    }}>
+    <div
+      style={{
+        background: 'rgba(20,20,20,0.5)',
+        border: '1px solid #2a2a2a',
+        borderRadius: 6,
+        padding: '10px 12px',
+      }}
+    >
       {Object.entries(grouped).map(([site, items]) => (
         <div key={site} style={{ marginBottom: 16 }}>
-          {/* 소싱처 레이블 */}
-          <div style={{
-            fontSize: 11,
-            color: '#888',
-            marginBottom: 6,
-            textTransform: 'uppercase',
-            letterSpacing: '0.05em',
-          }}>
+          <div
+            style={{
+              fontSize: 11,
+              color: '#888',
+              marginBottom: 6,
+              textTransform: 'uppercase',
+              letterSpacing: '0.05em',
+            }}
+          >
             {site}
             <span style={{ color: '#555', marginLeft: 6 }}>({fmtNum(items.length)})</span>
           </div>
-          {/* 블럭 그리드 */}
-          <div style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: 4,
-          }}>
-            {items.map((item, idx) => (
-              <div key={`${item.source_site}-${item.brand_name}-${idx}`} style={{ width: 180 }}>
-                <UnassignedItem
-                  item={item}
-                  blockHeight={blockHeight}
-                  onDragStart={onDragStart}
-                />
-              </div>
-            ))}
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 8,
+              alignItems: 'flex-end',
+            }}
+          >
+            {items.map((item, idx) => {
+              const itemHeight = item.collected_count > 0
+                ? Math.max(MIN_BLOCK_PX, Math.round(item.collected_count * pixelsPerUnit))
+                : MIN_BLOCK_PX
+              return (
+                <div key={`${item.source_site}-${item.brand_name}-${idx}`} style={{ width: 160 }}>
+                  <UnassignedItem
+                    item={item}
+                    itemHeight={itemHeight}
+                    onDragStart={onDragStart}
+                  />
+                </div>
+              )
+            })}
           </div>
         </div>
       ))}

@@ -1,10 +1,7 @@
 'use client'
-import { fmtNum } from '@/lib/samba/styles'
 import AccountBlock from './AccountBlock'
 import type { TetrisMarketGroup, TetrisBrandBlock } from '@/lib/samba/api/tetris'
 import type { DragState } from './useTetris'
-
-// ─── 타입 ─────────────────────────────────────────────────────────────────────
 
 interface Policy {
   id: string
@@ -14,78 +11,64 @@ interface Policy {
 
 interface Props {
   market: TetrisMarketGroup
-  blockHeight: number
+  pixelsPerUnit: number
+  globalMax: number
   policies: Policy[]
   dragState: DragState
   onDragStart: (block: TetrisBrandBlock, accountId: string) => void
   onDrop: (toAccountId: string) => Promise<void>
+  onReorder: (draggedId: string, newIndex: number, allAssignments: TetrisBrandBlock[]) => Promise<void>
   onRemove: (assignmentId: string, brandName: string) => void
   onPolicyChange: (assignmentId: string, policyId: string | null, accountId: string) => Promise<void>
 }
 
-// ─── MarketColumn 컴포넌트 ────────────────────────────────────────────────────
+const MIN_ACCOUNT_HEIGHT = 120
 
 export default function MarketColumn({
   market,
-  blockHeight,
+  pixelsPerUnit,
+  globalMax,
   policies,
   dragState,
   onDragStart,
   onDrop,
+  onReorder,
   onRemove,
   onPolicyChange,
 }: Props) {
-  // 마켓 전체 합산 수치
-  const totalRegistered = market.accounts.reduce((s, a) => s + a.total_registered, 0)
-  const totalCollected = market.accounts.reduce((s, a) => s + a.total_collected, 0)
-
   return (
-    <div style={{
-      minWidth: 200,
-      width: 220,
-      flexShrink: 0,
-    }}>
-      {/* 마켓 컬럼 헤더 */}
-      <div style={{
-        padding: '8px 10px',
-        background: 'rgba(35,35,35,0.8)',
-        border: '1px solid #333',
-        borderRadius: '6px 6px 0 0',
-        borderBottom: 'none',
-      }}>
-        <div style={{ fontSize: 13, color: '#eee', fontWeight: 700, marginBottom: 2 }}>
-          {market.market_name}
-        </div>
-        <div style={{ fontSize: 10, color: '#666' }}>
-          등록 {fmtNum(totalRegistered)} · 수집 {fmtNum(totalCollected)}
-        </div>
-      </div>
-
+    <div style={{ minWidth: 220, width: 240, flexShrink: 0 }}>
       {/* 계정 목록 */}
       <div style={{
         background: 'rgba(20,20,20,0.5)',
         border: '1px solid #333',
-        borderTop: 'none',
-        borderRadius: '0 0 6px 6px',
+        borderRadius: 6,
         padding: '8px 6px',
       }}>
-        {market.accounts.map(account => (
-          <AccountBlock
-            key={account.account_id}
-            account={account}
-            blockHeight={blockHeight}
-            policies={policies}
-            onDragStart={onDragStart}
-            onDrop={onDrop}
-            onRemove={onRemove}
-            onPolicyChange={onPolicyChange}
-            isDragging={dragState !== null}
-          />
-        ))}
+        {market.accounts.map(account => {
+          const capacityHeight = account.max_count > 0
+            ? Math.max(MIN_ACCOUNT_HEIGHT, Math.round(account.max_count * pixelsPerUnit))
+            : Math.max(MIN_ACCOUNT_HEIGHT, Math.round(globalMax * pixelsPerUnit * 0.15))
+
+          return (
+            <AccountBlock
+              key={account.account_id}
+              account={account}
+              capacityHeight={capacityHeight}
+              pixelsPerUnit={pixelsPerUnit}
+              policies={policies}
+              dragState={dragState}
+              onDragStart={onDragStart}
+              onDrop={onDrop}
+              onReorder={onReorder}
+              onRemove={onRemove}
+              onPolicyChange={onPolicyChange}
+              isDragging={dragState !== null}
+            />
+          )
+        })}
         {market.accounts.length === 0 && (
-          <div style={{ color: '#444', fontSize: 11, padding: '12px 0', textAlign: 'center' }}>
-            계정 없음
-          </div>
+          <div style={{ color: '#444', fontSize: 11, padding: '12px 0', textAlign: 'center' }}>계정 없음</div>
         )}
       </div>
     </div>

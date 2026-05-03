@@ -1,10 +1,4 @@
-export function normalizePlayautoAliasCode(value: string | null | undefined): string {
-  const trimmed = String(value || '').trim()
-  if (!trimmed) return ''
-  const upper = trimmed.toUpperCase()
-  if (/^\d+\.0+$/.test(upper)) return upper.replace(/\.0+$/, '')
-  return upper
-}
+import { normalizePlayautoAliasCode } from '@/lib/samba/playautoAlias'
 
 export function formatSourceSiteLabel(sourceSite: string | null | undefined, siteAliasMap: Record<string, string>): string {
   const site = String(sourceSite || '').trim()

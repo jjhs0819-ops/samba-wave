@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { fetchWithAuth, API_BASE } from '@/lib/samba/api/shared'
 
 // 프록시 서버 / 무신사 인증 상태를 관리하는 커스텀 훅
@@ -14,7 +14,7 @@ export default function useProxyAuth() {
 
   // 프록시 서버 상태 확인 — 502/네트워크 오류 시 1회 재시도(1.5초 지연)
   // Caddy fail_duration 윈도우(5s) 내 단발성 502를 흡수하기 위함
-  const checkProxyStatus = (retried = false) => {
+  const checkProxyStatus = useCallback((retried = false) => {
     fetchWithAuth(`${API_BASE}/api/v1/samba/collector/proxy-status`)
       .then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
@@ -37,10 +37,10 @@ export default function useProxyAuth() {
         setProxyStatus('error')
         setProxyText('백엔드 서버 연결 실패')
       })
-  }
+  }, [])
 
   // 무신사 인증 상태 확인 — 동일하게 1회 재시도
-  const checkMusinsaAuth = (retried = false) => {
+  const checkMusinsaAuth = useCallback((retried = false) => {
     fetchWithAuth(`${API_BASE}/api/v1/samba/collector/musinsa-auth-status`)
       .then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
@@ -63,13 +63,32 @@ export default function useProxyAuth() {
         setMusinsaAuth('error')
         setMusinsaAuthText('백엔드 서버 연결 실패')
       })
-  }
+  }, [])
 
   // 마운트 시 1회 체크 (기존 page.tsx 동작과 동일)
   useEffect(() => {
-    checkProxyStatus()
-    checkMusinsaAuth()
-  }, [])
+    const refreshAll = () => {
+      checkProxyStatus()
+      checkMusinsaAuth()
+    }
+
+    refreshAll()
+
+    const intervalId = window.setInterval(refreshAll, 10000)
+    const handleFocus = () => refreshAll()
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshAll()
+    }
+
+    window.addEventListener('focus', handleFocus)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      window.clearInterval(intervalId)
+      window.removeEventListener('focus', handleFocus)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [checkMusinsaAuth, checkProxyStatus])
 
   return {
     proxyStatus,

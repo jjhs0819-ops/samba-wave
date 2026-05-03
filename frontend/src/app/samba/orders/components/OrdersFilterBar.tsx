@@ -146,12 +146,12 @@ export default function OrdersFilterBar(props: Props) {
               <option value="">일괄 작업 선택</option>
               <option value="pending">상태: 대기</option>
               <option value="wait_ship">상태: 배송대기</option>
-              <option value="arrived">상태: 도착</option>
+              <option value="arrived">상태: 입고</option>
               <option value="shipped">상태: 발송완료</option>
               <option value="delivered">상태: 배송완료</option>
               <option value="cancelled">상태: 취소완료</option>
               <option value="confirm">주문확인</option>
-              <option value="approve_cancel">취소승인</option>
+              <option value="approve_cancel">취소확인</option>
               <option value="delete">삭제</option>
             </select>
             <button onClick={handleBulkAction} disabled={bulkUpdating || !bulkStatus || selectedIdsSize === 0} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: selectedIdsSize > 0 && bulkStatus ? '#C0392B' : 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: selectedIdsSize > 0 && bulkStatus ? '#fff' : '#666', borderRadius: '4px', cursor: bulkUpdating || !bulkStatus || selectedIdsSize === 0 ? 'not-allowed' : 'pointer' }}>{bulkUpdating ? '처리 중...' : `일괄 실행 (${fmtNum(selectedIdsSize)})`}</button>
@@ -161,7 +161,8 @@ export default function OrdersFilterBar(props: Props) {
 
       <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
         <span style={{ fontSize: '0.72rem', color: '#aaa' }}>
-          <span style={{ color: '#FF8C00', fontWeight: 600 }}>{fmtNum(filteredOrdersCount)}</span>건 / ₩<span style={{ color: '#FF8C00', fontWeight: 600 }}>{fmtNum(filteredOrdersTotalSale)}</span>
+          <span style={{ color: '#FF8C00', fontWeight: 600 }}>{fmtNum(filteredOrdersCount)}</span>건 /
+          <span style={{ color: '#FF8C00', fontWeight: 600 }}> {fmtNum(filteredOrdersTotalSale)}</span>
         </span>
         <select style={{ ...inputStyle, width: '90px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
           <option value="product">상품명</option>
@@ -213,12 +214,14 @@ export default function OrdersFilterBar(props: Props) {
             <option value="no_invoice">송장미입력</option>
             <option value="registered">등록상품</option>
             <option value="unregistered">미등록상품</option>
-            <option value="direct">직배송</option>
+            <option value="direct">직배</option>
             <option value="kkadaegi">까대기</option>
             <option value="gift">선물</option>
+            <option value="staff_a">직원A</option>
+            <option value="staff_b">직원B</option>
           </select>
           <select style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-            <option value="cancel_return_excluded">취소반품배송제외</option>
+            <option value="cancel_return_excluded">취소반품배송 제외</option>
             <option value="">전체 주문상태</option>
             {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>

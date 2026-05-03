@@ -224,9 +224,9 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
       const businessName = data.businessName || ''
       if (sellerId || businessName) {
         // API 인증정보를 additional_fields에 저장 (계정별 독립 인증)
-        // businessName, storeId, maxCount은 additional_fields에서 제외
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { businessName: _bn, storeId: _si, maxCount: _mc, ...apiFields } = data
+        // businessName, storeId는 account 필드로 분리 저장 — maxCount는 additional_fields에 포함
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { businessName: _bn, storeId: _si, ...apiFields } = data
         const accountData: Partial<SambaMarketAccount> = {
           market_type: marketKey,
           market_name: label,

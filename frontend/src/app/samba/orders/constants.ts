@@ -2,7 +2,7 @@ export const STATUS_MAP: Record<string, { label: string; bg: string; text: strin
   pending: { label: '주문접수', bg: 'rgba(255,211,61,0.15)', text: '#FFD93D' },
   preparing: { label: '상품준비중', bg: 'rgba(135,206,250,0.15)', text: '#87CEFA' },
   wait_ship: { label: '배송대기중', bg: 'rgba(100,149,237,0.15)', text: '#6495ED' },
-  arrived: { label: '사무실도착', bg: 'rgba(72,209,204,0.15)', text: '#48D1CC' },
+  arrived: { label: '상품도착', bg: 'rgba(72,209,204,0.15)', text: '#48D1CC' },
   ship_failed: { label: '송장전송실패', bg: 'rgba(255,50,50,0.2)', text: '#FF3232' },
   shipping: { label: '국내배송중', bg: 'rgba(76,154,255,0.15)', text: '#4C9AFF' },
   delivered: { label: '배송완료', bg: 'rgba(81,207,102,0.15)', text: '#51CF66' },
@@ -18,7 +18,7 @@ export const STATUS_MAP: Record<string, { label: string; bg: string; text: strin
   undeliverable: { label: '발송불가', bg: 'rgba(217,119,6,0.15)', text: '#F59E0B' },
 }
 
-export const SHIPPING_COMPANIES = ['CJ대한통운', '한진택배', '롯데택배', '로젠택배', '우체국택배', '경동택배', '대신택배', '일양로지스', '편의점택배', '딜리박스', 'DHL', '직접배송', '기타']
+export const SHIPPING_COMPANIES = ['CJ대한통운', '우진택배', '롯데택배', '로젠택배', '우체국택배', '경동택배', '한진택배', '일양로지스', '천일택배', '시리박스', 'DHL', '직접배송', '기타']
 
 export const ACTION_BUTTONS = [
   { key: 'no_price', label: '가격X', activeColor: '#DC2626' },
@@ -26,4 +26,6 @@ export const ACTION_BUTTONS = [
   { key: 'direct', label: '직배', activeColor: '#2563EB' },
   { key: 'kkadaegi', label: '까대기', activeColor: '#D97706' },
   { key: 'gift', label: '선물', activeColor: '#059669' },
+  { key: 'staff_a', label: '직원A', activeColor: '#7C3AED' },
+  { key: 'staff_b', label: '직원B', activeColor: '#DB2777' },
 ] as const

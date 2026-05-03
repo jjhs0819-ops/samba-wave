@@ -20,17 +20,25 @@ export type DragState = {
 export function useTetris() {
   const [board, setBoard] = useState<TetrisBoardResponse | null>(null)
   const [loading, setLoading] = useState(false)
-  const [blockHeight, setBlockHeight] = useState(60)  // px
+  // pixelsPerUnit: 등록 수량 1개 당 픽셀 수 (기본 0.01 = 100개당 1px, 70,000max → 700px)
+  const [pixelsPerUnit, setPixelsPerUnit] = useState(0.01)
   const [dragState, setDragState] = useState<DragState>(null)
 
   // 보드 데이터 새로고침
   const refresh = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await tetrisApi.getBoard()
-      setBoard(data)
-    } catch {
-      // 네트워크 오류는 무시 (빈 화면 유지)
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Request timeout')), 15000)
+      )
+      const data = await Promise.race([
+        tetrisApi.getBoard(),
+        timeoutPromise,
+      ])
+      setBoard(data as TetrisBoardResponse)
+    } catch (error) {
+      console.error('[테트리스] getBoard 실패:', error)
+      setBoard(null)
     } finally {
       setLoading(false)
     }
@@ -90,6 +98,33 @@ export function useTetris() {
     setDragState(null)
   }, [dragState, refresh])
 
+  // 계정 내 순서 변경 (move API 불필요 — reorder 전용)
+  const handleReorder = useCallback(async (
+    draggedId: string,
+    newIndex: number,
+    allAssignments: TetrisBrandBlock[],
+  ) => {
+    const mutable = allAssignments.filter(b => !b.is_legacy && b.id !== null)
+    const fromIndex = mutable.findIndex(b => b.id === draggedId)
+    if (fromIndex === -1) return
+
+    const [moved] = mutable.splice(fromIndex, 1)
+    mutable.splice(newIndex, 0, moved)
+
+    const updates = mutable
+      .map((block, idx) => ({ id: block.id!, oldPos: block.position_order, newPos: idx }))
+      .filter(u => u.oldPos !== u.newPos)
+
+    try {
+      for (const { id, newPos } of updates) {
+        await tetrisApi.reorder(id, { position_order: newPos })
+      }
+      await refresh()
+    } catch (e) {
+      showAlert('순서 변경 중 오류가 발생했습니다: ' + String(e))
+    }
+  }, [refresh])
+
   // 블럭 제거
   const handleRemove = useCallback(async (assignmentId: string, brandName: string) => {
     const confirmed = await showConfirm(
@@ -126,12 +161,13 @@ export function useTetris() {
   return {
     board,
     loading,
-    blockHeight,
-    setBlockHeight,
+    pixelsPerUnit,
+    setPixelsPerUnit,
     dragState,
     setDragState,
     handleDrop,
     handleRemove,
+    handleReorder,
     handlePolicyChange,
     refresh,
   }

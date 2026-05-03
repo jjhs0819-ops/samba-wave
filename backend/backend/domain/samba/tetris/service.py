@@ -99,22 +99,27 @@ class SambaTetrisService:
         market_account_id: str,
     ) -> list[str]:
         """해당 브랜드 상품 중 해당 계정에 등록된 상품 ID 목록 반환."""
-        rows = await self._session.execute(
-            text("""
-                SELECT id FROM samba_collected_product
-                WHERE tenant_id = :tid
-                  AND source_site = :site
-                  AND brand = :brand
-                  AND registered_accounts::jsonb ? :account_id
-            """),
-            {
-                "tid": tenant_id,
-                "site": source_site,
-                "brand": brand_name,
-                "account_id": market_account_id,
-            },
-        )
-        return [row[0] for row in rows]
+        try:
+            rows = await self._session.execute(
+                text("""
+                    SELECT id FROM samba_collected_product
+                    WHERE tenant_id = :tid
+                      AND source_site = :site
+                      AND brand = :brand
+                      AND registered_accounts IS NOT NULL
+                      AND (registered_accounts::text LIKE :account_id OR registered_accounts::text ILIKE :account_id)
+                """),
+                {
+                    "tid": tenant_id,
+                    "site": source_site,
+                    "brand": brand_name,
+                    "account_id": f"%{market_account_id}%",
+                },
+            )
+            return [row[0] for row in rows]
+        except Exception as e:
+            logger.error(f"[테트리스] _get_product_ids_for_remove 쿼리 실패: {e}")
+            return []
 
     # ──────────────────────────────────────────────
     # 보드 조회
@@ -174,7 +179,7 @@ class SambaTetrisService:
             (row[0], row[1]): row[2] for row in collected_rows
         }
 
-        # 5. Raw SQL 집계 — 소싱처·브랜드·계정별 등록 수
+        # 5. Raw SQL 집계 — JSONB 함수로 account_id 전개 후 DB에서 집계
         registered_rows = await self._session.execute(
             text("""
                 SELECT source_site, brand,
@@ -183,8 +188,7 @@ class SambaTetrisService:
                 FROM samba_collected_product
                 WHERE tenant_id = :tid
                   AND registered_accounts IS NOT NULL
-                  AND registered_accounts::text != 'null'
-                  AND registered_accounts::text != '[]'
+                  AND registered_accounts::text NOT IN ('null', '[]', '')
                   AND brand IS NOT NULL
                   AND source_site IS NOT NULL
                 GROUP BY source_site, brand, account_id
