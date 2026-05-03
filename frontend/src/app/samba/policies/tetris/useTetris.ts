@@ -17,7 +17,7 @@ export type DragState = {
 
 // ─── useTetris 훅 ─────────────────────────────────────────────────────────────
 
-export function useTetris(tetrisEnabled: boolean = false) {
+export function useTetris() {
   const [board, setBoard] = useState<TetrisBoardResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [blockHeight, setBlockHeight] = useState(60)  // px
@@ -44,12 +44,6 @@ export function useTetris(tetrisEnabled: boolean = false) {
   const handleDrop = useCallback(async (
     toAccountId: string,
   ) => {
-    if (!tetrisEnabled) {
-      showAlert('테트리스 매칭이 비활성화되어 있습니다')
-      setDragState(null)
-      return
-    }
-
     if (!dragState) return
 
     const block = dragState.block
@@ -94,15 +88,10 @@ export function useTetris(tetrisEnabled: boolean = false) {
     }
 
     setDragState(null)
-  }, [dragState, refresh, tetrisEnabled])
+  }, [dragState, refresh])
 
   // 블럭 제거
   const handleRemove = useCallback(async (assignmentId: string, brandName: string) => {
-    if (!tetrisEnabled) {
-      showAlert('테트리스 매칭이 비활성화되어 있습니다')
-      return
-    }
-
     const confirmed = await showConfirm(
       `"${brandName}" 블럭을 제거합니다. 마켓 등록 상품이 삭제됩니다.`
     )
@@ -114,7 +103,7 @@ export function useTetris(tetrisEnabled: boolean = false) {
     } catch (e) {
       showAlert('제거 중 오류가 발생했습니다: ' + String(e))
     }
-  }, [refresh, tetrisEnabled])
+  }, [refresh])
 
   // 정책 변경 (move API 재활용 — 동일 계정, policy_id만 교체)
   const handlePolicyChange = useCallback(async (
@@ -122,11 +111,6 @@ export function useTetris(tetrisEnabled: boolean = false) {
     policyId: string | null,
     accountId: string,
   ) => {
-    if (!tetrisEnabled) {
-      showAlert('테트리스 매칭이 비활성화되어 있습니다')
-      return
-    }
-
     try {
       await tetrisApi.move(assignmentId, {
         market_account_id: accountId,
@@ -137,7 +121,7 @@ export function useTetris(tetrisEnabled: boolean = false) {
     } catch (e) {
       showAlert('정책 변경 중 오류가 발생했습니다: ' + String(e))
     }
-  }, [refresh, tetrisEnabled])
+  }, [refresh])
 
   return {
     board,
