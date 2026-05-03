@@ -24,7 +24,7 @@ import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
 import { SITE_COLORS } from '@/lib/samba/constants'
 import { fmtTime } from '@/lib/samba/utils'
 import NumInput from '@/components/samba/NumInput'
-
+import TetrisBoard from './tetris/TetrisBoard'
 
 interface RangeMargin {
   min: number
@@ -197,6 +197,9 @@ export default function PoliciesPage() {
 
   // 소싱처별 추가 마진 UI 토글
   const [showSourceSiteMargins, setShowSourceSiteMargins] = useState(false)
+
+  // 메인 탭 (정책관리 vs 테트리스 매칭)
+  const [mainTab, setMainTab] = useState<'정책관리' | '테트리스 매칭'>('정책관리')
 
   // 마켓정책 설정
   const [marketPolicyTab, setMarketPolicyTab] = useState('쿠팡')
@@ -552,14 +555,50 @@ export default function PoliciesPage() {
 
   return (
     <div style={{ color: '#E5E5E5' }}>
-      {/* 헤더 + 다음 단계 연결 */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginBottom: '0.75rem' }}>
-        <a href="/samba/categories" style={{ fontSize: '0.75rem', color: '#4C9AFF', textDecoration: 'none' }}>카테고리매핑 →</a>
-        <a href="/samba/shipments" style={{ fontSize: '0.75rem', color: '#888', textDecoration: 'none' }}>상품전송 →</a>
+      {/* 헤더 + 탭 */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button
+            onClick={() => setMainTab('정책관리')}
+            style={{
+              padding: '0.375rem 0.75rem',
+              fontSize: '0.75rem',
+              borderRadius: '6px',
+              border: mainTab === '정책관리' ? '1px solid #FF8C00' : '1px solid #2D2D2D',
+              background: mainTab === '정책관리' ? 'rgba(255,140,0,0.12)' : 'transparent',
+              color: mainTab === '정책관리' ? '#FF8C00' : '#888',
+              cursor: 'pointer',
+              fontWeight: 600,
+            }}
+          >
+            정책관리
+          </button>
+          <button
+            onClick={() => setMainTab('테트리스 매칭')}
+            style={{
+              padding: '0.375rem 0.75rem',
+              fontSize: '0.75rem',
+              borderRadius: '6px',
+              border: mainTab === '테트리스 매칭' ? '1px solid #FF8C00' : '1px solid #2D2D2D',
+              background: mainTab === '테트리스 매칭' ? 'rgba(255,140,0,0.12)' : 'transparent',
+              color: mainTab === '테트리스 매칭' ? '#FF8C00' : '#888',
+              cursor: 'pointer',
+              fontWeight: 600,
+            }}
+          >
+            테트리스 매칭
+          </button>
+        </div>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <a href="/samba/categories" style={{ fontSize: '0.75rem', color: '#4C9AFF', textDecoration: 'none' }}>카테고리매핑 →</a>
+          <a href="/samba/shipments" style={{ fontSize: '0.75rem', color: '#888', textDecoration: 'none' }}>상품전송 →</a>
+        </div>
       </div>
 
-      {/* AI 비용 (SMS 잔여량 스타일) */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.2)', borderRadius: '8px', marginBottom: '0.75rem' }}>
+      {/* 정책관리 탭 내용 */}
+      <div style={{ display: mainTab === '정책관리' ? 'block' : 'none' }}>
+        {/* AI 비용 (SMS 잔여량 스타일) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.2)', borderRadius: '8px', marginBottom: '0.75rem' }}>
         <span style={{ fontSize: '0.8125rem', color: '#A78BFA', fontWeight: 600 }}>AI 비용</span>
         <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>
           예상 <span style={{ color: '#FFB84D', fontWeight: 700 }}>₩15</span>
@@ -2096,6 +2135,12 @@ export default function PoliciesPage() {
             )}
           </div>
         </div>
+      )}
+      </div>
+
+      {/* 테트리스 매칭 탭 */}
+      {mainTab === '테트리스 매칭' && (
+        <TetrisBoard />
       )}
     </div>
   )
