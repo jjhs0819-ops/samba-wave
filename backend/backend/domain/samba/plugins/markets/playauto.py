@@ -19,6 +19,9 @@ from backend.domain.samba.proxy.playauto import PlayAutoClient, PlayAutoApiError
 from backend.utils import add_lazy_loading
 from backend.utils.logger import logger
 
+# boto3 S3 클라이언트는 인증정보가 동일하면 재사용 — TCP 커넥션 풀 유지로 R2 업로드 오버헤드 감소
+_r2_client_cache: dict[str, tuple] = {}
+
 
 class PlayAutoPlugin(MarketPlugin):
     """플레이오토 EMP 마켓 플러그인."""
@@ -197,6 +200,18 @@ class PlayAutoPlugin(MarketPlugin):
         s3_client, bucket_name, public_url = r2
         proxy = self._get_proxy_for_download()
 
+        # 상품 1건 처리 중 동일 URL 재업로드 방지 — head_object 호출 횟수 감소
+        _url_cache: dict[str, str] = {}
+
+        async def _cached_ensure(dl_client, url: str) -> str:
+            if url in _url_cache:
+                return _url_cache[url]
+            r2_url = await self._ensure_accessible(
+                dl_client, s3_client, bucket_name, public_url, url
+            )
+            _url_cache[url] = r2_url
+            return r2_url
+
         # 대표/추가 이미지 R2 업로드
         images = product.get("images") or []
         if images:
@@ -213,9 +228,7 @@ class PlayAutoPlugin(MarketPlugin):
                     if not url:
                         return None
                     try:
-                        return await self._ensure_accessible(
-                            dl_client, s3_client, bucket_name, public_url, url
-                        )
+                        return await _cached_ensure(dl_client, url)
                     except Exception as e:
                         logger.warning(f"[플레이오토] 이미지 처리 실패: {e}")
                         return url
@@ -257,10 +270,15 @@ class PlayAutoPlugin(MarketPlugin):
                 if rebuilt_parts:
                     detail_html = "\n".join(rebuilt_parts)
 
-        # 상세설명 HTML 내 이미지도 동일 처리 + lazy loading 삽입
+        # 상세설명 HTML 내 이미지도 동일 처리 + lazy loading 삽입 (메인 이미지 캐시 공유)
         if detail_html:
             replaced = await self._replace_detail_images(
-                detail_html, s3_client, bucket_name, public_url, proxy
+                detail_html,
+                s3_client,
+                bucket_name,
+                public_url,
+                proxy,
+                url_cache=_url_cache,
             )
             product["detail_html"] = add_lazy_loading(replaced)
 
@@ -386,6 +404,7 @@ class PlayAutoPlugin(MarketPlugin):
         bucket_name: str,
         public_url: str,
         proxy: str = "",
+        url_cache: dict | None = None,
     ) -> str:
         """상세설명 HTML 내 외부 이미지 URL을 R2 URL로 교체.
 
@@ -443,9 +462,13 @@ class PlayAutoPlugin(MarketPlugin):
                 if public_url and public_url in url:
                     return url, url
                 try:
+                    if url_cache is not None and url in url_cache:
+                        return url, url_cache[url]
                     r2_url = await self._ensure_accessible(
                         dl_client, s3_client, bucket_name, public_url, url
                     )
+                    if url_cache is not None:
+                        url_cache[url] = r2_url
                     return url, r2_url
                 except Exception as e:
                     logger.warning(f"[플레이오토] 상세 이미지 R2 업로드 실패: {e}")
@@ -460,7 +483,7 @@ class PlayAutoPlugin(MarketPlugin):
         return html
 
     async def _get_r2_client(self, session):
-        """R2 클라이언트 가져오기."""
+        """R2 클라이언트 가져오기 (인증정보 동일 시 캐시 재사용)."""
         from backend.domain.samba.forbidden.model import SambaSettings
         from sqlmodel import select
 
@@ -480,6 +503,12 @@ class PlayAutoPlugin(MarketPlugin):
         if not access_key or not secret_key or not bucket_name:
             return None
 
+        cache_key = hashlib.md5(
+            f"{account_id}:{access_key}:{secret_key}:{bucket_name}".encode()
+        ).hexdigest()
+        if cache_key in _r2_client_cache:
+            return _r2_client_cache[cache_key]
+
         try:
             import boto3
 
@@ -490,7 +519,8 @@ class PlayAutoPlugin(MarketPlugin):
                 aws_secret_access_key=secret_key,
                 region_name="auto",
             )
-            return client, bucket_name, r2_public_url
+            _r2_client_cache[cache_key] = (client, bucket_name, r2_public_url)
+            return _r2_client_cache[cache_key]
         except Exception:
             return None
 

@@ -882,66 +882,14 @@ class JobWorker:
         skip_count = prev_result.get("skipped", 0) if start_from > 0 else 0
         failed_pids: list[str] = []  # 재시도 대상
 
-        # 상품별 전송 루프
+        # 상품별 전송 루프 (2건씩 병렬)
         if start_from > 0:
             _add_job_log(job.id, f"이전 진행 {start_from}/{total}건 이후부터 재개")
             logger.info(f"[잡워커] 전송 재개: {job.id} — {start_from}/{total}건부터")
-        for i, pid in enumerate(product_ids[start_from:], start=start_from):
-            # 비상정지 + Job 취소 + 전송중단 플래그 체크 (건별)
-            from backend.domain.samba.emergency import is_emergency_stopped
 
-            try:
-                _is_cancelled = await repo.is_cancelled(job.id)
-            except Exception as exc:
-                logger.warning(f"[잡워커] 취소 체크 중 DB 에러: {job.id} — {exc}")
-                _is_cancelled = False
-
-            # 배포 종료 감지 — progress 저장 + 즉시 pending 전환 후 탈출
-            if self._shutting_down:
-                remaining = len(product_ids) - i
-                _add_job_log(
-                    job.id,
-                    f"배포 종료 — {i}건 완료, {remaining}건 남음 (다음 인스턴스에서 재개)",
-                )
-                logger.info(
-                    f"[잡워커] 배포 종료 감지: {job.id} — {i}/{total}건, pending 전환"
-                )
-                try:
-                    from sqlalchemy import text
-
-                    await repo.update_progress(job.id, i, total)
-                    # 정상 배포 중단 → 즉시 pending + attempt 리셋 (OOM 아님)
-                    # graceful_stop()의 DB 쿼리와 이중 보호
-                    await session.execute(
-                        text(
-                            "UPDATE samba_jobs SET status = 'pending', "
-                            "started_at = NULL, attempt = 0 "
-                            "WHERE id = :jid AND status = 'running'"
-                        ),
-                        {"jid": job.id},
-                    )
-                    await session.commit()
-                except Exception as exc:
-                    logger.warning(
-                        f"[잡워커] 배포 종료 진행 저장 실패: {job.id} — {exc}"
-                    )
-                return  # fail 아닌 정상 리턴
-
-            if is_emergency_stopped() or is_cancel_requested(job.id) or _is_cancelled:
-                cancelled = len(product_ids) - i
-                reason = "비상정지" if is_emergency_stopped() else "취소"
-                _add_job_log(job.id, f"{reason} — {i}건 완료, {cancelled}건 중단")
-                logger.info(
-                    f"[잡워커] 전송 {reason}: {job.id} — {i}건 완료, {cancelled}건 중단"
-                )
-                await repo.fail_job(job.id, f"{reason}: {i}건 완료, {cancelled}건 중단")
-                # 감지 완료 — 모든 플래그 정리
-                clear_cancel_transmit()
-                clear_emergency_stop()
-                return
-
-            # 건별 독립 세션 — greenlet_spawn 방지 (세션 상태 누적 차단)
-            prod_name = pid[-8:]  # 기본값 — 세션 실패 시 폴백
+        async def _process_one(i: int, pid: str) -> tuple[int, int, int, str | None]:
+            """상품 1건 처리 → (success_delta, skip_delta, fail_delta, failed_pid)"""
+            prod_name = pid[-8:]
             try:
                 async with get_write_session() as item_session:
                     cp_repo = SambaCollectedProductRepository(item_session)
@@ -975,6 +923,7 @@ class JobWorker:
                     tx_result = r.get("transmit_result", {})
                     tx_error = r.get("transmit_error", {})
                     any_success = False
+                    _s = _sk = _f = 0
                     for acc_id, acc_status in tx_result.items():
                         acc = await acc_repo.get_async(acc_id)
                         acc_label = (
@@ -990,14 +939,14 @@ class JobWorker:
                         )
                         if acc_status in ("success", "completed"):
                             any_success = True
-                            success_count += 1
+                            _s += 1
                             label = "품절삭제" if acc_status == "completed" else "전송"
                             _add_job_log(
                                 job.id,
                                 f"[{i + 1}/{total:,}] {prod_name} → {acc_label}: {label}{rl}",
                             )
                         elif acc_status == "skipped":
-                            skip_count += 1
+                            _sk += 1
                             _skip_reason = str(tx_error.get(acc_id, "") or "")[:200]
                             _reason_suffix = (
                                 f" ({_skip_reason})" if _skip_reason else ""
@@ -1007,7 +956,7 @@ class JobWorker:
                                 f"[{i + 1}/{total:,}] {prod_name} → {acc_label}: 스킵{_reason_suffix}{rl}",
                             )
                         else:
-                            fail_count += 1
+                            _f += 1
                             err = str(tx_error.get(acc_id, "실패"))[:500]
                             if "<asyncio" in err or "Semaphore" in err:
                                 err = "전송 동시성 오류"
@@ -1017,7 +966,7 @@ class JobWorker:
                             )
                     if not tx_result:
                         if status == "skipped":
-                            skip_count += 1
+                            _sk += 1
                             refresh_info = r.get("update_result", {})
                             rl = (
                                 refresh_info.get("refresh", "")
@@ -1025,55 +974,134 @@ class JobWorker:
                                 else ""
                             )
                             _add_job_log(
-                                job.id, f"[{i + 1}/{total}] {prod_name}: 스킵 [{rl}]"
+                                job.id,
+                                f"[{i + 1}/{total}] {prod_name}: 스킵 [{rl}]",
                             )
                         elif r.get("error") or tx_error.get("_all"):
-                            fail_count += 1
+                            _f += 1
                             err_msg = r.get("error") or tx_error.get("_all", "실패")
                             _add_job_log(
                                 job.id,
                                 f"[{i + 1}/{total}] {prod_name}: {str(err_msg)[:500]}",
                             )
                         else:
-                            fail_count += 1
+                            _f += 1
                             _add_job_log(job.id, f"[{i + 1}/{total}] {prod_name}: 실패")
-                    # 1차 실패 → 재시도 대상
-                    if not any_success and status not in ("skipped", "completed"):
-                        failed_pids.append(pid)
+                    _failed_pid = (
+                        pid
+                        if not any_success and status not in ("skipped", "completed")
+                        else None
+                    )
                     await item_session.commit()
+                    return _s, _sk, _f, _failed_pid
             except Exception as e:
-                fail_count += 1
                 _add_job_log(job.id, f"[{i + 1}/{total}] {prod_name}: {e}")
-                failed_pids.append(pid)
-            # OOM 방지: 50건마다 gc + malloc_trim으로 RSS 회수
-            if (i + 1) % 50 == 0:
-                _force_free_memory()
-                logger.info(f"[잡워커] 메모리 회수 ({i + 1}/{total}건)")
-            # 잡 progress는 매 건마다 업데이트 (재시작 시 재처리 최소화)
-            if True:
+                return 0, 0, 1, pid
+
+        BATCH_SIZE = 2
+        all_indices = list(range(start_from, total))
+        for batch_start in range(0, len(all_indices), BATCH_SIZE):
+            batch = all_indices[batch_start : batch_start + BATCH_SIZE]
+            i_first = batch[0]
+            i_last = batch[-1]
+
+            # 비상정지 + Job 취소 + 전송중단 플래그 체크 (배치별)
+            from backend.domain.samba.emergency import is_emergency_stopped
+
+            try:
+                _is_cancelled = await repo.is_cancelled(job.id)
+            except Exception as exc:
+                logger.warning(f"[잡워커] 취소 체크 중 DB 에러: {job.id} — {exc}")
+                _is_cancelled = False
+
+            # 배포 종료 감지 — progress 저장 + 즉시 pending 전환 후 탈출
+            if self._shutting_down:
+                remaining = total - i_first
+                _add_job_log(
+                    job.id,
+                    f"배포 종료 — {i_first}건 완료, {remaining}건 남음 (다음 인스턴스에서 재개)",
+                )
+                logger.info(
+                    f"[잡워커] 배포 종료 감지: {job.id} — {i_first}/{total}건, pending 전환"
+                )
                 try:
-                    await repo.update_progress(job.id, i + 1, total)
-                    # 중간 카운트 저장 — 이어하기 시 복원용
-                    _job = await repo.get_async(job.id)
-                    if _job:
-                        _job.result = {
-                            "success": success_count,
-                            "skipped": skip_count,
-                            "failed": fail_count,
-                        }
+                    from sqlalchemy import text
+
+                    await repo.update_progress(job.id, i_first, total)
+                    # 정상 배포 중단 → 즉시 pending + attempt 리셋 (OOM 아님)
+                    await session.execute(
+                        text(
+                            "UPDATE samba_jobs SET status = 'pending', "
+                            "started_at = NULL, attempt = 0 "
+                            "WHERE id = :jid AND status = 'running'"
+                        ),
+                        {"jid": job.id},
+                    )
                     await session.commit()
-                except Exception as pg_err:
-                    logger.error(
-                        f"[잡워커] progress 업데이트 실패: {job.id} — {pg_err}"
+                except Exception as exc:
+                    logger.warning(
+                        f"[잡워커] 배포 종료 진행 저장 실패: {job.id} — {exc}"
                     )
-                    _add_job_log(
-                        job.id,
-                        f"[{i + 1}/{total}] DB 세션 오류 — 다음 건 계속 진행",
-                    )
-                    try:
-                        await session.rollback()
-                    except Exception as exc:
-                        logger.warning(f"[잡워커] 세션 롤백 실패: {job.id} — {exc}")
+                return  # fail 아닌 정상 리턴
+
+            if is_emergency_stopped() or is_cancel_requested(job.id) or _is_cancelled:
+                cancelled = total - i_first
+                reason = "비상정지" if is_emergency_stopped() else "취소"
+                _add_job_log(job.id, f"{reason} — {i_first}건 완료, {cancelled}건 중단")
+                logger.info(
+                    f"[잡워커] 전송 {reason}: {job.id} — {i_first}건 완료, {cancelled}건 중단"
+                )
+                await repo.fail_job(
+                    job.id, f"{reason}: {i_first}건 완료, {cancelled}건 중단"
+                )
+                clear_cancel_transmit()
+                clear_emergency_stop()
+                return
+
+            # 배치 내 병렬 처리
+            batch_results = await asyncio.gather(
+                *[_process_one(i, product_ids[i]) for i in batch],
+                return_exceptions=True,
+            )
+
+            for idx, res in zip(batch, batch_results):
+                if isinstance(res, BaseException):
+                    fail_count += 1
+                    failed_pids.append(product_ids[idx])
+                else:
+                    _s, _sk, _f, _fp = res
+                    success_count += _s
+                    skip_count += _sk
+                    fail_count += _f
+                    if _fp:
+                        failed_pids.append(_fp)
+
+            # OOM 방지: 50건마다 gc + malloc_trim으로 RSS 회수
+            if (i_last + 1) % 50 < BATCH_SIZE:
+                _force_free_memory()
+                logger.info(f"[잡워커] 메모리 회수 ({i_last + 1}/{total}건)")
+
+            # 잡 progress 업데이트 (배치 완료 후)
+            try:
+                await repo.update_progress(job.id, i_last + 1, total)
+                _job = await repo.get_async(job.id)
+                if _job:
+                    _job.result = {
+                        "success": success_count,
+                        "skipped": skip_count,
+                        "failed": fail_count,
+                    }
+                await session.commit()
+            except Exception as pg_err:
+                logger.error(f"[잡워커] progress 업데이트 실패: {job.id} — {pg_err}")
+                _add_job_log(
+                    job.id,
+                    f"[{i_last + 1}/{total}] DB 세션 오류 — 다음 건 계속 진행",
+                )
+                try:
+                    await session.rollback()
+                except Exception as exc:
+                    logger.warning(f"[잡워커] 세션 롤백 실패: {job.id} — {exc}")
 
         # 2차 재시도 — 실패 상품만 (건별 독립 세션)
         retry_success = 0
@@ -4712,8 +4740,10 @@ class JobWorker:
                                     if _nm2:
                                         _opts2 = await _s_loop.run_in_executor(
                                             None,
-                                            lambda: client._parse_layered_select_options(
-                                                _html
+                                            lambda: (
+                                                client._parse_layered_select_options(
+                                                    _html
+                                                )
                                             ),
                                         )
                                         det = {
