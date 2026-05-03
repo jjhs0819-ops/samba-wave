@@ -23,28 +23,34 @@
 
   async function stepGoto(step, ctx) {
     const url = interpolate(step.url, ctx.vars)
-    await chrome.tabs.update(ctx.tabId, { url })
     await new Promise((resolve) => {
-      function listener(tabId, info) {
-        if (tabId === ctx.tabId && info.status === 'complete') {
+      let settled = false
+      function done() {
+        if (!settled) {
+          settled = true
           chrome.tabs.onUpdated.removeListener(listener)
           resolve()
         }
       }
+      function listener(tabId, info) {
+        if (tabId === ctx.tabId && info.status === 'complete') done()
+      }
       chrome.tabs.onUpdated.addListener(listener)
-      setTimeout(resolve, 15000)
+      chrome.tabs.update(ctx.tabId, { url })
+      setTimeout(done, 15000)
     })
   }
 
   async function stepWait(step, ctx) {
+    const selector = interpolate(step.selector, ctx.vars)
     const timeout = step.timeout ?? 5000
     const start = Date.now()
     while (Date.now() - start < timeout) {
-      const found = await inPage(ctx.tabId, (sel) => !!document.querySelector(sel), [step.selector])
+      const found = await inPage(ctx.tabId, (sel) => !!document.querySelector(sel), [selector])
       if (found) return
       await new Promise(r => setTimeout(r, 300))
     }
-    console.warn(`[레시피] wait 타임아웃: ${step.selector}`)
+    console.warn(`[레시피] wait 타임아웃: ${selector}`)
   }
 
   async function stepExtract(step, ctx) {
@@ -79,30 +85,39 @@
   }
 
   async function stepClick(step, ctx) {
-    await inPage(ctx.tabId, (sel) => document.querySelector(sel)?.click(), [step.selector])
+    const selector = interpolate(step.selector, ctx.vars)
+    await inPage(ctx.tabId, (sel) => document.querySelector(sel)?.click(), [selector])
     await new Promise(r => setTimeout(r, 500))
   }
 
   async function stepScroll(step, ctx) {
-    if (step.target === 'bottom') {
+    const target = interpolate(step.target, ctx.vars)
+    if (target === 'bottom') {
       await inPage(ctx.tabId, () => window.scrollTo(0, document.body.scrollHeight))
     } else {
-      await inPage(ctx.tabId, (sel) => document.querySelector(sel)?.scrollIntoView(), [step.target])
+      await inPage(ctx.tabId, (sel) => document.querySelector(sel)?.scrollIntoView(), [target])
     }
     await new Promise(r => setTimeout(r, 500))
   }
 
   async function stepEvaluate(step, ctx) {
-    const result = await inPage(ctx.tabId, (expr) => {
-      try { return eval(expr) } catch { return null } // eslint-disable-line no-eval
-    }, [step.expression])
+    const expression = interpolate(step.expression, ctx.vars)
+    const result = await chrome.scripting.executeScript({
+      target: { tabId: ctx.tabId },
+      world: 'MAIN',
+      func: (expr) => {
+        try { return eval(expr) } catch { return null } // eslint-disable-line no-eval
+      },
+      args: [expression],
+    }).then(r => r?.[0]?.result ?? null)
     if (step.resultKey && result !== null) {
       ctx.result[step.resultKey] = result
     }
   }
 
   async function stepLoop(step, ctx) {
-    const count = await inPage(ctx.tabId, (sel) => document.querySelectorAll(sel).length, [step.selector])
+    const selector = interpolate(step.selector, ctx.vars)
+    const count = await inPage(ctx.tabId, (sel) => document.querySelectorAll(sel).length, [selector])
     const items = []
     for (let i = 0; i < (count || 0); i++) {
       const itemCtx = { tabId: ctx.tabId, vars: { ...ctx.vars, loopIndex: i }, result: {} }
