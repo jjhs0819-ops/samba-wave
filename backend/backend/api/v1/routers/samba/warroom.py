@@ -17,6 +17,15 @@ from backend.domain.samba.warroom.repository import SambaMonitorEventRepository
 router = APIRouter(prefix="/monitor", tags=["samba-monitor"])
 
 
+def _normalize_source_site(site: str | None) -> str:
+    raw = (site or "").strip()
+    if not raw:
+        return "기타"
+    if raw.upper() == "GSSHOP":
+        return "GSShop"
+    return raw
+
+
 @router.get("/dashboard")
 async def get_dashboard(
     session: AsyncSession = Depends(get_read_session_dependency),
@@ -48,7 +57,7 @@ async def list_events(
             "id": e.id,
             "event_type": e.event_type,
             "severity": e.severity,
-            "source_site": e.source_site,
+            "source_site": _normalize_source_site(e.source_site),
             "market_type": e.market_type,
             "product_id": e.product_id,
             "product_name": e.product_name,
@@ -80,7 +89,7 @@ async def list_recent_events(
             "id": e.id,
             "event_type": e.event_type,
             "severity": e.severity,
-            "source_site": e.source_site,
+            "source_site": _normalize_source_site(e.source_site),
             "market_type": e.market_type,
             "product_id": e.product_id,
             "product_name": e.product_name,
@@ -109,7 +118,7 @@ async def list_price_changes(
             "id": e.id,
             "product_id": e.product_id,
             "product_name": e.product_name,
-            "source_site": e.source_site,
+            "source_site": _normalize_source_site(e.source_site),
             "detail": e.detail,
             "created_at": e.created_at.isoformat(),
         }

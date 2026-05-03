@@ -245,6 +245,29 @@ type StoreScore = {
   updated_at: string
 }
 
+const normalizeWarroomSourceSite = (value: string | null | undefined) => {
+  const site = String(value || '').trim()
+  if (!site) return ''
+  if (site.toUpperCase() === 'GSSHOP') return 'GSShop'
+  return site
+}
+
+const normalizeWarroomSiteChanges = (
+  changes: Record<string, Record<string, Array<{ id: string; product_id: string | null; product_name: string | null; detail: Record<string, unknown> | null; created_at: string }>>>,
+) => {
+  return Object.entries(changes).reduce<typeof changes>((acc, [site, byType]) => {
+    const key = normalizeWarroomSourceSite(site)
+    if (!acc[key]) acc[key] = {}
+    for (const [eventType, items] of Object.entries(byType)) {
+      const prev = acc[key][eventType] || []
+      acc[key][eventType] = [...prev, ...items]
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .slice(0, 5)
+    }
+    return acc
+  }, {})
+}
+
 export default function WarroomPage() {
   useEffect(() => { document.title = 'SAMBA-오토튠' }, [])
   const [stats, setStats] = useState<DashboardStats | null>(null)
@@ -500,8 +523,11 @@ export default function WarroomPage() {
     // 사이클 완료 시 이벤트 타임라인 갱신
     if (cycles > prevCyclesRef.current) {
       prevCyclesRef.current = cycles
-      monitorApi.recentEvents(30).then(ev => setEvents(ev)).catch(() => {})
-      monitorApi.siteChanges(5).then(c => { if (c && Object.keys(c).length > 0) setSiteChanges(c) }).catch(() => {})
+      monitorApi.recentEvents(30).then(ev => setEvents(ev.map(row => ({
+        ...row,
+        source_site: normalizeWarroomSourceSite(row.source_site),
+      })))).catch(() => {})
+      monitorApi.siteChanges(5).then(c => { if (c && Object.keys(c).length > 0) setSiteChanges(normalizeWarroomSiteChanges(c)) }).catch(() => {})
       monitorApi.marketChanges(5).then(c => { if (c && Object.keys(c).length > 0) setMarketChanges(c) }).catch(() => {})
     }
   }, [])
@@ -525,11 +551,19 @@ export default function WarroomPage() {
       .finally(() => setLoading(false))
 
     monitorApi.recentEvents(30)
-      .then(setEvents)
+      .then(rows => {
+        setEvents(rows.map(row => ({
+          ...row,
+          source_site: normalizeWarroomSourceSite(row.source_site),
+        })))
+      })
       .catch(() => { /* ignore */ })
 
     monitorApi.siteChanges(5)
-      .then(c => { if (c && Object.keys(c).length > 0) setSiteChanges(c) })
+      .then(c => {
+        if (!c || Object.keys(c).length === 0) return
+        setSiteChanges(normalizeWarroomSiteChanges(c))
+      })
       .catch(() => { /* ignore */ })
 
     monitorApi.marketChanges(5)
@@ -595,7 +629,7 @@ export default function WarroomPage() {
     const tickCountBySite: Record<string, number> = {}
     const deduped = mapped.filter(e => {
       if (e.event_type === 'scheduler_tick') {
-        const siteKey = e.source_site || '_none'
+        const siteKey = normalizeWarroomSourceSite(e.source_site) || '_none'
         tickCountBySite[siteKey] = (tickCountBySite[siteKey] || 0) + 1
         if (tickCountBySite[siteKey] > 2) return false
       }
@@ -971,9 +1005,9 @@ export default function WarroomPage() {
               </div>
             )}
             {/* 소싱처별 최근 수정 상품 내역 */}
-            {Object.keys(tickEventsBySite).length > 0 && (
+            {Array.from(new Set([...Object.keys(tickEventsBySite), ...Object.keys(siteChanges)])).length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.25rem' }}>
-                {Object.keys(tickEventsBySite).map(siteName => {
+                {Array.from(new Set([...Object.keys(tickEventsBySite), ...Object.keys(siteChanges)])).map(siteName => {
                   const sitePriceChanges = siteChanges[siteName]?.price_changed ?? []
                   const siteSoldOuts = siteChanges[siteName]?.sold_out ?? []
                   const siteRestocks = siteChanges[siteName]?.restock ?? []

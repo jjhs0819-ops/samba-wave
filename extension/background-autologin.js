@@ -389,8 +389,16 @@ async function ensureLoggedIn(siteKey) {
       autoLoginState.cooldownUntil[siteKey] = 0
       // 자동로그인 성공 시각 기록 — sourcing detail의 _detectLoginStatus false-positive 방지용
       // (LOTTEON 상세페이지처럼 헤더 셀렉터로 로그인 판정 어려운 사이트의 무한 트리거 차단)
+      // storage에도 저장 — 서비스 워커 재시작 후에도 1시간 이내 성공 이력 유지
       try { globalThis._lastAutoLoginSuccessAt = globalThis._lastAutoLoginSuccessAt || {} } catch {}
-      try { globalThis._lastAutoLoginSuccessAt[siteKey] = Date.now() } catch {}
+      try {
+        globalThis._lastAutoLoginSuccessAt[siteKey] = Date.now()
+        const stored = {}
+        for (const k of Object.keys(globalThis._lastAutoLoginSuccessAt || {})) {
+          stored[k] = globalThis._lastAutoLoginSuccessAt[k]
+        }
+        chrome.storage.local.set({ _lastAutoLoginSuccessAt: stored }).catch(() => {})
+      } catch {}
       console.log(`[자동로그인] ✅ ${site.name} 성공 — 폴링 자동 재개`)
     } else {
       autoLoginState.failedAttempts[siteKey] = (autoLoginState.failedAttempts[siteKey] || 0) + 1
