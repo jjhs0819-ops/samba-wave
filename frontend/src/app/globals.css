@@ -286,3 +286,14 @@ textarea::placeholder {
   transform: translateX(-50%) translateY(-2px);
   box-shadow: 0 8px 30px rgba(74, 108, 247, 0.5);
 }
+
+.tetris-scroll-x {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.tetris-scroll-x::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}

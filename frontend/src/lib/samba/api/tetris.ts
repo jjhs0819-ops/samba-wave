@@ -20,6 +20,7 @@ export interface TetrisBrandBlock {
 export interface TetrisAccountBlock {
   account_id: string
   account_label: string
+  account_order?: number | null
   max_count: number
   total_registered: number
   total_collected: number
@@ -35,6 +36,7 @@ export interface TetrisMarketGroup {
 export interface TetrisUnassigned {
   source_site: string
   brand_name: string
+  registered_count: number
   collected_count: number
 }
 

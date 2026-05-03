@@ -10,6 +10,7 @@ import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { inputStyle, fmtNum } from '@/lib/samba/styles'
 import { fmtTime } from '@/lib/samba/utils'
 import { STATUS_MAP, SHIPPING_COMPANIES, ACTION_BUTTONS } from '../constants'
+import { parseActionTags } from '../utils/actionTag'
 import OrderInfoCell from './OrderInfoCell'
 
 // Props 타입 정의
@@ -52,7 +53,6 @@ interface OrdersTableProps {
   setLogMessages: Dispatch<SetStateAction<string[]>>
 
   // 헬퍼/핸들러
-  fmtNumStr: (v: string) => string
   calcProfit: (o: SambaOrder) => number
   calcProfitRate: (o: SambaOrder) => string
   calcFeeRate: (o: SambaOrder) => string
@@ -97,7 +97,7 @@ export default function OrdersTable(props: OrdersTableProps) {
     sentFlags, siteAliasMap, sourcingAccounts,
     setPriceHistoryProduct, setPriceHistoryData, setPriceHistoryModal,
     setLogMessages,
-    fmtNumStr, calcProfit, calcProfitRate, calcFeeRate, splitCustomerAddress,
+    calcProfit, calcProfitRate, calcFeeRate, splitCustomerAddress,
     renderCopyableText,
     handleDelete, handleImageClick, handleCopyOrderNumber, openMsgModal,
     handleDanawa, handleNaver, handleSourceLink, handleMarketLink,
@@ -135,7 +135,7 @@ export default function OrdersTable(props: OrdersTableProps) {
             const displayCost = o.collected_product_id
               ? (collectedProductCosts[o.collected_product_id] ?? o.cost ?? 0)
               : (o.cost ?? 0)
-            const activeAction = activeActions[o.id] || null
+            const activeActionTags = parseActionTags(activeActions[o.id] ?? o.action_tag ?? null)
             const customerAddress = splitCustomerAddress(o.customer_address, o.customer_address_detail)
 
             return (
@@ -143,7 +143,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                 {/* 체크박스 */}
                 <td style={{ padding: '0.75rem 0.5rem', textAlign: 'center', borderRight: '1px solid #1C2333' }}>
                   <div style={{ fontSize: '0.65rem', color: '#FFFFFF', fontWeight: 'bold', marginBottom: '2px' }}>{(currentPage - 1) * pageSize + index + 1}</div>
-                  <input type="checkbox" checked={selectedIds.has(o.id)} onChange={() => setSelectedIds(prev => { const next = new Set(prev); next.has(o.id) ? next.delete(o.id) : next.add(o.id); return next })} style={{ accentColor: '#F59E0B', cursor: 'pointer' }} />
+                  <input type="checkbox" checked={selectedIds.has(o.id)} onChange={() => setSelectedIds(prev => { const next = new Set(prev); if (next.has(o.id)) next.delete(o.id); else next.add(o.id); return next })} style={{ accentColor: '#F59E0B', cursor: 'pointer' }} />
                 </td>
                 {/* 주문정보 */}
                 <OrderInfoCell
@@ -192,7 +192,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                           const res = await orderApi.sellerCancel(o.id, 'SOLD_OUT')
                           showAlert(res.message || '처리 완료', 'success')
                           loadOrders()
-                        } catch (err) {
+                        } catch {
                           showAlert(err instanceof Error ? err.message : '처리 실패', 'error')
                         }
                       }}
@@ -205,7 +205,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                       }}
                     >주문취소</button>
                     {ACTION_BUTTONS.map(btn => {
-                      const isActive = activeAction === btn.key
+                      const isActive = activeActionTags.includes(btn.key)
                       return (
                         <button
                           key={btn.key}
@@ -250,7 +250,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                           try {
                             await orderApi.update(o.id, { sourcing_order_number: val })
                             patchOrder(o.id, { sourcing_order_number: val })
-                          } catch (err) { showAlert(err instanceof Error ? err.message : '소싱주문번호 저장 실패', 'error') }
+                          } catch { showAlert('소싱주문번호 저장 실패', 'error') }
                         }}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') {
@@ -365,7 +365,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                                 setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} ${res.message}`])
                               }
                               loadOrders()
-                            } catch (err) {
+                            } catch {
                               await orderApi.updateStatus(o.id, 'ship_failed').catch(() => {})
                               setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 전송 실패`])
                               loadOrders()
@@ -408,7 +408,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                                 setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} ${res.message}`])
                               }
                               loadOrders()
-                            } catch (err) {
+                            } catch {
                               await orderApi.updateStatus(o.id, 'ship_failed').catch(() => {})
                               setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 전송 실패`])
                               loadOrders()

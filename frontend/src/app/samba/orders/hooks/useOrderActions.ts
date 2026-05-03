@@ -8,6 +8,7 @@ import {
 } from '@/lib/samba/api/commerce'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtNum } from '@/lib/samba/styles'
+import { parseActionTags, serializeActionTags } from '../utils/actionTag'
 
 interface OrderForm {
   channel_id: string
@@ -183,8 +184,12 @@ export function useOrderActions(args: Args) {
   }
 
   const toggleAction = async (orderId: string, actionKey: string) => {
-    const newVal = activeActions[orderId] === actionKey ? null : actionKey
-    setActiveActions(prev => ({ ...prev, [orderId]: newVal }))
+    const currentTags = parseActionTags(activeActions[orderId])
+    const nextTags = currentTags.includes(actionKey)
+      ? currentTags.filter(tag => tag !== actionKey)
+      : [...currentTags, actionKey]
+    const newVal = serializeActionTags(nextTags)
+    setActiveActions(prev => ({ ...prev, [orderId]: newVal || null }))
     try {
       await orderApi.update(orderId, { action_tag: newVal || '' })
     } catch { /* ignore */ }

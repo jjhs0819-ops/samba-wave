@@ -57,6 +57,23 @@ PENDING_ORDER_STATUSES = (
 )
 
 
+def _build_action_tag_filter(action_tag: str):
+    from sqlalchemy import func, or_
+
+    normalized = action_tag.strip()
+    if not normalized:
+        return None
+
+    padded = f",{normalized},"
+    action_expr = func.concat(",", func.coalesce(SambaOrder.action_tag, ""), ",")
+    return or_(
+        SambaOrder.action_tag == normalized,
+        action_expr.like(f"{padded}%"),
+        action_expr.like(f"%{padded}"),
+        action_expr.like(f"%{padded}%"),
+    )
+
+
 class PaginatedOrdersResponse(BaseModel):
     items: list[SambaOrder]
     total_count: int
@@ -224,7 +241,9 @@ async def _build_order_filters(
             )
         )
     elif input_filter in {"direct", "kkadaegi", "gift", "staff_a", "staff_b"}:
-        filters.append(SambaOrder.action_tag == input_filter)
+        action_filter = _build_action_tag_filter(input_filter)
+        if action_filter is not None:
+            filters.append(action_filter)
 
     normalized_search = search_text.strip()
     if normalized_search:

@@ -13,8 +13,8 @@ interface Policy {
 
 interface Props {
   account: TetrisAccountBlock
-  capacityHeight: number     // 계정 블록 영역 전체 높이 (px)
-  pixelsPerUnit: number      // 수량 1개 당 픽셀 (블록 높이 계산용)
+  capacityHeight: number
+  pixelsPerUnit: number
   policies: Policy[]
   dragState: DragState
   onDragStart: (block: TetrisBrandBlock, accountId: string) => void
@@ -23,11 +23,17 @@ interface Props {
   onRemove: (assignmentId: string, brandName: string) => void
   onPolicyChange: (assignmentId: string, policyId: string | null, accountId: string) => Promise<void>
   isDragging: boolean
+  isAccountDragging: boolean
+  onAccountDragStart: (accountId: string) => void
+  onAccountDragEnd: () => void
 }
 
-// ─── 슬롯 드롭존 ──────────────────────────────────────────────────────────────
-
-function SlotZone({ active, onEnter, onLeave, onDrop }: {
+function SlotZone({
+  active,
+  onEnter,
+  onLeave,
+  onDrop,
+}: {
   active: boolean
   onEnter: () => void
   onLeave: () => void
@@ -50,9 +56,7 @@ function SlotZone({ active, onEnter, onLeave, onDrop }: {
   )
 }
 
-// ─── AccountBlock ─────────────────────────────────────────────────────────────
-
-const MIN_BLOCK_PX = 28  // 블록 최소 픽셀 높이
+const MIN_BLOCK_PX = 28
 
 export default function AccountBlock({
   account,
@@ -66,6 +70,9 @@ export default function AccountBlock({
   onRemove,
   onPolicyChange,
   isDragging,
+  isAccountDragging,
+  onAccountDragStart,
+  onAccountDragEnd,
 }: Props) {
   const [isOver, setIsOver] = useState(false)
   const [dropSlot, setDropSlot] = useState<number | null>(null)
@@ -75,15 +82,11 @@ export default function AccountBlock({
     dragState.fromAccountId === account.account_id &&
     dragState.assignmentId !== null
 
-  const validAssignments = useMemo(
-    () => account.assignments.filter(b => !b.is_legacy && b.id),
-    [account.assignments]
-  )
-
-  const ratio = account.max_count > 0 ? account.total_registered / account.max_count : 0
+  const ratio = account.total_collected > 0
+    ? account.total_registered / account.total_collected
+    : 0
   const progressColor = ratio >= 1 ? '#EF4444' : ratio >= 0.8 ? '#F59E0B' : '#22C55E'
 
-  // 각 브랜드 블록의 픽셀 높이 = collected_count × pixelsPerUnit (최소 MIN_BLOCK_PX)
   const blocksWithHeight = useMemo(() => {
     const items = account.assignments.map(block => ({
       block,
@@ -103,101 +106,139 @@ export default function AccountBlock({
   return (
     <div
       style={{
+        position: 'relative',
+        height: capacityHeight,
+        minHeight: capacityHeight,
         background: isOver && isDragging && !isSameAccountDrag ? 'rgba(255,140,0,0.08)' : 'rgba(25,25,25,0.6)',
-        border: isOver && isDragging && !isSameAccountDrag ? '1px dashed #FF8C00' : '1px solid #2a2a2a',
         borderRadius: 6,
-        marginBottom: 8,
-        transition: 'background 0.15s, border 0.15s',
+        transition: 'background 0.15s',
+        overflow: 'hidden',
+        boxSizing: 'border-box',
       }}
-      onDragOver={e => { if (isSameAccountDrag) return; e.preventDefault(); setIsOver(true) }}
+      onDragOver={e => { if (isAccountDragging || isSameAccountDrag) return; e.preventDefault(); setIsOver(true) }}
       onDragLeave={() => setIsOver(false)}
-      onDrop={async () => { if (isSameAccountDrag) return; setIsOver(false); await onDrop(account.account_id) }}
+      onDrop={async () => { if (isAccountDragging || isSameAccountDrag) return; setIsOver(false); await onDrop(account.account_id) }}
     >
-      {/* 헤더 */}
-      <div style={{
-        padding: '6px 8px',
-        borderBottom: '1px solid #2a2a2a',
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        gap: 8,
-      }}>
-        <span style={{ fontSize: 12, color: '#ccc', fontWeight: 600, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
-          {account.account_label}
-        </span>
-        <span style={{ fontSize: 10, color: '#888', whiteSpace: 'nowrap', flexShrink: 0 }}>
-          <span style={{ color: progressColor }}>{fmtNum(account.total_registered)}</span>
-          {account.max_count > 0 && <span>/{fmtNum(account.max_count)}</span>}
-          {' '}수집 {fmtNum(account.total_collected)}
-        </span>
-      </div>
-
-      {/* 진행바 */}
-      {account.max_count > 0 && (
-        <div style={{ height: 2, background: '#2a2a2a' }}>
-          <div style={{ height: '100%', width: `${Math.min(ratio * 100, 100)}%`, background: progressColor, transition: 'width 0.3s' }} />
-        </div>
+      {isOver && isDragging && !isAccountDragging && !isSameAccountDrag && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            border: '1px dashed #FF8C00',
+            borderRadius: 6,
+            pointerEvents: 'none',
+            boxSizing: 'border-box',
+          }}
+        />
       )}
 
-      {/* 블록 영역 */}
-      <div style={{ padding: '6px' }}>
-        <div style={{
-          height: capacityHeight,
-          minHeight: capacityHeight,
-          background: 'rgba(16,16,16,0.8)',
-          border: '1px solid #1f1f1f',
-          borderRadius: 4,
-          padding: 6,
+      <div
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: `${Math.min(ratio * 100, 100)}%`,
+          height: 2,
+          background: progressColor,
+          transition: 'width 0.3s',
+          pointerEvents: 'none',
+        }}
+      />
+
+      <div
+        style={{
+          position: 'absolute',
+          top: 8,
+          right: 8,
+          zIndex: 2,
           display: 'flex',
           flexDirection: 'column',
-          overflowY: 'auto',
-          boxSizing: 'border-box',
-        }}>
-          {account.assignments.length === 0 ? (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#444', fontSize: 11 }}>
-              {isDragging && !isSameAccountDrag ? '여기에 드롭하세요' : '배치된 브랜드 없음'}
-            </div>
-          ) : (
-            <>
-              {/* spacer: 블록을 하단으로 밀어내는 빈 공간 */}
-              <div style={{ flex: 1 }} />
-
-              {/* 드래그 중 최상단 슬롯 */}
-              {isSameAccountDrag && (
-                <SlotZone
-                  active={dropSlot === 0}
-                  onEnter={() => setDropSlot(0)}
-                  onLeave={() => setDropSlot(null)}
-                  onDrop={() => handleSlotDrop(0)}
-                />
-              )}
-              {/* 등록수 오름차순 정렬 → 많이 등록된 브랜드가 하단에 */}
-              {[...blocksWithHeight.items]
-                .sort((a, b) => a.block.registered_count - b.block.registered_count)
-                .map((item, idx) => (
-                  <div key={item.block.id ?? `legacy-${idx}`}>
-                    <BrandBlock
-                      block={item.block}
-                      accountId={account.account_id}
-                      blockHeight={item.height}
-                      onDragStart={onDragStart}
-                      onRemove={onRemove}
-                      policies={policies}
-                      onPolicyChange={onPolicyChange}
-                    />
-                    {isSameAccountDrag && !item.block.is_legacy && item.block.id && (
-                      <SlotZone
-                        active={dropSlot === idx + 1}
-                        onEnter={() => setDropSlot(idx + 1)}
-                        onLeave={() => setDropSlot(null)}
-                        onDrop={() => handleSlotDrop(idx + 1)}
-                      />
-                    )}
-                  </div>
-                ))}
-            </>
-          )}
+          alignItems: 'flex-end',
+          gap: 2,
+          pointerEvents: 'none',
+        }}
+      >
+        <div style={{ fontSize: 12, color: '#eee', fontWeight: 600, maxWidth: 190, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+          {account.account_label}
         </div>
+        <div style={{ fontSize: 10, color: '#888', whiteSpace: 'nowrap' }}>
+          <span style={{ color: progressColor }}>{fmtNum(account.total_registered)}</span>
+          <span>/{fmtNum(account.total_collected)}</span>
+        </div>
+      </div>
+
+      <div
+        draggable
+        onDragStart={e => {
+          e.stopPropagation()
+          onAccountDragStart(account.account_id)
+        }}
+        onDragEnd={onAccountDragEnd}
+        style={{
+          position: 'absolute',
+          top: 8,
+          left: 8,
+          zIndex: 3,
+          fontSize: 10,
+          color: '#666',
+          cursor: 'grab',
+          userSelect: 'none',
+        }}
+        title="Drag to reorder accounts"
+      >
+        |||
+      </div>
+
+      <div
+        style={{
+          height: '100%',
+          background: 'rgba(16,16,16,0.8)',
+          padding: '8px 6px 6px',
+          display: 'flex',
+          flexDirection: 'column',
+          boxSizing: 'border-box',
+        }}
+      >
+        {account.assignments.length === 0 ? (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#444', fontSize: 11 }}>
+            {isDragging && !isSameAccountDrag && !isAccountDragging ? 'Drop a brand here' : 'No assigned brands'}
+          </div>
+        ) : (
+          <>
+            <div style={{ flex: 1 }} />
+            {isSameAccountDrag && !isAccountDragging && (
+              <SlotZone
+                active={dropSlot === 0}
+                onEnter={() => setDropSlot(0)}
+                onLeave={() => setDropSlot(null)}
+                onDrop={() => handleSlotDrop(0)}
+              />
+            )}
+            {[...blocksWithHeight.items]
+              .sort((a, b) => a.block.registered_count - b.block.registered_count)
+              .map((item, idx) => (
+                <div key={item.block.id ?? `legacy-${idx}`}>
+                  <BrandBlock
+                    block={item.block}
+                    accountId={account.account_id}
+                    blockHeight={item.height}
+                    onDragStart={onDragStart}
+                    onRemove={onRemove}
+                    policies={policies}
+                    onPolicyChange={onPolicyChange}
+                  />
+                  {isSameAccountDrag && !isAccountDragging && !item.block.is_legacy && item.block.id && (
+                    <SlotZone
+                      active={dropSlot === idx + 1}
+                      onEnter={() => setDropSlot(idx + 1)}
+                      onLeave={() => setDropSlot(null)}
+                      onDrop={() => handleSlotDrop(idx + 1)}
+                    />
+                  )}
+                </div>
+              ))}
+          </>
+        )}
       </div>
     </div>
   )

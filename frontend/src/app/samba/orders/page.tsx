@@ -14,8 +14,6 @@ import {
   type SambaMarketAccount,
 } from '@/lib/samba/api/commerce'
 import { sourcingAccountApi, type SambaSourcingAccount } from '@/lib/samba/api/operations'
-import { showAlert } from '@/components/samba/Modal'
-import { fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
 import { fmtTime } from '@/lib/samba/utils'
 import OrdersTable from './components/OrdersTable'
 import { useSmsMessage } from './hooks/useSmsMessage'
@@ -319,7 +317,7 @@ export default function OrdersPage() {
     handleSubmit, handleStatusChange, handleDelete,
     handleCostSave, handleShipFeeSave, calcProfit, calcProfitRate, calcFeeRate,
     handleCopyOrderNumber, handleDanawa, handleNaver, handleTracking,
-    toggleAction, handleBulkAction, fmtNumStr,
+    toggleAction, handleBulkAction,
   } = useOrderActions({
     channels, form, emptyForm, editingId,
     setShowForm, setEditingId, setForm, loadOrders, patchOrder,
@@ -438,7 +436,6 @@ export default function OrdersPage() {
         setPriceHistoryData={setPriceHistoryData}
         setPriceHistoryModal={setPriceHistoryModal}
         setLogMessages={setLogMessages}
-        fmtNumStr={fmtNumStr}
         calcProfit={calcProfit}
         calcProfitRate={calcProfitRate}
         calcFeeRate={calcFeeRate}

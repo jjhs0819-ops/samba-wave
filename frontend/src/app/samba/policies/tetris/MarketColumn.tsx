@@ -1,6 +1,7 @@
 'use client'
+import { useMemo, useState } from 'react'
 import AccountBlock from './AccountBlock'
-import type { TetrisMarketGroup, TetrisBrandBlock } from '@/lib/samba/api/tetris'
+import type { TetrisAccountBlock, TetrisMarketGroup, TetrisBrandBlock } from '@/lib/samba/api/tetris'
 import type { DragState } from './useTetris'
 
 interface Policy {
@@ -18,11 +19,38 @@ interface Props {
   onDragStart: (block: TetrisBrandBlock, accountId: string) => void
   onDrop: (toAccountId: string) => Promise<void>
   onReorder: (draggedId: string, newIndex: number, allAssignments: TetrisBrandBlock[]) => Promise<void>
+  onAccountReorder: (accounts: TetrisAccountBlock[]) => Promise<void>
   onRemove: (assignmentId: string, brandName: string) => void
   onPolicyChange: (assignmentId: string, policyId: string | null, accountId: string) => Promise<void>
 }
 
-const MIN_ACCOUNT_HEIGHT = 120
+function AccountSlot({
+  active,
+  onEnter,
+  onLeave,
+  onDrop,
+}: {
+  active: boolean
+  onEnter: () => void
+  onLeave: () => void
+  onDrop: () => void
+}) {
+  return (
+    <div
+      style={{
+        height: active ? 10 : 4,
+        background: active ? '#FF8C00' : 'rgba(255,140,0,0.15)',
+        borderRadius: 3,
+        margin: '2px 0',
+        transition: 'height 0.1s, background 0.1s',
+        flexShrink: 0,
+      }}
+      onDragOver={e => { e.preventDefault(); e.stopPropagation(); onEnter() }}
+      onDragLeave={onLeave}
+      onDrop={e => { e.preventDefault(); e.stopPropagation(); onDrop() }}
+    />
+  )
+}
 
 export default function MarketColumn({
   market,
@@ -33,43 +61,116 @@ export default function MarketColumn({
   onDragStart,
   onDrop,
   onReorder,
+  onAccountReorder,
   onRemove,
   onPolicyChange,
 }: Props) {
+  const [draggedAccountId, setDraggedAccountId] = useState<string | null>(null)
+  const [dropIndex, setDropIndex] = useState<number | null>(null)
+
+  const orderedAccounts = useMemo(() => {
+    return [...market.accounts].sort((a, b) => {
+      const aOrder = a.account_order
+      const bOrder = b.account_order
+      if (aOrder != null && bOrder != null && aOrder !== bOrder) {
+        return aOrder - bOrder
+      }
+      if (aOrder != null && bOrder == null) return -1
+      if (aOrder == null && bOrder != null) return 1
+      if (a.total_registered !== b.total_registered) {
+        return a.total_registered - b.total_registered
+      }
+      if (a.max_count !== b.max_count) {
+        return a.max_count - b.max_count
+      }
+      return a.account_label.localeCompare(b.account_label)
+    })
+  }, [market.accounts])
+
+  const columnHeight = Math.max(60, Math.round(globalMax * pixelsPerUnit))
+  const isAccountDragging = draggedAccountId !== null
+
+  const handleAccountDrop = async (targetIndex: number) => {
+    if (!draggedAccountId) return
+    const reordered = [...orderedAccounts]
+    const fromIndex = reordered.findIndex(account => account.account_id === draggedAccountId)
+    if (fromIndex === -1) {
+      setDraggedAccountId(null)
+      setDropIndex(null)
+      return
+    }
+
+    const [moved] = reordered.splice(fromIndex, 1)
+    reordered.splice(targetIndex, 0, moved)
+
+    setDraggedAccountId(null)
+    setDropIndex(null)
+    await onAccountReorder(reordered)
+  }
+
   return (
-    <div style={{ minWidth: 220, width: 240, flexShrink: 0 }}>
-      {/* 계정 목록 */}
+    <div style={{ minWidth: 260, width: 280, flexShrink: 0 }}>
       <div style={{
         background: 'rgba(20,20,20,0.5)',
         border: '1px solid #333',
         borderRadius: 6,
-        padding: '8px 6px',
+        padding: '0 6px',
       }}>
-        {market.accounts.map(account => {
-          const capacityHeight = account.max_count > 0
-            ? Math.max(MIN_ACCOUNT_HEIGHT, Math.round(account.max_count * pixelsPerUnit))
-            : Math.max(MIN_ACCOUNT_HEIGHT, Math.round(globalMax * pixelsPerUnit * 0.15))
-
-          return (
-            <AccountBlock
-              key={account.account_id}
-              account={account}
-              capacityHeight={capacityHeight}
-              pixelsPerUnit={pixelsPerUnit}
-              policies={policies}
-              dragState={dragState}
-              onDragStart={onDragStart}
-              onDrop={onDrop}
-              onReorder={onReorder}
-              onRemove={onRemove}
-              onPolicyChange={onPolicyChange}
-              isDragging={dragState !== null}
+        <div style={{
+          minHeight: columnHeight,
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'flex-end',
+        }}>
+          {isAccountDragging && (
+            <AccountSlot
+              active={dropIndex === 0}
+              onEnter={() => setDropIndex(0)}
+              onLeave={() => setDropIndex(null)}
+              onDrop={() => handleAccountDrop(0)}
             />
-          )
-        })}
-        {market.accounts.length === 0 && (
-          <div style={{ color: '#444', fontSize: 11, padding: '12px 0', textAlign: 'center' }}>계정 없음</div>
-        )}
+          )}
+          {orderedAccounts.map((account, index) => {
+            const capacityHeight = account.max_count > 0
+              ? Math.max(1, Math.round(account.max_count * pixelsPerUnit))
+              : Math.max(1, Math.round(globalMax * pixelsPerUnit * 0.15))
+
+            return (
+              <div key={account.account_id}>
+                <AccountBlock
+                  account={account}
+                  capacityHeight={capacityHeight}
+                  pixelsPerUnit={pixelsPerUnit}
+                  policies={policies}
+                  dragState={dragState}
+                  onDragStart={onDragStart}
+                  onDrop={onDrop}
+                  onReorder={onReorder}
+                  onRemove={onRemove}
+                  onPolicyChange={onPolicyChange}
+                  isDragging={dragState !== null}
+                  isAccountDragging={isAccountDragging}
+                  onAccountDragStart={accountId => setDraggedAccountId(accountId)}
+                  onAccountDragEnd={() => {
+                    setDraggedAccountId(null)
+                    setDropIndex(null)
+                  }}
+                />
+                {isAccountDragging && (
+                  <AccountSlot
+                    active={dropIndex === index + 1}
+                    onEnter={() => setDropIndex(index + 1)}
+                    onLeave={() => setDropIndex(null)}
+                    onDrop={() => handleAccountDrop(index + 1)}
+                  />
+                )}
+              </div>
+            )
+          })}
+          {orderedAccounts.length === 0 && (
+            <div style={{ color: '#444', fontSize: 11, padding: '12px 0', textAlign: 'center' }}>No accounts</div>
+          )}
+        </div>
       </div>
     </div>
   )

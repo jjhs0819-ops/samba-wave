@@ -1,10 +1,12 @@
 ﻿'use client'
 import { useMemo, useRef, useCallback } from 'react'
+import { accountApi } from '@/lib/samba/api'
+import { showAlert } from '@/components/samba/Modal'
 import { fmtNum } from '@/lib/samba/styles'
 import { useTetris } from './useTetris'
 import MarketColumn from './MarketColumn'
 import UnassignedPool from './UnassignedPool'
-import type { TetrisBrandBlock } from '@/lib/samba/api/tetris'
+import type { TetrisAccountBlock, TetrisBrandBlock } from '@/lib/samba/api/tetris'
 
 function computeScaleStep(pixelsPerUnit: number, targetPx = 20): number {
   const rawStep = targetPx / pixelsPerUnit
@@ -17,11 +19,9 @@ function computeScaleStep(pixelsPerUnit: number, targetPx = 20): number {
 function ScaleRuler({
   globalMax,
   pixelsPerUnit,
-  headerOffset,
 }: {
   globalMax: number
   pixelsPerUnit: number
-  headerOffset: number
 }) {
   const totalHeight = Math.max(globalMax * pixelsPerUnit, 60)
   const scaleStep = computeScaleStep(pixelsPerUnit)
@@ -32,7 +32,7 @@ function ScaleRuler({
 
   return (
     <div style={{ width: 56, flexShrink: 0, position: 'relative' }}>
-      <div style={{ position: 'relative', height: totalHeight, marginTop: headerOffset }}>
+      <div style={{ position: 'relative', height: totalHeight }}>
         <div style={{ position: 'absolute', top: 0, bottom: 0, right: 0, width: 1, background: '#2a2a2a' }} />
         {marks.map(v => {
           const fromBottom = v * pixelsPerUnit
@@ -66,10 +66,8 @@ function ScaleRuler({
   )
 }
 
-const ACCOUNT_HEADER_PX = 52
-const COLUMN_PADDING_PX = 8
 const SCALE_RULER_WIDTH = 56
-const COLUMN_WIDTH = 240
+const COLUMN_WIDTH = 280
 const COLUMN_GAP = 12
 
 export default function TetrisBoard() {
@@ -142,6 +140,21 @@ export default function TetrisBoard() {
     setDragState({ block, fromAccountId: null, assignmentId: null })
   }
 
+  const handleAccountReorder = useCallback(async (accounts: TetrisAccountBlock[]) => {
+    try {
+      for (const [index, account] of accounts.entries()) {
+        await accountApi.update(account.account_id, {
+          additional_fields: {
+            tetrisAccountOrder: index,
+          },
+        })
+      }
+      await refresh()
+    } catch (error) {
+      showAlert('계정 순서 저장에 실패했습니다: ' + String(error))
+    }
+  }, [refresh])
+
   if (loading) return <div style={{ color: '#888', padding: 24, fontSize: 13 }}>遺덈윭?ㅻ뒗 以?..</div>
   if (!board) return null
 
@@ -198,6 +211,7 @@ export default function TetrisBoard() {
         {/* 留덉폆 ?ㅻ뜑 (?섑룊 ?ㅽ겕濡??깊겕) */}
         <div
           ref={headerScrollRef}
+          className="tetris-scroll-x"
           style={{ display: 'flex', gap: COLUMN_GAP, overflow: 'hidden', flex: 1 }}
         >
           {sortedMarkets.map(market => {
@@ -206,7 +220,7 @@ export default function TetrisBoard() {
             return (
               <div
                 key={market.market_type}
-                style={{ minWidth: COLUMN_WIDTH - COLUMN_GAP, width: COLUMN_WIDTH - COLUMN_GAP, flexShrink: 0, padding: '8px 10px' }}
+                style={{ minWidth: COLUMN_WIDTH, width: COLUMN_WIDTH, flexShrink: 0, padding: '8px 10px' }}
               >
                 <div style={{ fontSize: 13, color: '#eee', fontWeight: 700, marginBottom: 2 }}>
                   {market.market_name}
@@ -225,12 +239,12 @@ export default function TetrisBoard() {
         <ScaleRuler
           globalMax={globalMax}
           pixelsPerUnit={pixelsPerUnit}
-          headerOffset={COLUMN_PADDING_PX + ACCOUNT_HEADER_PX}
         />
         <div
           ref={contentScrollRef}
+          className="tetris-scroll-x"
           onScroll={onContentScroll}
-          style={{ overflowX: 'auto', flex: 1, display: 'flex', gap: COLUMN_GAP, alignItems: 'flex-start', paddingBottom: 8 }}
+          style={{ overflowX: 'auto', overflowY: 'hidden', flex: 1, display: 'flex', gap: COLUMN_GAP, alignItems: 'flex-start' }}
         >
           {sortedMarkets.map(market => (
             <MarketColumn
@@ -243,6 +257,7 @@ export default function TetrisBoard() {
               onDragStart={handleDragStart}
               onDrop={handleDrop}
               onReorder={handleReorder}
+              onAccountReorder={handleAccountReorder}
               onRemove={handleRemove}
               onPolicyChange={handlePolicyChange}
             />

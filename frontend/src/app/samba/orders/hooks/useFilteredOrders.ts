@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react'
 import { type SambaOrder, type SambaMarketAccount } from '@/lib/samba/api/commerce'
+import { parseActionTags } from '../utils/actionTag'
 
 interface Args {
   orders: SambaOrder[]
@@ -78,7 +79,7 @@ export function useFilteredOrders(args: Args) {
       } else if (o.status !== statusFilter) return false
     }
     if (inputFilter) {
-      const action = activeActions[o.id]
+      const actionTags = parseActionTags(activeActions[o.id] ?? o.action_tag ?? null)
       switch (inputFilter) {
         case 'has_order': if (!o.sourcing_order_number) return false; break
         case 'no_order': if (o.sourcing_order_number) return false; break
@@ -86,11 +87,11 @@ export function useFilteredOrders(args: Args) {
         case 'no_invoice': if (o.tracking_number) return false; break
         case 'registered': if (!o.collected_product_id && !o.source_url && !o.product_image) return false; break
         case 'unregistered': if (o.collected_product_id || o.source_url || o.product_image) return false; break
-        case 'direct': if (action !== 'direct') return false; break
-        case 'kkadaegi': if (action !== 'kkadaegi') return false; break
-        case 'gift': if (action !== 'gift') return false; break
-        case 'staff_a': if (action !== 'staff_a') return false; break
-        case 'staff_b': if (action !== 'staff_b') return false; break
+        case 'direct': if (!actionTags.includes('direct')) return false; break
+        case 'kkadaegi': if (!actionTags.includes('kkadaegi')) return false; break
+        case 'gift': if (!actionTags.includes('gift')) return false; break
+        case 'staff_a': if (!actionTags.includes('staff_a')) return false; break
+        case 'staff_b': if (!actionTags.includes('staff_b')) return false; break
       }
     }
     if (searchText) {

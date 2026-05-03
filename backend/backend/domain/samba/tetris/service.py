@@ -41,6 +41,23 @@ _MARKET_DISPLAY_NAMES: dict[str, str] = {
 _LEGACY_COLOR = "#6B7280"
 
 
+def _norm_tetris_key(value: str | None) -> str:
+    return "".join((value or "").split()).casefold()
+
+
+def _norm_site_key(value: str | None) -> str:
+    key = _norm_tetris_key(value)
+    site_aliases = {
+        "gsshop": "gsshop",
+        "abcmart": "abcmart",
+        "grandstage": "abcmart",
+        "lotteon": "lotteon",
+        "musinsa": "musinsa",
+        "ssg": "ssg",
+    }
+    return site_aliases.get(key, key)
+
+
 class SambaTetrisService:
     """테트리스 정책 배치 서비스."""
 
@@ -165,40 +182,72 @@ class SambaTetrisService:
         # 4. Raw SQL 집계 — 소싱처·브랜드별 수집 수
         collected_rows = await self._session.execute(
             text("""
-                SELECT source_site, brand, COUNT(*) AS cnt
-                FROM samba_collected_product
-                WHERE tenant_id = :tid
-                  AND brand IS NOT NULL
-                  AND source_site IS NOT NULL
-                GROUP BY source_site, brand
+                SELECT
+                    cp.source_site,
+                    COALESCE(
+                        NULLIF(BTRIM(cp.brand), ''),
+                        NULLIF(BTRIM(sf.source_brand_name), ''),
+                        NULLIF(BTRIM(cp.manufacturer), '')
+                    ) AS effective_brand,
+                    COUNT(*) AS cnt
+                FROM samba_collected_product cp
+                LEFT JOIN samba_search_filter sf ON sf.id = cp.search_filter_id
+                WHERE cp.tenant_id = :tid
+                  AND cp.source_site IS NOT NULL
+                  AND COALESCE(
+                        NULLIF(BTRIM(cp.brand), ''),
+                        NULLIF(BTRIM(sf.source_brand_name), ''),
+                        NULLIF(BTRIM(cp.manufacturer), '')
+                      ) IS NOT NULL
+                GROUP BY cp.source_site, effective_brand
             """),
             {"tid": tenant_id},
         )
-        # collected_map[(source_site, brand)] = count
-        collected_map: dict[tuple[str, str], int] = {
-            (row[0], row[1]): row[2] for row in collected_rows
-        }
+        # collected_map[(normalized_source_site, normalized_brand)] = count
+        collected_map: dict[tuple[str, str], int] = {}
+        collected_label_map: dict[tuple[str, str], tuple[str, str]] = {}
+        for row in collected_rows:
+            site = row[0]
+            brand = row[1]
+            key = (_norm_site_key(site), _norm_tetris_key(brand))
+            collected_map[key] = collected_map.get(key, 0) + int(row[2] or 0)
+            collected_label_map.setdefault(key, (site, brand))
 
         # 5. Raw SQL 집계 — JSONB 함수로 account_id 전개 후 DB에서 집계
         registered_rows = await self._session.execute(
             text("""
-                SELECT source_site, brand,
-                       jsonb_array_elements_text(registered_accounts::jsonb) AS account_id,
-                       COUNT(*) AS cnt
-                FROM samba_collected_product
-                WHERE tenant_id = :tid
-                  AND registered_accounts IS NOT NULL
-                  AND registered_accounts::text NOT IN ('null', '[]', '')
-                  AND brand IS NOT NULL
-                  AND source_site IS NOT NULL
-                GROUP BY source_site, brand, account_id
+                SELECT
+                    cp.source_site,
+                    COALESCE(
+                        NULLIF(BTRIM(cp.brand), ''),
+                        NULLIF(BTRIM(sf.source_brand_name), ''),
+                        NULLIF(BTRIM(cp.manufacturer), '')
+                    ) AS effective_brand,
+                    jsonb_array_elements_text(cp.registered_accounts::jsonb) AS account_id,
+                    COUNT(*) AS cnt
+                FROM samba_collected_product cp
+                LEFT JOIN samba_search_filter sf ON sf.id = cp.search_filter_id
+                WHERE cp.tenant_id = :tid
+                  AND cp.registered_accounts IS NOT NULL
+                  AND cp.registered_accounts::text NOT IN ('null', '[]', '')
+                  AND cp.source_site IS NOT NULL
+                  AND COALESCE(
+                        NULLIF(BTRIM(cp.brand), ''),
+                        NULLIF(BTRIM(sf.source_brand_name), ''),
+                        NULLIF(BTRIM(cp.manufacturer), '')
+                      ) IS NOT NULL
+                GROUP BY cp.source_site, effective_brand, account_id
             """),
             {"tid": tenant_id},
         )
-        # registered_map[(source_site, brand, account_id)] = count
-        registered_map: dict[tuple[str, str, str], int] = {
-            (row[0], row[1], row[2]): row[3] for row in registered_rows
-        }
+        # registered_map[(normalized_source_site, normalized_brand, account_id)] = count
+        registered_map: dict[tuple[str, str, str], int] = {}
+        for row in registered_rows:
+            site = row[0]
+            brand = row[1]
+            account_id = row[2]
+            key = (_norm_site_key(site), _norm_tetris_key(brand), account_id)
+            registered_map[key] = registered_map.get(key, 0) + int(row[3] or 0)
 
         # 6. 계정별 등록 총 수 집계
         # account_registered_total[account_id] = sum
@@ -210,7 +259,8 @@ class SambaTetrisService:
 
         # 7. 배치 인덱스: (source_site, brand_name) → assignment
         assignment_index: dict[tuple[str, str], SambaTetrisAssignment] = {
-            (a.source_site, a.brand_name): a for a in assignments
+            (_norm_site_key(a.source_site), _norm_tetris_key(a.brand_name)): a
+            for a in assignments
         }
 
         # 8. 등록된 (site, brand, account_id) 집합 — 레거시 감지용
@@ -236,6 +286,13 @@ class SambaTetrisService:
                 acc.additional_fields if isinstance(acc.additional_fields, dict) else {}
             ) or {}
             max_count: int = int(add_fields.get("maxCount", 0) or 0)
+            account_order_raw = add_fields.get("tetrisAccountOrder")
+            account_order = (
+                int(account_order_raw)
+                if isinstance(account_order_raw, (int, float, str))
+                and str(account_order_raw).strip() != ""
+                else None
+            )
 
             # 해당 계정에 배치된 assignment 목록
             acc_assignments: list[SambaTetrisAssignment] = [
@@ -251,8 +308,18 @@ class SambaTetrisService:
                     if a.policy_id
                     else ("기본정책", "#3B82F6")
                 )
-                reg_cnt = registered_map.get((a.source_site, a.brand_name, acc.id), 0)
-                col_cnt = collected_map.get((a.source_site, a.brand_name), 0)
+                reg_cnt = registered_map.get(
+                    (
+                        _norm_site_key(a.source_site),
+                        _norm_tetris_key(a.brand_name),
+                        acc.id,
+                    ),
+                    0,
+                )
+                col_cnt = collected_map.get(
+                    (_norm_site_key(a.source_site), _norm_tetris_key(a.brand_name)),
+                    0,
+                )
                 assignment_blocks.append(
                     {
                         "id": a.id,
@@ -270,7 +337,8 @@ class SambaTetrisService:
 
             # 레거시: registered_map에 있지만 tetris 배치 없는 브랜드
             assigned_site_brand = {
-                (a.source_site, a.brand_name) for a in acc_assignments
+                (_norm_site_key(a.source_site), _norm_tetris_key(a.brand_name))
+                for a in acc_assignments
             }
             legacy_keys = [
                 (site, brand)
@@ -303,6 +371,7 @@ class SambaTetrisService:
                 {
                     "account_id": acc.id,
                     "account_label": acc.account_label,
+                    "account_order": account_order,
                     "max_count": max_count,
                     "total_registered": total_registered,
                     "total_collected": total_collected,
@@ -311,21 +380,30 @@ class SambaTetrisService:
             )
 
         # 10. unassigned: 수집은 있지만 어떤 계정에도 등록·배치 없는 브랜드
-        all_registered_site_brand: set[tuple[str, str]] = {
-            (site, brand) for (site, brand, _) in registered_keys
-        }
         all_assigned_site_brand: set[tuple[str, str]] = {
-            (a.source_site, a.brand_name) for a in assignments
+            (_norm_site_key(a.source_site), _norm_tetris_key(a.brand_name))
+            for a in assignments
         }
-        already_placed = all_registered_site_brand | all_assigned_site_brand
 
         unassigned: list[dict[str, Any]] = []
+        registered_total_by_brand: dict[tuple[str, str], int] = {}
+        for (site, brand, _), cnt in registered_map.items():
+            key = (site, brand)
+            registered_total_by_brand[key] = registered_total_by_brand.get(key, 0) + cnt
+
         for (site, brand), cnt in collected_map.items():
-            if (site, brand) not in already_placed and cnt > 0:
+            if (site, brand) not in all_assigned_site_brand and cnt > 0:
                 unassigned.append(
                     {
-                        "source_site": site,
-                        "brand_name": brand,
+                        "source_site": collected_label_map.get(
+                            (site, brand), (site, brand)
+                        )[0],
+                        "brand_name": collected_label_map.get(
+                            (site, brand), (site, brand)
+                        )[1],
+                        "registered_count": registered_total_by_brand.get(
+                            (site, brand), 0
+                        ),
                         "collected_count": cnt,
                     }
                 )

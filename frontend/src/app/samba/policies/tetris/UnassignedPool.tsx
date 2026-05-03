@@ -27,7 +27,7 @@ function UnassignedItem({
     policy_id: null,
     policy_name: null,
     policy_color: '#6B7280',
-    registered_count: 0,
+    registered_count: item.registered_count,
     collected_count: item.collected_count,
     position_order: 0,
     is_legacy: false,
@@ -71,11 +71,11 @@ function UnassignedItem({
         }}>
           {item.brand_name}
         </div>
-        {itemHeight > 36 && (
-          <div style={{ fontSize: 10, color: '#666' }}>
-            {fmtNum(item.collected_count)}
-          </div>
-        )}
+        <div style={{ fontSize: 10, color: '#666' }}>
+          <span style={{ color: '#22C55E' }}>{fmtNum(item.registered_count)}</span>
+          <span style={{ color: '#444' }}>/</span>
+          <span style={{ color: '#888' }}>{fmtNum(item.collected_count)}</span>
+        </div>
       </div>
       <div style={{
         position: 'absolute',
@@ -132,8 +132,9 @@ export default function UnassignedPool({ unassigned, pixelsPerUnit, onDragStart 
             }}
           >
             {items.map((item, idx) => {
-              const itemHeight = item.collected_count > 0
-                ? Math.max(MIN_BLOCK_PX, Math.round(item.collected_count * pixelsPerUnit))
+              const displayCount = Math.max(item.collected_count, item.registered_count)
+              const itemHeight = displayCount > 0
+                ? Math.max(MIN_BLOCK_PX, Math.round(displayCount * pixelsPerUnit))
                 : MIN_BLOCK_PX
               return (
                 <div key={`${item.source_site}-${item.brand_name}-${idx}`} style={{ width: 160 }}>

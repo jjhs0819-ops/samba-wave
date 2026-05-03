@@ -25,6 +25,7 @@ class TetrisAccountBlock(BaseModel):
 
     account_id: str
     account_label: str
+    account_order: Optional[int] = None
     max_count: int
     total_registered: int
     total_collected: int
@@ -44,6 +45,7 @@ class TetrisUnassigned(BaseModel):
 
     source_site: str
     brand_name: str
+    registered_count: int
     collected_count: int
 
 
