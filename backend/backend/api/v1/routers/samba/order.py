@@ -2746,6 +2746,176 @@ async def sync_orders_from_markets(
         "Adidas": "https://www.adidas.co.kr/{}.html",
     }
 
+    # ── 병렬 사전조회: 각 마켓 get_orders() HTTP 호출을 동시에 실행 ──────────
+    # 세션 없이 순수 HTTP만 병렬화 — DB 작업/파싱/발주확인은 기존 루프에서 수행
+    _pre_settings_keys: set[str] = set()
+    for _pacc in account_snapshots:
+        _pmt = _pacc["market_type"]
+        _pex = _pacc["additional_fields"]
+        if _pmt == "smartstore" and not (
+            (_pex.get("clientId") or _pacc["api_key"])
+            and (_pex.get("clientSecret") or _pacc["api_secret"])
+        ):
+            _pre_settings_keys.add("store_smartstore")
+        elif _pmt == "11st" and not (_pex.get("apiKey") or _pacc["api_key"]):
+            _pre_settings_keys.add("store_11st")
+        elif _pmt == "ebay" and not (
+            (_pex.get("clientId") or _pex.get("appId") or _pacc["api_key"])
+            and (_pex.get("clientSecret") or _pex.get("certId") or _pacc["api_secret"])
+            and (_pex.get("oauthToken") or _pex.get("authToken"))
+        ):
+            _pre_settings_keys.add("store_ebay")
+        elif _pmt == "ssg" and not (_pex.get("apiKey") or _pacc["api_key"]):
+            _pre_settings_keys.add("store_ssg")
+
+    _pre_settings: dict[str, dict] = {}
+    if _pre_settings_keys:
+        _pre_svc_repo = SambaSettingsRepository(session)
+        for _psk in _pre_settings_keys:
+            _prow = await _pre_svc_repo.find_by_async(key=_psk)
+            if _prow and isinstance(_prow.value, dict):
+                _pre_settings[_psk] = _prow.value
+
+    async def _pre_fetch_orders(
+        acc: dict[str, Any], days: int
+    ) -> tuple[str, list | None]:
+        """마켓 API에서 초기 주문 목록 조회 (세션 없음, HTTP만)"""
+        _aid = acc["id"]
+        _mtype = acc["market_type"]
+        _extr = acc["additional_fields"]
+        _sid = acc["seller_id"]
+        try:
+            if _mtype == "smartstore":
+                _cid = _extr.get("clientId", "") or acc["api_key"] or ""
+                _csec = _extr.get("clientSecret", "") or acc["api_secret"] or ""
+                if not _cid or not _csec:
+                    _sv = _pre_settings.get("store_smartstore", {})
+                    _cid = _cid or _sv.get("clientId", "")
+                    _csec = _csec or _sv.get("clientSecret", "")
+                if not _cid or not _csec:
+                    return _aid, None
+                from backend.domain.samba.proxy.smartstore import SmartStoreClient
+
+                _c = SmartStoreClient(_cid, _csec)
+                return _aid, await _c.get_orders(days=days)
+
+            elif _mtype == "lotteon":
+                _ak = _extr.get("apiKey", "") or acc["api_key"] or ""
+                if not _ak:
+                    return _aid, None
+                from backend.domain.samba.proxy.lotteon import LotteonClient
+
+                _c = LotteonClient(_ak)
+                await _c.test_auth()
+                return _aid, await _c.get_delivery_orders(days=days)
+
+            elif _mtype == "playauto":
+                _ak = _extr.get("apiKey", "") or acc["api_key"] or ""
+                if not _ak:
+                    return _aid, None
+                from datetime import UTC as _paut, datetime as _padt, timedelta as _patd
+
+                from backend.domain.samba.proxy.playauto import PlayAutoClient
+
+                _c = PlayAutoClient(_ak)
+                try:
+                    _sd = (_padt.now(_paut) - _patd(days=days)).strftime("%Y%m%d")
+                    return _aid, await _c.get_orders(start_date=_sd, count=500)
+                finally:
+                    await _c.close()
+
+            elif _mtype == "coupang":
+                _ack = _extr.get("accessKey", "") or acc.get("api_key", "") or ""
+                _sck = _extr.get("secretKey", "") or acc.get("api_secret", "") or ""
+                _vid = _extr.get("vendorId", "") or _sid or ""
+                if not all([_ack, _sck, _vid]):
+                    return _aid, None
+                from backend.domain.samba.proxy.coupang import CoupangClient
+
+                _c = CoupangClient(_ack, _sck, _vid)
+                return _aid, await _c.get_orders(days=days)
+
+            elif _mtype == "11st":
+                _ak = _extr.get("apiKey", "") or acc["api_key"] or ""
+                if not _ak:
+                    _sv = _pre_settings.get("store_11st", {})
+                    _ak = _sv.get("apiKey", "") or ""
+                if not _ak:
+                    return _aid, None
+                from datetime import datetime as _11dt, timedelta as _11td
+                from zoneinfo import ZoneInfo as _11zi
+
+                from backend.domain.samba.proxy.elevenst import ElevenstClient
+
+                _KST11 = _11zi("Asia/Seoul")
+                _fmt11 = "%Y%m%d%H%M"
+                _st11 = (_11dt.now(_KST11) - _11td(days=days)).strftime(_fmt11)
+                _et11 = _11dt.now(_KST11).strftime(_fmt11)
+                _c = ElevenstClient(_ak)
+                return _aid, await _c.get_orders(_st11, _et11)
+
+            elif _mtype == "ebay":
+                _appid = _extr.get("clientId") or _extr.get("appId") or acc["api_key"]
+                _certid = (
+                    _extr.get("clientSecret")
+                    or _extr.get("certId")
+                    or acc["api_secret"]
+                )
+                _rtok = _extr.get("oauthToken") or _extr.get("authToken", "")
+                if not (_appid and _certid and _rtok):
+                    _sv = _pre_settings.get("store_ebay", {})
+                    _appid = _appid or _sv.get("clientId", "") or _sv.get("appId", "")
+                    _certid = (
+                        _certid or _sv.get("clientSecret", "") or _sv.get("certId", "")
+                    )
+                    _rtok = (
+                        _rtok or _sv.get("oauthToken", "") or _sv.get("authToken", "")
+                    )
+                if not (_appid and _certid and _rtok):
+                    return _aid, None
+                from backend.domain.samba.proxy.ebay import EbayClient
+
+                _c = EbayClient(
+                    app_id=_appid,
+                    dev_id="",
+                    cert_id=_certid,
+                    refresh_token=_rtok,
+                    sandbox=bool(_extr.get("sandbox", False)),
+                )
+                return _aid, await _c.get_orders(days=days)
+
+            elif _mtype == "ssg":
+                _ak = _extr.get("apiKey", "") or acc["api_key"] or ""
+                if not _ak:
+                    _sv = _pre_settings.get("store_ssg", {})
+                    _ak = _sv.get("apiKey", "") or ""
+                if not _ak:
+                    return _aid, None
+                from backend.domain.samba.proxy.ssg import SSGClient
+
+                _c = SSGClient(_ak)
+                return _aid, await _c.get_orders(days=days)
+
+        except Exception as _pfe:
+            logger.warning(f"[주문동기화] 병렬 사전조회 실패 ({_mtype}): {_pfe}")
+        return _aid, None
+
+    _prefetch_raw = await asyncio.gather(
+        *[_pre_fetch_orders(acc, body.days) for acc in account_snapshots],
+        return_exceptions=True,
+    )
+    _raw_cache: dict[str, list] = {}
+    for _pr in _prefetch_raw:
+        if isinstance(_pr, Exception):
+            continue
+        _paid, _praw = _pr
+        if _praw is not None:
+            _raw_cache[_paid] = _praw
+    logger.info(
+        f"[주문동기화] 병렬 사전조회 완료: {len(_raw_cache)}/{len(account_snapshots)}개 계정"
+    )
+    # ── 병렬 사전조회 끝 ──────────────────────────────────────────────────────
+
     for account in account_snapshots:
         market_type = account["market_type"]
         extras = account["additional_fields"]
@@ -2778,7 +2948,9 @@ async def sync_orders_from_markets(
                     )
                     continue
                 client = SmartStoreClient(client_id, client_secret)
-                raw_orders = await client.get_orders(days=body.days)
+                raw_orders = _raw_cache.get(account["id"])
+                if raw_orders is None:
+                    raw_orders = await client.get_orders(days=body.days)
                 # 발주 미확인(PAYED) 주문 자동 발주확인
                 unconfirmed_ids = []
                 for ro in raw_orders:
@@ -2893,7 +3065,11 @@ async def sync_orders_from_markets(
                     continue
                 lotteon_client = LotteonClient(api_key)
                 await lotteon_client.test_auth()
-                raw_orders = await lotteon_client.get_delivery_orders(days=body.days)
+                raw_orders = _raw_cache.get(account["id"])
+                if raw_orders is None:
+                    raw_orders = await lotteon_client.get_delivery_orders(
+                        days=body.days
+                    )
                 logger.info(
                     f"[주문동기화] {label}: 롯데ON 주문 {len(raw_orders)}건 조회"
                 )
@@ -3356,10 +3532,12 @@ async def sync_orders_from_markets(
                         datetime.now(UTC) - timedelta(days=body.days)
                     ).strftime("%Y%m%d")
                     # 전체 상태 한번에 조회 (상태 필터 없이)
-                    raw_orders = await pa_client.get_orders(
-                        start_date=start_date,
-                        count=500,
-                    )
+                    raw_orders = _raw_cache.get(account["id"])
+                    if raw_orders is None:
+                        raw_orders = await pa_client.get_orders(
+                            start_date=start_date,
+                            count=500,
+                        )
                     logger.info(f"[주문동기화] 플레이오토: {len(raw_orders)}건 조회")
                     for ro in raw_orders:
                         # 파생 주문 스킵 (사본-취소마감, ★교환주문 — 원주문에 이미 정보 포함)
@@ -3400,7 +3578,9 @@ async def sync_orders_from_markets(
 
                 client = CoupangClient(access_key, secret_key, vendor_id)
                 try:
-                    raw_orders = await client.get_orders(days=body.days)
+                    raw_orders = _raw_cache.get(account["id"])
+                    if raw_orders is None:
+                        raw_orders = await client.get_orders(days=body.days)
                     logger.info(f"[주문동기화] 쿠팡({label}): {len(raw_orders)}건 조회")
                     for ro in raw_orders:
                         try:
@@ -3453,7 +3633,11 @@ async def sync_orders_from_markets(
 
                 try:
                     # 결제완료 주문 조회
-                    _raw_orders = await _11st_client.get_orders(_start_time, _end_time)
+                    _raw_orders = _raw_cache.get(account["id"])
+                    if _raw_orders is None:
+                        _raw_orders = await _11st_client.get_orders(
+                            _start_time, _end_time
+                        )
                     logger.info(
                         f"[주문동기화] {label}: 11번가 주문 {len(_raw_orders)}건 조회"
                     )
@@ -3704,31 +3888,33 @@ async def sync_orders_from_markets(
                     refresh_token=refresh_token,
                     sandbox=bool(extras.get("sandbox", False)),
                 )
-                try:
-                    raw_orders = await ebay_client.get_orders(days=body.days)
-                except EbayApiError as e:
-                    err = str(e)
-                    if (
-                        "scope" in err.lower()
-                        or "invalid_scope" in err.lower()
-                        or "insufficient" in err.lower()
-                    ):
-                        results.append(
-                            {
-                                "account": label,
-                                "status": "error",
-                                "message": "sell.fulfillment scope 누락 — eBay 재인증 필요",
-                            }
-                        )
-                    else:
-                        results.append(
-                            {
-                                "account": label,
-                                "status": "error",
-                                "message": err[:150],
-                            }
-                        )
-                    continue
+                raw_orders = _raw_cache.get(account["id"])
+                if raw_orders is None:
+                    try:
+                        raw_orders = await ebay_client.get_orders(days=body.days)
+                    except EbayApiError as e:
+                        err = str(e)
+                        if (
+                            "scope" in err.lower()
+                            or "invalid_scope" in err.lower()
+                            or "insufficient" in err.lower()
+                        ):
+                            results.append(
+                                {
+                                    "account": label,
+                                    "status": "error",
+                                    "message": "sell.fulfillment scope 누락 — eBay 재인증 필요",
+                                }
+                            )
+                        else:
+                            results.append(
+                                {
+                                    "account": label,
+                                    "status": "error",
+                                    "message": err[:150],
+                                }
+                            )
+                        continue
 
                 logger.info(f"[주문동기화] {label}: eBay 주문 {len(raw_orders)}건 조회")
 
@@ -3889,7 +4075,9 @@ async def sync_orders_from_markets(
                         f"[주문동기화] {label}: SSG 정산 조회 실패 (무시) — {_ssg_se}"
                     )
                 try:
-                    _ssg_raw_orders = await _ssg_client.get_orders(days=body.days)
+                    _ssg_raw_orders = _raw_cache.get(account["id"])
+                    if _ssg_raw_orders is None:
+                        _ssg_raw_orders = await _ssg_client.get_orders(days=body.days)
                     logger.info(
                         f"[주문동기화] {label}: SSG 주문 {len(_ssg_raw_orders)}건 조회"
                     )
