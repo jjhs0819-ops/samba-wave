@@ -4215,15 +4215,22 @@ async def sync_orders_from_markets(
                     ),
                     None,
                 )
+                # asyncpg text()에서 list 파라미터 타입 오류 방지 — IN (...)으로 처리
+                _ph = ", ".join(f":no_{i}" for i in range(len(_non_lotteon_nos)))
+                _bulk_params: dict = {
+                    f"no_{i}": v for i, v in enumerate(_non_lotteon_nos)
+                }
+                _bulk_params["tid"] = _batch_tid
+                _bulk_params["cid"] = _batch_cid
                 _bulk_q = await session.execute(
                     _sa_text(
-                        "SELECT id, order_number FROM samba_order "
-                        "WHERE order_number = ANY(:nos) "
-                        "AND tenant_id IS NOT DISTINCT FROM :tid "
-                        "AND channel_id IS NOT DISTINCT FROM :cid "
-                        "ORDER BY created_at DESC"
+                        f"SELECT id, order_number FROM samba_order "
+                        f"WHERE order_number IN ({_ph}) "
+                        f"AND tenant_id IS NOT DISTINCT FROM :tid "
+                        f"AND channel_id IS NOT DISTINCT FROM :cid "
+                        f"ORDER BY created_at DESC"
                     ),
-                    {"nos": _non_lotteon_nos, "tid": _batch_tid, "cid": _batch_cid},
+                    _bulk_params,
                 )
                 for _br in _bulk_q.fetchall():
                     if _br[1] not in _existing_id_map:
