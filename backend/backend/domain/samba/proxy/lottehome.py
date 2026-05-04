@@ -392,18 +392,18 @@ class LotteHomeClient:
         if cache_key not in _auth_locks:
             _auth_locks[cache_key] = asyncio.Lock()
         async with _auth_locks[cache_key]:
-            if not force:
-                # Lock 획득 후 재확인
-                cached = _cert_cache.get(cache_key)
-                if cached:
-                    cert_key, expires_at = cached
-                    if expires_at.tzinfo is None:
-                        expires_at = expires_at.replace(tzinfo=timezone.utc)
-                    if (expires_at - now) > refresh_before:
-                        self._cert_key = cert_key
-                        self._cert_expires_at = expires_at
-                        return cert_key
+            # Lock 획득 후 재확인 — force=True 여도 동시 호출이 이미 갱신했으면 재사용
+            cached = _cert_cache.get(cache_key)
+            if cached:
+                cert_key, expires_at = cached
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                if (expires_at - now) > refresh_before:
+                    self._cert_key = cert_key
+                    self._cert_expires_at = expires_at
+                    return cert_key
 
+            if not force:
                 # 메모리 캐시 미스 → DB에서 복구 시도 (재시작 후 재인증 방지)
                 db_cached = await _load_cert_from_db(self.user_id, self.env)
                 if db_cached:
@@ -508,12 +508,15 @@ class LotteHomeClient:
     # ------------------------------------------------------------------
 
     async def search_brands(self, brand_name: str = "") -> dict[str, Any]:
-        """브랜드 목록 조회."""
+        """브랜드 목록 조회. POST 방식으로 한글 EUC-KR 인코딩 정상 처리."""
         cert_key = await self._ensure_auth()
+        params: dict[str, Any] = {"subscriptionId": cert_key}
+        if brand_name:
+            params["brnd_nm"] = brand_name
         return await self._call_api_auto_retry(
             "searchBrandListOpenApi.lotte",
-            "GET",
-            {"subscriptionId": cert_key, "brnd_nm": brand_name},
+            "POST",
+            params,
         )
 
     async def search_categories(
@@ -589,16 +592,19 @@ class LotteHomeClient:
         if not md_id:
             md_result = await self.search_md_list()
             md_data = md_result.get("data", {})
+            logger.info(f"[롯데홈쇼핑] MD목록 응답 keys: {list(md_data.keys()) if isinstance(md_data, dict) else type(md_data).__name__}")
             md_list = md_data.get("Result", md_data)
             info_list = (
                 md_list.get("MDInfoList", {}) if isinstance(md_list, dict) else {}
             )
             md_info = info_list.get("MDInfo", {}) if isinstance(info_list, dict) else {}
+            logger.info(f"[롯데홈쇼핑] MDInfo 추출 결과: type={type(md_info).__name__}, value={str(md_info)[:200]}")
             if isinstance(md_info, list) and md_info:
                 md_id = md_info[0].get("MDCode", "")
             elif isinstance(md_info, dict):
                 md_id = md_info.get("MDCode", "")
             if not md_id:
+                logger.warning(f"[롯데홈쇼핑] MD코드를 찾지 못함. md_data={str(md_data)[:300]}")
                 return {"success": False, "message": "배정된 MD가 없습니다"}
             logger.info(f"[롯데홈쇼핑] MD코드 자동 조회: {md_id}")
             cert_key = self._cert_key  # search_md_list 이후 갱신된 cert 사용
@@ -639,11 +645,11 @@ class LotteHomeClient:
 
     async def search_return_places(self) -> dict[str, Any]:
         """출고지/반품배송지 목록 조회. dlvp_tp_cd: 10=출고지, 20=반품지 — 각각 호출 후 병합."""
-        cert_key = await self._ensure_auth()
         shipping_places: list[dict[str, Any]] = []
         return_places: list[dict[str, Any]] = []
         for tp, target in (("10", shipping_places), ("20", return_places)):
             try:
+                cert_key = await self._ensure_auth()
                 res = await self._call_api_auto_retry(
                     "searchReturnListOpenApi.lotte",
                     "GET",
@@ -652,6 +658,7 @@ class LotteHomeClient:
                 data = res.get("data", {})
                 result = data.get("Result", data)
                 items_wrap = result.get("ReturnInfoList", {})
+                logger.info(f"[롯데홈] 배송지 tp={tp} result_keys={list(result.keys()) if isinstance(result, dict) else type(result)}, items_wrap={str(items_wrap)[:400]}")
                 info = (
                     items_wrap.get("ReturnInfo", [])
                     if isinstance(items_wrap, dict)
@@ -667,7 +674,8 @@ class LotteHomeClient:
                             "address": item.get("ReturnAddress", ""),
                         }
                     )
-            except LotteApiError:
+            except LotteApiError as e:
+                logger.warning(f"[롯데홈] 배송지 tp={tp} 오류: {e}")
                 continue
         return {
             "success": True,

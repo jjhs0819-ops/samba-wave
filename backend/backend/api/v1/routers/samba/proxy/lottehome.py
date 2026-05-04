@@ -133,12 +133,31 @@ async def lottehome_brands(
 ) -> dict[str, Any]:
     """롯데홈쇼핑 브랜드 목록 조회."""
     client = await _get_lotte_client(session)
+    logger.info(f"[롯데홈] 브랜드 검색 요청: brnd_nm={brnd_nm!r}, env={client.env}, user_id={client.user_id!r}")
     try:
         result = await client.search_brands(brnd_nm)
-        return {"success": True, "data": result.get("data")}
+        data = result.get("data", {})
+        result_block = data.get("Result", data) if isinstance(data, dict) else {}
+        brand_list_raw = result_block.get("BrandInfoList") if isinstance(result_block, dict) else None
+        logger.info(f"[롯데홈] 브랜드 응답 구조: BrandInfoList type={type(brand_list_raw).__name__}, keys={list(result_block.keys()) if isinstance(result_block, dict) else 'N/A'}")
+        # BrandInfoList가 flat list(각 항목이 브랜드) or dict(BrandInfo 자식) 둘 다 처리
+        if isinstance(brand_list_raw, list):
+            brands = brand_list_raw
+        elif isinstance(brand_list_raw, dict):
+            brand_info = brand_list_raw.get("BrandInfo", [])
+            brands = brand_info if isinstance(brand_info, list) else ([brand_info] if brand_info else [])
+        else:
+            brands = []
+        logger.info(f"[롯데홈] 브랜드 검색 결과: {len(brands)}건")
+        normalized = dict(result_block) if isinstance(result_block, dict) else {}
+        normalized["BrandInfoList"] = {"BrandInfo": brands}
+        return {"success": True, "data": {"Result": normalized}}
     except LotteApiError as exc:
-        logger.warning(f"[롯데홈] 브랜드 조회 실패: {exc}")
+        logger.warning(f"[롯데홈] 브랜드 조회 실패: code={exc.code}, message={exc}")
         return {"success": False, "message": str(exc), "code": exc.code}
+    except Exception as exc:
+        logger.exception(f"[롯데홈] 브랜드 조회 예외: {exc}")
+        return {"success": False, "message": str(exc)}
 
 
 @router.get("/lottehome/categories")
@@ -165,6 +184,10 @@ async def lottehome_md_groups(
     client = await _get_lotte_client(session)
     try:
         result = await client.search_md_groups()
+        if not result.get("success"):
+            msg = result.get("message", "MD상품군 조회 실패")
+            logger.warning(f"[롯데홈] MD상품군 조회 실패: {msg}")
+            return {"success": False, "message": msg}
         return {"success": True, "data": result.get("data")}
     except LotteApiError as exc:
         logger.warning(f"[롯데홈] MD상품군 조회 실패: {exc}")
@@ -192,11 +215,62 @@ async def lottehome_standard_categories(
 async def lottehome_delivery_policies(
     session: AsyncSession = Depends(get_read_session_dependency),
 ) -> dict[str, Any]:
-    """롯데홈쇼핑 배송비정책 조회."""
+    """롯데홈쇼핑 배송비정책 조회 — policies 리스트로 파싱해서 반환."""
     client = await _get_lotte_client(session)
     try:
         result = await client.search_delivery_policies()
-        return {"success": True, "data": result.get("data")}
+        data = result.get("data", {})
+        logger.info(f"[롯데홈] 배송비정책 raw data keys: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+        result_root = data.get("Result", data) if isinstance(data, dict) else {}
+        pol_list = result_root.get("DlvPolcInfoList", result_root.get("DlvPolcList", result_root.get("DlvPolcInfo", {})))
+        if isinstance(pol_list, dict):
+            items = pol_list.get("DlvPolcInfo", [])
+        else:
+            items = pol_list
+        if isinstance(items, dict):
+            items = [items]
+        logger.info(f"[롯데홈] 배송비정책 items count={len(items) if isinstance(items, list) else 'N/A'}, sample={str(items[:1])[:400] if isinstance(items, list) else items}")
+        def _policy_label(item: dict) -> str:
+            no = str(item.get("DlvPolcNo", item.get("dlv_polc_no", "")))
+            nm = item.get("DlvPolcNm") or item.get("dlv_polc_nm") or item.get("LwstEntrNm") or ""
+            dlex = item.get("Dlex", "")
+            rtgs = item.get("RtgsDlex", "")
+            parts = [nm] if nm else []
+            if dlex:
+                parts.append(f"기본 {dlex}원")
+            if rtgs:
+                parts.append(f"반품 {rtgs}원")
+            return f"[{no}] {' / '.join(parts)}" if parts else no
+        policies = [
+            {"no": str(item.get("DlvPolcNo", item.get("dlv_polc_no", ""))), "nm": _policy_label(item)}
+            for item in (items if isinstance(items, list) else [])
+            if item.get("DlvPolcNo") or item.get("dlv_polc_no")
+        ]
+        # 추가배송비정책 (도서산간) — IsmrDlvPolcInfoList
+        ismr_wrap = result_root.get("IsmrDlvPolcInfoList", {})
+        if isinstance(ismr_wrap, dict):
+            ismr_items = ismr_wrap.get("IsmrDlvPolcInfo", ismr_wrap.get("DlvPolcInfo", []))
+        else:
+            ismr_items = ismr_wrap
+        if isinstance(ismr_items, dict):
+            ismr_items = [ismr_items]
+        logger.info(f"[롯데홈] 추가배송비정책 ismr_items count={len(ismr_items) if isinstance(ismr_items, list) else 'N/A'}, sample={str(ismr_items[:1])[:400] if isinstance(ismr_items, list) else ismr_items}")
+        def _extra_policy_label(item: dict) -> str:
+            no = str(item.get("IsmrDlvPolcNo", item.get("DlvPolcNo", "")))
+            ismr = item.get("IsmrDlex", "")
+            jeju = item.get("JejuDlex", "")
+            parts = []
+            if ismr:
+                parts.append(f"도서산간 {ismr}원")
+            if jeju:
+                parts.append(f"제주 {jeju}원")
+            return f"[{no}] {' / '.join(parts)}" if parts else no
+        extra_policies = [
+            {"no": str(item.get("IsmrDlvPolcNo", item.get("DlvPolcNo", item.get("dlv_polc_no", "")))), "nm": _extra_policy_label(item)}
+            for item in (ismr_items if isinstance(ismr_items, list) else [])
+            if item.get("IsmrDlvPolcNo") or item.get("DlvPolcNo") or item.get("dlv_polc_no")
+        ]
+        return {"success": True, "policies": policies, "extra_policies": extra_policies}
     except LotteApiError as exc:
         logger.warning(f"[롯데홈] 배송비정책 조회 실패: {exc}")
         return {"success": False, "message": str(exc), "code": exc.code}

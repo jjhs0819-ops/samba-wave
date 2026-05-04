@@ -407,7 +407,11 @@ export const STORE_MARKETS: MarketConfig[] = [
     { name: 'jejuFee', label: '제주/도서산간 추가비', type: 'number', placeholder: '3000' },
     { name: 'stockQuantity', label: '재고수량', type: 'number', placeholder: '999 (기본값)' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
-    { name: 'env', label: 'API 환경', type: 'select', options: [{ value: 'prod', label: '운영(prod)' }, { value: 'dev', label: '개발(dev)' }] },
+    { name: '_divider_lottehome_shipping', label: '배송정책/출고지 설정', type: 'divider' },
+    { name: 'dlvPolcNo', label: '배송비정책', type: 'lottehome-policy-select' },
+    { name: 'addDlvPolcNo', label: '추가배송비정책', type: 'lottehome-extra-policy-select' },
+    { name: 'corpRlsPlSn', label: '출고지', type: 'lottehome-shipping-select' },
+    { name: 'corpDlvpSn', label: '반품지', type: 'lottehome-return-select' },
   ]},
   { key: 'homeand', label: '홈앤쇼핑', authField: 'apiKey', guideUrl: 'https://partner.home-and.com', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
