@@ -786,18 +786,30 @@ class LotteonClient:
                     "POST", "/v1/openapi/order/v1/getSROrderList", body=body
                 )
                 import json as _json
+
                 _preview = _json.dumps(result, ensure_ascii=False, default=str)[:500]
                 logger.info(f"[롯데ON] getSROrderList raw(500): {_preview}")
                 data = result.get("data") or {}
                 if isinstance(data, list):
                     return data
                 if isinstance(data, dict):
-                    for key in ("orderItems", "orderList", "list", "content", "items", "orders"):
+                    for key in (
+                        "orderItems",
+                        "orderList",
+                        "list",
+                        "content",
+                        "items",
+                        "orders",
+                    ):
                         val = data.get(key)
                         if isinstance(val, list) and val:
-                            logger.info(f"[롯데ON] getSROrderList 키='{key}', {len(val)}건")
+                            logger.info(
+                                f"[롯데ON] getSROrderList 키='{key}', {len(val)}건"
+                            )
                             return val
-                logger.warning(f"[롯데ON] getSROrderList 구조 미파악: data 키={list(data.keys()) if isinstance(data, dict) else type(data)}")
+                logger.warning(
+                    f"[롯데ON] getSROrderList 구조 미파악: data 키={list(data.keys()) if isinstance(data, dict) else type(data)}"
+                )
             except Exception as e:
                 logger.warning(f"[롯데ON] getSROrderList 실패: {e}")
             return []
@@ -821,7 +833,9 @@ class LotteonClient:
                 seen.add(key)
                 merged.append(item)
 
-        logger.info(f"[롯데ON] 병행 조회 완료: getSROrderList={len(sr_orders)}건, delivery={len(delivery_orders)}건, 최종={len(merged)}건")
+        logger.info(
+            f"[롯데ON] 병행 조회 완료: getSROrderList={len(sr_orders)}건, delivery={len(delivery_orders)}건, 최종={len(merged)}건"
+        )
         return merged
 
     async def get_claims(self, days: int = 7) -> list[dict[str, Any]]:
