@@ -8,7 +8,19 @@ import {
 import { fmtNum } from '@/lib/samba/styles'
 
 /** 옵션 패널 — 옵션명/가격/재고 편집 + 일괄수정. */
-const OptionPanel = React.memo(function OptionPanel({ options, productCost, productId, sourceSite }: { options: unknown[]; productCost: number; productId: string; sourceSite: string }) {
+const OptionPanel = React.memo(function OptionPanel({
+  options,
+  productCost,
+  productId,
+  sourceSite,
+  nameRule,
+}: {
+  options: unknown[]
+  productCost: number
+  productId: string
+  sourceSite: string
+  nameRule?: import('@/lib/samba/api/support').SambaNameRule
+}) {
   const [open, setOpen] = useState(false)
   const [selectAll, setSelectAll] = useState(true)
   const [editingName, setEditingName] = useState<number | null>(null)
@@ -19,6 +31,17 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
   const [editingPrices, setEditingPrices] = useState<Record<number, string>>({})
   const [editingStocks, setEditingStocks] = useState<Record<number, string>>({})
   const opts = localOpts
+  const displayOptionName = useCallback((value: unknown) => {
+    const text = String(value ?? '')
+    const rules = nameRule?.option_rules
+    if (!Array.isArray(rules) || rules.length === 0) return text
+    return rules.reduce((acc, rule) => {
+      if (!rule || typeof rule !== 'object') return acc
+      const from = String((rule as Record<string, unknown>).from ?? '')
+      const to = String((rule as Record<string, unknown>).to ?? '')
+      return from ? acc.split(from).join(to) : acc
+    }, text)
+  }, [nameRule])
   const getOptionBasePrice = useCallback((opt: Record<string, unknown>) => {
     const rawPrice = Number(opt.price ?? opt.salePrice ?? 0)
     if (rawPrice > 0) return rawPrice
@@ -170,7 +193,7 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
                         }}
                         style={{ width: '60px', background: 'rgba(255,255,255,0.05)', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', textAlign: 'right', fontSize: '0.875rem' }}
                       />
-                      <span>개</span>
+                      {displayOptionName(o.name || o.value || `option${idx + 1}`)}
                     </span>
                   )
                 }

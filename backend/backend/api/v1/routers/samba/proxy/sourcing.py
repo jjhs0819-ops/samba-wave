@@ -123,13 +123,21 @@ async def sourcing_collect_queue(request: Request) -> Any:
             return {"hasJob": False, "forceStop": True}
     except Exception:
         pass
-    # PC 분담 last_seen 갱신 — stale PC 자동 제거에 사용
+    # PC 분담 last_seen 갱신 + allowed_sites 동기화
+    # 서버 재시작 후 폴링이 재개되면 _pc_allowed_sites 자동 복원
     try:
         from backend.api.v1.routers.samba.collector_autotune import (
+            register_pc_allowed_sites,
             update_pc_last_seen,
         )
 
         update_pc_last_seen(device_id)
+        raw_sites_for_reg = request.headers.get("X-Allowed-Sites")
+        if device_id and raw_sites_for_reg is not None:
+            sites_for_reg = [
+                s.strip() for s in raw_sites_for_reg.split(",") if s.strip()
+            ]
+            register_pc_allowed_sites(device_id, sites_for_reg)
     except Exception:
         pass
     # X-Allowed-Sites 헤더 의미:

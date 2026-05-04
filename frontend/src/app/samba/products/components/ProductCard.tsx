@@ -1856,7 +1856,13 @@ const ProductCard = React.memo(function ProductCard({
                 <td style={tdLabel}>옵션</td>
                 <td style={tdVal}>
                   {p.options && p.options.length > 0 ? (
-                    <OptionPanel options={p.options} productCost={cost} productId={p.id} sourceSite={p.source_site} />
+                    <OptionPanel
+                      options={p.options}
+                      productCost={cost}
+                      productId={p.id}
+                      sourceSite={p.source_site}
+                      nameRule={nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id)}
+                    />
                   ) : (
                     <span style={{ color: '#444', fontSize: '0.75rem' }}>※ 옵션 미설정 -- 단일상품</span>
                   )}
