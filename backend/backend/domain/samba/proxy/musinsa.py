@@ -1072,6 +1072,42 @@ class MusinsaClient:
                     }
                 )
 
+            # extra(추가) 옵션 처리 — 이름에 (+XXXX) 형태로 추가금액 포함
+            extra_groups = opt_json["data"].get("extra", [])
+            for grp in extra_groups:
+                if grp.get("isDeleted"):
+                    continue
+                grp_name = grp.get("name", "")
+                is_stock_managed = grp.get("isStockManaged", False)
+                for ev in grp.get("optionValues", []):
+                    if not ev.get("activated") or ev.get("isDeleted"):
+                        continue
+                    ev_name = ev.get("name", "")
+                    if "선택안함" in ev_name or "선택없음" in ev_name:
+                        continue
+                    m = re.search(r"\(\+(\d+)\)", ev_name)
+                    add_price = int(m.group(1)) if m else 0
+                    ev_stock: Optional[int] = (
+                        (ev.get("quantity") or 99) if is_stock_managed else 99
+                    )
+                    full_name = f"{grp_name}: {ev_name}" if grp_name else ev_name
+                    options.append(
+                        {
+                            "no": ev.get("no"),
+                            "name": full_name,
+                            "price": (base_price or 0) + add_price,
+                            "stock": ev_stock,
+                            "isSoldOut": False,
+                            "isBrandDelivery": False,
+                            "deliveryType": "",
+                            "managedCode": "",
+                        }
+                    )
+            if extra_groups:
+                logger.info(
+                    f"[옵션] {goods_no} extra 옵션 {sum(len(g.get('optionValues', [])) for g in extra_groups)}개 추가"
+                )
+
         except Exception as exc:
             logger.warning(
                 f"[옵션] {goods_no} 옵션 수집 실패: {type(exc).__name__}: {exc}"
