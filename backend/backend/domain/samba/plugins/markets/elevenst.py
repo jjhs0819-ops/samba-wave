@@ -129,11 +129,19 @@ class ElevenstPlugin(MarketPlugin):
                             "</ProductOption>"
                         )
 
+                _brand = (
+                    (product.get("brand") or "")
+                    .replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;")
+                )
+                _brand_xml = f"<brand>{_brand}</brand>" if _brand else ""
                 xml_data = (
                     '<?xml version="1.0" encoding="UTF-8"?>'
                     "<Product>"
                     "<selMthdCd>01</selMthdCd>"
                     f"<selPrc>{new_price}</selPrc>"
+                    f"{_brand_xml}"
                     f"{option_xml}"
                     "</Product>"
                 )
