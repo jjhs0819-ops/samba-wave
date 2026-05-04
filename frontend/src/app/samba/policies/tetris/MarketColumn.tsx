@@ -70,18 +70,9 @@ export default function MarketColumn({
 
   const orderedAccounts = useMemo(() => {
     return [...market.accounts].sort((a, b) => {
-      const aOrder = a.account_order
-      const bOrder = b.account_order
-      if (aOrder != null && bOrder != null && aOrder !== bOrder) {
-        return aOrder - bOrder
-      }
-      if (aOrder != null && bOrder == null) return -1
-      if (aOrder == null && bOrder != null) return 1
-      if (a.total_registered !== b.total_registered) {
-        return a.total_registered - b.total_registered
-      }
-      if (a.max_count !== b.max_count) {
-        return a.max_count - b.max_count
+      // 수집상품수 오름차순 — 수집 많은 계정이 하단에 배치
+      if (a.total_collected !== b.total_collected) {
+        return a.total_collected - b.total_collected
       }
       return a.account_label.localeCompare(b.account_label)
     })

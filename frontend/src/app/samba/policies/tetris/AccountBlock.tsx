@@ -207,7 +207,7 @@ export default function AccountBlock({
               />
             )}
             {[...blocksWithHeight.items]
-              .sort((a, b) => a.block.registered_count - b.block.registered_count)
+              .sort((a, b) => a.block.collected_count - b.block.collected_count)
               .map((item, idx) => (
                 <div key={item.block.id ?? `legacy-${idx}`}>
                   <BrandBlock

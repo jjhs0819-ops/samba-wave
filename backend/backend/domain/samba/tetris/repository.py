@@ -36,10 +36,12 @@ class SambaTetrisRepository(BaseRepository[SambaTetrisAssignment]):
         tenant_id: Optional[str],
         source_site: str,
         brand_name: str,
+        market_account_id: str,
     ) -> Optional[SambaTetrisAssignment]:
-        """동일한 소싱처·브랜드 배치가 이미 존재하는지 확인."""
+        """동일한 소싱처·브랜드·계정 조합 배치가 이미 존재하는지 확인."""
         return await self.find_by_async(
             tenant_id=tenant_id,
             source_site=source_site,
             brand_name=brand_name,
+            market_account_id=market_account_id,
         )

@@ -139,6 +139,7 @@ const OptionPanel = React.memo(function OptionPanel({
             </thead>
             <tbody>
               {opts.map((o, idx) => {
+                const optionName = displayOptionName(o.name || o.value || `option${idx + 1}`)
                 const isBrandDelivery = o.isBrandDelivery === true
                 const stock = o.stock !== undefined && o.stock !== null ? Number(o.stock) : -1
                 const isSoldOut = !isBrandDelivery && (o.isSoldOut === true || stock === 0)
@@ -193,7 +194,6 @@ const OptionPanel = React.memo(function OptionPanel({
                         }}
                         style={{ width: '60px', background: 'rgba(255,255,255,0.05)', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', textAlign: 'right', fontSize: '0.875rem' }}
                       />
-                      {displayOptionName(o.name || o.value || `option${idx + 1}`)}
                     </span>
                   )
                 }
@@ -216,7 +216,7 @@ const OptionPanel = React.memo(function OptionPanel({
                           style={{ width: '100%', background: 'rgba(255,255,255,0.05)', border: '1px solid #FF8C00', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.875rem' }}
                         />
                       ) : (
-                        String(o.name || o.value || `옵션${idx + 1}`)
+                        optionName
                       )}
                     </td>
                     <td style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.875rem', color: '#C5C5C5' }}>

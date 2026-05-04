@@ -281,13 +281,7 @@ class SambaTetrisService:
                 account_registered_total.get(acc_id, 0) + cnt
             )
 
-        # 7. 배치 인덱스: (source_site, brand_name) → assignment
-        assignment_index: dict[tuple[str, str], SambaTetrisAssignment] = {
-            (_norm_site_key(a.source_site), _norm_tetris_key(a.brand_name)): a
-            for a in assignments
-        }
-
-        # 8. 등록된 (site, brand, account_id) 집합 — 레거시 감지용
+        # 7. 등록된 (site, brand, account_id) 집합 — 레거시 감지용
         registered_keys: set[tuple[str, str, str]] = set(registered_map.keys())
 
         # 9. 보드 조립
@@ -407,12 +401,8 @@ class SambaTetrisService:
                 }
             )
 
-        # 10. unassigned: 수집은 있지만 어떤 계정에도 등록·배치 없는 브랜드
-        all_assigned_site_brand: set[tuple[str, str]] = {
-            (_norm_site_key(a.source_site), _norm_tetris_key(a.brand_name))
-            for a in assignments
-        }
-
+        # 10. unassigned: 수집 상품이 있는 모든 브랜드 표시 (다중 계정 중복 배치 허용)
+        # 이미 일부 계정에 배치된 브랜드도 다른 계정에 추가 배치 가능하도록 풀에 항상 포함
         unassigned: list[dict[str, Any]] = []
         registered_total_by_brand: dict[tuple[str, str], int] = {}
         for (site, brand, _), cnt in registered_map.items():
@@ -420,7 +410,7 @@ class SambaTetrisService:
             registered_total_by_brand[key] = registered_total_by_brand.get(key, 0) + cnt
 
         for (site, brand), cnt in collected_map.items():
-            if (site, brand) not in all_assigned_site_brand and cnt > 0:
+            if cnt > 0:
                 unassigned.append(
                     {
                         "source_site": collected_label_map.get(
@@ -455,12 +445,14 @@ class SambaTetrisService:
         position_order: int,
     ) -> SambaTetrisAssignment:
         """배치 저장 후 해당 브랜드 미등록 상품 전송 트리거."""
-        # 기존 배치 확인 (중복 방지)
-        existing = await self._repo.find_existing(tenant_id, source_site, brand_name)
+        # 동일 계정에 동일 브랜드 중복 배치 방지 (다른 계정에는 허용)
+        existing = await self._repo.find_existing(
+            tenant_id, source_site, brand_name, market_account_id
+        )
         if existing:
             raise HTTPException(
                 status_code=409,
-                detail=f"{source_site}/{brand_name} 배치가 이미 존재합니다 (id={existing.id})",
+                detail=f"{source_site}/{brand_name} 배치가 이미 해당 계정에 존재합니다 (id={existing.id})",
             )
 
         assignment = await self._repo.create_async(
