@@ -752,9 +752,13 @@ class LotteonClient:
     async def get_orders(self, days: int = 7) -> list[dict[str, Any]]:
         """최근 N일 주문 목록 조회.
 
-        롯데ON Order API — camelCase 액션 방식 사용.
-        날짜 형식: yyyymmddhh24miss (전체 datetime)
+        전략: getSROrderList(전체 주문) + SellerDeliveryOrdersSearch(배송처리 중 보완) 병행.
+        getSROrderList 주의사항:
+          - lrtrNo 는 빈 문자열 고정 (self.tr_no 넣으면 0건)
+          - orderStatusList 미전송 및 빈 배열 전송 시 0건 → ["11","12"] 명시 필수
+          - 파서: 빈 list 필드는 건너뛰고 다음 키 확인 (orderItems:[] → orderList 확인)
         """
+        import asyncio
         from datetime import timedelta
 
         now = now_kst()
@@ -764,48 +768,61 @@ class LotteonClient:
         body: dict[str, Any] = {
             "trGrpCd": self.tr_grp_cd or "SR",
             "trNo": self.tr_no,
-            "lrtrNo": self.tr_no,
+            "lrtrNo": "",
             "srchStrtDttm": start,
             "srchEndDttm": end,
             "pageNo": 1,
             "pageSize": 100,
-            # 주문 상태 전체 조회 (일부 API에서 필수)
-            "orderStatusList": [],
+            "orderStatusList": ["11", "12"],
         }
         logger.info(
             f"[롯데ON] 주문 조회 {start}~{end}, trGrpCd={self.tr_grp_cd}, trNo={self.tr_no}"
         )
 
-        # 문서 확인된 경로: getSROrderList
-        result = await self._call_api(
-            "POST", "/v1/openapi/order/v1/getSROrderList", body=body
+        # getSROrderList + SellerDeliveryOrdersSearch 병행 조회 후 중복 제거
+        async def _get_sr_orders() -> list[dict]:
+            try:
+                result = await self._call_api(
+                    "POST", "/v1/openapi/order/v1/getSROrderList", body=body
+                )
+                import json as _json
+                _preview = _json.dumps(result, ensure_ascii=False, default=str)[:500]
+                logger.info(f"[롯데ON] getSROrderList raw(500): {_preview}")
+                data = result.get("data") or {}
+                if isinstance(data, list):
+                    return data
+                if isinstance(data, dict):
+                    for key in ("orderItems", "orderList", "list", "content", "items", "orders"):
+                        val = data.get(key)
+                        if isinstance(val, list) and val:
+                            logger.info(f"[롯데ON] getSROrderList 키='{key}', {len(val)}건")
+                            return val
+                logger.warning(f"[롯데ON] getSROrderList 구조 미파악: data 키={list(data.keys()) if isinstance(data, dict) else type(data)}")
+            except Exception as e:
+                logger.warning(f"[롯데ON] getSROrderList 실패: {e}")
+            return []
+
+        sr_orders, delivery_orders = await asyncio.gather(
+            _get_sr_orders(),
+            self.get_delivery_orders(days=days),
         )
-        logger.info(f"[롯데ON] 주문 API 응답 키: {list(result.keys())}")
-        # 디버그: 실제 응답 전체 덤프 (처음 2000자) — 원인 추적용, 추후 제거
-        import json as _json
 
-        _preview = _json.dumps(result, ensure_ascii=False, default=str)[:2000]
-        logger.info(f"[롯데ON] getSROrderList raw 응답(2KB): {_preview}")
+        # 중복 제거: (odNo, odSeq, procSeq) 기준
+        seen: set[tuple] = set()
+        merged: list[dict] = []
+        for item in sr_orders:
+            key = (item.get("odNo"), item.get("odSeq"), item.get("procSeq"))
+            if key not in seen:
+                seen.add(key)
+                merged.append(item)
+        for item in delivery_orders:
+            key = (item.get("odNo"), item.get("odSeq"), item.get("procSeq"))
+            if key not in seen:
+                seen.add(key)
+                merged.append(item)
 
-        # 응답 구조 탐색 (data.orderItems 또는 data.list 등)
-        data = result.get("data") or {}
-        if isinstance(data, list):
-            return data
-        if isinstance(data, dict):
-            for key in (
-                "orderItems",
-                "orderList",
-                "list",
-                "content",
-                "items",
-                "orders",
-            ):
-                val = data.get(key)
-                if isinstance(val, list):
-                    logger.info(f"[롯데ON] 주문 데이터 키='{key}', 건수={len(val)}")
-                    return val
-        logger.warning(f"[롯데ON] 주문 응답 구조 미파악: {list(result.keys())}")
-        return []
+        logger.info(f"[롯데ON] 병행 조회 완료: getSROrderList={len(sr_orders)}건, delivery={len(delivery_orders)}건, 최종={len(merged)}건")
+        return merged
 
     async def get_claims(self, days: int = 7) -> list[dict[str, Any]]:
         """최근 N일 클레임(반품/교환/취소) 목록 조회.
@@ -1377,14 +1394,6 @@ class LotteonClient:
                         f"deliveryOrderList={len(items) if isinstance(items, list) else repr(items)}"
                     )
                     if isinstance(items, list) and items:
-                        s = items[0]
-                        logger.info(
-                            f"[롯데ON][주문] 샘플 키값: odNo={s.get('odNo')} spdNo={s.get('spdNo')} "
-                            f"sitmNo={s.get('sitmNo')} odSeq={s.get('odSeq')} procSeq={s.get('procSeq')} "
-                            f"odPrgsStepCd={s.get('odPrgsStepCd')}"
-                        )
-                        logger.info(f"[롯데ON][주문] 샘플 전체 필드: {list(s.keys())}")
-                        logger.info(f"[롯데ON][주문] 샘플 전체 데이터: {s}")
                         return items
                     return []
                 except Exception as e:
