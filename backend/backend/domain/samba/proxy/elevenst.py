@@ -2407,12 +2407,29 @@ def _truncate_to_bytes(text: str, max_bytes: int) -> str:
     return encoded[:max_bytes].decode("utf-8", errors="ignore")
 
 
+def _limit_repeated_name_words(name: str) -> str:
+    """동일 단어가 3번 이상 등장하면 3번째부터 자르기.
+
+    복합어("데님팬츠")에 포함된 부분어("팬츠")도 출현 횟수에 포함.
+    """
+    words = name.split()
+    result: list[str] = []
+    for word in words:
+        count = sum(1 for w in result if word in w)
+        if count >= 2:
+            break
+        result.append(word)
+    return " ".join(result)
+
+
 def _clean_product_name(name: str) -> str:
-    """11번가 등록용 상품명 정제 (금지어 제거 + 99바이트 제한)."""
+    """11번가 등록용 상품명 정제 (금지어 제거 + 반복단어 제한 + 99바이트 제한)."""
     for pattern in _NAME_REMOVE_PATTERNS:
         name = re.sub(pattern, "", name, flags=re.IGNORECASE)
     # 연속 공백 정리
     name = re.sub(r"\s+", " ", name).strip()
+    # 동일 단어 3회 이상 반복 차단
+    name = _limit_repeated_name_words(name)
     # 99바이트 제한 (UTF-8)
     return _truncate_to_bytes(name, 99).strip()
 

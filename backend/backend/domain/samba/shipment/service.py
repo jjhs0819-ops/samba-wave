@@ -214,6 +214,84 @@ class SambaShipmentService:
         self.repo = repo
         self.session = session
 
+    @staticmethod
+    def _extract_market_product_no(result: dict[str, Any] | None) -> str:
+        """Scan nested success payloads and recover a market product number."""
+        if not isinstance(result, dict):
+            return ""
+
+        candidate_keys = (
+            "product_no",
+            "spdNo",
+            "epdNo",
+            "originProductNo",
+            "smartstoreChannelProductNo",
+            "productNo",
+            "sellerProductId",
+            "itemId",
+            "supPrdCd",
+            "prdNo",
+            "goodsNo",
+            "product_id",
+            "productId",
+        )
+        queue: list[Any] = [result]
+        seen: set[int] = set()
+
+        while queue:
+            current = queue.pop(0)
+            obj_id = id(current)
+            if obj_id in seen:
+                continue
+            seen.add(obj_id)
+
+            if isinstance(current, dict):
+                for key in candidate_keys:
+                    value = current.get(key)
+                    if value not in (None, ""):
+                        return str(value)
+                for value in current.values():
+                    if isinstance(value, (dict, list)):
+                        queue.append(value)
+            elif isinstance(current, list):
+                queue.extend(
+                    value for value in current if isinstance(value, (dict, list))
+                )
+
+        return ""
+
+    @staticmethod
+    def _apply_option_name_rules(options: list, name_rule: Any) -> list:
+        """옵션명 치환 규칙 적용.
+
+        name_rule.option_rules: [{"from": "원본", "to": "대체"}] 순서대로 치환.
+        options 항목이 dict이면 'name'/'option_name' 키, str이면 값 자체를 치환.
+        """
+        rules: list[dict] = getattr(name_rule, "option_rules", []) or []
+        if not rules:
+            return options
+
+        def _replace(text: str) -> str:
+            for rule in rules:
+                src, dst = rule.get("from", ""), rule.get("to", "")
+                if src:
+                    text = text.replace(src, dst)
+            return text
+
+        result = []
+        for opt in options:
+            if isinstance(opt, dict):
+                opt = dict(opt)
+                for key in ("name", "option_name"):
+                    if key in opt and isinstance(opt[key], str):
+                        opt[key] = _replace(opt[key])
+                result.append(opt)
+            elif isinstance(opt, str):
+                result.append(_replace(opt))
+            else:
+                result.append(opt)
+        return result
+
     # ==================== CRUD ====================
 
     async def list_shipments(
@@ -846,6 +924,21 @@ class SambaShipmentService:
         # 3. 카테고리 매핑 자동 조회 — product.category(전체 경로) 우선
         #    category1~4 개별 필드는 일부 소싱처에서 불완전할 수 있으므로
         #    전체 경로 문자열을 1순위로 사용
+        policy = None
+        policy_market_data: dict[str, Any] = {}
+        if product_row.applied_policy_id:
+            from backend.domain.samba.policy.repository import SambaPolicyRepository
+
+            policy_repo = SambaPolicyRepository(self.session)
+            policy = await policy_repo.get_async(product_row.applied_policy_id)
+            if policy and policy.market_policies:
+                policy_market_data = policy.market_policies
+            await self._apply_name_rule_effects(product_row, product_dict, policy)
+            if not is_price_stock_only:
+                product_dict["detail_html"] = await self._build_detail_html(
+                    product_dict
+                )
+
         raw_category = product_row.category or ""
         if not raw_category:
             cat_parts = [
@@ -934,8 +1027,6 @@ class SambaShipmentService:
         account_repo = SambaMarketAccountRepository(self.session)
 
         # 정책 기반 계정 필터링: 정책이 있으면 참조하되, 사용자 선택 계정은 보존
-        policy = None
-        policy_market_data: dict[str, Any] = {}
         MARKET_TYPE_TO_POLICY_KEY = {
             "coupang": "쿠팡",
             "ssg": "신세계몰",
@@ -1392,6 +1483,20 @@ class SambaShipmentService:
                             market_type=market_type,
                             deletion_words=product_dict.get("_deletion_words"),
                         )
+                if not is_price_stock_only:
+                    _detail_tpl_id = ""
+                    if policy and policy.extras:
+                        _detail_tpl_id = (
+                            policy.extras.get("market_detail_templates") or {}
+                        ).get(market_type) or ""
+                    if (
+                        acct_product.get("name") != product_dict.get("name")
+                        or _detail_tpl_id
+                    ):
+                        acct_product["detail_html"] = await self._build_detail_html(
+                            acct_product,
+                            template_id_override=_detail_tpl_id,
+                        )
                 cost = (
                     acct_product.get("cost")
                     or acct_product.get("sale_price")
@@ -1589,7 +1694,7 @@ class SambaShipmentService:
                     # 상품번호 추출
                     # product_no: 플러그인이 "product_no" 키로 반환 (롯데ON 등)
                     # spdNo: 이전 방식 또는 일부 마켓 직접 반환 — 둘 다 확인
-                    product_no = result.get("product_no") or result.get("spdNo") or ""
+                    product_no = self._extract_market_product_no(result)
                     api_data: dict[str, Any] = {}
                     if not product_no:
                         result_data = result.get("data", {})
@@ -1600,20 +1705,7 @@ class SambaShipmentService:
                                     api_data[0] if isinstance(api_data[0], dict) else {}
                                 )
                             if isinstance(api_data, dict):
-                                product_no = (
-                                    api_data.get("smartstoreChannelProductNo")
-                                    or api_data.get("originProductNo")
-                                    or api_data.get("productNo")
-                                    or api_data.get("sellerProductId")
-                                    or api_data.get("spdNo")
-                                    or api_data.get("itemId")
-                                    or api_data.get("supPrdCd")
-                                    or api_data.get("prdNo")
-                                    or api_data.get("goodsNo")
-                                    or api_data.get("product_id")
-                                    or api_data.get("productId")
-                                    or ""
-                                )
+                                product_no = self._extract_market_product_no(api_data)
                     if product_no:
                         nos: dict[str, str] = {account_id: str(product_no)}
                         if market_type == "smartstore" and isinstance(api_data, dict):
