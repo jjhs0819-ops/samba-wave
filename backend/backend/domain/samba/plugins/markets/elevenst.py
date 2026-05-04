@@ -85,6 +85,7 @@ class ElevenstPlugin(MarketPlugin):
                     col_title = product.get("option_type") or "옵션"
                     col_title = col_title[:25]  # 11번가 최대 25자 제한
                     option_xml = (
+                        "<optUpdateYn>Y</optUpdateYn>"
                         "<optSelectYn>Y</optSelectYn>"
                         "<txtColCnt>1</txtColCnt>"
                         f"<colTitle>{col_title}</colTitle>"

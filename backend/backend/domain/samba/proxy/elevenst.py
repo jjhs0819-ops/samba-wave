@@ -1860,7 +1860,7 @@ class ElevenstClient:
         # 스토어설정 재고수량 상한: _stock_quantity(계정설정) > _max_stock(정책) 우선
         _max_stock_cap = int(cfg.get("stockQuantity") or product.get("_max_stock") or 0)
         if options:
-            option_xml = "<optSelectYn>Y</optSelectYn>\n  <txtColCnt>1</txtColCnt>\n  <colTitle>사이즈</colTitle>\n  <prdExposeClfCd>00</prdExposeClfCd>"
+            option_xml = "<optUpdateYn>Y</optUpdateYn>\n  <optSelectYn>Y</optSelectYn>\n  <txtColCnt>1</txtColCnt>\n  <colTitle>사이즈</colTitle>\n  <prdExposeClfCd>00</prdExposeClfCd>"
             for opt in options:
                 opt_name = opt.get("name", "") or opt.get("size", "") or "기본"
                 raw_stock = opt.get("stock")
