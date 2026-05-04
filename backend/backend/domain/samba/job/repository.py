@@ -16,6 +16,21 @@ class SambaJobRepository(BaseRepository[SambaJob]):
     def __init__(self, session: AsyncSession):
         super().__init__(session, SambaJob)
 
+    @staticmethod
+    def _payload_account_array_sql(alias: str) -> str:
+        return (
+            "ARRAY("
+            "SELECT DISTINCT v FROM ("
+            f"SELECT json_array_elements_text(COALESCE({alias}.payload->'target_account_ids', '[]'::json)) AS v "
+            "UNION "
+            f"SELECT {alias}.payload->>'account_id' AS v "
+            f"WHERE COALESCE({alias}.payload->>'account_id', '') <> '' "
+            "UNION "
+            f"SELECT {alias}.payload->>'target_account_id' AS v "
+            f"WHERE COALESCE({alias}.payload->>'target_account_id', '') <> ''"
+            ") account_ids)"
+        )
+
     # ── 원자적 잡 획득 (멀티 worker race condition 방지) ──
 
     async def claim_pending_job(
@@ -79,17 +94,16 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         # 인메모리 exclude_accounts(같은 워커 내) + DB self-join(워커 간) 이중 방어.
         from sqlalchemy import text as _sa_text
 
+        _job_accounts_sql = self._payload_account_array_sql("samba_jobs")
+        _running_accounts_sql = self._payload_account_array_sql("r")
+
         _db_account_lock = _sa_text(
             "(samba_jobs.job_type <> 'transmit' OR NOT EXISTS ("
             "SELECT 1 FROM samba_jobs r "
             "WHERE r.status = 'running' "
             "AND r.job_type = 'transmit' "
             "AND r.id <> samba_jobs.id "
-            "AND ARRAY(SELECT json_array_elements_text("
-            "COALESCE(samba_jobs.payload->'target_account_ids', '[]'::json))) "
-            "&& "
-            "ARRAY(SELECT json_array_elements_text("
-            "COALESCE(r.payload->'target_account_ids', '[]'::json)))"
+            f"AND {_job_accounts_sql} && {_running_accounts_sql}"
             "))"
         )
         stmt = stmt.where(_db_account_lock)
@@ -99,9 +113,8 @@ class SambaJobRepository(BaseRepository[SambaJob]):
             _excl_acc_list = list(exclude_accounts)
             _no_overlap = _sa_text(
                 "(samba_jobs.job_type <> 'transmit' OR NOT EXISTS ("
-                "SELECT 1 FROM json_array_elements_text("
-                "COALESCE(samba_jobs.payload->'target_account_ids', '[]'::json)"
-                ") AS v WHERE v = ANY(:excl_accs)))"
+                f"SELECT 1 FROM unnest({_job_accounts_sql}) AS v "
+                "WHERE v = ANY(:excl_accs)))"
             ).bindparams(excl_accs=_excl_acc_list)
             stmt = stmt.where(_no_overlap)
 

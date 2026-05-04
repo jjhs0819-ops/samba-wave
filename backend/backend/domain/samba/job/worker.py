@@ -392,12 +392,46 @@ class JobWorker:
         # 마켓 계정별 transmit 동시 실행 제어 — 같은 계정은 순차, 다른 계정은 병렬
         # job_id → list[account_id]
         self._active_transmit_accounts: dict[str, list[str]] = {}
+        # 동일 계정 transmit 잡 직렬화 — 스케줄러 방어가 새더라도 실제 실행은 1개만 허용
+        self._transmit_account_locks: dict[str, asyncio.Lock] = {}
         # brand_all 잡 직렬화 — SSG+MUSINSA 동시 실행 시 DB/메모리 고갈 방지
         self._brand_all_running: bool = False
         self._poll_count = 0
         # 검색 결과 캐시: {(site, keyword): (items_list, timestamp)}
         # 동일 브랜드 그룹 수집 시 전수 검색 1회만 실행
         self._search_cache: dict[tuple[str, str], tuple[list, float]] = {}
+
+    @staticmethod
+    def _extract_transmit_account_ids(payload: dict[str, Any] | None) -> list[str]:
+        """전송 잡 payload에서 계정 ID 목록을 정규화해 추출."""
+        payload = payload or {}
+        account_ids: list[str] = []
+
+        raw_ids = payload.get("target_account_ids") or []
+        if isinstance(raw_ids, list):
+            for value in raw_ids:
+                account_id = str(value or "").strip()
+                if account_id:
+                    account_ids.append(account_id)
+
+        for key in ("account_id", "target_account_id"):
+            value = str(payload.get(key) or "").strip()
+            if value:
+                account_ids.append(value)
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for account_id in account_ids:
+            if account_id in seen:
+                continue
+            seen.add(account_id)
+            deduped.append(account_id)
+        return deduped
+
+    def _get_transmit_account_lock(self, account_id: str) -> asyncio.Lock:
+        if account_id not in self._transmit_account_locks:
+            self._transmit_account_locks[account_id] = asyncio.Lock()
+        return self._transmit_account_locks[account_id]
 
     async def start(self):
         """무한 루프: pending 잡 조회 → 전송 잡 병렬 실행 (무제한)."""
@@ -538,7 +572,7 @@ class JobWorker:
 
         # 전송: asyncio.Task로 백그라운드 병렬 실행
         if job.job_type == "transmit":
-            _tx_accounts = list((job.payload or {}).get("target_account_ids") or [])
+            _tx_accounts = self._extract_transmit_account_ids(job.payload)
             self._active_transmit_accounts[job.id] = _tx_accounts
             task = asyncio.create_task(
                 self._execute_job(job),
@@ -680,9 +714,21 @@ class JobWorker:
                 try:
                     if _job_type == "transmit":
                         _tx_token = _current_transmit_job_id.set(_job_id)
+                        _tx_accounts = sorted(
+                            set(self._extract_transmit_account_ids(_job_payload))
+                        )
+                        _tx_locks = [
+                            self._get_transmit_account_lock(account_id)
+                            for account_id in _tx_accounts
+                        ]
                         try:
+                            for _lock in _tx_locks:
+                                await _lock.acquire()
                             await self._run_transmit(fresh_job, repo, session)
                         finally:
+                            for _lock in reversed(_tx_locks):
+                                if _lock.locked():
+                                    _lock.release()
                             _current_transmit_job_id.reset(_tx_token)
                     elif _job_type == "refresh":
                         await self._run_stub(fresh_job, repo, "갱신")
@@ -882,7 +928,7 @@ class JobWorker:
         skip_count = prev_result.get("skipped", 0) if start_from > 0 else 0
         failed_pids: list[str] = []  # 재시도 대상
 
-        # 상품별 전송 루프 (2건씩 병렬)
+        # 상품별 전송 루프 (단건 순차 처리)
         if start_from > 0:
             _add_job_log(job.id, f"이전 진행 {start_from}/{total}건 이후부터 재개")
             logger.info(f"[잡워커] 전송 재개: {job.id} — {start_from}/{total}건부터")
@@ -998,7 +1044,7 @@ class JobWorker:
                 _add_job_log(job.id, f"[{i + 1}/{total}] {prod_name}: {e}")
                 return 0, 0, 1, pid
 
-        BATCH_SIZE = 2
+        BATCH_SIZE = 1
         all_indices = list(range(start_from, total))
         for batch_start in range(0, len(all_indices), BATCH_SIZE):
             batch = all_indices[batch_start : batch_start + BATCH_SIZE]
