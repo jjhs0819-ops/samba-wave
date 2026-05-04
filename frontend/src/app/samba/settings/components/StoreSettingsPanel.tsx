@@ -284,7 +284,7 @@ export function StoreSettingsPanel(props: Props) {
                             shpCount = shpOpts.length
                             retCount = retOpts.length
                           }
-                          showAlert(`배송정책 ${polCount}건, 추가배송비정책 ${extraCount}건, 출고지 ${shpCount}건, 반품지 ${retCount}건을 불러왔습니다.`, 'success')
+                          showAlert(`배송정책 ${fmtNum(polCount)}건, 추가배송비정책 ${fmtNum(extraCount)}건, 출고지 ${fmtNum(shpCount)}건, 반품지 ${fmtNum(retCount)}건을 불러왔습니다.`, 'success')
                         } catch { showAlert('불러오기 실패', 'error') }
                       }}
                       style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}

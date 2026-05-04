@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(npm install:*)",
-      "Bash(pnpm:*)"
+      "Bash(pnpm:*)",
+      "Bash(.venv/Scripts/python.exe -m ruff format backend/domain/samba/proxy/playauto.py)",
+      "Bash(.venv/Scripts/python.exe -m ruff check --fix backend/domain/samba/proxy/playauto.py)"
     ]
   }
 }
