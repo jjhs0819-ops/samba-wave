@@ -122,13 +122,11 @@ export default function TetrisBoard() {
     })
   }, [board])
 
-  // ???? ?? max_count ??? ? ???? ?? ??? ???? ??
+  // 단일 계정 기준 최대값 (합산 아님 — 스케일이 실제 데이터에 맞도록)
   const globalMax = useMemo(() => {
     if (!board) return 70000
-    const marketCapacities = board.markets.map(market =>
-      market.accounts.reduce((sum, account) => sum + account.max_count, 0)
-    )
-    return Math.max(1000, ...marketCapacities)
+    const allAccounts = board.markets.flatMap(m => m.accounts)
+    return Math.max(1000, ...allAccounts.map(a => Math.max(a.max_count, a.total_collected)))
   }, [board])
 
   const currentStep = useMemo(() => computeScaleStep(pixelsPerUnit), [pixelsPerUnit])
@@ -160,7 +158,7 @@ export default function TetrisBoard() {
 
   return (
     <div>
-      {/* 而⑦듃濡?諛?*/}
+      {/* 상단 툴바 */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
@@ -169,30 +167,45 @@ export default function TetrisBoard() {
         padding: '8px 0',
         borderBottom: '1px solid #2a2a2a',
       }}>
-        <span style={{ fontSize: 12, color: '#666' }}>스케일</span>
-        <button
-          onClick={() => setPixelsPerUnit(p => Math.max(0.001, p / 2))}
-          style={{ padding: '2px 10px', background: '#2a2a2a', border: '1px solid #444', color: '#ccc', borderRadius: 4, cursor: 'pointer', fontSize: 14, lineHeight: 1 }}
-        >
-          -
-        </button>
-        <span style={{ color: '#888', fontSize: 12, minWidth: 80, textAlign: 'center' }}>
-          {fmtNum(currentStep)}단위
-        </span>
-        <button
-          onClick={() => setPixelsPerUnit(p => Math.min(0.5, p * 2))}
-          style={{ padding: '2px 10px', background: '#2a2a2a', border: '1px solid #444', color: '#ccc', borderRadius: 4, cursor: 'pointer', fontSize: 14, lineHeight: 1 }}
-        >
-          +
-        </button>
-        <span style={{ color: '#555', fontSize: 11 }}>
-          (최대 {fmtNum(globalMax)}개)
-        </span>
+        <span style={{ color: '#555', fontSize: 11 }}>최대 {fmtNum(globalMax)}개</span>
         <button
           onClick={refresh}
           style={{ marginLeft: 'auto', padding: '4px 14px', background: '#2a2a2a', border: '1px solid #444', color: '#ccc', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
         >
           새로고침
+        </button>
+      </div>
+
+      {/* 스케일 +/- 고정 패널 — 화면 좌측 중앙 */}
+      <div style={{
+        position: 'fixed',
+        left: 8,
+        top: '50%',
+        transform: 'translateY(-50%)',
+        zIndex: 50,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 6,
+        background: 'rgba(20,20,20,0.9)',
+        border: '1px solid #333',
+        borderRadius: 6,
+        padding: '8px 6px',
+      }}>
+        <button
+          onClick={() => setPixelsPerUnit(p => Math.min(0.5, p * 2))}
+          style={{ width: 28, height: 28, background: '#2a2a2a', border: '1px solid #444', color: '#ccc', borderRadius: 4, cursor: 'pointer', fontSize: 16, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        >
+          +
+        </button>
+        <span style={{ color: '#555', fontSize: 9, textAlign: 'center', lineHeight: 1.3 }}>
+          {fmtNum(currentStep)}
+        </span>
+        <button
+          onClick={() => setPixelsPerUnit(p => Math.max(0.001, p / 2))}
+          style={{ width: 28, height: 28, background: '#2a2a2a', border: '1px solid #444', color: '#ccc', borderRadius: 4, cursor: 'pointer', fontSize: 16, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        >
+          -
         </button>
       </div>
 
