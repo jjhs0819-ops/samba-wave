@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 
 import React, { Dispatch, SetStateAction } from 'react'
 import { fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
@@ -107,13 +107,13 @@ export default function OrdersTopBar(props: Props) {
       {isProductMode && (
         <div style={{ background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.25)', borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '0.85rem', color: '#FF8C00', fontWeight: 600 }}>상품별 판매이력</span>
+            <span style={{ fontSize: '0.85rem', color: '#FF8C00', fontWeight: 600 }}>상품별 매입대상</span>
             <span style={{ fontSize: '0.85rem', color: '#E5E5E5', fontWeight: 500, maxWidth: '400px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {cpName || cpId}
             </span>
             <span style={{ fontSize: '0.75rem', color: '#888' }}>({fmtNum(filteredOrdersCount)}건)</span>
           </div>
-          <a href='/samba/orders' style={{ fontSize: '0.75rem', color: '#4C9AFF', textDecoration: 'none', padding: '4px 10px', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '5px', background: 'rgba(76,154,255,0.08)', whiteSpace: 'nowrap' }}>전체 주문 보기 →</a>
+          <a href='/samba/orders' style={{ fontSize: '0.75rem', color: '#4C9AFF', textDecoration: 'none', padding: '4px 10px', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '5px', background: 'rgba(76,154,255,0.08)', whiteSpace: 'nowrap' }}>전체 주문 보기</a>
         </div>
       )}
 

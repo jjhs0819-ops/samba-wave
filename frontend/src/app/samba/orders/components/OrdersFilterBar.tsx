@@ -161,8 +161,8 @@ export default function OrdersFilterBar(props: Props) {
 
       <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
         <span style={{ fontSize: '0.72rem', color: '#aaa' }}>
-          <span style={{ color: '#FF8C00', fontWeight: 600 }}>{fmtNum(filteredOrdersCount)}</span>嫄?/
-          <span style={{ color: '#FF8C00', fontWeight: 600 }}> {fmtNum(filteredOrdersTotalSale)}</span>
+          <span style={{ color: '#FF8C00', fontWeight: 600 }}>{fmtNum(filteredOrdersCount)}</span>건 /
+          <span style={{ color: '#FF8C00', fontWeight: 600 }}> {fmtNum(filteredOrdersTotalSale)}원</span>
         </span>
         <select style={{ ...inputStyle, width: '90px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
           <option value="product">상품명</option>
