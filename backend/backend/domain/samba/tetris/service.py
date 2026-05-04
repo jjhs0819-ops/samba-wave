@@ -92,7 +92,7 @@ class SambaTetrisService:
         rows = await self._session.execute(
             text("""
                 SELECT id FROM samba_collected_product
-                WHERE tenant_id = :tid
+                WHERE (:tid::text IS NULL AND tenant_id IS NULL OR tenant_id = :tid)
                   AND source_site = :site
                   AND brand = :brand
                   AND (
@@ -121,7 +121,7 @@ class SambaTetrisService:
             rows = await self._session.execute(
                 text("""
                     SELECT id FROM samba_collected_product
-                    WHERE tenant_id = :tid
+                    WHERE (:tid::text IS NULL AND tenant_id IS NULL OR tenant_id = :tid)
                       AND source_site = :site
                       AND brand = :brand
                       AND registered_accounts IS NOT NULL
@@ -203,7 +203,7 @@ class SambaTetrisService:
                     COUNT(*) AS cnt
                 FROM samba_collected_product cp
                 LEFT JOIN samba_search_filter sf ON sf.id = cp.search_filter_id
-                WHERE cp.tenant_id = :tid
+                WHERE (:tid::text IS NULL AND cp.tenant_id IS NULL OR cp.tenant_id = :tid)
                   AND cp.source_site IS NOT NULL
                   AND (
                     cp.brand IS NOT NULL
@@ -245,7 +245,7 @@ class SambaTetrisService:
                     COUNT(*) AS cnt
                 FROM samba_collected_product cp
                 LEFT JOIN samba_search_filter sf ON sf.id = cp.search_filter_id
-                WHERE cp.tenant_id = :tid
+                WHERE (:tid::text IS NULL AND cp.tenant_id IS NULL OR cp.tenant_id = :tid)
                   AND cp.registered_accounts IS NOT NULL
                   AND cp.registered_accounts::text NOT IN ('null', '[]', '')
                   AND cp.source_site IS NOT NULL
