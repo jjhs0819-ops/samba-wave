@@ -255,7 +255,7 @@ export default function OrderInfoCell(props: Props) {
               const retransmitStr = data.retransmitted ? ` | 마켓 ${data.retransmit_accounts}계정 수정등록` : ''
               setRefreshLog(prev => ({ ...prev, [o.id]: `[${ts2}] ${priceStr} | ${stockStr}${retransmitStr}` }))
             } else {
-              setRefreshLog(prev => ({ ...prev, [o.id]: `[${ts2}] 실패: ${data.detail || '갱신 실패'}` }))
+              setRefreshLog(prev => ({ ...prev, [o.id]: `[${ts2}] 실패: ${data.detail || data.message || '갱신 실패'}` }))
             }
           } catch (e) {
             setRefreshLog(prev => ({ ...prev, [o.id]: `[${ts}] 갱신 실패: ${e instanceof Error ? e.message : ''}` }))

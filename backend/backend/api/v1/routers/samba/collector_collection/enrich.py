@@ -98,9 +98,18 @@ async def _retransmit_if_changed(
                         account.market_type: str(raw_no) if raw_no else ""
                     },
                 }
-                del_result = await delete_from_market(
-                    session, account.market_type, pd, account=account
-                )
+                try:
+                    del_result = await asyncio.wait_for(
+                        delete_from_market(
+                            session, account.market_type, pd, account=account
+                        ),
+                        timeout=30,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"[enrich] {product.id} 마켓 삭제 타임아웃 (30s): {account.market_type}"
+                    )
+                    del_result = {"success": False, "error": "삭제 타임아웃"}
                 result["retransmit_accounts"] += 1
                 # soldout_fallback(플레이오토 등 삭제 불가 마켓)은 배지 유지 → 제외
                 if del_result.get("success") and not del_result.get("soldout_fallback"):

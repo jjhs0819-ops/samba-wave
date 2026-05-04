@@ -246,9 +246,15 @@ class SSGPlugin(SourcingPlugin):
                         detail["isSoldOut"] = True
 
             if not detail:
+                _ext_msg = ""
+                if isinstance(_ext_result, dict) and not _ext_result.get("success"):
+                    _ext_msg = (_ext_result.get("message") or "").strip()
+                    if _ext_result.get("blocked"):
+                        _ext_msg = "SSG 차단됨 (reCAPTCHA) — 잠시 후 재시도 해주세요"
                 return RefreshResult(
                     product_id=product_id,
-                    error=f"SSG 상세 조회 실패 (확장앱 미응답 또는 파싱 실패): {site_product_id}",
+                    error=_ext_msg
+                    or f"SSG 상세 조회 실패 (확장앱 미응답 또는 파싱 실패): {site_product_id}",
                 )
 
             new_sale_price = detail.get("salePrice", 0)

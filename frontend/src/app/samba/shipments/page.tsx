@@ -110,7 +110,7 @@ export default function ShipmentsPage() {
   // 전송 로그
   const [logMessages, setLogMessages] = useState<string[]>(['— 전송 시작 버튼을 누르면 로그가 여기에 실시간으로 표시됩니다 —'])
   const [transmitting, setTransmitting] = useState(false)
-  const [deleting, setDeleting] = useState(false)
+  const deleting = false
   const [stopping, setStopping] = useState('')  // '' | 'cancel' | 'emergency'
   const [pausedJobPayload, setPausedJobPayload] = useState<Record<string, unknown> | null>(null)
   const [, setProgress] = useState({ current: 0, total: 0 })
@@ -133,6 +133,50 @@ export default function ShipmentsPage() {
   const cancelLocalDeleteIdsRef = useRef<Set<string>>(new Set())
   const [cancellingJobIds, setCancellingJobIds] = useState<string[]>([])
   const jobQueuePollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const startBackgroundLogPolling = useCallback(async () => {
+    if (bgPollRef.current) return
+    const { API_BASE_URL: apiBase } = await import('@/config/api')
+    let bgPolling = false
+    bgPollRef.current = setInterval(async () => {
+      if (jobPollRef.current || deletePollRef.current || bgPolling) return
+      bgPolling = true
+      try {
+        const lr = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`)
+        const logData = await lr.json()
+        const newLogs = (logData.logs || []) as string[]
+        sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
+        appendShipmentLogs(setLogMessages, newLogs)
+      } catch { /* ignore */ }
+      bgPolling = false
+    }, BG_LOG_POLL_INTERVAL_MS)
+  }, [])
+
+  const stopBackgroundLogPolling = useCallback(() => {
+    if (bgPollRef.current) {
+      clearInterval(bgPollRef.current)
+      bgPollRef.current = null
+    }
+  }, [])
+
+  const ensureDeleteLogPolling = useCallback(async () => {
+    if (deletePollRef.current) return
+    stopBackgroundLogPolling()
+    const { API_BASE_URL: apiBase } = await import('@/config/api')
+    let delPolling = false
+    deletePollRef.current = setInterval(async () => {
+      if (delPolling) return
+      delPolling = true
+      try {
+        const lr = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`)
+        const logData = await lr.json()
+        const newLogs = (logData.logs || []) as string[]
+        sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
+        appendShipmentLogs(setLogMessages, newLogs)
+      } catch { /* ignore */ }
+      delPolling = false
+    }, DELETE_POLL_INTERVAL_MS)
+  }, [stopBackgroundLogPolling])
 
   // 컴포넌트 언마운트 시 잡 폴링 정리
   useEffect(() => {
@@ -166,6 +210,18 @@ export default function ShipmentsPage() {
     }, 3000)
     return () => { clearTimeout(delayTimer); if (jobQueuePollRef.current) clearInterval(jobQueuePollRef.current) }
   }, [])
+
+  useEffect(() => {
+    if (localDeleteJobs.length > 0) {
+      void ensureDeleteLogPolling()
+      return
+    }
+    if (deletePollRef.current) {
+      clearInterval(deletePollRef.current)
+      deletePollRef.current = null
+    }
+    void startBackgroundLogPolling()
+  }, [ensureDeleteLogPolling, localDeleteJobs.length, startBackgroundLogPolling])
 
   // 마운트 시 실행 중인 Job 감지 → 자동 폴링 (오토튠과 동일 패턴)
   useEffect(() => {
@@ -535,7 +591,6 @@ export default function ShipmentsPage() {
     }).join(', ')
     if (!await showConfirm(`${fmtNum(targetProducts.length)}개 상품을 ${targetLabels || '선택 계정'}에서 마켓삭제하시겠습니까?`)) return
 
-    setDeleting(true)
     const ts = fmtTime
     const addLog = (msg: string) => appendShipmentLog(setLogMessages, msg)
     const accLabelMap: Record<string, string> = {}
@@ -554,24 +609,6 @@ export default function ShipmentsPage() {
     }])
 
     // 삭제 중 500ms 링 버퍼 폴링 시작 — 다른 창에서도 실시간 로그 공유
-    if (bgPollRef.current) { clearInterval(bgPollRef.current); bgPollRef.current = null }
-    if (deletePollRef.current) { clearInterval(deletePollRef.current); deletePollRef.current = null }
-    let delPollActive = true
-    const { API_BASE_URL: apiBaseDelete } = await import('@/config/api')
-    let delPolling = false
-    deletePollRef.current = setInterval(async () => {
-      if (!delPollActive || delPolling) return
-      delPolling = true
-      try {
-        const lr = await fetchWithAuth(`${apiBaseDelete}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`)
-        const logData = await lr.json()
-        const newLogs = (logData.logs || []) as string[]
-        sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
-        appendShipmentLogs(setLogMessages, newLogs)
-      } catch { /* ignore */ }
-      delPolling = false
-    }, DELETE_POLL_INTERVAL_MS)
-
     let cancelledMid = false
     for (let i = 0; i < targetProducts.length; i++) {
       if (cancelLocalDeleteIdsRef.current.has(localJobId)) { cancelledMid = true; break }
@@ -592,28 +629,11 @@ export default function ShipmentsPage() {
     cancelLocalDeleteIdsRef.current.delete(localJobId)
 
     // 폴링 종료 후 백그라운드 폴링 복원
-    delPollActive = false
-    if (deletePollRef.current) { clearInterval(deletePollRef.current); deletePollRef.current = null }
 
     addLog(`[${ts()}] 마켓삭제 ${cancelledMid ? '중지됨' : '완료'}`)
 
     // 백그라운드 폴링 재시작
-    let bgPolling = false
-    bgPollRef.current = setInterval(async () => {
-      if (jobPollRef.current || deletePollRef.current || bgPolling) return
-      bgPolling = true
-      try {
-        const lr = await fetchWithAuth(`${apiBaseDelete}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`)
-        const logData = await lr.json()
-        const newLogs = (logData.logs || []) as string[]
-        sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
-        appendShipmentLogs(setLogMessages, newLogs)
-      } catch { /* ignore */ }
-      bgPolling = false
-    }, BG_LOG_POLL_INTERVAL_MS)
-
     await load()
-    setDeleting(false)
   }
 
   const handleSearchDelete = async () => {
@@ -675,7 +695,6 @@ export default function ShipmentsPage() {
       await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
     } catch { /* ignore */ }
 
-    setDeleting(true)
     const ts = fmtTime
     const addLog = (msg: string) => appendShipmentLog(setLogMessages, msg)
     addLog(`[${ts()}] 검색결과 마켓삭제 시작 — 상품 ${fmtNum(targetProducts.length)}개, ${targetLabels}`)
@@ -689,24 +708,6 @@ export default function ShipmentsPage() {
     }])
 
     // 삭제 중 500ms 링 버퍼 폴링 시작 — 다른 창에서도 실시간 로그 공유
-    if (bgPollRef.current) { clearInterval(bgPollRef.current); bgPollRef.current = null }
-    if (deletePollRef.current) { clearInterval(deletePollRef.current); deletePollRef.current = null }
-    let delPollActiveSearch = true
-    const { API_BASE_URL: apiBaseSearch } = await import('@/config/api')
-    let delPollingSearch = false
-    deletePollRef.current = setInterval(async () => {
-      if (!delPollActiveSearch || delPollingSearch) return
-      delPollingSearch = true
-      try {
-        const lr = await fetchWithAuth(`${apiBaseSearch}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`)
-        const logData = await lr.json()
-        const newLogs = (logData.logs || []) as string[]
-        sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
-        appendShipmentLogs(setLogMessages, newLogs)
-      } catch { /* ignore */ }
-      delPollingSearch = false
-    }, DELETE_POLL_INTERVAL_MS)
-
     let cancelledMidSearch = false
     for (let i = 0; i < targetProducts.length; i++) {
       if (cancelLocalDeleteIdsRef.current.has(localJobIdSearch)) { cancelledMidSearch = true; break }
@@ -725,28 +726,11 @@ export default function ShipmentsPage() {
     cancelLocalDeleteIdsRef.current.delete(localJobIdSearch)
 
     // 폴링 종료 후 백그라운드 폴링 복원
-    delPollActiveSearch = false
-    if (deletePollRef.current) { clearInterval(deletePollRef.current); deletePollRef.current = null }
 
     addLog(`[${ts()}] 검색결과 마켓삭제 ${cancelledMidSearch ? '중지됨' : '완료'}`)
 
     // 백그라운드 폴링 재시작
-    let bgPollingSearch = false
-    bgPollRef.current = setInterval(async () => {
-      if (jobPollRef.current || deletePollRef.current || bgPollingSearch) return
-      bgPollingSearch = true
-      try {
-        const lr = await fetchWithAuth(`${apiBaseSearch}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`)
-        const logData = await lr.json()
-        const newLogs = (logData.logs || []) as string[]
-        sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
-        appendShipmentLogs(setLogMessages, newLogs)
-      } catch { /* ignore */ }
-      bgPollingSearch = false
-    }, BG_LOG_POLL_INTERVAL_MS)
-
     await load()
-    setDeleting(false)
   }
 
   const handleStart = async (targetIds?: string[]) => {
@@ -1312,7 +1296,7 @@ export default function ShipmentsPage() {
                 await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/shipment-logs/clear`, { method: 'POST' })
               } catch { /* ignore */ }
             }} style={{ padding: '3px 10px', fontSize: '0.72rem', background: 'transparent', border: '1px solid #252B3B', color: '#666', borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
-            <button onClick={handleMarketDelete} disabled={deleting}
+            <button onClick={handleMarketDelete}
               style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,107,107,0.12)', border: '1px solid rgba(255,107,107,0.35)', color: '#FF6B6B', borderRadius: '4px', cursor: deleting ? 'not-allowed' : 'pointer', fontWeight: 600 }}>마켓삭제</button>
             <button disabled={!!stopping} onClick={async () => {
                 setStopping('cancel')
@@ -1481,7 +1465,7 @@ export default function ShipmentsPage() {
               }}
                 style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
               >검색결과전송 ({fmtNum(totalCount)})</button>
-              <button onClick={handleSearchDelete} disabled={deleting}
+              <button onClick={handleSearchDelete}
                 style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,107,107,0.12)', border: '1px solid rgba(255,107,107,0.35)', color: '#FF6B6B', borderRadius: '4px', cursor: deleting ? 'not-allowed' : 'pointer', fontWeight: 600 }}
               >검색결과삭제 ({fmtNum(totalCount)})</button>
             </>}
