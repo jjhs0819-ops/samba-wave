@@ -209,6 +209,9 @@ class ElevenstPlugin(MarketPlugin):
             product, cat_code, settings=account_settings
         )
 
+        if existing_no:
+            logger.info(f"[11번가] 폴백 전체XML (앞500자):\n{xml_data[:500]}")
+
         # 기존 상품번호가 있으면 수정, 없으면 신규등록
         from backend.domain.samba.proxy.elevenst import (
             ElevenstApiError,
@@ -218,6 +221,7 @@ class ElevenstPlugin(MarketPlugin):
         try:
             if existing_no:
                 result = await client.update_product(existing_no, xml_data)
+                logger.info(f"[11번가] 폴백 응답: {result}")
                 return {
                     "success": True,
                     "product_no": existing_no,
