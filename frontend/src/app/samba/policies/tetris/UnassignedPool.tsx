@@ -2,7 +2,7 @@
 import { fmtNum } from '@/lib/samba/styles'
 import type { TetrisUnassigned, TetrisBrandBlock } from '@/lib/samba/api/tetris'
 
-const MIN_BLOCK_PX = 28
+const FIXED_BLOCK_PX = 56
 
 interface Props {
   unassigned: TetrisUnassigned[]
@@ -132,15 +132,11 @@ export default function UnassignedPool({ unassigned, pixelsPerUnit, onDragStart 
             }}
           >
             {items.map((item, idx) => {
-              const displayCount = Math.max(item.collected_count, item.registered_count)
-              const itemHeight = displayCount > 0
-                ? Math.max(MIN_BLOCK_PX, Math.round(displayCount * pixelsPerUnit))
-                : MIN_BLOCK_PX
               return (
                 <div key={`${item.source_site}-${item.brand_name}-${idx}`} style={{ width: 160 }}>
                   <UnassignedItem
                     item={item}
-                    itemHeight={itemHeight}
+                    itemHeight={FIXED_BLOCK_PX}
                     onDragStart={onDragStart}
                   />
                 </div>

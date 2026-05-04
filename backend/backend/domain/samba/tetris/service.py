@@ -428,6 +428,9 @@ class SambaTetrisService:
                     }
                 )
 
+        if unassigned:
+            logger.info(f"[테트리스] unassigned 샘플: {unassigned[:3]}")
+
         return {
             "markets": [market_groups[mt] for mt in market_order],
             "unassigned": unassigned,
