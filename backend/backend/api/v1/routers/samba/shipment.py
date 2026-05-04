@@ -6,7 +6,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -532,6 +532,7 @@ async def start_shipment(
 
 @router.post("/market-delete")
 async def market_delete(
+    request: Request,
     body: MarketDeleteRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
@@ -543,6 +544,7 @@ async def market_delete(
         current_idx=body.current_idx,
         total_count=body.total_count,
         log_to_buffer=body.log_to_buffer,
+        disconnect_checker=request.is_disconnected,
     )
 
 

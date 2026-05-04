@@ -4196,9 +4196,53 @@ async def sync_orders_from_markets(
                     "product_image": _ur[3] or "",
                 }
 
+            # 비-롯데ON 주문: order_number 배치 조회로 N+1 SELECT 제거
+            _non_lotteon_nos = list(
+                {
+                    str(od.get("order_number", ""))
+                    for od in orders_data
+                    if od.get("source") != "lotteon" and od.get("order_number")
+                }
+            )
+            _existing_id_map: dict[str, int] = {}
+            if _non_lotteon_nos:
+                _batch_tid = account["tenant_id"] or tenant_id
+                _batch_cid = next(
+                    (
+                        od.get("channel_id")
+                        for od in orders_data
+                        if od.get("channel_id")
+                    ),
+                    None,
+                )
+                _bulk_q = await session.execute(
+                    _sa_text(
+                        "SELECT id, order_number FROM samba_order "
+                        "WHERE order_number = ANY(:nos) "
+                        "AND tenant_id IS NOT DISTINCT FROM :tid "
+                        "AND channel_id IS NOT DISTINCT FROM :cid "
+                        "ORDER BY created_at DESC"
+                    ),
+                    {"nos": _non_lotteon_nos, "tid": _batch_tid, "cid": _batch_cid},
+                )
+                for _br in _bulk_q.fetchall():
+                    if _br[1] not in _existing_id_map:
+                        _existing_id_map[_br[1]] = _br[0]
+                logger.info(
+                    f"[주문동기화] {label}: 배치 중복 조회 완료 "
+                    f"{len(_existing_id_map)}/{len(_non_lotteon_nos)}건 기존"
+                )
+
             # 중복 확인 후 저장 (기존 주문은 금액/상태 업데이트)
             synced = 0
+            _processed = 0
+            _total = len(orders_data)
             for order_data in orders_data:
+                _processed += 1
+                if _processed % 50 == 0:
+                    logger.info(
+                        f"[주문동기화] {label}: 주문 처리 중 {_processed}/{_total}건"
+                    )
                 # tenant_id 주입 (멀티테넌트 격리 — account 우선, JWT fallback)
                 _tid = account["tenant_id"] or tenant_id
                 if _tid:
@@ -4360,22 +4404,9 @@ async def sync_orders_from_markets(
                     _lo_id = (_lo_row.fetchone() or [None])[0]
                     existing = await svc.repo.get_async(_lo_id) if _lo_id else None
                 else:
-                    _existing_row = await session.execute(
-                        _sa_text(
-                            "SELECT id FROM samba_order "
-                            "WHERE order_number = :order_number "
-                            "AND tenant_id IS NOT DISTINCT FROM :tid "
-                            "AND channel_id IS NOT DISTINCT FROM :cid "
-                            "ORDER BY created_at DESC "
-                            "LIMIT 1"
-                        ),
-                        {
-                            "order_number": order_data["order_number"],
-                            "tid": order_data.get("tenant_id"),
-                            "cid": order_data.get("channel_id"),
-                        },
+                    _existing_id = _existing_id_map.get(
+                        str(order_data.get("order_number", ""))
                     )
-                    _existing_id = (_existing_row.fetchone() or [None])[0]
                     existing = (
                         await svc.repo.get_async(_existing_id) if _existing_id else None
                     )

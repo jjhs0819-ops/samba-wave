@@ -297,29 +297,30 @@ class MusinsaClient:
             grade_save_point_rate = gp.get("memberSavePointRate", 0) or 0
             save_point_value = gp.get("savePoint", 0) or 0
 
+            # 보유 적립금 5,000원 이상일 때만 적립금 사용 반영
+            member_point = (d.get("point") or {}).get("memberPoint", 0) or 0
+            can_use_point = member_point >= 5000
+
+            raw_point_rate = d.get("maxUsePointRate", 0) or 0
+            point_rate_pct = (
+                raw_point_rate * 100 if 0 < raw_point_rate < 1 else raw_point_rate
+            )
+
             # 2단계: 등급할인 (benefit_base 기준, 10원 절사)
             grade_discount, point_usage, display_benefit_price = (
                 self._calculate_display_benefit_price(
                     benefit_base=benefit_base,
                     grade_discount_rate=grade_discount_rate,
                     is_point_restricted=d.get("isRestictedUsePoint") is True,
-                    point_rate_pct=(
-                        (d.get("maxUsePointRate", 0) or 0) * 100
-                        if 0 < (d.get("maxUsePointRate", 0) or 0) < 1
-                        else (d.get("maxUsePointRate", 0) or 0)
-                    ),
+                    point_rate_pct=point_rate_pct if can_use_point else 0,
                 )
             )
 
             # 3단계: 적립금 사용 (benefit_base - 등급할인 기준, 10원 절사)
             is_point_restricted = d.get("isRestictedUsePoint") is True
-            raw_point_rate = d.get("maxUsePointRate", 0) or 0
-            point_rate_pct = (
-                raw_point_rate * 100 if 0 < raw_point_rate < 1 else raw_point_rate
-            )
             point_base = benefit_base - grade_discount
             point_usage = 0
-            if not is_point_restricted and point_rate_pct > 0:
+            if can_use_point and not is_point_restricted and point_rate_pct > 0:
                 point_usage = (
                     int(point_base * point_rate_pct / 100 / 10) * 10
                 )  # 10원 절사
@@ -357,7 +358,7 @@ class MusinsaClient:
                 f"할인가={s_price}, 쿠폰=-{benefit_coupon_discount}, "
                 f"benefit_base={benefit_base}, "
                 f"등급할인({grade_discount_rate}%,limitedDc={is_limited_dc})=-{grade_discount}, "
-                f"적립금({point_rate_pct}%)=-{point_usage}(base={point_base}), "
+                f"적립금({point_rate_pct}%,보유={member_point},사용가능={can_use_point})=-{point_usage}(base={point_base}), "
                 f"선할인(savePtRate={grade_save_point_rate}%+savePt={save_point_value})=-{pre_discount}, "
                 f"혜택가={best_benefit_price}"
             )
@@ -1201,14 +1202,22 @@ class MusinsaClient:
                                 f"[쿠폰 스킵] {goods_no}: lowPrice={c.get('lowPrice')} > {s_price} — 최소 금액 미달"
                             )
                             continue
-                        if c.get("bestSalePriceYn") == "N":
-                            logger.info(
-                                f"[쿠폰 스킵] {goods_no}: bestSalePriceYn=N — 최대혜택가 미반영 쿠폰"
-                            )
-                            continue
-                        # bestSalePriceYn=Y이면 AG 타입이어도 포함
-                        # (5월 무신사 회원 정기 쿠폰 등 AG지만 최대혜택가 반영 쿠폰 존재)
-                        # bestSalePriceYn=N은 위에서 이미 스킵됨
+                        coupon_apply = c.get("couponApply", "")
+                        best_yn = c.get("bestSalePriceYn")
+                        # AG 타입(카드/결제 조건부 쿠폰): bestSalePriceYn=N인 회원 정기쿠폰만 허용
+                        # SG/SB 타입: bestSalePriceYn=Y만 허용
+                        if coupon_apply == "AG":
+                            if best_yn != "N":
+                                logger.info(
+                                    f"[쿠폰 스킵] {goods_no}: AG 타입 bestSalePriceYn=Y — 조건부 카드쿠폰 제외"
+                                )
+                                continue
+                        else:
+                            if best_yn == "N":
+                                logger.info(
+                                    f"[쿠폰 스킵] {goods_no}: bestSalePriceYn=N — 최대혜택가 미반영 쿠폰"
+                                )
+                                continue
                         actual_discount = 0
                         c_sale_price = c.get("salePrice", 0) or 0
                         # salePrice 우선 처리

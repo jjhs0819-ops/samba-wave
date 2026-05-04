@@ -148,6 +148,7 @@ export default function ProductsPage() {
   const [aiJobLogs, setAiJobLogs] = useState<string[]>([])
   const [aiJobDone, setAiJobDone] = useState(false)
   const aiJobAbortRef = useRef(false)
+  const aiJobAbortControllerRef = useRef<AbortController | null>(null)
   const aiJobLogRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (aiJobLogRef.current) aiJobLogRef.current.scrollTop = aiJobLogRef.current.scrollHeight
@@ -209,6 +210,18 @@ export default function ProductsPage() {
   // 삭제 확인 모달
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: string[]; label: string } | null>(null);
   const [marketDeleteModal, setMarketDeleteModal] = useState<MarketDeleteModalState | null>(null)
+  const formatDeleteLogProductLabel = useCallback((product?: SambaCollectedProduct | null) => {
+    if (!product) return ''
+    const sourceSite = (product.source_site || '').trim()
+    const brand = (product.brand || '').trim()
+    const productName = (product.name || product.id || '').trim().slice(0, 20)
+    return [sourceSite, brand, productName].filter(Boolean).join(' / ')
+  }, [])
+  const abortAiJob = useCallback(() => {
+    aiJobAbortRef.current = true
+    aiJobAbortControllerRef.current?.abort()
+    aiJobAbortControllerRef.current = null
+  }, [])
 
   // 카테고리 매핑 (source_site::source_category → { market: category })
   const [catMappingMap, setCatMappingMap] = useState<Map<string, Record<string, string>>>(new Map())
@@ -639,6 +652,7 @@ export default function ProductsPage() {
     }
 
     aiJobAbortRef.current = false
+    aiJobAbortControllerRef.current = null
     setAiJobTitle(title)
     setAiJobLogs([])
     setAiJobDone(false)
@@ -659,7 +673,7 @@ export default function ProductsPage() {
       }
 
       const product = targetProducts[i]
-      const productName = (product.name || product.id).slice(0, 20)
+      const productName = formatDeleteLogProductLabel(product) || (product.name || product.id).slice(0, 20)
       const targetAccIds = accountIds.filter(id => (product.registered_accounts ?? []).includes(id))
       if (!targetAccIds.length) continue
 
@@ -679,7 +693,9 @@ export default function ProductsPage() {
           successMap.set(product.id, successAccIds)
         } else {
           // 마켓삭제: 실제 마켓 API 호출
-          const res = await shipmentApi.marketDelete([product.id], targetAccIds)
+          const controller = new AbortController()
+          aiJobAbortControllerRef.current = controller
+          const res = await shipmentApi.marketDelete([product.id], targetAccIds, undefined, undefined, false, controller.signal)
           const result = res?.results?.[0]
           if (result?.delete_results) {
             const entries = Object.entries(result.delete_results as Record<string, string>)
@@ -711,11 +727,17 @@ export default function ProductsPage() {
             logsRef.push(`[${ts()}] [${fmt(i + 1)}/${fmt(targetProducts.length)}] ${productName} -> 성공`)
           }
         }
-      } catch {
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          logsRef.push(``, `ä»¥ë¬ë–’??(${fmt(i)}/${fmt(targetProducts.length)})`)
+          flushLogs()
+          break
+        }
         totalFail++
         logsRef.push(`[${ts()}] [${fmt(i + 1)}/${fmt(targetProducts.length)}] ${productName} -> 오류`)
       }
 
+      aiJobAbortControllerRef.current = null
       flushLogs()
       await new Promise(resolve => setTimeout(resolve, 50))
     }
@@ -731,7 +753,7 @@ export default function ProductsPage() {
     flushLogs()
     setAiJobDone(true)
     reloadProducts()
-  }, [accountsMap, applyMarketDeleteSuccessState])
+  }, [accountsMap, applyMarketDeleteSuccessState, formatDeleteLogProductLabel])
 
   const handleMarketDelete = async (productId: string) => {
     const product = allProducts.find(x => x.id === productId)
@@ -749,7 +771,7 @@ export default function ProductsPage() {
       return
     }
     if (!await showConfirm('마켓에서 상품을 삭제(판매중지)하시겠습니까?')) return
-    const productName = (p?.name || productId).slice(0, 20)
+    const productName = formatDeleteLogProductLabel(p) || (p?.name || productId).slice(0, 20)
     const ts = fmtTime
     setAiJobTitle(`마켓삭제 - ${productName}`)
     setAiJobLogs([])
@@ -1058,7 +1080,7 @@ export default function ProductsPage() {
             </div>
             <div style={{ padding: '12px 20px', borderTop: '1px solid #2D2D2D', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
               {!aiJobDone && (
-                <button onClick={() => { aiJobAbortRef.current = true }} style={{
+                <button onClick={abortAiJob} style={{
                   padding: '6px 20px', borderRadius: '6px', fontSize: '0.56rem',
                   background: 'rgba(255,107,107,0.15)', border: '1px solid rgba(255,107,107,0.4)',
                   color: '#FF6B6B', cursor: 'pointer', fontWeight: 600,

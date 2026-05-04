@@ -856,10 +856,11 @@ export const shipmentApi = {
     }),
   retry: (id: string) =>
     request<SambaShipment>(`${SAMBA_PREFIX}/shipments/${id}/retry`, { method: "POST" }),
-  marketDelete: (productIds: string[], targetAccountIds: string[], currentIdx?: number, totalCount?: number, logToBuffer = false) =>
+  marketDelete: (productIds: string[], targetAccountIds: string[], currentIdx?: number, totalCount?: number, logToBuffer = false, signal?: AbortSignal) =>
     request<{ processed: number; results: { product_id: string; delete_results: Record<string, string>; success_count: number }[] }>(
       `${SAMBA_PREFIX}/shipments/market-delete`, {
         method: "POST",
+        signal,
         body: JSON.stringify({
           product_ids: productIds,
           target_account_ids: targetAccountIds,

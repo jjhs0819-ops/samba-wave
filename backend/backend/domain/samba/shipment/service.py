@@ -371,6 +371,8 @@ class SambaShipmentService:
         cancelled = 0
         results: list[dict[str, Any]] = []
         for product_id in product_ids:
+            if False:
+                logger.info("[마켓삭제] 클라이언트 연결 종료 감지 - 추가 삭제 중단")
             # 중단 체크
             if is_cancel_requested():
                 cancelled = len(product_ids) - processed
@@ -2455,6 +2457,7 @@ class SambaShipmentService:
         current_idx: int | None = None,
         total_count: int | None = None,
         log_to_buffer: bool = False,
+        disconnect_checker: Any | None = None,
     ) -> dict[str, Any]:
         """선택된 상품을 대상 마켓에서 삭제.
 
@@ -2524,6 +2527,9 @@ class SambaShipmentService:
             delete_results: dict[str, str] = {}
 
             for account_id in target_account_ids:
+                if disconnect_checker is not None and await disconnect_checker():
+                    logger.info("[마켓삭제] 클라이언트 연결 종료 감지 - 계정 삭제 중단")
+                    break
                 # 이 상품에 등록된 계정만 삭제 대상
                 if account_id not in reg_accounts:
                     acc = _del_account_map.get(account_id)
