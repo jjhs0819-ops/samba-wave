@@ -508,12 +508,15 @@ class LotteHomeClient:
     # ------------------------------------------------------------------
 
     async def search_brands(self, brand_name: str = "") -> dict[str, Any]:
-        """브랜드 목록 조회."""
+        """브랜드 목록 조회. POST 방식으로 한글 EUC-KR 인코딩 정상 처리."""
         cert_key = await self._ensure_auth()
+        params: dict[str, Any] = {"subscriptionId": cert_key}
+        if brand_name:
+            params["brnd_nm"] = brand_name
         return await self._call_api_auto_retry(
             "searchBrandListOpenApi.lotte",
-            "GET",
-            {"subscriptionId": cert_key, "brnd_nm": brand_name},
+            "POST",
+            params,
         )
 
     async def search_categories(

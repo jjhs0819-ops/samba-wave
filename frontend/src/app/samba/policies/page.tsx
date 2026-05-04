@@ -248,6 +248,7 @@ export default function PoliciesPage() {
   const [lotteBrands, setLotteBrands] = useState<LotteBrand[]>([])
   const [lotteBrandKeyword, setLotteBrandKeyword] = useState('')
   const [lotteBrandLoading, setLotteBrandLoading] = useState(false)
+  const [lotteBrandError, setLotteBrandError] = useState('')
   const [lotteStdCategories, setLotteStdCategories] = useState<{ no: string; nm: string; path?: string }[]>([])
   const [lotteStdCatLoading, setLotteStdCatLoading] = useState(false)
 
@@ -357,14 +358,24 @@ export default function PoliciesPage() {
 
   // 롯데홈쇼핑 브랜드 검색 (검색어 1글자 이상, 디바운스)
   useEffect(() => {
-    if (!lotteBrandKeyword.trim()) { setLotteBrands([]); return }
+    if (!lotteBrandKeyword.trim()) { setLotteBrands([]); setLotteBrandLoading(false); setLotteBrandError(''); return }
     setLotteBrandLoading(true)
+    setLotteBrandError('')
     const timer = setTimeout(() => {
-      request<{ success: boolean; data: unknown }>(`${API_BASE}/api/v1/samba/proxy/lottehome/brands?brnd_nm=${encodeURIComponent(lotteBrandKeyword)}`)
+      request<{ success: boolean; data: unknown; message?: string }>(`${API_BASE}/api/v1/samba/proxy/lottehome/brands?brnd_nm=${encodeURIComponent(lotteBrandKeyword)}`)
         .then(res => {
+          if (!res.success) {
+            console.warn('[브랜드검색] 서버 오류:', res.message)
+            setLotteBrandError(res.message || '브랜드 조회 실패')
+            setLotteBrands([])
+            return
+          }
           const raw = extractLotteList<Record<string, string>>(res.data, 'Result', 'BrandInfoList', 'BrandInfo')
           setLotteBrands(raw.map(b => ({ brnd_no: b.BrandCode || '', brnd_nm: b.BrandName || '', brnd_en: b.BrandEnglishName || '' })))
-        }).catch(() => {}).finally(() => setLotteBrandLoading(false))
+          if (raw.length === 0) setLotteBrandError('검색 결과 없음')
+        })
+        .catch(e => { console.error('[브랜드검색] 요청 실패:', e); setLotteBrandError('네트워크 오류') })
+        .finally(() => setLotteBrandLoading(false))
     }, 300)
     return () => clearTimeout(timer)
   }, [lotteBrandKeyword])
@@ -1046,11 +1057,14 @@ export default function PoliciesPage() {
                         {lotteBrandLoading && (
                           <span style={{ position: 'absolute', right: '0.5rem', top: '50%', transform: 'translateY(-50%)', fontSize: '0.75rem', color: '#666' }}>검색 중...</span>
                         )}
+                        {!lotteBrandLoading && lotteBrandError && lotteBrandKeyword.trim() && (
+                          <div style={{ marginTop: '0.2rem', fontSize: '0.75rem', color: '#e05c5c' }}>{lotteBrandError}</div>
+                        )}
                         {lotteBrands.length > 0 && (
                           <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 0, right: 0, background: '#1A1A1A', border: '1px solid #3D3D3D', borderRadius: '4px', zIndex: 50, maxHeight: '180px', overflowY: 'auto' }}>
                             {lotteBrands.map(b => (
                               <div key={b.brnd_no}
-                                onClick={() => { setLottePolicy(p => ({ ...p, brndNo: b.brnd_no, brndNm: b.brnd_nm })); setLotteBrandKeyword(''); setLotteBrands([]) }}
+                                onClick={() => { setLottePolicy(p => ({ ...p, brndNo: b.brnd_no, brndNm: b.brnd_nm })); setLotteBrandKeyword(''); setLotteBrands([]); setLotteBrandError('') }}
                                 style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', color: '#E5E5E5', cursor: 'pointer' }}
                                 onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,140,0,0.12)')}
                                 onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}

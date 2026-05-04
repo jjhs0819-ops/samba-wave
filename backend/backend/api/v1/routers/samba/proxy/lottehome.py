@@ -133,11 +133,13 @@ async def lottehome_brands(
 ) -> dict[str, Any]:
     """롯데홈쇼핑 브랜드 목록 조회."""
     client = await _get_lotte_client(session)
+    logger.info(f"[롯데홈] 브랜드 검색 요청: brnd_nm={brnd_nm!r}, env={client.env}, user_id={client.user_id!r}")
     try:
         result = await client.search_brands(brnd_nm)
         data = result.get("data", {})
         result_block = data.get("Result", data) if isinstance(data, dict) else {}
         brand_list_raw = result_block.get("BrandInfoList") if isinstance(result_block, dict) else None
+        logger.info(f"[롯데홈] 브랜드 응답 구조: BrandInfoList type={type(brand_list_raw).__name__}, keys={list(result_block.keys()) if isinstance(result_block, dict) else 'N/A'}")
         # BrandInfoList가 flat list(각 항목이 브랜드) or dict(BrandInfo 자식) 둘 다 처리
         if isinstance(brand_list_raw, list):
             brands = brand_list_raw
@@ -146,12 +148,16 @@ async def lottehome_brands(
             brands = brand_info if isinstance(brand_info, list) else ([brand_info] if brand_info else [])
         else:
             brands = []
+        logger.info(f"[롯데홈] 브랜드 검색 결과: {len(brands)}건")
         normalized = dict(result_block) if isinstance(result_block, dict) else {}
         normalized["BrandInfoList"] = {"BrandInfo": brands}
         return {"success": True, "data": {"Result": normalized}}
     except LotteApiError as exc:
-        logger.warning(f"[롯데홈] 브랜드 조회 실패: {exc}")
+        logger.warning(f"[롯데홈] 브랜드 조회 실패: code={exc.code}, message={exc}")
         return {"success": False, "message": str(exc), "code": exc.code}
+    except Exception as exc:
+        logger.exception(f"[롯데홈] 브랜드 조회 예외: {exc}")
+        return {"success": False, "message": str(exc)}
 
 
 @router.get("/lottehome/categories")
