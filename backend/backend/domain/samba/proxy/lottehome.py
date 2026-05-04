@@ -592,19 +592,25 @@ class LotteHomeClient:
         if not md_id:
             md_result = await self.search_md_list()
             md_data = md_result.get("data", {})
-            logger.info(f"[롯데홈쇼핑] MD목록 응답 keys: {list(md_data.keys()) if isinstance(md_data, dict) else type(md_data).__name__}")
+            logger.info(
+                f"[롯데홈쇼핑] MD목록 응답 keys: {list(md_data.keys()) if isinstance(md_data, dict) else type(md_data).__name__}"
+            )
             md_list = md_data.get("Result", md_data)
             info_list = (
                 md_list.get("MDInfoList", {}) if isinstance(md_list, dict) else {}
             )
             md_info = info_list.get("MDInfo", {}) if isinstance(info_list, dict) else {}
-            logger.info(f"[롯데홈쇼핑] MDInfo 추출 결과: type={type(md_info).__name__}, value={str(md_info)[:200]}")
+            logger.info(
+                f"[롯데홈쇼핑] MDInfo 추출 결과: type={type(md_info).__name__}, value={str(md_info)[:200]}"
+            )
             if isinstance(md_info, list) and md_info:
                 md_id = md_info[0].get("MDCode", "")
             elif isinstance(md_info, dict):
                 md_id = md_info.get("MDCode", "")
             if not md_id:
-                logger.warning(f"[롯데홈쇼핑] MD코드를 찾지 못함. md_data={str(md_data)[:300]}")
+                logger.warning(
+                    f"[롯데홈쇼핑] MD코드를 찾지 못함. md_data={str(md_data)[:300]}"
+                )
                 return {"success": False, "message": "배정된 MD가 없습니다"}
             logger.info(f"[롯데홈쇼핑] MD코드 자동 조회: {md_id}")
             cert_key = self._cert_key  # search_md_list 이후 갱신된 cert 사용
@@ -658,7 +664,9 @@ class LotteHomeClient:
                 data = res.get("data", {})
                 result = data.get("Result", data)
                 items_wrap = result.get("ReturnInfoList", {})
-                logger.info(f"[롯데홈] 배송지 tp={tp} result_keys={list(result.keys()) if isinstance(result, dict) else type(result)}, items_wrap={str(items_wrap)[:400]}")
+                logger.info(
+                    f"[롯데홈] 배송지 tp={tp} result_keys={list(result.keys()) if isinstance(result, dict) else type(result)}, items_wrap={str(items_wrap)[:400]}"
+                )
                 info = (
                     items_wrap.get("ReturnInfo", [])
                     if isinstance(items_wrap, dict)

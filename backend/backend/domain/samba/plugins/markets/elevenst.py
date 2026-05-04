@@ -129,8 +129,13 @@ class ElevenstPlugin(MarketPlugin):
                             "</ProductOption>"
                         )
 
-                xml_data = ElevenstClient.transform_product(
-                    product, cat_code, settings=_acct_extras
+                xml_data = (
+                    '<?xml version="1.0" encoding="UTF-8"?>'
+                    "<Product>"
+                    "<selMthdCd>01</selMthdCd>"
+                    f"<selPrc>{new_price}</selPrc>"
+                    f"{option_xml}"
+                    "</Product>"
                 )
 
                 result = await client.update_product(existing_no, xml_data)
