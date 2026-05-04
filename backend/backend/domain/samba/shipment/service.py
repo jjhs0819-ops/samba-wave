@@ -292,6 +292,34 @@ class SambaShipmentService:
                 result.append(opt)
         return result
 
+    async def _apply_name_rule_effects(
+        self,
+        product_row: Any,
+        product_dict: dict,
+        policy: Any,
+    ) -> None:
+        """정책의 명칭 규칙을 상품 옵션에 선적용하고 _name_rule 을 캐시."""
+        if not policy:
+            return
+        name_rule_id = (getattr(policy, "extras", None) or {}).get("name_rule_id")
+        if not name_rule_id:
+            return
+        from sqlmodel import select
+
+        from backend.domain.samba.policy.model import SambaNameRule
+
+        result = await self.session.exec(
+            select(SambaNameRule).where(SambaNameRule.id == name_rule_id)
+        )
+        name_rule = result.first()
+        if not name_rule:
+            return
+        if product_dict.get("options"):
+            product_dict["options"] = self._apply_option_name_rules(
+                product_dict["options"], name_rule
+            )
+        product_dict["_name_rule"] = name_rule
+
     # ==================== CRUD ====================
 
     async def list_shipments(
@@ -1453,20 +1481,6 @@ class SambaShipmentService:
 
                 # 마켓별 상세페이지 템플릿 오버라이드
                 # 프론트엔드는 market_type(영문 ID: "playauto")을 키로 저장
-                if policy and policy.extras:
-                    _mdt = policy.extras.get("market_detail_templates") or {}
-                    _market_tpl_id = _mdt.get(market_type)
-                    logger.info(
-                        f"[전송] 마켓별 상세 템플릿 조회: market={market_type}, "
-                        f"mdt_keys={list(_mdt.keys())}, "
-                        f"tpl_id={_market_tpl_id or '(없음)'}"
-                    )
-                    if _market_tpl_id:
-                        acct_product["detail_html"] = await self._build_detail_html(
-                            acct_product,
-                            template_id_override=_market_tpl_id,
-                        )
-
                 # 마켓별 상품명 조합 덮어쓰기
                 _nr = product_dict.get("_name_rule")
                 if _nr and getattr(_nr, "market_name_compositions", None):
@@ -1489,14 +1503,14 @@ class SambaShipmentService:
                         _detail_tpl_id = (
                             policy.extras.get("market_detail_templates") or {}
                         ).get(market_type) or ""
-                    if (
-                        acct_product.get("name") != product_dict.get("name")
-                        or _detail_tpl_id
-                    ):
-                        acct_product["detail_html"] = await self._build_detail_html(
-                            acct_product,
-                            template_id_override=_detail_tpl_id,
+                    if _detail_tpl_id:
+                        logger.info(
+                            f"[전송] 마켓별 상세 템플릿 적용: market={market_type}, tpl_id={_detail_tpl_id}"
                         )
+                    acct_product["detail_html"] = await self._build_detail_html(
+                        acct_product,
+                        template_id_override=_detail_tpl_id,
+                    )
                 cost = (
                     acct_product.get("cost")
                     or acct_product.get("sale_price")
