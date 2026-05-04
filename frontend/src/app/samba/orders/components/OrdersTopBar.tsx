@@ -19,7 +19,6 @@ interface Props {
   notifications: Notification[]
   setNotifications: Dispatch<SetStateAction<Notification[]>>
   setStatusFilter: Dispatch<SetStateAction<string>>
-  setExcludeClaimStatus: Dispatch<SetStateAction<boolean>>
   setMarketStatus: Dispatch<SetStateAction<string>>
   setCustomStart: Dispatch<SetStateAction<string>>
   setCustomEnd: Dispatch<SetStateAction<string>>
@@ -55,7 +54,7 @@ function renderLogMessage(message: string) {
 
 export default function OrdersTopBar(props: Props) {
   const {
-    notifications, setNotifications, setStatusFilter, setExcludeClaimStatus, setMarketStatus,
+    notifications, setNotifications, setStatusFilter, setMarketStatus,
     setCustomStart, setCustomEnd, setPeriod,
     isProductMode, cpId, cpName, filteredOrdersCount,
     pendingCount, smsRemain,
@@ -80,7 +79,6 @@ export default function OrdersTopBar(props: Props) {
               onClick={() => {
                 setNotifications([])
                 setStatusFilter('')
-                setExcludeClaimStatus(false)
                 setMarketStatus('취소요청')
                 setCustomStart('2020-01-01')
                 setCustomEnd(new Date().toLocaleDateString('sv-SE'))

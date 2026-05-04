@@ -302,6 +302,8 @@ let _sourcingForceStop = false
 // 이 PC가 현재 오토튠에 참여 중인지 여부 — 시작 버튼 클릭 시 true, 중지/forceStop 시 false.
 // false이면 collect-queue 폴링 자체를 건너뜀 → 다른 PC의 시작에 자동으로 편승하지 않음.
 let _localAutotuneJoined = false
+// 이 PC가 처리할 소싱처 목록 — null이면 전체, 배열이면 선택된 소싱처만
+let _allowedSourceSites = null
 // 사이트별 로그인 확인 완료 플래그 — logout_link 감지 시 set, 오토튠 탈퇴 시 clear
 // 한 번 확인된 사이트는 ambiguous여도 login_required 차단 안 함
 const _siteLoginConfirmed = new Set()
@@ -504,6 +506,7 @@ async function _runLotteonPreLogin() {
 
 globalThis._setLocalAutotuneJoined = (joined, sourceSites = null) => {
   _localAutotuneJoined = !!joined
+  _allowedSourceSites = joined ? sourceSites : null
   if (joined) {
     _sourcingForceStop = false
     _siteLoginConfirmed.clear()
@@ -1339,10 +1342,12 @@ async function handleSourcingJob(job) {
           if (sig === 'logout_link') {
             _siteLoginConfirmed.add(job.site)
           } else if (sig === 'login_link' && !_hasRecentLoginProof(job.site)) {
-            // 비로그인 신호 감지 — 백그라운드 로그인 시도 (fire-and-forget, 차단 없음)
-            console.log(`[LOTTEON] login_link 감지 — 백그라운드 ensureLoggedIn 트리거 (차단 없이 진행)`)
-            if (typeof ensureLoggedIn === 'function') {
+            const lotteonActive = _allowedSourceSites === null || _allowedSourceSites.includes('LOTTEON')
+            if (lotteonActive && typeof ensureLoggedIn === 'function') {
+              console.log(`[LOTTEON] login_link 감지 — 백그라운드 ensureLoggedIn 트리거 (차단 없이 진행)`)
               ensureLoggedIn('lotteon').catch(e => console.log(`[LOTTEON] bg ensureLoggedIn 오류: ${e?.message}`))
+            } else if (!lotteonActive) {
+              console.log(`[LOTTEON] login_link 감지 — LOTTEON 미선택 소싱처, ensureLoggedIn 스킵`)
             }
           }
           // 어떤 sig 값이든 _loginRequired = false (차단 금지)
@@ -1411,7 +1416,10 @@ async function handleSourcingJob(job) {
           // login_link — 아이템별 차단 금지. 백그라운드 ensureLoggedIn만 트리거
           // GrandStage도 abcmart 키로 매핑 (AUTO_LOGIN_SITES에 grandstage 없음)
           result._loginRequired = false
-          if (!_hasRecentLoginProof(job.site)) {
+          const _siteAllowed = _allowedSourceSites === null || _allowedSourceSites.includes(job.site)
+          if (!_siteAllowed) {
+            console.log(`[${job.site}] login_link 감지 — 미선택 소싱처, ensureLoggedIn 스킵: ${job.productId}`)
+          } else if (!_hasRecentLoginProof(job.site)) {
             const _loginKey = (typeof alExternalSiteToKey === 'function') ? alExternalSiteToKey(job.site) : job.site.toLowerCase()
             console.log(`[${job.site}] login_link 감지 — bg ensureLoggedIn(${_loginKey}) 트리거 (차단 없이 진행): ${job.productId}`)
             if (typeof ensureLoggedIn === 'function' && _loginKey) {

@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 
 import React, { Dispatch, SetStateAction, useState } from 'react'
 import {
@@ -188,7 +188,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                     <button
                       onClick={async () => {
                         const isPlayauto = (o.source === 'playauto' || o.channel_name?.toLowerCase().includes('플레이오토'))
-                        const confirmMsg = isPlayauto ? '주문확인 처리하시겠습니까?' : '주문을 취소하시겠습니까?'
+                                                const confirmMsg = isPlayauto ? '플레이오토는 EMP에서 직접 주문취소하셔야 합니다' : '주문취소하시겠습니까?'
                         const yes = await showConfirm(confirmMsg)
                         if (!yes) return
                         try {
@@ -455,3 +455,4 @@ export default function OrdersTable(props: OrdersTableProps) {
     </div>
   )
 }
+

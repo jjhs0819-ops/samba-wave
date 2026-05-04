@@ -240,7 +240,15 @@ async def _build_order_filters(
                 ),
             )
         )
-    elif input_filter in {"direct", "kkadaegi", "gift", "staff_a", "staff_b"}:
+    elif input_filter in {
+        "no_price",
+        "no_stock",
+        "direct",
+        "kkadaegi",
+        "gift",
+        "staff_a",
+        "staff_b",
+    }:
         action_filter = _build_action_tag_filter(input_filter)
         if action_filter is not None:
             filters.append(action_filter)
