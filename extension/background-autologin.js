@@ -318,7 +318,12 @@ async function _spaDirectLogin(siteKey, username, password) {
                   chrome.debugger.onEvent.removeListener(dialogHandler)
                   return true
                 }
-                console.log(`[자동로그인][SPA] ${site.name} URL 이탈했으나 #memInfo.mbNo 없음 — DOM 로딩 중, 폴링 계속`)
+                // mbNo 없어도 URL이 로그인 페이지를 벗어난 것 자체가 로그인 성공 증거
+                // (헤더 텍스트 체크 인코딩 문제로 매칭 불가 — URL 이탈 기준으로 단순화)
+                // 틀린 자격증명은 위의 alert dialog 핸들러가 이미 처리함
+                console.log(`[자동로그인][SPA] ✅ ${site.name} URL 이탈 확인 — #memInfo.mbNo 없음, 로그인 성공 처리`)
+                chrome.debugger.onEvent.removeListener(dialogHandler)
+                return true
               } catch (e) {
                 console.log(`[자동로그인][SPA] ${site.name} mbNo 체크 오류: ${e.message} — URL 이탈로 성공 처리`)
                 chrome.debugger.onEvent.removeListener(dialogHandler)
