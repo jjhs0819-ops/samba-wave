@@ -210,7 +210,7 @@ class ElevenstPlugin(MarketPlugin):
         )
 
         if existing_no:
-            logger.info(f"[11번가] 폴백 전체XML (앞500자):\n{xml_data[:500]}")
+            logger.info(f"[11번가] 폴백 전체XML (전체):\n{xml_data}")
 
         # 기존 상품번호가 있으면 수정, 없으면 신규등록
         from backend.domain.samba.proxy.elevenst import (
