@@ -35,16 +35,15 @@ class PlayAutoClient:
 
     @staticmethod
     def _get_proxy_url() -> str:
-        try:
-            from backend.domain.samba.collector.refresher import (
-                get_collect_proxy_url,
-                get_transmit_proxy_url,
-            )
+        import os
 
-            proxy = (get_transmit_proxy_url() or "").strip()
-            if proxy:
-                return proxy
-            return (get_collect_proxy_url() or "").strip()
+        playauto_proxy = os.environ.get("PLAYAUTO_PROXY_URL", "").strip()
+        if playauto_proxy:
+            return playauto_proxy
+        try:
+            from backend.domain.samba.collector.refresher import get_transmit_proxy_url
+
+            return (get_transmit_proxy_url() or "").strip()
         except Exception as e:
             logger.warning(f"[플레이오토] 프록시 설정 로드 실패: {e}")
             return ""
