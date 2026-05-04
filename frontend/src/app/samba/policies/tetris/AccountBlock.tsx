@@ -76,6 +76,7 @@ export default function AccountBlock({
 }: Props) {
   const [isOver, setIsOver] = useState(false)
   const [dropSlot, setDropSlot] = useState<number | null>(null)
+  const [isThisBeingDragged, setIsThisBeingDragged] = useState(false)
 
   const isSameAccountDrag =
     dragState !== null &&
@@ -105,15 +106,27 @@ export default function AccountBlock({
 
   return (
     <div
+      draggable
+      onDragStart={e => {
+        e.stopPropagation()
+        setIsThisBeingDragged(true)
+        onAccountDragStart(account.account_id)
+      }}
+      onDragEnd={() => {
+        setIsThisBeingDragged(false)
+        onAccountDragEnd()
+      }}
       style={{
         position: 'relative',
         height: capacityHeight,
         minHeight: capacityHeight,
         background: isOver && isDragging && !isSameAccountDrag ? 'rgba(255,140,0,0.08)' : 'rgba(25,25,25,0.6)',
         borderRadius: 6,
-        transition: 'background 0.15s',
+        transition: 'background 0.15s, opacity 0.15s',
         overflow: 'hidden',
         boxSizing: 'border-box',
+        opacity: isThisBeingDragged ? 0.4 : 1,
+        cursor: isThisBeingDragged ? 'grabbing' : 'grab',
       }}
       onDragOver={e => { if (isAccountDragging || isSameAccountDrag) return; e.preventDefault(); setIsOver(true) }}
       onDragLeave={() => setIsOver(false)}
@@ -167,27 +180,6 @@ export default function AccountBlock({
         </div>
       </div>
 
-      <div
-        draggable
-        onDragStart={e => {
-          e.stopPropagation()
-          onAccountDragStart(account.account_id)
-        }}
-        onDragEnd={onAccountDragEnd}
-        style={{
-          position: 'absolute',
-          top: 8,
-          left: 8,
-          zIndex: 3,
-          fontSize: 10,
-          color: '#666',
-          cursor: 'grab',
-          userSelect: 'none',
-        }}
-        title="Drag to reorder accounts"
-      >
-        |||
-      </div>
 
       <div
         style={{

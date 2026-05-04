@@ -205,11 +205,11 @@ class SambaTetrisService:
                 LEFT JOIN samba_search_filter sf ON sf.id = cp.search_filter_id
                 WHERE cp.tenant_id = :tid
                   AND cp.source_site IS NOT NULL
-                  AND COALESCE(
-                        NULLIF(BTRIM(cp.brand), ''),
-                        NULLIF(BTRIM(sf.source_brand_name), ''),
-                        NULLIF(BTRIM(cp.manufacturer), '')
-                      ) IS NOT NULL
+                  AND (
+                    cp.brand IS NOT NULL
+                    OR (sf.source_brand_name IS NOT NULL AND BTRIM(sf.source_brand_name) != '')
+                    OR (cp.manufacturer IS NOT NULL AND BTRIM(cp.manufacturer) != '')
+                  )
                 GROUP BY cp.source_site, effective_brand
             """),
             {"tid": tenant_id},
@@ -220,9 +220,16 @@ class SambaTetrisService:
         for row in collected_rows:
             site = row[0]
             brand = row[1]
+            if not brand:
+                continue
             key = (_norm_site_key(site), _norm_tetris_key(brand))
             collected_map[key] = collected_map.get(key, 0) + int(row[2] or 0)
             collected_label_map.setdefault(key, (site, brand))
+
+        logger.info(
+            f"[테트리스] collected_map={len(collected_map)}, "
+            f"accounts={len(accounts)}, tenant_id={tenant_id}"
+        )
 
         # 5. Raw SQL 집계 — JSONB 함수로 account_id 전개 후 DB에서 집계
         registered_rows = await self._session.execute(
@@ -242,11 +249,11 @@ class SambaTetrisService:
                   AND cp.registered_accounts IS NOT NULL
                   AND cp.registered_accounts::text NOT IN ('null', '[]', '')
                   AND cp.source_site IS NOT NULL
-                  AND COALESCE(
-                        NULLIF(BTRIM(cp.brand), ''),
-                        NULLIF(BTRIM(sf.source_brand_name), ''),
-                        NULLIF(BTRIM(cp.manufacturer), '')
-                      ) IS NOT NULL
+                  AND (
+                    cp.brand IS NOT NULL
+                    OR (sf.source_brand_name IS NOT NULL AND BTRIM(sf.source_brand_name) != '')
+                    OR (cp.manufacturer IS NOT NULL AND BTRIM(cp.manufacturer) != '')
+                  )
                 GROUP BY cp.source_site, effective_brand, account_id
             """),
             {"tid": tenant_id},
@@ -257,8 +264,14 @@ class SambaTetrisService:
             site = row[0]
             brand = row[1]
             account_id = row[2]
+            if not brand or not account_id:
+                continue
             key = (_norm_site_key(site), _norm_tetris_key(brand), account_id)
             registered_map[key] = registered_map.get(key, 0) + int(row[3] or 0)
+
+        logger.info(
+            f"[테트리스] registered_map={len(registered_map)}, assignments={len(assignments)}"
+        )
 
         # 6. 계정별 등록 총 수 집계
         # account_registered_total[account_id] = sum
@@ -359,11 +372,15 @@ class SambaTetrisService:
             for site, brand in legacy_keys:
                 reg_cnt = registered_map.get((site, brand, acc.id), 0)
                 col_cnt = collected_map.get((site, brand), 0)
+                # collected_label_map에서 원본(소문자 정규화 전) 레이블 복원
+                orig_site, orig_brand = collected_label_map.get(
+                    (site, brand), (site, brand)
+                )
                 assignment_blocks.append(
                     {
                         "id": None,
-                        "source_site": site,
-                        "brand_name": brand,
+                        "source_site": orig_site,
+                        "brand_name": orig_brand,
                         "policy_id": None,
                         "policy_name": None,
                         "policy_color": _LEGACY_COLOR,

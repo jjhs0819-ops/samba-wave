@@ -41,7 +41,7 @@ export default function BrandBlock({
   return (
     <div
       draggable
-      onDragStart={() => onDragStart(block, accountId)}
+      onDragStart={e => { e.stopPropagation(); onDragStart(block, accountId) }}
       onClick={() => { if (!isLegacy && block.id) setShowPolicies(v => !v) }}
       style={{
         height: blockHeight,
