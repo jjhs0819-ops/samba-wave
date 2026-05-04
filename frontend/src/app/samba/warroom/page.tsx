@@ -717,7 +717,8 @@ export default function WarroomPage() {
                   return
                 }
                 // 이 PC의 확장앱에만 폴링 합류 신호 전달 (다른 PC는 자동 편승 안 함)
-                window.postMessage({ source: 'samba-page', type: 'AUTOTUNE_SET_JOIN', joined: true }, window.location.origin)
+                // sourceSites: null=전체, [...]=지정 소싱처 — 불필요한 pre-login 차단
+                window.postMessage({ source: 'samba-page', type: 'AUTOTUNE_SET_JOIN', joined: true, sourceSites: filterSources }, window.location.origin)
                 falseCountRef.current = 0
                 setAutotuneRunning(true)
                 setAutotuneCycles(0)

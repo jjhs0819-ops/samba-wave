@@ -115,7 +115,7 @@ class PlayAutoPlugin(MarketPlugin):
             }
             logger.info(
                 f"[플레이오토] 전송 데이터: ProdName={emp_data.get('ProdName', '')[:30]}, "
-                f"Price={emp_data.get('Price')}, CostPrice={emp_data.get('CostPrice')}, "
+                f"Price={emp_data.get('Price')}, "
                 f"StreetPrice={emp_data.get('StreetPrice')}, Count={emp_data.get('Count')}, "
                 f"MadeIn={emp_data.get('MadeIn')}, "
                 f"Images={_img_debug}, "

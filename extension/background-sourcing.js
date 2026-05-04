@@ -502,21 +502,33 @@ async function _runLotteonPreLogin() {
   }
 }
 
-globalThis._setLocalAutotuneJoined = (joined) => {
+globalThis._setLocalAutotuneJoined = (joined, sourceSites = null) => {
   _localAutotuneJoined = !!joined
   if (joined) {
     _sourcingForceStop = false
     _siteLoginConfirmed.clear()
-    console.log('[오토튠] 이 PC 폴링 합류')
-    // 시작 시 1회 로그인 체크 + 1시간마다 재체크
-    // _abcPreLoginPromise: 첫 pollSourcingOnce를 로그인 확인 완료까지 블로킹 (race condition 방지)
-    _abcPreLoginPromise = _checkAbcmartLogin()
-    if (_abcLoginCheckTimer) clearInterval(_abcLoginCheckTimer)
-    _abcLoginCheckTimer = setInterval(() => { _checkAbcmartLogin() }, 60 * 60 * 1000)
-    // LOTTEON pre-login — 첫 pollSourcingOnce 전에 완료 보장 + 1시간마다 재체크
-    _lotteonPreLoginPromise = _runLotteonPreLogin()
-    if (_lotteonLoginCheckTimer) clearInterval(_lotteonLoginCheckTimer)
-    _lotteonLoginCheckTimer = setInterval(() => { _runLotteonPreLogin() }, 60 * 60 * 1000)
+    console.log(`[오토튠] 이 PC 폴링 합류 (소싱처: ${sourceSites === null ? '전체' : (sourceSites.length ? sourceSites.join(',') : '없음')})`)
+    // sourceSites: null=전체선택, [...]=선택된 소싱처 목록
+    const abcSelected = sourceSites === null || sourceSites.includes('ABCmart') || sourceSites.includes('GrandStage')
+    const lotteonSelected = sourceSites === null || sourceSites.includes('LOTTEON')
+    // ABCmart pre-login — ABCmart/GrandStage가 선택된 경우만
+    if (abcSelected) {
+      _abcPreLoginPromise = _checkAbcmartLogin()
+      if (_abcLoginCheckTimer) clearInterval(_abcLoginCheckTimer)
+      _abcLoginCheckTimer = setInterval(() => { _checkAbcmartLogin() }, 60 * 60 * 1000)
+    } else {
+      console.log('[ABCmart] pre-login 스킵 — 선택된 소싱처에 ABCmart/GrandStage 없음')
+      _abcPreLoginPromise = null
+    }
+    // LOTTEON pre-login — LOTTEON이 선택된 경우만
+    if (lotteonSelected) {
+      _lotteonPreLoginPromise = _runLotteonPreLogin()
+      if (_lotteonLoginCheckTimer) clearInterval(_lotteonLoginCheckTimer)
+      _lotteonLoginCheckTimer = setInterval(() => { _runLotteonPreLogin() }, 60 * 60 * 1000)
+    } else {
+      console.log('[LOTTEON] pre-login 스킵 — 선택된 소싱처에 LOTTEON 없음')
+      _lotteonPreLoginPromise = null
+    }
   } else {
     _siteLoginConfirmed.clear()
     if (_abcLoginCheckTimer) { clearInterval(_abcLoginCheckTimer); _abcLoginCheckTimer = null }

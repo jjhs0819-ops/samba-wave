@@ -64,7 +64,8 @@ export default function OrdersPage() {
   const [siteFilter, setSiteFilter] = useState('')
   const [accountFilter, setAccountFilter] = useState('')
   const [inputFilter, setInputFilter] = useState('registered')
-  const [statusFilter, setStatusFilter] = useState('cancel_return_excluded')
+  const [statusFilter, setStatusFilter] = useState('')
+  const [excludeClaimStatus, setExcludeClaimStatus] = useState(true)
   // CS 페이지 등 외부에서 ?search=...&search_type=... 로 진입 시 자동 검색
   const initialSearch = searchParams.get('search') || ''
   const [searchText, setSearchText] = useState(initialSearch)
@@ -145,6 +146,7 @@ export default function OrdersPage() {
   })
   const [startLocked, setStartLocked] = useState(false)
   const [customEnd, setCustomEnd] = useState(new Date().toLocaleDateString('sv-SE'))
+  const effectiveStatusFilter = statusFilter || (excludeClaimStatus ? 'cancel_return_excluded' : '')
 
   const loadOrders = useCallback(async () => {
     setLoading(true)
@@ -158,7 +160,7 @@ export default function OrdersPage() {
             site_filter: siteFilter,
             account_filter: accountFilter,
             market_status: marketStatus,
-            status_filter: statusFilter,
+            status_filter: effectiveStatusFilter,
             input_filter: inputFilter,
             search_text: appliedSearchText,
             search_category: searchCategory,
@@ -173,7 +175,7 @@ export default function OrdersPage() {
             site_filter: siteFilter,
             account_filter: accountFilter,
             market_status: marketStatus,
-            status_filter: statusFilter,
+            status_filter: effectiveStatusFilter,
             input_filter: inputFilter,
             search_text: appliedSearchText,
             search_category: searchCategory,
@@ -203,7 +205,7 @@ export default function OrdersPage() {
       setLogMessages(prev => [...prev, `[${fmtTime()}] 주문 조회 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`])
     }
     setLoading(false)
-  }, [isProductMode, cpId, currentPage, pageSize, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, appliedSearchText, searchCategory, sortBy, customStart, customEnd, setSentFlags])
+  }, [isProductMode, cpId, currentPage, pageSize, marketFilter, siteFilter, accountFilter, marketStatus, effectiveStatusFilter, inputFilter, appliedSearchText, searchCategory, sortBy, customStart, customEnd, setSentFlags])
 
   const patchOrder = useCallback((id: string, patch: Partial<SambaOrder>) => {
     setOrders(prev => prev.map(order => (
@@ -247,7 +249,7 @@ export default function OrdersPage() {
   useEffect(() => { loadOrders() }, [loadOrders])
   useEffect(() => {
     setCurrentPage(1)
-  }, [pageSize, customStart, customEnd, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, searchCategory, sortBy, isProductMode, cpId])
+  }, [pageSize, customStart, customEnd, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, excludeClaimStatus, inputFilter, searchCategory, sortBy, isProductMode, cpId])
   useEffect(() => {
     const ids = [...new Set(orders.map(o => o.collected_product_id).filter((id): id is string => !!id))]
     if (ids.length === 0) {
@@ -373,6 +375,7 @@ export default function OrdersPage() {
         notifications={notifications}
         setNotifications={setNotifications}
         setStatusFilter={setStatusFilter}
+        setExcludeClaimStatus={setExcludeClaimStatus}
         setMarketStatus={setMarketStatus}
         setCustomStart={setCustomStart}
         setCustomEnd={setCustomEnd}
@@ -408,6 +411,7 @@ export default function OrdersPage() {
         siteFilter={siteFilter} setSiteFilter={setSiteFilter}
         accountFilter={accountFilter} setAccountFilter={setAccountFilter}
         marketStatus={marketStatus} setMarketStatus={setMarketStatus}
+        excludeClaimStatus={excludeClaimStatus} setExcludeClaimStatus={setExcludeClaimStatus}
         inputFilter={inputFilter} setInputFilter={setInputFilter}
         statusFilter={statusFilter} setStatusFilter={setStatusFilter}
         sortBy={sortBy} setSortBy={setSortBy}

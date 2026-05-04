@@ -91,7 +91,7 @@
     // joined:true = 이 PC의 시작 버튼을 눌렀음 → 이 PC만 폴링 합류
     // joined:false = 중지 → 이 PC 폴링 탈퇴
     if (msg.type === 'AUTOTUNE_SET_JOIN') {
-      chrome.runtime.sendMessage({ type: 'AUTOTUNE_JOIN_LOCAL', joined: !!msg.joined })
+      chrome.runtime.sendMessage({ type: 'AUTOTUNE_JOIN_LOCAL', joined: !!msg.joined, sourceSites: msg.sourceSites ?? null })
     }
   })
 })()

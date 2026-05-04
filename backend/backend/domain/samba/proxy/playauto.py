@@ -426,15 +426,6 @@ class PlayAutoClient:
             "TaxType": "Y",
         }
 
-        # 원가 (소싱처 원가 = cost 필드)
-        cost = (
-            product.get("cost")
-            or product.get("cost_price")
-            or product.get("source_price")
-        )
-        if cost:
-            data["CostPrice"] = str(int(cost))
-
         # 시중가: 정책의 streetPriceRate(%) 적용, 0이면 판매가와 동일
         sale_price = int(product.get("sale_price", 0))
         street_rate = product.get("_street_price_rate", 0)

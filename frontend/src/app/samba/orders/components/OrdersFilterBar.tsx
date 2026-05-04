@@ -59,6 +59,8 @@ interface Props {
   setAccountFilter: Dispatch<SetStateAction<string>>
   marketStatus: string
   setMarketStatus: Dispatch<SetStateAction<string>>
+  excludeClaimStatus: boolean
+  setExcludeClaimStatus: Dispatch<SetStateAction<boolean>>
   inputFilter: string
   setInputFilter: Dispatch<SetStateAction<string>>
   statusFilter: string
@@ -83,6 +85,7 @@ export default function OrdersFilterBar(props: Props) {
     searchCategory, setSearchCategory, searchText, setSearchText, loadOrders,
     marketFilter, setMarketFilter, siteFilter, setSiteFilter,
     accountFilter, setAccountFilter, marketStatus, setMarketStatus,
+    excludeClaimStatus, setExcludeClaimStatus,
     inputFilter, setInputFilter, statusFilter, setStatusFilter,
     sortBy, setSortBy, pageSize, setPageSize,
     accounts, sourcingAccounts, siteOptions,
@@ -220,8 +223,16 @@ export default function OrdersFilterBar(props: Props) {
             <option value="staff_a">직원A</option>
             <option value="staff_b">직원B</option>
           </select>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', minHeight: '32px', padding: '0 10px', borderRadius: '6px', border: `1px solid ${excludeClaimStatus ? 'rgba(255,140,0,0.45)' : '#3D3D3D'}`, background: excludeClaimStatus ? 'rgba(255,140,0,0.12)' : 'rgba(20,20,20,0.9)', color: excludeClaimStatus ? '#FFB84D' : '#C5C5C5', fontSize: '0.74rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+            <input
+              type="checkbox"
+              checked={excludeClaimStatus}
+              onChange={e => setExcludeClaimStatus(e.target.checked)}
+              style={{ accentColor: '#FF8C00', cursor: 'pointer' }}
+            />
+            취소/반품/교환 제외
+          </label>
           <select style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-            <option value="cancel_return_excluded">취소반품배송 제외</option>
             <option value="">전체 주문상태</option>
             {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>

@@ -49,7 +49,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'AUTOTUNE_JOIN_LOCAL') {
     const joined = !!msg.joined
     if (typeof globalThis._setLocalAutotuneJoined === 'function') {
-      globalThis._setLocalAutotuneJoined(joined)
+      // sourceSites: null=전체, [...]=지정 소싱처 (불필요한 소싱처 pre-login 차단)
+      globalThis._setLocalAutotuneJoined(joined, msg.sourceSites ?? null)
     }
     sendResponse({ success: true })
     return false

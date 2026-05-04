@@ -1202,22 +1202,14 @@ class MusinsaClient:
                                 f"[쿠폰 스킵] {goods_no}: lowPrice={c.get('lowPrice')} > {s_price} — 최소 금액 미달"
                             )
                             continue
-                        coupon_apply = c.get("couponApply", "")
                         best_yn = c.get("bestSalePriceYn")
-                        # AG 타입(카드/결제 조건부 쿠폰): bestSalePriceYn=N인 회원 정기쿠폰만 허용
-                        # SG/SB 타입: bestSalePriceYn=Y만 허용
-                        if coupon_apply == "AG":
-                            if best_yn != "N":
-                                logger.info(
-                                    f"[쿠폰 스킵] {goods_no}: AG 타입 bestSalePriceYn=Y — 조건부 카드쿠폰 제외"
-                                )
-                                continue
-                        else:
-                            if best_yn == "N":
-                                logger.info(
-                                    f"[쿠폰 스킵] {goods_no}: bestSalePriceYn=N — 최대혜택가 미반영 쿠폰"
-                                )
-                                continue
+                        # bestSalePriceYn=Y인 쿠폰만 허용 (타입 무관)
+                        # AG Y = 해당 계정 등급에 맞는 최대 회원쿠폰 (무신사가 최대혜택가에 반영 표시)
+                        if best_yn != "Y":
+                            logger.info(
+                                f"[쿠폰 스킵] {goods_no}: bestSalePriceYn={best_yn} — 최대혜택가 미반영 쿠폰"
+                            )
+                            continue
                         actual_discount = 0
                         c_sale_price = c.get("salePrice", 0) or 0
                         # salePrice 우선 처리
