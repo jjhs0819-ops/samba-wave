@@ -138,7 +138,9 @@ class ElevenstPlugin(MarketPlugin):
                     "</Product>"
                 )
 
+                logger.info(f"[11번가] 경량 업데이트 XML:\n{xml_data}")
                 result = await client.update_product(existing_no, xml_data)
+                logger.info(f"[11번가] 경량 업데이트 응답: {result}")
 
                 _parts = [f"가격({new_price:,}원)"]
                 if options:
