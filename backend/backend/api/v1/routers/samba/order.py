@@ -2830,7 +2830,7 @@ async def sync_orders_from_markets(
 
                 _c = LotteonClient(_ak)
                 await _c.test_auth()
-                return _aid, await _c.get_delivery_orders(days=days)
+                return _aid, await _c.get_orders(days=days)
 
             elif _mtype == "playauto":
                 _ak = _extr.get("apiKey", "") or acc["api_key"] or ""
@@ -3090,9 +3090,7 @@ async def sync_orders_from_markets(
                 await lotteon_client.test_auth()
                 raw_orders = _raw_cache.get(account["id"])
                 if raw_orders is None:
-                    raw_orders = await lotteon_client.get_delivery_orders(
-                        days=body.days
-                    )
+                    raw_orders = await lotteon_client.get_orders(days=body.days)
                 logger.info(
                     f"[주문동기화] {label}: 롯데ON 주문 {len(raw_orders)}건 조회"
                 )
