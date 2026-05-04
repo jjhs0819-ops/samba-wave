@@ -1617,10 +1617,10 @@ class SambaShipmentService:
                 # httpx 타임아웃과 차등화하여 한 건이 느려도 동반 타임아웃 폭주 방지
                 account_sem = _get_account_semaphore(account_id)
                 try:
-                    await asyncio.wait_for(account_sem.acquire(), timeout=120)
+                    await asyncio.wait_for(account_sem.acquire(), timeout=300)
                 except asyncio.TimeoutError:
-                    res["error"] = f"계정 사용 중 (120초 타임아웃, {market_type})"
-                    logger.warning(f"[전송] 계정 {account_id} 세마포어 120초 타임아웃")
+                    res["error"] = f"계정 사용 중 (300초 타임아웃, {market_type})"
+                    logger.warning(f"[전송] 계정 {account_id} 세마포어 300초 타임아웃")
                     return res
                 try:
                     # 취소 체크 — 세마포어 대기 중 취소됐을 수 있음

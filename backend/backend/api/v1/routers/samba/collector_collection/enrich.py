@@ -24,6 +24,23 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["samba-collector"])
 
+# ── 실시간 로그 스트리밍용 ContextVar ──
+from contextvars import ContextVar
+from collections.abc import Callable as _Callable
+
+_enrich_log_fn: ContextVar[_Callable | None] = ContextVar(
+    "_enrich_log_fn", default=None
+)
+
+
+async def _emit_log(msg: str) -> None:
+    fn = _enrich_log_fn.get()
+    if fn:
+        try:
+            await fn(msg)
+        except Exception:
+            pass
+
 
 # ── enrich 전용 헬퍼 ──
 
@@ -73,6 +90,7 @@ async def _retransmit_if_changed(
             await session.flush()
             product_dict = {**product.model_dump(), **updates}
             deleted_account_ids: list[str] = []
+            await _emit_log(f"품절 전환 → {len(reg_accounts)}개 마켓 삭제 시작")
             for account_id in reg_accounts:
                 account = acc_map.get(account_id)
                 if not account:
@@ -111,9 +129,16 @@ async def _retransmit_if_changed(
                     )
                     del_result = {"success": False, "error": "삭제 타임아웃"}
                 result["retransmit_accounts"] += 1
-                # soldout_fallback(플레이오토 등 삭제 불가 마켓)은 배지 유지 → 제외
+                _del_label = f"{account.market_type}({getattr(account, 'account_label', account_id) or account_id})"
                 if del_result.get("success") and not del_result.get("soldout_fallback"):
+                    await _emit_log(f"[마켓삭제] {_del_label}: 성공")
                     deleted_account_ids.append(account_id)
+                elif del_result.get("soldout_fallback"):
+                    await _emit_log(f"[마켓삭제] {_del_label}: 판매중지(배지유지)")
+                else:
+                    await _emit_log(
+                        f"[마켓삭제] {_del_label}: 실패 — {str(del_result.get('error', ''))[:50]}"
+                    )
 
             # 삭제 성공 계정을 registered_accounts에서 제거
             if deleted_account_ids:
@@ -146,19 +171,56 @@ async def _retransmit_if_changed(
     try:
         from backend.domain.samba.shipment.repository import SambaShipmentRepository
         from backend.domain.samba.shipment.service import SambaShipmentService
+        from backend.domain.samba.account.model import SambaMarketAccount as _SMALog
 
         ship_repo = SambaShipmentRepository(session)
         ship_svc = SambaShipmentService(ship_repo, session)
 
-        await ship_svc.start_update(
+        # 계정 레이블 일괄 조회 (로그용)
+        _reg_ids = list(product.registered_accounts)
+        _acc_log_res = await session.execute(
+            select(_SMALog).where(_SMALog.id.in_(_reg_ids))
+        )
+        _acc_log_map = {a.id: a for a in _acc_log_res.scalars().all()}
+        _labels = [
+            f"{a.market_type}({a.account_label or aid})"
+            for aid, a in _acc_log_map.items()
+        ]
+        await _emit_log(
+            f"마켓 수정 전송 — {', '.join(_labels) or str(len(_reg_ids)) + '개 계정'}"
+        )
+
+        ship_result = await ship_svc.start_update(
             [product.id],
             ["price", "stock"],
-            list(product.registered_accounts),
+            _reg_ids,
             skip_unchanged=False,
             skip_refresh=True,
         )
         result["retransmitted"] = True
-        result["retransmit_accounts"] = len(product.registered_accounts)
+        result["retransmit_accounts"] = len(_reg_ids)
+
+        # 마켓별 결과 로깅
+        for pr in ship_result.get("results") or []:
+            _t_res = pr.get("transmit_result") or {}
+            _t_err = pr.get("transmit_error") or {}
+            for aid, status in _t_res.items():
+                _acc = _acc_log_map.get(aid)
+                _lbl = (
+                    f"{_acc.market_type}({_acc.account_label or aid})"
+                    if _acc
+                    else str(aid)[:20]
+                )
+                if status == "success":
+                    await _emit_log(f"[마켓전송] {_lbl}: 성공")
+                elif status == "skipped":
+                    await _emit_log(f"[마켓전송] {_lbl}: 스킵")
+                else:
+                    _emsg = _t_err.get(aid, "실패")
+                    await _emit_log(f"[마켓전송] {_lbl}: 실패 — {str(_emsg)[:60]}")
+            # 계정별 결과 없는 경우(Exception)
+            if not _t_res and pr.get("error"):
+                await _emit_log(f"[마켓전송] 오류: {str(pr['error'])[:80]}")
     except Exception as e:
         logger.error(f"[enrich] {product.id} 마켓 재전송 실패: {e}")
 
@@ -263,6 +325,12 @@ async def enrich_product(
         if detail.get("images"):
             updates["images"] = detail["images"]
 
+        _stock_label = "품절" if new_sale_status == "sold_out" else "재고있음"
+        await _emit_log(
+            f"소싱 갱신 완료 — 원가 {new_cost:,}원, 판매가 {new_sale_price:,}원, {_stock_label}"
+            if new_cost
+            else f"소싱 갱신 완료 — 판매가 {new_sale_price:,}원, {_stock_label}"
+        )
         updated = await svc.update_collected_product(product_id, updates)
         retransmit = await _retransmit_if_changed(session, product, updates)
         return {

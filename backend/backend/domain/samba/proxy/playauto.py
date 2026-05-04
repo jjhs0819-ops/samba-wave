@@ -37,16 +37,10 @@ class PlayAutoClient:
     def _get_proxy_url() -> str:
         import os
 
+        # PLAYAUTO_PROXY_URL 명시 설정 시에만 프록시 사용
+        # PlayAuto EMP API는 공개 REST API — 전송 프록시 폴백 불필요 (느린 프록시로 인한 타임아웃 방지)
         playauto_proxy = os.environ.get("PLAYAUTO_PROXY_URL", "").strip()
-        if playauto_proxy:
-            return playauto_proxy
-        try:
-            from backend.domain.samba.collector.refresher import get_transmit_proxy_url
-
-            return (get_transmit_proxy_url() or "").strip()
-        except Exception as e:
-            logger.warning(f"[플레이오토] 프록시 설정 로드 실패: {e}")
-            return ""
+        return playauto_proxy
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
