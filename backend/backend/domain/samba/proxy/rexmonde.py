@@ -35,8 +35,6 @@ class RexmondeClient:
         """상품 상세 페이지 JSON-LD + 정보고시 파싱 — 본격 구현 예정."""
         return {}
 
-    async def scan_categories(
-        self, keyword: str, pages: int = 3, **kwargs
-    ) -> dict:
+    async def scan_categories(self, keyword: str, pages: int = 3, **kwargs) -> dict:
         """카테고리 코드 분포 집계 — 본격 구현 예정."""
         return {"categories": [], "total": 0, "groupCount": 0}
