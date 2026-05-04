@@ -106,7 +106,12 @@ class SSGPlugin(SourcingPlugin):
             # 이전엔 owner_device_id="" 로 강제해 어떤 PC든 탭이 열리는 누수가 있었으나
             # "실행 개시 PC 만 창" 요구사항과 충돌하여 제거함(2026-04-29).
             # SourcingQueue는 requestId 단위 단일 resolver라 콜백 중복 자체는 없음.
-            _req_id, _future = SourcingQueue.add_detail_job("SSG", site_product_id)
+            from backend.domain.samba.collector.refresher import _current_refresh_source
+
+            _is_manual = _current_refresh_source.get("autotune") == "manual"
+            _req_id, _future = SourcingQueue.add_detail_job(
+                "SSG", site_product_id, priority=_is_manual
+            )
             # 타임아웃 150s: 확장앱 슬롯 2개 × 아이템당 ~45s = 3배치 = 135s + 여유
             _ext_result = await asyncio.wait_for(_future, timeout=150)
 

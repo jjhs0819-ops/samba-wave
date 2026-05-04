@@ -183,6 +183,7 @@ class SourcingQueue:
         url: str = "",
         extra: dict[str, Any] | None = None,
         owner_device_id: str | None = None,
+        priority: bool = False,
     ) -> tuple[str, asyncio.Future[Any]]:
         """상세조회 작업 큐에 추가. (requestId, future) 반환.
 
@@ -190,6 +191,7 @@ class SourcingQueue:
         url: 비어있지 않으면 SITE_DETAIL_URLS 템플릿 대신 직접 사용 (NAVERSTORE 등 템플릿만으로 부족한 경우).
         extra: job dict에 병합할 추가 필드 (channelUid, storeName 등).
         owner_device_id: 작업을 집어가야 할 확장앱 deviceId. None이면 오토튠 전역값을 사용.
+        priority: True면 큐 맨 앞에 삽입 (수동 enrich 등 긴급 요청용).
         """
         cls._ensure_accepting_jobs()
         request_id = str(uuid.uuid4())[:8]
@@ -217,11 +219,15 @@ class SourcingQueue:
             job["sitmNo"] = sitm_no
         if extra:
             job.update(extra)
-        cls.queue.append(job)
+        if priority:
+            cls.queue.insert(0, job)
+        else:
+            cls.queue.append(job)
         cls.resolvers[request_id] = future
         _owner_tag = f" owner={owner_device_id[:8]}" if owner_device_id else ""
+        _prio_tag = " [우선]" if priority else ""
         logger.info(
-            f"[소싱큐] 상세 추가: {site} #{product_id} (id={request_id}){_owner_tag}"
+            f"[소싱큐] 상세 추가: {site} #{product_id} (id={request_id}){_owner_tag}{_prio_tag}"
         )
         return request_id, future
 
