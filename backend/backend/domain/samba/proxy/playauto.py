@@ -35,33 +35,12 @@ class PlayAutoClient:
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
-            # Cloud Run → PlayAuto 직접 연결 차단 시 프록시 사용
-            proxy = self._get_proxy_url()
-            if proxy:
-                logger.info(
-                    f"[플레이오토] 프록시 사용: {proxy.split('@')[-1] if '@' in proxy else 'on'}"
-                )
-            else:
-                logger.warning("[플레이오토] 프록시 미설정 — 직접 연결")
-            # read 타임아웃을 30초로 단축 — 세마포어 대기(120초)와 차등화하여
-            # 한 건이 느려도 동반 타임아웃 폭주를 방지
+            # PlayAuto EMP API는 공개 REST API — 수집 프록시 불필요, 직접 연결
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(30.0, connect=15.0),
                 follow_redirects=True,
-                proxy=proxy if proxy else None,
             )
         return self._client
-
-    @staticmethod
-    def _get_proxy_url() -> str:
-        """수집용 프록시 URL 가져오기 — DB 설정 페이지(/samba/settings) 기반."""
-        try:
-            from backend.domain.samba.collector.refresher import get_collect_proxy_url
-
-            return (get_collect_proxy_url() or "").strip()
-        except Exception as e:
-            logger.warning(f"[플레이오토] 프록시 설정 로드 실패: {e}")
-            return ""
 
     async def close(self):
         if self._client and not self._client.is_closed:
@@ -122,8 +101,19 @@ class PlayAutoClient:
             msg = ""
             if isinstance(data, dict):
                 msg = data.get("message", data.get("msg", str(data)[:200]))
+            else:
+                msg = str(data)[:200]
+            logger.warning(
+                "[플레이오토] HTTP 오류 응답: method=%s url=%s status=%s body=%s params=%s resp=%s",
+                method,
+                url,
+                resp.status_code,
+                str(body)[:300] if body is not None else "",
+                params,
+                str(data)[:500],
+            )
             raise PlayAutoApiError(
-                f"[플레이오토] HTTP {resp.status_code}: {msg or resp.reason_phrase}",
+                f"[플레이오토] HTTP {resp.status_code}: {method} {url} - {msg or resp.reason_phrase}",
                 status=resp.status_code,
                 data=data,
             )
