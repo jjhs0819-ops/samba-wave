@@ -461,6 +461,28 @@ async function _ensureLoggedInSingle(siteKey) {
   // 백엔드 자격증명 없으면 즉시 실패. chrome.debugger triple-click 폴백 제거 (드롭다운 노출 방지).
   const SPA_DIRECT_LOGIN_SITES = ['lotteon', 'abcmart', 'ssg']
   if (SPA_DIRECT_LOGIN_SITES.includes(siteKey)) {
+    // 먼저 로그인 상태 확인 — 이미 로그인 상태면 경고창 없이 즉시 반환
+    let alreadyLoggedIn = false
+    let spaCheckTabId = null
+    try {
+      const checkTab = await chrome.tabs.create({ url: site.checkUrl, active: false })
+      spaCheckTabId = checkTab.id
+      try { await waitForTabLoad(spaCheckTabId, 20000) } catch {}
+      await wait(1500)
+      const checkTabInfo = await chrome.tabs.get(spaCheckTabId)
+      alreadyLoggedIn = !site.isLoginPage(checkTabInfo.url || '')
+      try { await chrome.tabs.remove(spaCheckTabId) } catch {}
+      spaCheckTabId = null
+    } catch (e) {
+      console.log(`[자동로그인] ${site.name} 사전 로그인 체크 실패 (무시): ${e.message}`)
+      if (spaCheckTabId) try { await chrome.tabs.remove(spaCheckTabId) } catch {}
+    }
+
+    if (alreadyLoggedIn) {
+      console.log(`[자동로그인] ${site.name} 이미 로그인됨 — 자동로그인 스킵`)
+      return true
+    }
+
     const credential = await _fetchLoginCredential(siteKey)
     if (credential?.username && credential?.password) {
       console.log(`[자동로그인] ${site.name} 백엔드 자격증명 사용 (${credential.account_label}) — SPA 직접 로그인 시도`)
