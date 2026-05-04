@@ -92,7 +92,7 @@ class SambaTetrisService:
         rows = await self._session.execute(
             text("""
                 SELECT id FROM samba_collected_product
-                WHERE (:tid::text IS NULL AND tenant_id IS NULL OR tenant_id = :tid)
+                WHERE (tenant_id IS NULL AND :tid_is_null OR tenant_id = :tid)
                   AND source_site = :site
                   AND brand = :brand
                   AND (
@@ -102,6 +102,7 @@ class SambaTetrisService:
             """),
             {
                 "tid": tenant_id,
+                "tid_is_null": tenant_id is None,
                 "site": source_site,
                 "brand": brand_name,
                 "account_id": market_account_id,
@@ -121,7 +122,7 @@ class SambaTetrisService:
             rows = await self._session.execute(
                 text("""
                     SELECT id FROM samba_collected_product
-                    WHERE (:tid::text IS NULL AND tenant_id IS NULL OR tenant_id = :tid)
+                    WHERE (tenant_id IS NULL AND :tid_is_null OR tenant_id = :tid)
                       AND source_site = :site
                       AND brand = :brand
                       AND registered_accounts IS NOT NULL
@@ -129,6 +130,7 @@ class SambaTetrisService:
                 """),
                 {
                     "tid": tenant_id,
+                    "tid_is_null": tenant_id is None,
                     "site": source_site,
                     "brand": brand_name,
                     "account_id": f"%{market_account_id}%",
@@ -203,7 +205,7 @@ class SambaTetrisService:
                     COUNT(*) AS cnt
                 FROM samba_collected_product cp
                 LEFT JOIN samba_search_filter sf ON sf.id = cp.search_filter_id
-                WHERE (:tid::text IS NULL AND cp.tenant_id IS NULL OR cp.tenant_id = :tid)
+                WHERE (cp.tenant_id IS NULL AND :tid_is_null OR cp.tenant_id = :tid)
                   AND cp.source_site IS NOT NULL
                   AND (
                     cp.brand IS NOT NULL
@@ -212,7 +214,7 @@ class SambaTetrisService:
                   )
                 GROUP BY cp.source_site, effective_brand
             """),
-            {"tid": tenant_id},
+            {"tid": tenant_id, "tid_is_null": tenant_id is None},
         )
         # collected_map[(normalized_source_site, normalized_brand)] = count
         collected_map: dict[tuple[str, str], int] = {}
@@ -245,7 +247,7 @@ class SambaTetrisService:
                     COUNT(*) AS cnt
                 FROM samba_collected_product cp
                 LEFT JOIN samba_search_filter sf ON sf.id = cp.search_filter_id
-                WHERE (:tid::text IS NULL AND cp.tenant_id IS NULL OR cp.tenant_id = :tid)
+                WHERE (cp.tenant_id IS NULL AND :tid_is_null OR cp.tenant_id = :tid)
                   AND cp.registered_accounts IS NOT NULL
                   AND cp.registered_accounts::text NOT IN ('null', '[]', '')
                   AND cp.source_site IS NOT NULL
@@ -256,7 +258,7 @@ class SambaTetrisService:
                   )
                 GROUP BY cp.source_site, effective_brand, account_id
             """),
-            {"tid": tenant_id},
+            {"tid": tenant_id, "tid_is_null": tenant_id is None},
         )
         # registered_map[(normalized_source_site, normalized_brand, account_id)] = count
         registered_map: dict[tuple[str, str, str], int] = {}
