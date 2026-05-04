@@ -10,7 +10,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
 from backend.domain.samba.proxy.lottehome import LotteApiError, LotteHomeClient
-from backend.domain.samba.tenant.middleware import require_admin
+
 from backend.utils.logger import logger
 
 from ._helpers import _get_lotte_client, _set_setting
@@ -52,7 +52,6 @@ async def save_lottehome_policy(
 async def lottehome_auth(
     body: LotteAuthRequest,
     write_session: AsyncSession = Depends(get_write_session_dependency),
-    admin: str = Depends(require_admin),
 ) -> dict[str, Any]:
     """롯데홈쇼핑 인증키 발급."""
     if not body.userId or not body.password:
