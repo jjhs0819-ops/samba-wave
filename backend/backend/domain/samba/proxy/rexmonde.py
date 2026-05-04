@@ -59,6 +59,14 @@ class RexmondeClient:
 
         keyword가 5자리 이상 숫자면 카테고리 코드로, 그 외엔 키워드로 동작.
         page=N 파라미터로 페이지네이션. size는 SSR 고정값이라 무시.
+
+        한계 1: 사이트가 검색 결과 영역과 추천 상품 영역을 동일 컨테이너
+        (#ProductListArea div.item_box)에 노출하므로, 무의미한 키워드도
+        80개 카드를 반환할 수 있다. 0건 판별은 호출자 책임.
+
+        한계 2: 렉스몬드 리브랜딩 이후 검색 결과에서 품절 상품을 제외하는
+        정책으로 동작 — `is_sold_out`은 거의 False만 반환된다. 정확한
+        품절 판정은 `get_product_detail`의 `saleStatus` 필드를 사용.
         """
         params = self._build_search_params(keyword, page)
         async with httpx.AsyncClient(
