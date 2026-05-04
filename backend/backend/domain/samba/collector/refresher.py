@@ -294,6 +294,12 @@ def get_collect_proxy_url() -> str | None:
     return urls[0] if urls else None
 
 
+def get_transmit_proxy_url() -> str | None:
+    """?꾩넚 ?⑸룄 ?꾨줉??以?泥?踰덉㎏ URL留?諛섑솚."""
+    urls = get_transmit_proxies()
+    return urls[0] if urls else None
+
+
 def invalidate_db_proxy_cache() -> None:
     """DB 프록시 캐시 무효화 — 설정 변경 시 호출."""
     global _db_proxy_cache, _db_proxy_cache_ts, _db_proxy_caches

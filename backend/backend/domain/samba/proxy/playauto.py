@@ -33,12 +33,36 @@ class PlayAutoClient:
         self.api_key = api_key
         self._client: httpx.AsyncClient | None = None
 
+    @staticmethod
+    def _get_proxy_url() -> str:
+        try:
+            from backend.domain.samba.collector.refresher import (
+                get_collect_proxy_url,
+                get_transmit_proxy_url,
+            )
+
+            proxy = (get_transmit_proxy_url() or "").strip()
+            if proxy:
+                return proxy
+            return (get_collect_proxy_url() or "").strip()
+        except Exception as e:
+            logger.warning(f"[플레이오토] 프록시 설정 로드 실패: {e}")
+            return ""
+
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
             # PlayAuto EMP API는 공개 REST API — 수집 프록시 불필요, 직접 연결
+            proxy = self._get_proxy_url()
+            if proxy:
+                logger.info(
+                    f"[플레이오토] 프록시 사용: {proxy.split('@')[-1] if '@' in proxy else 'on'}"
+                )
+            else:
+                logger.warning("[플레이오토] 프록시 미설정 — 직접 연결")
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(30.0, connect=15.0),
                 follow_redirects=True,
+                proxy=proxy if proxy else None,
             )
         return self._client
 
