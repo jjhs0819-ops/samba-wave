@@ -165,16 +165,16 @@ export default function OrdersFilterBar(props: Props) {
           <span style={{ color: '#FF8C00', fontWeight: 600 }}> {fmtNum(filteredOrdersTotalSale)}</span>
         </span>
         <select style={{ ...inputStyle, width: '90px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
-          <option value="product">?곹뭹紐?</option>
-          <option value="customer">怨좉컼紐?</option>
-          <option value="product_id">?곹뭹ID</option>
-          <option value="order_number">二쇰Ц踰덊샇</option>
+          <option value="product">상품명</option>
+          <option value="customer">고객명</option>
+          <option value="product_id">상품ID</option>
+          <option value="order_number">주문번호</option>
         </select>
         <input style={{ ...inputStyle, width: '160px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadOrders() }} />
         <button onClick={loadOrders} style={{ background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', padding: '0.22rem 0.75rem', borderRadius: '5px', fontSize: '0.75rem', border: 'none', cursor: 'pointer' }}>검색</button>
         <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto', flexWrap: 'wrap' }}>
           <select style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
-            <option value="">?꾩껜 留덉폆</option>
+            <option value="">전체 마켓</option>
             {(() => {
               const marketTypes = [...new Map(accounts.map(a => [a.market_type, a.market_name])).entries()]
               return marketTypes.flatMap(([type, name]) => [
@@ -189,11 +189,11 @@ export default function OrdersFilterBar(props: Props) {
             })()}
           </select>
           <select style={{ ...inputStyle, width: '120px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}>
-            <option value="">?꾩껜 ?뚯떛泥?</option>
+            <option value="">전체 소싱처</option>
             {siteOptions.map(site => <option key={site.value} value={site.value}>{site.label}</option>)}
           </select>
           <select style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={accountFilter} onChange={e => setAccountFilter(e.target.value)}>
-            <option value="">?꾩껜 ?뚯떛怨꾩젙</option>
+            <option value="">전체 소싱계정</option>
             {[...new Set(sourcingAccounts.map(sa => sa.site_name))].sort().map(site => (
               <optgroup key={site} label={site}>
                 {sourcingAccounts.filter(sa => sa.site_name === site).map(sa => (
@@ -203,44 +203,44 @@ export default function OrdersFilterBar(props: Props) {
             ))}
           </select>
           <select style={{ ...inputStyle, width: '120px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketStatus} onChange={e => setMarketStatus(e.target.value)}>
-            <option value="">諛곗넚?곹깭</option>
+            <option value="">배송상태</option>
             {MARKET_STATUS_OPTIONS.map(status => <option key={status} value={status}>{status}</option>)}
           </select>
           <select style={{ ...inputStyle, width: '120px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={inputFilter} onChange={e => setInputFilter(e.target.value)}>
             <option value="no_price">가격X</option>
             <option value="no_stock">재고X</option>
-            <option value="">?낅젰?꾪꽣</option>
-            <option value="has_order">?뚯떛二쇰Ц踰덊샇 ?덉쓬</option>
-            <option value="no_order">?뚯떛二쇰Ц踰덊샇 ?놁쓬</option>
-            <option value="has_invoice">?≪옣?낅젰</option>
-            <option value="no_invoice">?≪옣誘몄엯??</option>
-            <option value="registered">?깅줉?곹뭹</option>
-            <option value="unregistered">誘몃벑濡앹긽??</option>
-            <option value="direct">吏곷같</option>
-            <option value="kkadaegi">源뚮?湲?</option>
-            <option value="gift">?좊Ъ</option>
-            <option value="staff_a">吏곸썝A</option>
-            <option value="staff_b">吏곸썝B</option>
+            <option value="">입력필터</option>
+            <option value="has_order">소싱주문번호 있음</option>
+            <option value="no_order">소싱주문번호 없음</option>
+            <option value="has_invoice">송장입력</option>
+            <option value="no_invoice">송장미입력</option>
+            <option value="registered">등록상품</option>
+            <option value="unregistered">미등록상품</option>
+            <option value="direct">직배</option>
+            <option value="kkadaegi">까대기</option>
+            <option value="gift">선물</option>
+            <option value="staff_a">직원A</option>
+            <option value="staff_b">직원B</option>
           </select>
           <select style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-            <option value="">?꾩껜 二쇰Ц?곹깭</option>
-            <option value="cancel_return_excluded">痍⑥냼/諛섑뭹/援먰솚 ?쒖쇅</option>
+            <option value="">전체 주문상태</option>
+            <option value="cancel_return_excluded">취소/반품/교환 제외</option>
             {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
           <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ ...inputStyle, width: '100px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }}>
-            <option value="date_desc">理쒖떊??</option>
-            <option value="date_asc">?ㅻ옒?쒖닚</option>
-            <option value="profit_desc">?댁씡?믪쓬</option>
-            <option value="profit_asc">?댁씡??쓬</option>
-            <option value="price_desc">留ㅼ텧?믪쓬</option>
-            <option value="price_asc">留ㅼ텧??쓬</option>
+            <option value="date_desc">최신순</option>
+            <option value="date_asc">오래된순</option>
+            <option value="profit_desc">마진높음</option>
+            <option value="profit_asc">마진낮음</option>
+            <option value="price_desc">매출높음</option>
+            <option value="price_asc">매출낮음</option>
           </select>
           <select style={{ ...inputStyle, width: '92px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={pageSize} onChange={e => setPageSize(Number(e.target.value))}>
-            <option value={20}>20媛?</option>
-            <option value={50}>50媛?</option>
-            <option value={100}>100媛?</option>
-            <option value={200}>200媛?</option>
-            <option value={500}>500媛?</option>
+            <option value={20}>20개</option>
+            <option value={50}>50개</option>
+            <option value={100}>100개</option>
+            <option value={200}>200개</option>
+            <option value={500}>500개</option>
           </select>
         </div>
       </div>
