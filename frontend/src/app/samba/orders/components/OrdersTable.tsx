@@ -36,6 +36,7 @@ interface OrdersTableProps {
   setEditingOrderNumbers: Dispatch<SetStateAction<Record<string, string>>>
   activeActions: Record<string, string | null>
   collectedProductCosts: Record<string, number>
+  collectedProductSourceSites: Record<string, string>
 
   // 부가 상태
   refreshLog: Record<string, string>
@@ -93,6 +94,7 @@ export default function OrdersTable(props: OrdersTableProps) {
     editingOrderNumbers, setEditingOrderNumbers,
     activeActions,
     collectedProductCosts,
+    collectedProductSourceSites,
     refreshLog, setRefreshLog,
     sentFlags, siteAliasMap, sourcingAccounts,
     setPriceHistoryProduct, setPriceHistoryData, setPriceHistoryModal,
@@ -152,6 +154,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                   setRefreshLog={setRefreshLog}
                   sentFlags={sentFlags}
                   siteAliasMap={siteAliasMap}
+                  actualSourceSite={o.collected_product_id ? (collectedProductSourceSites[o.collected_product_id] || '') : ''}
                   activeActions={activeActions}
                   setPriceHistoryProduct={setPriceHistoryProduct}
                   setPriceHistoryData={setPriceHistoryData}

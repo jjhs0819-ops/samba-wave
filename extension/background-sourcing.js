@@ -1113,6 +1113,8 @@ async function handleSourcingJob(job) {
 
   let tabId = null
   let cleanedUp = false
+  let prevActiveTabId = null
+  let openedForegroundTab = false
   // hang 방어 timer — try 안 await가 영원히 대기(예: chrome.scripting.executeScript
   // 페이지 컨텍스트 죽음 감지 못함)해도 강제 cleanup. 100초는 백엔드 wrapper(120초)
   // 보다 짧게 잡아 wrapper 만료 전에 탭 정리되게 함.
@@ -1142,7 +1144,13 @@ async function handleSourcingJob(job) {
     if (_sourcingForceStop) { clearTimeout(hangTimer); return }
 
     // active:false — 병렬 처리 시 여러 탭 동시 오픈 (백그라운드 탭도 JS 렌더링 됨)
-    const tab = await chrome.tabs.create({ url: job.url, active: false })
+    const needsForegroundTab = job.type === 'detail' && job.site === 'SSG'
+    if (needsForegroundTab) {
+      const [prevActive] = await chrome.tabs.query({ active: true, currentWindow: true })
+      prevActiveTabId = prevActive?.id || null
+      openedForegroundTab = true
+    }
+    const tab = await chrome.tabs.create({ url: job.url, active: needsForegroundTab })
     tabId = tab.id
     await waitForTabLoad(tabId, 30000)
 
@@ -1482,6 +1490,9 @@ async function handleSourcingJob(job) {
       try { await chrome.tabs.remove(tabId) } catch {}
       cleanedUp = true
     }
+    if (openedForegroundTab && prevActiveTabId) {
+      try { await chrome.tabs.update(prevActiveTabId, { active: true }) } catch {}
+    }
   }
 }
 
@@ -1636,6 +1647,71 @@ async function extractSearchResults(tabId, site, maxCount = 999) {
 
         // 가격 (숫자+원 패턴)
         const priceTexts = texts.filter(t => /[\d,]+원/.test(t) || /^\d[\d,]+$/.test(t))
+        if (false && _domLoginSignal === 'logout_link' && !isLoggedIn) {
+          isLoggedIn = true
+        }
+        if (false && _domLoginSignal !== 'logout_link') {
+          let sawExplicitLoggedOutScript = false
+          for (const script of document.querySelectorAll('script')) {
+            const text = script.textContent || ''
+            if (!text || (!text.includes('memInfo') && !text.includes('mbNo'))) continue
+            const mbNoMatch =
+              text.match(/["']mbNo["']\s*:\s*["']([^"']{2,})["']/)
+              || text.match(/\bmbNo\s*:\s*["']([^"']{2,})["']/)
+            if (mbNoMatch?.[1]) {
+              isLoggedIn = true
+              _domLoginSignal = 'logout_link'
+              break
+            }
+            if (/["']mbNo["']\s*:\s*(null|["']{2})/.test(text) || /\bmbNo\s*:\s*(null|["']{2})/.test(text)) {
+              sawExplicitLoggedOutScript = true
+            }
+          }
+          if (_domLoginSignal !== 'logout_link') {
+            const _headerText = (
+              document.querySelector('header, #header, .header, [class*="header"], nav, [class*="gnb"]')?.innerText
+              || (document.body?.innerText || '').substring(0, 400)
+            ).replace(/\s+/g, ' ')
+            if (['濡쒓렇?꾩썐', '留덉씠濡?뜲', 'MY LOTTE', '二쇰Ц諛곗넚'].some(token => _headerText.includes(token))) {
+              isLoggedIn = true
+              _domLoginSignal = 'logout_link'
+            } else if (_domLoginSignal !== 'login_link' && (['濡쒓렇???뚯썝媛??', '濡쒓렇??', '?뚯썝媛??'].some(token => _headerText.includes(token)) || sawExplicitLoggedOutScript)) {
+              _domLoginSignal = 'login_link'
+            }
+          }
+        }
+
+        if (false && _domLoginSignal !== 'logout_link') {
+          let sawExplicitLoggedOutScript = false
+          for (const script of document.querySelectorAll('script')) {
+            const text = script.textContent || ''
+            if (!text || (!text.includes('memInfo') && !text.includes('mbNo'))) continue
+            const mbNoMatch =
+              text.match(/["']mbNo["']\s*:\s*["']([^"']{2,})["']/)
+              || text.match(/\bmbNo\s*:\s*["']([^"']{2,})["']/)
+            if (mbNoMatch?.[1]) {
+              isLoggedIn = true
+              _domLoginSignal = 'logout_link'
+              break
+            }
+            if (/["']mbNo["']\s*:\s*(null|["']{2})/.test(text) || /\bmbNo\s*:\s*(null|["']{2})/.test(text)) {
+              sawExplicitLoggedOutScript = true
+            }
+          }
+          if (_domLoginSignal !== 'logout_link') {
+            const _headerText = (
+              document.querySelector('header, #header, .header, [class*="header"], nav, [class*="gnb"]')?.innerText
+              || (document.body?.innerText || '').substring(0, 400)
+            ).replace(/\s+/g, ' ')
+            if (['濡쒓렇?꾩썐', '留덉씠濡?뜲', 'MY LOTTE', '二쇰Ц諛곗넚'].some(token => _headerText.includes(token))) {
+              isLoggedIn = true
+              _domLoginSignal = 'logout_link'
+            } else if (_domLoginSignal !== 'login_link' && (['濡쒓렇???뚯썝媛??', '濡쒓렇??', '?뚯썝媛??'].some(token => _headerText.includes(token)) || sawExplicitLoggedOutScript)) {
+              _domLoginSignal = 'login_link'
+            }
+          }
+        }
+
         let salePrice = 0
         let originalPrice = 0
         for (const pt of priceTexts) {
@@ -1969,21 +2045,24 @@ async function extractDetailData(tabId, site, productId) {
         // 로그인 판단 — #memInfo hidden input의 mbNo 존재 여부 (가장 확실한 신호)
         let isLoggedIn = false
         let memInfoFound = false
+        let _domLoginSignal = 'ambiguous'
         try {
           const memInfoEl = document.querySelector('#memInfo')
           if (memInfoEl) {
             memInfoFound = true
             const memInfo = JSON.parse(memInfoEl.value || '{}')
-            isLoggedIn = !!(memInfo.mbNo)
+            if (memInfo?.mbNo) {
+              isLoggedIn = true
+              _domLoginSignal = 'logout_link'
+            } else {
+              _domLoginSignal = 'login_link'
+            }
           }
         } catch {}
         // #memInfo 미발견(항상) → bodyText "로그인/회원가입" 텍스트로 보조 감지
         // 비로그인: 헤더에 "로그인/회원가입" 노출 확인됨 (CDP 테스트 2026-05-02)
         // 로그인: "로그인/회원가입" 사라짐 → 없으면 로그인 상태로 간주
-        let _domLoginSignal
-        if (memInfoFound) {
-          _domLoginSignal = isLoggedIn ? 'logout_link' : 'login_link'
-        } else {
+        if (_domLoginSignal === 'ambiguous') {
           // 헤더 영역만 검사 — 상품 설명에 "로그인/회원가입" 텍스트가 있으면 false-positive 발생
           // 비로그인 테스트: bodyText 앞 60자 이내에 노출 확인 → 300자로 여유 있게 자름
           const _headerText = document.querySelector('header, #header')?.innerText
@@ -1997,6 +2076,36 @@ async function extractDetailData(tabId, site, productId) {
           }
         }
 
+        if (_domLoginSignal !== 'logout_link') {
+          let sawExplicitLoggedOutScript = false
+          for (const script of document.querySelectorAll('script')) {
+            const text = script.textContent || ''
+            if (!text || (!text.includes('memInfo') && !text.includes('mbNo'))) continue
+            const mbNoMatch =
+              text.match(/["']mbNo["']\s*:\s*["']([^"']{2,})["']/)
+              || text.match(/\bmbNo\s*:\s*["']([^"']{2,})["']/)
+            if (mbNoMatch?.[1]) {
+              isLoggedIn = true
+              _domLoginSignal = 'logout_link'
+              break
+            }
+            if (/["']mbNo["']\s*:\s*(null|["']{2})/.test(text) || /\bmbNo\s*:\s*(null|["']{2})/.test(text)) {
+              sawExplicitLoggedOutScript = true
+            }
+          }
+          if (_domLoginSignal !== 'logout_link') {
+            const _headerText = (
+              document.querySelector('header, #header, .header, [class*="header"], nav, [class*="gnb"]')?.innerText
+              || (document.body?.innerText || '').substring(0, 400)
+            ).replace(/\s+/g, ' ')
+            if (['濡쒓렇?꾩썐', '留덉씠濡?뜲', 'MY LOTTE', '二쇰Ц諛곗넚'].some(token => _headerText.includes(token))) {
+              isLoggedIn = true
+              _domLoginSignal = 'logout_link'
+            } else if (_domLoginSignal !== 'login_link' && (['濡쒓렇???뚯썝媛??', '濡쒓렇??', '?뚯썝媛??'].some(token => _headerText.includes(token)) || sawExplicitLoggedOutScript)) {
+              _domLoginSignal = 'login_link'
+            }
+          }
+        }
         let salePrice = 0
         let originalPrice = 0
         let benefitPrice = 0
@@ -2092,7 +2201,7 @@ async function extractDetailData(tabId, site, productId) {
           options,
           seller,
           pageTitle: document.title,
-          _loginRequired: memInfoFound && !isLoggedIn,  // #memInfo 없으면 비로그인 단정 금지
+          _loginRequired: _domLoginSignal === 'login_link',
           _domLoginSignal,
         }
       }
@@ -2100,6 +2209,16 @@ async function extractDetailData(tabId, site, productId) {
       // ── ABCmart/GrandStage 전용 파싱 (최대혜택가 추출) ──
       if (siteName === 'ABCmart' || siteName === 'GrandStage') {
         // 로그인 상태 감지 — 헤더에서 로그인/로그아웃 링크 확인
+        let _abcScriptLogin = null
+        for (const script of document.querySelectorAll('script')) {
+          const text = script.textContent || ''
+          if (!text.includes('abc.userDetails')) continue
+          const loginMatch = text.match(/loginYn\s*:\s*'(\w+)'/)
+          if (loginMatch) {
+            _abcScriptLogin = loginMatch[1] === 'true'
+            break
+          }
+        }
         const _abcHeader = document.querySelector('header, #header, .header, nav, #gnb, .gnb, [class*="gnb"], [class*="header"]') || document.body
         let _abcHasLogin = false
         let _abcHasLogout = false
@@ -2117,8 +2236,11 @@ async function extractDetailData(tabId, site, productId) {
         }
         // LOGOUT 버튼 존재 = 로그인 확정 (login 링크 공존 무관)
         // 상품 페이지에 '/login' URL 포함 링크(포인트 적립, 혜택 안내 등)가 있어도 logout이 우선
-        const isLoggedIn = _abcHasLogout
-        const _domLoginSignal = _abcHasLogout ? 'logout_link' : (_abcHasLogin ? 'login_link' : 'ambiguous')
+        const isLoggedIn = _abcScriptLogin === true || _abcHasLogout
+        const _domLoginSignal =
+          _abcScriptLogin === true || _abcHasLogout ? 'logout_link'
+            : _abcScriptLogin === false || _abcHasLogin ? 'login_link'
+              : 'ambiguous'
 
         const bodyText = document.body?.innerText || ''
         let benefitPrice = 0
@@ -2174,7 +2296,7 @@ async function extractDetailData(tabId, site, productId) {
             best_benefit_price: benefitPrice,
             images: [],
             source_site: siteName,
-            _loginRequired: !isLoggedIn,
+            _loginRequired: _domLoginSignal === 'login_link',
             _domLoginSignal,
           }
         }

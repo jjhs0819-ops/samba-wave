@@ -673,8 +673,8 @@ async def get_login_credential(
         sa_select(SambaSourcingAccount)
         .where(SambaSourcingAccount.site_name.in_(site_candidates))
         .where(SambaSourcingAccount.is_active.is_(True))
+        .where(SambaSourcingAccount.is_login_default.is_(True))
         .order_by(
-            SambaSourcingAccount.is_login_default.desc(),
             SambaSourcingAccount.updated_at.desc(),
             SambaSourcingAccount.created_at.desc(),
         )

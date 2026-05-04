@@ -95,6 +95,7 @@ export default function OrdersPage() {
 
   const [activeActions, setActiveActions] = useState<Record<string, string | null>>({})
   const [collectedProductCosts, setCollectedProductCosts] = useState<Record<string, number>>({})
+  const [collectedProductSourceSites, setCollectedProductSourceSites] = useState<Record<string, string>>({})
 
   const [notifications, setNotifications] = useState<{id: number, message: string, type: string}[]>([])
 
@@ -251,6 +252,7 @@ export default function OrdersPage() {
     const ids = [...new Set(orders.map(o => o.collected_product_id).filter((id): id is string => !!id))]
     if (ids.length === 0) {
       setCollectedProductCosts({})
+      setCollectedProductSourceSites({})
       return
     }
     let cancelled = false
@@ -259,12 +261,18 @@ export default function OrdersPage() {
         const rows = await collectorApi.getProductsByIds(ids)
         if (cancelled) return
         const next: Record<string, number> = {}
+        const nextSourceSites: Record<string, string> = {}
         for (const row of rows) {
           next[row.id] = row.cost ?? row.sale_price ?? row.original_price ?? 0
+          if (row.source_site) nextSourceSites[row.id] = row.source_site
         }
         setCollectedProductCosts(next)
+        setCollectedProductSourceSites(nextSourceSites)
       } catch {
-        if (!cancelled) setCollectedProductCosts({})
+        if (!cancelled) {
+          setCollectedProductCosts({})
+          setCollectedProductSourceSites({})
+        }
       }
     })()
     return () => { cancelled = true }
@@ -427,6 +435,7 @@ export default function OrdersPage() {
         setEditingOrderNumbers={setEditingOrderNumbers}
         activeActions={activeActions}
         collectedProductCosts={collectedProductCosts}
+        collectedProductSourceSites={collectedProductSourceSites}
         refreshLog={refreshLog}
         setRefreshLog={setRefreshLog}
         sentFlags={sentFlags}

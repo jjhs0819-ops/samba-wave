@@ -19,6 +19,7 @@ interface Props {
   setRefreshLog: Dispatch<SetStateAction<Record<string, string>>>
   sentFlags: Record<string, { sms: boolean; kakao: boolean }>
   siteAliasMap: Record<string, string>
+  actualSourceSite: string
   activeActions: Record<string, string | null>
   setPriceHistoryProduct: Dispatch<SetStateAction<{ name: string; source_site: string }>>
   setPriceHistoryData: Dispatch<SetStateAction<Record<string, unknown>[]>>
@@ -44,7 +45,7 @@ interface Props {
 
 export default function OrderInfoCell(props: Props) {
   const {
-    o, refreshLog, setRefreshLog, sentFlags, siteAliasMap, activeActions,
+    o, refreshLog, setRefreshLog, sentFlags, siteAliasMap, actualSourceSite, activeActions,
     setPriceHistoryProduct, setPriceHistoryData, setPriceHistoryModal,
     customerAddress, renderCopyableText,
     handleDelete, handleImageClick, handleCopyOrderNumber, openMsgModal,
@@ -64,6 +65,17 @@ export default function OrderInfoCell(props: Props) {
       showAlert('메모 복사에 실패했습니다', 'error')
     }
   }
+
+  const resolvedSourceSite = String(actualSourceSite || o.source_site || '').trim()
+  const sourceBadgeLabel = resolvedSourceSite
+    ? (formatSourceSiteLabel(resolvedSourceSite, siteAliasMap) || resolvedSourceSite)
+    : ''
+  const extraSourceBadgeLabel = (() => {
+    const raw = String(o.source_site || '').trim()
+    if (!raw) return ''
+    if (!resolvedSourceSite || raw === resolvedSourceSite) return ''
+    return formatSourceSiteLabel(raw, siteAliasMap) || raw
+  })()
 
   return (
     <td style={{ padding: '0.75rem', borderRight: '1px solid #1C2333', fontSize: '0.8125rem', position: 'relative' }}>
@@ -98,7 +110,8 @@ export default function OrderInfoCell(props: Props) {
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
-            {o.source_site && <span style={{ fontSize: '0.75rem', color: '#B0B0B0', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px', border: '1px solid #2D2D2D', flexShrink: 0, whiteSpace: 'nowrap' }}>{formatSourceSiteLabel(o.source_site, siteAliasMap) || o.source_site}</span>}
+            {sourceBadgeLabel && <span style={{ fontSize: '0.75rem', color: '#B0B0B0', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px', border: '1px solid #2D2D2D', flexShrink: 0, whiteSpace: 'nowrap' }}>{sourceBadgeLabel}</span>}
+            {extraSourceBadgeLabel && <span style={{ fontSize: '0.75rem', color: '#B0B0B0', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px', border: '1px solid #2D2D2D', flexShrink: 0, whiteSpace: 'nowrap' }}>{extraSourceBadgeLabel}</span>}
             <span style={{ fontSize: '0.75rem', color: '#B0B0B0', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px', minWidth: 0, maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 1 }}>{o.channel_name || '마켓'}</span>
             <button onClick={() => handleCopyOrderNumber(o.order_number)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>주문번호복사</button>
             <button onClick={() => openMsgModal('sms', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: sentFlags[o.id]?.sms ? '#1F3A24' : 'transparent', border: `1px solid ${sentFlags[o.id]?.sms ? '#51CF66' : '#2D2D2D'}`, borderRadius: '4px', color: sentFlags[o.id]?.sms ? '#51CF66' : '#B0B0B0', cursor: 'pointer' }}>SMS</button>

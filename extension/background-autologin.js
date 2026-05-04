@@ -287,8 +287,29 @@ async function _spaDirectLogin(siteKey, username, password) {
                   target: { tabId },
                   func: () => {
                     const el = document.querySelector('#memInfo')
-                    if (!el) return null
-                    try { return JSON.parse(el.value || '{}')?.mbNo || null } catch { return null }
+                    try {
+                      const mbNo = el ? JSON.parse(el.value || '{}')?.mbNo || null : null
+                      if (mbNo) return 'MEMINFO'
+                    } catch {}
+                    for (const script of document.querySelectorAll('script')) {
+                      const text = script.textContent || ''
+                      if (!text || (!text.includes('memInfo') && !text.includes('mbNo'))) continue
+                      const m =
+                        text.match(/["']mbNo["']\s*:\s*["']([^"']{2,})["']/)
+                        || text.match(/\bmbNo\s*:\s*["']([^"']{2,})["']/)
+                      if (m?.[1]) return 'SCRIPT'
+                    }
+                    const headerText = (
+                      document.querySelector('header, #header, .header, [class*="header"], nav, [class*="gnb"]')?.innerText
+                      || (document.body?.innerText || '').substring(0, 400)
+                    ).replace(/\s+/g, ' ')
+                    if (['濡쒓렇?꾩썐', '留덉씠濡?뜲', 'MY LOTTE', '二쇰Ц諛곗넚'].some(token => headerText.includes(token))) {
+                      return 'HEADER'
+                    }
+                    if (['濡쒓렇???뚯썝媛??', '濡쒓렇??', '?뚯썝媛??'].some(token => headerText.includes(token))) {
+                      return null
+                    }
+                    return null
                   },
                 })
                 const mbNo = ck?.result
