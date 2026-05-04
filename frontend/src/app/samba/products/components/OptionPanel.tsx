@@ -19,6 +19,11 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
   const [editingPrices, setEditingPrices] = useState<Record<number, string>>({})
   const [editingStocks, setEditingStocks] = useState<Record<number, string>>({})
   const opts = localOpts
+  const getOptionBasePrice = useCallback((opt: Record<string, unknown>) => {
+    const rawPrice = Number(opt.price ?? opt.salePrice ?? 0)
+    if (rawPrice > 0) return rawPrice
+    return productCost > 0 ? productCost : 0
+  }, [productCost])
 
   // 옵션 변경 시 즉시 API 저장
   const saveOptions = useCallback((newOpts: Record<string, unknown>[]) => {
@@ -35,7 +40,7 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
       const newPrices: Record<number, string> = {}
       opts.forEach((_, idx) => { newPrices[idx] = fmtNum(v) })
       setEditingPrices(newPrices)
-      saveOptions(opts.map(o => ({ ...o, salePrice: v })))
+      saveOptions(opts.map(o => ({ ...o, price: v, salePrice: v })))
     } else {
       // React 상태로 재고 입력값 일괄 갱신
       const newStocks: Record<number, string> = {}
@@ -114,13 +119,12 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
                 const isBrandDelivery = o.isBrandDelivery === true
                 const stock = o.stock !== undefined && o.stock !== null ? Number(o.stock) : -1
                 const isSoldOut = !isBrandDelivery && (o.isSoldOut === true || stock === 0)
-                const optionCost = isSoldOut ? 0 : productCost
-                const optionSalePrice = Math.ceil(optionCost * 1.15)
+                const optionCost = isSoldOut ? 0 : getOptionBasePrice(o)
                 const isChecked = !isSoldOut
 
-                // 가격 표시: 편집 상태값 > salePrice > 계산값
+                // 가격 표시: 편집 상태값 > 옵션 저장가 > 기본가
                 const priceDisplay = editingPrices[idx] ?? (
-                  optionSalePrice > 0 ? fmtNum(optionSalePrice) : '0'
+                  optionCost > 0 ? fmtNum(optionCost) : '0'
                 )
 
                 let stockDisplay: React.ReactNode
@@ -136,6 +140,14 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
                         value={editingStocks[idx] ?? ''}
                         placeholder=""
                         onChange={(e) => setEditingStocks(prev => ({ ...prev, [idx]: e.target.value }))}
+                        onBlur={(e) => {
+                          const v = parseInt(e.target.value, 10)
+                          if (!isNaN(v)) {
+                            const newOpts = [...opts]
+                            newOpts[idx] = { ...newOpts[idx], stock: v, isSoldOut: v === 0 }
+                            saveOptions(newOpts)
+                          }
+                        }}
                         style={{ width: '70px', background: 'rgba(255,255,255,0.05)', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', textAlign: 'right', fontSize: '0.875rem' }}
                       />
                       <span style={{ fontSize: '0.72rem', color: '#51CF66' }}>{stock >= 999 ? '충분' : '재고있음'}</span>
@@ -148,6 +160,14 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
                         type="number"
                         value={editingStocks[idx] ?? String(stock)}
                         onChange={(e) => setEditingStocks(prev => ({ ...prev, [idx]: e.target.value }))}
+                        onBlur={(e) => {
+                          const v = parseInt(e.target.value, 10)
+                          if (!isNaN(v)) {
+                            const newOpts = [...opts]
+                            newOpts[idx] = { ...newOpts[idx], stock: v, isSoldOut: v === 0 }
+                            saveOptions(newOpts)
+                          }
+                        }}
                         style={{ width: '60px', background: 'rgba(255,255,255,0.05)', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', textAlign: 'right', fontSize: '0.875rem' }}
                       />
                       <span>개</span>
@@ -203,6 +223,11 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
                           // 블러 시 숫자 포맷팅 적용
                           const v = parseInt(e.target.value.replace(/,/g, ''), 10)
                           setEditingPrices(prev => ({ ...prev, [idx]: isNaN(v) ? '0' : fmtNum(v) }))
+                          if (!isNaN(v)) {
+                            const newOpts = [...opts]
+                            newOpts[idx] = { ...newOpts[idx], price: v, salePrice: v }
+                            saveOptions(newOpts)
+                          }
                         }}
                         style={{ width: '80px', background: 'rgba(255,255,255,0.05)', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', textAlign: 'right', fontSize: '0.875rem' }}
                       />

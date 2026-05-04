@@ -40,7 +40,7 @@ def test_apply_option_name_rules_keeps_options_without_rules() -> None:
     assert result == options
 
 
-def test_extract_market_product_no_recovers_nested_lotteon_payload() -> None:
+def test_extract_market_product_no_recovers_nested_payload() -> None:
     service = SambaShipmentService(repo=None, session=None)  # type: ignore[arg-type]
     payload = {
         "success": True,
