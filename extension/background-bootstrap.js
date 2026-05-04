@@ -19,6 +19,42 @@ function setupRecipeSyncAlarm() {
   })
 }
 
+// 버전 동기화 alarm (5분 주기) — 서버 커밋 변경 감지 시 자동 재시작
+function setupVersionSyncAlarm() {
+  chrome.alarms.get('versionSync', (alarm) => {
+    if (!alarm) {
+      chrome.alarms.create('versionSync', { periodInMinutes: 5 })
+      console.log('[버전싱크] chrome.alarms 설정: 5분 주기')
+    }
+  })
+}
+
+// 서버 커밋 변경 감지 → 자동 reload
+async function checkVersionAndReload() {
+  try {
+    const { proxyUrl } = await chrome.storage.local.get('proxyUrl')
+    const url = (proxyUrl || PROXY_URL) + '/api/v1/health'
+    const res = await fetch(url, { signal: AbortSignal.timeout(10000) })
+    if (!res.ok) return
+    const { commit } = await res.json()
+    if (!commit || commit === 'unknown') return
+
+    const { serverCommit } = await chrome.storage.local.get('serverCommit')
+    if (!serverCommit) {
+      // 최초 실행: 기준점 저장 (리로드 없음)
+      await chrome.storage.local.set({ serverCommit: commit })
+      return
+    }
+    if (serverCommit !== commit) {
+      console.log(`[버전싱크] 새 커밋 감지 ${serverCommit} → ${commit}, 확장앱 재시작`)
+      await chrome.storage.local.set({ serverCommit: commit })
+      chrome.runtime.reload()
+    }
+  } catch (e) {
+    // 서버 미응답 시 조용히 넘김
+  }
+}
+
 // alarm 이벤트 핸들러
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'collectPoll') {
@@ -40,6 +76,9 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
   if (alarm.name === 'chromeProfileSyncPoll') {
     pollChromeProfileSyncRequest()
+  }
+  if (alarm.name === 'versionSync') {
+    checkVersionAndReload()
   }
 })
 
@@ -191,17 +230,20 @@ async function ensureBackgroundSessionTabs() {
 chrome.runtime.onInstalled.addListener(() => {
   setupCookieSyncAlarm()
   setupRecipeSyncAlarm()
+  setupVersionSyncAlarm()
   startCollectPolling()
   syncChromeProfile()
 })
 chrome.runtime.onStartup.addListener(() => {
   setupCookieSyncAlarm()
   setupRecipeSyncAlarm()
+  setupVersionSyncAlarm()
   startCollectPolling()
   syncChromeProfile()
 })
 setupCookieSyncAlarm()
 setupRecipeSyncAlarm()
+setupVersionSyncAlarm()
 // 즉시 1회 동기화
 chrome.storage.local.get('proxyUrl').then(data => {
   const proxyUrl = data.proxyUrl || PROXY_URL
@@ -210,3 +252,5 @@ chrome.storage.local.get('proxyUrl').then(data => {
 startCollectPolling()
 pollChromeProfileSyncRequest()
 syncChromeProfile()
+// 시작 시 1회 버전 체크 (기준점 초기화)
+checkVersionAndReload()

@@ -17,6 +17,7 @@ from backend.domain.samba.shipment.service import SambaShipmentService
 from backend.domain.samba.tetris.model import SambaTetrisAssignment
 from backend.domain.samba.tetris.repository import SambaTetrisRepository
 from backend.utils.logger import logger
+from sqlalchemy import or_
 from sqlmodel import select
 
 
@@ -154,9 +155,19 @@ class SambaTetrisService:
         """
         # 1. 마켓 계정 전체 로드
         acc_stmt = select(SambaMarketAccount).where(
-            SambaMarketAccount.tenant_id == tenant_id,
             SambaMarketAccount.is_active == True,  # noqa: E712
         )
+        if tenant_id is not None:
+            # Account APIs expose both tenant-scoped accounts and pre-tenant legacy
+            # accounts with NULL tenant_id. Keep Tetris aligned with that behavior.
+            acc_stmt = acc_stmt.where(
+                or_(
+                    SambaMarketAccount.tenant_id == tenant_id,
+                    SambaMarketAccount.tenant_id == None,  # noqa: E711
+                )
+            )
+        else:
+            acc_stmt = acc_stmt.where(SambaMarketAccount.tenant_id == None)  # noqa: E711
         acc_result = await self._session.execute(acc_stmt)
         accounts: list[SambaMarketAccount] = list(acc_result.scalars().all())
 

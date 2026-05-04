@@ -140,6 +140,10 @@ def register_pc_allowed_sites(device_id: str, sites: list[str] | None) -> None:
         return
     _pc_allowed_sites[dev] = {s.strip() for s in sites if s and s.strip()}
     _pc_last_seen[dev] = time.time()
+    # 오토튠 실행 중이면 소싱처별 owner 매핑 즉시 재계산
+    # 서버 재시작 후 PC가 재등록할 때 자동으로 owner 매핑 복원됨
+    if _autotune_running_event.is_set():
+        apply_site_owners_from_pc_registry()
 
 
 def get_active_pcs() -> dict[str, set[str]]:
@@ -165,6 +169,37 @@ def get_union_active_sites() -> set[str] | None:
     for sites in pcs.values():
         union |= sites
     return union
+
+
+def apply_site_owners_from_pc_registry() -> None:
+    """PC 분담 등록 기반으로 소싱처별 ownerDeviceId 자동 설정.
+
+    특정 소싱처를 딱 1개 PC만 담당 → 그 PC로 고정 (다른 PC에서 탭 열림 방지).
+    여러 PC가 동일 소싱처 담당 → owner 미설정 (어느 PC든 처리 가능).
+    오토튠 시작 시 + PC 분담 등록 변경 시마다 호출되어 항상 최신 상태 유지.
+    """
+    from backend.domain.samba.proxy.sourcing_queue import (
+        clear_autotune_owners,
+        set_autotune_owner,
+        set_autotune_owner_for_site,
+    )
+
+    # 기존 매핑 초기화 후 전체 재계산 (stale 매핑 방지)
+    clear_autotune_owners()
+    set_autotune_owner("")
+
+    pcs = get_active_pcs()
+    if not pcs:
+        return
+
+    site_pcs: dict[str, list[str]] = {}
+    for dev, sites in pcs.items():
+        for site in sites:
+            site_pcs.setdefault(site, []).append(dev)
+
+    for site, devs in site_pcs.items():
+        if len(devs) == 1:
+            set_autotune_owner_for_site(site, devs[0])
 
 
 async def _classify_products(session) -> dict[str, int]:
@@ -2742,11 +2777,10 @@ async def autotune_start(
         _pc_force_stop_set.discard(body.device_id.strip())
 
     # 오토튠 작업 owner 정책:
-    # - 기본 owner는 비움(""): 작업 큐에 ownerDeviceId 없이 발행되어 어느 PC의
-    #   확장앱이든 자기 차례에 작업을 집어가 자연 분산된다 (PC 1대만 켜져 있으면
-    #   그 PC가 다 처리, 2대 이상이면 서로 나눠 가져감).
-    # - site_owners가 명시 등록된 경우만 해당 사이트는 그 deviceId의 PC로만 라우팅
-    #   (자동로그인 격리 등 특수 목적). 보통은 빈 dict로 두고 자연 분산 활용.
+    # - 기본 owner는 비움(""): ownerDeviceId 없이 발행 → X-Allowed-Sites 필터로 분담.
+    # - PC 분담 등록(_pc_allowed_sites)에서 소싱처를 딱 1개 PC만 담당하면 그 PC로 고정.
+    #   (다른 PC에서 탭이 열리는 것 방지)
+    # - site_owners 명시 시 그 설정이 자동 설정보다 우선.
     try:
         from backend.domain.samba.proxy.sourcing_queue import (
             clear_autotune_owners,
@@ -2755,10 +2789,14 @@ async def autotune_start(
         )
 
         clear_autotune_owners()  # 이전 매핑 잔재 제거
-        set_autotune_owner("")  # 기본 owner 비움 → 자연 분산
+        set_autotune_owner("")
         if body.site_owners:
+            # 명시 설정 우선
             for _site, _dev in body.site_owners.items():
                 set_autotune_owner_for_site(_site, _dev or "")
+        else:
+            # PC 분담 등록 기반으로 소싱처별 owner 자동 설정
+            apply_site_owners_from_pc_registry()
     except Exception:
         pass
 
