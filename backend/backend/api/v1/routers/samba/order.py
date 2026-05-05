@@ -3528,6 +3528,87 @@ async def sync_orders_from_markets(
                                     )
                 except Exception as rt_err:
                     logger.warning(f"[롯데ON] 반품 클레임 조회 실패: {rt_err}")
+
+                # 배송 진행 상태 갱신 (SellerDeliveryProgressStateSearch)
+                # 이미 수집된 주문(상품준비→발송완료→배송완료→구매확정) 상태 업데이트
+                _lo_delivery_status_map = {
+                    "11": ("출고지시", "preparing"),
+                    "12": ("상품준비", "preparing"),
+                    "13": ("발송완료", "shipping"),
+                    "14": ("배송완료", "delivered"),
+                    "15": ("수취완료", "delivered"),
+                    "21": ("취소완료", "cancelled"),
+                    "22": ("철회", "cancelled"),
+                    "23": ("회수지시", "return_requested"),
+                    "24": ("회수진행", "return_requested"),
+                    "25": ("회수완료", "return_requested"),
+                    "26": ("회수확정", "return_requested"),
+                    "27": ("반품완료", "return_requested"),
+                }
+                # 이미 orders_data에서 처리한 주문은 중복 갱신 불필요
+                _already_in_data = {
+                    od.get("order_number")
+                    for od in orders_data
+                    if od.get("order_number")
+                }
+                try:
+                    progress_states = await lotteon_client.get_delivery_progress_states(
+                        days=body.days
+                    )
+                    _ps_updated = 0
+                    for ps in progress_states:
+                        od_no = str(ps.get("odNo", "") or "")
+                        od_seq = str(ps.get("odSeq", 1) or 1)
+                        proc_seq = str(ps.get("procSeq", 1) or 1)
+                        if not od_no:
+                            continue
+                        order_number = f"{od_no}_{od_seq}_{proc_seq}"
+                        if order_number in _already_in_data:
+                            continue
+                        step_cd = str(ps.get("odPrgsStepCd", "") or "")
+                        mapped = _lo_delivery_status_map.get(step_cd)
+                        if not mapped:
+                            continue
+                        new_ship_status, new_status = mapped
+                        invc_no = str(ps.get("invcNo", "") or "")
+                        dv_co_cd = str(ps.get("dvCoCd", "") or "")
+                        from sqlalchemy import text as _sa_text_ps
+
+                        _set_parts = [
+                            "status = :status",
+                            "shipping_status = :ship_status",
+                            "updated_at = now()",
+                        ]
+                        _ps_params: dict[str, Any] = {
+                            "order_number": order_number,
+                            "status": new_status,
+                            "ship_status": new_ship_status,
+                        }
+                        if invc_no:
+                            _set_parts.append("tracking_number = :invc_no")
+                            _ps_params["invc_no"] = invc_no
+                        if dv_co_cd:
+                            _set_parts.append("shipping_company = :dv_co_cd")
+                            _ps_params["dv_co_cd"] = dv_co_cd
+                        _ps_result = await session.execute(
+                            _sa_text_ps(
+                                f"UPDATE samba_order SET {', '.join(_set_parts)} "
+                                "WHERE source = 'lotteon' AND order_number = :order_number "
+                                "AND status NOT IN ('cancelled', 'confirmed', 'return_requested')"
+                            ),
+                            _ps_params,
+                        )
+                        if _ps_result.rowcount:
+                            _ps_updated += 1
+                    if _ps_updated:
+                        logger.info(
+                            f"[주문동기화] {label}: 배송상태 갱신 {_ps_updated}건"
+                        )
+                except Exception as ps_err:
+                    logger.warning(
+                        f"[주문동기화] {label}: 롯데ON 배송상태 갱신 실패 — {ps_err}"
+                    )
+
             elif market_type == "playauto":
                 from datetime import UTC, datetime, timedelta
 

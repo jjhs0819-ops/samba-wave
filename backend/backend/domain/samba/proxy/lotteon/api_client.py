@@ -755,7 +755,7 @@ class LotteonClient:
         전략: getSROrderList(전체 주문) + SellerDeliveryOrdersSearch(배송처리 중 보완) 병행.
         getSROrderList 주의사항:
           - lrtrNo 는 빈 문자열 고정 (self.tr_no 넣으면 0건)
-          - orderStatusList 미전송 및 빈 배열 전송 시 0건 → ["11","12"] 명시 필수
+          - orderStatusList 미전송 및 빈 배열 전송 시 0건 → 명시 필수, 전체 상태 포함
           - 파서: 빈 list 필드는 건너뛰고 다음 키 확인 (orderItems:[] → orderList 확인)
         """
         import asyncio
@@ -773,7 +773,7 @@ class LotteonClient:
             "srchEndDttm": end,
             "pageNo": 1,
             "pageSize": 100,
-            "orderStatusList": ["11", "12"],
+            "orderStatusList": ["10", "11", "12", "13", "14", "20", "30", "40", "50"],
         }
         logger.info(
             f"[롯데ON] 주문 조회 {start}~{end}, trGrpCd={self.tr_grp_cd}, trNo={self.tr_no}"
@@ -1420,6 +1420,54 @@ class LotteonClient:
         result: list[dict] = []
         for items in day_results:
             result.extend(items)
+        return result
+
+    async def get_delivery_progress_states(self, days: int = 7) -> list[dict]:
+        """이미 수집된 주문의 실시간 진행 상태 조회 (SellerDeliveryProgressStateSearch).
+
+        API 제약: 조회 기간 1일 초과 불가 → 하루씩 병렬 조회 (동시 5건 제한).
+        주문수집 용도가 아닌 기존 주문 상태 갱신(발송완료→배송완료→구매확정)에 사용.
+        """
+        import asyncio
+
+        KST = timezone(timedelta(hours=9))
+        now = datetime.now(KST)
+        actual_days = min(days, 30)
+        sem = asyncio.Semaphore(5)
+
+        async def _fetch_day(offset: int) -> list[dict]:
+            base_date = (now - timedelta(days=offset)).date()
+            day_start = datetime(
+                base_date.year, base_date.month, base_date.day, 0, 0, 0
+            )
+            day_end = datetime(
+                base_date.year, base_date.month, base_date.day, 23, 59, 59
+            )
+            srch_strt = day_start.strftime("%Y%m%d%H%M%S")
+            srch_end = day_end.strftime("%Y%m%d%H%M%S")
+            async with sem:
+                try:
+                    data = await self._call_api(
+                        "POST",
+                        "/v1/openapi/delivery/v1/SellerDeliveryProgressStateSearch",
+                        body={"srchStrtDt": srch_strt, "srchEndDt": srch_end},
+                    )
+                    inner = data.get("data") or {}
+                    items = inner.get("deliveryProgressStateList") or []
+                    if isinstance(items, list) and items:
+                        return items
+                    return []
+                except Exception as e:
+                    logger.warning(
+                        f"[롯데ON] 배송상태 조회 실패 ({srch_strt}~{srch_end}): {e}"
+                    )
+                    return []
+
+        day_results = await asyncio.gather(*[_fetch_day(i) for i in range(actual_days)])
+        result: list[dict] = []
+        for items in day_results:
+            result.extend(items)
+        logger.info(f"[롯데ON] 배송상태 조회 완료: {len(result)}건")
         return result
 
     async def get_settlement_items(self, days: int = 7) -> list[dict]:
