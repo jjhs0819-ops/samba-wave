@@ -273,7 +273,20 @@ class SSGPlugin(SourcingPlugin):
             )
 
             # bestBenefitPrice → new_cost (실질 매입가)
-            best_benefit_price = detail.get("bestBenefitPrice", 0)
+            # domCardPrice(확장앱이 DOM에서 직접 추출한 카드혜택가) 최우선 강제 적용 —
+            # 검증(2026-05-05): 확장앱이 정확한 카드혜택가 전송하지만 위쪽 분기들에서
+            # detail/_rob_sell 조건 미충족 시 _dom_card 무시되어 cost가 bestAmt로 저장.
+            # 어떤 코드 경로로도 _dom_card가 우선 적용되도록 최종 시점에 강제.
+            _final_dom_card = (
+                int(_ext_result.get("domCardPrice", 0) or 0)
+                if isinstance(_ext_result, dict)
+                else 0
+            )
+            best_benefit_price = (
+                _final_dom_card
+                if _final_dom_card > 0
+                else detail.get("bestBenefitPrice", 0)
+            )
 
             # 옵션 데이터 변환
             new_options = None
