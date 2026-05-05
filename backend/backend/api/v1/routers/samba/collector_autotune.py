@@ -1700,10 +1700,19 @@ async def _site_autotune_loop(site: str):
                             SITE_AUTOTUNE_CONCURRENCY as _SAC,
                         )
 
+                        # on_result 완료마다 세션 반납 — HTTP 대기 중 풀 점유 방지
+                        # _fire_transmit_group은 자체 _tx_s 세션을 쓰므로 영향 없음
+                        async def _on_result_releasing(product, r, idx=0, total=0):
+                            await _on_result(product, r, idx, total)
+                            try:
+                                await session.close()
+                            except Exception:
+                                pass
+
                         results, summary = await refresh_products_bulk(
                             products,
                             max_concurrency=dict(_SAC),
-                            on_result=_on_result,
+                            on_result=_on_result_releasing,
                         )
 
                         # 에러 결과 후처리 (콜백에서 처리 안 된 에러 건)
