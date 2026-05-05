@@ -360,12 +360,12 @@ async function _getSiteConcurrencyMap() {
   try {
     const stored = await chrome.storage.local.get('proxyUrl')
     const proxyUrl = stored.proxyUrl || 'https://api.samba-wave.co.kr'
-    // raw fetch는 X-Api-Key 미부착 → 403 → 빈 객체 fallback (검증 2026-05-05).
-    // apiFetch는 X-Api-Key 자동 부착하여 인증 통과.
+    // collector/autotune/status는 JWT 필수 (확장앱은 401), proxy/autotune/concurrency는
+    // X-Api-Key 인증만으로 동시처리 캡만 조회 가능 (2026-05-05 백엔드 추가).
     const _apiFetch = globalThis.SambaBackgroundCore?.apiFetch
     const res = _apiFetch
-      ? await _apiFetch(`${proxyUrl}/api/v1/samba/collector/autotune/status`, { method: 'GET' })
-      : await fetch(`${proxyUrl}/api/v1/samba/collector/autotune/status`, { method: 'GET' })
+      ? await _apiFetch(`${proxyUrl}/api/v1/samba/proxy/autotune/concurrency`, { method: 'GET' })
+      : await fetch(`${proxyUrl}/api/v1/samba/proxy/autotune/concurrency`, { method: 'GET' })
     if (!res.ok) return _siteConcurrencyCache.value || {}
     const data = await res.json()
     const conc = { ...(data.site_autotune_concurrency || {}) }

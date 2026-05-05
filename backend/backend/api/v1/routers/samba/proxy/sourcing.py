@@ -163,6 +163,21 @@ async def sourcing_collect_result(body: dict[str, Any]) -> dict[str, Any]:
     return {"success": ok}
 
 
+@sourcing_queue_router.get("/autotune/concurrency")
+async def get_autotune_concurrency_for_extension() -> dict[str, Any]:
+    """확장앱 전용 — 사이트별 동시처리 캡 조회 (X-Api-Key 인증만, JWT 불필요).
+
+    검증(2026-05-05): /collector/autotune/status는 JWT 필수 → 확장앱이 401 받음 →
+    동시처리 설정값 못 가져와서 빈 객체 fallback → 큐 적체로 timeout 다발.
+    이 endpoint는 X-Api-Key만으로 동시처리 캡만 반환하여 확장앱이 적정값 사용.
+    """
+    from backend.domain.samba.collector.refresher import (
+        get_effective_autotune_concurrency,
+    )
+
+    return {"site_autotune_concurrency": get_effective_autotune_concurrency()}
+
+
 @router.get("/sourcing/{site}/search")
 async def sourcing_search(
     site: str,
