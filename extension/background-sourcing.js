@@ -1205,23 +1205,35 @@ async function handleSourcingJob(job) {
     } else if (job.type === 'search' && job.site === 'GSShop') {
       await waitForGSShopSearchResults(tabId, 6000)
     } else if (job.type === 'detail' && job.site === 'SSG') {
-      // resultItemObj가 AJAX로 늦게 세팅되므로 폴링으로 대기 (최대 15초)
+      // resultItemObj + 카드혜택가 DOM 모두 로드될 때까지 폴링 (최대 15초)
+      // 검증 결과(2026-05-05): resultItemObj만 기준 시 카드혜택가가 아직 AJAX 미반영
+      //   상태에서 추출되어 domCardPrice=0 → 백엔드가 bestAmt fallback → cost 마진 손실 8-10%.
+      // 수정: 카드혜택가 dt 텍스트가 DOM에 등장한 직후 추가 1초 대기 후 추출.
+      let _ssgReady = false
       await (async () => {
         for (let _i = 0; _i < 30; _i++) {
           await wait(500)
           const [_chk] = await chrome.scripting.executeScript({
             target: { tabId }, world: 'MAIN',
             func: () => {
-              if (window.resultItemObj && window.resultItemObj.itemNm) return true
-              if (document.querySelector('ul.selectLists[id^="select-bundleOpt-"] li')) return true
-              return Array.from(document.querySelectorAll('script:not([src])')).some(
-                (script) => script.textContent.includes('var resultItemObj')
-              )
+              const hasObj = !!(window.resultItemObj && window.resultItemObj.itemNm)
+              if (!hasObj) return { ready: false, hasObj: false, hasCard: false }
+              // 카드혜택가 dt 존재 여부
+              let hasCard = false
+              document.querySelectorAll('dt').forEach((dt) => {
+                if (dt.textContent.trim() === '카드혜택가') hasCard = true
+              })
+              return { ready: hasObj && hasCard, hasObj: true, hasCard: hasCard }
             },
-          }).catch(() => [{ result: false }])
-          if (_chk?.result) break
+          }).catch(() => [{ result: { ready: false } }])
+          const r = _chk?.result || {}
+          if (r.ready) { _ssgReady = true; break }
+          // 카드혜택가 없는 상품(일반가만)도 5초 후엔 통과 — resultItemObj만 있으면 추출 진행
+          if (r.hasObj && _i >= 10) { break }
         }
       })()
+      // 카드혜택가 DOM 등장 후 AJAX 가격 확정까지 짧은 추가 대기
+      if (_ssgReady) await wait(1000)
     } else {
       await wait(5000) // SPA 렌더링 대기
     }
