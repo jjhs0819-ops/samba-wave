@@ -1392,29 +1392,40 @@ class LotteonClient:
             srch_strt = day_start.strftime("%Y%m%d%H%M%S")
             srch_end = day_end.strftime("%Y%m%d%H%M%S")
             async with sem:
-                try:
-                    data = await self._call_api(
-                        "POST",
-                        "/v1/openapi/delivery/v1/SellerDeliveryOrdersSearch",
-                        body={
-                            "srchStrtDt": srch_strt,
-                            "srchEndDt": srch_end,
-                        },
-                    )
-                    inner = data.get("data") or {}
-                    items = inner.get("deliveryOrderList") or []
-                    logger.info(
-                        f"[롯데ON][주문] {srch_strt}~{srch_end} "
-                        f"deliveryOrderList={len(items) if isinstance(items, list) else repr(items)}"
-                    )
-                    if isinstance(items, list) and items:
-                        return items
-                    return []
-                except Exception as e:
-                    logger.warning(
-                        f"[롯데ON] 주문 조회 실패 ({srch_strt}~{srch_end}): {e}"
-                    )
-                    return []
+                # ifCplYN 없음(신규 미연동) + "Y"(연동완료) 두 번 조회 후 합산
+                # → 플레이오토 등 외부에서 연동완료 통보된 주문도 수집
+                combined: list[dict] = []
+                seen_keys: set[tuple] = set()
+                for if_cpl in (None, "Y"):
+                    body: dict = {"srchStrtDt": srch_strt, "srchEndDt": srch_end}
+                    if if_cpl:
+                        body["ifCplYN"] = if_cpl
+                    try:
+                        data = await self._call_api(
+                            "POST",
+                            "/v1/openapi/delivery/v1/SellerDeliveryOrdersSearch",
+                            body=body,
+                        )
+                        inner = data.get("data") or {}
+                        items = inner.get("deliveryOrderList") or []
+                        if isinstance(items, list):
+                            for item in items:
+                                key = (
+                                    item.get("odNo"),
+                                    item.get("odSeq"),
+                                    item.get("procSeq"),
+                                )
+                                if key not in seen_keys:
+                                    seen_keys.add(key)
+                                    combined.append(item)
+                    except Exception as e:
+                        logger.warning(
+                            f"[롯데ON] 주문 조회 실패 ({srch_strt}~{srch_end}, ifCplYN={if_cpl}): {e}"
+                        )
+                logger.info(
+                    f"[롯데ON][주문] {srch_strt}~{srch_end} deliveryOrderList={len(combined)}"
+                )
+                return combined
 
         day_results = await asyncio.gather(*[_fetch_day(i) for i in range(actual_days)])
         result: list[dict] = []
