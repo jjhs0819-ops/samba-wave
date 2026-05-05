@@ -361,8 +361,11 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
   // 쿠팡 출고지/반품지 목록 조회
   const loadCoupangShippingPlaces = useCallback(async (accountId?: string) => {
     try {
-      // 인증정보 먼저 저장
+      // 인증정보 먼저 저장 — saveStoreSettings 끝에서 setEditingAccountId(null)을
+      // 호출해 위쪽 계정 입력란이 공란화되는 부작용 차단을 위해 임시 보존 후 복원.
+      const prevEditingAccountId = editingAccountId
       await saveStoreSettings('coupang')
+      setEditingAccountId(prevEditingAccountId)
       const res = await proxyApi.coupangShippingPlaces(accountId)
       if (res.success && res.data) {
         setCoupangOutboundList(res.data.outboundList || [])
@@ -374,8 +377,7 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
     } catch {
       showAlert('출고지/반품지 조회 실패', 'error')
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [saveStoreSettings])
+  }, [saveStoreSettings, editingAccountId])
 
   // SSG 탭 진입 시 배송비/주소 옵션 자동 로드
   useEffect(() => {
