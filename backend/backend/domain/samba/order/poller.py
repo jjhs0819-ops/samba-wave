@@ -65,9 +65,13 @@ async def _fetch_new_order_numbers(
                 if not api_key:
                     continue
                 client = LotteonClient(api_key)
-                raw_orders = await client.get_delivery_orders(days=1)
+                await client.test_auth()
+                raw_orders = await client.get_orders(days=7)
                 for ro in raw_orders:
-                    oid = str(ro.get("ordNo", "") or ro.get("order_number", ""))
+                    od_no = str(ro.get("odNo", "") or "")
+                    od_seq = ro.get("odSeq", 1) or 1
+                    proc_seq = ro.get("procSeq", 1) or 1
+                    oid = f"{od_no}_{od_seq}_{proc_seq}" if od_no else ""
                     if oid:
                         raw_order_numbers.append(oid)
 
@@ -150,7 +154,7 @@ async def _run_direct_order_sync(tenant_ids: set[str | None]) -> None:
             try:
                 async with get_write_session() as acc_session:
                     res = await sync_orders_from_markets(
-                        body=SyncOrdersRequest(days=1, account_id=acc.id),
+                        body=SyncOrdersRequest(days=7, account_id=acc.id),
                         session=acc_session,
                         tenant_id=tenant_id,
                     )
