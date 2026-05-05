@@ -1234,6 +1234,26 @@ async function handleSourcingJob(job) {
       })()
       // 카드혜택가 DOM 등장 후 AJAX 가격 확정까지 짧은 추가 대기
       if (_ssgReady) await wait(1000)
+    } else if (job.type === 'detail' && (job.site === 'ABCmart' || job.site === 'GrandStage')) {
+      // ABCmart/GrandStage: 최대혜택가 텍스트가 AJAX로 늦게 추가됨.
+      // 검증(2026-05-05): DB cost가 실제 최대혜택가보다 4-10% 비쌈 (카드혜택가 미반영).
+      // 폴링으로 "최대 혜택가" 텍스트 등장까지 대기 후 추가 1초.
+      let _abcReady = false
+      await (async () => {
+        for (let _i = 0; _i < 20; _i++) {
+          await wait(500)
+          const [_chk] = await chrome.scripting.executeScript({
+            target: { tabId }, world: 'MAIN',
+            func: () => {
+              const t = (document.body && document.body.innerText) || ''
+              return /최대\s*혜택가\s*[\d,]+\s*원/.test(t)
+            },
+          }).catch(() => [{ result: false }])
+          if (_chk?.result) { _abcReady = true; break }
+        }
+      })()
+      if (_abcReady) await wait(1000)
+      else await wait(2000)
     } else {
       await wait(5000) // SPA 렌더링 대기
     }
