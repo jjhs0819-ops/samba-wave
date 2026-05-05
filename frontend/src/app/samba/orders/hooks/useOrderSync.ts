@@ -70,8 +70,8 @@ export function useOrderSync({ accounts, period, setLogMessages, showNotificatio
               setLogMessages(prev => [...prev, `[${ts()}] ${status === 'completed' ? '주문수집 완료' : status === 'failed' ? '주문수집 실패' : '주문수집 취소'}`])
               done = true
             }
-          } catch (e) {
-            setLogMessages(prev => [...prev, `[${ts()}] 백그라운드 로그 조회 실패: ${e instanceof Error ? e.message : String(e)}`])
+          } catch {
+            // 폴링 실패는 일시적 네트워크/DB 풀 압박 — 다음 사이클에 자동 재시도, 로그 출력 생략
           }
         }
       } catch (e) {

@@ -84,10 +84,10 @@ def _create_write_async_engine() -> AsyncEngine:
         future=True,
         echo=False,  # Disable SQL echo to reduce noise
         pool_pre_ping=True,  # Check connection validity before using
-        pool_size=15,  # 기본 연결 수 (전송+오토튠+API 동시 사용 대응)
-        max_overflow=10,  # 추가 허용 (write 최대 25개)
+        pool_size=20,  # 기본 연결 수 (전송+오토튠+주문동기화+API 동시 사용 대응)
+        max_overflow=15,  # 추가 허용 (write 최대 35개)
         pool_recycle=300,  # idle 커넥션 5분 후 재활용 — 좀비 누적 방지
-        pool_timeout=30,
+        pool_timeout=10,  # 빠른 실패 — 30s 대기 중 ASGI 워커 타임아웃 방지
         connect_args={"timeout": 10},  # asyncpg 연결 타임아웃 10초
     )
 
@@ -104,10 +104,10 @@ def _create_read_async_engine() -> AsyncEngine:
         future=True,
         echo=False,
         pool_pre_ping=True,
-        pool_size=10,  # 기본 연결 수 (상품페이지 동시 API 호출 대응)
-        max_overflow=5,  # 추가 허용 (read 최대 15개)
+        pool_size=12,  # 기본 연결 수 (상품페이지 동시 API 호출 대응)
+        max_overflow=8,  # 추가 허용 (read 최대 20개)
         pool_recycle=300,  # idle 커넥션 5분 후 재활용 — 좀비 누적 방지
-        pool_timeout=30,
+        pool_timeout=10,  # 빠른 실패 — 30s 대기 중 ASGI 워커 타임아웃 방지
         connect_args={"timeout": 10},  # asyncpg 연결 타임아웃 10초
     )
 
