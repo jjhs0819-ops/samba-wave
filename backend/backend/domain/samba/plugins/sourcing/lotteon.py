@@ -541,6 +541,19 @@ class LotteonSourcingPlugin(SourcingPlugin):
                     product_id=product_id,
                     error=f"LOTTEON {_reason} — 갱신 차단",
                 )
+            # 매장픽업 전용 상품 — 배송 불가, 수집 부적합 → 마켓 자동 삭제 처리
+            # 사용자 검증(LE1216449916): "매장픽업 전용 롯데백화점" 표기, 배송비 0,
+            # 일반 배송으로 위장 수집 시 cost에 임의 배송비 가산 + 주문 받아도 발송 불가.
+            if isinstance(dom_ext, dict) and dom_ext.get("store_pickup_only"):
+                logger.warning(
+                    f"[LOTTEON] 매장픽업 전용 상품 감지 → 마켓 삭제 처리: {site_product_id}"
+                )
+                return RefreshResult(
+                    product_id=product_id,
+                    new_sale_status="sold_out",
+                    changed=True,
+                    deleted_from_source=True,
+                )
             if not (isinstance(dom_ext, dict) and dom_ext.get("success")):
                 dom_ext = None
         except asyncio.TimeoutError:

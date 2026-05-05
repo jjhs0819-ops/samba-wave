@@ -2268,6 +2268,11 @@ async function extractDetailData(tabId, site, productId) {
         const sellerEl = document.querySelector('ul.sellerList > li.currentProduct .sellerGrade strong')
         const seller = sellerEl?.textContent?.trim() || null
 
+        // 매장픽업 전용 상품 감지 — 배송 불가 상품은 수집/갱신 차단
+        // 사용자 검증 LE1216449916: "매장픽업 전용 롯데백화점" 텍스트 + 배송비 0이지만
+        // DB는 배송비 3,000원 가산되어 잘못된 cost. 또한 배송 불가라 수집 자체 부적합.
+        const _storePickupOnly = /매장\s*픽업\s*전용/.test(bodyText)
+
         // 데이터 유무와 무관하게 항상 _domLoginSignal 포함 반환
         // — 데이터 없어도 undefined 반환 시 공통 블록 _detectLoginStatus 오탐 차단 방지
         return {
@@ -2283,6 +2288,7 @@ async function extractDetailData(tabId, site, productId) {
           options,
           seller,
           pageTitle: document.title,
+          store_pickup_only: _storePickupOnly,
           _loginRequired: _domLoginSignal === 'login_link',
           _domLoginSignal,
         }
