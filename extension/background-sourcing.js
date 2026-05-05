@@ -1190,10 +1190,11 @@ async function handleSourcingJob(job) {
     }
     tabId = tab.id
     await waitForTabLoad(tabId, 30000)
-    // SSG popup: 페이지 로드 완료 후 minimize (waitForTabLoad 이벤트 누락 방지)
-    if (openedSourcingWindow && sourcingWindowId) {
-      try { await chrome.windows.update(sourcingWindowId, { state: 'minimized' }) } catch {}
-    }
+    // popup minimize 제거 — 검증(2026-05-05) 결과 minimize된 popup은 Chromium
+    // setTimeout/AJAX throttling 영향으로 SSG 카드혜택가/ABCmart 최대혜택가 DOM이
+    // 폴링 timeout까지 안 채워짐 → cost 미반영 (DB cost=bestAmt 잔존).
+    // 대신 popup이 focused:false로 생성되어 사용자 메인 윈도우 포커스는 유지됨.
+    // popup 자체는 화면에 보이지만 처리 끝나면 즉시 닫히는 짧은 노출(15-25초).
 
     // 탭 로드 후 재확인 — 로드 중 취소된 경우 즉시 탭 닫고 종료
     if (_sourcingForceStop) {
