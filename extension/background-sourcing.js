@@ -1555,6 +1555,14 @@ async function handleSourcingJob(job) {
       cleanedUp = true
     }
 
+    // SSG/ABC 카드혜택가 디버그 — DB cost 검증용
+    if (job.type === 'detail' && result) {
+      if (job.site === 'SSG' && (result.domCardPrice !== undefined || result.resultItemObj?.bestAmt)) {
+        console.log(`[SSG.dbg] ${job.productId} domCard=${result.domCardPrice||0} bestAmt=${result.resultItemObj?.bestAmt||0} sellprc=${result.resultItemObj?.sellprc||0}`)
+      } else if ((job.site === 'ABCmart' || job.site === 'GrandStage') && result.best_benefit_price !== undefined) {
+        console.log(`[${job.site}.dbg] ${job.productId} benefit=${result.best_benefit_price||0} sale=${result.sale_price||0} orig=${result.original_price||0}`)
+      }
+    }
     await postResult('sourcing/collect-result', { requestId: job.requestId, data: result || { success: false, message: '파싱 실패' } })
     console.log(`[소싱] ${job.site} 완료: ${result?.products?.length || 0}건`)
   } catch (err) {
