@@ -361,11 +361,18 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
   // 쿠팡 출고지/반품지 목록 조회
   const loadCoupangShippingPlaces = useCallback(async (accountId?: string) => {
     try {
-      // 인증정보 먼저 저장 — saveStoreSettings 끝에서 setEditingAccountId(null)을
-      // 호출해 위쪽 계정 입력란이 공란화되는 부작용 차단을 위해 임시 보존 후 복원.
+      // saveStoreSettings 끝에서 발생하는 두 가지 부작용을 차단:
+      //   1) setEditingAccountId(null) — 우측 "수정중" 라벨 사라짐
+      //   2) setStoreData(prev => delete prev[marketKey]) — 좌측 폼 입력란 모두 초기화
+      // 정책: "저장" 버튼은 silent overwrite 방지로 폼을 비우는 게 맞지만, "조회" 흐름에서는
+      // 사용자가 같은 폼에서 추가 작업하는 게 자연스러움 → 임시 보존 후 복원.
       const prevEditingAccountId = editingAccountId
+      const prevStoreData = storeData['coupang']
       await saveStoreSettings('coupang')
       setEditingAccountId(prevEditingAccountId)
+      if (prevStoreData && Object.keys(prevStoreData).length > 0) {
+        setStoreData(prev => ({ ...prev, coupang: prevStoreData }))
+      }
       const res = await proxyApi.coupangShippingPlaces(accountId)
       if (res.success && res.data) {
         setCoupangOutboundList(res.data.outboundList || [])
@@ -377,7 +384,7 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
     } catch {
       showAlert('출고지/반품지 조회 실패', 'error')
     }
-  }, [saveStoreSettings, editingAccountId])
+  }, [saveStoreSettings, editingAccountId, storeData])
 
   // SSG 탭 진입 시 배송비/주소 옵션 자동 로드
   useEffect(() => {
