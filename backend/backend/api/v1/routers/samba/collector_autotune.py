@@ -3056,6 +3056,10 @@ async def autotune_status():
         "priority_enabled": priority_enabled,
         "site_loops": _active_site_loops,
         "stuck_timeout": STUCK_TIMEOUT_SECONDS,
+        # PC별 분담 현황 (UI 표시용) — {deviceId: [sites]}
+        "pc_assignments": {
+            dev: sorted(sites) for dev, sites in get_active_pcs().items()
+        },
     }
 
 

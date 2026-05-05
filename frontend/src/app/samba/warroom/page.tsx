@@ -303,6 +303,7 @@ export default function WarroomPage() {
   const [autotuneRunning, setAutotuneRunning] = useState(false)
   const [autotuneCycles, setAutotuneCycles] = useState(0)
   const [autotuneRestarts, setAutotuneRestarts] = useState(0)
+  const [pcAssignments, setPcAssignments] = useState<Record<string, string[]>>({})
   const [singleProductNo, setSingleProductNo] = useState('')
   const [, setAutotuneLastTick] = useState<string | null>(null)
   const prevCyclesRef = useRef(0)
@@ -614,6 +615,11 @@ export default function WarroomPage() {
             return init
           })
         }
+        // PC별 분담 현황 (status 응답)
+        const pcMap = (atStatus as { pc_assignments?: Record<string, string[]> }).pc_assignments
+        if (pcMap && typeof pcMap === 'object') {
+          setPcAssignments(pcMap)
+        }
       })
       .catch(() => { /* ignore */ })
 
@@ -689,12 +695,24 @@ export default function WarroomPage() {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
             <span style={{ width: 8, height: 8, borderRadius: '50%', background: autotuneRunning ? '#51CF66' : '#FF6B6B', display: 'inline-block' }} />
-            <span style={{ fontWeight: 700, color: '#FF8C00', fontSize: '0.875rem' }}>오토튠 실시간 모니터링</span>
-            {autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#51CF66' }}>실행 중 ({fmtNum(autotuneCycles)}회)</span>}
+            <span style={{ fontWeight: 700, color: '#FF8C00', fontSize: '0.875rem' }}>오토튠 모니터링</span>
+            {autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#51CF66' }}>실행 중</span>}
             {autotuneRunning && autotuneRestarts > 0 && <span style={{ fontSize: '0.75rem', color: '#FF6B6B' }}>재시작 {fmtNum(autotuneRestarts)}회</span>}
             {!autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#FF6B6B' }}>정지</span>}
+            {autotuneRunning && pcAssignments && Object.keys(pcAssignments).length > 0 && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', marginLeft: '0.75rem', paddingLeft: '0.75rem', borderLeft: '1px solid #3D3D3D', fontSize: '0.72rem', color: '#aaa', flexWrap: 'wrap' }}>
+                <span style={{ color: '#888' }}>PC 분담</span>
+                {Object.entries(pcAssignments).map(([devId, sites]) => (
+                  <span key={devId} style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', padding: '1px 6px' }}>
+                    <span style={{ color: '#4C9AFF', fontWeight: 600 }}>{(devId as string).slice(0, 8)}</span>
+                    <span style={{ color: '#666', margin: '0 4px' }}>·</span>
+                    <span style={{ color: '#DCE0E8' }}>{(sites as string[]).join(', ')}</span>
+                  </span>
+                ))}
+              </span>
+            )}
           </div>
           <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', color: '#888', alignItems: 'center' }}>
             <input
