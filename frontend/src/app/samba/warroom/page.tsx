@@ -701,18 +701,30 @@ export default function WarroomPage() {
             {autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#51CF66' }}>실행 중</span>}
             {autotuneRunning && autotuneRestarts > 0 && <span style={{ fontSize: '0.75rem', color: '#FF6B6B' }}>재시작 {fmtNum(autotuneRestarts)}회</span>}
             {!autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#FF6B6B' }}>정지</span>}
-            {autotuneRunning && pcAssignments && Object.keys(pcAssignments).length > 0 && (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', marginLeft: '0.75rem', paddingLeft: '0.75rem', borderLeft: '1px solid #3D3D3D', fontSize: '0.72rem', color: '#aaa', flexWrap: 'wrap' }}>
-                <span style={{ color: '#888' }}>PC 분담</span>
-                {Object.entries(pcAssignments).map(([devId, sites]) => (
-                  <span key={devId} style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', padding: '1px 6px' }}>
-                    <span style={{ color: '#4C9AFF', fontWeight: 600 }}>{(devId as string).slice(0, 8)}</span>
-                    <span style={{ color: '#666', margin: '0 4px' }}>·</span>
-                    <span style={{ color: '#DCE0E8' }}>{(sites as string[]).join(', ')}</span>
-                  </span>
-                ))}
-              </span>
-            )}
+            {autotuneRunning && pcAssignments && Object.keys(pcAssignments).length > 0 && (() => {
+              // 현재 체크된 소싱처만 PC분담에 표시 (체크 해제된 사이트는 실제로 처리 안 됨)
+              const filtered = Object.entries(pcAssignments)
+                .map(([devId, sites]) => {
+                  const visible = filterSources === null
+                    ? (sites as string[])
+                    : (sites as string[]).filter(s => filterSources.includes(s))
+                  return [devId, visible] as const
+                })
+                .filter(([, sites]) => sites.length > 0)
+              if (filtered.length === 0) return null
+              return (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', marginLeft: '0.75rem', paddingLeft: '0.75rem', borderLeft: '1px solid #3D3D3D', fontSize: '0.72rem', color: '#aaa', flexWrap: 'wrap' }}>
+                  <span style={{ color: '#888' }}>PC 분담</span>
+                  {filtered.map(([devId, sites]) => (
+                    <span key={devId} style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', padding: '1px 6px' }}>
+                      <span style={{ color: '#4C9AFF', fontWeight: 600 }}>{devId.slice(0, 8)}</span>
+                      <span style={{ color: '#666', margin: '0 4px' }}>·</span>
+                      <span style={{ color: '#DCE0E8' }}>{sites.join(', ')}</span>
+                    </span>
+                  ))}
+                </span>
+              )
+            })()}
           </div>
           <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', color: '#888', alignItems: 'center' }}>
             <input
