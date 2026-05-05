@@ -4555,6 +4555,11 @@ async def sync_orders_from_markets(
                             )
                     if order_data.get("product_image") and not existing.product_image:
                         update_fields["product_image"] = order_data["product_image"]
+                    # 상품명/옵션명이 빈 경우 새 데이터로 복구
+                    if order_data.get("product_name") and not existing.product_name:
+                        update_fields["product_name"] = order_data["product_name"]
+                    if order_data.get("product_option") and not existing.product_option:
+                        update_fields["product_option"] = order_data["product_option"]
                     new_source_site = str(order_data.get("source_site") or "").strip()
                     existing_source_site = str(existing.source_site or "").strip()
                     if new_source_site and not existing_source_site:

@@ -819,16 +819,16 @@ class LotteonClient:
             self.get_delivery_orders(days=days),
         )
 
-        # 중복 제거: (odNo, odSeq, procSeq) 기준
+        # 중복 제거: (odNo, odSeq) 기준 — procSeq는 API/상태에 따라 달라지므로 제외
         seen: set[tuple] = set()
         merged: list[dict] = []
         for item in sr_orders:
-            key = (item.get("odNo"), item.get("odSeq"), item.get("procSeq"))
+            key = (item.get("odNo"), item.get("odSeq"))
             if key not in seen:
                 seen.add(key)
                 merged.append(item)
         for item in delivery_orders:
-            key = (item.get("odNo"), item.get("odSeq"), item.get("procSeq"))
+            key = (item.get("odNo"), item.get("odSeq"))
             if key not in seen:
                 seen.add(key)
                 merged.append(item)
@@ -1410,11 +1410,8 @@ class LotteonClient:
                         items = inner.get("deliveryOrderList") or []
                         if isinstance(items, list):
                             for item in items:
-                                key = (
-                                    item.get("odNo"),
-                                    item.get("odSeq"),
-                                    item.get("procSeq"),
-                                )
+                                # procSeq는 ifCplYN에 따라 달라질 수 있으므로 제외
+                                key = (item.get("odNo"), item.get("odSeq"))
                                 if key not in seen_keys:
                                     seen_keys.add(key)
                                     combined.append(item)
