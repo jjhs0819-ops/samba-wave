@@ -3,6 +3,7 @@
 
 # 임시 개발 파일
 tmp_*
+backend/result.txt
 tmp_captures/
 .push-approved
 
