@@ -100,6 +100,7 @@ export async function performCollectGroups(args: CollectGroupsArgs) {
       const r = await fetchWithAuth(`${API_BASE}/api/v1/samba/collector/brand-collect-all`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: abort.signal,
         body: JSON.stringify({
           filter_ids: targetIds,
           source_site: _brandSite,
@@ -167,7 +168,7 @@ export async function performCollectGroups(args: CollectGroupsArgs) {
       try {
         const res = await fetchWithAuth(
           `${API_BASE}/api/v1/samba/collector/collect-filter/${id}?group_index=${gi + 1}&group_total=${targetIds.length}`,
-          { method: 'POST' }
+          { method: 'POST', signal: abort.signal }
         )
         if (!res.ok) {
           const errData = await res.json().catch(() => null)
