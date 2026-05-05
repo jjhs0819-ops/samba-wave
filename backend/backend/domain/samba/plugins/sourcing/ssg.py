@@ -153,13 +153,17 @@ class SSGPlugin(SourcingPlugin):
                         )
                         _sell = int(_ext_obj.get("sellprc", 0) or 0)
                         _best = int(_ext_obj.get("bestAmt", 0) or 0) or _sell
+                        # 카드혜택가(domCardPrice) 우선 적용 — 검증(2026-05-05) 결과 fallback 분기에서
+                        # _dom_card 무시되어 cost가 bestAmt로 저장되는 버그 수정
+                        _dom_card_fb = int(_ext_result.get("domCardPrice", 0) or 0)
+                        _benefit = _dom_card_fb if _dom_card_fb > 0 else _best
                         for _opt in _opts:
                             if not _opt.get("price"):
                                 _opt["price"] = _sell
                         detail = {
                             "salePrice": _sell,
                             "originalPrice": _sell,
-                            "bestBenefitPrice": _best,
+                            "bestBenefitPrice": _benefit,
                             "options": _opts,
                             "isOutOfStock": _sold,
                             "isSoldOut": _sold,
