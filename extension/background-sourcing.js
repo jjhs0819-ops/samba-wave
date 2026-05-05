@@ -1165,20 +1165,21 @@ async function handleSourcingJob(job) {
     const needsForegroundTab = job.type === 'detail' && job.site === 'SSG'
     let tab
     if (needsForegroundTab) {
-      // SSG 별도 popup 윈도우 — 화면 밖 좌표로 사용자 시야 미침범
-      // 검증: state:'minimized' 는 Whale에서 무시되어 'normal'로 생성됨 (실측 2026-05-05)
-      // → 화면 밖 좌표(left/top 큰 양수)로 띄워 시각 침범 0, JS 렌더링은 정상 active 탭이라 throttling X
-      // type:'popup'으로 메뉴/탭바 없는 가벼운 윈도우 (작업표시줄 흔적도 popup 1개로 한정)
+      // SSG 별도 popup 윈도우 — 사용자 메인 윈도우 포커스 미강탈
+      // 검증 이력 (2026-05-05):
+      //   - state:'minimized' → Whale에서 무시되고 'normal' 생성 ❌
+      //   - left/top: 5000 → "Bounds must be at least 50% within visible screen space" 거부 ❌
+      // 채택: 윈도우 create 후 즉시 update({state:'minimized'})로 최소화
+      //   focused:false 유지로 사용자 메인 윈도우 포커스는 그대로 유지됨
       const win = await chrome.windows.create({
         url: job.url,
         type: 'popup',
-        state: 'normal',
         focused: false,
-        left: 5000,
-        top: 5000,
         width: 1024,
         height: 768,
       })
+      // create 직후 즉시 minimize — 사용자 시야에서 사라지고 작업표시줄에만 표시
+      try { await chrome.windows.update(win.id, { state: 'minimized' }) } catch {}
       tab = win.tabs?.[0]
       sourcingWindowId = win.id
       openedSourcingWindow = true
