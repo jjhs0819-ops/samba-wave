@@ -85,16 +85,16 @@ export function useOrderSync({ accounts, period, setLogMessages, showNotificatio
     const isAll = !syncAccountId
     const isMarketGroup = syncAccountId.startsWith('type:')
 
-    if ((backgroundMode && isAll) || isMarketGroup) {
-      if (isMarketGroup) {
-        const marketType = syncAccountId.replace('type:', '')
-        const marketAccs = accounts.filter(account => account.market_type === marketType)
-        const marketName = marketAccs[0]?.market_name || marketType
-        setLogMessages(prev => [...prev, `[${ts()}] ${marketName} 주문수집 시작 (${fmtNum(marketAccs.length)}개 계정, 최근 ${days}일)...`])
-        await runBackgroundSync(marketAccs.map(account => account.id))
-        return
-      }
+    if (isMarketGroup) {
+      const marketType = syncAccountId.replace('type:', '')
+      const marketAccs = accounts.filter(account => account.market_type === marketType)
+      const marketName = marketAccs[0]?.market_name || marketType
+      setLogMessages(prev => [...prev, `[${ts()}] ${marketName} 주문수집 시작 (${fmtNum(marketAccs.length)}개 계정, 최근 ${days}일)...`])
+      await runBackgroundSync(marketAccs.map(account => account.id))
+      return
+    }
 
+    if (backgroundMode && isAll) {
       setLogMessages(prev => [...prev, `[${ts()}] 전체마켓 주문수집 시작 (${fmtNum(accounts.length)}개 계정, 최근 ${days}일)...`])
       await runBackgroundSync(accounts.map(account => account.id))
       return
@@ -102,6 +102,14 @@ export function useOrderSync({ accounts, period, setLogMessages, showNotificatio
 
     const account = accounts.find(item => item.id === syncAccountId)
     const label = account ? `${account.market_name}(${account.seller_id || '-'})` : syncAccountId
+
+    // backgroundMode: Caddy 120초 타임아웃 우회 — 특정 계정도 background job 경로 사용
+    if (backgroundMode && !isAll) {
+      setLogMessages(prev => [...prev, `[${ts()}] ${label} 주문수집 시작 (최근 ${days}일)...`])
+      await runBackgroundSync([syncAccountId])
+      return
+    }
+
     setLogMessages(prev => [...prev, `[${ts()}] ${label} 주문수집 시작 (최근 ${days}일)...`])
 
     try {
