@@ -2271,7 +2271,10 @@ async function extractDetailData(tabId, site, productId) {
         // 매장픽업 전용 상품 감지 — 배송 불가 상품은 수집/갱신 차단
         // 사용자 검증 LE1216449916: "매장픽업 전용 롯데백화점" 텍스트 + 배송비 0이지만
         // DB는 배송비 3,000원 가산되어 잘못된 cost. 또한 배송 불가라 수집 자체 부적합.
-        const _storePickupOnly = /매장\s*픽업\s*전용/.test(bodyText)
+        // 상품 정보 영역만 검사 — bodyText 전체 스캔 시 하단 추천상품 카드 라벨에서 오탐 가능
+        const _productInfoEl = document.querySelector('[class*="pdp"], [class*="prdInfo"], [class*="goods-info"], [class*="product-info"]')
+        const _pickupArea = _productInfoEl?.innerText || bodyText.slice(0, 6000)
+        const _storePickupOnly = /매장\s*픽업\s*전용/.test(_pickupArea)
 
         // 데이터 유무와 무관하게 항상 _domLoginSignal 포함 반환
         // — 데이터 없어도 undefined 반환 시 공통 블록 _detectLoginStatus 오탐 차단 방지
