@@ -163,12 +163,35 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
 // ==================== 공용 결과 전송 함수 ====================
 
 async function postResult(endpoint, body) {
-  const res = await apiFetch(`${PROXY_URL}${API_PREFIX}/${endpoint}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  })
-  if (!res.ok) console.warn(`[결과전송] ${endpoint} 실패: HTTP ${res.status}`)
+  // 503/429/502/504 일시적 장애 자동 재시도 (지수 백오프 0.5s/1.5s/3s)
+  // 백엔드가 일시적으로 응답 못 하면 결과가 유실되어 가격 갱신 차단으로 이어짐
+  const url = `${PROXY_URL}${API_PREFIX}/${endpoint}`
+  const headers = { 'Content-Type': 'application/json' }
+  const payload = JSON.stringify(body)
+  const RETRY_STATUSES = new Set([429, 502, 503, 504])
+  const RETRY_DELAYS = [500, 1500, 3000]
+
+  for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
+    let res
+    try {
+      res = await apiFetch(url, { method: 'POST', headers, body: payload })
+    } catch (e) {
+      if (attempt < RETRY_DELAYS.length) {
+        await new Promise(r => setTimeout(r, RETRY_DELAYS[attempt]))
+        continue
+      }
+      console.warn(`[결과전송] ${endpoint} 네트워크 실패: ${e.message}`)
+      return
+    }
+    if (res.ok) return
+    if (RETRY_STATUSES.has(res.status) && attempt < RETRY_DELAYS.length) {
+      console.log(`[결과전송] ${endpoint} HTTP ${res.status} → ${RETRY_DELAYS[attempt]}ms 후 재시도(${attempt+1}/${RETRY_DELAYS.length})`)
+      await new Promise(r => setTimeout(r, RETRY_DELAYS[attempt]))
+      continue
+    }
+    console.warn(`[결과전송] ${endpoint} 실패: HTTP ${res.status}`)
+    return
+  }
 }
 
 // ==================== 프록시 전송 함수 ====================
