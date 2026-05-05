@@ -264,6 +264,7 @@ export default function UnassignedPool({
   policies,
   policyByBrand,
   onBrandPolicyChange,
+  onDeleteBrandScope,
 }: Props) {
   const grouped = unassigned.reduce<Record<string, TetrisUnassigned[]>>((acc, item) => {
     const key = item.source_site
