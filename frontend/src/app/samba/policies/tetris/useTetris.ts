@@ -162,6 +162,34 @@ export function useTetris() {
     }
   }, [refresh])
 
+  // 소싱처 브랜드 풀에서 정책 일괄 변경 — 해당 브랜드의 모든 배치 블럭에 동일 정책 적용
+  const handleBrandPolicyChangeAll = useCallback(async (
+    sourceSite: string,
+    brandName: string,
+    policyId: string | null,
+  ) => {
+    if (!board) return
+    const targets: { assignmentId: string; accountId: string }[] = []
+    board.markets.forEach(m =>
+      m.accounts.forEach(a =>
+        a.assignments.forEach(b => {
+          if (b.source_site === sourceSite && b.brand_name === brandName && b.id && !b.is_legacy) {
+            targets.push({ assignmentId: b.id, accountId: a.account_id })
+          }
+        })
+      )
+    )
+    if (targets.length === 0) return
+    try {
+      for (const { assignmentId, accountId } of targets) {
+        await tetrisApi.move(assignmentId, { market_account_id: accountId, policy_id: policyId, position_order: 0 })
+      }
+      await refresh()
+    } catch (e) {
+      showAlert('정책 변경 중 오류가 발생했습니다: ' + String(e))
+    }
+  }, [board, refresh])
+
   return {
     board,
     loading,
@@ -174,6 +202,7 @@ export function useTetris() {
     handleRemove,
     handleReorder,
     handlePolicyChange,
+    handleBrandPolicyChangeAll,
     refresh,
   }
 }

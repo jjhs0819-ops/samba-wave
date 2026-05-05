@@ -190,6 +190,7 @@ export default function PoliciesPage() {
   const [showForm, setShowForm] = useState(true)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [name, setName] = useState("새 정책")
+  const [policyColor, setPolicyColor] = useState('#3B82F6')
   const [siteName, setSiteName] = useState("")
   const [pricing, setPricing] = useState<PricingForm>({ ...defaultPricing })
 
@@ -425,6 +426,7 @@ export default function PoliciesPage() {
     setSelectedDetailTemplateId(p.extras?.detail_template_id || '')
     setMarketDetailTemplates(p.extras?.market_detail_templates || {})
     setSelectedNameRuleId(p.extras?.name_rule_id || '')
+    setPolicyColor(p.extras?.color || '#3B82F6')
     setShowForm(true)
   }
 
@@ -452,6 +454,7 @@ export default function PoliciesPage() {
           detail_template_id: selectedDetailTemplateId || undefined,
           market_detail_templates: Object.keys(marketDetailTemplates).length > 0 ? marketDetailTemplates : undefined,
           name_rule_id: selectedNameRuleId || undefined,
+          color: policyColor || undefined,
         },
       }
       // 정책 저장 (필수 — 먼저 실행)
@@ -503,10 +506,10 @@ export default function PoliciesPage() {
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const latestPricingRef = useRef(pricing)
   const latestMarketPoliciesRef = useRef(marketPolicies)
-  const latestExtrasRef = useRef({ detail_template_id: selectedDetailTemplateId, name_rule_id: selectedNameRuleId })
+  const latestExtrasRef = useRef({ detail_template_id: selectedDetailTemplateId, name_rule_id: selectedNameRuleId, market_detail_templates: marketDetailTemplates, color: policyColor })
   latestPricingRef.current = pricing
   latestMarketPoliciesRef.current = marketPolicies
-  latestExtrasRef.current = { detail_template_id: selectedDetailTemplateId, name_rule_id: selectedNameRuleId }
+  latestExtrasRef.current = { detail_template_id: selectedDetailTemplateId, name_rule_id: selectedNameRuleId, market_detail_templates: marketDetailTemplates, color: policyColor }
 
   const triggerAutoSave = useCallback(() => {
     if (!editingId) return
@@ -522,6 +525,8 @@ export default function PoliciesPage() {
           extras: {
             detail_template_id: ex.detail_template_id || undefined,
             name_rule_id: ex.name_rule_id || undefined,
+            market_detail_templates: Object.keys(ex.market_detail_templates || {}).length > 0 ? ex.market_detail_templates : undefined,
+            color: ex.color || undefined,
           },
         })
         // 리스트만 갱신 (현재 편집 폼은 유지)
@@ -750,6 +755,14 @@ export default function PoliciesPage() {
               onChange={(e) => setName(e.target.value)}
               style={{ ...inputStyle, flex: 1, maxWidth: '300px' }}
             />
+            <input
+              type="color"
+              value={policyColor}
+              onChange={(e) => { setPolicyColor(e.target.value); triggerAutoSave() }}
+              title="정책 색상"
+              style={{ width: 32, height: 32, padding: 2, background: 'none', border: '1px solid #2D2D2D', borderRadius: 6, cursor: 'pointer', flexShrink: 0 }}
+            />
+            <span style={{ fontSize: '0.75rem', color: '#666' }}>색상</span>
           </div>
         )}
       </div>
@@ -1679,6 +1692,7 @@ export default function PoliciesPage() {
                           delete next[mkt]
                         }
                         setMarketDetailTemplates(Object.keys(next).length > 0 ? next : {})
+                        triggerAutoSave()
                       }}
                       style={{ ...inputStyle, width: '180px', fontSize: '0.75rem' }}
                     >
@@ -1689,6 +1703,7 @@ export default function PoliciesPage() {
                       const next = { ...marketDetailTemplates }
                       delete next[mkt]
                       setMarketDetailTemplates(Object.keys(next).length > 0 ? next : {})
+                      triggerAutoSave()
                     }} style={{ fontSize: '0.65rem', color: '#FF6B6B', background: 'none', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '4px', padding: '1px 6px', cursor: 'pointer' }}>삭제</button>
                   </div>
                 </div>
@@ -1703,9 +1718,10 @@ export default function PoliciesPage() {
           {/* 마켓 추가 드롭다운 */}
           <select
             value=""
-            onChange={async (e) => {
+            onChange={(e) => {
               if (!e.target.value) return
               setMarketDetailTemplates(prev => ({ ...prev, [e.target.value]: '' }))
+              triggerAutoSave()
             }}
             style={{ ...inputStyle, width: 'auto', fontSize: '0.75rem' }}
           >

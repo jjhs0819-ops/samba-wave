@@ -42,7 +42,7 @@ function SlotZone({
   return (
     <div
       style={{
-        height: active ? 8 : 4,
+        height: active ? 6 : 2,
         background: active ? '#FF8C00' : 'rgba(255,140,0,0.15)',
         borderRadius: 2,
         margin: '1px 0',
@@ -56,7 +56,7 @@ function SlotZone({
   )
 }
 
-const MIN_BLOCK_PX = 28
+const MIN_BLOCK_PX = 24
 
 export default function AccountBlock({
   account,

@@ -13,6 +13,7 @@ export interface TetrisBrandBlock {
   policy_color: string
   registered_count: number
   collected_count: number
+  ai_tagged_count: number
   position_order: number
   is_legacy: boolean
 }
@@ -38,6 +39,7 @@ export interface TetrisUnassigned {
   brand_name: string
   registered_count: number
   collected_count: number
+  ai_tagged_count: number
 }
 
 export interface TetrisBoardResponse {

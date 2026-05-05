@@ -38,26 +38,6 @@ _MARKET_DISPLAY_NAMES: dict[str, str] = {
     "playauto": "플레이오토",
 }
 
-# 레거시(배치 없이 등록된) 브랜드 기본 색상
-_LEGACY_COLOR = "#6B7280"
-
-
-def _norm_tetris_key(value: str | None) -> str:
-    return "".join((value or "").split()).casefold()
-
-
-def _norm_site_key(value: str | None) -> str:
-    key = _norm_tetris_key(value)
-    site_aliases = {
-        "gsshop": "gsshop",
-        "abcmart": "abcmart",
-        "grandstage": "abcmart",
-        "lotteon": "lotteon",
-        "musinsa": "musinsa",
-        "ssg": "ssg",
-    }
-    return site_aliases.get(key, key)
-
 
 class SambaTetrisService:
     """테트리스 정책 배치 서비스."""
@@ -198,7 +178,10 @@ class SambaTetrisService:
                 SELECT
                     source_site,
                     BTRIM(brand) AS effective_brand,
-                    COUNT(*) AS cnt
+                    COUNT(*) AS cnt,
+                    COUNT(*) FILTER (
+                        WHERE COALESCE(cast(tags AS text), '') LIKE '%__ai_tagged__%'
+                    ) AS ai_tagged_cnt
                 FROM samba_collected_product
                 WHERE (tenant_id IS NULL AND :tid_is_null OR tenant_id = :tid)
                   AND source_site IS NOT NULL
@@ -208,16 +191,18 @@ class SambaTetrisService:
             """),
             {"tid": tenant_id, "tid_is_null": tenant_id is None},
         )
-        # collected_map[(normalized_source_site, normalized_brand)] = count
+        # collected_map[(source_site, trimmed_brand)] = count
         collected_map: dict[tuple[str, str], int] = {}
+        ai_tagged_map: dict[tuple[str, str], int] = {}
         collected_label_map: dict[tuple[str, str], tuple[str, str]] = {}
         for row in collected_rows:
             site = row[0]
             brand = row[1]
             if not brand:
                 continue
-            key = (_norm_site_key(site), _norm_tetris_key(brand))
+            key = (site, brand)
             collected_map[key] = collected_map.get(key, 0) + int(row[2] or 0)
+            ai_tagged_map[key] = ai_tagged_map.get(key, 0) + int(row[3] or 0)
             collected_label_map.setdefault(key, (site, brand))
 
         logger.info(
@@ -244,7 +229,7 @@ class SambaTetrisService:
             """),
             {"tid": tenant_id, "tid_is_null": tenant_id is None},
         )
-        # registered_map[(normalized_source_site, normalized_brand, account_id)] = count
+        # registered_map[(source_site, trimmed_brand, account_id)] = count
         registered_map: dict[tuple[str, str, str], int] = {}
         for row in registered_rows:
             site = row[0]
@@ -252,7 +237,7 @@ class SambaTetrisService:
             account_id = row[2]
             if not brand or not account_id:
                 continue
-            key = (_norm_site_key(site), _norm_tetris_key(brand), account_id)
+            key = (site, brand, account_id)
             registered_map[key] = registered_map.get(key, 0) + int(row[3] or 0)
 
         logger.info(
@@ -266,9 +251,6 @@ class SambaTetrisService:
             account_registered_total[acc_id] = (
                 account_registered_total.get(acc_id, 0) + cnt
             )
-
-        # 7. 등록된 (site, brand, account_id) 집합 — 레거시 감지용
-        registered_keys: set[tuple[str, str, str]] = set(registered_map.keys())
 
         # 9. 보드 조립
         # market_type → market group dict
@@ -312,65 +294,30 @@ class SambaTetrisService:
                     if a.policy_id
                     else ("기본정책", "#3B82F6")
                 )
-                reg_cnt = registered_map.get(
-                    (
-                        _norm_site_key(a.source_site),
-                        _norm_tetris_key(a.brand_name),
-                        acc.id,
-                    ),
-                    0,
-                )
-                col_cnt = collected_map.get(
-                    (_norm_site_key(a.source_site), _norm_tetris_key(a.brand_name)),
-                    0,
+                reg_cnt = registered_map.get((a.source_site, a.brand_name, acc.id), 0)
+                col_cnt = collected_map.get((a.source_site, a.brand_name), 0)
+                if col_cnt <= 0:
+                    continue
+                display_site, display_brand = collected_label_map.get(
+                    (a.source_site, a.brand_name), (a.source_site, a.brand_name)
                 )
                 assignment_blocks.append(
                     {
                         "id": a.id,
-                        "source_site": a.source_site,
-                        "brand_name": a.brand_name,
+                        "source_site": display_site,
+                        "brand_name": display_brand,
                         "policy_id": a.policy_id,
                         "policy_name": pol_name,
                         "policy_color": pol_color,
                         "registered_count": reg_cnt,
                         "collected_count": col_cnt,
+                        "ai_tagged_count": ai_tagged_map.get(
+                            (a.source_site, a.brand_name), 0
+                        ),
                         "position_order": a.position_order,
                         "is_legacy": False,
                     }
                 )
-
-            # 레거시: registered_map에 있지만 tetris 배치 없는 브랜드
-            assigned_site_brand = {
-                (_norm_site_key(a.source_site), _norm_tetris_key(a.brand_name))
-                for a in acc_assignments
-            }
-            legacy_keys = [
-                (site, brand)
-                for (site, brand, aid) in registered_keys
-                if aid == acc.id and (site, brand) not in assigned_site_brand
-            ]
-            for site, brand in legacy_keys:
-                reg_cnt = registered_map.get((site, brand, acc.id), 0)
-                col_cnt = collected_map.get((site, brand), 0)
-                # collected_label_map에서 원본(소문자 정규화 전) 레이블 복원
-                orig_site, orig_brand = collected_label_map.get(
-                    (site, brand), (site, brand)
-                )
-                assignment_blocks.append(
-                    {
-                        "id": None,
-                        "source_site": orig_site,
-                        "brand_name": orig_brand,
-                        "policy_id": None,
-                        "policy_name": None,
-                        "policy_color": _LEGACY_COLOR,
-                        "registered_count": reg_cnt,
-                        "collected_count": col_cnt,
-                        "position_order": 9999,
-                        "is_legacy": True,
-                    }
-                )
-
             # 계정 총 수집 수 (배치된 브랜드 기준)
             total_collected = sum(b["collected_count"] for b in assignment_blocks)
             total_registered = account_registered_total.get(acc.id, 0)
@@ -409,6 +356,7 @@ class SambaTetrisService:
                             (site, brand), 0
                         ),
                         "collected_count": cnt,
+                        "ai_tagged_count": ai_tagged_map.get((site, brand), 0),
                     }
                 )
 

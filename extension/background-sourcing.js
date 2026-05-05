@@ -1181,22 +1181,29 @@ async function handleSourcingJob(job) {
       (job.site === 'SSG' || job.site === 'ABCmart' || job.site === 'GrandStage')
     let tab
     if (needsForegroundTab) {
-      // SSG 별도 popup 윈도우 — 사용자 메인 윈도우 포커스 미강탈
-      // 검증 이력 (2026-05-05):
-      //   - state:'minimized' on create → Whale에서 무시되고 'normal' 생성
-      //   - 즉시 minimize → waitForTabLoad의 chrome.tabs.onUpdated 이벤트 누락 → 30초 timeout
-      // 채택: focused:false로 background popup 생성 (사용자 main window 포커스 유지) →
-      //       waitForTabLoad 완료 후 update({state:'minimized'})로 시야 정리
+      // SSG/ABCmart/GrandStage 카드/혜택가 추출용 popup
+      // 사용자 PC 작업 가리지 않도록:
+      //   1. 작은 크기(420x320)로 좌상단 코너 배치 — 화면 점유 최소화
+      //   2. focused:false 생성 → 포커스 미강탈
+      //   3. 직후 메인 윈도우에 focus 복원 → popup이 z-order 뒤로 밀려 사용자 시야 위에 안 뜸
+      //      (state:'minimized'는 Whale에서 AJAX throttling으로 카드혜택가 미반영되어 사용 불가)
+      const _prevWin = await chrome.windows.getLastFocused().catch(() => null)
       const win = await chrome.windows.create({
         url: job.url,
         type: 'popup',
         focused: false,
-        width: 1024,
-        height: 768,
+        width: 420,
+        height: 320,
+        top: 10,
+        left: 10,
       })
       tab = win.tabs?.[0]
       sourcingWindowId = win.id
       openedSourcingWindow = true
+      // 메인 윈도우 재활성화 → popup z-order 뒤로 (사용자 작업창 가리지 않음)
+      if (_prevWin && _prevWin.id !== win.id) {
+        try { await chrome.windows.update(_prevWin.id, { focused: true }) } catch {}
+      }
     } else {
       tab = await chrome.tabs.create({ url: job.url, active: false })
     }

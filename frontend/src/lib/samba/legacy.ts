@@ -366,6 +366,7 @@ export interface SambaPolicy {
     deletion_text?: string;
     forbidden_template_id?: string;
     deletion_template_id?: string;
+    color?: string;
   };
   created_at: string;
   updated_at: string;

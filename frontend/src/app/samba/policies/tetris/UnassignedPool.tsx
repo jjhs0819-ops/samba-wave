@@ -6,19 +6,19 @@ import type { TetrisUnassigned, TetrisBrandBlock } from '@/lib/samba/api/tetris'
 const FIXED_BLOCK_PX = 56
 
 const MARKET_COLORS: Record<string, string> = {
-  coupang: '#F5A623',    // 주황
-  smartstore: '#03C75A', // 초록
-  '11st': '#E8002D',     // 빨강
-  gmarket: '#0065D5',    // 파랑
-  auction: '#A855F7',    // 보라 (기존 하늘과 구분)
-  lotteon: '#E2E8F0',    // 흰색
-  gsshop: '#FACC15',     // 노랑 (쿠팡 주황과 구분)
-  ssg: '#6B21A8',        // 진보라 (auction 보라와 구분)
-  lottehome: '#DB2777',  // 핑크-마젠타
-  homeand: '#06B6D4',    // 청록
-  hmall: '#3B82F6',      // 파랑 (gmarket 진파랑과 구분)
-  toss: '#1D4ED8',       // 진파랑
-  ktalpha: '#10B981',    // 에메랄드
+  coupang: '#F5A623',
+  smartstore: '#03C75A',
+  '11st': '#E8002D',
+  gmarket: '#0065D5',
+  auction: '#A855F7',
+  lotteon: '#E2E8F0',
+  gsshop: '#FACC15',
+  ssg: '#6B21A8',
+  lottehome: '#DB2777',
+  homeand: '#06B6D4',
+  hmall: '#3B82F6',
+  toss: '#1D4ED8',
+  ktalpha: '#10B981',
 }
 
 function getMarketColor(marketType: string): string {
@@ -31,13 +31,21 @@ export interface BrandAssignment {
   accountLabel: string
 }
 
+interface Policy {
+  id: string
+  name: string
+  color: string
+}
+
 interface Props {
   unassigned: TetrisUnassigned[]
   blockHeight?: number
   pixelsPerUnit: number
   onDragStart: (block: TetrisBrandBlock) => void
   assignmentsByBrand: Map<string, BrandAssignment[]>
-  onBrandClick: (sourceSite: string, brandName: string) => void
+  policies: Policy[]
+  policyByBrand: Map<string, { policyId: string | null; policyColor: string }>
+  onBrandPolicyChange: (sourceSite: string, brandName: string, policyId: string | null) => Promise<void>
 }
 
 function UnassignedItem({
@@ -45,14 +53,22 @@ function UnassignedItem({
   itemHeight,
   onDragStart,
   assignments,
-  onClick,
+  policies,
+  currentPolicyId,
+  currentPolicyColor,
+  onPolicyChange,
 }: {
   item: TetrisUnassigned
   itemHeight: number
   onDragStart: (block: TetrisBrandBlock) => void
   assignments: BrandAssignment[]
-  onClick: () => void
+  policies: Policy[]
+  currentPolicyId: string | null
+  currentPolicyColor: string
+  onPolicyChange: (policyId: string | null) => Promise<void>
 }) {
+  const [showPalette, setShowPalette] = useState(false)
+
   const block: TetrisBrandBlock = {
     id: null,
     source_site: item.source_site,
@@ -62,31 +78,33 @@ function UnassignedItem({
     policy_color: '#6B7280',
     registered_count: item.registered_count,
     collected_count: item.collected_count,
+    ai_tagged_count: item.ai_tagged_count,
     position_order: 0,
     is_legacy: false,
   }
 
-  // 등록된 마켓 타입별 색상 점 (중복 제거)
   const uniqueMarkets = Array.from(
     new Map(assignments.map(a => [a.marketType, a])).values()
   )
 
+  const borderColor = assignments.length > 0 ? currentPolicyColor : '#3a3a3a'
+
   return (
     <div
       draggable
-      onDragStart={() => onDragStart(block)}
-      onClick={assignments.length > 0 ? onClick : undefined}
+      onDragStart={() => { setShowPalette(false); onDragStart(block) }}
+      onClick={() => setShowPalette(v => !v)}
       style={{
         height: itemHeight,
         minHeight: itemHeight,
         background: 'rgba(28,28,28,0.9)',
         border: '1px solid #3a3a3a50',
-        borderLeft: '3px solid #6B7280',
+        borderLeft: `3px solid ${borderColor}`,
         borderRadius: 4,
         marginBottom: 2,
-        cursor: assignments.length > 0 ? 'pointer' : 'grab',
+        cursor: 'pointer',
         position: 'relative',
-        overflow: 'hidden',
+        overflow: 'visible',
         userSelect: 'none',
         boxSizing: 'border-box',
         flexShrink: 0,
@@ -99,6 +117,7 @@ function UnassignedItem({
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'space-between',
+        overflow: 'hidden',
       }}>
         <div style={{
           fontSize: 11,
@@ -117,7 +136,6 @@ function UnassignedItem({
             <span style={{ color: '#444' }}>/</span>
             <span style={{ color: '#888' }}>{fmtNum(item.collected_count)}</span>
           </div>
-          {/* 등록 마켓 색상 점 */}
           {uniqueMarkets.length > 0 && (
             <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
               {uniqueMarkets.map(a => (
@@ -137,6 +155,7 @@ function UnassignedItem({
           )}
         </div>
       </div>
+
       <div style={{
         position: 'absolute',
         top: 3,
@@ -148,6 +167,59 @@ function UnassignedItem({
       }}>
         {item.source_site}
       </div>
+
+      {/* 정책 색상 팔레트 */}
+      {showPalette && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '100%',
+            left: 0,
+            zIndex: 300,
+            background: '#1a1a1a',
+            border: '1px solid #333',
+            borderRadius: 6,
+            padding: '6px 8px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.7)',
+            whiteSpace: 'nowrap',
+          }}
+          onClick={e => e.stopPropagation()}
+        >
+          {assignments.length === 0 && (
+            <span style={{ fontSize: 10, color: '#555', marginRight: 4 }}>배치 없음</span>
+          )}
+          <div
+            onClick={() => { onPolicyChange(null); setShowPalette(false) }}
+            title="정책 없음"
+            style={{
+              width: 16, height: 16, borderRadius: '50%',
+              background: '#6B7280',
+              cursor: assignments.length > 0 ? 'pointer' : 'default',
+              border: currentPolicyId === null ? '2px solid #fff' : '2px solid transparent',
+              flexShrink: 0,
+              opacity: assignments.length === 0 ? 0.4 : 1,
+            }}
+          />
+          {policies.map(p => (
+            <div
+              key={p.id}
+              onClick={() => { if (assignments.length > 0) { onPolicyChange(p.id); setShowPalette(false) } }}
+              title={p.name}
+              style={{
+                width: 16, height: 16, borderRadius: '50%',
+                background: p.color,
+                cursor: assignments.length > 0 ? 'pointer' : 'default',
+                border: p.id === currentPolicyId ? '2px solid #fff' : '2px solid transparent',
+                flexShrink: 0,
+                opacity: assignments.length === 0 ? 0.4 : 1,
+              }}
+            />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -157,10 +229,10 @@ export default function UnassignedPool({
   pixelsPerUnit: _pixelsPerUnit,
   onDragStart,
   assignmentsByBrand,
-  onBrandClick,
+  policies,
+  policyByBrand,
+  onBrandPolicyChange,
 }: Props) {
-  const [hoveredKey, setHoveredKey] = useState<string | null>(null)
-
   const grouped = unassigned.reduce<Record<string, TetrisUnassigned[]>>((acc, item) => {
     const key = item.source_site
     if (!acc[key]) acc[key] = []
@@ -202,23 +274,21 @@ export default function UnassignedPool({
             {items.map((item, idx) => {
               const key = `${item.source_site}::${item.brand_name}`
               const assignments = assignmentsByBrand.get(key) ?? []
+              const policyInfo = policyByBrand.get(key)
               return (
                 <div
                   key={`${item.source_site}-${item.brand_name}-${idx}`}
-                  style={{
-                    width: 160,
-                    opacity: hoveredKey === key ? 0.8 : 1,
-                    transition: 'opacity 0.1s',
-                  }}
-                  onMouseEnter={() => assignments.length > 0 && setHoveredKey(key)}
-                  onMouseLeave={() => setHoveredKey(null)}
+                  style={{ width: 160 }}
                 >
                   <UnassignedItem
                     item={item}
                     itemHeight={FIXED_BLOCK_PX}
                     onDragStart={onDragStart}
                     assignments={assignments}
-                    onClick={() => onBrandClick(item.source_site, item.brand_name)}
+                    policies={policies}
+                    currentPolicyId={policyInfo?.policyId ?? null}
+                    currentPolicyColor={policyInfo?.policyColor ?? '#6B7280'}
+                    onPolicyChange={(policyId) => onBrandPolicyChange(item.source_site, item.brand_name, policyId)}
                   />
                 </div>
               )

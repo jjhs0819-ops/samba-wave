@@ -16,6 +16,7 @@ class TetrisBrandBlock(BaseModel):
     policy_color: str
     registered_count: int
     collected_count: int
+    ai_tagged_count: int = 0
     position_order: int
     is_legacy: bool
 

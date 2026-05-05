@@ -67,12 +67,6 @@ function ScaleRuler({
   )
 }
 
-interface BrandDetailModal {
-  sourceSite: string
-  brandName: string
-  assignments: BrandAssignment[]
-}
-
 interface DeleteScopeModal {
   assignmentId: string
   brandName: string
@@ -96,10 +90,10 @@ export default function TetrisBoard() {
     handleRemove,
     handleReorder,
     handlePolicyChange,
+    handleBrandPolicyChangeAll,
     refresh,
   } = useTetris()
 
-  const [brandDetailModal, setBrandDetailModal] = useState<BrandDetailModal | null>(null)
   const [deleteModal, setDeleteModal] = useState<DeleteScopeModal | null>(null)
 
   // horizontal scroll sync between the sticky header row and the market columns
@@ -111,20 +105,6 @@ export default function TetrisBoard() {
       headerScrollRef.current.scrollLeft = contentScrollRef.current.scrollLeft
     }
   }, [])
-
-  const policies = useMemo(() => {
-    const pMap = new Map<string, { id: string; name: string; color: string }>()
-    board?.markets.forEach(m =>
-      m.accounts.forEach(a =>
-        a.assignments.forEach(b => {
-          if (b.policy_id && b.policy_name) {
-            pMap.set(b.policy_id, { id: b.policy_id, name: b.policy_name, color: b.policy_color })
-          }
-        })
-      )
-    )
-    return Array.from(pMap.values())
-  }, [board])
 
   const sortedMarkets = useMemo(() => {
     if (!board) return []
@@ -164,6 +144,38 @@ export default function TetrisBoard() {
       })
     })
     return map
+  }, [board])
+
+  // 브랜드별 현재 정책 색상 맵 (첫 번째 배치 기준)
+  const policyByBrand = useMemo(() => {
+    const map = new Map<string, { policyId: string | null; policyColor: string }>()
+    if (!board) return map
+    board.markets.forEach(m =>
+      m.accounts.forEach(a =>
+        a.assignments.forEach(b => {
+          const key = `${b.source_site}::${b.brand_name}`
+          if (!map.has(key)) {
+            map.set(key, { policyId: b.policy_id, policyColor: b.policy_color })
+          }
+        })
+      )
+    )
+    return map
+  }, [board])
+
+  // 정책 목록 (색상 포함)
+  const policies = useMemo(() => {
+    const pMap = new Map<string, { id: string; name: string; color: string }>()
+    board?.markets.forEach(m =>
+      m.accounts.forEach(a =>
+        a.assignments.forEach(b => {
+          if (b.policy_id && b.policy_name) {
+            pMap.set(b.policy_id, { id: b.policy_id, name: b.policy_name, color: b.policy_color })
+          }
+        })
+      )
+    )
+    return Array.from(pMap.values())
   }, [board])
 
   const currentStep = useMemo(() => computeScaleStep(pixelsPerUnit), [pixelsPerUnit])
@@ -395,74 +407,24 @@ export default function TetrisBoard() {
         </div>
       </div>
 
-      {/* 미배치 풀 */}
-      {board.unassigned.length > 0 && (
-        <div style={{ marginTop: 28 }}>
-          <div style={{ color: '#888', fontSize: 12, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span>미배치 소싱처 브랜드</span>
-            <span style={{ background: 'rgba(255,140,0,0.15)', color: '#FF8C00', padding: '1px 8px', borderRadius: 10, fontSize: 11 }}>
-              {fmtNum(board.unassigned.length)}개
-            </span>
-          </div>
-          <UnassignedPool
-            unassigned={board.unassigned}
-            pixelsPerUnit={pixelsPerUnit}
-            onDragStart={handleUnassignedDragStart}
-            assignmentsByBrand={assignmentsByBrand}
-            onBrandClick={(sourceSite, brandName) => {
-              const key = `${sourceSite}::${brandName}`
-              const assignments = assignmentsByBrand.get(key) ?? []
-              setBrandDetailModal({ sourceSite, brandName, assignments })
-            }}
-          />
+      {/* 소싱처 브랜드 풀 — 항상 표시 */}
+      <div style={{ marginTop: 28 }}>
+        <div style={{ color: '#888', fontSize: 12, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span>소싱처 브랜드</span>
+          <span style={{ background: 'rgba(255,140,0,0.15)', color: '#FF8C00', padding: '1px 8px', borderRadius: 10, fontSize: 11 }}>
+            {fmtNum(board.unassigned.length)}개
+          </span>
         </div>
-      )}
-
-      {/* 브랜드 배치 현황 모달 */}
-      {brandDetailModal && (
-        <div
-          style={{
-            position: 'fixed', inset: 0, zIndex: 1000,
-            background: 'rgba(0,0,0,0.6)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}
-          onClick={() => setBrandDetailModal(null)}
-        >
-          <div
-            style={{
-              background: '#1a1a1a', border: '1px solid #333', borderRadius: 8,
-              padding: '20px 24px', minWidth: 320, maxWidth: 480,
-              boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
-            }}
-            onClick={e => e.stopPropagation()}
-          >
-            <div style={{ fontSize: 14, color: '#eee', fontWeight: 700, marginBottom: 4 }}>
-              {brandDetailModal.brandName}
-            </div>
-            <div style={{ fontSize: 11, color: '#666', marginBottom: 16 }}>
-              {brandDetailModal.sourceSite}
-            </div>
-            {brandDetailModal.assignments.length === 0 ? (
-              <div style={{ color: '#555', fontSize: 12 }}>배치된 계정이 없습니다.</div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {brandDetailModal.assignments.map((a, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: 'rgba(255,255,255,0.04)', borderRadius: 4 }}>
-                    <span style={{ fontSize: 11, color: '#ccc', fontWeight: 600 }}>{a.marketName}</span>
-                    <span style={{ fontSize: 10, color: '#888' }}>{a.accountLabel}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            <button
-              onClick={() => setBrandDetailModal(null)}
-              style={{ marginTop: 16, width: '100%', padding: '7px 0', background: '#2a2a2a', border: '1px solid #444', color: '#ccc', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
-            >
-              닫기
-            </button>
-          </div>
-        </div>
-      )}
+        <UnassignedPool
+          unassigned={board.unassigned}
+          pixelsPerUnit={pixelsPerUnit}
+          onDragStart={handleUnassignedDragStart}
+          assignmentsByBrand={assignmentsByBrand}
+          policies={policies}
+          policyByBrand={policyByBrand}
+          onBrandPolicyChange={handleBrandPolicyChangeAll}
+        />
+      </div>
 
       {/* 삭제 범위 선택 모달 */}
       {deleteModal && (
