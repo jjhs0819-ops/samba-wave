@@ -1187,7 +1187,6 @@ async function handleSourcingJob(job) {
       //   2. focused:false 생성 → 포커스 미강탈
       //   3. 직후 메인 윈도우에 focus 복원 → popup이 z-order 뒤로 밀려 사용자 시야 위에 안 뜸
       //      (state:'minimized'는 Whale에서 AJAX throttling으로 카드혜택가 미반영되어 사용 불가)
-      const _prevWin = await chrome.windows.getLastFocused().catch(() => null)
       const win = await chrome.windows.create({
         url: job.url,
         type: 'popup',
@@ -1200,10 +1199,7 @@ async function handleSourcingJob(job) {
       tab = win.tabs?.[0]
       sourcingWindowId = win.id
       openedSourcingWindow = true
-      // 메인 윈도우 재활성화 → popup z-order 뒤로 (사용자 작업창 가리지 않음)
-      if (_prevWin && _prevWin.id !== win.id) {
-        try { await chrome.windows.update(_prevWin.id, { focused: true }) } catch {}
-      }
+      // windows.update(focused:true) 제거 — Whale 창을 앞으로 꺼내 다른 앱(VS Code 등)을 가리는 문제 발생
     } else {
       tab = await chrome.tabs.create({ url: job.url, active: false })
     }
