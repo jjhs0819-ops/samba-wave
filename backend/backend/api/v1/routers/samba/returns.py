@@ -1259,6 +1259,16 @@ async def sync_returns_from_markets(
                                     existing_order.id, shipping_status=expected_ss
                                 )
                             continue
+                        # 이미 취소/반품 레코드가 있으면 교환 레코드 생성 금지
+                        # (롯데ON API 버그: 취소 주문이 교환 API에도 포함되는 케이스)
+                        existing_cancel_or_return = await svc.repo.filter_by_async(
+                            order_id=order_id
+                        )
+                        if existing_cancel_or_return:
+                            logger.warning(
+                                f"[롯데ON][교환동기화] 이미 {existing_cancel_or_return[0].type} 레코드 존재 → 교환 생성 스킵: {ex_order_number}"
+                            )
+                            continue
                         from datetime import UTC, datetime
 
                         await svc.repo.create_async(

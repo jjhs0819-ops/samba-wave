@@ -1,4 +1,4 @@
-﻿'use client'
+'use client'
 
 import React, { Dispatch, SetStateAction } from 'react'
 import { type SambaMarketAccount } from '@/lib/samba/api/commerce'
@@ -207,8 +207,6 @@ export default function OrdersFilterBar(props: Props) {
             {MARKET_STATUS_OPTIONS.map(status => <option key={status} value={status}>{status}</option>)}
           </select>
           <select style={{ ...inputStyle, width: '120px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={inputFilter} onChange={e => setInputFilter(e.target.value)}>
-            <option value="no_price">가격X</option>
-            <option value="no_stock">재고X</option>
             <option value="">입력필터</option>
             <option value="has_order">소싱주문번호 있음</option>
             <option value="no_order">소싱주문번호 없음</option>
@@ -219,6 +217,8 @@ export default function OrdersFilterBar(props: Props) {
             <option value="direct">직배</option>
             <option value="kkadaegi">까대기</option>
             <option value="gift">선물</option>
+            <option value="no_price">가격X</option>
+            <option value="no_stock">재고X</option>
             <option value="staff_a">직원A</option>
             <option value="staff_b">직원B</option>
           </select>
@@ -247,6 +247,3 @@ export default function OrdersFilterBar(props: Props) {
     </>
   )
 }
-
-
-
