@@ -20,7 +20,7 @@ interface Props {
   onDragStart: (block: TetrisBrandBlock, accountId: string) => void
   onDrop: (toAccountId: string) => Promise<void>
   onReorder: (draggedId: string, newIndex: number, allAssignments: TetrisBrandBlock[]) => Promise<void>
-  onRemove: (assignmentId: string, brandName: string) => void
+  onRemove: (assignmentId: string, brandName: string, sourceSite: string) => void
   onPolicyChange: (assignmentId: string, policyId: string | null, accountId: string) => Promise<void>
   isDragging: boolean
   isAccountDragging: boolean
@@ -80,8 +80,7 @@ export default function AccountBlock({
 
   const isSameAccountDrag =
     dragState !== null &&
-    dragState.fromAccountId === account.account_id &&
-    dragState.assignmentId !== null
+    dragState.fromAccountId === account.account_id
 
   const ratio = account.total_collected > 0
     ? account.total_registered / account.total_collected

@@ -20,7 +20,7 @@ interface Props {
   onDrop: (toAccountId: string) => Promise<void>
   onReorder: (draggedId: string, newIndex: number, allAssignments: TetrisBrandBlock[]) => Promise<void>
   onAccountReorder: (accounts: TetrisAccountBlock[]) => Promise<void>
-  onRemove: (assignmentId: string, brandName: string) => void
+  onRemove: (assignmentId: string, brandName: string, sourceSite: string) => void
   onPolicyChange: (assignmentId: string, policyId: string | null, accountId: string) => Promise<void>
 }
 

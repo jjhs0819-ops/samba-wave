@@ -1,24 +1,57 @@
 'use client'
+import { useState } from 'react'
 import { fmtNum } from '@/lib/samba/styles'
 import type { TetrisUnassigned, TetrisBrandBlock } from '@/lib/samba/api/tetris'
 
 const FIXED_BLOCK_PX = 56
 
+const MARKET_COLORS: Record<string, string> = {
+  coupang: '#F5A623',
+  smartstore: '#03C75A',
+  '11st': '#E8002D',
+  gmarket: '#0065D5',
+  auction: '#5A8ED0',
+  lotteon: '#FF0015',
+  gsshop: '#F47920',
+  ssg: '#CC0000',
+  lottehome: '#E50012',
+  homeand: '#8B5CF6',
+  hmall: '#3B82F6',
+  toss: '#0064FF',
+  ktalpha: '#E91E8C',
+}
+
+function getMarketColor(marketType: string): string {
+  return MARKET_COLORS[marketType.toLowerCase()] ?? '#6B7280'
+}
+
+export interface BrandAssignment {
+  marketType: string
+  marketName: string
+  accountLabel: string
+}
+
 interface Props {
   unassigned: TetrisUnassigned[]
-  blockHeight?: number  // unused — kept for backward-compat
+  blockHeight?: number
   pixelsPerUnit: number
   onDragStart: (block: TetrisBrandBlock) => void
+  assignmentsByBrand: Map<string, BrandAssignment[]>
+  onBrandClick: (sourceSite: string, brandName: string) => void
 }
 
 function UnassignedItem({
   item,
   itemHeight,
   onDragStart,
+  assignments,
+  onClick,
 }: {
   item: TetrisUnassigned
   itemHeight: number
   onDragStart: (block: TetrisBrandBlock) => void
+  assignments: BrandAssignment[]
+  onClick: () => void
 }) {
   const block: TetrisBrandBlock = {
     id: null,
@@ -33,10 +66,16 @@ function UnassignedItem({
     is_legacy: false,
   }
 
+  // 등록된 마켓 타입별 색상 점 (중복 제거)
+  const uniqueMarkets = Array.from(
+    new Map(assignments.map(a => [a.marketType, a])).values()
+  )
+
   return (
     <div
       draggable
       onDragStart={() => onDragStart(block)}
+      onClick={assignments.length > 0 ? onClick : undefined}
       style={{
         height: itemHeight,
         minHeight: itemHeight,
@@ -45,7 +84,7 @@ function UnassignedItem({
         borderLeft: '3px solid #6B7280',
         borderRadius: 4,
         marginBottom: 2,
-        cursor: 'grab',
+        cursor: assignments.length > 0 ? 'pointer' : 'grab',
         position: 'relative',
         overflow: 'hidden',
         userSelect: 'none',
@@ -71,10 +110,30 @@ function UnassignedItem({
         }}>
           {item.brand_name}
         </div>
-        <div style={{ fontSize: 10, color: '#666' }}>
-          <span style={{ color: '#22C55E' }}>{fmtNum(item.registered_count)}</span>
-          <span style={{ color: '#444' }}>/</span>
-          <span style={{ color: '#888' }}>{fmtNum(item.collected_count)}</span>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ fontSize: 10, color: '#666' }}>
+            <span style={{ color: '#22C55E' }}>{fmtNum(item.registered_count)}</span>
+            <span style={{ color: '#444' }}>/</span>
+            <span style={{ color: '#888' }}>{fmtNum(item.collected_count)}</span>
+          </div>
+          {/* 등록 마켓 색상 점 */}
+          {uniqueMarkets.length > 0 && (
+            <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+              {uniqueMarkets.map(a => (
+                <div
+                  key={a.marketType}
+                  title={a.marketName}
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: 1,
+                    background: getMarketColor(a.marketType),
+                    flexShrink: 0,
+                  }}
+                />
+              ))}
+            </div>
+          )}
         </div>
       </div>
       <div style={{
@@ -92,7 +151,15 @@ function UnassignedItem({
   )
 }
 
-export default function UnassignedPool({ unassigned, pixelsPerUnit, onDragStart }: Props) {
+export default function UnassignedPool({
+  unassigned,
+  pixelsPerUnit: _pixelsPerUnit,
+  onDragStart,
+  assignmentsByBrand,
+  onBrandClick,
+}: Props) {
+  const [hoveredKey, setHoveredKey] = useState<string | null>(null)
+
   const grouped = unassigned.reduce<Record<string, TetrisUnassigned[]>>((acc, item) => {
     const key = item.source_site
     if (!acc[key]) acc[key] = []
@@ -132,12 +199,25 @@ export default function UnassignedPool({ unassigned, pixelsPerUnit, onDragStart 
             }}
           >
             {items.map((item, idx) => {
+              const key = `${item.source_site}::${item.brand_name}`
+              const assignments = assignmentsByBrand.get(key) ?? []
               return (
-                <div key={`${item.source_site}-${item.brand_name}-${idx}`} style={{ width: 160 }}>
+                <div
+                  key={`${item.source_site}-${item.brand_name}-${idx}`}
+                  style={{
+                    width: 160,
+                    opacity: hoveredKey === key ? 0.8 : 1,
+                    transition: 'opacity 0.1s',
+                  }}
+                  onMouseEnter={() => assignments.length > 0 && setHoveredKey(key)}
+                  onMouseLeave={() => setHoveredKey(null)}
+                >
                   <UnassignedItem
                     item={item}
                     itemHeight={FIXED_BLOCK_PX}
                     onDragStart={onDragStart}
+                    assignments={assignments}
+                    onClick={() => onBrandClick(item.source_site, item.brand_name)}
                   />
                 </div>
               )

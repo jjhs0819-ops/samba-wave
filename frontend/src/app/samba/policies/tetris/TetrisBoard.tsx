@@ -1,12 +1,13 @@
-﻿'use client'
-import { useMemo, useRef, useCallback } from 'react'
+'use client'
+import { useMemo, useRef, useCallback, useState } from 'react'
 import { accountApi } from '@/lib/samba/api'
-import { showAlert } from '@/components/samba/Modal'
+import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtNum } from '@/lib/samba/styles'
 import { useTetris } from './useTetris'
 import MarketColumn from './MarketColumn'
 import UnassignedPool from './UnassignedPool'
 import type { TetrisAccountBlock, TetrisBrandBlock } from '@/lib/samba/api/tetris'
+import type { BrandAssignment } from './UnassignedPool'
 
 function computeScaleStep(pixelsPerUnit: number, targetPx = 20): number {
   const rawStep = targetPx / pixelsPerUnit
@@ -66,6 +67,18 @@ function ScaleRuler({
   )
 }
 
+interface BrandDetailModal {
+  sourceSite: string
+  brandName: string
+  assignments: BrandAssignment[]
+}
+
+interface DeleteScopeModal {
+  assignmentId: string
+  brandName: string
+  sourceSite: string
+}
+
 const SCALE_RULER_WIDTH = 56
 const COLUMN_WIDTH = 280
 const COLUMN_GAP = 12
@@ -84,6 +97,9 @@ export default function TetrisBoard() {
     handlePolicyChange,
     refresh,
   } = useTetris()
+
+  const [brandDetailModal, setBrandDetailModal] = useState<BrandDetailModal | null>(null)
+  const [deleteModal, setDeleteModal] = useState<DeleteScopeModal | null>(null)
 
   // horizontal scroll sync between the sticky header row and the market columns
   const contentScrollRef = useRef<HTMLDivElement>(null)
@@ -129,6 +145,26 @@ export default function TetrisBoard() {
     return Math.max(1000, ...allAccounts.map(a => Math.max(a.max_count, a.total_collected)))
   }, [board])
 
+  // 미배치 브랜드별 배치 현황 맵 (sourceSite::brandName → BrandAssignment[])
+  const assignmentsByBrand = useMemo(() => {
+    const map = new Map<string, BrandAssignment[]>()
+    if (!board) return map
+    board.markets.forEach(m => {
+      m.accounts.forEach(a => {
+        a.assignments.forEach(b => {
+          const key = `${b.source_site}::${b.brand_name}`
+          if (!map.has(key)) map.set(key, [])
+          map.get(key)!.push({
+            marketType: m.market_type,
+            marketName: m.market_name,
+            accountLabel: a.account_label,
+          })
+        })
+      })
+    })
+    return map
+  }, [board])
+
   const currentStep = useMemo(() => computeScaleStep(pixelsPerUnit), [pixelsPerUnit])
 
   const handleDragStart = (block: TetrisBrandBlock, accountId: string) => {
@@ -153,7 +189,75 @@ export default function TetrisBoard() {
     }
   }, [refresh])
 
-  if (loading) return <div style={{ color: '#888', padding: 24, fontSize: 13 }}>遺덈윭?ㅻ뒗 以?..</div>
+  // 삭제 버튼 클릭 — 삭제 범위 모달 표시
+  const handleRemoveWithScope = useCallback((assignmentId: string, brandName: string, sourceSite: string) => {
+    setDeleteModal({ assignmentId, brandName, sourceSite })
+  }, [])
+
+  // 삭제 범위 모달 — 이 계정만 삭제
+  const handleDeleteThisOnly = useCallback(async () => {
+    if (!deleteModal) return
+    setDeleteModal(null)
+    const confirmed = await showConfirm(`"${deleteModal.brandName}" 블럭을 이 계정에서만 제거합니다.\n마켓 등록 상품이 삭제됩니다.`)
+    if (!confirmed) return
+    try {
+      const { tetrisApi } = await import('@/lib/samba/api')
+      await tetrisApi.remove(deleteModal.assignmentId)
+      await refresh()
+    } catch (e) {
+      showAlert('제거 중 오류가 발생했습니다: ' + String(e))
+    }
+  }, [deleteModal, refresh])
+
+  // 삭제 범위 모달 — 전체 계정 삭제
+  const handleDeleteAll = useCallback(async () => {
+    if (!deleteModal) return
+    const { sourceSite, brandName } = deleteModal
+    setDeleteModal(null)
+    const confirmed = await showConfirm(`"${brandName}" 블럭을 모든 계정에서 제거합니다.\n관련 마켓 등록 상품이 모두 삭제됩니다.`)
+    if (!confirmed) return
+    try {
+      if (!board) return
+      const { tetrisApi } = await import('@/lib/samba/api')
+      const targets: string[] = []
+      board.markets.forEach(m =>
+        m.accounts.forEach(a =>
+          a.assignments.forEach(b => {
+            if (b.source_site === sourceSite && b.brand_name === brandName && b.id && !b.is_legacy) {
+              targets.push(b.id)
+            }
+          })
+        )
+      )
+      for (const id of targets) {
+        await tetrisApi.remove(id)
+      }
+      await refresh()
+    } catch (e) {
+      showAlert('전체 제거 중 오류가 발생했습니다: ' + String(e))
+    }
+  }, [deleteModal, board, refresh])
+
+  // 뷰포트 중심 기준 줌 (스크롤 위치 보정)
+  const zoomFromCenter = useCallback((factor: number) => {
+    const oldPpu = pixelsPerUnit
+    const newPpu = Math.min(0.5, Math.max(0.001, oldPpu * factor))
+    if (newPpu === oldPpu) return
+
+    const viewportH = window.innerHeight
+    const scrollY = window.scrollY
+    const centerY = scrollY + viewportH / 2
+
+    setPixelsPerUnit(newPpu)
+
+    requestAnimationFrame(() => {
+      const scale = newPpu / oldPpu
+      const newCenterY = centerY * scale
+      window.scrollTo({ top: newCenterY - viewportH / 2, behavior: 'instant' })
+    })
+  }, [pixelsPerUnit, setPixelsPerUnit])
+
+  if (loading) return <div style={{ color: '#888', padding: 24, fontSize: 13 }}>데이터 로딩 중...</div>
   if (!board) return null
 
   return (
@@ -193,7 +297,7 @@ export default function TetrisBoard() {
         padding: '8px 6px',
       }}>
         <button
-          onClick={() => setPixelsPerUnit(p => Math.min(0.5, p * 2))}
+          onClick={() => zoomFromCenter(2)}
           style={{ width: 28, height: 28, background: '#2a2a2a', border: '1px solid #444', color: '#ccc', borderRadius: 4, cursor: 'pointer', fontSize: 16, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
         >
           +
@@ -202,14 +306,14 @@ export default function TetrisBoard() {
           {fmtNum(currentStep)}
         </span>
         <button
-          onClick={() => setPixelsPerUnit(p => Math.max(0.001, p / 2))}
+          onClick={() => zoomFromCenter(0.5)}
           style={{ width: 28, height: 28, background: '#2a2a2a', border: '1px solid #444', color: '#ccc', borderRadius: 4, cursor: 'pointer', fontSize: 16, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
         >
           -
         </button>
       </div>
 
-      {/* ?? Sticky 留덉폆 ?ㅻ뜑 row (overflow 而⑦뀒?대꼫 諛뽰뿉 ?꾩튂 ??viewport 湲곗? sticky ?숈옉) ?? */}
+      {/* Sticky 마켓명 헤더 row */}
       <div style={{
         position: 'sticky',
         top: 0,
@@ -219,9 +323,9 @@ export default function TetrisBoard() {
         borderBottom: '1px solid #222',
         display: 'flex',
       }}>
-        {/* ?ㅼ????덇툑 ?먮━ */}
+        {/* 스케일 눈금 자리 */}
         <div style={{ width: SCALE_RULER_WIDTH, flexShrink: 0 }} />
-        {/* 留덉폆 ?ㅻ뜑 (?섑룊 ?ㅽ겕濡??깊겕) */}
+        {/* 마켓명 헤더 (스크롤 연동) */}
         <div
           ref={headerScrollRef}
           className="tetris-scroll-x"
@@ -239,7 +343,7 @@ export default function TetrisBoard() {
                   {market.market_name}
                 </div>
                 <div style={{ fontSize: 10, color: '#666' }}>
-                  ?깅줉 {fmtNum(totalRegistered)} / ?섏쭛 {fmtNum(totalCollected)}
+                  등록 {fmtNum(totalRegistered)} / 수집 {fmtNum(totalCollected)}
                 </div>
               </div>
             )
@@ -247,7 +351,7 @@ export default function TetrisBoard() {
         </div>
       </div>
 
-      {/* ?ㅼ???+ 留덉폆 而щ읆 (?섑룊 ?ㅽ겕濡? */}
+      {/* 눈금자 + 마켓 컬럼 (가로 스크롤) */}
       <div style={{ display: 'flex', gap: 0, alignItems: 'flex-start' }}>
         <ScaleRuler
           globalMax={globalMax}
@@ -271,19 +375,19 @@ export default function TetrisBoard() {
               onDrop={handleDrop}
               onReorder={handleReorder}
               onAccountReorder={handleAccountReorder}
-              onRemove={handleRemove}
+              onRemove={handleRemoveWithScope}
               onPolicyChange={handlePolicyChange}
             />
           ))}
           {sortedMarkets.length === 0 && (
             <div style={{ color: '#444', fontSize: 12, padding: '32px 0' }}>
-              ?깅줉??留덉폆 怨꾩젙???놁뒿?덈떎.
+              등록된 마켓 계정이 없습니다.
             </div>
           )}
         </div>
       </div>
 
-      {/* 誘몃같移?? */}
+      {/* 미배치 풀 */}
       {board.unassigned.length > 0 && (
         <div style={{ marginTop: 28 }}>
           <div style={{ color: '#888', fontSize: 12, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -296,7 +400,107 @@ export default function TetrisBoard() {
             unassigned={board.unassigned}
             pixelsPerUnit={pixelsPerUnit}
             onDragStart={handleUnassignedDragStart}
+            assignmentsByBrand={assignmentsByBrand}
+            onBrandClick={(sourceSite, brandName) => {
+              const key = `${sourceSite}::${brandName}`
+              const assignments = assignmentsByBrand.get(key) ?? []
+              setBrandDetailModal({ sourceSite, brandName, assignments })
+            }}
           />
+        </div>
+      )}
+
+      {/* 브랜드 배치 현황 모달 */}
+      {brandDetailModal && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 1000,
+            background: 'rgba(0,0,0,0.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+          onClick={() => setBrandDetailModal(null)}
+        >
+          <div
+            style={{
+              background: '#1a1a1a', border: '1px solid #333', borderRadius: 8,
+              padding: '20px 24px', minWidth: 320, maxWidth: 480,
+              boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ fontSize: 14, color: '#eee', fontWeight: 700, marginBottom: 4 }}>
+              {brandDetailModal.brandName}
+            </div>
+            <div style={{ fontSize: 11, color: '#666', marginBottom: 16 }}>
+              {brandDetailModal.sourceSite}
+            </div>
+            {brandDetailModal.assignments.length === 0 ? (
+              <div style={{ color: '#555', fontSize: 12 }}>배치된 계정이 없습니다.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {brandDetailModal.assignments.map((a, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: 'rgba(255,255,255,0.04)', borderRadius: 4 }}>
+                    <span style={{ fontSize: 11, color: '#ccc', fontWeight: 600 }}>{a.marketName}</span>
+                    <span style={{ fontSize: 10, color: '#888' }}>{a.accountLabel}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button
+              onClick={() => setBrandDetailModal(null)}
+              style={{ marginTop: 16, width: '100%', padding: '7px 0', background: '#2a2a2a', border: '1px solid #444', color: '#ccc', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
+            >
+              닫기
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 삭제 범위 선택 모달 */}
+      {deleteModal && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 1000,
+            background: 'rgba(0,0,0,0.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+          onClick={() => setDeleteModal(null)}
+        >
+          <div
+            style={{
+              background: '#1a1a1a', border: '1px solid #333', borderRadius: 8,
+              padding: '20px 24px', minWidth: 300, maxWidth: 400,
+              boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ fontSize: 14, color: '#eee', fontWeight: 700, marginBottom: 6 }}>
+              "{deleteModal.brandName}" 삭제 범위
+            </div>
+            <div style={{ fontSize: 12, color: '#888', marginBottom: 20 }}>
+              이 계정에서만 삭제할지, 모든 계정에서 삭제할지 선택하세요.
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <button
+                onClick={handleDeleteThisOnly}
+                style={{ padding: '9px 0', background: '#2a2a2a', border: '1px solid #444', color: '#ccc', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
+              >
+                이 계정에서만 삭제
+              </button>
+              <button
+                onClick={handleDeleteAll}
+                style={{ padding: '9px 0', background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.4)', color: '#EF4444', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
+              >
+                모든 계정에서 삭제
+              </button>
+              <button
+                onClick={() => setDeleteModal(null)}
+                style={{ padding: '7px 0', background: 'transparent', border: '1px solid #333', color: '#666', borderRadius: 4, cursor: 'pointer', fontSize: 11 }}
+              >
+                취소
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

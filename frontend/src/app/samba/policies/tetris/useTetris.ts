@@ -56,8 +56,8 @@ export function useTetris() {
 
     const block = dragState.block
 
-    // 같은 계정에 드롭하면 무시
-    if (dragState.fromAccountId === toAccountId && dragState.assignmentId) {
+    // 같은 계정에 드롭하면 무시 (레거시 블럭 포함)
+    if (dragState.fromAccountId === toAccountId) {
       setDragState(null)
       return
     }

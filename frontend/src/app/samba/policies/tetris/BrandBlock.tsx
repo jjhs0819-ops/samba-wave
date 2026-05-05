@@ -14,7 +14,7 @@ interface Props {
   accountId: string
   blockHeight: number
   onDragStart: (block: TetrisBrandBlock, accountId: string) => void
-  onRemove: (assignmentId: string, brandName: string) => void
+  onRemove: (assignmentId: string, brandName: string, sourceSite: string) => void
   policies: Policy[]
   onPolicyChange: (assignmentId: string, policyId: string | null, accountId: string) => Promise<void>
 }
@@ -122,7 +122,7 @@ export default function BrandBlock({
       {/* 제거 버튼 */}
       {block.id && !isLegacy && (
         <button
-          onClick={e => { e.stopPropagation(); onRemove(block.id!, block.brand_name) }}
+          onClick={e => { e.stopPropagation(); onRemove(block.id!, block.brand_name, block.source_site) }}
           style={{
             position: 'absolute',
             top: 2,
