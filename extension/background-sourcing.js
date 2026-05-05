@@ -1132,6 +1132,7 @@ async function handleSourcingJob(job) {
   let openedForegroundTab = false
   let sourcingWindowId = null
   let openedSourcingWindow = false
+  const _jobStartTs = Date.now()
   // hang 방어 timer — try 안 await가 영원히 대기(예: chrome.scripting.executeScript
   // 페이지 컨텍스트 죽음 감지 못함)해도 강제 cleanup. 100초는 백엔드 wrapper(120초)
   // 보다 짧게 잡아 wrapper 만료 전에 탭 정리되게 함.
@@ -1564,7 +1565,8 @@ async function handleSourcingJob(job) {
       }
     }
     await postResult('sourcing/collect-result', { requestId: job.requestId, data: result || { success: false, message: '파싱 실패' } })
-    console.log(`[소싱] ${job.site} 완료: ${result?.products?.length || 0}건`)
+    const _elapsedSec = Math.round((Date.now() - _jobStartTs) / 100) / 10
+    console.log(`[소싱] ${job.site} 완료: ${result?.products?.length || 0}건 (${_elapsedSec}s)`)
   } catch (err) {
     console.error(`[소싱] ${job.site} 오류:`, err)
     try {
