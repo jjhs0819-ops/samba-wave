@@ -163,12 +163,24 @@ class CoupangPlugin(MarketPlugin):
                 "message": "쿠팡 설정에서 출고지/반품지를 먼저 조회 후 선택해주세요.",
             }
 
+        # 카테고리별 정확한 noticeCategoryName/Detail을 쿠팡 메타 API로 동적 조회
+        # — 의류/신발 등록 시 정적 매핑이 쿠팡 표준과 미스매치되어 옵션 notice가 거부되는
+        # 문제(2026-05 보고)의 근본 해결. 실패 시 transform_product 내부에서 정적 매핑 폴백.
+        notice_meta = None
+        if category_id and str(category_id).isdigit():
+            try:
+                notice_meta = await client.get_notice_categories(str(category_id))
+            except Exception as _e:
+                # 메타 조회 실패는 등록 자체를 막지 않음 — fallback 사용
+                pass
+
         # AS 전화번호 주입은 base._apply_market_settings 에서 처리됨
         data = CoupangClient.transform_product(
             product,
             category_id,
             return_center_code=return_center_code,
             outbound_shipping_place_code=outbound_code,
+            notice_meta=notice_meta,
         )
         data["vendorId"] = vendor_id
         data["vendorUserId"] = vendor_user_id or vendor_id

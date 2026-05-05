@@ -414,13 +414,8 @@ _COUPANG_NOTICE_FIELDS: dict[str, list[str]] = {
 }
 
 
-def build_coupang_notices(product: dict[str, Any]) -> list[dict[str, str]]:
-    """상품 카테고리에 맞는 쿠팡 고시정보 notices 배열을 생성한다."""
-    group = detect_notice_group(product)
-    cat_name = _COUPANG_NOTICE_CATEGORY.get(group, "기타 재화")
-    fields = _COUPANG_NOTICE_FIELDS.get(cat_name, _COUPANG_NOTICE_FIELDS["기타 재화"])
-
-    # 상품 데이터에서 값 추출 (없으면 카테고리별 기본값)
+def _build_value_map(product: dict[str, Any], cat_name: str) -> tuple[dict[str, str], str]:
+    """notice value 매핑 사전 + fallback 생성 (build_coupang_notices와 _with_meta 공용)."""
     fallback = "상세페이지 참조"
     _caution_defaults: dict[str, str] = {
         "의류": "세탁 시 뒤집어서 단독 손세탁, 표백제 사용 금지, 직사광선을 피해 그늘에서 건조",
@@ -432,7 +427,6 @@ def build_coupang_notices(product: dict[str, Any]) -> list[dict[str, str]]:
         or product.get("careInstructions", "")
         or _caution_defaults.get(cat_name, fallback)
     )
-
     value_map: dict[str, str] = {
         "제품 소재": product.get("material", "") or fallback,
         "소재": product.get("material", "") or fallback,
@@ -440,12 +434,8 @@ def build_coupang_notices(product: dict[str, Any]) -> list[dict[str, str]]:
         "치수": fallback,
         "크기": fallback,
         "종류": fallback,
-        "제조자(수입자)": product.get("manufacturer", "")
-        or product.get("brand", "")
-        or fallback,
-        "제조자 및 제조판매업자": product.get("manufacturer", "")
-        or product.get("brand", "")
-        or fallback,
+        "제조자(수입자)": product.get("manufacturer", "") or product.get("brand", "") or fallback,
+        "제조자 및 제조판매업자": product.get("manufacturer", "") or product.get("brand", "") or fallback,
         "제조국": product.get("origin", "") or fallback,
         "세탁방법 및 취급시 주의사항": caution_text,
         "취급시 주의사항": caution_text,
@@ -455,6 +445,109 @@ def build_coupang_notices(product: dict[str, Any]) -> list[dict[str, str]]:
         "A/S 책임자와 전화번호": fallback,
         "소비자상담관련 전화번호": fallback,
     }
+    return value_map, fallback
+
+
+def _normalize_notice_meta(meta: Any) -> list[dict[str, Any]] | None:
+    """쿠팡 메타 API 응답에서 notice 그룹 리스트 추출 (응답 구조 다양성 대응).
+
+    응답 구조 후보:
+      a) {"data": [{"noticeCategoryName": ..., "noticeCategoryDetailNames": [{"noticeCategoryDetailName": ...}]}]}
+      b) {"data": {"noticeCategoryGroups": [...]}}
+      c) [...]  (data 키 없이 list 직접)
+    하나라도 매칭되면 정규화된 list[dict] 반환, 못 찾으면 None.
+    """
+    if meta is None:
+        return None
+    raw = meta.get("data") if isinstance(meta, dict) else meta
+    if isinstance(raw, dict):
+        # 후보 b
+        for k in ("noticeCategoryGroups", "noticeCategories", "items"):
+            v = raw.get(k)
+            if isinstance(v, list):
+                return v
+        return None
+    if isinstance(raw, list):
+        return raw
+    return None
+
+
+def build_coupang_notices_with_meta(
+    product: dict[str, Any],
+    meta: Any,
+) -> list[dict[str, str]] | None:
+    """쿠팡 메타 API 응답을 기반으로 notices 배열을 생성한다.
+
+    하드코딩 매핑(_COUPANG_NOTICE_CATEGORY/_COUPANG_NOTICE_FIELDS) 대신 카테고리별
+    실제 noticeCategoryName/Detail을 사용 — 의류/신발 등록 시 옵션의 notice가
+    "Cannot enter '...'" 로 거부되는 미스매치 근본 해결.
+
+    응답이 비정상이거나 그룹이 비어있으면 None 반환 → 호출자가 build_coupang_notices() 폴백.
+    """
+    groups = _normalize_notice_meta(meta)
+    if not groups:
+        return None
+
+    notices: list[dict[str, str]] = []
+    for grp in groups:
+        if not isinstance(grp, dict):
+            continue
+        cat_name = (
+            grp.get("noticeCategoryName")
+            or grp.get("name")
+            or grp.get("category")
+            or ""
+        )
+        if not cat_name:
+            continue
+        details_raw = (
+            grp.get("noticeCategoryDetailNames")
+            or grp.get("noticeCategoryDetails")
+            or grp.get("details")
+            or []
+        )
+        if not isinstance(details_raw, list):
+            continue
+        value_map, fallback = _build_value_map(product, cat_name)
+        for det in details_raw:
+            if isinstance(det, dict):
+                detail_name = (
+                    det.get("noticeCategoryDetailName")
+                    or det.get("name")
+                    or det.get("detail")
+                    or ""
+                )
+            elif isinstance(det, str):
+                detail_name = det
+            else:
+                continue
+            if not detail_name:
+                continue
+            notices.append(
+                {
+                    "noticeCategoryName": cat_name,
+                    "noticeCategoryDetailName": detail_name,
+                    "content": value_map.get(detail_name, fallback),
+                }
+            )
+        # 첫 번째 유효 그룹만 사용 (한 카테고리에 한 그룹)
+        if notices:
+            break
+    return notices or None
+
+
+def build_coupang_notices(product: dict[str, Any]) -> list[dict[str, str]]:
+    """상품 카테고리에 맞는 쿠팡 고시정보 notices 배열을 생성한다 (정적 매핑 폴백).
+
+    가능하면 build_coupang_notices_with_meta(product, meta)를 우선 사용하고,
+    이 함수는 메타 조회 실패 시 fallback으로 호출된다.
+    """
+    group = detect_notice_group(product)
+    cat_name = _COUPANG_NOTICE_CATEGORY.get(group, "기타 재화")
+    fields = _COUPANG_NOTICE_FIELDS.get(cat_name, _COUPANG_NOTICE_FIELDS["기타 재화"])
+
+    # 상품 데이터에서 값 추출 (없으면 카테고리별 기본값)
+    value_map, fallback = _build_value_map(product, cat_name)
 
     notices = []
     for field in fields:
