@@ -1161,8 +1161,12 @@ async function handleSourcingJob(job) {
     if (_sourcingForceStop) { clearTimeout(hangTimer); return }
 
     // active:false — 병렬 처리 시 여러 탭 동시 오픈 (백그라운드 탭도 JS 렌더링 됨)
-    // SSG는 active 탭에서만 JS 렌더링 → 별도 최소화 윈도우로 분리하여 사용자 포커스 미강탈
-    const needsForegroundTab = job.type === 'detail' && job.site === 'SSG'
+    // SSG/ABCmart/GrandStage는 active 탭에서만 카드/최대 혜택가 AJAX 발동 →
+    // 별도 popup 윈도우(minimized)로 분리하여 사용자 포커스 미강탈하면서 정확 추출
+    // (검증 2026-05-05: ABCmart는 background 탭에서 "최대 혜택가" 텍스트 미등장 →
+    //  benefitPrice=0 → 백엔드 cost 미갱신 → cost=sale 잔존 → 마진 3~6% 손실)
+    const needsForegroundTab = job.type === 'detail' &&
+      (job.site === 'SSG' || job.site === 'ABCmart' || job.site === 'GrandStage')
     let tab
     if (needsForegroundTab) {
       // SSG 별도 popup 윈도우 — 사용자 메인 윈도우 포커스 미강탈
