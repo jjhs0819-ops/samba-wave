@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from backend.db.orm import get_read_session_dependency, get_write_session_dependency
+from backend.db.orm import get_write_session_dependency
 from backend.domain.samba.exchange_rate_service import convert_cost_by_source_site
 
 from backend.api.v1.routers.samba.collector_common import (
@@ -959,25 +959,38 @@ async def test_rate_limit(body: RateLimitTestRequest = RateLimitTestRequest()):
 # ══════════════════════════════════════════════════════════════
 
 
+_probe_status_cache: dict = {"data": None, "at": 0.0}
+_PROBE_STATUS_TTL = 30.0
+
+
 @router.get("/probe/status")
-async def probe_status(
-    session: AsyncSession = Depends(get_read_session_dependency),
-):
-    """최근 probe 결과 조회 — IN 일괄 쿼리 1회로 N+1 제거."""
+async def probe_status():
+    """최근 probe 결과 조회 — 30초 in-memory 캐시로 DB 커넥션 절약."""
+    import time
+
     from backend.domain.samba.forbidden.model import SambaSettings
-    from backend.domain.samba.probe.health_checker import PROBE_TARGETS, MARKET_PROBES
+    from backend.domain.samba.probe.health_checker import MARKET_PROBES, PROBE_TARGETS
+    from backend.db.orm import get_read_session
+
+    now = time.monotonic()
+    if (
+        _probe_status_cache["data"] is not None
+        and now - _probe_status_cache["at"] < _PROBE_STATUS_TTL
+    ):
+        return _probe_status_cache["data"]
 
     source_keys = [f"probe_{s}" for s in PROBE_TARGETS]
     market_keys = [f"probe_market_{m}" for m in MARKET_PROBES]
     all_keys = source_keys + market_keys
 
-    rows = (
-        await session.execute(
-            select(SambaSettings.key, SambaSettings.value).where(
-                SambaSettings.key.in_(all_keys)
+    async with get_read_session() as session:
+        rows = (
+            await session.execute(
+                select(SambaSettings.key, SambaSettings.value).where(
+                    SambaSettings.key.in_(all_keys)
+                )
             )
-        )
-    ).all()
+        ).all()
     kv = {k: v for k, v in rows if v}
 
     results: dict = {"sources": {}, "markets": {}}
@@ -990,6 +1003,8 @@ async def probe_status(
         if v:
             results["markets"][mt] = v
 
+    _probe_status_cache["data"] = results
+    _probe_status_cache["at"] = now
     return results
 
 
