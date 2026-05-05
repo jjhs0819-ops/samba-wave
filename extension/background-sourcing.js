@@ -380,7 +380,13 @@ function _normalizeSiteForCap(site) {
 async function _siteSemAcquire(site) {
   const key = _normalizeSiteForCap(site)
   const concMap = await _getSiteConcurrencyMap()
-  const cap = concMap[key] || 99
+  // popup 윈도우 처리 사이트(SSG/ABCmart/LOTTEON)는 큐 적체 방지 위해 최소 4개 강제.
+  // 백엔드 설정값이 더 크면 그대로 사용 (사용자가 명시적으로 늘린 경우).
+  // 검증(2026-05-05): 동시 1개 시 큐 대기 100s+ → 90s timeout 다수 발생.
+  const _POPUP_SITES_MIN_CAP = 4
+  const _isPopupSite = key === 'SSG' || key === 'ABCmart' || key === 'LOTTEON'
+  const _serverCap = concMap[key] || 99
+  const cap = _isPopupSite ? Math.max(_serverCap, _POPUP_SITES_MIN_CAP) : _serverCap
   let sem = _siteSemaphores.get(key)
   if (!sem) {
     sem = { active: 0 }

@@ -105,13 +105,14 @@ KREAM_TIMEOUT = 90
 # 마켓별 분기.
 PRODUCT_TIMEOUT_DEFAULT: int = 60
 SITE_PRODUCT_TIMEOUT: dict[str, int] = {
-    # 실측(2026-05-05 v2.12.18 측정): 확장앱 단건 처리 SSG 17.7s/p90=21s,
-    # ABCmart 13.5s/p90=25s, LOTTEON 22.5s. 처리 자체는 빠름.
-    # timeout 차이는 큐 적체(동시처리 < 발행속도) 흡수용 — 실제 처리 + 큐 대기 마진.
-    "LOTTEON": 90,  # 23s + 큐 대기 60s + 마진
-    "SSG": 90,  # 22s + 큐 대기 60s + 마진
-    "ABCmart": 90,  # 26s + 큐 대기 60s + 마진
-    "GrandStage": 90,
+    # 실측(2026-05-05): 확장앱 단건 SSG 17s, ABC 13s, LOTTEON 22s.
+    # 단건은 빠르지만 큐 적체(동시처리 1개 < 발행속도) 시 대기 시간 폭증.
+    # 90s timeout 시 timeout 다수 발생 확인 → 큐 대기 흡수 위해 150s 유지.
+    # 근본 해결: 확장앱 동시처리 캡 늘리기(아래 _siteSemaphores).
+    "LOTTEON": 150,
+    "SSG": 150,
+    "ABCmart": 150,
+    "GrandStage": 150,
 }
 
 
