@@ -943,12 +943,13 @@ class GsShopSourcingClient:
         detail_html = prd.get("prdImgDescd", "") or ""
         detail_images = self._extract_detail_images_from_html(detail_html)
 
-        # 옵션 (attrTypList)
-        options = self._parse_options_from_render(prd)
-
         # 품절 판단
         prd_sale_st = prd.get("prdSaleSt", "Y")
         is_out_of_stock = prd_sale_st != "Y"
+
+        # 옵션 (attrTypList) — 전체 품절 여부를 옵션에 반영해야 stock_changed 감지 가능
+        options = self._parse_options_from_render(prd, is_out_of_stock=is_out_of_stock)
+
         if not is_out_of_stock and options:
             is_out_of_stock = all(opt.get("isSoldOut", False) for opt in options)
 
@@ -1004,11 +1005,14 @@ class GsShopSourcingClient:
             "status": "collected",
         }
 
-    def _parse_options_from_render(self, prd: dict[str, Any]) -> list[dict[str, Any]]:
+    def _parse_options_from_render(
+        self, prd: dict[str, Any], *, is_out_of_stock: bool = False
+    ) -> list[dict[str, Any]]:
         """renderJson.prd의 attrTypList에서 옵션 추출.
 
         GS샵 옵션은 `attrTypVal` 필드에 구분자 0x08(\\b)로 연결된 형식:
           예) "블랙\\b090(S)" → 색상=블랙, 사이즈=090(S)
+        is_out_of_stock: 상품 전체 품절 여부 → 옵션에 반영해야 stock_changed 감지 가능
         """
         options: list[dict[str, Any]] = []
         attr_list = prd.get("attrTypList") or []
@@ -1021,16 +1025,15 @@ class GsShopSourcingClient:
             opt_name = " / ".join(p.strip() for p in parts if p.strip())
 
             # stockFlg: Y=재고관리중(한정), N=재고관리안함(무제한/항상판매)
-            # 품절 여부는 prdSaleSt로 판단, stockFlg는 재고추적 여부
+            # 옵션 레벨 품절은 상품 전체 prdSaleSt로 결정
             stock_flg = attr.get("stockFlg", "N")
-            is_sold_out = False  # 옵션 레벨 품절은 prdSaleSt로만 판단
 
             options.append(
                 {
                     "name": opt_name,
                     "price": 0,  # GS샵 옵션은 추가가격 없음 (동일가)
-                    "stock": 99,  # 재고 불명 → 99 (프로젝트 규칙)
-                    "isSoldOut": is_sold_out,
+                    "stock": 0 if is_out_of_stock else 99,
+                    "isSoldOut": is_out_of_stock,
                     "attrPrdCd": attr.get("attrPrdCd"),
                 }
             )
