@@ -11,7 +11,7 @@ const MARKET_COLORS: Record<string, string> = {
   '11st': '#E8002D',     // 빨강
   gmarket: '#0065D5',    // 파랑
   auction: '#A855F7',    // 보라 (기존 하늘과 구분)
-  lotteon: '#FF6B00',    // 주황-빨강 (11st 빨강과 구분)
+  lotteon: '#E2E8F0',    // 흰색
   gsshop: '#FACC15',     // 노랑 (쿠팡 주황과 구분)
   ssg: '#6B21A8',        // 진보라 (auction 보라와 구분)
   lottehome: '#DB2777',  // 핑크-마젠타
