@@ -48,13 +48,38 @@ export function fmtDateTime(iso: string | undefined | null): string {
   return `${y}-${m}-${day} [${h}:${min}:${s}]`
 }
 
+function getKstDateParts(base: Date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(base)
+  const year = Number(parts.find(part => part.type === 'year')?.value ?? '0')
+  const month = Number(parts.find(part => part.type === 'month')?.value ?? '1')
+  const day = Number(parts.find(part => part.type === 'day')?.value ?? '1')
+  return { year, month, day }
+}
+
+export function getKstTodayDate(): Date {
+  const { year, month, day } = getKstDateParts()
+  return new Date(year, month - 1, day)
+}
+
+export function formatDateInput(date: Date): string {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 /**
  * 기간 키를 시작일 Date로 변환 (today/1week/1month 등)
  * @param key - 기간 키 (today, yesterday, thisweek, lastweek, 1week, 1month, thismonth, lastmonth, thisyear)
  * @returns 시작일 Date 또는 null (all 등 전체 기간)
  */
 export function getPeriodStart(key: string): Date | null {
-  const now = new Date()
+  const now = getKstTodayDate()
   now.setHours(0, 0, 0, 0)
   switch (key) {
     case 'today': return now
@@ -77,7 +102,7 @@ export function getPeriodStart(key: string): Date | null {
  * @returns 종료일 Date
  */
 export function getPeriodEnd(key: string): Date {
-  const now = new Date()
+  const now = getKstTodayDate()
   now.setHours(0, 0, 0, 0)
   switch (key) {
     case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }

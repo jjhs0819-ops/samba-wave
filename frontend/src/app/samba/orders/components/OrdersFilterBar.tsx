@@ -5,7 +5,7 @@ import { type SambaMarketAccount } from '@/lib/samba/api/commerce'
 import { type SambaSourcingAccount } from '@/lib/samba/api/operations'
 import { PERIOD_BUTTONS } from '@/lib/samba/constants'
 import { inputStyle, fmtNum } from '@/lib/samba/styles'
-import { getPeriodStart, getPeriodEnd } from '@/lib/samba/utils'
+import { formatDateInput, getPeriodStart, getPeriodEnd } from '@/lib/samba/utils'
 import { STATUS_MAP } from '../constants'
 
 const MARKET_STATUS_OPTIONS = [
@@ -101,9 +101,9 @@ export default function OrdersFilterBar(props: Props) {
                   setPeriod(pb.key)
                   if (!startLocked) {
                     const start = getPeriodStart(pb.key)
-                    setCustomStart(start ? start.toLocaleDateString('sv-SE') : '')
+                    setCustomStart(start ? formatDateInput(start) : '')
                   }
-                  setCustomEnd(getPeriodEnd(pb.key).toLocaleDateString('sv-SE'))
+                  setCustomEnd(formatDateInput(getPeriodEnd(pb.key)))
                 }}
                 style={{
                   padding: '0.22rem 0.55rem',

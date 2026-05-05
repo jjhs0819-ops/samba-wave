@@ -14,7 +14,7 @@ import {
   type SambaMarketAccount,
 } from '@/lib/samba/api/commerce'
 import { sourcingAccountApi, type SambaSourcingAccount } from '@/lib/samba/api/operations'
-import { fmtTime } from '@/lib/samba/utils'
+import { fmtTime, formatDateInput, getKstTodayDate } from '@/lib/samba/utils'
 import OrdersTable from './components/OrdersTable'
 import { useSmsMessage } from './hooks/useSmsMessage'
 import { useOrderSync } from './hooks/useOrderSync'
@@ -63,8 +63,8 @@ export default function OrdersPage() {
   const [marketStatus, setMarketStatus] = useState('')
   const [siteFilter, setSiteFilter] = useState('')
   const [accountFilter, setAccountFilter] = useState('')
-  const [inputFilter, setInputFilter] = useState('')
-  const [statusFilter, setStatusFilter] = useState('')
+  const [inputFilter, setInputFilter] = useState('registered')
+  const [statusFilter, setStatusFilter] = useState('cancel_return_excluded')
   // CS 페이지 등 외부에서 ?search=...&search_type=... 로 진입 시 자동 검색
   const initialSearch = searchParams.get('search') || ''
   const [searchText, setSearchText] = useState(initialSearch)
@@ -139,12 +139,12 @@ export default function OrdersPage() {
 
   const [dateLocked, setDateLocked] = useState(false)
   const [customStart, setCustomStart] = useState(() => {
-    const d = new Date()
+    const d = getKstTodayDate()
     d.setDate(d.getDate() - 4)
-    return d.toLocaleDateString('sv-SE')
+    return formatDateInput(d)
   })
   const [startLocked, setStartLocked] = useState(false)
-  const [customEnd, setCustomEnd] = useState(new Date().toLocaleDateString('sv-SE'))
+  const [customEnd, setCustomEnd] = useState(() => formatDateInput(getKstTodayDate()))
 
   const loadOrders = useCallback(async () => {
     setLoading(true)

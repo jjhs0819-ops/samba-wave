@@ -2,6 +2,7 @@
 
 import React, { Dispatch, SetStateAction } from 'react'
 import { fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
+import { formatDateInput, getKstTodayDate } from '@/lib/samba/utils'
 
 interface Notification {
   id: number
@@ -81,7 +82,7 @@ export default function OrdersTopBar(props: Props) {
                 setStatusFilter('')
                 setMarketStatus('취소요청')
                 setCustomStart('2020-01-01')
-                setCustomEnd(new Date().toLocaleDateString('sv-SE'))
+                setCustomEnd(formatDateInput(getKstTodayDate()))
                 setPeriod('')
               }}
               style={{ width: '100%', padding: '0.75rem', background: '#FF4444', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '1rem', fontWeight: 700, cursor: 'pointer', marginTop: '0.5rem' }}
