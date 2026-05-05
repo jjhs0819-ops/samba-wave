@@ -1230,9 +1230,9 @@ export default function PoliciesPage() {
                     <button disabled={lotteSaving} onClick={async () => {
                       setLotteSaving(true)
                       try {
-                        const res = await fetch(`${API_BASE}/api/v1/samba/proxy/lottehome/policy`, {
-                          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(lottePolicy),
-                        }).then(r => r.json())
+                        const res = await request<{ success: boolean; message?: string }>(`${API_BASE}/api/v1/samba/proxy/lottehome/policy`, {
+                          method: 'POST', body: JSON.stringify(lottePolicy),
+                        })
                         showAlert(res.success ? '저장되었습니다.' : (res.message || '저장 실패'))
                       } catch { showAlert('저장 중 오류가 발생했습니다.') }
                       finally { setLotteSaving(false) }
