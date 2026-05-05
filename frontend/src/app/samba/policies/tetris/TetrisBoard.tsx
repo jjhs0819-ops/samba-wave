@@ -1,6 +1,6 @@
 'use client'
-import { useMemo, useRef, useCallback, useState } from 'react'
-import { accountApi } from '@/lib/samba/api'
+import { useMemo, useRef, useCallback, useState, useEffect } from 'react'
+import { accountApi, tetrisApi } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtNum } from '@/lib/samba/styles'
 import { useTetris } from './useTetris'
@@ -91,10 +91,35 @@ export default function TetrisBoard() {
     handleReorder,
     handlePolicyChange,
     handleBrandPolicyChangeAll,
+    handleDeleteBrandScope,
     refresh,
   } = useTetris()
 
   const [deleteModal, setDeleteModal] = useState<DeleteScopeModal | null>(null)
+  const [syncInterval, setSyncInterval] = useState<number>(0)
+  const [syncRunning, setSyncRunning] = useState(false)
+
+  useEffect(() => {
+    tetrisApi.getSyncInterval().then(res => setSyncInterval(res.interval_hours)).catch(() => {})
+  }, [])
+
+  const handleIntervalChange = useCallback(async (hours: number) => {
+    setSyncInterval(hours)
+    await tetrisApi.setSyncInterval(hours)
+  }, [])
+
+  const handleRunSync = useCallback(async () => {
+    setSyncRunning(true)
+    try {
+      const res = await tetrisApi.runSync()
+      showAlert(`전송 잡 생성 완료: ${fmtNum(res.triggered)}개 상품 대상 (${fmtNum(res.jobs)}개 잡)`)
+      await refresh()
+    } catch (e) {
+      showAlert('sync 실패: ' + String(e))
+    } finally {
+      setSyncRunning(false)
+    }
+  }, [refresh])
 
   // horizontal scroll sync between the sticky header row and the market columns
   const contentScrollRef = useRef<HTMLDivElement>(null)
@@ -292,6 +317,48 @@ export default function TetrisBoard() {
         borderBottom: '1px solid #2a2a2a',
       }}>
         <span style={{ color: '#555', fontSize: 11 }}>최대 {fmtNum(globalMax)}개</span>
+
+        {/* 자동 등록 인터벌 설정 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 16 }}>
+          <span style={{ color: '#666', fontSize: 11 }}>자동등록</span>
+          <select
+            value={syncInterval}
+            onChange={e => handleIntervalChange(Number(e.target.value))}
+            style={{
+              background: '#2a2a2a',
+              border: '1px solid #444',
+              color: '#ccc',
+              borderRadius: 4,
+              padding: '2px 6px',
+              fontSize: 11,
+              cursor: 'pointer',
+            }}
+          >
+            <option value={0}>없음</option>
+            <option value={1}>1시간</option>
+            <option value={2}>2시간</option>
+            <option value={4}>4시간</option>
+            <option value={8}>8시간</option>
+            <option value={12}>12시간</option>
+            <option value={24}>24시간</option>
+          </select>
+          <button
+            onClick={handleRunSync}
+            disabled={syncRunning}
+            style={{
+              padding: '2px 10px',
+              background: '#2a2a2a',
+              border: '1px solid #444',
+              color: syncRunning ? '#555' : '#ccc',
+              borderRadius: 4,
+              cursor: syncRunning ? 'default' : 'pointer',
+              fontSize: 11,
+            }}
+          >
+            {syncRunning ? '처리중...' : '지금 실행'}
+          </button>
+        </div>
+
         <button
           onClick={refresh}
           style={{ marginLeft: 'auto', padding: '4px 14px', background: '#2a2a2a', border: '1px solid #444', color: '#ccc', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
@@ -415,7 +482,7 @@ export default function TetrisBoard() {
             {fmtNum(board.unassigned.length)}개
           </span>
         </div>
-        <UnassignedPool
+          <UnassignedPool
           unassigned={board.unassigned}
           pixelsPerUnit={pixelsPerUnit}
           onDragStart={handleUnassignedDragStart}
@@ -423,6 +490,7 @@ export default function TetrisBoard() {
           policies={policies}
           policyByBrand={policyByBrand}
           onBrandPolicyChange={handleBrandPolicyChangeAll}
+          onDeleteBrandScope={handleDeleteBrandScope}
         />
       </div>
 

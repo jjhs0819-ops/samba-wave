@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
@@ -100,6 +101,10 @@ def _derive_sale_status(data: Dict[str, Any]) -> None:
         return
     if all((opt.get("stock", 0) or 0) <= 0 for opt in options if isinstance(opt, dict)):
         data["sale_status"] = "sold_out"
+
+
+def _norm_brand_key(value: str | None) -> str:
+    return "".join((value or "").split()).casefold()
 
 
 class SambaCollectorService:
@@ -578,6 +583,81 @@ class SambaCollectorService:
 
     async def bulk_delete_collected_products(self, product_ids: list[str]) -> int:
         return await self.product_repo.bulk_delete(product_ids)
+
+    async def delete_brand_scope(
+        self,
+        source_site: str,
+        brand_name: str,
+        tenant_id: Optional[str],
+    ) -> dict[str, int]:
+        """소싱처+브랜드 기준으로 관련 상품과 그룹을 모두 삭제한다."""
+        from sqlalchemy import func, or_, delete as sa_delete
+        from sqlmodel import select
+
+        brand_key = _norm_brand_key(brand_name)
+        tenant_clause = self.product_repo._tenant_filter(tenant_id)
+
+        filter_stmt = select(SambaSearchFilter).where(
+            tenant_clause,
+            SambaSearchFilter.source_site == source_site,
+            SambaSearchFilter.is_folder == False,  # noqa: E712
+        )
+        filter_rows = (
+            (await self.product_repo.session.execute(filter_stmt)).scalars().all()
+        )
+        filter_ids = [
+            f.id
+            for f in filter_rows
+            if _norm_brand_key(f.source_brand_name or "") == brand_key
+            or _norm_brand_key(f.name or "") == brand_key
+        ]
+
+        brand_expr = func.lower(
+            func.replace(func.btrim(SambaCollectedProduct.brand), " ", "")
+        )
+        conditions = [brand_expr == brand_key]
+        if filter_ids:
+            conditions.append(SambaCollectedProduct.search_filter_id.in_(filter_ids))
+        product_stmt = select(SambaCollectedProduct).where(
+            tenant_clause,
+            SambaCollectedProduct.source_site == source_site,
+            or_(*conditions),
+        )
+        products = list(
+            (await self.product_repo.session.execute(product_stmt)).scalars().all()
+        )
+
+        registered = [
+            p
+            for p in products
+            if p.registered_accounts and len(p.registered_accounts) > 0
+        ]
+        if registered:
+            raise HTTPException(
+                400,
+                f"등록된 상품이 {len(registered)}건 있어 브랜드 전체 삭제를 진행할 수 없습니다.",
+            )
+
+        product_ids = [p.id for p in products]
+        deleted_products = 0
+        deleted_filters = 0
+        if product_ids:
+            await self.product_repo.session.execute(
+                sa_delete(SambaCollectedProduct).where(
+                    SambaCollectedProduct.id.in_(product_ids)
+                )
+            )
+            deleted_products = len(product_ids)
+        if filter_ids:
+            await self.product_repo.session.execute(
+                sa_delete(SambaSearchFilter).where(SambaSearchFilter.id.in_(filter_ids))
+            )
+            deleted_filters = len(filter_ids)
+        await self.product_repo.session.commit()
+        return {
+            "deleted_products": deleted_products,
+            "deleted_filters": deleted_filters,
+        }
 
     async def search_collected_products(
         self, query: str, limit: int = 100

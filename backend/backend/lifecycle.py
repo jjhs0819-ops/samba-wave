@@ -393,6 +393,71 @@ async def _start_autotune_if_enabled() -> None:
 
 _order_poller_task: asyncio.Task | None = None
 _lottehome_qa_poller_task: asyncio.Task | None = None
+_tetris_sync_task: asyncio.Task | None = None
+_tetris_sync_last_run: float = 0.0
+
+
+async def _tetris_sync_loop() -> None:
+    """테트리스 자동 sync 인터벌 루프 — 1분마다 설정 확인 후 조건 충족 시 전송 잡 생성."""
+    global _tetris_sync_last_run
+    import time
+
+    _log = logging.getLogger("backend.lifecycle")
+    while True:
+        await asyncio.sleep(60)
+        try:
+            from backend.db.orm import get_read_session, get_write_session
+
+            async with get_read_session() as rs:
+                from backend.api.v1.routers.samba.proxy._helpers import _get_setting
+
+                val = await _get_setting(rs, "tetris_sync_interval_hours")
+                interval_hours = int(val) if val else 0
+
+            if interval_hours <= 0:
+                continue
+
+            now = time.time()
+            if now - _tetris_sync_last_run < interval_hours * 3600:
+                continue
+
+            _log.info(f"[테트리스 auto sync] 인터벌 {interval_hours}h 도달 — 시작")
+
+            from sqlalchemy import text as _sa_text
+
+            async with get_read_session() as rs2:
+                rows = await rs2.execute(
+                    _sa_text("SELECT DISTINCT tenant_id FROM samba_tetris_assignment")
+                )
+                tenant_ids: list[str | None] = [row[0] for row in rows.all()]
+
+            from backend.domain.samba.tetris.repository import SambaTetrisRepository
+            from backend.domain.samba.tetris.service import SambaTetrisService
+
+            for tid in tenant_ids:
+                try:
+                    async with get_write_session() as ws:
+                        svc = SambaTetrisService(SambaTetrisRepository(ws), ws)
+                        result = await svc.sync_all(tid)
+                    _log.info(f"[테트리스 auto sync] tenant={tid} {result}")
+                except Exception as e:
+                    _log.error(f"[테트리스 auto sync] tenant={tid} 오류: {e}")
+
+            _tetris_sync_last_run = now
+
+        except Exception as e:
+            logging.getLogger("backend.lifecycle").error(
+                f"[테트리스 sync 루프] 오류: {e}"
+            )
+
+
+async def _start_tetris_sync_scheduler() -> None:
+    global _tetris_sync_task
+
+    _tetris_sync_task = asyncio.create_task(_tetris_sync_loop())
+    logging.getLogger("backend.lifecycle").info(
+        "[lifecycle] 테트리스 sync 스케줄러 시작"
+    )
 
 
 async def _start_order_poller() -> None:
@@ -512,6 +577,7 @@ async def lifespan(app: FastAPI):
         await _start_autotune_if_enabled()
         await _start_order_poller()
         await _start_lottehome_qa_poller()
+        await _start_tetris_sync_scheduler()
     _validate_startup_settings()
 
     try:
@@ -529,6 +595,7 @@ async def lifespan(app: FastAPI):
         await _stop_autotune_and_refreshers()
         await _cancel_task(_order_poller_task)
         await _cancel_task(_lottehome_qa_poller_task)
+        await _cancel_task(_tetris_sync_task)
         await _shutdown_worker_runtime(worker_runtime)
         await _disconnect_cache()
         shutdown_logger.info("[shutdown] graceful shutdown complete")

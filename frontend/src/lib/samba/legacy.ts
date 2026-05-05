@@ -542,6 +542,14 @@ export const collectorApi = {
     request<SambaSearchFilter>(`${SAMBA_PREFIX}/collector/filters/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteFilter: (id: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/filters/${id}`, { method: "DELETE" }),
+  deleteBrandScope: (sourceSite: string, brandName: string) =>
+    request<{ ok: boolean; deleted_products: number; deleted_filters: number }>(
+      `${SAMBA_PREFIX}/collector/brands/delete`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ source_site: sourceSite, brand_name: brandName }),
+      },
+    ),
   bulkApplyPolicy: (filterIds: string[], policyId: string) =>
     request<{ applied: number }>(`${SAMBA_PREFIX}/collector/filters/bulk-apply-policy`, {
       method: 'POST', body: JSON.stringify({ filter_ids: filterIds, policy_id: policyId }),

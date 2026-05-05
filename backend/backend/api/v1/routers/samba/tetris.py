@@ -16,7 +16,12 @@ from backend.dtos.samba.tetris import (
     TetrisBoardResponse,
     TetrisMoveRequest,
     TetrisReorderRequest,
+    TetrisSyncIntervalRequest,
+    TetrisSyncIntervalResponse,
+    TetrisSyncResponse,
 )
+
+TETRIS_SYNC_INTERVAL_KEY = "tetris_sync_interval_hours"
 
 logger = logging.getLogger(__name__)
 
@@ -127,3 +132,37 @@ async def reorder_assignment(
         policy_id=assignment.policy_id,
         position_order=assignment.position_order,
     )
+
+
+@router.get("/sync-interval", response_model=TetrisSyncIntervalResponse)
+async def get_sync_interval(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> TetrisSyncIntervalResponse:
+    """테트리스 자동 sync 인터벌 설정 조회."""
+    from backend.api.v1.routers.samba.proxy._helpers import _get_setting
+
+    val = await _get_setting(session, TETRIS_SYNC_INTERVAL_KEY)
+    return TetrisSyncIntervalResponse(interval_hours=int(val) if val else 0)
+
+
+@router.post("/sync-interval", response_model=TetrisSyncIntervalResponse)
+async def set_sync_interval(
+    body: TetrisSyncIntervalRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> TetrisSyncIntervalResponse:
+    """테트리스 자동 sync 인터벌 설정 저장."""
+    from backend.api.v1.routers.samba.proxy._helpers import _set_setting
+
+    await _set_setting(session, TETRIS_SYNC_INTERVAL_KEY, body.interval_hours)
+    return TetrisSyncIntervalResponse(interval_hours=body.interval_hours)
+
+
+@router.post("/sync", response_model=TetrisSyncResponse)
+async def run_sync(
+    session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+) -> TetrisSyncResponse:
+    """현재 배치 기준 미등록 상품 전송 잡 즉시 생성 (수동 실행)."""
+    svc = _get_service(session)
+    result = await svc.sync_all(tenant_id)
+    return TetrisSyncResponse(**result)

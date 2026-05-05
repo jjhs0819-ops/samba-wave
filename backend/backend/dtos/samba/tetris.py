@@ -48,6 +48,7 @@ class TetrisUnassigned(BaseModel):
     brand_name: str
     registered_count: int
     collected_count: int
+    ai_tagged_count: int = 0
 
 
 class TetrisBoardResponse(BaseModel):
@@ -90,3 +91,23 @@ class TetrisAssignResponse(BaseModel):
     market_account_id: str
     policy_id: Optional[str]
     position_order: int
+
+
+class TetrisSyncIntervalRequest(BaseModel):
+    """자동 sync 인터벌 설정 요청."""
+
+    interval_hours: int
+
+
+class TetrisSyncIntervalResponse(BaseModel):
+    """자동 sync 인터벌 설정 응답."""
+
+    interval_hours: int
+
+
+class TetrisSyncResponse(BaseModel):
+    """수동 sync 실행 응답."""
+
+    assignments: int
+    jobs: int
+    triggered: int

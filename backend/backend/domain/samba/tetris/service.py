@@ -94,7 +94,7 @@ class SambaTetrisService:
                 SELECT id FROM samba_collected_product
                 WHERE (tenant_id IS NULL AND :tid_is_null OR tenant_id = :tid)
                   AND source_site = :site
-                  AND brand = :brand
+                  AND BTRIM(brand) = :brand
                   AND (
                     registered_accounts IS NULL
                     OR NOT (registered_accounts::jsonb ? :account_id)
@@ -124,7 +124,7 @@ class SambaTetrisService:
                     SELECT id FROM samba_collected_product
                     WHERE (tenant_id IS NULL AND :tid_is_null OR tenant_id = :tid)
                       AND source_site = :site
-                      AND brand = :brand
+                      AND BTRIM(brand) = :brand
                       AND registered_accounts IS NOT NULL
                       AND (registered_accounts::text LIKE :account_id OR registered_accounts::text ILIKE :account_id)
                 """),
@@ -156,9 +156,7 @@ class SambaTetrisService:
         }
         """
         # 1. 마켓 계정 전체 로드
-        acc_stmt = select(SambaMarketAccount).where(
-            SambaMarketAccount.is_active == True,  # noqa: E712
-        )
+        acc_stmt = select(SambaMarketAccount)
         if tenant_id is not None:
             # Account APIs expose both tenant-scoped accounts and pre-tenant legacy
             # accounts with NULL tenant_id. Keep Tetris aligned with that behavior.
@@ -386,6 +384,8 @@ class SambaTetrisService:
                 reg_cnt = normalized_registered_map.get((site, brand, acc.id), 0)
                 col_cnt = normalized_collected_map.get((site, brand), 0)
                 ai_cnt = normalized_ai_tagged_map.get((site, brand), 0)
+                if col_cnt <= 0 and ai_cnt <= 0:
+                    continue
                 orig_site, orig_brand = normalized_label_map.get(
                     (site, brand), (site, brand)
                 )
@@ -646,3 +646,52 @@ class SambaTetrisService:
             raise HTTPException(status_code=404, detail="배치 업데이트 실패")
 
         return updated
+
+    # ──────────────────────────────────────────────
+    # 전체 sync (인터벌 자동등록 — A안: 미등록 보충)
+    # ──────────────────────────────────────────────
+
+    async def sync_all(self, tenant_id: Optional[str]) -> dict[str, int]:
+        """현재 배치 전체 기준으로 미등록 상품 transmit 잡 생성."""
+        from backend.domain.samba.job.repository import SambaJobRepository
+
+        assignments = await self._repo.list_by_tenant(tenant_id)
+
+        # 계정별 미등록 product_ids 집계
+        account_products: dict[str, list[str]] = {}
+        for a in assignments:
+            pids = await self._get_product_ids_for_assign(
+                tenant_id, a.source_site, a.brand_name, a.market_account_id
+            )
+            if pids:
+                if a.market_account_id not in account_products:
+                    account_products[a.market_account_id] = []
+                account_products[a.market_account_id].extend(pids)
+
+        job_repo = SambaJobRepository(self._session)
+        job_count = 0
+        total_products = 0
+        for account_id, pids in account_products.items():
+            unique_pids = list(dict.fromkeys(pids))
+            await job_repo.create_async(
+                tenant_id=tenant_id,
+                job_type="transmit",
+                payload={
+                    "product_ids": unique_pids,
+                    "update_items": ["price", "stock", "image", "description"],
+                    "target_account_ids": [account_id],
+                    "skip_unchanged": True,
+                },
+            )
+            job_count += 1
+            total_products += len(unique_pids)
+
+        logger.info(
+            f"[테트리스 sync] {len(assignments)}개 배치 → "
+            f"{job_count}개 잡, {total_products}개 상품"
+        )
+        return {
+            "assignments": len(assignments),
+            "jobs": job_count,
+            "triggered": total_products,
+        }

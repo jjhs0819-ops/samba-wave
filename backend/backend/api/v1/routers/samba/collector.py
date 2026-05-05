@@ -145,6 +145,11 @@ class BlockProductRequest(BaseModel):
     product_ids: list[str]
 
 
+class BrandDeleteRequest(BaseModel):
+    source_site: str
+    brand_name: str
+
+
 class FolderCreateRequest(BaseModel):
     source_site: str
     name: str
@@ -471,6 +476,25 @@ async def delete_filter(
 
     await svc.delete_filter(filter_id)
     return {"ok": True, "deleted_products": deleted_count}
+
+
+@router.post("/brands/delete")
+async def delete_brand_scope(
+    body: BrandDeleteRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+):
+    svc = _get_services(session)
+    result = await svc.delete_brand_scope(
+        source_site=body.source_site,
+        brand_name=body.brand_name,
+        tenant_id=tenant_id,
+    )
+    await cache.clear_pattern("products:*")
+    await cache.delete("products:counts")
+    await cache.delete("products:dashboard-stats-v3")
+    await cache.delete("products:category-tree")
+    return {"ok": True, **result}
 
 
 @router.delete("/products/orphans")

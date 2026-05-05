@@ -130,17 +130,22 @@ export default function BrandBlock({
       {block.id && !isLegacy && (
         <button
           onClick={e => { e.stopPropagation(); onRemove(block.id!, block.brand_name, block.source_site) }}
+          title="이 계정에서 삭제"
           style={{
             position: 'absolute',
             top: 2,
             right: 2,
-            background: 'transparent',
-            border: 'none',
-            color: '#666',
+            width: 16,
+            height: 16,
+            borderRadius: 4,
+            background: 'rgba(239,68,68,0.16)',
+            border: '1px solid rgba(239,68,68,0.35)',
+            color: '#FCA5A5',
             cursor: 'pointer',
-            fontSize: 12,
-            padding: '0 2px',
-            lineHeight: 1,
+            fontSize: 11,
+            fontWeight: 700,
+            padding: 0,
+            lineHeight: '14px',
           }}
         >
           x

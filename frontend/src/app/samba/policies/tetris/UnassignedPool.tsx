@@ -46,6 +46,7 @@ interface Props {
   policies: Policy[]
   policyByBrand: Map<string, { policyId: string | null; policyColor: string }>
   onBrandPolicyChange: (sourceSite: string, brandName: string, policyId: string | null) => Promise<void>
+  onDeleteBrandScope: (sourceSite: string, brandName: string) => Promise<void>
 }
 
 function UnassignedItem({
@@ -57,6 +58,7 @@ function UnassignedItem({
   currentPolicyId,
   currentPolicyColor,
   onPolicyChange,
+  onDeleteBrandScope,
 }: {
   item: TetrisUnassigned
   itemHeight: number
@@ -66,8 +68,10 @@ function UnassignedItem({
   currentPolicyId: string | null
   currentPolicyColor: string
   onPolicyChange: (policyId: string | null) => Promise<void>
+  onDeleteBrandScope: (sourceSite: string, brandName: string) => Promise<void>
 }) {
   const [showPalette, setShowPalette] = useState(false)
+  const brandColor = item.ai_tagged_count > 0 ? '#ddd' : '#EF4444'
 
   const block: TetrisBrandBlock = {
     id: null,
@@ -121,7 +125,7 @@ function UnassignedItem({
       }}>
         <div style={{
           fontSize: 11,
-          color: '#ddd',
+          color: brandColor,
           fontWeight: 600,
           overflow: 'hidden',
           whiteSpace: 'nowrap',
@@ -159,7 +163,7 @@ function UnassignedItem({
       <div style={{
         position: 'absolute',
         top: 3,
-        right: 4,
+        left: 4,
         fontSize: 9,
         color: '#444',
         whiteSpace: 'nowrap',
@@ -167,6 +171,34 @@ function UnassignedItem({
       }}>
         {item.source_site}
       </div>
+
+      <button
+        type="button"
+        title="브랜드 전체 삭제"
+        onClick={async e => {
+          e.stopPropagation()
+          setShowPalette(false)
+          await onDeleteBrandScope(item.source_site, item.brand_name)
+        }}
+        style={{
+          position: 'absolute',
+          top: 2,
+          right: 2,
+          width: 16,
+          height: 16,
+          borderRadius: 4,
+          border: '1px solid rgba(239,68,68,0.35)',
+          background: 'rgba(239,68,68,0.16)',
+          color: '#FCA5A5',
+          fontSize: 11,
+          fontWeight: 700,
+          lineHeight: '14px',
+          cursor: 'pointer',
+          padding: 0,
+        }}
+      >
+        x
+      </button>
 
       {/* 정책 색상 팔레트 */}
       {showPalette && (
@@ -289,6 +321,7 @@ export default function UnassignedPool({
                     currentPolicyId={policyInfo?.policyId ?? null}
                     currentPolicyColor={policyInfo?.policyColor ?? '#6B7280'}
                     onPolicyChange={(policyId) => onBrandPolicyChange(item.source_site, item.brand_name, policyId)}
+                    onDeleteBrandScope={onDeleteBrandScope}
                   />
                 </div>
               )

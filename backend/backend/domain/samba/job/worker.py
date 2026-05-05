@@ -903,6 +903,52 @@ class JobWorker:
         from backend.domain.samba.account.repository import SambaMarketAccountRepository
         from backend.db.orm import get_write_session
 
+        # tetris 매칭 사전 로드
+        # (source_site_norm, brand_norm) → market_account_id
+        _tetris_account_map: dict[tuple[str, str], str] = {}
+        try:
+            from backend.domain.samba.forbidden.model import SambaSettings
+            from backend.domain.samba.tetris.repository import SambaTetrisRepository
+            from backend.domain.samba.tetris.service import (
+                _norm_site_key as _ts_norm_site,
+                _norm_tetris_key as _ts_norm_brand,
+            )
+            from sqlmodel import select as _select
+
+            _tenant_id = getattr(job, "tenant_id", None)
+            _setting_key = (
+                f"{_tenant_id}:tetris_matching_enabled"
+                if _tenant_id
+                else "tetris_matching_enabled"
+            )
+            async with get_write_session() as _cfg_sess:
+                _setting_row = (
+                    (
+                        await _cfg_sess.execute(
+                            _select(SambaSettings).where(
+                                SambaSettings.key == _setting_key
+                            )
+                        )
+                    )
+                    .scalars()
+                    .first()
+                )
+                _tetris_enabled = bool(_setting_row.value) if _setting_row else False
+                if _tetris_enabled:
+                    _tet_repo = SambaTetrisRepository(_cfg_sess)
+                    _assignments = await _tet_repo.list_by_tenant(_tenant_id)
+                    for _a in _assignments:
+                        _norm_key = (
+                            _ts_norm_site(_a.source_site),
+                            _ts_norm_brand(_a.brand_name),
+                        )
+                        _tetris_account_map[_norm_key] = _a.market_account_id
+                    logger.info(
+                        f"[잡워커] tetris 매칭 활성 — {len(_tetris_account_map)}개 브랜드 배치 로드"
+                    )
+        except Exception as _te:
+            logger.warning(f"[잡워커] tetris 매칭 로드 실패(무시): {_te}")
+
         total = len(product_ids)
 
         # 이어하기: 이전 진행 위치를 먼저 읽은 후 진행률 갱신
@@ -954,13 +1000,24 @@ class JobWorker:
                     if _source:
                         prod_name = f"[{_source}] {prod_name}"
 
+                    # tetris 매칭이 활성화된 경우 배치된 계정으로 target 재지정
+                    effective_account_ids = target_account_ids
+                    if _tetris_account_map and prod:
+                        _norm_k = (
+                            _ts_norm_site(prod.source_site),
+                            _ts_norm_brand(prod.brand),
+                        )
+                        _assigned = _tetris_account_map.get(_norm_k)
+                        if _assigned:
+                            effective_account_ids = [_assigned]
+
                     item_svc = SambaShipmentService(
                         SambaShipmentRepository(item_session), item_session
                     )
                     result = await item_svc.start_update(
                         [pid],
                         update_items,
-                        target_account_ids,
+                        effective_account_ids,
                         skip_unchanged=skip_unchanged,
                     )
                     results_list = result.get("results", [])

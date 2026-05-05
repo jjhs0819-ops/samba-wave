@@ -70,6 +70,16 @@ export interface TetrisMoveRequest {
   position_order: number
 }
 
+export interface TetrisSyncIntervalResponse {
+  interval_hours: number
+}
+
+export interface TetrisSyncResponse {
+  assignments: number
+  jobs: number
+  triggered: number
+}
+
 // ─── API 클라이언트 ───────────────────────────────────────────────────────────
 
 export const tetrisApi = {
@@ -99,4 +109,17 @@ export const tetrisApi = {
       body: JSON.stringify(body),
       headers: { 'Content-Type': 'application/json' },
     }),
+
+  getSyncInterval: () =>
+    request<TetrisSyncIntervalResponse>(`${BASE}/sync-interval`),
+
+  setSyncInterval: (interval_hours: number) =>
+    request<TetrisSyncIntervalResponse>(`${BASE}/sync-interval`, {
+      method: 'POST',
+      body: JSON.stringify({ interval_hours }),
+      headers: { 'Content-Type': 'application/json' },
+    }),
+
+  runSync: () =>
+    request<TetrisSyncResponse>(`${BASE}/sync`, { method: 'POST' }),
 }
