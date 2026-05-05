@@ -765,8 +765,8 @@ class LotteonClient:
         start = (now - timedelta(days=days)).strftime("%Y%m%d") + "000000"
         end = now.strftime("%Y%m%d") + "235959"
 
+        # trGrpCd 제거: "SR" 고정 시 MO WEB 채널 주문(네이버 PCS 등) 필터링됨
         body: dict[str, Any] = {
-            "trGrpCd": self.tr_grp_cd or "SR",
             "trNo": self.tr_no,
             "lrtrNo": "",
             "srchStrtDttm": start,
@@ -776,7 +776,7 @@ class LotteonClient:
             "orderStatusList": ["10", "11", "12", "13", "14", "20", "30", "40", "50"],
         }
         logger.info(
-            f"[롯데ON] 주문 조회 {start}~{end}, trGrpCd={self.tr_grp_cd}, trNo={self.tr_no}"
+            f"[롯데ON] 주문 조회 {start}~{end}, trNo={self.tr_no} (trGrpCd 제거)"
         )
 
         # getSROrderList + SellerDeliveryOrdersSearch 병행 조회 후 중복 제거
