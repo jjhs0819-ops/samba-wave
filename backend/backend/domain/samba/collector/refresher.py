@@ -105,13 +105,13 @@ KREAM_TIMEOUT = 90
 # 마켓별 분기.
 PRODUCT_TIMEOUT_DEFAULT: int = 60
 SITE_PRODUCT_TIMEOUT: dict[str, int] = {
-    # LOTTEON: HTML 폴백(45) + pbf 보강(15) + DOM 위임(60) + qapi(~5) 흡수
-    "LOTTEON": 120,
-    # SSG: popup 윈도우(v2.12.16~) 처리 + 카드혜택가 폴링 + 큐 대기 → 180s
-    "SSG": 180,
-    # ABCmart/GrandStage: popup 윈도우 처리 + 최대혜택가 폴링(75) + 큐 대기 흡수 → 150s
-    "ABCmart": 150,
-    "GrandStage": 150,
+    # 실측(2026-05-05 v2.12.18 측정): 확장앱 단건 처리 SSG 17.7s/p90=21s,
+    # ABCmart 13.5s/p90=25s, LOTTEON 22.5s. 처리 자체는 빠름.
+    # timeout 차이는 큐 적체(동시처리 < 발행속도) 흡수용 — 실제 처리 + 큐 대기 마진.
+    "LOTTEON": 90,  # 23s + 큐 대기 60s + 마진
+    "SSG": 90,  # 22s + 큐 대기 60s + 마진
+    "ABCmart": 90,  # 26s + 큐 대기 60s + 마진
+    "GrandStage": 90,
 }
 
 

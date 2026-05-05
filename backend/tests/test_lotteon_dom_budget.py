@@ -17,17 +17,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 class TestProductTimeoutHelper:
     """SITE_PRODUCT_TIMEOUT 분기 헬퍼 동작 검증."""
 
-    def test_lotteon_returns_120(self) -> None:
-        # LOTTEON: HTML(45) + pbf보강(15) + DOM(60) + qapi(~5) 흡수 위해 120s
+    def test_lotteon_returns_90(self) -> None:
+        # 실측(2026-05-05): 확장앱 단건 22s + 큐 대기 60s + 마진 = 90s
         from backend.domain.samba.collector.refresher import get_product_timeout
 
-        assert get_product_timeout("LOTTEON") == 120
+        assert get_product_timeout("LOTTEON") == 90
 
-    def test_ssg_returns_180(self) -> None:
-        # SSG: popup 윈도우 처리(v2.12.16~) + 카드혜택가 폴링 + 큐 대기 흡수 → 180s
+    def test_ssg_returns_90(self) -> None:
+        # 실측(2026-05-05): 확장앱 단건 17s/p90=21s + 큐 대기 60s + 마진 = 90s
         from backend.domain.samba.collector.refresher import get_product_timeout
 
-        assert get_product_timeout("SSG") == 180
+        assert get_product_timeout("SSG") == 90
 
     def test_musinsa_returns_default_60(self) -> None:
         # 비-확장앱 마켓은 기본 60s
@@ -98,19 +98,19 @@ class TestSitePtoMapping:
     def test_lotteon_in_map(self) -> None:
         from backend.domain.samba.collector.refresher import SITE_PRODUCT_TIMEOUT
 
-        assert SITE_PRODUCT_TIMEOUT["LOTTEON"] == 120
+        assert SITE_PRODUCT_TIMEOUT["LOTTEON"] == 90
 
     def test_ssg_in_map(self) -> None:
         from backend.domain.samba.collector.refresher import SITE_PRODUCT_TIMEOUT
 
-        assert SITE_PRODUCT_TIMEOUT["SSG"] == 180
+        assert SITE_PRODUCT_TIMEOUT["SSG"] == 90
 
     def test_abcmart_in_map(self) -> None:
-        # ABCmart/GrandStage: popup 윈도우 처리(v2.12.14~) + 최대혜택가 폴링 + 큐 대기 흡수 → 150s
+        # 실측(2026-05-05) 기반: 확장앱 단건 13-26s + 큐 대기 60s + 마진 = 90s
         from backend.domain.samba.collector.refresher import SITE_PRODUCT_TIMEOUT
 
-        assert SITE_PRODUCT_TIMEOUT["ABCmart"] == 150
-        assert SITE_PRODUCT_TIMEOUT["GrandStage"] == 150
+        assert SITE_PRODUCT_TIMEOUT["ABCmart"] == 90
+        assert SITE_PRODUCT_TIMEOUT["GrandStage"] == 90
 
     def test_musinsa_not_overridden(self) -> None:
         # 순수 백엔드 처리(확장앱 무관) 마켓이 잘못 추가되지 않았는지 확인
