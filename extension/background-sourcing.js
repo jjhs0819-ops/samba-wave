@@ -1167,10 +1167,10 @@ async function handleSourcingJob(job) {
     if (needsForegroundTab) {
       // SSG 별도 popup 윈도우 — 사용자 메인 윈도우 포커스 미강탈
       // 검증 이력 (2026-05-05):
-      //   - state:'minimized' → Whale에서 무시되고 'normal' 생성 ❌
-      //   - left/top: 5000 → "Bounds must be at least 50% within visible screen space" 거부 ❌
-      // 채택: 윈도우 create 후 즉시 update({state:'minimized'})로 최소화
-      //   focused:false 유지로 사용자 메인 윈도우 포커스는 그대로 유지됨
+      //   - state:'minimized' on create → Whale에서 무시되고 'normal' 생성
+      //   - 즉시 minimize → waitForTabLoad의 chrome.tabs.onUpdated 이벤트 누락 → 30초 timeout
+      // 채택: focused:false로 background popup 생성 (사용자 main window 포커스 유지) →
+      //       waitForTabLoad 완료 후 update({state:'minimized'})로 시야 정리
       const win = await chrome.windows.create({
         url: job.url,
         type: 'popup',
@@ -1178,8 +1178,6 @@ async function handleSourcingJob(job) {
         width: 1024,
         height: 768,
       })
-      // create 직후 즉시 minimize — 사용자 시야에서 사라지고 작업표시줄에만 표시
-      try { await chrome.windows.update(win.id, { state: 'minimized' }) } catch {}
       tab = win.tabs?.[0]
       sourcingWindowId = win.id
       openedSourcingWindow = true
@@ -1188,6 +1186,10 @@ async function handleSourcingJob(job) {
     }
     tabId = tab.id
     await waitForTabLoad(tabId, 30000)
+    // SSG popup: 페이지 로드 완료 후 minimize (waitForTabLoad 이벤트 누락 방지)
+    if (openedSourcingWindow && sourcingWindowId) {
+      try { await chrome.windows.update(sourcingWindowId, { state: 'minimized' }) } catch {}
+    }
 
     // 탭 로드 후 재확인 — 로드 중 취소된 경우 즉시 탭 닫고 종료
     if (_sourcingForceStop) {
