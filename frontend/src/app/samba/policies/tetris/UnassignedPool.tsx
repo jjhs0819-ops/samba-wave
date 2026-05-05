@@ -107,6 +107,7 @@ function UnassignedItem({
           overflow: 'hidden',
           whiteSpace: 'nowrap',
           textOverflow: 'ellipsis',
+          paddingRight: 36,
         }}>
           {item.brand_name}
         </div>
@@ -138,7 +139,7 @@ function UnassignedItem({
       </div>
       <div style={{
         position: 'absolute',
-        bottom: 2,
+        top: 3,
         right: 4,
         fontSize: 9,
         color: '#444',
