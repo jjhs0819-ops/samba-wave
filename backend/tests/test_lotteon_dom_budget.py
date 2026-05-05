@@ -23,11 +23,11 @@ class TestProductTimeoutHelper:
 
         assert get_product_timeout("LOTTEON") == 120
 
-    def test_ssg_returns_120(self) -> None:
-        # SSG: 확장앱 의존 동일 구조
+    def test_ssg_returns_180(self) -> None:
+        # SSG: popup 윈도우 처리(v2.12.16~) + 카드혜택가 폴링 + 큐 대기 흡수 → 180s
         from backend.domain.samba.collector.refresher import get_product_timeout
 
-        assert get_product_timeout("SSG") == 120
+        assert get_product_timeout("SSG") == 180
 
     def test_musinsa_returns_default_60(self) -> None:
         # 비-확장앱 마켓은 기본 60s
@@ -103,15 +103,14 @@ class TestSitePtoMapping:
     def test_ssg_in_map(self) -> None:
         from backend.domain.samba.collector.refresher import SITE_PRODUCT_TIMEOUT
 
-        assert SITE_PRODUCT_TIMEOUT["SSG"] == 120
+        assert SITE_PRODUCT_TIMEOUT["SSG"] == 180
 
     def test_abcmart_in_map(self) -> None:
-        # ABCmart/GrandStage는 A안(DOM 위임 1순위) 적용 후 확장앱 의존이므로
-        # LOTTEON/SSG와 동일하게 120s wrapper 필요 (DOM 위임 45s + 큐 대기 흡수)
+        # ABCmart/GrandStage: popup 윈도우 처리(v2.12.14~) + 최대혜택가 폴링 + 큐 대기 흡수 → 150s
         from backend.domain.samba.collector.refresher import SITE_PRODUCT_TIMEOUT
 
-        assert SITE_PRODUCT_TIMEOUT["ABCmart"] == 120
-        assert SITE_PRODUCT_TIMEOUT["GrandStage"] == 120
+        assert SITE_PRODUCT_TIMEOUT["ABCmart"] == 150
+        assert SITE_PRODUCT_TIMEOUT["GrandStage"] == 150
 
     def test_musinsa_not_overridden(self) -> None:
         # 순수 백엔드 처리(확장앱 무관) 마켓이 잘못 추가되지 않았는지 확인
