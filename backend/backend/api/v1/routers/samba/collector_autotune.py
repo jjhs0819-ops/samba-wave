@@ -2127,6 +2127,7 @@ async def _autotune_loop():
     global _autotune_last_tick, _autotune_cycle_count, _autotune_restart_count
     log = logging.getLogger("autotune")
     log.info("[오토튠] 코디네이터 시작")
+    _last_logged_active: set[str] = set()  # active_sites 변동 감지용
 
     try:
         while _autotune_running_event.is_set():
@@ -2224,6 +2225,26 @@ async def _autotune_loop():
                         for s in active_sites
                         if _now_skip >= _site_empty_skip_until.get(s, 0)
                     ]
+
+                    # PC 분담 상황 로그 (active_sites 변동 시에만)
+                    if set(active_sites) != _last_logged_active:
+                        _pcs = get_active_pcs()
+                        _pc_info = (
+                            " / ".join(
+                                f"{d[:12]}→[{','.join(sorted(s)) or '전체해제'}]"
+                                for d, s in _pcs.items()
+                            )
+                            if _pcs
+                            else "미등록(레거시모드)"
+                        )
+                        log.info(
+                            "[오토튠] PC분담: %s | union=%s | enabled_sources=%s | active_sites=%s",
+                            _pc_info,
+                            sorted(pc_union) if pc_union is not None else "전체",
+                            sorted(_enabled_sources) if _enabled_sources else "전체",
+                            sorted(active_sites),
+                        )
+                        _last_logged_active = set(active_sites)
 
                 # 소싱처별 독립 루프 태스크 생성
                 _newly_spawned = []
@@ -2765,6 +2786,10 @@ async def autotune_start(
     _autotune_restart_count = 0
     _site_cycle_counts.clear()
     _site_last_ticks.clear()
+    # 이전 소싱처 루프 명시적 취소 — clear()만 하면 태스크가 계속 실행되어 write_session 점유
+    for _t in list(_site_tasks.values()):
+        if not _t.done():
+            _t.cancel()
     _site_tasks.clear()
     _site_heartbeats.clear()
     _site_empty_hits.clear()
