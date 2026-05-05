@@ -87,6 +87,7 @@ export default function TetrisBoard() {
   const {
     board,
     loading,
+    error,
     pixelsPerUnit,
     setPixelsPerUnit,
     dragState,
@@ -258,6 +259,13 @@ export default function TetrisBoard() {
   }, [pixelsPerUnit, setPixelsPerUnit])
 
   if (loading) return <div style={{ color: '#888', padding: 24, fontSize: 13 }}>데이터 로딩 중...</div>
+  if (error) return (
+    <div style={{ color: '#EF4444', padding: 24, fontSize: 13, background: 'rgba(239,68,68,0.08)', borderRadius: 6, border: '1px solid rgba(239,68,68,0.2)', marginTop: 16 }}>
+      <div style={{ fontWeight: 700, marginBottom: 6 }}>보드 로딩 실패</div>
+      <div style={{ color: '#888', fontSize: 12 }}>{error}</div>
+      <button onClick={refresh} style={{ marginTop: 10, padding: '4px 12px', background: '#2a2a2a', border: '1px solid #444', color: '#ccc', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>재시도</button>
+    </div>
+  )
   if (!board) return null
 
   return (

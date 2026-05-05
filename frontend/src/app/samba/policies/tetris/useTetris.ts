@@ -20,6 +20,7 @@ export type DragState = {
 export function useTetris() {
   const [board, setBoard] = useState<TetrisBoardResponse | null>(null)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   // pixelsPerUnit: 등록 수량 1개 당 픽셀 수 (기본 0.01 = 100개당 1px, 70,000max → 700px)
   const [pixelsPerUnit, setPixelsPerUnit] = useState(0.01)
   const [dragState, setDragState] = useState<DragState>(null)
@@ -27,17 +28,20 @@ export function useTetris() {
   // 보드 데이터 새로고침
   const refresh = useCallback(async () => {
     setLoading(true)
+    setError(null)
     try {
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Request timeout')), 15000)
+        setTimeout(() => reject(new Error('Request timeout (15s)')), 15000)
       )
       const data = await Promise.race([
         tetrisApi.getBoard(),
         timeoutPromise,
       ])
       setBoard(data as TetrisBoardResponse)
-    } catch (error) {
-      console.error('[테트리스] getBoard 실패:', error)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[테트리스] getBoard 실패:', msg)
+      setError(msg)
       setBoard(null)
     } finally {
       setLoading(false)
@@ -161,6 +165,7 @@ export function useTetris() {
   return {
     board,
     loading,
+    error,
     pixelsPerUnit,
     setPixelsPerUnit,
     dragState,
