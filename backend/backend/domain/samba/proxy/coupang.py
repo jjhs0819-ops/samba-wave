@@ -264,6 +264,12 @@ class CoupangClient:
 
     BASE_URL = "https://api-gateway.coupang.com"
 
+    # 카테고리별 notice 메타 캐시 (module-level, 모든 인스턴스 공유)
+    # category_id → (data, timestamp)
+    _notice_meta_cache: dict[str, tuple[dict, float]] = {}
+    _NOTICE_META_CACHE_TTL = 3600  # 1시간
+    _NOTICE_META_CACHE_MAX = 200  # 카테고리 200개 한도 (의류/신발/가방 등 메인 leaf 충분)
+
     def __init__(
         self,
         access_key: str,
@@ -442,7 +448,7 @@ class CoupangClient:
         )
 
     async def get_notice_categories(self, category_id: str) -> dict[str, Any]:
-        """카테고리별 정확한 noticeCategoryName/noticeCategoryDetailName 조회.
+        """카테고리별 정확한 noticeCategoryName/noticeCategoryDetailName 조회 (TTL 캐시).
 
         하드코딩된 한국어 매핑(_COUPANG_NOTICE_CATEGORY/_COUPANG_NOTICE_FIELDS)이
         쿠팡 API 표준 표기와 미스매치되어 의류/신발 등록 시 모든 옵션의 notice가
@@ -461,11 +467,33 @@ class CoupangClient:
               }
             ]
           }
+
+        캐시: module-level _notice_meta_cache, TTL 1시간. 카테고리당 1회 조회 후 재사용.
         """
-        return await self._call_api(
+        import time
+
+        now = time.time()
+        cached = self._notice_meta_cache.get(category_id)
+        if cached:
+            data, ts = cached
+            if now - ts < self._NOTICE_META_CACHE_TTL:
+                return data
+            # 만료된 항목 제거
+            del self._notice_meta_cache[category_id]
+
+        result = await self._call_api(
             "GET",
             f"/v2/providers/seller_api/apis/api/v1/marketplace/meta/notice-categories/{category_id}",
         )
+        self._notice_meta_cache[category_id] = (result, now)
+
+        # 캐시 한도 초과 시 가장 오래된 절반 제거
+        if len(self._notice_meta_cache) > self._NOTICE_META_CACHE_MAX:
+            sorted_items = sorted(self._notice_meta_cache.items(), key=lambda x: x[1][1])
+            for k, _ in sorted_items[: self._NOTICE_META_CACHE_MAX // 2]:
+                del self._notice_meta_cache[k]
+
+        return result
 
     # ------------------------------------------------------------------
     # 출고지 / 반품지 조회
