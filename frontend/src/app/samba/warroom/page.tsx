@@ -202,7 +202,17 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, extern
             let color = '#DCE0E8'
             let fontWeight: number | string = 400
             if (log.msg.includes('쿠키 로테이션')) { color = '#FFFFFF'; fontWeight = 700 }
-            else if (log.msg.includes('실패') || log.msg.includes('오류') || log.msg.includes('차단 HTTP') || log.msg.includes('차단 감지') || log.msg.includes('회 차단')) color = '#C4736E'
+            else if (
+              log.msg.includes('실패')
+              || log.msg.includes('오류')
+              || log.msg.includes('차단 HTTP')
+              || log.msg.includes('차단 감지')
+              || log.msg.includes('회 차단')
+              || log.msg.includes('타임아웃')
+              || log.msg.includes('건너뜀')
+              || log.msg.includes('갱신 차단')
+              || log.msg.includes('미응답')
+            ) { color = '#FF6B6B'; fontWeight = 600 }
             else if (log.msg.includes('품절')) color = '#A78BFA'
             else if (log.msg.includes('사이클 완료')) { color = '#4C9AFF'; fontWeight = 700 }
             else if (log.msg.includes('전송완료')) {

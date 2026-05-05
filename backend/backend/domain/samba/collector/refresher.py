@@ -107,12 +107,11 @@ PRODUCT_TIMEOUT_DEFAULT: int = 60
 SITE_PRODUCT_TIMEOUT: dict[str, int] = {
     # LOTTEON: HTML 폴백(45) + pbf 보강(15) + DOM 위임(60) + qapi(~5) 흡수
     "LOTTEON": 120,
-    # SSG: 확장앱 의존 동일 구조
-    "SSG": 120,
-    # ABCmart/GrandStage: A안 적용 후 무조건 DOM 위임 — 탭 생성(~2)+ load(~10)+
-    # SPA hydration(5)+ DOM 파싱(~2)+ 재시도(3)+ API(~5) + 큐 대기 시간 흡수
-    "ABCmart": 120,
-    "GrandStage": 120,
+    # SSG: popup 윈도우(v2.12.16~) 처리 + 카드혜택가 폴링 + 큐 대기 → 180s
+    "SSG": 180,
+    # ABCmart/GrandStage: popup 윈도우 처리 + 최대혜택가 폴링(75) + 큐 대기 흡수 → 150s
+    "ABCmart": 150,
+    "GrandStage": 150,
 }
 
 
