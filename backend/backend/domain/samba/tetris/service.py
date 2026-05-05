@@ -192,27 +192,19 @@ class SambaTetrisService:
             )
             policy_map[pol.id] = (pol.name, color)
 
-        # 4. Raw SQL 집계 — 소싱처·브랜드별 수집 수
+        # 4. Raw SQL 집계 — 소싱처·브랜드별 수집 수 (상품수집 페이지와 동일 기준: cp.brand만)
         collected_rows = await self._session.execute(
             text("""
                 SELECT
-                    cp.source_site,
-                    COALESCE(
-                        NULLIF(BTRIM(cp.brand), ''),
-                        NULLIF(BTRIM(sf.source_brand_name), ''),
-                        NULLIF(BTRIM(cp.manufacturer), '')
-                    ) AS effective_brand,
+                    source_site,
+                    BTRIM(brand) AS effective_brand,
                     COUNT(*) AS cnt
-                FROM samba_collected_product cp
-                LEFT JOIN samba_search_filter sf ON sf.id = cp.search_filter_id
-                WHERE (cp.tenant_id IS NULL AND :tid_is_null OR cp.tenant_id = :tid)
-                  AND cp.source_site IS NOT NULL
-                  AND (
-                    cp.brand IS NOT NULL
-                    OR (sf.source_brand_name IS NOT NULL AND BTRIM(sf.source_brand_name) != '')
-                    OR (cp.manufacturer IS NOT NULL AND BTRIM(cp.manufacturer) != '')
-                  )
-                GROUP BY cp.source_site, effective_brand
+                FROM samba_collected_product
+                WHERE (tenant_id IS NULL AND :tid_is_null OR tenant_id = :tid)
+                  AND source_site IS NOT NULL
+                  AND brand IS NOT NULL
+                  AND BTRIM(brand) != ''
+                GROUP BY source_site, BTRIM(brand)
             """),
             {"tid": tenant_id, "tid_is_null": tenant_id is None},
         )
@@ -233,30 +225,22 @@ class SambaTetrisService:
             f"accounts={len(accounts)}, tenant_id={tenant_id}"
         )
 
-        # 5. Raw SQL 집계 — JSONB 함수로 account_id 전개 후 DB에서 집계
+        # 5. Raw SQL 집계 — JSONB 함수로 account_id 전개 후 DB에서 집계 (cp.brand만)
         registered_rows = await self._session.execute(
             text("""
                 SELECT
-                    cp.source_site,
-                    COALESCE(
-                        NULLIF(BTRIM(cp.brand), ''),
-                        NULLIF(BTRIM(sf.source_brand_name), ''),
-                        NULLIF(BTRIM(cp.manufacturer), '')
-                    ) AS effective_brand,
-                    jsonb_array_elements_text(cp.registered_accounts::jsonb) AS account_id,
+                    source_site,
+                    BTRIM(brand) AS effective_brand,
+                    jsonb_array_elements_text(registered_accounts::jsonb) AS account_id,
                     COUNT(*) AS cnt
-                FROM samba_collected_product cp
-                LEFT JOIN samba_search_filter sf ON sf.id = cp.search_filter_id
-                WHERE (cp.tenant_id IS NULL AND :tid_is_null OR cp.tenant_id = :tid)
-                  AND cp.registered_accounts IS NOT NULL
-                  AND cp.registered_accounts::text NOT IN ('null', '[]', '')
-                  AND cp.source_site IS NOT NULL
-                  AND (
-                    cp.brand IS NOT NULL
-                    OR (sf.source_brand_name IS NOT NULL AND BTRIM(sf.source_brand_name) != '')
-                    OR (cp.manufacturer IS NOT NULL AND BTRIM(cp.manufacturer) != '')
-                  )
-                GROUP BY cp.source_site, effective_brand, account_id
+                FROM samba_collected_product
+                WHERE (tenant_id IS NULL AND :tid_is_null OR tenant_id = :tid)
+                  AND registered_accounts IS NOT NULL
+                  AND registered_accounts::text NOT IN ('null', '[]', '')
+                  AND source_site IS NOT NULL
+                  AND brand IS NOT NULL
+                  AND BTRIM(brand) != ''
+                GROUP BY source_site, BTRIM(brand), account_id
             """),
             {"tid": tenant_id, "tid_is_null": tenant_id is None},
         )
