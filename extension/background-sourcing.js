@@ -1130,6 +1130,8 @@ async function handleSourcingJob(job) {
   let cleanedUp = false
   let prevActiveTabId = null
   let openedForegroundTab = false
+  let sourcingWindowId = null
+  let openedSourcingWindow = false
   // hang 방어 timer — try 안 await가 영원히 대기(예: chrome.scripting.executeScript
   // 페이지 컨텍스트 죽음 감지 못함)해도 강제 cleanup. 100초는 백엔드 wrapper(120초)
   // 보다 짧게 잡아 wrapper 만료 전에 탭 정리되게 함.
@@ -1159,13 +1161,26 @@ async function handleSourcingJob(job) {
     if (_sourcingForceStop) { clearTimeout(hangTimer); return }
 
     // active:false — 병렬 처리 시 여러 탭 동시 오픈 (백그라운드 탭도 JS 렌더링 됨)
+    // SSG는 active 탭에서만 JS 렌더링 → 별도 최소화 윈도우로 분리하여 사용자 포커스 미강탈
     const needsForegroundTab = job.type === 'detail' && job.site === 'SSG'
+    let tab
     if (needsForegroundTab) {
-      const [prevActive] = await chrome.tabs.query({ active: true, currentWindow: true })
-      prevActiveTabId = prevActive?.id || null
-      openedForegroundTab = true
+      // SSG 별도 최소화 윈도우 생성 — 사용자 메인 윈도우 포커스 미강탈
+      // state:'minimized' + focused:false 조합으로 화면 점유 X, 작업표시줄에만 표시
+      // 페이지 초기 로드(JS 실행)는 최소화 상태에서도 정상 진행됨
+      // (Chromium 백그라운드 탭 throttling 미적용 — 별도 윈도우의 active 탭이므로)
+      const win = await chrome.windows.create({
+        url: job.url,
+        type: 'normal',
+        state: 'minimized',
+        focused: false,
+      })
+      tab = win.tabs?.[0]
+      sourcingWindowId = win.id
+      openedSourcingWindow = true
+    } else {
+      tab = await chrome.tabs.create({ url: job.url, active: false })
     }
-    const tab = await chrome.tabs.create({ url: job.url, active: needsForegroundTab })
     tabId = tab.id
     await waitForTabLoad(tabId, 30000)
 
@@ -1506,7 +1521,11 @@ async function handleSourcingJob(job) {
   } finally {
     // 정상/예외 모든 경로에서 hang timer 해제 + 탭 강제 cleanup 보장
     clearTimeout(hangTimer)
-    if (tabId && !cleanedUp) {
+    if (openedSourcingWindow && sourcingWindowId) {
+      // SSG 등 별도 윈도우는 윈도우째로 정리 (그 안의 탭도 함께 닫힘)
+      try { await chrome.windows.remove(sourcingWindowId) } catch {}
+      cleanedUp = true
+    } else if (tabId && !cleanedUp) {
       try { await chrome.tabs.remove(tabId) } catch {}
       cleanedUp = true
     }
