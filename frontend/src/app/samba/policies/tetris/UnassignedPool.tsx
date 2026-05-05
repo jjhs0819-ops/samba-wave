@@ -6,19 +6,19 @@ import type { TetrisUnassigned, TetrisBrandBlock } from '@/lib/samba/api/tetris'
 const FIXED_BLOCK_PX = 56
 
 const MARKET_COLORS: Record<string, string> = {
-  coupang: '#F5A623',
-  smartstore: '#03C75A',
-  '11st': '#E8002D',
-  gmarket: '#0065D5',
-  auction: '#5A8ED0',
-  lotteon: '#FF0015',
-  gsshop: '#F47920',
-  ssg: '#CC0000',
-  lottehome: '#E50012',
-  homeand: '#8B5CF6',
-  hmall: '#3B82F6',
-  toss: '#0064FF',
-  ktalpha: '#E91E8C',
+  coupang: '#F5A623',    // 주황
+  smartstore: '#03C75A', // 초록
+  '11st': '#E8002D',     // 빨강
+  gmarket: '#0065D5',    // 파랑
+  auction: '#A855F7',    // 보라 (기존 하늘과 구분)
+  lotteon: '#FF6B00',    // 주황-빨강 (11st 빨강과 구분)
+  gsshop: '#FACC15',     // 노랑 (쿠팡 주황과 구분)
+  ssg: '#6B21A8',        // 진보라 (auction 보라와 구분)
+  lottehome: '#DB2777',  // 핑크-마젠타
+  homeand: '#06B6D4',    // 청록
+  hmall: '#3B82F6',      // 파랑 (gmarket 진파랑과 구분)
+  toss: '#1D4ED8',       // 진파랑
+  ktalpha: '#10B981',    // 에메랄드
 }
 
 function getMarketColor(marketType: string): string {
