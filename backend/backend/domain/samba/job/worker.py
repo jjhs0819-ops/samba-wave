@@ -3606,6 +3606,20 @@ class JobWorker:
                     total_skipped += 1
                     continue
 
+                # 브랜드 검증 — GSShop은 키워드 검색이라 무관 브랜드 상품도 매칭됨
+                # 필터의 source_brand_name과 prefix 일치하지 않으면 스킵 (키즈/베이비 라인 보존)
+                _target_brand = (
+                    filters[0].source_brand_name if filters else keyword
+                ) or ""
+                _detail_brand = (detail.get("brand") or it.get("brand") or "").strip()
+                if (
+                    _target_brand
+                    and _detail_brand
+                    and not _detail_brand.startswith(_target_brand)
+                ):
+                    total_skipped += 1
+                    continue
+
                 # GS 상세 응답의 category 필드 = GNB_MAP 포함 전체 경로
                 _cat_str = detail.get("category", "")
                 filter_id = cat_filter_map.get(_cat_str) if _cat_str else None
