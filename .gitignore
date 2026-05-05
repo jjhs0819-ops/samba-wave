@@ -9,6 +9,9 @@ tmp_captures/
 # VM 배포 시크릿 (절대 커밋 금지)
 deploy/vm/.env
 deploy/vm/sa-key.json
+deploy/personal/.env
+deploy/personal/sa-key.json
+deploy/personal/Caddyfile.rendered
 sa-key.json
 *.sa-key.json
 

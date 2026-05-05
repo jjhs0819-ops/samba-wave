@@ -131,7 +131,7 @@ class BackendSettings(BaseSettings):
     @property
     def cors_origin_regex(self) -> str | None:
         """모든 환경에서 localhost + 프로젝트 vercel.app 허용."""
-        return r"https?://(localhost(:\d+)?|127\.0\.0\.1(:\d+)?|samba-wave[a-z0-9-]*\.vercel\.app)"
+        return r"(chrome-extension://.+|https?://(localhost(:\d+)?|127\.0\.0\.1(:\d+)?|samba-wave[a-z0-9-]*\.vercel\.app))"
 
     # ===========================================
     # Computed Properties
