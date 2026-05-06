@@ -88,10 +88,14 @@ class SambaMonitorEventRepository(BaseRepository[SambaMonitorEvent]):
             .label("rn")
         )
 
+        from datetime import datetime, timedelta, timezone
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=1)
         subq = (
             select(SambaMonitorEvent.id, row_num).where(
                 SambaMonitorEvent.event_type == event_type,
                 SambaMonitorEvent.source_site.is_not(None),
+                SambaMonitorEvent.created_at >= cutoff,
             )
         ).subquery()
 
@@ -124,10 +128,14 @@ class SambaMonitorEventRepository(BaseRepository[SambaMonitorEvent]):
             .label("rn")
         )
 
+        from datetime import datetime, timedelta, timezone
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=1)
         subq = (
             select(SambaMonitorEvent.id, row_num).where(
                 SambaMonitorEvent.event_type.in_(event_types),
                 SambaMonitorEvent.source_site.is_not(None),
+                SambaMonitorEvent.created_at >= cutoff,
             )
         ).subquery()
 
