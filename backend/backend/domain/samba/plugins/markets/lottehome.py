@@ -348,41 +348,53 @@ class LotteHomePlugin(MarketPlugin):
         if creds_setting and isinstance(creds_setting, dict):
             auth_creds = {**auth_creds, **creds_setting}
 
-        # 정책을 마지막에 로드 (사용자 설정값이 우선) — camelCase → snake_case 변환
+        # store_lottehome(설정 페이지) → lottehome_policy(정책 페이지) 순으로 로드,
+        # 뒤에 로드한 값이 우선(정책 페이지가 최종 override). 빈 값은 무시.
+        store_lh = await _get_setting(session, "store_lottehome")
+        store_lh = store_lh if isinstance(store_lh, dict) else {}
         policy = await _get_setting(session, "lottehome_policy")
-        if policy and isinstance(policy, dict):
-            auth_creds = {
-                **auth_creds,
-                "md_gsgr_no": policy.get("mdGsgrNo", ""),
-                "disp_no": policy.get("dispNo", ""),
-                "dlv_polc_no": policy.get("dlvPolcNo", ""),
-                "ismr_dlv_polc_no": policy.get("addDlvPolcNo", ""),
-                "corp_rls_pl_sn": policy.get("corpRlsPlSn", ""),
-                "corp_dlvp_sn": policy.get("corpDlvpSn", ""),
-                "brnd_no": policy.get("brndNo", ""),
-                "margin_rate": policy.get("marginRate", ""),
-                "ec_goods_artc_cd": policy.get("ecGoodsArtcCd", "")
-                or auth_creds.get("ec_goods_artc_cd", ""),
-                "item_material": policy.get("itemMaterial", ""),
-                "item_color": policy.get("itemColor", ""),
-                "item_size": policy.get("itemSize", ""),
-                "item_import": policy.get("itemImport", ""),
-                "item_import_note": policy.get("itemImportNote", ""),
-                "item_washing": policy.get("itemWashing", ""),
-                "item_mfg_date": policy.get("itemMfgDate", ""),
-                "item_quality": policy.get("itemQuality", ""),
-                "item_quality_note": policy.get("itemQualityNote", ""),
-                "item_quality_rd": policy.get("itemQualityRd", "1"),
-                "item_as": policy.get("itemAs", ""),
-            }
+        policy = policy if isinstance(policy, dict) else {}
+
+        def _pick(*keys: str) -> str:
+            """policy → store_lh 순으로 첫 번째 non-empty 값 반환."""
+            for src in (policy, store_lh):
+                for k in keys:
+                    v = src.get(k, "")
+                    if v:
+                        return str(v)
+            return ""
+
+        _field_map = {
+            "md_gsgr_no": ("mdGsgrNo",),
+            "disp_no": ("dispNo",),
+            "dlv_polc_no": ("dlvPolcNo",),
+            "ismr_dlv_polc_no": ("addDlvPolcNo",),
+            "corp_rls_pl_sn": ("corpRlsPlSn",),
+            "corp_dlvp_sn": ("corpDlvpSn",),
+            "brnd_no": ("brndNo",),
+            "margin_rate": ("marginRate",),
+            "ec_goods_artc_cd": ("ecGoodsArtcCd",),
+            "item_material": ("itemMaterial",),
+            "item_color": ("itemColor",),
+            "item_size": ("itemSize",),
+            "item_import": ("itemImport",),
+            "item_import_note": ("itemImportNote",),
+            "item_washing": ("itemWashing",),
+            "item_mfg_date": ("itemMfgDate",),
+            "item_quality": ("itemQuality",),
+            "item_quality_note": ("itemQualityNote",),
+            "item_quality_rd": ("itemQualityRd",),
+            "item_as": ("itemAs",),
+        }
+        for dest, src_keys in _field_map.items():
+            val = _pick(*src_keys)
+            if val:
+                auth_creds[dest] = val
+        auth_creds.setdefault("item_quality_rd", "1")
+        if policy or store_lh:
             logger.info(
                 f"[롯데홈쇼핑 정책 로드] ec_goods_artc_cd={auth_creds.get('ec_goods_artc_cd')}, md_gsgr_no={auth_creds.get('md_gsgr_no')}, disp_no={auth_creds.get('disp_no')}, dlv_polc_no={auth_creds.get('dlv_polc_no')}, add_dlv_polc_no={auth_creds.get('add_dlv_polc_no')}, item_material={auth_creds.get('item_material')}, item_size={auth_creds.get('item_size')}, item_quality={auth_creds.get('item_quality')}"
             )
-
-        if not auth_creds:
-            setting = await _get_setting(session, "store_lottehome")
-            if setting and isinstance(setting, dict):
-                auth_creds = setting
         if not auth_creds:
             return {"success": False, "message": "롯데홈쇼핑 설정이 없습니다."}
 
