@@ -358,12 +358,16 @@ async def get_collect_log_buffer(
                 return {"logs": db_logs[since_idx:], "current_idx": len(db_logs)}
 
         # 실행 중인 job 없으면 최근 완료 job fallback (since_idx=0일 때만)
+        # 시간 제한 5분: 다른 종류의 잡(예: ABC브랜드전체수집)이 한참 전에 끝난 로그가
+        # 새로 시작한 brand-scan 화면에 잘못 노출되는 것 방지
         if since_idx == 0:
             result = await session.execute(
                 _text(
                     "SELECT logs FROM samba_jobs"
                     " WHERE job_type='collect' AND logs IS NOT NULL"
                     " AND left(trim(logs::text), 1) = '['"
+                    " AND COALESCE(completed_at, started_at, created_at)"
+                    "     >= NOW() - INTERVAL '5 minutes'"
                     " ORDER BY created_at DESC LIMIT 1"
                 )
             )

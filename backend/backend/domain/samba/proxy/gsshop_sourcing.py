@@ -496,12 +496,20 @@ class GsShopSourcingClient:
             try:
                 resp = await client.get(url, headers=self._headers(mobile=True))
                 if resp.status_code != 200:
+                    logger.warning(
+                        f"[GSSHOP] 카테고리 스캔 상세 실패: {pid} — HTTP {resp.status_code}"
+                    )
                     return None
                 render_data = self._extract_render_json(resp.text)
                 if render_data:
                     return self._build_from_render_json(render_data, pid, 0, "")
-            except Exception:
-                pass
+                logger.warning(
+                    f"[GSSHOP] 카테고리 스캔 상세 실패: {pid} — render JSON 추출 불가 (단종/리다이렉트 추정)"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[GSSHOP] 카테고리 스캔 상세 실패: {pid} — {type(e).__name__}: {e}"
+                )
             return None
 
         async def _fetch(client: httpx.AsyncClient, pid: str) -> None:
@@ -509,6 +517,10 @@ class GsShopSourcingClient:
             async with sem:
                 try:
                     detail = await _fetch_detail(client, pid)
+                    if detail is None:
+                        fail_count += 1
+                        GsShopSourcingClient.scan_progress["detail_fail"] = fail_count
+                        return
                     c1 = detail.get("category1", "")
                     c2 = detail.get("category2", "")
                     c3 = detail.get("category3", "")
@@ -516,6 +528,9 @@ class GsShopSourcingClient:
                     if not c1:
                         fail_count += 1
                         GsShopSourcingClient.scan_progress["detail_fail"] = fail_count
+                        logger.warning(
+                            f"[GSSHOP] 카테고리 스캔 상세 실패: {pid} — category1 누락"
+                        )
                         return
                     # GNB 대카테고리 매핑
                     gnb = self.GNB_MAP.get(c1, "")
@@ -529,7 +544,9 @@ class GsShopSourcingClient:
                 except Exception as e:
                     fail_count += 1
                     GsShopSourcingClient.scan_progress["detail_fail"] = fail_count
-                    logger.debug(f"[GSSHOP] 카테고리 스캔 상세 실패: {pid} — {e}")
+                    logger.warning(
+                        f"[GSSHOP] 카테고리 스캔 상세 실패: {pid} — {type(e).__name__}: {e}"
+                    )
 
         # 500개씩 청크 분할 → 프록시 순차 로테이션
         chunks = [
