@@ -20,8 +20,8 @@ from backend.utils.logger import logger
 from sqlalchemy import or_
 from sqlmodel import select
 
-# get_board() 인메모리 캐시 — 30초 TTL
-_BOARD_CACHE_TTL = 30.0
+# get_board() 인메모리 캐시 — 5분 TTL (61초짜리 쿼리, 자주 갱신 불필요)
+_BOARD_CACHE_TTL = 300.0
 _board_cache: dict = {}
 _board_cache_lock = asyncio.Lock()
 
