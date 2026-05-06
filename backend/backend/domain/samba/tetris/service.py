@@ -202,7 +202,16 @@ class SambaTetrisService:
         )
 
         # 3. 정책 전체 로드 → id: (name, color) 딕셔너리
-        pol_stmt = select(SambaPolicy).where(SambaPolicy.tenant_id == tenant_id)
+        # 계정 쿼리와 동일하게 테넌트 정책 + 레거시(NULL) 정책 모두 포함
+        if tenant_id is not None:
+            pol_stmt = select(SambaPolicy).where(
+                or_(
+                    SambaPolicy.tenant_id == tenant_id,
+                    SambaPolicy.tenant_id == None,  # noqa: E711
+                )
+            )
+        else:
+            pol_stmt = select(SambaPolicy).where(SambaPolicy.tenant_id == None)  # noqa: E711
         pol_result = await self._session.execute(pol_stmt)
         policies: list[SambaPolicy] = list(pol_result.scalars().all())
         policy_map: dict[str, tuple[str, str]] = {}
