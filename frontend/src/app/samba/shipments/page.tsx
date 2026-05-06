@@ -83,7 +83,7 @@ export default function ShipmentsPage() {
   const [currentPage, setCurrentPage] = useState(1)
   const [siteFilter, setSiteFilter] = useState('전체')
   const [soldOutFilter, setSoldOutFilter] = useState('전체')
-  const [registrationFilter, setRegistrationFilter] = useState('미등록')
+  const [registrationFilter, setRegistrationFilter] = useState('전체')
   const [sortBy, setSortBy] = useState('update-desc')
   const [totalCount, setTotalCount] = useState(0)
   const [clientPagingMode, setClientPagingMode] = useState(false)
@@ -93,7 +93,7 @@ export default function ShipmentsPage() {
   const [appliedSearchText, setAppliedSearchText] = useState('')
   const [appliedSiteFilter, setAppliedSiteFilter] = useState('전체')
   const [appliedSoldOutFilter, setAppliedSoldOutFilter] = useState('전체')
-  const [appliedRegistrationFilter, setAppliedRegistrationFilter] = useState('미등록')
+  const [appliedRegistrationFilter, setAppliedRegistrationFilter] = useState('전체')
 
   // 선택
   const [selectedProducts, setSelectedProducts] = useState<string[]>([])

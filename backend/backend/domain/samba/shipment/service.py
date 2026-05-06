@@ -646,6 +646,7 @@ class SambaShipmentService:
                     if account_id not in registered:
                         registered.append(account_id)
                     updates["registered_accounts"] = registered
+                    updates["is_unregistered"] = False
                     updates["status"] = "registered"
                 await product_repo.update_async(p.id, **updates)
 
@@ -1444,6 +1445,7 @@ class SambaShipmentService:
                                         _prod.registered_accounts = (
                                             new_reg if new_reg else None
                                         )
+                                        _prod.is_unregistered = not bool(new_reg)
                                         await self.session.commit()
                                 except Exception as _db_e:
                                     logger.warning(
@@ -1858,6 +1860,7 @@ class SambaShipmentService:
                             if a not in _failed_db_accs
                         ]
                         _retry_prod.registered_accounts = new_reg if new_reg else None
+                        _retry_prod.is_unregistered = not bool(new_reg)
                         await _retry_s.commit()
                         logger.info(
                             f"[전송] DB 재시도 성공 — registered_accounts 갱신: {_failed_db_accs}"

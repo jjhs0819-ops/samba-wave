@@ -891,14 +891,7 @@ async def scroll_products(
 
         conditions.extend(build_market_registered_conditions(_CP))
     elif status == "market_unregistered":
-        # 마켓 미등록 상품: registered_accounts가 null이거나 빈 배열
-        conditions.append(
-            or_(
-                _CP.registered_accounts.is_(None),
-                func.jsonb_typeof(_CP.registered_accounts) != "array",
-                func.jsonb_array_length(_CP.registered_accounts) == 0,
-            )
-        )
+        conditions.append(_CP.is_unregistered == True)  # noqa: E712
     elif status == "sold_out":
         conditions.append(
             or_(_CP.sale_status == "sold_out", _all_options_sold_out(_CP))
@@ -1058,11 +1051,9 @@ async def scroll_products(
                     (
                         and_(
                             _CP.registered_accounts.isnot(None),
-                            func.jsonb_typeof(_CP.registered_accounts) == "array",
                             func.jsonb_array_length(_CP.registered_accounts) > 0,
                             _CP.market_product_nos.isnot(None),
-                            cast(_CP.market_product_nos, String) != "null",
-                            cast(_CP.market_product_nos, String) != "{}",
+                            _CP.market_product_nos != cast("{}", _JSONB),
                         ),
                         literal(1),
                     )
@@ -1248,7 +1239,7 @@ async def product_counts(
         return cached
 
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
-    from sqlalchemy import func, case, literal, and_, cast, String
+    from sqlalchemy import func, case, literal, and_, cast
 
     stmt = select(
         func.count().label("total"),
@@ -1257,11 +1248,9 @@ async def product_counts(
                 (
                     and_(
                         _CP.registered_accounts.isnot(None),
-                        func.jsonb_typeof(_CP.registered_accounts) == "array",
                         func.jsonb_array_length(_CP.registered_accounts) > 0,
                         _CP.market_product_nos.isnot(None),
-                        cast(_CP.market_product_nos, String) != "null",
-                        cast(_CP.market_product_nos, String) != "{}",
+                        _CP.market_product_nos != cast("{}", _JSONB),
                     ),
                     literal(1),
                 )
