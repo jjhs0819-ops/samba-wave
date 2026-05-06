@@ -369,6 +369,20 @@ def _run_transmit_in_thread(worker: "JobWorker", job_id: str, payload: dict):
                 f"[잡워커] 전송 스레드 에러 후 잡 상태 갱신 실패: {job_id} — {fe}"
             )
     finally:
+        # 스레드 전용 엔진 dispose — 풀의 TCP 커넥션을 Cloud SQL에 즉시 반납
+        # 생략 시 loop.close() 만으로는 asyncpg 소켓이 GC까지 살아있어 좀비 누적 → max_connections 고갈
+        try:
+            from backend.db.orm import _write_engine_cache, _read_engine_cache
+
+            for _cache in (_write_engine_cache, _read_engine_cache):
+                _eng = _cache.get(loop)
+                if _eng is not None:
+                    try:
+                        loop.run_until_complete(_eng.dispose())
+                    except Exception as de:
+                        logger.warning(f"[잡워커] 전송 엔진 dispose 실패: {de}")
+        except Exception:
+            pass
         loop.close()
 
 
