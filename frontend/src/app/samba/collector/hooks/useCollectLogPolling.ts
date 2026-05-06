@@ -14,13 +14,15 @@ interface Args {
 }
 
 export function useCollectLogPolling(args: Args) {
-  const { collecting, brandScanning, setCollecting, setCollectLog, load, logRef, manualCollectRef } = args
+  const { collecting, setCollecting, setCollectLog, load, logRef, manualCollectRef } = args
   const collectLogSinceRef = useRef(0)
   const collectLogPollingRef = useRef(false)
 
-  // 수집 로그 링 버퍼 폴링 (서버 로그 — collecting 또는 brandScanning 시 폴링)
+  // 수집 로그 링 버퍼 폴링 (서버 로그) — brand-scan 은 동기 endpoint 라
+  // server log buffer 와 무관하므로 brandScanning 만으로는 폴링하지 않는다.
+  // (brand-scan 진행 중에 다른 collect 잡의 잔여 DB log 가 오인 노출되는 것 방지)
   useEffect(() => {
-    if (!collecting && !brandScanning) return
+    if (!collecting) return
     collectLogPollingRef.current = true
     let checkCount = 0
 
@@ -66,7 +68,7 @@ export function useCollectLogPolling(args: Args) {
     const timer = setInterval(doPoll, 500)
     return () => { clearInterval(timer); collectLogPollingRef.current = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collecting, brandScanning])
+  }, [collecting])
 
   // 페이지 로드 시 진행 중인 수집 Job 자동 감지 + 로그 복원
   useEffect(() => {
