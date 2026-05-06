@@ -26,6 +26,7 @@ export interface DrilldownGroupTableProps {
   setShowDuplicatesModal: Dispatch<SetStateAction<boolean>>; setShowMappingModal: Dispatch<SetStateAction<boolean>>
   setMappingFilter: Dispatch<SetStateAction<SambaSearchFilter | null>>
   setMappingData: Dispatch<SetStateAction<Record<string, string>>>
+  treeCountsLoading?: boolean
   tagPreviewLoading: boolean
   handleDeleteSelectedGroups: () => void | Promise<void>
   handleCollectGroups: () => void | Promise<void>
@@ -49,6 +50,7 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
     setCollectFilter, setMarketRegFilter, setTagRegFilter, setPolicyRegFilter,
     selectedIds, setSelectedIds,
     setShowDuplicatesModal, setShowMappingModal, setMappingFilter, setMappingData,
+    treeCountsLoading,
     tagPreviewLoading,
     handleDeleteSelectedGroups, handleCollectGroups,
     handlePolicyApply, handleUpdateRequestedCount, handleGoToProducts,
@@ -308,7 +310,9 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
                   ) : null}
                 </div>
                 <div style={colStyle(1)}>
-                  {(drillEntry === 'brand' || drillSite) ? (
+                  {treeCountsLoading && drillSite ? (
+                    <div style={{ padding: '0.75rem', color: '#888', fontSize: '0.8rem' }}>로드 중...</div>
+                  ) : (drillEntry === 'brand' || drillSite) ? (
                     brands.length > 0 ? brands.map(([brand, info]) => (
                       <div key={brand} style={itemSt(drillBrand === brand)}
                         onClick={() => {

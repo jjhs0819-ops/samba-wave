@@ -138,6 +138,8 @@ export default function CollectorPage() {
 
   // 트리 + 드릴다운
   const [tree, setTree] = useState<SambaSearchFilter[]>([])
+  const [treeCountsLoading, setTreeCountsLoading] = useState(false)
+  const loadedSitesRef = useRef<Set<string>>(new Set())
   const [drillSite, setDrillSite] = useState<string | null>(null)
   const [drillBrand, setDrillBrand] = useState<string | null>(null)
   const [drillGroup, setDrillGroup] = useState<string | null>(null)
@@ -186,6 +188,7 @@ export default function CollectorPage() {
     try {
       const data = await collectorApi.getFilterTree()
       setTree(data)
+      loadedSitesRef.current = new Set()
       // 트리에서 리프 노드를 flat하게 추출 — /filters API 호출 대체
       const leaves: SambaSearchFilter[] = []
       const walk = (nodes: SambaSearchFilter[]) => {
@@ -198,6 +201,31 @@ export default function CollectorPage() {
       setFilters(leaves)
     } catch { /* 트리 로드 실패 무시 */ }
   }, [])
+
+  const loadSiteCounts = useCallback(async (sourceSite: string) => {
+    if (loadedSitesRef.current.has(sourceSite)) return
+    loadedSitesRef.current.add(sourceSite)
+    setTreeCountsLoading(true)
+    try {
+      const counts = await collectorApi.getFilterTreeCounts(sourceSite)
+      const mergeTree = (nodes: SambaSearchFilter[]): SambaSearchFilter[] =>
+        nodes.map(n => {
+          if (!n.is_folder && counts[n.id]) return { ...n, ...counts[n.id] }
+          if (n.children?.length) return { ...n, children: mergeTree(n.children) }
+          return n
+        })
+      setTree(prev => mergeTree(prev))
+      setFilters(prev => prev.map(f => (f.source_site === sourceSite && counts[f.id] ? { ...f, ...counts[f.id] } : f)))
+    } catch { /* 카운트 로드 실패 무시 */ }
+    setTreeCountsLoading(false)
+  }, [])
+
+  useEffect(() => {
+    if (!drillSite || !tree.length) return
+    const siteNode = tree.find(s => s.id === drillSite)
+    const sourceSite = siteNode?.source_site || siteNode?.name
+    if (sourceSite) loadSiteCounts(sourceSite)
+  }, [drillSite, tree, loadSiteCounts])
 
   useEffect(() => { load(); loadTree(); }, [load, loadTree]);
   useEffect(() => {
@@ -419,6 +447,7 @@ export default function CollectorPage() {
         selectedIds={selectedIds} setSelectedIds={setSelectedIds}
         setShowDuplicatesModal={setShowDuplicatesModal} setShowMappingModal={setShowMappingModal}
         setMappingFilter={setMappingFilter} setMappingData={setMappingData}
+        treeCountsLoading={treeCountsLoading}
         tagPreviewLoading={tagPreviewLoading}
         handleDeleteSelectedGroups={handleDeleteSelectedGroups}
         handleCollectGroups={handleCollectGroups}

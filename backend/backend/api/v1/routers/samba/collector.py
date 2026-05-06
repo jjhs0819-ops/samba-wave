@@ -559,103 +559,22 @@ async def delete_orphan_products(
     }
 
 
-@router.get("/filters/tree")
-async def get_filter_tree(
-    session: AsyncSession = Depends(get_read_session_dependency),
-):
-    """검색그룹 트리 구조 반환. 사이트 > 폴더 > 리프 그룹."""
-    cached = await cache.get("filters:tree:v2")
-    if cached:
-        return cached
-
-    svc = _get_services(session)
-    all_filters = await svc.list_filters(limit=10000)
-
-    # 각 필터별 수집상품 카운트 — 단일 쿼리로 일괄 조회
-    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
-    from sqlalchemy import func as _func
-
-    leaf_ids = [f.id for f in all_filters if not f.is_folder]
-    count_map: dict[str, int] = {}
-    market_reg_map: dict[str, int] = {}
-    ai_tag_map: dict[str, int] = {}
-    ai_image_map: dict[str, int] = {}
-    tag_applied_map: dict[str, int] = {}
-    policy_applied_map: dict[str, int] = {}
-    if leaf_ids:
-        from sqlalchemy import case, and_, literal
-        from sqlalchemy.dialects.postgresql import JSONB as _JSONB2
-
-        count_stmt = (
-            select(
-                _CP.search_filter_id,
-                _func.count().label("cnt"),
-                _func.count(
-                    case((_CP.is_unregistered == False, literal(1)))  # noqa: E712
-                ).label("market_registered"),
-                _func.count(
-                    case(
-                        (
-                            _CP.tags.op("@>")(_func.cast('["__ai_tagged__"]', _JSONB2)),
-                            literal(1),
-                        )
-                    )
-                ).label("ai_tagged"),
-                _func.count(
-                    case(
-                        (
-                            _CP.tags.op("@>")(_func.cast('["__ai_image__"]', _JSONB2)),
-                            literal(1),
-                        )
-                    )
-                ).label("ai_image"),
-                _func.count(
-                    case(
-                        (
-                            and_(
-                                _CP.tags.isnot(None),
-                                _func.jsonb_array_length(_CP.tags) > 0,
-                            ),
-                            literal(1),
-                        )
-                    )
-                ).label("tag_applied"),
-                _func.count(case((_CP.applied_policy_id != None, literal(1)))).label(
-                    "policy_applied"
-                ),
-            )
-            .where(_CP.search_filter_id.in_(leaf_ids))
-            .group_by(_CP.search_filter_id)
-        )
-        count_result = await session.execute(count_stmt)
-        for row in count_result.all():
-            count_map[row[0]] = row[1]
-            market_reg_map[row[0]] = row[2]
-            ai_tag_map[row[0]] = row[3]
-            ai_image_map[row[0]] = row[4]
-            tag_applied_map[row[0]] = row[5]
-            policy_applied_map[row[0]] = row[6]
-
+def _build_filter_tree(all_filters: list, count_map: dict | None = None) -> list:
+    """필터 목록에서 트리 구조를 빌드. count_map 없으면 모든 카운트 0."""
     filter_data = []
     for f in all_filters:
         data = {c.key: getattr(f, c.key) for c in f.__table__.columns}
-        data["collected_count"] = count_map.get(f.id, 0) if not f.is_folder else 0
-        data["market_registered_count"] = (
-            market_reg_map.get(f.id, 0) if not f.is_folder else 0
-        )
-        data["ai_tagged_count"] = ai_tag_map.get(f.id, 0) if not f.is_folder else 0
-        data["ai_image_count"] = ai_image_map.get(f.id, 0) if not f.is_folder else 0
-        data["tag_applied_count"] = (
-            tag_applied_map.get(f.id, 0) if not f.is_folder else 0
-        )
-        data["policy_applied_count"] = (
-            policy_applied_map.get(f.id, 0) if not f.is_folder else 0
-        )
+        counts = count_map.get(f.id, {}) if count_map and not f.is_folder else {}
+        data["collected_count"] = counts.get("cnt", 0)
+        data["market_registered_count"] = counts.get("market_registered", 0)
+        data["ai_tagged_count"] = counts.get("ai_tagged", 0)
+        data["ai_image_count"] = counts.get("ai_image", 0)
+        data["tag_applied_count"] = counts.get("tag_applied", 0)
+        data["policy_applied_count"] = counts.get("policy_applied", 0)
         filter_data.append(data)
 
-    # 트리 빌드: parent_id 기반 + 고아 노드 source_site별 자동 그룹핑
     by_id = {f["id"]: f for f in filter_data}
-    roots = []
+    roots: list = []
     orphans_by_site: dict[str, list] = {}
     for f in filter_data:
         f["children"] = []
@@ -664,21 +583,17 @@ async def get_filter_tree(
         if pid and pid in by_id:
             by_id[pid]["children"].append(f)
         elif not pid:
-            # 폴더는 루트, 비폴더(리프)는 source_site별 가상 폴더로
             if f.get("is_folder"):
                 roots.append(f)
             else:
                 site = f.get("source_site") or "기타"
                 orphans_by_site.setdefault(site, []).append(f)
 
-    # 가상 사이트 폴더 생성 (기존 폴더와 병합)
     existing_site_folders = {r["source_site"]: r for r in roots if r.get("is_folder")}
     for site, orphans in orphans_by_site.items():
         if site in existing_site_folders:
-            # 기존 사이트 폴더에 고아 노드 추가
             existing_site_folders[site]["children"].extend(orphans)
         else:
-            # 가상 사이트 폴더 생성
             virtual = {
                 "id": f"__virtual_{site}",
                 "source_site": site,
@@ -688,9 +603,104 @@ async def get_filter_tree(
                 "collected_count": 0,
             }
             roots.append(virtual)
-
-    await cache.set("filters:tree:v2", roots, ttl=60)
     return roots
+
+
+@router.get("/filters/tree")
+async def get_filter_tree(
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """검색그룹 트리 구조 반환 (카운트 없음). 소싱처 클릭 시 /filters/tree/counts로 카운트 로드."""
+    cached = await cache.get("filters:tree:v3")
+    if cached:
+        return cached
+
+    svc = _get_services(session)
+    all_filters = await svc.list_filters(limit=10000)
+    roots = _build_filter_tree(all_filters)
+    await cache.set("filters:tree:v3", roots, ttl=300)
+    return roots
+
+
+@router.get("/filters/tree/counts")
+async def get_filter_tree_counts(
+    source_site: str,
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """특정 소싱처 leaf 필터들의 카운트 반환. 소싱처 클릭 시 호출."""
+    cache_key = f"filters:tree:counts:{source_site}"
+    cached = await cache.get(cache_key)
+    if cached:
+        return cached
+
+    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
+    from sqlalchemy import func as _func, case, and_, literal
+    from sqlalchemy.dialects.postgresql import JSONB as _JSONB2
+
+    svc = _get_services(session)
+    all_filters = await svc.list_filters(limit=10000)
+    leaf_ids = [
+        f.id for f in all_filters if not f.is_folder and f.source_site == source_site
+    ]
+
+    if not leaf_ids:
+        return {}
+
+    count_stmt = (
+        select(
+            _CP.search_filter_id,
+            _func.count().label("cnt"),
+            _func.count(
+                case((_CP.is_unregistered == False, literal(1)))  # noqa: E712
+            ).label("market_registered"),
+            _func.count(
+                case(
+                    (
+                        _CP.tags.op("@>")(_func.cast('["__ai_tagged__"]', _JSONB2)),
+                        literal(1),
+                    )
+                )
+            ).label("ai_tagged"),
+            _func.count(
+                case(
+                    (
+                        _CP.tags.op("@>")(_func.cast('["__ai_image__"]', _JSONB2)),
+                        literal(1),
+                    )
+                )
+            ).label("ai_image"),
+            _func.count(
+                case(
+                    (
+                        and_(
+                            _CP.tags.isnot(None),
+                            _func.jsonb_typeof(_CP.tags) == "array",
+                            _func.jsonb_array_length(_CP.tags) > 0,
+                        ),
+                        literal(1),
+                    )
+                )
+            ).label("tag_applied"),
+            _func.count(case((_CP.applied_policy_id != None, literal(1)))).label(  # noqa: E711
+                "policy_applied"
+            ),
+        )
+        .where(_CP.search_filter_id.in_(leaf_ids))
+        .group_by(_CP.search_filter_id)
+    )
+    count_result = await session.execute(count_stmt)
+    counts: dict[str, dict] = {}
+    for row in count_result.all():
+        counts[row[0]] = {
+            "collected_count": row[1],
+            "market_registered_count": row[2],
+            "ai_tagged_count": row[3],
+            "ai_image_count": row[4],
+            "tag_applied_count": row[5],
+            "policy_applied_count": row[6],
+        }
+    await cache.set(cache_key, counts, ttl=300)
+    return counts
 
 
 @router.post("/filters/folder", status_code=201)

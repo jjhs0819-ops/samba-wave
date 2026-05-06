@@ -224,6 +224,32 @@ class SambaTetrisService:
             )
             policy_map[pol.id] = (pol.name, color)
 
+        # 3.5. 소싱그룹(검색그룹) applied_policy_id 로드
+        # tetris assignment가 없는 브랜드도 소싱그룹 정책 색상으로 표시
+        sf_rows = await self._session.execute(
+            text("""
+                SELECT DISTINCT ON (source_site, source_brand_name)
+                    source_site, source_brand_name, applied_policy_id
+                FROM samba_search_filter
+                WHERE applied_policy_id IS NOT NULL
+                  AND source_brand_name IS NOT NULL
+                  AND source_brand_name != ''
+                  AND (tenant_id IS NULL AND :tid_is_null OR tenant_id = :tid)
+                ORDER BY source_site, source_brand_name, updated_at DESC
+            """),
+            {"tid": tenant_id, "tid_is_null": tenant_id is None},
+        )
+        # (norm_site, norm_brand) → (policy_id, policy_name, policy_color)
+        sf_policy_map: dict[tuple[str, str], tuple[str, str, str]] = {}
+        for row in sf_rows:
+            site, brand, pid = row[0], row[1], row[2]
+            if not brand or not pid or pid not in policy_map:
+                continue
+            nkey = (_norm_site_key(site), _norm_tetris_key(brand))
+            if nkey not in sf_policy_map:
+                pol_name, pol_color = policy_map[pid]
+                sf_policy_map[nkey] = (pid, pol_name, pol_color)
+
         # 4. Raw SQL 집계 — 소싱처·브랜드별 수집 수 (상품수집 페이지와 동일 기준: cp.brand만)
         collected_rows = await self._session.execute(
             text("""
@@ -370,11 +396,25 @@ class SambaTetrisService:
 
             assignment_blocks: list[dict[str, Any]] = []
             for a in acc_assignments:
-                pol_name, pol_color = (
-                    policy_map.get(a.policy_id or "", ("기본정책", "#3B82F6"))
-                    if a.policy_id
-                    else ("기본정책", "#3B82F6")
-                )
+                if a.policy_id:
+                    pol_name, pol_color = policy_map.get(
+                        a.policy_id, ("기본정책", "#3B82F6")
+                    )
+                    eff_policy_id = a.policy_id
+                else:
+                    _nk = (
+                        _norm_site_key(a.source_site),
+                        _norm_tetris_key(a.brand_name),
+                    )
+                    _sf = sf_policy_map.get(_nk)
+                    if _sf:
+                        eff_policy_id, pol_name, pol_color = _sf
+                    else:
+                        eff_policy_id, pol_name, pol_color = (
+                            None,
+                            "기본정책",
+                            "#3B82F6",
+                        )
                 exact_key = (a.source_site, a.brand_name)
                 norm_key = (
                     _norm_site_key(a.source_site),
@@ -401,7 +441,7 @@ class SambaTetrisService:
                         "id": a.id,
                         "source_site": display_site,
                         "brand_name": display_brand,
-                        "policy_id": a.policy_id,
+                        "policy_id": eff_policy_id,
                         "policy_name": pol_name,
                         "policy_color": pol_color,
                         "registered_count": reg_cnt,
@@ -432,14 +472,15 @@ class SambaTetrisService:
                 orig_site, orig_brand = normalized_label_map.get(
                     (site, brand), (site, brand)
                 )
+                _sf_leg = sf_policy_map.get((site, brand))
                 assignment_blocks.append(
                     {
                         "id": None,
                         "source_site": orig_site,
                         "brand_name": orig_brand,
-                        "policy_id": None,
-                        "policy_name": None,
-                        "policy_color": _LEGACY_COLOR,
+                        "policy_id": _sf_leg[0] if _sf_leg else None,
+                        "policy_name": _sf_leg[1] if _sf_leg else None,
+                        "policy_color": _sf_leg[2] if _sf_leg else _LEGACY_COLOR,
                         "registered_count": reg_cnt,
                         "collected_count": col_cnt,
                         "ai_tagged_count": ai_cnt,

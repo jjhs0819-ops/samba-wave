@@ -463,6 +463,124 @@ async def _tetris_sync_loop() -> None:
             )
 
 
+async def _warmup_filter_tree_counts_cache(logger: logging.Logger) -> None:
+    """서버 시작 시 소싱처별 필터 카운트를 백그라운드에서 미리 계산해 캐시에 저장.
+
+    소싱처 클릭 시 즉시 응답 가능하도록 워밍업.
+    실패해도 무시 — 사용자 클릭 시 정상 동작함.
+    """
+    try:
+        from sqlalchemy import func, case, and_, literal
+        from sqlalchemy.dialects.postgresql import JSONB as _JSONB
+        from sqlmodel import select
+
+        from backend.db.orm import get_read_session
+        from backend.domain.samba.cache import cache
+        from backend.domain.samba.collector.model import (
+            SambaCollectedProduct,
+            SambaSearchFilter,
+        )
+
+        async with get_read_session() as session:
+            # 소싱처 목록 조회
+            site_rows = await session.execute(
+                select(SambaSearchFilter.source_site)
+                .where(
+                    SambaSearchFilter.is_folder == False,  # noqa: E712
+                    SambaSearchFilter.source_site.isnot(None),
+                )
+                .distinct()
+            )
+            source_sites = [r[0] for r in site_rows.all() if r[0]]
+
+        for source_site in source_sites:
+            cache_key = f"filters:tree:counts:{source_site}"
+            if await cache.get(cache_key):
+                continue  # 이미 캐시됨
+            try:
+                async with get_read_session() as session:
+                    leaf_rows = await session.execute(
+                        select(SambaSearchFilter.id).where(
+                            SambaSearchFilter.is_folder == False,  # noqa: E712
+                            SambaSearchFilter.source_site == source_site,
+                        )
+                    )
+                    leaf_ids = [r[0] for r in leaf_rows.all()]
+                    if not leaf_ids:
+                        continue
+
+                    _CP = SambaCollectedProduct
+                    count_stmt = (
+                        select(
+                            _CP.search_filter_id,
+                            func.count().label("cnt"),
+                            func.count(
+                                case((_CP.is_unregistered == False, literal(1)))  # noqa: E712
+                            ).label("market_registered"),
+                            func.count(
+                                case(
+                                    (
+                                        _CP.tags.op("@>")(
+                                            func.cast('["__ai_tagged__"]', _JSONB)
+                                        ),
+                                        literal(1),
+                                    )
+                                )
+                            ).label("ai_tagged"),
+                            func.count(
+                                case(
+                                    (
+                                        _CP.tags.op("@>")(
+                                            func.cast('["__ai_image__"]', _JSONB)
+                                        ),
+                                        literal(1),
+                                    )
+                                )
+                            ).label("ai_image"),
+                            func.count(
+                                case(
+                                    (
+                                        and_(
+                                            _CP.tags.isnot(None),
+                                            func.jsonb_typeof(_CP.tags) == "array",
+                                            func.jsonb_array_length(_CP.tags) > 0,
+                                        ),
+                                        literal(1),
+                                    )
+                                )
+                            ).label("tag_applied"),
+                            func.count(
+                                case((_CP.applied_policy_id.isnot(None), literal(1)))
+                            ).label("policy_applied"),
+                        )
+                        .where(_CP.search_filter_id.in_(leaf_ids))
+                        .group_by(_CP.search_filter_id)
+                    )
+                    count_result = await session.execute(count_stmt)
+                    counts: dict[str, dict] = {}
+                    for row in count_result.all():
+                        counts[row[0]] = {
+                            "collected_count": row[1],
+                            "market_registered_count": row[2],
+                            "ai_tagged_count": row[3],
+                            "ai_image_count": row[4],
+                            "tag_applied_count": row[5],
+                            "policy_applied_count": row[6],
+                        }
+                    await cache.set(cache_key, counts, ttl=300)
+                    logger.info(
+                        "[startup] 필터 카운트 워밍업 완료: %s (%d leaf)",
+                        source_site,
+                        len(leaf_ids),
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "[startup] 필터 카운트 워밍업 실패: %s — %s", source_site, exc
+                )
+    except Exception as exc:
+        logger.warning("[startup] 필터 카운트 워밍업 전체 실패: %s", exc)
+
+
 async def _warmup_tetris_board_cache(logger: logging.Logger) -> None:
     """서버 시작 시 테트리스 보드 캐시 백그라운드 워밍업.
 
@@ -573,6 +691,7 @@ async def lifespan(app: FastAPI):
     # yield 이전에 실행하면 health check가 그만큼 지연되므로 백그라운드 태스크로 분리
     asyncio.create_task(_sync_playauto_registered_accounts(startup_logger))
     asyncio.create_task(_warmup_tetris_board_cache(startup_logger))
+    asyncio.create_task(_warmup_filter_tree_counts_cache(startup_logger))
 
     # DB 프록시 캐시를 워커/오토튠 시작 전에 프라임한다.
     # async 컨텍스트에서는 _get_cached_proxies 가 백그라운드 태스크만 예약하므로,
