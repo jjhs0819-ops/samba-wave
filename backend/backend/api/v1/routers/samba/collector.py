@@ -269,17 +269,7 @@ async def list_filters(session: AsyncSession = Depends(get_write_session_depende
             _CP.search_filter_id,
             func.count().label("collected_count"),
             func.count(
-                case(
-                    (
-                        and_(
-                            _CP.registered_accounts.isnot(None),
-                            func.jsonb_array_length(_CP.registered_accounts) > 0,
-                            _CP.market_product_nos.isnot(None),
-                            _CP.market_product_nos != func.cast("{}", _JSONB),
-                        ),
-                        literal(1),
-                    )
-                )
+                case((_CP.is_unregistered == False, literal(1)))  # noqa: E712
             ).label("market_registered_count"),
             func.count(case((and_(_CP.applied_policy_id != None), literal(1)))).label(
                 "policy_applied_count"
@@ -574,6 +564,10 @@ async def get_filter_tree(
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """검색그룹 트리 구조 반환. 사이트 > 폴더 > 리프 그룹."""
+    cached = await cache.get("filters:tree:v2")
+    if cached:
+        return cached
+
     svc = _get_services(session)
     all_filters = await svc.list_filters(limit=10000)
 
@@ -597,17 +591,7 @@ async def get_filter_tree(
                 _CP.search_filter_id,
                 _func.count().label("cnt"),
                 _func.count(
-                    case(
-                        (
-                            and_(
-                                _CP.registered_accounts.isnot(None),
-                                _func.jsonb_array_length(_CP.registered_accounts) > 0,
-                                _CP.market_product_nos.isnot(None),
-                                _CP.market_product_nos != _func.cast("{}", _JSONB2),
-                            ),
-                            literal(1),
-                        )
-                    )
+                    case((_CP.is_unregistered == False, literal(1)))  # noqa: E712
                 ).label("market_registered"),
                 _func.count(
                     case(
@@ -705,6 +689,7 @@ async def get_filter_tree(
             }
             roots.append(virtual)
 
+    await cache.set("filters:tree:v2", roots, ttl=60)
     return roots
 
 
