@@ -274,9 +274,8 @@ async def list_filters(session: AsyncSession = Depends(get_write_session_depende
                 case(
                     (
                         and_(
-                            _CP.registered_accounts != None,
-                            cast(_CP.registered_accounts, String) != "null",
-                            cast(_CP.registered_accounts, String) != "[]",
+                            _CP.registered_accounts.isnot(None),
+                            func.jsonb_array_length(_CP.registered_accounts) > 0,
                             _CP.market_product_nos != None,
                             cast(_CP.market_product_nos, String) != "null",
                             cast(_CP.market_product_nos, String) != "{}",
@@ -595,9 +594,8 @@ async def get_filter_tree(
                     case(
                         (
                             and_(
-                                _CP.registered_accounts != None,
-                                cast(_CP.registered_accounts, String) != "null",
-                                cast(_CP.registered_accounts, String) != "[]",
+                                _CP.registered_accounts.isnot(None),
+                                _func.jsonb_array_length(_CP.registered_accounts) > 0,
                                 _CP.market_product_nos != None,
                                 cast(_CP.market_product_nos, String) != "null",
                                 cast(_CP.market_product_nos, String) != "{}",
@@ -1187,7 +1185,7 @@ async def products_init_data(
 
         base_queries = [
             session.execute(select(SambaPolicy).limit(50)),
-            session.execute(select(_SF).where(_SF.is_folder == False).limit(500)),
+            session.execute(select(_SF).where(_SF.is_folder == False)),
             session.execute(
                 select(SambaForbiddenWord).where(
                     SambaForbiddenWord.type == "deletion",

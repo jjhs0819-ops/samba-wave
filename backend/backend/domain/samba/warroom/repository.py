@@ -59,14 +59,15 @@ class SambaMonitorEventRepository(BaseRepository[SambaMonitorEvent]):
         self,
         event_type: str,
         limit: int = 50,
+        since: datetime | None = None,
     ) -> List[SambaMonitorEvent]:
-        """이벤트 타입별 최근 이벤트 조회."""
-        stmt = (
-            select(SambaMonitorEvent)
-            .where(SambaMonitorEvent.event_type == event_type)
-            .order_by(SambaMonitorEvent.created_at.desc())
-            .limit(limit)
+        """이벤트 타입별 최근 이벤트 조회. since 지정 시 DB 레벨에서 시간 필터링."""
+        stmt = select(SambaMonitorEvent).where(
+            SambaMonitorEvent.event_type == event_type
         )
+        if since:
+            stmt = stmt.where(SambaMonitorEvent.created_at >= since)
+        stmt = stmt.order_by(SambaMonitorEvent.created_at.desc()).limit(limit)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 

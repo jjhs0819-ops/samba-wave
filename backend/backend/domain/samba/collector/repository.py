@@ -2,7 +2,7 @@
 
 from typing import List
 
-from sqlalchemy import cast, or_, String
+from sqlalchemy import cast, func, or_
 from sqlmodel import select
 
 from backend.domain.shared.base_repository import BaseRepository
@@ -50,18 +50,21 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def list_by_status(self, status: str) -> List[SambaCollectedProduct]:
+    async def list_by_status(
+        self, status: str, limit: int = 200
+    ) -> List[SambaCollectedProduct]:
         return await self.filter_by_async(
-            status=status, order_by="created_at", order_by_desc=True
+            status=status, order_by="created_at", order_by_desc=True, limit=limit
         )
 
     async def list_by_filters(
         self,
         status: str | None = None,
         source_site: str | None = None,
+        limit: int = 200,
     ) -> List[SambaCollectedProduct]:
         """status, source_site 조합 필터링."""
-        kwargs: dict = {"order_by": "created_at", "order_by_desc": True}
+        kwargs: dict = {"order_by": "created_at", "order_by_desc": True, "limit": limit}
         if status:
             kwargs["status"] = status
         if source_site:
@@ -125,8 +128,7 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
         ).where(
             self._tenant_filter(tenant_id),
             SambaCollectedProduct.registered_accounts.isnot(None),
-            cast(SambaCollectedProduct.registered_accounts, String) != "null",
-            cast(SambaCollectedProduct.registered_accounts, String) != "[]",
+            func.jsonb_array_length(SambaCollectedProduct.registered_accounts) > 0,
         )
         result = await self.session.execute(stmt)
         rows = result.all()
@@ -144,7 +146,6 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
         filter_ids 지정 시 해당 search_filter_id 상품만 대상 (드릴 컨텍스트 정밀 필터).
         source_site 지정 시 해당 소싱처만 대상 (filter_ids 없을 때 사용).
         """
-        from sqlalchemy import func
 
         tf = self._tenant_filter(tenant_id)
         if filter_ids:
@@ -169,8 +170,7 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
                 *sc,
                 *fc,
                 SambaCollectedProduct.registered_accounts.isnot(None),
-                cast(SambaCollectedProduct.registered_accounts, String) != "null",
-                cast(SambaCollectedProduct.registered_accounts, String) != "[]",
+                func.jsonb_array_length(SambaCollectedProduct.registered_accounts) > 0,
             )
             .distinct()
         ).subquery()
@@ -222,8 +222,8 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
             self._tenant_filter(tenant_id),
             cast(SambaCollectedProduct.market_names, JSONB)[market_key].astext
             == product_name,
-            cast(SambaCollectedProduct.registered_accounts, String).contains(
-                f'"{account_id}"'
+            SambaCollectedProduct.registered_accounts.op("@>")(
+                cast(f'["{account_id}"]', JSONB)
             ),
         )
         if exclude_product_id is not None:

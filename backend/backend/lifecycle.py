@@ -166,7 +166,7 @@ async def _apply_startup_schema_fixes(logger: logging.Logger) -> None:
 
 async def _sync_playauto_registered_accounts(logger: logging.Logger) -> None:
     try:
-        from sqlalchemy import String, cast
+        from sqlalchemy import cast
         from sqlmodel import select
 
         from backend.db.orm import get_write_session
@@ -255,9 +255,11 @@ async def _sync_playauto_registered_accounts(logger: logging.Logger) -> None:
                     updated,
                 )
 
+                from sqlalchemy.dialects.postgresql import JSONB as _JSONB
+
                 reverse_stmt = select(SambaCollectedProduct).where(
-                    cast(SambaCollectedProduct.registered_accounts, String).like(
-                        f'%"{account.id}"%'
+                    SambaCollectedProduct.registered_accounts.op("@>")(
+                        cast(f'["{account.id}"]', _JSONB)
                     )
                 )
                 reverse_result = await session.exec(reverse_stmt)

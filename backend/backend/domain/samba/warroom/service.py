@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import func, cast, String
+from sqlalchemy import func
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -205,9 +205,8 @@ class SambaMonitorService:
             ),
             func.count(SambaCollectedProduct.id).filter(
                 SambaCollectedProduct.last_refreshed_at >= since_24h,
-                SambaCollectedProduct.registered_accounts != None,
-                func.length(cast(SambaCollectedProduct.registered_accounts, String))
-                > 2,
+                SambaCollectedProduct.registered_accounts.isnot(None),
+                func.jsonb_array_length(SambaCollectedProduct.registered_accounts) > 0,
             ),
             func.count(SambaCollectedProduct.id).filter(
                 SambaCollectedProduct.refresh_error_count > 0
@@ -228,9 +227,10 @@ class SambaMonitorService:
         since_24h: datetime,
     ) -> Dict[str, Any]:
         """24시간 가격 변동 통계."""
-        # 이벤트 기반 가격 변동 조회
-        events = await self.repo.list_by_type("price_changed", limit=100)
-        recent_events = [e for e in events if e.created_at >= since_24h]
+        # DB 레벨에서 24시간 필터링 (ix_sme_event_type_created_at_desc 인덱스 활용)
+        recent_events = await self.repo.list_by_type(
+            "price_changed", limit=100, since=since_24h
+        )
 
         changes_24h = len(recent_events)
 

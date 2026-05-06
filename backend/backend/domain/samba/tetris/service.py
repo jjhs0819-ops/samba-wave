@@ -292,6 +292,16 @@ class SambaTetrisService:
         )
 
         # 9. 보드 조립
+        # O(n²) 방지: 계정별 assignment 사전 인덱싱
+        assignments_by_account: dict[str, list[SambaTetrisAssignment]] = {}
+        for a in assignments:
+            assignments_by_account.setdefault(a.market_account_id, []).append(a)
+
+        # O(n²) 방지: 계정별 registered legacy_keys 사전 인덱싱
+        legacy_keys_by_account: dict[str, list[tuple[str, str]]] = {}
+        for site, brand, aid in registered_keys:
+            legacy_keys_by_account.setdefault(aid, []).append((site, brand))
+
         # market_type → market group dict
         market_groups: dict[str, dict[str, Any]] = {}
         market_order: list[str] = []
@@ -319,12 +329,11 @@ class SambaTetrisService:
                 else None
             )
 
-            # 해당 계정에 배치된 assignment 목록
-            acc_assignments: list[SambaTetrisAssignment] = [
-                a for a in assignments if a.market_account_id == acc.id
-            ]
-            # 배치 순서 정렬 (이미 repo에서 정렬됐지만 계정 필터 후 재정렬)
-            acc_assignments.sort(key=lambda a: a.position_order)
+            # 해당 계정에 배치된 assignment 목록 — O(1) dict 조회
+            acc_assignments: list[SambaTetrisAssignment] = sorted(
+                assignments_by_account.get(acc.id, []),
+                key=lambda a: a.position_order,
+            )
 
             assignment_blocks: list[dict[str, Any]] = []
             for a in acc_assignments:
@@ -375,10 +384,11 @@ class SambaTetrisService:
                 (_norm_site_key(a.source_site), _norm_tetris_key(a.brand_name))
                 for a in acc_assignments
             }
+            # O(1) dict 조회 — registered_keys 전체 순회 불필요
             legacy_keys = [
                 (site, brand)
-                for (site, brand, aid) in registered_keys
-                if aid == acc.id and (site, brand) not in assigned_site_brand
+                for (site, brand) in legacy_keys_by_account.get(acc.id, [])
+                if (site, brand) not in assigned_site_brand
             ]
             for site, brand in legacy_keys:
                 reg_cnt = normalized_registered_map.get((site, brand, acc.id), 0)

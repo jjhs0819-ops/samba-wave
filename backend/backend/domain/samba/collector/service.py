@@ -149,12 +149,14 @@ class SambaCollectorService:
     ) -> List[SambaCollectedProduct]:
         if status and source_site:
             return await self.product_repo.list_by_filters(
-                status=status, source_site=source_site
+                status=status, source_site=source_site, limit=limit
             )
         if status:
-            return await self.product_repo.list_by_status(status)
+            return await self.product_repo.list_by_status(status, limit=limit)
         if source_site:
-            return await self.product_repo.list_by_filters(source_site=source_site)
+            return await self.product_repo.list_by_filters(
+                source_site=source_site, limit=limit
+            )
         return await self.product_repo.list_async(
             skip=skip, limit=limit, order_by="-created_at"
         )

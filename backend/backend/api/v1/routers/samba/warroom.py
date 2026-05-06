@@ -107,11 +107,10 @@ async def list_price_changes(
 ):
     """최근 24시간 가격 변동 이벤트."""
     repo = SambaMonitorEventRepository(session)
-    events = await repo.list_by_type("price_changed", limit=100)
-
     now = datetime.now(timezone.utc)
     since_24h = now - timedelta(hours=24)
-    recent = [e for e in events if e.created_at >= since_24h]
+    # DB 레벨에서 24시간 필터링 (ix_sme_event_type_created_at_desc 인덱스 활용)
+    recent = await repo.list_by_type("price_changed", limit=100, since=since_24h)
 
     return [
         {

@@ -2667,7 +2667,8 @@ class SambaShipmentService:
 
         dry_run=True이면 삭제 대상 상품 수만 반환.
         """
-        from sqlalchemy import String, cast
+        from sqlalchemy import cast
+        from sqlalchemy.dialects.postgresql import JSONB as _JSONB
         from sqlmodel import select
 
         from backend.domain.samba.account.model import SambaMarketAccount
@@ -2680,8 +2681,8 @@ class SambaShipmentService:
 
         # 2) 해당 계정에 등록된 상품 ID 조회
         stmt = select(SambaCollectedProduct.id).where(
-            cast(SambaCollectedProduct.registered_accounts, String).like(
-                f'%"{account_id}"%'
+            SambaCollectedProduct.registered_accounts.op("@>")(
+                cast(f'["{account_id}"]', _JSONB)
             )
         )
         result = await self.session.execute(stmt)
