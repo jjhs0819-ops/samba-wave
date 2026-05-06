@@ -31,7 +31,7 @@ export default function BrandBlock({
   const [showPolicies, setShowPolicies] = useState(false)
   const color = block.policy_color || '#6B7280'
   const isLegacy = block.is_legacy
-  const brandColor = block.ai_tagged_count > 0 ? '#ddd' : '#EF4444'
+  const brandColor = block.collected_count > 0 && block.ai_tagged_count >= block.collected_count ? '#ddd' : '#EF4444'
 
   const fillRatio = block.collected_count > 0
     ? Math.min(1, block.registered_count / block.collected_count)

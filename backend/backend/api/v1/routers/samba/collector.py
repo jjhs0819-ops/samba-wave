@@ -258,13 +258,11 @@ async def list_filters(session: AsyncSession = Depends(get_write_session_depende
     # 각 필터별 카운트를 단일 쿼리로 일괄 조회
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
     from sqlalchemy import func, case, and_, literal
+    from sqlalchemy.dialects.postgresql import JSONB as _JSONB
 
     filter_ids = [f.id for f in filters]
     if not filter_ids:
         return []
-
-    # 한 번의 GROUP BY 쿼리로 모든 카운트 산출
-    from sqlalchemy import cast, String
 
     count_stmt = (
         select(
@@ -275,11 +273,9 @@ async def list_filters(session: AsyncSession = Depends(get_write_session_depende
                     (
                         and_(
                             _CP.registered_accounts.isnot(None),
-                            func.jsonb_typeof(_CP.registered_accounts) == "array",
                             func.jsonb_array_length(_CP.registered_accounts) > 0,
-                            _CP.market_product_nos != None,
-                            cast(_CP.market_product_nos, String) != "null",
-                            cast(_CP.market_product_nos, String) != "{}",
+                            _CP.market_product_nos.isnot(None),
+                            _CP.market_product_nos != func.cast("{}", _JSONB),
                         ),
                         literal(1),
                     )
@@ -289,19 +285,27 @@ async def list_filters(session: AsyncSession = Depends(get_write_session_depende
                 "policy_applied_count"
             ),
             func.count(
-                case((and_(cast(_CP.tags, String).like("%__ai_tagged__%")), literal(1)))
+                case(
+                    (
+                        _CP.tags.op("@>")(func.cast('["__ai_tagged__"]', _JSONB)),
+                        literal(1),
+                    )
+                )
             ).label("ai_tagged_count"),
             func.count(
-                case((and_(cast(_CP.tags, String).like("%__ai_image__%")), literal(1)))
+                case(
+                    (
+                        _CP.tags.op("@>")(func.cast('["__ai_image__"]', _JSONB)),
+                        literal(1),
+                    )
+                )
             ).label("ai_image_count"),
             func.count(
                 case(
                     (
                         and_(
-                            _CP.tags != None,
-                            func.length(cast(_CP.tags, String))
-                            > 20,  # 시스템태그만 있으면 짧음, 실제 태그 있으면 > 20
-                            ~cast(_CP.tags, String).like("%[]%"),
+                            _CP.tags.isnot(None),
+                            func.jsonb_array_length(_CP.tags) > 0,
                         ),
                         literal(1),
                     )
@@ -567,7 +571,7 @@ async def delete_orphan_products(
 
 @router.get("/filters/tree")
 async def get_filter_tree(
-    session: AsyncSession = Depends(get_write_session_dependency),
+    session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """검색그룹 트리 구조 반환. 사이트 > 폴더 > 리프 그룹."""
     svc = _get_services(session)
@@ -585,7 +589,8 @@ async def get_filter_tree(
     tag_applied_map: dict[str, int] = {}
     policy_applied_map: dict[str, int] = {}
     if leaf_ids:
-        from sqlalchemy import case, and_, cast, String, literal
+        from sqlalchemy import case, and_, literal
+        from sqlalchemy.dialects.postgresql import JSONB as _JSONB2
 
         count_stmt = (
             select(
@@ -596,11 +601,9 @@ async def get_filter_tree(
                         (
                             and_(
                                 _CP.registered_accounts.isnot(None),
-                                _func.jsonb_typeof(_CP.registered_accounts) == "array",
                                 _func.jsonb_array_length(_CP.registered_accounts) > 0,
-                                _CP.market_product_nos != None,
-                                cast(_CP.market_product_nos, String) != "null",
-                                cast(_CP.market_product_nos, String) != "{}",
+                                _CP.market_product_nos.isnot(None),
+                                _CP.market_product_nos != _func.cast("{}", _JSONB2),
                             ),
                             literal(1),
                         )
@@ -609,7 +612,7 @@ async def get_filter_tree(
                 _func.count(
                     case(
                         (
-                            and_(cast(_CP.tags, String).like("%__ai_tagged__%")),
+                            _CP.tags.op("@>")(_func.cast('["__ai_tagged__"]', _JSONB2)),
                             literal(1),
                         )
                     )
@@ -617,7 +620,7 @@ async def get_filter_tree(
                 _func.count(
                     case(
                         (
-                            and_(cast(_CP.tags, String).like("%__ai_image__%")),
+                            _CP.tags.op("@>")(_func.cast('["__ai_image__"]', _JSONB2)),
                             literal(1),
                         )
                     )
@@ -626,9 +629,8 @@ async def get_filter_tree(
                     case(
                         (
                             and_(
-                                _CP.tags != None,
-                                _func.length(cast(_CP.tags, String)) > 20,
-                                ~cast(_CP.tags, String).like("%[]%"),
+                                _CP.tags.isnot(None),
+                                _func.jsonb_array_length(_CP.tags) > 0,
                             ),
                             literal(1),
                         )
@@ -979,47 +981,31 @@ async def scroll_products(
             )
         )
 
-    # AI 필터 (JSON 태그/이미지 패턴)
+    # AI 필터 (JSONB @> 연산자 — GIN 인덱스 활용)
+    _ai_tag = cast('["__ai_tagged__"]', _JSONB)
+    _ai_img = cast('["__ai_image__"]', _JSONB)
+    _img_filtered = cast('["__img_filtered__"]', _JSONB)
+    _img_edited = cast('["__img_edited__"]', _JSONB)
     if ai_filter == "sold_out":
         conditions.append(
             or_(_CP.sale_status == "sold_out", _all_options_sold_out(_CP))
         )
     elif ai_filter == "ai_tag_yes":
-        conditions.append(cast(_CP.tags, String).like('%"__ai_tagged__"%'))
+        conditions.append(_CP.tags.op("@>")(_ai_tag))
     elif ai_filter == "ai_tag_no":
-        conditions.append(
-            or_(
-                _CP.tags.is_(None),
-                ~cast(_CP.tags, String).like('%"__ai_tagged__"%'),
-            )
-        )
+        conditions.append(or_(_CP.tags.is_(None), ~_CP.tags.op("@>")(_ai_tag)))
     elif ai_filter == "ai_img_yes":
-        conditions.append(cast(_CP.tags, String).like('%"__ai_image__"%'))
+        conditions.append(_CP.tags.op("@>")(_ai_img))
     elif ai_filter == "ai_img_no":
-        conditions.append(
-            or_(
-                _CP.tags.is_(None),
-                ~cast(_CP.tags, String).like('%"__ai_image__"%'),
-            )
-        )
+        conditions.append(or_(_CP.tags.is_(None), ~_CP.tags.op("@>")(_ai_img)))
     elif ai_filter == "filter_yes":
-        conditions.append(cast(_CP.tags, String).like('%"__img_filtered__"%'))
+        conditions.append(_CP.tags.op("@>")(_img_filtered))
     elif ai_filter == "filter_no":
-        conditions.append(
-            or_(
-                _CP.tags.is_(None),
-                ~cast(_CP.tags, String).like('%"__img_filtered__"%'),
-            )
-        )
+        conditions.append(or_(_CP.tags.is_(None), ~_CP.tags.op("@>")(_img_filtered)))
     elif ai_filter == "img_edit_yes":
-        conditions.append(cast(_CP.tags, String).like('%"__img_edited__"%'))
+        conditions.append(_CP.tags.op("@>")(_img_edited))
     elif ai_filter == "img_edit_no":
-        conditions.append(
-            or_(
-                _CP.tags.is_(None),
-                ~cast(_CP.tags, String).like('%"__img_edited__"%'),
-            )
-        )
+        conditions.append(or_(_CP.tags.is_(None), ~_CP.tags.op("@>")(_img_edited)))
     elif ai_filter == "video_yes":
         conditions.append(_CP.video_url.isnot(None))
         conditions.append(_CP.video_url != "")

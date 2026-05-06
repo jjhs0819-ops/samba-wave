@@ -247,7 +247,7 @@ class SambaCollectedProduct(SQLModel, table=True):
     )
     # 마켓별 등록된 상품번호: { "account_id": "product_no", ... }
     market_product_nos: Optional[Any] = Field(
-        default=None, sa_column=Column(JSON, nullable=True)
+        default=None, sa_column=Column(JSONB, nullable=True)
     )
     # 마켓별 등록 상품명: { "스마트스토어": "상품명", "쿠팡": "상품명", ... }
     market_names: Optional[Any] = Field(
@@ -284,7 +284,7 @@ class SambaCollectedProduct(SQLModel, table=True):
 
     # 태그
     tags: Optional[List[str]] = Field(
-        default=None, sa_column=Column(JSON, nullable=True)
+        default=None, sa_column=Column(JSONB, nullable=True)
     )
     # SEO 검색키워드 (상품명 조합용, 2-3개)
     seo_keywords: Optional[List[str]] = Field(
