@@ -18,6 +18,7 @@ import {
   type SambaNameRule,
 } from "@/lib/samba/api/support"
 import { API_BASE, request } from "@/lib/samba/api/shared"
+import { tetrisApi } from '@/lib/samba/api/tetris'
 import { MARKETS, MARKET_ID_BY_LABEL, POLICY_MARKETS_DOMESTIC, POLICY_MARKETS_OVERSEAS } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
@@ -204,6 +205,7 @@ export default function PoliciesPage() {
   const [mainTab, setMainTab] = useState<'정책관리' | '테트리스 매칭'>('정책관리')
   const [tetrisMatchingEnabled, setTetrisMatchingEnabled] = useState(false)
   const [tetrisMatchingSaving, setTetrisMatchingSaving] = useState(false)
+  const [syncIntervalInput, setSyncIntervalInput] = useState<number>(1)
 
   // 마켓정책 설정
   const [marketPolicyTab, setMarketPolicyTab] = useState('쿠팡')
@@ -313,6 +315,12 @@ export default function PoliciesPage() {
       })
       .catch(() => {})
   }, [TETRIS_MATCHING_ENABLED_KEY])
+
+  useEffect(() => {
+    tetrisApi.getSyncInterval()
+      .then(res => { if (res.interval_hours > 0) setSyncIntervalInput(res.interval_hours) })
+      .catch(() => {})
+  }, [])
 
 
   // URL highlight 파라미터로 정책 자동 선택
@@ -588,6 +596,7 @@ export default function PoliciesPage() {
     setTetrisMatchingSaving(true)
     try {
       await forbiddenApi.saveSetting(TETRIS_MATCHING_ENABLED_KEY, nextValue)
+      await tetrisApi.setSyncInterval(nextValue ? Math.max(1, syncIntervalInput) : 0)
     } catch (error) {
       setTetrisMatchingEnabled(!nextValue)
       showAlert('테트리스 매칭 사용 설정 저장에 실패했습니다: ' + String(error))
@@ -2219,24 +2228,44 @@ export default function PoliciesPage() {
                 OFF면 배치 현황 확인용으로만 사용하고, ON이면 상품등록 시 테트리스 매칭을 실제로 적용합니다.
               </div>
             </div>
-            <button
-              onClick={handleToggleTetrisMatching}
-              disabled={tetrisMatchingSaving}
-              style={{
-                minWidth: '92px',
-                padding: '0.5rem 0.875rem',
-                borderRadius: '999px',
-                border: tetrisMatchingEnabled ? '1px solid rgba(34,197,94,0.35)' : '1px solid rgba(255,140,0,0.35)',
-                background: tetrisMatchingEnabled ? '#22C55E' : '#2A2A2A',
-                color: tetrisMatchingEnabled ? '#06130A' : '#FFB84D',
-                fontSize: '0.8125rem',
-                fontWeight: 700,
-                cursor: tetrisMatchingSaving ? 'wait' : 'pointer',
-                opacity: tetrisMatchingSaving ? 0.7 : 1,
-              }}
-            >
-              {tetrisMatchingSaving ? '저장 중...' : tetrisMatchingEnabled ? 'ON' : 'OFF'}
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+              <input
+                type="number"
+                value={syncIntervalInput}
+                onChange={e => setSyncIntervalInput(Math.max(1, Number(e.target.value)))}
+                min={1}
+                max={168}
+                style={{
+                  width: 48,
+                  background: '#2A2A2A',
+                  border: '1px solid #444',
+                  color: '#ccc',
+                  borderRadius: 6,
+                  padding: '4px 6px',
+                  fontSize: '0.8125rem',
+                  textAlign: 'center',
+                }}
+              />
+              <span style={{ color: '#888', fontSize: '0.8125rem' }}>시간</span>
+              <button
+                onClick={handleToggleTetrisMatching}
+                disabled={tetrisMatchingSaving}
+                style={{
+                  minWidth: '92px',
+                  padding: '0.5rem 0.875rem',
+                  borderRadius: '999px',
+                  border: tetrisMatchingEnabled ? '1px solid rgba(34,197,94,0.35)' : '1px solid rgba(255,140,0,0.35)',
+                  background: tetrisMatchingEnabled ? '#22C55E' : '#2A2A2A',
+                  color: tetrisMatchingEnabled ? '#06130A' : '#FFB84D',
+                  fontSize: '0.8125rem',
+                  fontWeight: 700,
+                  cursor: tetrisMatchingSaving ? 'wait' : 'pointer',
+                  opacity: tetrisMatchingSaving ? 0.7 : 1,
+                }}
+              >
+                {tetrisMatchingSaving ? '저장 중...' : tetrisMatchingEnabled ? 'ON' : 'OFF'}
+              </button>
+            </div>
           </div>
           <TetrisBoard />
         </div>

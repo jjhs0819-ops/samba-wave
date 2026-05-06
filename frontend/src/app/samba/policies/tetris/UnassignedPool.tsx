@@ -5,25 +5,6 @@ import type { TetrisUnassigned, TetrisBrandBlock } from '@/lib/samba/api/tetris'
 
 const FIXED_BLOCK_PX = 56
 
-const MARKET_COLORS: Record<string, string> = {
-  coupang: '#F5A623',
-  smartstore: '#03C75A',
-  '11st': '#E8002D',
-  gmarket: '#0065D5',
-  auction: '#A855F7',
-  lotteon: '#E2E8F0',
-  gsshop: '#FACC15',
-  ssg: '#6B21A8',
-  lottehome: '#DB2777',
-  homeand: '#06B6D4',
-  hmall: '#3B82F6',
-  toss: '#1D4ED8',
-  ktalpha: '#10B981',
-}
-
-function getMarketColor(marketType: string): string {
-  return MARKET_COLORS[marketType.toLowerCase()] ?? '#6B7280'
-}
 
 export interface BrandAssignment {
   marketType: string
@@ -87,10 +68,6 @@ function UnassignedItem({
     is_legacy: false,
   }
 
-  const uniqueMarkets = Array.from(
-    new Map(assignments.map(a => [a.marketType, a])).values()
-  )
-
   const borderColor = assignments.length > 0 ? currentPolicyColor : '#3a3a3a'
 
   return (
@@ -123,6 +100,7 @@ function UnassignedItem({
         justifyContent: 'space-between',
         overflow: 'hidden',
       }}>
+        {/* 상단: 브랜드명 (삭제 버튼 공간 확보) */}
         <div style={{
           fontSize: 11,
           color: brandColor,
@@ -130,46 +108,21 @@ function UnassignedItem({
           overflow: 'hidden',
           whiteSpace: 'nowrap',
           textOverflow: 'ellipsis',
-          paddingRight: 36,
+          paddingRight: 22,
         }}>
           {item.brand_name}
         </div>
+        {/* 하단: 등록/수집수(좌) + 소싱처명(우, 흰색) */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ fontSize: 10, color: '#666' }}>
             <span style={{ color: '#22C55E' }}>{fmtNum(item.registered_count)}</span>
             <span style={{ color: '#444' }}>/</span>
             <span style={{ color: '#888' }}>{fmtNum(item.collected_count)}</span>
           </div>
-          {uniqueMarkets.length > 0 && (
-            <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
-              {uniqueMarkets.map(a => (
-                <div
-                  key={a.marketType}
-                  title={a.marketName}
-                  style={{
-                    width: 7,
-                    height: 7,
-                    borderRadius: 1,
-                    background: getMarketColor(a.marketType),
-                    flexShrink: 0,
-                  }}
-                />
-              ))}
-            </div>
-          )}
+          <span style={{ fontSize: 9, color: '#ddd', whiteSpace: 'nowrap', fontWeight: 500 }}>
+            {item.source_site}
+          </span>
         </div>
-      </div>
-
-      <div style={{
-        position: 'absolute',
-        top: 3,
-        left: 4,
-        fontSize: 9,
-        color: '#444',
-        whiteSpace: 'nowrap',
-        pointerEvents: 'none',
-      }}>
-        {item.source_site}
       </div>
 
       <button

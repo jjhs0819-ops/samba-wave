@@ -96,36 +96,6 @@ export default function TetrisBoard() {
   } = useTetris()
 
   const [deleteModal, setDeleteModal] = useState<DeleteScopeModal | null>(null)
-  const [syncInterval, setSyncInterval] = useState<number>(0)
-  const [intervalInput, setIntervalInput] = useState<number>(1)
-  const [syncToggling, setSyncToggling] = useState(false)
-
-  const syncEnabled = syncInterval > 0
-
-  useEffect(() => {
-    tetrisApi.getSyncInterval().then(res => {
-      setSyncInterval(res.interval_hours)
-      if (res.interval_hours > 0) setIntervalInput(res.interval_hours)
-    }).catch(() => {})
-  }, [])
-
-  const handleToggleSync = useCallback(async () => {
-    setSyncToggling(true)
-    try {
-      if (syncEnabled) {
-        await tetrisApi.setSyncInterval(0)
-        setSyncInterval(0)
-      } else {
-        const hours = Math.max(1, intervalInput)
-        await tetrisApi.setSyncInterval(hours)
-        setSyncInterval(hours)
-      }
-    } catch (e) {
-      showAlert('설정 저장 실패: ' + String(e))
-    } finally {
-      setSyncToggling(false)
-    }
-  }, [syncEnabled, intervalInput])
 
   // horizontal scroll sync between the sticky header row and the market columns
   const contentScrollRef = useRef<HTMLDivElement>(null)
@@ -323,46 +293,6 @@ export default function TetrisBoard() {
         borderBottom: '1px solid #2a2a2a',
       }}>
         <span style={{ color: '#555', fontSize: 11 }}>최대 {fmtNum(globalMax)}개</span>
-
-        {/* 자동 등록 인터벌 설정 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 16 }}>
-          <button
-            onClick={handleToggleSync}
-            disabled={syncToggling}
-            style={{
-              padding: '2px 10px',
-              background: syncEnabled ? 'rgba(34,197,94,0.15)' : '#2a2a2a',
-              border: `1px solid ${syncEnabled ? '#22C55E' : '#444'}`,
-              color: syncEnabled ? '#22C55E' : '#888',
-              borderRadius: 4,
-              cursor: syncToggling ? 'default' : 'pointer',
-              fontSize: 11,
-              fontWeight: 700,
-              minWidth: 38,
-            }}
-          >
-            {syncToggling ? '...' : syncEnabled ? 'ON' : 'OFF'}
-          </button>
-          <span style={{ color: '#666', fontSize: 11 }}>자동등록</span>
-          <input
-            type="number"
-            value={intervalInput}
-            onChange={e => setIntervalInput(Math.max(1, Number(e.target.value)))}
-            min={1}
-            max={168}
-            style={{
-              width: 44,
-              background: '#2a2a2a',
-              border: '1px solid #444',
-              color: '#ccc',
-              borderRadius: 4,
-              padding: '2px 4px',
-              fontSize: 11,
-              textAlign: 'center',
-            }}
-          />
-          <span style={{ color: '#555', fontSize: 11 }}>시간</span>
-        </div>
 
         <button
           onClick={refresh}
