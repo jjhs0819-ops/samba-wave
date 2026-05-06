@@ -264,6 +264,12 @@ class CoupangClient:
 
     BASE_URL = "https://api-gateway.coupang.com"
 
+    # 카테고리별 notice 메타 캐시 (module-level, 모든 인스턴스 공유)
+    # category_id → (data, timestamp)
+    _notice_meta_cache: dict[str, tuple[dict, float]] = {}
+    _NOTICE_META_CACHE_TTL = 3600  # 1시간
+    _NOTICE_META_CACHE_MAX = 200  # 카테고리 200개 한도 (의류/신발/가방 등 메인 leaf 충분)
+
     def __init__(
         self,
         access_key: str,
@@ -441,6 +447,54 @@ class CoupangClient:
             f"/v2/providers/seller_api/apis/api/v1/marketplace/meta/display-categories/{category_id}",
         )
 
+    async def get_notice_categories(self, category_id: str) -> dict[str, Any]:
+        """카테고리별 정확한 noticeCategoryName/noticeCategoryDetailName 조회 (TTL 캐시).
+
+        하드코딩된 한국어 매핑(_COUPANG_NOTICE_CATEGORY/_COUPANG_NOTICE_FIELDS)이
+        쿠팡 API 표준 표기와 미스매치되어 의류/신발 등록 시 모든 옵션의 notice가
+        거부되는 문제(2026-05 보고)를 동적 조회로 근본 해결.
+
+        GET /v2/providers/seller_api/apis/api/v1/marketplace/meta/notice-categories/{categoryId}
+        응답 구조 (추정 — 실제 응답 보고 보정):
+          {
+            "code": "SUCCESS",
+            "data": [
+              {
+                "noticeCategoryName": "...",
+                "noticeCategoryDetailNames": [
+                  {"noticeCategoryDetailName": "...", "required": true}
+                ]
+              }
+            ]
+          }
+
+        캐시: module-level _notice_meta_cache, TTL 1시간. 카테고리당 1회 조회 후 재사용.
+        """
+        import time
+
+        now = time.time()
+        cached = self._notice_meta_cache.get(category_id)
+        if cached:
+            data, ts = cached
+            if now - ts < self._NOTICE_META_CACHE_TTL:
+                return data
+            # 만료된 항목 제거
+            del self._notice_meta_cache[category_id]
+
+        result = await self._call_api(
+            "GET",
+            f"/v2/providers/seller_api/apis/api/v1/marketplace/meta/notice-categories/{category_id}",
+        )
+        self._notice_meta_cache[category_id] = (result, now)
+
+        # 캐시 한도 초과 시 가장 오래된 절반 제거
+        if len(self._notice_meta_cache) > self._NOTICE_META_CACHE_MAX:
+            sorted_items = sorted(self._notice_meta_cache.items(), key=lambda x: x[1][1])
+            for k, _ in sorted_items[: self._NOTICE_META_CACHE_MAX // 2]:
+                del self._notice_meta_cache[k]
+
+        return result
+
     # ------------------------------------------------------------------
     # 출고지 / 반품지 조회
     # ------------------------------------------------------------------
@@ -569,11 +623,15 @@ class CoupangClient:
         category_id: str = "",
         return_center_code: str = "",
         outbound_shipping_place_code: str = "",
+        notice_meta: Any = None,
     ) -> dict[str, Any]:
         """SambaCollectedProduct → 쿠팡 상품 등록 데이터 변환.
 
         쿠팡 Wing API 공식 스펙 기준 전체 필수필드 포함.
         SEO 최적화: 노출상품명 자동생성, 검색태그, 옵션별 색상분리, 상세이미지 분리.
+
+        notice_meta: get_notice_categories(category_id) 결과 (선택). 있으면 동적 매핑,
+        없으면 정적 매핑 폴백 (의류/신발 등록 시 옵션의 notice가 거부되는 미스매치 방지).
         """
         from datetime import datetime as dt, timezone as tz
 
@@ -612,10 +670,21 @@ class CoupangClient:
         # 판매기간
         now = dt.now(tz.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
-        # 고시정보 — 카테고리별 동적 생성
-        from backend.domain.samba.proxy.notice_utils import build_coupang_notices
+        # 고시정보 — 카테고리별 동적 생성 (메타 API 결과 우선, 실패 시 정적 매핑 폴백)
+        from backend.domain.samba.proxy.notice_utils import (
+            build_coupang_notices,
+            build_coupang_notices_with_meta,
+        )
 
-        notices = build_coupang_notices(product)
+        notices = None
+        if notice_meta is not None:
+            try:
+                notices = build_coupang_notices_with_meta(product, notice_meta)
+            except Exception as _e:
+                logger.warning(f"[쿠팡 고시정보] 동적 매핑 실패, 정적 매핑 폴백: {_e}")
+                notices = None
+        if not notices:
+            notices = build_coupang_notices(product)
 
         # detail_html 안의 외부 호스트 <img> 태그 제거 (쿠팡 검증 거절 방지, GSShop 전용)
         detail_html = (
