@@ -1239,22 +1239,12 @@ async def product_counts(
         return cached
 
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
-    from sqlalchemy import func, case, literal, and_, cast
+    from sqlalchemy import func, case, literal
 
     stmt = select(
         func.count().label("total"),
         func.count(
-            case(
-                (
-                    and_(
-                        _CP.registered_accounts.isnot(None),
-                        func.jsonb_array_length(_CP.registered_accounts) > 0,
-                        _CP.market_product_nos.isnot(None),
-                        _CP.market_product_nos != cast("{}", _JSONB),
-                    ),
-                    literal(1),
-                )
-            )
+            case((_CP.is_unregistered == False, literal(1)))  # noqa: E712
         ).label("registered"),
         func.count(case((_CP.applied_policy_id != None, literal(1)))).label(
             "policy_applied"
@@ -1286,15 +1276,11 @@ async def product_dashboard_stats(
     from backend.domain.samba.account.model import SambaMarketAccount as _MA
     from sqlalchemy import text
 
-    # 1) 소싱처별 수집현황 — raw SQL로 json/jsonb 호환
+    # 1) 소싱처별 수집현황 — is_unregistered 인덱스 활용
     site_stmt = text("""
         SELECT source_site,
                COUNT(*) AS total,
-               COUNT(*) FILTER (
-                   WHERE registered_accounts IS NOT NULL
-                     AND registered_accounts::text != 'null'
-                     AND registered_accounts::text != '[]'
-               ) AS registered,
+               COUNT(*) FILTER (WHERE is_unregistered = FALSE) AS registered,
                COUNT(*) FILTER (WHERE sale_status = 'sold_out') AS sold_out
         FROM samba_collected_product
         WHERE source_site IS NOT NULL AND source_site != ''
@@ -1308,11 +1294,7 @@ async def product_dashboard_stats(
         SELECT source_site,
                COALESCE(NULLIF(TRIM(brand), ''), '기타') AS brand_name,
                COUNT(*) AS total,
-               COUNT(*) FILTER (
-                   WHERE registered_accounts IS NOT NULL
-                     AND registered_accounts::text != 'null'
-                     AND registered_accounts::text != '[]'
-               ) AS registered,
+               COUNT(*) FILTER (WHERE is_unregistered = FALSE) AS registered,
                COUNT(*) FILTER (WHERE sale_status = 'sold_out') AS sold_out
         FROM samba_collected_product
         WHERE source_site IS NOT NULL AND source_site != ''
@@ -1349,11 +1331,9 @@ async def product_dashboard_stats(
         acct_stmt = text("""
             SELECT aid, COUNT(*) AS cnt
             FROM (
-                SELECT jsonb_array_elements_text(registered_accounts::jsonb) AS aid
+                SELECT jsonb_array_elements_text(registered_accounts) AS aid
                 FROM samba_collected_product
-                WHERE registered_accounts IS NOT NULL
-                  AND registered_accounts::text != 'null'
-                  AND registered_accounts::text != '[]'
+                WHERE is_unregistered = FALSE
             ) sub
             GROUP BY aid
             ORDER BY cnt DESC
@@ -1367,13 +1347,11 @@ async def product_dashboard_stats(
                    COALESCE(NULLIF(TRIM(brand), ''), '기타') AS brand_name,
                    COUNT(*) AS cnt
             FROM (
-                SELECT jsonb_array_elements_text(registered_accounts::jsonb) AS aid,
+                SELECT jsonb_array_elements_text(registered_accounts) AS aid,
                        source_site,
                        brand
                 FROM samba_collected_product
-                WHERE registered_accounts IS NOT NULL
-                  AND registered_accounts::text != 'null'
-                  AND registered_accounts::text != '[]'
+                WHERE is_unregistered = FALSE
             ) sub
             GROUP BY aid, source_site, COALESCE(NULLIF(TRIM(brand), ''), '기타')
             ORDER BY aid, cnt DESC

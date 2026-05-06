@@ -279,12 +279,11 @@ class SambaTetrisService:
                 SELECT
                     source_site,
                     BTRIM(brand) AS effective_brand,
-                    jsonb_array_elements_text(registered_accounts::jsonb) AS account_id,
+                    jsonb_array_elements_text(registered_accounts) AS account_id,
                     COUNT(*) AS cnt
                 FROM samba_collected_product
                 WHERE (tenant_id IS NULL AND :tid_is_null OR tenant_id = :tid)
-                  AND registered_accounts IS NOT NULL
-                  AND registered_accounts::text NOT IN ('null', '[]', '')
+                  AND is_unregistered = FALSE
                   AND source_site IS NOT NULL
                   AND brand IS NOT NULL
                   AND BTRIM(brand) != ''
