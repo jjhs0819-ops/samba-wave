@@ -76,6 +76,9 @@ _MAX_JOB_LOGS = 5000  # 인덱스 기반 since 폴링이므로 리스트 사용 
 # 수집 로그 주기적 DB 플러시 카운터 (크로스 인스턴스 동기화용)
 _collect_log_flush_counter: dict[str, int] = {}
 
+# job_id별 플러시 진행 중 여부 — 동시 UPDATE tuple lock 방지
+_flush_in_progress: dict[str, bool] = {}
+
 # ── 전송 로그 전용 링 버퍼 (오토튠과 동일 방식) ──
 _shipment_log_buffer: deque[str] = deque(maxlen=300)
 _shipment_log_total: int = 0  # 누적 카운터
@@ -186,6 +189,10 @@ async def _flush_job_logs(job_id: str, logs: list[str], job_type: str) -> None:
     """잡 로그를 DB에 영속화 — 서버 재시작 후 복원용."""
     if not logs:
         return
+    # 이미 플러시 진행 중이면 스킵 — 동시 UPDATE tuple lock 방지
+    if _flush_in_progress.get(job_id):
+        return
+    _flush_in_progress[job_id] = True
     try:
         from sqlalchemy import text as _text
         from backend.db.orm import get_write_session
@@ -201,6 +208,8 @@ async def _flush_job_logs(job_id: str, logs: list[str], job_type: str) -> None:
         logger.info(f"[잡워커] {job_type} 로그 DB 저장: {job_id} ({len(logs)}줄)")
     except Exception as le:
         logger.warning(f"[잡워커] {job_type} 로그 DB 저장 실패: {job_id} — {le}")
+    finally:
+        _flush_in_progress[job_id] = False
 
 
 def get_job_logs(job_id: str, since: int = 0) -> list[str]:
@@ -239,7 +248,7 @@ def _add_job_log(job_id: str, msg: str, job_type: str = ""):
         _collect_log_flush_counter[job_id] = (
             _collect_log_flush_counter.get(job_id, 0) + 1
         )
-        if _collect_log_flush_counter[job_id] % 20 == 0:
+        if _collect_log_flush_counter[job_id] % 50 == 0:
             import asyncio as _asyncio
 
             try:
@@ -250,11 +259,11 @@ def _add_job_log(job_id: str, msg: str, job_type: str = ""):
                 pass
     elif effective_type == "transmit":
         _add_shipment_log(msg)
-        # 20줄마다 DB 플러시 — Cloud Run 멀티 인스턴스에서도 로그 조회 가능하도록
+        # 50줄마다 DB 플러시 — Cloud Run 멀티 인스턴스에서도 로그 조회 가능하도록
         _collect_log_flush_counter[job_id] = (
             _collect_log_flush_counter.get(job_id, 0) + 1
         )
-        if _collect_log_flush_counter[job_id] % 20 == 0:
+        if _collect_log_flush_counter[job_id] % 50 == 0:
             import asyncio as _asyncio
 
             try:
@@ -268,7 +277,7 @@ def _add_job_log(job_id: str, msg: str, job_type: str = ""):
         _collect_log_flush_counter[job_id] = (
             _collect_log_flush_counter.get(job_id, 0) + 1
         )
-        if _collect_log_flush_counter[job_id] % 5 == 0:
+        if _collect_log_flush_counter[job_id] % 10 == 0:
             import asyncio as _asyncio
 
             try:
