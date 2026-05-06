@@ -83,7 +83,7 @@ def _create_write_async_engine() -> AsyncEngine:
         ),
         future=True,
         echo=False,  # Disable SQL echo to reduce noise
-        pool_pre_ping=True,  # Check connection validity before using
+        pool_pre_ping=False,  # asyncpg 버그: SELECT 1이 idle in transaction 좀비 누적 → pool_recycle=300으로 대체
         pool_size=20,  # 기본 연결 수 (전송+오토튠+주문동기화+API 동시 사용 대응)
         max_overflow=15,  # 추가 허용 (write 최대 35개)
         pool_recycle=300,  # idle 커넥션 5분 후 재활용 — 좀비 누적 방지
@@ -103,7 +103,7 @@ def _create_read_async_engine() -> AsyncEngine:
         ),
         future=True,
         echo=False,
-        pool_pre_ping=True,
+        pool_pre_ping=False,  # asyncpg 버그: SELECT 1이 idle in transaction 좀비 누적 → pool_recycle=300으로 대체
         pool_size=20,  # 기본 연결 수 (오토튠+API 동시 조회 대응)
         max_overflow=15,  # 추가 허용 (read 최대 35개)
         pool_recycle=300,  # idle 커넥션 5분 후 재활용 — 좀비 누적 방지

@@ -463,6 +463,25 @@ async def _tetris_sync_loop() -> None:
             )
 
 
+async def _warmup_tetris_board_cache(logger: logging.Logger) -> None:
+    """서버 시작 시 테트리스 보드 캐시 백그라운드 워밍업.
+
+    get_board() 쿼리는 60초 이상 소요되므로 첫 사용자 요청 전에 미리 실행해둔다.
+    실패해도 무시 — 사용자가 재시도하면 정상 동작함.
+    """
+    try:
+        from backend.db.orm import get_read_session
+        from backend.domain.samba.tetris.repository import SambaTetrisRepository
+        from backend.domain.samba.tetris.service import SambaTetrisService
+
+        async with get_read_session() as session:
+            svc = SambaTetrisService(SambaTetrisRepository(session), session)
+            await svc.get_board(tenant_id=None)
+            logger.info("[startup] 테트리스 보드 캐시 워밍업 완료")
+    except Exception as exc:
+        logger.warning("[startup] 테트리스 보드 캐시 워밍업 실패: %s", exc)
+
+
 async def _start_tetris_sync_scheduler() -> None:
     global _tetris_sync_task
 
@@ -553,6 +572,7 @@ async def lifespan(app: FastAPI):
     # PlayAuto 동기화는 외부 API + 대용량 DB 스캔으로 5~10분 소요 가능
     # yield 이전에 실행하면 health check가 그만큼 지연되므로 백그라운드 태스크로 분리
     asyncio.create_task(_sync_playauto_registered_accounts(startup_logger))
+    asyncio.create_task(_warmup_tetris_board_cache(startup_logger))
 
     # DB 프록시 캐시를 워커/오토튠 시작 전에 프라임한다.
     # async 컨텍스트에서는 _get_cached_proxies 가 백그라운드 태스크만 예약하므로,
