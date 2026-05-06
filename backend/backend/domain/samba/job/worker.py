@@ -1296,7 +1296,6 @@ class JobWorker:
             SambaCollectedProduct as CPModel,
         )
         from backend.domain.samba.proxy.musinsa import MusinsaClient, RateLimitError
-        from backend.domain.samba.forbidden.model import SambaSettings
         from backend.api.v1.routers.samba.collector_common import _build_product_data
         from backend.domain.samba.collector.refresher import (
             _site_intervals,
@@ -1370,12 +1369,12 @@ class JobWorker:
             await repo.fail_job(job.id, f"미지원 소싱처: {site}")
             return
 
-        # 쿠키 로드
-        result = await session.execute(
-            select(SambaSettings).where(SambaSettings.key == "musinsa_cookie")
+        # 쿠키 로드 — 암호화 저장값 자동 복호화 헬퍼 사용
+        from backend.api.v1.routers.samba.collector_common import (
+            get_musinsa_cookie as _get_musinsa_cookie,
         )
-        row = result.scalar_one_or_none()
-        cookie = (row.value if row and row.value else "") or ""
+
+        cookie = await _get_musinsa_cookie(session)
         if not cookie:
             await repo.fail_job(job.id, "무신사 로그인(쿠키) 필요")
             return
@@ -1893,7 +1892,6 @@ class JobWorker:
             SambaCollectedProduct as CPModel,
         )
         from backend.domain.samba.proxy.musinsa import MusinsaClient, RateLimitError
-        from backend.domain.samba.forbidden.model import SambaSettings
         from backend.api.v1.routers.samba.collector_common import (
             _build_product_data,
             _get_services,
@@ -1927,12 +1925,12 @@ class JobWorker:
             job_type="collect",
         )
 
-        # 쿠키 로드
-        result = await session.execute(
-            select(SambaSettings).where(SambaSettings.key == "musinsa_cookie")
+        # 쿠키 로드 — 암호화 저장값 자동 복호화 헬퍼 사용
+        from backend.api.v1.routers.samba.collector_common import (
+            get_musinsa_cookie as _get_musinsa_cookie,
         )
-        row = result.scalar_one_or_none()
-        cookie = (row.value if row and row.value else "") or ""
+
+        cookie = await _get_musinsa_cookie(session)
         if not cookie:
             await repo.fail_job(job.id, "무신사 로그인(쿠키) 필요")
             return
