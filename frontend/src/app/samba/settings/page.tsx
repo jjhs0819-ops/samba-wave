@@ -11,7 +11,6 @@ import { StoreSettingsPanel } from './components/StoreSettingsPanel'
 import { useSourcingAccounts } from './hooks/useSourcingAccounts'
 import { SourcingAccountsPanel } from './components/SourcingAccountsPanel'
 import { LicensePanel } from './components/LicensePanel'
-import { DailyJobSettingsPanel } from './components/DailyJobSettingsPanel'
 import { card, fmtNum } from '@/lib/samba/styles'
 
 export default function SettingsPage() {
@@ -47,13 +46,6 @@ export default function SettingsPage() {
 
   return (
     <div style={{ color: '#E5E5E5' }}>
-      <DailyJobSettingsPanel
-        networkIps={storeSettings.networkIps}
-        networkIpStatus={storeSettings.networkIpStatus}
-        setNetworkIps={storeSettings.setNetworkIps}
-        saveNetworkIps={storeSettings.saveNetworkIps}
-      />
-
       <StoreSettingsPanel {...storeSettings} />
 
       {/* 소싱처 계정 관리 */}
