@@ -2,6 +2,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { collectorApi, tetrisApi } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
+import { fmtNum } from '@/lib/samba/styles'
 import type { TetrisBoardResponse, TetrisBrandBlock } from '@/lib/samba/api/tetris'
 
 export type DragState = {
@@ -174,16 +175,16 @@ export function useTetris() {
 
   const handleDeleteBrandScope = useCallback(async (sourceSite: string, brandName: string) => {
     const confirmed = await showConfirm(
-      `"${brandName}" brand products and groups will be deleted.\nThis cannot be undone.`
+      `"${brandName}" 브랜드의 상품과 그룹이 모두 삭제됩니다.\n이 작업은 되돌릴 수 없습니다.`
     )
     if (!confirmed) return
 
     try {
       const res = await collectorApi.deleteBrandScope(sourceSite, brandName)
-      showAlert(`Deleted: ${res.deleted_products} products, ${res.deleted_filters} groups`)
+      showAlert(`삭제 완료: 상품 ${fmtNum(res.deleted_products)}건, 그룹 ${fmtNum(res.deleted_filters)}개`)
       await refresh()
     } catch (e) {
-      showAlert('Brand deletion failed: ' + String(e))
+      showAlert('브랜드 삭제 실패: ' + String(e))
     }
   }, [refresh])
 

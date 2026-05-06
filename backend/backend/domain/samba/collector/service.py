@@ -596,9 +596,14 @@ class SambaCollectorService:
 
         brand_key = _norm_brand_key(brand_name)
         tenant_clause = self.product_repo._tenant_filter(tenant_id)
+        filter_tenant_clause = (
+            SambaSearchFilter.tenant_id.is_(None)
+            if tenant_id is None
+            else SambaSearchFilter.tenant_id == tenant_id
+        )
 
         filter_stmt = select(SambaSearchFilter).where(
-            tenant_clause,
+            filter_tenant_clause,
             SambaSearchFilter.source_site == source_site,
             SambaSearchFilter.is_folder == False,  # noqa: E712
         )
