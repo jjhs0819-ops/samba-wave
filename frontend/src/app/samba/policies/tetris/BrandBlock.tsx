@@ -79,10 +79,11 @@ export default function BrandBlock({
           padding: '2px 18px 2px 6px',
           display: 'flex',
           flexDirection: 'column',
-          justifyContent: 'flex-start',
-          gap: 2,
+          justifyContent: 'space-between',
+          gap: 1,
         }}
       >
+        {/* 상단: 브랜드명 + 등록/수집 수 */}
         <div
           style={{
             display: 'flex',
@@ -114,16 +115,22 @@ export default function BrandBlock({
             <span style={{ color: '#444' }}>/</span>
             <span style={{ color: '#888' }}>{fmtNum(block.collected_count)}</span>
           </div>
-          <div style={{
-            flexShrink: 0,
+        </div>
+        {/* 하단: 소싱처명 우측 정렬 */}
+        <div style={{
+          display: 'flex',
+          justifyContent: 'flex-end',
+          alignItems: 'flex-end',
+        }}>
+          <span style={{
             fontSize: 9,
             color: '#fff',
-            fontWeight: 600,
+            fontWeight: 500,
             whiteSpace: 'nowrap',
-            opacity: 0.95,
+            opacity: 0.7,
           }}>
             {block.source_site}
-          </div>
+          </span>
         </div>
       </div>
 

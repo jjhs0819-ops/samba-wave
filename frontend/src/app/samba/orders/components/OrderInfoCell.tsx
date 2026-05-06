@@ -279,8 +279,8 @@ export default function OrderInfoCell(props: Props) {
           const srcNo = o.sourcing_order_number || ''
           if (!srcNo) { showAlert('소싱 주문번호가 없습니다', 'info'); return }
           const isGift = hasActionTag(activeActions[o.id] ?? o.action_tag, 'gift')
-          const sourceSiteRaw = (o.source_site || '').trim()
-          const sourceSiteCode = sourceSiteRaw.match(/\(([^)]+)\)$/)?.[1]?.trim() || sourceSiteRaw
+          const sourceSiteRaw = (actualSourceSite || o.source_site || '').trim()
+          const sourceSiteCode = sourceSiteRaw.split('(')[0].trim() || sourceSiteRaw
           const orderUrlMap: Record<string, string> = {
             MUSINSA: `https://www.musinsa.com/order/order-detail/${srcNo}`,
             KREAM: `https://kream.co.kr/my/purchasing/${srcNo}`,

@@ -97,29 +97,35 @@ export default function TetrisBoard() {
 
   const [deleteModal, setDeleteModal] = useState<DeleteScopeModal | null>(null)
   const [syncInterval, setSyncInterval] = useState<number>(0)
-  const [syncRunning, setSyncRunning] = useState(false)
+  const [intervalInput, setIntervalInput] = useState<number>(1)
+  const [syncToggling, setSyncToggling] = useState(false)
+
+  const syncEnabled = syncInterval > 0
 
   useEffect(() => {
-    tetrisApi.getSyncInterval().then(res => setSyncInterval(res.interval_hours)).catch(() => {})
+    tetrisApi.getSyncInterval().then(res => {
+      setSyncInterval(res.interval_hours)
+      if (res.interval_hours > 0) setIntervalInput(res.interval_hours)
+    }).catch(() => {})
   }, [])
 
-  const handleIntervalChange = useCallback(async (hours: number) => {
-    setSyncInterval(hours)
-    await tetrisApi.setSyncInterval(hours)
-  }, [])
-
-  const handleRunSync = useCallback(async () => {
-    setSyncRunning(true)
+  const handleToggleSync = useCallback(async () => {
+    setSyncToggling(true)
     try {
-      const res = await tetrisApi.runSync()
-      showAlert(`전송 잡 생성 완료: ${fmtNum(res.triggered)}개 상품 대상 (${fmtNum(res.jobs)}개 잡)`)
-      await refresh()
+      if (syncEnabled) {
+        await tetrisApi.setSyncInterval(0)
+        setSyncInterval(0)
+      } else {
+        const hours = Math.max(1, intervalInput)
+        await tetrisApi.setSyncInterval(hours)
+        setSyncInterval(hours)
+      }
     } catch (e) {
-      showAlert('sync 실패: ' + String(e))
+      showAlert('설정 저장 실패: ' + String(e))
     } finally {
-      setSyncRunning(false)
+      setSyncToggling(false)
     }
-  }, [refresh])
+  }, [syncEnabled, intervalInput])
 
   // horizontal scroll sync between the sticky header row and the market columns
   const contentScrollRef = useRef<HTMLDivElement>(null)
@@ -320,43 +326,42 @@ export default function TetrisBoard() {
 
         {/* 자동 등록 인터벌 설정 */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 16 }}>
-          <span style={{ color: '#666', fontSize: 11 }}>자동등록</span>
-          <select
-            value={syncInterval}
-            onChange={e => handleIntervalChange(Number(e.target.value))}
+          <button
+            onClick={handleToggleSync}
+            disabled={syncToggling}
             style={{
+              padding: '2px 10px',
+              background: syncEnabled ? 'rgba(34,197,94,0.15)' : '#2a2a2a',
+              border: `1px solid ${syncEnabled ? '#22C55E' : '#444'}`,
+              color: syncEnabled ? '#22C55E' : '#888',
+              borderRadius: 4,
+              cursor: syncToggling ? 'default' : 'pointer',
+              fontSize: 11,
+              fontWeight: 700,
+              minWidth: 38,
+            }}
+          >
+            {syncToggling ? '...' : syncEnabled ? 'ON' : 'OFF'}
+          </button>
+          <span style={{ color: '#666', fontSize: 11 }}>자동등록</span>
+          <input
+            type="number"
+            value={intervalInput}
+            onChange={e => setIntervalInput(Math.max(1, Number(e.target.value)))}
+            min={1}
+            max={168}
+            style={{
+              width: 44,
               background: '#2a2a2a',
               border: '1px solid #444',
               color: '#ccc',
               borderRadius: 4,
-              padding: '2px 6px',
+              padding: '2px 4px',
               fontSize: 11,
-              cursor: 'pointer',
+              textAlign: 'center',
             }}
-          >
-            <option value={0}>없음</option>
-            <option value={1}>1시간</option>
-            <option value={2}>2시간</option>
-            <option value={4}>4시간</option>
-            <option value={8}>8시간</option>
-            <option value={12}>12시간</option>
-            <option value={24}>24시간</option>
-          </select>
-          <button
-            onClick={handleRunSync}
-            disabled={syncRunning}
-            style={{
-              padding: '2px 10px',
-              background: '#2a2a2a',
-              border: '1px solid #444',
-              color: syncRunning ? '#555' : '#ccc',
-              borderRadius: 4,
-              cursor: syncRunning ? 'default' : 'pointer',
-              fontSize: 11,
-            }}
-          >
-            {syncRunning ? '처리중...' : '지금 실행'}
-          </button>
+          />
+          <span style={{ color: '#555', fontSize: 11 }}>시간</span>
         </div>
 
         <button
