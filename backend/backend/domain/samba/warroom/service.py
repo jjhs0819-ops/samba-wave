@@ -7,7 +7,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import func
+from sqlalchemy import cast, func
+from sqlalchemy.dialects.postgresql import JSONB  # noqa: F401
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -207,7 +208,7 @@ class SambaMonitorService:
                 SambaCollectedProduct.last_refreshed_at >= since_24h,
                 SambaCollectedProduct.registered_accounts.isnot(None),
                 func.jsonb_typeof(SambaCollectedProduct.registered_accounts) == "array",
-                func.jsonb_array_length(SambaCollectedProduct.registered_accounts) > 0,
+                SambaCollectedProduct.registered_accounts.op("!=")(cast("[]", JSONB)),
             ),
             func.count(SambaCollectedProduct.id).filter(
                 SambaCollectedProduct.refresh_error_count > 0

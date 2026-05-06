@@ -3,6 +3,7 @@
 from typing import List
 
 from sqlalchemy import cast, func, or_
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import select
 
 from backend.domain.shared.base_repository import BaseRepository
@@ -129,7 +130,7 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
             self._tenant_filter(tenant_id),
             SambaCollectedProduct.registered_accounts.isnot(None),
             func.jsonb_typeof(SambaCollectedProduct.registered_accounts) == "array",
-            func.jsonb_array_length(SambaCollectedProduct.registered_accounts) > 0,
+            SambaCollectedProduct.registered_accounts.op("!=")(cast("[]", JSONB)),
         )
         result = await self.session.execute(stmt)
         rows = result.all()
@@ -172,7 +173,7 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
                 *fc,
                 SambaCollectedProduct.registered_accounts.isnot(None),
                 func.jsonb_typeof(SambaCollectedProduct.registered_accounts) == "array",
-                func.jsonb_array_length(SambaCollectedProduct.registered_accounts) > 0,
+                SambaCollectedProduct.registered_accounts.op("!=")(cast("[]", JSONB)),
             )
             .distinct()
         ).subquery()
@@ -218,7 +219,6 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
         market_key: market_names의 키 (예: "스마트스토어")
         account_id: registered_accounts 배열에서 확인할 계정 ID 문자열
         """
-        from sqlalchemy.dialects.postgresql import JSONB
 
         stmt = select(SambaCollectedProduct).where(
             self._tenant_filter(tenant_id),

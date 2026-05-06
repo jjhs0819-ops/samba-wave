@@ -8,6 +8,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 from sqlalchemy import cast, func, String as _StrType
+from sqlalchemy.dialects.postgresql import JSONB as _JSONB  # noqa: F401
 from sqlmodel.ext.asyncio.session import AsyncSession
 from backend.domain.samba.collector.grouping import (
     generate_group_key,
@@ -361,13 +362,15 @@ async def build_has_orders_conditions(session: AsyncSession, model_class: Any) -
 def build_market_registered_conditions(model_class: Any) -> list:
     """마켓등록상품 판별 SQLAlchemy 조건 리스트 반환.
 
-    registered_accounts IS NOT NULL AND array_length > 0 (JSONB)
+    registered_accounts IS NOT NULL AND != '[]' (JSONB 비교 — jsonb_array_length 금지)
     AND market_product_nos IS NOT NULL / != 'null' / != '{}'
     """
     return [
         model_class.registered_accounts.isnot(None),
         func.jsonb_typeof(model_class.registered_accounts) == "array",
-        func.jsonb_array_length(model_class.registered_accounts) > 0,
+        # jsonb_array_length 금지: PostgreSQL은 WHERE 절 단락 평가를 보장하지 않아
+        # jsonb_typeof 체크보다 먼저 평가되면 스칼라값에서 에러 발생
+        model_class.registered_accounts.op("!=")(cast("[]", _JSONB)),
         model_class.market_product_nos.isnot(None),
         cast(model_class.market_product_nos, _StrType) != "null",
         cast(model_class.market_product_nos, _StrType) != "{}",
