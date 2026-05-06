@@ -487,23 +487,11 @@ class SambaTetrisService:
             position_order=position_order,
         )
 
-        # 미등록 상품 전송 트리거 (백그라운드)
-        product_ids = await self._get_product_ids_for_assign(
-            tenant_id, source_site, brand_name, market_account_id
+        # 즉시 전송하지 않음 — 인터벌 루프(sync_all)에서 잡큐로 스테이징
+        logger.info(
+            f"[테트리스] assign 저장 완료 — {source_site}/{brand_name} "
+            f"→ {market_account_id} (인터벌 루프에서 등록 예정)"
         )
-        if product_ids:
-            ship_svc = self._make_ship_svc()
-            asyncio.create_task(
-                ship_svc.start_update(
-                    product_ids=product_ids,
-                    update_items=["price", "stock", "image", "description"],
-                    target_account_ids=[market_account_id],
-                )
-            )
-            logger.info(
-                f"[테트리스] assign 전송 트리거 — {source_site}/{brand_name} "
-                f"→ {market_account_id} ({len(product_ids)}건)"
-            )
 
         return assignment
 
@@ -652,39 +640,37 @@ class SambaTetrisService:
     # ──────────────────────────────────────────────
 
     async def sync_all(self, tenant_id: Optional[str]) -> dict[str, int]:
-        """현재 배치 전체 기준으로 미등록 상품 transmit 잡 생성."""
+        """현재 배치 전체 기준으로 미등록 상품 transmit 잡 생성 (브랜드×계정별 별도 잡)."""
         from backend.domain.samba.job.repository import SambaJobRepository
 
         assignments = await self._repo.list_by_tenant(tenant_id)
 
-        # 계정별 미등록 product_ids 집계
-        account_products: dict[str, list[str]] = {}
+        job_repo = SambaJobRepository(self._session)
+        job_count = 0
+        total_products = 0
+
+        # 브랜드×계정 조합별 별도 잡 — 계정이 같아도 브랜드마다 독립 잡으로 스테이징
+        # (워커가 동일 계정 잡은 순차, 다른 계정 잡은 병렬로 자동 처리)
         for a in assignments:
             pids = await self._get_product_ids_for_assign(
                 tenant_id, a.source_site, a.brand_name, a.market_account_id
             )
-            if pids:
-                if a.market_account_id not in account_products:
-                    account_products[a.market_account_id] = []
-                account_products[a.market_account_id].extend(pids)
-
-        job_repo = SambaJobRepository(self._session)
-        job_count = 0
-        total_products = 0
-        for account_id, pids in account_products.items():
-            unique_pids = list(dict.fromkeys(pids))
+            if not pids:
+                continue
             await job_repo.create_async(
                 tenant_id=tenant_id,
                 job_type="transmit",
                 payload={
-                    "product_ids": unique_pids,
+                    "product_ids": pids,
                     "update_items": ["price", "stock", "image", "description"],
-                    "target_account_ids": [account_id],
+                    "target_account_ids": [a.market_account_id],
+                    "source_site": a.source_site,
+                    "brand_name": a.brand_name,
                     "skip_unchanged": True,
                 },
             )
             job_count += 1
-            total_products += len(unique_pids)
+            total_products += len(pids)
 
         logger.info(
             f"[테트리스 sync] {len(assignments)}개 배치 → "

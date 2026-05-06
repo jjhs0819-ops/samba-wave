@@ -177,11 +177,7 @@ export default function CollectorPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [f, pol] = await Promise.all([
-      collectorApi.listFilters().catch(() => []),
-      policyApi.list().catch(() => []),
-    ]);
-    setFilters(f);
+    const pol = await policyApi.list().catch(() => []);
     setPolicies(pol);
     setLoading(false);
   }, []);
@@ -190,6 +186,16 @@ export default function CollectorPage() {
     try {
       const data = await collectorApi.getFilterTree()
       setTree(data)
+      // 트리에서 리프 노드를 flat하게 추출 — /filters API 호출 대체
+      const leaves: SambaSearchFilter[] = []
+      const walk = (nodes: SambaSearchFilter[]) => {
+        for (const n of nodes) {
+          if (!n.is_folder) leaves.push(n)
+          if (n.children?.length) walk(n.children)
+        }
+      }
+      walk(data)
+      setFilters(leaves)
     } catch { /* 트리 로드 실패 무시 */ }
   }, [])
 

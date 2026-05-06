@@ -580,7 +580,9 @@ async def get_filter_tree(
     count_map: dict[str, int] = {}
     market_reg_map: dict[str, int] = {}
     ai_tag_map: dict[str, int] = {}
+    ai_image_map: dict[str, int] = {}
     tag_applied_map: dict[str, int] = {}
+    policy_applied_map: dict[str, int] = {}
     if leaf_ids:
         from sqlalchemy import case, and_, cast, String, literal
 
@@ -614,6 +616,14 @@ async def get_filter_tree(
                 _func.count(
                     case(
                         (
+                            and_(cast(_CP.tags, String).like("%__ai_image__%")),
+                            literal(1),
+                        )
+                    )
+                ).label("ai_image"),
+                _func.count(
+                    case(
+                        (
                             and_(
                                 _CP.tags != None,
                                 _func.length(cast(_CP.tags, String)) > 20,
@@ -623,6 +633,9 @@ async def get_filter_tree(
                         )
                     )
                 ).label("tag_applied"),
+                _func.count(case((_CP.applied_policy_id != None, literal(1)))).label(
+                    "policy_applied"
+                ),
             )
             .where(_CP.search_filter_id.in_(leaf_ids))
             .group_by(_CP.search_filter_id)
@@ -632,7 +645,9 @@ async def get_filter_tree(
             count_map[row[0]] = row[1]
             market_reg_map[row[0]] = row[2]
             ai_tag_map[row[0]] = row[3]
-            tag_applied_map[row[0]] = row[4]
+            ai_image_map[row[0]] = row[4]
+            tag_applied_map[row[0]] = row[5]
+            policy_applied_map[row[0]] = row[6]
 
     filter_data = []
     for f in all_filters:
@@ -642,8 +657,12 @@ async def get_filter_tree(
             market_reg_map.get(f.id, 0) if not f.is_folder else 0
         )
         data["ai_tagged_count"] = ai_tag_map.get(f.id, 0) if not f.is_folder else 0
+        data["ai_image_count"] = ai_image_map.get(f.id, 0) if not f.is_folder else 0
         data["tag_applied_count"] = (
             tag_applied_map.get(f.id, 0) if not f.is_folder else 0
+        )
+        data["policy_applied_count"] = (
+            policy_applied_map.get(f.id, 0) if not f.is_folder else 0
         )
         filter_data.append(data)
 

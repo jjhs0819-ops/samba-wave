@@ -995,6 +995,68 @@ async def backfill_product_links(
     return {"linked": linked, "total_cache": len(mpn_map)}
 
 
+@router.post("/fix-musinsa-fashionplus-mismatch")
+async def fix_musinsa_fashionplus_mismatch(
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """FashionPlus로 잘못 매칭된 무신사 주문 일괄 수정.
+
+    상품명 끝 숫자가 MUSINSA site_product_id와 일치하는데
+    collected_product_id가 FashionPlus 상품을 가리키는 주문을 찾아 수정한다.
+    """
+    import re as _re
+    from sqlalchemy import text as _t
+
+    # FashionPlus로 매칭된 주문 중 상품명 끝에 숫자가 있는 건 조회
+    bad_orders = await session.execute(
+        _t(
+            "SELECT o.id, o.product_name, o.collected_product_id "
+            "FROM samba_order o "
+            "JOIN samba_collected_product cp ON cp.id = o.collected_product_id "
+            "WHERE cp.source_site = 'FashionPlus' "
+            "AND o.product_name ~ E'\\\\d{7,}\\\\s*$'"
+        )
+    )
+    rows = bad_orders.fetchall()
+
+    fixed = 0
+    skipped = 0
+    for oid, pname, old_cpid in rows:
+        m = _re.search(r"(\d{7,})\s*$", pname or "")
+        if not m:
+            skipped += 1
+            continue
+        sid = m.group(1)
+
+        # 동일 site_product_id를 가진 MUSINSA 상품 조회
+        cp_row = await session.execute(
+            _t(
+                "SELECT id FROM samba_collected_product "
+                "WHERE site_product_id = :sid AND source_site = 'MUSINSA' "
+                "ORDER BY (market_product_nos IS NOT NULL) DESC, created_at ASC "
+                "LIMIT 1"
+            ),
+            {"sid": sid},
+        )
+        correct_cp = cp_row.fetchone()
+        if not correct_cp:
+            skipped += 1
+            continue
+
+        await session.execute(
+            _t(
+                "UPDATE samba_order "
+                "SET collected_product_id = :cpid, source_site = 'MUSINSA' "
+                "WHERE id = :oid"
+            ),
+            {"cpid": correct_cp[0], "oid": oid},
+        )
+        fixed += 1
+
+    await session.commit()
+    return {"fixed": fixed, "skipped": skipped, "total_checked": len(rows)}
+
+
 @router.put("/{order_id}", response_model=SambaOrder)
 async def update_order(
     order_id: str,
@@ -4437,10 +4499,13 @@ async def sync_orders_from_markets(
                     _id_match = _re.search(r"\b(\d{6,})\s*$", _pname)
                     if _id_match:
                         _sid = _id_match.group(1)
-                        # 1차: DB에서 수집상품 조회
+                        # 1차: DB에서 수집상품 조회 (market_product_nos 보유 상품 우선 → 먼저 수집된 순)
                         _cp_check = await session.execute(
                             _sa_text(
-                                "SELECT id, source_site, images FROM samba_collected_product WHERE site_product_id = :sid LIMIT 1"
+                                "SELECT id, source_site, images FROM samba_collected_product "
+                                "WHERE site_product_id = :sid "
+                                "ORDER BY (market_product_nos IS NOT NULL) DESC, created_at ASC "
+                                "LIMIT 1"
                             ),
                             {"sid": _sid},
                         )
@@ -4461,19 +4526,15 @@ async def sync_orders_from_markets(
                                 order_data["product_image"] = _cp_row[2][0]
                         else:
                             # 2차: DB에 없어도 상품명 패턴으로 소싱처 추론
-                            if len(_sid) >= 9:  # 패션플러스 상품번호는 9자리 이상
-                                if _can_override_source_site_from_sourcing(order_data):
-                                    order_data["source_site"] = "FashionPlus"
-                                order_data["source_url"] = (
-                                    f"https://www.fashionplus.co.kr/goods/detail/{_sid}"
-                                )
-                            elif len(_sid) >= 7:  # 무신사 상품번호는 7자리
+                            # 무신사 goodsNo도 9~10자리이므로 자릿수만으로 FashionPlus 단정 금지
+                            if len(_sid) >= 7:  # 7자리 이상은 무신사로 추론 (더 보수적)
                                 if _can_override_source_site_from_sourcing(order_data):
                                     order_data["source_site"] = "MUSINSA"
                                 order_data["source_url"] = (
                                     f"https://www.musinsa.com/products/{_sid}"
                                 )
-                # 중복 체크: 롯데ON은 od_no+od_seq+proc_seq 기반, 기타는 order_number 기반
+                # 중복 체크: 롯데ON은 od_no+od_seq 기반, 기타는 order_number 기반
+                # proc_seq는 주문 상태 변경 시 바뀌므로 중복 체크에서 제외
                 _normalize_synced_order_status(order_data)
                 if order_data.get("source") == "lotteon" and order_data.get("od_no"):
                     _lo_row = await session.execute(
@@ -4484,7 +4545,6 @@ async def sync_orders_from_markets(
                             "AND channel_id = :cid "
                             "AND od_no = :od_no "
                             "AND od_seq = :od_seq "
-                            "AND proc_seq = :proc_seq "
                             "LIMIT 1"
                         ),
                         {
@@ -4492,7 +4552,6 @@ async def sync_orders_from_markets(
                             "cid": order_data.get("channel_id"),
                             "od_no": order_data["od_no"],
                             "od_seq": order_data.get("od_seq", "1"),
-                            "proc_seq": order_data.get("proc_seq", "1"),
                         },
                     )
                     _lo_id = (_lo_row.fetchone() or [None])[0]
