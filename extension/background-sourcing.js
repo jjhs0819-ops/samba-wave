@@ -419,6 +419,15 @@ function _siteSemRelease(site) {
 
 async function _processJobWithCap(job) {
   const site = job.site || 'unknown'
+  // 사이트별 pre-login 대기 — 해당 사이트 잡 처리 직전에만 블로킹 (다른 소싱처는 즉시 시작)
+  if ((site === 'ABCmart' || site === 'GrandStage') && _abcPreLoginPromise) {
+    try { await _abcPreLoginPromise } catch {}
+    _abcPreLoginPromise = null
+  }
+  if (site === 'LOTTEON' && _lotteonPreLoginPromise) {
+    try { await _lotteonPreLoginPromise } catch {}
+    _lotteonPreLoginPromise = null
+  }
   await _siteSemAcquire(site)
   _markSourcingSiteActive(site)
   try {
@@ -701,16 +710,8 @@ async function _detectLoginStatus(tabId, site) {
 }
 
 async function pollSourcingOnce() {
-  // ABCmart pre-login 완료 대기 — 합류 직후 첫 폴링만 블로킹 (race condition 방지)
-  if (_abcPreLoginPromise) {
-    try { await _abcPreLoginPromise } catch {}
-    _abcPreLoginPromise = null
-  }
-  // LOTTEON pre-login 완료 대기 — 합류 직후 첫 폴링만 블로킹 (이후엔 null)
-  if (_lotteonPreLoginPromise) {
-    try { await _lotteonPreLoginPromise } catch {}
-    _lotteonPreLoginPromise = null
-  }
+  // pre-login 대기는 pollSourcingOnce 블로킹 제거 — 각 사이트 잡 처리 직전(_processJobWithCap)에서 개별 대기
+  // (SSG/GSShop 등 로그인 불필요 소싱처가 ABCmart 3분 로그인 체크에 묶이는 문제 방지)
   // 백엔드가 배치 크기만큼만 큐에 넣으므로 자연히 그 수만큼 처리됨
   // ownerDeviceId 매칭은 백엔드 get_next_job()이 보장하므로 여기서 별도 가드 불필요
   // (수동 업데이트: ownerDeviceId="" → 오토튠 off 상태에서도 처리 가능)

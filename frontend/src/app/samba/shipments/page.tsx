@@ -161,10 +161,12 @@ export default function ShipmentsPage() {
 
   const ensureDeleteLogPolling = useCallback(async () => {
     if (deletePollRef.current) return
+    if (jobPollRef.current) return  // 전송 잡 폴링이 이미 로그를 가져오는 중이면 중복 실행 방지
     stopBackgroundLogPolling()
     const { API_BASE_URL: apiBase } = await import('@/config/api')
     let delPolling = false
     deletePollRef.current = setInterval(async () => {
+      if (jobPollRef.current) return  // 전송 잡이 중간에 시작되면 즉시 양보
       if (delPolling) return
       delPolling = true
       try {

@@ -142,6 +142,7 @@ class SambaCollectedProduct(SQLModel, table=True):
             postgresql_where=text("site_product_id IS NOT NULL"),
         ),
         Index("ix_scp_tenant_source_name", "tenant_id", "source_site", "name"),
+        Index("ix_scp_sale_status", "sale_status"),
     )
 
     id: str = Field(

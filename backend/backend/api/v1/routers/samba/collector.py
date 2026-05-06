@@ -1043,17 +1043,9 @@ async def scroll_products(
             func.count(case((_CP.applied_policy_id != None, literal(1)))).label(
                 "policy_applied"
             ),
-            func.count(
-                case(
-                    (
-                        or_(
-                            _CP.sale_status == "sold_out",
-                            _all_options_sold_out(_CP),
-                        ),
-                        literal(1),
-                    )
-                )
-            ).label("sold_out"),
+            func.count(case((_CP.sale_status == "sold_out", literal(1)))).label(
+                "sold_out"
+            ),
         ).select_from(_CP)
         counts_task = session.execute(counts_stmt)
 
@@ -1101,7 +1093,7 @@ async def scroll_products(
             "policy_applied": counts_row.policy_applied,
             "sold_out": counts_row.sold_out,
         }
-        await cache.set("products:counts", counts, ttl=30)
+        await cache.set("products:counts", counts, ttl=300)
 
     return {
         "items": [dict(r) for r in rows],
@@ -1247,17 +1239,7 @@ async def product_counts(
         func.count(case((_CP.applied_policy_id != None, literal(1)))).label(
             "policy_applied"
         ),
-        func.count(
-            case(
-                (
-                    or_(
-                        _CP.sale_status == "sold_out",
-                        _all_options_sold_out(_CP),
-                    ),
-                    literal(1),
-                )
-            )
-        ).label("sold_out"),
+        func.count(case((_CP.sale_status == "sold_out", literal(1)))).label("sold_out"),
     ).select_from(_CP)
     row = (await session.execute(stmt)).one()
     result = {
@@ -1266,7 +1248,7 @@ async def product_counts(
         "policy_applied": row.policy_applied,
         "sold_out": row.sold_out,
     }
-    await cache.set("products:counts", result, ttl=30)
+    await cache.set("products:counts", result, ttl=300)
     return result
 
 

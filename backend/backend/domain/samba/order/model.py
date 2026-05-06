@@ -38,6 +38,7 @@ class SambaOrder(SQLModel, table=True):
             unique=True,
             postgresql_where=text("source = 'lotteon'"),
         ),
+        Index("ix_samba_order_tenant_paid_at", "tenant_id", "paid_at"),
     )
 
     id: str = Field(
