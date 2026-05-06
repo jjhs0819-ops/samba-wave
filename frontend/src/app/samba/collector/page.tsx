@@ -131,6 +131,7 @@ export default function CollectorPage() {
     proxyText,
     musinsaAuth,
     musinsaAuthText,
+    poolInfo,
     setProxyStatus,
     setProxyText,
   } = useProxyAuth();
@@ -334,6 +335,7 @@ export default function CollectorPage() {
         proxyText={proxyText}
         musinsaAuth={musinsaAuth}
         musinsaAuthText={musinsaAuthText}
+        poolInfo={poolInfo}
         setProxyStatus={setProxyStatus}
         setProxyText={setProxyText}
       />

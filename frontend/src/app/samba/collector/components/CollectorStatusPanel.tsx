@@ -3,6 +3,7 @@
 import type { Dispatch, RefObject, SetStateAction } from 'react'
 import { fetchWithAuth, API_BASE } from '@/lib/samba/api/shared'
 import { fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
+import type { PoolInfo } from '../hooks/useProxyAuth'
 
 // 인증/프록시 상태 타입
 type StatusState = 'checking' | 'ok' | 'error'
@@ -24,6 +25,7 @@ type StatusProps = {
   proxyText: string
   musinsaAuth: StatusState
   musinsaAuthText: string
+  poolInfo?: PoolInfo
   setProxyStatus: Dispatch<SetStateAction<StatusState>>
   setProxyText: Dispatch<SetStateAction<string>>
 }
@@ -53,11 +55,28 @@ export default function CollectorStatusPanel(props: Props) {
       proxyText,
       musinsaAuth,
       musinsaAuthText,
+      poolInfo,
       setProxyStatus,
       setProxyText,
     } = props
+
+    // 커넥션 풀 표시 계산
+    const poolText = (() => {
+      if (!poolInfo) return null
+      const fmt = (s: { size: number; checkedout: number; overflow: number } | null) => {
+        if (!s) return '—'
+        const max = s.size + s.overflow
+        return `${fmtNum(s.checkedout)}/${fmtNum(max)}`
+      }
+      const wUsage = poolInfo.write ? poolInfo.write.checkedout / (poolInfo.write.size + poolInfo.write.overflow) : 0
+      const rUsage = poolInfo.read ? poolInfo.read.checkedout / (poolInfo.read.size + poolInfo.read.overflow) : 0
+      const maxUsage = Math.max(wUsage, rUsage)
+      const color = maxUsage >= 0.9 ? '#FF6B6B' : maxUsage >= 0.7 ? '#FAB005' : '#8A95B0'
+      return { text: `W:${fmt(poolInfo.write)} R:${fmt(poolInfo.read)}`, color }
+    })()
+
     return (
-      // 프록시 + 무신사 인증 상태 (1줄)
+      // 프록시 + 무신사 인증 + 커넥션 풀 상태 (1줄)
       <div style={{
         display: 'flex', alignItems: 'center', gap: '16px', padding: '6px 14px',
         borderRadius: '8px', marginBottom: '12px',
@@ -73,6 +92,14 @@ export default function CollectorStatusPanel(props: Props) {
           background: musinsaAuth === 'ok' ? '#51CF66' : musinsaAuth === 'error' ? '#FF6B6B' : '#555',
         }} />
         <span style={{ color: musinsaAuth === 'ok' ? '#51CF66' : '#888' }}>{musinsaAuthText}</span>
+        {poolText && (
+          <>
+            <span style={{ color: '#2D2D2D' }}>|</span>
+            <span style={{ color: poolText.color, fontVariantNumeric: 'tabular-nums' }}>
+              DB풀 {poolText.text}
+            </span>
+          </>
+        )}
         <button
           onClick={() => {
             setProxyStatus('checking')

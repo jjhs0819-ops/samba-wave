@@ -4,10 +4,7 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from "react"
 import { useSearchParams, useRouter } from "next/navigation";
 import {
   collectorApi,
-  policyApi,
-  forbiddenApi,
   accountApi,
-  categoryApi,
   shipmentApi,
   proxyApi,
   type SambaCollectedProduct,
@@ -17,7 +14,7 @@ import {
   type RefreshDetail,
 } from "@/lib/samba/api/commerce";
 import { fetchWithAuth } from "@/lib/samba/api/shared";
-import { detailTemplateApi, nameRuleApi, type SambaNameRule, type SambaDetailTemplate } from "@/lib/samba/api/support";
+import { type SambaNameRule, type SambaDetailTemplate } from "@/lib/samba/api/support";
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtNum as fmt, fmtTextNumbers } from '@/lib/samba/styles'
 import { fmtTime } from '@/lib/samba/utils'
@@ -322,25 +319,18 @@ export default function ProductsPage() {
       setLoading(false)
     }
 
-    // Phase 2: 메타데이터 백그라운드 로드 (상품 표시 후 비동기)
-    Promise.all([
-      policyApi.list().catch(() => [] as SambaPolicy[]),
-      collectorApi.listFilters().catch(() => [] as SambaSearchFilter[]),
-      forbiddenApi.listWords('deletion').catch(() => [] as { word: string }[]),
-      accountApi.listActive().catch(() => [] as SambaMarketAccount[]),
-      nameRuleApi.list().catch(() => [] as SambaNameRule[]),
-      (categoryApi.listMappings() as Promise<{ source_site: string; source_category: string; target_mappings: Record<string, string> }[]>).catch(() => [] as { source_site: string; source_category: string; target_mappings: Record<string, string> }[]),
-      detailTemplateApi.list().catch(() => [] as SambaDetailTemplate[]),
-    ]).then(([pol, flts, wds, accs, rules, catMaps, tpls]) => {
-      setPolicies(pol)
-      setAccounts(accs)
-      setDetailTemplates(tpls)
-      setDeletionWords((wds as { word: string }[]).map(w => w.word))
-      setNameRules(rules)
+    // Phase 2: 메타데이터 백그라운드 로드 — 통합 엔드포인트 1회 호출 (기존 7개 개별 호출 대체)
+    collectorApi.initData().then(meta => {
+      setPolicies(meta.policies ?? [])
+      setAccounts(meta.accounts ?? [])
+      setDetailTemplates(meta.detail_templates ?? [])
+      setDeletionWords(meta.deletion_words ?? [])
+      setNameRules(meta.name_rules ?? [])
       const nameMap: Record<string, string> = {}
-      flts.forEach((f: SambaSearchFilter) => { nameMap[f.id] = f.name })
+      ;(meta.filters ?? []).forEach((f: SambaSearchFilter) => { nameMap[f.id] = f.name })
       setFilterNameMap(nameMap)
-      setSearchFilters(flts)
+      setSearchFilters(meta.filters ?? [])
+      const catMaps: { source_site: string; source_category: string; target_mappings: Record<string, string> }[] = meta.category_mappings ?? []
       if (Array.isArray(catMaps)) {
         const map = new Map<string, Record<string, string>>()
         catMaps.forEach(m => {

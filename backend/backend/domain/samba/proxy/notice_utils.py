@@ -414,7 +414,9 @@ _COUPANG_NOTICE_FIELDS: dict[str, list[str]] = {
 }
 
 
-def _build_value_map(product: dict[str, Any], cat_name: str) -> tuple[dict[str, str], str]:
+def _build_value_map(
+    product: dict[str, Any], cat_name: str
+) -> tuple[dict[str, str], str]:
     """notice value 매핑 사전 + fallback 생성 (build_coupang_notices와 _with_meta 공용)."""
     fallback = "상세페이지 참조"
     _caution_defaults: dict[str, str] = {
@@ -434,8 +436,12 @@ def _build_value_map(product: dict[str, Any], cat_name: str) -> tuple[dict[str, 
         "치수": fallback,
         "크기": fallback,
         "종류": fallback,
-        "제조자(수입자)": product.get("manufacturer", "") or product.get("brand", "") or fallback,
-        "제조자 및 제조판매업자": product.get("manufacturer", "") or product.get("brand", "") or fallback,
+        "제조자(수입자)": product.get("manufacturer", "")
+        or product.get("brand", "")
+        or fallback,
+        "제조자 및 제조판매업자": product.get("manufacturer", "")
+        or product.get("brand", "")
+        or fallback,
         "제조국": product.get("origin", "") or fallback,
         "세탁방법 및 취급시 주의사항": caution_text,
         "취급시 주의사항": caution_text,

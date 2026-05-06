@@ -296,24 +296,25 @@ export default function OrdersPage() {
     window.addEventListener('open-alarm-setting', handler)
     return () => window.removeEventListener('open-alarm-setting', handler)
   }, [])
-  useEffect(() => { channelApi.list().then(setChannels).catch(() => {}) }, [])
-  useEffect(() => { accountApi.listActive().then(setAccounts).catch(() => {}) }, [])
-  useEffect(() => { sourcingAccountApi.list().then(accs => setSourcingAccounts(accs.filter(a => a.is_active))).catch(() => {}) }, [])
+  // 마운트 1회 — 5개 메타 API를 하나의 useEffect에서 동시 호출 (DB 커넥션 경합 최소화)
   useEffect(() => {
-    proxyApi.aligoRemain().then(r => { if (r.success) setSmsRemain(r) }).catch(() => {})
-  }, [])
-  useEffect(() => {
-    forbiddenApi.getSetting('store_playauto').then(data => {
-      const d = data as Record<string, string> | null
-      if (!d) return
-      const map: Record<string, string> = {}
-      for (const k of ['alias1', 'alias2', 'alias3', 'alias4', 'alias5']) {
-        const v = d[k] || ''
-        const { code, alias } = parsePlayautoAliasEntry(v)
-        if (code && alias) map[code] = alias
-      }
-      setSiteAliasMap(map)
-    }).catch(() => {})
+    Promise.all([
+      channelApi.list().then(setChannels).catch(() => {}),
+      accountApi.listActive().then(setAccounts).catch(() => {}),
+      sourcingAccountApi.list().then(accs => setSourcingAccounts(accs.filter(a => a.is_active))).catch(() => {}),
+      proxyApi.aligoRemain().then(r => { if (r.success) setSmsRemain(r) }).catch(() => {}),
+      forbiddenApi.getSetting('store_playauto').then(data => {
+        const d = data as Record<string, string> | null
+        if (!d) return
+        const map: Record<string, string> = {}
+        for (const k of ['alias1', 'alias2', 'alias3', 'alias4', 'alias5']) {
+          const v = d[k] || ''
+          const { code, alias } = parsePlayautoAliasEntry(v)
+          if (code && alias) map[code] = alias
+        }
+        setSiteAliasMap(map)
+      }).catch(() => {}),
+    ])
   }, [])
 
   const { syncing, syncAccountId, setSyncAccountId, handleFetch } = useOrderSync({

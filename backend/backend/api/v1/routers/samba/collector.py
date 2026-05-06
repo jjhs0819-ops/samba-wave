@@ -203,6 +203,26 @@ async def proxy_status():
     return {"status": "ok", "message": "프록시 서버 정상 작동 중 (백엔드 통합)"}
 
 
+@router.get("/pool-status")
+async def pool_status():
+    """Write/Read 커넥션 풀 현황 반환 — 수집 페이지 모니터링용."""
+    from backend.db.orm import get_write_engine, get_read_engine
+
+    def _stats(engine):
+        p = engine.sync_engine.pool
+        return {
+            "size": p.size(),
+            "checkedout": p.checkedout(),
+            "overflow": p.overflow(),
+            "checkedin": p.checkedin(),
+        }
+
+    try:
+        return {"write": _stats(get_write_engine()), "read": _stats(get_read_engine())}
+    except Exception:
+        return {"write": None, "read": None}
+
+
 @router.get("/musinsa-auth-status")
 async def musinsa_auth_status(
     session: AsyncSession = Depends(get_read_session_dependency),

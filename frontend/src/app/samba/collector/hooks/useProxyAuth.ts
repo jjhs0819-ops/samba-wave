@@ -6,11 +6,15 @@ import { fetchWithAuth, API_BASE } from '@/lib/samba/api/shared'
 // - setter들도 함께 반환하여 외부(예: CollectorStatusPanel)에서 재확인 가능
 export type ProxyAuthStatus = 'checking' | 'ok' | 'error'
 
+type PoolStat = { size: number; checkedout: number; overflow: number; checkedin: number }
+export type PoolInfo = { write: PoolStat | null; read: PoolStat | null } | null
+
 export default function useProxyAuth() {
   const [proxyStatus, setProxyStatus] = useState<ProxyAuthStatus>('checking')
   const [proxyText, setProxyText] = useState('프록시 서버 확인 중...')
   const [musinsaAuth, setMusinsaAuth] = useState<ProxyAuthStatus>('checking')
   const [musinsaAuthText, setMusinsaAuthText] = useState('인증 상태 확인 중...')
+  const [poolInfo, setPoolInfo] = useState<PoolInfo>(null)
 
   // 프록시 서버 상태 확인 — 502/네트워크 오류 시 1회 재시도(1.5초 지연)
   // Caddy fail_duration 윈도우(5s) 내 단발성 502를 흡수하기 위함
@@ -65,11 +69,22 @@ export default function useProxyAuth() {
       })
   }, [])
 
+  const checkPoolStatus = useCallback(() => {
+    fetchWithAuth(`${API_BASE}/api/v1/samba/collector/pool-status`)
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
+      .then((data) => setPoolInfo(data))
+      .catch(() => setPoolInfo(null))
+  }, [])
+
   // 마운트 시 1회 체크 (기존 page.tsx 동작과 동일)
   useEffect(() => {
     const refreshAll = () => {
       checkProxyStatus()
       checkMusinsaAuth()
+      checkPoolStatus()
     }
 
     refreshAll()
@@ -88,13 +103,14 @@ export default function useProxyAuth() {
       window.removeEventListener('focus', handleFocus)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
-  }, [checkMusinsaAuth, checkProxyStatus])
+  }, [checkMusinsaAuth, checkProxyStatus, checkPoolStatus])
 
   return {
     proxyStatus,
     proxyText,
     musinsaAuth,
     musinsaAuthText,
+    poolInfo,
     checkProxyStatus,
     checkMusinsaAuth,
     setProxyStatus,

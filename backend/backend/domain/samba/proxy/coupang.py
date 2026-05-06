@@ -268,7 +268,9 @@ class CoupangClient:
     # category_id → (data, timestamp)
     _notice_meta_cache: dict[str, tuple[dict, float]] = {}
     _NOTICE_META_CACHE_TTL = 3600  # 1시간
-    _NOTICE_META_CACHE_MAX = 200  # 카테고리 200개 한도 (의류/신발/가방 등 메인 leaf 충분)
+    _NOTICE_META_CACHE_MAX = (
+        200  # 카테고리 200개 한도 (의류/신발/가방 등 메인 leaf 충분)
+    )
 
     def __init__(
         self,
@@ -489,7 +491,9 @@ class CoupangClient:
 
         # 캐시 한도 초과 시 가장 오래된 절반 제거
         if len(self._notice_meta_cache) > self._NOTICE_META_CACHE_MAX:
-            sorted_items = sorted(self._notice_meta_cache.items(), key=lambda x: x[1][1])
+            sorted_items = sorted(
+                self._notice_meta_cache.items(), key=lambda x: x[1][1]
+            )
             for k, _ in sorted_items[: self._NOTICE_META_CACHE_MAX // 2]:
                 del self._notice_meta_cache[k]
 
