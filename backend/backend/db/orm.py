@@ -180,6 +180,12 @@ async def get_write_session_dependency() -> AsyncGenerator[AsyncSession, None]:
     session = Session()
     try:
         yield session
+    except Exception:
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+        raise
     finally:
         await session.close()
 
@@ -194,5 +200,11 @@ async def get_read_session_dependency() -> AsyncGenerator[AsyncSession, None]:
     session = Session()
     try:
         yield session
+    except Exception:
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+        raise
     finally:
         await session.close()

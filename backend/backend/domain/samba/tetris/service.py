@@ -20,6 +20,10 @@ from backend.utils.logger import logger
 from sqlalchemy import or_
 from sqlmodel import select
 
+# get_board() 인메모리 캐시 — 30초 TTL
+_BOARD_CACHE_TTL = 30.0
+_board_cache: dict = {}
+_board_cache_lock = asyncio.Lock()
 
 # 마켓타입 → 표시명 매핑 (account.market_type 기준)
 _MARKET_DISPLAY_NAMES: dict[str, str] = {
@@ -155,6 +159,27 @@ class SambaTetrisService:
           "unassigned": [{ source_site, brand_name, collected_count }]
         }
         """
+        import time as _time
+
+        cache_key = str(tenant_id)
+        now_ts = _time.monotonic()
+        cached = _board_cache.get(cache_key)
+        if cached is not None and (now_ts - cached["ts"]) < _BOARD_CACHE_TTL:
+            return cached["data"]
+
+        async with _board_cache_lock:
+            cached = _board_cache.get(cache_key)
+            if (
+                cached is not None
+                and (_time.monotonic() - cached["ts"]) < _BOARD_CACHE_TTL
+            ):
+                return cached["data"]
+
+            result = await self._get_board_uncached(tenant_id)
+            _board_cache[cache_key] = {"data": result, "ts": _time.monotonic()}
+            return result
+
+    async def _get_board_uncached(self, tenant_id: Optional[str]) -> dict[str, Any]:
         # 1. 마켓 계정 전체 로드
         acc_stmt = select(SambaMarketAccount)
         if tenant_id is not None:

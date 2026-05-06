@@ -28,6 +28,7 @@ _HEAVY_FIELDS = {
     "detail_html",
     "extra_data",
     "kream_data",
+    "detail_images",  # 상품목록 불필요 — 상세 페이지에서만 사용
 }
 
 
