@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
-import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { useSearchParams, useRouter } from "next/navigation";
 import {
   collectorApi,
@@ -389,7 +388,6 @@ export default function ProductsPage() {
   // loadProducts를 deps에 넣으면 currentPage 변경 → loadProducts 재생성 → 이 effect가 발화하여
   // 2/3페이지로 이동해도 강제로 1페이지로 되돌리는 버그가 발생. pageSize만 감지해야 함.
   const pageSizeInitRef = useRef(true)
-  const cardListRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!queryReady) return
     if (pageSizeInitRef.current) { pageSizeInitRef.current = false; return }
@@ -402,14 +400,6 @@ export default function ProductsPage() {
   const products = highlightProductId
     ? allProducts.filter(p => p.id === highlightProductId)
     : allProducts
-
-  // 카드/간단 뷰 가상 스크롤 (이미지 뷰에서는 count=0)
-  const cardRowVirtualizer = useWindowVirtualizer({
-    count: viewMode !== 'image' ? Math.ceil(products.length / 2) : 0,
-    estimateSize: () => viewMode === 'compact' ? 130 : 320,
-    overscan: 3,
-    scrollMargin: cardListRef.current?.offsetTop ?? 0,
-  })
 
   // KPI 카드용 — scroll 응답에 counts 포함, 별도 API 호출 불필요
   const [kpiCounts, setKpiCounts] = useState({ total: 0, registered: 0, policy_applied: 0, sold_out: 0 })
@@ -2384,93 +2374,39 @@ export default function ProductsPage() {
           ))}
         </div>
       ) : (
-        /* Card / Compact view — 가상 스크롤 2열 그리드 */
-        <div ref={cardListRef} style={{ position: 'relative', height: `${cardRowVirtualizer.getTotalSize()}px` }}>
-          {cardRowVirtualizer.getVirtualItems().map(virtualRow => {
-            const leftIdx = virtualRow.index * 2
-            const rightIdx = leftIdx + 1
-            const gap = viewMode === 'compact' ? 4 : 8
-            return (
-              <div
-                key={virtualRow.key}
-                data-index={virtualRow.index}
-                ref={cardRowVirtualizer.measureElement}
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  width: '100%',
-                  transform: `translateY(${virtualRow.start - cardRowVirtualizer.options.scrollMargin}px)`,
-                  display: 'grid',
-                  gridTemplateColumns: '1fr 1fr',
-                  gap: `${gap}px`,
-                }}
-              >
-                {leftIdx < products.length && (
-                  <div style={{ minWidth: 0 }}>
-                    <ProductCard
-                      product={products[leftIdx]}
-                      idx={leftIdx}
-                      compact={viewMode === 'compact'}
-                      expanded={expandedIds.has(products[leftIdx].id)}
-                      onToggleExpand={() => handleToggleExpand(products[leftIdx].id)}
-                      policies={policies}
-                      accounts={accounts}
-                      nameRules={nameRules}
-                      selectedIds={selectedIds}
-                      filterNameMap={filterNameMap}
-                      deletionWords={deletionWords}
-                      onCheckboxToggle={handleCheckboxToggle}
-                      onDelete={handleDelete}
-                      onPolicyChange={handlePolicyChange}
-                      onToggleMarket={handleToggleMarket}
-                      onEnrich={handleEnrich}
-                      onLockToggle={handleLockToggle}
-                      onBlockCollect={handleBlockCollect}
-                      onMarketDelete={handleMarketDelete}
-                      onProductUpdate={handleProductUpdate}
-                      onTagUpdate={handleTagUpdate}
-                      logMessage={activeLog?.productId === products[leftIdx].id ? activeLog.message : undefined}
-                      catMappingMap={catMappingMap}
-                      filters={searchFilters}
-                      detailTemplates={detailTemplates}
-                    />
-                  </div>
-                )}
-                {rightIdx < products.length && (
-                  <div style={{ minWidth: 0 }}>
-                    <ProductCard
-                      product={products[rightIdx]}
-                      idx={rightIdx}
-                      compact={viewMode === 'compact'}
-                      expanded={expandedIds.has(products[rightIdx].id)}
-                      onToggleExpand={() => handleToggleExpand(products[rightIdx].id)}
-                      policies={policies}
-                      accounts={accounts}
-                      nameRules={nameRules}
-                      selectedIds={selectedIds}
-                      filterNameMap={filterNameMap}
-                      deletionWords={deletionWords}
-                      onCheckboxToggle={handleCheckboxToggle}
-                      onDelete={handleDelete}
-                      onPolicyChange={handlePolicyChange}
-                      onToggleMarket={handleToggleMarket}
-                      onEnrich={handleEnrich}
-                      onLockToggle={handleLockToggle}
-                      onBlockCollect={handleBlockCollect}
-                      onMarketDelete={handleMarketDelete}
-                      onProductUpdate={handleProductUpdate}
-                      onTagUpdate={handleTagUpdate}
-                      logMessage={activeLog?.productId === products[rightIdx].id ? activeLog.message : undefined}
-                      catMappingMap={catMappingMap}
-                      filters={searchFilters}
-                      detailTemplates={detailTemplates}
-                    />
-                  </div>
-                )}
-              </div>
-            )
-          })}
+        /* Card / Compact view — 2열 그리드 */
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: viewMode === 'compact' ? '4px' : '8px' }}>
+          {products.map((p, idx) => (
+            <div key={p.id} style={{ minWidth: 0 }}>
+              <ProductCard
+                product={p}
+                idx={idx}
+                compact={viewMode === 'compact'}
+                expanded={expandedIds.has(p.id)}
+                onToggleExpand={() => handleToggleExpand(p.id)}
+                policies={policies}
+                accounts={accounts}
+                nameRules={nameRules}
+                selectedIds={selectedIds}
+                filterNameMap={filterNameMap}
+                deletionWords={deletionWords}
+                onCheckboxToggle={handleCheckboxToggle}
+                onDelete={handleDelete}
+                onPolicyChange={handlePolicyChange}
+                onToggleMarket={handleToggleMarket}
+                onEnrich={handleEnrich}
+                onLockToggle={handleLockToggle}
+                onBlockCollect={handleBlockCollect}
+                onMarketDelete={handleMarketDelete}
+                onProductUpdate={handleProductUpdate}
+                onTagUpdate={handleTagUpdate}
+                logMessage={activeLog?.productId === p.id ? activeLog.message : undefined}
+                catMappingMap={catMappingMap}
+                filters={searchFilters}
+                detailTemplates={detailTemplates}
+              />
+            </div>
+          ))}
         </div>
       )}
 
