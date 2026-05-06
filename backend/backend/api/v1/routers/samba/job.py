@@ -445,6 +445,10 @@ async def get_collect_queue_status(
         payload = j.payload or {}
         fid = payload.get("filter_id", "")
         fname, fsite = filter_map.get(fid, ("", payload.get("source_site", "")))
+        # brand_all 잡: filter_id 없이 brand/keyword 조합으로 이름 표시
+        if not fname:
+            brand = payload.get("brand") or payload.get("keyword") or ""
+            fname = brand if brand else ""
         item = {
             "id": j.id,
             "filter_name": fname,
