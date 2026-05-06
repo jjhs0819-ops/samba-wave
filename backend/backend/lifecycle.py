@@ -256,10 +256,20 @@ async def _sync_playauto_registered_accounts(logger: logging.Logger) -> None:
                 )
 
                 from sqlalchemy.dialects.postgresql import JSONB as _JSONB
+                from sqlalchemy.orm import defer as _defer
 
-                reverse_stmt = select(SambaCollectedProduct).where(
-                    SambaCollectedProduct.registered_accounts.op("@>")(
-                        cast(f'["{account.id}"]', _JSONB)
+                reverse_stmt = (
+                    select(SambaCollectedProduct)
+                    .where(
+                        SambaCollectedProduct.registered_accounts.op("@>")(
+                            cast(f'["{account.id}"]', _JSONB)
+                        )
+                    )
+                    .options(
+                        _defer(SambaCollectedProduct.detail_html),
+                        _defer(SambaCollectedProduct.detail_images),
+                        _defer(SambaCollectedProduct.images),
+                        _defer(SambaCollectedProduct.extra_data),
                     )
                 )
                 reverse_result = await session.exec(reverse_stmt)
