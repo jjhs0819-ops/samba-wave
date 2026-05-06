@@ -1348,8 +1348,8 @@ class SambaShipmentService:
                                 f"[ESM 크로스매핑] {other}({other_id}) → {market_type}({category_id})"
                             )
 
-                # 카페24는 플러그인 내부에서 소싱처 카테고리로 자동 생성하므로 매핑 없어도 허용
-                if not category_id and market_type not in ("playauto", "cafe24"):
+                # 카페24/롯데홈쇼핑은 플러그인 내부에서 자체 카테고리(소싱처/정책 disp_no)를 사용하므로 매핑 없어도 허용
+                if not category_id and market_type not in ("playauto", "cafe24", "lottehome"):
                     res["error"] = "카테고리 매핑 없음"
                     logger.warning(
                         f"[전송] 상품 {product_id} → {market_type} 카테고리 매핑 없음 (스킵)"
@@ -1359,7 +1359,7 @@ class SambaShipmentService:
                 # 롯데ON은 BC 접두사 카테고리 코드 사용 (BC41030100 형식)
                 _lotteon_like = market_type in ("lotteon", "ssg")
                 if (
-                    market_type not in ("coupang", "playauto", "cafe24")
+                    market_type not in ("coupang", "playauto", "cafe24", "lottehome")
                     and not _lotteon_like
                     and not str(category_id).isdigit()
                 ):
@@ -2407,10 +2407,11 @@ class SambaShipmentService:
                             logger.info(
                                 f"[ESM 크로스매핑] {other}({other_id}) → {account.market_type}({category_id})"
                             )
-                # 카페24는 카테고리 매핑 없이 플러그인 내부에서 자동 생성
+                # 카페24/롯데홈쇼핑은 카테고리 매핑 없이 플러그인 내부에서 자동 처리
                 if not category_id and account.market_type not in (
                     "playauto",
                     "cafe24",
+                    "lottehome",
                 ):
                     new_result[account_id] = "failed"
                     new_errors[account_id] = "카테고리 매핑 없음"

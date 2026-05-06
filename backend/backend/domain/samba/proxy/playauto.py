@@ -35,12 +35,19 @@ class PlayAutoClient:
 
     @staticmethod
     def _get_proxy_url() -> str:
-        import os
+        try:
+            from backend.domain.samba.collector.refresher import (
+                get_collect_proxy_url,
+                get_transmit_proxy_url,
+            )
 
-        # PLAYAUTO_PROXY_URL 명시 설정 시에만 프록시 사용
-        # PlayAuto EMP API는 공개 REST API — 전송 프록시 폴백 불필요 (느린 프록시로 인한 타임아웃 방지)
-        playauto_proxy = os.environ.get("PLAYAUTO_PROXY_URL", "").strip()
-        return playauto_proxy
+            proxy = (get_transmit_proxy_url() or "").strip()
+            if proxy:
+                return proxy
+            return (get_collect_proxy_url() or "").strip()
+        except Exception as e:
+            logger.warning(f"[플레이오토] 프록시 설정 로드 실패: {e}")
+            return ""
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -425,6 +432,15 @@ class PlayAutoClient:
             "MadeIn": _normalize_origin(product.get("origin")),
             "TaxType": "Y",
         }
+
+        # 원가 (소싱처 원가 = cost 필드)
+        cost = (
+            product.get("cost")
+            or product.get("cost_price")
+            or product.get("source_price")
+        )
+        if cost:
+            data["CostPrice"] = str(int(cost))
 
         # 시중가: 정책의 streetPriceRate(%) 적용, 0이면 판매가와 동일
         sale_price = int(product.get("sale_price", 0))
