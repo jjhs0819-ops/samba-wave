@@ -46,7 +46,7 @@ export async function fetchWithAuth(url: string, init?: RequestInit): Promise<Re
   return res
 }
 
-export async function request<T>(url: string, init?: RequestInit): Promise<T> {
+export async function request<T>(url: string, init?: RequestInit, options?: { timeoutMs?: number }): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(init?.headers as Record<string, string>),
@@ -69,11 +69,21 @@ export async function request<T>(url: string, init?: RequestInit): Promise<T> {
     if (_did) headers['X-Device-Id'] = _did
   }
 
-  const res = await fetch(url, {
-    cache: 'no-store',
-    ...init,
-    headers,
-  });
+  const timeoutMs = options?.timeoutMs
+  const controller = timeoutMs ? new AbortController() : null
+  const timer = controller && timeoutMs ? setTimeout(() => controller.abort(), timeoutMs) : null
+
+  let res: Response
+  try {
+    res = await fetch(url, {
+      cache: 'no-store',
+      ...init,
+      headers,
+      ...(controller ? { signal: controller.signal } : {}),
+    })
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
   if (!res.ok) {
     // 401이면 토큰 만료 — 로그인 페이지로 강제 리다이렉트
     // .catch(() => []) 에 삼켜지지 않도록 never-resolving promise 반환
