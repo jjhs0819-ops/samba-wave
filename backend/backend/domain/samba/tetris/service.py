@@ -463,6 +463,7 @@ class SambaTetrisService:
                 for (site, brand) in legacy_keys_by_account.get(acc.id, [])
                 if (site, brand) not in assigned_site_brand
             ]
+            _fallback_color = next((v[1] for v in policy_map.values()), _LEGACY_COLOR)
             for site, brand in legacy_keys:
                 reg_cnt = normalized_registered_map.get((site, brand, acc.id), 0)
                 col_cnt = normalized_collected_map.get((site, brand), 0)
@@ -480,7 +481,7 @@ class SambaTetrisService:
                         "brand_name": orig_brand,
                         "policy_id": _sf_leg[0] if _sf_leg else None,
                         "policy_name": _sf_leg[1] if _sf_leg else None,
-                        "policy_color": _sf_leg[2] if _sf_leg else _LEGACY_COLOR,
+                        "policy_color": _sf_leg[2] if _sf_leg else _fallback_color,
                         "registered_count": reg_cnt,
                         "collected_count": col_cnt,
                         "ai_tagged_count": ai_cnt,

@@ -1042,19 +1042,9 @@ async def scroll_products(
         counts_stmt = select(
             func.count().label("total"),
             func.count(
-                case(
-                    (
-                        and_(
-                            _CP.registered_accounts.isnot(None),
-                            func.jsonb_array_length(_CP.registered_accounts) > 0,
-                            _CP.market_product_nos.isnot(None),
-                            _CP.market_product_nos != cast("{}", _JSONB),
-                        ),
-                        literal(1),
-                    )
-                )
+                case((_CP.is_unregistered == False, literal(1)))  # noqa: E712
             ).label("registered"),
-            func.count(case((_CP.applied_policy_id != None, literal(1)))).label(
+            func.count(case((_CP.applied_policy_id != None, literal(1)))).label(  # noqa: E711
                 "policy_applied"
             ),
             func.count(case((_CP.sale_status == "sold_out", literal(1)))).label(
