@@ -128,6 +128,7 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
         ).where(
             self._tenant_filter(tenant_id),
             SambaCollectedProduct.registered_accounts.isnot(None),
+            func.jsonb_typeof(SambaCollectedProduct.registered_accounts) == "array",
             func.jsonb_array_length(SambaCollectedProduct.registered_accounts) > 0,
         )
         result = await self.session.execute(stmt)
@@ -170,6 +171,7 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
                 *sc,
                 *fc,
                 SambaCollectedProduct.registered_accounts.isnot(None),
+                func.jsonb_typeof(SambaCollectedProduct.registered_accounts) == "array",
                 func.jsonb_array_length(SambaCollectedProduct.registered_accounts) > 0,
             )
             .distinct()

@@ -206,6 +206,7 @@ class SambaMonitorService:
             func.count(SambaCollectedProduct.id).filter(
                 SambaCollectedProduct.last_refreshed_at >= since_24h,
                 SambaCollectedProduct.registered_accounts.isnot(None),
+                func.jsonb_typeof(SambaCollectedProduct.registered_accounts) == "array",
                 func.jsonb_array_length(SambaCollectedProduct.registered_accounts) > 0,
             ),
             func.count(SambaCollectedProduct.id).filter(

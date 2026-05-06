@@ -275,6 +275,7 @@ async def list_filters(session: AsyncSession = Depends(get_write_session_depende
                     (
                         and_(
                             _CP.registered_accounts.isnot(None),
+                            func.jsonb_typeof(_CP.registered_accounts) == "array",
                             func.jsonb_array_length(_CP.registered_accounts) > 0,
                             _CP.market_product_nos != None,
                             cast(_CP.market_product_nos, String) != "null",
@@ -595,6 +596,7 @@ async def get_filter_tree(
                         (
                             and_(
                                 _CP.registered_accounts.isnot(None),
+                                _func.jsonb_typeof(_CP.registered_accounts) == "array",
                                 _func.jsonb_array_length(_CP.registered_accounts) > 0,
                                 _CP.market_product_nos != None,
                                 cast(_CP.market_product_nos, String) != "null",
@@ -891,6 +893,7 @@ async def scroll_products(
         conditions.append(
             or_(
                 _CP.registered_accounts.is_(None),
+                func.jsonb_typeof(_CP.registered_accounts) != "array",
                 func.jsonb_array_length(_CP.registered_accounts) == 0,
             )
         )
@@ -931,6 +934,7 @@ async def scroll_products(
             conditions.append(
                 or_(
                     _CP.registered_accounts.is_(None),
+                    func.jsonb_typeof(_CP.registered_accounts) != "array",
                     func.jsonb_array_length(_CP.registered_accounts) == 0,
                     and_(
                         *[
@@ -954,6 +958,7 @@ async def scroll_products(
         conditions.append(
             or_(
                 _CP.registered_accounts.is_(None),
+                func.jsonb_typeof(_CP.registered_accounts) != "array",
                 func.jsonb_array_length(_CP.registered_accounts) == 0,
                 ~_CP.registered_accounts.op("@>")(cast(f'["{account_id}"]', _JSONB)),
             )
@@ -1067,6 +1072,7 @@ async def scroll_products(
                     (
                         and_(
                             _CP.registered_accounts.isnot(None),
+                            func.jsonb_typeof(_CP.registered_accounts) == "array",
                             func.jsonb_array_length(_CP.registered_accounts) > 0,
                             _CP.market_product_nos.isnot(None),
                             cast(_CP.market_product_nos, String) != "null",
@@ -1155,7 +1161,6 @@ async def products_init_data(
     from backend.domain.samba.forbidden.model import SambaForbiddenWord
     from backend.domain.samba.account.model import SambaMarketAccount
     from backend.domain.samba.order.model import SambaOrder
-    from backend.domain.samba.category.model import SambaCategoryMapping
 
     # SQLModel 인스턴스를 dict로 변환
     def to_dict(obj):
@@ -1183,30 +1188,22 @@ async def products_init_data(
         # 카테고리 매핑은 캐시 우선 (변경 빈도 낮음 — TTL 5분)
         mappings = await cache.get("init_data:category_mappings") or []
 
-        base_queries = [
-            session.execute(select(SambaPolicy).limit(50)),
-            session.execute(select(_SF).where(_SF.is_folder == False)),
-            session.execute(
-                select(SambaForbiddenWord).where(
-                    SambaForbiddenWord.type == "deletion",
-                    SambaForbiddenWord.is_active == True,
-                )
-            ),
-            session.execute(
-                select(SambaMarketAccount).where(SambaMarketAccount.is_active == True)
-            ),
-        ]
-        if not mappings:
-            base_queries.append(
-                session.execute(select(SambaCategoryMapping).limit(2000))
+        pol_r = await session.execute(select(SambaPolicy).limit(50))
+        filter_r = await session.execute(select(_SF).where(_SF.is_folder == False))
+        words_r = await session.execute(
+            select(SambaForbiddenWord).where(
+                SambaForbiddenWord.type == "deletion",
+                SambaForbiddenWord.is_active == True,
             )
+        )
+        accs_r = await session.execute(
+            select(SambaMarketAccount).where(SambaMarketAccount.is_active == True)
+        )
 
-        core_results = await asyncio.gather(*base_queries)
+        if not mappings:
+            from backend.domain.samba.category.model import SambaCategoryMapping
 
-        if mappings:
-            pol_r, filter_r, words_r, accs_r = core_results
-        else:
-            pol_r, filter_r, words_r, accs_r, map_r = core_results
+            map_r = await session.execute(select(SambaCategoryMapping).limit(2000))
             mappings = [to_dict(r) for r in map_r.scalars().all()]
             await cache.set("init_data:category_mappings", mappings, ttl=300)
 
@@ -1235,10 +1232,8 @@ async def products_init_data(
     try:
         from backend.domain.samba.policy.model import SambaNameRule, SambaDetailTemplate
 
-        rules_r, tpl_r = await asyncio.gather(
-            session.execute(select(SambaNameRule)),
-            session.execute(select(SambaDetailTemplate)),
-        )
+        rules_r = await session.execute(select(SambaNameRule))
+        tpl_r = await session.execute(select(SambaDetailTemplate))
         rules = [to_dict(r) for r in rules_r.scalars().all()]
         templates = [to_dict(r) for r in tpl_r.scalars().all()]
     except Exception as e:
@@ -1276,6 +1271,7 @@ async def product_counts(
                 (
                     and_(
                         _CP.registered_accounts.isnot(None),
+                        func.jsonb_typeof(_CP.registered_accounts) == "array",
                         func.jsonb_array_length(_CP.registered_accounts) > 0,
                         _CP.market_product_nos.isnot(None),
                         cast(_CP.market_product_nos, String) != "null",
