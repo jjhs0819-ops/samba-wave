@@ -36,7 +36,7 @@ def upgrade() -> None:
         ON samba_collected_product
         USING GIN ((registered_accounts::jsonb) jsonb_ops)
         WHERE registered_accounts IS NOT NULL
-          AND registered_accounts ~ '^\\[.+\\]$'
+          AND registered_accounts::text ~ '^\\[.+\\]$'
     """)
 
 
