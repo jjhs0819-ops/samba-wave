@@ -289,23 +289,24 @@ textarea::placeholder {
 
 .tetris-scroll-x {
   scrollbar-width: thin;
-  scrollbar-color: #444 transparent;
+  scrollbar-color: #aaa transparent;
 }
 
 .tetris-scroll-x::-webkit-scrollbar {
   width: 4px;
-  height: 6px;
+  height: 8px;
 }
 
 .tetris-scroll-x::-webkit-scrollbar-track {
-  background: transparent;
+  background: rgba(255,255,255,0.05);
+  border-radius: 4px;
 }
 
 .tetris-scroll-x::-webkit-scrollbar-thumb {
-  background: #444;
-  border-radius: 3px;
+  background: #aaa;
+  border-radius: 4px;
 }
 
 .tetris-scroll-x::-webkit-scrollbar-thumb:hover {
-  background: #666;
+  background: #ddd;
 }
