@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import or_
+from sqlalchemy.dialects.postgresql import JSONB as _JSONB
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -892,8 +893,7 @@ async def scroll_products(
         conditions.append(
             or_(
                 _CP.registered_accounts.is_(None),
-                cast(_CP.registered_accounts, String) == "null",
-                cast(_CP.registered_accounts, String) == "[]",
+                func.jsonb_array_length(_CP.registered_accounts) == 0,
             )
         )
     elif status == "sold_out":
@@ -901,7 +901,7 @@ async def scroll_products(
             or_(_CP.sale_status == "sold_out", _all_options_sold_out(_CP))
         )
     elif status and status.startswith("mtype_reg_"):
-        # 마켓타입별 등록 필터: 해당 마켓타입의 계정 중 하나라도 등록된 상품
+        # 마켓타입별 등록 필터: 해당 마켓타입의 계정 중 하나라도 등록된 상품 (JSONB @>)
         market_type = status[10:]
         from backend.domain.samba.account.model import SambaMarketAccount as _MA
 
@@ -913,7 +913,7 @@ async def scroll_products(
             conditions.append(
                 or_(
                     *[
-                        cast(_CP.registered_accounts, String).like(f'%"{aid}"%')
+                        _CP.registered_accounts.op("@>")(cast(f'["{aid}"]', _JSONB))
                         for aid in acc_ids
                     ]
                 )
@@ -921,7 +921,7 @@ async def scroll_products(
         else:
             conditions.append(text("1=0"))
     elif status and status.startswith("mtype_unreg_"):
-        # 마켓타입별 미등록 필터: 해당 마켓타입의 계정이 하나도 등록되지 않은 상품
+        # 마켓타입별 미등록 필터: 해당 마켓타입의 계정이 하나도 등록되지 않은 상품 (JSONB @>)
         market_type = status[12:]
         from backend.domain.samba.account.model import SambaMarketAccount as _MA
 
@@ -933,31 +933,31 @@ async def scroll_products(
             conditions.append(
                 or_(
                     _CP.registered_accounts.is_(None),
-                    cast(_CP.registered_accounts, String) == "null",
-                    cast(_CP.registered_accounts, String) == "[]",
+                    func.jsonb_array_length(_CP.registered_accounts) == 0,
                     and_(
                         *[
-                            ~cast(_CP.registered_accounts, String).like(f'%"{aid}"%')
+                            ~_CP.registered_accounts.op("@>")(
+                                cast(f'["{aid}"]', _JSONB)
+                            )
                             for aid in acc_ids
                         ]
                     ),
                 )
             )
     elif status and status.startswith("reg_"):
-        # 특정 계정에 등록된 상품: registered_accounts JSON에 account_id 포함
+        # 특정 계정에 등록된 상품: registered_accounts JSONB에 account_id 포함 (@>)
         account_id = status[4:]  # "reg_ma_xxx" → "ma_xxx"
         conditions.append(
-            cast(_CP.registered_accounts, String).like(f'%"{account_id}"%')
+            _CP.registered_accounts.op("@>")(cast(f'["{account_id}"]', _JSONB))
         )
     elif status and status.startswith("unreg_"):
-        # 특정 계정에 미등록된 상품: registered_accounts에 account_id 미포함
+        # 특정 계정에 미등록된 상품: registered_accounts JSONB에 account_id 미포함 (~@>)
         account_id = status[6:]  # "unreg_ma_xxx" → "ma_xxx"
         conditions.append(
             or_(
                 _CP.registered_accounts.is_(None),
-                cast(_CP.registered_accounts, String) == "null",
-                cast(_CP.registered_accounts, String) == "[]",
-                ~cast(_CP.registered_accounts, String).like(f'%"{account_id}"%'),
+                func.jsonb_array_length(_CP.registered_accounts) == 0,
+                ~_CP.registered_accounts.op("@>")(cast(f'["{account_id}"]', _JSONB)),
             )
         )
     elif status and status in _KNOWN_STATUS_VALUES:
@@ -1069,8 +1069,7 @@ async def scroll_products(
                     (
                         and_(
                             _CP.registered_accounts.isnot(None),
-                            cast(_CP.registered_accounts, String) != "null",
-                            cast(_CP.registered_accounts, String) != "[]",
+                            func.jsonb_array_length(_CP.registered_accounts) > 0,
                             _CP.market_product_nos.isnot(None),
                             cast(_CP.market_product_nos, String) != "null",
                             cast(_CP.market_product_nos, String) != "{}",
@@ -1183,7 +1182,10 @@ async def products_init_data(
 
     # 1차: 핵심 메타데이터 (정책/필터/금지어/계정/카테고리) 병렬 조회
     try:
-        core_results = await asyncio.gather(
+        # 카테고리 매핑은 캐시 우선 (변경 빈도 낮음 — TTL 5분)
+        mappings = await cache.get("init_data:category_mappings") or []
+
+        base_queries = [
             session.execute(select(SambaPolicy).limit(50)),
             session.execute(select(_SF).where(_SF.is_folder == False).limit(500)),
             session.execute(
@@ -1195,18 +1197,29 @@ async def products_init_data(
             session.execute(
                 select(SambaMarketAccount).where(SambaMarketAccount.is_active == True)
             ),
-            session.execute(select(SambaCategoryMapping)),
-        )
-        pol_r, filter_r, words_r, accs_r, map_r = core_results
+        ]
+        if not mappings:
+            base_queries.append(
+                session.execute(select(SambaCategoryMapping).limit(2000))
+            )
+
+        core_results = await asyncio.gather(*base_queries)
+
+        if mappings:
+            pol_r, filter_r, words_r, accs_r = core_results
+        else:
+            pol_r, filter_r, words_r, accs_r, map_r = core_results
+            mappings = [to_dict(r) for r in map_r.scalars().all()]
+            await cache.set("init_data:category_mappings", mappings, ttl=300)
+
         policies = [to_dict(r) for r in pol_r.scalars().all()]
         filters = [to_dict(r) for r in filter_r.scalars().all()]
         words = [r.word for r in words_r.scalars().all()]
         accounts = [to_dict(r) for r in accs_r.scalars().all()]
-        mappings = [to_dict(r) for r in map_r.scalars().all()]
     except Exception as e:
         logger.exception(f"[init-data] 핵심 메타데이터 조회 실패: {e}")
 
-    # 2차: order_pids (캐시 우선, 주문 테이블 풀 스캔 방지 — 30초 TTL)
+    # 2차: order_pids (캐시 우선, 주문 테이블 풀 스캔 방지 — 5분 TTL)
     try:
         order_pids = await cache.get("init_data:order_pids") or []
         if not order_pids:
@@ -1216,7 +1229,7 @@ async def products_init_data(
                 .distinct()
             )
             order_pids = [r[0] for r in order_r.all()]
-            await cache.set("init_data:order_pids", order_pids, ttl=30)
+            await cache.set("init_data:order_pids", order_pids, ttl=300)
     except Exception as e:
         logger.exception(f"[init-data] order_pids 조회 실패: {e}")
 
@@ -1265,8 +1278,7 @@ async def product_counts(
                 (
                     and_(
                         _CP.registered_accounts.isnot(None),
-                        cast(_CP.registered_accounts, String) != "null",
-                        cast(_CP.registered_accounts, String) != "[]",
+                        func.jsonb_array_length(_CP.registered_accounts) > 0,
                         _CP.market_product_nos.isnot(None),
                         cast(_CP.market_product_nos, String) != "null",
                         cast(_CP.market_product_nos, String) != "{}",

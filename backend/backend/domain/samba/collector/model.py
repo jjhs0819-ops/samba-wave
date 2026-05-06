@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, List, Optional
 
 from sqlalchemy import BigInteger, Boolean, Index, Integer, String, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Column, DateTime, Field, JSON, SQLModel, Text
 
 from ulid import ULID
@@ -242,7 +243,7 @@ class SambaCollectedProduct(SQLModel, table=True):
         default=None, sa_column=Column(JSON, nullable=True)
     )
     registered_accounts: Optional[List[str]] = Field(
-        default=None, sa_column=Column(JSON, nullable=True)
+        default=None, sa_column=Column(JSONB, nullable=True)
     )
     # 마켓별 등록된 상품번호: { "account_id": "product_no", ... }
     market_product_nos: Optional[Any] = Field(
