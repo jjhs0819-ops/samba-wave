@@ -366,6 +366,7 @@ def build_market_registered_conditions(model_class: Any) -> list:
     """
     return [
         model_class.registered_accounts.isnot(None),
+        func.jsonb_typeof(model_class.registered_accounts) == "array",
         func.jsonb_array_length(model_class.registered_accounts) > 0,
         model_class.market_product_nos.isnot(None),
         cast(model_class.market_product_nos, _StrType) != "null",
