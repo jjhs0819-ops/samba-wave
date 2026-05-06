@@ -159,6 +159,7 @@ export async function performBrandRefresh(args: BrandRefreshArgs) {
             const r = await fetchWithAuth(`${API_BASE}/api/v1/samba/collector/brand-collect-all`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
+              signal: abort.signal,
               body: JSON.stringify({
                 filter_ids: updatedFilters.map(f => f.id),
                 source_site: sourceSite,
@@ -218,7 +219,7 @@ export async function performBrandRefresh(args: BrandRefreshArgs) {
             if (abort.signal.aborted) break
             const gp = `[${fmtNum(gi + 1)}/${fmtNum(updatedFilters.length)}]`
             try {
-              const r = await fetchWithAuth(`${API_BASE}/api/v1/samba/collector/collect-filter/${f.id}?group_index=${gi + 1}&group_total=${updatedFilters.length}`, { method: 'POST' })
+              const r = await fetchWithAuth(`${API_BASE}/api/v1/samba/collector/collect-filter/${f.id}?group_index=${gi + 1}&group_total=${updatedFilters.length}`, { method: 'POST', signal: abort.signal })
               if (!r.ok) { addLog(`[${f.name}] 수집 실패: HTTP ${r.status}`); continue }
               const { job_id } = await r.json()
               while (!abort.signal.aborted) {

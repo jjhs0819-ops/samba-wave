@@ -564,13 +564,22 @@ export const collectorApi = {
       `${SAMBA_PREFIX}/collector/gsshop-scan-progress`),
   brandScan: (brand: string, gf?: string, keyword?: string, source_site?: string, selected_brands?: string[], brand_ids?: string[], brand_total?: number, options?: Record<string, boolean>) =>
     request<{ categories: { categoryCode: string; path: string; count: number; category1: string; category2: string; category3: string }[]; total: number; groupCount: number }>(
-      `${SAMBA_PREFIX}/collector/brand-scan`, { method: "POST", body: JSON.stringify({ brand, gf: gf || 'A', keyword: keyword || '', source_site: source_site || 'MUSINSA', selected_brands: selected_brands || [], brand_ids: brand_ids || [], brand_total: brand_total || 0, options: options || {} }) }),
+      `${SAMBA_PREFIX}/collector/brand-scan`,
+      { method: "POST", body: JSON.stringify({ brand, gf: gf || 'A', keyword: keyword || '', source_site: source_site || 'MUSINSA', selected_brands: selected_brands || [], brand_ids: brand_ids || [], brand_total: brand_total || 0, options: options || {} }) },
+      { timeoutMs: 600_000 },
+    ),
   brandCreateGroups: (data: { brand: string; brand_name?: string; gf?: string; categories: { categoryCode: string; path: string; count: number }[]; requested_count_per_group?: number; real_total?: number; applied_policy_id?: string; options?: Record<string, boolean>; source_site?: string; selected_brands?: string[]; brand_ids?: string[] }) =>
     request<{ created: number; groups: { id: string; name: string; count: number; path: string }[] }>(
-      `${SAMBA_PREFIX}/collector/brand-create-groups`, { method: "POST", body: JSON.stringify(data) }),
+      `${SAMBA_PREFIX}/collector/brand-create-groups`,
+      { method: "POST", body: JSON.stringify(data) },
+      { timeoutMs: 600_000 },
+    ),
   brandRefresh: (data: { brand: string; brand_name?: string; gf?: string; options?: Record<string, boolean>; source_site?: string; categories?: string[] }) =>
     request<{ scanned: number; new_groups: number; updated_groups: number; filter_ids: string[]; message: string }>(
-      `${SAMBA_PREFIX}/collector/brand-refresh`, { method: "POST", body: JSON.stringify(data) }),
+      `${SAMBA_PREFIX}/collector/brand-refresh`,
+      { method: "POST", body: JSON.stringify(data) },
+      { timeoutMs: 600_000 },
+    ),
 
   // 상태 확인
   proxyStatus: () =>
