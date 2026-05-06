@@ -905,5 +905,51 @@ async def run():
     print("=" * 60)
 
 
+async def run_tasks(task_ids: list[int]):
+    """지정한 태스크만 실행 (VM cron용). 예: run_tasks([5, 4, 3])"""
+    print("=" * 60)
+    print(f"삼바웨이브 유지보수 시작 (tasks={task_ids})")
+    print(f"시각: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 60)
+
+    conn = await asyncpg.connect(**DB_CONFIG)
+    results = {}
+
+    try:
+        if 5 in task_ids:
+            results["collect"] = await task_brand_collect_jobs(conn, interval_days=5)
+        if 4 in task_ids:
+            results["soldout"] = await task_soldout_cleanup(conn)
+        if 3 in task_ids:
+            results["policy"] = await task_gadi_policy(conn)
+        if 2 in task_ids:
+            results["ai_tags"] = await task_ai_tags(conn)
+        if 1 in task_ids:
+            results["category"] = await task_category_mapping(conn)
+    finally:
+        await conn.close()
+
+    print("\n" + "=" * 60)
+    print("완료")
+    for k, v in results.items():
+        print(f"  {k}: {v}")
+    print("=" * 60)
+
+
 if __name__ == "__main__":
-    asyncio.run(run())
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--tasks",
+        type=str,
+        default=None,
+        help="실행할 태스크 번호 (쉼표 구분, 예: 5,4,3). 미지정 시 전체 실행.",
+    )
+    args = parser.parse_args()
+
+    if args.tasks:
+        task_ids = [int(t.strip()) for t in args.tasks.split(",")]
+        asyncio.run(run_tasks(task_ids))
+    else:
+        asyncio.run(run())
