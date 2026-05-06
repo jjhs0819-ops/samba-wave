@@ -85,6 +85,7 @@ class ElevenstPlugin(MarketPlugin):
                     col_title = product.get("option_type") or "옵션"
                     col_title = col_title[:25]  # 11번가 최대 25자 제한
                     option_xml = (
+                        "<optUpdateYn>Y</optUpdateYn>"
                         "<optSelectYn>Y</optSelectYn>"
                         "<txtColCnt>1</txtColCnt>"
                         f"<colTitle>{col_title}</colTitle>"
@@ -129,16 +130,26 @@ class ElevenstPlugin(MarketPlugin):
                             "</ProductOption>"
                         )
 
+                _brand = (
+                    (product.get("brand") or "")
+                    .replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;")
+                )
+                _brand_xml = f"<brand>{_brand}</brand>" if _brand else ""
                 xml_data = (
                     '<?xml version="1.0" encoding="UTF-8"?>'
                     "<Product>"
                     "<selMthdCd>01</selMthdCd>"
                     f"<selPrc>{new_price}</selPrc>"
+                    f"{_brand_xml}"
                     f"{option_xml}"
                     "</Product>"
                 )
 
+                logger.info(f"[11번가] 경량 업데이트 XML:\n{xml_data}")
                 result = await client.update_product(existing_no, xml_data)
+                logger.info(f"[11번가] 경량 업데이트 응답: {result}")
 
                 _parts = [f"가격({new_price:,}원)"]
                 if options:
@@ -199,6 +210,9 @@ class ElevenstPlugin(MarketPlugin):
             product, cat_code, settings=account_settings
         )
 
+        if existing_no:
+            logger.info(f"[11번가] 폴백 전체XML (전체):\n{xml_data}")
+
         # 기존 상품번호가 있으면 수정, 없으면 신규등록
         from backend.domain.samba.proxy.elevenst import (
             ElevenstApiError,
@@ -208,6 +222,7 @@ class ElevenstPlugin(MarketPlugin):
         try:
             if existing_no:
                 result = await client.update_product(existing_no, xml_data)
+                logger.info(f"[11번가] 폴백 응답: {result}")
                 return {
                     "success": True,
                     "product_no": existing_no,
