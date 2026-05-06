@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import warnings
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator
 from weakref import WeakKeyDictionary
@@ -11,12 +10,24 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.core.config import settings
 
-# Suppress SQLAlchemy warnings about non-checked-in connections
-warnings.filterwarnings(
-    "ignore",
-    message=".*non-checked-in connection.*",
-    category=Warning,
-)
+# non-checked-in connection = 연결이 GC에 의해 회수됨 → 진짜 누수. 경고 억제 대신 로깅으로 가시화
+import warnings as _w
+
+_orig_showwarning = _w.showwarning
+
+
+def _log_non_checked_in(msg, category, filename, lineno, file=None, line=None):
+    if "non-checked-in" in str(msg):
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "[DB누수] non-checked-in connection 감지: %s (%s:%s)", msg, filename, lineno
+        )
+        return
+    _orig_showwarning(msg, category, filename, lineno, file, line)
+
+
+_w.showwarning = _log_non_checked_in
 
 logger = logging.getLogger(__name__)
 
@@ -154,7 +165,9 @@ async def get_write_session() -> AsyncGenerator[AsyncSession, None]:
     async with Session() as sess:
         try:
             yield sess
-        except Exception:
+        except (
+            BaseException
+        ):  # CancelledError는 BaseException 상속 — Exception으로는 못 잡음
             try:
                 await sess.rollback()
             except Exception:
@@ -166,7 +179,16 @@ async def get_write_session() -> AsyncGenerator[AsyncSession, None]:
 async def get_read_session() -> AsyncGenerator[AsyncSession, None]:
     Session = get_read_sessionmaker()
     async with Session() as sess:
-        yield sess
+        try:
+            yield sess
+        except (
+            BaseException
+        ):  # CancelledError 포함 — rollback으로 idle in transaction 방지
+            try:
+                await sess.rollback()
+            except Exception:
+                pass
+            raise
 
 
 # Non-decorator versions for dependency injection

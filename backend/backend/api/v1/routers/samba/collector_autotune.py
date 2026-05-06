@@ -525,6 +525,10 @@ async def _site_autotune_loop(site: str):
                             for _acc in _acc_result.all():
                                 _account_cache[_acc.id] = _acc
 
+                        # SELECT 완료 후 즉시 커밋 — HTTP I/O 동안 커넥션이 idle in transaction으로 풀 점유하지 않도록
+                        # expire_on_commit=False이므로 products/_account_cache 객체는 커밋 후에도 유효
+                        await session.commit()
+
                         retransmitted = 0
                         deleted_count = 0
                         price_changed_count = 0

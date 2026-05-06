@@ -36,13 +36,6 @@ export default function ProductsPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const [queryReady, setQueryReady] = useState(false)
-  // URL 파라미터로 진입하면 즉시 검색, 아니면 사용자가 검색버튼 누를 때까지 쿼리 안 날림
-  const hasSearchedRef = useRef(!!(
-    searchParams.get('search_filter_id') ||
-    searchParams.get('search') ||
-    searchParams.get('highlight')
-  ))
-
   // URL searchParams에서 필터 읽기 — 한 번 읽은 뒤 URL에서 제거 (새로고침 시 풀림)
   // searchParams를 dep에 포함해야 클라이언트 네비게이션 시에도 동작함
   const [filterByGroupId, setFilterByGroupId] = useState(searchParams.get("search_filter_id") || "")
@@ -244,7 +237,6 @@ export default function ProductsPage() {
   // 서버사이드 페이지네이션 상품 로드 (counts도 함께 수신)
   const loadProducts = useCallback(async (page?: number) => {
     if (!queryReady) return
-    if (!hasSearchedRef.current) return
     const targetPage = page ?? currentPage
     setLoading(true)
     try {
@@ -290,7 +282,6 @@ export default function ProductsPage() {
   // Phase 2: 메타데이터 8개 백그라운드 → 정책/계정 정보 채움
   const load = useCallback(async () => {
     if (!queryReady) return
-    if (!hasSearchedRef.current) { setLoading(false); return }
     const knownStatus2 = ['has_orders', 'free_ship', 'same_day', 'free_same', 'market_registered', 'market_unregistered', 'sold_out']
     const statusParam = (knownStatus2.includes(appliedStatusFilter) || appliedStatusFilter.startsWith('reg_') || appliedStatusFilter.startsWith('unreg_'))
       ? appliedStatusFilter : appliedStatusFilter || undefined
@@ -418,7 +409,6 @@ export default function ProductsPage() {
   const allSites = serverSites
 
   const handleSearch = () => {
-    hasSearchedRef.current = true
     const nextGroupId = filterByGroupId ? "" : filterByGroupId
     // highlight + 그룹 필터 무조건 해제
     if (highlightProductId) setHighlightProductId("")
@@ -2330,11 +2320,7 @@ export default function ProductsPage() {
       </div>
 
       {/* Product list */}
-      {!hasSearchedRef.current ? (
-        <div style={{ padding: "3rem", textAlign: "center", color: "#555", fontSize: "0.9rem" }}>
-          검색 조건을 입력하고 검색 버튼을 눌러주세요
-        </div>
-      ) : loading ? (
+      {loading ? (
         <div style={{ padding: "3rem", textAlign: "center", color: "#555", fontSize: "0.9rem" }}>로딩 중...</div>
       ) : loadError ? (
         <div style={{ padding: "3rem", textAlign: "center", fontSize: "0.85rem" }}>

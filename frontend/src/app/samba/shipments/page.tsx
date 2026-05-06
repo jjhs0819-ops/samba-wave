@@ -70,6 +70,11 @@ async function fetchProductsByIdsChunked(ids: string[]) {
 export default function ShipmentsPage() {
   useEffect(() => { document.title = 'SAMBA-상품전송삭제' }, [])
   const searchParams = useSearchParams()
+  // 상품관리에서 selected/fromStorage로 넘어온 경우 즉시 로드, 그 외엔 검색버튼 클릭 후 로드
+  const hasSearchedRef = useRef(!!(
+    searchParams.get('selected') ||
+    searchParams.get('fromStorage') === '1'
+  ))
   const [products, setProducts] = useState<SambaCollectedProduct[]>([])
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
   const [, setFilters] = useState<SambaSearchFilter[]>([])
@@ -346,6 +351,7 @@ export default function ShipmentsPage() {
   }, [])
 
   const load = useCallback(async () => {
+    if (!hasSearchedRef.current) { setLoading(false); return }
     // URL에서 선택된 상품 ID 먼저 확인 (단, 사용자가 필터를 변경했으면 무시)
     const urlParams = new URLSearchParams(window.location.search)
     const preIds = userFilterChangedRef.current
@@ -419,6 +425,7 @@ export default function ShipmentsPage() {
   // 검색버튼 클릭 시 입력값을 적용값으로 복사 + 선택/URL 초기화 + 1페이지로 리셋
   const handleSearch = useCallback(() => {
     onFilterChange()
+    hasSearchedRef.current = true
     setAppliedSearchField(searchField)
     setAppliedSearchText(searchText)
     setAppliedSiteFilter(siteFilter)
@@ -1521,7 +1528,9 @@ export default function ShipmentsPage() {
             </tr>
           </thead>
           <tbody>
-            {loading ? (
+            {!hasSearchedRef.current ? (
+              <tr><td colSpan={7} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>검색 조건을 입력하고 검색 버튼을 눌러주세요</td></tr>
+            ) : loading ? (
               <tr><td colSpan={7} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>로딩 중...</td></tr>
             ) : products.length === 0 ? (
               <tr><td colSpan={7} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>상품이 없습니다</td></tr>
