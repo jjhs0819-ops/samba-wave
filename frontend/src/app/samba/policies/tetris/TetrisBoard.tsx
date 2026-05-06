@@ -379,11 +379,31 @@ export default function TetrisBoard() {
           globalMax={globalMax}
           pixelsPerUnit={pixelsPerUnit}
         />
+        <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
+          {/* 좌우 스크롤 화살표 */}
+          <button
+            onClick={() => contentScrollRef.current?.scrollBy({ left: -(COLUMN_WIDTH + COLUMN_GAP) * 3, behavior: 'smooth' })}
+            style={{
+              position: 'absolute', left: 0, top: '50%', transform: 'translateY(-50%)',
+              zIndex: 20, width: 28, height: 48, background: 'rgba(30,30,30,0.92)',
+              border: '1px solid #444', borderRadius: '0 6px 6px 0', color: '#aaa',
+              cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >‹</button>
+          <button
+            onClick={() => contentScrollRef.current?.scrollBy({ left: (COLUMN_WIDTH + COLUMN_GAP) * 3, behavior: 'smooth' })}
+            style={{
+              position: 'absolute', right: 0, top: '50%', transform: 'translateY(-50%)',
+              zIndex: 20, width: 28, height: 48, background: 'rgba(30,30,30,0.92)',
+              border: '1px solid #444', borderRadius: '6px 0 0 6px', color: '#aaa',
+              cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >›</button>
         <div
           ref={contentScrollRef}
           className="tetris-scroll-x"
           onScroll={onContentScroll}
-          style={{ overflowX: 'auto', overflowY: 'hidden', flex: 1, display: 'flex', gap: COLUMN_GAP, alignItems: 'flex-start' }}
+          style={{ overflowX: 'auto', overflowY: 'hidden', display: 'flex', gap: COLUMN_GAP, alignItems: 'flex-start' }}
         >
           {sortedMarkets.map(market => (
             <MarketColumn
@@ -406,6 +426,7 @@ export default function TetrisBoard() {
               등록된 마켓 계정이 없습니다.
             </div>
           )}
+        </div>
         </div>
       </div>
 
