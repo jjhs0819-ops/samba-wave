@@ -904,7 +904,7 @@ async def scroll_products(
             conditions.append(
                 or_(
                     *[
-                        _CP.registered_accounts.op("@>")(text(f"'[\"{aid}\"]'::jsonb"))
+                        _CP.registered_accounts.op("@>")(func.jsonb_build_array(aid))
                         for aid in acc_ids
                     ]
                 )
@@ -929,7 +929,7 @@ async def scroll_products(
                     and_(
                         *[
                             ~_CP.registered_accounts.op("@>")(
-                                text(f"'[\"{aid}\"]'::jsonb")
+                                func.jsonb_build_array(aid)
                             )
                             for aid in acc_ids
                         ]
@@ -940,7 +940,7 @@ async def scroll_products(
         # 특정 계정에 등록된 상품: registered_accounts JSONB에 account_id 포함 (@>)
         account_id = status[4:]  # "reg_ma_xxx" → "ma_xxx"
         conditions.append(
-            _CP.registered_accounts.op("@>")(text(f"'[\"{account_id}\"]'::jsonb"))
+            _CP.registered_accounts.op("@>")(func.jsonb_build_array(account_id))
         )
     elif status and status.startswith("unreg_"):
         # 특정 계정에 미등록된 상품: registered_accounts JSONB에 account_id 미포함 (~@>)
@@ -950,7 +950,7 @@ async def scroll_products(
                 _CP.registered_accounts.is_(None),
                 func.jsonb_typeof(_CP.registered_accounts) != "array",
                 func.jsonb_array_length(_CP.registered_accounts) == 0,
-                ~_CP.registered_accounts.op("@>")(text(f"'[\"{account_id}\"]'::jsonb")),
+                ~_CP.registered_accounts.op("@>")(func.jsonb_build_array(account_id)),
             )
         )
     elif status and status in _KNOWN_STATUS_VALUES:
