@@ -212,8 +212,10 @@ async def _build_order_filters(
         )
     elif input_filter == "registered":
         # collected_product_id가 있거나, "미등록 입력"으로 source_url/product_image를 채운 주문도 등록된 것으로 간주
+        # 롯데홈쇼핑은 수집상품 연동 없이 직접 등록하므로 항상 통과
         filters.append(
             or_(
+                SambaOrder.source == "lottehome",
                 SambaOrder.collected_product_id != None,  # noqa: E711
                 and_(
                     SambaOrder.source_url != None,  # noqa: E711
@@ -4318,33 +4320,51 @@ async def sync_orders_from_markets(
                         or ""
                     )
 
+                _new_ord_status_map = {
+                    "01": ("pending", "주문접수"),
+                    "02": ("pending", "출하지시"),
+                    "03": ("pending", "발송약정"),
+                }
                 for _lh_sel in ["01", "02", "03"]:
                     _lh_orders = await lh_client.search_new_orders(lh_start_str, lh_end_str, sel_option=_lh_sel)
+                    _fs, _fss = _new_ord_status_map[_lh_sel]
                     for ro in _lh_orders:
                         _oid = _lh_order_key(ro)
                         if _oid and _oid not in _lh_seen:
                             _lh_seen.add(_oid)
-                            orders_data.append(_parse_lottehome_order(ro, account["id"], label))
+                            orders_data.append(_parse_lottehome_order(ro, account["id"], label, _fs, _fss))
 
+                _dlv_status_map = {
+                    "15": ("shipping", "출고지시"),
+                    "16": ("shipping", "출고확정"),
+                    "17": ("delivered", "배송완료"),
+                    "18": ("confirmed", "구매확정"),
+                }
                 for _lh_stat in ["15", "16", "17", "18"]:
                     try:
                         _lh_dlv = await lh_client.search_deliver_list(lh_start_str, lh_end_str, ord_dtl_stat_cd=_lh_stat)
+                        _fs, _fss = _dlv_status_map[_lh_stat]
                         for ro in _lh_dlv:
                             _oid = _lh_order_key(ro)
                             if _oid and _oid not in _lh_seen:
                                 _lh_seen.add(_oid)
-                                orders_data.append(_parse_lottehome_order(ro, account["id"], label))
+                                orders_data.append(_parse_lottehome_order(ro, account["id"], label, _fs, _fss))
                     except Exception as _dlv_e:
                         logger.warning(f"[주문동기화] {label}: 배송조회(stat={_lh_stat}) 실패: {_dlv_e}")
+
+                def _lh_override(parsed: dict) -> None:
+                    _oid = parsed.get("order_number", "")
+                    if not _oid:
+                        return
+                    orders_data[:] = [o for o in orders_data if o.get("order_number") != _oid]
+                    orders_data.append(parsed)
+                    _lh_seen.add(_oid)
 
                 try:
                     _lh_cncl = await lh_client.search_cancel_orders(lh_start_str, lh_end_str)
                     for ro in _lh_cncl:
                         for parsed in _parse_lottehome_order_multi(ro, account["id"], label, "cancelled"):
-                            _oid = parsed.get("order_number", "")
-                            if _oid and _oid not in _lh_seen:
-                                _lh_seen.add(_oid)
-                                orders_data.append(parsed)
+                            _lh_override(parsed)
                 except Exception as _e:
                     logger.warning(f"[주문동기화] {label}: 취소주문 실패: {_e}")
 
@@ -4354,10 +4374,7 @@ async def sync_orders_from_markets(
                         ret_status = "return_requested" if _ret_stat == "20" else "return_completed"
                         for ro in _lh_ret:
                             for parsed in _parse_lottehome_order_multi(ro, account["id"], label, ret_status):
-                                _oid = parsed.get("order_number", "")
-                                if _oid and _oid not in _lh_seen:
-                                    _lh_seen.add(_oid)
-                                    orders_data.append(parsed)
+                                _lh_override(parsed)
                     except Exception as _e:
                         logger.warning(f"[주문동기화] {label}: 반품조회(stat={_ret_stat}) 실패: {_e}")
 
@@ -5971,6 +5988,11 @@ def _apply_ebay_claims_to_orders(
 
 def _parse_lottehome_order_multi(item: dict, account_id: str, label: str, force_status: str = "") -> list[dict]:
     """취소/반품처럼 ProdInfo가 리스트인 롯데홈쇼핑 주문 → 상품별 SambaOrder dict 리스트 반환."""
+    _shipping_status_map = {
+        "cancelled": "취소완료",
+        "return_requested": "반품요청",
+        "return_completed": "회수확정",
+    }
     prod_info_raw = item.get("ProdInfo", [])
     if isinstance(prod_info_raw, dict):
         prod_info_raw = [prod_info_raw]
@@ -5983,24 +6005,29 @@ def _parse_lottehome_order_multi(item: dict, account_id: str, label: str, force_
         parsed = _parse_lottehome_order(flat, account_id, label)
         if force_status:
             parsed["status"] = force_status
+            parsed["shipping_status"] = _shipping_status_map.get(force_status, force_status)
         results.append(parsed)
     return results
 
 
-def _parse_lottehome_order(item: dict, account_id: str, label: str) -> dict:
+def _parse_lottehome_order(item: dict, account_id: str, label: str, force_status: str = "", force_shipping_status: str = "") -> dict:
     """롯데홈쇼핑 주문 데이터 → SambaOrder dict 변환."""
     from datetime import datetime, timezone
+
+    def _lh_str(*vals) -> str:
+        for v in vals:
+            s = str(v or "").strip()
+            if s and s.lower() not in ("null", "none", "0"):
+                return s
+        return ""
 
     prod_info = item.get("ProdInfo", {}) if isinstance(item.get("ProdInfo"), dict) else {}
     delv_info = item.get("DelvInfo", {}) if isinstance(item.get("DelvInfo"), dict) else {}
 
     order_no = str(item.get("OrdNo", "") or "")
-    sub_ord_no = str(
-        item.get("SubOrdNo")
-        or prod_info.get("DlvUnitSn")
-        or prod_info.get("OrdDtlSn")
-        or ""
-    )
+    sub_ord_no = str(item.get("SubOrdNo") or "")
+    # SubOrdNo = 상품주문번호, OrdNo = 주문번호
+    # 반품API는 SubOrdNo가 없고 OrdNo에 상품주문번호가 들어옴 → 폴백으로 일치
     order_number = sub_ord_no or order_no
 
     proc_stat = str(item.get("OrdProcStat", "") or "")
@@ -6015,7 +6042,10 @@ def _parse_lottehome_order(item: dict, account_id: str, label: str) -> dict:
         "회수확정": "return_requested",
         "발송불가": "undeliverable",
     }
-    if is_deliver_api and not proc_stat:
+    if force_status:
+        status = force_status
+        shipping_status = force_shipping_status or proc_stat or "출고지시"
+    elif is_deliver_api and not proc_stat:
         status = "shipping"
         shipping_status = "출고확정"
     else:
@@ -6038,7 +6068,7 @@ def _parse_lottehome_order(item: dict, account_id: str, label: str) -> dict:
         delv_info.get("recvTel") or delv_info.get("recvHp") or item.get("OrderTelNo") or ""
     )
     shipping_company = str(delv_info.get("delvName") or delv_info.get("HdcNm") or "")
-    tracking_number = str(delv_info.get("invoiceNo") or delv_info.get("InvNo") or "")
+    tracking_number = _lh_str(delv_info.get("invoiceNo"), delv_info.get("InvNo"))
 
     trd_date = str(item.get("TrdDate", "") or "")
     paid_at = None
@@ -6076,5 +6106,5 @@ def _parse_lottehome_order(item: dict, account_id: str, label: str) -> dict:
         "tracking_number": tracking_number,
         "paid_at": paid_at,
         "source": "lottehome",
-        "ext_order_number": order_no,
+        "shipment_id": order_no,
     }
