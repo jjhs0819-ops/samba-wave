@@ -662,11 +662,16 @@ async def get_filter_tree(
 
 @router.get("/filters/tree/counts")
 async def get_filter_tree_counts(
-    source_site: str,
+    source_site: str | None = None,
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
-    """특정 소싱처 leaf 필터들의 카운트 반환. 소싱처 클릭 시 호출."""
-    cache_key = f"filters:tree:counts:{source_site}"
+    """leaf 필터 카운트 반환. source_site 미지정 시 전체 사이트 통합 집계.
+
+    초기 로드시 단일 호출로 모든 사이트의 카운트를 prefetch 하기 위함 —
+    이전엔 사이트별 lazy load 만 가능해 그룹 클릭 전엔 (0) 으로 표기되는
+    UX 문제. GROUP BY 쿼리 한 번이 N 개 사이트별 호출보다 효율적.
+    """
+    cache_key = f"filters:tree:counts:{source_site or '__all__'}"
     cached = await cache.get(cache_key)
     if cached:
         return cached
@@ -677,9 +682,14 @@ async def get_filter_tree_counts(
 
     svc = _get_services(session)
     all_filters = await svc.list_filters(limit=10000)
-    leaf_ids = [
-        f.id for f in all_filters if not f.is_folder and f.source_site == source_site
-    ]
+    if source_site is None:
+        leaf_ids = [f.id for f in all_filters if not f.is_folder]
+    else:
+        leaf_ids = [
+            f.id
+            for f in all_filters
+            if not f.is_folder and f.source_site == source_site
+        ]
 
     if not leaf_ids:
         return {}
