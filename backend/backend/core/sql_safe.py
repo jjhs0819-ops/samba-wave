@@ -5,7 +5,10 @@ from __future__ import annotations
 # PostgreSQL LIKE 의 와일드카드 메타 문자.
 # `%`: 0개 이상의 문자, `_`: 정확히 1개 문자.
 # 사용자 입력에 포함된 와일드카드를 리터럴로 강제하려면 이스케이프 필요.
-_LIKE_WILDCARDS = ("\\", "%", "_")
+# `\` 가 첫번째인 이유: 다른 메타 치환의 결과를 다시 이스케이프하지 않으려면
+# 가장 먼저 처리해야 한다 (예: `%` 가 `\%` 로 바뀐 후 `\` 를 다시 이스케이프하면
+# `\\%` 가 되어 의미 변형).
+_LIKE_META_CHARS: tuple[str, ...] = ("%", "_")
 
 
 def escape_like(value: str, escape_char: str = "\\") -> str:
@@ -34,7 +37,7 @@ def escape_like(value: str, escape_char: str = "\\") -> str:
 
     # `\\` 를 가장 먼저 치환해야 다른 메타 치환의 결과를 다시 이스케이프하지 않는다.
     result = value.replace(escape_char, escape_char + escape_char)
-    for meta in ("%", "_"):
+    for meta in _LIKE_META_CHARS:
         if meta == escape_char:
             continue
         result = result.replace(meta, escape_char + meta)

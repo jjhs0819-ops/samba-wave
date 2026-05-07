@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+from typing import Awaitable, Callable
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
 # JSON API 응답에 적용할 가장 엄격한 CSP — 브라우저가 응답을 HTML 로 렌더할
-# 가능성 자체를 차단 (default-src 'none'). API 응답은 절대 inline script /
-# iframe / form action 을 호출할 일이 없으므로 default-src 만 차단해도 충분.
+# 가능성 자체를 차단. default-src 'none' 이 모든 fetch/script/style/img 등을
+# 묵시적으로 차단하지만, 일부 구버전 브라우저가 default-src 를 제대로 상속하지
+# 못하는 경우를 대비해 script-src/style-src 를 명시적으로 'none' 으로 강제.
 _CSP_API = (
     "default-src 'none'; "
+    "script-src 'none'; "
+    "style-src 'none'; "
     "frame-ancestors 'none'; "
     "base-uri 'none'"
 )
@@ -63,7 +68,11 @@ def _csp_for(path: str) -> str | None:
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """모든 응답에 표준 보안 헤더 + path 별 CSP 부착."""
 
-    async def dispatch(self, request: Request, call_next) -> Response:
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
         response = await call_next(request)
 
         # 이미 다운스트림에서 같은 헤더를 직접 설정했다면 덮어쓰지 않음

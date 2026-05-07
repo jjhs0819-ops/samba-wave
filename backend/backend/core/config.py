@@ -155,7 +155,9 @@ class BackendSettings(BaseSettings):
             ]
             valid_ids = [_id for _id in valid_ids if _is_valid_chrome_id(_id)]
             if valid_ids:
-                ext_pattern = "|".join(valid_ids)
+                # _is_valid_chrome_id 가 [a-z]{32} 만 통과시키지만, defense-in-depth
+                # 로 정규식 메타 문자를 escape — 검증 함수에 회귀 발생 시에도 보호.
+                ext_pattern = "|".join(re.escape(_id) for _id in valid_ids)
                 ext_part = rf"chrome-extension://({ext_pattern})"
             else:
                 # 잘못된 형식만 들어있으면 어떤 확장도 허용 안 함
