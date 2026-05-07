@@ -4276,6 +4276,93 @@ async def sync_orders_from_markets(
                         }
                     )
                     continue
+            elif market_type == "lottehome":
+                from backend.domain.samba.proxy.lottehome import LotteHomeClient
+                from backend.domain.samba.forbidden.model import SambaSettings
+                from sqlmodel import select as _select_lh
+
+                _lh_creds_result = await session.exec(
+                    _select_lh(SambaSettings).where(
+                        SambaSettings.key == "lottehome_credentials"
+                    )
+                )
+                _lh_creds_row = _lh_creds_result.first()
+                lh_creds = _lh_creds_row.value if _lh_creds_row else {}
+
+                lh_user_id = lh_creds.get("userId", "") or extras.get("userId", "") or account["seller_id"] or ""
+                lh_password = lh_creds.get("password", "") or extras.get("password", "") or ""
+                lh_agnc_no = lh_creds.get("agncNo", "") or extras.get("agncNo", "")
+                lh_env = lh_creds.get("env", "prod")
+
+                if not lh_user_id or not lh_password:
+                    results.append({"account": label, "status": "skip", "message": "롯데홈쇼핑 인증정보 없음"})
+                    continue
+
+                lh_client = LotteHomeClient(lh_user_id, lh_password, lh_agnc_no, lh_env)
+
+                from datetime import datetime as _dt, timedelta as _td, UTC as _UTC
+                lh_end = _dt.now(_UTC)
+                lh_start = lh_end - _td(days=body.days)
+                lh_start_str = lh_start.strftime("%Y%m%d")
+                lh_end_str = lh_end.strftime("%Y%m%d")
+
+                _lh_seen: set[str] = set()
+
+                def _lh_order_key(ro: dict) -> str:
+                    prod = ro.get("ProdInfo", {}) if isinstance(ro.get("ProdInfo"), dict) else {}
+                    return str(
+                        ro.get("SubOrdNo")
+                        or prod.get("DlvUnitSn")
+                        or prod.get("OrdDtlSn")
+                        or ro.get("OrdNo", "")
+                        or ""
+                    )
+
+                for _lh_sel in ["01", "02", "03"]:
+                    _lh_orders = await lh_client.search_new_orders(lh_start_str, lh_end_str, sel_option=_lh_sel)
+                    for ro in _lh_orders:
+                        _oid = _lh_order_key(ro)
+                        if _oid and _oid not in _lh_seen:
+                            _lh_seen.add(_oid)
+                            orders_data.append(_parse_lottehome_order(ro, account["id"], label))
+
+                for _lh_stat in ["15", "16", "17", "18"]:
+                    try:
+                        _lh_dlv = await lh_client.search_deliver_list(lh_start_str, lh_end_str, ord_dtl_stat_cd=_lh_stat)
+                        for ro in _lh_dlv:
+                            _oid = _lh_order_key(ro)
+                            if _oid and _oid not in _lh_seen:
+                                _lh_seen.add(_oid)
+                                orders_data.append(_parse_lottehome_order(ro, account["id"], label))
+                    except Exception as _dlv_e:
+                        logger.warning(f"[주문동기화] {label}: 배송조회(stat={_lh_stat}) 실패: {_dlv_e}")
+
+                try:
+                    _lh_cncl = await lh_client.search_cancel_orders(lh_start_str, lh_end_str)
+                    for ro in _lh_cncl:
+                        for parsed in _parse_lottehome_order_multi(ro, account["id"], label, "cancelled"):
+                            _oid = parsed.get("order_number", "")
+                            if _oid and _oid not in _lh_seen:
+                                _lh_seen.add(_oid)
+                                orders_data.append(parsed)
+                except Exception as _e:
+                    logger.warning(f"[주문동기화] {label}: 취소주문 실패: {_e}")
+
+                for _ret_stat in ["20", "21"]:
+                    try:
+                        _lh_ret = await lh_client.search_return_orders(lh_start_str, lh_end_str, ord_dtl_stat_cd=_ret_stat)
+                        ret_status = "return_requested" if _ret_stat == "20" else "return_completed"
+                        for ro in _lh_ret:
+                            for parsed in _parse_lottehome_order_multi(ro, account["id"], label, ret_status):
+                                _oid = parsed.get("order_number", "")
+                                if _oid and _oid not in _lh_seen:
+                                    _lh_seen.add(_oid)
+                                    orders_data.append(parsed)
+                    except Exception as _e:
+                        logger.warning(f"[주문동기화] {label}: 반품조회(stat={_ret_stat}) 실패: {_e}")
+
+                logger.info(f"[주문동기화] {label}: 롯데홈쇼핑 주문 {len(orders_data)}건 조회")
+
             else:
                 results.append(
                     {
@@ -5880,3 +5967,114 @@ def _apply_ebay_claims_to_orders(
                 od["shipping_status"] = ss
                 od["status"] = "cancelled" if ss == "취소완료" else "cancel_requested"
                 break
+
+
+def _parse_lottehome_order_multi(item: dict, account_id: str, label: str, force_status: str = "") -> list[dict]:
+    """취소/반품처럼 ProdInfo가 리스트인 롯데홈쇼핑 주문 → 상품별 SambaOrder dict 리스트 반환."""
+    prod_info_raw = item.get("ProdInfo", [])
+    if isinstance(prod_info_raw, dict):
+        prod_info_raw = [prod_info_raw]
+    if not prod_info_raw:
+        prod_info_raw = [{}]
+    results = []
+    for prod in prod_info_raw:
+        flat = dict(item)
+        flat["ProdInfo"] = prod
+        parsed = _parse_lottehome_order(flat, account_id, label)
+        if force_status:
+            parsed["status"] = force_status
+        results.append(parsed)
+    return results
+
+
+def _parse_lottehome_order(item: dict, account_id: str, label: str) -> dict:
+    """롯데홈쇼핑 주문 데이터 → SambaOrder dict 변환."""
+    from datetime import datetime, timezone
+
+    prod_info = item.get("ProdInfo", {}) if isinstance(item.get("ProdInfo"), dict) else {}
+    delv_info = item.get("DelvInfo", {}) if isinstance(item.get("DelvInfo"), dict) else {}
+
+    order_no = str(item.get("OrdNo", "") or "")
+    sub_ord_no = str(
+        item.get("SubOrdNo")
+        or prod_info.get("DlvUnitSn")
+        or prod_info.get("OrdDtlSn")
+        or ""
+    )
+    order_number = sub_ord_no or order_no
+
+    proc_stat = str(item.get("OrdProcStat", "") or "")
+    is_deliver_api = bool(prod_info.get("DlvUnitSn") or prod_info.get("GoodsNo"))
+    status_map = {
+        "업체지시": "pending", "정상": "pending",
+        "출고확정": "shipping",
+        "배송완료": "delivered",
+        "구매확정": "confirmed",
+        "취소": "cancelled",
+        "반품진행": "return_requested",
+        "회수확정": "return_requested",
+        "발송불가": "undeliverable",
+    }
+    if is_deliver_api and not proc_stat:
+        status = "shipping"
+        shipping_status = "출고확정"
+    else:
+        status = status_map.get(proc_stat, "pending")
+        shipping_status = proc_stat or "출고지시"
+
+    product_name = str(prod_info.get("ProdName") or prod_info.get("GoodsNm") or "")
+    product_option = str(prod_info.get("prodOption") or prod_info.get("GoodsDesc") or "")
+    product_id = str(prod_info.get("ProdCode") or prod_info.get("GoodsNo") or "")
+    sale_price = int(float(prod_info.get("ordPrice") or prod_info.get("SalePrc") or 0))
+    buy_real_price = int(float(prod_info.get("buyRealPrice", 0) or 0))
+    qty = int(prod_info.get("ordQty") or prod_info.get("OrdQty") or 1)
+
+    recv_name = str(
+        delv_info.get("recvName") or delv_info.get("RmitNm") or item.get("OrderName") or ""
+    )
+    recv_addr = str(delv_info.get("recvAddr1", "") or delv_info.get("Addr", "") or item.get("OrderAddr1", ""))
+    recv_addr2 = str(delv_info.get("recvAddr2", "") or item.get("OrderAddr2", ""))
+    recv_tel = str(
+        delv_info.get("recvTel") or delv_info.get("recvHp") or item.get("OrderTelNo") or ""
+    )
+    shipping_company = str(delv_info.get("delvName") or delv_info.get("HdcNm") or "")
+    tracking_number = str(delv_info.get("invoiceNo") or delv_info.get("InvNo") or "")
+
+    trd_date = str(item.get("TrdDate", "") or "")
+    paid_at = None
+    if trd_date:
+        try:
+            paid_at = datetime.strptime(trd_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+    if paid_at is None and len(order_no) >= 8:
+        try:
+            paid_at = datetime.strptime(order_no[:8], "%Y%m%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+    if paid_at is None:
+        paid_at = datetime.now(timezone.utc)
+
+    return {
+        "order_number": order_number,
+        "channel_id": account_id,
+        "channel_name": label,
+        "product_id": product_id,
+        "product_name": product_name,
+        "product_option": product_option,
+        "customer_name": recv_name,
+        "customer_phone": recv_tel,
+        "customer_address": f"{recv_addr} {recv_addr2}".strip(),
+        "quantity": qty,
+        "sale_price": sale_price,
+        "cost": 0,
+        "fee_rate": 0,
+        "revenue": buy_real_price if buy_real_price else sale_price,
+        "status": status,
+        "shipping_status": shipping_status,
+        "shipping_company": shipping_company,
+        "tracking_number": tracking_number,
+        "paid_at": paid_at,
+        "source": "lottehome",
+        "ext_order_number": order_no,
+    }
