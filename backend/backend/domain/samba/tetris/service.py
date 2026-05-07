@@ -586,6 +586,7 @@ class SambaTetrisService:
         )
 
         # 즉시 전송하지 않음 — 인터벌 루프(sync_all)에서 잡큐로 스테이징
+        clear_board_cache()
         logger.info(
             f"[테트리스] assign 저장 완료 — {source_site}/{brand_name} "
             f"→ {market_account_id} (인터벌 루프에서 등록 예정)"
@@ -615,6 +616,7 @@ class SambaTetrisService:
         market_account_id = assignment.market_account_id
 
         deleted = await self._repo.delete_async(assignment_id)
+        clear_board_cache()
 
         # 등록된 상품 마켓 삭제 트리거 (백그라운드)
         product_ids = await self._get_product_ids_for_remove(
@@ -754,9 +756,38 @@ class SambaTetrisService:
         # 처리 완료된 (source_site, brand_name, account_id) 중복 방지
         processed_keys: set[tuple[str, str, str]] = set()
 
+        # 이미 pending/running인 transmit 잡 집합 조회 — 중복 잡 생성 방지
+        existing_rows = await self._session.execute(
+            text("""
+                SELECT
+                    payload->>'source_site' AS source_site,
+                    payload->>'brand_name' AS brand_name,
+                    payload->>'target_account_ids' AS account_ids
+                FROM samba_jobs
+                WHERE job_type = 'transmit'
+                  AND status IN ('pending', 'running')
+                  AND payload->>'brand_name' IS NOT NULL
+            """)
+        )
+        # target_account_ids는 '["account_id"]' 형태 text — 단순 포함 체크
+        pending_transmit_keys: set[tuple[str, str, str]] = set()
+        for row in existing_rows:
+            if row.source_site and row.brand_name and row.account_ids:
+                pending_transmit_keys.add(
+                    (row.source_site, row.brand_name, row.account_ids)
+                )
+
         # 브랜드×계정 조합별 별도 잡 — 계정이 같아도 브랜드마다 독립 잡으로 스테이징
         # (워커가 동일 계정 잡은 순차, 다른 계정 잡은 병렬로 자동 처리)
         for a in assignments:
+            acct_key = f'["{a.market_account_id}"]'
+            if (a.source_site, a.brand_name, acct_key) in pending_transmit_keys:
+                logger.debug(
+                    f"[테트리스 sync] 이미 pending/running 잡 존재 — 건너뜀: "
+                    f"{a.source_site}/{a.brand_name} → {a.market_account_id}"
+                )
+                processed_keys.add((a.source_site, a.brand_name, a.market_account_id))
+                continue
             pids = await self._get_product_ids_for_assign(
                 tenant_id, a.source_site, a.brand_name, a.market_account_id
             )
@@ -779,6 +810,12 @@ class SambaTetrisService:
             )
             job_count += 1
             total_products += len(pids)
+
+        # 테트리스 배치가 있는 (source_site, brand) 조합 — legacy 루프 개입 금지
+        # 배치된 브랜드는 고경 등 지정 계정에서만 처리해야 하므로 다른 계정으로 번지면 안 됨
+        tetris_brand_keys: set[tuple[str, str]] = {
+            (a.source_site, a.brand_name) for a in assignments
+        }
 
         # 레거시 블록 처리: registered_accounts에 이미 계정이 있지만 배치가 없는 브랜드
         # → 미등록 상품이 남아있을 경우 보충 등록 잡 생성
@@ -804,8 +841,19 @@ class SambaTetrisService:
             {"tid": tenant_id, "tid_is_null": tenant_id is None},
         )
         for row in legacy_rows:
+            # 테트리스 배치된 브랜드는 legacy 루프에서 절대 처리하지 않음
+            if (row.source_site, row.brand_name) in tetris_brand_keys:
+                continue
             key = (row.source_site, row.brand_name, row.account_id)
             if key in processed_keys:
+                continue
+            acct_key = f'["{row.account_id}"]'
+            if (row.source_site, row.brand_name, acct_key) in pending_transmit_keys:
+                logger.debug(
+                    f"[테트리스 sync 레거시] 이미 pending/running 잡 존재 — 건너뜀: "
+                    f"{row.source_site}/{row.brand_name} → {row.account_id}"
+                )
+                processed_keys.add(key)
                 continue
             processed_keys.add(key)
             pids = await self._get_product_ids_for_assign(

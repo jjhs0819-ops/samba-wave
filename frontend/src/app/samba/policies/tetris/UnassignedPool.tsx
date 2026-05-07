@@ -121,6 +121,7 @@ function UnassignedItem({
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'space-between',
+        gap: 2,
         overflow: 'hidden',
       }}>
         {/* 상단: 브랜드명 (삭제 버튼 공간 확보) */}
@@ -135,34 +136,34 @@ function UnassignedItem({
         }}>
           {item.brand_name}
         </div>
-        {/* 하단: 등록/수집수(좌) + 소싱처명(우, 흰색) */}
+        {/* 중단: 판매처 컬러 스퀘어 (배치된 마켓) */}
+        {uniqueMarkets.length > 0 && (
+          <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+            {uniqueMarkets.map(a => (
+              <div
+                key={a.marketType}
+                title={a.marketName}
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: 1,
+                  background: getMarketColor(a.marketType),
+                  flexShrink: 0,
+                }}
+              />
+            ))}
+          </div>
+        )}
+        {/* 하단: 등록/수집수(좌) + 소싱처명(우) */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ fontSize: 10, color: '#666' }}>
             <span style={{ color: '#22C55E' }}>{fmtNum(item.registered_count)}</span>
             <span style={{ color: '#444' }}>/</span>
             <span style={{ color: '#888' }}>{fmtNum(item.collected_count)}</span>
           </div>
-          {uniqueMarkets.length > 0 ? (
-            <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
-              {uniqueMarkets.map(a => (
-                <div
-                  key={a.marketType}
-                  title={a.marketName}
-                  style={{
-                    width: 7,
-                    height: 7,
-                    borderRadius: 1,
-                    background: getMarketColor(a.marketType),
-                    flexShrink: 0,
-                  }}
-                />
-              ))}
-            </div>
-          ) : (
-            <span style={{ fontSize: 9, color: '#ddd', whiteSpace: 'nowrap', fontWeight: 500 }}>
-              {item.source_site}
-            </span>
-          )}
+          <span style={{ fontSize: 9, color: '#ddd', whiteSpace: 'nowrap', fontWeight: 500 }}>
+            {item.source_site}
+          </span>
         </div>
       </div>
 
