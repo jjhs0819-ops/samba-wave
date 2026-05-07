@@ -500,7 +500,9 @@ export default function WarroomPage() {
       // 2) 백엔드 PC분담 등록: 모든 PC의 합집합으로 백엔드 active_sites 계산
       // 3) sessionStorage: 새로고침 즉시 복원 (1프레임 leak 방지)
       // 4) saveFilters(null, ...): legacy 글로벌 enabled_sources는 항상 null로 비활성화
-      syncAllowedSitesToExtension(result)
+      // 전체선택(null)이어도 extension에 명시 목록 전달 — null이면 X-Allowed-Sites 헤더 미전송으로
+      // 서버 재시작 후 PC 재등록이 안 되는 버그 방지 (extension은 항상 명시 목록 유지)
+      syncAllowedSitesToExtension(result === null ? [...all] : result)
       // 전체선택(null)이어도 availSources 명시 전달 — DB에만 있고 UI에 없는 소싱처 레거시 모드 실행 차단
       registerPcAllowedSites(result === null ? [...all] : result)
       saveFilterSourcesToSession(result)
@@ -747,6 +749,9 @@ export default function WarroomPage() {
                 await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
                 const pno = singleProductNo.trim() || undefined
                 const { getDeviceId } = await import('@/lib/samba/deviceId')
+                // 확장앱 allowedSites 먼저 동기화 — 페이지 로드 후 체크박스 변경이 extension storage에
+                // 반영됐는지 확실히 보장. null(전체선택) 포함 항상 명시 목록 전달
+                syncAllowedSitesToExtension(filterSources === null ? [...availSources] : filterSources)
                 // PC분담 먼저 등록 — 오토튠 첫 사이클에서 올바른 소싱처만 실행되도록 보장
                 // (등록 없이 시작하면 첫 사이클에서 union=None → 전체 소싱처 루프 생성됨)
                 await registerPcAllowedSites(filterSources === null ? [...availSources] : filterSources)

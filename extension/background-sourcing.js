@@ -710,6 +710,8 @@ async function _detectLoginStatus(tabId, site) {
 }
 
 async function pollSourcingOnce() {
+  // 이 PC가 오토튠에 참여하지 않은 경우 폴링 건너뜀 — 다른 PC의 시작에 자동 편승 차단
+  if (!_localAutotuneJoined) return false
   // pre-login 대기는 pollSourcingOnce 블로킹 제거 — 각 사이트 잡 처리 직전(_processJobWithCap)에서 개별 대기
   // (SSG/GSShop 등 로그인 불필요 소싱처가 ABCmart 3분 로그인 체크에 묶이는 문제 방지)
   // 백엔드가 배치 크기만큼만 큐에 넣으므로 자연히 그 수만큼 처리됨
