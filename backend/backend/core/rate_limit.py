@@ -38,12 +38,21 @@ def _client_key(request: Request) -> str:
 
     위조 방어: split(',')[-1] 로 가장 마지막 IP 만 사용. Caddy 가 자기 관찰
     IP 를 끝에 append 하므로, 클라이언트가 헤더 첫 부분을 위조해도 무시됨.
+
+    엣지케이스 처리:
+    - 헤더 끝 trailing comma (`"1.2.3.4, "`) → 빈 문자열 → fallback
+    - IPv6 bracket (`"[::1]"`) → strip 으로 정규화 (rate-limit 키 일관성)
+    - request.client 가 .host 속성 누락 (테스트 mock 등) → getattr 안전 접근
     """
     forwarded = request.headers.get("x-forwarded-for", "")
     if forwarded:
-        return forwarded.split(",")[-1].strip()
-    if request.client and request.client.host:
-        return request.client.host
+        last_ip = forwarded.split(",")[-1].strip().strip("[]")
+        if last_ip:
+            return last_ip
+    if request.client is not None:
+        host = getattr(request.client, "host", None)
+        if host:
+            return str(host).strip("[]")
     return "unknown"
 
 
