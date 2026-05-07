@@ -296,11 +296,14 @@ class RexmondeClient:
             brand_name = str(brand_value or "")
 
         info_notice = self._extract_info_notice(soup)
+        product_name = str(ld.get("name", "") or "")
+        style_code = self._extract_style_code_from_name(product_name)
+        material = self._extract_material(info_notice)
 
         return {
             # 표준 응답 키 — refresher가 저장 가능하도록
             "site_product_id": site_product_id,
-            "name": str(ld.get("name", "") or ""),
+            "name": product_name,
             "brand": brand_name,
             "description": str(ld.get("description", "") or ""),
             "main_image": self._jsonld_first_image(ld.get("image")),
@@ -310,11 +313,55 @@ class RexmondeClient:
             "availability": availability,
             "saleStatus": sale_status,
             "categoryPath": category_path,
+            "style_code": style_code,
+            "material": material,
             "detail_url": urljoin(
                 self.BASE, f"{self.DETAIL_PATH}?no={site_product_id}"
             ),
             "info_notice": info_notice,
         }
+
+    @staticmethod
+    def _extract_style_code_from_name(name: str) -> str:
+        """상품명 괄호 안 코드에서 품번 추출.
+
+        rexmonde 상품명 패턴:
+        - 슬래시 형식: `(ATOFMX7740/BLK)` — Arc'teryx 류
+        - 하이픈 형식: `(GMSW14817-U144)` — J.LINDEBERG 류
+        둘 다 슬래시/하이픈 앞이 품번. 뒤(색상/SKU 코드)는 추출하지 않음
+        — 사이트가 색상명을 명시적으로 제공하지 않아 신뢰 가능한 색상
+        매핑이 어렵기 때문.
+        """
+        if not name:
+            return ""
+        m = re.search(r"\(([A-Z][A-Z0-9]+)[/\-][A-Z0-9]+\)", name)
+        return m.group(1) if m else ""
+
+    # rexmonde info_notice의 placeholder 값 — 빈 값과 동일 취급
+    _NOTICE_PLACEHOLDERS = {
+        "",
+        "-",
+        "상품 페이지 별도 표기",
+        "상품페이지 별도 표기",
+        "상품 페이지에 별도 표기",
+        "상세페이지 참조",
+        "상세 페이지 참조",
+    }
+
+    @classmethod
+    def _extract_material(cls, info_notice: dict[str, str]) -> str:
+        """정보고시에서 재질(소재) 추출.
+
+        rexmonde는 상품마다 키 이름이 다름 ("소재" / "제품 소재" / "주요 소재").
+        값이 placeholder("상품 페이지 별도 표기" 등)면 빈 문자열 반환.
+        """
+        if not info_notice:
+            return ""
+        for key in ("소재", "제품 소재", "주요 소재", "주요소재", "재질"):
+            v = (info_notice.get(key) or "").strip()
+            if v and v not in cls._NOTICE_PLACEHOLDERS:
+                return v
+        return ""
 
     @staticmethod
     def _extract_all_jsonld(soup: BeautifulSoup) -> list[dict]:
@@ -613,6 +660,14 @@ class RexmondeClient:
         path = str(d.get("categoryPath") or "")
         parts = [p.strip() for p in path.split(" > ") if p.strip()] if path else []
         info = d.get("info_notice") or {}
+
+        def _clean(*keys: str) -> str:
+            for k in keys:
+                v = (info.get(k) or "").strip()
+                if v and v not in self._NOTICE_PLACEHOLDERS:
+                    return v
+            return ""
+
         return {
             **d,
             "images": d.get("gallery_images")
@@ -623,9 +678,9 @@ class RexmondeClient:
             "category2": parts[1] if len(parts) > 1 else "",
             "category3": parts[2] if len(parts) > 2 else "",
             "category4": parts[3] if len(parts) > 3 else "",
-            "manufacturer": info.get("제조자") or info.get("제조사") or "",
-            "origin": info.get("제조국") or info.get("원산지") or "",
-            "material": info.get("소재") or info.get("주요 소재") or "",
+            "manufacturer": _clean("제조자", "제조사"),
+            "origin": _clean("제조국", "원산지"),
+            # material은 get_product_detail에서 이미 placeholder 제거된 값 사용
             "free_shipping": False,
             "shipping_fee": 0,
         }
