@@ -295,8 +295,10 @@ async def list_filters(session: AsyncSession = Depends(get_write_session_depende
 
     # 각 필터별 카운트를 단일 쿼리로 일괄 조회
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
-    from sqlalchemy import func, case, and_, literal
-    from sqlalchemy.dialects.postgresql import JSONB as _JSONB
+    from sqlalchemy import func, case, and_, literal, text as _text2
+
+    _AI_TAGGED2 = _text2("'[\"__ai_tagged__\"]'::jsonb")
+    _AI_IMAGE2 = _text2("'[\"__ai_image__\"]'::jsonb")
 
     filter_ids = [f.id for f in filters]
     if not filter_ids:
@@ -315,7 +317,7 @@ async def list_filters(session: AsyncSession = Depends(get_write_session_depende
             func.count(
                 case(
                     (
-                        _CP.tags.op("@>")(func.cast('["__ai_tagged__"]', _JSONB)),
+                        _CP.tags.op("@>")(_AI_TAGGED2),
                         literal(1),
                     )
                 )
@@ -323,7 +325,7 @@ async def list_filters(session: AsyncSession = Depends(get_write_session_depende
             func.count(
                 case(
                     (
-                        _CP.tags.op("@>")(func.cast('["__ai_image__"]', _JSONB)),
+                        _CP.tags.op("@>")(_AI_IMAGE2),
                         literal(1),
                     )
                 )
@@ -672,8 +674,10 @@ async def get_filter_tree_counts(
         return cached
 
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
-    from sqlalchemy import func as _func, case, and_, literal
-    from sqlalchemy.dialects.postgresql import JSONB as _JSONB2
+    from sqlalchemy import func as _func, case, and_, literal, text as _text
+
+    _AI_TAGGED_JSONB = _text("'[\"__ai_tagged__\"]'::jsonb")
+    _AI_IMAGE_JSONB = _text("'[\"__ai_image__\"]'::jsonb")
 
     svc = _get_services(session)
     all_filters = await svc.list_filters(limit=10000)
@@ -694,7 +698,7 @@ async def get_filter_tree_counts(
             _func.count(
                 case(
                     (
-                        _CP.tags.op("@>")(_func.cast('["__ai_tagged__"]', _JSONB2)),
+                        _CP.tags.op("@>")(_AI_TAGGED_JSONB),
                         literal(1),
                     )
                 )
@@ -702,7 +706,7 @@ async def get_filter_tree_counts(
             _func.count(
                 case(
                     (
-                        _CP.tags.op("@>")(_func.cast('["__ai_image__"]', _JSONB2)),
+                        _CP.tags.op("@>")(_AI_IMAGE_JSONB),
                         literal(1),
                     )
                 )

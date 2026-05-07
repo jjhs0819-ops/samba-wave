@@ -337,9 +337,11 @@ async def _warmup_filter_tree_counts_cache(logger: logging.Logger) -> None:
     실패해도 무시 — 사용자 클릭 시 정상 동작함.
     """
     try:
-        from sqlalchemy import func, case, and_, literal
-        from sqlalchemy.dialects.postgresql import JSONB as _JSONB
+        from sqlalchemy import func, case, and_, literal, text as _text
         from sqlmodel import select
+
+        _AI_TAGGED_JSONB = _text("'[\"__ai_tagged__\"]'::jsonb")
+        _AI_IMAGE_JSONB = _text("'[\"__ai_image__\"]'::jsonb")
 
         from backend.db.orm import get_read_session
         from backend.domain.samba.cache import cache
@@ -385,9 +387,7 @@ async def _warmup_filter_tree_counts_cache(logger: logging.Logger) -> None:
                             func.count(
                                 case(
                                     (
-                                        _CP.tags.op("@>")(
-                                            func.cast('["__ai_tagged__"]', _JSONB)
-                                        ),
+                                        _CP.tags.op("@>")(_AI_TAGGED_JSONB),
                                         literal(1),
                                     )
                                 )
@@ -395,9 +395,7 @@ async def _warmup_filter_tree_counts_cache(logger: logging.Logger) -> None:
                             func.count(
                                 case(
                                     (
-                                        _CP.tags.op("@>")(
-                                            func.cast('["__ai_image__"]', _JSONB)
-                                        ),
+                                        _CP.tags.op("@>")(_AI_IMAGE_JSONB),
                                         literal(1),
                                     )
                                 )

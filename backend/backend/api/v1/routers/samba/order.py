@@ -3440,14 +3440,10 @@ async def sync_orders_from_markets(
                                     )
                                     new_p = exchange_priority.get(ex_status, 0)
                                     if cur_p == 0 or new_p >= cur_p:
-                                        update_ex: dict[str, Any] = {
-                                            "shipping_status": ex_status
-                                        }
-                                        if step_cd in ("21", "22", "23", "24"):
-                                            update_ex["status"] = "exchanging"
-                                        elif step_cd == "25":
-                                            update_ex["status"] = "exchanged"
-                                        await svc.update_order(existing.id, update_ex)
+                                        await svc.update_order(
+                                            existing.id,
+                                            {"shipping_status": ex_status},
+                                        )
                                         logger.info(
                                             f"[롯데ON][교환클레임] DB 직접 업데이트: {ex_od_no} → {ex_status}"
                                         )
@@ -3512,10 +3508,7 @@ async def sync_orders_from_markets(
                                 if cur_p == 0 or new_p >= cur_p:
                                     await svc.update_order(
                                         existing_c.id,
-                                        {
-                                            "shipping_status": cn_ship_status,
-                                            "status": cn_status,
-                                        },
+                                        {"shipping_status": cn_ship_status},
                                     )
                                     logger.info(
                                         f"[롯데ON][취소클레임] DB 직접 업데이트: {cn_od_no} → {cn_ship_status}"
@@ -3580,10 +3573,7 @@ async def sync_orders_from_markets(
                                 if cur_p == 0 or new_p >= cur_p:
                                     await svc.update_order(
                                         existing_r.id,
-                                        {
-                                            "shipping_status": rt_ship_status,
-                                            "status": rt_status,
-                                        },
+                                        {"shipping_status": rt_ship_status},
                                     )
                                     logger.info(
                                         f"[롯데ON][반품클레임] DB 직접 업데이트: {rt_od_no} → {rt_ship_status}"

@@ -469,7 +469,10 @@ async function _checkAbcmartLogin() {
   // 실패(3분 타임아웃) 확정 시에만 clear (아래 return false 직전)
   let tabId = null
   try {
+    let _prevWinIdAbc = null
+    try { _prevWinIdAbc = (await chrome.windows.getCurrent()).id } catch {}
     const tab = await chrome.tabs.create({ url: 'https://www.a-rt.com/', active: false })
+    if (_prevWinIdAbc) { try { await chrome.windows.update(_prevWinIdAbc, { focused: true }) } catch {} }
     tabId = tab.id
     const deadline = Date.now() + 3 * 60 * 1000
     while (Date.now() < deadline) {
@@ -1015,7 +1018,10 @@ async function ensureSiteSessionTab(site) {
 
   console.log(`[${site}] 백그라운드 세션 탭 자동 생성: ${homeUrl}`)
   // pinned:true 안 씀 — 웨일 호환. active:false로 사용자 화면 방해 X.
+  let _prevWinIdSession = null
+  try { _prevWinIdSession = (await chrome.windows.getCurrent()).id } catch {}
   const tab = await chrome.tabs.create({ url: homeUrl, active: false })
+  if (_prevWinIdSession) { try { await chrome.windows.update(_prevWinIdSession, { focused: true }) } catch {} }
   try { await waitForTabLoad(tab.id, 30000) } catch {}
   await wait(2000) // SPA hydration
   return tab.id
@@ -1190,6 +1196,8 @@ async function handleSourcingJob(job) {
       //   2. focused:false 생성 → 포커스 미강탈
       //   3. 직후 메인 윈도우에 focus 복원 → popup이 z-order 뒤로 밀려 사용자 시야 위에 안 뜸
       //      (state:'minimized'는 Whale에서 AJAX throttling으로 카드혜택가 미반영되어 사용 불가)
+      let _prevWinIdPopup = null
+      try { _prevWinIdPopup = (await chrome.windows.getCurrent()).id } catch {}
       const win = await chrome.windows.create({
         url: job.url,
         type: 'popup',
@@ -1199,6 +1207,7 @@ async function handleSourcingJob(job) {
         top: 10,
         left: 10,
       })
+      if (_prevWinIdPopup) { try { await chrome.windows.update(_prevWinIdPopup, { focused: true }) } catch {} }
       tab = win.tabs?.[0]
       sourcingWindowId = win.id
       openedSourcingWindow = true
