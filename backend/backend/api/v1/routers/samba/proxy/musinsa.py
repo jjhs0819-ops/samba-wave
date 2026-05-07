@@ -5,10 +5,11 @@ from __future__ import annotations
 from typing import Any, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from backend.core.rate_limit import RATE_SET_COOKIE, limiter
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
 from backend.domain.samba.proxy.musinsa import MusinsaClient
 from backend.utils.logger import logger
@@ -185,7 +186,9 @@ class MusinsaSetCookieRequest(BaseModel):
 
 
 @extension_router.post("/musinsa/set-cookie")
+@limiter.limit(RATE_SET_COOKIE)
 async def musinsa_set_cookie(
+    request: Request,
     body: MusinsaSetCookieRequest,
     write_session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:

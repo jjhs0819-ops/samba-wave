@@ -508,6 +508,15 @@ def _validate_startup_settings() -> None:
             "Mock authentication is ENABLED. This should only be used for development/testing."
         )
 
+    secret_bytes = (settings.jwt_secret_key or "").encode("utf-8")
+    if len(secret_bytes) < 32:
+        raise RuntimeError(
+            "CRITICAL: JWT_SECRET_KEY 가 32바이트 미만입니다. "
+            "HS256 알고리즘은 최소 256비트(32바이트) 시크릿이 필요합니다. "
+            f"현재 길이: {len(secret_bytes)}바이트. "
+            "권고: `python -c 'import secrets; print(secrets.token_urlsafe(48))'` 로 재생성."
+        )
+
 
 async def _stop_autotune_and_refreshers() -> None:
     from backend.api.v1.routers.samba.collector_autotune import (

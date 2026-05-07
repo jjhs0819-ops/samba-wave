@@ -66,9 +66,12 @@ from backend.api.v1.routers.samba.warroom import router as samba_warroom_router
 from backend.api.v1.routers.samba.wholesale import router as samba_wholesale_router
 from backend.api.v1.routers.user import router as user_router
 from backend.core.config import settings
+from backend.core.rate_limit import limiter, rate_limit_exceeded_handler
 from backend.domain.user.auth_service import get_user_id
 from backend.lifecycle import lifespan
 from backend.middleware.error_handler import register_exception_handlers
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 
 def create_application() -> FastAPI:
@@ -85,6 +88,11 @@ def create_application() -> FastAPI:
     )
 
     register_exception_handlers(app)
+
+    # 레이트 리미터 — 무차별 로그인·자격증명 변경·프록시 남용 방어
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+    app.add_middleware(SlowAPIMiddleware)
 
     from backend.middleware.api_gateway import ApiGatewayMiddleware
 

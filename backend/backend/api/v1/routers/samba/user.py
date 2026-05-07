@@ -9,6 +9,7 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from backend.core.rate_limit import RATE_LOGIN, limiter
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
 from backend.domain.samba.user.model import SambaLoginHistory, SambaUser
 from backend.domain.samba.user.repository import SambaUserRepository
@@ -266,9 +267,10 @@ def _get_client_ip(request: Request) -> str:
 
 
 @router.post("/login", response_model=UserOut)
+@limiter.limit(RATE_LOGIN)
 async def login_user(
-    body: UserLoginDto,
     request: Request,
+    body: UserLoginDto,
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """이메일/비밀번호 로그인."""

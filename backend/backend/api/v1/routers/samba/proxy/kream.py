@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from backend.core.rate_limit import RATE_LOGIN, RATE_SET_COOKIE, limiter
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
 from backend.domain.samba.proxy.kream import KreamClient
 from backend.shutdown_state import is_shutting_down
@@ -29,7 +30,9 @@ class KreamLoginRequest(BaseModel):
 
 
 @router.post("/kream/login")
+@limiter.limit(RATE_LOGIN)
 async def kream_login(
+    request: Request,
     body: KreamLoginRequest,
     write_session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:
@@ -82,7 +85,9 @@ class KreamSetCookieRequest(BaseModel):
 
 
 @router.post("/kream/set-cookie")
+@limiter.limit(RATE_SET_COOKIE)
 async def kream_set_cookie(
+    request: Request,
     body: KreamSetCookieRequest,
     write_session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:
