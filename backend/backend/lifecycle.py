@@ -3,7 +3,6 @@
 import asyncio
 import logging
 import os
-import re
 import sys
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -162,143 +161,6 @@ async def _apply_startup_schema_fixes(logger: logging.Logger) -> None:
         skipped,
         time.time() - total_start,
     )
-
-
-async def _sync_playauto_registered_accounts(logger: logging.Logger) -> None:
-    try:
-        from sqlalchemy import cast
-        from sqlmodel import select
-
-        from backend.db.orm import get_write_session
-        from backend.domain.samba.account.model import SambaMarketAccount
-        from backend.domain.samba.collector.model import SambaCollectedProduct
-        from backend.domain.samba.proxy.playauto import PlayAutoClient
-
-        async with get_write_session() as session:
-            statement = select(SambaMarketAccount).where(
-                SambaMarketAccount.market_type == "playauto",
-                SambaMarketAccount.is_active == True,  # noqa: E712
-            )
-            result = await session.exec(statement)
-            account = result.first()
-            if not account:
-                return
-
-            extras = account.additional_fields or {}
-            api_key = extras.get("apiKey", "") or getattr(account, "api_key", "")
-            if not api_key:
-                return
-
-            client = PlayAutoClient(api_key)
-            try:
-                playauto_products = await client.get_products(my_cate_name="SAMBA-WAVE")
-            finally:
-                await client.close()
-
-            logger.info(
-                "[startup] playauto SAMBA-WAVE products=%s", len(playauto_products)
-            )
-
-            site_ids: set[str] = set()
-            mastercode_map: dict[str, str] = {}
-            for product in playauto_products:
-                product_name = str(product.get("ProdName", "") or "").strip()
-                master_code = str(product.get("MasterCode", "") or "").strip()
-                parts = product_name.split()
-                if not parts:
-                    continue
-                token = parts[-1]
-                if not re.match(r"^[A-Za-z0-9_-]+$", token):
-                    continue
-                site_ids.add(token)
-                if master_code:
-                    mastercode_map[token] = master_code
-
-            if site_ids:
-                updated = 0
-                site_id_list = list(site_ids)
-                for chunk_index in range(0, len(site_id_list), 1000):
-                    chunk = site_id_list[chunk_index : chunk_index + 1000]
-                    product_stmt = select(SambaCollectedProduct).where(
-                        SambaCollectedProduct.site_product_id.in_(chunk),
-                    )
-                    product_result = await session.exec(product_stmt)
-                    for collected in product_result.all():
-                        changed = False
-                        registered_accounts = list(collected.registered_accounts or [])
-                        if account.id not in registered_accounts:
-                            registered_accounts.append(account.id)
-                            collected.registered_accounts = registered_accounts
-                            changed = True
-                        if collected.status != "registered":
-                            collected.status = "registered"
-                            changed = True
-                        market_product_nos = dict(collected.market_product_nos or {})
-                        if account.id not in market_product_nos:
-                            master_code = mastercode_map.get(
-                                collected.site_product_id, ""
-                            )
-                            if master_code:
-                                market_product_nos[account.id] = master_code
-                                collected.market_product_nos = market_product_nos
-                                changed = True
-                        if changed:
-                            session.add(collected)
-                            updated += 1
-
-                if updated:
-                    await session.commit()
-                logger.info(
-                    "[startup] playauto forward sync products=%s site_ids=%s updated=%s",
-                    len(playauto_products),
-                    len(site_ids),
-                    updated,
-                )
-
-                from sqlalchemy.dialects.postgresql import JSONB as _JSONB
-                from sqlalchemy.orm import defer as _defer
-
-                reverse_stmt = (
-                    select(SambaCollectedProduct)
-                    .where(
-                        SambaCollectedProduct.registered_accounts.op("@>")(
-                            cast(f'["{account.id}"]', _JSONB)
-                        )
-                    )
-                    .options(
-                        _defer(SambaCollectedProduct.detail_html),
-                        _defer(SambaCollectedProduct.detail_images),
-                        _defer(SambaCollectedProduct.images),
-                        _defer(SambaCollectedProduct.extra_data),
-                    )
-                )
-                reverse_result = await session.exec(reverse_stmt)
-                removed = 0
-                for collected in reverse_result.all():
-                    if (
-                        not collected.site_product_id
-                        or collected.site_product_id in site_ids
-                    ):
-                        continue
-                    registered_accounts = [
-                        value
-                        for value in (collected.registered_accounts or [])
-                        if value != account.id
-                    ]
-                    collected.registered_accounts = registered_accounts or None
-                    market_product_nos = dict(collected.market_product_nos or {})
-                    market_product_nos.pop(str(account.id), None)
-                    collected.market_product_nos = market_product_nos or None
-                    if not registered_accounts:
-                        collected.status = "collected"
-                    session.add(collected)
-                    removed += 1
-
-                if removed:
-                    await session.commit()
-                logger.info("[startup] playauto reverse sync removed=%s", removed)
-    except Exception as exc:
-        logger.warning("[startup] playauto sync failed: %s", exc)
 
 
 async def _recover_running_jobs(logger: logging.Logger) -> None:
@@ -687,9 +549,6 @@ async def lifespan(app: FastAPI):
     await _connect_cache()
     startup_logger = _startup_logger()
     await _apply_startup_schema_fixes(startup_logger)
-    # PlayAuto 동기화는 외부 API + 대용량 DB 스캔으로 5~10분 소요 가능
-    # yield 이전에 실행하면 health check가 그만큼 지연되므로 백그라운드 태스크로 분리
-    asyncio.create_task(_sync_playauto_registered_accounts(startup_logger))
     asyncio.create_task(_warmup_tetris_board_cache(startup_logger))
     asyncio.create_task(_warmup_filter_tree_counts_cache(startup_logger))
 
