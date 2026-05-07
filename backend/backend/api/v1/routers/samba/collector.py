@@ -826,46 +826,54 @@ async def scroll_products(
     # 텍스트 검색
     q = search.strip()
     if q:
+        # search 는 외부 입력 — `%`/`_` 메타 escape 후 ESCAPE '\\' 명시.
+        from backend.core.sql_safe import escape_like
+
+        q_pat = f"%{escape_like(q)}%"
+        q_no_space_pat = f"%{escape_like(q.replace(' ', ''))}%"
+
         # 상품번호 다중 입력(콤마) 지원 — split 결과가 있으면 IN, 없으면 단일 ilike
         _multi_ids = _split_product_ids(q)
         _site_id_clause = (
             _CP.site_product_id.in_(_multi_ids)
             if _multi_ids
-            else _CP.site_product_id.ilike(f"%{q}%")
+            else _CP.site_product_id.ilike(q_pat, escape="\\")
         )
 
         if search_type == "name":
             # 원상품명 + 등록상품명 + 마켓등록명 통합 부분 일치 (공백 무시)
-            q_no_space = q.replace(" ", "")
             conditions.append(
                 or_(
-                    _CP.name.ilike(f"%{q}%"),
-                    func.replace(_CP.name, " ", "").ilike(f"%{q_no_space}%"),
-                    _CP.name_en.ilike(f"%{q}%"),
+                    _CP.name.ilike(q_pat, escape="\\"),
+                    func.replace(_CP.name, " ", "").ilike(q_no_space_pat, escape="\\"),
+                    _CP.name_en.ilike(q_pat, escape="\\"),
                     func.replace(func.coalesce(_CP.name_en, ""), " ", "").ilike(
-                        f"%{q_no_space}%"
+                        q_no_space_pat, escape="\\"
                     ),
-                    func.coalesce(cast(_CP.market_names, String), "").ilike(f"%{q}%"),
-                    func.coalesce(_CP.brand, "").ilike(f"%{q}%"),
-                    func.coalesce(_CP.style_code, "").ilike(f"%{q}%"),
+                    func.coalesce(cast(_CP.market_names, String), "").ilike(
+                        q_pat, escape="\\"
+                    ),
+                    func.coalesce(_CP.brand, "").ilike(q_pat, escape="\\"),
+                    func.coalesce(_CP.style_code, "").ilike(q_pat, escape="\\"),
                     _site_id_clause,
                 )
             )
         elif search_type == "name_all":
             # 상품명 + 등록상품명 구성 요소(brand/style_code/site_product_id 포함) 동시 검색
             # market_names 포함 — 셀하 등 마켓 등록명으로 검색 시 누락 방지
-            q_no_space = q.replace(" ", "")
             conditions.append(
                 or_(
-                    _CP.name.ilike(f"%{q}%"),
-                    func.replace(_CP.name, " ", "").ilike(f"%{q_no_space}%"),
-                    _CP.name_en.ilike(f"%{q}%"),
+                    _CP.name.ilike(q_pat, escape="\\"),
+                    func.replace(_CP.name, " ", "").ilike(q_no_space_pat, escape="\\"),
+                    _CP.name_en.ilike(q_pat, escape="\\"),
                     func.replace(func.coalesce(_CP.name_en, ""), " ", "").ilike(
-                        f"%{q_no_space}%"
+                        q_no_space_pat, escape="\\"
                     ),
-                    func.coalesce(cast(_CP.market_names, String), "").ilike(f"%{q}%"),
-                    func.coalesce(_CP.brand, "").ilike(f"%{q}%"),
-                    func.coalesce(_CP.style_code, "").ilike(f"%{q}%"),
+                    func.coalesce(cast(_CP.market_names, String), "").ilike(
+                        q_pat, escape="\\"
+                    ),
+                    func.coalesce(_CP.brand, "").ilike(q_pat, escape="\\"),
+                    func.coalesce(_CP.style_code, "").ilike(q_pat, escape="\\"),
                     _site_id_clause,
                 )
             )
@@ -875,16 +883,16 @@ async def scroll_products(
             # 검색필터 이름으로 검색 → search_filter_id 서브쿼리
             from backend.domain.samba.collector.model import SambaSearchFilter as _SF
 
-            sf_ids = select(_SF.id).where(_SF.name.ilike(f"%{q}%"))
+            sf_ids = select(_SF.id).where(_SF.name.ilike(q_pat, escape="\\"))
             conditions.append(_CP.search_filter_id.in_(sf_ids))
         elif search_type == "brand":
-            conditions.append(_CP.brand.ilike(f"%{q}%"))
+            conditions.append(_CP.brand.ilike(q_pat, escape="\\"))
         elif search_type == "id":
             conditions.append(_CP.id == q)
         elif search_type == "policy":
             from backend.domain.samba.policy.model import SambaPolicy as _POL
 
-            pol_ids = select(_POL.id).where(_POL.name.ilike(f"%{q}%"))
+            pol_ids = select(_POL.id).where(_POL.name.ilike(q_pat, escape="\\"))
             conditions.append(_CP.applied_policy_id.in_(pol_ids))
 
     # 소싱처 필터 (단일 또는 복수)
@@ -1697,18 +1705,27 @@ async def bulk_remove_image(
     target_fields = body.fields if body.fields else [body.field]
     image_url = body.image_url
 
+    # image_url 은 외부 입력 — `%`/`_` 메타 escape 후 ESCAPE '\\' 명시.
+    from backend.core.sql_safe import escape_like
+
+    image_pat = f"%{escape_like(image_url)}%"
+
     # DB 레벨에서 해당 이미지 URL을 포함하는 상품만 필터링 (전체 로드 방지)
     conditions = []
     if "images" in target_fields:
         conditions.append(
-            cast(SambaCollectedProduct.images, String).like(f"%{image_url}%")
+            cast(SambaCollectedProduct.images, String).like(image_pat, escape="\\")
         )
     if "detail_images" in target_fields:
         conditions.append(
-            cast(SambaCollectedProduct.detail_images, String).like(f"%{image_url}%")
+            cast(SambaCollectedProduct.detail_images, String).like(
+                image_pat, escape="\\"
+            )
         )
     if "detail_html" in target_fields:
-        conditions.append(SambaCollectedProduct.detail_html.like(f"%{image_url}%"))
+        conditions.append(
+            SambaCollectedProduct.detail_html.like(image_pat, escape="\\")
+        )
     if not conditions:
         return {"removed": 0}
 
