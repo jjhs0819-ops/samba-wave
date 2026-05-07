@@ -133,3 +133,13 @@ class TestCspForFunction:
 
         assert _csp_for("/static/images/foo.png") == _CSP_STATIC
         assert _csp_for("/static/model_presets/x.png") == _CSP_STATIC
+
+    def test_path_matching_is_case_insensitive(self):
+        from backend.middleware.security_headers import _csp_for, _CSP_STATIC
+
+        # /Docs / /DOCS / /OpenAPI.json 도 면제 (lower 정규화)
+        assert _csp_for("/Docs") is None
+        assert _csp_for("/DOCS") is None
+        assert _csp_for("/OpenAPI.json") is None
+        # /STATIC/ 도 정적 CSP
+        assert _csp_for("/Static/images/foo.png") == _CSP_STATIC

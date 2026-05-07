@@ -57,10 +57,15 @@ _BASE_HEADERS: dict[str, str] = {
 
 
 def _csp_for(path: str) -> str | None:
-    """요청 경로에 따라 적용할 CSP 문자열 반환. None 이면 CSP 헤더 미적용."""
-    if path.startswith(_CSP_EXEMPT_PREFIXES):
+    """요청 경로에 따라 적용할 CSP 문자열 반환. None 이면 CSP 헤더 미적용.
+
+    path matching 은 case-insensitive — 클라이언트가 ``/Docs`` / ``/DOCS`` 등
+    대소문자 변형으로 보내도 의도된 면제 / 정적 자산 분기에 매칭된다.
+    """
+    lower = path.lower()
+    if lower.startswith(_CSP_EXEMPT_PREFIXES):
         return None
-    if path.startswith(_STATIC_PREFIXES):
+    if lower.startswith(_STATIC_PREFIXES):
         return _CSP_STATIC
     return _CSP_API
 

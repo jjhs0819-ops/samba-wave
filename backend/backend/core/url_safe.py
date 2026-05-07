@@ -45,6 +45,12 @@ def validate_url_host(
     if parsed.scheme.lower() not in allowed_schemes:
         return False
 
+    # userinfo (``user:pass@host``) 는 거부 — 정상 트래픽에는 없고, 로그/모니터링에
+    # 가짜 자격증명을 흘려보내거나 일부 라이브러리에서 hostname 파싱 혼동을
+    # 유발할 수 있다 (defense-in-depth, RFC 3986 의 deprecated 영역).
+    if parsed.username is not None or parsed.password is not None:
+        return False
+
     # netloc 에는 ``user:pass@host:port`` 가 포함될 수 있으므로 hostname 사용.
     host = (parsed.hostname or "").lower()
     if not host:

@@ -27,6 +27,18 @@ class TestValidateUrlHost:
 
     # ── SSRF 우회 시도 차단 ──
 
+    def test_userinfo_with_allowed_host_rejected(self):
+        # ``http://attacker:pass@musinsa.com`` — hostname 은 musinsa.com 이지만
+        # userinfo 가 있는 URL 은 정상 트래픽에 없으므로 거부 (defense-in-depth)
+        assert not validate_url_host("https://attacker:pass@musinsa.com/", _MUSINSA)
+
+    def test_userinfo_only_username_rejected(self):
+        assert not validate_url_host("https://user@musinsa.com/", _MUSINSA)
+
+    def test_userinfo_with_disallowed_host_rejected(self):
+        # 일반 host allowlist 거부와 무관 — userinfo 있어도 거부
+        assert not validate_url_host("https://u:p@attacker.com/", _MUSINSA)
+
     def test_attacker_domain_with_allowed_in_path(self):
         # `https://attacker.com/musinsa.com` → substring 검사로는 통과하지만
         # 정확/서브도메인 매칭으로는 차단되어야 함.
