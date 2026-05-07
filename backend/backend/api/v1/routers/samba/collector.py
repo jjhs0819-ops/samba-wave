@@ -1355,11 +1355,12 @@ async def product_dashboard_stats(
             SELECT aid, COUNT(*) AS cnt
             FROM (
                 SELECT jsonb_array_elements_text(registered_accounts) AS aid
-                FROM samba_collected_product
-                WHERE is_unregistered = FALSE
-                  AND registered_accounts IS NOT NULL
-                  AND jsonb_typeof(registered_accounts) = 'array'
-                  AND jsonb_array_length(registered_accounts) > 0
+                FROM (
+                    SELECT registered_accounts FROM samba_collected_product
+                    WHERE is_unregistered = FALSE
+                      AND registered_accounts IS NOT NULL
+                      AND jsonb_typeof(registered_accounts) = 'array'
+                ) safe_rows
             ) sub
             GROUP BY aid
             ORDER BY cnt DESC
@@ -1376,11 +1377,13 @@ async def product_dashboard_stats(
                 SELECT jsonb_array_elements_text(registered_accounts) AS aid,
                        source_site,
                        brand
-                FROM samba_collected_product
-                WHERE is_unregistered = FALSE
-                  AND registered_accounts IS NOT NULL
-                  AND jsonb_typeof(registered_accounts) = 'array'
-                  AND jsonb_array_length(registered_accounts) > 0
+                FROM (
+                    SELECT registered_accounts, source_site, brand
+                    FROM samba_collected_product
+                    WHERE is_unregistered = FALSE
+                      AND registered_accounts IS NOT NULL
+                      AND jsonb_typeof(registered_accounts) = 'array'
+                ) safe_rows
             ) sub
             GROUP BY aid, source_site, COALESCE(NULLIF(TRIM(brand), ''), '기타')
             ORDER BY aid, cnt DESC

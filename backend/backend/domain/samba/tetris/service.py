@@ -300,23 +300,27 @@ class SambaTetrisService:
         )
 
         # 5. Raw SQL 집계 — JSONB 함수로 account_id 전개 후 DB에서 집계 (cp.brand만)
+        # 서브쿼리로 배열 타입 행만 먼저 필터링 후 jsonb_array_elements_text 호출
+        # (PostgreSQL은 WHERE 조건 순서를 보장하지 않아 직접 체크 시 스칼라 에러 발생)
         registered_rows = await self._session.execute(
             text("""
                 SELECT
                     source_site,
-                    BTRIM(brand) AS effective_brand,
+                    effective_brand,
                     jsonb_array_elements_text(registered_accounts) AS account_id,
                     COUNT(*) AS cnt
-                FROM samba_collected_product
-                WHERE (tenant_id IS NULL AND :tid_is_null OR tenant_id = :tid)
-                  AND is_unregistered = FALSE
-                  AND registered_accounts IS NOT NULL
-                  AND jsonb_typeof(registered_accounts) = 'array'
-                  AND jsonb_array_length(registered_accounts) > 0
-                  AND source_site IS NOT NULL
-                  AND brand IS NOT NULL
-                  AND BTRIM(brand) != ''
-                GROUP BY source_site, BTRIM(brand), account_id
+                FROM (
+                    SELECT source_site, BTRIM(brand) AS effective_brand, registered_accounts
+                    FROM samba_collected_product
+                    WHERE (tenant_id IS NULL AND :tid_is_null OR tenant_id = :tid)
+                      AND is_unregistered = FALSE
+                      AND registered_accounts IS NOT NULL
+                      AND jsonb_typeof(registered_accounts) = 'array'
+                      AND source_site IS NOT NULL
+                      AND brand IS NOT NULL
+                      AND BTRIM(brand) != ''
+                ) sub
+                GROUP BY source_site, effective_brand, account_id
             """),
             {"tid": tenant_id, "tid_is_null": tenant_id is None},
         )
