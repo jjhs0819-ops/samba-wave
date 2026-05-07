@@ -1687,22 +1687,17 @@ async def _site_autotune_loop(site: str):
                                     _run_transmit_in_background(_fire_transmit_group)
                                 )
 
-                        # DB 세션 복구 — 갱신 전 연결 확인
-                        try:
-                            from sqlmodel import text as _txt
-
-                            await session.execute(_txt("SELECT 1"))
-                        except Exception:
-                            log.warning("[오토튠] 세션 만료 — rollback 후 재연결")
-                            try:
-                                await session.rollback()
-                            except Exception:
-                                pass
-
                         # ③ 소싱처별 병렬 갱신 + 결과 즉시 처리 (콜백)
                         from backend.domain.samba.collector.refresher import (
                             SITE_AUTOTUNE_CONCURRENCY as _SAC,
                         )
+
+                        # refresh 전 트랜잭션 종료 — idle in transaction → idle
+                        # HTTP 대기 중 풀 커넥션 점유 방지 (SELECT 1 헬스체크 대체)
+                        try:
+                            await session.commit()
+                        except Exception:
+                            pass
 
                         # on_result 완료마다 세션 반납 — HTTP 대기 중 풀 점유 방지
                         # _fire_transmit_group은 자체 _tx_s 세션을 쓰므로 영향 없음
