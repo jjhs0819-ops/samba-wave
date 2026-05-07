@@ -1660,6 +1660,11 @@ class SambaShipmentService:
                             )
                             return res
 
+                    # 모든 DB 읽기 완료 — HTTP 전송 전 트랜잭션 종료 (idle in transaction 방지)
+                    try:
+                        await self.session.commit()
+                    except Exception:
+                        pass
                     logger.info(f"[메모리] 마켓전송 전: {_mem_mb()}MB")
                     start_time = time.time()
                     result = await dispatch_to_market(
