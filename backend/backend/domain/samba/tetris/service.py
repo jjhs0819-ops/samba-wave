@@ -586,7 +586,7 @@ class SambaTetrisService:
         )
 
         # 즉시 전송하지 않음 — 인터벌 루프(sync_all)에서 잡큐로 스테이징
-        clear_board_cache()
+        # clear_board_cache() 금지 — 61초 쿼리 유발로 프론트 15초 타임아웃 발생
         logger.info(
             f"[테트리스] assign 저장 완료 — {source_site}/{brand_name} "
             f"→ {market_account_id} (인터벌 루프에서 등록 예정)"
@@ -616,7 +616,7 @@ class SambaTetrisService:
         market_account_id = assignment.market_account_id
 
         deleted = await self._repo.delete_async(assignment_id)
-        clear_board_cache()
+        # clear_board_cache() 금지 — 61초 쿼리 유발로 프론트 15초 타임아웃 발생
 
         # 등록된 상품 마켓 삭제 트리거 (백그라운드)
         product_ids = await self._get_product_ids_for_remove(

@@ -67,16 +67,44 @@ export function useTetris() {
           policy_id: block.policy_id,
           position_order: 0,
         })
+        await refresh()
       } else if (!dragState.assignmentId) {
-        await tetrisApi.assign({
+        const result = await tetrisApi.assign({
           source_site: block.source_site,
           brand_name: block.brand_name,
           market_account_id: toAccountId,
           policy_id: null,
           position_order: 0,
         })
+        // 옵티미스틱 업데이트: 보드 재조회 없이 즉시 블록 추가
+        setBoard(prev => {
+          if (!prev) return prev
+          const newBlock: TetrisBrandBlock = {
+            id: result.id,
+            source_site: block.source_site,
+            brand_name: block.brand_name,
+            policy_id: null,
+            policy_name: null,
+            policy_color: '#3B82F6',
+            registered_count: block.registered_count,
+            collected_count: block.collected_count,
+            ai_tagged_count: block.ai_tagged_count,
+            position_order: 0,
+            is_legacy: false,
+          }
+          return {
+            ...prev,
+            markets: prev.markets.map(m => ({
+              ...m,
+              accounts: m.accounts.map(a =>
+                a.account_id === toAccountId
+                  ? { ...a, assignments: [newBlock, ...a.assignments] }
+                  : a
+              ),
+            })),
+          }
+        })
       }
-      await refresh()
     } catch (e) {
       showAlert('An error occurred: ' + String(e))
     }

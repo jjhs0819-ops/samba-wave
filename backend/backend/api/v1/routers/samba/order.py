@@ -3627,13 +3627,11 @@ async def sync_orders_from_markets(
                         from sqlalchemy import text as _sa_text_ps
 
                         _set_parts = [
-                            "status = :status",
                             "shipping_status = :ship_status",
                             "updated_at = now()",
                         ]
                         _ps_params: dict[str, Any] = {
                             "order_number": order_number,
-                            "status": new_status,
                             "ship_status": new_ship_status,
                         }
                         if invc_no:
@@ -3858,10 +3856,7 @@ async def sync_orders_from_markets(
                             if _ex:
                                 await svc.update_order(
                                     _ex.id,
-                                    {
-                                        "status": "wait_ship",
-                                        "shipping_status": "배송대기",
-                                    },
+                                    {"shipping_status": "배송대기"},
                                 )
                         logger.info(
                             f"[주문동기화] {label}: 11번가 발주확인 {_confirmed}/{len(_confirm_targets)}건 완료"
@@ -3935,7 +3930,7 @@ async def sync_orders_from_markets(
                         if _ex_cancel:
                             await svc.update_order(
                                 _ex_cancel.id,
-                                {"shipping_status": "취소요청", "status": "cancelled"},
+                                {"shipping_status": "취소요청"},
                             )
 
                     for _claim in _return_claims:
@@ -3956,10 +3951,7 @@ async def sync_orders_from_markets(
                             if _ex_return:
                                 await svc.update_order(
                                     _ex_return.id,
-                                    {
-                                        "shipping_status": "반품요청",
-                                        "status": "return_requested",
-                                    },
+                                    {"shipping_status": "반품요청"},
                                 )
 
                     for _claim in _exchange_claims:
@@ -3985,10 +3977,7 @@ async def sync_orders_from_markets(
                             )
                             await svc.update_order(
                                 _ex_exchange.id,
-                                {
-                                    "shipping_status": "교환요청",
-                                    "status": "exchange_requested",
-                                },
+                                {"shipping_status": "교환요청"},
                             )
 
                 except Exception as _ce:
