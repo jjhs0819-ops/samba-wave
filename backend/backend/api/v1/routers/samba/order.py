@@ -5458,8 +5458,8 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
         "channel_id": account_id,
         "channel_name": label,
         "source": "lotteon",
-        # 합성 키: 동일 odNo 내 다른 옵션(odSeq)을 구분하기 위해 _odSeq_procSeq 접미사
-        "order_number": f"{_od_no}_{_od_seq}_{_proc_seq}" if _od_no else "",
+        # 합성 키: (odNo, odSeq) — procSeq는 처리 단계에 따라 변하므로 제외
+        "order_number": f"{_od_no}_{_od_seq}" if _od_no else "",
         "od_no": _od_no,
         "od_seq": _od_seq,
         "proc_seq": _proc_seq,
