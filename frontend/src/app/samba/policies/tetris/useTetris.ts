@@ -86,7 +86,7 @@ export function useTetris() {
             policy_id: null,
             policy_name: null,
             policy_color: '#3B82F6',
-            registered_count: block.registered_count,
+            registered_count: 0,
             collected_count: block.collected_count,
             ai_tagged_count: block.ai_tagged_count,
             position_order: 0,
@@ -98,7 +98,11 @@ export function useTetris() {
               ...m,
               accounts: m.accounts.map(a =>
                 a.account_id === toAccountId
-                  ? { ...a, assignments: [newBlock, ...a.assignments] }
+                  ? {
+                      ...a,
+                      assignments: [newBlock, ...a.assignments],
+                      total_collected: a.total_collected + block.collected_count,
+                    }
                   : a
               ),
             })),

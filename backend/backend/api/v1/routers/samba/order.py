@@ -38,10 +38,15 @@ ACTIVE_ORDER_STATUSES = (
 )
 EXCLUDED_ORDER_STATUSES = (
     "cancel_requested",
+    "cancelling",
     "cancelled",
     "return_requested",
+    "returning",
     "returned",
+    "return_completed",
     "exchange_requested",
+    "exchanging",
+    "exchanged",
     "exchange_pending",
     "exchange_done",
     "ship_failed",
