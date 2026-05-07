@@ -125,6 +125,12 @@ async def refresh_products(
         if _lt_ck:
             set_lotteon_cookie(str(_lt_ck))
 
+    # HTTP 갱신 전 커밋 — 설정 읽기 트랜잭션 종료 (idle in transaction 방지)
+    try:
+        await session.commit()
+    except Exception:
+        pass
+
     # 벌크 갱신 실행 (수동 갱신 — 오토튠 로그에 노출되지 않음)
     results, summary = await refresh_products_bulk(products, source="manual")
 

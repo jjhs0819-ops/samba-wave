@@ -548,6 +548,11 @@ async def enrich_product(
                     _lt_ck = await _get_setting(session, "lotteon_cookie")
                     if _lt_ck:
                         set_lotteon_cookie(str(_lt_ck))
+                    # HTTP refresh 전 커밋 — idle in transaction 방지
+                    try:
+                        await session.commit()
+                    except Exception:
+                        pass
 
             # ABCmart/GrandStage: 확장앱이 sync한 로그인 쿠키 강제 재로드
             # refresher.py:1366-1377(상품관리/오토튠 경로)와 동일 패턴 — 진입점 어디서든
