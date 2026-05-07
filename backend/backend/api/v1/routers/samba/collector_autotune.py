@@ -525,9 +525,52 @@ async def _site_autotune_loop(site: str):
                             for _acc in _acc_result.all():
                                 _account_cache[_acc.id] = _acc
 
-                        # SELECT 완료 후 즉시 커밋 — HTTP I/O 동안 커넥션이 idle in transaction으로 풀 점유하지 않도록
-                        # expire_on_commit=False이므로 products/_account_cache 객체는 커밋 후에도 유효
+                        # 정책 사전 로드 — _on_result에서 세션 없이 캐시에서 읽을 수 있도록
+                        _all_policy_ids = {
+                            _p.applied_policy_id
+                            for _p in products
+                            if _p.applied_policy_id
+                        }
+                        if _all_policy_ids:
+                            from backend.domain.samba.policy.model import (
+                                SambaPolicy as _SPol,
+                            )
+
+                            _pol_stmt = select(_SPol).where(
+                                _SPol.id.in_(list(_all_policy_ids))
+                            )
+                            _pol_result = await session.exec(_pol_stmt)
+                            for _pol in _pol_result.all():
+                                _policy_cache[_pol.id] = _pol
+
+                        # 롯데홈쇼핑 자격증명 사전 로드 (등록 계정 중 lottehome이 있을 때만)
+                        _lottehome_creds: dict = {}
+                        _has_lottehome = any(
+                            getattr(_account_cache.get(acc_id), "market_type", "")
+                            == "lottehome"
+                            for _p in products
+                            for acc_id in (_p.registered_accounts or [])
+                        )
+                        if _has_lottehome:
+                            from backend.domain.samba.forbidden.model import (
+                                SambaSettings as _SS2,
+                            )
+                            from sqlmodel import select as _sel2
+
+                            _lh_row = (
+                                await session.exec(
+                                    _sel2(_SS2).where(
+                                        _SS2.key == "lottehome_credentials"
+                                    )
+                                )
+                            ).first()
+                            _lottehome_creds = (_lh_row.value if _lh_row else {}) or {}
+
+                        # SELECT 완료 후 즉시 커밋 + 연결 반납 — refresh HTTP 동안 idle in transaction 방지
+                        # expire_on_commit=False이므로 products/_account_cache/_policy_cache 객체는 커밋 후에도 유효
+                        # session.close()는 연결만 풀에 반납, 세션 객체는 재사용 가능 (soldout 재시도 블록에서 재획득)
                         await session.commit()
+                        await session.close()
 
                         retransmitted = 0
                         deleted_count = 0
@@ -1023,16 +1066,11 @@ async def _site_autotune_loop(site: str):
                                     ]
                                 last_sent = product.last_sent_data or {}
 
-                                if product.applied_policy_id:
-                                    if product.applied_policy_id not in _policy_cache:
-                                        _policy_cache[
-                                            product.applied_policy_id
-                                        ] = await policy_repo.get_async(
-                                            product.applied_policy_id
-                                        )
-                                    policy = _policy_cache[product.applied_policy_id]
-                                else:
-                                    policy = None
+                                policy = (
+                                    _policy_cache.get(product.applied_policy_id)
+                                    if product.applied_policy_id
+                                    else None
+                                )
 
                                 _tx_actions: list[
                                     str
@@ -1045,11 +1083,7 @@ async def _site_autotune_loop(site: str):
                                 ] = []  # (pid, items, acc_id, label, action_text)
 
                                 for acc_id in reg_accounts:
-                                    if acc_id not in _account_cache:
-                                        _account_cache[
-                                            acc_id
-                                        ] = await account_repo.get_async(acc_id)
-                                    acc = _account_cache[acc_id]
+                                    acc = _account_cache.get(acc_id)
                                     if not acc:
                                         continue
                                     # market_product_nos에 상품번호가 없는 계정은 스킵
@@ -1077,21 +1111,8 @@ async def _site_autotune_loop(site: str):
                                                     from backend.domain.samba.proxy.lottehome import (
                                                         LotteHomeClient,
                                                     )
-                                                    from backend.domain.samba.forbidden.model import (
-                                                        SambaSettings,
-                                                    )
-                                                    from sqlmodel import select as _sel
 
-                                                    _cr = await session.exec(
-                                                        _sel(SambaSettings).where(
-                                                            SambaSettings.key
-                                                            == "lottehome_credentials"
-                                                        )
-                                                    )
-                                                    _creds = (
-                                                        _cr.first()
-                                                        or type("", (), {"value": {}})()
-                                                    ).value or {}
+                                                    _creds = _lottehome_creds
                                                     _lh = LotteHomeClient(
                                                         _creds.get("userId", ""),
                                                         _creds.get("password", ""),
@@ -1139,14 +1160,19 @@ async def _site_autotune_loop(site: str):
                                                             SambaCollectedProduct as _CP,
                                                         )
 
-                                                        await session.execute(
-                                                            _sa_upd(_CP)
-                                                            .where(_CP.id == product.id)
-                                                            .values(
-                                                                market_product_nos=_new_nos
+                                                        async with (
+                                                            get_write_session() as _upd_s
+                                                        ):
+                                                            await _upd_s.execute(
+                                                                _sa_upd(_CP)
+                                                                .where(
+                                                                    _CP.id == product.id
+                                                                )
+                                                                .values(
+                                                                    market_product_nos=_new_nos
+                                                                )
                                                             )
-                                                        )
-                                                        await session.commit()
+                                                            await _upd_s.commit()
                                                         log.info(
                                                             "[오토튠] %s 롯데홈쇼핑 승인 확인 → approved 처리",
                                                             product.id,
@@ -1692,21 +1718,8 @@ async def _site_autotune_loop(site: str):
                             SITE_AUTOTUNE_CONCURRENCY as _SAC,
                         )
 
-                        # refresh 전 트랜잭션 종료 — idle in transaction → idle
-                        # HTTP 대기 중 풀 커넥션 점유 방지 (SELECT 1 헬스체크 대체)
-                        try:
-                            await session.commit()
-                        except Exception:
-                            pass
-
-                        # on_result 완료마다 세션 반납 — HTTP 대기 중 풀 점유 방지
-                        # _fire_transmit_group은 자체 _tx_s 세션을 쓰므로 영향 없음
                         async def _on_result_releasing(product, r, idx=0, total=0):
                             await _on_result(product, r, idx, total)
-                            try:
-                                await session.close()
-                            except Exception:
-                                pass
 
                         results, summary = await refresh_products_bulk(
                             products,
