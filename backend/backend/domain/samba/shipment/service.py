@@ -1297,6 +1297,13 @@ class SambaShipmentService:
             except Exception as _sold_e:
                 logger.warning(f"[전송] 전 옵션 품절 소싱처 최신화 예외: {_sold_e}")
 
+        # 모든 pre-read 완료 — asyncio.gather 전 커밋으로 idle in transaction 방지
+        # (policy/name_rule/account 읽기가 여기까지 모두 완료됨)
+        try:
+            await self.session.commit()
+        except Exception:
+            pass
+
         # 계정별 전송을 병렬 코루틴으로 실행
 
         async def _dispatch_one(account_id: str) -> dict[str, Any]:
@@ -1418,6 +1425,11 @@ class SambaShipmentService:
                                 "market_product_no": {market_type: _pno},
                             }
 
+                            # HTTP 마켓 삭제 전 커밋 — idle in transaction 방지
+                            try:
+                                await self.session.commit()
+                            except Exception:
+                                pass
                             del_result = await delete_from_market(
                                 self.session, market_type, _del_pd, account=account
                             )
