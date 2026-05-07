@@ -186,7 +186,15 @@ export default function TetrisBoard() {
   }
   const handleUnassignedDragStart = (block: TetrisBrandBlock) => {
     setDragState({ block, fromAccountId: null, assignmentId: null })
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
+
+  // 드롭이 실패해도 dragState 정리
+  useEffect(() => {
+    const handleDragEnd = () => setDragState(null)
+    document.addEventListener('dragend', handleDragEnd)
+    return () => document.removeEventListener('dragend', handleDragEnd)
+  }, [setDragState])
 
   const handleAccountReorder = useCallback(async (accounts: TetrisAccountBlock[]) => {
     try {

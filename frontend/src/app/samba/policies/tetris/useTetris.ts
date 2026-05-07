@@ -51,8 +51,8 @@ export function useTetris() {
     }
 
     const message = dragState.fromAccountId
-      ? `"${block.brand_name}" brand will be moved to another account.\nExisting market registrations will be removed and the product will be re-registered.`
-      : `"${block.brand_name}" brand will be assigned to this account.\nProduct registration will start.`
+      ? `"${block.brand_name}" 브랜드가 다른 계정으로 이동됩니다.\n기존 마켓 등록 상품이 삭제되고 재등록됩니다.`
+      : `"${block.brand_name}" 브랜드가 이 계정에 배치됩니다.\n상품 등록이 시작됩니다.`
 
     const confirmed = await showConfirm(message)
     if (!confirmed) {

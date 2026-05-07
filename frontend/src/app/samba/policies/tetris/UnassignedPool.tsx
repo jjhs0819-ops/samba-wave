@@ -5,6 +5,26 @@ import type { TetrisUnassigned, TetrisBrandBlock } from '@/lib/samba/api/tetris'
 
 const FIXED_BLOCK_PX = 56
 
+const MARKET_COLORS: Record<string, string> = {
+  coupang: '#F5A623',
+  smartstore: '#03C75A',
+  '11st': '#E8002D',
+  gmarket: '#0065D5',
+  auction: '#A855F7',
+  lotteon: '#E2E8F0',
+  gsshop: '#FACC15',
+  ssg: '#6B21A8',
+  lottehome: '#DB2777',
+  homeand: '#06B6D4',
+  hmall: '#3B82F6',
+  toss: '#1D4ED8',
+  ktalpha: '#10B981',
+}
+
+function getMarketColor(marketType: string): string {
+  return MARKET_COLORS[marketType.toLowerCase()] ?? '#6B7280'
+}
+
 
 export interface BrandAssignment {
   marketType: string
@@ -53,6 +73,9 @@ function UnassignedItem({
 }) {
   const [showPalette, setShowPalette] = useState(false)
   const brandColor = item.ai_tagged_count > 0 ? '#ddd' : '#EF4444'
+  const uniqueMarkets = Array.from(
+    new Map(assignments.map(a => [a.marketType, a])).values()
+  )
 
   const block: TetrisBrandBlock = {
     id: null,
@@ -119,9 +142,27 @@ function UnassignedItem({
             <span style={{ color: '#444' }}>/</span>
             <span style={{ color: '#888' }}>{fmtNum(item.collected_count)}</span>
           </div>
-          <span style={{ fontSize: 9, color: '#ddd', whiteSpace: 'nowrap', fontWeight: 500 }}>
-            {item.source_site}
-          </span>
+          {uniqueMarkets.length > 0 ? (
+            <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+              {uniqueMarkets.map(a => (
+                <div
+                  key={a.marketType}
+                  title={a.marketName}
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: 1,
+                    background: getMarketColor(a.marketType),
+                    flexShrink: 0,
+                  }}
+                />
+              ))}
+            </div>
+          ) : (
+            <span style={{ fontSize: 9, color: '#ddd', whiteSpace: 'nowrap', fontWeight: 500 }}>
+              {item.source_site}
+            </span>
+          )}
         </div>
       </div>
 
