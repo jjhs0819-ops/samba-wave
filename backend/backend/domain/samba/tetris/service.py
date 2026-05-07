@@ -310,6 +310,9 @@ class SambaTetrisService:
                 FROM samba_collected_product
                 WHERE (tenant_id IS NULL AND :tid_is_null OR tenant_id = :tid)
                   AND is_unregistered = FALSE
+                  AND registered_accounts IS NOT NULL
+                  AND jsonb_typeof(registered_accounts) = 'array'
+                  AND jsonb_array_length(registered_accounts) > 0
                   AND source_site IS NOT NULL
                   AND brand IS NOT NULL
                   AND BTRIM(brand) != ''
