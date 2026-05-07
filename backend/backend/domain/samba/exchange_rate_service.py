@@ -97,7 +97,12 @@ async def get_exchange_rate_settings(
     stmt = select(SambaSettings).where(SambaSettings.key == effective_key)
     result = await session.execute(stmt)
     row = result.scalars().first()
-    return normalize_exchange_settings(row.value if row else None)
+    val = row.value if row else None
+    try:
+        await session.commit()
+    except Exception:
+        pass
+    return normalize_exchange_settings(val)
 
 
 async def get_latest_exchange_rates(force_refresh: bool = False) -> dict[str, Any]:

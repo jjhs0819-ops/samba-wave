@@ -490,10 +490,13 @@ class PlayAutoPlugin(MarketPlugin):
         stmt = select(SambaSettings).where(SambaSettings.key == "cloudflare_r2")
         result = await session.execute(stmt)
         row = result.scalars().first()
-        if not row or not isinstance(row.value, dict):
+        creds = row.value if (row and isinstance(row.value, dict)) else None
+        try:
+            await session.commit()
+        except Exception:
+            pass
+        if not creds:
             return None
-
-        creds = row.value
         account_id = str(creds.get("accountId", "")).strip()
         access_key = str(creds.get("accessKey", "")).strip()
         secret_key = str(creds.get("secretKey", "")).strip()

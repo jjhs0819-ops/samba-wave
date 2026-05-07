@@ -1583,8 +1583,13 @@ class LotteonPlugin(MarketPlugin):
         stmt = select(SambaSettings).where(SambaSettings.key == "store_lotteon")
         result = await session.execute(stmt)
         row = result.scalars().first()
-        if row and isinstance(row.value, dict):
-            extras = {**row.value, **extras}
+        _lotteon_setting_val = row.value if row else None
+        try:
+            await session.commit()
+        except Exception:
+            pass
+        if _lotteon_setting_val and isinstance(_lotteon_setting_val, dict):
+            extras = {**_lotteon_setting_val, **extras}
 
         product_copy["owhp_no"] = extras.get("owhpNo", "")
         product_copy["dv_cst_pol_no"] = extras.get("dvCstPolNo", "")

@@ -13,14 +13,19 @@ from backend.utils import add_lazy_loading
 
 
 async def _get_setting(session, key: str) -> Any:
-    """samba_settings 테이블에서 설정값 조회."""
+    """samba_settings 테이블에서 설정값 조회 후 즉시 커밋 — idle in transaction 방지."""
     from backend.domain.samba.forbidden.model import SambaSettings
     from sqlmodel import select
 
     stmt = select(SambaSettings).where(SambaSettings.key == key)
     result = await session.execute(stmt)
     row = result.scalars().first()
-    return row.value if row else None
+    val = row.value if row else None
+    try:
+        await session.commit()
+    except Exception:
+        pass
+    return val
 
 
 def _transform_for_gsshop(

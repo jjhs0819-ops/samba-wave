@@ -978,11 +978,14 @@ class SmartStorePlugin(MarketPlugin):
 
     @staticmethod
     async def _get_setting(session, key: str) -> Any:
-        """samba_settings 테이블에서 설정값 조회."""
+        """samba_settings 테이블에서 설정값 조회 후 즉시 커밋 — idle in transaction 방지."""
         from backend.domain.samba.forbidden.repository import SambaSettingsRepository
 
         repo = SambaSettingsRepository(session)
         row = await repo.find_by_async(key=key)
-        if row:
-            return row.value
-        return None
+        val = row.value if row else None
+        try:
+            await session.commit()
+        except Exception:
+            pass
+        return val
