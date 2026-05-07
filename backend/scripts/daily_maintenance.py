@@ -43,7 +43,6 @@ DB_CONFIG = dict(
     password=os.environ.get("WRITE_DB_PASSWORD", "gemini0674@@"),
     database=os.environ.get("WRITE_DB_NAME", "railway"),
 )
-GADI_POLICY_ID = "pol_01KKZAYW040F0HA93KP9WFDEPW"
 # 프로덕션 컨테이너 내부에서 호출 시 8080, 로컬 개발 시 28080
 BACKEND_URL = os.environ.get("SAMBA_BACKEND_URL", "http://localhost:8080")
 SS_BASE = "https://api.commerce.naver.com/external"
@@ -512,50 +511,64 @@ async def task_ai_tags(conn: asyncpg.Connection) -> dict:
     return {"applied": applied, "no_match": no_match}
 
 
-# ===== TASK 3: 가디 정책 설정 =====
-async def task_gadi_policy(conn: asyncpg.Connection) -> dict:
-    print("\n[TASK 3] 가디 정책 설정 시작")
+# ===== TASK 3: 정책 동기화 =====
+async def task_policy_sync(conn: asyncpg.Connection) -> dict:
+    """정책 없는 그룹에 같은 (source_site, 브랜드)의 기존 정책을 상속."""
+    print("\n[TASK 3] 정책 동기화 시작")
 
-    count_before = await conn.fetchval(
-        """
+    count_before = await conn.fetchval("""
         SELECT COUNT(*) FROM samba_search_filter
-        WHERE is_folder = false
-          AND (applied_policy_id IS NULL OR applied_policy_id != $1)
-    """,
-        GADI_POLICY_ID,
-    )
+        WHERE is_folder = false AND applied_policy_id IS NULL
+    """)
 
     if count_before == 0:
-        print("  미적용 그룹 없음 — 완료")
-        return {"applied": 0}
+        print("  정책 미적용 그룹 없음 — 완료")
+        return {"applied": 0, "skipped": 0}
 
-    print(f"  미적용 그룹: {count_before:,}개")
-    await conn.execute(
-        """
-        UPDATE samba_search_filter
-        SET applied_policy_id = $1, updated_at = NOW()
-        WHERE is_folder = false
-          AND (applied_policy_id IS NULL OR applied_policy_id != $1)
-    """,
-        GADI_POLICY_ID,
-    )
+    print(f"  정책 없는 그룹: {count_before:,}개")
 
-    # 해당 그룹의 상품에도 정책 적용
-    await conn.execute(
-        """
+    # 같은 (source_site, 브랜드) 내 다른 그룹의 정책 상속
+    result = await conn.execute("""
+        UPDATE samba_search_filter sf1
+        SET applied_policy_id = (
+            SELECT sf2.applied_policy_id
+            FROM samba_search_filter sf2
+            WHERE sf2.source_site = sf1.source_site
+              AND split_part(sf2.name, '_', 2) = split_part(sf1.name, '_', 2)
+              AND sf2.is_folder = false
+              AND sf2.applied_policy_id IS NOT NULL
+              AND sf2.id != sf1.id
+            LIMIT 1
+        ), updated_at = NOW()
+        WHERE sf1.is_folder = false
+          AND sf1.applied_policy_id IS NULL
+          AND sf1.source_site IS NOT NULL
+          AND sf1.name IS NOT NULL
+          AND EXISTS (
+              SELECT 1 FROM samba_search_filter sf2
+              WHERE sf2.source_site = sf1.source_site
+                AND split_part(sf2.name, '_', 2) = split_part(sf1.name, '_', 2)
+                AND sf2.is_folder = false
+                AND sf2.applied_policy_id IS NOT NULL
+                AND sf2.id != sf1.id
+          )
+    """)
+    applied = int(result.split()[-1]) if result else 0
+    skipped = count_before - applied
+
+    # 그룹 정책 → 상품에도 동기화
+    await conn.execute("""
         UPDATE samba_collected_product cp
-        SET applied_policy_id = $1, updated_at = NOW()
+        SET applied_policy_id = sf.applied_policy_id, updated_at = NOW()
         FROM samba_search_filter sf
         WHERE cp.search_filter_id = sf.id
           AND sf.is_folder = false
-          AND sf.applied_policy_id = $1
-          AND (cp.applied_policy_id IS NULL OR cp.applied_policy_id != $1)
-    """,
-        GADI_POLICY_ID,
-    )
+          AND sf.applied_policy_id IS NOT NULL
+          AND (cp.applied_policy_id IS NULL OR cp.applied_policy_id != sf.applied_policy_id)
+    """)
 
-    print(f"  완료: {count_before:,}개 그룹 + 상품 일괄 적용")
-    return {"applied": count_before}
+    print(f"  완료: 상속 {applied:,}개, 스킵(동일브랜드 정책없음) {skipped:,}개")
+    return {"applied": applied, "skipped": skipped}
 
 
 # ===== TASK 4: 품절 처리 =====
@@ -804,14 +817,10 @@ async def task_new_group_check(conn: asyncpg.Connection) -> dict:
         WHERE sf.is_folder = false
           AND (cp.tags IS NULL OR cp.tags::text NOT LIKE '%__ai_tagged__%')
     """)
-    missing_policy = await conn.fetchval(
-        """
+    missing_policy = await conn.fetchval("""
         SELECT COUNT(*) FROM samba_search_filter
-        WHERE is_folder = false
-          AND (applied_policy_id IS NULL OR applied_policy_id != $1)
-    """,
-        GADI_POLICY_ID,
-    )
+        WHERE is_folder = false AND applied_policy_id IS NULL
+    """)
     return {"missing_tag_groups": missing_tag, "missing_policy_groups": missing_policy}
 
 
@@ -873,7 +882,7 @@ async def run():
             await task_ai_tags(conn) if cfg["task2_enabled"] else {"skipped": True}
         )
         results["policy"] = (
-            await task_gadi_policy(conn) if cfg["task3_enabled"] else {"skipped": True}
+            await task_policy_sync(conn) if cfg["task3_enabled"] else {"skipped": True}
         )
         results["soldout"] = (
             await task_soldout_cleanup(conn)
@@ -896,7 +905,7 @@ async def run():
     print("일일 유지보수 완료")
     print(f"  카테고리 매핑: {results['category']}")
     print(f"  AI 태그:       {results['ai_tags']}")
-    print(f"  가디 정책:     {results['policy']}")
+    print(f"  정책 동기화:   {results['policy']}")
     print(f"  품절 처리:     {results['soldout']}")
     print(f"  수집 잡 생성:  {results['collect']}")
     print(
@@ -921,7 +930,7 @@ async def run_tasks(task_ids: list[int]):
         if 4 in task_ids:
             results["soldout"] = await task_soldout_cleanup(conn)
         if 3 in task_ids:
-            results["policy"] = await task_gadi_policy(conn)
+            results["policy"] = await task_policy_sync(conn)
         if 2 in task_ids:
             results["ai_tags"] = await task_ai_tags(conn)
         if 1 in task_ids:
