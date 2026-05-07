@@ -5483,22 +5483,50 @@ def _parse_coupang_order(
     fee_rate = 11.55
     revenue = round(sale_price * (1 - fee_rate / 100))
 
+    # 쿠팡 ordersheet 응답은 receiver/orderer를 nested object로 내려줌.
+    # 과거 flat key (receiverAddr1 등) 사용 코드가 빈값을 만들었음.
+    receiver = order.get("receiver") or {}
+    orderer = order.get("orderer") or {}
+
     receiver_addr = (
-        order.get("receiverAddr1", "") or order.get("receiverAddress", "") or ""
+        receiver.get("addr1")
+        or order.get("receiverAddr1", "")
+        or order.get("receiverAddress", "")
+        or ""
     )
     receiver_addr_detail = (
-        order.get("receiverAddr2", "") or order.get("receiverAddrDetail", "") or ""
+        receiver.get("addr2")
+        or order.get("receiverAddr2", "")
+        or order.get("receiverAddrDetail", "")
+        or ""
     )
     customer_address = receiver_addr.strip()
     customer_address_detail = receiver_addr_detail.strip()
 
-    orderer_name = order.get("ordererName", "") or order.get("receiverName", "") or ""
+    orderer_name = (
+        orderer.get("name")
+        or receiver.get("name")
+        or order.get("ordererName", "")
+        or order.get("receiverName", "")
+        or ""
+    )
     orderer_tel = (
-        order.get("ordererPhoneNumber", "")
+        orderer.get("safeNumber")
+        or orderer.get("ordererNumber")
+        or receiver.get("safeNumber")
+        or receiver.get("receiverNumber")
+        or order.get("ordererPhoneNumber", "")
         or order.get("orderPhoneNumber", "")
         or order.get("receiverPhoneNumber", "")
         or ""
     )
+
+    if not orderer_name and not customer_address:
+        logger.warning(
+            f"[쿠팡][주문파싱] customer 빈값 — keys={list(order.keys())[:25]} "
+            f"receiver_keys={list(receiver.keys()) if isinstance(receiver, dict) else 'NA'} "
+            f"orderer_keys={list(orderer.keys()) if isinstance(orderer, dict) else 'NA'}"
+        )
 
     # shipmentBoxId 우선 (배송단위 안정 ID), orderId fallback
     order_number = str(shipment_box_id or order_id or "")
@@ -5521,6 +5549,11 @@ def _parse_coupang_order(
         "customer_phone": orderer_tel,
         "customer_address": customer_address,
         "customer_address_detail": customer_address_detail,
+        "customer_note": (
+            order.get("parcelPrintMessage", "")
+            or order.get("shippingMessage", "")
+            or ""
+        ),
         "quantity": quantity,
         "sale_price": sale_price,
         "cost": 0,
