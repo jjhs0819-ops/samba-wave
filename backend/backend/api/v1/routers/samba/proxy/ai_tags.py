@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_write_session_dependency
+from backend.domain.samba.cache import cache
 from backend.utils.logger import logger
 
 from ._helpers import _get_setting
@@ -1245,6 +1246,7 @@ async def apply_ai_tags(
             total_tagged += 1
 
     await session.commit()
+    await cache.clear_pattern("filters:tree:counts:*")
     return {
         "success": True,
         "message": f"{len(groups_data)}개 그룹, {total_tagged}개 상품에 태그 적용 완료"
