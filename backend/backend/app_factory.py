@@ -87,9 +87,12 @@ def create_application() -> FastAPI:
     register_exception_handlers(app)
 
     from backend.middleware.api_gateway import ApiGatewayMiddleware
+    from backend.middleware.security_headers import SecurityHeadersMiddleware
 
     # CORS가 가장 바깥쪽에 있어야 Gateway 403 같은 오류 응답에도 CORS 헤더가 붙음
     # add_middleware는 나중에 추가할수록 바깥쪽(outermost)이므로 순서 주의
+    # SecurityHeaders 는 CORS 보다 안쪽 — preflight 등 CORS 응답에도 보안 헤더 부착
+    app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(ApiGatewayMiddleware, api_key=settings.api_gateway_key)
     app.add_middleware(
         CORSMiddleware,
