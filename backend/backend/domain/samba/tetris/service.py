@@ -732,7 +732,11 @@ class SambaTetrisService:
     # ──────────────────────────────────────────────
 
     async def sync_all(self, tenant_id: Optional[str]) -> dict[str, int]:
-        """현재 배치 전체 기준으로 미등록 상품 transmit 잡 생성 (브랜드×계정별 별도 잡)."""
+        """현재 배치 전체 기준으로 미등록 상품 transmit 잡 생성 (브랜드×계정별 별도 잡).
+
+        samba_tetris_assignment 배치뿐 아니라, registered_accounts에 이미 계정이 있는
+        레거시 블록(배치 미등록)도 함께 처리해 미등록 상품을 보충 등록한다.
+        """
         from backend.domain.samba.job.repository import SambaJobRepository
 
         assignments = await self._repo.list_by_tenant(tenant_id)
@@ -741,12 +745,16 @@ class SambaTetrisService:
         job_count = 0
         total_products = 0
 
+        # 처리 완료된 (source_site, brand_name, account_id) 중복 방지
+        processed_keys: set[tuple[str, str, str]] = set()
+
         # 브랜드×계정 조합별 별도 잡 — 계정이 같아도 브랜드마다 독립 잡으로 스테이징
         # (워커가 동일 계정 잡은 순차, 다른 계정 잡은 병렬로 자동 처리)
         for a in assignments:
             pids = await self._get_product_ids_for_assign(
                 tenant_id, a.source_site, a.brand_name, a.market_account_id
             )
+            processed_keys.add((a.source_site, a.brand_name, a.market_account_id))
             if not pids:
                 continue
             await job_repo.create_async(
@@ -764,8 +772,56 @@ class SambaTetrisService:
             job_count += 1
             total_products += len(pids)
 
+        # 레거시 블록 처리: registered_accounts에 이미 계정이 있지만 배치가 없는 브랜드
+        # → 미등록 상품이 남아있을 경우 보충 등록 잡 생성
+        # CASE WHEN으로 스칼라 registered_accounts를 빈 배열로 치환
+        # — PostgreSQL 옵티마이저가 CTE를 인라인화해서 WHERE 조건 순서가 보장 안 됨
+        # — LATERAL + CASE WHEN 방식으로 스칼라 에러 없이 처리
+        legacy_rows = await self._session.execute(
+            text("""
+                SELECT DISTINCT scp.source_site, BTRIM(scp.brand) AS brand_name, acc.val AS account_id
+                FROM samba_collected_product scp
+                CROSS JOIN LATERAL (
+                    SELECT val
+                    FROM jsonb_array_elements_text(
+                        CASE WHEN jsonb_typeof(scp.registered_accounts) = 'array'
+                             THEN scp.registered_accounts
+                             ELSE '[]'::jsonb
+                        END
+                    ) AS t(val)
+                ) AS acc
+                WHERE (scp.tenant_id IS NULL AND :tid_is_null OR scp.tenant_id = :tid)
+                  AND scp.registered_accounts IS NOT NULL
+            """),
+            {"tid": tenant_id, "tid_is_null": tenant_id is None},
+        )
+        for row in legacy_rows:
+            key = (row.source_site, row.brand_name, row.account_id)
+            if key in processed_keys:
+                continue
+            processed_keys.add(key)
+            pids = await self._get_product_ids_for_assign(
+                tenant_id, row.source_site, row.brand_name, row.account_id
+            )
+            if not pids:
+                continue
+            await job_repo.create_async(
+                tenant_id=tenant_id,
+                job_type="transmit",
+                payload={
+                    "product_ids": pids,
+                    "update_items": ["price", "stock", "image", "description"],
+                    "target_account_ids": [row.account_id],
+                    "source_site": row.source_site,
+                    "brand_name": row.brand_name,
+                    "skip_unchanged": True,
+                },
+            )
+            job_count += 1
+            total_products += len(pids)
+
         logger.info(
-            f"[테트리스 sync] {len(assignments)}개 배치 → "
+            f"[테트리스 sync] {len(assignments)}개 배치 + 레거시 → "
             f"{job_count}개 잡, {total_products}개 상품"
         )
         return {
