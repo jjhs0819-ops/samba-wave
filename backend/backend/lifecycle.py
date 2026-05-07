@@ -305,6 +305,11 @@ async def _tetris_sync_loop() -> None:
                 )
                 tenant_ids: list[str | None] = [row[0] for row in rows.all()]
 
+            # 배치가 없어도 레거시 블록(registered_accounts 기반)을 처리하기 위해
+            # tenant_id=None 항상 포함 (멀티테넌트 환경에서도 None 레코드가 존재)
+            if None not in tenant_ids:
+                tenant_ids.insert(0, None)
+
             from backend.domain.samba.tetris.repository import SambaTetrisRepository
             from backend.domain.samba.tetris.service import SambaTetrisService
 
