@@ -89,10 +89,10 @@ def create_application() -> FastAPI:
     from backend.middleware.api_gateway import ApiGatewayMiddleware
     from backend.middleware.security_headers import SecurityHeadersMiddleware
 
-    # CORS가 가장 바깥쪽에 있어야 Gateway 403 같은 오류 응답에도 CORS 헤더가 붙음
-    # add_middleware는 나중에 추가할수록 바깥쪽(outermost)이므로 순서 주의
-    # SecurityHeaders 는 CORS 보다 안쪽 — preflight 등 CORS 응답에도 보안 헤더 부착
-    app.add_middleware(SecurityHeadersMiddleware)
+    # 미들웨어 순서 (add_middleware 는 LIFO — 나중에 추가할수록 바깥쪽):
+    #   ApiGateway (가장 안쪽) → CORS → SecurityHeaders (가장 바깥)
+    # - CORS 가 ApiGateway 의 403 응답 위에 ACAO 헤더 부착
+    # - SecurityHeaders 가 모든 응답 (preflight / CORS 차단 400 포함) 에 보안 헤더 부착
     app.add_middleware(ApiGatewayMiddleware, api_key=settings.api_gateway_key)
     app.add_middleware(
         CORSMiddleware,
@@ -102,6 +102,7 @@ def create_application() -> FastAPI:
         allow_headers=["*"],
         allow_origin_regex=settings.cors_origin_regex,
     )
+    app.add_middleware(SecurityHeadersMiddleware)
 
     samba_auth = [Depends(get_user_id)]
 
