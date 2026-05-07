@@ -1743,6 +1743,11 @@ async def _site_autotune_loop(site: str):
                                         )
                                     except Exception:
                                         pass
+                        # 에러 핸들링 쓰기 커밋 — 다음 블록 진입 전 트랜잭션 종료
+                        try:
+                            await session.commit()
+                        except Exception:
+                            pass
 
                         # ④ 즉시전송으로 전환 — _pending_syncs 일괄 처리 제거됨
 
@@ -1850,6 +1855,12 @@ async def _site_autotune_loop(site: str):
                                     for _ra in _retry_acc_result.all():
                                         _account_cache[_ra.id] = _ra
 
+                                # 읽기 완료 후 커밋 — delete_from_market HTTP 호출 중 idle in transaction 방지
+                                try:
+                                    await session.commit()
+                                except Exception:
+                                    pass
+
                                 for _sp in _soldout_products:
                                     _sp_dict = _sp.model_dump()
                                     _sp_reg = list(_sp.registered_accounts or [])
@@ -1948,6 +1959,8 @@ async def _site_autotune_loop(site: str):
 
                                 try:
                                     await asyncio.wait_for(session.commit(), timeout=30)
+                                    # 쓰기 완료 즉시 커넥션 반납 — 사이클 대기 중 풀 점유 방지
+                                    await session.close()
                                 except Exception as _retry_commit_err:
                                     log.error(
                                         "[오토튠] 품절잔존 commit 실패: %s",
