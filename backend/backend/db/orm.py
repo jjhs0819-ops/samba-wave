@@ -95,8 +95,8 @@ def _create_write_async_engine() -> AsyncEngine:
         future=True,
         echo=False,  # Disable SQL echo to reduce noise
         pool_pre_ping=False,  # asyncpg 버그: SELECT 1이 idle in transaction 좀비 누적 → pool_recycle=300으로 대체
-        pool_size=10,  # idle 연결 수 축소 (기존 20 → 10)
-        max_overflow=10,  # 추가 허용 (write 최대 20개)
+        pool_size=20,  # write 풀 확장 (10 → 20, 오토튠+테트리스 동시 점유 대응)
+        max_overflow=20,  # 추가 허용 (write 최대 40개)
         pool_recycle=300,  # idle 커넥션 5분 후 재활용 — 좀비 누적 방지
         pool_timeout=10,  # 빠른 실패 — 30s 대기 중 ASGI 워커 타임아웃 방지
         connect_args={
