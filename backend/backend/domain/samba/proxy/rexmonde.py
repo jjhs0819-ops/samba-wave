@@ -53,22 +53,29 @@ class RexmondeClient:
         keyword: str,
         page: int = 1,
         size: int = 80,
+        cate: str = "",
+        brand: str = "",
         **kwargs: Any,
     ) -> list[dict]:
         """검색·카테고리 페이지 HTML 파싱.
 
-        keyword가 5자리 이상 숫자면 카테고리 코드로, 그 외엔 키워드로 동작.
+        파라미터 우선순위 (rexmonde 사이트 동작):
+        - brand 명시 → `brand=` 정확 필터 (해당 브랜드만 반환)
+        - keyword가 5자리 숫자 (cate 미지정) → 카테고리 코드 검색 (하위호환)
+        - keyword 명시 → `keyword=` 느슨 매칭 (카테고리 추천 포함, 다른 브랜드 섞임)
+        cate가 함께 있으면 카테고리 정확 필터를 추가로 적용.
         page=N 파라미터로 페이지네이션. size는 SSR 고정값이라 무시.
 
         한계 1: 사이트가 검색 결과 영역과 추천 상품 영역을 동일 컨테이너
-        (#ProductListArea div.item_box)에 노출하므로, 무의미한 키워드도
+        (#ProductListArea div.item_box)에 노출하므로, 무의미한 keyword=도
         80개 카드를 반환할 수 있다. 0건 판별은 호출자 책임.
+        브랜드 정확 매칭이 필요하면 `brand=`를 사용한다.
 
         한계 2: 렉스몬드 리브랜딩 이후 검색 결과에서 품절 상품을 제외하는
         정책으로 동작 — `is_sold_out`은 거의 False만 반환된다. 정확한
         품절 판정은 `get_product_detail`의 `saleStatus` 필드를 사용.
         """
-        params = self._build_search_params(keyword, page)
+        params = self._build_search_params(keyword, page, cate=cate, brand=brand)
         async with httpx.AsyncClient(
             timeout=self.TIMEOUT, follow_redirects=True
         ) as cli:
@@ -91,13 +98,37 @@ class RexmondeClient:
         return results
 
     @staticmethod
-    def _build_search_params(keyword: str, page: int) -> dict[str, Any]:
+    def _build_search_params(
+        keyword: str,
+        page: int,
+        cate: str = "",
+        brand: str = "",
+    ) -> dict[str, Any]:
+        """검색 URL 파라미터.
+
+        rexmonde 사이트 동작:
+        - `keyword=` : 느슨한 키워드 매칭 (관련 카테고리 상품 추천 포함)
+        - `brand=`   : 브랜드 정확 필터 (해당 브랜드만)
+        - `cate=`    : 카테고리 정확 필터
+
+        우선순위:
+        - brand가 있으면 brand 사용 (브랜드 정확 매칭)
+        - 그 외 keyword가 5자리 숫자면 cate로 해석 (하위호환)
+        - 그 외엔 keyword 검색
+        cate는 항상 추가 필터로 적용된다.
+        """
         params: dict[str, Any] = {"page": max(1, page)}
-        if keyword and keyword.isdigit() and len(keyword) >= 5:
+        if brand:
+            params["brand"] = brand
+        elif keyword and keyword.isdigit() and len(keyword) >= 5 and not cate:
             params["cate"] = keyword
             params["sort"] = "POINT"
-        else:
+            return params
+        elif keyword:
             params["keyword"] = keyword
+        if cate:
+            params["cate"] = cate
+            params["sort"] = "POINT"
         return params
 
     # ------------------------------------------------------------------
@@ -417,13 +448,18 @@ class RexmondeClient:
         self,
         keyword: str,
         pages: int = 3,
+        brand: str = "",
         **kwargs: Any,
     ) -> dict:
-        """N페이지 순회하며 카테고리 코드 분포 집계 + 이름 매핑."""
+        """N페이지 순회하며 카테고리 코드 분포 집계 + 이름 매핑.
+
+        brand가 명시되면 brand= 정확 필터로 스캔 (해당 브랜드 카테고리 분포만).
+        그렇지 않으면 keyword= 느슨 매칭 (혼합 브랜드 분포).
+        """
         cate_counts: dict[str, int] = {}
         cate_samples: dict[str, str] = {}
         for p in range(1, pages + 1):
-            cards = await self.search_products(keyword, page=p)
+            cards = await self.search_products(keyword, page=p, brand=brand)
             for c in cards:
                 code = c.get("category_code", "")
                 if not code:
@@ -446,12 +482,23 @@ class RexmondeClient:
         tasks = [_resolve(code, sid) for code, sid in cate_samples.items() if sid]
         resolved = dict(await asyncio.gather(*tasks)) if tasks else {}
 
-        categories = [
-            {"code": code, "count": cnt, "name": resolved.get(code, "")}
-            for code, cnt in sorted(
-                cate_counts.items(), key=lambda x: x[1], reverse=True
+        categories = []
+        for code, cnt in sorted(cate_counts.items(), key=lambda x: x[1], reverse=True):
+            path = resolved.get(code, "")
+            parts = [p.strip() for p in path.split(" > ") if p.strip()] if path else []
+            categories.append(
+                {
+                    "code": code,
+                    "categoryCode": code,
+                    "name": path,
+                    "path": path,
+                    "count": cnt,
+                    "category1": parts[0] if len(parts) > 0 else "",
+                    "category2": parts[1] if len(parts) > 1 else "",
+                    "category3": parts[2] if len(parts) > 2 else "",
+                    "category4": parts[3] if len(parts) > 3 else "",
+                }
             )
-        ]
         return {
             "categories": categories,
             "total": sum(cate_counts.values()),
@@ -497,3 +544,120 @@ class RexmondeClient:
         if url.startswith("http"):
             return url
         return f"https:{url}"
+
+    # ------------------------------------------------------------------
+    # 디스패처 어댑터 — routers/sourcing.py·worker.py 호환
+    # ------------------------------------------------------------------
+
+    async def search(
+        self,
+        keyword: str,
+        page: int = 1,
+        max_count: int = 0,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """디스패처 호환 검색 — {products, total} 형태로 반환.
+
+        max_count > 0이면 여러 페이지를 자동 순회하여 최대 max_count건 수집.
+        """
+        all_products: list[dict] = []
+        seen_ids: set[str] = set()
+        current_page = max(1, page)
+        last_error = ""
+        empty_streak = 0
+        max_pages = 50
+        while True:
+            try:
+                cards = await self.search_products(keyword, page=current_page, **kwargs)
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"[REXMONDE] 검색 p{current_page} 실패: {e}")
+                break
+            new_items = 0
+            for c in cards:
+                pid = str(c.get("site_product_id", ""))
+                if not pid or pid in seen_ids:
+                    continue
+                seen_ids.add(pid)
+                all_products.append(self._to_dispatcher_item(c))
+                new_items += 1
+            logger.info(
+                f"[REXMONDE] 검색 '{keyword}' p{current_page} → {new_items}건 (누적 {len(all_products)})"
+            )
+            if new_items == 0:
+                empty_streak += 1
+                if empty_streak >= 2:
+                    break
+            else:
+                empty_streak = 0
+            if max_count <= 0:
+                break
+            if len(all_products) >= max_count:
+                all_products = all_products[:max_count]
+                break
+            current_page += 1
+            if current_page > max_pages:
+                break
+        return {
+            "products": all_products,
+            "total": len(all_products),
+            "last_error": last_error,
+        }
+
+    async def get_detail(self, product_id: str) -> dict[str, Any]:
+        """디스패처 호환 상세 조회 — get_product_detail + 표준 키 정규화."""
+        d = await self.get_product_detail(product_id)
+        if not d or d.get("__product_not_found__"):
+            return d or {}
+        # categoryPath 분해 ("A > B > C > D" → category1/2/3/4)
+        path = str(d.get("categoryPath") or "")
+        parts = [p.strip() for p in path.split(" > ") if p.strip()] if path else []
+        info = d.get("info_notice") or {}
+        return {
+            **d,
+            "images": d.get("gallery_images")
+            or ([d.get("main_image")] if d.get("main_image") else []),
+            "source_url": d.get("detail_url", ""),
+            "category": path,
+            "category1": parts[0] if len(parts) > 0 else "",
+            "category2": parts[1] if len(parts) > 1 else "",
+            "category3": parts[2] if len(parts) > 2 else "",
+            "category4": parts[3] if len(parts) > 3 else "",
+            "manufacturer": info.get("제조자") or info.get("제조사") or "",
+            "origin": info.get("제조국") or info.get("원산지") or "",
+            "material": info.get("소재") or info.get("주요 소재") or "",
+            "free_shipping": False,
+            "shipping_fee": 0,
+        }
+
+    @staticmethod
+    def _to_dispatcher_item(card: dict) -> dict:
+        """검색 카드 → 워커가 기대하는 표준 키로 매핑."""
+        gallery = card.get("gallery_images") or []
+        main = card.get("main_image") or ""
+        images = gallery if gallery else ([main] if main else [])
+        return {
+            "site_product_id": card.get("site_product_id", ""),
+            "name": card.get("name", "") or card.get("name_ko", ""),
+            "brand": card.get("brand", "") or card.get("brand_ko", ""),
+            "original_price": card.get("original_price", 0) or 0,
+            "sale_price": card.get("sale_price", 0) or 0,
+            "is_sold_out": card.get("is_sold_out", False),
+            "images": images,
+            "source_url": card.get("detail_url", ""),
+            "style_code": "",
+            "category": "",
+            "category1": "",
+            "category2": "",
+            "category3": "",
+            "category4": "",
+            "free_shipping": (card.get("delivery_fee", 0) or 0) == 0,
+            # 원본 필드 보존 (디버그용)
+            "_rexmonde_raw": {
+                "category_code": card.get("category_code", ""),
+                "gender": card.get("gender", ""),
+                "sizes": card.get("sizes", []),
+                "best_rank": card.get("best_rank", ""),
+                "discount_rate": card.get("discount_rate", ""),
+            },
+        }
