@@ -362,8 +362,6 @@ async def _warmup_filter_tree_counts_cache(logger: logging.Logger) -> None:
 
         for source_site in source_sites:
             cache_key = f"filters:tree:counts:{source_site}"
-            if await cache.get(cache_key):
-                continue  # 이미 캐시됨
             try:
                 async with get_read_session() as session:
                     leaf_rows = await session.execute(

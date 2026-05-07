@@ -812,6 +812,10 @@ async def generate_ai_tags(
                 continue
 
     await session.commit()
+    await cache.clear_pattern("filters:tree:counts:*")
+    from backend.domain.samba.tetris.service import clear_board_cache as _cbc  # noqa: F811
+
+    _cbc()
     # 실비 계산 (Claude Sonnet 4.6: 입력 $3/1M, 출력 $15/1M, 환율 1400원)
     input_cost = total_input_tokens * 3 / 1_000_000 * 1400
     output_cost = total_output_tokens * 15 / 1_000_000 * 1400
@@ -1247,6 +1251,9 @@ async def apply_ai_tags(
 
     await session.commit()
     await cache.clear_pattern("filters:tree:counts:*")
+    from backend.domain.samba.tetris.service import clear_board_cache as _cbc  # noqa: F811
+
+    _cbc()
     return {
         "success": True,
         "message": f"{len(groups_data)}개 그룹, {total_tagged}개 상품에 태그 적용 완료"
@@ -1290,6 +1297,10 @@ async def clear_ai_tags(
             total_cleared += 1
 
     await session.commit()
+    await cache.clear_pattern("filters:tree:counts:*")
+    from backend.domain.samba.tetris.service import clear_board_cache as _cbc  # noqa: F811
+
+    _cbc()
     logger.info(f"[AI태그] 태그 삭제: {len(group_ids)}개 그룹, {total_cleared}개 상품")
     return {
         "success": True,

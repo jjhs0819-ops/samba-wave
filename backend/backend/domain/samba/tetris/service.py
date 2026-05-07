@@ -25,6 +25,12 @@ _BOARD_CACHE_TTL = 300.0
 _board_cache: dict = {}
 _board_cache_lock = asyncio.Lock()
 
+
+def clear_board_cache() -> None:
+    """테트리스 보드 캐시 전체 무효화 (AI 태그 변경 시 호출)."""
+    _board_cache.clear()
+
+
 # 마켓타입 → 표시명 매핑 (account.market_type 기준)
 _MARKET_DISPLAY_NAMES: dict[str, str] = {
     "smartstore": "스마트스토어",
@@ -258,7 +264,7 @@ class SambaTetrisService:
                     BTRIM(brand) AS effective_brand,
                     COUNT(*) AS cnt,
                     COUNT(*) FILTER (
-                        WHERE COALESCE(cast(tags AS text), '') LIKE '%__ai_tagged__%'
+                        WHERE tags @> '["__ai_tagged__"]'::jsonb
                     ) AS ai_tagged_cnt
                 FROM samba_collected_product
                 WHERE (tenant_id IS NULL AND :tid_is_null OR tenant_id = :tid)

@@ -52,7 +52,7 @@ function UnassignedItem({
   onDeleteBrandScope: (sourceSite: string, brandName: string) => Promise<void>
 }) {
   const [showPalette, setShowPalette] = useState(false)
-  const brandColor = item.collected_count > 0 && item.ai_tagged_count >= item.collected_count ? '#ddd' : '#EF4444'
+  const brandColor = item.ai_tagged_count > 0 ? '#ddd' : '#EF4444'
 
   const block: TetrisBrandBlock = {
     id: null,
