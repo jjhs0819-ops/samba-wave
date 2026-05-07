@@ -123,21 +123,26 @@ class SambaTetrisService:
     ) -> list[str]:
         """해당 브랜드 상품 중 해당 계정에 등록된 상품 ID 목록 반환."""
         try:
+            # market_account_id 는 FK ULID — 정상 흐름에 메타 문자 없지만
+            # defense-in-depth 로 LIKE wildcard escape 적용.
+            from backend.core.sql_safe import escape_like
+
+            safe_account = escape_like(market_account_id)
             rows = await self._session.execute(
-                text("""
+                text(r"""
                     SELECT id FROM samba_collected_product
                     WHERE (tenant_id IS NULL AND :tid_is_null OR tenant_id = :tid)
                       AND source_site = :site
                       AND BTRIM(brand) = :brand
                       AND registered_accounts IS NOT NULL
-                      AND (registered_accounts::text LIKE :account_id OR registered_accounts::text ILIKE :account_id)
+                      AND (registered_accounts::text LIKE :account_id ESCAPE '\' OR registered_accounts::text ILIKE :account_id ESCAPE '\')
                 """),
                 {
                     "tid": tenant_id,
                     "tid_is_null": tenant_id is None,
                     "site": source_site,
                     "brand": brand_name,
-                    "account_id": f"%{market_account_id}%",
+                    "account_id": f"%{safe_account}%",
                 },
             )
             return [row[0] for row in rows]

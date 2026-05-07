@@ -1620,13 +1620,19 @@ async def lookup_by_market_product_no(
     """마켓 상품번호로 수집상품 조회 (원문링크/이미지 등 반환)."""
     from sqlalchemy import text as sa_text
 
+    from backend.core.sql_safe import escape_like
+
     # 하이픈/공백 제거한 정규화 값 (IQ2245-068 → IQ2245068)
     spid_norm = market_product_no.replace("-", "").replace(" ", "")
+    # market_product_no 는 path param (외부 입력) — `%`/`_` 메타 문자를 리터럴로
+    # 강제하기 위해 escape 후 ESCAPE '\\' 절 명시. 단순 substring/JSON-quoted 두
+    # 패턴 모두 적용.
+    safe = escape_like(market_product_no)
     sql = sa_text(
         "SELECT id, source_site, site_product_id, name, images, source_url "
         "FROM samba_collected_product "
-        "WHERE market_product_nos::text LIKE :pattern "
-        "   OR market_product_nos::text LIKE :pattern_bare "
+        "WHERE market_product_nos::text LIKE :pattern ESCAPE '\\' "
+        "   OR market_product_nos::text LIKE :pattern_bare ESCAPE '\\' "
         "   OR site_product_id = :spid "
         "   OR REPLACE(site_product_id, '-', '') = :spid_norm "
         "LIMIT 1"
@@ -1634,8 +1640,8 @@ async def lookup_by_market_product_no(
     result = await session.execute(
         sql,
         {
-            "pattern": f'%"{market_product_no}"%',
-            "pattern_bare": f"%{market_product_no}%",
+            "pattern": f'%"{safe}"%',
+            "pattern_bare": f"%{safe}%",
             "spid": market_product_no,
             "spid_norm": spid_norm,
         },
