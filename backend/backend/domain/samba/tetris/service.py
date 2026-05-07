@@ -772,6 +772,8 @@ class SambaTetrisService:
                     "target_account_ids": [a.market_account_id],
                     "source_site": a.source_site,
                     "brand_name": a.brand_name,
+                    "source_sites": [a.source_site],
+                    "brands": [a.brand_name],
                     "skip_unchanged": True,
                 },
             )
@@ -820,6 +822,8 @@ class SambaTetrisService:
                     "target_account_ids": [row.account_id],
                     "source_site": row.source_site,
                     "brand_name": row.brand_name,
+                    "source_sites": [row.source_site],
+                    "brands": [row.brand_name],
                     "skip_unchanged": True,
                 },
             )

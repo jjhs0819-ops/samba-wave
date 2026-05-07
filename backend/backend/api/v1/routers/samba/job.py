@@ -515,9 +515,13 @@ async def get_transmit_queue_status(
             dict.fromkeys(acc_map.get(a, "") for a in target_ids if acc_map.get(a))
         )
         pids = payload.get("product_ids", [])
-        # payload 캐시 우선 사용 — 레거시 잡(이번 배포 이전 생성)은 빈 배열 반환
+        # payload 캐시 우선 사용 — brand_name/source_site 단수 필드로도 fallback
         sites: list[str] = list(payload.get("source_sites") or [])
+        if not sites and payload.get("source_site"):
+            sites = [payload["source_site"]]
         brands: list[str] = list(payload.get("brands") or [])
+        if not brands and payload.get("brand_name"):
+            brands = [payload["brand_name"]]
         item = {
             "id": j.id,
             "status": j.status,
