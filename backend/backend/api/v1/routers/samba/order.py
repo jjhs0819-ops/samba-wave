@@ -161,10 +161,15 @@ async def _build_order_filters(
         if "(" in normalized_site_filter:
             filters.append(normalized_source_site == normalized_site_filter)
         else:
+            # site_filter 는 외부 입력 — `%`/`_` 메타 escape 후 ESCAPE '\\' 명시.
+            # `(%` 는 의도된 wildcard 이므로 보존, escape 는 site_filter 부분만 적용.
+            from backend.core.sql_safe import escape_like
+
+            safe_site = escape_like(normalized_site_filter)
             filters.append(
                 or_(
                     normalized_source_site == normalized_site_filter,
-                    normalized_source_site.like(f"{normalized_site_filter}(%"),
+                    normalized_source_site.like(f"{safe_site}(%", escape="\\"),
                 )
             )
     if account_filter:

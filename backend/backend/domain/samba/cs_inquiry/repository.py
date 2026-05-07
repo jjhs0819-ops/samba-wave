@@ -37,10 +37,13 @@ class SambaCSInquiryRepository(BaseRepository[SambaCSInquiry]):
         if reply_status:
             stmt = stmt.where(SambaCSInquiry.reply_status == reply_status)
         if search:
+            from backend.core.sql_safe import escape_like
+
+            search_pat = f"%{escape_like(search)}%"
             stmt = stmt.where(
-                SambaCSInquiry.product_name.ilike(f"%{search}%")  # type: ignore
-                | SambaCSInquiry.content.ilike(f"%{search}%")  # type: ignore
-                | SambaCSInquiry.market_order_id.ilike(f"%{search}%")  # type: ignore
+                SambaCSInquiry.product_name.ilike(search_pat, escape="\\")  # type: ignore
+                | SambaCSInquiry.content.ilike(search_pat, escape="\\")  # type: ignore
+                | SambaCSInquiry.market_order_id.ilike(search_pat, escape="\\")  # type: ignore
             )
         if start_dt:
             stmt = stmt.where(SambaCSInquiry.inquiry_date >= start_dt)
@@ -78,10 +81,13 @@ class SambaCSInquiryRepository(BaseRepository[SambaCSInquiry]):
         if reply_status:
             stmt = stmt.where(SambaCSInquiry.reply_status == reply_status)
         if search:
+            from backend.core.sql_safe import escape_like
+
+            search_pat = f"%{escape_like(search)}%"
             stmt = stmt.where(
-                SambaCSInquiry.product_name.ilike(f"%{search}%")  # type: ignore
-                | SambaCSInquiry.content.ilike(f"%{search}%")  # type: ignore
-                | SambaCSInquiry.market_order_id.ilike(f"%{search}%")  # type: ignore
+                SambaCSInquiry.product_name.ilike(search_pat, escape="\\")  # type: ignore
+                | SambaCSInquiry.content.ilike(search_pat, escape="\\")  # type: ignore
+                | SambaCSInquiry.market_order_id.ilike(search_pat, escape="\\")  # type: ignore
             )
         if start_dt:
             stmt = stmt.where(SambaCSInquiry.inquiry_date >= start_dt)
