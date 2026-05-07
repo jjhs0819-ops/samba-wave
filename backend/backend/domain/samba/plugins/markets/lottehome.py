@@ -235,7 +235,7 @@ def _transform_for_lottehome(
             or creds.get("item_washing", "")
             or "상세페이지 참조"
         )
-        import_yn = creds.get("item_import", "Y")
+        import_yn = creds.get("item_import", "N")
         quality = (
             product.get("quality_guarantee", "")
             or creds.get("item_quality", "")
@@ -271,7 +271,7 @@ def _transform_for_lottehome(
             or creds.get("item_washing", "")
             or "상세페이지 참조"
         )
-        import_yn = creds.get("item_import", "Y")
+        import_yn = creds.get("item_import", "N")
         mfg_date = creds.get("item_mfg_date", "") or "상세페이지 참조"
         quality = (
             product.get("quality_guarantee", "")

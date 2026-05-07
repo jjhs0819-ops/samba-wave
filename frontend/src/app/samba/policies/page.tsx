@@ -1099,15 +1099,6 @@ export default function PoliciesPage() {
                       </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>제조사</span>
-                      <input
-                        style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5' }}
-                        placeholder="제조사명 직접 입력"
-                        value={lottePolicy.manufacturer}
-                        onChange={e => setLottePolicy(p => ({ ...p, manufacturer: e.target.value }))}
-                      />
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
                       <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>매입형태</span>
                       <select style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5' }}
                         value={lottePolicy.purchaseType}
