@@ -84,3 +84,40 @@ def test_critical_endpoints_have_rate_limit(app):
 
     missing = expected_paths - found
     assert not missing, f"rate limit 누락 엔드포인트: {missing}"
+
+
+def test_client_key_uses_forwarded_for():
+    """프록시 (Caddy) 뒤에서 X-Forwarded-For 의 첫 번째 IP 를 클라이언트 키로 사용."""
+    from unittest.mock import Mock
+    from backend.core.rate_limit import _client_key
+
+    req = Mock()
+    req.headers = {"x-forwarded-for": "203.0.113.42, 10.0.0.1, 10.0.0.2"}
+    req.client = Mock(host="10.0.0.99")
+    assert _client_key(req) == "203.0.113.42"
+
+    # 헤더 없을 때 fallback
+    req.headers = {}
+    assert _client_key(req) == "10.0.0.99"
+
+    # 클라이언트도 없을 때
+    req.client = None
+    assert _client_key(req) == "unknown"
+
+
+def test_retry_after_header_computed():
+    """429 응답에 Retry-After 헤더가 expiry 초로 정확히 설정되는지."""
+    from unittest.mock import Mock
+    from backend.core.rate_limit import rate_limit_exceeded_handler
+    import limits
+
+    rate_item = limits.parse("10/minute")  # expiry = 60s
+    limit_obj = Mock()
+    limit_obj.limit = rate_item
+    exc = Mock()
+    exc.limit = limit_obj
+    exc.detail = "10 per 1 minute"
+
+    response = rate_limit_exceeded_handler(Mock(), exc)
+    assert response.status_code == 429
+    assert response.headers["Retry-After"] == "60"
