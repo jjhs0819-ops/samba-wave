@@ -1178,6 +1178,12 @@ class SambaShipmentService:
         _res2 = await self.session.execute(_stmt2)
         _dispatch_account_map = {a.id: a for a in _res2.scalars().all()}
 
+        # 배치 읽기 완료 — soldout refresh(최대 30초) 전 커밋으로 idle in transaction 방지
+        try:
+            await self.session.commit()
+        except Exception:
+            pass
+
         # 전 옵션 품절 시 소싱처 1회 최신화 시도 (30초 타임아웃)
         _all_opts = product_dict.get("options") or []
         _all_sold = _all_opts and all(
