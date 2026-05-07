@@ -205,23 +205,61 @@ async def proxy_status():
 
 
 @router.get("/pool-status")
-async def pool_status():
-    """Write/Read 커넥션 풀 현황 반환 — 수집 페이지 모니터링용."""
-    from backend.db.orm import get_write_engine, get_read_engine
+async def pool_status(
+    write_session: AsyncSession = Depends(get_write_session_dependency),
+    read_session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """Write/Read 커넥션 풀 현황 + pg_stat_activity 반환 — 수집 페이지 모니터링용."""
+    import asyncio
 
-    def _stats(engine):
+    from sqlalchemy import text
+
+    from backend.db.orm import get_read_engine, get_write_engine
+
+    def _pool_stats(engine):
         p = engine.sync_engine.pool
+        max_overflow = getattr(p, "_max_overflow", 15)
         return {
             "size": p.size(),
             "checkedout": p.checkedout(),
             "overflow": p.overflow(),
             "checkedin": p.checkedin(),
+            "pool_max": p.size() + max_overflow,
         }
 
+    async def _pg_stats(session: AsyncSession):
+        try:
+            result = await session.execute(
+                text("""
+                    SELECT state, count(*) as cnt
+                    FROM pg_stat_activity
+                    WHERE datname = current_database()
+                    GROUP BY state
+                """)
+            )
+            data: dict = {}
+            for state, cnt in result.all():
+                key = (state or "unknown").replace(" ", "_")
+                data[key] = int(cnt)
+            data["total"] = sum(data.values())
+            return data
+        except Exception:
+            return None
+
     try:
-        return {"write": _stats(get_write_engine()), "read": _stats(get_read_engine())}
+        write_pool = _pool_stats(get_write_engine())
+        read_pool = _pool_stats(get_read_engine())
+        write_pg, read_pg = await asyncio.gather(
+            _pg_stats(write_session),
+            _pg_stats(read_session),
+        )
+        return {
+            "write": {**write_pool, "pg": write_pg},
+            "read": {**read_pool, "pg": read_pg},
+            "pool_max": write_pool["pool_max"],
+        }
     except Exception:
-        return {"write": None, "read": None}
+        return {"write": None, "read": None, "pool_max": 35}
 
 
 @router.get("/musinsa-auth-status")

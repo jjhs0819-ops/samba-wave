@@ -6,8 +6,9 @@ import { fetchWithAuth, API_BASE } from '@/lib/samba/api/shared'
 // - setter들도 함께 반환하여 외부(예: CollectorStatusPanel)에서 재확인 가능
 export type ProxyAuthStatus = 'checking' | 'ok' | 'error'
 
-type PoolStat = { size: number; checkedout: number; overflow: number; checkedin: number }
-export type PoolInfo = { write: PoolStat | null; read: PoolStat | null } | null
+type PgStat = { active?: number; idle_in_transaction?: number; idle?: number; total?: number }
+type PoolStat = { size: number; checkedout: number; overflow: number; checkedin: number; pool_max?: number; pg?: PgStat }
+export type PoolInfo = { write: PoolStat | null; read: PoolStat | null; pool_max?: number } | null
 
 export default function useProxyAuth() {
   const [proxyStatus, setProxyStatus] = useState<ProxyAuthStatus>('checking')
@@ -89,7 +90,7 @@ export default function useProxyAuth() {
 
     refreshAll()
 
-    const intervalId = window.setInterval(refreshAll, 10000)
+    const intervalId = window.setInterval(refreshAll, 5000)
     const handleFocus = () => refreshAll()
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') refreshAll()

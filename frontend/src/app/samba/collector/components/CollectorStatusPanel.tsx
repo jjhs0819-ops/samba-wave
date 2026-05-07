@@ -60,63 +60,102 @@ export default function CollectorStatusPanel(props: Props) {
       setProxyText,
     } = props
 
-    // 커넥션 풀 표시 계산
-    const poolText = (() => {
-      if (!poolInfo) return null
-      const fmt = (s: { size: number; checkedout: number; overflow: number } | null) => {
-        if (!s) return '—'
-        const max = s.size + s.overflow
-        return `${fmtNum(s.checkedout)}/${fmtNum(max)}`
-      }
-      const wUsage = poolInfo.write ? poolInfo.write.checkedout / (poolInfo.write.size + poolInfo.write.overflow) : 0
-      const rUsage = poolInfo.read ? poolInfo.read.checkedout / (poolInfo.read.size + poolInfo.read.overflow) : 0
-      const maxUsage = Math.max(wUsage, rUsage)
-      const color = maxUsage >= 0.9 ? '#FF6B6B' : maxUsage >= 0.7 ? '#FAB005' : '#8A95B0'
-      return { text: `W:${fmt(poolInfo.write)} R:${fmt(poolInfo.read)}`, color }
-    })()
+    const poolMax = poolInfo?.pool_max ?? 35
+    const wPg = poolInfo?.write?.pg
+    const rPg = poolInfo?.read?.pg
+    const wTotal = wPg?.total ?? 0
+    const rTotal = rPg?.total ?? 0
+    const maxTotal = Math.max(wTotal, rTotal)
+    const wIit = wPg?.idle_in_transaction ?? 0
+    const rIit = rPg?.idle_in_transaction ?? 0
+    const maxIit = Math.max(wIit, rIit)
+    const poolStatusColor = (maxTotal > poolMax || maxIit >= 10)
+      ? '#FF6B6B'
+      : (maxTotal > poolMax * 0.85 || maxIit >= 5)
+        ? '#FAB005'
+        : '#51CF66'
+    const cellColor = (val: number, type: 'total' | 'iit') => {
+      if (type === 'total') return val > poolMax ? '#FF6B6B' : val > poolMax * 0.85 ? '#FAB005' : '#C4CAD8'
+      return val >= 10 ? '#FF6B6B' : val >= 5 ? '#FAB005' : '#C4CAD8'
+    }
 
     return (
-      // 프록시 + 무신사 인증 + 커넥션 풀 상태 (1줄)
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: '16px', padding: '6px 14px',
-        borderRadius: '8px', marginBottom: '12px',
-        background: 'rgba(255,140,0,0.07)', border: '1px solid rgba(255,140,0,0.2)',
-        fontSize: '0.78rem',
-      }}>
-        <span style={{ width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0,
-          background: proxyStatus === 'ok' ? '#51CF66' : proxyStatus === 'error' ? '#FF6B6B' : '#555',
-        }} />
-        <span style={{ color: proxyStatus === 'ok' ? '#51CF66' : '#888' }}>{proxyText}</span>
-        <span style={{ color: '#2D2D2D' }}>|</span>
-        <span style={{ width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0,
-          background: musinsaAuth === 'ok' ? '#51CF66' : musinsaAuth === 'error' ? '#FF6B6B' : '#555',
-        }} />
-        <span style={{ color: musinsaAuth === 'ok' ? '#51CF66' : '#888' }}>{musinsaAuthText}</span>
-        {poolText && (
-          <>
-            <span style={{ color: '#2D2D2D' }}>|</span>
-            <span style={{ color: poolText.color, fontVariantNumeric: 'tabular-nums' }}>
-              DB풀 {poolText.text}
-            </span>
-          </>
+      <div style={{ marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        {/* 프록시 + 무신사 인증 상태 */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '16px', padding: '6px 14px',
+          borderRadius: '8px', background: 'rgba(255,140,0,0.07)', border: '1px solid rgba(255,140,0,0.2)',
+          fontSize: '0.78rem',
+        }}>
+          <span style={{ width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0,
+            background: proxyStatus === 'ok' ? '#51CF66' : proxyStatus === 'error' ? '#FF6B6B' : '#555',
+          }} />
+          <span style={{ color: proxyStatus === 'ok' ? '#51CF66' : '#888' }}>{proxyText}</span>
+          <span style={{ color: '#2D2D2D' }}>|</span>
+          <span style={{ width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0,
+            background: musinsaAuth === 'ok' ? '#51CF66' : musinsaAuth === 'error' ? '#FF6B6B' : '#555',
+          }} />
+          <span style={{ color: musinsaAuth === 'ok' ? '#51CF66' : '#888' }}>{musinsaAuthText}</span>
+          <button
+            onClick={() => {
+              setProxyStatus('checking')
+              setProxyText('프록시 서버 확인 중...')
+              fetchWithAuth(`${API_BASE}/api/v1/samba/collector/proxy-status`)
+                .then(r => r.json())
+                .then(data => {
+                  if (data.status === 'ok') { setProxyStatus('ok'); setProxyText(data.message || '프록시 서버 정상 작동 중') }
+                  else { setProxyStatus('error'); setProxyText(data.message || '프록시 서버 연결 실패') }
+                })
+                .catch(() => { setProxyStatus('error'); setProxyText('백엔드 서버 연결 실패') })
+            }}
+            style={{
+              marginLeft: 'auto', background: 'transparent', border: '1px solid #3D3D3D',
+              color: '#888', padding: '2px 10px', borderRadius: '4px', fontSize: '0.72rem', cursor: 'pointer',
+            }}
+          >재확인</button>
+        </div>
+
+        {/* DB 커넥션 풀 테이블 */}
+        {poolInfo && wPg && rPg && (
+          <div style={{
+            borderRadius: '8px', overflow: 'hidden',
+            border: `1px solid ${poolStatusColor === '#FF6B6B' ? 'rgba(255,107,107,0.4)' : poolStatusColor === '#FAB005' ? 'rgba(250,176,5,0.3)' : 'rgba(81,207,102,0.2)'}`,
+            background: 'rgba(8,10,16,0.6)', fontSize: '0.78rem',
+          }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: 'rgba(255,255,255,0.04)' }}>
+                  <th style={{ padding: '6px 14px', textAlign: 'left', color: '#9AA5C0', fontWeight: 600, borderBottom: '1px solid #1C1E2A' }}>상태</th>
+                  <th style={{ padding: '6px 14px', textAlign: 'center', color: '#9AA5C0', fontWeight: 600, borderBottom: '1px solid #1C1E2A' }}>Write DB</th>
+                  <th style={{ padding: '6px 14px', textAlign: 'center', color: '#9AA5C0', fontWeight: 600, borderBottom: '1px solid #1C1E2A' }}>Read DB</th>
+                </tr>
+              </thead>
+              <tbody>
+                {([
+                  { label: 'active', wVal: wPg.active ?? 0, rVal: rPg.active ?? 0, type: 'normal' },
+                  { label: 'idle in transaction', wVal: wIit, rVal: rIit, type: 'iit' },
+                  { label: 'idle', wVal: wPg.idle ?? 0, rVal: rPg.idle ?? 0, type: 'normal' },
+                ] as const).map(({ label, wVal, rVal, type }) => (
+                  <tr key={label} style={{ borderBottom: '1px solid rgba(28,30,42,0.8)' }}>
+                    <td style={{ padding: '5px 14px', color: '#8A95B0' }}>{label}</td>
+                    <td style={{ padding: '5px 14px', textAlign: 'center', color: type === 'iit' ? cellColor(wVal, 'iit') : '#C4CAD8', fontVariantNumeric: 'tabular-nums' }}>{fmtNum(wVal)}개</td>
+                    <td style={{ padding: '5px 14px', textAlign: 'center', color: type === 'iit' ? cellColor(rVal, 'iit') : '#C4CAD8', fontVariantNumeric: 'tabular-nums' }}>{fmtNum(rVal)}개</td>
+                  </tr>
+                ))}
+                <tr style={{ borderTop: '1px solid #2D3040', background: 'rgba(255,255,255,0.02)' }}>
+                  <td style={{ padding: '6px 14px', color: '#C4CAD8', fontWeight: 700 }}>총 연결</td>
+                  <td style={{ padding: '6px 14px', textAlign: 'center', color: cellColor(wTotal, 'total'), fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{fmtNum(wTotal)}개</td>
+                  <td style={{ padding: '6px 14px', textAlign: 'center', color: cellColor(rTotal, 'total'), fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{fmtNum(rTotal)}개</td>
+                </tr>
+                <tr>
+                  <td style={{ padding: '5px 14px', color: '#8A95B0', fontWeight: 700 }}>풀 최대</td>
+                  <td style={{ padding: '5px 14px', textAlign: 'center', color: '#8A95B0', fontVariantNumeric: 'tabular-nums' }}>{fmtNum(poolMax)}개</td>
+                  <td style={{ padding: '5px 14px', textAlign: 'center', color: '#8A95B0', fontVariantNumeric: 'tabular-nums' }}>{fmtNum(poolMax)}개</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         )}
-        <button
-          onClick={() => {
-            setProxyStatus('checking')
-            setProxyText('프록시 서버 확인 중...')
-            fetchWithAuth(`${API_BASE}/api/v1/samba/collector/proxy-status`)
-              .then(r => r.json())
-              .then(data => {
-                if (data.status === 'ok') { setProxyStatus('ok'); setProxyText(data.message || '프록시 서버 정상 작동 중') }
-                else { setProxyStatus('error'); setProxyText(data.message || '프록시 서버 연결 실패') }
-              })
-              .catch(() => { setProxyStatus('error'); setProxyText('백엔드 서버 연결 실패') })
-          }}
-          style={{
-            marginLeft: 'auto', background: 'transparent', border: '1px solid #3D3D3D',
-            color: '#888', padding: '2px 10px', borderRadius: '4px', fontSize: '0.72rem', cursor: 'pointer',
-          }}
-        >재확인</button>
       </div>
     )
   }
