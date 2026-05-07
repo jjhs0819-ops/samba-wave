@@ -33,6 +33,16 @@ from starlette.responses import JSONResponse
 _logger = logging.getLogger(__name__)
 
 
+def _is_printable_ascii(value: str) -> bool:
+    """IP 후보 문자열이 printable ASCII (32-126) 만 포함하는지.
+
+    rate-limit 키 분리 우회 방어 — `\\x00`/`\\x01` 등 제어문자가 포함되면
+    `.strip()` 으로 제거되지 않아 동일 IP 가 다른 키로 갈라진다.
+    IPv4/IPv6 (콜론·점·hex) 는 모두 printable 범위이므로 false-rejection 없음.
+    """
+    return bool(value) and all(32 <= ord(c) < 127 for c in value)
+
+
 def _client_key(request: Request) -> str:
     """원본 클라이언트 IP — X-Forwarded-For 마지막 IP 우선, fallback request.client.host.
 
@@ -42,17 +52,20 @@ def _client_key(request: Request) -> str:
     엣지케이스 처리:
     - 헤더 끝 trailing comma (`"1.2.3.4, "`) → 빈 문자열 → fallback
     - IPv6 bracket (`"[::1]"`) → strip 으로 정규화 (rate-limit 키 일관성)
+    - 제어문자 포함 (`"10.0.0.1\\x00"`) → printable ASCII 검증 → fallback
     - request.client 가 .host 속성 누락 (테스트 mock 등) → getattr 안전 접근
     """
     forwarded = request.headers.get("x-forwarded-for", "")
     if forwarded:
         last_ip = forwarded.split(",")[-1].strip().strip("[]")
-        if last_ip:
+        if _is_printable_ascii(last_ip):
             return last_ip
     if request.client is not None:
         host = getattr(request.client, "host", None)
         if host:
-            return str(host).strip("[]")
+            normalized = str(host).strip("[]")
+            if _is_printable_ascii(normalized):
+                return normalized
     return "unknown"
 
 

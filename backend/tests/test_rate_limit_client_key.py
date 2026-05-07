@@ -71,10 +71,46 @@ class TestClientKey:
 
     def test_client_host_without_attr_falls_back_to_unknown(self):
         # request.client 객체에 .host 속성 누락 (테스트 mock 등) → AttributeError 회피
-        from unittest.mock import MagicMock
         req = MagicMock()
         req.headers = {}
         # spec=[] 객체는 어떤 속성에도 AttributeError 를 일으키지 않으나 .host 는 None
         client = MagicMock(spec=[])
         req.client = client
         assert _client_key(req) == "unknown"
+
+    def test_null_byte_trailing_rejected_falls_back(self):
+        # NULL byte 가 IP 끝에 붙어도 strip 으로 제거 안 됨 → printable 검증으로 fallback
+        # 동일 IP 가 다른 rate-limit 키로 갈라지는 우회를 차단
+        req = _mock_request(
+            headers={"X-Forwarded-For": "1.2.3.4, 10.0.0.1\x00"},
+            client_host="127.0.0.1",
+        )
+        assert _client_key(req) == "127.0.0.1"
+
+    def test_control_char_leading_rejected_falls_back(self):
+        # IP 앞 \x01 — 제어문자는 strip 으로 제거 안 됨
+        req = _mock_request(
+            headers={"X-Forwarded-For": "1.2.3.4, \x0110.0.0.1"},
+            client_host="127.0.0.1",
+        )
+        assert _client_key(req) == "127.0.0.1"
+
+    def test_control_char_only_xff_falls_back_to_unknown(self):
+        # 제어문자만 있어 fallback 도 없는 경우 → "unknown"
+        req = _mock_request(headers={"X-Forwarded-For": "\x00\x01\x02"})
+        assert _client_key(req) == "unknown"
+
+    def test_control_char_in_client_host_falls_back_to_unknown(self):
+        # client.host 에도 제어문자 검증 적용 — defense-in-depth
+        req = _mock_request(client_host="10.0.0.1\x00")
+        assert _client_key(req) == "unknown"
+
+    def test_normal_ipv4_passes_printable_check(self):
+        # 정상 IPv4 는 모두 printable — 회귀 방지
+        req = _mock_request(headers={"X-Forwarded-For": "203.0.113.42"})
+        assert _client_key(req) == "203.0.113.42"
+
+    def test_normal_ipv6_passes_printable_check(self):
+        # IPv6 (콜론·hex) 도 printable — false rejection 없음
+        req = _mock_request(headers={"X-Forwarded-For": "[2001:db8::1]"})
+        assert _client_key(req) == "2001:db8::1"
