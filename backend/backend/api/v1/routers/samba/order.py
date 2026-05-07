@@ -212,10 +212,8 @@ async def _build_order_filters(
         )
     elif input_filter == "registered":
         # collected_product_id가 있거나, "미등록 입력"으로 source_url/product_image를 채운 주문도 등록된 것으로 간주
-        # 롯데홈쇼핑은 수집상품 연동 없이 직접 등록하므로 항상 통과
         filters.append(
             or_(
-                SambaOrder.source == "lottehome",
                 SambaOrder.collected_product_id != None,  # noqa: E711
                 and_(
                     SambaOrder.source_url != None,  # noqa: E711
@@ -4472,6 +4470,9 @@ async def sync_orders_from_markets(
                     }
                     for _k, _v in _mpnos.items():
                         if not _v:
+                            continue
+                        # _qa 상태값("pending"/"approved")은 상품번호가 아니므로 제외
+                        if _k.endswith("_qa"):
                             continue
                         if isinstance(_v, dict):
                             # 중첩 구조: {"originProductNo": "...", "smartstoreChannelProductNo": "..."}
