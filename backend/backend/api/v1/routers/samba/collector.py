@@ -1199,7 +1199,14 @@ async def products_init_data(
         mappings = await cache.get("init_data:category_mappings") or []
 
         pol_r = await session.execute(select(SambaPolicy).limit(50))
-        filter_r = await session.execute(select(_SF).where(_SF.is_folder == False))
+        # filters 는 frontend 에서 id↔name 매핑 + target_mappings(카테고리 fallback)
+        # 만 사용 — 전체 컬럼 select 시 keyword/timestamp 등이 응답의 76% 차지.
+        # 카드 렌더에 불필요한 필드 제외. 다른 페이지가 전체 필드를 필요로 하면
+        # /collector/filters 또는 /collector/filters/tree 별도 호출.
+        filter_r = await session.execute(
+            select(_SF.id, _SF.name, _SF.target_mappings)
+            .where(_SF.is_folder == False)  # noqa: E712
+        )
         words_r = await session.execute(
             select(SambaForbiddenWord).where(
                 SambaForbiddenWord.type == "deletion",
@@ -1218,7 +1225,11 @@ async def products_init_data(
             await cache.set("init_data:category_mappings", mappings, ttl=300)
 
         policies = [to_dict(r) for r in pol_r.scalars().all()]
-        filters = [to_dict(r) for r in filter_r.scalars().all()]
+        # filter_r 은 select(id, name, target_mappings) 의 Row 튜플 — scalars() 사용 불가
+        filters = [
+            {"id": row[0], "name": row[1], "target_mappings": row[2]}
+            for row in filter_r.all()
+        ]
         words = [r.word for r in words_r.scalars().all()]
         accounts = [to_dict(r) for r in accs_r.scalars().all()]
     except Exception as e:
