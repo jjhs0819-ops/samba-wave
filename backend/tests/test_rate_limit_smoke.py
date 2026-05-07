@@ -87,14 +87,18 @@ def test_critical_endpoints_have_rate_limit(app):
 
 
 def test_client_key_uses_forwarded_for():
-    """프록시 (Caddy) 뒤에서 X-Forwarded-For 의 첫 번째 IP 를 클라이언트 키로 사용."""
+    """프록시 (Caddy) 뒤에서 X-Forwarded-For 의 *마지막* IP 를 클라이언트 키로 사용.
+
+    Caddy 가 자기 관찰 IP 를 끝에 append 하므로 마지막 IP 가 신뢰값. 클라이언트가
+    헤더 첫 부분을 위조해도 무시됨 (위조 방어 — test_rate_limit_client_key 별도).
+    """
     from unittest.mock import Mock
     from backend.core.rate_limit import _client_key
 
     req = Mock()
     req.headers = {"x-forwarded-for": "203.0.113.42, 10.0.0.1, 10.0.0.2"}
     req.client = Mock(host="10.0.0.99")
-    assert _client_key(req) == "203.0.113.42"
+    assert _client_key(req) == "10.0.0.2"
 
     # 헤더 없을 때 fallback
     req.headers = {}

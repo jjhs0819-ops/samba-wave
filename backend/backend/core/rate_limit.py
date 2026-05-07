@@ -10,40 +10,54 @@
         ...
 
 `request: Request` 파라미터가 시그니처에 있어야 slowapi 가 키(IP) 추출 가능.
+이 파라미터를 rename/제거하면 limiter 가 silent 하게 stub 키로 동작 — 절대
+변경 금지.
 
-키 함수: Caddy 리버스 프록시 뒤에서 모든 요청은 동일 컨테이너 IP 로 보이므로
-`X-Forwarded-For` 의 첫 번째 IP (원본 클라이언트) 를 우선 사용. 헤더 누락 시
-fallback 으로 `request.client.host`. 외부 클라이언트가 직접 헤더를 위조할 수
-있지만 ApiGatewayMiddleware 의 X-Api-Key 검증을 통과한 후이고, Caddy 자체가
-X-Forwarded-For 를 항상 덧붙이는 구조라 신뢰 가능.
+키 함수: Caddy 리버스 프록시 뒤라 모든 요청이 동일 컨테이너 IP 로 보임.
+`X-Forwarded-For` 의 *마지막* IP (Caddy 가 가장 마지막에 추가한 신뢰 IP) 를
+사용. 클라이언트가 `X-Forwarded-For: 1.2.3.4` 를 위조해 보내도 Caddy 가 자기
+관찰 IP 를 끝에 append 하므로 위조값은 무시됨. 헤더가 없으면
+`request.client.host` (Docker 네트워크 컨테이너 IP) fallback.
+
+운영 인프라 가정: 단일 Caddy → 백엔드. 다단 프록시 (CDN→Caddy) 추가 시 신뢰
+범위 재검토 필요.
 """
+
+import logging
 
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+_logger = logging.getLogger(__name__)
+
 
 def _client_key(request: Request) -> str:
-    """원본 클라이언트 IP — X-Forwarded-For 우선, fallback request.client.host."""
+    """원본 클라이언트 IP — X-Forwarded-For 마지막 IP 우선, fallback request.client.host.
+
+    위조 방어: split(',')[-1] 로 가장 마지막 IP 만 사용. Caddy 가 자기 관찰
+    IP 를 끝에 append 하므로, 클라이언트가 헤더 첫 부분을 위조해도 무시됨.
+    """
     forwarded = request.headers.get("x-forwarded-for", "")
     if forwarded:
-        return forwarded.split(",")[0].strip()
+        return forwarded.split(",")[-1].strip()
     if request.client and request.client.host:
         return request.client.host
     return "unknown"
 
 
-# 단일 프로세스 in-memory storage. 멀티 워커/멀티 VM 확장 시 Redis storage 로 전환:
+# 단일 프로세스 in-memory storage. 운영 docker-compose 의 WEB_CONCURRENCY=1 전제.
+# 멀티 워커/멀티 VM 확장 시 Redis storage 로 전환 필요:
 #   storage_uri="redis://..."
 limiter = Limiter(key_func=_client_key, default_limits=[])
 
 
 # 사전 정의 정책 — 호출부에서 일관성 유지하기 위해 상수로 묶음.
-RATE_LOGIN = "10/minute"          # 무차별 인증 시도 차단 (로그인/check-login)
-RATE_SET_COOKIE = "30/minute"     # 자격증명 갱신 — 정상 사용량 충분 + 남용 방지
-RATE_PROXY_HEAVY = "300/minute"   # 외부 사이트 호출 (수집/검색/카테고리 스캔)
-RATE_PROXY_LIGHT = "1200/minute"  # 가벼운 메타·진단 — 확장앱 동시 폴링 허용
+RATE_LOGIN: str = "10/minute"          # 무차별 인증 시도 차단 (로그인/check-login)
+RATE_SET_COOKIE: str = "30/minute"     # 자격증명 갱신 — 정상 사용량 충분 + 남용 방지
+RATE_PROXY_HEAVY: str = "300/minute"   # 외부 사이트 호출 (수집/검색/카테고리 스캔)
+RATE_PROXY_LIGHT: str = "1200/minute"  # 가벼운 메타·진단 — 확장앱 동시 폴링 허용
 
 
 def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
@@ -60,7 +74,7 @@ def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSO
     try:
         expiry = exc.limit.limit.get_expiry()
         response.headers["Retry-After"] = str(int(expiry))
-    except Exception:
-        # 정책 객체 변경 등 예외는 무시 — 응답 자체는 정상 반환
-        pass
+    except (AttributeError, TypeError) as err:
+        # slowapi/limits API 변경 가능 — 응답 자체는 정상 반환하되 가시화
+        _logger.warning(f"[rate_limit] Retry-After 계산 실패: {err}")
     return response
