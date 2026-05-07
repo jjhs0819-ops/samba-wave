@@ -618,15 +618,19 @@ class JobWorker:
 
         # 수집: 소싱처별 병렬 Task (같은 소싱처는 exclude_sources로 순차 보장)
         if job.job_type == "collect":
+            _site = (job.payload or {}).get("source_site", "?")
+            # Task 생성 전에 즉시 등록 — 폴링 루프가 sleep 없이 연속 호출될 때
+            # _execute_job 내부에서 add()하면 Task 실행 전까지 반영 안 됨 (race condition)
+            if _site and _site != "?":
+                self._active_collect_sources.add(_site)
             task = asyncio.create_task(
                 self._execute_job(job),
                 name=f"collect-{job.id}",
             )
             self._active_tasks[job.id] = task
-            _site = (job.payload or {}).get("source_site", "?")
             logger.info(
                 f"[잡워커] 수집 Task 생성: {job.id} (site={_site}, "
-                f"활성 소싱처={sorted(self._active_collect_sources | {_site})})"
+                f"활성 소싱처={sorted(self._active_collect_sources)})"
             )
             return True
 

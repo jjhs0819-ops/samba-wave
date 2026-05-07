@@ -1204,7 +1204,14 @@ async function handleSourcingJob(job) {
       openedSourcingWindow = true
       // windows.update(focused:true) 제거 — Whale 창을 앞으로 꺼내 다른 앱(VS Code 등)을 가리는 문제 발생
     } else {
+      // 탭 생성 전 현재 포커스 창 기록 — 탭 추가 시 웨일이 창을 앞으로 꺼내는 현상 방지
+      let _prevWinId = null
+      try { _prevWinId = (await chrome.windows.getCurrent()).id } catch {}
       tab = await chrome.tabs.create({ url: job.url, active: false })
+      // 탭 생성 후 즉시 원래 창에 포커스 복원 (LOTTEON 탭이 포커스 뺏는 현상 차단)
+      if (_prevWinId) {
+        try { await chrome.windows.update(_prevWinId, { focused: true }) } catch {}
+      }
     }
     tabId = tab.id
     await waitForTabLoad(tabId, 30000)
