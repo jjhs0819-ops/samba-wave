@@ -7,7 +7,7 @@ import { monitorApi, type DashboardStats, type MonitorEvent, type RefreshLogEntr
 import { SITE_COLORS } from '@/lib/samba/constants'
 import { fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
 
-const POLL_INTERVAL = 30_000
+const POLL_INTERVAL = 10_000
 const LOG_POLL_INTERVAL = 500
 
 // 로그 메시지 앞부분의 [SITE] 태그 추출 — 예: "[12:34:56] [1/100] [MUSINSA] ..." → "MUSINSA"
@@ -523,10 +523,10 @@ export default function WarroomPage() {
   }, [availMarkets, saveMarketFilter])
 
   const handleAutotuneStatus = useCallback((running: boolean, cycles: number, lastTick: string | null, refreshed: number) => {
-    // 별도 스레드 타이밍 차이 대응 — 3회 연속 false일 때만 정지 표시
+    // 별도 스레드 타이밍 차이 대응 — 2회 연속 false일 때 정지 표시 (POLL_INTERVAL 10초 × 2 = 20초 desync 감지)
     if (!running) {
       falseCountRef.current++
-      if (falseCountRef.current < 3) return  // 일시적 false 무시
+      if (falseCountRef.current < 2) return  // 일시적 false 무시
     } else {
       falseCountRef.current = 0
     }
@@ -808,12 +808,22 @@ export default function WarroomPage() {
             >작업취소</button>
           <button
             onClick={async () => {
+              const { showAlert } = await import('@/components/samba/Modal')
               try {
                 const { API_BASE_URL: apiBase } = await import('@/config/api')
-                await fetchWithAuth(`${apiBase}/api/v1/samba/collector/autotune/stop`, { method: 'POST' })
+                const r = await fetchWithAuth(`${apiBase}/api/v1/samba/collector/autotune/stop`, { method: 'POST' })
                 window.postMessage({ source: 'samba-page', type: 'AUTOTUNE_SET_JOIN', joined: false }, window.location.origin)
                 setAutotuneRunning(false)
-              } catch { /* ignore */ }
+                falseCountRef.current = 0
+                if (r.ok) {
+                  showAlert('오토튠 정지 완료', 'success')
+                } else {
+                  showAlert(`정지 요청 응답 ${r.status} — UI는 정지 상태로 동기화됨`, 'info')
+                }
+              } catch {
+                setAutotuneRunning(false)
+                showAlert('정지 요청 실패 — 백엔드 연결 확인 필요', 'error')
+              }
             }}
             style={{
               padding: '0.25rem 0.75rem',
