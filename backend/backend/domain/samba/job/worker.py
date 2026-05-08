@@ -1082,6 +1082,7 @@ class JobWorker:
                         update_items,
                         effective_account_ids,
                         skip_unchanged=skip_unchanged,
+                        skip_policy_account_filter=_tetris_enabled,
                     )
                     results_list = result.get("results", [])
                     r = results_list[0] if results_list else {}

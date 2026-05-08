@@ -129,20 +129,22 @@ class SambaTetrisService:
     ) -> list[str]:
         """해당 브랜드 상품 중 해당 계정에 등록된 상품 ID 목록 반환."""
         try:
+            # _get_product_ids_for_assign과 동일한 ? 연산자 패턴 사용 (검증된 방식)
             rows = await self._session.execute(
                 text("""
                     SELECT id FROM samba_collected_product
                     WHERE (tenant_id IS NULL AND :tid_is_null OR tenant_id = :tid)
                       AND source_site = :site
                       AND BTRIM(brand) = :brand
-                      AND registered_accounts @> :account_arr::jsonb
+                      AND registered_accounts IS NOT NULL
+                      AND registered_accounts::jsonb ? :account_id
                 """),
                 {
                     "tid": tenant_id,
                     "tid_is_null": tenant_id is None,
                     "site": source_site,
                     "brand": brand_name,
-                    "account_arr": f'["{market_account_id}"]',
+                    "account_id": market_account_id,
                 },
             )
             return [row[0] for row in rows]

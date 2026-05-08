@@ -360,6 +360,7 @@ class SambaShipmentService:
         target_account_ids: list[str],
         skip_unchanged: bool = False,
         skip_refresh: bool = False,
+        skip_policy_account_filter: bool = False,
     ) -> dict[str, Any]:
         """여러 상품을 대상 마켓 계정으로 실제 전송. 마켓별 결과 반환."""
 
@@ -388,6 +389,7 @@ class SambaShipmentService:
                     update_items,
                     skip_unchanged=skip_unchanged,
                     skip_refresh=skip_refresh,
+                    skip_policy_account_filter=skip_policy_account_filter,
                 )
                 results.append(
                     {
@@ -662,6 +664,7 @@ class SambaShipmentService:
         update_items: list[str],
         skip_unchanged: bool = False,
         skip_refresh: bool = False,
+        skip_policy_account_filter: bool = False,
     ) -> SambaShipment:
         """단일 상품에 대한 실제 마켓 전송."""
 
@@ -689,6 +692,7 @@ class SambaShipmentService:
                     update_items,
                     skip_unchanged,
                     skip_refresh,
+                    skip_policy_account_filter,
                 ),
                 timeout=180,  # 상품 1건당 최대 180초 (최신화+이미지업로드 포함)
             )
@@ -714,6 +718,7 @@ class SambaShipmentService:
         update_items: list[str],
         skip_unchanged: bool = False,
         skip_refresh: bool = False,
+        skip_policy_account_filter: bool = False,
     ) -> SambaShipment:
         """상품 전송 실제 구현 (락 획득 후 호출)."""
 
@@ -1127,7 +1132,9 @@ class SambaShipmentService:
                     product_dict["_deletion_words"] = deletion_words
 
         # 정책이 있으면 계정 필터링, 없으면 사용자 선택 전체 유지
-        if policy_market_data:
+        # skip_policy_account_filter=True(테트리스 매칭 ON)이면 건너뜀 —
+        # 테트리스 블럭이 계정을 결정하므로 정책 accountIds 필터 불필요
+        if policy_market_data and not skip_policy_account_filter:
             # 배치 조회 (N+1 → 1회)
             from sqlmodel import select as _sel
             from backend.domain.samba.account.model import SambaMarketAccount
@@ -1161,6 +1168,18 @@ class SambaShipmentService:
                     continue
                 filtered_ids.append(aid)
             target_account_ids = filtered_ids
+            if not target_account_ids:
+                logger.warning(
+                    f"[전송] 상품 {product_id} — 정책 accountIds 필터링으로 전송 계정 없음 "
+                    f"(정책ID: {product_row.applied_policy_id}). "
+                    f"테트리스 매칭 ON 상태에서 발생 시 skip_policy_account_filter 미전달 의심"
+                )
+                await self.repo.update_async(
+                    shipment.id,
+                    status="failed",
+                    error="정책에 해당 계정이 없어 전송 불가 (정책 > 스마트스토어 계정 설정 확인)",
+                )
+                return await self.repo.get_async(shipment.id) or shipment
             logger.info(f"[전송] 정책 필터링 후 계정: {len(target_account_ids)}개")
 
         transmit_result: dict[str, str] = {}
