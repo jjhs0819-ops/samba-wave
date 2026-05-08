@@ -21,6 +21,7 @@ interface Props {
   onDrop: (toAccountId: string) => Promise<void>
   onReorder: (draggedId: string, newIndex: number, allAssignments: TetrisBrandBlock[]) => Promise<void>
   onRemove: (assignmentId: string, brandName: string, sourceSite: string) => void
+  onDeleteBrandScope: (sourceSite: string, brandName: string) => Promise<void>
   onPolicyChange: (assignmentId: string, policyId: string | null, accountId: string) => Promise<void>
   isDragging: boolean
   isAccountDragging: boolean
@@ -68,6 +69,7 @@ export default function AccountBlock({
   onDrop,
   onReorder,
   onRemove,
+  onDeleteBrandScope,
   onPolicyChange,
   isDragging,
   isAccountDragging,
@@ -215,6 +217,7 @@ export default function AccountBlock({
                     blockHeight={item.height}
                     onDragStart={onDragStart}
                     onRemove={onRemove}
+                    onDeleteBrandScope={onDeleteBrandScope}
                     policies={policies}
                     onPolicyChange={onPolicyChange}
                   />

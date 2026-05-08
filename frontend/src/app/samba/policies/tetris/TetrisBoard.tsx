@@ -455,6 +455,7 @@ export default function TetrisBoard() {
               onReorder={handleReorder}
               onAccountReorder={handleAccountReorder}
               onRemove={handleRemoveWithScope}
+              onDeleteBrandScope={handleDeleteBrandScope}
               onPolicyChange={handlePolicyChange}
             />
           ))}
