@@ -6,23 +6,44 @@ import type { TetrisUnassigned, TetrisBrandBlock } from '@/lib/samba/api/tetris'
 const FIXED_BLOCK_PX = 56
 
 const MARKET_COLORS: Record<string, string> = {
-  coupang: '#F5A623',
-  smartstore: '#03C75A',
-  '11st': '#E8002D',
-  gmarket: '#0065D5',
-  auction: '#A855F7',
-  lotteon: '#E2E8F0',
-  gsshop: '#FACC15',
-  ssg: '#6B21A8',
-  lottehome: '#DB2777',
-  homeand: '#06B6D4',
-  hmall: '#3B82F6',
-  toss: '#1D4ED8',
-  ktalpha: '#10B981',
+  coupang: '#F59E0B',    // 호박(amber)
+  smartstore: '#22C55E', // 네이버 초록
+  '11st': '#EF4444',     // 빨강
+  gmarket: '#3B82F6',    // 파랑
+  auction: '#A855F7',    // 보라
+  lotteon: '#14B8A6',    // 청록 (기존 흰색→구분 가능)
+  gsshop: '#EAB308',     // 노랑
+  ssg: '#7C3AED',        // 남보라
+  lottehome: '#EC4899',  // 핫핑크 (기존 빨간계열→분홍으로 분리)
+  homeand: '#0EA5E9',    // 하늘
+  hmall: '#6366F1',      // 인디고 (기존 파랑→파란보라로 분리)
+  toss: '#84CC16',       // 라임 (기존 파랑→연두로 분리)
+  ktalpha: '#10B981',    // 에메랄드
 }
 
 function getMarketColor(marketType: string): string {
   return MARKET_COLORS[marketType.toLowerCase()] ?? '#6B7280'
+}
+
+function normTetrisKey(value: string | null | undefined): string {
+  return (value ?? '').replace(/\s+/g, '').toLowerCase()
+}
+
+function normSiteKey(value: string | null | undefined): string {
+  const key = normTetrisKey(value)
+  const siteAliases: Record<string, string> = {
+    gsshop: 'gsshop',
+    abcmart: 'abcmart',
+    grandstage: 'abcmart',
+    lotteon: 'lotteon',
+    musinsa: 'musinsa',
+    ssg: 'ssg',
+  }
+  return siteAliases[key] ?? key
+}
+
+function brandScopeKey(sourceSite: string | null | undefined, brandName: string | null | undefined): string {
+  return `${normSiteKey(sourceSite)}::${normTetrisKey(brandName)}`
 }
 
 
@@ -91,7 +112,7 @@ function UnassignedItem({
     is_legacy: false,
   }
 
-  const borderColor = assignments.length > 0 ? currentPolicyColor : '#3a3a3a'
+  const borderColor = currentPolicyId ? currentPolicyColor : '#3a3a3a'
 
   return (
     <div
@@ -300,7 +321,7 @@ export default function UnassignedPool({
             }}
           >
             {items.map((item, idx) => {
-              const key = `${item.source_site}::${item.brand_name}`
+              const key = brandScopeKey(item.source_site, item.brand_name)
               const assignments = assignmentsByBrand.get(key) ?? []
               const policyInfo = policyByBrand.get(key)
               return (
@@ -314,8 +335,8 @@ export default function UnassignedPool({
                     onDragStart={onDragStart}
                     assignments={assignments}
                     policies={policies}
-                    currentPolicyId={policyInfo?.policyId ?? null}
-                    currentPolicyColor={policyInfo?.policyColor ?? '#6B7280'}
+                    currentPolicyId={policyInfo?.policyId ?? item.policy_id ?? null}
+                    currentPolicyColor={policyInfo?.policyColor ?? item.policy_color ?? '#6B7280'}
                     onPolicyChange={(policyId) => onBrandPolicyChange(item.source_site, item.brand_name, policyId)}
                     onDeleteBrandScope={onDeleteBrandScope}
                   />

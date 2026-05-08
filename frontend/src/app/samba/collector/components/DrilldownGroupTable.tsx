@@ -10,6 +10,7 @@ import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { SOURCING_SEARCH_URLS } from '@/lib/samba/constants'
 import { fmtDate as _fmtDate } from '@/lib/samba/utils'
 import { fmtNum } from '@/lib/samba/styles'
+import { matchesPolicyRegFilter } from '../hooks/useDisplayedFilters'
 
 const fmtDate = (iso: string | undefined | null) => _fmtDate(iso, '.')
 const FIXED_REQUESTED_COUNT = 1000
@@ -202,12 +203,7 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
             })
           }
           if (policyRegFilter) {
-            allLeafInfos = allLeafInfos.filter(l => {
-              const hasPolicy = !!(l as unknown as Record<string, string>).applied_policy_id
-              if (policyRegFilter === 'registered') return hasPolicy
-              if (policyRegFilter === 'unregistered') return !hasPolicy
-              return true
-            })
+            allLeafInfos = allLeafInfos.filter(l => matchesPolicyRegFilter(l, policyRegFilter))
           }
           if (marketRegFilter) {
             allLeafInfos = allLeafInfos.filter(l => {

@@ -37,6 +37,9 @@ export interface TetrisMarketGroup {
 export interface TetrisUnassigned {
   source_site: string
   brand_name: string
+  policy_id: string | null
+  policy_name: string | null
+  policy_color: string | null
   registered_count: number
   collected_count: number
   ai_tagged_count: number

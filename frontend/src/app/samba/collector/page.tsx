@@ -321,7 +321,8 @@ export default function CollectorPage() {
       showAlert('요청수 변경에 실패했습니다.', 'error')
       return
     }
-    load(); loadTree();
+    // loadTree() 대신 state 직접 업데이트 — loadTree는 5분 캐시로 stale 값(0)을 반환해 덮어쓰는 버그 방지
+    setFilters(prev => prev.map(f => f.id === filterId ? { ...f, requested_count: count } : f))
   };
 
   // 수집상품수 클릭 → 상품관리 이동

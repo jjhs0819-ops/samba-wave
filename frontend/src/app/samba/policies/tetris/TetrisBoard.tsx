@@ -9,6 +9,27 @@ import UnassignedPool from './UnassignedPool'
 import type { TetrisAccountBlock, TetrisBrandBlock } from '@/lib/samba/api/tetris'
 import type { BrandAssignment } from './UnassignedPool'
 
+function normTetrisKey(value: string | null | undefined): string {
+  return (value ?? '').replace(/\s+/g, '').toLowerCase()
+}
+
+function normSiteKey(value: string | null | undefined): string {
+  const key = normTetrisKey(value)
+  const siteAliases: Record<string, string> = {
+    gsshop: 'gsshop',
+    abcmart: 'abcmart',
+    grandstage: 'abcmart',
+    lotteon: 'lotteon',
+    musinsa: 'musinsa',
+    ssg: 'ssg',
+  }
+  return siteAliases[key] ?? key
+}
+
+function brandScopeKey(sourceSite: string | null | undefined, brandName: string | null | undefined): string {
+  return `${normSiteKey(sourceSite)}::${normTetrisKey(brandName)}`
+}
+
 function computeScaleStep(pixelsPerUnit: number, targetPx = 20): number {
   const rawStep = targetPx / pixelsPerUnit
   const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)))
@@ -134,7 +155,7 @@ export default function TetrisBoard() {
     board.markets.forEach(m => {
       m.accounts.forEach(a => {
         a.assignments.forEach(b => {
-          const key = `${b.source_site}::${b.brand_name}`
+          const key = brandScopeKey(b.source_site, b.brand_name)
           if (!map.has(key)) map.set(key, [])
           map.get(key)!.push({
             marketType: m.market_type,
@@ -154,7 +175,7 @@ export default function TetrisBoard() {
     board.markets.forEach(m =>
       m.accounts.forEach(a =>
         a.assignments.forEach(b => {
-          const key = `${b.source_site}::${b.brand_name}`
+          const key = brandScopeKey(b.source_site, b.brand_name)
           if (!map.has(key)) {
             map.set(key, { policyId: b.policy_id, policyColor: b.policy_color })
           }
@@ -176,6 +197,15 @@ export default function TetrisBoard() {
         })
       )
     )
+    board?.unassigned.forEach(item => {
+      if (item.policy_id && item.policy_name) {
+        pMap.set(item.policy_id, {
+          id: item.policy_id,
+          name: item.policy_name,
+          color: item.policy_color || '#3B82F6',
+        })
+      }
+    })
     return Array.from(pMap.values())
   }, [board])
 

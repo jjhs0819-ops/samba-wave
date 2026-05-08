@@ -1192,9 +1192,9 @@ async function handleSourcingJob(job) {
     if (needsForegroundTab) {
       // SSG/ABCmart/GrandStage 카드/혜택가 추출용 popup
       // 사용자 PC 작업 가리지 않도록:
-      //   1. 작은 크기(420x320)로 좌상단 코너 배치 — 화면 점유 최소화
-      //   2. focused:false 생성 → 포커스 미강탈
-      //   3. 직후 메인 윈도우에 focus 복원 → popup이 z-order 뒤로 밀려 사용자 시야 위에 안 뜸
+      //   1. left:-9999 으로 화면 밖 배치 — 사용자 눈에 안 보이므로 포커스 뺏김 체감 X
+      //   2. focused:false 생성 → 포커스 미강탈 (Shopback 등 내부 확장앱이 후속 요청해도 체감 없음)
+      //   3. 직후 메인 윈도우에 focus 복원
       //      (state:'minimized'는 Whale에서 AJAX throttling으로 카드혜택가 미반영되어 사용 불가)
       let _prevWinIdPopup = null
       try { _prevWinIdPopup = (await chrome.windows.getCurrent()).id } catch {}
@@ -1204,8 +1204,8 @@ async function handleSourcingJob(job) {
         focused: false,
         width: 420,
         height: 320,
-        top: 10,
-        left: 10,
+        top: 0,
+        left: -9999,
       })
       if (_prevWinIdPopup) { try { await chrome.windows.update(_prevWinIdPopup, { focused: true }) } catch {} }
       tab = win.tabs?.[0]

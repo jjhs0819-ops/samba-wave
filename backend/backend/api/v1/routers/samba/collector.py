@@ -394,6 +394,7 @@ async def update_filter(
     result = await svc.update_filter(filter_id, data)
     if not result:
         raise HTTPException(404, "필터를 찾을 수 없습니다")
+    await cache.delete("filters:tree:v3")
 
     # 정책 적용 시 해당 그룹 상품에 백그라운드 전파 (즉시 응답)
     if "applied_policy_id" in data and data["applied_policy_id"]:

@@ -536,6 +536,18 @@ class SambaTetrisService:
                         "brand_name": collected_label_map.get(
                             (site, brand), (site, brand)
                         )[1],
+                        "policy_id": sf_policy_map.get(
+                            (_norm_site_key(site), _norm_tetris_key(brand)),
+                            (None, None, None),
+                        )[0],
+                        "policy_name": sf_policy_map.get(
+                            (_norm_site_key(site), _norm_tetris_key(brand)),
+                            (None, None, None),
+                        )[1],
+                        "policy_color": sf_policy_map.get(
+                            (_norm_site_key(site), _norm_tetris_key(brand)),
+                            (None, None, None),
+                        )[2],
                         "registered_count": registered_total_by_brand.get(
                             (site, brand), 0
                         ),
