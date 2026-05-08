@@ -1308,7 +1308,7 @@ export default function ShipmentsPage() {
                     {sitesStr && <span style={{ color: '#7BB0FF' }}>{sitesStr}</span>}
                     {brandsStr && <span style={{ color: '#3A4258' }}> · </span>}
                     {brandsStr && <span style={{ color: '#A78BFA' }}>{brandsStr}</span>}
-                    {j.jobCount > 1 && <span style={{ color: '#6E7A95' }}> · {fmtNum(j.jobCount)}개 잡</span>}
+                    {(j.jobCount ?? 0) > 1 && <span style={{ color: '#6E7A95' }}> · {fmtNum(j.jobCount ?? 0)}개 잡</span>}
                   </span>
                   <span style={{ color: '#9AA5C0', minWidth: '92px', textAlign: 'right', flexShrink: 0 }}>
                     {fmtNum(j.current)} / {fmtNum(j.total)} ({pct}%)
