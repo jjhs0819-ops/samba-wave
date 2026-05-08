@@ -1,35 +1,40 @@
-import asyncio
-import asyncpg
-import sys
+"""ABCmart 상품 오토튠 대상 여부 확인 스크립트."""
+import asyncio, asyncpg, sys, os
 sys.path.insert(0, '/app/backend')
+os.chdir('/app/backend')
 from backend.core.config import settings
-
-PRODUCT_ID = 'cp_01KMXZ4R978KXSVQKANNCT291E'
-ACCOUNT_ID = 'ma_01KQBJGJ0QGMZ5THS89RQ4VK47'
 
 async def main():
     conn = await asyncpg.connect(
-        host=settings.write_db_host,
-        port=settings.write_db_port,
-        ssl=settings.use_db_ssl,
-        user=settings.write_db_user,
-        password=settings.write_db_password,
-        database=settings.write_db_name,
+        host=getattr(settings, 'DB_HOST', '172.18.0.2'),
+        port=getattr(settings, 'DB_PORT', 5432),
+        user=settings.DB_USER,
+        password=settings.DB_PASSWORD,
+        database=settings.DB_NAME,
+        ssl=False,
     )
-
-    cp = await conn.fetchrow(
-        "SELECT id, status, registered_accounts, market_product_nos FROM samba_collected_product WHERE id = $1",
-        PRODUCT_ID
-    )
-    if cp:
-        import json
-        reg = cp['registered_accounts'] or []
-        nos = cp['market_product_nos'] or {}
-        print(f"status: {cp['status']}")
-        print(f"registered_accounts: {reg}")
-        print(f"ACCOUNT_ID 포함 여부: {ACCOUNT_ID in str(reg)}")
-        print(f"market_product_nos[account]: {nos.get(ACCOUNT_ID, 'NONE')}")
-
-    await conn.close()
+    try:
+        rows = await conn.fetch("""
+            SELECT
+                source_site,
+                COUNT(*) as total,
+                COUNT(applied_policy_id) as with_policy,
+                COUNT(CASE WHEN registered_accounts IS NOT NULL
+                           AND jsonb_array_length(registered_accounts) > 0
+                           THEN 1 END) as with_market,
+                COUNT(CASE WHEN applied_policy_id IS NOT NULL
+                           AND registered_accounts IS NOT NULL
+                           AND jsonb_array_length(registered_accounts) > 0
+                           THEN 1 END) as autotune_eligible
+            FROM samba_collected_product
+            WHERE source_site IN ('ABCmart', 'GrandStage', 'SSG', 'LOTTEON')
+            GROUP BY source_site
+            ORDER BY source_site
+        """)
+        print("=== 소싱처별 오토튠 대상 상품 통계 ===")
+        for r in rows:
+            print(f"{r['source_site']:12} | 전체:{r['total']:5} | 정책적용:{r['with_policy']:5} | 마켓등록:{r['with_market']:5} | 오토튠대상:{r['autotune_eligible']:5}")
+    finally:
+        await conn.close()
 
 asyncio.run(main())

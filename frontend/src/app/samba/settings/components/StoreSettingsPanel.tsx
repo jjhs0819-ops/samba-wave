@@ -539,8 +539,9 @@ export function StoreSettingsPanel(props: Props) {
                         type="button"
                         onClick={async () => {
                           const visKey = `${market.key}_${field.name}`
-                          // 수정 모드 + 아직 값이 없으면 백엔드에서 실제값 조회
-                          if (editingAccountId && !storeData[market.key]?.[field.name]) {
+                          // 수정 모드 + 값이 없거나 마스킹값이면 백엔드에서 실제값 조회
+                          const curVal = storeData[market.key]?.[field.name] ?? ''
+                          if (editingAccountId && (!curVal || /^\*{4}.{0,4}$/.test(curVal))) {
                             try {
                               const secrets = await accountApi.getSecrets(editingAccountId)
                               const val = (secrets as Record<string, string>)[field.name]
