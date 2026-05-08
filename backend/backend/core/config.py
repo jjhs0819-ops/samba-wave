@@ -150,9 +150,7 @@ class BackendSettings(BaseSettings):
         """
         ids_raw = (self.chrome_extension_ids or "").strip()
         if ids_raw:
-            valid_ids = [
-                _id.strip() for _id in ids_raw.split(",") if _id.strip()
-            ]
+            valid_ids = [_id.strip() for _id in ids_raw.split(",") if _id.strip()]
             valid_ids = [_id for _id in valid_ids if _is_valid_chrome_id(_id)]
             if valid_ids:
                 # _is_valid_chrome_id 가 [a-z]{32} 만 통과시키지만, defense-in-depth

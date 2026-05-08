@@ -34,6 +34,7 @@ def client(app):
 
 # ── 표준 보안 헤더 ────────────────────────────────────────────
 
+
 class TestBaseSecurityHeaders:
     """모든 응답에 5개 표준 보안 헤더가 부착되어야 한다."""
 
@@ -69,6 +70,7 @@ class TestBaseSecurityHeaders:
 
 
 # ── CSP 분기 ──────────────────────────────────────────────────
+
 
 class TestCSPBranches:
     """경로에 따라 CSP 헤더가 다르게 부착되거나 면제되어야 한다."""
@@ -109,6 +111,7 @@ class TestCSPBranches:
 
 
 # ── 미들웨어 함수 단위 ────────────────────────────────────────
+
 
 class TestCspForFunction:
     """경로별 CSP 선택 헬퍼 단위 검증."""

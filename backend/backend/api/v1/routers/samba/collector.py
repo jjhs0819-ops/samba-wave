@@ -1217,8 +1217,7 @@ async def products_init_data(
         # 카드 렌더에 불필요한 필드 제외. 다른 페이지가 전체 필드를 필요로 하면
         # /collector/filters 또는 /collector/filters/tree 별도 호출.
         filter_r = await session.execute(
-            select(_SF.id, _SF.name, _SF.target_mappings)
-            .where(_SF.is_folder == False)  # noqa: E712
+            select(_SF.id, _SF.name, _SF.target_mappings).where(_SF.is_folder == False)  # noqa: E712
         )
         words_r = await session.execute(
             select(SambaForbiddenWord).where(
