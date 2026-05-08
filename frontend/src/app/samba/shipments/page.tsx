@@ -1232,10 +1232,10 @@ export default function ShipmentsPage() {
               const sitesStr = sites.length > 0 ? (sites.length <= 3 ? sites.join('·') : `${sites.slice(0,3).join('·')} 외 ${fmtNum(sites.length - 3)}`) : ''
               const brandsStr = brands.length > 0 ? (brands.length <= 3 ? brands.join('·') : `${brands.slice(0,3).join('·')} 외 ${fmtNum(brands.length - 3)}`) : ''
               return (
-                <div key={`r-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: '#C4CAD8', borderBottom: '1px solid #151822', paddingBottom: '4px', marginBottom: '0' }}>
+                <div key={`r-${j.id || idx}`} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', fontSize: '0.75rem', color: '#C4CAD8', borderBottom: '1px solid #151822', paddingBottom: '4px', marginBottom: '0' }}>
                   <span style={{ color: j.kind === 'delete' ? '#FF6B6B' : '#51CF66', fontWeight: 600, minWidth: '40px' }}>{j.kind === 'delete' ? '삭제중' : '전송중'}</span>
                   <span style={{ color: '#8A95B0', minWidth: '72px' }}>시작 {startedStr}</span>
-                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span style={{ flex: 1, minWidth: 0, whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.45 }}>
                     {j.markets}
                     {sitesStr && <span style={{ color: '#3A4258' }}> · </span>}
                     {sitesStr && <span style={{ color: '#7BB0FF' }}>{sitesStr}</span>}
@@ -1264,10 +1264,10 @@ export default function ShipmentsPage() {
               const sitesStr = sites.length > 0 ? (sites.length <= 3 ? sites.join('·') : `${sites.slice(0,3).join('·')} 외 ${fmtNum(sites.length - 3)}`) : ''
               const brandsStr = brands.length > 0 ? (brands.length <= 3 ? brands.join('·') : `${brands.slice(0,3).join('·')} 외 ${fmtNum(brands.length - 3)}`) : ''
               return (
-                <div key={`p-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: '#8A95B0', borderBottom: '1px solid #151822', paddingBottom: '4px', marginBottom: '0' }}>
+                <div key={`p-${j.id || idx}`} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', fontSize: '0.75rem', color: '#8A95B0', borderBottom: '1px solid #151822', paddingBottom: '4px', marginBottom: '0' }}>
                   <span style={{ color: '#FAB005', fontWeight: 600, minWidth: '40px' }}>대기</span>
                   <span style={{ minWidth: '72px' }}>—</span>
-                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span style={{ flex: 1, minWidth: 0, whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.45 }}>
                     {j.markets}
                     {sitesStr && <span style={{ color: '#3A4258' }}> · </span>}
                     {sitesStr && <span style={{ color: '#7BB0FF' }}>{sitesStr}</span>}
