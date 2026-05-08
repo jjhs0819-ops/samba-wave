@@ -128,7 +128,7 @@ export default function ShipmentsPage() {
   const sinceIdxRef = useRef(0)  // 링 버퍼 폴링용
 
   // 실시간 Job 큐 상태
-  type JobQueueItem = { id?: string, status?: string, kind?: 'transmit' | 'delete', markets: string, source_sites?: string[], brands?: string[], product_count: number, current: number, total: number, started_at?: string | null, jobIds?: string[], jobCount?: number }
+  type JobQueueItem = { id?: string, status?: string, kind?: 'transmit' | 'delete', markets: string, source_sites?: string[], brands?: string[], product_count: number, current: number, total: number, started_at?: string | null }
   const [jobQueueStatus, setJobQueueStatus] = useState<{
     running: JobQueueItem[],
     pending: JobQueueItem[],
@@ -1049,52 +1049,6 @@ export default function ShipmentsPage() {
     }
   }
 
-  const handleCancelGroupedPendingJobs = async (jobIds: string[], label: string) => {
-    const ids = Array.from(new Set(jobIds.filter(Boolean)))
-    if (ids.length === 0) return
-
-    const ok = await showConfirm(`[${label}] 대기 잡 ${fmtNum(ids.length)}건을 모두 취소할까요?`)
-    if (!ok) return
-
-    setCancellingJobIds(prev => [...new Set([...prev, ...ids])])
-    const ts = fmtTime()
-    const log = (msg: string) => appendShipmentLog(setLogMessages, msg)
-
-    try {
-      const { API_BASE_URL: apiBase } = await import('@/config/api')
-      const results = await Promise.allSettled(
-        ids.map(async (jobId) => {
-          const res = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/${jobId}`, { method: 'DELETE' })
-          if (!res.ok) {
-            const msg = await res.text().catch(() => '')
-            throw new Error(msg || String(res.status))
-          }
-          return jobId
-        }),
-      )
-
-      const succeededIds = results
-        .filter((result): result is PromiseFulfilledResult<string> => result.status === 'fulfilled')
-        .map(result => result.value)
-      const failedCount = results.length - succeededIds.length
-
-      if (succeededIds.length > 0) {
-        setJobQueueStatus(prev => ({
-          running: prev.running,
-          pending: prev.pending.filter(j => !succeededIds.includes(j.id || '')),
-        }))
-        log(`[${ts}] 대기 잡 취소 완료 (${label}) ${fmtNum(succeededIds.length)}건`)
-      }
-      if (failedCount > 0) {
-        log(`[${ts}] 대기 잡 취소 실패 (${label}) ${fmtNum(failedCount)}건`)
-      }
-    } catch (e) {
-      log(`[${ts}] 대기 잡 취소 오류 (${label}) ${e instanceof Error ? e.message : '오류'}`)
-    } finally {
-      setCancellingJobIds(prev => prev.filter(id => !ids.includes(id)))
-    }
-  }
-
   return (
     <div style={{ color: '#E5E5E5' }}>
       {/* 이전 단계 연결 */}
@@ -1246,27 +1200,11 @@ export default function ShipmentsPage() {
           ...jobQueueStatus.running.map(j => ({ ...j, kind: (j.kind || 'transmit') as 'transmit' | 'delete' })),
           ...localDeleteJobs,
         ]
-        const groupedPending = Object.values(jobQueueStatus.pending.reduce<Record<string, JobQueueItem & { jobIds: string[], jobCount: number }>>((acc, job, idx) => {
-          const key = (job.markets || '').trim() || `pending-${idx}`
-          if (!acc[key]) {
-            acc[key] = {
-              ...job,
-              product_count: 0,
-              current: 0,
-              total: 0,
-              source_sites: [],
-              brands: [],
-              jobIds: [],
-              jobCount: 0,
-            }
-          }
-          acc[key].product_count += job.product_count || 0
-          acc[key].jobCount += 1
-          if (job.id) acc[key].jobIds.push(job.id)
-          acc[key].source_sites = Array.from(new Set([...(acc[key].source_sites || []), ...(job.source_sites || [])]))
-          acc[key].brands = Array.from(new Set([...(acc[key].brands || []), ...(job.brands || [])]))
-          return acc
-        }, {}))
+        const sortedPending = [...jobQueueStatus.pending].sort((a, b) => {
+          const byMarket = (a.markets || '').localeCompare(b.markets || '')
+          if (byMarket !== 0) return byMarket
+          return (a.id || '').localeCompare(b.id || '')
+        })
         const transmitCount = runningAll.filter(j => j.kind !== 'delete').length
         const deleteCount = runningAll.filter(j => j.kind === 'delete').length
         return (
@@ -1285,30 +1223,32 @@ export default function ShipmentsPage() {
             {runningAll.map((j, idx) => {
               const started = j.started_at ? new Date(j.started_at) : null
               const startedStr = started
-                ? `${String(started.getHours()).padStart(2,'0')}:${String(started.getMinutes()).padStart(2,'0')}:${String(started.getSeconds()).padStart(2,'0')}`
+                ? `${String(started.getHours()).padStart(2, '0')}:${String(started.getMinutes()).padStart(2, '0')}:${String(started.getSeconds()).padStart(2, '0')}`
                 : '-'
               const pct = j.total > 0 ? Math.floor((j.current / j.total) * 100) : 0
               const elapsedMs = started ? Math.max(0, Date.now() - started.getTime()) : 0
               const perItemSec = j.current > 0 && elapsedMs > 0 ? elapsedMs / 1000 / j.current : 0
               const perItemStr = perItemSec > 0
-                ? (perItemSec >= 10 ? `${Math.round(perItemSec)}초/1건` : `${perItemSec.toFixed(1)}초/1건`)
-                : '—'
+                ? (perItemSec >= 10 ? `${Math.round(perItemSec)}?/1?` : `${perItemSec.toFixed(1)}?/1?`)
+                : '?'
               const busy = !!(j.id && cancellingJobIds.includes(j.id))
               const sites = j.source_sites ?? []
               const brands = j.brands ?? []
-              const sitesStr = sites.length > 0 ? (sites.length <= 3 ? sites.join('·') : `${sites.slice(0,3).join('·')} 외 ${fmtNum(sites.length - 3)}`) : ''
-              const brandsStr = brands.length > 0 ? (brands.length <= 3 ? brands.join('·') : `${brands.slice(0,3).join('·')} 외 ${fmtNum(brands.length - 3)}`) : ''
+              const sitesStr = sites.length > 0 ? (sites.length <= 3 ? sites.join('?') : `${sites.slice(0, 3).join('?')} ? ${fmtNum(sites.length - 3)}`) : ''
+              const brandsStr = brands.length > 0 ? (brands.length <= 3 ? brands.join('?') : `${brands.slice(0, 3).join('?')} ? ${fmtNum(brands.length - 3)}`) : ''
               return (
                 <div key={`r-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: '#C4CAD8', borderBottom: '1px solid #151822', paddingBottom: '4px', marginBottom: '0' }}>
-                  <span style={{ color: j.kind === 'delete' ? '#FF6B6B' : '#51CF66', fontWeight: 600, minWidth: '40px' }}>{j.kind === 'delete' ? '삭제중' : '전송중'}</span>
-                  <span style={{ color: '#8A95B0', minWidth: '64px', flexShrink: 0 }}>시작 {startedStr}</span>
-                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={[j.markets, sitesStr, brandsStr].filter(Boolean).join(' · ')}>
+                  <span style={{ color: j.kind === 'delete' ? '#FF6B6B' : '#51CF66', fontWeight: 600, minWidth: '40px' }}>
+                    {j.kind === 'delete' ? '???' : '???'}
+                  </span>
+                  <span style={{ color: '#8A95B0', minWidth: '64px', flexShrink: 0 }}>?? {startedStr}</span>
+                  <span style={{ color: '#C4CAD8', whiteSpace: 'nowrap', flexShrink: 0 }} title={j.markets}>
                     {j.markets}
-                    {sitesStr && <span style={{ color: '#3A4258' }}> · </span>}
+                  </span>
+                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={[sitesStr, brandsStr].filter(Boolean).join(' / ')}>
                     {sitesStr && <span style={{ color: '#7BB0FF' }}>{sitesStr}</span>}
-                    {brandsStr && <span style={{ color: '#3A4258' }}> · </span>}
+                    {sitesStr && brandsStr && <span style={{ color: '#3A4258' }}> ? </span>}
                     {brandsStr && <span style={{ color: '#A78BFA' }}>{brandsStr}</span>}
-                    {(j.jobCount ?? 0) > 1 && <span style={{ color: '#6E7A95' }}> · {fmtNum(j.jobCount ?? 0)}개 잡</span>}
                   </span>
                   <span style={{ color: '#9AA5C0', minWidth: '92px', textAlign: 'right', flexShrink: 0 }}>
                     {fmtNum(j.current)} / {fmtNum(j.total)} ({pct}%)
@@ -1319,37 +1259,37 @@ export default function ShipmentsPage() {
                   <button
                     onClick={() => j.id && handleCancelSingleJob(j.id, j.markets)}
                     disabled={!j.id || busy}
-                    title="이 잡만 취소"
+                    title="? ?? ??"
                     style={{ padding: '2px 8px', fontSize: '0.7rem', background: busy ? 'rgba(255,80,80,0.3)' : 'rgba(255,80,80,0.12)', color: '#FF6B6B', border: '1px solid rgba(255,80,80,0.4)', borderRadius: '3px', cursor: (!j.id || busy) ? 'not-allowed' : 'pointer', fontWeight: 600, minWidth: '40px', flexShrink: 0 }}
-                  >{busy ? '취소중' : '취소'}</button>
+                  >{busy ? '???' : '??'}</button>
                 </div>
               )
             })}
-            {groupedPending.map((j, idx) => {
-              const busy = j.jobIds.some(id => cancellingJobIds.includes(id))
+            {sortedPending.map((j, idx) => {
+              const busy = !!(j.id && cancellingJobIds.includes(j.id))
               const sites = j.source_sites ?? []
               const brands = j.brands ?? []
-              const sitesStr = sites.length > 0 ? (sites.length <= 3 ? sites.join('·') : `${sites.slice(0,3).join('·')} 외 ${fmtNum(sites.length - 3)}`) : ''
-              const brandsStr = brands.length > 0 ? (brands.length <= 3 ? brands.join('·') : `${brands.slice(0,3).join('·')} 외 ${fmtNum(brands.length - 3)}`) : ''
+              const sitesStr = sites.length > 0 ? (sites.length <= 3 ? sites.join('?') : `${sites.slice(0, 3).join('?')} ? ${fmtNum(sites.length - 3)}`) : ''
+              const brandsStr = brands.length > 0 ? (brands.length <= 3 ? brands.join('?') : `${brands.slice(0, 3).join('?')} ? ${fmtNum(brands.length - 3)}`) : ''
               return (
-                <div key={`p-${j.markets || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: '#8A95B0', borderBottom: '1px solid #151822', paddingBottom: '4px', marginBottom: '0' }}>
-                  <span style={{ color: '#FAB005', fontWeight: 600, minWidth: '40px' }}>대기</span>
-                  <span style={{ minWidth: '72px' }}>—</span>
-                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={[j.markets, sitesStr, brandsStr].filter(Boolean).join(' / ')}>
+                <div key={`p-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: '#8A95B0', borderBottom: '1px solid #151822', paddingBottom: '4px', marginBottom: '0' }}>
+                  <span style={{ color: '#FAB005', fontWeight: 600, minWidth: '40px' }}>??</span>
+                  <span style={{ minWidth: '64px', flexShrink: 0 }}>?</span>
+                  <span style={{ color: '#C4CAD8', whiteSpace: 'nowrap', flexShrink: 0 }} title={j.markets}>
                     {j.markets}
-                    {sitesStr && <span style={{ color: '#3A4258' }}> · </span>}
-                    {sitesStr && <span style={{ color: '#7BB0FF' }}>{sitesStr}</span>}
-                    {brandsStr && <span style={{ color: '#3A4258' }}> · </span>}
-                    {brandsStr && <span style={{ color: '#A78BFA' }}>{brandsStr}</span>}
-                    {j.jobCount && j.jobCount > 1 && <span style={{ color: '#6E7A95' }}> · {fmtNum(j.jobCount)}개 잡</span>}
                   </span>
-                  <span style={{ minWidth: '110px', textAlign: 'right' }}>{fmtNum(j.product_count)}건</span>
+                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={[sitesStr, brandsStr].filter(Boolean).join(' / ')}>
+                    {sitesStr && <span style={{ color: '#7BB0FF' }}>{sitesStr}</span>}
+                    {sitesStr && brandsStr && <span style={{ color: '#3A4258' }}> ? </span>}
+                    {brandsStr && <span style={{ color: '#A78BFA' }}>{brandsStr}</span>}
+                  </span>
+                  <span style={{ minWidth: '110px', textAlign: 'right', flexShrink: 0 }}>{fmtNum(j.product_count)}?</span>
                   <button
-                    onClick={() => handleCancelGroupedPendingJobs(j.jobIds || [], j.markets)}
-                    disabled={(j.jobIds || []).length === 0 || busy}
-                    title="이 잡만 취소"
-                    style={{ padding: '2px 8px', fontSize: '0.7rem', background: busy ? 'rgba(255,80,80,0.3)' : 'rgba(255,80,80,0.12)', color: '#FF6B6B', border: '1px solid rgba(255,80,80,0.4)', borderRadius: '3px', cursor: ((j.jobIds || []).length === 0 || busy) ? 'not-allowed' : 'pointer', fontWeight: 600, minWidth: '40px', flexShrink: 0 }}
-                  >{busy ? '취소중' : '취소'}</button>
+                    onClick={() => j.id && handleCancelSingleJob(j.id, j.markets)}
+                    disabled={!j.id || busy}
+                    title="? ?? ??"
+                    style={{ padding: '2px 8px', fontSize: '0.7rem', background: busy ? 'rgba(255,80,80,0.3)' : 'rgba(255,80,80,0.12)', color: '#FF6B6B', border: '1px solid rgba(255,80,80,0.4)', borderRadius: '3px', cursor: (!j.id || busy) ? 'not-allowed' : 'pointer', fontWeight: 600, minWidth: '40px', flexShrink: 0 }}
+                  >{busy ? '???' : '??'}</button>
                 </div>
               )
             })}
