@@ -509,8 +509,6 @@ export interface SambaCollectedProduct {
   same_day_delivery?: boolean;
   sourcing_shipping_fee?: number;
   is_point_restricted?: boolean | null;
-  model_no?: string;
-  collected_at?: string;
   created_at: string;
   updated_at?: string;
 }
@@ -1681,18 +1679,24 @@ export interface RefreshLogsResponse {
 
 // ── Job 큐 ──
 
+// 백엔드 backend/domain/samba/job/model.py 와 1:1 정합.
+// 변경 시 backend job/model.py · routers/samba/job.py 응답 매핑 동시 점검.
 export interface SambaJob {
   id: string
-  type: string
-  status: string
+  tenant_id?: string | null
+  job_type: string
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | string
   progress: number
+  current: number
   total: number
-  success_count: number
-  fail_count: number
+  attempt?: number
+  payload?: Record<string, unknown> | null
+  result?: Record<string, unknown> | null
+  error?: string | null
+  logs?: unknown[] | null
   created_at: string
-  updated_at: string
-  error?: string
-  metadata?: Record<string, unknown>
+  started_at?: string | null
+  completed_at?: string | null
 }
 
 export interface QueueStatus {
