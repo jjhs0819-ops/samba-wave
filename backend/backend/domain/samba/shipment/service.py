@@ -1813,11 +1813,10 @@ class SambaShipmentService:
                     pass
             return res
 
-        # 모든 계정 병렬 전송
-        account_results = await asyncio.gather(
-            *[_dispatch_one(aid) for aid in target_account_ids],
-            return_exceptions=True,
-        )
+        # 계정별 순차 전송 — 동일 세션 병렬 사용 시 asyncpg 연결 오염 방지
+        account_results = []
+        for _aid in target_account_ids:
+            account_results.append(await _dispatch_one(_aid))
 
         # 결과 병합 + DB 일괄 업데이트
         merged_nos = dict(product_row.market_product_nos or {})

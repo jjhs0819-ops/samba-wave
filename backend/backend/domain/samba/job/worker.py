@@ -580,6 +580,7 @@ class JobWorker:
 
         from backend.db.orm import get_write_session
         from backend.domain.samba.job.repository import SambaJobRepository
+        from backend.domain.samba.shipment.service import is_cancel_requested
 
         async with get_write_session() as session:
             repo = SambaJobRepository(session)
@@ -589,10 +590,14 @@ class JobWorker:
             _excl_accounts: set[str] = set()
             for _aids in self._active_transmit_accounts.values():
                 _excl_accounts.update(_aids)
+            # 일시정지(__all__ 플래그) 중이면 transmit 잡 클레임 스킵 — PENDING 잡 대기 유지
+            _excl_types: set[str] = {"bg_remove"}
+            if is_cancel_requested("__all__"):
+                _excl_types.add("transmit")
             job = await repo.claim_pending_job(
                 exclude_sources=_excl_sources or None,
                 exclude_brand_all=self._brand_all_running,
-                exclude_types={"bg_remove"},  # 로컬 워커 전용 — Cloud Run에서 처리 금지
+                exclude_types=_excl_types,
                 exclude_accounts=_excl_accounts or None,
             )
             if not job:
@@ -923,8 +928,8 @@ class JobWorker:
         from backend.domain.samba.shipment.repository import SambaShipmentRepository
         from backend.domain.samba.emergency import clear_emergency_stop
 
-        # 새 잡 시작 — 이전 취소의 잔존 플래그 전부 해제
-        clear_cancel_transmit()
+        # 새 잡 시작 — 이 잡의 잔존 플래그만 해제 (__all__ 유지 — 일시정지 중 다음 잡 클레임 차단)
+        clear_cancel_transmit(job.id)
         clear_emergency_stop()
 
         payload = job.payload or {}
@@ -1197,7 +1202,7 @@ class JobWorker:
                 await repo.fail_job(
                     job.id, f"{reason}: {i_first}건 완료, {cancelled}건 중단"
                 )
-                clear_cancel_transmit()
+                clear_cancel_transmit(job.id)  # 이 잡 플래그만 해제, __all__ 유지
                 clear_emergency_stop()
                 return
 
