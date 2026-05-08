@@ -574,6 +574,11 @@ class JobWorker:
             task = self._active_tasks.pop(jid)
             self._active_job_ids.discard(jid)
             self._active_transmit_accounts.pop(jid, None)
+            if task.cancelled():
+                # 취소된 Task — CancelledError는 BaseException이므로 exception() 호출 시 재발생
+                # start() 루프의 except CancelledError: break에 걸려 워커 사망 방지
+                logger.warning(f"[잡워커] 전송 Task 취소됨: {jid}")
+                continue
             exc = task.exception()
             if exc:
                 logger.error(f"[잡워커] 전송 Task 예외: {jid} — {exc}")
