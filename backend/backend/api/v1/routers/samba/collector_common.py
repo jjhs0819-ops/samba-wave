@@ -365,6 +365,22 @@ async def build_has_orders_conditions(session: AsyncSession, model_class: Any) -
 # ── 마켓등록상품 필터 조건 ──
 
 
+def has_registered_accounts(model_class: Any):
+    """registered_accounts 배열이 비어있지 않음 — is_unregistered=FALSE 대체 표현식."""
+    return model_class.registered_accounts.op("!=")(cast("[]", _JSONB))
+
+
+def no_registered_accounts(model_class: Any):
+    """registered_accounts 배열이 비어있거나 NULL — is_unregistered=TRUE 대체 표현식."""
+    from sqlalchemy import or_
+
+    return or_(
+        model_class.registered_accounts.is_(None),
+        func.jsonb_typeof(model_class.registered_accounts) != "array",
+        model_class.registered_accounts.op("==")(cast("[]", _JSONB)),
+    )
+
+
 def build_market_registered_conditions(model_class: Any) -> list:
     """마켓등록상품 판별 SQLAlchemy 조건 리스트 반환.
 

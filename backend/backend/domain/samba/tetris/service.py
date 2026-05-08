@@ -324,8 +324,8 @@ class SambaTetrisService:
                     SELECT source_site, BTRIM(brand) AS effective_brand, registered_accounts
                     FROM samba_collected_product
                     WHERE (tenant_id IS NULL AND :tid_is_null OR tenant_id = :tid)
-                      AND is_unregistered = FALSE
                       AND registered_accounts IS NOT NULL
+                      AND registered_accounts != '[]'::jsonb
                       AND jsonb_typeof(registered_accounts) = 'array'
                       AND source_site IS NOT NULL
                       AND brand IS NOT NULL

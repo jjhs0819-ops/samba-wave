@@ -24,6 +24,8 @@ from backend.api.v1.routers.samba.collector_common import (
     _HEAVY_FIELDS,
     _get_services,
     _invalidate_blacklist_cache,
+    has_registered_accounts,
+    no_registered_accounts,
 )
 
 router = APIRouter(prefix="/collector", tags=["samba-collector"])
@@ -308,9 +310,9 @@ async def list_filters(session: AsyncSession = Depends(get_write_session_depende
         select(
             _CP.search_filter_id,
             func.count().label("collected_count"),
-            func.count(
-                case((_CP.is_unregistered == False, literal(1)))  # noqa: E712
-            ).label("market_registered_count"),
+            func.count(case((has_registered_accounts(_CP), literal(1)))).label(
+                "market_registered_count"
+            ),
             func.count(case((and_(_CP.applied_policy_id != None), literal(1)))).label(
                 "policy_applied_count"
             ),
@@ -703,9 +705,9 @@ async def get_filter_tree_counts(
         select(
             _CP.search_filter_id,
             _func.count().label("cnt"),
-            _func.count(
-                case((_CP.is_unregistered == False, literal(1)))  # noqa: E712
-            ).label("market_registered"),
+            _func.count(case((has_registered_accounts(_CP), literal(1)))).label(
+                "market_registered"
+            ),
             _func.count(
                 case(
                     (
@@ -947,7 +949,7 @@ async def scroll_products(
 
         conditions.extend(build_market_registered_conditions(_CP))
     elif status == "market_unregistered":
-        conditions.append(_CP.is_unregistered == True)  # noqa: E712
+        conditions.append(no_registered_accounts(_CP))
     elif status == "sold_out":
         conditions.append(
             or_(_CP.sale_status == "sold_out", _all_options_sold_out(_CP))
@@ -1102,9 +1104,9 @@ async def scroll_products(
 
         counts_stmt = select(
             func.count().label("total"),
-            func.count(
-                case((_CP.is_unregistered == False, literal(1)))  # noqa: E712
-            ).label("registered"),
+            func.count(case((has_registered_accounts(_CP), literal(1)))).label(
+                "registered"
+            ),
             func.count(case((_CP.applied_policy_id != None, literal(1)))).label(  # noqa: E711
                 "policy_applied"
             ),
@@ -1299,9 +1301,9 @@ async def product_counts(
 
     stmt = select(
         func.count().label("total"),
-        func.count(
-            case((_CP.is_unregistered == False, literal(1)))  # noqa: E712
-        ).label("registered"),
+        func.count(case((has_registered_accounts(_CP), literal(1)))).label(
+            "registered"
+        ),
         func.count(case((_CP.applied_policy_id != None, literal(1)))).label(
             "policy_applied"
         ),
@@ -1332,11 +1334,11 @@ async def product_dashboard_stats(
     from backend.domain.samba.account.model import SambaMarketAccount as _MA
     from sqlalchemy import text
 
-    # 1) 소싱처별 수집현황 — is_unregistered 인덱스 활용
+    # 1) 소싱처별 수집현황
     site_stmt = text("""
         SELECT source_site,
                COUNT(*) AS total,
-               COUNT(*) FILTER (WHERE is_unregistered = FALSE) AS registered,
+               COUNT(*) FILTER (WHERE registered_accounts IS NOT NULL AND registered_accounts != '[]'::jsonb) AS registered,
                COUNT(*) FILTER (WHERE sale_status = 'sold_out') AS sold_out
         FROM samba_collected_product
         WHERE source_site IS NOT NULL AND source_site != ''
@@ -1350,7 +1352,7 @@ async def product_dashboard_stats(
         SELECT source_site,
                COALESCE(NULLIF(TRIM(brand), ''), '기타') AS brand_name,
                COUNT(*) AS total,
-               COUNT(*) FILTER (WHERE is_unregistered = FALSE) AS registered,
+               COUNT(*) FILTER (WHERE registered_accounts IS NOT NULL AND registered_accounts != '[]'::jsonb) AS registered,
                COUNT(*) FILTER (WHERE sale_status = 'sold_out') AS sold_out
         FROM samba_collected_product
         WHERE source_site IS NOT NULL AND source_site != ''
@@ -1390,8 +1392,8 @@ async def product_dashboard_stats(
                 SELECT jsonb_array_elements_text(registered_accounts) AS aid
                 FROM (
                     SELECT registered_accounts FROM samba_collected_product
-                    WHERE is_unregistered = FALSE
-                      AND registered_accounts IS NOT NULL
+                    WHERE registered_accounts IS NOT NULL
+                      AND registered_accounts != '[]'::jsonb
                       AND jsonb_typeof(registered_accounts) = 'array'
                 ) safe_rows
             ) sub
@@ -1413,8 +1415,8 @@ async def product_dashboard_stats(
                 FROM (
                     SELECT registered_accounts, source_site, brand
                     FROM samba_collected_product
-                    WHERE is_unregistered = FALSE
-                      AND registered_accounts IS NOT NULL
+                    WHERE registered_accounts IS NOT NULL
+                      AND registered_accounts != '[]'::jsonb
                       AND jsonb_typeof(registered_accounts) = 'array'
                 ) safe_rows
             ) sub

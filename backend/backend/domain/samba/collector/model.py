@@ -245,10 +245,6 @@ class SambaCollectedProduct(SQLModel, table=True):
     registered_accounts: Optional[List[str]] = Field(
         default=None, sa_column=Column(JSONB, nullable=True)
     )
-    is_unregistered: bool = Field(
-        default=True,
-        sa_column=Column(Boolean, nullable=False, server_default="true", index=True),
-    )
     # 마켓별 등록된 상품번호: { "account_id": "product_no", ... }
     market_product_nos: Optional[Any] = Field(
         default=None, sa_column=Column(JSONB, nullable=True)

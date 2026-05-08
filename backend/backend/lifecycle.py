@@ -377,13 +377,17 @@ async def _warmup_filter_tree_counts_cache(logger: logging.Logger) -> None:
                         continue
 
                     _CP = SambaCollectedProduct
+                    from backend.api.v1.routers.samba.collector_common import (  # noqa: F811
+                        has_registered_accounts as _has_reg,
+                    )
+
                     count_stmt = (
                         select(
                             _CP.search_filter_id,
                             func.count().label("cnt"),
-                            func.count(
-                                case((_CP.is_unregistered == False, literal(1)))  # noqa: E712
-                            ).label("market_registered"),
+                            func.count(case((_has_reg(_CP), literal(1)))).label(
+                                "market_registered"
+                            ),
                             func.count(
                                 case(
                                     (

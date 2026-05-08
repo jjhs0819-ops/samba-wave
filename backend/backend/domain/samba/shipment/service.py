@@ -646,7 +646,6 @@ class SambaShipmentService:
                     if account_id not in registered:
                         registered.append(account_id)
                     updates["registered_accounts"] = registered
-                    updates["is_unregistered"] = False
                     updates["status"] = "registered"
                 await product_repo.update_async(p.id, **updates)
 
@@ -1463,7 +1462,6 @@ class SambaShipmentService:
                                         _prod.registered_accounts = (
                                             new_reg if new_reg else None
                                         )
-                                        _prod.is_unregistered = not bool(new_reg)
                                         await self.session.commit()
                                 except Exception as _db_e:
                                     logger.warning(
@@ -1794,6 +1792,10 @@ class SambaShipmentService:
                         f"[전송] {market_type} {action} 성공 - 상품: {product_id}, 계정: {account_id}"
                     )
                 else:
+                    # _skip_retry: 플레이오토 미등록 상품코드 — 재시도/신규등록 차단
+                    if result.get("_skip_retry"):
+                        res["status"] = "skipped"
+                        res["_clear_failed_at"] = True
                     _msg = result.get("message", "알 수 없는 오류")
                     res["error"] = str(_msg) if not isinstance(_msg, str) else _msg
                     logger.warning(f"[전송] {market_type} 실패 - {_msg}")
@@ -1846,6 +1848,11 @@ class SambaShipmentService:
                 _existing = dict(merged_sent.get(aid, {}) or {})
                 _existing["failed_at"] = datetime.now(UTC).isoformat()
                 merged_sent[aid] = _existing
+            elif ar.get("_clear_failed_at") and aid in merged_sent:
+                # _skip_retry 케이스 (플레이오토 미등록 상품코드): 기존 failed_at 제거 → 재시도 루프 차단
+                _existing = dict(merged_sent[aid] or {})
+                _existing.pop("failed_at", None)
+                merged_sent[aid] = _existing
 
         # DB 1회 업데이트
         try:
@@ -1882,7 +1889,6 @@ class SambaShipmentService:
                             if a not in _failed_db_accs
                         ]
                         _retry_prod.registered_accounts = new_reg if new_reg else None
-                        _retry_prod.is_unregistered = not bool(new_reg)
                         await _retry_s.commit()
                         logger.info(
                             f"[전송] DB 재시도 성공 — registered_accounts 갱신: {_failed_db_accs}"

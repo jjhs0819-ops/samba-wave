@@ -162,6 +162,15 @@ class PlayAutoPlugin(MarketPlugin):
                 }
             else:
                 logger.warning(f"[플레이오토] 실패: {msg}")
+                # 플레이오토에서 직접 삭제된 상품 — 재시도/신규등록 차단
+                if "마스터상품코드" in msg and "미등록" in msg:
+                    return {
+                        "success": False,
+                        "error_type": "product_not_found",
+                        "message": f"플레이오토 실패: {msg}",
+                        "_skip_retry": True,
+                        "data": result,
+                    }
                 return {
                     "success": False,
                     "message": f"플레이오토 실패: {msg}",
