@@ -1226,18 +1226,15 @@ export default function ShipmentsPage() {
               const sitesStr = sites.length > 0 ? (sites.length <= 3 ? sites.join('·') : `${sites.slice(0,3).join('·')} 외 ${fmtNum(sites.length - 3)}`) : ''
               const brandsStr = brands.length > 0 ? (brands.length <= 3 ? brands.join('·') : `${brands.slice(0,3).join('·')} 외 ${fmtNum(brands.length - 3)}`) : ''
               return (
-                <div key={`r-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: '#C4CAD8' }}>
+                <div key={`r-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: '#C4CAD8', borderBottom: '1px solid #151822', paddingBottom: '4px', marginBottom: '0' }}>
                   <span style={{ color: j.kind === 'delete' ? '#FF6B6B' : '#51CF66', fontWeight: 600, minWidth: '40px' }}>{j.kind === 'delete' ? '삭제중' : '전송중'}</span>
                   <span style={{ color: '#8A95B0', minWidth: '72px' }}>시작 {startedStr}</span>
-                  <span style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '2px', overflow: 'hidden' }}>
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{j.markets}</span>
-                    {(sitesStr || brandsStr) && (
-                      <span style={{ fontSize: '0.7rem', color: '#6E7A95', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {sitesStr && <span style={{ color: '#7BB0FF' }}>{sitesStr}</span>}
-                        {sitesStr && brandsStr && <span style={{ color: '#3A4258' }}> · </span>}
-                        {brandsStr && <span style={{ color: '#A78BFA' }}>{brandsStr}</span>}
-                      </span>
-                    )}
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {j.markets}
+                    {sitesStr && <span style={{ color: '#3A4258' }}> · </span>}
+                    {sitesStr && <span style={{ color: '#7BB0FF' }}>{sitesStr}</span>}
+                    {brandsStr && <span style={{ color: '#3A4258' }}> · </span>}
+                    {brandsStr && <span style={{ color: '#A78BFA' }}>{brandsStr}</span>}
                   </span>
                   <span style={{ color: '#9AA5C0', minWidth: '110px', textAlign: 'right' }}>
                     {fmtNum(j.current)} / {fmtNum(j.total)} ({pct}%)
@@ -1261,18 +1258,15 @@ export default function ShipmentsPage() {
               const sitesStr = sites.length > 0 ? (sites.length <= 3 ? sites.join('·') : `${sites.slice(0,3).join('·')} 외 ${fmtNum(sites.length - 3)}`) : ''
               const brandsStr = brands.length > 0 ? (brands.length <= 3 ? brands.join('·') : `${brands.slice(0,3).join('·')} 외 ${fmtNum(brands.length - 3)}`) : ''
               return (
-                <div key={`p-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: '#8A95B0' }}>
+                <div key={`p-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: '#8A95B0', borderBottom: '1px solid #151822', paddingBottom: '4px', marginBottom: '0' }}>
                   <span style={{ color: '#FAB005', fontWeight: 600, minWidth: '40px' }}>대기</span>
                   <span style={{ minWidth: '72px' }}>—</span>
-                  <span style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '2px', overflow: 'hidden' }}>
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{j.markets}</span>
-                    {(sitesStr || brandsStr) && (
-                      <span style={{ fontSize: '0.7rem', color: '#6E7A95', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {sitesStr && <span style={{ color: '#7BB0FF' }}>{sitesStr}</span>}
-                        {sitesStr && brandsStr && <span style={{ color: '#3A4258' }}> · </span>}
-                        {brandsStr && <span style={{ color: '#A78BFA' }}>{brandsStr}</span>}
-                      </span>
-                    )}
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {j.markets}
+                    {sitesStr && <span style={{ color: '#3A4258' }}> · </span>}
+                    {sitesStr && <span style={{ color: '#7BB0FF' }}>{sitesStr}</span>}
+                    {brandsStr && <span style={{ color: '#3A4258' }}> · </span>}
+                    {brandsStr && <span style={{ color: '#A78BFA' }}>{brandsStr}</span>}
                   </span>
                   <span style={{ minWidth: '110px', textAlign: 'right' }}>{fmtNum(j.product_count)}건</span>
                   <button

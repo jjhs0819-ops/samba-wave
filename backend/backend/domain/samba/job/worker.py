@@ -471,8 +471,8 @@ class JobWorker:
             clear_account_semaphores()
         except Exception:
             pass
-        # 배포/재시작으로 stuck된 running 잡 자동 복구
-        await self._recover_stuck_jobs()
+        # 배포/재시작으로 stuck된 running 잡 자동 복구 — 시작 시 threshold 없이 전부 복구
+        await self._recover_stuck_jobs(force=True)
         while self._running:
             try:
                 # 주기적 stuck 잡 복구 (배포/DB 끊김 후 running 상태로 남은 잡)
@@ -490,22 +490,28 @@ class JobWorker:
         _worker_status["alive"] = "false"
         logger.info("[잡워커] 종료")
 
-    async def _recover_stuck_jobs(self):
-        """stuck running 잡을 pending으로 복구 — 현재 워커가 실행 중인 잡은 제외."""
+    async def _recover_stuck_jobs(self, force: bool = False):
+        """stuck running 잡을 pending으로 복구 — 현재 워커가 실행 중인 잡은 제외.
+
+        force=True: threshold 없이 전체 복구 (재시작 직후 전용).
+        force=False: STUCK_THRESHOLD_SEC 초과 잡만 복구 (주기적 체크).
+        """
         try:
             from backend.db.orm import get_write_session
             from backend.domain.samba.job.repository import SambaJobRepository
 
+            threshold = 0 if force else self.STUCK_THRESHOLD_SEC
             async with get_write_session() as session:
                 repo = SambaJobRepository(session)
                 recovered = await repo.recover_stuck_running(
                     exclude_ids=self._active_job_ids,
-                    threshold_sec=self.STUCK_THRESHOLD_SEC,
+                    threshold_sec=threshold,
                 )
                 if recovered:
                     await session.commit()
                     logger.info(
                         f"[잡워커] stuck running 잡 {recovered}건 → pending 복구"
+                        + (" (강제 복구)" if force else "")
                     )
         except Exception as e:
             logger.warning(f"[잡워커] stuck 잡 복구 실패: {e}")

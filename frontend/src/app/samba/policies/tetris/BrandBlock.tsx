@@ -134,7 +134,7 @@ export default function BrandBlock({
         </div>
       </div>
 
-      {block.id && !isLegacy && (
+      {block.id && (
         <button
           onClick={e => { e.stopPropagation(); onRemove(block.id!, block.brand_name, block.source_site) }}
           title="이 계정에서 삭제"

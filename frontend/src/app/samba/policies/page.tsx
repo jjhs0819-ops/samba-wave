@@ -202,7 +202,7 @@ export default function PoliciesPage() {
   const [showSourceSiteMargins, setShowSourceSiteMargins] = useState(false)
 
   // 메인 탭 (정책관리 vs 테트리스 매칭)
-  const [mainTab, setMainTab] = useState<'정책관리' | '테트리스 매칭'>('정책관리')
+  const [mainTab, setMainTab] = useState<'정책관리' | '테트리스 매칭'>('테트리스 매칭')
   const [tetrisMatchingEnabled, setTetrisMatchingEnabled] = useState(false)
   const [tetrisMatchingSaving, setTetrisMatchingSaving] = useState(false)
   const [syncIntervalInput, setSyncIntervalInput] = useState<number>(1)
@@ -613,21 +613,6 @@ export default function PoliciesPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           <button
-            onClick={() => setMainTab('정책관리')}
-            style={{
-              padding: '0.375rem 0.75rem',
-              fontSize: '0.75rem',
-              borderRadius: '6px',
-              border: mainTab === '정책관리' ? '1px solid #FF8C00' : '1px solid #2D2D2D',
-              background: mainTab === '정책관리' ? 'rgba(255,140,0,0.12)' : 'transparent',
-              color: mainTab === '정책관리' ? '#FF8C00' : '#888',
-              cursor: 'pointer',
-              fontWeight: 600,
-            }}
-          >
-            정책관리
-          </button>
-          <button
             onClick={() => setMainTab('테트리스 매칭')}
             style={{
               padding: '0.375rem 0.75rem',
@@ -641,6 +626,21 @@ export default function PoliciesPage() {
             }}
           >
             테트리스 매칭
+          </button>
+          <button
+            onClick={() => setMainTab('정책관리')}
+            style={{
+              padding: '0.375rem 0.75rem',
+              fontSize: '0.75rem',
+              borderRadius: '6px',
+              border: mainTab === '정책관리' ? '1px solid #FF8C00' : '1px solid #2D2D2D',
+              background: mainTab === '정책관리' ? 'rgba(255,140,0,0.12)' : 'transparent',
+              color: mainTab === '정책관리' ? '#FF8C00' : '#888',
+              cursor: 'pointer',
+              fontWeight: 600,
+            }}
+          >
+            정책관리
           </button>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem' }}>

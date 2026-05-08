@@ -274,7 +274,7 @@ export default function TetrisBoard() {
       board.markets.forEach(m =>
         m.accounts.forEach(a =>
           a.assignments.forEach(b => {
-            if (b.source_site === sourceSite && b.brand_name === brandName && b.id && !b.is_legacy) {
+            if (b.source_site === sourceSite && b.brand_name === brandName && b.id) {
               targets.push(b.id)
             }
           })
