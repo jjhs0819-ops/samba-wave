@@ -14,7 +14,7 @@ class SambaProductService:
         self, skip: int = 0, limit: int = 50, status: Optional[str] = None
     ) -> List[SambaProduct]:
         if status:
-            return await self.repo.list_by_status(status)
+            return await self.repo.list_by_status(status, limit=limit)
         return await self.repo.list_async(
             skip=skip, limit=limit, order_by="-created_at"
         )

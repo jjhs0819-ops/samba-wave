@@ -112,6 +112,6 @@ class SambaSnsAutoConfigRepository(BaseRepository[SambaSnsAutoConfig]):
         """사이트별 자동 포스팅 설정 조회."""
         return await self.find_by_async(wp_site_id=wp_site_id)
 
-    async def list_running(self) -> List[SambaSnsAutoConfig]:
-        """실행 중인 자동 포스팅 설정 목록 조회."""
-        return await self.filter_by_async(is_running=True)
+    async def list_running(self, limit: int = 500) -> List[SambaSnsAutoConfig]:
+        """실행 중인 자동 포스팅 설정 목록 조회 — limit 명시 (CLAUDE.md 성능 규칙)."""
+        return await self.filter_by_async(is_running=True, limit=limit)

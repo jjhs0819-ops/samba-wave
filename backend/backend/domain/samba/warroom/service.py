@@ -20,6 +20,7 @@ from backend.utils.logger import logger
 
 _RETENTION_DAYS = 30  # 이벤트 보존 기간
 _emit_counter = 0  # 100회마다 정리 실행
+_emit_counter_lock = asyncio.Lock()  # 코루틴 race 방지: += 연산 보호
 
 # ── 대시보드 결과 인메모리 캐시 ──
 # 30초 폴링 대상 API이므로 30초 TTL 캐시로 대부분의 중복 연산을 회피.
@@ -65,10 +66,14 @@ class SambaMonitorService:
             self.session.add(event)
             await self.session.flush()
 
-            # 100회마다 30일 이전 이벤트 자동 정리
-            _emit_counter += 1
-            if _emit_counter >= 100:
-                _emit_counter = 0
+            # 100회마다 30일 이전 이벤트 자동 정리 (lock으로 race 방지)
+            should_cleanup = False
+            async with _emit_counter_lock:
+                _emit_counter += 1
+                if _emit_counter >= 100:
+                    _emit_counter = 0
+                    should_cleanup = True
+            if should_cleanup:
                 cutoff = datetime.now(timezone.utc) - timedelta(days=_RETENTION_DAYS)
                 deleted = await self.repo.cleanup_old(cutoff)
                 if deleted:

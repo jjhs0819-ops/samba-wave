@@ -129,7 +129,9 @@ class SambaForbiddenService:
             deletion_found: list of deletion words found in the product name
             clean_name: str - product name with deletion words removed
         """
-        all_active = await self.word_repo.filter_by_async(is_active=True)
+        # limit=10000 — 금지어 테이블은 보통 수백~수천개, 만약을 대비한 상한.
+        # CLAUDE.md 성능 규칙: filter_by_async는 limit 명시 필수.
+        all_active = await self.word_repo.filter_by_async(is_active=True, limit=10000)
 
         forbidden_found: List[str] = []
         deletion_found: List[str] = []

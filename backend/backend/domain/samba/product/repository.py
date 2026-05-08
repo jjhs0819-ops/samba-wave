@@ -33,7 +33,13 @@ class SambaProductRepository(BaseRepository[SambaProduct]):
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def list_by_status(self, status: str) -> List[SambaProduct]:
+    async def list_by_status(
+        self, status: str, limit: int = 1000
+    ) -> List[SambaProduct]:
+        # limit 명시 필수 — 기본값 1000으로 풀스캔 방지 (CLAUDE.md 성능 규칙)
         return await self.filter_by_async(
-            status=status, order_by="created_at", order_by_desc=True
+            status=status,
+            order_by="created_at",
+            order_by_desc=True,
+            limit=limit,
         )
