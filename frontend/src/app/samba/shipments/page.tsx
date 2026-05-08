@@ -185,6 +185,11 @@ export default function ShipmentsPage() {
     }, DELETE_POLL_INTERVAL_MS)
   }, [stopBackgroundLogPolling])
 
+  // 마운트 시 계정 목록 즉시 로드 (검색 전에도 마켓등록 드롭박스에 표시)
+  useEffect(() => {
+    accountApi.listActive().catch(() => []).then(a => setAccounts(a))
+  }, [])
+
   // 컴포넌트 언마운트 시 잡 폴링 정리
   useEffect(() => {
     return () => {
@@ -649,28 +654,29 @@ export default function ShipmentsPage() {
     if (selectedAccounts.length === 0) { showAlert('마켓 계정을 선택해주세요'); return }
     if (selectedSites.length === 0) { showAlert('소싱사이트를 선택해주세요'); return }
 
-    // 현재 검색 조건(적용된 값)으로 전체 상품 조회
-    const allParams: Record<string, string | number> = { skip: 0, limit: 10000 }
+    // 현재 검색 조건(적용된 값)으로 전체 상품 ID 조회 (경량) → 청크 분할 상세 조회
+    const idParams: Parameters<typeof collectorApi.getProductIds>[0] = {}
     if (appliedSearchText.trim()) {
-      allParams.search = appliedSearchText.trim()
+      idParams.search = appliedSearchText.trim()
       const typeMap: Record<string, string> = { name: 'name', brand: 'brand', name_all: 'name_all', group: 'filter', no: 'no', policy: 'policy' }
-      allParams.search_type = typeMap[appliedSearchField] || 'name'
+      idParams.search_type = typeMap[appliedSearchField] || 'name'
     }
-    if (appliedSiteFilter !== '전체') allParams.source_site = appliedSiteFilter
-    if (appliedSoldOutFilter !== '전체') allParams.sold_out_filter = appliedSoldOutFilter === '품절' ? 'sold_out' : 'not_sold_out'
+    if (appliedSiteFilter !== '전체') idParams.source_site = appliedSiteFilter
+    if (appliedSoldOutFilter !== '전체') idParams.sold_out_filter = appliedSoldOutFilter === '품절' ? 'sold_out' : 'not_sold_out'
     if (appliedRegistrationFilter !== '전체') {
       if (appliedRegistrationFilter.startsWith('reg_') || appliedRegistrationFilter.startsWith('unreg_') || appliedRegistrationFilter.startsWith('mtype_')) {
-        allParams.status = appliedRegistrationFilter
+        idParams.status = appliedRegistrationFilter
       } else {
-        allParams.status = appliedRegistrationFilter === '등록' ? 'market_registered' : appliedRegistrationFilter === '미등록' ? 'market_unregistered' : appliedRegistrationFilter === '품절' ? 'sold_out' : ''
+        idParams.status = appliedRegistrationFilter === '등록' ? 'market_registered' : appliedRegistrationFilter === '미등록' ? 'market_unregistered' : appliedRegistrationFilter === '품절' ? 'sold_out' : ''
       }
     }
 
     let allItems
     try {
-      const all = await collectorApi.scrollProducts(allParams)
+      const idResult = await collectorApi.getProductIds(idParams)
       const siteSet = new Set(selectedSites)
-      allItems = all.items.filter(p => siteSet.has(p.source_site))
+      const allProds = await fetchProductsByIdsChunked(idResult.ids)
+      allItems = allProds.filter(p => siteSet.has(p.source_site))
     } catch (e) {
       showAlert('상품 조회 실패: ' + (e instanceof Error ? e.message : ''), 'error')
       return
@@ -1060,7 +1066,7 @@ export default function ShipmentsPage() {
           <select value={searchField} onChange={e => setSearchField(e.target.value)} style={{ ...inputStyle, width: '100px' }}>
             <option value="name">검색항목</option>
             <option value="brand">브랜드</option>
-            <option value="name_all">상품명+등록명</option>
+            <option value="name_all">상품명</option>
             <option value="group">그룹</option>
             <option value="no">상품번호</option>
             <option value="policy">정책</option>
