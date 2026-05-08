@@ -756,14 +756,17 @@ class LotteHomeClient:
     ) -> dict[str, Any]:
         """판매상태 변경. sale_stat_cd: 10=판매진행, 20=품절, 30=영구중단."""
         cert_key = await self._ensure_auth()
+        params: dict[str, Any] = {
+            "subscriptionId": cert_key,
+            "goods_no": goods_no,
+            "sale_stat_cd": sale_stat_cd,
+        }
+        if self.agnc_no:
+            params["agncNo"] = self.agnc_no
         return await self._call_api_auto_retry(
             "updateGoodsSaleStat.lotte",
             "POST",
-            {
-                "subscriptionId": cert_key,
-                "goods_no": goods_no,
-                "sale_stat_cd": sale_stat_cd,
-            },
+            params,
         )
 
     # ------------------------------------------------------------------
