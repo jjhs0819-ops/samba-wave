@@ -1621,17 +1621,8 @@ class SambaShipmentService:
                     last_cost_sent = 0
                     opts_changed = False
 
-                if skip_unchanged and has_update and last_sent:
-                    if (
-                        last_price == cur_price
-                        and last_cost_sent == cur_cost_int
-                        and not opts_changed
-                    ):
-                        res["status"] = "skipped"
-                        logger.info(f"[전송] {market_type} 스킵")
-                        return res
-
-                # 기존 상품번호 확인
+                # 기존 상품번호 확인 — skip_unchanged 판단 전에 먼저 수행
+                # (미등록 상품은 last_sent_data가 있어도 스킵하면 안 됨)
                 existing_nos = product_row.market_product_nos or {}
                 if market_type == "smartstore":
                     existing_product_no = existing_nos.get(f"{account_id}_origin", "")
@@ -1653,6 +1644,18 @@ class SambaShipmentService:
                     logger.info(
                         f"[전송] 기존 상품번호 발견 → 수정 모드: {market_type} #{existing_product_no}"
                     )
+
+                # 마켓에 실제 등록된 상품번호가 있는 경우에만 skip_unchanged 적용
+                # existing_product_no 없으면 미등록 상품 → 반드시 신규 등록 시도
+                if skip_unchanged and has_update and last_sent and existing_product_no:
+                    if (
+                        last_price == cur_price
+                        and last_cost_sent == cur_cost_int
+                        and not opts_changed
+                    ):
+                        res["status"] = "skipped"
+                        logger.info(f"[전송] {market_type} 스킵")
+                        return res
 
                 # 마켓 API 호출 (계정별 세마포어 — 120초 대기)
                 # httpx 타임아웃과 차등화하여 한 건이 느려도 동반 타임아웃 폭주 방지
