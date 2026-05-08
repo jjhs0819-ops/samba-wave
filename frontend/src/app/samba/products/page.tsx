@@ -436,7 +436,7 @@ export default function ProductsPage() {
       return;
     }
     if (p && (p.registered_accounts?.length ?? 0) > 0) {
-      openMarketDeleteModal([p], 'single', 'force')
+      openMarketDeleteModal([p], 'single', 'market')
       return;
     }
     setDeleteConfirm({ ids: [id], label: p ? `"${p.name.slice(0, 30)}"` : "이 상품" });
