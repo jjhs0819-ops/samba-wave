@@ -120,7 +120,7 @@ interface LottePolicy {
   mdGsgrNo: string; mdGsgrNm: string
   dispNo: string; dispNm: string
   stdCatNo: string; stdCatNm: string
-  brndNo: string; brndNm: string
+  brandMappings: { brnd_no: string; brnd_nm: string }[]
   manufacturer: string
   taxType: string
   ageLimit: string
@@ -151,7 +151,7 @@ interface LottePolicy {
   itemQualityNote: string
   itemAs: string
 }
-const defaultLottePolicy: LottePolicy = { mdGsgrNo: '', mdGsgrNm: '', dispNo: '', dispNm: '', stdCatNo: '', stdCatNm: '', brndNo: '', brndNm: '', manufacturer: '', taxType: '', ageLimit: '', purchaseType: '', marginRate: '', saleType: '', saleMethod: '', priceCompareDisplay: '', purchaseQtyLimit: '', optionModify: '', optionStockMgmt: '사용함', imageResize: '', dlvPolcNo: '', dlvPolcNm: '', corpRlsPlSn: '', corpRlsPlNm: '', corpDlvpSn: '', corpDlvpNm: '', addDlvPolcNo: '', addDlvPolcNm: '', ecGoodsArtcCd: '', ecGoodsArtcNm: '', itemMaterial: '', itemColor: '', itemSize: '', itemImport: '', itemImportNote: '', itemWashing: '', itemMfgDate: '', itemQuality: '', itemQualityNote: '', itemAs: '' }
+const defaultLottePolicy: LottePolicy = { mdGsgrNo: '', mdGsgrNm: '', dispNo: '', dispNm: '', stdCatNo: '', stdCatNm: '', brandMappings: [], manufacturer: '', taxType: '', ageLimit: '', purchaseType: '', marginRate: '', saleType: '', saleMethod: '', priceCompareDisplay: '', purchaseQtyLimit: '', optionModify: '', optionStockMgmt: '사용함', imageResize: '', dlvPolcNo: '', dlvPolcNm: '', corpRlsPlSn: '', corpRlsPlNm: '', corpDlvpSn: '', corpDlvpNm: '', addDlvPolcNo: '', addDlvPolcNm: '', ecGoodsArtcCd: '', ecGoodsArtcNm: '', itemMaterial: '', itemColor: '', itemSize: '', itemImport: '', itemImportNote: '', itemWashing: '', itemMfgDate: '', itemQuality: '', itemQualityNote: '', itemAs: '' }
 
 function extractLotteList<T>(data: unknown, ...keys: string[]): T[] {
   if (!data || typeof data !== 'object') return []
@@ -335,7 +335,7 @@ export default function PoliciesPage() {
   // 롯데홈쇼핑: 저장된 정책 + MD상품군 초기 로드
   useEffect(() => {
     request<{ success: boolean; data: Record<string, unknown> }>(`${API_BASE}/api/v1/samba/proxy/lottehome/policy`)
-      .then(res => { if (res.success && res.data && Object.keys(res.data).length > 0) { const loaded = { ...defaultLottePolicy, ...res.data }; setLottePolicy({ ...loaded, optionStockMgmt: (loaded.optionStockMgmt as string) || '사용함' }) } })
+      .then(res => { if (res.success && res.data && Object.keys(res.data).length > 0) { const raw = res.data as Record<string, unknown>; const loaded = { ...defaultLottePolicy, ...raw }; if (!loaded.brandMappings?.length && (raw.brndNo as string)) { loaded.brandMappings = [{ brnd_no: raw.brndNo as string, brnd_nm: (raw.brndNm as string) || '' }] } setLottePolicy({ ...loaded, optionStockMgmt: (loaded.optionStockMgmt as string) || '사용함' }) } })
       .catch(() => {})
     setLotteMdLoading(true)
     request<{ success: boolean; data: unknown }>(`${API_BASE}/api/v1/samba/proxy/lottehome/md-groups`)
@@ -1063,13 +1063,13 @@ export default function PoliciesPage() {
                     <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.375rem' }}>
                       <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0, paddingTop: '0.3rem' }}>브랜드</span>
                       <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
-                        {lottePolicy.brndNo && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', marginBottom: '0.25rem' }}>
-                            <span style={{ fontSize: '0.8rem', color: '#FF8C00', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>[{lottePolicy.brndNo}] {lottePolicy.brndNm}</span>
-                            <button onClick={() => setLottePolicy(p => ({ ...p, brndNo: '', brndNm: '' }))}
+                        {lottePolicy.brandMappings.map(b => (
+                          <div key={b.brnd_no} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', marginBottom: '0.2rem' }}>
+                            <span style={{ fontSize: '0.8rem', color: '#FF8C00', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>[{b.brnd_no}] {b.brnd_nm}</span>
+                            <button onClick={() => setLottePolicy(p => ({ ...p, brandMappings: p.brandMappings.filter(x => x.brnd_no !== b.brnd_no) }))}
                               style={{ fontSize: '0.75rem', color: '#888', background: 'transparent', border: 'none', cursor: 'pointer', padding: '0 2px', flexShrink: 0 }}>✕</button>
                           </div>
-                        )}
+                        ))}
                         <input
                           style={{ width: '100%', padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', boxSizing: 'border-box' }}
                           placeholder="브랜드명 검색 (예: nike)"
@@ -1086,7 +1086,7 @@ export default function PoliciesPage() {
                           <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 0, right: 0, background: '#1A1A1A', border: '1px solid #3D3D3D', borderRadius: '4px', zIndex: 50, maxHeight: '180px', overflowY: 'auto' }}>
                             {lotteBrands.map(b => (
                               <div key={b.brnd_no}
-                                onClick={() => { setLottePolicy(p => ({ ...p, brndNo: b.brnd_no, brndNm: b.brnd_nm })); setLotteBrandKeyword(''); setLotteBrands([]); setLotteBrandError('') }}
+                                onClick={() => { setLottePolicy(p => ({ ...p, brandMappings: p.brandMappings.some(x => x.brnd_no === b.brnd_no) ? p.brandMappings : [...p.brandMappings, { brnd_no: b.brnd_no, brnd_nm: b.brnd_nm }] })); setLotteBrandKeyword(''); setLotteBrands([]); setLotteBrandError('') }}
                                 style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', color: '#E5E5E5', cursor: 'pointer' }}
                                 onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,140,0,0.12)')}
                                 onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
