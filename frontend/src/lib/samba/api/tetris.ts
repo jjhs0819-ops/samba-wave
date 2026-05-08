@@ -83,6 +83,12 @@ export interface TetrisSyncResponse {
   triggered: number
 }
 
+export interface TetrisAssignmentEntry {
+  source_site: string
+  brand_name: string
+  market_account_id: string
+}
+
 // ─── API 클라이언트 ───────────────────────────────────────────────────────────
 
 export const tetrisApi = {
@@ -132,4 +138,7 @@ export const tetrisApi = {
       body: JSON.stringify({ source_site: sourceSite, brand_name: brandName, market_account_id: marketAccountId }),
       headers: { 'Content-Type': 'application/json' },
     }),
+
+  listAssignments: () =>
+    request<TetrisAssignmentEntry[]>(`${BASE}/assignments`),
 }

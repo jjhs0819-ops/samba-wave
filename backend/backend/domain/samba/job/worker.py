@@ -967,6 +967,8 @@ class JobWorker:
         update_items = payload.get("update_items", [])
         target_account_ids = payload.get("target_account_ids", [])
         skip_unchanged = payload.get("skip_unchanged", False)
+        # 프론트에서 테트리스 배치 기반으로 직접 target_account_ids 구성한 경우 True
+        _payload_tetris_flag = bool(payload.get("skip_policy_account_filter", False))
 
         if not product_ids:
             await repo.fail_job(job.id, "product_ids 없음")
@@ -1009,6 +1011,9 @@ class JobWorker:
                     .first()
                 )
                 _tetris_enabled = bool(_setting_row.value) if _setting_row else False
+                # payload 플래그가 True이면 DB 설정과 무관하게 테트리스 오버라이드 활성화
+                if _payload_tetris_flag:
+                    _tetris_enabled = True
                 if _tetris_enabled:
                     _tet_repo = SambaTetrisRepository(_cfg_sess)
                     _assignments = await _tet_repo.list_by_tenant(_tenant_id)

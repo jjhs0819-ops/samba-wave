@@ -169,6 +169,24 @@ async def run_sync(
     return TetrisSyncResponse(**result)
 
 
+@router.get("/assignments")
+async def list_assignments(
+    session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+) -> list[dict]:
+    """현재 배치된 브랜드 목록 반환 — source_site, brand_name, market_account_id."""
+    repo = SambaTetrisRepository(session)
+    assignments = await repo.list_by_tenant(tenant_id)
+    return [
+        {
+            "source_site": a.source_site,
+            "brand_name": a.brand_name,
+            "market_account_id": a.market_account_id,
+        }
+        for a in assignments
+    ]
+
+
 class RemoveByBrandRequest(BaseModel):
     source_site: str
     brand_name: str

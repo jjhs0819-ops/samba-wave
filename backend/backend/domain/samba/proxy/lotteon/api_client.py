@@ -1398,6 +1398,10 @@ class LotteonClient:
                 seen_keys: set[tuple] = set()
                 for if_cpl in (None, "Y"):
                     body: dict = {"srchStrtDt": srch_strt, "srchEndDt": srch_end}
+                    if self.tr_no:
+                        body["trNo"] = (
+                            self.tr_no
+                        )  # 계정 trNo로 필터링 — 타 계정 주문 수집 차단
                     if if_cpl:
                         body["ifCplYN"] = if_cpl
                     try:

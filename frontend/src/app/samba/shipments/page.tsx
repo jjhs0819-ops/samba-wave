@@ -14,6 +14,7 @@ import {
   type SambaPolicy,
 } from '@/lib/samba/api/commerce'
 import { fetchWithAuth } from '@/lib/samba/api/shared'
+import { tetrisApi } from '@/lib/samba/api/tetris'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { SITE_COLORS } from '@/lib/samba/constants'
 import { inputStyle, fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
@@ -861,10 +862,36 @@ export default function ShipmentsPage() {
     }
     setProgress({ current: 0, total: tasks.length })
 
+    // 테트리스 배치 조회 — 브랜드에 배치 계정이 있으면 정책 계정 대신 테트리스 계정 사용
+    let tetrisMap: Map<string, string> = new Map()
+    try {
+      const tetrisAssignments = await tetrisApi.listAssignments()
+      for (const a of tetrisAssignments) {
+        tetrisMap.set(`${a.source_site}:${a.brand_name}`, a.market_account_id)
+      }
+    } catch { /* 조회 실패 시 기존 정책 로직으로 폴백 */ }
+
+    // 테트리스 배치가 있는 상품은 해당 계정으로 targetAccIds 교체
+    let hasTetrisOverride = false
+    const tetrisTasks = tasks.map(task => {
+      const prod = productsById.get(task.pid)
+      if (!prod) return task
+      const tetrisAccId = tetrisMap.get(`${prod.source_site}:${prod.brand}`)
+      if (tetrisAccId) {
+        hasTetrisOverride = true
+        return { ...task, targetAccIds: [tetrisAccId] }
+      }
+      return task
+    })
+
     // Job 큐로 백그라운드 전송 (건수 무관)
     try {
-      const allPids = tasks.map(t => t.pid)
-      const allAccIds = [...effectiveAccountSet]
+      const allPids = tetrisTasks.map(t => t.pid)
+      // 테트리스 오버라이드 포함 시 모든 실제 대상 계정 ID 수집
+      const finalAccIds = hasTetrisOverride
+        ? [...new Set(tetrisTasks.flatMap(t => t.targetAccIds))]
+        : [...effectiveAccountSet]
+      const allAccIds = finalAccIds
       const jobPayload = {
         job_type: 'transmit',
         payload: {
@@ -872,6 +899,7 @@ export default function ShipmentsPage() {
           update_items: items,
           target_account_ids: allAccIds,
           skip_unchanged: skipEnabled,
+          skip_policy_account_filter: hasTetrisOverride,
         },
       }
       setPausedJobPayload(jobPayload)
