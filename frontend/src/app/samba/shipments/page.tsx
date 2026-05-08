@@ -863,7 +863,7 @@ export default function ShipmentsPage() {
     setProgress({ current: 0, total: tasks.length })
 
     // 테트리스 배치 조회 — 브랜드에 배치 계정이 있으면 정책 계정 대신 테트리스 계정 사용
-    let tetrisMap: Map<string, string> = new Map()
+    const tetrisMap: Map<string, string> = new Map()
     try {
       const tetrisAssignments = await tetrisApi.listAssignments()
       for (const a of tetrisAssignments) {
@@ -1459,7 +1459,7 @@ export default function ShipmentsPage() {
                     }
                   }
                   // 테트리스 배치 조회 — 배치 계정이 있으면 target_account_ids에 포함
-                  let bulkTetrisMap: Map<string, string> = new Map()
+                  const bulkTetrisMap: Map<string, string> = new Map()
                   let bulkHasTetris = false
                   try {
                     const tetrisAssignments = await tetrisApi.listAssignments()
