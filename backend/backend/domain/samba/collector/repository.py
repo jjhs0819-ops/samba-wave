@@ -36,14 +36,16 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
         return len(products)
 
     async def search(self, query: str, limit: int = 100) -> List[SambaCollectedProduct]:
-        lower_q = f"%{query.lower()}%"
+        from backend.core.sql_safe import escape_like
+
+        lower_q = f"%{escape_like(query.lower())}%"
         stmt = (
             select(SambaCollectedProduct)
             .where(
                 or_(
-                    SambaCollectedProduct.name.ilike(lower_q),
-                    SambaCollectedProduct.brand.ilike(lower_q),
-                    SambaCollectedProduct.source_site.ilike(lower_q),
+                    SambaCollectedProduct.name.ilike(lower_q, escape="\\"),
+                    SambaCollectedProduct.brand.ilike(lower_q, escape="\\"),
+                    SambaCollectedProduct.source_site.ilike(lower_q, escape="\\"),
                 )
             )
             .limit(limit)

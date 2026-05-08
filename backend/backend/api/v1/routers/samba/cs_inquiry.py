@@ -479,13 +479,18 @@ async def _find_collected_product_by_market_product_no(
 
     # ── 1차: market_product_nos LIKE 매칭 (정수형 저장 케이스도 잡히도록 따옴표 제외) ──
     if market_product_no:
+        # market_product_no 는 외부 (CS 게시물 본문) 에서 유래 — `%`/`_` 와일드카드를
+        # 리터럴로 강제하기 위해 escape 후 ESCAPE '\\' 절 명시.
+        from backend.core.sql_safe import escape_like
+
         sql = sa_text(
             "SELECT id, source_site, site_product_id, name, images "
             "FROM samba_collected_product "
-            "WHERE market_product_nos::text LIKE :pattern "
+            "WHERE market_product_nos::text LIKE :pattern ESCAPE '\\' "
             "LIMIT 1"
         )
-        result = await session.execute(sql, {"pattern": f"%{market_product_no}%"})
+        safe = escape_like(str(market_product_no))
+        result = await session.execute(sql, {"pattern": f"%{safe}%"})
         row = result.fetchone()
         if row:
             pid, source_site, site_product_id, name, images = row

@@ -60,11 +60,15 @@ async def search_products(
 ):
     # tenant_id가 있으면 해당 테넌트 상품만 검색
     if tenant_id:
+        # q 는 외부 입력 — `%`/`_` 메타 escape 후 ESCAPE '\\' 명시.
+        from backend.core.sql_safe import escape_like
+
+        safe_q = f"%{escape_like(q)}%"
         stmt = (
             select(SambaProduct)
             .where(
                 SambaProduct.tenant_id == tenant_id,
-                SambaProduct.name.ilike(f"%{q}%"),
+                SambaProduct.name.ilike(safe_q, escape="\\"),
             )
             .limit(limit)
         )

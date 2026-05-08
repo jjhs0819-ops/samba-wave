@@ -14,15 +14,18 @@ class SambaProductRepository(BaseRepository[SambaProduct]):
         super().__init__(session, SambaProduct)
 
     async def search(self, query: str, limit: int = 100) -> List[SambaProduct]:
-        lower_q = f"%{query.lower()}%"
+        # query 는 외부 입력 — `%`/`_` 메타 escape 후 ESCAPE '\\' 명시.
+        from backend.core.sql_safe import escape_like
+
+        lower_q = f"%{escape_like(query.lower())}%"
         stmt = (
             select(SambaProduct)
             .where(
                 or_(
-                    SambaProduct.name.ilike(lower_q),
-                    SambaProduct.source_url.ilike(lower_q),
-                    SambaProduct.source_site.ilike(lower_q),
-                    SambaProduct.brand.ilike(lower_q),
+                    SambaProduct.name.ilike(lower_q, escape="\\"),
+                    SambaProduct.source_url.ilike(lower_q, escape="\\"),
+                    SambaProduct.source_site.ilike(lower_q, escape="\\"),
+                    SambaProduct.brand.ilike(lower_q, escape="\\"),
                 )
             )
             .limit(limit)

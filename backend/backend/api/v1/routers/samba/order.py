@@ -166,10 +166,15 @@ async def _build_order_filters(
         if "(" in normalized_site_filter:
             filters.append(normalized_source_site == normalized_site_filter)
         else:
+            # site_filter 는 외부 입력 — `%`/`_` 메타 escape 후 ESCAPE '\\' 명시.
+            # `(%` 는 의도된 wildcard 이므로 보존, escape 는 site_filter 부분만 적용.
+            from backend.core.sql_safe import escape_like
+
+            safe_site = escape_like(normalized_site_filter)
             filters.append(
                 or_(
                     normalized_source_site == normalized_site_filter,
-                    normalized_source_site.like(f"{normalized_site_filter}(%"),
+                    normalized_source_site.like(f"{safe_site}(%", escape="\\"),
                 )
             )
     if account_filter:
@@ -260,22 +265,26 @@ async def _build_order_filters(
 
     normalized_search = search_text.strip()
     if normalized_search:
-        lower_q = f"%{normalized_search.lower()}%"
+        # search_text 는 외부 입력 — `%`/`_` 메타 escape 후 ESCAPE '\\' 명시.
+        from backend.core.sql_safe import escape_like
+
+        safe_q = escape_like(normalized_search.lower())
+        lower_q = f"%{safe_q}%"
         if search_category == "product":
-            filters.append(SambaOrder.product_name.ilike(lower_q))
+            filters.append(SambaOrder.product_name.ilike(lower_q, escape="\\"))
         elif search_category == "product_id":
-            filters.append(SambaOrder.product_id.ilike(lower_q))
+            filters.append(SambaOrder.product_id.ilike(lower_q, escape="\\"))
         elif search_category == "order_number":
             # 상품주문번호(order_number) + 묶음주문번호(shipment_id) + 외부주문번호(ext_order_number) 모두 매칭
             filters.append(
                 or_(
-                    SambaOrder.order_number.ilike(lower_q),
-                    SambaOrder.shipment_id.ilike(lower_q),
-                    SambaOrder.ext_order_number.ilike(lower_q),
+                    SambaOrder.order_number.ilike(lower_q, escape="\\"),
+                    SambaOrder.shipment_id.ilike(lower_q, escape="\\"),
+                    SambaOrder.ext_order_number.ilike(lower_q, escape="\\"),
                 )
             )
         else:
-            filters.append(SambaOrder.customer_name.ilike(lower_q))
+            filters.append(SambaOrder.customer_name.ilike(lower_q, escape="\\"))
 
     return filters
 
