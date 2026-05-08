@@ -1,7 +1,14 @@
+import re
 from typing import Literal
 
 from pydantic import computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_CHROME_EXT_ID_RE = re.compile(r"^[a-z]{32}$")
+
+
+def _is_valid_chrome_id(value: str) -> bool:
+    return bool(_CHROME_EXT_ID_RE.fullmatch(value))
 
 
 class BackendSettings(BaseSettings):
@@ -109,6 +116,11 @@ class BackendSettings(BaseSettings):
     # 추가 허용 origin (콤마 구분, Railway 환경변수로 주입)
     cors_extra_origins: str = ""
 
+    # 명시적으로 허용할 chrome 확장앱 ID 목록 (콤마 구분, 32자 [a-z]).
+    # env 가 비어있으면 fallback 으로 모든 32자 [a-z] 확장 ID 를 허용 (배포 직후 회귀 방지).
+    # 운영에서는 env 주입 권장 — 임의 확장이 origin 헤더만 위조하면 CORS 통과하는 위험을 차단.
+    chrome_extension_ids: str = ""
+
     @computed_field
     @property
     def cors_origins(self) -> list[str]:
@@ -130,8 +142,32 @@ class BackendSettings(BaseSettings):
     @computed_field
     @property
     def cors_origin_regex(self) -> str | None:
-        """모든 환경에서 localhost + 프로젝트 vercel.app 허용."""
-        return r"(chrome-extension://.+|https?://(localhost(:\d+)?|127\.0\.0\.1(:\d+)?|samba-wave[a-z0-9-]*\.vercel\.app))"
+        """localhost + 프로젝트 vercel.app + chrome 확장앱 origin 허용.
+
+        chrome 확장앱 부분:
+        - chrome_extension_ids 가 주입되면 명시 ID allowlist 만 통과
+        - 비어있으면 [a-z]{32} fallback (운영 env 주입 전 일시적 호환)
+        """
+        ids_raw = (self.chrome_extension_ids or "").strip()
+        if ids_raw:
+            valid_ids = [_id.strip() for _id in ids_raw.split(",") if _id.strip()]
+            valid_ids = [_id for _id in valid_ids if _is_valid_chrome_id(_id)]
+            if valid_ids:
+                # _is_valid_chrome_id 가 [a-z]{32} 만 통과시키지만, defense-in-depth
+                # 로 정규식 메타 문자를 escape — 검증 함수에 회귀 발생 시에도 보호.
+                ext_pattern = "|".join(re.escape(_id) for _id in valid_ids)
+                ext_part = rf"chrome-extension://({ext_pattern})"
+            else:
+                # 잘못된 형식만 들어있으면 어떤 확장도 허용 안 함
+                ext_part = r"chrome-extension://__never_match__"
+        else:
+            ext_part = r"chrome-extension://[a-z]{32}"
+
+        return (
+            r"^(https?://(localhost(:\d+)?|127\.0\.0\.1(:\d+)?"
+            r"|samba-wave[a-z0-9-]*\.vercel\.app)"
+            r"|" + ext_part + r")$"
+        )
 
     # ===========================================
     # Computed Properties

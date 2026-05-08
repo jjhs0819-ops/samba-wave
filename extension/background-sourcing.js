@@ -309,6 +309,7 @@ let _allowedSourceSites = null
 const _siteLoginConfirmed = new Set()
 let _abcLoginCheckTimer = null  // ABCmart 1시간 주기 재체크 타이머
 let _lotteonLoginCheckTimer = null  // LOTTEON 1시간 주기 재체크 타이머
+let _abcLoginConfirmedAt = 0  // ABCmart 마지막 로그인 확인 시각 (ms) — 재합류 시 재체크 스킵 판단용
 
 // 사이트별 동시 처리 세마포어 — 폴링이 받은 작업을 사이트별 캡까지만 병렬 처리
 // (프론트 "동시실행" 설정값을 백엔드 status API에서 받아 적용)
@@ -491,6 +492,7 @@ async function _checkAbcmartLogin() {
         if (r?.result) {
           _siteLoginConfirmed.add('ABCmart')
           _siteLoginConfirmed.add('GrandStage')
+          _abcLoginConfirmedAt = Date.now()
           console.log('[ABCmart] 로그인 확인 완료 — 오토튠 중 재체크 없음')
           return true
         }
@@ -536,7 +538,16 @@ globalThis._setLocalAutotuneJoined = (joined, sourceSites = null) => {
     const lotteonSelected = sourceSites === null || sourceSites.includes('LOTTEON')
     // ABCmart pre-login — ABCmart/GrandStage가 선택된 경우만
     if (abcSelected) {
-      _abcPreLoginPromise = _checkAbcmartLogin()
+      // 2시간 이내 로그인 확인됐으면 재체크 스킵 (LotteON 자동로그인 등 무관한 재합류 시 불필요한 3분 체크 방지)
+      const _abcRecentlyConfirmed = _abcLoginConfirmedAt > 0 && (Date.now() - _abcLoginConfirmedAt) < 2 * 60 * 60 * 1000
+      if (_abcRecentlyConfirmed) {
+        _siteLoginConfirmed.add('ABCmart')
+        _siteLoginConfirmed.add('GrandStage')
+        _abcPreLoginPromise = null
+        console.log('[ABCmart] pre-login 스킵 — 최근 로그인 확인됨 (재체크 불필요)')
+      } else {
+        _abcPreLoginPromise = _checkAbcmartLogin()
+      }
       if (_abcLoginCheckTimer) clearInterval(_abcLoginCheckTimer)
       _abcLoginCheckTimer = setInterval(() => { _checkAbcmartLogin() }, 60 * 60 * 1000)
     } else {

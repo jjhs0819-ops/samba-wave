@@ -38,10 +38,15 @@ ACTIVE_ORDER_STATUSES = (
 )
 EXCLUDED_ORDER_STATUSES = (
     "cancel_requested",
+    "cancelling",
     "cancelled",
     "return_requested",
+    "returning",
     "returned",
+    "return_completed",
     "exchange_requested",
+    "exchanging",
+    "exchanged",
     "exchange_pending",
     "exchange_done",
     "ship_failed",
@@ -161,10 +166,15 @@ async def _build_order_filters(
         if "(" in normalized_site_filter:
             filters.append(normalized_source_site == normalized_site_filter)
         else:
+            # site_filter 는 외부 입력 — `%`/`_` 메타 escape 후 ESCAPE '\\' 명시.
+            # `(%` 는 의도된 wildcard 이므로 보존, escape 는 site_filter 부분만 적용.
+            from backend.core.sql_safe import escape_like
+
+            safe_site = escape_like(normalized_site_filter)
             filters.append(
                 or_(
                     normalized_source_site == normalized_site_filter,
-                    normalized_source_site.like(f"{normalized_site_filter}(%"),
+                    normalized_source_site.like(f"{safe_site}(%", escape="\\"),
                 )
             )
     if account_filter:
@@ -212,10 +222,8 @@ async def _build_order_filters(
         )
     elif input_filter == "registered":
         # collected_product_id가 있거나, "미등록 입력"으로 source_url/product_image를 채운 주문도 등록된 것으로 간주
-        # 롯데홈쇼핑은 수집상품 연동 없이 직접 등록하므로 항상 통과
         filters.append(
             or_(
-                SambaOrder.source == "lottehome",
                 SambaOrder.collected_product_id != None,  # noqa: E711
                 and_(
                     SambaOrder.source_url != None,  # noqa: E711
@@ -257,22 +265,26 @@ async def _build_order_filters(
 
     normalized_search = search_text.strip()
     if normalized_search:
-        lower_q = f"%{normalized_search.lower()}%"
+        # search_text 는 외부 입력 — `%`/`_` 메타 escape 후 ESCAPE '\\' 명시.
+        from backend.core.sql_safe import escape_like
+
+        safe_q = escape_like(normalized_search.lower())
+        lower_q = f"%{safe_q}%"
         if search_category == "product":
-            filters.append(SambaOrder.product_name.ilike(lower_q))
+            filters.append(SambaOrder.product_name.ilike(lower_q, escape="\\"))
         elif search_category == "product_id":
-            filters.append(SambaOrder.product_id.ilike(lower_q))
+            filters.append(SambaOrder.product_id.ilike(lower_q, escape="\\"))
         elif search_category == "order_number":
             # 상품주문번호(order_number) + 묶음주문번호(shipment_id) + 외부주문번호(ext_order_number) 모두 매칭
             filters.append(
                 or_(
-                    SambaOrder.order_number.ilike(lower_q),
-                    SambaOrder.shipment_id.ilike(lower_q),
-                    SambaOrder.ext_order_number.ilike(lower_q),
+                    SambaOrder.order_number.ilike(lower_q, escape="\\"),
+                    SambaOrder.shipment_id.ilike(lower_q, escape="\\"),
+                    SambaOrder.ext_order_number.ilike(lower_q, escape="\\"),
                 )
             )
         else:
-            filters.append(SambaOrder.customer_name.ilike(lower_q))
+            filters.append(SambaOrder.customer_name.ilike(lower_q, escape="\\"))
 
     return filters
 
@@ -3442,14 +3454,10 @@ async def sync_orders_from_markets(
                                     )
                                     new_p = exchange_priority.get(ex_status, 0)
                                     if cur_p == 0 or new_p >= cur_p:
-                                        update_ex: dict[str, Any] = {
-                                            "shipping_status": ex_status
-                                        }
-                                        if step_cd in ("21", "22", "23", "24"):
-                                            update_ex["status"] = "exchanging"
-                                        elif step_cd == "25":
-                                            update_ex["status"] = "exchanged"
-                                        await svc.update_order(existing.id, update_ex)
+                                        await svc.update_order(
+                                            existing.id,
+                                            {"shipping_status": ex_status},
+                                        )
                                         logger.info(
                                             f"[롯데ON][교환클레임] DB 직접 업데이트: {ex_od_no} → {ex_status}"
                                         )
@@ -3514,10 +3522,7 @@ async def sync_orders_from_markets(
                                 if cur_p == 0 or new_p >= cur_p:
                                     await svc.update_order(
                                         existing_c.id,
-                                        {
-                                            "shipping_status": cn_ship_status,
-                                            "status": cn_status,
-                                        },
+                                        {"shipping_status": cn_ship_status},
                                     )
                                     logger.info(
                                         f"[롯데ON][취소클레임] DB 직접 업데이트: {cn_od_no} → {cn_ship_status}"
@@ -3582,10 +3587,7 @@ async def sync_orders_from_markets(
                                 if cur_p == 0 or new_p >= cur_p:
                                     await svc.update_order(
                                         existing_r.id,
-                                        {
-                                            "shipping_status": rt_ship_status,
-                                            "status": rt_status,
-                                        },
+                                        {"shipping_status": rt_ship_status},
                                     )
                                     logger.info(
                                         f"[롯데ON][반품클레임] DB 직접 업데이트: {rt_od_no} → {rt_ship_status}"
@@ -3639,13 +3641,11 @@ async def sync_orders_from_markets(
                         from sqlalchemy import text as _sa_text_ps
 
                         _set_parts = [
-                            "status = :status",
                             "shipping_status = :ship_status",
                             "updated_at = now()",
                         ]
                         _ps_params: dict[str, Any] = {
                             "order_number": order_number,
-                            "status": new_status,
                             "ship_status": new_ship_status,
                         }
                         if invc_no:
@@ -3697,6 +3697,10 @@ async def sync_orders_from_markets(
                                 alias_map[code] = nick
                 except Exception:
                     pass
+                # 롯데홈쇼핑 직접 연동 계정이 있으면 플레이오토 중복 주문 차단
+                _has_lottehome = any(
+                    a["market_type"] == "lottehome" for a in account_snapshots
+                )
                 pa_client = PlayAutoClient(api_key)
                 try:
                     start_date = (
@@ -3710,11 +3714,35 @@ async def sync_orders_from_markets(
                             count=500,
                         )
                     logger.info(f"[주문동기화] 플레이오토: {len(raw_orders)}건 조회")
+
+                    # 롯데홈쇼핑 직접 연동 시 기존 플레이오토 중복 주문 삭제 (최초 1회)
+                    if _has_lottehome:
+                        from sqlalchemy import text as _pa_text
+
+                        _del_result = await session.execute(
+                            _pa_text(
+                                "DELETE FROM samba_order "
+                                "WHERE source = 'playauto' "
+                                "AND channel_id = :cid "
+                                "AND (source_site LIKE '%롯데아이몰%' OR source_site LIKE '%롯데홈쇼핑%')"
+                            ),
+                            {"cid": account["id"]},
+                        )
+                        if _del_result.rowcount:
+                            logger.info(
+                                f"[주문동기화] 플레이오토 롯데홈쇼핑 중복 주문 {_del_result.rowcount}건 삭제"
+                            )
+
                     for ro in raw_orders:
                         # 파생 주문 스킵 (사본-취소마감, ★교환주문 — 원주문에 이미 정보 포함)
                         _pname = ro.get("ProdName", "")
                         if _pname.startswith("[사본-") or "★교환주문" in _pname:
                             continue
+                        # 롯데홈쇼핑 직접 연동 계정이 있으면 플레이오토 롯데홈 주문 스킵
+                        if _has_lottehome:
+                            _ro_site = str(ro.get("SiteName", "") or "").strip()
+                            if "롯데아이몰" in _ro_site or "롯데홈쇼핑" in _ro_site:
+                                continue
                         orders_data.append(
                             _parse_playauto_order(ro, account["id"], label, alias_map)
                         )
@@ -3870,10 +3898,7 @@ async def sync_orders_from_markets(
                             if _ex:
                                 await svc.update_order(
                                     _ex.id,
-                                    {
-                                        "status": "wait_ship",
-                                        "shipping_status": "배송대기",
-                                    },
+                                    {"shipping_status": "배송대기"},
                                 )
                         logger.info(
                             f"[주문동기화] {label}: 11번가 발주확인 {_confirmed}/{len(_confirm_targets)}건 완료"
@@ -3947,7 +3972,7 @@ async def sync_orders_from_markets(
                         if _ex_cancel:
                             await svc.update_order(
                                 _ex_cancel.id,
-                                {"shipping_status": "취소요청", "status": "cancelled"},
+                                {"shipping_status": "취소요청"},
                             )
 
                     for _claim in _return_claims:
@@ -3968,10 +3993,7 @@ async def sync_orders_from_markets(
                             if _ex_return:
                                 await svc.update_order(
                                     _ex_return.id,
-                                    {
-                                        "shipping_status": "반품요청",
-                                        "status": "return_requested",
-                                    },
+                                    {"shipping_status": "반품요청"},
                                 )
 
                     for _claim in _exchange_claims:
@@ -3997,10 +4019,7 @@ async def sync_orders_from_markets(
                             )
                             await svc.update_order(
                                 _ex_exchange.id,
-                                {
-                                    "shipping_status": "교환요청",
-                                    "status": "exchange_requested",
-                                },
+                                {"shipping_status": "교환요청"},
                             )
 
                 except Exception as _ce:
@@ -4291,18 +4310,33 @@ async def sync_orders_from_markets(
                 _lh_creds_row = _lh_creds_result.first()
                 lh_creds = _lh_creds_row.value if _lh_creds_row else {}
 
-                lh_user_id = lh_creds.get("userId", "") or extras.get("userId", "") or account["seller_id"] or ""
-                lh_password = lh_creds.get("password", "") or extras.get("password", "") or ""
+                lh_user_id = (
+                    lh_creds.get("userId", "")
+                    or extras.get("userId", "")
+                    or account["seller_id"]
+                    or ""
+                )
+                lh_password = (
+                    lh_creds.get("password", "") or extras.get("password", "") or ""
+                )
                 lh_agnc_no = lh_creds.get("agncNo", "") or extras.get("agncNo", "")
                 lh_env = lh_creds.get("env", "prod")
 
                 if not lh_user_id or not lh_password:
-                    results.append({"account": label, "status": "skip", "message": "롯데홈쇼핑 인증정보 없음"})
+                    results.append(
+                        {
+                            "account": label,
+                            "status": "skip",
+                            "message": "롯데홈쇼핑 인증정보 없음",
+                        }
+                    )
                     continue
 
+                await session.commit()
                 lh_client = LotteHomeClient(lh_user_id, lh_password, lh_agnc_no, lh_env)
 
                 from datetime import datetime as _dt, timedelta as _td, UTC as _UTC
+
                 lh_end = _dt.now(_UTC)
                 lh_start = lh_end - _td(days=body.days)
                 lh_start_str = lh_start.strftime("%Y%m%d")
@@ -4311,7 +4345,11 @@ async def sync_orders_from_markets(
                 _lh_seen: set[str] = set()
 
                 def _lh_order_key(ro: dict) -> str:
-                    prod = ro.get("ProdInfo", {}) if isinstance(ro.get("ProdInfo"), dict) else {}
+                    prod = (
+                        ro.get("ProdInfo", {})
+                        if isinstance(ro.get("ProdInfo"), dict)
+                        else {}
+                    )
                     return str(
                         ro.get("SubOrdNo")
                         or prod.get("DlvUnitSn")
@@ -4326,13 +4364,19 @@ async def sync_orders_from_markets(
                     "03": ("pending", "발송약정"),
                 }
                 for _lh_sel in ["01", "02", "03"]:
-                    _lh_orders = await lh_client.search_new_orders(lh_start_str, lh_end_str, sel_option=_lh_sel)
+                    _lh_orders = await lh_client.search_new_orders(
+                        lh_start_str, lh_end_str, sel_option=_lh_sel
+                    )
                     _fs, _fss = _new_ord_status_map[_lh_sel]
                     for ro in _lh_orders:
                         _oid = _lh_order_key(ro)
                         if _oid and _oid not in _lh_seen:
                             _lh_seen.add(_oid)
-                            orders_data.append(_parse_lottehome_order(ro, account["id"], label, _fs, _fss))
+                            orders_data.append(
+                                _parse_lottehome_order(
+                                    ro, account["id"], label, _fs, _fss
+                                )
+                            )
 
                 _dlv_status_map = {
                     "15": ("shipping", "출고지시"),
@@ -4342,43 +4386,69 @@ async def sync_orders_from_markets(
                 }
                 for _lh_stat in ["15", "16", "17", "18"]:
                     try:
-                        _lh_dlv = await lh_client.search_deliver_list(lh_start_str, lh_end_str, ord_dtl_stat_cd=_lh_stat)
+                        _lh_dlv = await lh_client.search_deliver_list(
+                            lh_start_str, lh_end_str, ord_dtl_stat_cd=_lh_stat
+                        )
                         _fs, _fss = _dlv_status_map[_lh_stat]
                         for ro in _lh_dlv:
                             _oid = _lh_order_key(ro)
                             if _oid and _oid not in _lh_seen:
                                 _lh_seen.add(_oid)
-                                orders_data.append(_parse_lottehome_order(ro, account["id"], label, _fs, _fss))
+                                orders_data.append(
+                                    _parse_lottehome_order(
+                                        ro, account["id"], label, _fs, _fss
+                                    )
+                                )
                     except Exception as _dlv_e:
-                        logger.warning(f"[주문동기화] {label}: 배송조회(stat={_lh_stat}) 실패: {_dlv_e}")
+                        logger.warning(
+                            f"[주문동기화] {label}: 배송조회(stat={_lh_stat}) 실패: {_dlv_e}"
+                        )
 
                 def _lh_override(parsed: dict) -> None:
                     _oid = parsed.get("order_number", "")
                     if not _oid:
                         return
-                    orders_data[:] = [o for o in orders_data if o.get("order_number") != _oid]
+                    orders_data[:] = [
+                        o for o in orders_data if o.get("order_number") != _oid
+                    ]
                     orders_data.append(parsed)
                     _lh_seen.add(_oid)
 
                 try:
-                    _lh_cncl = await lh_client.search_cancel_orders(lh_start_str, lh_end_str)
+                    _lh_cncl = await lh_client.search_cancel_orders(
+                        lh_start_str, lh_end_str
+                    )
                     for ro in _lh_cncl:
-                        for parsed in _parse_lottehome_order_multi(ro, account["id"], label, "cancelled"):
+                        for parsed in _parse_lottehome_order_multi(
+                            ro, account["id"], label, "cancelled"
+                        ):
                             _lh_override(parsed)
                 except Exception as _e:
                     logger.warning(f"[주문동기화] {label}: 취소주문 실패: {_e}")
 
                 for _ret_stat in ["20", "21"]:
                     try:
-                        _lh_ret = await lh_client.search_return_orders(lh_start_str, lh_end_str, ord_dtl_stat_cd=_ret_stat)
-                        ret_status = "return_requested" if _ret_stat == "20" else "return_completed"
+                        _lh_ret = await lh_client.search_return_orders(
+                            lh_start_str, lh_end_str, ord_dtl_stat_cd=_ret_stat
+                        )
+                        ret_status = (
+                            "return_requested"
+                            if _ret_stat == "20"
+                            else "return_completed"
+                        )
                         for ro in _lh_ret:
-                            for parsed in _parse_lottehome_order_multi(ro, account["id"], label, ret_status):
+                            for parsed in _parse_lottehome_order_multi(
+                                ro, account["id"], label, ret_status
+                            ):
                                 _lh_override(parsed)
                     except Exception as _e:
-                        logger.warning(f"[주문동기화] {label}: 반품조회(stat={_ret_stat}) 실패: {_e}")
+                        logger.warning(
+                            f"[주문동기화] {label}: 반품조회(stat={_ret_stat}) 실패: {_e}"
+                        )
 
-                logger.info(f"[주문동기화] {label}: 롯데홈쇼핑 주문 {len(orders_data)}건 조회")
+                logger.info(
+                    f"[주문동기화] {label}: 롯데홈쇼핑 주문 {len(orders_data)}건 조회"
+                )
 
             else:
                 results.append(
@@ -4421,6 +4491,9 @@ async def sync_orders_from_markets(
                     }
                     for _k, _v in _mpnos.items():
                         if not _v:
+                            continue
+                        # _qa 상태값("pending"/"approved")은 상품번호가 아니므로 제외
+                        if _k.endswith("_qa"):
                             continue
                         if isinstance(_v, dict):
                             # 중첩 구조: {"originProductNo": "...", "smartstoreChannelProductNo": "..."}
@@ -5431,22 +5504,50 @@ def _parse_coupang_order(
     fee_rate = 11.55
     revenue = round(sale_price * (1 - fee_rate / 100))
 
+    # 쿠팡 ordersheet 응답은 receiver/orderer를 nested object로 내려줌.
+    # 과거 flat key (receiverAddr1 등) 사용 코드가 빈값을 만들었음.
+    receiver = order.get("receiver") or {}
+    orderer = order.get("orderer") or {}
+
     receiver_addr = (
-        order.get("receiverAddr1", "") or order.get("receiverAddress", "") or ""
+        receiver.get("addr1")
+        or order.get("receiverAddr1", "")
+        or order.get("receiverAddress", "")
+        or ""
     )
     receiver_addr_detail = (
-        order.get("receiverAddr2", "") or order.get("receiverAddrDetail", "") or ""
+        receiver.get("addr2")
+        or order.get("receiverAddr2", "")
+        or order.get("receiverAddrDetail", "")
+        or ""
     )
     customer_address = receiver_addr.strip()
     customer_address_detail = receiver_addr_detail.strip()
 
-    orderer_name = order.get("ordererName", "") or order.get("receiverName", "") or ""
+    orderer_name = (
+        orderer.get("name")
+        or receiver.get("name")
+        or order.get("ordererName", "")
+        or order.get("receiverName", "")
+        or ""
+    )
     orderer_tel = (
-        order.get("ordererPhoneNumber", "")
+        orderer.get("safeNumber")
+        or orderer.get("ordererNumber")
+        or receiver.get("safeNumber")
+        or receiver.get("receiverNumber")
+        or order.get("ordererPhoneNumber", "")
         or order.get("orderPhoneNumber", "")
         or order.get("receiverPhoneNumber", "")
         or ""
     )
+
+    if not orderer_name and not customer_address:
+        logger.warning(
+            f"[쿠팡][주문파싱] customer 빈값 — keys={list(order.keys())[:25]} "
+            f"receiver_keys={list(receiver.keys()) if isinstance(receiver, dict) else 'NA'} "
+            f"orderer_keys={list(orderer.keys()) if isinstance(orderer, dict) else 'NA'}"
+        )
 
     # shipmentBoxId 우선 (배송단위 안정 ID), orderId fallback
     order_number = str(shipment_box_id or order_id or "")
@@ -5469,6 +5570,11 @@ def _parse_coupang_order(
         "customer_phone": orderer_tel,
         "customer_address": customer_address,
         "customer_address_detail": customer_address_detail,
+        "customer_note": (
+            order.get("parcelPrintMessage", "")
+            or order.get("shippingMessage", "")
+            or ""
+        ),
         "quantity": quantity,
         "sale_price": sale_price,
         "cost": 0,
@@ -5562,8 +5668,8 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
         "channel_id": account_id,
         "channel_name": label,
         "source": "lotteon",
-        # 합성 키: 동일 odNo 내 다른 옵션(odSeq)을 구분하기 위해 _odSeq_procSeq 접미사
-        "order_number": f"{_od_no}_{_od_seq}_{_proc_seq}" if _od_no else "",
+        # 합성 키: (odNo, odSeq) — procSeq는 처리 단계에 따라 변하므로 제외
+        "order_number": f"{_od_no}_{_od_seq}" if _od_no else "",
         "od_no": _od_no,
         "od_seq": _od_seq,
         "proc_seq": _proc_seq,
@@ -5986,7 +6092,9 @@ def _apply_ebay_claims_to_orders(
                 break
 
 
-def _parse_lottehome_order_multi(item: dict, account_id: str, label: str, force_status: str = "") -> list[dict]:
+def _parse_lottehome_order_multi(
+    item: dict, account_id: str, label: str, force_status: str = ""
+) -> list[dict]:
     """취소/반품처럼 ProdInfo가 리스트인 롯데홈쇼핑 주문 → 상품별 SambaOrder dict 리스트 반환."""
     _shipping_status_map = {
         "cancelled": "취소완료",
@@ -6005,12 +6113,20 @@ def _parse_lottehome_order_multi(item: dict, account_id: str, label: str, force_
         parsed = _parse_lottehome_order(flat, account_id, label)
         if force_status:
             parsed["status"] = force_status
-            parsed["shipping_status"] = _shipping_status_map.get(force_status, force_status)
+            parsed["shipping_status"] = _shipping_status_map.get(
+                force_status, force_status
+            )
         results.append(parsed)
     return results
 
 
-def _parse_lottehome_order(item: dict, account_id: str, label: str, force_status: str = "", force_shipping_status: str = "") -> dict:
+def _parse_lottehome_order(
+    item: dict,
+    account_id: str,
+    label: str,
+    force_status: str = "",
+    force_shipping_status: str = "",
+) -> dict:
     """롯데홈쇼핑 주문 데이터 → SambaOrder dict 변환."""
     from datetime import datetime, timezone
 
@@ -6021,8 +6137,12 @@ def _parse_lottehome_order(item: dict, account_id: str, label: str, force_status
                 return s
         return ""
 
-    prod_info = item.get("ProdInfo", {}) if isinstance(item.get("ProdInfo"), dict) else {}
-    delv_info = item.get("DelvInfo", {}) if isinstance(item.get("DelvInfo"), dict) else {}
+    prod_info = (
+        item.get("ProdInfo", {}) if isinstance(item.get("ProdInfo"), dict) else {}
+    )
+    delv_info = (
+        item.get("DelvInfo", {}) if isinstance(item.get("DelvInfo"), dict) else {}
+    )
 
     order_no = str(item.get("OrdNo", "") or "")
     sub_ord_no = str(item.get("SubOrdNo") or "")
@@ -6033,7 +6153,8 @@ def _parse_lottehome_order(item: dict, account_id: str, label: str, force_status
     proc_stat = str(item.get("OrdProcStat", "") or "")
     is_deliver_api = bool(prod_info.get("DlvUnitSn") or prod_info.get("GoodsNo"))
     status_map = {
-        "업체지시": "pending", "정상": "pending",
+        "업체지시": "pending",
+        "정상": "pending",
         "출고확정": "shipping",
         "배송완료": "delivered",
         "구매확정": "confirmed",
@@ -6053,19 +6174,31 @@ def _parse_lottehome_order(item: dict, account_id: str, label: str, force_status
         shipping_status = proc_stat or "출고지시"
 
     product_name = str(prod_info.get("ProdName") or prod_info.get("GoodsNm") or "")
-    product_option = str(prod_info.get("prodOption") or prod_info.get("GoodsDesc") or "")
+    product_option = str(
+        prod_info.get("prodOption") or prod_info.get("GoodsDesc") or ""
+    )
     product_id = str(prod_info.get("ProdCode") or prod_info.get("GoodsNo") or "")
     sale_price = int(float(prod_info.get("ordPrice") or prod_info.get("SalePrc") or 0))
     buy_real_price = int(float(prod_info.get("buyRealPrice", 0) or 0))
     qty = int(prod_info.get("ordQty") or prod_info.get("OrdQty") or 1)
 
     recv_name = str(
-        delv_info.get("recvName") or delv_info.get("RmitNm") or item.get("OrderName") or ""
+        delv_info.get("recvName")
+        or delv_info.get("RmitNm")
+        or item.get("OrderName")
+        or ""
     )
-    recv_addr = str(delv_info.get("recvAddr1", "") or delv_info.get("Addr", "") or item.get("OrderAddr1", ""))
+    recv_addr = str(
+        delv_info.get("recvAddr1", "")
+        or delv_info.get("Addr", "")
+        or item.get("OrderAddr1", "")
+    )
     recv_addr2 = str(delv_info.get("recvAddr2", "") or item.get("OrderAddr2", ""))
     recv_tel = str(
-        delv_info.get("recvTel") or delv_info.get("recvHp") or item.get("OrderTelNo") or ""
+        delv_info.get("recvTel")
+        or delv_info.get("recvHp")
+        or item.get("OrderTelNo")
+        or ""
     )
     shipping_company = str(delv_info.get("delvName") or delv_info.get("HdcNm") or "")
     tracking_number = _lh_str(delv_info.get("invoiceNo"), delv_info.get("InvNo"))
@@ -6074,12 +6207,16 @@ def _parse_lottehome_order(item: dict, account_id: str, label: str, force_status
     paid_at = None
     if trd_date:
         try:
-            paid_at = datetime.strptime(trd_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            paid_at = datetime.strptime(trd_date, "%Y-%m-%d").replace(
+                tzinfo=timezone.utc
+            )
         except ValueError:
             pass
     if paid_at is None and len(order_no) >= 8:
         try:
-            paid_at = datetime.strptime(order_no[:8], "%Y%m%d").replace(tzinfo=timezone.utc)
+            paid_at = datetime.strptime(order_no[:8], "%Y%m%d").replace(
+                tzinfo=timezone.utc
+            )
         except ValueError:
             pass
     if paid_at is None:

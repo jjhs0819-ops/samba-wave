@@ -191,7 +191,6 @@ class SambaCollectorService:
     ) -> Optional[SambaCollectedProduct]:
         self._sanitize_kream_data(data)
         self._clean_company_names(data)
-        self._fill_optional_images(data)
         await self._fill_source_brand(data)
         await self._inherit_group_attributes(data)
         _derive_sale_status(data)
@@ -296,7 +295,6 @@ class SambaCollectorService:
         """전처리만 수행 (배치 저장용). DB 저장은 별도."""
         self._sanitize_kream_data(data)
         self._clean_company_names(data)
-        self._fill_optional_images(data)
         return data
 
     async def bulk_create_products(self, items: list[Dict[str, Any]]) -> int:
@@ -444,7 +442,6 @@ class SambaCollectorService:
     ) -> Optional[SambaCollectedProduct]:
         self._sanitize_kream_data(data)
         self._clean_company_names(data)
-        self._fill_optional_images(data)
         # tags가 None으로 전달되면 기존 태그를 덮어쓰지 않도록 제거
         # (명시적으로 빈 리스트 []를 보내면 태그 초기화 허용)
         if "tags" in data and data["tags"] is None:
@@ -492,29 +489,6 @@ class SambaCollectorService:
         origin = (data.get("origin") or "").strip()
         if mfr and (_looks_like_country(mfr) or (origin and mfr == origin)):
             data["manufacturer"] = ""
-
-    @staticmethod
-    def _fill_optional_images(data: Dict[str, Any]) -> None:
-        """추가이미지가 부족하면 상세이미지로 보충 (최대 9장).
-
-        단, 추가이미지(images[1:])가 1장이라도 존재하면 보충하지 않는다.
-        소싱처가 제공한 추가이미지 원본 의도를 우선 보존하기 위함.
-        """
-        images = data.get("images")
-        detail_images = data.get("detail_images")
-        if not isinstance(images, list) or not isinstance(detail_images, list):
-            return
-        if len(images) >= 9:
-            return
-        # 추가이미지가 1장이라도 있으면 상세이미지로 보강하지 않음
-        if len(images) > 1:
-            return
-        existing = set(images)
-        for di in detail_images:
-            if di not in existing and len(images) < 9:
-                images.append(di)
-                existing.add(di)
-        data["images"] = images
 
     async def get_duplicate_products(
         self,

@@ -14,15 +14,17 @@ class SambaOrderRepository(BaseRepository[SambaOrder]):
         super().__init__(session, SambaOrder)
 
     async def search(self, query: str) -> List[SambaOrder]:
-        lower_q = f"%{query.lower()}%"
+        from backend.core.sql_safe import escape_like
+
+        lower_q = f"%{escape_like(query.lower())}%"
         stmt = (
             select(SambaOrder)
             .where(
                 or_(
-                    SambaOrder.order_number.ilike(lower_q),
-                    SambaOrder.customer_name.ilike(lower_q),
-                    SambaOrder.customer_phone.ilike(lower_q),
-                    SambaOrder.product_name.ilike(lower_q),
+                    SambaOrder.order_number.ilike(lower_q, escape="\\"),
+                    SambaOrder.customer_name.ilike(lower_q, escape="\\"),
+                    SambaOrder.customer_phone.ilike(lower_q, escape="\\"),
+                    SambaOrder.product_name.ilike(lower_q, escape="\\"),
                 )
             )
             .order_by(SambaOrder.created_at.desc())

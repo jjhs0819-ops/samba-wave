@@ -295,8 +295,10 @@ async def list_filters(session: AsyncSession = Depends(get_write_session_depende
 
     # 각 필터별 카운트를 단일 쿼리로 일괄 조회
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
-    from sqlalchemy import func, case, and_, literal
-    from sqlalchemy.dialects.postgresql import JSONB as _JSONB
+    from sqlalchemy import func, case, and_, literal, text as _text2
+
+    _AI_TAGGED2 = _text2("'[\"__ai_tagged__\"]'::jsonb")
+    _AI_IMAGE2 = _text2("'[\"__ai_image__\"]'::jsonb")
 
     filter_ids = [f.id for f in filters]
     if not filter_ids:
@@ -315,7 +317,7 @@ async def list_filters(session: AsyncSession = Depends(get_write_session_depende
             func.count(
                 case(
                     (
-                        _CP.tags.op("@>")(func.cast('["__ai_tagged__"]', _JSONB)),
+                        _CP.tags.op("@>")(_AI_TAGGED2),
                         literal(1),
                     )
                 )
@@ -323,7 +325,7 @@ async def list_filters(session: AsyncSession = Depends(get_write_session_depende
             func.count(
                 case(
                     (
-                        _CP.tags.op("@>")(func.cast('["__ai_image__"]', _JSONB)),
+                        _CP.tags.op("@>")(_AI_IMAGE2),
                         literal(1),
                     )
                 )
@@ -392,6 +394,7 @@ async def update_filter(
     result = await svc.update_filter(filter_id, data)
     if not result:
         raise HTTPException(404, "필터를 찾을 수 없습니다")
+    await cache.delete("filters:tree:v3")
 
     # 정책 적용 시 해당 그룹 상품에 백그라운드 전파 (즉시 응답)
     if "applied_policy_id" in data and data["applied_policy_id"]:
@@ -662,24 +665,36 @@ async def get_filter_tree(
 
 @router.get("/filters/tree/counts")
 async def get_filter_tree_counts(
-    source_site: str,
+    source_site: str | None = None,
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
-    """특정 소싱처 leaf 필터들의 카운트 반환. 소싱처 클릭 시 호출."""
-    cache_key = f"filters:tree:counts:{source_site}"
+    """leaf 필터 카운트 반환. source_site 미지정 시 전체 사이트 통합 집계.
+
+    초기 로드시 단일 호출로 모든 사이트의 카운트를 prefetch 하기 위함 —
+    이전엔 사이트별 lazy load 만 가능해 그룹 클릭 전엔 (0) 으로 표기되는
+    UX 문제. GROUP BY 쿼리 한 번이 N 개 사이트별 호출보다 효율적.
+    """
+    cache_key = f"filters:tree:counts:{source_site or '__all__'}"
     cached = await cache.get(cache_key)
     if cached:
         return cached
 
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
-    from sqlalchemy import func as _func, case, and_, literal
-    from sqlalchemy.dialects.postgresql import JSONB as _JSONB2
+    from sqlalchemy import func as _func, case, and_, literal, text as _text
+
+    _AI_TAGGED_JSONB = _text("'[\"__ai_tagged__\"]'::jsonb")
+    _AI_IMAGE_JSONB = _text("'[\"__ai_image__\"]'::jsonb")
 
     svc = _get_services(session)
     all_filters = await svc.list_filters(limit=10000)
-    leaf_ids = [
-        f.id for f in all_filters if not f.is_folder and f.source_site == source_site
-    ]
+    if source_site is None:
+        leaf_ids = [f.id for f in all_filters if not f.is_folder]
+    else:
+        leaf_ids = [
+            f.id
+            for f in all_filters
+            if not f.is_folder and f.source_site == source_site
+        ]
 
     if not leaf_ids:
         return {}
@@ -694,7 +709,7 @@ async def get_filter_tree_counts(
             _func.count(
                 case(
                     (
-                        _CP.tags.op("@>")(_func.cast('["__ai_tagged__"]', _JSONB2)),
+                        _CP.tags.op("@>")(_AI_TAGGED_JSONB),
                         literal(1),
                     )
                 )
@@ -702,7 +717,7 @@ async def get_filter_tree_counts(
             _func.count(
                 case(
                     (
-                        _CP.tags.op("@>")(_func.cast('["__ai_image__"]', _JSONB2)),
+                        _CP.tags.op("@>")(_AI_IMAGE_JSONB),
                         literal(1),
                     )
                 )
@@ -826,46 +841,54 @@ async def scroll_products(
     # 텍스트 검색
     q = search.strip()
     if q:
+        # search 는 외부 입력 — `%`/`_` 메타 escape 후 ESCAPE '\\' 명시.
+        from backend.core.sql_safe import escape_like
+
+        q_pat = f"%{escape_like(q)}%"
+        q_no_space_pat = f"%{escape_like(q.replace(' ', ''))}%"
+
         # 상품번호 다중 입력(콤마) 지원 — split 결과가 있으면 IN, 없으면 단일 ilike
         _multi_ids = _split_product_ids(q)
         _site_id_clause = (
             _CP.site_product_id.in_(_multi_ids)
             if _multi_ids
-            else _CP.site_product_id.ilike(f"%{q}%")
+            else _CP.site_product_id.ilike(q_pat, escape="\\")
         )
 
         if search_type == "name":
             # 원상품명 + 등록상품명 + 마켓등록명 통합 부분 일치 (공백 무시)
-            q_no_space = q.replace(" ", "")
             conditions.append(
                 or_(
-                    _CP.name.ilike(f"%{q}%"),
-                    func.replace(_CP.name, " ", "").ilike(f"%{q_no_space}%"),
-                    _CP.name_en.ilike(f"%{q}%"),
+                    _CP.name.ilike(q_pat, escape="\\"),
+                    func.replace(_CP.name, " ", "").ilike(q_no_space_pat, escape="\\"),
+                    _CP.name_en.ilike(q_pat, escape="\\"),
                     func.replace(func.coalesce(_CP.name_en, ""), " ", "").ilike(
-                        f"%{q_no_space}%"
+                        q_no_space_pat, escape="\\"
                     ),
-                    func.coalesce(cast(_CP.market_names, String), "").ilike(f"%{q}%"),
-                    func.coalesce(_CP.brand, "").ilike(f"%{q}%"),
-                    func.coalesce(_CP.style_code, "").ilike(f"%{q}%"),
+                    func.coalesce(cast(_CP.market_names, String), "").ilike(
+                        q_pat, escape="\\"
+                    ),
+                    func.coalesce(_CP.brand, "").ilike(q_pat, escape="\\"),
+                    func.coalesce(_CP.style_code, "").ilike(q_pat, escape="\\"),
                     _site_id_clause,
                 )
             )
         elif search_type == "name_all":
             # 상품명 + 등록상품명 구성 요소(brand/style_code/site_product_id 포함) 동시 검색
             # market_names 포함 — 셀하 등 마켓 등록명으로 검색 시 누락 방지
-            q_no_space = q.replace(" ", "")
             conditions.append(
                 or_(
-                    _CP.name.ilike(f"%{q}%"),
-                    func.replace(_CP.name, " ", "").ilike(f"%{q_no_space}%"),
-                    _CP.name_en.ilike(f"%{q}%"),
+                    _CP.name.ilike(q_pat, escape="\\"),
+                    func.replace(_CP.name, " ", "").ilike(q_no_space_pat, escape="\\"),
+                    _CP.name_en.ilike(q_pat, escape="\\"),
                     func.replace(func.coalesce(_CP.name_en, ""), " ", "").ilike(
-                        f"%{q_no_space}%"
+                        q_no_space_pat, escape="\\"
                     ),
-                    func.coalesce(cast(_CP.market_names, String), "").ilike(f"%{q}%"),
-                    func.coalesce(_CP.brand, "").ilike(f"%{q}%"),
-                    func.coalesce(_CP.style_code, "").ilike(f"%{q}%"),
+                    func.coalesce(cast(_CP.market_names, String), "").ilike(
+                        q_pat, escape="\\"
+                    ),
+                    func.coalesce(_CP.brand, "").ilike(q_pat, escape="\\"),
+                    func.coalesce(_CP.style_code, "").ilike(q_pat, escape="\\"),
                     _site_id_clause,
                 )
             )
@@ -875,16 +898,16 @@ async def scroll_products(
             # 검색필터 이름으로 검색 → search_filter_id 서브쿼리
             from backend.domain.samba.collector.model import SambaSearchFilter as _SF
 
-            sf_ids = select(_SF.id).where(_SF.name.ilike(f"%{q}%"))
+            sf_ids = select(_SF.id).where(_SF.name.ilike(q_pat, escape="\\"))
             conditions.append(_CP.search_filter_id.in_(sf_ids))
         elif search_type == "brand":
-            conditions.append(_CP.brand.ilike(f"%{q}%"))
+            conditions.append(_CP.brand.ilike(q_pat, escape="\\"))
         elif search_type == "id":
             conditions.append(_CP.id == q)
         elif search_type == "policy":
             from backend.domain.samba.policy.model import SambaPolicy as _POL
 
-            pol_ids = select(_POL.id).where(_POL.name.ilike(f"%{q}%"))
+            pol_ids = select(_POL.id).where(_POL.name.ilike(q_pat, escape="\\"))
             conditions.append(_CP.applied_policy_id.in_(pol_ids))
 
     # 소싱처 필터 (단일 또는 복수)
@@ -1189,7 +1212,13 @@ async def products_init_data(
         mappings = await cache.get("init_data:category_mappings") or []
 
         pol_r = await session.execute(select(SambaPolicy).limit(50))
-        filter_r = await session.execute(select(_SF).where(_SF.is_folder == False))
+        # filters 는 frontend 에서 id↔name 매핑 + target_mappings(카테고리 fallback)
+        # 만 사용 — 전체 컬럼 select 시 keyword/timestamp 등이 응답의 76% 차지.
+        # 카드 렌더에 불필요한 필드 제외. 다른 페이지가 전체 필드를 필요로 하면
+        # /collector/filters 또는 /collector/filters/tree 별도 호출.
+        filter_r = await session.execute(
+            select(_SF.id, _SF.name, _SF.target_mappings).where(_SF.is_folder == False)  # noqa: E712
+        )
         words_r = await session.execute(
             select(SambaForbiddenWord).where(
                 SambaForbiddenWord.type == "deletion",
@@ -1208,7 +1237,11 @@ async def products_init_data(
             await cache.set("init_data:category_mappings", mappings, ttl=300)
 
         policies = [to_dict(r) for r in pol_r.scalars().all()]
-        filters = [to_dict(r) for r in filter_r.scalars().all()]
+        # filter_r 은 select(id, name, target_mappings) 의 Row 튜플 — scalars() 사용 불가
+        filters = [
+            {"id": row[0], "name": row[1], "target_mappings": row[2]}
+            for row in filter_r.all()
+        ]
         words = [r.word for r in words_r.scalars().all()]
         accounts = [to_dict(r) for r in accs_r.scalars().all()]
     except Exception as e:
@@ -1355,8 +1388,12 @@ async def product_dashboard_stats(
             SELECT aid, COUNT(*) AS cnt
             FROM (
                 SELECT jsonb_array_elements_text(registered_accounts) AS aid
-                FROM samba_collected_product
-                WHERE is_unregistered = FALSE
+                FROM (
+                    SELECT registered_accounts FROM samba_collected_product
+                    WHERE is_unregistered = FALSE
+                      AND registered_accounts IS NOT NULL
+                      AND jsonb_typeof(registered_accounts) = 'array'
+                ) safe_rows
             ) sub
             GROUP BY aid
             ORDER BY cnt DESC
@@ -1373,8 +1410,13 @@ async def product_dashboard_stats(
                 SELECT jsonb_array_elements_text(registered_accounts) AS aid,
                        source_site,
                        brand
-                FROM samba_collected_product
-                WHERE is_unregistered = FALSE
+                FROM (
+                    SELECT registered_accounts, source_site, brand
+                    FROM samba_collected_product
+                    WHERE is_unregistered = FALSE
+                      AND registered_accounts IS NOT NULL
+                      AND jsonb_typeof(registered_accounts) = 'array'
+                ) safe_rows
             ) sub
             GROUP BY aid, source_site, COALESCE(NULLIF(TRIM(brand), ''), '기타')
             ORDER BY aid, cnt DESC
@@ -1611,13 +1653,19 @@ async def lookup_by_market_product_no(
     """마켓 상품번호로 수집상품 조회 (원문링크/이미지 등 반환)."""
     from sqlalchemy import text as sa_text
 
+    from backend.core.sql_safe import escape_like
+
     # 하이픈/공백 제거한 정규화 값 (IQ2245-068 → IQ2245068)
     spid_norm = market_product_no.replace("-", "").replace(" ", "")
+    # market_product_no 는 path param (외부 입력) — `%`/`_` 메타 문자를 리터럴로
+    # 강제하기 위해 escape 후 ESCAPE '\\' 절 명시. 단순 substring/JSON-quoted 두
+    # 패턴 모두 적용.
+    safe = escape_like(market_product_no)
     sql = sa_text(
         "SELECT id, source_site, site_product_id, name, images, source_url "
         "FROM samba_collected_product "
-        "WHERE market_product_nos::text LIKE :pattern "
-        "   OR market_product_nos::text LIKE :pattern_bare "
+        "WHERE market_product_nos::text LIKE :pattern ESCAPE '\\' "
+        "   OR market_product_nos::text LIKE :pattern_bare ESCAPE '\\' "
         "   OR site_product_id = :spid "
         "   OR REPLACE(site_product_id, '-', '') = :spid_norm "
         "LIMIT 1"
@@ -1625,8 +1673,8 @@ async def lookup_by_market_product_no(
     result = await session.execute(
         sql,
         {
-            "pattern": f'%"{market_product_no}"%',
-            "pattern_bare": f"%{market_product_no}%",
+            "pattern": f'%"{safe}"%',
+            "pattern_bare": f"%{safe}%",
             "spid": market_product_no,
             "spid_norm": spid_norm,
         },
@@ -1682,18 +1730,27 @@ async def bulk_remove_image(
     target_fields = body.fields if body.fields else [body.field]
     image_url = body.image_url
 
+    # image_url 은 외부 입력 — `%`/`_` 메타 escape 후 ESCAPE '\\' 명시.
+    from backend.core.sql_safe import escape_like
+
+    image_pat = f"%{escape_like(image_url)}%"
+
     # DB 레벨에서 해당 이미지 URL을 포함하는 상품만 필터링 (전체 로드 방지)
     conditions = []
     if "images" in target_fields:
         conditions.append(
-            cast(SambaCollectedProduct.images, String).like(f"%{image_url}%")
+            cast(SambaCollectedProduct.images, String).like(image_pat, escape="\\")
         )
     if "detail_images" in target_fields:
         conditions.append(
-            cast(SambaCollectedProduct.detail_images, String).like(f"%{image_url}%")
+            cast(SambaCollectedProduct.detail_images, String).like(
+                image_pat, escape="\\"
+            )
         )
     if "detail_html" in target_fields:
-        conditions.append(SambaCollectedProduct.detail_html.like(f"%{image_url}%"))
+        conditions.append(
+            SambaCollectedProduct.detail_html.like(image_pat, escape="\\")
+        )
     if not conditions:
         return {"removed": 0}
 

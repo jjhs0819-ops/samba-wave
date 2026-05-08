@@ -184,6 +184,39 @@ export default function CollectorPage() {
     setLoading(false);
   }, []);
 
+  const mergeCountsIntoTree = useCallback(
+    (counts: Record<string, Partial<SambaSearchFilter>>) => {
+      const mergeTree = (nodes: SambaSearchFilter[]): SambaSearchFilter[] =>
+        nodes.map(n => {
+          if (!n.is_folder && counts[n.id]) return { ...n, ...counts[n.id] }
+          if (n.children?.length) return { ...n, children: mergeTree(n.children) }
+          return n
+        })
+      setTree(prev => mergeTree(prev))
+      setFilters(prev => prev.map(f => (counts[f.id] ? { ...f, ...counts[f.id] } : f)))
+    },
+    [],
+  )
+
+  // 모든 사이트의 카운트를 단일 호출로 prefetch — 그룹 클릭 전에도 (N) 표기
+  const loadAllCounts = useCallback(async () => {
+    setTreeCountsLoading(true)
+    try {
+      const counts = await collectorApi.getFilterTreeCounts()
+      mergeCountsIntoTree(counts)
+      // prefetch 완료된 사이트는 이후 클릭 시 재호출 skip
+      // — 사이트 ID 가 아닌 source_site 값으로 추적되므로 트리에서 추출
+      setTree(prev => {
+        for (const site of prev) {
+          const ss = site.source_site || site.name
+          if (ss) loadedSitesRef.current.add(ss)
+        }
+        return prev
+      })
+    } catch { /* 카운트 prefetch 실패 무시 — 클릭 시 lazy load 로 복원 */ }
+    setTreeCountsLoading(false)
+  }, [mergeCountsIntoTree])
+
   const loadTree = useCallback(async () => {
     try {
       const data = await collectorApi.getFilterTree()
@@ -199,8 +232,10 @@ export default function CollectorPage() {
       }
       walk(data)
       setFilters(leaves)
+      // 트리 로드 직후 모든 사이트 카운트 한 번에 prefetch
+      await loadAllCounts()
     } catch { /* 트리 로드 실패 무시 */ }
-  }, [])
+  }, [loadAllCounts])
 
   const loadSiteCounts = useCallback(async (sourceSite: string) => {
     if (loadedSitesRef.current.has(sourceSite)) return
@@ -208,17 +243,10 @@ export default function CollectorPage() {
     setTreeCountsLoading(true)
     try {
       const counts = await collectorApi.getFilterTreeCounts(sourceSite)
-      const mergeTree = (nodes: SambaSearchFilter[]): SambaSearchFilter[] =>
-        nodes.map(n => {
-          if (!n.is_folder && counts[n.id]) return { ...n, ...counts[n.id] }
-          if (n.children?.length) return { ...n, children: mergeTree(n.children) }
-          return n
-        })
-      setTree(prev => mergeTree(prev))
-      setFilters(prev => prev.map(f => (f.source_site === sourceSite && counts[f.id] ? { ...f, ...counts[f.id] } : f)))
+      mergeCountsIntoTree(counts)
     } catch { /* 카운트 로드 실패 무시 */ }
     setTreeCountsLoading(false)
-  }, [])
+  }, [mergeCountsIntoTree])
 
   useEffect(() => {
     if (!drillSite || !tree.length) return
@@ -321,7 +349,8 @@ export default function CollectorPage() {
       showAlert('요청수 변경에 실패했습니다.', 'error')
       return
     }
-    load(); loadTree();
+    // loadTree() 대신 state 직접 업데이트 — loadTree는 5분 캐시로 stale 값(0)을 반환해 덮어쓰는 버그 방지
+    setFilters(prev => prev.map(f => f.id === filterId ? { ...f, requested_count: count } : f))
   };
 
   // 수집상품수 클릭 → 상품관리 이동

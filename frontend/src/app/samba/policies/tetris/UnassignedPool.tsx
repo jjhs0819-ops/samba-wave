@@ -5,6 +5,47 @@ import type { TetrisUnassigned, TetrisBrandBlock } from '@/lib/samba/api/tetris'
 
 const FIXED_BLOCK_PX = 56
 
+const MARKET_COLORS: Record<string, string> = {
+  coupang: '#F59E0B',    // 호박(amber)
+  smartstore: '#22C55E', // 네이버 초록
+  '11st': '#EF4444',     // 빨강
+  gmarket: '#3B82F6',    // 파랑
+  auction: '#A855F7',    // 보라
+  lotteon: '#14B8A6',    // 청록 (기존 흰색→구분 가능)
+  gsshop: '#EAB308',     // 노랑
+  ssg: '#7C3AED',        // 남보라
+  lottehome: '#EC4899',  // 핫핑크 (기존 빨간계열→분홍으로 분리)
+  homeand: '#0EA5E9',    // 하늘
+  hmall: '#6366F1',      // 인디고 (기존 파랑→파란보라로 분리)
+  toss: '#84CC16',       // 라임 (기존 파랑→연두로 분리)
+  ktalpha: '#10B981',    // 에메랄드
+}
+
+function getMarketColor(marketType: string): string {
+  return MARKET_COLORS[marketType.toLowerCase()] ?? '#6B7280'
+}
+
+function normTetrisKey(value: string | null | undefined): string {
+  return (value ?? '').replace(/\s+/g, '').toLowerCase()
+}
+
+function normSiteKey(value: string | null | undefined): string {
+  const key = normTetrisKey(value)
+  const siteAliases: Record<string, string> = {
+    gsshop: 'gsshop',
+    abcmart: 'abcmart',
+    grandstage: 'abcmart',
+    lotteon: 'lotteon',
+    musinsa: 'musinsa',
+    ssg: 'ssg',
+  }
+  return siteAliases[key] ?? key
+}
+
+function brandScopeKey(sourceSite: string | null | undefined, brandName: string | null | undefined): string {
+  return `${normSiteKey(sourceSite)}::${normTetrisKey(brandName)}`
+}
+
 
 export interface BrandAssignment {
   marketType: string
@@ -52,7 +93,10 @@ function UnassignedItem({
   onDeleteBrandScope: (sourceSite: string, brandName: string) => Promise<void>
 }) {
   const [showPalette, setShowPalette] = useState(false)
-  const brandColor = item.collected_count > 0 && item.ai_tagged_count >= item.collected_count ? '#ddd' : '#EF4444'
+  const brandColor = item.ai_tagged_count > 0 ? '#ddd' : '#EF4444'
+  const uniqueMarkets = Array.from(
+    new Map(assignments.map(a => [a.marketType, a])).values()
+  )
 
   const block: TetrisBrandBlock = {
     id: null,
@@ -68,7 +112,7 @@ function UnassignedItem({
     is_legacy: false,
   }
 
-  const borderColor = assignments.length > 0 ? currentPolicyColor : '#3a3a3a'
+  const borderColor = currentPolicyId ? currentPolicyColor : '#3a3a3a'
 
   return (
     <div
@@ -98,6 +142,7 @@ function UnassignedItem({
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'space-between',
+        gap: 2,
         overflow: 'hidden',
       }}>
         {/* 상단: 브랜드명 (삭제 버튼 공간 확보) */}
@@ -112,7 +157,25 @@ function UnassignedItem({
         }}>
           {item.brand_name}
         </div>
-        {/* 하단: 등록/수집수(좌) + 소싱처명(우, 흰색) */}
+        {/* 중단: 판매처 컬러 스퀘어 (배치된 마켓) */}
+        {uniqueMarkets.length > 0 && (
+          <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+            {uniqueMarkets.map(a => (
+              <div
+                key={a.marketType}
+                title={a.marketName}
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: 1,
+                  background: getMarketColor(a.marketType),
+                  flexShrink: 0,
+                }}
+              />
+            ))}
+          </div>
+        )}
+        {/* 하단: 등록/수집수(좌) + 소싱처명(우) */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ fontSize: 10, color: '#666' }}>
             <span style={{ color: '#22C55E' }}>{fmtNum(item.registered_count)}</span>
@@ -235,7 +298,7 @@ export default function UnassignedPool({
         padding: '10px 12px',
       }}
     >
-      {Object.entries(grouped).map(([site, items]) => (
+      {Object.entries(grouped).sort(([, a], [, b]) => b.length - a.length).map(([site, items]) => (
         <div key={site} style={{ marginBottom: 16 }}>
           <div
             style={{
@@ -258,7 +321,7 @@ export default function UnassignedPool({
             }}
           >
             {items.map((item, idx) => {
-              const key = `${item.source_site}::${item.brand_name}`
+              const key = brandScopeKey(item.source_site, item.brand_name)
               const assignments = assignmentsByBrand.get(key) ?? []
               const policyInfo = policyByBrand.get(key)
               return (
@@ -272,8 +335,8 @@ export default function UnassignedPool({
                     onDragStart={onDragStart}
                     assignments={assignments}
                     policies={policies}
-                    currentPolicyId={policyInfo?.policyId ?? null}
-                    currentPolicyColor={policyInfo?.policyColor ?? '#6B7280'}
+                    currentPolicyId={policyInfo?.policyId ?? item.policy_id ?? null}
+                    currentPolicyColor={policyInfo?.policyColor ?? item.policy_color ?? '#6B7280'}
                     onPolicyChange={(policyId) => onBrandPolicyChange(item.source_site, item.brand_name, policyId)}
                     onDeleteBrandScope={onDeleteBrandScope}
                   />

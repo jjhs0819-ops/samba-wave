@@ -34,7 +34,6 @@ class SambaOrder(SQLModel, table=True):
             "channel_id",
             "od_no",
             "od_seq",
-            "proc_seq",
             unique=True,
             postgresql_where=text("source = 'lotteon'"),
         ),

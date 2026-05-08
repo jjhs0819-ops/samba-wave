@@ -5,15 +5,22 @@ from __future__ import annotations
 from typing import Any, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from backend.core.rate_limit import RATE_SET_COOKIE, limiter
+from backend.core.url_safe import validate_url_host
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
 from backend.domain.samba.proxy.musinsa import MusinsaClient
 from backend.utils.logger import logger
 
 from ._helpers import _get_musinsa_client, _get_setting, _set_setting
+
+# SSRF 방지 — `/musinsa/search?url=...` 가 받을 수 있는 host allowlist.
+# substring 검사 (``"musinsa.com" in url``) 는 ``https://attacker.com/musinsa.com``
+# 우회에 취약하므로 host 정확/서브도메인 매칭으로 강화.
+_MUSINSA_ALLOWED_URL_HOSTS = frozenset({"musinsa.com", "musinsa.onelink.me"})
 
 router = APIRouter(tags=["samba-proxy"])
 
@@ -170,7 +177,7 @@ async def musinsa_search_by_url(
     session: AsyncSession = Depends(get_read_session_dependency),
 ) -> dict[str, Any]:
     """URL 기반 검색/리다이렉트 처리."""
-    if not url or ("musinsa.com" not in url and "musinsa.onelink.me" not in url):
+    if not validate_url_host(url, _MUSINSA_ALLOWED_URL_HOSTS):
         raise HTTPException(status_code=400, detail="무신사 URL을 입력해주세요.")
 
     client = await _get_musinsa_client(session)
@@ -185,7 +192,9 @@ class MusinsaSetCookieRequest(BaseModel):
 
 
 @extension_router.post("/musinsa/set-cookie")
+@limiter.limit(RATE_SET_COOKIE)
 async def musinsa_set_cookie(
+    request: Request,
     body: MusinsaSetCookieRequest,
     write_session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:

@@ -144,14 +144,23 @@ export default function OrdersFilterBar(props: Props) {
             <button onClick={handleFetch} disabled={syncing} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: syncing ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>{syncing ? '주문수집 중...' : '가져오기'}</button>
             <select value={bulkStatus} onChange={e => setBulkStatus(e.target.value)} style={{ ...inputStyle, width: '130px', padding: '0.22rem 0.4rem', fontSize: '0.72rem', minWidth: '130px' }}>
               <option value="">일괄 작업 선택</option>
-              <option value="pending">상태: 대기</option>
-              <option value="wait_ship">상태: 배송대기</option>
-              <option value="arrived">상태: 입고</option>
-              <option value="shipped">상태: 발송완료</option>
-              <option value="delivered">상태: 배송완료</option>
-              <option value="cancelled">상태: 취소완료</option>
-              <option value="confirm">주문확인</option>
-              <option value="approve_cancel">취소승인</option>
+              <option value="pending">주문접수</option>
+              <option value="preparing">상품준비중</option>
+              <option value="wait_ship">배송대기중</option>
+              <option value="arrived">상품도착</option>
+              <option value="ship_failed">송장전송실패</option>
+              <option value="shipping">국내배송중</option>
+              <option value="delivered">배송완료</option>
+              <option value="cancelling">취소중</option>
+              <option value="returning">반품중</option>
+              <option value="exchanging">교환중</option>
+              <option value="cancel_requested">취소요청</option>
+              <option value="return_requested">반품요청</option>
+              <option value="cancelled">취소완료</option>
+              <option value="returned">반품완료</option>
+              <option value="exchanged">교환완료</option>
+              <option value="return_completed">회수확정</option>
+              <option value="undeliverable">발송불가</option>
               <option value="delete">삭제</option>
             </select>
             <button onClick={handleBulkAction} disabled={bulkUpdating || !bulkStatus || selectedIdsSize === 0} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: selectedIdsSize > 0 && bulkStatus ? '#C0392B' : 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: selectedIdsSize > 0 && bulkStatus ? '#fff' : '#666', borderRadius: '4px', cursor: bulkUpdating || !bulkStatus || selectedIdsSize === 0 ? 'not-allowed' : 'pointer' }}>{bulkUpdating ? '처리 중...' : `일괄 실행 (${fmtNum(selectedIdsSize)})`}</button>

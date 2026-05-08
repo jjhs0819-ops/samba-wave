@@ -70,8 +70,7 @@ async def _fetch_new_order_numbers(
                 for ro in raw_orders:
                     od_no = str(ro.get("odNo", "") or "")
                     od_seq = ro.get("odSeq", 1) or 1
-                    proc_seq = ro.get("procSeq", 1) or 1
-                    oid = f"{od_no}_{od_seq}_{proc_seq}" if od_no else ""
+                    oid = f"{od_no}_{od_seq}" if od_no else ""
                     if oid:
                         raw_order_numbers.append(oid)
 

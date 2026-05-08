@@ -66,9 +66,12 @@ from backend.api.v1.routers.samba.warroom import router as samba_warroom_router
 from backend.api.v1.routers.samba.wholesale import router as samba_wholesale_router
 from backend.api.v1.routers.user import router as user_router
 from backend.core.config import settings
+from backend.core.rate_limit import limiter, rate_limit_exceeded_handler
 from backend.domain.user.auth_service import get_user_id
 from backend.lifecycle import lifespan
 from backend.middleware.error_handler import register_exception_handlers
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 
 def create_application() -> FastAPI:
@@ -86,10 +89,20 @@ def create_application() -> FastAPI:
 
     register_exception_handlers(app)
 
-    from backend.middleware.api_gateway import ApiGatewayMiddleware
+    # 레이트 리미터 — 무차별 로그인·자격증명 변경·프록시 남용 방어
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
-    # CORS가 가장 바깥쪽에 있어야 Gateway 403 같은 오류 응답에도 CORS 헤더가 붙음
-    # add_middleware는 나중에 추가할수록 바깥쪽(outermost)이므로 순서 주의
+    from fastapi.middleware.gzip import GZipMiddleware
+    from backend.middleware.api_gateway import ApiGatewayMiddleware
+    from backend.middleware.security_headers import SecurityHeadersMiddleware
+
+    # 미들웨어 순서 (add_middleware 는 LIFO — 나중에 추가할수록 바깥쪽):
+    #   ApiGateway (가장 안쪽) → CORS → SlowAPI → SecurityHeaders → GZip (가장 바깥)
+    # - CORS 가 ApiGateway 의 403 응답 위에 ACAO 헤더 부착
+    # - SlowAPI 가 레이트 리밋 초과 시 429 반환
+    # - SecurityHeaders 가 모든 응답에 보안 헤더 부착 (HSTS/CSP/X-Frame)
+    # - GZip 이 가장 바깥 — 모든 응답 본문 압축. minimum_size=500 으로 짧은 응답 skip.
     app.add_middleware(ApiGatewayMiddleware, api_key=settings.api_gateway_key)
     app.add_middleware(
         CORSMiddleware,
@@ -99,6 +112,9 @@ def create_application() -> FastAPI:
         allow_headers=["*"],
         allow_origin_regex=settings.cors_origin_regex,
     )
+    app.add_middleware(SlowAPIMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(GZipMiddleware, minimum_size=500)
 
     samba_auth = [Depends(get_user_id)]
 
