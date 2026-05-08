@@ -18,6 +18,24 @@ from backend.core.config import settings
 from backend.utils.logger import logger
 
 
+def _is_future_sell_start(d: dict) -> bool:
+    """sellStartDate가 현재 시각보다 미래이면 True (신규 발매 카운트다운 상품)."""
+    raw = d.get("sellStartDate") or d.get("saleStartDate")
+    if not raw or not isinstance(raw, str):
+        return False
+    try:
+        if raw.endswith("Z") or "+" in raw[10:] or "-" in raw[10:]:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        else:
+            # 무신사 응답은 timezone 없는 KST 시각 반환
+            dt = datetime.fromisoformat(raw).replace(
+                tzinfo=timezone(timedelta(hours=9))
+            )
+    except (ValueError, TypeError):
+        return False
+    return dt > datetime.now(tz=timezone.utc)
+
+
 class RateLimitError(Exception):
     """소싱처 차단 감지 (429/403)."""
 
@@ -519,6 +537,8 @@ class MusinsaClient:
                                 for opt in options
                             )
                         )
+                        # sellStartDate가 미래 시각인 경우 — 신규 발매 카운트다운 상품
+                        or _is_future_sell_start(d)
                         # isSale=False 조건 제거 — 무배당발 상품도 isSale=False일 수 있음
                     )
                     else "in_stock"
