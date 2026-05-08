@@ -5586,21 +5586,37 @@ class JobWorker:
             await repo.complete_job(job.id)
             return
 
+        total = len(product_ids)
         logger.info(
             f"[마켓삭제잡] 시작 — {source_site}/{brand_name} "
-            f"← {target_account_ids} ({len(product_ids)}건)"
+            f"← {target_account_ids} ({total}건)"
         )
+
+        # 진행률 초기화 — UI에서 0/N 표시
+        await repo.update_progress(job.id, 0, total)
+        await session.commit()
+
+        async def _on_progress(current: int, _total: int) -> None:
+            from backend.db.orm import get_write_session
+            from backend.domain.samba.job.repository import (
+                SambaJobRepository as _JobRepo,
+            )
+
+            async with get_write_session() as prog_session:
+                prog_repo = _JobRepo(prog_session)
+                await prog_repo.update_progress(job.id, current, _total)
+                await prog_session.commit()
 
         ship_svc = SambaShipmentService(SambaShipmentRepository(session), session)
         try:
             await ship_svc.delete_from_markets(
                 product_ids=product_ids,
                 target_account_ids=target_account_ids,
+                log_to_buffer=True,
+                on_progress=_on_progress,
             )
             await repo.complete_job(job.id)
-            logger.info(
-                f"[마켓삭제잡] 완료 — {source_site}/{brand_name} ({len(product_ids)}건)"
-            )
+            logger.info(f"[마켓삭제잡] 완료 — {source_site}/{brand_name} ({total}건)")
         except Exception as e:
             logger.error(f"[마켓삭제잡] 실패 — {job.id}: {e}")
             raise

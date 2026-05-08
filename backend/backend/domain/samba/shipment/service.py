@@ -2516,6 +2516,7 @@ class SambaShipmentService:
         total_count: int | None = None,
         log_to_buffer: bool = False,
         disconnect_checker: Any | None = None,
+        on_progress: Any | None = None,
     ) -> dict[str, Any]:
         """선택된 상품을 대상 마켓에서 삭제.
 
@@ -2710,6 +2711,8 @@ class SambaShipmentService:
                     ),
                 }
             )
+            if on_progress:
+                await on_progress(len(results), len(product_ids))
 
         return {
             "processed": len(results),
