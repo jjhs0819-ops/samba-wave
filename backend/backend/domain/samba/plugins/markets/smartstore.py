@@ -469,6 +469,7 @@ class SmartStorePlugin(MarketPlugin):
                 .get("optionInfo")
             )
             new_benefit = data.get("originProduct", {}).get("customerBenefit")
+            new_seller_code = str(product_copy.get("id") or "")
             try:
                 existing_data = await client.get_product(existing_no)
                 origin = existing_data.get("originProduct", {})
@@ -491,6 +492,15 @@ class SmartStorePlugin(MarketPlugin):
                     origin.setdefault("detailAttribute", {})["optionInfo"] = new_opt
                 if new_benefit:
                     origin["customerBenefit"] = new_benefit
+                # 판매자 상품코드 누락 시 삼바 내부 ID(cp_ULID)로 보정
+                if new_seller_code:
+                    existing_code = origin.get("sellerCodeInfo", {}).get(
+                        "sellerManagementCode", ""
+                    )
+                    if not existing_code:
+                        origin.setdefault("sellerCodeInfo", {})[
+                            "sellerManagementCode"
+                        ] = new_seller_code
                 data = {"originProduct": origin}
                 if "smartstoreChannelProduct" in existing_data:
                     data["smartstoreChannelProduct"] = existing_data[

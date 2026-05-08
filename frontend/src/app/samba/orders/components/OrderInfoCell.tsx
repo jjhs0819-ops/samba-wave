@@ -66,7 +66,26 @@ export default function OrderInfoCell(props: Props) {
     }
   }
 
-  const resolvedSourceSite = String(actualSourceSite || o.source_site || '').trim()
+  // source_url 도메인 → 소싱처 코드 추론 (판매처와 무관, 가장 정확한 소스)
+  const sourceFromUrl = (() => {
+    const url = String(o.source_url || '').trim()
+    if (!url) return ''
+    const host = (() => {
+      try { return new URL(url).hostname.toLowerCase() } catch { return url.toLowerCase() }
+    })()
+    if (host.includes('musinsa.com')) return 'MUSINSA'
+    if (host.includes('kream.co.kr')) return 'KREAM'
+    if (host.includes('fashionplus.co.kr')) return 'FashionPlus'
+    if (host.includes('grandstage.a-rt.com')) return 'GrandStage'
+    if (host.includes('abcmart.a-rt.com') || host.includes('abcmart.co.kr')) return 'ABCmart'
+    if (host.includes('nike.com')) return 'Nike'
+    if (host.includes('ssg.com')) return 'SSG'
+    if (host.includes('lotteon.com')) return 'LOTTEON'
+    if (host.includes('gsshop.com')) return 'GSShop'
+    return ''
+  })()
+  // 소싱처 우선순위: source_url 도메인 > collected_product.source_site > o.source_site
+  const resolvedSourceSite = String(sourceFromUrl || actualSourceSite || o.source_site || '').trim()
   const sourceBadgeLabel = resolvedSourceSite
     ? (formatSourceSiteLabel(resolvedSourceSite, siteAliasMap) || resolvedSourceSite)
     : ''
@@ -90,7 +109,7 @@ export default function OrderInfoCell(props: Props) {
           <span style={{ fontSize: '0.72rem', color: '#555' }}>{fmtDate(o.created_at, '.')}</span>
           <button onClick={() => handleDelete(o.id)} style={{ padding: '0.125rem 0.5rem', fontSize: '0.7rem', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>삭제</button>
         </div>
-        <span style={{ fontSize: o.quantity > 1 ? '2.25rem' : '0.95rem', fontWeight: 700, color: o.quantity > 1 ? '#F5A623' : '#888' }}>수량: <span style={{ color: o.quantity > 1 ? '#F5A623' : '#E5E5E5' }}>{fmtNum(o.quantity)}</span></span>
+        <span style={{ fontSize: '0.95rem', fontWeight: 700, color: '#888' }}>수량: <span style={{ color: '#888' }}>{fmtNum(o.quantity)}</span></span>
       </div>
 
       {/* 상품 이미지 (100x100) + 마켓/주문번호 */}
@@ -279,7 +298,7 @@ export default function OrderInfoCell(props: Props) {
           const srcNo = o.sourcing_order_number || ''
           if (!srcNo) { showAlert('소싱 주문번호가 없습니다', 'info'); return }
           const isGift = hasActionTag(activeActions[o.id] ?? o.action_tag, 'gift')
-          const sourceSiteRaw = (actualSourceSite || o.source_site || '').trim()
+          const sourceSiteRaw = (sourceFromUrl || actualSourceSite || o.source_site || '').trim()
           const sourceSiteCode = sourceSiteRaw.split('(')[0].trim() || sourceSiteRaw
           const orderUrlMap: Record<string, string> = {
             MUSINSA: `https://www.musinsa.com/order/order-detail/${srcNo}`,
