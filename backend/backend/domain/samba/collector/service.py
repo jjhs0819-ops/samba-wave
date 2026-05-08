@@ -399,16 +399,19 @@ class SambaCollectorService:
         items = filtered_items
 
         created = 0
+        # 항목별 savepoint 적용: IntegrityError 발생 시 해당 항목만 롤백하고
+        # 이전 루프에서 성공한 항목들은 보존한다 (session.rollback은 트랜잭션 전체를
+        # 롤백하므로 직전 성공 항목들이 모두 소실되는 데이터 손실 버그가 있었음).
         for d in items:
             _derive_sale_status(d)
-            obj = SambaCollectedProduct(**d)
-            self.product_repo.session.add(obj)
             try:
-                await self.product_repo.session.flush()
+                async with self.product_repo.session.begin_nested():
+                    obj = SambaCollectedProduct(**d)
+                    self.product_repo.session.add(obj)
+                    await self.product_repo.session.flush()
                 created += 1
             except IntegrityError:
-                # 동시 수집으로 중복 발생 시 기존 상품 업데이트
-                await self.product_repo.session.rollback()
+                # 동시 수집으로 중복 발생 시 기존 상품 업데이트 (savepoint 자동 롤백)
                 existing = (
                     (
                         await self.product_repo.session.execute(
@@ -430,10 +433,15 @@ class SambaCollectorService:
                         if k
                         not in ("id", "source_site", "site_product_id", "created_at")
                     }
-                    for k, v in update_fields.items():
-                        setattr(existing, k, v)
-                    await self.product_repo.session.flush()
-                    created += 1
+                    try:
+                        async with self.product_repo.session.begin_nested():
+                            for k, v in update_fields.items():
+                                setattr(existing, k, v)
+                            await self.product_repo.session.flush()
+                        created += 1
+                    except IntegrityError:
+                        # 업데이트조차 실패 (희귀 케이스) — 이 항목 스킵, 진행 계속
+                        continue
         await self.product_repo.session.commit()
         return created
 
