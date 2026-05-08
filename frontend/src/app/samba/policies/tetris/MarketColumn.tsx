@@ -126,13 +126,13 @@ export default function MarketColumn({
             />
           )}
           {orderedAccounts.map((account, index) => {
-            const scaledCollectedHeight = account.total_collected > 0
-              ? Math.max(1, Math.round(account.total_collected * pixelsPerUnit))
+            const scaledCapacityHeight = account.max_count > 0
+              ? Math.max(1, Math.round(account.max_count * pixelsPerUnit))
               : 0
-            const capacityHeight = scaledCollectedHeight > 0
-              ? scaledCollectedHeight
-              : account.max_count > 0
-                ? Math.max(1, Math.round(account.max_count * pixelsPerUnit))
+            const capacityHeight = scaledCapacityHeight > 0
+              ? scaledCapacityHeight
+              : account.total_collected > 0
+                ? Math.max(1, Math.round(account.total_collected * pixelsPerUnit))
                 : Math.max(1, Math.round(globalMax * pixelsPerUnit * 0.15))
 
             return (

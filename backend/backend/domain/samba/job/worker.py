@@ -417,6 +417,8 @@ class JobWorker:
         self._active_transmit_accounts: dict[str, list[str]] = {}
         # 동일 계정 transmit 잡 직렬화 — 스케줄러 방어가 새더라도 실제 실행은 1개만 허용
         self._transmit_account_locks: dict[str, asyncio.Lock] = {}
+        # 동일 계정 delete_market 잡 직렬화 — transmit 락과 독립 (전송/삭제 별개 실행)
+        self._delete_account_locks: dict[str, asyncio.Lock] = {}
         # transmit 글로벌 동시 실행 한도 — write pool 여유 확보 (오토튠 점유분 고려)
         self._transmit_semaphore = asyncio.Semaphore(5)
         # brand_all 잡 직렬화 — SSG+MUSINSA 동시 실행 시 DB/메모리 고갈 방지
@@ -457,6 +459,11 @@ class JobWorker:
         if account_id not in self._transmit_account_locks:
             self._transmit_account_locks[account_id] = asyncio.Lock()
         return self._transmit_account_locks[account_id]
+
+    def _get_delete_account_lock(self, account_id: str) -> asyncio.Lock:
+        if account_id not in self._delete_account_locks:
+            self._delete_account_locks[account_id] = asyncio.Lock()
+        return self._delete_account_locks[account_id]
 
     async def start(self):
         """무한 루프: pending 잡 조회 → 전송 잡 병렬 실행 (무제한)."""
@@ -786,7 +793,7 @@ class JobWorker:
                             set(self._extract_transmit_account_ids(_job_payload))
                         )
                         _dm_locks = [
-                            self._get_transmit_account_lock(account_id)
+                            self._get_delete_account_lock(account_id)
                             for account_id in _dm_accounts
                         ]
                         try:
