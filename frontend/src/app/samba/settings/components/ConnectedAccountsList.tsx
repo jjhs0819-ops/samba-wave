@@ -58,8 +58,11 @@ export function ConnectedAccountsList(props: Props) {
                   )
                   const sanitized: Record<string, string> = {}
                   for (const [k, v] of Object.entries(accData)) {
-                    if (passwordFields.has(k) || isMaskedSecret(v)) continue
-                    sanitized[k] = v
+                    // non-password 마스킹값은 스킵 (잘못 덮어쓰기 방지)
+                    if (!passwordFields.has(k) && isMaskedSecret(v)) continue
+                    // password 필드: 마스킹값(****xxxx) 포함 로드 → 폼에 ••• 도트 표시
+                    // 저장 시 saveStoreSettings 필터가 마스킹값 자동 제거 → 기존 DB값 유지
+                    sanitized[k] = String(v || '')
                   }
                   const formData: Record<string, string> = {
                     businessName: a.business_name || '',

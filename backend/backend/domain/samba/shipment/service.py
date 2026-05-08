@@ -1654,7 +1654,10 @@ class SambaShipmentService:
                         and not opts_changed
                     ):
                         res["status"] = "skipped"
-                        logger.info(f"[전송] {market_type} 스킵")
+                        res["error"] = "이미 등록됨, 변동 없음"
+                        logger.info(
+                            f"[전송] {market_type} 스킵 (이미 등록됨, 변동 없음)"
+                        )
                         return res
 
                 # 마켓 API 호출 (계정별 세마포어 — 120초 대기)
