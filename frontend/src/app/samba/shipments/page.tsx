@@ -1270,7 +1270,7 @@ export default function ShipmentsPage() {
                       {j.kind === 'delete' ? '삭제중' : '전송중'}
                     </span>
                     <span style={{ color: '#8A95B0', minWidth: '92px', flexShrink: 0 }}>{'시작'} {startedStr}</span>
-                    <span style={{ color: '#C4CAD8', whiteSpace: 'nowrap', flexShrink: 0 }} title={j.markets}>
+                    <span style={{ color: '#C4CAD8', whiteSpace: 'normal', wordBreak: 'break-all', flexShrink: 0, maxWidth: '320px' }} title={j.markets}>
                       {j.markets}
                     </span>
                     <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={[sitesStr, brandsStr].filter(Boolean).join(' / ')}>
@@ -1303,7 +1303,7 @@ export default function ShipmentsPage() {
                   <div key={`p-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: '#8A95B0', borderBottom: '1px solid #151822', paddingBottom: '4px', marginBottom: '0' }}>
                     <span style={{ color: '#FAB005', fontWeight: 600, minWidth: '40px' }}>{'대기'}</span>
                     <span style={{ minWidth: '92px', flexShrink: 0 }}>{'—'}</span>
-                    <span style={{ color: '#C4CAD8', whiteSpace: 'nowrap', flexShrink: 0 }} title={j.markets}>
+                    <span style={{ color: '#C4CAD8', whiteSpace: 'normal', wordBreak: 'break-all', flexShrink: 0, maxWidth: '320px' }} title={j.markets}>
                       {j.markets}
                     </span>
                     <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={[sitesStr, brandsStr].filter(Boolean).join(' / ')}>
