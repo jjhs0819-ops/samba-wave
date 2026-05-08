@@ -452,6 +452,9 @@ async def _delete_lottehome(
         ):
             # account.additional_fields에 env 없으면 lottehome_credentials에서 보완
             creds = {**db_creds, **extra}
+        else:
+            # account 제공됐지만 lottehome 자격증명 없음 → 전역 설정 폴백 금지
+            return {"success": False, "message": "롯데홈쇼핑 계정 자격증명 없음"}
     if not creds:
         creds = db_creds or await _get_setting(session, "store_lottehome")
     if not creds or not isinstance(creds, dict):
