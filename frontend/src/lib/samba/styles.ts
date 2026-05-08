@@ -3,6 +3,8 @@
  * policies, settings 등 여러 페이지에서 공유
  */
 
+export const LOG_FONT_FAMILY = 'Consolas, "Malgun Gothic", "Noto Sans KR", monospace'
+
 export const card = {
   background: 'rgba(30,30,30,0.5)',
   backdropFilter: 'blur(20px)',

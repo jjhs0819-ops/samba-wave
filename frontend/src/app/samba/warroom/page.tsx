@@ -5,7 +5,7 @@ import { collectorApi } from '@/lib/samba/api/commerce'
 import { fetchWithAuth } from '@/lib/samba/api/shared'
 import { monitorApi, type DashboardStats, type MonitorEvent, type RefreshLogEntry } from '@/lib/samba/api/operations'
 import { SITE_COLORS } from '@/lib/samba/constants'
-import { fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
+import { fmtNum, fmtTextNumbers, LOG_FONT_FAMILY } from '@/lib/samba/styles'
 
 const POLL_INTERVAL = 10_000
 const LOG_POLL_INTERVAL = 500
@@ -187,7 +187,7 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, extern
       </div>
       <div
         ref={containerRef}
-        style={{ height: '250px', overflowY: 'auto', padding: '10px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.73rem', lineHeight: 1.8, color: '#4A5568' }}
+        style={{ height: '250px', overflowY: 'auto', padding: '10px 14px', fontFamily: LOG_FONT_FAMILY, fontSize: '0.73rem', lineHeight: 1.8, color: '#4A5568' }}
       >
         {(() => {
           const visibleLogs = logs.filter(l => shouldShowLog(l.msg, filterSources ?? null))

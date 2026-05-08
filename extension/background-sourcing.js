@@ -420,11 +420,8 @@ function _siteSemRelease(site) {
 
 async function _processJobWithCap(job) {
   const site = job.site || 'unknown'
-  // 사이트별 pre-login 대기 — 해당 사이트 잡 처리 직전에만 블로킹 (다른 소싱처는 즉시 시작)
-  if ((site === 'ABCmart' || site === 'GrandStage') && _abcPreLoginPromise) {
-    try { await _abcPreLoginPromise } catch {}
-    _abcPreLoginPromise = null
-  }
+  // ABCmart/GrandStage: _abcPreLoginPromise 차단 제거 — per-job 로그인 검증(line ~1499)이 이미 처리
+  // 로그인 체크(~30초) + 잡처리(~45초) = 75초 타임아웃 경계를 넘는 원인이었음
   if (site === 'LOTTEON' && _lotteonPreLoginPromise) {
     try { await _lotteonPreLoginPromise } catch {}
     _lotteonPreLoginPromise = null
@@ -1244,16 +1241,16 @@ async function handleSourcingJob(job) {
       // 검증 결과(2026-05-05): resultItemObj만 기준 시 카드혜택가가 아직 AJAX 미반영
       //   상태에서 추출되어 domCardPrice=0 → 백엔드가 bestAmt fallback → cost 마진 손실 8-10%.
       // 수정: 카드혜택가 dt 텍스트가 DOM에 등장한 직후 추가 1초 대기 후 추출.
-      let _ssgReady = false
-      await (async () => {
+      const _ssgPoll = async (tid) => {
+        let ready = false
+        let hasObj = false
         for (let _i = 0; _i < 30; _i++) {
           await wait(500)
           const [_chk] = await chrome.scripting.executeScript({
-            target: { tabId }, world: 'MAIN',
+            target: { tabId: tid }, world: 'MAIN',
             func: () => {
               const hasObj = !!(window.resultItemObj && window.resultItemObj.itemNm)
               if (!hasObj) return { ready: false, hasObj: false, hasCard: false }
-              // 카드혜택가 dt 존재 여부
               let hasCard = false
               document.querySelectorAll('dt').forEach((dt) => {
                 if (dt.textContent.trim() === '카드혜택가') hasCard = true
@@ -1262,11 +1259,26 @@ async function handleSourcingJob(job) {
             },
           }).catch(() => [{ result: { ready: false } }])
           const r = _chk?.result || {}
-          if (r.ready) { _ssgReady = true; break }
+          if (r.hasObj) hasObj = true
+          if (r.ready) { ready = true; break }
           // 카드혜택가 없는 상품(일반가만)도 5초 후엔 통과 — resultItemObj만 있으면 추출 진행
           if (r.hasObj && _i >= 10) { break }
         }
-      })()
+        return { ready, hasObj }
+      }
+      let _ssgReady = false
+      let { ready: _r1, hasObj: _h1 } = await _ssgPoll(tabId)
+      _ssgReady = _r1
+
+      // 빈 페이지 감지(resultItemObj 전혀 없음) — 리로드 1회 재시도
+      if (!_h1) {
+        console.log(`[SSG] 빈 페이지 감지 — 리로드 재시도: ${job.productId}`)
+        try { await chrome.tabs.reload(tabId) } catch {}
+        await waitForTabLoad(tabId, 30000).catch(() => {})
+        const { ready: _r2 } = await _ssgPoll(tabId)
+        _ssgReady = _r2
+      }
+
       // 카드혜택가 DOM 등장 후 AJAX 가격 확정까지 짧은 추가 대기
       if (_ssgReady) await wait(1000)
     } else if (job.type === 'detail' && (job.site === 'ABCmart' || job.site === 'GrandStage')) {

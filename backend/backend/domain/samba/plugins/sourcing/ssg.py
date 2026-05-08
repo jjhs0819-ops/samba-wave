@@ -147,11 +147,20 @@ class SSGPlugin(SourcingPlugin):
                     )
                     if _rob_orig > 0:
                         detail["originalPrice"] = _rob_orig
-                    # 원가(bestBenefitPrice): domCardPrice → bestAmt → salePrice
+                    # 원가(bestBenefitPrice): domCardPrice → bestAmt(확장앱) → bestBenefitPrice(HTML) → domSalePrice → sellprc
+                    _cur_benefit = int(detail.get("bestBenefitPrice", 0) or 0)
+                    _orig_price = int(detail.get("originalPrice", 0) or _rob_sell or 0)
+                    _ext_benefit = _rob_best or _dom_sale  # 확장앱 실시간값
                     if _dom_card > 0:
                         detail["bestBenefitPrice"] = _dom_card
-                    elif not int(detail.get("bestBenefitPrice", 0) or 0):
-                        detail["bestBenefitPrice"] = _rob_best or _dom_sale or _rob_sell
+                    elif _ext_benefit > 0 and (
+                        _cur_benefit == 0
+                        or (_orig_price > 0 and _cur_benefit >= _orig_price)
+                    ):
+                        # HTML 파싱이 정상가로 fallback됐거나 미설정이면 확장앱 실시간값 우선
+                        detail["bestBenefitPrice"] = _ext_benefit
+                    elif not _cur_benefit:
+                        detail["bestBenefitPrice"] = _rob_sell
 
                 # _parse_result_item_obj 실패 시 (dept.ssg.com AJAX 로드): resultItemObj 폴백
                 if not detail:
