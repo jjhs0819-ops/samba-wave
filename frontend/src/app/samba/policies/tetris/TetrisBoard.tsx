@@ -226,6 +226,45 @@ export default function TetrisBoard() {
     return () => document.removeEventListener('dragend', handleDragEnd)
   }, [setDragState])
 
+  // 드래그 중 마우스 위치 기반 페이지 자동 스크롤
+  // (네이티브 auto-scroll이 외곽 컨테이너 레이아웃 때문에 동작 안 하는 케이스 보완)
+  useEffect(() => {
+    if (!dragState) return
+    const EDGE = 90        // 가장자리 트리거 영역(px)
+    const SPEED = 16       // 프레임당 스크롤량(px)
+    let lastY = 0
+    let inEdge = false
+    let rafId: number | null = null
+
+    const loop = () => {
+      if (!inEdge) { rafId = null; return }
+      if (lastY < EDGE) {
+        window.scrollBy(0, -SPEED)
+      } else if (lastY > window.innerHeight - EDGE) {
+        window.scrollBy(0, SPEED)
+      }
+      rafId = requestAnimationFrame(loop)
+    }
+
+    const handleDragOver = (e: DragEvent) => {
+      lastY = e.clientY
+      const nowInEdge = lastY > 0 && (lastY < EDGE || lastY > window.innerHeight - EDGE)
+      if (nowInEdge && !inEdge) {
+        inEdge = true
+        if (rafId === null) rafId = requestAnimationFrame(loop)
+      } else if (!nowInEdge && inEdge) {
+        inEdge = false
+      }
+    }
+
+    window.addEventListener('dragover', handleDragOver)
+    return () => {
+      window.removeEventListener('dragover', handleDragOver)
+      inEdge = false
+      if (rafId !== null) cancelAnimationFrame(rafId)
+    }
+  }, [dragState])
+
   const handleAccountReorder = useCallback(async (accounts: TetrisAccountBlock[]) => {
     try {
       for (const [index, account] of accounts.entries()) {
