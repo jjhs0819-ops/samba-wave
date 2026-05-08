@@ -97,12 +97,12 @@ def _create_write_async_engine() -> AsyncEngine:
         pool_pre_ping=False,  # asyncpg 버그: SELECT 1이 idle in transaction 좀비 누적 → pool_recycle=300으로 대체
         pool_size=20,  # write 풀 확장 (10 → 20, 오토튠+테트리스 동시 점유 대응)
         max_overflow=20,  # 추가 허용 (write 최대 40개)
-        pool_recycle=300,  # idle 커넥션 5분 후 재활용 — 좀비 누적 방지
+        pool_recycle=120,  # idle 커넥션 2분 후 재활용 — 좀비 누적 방지
         pool_timeout=10,  # 빠른 실패 — 30s 대기 중 ASGI 워커 타임아웃 방지
         connect_args={
             "timeout": 10,  # asyncpg 연결 타임아웃 10초
             "server_settings": {
-                "idle_in_transaction_session_timeout": "300000",  # 5분 초과 idle in transaction 자동 종료
+                "idle_in_transaction_session_timeout": "60000",  # 1분 초과 idle in transaction 자동 종료
             },
         },
     )
@@ -122,12 +122,12 @@ def _create_read_async_engine() -> AsyncEngine:
         pool_pre_ping=False,  # asyncpg 버그: SELECT 1이 idle in transaction 좀비 누적 → pool_recycle=300으로 대체
         pool_size=5,  # idle 연결 수 축소 (기존 20 → 5, read는 주로 조회용)
         max_overflow=10,  # 추가 허용 (read 최대 15개)
-        pool_recycle=300,  # idle 커넥션 5분 후 재활용 — 좀비 누적 방지
+        pool_recycle=120,  # idle 커넥션 2분 후 재활용 — 좀비 누적 방지
         pool_timeout=10,  # 빠른 실패 — 30s 대기 중 ASGI 워커 타임아웃 방지
         connect_args={
             "timeout": 10,  # asyncpg 연결 타임아웃 10초
             "server_settings": {
-                "idle_in_transaction_session_timeout": "300000",  # 5분 초과 idle in transaction 자동 종료
+                "idle_in_transaction_session_timeout": "60000",  # 1분 초과 idle in transaction 자동 종료
             },
         },
     )

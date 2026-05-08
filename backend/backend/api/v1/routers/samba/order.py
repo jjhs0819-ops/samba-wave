@@ -3743,9 +3743,16 @@ async def sync_orders_from_markets(
                 except Exception:
                     pass
                 # 롯데홈쇼핑 직접 연동 계정이 있으면 플레이오토 중복 주문 차단
-                _has_lottehome = any(
-                    a["market_type"] == "lottehome" for a in account_snapshots
+                # account_id 단독 호출 시 account_snapshots에 해당 계정만 있어 DB 전체 조회로 판단
+                from sqlalchemy import text as _check_text  # noqa: F811
+
+                _lottehome_row = await session.execute(
+                    _check_text(
+                        "SELECT 1 FROM samba_market_account "
+                        "WHERE market_type = 'lottehome' AND is_active = true LIMIT 1"
+                    )
                 )
+                _has_lottehome = _lottehome_row.first() is not None
                 pa_client = PlayAutoClient(api_key)
                 try:
                     start_date = (
