@@ -203,6 +203,7 @@ export function useOrderActions(args: Args) {
     }
     setBulkUpdating(true)
     let ok = 0
+    let fail = 0
     for (const id of selectedIds) {
       try {
         if (bulkStatus === 'delete') {
@@ -212,17 +213,21 @@ export function useOrderActions(args: Args) {
         } else if (bulkStatus === 'approve_cancel') {
           await orderApi.approveCancel(id)
         } else {
-          await orderApi.update(id, { status: bulkStatus })
+          await orderApi.updateStatus(id, bulkStatus)
         }
         ok++
-      } catch { /* ignore */ }
+      } catch (e) {
+        fail++
+        console.error('[일괄실행] 실패 id:', id, e)
+      }
     }
     const actionLabel =
       bulkStatus === 'delete'         ? '삭제' :
       bulkStatus === 'confirm'        ? '발주확인' :
       bulkStatus === 'approve_cancel' ? '취소승인' :
       `상태변경→${bulkStatus}`
-    setLogMessages(prev => [...prev, `[완료] 일괄 ${actionLabel}: ${fmtNum(ok)}/${fmtNum(selectedIds.size)}건`])
+    const failMsg = fail > 0 ? ` (실패 ${fmtNum(fail)}건)` : ''
+    setLogMessages(prev => [...prev, `[완료] 일괄 ${actionLabel}: ${fmtNum(ok)}/${fmtNum(selectedIds.size)}건${failMsg}`])
     setSelectedIds(new Set())
     setBulkStatus('')
     setBulkUpdating(false)

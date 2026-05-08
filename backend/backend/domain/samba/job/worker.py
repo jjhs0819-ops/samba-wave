@@ -417,6 +417,8 @@ class JobWorker:
         self._active_transmit_accounts: dict[str, list[str]] = {}
         # 동일 계정 transmit 잡 직렬화 — 스케줄러 방어가 새더라도 실제 실행은 1개만 허용
         self._transmit_account_locks: dict[str, asyncio.Lock] = {}
+        # transmit 글로벌 동시 실행 한도 — write pool 여유 확보 (오토튠 점유분 고려)
+        self._transmit_semaphore = asyncio.Semaphore(5)
         # brand_all 잡 직렬화 — SSG+MUSINSA 동시 실행 시 DB/메모리 고갈 방지
         self._brand_all_running: bool = False
         self._poll_count = 0
@@ -597,8 +599,13 @@ class JobWorker:
         if job.job_type == "transmit":
             _tx_accounts = self._extract_transmit_account_ids(job.payload)
             self._active_transmit_accounts[job.id] = _tx_accounts
+
+            async def _run_with_limit(_j=job):
+                async with self._transmit_semaphore:
+                    await self._execute_job(_j)
+
             task = asyncio.create_task(
-                self._execute_job(job),
+                _run_with_limit(),
                 name=f"transmit-{job.id}",
             )
             self._active_tasks[job.id] = task
@@ -611,15 +618,19 @@ class JobWorker:
 
         # 수집: 소싱처별 병렬 Task (같은 소싱처는 exclude_sources로 순차 보장)
         if job.job_type == "collect":
+            _site = (job.payload or {}).get("source_site", "?")
+            # Task 생성 전에 즉시 등록 — 폴링 루프가 sleep 없이 연속 호출될 때
+            # _execute_job 내부에서 add()하면 Task 실행 전까지 반영 안 됨 (race condition)
+            if _site and _site != "?":
+                self._active_collect_sources.add(_site)
             task = asyncio.create_task(
                 self._execute_job(job),
                 name=f"collect-{job.id}",
             )
             self._active_tasks[job.id] = task
-            _site = (job.payload or {}).get("source_site", "?")
             logger.info(
                 f"[잡워커] 수집 Task 생성: {job.id} (site={_site}, "
-                f"활성 소싱처={sorted(self._active_collect_sources | {_site})})"
+                f"활성 소싱처={sorted(self._active_collect_sources)})"
             )
             return True
 

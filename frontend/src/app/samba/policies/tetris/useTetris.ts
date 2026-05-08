@@ -51,8 +51,8 @@ export function useTetris() {
     }
 
     const message = dragState.fromAccountId
-      ? `"${block.brand_name}" brand will be moved to another account.\nExisting market registrations will be removed and the product will be re-registered.`
-      : `"${block.brand_name}" brand will be assigned to this account.\nProduct registration will start.`
+      ? `"${block.brand_name}" 브랜드가 다른 계정으로 이동됩니다.\n기존 마켓 등록 상품이 삭제되고 재등록됩니다.`
+      : `"${block.brand_name}" 브랜드가 이 계정에 배치됩니다.\n상품 등록이 시작됩니다.`
 
     const confirmed = await showConfirm(message)
     if (!confirmed) {
@@ -67,16 +67,48 @@ export function useTetris() {
           policy_id: block.policy_id,
           position_order: 0,
         })
+        await refresh()
       } else if (!dragState.assignmentId) {
-        await tetrisApi.assign({
+        const result = await tetrisApi.assign({
           source_site: block.source_site,
           brand_name: block.brand_name,
           market_account_id: toAccountId,
           policy_id: null,
           position_order: 0,
         })
+        // 옵티미스틱 업데이트: 보드 재조회 없이 즉시 블록 추가
+        setBoard(prev => {
+          if (!prev) return prev
+          const newBlock: TetrisBrandBlock = {
+            id: result.id,
+            source_site: block.source_site,
+            brand_name: block.brand_name,
+            policy_id: null,
+            policy_name: null,
+            policy_color: '#3B82F6',
+            registered_count: 0,
+            collected_count: block.collected_count,
+            ai_tagged_count: block.ai_tagged_count,
+            position_order: 0,
+            is_legacy: false,
+          }
+          return {
+            ...prev,
+            markets: prev.markets.map(m => ({
+              ...m,
+              accounts: m.accounts.map(a =>
+                a.account_id === toAccountId
+                  ? {
+                      ...a,
+                      assignments: [newBlock, ...a.assignments],
+                      total_collected: a.total_collected + block.collected_count,
+                    }
+                  : a
+              ),
+            })),
+          }
+        })
       }
-      await refresh()
     } catch (e) {
       showAlert('An error occurred: ' + String(e))
     }

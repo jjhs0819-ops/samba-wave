@@ -38,10 +38,15 @@ ACTIVE_ORDER_STATUSES = (
 )
 EXCLUDED_ORDER_STATUSES = (
     "cancel_requested",
+    "cancelling",
     "cancelled",
     "return_requested",
+    "returning",
     "returned",
+    "return_completed",
     "exchange_requested",
+    "exchanging",
+    "exchanged",
     "exchange_pending",
     "exchange_done",
     "ship_failed",
@@ -3449,14 +3454,10 @@ async def sync_orders_from_markets(
                                     )
                                     new_p = exchange_priority.get(ex_status, 0)
                                     if cur_p == 0 or new_p >= cur_p:
-                                        update_ex: dict[str, Any] = {
-                                            "shipping_status": ex_status
-                                        }
-                                        if step_cd in ("21", "22", "23", "24"):
-                                            update_ex["status"] = "exchanging"
-                                        elif step_cd == "25":
-                                            update_ex["status"] = "exchanged"
-                                        await svc.update_order(existing.id, update_ex)
+                                        await svc.update_order(
+                                            existing.id,
+                                            {"shipping_status": ex_status},
+                                        )
                                         logger.info(
                                             f"[롯데ON][교환클레임] DB 직접 업데이트: {ex_od_no} → {ex_status}"
                                         )
@@ -3521,10 +3522,7 @@ async def sync_orders_from_markets(
                                 if cur_p == 0 or new_p >= cur_p:
                                     await svc.update_order(
                                         existing_c.id,
-                                        {
-                                            "shipping_status": cn_ship_status,
-                                            "status": cn_status,
-                                        },
+                                        {"shipping_status": cn_ship_status},
                                     )
                                     logger.info(
                                         f"[롯데ON][취소클레임] DB 직접 업데이트: {cn_od_no} → {cn_ship_status}"
@@ -3589,10 +3587,7 @@ async def sync_orders_from_markets(
                                 if cur_p == 0 or new_p >= cur_p:
                                     await svc.update_order(
                                         existing_r.id,
-                                        {
-                                            "shipping_status": rt_ship_status,
-                                            "status": rt_status,
-                                        },
+                                        {"shipping_status": rt_ship_status},
                                     )
                                     logger.info(
                                         f"[롯데ON][반품클레임] DB 직접 업데이트: {rt_od_no} → {rt_ship_status}"
@@ -3646,13 +3641,11 @@ async def sync_orders_from_markets(
                         from sqlalchemy import text as _sa_text_ps
 
                         _set_parts = [
-                            "status = :status",
                             "shipping_status = :ship_status",
                             "updated_at = now()",
                         ]
                         _ps_params: dict[str, Any] = {
                             "order_number": order_number,
-                            "status": new_status,
                             "ship_status": new_ship_status,
                         }
                         if invc_no:
@@ -3877,10 +3870,7 @@ async def sync_orders_from_markets(
                             if _ex:
                                 await svc.update_order(
                                     _ex.id,
-                                    {
-                                        "status": "wait_ship",
-                                        "shipping_status": "배송대기",
-                                    },
+                                    {"shipping_status": "배송대기"},
                                 )
                         logger.info(
                             f"[주문동기화] {label}: 11번가 발주확인 {_confirmed}/{len(_confirm_targets)}건 완료"
@@ -3954,7 +3944,7 @@ async def sync_orders_from_markets(
                         if _ex_cancel:
                             await svc.update_order(
                                 _ex_cancel.id,
-                                {"shipping_status": "취소요청", "status": "cancelled"},
+                                {"shipping_status": "취소요청"},
                             )
 
                     for _claim in _return_claims:
@@ -3975,10 +3965,7 @@ async def sync_orders_from_markets(
                             if _ex_return:
                                 await svc.update_order(
                                     _ex_return.id,
-                                    {
-                                        "shipping_status": "반품요청",
-                                        "status": "return_requested",
-                                    },
+                                    {"shipping_status": "반품요청"},
                                 )
 
                     for _claim in _exchange_claims:
@@ -4004,10 +3991,7 @@ async def sync_orders_from_markets(
                             )
                             await svc.update_order(
                                 _ex_exchange.id,
-                                {
-                                    "shipping_status": "교환요청",
-                                    "status": "exchange_requested",
-                                },
+                                {"shipping_status": "교환요청"},
                             )
 
                 except Exception as _ce:
@@ -5492,22 +5476,50 @@ def _parse_coupang_order(
     fee_rate = 11.55
     revenue = round(sale_price * (1 - fee_rate / 100))
 
+    # 쿠팡 ordersheet 응답은 receiver/orderer를 nested object로 내려줌.
+    # 과거 flat key (receiverAddr1 등) 사용 코드가 빈값을 만들었음.
+    receiver = order.get("receiver") or {}
+    orderer = order.get("orderer") or {}
+
     receiver_addr = (
-        order.get("receiverAddr1", "") or order.get("receiverAddress", "") or ""
+        receiver.get("addr1")
+        or order.get("receiverAddr1", "")
+        or order.get("receiverAddress", "")
+        or ""
     )
     receiver_addr_detail = (
-        order.get("receiverAddr2", "") or order.get("receiverAddrDetail", "") or ""
+        receiver.get("addr2")
+        or order.get("receiverAddr2", "")
+        or order.get("receiverAddrDetail", "")
+        or ""
     )
     customer_address = receiver_addr.strip()
     customer_address_detail = receiver_addr_detail.strip()
 
-    orderer_name = order.get("ordererName", "") or order.get("receiverName", "") or ""
+    orderer_name = (
+        orderer.get("name")
+        or receiver.get("name")
+        or order.get("ordererName", "")
+        or order.get("receiverName", "")
+        or ""
+    )
     orderer_tel = (
-        order.get("ordererPhoneNumber", "")
+        orderer.get("safeNumber")
+        or orderer.get("ordererNumber")
+        or receiver.get("safeNumber")
+        or receiver.get("receiverNumber")
+        or order.get("ordererPhoneNumber", "")
         or order.get("orderPhoneNumber", "")
         or order.get("receiverPhoneNumber", "")
         or ""
     )
+
+    if not orderer_name and not customer_address:
+        logger.warning(
+            f"[쿠팡][주문파싱] customer 빈값 — keys={list(order.keys())[:25]} "
+            f"receiver_keys={list(receiver.keys()) if isinstance(receiver, dict) else 'NA'} "
+            f"orderer_keys={list(orderer.keys()) if isinstance(orderer, dict) else 'NA'}"
+        )
 
     # shipmentBoxId 우선 (배송단위 안정 ID), orderId fallback
     order_number = str(shipment_box_id or order_id or "")
@@ -5530,6 +5542,11 @@ def _parse_coupang_order(
         "customer_phone": orderer_tel,
         "customer_address": customer_address,
         "customer_address_detail": customer_address_detail,
+        "customer_note": (
+            order.get("parcelPrintMessage", "")
+            or order.get("shippingMessage", "")
+            or ""
+        ),
         "quantity": quantity,
         "sale_price": sale_price,
         "cost": 0,

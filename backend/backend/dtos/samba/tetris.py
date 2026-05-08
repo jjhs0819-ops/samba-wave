@@ -46,6 +46,9 @@ class TetrisUnassigned(BaseModel):
 
     source_site: str
     brand_name: str
+    policy_id: Optional[str] = None
+    policy_name: Optional[str] = None
+    policy_color: Optional[str] = None
     registered_count: int
     collected_count: int
     ai_tagged_count: int = 0

@@ -24,6 +24,16 @@ export function parseGroupName(name: string, site: string) {
   return { brand: rest, category: '' }
 }
 
+export function matchesPolicyRegFilter(filter: SambaSearchFilter, policyRegFilter: string) {
+  const r = filter as unknown as Record<string, number>
+  const cnt = r.policy_applied_count ?? 0
+  const total = r.collected_count ?? 0
+  if (policyRegFilter === 'registered') return cnt > 0 && cnt >= total
+  if (policyRegFilter === 'partial') return cnt > 0 && cnt < total
+  if (policyRegFilter === 'unregistered') return cnt === 0
+  return true
+}
+
 interface Args {
   filters: SambaSearchFilter[]
   tree: SambaSearchFilter[]
@@ -100,15 +110,7 @@ export function useDisplayedFilters(args: Args) {
       })
     }
     if (policyRegFilter) {
-      result = result.filter((f) => {
-        const r = f as unknown as Record<string, number>
-        const cnt = r.policy_applied_count ?? 0
-        const total = r.collected_count ?? 0
-        if (policyRegFilter === 'registered') return cnt > 0 && cnt >= total
-        if (policyRegFilter === 'partial') return cnt > 0 && cnt < total
-        if (policyRegFilter === 'unregistered') return cnt === 0
-        return true
-      })
+      result = result.filter((f) => matchesPolicyRegFilter(f, policyRegFilter))
     }
     const [sortField, sortDir] = sortBy.split('_')
     result.sort((a, b) => {

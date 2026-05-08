@@ -7,7 +7,7 @@ import { monitorApi, type DashboardStats, type MonitorEvent, type RefreshLogEntr
 import { SITE_COLORS } from '@/lib/samba/constants'
 import { fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
 
-const POLL_INTERVAL = 30_000
+const POLL_INTERVAL = 10_000
 const LOG_POLL_INTERVAL = 500
 
 // 로그 메시지 앞부분의 [SITE] 태그 추출 — 예: "[12:34:56] [1/100] [MUSINSA] ..." → "MUSINSA"
@@ -523,10 +523,10 @@ export default function WarroomPage() {
   }, [availMarkets, saveMarketFilter])
 
   const handleAutotuneStatus = useCallback((running: boolean, cycles: number, lastTick: string | null, refreshed: number) => {
-    // 별도 스레드 타이밍 차이 대응 — 3회 연속 false일 때만 정지 표시
+    // 별도 스레드 타이밍 차이 대응 — 2회 연속 false일 때 정지 표시 (POLL_INTERVAL 10초 × 2 = 20초 desync 감지)
     if (!running) {
       falseCountRef.current++
-      if (falseCountRef.current < 3) return  // 일시적 false 무시
+      if (falseCountRef.current < 2) return  // 일시적 false 무시
     } else {
       falseCountRef.current = 0
     }
@@ -808,12 +808,22 @@ export default function WarroomPage() {
             >작업취소</button>
           <button
             onClick={async () => {
+              const { showAlert } = await import('@/components/samba/Modal')
               try {
                 const { API_BASE_URL: apiBase } = await import('@/config/api')
-                await fetchWithAuth(`${apiBase}/api/v1/samba/collector/autotune/stop`, { method: 'POST' })
+                const r = await fetchWithAuth(`${apiBase}/api/v1/samba/collector/autotune/stop`, { method: 'POST' })
                 window.postMessage({ source: 'samba-page', type: 'AUTOTUNE_SET_JOIN', joined: false }, window.location.origin)
                 setAutotuneRunning(false)
-              } catch { /* ignore */ }
+                falseCountRef.current = 0
+                if (r.ok) {
+                  showAlert('오토튠 정지 완료', 'success')
+                } else {
+                  showAlert(`정지 요청 응답 ${r.status} — UI는 정지 상태로 동기화됨`, 'info')
+                }
+              } catch {
+                setAutotuneRunning(false)
+                showAlert('정지 요청 실패 — 백엔드 연결 확인 필요', 'error')
+              }
             }}
             style={{
               padding: '0.25rem 0.75rem',
@@ -868,7 +878,7 @@ export default function WarroomPage() {
             <span style={{ fontSize: '0.75rem', color: '#9AA5C0', fontWeight: 600, whiteSpace: 'nowrap' }}>판매처</span>
             {availMarkets.map(mt => {
               const checked = filterMarkets === null || filterMarkets.includes(mt)
-              const marketLabel: Record<string, string> = { smartstore: '스마트스토어', coupang: '쿠팡', '11st': '11번가', auction: '옥션', gmarket: 'G마켓', lotteon: '롯데ON', ssg: 'SSG', tmon: '티몬', wemakeprice: '위메프', kream: 'KREAM', playauto: '플레이오토', gsshop: 'GS샵', elandmall: '이랜드몰', ssf: 'SSF샵' }
+              const marketLabel: Record<string, string> = { smartstore: '스마트스토어', coupang: '쿠팡', '11st': '11번가', auction: '옥션', gmarket: 'G마켓', lotteon: '롯데ON', lottehome: '롯데홈쇼핑', ssg: 'SSG', tmon: '티몬', wemakeprice: '위메프', kream: 'KREAM', playauto: '플레이오토', gsshop: 'GS샵', elandmall: '이랜드몰', ssf: 'SSF샵' }
               return (
                 <label key={mt} style={{ display: 'flex', alignItems: 'center', gap: '2px', cursor: 'pointer' }}>
                   <input
@@ -1208,7 +1218,7 @@ export default function WarroomPage() {
             {Object.keys(marketChanges).length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.25rem' }}>
                 {(() => {
-                  const MARKET_LABEL: Record<string, string> = { smartstore: '스마트스토어', coupang: '쿠팡', '11st': '11번가', auction: '옥션', gmarket: 'G마켓', lotteon: '롯데ON', ssg: 'SSG', tmon: '티몬', wemakeprice: '위메프', kream: 'KREAM', playauto: '플레이오토', gsshop: 'GS샵', elandmall: '이랜드몰', ssf: 'SSF샵' }
+                  const MARKET_LABEL: Record<string, string> = { smartstore: '스마트스토어', coupang: '쿠팡', '11st': '11번가', auction: '옥션', gmarket: 'G마켓', lotteon: '롯데ON', lottehome: '롯데홈쇼핑', ssg: 'SSG', tmon: '티몬', wemakeprice: '위메프', kream: 'KREAM', playauto: '플레이오토', gsshop: 'GS샵', elandmall: '이랜드몰', ssf: 'SSF샵' }
                   const MARKET_COLOR: Record<string, string> = { smartstore: '#51CF66', coupang: '#FF6B6B', '11st': '#FFD93D', lotteon: '#FB923C', ssg: '#A78BFA', auction: '#4C9AFF', gmarket: '#34D399', kream: '#E5E5E5' }
                   const fmtT = (iso: string) => {
                     const d = new Date(iso)

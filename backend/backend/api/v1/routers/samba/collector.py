@@ -295,8 +295,10 @@ async def list_filters(session: AsyncSession = Depends(get_write_session_depende
 
     # 각 필터별 카운트를 단일 쿼리로 일괄 조회
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
-    from sqlalchemy import func, case, and_, literal
-    from sqlalchemy.dialects.postgresql import JSONB as _JSONB
+    from sqlalchemy import func, case, and_, literal, text as _text2
+
+    _AI_TAGGED2 = _text2("'[\"__ai_tagged__\"]'::jsonb")
+    _AI_IMAGE2 = _text2("'[\"__ai_image__\"]'::jsonb")
 
     filter_ids = [f.id for f in filters]
     if not filter_ids:
@@ -315,7 +317,7 @@ async def list_filters(session: AsyncSession = Depends(get_write_session_depende
             func.count(
                 case(
                     (
-                        _CP.tags.op("@>")(func.cast('["__ai_tagged__"]', _JSONB)),
+                        _CP.tags.op("@>")(_AI_TAGGED2),
                         literal(1),
                     )
                 )
@@ -323,7 +325,7 @@ async def list_filters(session: AsyncSession = Depends(get_write_session_depende
             func.count(
                 case(
                     (
-                        _CP.tags.op("@>")(func.cast('["__ai_image__"]', _JSONB)),
+                        _CP.tags.op("@>")(_AI_IMAGE2),
                         literal(1),
                     )
                 )
@@ -392,6 +394,7 @@ async def update_filter(
     result = await svc.update_filter(filter_id, data)
     if not result:
         raise HTTPException(404, "필터를 찾을 수 없습니다")
+    await cache.delete("filters:tree:v3")
 
     # 정책 적용 시 해당 그룹 상품에 백그라운드 전파 (즉시 응답)
     if "applied_policy_id" in data and data["applied_policy_id"]:
@@ -662,24 +665,36 @@ async def get_filter_tree(
 
 @router.get("/filters/tree/counts")
 async def get_filter_tree_counts(
-    source_site: str,
+    source_site: str | None = None,
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
-    """특정 소싱처 leaf 필터들의 카운트 반환. 소싱처 클릭 시 호출."""
-    cache_key = f"filters:tree:counts:{source_site}"
+    """leaf 필터 카운트 반환. source_site 미지정 시 전체 사이트 통합 집계.
+
+    초기 로드시 단일 호출로 모든 사이트의 카운트를 prefetch 하기 위함 —
+    이전엔 사이트별 lazy load 만 가능해 그룹 클릭 전엔 (0) 으로 표기되는
+    UX 문제. GROUP BY 쿼리 한 번이 N 개 사이트별 호출보다 효율적.
+    """
+    cache_key = f"filters:tree:counts:{source_site or '__all__'}"
     cached = await cache.get(cache_key)
     if cached:
         return cached
 
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
-    from sqlalchemy import func as _func, case, and_, literal
-    from sqlalchemy.dialects.postgresql import JSONB as _JSONB2
+    from sqlalchemy import func as _func, case, and_, literal, text as _text
+
+    _AI_TAGGED_JSONB = _text("'[\"__ai_tagged__\"]'::jsonb")
+    _AI_IMAGE_JSONB = _text("'[\"__ai_image__\"]'::jsonb")
 
     svc = _get_services(session)
     all_filters = await svc.list_filters(limit=10000)
-    leaf_ids = [
-        f.id for f in all_filters if not f.is_folder and f.source_site == source_site
-    ]
+    if source_site is None:
+        leaf_ids = [f.id for f in all_filters if not f.is_folder]
+    else:
+        leaf_ids = [
+            f.id
+            for f in all_filters
+            if not f.is_folder and f.source_site == source_site
+        ]
 
     if not leaf_ids:
         return {}
@@ -694,7 +709,7 @@ async def get_filter_tree_counts(
             _func.count(
                 case(
                     (
-                        _CP.tags.op("@>")(_func.cast('["__ai_tagged__"]', _JSONB2)),
+                        _CP.tags.op("@>")(_AI_TAGGED_JSONB),
                         literal(1),
                     )
                 )
@@ -702,7 +717,7 @@ async def get_filter_tree_counts(
             _func.count(
                 case(
                     (
-                        _CP.tags.op("@>")(_func.cast('["__ai_image__"]', _JSONB2)),
+                        _CP.tags.op("@>")(_AI_IMAGE_JSONB),
                         literal(1),
                     )
                 )
@@ -1197,7 +1212,14 @@ async def products_init_data(
         mappings = await cache.get("init_data:category_mappings") or []
 
         pol_r = await session.execute(select(SambaPolicy).limit(50))
-        filter_r = await session.execute(select(_SF).where(_SF.is_folder == False))
+        # filters 는 frontend 에서 id↔name 매핑 + target_mappings(카테고리 fallback)
+        # 만 사용 — 전체 컬럼 select 시 keyword/timestamp 등이 응답의 76% 차지.
+        # 카드 렌더에 불필요한 필드 제외. 다른 페이지가 전체 필드를 필요로 하면
+        # /collector/filters 또는 /collector/filters/tree 별도 호출.
+        filter_r = await session.execute(
+            select(_SF.id, _SF.name, _SF.target_mappings)
+            .where(_SF.is_folder == False)  # noqa: E712
+        )
         words_r = await session.execute(
             select(SambaForbiddenWord).where(
                 SambaForbiddenWord.type == "deletion",
@@ -1216,7 +1238,11 @@ async def products_init_data(
             await cache.set("init_data:category_mappings", mappings, ttl=300)
 
         policies = [to_dict(r) for r in pol_r.scalars().all()]
-        filters = [to_dict(r) for r in filter_r.scalars().all()]
+        # filter_r 은 select(id, name, target_mappings) 의 Row 튜플 — scalars() 사용 불가
+        filters = [
+            {"id": row[0], "name": row[1], "target_mappings": row[2]}
+            for row in filter_r.all()
+        ]
         words = [r.word for r in words_r.scalars().all()]
         accounts = [to_dict(r) for r in accs_r.scalars().all()]
     except Exception as e:

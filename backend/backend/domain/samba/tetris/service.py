@@ -25,6 +25,12 @@ _BOARD_CACHE_TTL = 300.0
 _board_cache: dict = {}
 _board_cache_lock = asyncio.Lock()
 
+
+def clear_board_cache() -> None:
+    """테트리스 보드 캐시 전체 무효화 (AI 태그 변경 시 호출)."""
+    _board_cache.clear()
+
+
 # 마켓타입 → 표시명 매핑 (account.market_type 기준)
 _MARKET_DISPLAY_NAMES: dict[str, str] = {
     "smartstore": "스마트스토어",
@@ -263,7 +269,7 @@ class SambaTetrisService:
                     BTRIM(brand) AS effective_brand,
                     COUNT(*) AS cnt,
                     COUNT(*) FILTER (
-                        WHERE COALESCE(cast(tags AS text), '') LIKE '%__ai_tagged__%'
+                        WHERE tags @> '["__ai_tagged__"]'::jsonb
                     ) AS ai_tagged_cnt
                 FROM samba_collected_product
                 WHERE (tenant_id IS NULL AND :tid_is_null OR tenant_id = :tid)
@@ -535,6 +541,18 @@ class SambaTetrisService:
                         "brand_name": collected_label_map.get(
                             (site, brand), (site, brand)
                         )[1],
+                        "policy_id": sf_policy_map.get(
+                            (_norm_site_key(site), _norm_tetris_key(brand)),
+                            (None, None, None),
+                        )[0],
+                        "policy_name": sf_policy_map.get(
+                            (_norm_site_key(site), _norm_tetris_key(brand)),
+                            (None, None, None),
+                        )[1],
+                        "policy_color": sf_policy_map.get(
+                            (_norm_site_key(site), _norm_tetris_key(brand)),
+                            (None, None, None),
+                        )[2],
                         "registered_count": registered_total_by_brand.get(
                             (site, brand), 0
                         ),
@@ -585,6 +603,7 @@ class SambaTetrisService:
         )
 
         # 즉시 전송하지 않음 — 인터벌 루프(sync_all)에서 잡큐로 스테이징
+        # clear_board_cache() 금지 — 61초 쿼리 유발로 프론트 15초 타임아웃 발생
         logger.info(
             f"[테트리스] assign 저장 완료 — {source_site}/{brand_name} "
             f"→ {market_account_id} (인터벌 루프에서 등록 예정)"
@@ -614,6 +633,7 @@ class SambaTetrisService:
         market_account_id = assignment.market_account_id
 
         deleted = await self._repo.delete_async(assignment_id)
+        # clear_board_cache() 금지 — 61초 쿼리 유발로 프론트 15초 타임아웃 발생
 
         # 등록된 상품 마켓 삭제 트리거 (백그라운드)
         product_ids = await self._get_product_ids_for_remove(
@@ -737,7 +757,11 @@ class SambaTetrisService:
     # ──────────────────────────────────────────────
 
     async def sync_all(self, tenant_id: Optional[str]) -> dict[str, int]:
-        """현재 배치 전체 기준으로 미등록 상품 transmit 잡 생성 (브랜드×계정별 별도 잡)."""
+        """현재 배치 전체 기준으로 미등록 상품 transmit 잡 생성 (브랜드×계정별 별도 잡).
+
+        samba_tetris_assignment 배치뿐 아니라, registered_accounts에 이미 계정이 있는
+        레거시 블록(배치 미등록)도 함께 처리해 미등록 상품을 보충 등록한다.
+        """
         from backend.domain.samba.job.repository import SambaJobRepository
 
         assignments = await self._repo.list_by_tenant(tenant_id)
@@ -746,12 +770,45 @@ class SambaTetrisService:
         job_count = 0
         total_products = 0
 
+        # 처리 완료된 (source_site, brand_name, account_id) 중복 방지
+        processed_keys: set[tuple[str, str, str]] = set()
+
+        # 이미 pending/running인 transmit 잡 집합 조회 — 중복 잡 생성 방지
+        existing_rows = await self._session.execute(
+            text("""
+                SELECT
+                    payload->>'source_site' AS source_site,
+                    payload->>'brand_name' AS brand_name,
+                    payload->>'target_account_ids' AS account_ids
+                FROM samba_jobs
+                WHERE job_type = 'transmit'
+                  AND status IN ('pending', 'running')
+                  AND payload->>'brand_name' IS NOT NULL
+            """)
+        )
+        # target_account_ids는 '["account_id"]' 형태 text — 단순 포함 체크
+        pending_transmit_keys: set[tuple[str, str, str]] = set()
+        for row in existing_rows:
+            if row.source_site and row.brand_name and row.account_ids:
+                pending_transmit_keys.add(
+                    (row.source_site, row.brand_name, row.account_ids)
+                )
+
         # 브랜드×계정 조합별 별도 잡 — 계정이 같아도 브랜드마다 독립 잡으로 스테이징
         # (워커가 동일 계정 잡은 순차, 다른 계정 잡은 병렬로 자동 처리)
         for a in assignments:
+            acct_key = f'["{a.market_account_id}"]'
+            if (a.source_site, a.brand_name, acct_key) in pending_transmit_keys:
+                logger.debug(
+                    f"[테트리스 sync] 이미 pending/running 잡 존재 — 건너뜀: "
+                    f"{a.source_site}/{a.brand_name} → {a.market_account_id}"
+                )
+                processed_keys.add((a.source_site, a.brand_name, a.market_account_id))
+                continue
             pids = await self._get_product_ids_for_assign(
                 tenant_id, a.source_site, a.brand_name, a.market_account_id
             )
+            processed_keys.add((a.source_site, a.brand_name, a.market_account_id))
             if not pids:
                 continue
             await job_repo.create_async(
@@ -763,6 +820,75 @@ class SambaTetrisService:
                     "target_account_ids": [a.market_account_id],
                     "source_site": a.source_site,
                     "brand_name": a.brand_name,
+                    "source_sites": [a.source_site],
+                    "brands": [a.brand_name],
+                    "skip_unchanged": True,
+                },
+            )
+            job_count += 1
+            total_products += len(pids)
+
+        # 테트리스 배치가 있는 (source_site, brand) 조합 — legacy 루프 개입 금지
+        # 배치된 브랜드는 고경 등 지정 계정에서만 처리해야 하므로 다른 계정으로 번지면 안 됨
+        tetris_brand_keys: set[tuple[str, str]] = {
+            (a.source_site, a.brand_name) for a in assignments
+        }
+
+        # 레거시 블록 처리: registered_accounts에 이미 계정이 있지만 배치가 없는 브랜드
+        # → 미등록 상품이 남아있을 경우 보충 등록 잡 생성
+        # CASE WHEN으로 스칼라 registered_accounts를 빈 배열로 치환
+        # — PostgreSQL 옵티마이저가 CTE를 인라인화해서 WHERE 조건 순서가 보장 안 됨
+        # — LATERAL + CASE WHEN 방식으로 스칼라 에러 없이 처리
+        legacy_rows = await self._session.execute(
+            text("""
+                SELECT DISTINCT scp.source_site, BTRIM(scp.brand) AS brand_name, acc.val AS account_id
+                FROM samba_collected_product scp
+                CROSS JOIN LATERAL (
+                    SELECT val
+                    FROM jsonb_array_elements_text(
+                        CASE WHEN jsonb_typeof(scp.registered_accounts) = 'array'
+                             THEN scp.registered_accounts
+                             ELSE '[]'::jsonb
+                        END
+                    ) AS t(val)
+                ) AS acc
+                WHERE (scp.tenant_id IS NULL AND :tid_is_null OR scp.tenant_id = :tid)
+                  AND scp.registered_accounts IS NOT NULL
+            """),
+            {"tid": tenant_id, "tid_is_null": tenant_id is None},
+        )
+        for row in legacy_rows:
+            # 테트리스 배치된 브랜드는 legacy 루프에서 절대 처리하지 않음
+            if (row.source_site, row.brand_name) in tetris_brand_keys:
+                continue
+            key = (row.source_site, row.brand_name, row.account_id)
+            if key in processed_keys:
+                continue
+            acct_key = f'["{row.account_id}"]'
+            if (row.source_site, row.brand_name, acct_key) in pending_transmit_keys:
+                logger.debug(
+                    f"[테트리스 sync 레거시] 이미 pending/running 잡 존재 — 건너뜀: "
+                    f"{row.source_site}/{row.brand_name} → {row.account_id}"
+                )
+                processed_keys.add(key)
+                continue
+            processed_keys.add(key)
+            pids = await self._get_product_ids_for_assign(
+                tenant_id, row.source_site, row.brand_name, row.account_id
+            )
+            if not pids:
+                continue
+            await job_repo.create_async(
+                tenant_id=tenant_id,
+                job_type="transmit",
+                payload={
+                    "product_ids": pids,
+                    "update_items": ["price", "stock", "image", "description"],
+                    "target_account_ids": [row.account_id],
+                    "source_site": row.source_site,
+                    "brand_name": row.brand_name,
+                    "source_sites": [row.source_site],
+                    "brands": [row.brand_name],
                     "skip_unchanged": True,
                 },
             )
@@ -770,7 +896,7 @@ class SambaTetrisService:
             total_products += len(pids)
 
         logger.info(
-            f"[테트리스 sync] {len(assignments)}개 배치 → "
+            f"[테트리스 sync] {len(assignments)}개 배치 + 레거시 → "
             f"{job_count}개 잡, {total_products}개 상품"
         )
         return {

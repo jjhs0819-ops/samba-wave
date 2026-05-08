@@ -305,6 +305,11 @@ async def _tetris_sync_loop() -> None:
                 )
                 tenant_ids: list[str | None] = [row[0] for row in rows.all()]
 
+            # 배치가 없어도 레거시 블록(registered_accounts 기반)을 처리하기 위해
+            # tenant_id=None 항상 포함 (멀티테넌트 환경에서도 None 레코드가 존재)
+            if None not in tenant_ids:
+                tenant_ids.insert(0, None)
+
             from backend.domain.samba.tetris.repository import SambaTetrisRepository
             from backend.domain.samba.tetris.service import SambaTetrisService
 
@@ -332,9 +337,11 @@ async def _warmup_filter_tree_counts_cache(logger: logging.Logger) -> None:
     실패해도 무시 — 사용자 클릭 시 정상 동작함.
     """
     try:
-        from sqlalchemy import func, case, and_, literal
-        from sqlalchemy.dialects.postgresql import JSONB as _JSONB
+        from sqlalchemy import func, case, and_, literal, text as _text
         from sqlmodel import select
+
+        _AI_TAGGED_JSONB = _text("'[\"__ai_tagged__\"]'::jsonb")
+        _AI_IMAGE_JSONB = _text("'[\"__ai_image__\"]'::jsonb")
 
         from backend.db.orm import get_read_session
         from backend.domain.samba.cache import cache
@@ -357,8 +364,6 @@ async def _warmup_filter_tree_counts_cache(logger: logging.Logger) -> None:
 
         for source_site in source_sites:
             cache_key = f"filters:tree:counts:{source_site}"
-            if await cache.get(cache_key):
-                continue  # 이미 캐시됨
             try:
                 async with get_read_session() as session:
                     leaf_rows = await session.execute(
@@ -382,9 +387,7 @@ async def _warmup_filter_tree_counts_cache(logger: logging.Logger) -> None:
                             func.count(
                                 case(
                                     (
-                                        _CP.tags.op("@>")(
-                                            func.cast('["__ai_tagged__"]', _JSONB)
-                                        ),
+                                        _CP.tags.op("@>")(_AI_TAGGED_JSONB),
                                         literal(1),
                                     )
                                 )
@@ -392,9 +395,7 @@ async def _warmup_filter_tree_counts_cache(logger: logging.Logger) -> None:
                             func.count(
                                 case(
                                     (
-                                        _CP.tags.op("@>")(
-                                            func.cast('["__ai_image__"]', _JSONB)
-                                        ),
+                                        _CP.tags.op("@>")(_AI_IMAGE_JSONB),
                                         literal(1),
                                     )
                                 )
