@@ -47,7 +47,9 @@ async def _safe_delete(
       api_call: product_no를 받아 삭제 API를 호출하는 코루틴
     """
     product_no = product.get("market_product_no", {}).get(market_key, "")
-    logger.info(f"[{market_name}] 삭제 시도 — market_key={market_key}, product_no={product_no!r}")
+    logger.info(
+        f"[{market_name}] 삭제 시도 — market_key={market_key}, product_no={product_no!r}"
+    )
     if not product_no:
         return {"success": False, "message": f"{market_name} 상품번호 없음 (건너뜀)"}
     try:

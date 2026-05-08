@@ -29,6 +29,11 @@ class MarketPlugin(ABC):
                 "success": False,
                 "message": f"{self.market_type} 카테고리 코드 없음",
             }
+        # DB 읽기 완료 — HTTP API 호출 전 트랜잭션 종료 (idle in transaction 방지)
+        try:
+            await session.commit()
+        except Exception:
+            pass
         try:
             return await self.execute(
                 session, product, creds, category_id, account, existing_no
