@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -623,10 +623,50 @@ class ExtensionKeyRequest(BaseModel):
     email: str = ""
 
 
+# 확장앱 키 발급 IP 레이트리밋 — 무인증 부트스트랩 엔드포인트의 1차 방어선.
+# 정식 해결책(테넌트별 키, 사용자 JWT 발급) 도입 전 한시 보강.
+_EXT_KEY_RATE_LIMIT_WINDOW_S = 60  # 초
+_EXT_KEY_RATE_LIMIT_COUNT = 10  # 분당 IP당 허용 횟수
+_ext_key_rate_log: dict[str, list[float]] = {}
+_ext_key_rate_lock_inited = False
+
+
 @extension_router.post("/extension-key")
-async def get_extension_key():
-    """확장앱 API 키 발급 — 키 자체가 인증 수단이므로 사용자 검증 불필요."""
+async def get_extension_key(request: Request):
+    """확장앱 API 키 발급 — 키 자체가 인증 수단이므로 사용자 검증 불필요.
+
+    보안 보강 (2026-05-09):
+      - IP당 1분 10회 레이트리밋
+      - User-Agent / Origin 누락 시 경고 로그 (차단은 안 함 — 정식 확장앱 호환 유지)
+      - 정식 해결책(JWT 또는 tenant-scoped 키) 도입 전 한시 조치
+    """
+    import time as _time
+    import logging as _logging
+
     from backend.core.config import settings
+
+    _logger = _logging.getLogger(__name__)
+    client_ip = request.client.host if request.client else "unknown"
+    now = _time.time()
+    cutoff = now - _EXT_KEY_RATE_LIMIT_WINDOW_S
+    bucket = _ext_key_rate_log.setdefault(client_ip, [])
+    # 윈도우 밖 타임스탬프 정리
+    while bucket and bucket[0] < cutoff:
+        bucket.pop(0)
+    if len(bucket) >= _EXT_KEY_RATE_LIMIT_COUNT:
+        _logger.warning(
+            f"[extension-key] IP {client_ip} 레이트리밋 차단 ({len(bucket)}/{_EXT_KEY_RATE_LIMIT_COUNT})"
+        )
+        raise HTTPException(429, "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.")
+    bucket.append(now)
+
+    # 부트스트랩 출처 흔적 — 비정상 호출 패턴 감지용 (차단은 하지 않음)
+    ua = request.headers.get("User-Agent", "")
+    origin = request.headers.get("Origin", "")
+    if "chrome-extension" not in origin and "Mozilla" not in ua:
+        _logger.warning(
+            f"[extension-key] 비정상 호출 의심 ip={client_ip} ua={ua[:80]} origin={origin[:80]}"
+        )
 
     return {"api_key": settings.api_gateway_key}
 
