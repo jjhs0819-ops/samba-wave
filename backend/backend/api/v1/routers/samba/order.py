@@ -871,6 +871,26 @@ async def find_by_order_number(
     return {"id": order.id, "order_number": order.order_number}
 
 
+@router.get("/cancel-alert-count")
+async def get_cancel_alert_count(
+    session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+):
+    """처리 중 상태(주문접수/상품준비중/배송대기중/상품도착)인데 shipping_status가 취소요청/취소완료인 건수 반환."""
+    from sqlalchemy import select, func
+    from backend.domain.samba.order.model import SambaOrder as OrderModel
+
+    stmt = select(func.count()).where(
+        OrderModel.status.in_(["pending", "preparing", "wait_ship", "arrived"]),
+        OrderModel.shipping_status.in_(["cancel_requested", "cancelled"]),
+    )
+    if tenant_id is not None:
+        stmt = stmt.where(OrderModel.tenant_id == tenant_id)
+    result = await session.exec(stmt)  # type: ignore[arg-type]
+    count = result.one()
+    return {"count": count}
+
+
 @router.get("/alarm-settings")
 async def get_alarm_settings(
     session: AsyncSession = Depends(get_read_session_dependency),

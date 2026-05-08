@@ -78,6 +78,12 @@ export function useOrderSync({ accounts, period, setLogMessages, showNotificatio
         setLogMessages(prev => [...prev, `[${ts()}] 백그라운드 주문수집 시작 실패: ${e instanceof Error ? e.message : String(e)}`])
       } finally {
         await loadOrders()
+        try {
+          const { count } = await orderApi.getCancelAlertCount()
+          if (count > 0) {
+            showNotification(`처리 중인 주문 중 취소요청이 ${fmtNum(count)}건 있습니다. 확인해 주세요.`)
+          }
+        } catch { /* 알람 조회 실패는 무시 */ }
         setSyncing(false)
       }
     }

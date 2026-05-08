@@ -306,6 +306,8 @@ export const orderApi = {
     request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/cancel-source-order`, {
       method: "POST", body: JSON.stringify({ order_number: orderNumber, reason: reason || '단순변심' }),
     }),
+  getCancelAlertCount: () =>
+    request<{ count: number }>(`${SAMBA_PREFIX}/orders/cancel-alert-count`),
   getAlarmSettings: () =>
     request<{ hour: number; min: number; sleep_start: string; sleep_end: string }>(`${SAMBA_PREFIX}/orders/alarm-settings`),
   saveAlarmSettings: (data: { hour: number; min: number; sleep_start: string; sleep_end: string }) =>
