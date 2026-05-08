@@ -86,10 +86,14 @@ def create_application() -> FastAPI:
 
     register_exception_handlers(app)
 
+    from fastapi.middleware.gzip import GZipMiddleware
     from backend.middleware.api_gateway import ApiGatewayMiddleware
 
-    # CORS가 가장 바깥쪽에 있어야 Gateway 403 같은 오류 응답에도 CORS 헤더가 붙음
-    # add_middleware는 나중에 추가할수록 바깥쪽(outermost)이므로 순서 주의
+    # 미들웨어 순서 (add_middleware 는 LIFO — 나중에 추가할수록 바깥쪽):
+    #   ApiGateway (가장 안쪽) → CORS → GZip (가장 바깥)
+    # - CORS 가 가장 바깥쪽에 있어야 Gateway 403 같은 오류 응답에도 CORS 헤더 부착
+    # - GZip 이 가장 바깥 — 모든 응답 본문 압축 (init-data 731KB → ~120KB,
+    #   /tree/counts 113KB → ~20KB). minimum_size=500 으로 짧은 응답은 skip.
     app.add_middleware(ApiGatewayMiddleware, api_key=settings.api_gateway_key)
     app.add_middleware(
         CORSMiddleware,
@@ -99,6 +103,7 @@ def create_application() -> FastAPI:
         allow_headers=["*"],
         allow_origin_regex=settings.cors_origin_regex,
     )
+    app.add_middleware(GZipMiddleware, minimum_size=500)
 
     samba_auth = [Depends(get_user_id)]
 

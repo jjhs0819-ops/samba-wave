@@ -538,8 +538,10 @@ export const collectorApi = {
   // Filters
   listFilters: () => request<SambaSearchFilter[]>(`${SAMBA_PREFIX}/collector/filters`),
   getFilterTree: () => request<SambaSearchFilter[]>(`${SAMBA_PREFIX}/collector/filters/tree`),
-  getFilterTreeCounts: (sourceSite: string) =>
-    request<Record<string, { collected_count: number; market_registered_count: number; ai_tagged_count: number; ai_image_count: number; tag_applied_count: number; policy_applied_count: number }>>(`${SAMBA_PREFIX}/collector/filters/tree/counts?source_site=${encodeURIComponent(sourceSite)}`),
+  getFilterTreeCounts: (sourceSite?: string) => {
+    const qs = sourceSite ? `?source_site=${encodeURIComponent(sourceSite)}` : ''
+    return request<Record<string, { collected_count: number; market_registered_count: number; ai_tagged_count: number; ai_image_count: number; tag_applied_count: number; policy_applied_count: number }>>(`${SAMBA_PREFIX}/collector/filters/tree/counts${qs}`)
+  },
   createFilter: (data: Partial<SambaSearchFilter>) =>
     request<SambaSearchFilter>(`${SAMBA_PREFIX}/collector/filters`, { method: "POST", body: JSON.stringify(data) }),
   createFolder: (sourceSite: string, name: string, parentId?: string) =>
