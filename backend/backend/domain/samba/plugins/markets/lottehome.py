@@ -67,9 +67,40 @@ def _transform_for_lottehome(
     # 품목코드 — 기본 102(구두/신발), 빈 문자열이면 기본값 사용
     ec_goods_artc_cd = creds.get("ec_goods_artc_cd", "") or "102"
 
+    _brand_mappings = creds.get("brandMappings", [])
+    _product_brand = (product.get("brand") or "").strip().lower()
+    _product_name = (product.get("name") or "").strip().lower()
+    _matched_brnd_no = None
+    # 1순위: 전체 배열에서 brand 정확 매칭
+    for _m in _brand_mappings:
+        _nm = (_m.get("brnd_nm") or "").strip().lower()
+        if _nm and _nm == _product_brand:
+            _matched_brnd_no = _m["brnd_no"]
+            break
+    # 2순위: brand 포함 매칭
+    if not _matched_brnd_no:
+        for _m in _brand_mappings:
+            _nm = (_m.get("brnd_nm") or "").strip().lower()
+            if _nm and (_nm in _product_brand or _product_brand in _nm):
+                _matched_brnd_no = _m["brnd_no"]
+                break
+    # 3순위: 상품명에 브랜드명 포함
+    if not _matched_brnd_no:
+        for _m in _brand_mappings:
+            _nm = (_m.get("brnd_nm") or "").strip().lower()
+            if _nm and _nm in _product_name:
+                _matched_brnd_no = _m["brnd_no"]
+                break
+    if _brand_mappings and not product.get("brand_code") and not _matched_brnd_no:
+        raise ValueError(
+            f"브랜드 매핑 없음: '{product.get('brand', '')}' / 상품명: '{product.get('name', '')}' — 정책에서 해당 브랜드를 추가해주세요."
+        )
+
     data: dict[str, Any] = {
         # 필수
-        "brnd_no": product.get("brand_code") or creds.get("brnd_no", "010565"),
+        "brnd_no": product.get("brand_code")
+        or _matched_brnd_no
+        or creds.get("brnd_no", "010565"),
         "goods_nm": product.get("name", ""),
         "md_gsgr_no": md_gsgr_no,
         "pur_shp_cd": "3",  # 위탁판매
@@ -396,6 +427,11 @@ class LotteHomePlugin(MarketPlugin):
             if val:
                 auth_creds[dest] = val
         auth_creds.setdefault("item_quality_rd", "1")
+        brand_mappings = (
+            policy.get("brandMappings") or store_lh.get("brandMappings") or []
+        )
+        if brand_mappings:
+            auth_creds["brandMappings"] = brand_mappings
         if policy or store_lh:
             logger.info(
                 f"[롯데홈쇼핑 정책 로드] ec_goods_artc_cd={auth_creds.get('ec_goods_artc_cd')}, md_gsgr_no={auth_creds.get('md_gsgr_no')}, disp_no={auth_creds.get('disp_no')}, dlv_polc_no={auth_creds.get('dlv_polc_no')}, add_dlv_polc_no={auth_creds.get('add_dlv_polc_no')}, item_material={auth_creds.get('item_material')}, item_size={auth_creds.get('item_size')}, item_quality={auth_creds.get('item_quality')}"
