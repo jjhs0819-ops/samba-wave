@@ -1141,7 +1141,7 @@ const ProductCard = React.memo(function ProductCard({
                     style={{ maxWidth: '85vw', maxHeight: '80vh', objectFit: 'contain', borderRadius: '8px' }}
                   />
                   <span style={{ color: '#888', fontSize: '0.8rem' }}>
-                    {zoomIdx === 0 ? '대표' : `추가 ${zoomIdx}`} ({zoomIdx + 1}/{zoomList.length})
+                    {zoomIdx === 0 ? '대표' : `추가 ${fmtNum(zoomIdx)}`} ({fmtNum(zoomIdx + 1)}/{fmtNum(zoomList.length)})
                   </span>
                 </div>
                 {/* 오른쪽 화살표 */}
@@ -1523,8 +1523,8 @@ const ProductCard = React.memo(function ProductCard({
                   ? getByteLength(baseText) > byteLimit
                   : baseText.length > nameLimit
                 const countLabel = byteLimit
-                  ? `${getByteLength(displayName)}/${byteLimit}B`
-                  : `${displayName.length}/${nameLimit}`
+                  ? `${fmtNum(getByteLength(displayName))}/${fmtNum(byteLimit)}B`
+                  : `${fmtNum(displayName.length)}/${fmtNum(nameLimit)}`
                 const placeholder = byteLimit ? truncateToBytes(composedName, byteLimit) : composedName.slice(0, nameLimit)
                 return (
                 <tr key={m.marketName} style={{ borderBottom: '1px solid #1E1E1E' }}>
@@ -1650,8 +1650,8 @@ const ProductCard = React.memo(function ProductCard({
                     ? getByteLength(baseText) > byteLimit
                     : baseText.length > nameLimit
                   const cntLabel = byteLimit
-                    ? `${getByteLength(dispName)}/${byteLimit}B`
-                    : `${dispName.length}/${nameLimit}`
+                    ? `${fmtNum(getByteLength(dispName))}/${fmtNum(byteLimit)}B`
+                    : `${fmtNum(dispName.length)}/${fmtNum(nameLimit)}`
                   const ph = byteLimit ? truncateToBytes(_composed, byteLimit) : _composed.slice(0, nameLimit)
                   return (
                     <tr key={`store-name-${rm.accId}`} style={{ borderBottom: '1px solid #1E1E1E' }}>

@@ -1257,7 +1257,7 @@ export default function ShipmentsPage() {
                 const elapsedMs = started ? Math.max(0, Date.now() - started.getTime()) : 0
                 const perItemSec = j.current > 0 && elapsedMs > 0 ? elapsedMs / 1000 / j.current : 0
                 const perItemStr = perItemSec > 0
-                  ? (perItemSec >= 10 ? `${Math.round(perItemSec)}초/1건` : `${perItemSec.toFixed(1)}초/1건`)
+                  ? (perItemSec >= 10 ? `${fmtNum(Math.round(perItemSec))}초/1건` : `${perItemSec.toFixed(1)}초/1건`)
                   : '—'
                 const busy = !!(j.id && cancellingJobIds.includes(j.id))
                 const sites = j.source_sites ?? []

@@ -298,7 +298,7 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
                           {(() => {
                             const leaves = allLeafInfos.filter(l => l._siteId === s.id)
                             const collected = leaves.reduce((sum, l) => sum + ((l as unknown as Record<string, number>).collected_count ?? 0), 0)
-                            return `${leaves.length}(${fmtNum(collected)})`
+                            return `${fmtNum(leaves.length)}(${fmtNum(collected)})`
                           })()}
                         </span>
                       </div>
