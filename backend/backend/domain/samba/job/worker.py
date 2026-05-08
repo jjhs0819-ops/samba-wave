@@ -421,6 +421,8 @@ class JobWorker:
         self._delete_account_locks: dict[str, asyncio.Lock] = {}
         # transmit 글로벌 동시 실행 한도 — write pool 여유 확보 (오토튠 점유분 고려)
         self._transmit_semaphore = asyncio.Semaphore(5)
+        # delete_market 전용 세마포어 — transmit 세마포어와 분리하여 전송 포화 시에도 즉시 실행
+        self._delete_semaphore = asyncio.Semaphore(2)
         # brand_all 잡 직렬화 — SSG+MUSINSA 동시 실행 시 DB/메모리 고갈 방지
         self._brand_all_running: bool = False
         self._poll_count = 0
@@ -623,9 +625,16 @@ class JobWorker:
             _tx_accounts = self._extract_transmit_account_ids(job.payload)
             self._active_transmit_accounts[job.id] = _tx_accounts
 
-            async def _run_with_limit(_j=job):
-                async with self._transmit_semaphore:
-                    await self._execute_job(_j)
+            if job.job_type == "delete_market":
+
+                async def _run_with_limit(_j=job):
+                    async with self._delete_semaphore:
+                        await self._execute_job(_j)
+            else:
+
+                async def _run_with_limit(_j=job):  # type: ignore[misc]
+                    async with self._transmit_semaphore:
+                        await self._execute_job(_j)
 
             task = asyncio.create_task(
                 _run_with_limit(),

@@ -218,20 +218,29 @@ class AbcMartPlugin(SourcingPlugin):
             new_original_price = 0
 
             # ── DOM 위임 — 가격·혜택가 모두 DOM에서 수집 ──
-            _dom_site = "GrandStage" if _prefer_grandstage else "ABCmart"
             try:
                 from backend.domain.samba.proxy.sourcing_queue import (
                     SourcingQueue,
                     get_autotune_owner,
                 )
 
-                # GrandStage 잡도 ABCmart owner 사용 — GrandStage는 사이트별 owner 미설정으로
-                # owner=""(무주공산)이 되어 extension 사이트 필터에서 제외됨.
-                # ABCmart와 GrandStage는 동일 플러그인(abcmart.py)에서 처리하므로 ABCmart owner 공유.
+                # GrandStage 상품도 site="ABCmart"로 잡 생성 — extension X-Allowed-Sites에
+                # GrandStage가 없으면 allowed_set 필터로 잡 자체가 반환 안 됨.
+                # 동일 도메인(a-rt.com)이므로 ABCmart 처리 경로로도 정확히 추출 가능.
+                # URL만 GrandStage URL 사용해 올바른 채널가 수집.
                 _abc_owner = get_autotune_owner("ABCmart") or None
-                _dom_req, _dom_fut = SourcingQueue.add_detail_job(
-                    _dom_site, site_product_id, owner_device_id=_abc_owner
-                )
+                if _prefer_grandstage:
+                    _gs_url = f"https://grandstage.a-rt.com/product/new?prdtNo={site_product_id}&tChnnlNo=10002"
+                    _dom_req, _dom_fut = SourcingQueue.add_detail_job(
+                        "ABCmart",
+                        site_product_id,
+                        url=_gs_url,
+                        owner_device_id=_abc_owner,
+                    )
+                else:
+                    _dom_req, _dom_fut = SourcingQueue.add_detail_job(
+                        "ABCmart", site_product_id, owner_device_id=_abc_owner
+                    )
                 # popup 윈도우 처리시간: ~25-30초 평균, 최대 ~45초
                 # SSG 빈페이지 reload(최대 25s) + 다음 폴 사이클 대기 고려해 110s로 여유 확보
                 _dom_ext = await asyncio.wait_for(_dom_fut, timeout=110)

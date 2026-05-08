@@ -600,6 +600,17 @@ class SambaTetrisService:
 
         # 즉시 전송하지 않음 — 인터벌 루프(sync_all)에서 잡큐로 스테이징
         # clear_board_cache() 금지 — 61초 쿼리 유발로 프론트 15초 타임아웃 발생
+
+        # 동일 브랜드의 다른 계정 pending/running 잡 취소 (중복 전송 방지)
+        cancelled = await self._cancel_other_account_transmit_jobs(
+            source_site, brand_name, market_account_id
+        )
+        if cancelled > 0:
+            logger.info(
+                f"[테트리스] assign — 다른 계정 pending 잡 {cancelled}건 취소 "
+                f"({source_site}/{brand_name})"
+            )
+
         logger.info(
             f"[테트리스] assign 저장 완료 — {source_site}/{brand_name} "
             f"→ {market_account_id} (인터벌 루프에서 등록 예정)"
@@ -614,6 +625,110 @@ class SambaTetrisService:
     # ──────────────────────────────────────────────
     # 잡큐 헬퍼
     # ──────────────────────────────────────────────
+
+    async def _cancel_other_account_transmit_jobs(
+        self, source_site: str, brand_name: str, keep_account_id: str
+    ) -> int:
+        """동일 브랜드의 다른 계정 pending/running 잡 취소 — 새 배치 계정만 유지."""
+        from backend.domain.samba.job.model import JobStatus, SambaJob
+        from backend.domain.samba.shipment.service import request_cancel_transmit
+        from sqlmodel import select
+
+        rows = await self._session.execute(
+            select(SambaJob).where(
+                SambaJob.job_type == "transmit",
+                SambaJob.status.in_([JobStatus.PENDING, JobStatus.RUNNING]),
+                SambaJob.payload.op("->>")("brand_name") == brand_name,
+                SambaJob.payload.op("->>")("source_site") == source_site,
+            )
+        )
+        jobs = rows.scalars().all()
+        cancelled = 0
+        for job in jobs:
+            target_ids = (job.payload or {}).get("target_account_ids", [])
+            if keep_account_id in target_ids:
+                continue  # 새 배치 계정 잡은 유지
+            if job.status == JobStatus.PENDING:
+                job.status = JobStatus.CANCELLED
+                self._session.add(job)
+                cancelled += 1
+                logger.info(
+                    f"[테트리스] 다른 계정 pending 잡 취소 — {job.id[:8]} "
+                    f"({source_site}/{brand_name} targets={target_ids})"
+                )
+            else:  # RUNNING
+                request_cancel_transmit(job.id)
+                cancelled += 1
+                logger.info(
+                    f"[테트리스] 다른 계정 running 잡 취소 신호 — {job.id[:8]} "
+                    f"({source_site}/{brand_name} targets={target_ids})"
+                )
+        return cancelled
+
+    async def _cancel_stale_transmit_jobs(
+        self,
+        tenant_id: Optional[str],
+        assignments: list,
+    ) -> int:
+        """sync_all 실행 시 현재 배치 기준으로 유효하지 않은 pending/running 잡 취소.
+
+        배치된 (source_site, brand_name) → assigned_account_id 매핑을 기준으로
+        다른 계정을 타깃하는 잡을 정리한다.
+        테트리스 배치가 없는 브랜드(레거시)는 건드리지 않는다.
+        """
+        from backend.domain.samba.job.model import JobStatus, SambaJob
+        from backend.domain.samba.shipment.service import request_cancel_transmit
+        from sqlmodel import select
+
+        if not assignments:
+            return 0
+
+        # 현재 배치: (source_site, brand_name) → 유효한 account_id
+        valid_map: dict[tuple[str, str], str] = {
+            (a.source_site, a.brand_name): a.market_account_id for a in assignments
+        }
+
+        rows = await self._session.execute(
+            select(SambaJob).where(
+                SambaJob.job_type == "transmit",
+                SambaJob.status.in_([JobStatus.PENDING, JobStatus.RUNNING]),
+                SambaJob.payload.op("->>")("brand_name").isnot(None),
+                SambaJob.payload.op("->>")("source_site").isnot(None),
+            )
+        )
+        jobs = rows.scalars().all()
+        cancelled = 0
+        for job in jobs:
+            payload = job.payload or {}
+            site = payload.get("source_site")
+            brand = payload.get("brand_name")
+            target_ids = payload.get("target_account_ids", [])
+
+            key = (site, brand)
+            if key not in valid_map:
+                continue  # 테트리스 배치 없는 레거시 브랜드 — 건드리지 않음
+
+            valid_account = valid_map[key]
+            if valid_account in target_ids:
+                continue  # 올바른 계정 잡 — 유지
+
+            # 배치와 다른 계정 잡 → 취소
+            if job.status == JobStatus.PENDING:
+                job.status = JobStatus.CANCELLED
+                self._session.add(job)
+                cancelled += 1
+                logger.info(
+                    f"[테트리스 sync] stale pending 잡 취소 — {job.id[:8]} "
+                    f"({site}/{brand} targets={target_ids}, valid={valid_account})"
+                )
+            else:  # RUNNING
+                request_cancel_transmit(job.id)
+                cancelled += 1
+                logger.info(
+                    f"[테트리스 sync] stale running 잡 취소 신호 — {job.id[:8]} "
+                    f"({site}/{brand} targets={target_ids}, valid={valid_account})"
+                )
+        return cancelled
 
     async def _cancel_pending_transmit_jobs(
         self, source_site: str, brand_name: str, account_id: str
@@ -887,6 +1002,12 @@ class SambaTetrisService:
         job_repo = SambaJobRepository(self._session)
         job_count = 0
         total_products = 0
+
+        # 현재 배치 기준으로 다른 계정 pending/running 잡 정리
+        # — 배치 이동 후 이전 계정 잡이 남아 중복 전송되는 버그 방지
+        stale_cancelled = await self._cancel_stale_transmit_jobs(tenant_id, assignments)
+        if stale_cancelled > 0:
+            logger.info(f"[테트리스 sync] 배치 외 계정 잡 {stale_cancelled}건 취소")
 
         # 처리 완료된 (source_site, brand_name, account_id) 중복 방지
         processed_keys: set[tuple[str, str, str]] = set()
