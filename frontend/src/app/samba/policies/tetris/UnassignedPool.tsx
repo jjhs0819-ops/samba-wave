@@ -298,7 +298,7 @@ export default function UnassignedPool({
         padding: '10px 12px',
       }}
     >
-      {Object.entries(grouped).map(([site, items]) => (
+      {Object.entries(grouped).sort(([, a], [, b]) => b.length - a.length).map(([site, items]) => (
         <div key={site} style={{ marginBottom: 16 }}>
           <div
             style={{
