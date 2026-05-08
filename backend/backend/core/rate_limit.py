@@ -76,13 +76,15 @@ limiter = Limiter(key_func=_client_key, default_limits=[])
 
 
 # 사전 정의 정책 — 호출부에서 일관성 유지하기 위해 상수로 묶음.
-RATE_LOGIN: str = "10/minute"          # 무차별 인증 시도 차단 (로그인/check-login)
-RATE_SET_COOKIE: str = "30/minute"     # 자격증명 갱신 — 정상 사용량 충분 + 남용 방지
-RATE_PROXY_HEAVY: str = "300/minute"   # 외부 사이트 호출 (수집/검색/카테고리 스캔)
+RATE_LOGIN: str = "10/minute"  # 무차별 인증 시도 차단 (로그인/check-login)
+RATE_SET_COOKIE: str = "30/minute"  # 자격증명 갱신 — 정상 사용량 충분 + 남용 방지
+RATE_PROXY_HEAVY: str = "300/minute"  # 외부 사이트 호출 (수집/검색/카테고리 스캔)
 RATE_PROXY_LIGHT: str = "1200/minute"  # 가벼운 메타·진단 — 확장앱 동시 폴링 허용
 
 
-def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+def rate_limit_exceeded_handler(
+    request: Request, exc: RateLimitExceeded
+) -> JSONResponse:
     """429 + Retry-After 헤더 강제."""
     response = JSONResponse(
         status_code=429,

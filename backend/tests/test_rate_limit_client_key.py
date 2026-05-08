@@ -7,7 +7,9 @@ from unittest.mock import MagicMock
 from backend.core.rate_limit import _client_key
 
 
-def _mock_request(headers: dict[str, str] | None = None, client_host: str | None = None):
+def _mock_request(
+    headers: dict[str, str] | None = None, client_host: str | None = None
+):
     req = MagicMock()
     req.headers = {k.lower(): v for k, v in (headers or {}).items()}
     if client_host:
