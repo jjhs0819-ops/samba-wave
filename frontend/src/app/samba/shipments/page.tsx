@@ -1236,7 +1236,7 @@ export default function ShipmentsPage() {
         const transmitCount = runningAll.filter(j => j.kind !== 'delete').length
         const deleteCount = runningAll.filter(j => j.kind === 'delete').length
         return (
-          <div style={{ background: 'rgba(8,10,16,0.98)', border: '1px solid #1C1E2A', borderRadius: '8px', marginBottom: '8px', overflow: 'hidden' }}>
+          <div style={{ background: 'rgba(8,10,16,0.98)', border: '1px solid #1C1E2A', borderRadius: '8px', marginBottom: '8px', overflow: 'visible' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 14px', background: '#0A0D14', borderBottom: '1px solid #1C1E2A' }}>
               <span style={{ width: '6px', height: '6px', borderRadius: '50%',
                 background: runningAll.length > 0 ? '#51CF66' : '#FAB005' }} />
@@ -1270,7 +1270,7 @@ export default function ShipmentsPage() {
                       {j.kind === 'delete' ? '삭제중' : '전송중'}
                     </span>
                     <span style={{ color: '#8A95B0', minWidth: '92px', flexShrink: 0 }}>{'시작'} {startedStr}</span>
-                    <span style={{ color: '#C4CAD8', whiteSpace: 'normal', wordBreak: 'break-all', flexShrink: 0, maxWidth: '320px' }} title={j.markets}>
+                    <span style={{ color: '#C4CAD8', whiteSpace: 'nowrap', flexShrink: 0, overflow: 'visible' }} title={j.markets}>
                       {j.markets}
                     </span>
                     <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={[sitesStr, brandsStr].filter(Boolean).join(' / ')}>
@@ -1303,7 +1303,7 @@ export default function ShipmentsPage() {
                   <div key={`p-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: '#8A95B0', borderBottom: '1px solid #151822', paddingBottom: '4px', marginBottom: '0' }}>
                     <span style={{ color: '#FAB005', fontWeight: 600, minWidth: '40px' }}>{'대기'}</span>
                     <span style={{ minWidth: '92px', flexShrink: 0 }}>{'—'}</span>
-                    <span style={{ color: '#C4CAD8', whiteSpace: 'normal', wordBreak: 'break-all', flexShrink: 0, maxWidth: '320px' }} title={j.markets}>
+                    <span style={{ color: '#C4CAD8', whiteSpace: 'nowrap', flexShrink: 0, overflow: 'visible' }} title={j.markets}>
                       {j.markets}
                     </span>
                     <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={[sitesStr, brandsStr].filter(Boolean).join(' / ')}>
