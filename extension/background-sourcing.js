@@ -747,6 +747,11 @@ async function pollSourcingOnce() {
         break
       }
       if (!job.hasJob) break
+      // 실제 잡 수신 = 서버가 오토튠 재개 상태 → forceStop 플래그 자동 해제
+      if (_sourcingForceStop) {
+        console.log('[소싱] 오토튠 재개 감지 — forceStop 해제')
+        _sourcingForceStop = false
+      }
       console.log(`[소싱] ${job.url || '작업 수신'} (${jobs.length + 1}/${SOURCING_MAX_POLL_LIMIT})`)
       jobs.push(job)
     } catch {
