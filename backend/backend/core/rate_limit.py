@@ -72,7 +72,11 @@ def _client_key(request: Request) -> str:
 # 단일 프로세스 in-memory storage. 운영 docker-compose 의 WEB_CONCURRENCY=1 전제.
 # 멀티 워커/멀티 VM 확장 시 Redis storage 로 전환 필요:
 #   storage_uri="redis://..."
-limiter = Limiter(key_func=_client_key, default_limits=[])
+# config_filename="" : slowapi 가 .env 파일을 시스템 인코딩으로 읽으려다
+# Windows(cp949) 에서 UnicodeDecodeError 발생하는 것을 방지.
+limiter = Limiter(
+    key_func=_client_key, default_limits=[], storage_uri="memory://", config_filename=""
+)
 
 
 # 사전 정의 정책 — 호출부에서 일관성 유지하기 위해 상수로 묶음.
