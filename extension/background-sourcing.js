@@ -739,10 +739,23 @@ async function pollSourcingOnce() {
         pauseCollectPolling(30000, 'backend shutting down')
         break
       }
+      // 백엔드가 요구하는 최소 확장앱 버전 — 미달이면 폴링 중단 + 경고 (사용자 업데이트 유도)
+      if (job.minExtVersion && typeof globalThis._isExtVersionBelow === 'function'
+          && globalThis._isExtVersionBelow(job.minExtVersion)) {
+        console.warn(`[소싱] 확장앱 버전이 백엔드 요구치(${job.minExtVersion}) 미만 — 폴링 중단`)
+        pauseCollectPolling(300000, `extension version below ${job.minExtVersion}`)
+        break
+      }
       if (job.forceStop) {
         // 오토튠 stop 직후 — 이미 받은 작업 포함 전부 버리고 즉시 중단
         _sourcingForceStop = true
-        _localAutotuneJoined = false  // 이 PC 참여 종료
+        // _allowedSourceSites 까지 함께 초기화하기 위해 세터 경유 (직접 대입 시 상태 불일치)
+        if (typeof globalThis._setLocalAutotuneJoined === 'function') {
+          globalThis._setLocalAutotuneJoined(false)
+        } else {
+          _localAutotuneJoined = false
+          _allowedSourceSites = null
+        }
         jobs.length = 0
         break
       }
@@ -2001,91 +2014,7 @@ async function extractDetailData(tabId, site, productId) {
           return { success: false, message: 'SSG HTML 추출 실패: ' + e.message, site_product_id: prdId }
         }
       }
-      // Unused-SSG branch (dead code — replaced above)
-      if (false && siteName === 'SSG') {
-        try {
-          const obj = window.resultItemObj || {}
-          if (!obj.itemNm) {
-            return { success: false, message: 'resultItemObj 없음', site_product_id: prdId }
-          }
-          // 가격 (문자열/숫자 혼용 → int 정규화)
-          const toInt = (v) => {
-            if (v == null) return 0
-            const n = parseInt(String(v).replace(/[^\d]/g, ''))
-            return isNaN(n) ? 0 : n
-          }
-          const salePrice = toInt(obj.sellprc || obj.finalPrice)
-          const bestAmt = toInt(obj.bestAmt)
-          const origPrice = toInt(obj.norprc || obj.strikeOutPrice) || salePrice
-          // 카테고리 (dispCtg 우선, stdCtg 폴백)
-          const dispCtgId = String(obj.dispCtgId || '')
-          const c1 = obj.dispCtgLclsNm || obj.stdCtgLclsNm || ''
-          const c2 = obj.dispCtgMclsNm || obj.stdCtgMclsNm || ''
-          const c3 = obj.dispCtgSclsNm || obj.stdCtgSclsNm || ''
-          const catParts = [c1, c2, c3].filter(Boolean)
-          const catStr = catParts.join(' > ')
-          // 이미지
-          const imgs = []
-          if (obj.itemImgUrl) {
-            let img = obj.itemImgUrl
-            if (img.startsWith('//')) img = 'https:' + img
-            imgs.push(img)
-          }
-          // 추가 이미지 (uitemObjList의 이미지도 있을 수 있음)
-          if (Array.isArray(obj.imgList)) {
-            for (const im of obj.imgList) {
-              const url = im.imgFilePath || im.imgUrl || ''
-              if (url) {
-                let fixed = url
-                if (fixed.startsWith('//')) fixed = 'https:' + fixed
-                if (!imgs.includes(fixed)) imgs.push(fixed)
-              }
-            }
-          }
-          // 옵션 (uitemObjList)
-          const options = []
-          if (Array.isArray(obj.uitemObjList)) {
-            for (const u of obj.uitemObjList) {
-              options.push({
-                name: u.optnDisplayNm || u.optnNm || '',
-                price: toInt(u.addAmt || 0),
-                stock: toInt(u.usablInvQty || 99),
-                isSoldOut: String(u.usablInvQty || '0') === '0',
-              })
-            }
-          }
-          const isSoldOut = String(obj.soldOut || 'N').toUpperCase() === 'Y'
-          const result = {
-            success: true,
-            site_product_id: prdId,
-            itemNm: obj.itemNm,
-            name: obj.itemNm,
-            repBrandNm: obj.repBrandNm || obj.brandNm || '',
-            brand: obj.repBrandNm || obj.brandNm || '',
-            sellprc: salePrice,
-            sale_price: salePrice,
-            bestAmt: bestAmt,
-            best_benefit_price: bestAmt,
-            originalPrice: origPrice,
-            original_price: origPrice,
-            dispCtgId: dispCtgId,
-            dispCtgLclsNm: c1,
-            dispCtgMclsNm: c2,
-            dispCtgSclsNm: c3,
-            category: catStr,
-            images: imgs,
-            options: options,
-            soldOut: isSoldOut ? 'Y' : 'N',
-            is_sold_out: isSoldOut,
-            sourceUrl: 'https://www.ssg.com/item/itemView.ssg?itemId=' + prdId,
-            source_site: 'SSG',
-            freeShipping: (obj.shppTypeDtlCd || '').includes('FREE'),
-          }
-          return result
-        } catch (e) {
-          return { success: false, message: 'SSG 파싱 실패: ' + e.message, site_product_id: prdId }
-        }
-      }
+      // (구 SSG resultItemObj 데드코드 블록 제거 — CLAUDE.md SSG 가격 로직 영구 금지 규칙 위반 패턴 잔존 위험 차단)
       // ── 패션플러스 전용 파싱 ──
       if (siteName === 'FashionPlus') {
         // JSON-LD 기본 정보

@@ -100,8 +100,33 @@
     await new Promise(r => setTimeout(r, 500))
   }
 
+  // 서버 레시피의 evaluate 표현식 1차 방어선:
+  //  1) 길이 상한 (탈취 시 페이로드 폭증 방지)
+  //  2) 위험 토큰 블록리스트 (chrome.* / fetch / XHR / cookie / Function / import / require 등)
+  // 근본 해결은 백엔드 HMAC 서명 검증 필요 — 별도 PR.
+  const _EVAL_MAX_LEN = 2000
+  const _EVAL_DENY_TOKENS = [
+    'chrome.', 'browser.', 'fetch(', 'XMLHttpRequest', 'navigator.sendBeacon',
+    'document.cookie', 'localStorage', 'sessionStorage', 'indexedDB',
+    'Function(', 'new Function', 'import(', 'import ', 'require(',
+    'eval(', 'WebAssembly', 'postMessage(', 'BroadcastChannel',
+  ]
+  function _isEvalExprSafe(expr) {
+    if (typeof expr !== 'string') return false
+    if (expr.length > _EVAL_MAX_LEN) return false
+    for (const tok of _EVAL_DENY_TOKENS) {
+      if (expr.includes(tok)) return false
+    }
+    return true
+  }
+
   async function stepEvaluate(step, ctx) {
     const expression = interpolate(step.expression, ctx.vars)
+    if (!_isEvalExprSafe(expression)) {
+      console.warn('[recipe] evaluate 차단 (비허용 토큰/초과길이):', expression?.slice?.(0, 80))
+      if (step.resultKey) ctx.result[step.resultKey] = null
+      return
+    }
     const result = await chrome.scripting.executeScript({
       target: { tabId: ctx.tabId },
       world: 'MAIN',

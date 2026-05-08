@@ -131,6 +131,26 @@
     return res.json()
   }
 
+  // 버전 비교 — semver 'major.minor.patch' 가정, 짧으면 0으로 패딩.
+  // 백엔드 collect-queue 가 minExtVersion 을 응답하면 background-sourcing.js 에서 활용.
+  function _isExtVersionBelow(minVersion) {
+    try {
+      const cur = (chrome?.runtime?.getManifest?.()?.version || '').split('.').map(n => parseInt(n) || 0)
+      const min = String(minVersion).split('.').map(n => parseInt(n) || 0)
+      const len = Math.max(cur.length, min.length)
+      for (let i = 0; i < len; i++) {
+        const a = cur[i] || 0
+        const b = min[i] || 0
+        if (a < b) return true
+        if (a > b) return false
+      }
+      return false
+    } catch {
+      return false
+    }
+  }
+  globalThis._isExtVersionBelow = _isExtVersionBelow
+
   globalThis.SambaBackgroundCore = {
     API_PREFIX,
     CLOUD_URL,
