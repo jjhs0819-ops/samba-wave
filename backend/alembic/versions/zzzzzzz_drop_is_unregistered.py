@@ -12,7 +12,7 @@ Create Date: 2026-05-08 00:00:00.000000
 from alembic import op
 
 revision = "zzzzzzz_drop_is_unregistered"
-down_revision = "zzzzzz_lotteon_order_dedup_fix"
+down_revision = "dd3eaff7233e"
 branch_labels = None
 depends_on = None
 
