@@ -268,9 +268,13 @@ class CoupangClient:
     # category_id → (data, timestamp)
     _notice_meta_cache: dict[str, tuple[dict, float]] = {}
     _NOTICE_META_CACHE_TTL = 3600  # 1시간
+<<<<<<< Updated upstream
     _NOTICE_META_CACHE_MAX = (
         200  # 카테고리 200개 한도 (의류/신발/가방 등 메인 leaf 충분)
     )
+=======
+    _NOTICE_META_CACHE_MAX = 200  # 카테고리 200개 한도 (의류/신발/가방 등 메인 leaf 충분)
+>>>>>>> Stashed changes
 
     def __init__(
         self,
@@ -456,6 +460,7 @@ class CoupangClient:
         쿠팡 API 표준 표기와 미스매치되어 의류/신발 등록 시 모든 옵션의 notice가
         거부되는 문제(2026-05 보고)를 동적 조회로 근본 해결.
 
+<<<<<<< Updated upstream
         GET /v2/providers/seller_api/apis/api/v1/marketplace/meta/notice-categories/{categoryId}
         응답 구조 (추정 — 실제 응답 보고 보정):
           {
@@ -469,6 +474,13 @@ class CoupangClient:
               }
             ]
           }
+=======
+        GET /v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/{displayCategoryCode}
+        쿠팡 공식 path. data.noticeCategories[*].noticeCategoryDetailNames[*] 내려줌.
+
+        직전 fix(PR #120)는 존재하지 않는 path(/notice-categories/{id})로 호출해
+        모든 카테고리에서 404를 받고 정적 매핑으로 폴백되어 동일 오류가 재현됨.
+>>>>>>> Stashed changes
 
         캐시: module-level _notice_meta_cache, TTL 1시간. 카테고리당 1회 조회 후 재사용.
         """
@@ -485,15 +497,37 @@ class CoupangClient:
 
         result = await self._call_api(
             "GET",
+<<<<<<< Updated upstream
             f"/v2/providers/seller_api/apis/api/v1/marketplace/meta/notice-categories/{category_id}",
         )
+=======
+            f"/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/{category_id}",
+        )
+        # 진단용 로그: 응답 구조 검증 (캐시 미스 시 1회씩만 출력됨)
+        if isinstance(result, dict):
+            data = result.get("data")
+            if isinstance(data, dict):
+                logger.info(
+                    f"[쿠팡][notice-meta] cat={category_id} "
+                    f"data_keys={list(data.keys())[:10]} "
+                    f"notice_groups={len(data.get('noticeCategories') or [])}"
+                )
+            else:
+                logger.warning(
+                    f"[쿠팡][notice-meta] cat={category_id} 비정상 응답 keys={list(result.keys())[:10]}"
+                )
+>>>>>>> Stashed changes
         self._notice_meta_cache[category_id] = (result, now)
 
         # 캐시 한도 초과 시 가장 오래된 절반 제거
         if len(self._notice_meta_cache) > self._NOTICE_META_CACHE_MAX:
+<<<<<<< Updated upstream
             sorted_items = sorted(
                 self._notice_meta_cache.items(), key=lambda x: x[1][1]
             )
+=======
+            sorted_items = sorted(self._notice_meta_cache.items(), key=lambda x: x[1][1])
+>>>>>>> Stashed changes
             for k, _ in sorted_items[: self._NOTICE_META_CACHE_MAX // 2]:
                 del self._notice_meta_cache[k]
 
