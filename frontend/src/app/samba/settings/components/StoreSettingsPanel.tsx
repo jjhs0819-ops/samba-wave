@@ -2,6 +2,7 @@
 
 import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
 import {
+  accountApi,
   forbiddenApi,
   proxyApi,
 } from '@/lib/samba/api/commerce'
@@ -536,7 +537,23 @@ export function StoreSettingsPanel(props: Props) {
                       />
                       <button
                         type="button"
-                        onClick={() => togglePasswordVisibility(`${market.key}_${field.name}`)}
+                        onClick={async () => {
+                          const visKey = `${market.key}_${field.name}`
+                          // 수정 모드 + 아직 값이 없으면 백엔드에서 실제값 조회
+                          if (editingAccountId && !storeData[market.key]?.[field.name]) {
+                            try {
+                              const secrets = await accountApi.getSecrets(editingAccountId)
+                              const val = (secrets as Record<string, string>)[field.name]
+                              if (val) {
+                                setStoreData(prev => ({
+                                  ...prev,
+                                  [market.key]: { ...(prev[market.key] || {}), [field.name]: val },
+                                }))
+                              }
+                            } catch { /* 조회 실패 시 무시 */ }
+                          }
+                          togglePasswordVisibility(visKey)
+                        }}
                         style={{ padding: '0.3rem 0.5rem', fontSize: '0.7rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer', whiteSpace: 'nowrap' }}
                       >{visiblePasswords.has(`${market.key}_${field.name}`) ? '숨김' : '보기'}</button>
                     </div>

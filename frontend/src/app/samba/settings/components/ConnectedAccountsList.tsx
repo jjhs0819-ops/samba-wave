@@ -58,9 +58,8 @@ export function ConnectedAccountsList(props: Props) {
                   )
                   const sanitized: Record<string, string> = {}
                   for (const [k, v] of Object.entries(accData)) {
-                    // non-password 필드의 마스킹값은 스킵 (비밀번호 아닌 필드에 ****값 저장 방지)
-                    if (!passwordFields.has(k) && isMaskedSecret(v)) continue
-                    sanitized[k] = String(v || '')
+                    if (passwordFields.has(k) || isMaskedSecret(v)) continue
+                    sanitized[k] = v
                   }
                   const formData: Record<string, string> = {
                     businessName: a.business_name || '',

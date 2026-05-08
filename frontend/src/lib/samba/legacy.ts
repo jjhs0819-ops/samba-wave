@@ -814,6 +814,8 @@ export const accountApi = {
     request<SambaMarketAccount>(`${SAMBA_PREFIX}/accounts/${id}/toggle`, { method: "PUT" }),
   delete: (id: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/accounts/${id}`, { method: "DELETE" }),
+  getSecrets: (id: string) =>
+    request<Record<string, string>>(`${SAMBA_PREFIX}/accounts/${id}/secrets`),
 };
 
 // ── Shipments ──

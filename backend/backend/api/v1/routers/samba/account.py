@@ -117,6 +117,22 @@ async def get_account(
     return mask_model_secrets(account.model_dump())
 
 
+@router.get("/{account_id}/secrets")
+async def get_account_secrets(
+    account_id: str,
+    session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+):
+    """additional_fields를 마스킹 없이 반환 (설정 화면 '보기' 전용)."""
+    svc = _get_service(session)
+    account = await svc.get_account(account_id)
+    if not account:
+        raise HTTPException(404, "계정을 찾을 수 없습니다")
+    if tenant_id is not None and account.tenant_id != tenant_id:
+        raise HTTPException(403, "해당 계정에 대한 권한이 없습니다")
+    return account.additional_fields or {}
+
+
 @router.post("", status_code=201)
 async def create_account(
     body: AccountCreate,
