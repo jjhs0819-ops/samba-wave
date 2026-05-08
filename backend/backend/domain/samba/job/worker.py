@@ -623,7 +623,10 @@ class JobWorker:
         # 전송/마켓삭제: asyncio.Task로 백그라운드 병렬 실행 (동일 계정 순차 보장)
         if job.job_type in ("transmit", "delete_market"):
             _tx_accounts = self._extract_transmit_account_ids(job.payload)
-            self._active_transmit_accounts[job.id] = _tx_accounts
+            # transmit 잡만 등록 — delete_market은 별도 세마포어/락으로 관리하므로
+            # _active_transmit_accounts에 포함하면 같은 계정의 transmit 잡을 불필요하게 차단함
+            if job.job_type == "transmit":
+                self._active_transmit_accounts[job.id] = _tx_accounts
 
             if job.job_type == "delete_market":
 

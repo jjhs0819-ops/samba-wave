@@ -231,18 +231,27 @@ class SambaTetrisService:
             )
             policy_map[pol.id] = (pol.name, color)
 
-        # 3.5. 소싱그룹(검색그룹) applied_policy_id 로드
-        # tetris assignment가 없는 브랜드도 소싱그룹 정책 색상으로 표시
+        # 3.5. (소싱처, 브랜드)별 정책 색상 로드 — collected_product.applied_policy_id 기준
+        # search_filter.source_brand_name은 표기 차이/NULL이 있어 매칭 누락됨
+        # → 상품 자체에 채워진 applied_policy_id를 (site, BTRIM(brand))로 집계해 사용
         sf_rows = await self._session.execute(
             text("""
-                SELECT DISTINCT ON (source_site, source_brand_name)
-                    source_site, source_brand_name, applied_policy_id
-                FROM samba_search_filter
-                WHERE applied_policy_id IS NOT NULL
-                  AND source_brand_name IS NOT NULL
-                  AND source_brand_name != ''
-                  AND (tenant_id IS NULL AND :tid_is_null OR tenant_id = :tid)
-                ORDER BY source_site, source_brand_name, updated_at DESC
+                SELECT DISTINCT ON (source_site, brand_norm)
+                    source_site, brand_norm AS source_brand_name, applied_policy_id, cnt
+                FROM (
+                    SELECT
+                        source_site,
+                        BTRIM(brand) AS brand_norm,
+                        applied_policy_id,
+                        COUNT(*) AS cnt
+                    FROM samba_collected_product
+                    WHERE applied_policy_id IS NOT NULL
+                      AND brand IS NOT NULL
+                      AND BTRIM(brand) != ''
+                      AND (tenant_id IS NULL AND :tid_is_null OR tenant_id = :tid)
+                    GROUP BY source_site, BTRIM(brand), applied_policy_id
+                ) sub
+                ORDER BY source_site, brand_norm, cnt DESC
             """),
             {"tid": tenant_id, "tid_is_null": tenant_id is None},
         )

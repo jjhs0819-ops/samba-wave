@@ -597,6 +597,15 @@ export const collectorApi = {
       { timeoutMs: 600_000 },
     ),
 
+  brandPolicyApply: (sourceSite: string, brandName: string, policyId: string | null) =>
+    request<{ products_updated: number; filters_updated: number; assignments_updated: number }>(
+      `${SAMBA_PREFIX}/collector/brand-policy-apply`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ source_site: sourceSite, brand_name: brandName, policy_id: policyId }),
+      },
+    ),
+
   // 상태 확인
   proxyStatus: () =>
     request<{ status: string; message: string }>(`${SAMBA_PREFIX}/collector/proxy-status`),

@@ -810,3 +810,80 @@ async def brand_create_groups(
         "created": len(created_groups),
         "groups": created_groups,
     }
+
+
+# ── 브랜드 단위 정책 일괄 적용 ──
+
+
+class BrandPolicyApplyRequest(BaseModel):
+    source_site: str
+    brand_name: str
+    policy_id: Optional[str] = None  # None = 정책 해제
+
+
+@router.post("/brand-policy-apply")
+async def brand_policy_apply(
+    body: BrandPolicyApplyRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """브랜드 단위 정책 일괄 적용 — 수집상품·검색필터·테트리스배치 모두 갱신.
+
+    테트리스 보드 배지 팔레트에서 호출. 해당 (소싱처, 브랜드) 조합의
+    `samba_collected_product.applied_policy_id` /
+    `samba_search_filter.applied_policy_id` /
+    `samba_tetris_assignment.policy_id`을 한 번에 갱신한다.
+    """
+    from sqlalchemy import text as _text
+
+    site = (body.source_site or "").strip()
+    brand = (body.brand_name or "").strip()
+    pid = body.policy_id  # None 허용
+
+    if not site or not brand:
+        raise HTTPException(400, "source_site, brand_name이 필요합니다")
+
+    if pid:
+        pol = await session.execute(
+            _text("SELECT 1 FROM samba_policy WHERE id = :pid"),
+            {"pid": pid},
+        )
+        if not pol.scalar():
+            raise HTTPException(404, f"정책 {pid}을 찾을 수 없습니다")
+
+    # 1) 수집상품 — 색상 매칭의 진실 소스 (테트리스 보드가 이 컬럼을 사용)
+    cp_res = await session.execute(
+        _text("""
+            UPDATE samba_collected_product
+            SET applied_policy_id = :pid
+            WHERE source_site = :site AND BTRIM(brand) = :brand
+        """),
+        {"pid": pid, "site": site, "brand": brand},
+    )
+
+    # 2) 검색필터 — 차후 신규 수집 상품에 자동 상속되는 기본값
+    sf_res = await session.execute(
+        _text("""
+            UPDATE samba_search_filter
+            SET applied_policy_id = :pid, updated_at = NOW()
+            WHERE source_site = :site AND BTRIM(source_brand_name) = :brand
+        """),
+        {"pid": pid, "site": site, "brand": brand},
+    )
+
+    # 3) 테트리스 배치 — 화면에 즉시 반영
+    ta_res = await session.execute(
+        _text("""
+            UPDATE samba_tetris_assignment
+            SET policy_id = :pid, updated_at = NOW()
+            WHERE source_site = :site AND brand_name = :brand
+        """),
+        {"pid": pid, "site": site, "brand": brand},
+    )
+
+    await session.commit()
+
+    return {
+        "products_updated": cp_res.rowcount,
+        "filters_updated": sf_res.rowcount,
+        "assignments_updated": ta_res.rowcount,
+    }

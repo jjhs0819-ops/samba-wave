@@ -236,33 +236,28 @@ function UnassignedItem({
           }}
           onClick={e => e.stopPropagation()}
         >
-          {assignments.length === 0 && (
-            <span style={{ fontSize: 10, color: '#555', marginRight: 4 }}>배치 없음</span>
-          )}
           <div
             onClick={() => { onPolicyChange(null); setShowPalette(false) }}
             title="정책 없음"
             style={{
               width: 16, height: 16, borderRadius: '50%',
               background: '#6B7280',
-              cursor: assignments.length > 0 ? 'pointer' : 'default',
+              cursor: 'pointer',
               border: currentPolicyId === null ? '2px solid #fff' : '2px solid transparent',
               flexShrink: 0,
-              opacity: assignments.length === 0 ? 0.4 : 1,
             }}
           />
           {policies.map(p => (
             <div
               key={p.id}
-              onClick={() => { if (assignments.length > 0) { onPolicyChange(p.id); setShowPalette(false) } }}
+              onClick={() => { onPolicyChange(p.id); setShowPalette(false) }}
               title={p.name}
               style={{
                 width: 16, height: 16, borderRadius: '50%',
                 background: p.color,
-                cursor: assignments.length > 0 ? 'pointer' : 'default',
+                cursor: 'pointer',
                 border: p.id === currentPolicyId ? '2px solid #fff' : '2px solid transparent',
                 flexShrink: 0,
-                opacity: assignments.length === 0 ? 0.4 : 1,
               }}
             />
           ))}

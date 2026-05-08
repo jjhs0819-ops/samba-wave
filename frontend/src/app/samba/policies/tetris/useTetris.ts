@@ -178,32 +178,14 @@ export function useTetris() {
     brandName: string,
     policyId: string | null,
   ) => {
-    if (!board) return
-    const targets: { assignmentId: string; accountId: string }[] = []
-    board.markets.forEach(m =>
-      m.accounts.forEach(a =>
-        a.assignments.forEach(b => {
-          if (b.source_site === sourceSite && b.brand_name === brandName && b.id && !b.is_legacy) {
-            targets.push({ assignmentId: b.id, accountId: a.account_id })
-          }
-        })
-      )
-    )
-    if (targets.length === 0) return
-
+    // 브랜드의 모든 수집상품·검색필터·테트리스배치에 정책 일괄 적용
     try {
-      for (const { assignmentId, accountId } of targets) {
-        await tetrisApi.move(assignmentId, {
-          market_account_id: accountId,
-          policy_id: policyId,
-          position_order: 0,
-        })
-      }
+      await collectorApi.brandPolicyApply(sourceSite, brandName, policyId)
       await refresh()
     } catch (e) {
       showAlert('Policy update failed: ' + String(e))
     }
-  }, [board, refresh])
+  }, [refresh])
 
   const handleDeleteBrandScope = useCallback(async (sourceSite: string, brandName: string) => {
     const confirmed = await showConfirm(
