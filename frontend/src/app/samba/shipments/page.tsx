@@ -1208,84 +1208,94 @@ export default function ShipmentsPage() {
         const transmitCount = runningAll.filter(j => j.kind !== 'delete').length
         const deleteCount = runningAll.filter(j => j.kind === 'delete').length
         return (
-        <div style={{ background: 'rgba(8,10,16,0.98)', border: '1px solid #1C1E2A', borderRadius: '8px', marginBottom: '8px', overflow: 'hidden' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 14px', background: '#0A0D14', borderBottom: '1px solid #1C1E2A' }}>
-            <span style={{ width: '6px', height: '6px', borderRadius: '50%',
-              background: runningAll.length > 0 ? '#51CF66' : '#FAB005' }} />
-            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#9AA5C0' }}>
-              Job 진행상황
-              {transmitCount > 0 && ` — 전송 중 ${fmtNum(transmitCount)}건`}
-              {deleteCount > 0 && `${transmitCount > 0 ? ' · ' : ' — '}삭제 중 ${fmtNum(deleteCount)}건`}
-              {jobQueueStatus.pending.length > 0 && ` · 대기 ${fmtNum(jobQueueStatus.pending.length)}건`}
-            </span>
+          <div style={{ background: 'rgba(8,10,16,0.98)', border: '1px solid #1C1E2A', borderRadius: '8px', marginBottom: '8px', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 14px', background: '#0A0D14', borderBottom: '1px solid #1C1E2A' }}>
+              <span style={{ width: '6px', height: '6px', borderRadius: '50%',
+                background: runningAll.length > 0 ? '#51CF66' : '#FAB005' }} />
+              <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#9AA5C0' }}>
+                Job ????
+                {transmitCount > 0 && ` ? ?? ? ${fmtNum(transmitCount)}?`}
+                {deleteCount > 0 && `${transmitCount > 0 ? ' ? ' : ' ? '}?? ? ${fmtNum(deleteCount)}?`}
+                {jobQueueStatus.pending.length > 0 && ` ? ?? ${fmtNum(jobQueueStatus.pending.length)}?`}
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '8px 14px' }}>
+              {runningAll.map((j, idx) => {
+                const started = j.started_at ? new Date(j.started_at) : null
+                const startedStr = started
+                  ? `${String(started.getHours()).padStart(2, '0')}:${String(started.getMinutes()).padStart(2, '0')}:${String(started.getSeconds()).padStart(2, '0')}`
+                  : '-'
+                const pct = j.total > 0 ? Math.floor((j.current / j.total) * 100) : 0
+                const elapsedMs = started ? Math.max(0, Date.now() - started.getTime()) : 0
+                const perItemSec = j.current > 0 && elapsedMs > 0 ? elapsedMs / 1000 / j.current : 0
+                const perItemStr = perItemSec > 0
+                  ? (perItemSec >= 10 ? `${Math.round(perItemSec)}?/1?` : `${perItemSec.toFixed(1)}?/1?`)
+                  : '?'
+                const busy = !!(j.id && cancellingJobIds.includes(j.id))
+                const sites = j.source_sites ?? []
+                const brands = j.brands ?? []
+                const sitesStr = sites.length > 0 ? (sites.length <= 3 ? sites.join(' ? ') : `${sites.slice(0, 3).join(' ? ')} ? ${fmtNum(sites.length - 3)}`) : ''
+                const brandsStr = brands.length > 0 ? (brands.length <= 3 ? brands.join(' ? ') : `${brands.slice(0, 3).join(' ? ')} ? ${fmtNum(brands.length - 3)}`) : ''
+                return (
+                  <div key={`r-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: '#C4CAD8', borderBottom: '1px solid #151822', paddingBottom: '4px', marginBottom: '0' }}>
+                    <span style={{ color: j.kind === 'delete' ? '#FF6B6B' : '#51CF66', fontWeight: 600, minWidth: '40px' }}>
+                      {j.kind === 'delete' ? '???' : '???'}
+                    </span>
+                    <span style={{ color: '#8A95B0', minWidth: '92px', flexShrink: 0 }}>?? {startedStr}</span>
+                    <span style={{ color: '#C4CAD8', whiteSpace: 'nowrap', flexShrink: 0 }} title={j.markets}>
+                      {j.markets}
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={[sitesStr, brandsStr].filter(Boolean).join(' / ')}>
+                      {sitesStr && <span style={{ color: '#7BB0FF' }}>{sitesStr}</span>}
+                      {sitesStr && brandsStr && <span style={{ color: '#3A4258' }}> ? </span>}
+                      {brandsStr && <span style={{ color: '#A78BFA' }}>{brandsStr}</span>}
+                    </span>
+                    <span style={{ color: '#9AA5C0', minWidth: '92px', textAlign: 'right', flexShrink: 0 }}>
+                      {fmtNum(j.current)} / {fmtNum(j.total)} ({pct}%)
+                    </span>
+                    <span style={{ color: '#6E7A95', minWidth: '56px', textAlign: 'right', fontSize: '0.7rem', flexShrink: 0 }}>
+                      {perItemStr}
+                    </span>
+                    <button
+                      onClick={() => j.id && handleCancelSingleJob(j.id, j.markets)}
+                      disabled={!j.id || busy}
+                      title="? ?? ??"
+                      style={{ padding: '2px 8px', fontSize: '0.7rem', background: busy ? 'rgba(255,80,80,0.3)' : 'rgba(255,80,80,0.12)', color: '#FF6B6B', border: '1px solid rgba(255,80,80,0.4)', borderRadius: '3px', cursor: (!j.id || busy) ? 'not-allowed' : 'pointer', fontWeight: 600, minWidth: '40px', flexShrink: 0 }}
+                    >{busy ? '???' : '??'}</button>
+                  </div>
+                )
+              })}
+              {sortedPending.map((j, idx) => {
+                const busy = !!(j.id && cancellingJobIds.includes(j.id))
+                const sites = j.source_sites ?? []
+                const brands = j.brands ?? []
+                const sitesStr = sites.length > 0 ? (sites.length <= 3 ? sites.join(' ? ') : `${sites.slice(0, 3).join(' ? ')} ? ${fmtNum(sites.length - 3)}`) : ''
+                const brandsStr = brands.length > 0 ? (brands.length <= 3 ? brands.join(' ? ') : `${brands.slice(0, 3).join(' ? ')} ? ${fmtNum(brands.length - 3)}`) : ''
+                return (
+                  <div key={`p-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: '#8A95B0', borderBottom: '1px solid #151822', paddingBottom: '4px', marginBottom: '0' }}>
+                    <span style={{ color: '#FAB005', fontWeight: 600, minWidth: '40px' }}>??</span>
+                    <span style={{ minWidth: '92px', flexShrink: 0 }}>?</span>
+                    <span style={{ color: '#C4CAD8', whiteSpace: 'nowrap', flexShrink: 0 }} title={j.markets}>
+                      {j.markets}
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={[sitesStr, brandsStr].filter(Boolean).join(' / ')}>
+                      {sitesStr && <span style={{ color: '#7BB0FF' }}>{sitesStr}</span>}
+                      {sitesStr && brandsStr && <span style={{ color: '#3A4258' }}> ? </span>}
+                      {brandsStr && <span style={{ color: '#A78BFA' }}>{brandsStr}</span>}
+                    </span>
+                    <span style={{ minWidth: '110px', textAlign: 'right', flexShrink: 0 }}>{fmtNum(j.product_count)}?</span>
+                    <button
+                      onClick={() => j.id && handleCancelSingleJob(j.id, j.markets)}
+                      disabled={!j.id || busy}
+                      title="? ?? ??"
+                      style={{ padding: '2px 8px', fontSize: '0.7rem', background: busy ? 'rgba(255,80,80,0.3)' : 'rgba(255,80,80,0.12)', color: '#FF6B6B', border: '1px solid rgba(255,80,80,0.4)', borderRadius: '3px', cursor: (!j.id || busy) ? 'not-allowed' : 'pointer', fontWeight: 600, minWidth: '40px', flexShrink: 0 }}
+                    >{busy ? '???' : '??'}</button>
+                  </div>
+                )
+              })}
+            </div>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '8px 14px' }}>
-            {runningAll.map((j, idx) => {
-              const started = j.started_at ? new Date(j.started_at) : null
-              const startedStr = started
-                ? `${String(started.getHours()).padStart(2, '0')}:${String(started.getMinutes()).padStart(2, '0')}:${String(started.getSeconds()).padStart(2, '0')}`
-                : '-'
-              const pct = j.total > 0 ? Math.floor((j.current / j.total) * 100) : 0
-              const elapsedMs = started ? Math.max(0, Date.now() - started.getTime()) : 0
-              const perItemSec = j.current > 0 && elapsedMs > 0 ? elapsedMs / 1000 / j.current : 0
-              const perItemStr = perItemSec > 0
-                ? (perItemSec >= 10 ? `${Math.round(perItemSec)}?/1?` : `${perItemSec.toFixed(1)}?/1?`)
-                : '?'
-              const busy = !!(j.id && cancellingJobIds.includes(j.id))
-              const sites = j.source_sites ?? []
-              const brands = j.brands ?? []
-              const sitesStr = sites.length > 0 ? (sites.length <= 3 ? sites.join('?') : `${sites.slice(0, 3).join('?')} ? ${fmtNum(sites.length - 3)}`) : ''
-              const brandsStr = brands.length > 0 ? (brands.length <= 3 ? brands.join('?') : `${brands.slice(0, 3).join('?')} ? ${fmtNum(brands.length - 3)}`) : ''
-              return (
-                <div key={`r-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: '#C4CAD8', borderBottom: '1px solid #151822', paddingBottom: '4px', marginBottom: '0' }}>
-                  <span style={{ color: j.kind === 'delete' ? '#FF6B6B' : '#51CF66', fontWeight: 600, minWidth: '40px' }}>
-                    {j.kind === 'delete' ? '???' : '???'}
-                  </span>
-                  <span style={{ color: '#8A95B0', minWidth: '64px', flexShrink: 0 }}>?? {startedStr}</span>
-                  <span style={{ color: '#C4CAD8', whiteSpace: 'nowrap', flexShrink: 0 }} title={j.markets}>
-                    {j.markets}
-                  </span>
-                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={[sitesStr, brandsStr].filter(Boolean).join(' / ')}>
-                    {sitesStr && <span style={{ color: '#7BB0FF' }}>{sitesStr}</span>}
-                    {sitesStr && brandsStr && <span style={{ color: '#3A4258' }}> ? </span>}
-                    {brandsStr && <span style={{ color: '#A78BFA' }}>{brandsStr}</span>}
-                  </span>
-                  <span style={{ color: '#9AA5C0', minWidth: '92px', textAlign: 'right', flexShrink: 0 }}>
-                    {fmtNum(j.current)} / {fmtNum(j.total)} ({pct}%)
-                  </span>
-                  <span style={{ color: '#6E7A95', minWidth: '56px', textAlign: 'right', fontSize: '0.7rem', flexShrink: 0 }}>
-                    {perItemStr}
-                  </span>
-                  <button
-                    onClick={() => j.id && handleCancelSingleJob(j.id, j.markets)}
-                    disabled={!j.id || busy}
-                    title="? ?? ??"
-                    style={{ padding: '2px 8px', fontSize: '0.7rem', background: busy ? 'rgba(255,80,80,0.3)' : 'rgba(255,80,80,0.12)', color: '#FF6B6B', border: '1px solid rgba(255,80,80,0.4)', borderRadius: '3px', cursor: (!j.id || busy) ? 'not-allowed' : 'pointer', fontWeight: 600, minWidth: '40px', flexShrink: 0 }}
-                  >{busy ? '???' : '??'}</button>
-                </div>
-              )
-            })}
-            {sortedPending.map((j, idx) => {
-              const busy = !!(j.id && cancellingJobIds.includes(j.id))
-              const sites = j.source_sites ?? []
-              const brands = j.brands ?? []
-              const sitesStr = sites.length > 0 ? (sites.length <= 3 ? sites.join('?') : `${sites.slice(0, 3).join('?')} ? ${fmtNum(sites.length - 3)}`) : ''
-              const brandsStr = brands.length > 0 ? (brands.length <= 3 ? brands.join('?') : `${brands.slice(0, 3).join('?')} ? ${fmtNum(brands.length - 3)}`) : ''
-              return (
-                <div key={`p-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: '#8A95B0', borderBottom: '1px solid #151822', paddingBottom: '4px', marginBottom: '0' }}>
-                  <span style={{ color: '#FAB005', fontWeight: 600, minWidth: '40px' }}>??</span>
-                  <span style={{ minWidth: '64px', flexShrink: 0 }}>?</span>
-                  <span style={{ color: '#C4CAD8', whiteSpace: 'nowrap', flexShrink: 0 }} title={j.markets}>
-                    {j.markets}
-                  </span>
-                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={[sitesStr, brandsStr].filter(Boolean).join(' / ')}>
-                    {sitesStr && <span style={{ color: '#7BB0FF' }}>{sitesStr}</span>}
-                    {sitesStr && brandsStr && <span style={{ color: '#3A4258' }}> ? </span>}
-                    {brandsStr && <span style={{ color: '#A78BFA' }}>{brandsStr}</span>}
-                  </span>
-                  <span style={{ minWidth: '110px', textAlign: 'right', flexShrink: 0 }}>{fmtNum(j.product_count)}?</span>
-                  <button
-                    onClick={() => j.id && handleCancelSingleJob(j.id, j.markets)}
+        )
                     disabled={!j.id || busy}
                     title="? ?? ??"
                     style={{ padding: '2px 8px', fontSize: '0.7rem', background: busy ? 'rgba(255,80,80,0.3)' : 'rgba(255,80,80,0.12)', color: '#FF6B6B', border: '1px solid rgba(255,80,80,0.4)', borderRadius: '3px', cursor: (!j.id || busy) ? 'not-allowed' : 'pointer', fontWeight: 600, minWidth: '40px', flexShrink: 0 }}
