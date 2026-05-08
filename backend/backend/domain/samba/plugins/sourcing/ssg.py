@@ -187,14 +187,31 @@ class SSGPlugin(SourcingPlugin):
                         )
                     ):
                         _price_fallback = int(detail.get("salePrice", 0) or 0)
-                        detail["options"] = [
-                            {
-                                "name": _opt.get("name", ""),
+
+                        def _build_uitem_opt(_opt: dict) -> dict:
+                            _nm = _opt.get("name", "")
+                            _entry = {
+                                "name": _nm,
                                 "price": int(_opt.get("price", 0) or 0)
                                 or _price_fallback,
                                 "stock": _opt.get("usablInvQty", 0),
                                 "isSoldOut": _opt.get("isSoldOut", False),
                             }
+                            # uitemOptions에 이미 depth 정보가 있으면 그대로 전달
+                            if _opt.get("optionDepth"):
+                                _entry["optionDepth"] = _opt["optionDepth"]
+                                for _k in ("optionName1", "optionName2", "optionName3"):
+                                    if _opt.get(_k):
+                                        _entry[_k] = _opt[_k]
+                            elif "/" in _nm:
+                                _parts = _nm.split("/", 2)
+                                _entry["optionDepth"] = len(_parts)
+                                for _i, _p in enumerate(_parts, start=1):
+                                    _entry[f"optionName{_i}"] = _p
+                            return _entry
+
+                        detail["options"] = [
+                            _build_uitem_opt(_opt)
                             for _opt in _uitem_opts
                             if _opt.get("name")
                         ]

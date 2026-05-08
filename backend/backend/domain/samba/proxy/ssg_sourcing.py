@@ -1800,14 +1800,28 @@ class SSGSourcingClient:
             is_soldout = uitem.get("isSoldOut", False) or stock == 0
             sell_price = self._safe_int(uitem.get("price", 0))
 
-            options.append(
-                {
-                    "name": opt_name,
-                    "price": sell_price,
-                    "stock": stock,
-                    "isSoldOut": bool(is_soldout),
-                }
-            )
+            # _parse_raw_uitem_blocks가 이미 optionName1/2, optionDepth 세팅한 경우 그대로 전달
+            opt_entry: dict[str, Any] = {
+                "name": opt_name,
+                "price": sell_price,
+                "stock": stock,
+                "isSoldOut": bool(is_soldout),
+            }
+            if uitem.get("optionDepth"):
+                opt_entry["optionDepth"] = uitem["optionDepth"]
+                if uitem.get("optionName1"):
+                    opt_entry["optionName1"] = uitem["optionName1"]
+                if uitem.get("optionName2"):
+                    opt_entry["optionName2"] = uitem["optionName2"]
+                if uitem.get("optionName3"):
+                    opt_entry["optionName3"] = uitem["optionName3"]
+            elif "/" in opt_name:
+                # optionDepth 없이 "/" 포함된 name → 분리해서 depth 추론
+                parts = opt_name.split("/", 2)
+                opt_entry["optionDepth"] = len(parts)
+                for i, p in enumerate(parts, start=1):
+                    opt_entry[f"optionName{i}"] = p
+            options.append(opt_entry)
 
         return options
 

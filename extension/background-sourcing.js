@@ -721,13 +721,14 @@ async function _detectLoginStatus(tabId, site) {
 }
 
 async function pollSourcingOnce() {
-  // 이 PC가 오토튠에 참여하지 않은 경우 폴링 건너뜀 — 다른 PC의 시작에 자동 편승 차단
-  if (!_localAutotuneJoined) return false
-  // pre-login 대기는 pollSourcingOnce 블로킹 제거 — 각 사이트 잡 처리 직전(_processJobWithCap)에서 개별 대기
-  // (SSG/GSShop 등 로그인 불필요 소싱처가 ABCmart 3분 로그인 체크에 묶이는 문제 방지)
+  // ⚠️ _localAutotuneJoined 가드 절대 추가 금지 ⚠️
+  // "다른 PC 편승 차단"을 위해 guard를 붙이면 수동 업데이트(업데이트 버튼)가 깨진다.
+  // 편승 차단은 백엔드 get_next_job()의 ownerDeviceId 매칭이 이미 보장한다:
+  //   - 오토튠 잡: ownerDeviceId="device_A" → device_A만 수신 (다른 PC는 hasJob:false)
+  //   - 수동 잡:   ownerDeviceId=""         → 어떤 PC든 수신 가능 (오토튠 off여도 처리)
+  // 이 guard는 6abafeb4(수동 업데이트 수정)에서 제거 → e9e2c83c(다중PC분담)에서 재추가 →
+  // 다시 제거. 3번째 반복이므로 절대 재추가하지 말 것.
   // 백엔드가 배치 크기만큼만 큐에 넣으므로 자연히 그 수만큼 처리됨
-  // ownerDeviceId 매칭은 백엔드 get_next_job()이 보장하므로 여기서 별도 가드 불필요
-  // (수동 업데이트: ownerDeviceId="" → 오토튠 off 상태에서도 처리 가능)
   const jobs = []
   for (let i = 0; i < SOURCING_MAX_POLL_LIMIT; i++) {
     try {
