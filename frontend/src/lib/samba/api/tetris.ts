@@ -125,4 +125,11 @@ export const tetrisApi = {
 
   runSync: () =>
     request<TetrisSyncResponse>(`${BASE}/sync`, { method: 'POST' }),
+
+  removeByBrand: (sourceSite: string, brandName: string, marketAccountId: string) =>
+    request<{ pending_cancelled: number; delete_job_products: number }>(`${BASE}/remove-by-brand`, {
+      method: 'POST',
+      body: JSON.stringify({ source_site: sourceSite, brand_name: brandName, market_account_id: marketAccountId }),
+      headers: { 'Content-Type': 'application/json' },
+    }),
 }

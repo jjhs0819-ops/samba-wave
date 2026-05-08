@@ -113,6 +113,7 @@ export default function TetrisBoard() {
     handlePolicyChange,
     handleBrandPolicyChangeAll,
     handleDeleteBrandScope,
+    handleRemoveLegacyFromAccount,
     refresh,
   } = useTetris()
 
@@ -456,6 +457,7 @@ export default function TetrisBoard() {
               onAccountReorder={handleAccountReorder}
               onRemove={handleRemoveWithScope}
               onDeleteBrandScope={handleDeleteBrandScope}
+              onRemoveLegacyFromAccount={handleRemoveLegacyFromAccount}
               onPolicyChange={handlePolicyChange}
             />
           ))}

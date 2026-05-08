@@ -220,6 +220,21 @@ export function useTetris() {
     }
   }, [refresh])
 
+  const handleRemoveLegacyFromAccount = useCallback(async (sourceSite: string, brandName: string, accountId: string) => {
+    const confirmed = await showConfirm(
+      `"${brandName}" 브랜드를 이 계정에서 제거합니다.\n진행 중인 전송이 취소되고, 마켓 등록 상품이 삭제됩니다.`
+    )
+    if (!confirmed) return
+
+    try {
+      const res = await tetrisApi.removeByBrand(sourceSite, brandName, accountId)
+      showAlert(`마켓삭제 잡이 등록되었습니다. (${fmtNum(res.delete_job_products)}건 삭제 예정)`)
+      await refresh()
+    } catch (e) {
+      showAlert('삭제 실패: ' + String(e))
+    }
+  }, [refresh])
+
   return {
     board,
     loading,
@@ -234,6 +249,7 @@ export function useTetris() {
     handlePolicyChange,
     handleBrandPolicyChangeAll,
     handleDeleteBrandScope,
+    handleRemoveLegacyFromAccount,
     refresh,
   }
 }

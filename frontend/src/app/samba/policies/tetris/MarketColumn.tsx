@@ -22,6 +22,7 @@ interface Props {
   onAccountReorder: (accounts: TetrisAccountBlock[]) => Promise<void>
   onRemove: (assignmentId: string, brandName: string, sourceSite: string) => void
   onDeleteBrandScope: (sourceSite: string, brandName: string) => Promise<void>
+  onRemoveLegacyFromAccount: (sourceSite: string, brandName: string, accountId: string) => Promise<void>
   onPolicyChange: (assignmentId: string, policyId: string | null, accountId: string) => Promise<void>
 }
 
@@ -65,6 +66,7 @@ export default function MarketColumn({
   onAccountReorder,
   onRemove,
   onDeleteBrandScope,
+  onRemoveLegacyFromAccount,
   onPolicyChange,
 }: Props) {
   const [draggedAccountId, setDraggedAccountId] = useState<string | null>(null)
@@ -146,6 +148,7 @@ export default function MarketColumn({
                   onReorder={onReorder}
                   onRemove={onRemove}
                   onDeleteBrandScope={onDeleteBrandScope}
+                  onRemoveLegacyFromAccount={onRemoveLegacyFromAccount}
                   onPolicyChange={onPolicyChange}
                   isDragging={dragState !== null}
                   isAccountDragging={isAccountDragging}

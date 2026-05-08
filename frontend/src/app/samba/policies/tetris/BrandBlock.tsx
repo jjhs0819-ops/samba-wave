@@ -16,6 +16,7 @@ interface Props {
   onDragStart: (block: TetrisBrandBlock, accountId: string) => void
   onRemove: (assignmentId: string, brandName: string, sourceSite: string) => void
   onDeleteBrandScope: (sourceSite: string, brandName: string) => Promise<void>
+  onRemoveLegacy?: () => Promise<void>
   policies: Policy[]
   onPolicyChange: (assignmentId: string, policyId: string | null, accountId: string) => Promise<void>
 }
@@ -27,6 +28,7 @@ export default function BrandBlock({
   onDragStart,
   onRemove,
   onDeleteBrandScope,
+  onRemoveLegacy,
   policies,
   onPolicyChange,
 }: Props) {
@@ -144,7 +146,11 @@ export default function BrandBlock({
               onRemove(block.id, block.brand_name, block.source_site)
               return
             }
-            await onDeleteBrandScope(block.source_site, block.brand_name)
+            if (onRemoveLegacy) {
+              await onRemoveLegacy()
+            } else {
+              await onDeleteBrandScope(block.source_site, block.brand_name)
+            }
           }}
           title="이 계정에서 삭제"
           style={{

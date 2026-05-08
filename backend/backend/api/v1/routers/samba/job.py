@@ -481,7 +481,7 @@ async def get_transmit_queue_status(
     stmt = (
         select(SambaJob)
         .where(
-            SambaJob.job_type == "transmit",
+            col(SambaJob.job_type).in_(["transmit", "delete_market"]),
             col(SambaJob.status).in_([JobStatus.RUNNING, JobStatus.PENDING]),
         )
         .order_by(SambaJob.created_at.asc())
@@ -525,6 +525,7 @@ async def get_transmit_queue_status(
         item = {
             "id": j.id,
             "status": j.status,
+            "kind": "delete" if j.job_type == "delete_market" else "transmit",
             "markets": markets or "알 수 없음",
             "source_sites": sites,
             "brands": brands,

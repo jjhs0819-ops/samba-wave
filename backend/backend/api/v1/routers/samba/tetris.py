@@ -4,6 +4,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
@@ -166,3 +167,27 @@ async def run_sync(
     svc = _get_service(session)
     result = await svc.sync_all(tenant_id)
     return TetrisSyncResponse(**result)
+
+
+class RemoveByBrandRequest(BaseModel):
+    source_site: str
+    brand_name: str
+    market_account_id: str
+
+
+@router.post("/remove-by-brand", status_code=200)
+async def remove_by_brand(
+    body: RemoveByBrandRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+) -> dict:
+    """레거시 블럭 삭제 — 해당 계정 pending 전송잡 취소 + delete_market 잡 등록."""
+    svc = _get_service(session)
+    result = await svc.remove_by_brand(
+        tenant_id=tenant_id,
+        source_site=body.source_site,
+        brand_name=body.brand_name,
+        market_account_id=body.market_account_id,
+    )
+    await session.commit()
+    return result

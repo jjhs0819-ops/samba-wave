@@ -129,26 +129,20 @@ class SambaTetrisService:
     ) -> list[str]:
         """해당 브랜드 상품 중 해당 계정에 등록된 상품 ID 목록 반환."""
         try:
-            # market_account_id 는 FK ULID — 정상 흐름에 메타 문자 없지만
-            # defense-in-depth 로 LIKE wildcard escape 적용.
-            from backend.core.sql_safe import escape_like
-
-            safe_account = escape_like(market_account_id)
             rows = await self._session.execute(
-                text(r"""
+                text("""
                     SELECT id FROM samba_collected_product
                     WHERE (tenant_id IS NULL AND :tid_is_null OR tenant_id = :tid)
                       AND source_site = :site
                       AND BTRIM(brand) = :brand
-                      AND registered_accounts IS NOT NULL
-                      AND (registered_accounts::text LIKE :account_id ESCAPE '\' OR registered_accounts::text ILIKE :account_id ESCAPE '\')
+                      AND registered_accounts @> :account_arr::jsonb
                 """),
                 {
                     "tid": tenant_id,
                     "tid_is_null": tenant_id is None,
                     "site": source_site,
                     "brand": brand_name,
-                    "account_id": f"%{safe_account}%",
+                    "account_arr": f'["{market_account_id}"]',
                 },
             )
             return [row[0] for row in rows]
@@ -615,12 +609,94 @@ class SambaTetrisService:
     # 배치 삭제
     # ──────────────────────────────────────────────
 
+    # ──────────────────────────────────────────────
+    # 잡큐 헬퍼
+    # ──────────────────────────────────────────────
+
+    async def _cancel_pending_transmit_jobs(
+        self, source_site: str, brand_name: str, account_id: str
+    ) -> int:
+        """특정 브랜드+계정의 pending 전송잡 취소."""
+        from backend.domain.samba.job.model import JobStatus, SambaJob
+        from sqlmodel import select
+
+        rows = await self._session.execute(
+            select(SambaJob).where(
+                SambaJob.job_type == "transmit",
+                SambaJob.status == JobStatus.PENDING,
+                SambaJob.payload.op("->>")("brand_name") == brand_name,
+                SambaJob.payload.op("->>")("source_site") == source_site,
+            )
+        )
+        jobs = rows.scalars().all()
+        cancelled = 0
+        for job in jobs:
+            target_ids = (job.payload or {}).get("target_account_ids", [])
+            if account_id in target_ids:
+                job.status = JobStatus.CANCELLED
+                self._session.add(job)
+                cancelled += 1
+        return cancelled
+
+    async def _cancel_running_transmit_jobs(
+        self, source_site: str, brand_name: str, account_id: str
+    ) -> None:
+        """특정 브랜드+계정의 running 전송잡에 취소 신호 전송."""
+        from backend.domain.samba.job.model import JobStatus, SambaJob
+        from backend.domain.samba.shipment.service import request_cancel_transmit
+        from sqlmodel import select
+
+        rows = await self._session.execute(
+            select(SambaJob).where(
+                SambaJob.job_type == "transmit",
+                SambaJob.status == JobStatus.RUNNING,
+                SambaJob.payload.op("->>")("brand_name") == brand_name,
+                SambaJob.payload.op("->>")("source_site") == source_site,
+            )
+        )
+        jobs = rows.scalars().all()
+        for job in jobs:
+            target_ids = (job.payload or {}).get("target_account_ids", [])
+            if account_id in target_ids:
+                request_cancel_transmit(job.id)
+                logger.info(
+                    f"[테트리스] running 전송잡 취소 신호 — {job.id[:8]} "
+                    f"({source_site}/{brand_name} ← {account_id})"
+                )
+
+    async def _create_delete_market_job(
+        self,
+        tenant_id: Optional[str],
+        product_ids: list[str],
+        account_id: str,
+        source_site: str,
+        brand_name: str,
+    ) -> None:
+        """마켓삭제 잡 생성."""
+        from backend.domain.samba.job.repository import SambaJobRepository
+
+        job_repo = SambaJobRepository(self._session)
+        await job_repo.create_async(
+            tenant_id=tenant_id,
+            job_type="delete_market",
+            payload={
+                "product_ids": product_ids,
+                "target_account_ids": [account_id],
+                "source_site": source_site,
+                "brand_name": brand_name,
+            },
+        )
+        logger.info(
+            f"[테트리스] delete_market 잡 생성 — {source_site}/{brand_name} "
+            f"← {account_id} ({len(product_ids)}건)"
+        )
+
     async def remove(
         self,
         assignment_id: str,
         tenant_id: Optional[str],
     ) -> bool:
-        """배치 삭제 후 해당 계정 상품 마켓 삭제 트리거."""
+        """배치 삭제 후 해당 계정 상품 마켓삭제 잡 등록."""
         assignment = await self._repo.get_async(assignment_id)
         if not assignment:
             return False
@@ -635,24 +711,64 @@ class SambaTetrisService:
         deleted = await self._repo.delete_async(assignment_id)
         # clear_board_cache() 금지 — 61초 쿼리 유발로 프론트 15초 타임아웃 발생
 
-        # 등록된 상품 마켓 삭제 트리거 (백그라운드)
+        # pending 전송잡 취소 + running 전송잡 취소 신호
+        pending_cancelled = await self._cancel_pending_transmit_jobs(
+            source_site, brand_name, market_account_id
+        )
+        await self._cancel_running_transmit_jobs(
+            source_site, brand_name, market_account_id
+        )
+
+        # 등록된 상품 → delete_market 잡 큐 등록
         product_ids = await self._get_product_ids_for_remove(
             tenant_id, source_site, brand_name, market_account_id
         )
         if product_ids:
-            ship_svc = self._make_ship_svc()
-            asyncio.create_task(
-                ship_svc.delete_from_markets(
-                    product_ids=product_ids,
-                    target_account_ids=[market_account_id],
-                )
-            )
-            logger.info(
-                f"[테트리스] remove 마켓삭제 트리거 — {source_site}/{brand_name} "
-                f"← {market_account_id} ({len(product_ids)}건)"
+            await self._create_delete_market_job(
+                tenant_id, product_ids, market_account_id, source_site, brand_name
             )
 
+        logger.info(
+            f"[테트리스] remove 완료 — {source_site}/{brand_name} ← {market_account_id} "
+            f"(pending취소={pending_cancelled}, delete_market잡={len(product_ids)}건)"
+        )
+
         return deleted
+
+    async def remove_by_brand(
+        self,
+        tenant_id: Optional[str],
+        source_site: str,
+        brand_name: str,
+        market_account_id: str,
+    ) -> dict:
+        """레거시 블럭 삭제 — assignment 없이 registered_accounts 기준으로 마켓삭제 잡 등록."""
+        # pending 전송잡 취소 + running 전송잡 취소 신호
+        pending_cancelled = await self._cancel_pending_transmit_jobs(
+            source_site, brand_name, market_account_id
+        )
+        await self._cancel_running_transmit_jobs(
+            source_site, brand_name, market_account_id
+        )
+
+        # 등록된 상품 → delete_market 잡 큐 등록
+        product_ids = await self._get_product_ids_for_remove(
+            tenant_id, source_site, brand_name, market_account_id
+        )
+        if product_ids:
+            await self._create_delete_market_job(
+                tenant_id, product_ids, market_account_id, source_site, brand_name
+            )
+
+        logger.info(
+            f"[테트리스] remove_by_brand 완료 — {source_site}/{brand_name} ← {market_account_id} "
+            f"(pending취소={pending_cancelled}, delete_market잡={len(product_ids)}건)"
+        )
+
+        return {
+            "pending_cancelled": pending_cancelled,
+            "delete_job_products": len(product_ids),
+        }
 
     # ──────────────────────────────────────────────
     # 배치 이동

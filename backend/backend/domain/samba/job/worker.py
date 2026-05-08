@@ -550,7 +550,7 @@ class JobWorker:
                     text(
                         "UPDATE samba_jobs SET status = 'pending', "
                         "started_at = NULL "
-                        "WHERE status = 'running' AND job_type = 'transmit'"
+                        "WHERE status = 'running' AND job_type IN ('transmit', 'delete_market')"
                     )
                 )
                 await session.commit()
@@ -606,8 +606,8 @@ class JobWorker:
             self._active_job_ids.add(job.id)
             await session.commit()
 
-        # 전송: asyncio.Task로 백그라운드 병렬 실행
-        if job.job_type == "transmit":
+        # 전송/마켓삭제: asyncio.Task로 백그라운드 병렬 실행 (동일 계정 순차 보장)
+        if job.job_type in ("transmit", "delete_market"):
             _tx_accounts = self._extract_transmit_account_ids(job.payload)
             self._active_transmit_accounts[job.id] = _tx_accounts
 
@@ -617,11 +617,11 @@ class JobWorker:
 
             task = asyncio.create_task(
                 _run_with_limit(),
-                name=f"transmit-{job.id}",
+                name=f"{job.job_type}-{job.id}",
             )
             self._active_tasks[job.id] = task
             logger.info(
-                f"[잡워커] 전송 Task 생성: {job.id} "
+                f"[잡워커] {job.job_type} Task 생성: {job.id} "
                 f"(동시 실행: {len(self._active_tasks)}개, "
                 f"계정={_tx_accounts})"
             )
@@ -775,6 +775,24 @@ class JobWorker:
                                 if _lock.locked():
                                     _lock.release()
                             _current_transmit_job_id.reset(_tx_token)
+                    elif _job_type == "delete_market":
+                        _dm_token = _current_transmit_job_id.set(_job_id)
+                        _dm_accounts = sorted(
+                            set(self._extract_transmit_account_ids(_job_payload))
+                        )
+                        _dm_locks = [
+                            self._get_transmit_account_lock(account_id)
+                            for account_id in _dm_accounts
+                        ]
+                        try:
+                            for _lock in _dm_locks:
+                                await _lock.acquire()
+                            await self._run_delete_market(fresh_job, repo, session)
+                        finally:
+                            for _lock in reversed(_dm_locks):
+                                if _lock.locked():
+                                    _lock.release()
+                            _current_transmit_job_id.reset(_dm_token)
                     elif _job_type == "refresh":
                         await self._run_stub(fresh_job, repo, "갱신")
                     elif _job_type == "ai_tag":
@@ -5539,6 +5557,40 @@ class JobWorker:
             logger.info(
                 f"[잡워커] LOTTEON 상세 보강 완료: {enriched}/{total}건 업데이트"
             )
+
+    async def _run_delete_market(self, job, repo, session):
+        """마켓삭제 잡 실행 — registered_accounts에서 계정을 제거하고 마켓 API로 삭제."""
+        from backend.domain.samba.shipment.service import SambaShipmentService
+        from backend.domain.samba.shipment.repository import SambaShipmentRepository
+
+        payload = job.payload or {}
+        product_ids = payload.get("product_ids", [])
+        target_account_ids = payload.get("target_account_ids", [])
+        source_site = payload.get("source_site", "?")
+        brand_name = payload.get("brand_name", "?")
+
+        if not product_ids:
+            await repo.complete_job(job.id)
+            return
+
+        logger.info(
+            f"[마켓삭제잡] 시작 — {source_site}/{brand_name} "
+            f"← {target_account_ids} ({len(product_ids)}건)"
+        )
+
+        ship_svc = SambaShipmentService(SambaShipmentRepository(session), session)
+        try:
+            await ship_svc.delete_from_markets(
+                product_ids=product_ids,
+                target_account_ids=target_account_ids,
+            )
+            await repo.complete_job(job.id)
+            logger.info(
+                f"[마켓삭제잡] 완료 — {source_site}/{brand_name} ({len(product_ids)}건)"
+            )
+        except Exception as e:
+            logger.error(f"[마켓삭제잡] 실패 — {job.id}: {e}")
+            raise
 
     async def _run_stub(self, job, repo, name: str):
         """미구현 잡 타입 스텁."""
