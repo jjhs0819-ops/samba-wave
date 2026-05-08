@@ -334,6 +334,8 @@ async def build_has_orders_conditions(session: AsyncSession, model_class: Any) -
     """
     from sqlalchemy import or_, text
     from sqlmodel import select
+
+    from backend.core.sql_safe import escape_like
     from backend.domain.samba.order.model import SambaOrder
 
     result = await session.execute(
@@ -347,10 +349,13 @@ async def build_has_orders_conditions(session: AsyncSession, model_class: Any) -
     if not order_pids:
         return [text("1=0")]
 
+    # pid 는 마켓에서 수신해 저장된 product_id — defense-in-depth 로 LIKE 메타 escape.
     return [
         or_(
             *[
-                cast(model_class.market_product_nos, _StrType).like(f'%"{pid}"%')
+                cast(model_class.market_product_nos, _StrType).like(
+                    f'%"{escape_like(pid)}"%', escape="\\"
+                )
                 for pid in order_pids
             ]
         )

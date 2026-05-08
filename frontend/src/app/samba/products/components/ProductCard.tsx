@@ -885,7 +885,8 @@ const ProductCard = React.memo(function ProductCard({
                         <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start' }}>
                           <div>
                             <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '6px' }}>[현재 대표이미지]</p>
-                            <img src={mainImg} alt="대표이미지" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                            <img src={mainImg} alt="대표이미지" loading="lazy" referrerPolicy="no-referrer"
+                              onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
                               onClick={() => openZoom(mainImg)}
                               style={{ width: 200, height: 200, objectFit: 'cover', borderRadius: '8px', border: '1px solid #2D2D2D', cursor: 'pointer' }} />
                             <p style={{ margin: '6px 0 0', fontSize: '0.65rem', color: '#555', wordBreak: 'break-all' }}>{mainImg}</p>
@@ -963,7 +964,8 @@ const ProductCard = React.memo(function ProductCard({
                         {coupangMainImg && (
                           <div>
                             <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '6px' }}>[현재 쿠팡 대표이미지]</p>
-                            <img src={coupangMainImg} alt="쿠팡 대표이미지" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                            <img src={coupangMainImg} alt="쿠팡 대표이미지" loading="lazy" referrerPolicy="no-referrer"
+                              onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
                               onClick={() => openZoom(coupangMainImg)}
                               style={{ width: 200, height: 200, objectFit: 'cover', borderRadius: '8px', border: '1px solid #00B4D8', cursor: 'pointer' }} />
                             <p style={{ margin: '6px 0 0', fontSize: '0.65rem', color: '#555', wordBreak: 'break-all' }}>{coupangMainImg}</p>

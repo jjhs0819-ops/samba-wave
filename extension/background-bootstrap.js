@@ -254,3 +254,30 @@ pollChromeProfileSyncRequest()
 syncChromeProfile()
 // 시작 시 1회 버전 체크 (기준점 초기화)
 checkVersionAndReload()
+
+// SW 재시작 시 오토튠 실행 중이면 _localAutotuneJoined 복원
+async function restoreAutotuneJoinIfRunning() {
+  try {
+    const { proxyUrl: _pu } = await chrome.storage.local.get('proxyUrl')
+    const _baseUrl = _pu || PROXY_URL
+    const res = await apiFetch(`${_baseUrl}${API_PREFIX}/autotune/status`)
+    if (!res.ok) return
+    const status = await res.json()
+    if (!status.running) return
+    const deviceId = await SambaBackgroundCore.getOrCreateDeviceId()
+    const mySites = status.pc_assignments?.[deviceId] ?? null
+    // background-sourcing.js가 아직 로드 안 된 경우 최대 3초 대기 후 재시도
+    for (let i = 0; i < 6; i++) {
+      if (typeof globalThis._setLocalAutotuneJoined === 'function') {
+        globalThis._setLocalAutotuneJoined(true, mySites?.length ? mySites : null)
+        console.log(`[복원] 오토튠 실행 중 감지 — 폴링 자동 복원 (sites=${JSON.stringify(mySites)})`)
+        return
+      }
+      await new Promise(r => setTimeout(r, 500))
+    }
+    console.log('[복원] _setLocalAutotuneJoined 미정의 — sourcing 모듈 로드 실패, 복원 불가')
+  } catch (e) {
+    console.log('[복원] 오토튠 상태 조회 실패 (무시):', e?.message)
+  }
+}
+restoreAutotuneJoinIfRunning()
