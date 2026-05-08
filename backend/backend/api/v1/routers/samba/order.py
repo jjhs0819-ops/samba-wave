@@ -3697,6 +3697,10 @@ async def sync_orders_from_markets(
                                 alias_map[code] = nick
                 except Exception:
                     pass
+                # 롯데홈쇼핑 직접 연동 계정이 있으면 플레이오토 중복 주문 차단
+                _has_lottehome = any(
+                    a["market_type"] == "lottehome" for a in account_snapshots
+                )
                 pa_client = PlayAutoClient(api_key)
                 try:
                     start_date = (
@@ -3710,11 +3714,35 @@ async def sync_orders_from_markets(
                             count=500,
                         )
                     logger.info(f"[주문동기화] 플레이오토: {len(raw_orders)}건 조회")
+
+                    # 롯데홈쇼핑 직접 연동 시 기존 플레이오토 중복 주문 삭제 (최초 1회)
+                    if _has_lottehome:
+                        from sqlalchemy import text as _pa_text
+
+                        _del_result = await session.execute(
+                            _pa_text(
+                                "DELETE FROM samba_order "
+                                "WHERE source = 'playauto' "
+                                "AND channel_id = :cid "
+                                "AND (source_site LIKE '%롯데아이몰%' OR source_site LIKE '%롯데홈쇼핑%')"
+                            ),
+                            {"cid": account["id"]},
+                        )
+                        if _del_result.rowcount:
+                            logger.info(
+                                f"[주문동기화] 플레이오토 롯데홈쇼핑 중복 주문 {_del_result.rowcount}건 삭제"
+                            )
+
                     for ro in raw_orders:
                         # 파생 주문 스킵 (사본-취소마감, ★교환주문 — 원주문에 이미 정보 포함)
                         _pname = ro.get("ProdName", "")
                         if _pname.startswith("[사본-") or "★교환주문" in _pname:
                             continue
+                        # 롯데홈쇼핑 직접 연동 계정이 있으면 플레이오토 롯데홈 주문 스킵
+                        if _has_lottehome:
+                            _ro_site = str(ro.get("SiteName", "") or "").strip()
+                            if "롯데아이몰" in _ro_site or "롯데홈쇼핑" in _ro_site:
+                                continue
                         orders_data.append(
                             _parse_playauto_order(ro, account["id"], label, alias_map)
                         )

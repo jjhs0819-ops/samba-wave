@@ -216,7 +216,6 @@ export default function TetrisBoard() {
   }
   const handleUnassignedDragStart = (block: TetrisBrandBlock) => {
     setDragState({ block, fromAccountId: null, assignmentId: null })
-    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   // 드롭이 실패해도 dragState 정리
