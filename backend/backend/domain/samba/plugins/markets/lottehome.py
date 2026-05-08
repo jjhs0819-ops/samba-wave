@@ -77,8 +77,8 @@ def _transform_for_lottehome(
         if _nm and _nm == _product_brand:
             _matched_brnd_no = _m["brnd_no"]
             break
-    # 2순위: brand 포함 매칭
-    if not _matched_brnd_no:
+    # 2순위: brand 포함 매칭 (_product_brand 비어있으면 스킵)
+    if not _matched_brnd_no and _product_brand:
         for _m in _brand_mappings:
             _nm = (_m.get("brnd_nm") or "").strip().lower()
             if _nm and (_nm in _product_brand or _product_brand in _nm):
