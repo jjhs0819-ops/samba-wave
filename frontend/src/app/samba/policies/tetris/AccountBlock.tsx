@@ -168,19 +168,21 @@ export default function AccountBlock({
         style={{
           position: 'absolute',
           top: 8,
-          right: 8,
+          left: '50%',
+          transform: 'translateX(-50%)',
           zIndex: 2,
           display: 'flex',
           flexDirection: 'column',
-          alignItems: 'flex-end',
+          alignItems: 'center',
           gap: 2,
           pointerEvents: 'none',
+          maxWidth: 'calc(100% - 16px)',
         }}
       >
-        <div style={{ fontSize: 12, color: '#eee', fontWeight: 600, maxWidth: 190, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
-          {account.account_label}
+        <div style={{ fontSize: 12, color: '#EF4444', fontWeight: 600, maxWidth: '100%', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', textAlign: 'center' }}>
+          {account.account_label.split('-')[0]}
         </div>
-        <div style={{ fontSize: 10, color: '#888', whiteSpace: 'nowrap' }}>
+        <div style={{ fontSize: 10, color: '#888', whiteSpace: 'nowrap', textAlign: 'center' }}>
           <span style={{ color: progressColor }}>{fmtNum(account.total_registered)}</span>
           <span>/{fmtNum(account.total_collected)}</span>
         </div>
