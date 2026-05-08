@@ -109,7 +109,7 @@ export default function OrderInfoCell(props: Props) {
           <span style={{ fontSize: '0.72rem', color: '#555' }}>{fmtDate(o.created_at, '.')}</span>
           <button onClick={() => handleDelete(o.id)} style={{ padding: '0.125rem 0.5rem', fontSize: '0.7rem', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>삭제</button>
         </div>
-        <span style={{ fontSize: '0.95rem', fontWeight: 700, color: '#888' }}>수량: <span style={{ color: '#888' }}>{fmtNum(o.quantity)}</span></span>
+        <span style={{ fontSize: '0.95rem', fontWeight: 700, color: o.quantity > 1 ? '#F5A623' : '#888' }}>수량: <span style={{ color: o.quantity > 1 ? '#F5A623' : '#888' }}>{fmtNum(o.quantity)}</span></span>
       </div>
 
       {/* 상품 이미지 (100x100) + 마켓/주문번호 */}

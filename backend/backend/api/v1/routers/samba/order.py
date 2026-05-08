@@ -1097,10 +1097,35 @@ async def update_order(
     body: OrderUpdate,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
+    from sqlalchemy import text as _t
+
     svc = _write_service(session)
-    order = await svc.update_order(order_id, body.model_dump(exclude_unset=True))
+    data = body.model_dump(exclude_unset=True)
+    order = await svc.update_order(order_id, data)
     if not order:
         raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다")
+
+    # source_url/product_image 변경 시 동일 product_id+channel_name 주문 일괄 업데이트
+    batch_fields = {
+        k: v for k, v in data.items() if k in ("source_url", "product_image")
+    }
+    if batch_fields and order.product_id and order.channel_name:
+        set_clauses = ", ".join(f"{k} = :{k}" for k in batch_fields)
+        params = {
+            **batch_fields,
+            "pid": order.product_id,
+            "cname": order.channel_name,
+            "oid": order_id,
+        }
+        await session.execute(
+            _t(
+                f"UPDATE samba_order SET {set_clauses} "
+                "WHERE product_id = :pid AND channel_name = :cname AND id != :oid"
+            ),
+            params,
+        )
+        await session.commit()
+
     return order
 
 
