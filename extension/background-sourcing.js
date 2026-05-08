@@ -1274,7 +1274,7 @@ async function handleSourcingJob(job) {
       if (!_h1) {
         console.log(`[SSG] 빈 페이지 감지 — 리로드 재시도: ${job.productId}`)
         try { await chrome.tabs.reload(tabId) } catch {}
-        await waitForTabLoad(tabId, 30000).catch(() => {})
+        await waitForTabLoad(tabId, 10000).catch(() => {})
         const { ready: _r2 } = await _ssgPoll(tabId)
         _ssgReady = _r2
       }

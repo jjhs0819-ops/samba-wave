@@ -225,11 +225,9 @@ class AbcMartPlugin(SourcingPlugin):
                 _dom_req, _dom_fut = SourcingQueue.add_detail_job(
                     _dom_site, site_product_id
                 )
-                # popup 윈도우(v2.12.14+)로 변경되며 처리시간 증가:
-                #   - 윈도우 create: 1초, 페이지 로드: 8-15초, minimize: 1초,
-                #   - 카드혜택가 폴링: max 10초, 추가 대기: 1초, 추출/전송: 3초
-                # 합계 ~25-30초 평균, 최대 ~45초 → 75초로 늘려 안전 마진 확보
-                _dom_ext = await asyncio.wait_for(_dom_fut, timeout=75)
+                # popup 윈도우 처리시간: ~25-30초 평균, 최대 ~45초
+                # SSG 빈페이지 reload(최대 25s) + 다음 폴 사이클 대기 고려해 110s로 여유 확보
+                _dom_ext = await asyncio.wait_for(_dom_fut, timeout=110)
                 if isinstance(_dom_ext, dict) and _dom_ext.get("login_required"):
                     _reason = (
                         "창 미오픈"
@@ -259,11 +257,11 @@ class AbcMartPlugin(SourcingPlugin):
                         new_original_price = _dom_orig
             except asyncio.TimeoutError:
                 logger.warning(
-                    f"[ABCmart] 확장앱 미응답(75s) → 갱신 차단: {site_product_id}"
+                    f"[ABCmart] 확장앱 미응답(110s) → 갱신 차단: {site_product_id}"
                 )
                 return RefreshResult(
                     product_id=product_id,
-                    error="ABCmart 확장앱 미응답 (75s 타임아웃) — 갱신 차단",
+                    error="ABCmart 확장앱 미응답 (110s 타임아웃) — 갱신 차단",
                 )
             except Exception as _dom_err:
                 logger.debug(f"[ABCmart] DOM 위임 예외: {site_product_id} — {_dom_err}")

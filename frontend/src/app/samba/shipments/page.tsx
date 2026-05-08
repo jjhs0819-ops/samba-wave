@@ -1458,7 +1458,21 @@ export default function ShipmentsPage() {
                       ids.forEach((id: string) => { if (selectedSet.has(id)) effectiveAccIds.add(id) })
                     }
                   }
-                  const effectiveAccList = effectiveAccIds.size > 0 ? [...effectiveAccIds] : [...selectedSet]
+                  // 테트리스 배치 조회 — 배치 계정이 있으면 target_account_ids에 포함
+                  let bulkTetrisMap: Map<string, string> = new Map()
+                  let bulkHasTetris = false
+                  try {
+                    const tetrisAssignments = await tetrisApi.listAssignments()
+                    for (const a of tetrisAssignments) {
+                      bulkTetrisMap.set(`${a.source_site}:${a.brand_name}`, a.market_account_id)
+                    }
+                    bulkHasTetris = bulkTetrisMap.size > 0
+                  } catch { /* 조회 실패 시 정책 로직으로 폴백 */ }
+
+                  const baseAccList = effectiveAccIds.size > 0 ? [...effectiveAccIds] : [...selectedSet]
+                  // 테트리스 배치 계정을 target_account_ids에 추가 (워커가 상품별로 올바른 계정 선택)
+                  const tetrisAccIds = bulkHasTetris ? [...new Set(bulkTetrisMap.values())] : []
+                  const effectiveAccList = [...new Set([...baseAccList, ...tetrisAccIds])]
                   const accLabels = effectiveAccList.map(aid => {
                     const acc = accountsById.get(aid)
                     return acc ? `${acc.market_name}(${acc.seller_id || '-'})` : aid
@@ -1470,7 +1484,7 @@ export default function ShipmentsPage() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                       job_type: 'transmit',
-                      payload: { product_ids: allIds, update_items: items, target_account_ids: effectiveAccList, skip_unchanged: skipEnabled },
+                      payload: { product_ids: allIds, update_items: items, target_account_ids: effectiveAccList, skip_unchanged: skipEnabled, skip_policy_account_filter: bulkHasTetris },
                     }),
                   })
                   const jobData = await res.json()

@@ -260,7 +260,7 @@ async function restoreAutotuneJoinIfRunning() {
   try {
     const { proxyUrl: _pu } = await chrome.storage.local.get('proxyUrl')
     const _baseUrl = _pu || PROXY_URL
-    const res = await apiFetch(`${_baseUrl}${API_PREFIX}/autotune/status`)
+    const res = await apiFetch(`${_baseUrl}/api/v1/samba/collector/autotune/status`)
     if (!res.ok) return
     const status = await res.json()
     if (!status.running) return
