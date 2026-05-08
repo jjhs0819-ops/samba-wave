@@ -242,8 +242,9 @@ async def save_setting(
         cleaned = drop_masked_secret_fields(value)
         if existing and isinstance(existing.value, dict):
             for sk in ALL_NESTED_SECRET_KEYS:
-                # incoming에 마스킹값으로 들어와 drop된 secret 키만 기존값으로 복원
-                if sk in value and sk not in cleaned and sk in existing.value:
+                # absent(프론트가 빈 password 필드를 payload에서 제거한 케이스) 또는
+                # 마스킹값으로 drop된 케이스 모두 기존값 보존
+                if sk in existing.value and sk not in cleaned:
                     cleaned[sk] = existing.value[sk]
         value = cleaned
     if existing:

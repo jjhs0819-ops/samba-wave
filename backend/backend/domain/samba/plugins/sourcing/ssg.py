@@ -122,23 +122,36 @@ class SSGPlugin(SourcingPlugin):
                         client._parse_result_item_obj(_html, site_product_id, True)
                         or {}
                     )
-                # resultItemObj.sellprc/bestAmt = AJAX 실시간 값 (script 텍스트 파싱보다 정확)
-                # _parse_result_item_obj가 성공해도 _extract_dept_sale_price/card 가격은
-                # script 템플릿의 다른 상품 가격을 잡을 수 있으므로 항상 덮어씌운다.
+                # ⚠️ sellprc 절대 salePrice에 사용 금지 ⚠️
+                # resultItemObj.sellprc = 정상가(할인 전 원가). 판매가가 아님.
+                # 6ff7484c에서 "AJAX 실시간 값이라 정확"하다고 잘못 추가됐으나 오류.
+                # salePrice는 domSalePrice(DOM 직접 추출) → bestAmt → _parse 결과 순으로 사용.
                 _rob = _ext_result.get("resultItemObj", {})
-                _rob_sell = int(_rob.get("sellprc", 0) or 0)
-                _rob_best = int(_rob.get("bestAmt", 0) or 0)
+                _rob_sell = int(
+                    _rob.get("sellprc", 0) or 0
+                )  # = 정상가(originalPrice 용도만)
+                _rob_best = int(_rob.get("bestAmt", 0) or 0)  # = 최적 할인가
                 _dom_card = int(_ext_result.get("domCardPrice", 0) or 0)
-                if detail and _rob_sell > 0:
-                    detail["salePrice"] = _rob_sell
-                    # domCardPrice(DOM 직접 추출 카드혜택가) 최우선 — bestAmt 없는 상품 보정
+                _dom_sale = int(
+                    _ext_result.get("domSalePrice", 0) or 0
+                )  # DOM 실제 판매가
+                if detail or _rob_sell > 0:
+                    # 판매가: domSalePrice(DOM 직추출) → bestAmt → _parse 결과 유지
+                    if _dom_sale > 0:
+                        detail["salePrice"] = _dom_sale
+                    elif _rob_best > 0 and not detail.get("salePrice"):
+                        detail["salePrice"] = _rob_best
+                    # 정상가: sellprc 사용 (할인 전 원가)
+                    _rob_orig = int(
+                        _rob.get("norprc", 0) or _rob.get("orgPrc", 0) or _rob_sell or 0
+                    )
+                    if _rob_orig > 0:
+                        detail["originalPrice"] = _rob_orig
+                    # 원가(bestBenefitPrice): domCardPrice → bestAmt → salePrice
                     if _dom_card > 0:
                         detail["bestBenefitPrice"] = _dom_card
                     elif not int(detail.get("bestBenefitPrice", 0) or 0):
-                        detail["bestBenefitPrice"] = _rob_best or _rob_sell
-                    _rob_orig = int(_rob.get("norprc", 0) or _rob.get("orgPrc", 0) or 0)
-                    if _rob_orig > 0:
-                        detail["originalPrice"] = _rob_orig
+                        detail["bestBenefitPrice"] = _rob_best or _dom_sale or _rob_sell
 
                 # _parse_result_item_obj 실패 시 (dept.ssg.com AJAX 로드): resultItemObj 폴백
                 if not detail:
@@ -151,18 +164,29 @@ class SSGPlugin(SourcingPlugin):
                             if _opts
                             else False
                         )
-                        _sell = int(_ext_obj.get("sellprc", 0) or 0)
-                        _best = int(_ext_obj.get("bestAmt", 0) or 0) or _sell
-                        # 카드혜택가(domCardPrice) 우선 적용 — 검증(2026-05-05) 결과 fallback 분기에서
-                        # _dom_card 무시되어 cost가 bestAmt로 저장되는 버그 수정
+                        # sellprc = 정상가, bestAmt = 최적가, domSalePrice = DOM 실제 판매가
+                        _sell = (
+                            _dom_sale
+                            or int(_ext_obj.get("bestAmt", 0) or 0)
+                            or int(_ext_obj.get("sellprc", 0) or 0)
+                        )
+                        _best_amt = int(_ext_obj.get("bestAmt", 0) or 0)
                         _dom_card_fb = int(_ext_result.get("domCardPrice", 0) or 0)
-                        _benefit = _dom_card_fb if _dom_card_fb > 0 else _best
+                        _benefit = (
+                            _dom_card_fb if _dom_card_fb > 0 else (_best_amt or _sell)
+                        )
+                        _orig = int(
+                            _ext_obj.get("norprc", 0)
+                            or _ext_obj.get("orgPrc", 0)
+                            or _ext_obj.get("sellprc", 0)
+                            or 0
+                        )
                         for _opt in _opts:
                             if not _opt.get("price"):
                                 _opt["price"] = _sell
                         detail = {
                             "salePrice": _sell,
-                            "originalPrice": _sell,
+                            "originalPrice": _orig or _sell,
                             "bestBenefitPrice": _benefit,
                             "options": _opts,
                             "isOutOfStock": _sold,

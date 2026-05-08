@@ -1955,6 +1955,18 @@ async function extractDetailData(tabId, site, productId) {
               break
             }
           }
+          // 실제 판매가 DOM 직접 추출 — resultItemObj.sellprc는 정상가(할인 전)라 사용 금지
+          // 1순위: cdtl_new_price notranslate (현재 최저 비카드가격)
+          // 2순위: cdtl_price point (최적가 tooltip)
+          // 3순위: resultItemObj.bestAmt (AJAX 값, sellprc보다 정확)
+          let domSalePrice = 0
+          const _spEl = document.querySelector('.cdtl_new_price.notranslate em.ssg_price')
+            || document.querySelector('.cdtl_new_price.notranslate .ssg_price')
+            || document.querySelector('.cdtl_price.point em.ssg_price')
+            || document.querySelector('.cdtl_price.point .ssg_price')
+          if (_spEl) {
+            domSalePrice = parseInt(_spEl.textContent.replace(/[^\d]/g, ''), 10) || 0
+          }
           return {
             success: true,
             site_product_id: prdId,
@@ -1964,7 +1976,8 @@ async function extractDetailData(tabId, site, productId) {
             ctgFields: ctgFields,  // 카테고리 관련 전체 필드
             uitemOptions: uitemOptions,  // 옵션별 실제 재고 (AJAX 후 값)
             domOptions: domOptions,  // DOM 파싱 실재고 (JS 렌더링 후, 우선순위 최상)
-            domCardPrice: domCardPrice,  // 카드혜택가 DOM 직접 추출값
+            domCardPrice: domCardPrice,  // 카드혜택가 DOM 직접 추출값 → cost(원가)에 반영
+            domSalePrice: domSalePrice,  // 판매가 DOM 직접 추출값 → salePrice에 반영 (sellprc 대체)
             url: location.href,
           }
         } catch (e) {
