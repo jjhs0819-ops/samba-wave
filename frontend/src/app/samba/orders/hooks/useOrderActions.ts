@@ -212,7 +212,7 @@ export function useOrderActions(args: Args) {
         } else if (bulkStatus === 'approve_cancel') {
           await orderApi.approveCancel(id)
         } else {
-          await orderApi.update(id, { status: bulkStatus })
+          await orderApi.updateStatus(id, bulkStatus)
         }
         ok++
       } catch { /* ignore */ }
