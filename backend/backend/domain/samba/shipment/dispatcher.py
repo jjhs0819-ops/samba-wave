@@ -437,6 +437,9 @@ async def _delete_lottehome(
     from backend.domain.samba.proxy.lottehome import LotteHomeClient
 
     creds: dict[str, Any] | None = None
+    db_creds = await _get_setting(session, "lottehome_credentials") or {}
+    if not isinstance(db_creds, dict):
+        db_creds = {}
     if account:
         extra = getattr(account, "additional_fields", None) or {}
         if isinstance(extra, dict) and (
@@ -445,11 +448,10 @@ async def _delete_lottehome(
             or extra.get("agncNo")
             or extra.get("env")
         ):
-            creds = extra
-    else:
-        creds = await _get_setting(session, "lottehome_credentials")
-        if not creds or not isinstance(creds, dict):
-            creds = await _get_setting(session, "store_lottehome")
+            # account.additional_fields에 env 없으면 lottehome_credentials에서 보완
+            creds = {**db_creds, **extra}
+    if not creds:
+        creds = db_creds or await _get_setting(session, "store_lottehome")
     if not creds or not isinstance(creds, dict):
         return {"success": False, "message": "롯데홈쇼핑 설정 없음"}
 
