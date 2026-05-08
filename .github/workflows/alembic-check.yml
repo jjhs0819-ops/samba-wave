@@ -1,0 +1,65 @@
+# Alembic 마이그레이션 검증 — PR 단계에서 multiple heads / 컨벤션 위반 차단
+#
+# 트리거: backend/alembic/** 변경된 PR
+# 검사:
+#   1. heads 가 정확히 1개 (multiple heads 차단)
+#   2. 한 PR 에 새 마이그레이션 파일 1개만 추가
+#
+# 참고: backend/alembic/README
+
+name: Alembic Migration Check
+
+on:
+  pull_request:
+    paths:
+      - "backend/alembic/**"
+      - "backend/alembic.ini"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install Python deps
+        working-directory: backend
+        run: uv sync --frozen
+
+      - name: Check single head
+        working-directory: backend
+        run: |
+          # alembic.ini sqlalchemy.url 은 driver://user:pass@localhost/dbname (placeholder)
+          # heads 는 versions/ 파일 분석만 사용하므로 DB 연결 불필요
+          HEADS_OUTPUT=$(uv run alembic heads 2>&1)
+          HEADS_COUNT=$(echo "$HEADS_OUTPUT" | grep -E '^[a-z0-9]+ \(head\)' | wc -l | tr -d ' ')
+          echo "$HEADS_OUTPUT"
+          echo "---"
+          echo "Detected heads: $HEADS_COUNT"
+          if [ "$HEADS_COUNT" != "1" ]; then
+            echo ""
+            echo "::error::multiple heads 감지됨 ($HEADS_COUNT 개). merge 마이그레이션 필요."
+            echo "  cd backend && uv run alembic merge -m 'merge heads' <head1> <head2>"
+            echo "참고: backend/alembic/README §2"
+            exit 1
+          fi
+
+      - name: Check single migration file per PR
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          ADDED=$(git diff --name-only --diff-filter=A "$BASE_SHA" "$HEAD_SHA" -- 'backend/alembic/versions/*.py' | wc -l | tr -d ' ')
+          echo "Added migration files: $ADDED"
+          git diff --name-only --diff-filter=A "$BASE_SHA" "$HEAD_SHA" -- 'backend/alembic/versions/*.py' || true
+          if [ "$ADDED" -gt "1" ]; then
+            echo ""
+            echo "::error::한 PR 에 마이그레이션 파일 1개만 허용 (실제 $ADDED 개)."
+            echo "참고: backend/alembic/README §3"
+            exit 1
+          fi

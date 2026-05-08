@@ -32,6 +32,7 @@ dependencies = [
     "curl_cffi>=0.7.0",
     "onnxruntime>=1.18.0",
     "openpyxl>=3.1.0",
+    "slowapi>=0.1.9",
 ]
 
 [build-system]

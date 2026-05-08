@@ -1,1 +1,145 @@
-Generic single-database configuration.
+# Alembic 마이그레이션 컨벤션
+
+본 문서는 SambaWave 백엔드 Alembic 마이그레이션 작성·관리 규칙을 정의합니다.
+2026-05-07 사고(zzzzz_tags_jsonb_gin deadlock + multiple heads 누적) 후 정립.
+
+## 1. 파일명 컨벤션
+
+새 마이그레이션은 **타임스탬프 prefix** 사용. `alembic.ini` `file_template` 로 자동 적용됨:
+
+```
+yyyymmdd_HHMMSS_<rev>_<slug>.py
+예) 20260507_142354_a1b2c3d4_add_user_email_index.py
+```
+
+기존 `z_*`, `zz_*`, `zzz_*`, `zzzz_*`, `zzzzz_*` prefix 파일은 **변경하지 말 것**
+(alembic_version 테이블에 revision id 가 저장되어 있어 파일명 변경은 무관, 다만 관행 통일 차원에서 신규만 적용).
+
+## 2. multiple heads 금지
+
+PR 단계에서 head 가 1개임을 보장. CI 워크플로우 `alembic-heads-check.yml` 가
+`alembic heads | wc -l` 을 검증하여 1 이 아니면 fail.
+
+여러 PR 이 동시에 마이그레이션을 추가하면 충돌이 발생합니다. 해결 순서:
+1. `git pull` + 본인 PR 의 `down_revision` 을 main 의 최신 head 로 변경, OR
+2. 두 head 가 모두 main 에 들어간 경우 merge 마이그레이션 작성:
+   ```bash
+   cd backend
+   uv run alembic merge -m "merge heads" <head1> <head2>
+   ```
+
+## 3. 한 PR 에 마이그레이션 1개
+
+병합 충돌·리뷰 부담·디버깅 용이성을 위해 한 PR 당 마이그레이션 파일 1개로 제한.
+여러 변경이 필요한 경우 PR 을 나눌 것.
+
+## 4. autogenerate 우선
+
+스키마 자동 추론으로 누락 방지:
+
+```bash
+cd backend
+uv run alembic revision --autogenerate -m "add user email index"
+```
+
+수동 작성은 다음 경우만 허용:
+- 데이터 백필 (UPDATE/INSERT)
+- 인덱스 변경 (CREATE/DROP INDEX)
+- 비파괴 ALTER (컬럼 추가, comment 등)
+
+수동 작성 시 PR 리뷰에서 SQL 검증 필수.
+
+## 5. 운영 트래픽 중 안전한 DDL 패턴
+
+배포는 blue/green 무중단으로 실행됩니다. 즉 마이그레이션이 도는 동안 **운영 컨테이너(blue)
+가 같은 테이블에 RowExclusiveLock 을 보유**할 수 있습니다. 다음 패턴 필수:
+
+### 5-1. lock_timeout + retry
+
+`ALTER TABLE`, `ALTER COLUMN TYPE`, `CREATE INDEX (non-CONCURRENTLY)` 등 AccessExclusiveLock 또는
+ShareLock 을 요구하는 작업은 lock_timeout + retry 로 감쌀 것:
+
+```python
+op.execute("""
+    DO $$
+    DECLARE
+        attempts INTEGER := 0;
+        max_attempts INTEGER := 30;
+    BEGIN
+        LOOP
+            attempts := attempts + 1;
+            BEGIN
+                SET LOCAL lock_timeout = '3s';
+                ALTER TABLE samba_collected_product
+                    ALTER COLUMN tags TYPE jsonb USING tags::jsonb;
+                EXIT;
+            EXCEPTION
+                WHEN lock_not_available OR deadlock_detected THEN
+                    IF attempts >= max_attempts THEN RAISE; END IF;
+                    PERFORM pg_sleep(2);
+            END;
+        END LOOP;
+    END
+    $$;
+""")
+```
+
+참고: `backend/alembic/versions/zzzzz_tags_jsonb_gin.py`.
+
+### 5-2. idempotent 작성
+
+엔트리포인트가 마이그레이션을 최대 3회 재시도합니다. 각 SQL 은 재실행 안전해야 함.
+
+```sql
+-- 안전
+CREATE INDEX IF NOT EXISTS ix_xxx ON yyy(zzz);
+ALTER TABLE xxx ADD COLUMN IF NOT EXISTS yyy TEXT;
+DROP INDEX IF EXISTS ix_xxx;
+
+-- 위험 (재실행 시 에러)
+CREATE INDEX ix_xxx ON yyy(zzz);
+ALTER TABLE xxx ADD COLUMN yyy TEXT;
+```
+
+ALTER COLUMN TYPE 은 `IF EXISTS data_type='json'` 같은 information_schema 가드 + lock_timeout 로 idempotent 화.
+
+### 5-3. CREATE INDEX CONCURRENTLY 는 별도 마이그레이션
+
+`CONCURRENTLY` 는 트랜잭션 안에서 실행 불가. alembic 의 transactional DDL 과 충돌하므로
+필요 시 **별도 마이그레이션 + `op.get_bind().execution_options(isolation_level="AUTOCOMMIT")`** 패턴 사용.
+실패 후 재시도 시 `INVALID` 상태 인덱스가 남으므로 `DROP INDEX IF EXISTS` 선행 권장.
+
+## 6. 백필 (대량 UPDATE) 안전
+
+47k+ 행 UPDATE 는 운영 부하 + 락 보유 시간 증가 위험. 다음 중 하나 채택:
+
+- 인덱스 활용 + `WHERE` 절 좁히기 (전체 스캔 회피)
+- 청크 분할 (`WHERE id BETWEEN x AND y` 반복) — 단일 트랜잭션 거대화 방지
+- 신규 컬럼 default 값으로 NULL 허용 후 애플리케이션에서 lazy 채우기
+
+## 7. emergency_schema_fixes 와의 관계
+
+`backend/scripts/entrypoint.sh` 가 alembic 전에 `emergency_schema_fixes` (idempotent SQL 묶음) 을
+실행합니다. **장기적인 스키마 변경은 alembic 으로 관리**, emergency 는 이전 마이그레이션 누락 보정용으로만 사용.
+
+## 8. 배포 + 마이그레이션 흐름
+
+```
+deploy.sh
+  └─ green(staging) 컨테이너 시작
+       └─ entrypoint.sh
+           ├─ Cloud SQL proxy 대기
+           ├─ Emergency schema fixes (idempotent)
+           ├─ alembic upgrade heads (3회 retry)
+           ├─ verify_schema.py
+           └─ gunicorn 시작
+       └─ green 헬스체크 (최대 360초)
+  └─ blue stop → blue 새 이미지로 재시작
+```
+
+마이그레이션이 운영 blue 와 lock 충돌하면 deploy 실패. **5-1 패턴 필수**.
+
+## 9. 사고 사례 / 교훈
+
+- **2026-05-07 zzzzz_tags_jsonb_gin deadlock**: ALTER COLUMN TYPE 가 운영 blue 의 RowExclusiveLock 과 deadlock → migration rollback → green 헬스체크 영구 fail. 수습: blue 정지 후 재시작 (~7분 다운타임). 후속: lock_timeout + retry 패치 (commit 526db21e).
+- **multiple heads 두 차례**: `z_add_sourcing_recipes` + `z_add_tetris_assignment` 동시 머지. 수습: `37fd18b908e6` merge migration 수동 작성. 본 컨벤션 도입으로 CI 차단.
