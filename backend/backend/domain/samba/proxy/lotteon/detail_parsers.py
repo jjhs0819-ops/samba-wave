@@ -45,14 +45,26 @@ class DetailParsersMixin:
     # ------------------------------------------------------------------
 
     def _normalize_image(self, url: str) -> str:
-        """이미지 URL 정규화 (프로토콜 보정)."""
+        """이미지 URL 정규화 (프로토콜 보정 + LotteON CDN 변환 path 제거).
+
+        LotteON CDN은 .jpg 뒤에 `/dims/optimize/resizemc/400x400` 같은 변환 path 가 붙어
+        URL 끝이 확장자가 아닌 경우가 있다. 다른 마켓(롯데홈쇼핑 등) API가 확장자 검증으로
+        등록 거부([1036])하므로 여기서 표준 확장자로 끝나도록 컷한다.
+        """
         if not url:
             return ""
         url = url.strip()
         if url.startswith("//"):
-            return f"https:{url}"
+            url = f"https:{url}"
         if not url.startswith("http"):
             return ""
+        # `.jpg/.jpeg/.png/.gif/.webp` 다음에 추가 path 가 있으면 잘라낸다 (대소문자 무시)
+        url = re.sub(
+            r"(\.(?:jpg|jpeg|png|gif|webp))/.*$",
+            r"\1",
+            url,
+            flags=re.IGNORECASE,
+        )
         return url
 
     @staticmethod

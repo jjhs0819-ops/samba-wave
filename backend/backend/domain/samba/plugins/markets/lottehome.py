@@ -6,11 +6,33 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from backend.domain.samba.plugins.market_base import MarketPlugin
 from backend.utils import add_lazy_loading
 from backend.utils.logger import logger
+
+
+def _sanitize_image_url(url: str) -> str:
+    """롯데홈쇼핑 등록용 이미지 URL 정규화.
+
+    LotteON CDN(`contents.lotteon.com`)은 `.jpg/dims/optimize/resizemc/400x400`처럼
+    표준 확장자 뒤에 변환 path 가 붙어 롯데홈쇼핑 API 가 [1036] 확장자 오류를 던진다.
+    이미 DB 에 저장된 기존 이미지 URL 도 정상 등록되도록 안전망으로 컷한다.
+    """
+    if not url:
+        return ""
+    s = str(url).strip()
+    if s.startswith("//"):
+        s = f"https:{s}"
+    s = re.sub(
+        r"(\.(?:jpg|jpeg|png|gif|webp))/.*$",
+        r"\1",
+        s,
+        flags=re.IGNORECASE,
+    )
+    return s
 
 
 async def _get_setting(session, key: str) -> Any:
@@ -42,7 +64,8 @@ def _transform_for_lottehome(
     logger.info(
         f"[롯데홈쇼핑 변환] 정책=ec_goods_artc_cd:{creds.get('ec_goods_artc_cd')}, product.material:{product.get('material')}, product.sizeInfo:{product.get('sizeInfo')}, product.quality_guarantee:{product.get('quality_guarantee')}"
     )
-    images = product.get("images") or []
+    images = [_sanitize_image_url(u) for u in (product.get("images") or [])]
+    images = [u for u in images if u]
     sale_price = int(product.get("sale_price", 0) or 0)
     # 판매가 끝자리 0 필수 (API 에러 1062)
     if sale_price % 10 != 0:
@@ -391,9 +414,17 @@ class LotteHomePlugin(MarketPlugin):
         policy = await _get_setting(session, "lottehome_policy")
         policy = policy if isinstance(policy, dict) else {}
 
+        # account.additional_fields 의 camelCase 값도 폴백 소스로 사용
+        # (배송정책/출고지/반품지 등은 계정별 설정인데 store_lh 보다 우선 고려)
+        account_extra: dict[str, Any] = {}
+        if account:
+            ae = getattr(account, "additional_fields", None) or {}
+            if isinstance(ae, dict):
+                account_extra = ae
+
         def _pick(*keys: str) -> str:
-            """policy → store_lh 순으로 첫 번째 non-empty 값 반환."""
-            for src in (policy, store_lh):
+            """policy → account.additional_fields → store_lh 순으로 첫 non-empty 값 반환."""
+            for src in (policy, account_extra, store_lh):
                 for k in keys:
                     v = src.get(k, "")
                     if v:

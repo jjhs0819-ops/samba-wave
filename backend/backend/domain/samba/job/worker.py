@@ -3325,6 +3325,19 @@ class JobWorker:
                         )
                         _cost = 100000
 
+                    # 크론잡(brand_all) 분기에서 SSG 검색결과의 dispCtgLclsNm/Mcls/Scls가
+                    # 비어 있는 케이스가 다수 — _cat_parts가 1개 이하면 검색그룹명(filter.name)
+                    # 의 풀 path("SSG_브랜드_대_중_소") 에서 카테고리 단계를 복원해
+                    # product.category 가 leaf 1단계로 굳는 사고를 방지.
+                    if len(_cat_parts) <= 1 and filter_id:
+                        _f_match = next((f for f in filters if f.id == filter_id), None)
+                        if _f_match and _f_match.name:
+                            _name_parts = _f_match.name.split("_")
+                            # 형식: "SSG_<브랜드>_<대>_<중>_<소>..." → brand 다음 토큰들이 path
+                            if len(_name_parts) > 2:
+                                _restored = [p for p in _name_parts[2:] if p]
+                                if len(_restored) > len(_cat_parts):
+                                    _cat_parts = _restored
                     _raw_cat = " > ".join(_cat_parts)
                     detail_for_build: dict = {
                         "name": detail.get("itemNm")

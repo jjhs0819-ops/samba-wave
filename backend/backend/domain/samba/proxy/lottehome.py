@@ -351,13 +351,23 @@ class LotteHomeClient:
         method: str = "POST",
         params: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
-        """인증키 오류([0001],[5001]) 시 자동 재인증 후 1회 재시도."""
+        """인증키 오류([0001]/[5001] + 인증 메시지) 시 자동 재인증 후 1회 재시도.
+
+        주의: 0001 은 롯데홈쇼핑이 다양한 "데이터 없음" 에 광범위하게 사용한다.
+        예) 마스터 데이터 미존재(brnd_no/disp_no 등)도 0001 로 떨어진다.
+        메시지에 "인증" 키워드가 있을 때만 재인증으로 분류한다.
+        """
         try:
             return await self._call_api(endpoint, method, params)
         except LotteApiError as e:
-            if e.code in ("0001", "5001"):
+            msg = (e.lotte_msg or "").lower()
+            is_auth = e.code == "5001" or (
+                e.code == "0001"
+                and any(k in (e.lotte_msg or "") for k in ("인증", "토큰", "키"))
+            )
+            if is_auth:
                 logger.info(
-                    f"[롯데홈쇼핑] 인증키 무효 감지 → 강제 재인증 후 재시도 (endpoint={endpoint})"
+                    f"[롯데홈쇼핑] 인증키 무효 감지 → 강제 재인증 후 재시도 (endpoint={endpoint}, code={e.code}, msg={e.lotte_msg})"
                 )
                 _cert_cache.pop(f"{self.user_id}:{self.env}", None)
                 self._cert_key = ""
@@ -366,6 +376,12 @@ class LotteHomeClient:
                 if params and "subscriptionId" in params:
                     params = {**params, "subscriptionId": new_key}
                 return await self._call_api(endpoint, method, params)
+            # 0001 이지만 인증 외 사유면 그대로 raise → 호출자에게 정확한 원인 노출
+            if e.code == "0001":
+                logger.warning(
+                    f"[롯데홈쇼핑] 0001(데이터 미존재) — endpoint={endpoint}, msg={e.lotte_msg}"
+                )
+            _ = msg  # suppress unused
             raise
 
     async def _ensure_auth(self, force: bool = False) -> str:
