@@ -38,7 +38,7 @@ jobs:
           # alembic.ini sqlalchemy.url 은 driver://user:pass@localhost/dbname (placeholder)
           # heads 는 versions/ 파일 분석만 사용하므로 DB 연결 불필요
           HEADS_OUTPUT=$(uv run alembic heads 2>&1)
-          HEADS_COUNT=$(echo "$HEADS_OUTPUT" | grep -E '^[a-z0-9]+ \(head\)' | wc -l | tr -d ' ')
+          HEADS_COUNT=$(echo "$HEADS_OUTPUT" | grep -E '^[a-z0-9_]+ \(head\)' | wc -l | tr -d ' ')
           echo "$HEADS_OUTPUT"
           echo "---"
           echo "Detected heads: $HEADS_COUNT"
@@ -54,8 +54,9 @@ jobs:
         run: |
           BASE_SHA="${{ github.event.pull_request.base.sha }}"
           HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-          ADDED=$(git diff --name-only --diff-filter=A "$BASE_SHA" "$HEAD_SHA" -- 'backend/alembic/versions/*.py' | wc -l | tr -d ' ')
-          echo "Added migration files: $ADDED"
+          # 머지 리비전(_merge_heads_)은 카운트에서 제외 — 머지 리비전은 head 통합 목적이라 본 카운트 의미가 다름
+          ADDED=$(git diff --name-only --diff-filter=A "$BASE_SHA" "$HEAD_SHA" -- 'backend/alembic/versions/*.py' | grep -v '_merge_heads_' | wc -l | tr -d ' ')
+          echo "Added migration files (merge revisions excluded): $ADDED"
           git diff --name-only --diff-filter=A "$BASE_SHA" "$HEAD_SHA" -- 'backend/alembic/versions/*.py' || true
           if [ "$ADDED" -gt "1" ]; then
             echo ""

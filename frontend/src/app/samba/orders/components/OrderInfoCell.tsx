@@ -322,7 +322,7 @@ export default function OrderInfoCell(props: Props) {
       <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.8rem', flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
           <span style={{ color: '#666' }}>주문자</span>
-          {renderCopyableText(o.customer_name, '주문자')}
+          {renderCopyableText(o.orderer_name || o.customer_name, '주문자')}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
           <span style={{ color: '#666' }}>수령인</span>

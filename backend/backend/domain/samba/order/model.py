@@ -92,6 +92,10 @@ class SambaOrder(SQLModel, table=True):
     customer_name: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)
     )
+    # 주문자명 (수취인 customer_name과 다를 수 있음 — 선물하기 등)
+    orderer_name: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
     customer_phone: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)
     )

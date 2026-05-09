@@ -4886,6 +4886,11 @@ async def sync_orders_from_markets(
                         existing.customer_name or ""
                     ):
                         update_fields["customer_name"] = new_cust_name
+                    new_orderer_name = order_data.get("orderer_name")
+                    if new_orderer_name and new_orderer_name != str(
+                        existing.orderer_name or ""
+                    ):
+                        update_fields["orderer_name"] = new_orderer_name
                     new_cust_phone = order_data.get("customer_phone")
                     if new_cust_phone and new_cust_phone != str(
                         existing.customer_phone or ""
@@ -5735,7 +5740,8 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
         "cost": 0,
         "status": status,
         "shipping_status": shipping_status,
-        "customer_name": item.get("dvpCustNm", "") or item.get("odrNm", "") or "",
+        "customer_name": item.get("dvpCustNm", "") or "",
+        "orderer_name": item.get("odrNm", "") or "",
         "customer_phone": item.get("dvpMphnNo", "")
         or item.get("dvpTelNo", "")
         or item.get("mphnNo", "")

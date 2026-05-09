@@ -138,6 +138,7 @@ export interface SambaOrder {
   source_site?: string;
   collected_product_id?: string;
   customer_name?: string;
+  orderer_name?: string;
   customer_phone?: string;
   customer_address?: string;
   customer_address_detail?: string;
