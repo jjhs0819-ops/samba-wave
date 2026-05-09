@@ -1056,6 +1056,7 @@ export const proxyConfigApi = {
     return fetchWithAuth(`${SAMBA_PREFIX}/proxy/config/proxies/test`, { method: 'POST', body: form })
       .then(r => r.json() as Promise<{ success: boolean; ip?: string; message?: string }>)
   },
+  myIp: () => request<{ ipv4: string; ipv6: string }>(`${SAMBA_PREFIX}/proxy/myip`),
 }
 
 // ── Proxy (외부 API 프록시) ──
