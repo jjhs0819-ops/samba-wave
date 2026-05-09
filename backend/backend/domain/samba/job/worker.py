@@ -571,13 +571,16 @@ class JobWorker:
             logger.error(f"[잡워커] 배포 종료 잡 복구 실패: {e}")
 
     async def _poll_once(self) -> bool:
-        """전송 잡 병렬 실행 (무제한).
+        """전송 잡 병렬 실행 — 빈 슬롯만큼 배치 픽업.
 
         FOR UPDATE SKIP LOCKED로 원자적 잡 획득 — 멀티 worker 중복 실행 방지.
+        호출 1회당 transmit 빈 슬롯(=5 - 활성 transmit Task)만큼 연속 클레임하여
+        다른 계정 잡을 즉시 병렬 시작 (큐 맨 앞이 같은 계정으로 채워져 있어도
+        SQL NOT EXISTS + 인메모리 exclude로 자연스럽게 다른 계정으로 점프).
         """
         _worker_status["last_poll"] = datetime.now(UTC).isoformat()
 
-        # 완료된 전송 Task 정리
+        # 완료된 Task 정리
         done_ids = [jid for jid, task in self._active_tasks.items() if task.done()]
         for jid in done_ids:
             task = self._active_tasks.pop(jid)
@@ -596,82 +599,98 @@ class JobWorker:
         from backend.domain.samba.job.repository import SambaJobRepository
         from backend.domain.samba.shipment.service import is_cancel_requested
 
-        async with get_write_session() as session:
-            repo = SambaJobRepository(session)
-            # 현재 실행 중인 소싱처는 제외 — 같은 소싱처 순차, 다른 소싱처 병렬
-            _excl_sources = set(self._active_collect_sources)
-            # 현재 실행 중인 transmit 잡의 계정 합집합 — 같은 계정 순차 보장
-            _excl_accounts: set[str] = set()
-            for _aids in self._active_transmit_accounts.values():
-                _excl_accounts.update(_aids)
-            # 일시정지(__all__ 플래그) 중이면 transmit 잡 클레임 스킵 — PENDING 잡 대기 유지
-            _excl_types: set[str] = {"bg_remove"}
-            if is_cancel_requested("__all__"):
-                _excl_types.add("transmit")
-            job = await repo.claim_pending_job(
-                exclude_sources=_excl_sources or None,
-                exclude_brand_all=self._brand_all_running,
-                exclude_types=_excl_types,
-                exclude_accounts=_excl_accounts or None,
-            )
-            if not job:
-                return bool(self._active_tasks)
+        # transmit 빈 슬롯 계산 (글로벌 세마포어 한도 5 기준)
+        transmit_running = sum(
+            1 for jid in self._active_tasks if jid in self._active_transmit_accounts
+        )
+        transmit_slots = max(0, 5 - transmit_running)
+        # 한 폴링 사이클 최대 픽업 개수 = transmit 슬롯 + 비-transmit 여유분(2)
+        # 비-transmit(collect/delete/기타)이 들어와도 큐 진행이 막히지 않도록 여유 둠
+        max_picks = transmit_slots + 2
+        picked = 0
 
-            self._active_job_ids.add(job.id)
-            await session.commit()
+        for _ in range(max_picks):
+            # 매 iteration마다 fresh write session — claim → commit 후 즉시 닫아
+            # 다음 iteration의 _excl_accounts 계산이 최신 _active_transmit_accounts 반영
+            async with get_write_session() as session:
+                repo = SambaJobRepository(session)
+                # 현재 실행 중인 소싱처/계정 — 같은 소싱처 순차, 같은 계정 순차
+                _excl_sources = set(self._active_collect_sources)
+                _excl_accounts: set[str] = set()
+                for _aids in self._active_transmit_accounts.values():
+                    _excl_accounts.update(_aids)
+                # 일시정지 중이면 transmit 클레임 스킵 — PENDING 잡 대기 유지
+                _excl_types: set[str] = {"bg_remove"}
+                if is_cancel_requested("__all__"):
+                    _excl_types.add("transmit")
+                job = await repo.claim_pending_job(
+                    exclude_sources=_excl_sources or None,
+                    exclude_brand_all=self._brand_all_running,
+                    exclude_types=_excl_types,
+                    exclude_accounts=_excl_accounts or None,
+                )
+                if not job:
+                    break
+                self._active_job_ids.add(job.id)
+                await session.commit()
 
-        # 전송/마켓삭제: asyncio.Task로 백그라운드 병렬 실행 (동일 계정 순차 보장)
-        if job.job_type in ("transmit", "delete_market"):
-            _tx_accounts = self._extract_transmit_account_ids(job.payload)
-            # transmit 잡만 등록 — delete_market은 별도 세마포어/락으로 관리하므로
-            # _active_transmit_accounts에 포함하면 같은 계정의 transmit 잡을 불필요하게 차단함
-            if job.job_type == "transmit":
-                self._active_transmit_accounts[job.id] = _tx_accounts
+            # 전송/마켓삭제: asyncio.Task로 백그라운드 병렬 실행 (동일 계정 순차 보장)
+            if job.job_type in ("transmit", "delete_market"):
+                _tx_accounts = self._extract_transmit_account_ids(job.payload)
+                # transmit 잡만 등록 — delete_market은 별도 세마포어/락으로 관리하므로
+                # _active_transmit_accounts에 포함하면 같은 계정의 transmit 잡을 불필요하게 차단함
+                if job.job_type == "transmit":
+                    self._active_transmit_accounts[job.id] = _tx_accounts
 
-            if job.job_type == "delete_market":
+                if job.job_type == "delete_market":
 
-                async def _run_with_limit(_j=job):
-                    async with self._delete_semaphore:
-                        await self._execute_job(_j)
-            else:
+                    async def _run_with_limit(_j=job):
+                        async with self._delete_semaphore:
+                            await self._execute_job(_j)
+                else:
 
-                async def _run_with_limit(_j=job):  # type: ignore[misc]
-                    async with self._transmit_semaphore:
-                        await self._execute_job(_j)
+                    async def _run_with_limit(_j=job):  # type: ignore[misc]
+                        async with self._transmit_semaphore:
+                            await self._execute_job(_j)
 
-            task = asyncio.create_task(
-                _run_with_limit(),
-                name=f"{job.job_type}-{job.id}",
-            )
-            self._active_tasks[job.id] = task
-            logger.info(
-                f"[잡워커] {job.job_type} Task 생성: {job.id} "
-                f"(동시 실행: {len(self._active_tasks)}개, "
-                f"계정={_tx_accounts})"
-            )
-            return True
+                task = asyncio.create_task(
+                    _run_with_limit(),
+                    name=f"{job.job_type}-{job.id}",
+                )
+                self._active_tasks[job.id] = task
+                logger.info(
+                    f"[잡워커] {job.job_type} Task 생성: {job.id} "
+                    f"(동시 실행: {len(self._active_tasks)}개, "
+                    f"계정={_tx_accounts})"
+                )
+                picked += 1
+                continue
 
-        # 수집: 소싱처별 병렬 Task (같은 소싱처는 exclude_sources로 순차 보장)
-        if job.job_type == "collect":
-            _site = (job.payload or {}).get("source_site", "?")
-            # Task 생성 전에 즉시 등록 — 폴링 루프가 sleep 없이 연속 호출될 때
-            # _execute_job 내부에서 add()하면 Task 실행 전까지 반영 안 됨 (race condition)
-            if _site and _site != "?":
-                self._active_collect_sources.add(_site)
-            task = asyncio.create_task(
-                self._execute_job(job),
-                name=f"collect-{job.id}",
-            )
-            self._active_tasks[job.id] = task
-            logger.info(
-                f"[잡워커] 수집 Task 생성: {job.id} (site={_site}, "
-                f"활성 소싱처={sorted(self._active_collect_sources)})"
-            )
-            return True
+            # 수집: 소싱처별 병렬 Task (같은 소싱처는 exclude_sources로 순차 보장)
+            if job.job_type == "collect":
+                _site = (job.payload or {}).get("source_site", "?")
+                # Task 생성 전에 즉시 등록 — 폴링 루프가 sleep 없이 연속 호출될 때
+                # _execute_job 내부에서 add()하면 Task 실행 전까지 반영 안 됨 (race condition)
+                if _site and _site != "?":
+                    self._active_collect_sources.add(_site)
+                task = asyncio.create_task(
+                    self._execute_job(job),
+                    name=f"collect-{job.id}",
+                )
+                self._active_tasks[job.id] = task
+                logger.info(
+                    f"[잡워커] 수집 Task 생성: {job.id} (site={_site}, "
+                    f"활성 소싱처={sorted(self._active_collect_sources)})"
+                )
+                picked += 1
+                continue
 
-        # 기타: 기존 방식 (동기 대기)
-        await self._execute_job(job)
-        return True
+            # 기타: 기존 방식 (동기 대기) — 사이클 점유하므로 즉시 종료
+            await self._execute_job(job)
+            picked += 1
+            break
+
+        return picked > 0 or bool(self._active_tasks)
 
     async def _execute_job(self, job):
         """개별 잡 실행 — 수집만 별도 스레드, 전송+기타는 메인 루프."""
