@@ -180,7 +180,7 @@ async def get_write_session() -> AsyncGenerator[AsyncSession, None]:
         ):  # CancelledError는 BaseException 상속 — Exception으로는 못 잡음
             try:
                 await sess.rollback()
-            except Exception:
+            except BaseException:  # rollback 중 2차 CancelledError도 억제
                 pass
             raise
 
@@ -196,7 +196,7 @@ async def get_read_session() -> AsyncGenerator[AsyncSession, None]:
         ):  # CancelledError 포함 — rollback으로 idle in transaction 방지
             try:
                 await sess.rollback()
-            except Exception:
+            except BaseException:  # rollback 중 2차 CancelledError도 억제
                 pass
             raise
 
