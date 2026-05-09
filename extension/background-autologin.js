@@ -78,7 +78,7 @@ async function _isAutotuneActive() {
   }
   try {
     const stored = await chrome.storage.local.get('proxyUrl')
-    const proxyUrl = stored.proxyUrl || 'https://api.samba-wave.co.kr'
+    const proxyUrl = stored.proxyUrl || ''
     // X-Api-Key 헤더 자동 부착하는 apiFetch 사용 (raw fetch는 ApiGatewayMiddleware에 의해 403)
     const apiFetch = globalThis.SambaBackgroundCore?.apiFetch
     const res = apiFetch
@@ -127,7 +127,7 @@ async function _fetchLoginCredential(siteKey) {
   if (!siteName) return null
   try {
     const stored = await chrome.storage.local.get('proxyUrl')
-    const proxyUrl = stored.proxyUrl || 'https://api.samba-wave.co.kr'
+    const proxyUrl = stored.proxyUrl || ''
     const apiFetch = globalThis.SambaBackgroundCore?.apiFetch
     if (!apiFetch) return null
     const res = await apiFetch(

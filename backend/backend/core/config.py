@@ -73,6 +73,9 @@ class BackendSettings(BaseSettings):
     api_gateway_key: str = ""
     """API 게이트웨이 키 — 프론트엔드·확장앱만 허용, 외부 앱 차단."""
 
+    deprecate_global_key: bool = False
+    """True 시 글로벌 키 폴백 비활성화 — 테넌트 키만 허용. 모든 유저가 웹 로그인 후 전환."""
+
     # ===========================================
     # AI / Anthropic Configuration
     # ===========================================

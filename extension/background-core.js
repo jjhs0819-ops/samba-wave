@@ -2,7 +2,7 @@
   // CLOUD_URL 은 extension-web/config.js 에서 주입. 누락 시 기본값 폴백.
   const _CFG_URL =
     (typeof self !== 'undefined' && self.SAMBA_CONFIG && self.SAMBA_CONFIG.CLOUD_URL) ||
-    'https://api.samba-wave.co.kr'
+    ''
   const DEFAULT_PROXY_URL = _CFG_URL
   const CLOUD_URL = _CFG_URL
   const API_PREFIX = '/api/v1/samba/proxy'

@@ -118,8 +118,10 @@ class ApiGatewayMiddleware(BaseHTTPMiddleware):
                 request.state.tenant_id = tenant_id
                 return await call_next(request)
 
-        # 2단계: 글로벌 키 폴백
-        if request_key == self.api_key:
+        # 2단계: 글로벌 키 폴백 (DEPRECATE_GLOBAL_KEY=true 시 건너뜀)
+        from backend.core.config import settings as _settings
+
+        if not _settings.deprecate_global_key and request_key == self.api_key:
             request.state.tenant_id = None
             return await call_next(request)
 

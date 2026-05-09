@@ -9,5 +9,5 @@
 // ============================================================
 
 self.SAMBA_CONFIG = {
-  CLOUD_URL: 'https://api.samba-wave.co.kr',
+  CLOUD_URL: '',
 }
