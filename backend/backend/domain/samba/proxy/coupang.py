@@ -610,6 +610,37 @@ class CoupangClient:
         )
         return {"success": True, "data": result}
 
+    async def update_item_price(
+        self, vendor_item_id: int | str, price: int
+    ) -> dict[str, Any]:
+        """옵션(vendorItemId) 단위 가격 변경 — 부분 업데이트.
+
+        쿠팡 Wing API: PUT /v2/.../marketplace/vendor-items/{vendorItemId}/prices/{price}
+        Path segment가 'vendor-items' (seller-products X). body 없음.
+        forceSalePriceUpdate=true: 변경 비율 제한 우회 (오토튠 빈번 변동 대응).
+        """
+        path = (
+            f"/v2/providers/seller_api/apis/api/v1/marketplace/"
+            f"vendor-items/{vendor_item_id}/prices/{int(price)}"
+        )
+        return await self._call_api(
+            "PUT", path, params={"forceSalePriceUpdate": "true"}
+        )
+
+    async def update_item_quantity(
+        self, vendor_item_id: int | str, quantity: int
+    ) -> dict[str, Any]:
+        """옵션(vendorItemId) 단위 재고 변경 — 부분 업데이트.
+
+        쿠팡 Wing API: PUT /v2/.../marketplace/vendor-items/{vendorItemId}/quantities/{quantity}
+        Path segment가 'vendor-items'. body 없음.
+        """
+        path = (
+            f"/v2/providers/seller_api/apis/api/v1/marketplace/"
+            f"vendor-items/{vendor_item_id}/quantities/{int(quantity)}"
+        )
+        return await self._call_api("PUT", path)
+
     async def delete_product(self, seller_product_id: str) -> dict[str, Any]:
         """상품 삭제 (리스트에서 완전 제거)."""
         result = await self._call_api(
