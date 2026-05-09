@@ -93,5 +93,9 @@
     if (msg.type === 'AUTOTUNE_SET_JOIN') {
       chrome.runtime.sendMessage({ type: 'AUTOTUNE_JOIN_LOCAL', joined: !!msg.joined, sourceSites: msg.sourceSites ?? null })
     }
+    // 확장앱 연결 페이지(/samba/extension-link)에서 발급된 키 저장
+    if (msg.type === 'SAMBA_SET_API_KEY' && msg.apiKey) {
+      chrome.storage.local.set({ apiKey: msg.apiKey })
+    }
   })
 })()

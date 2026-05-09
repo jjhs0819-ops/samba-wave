@@ -99,6 +99,26 @@ document.addEventListener('DOMContentLoaded', async () => {
   })
 
   // ============================================================
+  // 웹사이트 로그인 → 확장앱 API 키 발급
+  // ============================================================
+  const loginStatus = $('loginStatus')
+
+  // 현재 저장된 키 유무 표시
+  const keyData = await chrome.storage.local.get(['apiKey'])
+  if (keyData.apiKey) {
+    setStatus(loginStatus, '✅ API 키 연결됨', 'ok')
+  } else {
+    setStatus(loginStatus, '미연결 — 아래 버튼으로 로그인하세요', '')
+  }
+
+  $('btnLogin').addEventListener('click', async () => {
+    const FRONTEND = 'https://samba-wave.vercel.app'
+    const linkUrl = `${FRONTEND}/samba/extension-link`
+    await chrome.tabs.create({ url: linkUrl, active: true })
+    setStatus(loginStatus, '⏳ 웹페이지에서 키 발급 후 이 팝업을 다시 여세요', '')
+  })
+
+  // ============================================================
   // 스토어 점수 수집
   // ============================================================
   const btn = $('btnStoreScore')

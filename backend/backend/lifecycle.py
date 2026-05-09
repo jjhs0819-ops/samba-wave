@@ -338,6 +338,7 @@ async def _start_autotune_if_enabled() -> None:
 _order_poller_task: asyncio.Task | None = None
 _lottehome_qa_poller_task: asyncio.Task | None = None
 _tetris_sync_task: asyncio.Task | None = None
+_sourcing_job_cleanup_task: asyncio.Task | None = None
 _tetris_sync_last_run: float = 0.0
 
 
@@ -562,6 +563,50 @@ async def _start_lottehome_qa_poller() -> None:
     logging.getLogger("backend.lifecycle").info("[lifecycle] 롯데홈 QA 폴러 시작")
 
 
+async def _sourcing_job_cleanup_loop() -> None:
+    """1분 주기 소싱 잡 만료 청소 + 7일 이전 레코드 삭제."""
+    from sqlalchemy import text
+
+    from backend.db.orm import get_write_session
+    from backend.shutdown_state import is_shutting_down
+
+    _log = logging.getLogger("backend.lifecycle")
+    while not is_shutting_down():
+        await asyncio.sleep(60)
+        if is_shutting_down():
+            break
+        try:
+            async with get_write_session() as session:
+                expired = await session.execute(
+                    text(
+                        "UPDATE samba_sourcing_job SET status = 'expired' "
+                        "WHERE expires_at < now() AND status IN ('pending', 'dispatched')"
+                    )
+                )
+                deleted = await session.execute(
+                    text(
+                        "DELETE FROM samba_sourcing_job "
+                        "WHERE status IN ('completed', 'failed', 'expired') "
+                        "AND created_at < now() - interval '7 days'"
+                    )
+                )
+                await session.commit()
+                if expired.rowcount or deleted.rowcount:
+                    _log.info(
+                        "[sourcing-cleanup] expired=%d deleted=%d",
+                        expired.rowcount,
+                        deleted.rowcount,
+                    )
+        except Exception as exc:
+            _log.warning("[sourcing-cleanup] 실패 (무시): %s", exc)
+
+
+async def _start_sourcing_job_cleanup() -> None:
+    global _sourcing_job_cleanup_task
+    _sourcing_job_cleanup_task = asyncio.create_task(_sourcing_job_cleanup_loop())
+    logging.getLogger("backend.lifecycle").info("[lifecycle] 소싱 잡 청소 워커 시작")
+
+
 def _validate_startup_settings() -> None:
     if sys.version_info[:3] != SUPPORTED_PYTHON_VERSION:
         current = ".".join(str(part) for part in sys.version_info[:3])
@@ -673,6 +718,7 @@ async def lifespan(app: FastAPI):
         await _start_order_poller()
         await _start_lottehome_qa_poller()
         await _start_tetris_sync_scheduler()
+        await _start_sourcing_job_cleanup()
     _validate_startup_settings()
 
     try:
