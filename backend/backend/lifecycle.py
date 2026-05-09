@@ -273,12 +273,10 @@ async def _recover_sourcing_jobs(logger: logging.Logger) -> None:
                         stale_ids.append(row.request_id)
                         continue
 
-                payload = dict(row.payload or {})
-                if not payload.get("requestId"):
-                    payload["requestId"] = row.request_id
+                # DB pending 상태 유지 — get_next_job이 DB에서 직접 읽어감
+                # resolve_job 호출 시 Future가 있으면 resolve 가능하도록 등록
                 loop = _asyncio.get_event_loop()
                 future = loop.create_future()
-                SourcingQueue.queue.append(payload)
                 SourcingQueue.resolvers[row.request_id] = future
                 recovered += 1
 
