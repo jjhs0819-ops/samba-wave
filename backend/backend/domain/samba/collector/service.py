@@ -186,6 +186,47 @@ class SambaCollectorService:
         result = await self.product_repo.session.execute(q.limit(1))
         return result.scalars().first() is not None
 
+    async def _ensure_category_mapping_row(
+        self,
+        source_site: str,
+        source_category: str,
+        tenant_id: str | None = None,
+    ) -> None:
+        """수집된 (source_site, source_category) 가 매핑 테이블에 없으면 INSERT.
+
+        TASK 5(상품 수집) ↔ TASK 1(카테고리 매핑) 누락 방지: 수집 시점에 빈 매핑 행을
+        만들어 두면 TASK 1 또는 사용자가 매핑 작업할 때 누락 없이 인식된다.
+        target_mappings 는 빈 객체로 시작.
+        """
+        if not source_site or not source_category:
+            return
+        from sqlalchemy import text  # noqa: F811
+        from ulid import ULID  # noqa: F811
+
+        try:
+            await self.product_repo.session.execute(
+                text(
+                    """
+                    INSERT INTO samba_category_mapping
+                        (id, tenant_id, source_site, source_category,
+                         target_mappings, created_at, updated_at)
+                    VALUES
+                        (:id, :tid, :ss, :sc, '{}'::json, NOW(), NOW())
+                    ON CONFLICT (source_site, source_category) DO NOTHING
+                    """
+                ),
+                {
+                    "id": f"cm_{ULID()}",
+                    "tid": tenant_id,
+                    "ss": source_site,
+                    "sc": source_category,
+                },
+            )
+        except Exception as e:
+            logger.warning(
+                f"[카테고리매핑] UPSERT 실패 (무시) — {source_site}/{source_category}: {e}"
+            )
+
     async def create_collected_product(
         self, data: Dict[str, Any]
     ) -> Optional[SambaCollectedProduct]:
@@ -206,6 +247,10 @@ class SambaCollectorService:
 
             if await _is_blacklisted(self.product_repo.session, _src, _spid):
                 return None
+        # 카테고리 매핑 테이블에 (source_site, category) 행 미리 보장
+        await self._ensure_category_mapping_row(
+            _src, data.get("category", ""), data.get("tenant_id")
+        )
         try:
             return await self.product_repo.create_async(**data)
         except IntegrityError:
@@ -442,6 +487,16 @@ class SambaCollectorService:
                     except IntegrityError:
                         # 업데이트조차 실패 (희귀 케이스) — 이 항목 스킵, 진행 계속
                         continue
+        # 배치 내 distinct (source_site, category) 카테고리 매핑 행 보장
+        _seen_cat: set[tuple] = set()
+        for d in items:
+            _ss = d.get("source_site")
+            _sc = d.get("category")
+            _tid = d.get("tenant_id")
+            _key = (_tid, _ss, _sc)
+            if _ss and _sc and _key not in _seen_cat:
+                _seen_cat.add(_key)
+                await self._ensure_category_mapping_row(_ss, _sc, _tid)
         await self.product_repo.session.commit()
         return created
 
