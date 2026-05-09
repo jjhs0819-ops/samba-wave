@@ -5494,6 +5494,25 @@ def _parse_smartstore_order(
     }
 
 
+def _coupang_paid_to_utc(val: str | None) -> datetime | None:
+    """쿠팡 paidAt(KST naive ISO) → UTC tz-aware datetime.
+
+    쿠팡 ordersheet 응답의 paidAt/orderedAt은 timezone 정보 없는 KST 문자열이라
+    그대로 사용하면 SambaOrder.paid_at(DateTime(timezone=True))과 비교 시
+    'can't compare offset-naive and offset-aware datetimes' 에러 발생.
+    naive 면 KST 부여, aware 면 그대로 UTC astimezone.
+    """
+    from datetime import timezone
+    from zoneinfo import ZoneInfo
+
+    dt = _parse_iso_datetime(val)
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ZoneInfo("Asia/Seoul"))
+    return dt.astimezone(timezone.utc)
+
+
 def _parse_coupang_order(
     order: dict,
     account_id: str,
@@ -5641,7 +5660,7 @@ def _parse_coupang_order(
         "shipping_status": market_order_status,
         "shipping_company": order.get("deliveryCompanyName", "") or "",
         "tracking_number": order.get("invoiceNumber", "") or "",
-        "paid_at": _parse_iso_datetime(order.get("paidAt") or order.get("orderedAt")),
+        "paid_at": _coupang_paid_to_utc(order.get("paidAt") or order.get("orderedAt")),
         "source": "coupang",
     }
 
