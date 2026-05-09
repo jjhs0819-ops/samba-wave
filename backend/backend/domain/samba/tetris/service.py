@@ -694,10 +694,12 @@ class SambaTetrisService:
         if not assignments:
             return 0
 
-        # 현재 배치: (source_site, brand_name) → 유효한 account_id
-        valid_map: dict[tuple[str, str], str] = {
-            (a.source_site, a.brand_name): a.market_account_id for a in assignments
-        }
+        # 현재 배치: (source_site, brand_name) → 유효한 account_id 집합
+        # 동일 브랜드에 여러 계정 배치 가능 → set으로 모두 수집
+        valid_map: dict[tuple[str, str], set[str]] = {}
+        for a in assignments:
+            key = (a.source_site, a.brand_name)
+            valid_map.setdefault(key, set()).add(a.market_account_id)
 
         rows = await self._session.execute(
             select(SambaJob).where(
@@ -719,9 +721,9 @@ class SambaTetrisService:
             if key not in valid_map:
                 continue  # 테트리스 배치 없는 레거시 브랜드 — 건드리지 않음
 
-            valid_account = valid_map[key]
-            if valid_account in target_ids:
-                continue  # 올바른 계정 잡 — 유지
+            valid_accounts = valid_map[key]
+            if any(acc in target_ids for acc in valid_accounts):
+                continue  # 유효한 계정 잡 — 유지
 
             # 배치와 다른 계정 잡 → 취소
             if job.status == JobStatus.PENDING:
@@ -730,14 +732,14 @@ class SambaTetrisService:
                 cancelled += 1
                 logger.info(
                     f"[테트리스 sync] stale pending 잡 취소 — {job.id[:8]} "
-                    f"({site}/{brand} targets={target_ids}, valid={valid_account})"
+                    f"({site}/{brand} targets={target_ids}, valid={valid_accounts})"
                 )
             else:  # RUNNING
                 request_cancel_transmit(job.id)
                 cancelled += 1
                 logger.info(
                     f"[테트리스 sync] stale running 잡 취소 신호 — {job.id[:8]} "
-                    f"({site}/{brand} targets={target_ids}, valid={valid_account})"
+                    f"({site}/{brand} targets={target_ids}, valid={valid_accounts})"
                 )
         return cancelled
 

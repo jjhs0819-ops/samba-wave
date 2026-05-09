@@ -3,7 +3,7 @@ import { MARKET_KEYS } from './constants'
 export const marketColWidth = (mk: string) =>
   mk === 'coupang' || mk === 'ssg' || mk === 'ssg_std' ? '360px' : '300px'
 
-export const GRID_COLS = `80px 329px ${MARKET_KEYS.map(mk => marketColWidth(mk)).join(' ')} 40px`
+export const GRID_COLS = `80px 362px ${MARKET_KEYS.map(mk => marketColWidth(mk)).join(' ')} 40px`
 
 // 가로 스크롤 시 사이트/소싱카테고리 컬럼 고정
 export const stickyColA = { position: 'sticky' as const, left: 0, zIndex: 1 }
