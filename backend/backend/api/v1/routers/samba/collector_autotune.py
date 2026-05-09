@@ -949,6 +949,10 @@ async def _site_autotune_loop(site: str):
                                             }
                                             _del_label = f"{_del_acc.market_name}({_del_acc.seller_id or '-'})"
                                             try:
+                                                await session.commit()
+                                            except Exception:
+                                                pass
+                                            try:
                                                 dr = await delete_from_market(
                                                     session,
                                                     _del_acc.market_type,
