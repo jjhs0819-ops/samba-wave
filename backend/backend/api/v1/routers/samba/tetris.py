@@ -15,6 +15,7 @@ from backend.dtos.samba.tetris import (
     TetrisAssignRequest,
     TetrisAssignResponse,
     TetrisBoardResponse,
+    TetrisExcludeRequest,
     TetrisMoveRequest,
     TetrisReorderRequest,
     TetrisSyncIntervalRequest,
@@ -209,3 +210,25 @@ async def remove_by_brand(
     )
     await session.commit()
     return result
+
+
+@router.post("/exclude", status_code=200)
+async def set_excluded(
+    body: TetrisExcludeRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+) -> dict:
+    """브랜드 블럭 배제 토글 — 레거시 블럭은 assignment 신규 생성 후 excluded=True."""
+    svc = _get_service(session)
+    assignment = await svc.set_excluded(
+        tenant_id=tenant_id,
+        source_site=body.source_site,
+        brand_name=body.brand_name,
+        market_account_id=body.market_account_id,
+        excluded=body.excluded,
+    )
+    await session.commit()
+    return {
+        "id": assignment.id,
+        "excluded": assignment.excluded,
+    }

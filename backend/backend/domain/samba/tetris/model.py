@@ -48,6 +48,8 @@ class SambaTetrisAssignment(SQLModel, table=True):
     )
     # 배치 순서 (같은 계정 내 정렬 기준)
     position_order: int = Field(default=0)
+    # 전송잡 등록 배제 플래그 — True 면 sync_all 에서 transmit 잡을 만들지 않음
+    excluded: bool = Field(default=False, nullable=False)
 
     # Timestamps
     created_at: datetime = Field(

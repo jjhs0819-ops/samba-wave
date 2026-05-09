@@ -472,6 +472,7 @@ class SambaTetrisService:
                         "ai_tagged_count": ai_cnt,
                         "position_order": a.position_order,
                         "is_legacy": False,
+                        "excluded": bool(a.excluded),
                     }
                 )
 
@@ -510,6 +511,7 @@ class SambaTetrisService:
                         "ai_tagged_count": ai_cnt,
                         "position_order": 9999,
                         "is_legacy": True,
+                        "excluded": False,
                     }
                 )
             # 계정 총 수집 수 (배치된 브랜드 기준)
@@ -897,6 +899,77 @@ class SambaTetrisService:
         }
 
     # ──────────────────────────────────────────────
+    # 배제 토글 (legacy 포함)
+    # ──────────────────────────────────────────────
+
+    async def set_excluded(
+        self,
+        tenant_id: Optional[str],
+        source_site: str,
+        brand_name: str,
+        market_account_id: str,
+        excluded: bool,
+    ) -> SambaTetrisAssignment:
+        """(소싱처, 브랜드, 계정) 조합의 배제 상태 설정.
+
+        - 기존 assignment 존재 시: excluded 컬럼만 갱신
+        - 없고 excluded=True 면: assignment 신규 생성 (레거시 블럭 배제 케이스)
+        - 없고 excluded=False 면: 아무 일도 하지 않음 (no-op)
+        excluded=True 로 전환되는 경우 해당 (브랜드, 계정) 의 pending/running 전송잡 취소.
+        """
+        existing = await self._repo.find_existing(
+            tenant_id, source_site, brand_name, market_account_id
+        )
+
+        if existing is None:
+            if not excluded:
+                raise HTTPException(
+                    status_code=404,
+                    detail="배치를 찾을 수 없습니다",
+                )
+            # 레거시 블럭 → excluded=True 로 신규 생성 (전송잡 등록 차단 목적)
+            assignment = await self._repo.create_async(
+                tenant_id=tenant_id,
+                source_site=source_site,
+                brand_name=brand_name,
+                market_account_id=market_account_id,
+                policy_id=None,
+                position_order=0,
+                excluded=True,
+            )
+        else:
+            if existing.tenant_id != tenant_id:
+                raise HTTPException(status_code=403, detail="권한이 없습니다")
+            updated = await self._repo.update_async(
+                existing.id,
+                excluded=excluded,
+                updated_at=datetime.now(tz=timezone.utc),
+            )
+            if not updated:
+                raise HTTPException(status_code=404, detail="배치 업데이트 실패")
+            assignment = updated
+
+        # excluded=True 로 전환되는 경우 진행 중인 전송잡 정리
+        if excluded:
+            pending_cancelled = await self._cancel_pending_transmit_jobs(
+                source_site, brand_name, market_account_id
+            )
+            await self._cancel_running_transmit_jobs(
+                source_site, brand_name, market_account_id
+            )
+            logger.info(
+                f"[테트리스] set_excluded(True) — {source_site}/{brand_name} "
+                f"← {market_account_id} (pending취소={pending_cancelled})"
+            )
+        else:
+            logger.info(
+                f"[테트리스] set_excluded(False) — {source_site}/{brand_name} "
+                f"← {market_account_id}"
+            )
+
+        return assignment
+
+    # ──────────────────────────────────────────────
     # 배치 이동
     # ──────────────────────────────────────────────
 
@@ -1045,6 +1118,11 @@ class SambaTetrisService:
         # 브랜드×계정 조합별 별도 잡 — 계정이 같아도 브랜드마다 독립 잡으로 스테이징
         # (워커가 동일 계정 잡은 순차, 다른 계정 잡은 병렬로 자동 처리)
         for a in assignments:
+            # 배제 플래그가 켜진 배치는 transmit 잡 생성 스킵 + 레거시 루프에서도 처리되지 않도록
+            # processed_keys 에 미리 등록
+            if a.excluded:
+                processed_keys.add((a.source_site, a.brand_name, a.market_account_id))
+                continue
             acct_key = f'["{a.market_account_id}"]'
             if (a.source_site, a.brand_name, acct_key) in pending_transmit_keys:
                 logger.debug(
@@ -1078,8 +1156,10 @@ class SambaTetrisService:
 
         # 테트리스 배치가 있는 (source_site, brand) 조합 — legacy 루프 개입 금지
         # 배치된 브랜드는 고경 등 지정 계정에서만 처리해야 하므로 다른 계정으로 번지면 안 됨
+        # excluded 배치는 제외 — 배제는 해당 (브랜드, 계정) 조합만 막아야 하고
+        # 같은 브랜드의 다른 레거시 계정 자동등록은 계속 동작해야 함
         tetris_brand_keys: set[tuple[str, str]] = {
-            (a.source_site, a.brand_name) for a in assignments
+            (a.source_site, a.brand_name) for a in assignments if not a.excluded
         }
 
         # 레거시 블록 처리: registered_accounts에 이미 계정이 있지만 배치가 없는 브랜드

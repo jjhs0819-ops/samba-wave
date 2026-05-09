@@ -24,6 +24,7 @@ interface Props {
   onDeleteBrandScope: (sourceSite: string, brandName: string) => Promise<void>
   onRemoveLegacyFromAccount: (sourceSite: string, brandName: string, accountId: string) => Promise<void>
   onPolicyChange: (assignmentId: string, policyId: string | null, accountId: string) => Promise<void>
+  onToggleExcluded: (block: TetrisBrandBlock, accountId: string) => Promise<void>
 }
 
 function AccountSlot({
@@ -68,6 +69,7 @@ export default function MarketColumn({
   onDeleteBrandScope,
   onRemoveLegacyFromAccount,
   onPolicyChange,
+  onToggleExcluded,
 }: Props) {
   const [draggedAccountId, setDraggedAccountId] = useState<string | null>(null)
   const [dropIndex, setDropIndex] = useState<number | null>(null)
@@ -150,6 +152,7 @@ export default function MarketColumn({
                   onDeleteBrandScope={onDeleteBrandScope}
                   onRemoveLegacyFromAccount={onRemoveLegacyFromAccount}
                   onPolicyChange={onPolicyChange}
+                  onToggleExcluded={onToggleExcluded}
                   isDragging={dragState !== null}
                   isAccountDragging={isAccountDragging}
                   onAccountDragStart={accountId => setDraggedAccountId(accountId)}

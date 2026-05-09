@@ -19,6 +19,7 @@ class TetrisBrandBlock(BaseModel):
     ai_tagged_count: int = 0
     position_order: int
     is_legacy: bool
+    excluded: bool = False
 
 
 class TetrisAccountBlock(BaseModel):
@@ -114,3 +115,12 @@ class TetrisSyncResponse(BaseModel):
     assignments: int
     jobs: int
     triggered: int
+
+
+class TetrisExcludeRequest(BaseModel):
+    """배제 토글 요청 — 레거시 블럭도 처리 가능 (assignment 자동 생성)."""
+
+    source_site: str
+    brand_name: str
+    market_account_id: str
+    excluded: bool

@@ -24,6 +24,7 @@ interface Props {
   onDeleteBrandScope: (sourceSite: string, brandName: string) => Promise<void>
   onRemoveLegacyFromAccount: (sourceSite: string, brandName: string, accountId: string) => Promise<void>
   onPolicyChange: (assignmentId: string, policyId: string | null, accountId: string) => Promise<void>
+  onToggleExcluded: (block: TetrisBrandBlock, accountId: string) => Promise<void>
   isDragging: boolean
   isAccountDragging: boolean
   onAccountDragStart: (accountId: string) => void
@@ -73,6 +74,7 @@ export default function AccountBlock({
   onDeleteBrandScope,
   onRemoveLegacyFromAccount,
   onPolicyChange,
+  onToggleExcluded,
   isDragging,
   isAccountDragging,
   onAccountDragStart,
@@ -228,6 +230,7 @@ export default function AccountBlock({
                     onRemoveLegacy={() => onRemoveLegacyFromAccount(item.block.source_site, item.block.brand_name, account.account_id)}
                     policies={policies}
                     onPolicyChange={onPolicyChange}
+                    onToggleExcluded={onToggleExcluded}
                   />
                   {isSameAccountDrag && !isAccountDragging && !item.block.is_legacy && item.block.id && (
                     <SlotZone

@@ -114,6 +114,7 @@ export default function TetrisBoard() {
     handleBrandPolicyChangeAll,
     handleDeleteBrandScope,
     handleRemoveLegacyFromAccount,
+    handleToggleExcluded,
     refresh,
   } = useTetris()
 
@@ -498,6 +499,7 @@ export default function TetrisBoard() {
               onDeleteBrandScope={handleDeleteBrandScope}
               onRemoveLegacyFromAccount={handleRemoveLegacyFromAccount}
               onPolicyChange={handlePolicyChange}
+              onToggleExcluded={handleToggleExcluded}
             />
           ))}
           {sortedMarkets.length === 0 && (

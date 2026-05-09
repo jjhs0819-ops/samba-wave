@@ -19,6 +19,7 @@ interface Props {
   onRemoveLegacy?: () => Promise<void>
   policies: Policy[]
   onPolicyChange: (assignmentId: string, policyId: string | null, accountId: string) => Promise<void>
+  onToggleExcluded: (block: TetrisBrandBlock, accountId: string) => Promise<void>
 }
 
 export default function BrandBlock({
@@ -31,11 +32,18 @@ export default function BrandBlock({
   onRemoveLegacy,
   policies,
   onPolicyChange,
+  onToggleExcluded,
 }: Props) {
   const [showPolicies, setShowPolicies] = useState(false)
-  const color = block.policy_color || '#6B7280'
+  const isExcluded = !!block.excluded
+  const baseColor = block.policy_color || '#6B7280'
+  const color = isExcluded ? '#555' : baseColor
   const isLegacy = block.is_legacy
-  const brandColor = block.ai_tagged_count > 0 ? '#ddd' : '#EF4444'
+  const brandColor = isExcluded
+    ? '#666'
+    : block.ai_tagged_count > 0
+    ? '#ddd'
+    : '#EF4444'
 
   const fillRatio = block.collected_count > 0
     ? Math.min(1, block.registered_count / block.collected_count)
@@ -43,26 +51,34 @@ export default function BrandBlock({
 
   return (
     <div
-      draggable
+      draggable={!isExcluded}
       onDragStart={e => { e.stopPropagation(); onDragStart(block, accountId) }}
-      onClick={() => { if (!isLegacy && block.id) setShowPolicies(v => !v) }}
+      onClick={() => { onToggleExcluded(block, accountId) }}
+      title={isExcluded ? '배제됨 — 클릭하여 해제' : '클릭하여 전송잡 등록에서 배제'}
       style={{
         height: blockHeight,
         minHeight: blockHeight,
-        background: isLegacy ? 'rgba(50,50,50,0.7)' : 'rgba(28,28,28,0.9)',
+        background: isExcluded
+          ? 'rgba(40,40,40,0.55)'
+          : isLegacy
+          ? 'rgba(50,50,50,0.7)'
+          : 'rgba(28,28,28,0.9)',
         border: `1px solid ${color}50`,
         borderLeft: `3px solid ${color}`,
         borderRadius: 4,
         marginBottom: 2,
-        cursor: 'grab',
+        cursor: isExcluded ? 'pointer' : 'grab',
         position: 'relative',
         overflow: 'hidden',
         userSelect: 'none',
         boxSizing: 'border-box',
         flexShrink: 0,
+        opacity: isExcluded ? 0.55 : 1,
+        filter: isExcluded ? 'grayscale(0.9)' : 'none',
+        transition: 'opacity 0.15s, filter 0.15s, background 0.15s',
       }}
     >
-      {fillRatio > 0 && (
+      {fillRatio > 0 && !isExcluded && (
         <div
           style={{
             position: 'absolute',
@@ -74,6 +90,44 @@ export default function BrandBlock({
             pointerEvents: 'none',
           }}
         />
+      )}
+
+      {/* 정책 팝오버 트리거 — 좌측 색상바 영역 클릭 시 (배제 토글과 충돌 방지) */}
+      {!isLegacy && block.id && (
+        <div
+          onClick={e => { e.stopPropagation(); setShowPolicies(v => !v) }}
+          title="정책 변경"
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: 8,
+            height: '100%',
+            cursor: 'pointer',
+            zIndex: 3,
+          }}
+        />
+      )}
+
+      {isExcluded && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 2,
+            left: 10,
+            fontSize: 8,
+            color: '#999',
+            background: 'rgba(0,0,0,0.5)',
+            padding: '0 4px',
+            borderRadius: 2,
+            fontWeight: 700,
+            letterSpacing: 0.3,
+            pointerEvents: 'none',
+            zIndex: 2,
+          }}
+        >
+          배제
+        </div>
       )}
 
       <div

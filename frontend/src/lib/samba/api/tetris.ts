@@ -16,6 +16,7 @@ export interface TetrisBrandBlock {
   ai_tagged_count: number
   position_order: number
   is_legacy: boolean
+  excluded?: boolean
 }
 
 export interface TetrisAccountBlock {
@@ -141,4 +142,16 @@ export const tetrisApi = {
 
   listAssignments: () =>
     request<TetrisAssignmentEntry[]>(`${BASE}/assignments`),
+
+  setExcluded: (sourceSite: string, brandName: string, marketAccountId: string, excluded: boolean) =>
+    request<{ id: string; excluded: boolean }>(`${BASE}/exclude`, {
+      method: 'POST',
+      body: JSON.stringify({
+        source_site: sourceSite,
+        brand_name: brandName,
+        market_account_id: marketAccountId,
+        excluded,
+      }),
+      headers: { 'Content-Type': 'application/json' },
+    }),
 }
