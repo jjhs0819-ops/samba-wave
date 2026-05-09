@@ -8,10 +8,72 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from backend.db.orm import get_write_sessionmaker
+from backend.domain.samba.sourcing_job.model import SambaSourcingJob
 from backend.shutdown_state import is_shutting_down
 from backend.utils.logger import logger
+
+_UTC = timezone.utc
+_JOB_TTL_SEC: dict[str, int] = {"search": 600, "detail": 180}
+
+
+async def _db_insert_job(
+    job: dict[str, Any], job_type: str, *, priority: bool = False
+) -> None:
+    try:
+        sessionmaker = get_write_sessionmaker()
+        async with sessionmaker() as session:
+            now = datetime.now(_UTC)
+            record = SambaSourcingJob(
+                request_id=job["requestId"],
+                site=job["site"],
+                job_type=job_type,
+                status="pending",
+                owner_device_id=job.get("ownerDeviceId") or None,
+                payload=job,
+                # priority 잡은 created_at을 과거로 밀어 ORDER BY created_at 우선순위 확보
+                created_at=now - timedelta(seconds=3600) if priority else now,
+                expires_at=now + timedelta(seconds=_JOB_TTL_SEC.get(job_type, 180)),
+            )
+            session.add(record)
+            await session.commit()
+    except Exception as exc:
+        logger.warning(f"[소싱큐-DB] INSERT 실패 (무시): {exc}")
+
+
+async def _db_update_dispatched(request_id: str) -> None:
+    try:
+        sessionmaker = get_write_sessionmaker()
+        async with sessionmaker() as session:
+            record = await session.get(SambaSourcingJob, request_id)
+            if record:
+                record.status = "dispatched"
+                record.dispatched_at = datetime.now(_UTC)
+                session.add(record)
+                await session.commit()
+    except Exception as exc:
+        logger.warning(f"[소싱큐-DB] dispatched UPDATE 실패 (무시): {exc}")
+
+
+async def _db_update_completed(request_id: str, data: dict[str, Any]) -> None:
+    try:
+        sessionmaker = get_write_sessionmaker()
+        async with sessionmaker() as session:
+            record = await session.get(SambaSourcingJob, request_id)
+            if record:
+                success = bool(data.get("success"))
+                record.status = "completed" if success else "failed"
+                record.result = data
+                record.error = data.get("error") or None
+                record.completed_at = datetime.now(_UTC)
+                session.add(record)
+                await session.commit()
+    except Exception as exc:
+        logger.warning(f"[소싱큐-DB] completed UPDATE 실패 (무시): {exc}")
+
 
 # 오토튠 등 백엔드 자동화 경로에서 add_detail_job을 호출할 때
 # 기본 소유자(작업을 처리해야 할 브라우저의 deviceId)를 설정하는 전역 저장소.
@@ -111,10 +173,13 @@ SITE_DETAIL_URLS: dict[str, str] = {
 
 
 class SourcingQueue:
-    """통합 소싱 수집 큐 (싱글턴, 클래스 변수)."""
+    """통합 소싱 수집 큐 (싱글턴, 클래스 변수).
 
-    # 수집 큐: [{requestId, site, type, url, keyword?, productId?}]
-    queue: list[dict[str, Any]] = []
+    단계 3(2026-05-09~): DB가 단일 진실의 원천. queue 리스트 제거.
+    잡 발행 → DB INSERT (create_task fire-and-forget)
+    잡 수신 → DB SELECT FOR UPDATE SKIP LOCKED
+    """
+
     # 결과 대기: {requestId: asyncio.Future}
     resolvers: dict[str, asyncio.Future[Any]] = {}
 
@@ -165,8 +230,8 @@ class SourcingQueue:
         }
         if max_count is not None:
             job["maxCount"] = max_count
-        cls.queue.append(job)
         cls.resolvers[request_id] = future
+        asyncio.create_task(_db_insert_job(job, "search"))
         _owner_tag = f" owner={owner_device_id[:8]}" if owner_device_id else ""
         logger.info(
             f"[소싱큐] 검색 추가: {site} '{keyword}' (id={request_id}){_owner_tag}"
@@ -219,11 +284,8 @@ class SourcingQueue:
             job["sitmNo"] = sitm_no
         if extra:
             job.update(extra)
-        if priority:
-            cls.queue.insert(0, job)
-        else:
-            cls.queue.append(job)
         cls.resolvers[request_id] = future
+        asyncio.create_task(_db_insert_job(job, "detail", priority=priority))
         _owner_tag = f" owner={owner_device_id[:8]}" if owner_device_id else ""
         _prio_tag = " [우선]" if priority else ""
         logger.info(
@@ -232,52 +294,89 @@ class SourcingQueue:
         return request_id, future
 
     @classmethod
-    def get_next_job(
+    async def get_next_job(
         cls,
         device_id: str | None = None,
         allowed_sites: list[str] | None = None,
     ) -> dict[str, Any]:
-        """큐에서 다음 작업 가져오기 (확장앱 폴링용).
+        """DB에서 다음 작업 가져오기 (확장앱 폴링용).
 
-        device_id: 매칭 시 해당 deviceId가 소유자인 작업만 반환.
-                   미지정(legacy) 작업은 누구나 집어갈 수 있다.
-        allowed_sites: 화면 소싱처 체크박스 = "이 PC가 처리할 사이트" 필터.
-                   - None  = 헤더 미부착(미설정) → 모든 사이트 처리 (단일 PC 디폴트)
-                   - []    = 명시적 0개(체크 모두 해제) → 작업 안 받음 (분담 외 PC)
-                   - [...] = 명시된 사이트 작업만 받음 (PC별 분담)
+        SELECT FOR UPDATE SKIP LOCKED — 멀티 PC 동시 폴링 안전.
 
-        분담 시나리오:
-          PC A 화면: ABC,무신사 체크 → A는 그 사이트 작업만 처리
-          PC B 화면: 롯데ON,SSG 체크 → B는 그 사이트 작업만 처리
-          PC C 화면: 모두 해제(빈 배열) → C는 작업 안 받음
+        device_id: 해당 deviceId 소유 잡 또는 소유자 미지정 잡만 반환.
+        allowed_sites:
+          - None  = 전체 처리 (단일 PC 디폴트)
+          - []    = 아무것도 처리 안 함
+          - [...] = 해당 사이트만
         """
         if is_shutting_down():
             return {"hasJob": False, "shuttingDown": True}
-        if not cls.queue:
-            return {"hasJob": False}
 
         device_id = (device_id or "").strip()
-        # allowed_sites is None: 미설정(전체 처리)
-        # allowed_sites == []  : 명시적 0개(아무것도 처리 안 함) → 항상 매칭 실패
-        # allowed_sites == [..]: 그 사이트만
-        if allowed_sites is None:
-            allowed_set: set[str] | None = None  # 필터 미적용
-        else:
-            allowed_set = {s.strip() for s in allowed_sites if s and s.strip()}
-        for idx, job in enumerate(cls.queue):
-            site = (job.get("site") or "").strip()
-            # 사이트 필터 — None이면 통과, set이면 매칭 검사 (빈 set이면 무조건 fail)
-            if allowed_set is not None and site not in allowed_set:
-                continue
-            owner = (job.get("ownerDeviceId") or "").strip()
-            if not owner:
-                # 소유자 미지정 작업 — 사이트 필터 통과한 경우만 가져감
-                cls.queue.pop(idx)
-                return {"hasJob": True, **job}
-            if device_id and owner == device_id:
-                cls.queue.pop(idx)
-                return {"hasJob": True, **job}
-        return {"hasJob": False}
+
+        # 명시적 빈 배열 → 이 PC는 작업 안 받음
+        if allowed_sites is not None and len(allowed_sites) == 0:
+            return {"hasJob": False}
+
+        from sqlalchemy import text
+
+        try:
+            conditions = [
+                "status = 'pending'",
+                "expires_at > now()",
+            ]
+            params: dict[str, Any] = {}
+
+            # owner 필터
+            if device_id:
+                conditions.append(
+                    "(owner_device_id IS NULL OR owner_device_id = '' "
+                    "OR owner_device_id = :device_id)"
+                )
+                params["device_id"] = device_id
+            else:
+                conditions.append("(owner_device_id IS NULL OR owner_device_id = '')")
+
+            # site 필터
+            if allowed_sites is not None:
+                site_list = [s.strip() for s in allowed_sites if s.strip()]
+                placeholders = ", ".join(f":site_{i}" for i in range(len(site_list)))
+                conditions.append(f"site IN ({placeholders})")
+                for i, s in enumerate(site_list):
+                    params[f"site_{i}"] = s
+
+            where = " AND ".join(conditions)
+            sql = text(
+                f"SELECT request_id, payload FROM samba_sourcing_job "
+                f"WHERE {where} "
+                f"ORDER BY created_at ASC LIMIT 1 "
+                f"FOR UPDATE SKIP LOCKED"
+            )
+
+            sessionmaker = get_write_sessionmaker()
+            async with sessionmaker() as session:
+                row = (await session.execute(sql, params)).fetchone()
+                if not row:
+                    return {"hasJob": False}
+
+                request_id, payload = row
+                await session.execute(
+                    text(
+                        "UPDATE samba_sourcing_job "
+                        "SET status = 'dispatched', dispatched_at = now() "
+                        "WHERE request_id = :rid"
+                    ),
+                    {"rid": request_id},
+                )
+                await session.commit()
+
+            job = dict(payload or {})
+            job.setdefault("requestId", request_id)
+            return {"hasJob": True, **job}
+
+        except Exception as exc:
+            logger.warning(f"[소싱큐] DB dequeue 실패: {exc}")
+            return {"hasJob": False}
 
     @classmethod
     def resolve_job(cls, request_id: str, data: dict[str, Any]) -> bool:
@@ -295,6 +394,7 @@ class SourcingQueue:
                 # 루프가 닫혔으면 직접 set (같은 스레드일 수도 있음)
                 if not future.done():
                     future.set_result(data)
+            asyncio.create_task(_db_update_completed(request_id, data))
             _prods = data.get("products") or []
             _err = data.get("error") or ""
             logger.info(
@@ -306,8 +406,7 @@ class SourcingQueue:
 
     @classmethod
     def cancel_all(cls, reason: str = "server is shutting down") -> None:
-        """Release pending waiters during process shutdown."""
-        cls.queue.clear()
+        """인-메모리 Future 전부 취소. DB pending 잡은 TTL로 자연 소멸."""
         futures = list(cls.resolvers.items())
         cls.resolvers.clear()
         for request_id, future in futures:

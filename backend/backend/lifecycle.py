@@ -227,6 +227,78 @@ async def _recover_running_jobs(logger: logging.Logger) -> None:
                 await asyncio.sleep(2)
 
 
+async def _recover_sourcing_jobs(logger: logging.Logger) -> None:
+    """재시작 시 pending/dispatched 소싱 잡을 메모리 큐에 복원.
+
+    dispatched 상태에서 5분 이상 응답 없는 잡은 expired 처리.
+    최대 1,000건 cap — 그 이상이면 초과분은 무시(TTL로 자연 소멸).
+    """
+    import asyncio as _asyncio
+    from datetime import datetime, timezone
+
+    from sqlalchemy import update as sa_update
+    from sqlmodel import select
+
+    from backend.db.orm import get_write_sessionmaker
+    from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+    from backend.domain.samba.sourcing_job.model import SambaSourcingJob
+
+    _UTC = timezone.utc
+    _STALE_SEC = 5 * 60
+    _MAX_RECOVER = 1000
+
+    try:
+        sessionmaker = get_write_sessionmaker()
+        async with sessionmaker() as session:
+            now = datetime.now(_UTC)
+            stmt = (
+                select(SambaSourcingJob)
+                .where(
+                    SambaSourcingJob.status.in_(["pending", "dispatched"]),
+                    SambaSourcingJob.expires_at > now,
+                )
+                .limit(_MAX_RECOVER)
+            )
+            result = await asyncio.wait_for(session.execute(stmt), timeout=10)
+            rows = result.scalars().all()
+
+            stale_ids: list[str] = []
+            recovered = 0
+            for row in rows:
+                if row.status == "dispatched" and row.dispatched_at:
+                    elapsed = (
+                        now - row.dispatched_at.replace(tzinfo=_UTC)
+                    ).total_seconds()
+                    if elapsed > _STALE_SEC:
+                        stale_ids.append(row.request_id)
+                        continue
+
+                payload = dict(row.payload or {})
+                if not payload.get("requestId"):
+                    payload["requestId"] = row.request_id
+                loop = _asyncio.get_event_loop()
+                future = loop.create_future()
+                SourcingQueue.queue.append(payload)
+                SourcingQueue.resolvers[row.request_id] = future
+                recovered += 1
+
+            if stale_ids:
+                await session.execute(
+                    sa_update(SambaSourcingJob)
+                    .where(SambaSourcingJob.request_id.in_(stale_ids))
+                    .values(status="expired")
+                )
+                await session.commit()
+
+            logger.info(
+                "[startup] sourcing job 복원: recovered=%d, expired=%d",
+                recovered,
+                len(stale_ids),
+            )
+    except Exception as exc:
+        logger.warning("[startup] sourcing job 복원 실패 (무시): %s", exc)
+
+
 async def _start_worker_runtime() -> WorkerRuntime:
     from backend.domain.samba.job.worker import JobWorker
 
@@ -597,6 +669,7 @@ async def lifespan(app: FastAPI):
         )
     else:
         await _recover_running_jobs(startup_logger)
+        await _recover_sourcing_jobs(startup_logger)
         worker_runtime = await _start_worker_runtime()
         await _start_autotune_if_enabled()
         await _start_order_poller()
