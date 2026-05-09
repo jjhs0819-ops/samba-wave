@@ -464,7 +464,7 @@ async def ssg_shipping_policies(
             policies.append(
                 {
                     "shppcstId": p.get("shppcstId", ""),
-                    "feeAmt": p.get("dlvCstAmt", 0),
+                    "feeAmt": p.get("shppcst", 0) or p.get("dlvCstAmt", 0),
                     "prpayCodDivNm": p.get("prpayCodDivNm", ""),
                     "shppcstAplUnitNm": p.get("shppcstAplUnitNm", ""),
                     "divCd": p.get("shppcstPlcyDivCd", 0),
