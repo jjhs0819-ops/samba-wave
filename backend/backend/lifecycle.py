@@ -721,6 +721,14 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_warmup_tetris_board_cache(startup_logger))
     asyncio.create_task(_warmup_filter_tree_counts_cache(startup_logger))
 
+    # DB 풀 모니터 로거 — 30초 주기로 풀 사용률 INFO/WARN 로깅
+    try:
+        from backend.db.pool_monitor import pool_status_logger_loop
+
+        app.state._pool_monitor_task = asyncio.create_task(pool_status_logger_loop())
+    except Exception as e:
+        startup_logger.warning(f"[startup] DB 풀 모니터 로거 시작 실패: {e}")
+
     # DB 프록시 캐시를 워커/오토튠 시작 전에 프라임한다.
     # async 컨텍스트에서는 _get_cached_proxies 가 백그라운드 태스크만 예약하므로,
     # 프라임 없이는 첫 호출 시 빈 목록이 반환되어 프록시 없이 직접 트래픽이 나감.
@@ -778,5 +786,6 @@ async def lifespan(app: FastAPI):
         await _cancel_task(_lottehome_qa_poller_task)
         await _cancel_task(_tetris_sync_task)
         await _shutdown_worker_runtime(worker_runtime)
+        await _cancel_task(getattr(app.state, "_pool_monitor_task", None))
         await _disconnect_cache()
         shutdown_logger.info("[shutdown] graceful shutdown complete")
