@@ -4900,6 +4900,15 @@ async def sync_orders_from_markets(
                         update_fields["source_site"] = new_source_site
                     if order_data.get("source_url") and not existing.source_url:
                         update_fields["source_url"] = order_data["source_url"]
+                    # collected_product_id 백필 — 과거 매칭 캐시 LIMIT 컷오프로 끊긴
+                    # 기존 주문이 다음 sync 때 자동 재연결되도록.
+                    if (
+                        order_data.get("collected_product_id")
+                        and not existing.collected_product_id
+                    ):
+                        update_fields["collected_product_id"] = order_data[
+                            "collected_product_id"
+                        ]
                     if order_data.get("customer_note") and order_data[
                         "customer_note"
                     ] != str(existing.customer_note or ""):
