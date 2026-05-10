@@ -1,7 +1,5 @@
 """소싱 관련 엔드포인트 (sourcing_queue_router 포함)."""
 
-from __future__ import annotations
-
 import asyncio
 from typing import Any
 
@@ -10,6 +8,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from backend.core.rate_limit import RATE_SET_COOKIE, limiter
 from backend.db.orm import get_write_session_dependency
 
 from ._helpers import _set_setting
@@ -59,6 +58,7 @@ class LotteonSetCookieRequest(BaseModel):
 
 
 @sourcing_queue_router.post("/lotteon/set-cookie")
+@limiter.limit(RATE_SET_COOKIE)
 async def lotteon_set_cookie(
     request: Request,
     body: LotteonSetCookieRequest = Body(...),

@@ -1,11 +1,11 @@
 """KREAM 관련 엔드포인트."""
 
-from __future__ import annotations
-
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
+
+from backend.core.rate_limit import RATE_LOGIN, RATE_SET_COOKIE, limiter
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -29,6 +29,7 @@ class KreamLoginRequest(BaseModel):
 
 
 @router.post("/kream/login")
+@limiter.limit(RATE_LOGIN)
 async def kream_login(
     request: Request,
     body: KreamLoginRequest = Body(...),
@@ -83,6 +84,7 @@ class KreamSetCookieRequest(BaseModel):
 
 
 @router.post("/kream/set-cookie")
+@limiter.limit(RATE_SET_COOKIE)
 async def kream_set_cookie(
     request: Request,
     body: KreamSetCookieRequest = Body(...),
