@@ -128,6 +128,12 @@ def create_application() -> FastAPI:
     )
     app.include_router(user_router, prefix="/api/v1", dependencies=samba_auth)
     app.include_router(samba_user_router, prefix="/api/v1/samba")
+    # DB 풀 진단 (운영 모니터링용 — JWT 보호)
+    from backend.api.v1.routers.samba.db_pool import router as samba_db_pool_router
+
+    app.include_router(
+        samba_db_pool_router, prefix="/api/v1/samba", dependencies=samba_auth
+    )
     app.include_router(
         samba_product_router, prefix="/api/v1/samba", dependencies=samba_auth
     )
