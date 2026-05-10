@@ -5933,17 +5933,33 @@ def _parse_playauto_order(
 ) -> dict[str, Any]:
     """플레이오토 EMP 주문 → SambaOrder 데이터 변환."""
 
-    # spec 진단용 — 첫 호출 시 raw 키 + 일부 값 로깅 (MasterCode 필드 확인)
-    if not getattr(_parse_playauto_order, "_logged_keys", False):
+    # spec 진단용 — SiteId(별칭)별 첫 1건씩 raw 로깅. MasterCode/MyCateName 등 키별 값 확인.
+    _logged_sites = getattr(_parse_playauto_order, "_logged_sites", set())
+    _site_raw = str(ro.get("SiteId", "")).strip()
+    if _site_raw and _site_raw not in _logged_sites:
         try:
             import json as _json
 
-            keys = list(ro.keys())
-            sample = {k: str(ro.get(k))[:60] for k in keys}
+            sample = {
+                k: str(ro.get(k, ""))[:80]
+                for k in (
+                    "SiteId",
+                    "SiteName",
+                    "ProdCode",
+                    "MasterCode",
+                    "MyCateName",
+                    "SellerCode",
+                    "Groupkey",
+                    "ProdName",
+                    "OrderCode",
+                    "Number",
+                )
+            }
             logger.info(
-                f"[플레이오토 주문 raw spec] keys={keys} sample={_json.dumps(sample, ensure_ascii=False)[:1500]}"
+                f"[플레이오토 raw site={_site_raw}] {_json.dumps(sample, ensure_ascii=False)}"
             )
-            _parse_playauto_order._logged_keys = True  # type: ignore[attr-defined]
+            _logged_sites.add(_site_raw)
+            _parse_playauto_order._logged_sites = _logged_sites  # type: ignore[attr-defined]
         except Exception:
             pass
 
