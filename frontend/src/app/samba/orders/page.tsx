@@ -58,7 +58,7 @@ export default function OrdersPage() {
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
   const [sourcingAccounts, setSourcingAccounts] = useState<SambaSourcingAccount[]>([])
   const [loading, setLoading] = useState(true)
-  const [period, setPeriod] = useState('5days')
+  const [period, setPeriod] = useState('today')
   const [marketFilter, setMarketFilter] = useState('')
   const [marketStatus, setMarketStatus] = useState('')
   const [siteFilter, setSiteFilter] = useState('')
@@ -138,11 +138,7 @@ export default function OrdersPage() {
   const [searchCategory, setSearchCategory] = useState(initialSearchType)
 
   const [dateLocked, setDateLocked] = useState(false)
-  const [customStart, setCustomStart] = useState(() => {
-    const d = getKstTodayDate()
-    d.setDate(d.getDate() - 4)
-    return formatDateInput(d)
-  })
+  const [customStart, setCustomStart] = useState(() => formatDateInput(getKstTodayDate()))
   const [startLocked, setStartLocked] = useState(false)
   const [customEnd, setCustomEnd] = useState(() => formatDateInput(getKstTodayDate()))
 
