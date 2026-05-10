@@ -617,11 +617,18 @@ class GsShopSourcingClient:
     # ------------------------------------------------------------------
 
     async def _fetch_mobile(self, product_id: str, proxy: str | None = None) -> str:
-        """모바일 상세 페이지 HTML 반환. 실패 시 빈 문자열."""
+        """모바일 상세 페이지 HTML 반환. 실패 시 빈 문자열.
+
+        GS샵은 삭제/품절 상품을 메인(`/index.gs`) 또는 검색결과없음
+        (`/search/noResult.gs`) 페이지로 302 redirect(HTTP 200) 시킨다.
+        follow_redirects=True 로 따라가면 정상 응답으로 인식되어 모든 갱신이
+        in_stock 으로 고정되는 버그가 발생하므로 redirect 직접 검사로 영구
+        삭제 신호를 잡는다.
+        """
         url = f"{self.PRODUCT_URL}?prdid={product_id}"
         _ck: dict[str, Any] = {
             "timeout": self._timeout,
-            "follow_redirects": True,
+            "follow_redirects": False,
         }
         if proxy:
             _ck["proxy"] = proxy
@@ -636,6 +643,30 @@ class GsShopSourcingClient:
             if resp.status_code == 404:
                 logger.warning(f"[GSSHOP] 상품 영구 삭제 감지 (404): {product_id}")
                 raise ProductNotFoundError(product_id)
+            # 3xx redirect — Location이 상품 상세가 아니면 영구 삭제로 간주
+            if 300 <= resp.status_code < 400:
+                location = resp.headers.get("Location", "") or resp.headers.get(
+                    "location", ""
+                )
+                # 상세 페이지 외(메인/검색결과없음/카테고리 등)로 보내면 삭제 신호
+                if "prdid=" not in location and "prd.gs" not in location:
+                    logger.warning(
+                        f"[GSSHOP] 상품 영구 삭제 감지 (redirect→{location[:80]}): {product_id}"
+                    )
+                    raise ProductNotFoundError(product_id)
+                # 상세 → 상세 redirect는 흔치 않지만 발생 시 한 번만 따라가서 응답 확보
+                follow = await client.get(
+                    location
+                    if location.startswith("http")
+                    else f"{self.BASE_MOBILE}{location}",
+                    headers=self._headers(mobile=True),
+                )
+                if follow.status_code == 200:
+                    return follow.text
+                logger.warning(
+                    f"[GSSHOP] redirect 후 HTTP {follow.status_code}: {product_id}"
+                )
+                return ""
             if resp.status_code != 200:
                 logger.warning(
                     f"[GSSHOP] 모바일 상세 HTTP {resp.status_code}: {product_id}"
