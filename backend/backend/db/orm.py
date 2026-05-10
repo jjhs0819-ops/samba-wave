@@ -84,6 +84,17 @@ def _build_db_url(user: str, password: str, host: str, port: int, name: str) -> 
 
 
 def _create_write_async_engine() -> AsyncEngine:
+    eng = _build_write_engine()
+    try:
+        from backend.db.pool_monitor import attach_pool_monitor
+
+        attach_pool_monitor(eng, "write")
+    except Exception:
+        pass
+    return eng
+
+
+def _build_write_engine() -> AsyncEngine:
     return create_async_engine(
         _build_db_url(
             settings.write_db_user,
@@ -109,6 +120,17 @@ def _create_write_async_engine() -> AsyncEngine:
 
 
 def _create_read_async_engine() -> AsyncEngine:
+    eng = _build_read_engine()
+    try:
+        from backend.db.pool_monitor import attach_pool_monitor
+
+        attach_pool_monitor(eng, "read")
+    except Exception:
+        pass
+    return eng
+
+
+def _build_read_engine() -> AsyncEngine:
     return create_async_engine(
         _build_db_url(
             settings.read_db_user,
