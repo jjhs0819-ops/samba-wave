@@ -307,11 +307,19 @@ class ElevenstPlugin(MarketPlugin):
                 result = await client.register_product(xml_data)
                 prd_no = result.get("prd_no") or result.get("data", {}).get("prdNo", "")
                 if not prd_no:
+                    # prdNo 미수신 → ghost 매핑 생성 차단 (registered_accounts에 추가 X)
+                    # 11번가 셀러센터엔 등록됐을 수도 있으나 우리 DB가 prdNo 못 받았으니
+                    # 다음 사이클에서 신규등록 재시도하도록 success=False 처리.
                     logger.warning(
                         f"[11번가] 신규 등록 후 prdNo 미수신 — result keys={list(result.keys()) if isinstance(result, dict) else type(result)}"
                     )
-                else:
-                    logger.info(f"[11번가] 신규 등록 완료 — product_no={prd_no}")
+                    return {
+                        "success": False,
+                        "product_no": "",
+                        "message": "11번가 등록 응답에 prdNo 없음 — ghost 매핑 방지로 실패 처리",
+                        "data": result,
+                    }
+                logger.info(f"[11번가] 신규 등록 완료 — product_no={prd_no}")
                 return {
                     "success": True,
                     "product_no": prd_no,

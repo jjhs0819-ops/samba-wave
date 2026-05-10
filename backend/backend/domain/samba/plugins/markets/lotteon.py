@@ -2914,5 +2914,19 @@ class LotteonPlugin(MarketPlugin):
             await client.delete_product(product_no)
             return {"success": True, "message": "롯데ON 판매종료 완료"}
         except Exception as e:
+            err = str(e)
+            # 이미 종료/삭제된 상품 — 마켓 측 정리는 끝났으므로 우리도 success로 간주해
+            # registered_accounts에서 정리되도록 한다 (테트리스 브랜드 블럭 삭제 차단 방지).
+            # 8888 = 판매종료된 상품, 9999 = 존재하지 않는 상품 등
+            _ghost_signals = ("8888", "판매종료 된 상품", "존재하지 않", "이미 삭제")
+            if any(sig in err for sig in _ghost_signals):
+                logger.warning(
+                    f"[롯데ON] 이미 종료/삭제된 상품 — 정리 완료로 처리: {err}"
+                )
+                return {
+                    "success": True,
+                    "message": f"롯데ON 이미 종료됨(자동정리): {err}",
+                    "ghost_cleanup": True,
+                }
             logger.error(f"[롯데ON] 판매종료 실패: {e}")
             return {"success": False, "message": f"롯데ON 판매종료 실패: {e}"}
