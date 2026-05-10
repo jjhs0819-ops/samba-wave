@@ -218,12 +218,12 @@ export default function OrdersFilterBar(props: Props) {
             <option value="">배송상태</option>
             {MARKET_STATUS_OPTIONS.map(status => <option key={status} value={status}>{status}</option>)}
           </select>
-          <select style={{ ...inputStyle, width: '120px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={registrationFilter} onChange={e => { setRegistrationFilter(e.target.value); if (e.target.value) setInputFilter('') }}>
+          <select style={{ ...inputStyle, width: '120px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={registrationFilter} onChange={e => setRegistrationFilter(e.target.value)}>
             <option value="">등록필터</option>
             <option value="registered">등록상품</option>
             <option value="unregistered">미등록상품</option>
           </select>
-          <select style={{ ...inputStyle, width: '120px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={inputFilter} onChange={e => { setInputFilter(e.target.value); if (e.target.value) setRegistrationFilter('') }}>
+          <select style={{ ...inputStyle, width: '120px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={inputFilter} onChange={e => setInputFilter(e.target.value)}>
             <option value="">입력필터</option>
             <option value="has_order">소싱주문번호 있음</option>
             <option value="no_order">소싱주문번호 없음</option>

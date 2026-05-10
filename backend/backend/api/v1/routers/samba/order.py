@@ -240,6 +240,7 @@ async def _build_order_filters(
     market_status: str = "",
     status_filter: str = "",
     input_filter: str = "",
+    registration_filter: str = "",
     search_text: str = "",
     search_category: str = "customer",
 ) -> list[Any]:
@@ -342,7 +343,21 @@ async def _build_order_filters(
                 SambaOrder.tracking_number == "",
             )
         )
-    elif input_filter == "registered":
+    elif input_filter in {
+        "no_price",
+        "no_stock",
+        "direct",
+        "kkadaegi",
+        "gift",
+        "staff_a",
+        "staff_b",
+    }:
+        action_filter = _build_action_tag_filter(input_filter)
+        if action_filter is not None:
+            filters.append(action_filter)
+
+    # 등록필터 — 입력필터와 독립적으로 동작 (이중 선택 가능)
+    if registration_filter == "registered":
         # collected_product_id가 있거나, "미등록 입력"으로 source_url/product_image를 채운 주문도 등록된 것으로 간주
         filters.append(
             or_(
@@ -357,7 +372,7 @@ async def _build_order_filters(
                 ),
             )
         )
-    elif input_filter == "unregistered":
+    elif registration_filter == "unregistered":
         # collected_product_id가 없고 source_url/product_image도 모두 비어있어야 미등록
         filters.append(
             and_(
@@ -372,18 +387,6 @@ async def _build_order_filters(
                 ),
             )
         )
-    elif input_filter in {
-        "no_price",
-        "no_stock",
-        "direct",
-        "kkadaegi",
-        "gift",
-        "staff_a",
-        "staff_b",
-    }:
-        action_filter = _build_action_tag_filter(input_filter)
-        if action_filter is not None:
-            filters.append(action_filter)
 
     normalized_search = search_text.strip()
     if normalized_search:
@@ -759,6 +762,7 @@ async def list_orders_by_date_range_paged(
     market_status: str = Query(""),
     status_filter: str = Query(""),
     input_filter: str = Query(""),
+    registration_filter: str = Query(""),
     search_text: str = Query(""),
     search_category: str = Query("customer"),
     sort_by: str = Query("date_desc"),
@@ -777,6 +781,7 @@ async def list_orders_by_date_range_paged(
         market_status=market_status,
         status_filter=status_filter,
         input_filter=input_filter,
+        registration_filter=registration_filter,
         search_text=search_text,
         search_category=search_category,
     )
@@ -805,6 +810,7 @@ async def list_orders_by_collected_product_paged(
     market_status: str = Query(""),
     status_filter: str = Query(""),
     input_filter: str = Query(""),
+    registration_filter: str = Query(""),
     search_text: str = Query(""),
     search_category: str = Query("customer"),
     sort_by: str = Query("date_desc"),
@@ -820,6 +826,7 @@ async def list_orders_by_collected_product_paged(
         market_status=market_status,
         status_filter=status_filter,
         input_filter=input_filter,
+        registration_filter=registration_filter,
         search_text=search_text,
         search_category=search_category,
     )

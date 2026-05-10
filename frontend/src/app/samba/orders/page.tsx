@@ -142,8 +142,6 @@ export default function OrdersPage() {
   const [customStart, setCustomStart] = useState(() => formatDateInput(getKstTodayDate()))
   const [startLocked, setStartLocked] = useState(false)
   const [customEnd, setCustomEnd] = useState(() => formatDateInput(getKstTodayDate()))
-  const resolvedInputFilter = registrationFilter || inputFilter
-
   const loadOrders = useCallback(async () => {
     setLoading(true)
     try {
@@ -157,7 +155,8 @@ export default function OrdersPage() {
             account_filter: accountFilter,
             market_status: marketStatus,
             status_filter: statusFilter,
-            input_filter: resolvedInputFilter,
+            input_filter: inputFilter,
+            registration_filter: registrationFilter,
             search_text: appliedSearchText,
             search_category: searchCategory,
             sort_by: sortBy,
@@ -172,7 +171,8 @@ export default function OrdersPage() {
             account_filter: accountFilter,
             market_status: marketStatus,
             status_filter: statusFilter,
-            input_filter: resolvedInputFilter,
+            input_filter: inputFilter,
+            registration_filter: registrationFilter,
             search_text: appliedSearchText,
             search_category: searchCategory,
             sort_by: sortBy,
@@ -201,7 +201,7 @@ export default function OrdersPage() {
       setLogMessages(prev => [...prev, `[${fmtTime()}] 주문 조회 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`])
     }
     setLoading(false)
-  }, [isProductMode, cpId, currentPage, pageSize, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, resolvedInputFilter, appliedSearchText, searchCategory, sortBy, customStart, customEnd, setSentFlags])
+  }, [isProductMode, cpId, currentPage, pageSize, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, registrationFilter, appliedSearchText, searchCategory, sortBy, customStart, customEnd, setSentFlags])
 
   const patchOrder = useCallback((id: string, patch: Partial<SambaOrder>) => {
     setOrders(prev => prev.map(order => (
