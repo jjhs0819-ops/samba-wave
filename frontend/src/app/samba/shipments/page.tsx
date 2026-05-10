@@ -1471,7 +1471,10 @@ export default function ShipmentsPage() {
 
                   const baseAccList = effectiveAccIds.size > 0 ? [...effectiveAccIds] : [...selectedSet]
                   // 테트리스 배치 계정을 target_account_ids에 추가 (워커가 상품별로 올바른 계정 선택)
-                  const tetrisAccIds = bulkHasTetris ? [...new Set(bulkTetrisMap.values())] : []
+                  // 사용자가 UI에서 선택한 마켓 계정(selectedSet)으로 반드시 필터링 — 미필터링 시 선택 안 한 마켓까지 전송되는 버그 발생
+                  const tetrisAccIds = bulkHasTetris
+                    ? [...new Set(bulkTetrisMap.values())].filter(id => selectedSet.has(id))
+                    : []
                   const effectiveAccList = [...new Set([...baseAccList, ...tetrisAccIds])]
                   const accLabels = effectiveAccList.map(aid => {
                     const acc = accountsById.get(aid)
