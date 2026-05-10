@@ -102,7 +102,7 @@ def _create_write_async_engine() -> AsyncEngine:
         connect_args={
             "timeout": 10,  # asyncpg 연결 타임아웃 10초
             "server_settings": {
-                "idle_in_transaction_session_timeout": "60000",  # 1분 초과 idle in transaction 자동 종료
+                "idle_in_transaction_session_timeout": "180000",  # 3분 초과 idle in transaction 자동 종료 (마켓 API 응답 1분 초과 사례 대응)
             },
         },
     )
@@ -127,7 +127,7 @@ def _create_read_async_engine() -> AsyncEngine:
         connect_args={
             "timeout": 10,  # asyncpg 연결 타임아웃 10초
             "server_settings": {
-                "idle_in_transaction_session_timeout": "60000",  # 1분 초과 idle in transaction 자동 종료
+                "idle_in_transaction_session_timeout": "180000",  # 3분 초과 idle in transaction 자동 종료 (마켓 API 응답 1분 초과 사례 대응)
             },
         },
     )
