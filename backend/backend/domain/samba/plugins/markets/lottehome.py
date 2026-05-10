@@ -17,15 +17,30 @@ from backend.utils.logger import logger
 def _sanitize_image_url(url: str) -> str:
     """롯데홈쇼핑 등록용 이미지 URL 정규화.
 
-    LotteON CDN(`contents.lotteon.com`)은 `.jpg/dims/optimize/resizemc/400x400`처럼
-    표준 확장자 뒤에 변환 path 가 붙어 롯데홈쇼핑 API 가 [1036] 확장자 오류를 던진다.
-    이미 DB 에 저장된 기존 이미지 URL 도 정상 등록되도록 안전망으로 컷한다.
+    [1036] 확장자 오류 / [1038] 용량 초과 동시 해결:
+    - LotteON CDN: `.jpg/dims/optimize/...` 변환 path 컷
+    - 무신사 msscdn: `.webp` → `.jpg`, `_big/_1100.jpg` 등 대형 사이즈 → `_500.jpg`
+    - query string 제거 (롯데 path 확장자 파싱 실패 방지)
     """
     if not url:
         return ""
     s = str(url).strip()
     if s.startswith("//"):
         s = f"https:{s}"
+    # query string 제거 — 롯데 path 확장자 파싱 안전
+    s = s.split("?", 1)[0]
+    # msscdn(무신사) 전용 정규화 — 용량/확장자 동시 해결
+    if "msscdn.net" in s.lower():
+        s = re.sub(r"(_\d+)\.webp$", r"\1.jpg", s, flags=re.IGNORECASE)
+        s = re.sub(r"_big\.jpg$", "_500.jpg", s, flags=re.IGNORECASE)
+
+        def _resize(m: re.Match) -> str:
+            n = int(m.group(1))
+            return "_500.jpg" if n > 500 else m.group(0)
+
+        s = re.sub(r"_(\d+)\.jpg$", _resize, s, flags=re.IGNORECASE)
+        s = s.replace("/thumbnails/images/goods_img/", "/images/goods_img/")
+    # LotteON CDN 등 `.jpg/dims/...` 변환 path 컷
     s = re.sub(
         r"(\.(?:jpg|jpeg|png|gif|webp))/.*$",
         r"\1",

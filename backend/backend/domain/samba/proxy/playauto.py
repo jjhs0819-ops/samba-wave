@@ -35,6 +35,15 @@ class PlayAutoClient:
 
     @staticmethod
     def _get_proxy_url() -> str:
+        # 우선순위: PLAYAUTO_PROXY_URL env → DB transmit → DB collect
+        # GCP/클라우드 VM에서 PlayAuto 호스트 차단 회피용 — env 우선
+        import os as _os
+
+        env_proxy = _os.environ.get("PLAYAUTO_PROXY_URL", "").strip()
+        if env_proxy:
+            if "://" not in env_proxy:
+                env_proxy = f"http://{env_proxy}"
+            return env_proxy
         try:
             from backend.domain.samba.collector.refresher import (
                 get_collect_proxy_url,
@@ -439,14 +448,8 @@ class PlayAutoClient:
             "TaxType": "Y",
         }
 
-        # 원가 (소싱처 원가 = cost 필드)
-        cost = (
-            product.get("cost")
-            or product.get("cost_price")
-            or product.get("source_price")
-        )
-        if cost:
-            data["CostPrice"] = str(int(cost))
+        # 원가는 절대 전송 금지 — 신규/오토튠 모두 0으로 강제하여 기존 등록값도 초기화
+        data["CostPrice"] = "0"
 
         # 시중가: 정책의 streetPriceRate(%) 적용, 0이면 판매가와 동일
         sale_price = int(product.get("sale_price", 0))
