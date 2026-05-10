@@ -1283,15 +1283,21 @@ async function handleSourcingJob(job) {
                 return { ready: false, hasObj: false, hasCard: false, staffOnly: true }
               }
               // URL 기반 폴백 — content_script suppress 가 race 로 늦어 inline script 의
-              // location.href = "member.ssg.com/login..." 리다이렉트가 먼저 실행된 케이스.
+              // location.href = "member.ssg.com/login..." 또는 history.back() 리다이렉트가 먼저 실행된 케이스.
               // 882B 짜리 flagMsg 페이지는 매우 빨리 파싱되어 world:MAIN 주입이 늦을 수 있음.
               const _href = location.href || ''
-              if (_href.indexOf('member.ssg.com/member/login') !== -1 &&
-                  _href.indexOf('itemView.ssg') !== -1) {
+              // login 페이지로 리다이렉트
+              if (_href.indexOf('member.ssg.com/member/login') !== -1) {
                 return { ready: false, hasObj: false, hasCard: false, staffOnly: true }
               }
               // flagMsg 페이지 자체 감지 — 마커 매칭 실패 보호 (확장앱 suppress 가 작동해 페이지 유지된 경우)
               if (document.title === 'flagMsg') {
+                return { ready: false, hasObj: false, hasCard: false, staffOnly: true }
+              }
+              // 상품 URL 컨텍스트 손실 — itemView.ssg 가 URL 에 없으면 어디로 튄 것 (homepage/로그인 등).
+              // 진단: history.back() 으로 department.ssg.com/ 홈으로 이동하는 케이스 다수 확인.
+              // SSG 상품 잡은 항상 itemView.ssg URL 로 시작하므로 그게 사라지면 staffOnly 리다이렉트.
+              if (_href && _href.indexOf('itemView.ssg') === -1) {
                 return { ready: false, hasObj: false, hasCard: false, staffOnly: true }
               }
               const hasObj = !!(window.resultItemObj && window.resultItemObj.itemNm)
@@ -1612,9 +1618,11 @@ async function handleSourcingJob(job) {
           const body = document.body?.innerText || ''
           const src = document.documentElement ? document.documentElement.outerHTML : ''
           const href = location.href || ''
-          // 임직원 redirect 폴백 — flagMsg → member.ssg.com/login 리다이렉트가 먼저 실행된 경우
-          const _redirectStaff = href.indexOf('member.ssg.com/member/login') !== -1 &&
-                                  href.indexOf('itemView.ssg') !== -1
+          // 임직원 redirect 폴백 — flagMsg 페이지에서 alert 후
+          //   1) location.href → member.ssg.com/login 리다이렉트
+          //   2) history.back() → department.ssg.com/ 홈으로 튕김
+          // 어느 쪽이든 URL 에 itemView.ssg 가 사라지면 staffOnly 리다이렉트.
+          const _redirectStaff = href && href.indexOf('itemView.ssg') === -1
           const _flagMsgTitle = document.title === 'flagMsg'
           return {
             captcha: body.includes('연속적인 접근') || body.includes('로봇이 아닙니다'),
