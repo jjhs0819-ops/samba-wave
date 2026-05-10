@@ -67,6 +67,14 @@ export function useOrderSync({ accounts, period, setLogMessages, showNotificatio
             const job = await jobApi.get(jobId)
             const status = job.status
             if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+              // 잡 종료 직전 백엔드가 추가한 결과 로그(계정별 success/error/skip + "전체마켓 주문수집 완료") 누락 방지
+              try {
+                const finalLogs = await jobApi.jobLogs(jobId, logSince)
+                if (finalLogs.logs.length > 0) {
+                  setLogMessages(prev => [...prev, ...finalLogs.logs])
+                  logSince += finalLogs.logs.length
+                }
+              } catch { /* 최종 로그 폴링 실패는 무시 */ }
               setLogMessages(prev => [...prev, `[${ts()}] ${status === 'completed' ? '주문수집 완료' : status === 'failed' ? '주문수집 실패' : '주문수집 취소'}`])
               done = true
             }

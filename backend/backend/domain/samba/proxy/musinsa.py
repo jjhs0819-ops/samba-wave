@@ -294,13 +294,33 @@ class MusinsaClient:
             coupon_price_raw = (
                 gp.get("couponPrice", 0) or 0
             )  # price_uncertain 판단용으로만 사용
-            benefit_coupon_discount, _coupon_api_failed = await self._fetch_coupons(
+            (
+                benefit_coupon_discount,
+                _coupon_api_failed,
+                _coupons_total,
+                _sg_y_total,
+            ) = await self._fetch_coupons(
                 client,
                 goods_no,
                 d,
                 s_price,
                 0,  # 초기값 0 고정 — goodsPrice.couponPrice 미사용
             )
+            # 인증 의심: 쿠키 보유 + couponPrice 있는데 쿠폰 응답이 0건이면
+            # 비로그인 응답 가능성 (회원전용 SG/SB 쿠폰 누락 → cost 부정확)
+            _auth_suspect = (
+                bool(self.cookie)
+                and _coupons_total == 0
+                and coupon_price_raw > 0
+                and coupon_price_raw < s_price
+            )
+            if _auth_suspect:
+                logger.warning(
+                    f"[무신사 인증 의심] {goods_no}: 쿠키 보유했으나 쿠폰 0건 "
+                    f"(couponPrice={coupon_price_raw}, salePrice={s_price}) — "
+                    f"DB musinsa_cookies 만료/복호화 실패 가능성. "
+                    f"price_uncertain=True 마킹하여 잘못된 cost 갱신 차단."
+                )
             benefit_base = s_price - benefit_coupon_discount
 
             # ── 등급 할인 & 선할인 ──
@@ -547,9 +567,11 @@ class MusinsaClient:
                 "sameDayDelivery": is_same_day,
                 "collectedAt": now_iso,
                 "updatedAt": now_iso,
-                # 쿠폰 API 실패 + goodsPrice.couponPrice도 0이면 가격 불확실
-                # (쿠폰 API가 유일한 쿠폰 정보원인 경우)
-                "price_uncertain": _coupon_api_failed and coupon_price_raw == 0,
+                # 가격 불확실 케이스:
+                #   1) 쿠폰 API 실패 + goodsPrice.couponPrice도 0
+                #   2) 인증 의심 (쿠키 있는데 쿠폰 0건이고 couponPrice>0 — 비로그인 응답)
+                "price_uncertain": (_coupon_api_failed and coupon_price_raw == 0)
+                or _auth_suspect,
                 # 적립금 사용 제한 여부 (True=불가, False=가능)
                 "isPointRestricted": bool(d.get("isRestictedUsePoint")),
             }
@@ -1270,8 +1292,15 @@ class MusinsaClient:
         d: dict[str, Any],
         s_price: int,
         best_coupon_discount: int,
-    ) -> tuple[int, bool]:
-        """쿠폰 API 호출. Returns (할인액, API실패여부)."""
+    ) -> tuple[int, bool, int, int]:
+        """쿠폰 API 호출.
+
+        Returns (할인액, API실패여부, 응답_쿠폰갯수, bestSalePriceYn=Y_갯수).
+        호출자는 cookie 보유 + couponPrice>0인데 응답 쿠폰 0건이면 비로그인 응답
+        의심 신호로 사용 가능.
+        """
+        coupons_total = 0
+        sg_y_total = 0
         try:
             specialty = d.get("specialtyCodes") or []
             params_dict: dict[str, Any] = {
@@ -1293,6 +1322,15 @@ class MusinsaClient:
                     "list"
                 ) or coupon_json.get("data", [])
                 if isinstance(coupons, list):
+                    coupons_total = len(coupons)
+                    sg_y_total = sum(
+                        1 for c in coupons if c.get("bestSalePriceYn") == "Y"
+                    )
+                    logger.info(
+                        f"[쿠폰 응답] {goods_no}: total={coupons_total}, "
+                        f"bestSalePriceYn=Y={sg_y_total}, "
+                        f"hasCookie={bool(self.cookie)}"
+                    )
                     for c in coupons:
                         logger.info(
                             f"[쿠폰 상세] {goods_no}: salePrice={c.get('salePrice')}, "
@@ -1342,9 +1380,9 @@ class MusinsaClient:
                             best_coupon_discount = actual_discount
         except Exception as exc:
             logger.warning(f"[쿠폰] {goods_no} API 호출 실패: {exc}")
-            return best_coupon_discount, True
+            return best_coupon_discount, True, coupons_total, sg_y_total
 
-        return best_coupon_discount, False
+        return best_coupon_discount, False, coupons_total, sg_y_total
 
     @staticmethod
     def _extract_detail_images(desc_html: str) -> list[str]:

@@ -134,9 +134,12 @@ class SambaCollectedProduct(SQLModel, table=True):
     __tablename__ = "samba_collected_product"
     __table_args__ = (
         Index("ix_scp_status_source_site", "status", "source_site"),
+        # NULL-safe 유니크 인덱스 (2026-05-10 중복 수집 재발방지)
+        # PostgreSQL은 NULL을 distinct로 취급 → tenant_id IS NULL 끼리는 유니크
+        # 제약이 작동하지 않음. COALESCE로 NULL을 빈 문자열로 정규화.
         Index(
-            "uq_scp_tenant_source_product",
-            "tenant_id",
+            "uq_scp_tenant_source_product_v2",
+            text("COALESCE(tenant_id, '')"),
             "source_site",
             "site_product_id",
             unique=True,

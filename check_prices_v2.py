@@ -50,7 +50,7 @@ SAMPLES = {
 URL_TPL = {
     "GSShop": "https://m.gsshop.com/prd/prd.gs?prdid={}",
     "MUSINSA": "https://www.musinsa.com/products/{}",
-    "ABCmart": "https://abcmart.a-rt.com/product/products.a-rt?prdtNo={}",
+    "ABCmart": "https://abcmart.a-rt.com/product/new?prdtNo={}",
     "LOTTEON": "https://www.lotteon.com/p/product/{}",
 }
 
@@ -87,28 +87,18 @@ EXTRACTORS = {
   } catch (e) { return JSON.stringify({err: String(e)}); }
 })()
 """,
-    # 무신사: 페이지의 최대혜택가 영역 직접 추출 (로그인 후 표시)
     "MUSINSA": r"""
 (async () => {
-  await new Promise(r=>setTimeout(r,6000));
-  // 무신사 본 상품 가격 영역 (상단 product detail)
-  const sels = ['span.text-red.text-title_18px_semi','span[data-mds-component="Typography"][class*="text-red"]','div.text-title_18px_semi.text-red'];
-  let priceText = '';
-  for (const s of sels) { const el = document.querySelector(s); if (el) { priceText = el.innerText.trim(); break; } }
-  // 최대혜택가 라벨 옆 가격
-  const labels = Array.from(document.querySelectorAll('span,div,p'));
-  let benefit = '';
-  for (const el of labels) {
-    if (el.innerText && el.innerText.includes('최대혜택가')) {
-      const p = el.parentElement;
-      const m = (p?.innerText||'').match(/(\d{1,3}(?:,\d{3})+)\s*원/);
-      if (m) { benefit = m[1]; break; }
-    }
-  }
-  // 실판매가 (선할인 제외 즉시판매가)
-  const finalPrice = (document.querySelector('[class*="price-text"]')?.innerText||'').match(/(\d{1,3}(?:,\d{3})+)/)?.[1] || '';
-  const title = document.querySelector('h1, h2, h3')?.innerText || document.title;
-  return JSON.stringify({title:title.slice(0,80), priceText, benefit, finalPrice});
+  await new Promise(r=>setTimeout(r,6500));
+  const text = document.body.innerText;
+  const grab = (lab) => (text.match(new RegExp(lab + '[^\\n]{0,40}?(\\d{1,3}(?:,\\d{3})+)\\s*원')) || [])[1] || '';
+  const benefit = grab('최대혜택가');
+  const sale = grab('판매가');
+  const member = grab('회원전용가');
+  const normal = grab('정상가') || grab('정가');
+  const firstPrice = (text.slice(0,1500).match(/(\d{1,3}(?:,\d{3})+)\s*원/) || [])[1] || '';
+  const title = (document.querySelector('h2, h1')?.innerText || document.title).slice(0,80);
+  return JSON.stringify({title, benefit, sale, member, normal, firstPrice});
 })()
 """,
     # ABCmart: in-tab fetch (헤더 X-Requested-With 필수)

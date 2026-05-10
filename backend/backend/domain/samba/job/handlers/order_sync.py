@@ -149,13 +149,44 @@ async def run(
             )
             # acc_session 은 컨텍스트 매니저가 자체 rollback — 워커 세션은 노출 안 됐으므로 별도 롤백 불필요
 
-        # 진행률 갱신 — 매 계정 처리 후 (워커 세션, 계정 세션과 분리)
-        await repo.update_progress(job.id, idx + 1, total)
+        # 진행률 갱신 — 매 계정 처리 후 fresh 세션 + 5초 타임아웃
+        # 워커 세션이 풀 압박/idle in transaction 으로 hang 시
+        # "주문수집 중..." 무한 표시되는 사고 방지
+        try:
+            async with get_write_session() as prog_session:
+                prog_repo = SambaJobRepository(prog_session)
+                await asyncio.wait_for(
+                    prog_repo.update_progress(job.id, idx + 1, total),
+                    timeout=5,
+                )
+                await prog_session.commit()
+        except (asyncio.TimeoutError, Exception) as pe:
+            logger.warning(f"[order_sync] {job.id} 진행률 갱신 실패 (계속 진행): {pe}")
 
     _add_job_log(job.id, f"전체마켓 주문수집 완료 — 총 {total_synced}건 신규 저장")
 
-    # 잡 완료 — worker 가 finally 에서 commit 함
-    await repo.complete_job(
-        job.id,
-        result={"total_synced": total_synced, "results": all_results},
-    )
+    # 잡 완료 — 워커 세션이 idle in transaction/풀 락으로 hang 되면 status가
+    # 영원히 'running' 으로 남아 프론트가 "주문수집 중..." 무한 표시되는 사고가 있어
+    # 독립된 fresh 세션에서 즉시 commit (워커 세션과 분리)
+    from backend.domain.samba.job.repository import SambaJobRepository as _Repo
+
+    try:
+        async with get_write_session() as fin_session:
+            fin_repo = _Repo(fin_session)
+            await asyncio.wait_for(
+                fin_repo.complete_job(
+                    job.id,
+                    result={"total_synced": total_synced, "results": all_results},
+                ),
+                timeout=10,
+            )
+            await fin_session.commit()
+    except Exception as fe:
+        logger.error(
+            f"[order_sync] {job.id} 최종 commit 실패 — 워커 세션 fallback: {fe}"
+        )
+        # fallback: 워커 세션 — finally 에서 commit 시도
+        await repo.complete_job(
+            job.id,
+            result={"total_synced": total_synced, "results": all_results},
+        )
