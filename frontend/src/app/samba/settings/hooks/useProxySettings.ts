@@ -17,6 +17,7 @@ export interface ProxySettingsState {
   proxyFields: { username: string; password: string; ip: string; port: string }
   proxyTesting: number | null
   proxySaving: boolean
+  mainIp: string
 }
 
 export interface ProxySettingsActions {
@@ -42,12 +43,17 @@ export function useProxySettings(): ProxySettingsState & ProxySettingsActions {
   const [proxyFields, setProxyFields] = useState({ username: '', password: '', ip: '', port: '' })
   const [proxyTesting, setProxyTesting] = useState<number | null>(null)
   const [proxySaving, setProxySaving] = useState(false)
+  const [mainIp, setMainIp] = useState('')
 
-  // 프록시 목록 로드
+  // 프록시 목록 로드 + 메인 IP(백엔드 outbound) 동시 조회
   const loadProxies = useCallback(async () => {
     try {
       const data = await proxyConfigApi.list()
       if (Array.isArray(data)) setProxies(data)
+    } catch { /* ignore */ }
+    try {
+      const ip = await proxyConfigApi.myIp()
+      if (ip?.ipv4) setMainIp(ip.ipv4)
     } catch { /* ignore */ }
   }, [])
 
@@ -162,6 +168,7 @@ export function useProxySettings(): ProxySettingsState & ProxySettingsActions {
     proxyFields,
     proxyTesting,
     proxySaving,
+    mainIp,
     loadProxies,
     saveProxies,
     testProxy,
