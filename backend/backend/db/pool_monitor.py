@@ -37,34 +37,57 @@ _attached_engines: set[int] = set()
 _monitored_engines: list[tuple[str, AsyncEngine]] = []
 
 
+def _is_backend_frame(fn: str) -> bool:
+    fn = (fn or "").replace("\\", "/")
+    if "/site-packages/" in fn or "/.venv/" in fn:
+        return False
+    return "/backend/" in fn or fn.startswith("backend/")
+
+
+def _format_frame(filename: str, lineno: int, name: str) -> str:
+    fn = (filename or "").replace("\\", "/")
+    idx = fn.rfind("/backend/")
+    short = fn[idx + 1 :] if idx >= 0 else fn.rsplit("/", 1)[-1]
+    return f"{short}:{lineno}({name})"
+
+
 def _short_stack(skip: int = 2, limit: int = 4) -> str:
-    """현재 호출 스택을 요약 — sqlalchemy/asyncio 내부 프레임 스킵 후 backend 코드 우선.
+    """현재 코루틴/스레드의 backend 호출 위치를 요약.
 
-    SQLAlchemy pool checkout 이벤트 안에서 호출되므로 단순 tail 추출 시 sqlalchemy
-    내부만 잡힘. backend/ 경로 프레임을 우선 추출하고, 없을 때만 호출 직전 프레임 노출.
+    SQLAlchemy pool checkout 이벤트는 SQLAlchemy 내부에서 호출되어 traceback.extract_stack()로는
+    backend 프레임이 안 잡힌다. asyncio.current_task().get_stack()으로 코루틴 스택에서
+    backend/ 프레임을 우선 수집한다. 코루틴 task가 없으면 동기 스택에서 fallback.
     """
-    frames = traceback.extract_stack()[:-skip]
-    backend_frames: list[traceback.FrameSummary] = []
-    for f in frames:
-        fn = (f.filename or "").replace("\\", "/")
-        # 외부 라이브러리 스킵
-        if "/site-packages/" in fn or "/.venv/" in fn:
-            continue
-        # 너무 일반적인 framework 진입점 스킵
-        if fn.endswith("/asyncio/events.py") or fn.endswith("/asyncio/base_events.py"):
-            continue
-        if "/backend/" in fn or "\\backend\\" in fn or fn.startswith("backend/"):
-            backend_frames.append(f)
-    picked = backend_frames[-limit:] if backend_frames else frames[-limit:]
+    backend_frames: list[tuple[str, int, str]] = []
 
-    def _fmt(f: traceback.FrameSummary) -> str:
-        fn = (f.filename or "").replace("\\", "/")
-        # backend/ 이후 경로만 표기
-        idx = fn.rfind("/backend/")
-        short = fn[idx + 1 :] if idx >= 0 else fn.split("/")[-1]
-        return f"{short}:{f.lineno}({f.name})"
+    # 1) async task의 코루틴 스택 — 가장 정확한 호출자
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:
+        task = None
+    if task is not None:
+        try:
+            for frame in task.get_stack(limit=30):
+                fn = frame.f_code.co_filename
+                if _is_backend_frame(fn):
+                    backend_frames.append((fn, frame.f_lineno, frame.f_code.co_name))
+        except Exception:
+            pass
 
-    return " | ".join(_fmt(f) for f in picked)
+    # 2) 동기 스택에서 추가 추출 (backend 프레임 부족 시 보조)
+    if not backend_frames:
+        try:
+            for f in traceback.extract_stack()[:-skip]:
+                if _is_backend_frame(f.filename or ""):
+                    backend_frames.append((f.filename, f.lineno, f.name))
+        except Exception:
+            pass
+
+    if not backend_frames:
+        return "<no backend frame>"
+
+    picked = backend_frames[-limit:]
+    return " | ".join(_format_frame(fn, ln, nm) for fn, ln, nm in picked)
 
 
 def attach_pool_monitor(async_engine: AsyncEngine, name: str) -> None:
