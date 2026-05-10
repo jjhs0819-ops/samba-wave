@@ -374,6 +374,8 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
         } else {
           result = await proxyApi.lottehomeAuth({ userId, password, agncNo, env: safeData.env || 'prod' })
         }
+      } else if (marketKey === 'playauto') {
+        result = await proxyApi.playautoAuthTest()
       } else {
         result = await proxyApi.marketAuthTest(marketKey)
       }

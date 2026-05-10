@@ -628,6 +628,22 @@ def _validate_startup_settings() -> None:
             "Mock authentication is ENABLED. This should only be used for development/testing."
         )
 
+    # PlayAuto proxy 미설정 경고 — GCP/클라우드 환경에서 직접 연결 불가
+    try:
+        import os as _os
+
+        from backend.domain.samba.collector.refresher import get_transmit_proxy_url
+
+        _playauto_env = _os.environ.get("PLAYAUTO_PROXY_URL", "").strip()
+        _transmit_proxy = (get_transmit_proxy_url() or "").strip()
+        if not _playauto_env and not _transmit_proxy:
+            logging.getLogger("backend.startup").warning(
+                "[startup] PlayAuto 전송 프록시 미설정 — GCP/클라우드 환경에서 PlayAuto 호스트 직접 도달 불가. "
+                "settings > 프록시/IP 설정에서 전송(transmit) 용도 국내 ISP 정적 IP 프록시를 등록하세요."
+            )
+    except Exception:
+        pass
+
     secret_bytes = (settings.jwt_secret_key or "").encode("utf-8")
     if len(secret_bytes) < 32:
         raise RuntimeError(

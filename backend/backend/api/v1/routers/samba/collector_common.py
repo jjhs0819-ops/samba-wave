@@ -367,7 +367,13 @@ async def build_has_orders_conditions(session: AsyncSession, model_class: Any) -
 
 def has_registered_accounts(model_class: Any):
     """registered_accounts 배열이 비어있지 않음 — is_unregistered=FALSE 대체 표현식."""
-    return model_class.registered_accounts.op("!=")(cast("[]", _JSONB))
+    from sqlalchemy import and_
+
+    return and_(
+        model_class.registered_accounts.isnot(None),
+        func.jsonb_typeof(model_class.registered_accounts) == "array",
+        model_class.registered_accounts.op("!=")(cast("[]", _JSONB)),
+    )
 
 
 def no_registered_accounts(model_class: Any):

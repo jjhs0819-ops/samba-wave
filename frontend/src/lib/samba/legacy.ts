@@ -1075,6 +1075,9 @@ export const proxyApi = {
     request<MessageLog[]>(`${SAMBA_PREFIX}/proxy/messages/by-order/${encodeURIComponent(orderId)}`),
   fetchSentFlags: (orderIds: string[]) =>
     request<Record<string, { sms: boolean; kakao: boolean }>>(`${SAMBA_PREFIX}/proxy/messages/sent-flags?order_ids=${orderIds.map(encodeURIComponent).join(',')}`),
+  playautoAuthTest: () =>
+    request<{ success: boolean; message: string }>(
+      `${SAMBA_PREFIX}/proxy/playauto/auth-test`, { method: 'POST' }),
   smartstoreAuthTest: () =>
     request<{ success: boolean; message: string; token_preview?: string }>(
       `${SAMBA_PREFIX}/proxy/smartstore/auth-test`, { method: 'POST' }),

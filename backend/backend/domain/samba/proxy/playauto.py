@@ -110,9 +110,15 @@ class PlayAutoClient:
                 logger.warning(f"[플레이오토] 연결 단계 실패 → 1회 재시도: {e}")
                 resp = await _send_once()
         except httpx.TimeoutException as e:
-            raise PlayAutoApiError(f"[플레이오토] 타임아웃: {e}") from e
+            raise PlayAutoApiError(
+                f"[플레이오토] 타임아웃 — GCP/클라우드 환경에서 PlayAuto 호스트 직접 도달 불가 시 "
+                f"settings 전송(transmit) 프록시 또는 PLAYAUTO_PROXY_URL 설정 필요: {e}"
+            ) from e
         except httpx.ConnectError as e:
-            raise PlayAutoApiError(f"[플레이오토] 연결 실패: {e}") from e
+            raise PlayAutoApiError(
+                f"[플레이오토] 연결 실패 — GCP/클라우드 환경에서 PlayAuto 호스트가 차단됩니다. "
+                f"국내 ISP 정적 IP 프록시(전송 용도)를 설정하세요: {e}"
+            ) from e
 
         # 응답 파싱
         try:
