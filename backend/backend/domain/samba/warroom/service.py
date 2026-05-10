@@ -356,20 +356,23 @@ class SambaMonitorService:
     async def get_market_changes(
         self,
         per_market_limit: int = 5,
-        scan_limit: int = 300,
+        limit_per_type: int = 200,
     ) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
         """판매처별 최근 가격변동/품절 이벤트 fan-out.
 
         SambaMonitorEvent의 product_id → SambaCollectedProduct.registered_accounts/
         market_product_nos → SambaMarketAccount(market_type, account_label) 로 펼친다.
         같은 (market_type, event_type) 그룹 안에서 created_at DESC 상위 N건만 유지.
+
+        event_type별로 limit_per_type건씩 가져와 가격변동 폭주가 sold_out/restock을
+        윈도우 밖으로 밀어내는 편향을 방지한다.
         """
         from backend.domain.samba.collector.model import SambaCollectedProduct
         from backend.domain.samba.account.model import SambaMarketAccount
 
         events = await self.repo.list_recent_changes_for_markets(
             event_types=["price_changed", "sold_out", "restock"],
-            limit=scan_limit,
+            limit_per_type=limit_per_type,
         )
         if not events:
             return {}

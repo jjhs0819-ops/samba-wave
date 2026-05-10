@@ -99,7 +99,6 @@ export default function ProductsPage() {
   const [searchQ, setSearchQ] = useState(_initSearchType === "id" ? "" : _initSearch);
   const [siteFilter, setSiteFilter] = useState("");
   const [soldOutFilter, setSoldOutFilter] = useState("");
-  const [registrationFilter, setRegistrationFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [aiFilter, setAiFilter] = useState("");
   const [sortBy, setSortBy] = useState("collect-desc");
@@ -107,7 +106,6 @@ export default function ProductsPage() {
   const [appliedSearchQ, setAppliedSearchQ] = useState(_initSearchType === "id" ? "" : _initSearch);
   const [appliedSiteFilter, setAppliedSiteFilter] = useState("");
   const [appliedSoldOutFilter, setAppliedSoldOutFilter] = useState("");
-  const [appliedRegistrationFilter, setAppliedRegistrationFilter] = useState("");
   const [appliedStatusFilter, setAppliedStatusFilter] = useState("");
   const [appliedAiFilter, setAppliedAiFilter] = useState("");
   const [appliedSortBy, setAppliedSortBy] = useState("collect-desc");
@@ -235,18 +233,6 @@ export default function ProductsPage() {
   const [deletionWords, setDeletionWords] = useState<string[]>([]);
   // 상품명 규칙 목록 (상품명 조합 적용용)
   const [nameRules, setNameRules] = useState<SambaNameRule[]>([]);
-  const resolveStatusParam = useCallback((statusValue: string, registrationValue: string) => {
-    const merged = statusValue || registrationValue
-    if (!merged) return undefined
-    if (
-      merged.startsWith('reg_')
-      || merged.startsWith('unreg_')
-      || merged.startsWith('mtype_reg_')
-      || merged.startsWith('mtype_unreg_')
-    ) return merged
-    const knownStatus = ['has_orders', 'free_ship', 'same_day', 'free_same', 'market_registered', 'market_unregistered', 'sold_out']
-    return knownStatus.includes(merged) ? merged : merged
-  }, [])
 
   // 서버사이드 페이지네이션 상품 로드 (counts도 함께 수신)
   const loadProducts = useCallback(async (page?: number) => {
@@ -256,7 +242,9 @@ export default function ProductsPage() {
     try {
       const skip = (targetPage - 1) * pageSize
       // status 필터에서 특수값 분리
-      const statusParam = resolveStatusParam(appliedStatusFilter, appliedRegistrationFilter)
+      const knownStatus = ['has_orders', 'free_ship', 'same_day', 'free_same', 'market_registered', 'market_unregistered', 'sold_out']
+      const statusParam = (knownStatus.includes(appliedStatusFilter) || appliedStatusFilter.startsWith('reg_') || appliedStatusFilter.startsWith('unreg_'))
+        ? appliedStatusFilter : appliedStatusFilter || undefined
       const aiParam = (appliedAiFilter === 'has_orders') ? appliedAiFilter : appliedAiFilter || undefined
       const res = await collectorApi.scrollProducts({
         skip,
@@ -282,7 +270,7 @@ export default function ProductsPage() {
     } finally {
       setLoading(false)
     }
-  }, [queryReady, currentPage, pageSize, appliedSearchQ, appliedSearchType, _idFilter, appliedSiteFilter, appliedSoldOutFilter, appliedStatusFilter, appliedRegistrationFilter, appliedAiFilter, appliedFilterByGroupId, appliedSortBy, resolveStatusParam])
+  }, [queryReady, currentPage, pageSize, appliedSearchQ, appliedSearchType, _idFilter, appliedSiteFilter, appliedSoldOutFilter, appliedStatusFilter, appliedAiFilter, appliedFilterByGroupId, appliedSortBy])
 
   // 상품만 리로드 (삭제/수정 등 상품 변경 후 사용)
   const reloadProducts = useCallback(async () => {
@@ -294,7 +282,9 @@ export default function ProductsPage() {
   // Phase 2: 메타데이터 8개 백그라운드 → 정책/계정 정보 채움
   const load = useCallback(async () => {
     if (!queryReady) return
-    const statusParam = resolveStatusParam(appliedStatusFilter, appliedRegistrationFilter)
+    const knownStatus2 = ['has_orders', 'free_ship', 'same_day', 'free_same', 'market_registered', 'market_unregistered', 'sold_out']
+    const statusParam = (knownStatus2.includes(appliedStatusFilter) || appliedStatusFilter.startsWith('reg_') || appliedStatusFilter.startsWith('unreg_'))
+      ? appliedStatusFilter : appliedStatusFilter || undefined
     const aiParam = (appliedAiFilter === 'has_orders') ? appliedAiFilter : appliedAiFilter || undefined
 
     // Phase 1: 상품 목록만 먼저 (빠른 초기 렌더링)
@@ -348,7 +338,7 @@ export default function ProductsPage() {
         setCatMappingMap(map)
       }
     }).catch(e => console.error('metadata load error:', e))
-  }, [queryReady, pageSize, appliedSearchQ, appliedSearchType, _idFilter, appliedSiteFilter, appliedSoldOutFilter, appliedStatusFilter, appliedRegistrationFilter, appliedAiFilter, appliedFilterByGroupId, appliedSortBy, resolveStatusParam])
+  }, [queryReady, pageSize, appliedSearchQ, appliedSearchType, _idFilter, appliedSiteFilter, appliedSoldOutFilter, appliedStatusFilter, appliedAiFilter, appliedFilterByGroupId, appliedSortBy])
 
   useEffect(() => { load() }, [load])
 
@@ -362,7 +352,7 @@ export default function ProductsPage() {
       setFilterGroupName("")
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queryReady, siteFilter, soldOutFilter, registrationFilter, statusFilter, aiFilter, sortBy])
+  }, [queryReady, siteFilter, soldOutFilter, statusFilter, aiFilter, sortBy])
 
   // 필터/정렬 변경 시 1페이지로 리셋 + 선택 초기화 (디바운싱 300ms, 초기 로드 제외)
   const filterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -380,7 +370,7 @@ export default function ProductsPage() {
     return () => { if (filterTimerRef.current) clearTimeout(filterTimerRef.current) }
   // searchType은 검색어가 있을 때만 재조회 트리거 (빈 검색어에서 드롭박스 변경 시 불필요한 로딩 방지)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queryReady, searchQ, searchQ.trim() ? searchType : '', siteFilter, soldOutFilter, registrationFilter, statusFilter, aiFilter, sortBy, filterByGroupId])
+  }, [queryReady, searchQ, searchQ.trim() ? searchType : '', siteFilter, soldOutFilter, statusFilter, aiFilter, sortBy, filterByGroupId])
 
   // 페이지 변경 시 서버에서 해당 페이지 로드
   const totalPages = Math.max(1, Math.ceil(serverTotal / pageSize))
@@ -430,7 +420,6 @@ export default function ProductsPage() {
     setAppliedSearchQ(searchQ)
     setAppliedSiteFilter(siteFilter)
     setAppliedSoldOutFilter(soldOutFilter)
-    setAppliedRegistrationFilter(registrationFilter)
     setAppliedStatusFilter(statusFilter)
     setAppliedAiFilter(aiFilter)
     setAppliedSortBy(sortBy)
@@ -834,13 +823,12 @@ export default function ProductsPage() {
     }
     // 검색결과 전체 ID 조회 (1회 자동 재시도, 실패 시 무음 폴백 금지)
     setSelectAll(true);
-    const statusParam = resolveStatusParam(appliedStatusFilter, appliedRegistrationFilter)
     const fetchIds = () =>
       collectorApi.getProductIds({
         search: appliedSearchQ.trim() || undefined,
         search_type: appliedSearchQ.trim() ? appliedSearchType : undefined,
         source_site: appliedSiteFilter || undefined,
-        status: statusParam,
+        status: appliedStatusFilter || undefined,
         sold_out_filter: appliedSoldOutFilter || undefined,
         ai_filter: appliedAiFilter || undefined,
         search_filter_id: appliedFilterByGroupId || undefined,
@@ -1447,15 +1435,11 @@ export default function ProductsPage() {
             <option value="sold_out">품절</option>
             <option value="not_sold_out">비품절</option>
           </select>
-          <select value={registrationFilter} onChange={(e) => { setRegistrationFilter(e.target.value); if (e.target.value) setStatusFilter("") }}
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
             style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: "rgba(22,22,22,0.95)", border: "1px solid #353535", color: "#C5C5C5", borderRadius: "6px" }}>
-            <option value="">등록필터</option>
+            <option value="">마켓현황</option>
             <option value="market_unregistered">미등록상품</option>
             <option value="market_registered">등록상품</option>
-          </select>
-          <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); if (e.target.value) setRegistrationFilter("") }}
-            style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: "rgba(22,22,22,0.95)", border: "1px solid #353535", color: "#C5C5C5", borderRadius: "6px" }}>
-            <option value="">등록계정필터</option>
             {[...new Map(accounts.map(a => [a.market_type, a.market_name] as const)).entries()].map(([type, name]) => (
               <React.Fragment key={type}>
                 <option value={`mtype_reg_${type}`}>{name} 등록</option>
@@ -2140,12 +2124,11 @@ export default function ProductsPage() {
                 // 화면 필터에 매칭되는 모든 product_id 조회 (8,785개) — 백엔드 분석 범위 한정
                 let filteredIds: string[] = []
                 try {
-                  const statusParam = resolveStatusParam(appliedStatusFilter, appliedRegistrationFilter)
                   const idRes = await collectorApi.getProductIds({
                     search: appliedSearchQ.trim() || undefined,
                     search_type: appliedSearchQ.trim() ? appliedSearchType : undefined,
                     source_site: appliedSiteFilter || undefined,
-                    status: statusParam,
+                    status: appliedStatusFilter || undefined,
                     sold_out_filter: appliedSoldOutFilter || undefined,
                     ai_filter: appliedAiFilter || undefined,
                     search_filter_id: appliedFilterByGroupId || undefined,

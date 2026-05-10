@@ -155,17 +155,36 @@ class SambaMonitorEventRepository(BaseRepository[SambaMonitorEvent]):
     async def list_recent_changes_for_markets(
         self,
         event_types: List[str],
-        limit: int = 300,
+        limit_per_type: int = 200,
     ) -> List[SambaMonitorEvent]:
-        """판매처 fan-out 용 — 최근 가격변동/품절 이벤트 조회 (product_id 보유분만)."""
-        stmt = (
-            select(SambaMonitorEvent)
-            .where(
+        """판매처 fan-out 용 — event_type별 각각 최신 N건씩 조회.
+
+        단순 limit 방식은 가격변동이 폭주하는 시간대에 sold_out/restock이
+        윈도우 밖으로 밀려나 마켓 카드에 표시되지 않는 문제가 있어,
+        event_type별로 partition_by 윈도우로 균등 추출한다.
+        """
+        from sqlalchemy import literal_column
+
+        row_num = (
+            func.row_number()
+            .over(
+                partition_by=SambaMonitorEvent.event_type,
+                order_by=SambaMonitorEvent.created_at.desc(),
+            )
+            .label("rn")
+        )
+        subq = (
+            select(SambaMonitorEvent.id, row_num).where(
                 SambaMonitorEvent.event_type.in_(event_types),
                 SambaMonitorEvent.product_id.is_not(None),
             )
+        ).subquery()
+
+        stmt = (
+            select(SambaMonitorEvent)
+            .join(subq, SambaMonitorEvent.id == subq.c.id)
+            .where(literal_column("rn") <= limit_per_type)
             .order_by(SambaMonitorEvent.created_at.desc())
-            .limit(limit)
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())

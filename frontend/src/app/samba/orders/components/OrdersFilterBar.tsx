@@ -182,7 +182,7 @@ export default function OrdersFilterBar(props: Props) {
           <option value="product_id">상품ID</option>
           <option value="order_number">주문번호</option>
         </select>
-        <input style={{ ...inputStyle, width: '160px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadOrders() }} />
+        <input style={{ ...inputStyle, width: '144px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadOrders() }} />
         <button onClick={loadOrders} style={{ background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', padding: '0.22rem 0.75rem', borderRadius: '5px', fontSize: '0.75rem', border: 'none', cursor: 'pointer' }}>검색</button>
         <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto', flexWrap: 'wrap' }}>
           <select style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
@@ -218,14 +218,17 @@ export default function OrdersFilterBar(props: Props) {
             <option value="">배송상태</option>
             {MARKET_STATUS_OPTIONS.map(status => <option key={status} value={status}>{status}</option>)}
           </select>
-          <select style={{ ...inputStyle, width: '120px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={inputFilter} onChange={e => setInputFilter(e.target.value)}>
+          <select style={{ ...inputStyle, width: '120px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={registrationFilter} onChange={e => { setRegistrationFilter(e.target.value); if (e.target.value) setInputFilter('') }}>
+            <option value="">등록필터</option>
+            <option value="registered">등록상품</option>
+            <option value="unregistered">미등록상품</option>
+          </select>
+          <select style={{ ...inputStyle, width: '120px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={inputFilter} onChange={e => { setInputFilter(e.target.value); if (e.target.value) setRegistrationFilter('') }}>
             <option value="">입력필터</option>
             <option value="has_order">소싱주문번호 있음</option>
             <option value="no_order">소싱주문번호 없음</option>
             <option value="has_invoice">송장입력</option>
             <option value="no_invoice">송장미입력</option>
-            <option value="registered">등록상품</option>
-            <option value="unregistered">미등록상품</option>
             <option value="direct">직배</option>
             <option value="kkadaegi">까대기</option>
             <option value="gift">선물</option>
