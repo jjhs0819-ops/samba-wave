@@ -224,11 +224,78 @@ async def r2_upload_image(
         return {"success": False, "message": str(exc)[:200]}
 
 
+# 소싱사이트 이미지 CDN 허용 도메인 — 서버사이드 SSRF 방어
+_IMAGE_FETCH_ALLOWED_HOSTS: frozenset[str] = frozenset(
+    [
+        # 무신사
+        "image.msscdn.net",
+        "cdn.musinsa.com",
+        # 롯데ON
+        "thumbnail6.lotteon.com",
+        "thumbnail.lotteon.com",
+        # GS샵
+        "www.gsshop.com",
+        "image.gsshop.com",
+        # ABCmart / GrandStage
+        "img.a-rt.com",
+        "image.a-rt.com",
+        # SSG
+        "static.ssgcdn.com",
+        "img.ssgcdn.com",
+        # KREAM
+        "kream-product.clutch.io",
+        "cdn.kream.co.kr",
+        # 패션플러스
+        "img.fashionplus.co.kr",
+        "www.fashionplus.co.kr",
+        # Nike
+        "static.nike.com",
+        "n.neuralmagic.com",
+        # Adidas
+        "assets.adidas.com",
+        # 롯데홈쇼핑
+        "image.lotteimall.com",
+        # 기타 공통 CDN
+        "cdn.jsdelivr.net",
+    ]
+)
+
+
+def _is_image_fetch_allowed(url: str) -> bool:
+    """SSRF 방어 — 허용된 소싱사이트 호스트이고 userinfo 없는지 확인."""
+    try:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url)
+        # userinfo(user:pass@host) 차단
+        if parsed.username or parsed.password:
+            return False
+        # https 또는 http만 허용 (file://, ftp:// 등 차단)
+        if parsed.scheme not in ("https", "http"):
+            return False
+        host = (parsed.hostname or "").lower()
+        # 정확한 호스트 또는 서브도메인 매칭
+        if any(host == h or host.endswith(f".{h}") for h in _IMAGE_FETCH_ALLOWED_HOSTS):
+            return True
+        # Cloudflare R2 퍼블릭 버킷: pub-<hash>.r2.dev 형식
+        if host.startswith("pub-") and host.endswith(".r2.dev"):
+            return True
+        return False
+    except Exception:
+        return False
+
+
 @router.get("/image-fetch")
 async def image_fetch_proxy(url: str = Query(...)) -> Response:
-    """외부 이미지 URL을 서버에서 가져와 반환 (브라우저 CORS 우회)."""
+    """외부 이미지 URL을 서버에서 가져와 반환 (브라우저 CORS 우회).
+
+    SSRF 방어: 허용된 소싱사이트 CDN 호스트만 요청 가능.
+    """
     if len(url) > 2000:
         return Response(status_code=400, content=b"URL too long")
+    if not _is_image_fetch_allowed(url):
+        logger.warning(f"[image-fetch] 차단된 URL: {url[:100]}")
+        return Response(status_code=403, content=b"Host not allowed")
     try:
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             resp = await client.get(

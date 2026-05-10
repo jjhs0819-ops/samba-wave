@@ -251,12 +251,32 @@ class FashionPlusClient:
                 if not items:
                     break
 
-                products = [
-                    self._map_item(item) for item in items if not item.get("isSoldout")
-                ]
+                # brand_name 지정 시 응답에서도 정확 일치 필터 — 키워드 검색 결과에
+                # 타브랜드 상품이 혼입되는 사고 차단
+                target_brand = (brand_name or "").strip().lower() if brand_name else ""
+                filtered_items = []
+                for item in items:
+                    if item.get("isSoldout"):
+                        continue
+                    if target_brand:
+                        item_brand = item.get("brand") or {}
+                        item_brand_name = (
+                            (
+                                item_brand.get("name", "")
+                                if isinstance(item_brand, dict)
+                                else str(item_brand)
+                            )
+                            .strip()
+                            .lower()
+                        )
+                        if item_brand_name != target_brand:
+                            continue
+                    filtered_items.append(item)
+                products = [self._map_item(item) for item in filtered_items]
                 all_products.extend(products)
                 logger.info(
                     f"[패션플러스] 검색 '{keyword}' p{current_page} → {len(products)}건 (누적 {len(all_products)}, 전체 {total})"
+                    + (f" [브랜드필터: {brand_name}]" if target_brand else "")
                 )
 
                 if max_count <= 0:

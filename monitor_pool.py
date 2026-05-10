@@ -54,6 +54,18 @@ async def main():
         for r in long_rows:
             print(f"  └ 장기쿼리 PID {r['pid']} {str(r['dur'])[:12]}  {r['q']}")
 
+        # idle in transaction 세션의 마지막 쿼리
+        if iit > 0:
+            iit_rows = await conn.fetch("""
+                SELECT pid, now() - state_change as dur, left(query, 100) as q
+                FROM pg_stat_activity
+                WHERE state = 'idle in transaction'
+                  AND datname = current_database()
+                ORDER BY dur DESC LIMIT 5
+            """)
+            for r in iit_rows:
+                print(f"  └ [iit] PID {r['pid']} {str(r['dur'])[:12]}  {r['q']}")
+
         await conn.close()
     except Exception as e:
         print(f"[{now}] ERROR: {e}")
