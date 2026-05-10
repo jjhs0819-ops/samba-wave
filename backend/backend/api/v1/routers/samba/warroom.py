@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
+from backend.domain.samba.cache import cache
 from backend.domain.samba.collector.refresher import (
     get_refresh_logs,
     get_site_intervals_info,
@@ -42,31 +43,34 @@ async def list_events(
     limit: int = Query(50, ge=1, le=500),
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
-    """이벤트 목록 — 필터 가능."""
-    repo = SambaMonitorEventRepository(session)
+    """이벤트 목록 — 필터 가능. 60초 캐시 + single-flight."""
+    cache_key = f"warroom:events:{event_type or '_'}:{severity or '_'}:{limit}"
 
-    if severity:
-        events = await repo.list_by_severity(severity, limit)
-    elif event_type:
-        events = await repo.list_by_type(event_type, limit)
-    else:
-        events = await repo.list_recent(limit)
+    async def _factory():
+        repo = SambaMonitorEventRepository(session)
+        if severity:
+            events = await repo.list_by_severity(severity, limit)
+        elif event_type:
+            events = await repo.list_by_type(event_type, limit)
+        else:
+            events = await repo.list_recent(limit)
+        return [
+            {
+                "id": e.id,
+                "event_type": e.event_type,
+                "severity": e.severity,
+                "source_site": _normalize_source_site(e.source_site),
+                "market_type": e.market_type,
+                "product_id": e.product_id,
+                "product_name": e.product_name,
+                "summary": e.summary,
+                "detail": e.detail,
+                "created_at": e.created_at.isoformat(),
+            }
+            for e in events
+        ]
 
-    return [
-        {
-            "id": e.id,
-            "event_type": e.event_type,
-            "severity": e.severity,
-            "source_site": _normalize_source_site(e.source_site),
-            "market_type": e.market_type,
-            "product_id": e.product_id,
-            "product_name": e.product_name,
-            "summary": e.summary,
-            "detail": e.detail,
-            "created_at": e.created_at.isoformat(),
-        }
-        for e in events
-    ]
+    return await cache.get_or_compute(cache_key, _factory, ttl=60)
 
 
 @router.get("/events/recent")
@@ -74,55 +78,61 @@ async def list_recent_events(
     limit: int = Query(50, ge=1, le=100),
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
-    """최근 이벤트 — scheduler_tick 최신 3건 보장."""
-    repo = SambaMonitorEventRepository(session)
-    # 일반 최신 이벤트 + scheduler_tick 소싱처별 최신 2건 병합
-    recent, ticks = (
-        await repo.list_recent(limit),
-        await repo.list_latest_per_site("scheduler_tick", per_site_limit=2),
-    )
-    seen = {e.id for e in recent}
-    merged = list(recent) + [t for t in ticks if t.id not in seen]
-    merged.sort(key=lambda e: e.created_at, reverse=True)
-    return [
-        {
-            "id": e.id,
-            "event_type": e.event_type,
-            "severity": e.severity,
-            "source_site": _normalize_source_site(e.source_site),
-            "market_type": e.market_type,
-            "product_id": e.product_id,
-            "product_name": e.product_name,
-            "summary": e.summary,
-            "detail": e.detail,
-            "created_at": e.created_at.isoformat(),
-        }
-        for e in merged
-    ]
+    """최근 이벤트 — scheduler_tick 최신 3건 보장. 60초 캐시 + single-flight."""
+    cache_key = f"warroom:events_recent:{limit}"
+
+    async def _factory():
+        repo = SambaMonitorEventRepository(session)
+        recent, ticks = (
+            await repo.list_recent(limit),
+            await repo.list_latest_per_site("scheduler_tick", per_site_limit=2),
+        )
+        seen = {e.id for e in recent}
+        merged = list(recent) + [t for t in ticks if t.id not in seen]
+        merged.sort(key=lambda e: e.created_at, reverse=True)
+        return [
+            {
+                "id": e.id,
+                "event_type": e.event_type,
+                "severity": e.severity,
+                "source_site": _normalize_source_site(e.source_site),
+                "market_type": e.market_type,
+                "product_id": e.product_id,
+                "product_name": e.product_name,
+                "summary": e.summary,
+                "detail": e.detail,
+                "created_at": e.created_at.isoformat(),
+            }
+            for e in merged
+        ]
+
+    return await cache.get_or_compute(cache_key, _factory, ttl=60)
 
 
 @router.get("/price-changes")
 async def list_price_changes(
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
-    """최근 24시간 가격 변동 이벤트."""
-    repo = SambaMonitorEventRepository(session)
-    now = datetime.now(timezone.utc)
-    since_24h = now - timedelta(hours=24)
-    # DB 레벨에서 24시간 필터링 (ix_sme_event_type_created_at_desc 인덱스 활용)
-    recent = await repo.list_by_type("price_changed", limit=100, since=since_24h)
+    """최근 24시간 가격 변동 이벤트. 60초 캐시 + single-flight."""
 
-    return [
-        {
-            "id": e.id,
-            "product_id": e.product_id,
-            "product_name": e.product_name,
-            "source_site": _normalize_source_site(e.source_site),
-            "detail": e.detail,
-            "created_at": e.created_at.isoformat(),
-        }
-        for e in recent
-    ]
+    async def _factory():
+        repo = SambaMonitorEventRepository(session)
+        now = datetime.now(timezone.utc)
+        since_24h = now - timedelta(hours=24)
+        recent = await repo.list_by_type("price_changed", limit=100, since=since_24h)
+        return [
+            {
+                "id": e.id,
+                "product_id": e.product_id,
+                "product_name": e.product_name,
+                "source_site": _normalize_source_site(e.source_site),
+                "detail": e.detail,
+                "created_at": e.created_at.isoformat(),
+            }
+            for e in recent
+        ]
+
+    return await cache.get_or_compute("warroom:price_changes", _factory, ttl=60)
 
 
 @router.get("/events/site-changes")
@@ -130,31 +140,35 @@ async def list_site_changes(
     limit: int = Query(5, ge=1, le=20),
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
-    """소싱처별 최근 가격변동·재고변동 이벤트 (각 N건)."""
-    repo = SambaMonitorEventRepository(session)
-    events = await repo.list_changes_per_site(
-        event_types=["price_changed", "sold_out", "restock"],
-        per_site_limit=limit,
-    )
+    """소싱처별 최근 가격변동·재고변동 이벤트 (각 N건). 60초 캐시 + single-flight."""
+    cache_key = f"warroom:site_changes:{limit}"
 
-    result: dict[str, dict[str, list]] = {}
-    for e in events:
-        site = e.source_site or "기타"
-        etype = e.event_type
-        if site not in result:
-            result[site] = {}
-        if etype not in result[site]:
-            result[site][etype] = []
-        result[site][etype].append(
-            {
-                "id": e.id,
-                "product_id": e.product_id,
-                "product_name": e.product_name,
-                "detail": e.detail,
-                "created_at": e.created_at.isoformat(),
-            }
+    async def _factory():
+        repo = SambaMonitorEventRepository(session)
+        events = await repo.list_changes_per_site(
+            event_types=["price_changed", "sold_out", "restock"],
+            per_site_limit=limit,
         )
-    return result
+        result: dict[str, dict[str, list]] = {}
+        for e in events:
+            site = e.source_site or "기타"
+            etype = e.event_type
+            if site not in result:
+                result[site] = {}
+            if etype not in result[site]:
+                result[site][etype] = []
+            result[site][etype].append(
+                {
+                    "id": e.id,
+                    "product_id": e.product_id,
+                    "product_name": e.product_name,
+                    "detail": e.detail,
+                    "created_at": e.created_at.isoformat(),
+                }
+            )
+        return result
+
+    return await cache.get_or_compute(cache_key, _factory, ttl=60)
 
 
 @router.get("/events/market-changes")
@@ -162,23 +176,32 @@ async def list_market_changes(
     limit: int = Query(5, ge=1, le=20),
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
-    """판매처(마켓)별 최근 가격변동·품절 이벤트 fan-out (각 N건)."""
-    svc = SambaMonitorService(session)
-    return await svc.get_market_changes(per_market_limit=limit)
+    """판매처(마켓)별 최근 가격변동·품절 이벤트 fan-out (각 N건). 60초 캐시 + single-flight."""
+    cache_key = f"warroom:market_changes:{limit}"
+
+    async def _factory():
+        svc = SambaMonitorService(session)
+        return await svc.get_market_changes(per_market_limit=limit)
+
+    return await cache.get_or_compute(cache_key, _factory, ttl=60)
 
 
 @router.get("/site-health")
 async def get_site_health(
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
-    """소싱처/마켓 헬스 상태."""
-    svc = SambaMonitorService(session)
-    site_health = await svc._get_site_health()
-    market_health = await svc._get_market_health()
-    return {
-        "sources": site_health,
-        "markets": market_health,
-    }
+    """소싱처/마켓 헬스 상태. 60초 캐시 + single-flight."""
+
+    async def _factory():
+        svc = SambaMonitorService(session)
+        site_health = await svc._get_site_health()
+        market_health = await svc._get_market_health()
+        return {
+            "sources": site_health,
+            "markets": market_health,
+        }
+
+    return await cache.get_or_compute("warroom:site_health", _factory, ttl=60)
 
 
 @router.get("/refresh-logs")
