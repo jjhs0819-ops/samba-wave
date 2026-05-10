@@ -32,13 +32,35 @@ async def _get_setting(session: AsyncSession, key: str) -> Any:
     return val
 
 
+# 마켓별 "이미 죽은 상품" 응답 공통 신호.
+# 이 신호가 잡히면 우리 DB에서도 정리 완료(success=True)로 처리해
+# registered_accounts ghost 매핑이 영구화되는 것을 막는다.
+_DELETE_GHOST_SIGNALS = (
+    "존재하지 않",
+    "이미 삭제",
+    "삭제된 상품",
+    "판매종료 된 상품",
+    "판매중지된 상품",
+    "현재 판매 중인 상품이 아닙니다",
+    "유효하지 않은 상품",
+    "상품을 찾을 수 없",
+    "8888",
+    "9999",
+    "HTTP 404",
+)
+
+
+def _is_delete_ghost(err: str) -> bool:
+    return any(sig in err for sig in _DELETE_GHOST_SIGNALS)
+
+
 async def _safe_delete(
     market_name: str,
     market_key: str,
     product: dict[str, Any],
     api_call: Callable[[str], Coroutine],
 ) -> dict[str, Any]:
-    """마켓 삭제 공통 래퍼 — 상품번호 확인 + try/except 처리.
+    """마켓 삭제 공통 래퍼 — 상품번호 확인 + try/except 처리 + ghost 자동정리.
 
     Args:
       market_name: 로그/메시지용 마켓 이름 (예: "스마트스토어")
@@ -56,6 +78,17 @@ async def _safe_delete(
         await api_call(product_no)
         return {"success": True, "message": f"{market_name} 삭제 완료"}
     except Exception as e:
+        err = str(e)
+        if _is_delete_ghost(err):
+            # 마켓 측 정리 완료 → 우리도 success로 처리해 registered_accounts 정리.
+            logger.warning(
+                f"[{market_name}] 이미 종료/삭제된 상품 — 정리 완료로 처리: {err}"
+            )
+            return {
+                "success": True,
+                "message": f"{market_name} 이미 종료됨(자동정리): {err}",
+                "ghost_cleanup": True,
+            }
         logger.error(f"[{market_name}] 삭제 실패: {e}")
         return {"success": False, "message": f"삭제 실패: {e}", "error_detail": str(e)}
 
@@ -616,6 +649,80 @@ async def _delete_cafe24(
     return await plugin.delete(session, product_no, account)
 
 
+async def _delete_gmarket(
+    session: AsyncSession,
+    product: dict[str, Any],
+    account: Any = None,
+) -> dict[str, Any]:
+    """G마켓 상품 판매중지 — 플러그인 delete() 위임."""
+    from backend.domain.samba.plugins.markets.gmarket import GMarketMarketPlugin
+
+    product_no = product.get("market_product_no", {}).get("gmarket", "")
+    if not product_no:
+        return {"success": False, "message": "G마켓 상품번호 없음 (건너뜀)"}
+    plugin = GMarketMarketPlugin()
+    try:
+        result = await plugin.delete(session, product_no, account)
+    except Exception as e:
+        err = str(e)
+        if _is_delete_ghost(err):
+            logger.warning(f"[G마켓] 이미 종료/삭제된 상품 — 정리 완료로 처리: {err}")
+            return {
+                "success": True,
+                "message": f"G마켓 이미 종료됨(자동정리): {err}",
+                "ghost_cleanup": True,
+            }
+        logger.error(f"[G마켓] 판매중지 실패: {e}")
+        return {"success": False, "message": f"G마켓 판매중지 실패: {e}"}
+    if not result.get("success"):
+        msg = result.get("message", "")
+        if _is_delete_ghost(msg):
+            logger.warning(f"[G마켓] 이미 종료/삭제 응답 — 정리 완료로 처리: {msg}")
+            return {
+                "success": True,
+                "message": f"G마켓 이미 종료됨(자동정리): {msg}",
+                "ghost_cleanup": True,
+            }
+    return result
+
+
+async def _delete_auction(
+    session: AsyncSession,
+    product: dict[str, Any],
+    account: Any = None,
+) -> dict[str, Any]:
+    """옥션 상품 판매중지 — 플러그인 delete() 위임."""
+    from backend.domain.samba.plugins.markets.auction import AuctionPlugin
+
+    product_no = product.get("market_product_no", {}).get("auction", "")
+    if not product_no:
+        return {"success": False, "message": "옥션 상품번호 없음 (건너뜀)"}
+    plugin = AuctionPlugin()
+    try:
+        result = await plugin.delete(session, product_no, account)
+    except Exception as e:
+        err = str(e)
+        if _is_delete_ghost(err):
+            logger.warning(f"[옥션] 이미 종료/삭제된 상품 — 정리 완료로 처리: {err}")
+            return {
+                "success": True,
+                "message": f"옥션 이미 종료됨(자동정리): {err}",
+                "ghost_cleanup": True,
+            }
+        logger.error(f"[옥션] 판매중지 실패: {e}")
+        return {"success": False, "message": f"옥션 판매중지 실패: {e}"}
+    if not result.get("success"):
+        msg = result.get("message", "")
+        if _is_delete_ghost(msg):
+            logger.warning(f"[옥션] 이미 종료/삭제 응답 — 정리 완료로 처리: {msg}")
+            return {
+                "success": True,
+                "message": f"옥션 이미 종료됨(자동정리): {msg}",
+                "ghost_cleanup": True,
+            }
+    return result
+
+
 async def _delete_playauto(
     session: AsyncSession,
     product: dict[str, Any],
@@ -683,4 +790,6 @@ MARKET_DELETE_HANDLERS: dict[str, Any] = {
     "gsshop": _delete_gsshop,
     "cafe24": _delete_cafe24,
     "playauto": _delete_playauto,
+    "gmarket": _delete_gmarket,
+    "auction": _delete_auction,
 }
