@@ -38,11 +38,33 @@ _monitored_engines: list[tuple[str, AsyncEngine]] = []
 
 
 def _short_stack(skip: int = 2, limit: int = 4) -> str:
-    """현재 호출 스택을 요약 — 외부/사용자 코드 우선."""
+    """현재 호출 스택을 요약 — sqlalchemy/asyncio 내부 프레임 스킵 후 backend 코드 우선.
+
+    SQLAlchemy pool checkout 이벤트 안에서 호출되므로 단순 tail 추출 시 sqlalchemy
+    내부만 잡힘. backend/ 경로 프레임을 우선 추출하고, 없을 때만 호출 직전 프레임 노출.
+    """
     frames = traceback.extract_stack()[:-skip]
-    # 마지막 limit 프레임만 (가장 가까운 호출자)
-    tail = frames[-limit:]
-    return " | ".join(f"{f.filename.split('backend')[-1]}:{f.lineno}" for f in tail)
+    backend_frames: list[traceback.FrameSummary] = []
+    for f in frames:
+        fn = (f.filename or "").replace("\\", "/")
+        # 외부 라이브러리 스킵
+        if "/site-packages/" in fn or "/.venv/" in fn:
+            continue
+        # 너무 일반적인 framework 진입점 스킵
+        if fn.endswith("/asyncio/events.py") or fn.endswith("/asyncio/base_events.py"):
+            continue
+        if "/backend/" in fn or "\\backend\\" in fn or fn.startswith("backend/"):
+            backend_frames.append(f)
+    picked = backend_frames[-limit:] if backend_frames else frames[-limit:]
+
+    def _fmt(f: traceback.FrameSummary) -> str:
+        fn = (f.filename or "").replace("\\", "/")
+        # backend/ 이후 경로만 표기
+        idx = fn.rfind("/backend/")
+        short = fn[idx + 1 :] if idx >= 0 else fn.split("/")[-1]
+        return f"{short}:{f.lineno}({f.name})"
+
+    return " | ".join(_fmt(f) for f in picked)
 
 
 def attach_pool_monitor(async_engine: AsyncEngine, name: str) -> None:
