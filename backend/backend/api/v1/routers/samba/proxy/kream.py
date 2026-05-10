@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -33,7 +33,7 @@ class KreamLoginRequest(BaseModel):
 @limiter.limit(RATE_LOGIN)
 async def kream_login(
     request: Request,
-    body: KreamLoginRequest,
+    body: KreamLoginRequest = Body(...),
     write_session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:
     """KREAM 로그인."""
@@ -88,7 +88,7 @@ class KreamSetCookieRequest(BaseModel):
 @limiter.limit(RATE_SET_COOKIE)
 async def kream_set_cookie(
     request: Request,
-    body: KreamSetCookieRequest,
+    body: KreamSetCookieRequest = Body(...),
     write_session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:
     """확장앱에서 KREAM 쿠키 수신."""

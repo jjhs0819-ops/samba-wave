@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -63,7 +63,7 @@ class LotteonSetCookieRequest(BaseModel):
 @limiter.limit(RATE_SET_COOKIE)
 async def lotteon_set_cookie(
     request: Request,
-    body: LotteonSetCookieRequest,
+    body: LotteonSetCookieRequest = Body(...),
     write_session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:
     """확장앱에서 롯데ON 쿠키 수신 (인증 불필요 — 확장앱에서 직접 호출)."""

@@ -32,12 +32,30 @@ def encrypt_value(plaintext: str) -> str:
 
 
 def decrypt_value(token: str) -> str:
-    """암호화된 토큰 → 원본 문자열 복호화."""
+    """암호화된 토큰 → 원본 문자열 복호화.
+
+    Fernet 토큰 형태(`gAAAAA`로 시작)인데 복호화에 실패하면 빈 문자열을 반환한다.
+    이전 키로 암호화된 토큰을 평문 폴백으로 그대로 반환하면 무신사/롯데ON 등에
+    암호화 문자열이 그대로 Cookie 헤더로 전송돼 비로그인 응답이 내려오는 사고가
+    반복됨(2026-05-10 진단). 평문 폴백은 마이그레이션 초기에만 필요했으므로
+    이제는 명시적 실패로 전환해 호출부가 재로그인 유도하도록 한다.
+    """
+    if not token:
+        return ""
+    is_fernet_like = token.startswith("gAAAA")
     try:
         return _get_fernet().decrypt(token.encode()).decode()
     except (InvalidToken, Exception) as e:
-        logger.warning("복호화 실패 (평문 폴백): %s", e)
-        # 암호화 전 평문 데이터 호환 — 마이그레이션 기간 동안 평문 반환
+        if is_fernet_like:
+            logger.error(
+                "복호화 실패: Fernet 토큰이지만 현재 키로 풀 수 없음 — "
+                "다른 jwt_secret_key 시점에 저장된 값일 가능성. "
+                "확장앱에서 해당 사이트 재로그인 후 쿠키를 다시 저장하세요. err=%s",
+                e,
+            )
+            return ""
+        # 평문(비-Fernet) 데이터 호환: 과거 평문 저장값은 그대로 반환
+        logger.warning("복호화 실패 (평문 폴백, 비-Fernet 형태): %s", e)
         return token
 
 
