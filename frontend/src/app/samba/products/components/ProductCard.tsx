@@ -1911,14 +1911,18 @@ const ProductCard = React.memo(function ProductCard({
                         </tr>
                       </thead>
                       <tbody>
-                        {p.addon_options.map((ao, idx) => (
-                          <tr key={`${ao.no ?? idx}-${ao.name}`} style={{ borderTop: '1px solid #1E1E1E' }}>
-                            <td style={{ padding: '4px 6px' }}>{ao.name}</td>
-                            <td style={{ padding: '4px 6px', textAlign: 'right' }}>+{(ao.add_price ?? 0).toLocaleString()}원</td>
-                            <td style={{ padding: '4px 6px', textAlign: 'right' }}>{(ao.stock ?? 0).toLocaleString()}</td>
-                            <td style={{ padding: '4px 6px' }}>{ao.is_required ? 'Y' : 'N'}</td>
-                          </tr>
-                        ))}
+                        {p.addon_options.map((ao, idx) => {
+                          const noneChoice = ao.is_none_choice || ao.name.includes('선택안함') || ao.name.includes('선택없음')
+                          const rowColor = noneChoice ? '#666' : undefined
+                          return (
+                            <tr key={`${ao.no ?? idx}-${ao.name}`} style={{ borderTop: '1px solid #1E1E1E', color: rowColor }}>
+                              <td style={{ padding: '4px 6px' }}>{ao.name}</td>
+                              <td style={{ padding: '4px 6px', textAlign: 'right' }}>{noneChoice ? '-' : `+${(ao.add_price ?? 0).toLocaleString()}원`}</td>
+                              <td style={{ padding: '4px 6px', textAlign: 'right' }}>{noneChoice ? '-' : (ao.stock ?? 0).toLocaleString()}</td>
+                              <td style={{ padding: '4px 6px' }}>{ao.is_required ? 'Y' : 'N'}</td>
+                            </tr>
+                          )
+                        })}
                       </tbody>
                     </table>
                   </td>

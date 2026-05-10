@@ -468,6 +468,7 @@ export interface SambaCollectedProduct {
     add_price?: number
     stock?: number
     is_required?: boolean
+    is_none_choice?: boolean
   }>;
   // 메인 옵션 그룹명 (예: ["색상","사이즈"])
   option_group_names?: string[];

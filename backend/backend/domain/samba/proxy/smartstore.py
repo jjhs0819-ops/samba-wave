@@ -426,6 +426,10 @@ def _build_product_add_items(addon_options: list[dict]) -> list[dict]:
         name = (ao.get("name") or "").strip()
         if not name:
             continue
+        # "선택안함"/"선택없음"은 productAddItems에 의미 없음 — 스마트스토어 추가옵션은
+        # 미선택이 기본값이므로 명시 항목 불필요
+        if ao.get("is_none_choice") or "선택안함" in name or "선택없음" in name:
+            continue
         if len(name) > 25:
             name = name[:25]
         add_price = max(int(ao.get("add_price") or 0), 0)

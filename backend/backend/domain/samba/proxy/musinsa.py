@@ -1159,8 +1159,7 @@ class MusinsaClient:
                     if not ev.get("activated") or ev.get("isDeleted"):
                         continue
                     ev_name = (ev.get("name") or "").strip()
-                    if "선택안함" in ev_name or "선택없음" in ev_name:
-                        continue
+                    is_none_choice = "선택안함" in ev_name or "선택없음" in ev_name
                     # 추가금액: optionValue.price 우선, 없으면 이름의 (+숫자) 폴백
                     add_price = int(ev.get("price") or 0)
                     if not add_price:
@@ -1178,6 +1177,7 @@ class MusinsaClient:
                             "add_price": add_price,
                             "stock": ev_stock,
                             "is_required": is_required,
+                            "is_none_choice": is_none_choice,
                         }
                     )
             if extra_groups:
