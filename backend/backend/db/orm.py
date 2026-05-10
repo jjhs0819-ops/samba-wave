@@ -205,38 +205,44 @@ async def get_read_session() -> AsyncGenerator[AsyncSession, None]:
 async def get_write_session_dependency() -> AsyncGenerator[AsyncSession, None]:
     """FastAPI dependency for write sessions with guaranteed cleanup.
 
-    Uses try/finally instead of async with to ensure session.close() is called
-    even when client disconnects or exceptions occur during request processing.
+    BaseException까지 잡아야 함 — asyncio.CancelledError는 Exception이 아닌 BaseException 상속.
+    클라이언트 끊김/ASGI 타임아웃 시 CancelledError가 발생하는데 except Exception이면
+    rollback이 호출되지 않아 idle in transaction 좀비가 풀에 쌓인다(2026-05-10 사고).
     """
     Session = get_write_sessionmaker()
     session = Session()
     try:
         yield session
-    except Exception:
+    except BaseException:
         try:
             await session.rollback()
-        except Exception:
+        except BaseException:
             pass
         raise
     finally:
-        await session.close()
+        try:
+            await session.close()
+        except BaseException:
+            pass
 
 
 async def get_read_session_dependency() -> AsyncGenerator[AsyncSession, None]:
     """FastAPI dependency for read sessions with guaranteed cleanup.
 
-    Uses try/finally instead of async with to ensure session.close() is called
-    even when client disconnects or exceptions occur during request processing.
+    BaseException까지 잡아야 함 — write 세션과 동일 이유 (CancelledError 안 잡힘 → rollback 누락).
     """
     Session = get_read_sessionmaker()
     session = Session()
     try:
         yield session
-    except Exception:
+    except BaseException:
         try:
             await session.rollback()
-        except Exception:
+        except BaseException:
             pass
         raise
     finally:
-        await session.close()
+        try:
+            await session.close()
+        except BaseException:
+            pass
