@@ -59,6 +59,8 @@ interface Props {
   setAccountFilter: Dispatch<SetStateAction<string>>
   marketStatus: string
   setMarketStatus: Dispatch<SetStateAction<string>>
+  registrationFilter: string
+  setRegistrationFilter: Dispatch<SetStateAction<string>>
   inputFilter: string
   setInputFilter: Dispatch<SetStateAction<string>>
   statusFilter: string
@@ -83,6 +85,7 @@ export default function OrdersFilterBar(props: Props) {
     searchCategory, setSearchCategory, searchText, setSearchText, loadOrders,
     marketFilter, setMarketFilter, siteFilter, setSiteFilter,
     accountFilter, setAccountFilter, marketStatus, setMarketStatus,
+    registrationFilter, setRegistrationFilter,
     inputFilter, setInputFilter, statusFilter, setStatusFilter,
     sortBy, setSortBy, pageSize, setPageSize,
     accounts, sourcingAccounts, siteOptions,

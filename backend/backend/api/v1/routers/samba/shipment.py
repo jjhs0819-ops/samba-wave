@@ -459,6 +459,212 @@ async def cleanup_smartstore_orphans(
     }
 
 
+class ElevenstCleanupRequest(BaseModel):
+    # 화면 필터로 좁혀진 product_id 목록 — 비어있으면 해당 계정 전체
+    product_ids: Optional[list[str]] = None
+
+
+@router.post("/elevenst/cleanup-orphans")
+async def cleanup_elevenst_orphans(
+    body: ElevenstCleanupRequest = ElevenstCleanupRequest(),
+    dry_run: bool = Query(True, description="true면 목록만, false면 실제 매핑 정리"),
+    account_id: Optional[str] = Query(
+        None, description="특정 계정만 점검 (미지정 시 모든 11번가 계정)"
+    ),
+    max_check: int = Query(
+        500, ge=1, le=20000, description="계정당 점검할 최대 prdNo 개수"
+    ),
+    session: AsyncSession = Depends(get_write_session_dependency),
+    admin: str = Depends(require_admin),
+):
+    """11번가 유령 매핑 정리.
+
+    11번가는 GET 권한이 모든 계정에 미부여 상태이므로, 가격 변경 없는 minimal PUT으로
+    응답 메시지를 분류해 유령 prdNo를 탐지한다.
+    - "삭제된 상품" / "존재하지 않는 상품" → 유령 → DB 매핑 정리
+    - 정상 200 → 살아있음 → skip
+    - 그 외 에러 → fail (재시도 대상으로 분리)
+    """
+    from sqlalchemy.orm.attributes import flag_modified
+    from sqlmodel import select
+
+    from backend.domain.samba.account.model import SambaMarketAccount
+    from backend.domain.samba.collector.model import SambaCollectedProduct
+    from backend.domain.samba.proxy.elevenst import (
+        ElevenstApiError,
+        ElevenstClient,
+        ElevenstRateLimitError,
+    )
+
+    # 유령 판정 키워드 (plugins.markets.elevenst._GHOST_ERROR_PATTERNS 와 동일)
+    GHOST_PATTERNS = ("삭제된 상품", "존재하지 않는 상품")
+
+    # 1) 11번가 계정 조회
+    q = select(SambaMarketAccount).where(
+        SambaMarketAccount.market_type == "11st",
+        SambaMarketAccount.is_active == True,  # noqa: E712
+    )
+    if account_id:
+        q = q.where(SambaMarketAccount.id == account_id)
+    accounts = (await session.execute(q)).scalars().all()
+    if not accounts:
+        raise HTTPException(status_code=404, detail="활성 11번가 계정 없음")
+
+    per_account: list[dict] = []
+    total_checked = 0
+    total_ghosts = 0
+    total_cleared = 0
+    total_alive = 0
+    total_failed = 0
+
+    for account in accounts:
+        add_f = account.additional_fields or {}
+        api_key = (
+            (add_f.get("apiKey") if isinstance(add_f, dict) else "")
+            or account.api_key
+            or ""
+        )
+        if not api_key:
+            per_account.append(
+                {
+                    "account_id": account.id,
+                    "label": account.account_label,
+                    "error": "API 키 없음",
+                }
+            )
+            continue
+
+        # 2) 이 계정에 등록된 상품 + prdNo 추출
+        prod_q = select(SambaCollectedProduct).where(
+            SambaCollectedProduct.registered_accounts.op("@>")([account.id])
+        )
+        if body.product_ids:
+            prod_q = prod_q.where(SambaCollectedProduct.id.in_(body.product_ids))
+        products = (await session.execute(prod_q)).scalars().all()
+
+        targets: list[dict] = []
+        for p in products:
+            nos = p.market_product_nos or {}
+            v = nos.get(account.id)
+            prd_no = ""
+            if isinstance(v, str):
+                prd_no = v.strip()
+            elif isinstance(v, dict):
+                prd_no = str(v.get("prdNo") or v.get("productNo") or "").strip()
+            if prd_no:
+                targets.append(
+                    {"product_id": p.id, "prd_no": prd_no, "name": (p.name or "")[:60]}
+                )
+            if len(targets) >= max_check:
+                break
+
+        # 3) minimal PUT 으로 상태 점검 (가격 변경 효과 없는 selPrc 0 + 다른 필드 없음)
+        # → 11번가는 prdNo 상태를 먼저 검증 후 XML 검증하므로
+        #   "삭제된 상품" / "존재하지 않는 상품" 응답을 우선적으로 받음
+        # → 살아있는 상품은 selPrc 0 자체가 검증 실패로 다른 에러 메시지 반환 → 유령 아님으로 분류
+        client = ElevenstClient(api_key)
+        ghosts: list[dict] = []
+        alive_count = 0
+        failed: list[dict] = []
+        cleared: list[str] = []
+
+        # selPrc 0 + selMthdCd 만 — 살아있는 상품 가격 변경 0원 검증실패 유도
+        probe_xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            "<Product><selMthdCd>01</selMthdCd><selPrc>0</selPrc></Product>"
+        )
+
+        for t in targets:
+            try:
+                await client.update_product(t["prd_no"], probe_xml)
+                # 200 성공이 나오면 (이론상 없음 — selPrc 0 검증 통과 불가) 살아있음으로 간주
+                alive_count += 1
+            except ElevenstRateLimitError as e:
+                # Rate limit은 즉시 중단, 남은 건 fail 처리하지 않고 다음 사이클에 재시도
+                logger.warning(f"[유령정리][11번가] {account.id} rate limit, 중단: {e}")
+                failed.append({"prd_no": t["prd_no"], "error": "rate_limit"})
+                break
+            except ElevenstApiError as e:
+                msg = str(e)
+                if any(p in msg for p in GHOST_PATTERNS):
+                    ghosts.append(
+                        {
+                            "product_id": t["product_id"],
+                            "prd_no": t["prd_no"],
+                            "name": t["name"],
+                            "reason": msg,
+                        }
+                    )
+                else:
+                    # 살아있으나 selPrc 0 검증실패 등 정상 케이스
+                    alive_count += 1
+            except Exception as e:
+                failed.append({"prd_no": t["prd_no"], "error": str(e)[:120]})
+            await asyncio.sleep(0.4)  # ~2.5 RPS
+
+        # 4) dry_run=false 일 때 실제 정리
+        if not dry_run and ghosts:
+            ghost_pids = [g["product_id"] for g in ghosts]
+            clear_q = select(SambaCollectedProduct).where(
+                SambaCollectedProduct.id.in_(ghost_pids)
+            )
+            clear_rows = (await session.execute(clear_q)).scalars().all()
+            for prod in clear_rows:
+                changed = False
+                nos = dict(prod.market_product_nos or {})
+                for k in (account.id, f"{account.id}_origin"):
+                    if k in nos:
+                        nos.pop(k, None)
+                        changed = True
+                if changed:
+                    prod.market_product_nos = nos
+                    flag_modified(prod, "market_product_nos")
+                regs = list(prod.registered_accounts or [])
+                if account.id in regs:
+                    regs = [a for a in regs if a != account.id]
+                    prod.registered_accounts = regs
+                    flag_modified(prod, "registered_accounts")
+                    changed = True
+                if changed:
+                    session.add(prod)
+                    cleared.append(str(prod.id))
+            if cleared:
+                await session.commit()
+                logger.warning(f"[유령정리][11번가] {account.id} 정리 {len(cleared)}건")
+
+        total_checked += len(targets)
+        total_ghosts += len(ghosts)
+        total_alive += alive_count
+        total_failed += len(failed)
+        total_cleared += len(cleared)
+
+        per_account.append(
+            {
+                "account_id": account.id,
+                "label": account.account_label,
+                "checked": len(targets),
+                "alive": alive_count,
+                "ghost_count": len(ghosts),
+                "ghosts": ghosts[:100],
+                "cleared": cleared,
+                "failed_count": len(failed),
+                "failed": failed[:50],
+            }
+        )
+
+    return {
+        "ok": True,
+        "dry_run": dry_run,
+        "max_check": max_check,
+        "total_checked": total_checked,
+        "total_alive": total_alive,
+        "total_ghosts": total_ghosts,
+        "total_cleared": total_cleared,
+        "total_failed": total_failed,
+        "accounts": per_account,
+    }
+
+
 @router.get("")
 async def list_shipments(
     skip: int = Query(0, ge=0),

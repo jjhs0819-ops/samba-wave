@@ -261,7 +261,20 @@ async def _build_order_filters(
         normalized_source_site = func.replace(
             func.coalesce(SambaOrder.source_site, ""), " ", ""
         )
-        if "(" in normalized_site_filter:
+        # GSSHOP 통합 필터 — DB에는 GSShop/GS이숍/GS이숍(고경) 등 변형 혼재 → 모두 매칭
+        gs_aliases = {"GSSHOP", "GSShop", "GS이숍", "GS이샵", "GS샵"}
+        if normalized_site_filter in gs_aliases:
+            from backend.core.sql_safe import escape_like
+
+            gs_filters = []
+            for alias in gs_aliases:
+                safe_alias = escape_like(alias)
+                gs_filters.append(normalized_source_site == alias)
+                gs_filters.append(
+                    normalized_source_site.like(f"{safe_alias}(%", escape="\\")
+                )
+            filters.append(or_(*gs_filters))
+        elif "(" in normalized_site_filter:
             filters.append(normalized_source_site == normalized_site_filter)
         else:
             # site_filter 는 외부 입력 — `%`/`_` 메타 escape 후 ESCAPE '\\' 명시.
