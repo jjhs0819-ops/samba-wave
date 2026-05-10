@@ -20,6 +20,19 @@ router = APIRouter(tags=["samba-proxy"])
 bg_worker_router = APIRouter(prefix="/proxy", tags=["samba-proxy-worker"])
 
 
+def _default_tenant_id() -> str | None:
+    """BG_WORKER_TENANT_ID 환경변수에서 테넌트 ID 조회.
+
+    멀티테넌트 환경에서 설정이 '{tenant_id}:{key}' 형식으로 저장된 경우
+    환경변수로 테넌트 ID를 지정하면 올바른 키로 조회한다.
+    미설정 시 None 반환 → 기존 단일테넌트 동작 그대로.
+    """
+    import os
+
+    val = os.environ.get("BG_WORKER_TENANT_ID", "").strip()
+    return val if val else None
+
+
 # ═══════════════════════════════════════════════
 # Claude AI API 인증 테스트
 # ═══════════════════════════════════════════════
@@ -338,7 +351,9 @@ async def transform_images(
         return {"success": False, "message": str(exc)[:300]}
 
 
-async def _verify_worker_token(token: str, session: AsyncSession) -> bool:
+async def _verify_worker_token(
+    token: str, session: AsyncSession, tenant_id: str | None = None
+) -> bool:
     """X-Worker-Token 검증 — 환경변수 BG_WORKER_TOKEN 또는 DB bg_worker.worker_token과 비교."""
     import os
 
@@ -349,7 +364,7 @@ async def _verify_worker_token(token: str, session: AsyncSession) -> bool:
     if env_token and token == env_token:
         return True
     # DB 설정 확인 (레거시/수동 설정)
-    cfg = await _get_setting(session, "bg_worker")
+    cfg = await _get_setting(session, "bg_worker", tenant_id=tenant_id)
     if not cfg or not isinstance(cfg, dict):
         return False
     return cfg.get("worker_token", "") == token
@@ -368,18 +383,21 @@ async def bg_jobs_config(
 
     from ._helpers import _set_setting
 
+    _tid = _default_tenant_id()
     env_token = os.environ.get("BG_WORKER_TOKEN", "")
-    cfg = await _get_setting(session, "bg_worker")
+    cfg = await _get_setting(session, "bg_worker", tenant_id=_tid)
     db_token = (cfg or {}).get("worker_token", "") if isinstance(cfg, dict) else ""
 
     # 로컬 워커용 토큰 미설정 + 토큰 없이 요청 → 자동 생성 후 워커에게 반환 (최초 1회)
     # env_token은 VM 워커용이므로 체크 제외
     if not db_token and not x_worker_token:
         new_token = secrets.token_hex(32)
-        await _set_setting(session, "bg_worker", {"worker_token": new_token})
+        await _set_setting(
+            session, "bg_worker", {"worker_token": new_token}, tenant_id=_tid
+        )
         os.environ["BG_WORKER_TOKEN"] = new_token
         logger.info("[배경제거] 워커 토큰 자동 생성 완료")
-        r2 = await _get_setting(session, "cloudflare_r2")
+        r2 = await _get_setting(session, "cloudflare_r2", tenant_id=_tid)
         if not r2 or not isinstance(r2, dict):
             return {"success": False, "message": "R2 설정이 저장되지 않았습니다"}
         return {
@@ -394,10 +412,12 @@ async def bg_jobs_config(
             },
         }
 
-    if not await _verify_worker_token(x_worker_token, session):
+    if not await _verify_worker_token(
+        x_worker_token, session, tenant_id=_default_tenant_id()
+    ):
         return {"success": False, "message": "Invalid worker token"}
 
-    r2 = await _get_setting(session, "cloudflare_r2")
+    r2 = await _get_setting(session, "cloudflare_r2", tenant_id=_tid)
     if not r2 or not isinstance(r2, dict):
         return {"success": False, "message": "R2 설정이 저장되지 않았습니다"}
 
@@ -424,7 +444,9 @@ async def bg_jobs_next(
     from backend.domain.samba.collector.model import SambaCollectedProduct
     from backend.domain.samba.job.model import JobStatus, SambaJob
 
-    if not await _verify_worker_token(x_worker_token, session):
+    if not await _verify_worker_token(
+        x_worker_token, session, tenant_id=_default_tenant_id()
+    ):
         return {"error": "Invalid worker token"}
 
     # 가장 오래된 pending 잡 1개 조회
@@ -498,7 +520,9 @@ async def bg_jobs_complete(
     from backend.domain.samba.collector.model import SambaCollectedProduct
     from backend.domain.samba.job.model import JobStatus, SambaJob
 
-    if not await _verify_worker_token(x_worker_token, session):
+    if not await _verify_worker_token(
+        x_worker_token, session, tenant_id=_default_tenant_id()
+    ):
         return {"success": False, "message": "Invalid worker token"}
 
     stmt = sa_select(SambaJob).where(SambaJob.id == job_id)
@@ -587,7 +611,9 @@ async def bg_jobs_progress(
     from backend.domain.samba.collector.model import SambaCollectedProduct
     from backend.domain.samba.job.model import SambaJob
 
-    if not await _verify_worker_token(x_worker_token, session):
+    if not await _verify_worker_token(
+        x_worker_token, session, tenant_id=_default_tenant_id()
+    ):
         return {"success": False, "message": "Invalid worker token"}
 
     stmt = sa_select(SambaJob).where(SambaJob.id == job_id)
@@ -785,7 +811,9 @@ async def bg_jobs_worker_reset_running(
 
     from backend.domain.samba.job.model import JobStatus, SambaJob
 
-    if not await _verify_worker_token(x_worker_token, session):
+    if not await _verify_worker_token(
+        x_worker_token, session, tenant_id=_default_tenant_id()
+    ):
         return {"success": False, "message": "Invalid worker token"}
 
     stmt = (
@@ -822,7 +850,9 @@ async def bg_jobs_heartbeat(
     """워커 헬스체크 — 매 폴링마다 호출되어 last_seen 갱신."""
     from datetime import datetime, timezone
 
-    if not await _verify_worker_token(x_worker_token, session):
+    if not await _verify_worker_token(
+        x_worker_token, session, tenant_id=_default_tenant_id()
+    ):
         return {"success": False, "message": "Invalid worker token"}
 
     now = datetime.now(timezone.utc).isoformat()
