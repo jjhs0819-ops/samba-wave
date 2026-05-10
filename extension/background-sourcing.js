@@ -1282,6 +1282,18 @@ async function handleSourcingJob(job) {
               if (_src.indexOf('임직원 및 사업자 회원') !== -1 || _src.indexOf('임직원만 구매') !== -1) {
                 return { ready: false, hasObj: false, hasCard: false, staffOnly: true }
               }
+              // URL 기반 폴백 — content_script suppress 가 race 로 늦어 inline script 의
+              // location.href = "member.ssg.com/login..." 리다이렉트가 먼저 실행된 케이스.
+              // 882B 짜리 flagMsg 페이지는 매우 빨리 파싱되어 world:MAIN 주입이 늦을 수 있음.
+              const _href = location.href || ''
+              if (_href.indexOf('member.ssg.com/member/login') !== -1 &&
+                  _href.indexOf('itemView.ssg') !== -1) {
+                return { ready: false, hasObj: false, hasCard: false, staffOnly: true }
+              }
+              // flagMsg 페이지 자체 감지 — 마커 매칭 실패 보호 (확장앱 suppress 가 작동해 페이지 유지된 경우)
+              if (document.title === 'flagMsg') {
+                return { ready: false, hasObj: false, hasCard: false, staffOnly: true }
+              }
               const hasObj = !!(window.resultItemObj && window.resultItemObj.itemNm)
               if (!hasObj) return { ready: false, hasObj: false, hasCard: false }
               let hasCard = false
@@ -1585,9 +1597,17 @@ async function handleSourcingJob(job) {
         func: () => {
           const body = document.body?.innerText || ''
           const src = document.documentElement ? document.documentElement.outerHTML : ''
+          const href = location.href || ''
+          // 임직원 redirect 폴백 — flagMsg → member.ssg.com/login 리다이렉트가 먼저 실행된 경우
+          const _redirectStaff = href.indexOf('member.ssg.com/member/login') !== -1 &&
+                                  href.indexOf('itemView.ssg') !== -1
+          const _flagMsgTitle = document.title === 'flagMsg'
           return {
             captcha: body.includes('연속적인 접근') || body.includes('로봇이 아닙니다'),
-            staffOnly: src.indexOf('임직원 및 사업자 회원') !== -1 || src.indexOf('임직원만 구매') !== -1,
+            staffOnly: src.indexOf('임직원 및 사업자 회원') !== -1 ||
+                       src.indexOf('임직원만 구매') !== -1 ||
+                       _redirectStaff ||
+                       _flagMsgTitle,
           }
         }
       })
