@@ -908,6 +908,153 @@ class ImageTransformService:
             blocked in host for blocked in ImageTransformService._HOTLINK_BLOCKED_HOSTS
         )
 
+    async def mirror_oversized_to_r2(
+        self,
+        urls: list[str],
+        max_bytes: int = 900_000,
+        max_dim: int = 1500,
+        quality: int = 85,
+    ) -> tuple[list[str], dict[str, str]]:
+        """용량 초과 이미지를 다운로드/리사이즈하여 R2로 업로드.
+
+        롯데홈쇼핑 [1038] 등 마켓 측 이미지 용량 한도 대응 — 호스트 무관하게
+        max_bytes 초과로 추정되거나 실제 다운로드 크기가 초과인 경우만 R2 미러.
+        msscdn 등 차단 도메인은 mirror_external_to_r2 가 별도로 처리하므로 중복 미러 안 함.
+
+        반환: (치환 결과 URL 리스트, 원본→R2 매핑)
+        """
+        from urllib.parse import urlparse
+
+        if not urls:
+            return [], {}
+        r2 = await self._get_r2_client()
+        if not r2:
+            return list(urls), {}
+        client_r2, bucket_name, public_url = r2
+        public_host = urlparse(public_url).netloc if public_url else ""
+
+        result: list[str] = []
+        url_map: dict[str, str] = {}
+
+        # 빠른 사전 체크용 HTTP 클라이언트 (HEAD)
+        async with httpx.AsyncClient(
+            timeout=10.0, follow_redirects=True
+        ) as http_client:
+            for url in urls:
+                if not url:
+                    continue
+                try:
+                    parsed = urlparse(url)
+                    host = (parsed.netloc or "").lower()
+                    # R2 본인 호스트면 그대로
+                    if public_host and host == public_host:
+                        result.append(url)
+                        continue
+                    # HEAD 로 size 조회 — 초과 후보만 다운로드
+                    over = False
+                    try:
+                        head = await http_client.head(url)
+                        cl = head.headers.get("content-length", "")
+                        if cl.isdigit() and int(cl) > max_bytes:
+                            over = True
+                    except Exception:
+                        # HEAD 실패 → 일단 다운로드 후 판단
+                        over = True
+
+                    if not over:
+                        result.append(url)
+                        continue
+
+                    # 다운로드 후 PIL 로 리사이즈
+                    image_bytes = await self._download_image(url)
+                    if not image_bytes:
+                        result.append(url)
+                        continue
+                    if len(image_bytes) <= max_bytes:
+                        # HEAD 가 잘못 보고된 케이스 — 원본 유지
+                        result.append(url)
+                        continue
+
+                    from PIL import Image  # noqa: F811
+
+                    img = Image.open(io.BytesIO(image_bytes))
+                    img = img.convert("RGB")
+                    if max(img.size) > max_dim:
+                        img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+                    out = io.BytesIO()
+                    # 품질 단계적 하향: 85 → 70 → 55 까지 시도
+                    final_bytes = b""
+                    for q in (quality, 70, 55):
+                        out.seek(0)
+                        out.truncate(0)
+                        img.save(out, format="JPEG", quality=q, optimize=True)
+                        final_bytes = out.getvalue()
+                        if len(final_bytes) <= max_bytes:
+                            break
+                    if not final_bytes:
+                        result.append(url)
+                        continue
+
+                    content_hash = hashlib.md5(final_bytes).hexdigest()[:16]
+                    key = f"resized/{content_hash}.jpg"
+
+                    def _exists(_key: str = key) -> bool:
+                        try:
+                            client_r2.head_object(Bucket=bucket_name, Key=_key)
+                            return True
+                        except Exception:
+                            return False
+
+                    if not await asyncio.to_thread(_exists):
+                        await asyncio.to_thread(
+                            partial(
+                                client_r2.upload_fileobj,
+                                io.BytesIO(final_bytes),
+                                bucket_name,
+                                key,
+                                ExtraArgs={"ContentType": "image/jpeg"},
+                            ),
+                        )
+                    mirrored = f"{public_url}/{key}"
+                    result.append(mirrored)
+                    url_map[url] = mirrored
+                    logger.info(
+                        f"[이미지리사이즈] {len(image_bytes)}B→{len(final_bytes)}B {url} → {mirrored}"
+                    )
+                except Exception as e:
+                    logger.warning(f"[이미지리사이즈] 실패로 원본 유지: {url} — {e}")
+                    result.append(url)
+        return result, url_map
+
+    async def mirror_oversized_in_html(
+        self,
+        html: str,
+        max_bytes: int = 900_000,
+        max_dim: int = 1500,
+    ) -> str:
+        """HTML 내부 <img src> 중 용량 초과분만 리사이즈 후 R2 URL 로 치환."""
+        if not html:
+            return html
+        import re as _re
+
+        pattern = _re.compile(r'src=(["\'])(https?://[^"\']+)\1', _re.IGNORECASE)
+        candidates: list[str] = []
+        for m in pattern.finditer(html):
+            url = m.group(2)
+            if url not in candidates:
+                candidates.append(url)
+        if not candidates:
+            return html
+        _, url_map = await self.mirror_oversized_to_r2(
+            candidates, max_bytes=max_bytes, max_dim=max_dim
+        )
+        if not url_map:
+            return html
+        new_html = html
+        for orig, new in url_map.items():
+            new_html = new_html.replace(orig, new)
+        return new_html
+
     async def mirror_urls_in_html(self, html: str) -> str:
         """HTML 문자열 내부의 차단 도메인 이미지 URL을 R2 미러 URL로 치환.
 

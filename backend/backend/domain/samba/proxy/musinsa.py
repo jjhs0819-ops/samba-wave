@@ -1092,8 +1092,10 @@ class MusinsaClient:
                     }
                 )
 
-            # extra(추가) 옵션 처리 — 이름에 (+XXXX) 형태로 추가금액 포함
+            # extra(추가) 옵션 처리 — 메인 옵션과 카르테시안 곱으로 2-depth 조합 생성
+            # 이름에 (+XXXX) 형태로 추가금액 포함
             extra_groups = opt_json["data"].get("extra", [])
+            extra_values: list[dict[str, Any]] = []
             for grp in extra_groups:
                 if grp.get("isDeleted"):
                     continue
@@ -1105,28 +1107,81 @@ class MusinsaClient:
                     ev_name = ev.get("name", "")
                     if "선택안함" in ev_name or "선택없음" in ev_name:
                         continue
-                    m = re.search(r"\(\+(\d+)\)", ev_name)
-                    add_price = int(m.group(1)) if m else 0
+                    # 추가금액: optionValue.price 우선, 없으면 이름의 (+숫자) 폴백
+                    add_price = int(ev.get("price") or 0)
+                    if not add_price:
+                        m = re.search(r"\(\+(\d+)\)", ev_name)
+                        if m:
+                            add_price = int(m.group(1))
                     ev_stock: Optional[int] = (
                         (ev.get("quantity") or 99) if is_stock_managed else 99
                     )
                     full_name = f"{grp_name}: {ev_name}" if grp_name else ev_name
-                    options.append(
+                    extra_values.append(
                         {
                             "no": ev.get("no"),
-                            "name": full_name,
-                            "price": (base_price or 0) + add_price,
+                            "label": full_name,
+                            "add_price": add_price,
                             "stock": ev_stock,
-                            "isSoldOut": False,
-                            "isBrandDelivery": False,
-                            "deliveryType": "",
-                            "managedCode": "",
                         }
                     )
-            if extra_groups:
-                logger.info(
-                    f"[옵션] {goods_no} extra 옵션 {sum(len(g.get('optionValues', [])) for g in extra_groups)}개 추가"
-                )
+
+            if extra_values:
+                if options:
+                    # 메인 옵션 × (미선택 + 엑스트라 N개) 조합 생성
+                    main_options = list(options)
+                    options = []
+                    for main in main_options:
+                        # 미선택 행: 메인 그대로
+                        options.append(main)
+                        # 엑스트라 선택 행
+                        for ev in extra_values:
+                            ev_stock_val = ev["stock"]
+                            main_stock = main.get("stock")
+                            combo_stock: Optional[int]
+                            if main_stock is None:
+                                combo_stock = ev_stock_val
+                            elif ev_stock_val is None:
+                                combo_stock = main_stock
+                            else:
+                                combo_stock = min(main_stock, ev_stock_val)
+                            options.append(
+                                {
+                                    "no": ev["no"],
+                                    "name": f"{main['name']} / {ev['label']}",
+                                    "price": (main.get("price") or 0) + ev["add_price"],
+                                    "stock": combo_stock,
+                                    "isSoldOut": main.get("isSoldOut", False),
+                                    "isBrandDelivery": main.get(
+                                        "isBrandDelivery", False
+                                    ),
+                                    "deliveryType": main.get("deliveryType", ""),
+                                    "managedCode": main.get("managedCode", ""),
+                                }
+                            )
+                    logger.info(
+                        f"[옵션] {goods_no} 2-depth 조합 생성: "
+                        f"메인 {len(main_options)} × (1+{len(extra_values)}) = {len(options)}개"
+                    )
+                else:
+                    # 메인 옵션이 없는 경우 — 엑스트라만 단독 옵션으로 fallback
+                    for ev in extra_values:
+                        options.append(
+                            {
+                                "no": ev["no"],
+                                "name": ev["label"],
+                                "price": (base_price or 0) + ev["add_price"],
+                                "stock": ev["stock"],
+                                "isSoldOut": False,
+                                "isBrandDelivery": False,
+                                "deliveryType": "",
+                                "managedCode": "",
+                            }
+                        )
+                    logger.info(
+                        f"[옵션] {goods_no} extra 단독 {len(extra_values)}개 추가 "
+                        f"(메인 옵션 없음)"
+                    )
 
         except Exception as exc:
             logger.warning(

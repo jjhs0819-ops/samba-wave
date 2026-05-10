@@ -333,6 +333,13 @@ def _build_combination_options(
     # ── 동일 옵션명 중복 감지 → US 사이즈 접미사로 구분 (나이키 등) ──
     from collections import Counter as _Counter
 
+    def _append_within_25(base: str, suffix: str) -> str:
+        # suffix 포함 25자 초과 시 base 를 먼저 잘라서 합산이 25자 이하가 되도록 보장
+        if len(base) + len(suffix) <= 25:
+            return base + suffix
+        cut = max(25 - len(suffix), 0)
+        return base[:cut] + suffix
+
     _name_counts = _Counter(c["optionName1"] for c in combinations)
     _dup_names = {n for n, cnt in _name_counts.items() if cnt > 1}
     if _dup_names:
@@ -341,13 +348,22 @@ def _build_combination_options(
             if _c["optionName1"] in _dup_names:
                 _us = _opt.get("us_label", "")
                 if _us:
-                    _c["optionName1"] = f"{_c['optionName1']} US{_us}"
+                    _c["optionName1"] = _append_within_25(
+                        _c["optionName1"], f" US{_us}"
+                    )
                 else:
                     _base = _c["optionName1"]
                     _seq = _dup_seq.get(_base, 1)
                     _dup_seq[_base] = _seq + 1
                     if _seq > 1:
-                        _c["optionName1"] = f"{_base}({_seq})"
+                        _c["optionName1"] = _append_within_25(_base, f"({_seq})")
+
+    # 최종 안전망 — 어떤 경로로 들어와도 옵션값은 25자 이하 보장 (스마트스토어 MaxLength 정책)
+    for _c in combinations:
+        if isinstance(_c.get("optionName1"), str) and len(_c["optionName1"]) > 25:
+            _c["optionName1"] = _c["optionName1"][:25]
+        if isinstance(_c.get("optionName2"), str) and len(_c["optionName2"]) > 25:
+            _c["optionName2"] = _c["optionName2"][:25]
 
     # 스마트스토어 필수조건: 옵션가 0원 + 재고 1개 이상 + 사용여부 Y 가 최소 1개
     has_base = any(

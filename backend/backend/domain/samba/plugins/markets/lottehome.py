@@ -685,6 +685,34 @@ class LotteHomePlugin(MarketPlugin):
             except Exception as e:
                 logger.warning(f"[롯데홈쇼핑] 배송지/정책 자동 조회 실패: {e}")
 
+        # 이미지 용량 초과 사전 차단 — 롯데홈쇼핑 [1038] 대응
+        # 호스트 무관 (yswholesale 등 도매업체 CDN 포함) 모든 이미지 점검 후
+        # 900KB 초과 시 R2 리사이즈 미러로 대체
+        try:
+            from backend.domain.samba.image.service import ImageTransformService
+
+            _img_svc = ImageTransformService(session)
+            _images = product.get("images") or []
+            _detail_images = product.get("detail_images") or []
+            _detail_html = product.get("detail_html") or ""
+            if _images or _detail_images or _detail_html:
+                product = dict(product)  # 원본 dict 변형 방지
+                if _images:
+                    product["images"], _ = await _img_svc.mirror_oversized_to_r2(
+                        _images
+                    )
+                if _detail_images:
+                    (
+                        product["detail_images"],
+                        _,
+                    ) = await _img_svc.mirror_oversized_to_r2(_detail_images)
+                if _detail_html:
+                    product["detail_html"] = await _img_svc.mirror_oversized_in_html(
+                        _detail_html
+                    )
+        except Exception as e:
+            logger.warning(f"[롯데홈쇼핑] 이미지 리사이즈 단계 오류 — 원본 유지: {e}")
+
         goods_data = _transform_for_lottehome(product, category_id, auth_creds)
         result = await client.register_goods(goods_data)
 
