@@ -28,6 +28,76 @@ from backend.utils.logger import logger
 
 router = APIRouter(prefix="/orders", tags=["samba-orders"])
 
+
+# ── 매칭 캐시(_mpn_cache) 모듈 전역 TTL 캐시 ──
+# 매 sync마다 collected_product 12.6만건 SELECT + 인덱싱(약 7초) 부담을
+# 60초 TTL로 한 번만 빌드해 재사용. 신규 cp 등록은 60초 안에 매칭됨.
+_MPN_CACHE_TTL_SEC = 60.0
+_mpn_cache_data: dict[str, dict] | None = None
+_mpn_cache_built_at: float = 0.0
+_mpn_cache_lock = asyncio.Lock()
+
+
+async def _get_mpn_cache(session, sourcing_urls: dict) -> dict[str, dict]:
+    """market_product_no → collected_product 인덱스 (TTL 60초)."""
+    import time as _t
+
+    from sqlalchemy import text as _sa_text
+
+    global _mpn_cache_data, _mpn_cache_built_at
+    async with _mpn_cache_lock:
+        now = _t.monotonic()
+        if (
+            _mpn_cache_data is not None
+            and (now - _mpn_cache_built_at) < _MPN_CACHE_TTL_SEC
+        ):
+            return _mpn_cache_data
+        _cp_result = await session.execute(
+            _sa_text(
+                "SELECT id, source_site, site_product_id, images, market_product_nos, source_url, category "
+                "FROM samba_collected_product WHERE market_product_nos IS NOT NULL"
+            )
+        )
+        new_cache: dict[str, dict] = {}
+        for _row in _cp_result.fetchall():
+            _cpid, _site, _spid, _imgs, _mpnos, _src_url, _cat = _row
+            if not (_mpnos and isinstance(_mpnos, dict)):
+                continue
+            _thumb = _imgs[0] if _imgs and isinstance(_imgs, list) and _imgs else ""
+            _olink = _src_url or (
+                sourcing_urls.get(_site, "").format(_spid)
+                if _site in sourcing_urls and _spid
+                else ""
+            )
+            _entry = {
+                "collected_product_id": _cpid,
+                "source_site": _site,
+                "product_image": _thumb,
+                "original_link": _olink,
+                "category": _cat or "",
+            }
+            for _k, _v in _mpnos.items():
+                if not _v or _k.endswith("_qa"):
+                    continue
+                if isinstance(_v, dict):
+                    for _sub_v in (
+                        _v.get("smartstoreChannelProductNo"),
+                        _v.get("originProductNo"),
+                        _v.get("channelProductNo"),
+                    ):
+                        if _sub_v:
+                            new_cache[str(_sub_v)] = _entry
+                else:
+                    new_cache[str(_v)] = _entry
+        _mpn_cache_data = new_cache
+        _mpn_cache_built_at = now
+        logger.info(
+            f"[주문동기화] _mpn_cache 재빌드 완료 — entries={len(new_cache):,}, "
+            f"TTL={_MPN_CACHE_TTL_SEC}s"
+        )
+        return _mpn_cache_data
+
+
 ACTIVE_ORDER_STATUSES = (
     "new_order",
     "invoice_printed",
@@ -4512,55 +4582,10 @@ async def sync_orders_from_markets(
                 )
                 continue
 
-            # 수집상품 매칭 캐시 구축 (마켓상품번호 → 이미지/소싱처)
+            # 수집상품 매칭 캐시 — 모듈 전역 60초 TTL 캐시 사용 (sync마다 재빌드 X)
             from sqlalchemy import text as _sa_text
 
-            # LIMIT 무제한 — 50000으로 두면 cp 등록 누적이 초과될 때 ORDER BY 없는 SELECT가
-            # 무작위 cutoff을 만들어 "어제 매칭되던 주문이 오늘 갑자기 미매칭"되는 현상이 발생.
-            # (2026-05-10 시점 mpn O cp 약 12.6만 건 — LIMIT 50000은 약 60% 누락 유발)
-            _cp_result = await session.execute(
-                _sa_text(
-                    "SELECT id, source_site, site_product_id, images, market_product_nos, source_url, category "
-                    "FROM samba_collected_product WHERE market_product_nos IS NOT NULL"
-                )
-            )
-            _mpn_cache: dict[str, dict] = {}
-            for _row in _cp_result.fetchall():
-                _cpid, _site, _spid, _imgs, _mpnos, _src_url, _cat = _row
-                if _mpnos and isinstance(_mpnos, dict):
-                    _thumb = (
-                        _imgs[0] if _imgs and isinstance(_imgs, list) and _imgs else ""
-                    )
-                    # DB에 저장된 source_url 우선 사용 (수집기가 올바르게 저장한 URL)
-                    _olink = _src_url or (
-                        _sourcing_urls.get(_site, "").format(_spid)
-                        if _site in _sourcing_urls and _spid
-                        else ""
-                    )
-                    _entry = {
-                        "collected_product_id": _cpid,
-                        "source_site": _site,
-                        "product_image": _thumb,
-                        "original_link": _olink,
-                        "category": _cat or "",
-                    }
-                    for _k, _v in _mpnos.items():
-                        if not _v:
-                            continue
-                        # _qa 상태값("pending"/"approved")은 상품번호가 아니므로 제외
-                        if _k.endswith("_qa"):
-                            continue
-                        if isinstance(_v, dict):
-                            # 중첩 구조: {"originProductNo": "...", "smartstoreChannelProductNo": "..."}
-                            for _sub_v in [
-                                _v.get("smartstoreChannelProductNo"),
-                                _v.get("originProductNo"),
-                                _v.get("channelProductNo"),
-                            ]:
-                                if _sub_v:
-                                    _mpn_cache[str(_sub_v)] = _entry
-                        else:
-                            _mpn_cache[str(_v)] = _entry
+            _mpn_cache = await _get_mpn_cache(session, _sourcing_urls)
 
             # 미등록 입력 캐시: 동일 product_id+channel_name에 대해 수동 등록된 source_url/product_image 재활용
             _unreg_cache: dict[str, dict[str, str]] = {}
