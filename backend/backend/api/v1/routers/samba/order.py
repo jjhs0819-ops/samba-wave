@@ -69,26 +69,54 @@ async def _get_mpn_cache(session, sourcing_urls: dict) -> dict[str, dict]:
                 if _site in sourcing_urls and _spid
                 else ""
             )
-            _entry = {
-                "collected_product_id": _cpid,
-                "source_site": _site,
-                "product_image": _thumb,
-                "original_link": _olink,
-                "category": _cat or "",
-            }
+            # account_id별 등록된 site_ids 모음 — `{account_id}_sites` 키 패턴.
+            # 신규 등록 액션에서 이 키에 [site_id, ...] 저장 (Phase 3에서 구현).
+            # 기존 cp는 _sites 키 없음 → cache value의 site_ids_by_account = {} 유지 →
+            # 매칭 시 호환 모드(site_id 검증 안 함).
+            _sites_by_account: dict[str, list[str]] = {}
             for _k, _v in _mpnos.items():
-                if not _v or _k.endswith("_qa"):
+                if _k.endswith("_sites") and isinstance(_v, list):
+                    _account_id = _k[: -len("_sites")]
+                    _sites_by_account[_account_id] = [str(s) for s in _v if s]
+
+            for _k, _v in _mpnos.items():
+                if not _v or _k.endswith("_qa") or _k.endswith("_sites"):
+                    continue
+                if _k.endswith("_origin"):
                     continue
                 if isinstance(_v, dict):
-                    for _sub_v in (
+                    _values = [
                         _v.get("smartstoreChannelProductNo"),
                         _v.get("originProductNo"),
                         _v.get("channelProductNo"),
-                    ):
-                        if _sub_v:
-                            new_cache[str(_sub_v)] = _entry
+                    ]
                 else:
-                    new_cache[str(_v)] = _entry
+                    _values = [_v]
+                for _sub_v in _values:
+                    if not _sub_v:
+                        continue
+                    _key = str(_sub_v)
+                    # 기존 entry가 있다면 site_ids만 추가, 없으면 새로
+                    _entry = new_cache.get(_key)
+                    if not _entry:
+                        _entry = {
+                            "collected_product_id": _cpid,
+                            "source_site": _site,
+                            "product_image": _thumb,
+                            "original_link": _olink,
+                            "category": _cat or "",
+                            "site_ids_by_account": dict(_sites_by_account),
+                        }
+                        new_cache[_key] = _entry
+                    else:
+                        # 같은 master_code가 여러 cp에 있는 케이스(드물 것).
+                        # 기존 entry 그대로 두고 site_ids만 보강.
+                        for acc, sites in _sites_by_account.items():
+                            _entry["site_ids_by_account"].setdefault(acc, []).extend(
+                                s
+                                for s in sites
+                                if s not in _entry["site_ids_by_account"].get(acc, [])
+                            )
         _mpn_cache_data = new_cache
         _mpn_cache_built_at = now
         logger.info(
@@ -4663,6 +4691,23 @@ async def sync_orders_from_markets(
                 # 수집상품 매칭 — collected_product_id, product_image, source_site, source_url 보충
                 _pid = str(order_data.get("product_id", ""))
                 _matched = _mpn_cache.get(_pid)
+                # 플레이오토 별칭(site_id) 단위 매칭 검증 — 1 channel_id에 5개 별칭이
+                # 묶인 구조에서 사용자가 특정 별칭에만 등록한 cp가 다른 별칭 주문에
+                # 잘못 매칭되는 것을 차단. cp.market_product_nos에 `{account_id}_sites`
+                # 키가 있을 때만 엄격 매칭, 없으면 호환 모드(기존 동작).
+                if _matched and order_data.get("source") == "playauto":
+                    _order_site_id = str(order_data.get("_pa_site_id") or "").strip()
+                    _account_id = str(order_data.get("channel_id") or "")
+                    _allowed_sites = _matched.get("site_ids_by_account", {}).get(
+                        _account_id
+                    )
+                    if (
+                        _allowed_sites
+                        and _order_site_id
+                        and _order_site_id not in _allowed_sites
+                    ):
+                        # 등록된 site_id에 해당 주문의 별칭이 없음 → 매칭 거부
+                        _matched = None
                 if _matched:
                     if not order_data.get("collected_product_id"):
                         order_data["collected_product_id"] = _matched[
@@ -4678,6 +4723,8 @@ async def sync_orders_from_markets(
                         "original_link"
                     ):
                         order_data["source_url"] = _matched["original_link"]
+                # 매칭 검증용 임시 키 제거 (DB 저장 직전, 모델에 없는 필드)
+                order_data.pop("_pa_site_id", None)
                 # 롯데ON 예상 정산금액 계산 (롯데ON 공식 정산공식, 2026-04-30 재확인)
                 #   pymtAmt = actualAmt − (bseCmsn + pcsCmsn + dvCmsn − ajstDcAmt)
                 # raw 응답엔 수수료 필드가 없으므로:
@@ -5941,6 +5988,9 @@ def _parse_playauto_order(
         "tracking_number": ro.get("SenderNo", ""),
         "paid_at": paid_at,
         "source": "playauto",
+        # 별칭 단위 매칭 검증용 — DB 저장 전 pop. site_id가 cp의 등록된 site_ids에
+        # 포함될 때만 매칭 허용 (기존 cp는 site_ids 미저장이라 호환 매칭).
+        "_pa_site_id": site_id,
         # 판매처(사업자) 정보 — 별칭 매핑 적용
         "source_site": (
             f"{site_name}({alias_map[site_id]})"
