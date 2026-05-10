@@ -1020,10 +1020,13 @@ class MusinsaClient:
 
             items = opt_json["data"].get("optionItems", [])
 
-            # 메인 옵션 그룹명 — 무신사 응답의 options[*].name을 차원 순서대로 사용
-            # data.options: [{ no, name(예: "색상"), optionValues:[...] }, ...]
-            main_groups_meta = opt_json["data"].get("options", []) or []
-            for grp in main_groups_meta:
+            # 메인 옵션 그룹명 — 무신사 응답의 basic[*].name을 차원 순서대로 사용
+            # data.basic: [{ no, name(예: "색상"), sequence, optionValues:[...] }, ...]
+            main_groups_meta = opt_json["data"].get("basic", []) or []
+            # sequence 오름차순으로 정렬 — 차원 순서 보장
+            for grp in sorted(
+                main_groups_meta, key=lambda g: g.get("sequence", 0) or 0
+            ):
                 if grp.get("isDeleted"):
                     continue
                 gn = (grp.get("name") or "").strip()
