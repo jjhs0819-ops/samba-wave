@@ -10,12 +10,22 @@
         console.log('[SSG] alert suppressed:', msg)
       } catch {}
     }
+    // confirm 은 false 리턴 — true 리턴 시 임직원 전용 페이지의 inline script 가
+    // location.href 로 로그인 페이지로 리다이렉트되어 staffOnly 마커가 사라지고,
+    // 백엔드/폴링이 임직원 전용 상품을 감지하지 못해 "확장앱 미응답 또는 파싱 실패" 로 기록됨.
     window.confirm = function () {
-      return true
+      return false
     }
     window.prompt = function () {
       return null
     }
+    // history.back 도 무력화 — confirm=false 분기에서 history.back() 이 호출되면
+    // 페이지를 이탈하여 staffOnly HTML 마커("임직원 및 사업자 회원")가 사라짐.
+    // 페이지를 그대로 유지해야 폴링/preCheck 가 staffOnly 신호를 잡고 sold_out 처리됨.
+    try {
+      history.back = function () {}
+      history.go = function () {}
+    } catch {}
     // beforeunload는 살려둠 (탭 닫기 정상 동작)
   } catch (e) {
     // noop

@@ -9,7 +9,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from backend.db.orm import get_read_session_dependency, get_write_session_dependency
+from backend.db.orm import (
+    get_read_session,
+    get_read_session_dependency,
+    get_write_session_dependency,
+)
 from backend.domain.samba.tenant.middleware import get_optional_tenant_id
 from backend.domain.samba.order.model import SambaOrder
 from backend.domain.samba.order.playauto_alias import (
@@ -39,7 +43,12 @@ _mpn_cache_lock = asyncio.Lock()
 
 
 async def _get_mpn_cache(session, sourcing_urls: dict) -> dict[str, dict]:
-    """market_product_no → collected_product 인덱스 (TTL 60초)."""
+    """market_product_no → collected_product 인덱스 (TTL 60초).
+
+    SELECT 전용이므로 write session(외부 마켓 API 동안 idle in transaction
+    timeout으로 죽을 수 있음)에 의존하지 않고 내부에서 별도 read session을
+    연다. 인자 ``session``은 호환을 위해 유지되며 사용되지 않는다.
+    """
     import time as _t
 
     from sqlalchemy import text as _sa_text
@@ -52,14 +61,16 @@ async def _get_mpn_cache(session, sourcing_urls: dict) -> dict[str, dict]:
             and (now - _mpn_cache_built_at) < _MPN_CACHE_TTL_SEC
         ):
             return _mpn_cache_data
-        _cp_result = await session.execute(
-            _sa_text(
-                "SELECT id, source_site, site_product_id, images, market_product_nos, source_url, category "
-                "FROM samba_collected_product WHERE market_product_nos IS NOT NULL"
+        async with get_read_session() as _read_sess:
+            _cp_result = await _read_sess.execute(
+                _sa_text(
+                    "SELECT id, source_site, site_product_id, images, market_product_nos, source_url, category "
+                    "FROM samba_collected_product WHERE market_product_nos IS NOT NULL"
+                )
             )
-        )
+            _cp_rows = _cp_result.fetchall()
         new_cache: dict[str, dict] = {}
-        for _row in _cp_result.fetchall():
+        for _row in _cp_rows:
             _cpid, _site, _spid, _imgs, _mpnos, _src_url, _cat = _row
             if not (_mpnos and isinstance(_mpnos, dict)):
                 continue
@@ -4626,17 +4637,31 @@ async def sync_orders_from_markets(
             # 수집상품 매칭 캐시 — 모듈 전역 60초 TTL 캐시 사용 (sync마다 재빌드 X)
             from sqlalchemy import text as _sa_text
 
+            # 외부 마켓 API 호출이 길어 write session이 idle in transaction
+            # timeout으로 끊겼을 수 있음. 이후 INSERT/UPDATE 전 rollback으로
+            # 죽은 connection을 invalidate하고 풀에서 새 connection을 받는다.
+            try:
+                await session.rollback()
+            except BaseException as _rb_e:
+                logger.warning(
+                    f"[주문동기화] write session rollback 실패(무시): {_rb_e}"
+                )
+
             _mpn_cache = await _get_mpn_cache(session, _sourcing_urls)
 
             # 미등록 입력 캐시: 동일 product_id+channel_name에 대해 수동 등록된 source_url/product_image 재활용
+            # write session은 직전 외부 마켓 API 동안 idle in transaction timeout으로
+            # 죽었을 수 있어 SELECT 전용 read session으로 분리.
             _unreg_cache: dict[str, dict[str, str]] = {}
-            _unreg_result = await session.execute(
-                _sa_text(
-                    "SELECT product_id, channel_name, source_url, product_image "
-                    "FROM samba_order WHERE source_url IS NOT NULL AND product_id IS NOT NULL"
+            async with get_read_session() as _unreg_sess:
+                _unreg_result = await _unreg_sess.execute(
+                    _sa_text(
+                        "SELECT product_id, channel_name, source_url, product_image "
+                        "FROM samba_order WHERE source_url IS NOT NULL AND product_id IS NOT NULL"
+                    )
                 )
-            )
-            for _ur in _unreg_result.fetchall():
+                _unreg_rows = _unreg_result.fetchall()
+            for _ur in _unreg_rows:
                 _ukey = f"{_ur[0]}|{_ur[1] or ''}"
                 _unreg_cache[_ukey] = {
                     "source_url": _ur[2],
