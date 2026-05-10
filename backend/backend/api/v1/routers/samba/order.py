@@ -4515,10 +4515,13 @@ async def sync_orders_from_markets(
             # 수집상품 매칭 캐시 구축 (마켓상품번호 → 이미지/소싱처)
             from sqlalchemy import text as _sa_text
 
+            # LIMIT 무제한 — 50000으로 두면 cp 등록 누적이 초과될 때 ORDER BY 없는 SELECT가
+            # 무작위 cutoff을 만들어 "어제 매칭되던 주문이 오늘 갑자기 미매칭"되는 현상이 발생.
+            # (2026-05-10 시점 mpn O cp 약 12.6만 건 — LIMIT 50000은 약 60% 누락 유발)
             _cp_result = await session.execute(
                 _sa_text(
                     "SELECT id, source_site, site_product_id, images, market_product_nos, source_url, category "
-                    "FROM samba_collected_product WHERE market_product_nos IS NOT NULL LIMIT 50000"
+                    "FROM samba_collected_product WHERE market_product_nos IS NOT NULL"
                 )
             )
             _mpn_cache: dict[str, dict] = {}
