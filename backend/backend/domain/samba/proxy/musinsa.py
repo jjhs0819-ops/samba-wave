@@ -192,10 +192,13 @@ class MusinsaClient:
             gp = d.get("goodsPrice") or {}
             cat = d.get("category") or {}  # None 방지
 
-            # 2) 옵션 API + 재고 API
-            options, option_value_no_map = await self._fetch_options(
-                client, goods_no, gp
-            )
+            # 2) 옵션 API + 재고 API (메인 / 추가옵션 / 그룹명 분리)
+            (
+                options,
+                option_value_no_map,
+                addon_options,
+                option_group_names,
+            ) = await self._fetch_options(client, goods_no, gp)
 
             # 3) 상품고시정보 API (갱신 모드에서는 스킵)
             essential = (
@@ -462,6 +465,8 @@ class MusinsaClient:
                 "detailImages": detail_images,
                 "detailHtml": desc_html,
                 "options": options,
+                "addonOptions": addon_options,
+                "optionGroupNames": option_group_names,
                 "originalPrice": gp.get("normalPrice") or raw_sale or 0,
                 "salePrice": s_price,
                 "couponPrice": benefit_base,
@@ -976,10 +981,23 @@ class MusinsaClient:
         client: httpx.AsyncClient,
         goods_no: str,
         gp: dict[str, Any],
-    ) -> tuple[list[dict[str, Any]], dict[int, int]]:
-        """옵션 + 재고 API 호출."""
+    ) -> tuple[
+        list[dict[str, Any]],
+        dict[int, int],
+        list[dict[str, Any]],
+        list[str],
+    ]:
+        """옵션 + 재고 API 호출.
+
+        반환: (options, option_value_no_map, addon_options, option_group_names)
+          - options: 메인 SKU 옵션 (1단 또는 색상×사이즈 같은 다단 매트릭스)
+          - addon_options: 추가구성상품(스마트스토어 productAddItems 등) — 메인과 별개 차원
+          - option_group_names: 메인 옵션의 그룹명 목록 (예: ["색상"], ["색상","사이즈"])
+        """
         option_value_no_map: dict[int, int] = {}
         options: list[dict[str, Any]] = []
+        addon_options: list[dict[str, Any]] = []
+        option_group_names: list[str] = []
 
         try:
             opt_resp = await client.get(
@@ -990,7 +1008,7 @@ class MusinsaClient:
                 logger.warning(
                     f"[옵션] {goods_no} 옵션 API 비정상 응답: HTTP {opt_resp.status_code}"
                 )
-                return options, option_value_no_map
+                return options, option_value_no_map, addon_options, option_group_names
 
             opt_json = opt_resp.json()
             opt_meta = opt_json.get("meta", {})
@@ -998,9 +1016,19 @@ class MusinsaClient:
                 logger.warning(
                     f"[옵션] {goods_no} 옵션 API 실패: result={opt_meta.get('result')}, data={bool(opt_json.get('data'))}"
                 )
-                return options, option_value_no_map
+                return options, option_value_no_map, addon_options, option_group_names
 
             items = opt_json["data"].get("optionItems", [])
+
+            # 메인 옵션 그룹명 — 무신사 응답의 options[*].name을 차원 순서대로 사용
+            # data.options: [{ no, name(예: "색상"), optionValues:[...] }, ...]
+            main_groups_meta = opt_json["data"].get("options", []) or []
+            for grp in main_groups_meta:
+                if grp.get("isDeleted"):
+                    continue
+                gn = (grp.get("name") or "").strip()
+                if gn:
+                    option_group_names.append(gn)
 
             # optionValueNo 목록 수집
             all_option_value_nos: list[int] = []
@@ -1114,19 +1142,20 @@ class MusinsaClient:
                     }
                 )
 
-            # extra(추가) 옵션 처리 — 메인 옵션과 카르테시안 곱으로 2-depth 조합 생성
-            # 이름에 (+XXXX) 형태로 추가금액 포함
+            # extra(추가) 옵션 처리 — addon_options로 분리 저장 (메인과 다른 차원)
+            # 마켓 변환 시: 스마트스토어 productAddItems / 11번가 addOptInfo 등으로 매핑
+            # "선택안함"/"선택없음"은 제외 (마켓 측 기본값 처리)
             extra_groups = opt_json["data"].get("extra", [])
-            extra_values: list[dict[str, Any]] = []
             for grp in extra_groups:
                 if grp.get("isDeleted"):
                     continue
-                grp_name = grp.get("name", "")
+                grp_name = (grp.get("name") or "").strip()
                 is_stock_managed = grp.get("isStockManaged", False)
+                is_required = grp.get("isRequired", False) is True
                 for ev in grp.get("optionValues", []):
                     if not ev.get("activated") or ev.get("isDeleted"):
                         continue
-                    ev_name = ev.get("name", "")
+                    ev_name = (ev.get("name") or "").strip()
                     if "선택안함" in ev_name or "선택없음" in ev_name:
                         continue
                     # 추가금액: optionValue.price 우선, 없으면 이름의 (+숫자) 폴백
@@ -1138,79 +1167,28 @@ class MusinsaClient:
                     ev_stock: Optional[int] = (
                         (ev.get("quantity") or 99) if is_stock_managed else 99
                     )
-                    full_name = f"{grp_name}: {ev_name}" if grp_name else ev_name
-                    extra_values.append(
+                    addon_options.append(
                         {
                             "no": ev.get("no"),
-                            "label": full_name,
+                            "group": grp_name,
+                            "name": ev_name,
                             "add_price": add_price,
                             "stock": ev_stock,
+                            "is_required": is_required,
                         }
                     )
-
-            if extra_values:
-                if options:
-                    # 메인 옵션 × (미선택 + 엑스트라 N개) 조합 생성
-                    main_options = list(options)
-                    options = []
-                    for main in main_options:
-                        # 미선택 행: 메인 그대로
-                        options.append(main)
-                        # 엑스트라 선택 행
-                        for ev in extra_values:
-                            ev_stock_val = ev["stock"]
-                            main_stock = main.get("stock")
-                            combo_stock: Optional[int]
-                            if main_stock is None:
-                                combo_stock = ev_stock_val
-                            elif ev_stock_val is None:
-                                combo_stock = main_stock
-                            else:
-                                combo_stock = min(main_stock, ev_stock_val)
-                            options.append(
-                                {
-                                    "no": ev["no"],
-                                    "name": f"{main['name']} / {ev['label']}",
-                                    "price": (main.get("price") or 0) + ev["add_price"],
-                                    "stock": combo_stock,
-                                    "isSoldOut": main.get("isSoldOut", False),
-                                    "isBrandDelivery": main.get(
-                                        "isBrandDelivery", False
-                                    ),
-                                    "deliveryType": main.get("deliveryType", ""),
-                                    "managedCode": main.get("managedCode", ""),
-                                }
-                            )
-                    logger.info(
-                        f"[옵션] {goods_no} 2-depth 조합 생성: "
-                        f"메인 {len(main_options)} × (1+{len(extra_values)}) = {len(options)}개"
-                    )
-                else:
-                    # 메인 옵션이 없는 경우 — 엑스트라만 단독 옵션으로 fallback
-                    for ev in extra_values:
-                        options.append(
-                            {
-                                "no": ev["no"],
-                                "name": ev["label"],
-                                "price": (base_price or 0) + ev["add_price"],
-                                "stock": ev["stock"],
-                                "isSoldOut": False,
-                                "isBrandDelivery": False,
-                                "deliveryType": "",
-                                "managedCode": "",
-                            }
-                        )
-                    logger.info(
-                        f"[옵션] {goods_no} extra 단독 {len(extra_values)}개 추가 "
-                        f"(메인 옵션 없음)"
-                    )
+            if extra_groups:
+                logger.info(
+                    f"[옵션] {goods_no} addon_options {len(addon_options)}개 분리 저장 "
+                    f"(메인 {len(options)}개와 별개 차원)"
+                )
 
         except Exception as exc:
             logger.warning(
                 f"[옵션] {goods_no} 옵션 수집 실패: {type(exc).__name__}: {exc}"
             )
 
-        return options, option_value_no_map
+        return options, option_value_no_map, addon_options, option_group_names
 
     async def _fetch_essential(
         self, client: httpx.AsyncClient, goods_no: str

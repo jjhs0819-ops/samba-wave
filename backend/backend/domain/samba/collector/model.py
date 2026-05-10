@@ -356,6 +356,16 @@ class SambaCollectedProduct(SQLModel, table=True):
         default=None, sa_column=Column(JSON, nullable=True)
     )
 
+    # 추가구성상품 (메인 옵션과 별개 차원 — 스마트스토어 productAddItems 등으로 매핑)
+    # [{no, group, name, add_price, stock, is_required}, ...]
+    addon_options: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    # 메인 옵션 그룹명 목록 (예: ["색상"], ["색상","사이즈"])
+    option_group_names: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+
     # 그룹상품 관련
     group_key: Optional[str] = Field(
         default=None, sa_column=Column(String(255), nullable=True, index=True)

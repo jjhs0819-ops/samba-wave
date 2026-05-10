@@ -7,6 +7,7 @@ crtfGrpObjClfCd01~04 값을 출력. API 키는 화면에 노출하지 않음.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import sys
@@ -63,12 +64,11 @@ async def main() -> None:
             print(f"  extras[{k}] = {v!r}")
     api_key = (extras.get("apiKey") or raw_key or "").strip()
     if not api_key:
-        print(f"[ERR] api_key 없음")
+        print("[ERR] api_key 없음")
         sys.exit(1)
     print(f"[ACC] id={acc_id} label={label} key=****{api_key[-4:]}")
 
     # 동일 계정으로 등록된 11번가 prdNo 1건 추출 (검증용)
-    engine2 = create_async_engine(_build_db_url_pre, echo=False) if False else None
     from backend.db.orm import _build_db_url as _bd
     engine2 = create_async_engine(_bd(settings.write_db_user, settings.write_db_password, settings.write_db_host, settings.write_db_port, settings.write_db_name), echo=False)
     async with engine2.connect() as c2:
