@@ -1578,18 +1578,27 @@ async function handleSourcingJob(job) {
         }
       }
     } else if (job.type === 'detail' && job.site === 'SSG') {
-      // SSG: reCAPTCHA 감지 후 즉시 실패 반환 (25초 타임아웃 낭비 방지)
-      const [captchaCheck] = await chrome.scripting.executeScript({
+      // SSG: reCAPTCHA / 임직원 전용 페이지 감지 후 즉시 실패 반환 (타임아웃 낭비 방지)
+      const [preCheck] = await chrome.scripting.executeScript({
         target: { tabId },
         world: 'MAIN',
         func: () => {
           const body = document.body?.innerText || ''
-          return body.includes('연속적인 접근') || body.includes('로봇이 아닙니다')
+          const src = document.documentElement ? document.documentElement.outerHTML : ''
+          return {
+            captcha: body.includes('연속적인 접근') || body.includes('로봇이 아닙니다'),
+            staffOnly: src.indexOf('임직원 및 사업자 회원') !== -1 || src.indexOf('임직원만 구매') !== -1,
+          }
         }
       })
-      if (captchaCheck?.result) {
+      const _pc = preCheck?.result || {}
+      if (_pc.captcha) {
         console.log(`[SSG] reCAPTCHA 차단 감지: ${job.productId}`)
         result = { success: false, blocked: true, message: 'SSG reCAPTCHA 차단' }
+      } else if (_pc.staffOnly) {
+        // 임직원/사업자 회원 전용 — 일반 고객 구매 불가 → 백엔드에서 sold_out 처리하도록 명시적 신호 전달
+        console.log(`[SSG] 임직원 전용 상품 감지 → staffOnly 신호 전송: ${job.productId}`)
+        result = { success: false, staffOnly: true, message: 'SSG 임직원/사업자 회원 전용 상품' }
       } else {
         result = await extractDetailData(tabId, job.site, job.productId)
       }

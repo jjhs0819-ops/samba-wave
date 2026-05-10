@@ -115,15 +115,28 @@ class SSGPlugin(SourcingPlugin):
             # 타임아웃 150s: 확장앱 슬롯 2개 × 아이템당 ~45s = 3배치 = 135s + 여유
             _ext_result = await asyncio.wait_for(_future, timeout=150)
 
+            # 임직원/사업자 회원 전용 상품 — 확장앱이 staffOnly:true 명시 신호 전송
+            # (success:false 케이스이지만 일반 고객 구매 불가이므로 sold_out으로 자동 정리)
+            if isinstance(_ext_result, dict) and _ext_result.get("staffOnly"):
+                logger.info(
+                    f"[SSG] 임직원 전용 상품(확장앱 신호) → sold_out 처리: {site_product_id}"
+                )
+                return RefreshResult(
+                    product_id=product_id,
+                    new_sale_status="sold_out",
+                    new_options=[],
+                    changed=True,
+                    stock_changed=True,
+                )
+
             if isinstance(_ext_result, dict) and _ext_result.get("success"):
                 _html = _ext_result.get("html", "")
-                # 임직원/사업자 회원 전용 상품(SSG가 alert+빈 페이지로 응답) → 일반 고객 구매 불가.
-                # 오토튠 품절 처리와 동일 경로로 흘려보내 마켓에서 자동 정리되도록 sold_out 반환.
+                # 백엔드 폴백 — html 본문 기준 임직원 마커 매칭(확장앱 신호 누락 시 보호)
                 from backend.domain.samba.proxy.ssg_sourcing import _is_staff_only
 
                 if _html and _is_staff_only(_html):
                     logger.info(
-                        f"[SSG] 임직원 전용 상품 감지 → sold_out 처리: {site_product_id}"
+                        f"[SSG] 임직원 전용 상품(html 폴백) → sold_out 처리: {site_product_id}"
                     )
                     return RefreshResult(
                         product_id=product_id,
