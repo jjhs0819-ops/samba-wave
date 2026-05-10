@@ -4690,7 +4690,13 @@ async def sync_orders_from_markets(
                     order_data["tenant_id"] = _tid
                 # 수집상품 매칭 — collected_product_id, product_image, source_site, source_url 보충
                 _pid = str(order_data.get("product_id", ""))
-                _matched = _mpn_cache.get(_pid)
+                # 플레이오토 주문은 master_code 매칭 우선 — 더망고 등록은 우리 cp에 없으니
+                # master_code 미스 = "삼바로 등록 안 한 상품" 자동 판정 (별칭 분리 자연 달성).
+                _pa_mc = str(order_data.get("_pa_master_code") or "")
+                if order_data.get("source") == "playauto" and _pa_mc:
+                    _matched = _mpn_cache.get(_pa_mc) or _mpn_cache.get(_pid)
+                else:
+                    _matched = _mpn_cache.get(_pid)
                 # 플레이오토 별칭(site_id) 단위 매칭 검증 — 1 channel_id에 5개 별칭이
                 # 묶인 구조에서 사용자가 특정 별칭에만 등록한 cp가 다른 별칭 주문에
                 # 잘못 매칭되는 것을 차단. cp.market_product_nos에 `{account_id}_sites`
@@ -4725,6 +4731,7 @@ async def sync_orders_from_markets(
                         order_data["source_url"] = _matched["original_link"]
                 # 매칭 검증용 임시 키 제거 (DB 저장 직전, 모델에 없는 필드)
                 order_data.pop("_pa_site_id", None)
+                order_data.pop("_pa_master_code", None)
                 # 롯데ON 예상 정산금액 계산 (롯데ON 공식 정산공식, 2026-04-30 재확인)
                 #   pymtAmt = actualAmt − (bseCmsn + pcsCmsn + dvCmsn − ajstDcAmt)
                 # raw 응답엔 수수료 필드가 없으므로:
@@ -4796,7 +4803,13 @@ async def sync_orders_from_markets(
                     ):
                         order_data["product_image"] = _unreg_matched["product_image"]
                 # 상품명에서 소싱처 상품번호 추출 → source_site/source_url 보충
-                if not order_data.get("source_url"):
+                # 플레이오토는 1 channel에 5 별칭이 묶인 구조라 product_name 끝 공통 무신사
+                # goods_no가 별칭 무관하게 cross-매칭됨 (예: 캐논 주문이 고경 등록 cp에 매칭).
+                # → 플레이오토 주문은 본 분기 비활성화. master_code 직접 매칭만 신뢰.
+                if (
+                    not order_data.get("source_url")
+                    and order_data.get("source") != "playauto"
+                ):
                     import re as _re
 
                     _pname = order_data.get("product_name", "")
@@ -5920,6 +5933,25 @@ def _parse_playauto_order(
 ) -> dict[str, Any]:
     """플레이오토 EMP 주문 → SambaOrder 데이터 변환."""
 
+    # spec 진단용 — 첫 호출 시 raw 키 + 일부 값 로깅 (MasterCode 필드 확인)
+    if not getattr(_parse_playauto_order, "_logged_keys", False):
+        try:
+            import json as _json
+
+            keys = list(ro.keys())
+            sample = {k: str(ro.get(k))[:60] for k in keys}
+            logger.info(
+                f"[플레이오토 주문 raw spec] keys={keys} sample={_json.dumps(sample, ensure_ascii=False)[:1500]}"
+            )
+            _parse_playauto_order._logged_keys = True  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+    # MasterCode 추출 (응답에 있으면 매칭에 활용 — Phase 4)
+    master_code = (
+        ro.get("MasterCode") or ro.get("master_code") or ro.get("masterCode") or ""
+    )
+
     status_map = {
         "신규주문": "pending",
         "송장출력": "wait_ship",
@@ -5991,6 +6023,9 @@ def _parse_playauto_order(
         # 별칭 단위 매칭 검증용 — DB 저장 전 pop. site_id가 cp의 등록된 site_ids에
         # 포함될 때만 매칭 허용 (기존 cp는 site_ids 미저장이라 호환 매칭).
         "_pa_site_id": site_id,
+        # 매칭용 임시 키 — DB 저장 전 pop. plapro 응답에 MasterCode 있으면 추출해
+        # _mpn_cache 매칭에 ProdCode와 함께 시도. 매칭 우선순위: master_code > product_id.
+        "_pa_master_code": master_code,
         # 판매처(사업자) 정보 — 별칭 매핑 적용
         "source_site": (
             f"{site_name}({alias_map[site_id]})"
