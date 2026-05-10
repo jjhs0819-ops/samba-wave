@@ -239,7 +239,7 @@ async def _recover_sourcing_jobs(logger: logging.Logger) -> None:
     from sqlalchemy import update as sa_update
     from sqlmodel import select
 
-    from backend.db.orm import get_write_sessionmaker
+    from backend.db.orm import get_write_session
     from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
     from backend.domain.samba.sourcing_job.model import SambaSourcingJob
 
@@ -248,8 +248,7 @@ async def _recover_sourcing_jobs(logger: logging.Logger) -> None:
     _MAX_RECOVER = 1000
 
     try:
-        sessionmaker = get_write_sessionmaker()
-        async with sessionmaker() as session:
+        async with get_write_session() as session:
             now = datetime.now(_UTC)
             stmt = (
                 select(SambaSourcingJob)

@@ -17,7 +17,11 @@ def reset_shutdown_queue_state():
 
 
 def _make_db_session_mock(request_id: str, payload: dict):
-    """get_next_job DB 조회를 mock하는 헬퍼."""
+    """get_next_job DB 조회를 mock하는 헬퍼.
+
+    get_write_session은 @asynccontextmanager 데코레이터로 감싼
+    async generator 함수 — 호출 시 async context manager 객체를 반환.
+    """
     mock_row = MagicMock()
     mock_row.__iter__ = lambda s: iter([request_id, payload])
 
@@ -27,11 +31,12 @@ def _make_db_session_mock(request_id: str, payload: dict):
     mock_session = AsyncMock()
     mock_session.execute = AsyncMock(return_value=mock_result)
     mock_session.commit = AsyncMock()
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
 
-    mock_sessionmaker = MagicMock(return_value=mock_session)
-    return mock_sessionmaker
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_cm.__aexit__ = AsyncMock(return_value=False)
+
+    return MagicMock(return_value=mock_cm)
 
 
 def test_sourcing_queue_add_and_resolve_job():
@@ -50,11 +55,11 @@ def test_sourcing_queue_add_and_resolve_job():
             "url": "https://example.com",
             "ownerDeviceId": "",
         }
-        mock_sessionmaker = _make_db_session_mock(request_id, payload)
+        mock_get_write_session = _make_db_session_mock(request_id, payload)
 
         with patch(
-            "backend.domain.samba.proxy.sourcing_queue.get_write_sessionmaker",
-            return_value=mock_sessionmaker,
+            "backend.domain.samba.proxy.sourcing_queue.get_write_session",
+            mock_get_write_session,
         ):
             job = await SourcingQueue.get_next_job()
 
