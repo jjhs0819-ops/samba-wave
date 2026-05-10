@@ -525,6 +525,16 @@ const ProductCard = React.memo(function ProductCard({
 
   const tdLabel: React.CSSProperties = { padding: '6px 8px', color: '#555', fontSize: '0.75rem', whiteSpace: 'nowrap', verticalAlign: 'middle' }
   const tdVal: React.CSSProperties = { padding: '6px 8px', verticalAlign: 'middle' }
+  const marketNameInputBaseStyle: React.CSSProperties = {
+    width: '100%',
+    padding: '2px 6px',
+    fontSize: '0.72rem',
+    background: '#1A1A1A',
+    borderRadius: '3px',
+    outline: 'none',
+    userSelect: 'text',
+    WebkitUserSelect: 'text',
+  }
 
   return (
     <div style={{
@@ -1583,10 +1593,12 @@ const ProductCard = React.memo(function ProductCard({
                           defaultValue={currentMarketName}
                           placeholder={placeholder}
                           style={{
-                            width: '100%', padding: '2px 6px', fontSize: '0.72rem',
-                            background: '#1A1A1A', border: `1px solid ${isOverLimit ? '#FF6B6B' : '#2D2D2D'}`,
-                            color: isOverLimit ? '#FF6B6B' : '#C5C5C5', borderRadius: '3px', outline: 'none',
+                            ...marketNameInputBaseStyle,
+                            border: `1px solid ${isOverLimit ? '#FF6B6B' : '#2D2D2D'}`,
+                            color: isOverLimit ? '#FF6B6B' : '#C5C5C5',
                           }}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onClick={(e) => e.stopPropagation()}
                           onBlur={(e) => {
                             const val = e.target.value.trim()
                             if (val === currentMarketName) return
@@ -1663,10 +1675,12 @@ const ProductCard = React.memo(function ProductCard({
                             defaultValue={curName}
                             placeholder={ph}
                             style={{
-                              width: '100%', padding: '2px 6px', fontSize: '0.72rem',
-                              background: '#1A1A1A', border: `1px solid ${isOver ? '#FF6B6B' : '#2D2D2D'}`,
-                              color: isOver ? '#FF6B6B' : '#C5C5C5', borderRadius: '3px', outline: 'none',
+                              ...marketNameInputBaseStyle,
+                              border: `1px solid ${isOver ? '#FF6B6B' : '#2D2D2D'}`,
+                              color: isOver ? '#FF6B6B' : '#C5C5C5',
                             }}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onClick={(e) => e.stopPropagation()}
                             onBlur={(e) => {
                               const val = e.target.value.trim()
                               if (val === curName) return

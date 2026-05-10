@@ -12,6 +12,68 @@ from backend.domain.samba.plugins.market_base import MarketPlugin
 from backend.utils.logger import logger
 
 
+# 11번가 PUT 응답 중 "유령 매핑(이미 삭제됨/존재하지 않음)" 으로 판정할 메시지 패턴.
+# - "삭제된 상품은 수정할 수 없습니다" : 등록은 됐지만 11번가가 deleted 처리한 케이스
+#   (검수 반려 자동삭제, 셀러 직접 삭제, 정책 위반 차단 등)
+# - "존재하지 않는 상품"             : 그런 prdNo 자체가 11번가에 없음 (잘못 저장된 prdNo)
+_GHOST_ERROR_PATTERNS = ("삭제된 상품", "존재하지 않는 상품")
+
+
+def _is_ghost_error(err_msg: str) -> bool:
+    """11번가 응답 메시지가 '유령 매핑' 신호인지 판별."""
+    return any(p in err_msg for p in _GHOST_ERROR_PATTERNS)
+
+
+async def _purge_ghost_mapping(
+    session, product_id: str, account_id: str, prd_no: str, reason: str
+) -> bool:
+    """DB에서 해당 product의 11번가 unclehg/계정 매핑을 정리.
+
+    - registered_accounts 배열에서 account_id 제거
+    - market_product_nos 에서 account_id / f"{account_id}_origin" 키 제거
+    실패해도 호출부에 영향 안 가도록 예외는 삼키고 False 리턴.
+    """
+    try:
+        from sqlalchemy.orm.attributes import flag_modified
+        from sqlmodel import select
+
+        from backend.domain.samba.collector.model import SambaCollectedProduct
+
+        if not (product_id and account_id):
+            return False
+        stmt = select(SambaCollectedProduct).where(
+            SambaCollectedProduct.id == product_id
+        )
+        prod = (await session.execute(stmt)).scalars().first()
+        if not prod:
+            return False
+        changed = False
+        nos = dict(prod.market_product_nos or {})
+        for k in (account_id, f"{account_id}_origin"):
+            if k in nos:
+                nos.pop(k, None)
+                changed = True
+        if changed:
+            prod.market_product_nos = nos
+            flag_modified(prod, "market_product_nos")
+        regs = list(prod.registered_accounts or [])
+        if account_id in regs:
+            regs = [a for a in regs if a != account_id]
+            prod.registered_accounts = regs
+            flag_modified(prod, "registered_accounts")
+            changed = True
+        if changed:
+            session.add(prod)
+            await session.commit()
+            logger.warning(
+                f"[11번가][유령정리] product={product_id} account={account_id} prdNo={prd_no} 사유={reason}"
+            )
+        return changed
+    except Exception as e:
+        logger.warning(f"[11번가][유령정리] 실패 product={product_id} — {e}")
+        return False
+
+
 class ElevenstPlugin(MarketPlugin):
     market_type = "11st"
     policy_key = "11번가"
@@ -167,6 +229,18 @@ class ElevenstPlugin(MarketPlugin):
             except ElevenstRateLimitError:
                 raise  # Rate Limit은 폴백 없이 즉시 전파
             except Exception as e:
+                _err_msg = str(e)
+                # 유령 매핑이면 폴백 시도 무의미 — 즉시 정리하고 종료
+                if _is_ghost_error(_err_msg):
+                    pid = str(product.get("id") or "")
+                    aid = getattr(account, "id", "") if account else ""
+                    await _purge_ghost_mapping(session, pid, aid, existing_no, _err_msg)
+                    return {
+                        "success": True,
+                        "product_no": "",
+                        "message": f"11번가 유령 매핑 자동정리 (사유: {_err_msg})",
+                        "ghost_cleanup": True,
+                    }
                 logger.warning(
                     f"[11번가] 경량 업데이트 실패, 전체 수정으로 폴백: {existing_no} — {e}"
                 )
@@ -248,6 +322,17 @@ class ElevenstPlugin(MarketPlugin):
             raise  # worker까지 전파시켜 Rate Limit 동적 감소 동작하도록
         except ElevenstApiError as e:
             err = str(e)
+            # 유령 매핑(이미 삭제됨/존재하지 않음) → DB 매핑 정리 후 success 처리
+            if existing_no and _is_ghost_error(err):
+                pid = str(product.get("id") or "")
+                aid = getattr(account, "id", "") if account else ""
+                await _purge_ghost_mapping(session, pid, aid, existing_no, err)
+                return {
+                    "success": True,
+                    "product_no": "",
+                    "message": f"11번가 유령 매핑 자동정리 (사유: {err})",
+                    "ghost_cleanup": True,
+                }
             if "해외 쇼핑 카테고리" in err:
                 return {
                     "success": False,

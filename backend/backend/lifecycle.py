@@ -6,6 +6,7 @@ import os
 import sys
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from typing import Optional
 
 from fastapi import FastAPI
 
@@ -522,19 +523,43 @@ async def _warmup_tetris_board_cache(logger: logging.Logger) -> None:
     """서버 시작 시 테트리스 보드 캐시 백그라운드 워밍업.
 
     get_board() 쿼리는 60초 이상 소요되므로 첫 사용자 요청 전에 미리 실행해둔다.
+    캐시 키가 tenant_id별로 분리되므로 None 외에 실제 tenant_id 전부를 워밍업한다.
     실패해도 무시 — 사용자가 재시도하면 정상 동작함.
     """
     try:
+        from sqlalchemy import text as _sa_text
+
         from backend.db.orm import get_read_session
         from backend.domain.samba.tetris.repository import SambaTetrisRepository
         from backend.domain.samba.tetris.service import SambaTetrisService
 
-        async with get_read_session() as session:
-            svc = SambaTetrisService(SambaTetrisRepository(session), session)
-            await svc.get_board(tenant_id=None)
-            logger.info("[startup] 테트리스 보드 캐시 워밍업 완료")
+        tenant_ids: list[Optional[str]] = [None]
+        try:
+            async with get_read_session() as rs:
+                rows = await rs.execute(
+                    _sa_text(
+                        "SELECT DISTINCT tenant_id FROM samba_market_account "
+                        "WHERE tenant_id IS NOT NULL"
+                    )
+                )
+                for (tid,) in rows.all():
+                    if tid:
+                        tenant_ids.append(str(tid))
+        except Exception as exc:
+            logger.warning("[startup] 테트리스 워밍업 tenant 목록 조회 실패: %s", exc)
+
+        for tid in tenant_ids:
+            try:
+                async with get_read_session() as session:
+                    svc = SambaTetrisService(SambaTetrisRepository(session), session)
+                    await svc.get_board(tenant_id=tid)
+                logger.info("[startup] 테트리스 보드 캐시 워밍업 완료 tenant=%s", tid)
+            except Exception as exc:
+                logger.warning(
+                    "[startup] 테트리스 보드 캐시 워밍업 실패 tenant=%s — %s", tid, exc
+                )
     except Exception as exc:
-        logger.warning("[startup] 테트리스 보드 캐시 워밍업 실패: %s", exc)
+        logger.warning("[startup] 테트리스 보드 캐시 워밍업 전체 실패: %s", exc)
 
 
 async def _start_tetris_sync_scheduler() -> None:

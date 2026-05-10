@@ -23,7 +23,7 @@ export function useTetris() {
     setError(null)
     try {
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Request timeout (15s)')), 15000)
+        setTimeout(() => reject(new Error('Request timeout (60s)')), 60000)
       )
       const data = await Promise.race([tetrisApi.getBoard(), timeoutPromise])
       setBoard(data as TetrisBoardResponse)
