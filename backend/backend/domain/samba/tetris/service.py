@@ -390,13 +390,20 @@ class SambaTetrisService:
 
         for acc in accounts:
             mt = acc.market_type
-            if mt not in market_groups:
-                market_groups[mt] = {
-                    "market_type": mt,
-                    "market_name": acc.market_name or _MARKET_DISPLAY_NAMES.get(mt, mt),
+            # 플레이오토는 계정별로 별도 컬럼 분리
+            is_playauto = mt == "playauto"
+            group_key = f"playauto:{acc.id}" if is_playauto else mt
+            if group_key not in market_groups:
+                base_name = acc.market_name or _MARKET_DISPLAY_NAMES.get(mt, mt)
+                display_name = (
+                    f"{base_name} ({acc.account_label})" if is_playauto else base_name
+                )
+                market_groups[group_key] = {
+                    "market_type": mt,  # 응답 필드는 그대로 'playauto' 유지
+                    "market_name": display_name,
                     "accounts": [],
                 }
-                market_order.append(mt)
+                market_order.append(group_key)
 
             # max_count: additional_fields.maxCount
             add_fields: dict[str, Any] = (
@@ -518,7 +525,7 @@ class SambaTetrisService:
             total_collected = sum(b["collected_count"] for b in assignment_blocks)
             total_registered = account_registered_total.get(acc.id, 0)
 
-            market_groups[mt]["accounts"].append(
+            market_groups[group_key]["accounts"].append(
                 {
                     "account_id": acc.id,
                     "account_label": acc.account_label,
@@ -572,7 +579,7 @@ class SambaTetrisService:
             logger.info(f"[테트리스] unassigned 샘플: {unassigned[:3]}")
 
         return {
-            "markets": [market_groups[mt] for mt in market_order],
+            "markets": [market_groups[gk] for gk in market_order],
             "unassigned": unassigned,
         }
 

@@ -436,7 +436,7 @@ export default function TetrisBoard() {
             const totalCollected  = market.accounts.reduce((s, a) => s + a.total_collected, 0)
             return (
               <div
-                key={market.market_type}
+                key={market.market_name}
                 style={{ minWidth: COLUMN_WIDTH, width: COLUMN_WIDTH, flexShrink: 0, padding: '8px 10px' }}
               >
                 <div style={{ fontSize: 13, color: '#eee', fontWeight: 700, marginBottom: 2 }}>
@@ -485,7 +485,7 @@ export default function TetrisBoard() {
         >
           {sortedMarkets.map(market => (
             <MarketColumn
-              key={market.market_type}
+              key={market.market_name}
               market={market}
               pixelsPerUnit={pixelsPerUnit}
               globalMax={globalMax}
