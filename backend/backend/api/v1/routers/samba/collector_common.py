@@ -177,6 +177,10 @@ def _build_product_data(
             {**o, "stock": o.get("stock") if o.get("stock") is not None else 0}
             for o in cleaned_options
         ],
+        # 추가구성상품 (메인 옵션과 별개 차원 — 스마트스토어 productAddItems 등으로 매핑)
+        "addon_options": detail.get("addonOptions") or None,
+        # 메인 옵션 그룹명 목록 (예: ["색상","사이즈"])
+        "option_group_names": detail.get("optionGroupNames") or None,
         "category": raw_cat,
         "category1": cat_parts[0] if len(cat_parts) > 0 else None,
         "category2": cat_parts[1] if len(cat_parts) > 1 else None,

@@ -51,7 +51,9 @@ async def main() -> None:
 
         print("\n  메인 옵션 샘플 5건:")
         for o in options[:5]:
-            print(f"    {o.get('name'):<30} price={o.get('price')} stock={o.get('stock')}")
+            print(
+                f"    {o.get('name'):<30} price={o.get('price')} stock={o.get('stock')}"
+            )
 
         print("\n  addon_options 샘플 5건:")
         for a in addon_options[:5]:
@@ -115,6 +117,8 @@ async def main() -> None:
             "material": data.get("material", ""),
             "color": data.get("color", "")
             or parse_color_from_name(data.get("name", "")),
+            "sex": data.get("sex", "") or "남녀공용",
+            "season": data.get("season", "") or "사계절",
             "similar_no": similar_no,
             "style_code": data.get("styleNo", ""),
             "group_key": generate_group_key(
@@ -146,7 +150,9 @@ async def main() -> None:
             print(f"\n  ✏️ DB 업데이트: {existing.id}")
         else:
             collected = await svc.create_collected_product(product_data)
-            print(f"\n  ✨ DB 신규 생성: {collected.id if hasattr(collected, 'id') else '?'}")
+            print(
+                f"\n  ✨ DB 신규 생성: {collected.id if hasattr(collected, 'id') else '?'}"
+            )
 
         sf.last_collected_at = datetime.now(timezone.utc)
         session.add(sf)
@@ -164,7 +170,7 @@ async def main() -> None:
         if fresh:
             db_addon = fresh.addon_options or []
             db_groups = fresh.option_group_names or []
-            print(f"\n[DB 검증]")
+            print("\n[DB 검증]")
             print(f"  options: {len(fresh.options or [])}건")
             print(f"  addon_options: {len(db_addon)}건")
             print(f"  option_group_names: {db_groups}")
