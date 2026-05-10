@@ -1321,6 +1321,20 @@ async function handleSourcingJob(job) {
         console.log(`[SSG] 임직원 전용 상품 감지 — fail-fast: ${job.productId}`)
         // 리로드 스킵 후 그대로 진행 → 백엔드가 HTML에서 staff_only 마커 감지해 sold_out 처리
       } else if (!_h1) {
+        // 진단 로그 — 빈 페이지일 때 어떤 URL/title 인지 확인 (임직원 redirect 추적용)
+        try {
+          const [_diag] = await chrome.scripting.executeScript({
+            target: { tabId }, world: 'MAIN',
+            func: () => ({
+              href: location.href || '',
+              title: document.title || '',
+              bodyLen: (document.body?.innerHTML || '').length,
+              hasMarker: (document.documentElement?.outerHTML || '').indexOf('임직원') !== -1,
+            }),
+          }).catch(() => [{ result: null }])
+          const _d = _diag?.result || {}
+          console.log(`[SSG.diag] ${job.productId} href="${_d.href}" title="${_d.title}" bodyLen=${_d.bodyLen} hasMarker=${_d.hasMarker}`)
+        } catch {}
         // 빈 페이지 감지(resultItemObj 전혀 없음) — 리로드 1회 재시도
         console.log(`[SSG] 빈 페이지 감지 — 리로드 재시도: ${job.productId}`)
         try { await chrome.tabs.reload(tabId) } catch {}
