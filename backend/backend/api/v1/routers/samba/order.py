@@ -4728,10 +4728,11 @@ async def sync_orders_from_markets(
                     _id_match = _re.search(r"\b(\d{6,})\s*$", _pname)
                     if _id_match:
                         _sid = _id_match.group(1)
-                        # 1차: DB에서 수집상품 조회 (market_product_nos 보유 상품 우선 → 먼저 수집된 순)
+                        # 1차-A: site_product_id 정확 매칭
                         _cp_check = await session.execute(
                             _sa_text(
-                                "SELECT id, source_site, images FROM samba_collected_product "
+                                "SELECT id, source_site, images, site_product_id "
+                                "FROM samba_collected_product "
                                 "WHERE site_product_id = :sid "
                                 "ORDER BY (market_product_nos IS NOT NULL) DESC, created_at ASC "
                                 "LIMIT 1"
@@ -4739,29 +4740,39 @@ async def sync_orders_from_markets(
                             {"sid": _sid},
                         )
                         _cp_row = _cp_check.fetchone()
+                        # 1차-B: prefix 매칭 (예: SSG itemId '1000807183548'은 _sid '1000807183'로
+                        # 시작 — 정확 매칭 실패 시 prefix로 시도하되, 단 1건일 때만 신뢰)
+                        if not _cp_row:
+                            _cp_pref = await session.execute(
+                                _sa_text(
+                                    "SELECT id, source_site, images, site_product_id "
+                                    "FROM samba_collected_product "
+                                    "WHERE site_product_id LIKE :pfx "
+                                    "ORDER BY (market_product_nos IS NOT NULL) DESC, created_at ASC "
+                                    "LIMIT 2"
+                                ),
+                                {"pfx": _sid + "%"},
+                            )
+                            _cp_pref_rows = _cp_pref.fetchall()
+                            if len(_cp_pref_rows) == 1:
+                                _cp_row = _cp_pref_rows[0]
                         if _cp_row:
+                            _matched_spid = _cp_row[3] or _sid
                             if not order_data.get("collected_product_id"):
                                 order_data["collected_product_id"] = _cp_row[0]
                             if _can_override_source_site_from_sourcing(order_data):
                                 order_data["source_site"] = _cp_row[1]
                             order_data["source_url"] = _sourcing_urls.get(
                                 _cp_row[1], ""
-                            ).format(_sid)
+                            ).format(_matched_spid)
                             if (
                                 not order_data.get("product_image")
                                 and _cp_row[2]
                                 and isinstance(_cp_row[2], list)
                             ):
                                 order_data["product_image"] = _cp_row[2][0]
-                        else:
-                            # 2차: DB에 없어도 상품명 패턴으로 소싱처 추론
-                            # 무신사 goodsNo도 9~10자리이므로 자릿수만으로 FashionPlus 단정 금지
-                            if len(_sid) >= 7:  # 7자리 이상은 무신사로 추론 (더 보수적)
-                                if _can_override_source_site_from_sourcing(order_data):
-                                    order_data["source_site"] = "MUSINSA"
-                                order_data["source_url"] = (
-                                    f"https://www.musinsa.com/products/{_sid}"
-                                )
+                        # 매칭 실패 시 무신사 단정하지 않음 — source_site/url 오염 방지
+                        # (과거 자릿수만으로 MUSINSA로 추론하던 fallback 제거: 2026-05-10)
                 # 중복 체크: 롯데ON은 od_no+od_seq 기반, 기타는 order_number 기반
                 # proc_seq는 주문 상태 변경 시 바뀌므로 중복 체크에서 제외
                 _normalize_synced_order_status(order_data)
