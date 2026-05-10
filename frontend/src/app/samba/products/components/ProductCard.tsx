@@ -1867,9 +1867,16 @@ const ProductCard = React.memo(function ProductCard({
                   </div>
                 </td>
               </tr>
-              {/* Options */}
+              {/* Options (메인) */}
               <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
-                <td style={tdLabel}>옵션</td>
+                <td style={tdLabel}>
+                  옵션
+                  {p.option_group_names && p.option_group_names.length > 0 && (
+                    <div style={{ color: '#666', fontSize: '0.65rem', marginTop: '2px' }}>
+                      {p.option_group_names.join(' / ')}
+                    </div>
+                  )}
+                </td>
                 <td style={tdVal}>
                   {p.options && p.options.length > 0 ? (
                     <OptionPanel
@@ -1884,6 +1891,39 @@ const ProductCard = React.memo(function ProductCard({
                   )}
                 </td>
               </tr>
+              {/* Addon Options (추가구성상품) */}
+              {p.addon_options && p.addon_options.length > 0 && (
+                <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
+                  <td style={tdLabel}>
+                    추가옵션
+                    <div style={{ color: '#666', fontSize: '0.65rem', marginTop: '2px' }}>
+                      {p.addon_options[0]?.group || ''}
+                    </div>
+                  </td>
+                  <td style={tdVal}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
+                      <thead>
+                        <tr style={{ color: '#666', textAlign: 'left' }}>
+                          <th style={{ padding: '4px 6px', fontWeight: 'normal' }}>이름</th>
+                          <th style={{ padding: '4px 6px', fontWeight: 'normal', textAlign: 'right' }}>추가금액</th>
+                          <th style={{ padding: '4px 6px', fontWeight: 'normal', textAlign: 'right' }}>재고</th>
+                          <th style={{ padding: '4px 6px', fontWeight: 'normal' }}>필수</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {p.addon_options.map((ao, idx) => (
+                          <tr key={`${ao.no ?? idx}-${ao.name}`} style={{ borderTop: '1px solid #1E1E1E' }}>
+                            <td style={{ padding: '4px 6px' }}>{ao.name}</td>
+                            <td style={{ padding: '4px 6px', textAlign: 'right' }}>+{(ao.add_price ?? 0).toLocaleString()}원</td>
+                            <td style={{ padding: '4px 6px', textAlign: 'right' }}>{(ao.stock ?? 0).toLocaleString()}</td>
+                            <td style={{ padding: '4px 6px' }}>{ao.is_required ? 'Y' : 'N'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </td>
+                </tr>
+              )}
               {/* Market ON/OFF switches */}
               <tr>
                 <td style={tdLabel}>ON-OFF</td>

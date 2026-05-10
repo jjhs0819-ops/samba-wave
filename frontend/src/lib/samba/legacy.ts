@@ -460,6 +460,17 @@ export interface SambaCollectedProduct {
   images?: string[];
   coupang_main_image?: string;
   options?: unknown[];
+  // 추가구성상품 (메인 옵션과 별개 차원 — 스마트스토어 productAddItems 등으로 매핑)
+  addon_options?: Array<{
+    no?: number
+    group?: string
+    name: string
+    add_price?: number
+    stock?: number
+    is_required?: boolean
+  }>;
+  // 메인 옵션 그룹명 (예: ["색상","사이즈"])
+  option_group_names?: string[];
   category?: string;
   category1?: string;
   category2?: string;
