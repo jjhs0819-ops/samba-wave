@@ -212,7 +212,10 @@ export default function OrdersPage() {
   const applySearch = useCallback(() => {
     setCurrentPage(1)
     setAppliedSearchText(searchText.trim())
-  }, [searchText])
+    // 필터 state(statusFilter 등)가 동일해 loadOrders useCallback이 재생성되지 않더라도
+    // 검색 버튼 클릭 시 항상 최신 필터로 재조회되도록 강제 호출
+    loadOrders()
+  }, [searchText, loadOrders])
 
 
   const [siteAliasMap, setSiteAliasMap] = useState<Record<string, string>>({})
