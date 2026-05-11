@@ -1153,6 +1153,9 @@ export const proxyApi = {
   ssgAddresses: (accountId?: string) =>
     request<{ success: boolean; addresses: { grpAddrId: string; addrNm: string; bascAddr: string }[] }>(
       `${SAMBA_PREFIX}/proxy/ssg/addresses${accountId ? `?account_id=${encodeURIComponent(accountId)}` : ''}`),
+  ssgBrands: (accountId?: string) =>
+    request<{ success: boolean; brands: { brandId: string; brandNm: string }[] }>(
+      `${SAMBA_PREFIX}/proxy/ssg/brands${accountId ? `?account_id=${encodeURIComponent(accountId)}` : ''}`),
   esmDeliveryInfo: (market: string, accountId?: string) =>
     request<{ success: boolean; places: { placeNo: number; placeNm: string; placeType: number }[]; dispatchPolicies: { dispatchPolicyNo: number; policyNm: string }[]; message?: string }>(
       `${SAMBA_PREFIX}/proxy/esm/${market}/delivery-info${accountId ? `?account_id=${encodeURIComponent(accountId)}` : ''}`),

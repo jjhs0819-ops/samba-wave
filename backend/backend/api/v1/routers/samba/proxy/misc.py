@@ -437,6 +437,62 @@ async def ssg_auth_test(
         return {"success": False, "message": f"인증 실패: {exc}"}
 
 
+@router.get("/ssg/brands")
+async def ssg_brands(
+    session: AsyncSession = Depends(get_read_session_dependency),
+    account_id: str | None = None,
+) -> dict[str, Any]:
+    """SSG 계약 브랜드 목록 조회 (계정별).
+
+    account_id 지정 시 해당 계정의 API 키 사용, 없으면 store_ssg 전역 폴백.
+    """
+    from backend.domain.samba.account.model import SambaMarketAccount
+
+    api_key = ""
+
+    if account_id:
+        account = await session.get(SambaMarketAccount, account_id)
+        if account:
+            extras = account.additional_fields or {}
+            if isinstance(extras, dict):
+                api_key = extras.get("apiKey", "")
+            if not api_key and account.api_key:
+                api_key = account.api_key
+
+    if not api_key:
+        creds = await _get_setting(session, "store_ssg")
+        if isinstance(creds, dict):
+            api_key = creds.get("apiKey", "")
+
+    if not api_key:
+        return {"success": False, "brands": []}
+    try:
+        from backend.domain.samba.proxy.ssg import SSGClient
+
+        client = SSGClient(api_key)
+        result = await client.get_brands()
+        raw = result.get("result", {})
+        brand_list = raw.get("brands", [{}])
+        if isinstance(brand_list, dict):
+            brand_list = [brand_list]
+        # XStream 형식: brands[0].brand[] 구조
+        actual_brands: list[dict] = []
+        for item in brand_list:
+            sub = item.get("brand", [])
+            if isinstance(sub, dict):
+                sub = [sub]
+            actual_brands.extend(sub)
+        brands = [
+            {"brandId": str(b.get("brandId", "")), "brandNm": b.get("brandNm", "")}
+            for b in actual_brands
+            if b.get("brandId") and b.get("useYn") == "Y"
+        ]
+        return {"success": True, "brands": brands}
+    except Exception as exc:
+        logger.error(f"[SSG] 브랜드 조회 실패: {exc}")
+        return {"success": False, "brands": [], "message": str(exc)}
+
+
 @router.get("/ssg/shipping-policies")
 async def ssg_shipping_policies(
     session: AsyncSession = Depends(get_read_session_dependency),
@@ -464,7 +520,7 @@ async def ssg_shipping_policies(
             policies.append(
                 {
                     "shppcstId": p.get("shppcstId", ""),
-                    "feeAmt": p.get("dlvCstAmt", 0),
+                    "feeAmt": p.get("shppcst", 0) or p.get("dlvCstAmt", 0),
                     "prpayCodDivNm": p.get("prpayCodDivNm", ""),
                     "shppcstAplUnitNm": p.get("shppcstAplUnitNm", ""),
                     "divCd": p.get("shppcstPlcyDivCd", 0),

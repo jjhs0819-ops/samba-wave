@@ -4689,11 +4689,45 @@ async def sync_orders_from_markets(
 
             _mpn_global, _mpn_by_account = await _get_mpn_cache(session, _sourcing_urls)
 
-            # 미등록 입력 캐시 — 영구 비활성화(2026-05-11).
-            # 과거: 동일 (product_id, channel_name) 그룹에 source_url 자동 전파 → 한 번
-            # 잘못 박힌 URL이 무한 자가증식(시계 cp 사례 800+건 오염). 수동 입력 본래
-            # 의도(자기 행에만 적용)는 그대로 동작하므로 자동 전파 기능만 제거.
+            # 미등록 입력 캐시 — 정확 키 매칭만 허용(2026-05-11 보완).
+            # 과거 사고: 동일 (product_id, channel_name) 키 헐거움 → 시계 cp 800건 오염.
+            # 보완:
+            #   - 키: (channel_id, product_id) — 마켓×상품 정확 식별
+            #   - playauto: (channel_id, product_id, _pa_site_id) — 1채널 5별칭 분리
+            #   - 소스: 수동 입력본(collected_product_id IS NULL + source_url 존재)만
+            #     자동매칭으로 채워진 행은 _matched 경로가 이미 처리하므로 캐시 미포함.
             _unreg_cache: dict[str, dict[str, str]] = {}
+            try:
+                async with get_read_session() as _unreg_sess:
+                    _unreg_result = await _unreg_sess.execute(
+                        _sa_text(
+                            "SELECT channel_id, product_id, source, product_name, source_url, product_image "
+                            "FROM samba_order "
+                            "WHERE source_url IS NOT NULL AND source_url <> '' "
+                            "AND collected_product_id IS NULL "
+                            "AND channel_id IS NOT NULL "
+                            "AND product_id IS NOT NULL"
+                        )
+                    )
+                    _unreg_rows = _unreg_result.fetchall()
+                for _ur in _unreg_rows:
+                    _u_ch = str(_ur[0] or "")
+                    _u_pid = str(_ur[1] or "")
+                    _u_src = str(_ur[2] or "")
+                    if not _u_ch or not _u_pid:
+                        continue
+                    if _u_src == "playauto":
+                        # playauto는 _pa_site_id 차원이 필요하지만 DB엔 별도 컬럼 없음.
+                        # 별칭 cross-매칭 사고 방지 위해 playauto 수동입력 전파는 보류.
+                        continue
+                    _ukey_build = f"{_u_ch}|{_u_pid}"
+                    _unreg_cache[_ukey_build] = {
+                        "source_url": _ur[4],
+                        "product_image": _ur[5] or "",
+                    }
+            except Exception as _unreg_e:
+                logger.warning(f"[주문동기화] _unreg_cache 빌드 실패(무시): {_unreg_e}")
+                _unreg_cache = {}
 
             # 비-롯데ON 주문: order_number 배치 조회로 N+1 SELECT 제거
             _non_lotteon_nos = list(
@@ -4869,9 +4903,39 @@ async def sync_orders_from_markets(
                         order_data["total_payment_amount"] = _sp
                         order_data["fee_rate"] = _fee
                         order_data["revenue"] = max(0, int(_sp * (1 - _fee / 100)))
-                # 미등록 입력 자동 적용 — 영구 비활성화(2026-05-11).
-                # _unreg_cache는 항상 빈 dict이므로 매칭 분기 자체가 동작하지 않음.
-                # 자세한 사유는 _unreg_cache 빌드 위치(상단) 주석 참조.
+                # 롯데홈쇼핑 정산금액 계산 — account.additional_fields.commission_rate 우선, 폴백 25%
+                if order_data.get("source") == "lottehome":
+                    _lh_fee = float(
+                        (account.get("additional_fields") or {}).get("commission_rate")
+                        or 25.0
+                    )
+                    _lh_total = int(order_data.get("total_payment_amount") or 0)
+                    order_data["fee_rate"] = _lh_fee
+                    if not order_data.get("revenue") and _lh_total > 0:
+                        order_data["revenue"] = max(
+                            0, int(_lh_total * (1 - _lh_fee / 100))
+                        )
+                # 미등록 입력 자동 적용 — 정확 키 매칭만 허용(2026-05-11 보완).
+                # 과거 (product_id, channel_name) 키는 헐거워서 시계 cp 800건 오염 사고 발생.
+                # 보완: (channel_id, product_id) 정확 매칭 + playauto는 site_id 추가.
+                # _matched(수집상품 자동매칭)가 이미 채운 경우 그쪽 우선이므로 건드리지 않음.
+                if not _matched and _ch_id and _pid:
+                    if order_data.get("source") == "playauto":
+                        _pa_sid = str(order_data.get("_pa_site_id") or "")
+                        _ukey = f"{_ch_id}|{_pid}|{_pa_sid}"
+                    else:
+                        _ukey = f"{_ch_id}|{_pid}"
+                    _unreg_matched = _unreg_cache.get(_ukey)
+                    if _unreg_matched:
+                        if not order_data.get("source_url"):
+                            order_data["source_url"] = _unreg_matched["source_url"]
+                        if (
+                            not order_data.get("product_image")
+                            and _unreg_matched["product_image"]
+                        ):
+                            order_data["product_image"] = _unreg_matched[
+                                "product_image"
+                            ]
                 # 상품명에서 소싱처 상품번호 추출 → source_site/source_url 보충
                 # 플레이오토는 1 channel에 5 별칭이 묶인 구조라 product_name 끝 공통 무신사
                 # goods_no가 별칭 무관하게 cross-매칭됨 (예: 캐논 주문이 고경 등록 cp에 매칭).
@@ -6530,9 +6594,10 @@ def _parse_lottehome_order(
         "customer_address": f"{recv_addr} {recv_addr2}".strip(),
         "quantity": qty,
         "sale_price": sale_price,
+        "total_payment_amount": sale_price * qty,
         "cost": 0,
         "fee_rate": 0,
-        "revenue": buy_real_price if buy_real_price else sale_price,
+        "revenue": buy_real_price,
         "status": status,
         "shipping_status": shipping_status,
         "shipping_company": shipping_company,

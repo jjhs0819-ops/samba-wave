@@ -631,6 +631,22 @@ async def _start_sourcing_job_cleanup() -> None:
     logging.getLogger("backend.lifecycle").info("[lifecycle] 소싱 잡 청소 워커 시작")
 
 
+_lotteon_ghost_reconciler_task: asyncio.Task | None = None
+
+
+async def _start_lotteon_ghost_reconciler() -> None:
+    """롯데ON 유령상품 일일 자동 감지 잡 — 24시간 주기."""
+    global _lotteon_ghost_reconciler_task
+    from backend.domain.samba.proxy.lotteon.ghost_reconciler import (
+        ghost_reconciler_loop,
+    )
+
+    _lotteon_ghost_reconciler_task = asyncio.create_task(ghost_reconciler_loop())
+    logging.getLogger("backend.lifecycle").info(
+        "[lifecycle] 롯데ON 유령상품 reconciler 시작"
+    )
+
+
 def _validate_startup_settings() -> None:
     if sys.version_info[:3] != SUPPORTED_PYTHON_VERSION:
         current = ".".join(str(part) for part in sys.version_info[:3])
@@ -767,6 +783,7 @@ async def lifespan(app: FastAPI):
         await _start_lottehome_qa_poller()
         await _start_tetris_sync_scheduler()
         await _start_sourcing_job_cleanup()
+        await _start_lotteon_ghost_reconciler()
     _validate_startup_settings()
 
     try:
@@ -785,6 +802,7 @@ async def lifespan(app: FastAPI):
         await _cancel_task(_order_poller_task)
         await _cancel_task(_lottehome_qa_poller_task)
         await _cancel_task(_tetris_sync_task)
+        await _cancel_task(_lotteon_ghost_reconciler_task)
         await _shutdown_worker_runtime(worker_runtime)
         await _cancel_task(getattr(app.state, "_pool_monitor_task", None))
         await _disconnect_cache()

@@ -7,6 +7,7 @@ import {
   forbiddenApi,
   accountApi,
   collectorApi,
+  proxyApi,
   type SambaPolicy,
   type SambaMarketAccount,
   type SambaCollectedProduct,
@@ -209,7 +210,17 @@ export default function PoliciesPage() {
 
   // 마켓정책 설정
   const [marketPolicyTab, setMarketPolicyTab] = useState('쿠팡')
+  const [ssgBrandOptions, setSsgBrandOptions] = useState<{ brandId: string; brandNm: string }[]>([])
   const [marketPolicies, setMarketPolicies] = useState<Record<string, MarketPolicyForm>>({})
+
+  const ssgAccountId = marketPolicies['신세계몰(전시)']?.accountId || ''
+  useEffect(() => {
+    if (marketPolicyTab !== '신세계몰(전시)') return
+    setSsgBrandOptions([])
+    proxyApi.ssgBrands(ssgAccountId || undefined).then(res => {
+      if (res.success && res.brands?.length) setSsgBrandOptions(res.brands)
+    }).catch(() => {})
+  }, [marketPolicyTab, ssgAccountId])
 
   // 상세페이지/상품명 템플릿
   const [detailTemplates, setDetailTemplates] = useState<SambaDetailTemplate[]>([])
@@ -1279,7 +1290,7 @@ export default function PoliciesPage() {
                 </div>
               )}
               {/* 신세계몰 전용: 주문수량 제한 */}
-              {marketPolicyTab === '신세계몰' && (
+              {marketPolicyTab === '신세계몰(전시)' && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                 <span style={{ color: '#888', fontSize: '0.8125rem' }}>1일 최대수량</span>
                 <NumInput value={mp.dayMaxQty || 5} onChange={(v) => { setCurrentMarketPolicy({ ...mp, dayMaxQty: v }); triggerAutoSave() }} style={{ width: '60px' }} suffix="개" />
@@ -1313,7 +1324,7 @@ export default function PoliciesPage() {
               </>
               )}
               {/* 신세계몰 전용: 마진율, 브랜드 */}
-              {marketPolicyTab === '신세계몰' && (
+              {marketPolicyTab === '신세계몰(전시)' && (
                 <>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>마진율</span>
@@ -1323,13 +1334,10 @@ export default function PoliciesPage() {
                     <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>브랜드</span>
                     <select style={{ padding: '0.375rem 0.5rem', fontSize: '0.8125rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', outline: 'none' }}
                       value={mp.brand || ''} onChange={(e) => { setCurrentMarketPolicy({ ...mp, brand: e.target.value }); triggerAutoSave() }}>
-                      <option value="">브랜드 선택</option>
-                      <option value="Nike">Nike</option>
-                      <option value="Adidas">Adidas</option>
-                      <option value="New Balance">New Balance</option>
-                      <option value="Converse">Converse</option>
-                      <option value="Vans">Vans</option>
-                      <option value="기타">기타 (직접입력)</option>
+                      <option value="">{ssgBrandOptions.length ? '브랜드 선택' : '불러오는 중...'}</option>
+                      {ssgBrandOptions.map(b => (
+                        <option key={b.brandId} value={b.brandId}>{b.brandNm}</option>
+                      ))}
                     </select>
                   </div>
                 </>

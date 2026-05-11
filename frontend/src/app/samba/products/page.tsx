@@ -356,16 +356,24 @@ export default function ProductsPage() {
 
   // 필터/정렬 변경 시 1페이지로 리셋 + 선택 초기화 (디바운싱 300ms, 초기 로드 제외)
   const filterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const filterInitRef = useRef(false)
+  const filterInitRef = useRef(true)
   useEffect(() => {
     if (!queryReady) return
-    if (!filterInitRef.current) return
+    // 첫 렌더는 스킵하고 ref를 flip — 이후 드롭다운 변경 시 디바운스 적용 활성화
+    if (filterInitRef.current) { filterInitRef.current = false; return }
     setSelectAll(false)
     setSelectedIds(new Set())
     setCurrentPage(1)
     if (filterTimerRef.current) clearTimeout(filterTimerRef.current)
     filterTimerRef.current = setTimeout(() => {
-      loadProducts(1)
+      // 드롭다운 변경 시 applied 상태 동기화 — loadProducts는 appliedXxx 기준이므로
+      // raw 상태만 바뀌면 OLD 필터로 호출되는 버그 방지 (예: AI이미지 미적용 필터 누락)
+      setAppliedSiteFilter(siteFilter)
+      setAppliedSoldOutFilter(soldOutFilter)
+      setAppliedStatusFilter(statusFilter)
+      setAppliedAiFilter(aiFilter)
+      setAppliedSortBy(sortBy)
+      // applied 상태 갱신 시 useEffect(() => load(), [load])가 자동 재조회
     }, 300)
     return () => { if (filterTimerRef.current) clearTimeout(filterTimerRef.current) }
   // searchType은 검색어가 있을 때만 재조회 트리거 (빈 검색어에서 드롭박스 변경 시 불필요한 로딩 방지)

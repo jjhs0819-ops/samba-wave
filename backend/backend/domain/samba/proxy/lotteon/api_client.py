@@ -344,6 +344,10 @@ class LotteonClient:
 
         롯데ON은 returnCode=0000(요청 접수)이어도
         data[].resultCode=9999이면 개별 상품 등록 실패.
+
+        유령상품 방지: 응답에 spdNo 없으면 epdNo로 list API 재조회 보강.
+        spdNo 없이 epdNo만 저장하면 후속 update/status_change/get_product 가 모두 실패하므로,
+        정상 처리에서는 반드시 진짜 spdNo 를 채워서 반환한다.
         """
         result = await self._call_api(
             "POST",
@@ -360,10 +364,74 @@ class LotteonClient:
                     msg = item.get("resultMessage", "") or str(item)
                     logger.warning(f"[롯데ON] 상품 등록 실패: {item_code} — {msg}")
                     raise LotteonApiError(f"상품 등록 실패 ({item_code}): {msg}")
-                # 성공 시 spdNo 추출
-                spd_no = item.get("spdNo") or item.get("epdNo") or ""
-                return {"success": True, "data": result, "spdNo": spd_no}
+                # 성공 시 spdNo 추출 — 응답에 없으면 epdNo로 list API 보강
+                spd_no = str(item.get("spdNo") or "").strip()
+                epd_no = str(item.get("epdNo") or "").strip()
+                if not epd_no:
+                    # product_data 안 spdLst[0].epdNo 폴백
+                    try:
+                        epd_no = str(
+                            (product_data.get("spdLst") or [{}])[0].get("epdNo") or ""
+                        ).strip()
+                    except Exception:
+                        epd_no = ""
+                if not spd_no and epd_no:
+                    spd_no = await self._lookup_spd_no_by_epd_no(epd_no)
+                    if spd_no:
+                        logger.info(
+                            f"[롯데ON] spdNo 보강 성공 — epdNo={epd_no} → spdNo={spd_no}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[롯데ON] spdNo 보강 실패 — epdNo={epd_no} 조회 결과 없음 "
+                            "(유령상품 위험, ghost_reconciler 가 다음 사이클에 회수)"
+                        )
+                return {
+                    "success": True,
+                    "data": result,
+                    "spdNo": spd_no,
+                    "epdNo": epd_no,
+                }
         return {"success": True, "data": result}
+
+    async def _lookup_spd_no_by_epd_no(
+        self, epd_no: str, retries: int = 3, delay: float = 2.0
+    ) -> str:
+        """epdNo로 list API 재조회해 spdNo 회수 (등록 직후 인덱싱 지연 대응).
+
+        retries 회 / delay 초 간격으로 시도. trGrpCd/trNo 가 비어있으면 빈 문자열 반환.
+        """
+        if not (self.tr_grp_cd and self.tr_no and epd_no):
+            return ""
+        import asyncio as _asyncio
+
+        for attempt in range(retries):
+            try:
+                resp = await self._call_api(
+                    "POST",
+                    "/v1/openapi/product/v1/product/list",
+                    body={
+                        "trGrpCd": self.tr_grp_cd,
+                        "trNo": self.tr_no,
+                        "pageNo": 1,
+                        "rowsPerPage": 10,
+                        "regStrtDttm": "20200101000000",
+                        "regEndDttm": "99991231235959",
+                        "epdNo": [epd_no],
+                    },
+                )
+                for it in resp.get("data") or []:
+                    if not isinstance(it, dict):
+                        continue
+                    if str(it.get("epdNo") or "").strip() == epd_no:
+                        spd = str(it.get("spdNo") or "").strip()
+                        if spd:
+                            return spd
+            except Exception as e:
+                logger.warning(f"[롯데ON] spdNo 보강 조회 예외(무시): {e}")
+            if attempt < retries - 1:
+                await _asyncio.sleep(delay)
+        return ""
 
     async def update_product(self, product_data: dict[str, Any]) -> dict[str, Any]:
         """승인 상품 수정.
@@ -2006,14 +2074,9 @@ class LotteonClient:
                             f"[롯데ON][교환-배송모듈] odNo={od_no} clmNo={clm_no} "
                             f"stepCd={step_cd} dvRtrvDvsCd={item.get('dvRtrvDvsCd', '')}"
                         )
-                        key = f"{od_no}_{clm_no}_{item.get('odSeq', '')}"
-                        if key not in seen_clm_keys:
-                            seen_clm_keys.add(key)
-                            # 배송 API의 stepCd는 교환 클레임 단계와 다른 체계이므로
-                            # 교환요청(21)으로 고정 — 정확한 단계는 1차/2차 클레임 API에서 결정
-                            delivery_item = dict(item)
-                            delivery_item["odPrgsStepCd"] = "21"
-                            result.append(delivery_item)
+                        # 배송 API의 stepCd는 교환 클레임 단계와 다른 체계.
+                        # 강제로 21(교환요청)을 찍으면 상품준비중 주문이 교환요청으로
+                        # 잘못 바뀌므로 1·2차 클레임 API 결과만 신뢰하고 로그만 남김.
                 except Exception as day_e:
                     logger.debug(
                         f"[롯데ON][교환-배송모듈] {srch_strt} 조회 실패: {day_e}"

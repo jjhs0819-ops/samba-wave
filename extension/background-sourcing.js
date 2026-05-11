@@ -2068,6 +2068,23 @@ async function extractDetailData(tabId, site, productId) {
           if (_spEl) {
             domSalePrice = parseInt(_spEl.textContent.replace(/[^\d]/g, ''), 10) || 0
           }
+          // 추가이미지 — `img.zoom_thumb` 썸네일을 DOM에서 직접 추출.
+          // 백엔드에 전달되는 html 필드는 script 태그만 포함하므로 body의 <img> URL은
+          // 정규식으로 잡히지 않아 i2~iN 추가이미지가 0건이 되는 문제를 해결한다.
+          // 500 → 1200 사이즈 치환 후 중복 제거.
+          const domImages = []
+          const _imgSeen = new Set()
+          document.querySelectorAll('img.zoom_thumb').forEach(function(img) {
+            let _s = (img.getAttribute('src') || img.src || '').trim()
+            if (!_s) return
+            if (_s.indexOf('sitem.ssgcdn.com') === -1) return
+            if (_s.indexOf('/' + prdId + '_') === -1) return
+            _s = _s.replace(/_i(\d+)_\d+\.jpg/i, '_i$1_1200.jpg')
+            if (!_imgSeen.has(_s)) {
+              _imgSeen.add(_s)
+              domImages.push(_s)
+            }
+          })
           return {
             success: true,
             site_product_id: prdId,
@@ -2079,6 +2096,7 @@ async function extractDetailData(tabId, site, productId) {
             domOptions: domOptions,  // DOM 파싱 실재고 (JS 렌더링 후, 우선순위 최상)
             domCardPrice: domCardPrice,  // 카드혜택가 DOM 직접 추출값 → cost(원가)에 반영
             domSalePrice: domSalePrice,  // 판매가 DOM 직접 추출값 → salePrice에 반영 (sellprc 대체)
+            domImages: domImages,  // 추가이미지 DOM 직접 추출 (i2~iN, 1200 고해상도)
             url: location.href,
           }
         } catch (e) {

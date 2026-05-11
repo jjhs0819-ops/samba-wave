@@ -1362,19 +1362,63 @@ class JobWorker:
                         )
                         r2 = (result.get("results", []) or [{}])[0]
                         tx2 = r2.get("transmit_result", {})
+                        tx2_err = r2.get("transmit_error", {})
                         any_ok = any(s == "success" for s in tx2.values())
+                        # 갱신 항목 라벨 (price→가격, stock→재고 등)
+                        _item_label_map = {
+                            "price": "가격",
+                            "stock": "재고",
+                            "image": "이미지",
+                            "name": "상품명",
+                            "detail": "상세",
+                            "option": "옵션",
+                            "category": "카테고리",
+                        }
+                        _items_label = (
+                            "·".join(
+                                _item_label_map.get(str(k), str(k))
+                                for k in (update_items or [])
+                            )
+                            or "전체"
+                        )
+                        # 계정 라벨 매핑 (재시도 세션 기준)
+                        retry_acc_repo = SambaMarketAccountRepository(retry_session)
+                        _ok_labels: list[str] = []
+                        _ng_labels: list[str] = []
+                        for _aid, _astatus in tx2.items():
+                            _acc = await retry_acc_repo.get_async(_aid)
+                            _alabel = (
+                                f"{_acc.market_name}({_acc.seller_id or _acc.business_name or '-'})"
+                                if _acc
+                                else str(_aid)
+                            )
+                            if _astatus == "success":
+                                _ok_labels.append(_alabel)
+                            else:
+                                _err = str(tx2_err.get(_aid, "") or "")[:80]
+                                _ng_labels.append(
+                                    f"{_alabel}:{_err}" if _err else _alabel
+                                )
                         if any_ok:
                             retry_success += 1
                             success_count += 1
                             fail_count = prev_fail - 1
+                            _detail = f"{_items_label} → {', '.join(_ok_labels)} {len(_ok_labels):,}건 성공"
+                            if _ng_labels:
+                                _detail += f", {', '.join(_ng_labels)} 실패"
                             _add_job_log(
                                 job.id,
-                                f"[재시도 {ri + 1}/{len(failed_pids)}] {prod_name}: 복구",
+                                f"[재시도 {ri + 1}/{len(failed_pids)}] {prod_name}: 복구 ({_detail})",
                             )
                         else:
+                            _detail = (
+                                f"{_items_label} → {', '.join(_ng_labels)} 재실패"
+                                if _ng_labels
+                                else f"{_items_label} → 재실패"
+                            )
                             _add_job_log(
                                 job.id,
-                                f"[재시도 {ri + 1}/{len(failed_pids)}] {prod_name}: 재실패",
+                                f"[재시도 {ri + 1}/{len(failed_pids)}] {prod_name}: {_detail}",
                             )
                         await retry_session.commit()
                 except Exception as e:
@@ -3122,6 +3166,24 @@ class JobWorker:
                                     or {}
                                 ),
                             )
+                        # 확장앱 DOM 썸네일(domImages) 머지 — 추가이미지 백필.
+                        # html 필드가 script 태그만이라 _build_images_from_base_url 정규식이
+                        # body의 <img.zoom_thumb>를 못 잡아 i2~iN이 누락되는 문제 해결.
+                        _dom_imgs = (
+                            _ext_result.get("domImages", [])
+                            if isinstance(_ext_result, dict)
+                            else []
+                        )
+                        if _dom_imgs and detail:
+                            _cur_imgs = list(detail.get("images") or [])
+                            _seen_imgs = set(_cur_imgs)
+                            for _di in _dom_imgs:
+                                if _di and _di not in _seen_imgs:
+                                    _cur_imgs.append(_di)
+                                    _seen_imgs.add(_di)
+                                    if len(_cur_imgs) >= 9:
+                                        break
+                            detail["images"] = _cur_imgs[:9]
                         # _parse_result_item_obj 실패 시 (dept.ssg.com AJAX 로드):
                         # 확장앱 safeObj의 itemNm + HTML select 직접 파싱으로 폴백
                         if not detail:

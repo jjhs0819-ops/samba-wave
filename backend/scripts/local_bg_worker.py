@@ -154,10 +154,33 @@ def _rembg_alpha(
     return a.point(lambda x: 0 if x < 20 else x)
 
 
+def _sample_bg_color(src: Image.Image) -> tuple[int, int, int]:
+    """원본 네 모서리 16x16 블록 median으로 배경색 추정.
+
+    흰 배경이면 흰색, 회색/검정 스튜디오 컷이면 그 색을 반환해
+    합성 시 흰박스가 튀어보이는 문제를 방지.
+    """
+    import numpy as np
+
+    arr = np.array(src.convert("RGB"))
+    h, w = arr.shape[:2]
+    sz = max(8, min(16, h // 32, w // 32))
+    corners = np.concatenate(
+        [
+            arr[:sz, :sz].reshape(-1, 3),
+            arr[:sz, -sz:].reshape(-1, 3),
+            arr[-sz:, :sz].reshape(-1, 3),
+            arr[-sz:, -sz:].reshape(-1, 3),
+        ],
+        axis=0,
+    )
+    return tuple(int(c) for c in np.median(corners, axis=0))
+
+
 def _composite_with_alpha(
     full_src: Image.Image, small_alpha: Image.Image
 ) -> Image.Image:
-    """원본 해상도 RGB + 작은 alpha mask → 업스케일 후 흰배경 합성, 원본 크기 RGB 반환."""
+    """원본 해상도 RGB + 작은 alpha mask → 업스케일 후 원본 배경색으로 합성."""
     if small_alpha.size != full_src.size:
         big_alpha = small_alpha.resize(full_src.size, Image.LANCZOS)
     else:
@@ -165,8 +188,9 @@ def _composite_with_alpha(
     rgba = Image.new("RGBA", full_src.size)
     rgba.paste(full_src.convert("RGBA"))
     rgba.putalpha(big_alpha)
-    white_bg = Image.new("RGBA", full_src.size, (255, 255, 255, 255))
-    return Image.alpha_composite(white_bg, rgba).convert("RGB")
+    bg_color = _sample_bg_color(full_src)
+    bg = Image.new("RGBA", full_src.size, (*bg_color, 255))
+    return Image.alpha_composite(bg, rgba).convert("RGB")
 
 
 def _alpha_edge_ratio(alpha: Image.Image) -> float:
@@ -243,7 +267,8 @@ def remove_watermark(image_bytes: bytes) -> bytes | None:
         src_orig.save(buf, format="WEBP", quality=90)
         return buf.getvalue()
 
-    # 2) 흰배경 + 로고 패턴 → 원본 좌표로 box 환산해 흰박스 덮음 (rembg 미사용)
+    # 2) 흰배경 + 로고 패턴 → 원본 좌표로 box 환산해 배경색 박스 덮음 (rembg 미사용)
+    #    회색/검정 사진에 흰박스가 박히는 문제 방지 위해 원본 모서리 색을 샘플링
     if _is_white_background_logo(crop):
         W, H = src_orig.size
         box_orig = (
@@ -253,7 +278,8 @@ def remove_watermark(image_bytes: bytes) -> bytes | None:
             int(H * _WM_BOX_H_RATIO),
         )
         out = src_orig.copy()
-        ImageDraw.Draw(out).rectangle(box_orig, fill="white")
+        bg_color = _sample_bg_color(src_orig)
+        ImageDraw.Draw(out).rectangle(box_orig, fill=bg_color)
         buf = io.BytesIO()
         out.save(buf, format="WEBP", quality=90)
         return buf.getvalue()
