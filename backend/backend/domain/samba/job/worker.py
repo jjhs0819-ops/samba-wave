@@ -4616,14 +4616,6 @@ class JobWorker:
             if not _selected_brands and keyword:
                 _selected_brands = [keyword]
 
-            # 브랜드별 검색 모드: brand 정확일치 필터 건너뛴다(키워드 검색 결과 신뢰).
-            # 서브키워드 모드("나이키 운동화"): q에 카테고리 명사가 포함되어 관련 브랜드가
-            # 섞일 수 있으므로 brands= 파라미터 기반 브랜드 필터 유지.
-            if locals().get("_per_brand_keywords") and not locals().get(
-                "_use_subkw_mode"
-            ):
-                _selected_brands = []
-
             if _selected_brands:
                 before = len(items_list)
                 items_list = _filter_by_brands(items_list, _selected_brands)
