@@ -342,8 +342,10 @@ class CoupangClient:
 
             try:
                 data = resp.json()
+                _parsed = True
             except Exception:
                 data = {"raw": resp.text}
+                _parsed = False
 
             logger.info(f"[쿠팡] {method} {path} → {resp.status_code}")
 
@@ -352,6 +354,12 @@ class CoupangClient:
                     data.get("message", "") or data.get("reason", "") or resp.text[:200]
                 )
                 raise CoupangApiError(f"HTTP {resp.status_code}: {msg}")
+
+            # 200 이지만 JSON 파싱 실패 → 응답을 신뢰할 수 없음
+            if not _parsed:
+                raise CoupangApiError(
+                    f"응답 파싱 실패 (HTTP {resp.status_code}): {resp.text[:200]}"
+                )
 
             # 쿠팡 API는 HTTP 200이지만 body에 code=ERROR 반환하는 경우 있음
             if isinstance(data, dict) and data.get("code") == "ERROR":
@@ -593,6 +601,19 @@ class CoupangClient:
         )
         return {"success": True, "data": result}
 
+    async def approve_product(self, seller_product_id: str) -> dict[str, Any]:
+        """상품 승인요청 — 임시저장 상태를 승인대기로 전환.
+
+        쿠팡 Wing API: PUT /v2/.../marketplace/seller-products/{spid}/approvals
+        body 없음.
+        register/update API에서 requested=true 가 무시되는 케이스가 있어
+        명시 호출로 보강 (확인된 사실: 2026-05-11).
+        """
+        return await self._call_api(
+            "PUT",
+            f"/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/{seller_product_id}/approvals",
+        )
+
     async def update_item_price(
         self, vendor_item_id: int | str, price: int
     ) -> dict[str, Any]:
@@ -722,7 +743,11 @@ class CoupangClient:
 
         # 아이템별 공통 필드 생성 함수
         def _build_item(
-            item_name: str, stock: int, size_val: str, item_color: str = ""
+            item_name: str,
+            stock: int,
+            size_val: str,
+            item_color: str = "",
+            add_price: int = 0,
         ) -> dict[str, Any]:
             rep_image = coupang_main or (images_raw[0] if images_raw else "")
             item_images: list[dict[str, Any]] = []
@@ -746,12 +771,16 @@ class CoupangClient:
             # 아이템별 색상 (옵션에서 파싱된 개별 색상 우선)
             resolved_color = item_color or default_color
 
+            # 옵션별 추가금액(add_price) 반영 — Gift box 같은 extra 옵션의 +N원
+            base_sale = int(product.get("sale_price", 0))
+            base_orig = (int(product.get("original_price", 0)) // 100) * 100
+            opt_sale = base_sale + int(add_price or 0)
+            opt_orig = base_orig + int(add_price or 0) if base_orig else 0
+
             return {
                 "itemName": item_name,
-                "originalPrice": (int(product.get("original_price", 0)) // 100) * 100,
-                "salePrice": int(
-                    product.get("sale_price", 0)
-                ),  # calc_market_price에서 이미 100원 내림
+                "originalPrice": opt_orig,
+                "salePrice": opt_sale,
                 "maximumBuyCount": min(stock, 99999),
                 "maximumBuyForPerson": 0,
                 "maximumBuyForPersonPeriod": 1,
@@ -789,6 +818,11 @@ class CoupangClient:
         # 옵션 처리 — 색상/사이즈 분리
         options = product.get("options") or []
         _max_stock_cap = int(product.get("_max_stock") or 0)
+        # 옵션별 추가금액(add_price) 기준치 — 최저가 옵션을 base 로 보고 차액 계산.
+        # 무신사 cartesian 곱으로 만들어진 options 의 경우 price 만 합산돼 있고
+        # add_price 필드가 누락된 과거 데이터에도 동일 fallback 으로 동작.
+        _opt_prices = [int(o.get("price", 0) or 0) for o in options if o.get("price")]
+        _base_opt_price = min(_opt_prices) if _opt_prices else 0
         items = []
         if options:
             for opt in options:
@@ -805,7 +839,15 @@ class CoupangClient:
                         else int(_raw)
                     )
                 opt_color, size_val = _parse_option_color_size(opt_name, default_color)
-                items.append(_build_item(opt_name, opt_stock, size_val, opt_color))
+                # add_price: 명시 필드 우선, 없으면 옵션 price - 최저가로 추출
+                opt_add_price = int(opt.get("add_price", 0) or 0)
+                if not opt_add_price and _base_opt_price:
+                    _this_price = int(opt.get("price", 0) or 0)
+                    if _this_price > _base_opt_price:
+                        opt_add_price = _this_price - _base_opt_price
+                items.append(
+                    _build_item(opt_name, opt_stock, size_val, opt_color, opt_add_price)
+                )
         else:
             _no_opt_stock = _max_stock_cap if _max_stock_cap > 0 else 99
             items.append(

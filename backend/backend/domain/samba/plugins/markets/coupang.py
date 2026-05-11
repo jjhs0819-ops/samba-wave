@@ -211,7 +211,7 @@ class CoupangPlugin(MarketPlugin):
 
         # 기존 상품번호가 있으면 수정, 없으면 신규등록
         if existing_no:
-            result = await client.update_product(existing_no, data)
+            await client.update_product(existing_no, data)
             return {
                 "success": True,
                 "product_no": existing_no,
@@ -230,11 +230,23 @@ class CoupangPlugin(MarketPlugin):
                 elif inner:
                     seller_product_id = str(inner)
 
+            # 응답에 sellerProductId 가 없거나 숫자가 아니면 실패로 처리
+            # — register API 가 200 OK 주더라도 실제 등록 안된 케이스 방어
+            if not seller_product_id or not seller_product_id.isdigit():
+                return {
+                    "success": False,
+                    "message": f"쿠팡 등록 실패: sellerProductId 미수신 (응답: {str(result)[:300]})",
+                    "data": result,
+                }
+
+            # NOTE: approve_product 호출하지 않음 — 호출 시 contributorType 이
+            # None → API_SELLER 로 변경되어 Wing UI 노출 트랙에서 이탈하는
+            # 부작용 확인(2026-05-11). 쿠팡은 register 직후 자동 승인 처리
+            # 흐름이 있으니 우리가 별도 호출 안 하는 게 정확.
+
             return {
                 "success": True,
                 "product_no": seller_product_id,
                 "message": "쿠팡 등록 성공",
-                "data": {"sellerProductId": seller_product_id}
-                if seller_product_id
-                else result,
+                "data": {"sellerProductId": seller_product_id},
             }

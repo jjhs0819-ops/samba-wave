@@ -275,18 +275,15 @@ def _build_combination_options(
     # "A/XS", "A/M" 같은 사이즈 코드는 1단 옵션으로 처리
     has_slash = any(" / " in (o.get("name") or "") for o in options)
 
-    # 그룹명 결정: option_group_names 가 있으면 우선 사용, 없으면 색상/사이즈 폴백
+    # 그룹명 결정: 1차 옵션그룹명은 항상 "선택"으로 강제 (소싱처가 코드성 명칭(A/B/C 등)을
+    # 내려보내 1차옵션명이 단일 문자로 노출되는 문제 방지).
+    # 2차 그룹명은 소싱처 응답(option_group_names[1])을 우선, 없으면 "사이즈" 폴백.
     _src_groups = [g for g in (option_group_names or []) if g]
     if has_slash:
-        if len(_src_groups) >= 2:
-            option_groups = [_src_groups[0][:25], _src_groups[1][:25]]
-        else:
-            option_groups = ["색상", "사이즈"]
+        second = _src_groups[1][:25] if len(_src_groups) >= 2 else "옵션"
+        option_groups = ["선택", second]
     else:
-        if _src_groups:
-            option_groups = [_src_groups[0][:25]]
-        else:
-            option_groups = ["사이즈"]
+        option_groups = ["선택"]
 
     def _clean_option_name(n: str) -> str:
         """옵션명에서 삭제어 제거."""

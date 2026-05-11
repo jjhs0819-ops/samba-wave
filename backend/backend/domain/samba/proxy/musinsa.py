@@ -1216,6 +1216,8 @@ class MusinsaClient:
                                 "no": ev["no"] or main.get("no"),
                                 "name": combo_name,
                                 "price": (main.get("price") or 0) + ev["add_price"],
+                                # 옵션별 추가금액 — 마켓 전송 시 salePrice 보정용
+                                "add_price": int(ev["add_price"] or 0),
                                 "stock": combo_stock,
                                 "isSoldOut": main.get("isSoldOut", False),
                                 "isBrandDelivery": main.get("isBrandDelivery", False),
