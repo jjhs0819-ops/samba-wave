@@ -4836,6 +4836,15 @@ async def sync_orders_from_markets(
                         order_data["total_payment_amount"] = _sp
                         order_data["fee_rate"] = _fee
                         order_data["revenue"] = max(0, int(_sp * (1 - _fee / 100)))
+                # 롯데홈쇼핑 정산금액 계산 — account.additional_fields.commission_rate 우선, 폴백 25%
+                if order_data.get("source") == "lottehome":
+                    _lh_fee = float(
+                        (account.get("additional_fields") or {}).get("commission_rate") or 25.0
+                    )
+                    _lh_total = int(order_data.get("total_payment_amount") or 0)
+                    order_data["fee_rate"] = _lh_fee
+                    if not order_data.get("revenue") and _lh_total > 0:
+                        order_data["revenue"] = max(0, int(_lh_total * (1 - _lh_fee / 100)))
                 # 미등록 입력 자동 적용: 동일 상품의 기존 source_url/product_image 복사
                 _ukey = f"{_pid}|{order_data.get('channel_name', '')}"
                 _unreg_matched = _unreg_cache.get(_ukey)
@@ -6505,9 +6514,10 @@ def _parse_lottehome_order(
         "customer_address": f"{recv_addr} {recv_addr2}".strip(),
         "quantity": qty,
         "sale_price": sale_price,
+        "total_payment_amount": sale_price * qty,
         "cost": 0,
         "fee_rate": 0,
-        "revenue": buy_real_price if buy_real_price else sale_price,
+        "revenue": buy_real_price,
         "status": status,
         "shipping_status": shipping_status,
         "shipping_company": shipping_company,

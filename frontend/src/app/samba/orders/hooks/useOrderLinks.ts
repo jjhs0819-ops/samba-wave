@@ -70,6 +70,7 @@ export function useOrderLinks(accounts: SambaMarketAccount[]) {
       auction: `https://itempage3.auction.co.kr/DetailView.aspx?ItemNo=${productNo}`,
       ssg: `https://www.ssg.com/item/itemView.ssg?itemId=${productNo}`,
       lotteon: `https://www.lotteon.com/p/product/${productNo}`,
+      lottehome: `https://www.lotteimall.com/goods/viewGoodsDetail.lotte?goods_no=${productNo}`,
       kream: `https://kream.co.kr/products/${productNo}`,
       ebay: `https://www.ebay.com/itm/${productNo}`,
     }
