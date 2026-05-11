@@ -294,6 +294,18 @@ def _build_combination_options(
             n = n.replace(w, "")
         return _re.sub(r"\s{2,}", " ", n).strip() or n
 
+    # 옵션 가격 차이 base 결정 — sale_price(정상가) 가 옵션의 ABS 가격보다 높으면
+    # max(opt-sale_price,0) 가 전부 0으로 clamp되어 옵션 간 가격 차이가 소실됨.
+    # 옵션의 활성 가격 중 최저가를 base 로 사용하여 옵션 간 상대 차이만 추출.
+    _active_opt_prices = [
+        int(o.get("price") or 0)
+        for o in options
+        if int(o.get("price") or 0) > 0
+        and not o.get("isSoldOut", False)
+        and (o.get("stock") or 0) > 0
+    ]
+    _diff_base = min(_active_opt_prices) if _active_opt_prices else int(sale_price or 0)
+
     combinations = []
     for idx, opt in enumerate(options):
         name = opt.get("name") or opt.get("size") or f"옵션{idx + 1}"
@@ -325,9 +337,9 @@ def _build_combination_options(
         if sold_out:
             stock = 0
 
-        # 옵션 가격 차이 (기본가 대비, 음수면 0으로 클램핑)
+        # 옵션 가격 차이 — 옵션 활성가 중 최저가를 base 로 사용 (음수 0 클램핑)
         opt_price = int(opt.get("price", 0) or 0)
-        price_diff = max(opt_price - sale_price, 0) if opt_price > 0 else 0
+        price_diff = max(opt_price - _diff_base, 0) if opt_price > 0 else 0
 
         combinations.append(
             {
