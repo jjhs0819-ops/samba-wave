@@ -407,45 +407,57 @@ def _build_combination_options(
 def _build_product_add_items(addon_options: list[dict]) -> list[dict]:
     """addon_options → 스마트스토어 productAddItems 변환.
 
-    스마트스토어 추가구성상품 스펙:
-      - groupName: 추가옵션 그룹명 (드롭다운 라벨)
-      - itemName: 추가옵션 값명 (25자 제한)
-      - price: 추가금액 (정수, 0 이상)
-      - stockQuantity: 재고 (정수)
-      - usable: 사용 여부
+    Naver Commerce API 스키마 (그룹/아이템 중첩):
+      productAddItems = [
+        { "groupName": "추가옵션 그룹명",
+          "items": [
+            {"itemName": "값명", "price": 추가금액, "stockQuantity": 재고, "usable": bool},
+            ...
+          ]
+        },
+        ...
+      ]
 
-    addon_options 입력 포맷 (collector가 채우는 형태):
-      [{no, group, name, add_price, stock, is_required}, ...]
+    addon_options 입력 포맷:
+      [{no, group, name, add_price, stock, is_required, is_none_choice}, ...]
     """
     if not addon_options:
         return []
 
-    items: list[dict] = []
+    # 그룹별로 묶기 (group 키 없으면 "추가옵션" 으로 모음)
+    by_group: dict[str, list[dict]] = {}
     for ao in addon_options:
-        group = (ao.get("group") or "추가옵션").strip()[:25]
         name = (ao.get("name") or "").strip()
         if not name:
             continue
-        # "선택안함"/"선택없음"은 productAddItems에 의미 없음 — 스마트스토어 추가옵션은
-        # 미선택이 기본값이므로 명시 항목 불필요
+        # "선택안함"/"선택없음"은 productAddItems에 의미 없음 — 미선택이 기본
         if ao.get("is_none_choice") or "선택안함" in name or "선택없음" in name:
             continue
         if len(name) > 25:
             name = name[:25]
+        group_raw = (ao.get("group") or "추가옵션").strip()
+        group = group_raw[:25] if group_raw else "추가옵션"
         add_price = max(int(ao.get("add_price") or 0), 0)
         stock = int(ao.get("stock") or 0)
         if stock < 0:
             stock = 0
-        items.append(
+        # 스마트스토어 stockQuantity 보정 — 소싱처 99999+ 같은 큰 값은 9999로 캡
+        if stock > 9999:
+            stock = 9999
+        by_group.setdefault(group, []).append(
             {
-                "groupName": group,
                 "itemName": name,
                 "price": add_price,
                 "stockQuantity": stock,
                 "usable": stock > 0,
             }
         )
-    return items
+
+    return [
+        {"groupName": group_name, "items": items}
+        for group_name, items in by_group.items()
+        if items
+    ]
 
 
 class SmartStoreClient:
@@ -2155,6 +2167,17 @@ class SmartStoreClient:
 
         # 브랜드/제조사 — naverShoppingSearchInfo에 설정 (스마트스토어 상품주요정보)
         # brandName은 네이버에 등록된 브랜드만 허용 — brandId 있을 때만 전송
+        # 네이버 금지문자(\ * ? " < >) 및 URL 패턴 최종 방어 — 소싱처 파서 누락 대비
+        def _sanitize_naver_name(v: str) -> str:
+            if not v:
+                return ""
+            v = re.split(r"https?://|www\.", v, maxsplit=1)[0].strip()
+            v = re.sub(r'[\\*?"<>]', "", v).strip()
+            return v
+
+        brand = _sanitize_naver_name(brand)
+        mfr = _sanitize_naver_name(mfr)
+
         naver_search_info: dict[str, Any] = {}
         brand_id = product.get("_brand_id")
         mfr_id = product.get("_manufacturer_id")

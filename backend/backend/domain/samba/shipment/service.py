@@ -1763,17 +1763,20 @@ class SambaShipmentService:
                     # product_no: 플러그인이 "product_no" 키로 반환 (롯데ON 등)
                     # spdNo: 이전 방식 또는 일부 마켓 직접 반환 — 둘 다 확인
                     product_no = self._extract_market_product_no(result)
+                    # 스마트스토어 origin/channel 분리를 위해 api_data 는 항상 추출
+                    # (기존: product_no 가 비어있을 때만 → smartstore 도 origin 만 저장하던 버그)
                     api_data: dict[str, Any] = {}
-                    if not product_no:
-                        result_data = result.get("data", {})
-                        if isinstance(result_data, dict):
-                            api_data = result_data.get("data", result_data)
-                            if isinstance(api_data, list) and api_data:
-                                api_data = (
-                                    api_data[0] if isinstance(api_data[0], dict) else {}
-                                )
-                            if isinstance(api_data, dict):
-                                product_no = self._extract_market_product_no(api_data)
+                    result_data = result.get("data", {})
+                    if isinstance(result_data, dict):
+                        api_data = result_data.get("data", result_data)
+                        if isinstance(api_data, list) and api_data:
+                            api_data = (
+                                api_data[0] if isinstance(api_data[0], dict) else {}
+                            )
+                        if not isinstance(api_data, dict):
+                            api_data = {}
+                        if not product_no and api_data:
+                            product_no = self._extract_market_product_no(api_data)
                     if product_no:
                         nos: dict[str, str] = {account_id: str(product_no)}
                         if market_type == "smartstore" and isinstance(api_data, dict):
