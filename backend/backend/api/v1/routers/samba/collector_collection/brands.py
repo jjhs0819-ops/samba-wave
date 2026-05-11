@@ -770,11 +770,14 @@ async def brand_create_groups(
             if body.selected_brands:
                 _lbl_norm = _brand_label.lower().replace(" ", "")
                 _valid_brands = [
-                    b for b in body.selected_brands
+                    b
+                    for b in body.selected_brands
                     if _lbl_norm in b.lower().replace(" ", "")
                     or b.lower().replace(" ", "") in _lbl_norm
                 ]
-                _brands_val_lt = ",".join(_valid_brands) if _valid_brands else _brand_label
+                _brands_val_lt = (
+                    ",".join(_valid_brands) if _valid_brands else _brand_label
+                )
             else:
                 _brands_val_lt = _brand_label
             keyword = (
