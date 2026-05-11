@@ -113,7 +113,20 @@ class GsShopSourcingPlugin(SourcingPlugin):
                 count_stock_transitions,
             )
 
+            # options 컬럼은 ORM 환경에 따라 list / str(JSON) 둘 다 들어올 수 있음 —
+            # str로 들어오면 count_stock_transitions가 char 단위 iterate해서
+            # 'str' object has no attribute 'get' 에러를 던지고 갱신이 통째로 실패한다.
+            # 그 결과 GSShop sale_status 가 영원히 in_stock 고착 → 정규화 방어.
             old_options_gs = getattr(product, "options", None) or []
+            if isinstance(old_options_gs, str):
+                import json as _json
+
+                try:
+                    old_options_gs = _json.loads(old_options_gs)
+                except Exception:
+                    old_options_gs = []
+            if not isinstance(old_options_gs, list):
+                old_options_gs = []
             _stock_changes = count_stock_transitions(old_options_gs, new_options or [])
             old_sale = getattr(product, "sale_price", 0) or 0
             old_status = getattr(product, "sale_status", "in_stock")
