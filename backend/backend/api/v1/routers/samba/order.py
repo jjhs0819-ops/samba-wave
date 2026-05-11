@@ -5072,11 +5072,26 @@ async def sync_orders_from_markets(
                         update_fields["ord_prd_seq"] = order_data["ord_prd_seq"]
                     # 결제일 갱신: 기존이 NULL이거나 더 이른 값일 때만 채택
                     # (고객 결제시각은 변하지 않음 — 더 늦은 값은 마켓이 sync/처리시각을 결제칸으로 돌려준 케이스로 간주하고 무시)
+                    # tz-aware/naive 혼재 방지: 비교 직전 양쪽을 UTC tz-aware로 normalize
                     new_paid = order_data.get("paid_at")
-                    if new_paid and (
-                        existing.paid_at is None or new_paid < existing.paid_at
-                    ):
-                        update_fields["paid_at"] = new_paid
+                    if new_paid:
+                        if existing.paid_at is None:
+                            update_fields["paid_at"] = new_paid
+                        else:
+                            from datetime import timezone as _tz
+
+                            _np = (
+                                new_paid.replace(tzinfo=_tz.utc)
+                                if new_paid.tzinfo is None
+                                else new_paid
+                            )
+                            _ep = (
+                                existing.paid_at.replace(tzinfo=_tz.utc)
+                                if existing.paid_at.tzinfo is None
+                                else existing.paid_at
+                            )
+                            if _np < _ep:
+                                update_fields["paid_at"] = new_paid
                     # 수령인 정보 갱신 — 선물하기 주문 등에서 보내는 사람으로 잘못 저장된
                     # customer_name/phone을 다시 가져오기로 수령인 기준으로 교정.
                     # 마켓 응답에 값이 있고 기존과 다르면 덮어쓴다.
