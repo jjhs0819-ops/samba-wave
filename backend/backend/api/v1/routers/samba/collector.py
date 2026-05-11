@@ -384,7 +384,10 @@ async def create_filter(
     svc = _get_services(session)
     data = body.model_dump(exclude_unset=True)
     data["created_by"] = user_id
-    return await svc.create_filter(data)
+    result = await svc.create_filter(data)
+    await cache.delete("filters:tree:v3")
+    await cache.clear_pattern("filters:tree:counts:*")
+    return result
 
 
 @router.put("/filters/{filter_id}")

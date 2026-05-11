@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
+from backend.domain.samba.cache import cache
 from backend.domain.samba.collector.model import FIXED_REQUESTED_COUNT
 
 from backend.api.v1.routers.samba.collector_common import (
@@ -816,6 +817,10 @@ async def brand_create_groups(
         except Exception as e:
             # 중복 그룹은 건너뜀
             logger.warning(f"그룹 생성 스킵: {group_name} — {e}")
+
+    if created_groups:
+        await cache.delete("filters:tree:v3")
+        await cache.clear_pattern("filters:tree:counts:*")
 
     return {
         "created": len(created_groups),
