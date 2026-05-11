@@ -3122,6 +3122,24 @@ class JobWorker:
                                     or {}
                                 ),
                             )
+                        # 확장앱 DOM 썸네일(domImages) 머지 — 추가이미지 백필.
+                        # html 필드가 script 태그만이라 _build_images_from_base_url 정규식이
+                        # body의 <img.zoom_thumb>를 못 잡아 i2~iN이 누락되는 문제 해결.
+                        _dom_imgs = (
+                            _ext_result.get("domImages", [])
+                            if isinstance(_ext_result, dict)
+                            else []
+                        )
+                        if _dom_imgs and detail:
+                            _cur_imgs = list(detail.get("images") or [])
+                            _seen_imgs = set(_cur_imgs)
+                            for _di in _dom_imgs:
+                                if _di and _di not in _seen_imgs:
+                                    _cur_imgs.append(_di)
+                                    _seen_imgs.add(_di)
+                                    if len(_cur_imgs) >= 9:
+                                        break
+                            detail["images"] = _cur_imgs[:9]
                         # _parse_result_item_obj 실패 시 (dept.ssg.com AJAX 로드):
                         # 확장앱 safeObj의 itemNm + HTML select 직접 파싱으로 폴백
                         if not detail:

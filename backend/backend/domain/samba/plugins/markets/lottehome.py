@@ -31,7 +31,11 @@ def _sanitize_image_url(url: str) -> str:
     s = s.split("?", 1)[0]
     # msscdn(무신사) 전용 정규화 — 용량/확장자 동시 해결
     if "msscdn.net" in s.lower():
+        # 1) `_NNN.webp` → `_NNN.jpg` (사이즈 suffix 보존)
         s = re.sub(r"(_\d+)\.webp$", r"\1.jpg", s, flags=re.IGNORECASE)
+        # 2) 그 외 임의 명명 규칙의 `.webp` → `.jpg` (msscdn은 동일 path의
+        #    .jpg 변형을 항상 제공 — Puma 02616601 [1036] 재발 원인)
+        s = re.sub(r"\.webp$", ".jpg", s, flags=re.IGNORECASE)
         s = re.sub(r"_big\.jpg$", "_500.jpg", s, flags=re.IGNORECASE)
 
         def _resize(m: re.Match) -> str:
