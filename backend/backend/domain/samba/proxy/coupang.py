@@ -452,33 +452,16 @@ class CoupangClient:
     async def get_notice_categories(self, category_id: str) -> dict[str, Any]:
         """카테고리별 정확한 noticeCategoryName/noticeCategoryDetailName 조회 (TTL 캐시).
 
-                하드코딩된 한국어 매핑(_COUPANG_NOTICE_CATEGORY/_COUPANG_NOTICE_FIELDS)이
-                쿠팡 API 표준 표기와 미스매치되어 의류/신발 등록 시 모든 옵션의 notice가
-                거부되는 문제(2026-05 보고)를 동적 조회로 근본 해결.
+        하드코딩된 한국어 매핑(_COUPANG_NOTICE_CATEGORY/_COUPANG_NOTICE_FIELDS)이
+        쿠팡 API 표준 표기와 미스매치되어 의류/신발 등록 시 모든 옵션의 notice가
+        거부되는 문제(2026-05 보고)를 동적 조회로 근본 해결.
 
-        <<<<<<< Updated upstream
-                GET /v2/providers/seller_api/apis/api/v1/marketplace/meta/notice-categories/{categoryId}
-                응답 구조 (추정 — 실제 응답 보고 보정):
-                  {
-                    "code": "SUCCESS",
-                    "data": [
-                      {
-                        "noticeCategoryName": "...",
-                        "noticeCategoryDetailNames": [
-                          {"noticeCategoryDetailName": "...", "required": true}
-                        ]
-                      }
-                    ]
-                  }
-        =======
-                GET /v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/{displayCategoryCode}
-                쿠팡 공식 path. data.noticeCategories[*].noticeCategoryDetailNames[*] 내려줌.
+        GET /v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/{displayCategoryCode}
+        쿠팡 공식 path. data.noticeCategories[*].noticeCategoryDetailNames[*] 내려줌.
+        # 직전 fix는 존재하지 않는 path(/notice-categories/{id})로 호출해
+        # 모든 카테고리에서 404 → 정적 매핑 폴백 → 스포츠/레저 카테고리에 '의류' 전송 → 거부.
 
-                직전 fix(PR #120)는 존재하지 않는 path(/notice-categories/{id})로 호출해
-                모든 카테고리에서 404를 받고 정적 매핑으로 폴백되어 동일 오류가 재현됨.
-        >>>>>>> Stashed changes
-
-                캐시: module-level _notice_meta_cache, TTL 1시간. 카테고리당 1회 조회 후 재사용.
+        캐시: module-level _notice_meta_cache, TTL 1시간. 카테고리당 1회 조회 후 재사용.
         """
         import time
 
@@ -493,7 +476,7 @@ class CoupangClient:
 
         result = await self._call_api(
             "GET",
-            f"/v2/providers/seller_api/apis/api/v1/marketplace/meta/notice-categories/{category_id}",
+            f"/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/{category_id}",
         )
         self._notice_meta_cache[category_id] = (result, now)
 
