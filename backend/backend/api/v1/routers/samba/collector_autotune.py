@@ -611,17 +611,25 @@ async def _site_autotune_loop(site: str):
                             _ref_mod._refresh_log_total += 1
 
                         async def _partial_update(pid: str, vals: dict):
-                            """last_sent_data를 건드리지 않는 partial UPDATE."""
+                            """last_sent_data를 건드리지 않는 partial UPDATE.
+
+                            outer session은 refresh 직전 close()됐으므로 재사용 시
+                            greenlet_spawn 에러 발생 — 매번 새 세션 획득.
+                            """
                             from backend.domain.samba.collector.model import (
                                 SambaCollectedProduct as _PU_CP,
+                            )
+                            from backend.db.orm import (
+                                get_write_session as _get_pu_session,
                             )
 
                             vals["updated_at"] = datetime.now(timezone.utc)
                             stmt = (
                                 sa_update(_PU_CP).where(_PU_CP.id == pid).values(**vals)
                             )
-                            await session.execute(stmt)
-                            await session.commit()
+                            async with _get_pu_session() as _pu_s:
+                                await _pu_s.execute(stmt)
+                                await _pu_s.commit()
 
                         async def _on_result(product, r, idx=0, total=0):
                             """리프레시 직후 호출 — DB 업데이트 + 즉시 마켓 전송."""
