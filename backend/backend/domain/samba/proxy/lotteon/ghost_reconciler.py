@@ -130,28 +130,25 @@ async def _fetch_lotteon_sale(client: LotteonClient) -> set[str]:
 async def _log_monitor_event(
     account_id: str, account_label: str, ghosts: int, lotteon_total: int
 ) -> None:
-    """samba_monitor_event 테이블에 알림 기록. 테이블 없으면 silently skip."""
+    """samba_monitor_event 테이블에 알림 기록. 실패 시 silently skip."""
     try:
+        from backend.domain.samba.warroom.model import SambaMonitorEvent
+
         async with get_write_session() as session:
-            await session.execute(
-                text(
-                    "INSERT INTO samba_monitor_event "
-                    "(event_type, severity, source, summary, payload, created_at) "
-                    "VALUES ('lotteon_ghost_detected', :sev, :src, :summary, :payload, now())"
-                ),
-                {
-                    "sev": "warning" if ghosts < ALERT_THRESHOLD else "critical",
-                    "src": f"lotteon:{account_label}",
-                    "summary": f"롯데ON {account_label} 유령상품 {ghosts}개 감지",
-                    "payload": json.dumps(
-                        {
-                            "account_id": account_id,
-                            "ghosts": ghosts,
-                            "lotteon_sale_total": lotteon_total,
-                        },
-                        ensure_ascii=False,
-                    ),
-                },
+            session.add(
+                SambaMonitorEvent(
+                    event_type="lotteon_ghost_detected",
+                    severity="warning" if ghosts < ALERT_THRESHOLD else "critical",
+                    market_type="lotteon",
+                    summary=f"롯데ON {account_label} 유령상품 {ghosts}개 감지",
+                    detail={
+                        "account_id": account_id,
+                        "account_label": account_label,
+                        "ghosts": ghosts,
+                        "lotteon_sale_total": lotteon_total,
+                        "auto_sout_enabled": AUTO_SOUT,
+                    },
+                )
             )
             await session.commit()
     except Exception as e:
