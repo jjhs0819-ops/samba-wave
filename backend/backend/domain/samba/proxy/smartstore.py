@@ -339,6 +339,9 @@ def _build_combination_options(
         )
 
     # ── 동일 옵션명 중복 감지 → US 사이즈 접미사로 구분 (나이키 등) ──
+    # 2D(색상 / 사이즈, 색상 / 스트랩 등) 모드에서는 optionName1 이 여러 optionName2 와
+    # 짝지어져 자연스럽게 반복되므로 중복 제거 로직 건너뜀
+    # (1D 단독 옵션 — has_slash=False — 에서만 의미 있음)
     from collections import Counter as _Counter
 
     def _append_within_25(base: str, suffix: str) -> str:
@@ -348,23 +351,24 @@ def _build_combination_options(
         cut = max(25 - len(suffix), 0)
         return base[:cut] + suffix
 
-    _name_counts = _Counter(c["optionName1"] for c in combinations)
-    _dup_names = {n for n, cnt in _name_counts.items() if cnt > 1}
-    if _dup_names:
-        _dup_seq: dict[str, int] = {}
-        for _c, _opt in zip(combinations, options):
-            if _c["optionName1"] in _dup_names:
-                _us = _opt.get("us_label", "")
-                if _us:
-                    _c["optionName1"] = _append_within_25(
-                        _c["optionName1"], f" US{_us}"
-                    )
-                else:
-                    _base = _c["optionName1"]
-                    _seq = _dup_seq.get(_base, 1)
-                    _dup_seq[_base] = _seq + 1
-                    if _seq > 1:
-                        _c["optionName1"] = _append_within_25(_base, f"({_seq})")
+    if not has_slash:
+        _name_counts = _Counter(c["optionName1"] for c in combinations)
+        _dup_names = {n for n, cnt in _name_counts.items() if cnt > 1}
+        if _dup_names:
+            _dup_seq: dict[str, int] = {}
+            for _c, _opt in zip(combinations, options):
+                if _c["optionName1"] in _dup_names:
+                    _us = _opt.get("us_label", "")
+                    if _us:
+                        _c["optionName1"] = _append_within_25(
+                            _c["optionName1"], f" US{_us}"
+                        )
+                    else:
+                        _base = _c["optionName1"]
+                        _seq = _dup_seq.get(_base, 1)
+                        _dup_seq[_base] = _seq + 1
+                        if _seq > 1:
+                            _c["optionName1"] = _append_within_25(_base, f"({_seq})")
 
     # 최종 안전망 — 어떤 경로로 들어와도 옵션값은 25자 이하 보장 (스마트스토어 MaxLength 정책)
     for _c in combinations:
