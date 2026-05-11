@@ -80,7 +80,7 @@ export default function OrdersTopBar(props: Props) {
               onClick={() => {
                 setNotifications([])
                 setStatusFilter('')
-                setMarketStatus('취소요청')
+                setMarketStatus('cancel_requested')
                 setCustomStart('2020-01-01')
                 setCustomEnd(formatDateInput(getKstTodayDate()))
                 setPeriod('')
