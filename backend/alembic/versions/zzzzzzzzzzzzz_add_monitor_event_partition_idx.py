@@ -25,19 +25,18 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+# async(asyncpg) alembic 환경에서는 autocommit_block 미지원 → AssertionError 발생.
+# 운영 자동 배포(entrypoint.sh 의 alembic upgrade heads)가 이 마이그레이션에서 멈춤.
+# samba_monitor_event 가 작은 테이블(약 16만 row / 102 MB)이므로 CONCURRENTLY 없이도
+# 락 시간 수초 이내 — 락 영향 미미.
 def upgrade() -> None:
-    # autocommit_block: CREATE INDEX CONCURRENTLY는 트랜잭션 내부 실행 불가 → autocommit으로 수행
-    with op.get_context().autocommit_block():
-        op.execute(
-            """
-            CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_sme_event_site_created_at_desc
-            ON samba_monitor_event (event_type, source_site, created_at DESC)
-            """
-        )
+    op.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_sme_event_site_created_at_desc
+        ON samba_monitor_event (event_type, source_site, created_at DESC)
+        """
+    )
 
 
 def downgrade() -> None:
-    with op.get_context().autocommit_block():
-        op.execute(
-            "DROP INDEX CONCURRENTLY IF EXISTS ix_sme_event_site_created_at_desc"
-        )
+    op.execute("DROP INDEX IF EXISTS ix_sme_event_site_created_at_desc")
