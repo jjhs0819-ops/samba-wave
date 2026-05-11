@@ -107,6 +107,7 @@ class TetrisSyncIntervalResponse(BaseModel):
     """자동 sync 인터벌 설정 응답."""
 
     interval_hours: int
+    cancelled: int = 0
 
 
 class TetrisSyncResponse(BaseModel):
@@ -115,6 +116,7 @@ class TetrisSyncResponse(BaseModel):
     assignments: int
     jobs: int
     triggered: int
+    skipped: bool = False
 
 
 class TetrisExcludeRequest(BaseModel):

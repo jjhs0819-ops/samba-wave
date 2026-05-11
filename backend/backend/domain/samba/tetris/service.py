@@ -683,6 +683,43 @@ class SambaTetrisService:
                 )
         return cancelled
 
+    async def cancel_pending_tetris_jobs(self, tenant_id: Optional[str]) -> int:
+        """테트리스 발 PENDING transmit 잡을 모두 취소.
+
+        식별 기준 — payload.origin == 'tetris_sync' (sync_all 생성 시 부착한 마커).
+        RUNNING 잡은 건드리지 않음 — 사용자 의도가 '신규 진행 차단' 이지
+        '현재 진행 중 강제 중단' 이 아니기 때문. 필요 시 개별 '취소' 버튼으로 중단.
+
+        tenant_id 가 주어지면 해당 테넌트 잡만, None 이면 NULL 테넌트 잡만 대상.
+        """
+        from backend.domain.samba.job.model import JobStatus, SambaJob
+        from sqlmodel import select
+
+        stmt = select(SambaJob).where(
+            SambaJob.job_type == "transmit",
+            SambaJob.status == JobStatus.PENDING,
+            SambaJob.payload.op("->>")("origin") == "tetris_sync",
+        )
+        if tenant_id is None:
+            stmt = stmt.where(SambaJob.tenant_id.is_(None))
+        else:
+            stmt = stmt.where(SambaJob.tenant_id == tenant_id)
+
+        rows = await self._session.execute(stmt)
+        jobs = rows.scalars().all()
+        cancelled = 0
+        for job in jobs:
+            job.status = JobStatus.CANCELLED
+            self._session.add(job)
+            cancelled += 1
+        if cancelled > 0:
+            await self._session.commit()
+            logger.info(
+                f"[테트리스] 토글 OFF — 테트리스 발 PENDING 잡 {cancelled}건 취소 "
+                f"(tenant_id={tenant_id})"
+            )
+        return cancelled
+
     async def _cancel_stale_transmit_jobs(
         self,
         tenant_id: Optional[str],
@@ -1080,13 +1117,28 @@ class SambaTetrisService:
     # 전체 sync (인터벌 자동등록 — A안: 미등록 보충)
     # ──────────────────────────────────────────────
 
-    async def sync_all(self, tenant_id: Optional[str]) -> dict[str, int]:
+    async def sync_all(self, tenant_id: Optional[str]) -> dict[str, Any]:
         """현재 배치 전체 기준으로 미등록 상품 transmit 잡 생성 (브랜드×계정별 별도 잡).
 
         samba_tetris_assignment 배치뿐 아니라, registered_accounts에 이미 계정이 있는
         레거시 블록(배치 미등록)도 함께 처리해 미등록 상품을 보충 등록한다.
+
+        토글 OFF (tetris_sync_interval_hours <= 0) 인 경우 어떤 잡도 만들지 않고 즉시 반환.
         """
+        from backend.api.v1.routers.samba.proxy._helpers import _get_setting
         from backend.domain.samba.job.repository import SambaJobRepository
+
+        # 토글 가드 — 루프/엔드포인트 어디서 호출돼도 OFF면 신규 잡 생성 차단
+        toggle_val = await _get_setting(self._session, "tetris_sync_interval_hours")
+        toggle_interval = int(toggle_val) if toggle_val else 0
+        if toggle_interval <= 0:
+            logger.info("[테트리스 sync] 토글 OFF (interval=0) — 스킵")
+            return {
+                "assignments": 0,
+                "jobs": 0,
+                "triggered": 0,
+                "skipped": True,
+            }
 
         assignments = await self._repo.list_by_tenant(tenant_id)
 
@@ -1190,6 +1242,7 @@ class SambaTetrisService:
                     "source_sites": [a.source_site],
                     "brands": [a.brand_name],
                     "skip_unchanged": True,
+                    "origin": "tetris_sync",
                 },
             )
             job_count += 1
@@ -1268,6 +1321,7 @@ class SambaTetrisService:
                     "source_sites": [row.source_site],
                     "brands": [row.brand_name],
                     "skip_unchanged": True,
+                    "origin": "tetris_sync",
                 },
             )
             job_count += 1

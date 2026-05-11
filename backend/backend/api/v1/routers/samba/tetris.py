@@ -151,12 +151,26 @@ async def get_sync_interval(
 async def set_sync_interval(
     body: TetrisSyncIntervalRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ) -> TetrisSyncIntervalResponse:
-    """테트리스 자동 sync 인터벌 설정 저장."""
+    """테트리스 자동 sync 인터벌 설정 저장.
+
+    interval_hours <= 0 이면 토글 OFF 로 간주 — 대기 중인 테트리스 발 PENDING 잡을
+    일괄 취소한다 (RUNNING 잡은 건드리지 않음).
+    """
     from backend.api.v1.routers.samba.proxy._helpers import _set_setting
 
     await _set_setting(session, TETRIS_SYNC_INTERVAL_KEY, body.interval_hours)
-    return TetrisSyncIntervalResponse(interval_hours=body.interval_hours)
+
+    cancelled = 0
+    if body.interval_hours <= 0:
+        svc = _get_service(session)
+        cancelled = await svc.cancel_pending_tetris_jobs(tenant_id)
+
+    return TetrisSyncIntervalResponse(
+        interval_hours=body.interval_hours,
+        cancelled=cancelled,
+    )
 
 
 @router.post("/sync", response_model=TetrisSyncResponse)

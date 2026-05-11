@@ -607,7 +607,10 @@ export default function PoliciesPage() {
     setTetrisMatchingSaving(true)
     try {
       await forbiddenApi.saveSetting(TETRIS_MATCHING_ENABLED_KEY, nextValue)
-      await tetrisApi.setSyncInterval(nextValue ? Math.max(1, syncIntervalInput) : 0)
+      const res = await tetrisApi.setSyncInterval(nextValue ? Math.max(1, syncIntervalInput) : 0)
+      if (!nextValue && res?.cancelled && res.cancelled > 0) {
+        showAlert(`테트리스 매칭 OFF — 대기 중 잡 ${fmtNum(res.cancelled)}건 취소됨`)
+      }
     } catch (error) {
       setTetrisMatchingEnabled(!nextValue)
       showAlert('테트리스 매칭 사용 설정 저장에 실패했습니다: ' + String(error))

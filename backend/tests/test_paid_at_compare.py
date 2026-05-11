@@ -9,9 +9,7 @@ def _normalize_for_compare(
     new_paid: datetime, existing_paid: datetime
 ) -> tuple[datetime, datetime]:
     """order.py:5076-5095 비교 직전 normalize 로직과 동일."""
-    _np = (
-        new_paid.replace(tzinfo=timezone.utc) if new_paid.tzinfo is None else new_paid
-    )
+    _np = new_paid.replace(tzinfo=timezone.utc) if new_paid.tzinfo is None else new_paid
     _ep = (
         existing_paid.replace(tzinfo=timezone.utc)
         if existing_paid.tzinfo is None

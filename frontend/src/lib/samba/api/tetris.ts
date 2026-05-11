@@ -76,6 +76,7 @@ export interface TetrisMoveRequest {
 
 export interface TetrisSyncIntervalResponse {
   interval_hours: number
+  cancelled?: number
 }
 
 export interface TetrisSyncResponse {
