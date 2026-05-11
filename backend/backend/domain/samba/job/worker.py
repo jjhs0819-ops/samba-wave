@@ -1362,19 +1362,63 @@ class JobWorker:
                         )
                         r2 = (result.get("results", []) or [{}])[0]
                         tx2 = r2.get("transmit_result", {})
+                        tx2_err = r2.get("transmit_error", {})
                         any_ok = any(s == "success" for s in tx2.values())
+                        # 갱신 항목 라벨 (price→가격, stock→재고 등)
+                        _item_label_map = {
+                            "price": "가격",
+                            "stock": "재고",
+                            "image": "이미지",
+                            "name": "상품명",
+                            "detail": "상세",
+                            "option": "옵션",
+                            "category": "카테고리",
+                        }
+                        _items_label = (
+                            "·".join(
+                                _item_label_map.get(str(k), str(k))
+                                for k in (update_items or [])
+                            )
+                            or "전체"
+                        )
+                        # 계정 라벨 매핑 (재시도 세션 기준)
+                        retry_acc_repo = SambaMarketAccountRepository(retry_session)
+                        _ok_labels: list[str] = []
+                        _ng_labels: list[str] = []
+                        for _aid, _astatus in tx2.items():
+                            _acc = await retry_acc_repo.get_async(_aid)
+                            _alabel = (
+                                f"{_acc.market_name}({_acc.seller_id or _acc.business_name or '-'})"
+                                if _acc
+                                else str(_aid)
+                            )
+                            if _astatus == "success":
+                                _ok_labels.append(_alabel)
+                            else:
+                                _err = str(tx2_err.get(_aid, "") or "")[:80]
+                                _ng_labels.append(
+                                    f"{_alabel}:{_err}" if _err else _alabel
+                                )
                         if any_ok:
                             retry_success += 1
                             success_count += 1
                             fail_count = prev_fail - 1
+                            _detail = f"{_items_label} → {', '.join(_ok_labels)} {len(_ok_labels):,}건 성공"
+                            if _ng_labels:
+                                _detail += f", {', '.join(_ng_labels)} 실패"
                             _add_job_log(
                                 job.id,
-                                f"[재시도 {ri + 1}/{len(failed_pids)}] {prod_name}: 복구",
+                                f"[재시도 {ri + 1}/{len(failed_pids)}] {prod_name}: 복구 ({_detail})",
                             )
                         else:
+                            _detail = (
+                                f"{_items_label} → {', '.join(_ng_labels)} 재실패"
+                                if _ng_labels
+                                else f"{_items_label} → 재실패"
+                            )
                             _add_job_log(
                                 job.id,
-                                f"[재시도 {ri + 1}/{len(failed_pids)}] {prod_name}: 재실패",
+                                f"[재시도 {ri + 1}/{len(failed_pids)}] {prod_name}: {_detail}",
                             )
                         await retry_session.commit()
                 except Exception as e:
