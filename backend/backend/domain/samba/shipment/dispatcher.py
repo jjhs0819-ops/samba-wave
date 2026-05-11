@@ -49,8 +49,22 @@ _DELETE_GHOST_SIGNALS = (
     "HTTP 404",
 )
 
+# 마켓이 명시적으로 "삭제 거부" 한 응답 — ghost 자동정리로 처리하면 안 됨.
+# 쿠팡 spec: 승인완료 상품은 DELETE 불가, 임시저장 상태에서만 가능.
+# 이 응답을 ghost 로 잘못 처리하면 sambawave 측 registered_accounts 만 정리되어
+# UI 상 "삭제됨" 으로 보이지만 마켓에는 살아남 = 사용자 보고 시나리오.
+_DELETE_REJECT_SIGNALS = (
+    "삭제가 불가능",
+    "삭제는 '저장중', '임시저장'",
+    "임시저장' 상태에서만",
+    "삭제 권한이 없",
+)
+
 
 def _is_delete_ghost(err: str) -> bool:
+    # 명시 거부 응답은 ghost 가 아님 — 우선 검사
+    if any(sig in err for sig in _DELETE_REJECT_SIGNALS):
+        return False
     return any(sig in err for sig in _DELETE_GHOST_SIGNALS)
 
 
@@ -460,7 +474,107 @@ async def _delete_coupang(
         return {"success": False, "message": "쿠팡 인증 정보 없음"}
 
     client = CoupangClient(access_key, secret_key, vendor_id)
-    return await _safe_delete("쿠팡", "coupang", product, client.delete_product)
+
+    # 쿠팡 spec: DELETE 는 '저장중'/'임시저장' 상태에서만 가능.
+    # 승인완료/심사중 상품은 모든 vendor-items 를 sales/stop 후 잠시 대기하면
+    # 쿠팡 측에서 자동으로 삭제 가능 상태로 동기화되어 DELETE 가능.
+    # (2026-05-11 검증: 16198825322 케이스에서 stop+대기 후 DELETE 성공)
+    product_no = product.get("market_product_no", {}).get("coupang", "")
+    if not product_no:
+        return {"success": False, "message": "쿠팡 상품번호 없음 (건너뜀)"}
+
+    async def _stop_all_items() -> int:
+        """모든 vendor-items 를 sales/stop. 성공 개수 반환."""
+        try:
+            gr = await client.get_product(str(product_no))
+            inner = gr.get("data", gr) if isinstance(gr, dict) else {}
+            items = inner.get("items") or []
+        except Exception as e:
+            logger.warning(f"[쿠팡 삭제] get_product 실패: {product_no} — {e}")
+            return 0
+        ok = 0
+        for it in items:
+            vid = it.get("vendorItemId") if isinstance(it, dict) else None
+            if not vid:
+                continue
+            try:
+                await client._call_api(
+                    "PUT",
+                    f"/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/{vid}/sales/stop",
+                )
+                ok += 1
+            except Exception as e:
+                err_s = str(e)
+                # 이미 stop 상태면 무시
+                if "이미" in err_s or "already" in err_s.lower() or "판매중지" in err_s:
+                    ok += 1
+                else:
+                    logger.warning(
+                        f"[쿠팡 삭제] vid={vid} sales/stop 실패: {err_s[:120]}"
+                    )
+        return ok
+
+    # 1차: 즉시 DELETE 시도 (임시저장 상품 빠르게 처리)
+    try:
+        await client.delete_product(str(product_no))
+        return {"success": True, "message": "쿠팡 삭제 완료"}
+    except Exception as e:
+        first_err = str(e)
+        if "삭제가 불가능" not in first_err and "임시저장" not in first_err:
+            # 다른 에러는 ghost 확인
+            if _is_delete_ghost(first_err):
+                return {
+                    "success": True,
+                    "message": f"쿠팡 이미 종료됨(자동정리): {first_err}",
+                    "ghost_cleanup": True,
+                }
+            return {
+                "success": False,
+                "message": f"쿠팡 삭제 실패: {first_err}",
+            }
+
+    # 2차: 모든 옵션 stop + 짧은 대기 + DELETE 재시도 (최대 3회)
+    logger.info(f"[쿠팡 삭제] 옵션 stop 후 재시도 진행: {product_no}")
+    stop_ok = await _stop_all_items()
+    logger.info(f"[쿠팡 삭제] sales/stop 완료: {stop_ok}개 — DELETE 재시도")
+
+    import asyncio as _asyncio
+
+    last_err = ""
+    for wait_sec in (5, 15, 30):
+        await _asyncio.sleep(wait_sec)
+        try:
+            await client.delete_product(str(product_no))
+            return {
+                "success": True,
+                "message": f"쿠팡 삭제 완료 (옵션 {stop_ok}개 stop 후, 대기 {wait_sec}s)",
+            }
+        except Exception as e:
+            last_err = str(e)
+            logger.info(
+                f"[쿠팡 삭제] DELETE 재시도 실패 (대기 {wait_sec}s): {last_err[:120]}"
+            )
+            # ghost 신호면 자동정리로 처리
+            if _is_delete_ghost(last_err):
+                return {
+                    "success": True,
+                    "message": f"쿠팡 이미 종료됨(자동정리): {last_err}",
+                    "ghost_cleanup": True,
+                }
+            # 거부 외 에러면 즉시 실패
+            if "삭제가 불가능" not in last_err and "임시저장" not in last_err:
+                return {
+                    "success": False,
+                    "message": f"쿠팡 삭제 실패: {last_err}",
+                }
+
+    return {
+        "success": False,
+        "message": (
+            f"쿠팡 삭제 실패 — 옵션 stop({stop_ok}개) 후 재시도 3회 모두 거부됨. "
+            f"쿠팡 측 동기화 지연 가능, 잠시 후 자동 재시도 권장: {last_err[:200]}"
+        ),
+    }
 
 
 async def _delete_lottehome(
