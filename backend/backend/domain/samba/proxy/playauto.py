@@ -626,6 +626,9 @@ def _build_siil_entry(product: dict, data: dict) -> dict:
     )
     maker = data.get("Maker", "") or product.get("brand", "") or fallback
     material = (product.get("material") or "").strip() or fallback
+    # 플레이오토 품목정보 소재는 1글자만 등록 시 에러 — 한 글자면 "X 소재" 형태로 보정
+    if material != fallback and len(material) == 1:
+        material = f"{material} 소재"
     color = (product.get("color") or "").strip() or fallback
     care = (
         product.get("care_instructions") or product.get("careInstructions") or ""
