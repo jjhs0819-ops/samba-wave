@@ -10,7 +10,6 @@ logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import or_
-from sqlalchemy.dialects.postgresql import JSONB as _JSONB
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -1038,10 +1037,15 @@ async def scroll_products(
         )
 
     # AI 필터 (JSONB @> 연산자 — GIN 인덱스 활용)
-    _ai_tag = cast('["__ai_tagged__"]', _JSONB)
-    _ai_img = cast('["__ai_image__"]', _JSONB)
-    _img_filtered = cast('["__img_filtered__"]', _JSONB)
-    _img_edited = cast('["__img_edited__"]', _JSONB)
+    # cast(literal, JSONB)는 asyncpg JSONB 코덱이 문자열을 JSON 문자열로 인코딩해
+    # tags(array) @> "json string" 형태가 되어 절대 매칭 안 됨 → 필터 무력화 버그.
+    # text() 인라인 ::jsonb 캐스트로 PG가 직접 파싱하도록 강제 (line 693 패턴과 동일).
+    from sqlalchemy import text as _text_jsonb
+
+    _ai_tag = _text_jsonb("'[\"__ai_tagged__\"]'::jsonb")
+    _ai_img = _text_jsonb("'[\"__ai_image__\"]'::jsonb")
+    _img_filtered = _text_jsonb("'[\"__img_filtered__\"]'::jsonb")
+    _img_edited = _text_jsonb("'[\"__img_edited__\"]'::jsonb")
     if ai_filter == "sold_out":
         conditions.append(
             or_(_CP.sale_status == "sold_out", _all_options_sold_out(_CP))
