@@ -133,64 +133,24 @@ class ElevenstPlugin(MarketPlugin):
         # _skip_image_upload=True → price/stock만 변경된 경우
         # 전체 XML 변환 없이 가격/재고만 포함된 최소 XML로 수정
         if product.get("_skip_image_upload") and existing_no:
-            from backend.domain.samba.proxy.elevenst import ElevenstRateLimitError
+            from backend.domain.samba.proxy.elevenst import (
+                ElevenstRateLimitError,
+                _build_elevenst_option_xml,
+            )
 
             try:
                 new_price = int(product.get("sale_price", 0))
                 options = product.get("options") or []
 
-                # 공식 11번가 상품수정 API 스펙: ProductOption 구조 사용
-                # (sellerOptions/sellerOption은 비공식 구조로 옵션 덮어쓰기 오작동 위험)
+                # 신규등록과 동일한 구조 유지 — 옵션 구조 불일치 시 11번가가 "옵션 동일" 판정 실패
+                # 2D(슬래시) → 멀티옵션, 1D → 싱글옵션, 옵션별 추가요금/재고 반영
                 option_xml = ""
                 if options:
-                    # colTitle: 최초 등록 시 사용한 옵션 타입명 유지 (기본: 옵션)
-                    col_title = product.get("option_type") or "옵션"
-                    col_title = col_title[:25]  # 11번가 최대 25자 제한
-                    option_xml = (
-                        "<optUpdateYn>Y</optUpdateYn>"
-                        "<optSelectYn>Y</optSelectYn>"
-                        "<txtColCnt>1</txtColCnt>"
-                        f"<colTitle>{col_title}</colTitle>"
-                        "<prdExposeClfCd>00</prdExposeClfCd>"
+                    option_xml = _build_elevenst_option_xml(
+                        options,
+                        max_stock_cap=_max_stock_cap,
+                        option_group_names=product.get("option_group_names"),
                     )
-                    for opt in options:
-                        opt_name = opt.get("name", "") or opt.get("size", "") or "기본"
-                        _raw = opt.get("stock")
-                        if _raw is None or _raw == "":
-                            opt_stock = _max_stock_cap if _max_stock_cap > 0 else 99
-                        elif int(_raw) <= 0:
-                            opt_stock = 0
-                        else:
-                            opt_stock = (
-                                min(int(_raw), _max_stock_cap)
-                                if _max_stock_cap > 0
-                                else int(_raw)
-                            )
-                        use_yn = "N" if opt_stock <= 0 else "Y"
-                        stock_qty = max(0, opt_stock)
-                        stock_code = opt.get("managedCode", "") or ""
-                        # XML 특수문자 이스케이프
-                        safe_name = (
-                            opt_name.replace("&", "&amp;")
-                            .replace("<", "&lt;")
-                            .replace(">", "&gt;")
-                            .replace('"', "&quot;")
-                            .replace("'", "&apos;")
-                        )
-                        safe_code = (
-                            stock_code.replace("&", "&amp;")
-                            .replace("<", "&lt;")
-                            .replace(">", "&gt;")
-                        )
-                        option_xml += (
-                            "<ProductOption>"
-                            f"<useYn>{use_yn}</useYn>"
-                            f"<colOptPrice>0</colOptPrice>"
-                            f"<colValue0>{safe_name}</colValue0>"
-                            f"<colCount>{stock_qty}</colCount>"
-                            f"<colSellerStockCd>{safe_code}</colSellerStockCd>"
-                            "</ProductOption>"
-                        )
 
                 _brand = (
                     (product.get("brand") or "")

@@ -748,6 +748,8 @@ class CoupangClient:
             size_val: str,
             item_color: str = "",
             add_price: int = 0,
+            extra_attr_name: str = "",
+            extra_attr_value: str = "",
         ) -> dict[str, Any]:
             rep_image = coupang_main or (images_raw[0] if images_raw else "")
             item_images: list[dict[str, Any]] = []
@@ -795,13 +797,33 @@ class CoupangClient:
                 "emptyBarcode": True,
                 "emptyBarcodeReason": "바코드 없음",
                 "offerCondition": "NEW",
-                "attributes": [
-                    {
-                        "attributeTypeName": "패션의류/잡화 사이즈",
-                        "attributeValueName": size_val,
-                    },
-                    {"attributeTypeName": "색상", "attributeValueName": resolved_color},
-                ],
+                # attributes — 카테고리 MANDATORY(사이즈/색상) 유지 + 옵션 그룹명 기반 자유 입력
+                # 두 번째 토큰이 사이즈 패턴 아니면(예: "Gift box") 자유 attribute 로 등록하고
+                # 사이즈 attribute 는 "FREE" 로 채워 MANDATORY 충족.
+                "attributes": (
+                    [
+                        {
+                            "attributeTypeName": "패션의류/잡화 사이즈",
+                            "attributeValueName": (
+                                "FREE" if extra_attr_name else size_val
+                            ),
+                        },
+                        {
+                            "attributeTypeName": "색상",
+                            "attributeValueName": resolved_color,
+                        },
+                    ]
+                    + (
+                        [
+                            {
+                                "attributeTypeName": extra_attr_name[:25],
+                                "attributeValueName": extra_attr_value[:30],
+                            }
+                        ]
+                        if extra_attr_name and extra_attr_value
+                        else []
+                    )
+                ),
                 "contents": [
                     {
                         "contentsType": "HTML",
@@ -823,6 +845,15 @@ class CoupangClient:
         # add_price 필드가 누락된 과거 데이터에도 동일 fallback 으로 동작.
         _opt_prices = [int(o.get("price", 0) or 0) for o in options if o.get("price")]
         _base_opt_price = min(_opt_prices) if _opt_prices else 0
+        # 옵션 그룹명 — 무신사 main × extra cartesian 곱일 때 두 번째 그룹명
+        # (예: "Gift box 추가") 을 쿠팡 자유 입력 attribute 로 등록하기 위해 사용.
+        _opt_groups = product.get("option_group_names") or []
+        _second_group = ""
+        if isinstance(_opt_groups, list) and len(_opt_groups) >= 2:
+            _gname = str(_opt_groups[1] or "").strip()
+            # 두 번째 그룹명이 "사이즈/size" 류면 자유 attribute 안 만들고 기존 size 매핑 사용
+            if _gname and "사이즈" not in _gname and "size" not in _gname.lower():
+                _second_group = _gname
         items = []
         if options:
             for opt in options:
@@ -845,8 +876,25 @@ class CoupangClient:
                     _this_price = int(opt.get("price", 0) or 0)
                     if _this_price > _base_opt_price:
                         opt_add_price = _this_price - _base_opt_price
+                # 멀티옵션 자유 attribute — _second_group 이 있을 때만 활성화
+                # extra_attr_value 는 옵션명의 마지막 토큰 (예: "차콜 / Gift box" → "Gift box")
+                _extra_name = ""
+                _extra_value = ""
+                if _second_group:
+                    _parts = re.split(r"\s*/\s*|\s*,\s*", opt_name.strip())
+                    if len(_parts) >= 2:
+                        _extra_name = _second_group
+                        _extra_value = _parts[-1].strip()
                 items.append(
-                    _build_item(opt_name, opt_stock, size_val, opt_color, opt_add_price)
+                    _build_item(
+                        opt_name,
+                        opt_stock,
+                        size_val,
+                        opt_color,
+                        opt_add_price,
+                        _extra_name,
+                        _extra_value,
+                    )
                 )
         else:
             _no_opt_stock = _max_stock_cap if _max_stock_cap > 0 else 99

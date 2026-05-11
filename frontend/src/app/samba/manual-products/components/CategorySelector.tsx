@@ -18,9 +18,24 @@ interface Props {
   deletingAccountId?: string
 }
 
-function getMarketProductUrl(marketType: string, productNo: string): string | null {
+function getMarketProductUrl(
+  marketType: string,
+  productNo: string,
+  extras?: { pid?: string; vid?: string }
+): string | null {
   switch (marketType) {
-    case 'coupang': return `https://www.coupang.com/vp/products/${productNo}`
+    case 'coupang': {
+      // 쿠팡 vp/products URL 은 {productId}?vendorItemId={vendorItemId} 형식.
+      // pid 없으면 sellerProductId 로 fallback (접속 안 될 수 있음).
+      const pid = extras?.pid
+      const vid = extras?.vid
+      if (pid) {
+        return vid
+          ? `https://www.coupang.com/vp/products/${pid}?vendorItemId=${vid}`
+          : `https://www.coupang.com/vp/products/${pid}`
+      }
+      return `https://www.coupang.com/vp/products/${productNo}`
+    }
     case '11st': return `https://www.11st.co.kr/products/${productNo}`
     case 'ssg': return `https://www.ssg.com/item/itemView.ssg?itemId=${productNo}`
     case 'gsshop': return `https://www.gsshop.com/prd/prd.gs?prdid=${productNo}`
@@ -76,7 +91,12 @@ export default function CategorySelector({
       {accounts.map(acc => {
         const productNo = marketProductNos?.[acc.id]
         const isRegistered = !!productNo
-        const marketUrl = isRegistered ? getMarketProductUrl(acc.market_type, productNo) : null
+        const marketUrl = isRegistered
+          ? getMarketProductUrl(acc.market_type, productNo, {
+              pid: marketProductNos?.[`${acc.id}_pid`],
+              vid: marketProductNos?.[`${acc.id}_vid`],
+            })
+          : null
         const isDeleting = deletingAccountId === acc.id
 
         return (

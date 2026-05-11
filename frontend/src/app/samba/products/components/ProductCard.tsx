@@ -79,14 +79,29 @@ function fmt(n: number): string {
 }
 
 // 마켓별 상품 구매페이지 URL 생성 (상품번호가 있을 때만)
-function buildMarketProductUrl(marketType: string, sellerId: string, productNo: string, storeSlug?: string): string {
+function buildMarketProductUrl(
+  marketType: string,
+  sellerId: string,
+  productNo: string,
+  storeSlug?: string,
+  extras?: { pid?: string; vid?: string }
+): string {
   if (!productNo) return ''
   switch (marketType) {
     case 'smartstore':
       // 스토어 슬러그 우선 사용 (seller_id는 이메일일 수 있음)
       return `https://smartstore.naver.com/${storeSlug || sellerId}/products/${productNo}`
-    case 'coupang':
+    case 'coupang': {
+      // 쿠팡 vp/products URL 은 {productId}?vendorItemId={vendorItemId} 형식.
+      const pid = extras?.pid
+      const vid = extras?.vid
+      if (pid) {
+        return vid
+          ? `https://www.coupang.com/vp/products/${pid}?vendorItemId=${vid}`
+          : `https://www.coupang.com/vp/products/${pid}`
+      }
       return `https://www.coupang.com/vp/products/${productNo}`
+    }
     case '11st':
       return `https://www.11st.co.kr/products/${productNo}`
     case 'gmarket':
@@ -524,7 +539,13 @@ const ProductCard = React.memo(function ProductCard({
         const productNo = marketProductNos[acc.id] || marketProductNos[`${acc.id}_origin`] || ''
         // 마켓 상품번호가 있으면 구매페이지 직접 링크, 없으면 검색 URL
         const extras = (acc.additional_fields || {}) as Record<string, string>
-        const url = buildMarketProductUrl(acc.market_type, acc.seller_id || '', productNo, extras.storeSlug)
+        const url = buildMarketProductUrl(
+          acc.market_type,
+          acc.seller_id || '',
+          productNo,
+          extras.storeSlug,
+          { pid: marketProductNos[`${acc.id}_pid`], vid: marketProductNos[`${acc.id}_vid`] }
+        )
           || (market?.searchUrl ? market.searchUrl + encodeURIComponent(p.name) : market?.url || '')
         return {
           marketId: acc.market_type,

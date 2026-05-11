@@ -54,8 +54,19 @@ def _pick_lotteon_itm_label(itm: dict) -> str:
     """
     candidates: list[Any] = [itm.get("itmNm"), itm.get("sitmNm")]
     opt_lst = itm.get("itmOptLst") or []
-    if opt_lst and isinstance(opt_lst[0], dict):
-        candidates.append(opt_lst[0].get("optVal"))
+    # 2단 옵션 대응: itmOptLst에 여러 차원이 있으면 " / "로 조합한 라벨도 후보로
+    # (transform_product가 2단 옵션을 [{optNm:색상,optVal:차콜},{optNm:Gift box,optVal:선택안함}] 형태로 등록 →
+    # 매칭 키는 "차콜 / 선택안함" 이어야 product.options의 name과 매칭됨)
+    if opt_lst:
+        opt_vals = [
+            str(o.get("optVal") or "").strip()
+            for o in opt_lst
+            if isinstance(o, dict) and o.get("optVal")
+        ]
+        if len(opt_vals) >= 2:
+            candidates.append(" / ".join(opt_vals))
+        if opt_vals:
+            candidates.append(opt_vals[0])
     candidates.append(itm.get("optNm"))
 
     for c in candidates:

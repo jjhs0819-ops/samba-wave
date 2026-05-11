@@ -1794,6 +1794,15 @@ class SambaShipmentService:
                             logger.info(
                                 f"[전송] 스마트스토어 상품번호 — channel={channel_no or product_no}, origin={origin_no}"
                             )
+                        # 쿠팡 — vp/products URL 은 {productId}?vendorItemId={vendorItemId} 형식.
+                        # plugin 이 register 후 GET 으로 추출한 값을 별도 sub-key 로 저장.
+                        if market_type == "coupang":
+                            _cpid = str(result.get("coupang_product_id", "") or "")
+                            _cvid = str(result.get("coupang_vendor_item_id", "") or "")
+                            if _cpid:
+                                nos[f"{account_id}_pid"] = _cpid
+                            if _cvid:
+                                nos[f"{account_id}_vid"] = _cvid
                         res["product_nos"] = nos
                         logger.info(f"[전송] {market_type} 상품번호: {product_no}")
 

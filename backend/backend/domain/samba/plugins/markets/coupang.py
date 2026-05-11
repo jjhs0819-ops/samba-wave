@@ -244,9 +244,34 @@ class CoupangPlugin(MarketPlugin):
             # 부작용 확인(2026-05-11). 쿠팡은 register 직후 자동 승인 처리
             # 흐름이 있으니 우리가 별도 호출 안 하는 게 정확.
 
+            # 쿠팡 vp/products URL 은 {productId}?vendorItemId={vendorItemId} 형식.
+            # register 응답에는 sellerProductId 만 오므로 GET 으로 즉시 보강 시도.
+            # 임시저장중이면 productId/vendorItemId 가 null 일 수 있음 → 빈값 저장.
+            coupang_product_id = ""
+            coupang_vendor_item_id = ""
+            try:
+                gr = await client.get_product(seller_product_id)
+                inner = gr.get("data", gr) if isinstance(gr, dict) else {}
+                if isinstance(inner, dict):
+                    _pid = inner.get("productId")
+                    if _pid:
+                        coupang_product_id = str(_pid)
+                    _items = inner.get("items") or []
+                    if _items and isinstance(_items[0], dict):
+                        _vid = _items[0].get("vendorItemId")
+                        if _vid:
+                            coupang_vendor_item_id = str(_vid)
+            except Exception as e:
+                logger.warning(
+                    f"[쿠팡] 등록 후 productId/vendorItemId 조회 실패(추후 동기화): "
+                    f"spid={seller_product_id} — {e}"
+                )
+
             return {
                 "success": True,
                 "product_no": seller_product_id,
+                "coupang_product_id": coupang_product_id,
+                "coupang_vendor_item_id": coupang_vendor_item_id,
                 "message": "쿠팡 등록 성공",
                 "data": {"sellerProductId": seller_product_id},
             }

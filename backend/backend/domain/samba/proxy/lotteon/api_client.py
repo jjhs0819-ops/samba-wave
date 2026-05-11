@@ -1238,10 +1238,40 @@ class LotteonClient:
         # ── 단품(옵션) 목록 ─────────────────────────────────────────
         # 스마트스토어 `_build_combination_options` 패턴(proxy/smartstore.py:270~)을
         # 그대로 포팅 — isSoldOut 반영, 실재고 그대로, 상한 있을 때만 cap.
+        # 2단 옵션(" / " 패턴): itmOptLst를 2개 항목으로 분리하고 slPrc를 옵션별 차등 적용.
         itm_lst: list[dict[str, Any]] = []
+        opt_srt_lst: list[dict[str, Any]] = []
         if options:
-            # 상품 전체에서 optNm 한 번만 결정 (단품 간 불일치 시 9999 에러)
-            product_opt_nm = _detect_opt_nm(options[0])
+            # 2단 옵션 판별 — " / "(공백+슬래시+공백) 패턴이 있어야 진짜 2단
+            has_slash = any(" / " in (o.get("name") or "") for o in options)
+
+            # 그룹명(차원명) 결정
+            _src_groups = [g for g in (product.get("option_group_names") or []) if g]
+            if has_slash:
+                first_opt_nm = _src_groups[0][:200] if len(_src_groups) >= 1 else "선택"
+                second_opt_nm = (
+                    _src_groups[1][:200] if len(_src_groups) >= 2 else "옵션2"
+                )
+            else:
+                first_opt_nm = _detect_opt_nm(options[0])
+                second_opt_nm = ""
+
+            # 옵션별 추가금 산정용 base — 활성 옵션 중 최저가
+            _active_opt_prices = [
+                int(o.get("price") or 0)
+                for o in options
+                if int(o.get("price") or 0) > 0
+                and not o.get("isSoldOut", False)
+                and (o.get("stock") or 0) > 0
+            ]
+            _diff_base = (
+                min(_active_opt_prices) if _active_opt_prices else int(sale_price or 0)
+            )
+
+            # optSrtLst 차원별 유니크 값(등장 순서 유지)
+            _dim1_vals: list[str] = []
+            _dim2_vals: list[str] = []
+
             for idx, opt in enumerate(options):
                 opt_name = (
                     opt.get("name", "")
@@ -1249,6 +1279,19 @@ class LotteonClient:
                     or opt.get("value", "")
                     or f"옵션{idx + 1}"
                 )
+
+                # 2단 분리
+                if has_slash and " / " in opt_name:
+                    parts = [p.strip() for p in opt_name.split(" / ", 1)]
+                    parts = [p for p in parts if p]
+                    if len(parts) == 2:
+                        opt_val_1, opt_val_2 = parts[0], parts[1]
+                    elif len(parts) == 1:
+                        opt_val_1, opt_val_2 = parts[0], ""
+                    else:
+                        opt_val_1, opt_val_2 = opt_name, ""
+                else:
+                    opt_val_1, opt_val_2 = opt_name, ""
 
                 # ── 스마트스토어 패턴: isSoldOut → stock=0, 실재고 그대로 ──
                 raw_stock = opt.get("stock", 0) or 0
@@ -1264,15 +1307,55 @@ class LotteonClient:
                 # 품절/재고0 옵션은 미노출(dpYn=N) — smartstore의 usable=False 대응
                 dp_yn = "N" if (sold_out or opt_stock == 0) else "Y"
 
+                # 옵션별 가격 — 추가금만큼 가산 (price_diff = opt.price - _diff_base)
+                opt_price = int(opt.get("price") or 0)
+                price_diff = max(opt_price - _diff_base, 0) if opt_price > 0 else 0
+                itm_sl_prc = int(sale_price) + price_diff
+
+                itm_opt_lst: list[dict[str, str]] = [
+                    {"optNm": first_opt_nm, "optVal": opt_val_1}
+                ]
+                if has_slash and opt_val_2:
+                    itm_opt_lst.append({"optNm": second_opt_nm, "optVal": opt_val_2})
+
                 itm_lst.append(
                     {
                         "eitmNo": f"OPT{idx}",
                         "dpYn": dp_yn,
                         "sortSeq": idx + 1,
-                        "itmOptLst": [{"optNm": product_opt_nm, "optVal": opt_name}],
+                        "itmOptLst": itm_opt_lst,
                         "itmImgLst": itm_img_lst,
-                        "slPrc": sale_price,
+                        "slPrc": itm_sl_prc,
                         "stkQty": opt_stock,
+                    }
+                )
+
+                # optSrtLst 누적
+                if opt_val_1 and opt_val_1 not in _dim1_vals:
+                    _dim1_vals.append(opt_val_1)
+                if has_slash and opt_val_2 and opt_val_2 not in _dim2_vals:
+                    _dim2_vals.append(opt_val_2)
+
+            # optSrtLst 블록 구성 (itmOptLst 차원과 1:1 일치 필수)
+            opt_srt_lst.append(
+                {
+                    "optSeq": 1,
+                    "optNm": first_opt_nm,
+                    "optValSrtLst": [
+                        {"optValSeq": i + 1, "optVal": v}
+                        for i, v in enumerate(_dim1_vals)
+                    ],
+                }
+            )
+            if has_slash and _dim2_vals:
+                opt_srt_lst.append(
+                    {
+                        "optSeq": 2,
+                        "optNm": second_opt_nm,
+                        "optValSrtLst": [
+                            {"optValSeq": i + 1, "optVal": v}
+                            for i, v in enumerate(_dim2_vals)
+                        ],
                     }
                 )
 
@@ -1280,6 +1363,13 @@ class LotteonClient:
             if all((itm["stkQty"] == 0 or itm["dpYn"] == "N") for itm in itm_lst):
                 _log.warning(
                     "[롯데ON] 전 옵션 품절 상태로 transform_product 호출됨 — 상위에서 sold_out 처리 필요"
+                )
+
+            if has_slash:
+                _log.info(
+                    f"[롯데ON] 2단 옵션 등록: {first_opt_nm}({len(_dim1_vals)}) × "
+                    f"{second_opt_nm}({len(_dim2_vals)}) — 총 {len(itm_lst)}개 단품, "
+                    f"슬프 범위 {min(i['slPrc'] for i in itm_lst):,}~{max(i['slPrc'] for i in itm_lst):,}"
                 )
         else:
             # itmOptLst 키 생략 — 빈 배열 [] 은 롯데ON API 9999 에러 발생
@@ -1373,6 +1463,7 @@ class LotteonClient:
             "stkMgtYn": "Y",
             "sitmYn": "Y" if options else "N",
             "itmLst": itm_lst,
+            **({"optSrtLst": opt_srt_lst} if opt_srt_lst else {}),
             "rtrvTypCd": "ENTP_RTRV",
             "dvRgsprGrpCd": "GN000",
         }

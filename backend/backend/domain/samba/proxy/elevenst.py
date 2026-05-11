@@ -1854,52 +1854,16 @@ class ElevenstClient:
             for i, url in enumerate(product_images[1:4], start=2):
                 image_xml += f"<prdImage0{i}>{_escape_xml(url)}</prdImage0{i}>"
 
-        # 옵션 처리 (싱글옵션 방식 — 옵션개편 이후 공식 포맷)
-        # 공식 예제: http://openapi.11st.co.kr/example/singleOption1.txt
+        # 옵션 처리 — 2D(슬래시) 감지 시 멀티옵션, 그 외 싱글옵션
+        # 공식 예제: singleOption1.txt / multiOption1-1.txt
         options = product.get("options") or []
         # 스토어설정 재고수량 상한: _stock_quantity(계정설정) > _max_stock(정책) 우선
         _max_stock_cap = int(cfg.get("stockQuantity") or product.get("_max_stock") or 0)
-        if options:
-            option_xml = "<optUpdateYn>Y</optUpdateYn>\n  <optSelectYn>Y</optSelectYn>\n  <txtColCnt>1</txtColCnt>\n  <colTitle>사이즈</colTitle>\n  <prdExposeClfCd>00</prdExposeClfCd>"
-            for opt in options:
-                opt_name = opt.get("name", "") or opt.get("size", "") or "기본"
-                raw_stock = opt.get("stock")
-                is_sold_out = opt.get("isSoldOut", False)
-                if raw_stock is None:
-                    # 재고 미제공 → 설정값 사용, 없으면 99
-                    stock_qty = _max_stock_cap if _max_stock_cap > 0 else 99
-                    use_yn = "Y"
-                elif raw_stock <= 0 or is_sold_out:
-                    stock_qty = 0
-                    use_yn = "N"
-                else:
-                    real = int(raw_stock)
-                    stock_qty = (
-                        min(real, _max_stock_cap) if _max_stock_cap > 0 else real
-                    )
-                    use_yn = "Y"
-                stock_code = opt.get("managedCode", "") or ""
-                option_xml += f"""
-  <ProductOption>
-    <useYn>{use_yn}</useYn>
-    <colOptPrice>0</colOptPrice>
-    <colValue0>{_escape_xml(str(opt_name))}</colValue0>
-    <colCount>{stock_qty}</colCount>
-    <colSellerStockCd>{_escape_xml(stock_code)}</colSellerStockCd>
-  </ProductOption>"""
-        else:
-            # 옵션 없는 상품: 기본 옵션 1개 등록
-            _no_opt_stock = _max_stock_cap if _max_stock_cap > 0 else 99
-            option_xml = f"""<optSelectYn>Y</optSelectYn>
-  <txtColCnt>1</txtColCnt>
-  <colTitle>옵션</colTitle>
-  <prdExposeClfCd>00</prdExposeClfCd>
-  <ProductOption>
-    <useYn>Y</useYn>
-    <colOptPrice>0</colOptPrice>
-    <colValue0>기본</colValue0>
-    <colCount>{_no_opt_stock}</colCount>
-  </ProductOption>"""
+        option_xml = _build_elevenst_option_xml(
+            options,
+            max_stock_cap=_max_stock_cap,
+            option_group_names=product.get("option_group_names"),
+        )
 
         # 홍보문구 — 스토어설정 값 우선, 없으면 카테고리 기반 자동 생성
         # (advrtStmt 제한: 한글 14자/영문 28자)
@@ -2276,6 +2240,180 @@ def _escape_xml(text: str) -> str:
         .replace('"', "&quot;")
         .replace("'", "&apos;")
     )
+
+
+# 11번가 옵션값/제목에서 금지된 특수문자 제거 (공식 가이드 명시)
+# 금지: [ ] & ; " % < > # † |  (단 &는 XML escape 후 허용되므로 strip 대상에서 제외)
+_ELEVENST_FORBIDDEN_OPT_RE = re.compile(r'[\[\];"%<>#†|]')
+
+
+def _sanitize_elevenst_option_text(s: str, max_len: int = 25) -> str:
+    """11번가 옵션값/제목 정제: 금지문자 제거 + 중복 공백 압축 + 길이 컷."""
+    s = _ELEVENST_FORBIDDEN_OPT_RE.sub("", s or "")
+    s = re.sub(r"\s{2,}", " ", s).strip()
+    return s[:max_len]
+
+
+def _build_elevenst_option_xml(
+    options: list[dict],
+    max_stock_cap: int,
+    option_group_names: list | None,
+) -> str:
+    """11번가 옵션 XML 빌드.
+
+    - 옵션명에 ' / ' 패턴 감지 시 2D 멀티옵션(optMixYn=N + ProductRootOption + ProductOptionExt)
+    - 그 외엔 1D 싱글옵션
+    - 1차 그룹명 폴백: "선택", 2차 폴백: "옵션"
+    - colOptPrice = max(opt.price - 활성옵션최저가, 0) — 옵션별 추가요금 반영
+    - 11번가 정책: 옵션가 0원 옵션 최소 1개 필수 (base 옵션이 자동 0원)
+    """
+    if not options:
+        no_stock = max_stock_cap if max_stock_cap > 0 else 99
+        return (
+            "<optSelectYn>Y</optSelectYn>"
+            "<txtColCnt>1</txtColCnt>"
+            "<colTitle>옵션</colTitle>"
+            "<prdExposeClfCd>00</prdExposeClfCd>"
+            "<ProductOption>"
+            "<useYn>Y</useYn>"
+            "<colOptPrice>0</colOptPrice>"
+            "<colValue0>기본</colValue0>"
+            f"<colCount>{no_stock}</colCount>"
+            "</ProductOption>"
+        )
+
+    has_slash = any(" / " in (o.get("name") or "") for o in options)
+
+    # 활성 옵션 최저가를 옵션가 base 로 사용 (옵션 간 상대 차이만 추출)
+    _active_prices = [
+        int(o.get("price") or 0)
+        for o in options
+        if int(o.get("price") or 0) > 0
+        and not o.get("isSoldOut", False)
+        and (o.get("stock") or 0) > 0
+    ]
+    diff_base = min(_active_prices) if _active_prices else 0
+
+    def _stock_of(opt: dict) -> tuple[int, str]:
+        raw = opt.get("stock")
+        sold_out = opt.get("isSoldOut", False)
+        if raw is None:
+            qty = max_stock_cap if max_stock_cap > 0 else 99
+            use = "Y"
+        elif int(raw) <= 0 or sold_out:
+            qty = 0
+            use = "N"
+        else:
+            real = int(raw)
+            qty = min(real, max_stock_cap) if max_stock_cap > 0 else real
+            use = "Y"
+        return qty, use
+
+    groups = [g for g in (option_group_names or []) if g]
+
+    if has_slash:
+        # 2D 멀티옵션 (선택형: optMixYn=N + ProductOptionExt)
+        title1 = _sanitize_elevenst_option_text(groups[0]) if len(groups) >= 1 else ""
+        title2 = _sanitize_elevenst_option_text(groups[1]) if len(groups) >= 2 else ""
+        if not title1:
+            title1 = "선택"
+        if not title2:
+            title2 = "옵션"
+
+        axis1_values: list[str] = []
+        axis2_values: list[str] = []
+        parsed: list[tuple[str, str, dict]] = []
+        seen_pairs: set[tuple[str, str]] = set()
+        for opt in options:
+            name = (opt.get("name") or "").strip()
+            if " / " in name:
+                a_raw, b_raw = (p.strip() for p in name.split(" / ", 1))
+            else:
+                a_raw, b_raw = name, ""
+            a = _sanitize_elevenst_option_text(a_raw) or "기본"
+            b = _sanitize_elevenst_option_text(b_raw) or "기본"
+            if (a, b) in seen_pairs:
+                continue
+            seen_pairs.add((a, b))
+            if a not in axis1_values:
+                axis1_values.append(a)
+            if b not in axis2_values:
+                axis2_values.append(b)
+            parsed.append((a, b, opt))
+
+        root1_items = "".join(
+            f"<ProductOption><colOptPrice>0</colOptPrice><colValue0>{_escape_xml(v)}</colValue0></ProductOption>"
+            for v in axis1_values
+        )
+        root2_items = "".join(
+            f"<ProductOption><colOptPrice>0</colOptPrice><colValue0>{_escape_xml(v)}</colValue0></ProductOption>"
+            for v in axis2_values
+        )
+        root_xml = (
+            f"<ProductRootOption><colTitle>{_escape_xml(title1)}</colTitle>{root1_items}</ProductRootOption>"
+            f"<ProductRootOption><colTitle>{_escape_xml(title2)}</colTitle>{root2_items}</ProductRootOption>"
+        )
+
+        ext_items = ""
+        for a, b, opt in parsed:
+            qty, use = _stock_of(opt)
+            opt_price = int(opt.get("price", 0) or 0)
+            diff = max(opt_price - diff_base, 0) if opt_price > 0 else 0
+            stock_code = _escape_xml(opt.get("managedCode", "") or "")
+            mapping_key = f"{title1}:{a}†{title2}:{b}"
+            ext_items += (
+                "<ProductOption>"
+                f"<useYn>{use}</useYn>"
+                f"<colOptPrice>{diff}</colOptPrice>"
+                f"<colOptCount>{qty}</colOptCount>"
+                f"<colCount>{qty}</colCount>"
+                f"<colSellerStockCd>{stock_code}</colSellerStockCd>"
+                f"<optionMappingKey>{_escape_xml(mapping_key)}</optionMappingKey>"
+                "</ProductOption>"
+            )
+
+        return (
+            "<optUpdateYn>Y</optUpdateYn>"
+            "<optSelectYn>Y</optSelectYn>"
+            "<txtColCnt>1</txtColCnt>"
+            "<prdExposeClfCd>00</prdExposeClfCd>"
+            "<optMixYn>N</optMixYn>"
+            f"{root_xml}"
+            f"<ProductOptionExt>{ext_items}</ProductOptionExt>"
+        )
+
+    # 1D 싱글옵션
+    title = _sanitize_elevenst_option_text(groups[0]) if groups else ""
+    if not title:
+        title = "선택"
+    xml = (
+        "<optUpdateYn>Y</optUpdateYn>"
+        "<optSelectYn>Y</optSelectYn>"
+        "<txtColCnt>1</txtColCnt>"
+        f"<colTitle>{_escape_xml(title)}</colTitle>"
+        "<prdExposeClfCd>00</prdExposeClfCd>"
+    )
+    seen_names: set[str] = set()
+    for opt in options:
+        raw_name = opt.get("name", "") or opt.get("size", "") or "기본"
+        opt_name = _sanitize_elevenst_option_text(raw_name) or "기본"
+        if opt_name in seen_names:
+            continue
+        seen_names.add(opt_name)
+        qty, use = _stock_of(opt)
+        opt_price = int(opt.get("price", 0) or 0)
+        diff = max(opt_price - diff_base, 0) if opt_price > 0 else 0
+        stock_code = _escape_xml(opt.get("managedCode", "") or "")
+        xml += (
+            "<ProductOption>"
+            f"<useYn>{use}</useYn>"
+            f"<colOptPrice>{diff}</colOptPrice>"
+            f"<colValue0>{_escape_xml(opt_name)}</colValue0>"
+            f"<colCount>{qty}</colCount>"
+            f"<colSellerStockCd>{stock_code}</colSellerStockCd>"
+            "</ProductOption>"
+        )
+    return xml
 
 
 # ──────────────────────────────────────────────────────────────
