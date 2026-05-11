@@ -1226,12 +1226,30 @@ class LotteonPlugin(MarketPlugin):
         """롯데ON 상품 등록/수정 — 전체 로직."""
         from backend.domain.samba.proxy.lotteon import LotteonClient
 
+        # market_base.handle()이 execute() 호출 전에 session.commit()을 수행하므로
+        # ORM account 객체의 속성은 expired 상태. commit 이후 account.* 직접 접근은
+        # async lazy-refresh를 유발해 "greenlet_spawn has not been called" 에러를 낸다.
+        # 따라서 진입 시점에 필요한 필드를 dict/스칼라로 스냅샷하여 이후엔 ORM 접근 금지.
+        _account_extras_snapshot: dict[str, Any] = {}
+        _account_api_key_snapshot: str = ""
+        if account:
+            try:
+                _account_extras_snapshot = (
+                    getattr(account, "additional_fields", None) or {}
+                )
+            except Exception:
+                _account_extras_snapshot = {}
+            try:
+                _account_api_key_snapshot = getattr(account, "api_key", "") or ""
+            except Exception:
+                _account_api_key_snapshot = ""
+
         api_key = creds.get("apiKey", "")
 
         # account 필드에서 보완
         if not api_key and account:
-            extras = getattr(account, "additional_fields", None) or {}
-            api_key = extras.get("apiKey", "") or getattr(account, "api_key", "") or ""
+            extras = _account_extras_snapshot
+            api_key = extras.get("apiKey", "") or _account_api_key_snapshot or ""
 
         if not api_key:
             return {
@@ -1271,7 +1289,8 @@ class LotteonPlugin(MarketPlugin):
                     # 계정 재고수량 상한 (transform_product와 동일 정책)
                     # 주의: 경량 분기는 1410 라인의 product_copy 주입보다 먼저 실행되므로
                     # account.additional_fields에서 직접 로드해야 함.
-                    _acc_extras = getattr(account, "additional_fields", None) or {}
+                    # (commit으로 expired된 ORM 직접 접근 금지 — 스냅샷 사용)
+                    _acc_extras = _account_extras_snapshot
 
                     # 즉시할인 미적용 — sale_price 그대로 등록 (팀장 결정).
                     new_price = _raw_price
@@ -1582,9 +1601,8 @@ class LotteonPlugin(MarketPlugin):
         product_copy = dict(product)
 
         # ── 1. 계정 additional_fields 주입 ──────────────────────────────
-        extras: dict[str, Any] = {}
-        if account:
-            extras = getattr(account, "additional_fields", None) or {}
+        # commit 이후 ORM account 직접 접근 금지 — 진입 시점 스냅샷 사용
+        extras: dict[str, Any] = dict(_account_extras_snapshot)
 
         # 글로벌 설정을 항상 base로 읽고, 계정 설정으로 오버라이드
         # (owhpNo 유무와 무관하게 shippingType 등 발송 설정도 반영되어야 함)

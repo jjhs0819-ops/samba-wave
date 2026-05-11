@@ -141,42 +141,10 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
     // savedStoreData는 SSG/롯데ON/11번가 탭 진입 시 apiKey 체크용으로만 유지.
     setSavedStoreData(withDefaults)
     setStoreStatus(statuses)
-
-    // 설정은 있지만 SambaMarketAccount 레코드가 없는 마켓 자동 생성
-    // (과거 저장 시 계정 생성 로직이 없었거나 sellerId 조건 미충족으로 누락된 경우 소급 적용)
-    // 주의: store_${market.key} 싱글톤에서 최신 저장값 1개만 소급 — 다계정 환경에서는
-    //       이미 계정이 1개라도 있으면 스킵되므로 추가 누락 계정은 수동 재저장 필요
-    try {
-      const existingAccounts = await accountApi.list()
-      const existingMarketTypes = new Set(existingAccounts.map((a: SambaMarketAccount) => a.market_type))
-      let created = false
-      for (const market of STORE_MARKETS) {
-        const settings = loaded[market.key]
-        if (!settings || !Object.keys(settings).length) continue
-        if (existingMarketTypes.has(market.key)) continue
-        const authFieldValue = market.authField ? settings[market.authField] : null
-        const sellerId = settings.storeId || settings.vendorId || settings.account || settings.email || settings.userId || settings.apiKey || ''
-        const businessName = settings.businessName || ''
-        if (!authFieldValue && !sellerId && !businessName) continue
-        const { businessName: _bn, storeId: _si, ...apiFields } = settings
-        try {
-          await accountApi.create({
-            market_type: market.key,
-            market_name: market.label,
-            account_label: `${businessName}${sellerId ? '-' + (sellerId.length > 16 ? sellerId.slice(0, 8) + '...' : sellerId) : ''}`.replace(/^-|-$/g, '') || market.key,
-            seller_id: sellerId || undefined,
-            business_name: businessName || undefined,
-            is_active: true,
-            additional_fields: apiFields,
-          })
-          created = true
-        } catch (err) {
-          console.warn(`[소급 계정 생성 실패] ${market.key}:`, err)
-        }
-      }
-      if (created) await loadAccounts()
-    } catch { /* 소급 생성 실패 — 무시 */ }
-  }, [loadAccounts])
+    // [삭제됨] store_${market.key} 싱글톤 → SambaMarketAccount 소급 생성 로직 제거.
+    // 사용자가 계정 삭제해도 다음 마운트 때 자동 부활하는 사고 원인이라 통째로 제거.
+    // (과거 마이그레이션용 코드라 신규 사용자에겐 무용)
+  }, [])
 
   const updateStoreField = (marketKey: string, fieldName: string, value: string) => {
     setStoreData(prev => ({
