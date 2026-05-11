@@ -766,9 +766,17 @@ async def brand_create_groups(
             )
             # brands= 는 사후 브랜드 정확일치 필터용 (worker.py가 읽음).
             # selected_brands가 있으면 다중 브랜드 필터, 없으면 단일 브랜드명.
-            _brands_val_lt = (
-                ",".join(body.selected_brands) if body.selected_brands else _brand_label
-            )
+            # 단, brand_label과 관련 없는 브랜드가 섞이면 해당 브랜드만 필터링해 오염 방지.
+            if body.selected_brands:
+                _lbl_norm = _brand_label.lower().replace(" ", "")
+                _valid_brands = [
+                    b for b in body.selected_brands
+                    if _lbl_norm in b.lower().replace(" ", "")
+                    or b.lower().replace(" ", "") in _lbl_norm
+                ]
+                _brands_val_lt = ",".join(_valid_brands) if _valid_brands else _brand_label
+            else:
+                _brands_val_lt = _brand_label
             keyword = (
                 f"https://www.lotteon.com/csearch/search/search"
                 f"?render=search&platform=pc&q={_quote_lt(_sub_kw_lt)}"
