@@ -560,15 +560,29 @@ class ImageTransformService:
 
         def _process(data: bytes) -> bytes:
             import numpy as np
-            from scipy import ndimage
 
             # 큰 이미지 리사이즈 (메모리/시간 절약)
-            src = Image.open(io.BytesIO(data))
+            src = Image.open(io.BytesIO(data)).convert("RGB")
             if max(src.size) > 1024:
                 src.thumbnail((1024, 1024), Image.LANCZOS)
-                buf_resized = io.BytesIO()
-                src.save(buf_resized, format="PNG")
-                data = buf_resized.getvalue()
+            buf_resized = io.BytesIO()
+            src.save(buf_resized, format="PNG")
+            data = buf_resized.getvalue()
+            # 원본 네 모서리 16x16 블록을 평균내어 배경색 추정
+            # (흰 사진이면 흰색, 회색 스튜디오 컷이면 회색으로 자연 합성)
+            arr_src = np.array(src)
+            h, w = arr_src.shape[:2]
+            sz = max(8, min(16, h // 32, w // 32))
+            corners = np.concatenate(
+                [
+                    arr_src[:sz, :sz].reshape(-1, 3),
+                    arr_src[:sz, -sz:].reshape(-1, 3),
+                    arr_src[-sz:, :sz].reshape(-1, 3),
+                    arr_src[-sz:, -sz:].reshape(-1, 3),
+                ],
+                axis=0,
+            )
+            bg_color = tuple(int(c) for c in np.median(corners, axis=0))
             # 캐시된 세션 재사용 (매번 모델 로드 방지)
             session = _get_rembg_session()
             result = remove(
@@ -577,31 +591,14 @@ class ImageTransformService:
                 alpha_matting=True,
                 alpha_matting_foreground_threshold=250,
                 alpha_matting_background_threshold=30,
-                # 이진화 후처리로 본체 외곽이 깎이지 않도록 erode 축소 (15→8)
-                alpha_matting_erode_size=8,
+                alpha_matting_erode_size=15,
             )
-            # 알파 이진화 + 분리된 작은 잔상 조각 제거
-            # 마켓 API(11번가/스마트스토어/롯데ON 등)가 WebP를 거부하므로 JPEG로 통일
+            # 부드러운 알파 그대로 사용 — 애매한 영역(팔/머리 가장자리)은
+            # 자르지 않고 원본 배경색과 자연스럽게 블렌드.
+            # 마켓 API(11번가/스마트스토어/롯데ON 등)가 WebP를 거부하므로 JPEG로 통일.
             img = Image.open(io.BytesIO(result)).convert("RGBA")
-            r, g, b, a = img.split()
-            alpha_arr = np.array(a)
-            # 이진화: 약한 반투명 픽셀이 흰배경에 합성돼 회색 잔상으로 남는 문제 차단
-            binary = alpha_arr >= 128
-            # 연결성분 분석 — 가장 큰 영역의 5% 미만 조각은 잔상으로 보고 제거
-            labeled, num = ndimage.label(binary)
-            if num > 1:
-                sizes = ndimage.sum(binary, labeled, range(1, num + 1))
-                max_size = float(sizes.max()) if sizes.size else 0.0
-                threshold = max_size * 0.05
-                keep_labels = {i + 1 for i, s in enumerate(sizes) if s >= threshold}
-                mask = np.isin(labeled, list(keep_labels))
-            else:
-                mask = binary
-            alpha_arr = np.where(mask, 255, 0).astype(np.uint8)
-            a = Image.fromarray(alpha_arr, mode="L")
-            img = Image.merge("RGBA", (r, g, b, a))
-            white_bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
-            composite = Image.alpha_composite(white_bg, img).convert("RGB")
+            bg = Image.new("RGBA", img.size, (*bg_color, 255))
+            composite = Image.alpha_composite(bg, img).convert("RGB")
             buf = io.BytesIO()
             composite.save(buf, format="JPEG", quality=92, optimize=True)
             return buf.getvalue()
