@@ -284,6 +284,11 @@ export default function UnassignedPool({
     return acc
   }, {})
 
+  // 소싱처별로 브랜드명 가나다순 정렬
+  Object.values(grouped).forEach(items => {
+    items.sort((a, b) => (a.brand_name ?? '').localeCompare(b.brand_name ?? '', 'ko'))
+  })
+
   return (
     <div
       style={{
