@@ -35,6 +35,15 @@ class PlayAutoClient:
 
     @staticmethod
     def _get_proxy_url() -> str:
+        # 우선순위: PLAYAUTO_PROXY_URL env → DB transmit → DB collect
+        # GCP/클라우드 VM에서 PlayAuto 호스트 차단 회피용 — env 우선
+        import os as _os
+
+        env_proxy = _os.environ.get("PLAYAUTO_PROXY_URL", "").strip()
+        if env_proxy:
+            if "://" not in env_proxy:
+                env_proxy = f"http://{env_proxy}"
+            return env_proxy
         try:
             from backend.domain.samba.collector.refresher import (
                 get_collect_proxy_url,
@@ -110,9 +119,15 @@ class PlayAutoClient:
                 logger.warning(f"[플레이오토] 연결 단계 실패 → 1회 재시도: {e}")
                 resp = await _send_once()
         except httpx.TimeoutException as e:
-            raise PlayAutoApiError(f"[플레이오토] 타임아웃: {e}") from e
+            raise PlayAutoApiError(
+                f"[플레이오토] 타임아웃 — GCP/클라우드 환경에서 PlayAuto 호스트 직접 도달 불가 시 "
+                f"settings 전송(transmit) 프록시 또는 PLAYAUTO_PROXY_URL 설정 필요: {e}"
+            ) from e
         except httpx.ConnectError as e:
-            raise PlayAutoApiError(f"[플레이오토] 연결 실패: {e}") from e
+            raise PlayAutoApiError(
+                f"[플레이오토] 연결 실패 — GCP/클라우드 환경에서 PlayAuto 호스트가 차단됩니다. "
+                f"국내 ISP 정적 IP 프록시(전송 용도)를 설정하세요: {e}"
+            ) from e
 
         # 응답 파싱
         try:
@@ -433,14 +448,8 @@ class PlayAutoClient:
             "TaxType": "Y",
         }
 
-        # 원가 (소싱처 원가 = cost 필드)
-        cost = (
-            product.get("cost")
-            or product.get("cost_price")
-            or product.get("source_price")
-        )
-        if cost:
-            data["CostPrice"] = str(int(cost))
+        # 원가는 절대 전송 금지 — 신규/오토튠 모두 0으로 강제하여 기존 등록값도 초기화
+        data["CostPrice"] = "0"
 
         # 시중가: 정책의 streetPriceRate(%) 적용, 0이면 판매가와 동일
         sale_price = int(product.get("sale_price", 0))

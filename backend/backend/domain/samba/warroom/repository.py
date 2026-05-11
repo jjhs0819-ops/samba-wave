@@ -155,17 +155,44 @@ class SambaMonitorEventRepository(BaseRepository[SambaMonitorEvent]):
     async def list_recent_changes_for_markets(
         self,
         event_types: List[str],
-        limit: int = 300,
+        limit_per_type: int = 200,
     ) -> List[SambaMonitorEvent]:
-        """판매처 fan-out 용 — 최근 가격변동/품절 이벤트 조회 (product_id 보유분만)."""
-        stmt = (
-            select(SambaMonitorEvent)
-            .where(
+        """판매처 fan-out 용 — event_type별 각각 최신 N건씩 조회.
+
+        단순 limit 방식은 가격변동이 폭주하는 시간대에 sold_out/restock이
+        윈도우 밖으로 밀려나 마켓 카드에 표시되지 않는 문제가 있어,
+        event_type별로 partition_by 윈도우로 균등 추출한다.
+
+        24h 이내로 컷오프 — 시간 필터가 없으면 이벤트 테이블 누적 시
+        풀스캔/외부 정렬로 워룸 마운트가 수분 단위로 늦어진다.
+        워룸 카드는 최신 N건만 노출하므로 24h 이상은 의미가 없다.
+        """
+        from sqlalchemy import literal_column
+        from datetime import datetime, timedelta, timezone
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=1)
+
+        row_num = (
+            func.row_number()
+            .over(
+                partition_by=SambaMonitorEvent.event_type,
+                order_by=SambaMonitorEvent.created_at.desc(),
+            )
+            .label("rn")
+        )
+        subq = (
+            select(SambaMonitorEvent.id, row_num).where(
                 SambaMonitorEvent.event_type.in_(event_types),
                 SambaMonitorEvent.product_id.is_not(None),
+                SambaMonitorEvent.created_at >= cutoff,
             )
+        ).subquery()
+
+        stmt = (
+            select(SambaMonitorEvent)
+            .join(subq, SambaMonitorEvent.id == subq.c.id)
+            .where(literal_column("rn") <= limit_per_type)
             .order_by(SambaMonitorEvent.created_at.desc())
-            .limit(limit)
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())

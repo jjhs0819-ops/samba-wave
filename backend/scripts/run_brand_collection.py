@@ -15,7 +15,6 @@
 import asyncio
 import os
 import sys
-import time
 from datetime import datetime
 from typing import Optional
 
@@ -204,7 +203,7 @@ async def login(email: str, password: str) -> Optional[str]:
                     data = await resp.json()
                     token = data.get('app_auth_token')
                     if token:
-                        log(f'✅ 로그인 성공')
+                        log('✅ 로그인 성공')
                         return token
                 else:
                     log(f'❌ 로그인 실패: {resp.status}')
@@ -247,7 +246,7 @@ async def main():
             if source_site in ('LOTTEON', 'SSG'):
                 brand_ids = await client.brand_discover(source_site, brand_name)
                 if not brand_ids:
-                    log(f'    ⚠️  브랜드를 찾을 수 없음, 스킵')
+                    log('    ⚠️  브랜드를 찾을 수 없음, 스킵')
                     continue
 
             # Step 2: 카테고리 스캔
@@ -259,7 +258,7 @@ async def main():
             )
 
             if not categories:
-                log(f'    ⚠️  카테고리 0개, 스킵')
+                log('    ⚠️  카테고리 0개, 스킵')
                 continue
 
             log(f'    📊 {len(categories)}개 카테고리 발견')
@@ -268,7 +267,7 @@ async def main():
             filter_ids = await client.brand_create_groups(source_site, brand_name, categories)
 
             if not filter_ids:
-                log(f'    ❌ 그룹 생성 실패')
+                log('    ❌ 그룹 생성 실패')
                 continue
 
             log(f'    ✅ {len(filter_ids)}개 그룹 생성')

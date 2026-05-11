@@ -20,6 +20,19 @@ router = APIRouter(tags=["samba-proxy"])
 bg_worker_router = APIRouter(prefix="/proxy", tags=["samba-proxy-worker"])
 
 
+def _default_tenant_id() -> str | None:
+    """BG_WORKER_TENANT_ID 환경변수에서 테넌트 ID 조회.
+
+    멀티테넌트 환경에서 설정이 '{tenant_id}:{key}' 형식으로 저장된 경우
+    환경변수로 테넌트 ID를 지정하면 올바른 키로 조회한다.
+    미설정 시 None 반환 → 기존 단일테넌트 동작 그대로.
+    """
+    import os
+
+    val = os.environ.get("BG_WORKER_TENANT_ID", "").strip()
+    return val if val else None
+
+
 # ═══════════════════════════════════════════════
 # Claude AI API 인증 테스트
 # ═══════════════════════════════════════════════
@@ -211,11 +224,78 @@ async def r2_upload_image(
         return {"success": False, "message": str(exc)[:200]}
 
 
+# 소싱사이트 이미지 CDN 허용 도메인 — 서버사이드 SSRF 방어
+_IMAGE_FETCH_ALLOWED_HOSTS: frozenset[str] = frozenset(
+    [
+        # 무신사
+        "image.msscdn.net",
+        "cdn.musinsa.com",
+        # 롯데ON
+        "thumbnail6.lotteon.com",
+        "thumbnail.lotteon.com",
+        # GS샵
+        "www.gsshop.com",
+        "image.gsshop.com",
+        # ABCmart / GrandStage
+        "img.a-rt.com",
+        "image.a-rt.com",
+        # SSG
+        "static.ssgcdn.com",
+        "img.ssgcdn.com",
+        # KREAM
+        "kream-product.clutch.io",
+        "cdn.kream.co.kr",
+        # 패션플러스
+        "img.fashionplus.co.kr",
+        "www.fashionplus.co.kr",
+        # Nike
+        "static.nike.com",
+        "n.neuralmagic.com",
+        # Adidas
+        "assets.adidas.com",
+        # 롯데홈쇼핑
+        "image.lotteimall.com",
+        # 기타 공통 CDN
+        "cdn.jsdelivr.net",
+    ]
+)
+
+
+def _is_image_fetch_allowed(url: str) -> bool:
+    """SSRF 방어 — 허용된 소싱사이트 호스트이고 userinfo 없는지 확인."""
+    try:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url)
+        # userinfo(user:pass@host) 차단
+        if parsed.username or parsed.password:
+            return False
+        # https 또는 http만 허용 (file://, ftp:// 등 차단)
+        if parsed.scheme not in ("https", "http"):
+            return False
+        host = (parsed.hostname or "").lower()
+        # 정확한 호스트 또는 서브도메인 매칭
+        if any(host == h or host.endswith(f".{h}") for h in _IMAGE_FETCH_ALLOWED_HOSTS):
+            return True
+        # Cloudflare R2 퍼블릭 버킷: pub-<hash>.r2.dev 형식
+        if host.startswith("pub-") and host.endswith(".r2.dev"):
+            return True
+        return False
+    except Exception:
+        return False
+
+
 @router.get("/image-fetch")
 async def image_fetch_proxy(url: str = Query(...)) -> Response:
-    """외부 이미지 URL을 서버에서 가져와 반환 (브라우저 CORS 우회)."""
+    """외부 이미지 URL을 서버에서 가져와 반환 (브라우저 CORS 우회).
+
+    SSRF 방어: 허용된 소싱사이트 CDN 호스트만 요청 가능.
+    """
     if len(url) > 2000:
         return Response(status_code=400, content=b"URL too long")
+    if not _is_image_fetch_allowed(url):
+        logger.warning(f"[image-fetch] 차단된 URL: {url[:100]}")
+        return Response(status_code=403, content=b"Host not allowed")
     try:
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             resp = await client.get(
@@ -338,7 +418,9 @@ async def transform_images(
         return {"success": False, "message": str(exc)[:300]}
 
 
-async def _verify_worker_token(token: str, session: AsyncSession) -> bool:
+async def _verify_worker_token(
+    token: str, session: AsyncSession, tenant_id: str | None = None
+) -> bool:
     """X-Worker-Token 검증 — 환경변수 BG_WORKER_TOKEN 또는 DB bg_worker.worker_token과 비교."""
     import os
 
@@ -349,7 +431,7 @@ async def _verify_worker_token(token: str, session: AsyncSession) -> bool:
     if env_token and token == env_token:
         return True
     # DB 설정 확인 (레거시/수동 설정)
-    cfg = await _get_setting(session, "bg_worker")
+    cfg = await _get_setting(session, "bg_worker", tenant_id=tenant_id)
     if not cfg or not isinstance(cfg, dict):
         return False
     return cfg.get("worker_token", "") == token
@@ -368,18 +450,21 @@ async def bg_jobs_config(
 
     from ._helpers import _set_setting
 
+    _tid = _default_tenant_id()
     env_token = os.environ.get("BG_WORKER_TOKEN", "")
-    cfg = await _get_setting(session, "bg_worker")
+    cfg = await _get_setting(session, "bg_worker", tenant_id=_tid)
     db_token = (cfg or {}).get("worker_token", "") if isinstance(cfg, dict) else ""
 
     # 로컬 워커용 토큰 미설정 + 토큰 없이 요청 → 자동 생성 후 워커에게 반환 (최초 1회)
     # env_token은 VM 워커용이므로 체크 제외
     if not db_token and not x_worker_token:
         new_token = secrets.token_hex(32)
-        await _set_setting(session, "bg_worker", {"worker_token": new_token})
+        await _set_setting(
+            session, "bg_worker", {"worker_token": new_token}, tenant_id=_tid
+        )
         os.environ["BG_WORKER_TOKEN"] = new_token
         logger.info("[배경제거] 워커 토큰 자동 생성 완료")
-        r2 = await _get_setting(session, "cloudflare_r2")
+        r2 = await _get_setting(session, "cloudflare_r2", tenant_id=_tid)
         if not r2 or not isinstance(r2, dict):
             return {"success": False, "message": "R2 설정이 저장되지 않았습니다"}
         return {
@@ -394,10 +479,12 @@ async def bg_jobs_config(
             },
         }
 
-    if not await _verify_worker_token(x_worker_token, session):
+    if not await _verify_worker_token(
+        x_worker_token, session, tenant_id=_default_tenant_id()
+    ):
         return {"success": False, "message": "Invalid worker token"}
 
-    r2 = await _get_setting(session, "cloudflare_r2")
+    r2 = await _get_setting(session, "cloudflare_r2", tenant_id=_tid)
     if not r2 or not isinstance(r2, dict):
         return {"success": False, "message": "R2 설정이 저장되지 않았습니다"}
 
@@ -424,7 +511,9 @@ async def bg_jobs_next(
     from backend.domain.samba.collector.model import SambaCollectedProduct
     from backend.domain.samba.job.model import JobStatus, SambaJob
 
-    if not await _verify_worker_token(x_worker_token, session):
+    if not await _verify_worker_token(
+        x_worker_token, session, tenant_id=_default_tenant_id()
+    ):
         return {"error": "Invalid worker token"}
 
     # 가장 오래된 pending 잡 1개 조회
@@ -498,7 +587,9 @@ async def bg_jobs_complete(
     from backend.domain.samba.collector.model import SambaCollectedProduct
     from backend.domain.samba.job.model import JobStatus, SambaJob
 
-    if not await _verify_worker_token(x_worker_token, session):
+    if not await _verify_worker_token(
+        x_worker_token, session, tenant_id=_default_tenant_id()
+    ):
         return {"success": False, "message": "Invalid worker token"}
 
     stmt = sa_select(SambaJob).where(SambaJob.id == job_id)
@@ -587,7 +678,9 @@ async def bg_jobs_progress(
     from backend.domain.samba.collector.model import SambaCollectedProduct
     from backend.domain.samba.job.model import SambaJob
 
-    if not await _verify_worker_token(x_worker_token, session):
+    if not await _verify_worker_token(
+        x_worker_token, session, tenant_id=_default_tenant_id()
+    ):
         return {"success": False, "message": "Invalid worker token"}
 
     stmt = sa_select(SambaJob).where(SambaJob.id == job_id)
@@ -785,7 +878,9 @@ async def bg_jobs_worker_reset_running(
 
     from backend.domain.samba.job.model import JobStatus, SambaJob
 
-    if not await _verify_worker_token(x_worker_token, session):
+    if not await _verify_worker_token(
+        x_worker_token, session, tenant_id=_default_tenant_id()
+    ):
         return {"success": False, "message": "Invalid worker token"}
 
     stmt = (
@@ -822,7 +917,9 @@ async def bg_jobs_heartbeat(
     """워커 헬스체크 — 매 폴링마다 호출되어 last_seen 갱신."""
     from datetime import datetime, timezone
 
-    if not await _verify_worker_token(x_worker_token, session):
+    if not await _verify_worker_token(
+        x_worker_token, session, tenant_id=_default_tenant_id()
+    ):
         return {"success": False, "message": "Invalid worker token"}
 
     now = datetime.now(timezone.utc).isoformat()

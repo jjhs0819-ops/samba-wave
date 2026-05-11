@@ -17,15 +17,30 @@ from backend.utils.logger import logger
 def _sanitize_image_url(url: str) -> str:
     """롯데홈쇼핑 등록용 이미지 URL 정규화.
 
-    LotteON CDN(`contents.lotteon.com`)은 `.jpg/dims/optimize/resizemc/400x400`처럼
-    표준 확장자 뒤에 변환 path 가 붙어 롯데홈쇼핑 API 가 [1036] 확장자 오류를 던진다.
-    이미 DB 에 저장된 기존 이미지 URL 도 정상 등록되도록 안전망으로 컷한다.
+    [1036] 확장자 오류 / [1038] 용량 초과 동시 해결:
+    - LotteON CDN: `.jpg/dims/optimize/...` 변환 path 컷
+    - 무신사 msscdn: `.webp` → `.jpg`, `_big/_1100.jpg` 등 대형 사이즈 → `_500.jpg`
+    - query string 제거 (롯데 path 확장자 파싱 실패 방지)
     """
     if not url:
         return ""
     s = str(url).strip()
     if s.startswith("//"):
         s = f"https:{s}"
+    # query string 제거 — 롯데 path 확장자 파싱 안전
+    s = s.split("?", 1)[0]
+    # msscdn(무신사) 전용 정규화 — 용량/확장자 동시 해결
+    if "msscdn.net" in s.lower():
+        s = re.sub(r"(_\d+)\.webp$", r"\1.jpg", s, flags=re.IGNORECASE)
+        s = re.sub(r"_big\.jpg$", "_500.jpg", s, flags=re.IGNORECASE)
+
+        def _resize(m: re.Match) -> str:
+            n = int(m.group(1))
+            return "_500.jpg" if n > 500 else m.group(0)
+
+        s = re.sub(r"_(\d+)\.jpg$", _resize, s, flags=re.IGNORECASE)
+        s = s.replace("/thumbnails/images/goods_img/", "/images/goods_img/")
+    # LotteON CDN 등 `.jpg/dims/...` 변환 path 컷
     s = re.sub(
         r"(\.(?:jpg|jpeg|png|gif|webp))/.*$",
         r"\1",
@@ -669,6 +684,34 @@ class LotteHomePlugin(MarketPlugin):
                             )
             except Exception as e:
                 logger.warning(f"[롯데홈쇼핑] 배송지/정책 자동 조회 실패: {e}")
+
+        # 이미지 용량 초과 사전 차단 — 롯데홈쇼핑 [1038] 대응
+        # 호스트 무관 (yswholesale 등 도매업체 CDN 포함) 모든 이미지 점검 후
+        # 900KB 초과 시 R2 리사이즈 미러로 대체
+        try:
+            from backend.domain.samba.image.service import ImageTransformService
+
+            _img_svc = ImageTransformService(session)
+            _images = product.get("images") or []
+            _detail_images = product.get("detail_images") or []
+            _detail_html = product.get("detail_html") or ""
+            if _images or _detail_images or _detail_html:
+                product = dict(product)  # 원본 dict 변형 방지
+                if _images:
+                    product["images"], _ = await _img_svc.mirror_oversized_to_r2(
+                        _images
+                    )
+                if _detail_images:
+                    (
+                        product["detail_images"],
+                        _,
+                    ) = await _img_svc.mirror_oversized_to_r2(_detail_images)
+                if _detail_html:
+                    product["detail_html"] = await _img_svc.mirror_oversized_in_html(
+                        _detail_html
+                    )
+        except Exception as e:
+            logger.warning(f"[롯데홈쇼핑] 이미지 리사이즈 단계 오류 — 원본 유지: {e}")
 
         goods_data = _transform_for_lottehome(product, category_id, auth_creds)
         result = await client.register_goods(goods_data)

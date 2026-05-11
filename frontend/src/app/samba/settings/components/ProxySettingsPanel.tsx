@@ -28,6 +28,7 @@ export function ProxySettingsPanel(props: Props) {
     proxyFields,
     proxyTesting,
     proxySaving,
+    mainIp,
     testProxy,
     openProxyAdd,
     openProxyEdit,
@@ -73,7 +74,8 @@ export function ProxySettingsPanel(props: Props) {
             <tbody>
               {proxies.map((p, i) => {
                 const isMainIp = !p.url
-                const masked = isMainIp ? '34.47.122.131 (직접 연결)' : p.url.includes('@') ? `***@${p.url.split('@').pop()}` : p.url.replace(/^https?:\/\//, '')
+                const mainIpLabel = mainIp ? `${mainIp} (직접 연결)` : '메인 IP 조회 중…'
+                const masked = isMainIp ? mainIpLabel : p.url.includes('@') ? `***@${p.url.split('@').pop()}` : p.url.replace(/^https?:\/\//, '')
                 return (
                   <tr key={i} style={{ borderBottom: '1px solid #1A1A1A' }}>
                     <td style={{ padding: '0.6rem 0.75rem', color: '#E5E5E5' }}>

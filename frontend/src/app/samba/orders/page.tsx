@@ -22,7 +22,7 @@ import { useOrderLinks } from './hooks/useOrderLinks'
 import { useOrderActions } from './hooks/useOrderActions'
 import { useUrlModal } from './hooks/useUrlModal'
 import { renderCopyableText, splitCustomerAddress } from './utils/copyHelpers'
-import { formatSourceSiteLabel } from './utils/siteAlias'
+import { formatSourceSiteLabel, normalizeSourceSiteName } from './utils/siteAlias'
 import { parsePlayautoAliasEntry } from '@/lib/samba/playautoAlias'
 import OrdersFilterBar from './components/OrdersFilterBar'
 import OrdersTopBar from './components/OrdersTopBar'
@@ -58,12 +58,13 @@ export default function OrdersPage() {
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
   const [sourcingAccounts, setSourcingAccounts] = useState<SambaSourcingAccount[]>([])
   const [loading, setLoading] = useState(true)
-  const [period, setPeriod] = useState('5days')
+  const [period, setPeriod] = useState('today')
   const [marketFilter, setMarketFilter] = useState('')
   const [marketStatus, setMarketStatus] = useState('')
   const [siteFilter, setSiteFilter] = useState('')
   const [accountFilter, setAccountFilter] = useState('')
-  const [inputFilter, setInputFilter] = useState('registered')
+  const [registrationFilter, setRegistrationFilter] = useState('registered')
+  const [inputFilter, setInputFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('cancel_return_excluded')
   // CS 페이지 등 외부에서 ?search=...&search_type=... 로 진입 시 자동 검색
   const initialSearch = searchParams.get('search') || ''
@@ -138,14 +139,9 @@ export default function OrdersPage() {
   const [searchCategory, setSearchCategory] = useState(initialSearchType)
 
   const [dateLocked, setDateLocked] = useState(false)
-  const [customStart, setCustomStart] = useState(() => {
-    const d = getKstTodayDate()
-    d.setDate(d.getDate() - 4)
-    return formatDateInput(d)
-  })
+  const [customStart, setCustomStart] = useState(() => formatDateInput(getKstTodayDate()))
   const [startLocked, setStartLocked] = useState(false)
   const [customEnd, setCustomEnd] = useState(() => formatDateInput(getKstTodayDate()))
-
   const loadOrders = useCallback(async () => {
     setLoading(true)
     try {
@@ -160,6 +156,7 @@ export default function OrdersPage() {
             market_status: marketStatus,
             status_filter: statusFilter,
             input_filter: inputFilter,
+            registration_filter: registrationFilter,
             search_text: appliedSearchText,
             search_category: searchCategory,
             sort_by: sortBy,
@@ -175,6 +172,7 @@ export default function OrdersPage() {
             market_status: marketStatus,
             status_filter: statusFilter,
             input_filter: inputFilter,
+            registration_filter: registrationFilter,
             search_text: appliedSearchText,
             search_category: searchCategory,
             sort_by: sortBy,
@@ -203,7 +201,7 @@ export default function OrdersPage() {
       setLogMessages(prev => [...prev, `[${fmtTime()}] 주문 조회 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`])
     }
     setLoading(false)
-  }, [isProductMode, cpId, currentPage, pageSize, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, appliedSearchText, searchCategory, sortBy, customStart, customEnd, setSentFlags])
+  }, [isProductMode, cpId, currentPage, pageSize, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, registrationFilter, appliedSearchText, searchCategory, sortBy, customStart, customEnd, setSentFlags])
 
   const patchOrder = useCallback((id: string, patch: Partial<SambaOrder>) => {
     setOrders(prev => prev.map(order => (
@@ -219,14 +217,13 @@ export default function OrdersPage() {
 
   const [siteAliasMap, setSiteAliasMap] = useState<Record<string, string>>({})
   const siteOptions = useMemo(() => {
-    const knownSites = ['MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'REXMONDE', 'SSG', 'LOTTEON', 'GSShop', 'GS이숍', 'ElandMall', 'SSF']
+    const knownSites = ['MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'REXMONDE', 'SSG', 'LOTTEON', 'GSSHOP', 'ElandMall', 'SSF']
     const options = new Map<string, string>()
 
     const formatSiteLabel = (site: string) => {
       const formatted = formatSourceSiteLabel(site, siteAliasMap)
       if (formatted) return formatted
-      if (site === 'GS이숍') return 'GS샵 배지 주문건'
-      return site
+      return normalizeSourceSiteName(site)
     }
 
     for (const site of knownSites) {
@@ -235,9 +232,10 @@ export default function OrdersPage() {
     for (const order of orders) {
       const site = order.source_site?.trim()
       if (!site) continue
-      options.set(site, formatSiteLabel(site))
-      const baseSite = site.match(/^(.+?)\(/)?.[1]?.trim()
-      if (baseSite) options.set(baseSite, formatSiteLabel(baseSite))
+      // 괄호 안은 플레이오토 마켓 계정명(예: GS이숍(고경))이 source_site에 섞이는 케이스 — base만 노출
+      const baseRaw = site.match(/^(.+?)\(/)?.[1]?.trim() || site
+      const baseSite = normalizeSourceSiteName(baseRaw)
+      options.set(baseSite, formatSiteLabel(baseSite))
     }
 
     return [...options.entries()]
@@ -247,7 +245,7 @@ export default function OrdersPage() {
   useEffect(() => { loadOrders() }, [loadOrders])
   useEffect(() => {
     setCurrentPage(1)
-  }, [pageSize, customStart, customEnd, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, searchCategory, sortBy, isProductMode, cpId])
+  }, [pageSize, customStart, customEnd, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, registrationFilter, inputFilter, searchCategory, sortBy, isProductMode, cpId])
   useEffect(() => {
     const ids = [...new Set(orders.map(o => o.collected_product_id).filter((id): id is string => !!id))]
     if (ids.length === 0) {
@@ -409,6 +407,7 @@ export default function OrdersPage() {
         siteFilter={siteFilter} setSiteFilter={setSiteFilter}
         accountFilter={accountFilter} setAccountFilter={setAccountFilter}
         marketStatus={marketStatus} setMarketStatus={setMarketStatus}
+        registrationFilter={registrationFilter} setRegistrationFilter={setRegistrationFilter}
         inputFilter={inputFilter} setInputFilter={setInputFilter}
         statusFilter={statusFilter} setStatusFilter={setStatusFilter}
         sortBy={sortBy} setSortBy={setSortBy}

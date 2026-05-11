@@ -40,7 +40,7 @@ async def diagnose(goods_no: str, cookie: str) -> None:
         data = resp.json()
         inner = data.get("data") or {}
 
-        print(f"\n[data 최상위 키 목록]")
+        print("\n[data 최상위 키 목록]")
         for k, v in inner.items():
             if isinstance(v, list):
                 print(f"  {k}: list({len(v)}개)")
@@ -71,7 +71,7 @@ async def diagnose(goods_no: str, cookie: str) -> None:
                     print(f"  구조: {json.dumps(v[:3], ensure_ascii=False, indent=2)}")
 
         # 전체 data 덤프 (축약)
-        print(f"\n[전체 data 덤프 (처음 2000자)]")
+        print("\n[전체 data 덤프 (처음 2000자)]")
         dumped = json.dumps(inner, ensure_ascii=False, indent=2)
         print(dumped[:2000])
         if len(dumped) > 2000:

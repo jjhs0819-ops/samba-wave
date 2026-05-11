@@ -1,15 +1,14 @@
 """KREAM 관련 엔드포인트."""
 
-from __future__ import annotations
-
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
+
+from backend.core.rate_limit import RATE_LOGIN, RATE_SET_COOKIE, limiter
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from backend.core.rate_limit import RATE_LOGIN, RATE_SET_COOKIE, limiter
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
 from backend.domain.samba.proxy.kream import KreamClient
 from backend.shutdown_state import is_shutting_down
@@ -33,7 +32,7 @@ class KreamLoginRequest(BaseModel):
 @limiter.limit(RATE_LOGIN)
 async def kream_login(
     request: Request,
-    body: KreamLoginRequest,
+    body: KreamLoginRequest = Body(...),
     write_session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:
     """KREAM 로그인."""
@@ -88,7 +87,7 @@ class KreamSetCookieRequest(BaseModel):
 @limiter.limit(RATE_SET_COOKIE)
 async def kream_set_cookie(
     request: Request,
-    body: KreamSetCookieRequest,
+    body: KreamSetCookieRequest = Body(...),
     write_session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:
     """확장앱에서 KREAM 쿠키 수신."""

@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from backend.db.orm import get_write_sessionmaker
+from backend.db.orm import get_write_session
 from backend.domain.samba.sourcing_job.model import SambaSourcingJob
 from backend.shutdown_state import is_shutting_down
 from backend.utils.logger import logger
@@ -24,8 +24,7 @@ async def _db_insert_job(
     job: dict[str, Any], job_type: str, *, priority: bool = False
 ) -> None:
     try:
-        sessionmaker = get_write_sessionmaker()
-        async with sessionmaker() as session:
+        async with get_write_session() as session:
             now = datetime.now(_UTC)
             record = SambaSourcingJob(
                 request_id=job["requestId"],
@@ -46,8 +45,7 @@ async def _db_insert_job(
 
 async def _db_update_dispatched(request_id: str) -> None:
     try:
-        sessionmaker = get_write_sessionmaker()
-        async with sessionmaker() as session:
+        async with get_write_session() as session:
             record = await session.get(SambaSourcingJob, request_id)
             if record:
                 record.status = "dispatched"
@@ -60,8 +58,7 @@ async def _db_update_dispatched(request_id: str) -> None:
 
 async def _db_update_completed(request_id: str, data: dict[str, Any]) -> None:
     try:
-        sessionmaker = get_write_sessionmaker()
-        async with sessionmaker() as session:
+        async with get_write_session() as session:
             record = await session.get(SambaSourcingJob, request_id)
             if record:
                 success = bool(data.get("success"))
@@ -353,8 +350,7 @@ class SourcingQueue:
                 f"FOR UPDATE SKIP LOCKED"
             )
 
-            sessionmaker = get_write_sessionmaker()
-            async with sessionmaker() as session:
+            async with get_write_session() as session:
                 row = (await session.execute(sql, params)).fetchone()
                 if not row:
                     return {"hasJob": False}

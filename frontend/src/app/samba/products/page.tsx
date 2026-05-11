@@ -1058,8 +1058,8 @@ export default function ProductsPage() {
               {aiJobLogs.map((line, i) => (
                 <p key={i} style={{
                   margin: 0,
-                  color: line.includes('완료') && !line.includes('실패') ? '#51CF66'
-                    : line.includes('실패') || line.includes('오류') ? '#FF6B6B'
+                  color: line.includes('완료') && !/실패[\s:]*[1-9]/.test(line) && !/실패(?![\s:]*\d)/.test(line) ? '#51CF66'
+                    : /실패[\s:]*[1-9]/.test(line) || /실패(?![\s:]*\d)/.test(line) || line.includes('오류') ? '#FF6B6B'
                     : '#8A95B0',
                 }}>{fmtTextNumbers(line)}</p>
               ))}
@@ -1493,7 +1493,7 @@ export default function ProductsPage() {
         <div ref={el => { if (el) el.scrollTop = el.scrollHeight }} style={{ maxHeight: '150px', overflowY: 'auto', padding: '8px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.72rem', lineHeight: 1.7 }}>
           {taskLogs.map((msg, i) => {
             let color = '#555'
-            if (msg.includes('실패') || msg.includes('오류')) color = '#FF6B6B'
+            if (/실패[\s:]*[1-9]/.test(msg) || /실패(?![\s:]*\d)/.test(msg) || msg.includes('오류')) color = '#FF6B6B'
             else if (msg.includes('완료') || msg.includes('성공')) color = '#51CF66'
             else if (msg.includes('생성 중') || msg.includes('처리 중')) color = '#FFB84D'
             return <div key={i} style={{ color }}>{msg}</div>

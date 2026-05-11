@@ -33,6 +33,22 @@ import httpx
 from backend.utils.logger import logger
 
 
+# 임직원/사업자 회원 전용 상품 — 일반 고객 구매 불가 (수집·오토튠 대상 아님).
+# department.ssg.com이 페이지 진입 시 alert(...)로 안내하며, HTML 본문 인라인 스크립트에 동일 문구가 박혀 있음.
+_STAFF_ONLY_MARKERS: tuple[str, ...] = (
+    "임직원 및 사업자 회원",
+    "임직원만 구매",
+    "임직원 전용",
+)
+
+
+def _is_staff_only(html: str) -> bool:
+    """SSG 백화점관 임직원/사업자 회원 전용 상품 여부."""
+    if not html:
+        return False
+    return any(marker in html for marker in _STAFF_ONLY_MARKERS)
+
+
 class RateLimitError(Exception):
     """SSG 차단 감지 (429/403)."""
 
@@ -1346,6 +1362,11 @@ class SSGSourcingClient:
             if not html:
                 return {}
 
+            # 임직원/사업자 회원 전용 상품 차단 — 일반 고객 구매 불가하여 마켓 등록·오토튠 무의미
+            if _is_staff_only(html):
+                logger.info(f"[SSG] 임직원 전용 상품 수집 차단: {item_id}")
+                return {}
+
             # 1순위: resultItemObj JS 변수 파싱
             result = self._parse_result_item_obj(html, item_id, refresh_only)
             if result:
@@ -1373,6 +1394,12 @@ class SSGSourcingClient:
         SSG HTML의 resultItemObj는 parseInt() 등 JS 표현식이 포함된 객체 리터럴이므로
         JSON 파싱 대신 개별 필드 직접 추출 방식을 사용한다.
         """
+        # 임직원/사업자 회원 전용 상품 차단 — 확장앱 경로(로그인 브라우저)에서도
+        # 동일하게 alert 페이지(title=flagMsg, 본문에 "임직원 및 사업자 회원" 문구)가 내려오므로
+        # 모든 호출자에서 일관 차단되도록 진입부에서 검사한다.
+        if _is_staff_only(html):
+            logger.info(f"[SSG] 임직원 전용 상품 수집 차단(parser): {item_id}")
+            return {}
         # resultItemObj 블록 추출 (브라켓 카운터)
         start_marker = re.search(r"var\s+resultItemObj\s*=\s*\{", html)
         if not start_marker:

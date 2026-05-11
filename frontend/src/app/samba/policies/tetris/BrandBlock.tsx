@@ -109,27 +109,6 @@ export default function BrandBlock({
         />
       )}
 
-      {isExcluded && (
-        <div
-          style={{
-            position: 'absolute',
-            top: 2,
-            left: 10,
-            fontSize: 8,
-            color: '#999',
-            background: 'rgba(0,0,0,0.5)',
-            padding: '0 4px',
-            borderRadius: 2,
-            fontWeight: 700,
-            letterSpacing: 0.3,
-            pointerEvents: 'none',
-            zIndex: 2,
-          }}
-        >
-          배제
-        </div>
-      )}
-
       <div
         style={{
           position: 'relative',
@@ -163,6 +142,22 @@ export default function BrandBlock({
               textOverflow: 'ellipsis',
             }}
           >
+            {isExcluded && (
+              <span
+                style={{
+                  fontSize: 9,
+                  color: '#999',
+                  background: 'rgba(0,0,0,0.5)',
+                  padding: '0 4px',
+                  borderRadius: 2,
+                  fontWeight: 700,
+                  letterSpacing: 0.3,
+                  marginRight: 4,
+                }}
+              >
+                배제
+              </span>
+            )}
             {block.brand_name}
             {isLegacy && <span style={{ color: '#666', fontSize: 9, marginLeft: 4 }}>legacy</span>}
           </div>

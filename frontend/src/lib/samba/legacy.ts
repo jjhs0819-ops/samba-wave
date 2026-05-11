@@ -204,6 +204,7 @@ export const orderApi = {
     market_status?: string
     status_filter?: string
     input_filter?: string
+    registration_filter?: string
     search_text?: string
     search_category?: string
     sort_by?: string
@@ -219,6 +220,7 @@ export const orderApi = {
       market_status: params.market_status ?? '',
       status_filter: params.status_filter ?? '',
       input_filter: params.input_filter ?? '',
+      registration_filter: params.registration_filter ?? '',
       search_text: params.search_text ?? '',
       search_category: params.search_category ?? 'customer',
       sort_by: params.sort_by ?? 'date_desc',
@@ -237,6 +239,7 @@ export const orderApi = {
     market_status?: string
     status_filter?: string
     input_filter?: string
+    registration_filter?: string
     search_text?: string
     search_category?: string
     sort_by?: string
@@ -251,6 +254,7 @@ export const orderApi = {
       market_status: params.market_status ?? '',
       status_filter: params.status_filter ?? '',
       input_filter: params.input_filter ?? '',
+      registration_filter: params.registration_filter ?? '',
       search_text: params.search_text ?? '',
       search_category: params.search_category ?? 'customer',
       sort_by: params.sort_by ?? 'date_desc',
@@ -456,6 +460,18 @@ export interface SambaCollectedProduct {
   images?: string[];
   coupang_main_image?: string;
   options?: unknown[];
+  // 추가구성상품 (메인 옵션과 별개 차원 — 스마트스토어 productAddItems 등으로 매핑)
+  addon_options?: Array<{
+    no?: number
+    group?: string
+    name: string
+    add_price?: number
+    stock?: number
+    is_required?: boolean
+    is_none_choice?: boolean
+  }>;
+  // 메인 옵션 그룹명 (예: ["색상","사이즈"])
+  option_group_names?: string[];
   category?: string;
   category1?: string;
   category2?: string;
@@ -1056,6 +1072,7 @@ export const proxyConfigApi = {
     return fetchWithAuth(`${SAMBA_PREFIX}/proxy/config/proxies/test`, { method: 'POST', body: form })
       .then(r => r.json() as Promise<{ success: boolean; ip?: string; message?: string }>)
   },
+  myIp: () => request<{ ipv4: string; ipv6: string }>(`${SAMBA_PREFIX}/proxy/myip`),
 }
 
 // ── Proxy (외부 API 프록시) ──
@@ -1074,6 +1091,9 @@ export const proxyApi = {
     request<MessageLog[]>(`${SAMBA_PREFIX}/proxy/messages/by-order/${encodeURIComponent(orderId)}`),
   fetchSentFlags: (orderIds: string[]) =>
     request<Record<string, { sms: boolean; kakao: boolean }>>(`${SAMBA_PREFIX}/proxy/messages/sent-flags?order_ids=${orderIds.map(encodeURIComponent).join(',')}`),
+  playautoAuthTest: () =>
+    request<{ success: boolean; message: string }>(
+      `${SAMBA_PREFIX}/proxy/playauto/auth-test`, { method: 'POST' }),
   smartstoreAuthTest: () =>
     request<{ success: boolean; message: string; token_preview?: string }>(
       `${SAMBA_PREFIX}/proxy/smartstore/auth-test`, { method: 'POST' }),

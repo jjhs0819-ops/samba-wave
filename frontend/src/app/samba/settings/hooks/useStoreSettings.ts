@@ -374,6 +374,8 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
         } else {
           result = await proxyApi.lottehomeAuth({ userId, password, agncNo, env: safeData.env || 'prod' })
         }
+      } else if (marketKey === 'playauto') {
+        result = await proxyApi.playautoAuthTest()
       } else {
         result = await proxyApi.marketAuthTest(marketKey)
       }
@@ -492,16 +494,19 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
   const handleAccountDelete = async (id: string) => {
     if (!await showConfirm('삭제하시겠습니까?')) return
     await accountApi.delete(id)
-    // [근본수정] 낙관적 갱신: 삭제 즉시 로컬에서 제거 → 새로고침 없이 UI 반영.
-    // 기존엔 loadAccounts()를 await 없이 호출했고, 읽기 복제본 lag으로 막 삭제된 row가 list에 그대로
-    // 잡혀 새로고침 전까지 카드가 안 사라지는 버그.
+    // [근본수정] 낙관적 갱신 + 재조회 시에도 삭제된 id 강제 제외:
+    // 읽기 복제본 lag 때문에 await loadAccounts()가 막 삭제된 row를 다시 가져와
+    // 카드가 사라졌다 되살아나는 버그가 있어 토스 등에서 "삭제가 안된다"고 보였음.
     setAccounts(prev => prev.filter(a => a.id !== id))
     // 편집 중이던 계정이 삭제되면 폼·편집상태도 비움
     if (editingAccountId === id) {
       setEditingAccountId(null)
       setStoreData(prev => { const next = { ...prev }; delete next[storeTab]; return next })
     }
-    await loadAccounts()
+    try {
+      const fresh = await accountApi.list()
+      setAccounts(fresh.filter(a => a.id !== id))
+    } catch { /* ignore — 낙관적 제거 상태 유지 */ }
   }
 
   const togglePasswordVisibility = (key: string) => {

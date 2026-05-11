@@ -872,12 +872,13 @@ export default function ShipmentsPage() {
     } catch { /* 조회 실패 시 기존 정책 로직으로 폴백 */ }
 
     // 테트리스 배치가 있는 상품은 해당 계정으로 targetAccIds 교체
+    // 단, 사용자가 UI에서 선택한 마켓 계정(selectedSet)에 포함된 경우에만 적용 — 미필터링 시 선택 안 한 마켓까지 전송되는 버그 발생
     let hasTetrisOverride = false
     const tetrisTasks = tasks.map(task => {
       const prod = productsById.get(task.pid)
       if (!prod) return task
       const tetrisAccId = tetrisMap.get(`${prod.source_site}:${prod.brand}`)
-      if (tetrisAccId) {
+      if (tetrisAccId && selectedSet.has(tetrisAccId)) {
         hasTetrisOverride = true
         return { ...task, targetAccIds: [tetrisAccId] }
       }
@@ -1471,7 +1472,10 @@ export default function ShipmentsPage() {
 
                   const baseAccList = effectiveAccIds.size > 0 ? [...effectiveAccIds] : [...selectedSet]
                   // 테트리스 배치 계정을 target_account_ids에 추가 (워커가 상품별로 올바른 계정 선택)
-                  const tetrisAccIds = bulkHasTetris ? [...new Set(bulkTetrisMap.values())] : []
+                  // 사용자가 UI에서 선택한 마켓 계정(selectedSet)으로 반드시 필터링 — 미필터링 시 선택 안 한 마켓까지 전송되는 버그 발생
+                  const tetrisAccIds = bulkHasTetris
+                    ? [...new Set(bulkTetrisMap.values())].filter(id => selectedSet.has(id))
+                    : []
                   const effectiveAccList = [...new Set([...baseAccList, ...tetrisAccIds])]
                   const accLabels = effectiveAccList.map(aid => {
                     const acc = accountsById.get(aid)

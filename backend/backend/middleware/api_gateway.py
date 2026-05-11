@@ -55,10 +55,9 @@ async def _lookup_tenant_key(key_hash: str) -> tuple[bool, Optional[str]]:
             return True, tenant_id
 
     try:
-        from backend.db.orm import get_read_sessionmaker
+        from backend.db.orm import get_read_session
 
-        Session = get_read_sessionmaker()
-        async with Session() as session:
+        async with get_read_session() as session:
             result = await session.execute(
                 text(
                     "SELECT tenant_id FROM samba_extension_key "

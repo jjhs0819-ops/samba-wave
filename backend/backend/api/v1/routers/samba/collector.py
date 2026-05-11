@@ -290,87 +290,90 @@ async def musinsa_auth_status(
 
 @router.get("/filters")
 async def list_filters(session: AsyncSession = Depends(get_write_session_dependency)):
-    svc = _get_services(session)
-    all_filters = await svc.list_filters(limit=10000)
-    # 폴더 제외, 리프 그룹만 반환 (기존 호환성)
-    filters = [f for f in all_filters if not f.is_folder]
+    """검색필터 목록 + 필터별 카운트 6종. 60초 캐시 + single-flight."""
 
-    # 각 필터별 카운트를 단일 쿼리로 일괄 조회
-    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
-    from sqlalchemy import func, case, and_, literal, text as _text2
+    async def _factory():
+        svc = _get_services(session)
+        all_filters = await svc.list_filters(limit=10000)
+        filters = [f for f in all_filters if not f.is_folder]
 
-    _AI_TAGGED2 = _text2("'[\"__ai_tagged__\"]'::jsonb")
-    _AI_IMAGE2 = _text2("'[\"__ai_image__\"]'::jsonb")
+        from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
+        from sqlalchemy import func, case, and_, literal, text as _text2
 
-    filter_ids = [f.id for f in filters]
-    if not filter_ids:
-        return []
+        _AI_TAGGED2 = _text2("'[\"__ai_tagged__\"]'::jsonb")
+        _AI_IMAGE2 = _text2("'[\"__ai_image__\"]'::jsonb")
 
-    count_stmt = (
-        select(
-            _CP.search_filter_id,
-            func.count().label("collected_count"),
-            func.count(case((has_registered_accounts(_CP), literal(1)))).label(
-                "market_registered_count"
-            ),
-            func.count(case((and_(_CP.applied_policy_id != None), literal(1)))).label(
-                "policy_applied_count"
-            ),
-            func.count(
-                case(
-                    (
-                        _CP.tags.op("@>")(_AI_TAGGED2),
-                        literal(1),
+        filter_ids = [f.id for f in filters]
+        if not filter_ids:
+            return []
+
+        count_stmt = (
+            select(
+                _CP.search_filter_id,
+                func.count().label("collected_count"),
+                func.count(case((has_registered_accounts(_CP), literal(1)))).label(
+                    "market_registered_count"
+                ),
+                func.count(
+                    case((and_(_CP.applied_policy_id != None), literal(1)))  # noqa: E711
+                ).label("policy_applied_count"),
+                func.count(
+                    case(
+                        (
+                            _CP.tags.op("@>")(_AI_TAGGED2),
+                            literal(1),
+                        )
                     )
-                )
-            ).label("ai_tagged_count"),
-            func.count(
-                case(
-                    (
-                        _CP.tags.op("@>")(_AI_IMAGE2),
-                        literal(1),
+                ).label("ai_tagged_count"),
+                func.count(
+                    case(
+                        (
+                            _CP.tags.op("@>")(_AI_IMAGE2),
+                            literal(1),
+                        )
                     )
-                )
-            ).label("ai_image_count"),
-            func.count(
-                case(
-                    (
-                        and_(
-                            _CP.tags.isnot(None),
-                            func.jsonb_array_length(_CP.tags) > 0,
-                        ),
-                        literal(1),
+                ).label("ai_image_count"),
+                func.count(
+                    case(
+                        (
+                            and_(
+                                _CP.tags.isnot(None),
+                                func.jsonb_array_length(_CP.tags) > 0,
+                            ),
+                            literal(1),
+                        )
                     )
-                )
-            ).label("tag_applied_count"),
+                ).label("tag_applied_count"),
+            )
+            .where(_CP.search_filter_id.in_(filter_ids))
+            .group_by(_CP.search_filter_id)
         )
-        .where(_CP.search_filter_id.in_(filter_ids))
-        .group_by(_CP.search_filter_id)
-    )
-    count_result = await session.execute(count_stmt)
-    count_map = {}
-    for row in count_result.all():
-        count_map[row[0]] = {
-            "collected_count": row[1],
-            "market_registered_count": row[2],
-            "policy_applied_count": row[3],
-            "ai_tagged_count": row[4],
-            "ai_image_count": row[5],
-            "tag_applied_count": row[6],
-        }
+        count_result = await session.execute(count_stmt)
+        count_map = {}
+        for row in count_result.all():
+            count_map[row[0]] = {
+                "collected_count": row[1],
+                "market_registered_count": row[2],
+                "policy_applied_count": row[3],
+                "ai_tagged_count": row[4],
+                "ai_image_count": row[5],
+                "tag_applied_count": row[6],
+            }
 
-    result = []
-    for f in filters:
-        data = {c.key: getattr(f, c.key) for c in f.__table__.columns}
-        counts = count_map.get(f.id, {})
-        data["collected_count"] = counts.get("collected_count", 0)
-        data["market_registered_count"] = counts.get("market_registered_count", 0)
-        data["policy_applied_count"] = counts.get("policy_applied_count", 0)
-        data["ai_tagged_count"] = counts.get("ai_tagged_count", 0)
-        data["ai_image_count"] = counts.get("ai_image_count", 0)
-        data["tag_applied_count"] = counts.get("tag_applied_count", 0)
-        result.append(data)
-    return result
+        result = []
+        for f in filters:
+            data = {c.key: getattr(f, c.key) for c in f.__table__.columns}
+            counts = count_map.get(f.id, {})
+            data["collected_count"] = counts.get("collected_count", 0)
+            data["market_registered_count"] = counts.get("market_registered_count", 0)
+            data["policy_applied_count"] = counts.get("policy_applied_count", 0)
+            data["ai_tagged_count"] = counts.get("ai_tagged_count", 0)
+            data["ai_image_count"] = counts.get("ai_image_count", 0)
+            data["tag_applied_count"] = counts.get("tag_applied_count", 0)
+            result.append(data)
+        return result
+
+    return await cache.get_or_compute("collector:filters:v1", _factory, ttl=60)
 
 
 @router.post("/filters", status_code=201)

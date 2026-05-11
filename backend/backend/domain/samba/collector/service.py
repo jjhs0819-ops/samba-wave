@@ -227,11 +227,31 @@ class SambaCollectorService:
                 f"[카테고리매핑] UPSERT 실패 (무시) — {source_site}/{source_category}: {e}"
             )
 
+    async def _backfill_tenant_id(self, data: Dict[str, Any]) -> None:
+        """tenant_id 누락 시 search_filter의 tenant_id로 자동 채움.
+
+        중복 상품 수집 재발방지(2026-05-10): 수집 경로에서 tenant_id를 빠뜨려
+        (NULL, source_site, site_product_id) 조합이 유니크 인덱스를 우회하던 버그
+        대응. 누락된 모든 호출 경로를 한 곳에서 흡수.
+        """
+        if data.get("tenant_id"):
+            return
+        fid = data.get("search_filter_id")
+        if not fid:
+            return
+        try:
+            sf = await self.filter_repo.get_async(fid)
+        except Exception:
+            return
+        if sf and sf.tenant_id:
+            data["tenant_id"] = sf.tenant_id
+
     async def create_collected_product(
         self, data: Dict[str, Any]
     ) -> Optional[SambaCollectedProduct]:
         self._sanitize_kream_data(data)
         self._clean_company_names(data)
+        await self._backfill_tenant_id(data)
         await self._fill_source_brand(data)
         await self._inherit_group_attributes(data)
         _derive_sale_status(data)
@@ -256,10 +276,14 @@ class SambaCollectorService:
         except IntegrityError:
             # 다른 검색필터에서 이미 수집된 상품 → 기존 상품 업데이트
             await self.product_repo.session.rollback()
+            # tenant_id NULL-safe 필터 — 멀티테넌시에서 다른 테넌트 row를
+            # 잘못 가져오는 것을 방지 (2026-05-10 중복 수집 재발방지)
+            _tid = data.get("tenant_id")
             existing = (
                 (
                     await self.product_repo.session.execute(
                         select(SambaCollectedProduct).where(
+                            self.product_repo._tenant_filter(_tid),
                             SambaCollectedProduct.source_site
                             == data.get("source_site"),
                             SambaCollectedProduct.site_product_id
@@ -365,11 +389,26 @@ class SambaCollectorService:
                         filter_policy_map[f.id] = f.applied_policy_id
                     if f.source_brand_name:
                         filter_brand_map[f.id] = f.source_brand_name
+        # filter_id → tenant_id 매핑 (중복 수집 재발방지: tenant_id 누락 시 자동 채움)
+        filter_tenant_map: Dict[str, str] = {}
+        if filter_ids:
+            # filter_policy_map 빌드 시 이미 filters를 가져왔지만 스코프가 분리됨 → 재조회
+            tenant_filters = await self.filter_repo.filter_by_async(
+                limit=len(filter_ids) + 10
+            )
+            for f in tenant_filters:
+                if f.id in filter_ids and f.tenant_id:
+                    filter_tenant_map[f.id] = f.tenant_id
         for item in items:
             if not item.get("applied_policy_id"):
                 fid = item.get("search_filter_id", "")
                 if fid in filter_policy_map:
                     item["applied_policy_id"] = filter_policy_map[fid]
+            # tenant_id 누락 시 search_filter의 tenant_id로 채움
+            if not item.get("tenant_id"):
+                fid = item.get("search_filter_id", "")
+                if fid in filter_tenant_map:
+                    item["tenant_id"] = filter_tenant_map[fid]
         # 소싱처 브랜드명으로 빈 brand/manufacturer 자동 채움
         for item in items:
             fid = item.get("search_filter_id", "")
@@ -457,10 +496,13 @@ class SambaCollectorService:
                 created += 1
             except IntegrityError:
                 # 동시 수집으로 중복 발생 시 기존 상품 업데이트 (savepoint 자동 롤백)
+                # tenant_id NULL-safe 필터 (2026-05-10 중복 수집 재발방지)
+                _tid_d = d.get("tenant_id")
                 existing = (
                     (
                         await self.product_repo.session.execute(
                             select(SambaCollectedProduct).where(
+                                self.product_repo._tenant_filter(_tid_d),
                                 SambaCollectedProduct.source_site
                                 == d.get("source_site"),
                                 SambaCollectedProduct.site_product_id

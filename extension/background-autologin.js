@@ -359,8 +359,30 @@ async function _spaDirectLogin(siteKey, username, password) {
   }
 }
 
+// 동시 진입 race 차단용 in-flight Map — 어떤 await보다 먼저 동기적으로 체크.
+// 기존 autoLoginState.inProgress 가드는 첫 await(_isAutotuneActive) 이후에 설정되어
+// 같은 tick에 fire-and-forget으로 들어온 호출들이 모두 통과 → 자동로그인 탭 폭증.
+// 이 Map은 같은 사이트의 동시 호출을 즉시 같은 Promise로 합쳐 반환한다.
+const _ensureLoggedInInflight = new Map()  // siteKey → Promise<boolean>
+
 // 진입점 — 외부에서 자동로그인을 트리거할 때 호출 (3회 재시도)
-async function ensureLoggedIn(siteKey) {
+function ensureLoggedIn(siteKey) {
+  // 동기적 in-flight 체크 — async 함수 진입 시점의 첫 await 이전에 처리해야 race 차단 가능
+  if (_ensureLoggedInInflight.has(siteKey)) {
+    return _ensureLoggedInInflight.get(siteKey)
+  }
+  const p = (async () => {
+    try {
+      return await _ensureLoggedInImpl(siteKey)
+    } finally {
+      _ensureLoggedInInflight.delete(siteKey)
+    }
+  })()
+  _ensureLoggedInInflight.set(siteKey, p)
+  return p
+}
+
+async function _ensureLoggedInImpl(siteKey) {
   const site = AUTO_LOGIN_SITES[siteKey]
   if (!site) {
     console.log(`[자동로그인] 미지원 사이트: ${siteKey}`)
@@ -375,7 +397,7 @@ async function ensureLoggedIn(siteKey) {
     return false
   }
 
-  // 중복 호출 차단 — 이미 진행 중이면 즉시 false
+  // 중복 호출 차단 — 이미 진행 중이면 즉시 false (in-flight Map과 별개로 cooldown/실패카운트용)
   if (autoLoginState.inProgress[siteKey]) {
     console.log(`[자동로그인] ${site.name} 이미 진행 중 — 무시`)
     return false

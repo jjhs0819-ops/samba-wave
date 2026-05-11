@@ -257,6 +257,7 @@ def _build_combination_options(
     sale_price: int,
     max_stock_per_option: int = 0,
     option_deletion_words: list[str] | None = None,
+    option_group_names: list[str] | None = None,
 ) -> dict:
     """수집 옵션 → 스마트스토어 combinationOption 변환.
 
@@ -264,6 +265,7 @@ def _build_combination_options(
     옵션가는 sale_price 기준 0원이 최소 1개 보장되도록 처리.
     max_stock_per_option: 계정 재고수량 설정 (옵션별 재고 상한)
     option_deletion_words: 옵션명에서 제거할 단어 목록
+    option_group_names: 소싱처 응답의 그룹명 (예: ["색상","사이즈"]) — 있으면 우선 사용
     """
     import re as _re
 
@@ -273,12 +275,18 @@ def _build_combination_options(
     # "A/XS", "A/M" 같은 사이즈 코드는 1단 옵션으로 처리
     has_slash = any(" / " in (o.get("name") or "") for o in options)
 
+    # 그룹명 결정: option_group_names 가 있으면 우선 사용, 없으면 색상/사이즈 폴백
+    _src_groups = [g for g in (option_group_names or []) if g]
     if has_slash:
-        # 2단 옵션: 색상 / 사이즈
-        option_groups = ["색상", "사이즈"]
+        if len(_src_groups) >= 2:
+            option_groups = [_src_groups[0][:25], _src_groups[1][:25]]
+        else:
+            option_groups = ["색상", "사이즈"]
     else:
-        # 1단 옵션: 사이즈만
-        option_groups = ["사이즈"]
+        if _src_groups:
+            option_groups = [_src_groups[0][:25]]
+        else:
+            option_groups = ["사이즈"]
 
     def _clean_option_name(n: str) -> str:
         """옵션명에서 삭제어 제거."""
@@ -333,6 +341,13 @@ def _build_combination_options(
     # ── 동일 옵션명 중복 감지 → US 사이즈 접미사로 구분 (나이키 등) ──
     from collections import Counter as _Counter
 
+    def _append_within_25(base: str, suffix: str) -> str:
+        # suffix 포함 25자 초과 시 base 를 먼저 잘라서 합산이 25자 이하가 되도록 보장
+        if len(base) + len(suffix) <= 25:
+            return base + suffix
+        cut = max(25 - len(suffix), 0)
+        return base[:cut] + suffix
+
     _name_counts = _Counter(c["optionName1"] for c in combinations)
     _dup_names = {n for n, cnt in _name_counts.items() if cnt > 1}
     if _dup_names:
@@ -341,13 +356,22 @@ def _build_combination_options(
             if _c["optionName1"] in _dup_names:
                 _us = _opt.get("us_label", "")
                 if _us:
-                    _c["optionName1"] = f"{_c['optionName1']} US{_us}"
+                    _c["optionName1"] = _append_within_25(
+                        _c["optionName1"], f" US{_us}"
+                    )
                 else:
                     _base = _c["optionName1"]
                     _seq = _dup_seq.get(_base, 1)
                     _dup_seq[_base] = _seq + 1
                     if _seq > 1:
-                        _c["optionName1"] = f"{_base}({_seq})"
+                        _c["optionName1"] = _append_within_25(_base, f"({_seq})")
+
+    # 최종 안전망 — 어떤 경로로 들어와도 옵션값은 25자 이하 보장 (스마트스토어 MaxLength 정책)
+    for _c in combinations:
+        if isinstance(_c.get("optionName1"), str) and len(_c["optionName1"]) > 25:
+            _c["optionName1"] = _c["optionName1"][:25]
+        if isinstance(_c.get("optionName2"), str) and len(_c["optionName2"]) > 25:
+            _c["optionName2"] = _c["optionName2"][:25]
 
     # 스마트스토어 필수조건: 옵션가 0원 + 재고 1개 이상 + 사용여부 Y 가 최소 1개
     has_base = any(
@@ -378,6 +402,50 @@ def _build_combination_options(
         "optionCombinations": combinations,
         "useStockManagement": True,
     }
+
+
+def _build_product_add_items(addon_options: list[dict]) -> list[dict]:
+    """addon_options → 스마트스토어 productAddItems 변환.
+
+    스마트스토어 추가구성상품 스펙:
+      - groupName: 추가옵션 그룹명 (드롭다운 라벨)
+      - itemName: 추가옵션 값명 (25자 제한)
+      - price: 추가금액 (정수, 0 이상)
+      - stockQuantity: 재고 (정수)
+      - usable: 사용 여부
+
+    addon_options 입력 포맷 (collector가 채우는 형태):
+      [{no, group, name, add_price, stock, is_required}, ...]
+    """
+    if not addon_options:
+        return []
+
+    items: list[dict] = []
+    for ao in addon_options:
+        group = (ao.get("group") or "추가옵션").strip()[:25]
+        name = (ao.get("name") or "").strip()
+        if not name:
+            continue
+        # "선택안함"/"선택없음"은 productAddItems에 의미 없음 — 스마트스토어 추가옵션은
+        # 미선택이 기본값이므로 명시 항목 불필요
+        if ao.get("is_none_choice") or "선택안함" in name or "선택없음" in name:
+            continue
+        if len(name) > 25:
+            name = name[:25]
+        add_price = max(int(ao.get("add_price") or 0), 0)
+        stock = int(ao.get("stock") or 0)
+        if stock < 0:
+            stock = 0
+        items.append(
+            {
+                "groupName": group,
+                "itemName": name,
+                "price": add_price,
+                "stockQuantity": stock,
+                "usable": stock > 0,
+            }
+        )
+    return items
 
 
 class SmartStoreClient:
@@ -2012,6 +2080,17 @@ class SmartStoreClient:
                                 option_deletion_words=product.get(
                                     "_option_deletion_words"
                                 ),
+                                option_group_names=product.get("option_group_names"),
+                            )
+                        )
+                        else {}
+                    ),
+                    # 추가구성상품 — addon_options를 productAddItems로 변환
+                    **(
+                        {"productAddItems": _addon_items}
+                        if (
+                            _addon_items := _build_product_add_items(
+                                product.get("addon_options") or []
                             )
                         )
                         else {}

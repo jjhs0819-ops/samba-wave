@@ -633,6 +633,43 @@ async def gsshop_auth_test(
 
 
 # ═══════════════════════════════════════════════
+# 플레이오토 인증 테스트
+# ═══════════════════════════════════════════════
+
+
+@router.post("/playauto/auth-test")
+async def playauto_auth_test(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """플레이오토 API 인증 테스트 — 실제 API 호출로 연결 및 인증 확인."""
+    from backend.domain.samba.proxy.playauto import PlayAutoClient, PlayAutoApiError
+
+    creds = await _get_setting(session, "store_playauto")
+    if not creds or not isinstance(creds, dict):
+        return {"success": False, "message": "플레이오토 설정이 저장되지 않았습니다."}
+
+    api_key = creds.get("apiKey", "")
+    if not api_key:
+        return {"success": False, "message": "API Key가 설정되지 않았습니다."}
+
+    try:
+        client = PlayAutoClient(api_key)
+        await client.get_market_list()
+        return {"success": True, "message": "플레이오토 연결 성공 — API 인증 확인됨"}
+    except PlayAutoApiError as e:
+        msg = str(e.message)
+        if "타임아웃" in msg or "연결 실패" in msg:
+            return {
+                "success": False,
+                "message": "연결 실패 — GCP/클라우드 환경에서 PlayAuto 호스트가 차단됩니다. "
+                "설정 > 프록시/IP 설정에서 전송(transmit) 용도 국내 ISP 정적 IP 프록시를 등록하세요.",
+            }
+        return {"success": False, "message": f"인증 실패: {msg}"}
+    except Exception as e:
+        return {"success": False, "message": f"인증 테스트 오류: {e}"}
+
+
+# ═══════════════════════════════════════════════
 # 통합 마켓 인증 테스트 (범용)
 # ═══════════════════════════════════════════════
 

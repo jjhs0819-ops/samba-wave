@@ -68,10 +68,11 @@ class CoupangPlugin(MarketPlugin):
 
         client = CoupangClient(access_key, secret_key, vendor_id)
 
-        # ── 경량 가격/재고 업데이트 (오토튠 최적화) ──────────────────────
-        # _skip_image_upload=True → price/stock만 변경된 경우
-        # 반품지/출고지/카테고리 조회 없이 기존 상품 가격/재고만 수정
-        if product.get("_skip_image_upload") and existing_no:
+        # ── 등록된 상품 가격/재고 업데이트 — 부분 endpoint(vendor-items) ──
+        # 쿠팡 spec 상 update_product PUT(/seller-products/{id})는 정의되지 않아 404.
+        # 가격/재고는 vendor-items 부분 endpoint로 가야 함. 이미지/이름 등 다른
+        # 필드 변경은 본 분기에서 다루지 않음 (별도 의도 — 후속 PR).
+        if existing_no:
             try:
                 existing = await client.get_product(existing_no)
                 prod_data = existing.get("data", existing)
@@ -94,12 +95,23 @@ class CoupangPlugin(MarketPlugin):
                         for o in new_options
                     }
 
+                    # vendorItemId 단위 부분 endpoint(/prices, /quantities)로 호출.
+                    # update_product PUT(/seller-products/{id})는 쿠팡 spec에 미정의(GET/DELETE만) — 404 반환됨.
+                    price_updates = 0
+                    qty_updates = 0
+                    skipped = 0
                     for item in items:
-                        # 가격 업데이트
-                        if new_price > 0:
-                            item["originalPrice"] = new_price
-                            item["salePrice"] = new_price
-                        # 재고 업데이트 (옵션명으로 매칭)
+                        vendor_item_id = item.get("vendorItemId")
+                        if not vendor_item_id:
+                            skipped += 1
+                            continue
+
+                        # 가격: 변경 시만 호출
+                        if new_price > 0 and item.get("salePrice") != new_price:
+                            await client.update_item_price(vendor_item_id, new_price)
+                            price_updates += 1
+
+                        # 재고: 옵션명 매칭 후 변경 시만 호출
                         item_name = item.get("itemName", "")
                         if item_name in opt_stock_map:
                             stk = opt_stock_map[item_name]
@@ -110,16 +122,18 @@ class CoupangPlugin(MarketPlugin):
                             )
                         else:
                             stk = 999
-                        item["maximumBuyCount"] = min(int(stk), 99999)
-
-                    prod_data["items"] = items
-                    await client.update_product(existing_no, prod_data)
+                        new_stk = min(int(stk), 99999)
+                        if item.get("maximumBuyCount") != new_stk:
+                            await client.update_item_quantity(vendor_item_id, new_stk)
+                            qty_updates += 1
 
                     _parts = []
                     if new_price > 0:
-                        _parts.append(f"가격({new_price:,}원)")
+                        _parts.append(f"가격({new_price:,}원, {price_updates}건)")
                     if new_options:
-                        _parts.append(f"옵션({len(new_options)}건)")
+                        _parts.append(f"재고({qty_updates}건)")
+                    if skipped:
+                        _parts.append(f"skip({skipped}건 vendorItemId 없음)")
                     logger.info(
                         f"[쿠팡] 경량 업데이트 완료: {existing_no} — {', '.join(_parts)}"
                     )

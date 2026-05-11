@@ -125,6 +125,10 @@ def get_product_timeout(site: str) -> int:
 # 키 형식: "MUSINSA" (워룸/갱신), "MUSINSA_collect" (수집)
 _site_intervals: dict[str, float] = {}
 _site_consecutive_errors: dict[str, int] = {}
+# 연속 타임아웃 카운터 (좀비 공유 클라이언트 자동 복구용)
+_site_consecutive_timeouts: dict[str, int] = {}
+# 연속 타임아웃 임계치 — 이 이상이면 공유 클라이언트 풀 강제 폐기
+TIMEOUT_RESET_THRESHOLD = 5
 # 소싱처별 안전 인터벌 기록 (차단 안 당하는 최소값)
 _site_safe_intervals: dict[str, float] = {}
 
@@ -797,6 +801,8 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
         new_interval = max(base, prev_interval - step)
         _site_intervals["MUSINSA"] = new_interval
         _site_consecutive_errors["MUSINSA"] = 0
+        # 정상 응답 → 연속 타임아웃 카운터 리셋 (좀비 클라이언트 복구 트리거 해제)
+        _site_consecutive_timeouts["MUSINSA"] = 0
         # 차단 안 당하는 최소 인터벌 기록
         if new_interval <= _site_safe_intervals.get("MUSINSA", 999):
             _site_safe_intervals["MUSINSA"] = new_interval
@@ -867,15 +873,29 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
             return RefreshResult(product_id=product.id, error=f"차단: HTTP {e.status}")
     except asyncio.TimeoutError:
         # 45초 안에 응답 없음 → 건너뛰기
+        # 연속 타임아웃 누적 시 공유 httpx 클라이언트 좀비 의심 → 강제 폐기
+        _site_consecutive_timeouts["MUSINSA"] = (
+            _site_consecutive_timeouts.get("MUSINSA", 0) + 1
+        )
+        _consecutive = _site_consecutive_timeouts["MUSINSA"]
         _log_refresh(
             "MUSINSA",
             product.id,
             getattr(product, "name", ""),
-            "응답 없음 (45초 타임아웃) — 건너뜀",
+            f"응답 없음 (45초 타임아웃, 연속 {_consecutive}회) — 건너뜀",
             level="warning",
             idx=_idx,
             total=_total,
         )
+        if _consecutive >= TIMEOUT_RESET_THRESHOLD:
+            logger.warning(
+                f"[refresher] MUSINSA 연속 {_consecutive}회 타임아웃 → 공유 httpx 클라이언트 풀 강제 폐기 (좀비 연결 복구)"
+            )
+            try:
+                await reset_musinsa_shared_clients()
+            except Exception as _e:
+                logger.error(f"[refresher] 공유 클라이언트 폐기 실패: {_e}")
+            _site_consecutive_timeouts["MUSINSA"] = 0
         return RefreshResult(product_id=product.id, error="응답 없음: 45초 타임아웃")
     except Exception as e:
         _err_brand = getattr(product, "brand", "") or ""

@@ -134,9 +134,12 @@ class SambaCollectedProduct(SQLModel, table=True):
     __tablename__ = "samba_collected_product"
     __table_args__ = (
         Index("ix_scp_status_source_site", "status", "source_site"),
+        # NULL-safe 유니크 인덱스 (2026-05-10 중복 수집 재발방지)
+        # PostgreSQL은 NULL을 distinct로 취급 → tenant_id IS NULL 끼리는 유니크
+        # 제약이 작동하지 않음. COALESCE로 NULL을 빈 문자열로 정규화.
         Index(
-            "uq_scp_tenant_source_product",
-            "tenant_id",
+            "uq_scp_tenant_source_product_v2",
+            text("COALESCE(tenant_id, '')"),
             "source_site",
             "site_product_id",
             unique=True,
@@ -350,6 +353,16 @@ class SambaCollectedProduct(SQLModel, table=True):
 
     # 소싱처별 추가 데이터 (매핑 안 된 필드 자동 저장)
     extra_data: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+
+    # 추가구성상품 (메인 옵션과 별개 차원 — 스마트스토어 productAddItems 등으로 매핑)
+    # [{no, group, name, add_price, stock, is_required}, ...]
+    addon_options: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    # 메인 옵션 그룹명 목록 (예: ["색상"], ["색상","사이즈"])
+    option_group_names: Optional[Any] = Field(
         default=None, sa_column=Column(JSON, nullable=True)
     )
 

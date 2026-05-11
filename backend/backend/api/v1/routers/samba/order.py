@@ -9,7 +9,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from backend.db.orm import get_read_session_dependency, get_write_session_dependency
+from backend.db.orm import (
+    get_read_session,
+    get_read_session_dependency,
+    get_write_session_dependency,
+)
 from backend.domain.samba.tenant.middleware import get_optional_tenant_id
 from backend.domain.samba.order.model import SambaOrder
 from backend.domain.samba.order.playauto_alias import (
@@ -27,6 +31,111 @@ from backend.dtos.samba.order import (
 from backend.utils.logger import logger
 
 router = APIRouter(prefix="/orders", tags=["samba-orders"])
+
+
+# ── 매칭 캐시(_mpn_cache) 모듈 전역 TTL 캐시 ──
+# 매 sync마다 collected_product 12.6만건 SELECT + 인덱싱(약 7초) 부담을
+# 60초 TTL로 한 번만 빌드해 재사용. 신규 cp 등록은 60초 안에 매칭됨.
+_MPN_CACHE_TTL_SEC = 60.0
+_mpn_cache_data: dict[str, dict] | None = None
+_mpn_cache_built_at: float = 0.0
+_mpn_cache_lock = asyncio.Lock()
+
+
+async def _get_mpn_cache(session, sourcing_urls: dict) -> dict[str, dict]:
+    """market_product_no → collected_product 인덱스 (TTL 60초).
+
+    SELECT 전용이므로 write session(외부 마켓 API 동안 idle in transaction
+    timeout으로 죽을 수 있음)에 의존하지 않고 내부에서 별도 read session을
+    연다. 인자 ``session``은 호환을 위해 유지되며 사용되지 않는다.
+    """
+    import time as _t
+
+    from sqlalchemy import text as _sa_text
+
+    global _mpn_cache_data, _mpn_cache_built_at
+    async with _mpn_cache_lock:
+        now = _t.monotonic()
+        if (
+            _mpn_cache_data is not None
+            and (now - _mpn_cache_built_at) < _MPN_CACHE_TTL_SEC
+        ):
+            return _mpn_cache_data
+        async with get_read_session() as _read_sess:
+            _cp_result = await _read_sess.execute(
+                _sa_text(
+                    "SELECT id, source_site, site_product_id, images, market_product_nos, source_url, category "
+                    "FROM samba_collected_product WHERE market_product_nos IS NOT NULL"
+                )
+            )
+            _cp_rows = _cp_result.fetchall()
+        new_cache: dict[str, dict] = {}
+        for _row in _cp_rows:
+            _cpid, _site, _spid, _imgs, _mpnos, _src_url, _cat = _row
+            if not (_mpnos and isinstance(_mpnos, dict)):
+                continue
+            _thumb = _imgs[0] if _imgs and isinstance(_imgs, list) and _imgs else ""
+            _olink = _src_url or (
+                sourcing_urls.get(_site, "").format(_spid)
+                if _site in sourcing_urls and _spid
+                else ""
+            )
+            # account_id별 등록된 site_ids 모음 — `{account_id}_sites` 키 패턴.
+            # 신규 등록 액션에서 이 키에 [site_id, ...] 저장 (Phase 3에서 구현).
+            # 기존 cp는 _sites 키 없음 → cache value의 site_ids_by_account = {} 유지 →
+            # 매칭 시 호환 모드(site_id 검증 안 함).
+            _sites_by_account: dict[str, list[str]] = {}
+            for _k, _v in _mpnos.items():
+                if _k.endswith("_sites") and isinstance(_v, list):
+                    _account_id = _k[: -len("_sites")]
+                    _sites_by_account[_account_id] = [str(s) for s in _v if s]
+
+            for _k, _v in _mpnos.items():
+                if not _v or _k.endswith("_qa") or _k.endswith("_sites"):
+                    continue
+                if _k.endswith("_origin"):
+                    continue
+                if isinstance(_v, dict):
+                    _values = [
+                        _v.get("smartstoreChannelProductNo"),
+                        _v.get("originProductNo"),
+                        _v.get("channelProductNo"),
+                    ]
+                else:
+                    _values = [_v]
+                for _sub_v in _values:
+                    if not _sub_v:
+                        continue
+                    _key = str(_sub_v)
+                    # 기존 entry가 있다면 site_ids만 추가, 없으면 새로
+                    _entry = new_cache.get(_key)
+                    if not _entry:
+                        _entry = {
+                            "collected_product_id": _cpid,
+                            "source_site": _site,
+                            "product_image": _thumb,
+                            "original_link": _olink,
+                            "category": _cat or "",
+                            "site_ids_by_account": dict(_sites_by_account),
+                        }
+                        new_cache[_key] = _entry
+                    else:
+                        # 같은 master_code가 여러 cp에 있는 케이스(드물 것).
+                        # 기존 entry 그대로 두고 site_ids만 보강.
+                        for acc, sites in _sites_by_account.items():
+                            _entry["site_ids_by_account"].setdefault(acc, []).extend(
+                                s
+                                for s in sites
+                                if s not in _entry["site_ids_by_account"].get(acc, [])
+                            )
+        _mpn_cache_data = new_cache
+        _mpn_cache_built_at = now
+        logger.info(
+            f"[주문동기화] _mpn_cache 재빌드 완료 — entries={len(new_cache):,}, "
+            f"TTL={_MPN_CACHE_TTL_SEC}s"
+        )
+        return _mpn_cache_data
+
 
 ACTIVE_ORDER_STATUSES = (
     "new_order",
@@ -131,6 +240,7 @@ async def _build_order_filters(
     market_status: str = "",
     status_filter: str = "",
     input_filter: str = "",
+    registration_filter: str = "",
     search_text: str = "",
     search_category: str = "customer",
 ) -> list[Any]:
@@ -163,7 +273,20 @@ async def _build_order_filters(
         normalized_source_site = func.replace(
             func.coalesce(SambaOrder.source_site, ""), " ", ""
         )
-        if "(" in normalized_site_filter:
+        # GSSHOP 통합 필터 — DB에는 GSShop/GS이숍/GS이숍(고경) 등 변형 혼재 → 모두 매칭
+        gs_aliases = {"GSSHOP", "GSShop", "GS이숍", "GS이샵", "GS샵"}
+        if normalized_site_filter in gs_aliases:
+            from backend.core.sql_safe import escape_like
+
+            gs_filters = []
+            for alias in gs_aliases:
+                safe_alias = escape_like(alias)
+                gs_filters.append(normalized_source_site == alias)
+                gs_filters.append(
+                    normalized_source_site.like(f"{safe_alias}(%", escape="\\")
+                )
+            filters.append(or_(*gs_filters))
+        elif "(" in normalized_site_filter:
             filters.append(normalized_source_site == normalized_site_filter)
         else:
             # site_filter 는 외부 입력 — `%`/`_` 메타 escape 후 ESCAPE '\\' 명시.
@@ -220,7 +343,21 @@ async def _build_order_filters(
                 SambaOrder.tracking_number == "",
             )
         )
-    elif input_filter == "registered":
+    elif input_filter in {
+        "no_price",
+        "no_stock",
+        "direct",
+        "kkadaegi",
+        "gift",
+        "staff_a",
+        "staff_b",
+    }:
+        action_filter = _build_action_tag_filter(input_filter)
+        if action_filter is not None:
+            filters.append(action_filter)
+
+    # 등록필터 — 입력필터와 독립적으로 동작 (이중 선택 가능)
+    if registration_filter == "registered":
         # collected_product_id가 있거나, "미등록 입력"으로 source_url/product_image를 채운 주문도 등록된 것으로 간주
         filters.append(
             or_(
@@ -235,7 +372,7 @@ async def _build_order_filters(
                 ),
             )
         )
-    elif input_filter == "unregistered":
+    elif registration_filter == "unregistered":
         # collected_product_id가 없고 source_url/product_image도 모두 비어있어야 미등록
         filters.append(
             and_(
@@ -250,18 +387,6 @@ async def _build_order_filters(
                 ),
             )
         )
-    elif input_filter in {
-        "no_price",
-        "no_stock",
-        "direct",
-        "kkadaegi",
-        "gift",
-        "staff_a",
-        "staff_b",
-    }:
-        action_filter = _build_action_tag_filter(input_filter)
-        if action_filter is not None:
-            filters.append(action_filter)
 
     normalized_search = search_text.strip()
     if normalized_search:
@@ -637,6 +762,7 @@ async def list_orders_by_date_range_paged(
     market_status: str = Query(""),
     status_filter: str = Query(""),
     input_filter: str = Query(""),
+    registration_filter: str = Query(""),
     search_text: str = Query(""),
     search_category: str = Query("customer"),
     sort_by: str = Query("date_desc"),
@@ -655,6 +781,7 @@ async def list_orders_by_date_range_paged(
         market_status=market_status,
         status_filter=status_filter,
         input_filter=input_filter,
+        registration_filter=registration_filter,
         search_text=search_text,
         search_category=search_category,
     )
@@ -683,6 +810,7 @@ async def list_orders_by_collected_product_paged(
     market_status: str = Query(""),
     status_filter: str = Query(""),
     input_filter: str = Query(""),
+    registration_filter: str = Query(""),
     search_text: str = Query(""),
     search_category: str = Query("customer"),
     sort_by: str = Query("date_desc"),
@@ -698,6 +826,7 @@ async def list_orders_by_collected_product_paged(
         market_status=market_status,
         status_filter=status_filter,
         input_filter=input_filter,
+        registration_filter=registration_filter,
         search_text=search_text,
         search_category=search_category,
     )
@@ -4512,62 +4641,34 @@ async def sync_orders_from_markets(
                 )
                 continue
 
-            # 수집상품 매칭 캐시 구축 (마켓상품번호 → 이미지/소싱처)
+            # 수집상품 매칭 캐시 — 모듈 전역 60초 TTL 캐시 사용 (sync마다 재빌드 X)
             from sqlalchemy import text as _sa_text
 
-            _cp_result = await session.execute(
-                _sa_text(
-                    "SELECT id, source_site, site_product_id, images, market_product_nos, source_url, category "
-                    "FROM samba_collected_product WHERE market_product_nos IS NOT NULL LIMIT 50000"
+            # 외부 마켓 API 호출이 길어 write session이 idle in transaction
+            # timeout으로 끊겼을 수 있음. 이후 INSERT/UPDATE 전 rollback으로
+            # 죽은 connection을 invalidate하고 풀에서 새 connection을 받는다.
+            try:
+                await session.rollback()
+            except BaseException as _rb_e:
+                logger.warning(
+                    f"[주문동기화] write session rollback 실패(무시): {_rb_e}"
                 )
-            )
-            _mpn_cache: dict[str, dict] = {}
-            for _row in _cp_result.fetchall():
-                _cpid, _site, _spid, _imgs, _mpnos, _src_url, _cat = _row
-                if _mpnos and isinstance(_mpnos, dict):
-                    _thumb = (
-                        _imgs[0] if _imgs and isinstance(_imgs, list) and _imgs else ""
-                    )
-                    # DB에 저장된 source_url 우선 사용 (수집기가 올바르게 저장한 URL)
-                    _olink = _src_url or (
-                        _sourcing_urls.get(_site, "").format(_spid)
-                        if _site in _sourcing_urls and _spid
-                        else ""
-                    )
-                    _entry = {
-                        "collected_product_id": _cpid,
-                        "source_site": _site,
-                        "product_image": _thumb,
-                        "original_link": _olink,
-                        "category": _cat or "",
-                    }
-                    for _k, _v in _mpnos.items():
-                        if not _v:
-                            continue
-                        # _qa 상태값("pending"/"approved")은 상품번호가 아니므로 제외
-                        if _k.endswith("_qa"):
-                            continue
-                        if isinstance(_v, dict):
-                            # 중첩 구조: {"originProductNo": "...", "smartstoreChannelProductNo": "..."}
-                            for _sub_v in [
-                                _v.get("smartstoreChannelProductNo"),
-                                _v.get("originProductNo"),
-                                _v.get("channelProductNo"),
-                            ]:
-                                if _sub_v:
-                                    _mpn_cache[str(_sub_v)] = _entry
-                        else:
-                            _mpn_cache[str(_v)] = _entry
+
+            _mpn_cache = await _get_mpn_cache(session, _sourcing_urls)
 
             # 미등록 입력 캐시: 동일 product_id+channel_name에 대해 수동 등록된 source_url/product_image 재활용
+            # write session은 직전 외부 마켓 API 동안 idle in transaction timeout으로
+            # 죽었을 수 있어 SELECT 전용 read session으로 분리.
             _unreg_cache: dict[str, dict[str, str]] = {}
-            _unreg_result = await session.execute(
-                _sa_text(
-                    "SELECT product_id, channel_name, source_url, product_image "
-                    "FROM samba_order WHERE source_url IS NOT NULL AND product_id IS NOT NULL"
+            async with get_read_session() as _unreg_sess:
+                _unreg_result = await _unreg_sess.execute(
+                    _sa_text(
+                        "SELECT product_id, channel_name, source_url, product_image "
+                        "FROM samba_order WHERE source_url IS NOT NULL AND product_id IS NOT NULL"
+                    )
                 )
-            )
-            for _ur in _unreg_result.fetchall():
+                _unreg_rows = _unreg_result.fetchall()
+            for _ur in _unreg_rows:
                 _ukey = f"{_ur[0]}|{_ur[1] or ''}"
                 _unreg_cache[_ukey] = {
                     "source_url": _ur[2],
@@ -4634,7 +4735,30 @@ async def sync_orders_from_markets(
                     order_data["tenant_id"] = _tid
                 # 수집상품 매칭 — collected_product_id, product_image, source_site, source_url 보충
                 _pid = str(order_data.get("product_id", ""))
-                _matched = _mpn_cache.get(_pid)
+                # 플레이오토 주문은 master_code 매칭 우선 — 더망고 등록은 우리 cp에 없으니
+                # master_code 미스 = "삼바로 등록 안 한 상품" 자동 판정 (별칭 분리 자연 달성).
+                _pa_mc = str(order_data.get("_pa_master_code") or "")
+                if order_data.get("source") == "playauto" and _pa_mc:
+                    _matched = _mpn_cache.get(_pa_mc) or _mpn_cache.get(_pid)
+                else:
+                    _matched = _mpn_cache.get(_pid)
+                # 플레이오토 별칭(site_id) 단위 매칭 검증 — 1 channel_id에 5개 별칭이
+                # 묶인 구조에서 사용자가 특정 별칭에만 등록한 cp가 다른 별칭 주문에
+                # 잘못 매칭되는 것을 차단. cp.market_product_nos에 `{account_id}_sites`
+                # 키가 있을 때만 엄격 매칭, 없으면 호환 모드(기존 동작).
+                if _matched and order_data.get("source") == "playauto":
+                    _order_site_id = str(order_data.get("_pa_site_id") or "").strip()
+                    _account_id = str(order_data.get("channel_id") or "")
+                    _allowed_sites = _matched.get("site_ids_by_account", {}).get(
+                        _account_id
+                    )
+                    if (
+                        _allowed_sites
+                        and _order_site_id
+                        and _order_site_id not in _allowed_sites
+                    ):
+                        # 등록된 site_id에 해당 주문의 별칭이 없음 → 매칭 거부
+                        _matched = None
                 if _matched:
                     if not order_data.get("collected_product_id"):
                         order_data["collected_product_id"] = _matched[
@@ -4650,6 +4774,9 @@ async def sync_orders_from_markets(
                         "original_link"
                     ):
                         order_data["source_url"] = _matched["original_link"]
+                # 매칭 검증용 임시 키 제거 (DB 저장 직전, 모델에 없는 필드)
+                order_data.pop("_pa_site_id", None)
+                order_data.pop("_pa_master_code", None)
                 # 롯데ON 예상 정산금액 계산 (롯데ON 공식 정산공식, 2026-04-30 재확인)
                 #   pymtAmt = actualAmt − (bseCmsn + pcsCmsn + dvCmsn − ajstDcAmt)
                 # raw 응답엔 수수료 필드가 없으므로:
@@ -4721,17 +4848,24 @@ async def sync_orders_from_markets(
                     ):
                         order_data["product_image"] = _unreg_matched["product_image"]
                 # 상품명에서 소싱처 상품번호 추출 → source_site/source_url 보충
-                if not order_data.get("source_url"):
+                # 플레이오토는 1 channel에 5 별칭이 묶인 구조라 product_name 끝 공통 무신사
+                # goods_no가 별칭 무관하게 cross-매칭됨 (예: 캐논 주문이 고경 등록 cp에 매칭).
+                # → 플레이오토 주문은 본 분기 비활성화. master_code 직접 매칭만 신뢰.
+                if (
+                    not order_data.get("source_url")
+                    and order_data.get("source") != "playauto"
+                ):
                     import re as _re
 
                     _pname = order_data.get("product_name", "")
                     _id_match = _re.search(r"\b(\d{6,})\s*$", _pname)
                     if _id_match:
                         _sid = _id_match.group(1)
-                        # 1차: DB에서 수집상품 조회 (market_product_nos 보유 상품 우선 → 먼저 수집된 순)
+                        # 1차-A: site_product_id 정확 매칭
                         _cp_check = await session.execute(
                             _sa_text(
-                                "SELECT id, source_site, images FROM samba_collected_product "
+                                "SELECT id, source_site, images, site_product_id "
+                                "FROM samba_collected_product "
                                 "WHERE site_product_id = :sid "
                                 "ORDER BY (market_product_nos IS NOT NULL) DESC, created_at ASC "
                                 "LIMIT 1"
@@ -4739,29 +4873,39 @@ async def sync_orders_from_markets(
                             {"sid": _sid},
                         )
                         _cp_row = _cp_check.fetchone()
+                        # 1차-B: prefix 매칭 (예: SSG itemId '1000807183548'은 _sid '1000807183'로
+                        # 시작 — 정확 매칭 실패 시 prefix로 시도하되, 단 1건일 때만 신뢰)
+                        if not _cp_row:
+                            _cp_pref = await session.execute(
+                                _sa_text(
+                                    "SELECT id, source_site, images, site_product_id "
+                                    "FROM samba_collected_product "
+                                    "WHERE site_product_id LIKE :pfx "
+                                    "ORDER BY (market_product_nos IS NOT NULL) DESC, created_at ASC "
+                                    "LIMIT 2"
+                                ),
+                                {"pfx": _sid + "%"},
+                            )
+                            _cp_pref_rows = _cp_pref.fetchall()
+                            if len(_cp_pref_rows) == 1:
+                                _cp_row = _cp_pref_rows[0]
                         if _cp_row:
+                            _matched_spid = _cp_row[3] or _sid
                             if not order_data.get("collected_product_id"):
                                 order_data["collected_product_id"] = _cp_row[0]
                             if _can_override_source_site_from_sourcing(order_data):
                                 order_data["source_site"] = _cp_row[1]
                             order_data["source_url"] = _sourcing_urls.get(
                                 _cp_row[1], ""
-                            ).format(_sid)
+                            ).format(_matched_spid)
                             if (
                                 not order_data.get("product_image")
                                 and _cp_row[2]
                                 and isinstance(_cp_row[2], list)
                             ):
                                 order_data["product_image"] = _cp_row[2][0]
-                        else:
-                            # 2차: DB에 없어도 상품명 패턴으로 소싱처 추론
-                            # 무신사 goodsNo도 9~10자리이므로 자릿수만으로 FashionPlus 단정 금지
-                            if len(_sid) >= 7:  # 7자리 이상은 무신사로 추론 (더 보수적)
-                                if _can_override_source_site_from_sourcing(order_data):
-                                    order_data["source_site"] = "MUSINSA"
-                                order_data["source_url"] = (
-                                    f"https://www.musinsa.com/products/{_sid}"
-                                )
+                        # 매칭 실패 시 무신사 단정하지 않음 — source_site/url 오염 방지
+                        # (과거 자릿수만으로 MUSINSA로 추론하던 fallback 제거: 2026-05-10)
                 # 중복 체크: 롯데ON은 od_no+od_seq 기반, 기타는 order_number 기반
                 # proc_seq는 주문 상태 변경 시 바뀌므로 중복 체크에서 제외
                 _normalize_synced_order_status(order_data)
@@ -4861,6 +5005,15 @@ async def sync_orders_from_markets(
                         update_fields["source_site"] = new_source_site
                     if order_data.get("source_url") and not existing.source_url:
                         update_fields["source_url"] = order_data["source_url"]
+                    # collected_product_id 백필 — 과거 매칭 캐시 LIMIT 컷오프로 끊긴
+                    # 기존 주문이 다음 sync 때 자동 재연결되도록.
+                    if (
+                        order_data.get("collected_product_id")
+                        and not existing.collected_product_id
+                    ):
+                        update_fields["collected_product_id"] = order_data[
+                            "collected_product_id"
+                        ]
                     if order_data.get("customer_note") and order_data[
                         "customer_note"
                     ] != str(existing.customer_note or ""):
@@ -5825,6 +5978,41 @@ def _parse_playauto_order(
 ) -> dict[str, Any]:
     """플레이오토 EMP 주문 → SambaOrder 데이터 변환."""
 
+    # spec 진단용 — SiteId(별칭)별 첫 1건씩 raw 로깅. MasterCode/MyCateName 등 키별 값 확인.
+    _logged_sites = getattr(_parse_playauto_order, "_logged_sites", set())
+    _site_raw = str(ro.get("SiteId", "")).strip()
+    if _site_raw and _site_raw not in _logged_sites:
+        try:
+            import json as _json
+
+            sample = {
+                k: str(ro.get(k, ""))[:80]
+                for k in (
+                    "SiteId",
+                    "SiteName",
+                    "ProdCode",
+                    "MasterCode",
+                    "MyCateName",
+                    "SellerCode",
+                    "Groupkey",
+                    "ProdName",
+                    "OrderCode",
+                    "Number",
+                )
+            }
+            logger.info(
+                f"[플레이오토 raw site={_site_raw}] {_json.dumps(sample, ensure_ascii=False)}"
+            )
+            _logged_sites.add(_site_raw)
+            _parse_playauto_order._logged_sites = _logged_sites  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+    # MasterCode 추출 (응답에 있으면 매칭에 활용 — Phase 4)
+    master_code = (
+        ro.get("MasterCode") or ro.get("master_code") or ro.get("masterCode") or ""
+    )
+
     status_map = {
         "신규주문": "pending",
         "송장출력": "wait_ship",
@@ -5893,6 +6081,12 @@ def _parse_playauto_order(
         "tracking_number": ro.get("SenderNo", ""),
         "paid_at": paid_at,
         "source": "playauto",
+        # 별칭 단위 매칭 검증용 — DB 저장 전 pop. site_id가 cp의 등록된 site_ids에
+        # 포함될 때만 매칭 허용 (기존 cp는 site_ids 미저장이라 호환 매칭).
+        "_pa_site_id": site_id,
+        # 매칭용 임시 키 — DB 저장 전 pop. plapro 응답에 MasterCode 있으면 추출해
+        # _mpn_cache 매칭에 ProdCode와 함께 시도. 매칭 우선순위: master_code > product_id.
+        "_pa_master_code": master_code,
         # 판매처(사업자) 정보 — 별칭 매핑 적용
         "source_site": (
             f"{site_name}({alias_map[site_id]})"

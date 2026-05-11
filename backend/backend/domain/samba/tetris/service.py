@@ -390,13 +390,20 @@ class SambaTetrisService:
 
         for acc in accounts:
             mt = acc.market_type
-            if mt not in market_groups:
-                market_groups[mt] = {
-                    "market_type": mt,
-                    "market_name": acc.market_name or _MARKET_DISPLAY_NAMES.get(mt, mt),
+            # 플레이오토는 계정별로 별도 컬럼 분리
+            is_playauto = mt == "playauto"
+            group_key = f"playauto:{acc.id}" if is_playauto else mt
+            if group_key not in market_groups:
+                base_name = acc.market_name or _MARKET_DISPLAY_NAMES.get(mt, mt)
+                display_name = (
+                    f"{base_name} ({acc.account_label})" if is_playauto else base_name
+                )
+                market_groups[group_key] = {
+                    "market_type": mt,  # 응답 필드는 그대로 'playauto' 유지
+                    "market_name": display_name,
                     "accounts": [],
                 }
-                market_order.append(mt)
+                market_order.append(group_key)
 
             # max_count: additional_fields.maxCount
             add_fields: dict[str, Any] = (
@@ -518,7 +525,7 @@ class SambaTetrisService:
             total_collected = sum(b["collected_count"] for b in assignment_blocks)
             total_registered = account_registered_total.get(acc.id, 0)
 
-            market_groups[mt]["accounts"].append(
+            market_groups[group_key]["accounts"].append(
                 {
                     "account_id": acc.id,
                     "account_label": acc.account_label,
@@ -572,7 +579,7 @@ class SambaTetrisService:
             logger.info(f"[테트리스] unassigned 샘플: {unassigned[:3]}")
 
         return {
-            "markets": [market_groups[mt] for mt in market_order],
+            "markets": [market_groups[gk] for gk in market_order],
             "unassigned": unassigned,
         }
 
@@ -1117,6 +1124,38 @@ class SambaTetrisService:
                     (row.source_site, row.brand_name, row.account_ids)
                 )
 
+        # pending/running 상태의 delete_market 잡 조합 조회
+        # — 삭제 진행 중인 (소싱처, 브랜드, 계정) 조합을 레거시 복원 루프에서 스킵하기 위함
+        # — registered_accounts JSONB 가 delete_market 잡 처리 후에야 갱신되므로,
+        #   그 사이에 sync_all 이 도래하면 레거시 블럭으로 오인해 transmit 잡을 재생성하던 버그 방지
+        pending_delete_rows = await self._session.execute(
+            text("""
+                SELECT
+                    payload->>'source_site' AS source_site,
+                    payload->>'brand_name' AS brand_name,
+                    payload->>'target_account_ids' AS account_ids
+                FROM samba_jobs
+                WHERE job_type = 'delete_market'
+                  AND status IN ('pending', 'running')
+                  AND payload->>'brand_name' IS NOT NULL
+            """)
+        )
+        pending_delete_keys: set[tuple[str, str, str]] = set()
+        for row in pending_delete_rows:
+            if row.source_site and row.brand_name and row.account_ids:
+                # account_ids 는 '["account_id"]' JSON text — 단일 계정 가정으로 파싱
+                try:
+                    import json as _json
+
+                    parsed = _json.loads(row.account_ids)
+                    if isinstance(parsed, list):
+                        for acct in parsed:
+                            pending_delete_keys.add(
+                                (row.source_site, row.brand_name, str(acct))
+                            )
+                except Exception:
+                    pass
+
         # 브랜드×계정 조합별 별도 잡 — 계정이 같아도 브랜드마다 독립 잡으로 스테이징
         # (워커가 동일 계정 잡은 순차, 다른 계정 잡은 병렬로 자동 처리)
         for a in assignments:
@@ -1193,6 +1232,15 @@ class SambaTetrisService:
                 continue
             key = (row.source_site, row.brand_name, row.account_id)
             if key in processed_keys:
+                continue
+            # 삭제(delete_market) 잡 진행 중인 조합은 레거시 복원 금지
+            # — registered_accounts 갱신이 지연되어 오인 복원되는 버그 방지
+            if key in pending_delete_keys:
+                logger.info(
+                    f"[테트리스 sync 레거시] delete_market 잡 진행 중 — 복원 스킵: "
+                    f"{row.source_site}/{row.brand_name} → {row.account_id}"
+                )
+                processed_keys.add(key)
                 continue
             acct_key = f'["{row.account_id}"]'
             if (row.source_site, row.brand_name, acct_key) in pending_transmit_keys:

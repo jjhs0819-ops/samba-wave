@@ -1212,24 +1212,32 @@ async function handleSourcingJob(job) {
     let tab
     if (needsForegroundTab) {
       // SSG/ABCmart/GrandStage 카드/혜택가 추출용 popup
-      // 사용자 PC 작업 가리지 않도록:
-      //   1. 작은 크기(420x320)로 좌상단 코너 배치 — 화면 점유 최소화
-      //   2. focused:false 생성 → 포커스 미강탈
-      //   3. 직후 메인 윈도우에 focus 복원 → popup이 z-order 뒤로 밀려 사용자 시야 위에 안 뜸
-      //      (state:'minimized'는 Whale에서 AJAX throttling으로 카드혜택가 미반영되어 사용 불가)
+      // 검증(2026-05-10): focused:false popup은 Chromium 페이지 라이프사이클 throttling으로
+      //   AJAX(카드혜택가/최대혜택가)가 발화하지 않음 → 사용자 클릭해야 로딩 시작 → 빈화면 멈춤.
+      // 해결: focused:true로 활성화 보장 + 좌측 하단 작은 코너에 배치(사용자 작업 영역인 상단 미가림).
+      // 메인 윈도우 focused 복원은 호출하지 않음(이전 회귀: 다른 앱 가림 문제).
+      let _bottomY = 800   // fallback (1080 해상도 기준 - 하단 280)
+      let _leftX = 10
+      try {
+        const displays = await chrome.system.display.getInfo()
+        const primary = displays.find(d => d.isPrimary) || displays[0]
+        if (primary?.workArea) {
+          _bottomY = primary.workArea.top + primary.workArea.height - 170  // height=150 + 여유 20
+          _leftX = primary.workArea.left + 10
+        }
+      } catch {}
       const win = await chrome.windows.create({
         url: job.url,
         type: 'popup',
-        focused: false,
-        width: 420,
-        height: 320,
-        top: 10,
-        left: 10,
+        focused: true,
+        width: 200,
+        height: 150,
+        top: _bottomY,
+        left: _leftX,
       })
       tab = win.tabs?.[0]
       sourcingWindowId = win.id
       openedSourcingWindow = true
-      // windows.update(focused:true) 제거 — Whale 창을 앞으로 꺼내 다른 앱(VS Code 등)을 가리는 문제 발생
     } else {
       tab = await chrome.tabs.create({ url: job.url, active: false })
     }
@@ -1262,11 +1270,36 @@ async function handleSourcingJob(job) {
       const _ssgPoll = async (tid) => {
         let ready = false
         let hasObj = false
+        let staffOnly = false
         for (let _i = 0; _i < 30; _i++) {
           await wait(500)
           const [_chk] = await chrome.scripting.executeScript({
             target: { tabId: tid }, world: 'MAIN',
             func: () => {
+              // 임직원/사업자 회원 전용 상품 — alert("임직원 및 사업자 회원만 구매 가능한 상품입니다.")
+              // 페이지 본문(또는 인라인 스크립트)에 동일 문구가 박혀 있어 fail-fast 가능.
+              const _src = document.documentElement ? document.documentElement.outerHTML : ''
+              if (_src.indexOf('임직원 및 사업자 회원') !== -1 || _src.indexOf('임직원만 구매') !== -1) {
+                return { ready: false, hasObj: false, hasCard: false, staffOnly: true }
+              }
+              // URL 기반 폴백 — content_script suppress 가 race 로 늦어 inline script 의
+              // location.href = "member.ssg.com/login..." 또는 history.back() 리다이렉트가 먼저 실행된 케이스.
+              // 882B 짜리 flagMsg 페이지는 매우 빨리 파싱되어 world:MAIN 주입이 늦을 수 있음.
+              const _href = location.href || ''
+              // login 페이지로 리다이렉트
+              if (_href.indexOf('member.ssg.com/member/login') !== -1) {
+                return { ready: false, hasObj: false, hasCard: false, staffOnly: true }
+              }
+              // flagMsg 페이지 자체 감지 — 마커 매칭 실패 보호 (확장앱 suppress 가 작동해 페이지 유지된 경우)
+              if (document.title === 'flagMsg') {
+                return { ready: false, hasObj: false, hasCard: false, staffOnly: true }
+              }
+              // 상품 URL 컨텍스트 손실 — itemView.ssg 가 URL 에 없으면 어디로 튄 것 (homepage/로그인 등).
+              // 진단: history.back() 으로 department.ssg.com/ 홈으로 이동하는 케이스 다수 확인.
+              // SSG 상품 잡은 항상 itemView.ssg URL 로 시작하므로 그게 사라지면 staffOnly 리다이렉트.
+              if (_href && _href.indexOf('itemView.ssg') === -1) {
+                return { ready: false, hasObj: false, hasCard: false, staffOnly: true }
+              }
               const hasObj = !!(window.resultItemObj && window.resultItemObj.itemNm)
               if (!hasObj) return { ready: false, hasObj: false, hasCard: false }
               let hasCard = false
@@ -1277,19 +1310,38 @@ async function handleSourcingJob(job) {
             },
           }).catch(() => [{ result: { ready: false } }])
           const r = _chk?.result || {}
+          if (r.staffOnly) { staffOnly = true; break }
           if (r.hasObj) hasObj = true
           if (r.ready) { ready = true; break }
           // 카드혜택가 없는 상품(일반가만)도 5초 후엔 통과 — resultItemObj만 있으면 추출 진행
           if (r.hasObj && _i >= 10) { break }
         }
-        return { ready, hasObj }
+        return { ready, hasObj, staffOnly }
       }
       let _ssgReady = false
-      let { ready: _r1, hasObj: _h1 } = await _ssgPoll(tabId)
+      let { ready: _r1, hasObj: _h1, staffOnly: _s1 } = await _ssgPoll(tabId)
       _ssgReady = _r1
 
-      // 빈 페이지 감지(resultItemObj 전혀 없음) — 리로드 1회 재시도
-      if (!_h1) {
+      // 임직원/사업자 회원 전용 상품 — 리로드 시도 무의미 (영구 차단)
+      if (_s1) {
+        console.log(`[SSG] 임직원 전용 상품 감지 — fail-fast: ${job.productId}`)
+        // 리로드 스킵 후 그대로 진행 → 백엔드가 HTML에서 staff_only 마커 감지해 sold_out 처리
+      } else if (!_h1) {
+        // 진단 로그 — 빈 페이지일 때 어떤 URL/title 인지 확인 (임직원 redirect 추적용)
+        try {
+          const [_diag] = await chrome.scripting.executeScript({
+            target: { tabId }, world: 'MAIN',
+            func: () => ({
+              href: location.href || '',
+              title: document.title || '',
+              bodyLen: (document.body?.innerHTML || '').length,
+              hasMarker: (document.documentElement?.outerHTML || '').indexOf('임직원') !== -1,
+            }),
+          }).catch(() => [{ result: null }])
+          const _d = _diag?.result || {}
+          console.log(`[SSG.diag] ${job.productId} href="${_d.href}" title="${_d.title}" bodyLen=${_d.bodyLen} hasMarker=${_d.hasMarker}`)
+        } catch {}
+        // 빈 페이지 감지(resultItemObj 전혀 없음) — 리로드 1회 재시도
         console.log(`[SSG] 빈 페이지 감지 — 리로드 재시도: ${job.productId}`)
         try { await chrome.tabs.reload(tabId) } catch {}
         await waitForTabLoad(tabId, 10000).catch(() => {})
@@ -1558,18 +1610,37 @@ async function handleSourcingJob(job) {
         }
       }
     } else if (job.type === 'detail' && job.site === 'SSG') {
-      // SSG: reCAPTCHA 감지 후 즉시 실패 반환 (25초 타임아웃 낭비 방지)
-      const [captchaCheck] = await chrome.scripting.executeScript({
+      // SSG: reCAPTCHA / 임직원 전용 페이지 감지 후 즉시 실패 반환 (타임아웃 낭비 방지)
+      const [preCheck] = await chrome.scripting.executeScript({
         target: { tabId },
         world: 'MAIN',
         func: () => {
           const body = document.body?.innerText || ''
-          return body.includes('연속적인 접근') || body.includes('로봇이 아닙니다')
+          const src = document.documentElement ? document.documentElement.outerHTML : ''
+          const href = location.href || ''
+          // 임직원 redirect 폴백 — flagMsg 페이지에서 alert 후
+          //   1) location.href → member.ssg.com/login 리다이렉트
+          //   2) history.back() → department.ssg.com/ 홈으로 튕김
+          // 어느 쪽이든 URL 에 itemView.ssg 가 사라지면 staffOnly 리다이렉트.
+          const _redirectStaff = href && href.indexOf('itemView.ssg') === -1
+          const _flagMsgTitle = document.title === 'flagMsg'
+          return {
+            captcha: body.includes('연속적인 접근') || body.includes('로봇이 아닙니다'),
+            staffOnly: src.indexOf('임직원 및 사업자 회원') !== -1 ||
+                       src.indexOf('임직원만 구매') !== -1 ||
+                       _redirectStaff ||
+                       _flagMsgTitle,
+          }
         }
       })
-      if (captchaCheck?.result) {
+      const _pc = preCheck?.result || {}
+      if (_pc.captcha) {
         console.log(`[SSG] reCAPTCHA 차단 감지: ${job.productId}`)
         result = { success: false, blocked: true, message: 'SSG reCAPTCHA 차단' }
+      } else if (_pc.staffOnly) {
+        // 임직원/사업자 회원 전용 — 일반 고객 구매 불가 → 백엔드에서 sold_out 처리하도록 명시적 신호 전달
+        console.log(`[SSG] 임직원 전용 상품 감지 → staffOnly 신호 전송: ${job.productId}`)
+        result = { success: false, staffOnly: true, message: 'SSG 임직원/사업자 회원 전용 상품' }
       } else {
         result = await extractDetailData(tabId, job.site, job.productId)
       }

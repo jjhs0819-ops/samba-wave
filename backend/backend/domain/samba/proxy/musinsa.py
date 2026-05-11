@@ -192,10 +192,13 @@ class MusinsaClient:
             gp = d.get("goodsPrice") or {}
             cat = d.get("category") or {}  # None 방지
 
-            # 2) 옵션 API + 재고 API
-            options, option_value_no_map = await self._fetch_options(
-                client, goods_no, gp
-            )
+            # 2) 옵션 API + 재고 API (메인 / 추가옵션 / 그룹명 분리)
+            (
+                options,
+                option_value_no_map,
+                addon_options,
+                option_group_names,
+            ) = await self._fetch_options(client, goods_no, gp)
 
             # 3) 상품고시정보 API (갱신 모드에서는 스킵)
             essential = (
@@ -294,13 +297,33 @@ class MusinsaClient:
             coupon_price_raw = (
                 gp.get("couponPrice", 0) or 0
             )  # price_uncertain 판단용으로만 사용
-            benefit_coupon_discount, _coupon_api_failed = await self._fetch_coupons(
+            (
+                benefit_coupon_discount,
+                _coupon_api_failed,
+                _coupons_total,
+                _sg_y_total,
+            ) = await self._fetch_coupons(
                 client,
                 goods_no,
                 d,
                 s_price,
                 0,  # 초기값 0 고정 — goodsPrice.couponPrice 미사용
             )
+            # 인증 의심: 쿠키 보유 + couponPrice 있는데 쿠폰 응답이 0건이면
+            # 비로그인 응답 가능성 (회원전용 SG/SB 쿠폰 누락 → cost 부정확)
+            _auth_suspect = (
+                bool(self.cookie)
+                and _coupons_total == 0
+                and coupon_price_raw > 0
+                and coupon_price_raw < s_price
+            )
+            if _auth_suspect:
+                logger.warning(
+                    f"[무신사 인증 의심] {goods_no}: 쿠키 보유했으나 쿠폰 0건 "
+                    f"(couponPrice={coupon_price_raw}, salePrice={s_price}) — "
+                    f"DB musinsa_cookies 만료/복호화 실패 가능성. "
+                    f"price_uncertain=True 마킹하여 잘못된 cost 갱신 차단."
+                )
             benefit_base = s_price - benefit_coupon_discount
 
             # ── 등급 할인 & 선할인 ──
@@ -442,6 +465,8 @@ class MusinsaClient:
                 "detailImages": detail_images,
                 "detailHtml": desc_html,
                 "options": options,
+                "addonOptions": addon_options,
+                "optionGroupNames": option_group_names,
                 "originalPrice": gp.get("normalPrice") or raw_sale or 0,
                 "salePrice": s_price,
                 "couponPrice": benefit_base,
@@ -547,9 +572,11 @@ class MusinsaClient:
                 "sameDayDelivery": is_same_day,
                 "collectedAt": now_iso,
                 "updatedAt": now_iso,
-                # 쿠폰 API 실패 + goodsPrice.couponPrice도 0이면 가격 불확실
-                # (쿠폰 API가 유일한 쿠폰 정보원인 경우)
-                "price_uncertain": _coupon_api_failed and coupon_price_raw == 0,
+                # 가격 불확실 케이스:
+                #   1) 쿠폰 API 실패 + goodsPrice.couponPrice도 0
+                #   2) 인증 의심 (쿠키 있는데 쿠폰 0건이고 couponPrice>0 — 비로그인 응답)
+                "price_uncertain": (_coupon_api_failed and coupon_price_raw == 0)
+                or _auth_suspect,
                 # 적립금 사용 제한 여부 (True=불가, False=가능)
                 "isPointRestricted": bool(d.get("isRestictedUsePoint")),
             }
@@ -954,10 +981,23 @@ class MusinsaClient:
         client: httpx.AsyncClient,
         goods_no: str,
         gp: dict[str, Any],
-    ) -> tuple[list[dict[str, Any]], dict[int, int]]:
-        """옵션 + 재고 API 호출."""
+    ) -> tuple[
+        list[dict[str, Any]],
+        dict[int, int],
+        list[dict[str, Any]],
+        list[str],
+    ]:
+        """옵션 + 재고 API 호출.
+
+        반환: (options, option_value_no_map, addon_options, option_group_names)
+          - options: 메인 SKU 옵션 (1단 또는 색상×사이즈 같은 다단 매트릭스)
+          - addon_options: 추가구성상품(스마트스토어 productAddItems 등) — 메인과 별개 차원
+          - option_group_names: 메인 옵션의 그룹명 목록 (예: ["색상"], ["색상","사이즈"])
+        """
         option_value_no_map: dict[int, int] = {}
         options: list[dict[str, Any]] = []
+        addon_options: list[dict[str, Any]] = []
+        option_group_names: list[str] = []
 
         try:
             opt_resp = await client.get(
@@ -968,7 +1008,7 @@ class MusinsaClient:
                 logger.warning(
                     f"[옵션] {goods_no} 옵션 API 비정상 응답: HTTP {opt_resp.status_code}"
                 )
-                return options, option_value_no_map
+                return options, option_value_no_map, addon_options, option_group_names
 
             opt_json = opt_resp.json()
             opt_meta = opt_json.get("meta", {})
@@ -976,9 +1016,22 @@ class MusinsaClient:
                 logger.warning(
                     f"[옵션] {goods_no} 옵션 API 실패: result={opt_meta.get('result')}, data={bool(opt_json.get('data'))}"
                 )
-                return options, option_value_no_map
+                return options, option_value_no_map, addon_options, option_group_names
 
             items = opt_json["data"].get("optionItems", [])
+
+            # 메인 옵션 그룹명 — 무신사 응답의 basic[*].name을 차원 순서대로 사용
+            # data.basic: [{ no, name(예: "색상"), sequence, optionValues:[...] }, ...]
+            main_groups_meta = opt_json["data"].get("basic", []) or []
+            # sequence 오름차순으로 정렬 — 차원 순서 보장
+            for grp in sorted(
+                main_groups_meta, key=lambda g: g.get("sequence", 0) or 0
+            ):
+                if grp.get("isDeleted"):
+                    continue
+                gn = (grp.get("name") or "").strip()
+                if gn:
+                    option_group_names.append(gn)
 
             # optionValueNo 목록 수집
             all_option_value_nos: list[int] = []
@@ -1092,40 +1145,45 @@ class MusinsaClient:
                     }
                 )
 
-            # extra(추가) 옵션 처리 — 이름에 (+XXXX) 형태로 추가금액 포함
+            # extra(추가) 옵션 처리 — addon_options로 분리 저장 (메인과 다른 차원)
+            # 마켓 변환 시: 스마트스토어 productAddItems / 11번가 addOptInfo 등으로 매핑
+            # "선택안함"/"선택없음"은 제외 (마켓 측 기본값 처리)
             extra_groups = opt_json["data"].get("extra", [])
             for grp in extra_groups:
                 if grp.get("isDeleted"):
                     continue
-                grp_name = grp.get("name", "")
+                grp_name = (grp.get("name") or "").strip()
                 is_stock_managed = grp.get("isStockManaged", False)
+                is_required = grp.get("isRequired", False) is True
                 for ev in grp.get("optionValues", []):
                     if not ev.get("activated") or ev.get("isDeleted"):
                         continue
-                    ev_name = ev.get("name", "")
-                    if "선택안함" in ev_name or "선택없음" in ev_name:
-                        continue
-                    m = re.search(r"\(\+(\d+)\)", ev_name)
-                    add_price = int(m.group(1)) if m else 0
+                    ev_name = (ev.get("name") or "").strip()
+                    is_none_choice = "선택안함" in ev_name or "선택없음" in ev_name
+                    # 추가금액: optionValue.price 우선, 없으면 이름의 (+숫자) 폴백
+                    add_price = int(ev.get("price") or 0)
+                    if not add_price:
+                        m = re.search(r"\(\+(\d+)\)", ev_name)
+                        if m:
+                            add_price = int(m.group(1))
                     ev_stock: Optional[int] = (
                         (ev.get("quantity") or 99) if is_stock_managed else 99
                     )
-                    full_name = f"{grp_name}: {ev_name}" if grp_name else ev_name
-                    options.append(
+                    addon_options.append(
                         {
                             "no": ev.get("no"),
-                            "name": full_name,
-                            "price": (base_price or 0) + add_price,
+                            "group": grp_name,
+                            "name": ev_name,
+                            "add_price": add_price,
                             "stock": ev_stock,
-                            "isSoldOut": False,
-                            "isBrandDelivery": False,
-                            "deliveryType": "",
-                            "managedCode": "",
+                            "is_required": is_required,
+                            "is_none_choice": is_none_choice,
                         }
                     )
             if extra_groups:
                 logger.info(
-                    f"[옵션] {goods_no} extra 옵션 {sum(len(g.get('optionValues', [])) for g in extra_groups)}개 추가"
+                    f"[옵션] {goods_no} addon_options {len(addon_options)}개 분리 저장 "
+                    f"(메인 {len(options)}개와 별개 차원)"
                 )
 
         except Exception as exc:
@@ -1133,7 +1191,7 @@ class MusinsaClient:
                 f"[옵션] {goods_no} 옵션 수집 실패: {type(exc).__name__}: {exc}"
             )
 
-        return options, option_value_no_map
+        return options, option_value_no_map, addon_options, option_group_names
 
     async def _fetch_essential(
         self, client: httpx.AsyncClient, goods_no: str
@@ -1215,8 +1273,15 @@ class MusinsaClient:
         d: dict[str, Any],
         s_price: int,
         best_coupon_discount: int,
-    ) -> tuple[int, bool]:
-        """쿠폰 API 호출. Returns (할인액, API실패여부)."""
+    ) -> tuple[int, bool, int, int]:
+        """쿠폰 API 호출.
+
+        Returns (할인액, API실패여부, 응답_쿠폰갯수, bestSalePriceYn=Y_갯수).
+        호출자는 cookie 보유 + couponPrice>0인데 응답 쿠폰 0건이면 비로그인 응답
+        의심 신호로 사용 가능.
+        """
+        coupons_total = 0
+        sg_y_total = 0
         try:
             specialty = d.get("specialtyCodes") or []
             params_dict: dict[str, Any] = {
@@ -1238,6 +1303,15 @@ class MusinsaClient:
                     "list"
                 ) or coupon_json.get("data", [])
                 if isinstance(coupons, list):
+                    coupons_total = len(coupons)
+                    sg_y_total = sum(
+                        1 for c in coupons if c.get("bestSalePriceYn") == "Y"
+                    )
+                    logger.info(
+                        f"[쿠폰 응답] {goods_no}: total={coupons_total}, "
+                        f"bestSalePriceYn=Y={sg_y_total}, "
+                        f"hasCookie={bool(self.cookie)}"
+                    )
                     for c in coupons:
                         logger.info(
                             f"[쿠폰 상세] {goods_no}: salePrice={c.get('salePrice')}, "
@@ -1287,9 +1361,9 @@ class MusinsaClient:
                             best_coupon_discount = actual_discount
         except Exception as exc:
             logger.warning(f"[쿠폰] {goods_no} API 호출 실패: {exc}")
-            return best_coupon_discount, True
+            return best_coupon_discount, True, coupons_total, sg_y_total
 
-        return best_coupon_discount, False
+        return best_coupon_discount, False, coupons_total, sg_y_total
 
     @staticmethod
     def _extract_detail_images(desc_html: str) -> list[str]:

@@ -32,7 +32,7 @@ export default function AiJobModal({ open, title, logs, done, abortRef, onClose 
           {logs.map((msg, i) => {
             let color = '#CCC'
             if (msg.includes('완료')) color = '#51CF66'
-            if (msg.includes('실패') || msg.includes('오류')) color = '#FF6B6B'
+            if (/실패[\s:]*[1-9]/.test(msg) || /실패(?![\s:]*\d)/.test(msg) || msg.includes('오류')) color = '#FF6B6B'
             if (msg.includes('시작')) color = '#4C9AFF'
             return <div key={i} style={{ color }}>{fmtTextNumbers(msg)}</div>
           })}

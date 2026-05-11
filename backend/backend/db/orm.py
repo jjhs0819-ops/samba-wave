@@ -84,6 +84,17 @@ def _build_db_url(user: str, password: str, host: str, port: int, name: str) -> 
 
 
 def _create_write_async_engine() -> AsyncEngine:
+    eng = _build_write_engine()
+    try:
+        from backend.db.pool_monitor import attach_pool_monitor
+
+        attach_pool_monitor(eng, "write")
+    except Exception:
+        pass
+    return eng
+
+
+def _build_write_engine() -> AsyncEngine:
     return create_async_engine(
         _build_db_url(
             settings.write_db_user,
@@ -94,21 +105,32 @@ def _create_write_async_engine() -> AsyncEngine:
         ),
         future=True,
         echo=False,  # Disable SQL echo to reduce noise
-        pool_pre_ping=False,  # asyncpg 버그: SELECT 1이 idle in transaction 좀비 누적 → pool_recycle=300으로 대체
-        pool_size=20,  # write 풀 확장 (10 → 20, 오토튠+테트리스 동시 점유 대응)
-        max_overflow=20,  # 추가 허용 (write 최대 40개)
-        pool_recycle=120,  # idle 커넥션 2분 후 재활용 — 좀비 누적 방지
+        pool_pre_ping=False,  # asyncpg 버그: SELECT 1이 idle in transaction 좀비 누적 → pool_recycle로 대체
+        pool_size=25,  # write 풀 확장 (20 → 25)
+        max_overflow=25,  # 추가 허용 (write 최대 50개, Cloud SQL max=100 내)
+        pool_recycle=60,  # idle 커넥션 1분 후 재활용 — 좀비 회수 가속
         pool_timeout=10,  # 빠른 실패 — 30s 대기 중 ASGI 워커 타임아웃 방지
         connect_args={
             "timeout": 10,  # asyncpg 연결 타임아웃 10초
             "server_settings": {
-                "idle_in_transaction_session_timeout": "60000",  # 1분 초과 idle in transaction 자동 종료
+                "idle_in_transaction_session_timeout": "90000",  # 90초 초과 idle in transaction 자동 종료 (transmit 잡 최대 100초이나 그 사이 commit/HTTP 이어지므로 idle 90s면 좀비)
             },
         },
     )
 
 
 def _create_read_async_engine() -> AsyncEngine:
+    eng = _build_read_engine()
+    try:
+        from backend.db.pool_monitor import attach_pool_monitor
+
+        attach_pool_monitor(eng, "read")
+    except Exception:
+        pass
+    return eng
+
+
+def _build_read_engine() -> AsyncEngine:
     return create_async_engine(
         _build_db_url(
             settings.read_db_user,
@@ -119,15 +141,15 @@ def _create_read_async_engine() -> AsyncEngine:
         ),
         future=True,
         echo=False,
-        pool_pre_ping=False,  # asyncpg 버그: SELECT 1이 idle in transaction 좀비 누적 → pool_recycle=300으로 대체
-        pool_size=5,  # idle 연결 수 축소 (기존 20 → 5, read는 주로 조회용)
+        pool_pre_ping=False,  # asyncpg 버그: SELECT 1이 idle in transaction 좀비 누적 → pool_recycle로 대체
+        pool_size=5,  # idle 연결 수 축소 (read는 주로 조회용)
         max_overflow=10,  # 추가 허용 (read 최대 15개)
-        pool_recycle=120,  # idle 커넥션 2분 후 재활용 — 좀비 누적 방지
+        pool_recycle=60,  # idle 커넥션 1분 후 재활용 — 좀비 회수 가속
         pool_timeout=10,  # 빠른 실패 — 30s 대기 중 ASGI 워커 타임아웃 방지
         connect_args={
             "timeout": 10,  # asyncpg 연결 타임아웃 10초
             "server_settings": {
-                "idle_in_transaction_session_timeout": "60000",  # 1분 초과 idle in transaction 자동 종료
+                "idle_in_transaction_session_timeout": "90000",  # 90초 초과 idle in transaction 자동 종료
             },
         },
     )
@@ -180,7 +202,7 @@ async def get_write_session() -> AsyncGenerator[AsyncSession, None]:
         ):  # CancelledError는 BaseException 상속 — Exception으로는 못 잡음
             try:
                 await sess.rollback()
-            except Exception:
+            except BaseException:  # rollback 중 2차 CancelledError도 억제
                 pass
             raise
 
@@ -196,7 +218,7 @@ async def get_read_session() -> AsyncGenerator[AsyncSession, None]:
         ):  # CancelledError 포함 — rollback으로 idle in transaction 방지
             try:
                 await sess.rollback()
-            except Exception:
+            except BaseException:  # rollback 중 2차 CancelledError도 억제
                 pass
             raise
 
@@ -205,38 +227,44 @@ async def get_read_session() -> AsyncGenerator[AsyncSession, None]:
 async def get_write_session_dependency() -> AsyncGenerator[AsyncSession, None]:
     """FastAPI dependency for write sessions with guaranteed cleanup.
 
-    Uses try/finally instead of async with to ensure session.close() is called
-    even when client disconnects or exceptions occur during request processing.
+    BaseException까지 잡아야 함 — asyncio.CancelledError는 Exception이 아닌 BaseException 상속.
+    클라이언트 끊김/ASGI 타임아웃 시 CancelledError가 발생하는데 except Exception이면
+    rollback이 호출되지 않아 idle in transaction 좀비가 풀에 쌓인다(2026-05-10 사고).
     """
     Session = get_write_sessionmaker()
     session = Session()
     try:
         yield session
-    except Exception:
+    except BaseException:
         try:
             await session.rollback()
-        except Exception:
+        except BaseException:
             pass
         raise
     finally:
-        await session.close()
+        try:
+            await session.close()
+        except BaseException:
+            pass
 
 
 async def get_read_session_dependency() -> AsyncGenerator[AsyncSession, None]:
     """FastAPI dependency for read sessions with guaranteed cleanup.
 
-    Uses try/finally instead of async with to ensure session.close() is called
-    even when client disconnects or exceptions occur during request processing.
+    BaseException까지 잡아야 함 — write 세션과 동일 이유 (CancelledError 안 잡힘 → rollback 누락).
     """
     Session = get_read_sessionmaker()
     session = Session()
     try:
         yield session
-    except Exception:
+    except BaseException:
         try:
             await session.rollback()
-        except Exception:
+        except BaseException:
             pass
         raise
     finally:
-        await session.close()
+        try:
+            await session.close()
+        except BaseException:
+            pass

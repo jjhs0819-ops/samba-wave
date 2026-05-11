@@ -1,11 +1,9 @@
 """무신사 관련 엔드포인트."""
 
-from __future__ import annotations
-
 from typing import Any, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -195,7 +193,7 @@ class MusinsaSetCookieRequest(BaseModel):
 @limiter.limit(RATE_SET_COOKIE)
 async def musinsa_set_cookie(
     request: Request,
-    body: MusinsaSetCookieRequest,
+    body: MusinsaSetCookieRequest = Body(...),
     write_session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:
     """브라우저 확장에서 쿠키 직접 전달.

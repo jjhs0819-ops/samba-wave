@@ -84,17 +84,22 @@ export default function OrderInfoCell(props: Props) {
     if (host.includes('gsshop.com')) return 'GSShop'
     return ''
   })()
-  // 소싱처 우선순위: source_url 도메인 > collected_product.source_site > o.source_site
-  const resolvedSourceSite = String(sourceFromUrl || actualSourceSite || o.source_site || '').trim()
-  const sourceBadgeLabel = resolvedSourceSite
-    ? (formatSourceSiteLabel(resolvedSourceSite, siteAliasMap) || resolvedSourceSite)
+  // 두 배지는 완전 별개 차원 — 항상 함께 표시.
+  // (1) 소싱처 배지: 어디서 가져온 상품 (MUSINSA, LOTTEON, SSG 등)
+  //     우선순위 source_url 도메인 → collected_product.source_site
+  // (2) 별칭 배지: 플레이오토 1 channel 5 site_id 구조에서 실제 판매된 GS샵 계정 구분
+  //     o.source_site 안의 괄호 형식(예: 'GS이숍(고경)', '롯데홈쇼핑(037800LT)')
+  const sourcingSite = String(sourceFromUrl || actualSourceSite || '').trim()
+  const sourceBadgeLabel = sourcingSite
+    ? (formatSourceSiteLabel(sourcingSite, siteAliasMap) || sourcingSite)
     : ''
-  const extraSourceBadgeLabel = (() => {
+  const aliasBadgeRaw = (() => {
     const raw = String(o.source_site || '').trim()
-    if (!raw) return ''
-    if (!resolvedSourceSite || raw === resolvedSourceSite) return ''
-    return formatSourceSiteLabel(raw, siteAliasMap) || raw
+    return raw && raw.includes('(') ? raw : ''
   })()
+  const extraSourceBadgeLabel = aliasBadgeRaw
+    ? (formatSourceSiteLabel(aliasBadgeRaw, siteAliasMap) || aliasBadgeRaw)
+    : ''
 
   return (
     <td style={{ padding: '0.75rem', borderRight: '1px solid #1C2333', fontSize: '0.8125rem', position: 'relative' }}>

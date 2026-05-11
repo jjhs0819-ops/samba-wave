@@ -6,6 +6,7 @@ import os
 import sys
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from typing import Optional
 
 from fastapi import FastAPI
 
@@ -239,7 +240,7 @@ async def _recover_sourcing_jobs(logger: logging.Logger) -> None:
     from sqlalchemy import update as sa_update
     from sqlmodel import select
 
-    from backend.db.orm import get_write_sessionmaker
+    from backend.db.orm import get_write_session
     from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
     from backend.domain.samba.sourcing_job.model import SambaSourcingJob
 
@@ -248,8 +249,7 @@ async def _recover_sourcing_jobs(logger: logging.Logger) -> None:
     _MAX_RECOVER = 1000
 
     try:
-        sessionmaker = get_write_sessionmaker()
-        async with sessionmaker() as session:
+        async with get_write_session() as session:
             now = datetime.now(_UTC)
             stmt = (
                 select(SambaSourcingJob)
@@ -523,19 +523,43 @@ async def _warmup_tetris_board_cache(logger: logging.Logger) -> None:
     """서버 시작 시 테트리스 보드 캐시 백그라운드 워밍업.
 
     get_board() 쿼리는 60초 이상 소요되므로 첫 사용자 요청 전에 미리 실행해둔다.
+    캐시 키가 tenant_id별로 분리되므로 None 외에 실제 tenant_id 전부를 워밍업한다.
     실패해도 무시 — 사용자가 재시도하면 정상 동작함.
     """
     try:
+        from sqlalchemy import text as _sa_text
+
         from backend.db.orm import get_read_session
         from backend.domain.samba.tetris.repository import SambaTetrisRepository
         from backend.domain.samba.tetris.service import SambaTetrisService
 
-        async with get_read_session() as session:
-            svc = SambaTetrisService(SambaTetrisRepository(session), session)
-            await svc.get_board(tenant_id=None)
-            logger.info("[startup] 테트리스 보드 캐시 워밍업 완료")
+        tenant_ids: list[Optional[str]] = [None]
+        try:
+            async with get_read_session() as rs:
+                rows = await rs.execute(
+                    _sa_text(
+                        "SELECT DISTINCT tenant_id FROM samba_market_account "
+                        "WHERE tenant_id IS NOT NULL"
+                    )
+                )
+                for (tid,) in rows.all():
+                    if tid:
+                        tenant_ids.append(str(tid))
+        except Exception as exc:
+            logger.warning("[startup] 테트리스 워밍업 tenant 목록 조회 실패: %s", exc)
+
+        for tid in tenant_ids:
+            try:
+                async with get_read_session() as session:
+                    svc = SambaTetrisService(SambaTetrisRepository(session), session)
+                    await svc.get_board(tenant_id=tid)
+                logger.info("[startup] 테트리스 보드 캐시 워밍업 완료 tenant=%s", tid)
+            except Exception as exc:
+                logger.warning(
+                    "[startup] 테트리스 보드 캐시 워밍업 실패 tenant=%s — %s", tid, exc
+                )
     except Exception as exc:
-        logger.warning("[startup] 테트리스 보드 캐시 워밍업 실패: %s", exc)
+        logger.warning("[startup] 테트리스 보드 캐시 워밍업 전체 실패: %s", exc)
 
 
 async def _start_tetris_sync_scheduler() -> None:
@@ -628,6 +652,22 @@ def _validate_startup_settings() -> None:
             "Mock authentication is ENABLED. This should only be used for development/testing."
         )
 
+    # PlayAuto proxy 미설정 경고 — GCP/클라우드 환경에서 직접 연결 불가
+    try:
+        import os as _os
+
+        from backend.domain.samba.collector.refresher import get_transmit_proxy_url
+
+        _playauto_env = _os.environ.get("PLAYAUTO_PROXY_URL", "").strip()
+        _transmit_proxy = (get_transmit_proxy_url() or "").strip()
+        if not _playauto_env and not _transmit_proxy:
+            logging.getLogger("backend.startup").warning(
+                "[startup] PlayAuto 전송 프록시 미설정 — GCP/클라우드 환경에서 PlayAuto 호스트 직접 도달 불가. "
+                "settings > 프록시/IP 설정에서 전송(transmit) 용도 국내 ISP 정적 IP 프록시를 등록하세요."
+            )
+    except Exception:
+        pass
+
     secret_bytes = (settings.jwt_secret_key or "").encode("utf-8")
     if len(secret_bytes) < 32:
         raise RuntimeError(
@@ -680,6 +720,14 @@ async def lifespan(app: FastAPI):
     await _apply_startup_schema_fixes(startup_logger)
     asyncio.create_task(_warmup_tetris_board_cache(startup_logger))
     asyncio.create_task(_warmup_filter_tree_counts_cache(startup_logger))
+
+    # DB 풀 모니터 로거 — 30초 주기로 풀 사용률 INFO/WARN 로깅
+    try:
+        from backend.db.pool_monitor import pool_status_logger_loop
+
+        app.state._pool_monitor_task = asyncio.create_task(pool_status_logger_loop())
+    except Exception as e:
+        startup_logger.warning(f"[startup] DB 풀 모니터 로거 시작 실패: {e}")
 
     # DB 프록시 캐시를 워커/오토튠 시작 전에 프라임한다.
     # async 컨텍스트에서는 _get_cached_proxies 가 백그라운드 태스크만 예약하므로,
@@ -738,5 +786,6 @@ async def lifespan(app: FastAPI):
         await _cancel_task(_lottehome_qa_poller_task)
         await _cancel_task(_tetris_sync_task)
         await _shutdown_worker_runtime(worker_runtime)
+        await _cancel_task(getattr(app.state, "_pool_monitor_task", None))
         await _disconnect_cache()
         shutdown_logger.info("[shutdown] graceful shutdown complete")

@@ -27,11 +27,10 @@ async def rebuild_exported_rules() -> dict:
     from datetime import UTC, datetime
     from pathlib import Path
     from sqlmodel import select
-    from backend.db.orm import get_write_sessionmaker
+    from backend.db.orm import get_write_session
 
-    Session = get_write_sessionmaker()
     try:
-        async with Session() as session:
+        async with get_write_session() as session:
             result = await session.execute(select(SambaCategoryMapping))
             rows = result.scalars().all()
 

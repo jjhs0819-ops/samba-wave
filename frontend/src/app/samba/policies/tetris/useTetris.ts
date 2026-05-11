@@ -23,7 +23,7 @@ export function useTetris() {
     setError(null)
     try {
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Request timeout (15s)')), 15000)
+        setTimeout(() => reject(new Error('Request timeout (60s)')), 60000)
       )
       const data = await Promise.race([tetrisApi.getBoard(), timeoutPromise])
       setBoard(data as TetrisBoardResponse)
@@ -208,12 +208,47 @@ export function useTetris() {
   ) => {
     const next = !(block.excluded ?? false)
     try {
-      await tetrisApi.setExcluded(block.source_site, block.brand_name, accountId, next)
-      await refresh()
+      const res = await tetrisApi.setExcluded(
+        block.source_site,
+        block.brand_name,
+        accountId,
+        next,
+      )
+      // 보드 캐시 5분 TTL 우회 — 응답값으로 해당 블럭만 즉시 토글
+      setBoard(prev => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          markets: prev.markets.map(m => ({
+            ...m,
+            accounts: m.accounts.map(a => {
+              if (a.account_id !== accountId) return a
+              const matched = a.assignments.some(
+                b =>
+                  b.source_site === block.source_site &&
+                  b.brand_name === block.brand_name,
+              )
+              if (matched) {
+                return {
+                  ...a,
+                  assignments: a.assignments.map(b =>
+                    b.source_site === block.source_site &&
+                    b.brand_name === block.brand_name
+                      ? { ...b, id: b.id ?? res.id, excluded: res.excluded, is_legacy: false }
+                      : b,
+                  ),
+                }
+              }
+              // 레거시 블럭 자리에 없는 경우(드물지만 안전) — 새로 추가
+              return a
+            }),
+          })),
+        }
+      })
     } catch (e) {
       showAlert('배제 상태 변경 실패: ' + String(e))
     }
-  }, [refresh])
+  }, [])
 
   const handleRemoveLegacyFromAccount = useCallback(async (sourceSite: string, brandName: string, accountId: string) => {
     const confirmed = await showConfirm(
