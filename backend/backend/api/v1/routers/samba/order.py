@@ -2687,6 +2687,9 @@ async def ship_order(
                     "경동택배": "00004",
                     "합동택배": "00005",
                     "딜리박스": "00133",
+                    # 직접배송 → 11번가는 dlvMthdCd=03 (직접/화물배달) 사용, 택배사 코드는 기타(00099)
+                    "직접배송": "00099",
+                    "직접 배송": "00099",
                 }
                 api_key = account.api_key or ""
                 if not api_key and isinstance(account.additional_fields, dict):
@@ -2702,11 +2705,16 @@ async def ship_order(
                         dlv_etprs_cd = _CARRIER_MAP.get(
                             body.shipping_company, body.shipping_company
                         )
+                        # 직접배송 선택 시 배송방식 03(직접/화물배달), 그 외 01(택배)
+                        _is_direct = (body.shipping_company or "").replace(
+                            " ", ""
+                        ) == "직접배송"
                         _11st_client = ElevenstClient(api_key)
                         sent = await _11st_client.ship_order(
                             dlv_no=dlv_no,
                             invc_no=body.tracking_number,
                             dlv_etprs_cd=dlv_etprs_cd,
+                            dlv_mthd_cd="03" if _is_direct else "01",
                         )
                         if sent:
                             market_sent = True
