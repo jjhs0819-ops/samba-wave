@@ -6289,6 +6289,8 @@ def _parse_elevenst_order(item: dict, account_id: str, label: str) -> dict:
         "status": status,
         "shipping_status": shipping_status,
         "customer_name": str(item.get("rcvrNm", "") or item.get("ordNm", "") or ""),
+        # 주문자명 — 11번가 API ordNm (수령인 rcvrNm과 다를 수 있음: 선물하기 등)
+        "orderer_name": str(item.get("ordNm", "") or item.get("rcvrNm", "") or ""),
         "customer_phone": str(
             item.get("rcvrPrtblNo", "") or item.get("ordPrtblTel", "") or ""
         ),
