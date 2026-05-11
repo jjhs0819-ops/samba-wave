@@ -2074,14 +2074,9 @@ class LotteonClient:
                             f"[롯데ON][교환-배송모듈] odNo={od_no} clmNo={clm_no} "
                             f"stepCd={step_cd} dvRtrvDvsCd={item.get('dvRtrvDvsCd', '')}"
                         )
-                        key = f"{od_no}_{clm_no}_{item.get('odSeq', '')}"
-                        if key not in seen_clm_keys:
-                            seen_clm_keys.add(key)
-                            # 배송 API의 stepCd는 교환 클레임 단계와 다른 체계이므로
-                            # 교환요청(21)으로 고정 — 정확한 단계는 1차/2차 클레임 API에서 결정
-                            delivery_item = dict(item)
-                            delivery_item["odPrgsStepCd"] = "21"
-                            result.append(delivery_item)
+                        # 배송 API의 stepCd는 교환 클레임 단계와 다른 체계.
+                        # 강제로 21(교환요청)을 찍으면 상품준비중 주문이 교환요청으로
+                        # 잘못 바뀌므로 1·2차 클레임 API 결과만 신뢰하고 로그만 남김.
                 except Exception as day_e:
                     logger.debug(
                         f"[롯데ON][교환-배송모듈] {srch_strt} 조회 실패: {day_e}"
