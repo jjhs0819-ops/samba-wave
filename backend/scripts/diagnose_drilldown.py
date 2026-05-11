@@ -1,4 +1,5 @@
 """드릴다운 느린 쿼리 진단"""
+
 import asyncio
 import asyncpg
 from backend.core.config import settings
@@ -28,7 +29,9 @@ async def main():
         LIMIT 15
     """)
     for r in rows:
-        print(f"  pid={r['pid']} dur={r['dur_sec']}s wait={r['wait_event_type']}/{r['wait_event']}")
+        print(
+            f"  pid={r['pid']} dur={r['dur_sec']}s wait={r['wait_event_type']}/{r['wait_event']}"
+        )
         print(f"    {r['q']}")
 
     print("\n=== 연결 상태 요약 ===")

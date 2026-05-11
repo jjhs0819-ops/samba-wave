@@ -155,7 +155,75 @@ class CategoryMappingMixin:
                 "[rules_exported] 백그라운드 태스크 예외: %s", e, exc_info=True
             )
 
+    async def _sanitize_target_mappings(
+        self,
+        target_mappings: Optional[Dict[str, Any]],
+        source_site: str = "",
+        source_category: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        """target_mappings의 각 마켓 경로가 해당 마켓 카테고리 트리에 존재하는지 검증.
+
+        트리에 없는 경로는 저장에서 제외하고 경고 로그를 남긴다.
+        트리가 비어있는 마켓은 검증을 건너뛴다(차후 동기화 후 재검증 가능).
+        """
+        if not target_mappings or not isinstance(target_mappings, dict):
+            return target_mappings
+
+        sanitized: Dict[str, Any] = {}
+        rejected: List[str] = []
+        for market, path in target_mappings.items():
+            if not path or not isinstance(path, str):
+                sanitized[market] = path
+                continue
+            path_str = path.strip()
+            if not path_str:
+                continue
+
+            tree = await self.tree_repo.get_by_site(market)
+            if not tree:
+                # 트리 없는 마켓은 검증 불가 — 일단 통과
+                sanitized[market] = path_str
+                continue
+
+            valid_paths: set[str] = set()
+            # cat1: 평탄화된 leaf 경로 리스트 (스마트스토어, 쿠팡 등)
+            if tree.cat1 and isinstance(tree.cat1, list):
+                valid_paths.update(c for c in tree.cat1 if isinstance(c, str))
+            # cat2: 일부 마켓(11st 등)은 {경로: 코드} dict
+            if tree.cat2 and isinstance(tree.cat2, dict):
+                valid_paths.update(k for k in tree.cat2.keys() if isinstance(k, str))
+            # cat2가 list 형태인 경우(다른 트리 스키마)
+            elif tree.cat2 and isinstance(tree.cat2, list):
+                valid_paths.update(c for c in tree.cat2 if isinstance(c, str))
+
+            if not valid_paths:
+                # 트리는 있지만 비어있음 — 검증 불가, 통과
+                sanitized[market] = path_str
+                continue
+
+            if path_str in valid_paths:
+                sanitized[market] = path_str
+            else:
+                rejected.append(f"{market}={path_str}")
+
+        if rejected:
+            logger.warning(
+                "[매핑 검증] 트리에 없는 경로 저장 거부 — site=%s src=%s rejected=%s",
+                source_site,
+                source_category,
+                ", ".join(rejected),
+            )
+
+        return sanitized
+
     async def create_mapping(self, data: Dict[str, Any]) -> SambaCategoryMapping:
+        if "target_mappings" in data:
+            data = dict(data)
+            data["target_mappings"] = await self._sanitize_target_mappings(
+                data.get("target_mappings"),
+                source_site=str(data.get("source_site") or ""),
+                source_category=str(data.get("source_category") or ""),
+            )
         result = await self.mapping_repo.create_async(**data)
         import asyncio
 
@@ -165,6 +233,14 @@ class CategoryMappingMixin:
     async def update_mapping(
         self, mapping_id: str, data: Dict[str, Any]
     ) -> Optional[SambaCategoryMapping]:
+        if "target_mappings" in data:
+            existing = await self.mapping_repo.get_async(mapping_id)
+            data = dict(data)
+            data["target_mappings"] = await self._sanitize_target_mappings(
+                data.get("target_mappings"),
+                source_site=str(getattr(existing, "source_site", "") or ""),
+                source_category=str(getattr(existing, "source_category", "") or ""),
+            )
         result = await self.mapping_repo.update_async(mapping_id, **data)
         import asyncio
 

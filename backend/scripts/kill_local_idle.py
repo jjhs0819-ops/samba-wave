@@ -1,4 +1,5 @@
 """로컬 DB blocking 연결 정리"""
+
 import asyncio
 import asyncpg
 

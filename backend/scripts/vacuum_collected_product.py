@@ -1,4 +1,5 @@
 """samba_collected_product VACUUM ANALYZE 강제 실행"""
+
 import asyncio
 import asyncpg
 from backend.core.config import settings
@@ -24,7 +25,9 @@ async def main():
         FROM pg_stat_user_tables
         WHERE relname = 'samba_collected_product'
     """)
-    print(f"live={stats['n_live_tup']} dead={stats['n_dead_tup']} bloat={stats['bloat_pct']}%")
+    print(
+        f"live={stats['n_live_tup']} dead={stats['n_dead_tup']} bloat={stats['bloat_pct']}%"
+    )
     print(f"last_vacuum={stats['last_vacuum']}")
     print(f"last_analyze={stats['last_analyze']}")
 

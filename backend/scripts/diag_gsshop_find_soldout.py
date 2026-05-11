@@ -8,7 +8,16 @@ async def main():
     client = GsShopSourcingClient()
 
     # 검색에 잘 잡힐 만한 키워드 여러 개 시도 — 품절 상품 1~3개 찾기
-    keywords = ["아이더", "노스페이스", "나이키", "아디다스", "푸마", "디스커버리", "조던", "뉴발란스"]
+    keywords = [
+        "아이더",
+        "노스페이스",
+        "나이키",
+        "아디다스",
+        "푸마",
+        "디스커버리",
+        "조던",
+        "뉴발란스",
+    ]
     soldout_targets: list[tuple[str, str]] = []
 
     for kw in keywords:
@@ -35,10 +44,13 @@ async def main():
         print(f"  {sid} | {nm[:40]}")
 
     if not soldout_targets:
-        print("\n[!] isTempout=True 상품을 못 찾음. 검색 응답 isTempout 값 분포 확인 필요")
+        print(
+            "\n[!] isTempout=True 상품을 못 찾음. 검색 응답 isTempout 값 분포 확인 필요"
+        )
         # 첫 키워드 검색 결과에서 isTempout 키 분포만 별도 확인
         items = await client.search_products("아이더", size=60, url="")
         from collections import Counter
+
         c = Counter(str(it.get("isSoldOut")) for it in items)
         print(f"isSoldOut 값 분포(아이더 60건): {dict(c)}")
         c2 = Counter(str(it.get("isTempout", "<missing>")) for it in items)
@@ -56,7 +68,14 @@ async def main():
             if not data:
                 print(f"\n  [{sid}] renderJson 없음 / html_len={len(html or '')}")
                 # html 내 품절/일시품절 텍스트 검색
-                for kw in ["품절", "일시품절", "재고없음", "판매중지", "SOLD OUT", "soldout"]:
+                for kw in [
+                    "품절",
+                    "일시품절",
+                    "재고없음",
+                    "판매중지",
+                    "SOLD OUT",
+                    "soldout",
+                ]:
                     if kw in (html or ""):
                         print(f"     HTML에 '{kw}' 발견")
                 continue
@@ -69,7 +88,10 @@ async def main():
             # 모든 키 중 'Y'/'N' 값 가지면서 키 이름에 sale/sold/stock/tmpout/buy 포함된 것
             for k, v in prd.items():
                 kl = k.lower()
-                if any(t in kl for t in ['sale', 'sold', 'stock', 'tmpout', 'buy', 'avail', 'avl']):
+                if any(
+                    t in kl
+                    for t in ["sale", "sold", "stock", "tmpout", "buy", "avail", "avl"]
+                ):
                     print(f"     [{k}] = {repr(v)[:100]}")
         except Exception as e:
             print(f"  [{sid}] error: {e}")

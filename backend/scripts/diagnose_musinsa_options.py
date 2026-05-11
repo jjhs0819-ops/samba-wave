@@ -45,7 +45,9 @@ async def diagnose(goods_no: str, cookie: str) -> None:
             if isinstance(v, list):
                 print(f"  {k}: list({len(v)}개)")
                 if v:
-                    print(f"    첫 번째 항목 키: {list(v[0].keys()) if isinstance(v[0], dict) else type(v[0]).__name__}")
+                    print(
+                        f"    첫 번째 항목 키: {list(v[0].keys()) if isinstance(v[0], dict) else type(v[0]).__name__}"
+                    )
             elif isinstance(v, dict):
                 print(f"  {k}: dict(키={list(v.keys())})")
             else:
@@ -55,15 +57,24 @@ async def diagnose(goods_no: str, cookie: str) -> None:
         items = inner.get("optionItems", [])
         print(f"\n[optionItems] 총 {len(items)}개")
         for i, item in enumerate(items[:5]):
-            print(f"  [{i}] no={item.get('no')}, price={item.get('price')}, "
-                  f"activated={item.get('activated')}, "
-                  f"optionValues={[v.get('name') for v in item.get('optionValues', [])]}")
+            print(
+                f"  [{i}] no={item.get('no')}, price={item.get('price')}, "
+                f"activated={item.get('activated')}, "
+                f"optionValues={[v.get('name') for v in item.get('optionValues', [])]}"
+            )
         if len(items) > 5:
-            print(f"  ... 및 {len(items)-5}개 더")
+            print(f"  ... 및 {len(items) - 5}개 더")
 
         # addOptionItems 확인
-        for key in ["addOptionItems", "addOnOptions", "subOptionItems", "optionAddItems",
-                    "additionalOptions", "optionGroups", "extraOptionItems"]:
+        for key in [
+            "addOptionItems",
+            "addOnOptions",
+            "subOptionItems",
+            "optionAddItems",
+            "additionalOptions",
+            "optionGroups",
+            "extraOptionItems",
+        ]:
             if key in inner:
                 v = inner[key]
                 print(f"\n[{key}] 발견! 총 {len(v) if isinstance(v, list) else '?'}개")
@@ -94,10 +105,12 @@ async def main() -> None:
         else:
             print("DB에 무신사 쿠키 없음. MUSINSA_COOKIE 환경변수 시도...")
             import os
+
             cookie = os.environ.get("MUSINSA_COOKIE", "")
     except Exception as e:
         print(f"DB 로드 실패: {e}")
         import os
+
         cookie = os.environ.get("MUSINSA_COOKIE", "")
 
     if not cookie:

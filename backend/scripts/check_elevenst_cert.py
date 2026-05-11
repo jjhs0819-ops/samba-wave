@@ -70,13 +70,28 @@ async def main() -> None:
 
     # 동일 계정으로 등록된 11번가 prdNo 1건 추출 (검증용)
     from backend.db.orm import _build_db_url as _bd
-    engine2 = create_async_engine(_bd(settings.write_db_user, settings.write_db_password, settings.write_db_host, settings.write_db_port, settings.write_db_name), echo=False)
+
+    engine2 = create_async_engine(
+        _bd(
+            settings.write_db_user,
+            settings.write_db_password,
+            settings.write_db_host,
+            settings.write_db_port,
+            settings.write_db_name,
+        ),
+        echo=False,
+    )
     async with engine2.connect() as c2:
-        r2 = (await c2.execute(text(
-            "SELECT id, market_product_nos FROM samba_collected_product "
-            "WHERE market_product_nos::text LIKE :acc "
-            "ORDER BY updated_at DESC LIMIT 5"
-        ), {"acc": f"%{acc_id}%"})).fetchall()
+        r2 = (
+            await c2.execute(
+                text(
+                    "SELECT id, market_product_nos FROM samba_collected_product "
+                    "WHERE market_product_nos::text LIKE :acc "
+                    "ORDER BY updated_at DESC LIMIT 5"
+                ),
+                {"acc": f"%{acc_id}%"},
+            )
+        ).fetchall()
     await engine2.dispose()
     print(f"\n[등록 prdNo 후보 — {len(r2)}건]")
     candidate_prds = []
@@ -100,7 +115,9 @@ async def main() -> None:
     print("\n[AUTH TEST get_categories]")
     try:
         cat = await cli.get_categories()
-        print(f"  OK keys={list(cat.keys())[:3] if isinstance(cat, dict) else type(cat)}")
+        print(
+            f"  OK keys={list(cat.keys())[:3] if isinstance(cat, dict) else type(cat)}"
+        )
     except Exception as e:
         print(f"  FAIL: {str(e)[:200]}")
 
@@ -110,7 +127,12 @@ async def main() -> None:
         raw = d.get("raw", "") if isinstance(d, dict) else ""
         print(f"  OK keys={list(d.keys())[:10] if isinstance(d, dict) else type(d)}")
         print(f"  raw_len={len(raw)}")
-        for tag in ("crtfGrpObjClfCd01","crtfGrpObjClfCd02","crtfGrpObjClfCd03","crtfGrpObjClfCd04"):
+        for tag in (
+            "crtfGrpObjClfCd01",
+            "crtfGrpObjClfCd02",
+            "crtfGrpObjClfCd03",
+            "crtfGrpObjClfCd04",
+        ):
             m = re.search(rf"<{tag}>([^<]*)</{tag}>", raw)
             print(f"  {tag} = {m.group(1) if m else '(없음)'}")
     except Exception as e:
@@ -118,6 +140,7 @@ async def main() -> None:
 
     sys.exit(0)
     import httpx
+
     headers = {
         "openapikey": api_key,
         "Accept": "application/xml; charset=utf-8",
@@ -156,10 +179,20 @@ async def main() -> None:
     raw = data.get("raw", "") if isinstance(data, dict) else ""
     if not raw:
         # raw 가 없으면 dict 자체에서 키 검색
-        for k in ("crtfGrpObjClfCd01", "crtfGrpObjClfCd02", "crtfGrpObjClfCd03", "crtfGrpObjClfCd04"):
+        for k in (
+            "crtfGrpObjClfCd01",
+            "crtfGrpObjClfCd02",
+            "crtfGrpObjClfCd03",
+            "crtfGrpObjClfCd04",
+        ):
             print(f"  {k} = {data.get(k) if isinstance(data, dict) else 'N/A'}")
     else:
-        for tag in ("crtfGrpObjClfCd01", "crtfGrpObjClfCd02", "crtfGrpObjClfCd03", "crtfGrpObjClfCd04"):
+        for tag in (
+            "crtfGrpObjClfCd01",
+            "crtfGrpObjClfCd02",
+            "crtfGrpObjClfCd03",
+            "crtfGrpObjClfCd04",
+        ):
             m = re.search(rf"<{tag}>([^<]*)</{tag}>", raw)
             print(f"  {tag} = {m.group(1) if m else '(없음)'}")
 

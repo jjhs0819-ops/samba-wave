@@ -1156,6 +1156,10 @@ class ARTSourcingClient:
 
         # 제조사/원산지
         manufacturer = (data.get("mnftrName") or "").strip()
+        # ABCmart 어드민 오입력 방어: URL/금지문자가 mnftrName에 섞여 내려오는 케이스 차단
+        # (스마트스토어 manufacturerName 금지문자: \ * ? " < >)
+        manufacturer = re.split(r"https?://|www\.", manufacturer, maxsplit=1)[0].strip()
+        manufacturer = re.sub(r'[\\*?"<>]', "", manufacturer).strip()
         org_place_code = str(data.get("orgPlaceCode") or "")
         # 고시정보 API의 제조국 텍스트 우선 사용, 없으면 코드 매핑 사용
         origin_notice = (detail_extra or {}).get("origin_notice", "")

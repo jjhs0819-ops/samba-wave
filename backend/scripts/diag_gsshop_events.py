@@ -84,7 +84,9 @@ async def main():
         )
         print("\n[5] GSShop sold_out/restock 최근 5건:")
         for r in rows:
-            print(f"  {r['created_at']} | {r['event_type']} | {r['summary'][:60] if r['summary'] else ''}")
+            print(
+                f"  {r['created_at']} | {r['event_type']} | {r['summary'][:60] if r['summary'] else ''}"
+            )
 
         # 6. GSShop scheduler_tick의 stock_changed_items 샘플
         rows = await conn.fetch(
@@ -100,8 +102,8 @@ async def main():
         )
         print("\n[6] GSShop 최근 scheduler_tick의 stock_changed_items:")
         for r in rows:
-            d = r['detail'] or {}
-            items = d.get('stock_changed_items') or []
+            d = r["detail"] or {}
+            items = d.get("stock_changed_items") or []
             print(f"  {r['created_at']} stock_items={len(items)} sample={items[:2]}")
 
         # 7. GSShop 품절 상품의 options 구조 샘플
@@ -116,8 +118,10 @@ async def main():
         )
         print("\n[7] GSShop sold_out 상품 옵션 샘플:")
         for r in rows:
-            opts = r['options'] or []
-            print(f"  {r['site_product_id']} sale_status={r['sale_status']} options_len={len(opts)} first={opts[:1] if opts else 'EMPTY'}")
+            opts = r["options"] or []
+            print(
+                f"  {r['site_product_id']} sale_status={r['sale_status']} options_len={len(opts)} first={opts[:1] if opts else 'EMPTY'}"
+            )
 
     finally:
         await conn.close()

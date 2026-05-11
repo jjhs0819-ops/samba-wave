@@ -1,4 +1,5 @@
 """로컬 DB: tags/market_product_nos JSON→JSONB + GIN 인덱스 마이그레이션 (lock_timeout 우회)"""
+
 import asyncio
 import asyncpg
 

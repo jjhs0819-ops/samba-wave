@@ -25,10 +25,16 @@ async def main():
         from backend.domain.samba.category.model import SambaCategoryTree
 
         row = (
-            await session.execute(
-                select(SambaCategoryTree).where(SambaCategoryTree.site_name == "lotteon")
+            (
+                await session.execute(
+                    select(SambaCategoryTree).where(
+                        SambaCategoryTree.site_name == "lotteon"
+                    )
+                )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if row and row.cat1:
             soccer = [p for p in row.cat1 if "축구" in p][:20]
             print(f"VERIFY: cat1 total={len(row.cat1)}, '축구' 포함={len(soccer)}개")

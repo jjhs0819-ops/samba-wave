@@ -1,4 +1,5 @@
 """로컬 DB: is_unregistered 컬럼 추가 마이그레이션 (lock_timeout 우회)"""
+
 import asyncio
 import asyncpg
 
@@ -62,9 +63,7 @@ async def main():
     print("인덱스 생성 완료")
 
     # alembic_version 업데이트
-    await conn.execute(
-        "UPDATE alembic_version SET version_num = 'dd3eaff7233e'"
-    )
+    await conn.execute("UPDATE alembic_version SET version_num = 'dd3eaff7233e'")
 
     new_ver = await conn.fetchval("SELECT version_num FROM alembic_version LIMIT 1")
     print(f"\n마이그레이션 완료! alembic 버전: {new_ver}")

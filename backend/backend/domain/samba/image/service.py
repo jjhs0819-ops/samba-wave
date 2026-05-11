@@ -37,7 +37,8 @@ def _get_rembg_session() -> Any:
     if "session" not in _rembg_session_cache:
         from rembg import new_session
 
-        _rembg_session_cache["session"] = new_session("silueta")
+        # isnet-general-use: 패션/일반 객체 분리에 silueta보다 깔끔 (잔상 감소)
+        _rembg_session_cache["session"] = new_session("isnet-general-use")
     return _rembg_session_cache["session"]
 
 
@@ -558,6 +559,9 @@ class ImageTransformService:
         from rembg import remove
 
         def _process(data: bytes) -> bytes:
+            import numpy as np
+            from scipy import ndimage
+
             # 큰 이미지 리사이즈 (메모리/시간 절약)
             src = Image.open(io.BytesIO(data))
             if max(src.size) > 1024:
@@ -573,17 +577,33 @@ class ImageTransformService:
                 alpha_matting=True,
                 alpha_matting_foreground_threshold=250,
                 alpha_matting_background_threshold=30,
-                alpha_matting_erode_size=15,
+                # 이진화 후처리로 본체 외곽이 깎이지 않도록 erode 축소 (15→8)
+                alpha_matting_erode_size=8,
             )
-            # 흰배경 합성 + WebP 변환
+            # 알파 이진화 + 분리된 작은 잔상 조각 제거
+            # 마켓 API(11번가/스마트스토어/롯데ON 등)가 WebP를 거부하므로 JPEG로 통일
             img = Image.open(io.BytesIO(result)).convert("RGBA")
             r, g, b, a = img.split()
-            a = a.point(lambda x: 0 if x < 20 else x)
+            alpha_arr = np.array(a)
+            # 이진화: 약한 반투명 픽셀이 흰배경에 합성돼 회색 잔상으로 남는 문제 차단
+            binary = alpha_arr >= 128
+            # 연결성분 분석 — 가장 큰 영역의 5% 미만 조각은 잔상으로 보고 제거
+            labeled, num = ndimage.label(binary)
+            if num > 1:
+                sizes = ndimage.sum(binary, labeled, range(1, num + 1))
+                max_size = float(sizes.max()) if sizes.size else 0.0
+                threshold = max_size * 0.05
+                keep_labels = {i + 1 for i, s in enumerate(sizes) if s >= threshold}
+                mask = np.isin(labeled, list(keep_labels))
+            else:
+                mask = binary
+            alpha_arr = np.where(mask, 255, 0).astype(np.uint8)
+            a = Image.fromarray(alpha_arr, mode="L")
             img = Image.merge("RGBA", (r, g, b, a))
             white_bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
             composite = Image.alpha_composite(white_bg, img).convert("RGB")
             buf = io.BytesIO()
-            composite.save(buf, format="WEBP", quality=90)
+            composite.save(buf, format="JPEG", quality=92, optimize=True)
             return buf.getvalue()
 
         # CPU 작업이므로 스레드풀에서 실행 (이벤트루프 블로킹 방지)
@@ -761,7 +781,7 @@ class ImageTransformService:
         """
         # content-hash 기반 결정적 파일명 (중복 업로드 방지)
         content_hash = hashlib.md5(image_bytes).hexdigest()[:16]
-        filename = f"ai_{content_hash}.webp"
+        filename = f"ai_{content_hash}.jpg"
         key = f"transformed/{filename}"
 
         # R2 저장 시도
@@ -789,7 +809,7 @@ class ImageTransformService:
                         io.BytesIO(image_bytes),
                         bucket_name,
                         key,
-                        ExtraArgs={"ContentType": "image/webp"},
+                        ExtraArgs={"ContentType": "image/jpeg"},
                     ),
                 )
                 return f"{public_url}/{key}"
@@ -1676,16 +1696,17 @@ async def _split_single_image(
             logger.info(f"[이미지분할] 텍스트 이미지 제외: {url} seg#{idx}")
             continue
         buf = io.BytesIO()
-        seg.convert("RGB").save(buf, format="WEBP", quality=85)
+        # 마켓 API 호환을 위해 JPEG로 저장 (WebP는 11번가 등에서 거부됨)
+        seg.convert("RGB").save(buf, format="JPEG", quality=88, optimize=True)
         buf.seek(0)
-        filename = f"split_{url_hash}_{idx}_{uuid.uuid4().hex[:6]}.webp"
+        filename = f"split_{url_hash}_{idx}_{uuid.uuid4().hex[:6]}.jpg"
         await asyncio.to_thread(
             partial(
                 r2_client.upload_fileobj,
                 buf,
                 bucket_name,
                 f"split/{filename}",
-                ExtraArgs={"ContentType": "image/webp"},
+                ExtraArgs={"ContentType": "image/jpeg"},
             ),
         )
         uploaded.append(f"{public_url}/split/{filename}")

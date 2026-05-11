@@ -8,7 +8,7 @@ from backend.core.config import settings
 
 async def main():
     conn = await asyncpg.connect(
-        host='172.18.0.2',
+        host="172.18.0.2",
         port=5432,
         user=settings.write_db_user,
         password=settings.write_db_password,
@@ -19,7 +19,7 @@ async def main():
         target = "ma_01KQBJGJ0QGMZ5THS89RQ4VK47"
 
         # 가장 최근 completed 11번가 가디 잡의 logs (실제 실패 메시지)
-        print(f"\n[1] 최근 completed 11번가 가디 LOTTEON/나이키 잡 logs (마지막 30줄):")
+        print("\n[1] 최근 completed 11번가 가디 LOTTEON/나이키 잡 logs (마지막 30줄):")
         row = await conn.fetchrow(
             """
             SELECT id, logs::text AS logs_text
@@ -36,20 +36,22 @@ async def main():
         )
         if row:
             try:
-                logs = json.loads(row['logs_text']) if row['logs_text'] else []
+                logs = json.loads(row["logs_text"]) if row["logs_text"] else []
                 if isinstance(logs, list):
                     for line in logs[-30:]:
                         print(f"  {line}")
                 else:
                     print(f"  logs not list: {logs}")
             except Exception as e:
-                print(f"  parse error: {e}, raw len={len(row['logs_text']) if row['logs_text'] else 0}")
+                print(
+                    f"  parse error: {e}, raw len={len(row['logs_text']) if row['logs_text'] else 0}"
+                )
                 print(f"  raw[:500]: {(row['logs_text'] or '')[:500]}")
         else:
             print("  (no completed job)")
 
         # 11번가 가디 외 다른 11번가 계정 잡 결과 — 동일 실패인지 가디만 실패인지
-        print(f"\n[2] 다른 11번가 계정들 최근 잡 결과 (실패 여부 비교):")
+        print("\n[2] 다른 11번가 계정들 최근 잡 결과 (실패 여부 비교):")
         rows = await conn.fetch(
             """
             SELECT
@@ -70,12 +72,14 @@ async def main():
             """
         )
         for r in rows:
-            print(f"  {r['account_label']:25s} | {r['site']}/{r['brand']:20s} | "
-                  f"{r['current']}/{r['total']} | {r['result']}")
+            print(
+                f"  {r['account_label']:25s} | {r['site']}/{r['brand']:20s} | "
+                f"{r['current']}/{r['total']} | {r['result']}"
+            )
 
         # 11번가 가디 외 SS/lotteon completed 잡 결과 — 같은 fail 패턴인지
-        print(f"\n[3] SS/lotteon 가디 계정 최근 completed 잡:")
-        for label in ('가디-enclehhg@naver.com', '가디-unclehg'):
+        print("\n[3] SS/lotteon 가디 계정 최근 completed 잡:")
+        for label in ("가디-enclehhg@naver.com", "가디-unclehg"):
             rows = await conn.fetch(
                 """
                 SELECT
@@ -96,8 +100,10 @@ async def main():
                 label,
             )
             for r in rows:
-                print(f"  {r['market_type']:10s} {r['account_label']:25s} | {r['site']}/{r['brand']:20s} | "
-                      f"{r['current']}/{r['total']} | {r['result']}")
+                print(
+                    f"  {r['market_type']:10s} {r['account_label']:25s} | {r['site']}/{r['brand']:20s} | "
+                    f"{r['current']}/{r['total']} | {r['result']}"
+                )
 
     finally:
         await conn.close()

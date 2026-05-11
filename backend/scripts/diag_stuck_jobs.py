@@ -8,7 +8,7 @@ from backend.core.config import settings
 
 async def main():
     conn = await asyncpg.connect(
-        host='172.18.0.2',
+        host="172.18.0.2",
         port=5432,
         user=settings.write_db_user,
         password=settings.write_db_password,
@@ -29,8 +29,10 @@ async def main():
             """
         )
         for r in rows:
-            print(f"  {r['id'][:12]} | {r['site']}/{r['brand']} → {r['targets']} | "
-                  f"current={r['current']}/{r['total']} | created={r['created_at']} started={r['started_at']}")
+            print(
+                f"  {r['id'][:12]} | {r['site']}/{r['brand']} → {r['targets']} | "
+                f"current={r['current']}/{r['total']} | created={r['created_at']} started={r['started_at']}"
+            )
 
         print("\n[B] pending 잡이 lock 잡혀있는지 (pg_locks 조회):")
         rows = await conn.fetch(
@@ -48,8 +50,10 @@ async def main():
             """
         )
         for r in rows:
-            print(f"  pid={r['pid']} {r['locktype']}/{r['mode']} granted={r['granted']} "
-                  f"state={r['state']} xact_start={r['xact_start']} app={r['application_name']}")
+            print(
+                f"  pid={r['pid']} {r['locktype']}/{r['mode']} granted={r['granted']} "
+                f"state={r['state']} xact_start={r['xact_start']} app={r['application_name']}"
+            )
             print(f"    query: {r['query_snip']}")
 
         print("\n[C] idle in transaction 좀비 연결 (samba_jobs 관련):")
@@ -65,7 +69,9 @@ async def main():
             """
         )
         for r in rows:
-            print(f"  pid={r['pid']} state={r['state']} xact_start={r['xact_start']} state_change={r['state_change']}")
+            print(
+                f"  pid={r['pid']} state={r['state']} xact_start={r['xact_start']} state_change={r['state_change']}"
+            )
             print(f"    query: {r['query_snip']}")
 
     finally:

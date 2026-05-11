@@ -7,6 +7,7 @@ Claude가 사람 개입 없이 DB 데이터를 확인하는 용도
   cd backend && .venv/Scripts/python.exe scripts/check_db.py [쿼리명]
   쿼리명: jobs | products | orders | columns TABLE | count TABLE | raw "SQL"
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -54,27 +55,24 @@ QUERIES = {
     "jobs": (
         "SELECT id, type, status, created_at, updated_at "
         "FROM samba_jobs ORDER BY created_at DESC LIMIT 10",
-        "최근 Job 10건"
+        "최근 Job 10건",
     ),
     "failed-jobs": (
         "SELECT id, type, status, error_message, created_at "
         "FROM samba_jobs WHERE status='failed' ORDER BY created_at DESC LIMIT 10",
-        "실패 Job 10건"
+        "실패 Job 10건",
     ),
     "products": (
         "SELECT id, source_site, product_name, sale_status, updated_at "
         "FROM samba_products ORDER BY updated_at DESC LIMIT 10",
-        "최근 상품 10건"
+        "최근 상품 10건",
     ),
     "orders": (
         "SELECT id, market_type, order_status, created_at "
         "FROM samba_orders ORDER BY created_at DESC LIMIT 10",
-        "최근 주문 10건"
+        "최근 주문 10건",
     ),
-    "migrations": (
-        "SELECT version_num FROM alembic_version",
-        "현재 마이그레이션 버전"
-    ),
+    "migrations": ("SELECT version_num FROM alembic_version", "현재 마이그레이션 버전"),
 }
 
 
@@ -87,7 +85,7 @@ async def main():
             f"SELECT column_name, data_type, is_nullable "
             f"FROM information_schema.columns "
             f"WHERE table_name='{table}' ORDER BY ordinal_position",
-            f"{table} 컬럼 목록"
+            f"{table} 컬럼 목록",
         )
     elif cmd == "count" and len(sys.argv) > 2:
         table = sys.argv[2]

@@ -7,7 +7,7 @@ from backend.core.config import settings
 
 async def main():
     conn = await asyncpg.connect(
-        host='172.18.0.2',
+        host="172.18.0.2",
         port=5432,
         user=settings.write_db_user,
         password=settings.write_db_password,
@@ -28,11 +28,14 @@ async def main():
         )
         if row:
             print(f"  id={row['id']} name={row['name']}")
-            imgs = row['images']
+            imgs = row["images"]
             if isinstance(imgs, str):
                 import json as _j
+
                 imgs = _j.loads(imgs)
-            print(f"  images type={type(imgs).__name__}, len={len(imgs) if imgs else 0}")
+            print(
+                f"  images type={type(imgs).__name__}, len={len(imgs) if imgs else 0}"
+            )
             if imgs:
                 for i, u in enumerate(imgs[:8]):
                     print(f"    [{i}] {u}")
@@ -49,16 +52,19 @@ async def main():
             """
         )
         for r in rows:
-            imgs = r['images']
+            imgs = r["images"]
             if isinstance(imgs, str):
                 import json as _j
+
                 try:
                     imgs = _j.loads(imgs)
                 except Exception:
                     imgs = []
             cnt = len(imgs) if imgs else 0
             first = imgs[0] if imgs else None
-            print(f"  {r['site_product_id']} {r['name'][:40]} | images={cnt} first={first}")
+            print(
+                f"  {r['site_product_id']} {r['name'][:40]} | images={cnt} first={first}"
+            )
 
     finally:
         await conn.close()

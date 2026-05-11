@@ -93,13 +93,17 @@ async def main() -> None:
                     ra_obj = ra
             else:
                 ra_obj = ra
-            print(f"[ROW] {prod_id} top_keys={list(ra_obj.keys()) if isinstance(ra_obj, dict) else type(ra_obj).__name__}")
+            print(
+                f"[ROW] {prod_id} top_keys={list(ra_obj.keys()) if isinstance(ra_obj, dict) else type(ra_obj).__name__}"
+            )
             if isinstance(ra_obj, dict):
                 for k, v in list(ra_obj.items())[:8]:
                     if isinstance(v, dict):
                         print(f"   {k}: dict keys={list(v.keys())}")
                     elif isinstance(v, list):
-                        print(f"   {k}: list len={len(v)} first_keys={list(v[0].keys()) if v and isinstance(v[0], dict) else 'N/A'}")
+                        print(
+                            f"   {k}: list len={len(v)} first_keys={list(v[0].keys()) if v and isinstance(v[0], dict) else 'N/A'}"
+                        )
                     else:
                         print(f"   {k}: {type(v).__name__}={str(v)[:50]}")
             no = _extract_prdno(ra)
@@ -116,13 +120,19 @@ async def main() -> None:
                 elif isinstance(shape, list) and shape:
                     sample_shape = f"list[0] keys={list(shape[0].keys()) if isinstance(shape[0], dict) else type(shape[0])}"
                 else:
-                    sample_shape = f"type={type(shape).__name__} value={str(shape)[:80]}"
+                    sample_shape = (
+                        f"type={type(shape).__name__} value={str(shape)[:80]}"
+                    )
             if no:
                 prdno = no
-                print(f"[FOUND] product_id={prod_id} prdNo={prdno} sample_shape={sample_shape}")
+                print(
+                    f"[FOUND] product_id={prod_id} prdNo={prdno} sample_shape={sample_shape}"
+                )
                 break
         else:
-            print(f"[INFO] 11st 매핑 5건 모두 prdNo 추출 실패. 첫 건 shape: {sample_shape}")
+            print(
+                f"[INFO] 11st 매핑 5건 모두 prdNo 추출 실패. 첫 건 shape: {sample_shape}"
+            )
     await engine.dispose()
 
     if not api_key or not prdno:
@@ -138,7 +148,12 @@ async def main() -> None:
     raw = data.get("raw", "") if isinstance(data, dict) else ""
     print("\n[crtfGrpObjClfCd raw]")
     src = raw or json.dumps(data, ensure_ascii=False)
-    for tag in ("crtfGrpObjClfCd01", "crtfGrpObjClfCd02", "crtfGrpObjClfCd03", "crtfGrpObjClfCd04"):
+    for tag in (
+        "crtfGrpObjClfCd01",
+        "crtfGrpObjClfCd02",
+        "crtfGrpObjClfCd03",
+        "crtfGrpObjClfCd04",
+    ):
         m = re.search(rf"<{tag}>([^<]*)</{tag}>", src)
         print(f"  {tag} = {m.group(1) if m else '(없음)'}")
 

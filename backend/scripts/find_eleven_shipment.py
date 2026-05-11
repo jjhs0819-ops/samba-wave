@@ -72,7 +72,9 @@ async def main() -> None:
         print("[INFO] 11번가 product_no 매핑 못 찾음")
         sys.exit(2)
     sh_id, prod_id, prdno, used_acc = found[0]
-    print(f"[FOUND] shipment={sh_id} product={prod_id} prdNo={prdno} acc_used={used_acc}")
+    print(
+        f"[FOUND] shipment={sh_id} product={prod_id} prdNo={prdno} acc_used={used_acc}"
+    )
 
     if not api_key or not prdno:
         sys.exit(2)
@@ -87,7 +89,12 @@ async def main() -> None:
     src = raw or json.dumps(data, ensure_ascii=False)
     print(f"\n[GET 응답 길이] {len(src)} chars")
     print("\n[crtfGrpObjClfCd 추출]")
-    for tag in ("crtfGrpObjClfCd01", "crtfGrpObjClfCd02", "crtfGrpObjClfCd03", "crtfGrpObjClfCd04"):
+    for tag in (
+        "crtfGrpObjClfCd01",
+        "crtfGrpObjClfCd02",
+        "crtfGrpObjClfCd03",
+        "crtfGrpObjClfCd04",
+    ):
         m = re.search(rf"<{tag}>([^<]*)</{tag}>", src)
         print(f"  {tag} = {m.group(1) if m else '(없음)'}")
 

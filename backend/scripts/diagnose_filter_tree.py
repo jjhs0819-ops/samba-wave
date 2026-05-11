@@ -1,4 +1,5 @@
 """filters/tree 쿼리 성능 측정"""
+
 import asyncio
 import asyncpg
 import time
@@ -53,7 +54,7 @@ async def main():
         GROUP BY search_filter_id
     """)
     t1 = time.time()
-    print(f"  결과: {len(rows)}행, 소요: {t1-t0:.2f}초")
+    print(f"  결과: {len(rows)}행, 소요: {t1 - t0:.2f}초")
 
     # 3. 개선 쿼리 (is_unregistered 패턴) 성능 측정
     print("\n=== 개선 쿼리 (is_unregistered 패턴) ===")
@@ -74,7 +75,7 @@ async def main():
         GROUP BY search_filter_id
     """)
     t3 = time.time()
-    print(f"  결과: {len(rows2)}행, 소요: {t3-t2:.2f}초")
+    print(f"  결과: {len(rows2)}행, 소요: {t3 - t2:.2f}초")
 
     # 4. EXPLAIN
     print("\n=== EXPLAIN ===")

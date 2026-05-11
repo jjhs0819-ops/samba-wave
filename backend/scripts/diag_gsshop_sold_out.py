@@ -1,7 +1,6 @@
 """GSShop 품절 신호 진단 — 실제 상품들의 renderJson.prd에서 sold_out 관련 키 분포 확인."""
 
 import asyncio
-import json
 import asyncpg
 from backend.core.config import settings
 from backend.domain.samba.proxy.gsshop_sourcing import GsShopSourcingClient
@@ -51,7 +50,9 @@ async def main():
         await conn.close()
 
     print(f"[DB] GSShop 상품 샘플 {len(rows)}개 추출")
-    targets = [(r["site_product_id"], r["name"], r["sale_price"], r["cost"]) for r in rows]
+    targets = [
+        (r["site_product_id"], r["name"], r["sale_price"], r["cost"]) for r in rows
+    ]
 
     # 2) 실제 GS샵 상세 페이지 가져와서 renderJson.prd의 sold-out 후보 키 + 값 분포 수집
     client = GsShopSourcingClient()
@@ -85,7 +86,24 @@ async def main():
                 print(f"\n[FULL DUMP] sid={sid} name={(name or '')[:30]}")
                 print(f"  prd keys ({len(keys)}): {keys}")
                 # 품절·재고 단어 포함 키만 별도 강조
-                soldish = [k for k in keys if any(t in k.lower() for t in ['sale', 'sold', 'stock', 'stk', 'tmpout', 'buy', 'avail', 'avl', 'qty'])]
+                soldish = [
+                    k
+                    for k in keys
+                    if any(
+                        t in k.lower()
+                        for t in [
+                            "sale",
+                            "sold",
+                            "stock",
+                            "stk",
+                            "tmpout",
+                            "buy",
+                            "avail",
+                            "avl",
+                            "qty",
+                        ]
+                    )
+                ]
                 print(f"  soldish keys ({len(soldish)}): {soldish}")
                 for k in soldish:
                     print(f"    {k} = {repr(prd.get(k))[:80]}")

@@ -50,7 +50,7 @@ async def main() -> None:
 
     # KC 관련 input
     print("\n[KC 관련 input]")
-    pat2 = re.compile(r'<input[^>]*[Kk][Cc][^>]*>', re.I)
+    pat2 = re.compile(r"<input[^>]*[Kk][Cc][^>]*>", re.I)
     for m in pat2.finditer(html):
         print("  ", m.group(0)[:300])
 
@@ -63,9 +63,14 @@ async def main() -> None:
 
     # CRTF_GRP / 인증 검색
     print("\n[인증/KC 키워드 영역 (radio + name)]")
-    for m in re.finditer(r'name=["\']([^"\']*[Cc]rtf[^"\']*)["\'][^>]*value=["\']([^"\']*)["\'][^>]*(checked)?',
-                          html, re.I):
-        print(f"  name={m.group(1)} value={m.group(2)} checked={m.group(3) is not None}")
+    for m in re.finditer(
+        r'name=["\']([^"\']*[Cc]rtf[^"\']*)["\'][^>]*value=["\']([^"\']*)["\'][^>]*(checked)?',
+        html,
+        re.I,
+    ):
+        print(
+            f"  name={m.group(1)} value={m.group(2)} checked={m.group(3) is not None}"
+        )
 
 
 if __name__ == "__main__":

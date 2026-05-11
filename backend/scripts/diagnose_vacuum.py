@@ -1,4 +1,5 @@
 """autovacuum 진행 상태 + 영향 쿼리 확인"""
+
 import asyncio
 import asyncpg
 from backend.core.config import settings
@@ -29,9 +30,11 @@ async def main():
         WHERE relid = 'samba_collected_product'::regclass
     """)
     if vac:
-        pct = round(vac['heap_blks_scanned'] / max(vac['heap_blks_total'], 1) * 100, 1)
+        pct = round(vac["heap_blks_scanned"] / max(vac["heap_blks_total"], 1) * 100, 1)
         print(f"  pid={vac['pid']} phase={vac['phase']}")
-        print(f"  블록: scanned={vac['heap_blks_scanned']}/{vac['heap_blks_total']} ({pct}%)")
+        print(
+            f"  블록: scanned={vac['heap_blks_scanned']}/{vac['heap_blks_total']} ({pct}%)"
+        )
         print(f"  dead_tuples: {vac['num_dead_tuples']}/{vac['max_dead_tuples']}")
         print(f"  index_vacuum_count: {vac['index_vacuum_count']}")
     else:
@@ -46,7 +49,9 @@ async def main():
         FROM pg_stat_user_tables
         WHERE relname = 'samba_collected_product'
     """)
-    print(f"  live={stats['n_live_tup']} dead={stats['n_dead_tup']} bloat={stats['bloat_pct']}%")
+    print(
+        f"  live={stats['n_live_tup']} dead={stats['n_dead_tup']} bloat={stats['bloat_pct']}%"
+    )
     print(f"  last_autovacuum={stats['last_autovacuum']}")
     print(f"  last_autoanalyze={stats['last_autoanalyze']}")
 
@@ -64,7 +69,9 @@ async def main():
         ORDER BY dur_sec DESC NULLS LAST
     """)
     for r in active:
-        print(f"  pid={r['pid']} dur={r['dur_sec']}s wait={r['wait_event_type']}/{r['wait_event']}")
+        print(
+            f"  pid={r['pid']} dur={r['dur_sec']}s wait={r['wait_event_type']}/{r['wait_event']}"
+        )
         print(f"    {r['q']}")
 
     await conn.close()

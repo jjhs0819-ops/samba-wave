@@ -7,7 +7,7 @@ from backend.core.config import settings
 
 async def main():
     conn = await asyncpg.connect(
-        host='172.18.0.2',
+        host="172.18.0.2",
         port=5432,
         user=settings.write_db_user,
         password=settings.write_db_password,

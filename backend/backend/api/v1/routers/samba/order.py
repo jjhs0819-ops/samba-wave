@@ -37,13 +37,20 @@ router = APIRouter(prefix="/orders", tags=["samba-orders"])
 # 매 sync마다 collected_product 12.6만건 SELECT + 인덱싱(약 7초) 부담을
 # 60초 TTL로 한 번만 빌드해 재사용. 신규 cp 등록은 60초 안에 매칭됨.
 _MPN_CACHE_TTL_SEC = 60.0
-_mpn_cache_data: dict[str, dict] | None = None
+# (by_global, by_account) 튜플 — by_account는 정확 매칭(account_id, product_no) 인덱스
+_mpn_cache_data: tuple[dict[str, dict], dict[str, dict]] | None = None
 _mpn_cache_built_at: float = 0.0
 _mpn_cache_lock = asyncio.Lock()
 
 
-async def _get_mpn_cache(session, sourcing_urls: dict) -> dict[str, dict]:
+async def _get_mpn_cache(
+    session, sourcing_urls: dict
+) -> tuple[dict[str, dict], dict[str, dict]]:
     """market_product_no → collected_product 인덱스 (TTL 60초).
+
+    리턴: (by_global, by_account)
+      - by_global[product_no]            = entry  (기존 호환 키, 충돌 시 entry["ambiguous"]=True)
+      - by_account[f"{account_id}:{no}"] = entry  (정확 매칭용, 충돌 없음)
 
     SELECT 전용이므로 write session(외부 마켓 API 동안 idle in transaction
     timeout으로 죽을 수 있음)에 의존하지 않고 내부에서 별도 read session을
@@ -70,6 +77,8 @@ async def _get_mpn_cache(session, sourcing_urls: dict) -> dict[str, dict]:
             )
             _cp_rows = _cp_result.fetchall()
         new_cache: dict[str, dict] = {}
+        new_by_account: dict[str, dict] = {}
+        _ambiguous_count = 0
         for _row in _cp_rows:
             _cpid, _site, _spid, _imgs, _mpnos, _src_url, _cat = _row
             if not (_mpnos and isinstance(_mpnos, dict)):
@@ -95,6 +104,8 @@ async def _get_mpn_cache(session, sourcing_urls: dict) -> dict[str, dict]:
                     continue
                 if _k.endswith("_origin"):
                     continue
+                # _k는 통상 account_id (혹은 master_code 키). 정확 매칭 인덱스 빌드용.
+                _account_key = str(_k)
                 if isinstance(_v, dict):
                     _values = [
                         _v.get("smartstoreChannelProductNo"),
@@ -107,9 +118,9 @@ async def _get_mpn_cache(session, sourcing_urls: dict) -> dict[str, dict]:
                     if not _sub_v:
                         continue
                     _key = str(_sub_v)
-                    # 기존 entry가 있다면 site_ids만 추가, 없으면 새로
-                    _entry = new_cache.get(_key)
-                    if not _entry:
+                    # 글로벌 인덱스 — 충돌 감지 (다른 cp가 같은 키 차지 시 ambiguous)
+                    _existing_global = new_cache.get(_key)
+                    if not _existing_global:
                         _entry = {
                             "collected_product_id": _cpid,
                             "source_site": _site,
@@ -119,19 +130,41 @@ async def _get_mpn_cache(session, sourcing_urls: dict) -> dict[str, dict]:
                             "site_ids_by_account": dict(_sites_by_account),
                         }
                         new_cache[_key] = _entry
+                    elif _existing_global.get("collected_product_id") != _cpid:
+                        # 다른 cp가 같은 글로벌 키를 차지 → 글로벌 매칭 거부 표시
+                        if not _existing_global.get("ambiguous"):
+                            _ambiguous_count += 1
+                        _existing_global["ambiguous"] = True
                     else:
-                        # 같은 master_code가 여러 cp에 있는 케이스(드물 것).
-                        # 기존 entry 그대로 두고 site_ids만 보강.
+                        # 같은 cp 내 여러 키 — site_ids만 보강
                         for acc, sites in _sites_by_account.items():
-                            _entry["site_ids_by_account"].setdefault(acc, []).extend(
+                            _existing_global["site_ids_by_account"].setdefault(
+                                acc, []
+                            ).extend(
                                 s
                                 for s in sites
-                                if s not in _entry["site_ids_by_account"].get(acc, [])
+                                if s
+                                not in _existing_global["site_ids_by_account"].get(
+                                    acc, []
+                                )
                             )
-        _mpn_cache_data = new_cache
+                    # 정확 매칭 인덱스 — (account_id, product_no) 쌍은 충돌 거의 없음.
+                    # 첫 번째 entry 유지(같은 키에 여러 cp 등록 시 가장 오래된 것 우선).
+                    _acc_key = f"{_account_key}:{_key}"
+                    if _acc_key not in new_by_account:
+                        new_by_account[_acc_key] = {
+                            "collected_product_id": _cpid,
+                            "source_site": _site,
+                            "product_image": _thumb,
+                            "original_link": _olink,
+                            "category": _cat or "",
+                            "site_ids_by_account": dict(_sites_by_account),
+                        }
+        _mpn_cache_data = (new_cache, new_by_account)
         _mpn_cache_built_at = now
         logger.info(
-            f"[주문동기화] _mpn_cache 재빌드 완료 — entries={len(new_cache):,}, "
+            f"[주문동기화] _mpn_cache 재빌드 완료 — global={len(new_cache):,} "
+            f"by_account={len(new_by_account):,} ambiguous={_ambiguous_count:,} "
             f"TTL={_MPN_CACHE_TTL_SEC}s"
         )
         return _mpn_cache_data
@@ -4654,7 +4687,7 @@ async def sync_orders_from_markets(
                     f"[주문동기화] write session rollback 실패(무시): {_rb_e}"
                 )
 
-            _mpn_cache = await _get_mpn_cache(session, _sourcing_urls)
+            _mpn_global, _mpn_by_account = await _get_mpn_cache(session, _sourcing_urls)
 
             # 미등록 입력 캐시: 동일 product_id+channel_name에 대해 수동 등록된 source_url/product_image 재활용
             # write session은 직전 외부 마켓 API 동안 idle in transaction timeout으로
@@ -4734,14 +4767,27 @@ async def sync_orders_from_markets(
                 if _tid:
                     order_data["tenant_id"] = _tid
                 # 수집상품 매칭 — collected_product_id, product_image, source_site, source_url 보충
+                # 매칭 우선순위 (오염 방지):
+                #   1) (channel_id, product_id) 정확 매칭 (by_account)
+                #   2) playauto master_code 글로벌 매칭 (충돌 시 거부)
+                #   3) product_id 글로벌 매칭 (충돌 시 거부)
                 _pid = str(order_data.get("product_id", ""))
-                # 플레이오토 주문은 master_code 매칭 우선 — 더망고 등록은 우리 cp에 없으니
-                # master_code 미스 = "삼바로 등록 안 한 상품" 자동 판정 (별칭 분리 자연 달성).
                 _pa_mc = str(order_data.get("_pa_master_code") or "")
-                if order_data.get("source") == "playauto" and _pa_mc:
-                    _matched = _mpn_cache.get(_pa_mc) or _mpn_cache.get(_pid)
-                else:
-                    _matched = _mpn_cache.get(_pid)
+                _ch_id = str(order_data.get("channel_id") or "")
+                _matched = None
+                # 1) 정확 매칭 — (channel_id, product_id)
+                if _ch_id and _pid:
+                    _matched = _mpn_by_account.get(f"{_ch_id}:{_pid}")
+                # 2) playauto master_code 글로벌 (master_code는 통상 unique)
+                if not _matched and order_data.get("source") == "playauto" and _pa_mc:
+                    _cand = _mpn_global.get(_pa_mc)
+                    if _cand and not _cand.get("ambiguous"):
+                        _matched = _cand
+                # 3) product_id 글로벌 — 충돌(ambiguous)이면 거부
+                if not _matched and _pid:
+                    _cand = _mpn_global.get(_pid)
+                    if _cand and not _cand.get("ambiguous"):
+                        _matched = _cand
                 # 플레이오토 별칭(site_id) 단위 매칭 검증 — 1 channel_id에 5개 별칭이
                 # 묶인 구조에서 사용자가 특정 별칭에만 등록한 cp가 다른 별칭 주문에
                 # 잘못 매칭되는 것을 차단. cp.market_product_nos에 `{account_id}_sites`

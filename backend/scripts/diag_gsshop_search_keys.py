@@ -37,7 +37,7 @@ async def main():
         return
 
     end = html.find(";\n", start)
-    raw = html[start + len(marker):end if end > 0 else start + 200000]
+    raw = html[start + len(marker) : end if end > 0 else start + 200000]
     try:
         data = json.loads(raw)
     except Exception as e:
@@ -77,6 +77,7 @@ async def main():
 
     # 모든 아이템에서 'tempout'/'soldout'/'sale' 등 포함 키 분포
     from collections import Counter
+
     soldish_keys = set()
     for k, v in data.items():
         if not isinstance(v, list):
@@ -86,7 +87,20 @@ async def main():
                 continue
             for ik in it.keys():
                 ikl = ik.lower()
-                if any(t in ikl for t in ['tempout', 'soldout', 'salest', 'salepsbl', 'stock', 'buyy', 'buyps', 'avail', 'sale_st']):
+                if any(
+                    t in ikl
+                    for t in [
+                        "tempout",
+                        "soldout",
+                        "salest",
+                        "salepsbl",
+                        "stock",
+                        "buyy",
+                        "buyps",
+                        "avail",
+                        "sale_st",
+                    ]
+                ):
                     soldish_keys.add(ik)
 
     print(f"\n[soldish keys 발견]: {sorted(soldish_keys)}")

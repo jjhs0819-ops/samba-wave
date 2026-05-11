@@ -27,9 +27,9 @@ async def main():
         )
         cur = None
         for r in rows:
-            if r['source_site'] != cur:
+            if r["source_site"] != cur:
                 print(f"\n  [{r['source_site']}]")
-                cur = r['source_site']
+                cur = r["source_site"]
             print(f"    {r['sale_status']}: {r['cnt']:,}")
 
         print("\n[2] 소싱처별 최근 7일 이벤트 타입 분포:")
@@ -46,12 +46,14 @@ async def main():
         )
         cur = None
         for r in rows:
-            if r['source_site'] != cur:
+            if r["source_site"] != cur:
                 print(f"\n  [{r['source_site']}]")
-                cur = r['source_site']
+                cur = r["source_site"]
             print(f"    {r['event_type']}: {r['cnt']:,}")
 
-        print("\n[3] GSShop 영구 삭제(deleted_from_source) 사례 흔적 — detail.reason='source_deleted' 이벤트:")
+        print(
+            "\n[3] GSShop 영구 삭제(deleted_from_source) 사례 흔적 — detail.reason='source_deleted' 이벤트:"
+        )
         rows = await conn.fetch(
             """
             SELECT COUNT(*) AS cnt
@@ -77,9 +79,13 @@ async def main():
             """
         )
         for r in rows:
-            print(f"    24h 갱신: {r['r_24h']:,} / 7d 갱신: {r['r_7d']:,} / null: {r['r_null']:,} / 전체: {r['total']:,}")
+            print(
+                f"    24h 갱신: {r['r_24h']:,} / 7d 갱신: {r['r_7d']:,} / null: {r['r_null']:,} / 전체: {r['total']:,}"
+            )
 
-        print("\n[5] GSShop scheduler_tick의 summary(소싱처삭제/품절 카운트)에서 sold_out 카운트 합산:")
+        print(
+            "\n[5] GSShop scheduler_tick의 summary(소싱처삭제/품절 카운트)에서 sold_out 카운트 합산:"
+        )
         rows = await conn.fetch(
             """
             SELECT
@@ -94,7 +100,9 @@ async def main():
             """
         )
         for r in rows:
-            print(f"    최근 7일 GSShop tick={r['tick_count']:,}, sold_out 합계={r['sum_so']:,}, success={r['sum_ok']:,}, fail={r['sum_fail']:,}")
+            print(
+                f"    최근 7일 GSShop tick={r['tick_count']:,}, sold_out 합계={r['sum_so']:,}, success={r['sum_ok']:,}, fail={r['sum_fail']:,}"
+            )
 
     finally:
         await conn.close()
