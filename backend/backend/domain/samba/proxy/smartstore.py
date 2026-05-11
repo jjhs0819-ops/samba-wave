@@ -1611,7 +1611,7 @@ class SmartStoreClient:
         "CJ대한통운": "CJGLS",
         "한진택배": "HANJIN",
         "롯데택배": "HYUNDAI",  # 롯데글로벌로지스 (구 현대택배)
-        "로젠택배": "LOGEN",
+        "로젠택배": "KGB",
         "우체국택배": "EPOST",
         "경동택배": "KDEXP",
         "대신택배": "DAESIN",
@@ -1619,8 +1619,17 @@ class SmartStoreClient:
         "편의점택배": "CVSNET",
         "딜리박스": "JMNP",
         "DHL": "DHL",
-        "직접배송": "ONSLF_DLV",
         "기타": "DLV_COM_ETC",
+    }
+
+    # 한글 라벨 → 네이버 deliveryMethod enum
+    # 매핑되지 않으면 기본값 "DELIVERY" 사용 (택배/등기/소포)
+    DELIVERY_METHOD_MAP: dict[str, str] = {
+        "직접배송": "DIRECT_DELIVERY",
+        "직접전달": "DIRECT_DELIVERY",
+        "방문수령": "VISIT_RECEIPT",
+        "퀵서비스": "QUICK_SVC",
+        "배송없음": "NOTHING",
     }
 
     async def ship_product_order(
@@ -1641,22 +1650,31 @@ class SmartStoreClient:
         from datetime import datetime
         from zoneinfo import ZoneInfo
 
-        company_code = self.DELIVERY_COMPANY_MAP.get(delivery_company, delivery_company)
+        # 한글 라벨에서 공백 제거 후 deliveryMethod 우선 판단
+        # (택배 외 흐름은 deliveryCompanyCode를 보내지 않음)
+        normalized = (delivery_company or "").replace(" ", "")
+        delivery_method = self.DELIVERY_METHOD_MAP.get(normalized, "DELIVERY")
         now = datetime.now(ZoneInfo("Asia/Seoul")).strftime(
             "%Y-%m-%dT%H:%M:%S.000+09:00"
         )
 
-        body = {
-            "dispatchProductOrders": [
-                {
-                    "productOrderId": product_order_id,
-                    "deliveryMethod": "DELIVERY",
-                    "deliveryCompanyCode": company_code,
-                    "trackingNumber": tracking_number,
-                    "dispatchDate": now,
-                }
-            ]
+        dispatch_item: dict[str, Any] = {
+            "productOrderId": product_order_id,
+            "deliveryMethod": delivery_method,
+            "dispatchDate": now,
         }
+        if delivery_method == "DELIVERY":
+            # 택배 흐름: 회사 코드 + 송장번호 필수
+            dispatch_item["deliveryCompanyCode"] = self.DELIVERY_COMPANY_MAP.get(
+                delivery_company, delivery_company
+            )
+            dispatch_item["trackingNumber"] = tracking_number
+        else:
+            # 직접배송/방문수령/퀵서비스/배송없음: 송장 필드 자체를 보내지 않음
+            # (송장번호가 들어와도 의미가 없으므로 생략)
+            pass
+
+        body = {"dispatchProductOrders": [dispatch_item]}
         result = await self._call_api(
             "POST",
             "/v1/pay-order/seller/product-orders/dispatch",
@@ -1672,7 +1690,8 @@ class SmartStoreClient:
             raise SmartStoreApiError(f"발송처리 실패: {fail_msg}")
 
         logger.info(
-            f"[스마트스토어] 발송처리 {product_order_id} → {company_code} {tracking_number}"
+            f"[스마트스토어] 발송처리 {product_order_id} → method={delivery_method} "
+            f"company={dispatch_item.get('deliveryCompanyCode', '-')} tracking={tracking_number or '-'}"
         )
         return result
 
