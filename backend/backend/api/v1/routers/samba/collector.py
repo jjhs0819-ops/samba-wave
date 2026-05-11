@@ -514,7 +514,9 @@ async def delete_filter(
     svc = _get_services(session)
     sf = await svc.filter_repo.get_async(filter_id)
     if not sf:
-        raise HTTPException(404, "필터를 찾을 수 없습니다")
+        # row 이미 부재 — idempotent 처리. UI stale 캐시 시 "삭제 실패" 사고 차단.
+        logger.info(f"필터 삭제 요청 — row 이미 부재: {filter_id} (idempotent)")
+        return {"ok": True, "deleted_products": 0, "already_deleted": True}
 
     # 마켓등록 상품 체크
     products = await svc.product_repo.list_by_filter(filter_id, limit=100000)
