@@ -1137,7 +1137,7 @@ export default function PoliciesPage() {
                           style={{ width: '60px', padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px 0 0 4px', color: '#E5E5E5' }}
                           placeholder="30"
                           value={lottePolicy.marginRate}
-                          onChange={e => setLottePolicy(p => ({ ...p, marginRate: e.target.value }))}
+                          onChange={e => { setLottePolicy(p => ({ ...p, marginRate: e.target.value })); setCurrentMarketPolicy({ ...mp, feeRate: Number(e.target.value) || 0 }); triggerAutoSave() }}
                         />
                         <span style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', background: '#252525', border: '1px solid #2D2D2D', borderLeft: 'none', borderRadius: '0 4px 4px 0', color: '#888' }}>%</span>
                       </div>
