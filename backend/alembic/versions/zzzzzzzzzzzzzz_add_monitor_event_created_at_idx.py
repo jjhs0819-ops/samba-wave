@@ -24,16 +24,16 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # CREATE INDEX CONCURRENTLY는 트랜잭션 내부 실행 불가 → autocommit_block
-    with op.get_context().autocommit_block():
-        op.execute(
-            """
-            CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_sme_created_at_desc
-            ON samba_monitor_event (created_at DESC)
-            """
-        )
+    # async(asyncpg) alembic 환경에서는 autocommit_block 미지원 → AssertionError.
+    # CONCURRENTLY 제거하고 단순 CREATE INDEX 으로 변경 (samba_monitor_event 102MB 라
+    # 락 시간 수초 이내, 영향 미미).
+    op.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_sme_created_at_desc
+        ON samba_monitor_event (created_at DESC)
+        """
+    )
 
 
 def downgrade() -> None:
-    with op.get_context().autocommit_block():
-        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_sme_created_at_desc")
+    op.execute("DROP INDEX IF EXISTS ix_sme_created_at_desc")
