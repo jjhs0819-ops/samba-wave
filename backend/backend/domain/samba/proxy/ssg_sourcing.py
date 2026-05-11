@@ -1640,13 +1640,6 @@ class SSGSourcingClient:
         detail_html = ""
         if not refresh_only:
             detail_html, detail_images = self._parse_detail_content(html)
-            # 이미지 9장 미만 시 상세 이미지로 보충 (무신사 동일 패턴)
-            if len(images) < 9 and detail_images:
-                existing = set(images)
-                for di in detail_images:
-                    if di not in existing and len(images) < 9:
-                        images.append(di)
-                        existing.add(di)
 
         # 옵션/재고: uitemObjList 파싱, 비어있으면 HTML <select> 태그 폴백
         # department.ssg.com: SSR의 uitemObjList는 낙관값(stock=99)이므로

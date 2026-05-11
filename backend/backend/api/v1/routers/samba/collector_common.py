@@ -172,7 +172,9 @@ def _build_product_data(
         "sale_price": sale_price,
         "cost": cost,
         "images": detail.get("images", []),
-        "detail_images": detail.get("detailImages") or [],
+        "detail_images": detail.get("detailImages")
+        or detail.get("detail_images")
+        or [],
         "options": [
             {**o, "stock": o.get("stock") if o.get("stock") is not None else 0}
             for o in cleaned_options
@@ -206,7 +208,10 @@ def _build_product_data(
             style_code=detail.get("styleNo", "") or detail.get("style_code", ""),
             name=detail.get("name", ""),
         ),
-        "detail_html": raw_detail_html,
+        "detail_html": raw_detail_html
+        or detail.get("detailHtml")
+        or detail.get("detail_html")
+        or "",
         "status": "collected",
         "sale_status": detail.get("saleStatus", "in_stock"),
         "free_shipping": detail.get("freeShipping", False),
