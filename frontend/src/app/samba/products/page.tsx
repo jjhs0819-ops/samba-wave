@@ -356,10 +356,11 @@ export default function ProductsPage() {
 
   // 필터/정렬 변경 시 1페이지로 리셋 + 선택 초기화 (디바운싱 300ms, 초기 로드 제외)
   const filterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const filterInitRef = useRef(false)
+  const filterInitRef = useRef(true)
   useEffect(() => {
     if (!queryReady) return
-    if (!filterInitRef.current) return
+    // 첫 렌더는 스킵하고 ref를 flip — 이후 드롭다운 변경 시 디바운스 적용 활성화
+    if (filterInitRef.current) { filterInitRef.current = false; return }
     setSelectAll(false)
     setSelectedIds(new Set())
     setCurrentPage(1)
