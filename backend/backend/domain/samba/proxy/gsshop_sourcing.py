@@ -672,7 +672,16 @@ class GsShopSourcingClient:
                     f"[GSSHOP] 모바일 상세 HTTP {resp.status_code}: {product_id}"
                 )
                 return ""
-            return resp.text
+            # GS샵은 모바일 UA에 redirect 대신 HTTP 200 + "DustView 에러 페이지"
+            # HTML을 반환하는 경우가 있다 (예: 존재 안 하는 prdid). 마커 검출로
+            # 영구 삭제 신호를 잡는다.
+            body = resp.text
+            if "DustView" in body or "에러 페이지" in body:
+                logger.warning(
+                    f"[GSSHOP] 상품 영구 삭제 감지 (에러 페이지 본문): {product_id}"
+                )
+                raise ProductNotFoundError(product_id)
+            return body
 
     async def _fetch_pc(self, product_id: str, proxy: str | None = None) -> str:
         """PC 상세 페이지 HTML 반환. 실패 시 빈 문자열 (수집 중단 X)."""
@@ -694,7 +703,12 @@ class GsShopSourcingClient:
             return ""
 
     def _parse_mobile_html(self, html: str, product_id: str) -> dict[str, Any]:
-        """모바일 HTML에서 renderJson → JSON-LD → og 메타 순으로 파싱."""
+        """모바일 HTML에서 renderJson → JSON-LD → og 메타 순으로 파싱.
+
+        모든 폴백에서 name 추출에 실패하면 영구 삭제 상품으로 간주하고
+        ProductNotFoundError 를 발생시킨다 (renderJson 의 prd 필드가 비거나,
+        JSON-LD/og 메타도 없는 케이스).
+        """
         if not html:
             return {}
         now_iso = datetime.now(tz=timezone.utc).isoformat()
@@ -719,7 +733,15 @@ class GsShopSourcingClient:
                 return result
 
         # 3순위: og 메타 태그
-        return self._build_from_meta(html, product_id, timestamp, now_iso)
+        result = self._build_from_meta(html, product_id, timestamp, now_iso)
+        if result.get("name"):
+            return result
+
+        # 모든 폴백 실패 — 상품이 더 이상 존재하지 않음 (메인페이지 redirect 등)
+        logger.warning(
+            f"[GSSHOP] 상품 영구 삭제 감지 (파싱 결과 비어있음): {product_id}"
+        )
+        raise ProductNotFoundError(product_id)
 
     # ------------------------------------------------------------------
     # 상세 조회 메인
