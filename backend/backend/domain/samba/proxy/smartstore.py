@@ -303,9 +303,22 @@ def _build_combination_options(
         name = name.strip()
         if not name or len(name.replace(" ", "")) == 0:
             name = f"옵션{idx + 1}"
-        # 스마트스토어 옵션명 최대 25자 제한
-        if len(name) > 25:
-            name = name[:25]
+
+        # 2D 옵션은 split 먼저 — 결합 이름 길이로 자르면 뒷부분 짤림 (예: "Cotton beige / Cotton beige"
+        # 가 25자 cut → "Cotton beige / Cotton bei" → optionName2 = "Cotton bei")
+        if has_slash and " / " in name:
+            parts = [p.strip() for p in name.split(" / ", 1)]
+            parts = [p for p in parts if p]
+            if not parts:
+                parts = [name.replace("/", "").strip() or f"옵션{idx + 1}"]
+            # 각 차원별 25자 제한 (전체가 아닌 차원별)
+            option_values = [p[:25] for p in parts]
+        else:
+            # 1D — 전체 이름에 25자 제한
+            if len(name) > 25:
+                name = name[:25]
+            option_values = [name]
+
         stock = opt.get("stock", 0) or 0
         sold_out = opt.get("isSoldOut", False)
 
@@ -315,16 +328,6 @@ def _build_combination_options(
         # 옵션 가격 차이 (기본가 대비, 음수면 0으로 클램핑)
         opt_price = int(opt.get("price", 0) or 0)
         price_diff = max(opt_price - sale_price, 0) if opt_price > 0 else 0
-
-        if has_slash and " / " in name:
-            parts = [p.strip() for p in name.split(" / ", 1)]
-            # 분리 후 빈값 방어
-            parts = [p for p in parts if p]
-            if len(parts) == 0:
-                parts = [name.replace("/", "").strip() or f"옵션{idx + 1}"]
-            option_values = parts
-        else:
-            option_values = [name]
 
         combinations.append(
             {
