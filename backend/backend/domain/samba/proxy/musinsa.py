@@ -1145,45 +1145,100 @@ class MusinsaClient:
                     }
                 )
 
-            # extra(추가) 옵션 처리 — addon_options로 분리 저장 (메인과 다른 차원)
-            # 마켓 변환 시: 스마트스토어 productAddItems / 11번가 addOptInfo 등으로 매핑
-            # "선택안함"/"선택없음"은 제외 (마켓 측 기본값 처리)
+            # extra(추가) 옵션 처리 — 메인 × 엑스트라 2D 조합 SKU로 통합
+            # Naver Commerce v2 의 productAddItems 는 inline 등록 안 되므로,
+            # 메인×엑스트라를 cartesian 곱으로 2D optionCombinations 만들어
+            # 마켓에 색상×스트랩 두 드롭다운으로 노출 (선택안함은 엑스트라의 첫 행)
             extra_groups = opt_json["data"].get("extra", [])
+            extra_values: list[dict[str, Any]] = []
+            extra_group_name = ""
             for grp in extra_groups:
                 if grp.get("isDeleted"):
                     continue
-                grp_name = (grp.get("name") or "").strip()
+                if not extra_group_name:
+                    extra_group_name = (grp.get("name") or "추가").strip()
                 is_stock_managed = grp.get("isStockManaged", False)
-                is_required = grp.get("isRequired", False) is True
+                # "선택안함" 항목 자동 생성 — Musinsa 응답에 명시 안 돼 있을 수도 있으므로 보장
+                has_none = False
                 for ev in grp.get("optionValues", []):
                     if not ev.get("activated") or ev.get("isDeleted"):
                         continue
                     ev_name = (ev.get("name") or "").strip()
-                    is_none_choice = "선택안함" in ev_name or "선택없음" in ev_name
-                    # 추가금액: optionValue.price 우선, 없으면 이름의 (+숫자) 폴백
+                    if "선택안함" in ev_name or "선택없음" in ev_name:
+                        has_none = True
+                        extra_values.insert(
+                            0,
+                            {
+                                "no": ev.get("no"),
+                                "name": "선택안함",
+                                "add_price": 0,
+                                "stock": 99,
+                            },
+                        )
+                        continue
                     add_price = int(ev.get("price") or 0)
                     if not add_price:
                         m = re.search(r"\(\+(\d+)\)", ev_name)
                         if m:
                             add_price = int(m.group(1))
-                    ev_stock: Optional[int] = (
-                        (ev.get("quantity") or 99) if is_stock_managed else 99
-                    )
-                    addon_options.append(
+                    ev_stock = (ev.get("quantity") or 99) if is_stock_managed else 99
+                    if ev_stock and ev_stock > 9999:
+                        ev_stock = 9999
+                    extra_values.append(
                         {
                             "no": ev.get("no"),
-                            "group": grp_name,
                             "name": ev_name,
                             "add_price": add_price,
                             "stock": ev_stock,
-                            "is_required": is_required,
-                            "is_none_choice": is_none_choice,
                         }
                     )
-            if extra_groups:
+                # 선택안함이 응답에 없으면 0번째로 추가 (필수 아님일 때만)
+                is_required = grp.get("isRequired", False) is True
+                if not has_none and not is_required:
+                    extra_values.insert(
+                        0,
+                        {
+                            "no": None,
+                            "name": "선택안함",
+                            "add_price": 0,
+                            "stock": 99,
+                        },
+                    )
+
+            if extra_values and options:
+                main_options = list(options)
+                options = []
+                for main in main_options:
+                    main_name = main.get("name") or ""
+                    for ev in extra_values:
+                        ev_name = ev["name"]
+                        combo_name = f"{main_name} / {ev_name}"
+                        main_stock = main.get("stock")
+                        if main_stock is None:
+                            combo_stock = ev["stock"]
+                        elif ev["stock"] is None:
+                            combo_stock = main_stock
+                        else:
+                            combo_stock = min(main_stock, ev["stock"])
+                        options.append(
+                            {
+                                "no": ev["no"] or main.get("no"),
+                                "name": combo_name,
+                                "price": (main.get("price") or 0) + ev["add_price"],
+                                "stock": combo_stock,
+                                "isSoldOut": main.get("isSoldOut", False),
+                                "isBrandDelivery": main.get("isBrandDelivery", False),
+                                "deliveryType": main.get("deliveryType", ""),
+                                "managedCode": main.get("managedCode", ""),
+                            }
+                        )
+                # 그룹명에 엑스트라 그룹 추가 (마켓 변환에서 optionGroupName2 로 사용)
+                if extra_group_name:
+                    option_group_names.append(extra_group_name)
                 logger.info(
-                    f"[옵션] {goods_no} addon_options {len(addon_options)}개 분리 저장 "
-                    f"(메인 {len(options)}개와 별개 차원)"
+                    f"[옵션] {goods_no} 2D 조합 생성: "
+                    f"메인 {len(main_options)} × 엑스트라 {len(extra_values)} = {len(options)}개, "
+                    f"그룹={option_group_names}"
                 )
 
         except Exception as exc:

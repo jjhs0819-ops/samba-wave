@@ -2097,16 +2097,6 @@ class SmartStoreClient:
                         )
                         else {}
                     ),
-                    # 추가구성상품 — addon_options를 productAddItems로 변환
-                    **(
-                        {"productAddItems": _addon_items}
-                        if (
-                            _addon_items := _build_product_add_items(
-                                product.get("addon_options") or []
-                            )
-                        )
-                        else {}
-                    ),
                     **_build_certification_infos(product.get("_certification_infos")),
                 },
             },
@@ -2117,6 +2107,10 @@ class SmartStoreClient:
                 "channelProductDisplayStatusType": "ON",
             },
         }
+
+        # NOTE: Naver Commerce v2 API 는 inline productAddItems 미지원
+        # → addon_options 은 Musinsa collector 에서 메인×엑스트라 2D 조합 SKU로 통합되어
+        #   options 에 들어있음 (optionCombinations 로 등록됨). 별도 productAddItems 빌드 불필요.
 
         # 즉시할인 적용
         if immediate_discount:
@@ -2196,12 +2190,12 @@ class SmartStoreClient:
             naver_search_info["modelId"] = catalog_model_id
         else:
             # 모델명 ← 원상품명(product.name), 50자 제한
-            origin_name = (product.get("name") or "").strip()
+            origin_name = _sanitize_naver_name(product.get("name") or "")
             if origin_name:
                 naver_search_info["modelName"] = origin_name[:50]
             # 제조사 모델명 ← 품번(style_code), 50자 제한
             if style_code:
-                clean_code = style_code[:50].strip()
+                clean_code = _sanitize_naver_name(style_code)[:50].strip()
                 if clean_code:
                     naver_search_info["manufacturerModelName"] = clean_code
         if naver_search_info:
