@@ -971,11 +971,15 @@ class ImageTransformService:
                         result.append(url)
                         continue
                     # HEAD 로 size 조회 — 초과 후보만 다운로드
+                    # Content-Length 누락/비숫자 또는 HEAD 자체 실패 시 over=True 로 fallthrough
+                    # (msscdn 등 일부 CDN은 HEAD 에 CL 미반환 → 사전 스킵되던 [1038] 재발 원인)
                     over = False
                     try:
                         head = await http_client.head(url)
                         cl = head.headers.get("content-length", "")
-                        if cl.isdigit() and int(cl) > max_bytes:
+                        if cl.isdigit():
+                            over = int(cl) > max_bytes
+                        else:
                             over = True
                     except Exception:
                         # HEAD 실패 → 일단 다운로드 후 판단

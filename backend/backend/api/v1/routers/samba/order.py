@@ -4689,24 +4689,11 @@ async def sync_orders_from_markets(
 
             _mpn_global, _mpn_by_account = await _get_mpn_cache(session, _sourcing_urls)
 
-            # 미등록 입력 캐시: 동일 product_id+channel_name에 대해 수동 등록된 source_url/product_image 재활용
-            # write session은 직전 외부 마켓 API 동안 idle in transaction timeout으로
-            # 죽었을 수 있어 SELECT 전용 read session으로 분리.
+            # 미등록 입력 캐시 — 영구 비활성화(2026-05-11).
+            # 과거: 동일 (product_id, channel_name) 그룹에 source_url 자동 전파 → 한 번
+            # 잘못 박힌 URL이 무한 자가증식(시계 cp 사례 800+건 오염). 수동 입력 본래
+            # 의도(자기 행에만 적용)는 그대로 동작하므로 자동 전파 기능만 제거.
             _unreg_cache: dict[str, dict[str, str]] = {}
-            async with get_read_session() as _unreg_sess:
-                _unreg_result = await _unreg_sess.execute(
-                    _sa_text(
-                        "SELECT product_id, channel_name, source_url, product_image "
-                        "FROM samba_order WHERE source_url IS NOT NULL AND product_id IS NOT NULL"
-                    )
-                )
-                _unreg_rows = _unreg_result.fetchall()
-            for _ur in _unreg_rows:
-                _ukey = f"{_ur[0]}|{_ur[1] or ''}"
-                _unreg_cache[_ukey] = {
-                    "source_url": _ur[2],
-                    "product_image": _ur[3] or "",
-                }
 
             # 비-롯데ON 주문: order_number 배치 조회로 N+1 SELECT 제거
             _non_lotteon_nos = list(
@@ -4882,17 +4869,9 @@ async def sync_orders_from_markets(
                         order_data["total_payment_amount"] = _sp
                         order_data["fee_rate"] = _fee
                         order_data["revenue"] = max(0, int(_sp * (1 - _fee / 100)))
-                # 미등록 입력 자동 적용: 동일 상품의 기존 source_url/product_image 복사
-                _ukey = f"{_pid}|{order_data.get('channel_name', '')}"
-                _unreg_matched = _unreg_cache.get(_ukey)
-                if _unreg_matched:
-                    if not order_data.get("source_url"):
-                        order_data["source_url"] = _unreg_matched["source_url"]
-                    if (
-                        not order_data.get("product_image")
-                        and _unreg_matched["product_image"]
-                    ):
-                        order_data["product_image"] = _unreg_matched["product_image"]
+                # 미등록 입력 자동 적용 — 영구 비활성화(2026-05-11).
+                # _unreg_cache는 항상 빈 dict이므로 매칭 분기 자체가 동작하지 않음.
+                # 자세한 사유는 _unreg_cache 빌드 위치(상단) 주석 참조.
                 # 상품명에서 소싱처 상품번호 추출 → source_site/source_url 보충
                 # 플레이오토는 1 channel에 5 별칭이 묶인 구조라 product_name 끝 공통 무신사
                 # goods_no가 별칭 무관하게 cross-매칭됨 (예: 캐논 주문이 고경 등록 cp에 매칭).
