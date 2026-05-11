@@ -1455,7 +1455,9 @@ async def sync_returns_from_markets(
 
                 access_key = account.api_key or extras.get("accessKey", "")
                 secret_key = account.api_secret or extras.get("secretKey", "")
-                vendor_id = account.seller_id or extras.get("vendorId", "")
+                # extras.vendorId(A0xxxxxxx) 우선, 없을 때만 account.seller_id fallback
+                # (account.seller_id는 로그인 ID 'zerocp'가 들어있어 404 유발)
+                vendor_id = extras.get("vendorId", "") or account.seller_id or ""
                 if not access_key or not secret_key or not vendor_id:
                     results.append(
                         {"account": label, "status": "skip", "message": "API 설정 없음"}
