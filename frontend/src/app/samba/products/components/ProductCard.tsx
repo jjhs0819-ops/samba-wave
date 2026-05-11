@@ -420,6 +420,19 @@ const ProductCard = React.memo(function ProductCard({
       : (p.detail_html || '').match(/src=["']([^"']+)["']/gi)
           ?.map((m: string) => m.replace(/src=["']/i, '').replace(/["']$/, '')) || []
   )
+  // 모달 열 때 상세이미지/HTML 단일 fetch (목록 API에서는 defer되어 비어있음)
+  const openImageModal = () => {
+    setProductImages(p.images || [])
+    setShowImageModal(true)
+    collectorApi.getProduct(p.id).then((full) => {
+      const dimgs = (full?.detail_images && full.detail_images.length > 0)
+        ? full.detail_images
+        : (full?.detail_html || '').match(/src=["']([^"']+)["']/gi)
+            ?.map((m: string) => m.replace(/src=["']/i, '').replace(/["']$/, '')) || []
+      setDetailImgList(dimgs)
+      if (full?.images && full.images.length > 0) setProductImages(full.images)
+    }).catch(() => {})
+  }
   // 원가: best_benefit_price(최대혜택가) > sale_price > original_price 순 우선
   const cost = p.cost || p.sale_price || p.original_price || 0
   const policy = policies.find((pol) => pol.id === p.applied_policy_id)
@@ -1286,7 +1299,7 @@ const ProductCard = React.memo(function ProductCard({
         /* 간단보기: 원 상품명 + 등록 상품명 + 브랜드 + 원가 한 줄 */
         <div style={{ padding: '8px 14px', display: 'flex', gap: '10px', alignItems: 'center', fontSize: '0.78rem' }}>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', flexShrink: 0 }}>
-            <div onClick={() => { setProductImages(p.images || []); setShowImageModal(true); }} style={{ cursor: 'pointer' }}>
+            <div onClick={() => openImageModal()} style={{ cursor: 'pointer' }}>
               <ProductImage src={p.images?.[0]} name={p.name} size={50} />
             </div>
             {(p.tags || []).includes('__ai_image__') && (
@@ -1318,7 +1331,7 @@ const ProductCard = React.memo(function ProductCard({
           width: '130px', flexShrink: 0, display: 'flex', flexDirection: 'column',
           alignItems: 'center', gap: '8px', paddingRight: '14px', borderRight: '1px solid #222',
         }}>
-          <div onClick={() => { setProductImages(p.images || []); setShowImageModal(true); }} style={{ cursor: 'pointer' }}>
+          <div onClick={() => openImageModal()} style={{ cursor: 'pointer' }}>
             <ProductImage src={p.images?.[0]} name={p.name} size={110} />
           </div>
           {(p.tags || []).includes('__ai_image__') && (
