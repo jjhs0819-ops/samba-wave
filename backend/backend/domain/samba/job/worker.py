@@ -1125,34 +1125,48 @@ class JobWorker:
                         prod_name = f"[{_source}] {prod_name}"
 
                     # tetris 매칭이 활성화된 경우 — 마켓별로 정책 계정을 테트리스 계정으로 교체
-                    # (브랜드당 여러 마켓 배정 가능: 매칭된 마켓만 교체, 미매칭 마켓은 정책 계정 유지)
+                    # 단, 사용자가 선택한 마켓(target_account_ids의 market_type) 범위 내에서만 적용
                     effective_account_ids = list(target_account_ids)
-                    if _tetris_account_map and prod:
+                    if _tetris_account_map and prod and target_account_ids:
                         _norm_k = (
                             _ts_norm_site(prod.source_site),
                             _ts_norm_brand(prod.brand),
                         )
-                        _assigned_list = _tetris_account_map.get(_norm_k) or []
-                        if _assigned_list:
-                            _override_markets = {
-                                _tetris_acc_market[a]
-                                for a in _assigned_list
-                                if a in _tetris_acc_market
-                            }
-                            _kept: list[str] = []
+                        _assigned_all = _tetris_account_map.get(_norm_k) or []
+                        if _assigned_all:
+                            # target_account_ids의 market_type 집합 (선택된 마켓 범위)
+                            _selected_markets: set[str] = set()
+                            _target_acc_market: dict[str, str] = {}
                             for _tid in target_account_ids:
                                 _tacc = await acc_repo.get_async(_tid)
-                                if not _tacc:
-                                    continue
-                                if _tacc.market_type not in _override_markets:
-                                    _kept.append(_tid)
-                            # 중복 제거 + 순서 유지
-                            _seen: set[str] = set()
-                            effective_account_ids = []
-                            for _x in _kept + _assigned_list:
-                                if _x not in _seen:
-                                    _seen.add(_x)
-                                    effective_account_ids.append(_x)
+                                if _tacc:
+                                    _target_acc_market[_tid] = _tacc.market_type
+                                    _selected_markets.add(_tacc.market_type)
+                            # 선택된 마켓에 해당하는 테트리스 계정만 사용
+                            _assigned_list = [
+                                a
+                                for a in _assigned_all
+                                if _tetris_acc_market.get(a) in _selected_markets
+                            ]
+                            if _assigned_list:
+                                _override_markets = {
+                                    _tetris_acc_market[a]
+                                    for a in _assigned_list
+                                    if a in _tetris_acc_market
+                                }
+                                _kept = [
+                                    _tid
+                                    for _tid in target_account_ids
+                                    if _target_acc_market.get(_tid)
+                                    and _target_acc_market[_tid]
+                                    not in _override_markets
+                                ]
+                                _seen: set[str] = set()
+                                effective_account_ids = []
+                                for _x in _kept + _assigned_list:
+                                    if _x not in _seen:
+                                        _seen.add(_x)
+                                        effective_account_ids.append(_x)
 
                     item_svc = SambaShipmentService(
                         SambaShipmentRepository(item_session), item_session
