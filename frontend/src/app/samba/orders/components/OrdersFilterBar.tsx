@@ -185,7 +185,7 @@ export default function OrdersFilterBar(props: Props) {
               ])
             })()}
           </select>
-          <select style={{ ...inputStyle, width: '120px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}>
+          <select style={{ ...inputStyle, width: '108px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}>
             <option value="">전체 소싱처</option>
             {siteOptions.map(site => <option key={site.value} value={site.value}>{site.label}</option>)}
           </select>
@@ -199,11 +199,11 @@ export default function OrdersFilterBar(props: Props) {
               </optgroup>
             ))}
           </select>
-          <select style={{ ...inputStyle, width: '120px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketStatus} onChange={e => setMarketStatus(e.target.value)}>
+          <select style={{ ...inputStyle, width: '108px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketStatus} onChange={e => setMarketStatus(e.target.value)}>
             <option value="">배송상태</option>
             {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
-          <select style={{ ...inputStyle, width: '120px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={registrationFilter} onChange={e => setRegistrationFilter(e.target.value)}>
+          <select style={{ ...inputStyle, width: '108px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={registrationFilter} onChange={e => setRegistrationFilter(e.target.value)}>
             <option value="">등록필터</option>
             <option value="registered">등록상품</option>
             <option value="unregistered">미등록상품</option>
@@ -227,7 +227,7 @@ export default function OrdersFilterBar(props: Props) {
             <option value="cancel_return_excluded">취소/반품/교환 제외</option>
             {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
-          <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ ...inputStyle, width: '100px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }}>
+          <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ ...inputStyle, width: '90px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }}>
             <option value="date_desc">최신순</option>
             <option value="date_asc">오래된순</option>
             <option value="profit_desc">마진높음</option>
@@ -235,7 +235,7 @@ export default function OrdersFilterBar(props: Props) {
             <option value="price_desc">매출높음</option>
             <option value="price_asc">매출낮음</option>
           </select>
-          <select style={{ ...inputStyle, width: '92px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={pageSize} onChange={e => setPageSize(Number(e.target.value))}>
+          <select style={{ ...inputStyle, width: '83px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={pageSize} onChange={e => setPageSize(Number(e.target.value))}>
             <option value={20}>20개</option>
             <option value={50}>50개</option>
             <option value={100}>100개</option>
