@@ -364,8 +364,9 @@ class SambaShipmentService:
     ) -> dict[str, Any]:
         """여러 상품을 대상 마켓 계정으로 실제 전송. 마켓별 결과 반환."""
 
-        # 이전 취소 플래그 잔존 방지
-        clear_cancel_transmit()
+        # 이전 취소 플래그 잔존 방지는 워커가 잡 단위로 처리 (clear_cancel_transmit(job.id))
+        # 여기서 인자 없이 호출하면 일시정지 글로벌 마커(__all__)까지 지워져서
+        # 일시정지 누른 직후 다음 PENDING 잡이 즉시 클레임됨 — 절대 추가 금지
 
         processed = 0
         skipped = 0
@@ -380,7 +381,7 @@ class SambaShipmentService:
                 logger.info(
                     f"[전송] 강제 중단 — {processed}건 완료, {cancelled}건 취소"
                 )
-                clear_cancel_transmit()
+                # 일시정지 글로벌 마커(__all__) 유지 — 워커가 잡 단위로 해제
                 break
             try:
                 shipment = await self._transmit_product(

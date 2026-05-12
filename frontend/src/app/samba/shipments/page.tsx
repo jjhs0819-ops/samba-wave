@@ -272,10 +272,11 @@ export default function ShipmentsPage() {
               // Job 결과를 프론트 로그에 직접 표시 (링 버퍼 인스턴스 격리 시 누락 방지)
               const r = (j.result || {}) as Record<string, number>
               const _ts = fmtTime()
-              const statusLabel = j.status === 'completed' ? '전송 완료' : j.status === 'failed' ? '전송 실패' : '전송 중단'
+              const statusLabel = j.status === 'completed' ? '전송 완료' : j.status === 'failed' ? '일시정지(이어하기 가능)' : '전송 중단'
               appendShipmentLog(setLogMessages, `[${_ts}] ${statusLabel} — 성공 ${fmtNum(r.success || 0)}건, 스킵 ${fmtNum(r.skipped || 0)}건, 실패 ${fmtNum(r.failed || 0)}건`)
               setTransmitting(false)
               activeJobIdRef.current = ''
+              // FAILED는 일시정지 = 재개 가능 — payload는 페이로드 복원이 필요하면 별도 endpoint
               load()
             }
           } catch { /* ignore */ }
@@ -943,9 +944,10 @@ export default function ShipmentsPage() {
             if (j.error) addLog(`[${_ts}] ${j.error}`)
             // Job 결과를 프론트 로그에 직접 표시 (링 버퍼 인스턴스 격리 시 누락 방지)
             const r = (j.result || {}) as Record<string, number>
-            const statusLabel = j.status === 'completed' ? '전송 완료' : j.status === 'failed' ? '전송 실패' : '전송 중단'
+            const statusLabel = j.status === 'completed' ? '전송 완료' : j.status === 'failed' ? '일시정지(이어하기 가능)' : '전송 중단'
             appendShipmentLog(setLogMessages, `[${_ts}] ${statusLabel} — 성공 ${fmtNum(r.success || 0)}건, 스킵 ${fmtNum(r.skipped || 0)}건, 실패 ${fmtNum(r.failed || 0)}건`)
-            setPausedJobPayload(null)
+            // FAILED는 일시정지 = 재개 가능 → pausedJobPayload 유지
+            if (j.status !== 'failed') setPausedJobPayload(null)
             setTransmitting(false)
             activeJobIdRef.current = ''
             load()
@@ -1013,9 +1015,10 @@ export default function ShipmentsPage() {
             const _ts = fmtTime()
             if (j.error) addLog(`[${_ts}] ${j.error}`)
             const r = (j.result || {}) as Record<string, number>
-            const statusLabel = j.status === 'completed' ? '전송 완료' : j.status === 'failed' ? '전송 실패' : '작업중지됨'
+            const statusLabel = j.status === 'completed' ? '전송 완료' : j.status === 'failed' ? '일시정지(이어하기 가능)' : '작업중지됨'
             appendShipmentLog(setLogMessages, `[${_ts}] ${statusLabel} — 성공 ${fmtNum(r.success || 0)}건, 스킵 ${fmtNum(r.skipped || 0)}건, 실패 ${fmtNum(r.failed || 0)}건`)
-            setPausedJobPayload(null)
+            // FAILED는 일시정지 = 재개 가능 → pausedJobPayload 유지
+            if (j.status !== 'failed') setPausedJobPayload(null)
             setTransmitting(false)
             activeJobIdRef.current = ''
             load()

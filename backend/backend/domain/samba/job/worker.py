@@ -1331,7 +1331,7 @@ class JobWorker:
                     or is_cancel_requested(job.id)
                     or await repo.is_cancelled(job.id)
                 ):
-                    clear_cancel_transmit()
+                    clear_cancel_transmit(job.id)  # 이 잡 플래그만 — __all__ 유지
                     clear_emergency_stop()
                     break
                 try:
