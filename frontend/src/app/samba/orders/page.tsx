@@ -351,6 +351,40 @@ export default function OrdersPage() {
     openTrackingModal: (o: SambaOrder) => setTrackingOrder(o),
   })
   const [trackingOrder, setTrackingOrder] = useState<SambaOrder | null>(null)
+  const [trackingSyncing, setTrackingSyncing] = useState(false)
+
+  const handleTrackingSyncOne = async (o: SambaOrder) => {
+    try {
+      const res = await orderApi.syncTracking(o.id)
+      if (res.skipped) {
+        setLogMessages(prev => [...prev, `[송장] 스킵: ${res.reason || '이미 처리됨'}`])
+      } else if (res.success) {
+        setLogMessages(prev => [...prev, `[송장] 큐 적재 완료 (요청ID ${res.requestId}) — 확장앱이 처리 중...`])
+      } else {
+        setLogMessages(prev => [...prev, `[송장] 실패: ${res.error || '알 수 없음'}`])
+      }
+    } catch (err) {
+      setLogMessages(prev => [...prev, `[송장] 오류: ${(err as Error).message}`])
+    }
+  }
+
+  const handleTrackingSyncBulk = async () => {
+    if (!confirm('미발송 주문 최대 50건의 송장을 일괄 동기화합니다. 진행할까요?')) return
+    setTrackingSyncing(true)
+    try {
+      const res = await orderApi.syncTrackingBulk(50)
+      setLogMessages(prev => [
+        ...prev,
+        `[송장 일괄] 큐 적재 ${fmtNum(res.queued)}건 / 스킵 ${fmtNum(res.skipped)}건 / 오류 ${fmtNum(res.errors.length)}건`,
+        ...res.errors.slice(0, 5).map(e => `  · ${e}`),
+      ])
+      setTimeout(() => loadOrders(), 3000)
+    } catch (err) {
+      setLogMessages(prev => [...prev, `[송장 일괄] 오류: ${(err as Error).message}`])
+    } finally {
+      setTrackingSyncing(false)
+    }
+  }
   const { handleSourceLink, handleMarketLink } = useOrderLinks(accounts)
 
   const {
@@ -429,6 +463,52 @@ export default function OrdersPage() {
         accounts={accounts} sourcingAccounts={sourcingAccounts}
         siteOptions={siteOptions}
       />
+
+      {/* 송장 자동전송 미니바 — 일괄 트리거 + 안내 */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 12,
+        padding: '8px 14px', margin: '6px 0',
+        background: '#1a1a1a', border: '1px solid #333', borderRadius: 6,
+        fontSize: 13, color: '#ccc',
+      }}>
+        <span style={{ fontWeight: 600, color: '#fff' }}>📦 송장 자동전송</span>
+        <span style={{ color: '#888' }}>
+          미발송 주문을 소싱처(무신사/롯데/SSG/ABC/GS/패션플러스/나이키/올리브영)에서 추출 → 마켓 전송
+        </span>
+        <button
+          onClick={handleTrackingSyncBulk}
+          disabled={trackingSyncing}
+          style={{
+            marginLeft: 'auto',
+            padding: '6px 14px',
+            background: trackingSyncing ? '#444' : '#2563eb',
+            color: '#fff', border: 'none', borderRadius: 4,
+            cursor: trackingSyncing ? 'not-allowed' : 'pointer',
+            fontSize: 13, fontWeight: 600,
+          }}
+        >
+          {trackingSyncing ? '큐 적재 중...' : '미발송 일괄 송장수집'}
+        </button>
+        {selectedIds.size > 0 && (
+          <button
+            onClick={async () => {
+              const ids = Array.from(selectedIds)
+              setLogMessages(prev => [...prev, `[송장] 선택한 ${fmtNum(ids.length)}건 큐 적재 시작...`])
+              for (const id of ids) {
+                const ord = orders.find(o => o.id === id)
+                if (ord) await handleTrackingSyncOne(ord)
+              }
+            }}
+            style={{
+              padding: '6px 14px',
+              background: '#16a34a', color: '#fff', border: 'none', borderRadius: 4,
+              cursor: 'pointer', fontSize: 13, fontWeight: 600,
+            }}
+          >
+            선택 {fmtNum(selectedIds.size)}건 송장수집
+          </button>
+        )}
+      </div>
 
       <OrdersTable
         loading={loading}

@@ -314,6 +314,21 @@ export const orderApi = {
     }),
   getCancelAlertCount: () =>
     request<{ count: number }>(`${SAMBA_PREFIX}/orders/cancel-alert-count`),
+  syncTracking: (orderId: string, force = false) =>
+    request<{ success: boolean; jobId?: string; requestId?: string; skipped?: boolean; reason?: string; error?: string }>(
+      `${SAMBA_PREFIX}/orders/${orderId}/sync-tracking?force=${force}`,
+      { method: 'POST' },
+    ),
+  syncTrackingBulk: (limit = 50) =>
+    request<{ success: boolean; queued: number; skipped: number; errors: string[] }>(
+      `${SAMBA_PREFIX}/orders/sync-tracking/bulk?limit=${limit}`,
+      { method: 'POST' },
+    ),
+  dispatchTrackingToMarket: (jobId: string, dryRun = true) =>
+    request<{ success: boolean; dryRun?: boolean; channel?: string; courier?: string; tracking?: string; error?: string }>(
+      `${SAMBA_PREFIX}/orders/tracking-sync/${jobId}/dispatch?dry_run=${dryRun}`,
+      { method: 'POST' },
+    ),
   getAlarmSettings: () =>
     request<{ hour: number; min: number; sleep_start: string; sleep_end: string }>(`${SAMBA_PREFIX}/orders/alarm-settings`),
   saveAlarmSettings: (data: { hour: number; min: number; sleep_start: string; sleep_end: string }) =>
