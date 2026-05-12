@@ -1147,6 +1147,20 @@ class SambaTetrisService:
                 "skipped": True,
             }
 
+        # 일시정지 가드 — 사용자가 전송 일시정지(__all__ 마커) 상태이면 신규 잡 생성 차단
+        # 이유: 일시정지 중에 sync가 잡을 계속 쌓아두면 서버 재시작 시 마커가 휘발되어
+        #       누적된 잡들이 한꺼번에 자동 실행되는 폭주가 발생할 수 있음
+        from backend.domain.samba.shipment.service import is_cancel_requested
+
+        if is_cancel_requested("__all__"):
+            logger.info("[테트리스 sync] 일시정지(__all__) 감지 — 신규 잡 생성 스킵")
+            return {
+                "assignments": 0,
+                "jobs": 0,
+                "triggered": 0,
+                "paused": True,
+            }
+
         assignments = await self._repo.list_by_tenant(tenant_id)
 
         job_repo = SambaJobRepository(self._session)
