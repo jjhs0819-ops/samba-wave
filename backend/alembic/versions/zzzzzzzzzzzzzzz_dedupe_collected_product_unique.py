@@ -33,38 +33,35 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # CREATE/DROP INDEX CONCURRENTLY는 트랜잭션 내부 실행 불가 → autocommit_block
-    with op.get_context().autocommit_block():
-        # 기존 NULL-허용 인덱스 제거
-        op.execute("DROP INDEX CONCURRENTLY IF EXISTS uq_scp_tenant_source_product")
-        # NULL-safe 유니크 인덱스 생성
-        op.execute(
-            """
-            CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS
-                uq_scp_tenant_source_product_v2
-            ON samba_collected_product (
-                COALESCE(tenant_id, ''),
-                source_site,
-                site_product_id
-            )
-            WHERE site_product_id IS NOT NULL
-            """
+    # async(asyncpg) alembic 환경에서는 autocommit_block 미지원 → AssertionError.
+    # CONCURRENTLY 제거, IF EXISTS / IF NOT EXISTS 로 멱등 보장.
+    # ⚠️ prerequisite: 운영 적용 전 중복 row 정리 필요 (없으면 unique violation).
+    op.execute("DROP INDEX IF EXISTS uq_scp_tenant_source_product")
+    op.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS
+            uq_scp_tenant_source_product_v2
+        ON samba_collected_product (
+            COALESCE(tenant_id, ''),
+            source_site,
+            site_product_id
         )
+        WHERE site_product_id IS NOT NULL
+        """
+    )
 
 
 def downgrade() -> None:
-    with op.get_context().autocommit_block():
-        op.execute("DROP INDEX CONCURRENTLY IF EXISTS uq_scp_tenant_source_product_v2")
-        # 원복: 기존 NULL-unsafe 인덱스 재생성
-        op.execute(
-            """
-            CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS
-                uq_scp_tenant_source_product
-            ON samba_collected_product (
-                tenant_id,
-                source_site,
-                site_product_id
-            )
-            WHERE site_product_id IS NOT NULL
-            """
+    op.execute("DROP INDEX IF EXISTS uq_scp_tenant_source_product_v2")
+    op.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS
+            uq_scp_tenant_source_product
+        ON samba_collected_product (
+            tenant_id,
+            source_site,
+            site_product_id
         )
+        WHERE site_product_id IS NOT NULL
+        """
+    )
