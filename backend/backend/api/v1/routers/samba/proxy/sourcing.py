@@ -158,6 +158,55 @@ async def sourcing_collect_result(body: dict[str, Any]) -> dict[str, Any]:
     return {"success": ok}
 
 
+@sourcing_queue_router.post("/sourcing/tracking-result")
+async def sourcing_tracking_result(body: dict[str, Any]) -> dict[str, Any]:
+    """확장앱이 추출한 운송장 정보 수신 (인증 불필요).
+
+    body = {
+      requestId: str,
+      success: bool,
+      courierName?: str,
+      trackingNumber?: str,
+      error?: str,
+    }
+    """
+    from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+    from backend.domain.samba.tracking_sync.service import apply_tracking_result
+
+    request_id = (body.get("requestId") or "").strip()
+    if not request_id:
+        raise HTTPException(status_code=400, detail="requestId 누락")
+
+    success = bool(body.get("success"))
+    courier_name = (body.get("courierName") or "").strip()
+    tracking_number = (body.get("trackingNumber") or "").strip()
+    error = (body.get("error") or "").strip()
+
+    # 인메모리 Future 깨워서 await 호출자 unblock + DB samba_sourcing_job completed 처리
+    SourcingQueue.resolve_job(
+        request_id,
+        {
+            "success": success,
+            "courierName": courier_name,
+            "trackingNumber": tracking_number,
+            "error": error,
+        },
+    )
+
+    # tracking 잡 도메인 처리 — DB 저장 + (옵션) 마켓 dispatch
+    # auto_dispatch는 안정화 전까지 False, dry_run=True 기본
+    res = await apply_tracking_result(
+        request_id,
+        success=success,
+        courier_name=courier_name,
+        tracking_number=tracking_number,
+        error=error,
+        auto_dispatch=False,
+        dry_run=True,
+    )
+    return res
+
+
 @sourcing_queue_router.get("/autotune/concurrency")
 async def get_autotune_concurrency_for_extension() -> dict[str, Any]:
     """확장앱 전용 — 사이트별 동시처리 캡 조회 (X-Api-Key 인증만, JWT 불필요).

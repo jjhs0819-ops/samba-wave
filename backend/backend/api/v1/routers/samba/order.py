@@ -1116,6 +1116,39 @@ async def find_by_order_number(
     return {"id": order.id, "order_number": order.order_number}
 
 
+@router.post("/{order_id}/sync-tracking")
+async def sync_order_tracking(order_id: str, force: bool = False) -> dict:
+    """소싱처에서 운송장 추출 잡을 큐에 적재 (단건).
+
+    force=True 면 이미 송장이 있어도 다시 큐잉.
+    """
+    from backend.domain.samba.tracking_sync.service import enqueue_for_order
+
+    return await enqueue_for_order(order_id, force=force)
+
+
+@router.post("/sync-tracking/bulk")
+async def sync_order_tracking_bulk(
+    limit: int = Query(50, ge=1, le=500),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+) -> dict:
+    """미발송 주문 일괄 송장 추출 큐잉."""
+    from backend.domain.samba.tracking_sync.service import enqueue_pending_orders
+
+    return await enqueue_pending_orders(tenant_id=tenant_id, limit=limit)
+
+
+@router.post("/tracking-sync/{job_id}/dispatch")
+async def dispatch_tracking_to_market(job_id: str, dry_run: bool = True) -> dict:
+    """추출 완료된(SCRAPED) 잡의 운송장을 마켓으로 push.
+
+    dry_run=True (기본): 페이로드만 로그. False면 실제 마켓 API 호출.
+    """
+    from backend.domain.samba.tracking_sync.service import dispatch_to_market
+
+    return await dispatch_to_market(job_id, dry_run=dry_run)
+
+
 @router.get("/cancel-alert-count")
 async def get_cancel_alert_count(
     session: AsyncSession = Depends(get_read_session_dependency),

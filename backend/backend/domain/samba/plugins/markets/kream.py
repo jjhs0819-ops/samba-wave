@@ -77,29 +77,73 @@ class KreamPlugin(MarketPlugin):
 
         client = KreamClient(token=token, cookie=cookie)
         kream_data = product.get("kream_data") or {}
-        product_id = kream_data.get("product_id", "")
+        # KREAM 상품 ID 추출 — DB 스네이크/카멜/kream_data 내부 모두 폴백
+        product_id = (
+            product.get("site_product_id")
+            or product.get("siteProductId")
+            or kream_data.get("product_id")
+            or kream_data.get("siteProductId")
+            or ""
+        )
+        product_id = str(product_id).strip()
         if not product_id:
             return {"success": False, "message": "KREAM 상품 ID가 없습니다."}
 
-        # 사이즈별 매도 입찰
+        # 사이즈별 매도 입찰 — 옵션 스키마는 {name, price, stock} 또는 {size, price}
         options = product.get("options") or []
         sale_type = "auction"
-        results = []
+        results: list[dict[str, Any]] = []
+        fallback_price = 0
+        try:
+            fallback_price = int(product.get("sale_price", 0) or 0)
+        except (TypeError, ValueError):
+            fallback_price = 0
+
         for opt in options:
-            size = opt.get("size", "") or opt.get("name", "")
-            price = int(opt.get("price", product.get("sale_price", 0)))
-            if size and price:
+            size = (opt.get("name") or opt.get("size") or "").strip()
+            try:
+                price = int(opt.get("price") or fallback_price)
+            except (TypeError, ValueError):
+                price = fallback_price
+            if size and price > 0:
                 r = await client.create_ask(product_id, size, price, sale_type)
                 results.append(r)
 
-        if not results:
-            # 단일 상품 (옵션 없음)
-            price = int(product.get("sale_price", 0))
-            r = await client.create_ask(product_id, "ONE_SIZE", price, sale_type)
+        if not results and fallback_price > 0:
+            # 단일 상품 (옵션 없음) — KREAM이 거부할 수 있으나 응답 메시지로 노출
+            r = await client.create_ask(
+                product_id, "ONE_SIZE", fallback_price, sale_type
+            )
             results.append(r)
 
+        ok_count = sum(1 for r in results if r.get("success"))
+        first_ask_id = ""
+        for r in results:
+            if r.get("success"):
+                data = r.get("data") or {}
+                if isinstance(data, dict):
+                    first_ask_id = str(data.get("ask_id") or data.get("id") or "")
+                if first_ask_id:
+                    break
+
+        success = ok_count > 0
+        if not success:
+            err_msg = ""
+            for r in results:
+                if not r.get("success") and r.get("message"):
+                    err_msg = r.get("message", "")
+                    break
+            return {
+                "success": False,
+                "message": err_msg or "KREAM 입찰 등록 실패",
+                "data": results,
+            }
+
+        # _extract_market_product_no가 인식하도록 product_no 키 노출
         return {
             "success": True,
-            "message": f"KREAM {len(results)}건 입찰 등록",
+            "message": f"KREAM {ok_count}건 입찰 등록",
+            "product_no": product_id,
+            "ask_id": first_ask_id,
             "data": results,
         }

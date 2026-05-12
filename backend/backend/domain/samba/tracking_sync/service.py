@@ -1,0 +1,430 @@
+"""송장 자동전송 서비스.
+
+흐름:
+  1) enqueue(order_id) — SambaOrder.sourcing_order_number 기반으로 SourcingQueue에
+     `type='tracking'` 잡 적재 + SambaTrackingSyncJob row 생성 (status=PENDING)
+  2) 확장앱이 잡 수신 → 소싱처 배송조회 페이지 열고 운송장 추출
+  3) apply_tracking(request_id, courier, tracking) — DB 저장 (status=SCRAPED) →
+     SambaOrder.tracking_number/shipping_company 갱신
+  4) dispatch_to_market(job_id, dry_run) — 마켓 dispatch API 호출 (status=SENT_TO_MARKET)
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any, Optional
+
+from sqlmodel import select
+
+from backend.db.orm import get_write_session
+from backend.domain.samba.order.model import SambaOrder
+from backend.domain.samba.tracking_sync.model import (
+    STATUS_DISPATCHED,
+    STATUS_FAILED,
+    STATUS_NO_TRACKING,
+    STATUS_PENDING,
+    STATUS_SCRAPED,
+    STATUS_SENT,
+    SambaTrackingSyncJob,
+)
+from backend.utils.logger import logger
+
+_UTC = timezone.utc
+
+
+# 소싱처 배송조회 URL 빌더 — 확장앱 content-script와 셀렉터 짝꿍
+def build_tracking_url(site: str, sourcing_order_number: str) -> str:
+    s = (site or "").upper()
+    if s == "MUSINSA":
+        # overlink 확장앱 검증된 URL — content-tracking-musinsa.js와 매칭
+        return (
+            "https://www.musinsa.com/order-service/my/delivery/trace"
+            f"?ord_no={sourcing_order_number}"
+        )
+    if s == "LOTTEON":
+        # 롯데ON 마이오더 상세 — content-tracking-lotteon.js가 ordNo 파라미터로 조회
+        return (
+            "https://www.lotteon.com/member/mypage/mppr0007"
+            f"?ordNo={sourcing_order_number}"
+        )
+    if s == "SSG":
+        return f"https://my.ssg.com/order/orderDetail.ssg?ordNo={sourcing_order_number}"
+    raise ValueError(f"지원하지 않는 소싱처 송장조회: {site}")
+
+
+# 택배사 이름 정규화 — overlink utils.js의 매핑을 백엔드로 이식
+# 키: 소싱처에서 추출되는 한글/영문 이름의 다양한 변형 (소문자/공백제거 후 비교)
+COURIER_NAME_ALIASES: dict[str, str] = {
+    "cj대한통운": "CJ대한통운",
+    "cj": "CJ대한통운",
+    "대한통운": "CJ대한통운",
+    "한진택배": "한진택배",
+    "한진": "한진택배",
+    "롯데택배": "롯데택배",
+    "롯데글로벌로지스": "롯데택배",
+    "우체국택배": "우체국택배",
+    "우체국": "우체국택배",
+    "로젠택배": "로젠택배",
+    "로젠": "로젠택배",
+    "cu편의점택배": "CU편의점택배",
+    "gs편의점택배": "GS편의점택배",
+    "gspostbox": "GS편의점택배",
+    "경동택배": "경동택배",
+    "쿠팡": "쿠팡로지스틱스",
+    "cls": "쿠팡로지스틱스",
+    "쿠팡로지스틱스": "쿠팡로지스틱스",
+    "agility": "Agility",
+}
+
+
+def normalize_courier_name(raw: str) -> str:
+    """확장앱이 추출한 택배사 이름을 정규화된 한글명으로 변환."""
+    if not raw:
+        return ""
+    key = raw.strip().lower().replace(" ", "")
+    return COURIER_NAME_ALIASES.get(key, raw.strip())
+
+
+# ---------------------------------------------------------------------------
+# 1) 잡 큐잉
+# ---------------------------------------------------------------------------
+
+
+async def _resolve_owner_device_id(sourcing_account_id: Optional[str]) -> str:
+    """소싱처 계정 → chrome_profile → samba_chrome_profile → device_id 매핑.
+
+    MVP: chrome_profile 문자열이 있으면 그대로 owner_device_id로 사용한다.
+    확장앱은 자기 chrome 프로필명과 매칭되는 잡만 받게 background-sourcing.js에서
+    필터링한다. 매핑이 더 정교해지면 여기서 발전시킨다.
+    """
+    if not sourcing_account_id:
+        return ""
+    try:
+        from backend.domain.samba.sourcing_account.model import SambaSourcingAccount
+
+        async with get_write_session() as session:
+            row = await session.get(SambaSourcingAccount, sourcing_account_id)
+            if not row:
+                return ""
+            return (row.chrome_profile or "").strip()
+    except Exception as exc:
+        logger.warning(f"[송장동기화] owner 조회 실패: {exc}")
+        return ""
+
+
+async def enqueue_for_order(order_id: str, *, force: bool = False) -> dict[str, Any]:
+    """단건 주문에 대해 송장 추출 잡을 큐에 적재.
+
+    force=False (기본): 이미 PENDING/DISPATCHED 잡이 있으면 중복 큐잉 안 함.
+    """
+    from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+
+    async with get_write_session() as session:
+        order = await session.get(SambaOrder, order_id)
+        if not order:
+            return {"success": False, "error": "주문을 찾을 수 없습니다"}
+        if not order.sourcing_order_number:
+            return {"success": False, "error": "소싱처 주문번호가 없습니다"}
+        if not order.source_site:
+            return {"success": False, "error": "소싱처 정보가 없습니다"}
+        if order.tracking_number and not force:
+            return {
+                "success": True,
+                "skipped": True,
+                "reason": "이미 송장번호가 있습니다",
+            }
+
+        # 중복 큐잉 방지
+        if not force:
+            stmt = (
+                select(SambaTrackingSyncJob)
+                .where(
+                    SambaTrackingSyncJob.order_id == order_id,
+                    SambaTrackingSyncJob.status.in_(
+                        [STATUS_PENDING, STATUS_DISPATCHED]
+                    ),
+                )
+                .limit(1)
+            )
+            existing = (await session.execute(stmt)).scalars().first()
+            if existing:
+                return {
+                    "success": True,
+                    "skipped": True,
+                    "reason": "이미 진행 중인 잡이 있습니다",
+                    "jobId": existing.id,
+                }
+
+        owner_device_id = await _resolve_owner_device_id(order.sourcing_account_id)
+
+        # 1) SourcingQueue에 잡 적재 (확장앱 폴링이 받음)
+        try:
+            url = build_tracking_url(order.source_site, order.sourcing_order_number)
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
+
+        request_id, _future = SourcingQueue.add_tracking_job(
+            site=order.source_site,
+            url=url,
+            order_id=order.id,
+            sourcing_order_number=order.sourcing_order_number,
+            owner_device_id=owner_device_id or None,
+        )
+
+        # 2) DB row 생성
+        job = SambaTrackingSyncJob(
+            tenant_id=order.tenant_id,
+            order_id=order.id,
+            sourcing_site=order.source_site,
+            sourcing_order_number=order.sourcing_order_number,
+            sourcing_account_id=order.sourcing_account_id,
+            owner_device_id=owner_device_id or None,
+            request_id=request_id,
+            status=STATUS_PENDING,
+        )
+        session.add(job)
+        await session.commit()
+
+        logger.info(
+            f"[송장동기화] 큐 적재: order={order.id} site={order.source_site} "
+            f"ord_no={order.sourcing_order_number} req={request_id}"
+        )
+        return {"success": True, "jobId": job.id, "requestId": request_id}
+
+
+async def enqueue_pending_orders(
+    tenant_id: Optional[str] = None,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """미발송 주문 일괄 적재 — 수동 트리거 + 스케줄러 공용."""
+    queued = 0
+    skipped = 0
+    errors: list[str] = []
+
+    async with get_write_session() as session:
+        stmt = (
+            select(SambaOrder)
+            .where(
+                SambaOrder.tracking_number.is_(None),
+                SambaOrder.sourcing_order_number.is_not(None),
+                SambaOrder.source_site.is_not(None),
+            )
+            .order_by(SambaOrder.created_at.desc())
+            .limit(limit)
+        )
+        if tenant_id:
+            stmt = stmt.where(SambaOrder.tenant_id == tenant_id)
+        orders = (await session.execute(stmt)).scalars().all()
+
+    for order in orders:
+        try:
+            res = await enqueue_for_order(order.id)
+            if res.get("skipped"):
+                skipped += 1
+            elif res.get("success"):
+                queued += 1
+            else:
+                errors.append(f"{order.id}: {res.get('error')}")
+        except Exception as exc:
+            errors.append(f"{order.id}: {exc}")
+
+    logger.info(
+        f"[송장동기화] 일괄 적재 결과: queued={queued} skipped={skipped} "
+        f"errors={len(errors)}"
+    )
+    return {
+        "success": True,
+        "queued": queued,
+        "skipped": skipped,
+        "errors": errors[:20],
+    }
+
+
+# ---------------------------------------------------------------------------
+# 2) 결과 수신 (확장앱 → 백엔드)
+# ---------------------------------------------------------------------------
+
+
+async def apply_tracking_result(
+    request_id: str,
+    *,
+    success: bool,
+    courier_name: str = "",
+    tracking_number: str = "",
+    error: str = "",
+    auto_dispatch: bool = False,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """확장앱이 보낸 결과를 DB에 반영하고 (옵션) 마켓 dispatch까지 트리거.
+
+    auto_dispatch=False가 기본 — 안정화 전까지 추출만 하고 마켓 push는 별도 단계.
+    """
+    async with get_write_session() as session:
+        stmt = select(SambaTrackingSyncJob).where(
+            SambaTrackingSyncJob.request_id == request_id
+        )
+        job = (await session.execute(stmt)).scalars().first()
+        if not job:
+            logger.warning(f"[송장동기화] request_id 매칭 실패: {request_id}")
+            return {"success": False, "error": "잡을 찾을 수 없습니다"}
+
+        job.attempts = (job.attempts or 0) + 1
+        job.updated_at = datetime.now(_UTC)
+
+        if not success or not tracking_number:
+            # 캡챠/미발송/실패 — 재시도 여지 두기
+            reason = (error or "송장번호 없음")[:500]
+            job.last_error = reason
+            if (
+                "captcha" in reason.lower()
+                or "미발송" in reason
+                or "no_tracking" in reason.lower()
+            ):
+                job.status = STATUS_NO_TRACKING
+            else:
+                job.status = STATUS_FAILED
+            session.add(job)
+            await session.commit()
+            return {"success": False, "status": job.status, "reason": reason}
+
+        normalized_courier = normalize_courier_name(courier_name)
+        job.scraped_courier = normalized_courier
+        job.scraped_tracking = tracking_number.strip()
+        job.scraped_at = datetime.now(_UTC)
+        job.status = STATUS_SCRAPED
+
+        # SambaOrder도 함께 갱신
+        order = await session.get(SambaOrder, job.order_id)
+        if order:
+            order.tracking_number = job.scraped_tracking
+            order.shipping_company = normalized_courier or order.shipping_company
+            order.updated_at = datetime.now(_UTC)
+            session.add(order)
+
+        session.add(job)
+        await session.commit()
+
+        logger.info(
+            f"[송장동기화] 추출 완료: order={job.order_id} courier={normalized_courier} "
+            f"tracking={job.scraped_tracking}"
+        )
+
+    # 마켓 자동 dispatch (옵션)
+    if auto_dispatch:
+        try:
+            await dispatch_to_market(job.id, dry_run=dry_run)
+        except Exception as exc:
+            logger.warning(f"[송장동기화] 자동 dispatch 실패 {job.id}: {exc}")
+
+    return {
+        "success": True,
+        "jobId": job.id,
+        "courier": normalized_courier,
+        "tracking": tracking_number,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 3) 마켓 dispatch
+# ---------------------------------------------------------------------------
+
+
+async def dispatch_to_market(
+    tracking_sync_job_id: str, *, dry_run: bool = True
+) -> dict[str, Any]:
+    """SCRAPED 상태 잡의 운송장을 마켓 API로 push.
+
+    dry_run=True (기본): 실제 호출 없이 페이로드만 로그 출력.
+    """
+    async with get_write_session() as session:
+        job = await session.get(SambaTrackingSyncJob, tracking_sync_job_id)
+        if not job:
+            return {"success": False, "error": "잡을 찾을 수 없습니다"}
+        if job.status not in (STATUS_SCRAPED, STATUS_FAILED):
+            return {
+                "success": False,
+                "error": f"dispatch 가능한 상태 아님: {job.status}",
+            }
+        if not job.scraped_tracking:
+            return {"success": False, "error": "추출된 송장번호 없음"}
+
+        order = await session.get(SambaOrder, job.order_id)
+        if not order:
+            return {"success": False, "error": "주문을 찾을 수 없습니다"}
+
+        channel_source = (order.source or "").lower()
+        result: dict[str, Any] = {
+            "channel": channel_source,
+            "ext_order_number": order.ext_order_number,
+            "courier": job.scraped_courier,
+            "tracking": job.scraped_tracking,
+            "dry_run": dry_run,
+        }
+
+        if dry_run:
+            logger.info(f"[송장동기화][DRY] {result}")
+            job.dispatch_result = {"dryRun": True, **result}
+            job.dispatched_to_market_at = datetime.now(_UTC)
+            job.status = STATUS_SENT
+            session.add(job)
+            await session.commit()
+            return {"success": True, "dryRun": True, **result}
+
+        # 실전송 분기
+        try:
+            if channel_source == "smartstore":
+                from backend.domain.samba.proxy.smartstore import SmartStoreClient
+
+                client = SmartStoreClient()
+                api_resp = await client.ship_product_order(
+                    product_order_id=order.ext_order_number or "",
+                    delivery_company=job.scraped_courier or "",
+                    tracking_number=job.scraped_tracking,
+                )
+                result["api"] = api_resp
+            elif channel_source == "coupang":
+                from backend.domain.samba.proxy.coupang import CoupangClient
+
+                client = CoupangClient()
+                # 쿠팡은 shipmentBoxId(int) + 코드(string) 사용 — order.ext_order_number에 박스ID 저장 가정
+                shipment_box_id = int(order.ext_order_number or 0)
+                api_resp = await client.update_shipping(
+                    shipment_box_id=shipment_box_id,
+                    delivery_company_code=job.scraped_courier or "",
+                    invoice_number=job.scraped_tracking,
+                )
+                result["api"] = api_resp
+            else:
+                # 미지원 채널 — dry-run으로 fallback
+                result["unsupported_channel"] = True
+                logger.warning(
+                    f"[송장동기화] 미지원 채널: {channel_source} order={order.id}"
+                )
+
+            job.status = STATUS_SENT
+            job.dispatched_to_market_at = datetime.now(_UTC)
+            job.dispatch_result = result
+            session.add(job)
+
+            if order.shipping_status != "shipped":
+                order.shipping_status = "shipped"
+                order.shipped_at = datetime.now(_UTC)
+                session.add(order)
+
+            await session.commit()
+            logger.info(
+                f"[송장동기화] 마켓 전송 완료: order={order.id} channel={channel_source}"
+            )
+            return {"success": True, **result}
+
+        except Exception as exc:
+            job.status = STATUS_FAILED
+            job.last_error = f"dispatch 실패: {exc}"[:500]
+            job.dispatch_result = {"error": str(exc), **result}
+            session.add(job)
+            await session.commit()
+            logger.warning(
+                f"[송장동기화] 마켓 전송 실패: order={order.id} ch={channel_source} "
+                f"err={exc}"
+            )
+            return {"success": False, "error": str(exc), **result}

@@ -17,7 +17,7 @@ from backend.shutdown_state import is_shutting_down
 from backend.utils.logger import logger
 
 _UTC = timezone.utc
-_JOB_TTL_SEC: dict[str, int] = {"search": 600, "detail": 180}
+_JOB_TTL_SEC: dict[str, int] = {"search": 600, "detail": 180, "tracking": 300}
 
 
 async def _db_insert_job(
@@ -244,6 +244,46 @@ class SourcingQueue:
         _prio_tag = " [우선]" if priority else ""
         logger.info(
             f"[소싱큐] 상세 추가: {site} #{product_id} (id={request_id}){_owner_tag}{_prio_tag}"
+        )
+        return request_id, future
+
+    @classmethod
+    def add_tracking_job(
+        cls,
+        site: str,
+        url: str,
+        order_id: str,
+        sourcing_order_number: str,
+        *,
+        owner_device_id: str | None = None,
+    ) -> tuple[str, asyncio.Future[Any]]:
+        """송장 추출 작업 큐에 추가 (소싱처 배송조회 페이지 → 운송장 스크래핑).
+
+        결과는 별도 라우터 `/proxy/sourcing/tracking-result` 로 수신되어
+        tracking_sync_service.apply_tracking_result()로 라우팅됨.
+        """
+        cls._ensure_accepting_jobs()
+        request_id = str(uuid.uuid4())[:8]
+        loop = asyncio.get_event_loop()
+        future: asyncio.Future[Any] = loop.create_future()
+        if owner_device_id is None:
+            owner_device_id = get_autotune_owner(site)
+
+        job: dict[str, Any] = {
+            "requestId": request_id,
+            "site": site,
+            "type": "tracking",
+            "url": url,
+            "orderId": order_id,
+            "sourcingOrderNumber": sourcing_order_number,
+            "ownerDeviceId": owner_device_id or "",
+        }
+        cls.resolvers[request_id] = future
+        asyncio.create_task(_db_insert_job(job, "tracking"))
+        _owner_tag = f" owner={owner_device_id[:8]}" if owner_device_id else ""
+        logger.info(
+            f"[소싱큐] 송장조회 추가: {site} ord={sourcing_order_number} "
+            f"(id={request_id}){_owner_tag}"
         )
         return request_id, future
 

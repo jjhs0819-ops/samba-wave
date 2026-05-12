@@ -420,6 +420,17 @@ function _siteSemRelease(site) {
 
 async function _processJobWithCap(job) {
   const site = job.site || 'unknown'
+  // 송장 추출 잡(type=tracking) — 가격수집과 격리. 동일 사이트 캡 공유로 무신사 폭주 방지
+  if (job.type === 'tracking') {
+    await _siteSemAcquire(site)
+    _markSourcingSiteActive(site)
+    try {
+      return await handleTrackingJob(job)
+    } finally {
+      _markSourcingSiteInactive(site)
+      _siteSemRelease(site)
+    }
+  }
   // ABCmart/GrandStage: _abcPreLoginPromise 차단 제거 — per-job 로그인 검증(line ~1499)이 이미 처리
   // 로그인 체크(~30초) + 잡처리(~45초) = 75초 타임아웃 경계를 넘는 원인이었음
   if (site === 'LOTTEON' && _lotteonPreLoginPromise) {
@@ -435,6 +446,91 @@ async function _processJobWithCap(job) {
     _siteSemRelease(site)
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 송장 추출 잡 핸들러 (소싱처 배송조회 페이지 → DOM 파싱 → tracking-result 전송)
+// 사이트별 content-tracking-*.js 가 페이지에서 직접 chrome.runtime.sendMessage 로
+// 결과를 보내고, 여기서 그 메시지를 받아 백엔드로 POST.
+// ─────────────────────────────────────────────────────────────────────────────
+const _trackingPending = new Map() // requestId → {resolve, timeoutId, tabId}
+
+async function handleTrackingJob(job) {
+  const { requestId, site, url, sourcingOrderNumber } = job
+  console.log(`[송장] 잡 수신 site=${site} ord=${sourcingOrderNumber} req=${requestId}`)
+  let tabId = null
+  let cleaned = false
+  try {
+    if (!url) throw new Error('tracking URL 누락')
+    const tab = await chrome.tabs.create({ url, active: false })
+    tabId = tab.id
+    await waitForTabLoad(tabId, 30000)
+
+    // content script 결과 message 대기 (최대 30초)
+    const result = await new Promise((resolve) => {
+      const timeoutId = setTimeout(() => {
+        _trackingPending.delete(requestId)
+        resolve({ success: false, error: 'timeout: content script 응답 없음' })
+      }, 30000)
+      _trackingPending.set(requestId, { resolve, timeoutId, tabId })
+
+      // content-tracking-musinsa.js 등은 자체적으로 추출 후 message 전송
+      // 여기선 fallback으로 chrome.scripting.executeScript에 ord_no 주입 가능
+      try {
+        chrome.tabs.sendMessage(tabId, {
+          type: 'TRACKING_REQUEST',
+          requestId,
+          site,
+          sourcingOrderNumber,
+        }, (_resp) => {
+          // content script가 비동기로 응답할 수 있으므로 무시
+          void chrome.runtime.lastError
+        })
+      } catch {}
+    })
+
+    await postResult('sourcing/tracking-result', {
+      requestId,
+      success: !!result.success,
+      courierName: result.courierName || '',
+      trackingNumber: result.trackingNumber || '',
+      error: result.error || '',
+    })
+  } catch (err) {
+    console.warn(`[송장] 처리 실패 req=${requestId}:`, err)
+    try {
+      await postResult('sourcing/tracking-result', {
+        requestId,
+        success: false,
+        error: String(err?.message || err),
+      })
+    } catch {}
+  } finally {
+    if (tabId && !cleaned) {
+      try { await chrome.tabs.remove(tabId) } catch {}
+      cleaned = true
+    }
+  }
+}
+
+// content script 가 페이지에서 추출 결과를 background로 보낼 때 매칭
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg && msg.type === 'TRACKING_RESULT' && msg.requestId) {
+    const pending = _trackingPending.get(msg.requestId)
+    if (pending) {
+      clearTimeout(pending.timeoutId)
+      _trackingPending.delete(msg.requestId)
+      pending.resolve({
+        success: !!msg.success,
+        courierName: msg.courierName || '',
+        trackingNumber: msg.trackingNumber || '',
+        error: msg.error || '',
+      })
+    }
+    sendResponse({ ack: true })
+    return true
+  }
+  return false
+})
 
 let _lastAutotuneRunning = false
 
