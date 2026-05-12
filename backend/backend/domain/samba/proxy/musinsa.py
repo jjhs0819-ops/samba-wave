@@ -1136,9 +1136,9 @@ class MusinsaClient:
                     }
                 )
 
-            # 의미없는 "FREE" 단일축 제거 — 무신사가 사이즈축에 FREE 하나만 넣은 경우
-            # 예: [색상, 사이즈=FREE] × 엑스트라(선택안함) → 3축이 되어 쿠팡에서 중복 에러
-            # 모든 옵션에서 값이 동일하게 "FREE" 인 컬럼을 메인 옵션명/그룹명에서 드롭
+            # 의미없는 단일값 축 제거 — FREE/ONE COLOR/ONESIZE 등 한 가지 값만 있는 축
+            # 예: [컬러=ONE COLOR, 사이즈=FREE] × 엑스트라 → 불필요한 축 누적으로 마켓 전송 에러
+            # 모든 옵션 행에서 값이 동일(unique 1개)인 컬럼을 메인 옵션명/그룹명에서 드롭
             if options and option_group_names:
                 n_cols = len(option_group_names)
                 vals_per_item: list[list[str]] = []
@@ -1150,18 +1150,19 @@ class MusinsaClient:
                     drop_idx = [
                         i
                         for i in range(n_cols)
-                        if {v[i].strip().upper() for v in aligned} == {"FREE"}
+                        if len({v[i].strip().upper() for v in aligned}) == 1
                     ]
                     keep_idx = [i for i in range(n_cols) if i not in drop_idx]
-                    # 남는 축이 1개 이상일 때만 드롭 (전부 FREE 단일축 상품은 유지)
+                    # 남는 축이 1개 이상일 때만 드롭 (전부 단일값 축인 상품은 유지)
                     if drop_idx and keep_idx:
+                        dropped_names = [option_group_names[i] for i in drop_idx]
                         for opt, parts in zip(options, vals_per_item):
                             if parts:
                                 opt["name"] = " / ".join(parts[i] for i in keep_idx)
                         option_group_names = [option_group_names[i] for i in keep_idx]
                         logger.info(
-                            f"[옵션] {goods_no} 무의미한 FREE 축 {len(drop_idx)}개 제거 "
-                            f"→ 그룹={option_group_names}"
+                            f"[옵션] {goods_no} 무의미한 단일값 축 {len(drop_idx)}개 제거 "
+                            f"(드롭={dropped_names}) → 그룹={option_group_names}"
                         )
 
             # extra(추가) 옵션 처리 — 메인 × 엑스트라 2D 조합 SKU로 통합

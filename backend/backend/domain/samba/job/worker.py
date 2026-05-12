@@ -1405,6 +1405,8 @@ class JobWorker:
                             update_items,
                             target_account_ids,
                             skip_unchanged=skip_unchanged,
+                            # 첫 실행과 동일하게 테트리스 매칭 ON 시 정책 accountIds 필터 우회
+                            skip_policy_account_filter=_tetris_enabled,
                         )
                         r2 = (result.get("results", []) or [{}])[0]
                         tx2 = r2.get("transmit_result", {})
