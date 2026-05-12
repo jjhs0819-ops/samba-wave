@@ -13,6 +13,7 @@ export const SITE_COLORS: Record<string, string> = {
   ElandMall: '#4ECDC4',
   SSF: '#845EF7',
   NAVERSTORE: '#03C75A',
+  SNKRDUNK: '#1A1A1A',
 }
 
 export const PERIOD_BUTTONS = [
@@ -34,6 +35,7 @@ export const SOURCING_SEARCH_URLS: Record<string, string> = {
   ABCmart: 'https://abcmart.a-rt.com/search?q=',
   LOTTEON: 'https://www.lotteon.com/csearch/search/search?render=search&platform=pc&mallId=2&q=',
   NAVERSTORE: 'https://search.shopping.naver.com/search/all?query=',
+  SNKRDUNK: 'https://snkrdunk.com/en/search/result?keyword=',
 }
 
 export const SOURCING_PRODUCT_URLS: Record<string, string> = {
@@ -44,6 +46,7 @@ export const SOURCING_PRODUCT_URLS: Record<string, string> = {
   Nike: 'https://www.nike.com/kr/t/',
   LOTTEON: 'https://www.lotteon.com/p/product/',
   NAVERSTORE: 'https://smartstore.naver.com/',
+  SNKRDUNK: 'https://snkrdunk.com/en/sneakers/',
 }
 
 export const SOURCING_ORDER_URLS: Record<string, string> = {

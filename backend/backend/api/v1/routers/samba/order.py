@@ -1154,13 +1154,21 @@ async def get_cancel_alert_count(
     session: AsyncSession = Depends(get_read_session_dependency),
     tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
-    """처리 중 상태(주문접수/상품준비중/배송대기중/상품도착)인데 shipping_status가 취소요청/취소완료인 건수 반환."""
-    from sqlalchemy import select, func
+    """아직 처리 안 한 취소요청 건수 반환.
+
+    DB 실데이터: shipping_status는 마켓 원본 한글값("취소요청"/"취소처리중"),
+    status는 내부 enum. 마켓에서 취소요청이 들어왔지만 내부 status가 아직 처리중(pending 등)
+    또는 명시적 cancel_requested 상태인 케이스를 안 처리된 것으로 간주.
+    """
+    from sqlalchemy import select, func, or_
     from backend.domain.samba.order.model import SambaOrder as OrderModel
 
     stmt = select(func.count()).where(
-        OrderModel.status.in_(["pending", "preparing", "wait_ship", "arrived"]),
-        OrderModel.shipping_status.in_(["cancel_requested", "cancelled"]),
+        OrderModel.shipping_status.in_(["취소요청", "취소처리중"]),
+        or_(
+            OrderModel.status.in_(["pending", "wait_ship", "arrived", "shipping"]),
+            OrderModel.status == "cancel_requested",
+        ),
     )
     if tenant_id is not None:
         stmt = stmt.where(OrderModel.tenant_id == tenant_id)

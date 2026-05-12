@@ -33,22 +33,32 @@ _UTC = timezone.utc
 
 
 # 소싱처 배송조회 URL 빌더 — 확장앱 content-script와 셀렉터 짝꿍
+# overlink-invoice-extension config.js 검증값 이식 (2026-05-13)
 def build_tracking_url(site: str, sourcing_order_number: str) -> str:
     s = (site or "").upper()
+    ord_no = sourcing_order_number
     if s == "MUSINSA":
-        # overlink 확장앱 검증된 URL — content-tracking-musinsa.js와 매칭
         return (
-            "https://www.musinsa.com/order-service/my/delivery/trace"
-            f"?ord_no={sourcing_order_number}"
+            f"https://www.musinsa.com/order-service/my/delivery/trace?ord_no={ord_no}"
         )
     if s == "LOTTEON":
-        # 롯데ON 마이오더 상세 — content-tracking-lotteon.js가 ordNo 파라미터로 조회
-        return (
-            "https://www.lotteon.com/member/mypage/mppr0007"
-            f"?ordNo={sourcing_order_number}"
-        )
+        return f"https://www.lotteon.com/p/order/claim/orderDetail?odNo={ord_no}"
     if s == "SSG":
-        return f"https://my.ssg.com/order/orderDetail.ssg?ordNo={sourcing_order_number}"
+        return f"https://pay.ssg.com/myssg/orderInfoDetail.ssg?orordNo={ord_no}"
+    if s == "ABCMART":
+        return (
+            f"https://abcmart.a-rt.com/mypage/order/read-order-detail?orderNo={ord_no}"
+        )
+    if s == "GRANDSTAGE":
+        return f"https://grandstage.a-rt.com/mypage/order/read-order-detail?orderNo={ord_no}"
+    if s == "GSSHOP":
+        return f"https://www.gsshop.com/ord/dlvcursta/popup/ordDtl.gs?ordNo={ord_no}&ecOrdTypCd=S"
+    if s == "FASHIONPLUS":
+        return f"https://www.fashionplus.co.kr/mypage/order/detail/{ord_no}"
+    if s == "NIKE":
+        return f"https://www.nike.com/kr/orders/sales/{ord_no}/"
+    if s == "OLIVEYOUNG":
+        return f"https://www.oliveyoung.co.kr/store/mypage/getOrderDetail.do?ordNo={ord_no}"
     raise ValueError(f"지원하지 않는 소싱처 송장조회: {site}")
 
 

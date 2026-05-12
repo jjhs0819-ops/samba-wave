@@ -36,6 +36,7 @@ SITE_CONCURRENCY: dict[str, int] = {
     "ElandMall": 5,
     "SSF": 5,
     "NAVERSTORE": 5,
+    "SNKRDUNK": 2,
 }
 # 오토튠 전용 동시성 오버라이드 (값 없으면 SITE_CONCURRENCY 기본값 사용)
 # 24시간 백그라운드 실행 → 차단 방지를 위해 일반 갱신/수집보다 보수적 운영
@@ -60,6 +61,7 @@ SITE_BASE_INTERVAL: dict[str, float] = {
     "ElandMall": 1.0,
     "SSF": 1.0,
     "NAVERSTORE": 0.5,
+    "SNKRDUNK": 1.0,
 }
 # 소싱처별 최소 인터벌 (초)
 SITE_MIN_INTERVAL: dict[str, float] = {
@@ -78,6 +80,7 @@ SITE_MIN_INTERVAL: dict[str, float] = {
     "ElandMall": 0,
     "SSF": 0,
     "NAVERSTORE": 0,
+    "SNKRDUNK": 0.5,
 }
 # 소싱처별 인터벌 복원 스텝 (성공 시 감소량)
 SITE_INTERVAL_STEP: dict[str, float] = {
@@ -96,6 +99,7 @@ SITE_INTERVAL_STEP: dict[str, float] = {
     "ElandMall": 0.3,
     "SSF": 0.3,
     "NAVERSTORE": 0.3,
+    "SNKRDUNK": 0.3,
 }
 # KREAM 확장앱 대기 타임아웃 (초)
 KREAM_TIMEOUT = 90
@@ -1352,6 +1356,7 @@ SITE_PARSERS: dict[str, Any] = {
     "ElandMall": _parse_generic_stub,
     "SSF": _parse_generic_stub,
     "FashionPlus": _parse_fashionplus,
+    "SNKRDUNK": _parse_generic_stub,
 }
 
 

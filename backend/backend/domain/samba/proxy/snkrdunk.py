@@ -1,0 +1,320 @@
+"""SNKRDUNK(스니덩크) 소싱 클라이언트.
+
+사이트: https://snkrdunk.com/en
+수집 방식:
+  - 검색: GET /en/v1/search?keyword=&perPage=&page=&type=
+  - 자동완성: GET /en/v1/search/keywords?keyword=
+  - 상세: HTML SSR + JSON-LD `<script type="application/ld+json">` 파싱
+  - 통화: /en/ 사이트는 USD 결제 — JSON-LD offers 중 priceCurrency=USD 항목 사용
+
+설계:
+  - USD 원본 저장 (영문 사이트 기본 결제 통화)
+  - sneakers / streetwears 두 카탈로그 모두 지원 (extra_data.snkr_type 으로 구분)
+  - 인증 없음. User-Agent 만 필요.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from typing import Any
+
+import httpx
+
+from backend.utils.logger import logger
+
+BASE = "https://snkrdunk.com"
+SEARCH_URL = f"{BASE}/en/v1/search"
+KEYWORDS_URL = f"{BASE}/en/v1/search/keywords"
+DETAIL_SNEAKER_URL = f"{BASE}/en/sneakers/{{id}}"
+DETAIL_STREETWEAR_URL = f"{BASE}/en/streetwears/{{id}}"
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/html;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9,ja;q=0.8",
+    "Referer": f"{BASE}/en/",
+}
+
+# 추출할 통화 코드 (영문 사이트 결제 통화)
+TARGET_CURRENCY = "USD"
+
+
+def _is_streetwear_id(site_product_id: str) -> bool:
+    """순수 숫자면 streetwear, 그 외(예: IQ1323-001)는 sneaker."""
+    return site_product_id.isdigit()
+
+
+def _detail_url(site_product_id: str, snkr_type: str | None = None) -> str:
+    if snkr_type == "streetwear" or (
+        snkr_type is None and _is_streetwear_id(site_product_id)
+    ):
+        return DETAIL_STREETWEAR_URL.format(id=site_product_id)
+    return DETAIL_SNEAKER_URL.format(id=site_product_id)
+
+
+def _parse_size_label(desc: str) -> str:
+    """JSON-LD offer.description ('US 9', 'US 10.5') 정규화."""
+    return (desc or "").strip()
+
+
+def _extract_jsonld_products(html: str) -> list[dict[str, Any]]:
+    """HTML에서 ld+json Product 노드들 추출."""
+    products: list[dict[str, Any]] = []
+    for m in re.finditer(
+        r'<script type="application/ld\+json">(.+?)</script>', html, re.DOTALL
+    ):
+        body = m.group(1).strip()
+        try:
+            data = json.loads(body)
+        except Exception:
+            continue
+        if isinstance(data, dict) and data.get("@type") == "Product":
+            products.append(data)
+        elif isinstance(data, list):
+            for d in data:
+                if isinstance(d, dict) and d.get("@type") == "Product":
+                    products.append(d)
+    return products
+
+
+class SnkrdunkClient:
+    """SNKRDUNK 소싱 클라이언트."""
+
+    def __init__(self, timeout: float = 15.0) -> None:
+        self._timeout = timeout
+
+    async def search(
+        self,
+        keyword: str,
+        page: int = 1,
+        per_page: int = 24,
+        type_filter: str = "",
+        max_count: int = 100,
+    ) -> dict[str, Any]:
+        """키워드 검색 — sneakers + streetwears 통합 결과 반환.
+
+        Returns:
+            {"products": [...], "total": int}
+        """
+        products: list[dict[str, Any]] = []
+        total = 0
+        async with httpx.AsyncClient(
+            headers=HEADERS, timeout=self._timeout, follow_redirects=True
+        ) as client:
+            cur_page = page
+            while len(products) < max_count:
+                params = {
+                    "keyword": keyword,
+                    "perPage": per_page,
+                    "page": cur_page,
+                    "type": type_filter,
+                }
+                try:
+                    r = await client.get(SEARCH_URL, params=params)
+                    r.raise_for_status()
+                    data = r.json()
+                except Exception as e:
+                    logger.warning(f"[SNKRDUNK] 검색 실패 page={cur_page}: {e}")
+                    break
+
+                sneaker_total = data.get("sneakerCount") or 0
+                street_total = data.get("streetwearCount") or 0
+                total = sneaker_total + street_total
+
+                page_items = self._parse_search_items(
+                    data.get("sneakers") or [], "sneaker"
+                ) + self._parse_search_items(
+                    data.get("streetwears") or [], "streetwear"
+                )
+                if not page_items:
+                    break
+                products.extend(page_items)
+                logger.info(
+                    f"[SNKRDUNK] 검색 '{keyword}' p{cur_page} +{len(page_items)}건"
+                    f" (누적 {len(products)}/{total})"
+                )
+                if len(page_items) < per_page:
+                    break
+                cur_page += 1
+
+        products = products[:max_count]
+        return {"products": products, "total": total}
+
+    @staticmethod
+    def _parse_search_items(
+        items: list[dict[str, Any]], snkr_type: str
+    ) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+        for it in items:
+            sid = str(it.get("id", "")).strip()
+            if not sid:
+                continue
+            thumb = it.get("thumbnailUrl") or ""
+            min_price = it.get("minPrice")
+            sale_price = int(min_price) if isinstance(min_price, (int, float)) else 0
+            results.append(
+                {
+                    "site_product_id": sid,
+                    "name": (it.get("name") or "").strip(),
+                    "original_price": sale_price,
+                    "sale_price": sale_price,
+                    "images": [thumb] if thumb else [],
+                    "brand": "",
+                    "source_site": "SNKRDUNK",
+                    "source_url": _detail_url(sid, snkr_type),
+                    "category": "스니커즈" if snkr_type == "sneaker" else "스트릿웨어",
+                    "category1": "SNKRDUNK",
+                    "category2": "스니커즈" if snkr_type == "sneaker" else "스트릿웨어",
+                    "category3": "",
+                    "color": "",
+                    "url": _detail_url(sid, snkr_type),
+                    "video_url": _detail_url(sid, snkr_type),
+                    "options": [],
+                    "detail_html": "",
+                    "free_shipping": False,
+                    "extra_data": {
+                        "snkr_type": snkr_type,
+                        "currency": TARGET_CURRENCY,
+                        "min_price_format": it.get("minPriceFormat"),
+                        "listing_count": str(it.get("listingCount", "")),
+                        "offer_count": str(it.get("offerCount", "")),
+                    },
+                }
+            )
+        return results
+
+    async def get_detail(
+        self, site_product_id: str, snkr_type: str | None = None
+    ) -> dict[str, Any]:
+        """상품 상세 조회 — SSR HTML의 JSON-LD 추출."""
+        url = _detail_url(site_product_id, snkr_type)
+        async with httpx.AsyncClient(
+            headers=HEADERS, timeout=self._timeout, follow_redirects=True
+        ) as client:
+            try:
+                r = await client.get(url)
+                if r.status_code == 404 and snkr_type is None:
+                    other_type = (
+                        "streetwear"
+                        if not _is_streetwear_id(site_product_id)
+                        else "sneaker"
+                    )
+                    url = _detail_url(site_product_id, other_type)
+                    r = await client.get(url)
+                    snkr_type = other_type
+                r.raise_for_status()
+                html = r.text
+            except Exception as e:
+                logger.warning(f"[SNKRDUNK] 상세 실패 {site_product_id}: {e}")
+                return {"error": str(e)}
+
+        detected_type = snkr_type or (
+            "streetwear" if _is_streetwear_id(site_product_id) else "sneaker"
+        )
+        return self._parse_detail(html, site_product_id, detected_type, url)
+
+    @staticmethod
+    def _parse_detail(
+        html: str, site_product_id: str, snkr_type: str, url: str
+    ) -> dict[str, Any]:
+        """JSON-LD Product 노드 + AggregateOffer(priceCurrency=JPY)에서 필드 추출."""
+        ld_products = _extract_jsonld_products(html)
+        if not ld_products:
+            return {"error": "JSON-LD Product 노드 없음"}
+
+        prod = ld_products[0]
+        name = (prod.get("name") or "").strip()
+        image = prod.get("image") or ""
+        if isinstance(image, list):
+            image = image[0] if image else ""
+        brand_node = prod.get("brand") or {}
+        brand = (
+            brand_node.get("name") if isinstance(brand_node, dict) else str(brand_node)
+        ) or ""
+
+        # AggregateOffer 배열에서 JPY 항목 선택
+        offers_root = prod.get("offers") or []
+        if isinstance(offers_root, dict):
+            offers_root = [offers_root]
+        jpy_agg: dict[str, Any] | None = None
+        for agg in offers_root:
+            if isinstance(agg, dict) and agg.get("priceCurrency") == TARGET_CURRENCY:
+                jpy_agg = agg
+                break
+
+        options: list[dict[str, Any]] = []
+        low_price: float | None = None
+        high_price: float | None = None
+        availability = "out_of_stock"
+        if jpy_agg:
+            low_price = jpy_agg.get("lowPrice")
+            high_price = jpy_agg.get("highPrice")
+            inner = jpy_agg.get("offers") or []
+            for o in inner:
+                if not isinstance(o, dict):
+                    continue
+                if o.get("priceCurrency") != TARGET_CURRENCY:
+                    continue
+                size = _parse_size_label(o.get("description", ""))
+                price = o.get("price")
+                avail = o.get("availability", "")
+                in_stock = avail.endswith("InStock")
+                options.append(
+                    {
+                        "name": size or "기본",
+                        "price": int(price) if isinstance(price, (int, float)) else 0,
+                        "stock": 1 if in_stock else 0,
+                    }
+                )
+            if any(opt.get("stock", 0) > 0 for opt in options):
+                availability = "in_stock"
+
+        # 옵션이 비어있으면 sold_out
+        if not options:
+            sale_status = "sold_out"
+        else:
+            sale_status = availability
+
+        # 발매가 단서: 정상가 정보가 JSON-LD에 없으므로 lowPrice 를 정상가/할인가 동일 처리
+        sale_price = int(low_price) if isinstance(low_price, (int, float)) else 0
+        original_price = (
+            int(high_price)
+            if isinstance(high_price, (int, float)) and high_price
+            else sale_price
+        )
+
+        release_date = prod.get("releaseDate") or ""
+
+        return {
+            "site_product_id": site_product_id,
+            "name": name,
+            "brand": brand,
+            "sale_price": sale_price,
+            "original_price": original_price,
+            "images": [image] if image else [],
+            "options": options,
+            "category": "스니커즈" if snkr_type == "sneaker" else "스트릿웨어",
+            "category1": "SNKRDUNK",
+            "category2": "스니커즈" if snkr_type == "sneaker" else "스트릿웨어",
+            "category3": "",
+            "source_site": "SNKRDUNK",
+            "source_url": url,
+            "url": url,
+            "video_url": url,
+            "detail_html": "",
+            "sale_status": sale_status,
+            "free_shipping": False,
+            "color": "",
+            "extra_data": {
+                "snkr_type": snkr_type,
+                "currency": TARGET_CURRENCY,
+                "release_date": release_date,
+                "low_price": low_price,
+                "high_price": high_price,
+            },
+        }

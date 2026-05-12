@@ -15,6 +15,7 @@ import {
 } from '@/lib/samba/api/commerce'
 import { sourcingAccountApi, type SambaSourcingAccount } from '@/lib/samba/api/operations'
 import { fmtTime, formatDateInput, getKstTodayDate } from '@/lib/samba/utils'
+import { fmtNum } from '@/lib/samba/styles'
 import OrdersTable from './components/OrdersTable'
 import { useSmsMessage } from './hooks/useSmsMessage'
 import { useOrderSync } from './hooks/useOrderSync'
@@ -296,6 +297,16 @@ export default function OrdersPage() {
     const handler = () => setShowAlarmSetting(true)
     window.addEventListener('open-alarm-setting', handler)
     return () => window.removeEventListener('open-alarm-setting', handler)
+  }, [])
+
+  // 페이지 진입 시 미처리 취소요청 알람 (1회)
+  useEffect(() => {
+    orderApi.getCancelAlertCount().then(({ count }) => {
+      if (count > 0) {
+        showNotification(`처리 중인 주문 중 취소요청이 ${fmtNum(count)}건 있습니다. 확인해 주세요.`)
+      }
+    }).catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   // 마운트 1회 — 5개 메타 API를 하나의 useEffect에서 동시 호출 (DB 커넥션 경합 최소화)
   useEffect(() => {
