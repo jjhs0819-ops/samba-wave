@@ -11,14 +11,15 @@ const MARKET_COLORS: Record<string, string> = {
   '11st': '#EF4444',     // 빨강
   gmarket: '#3B82F6',    // 파랑
   auction: '#A855F7',    // 보라
-  lotteon: '#14B8A6',    // 청록 (기존 흰색→구분 가능)
-  gsshop: '#EAB308',     // 노랑
+  lotteon: '#FFFFFF',    // 흰색
+  gsshop: '#EC4899',     // 핫핑크
   ssg: '#7C3AED',        // 남보라
-  lottehome: '#EC4899',  // 핫핑크 (기존 빨간계열→분홍으로 분리)
+  lottehome: '#EAB308',  // 노랑
   homeand: '#0EA5E9',    // 하늘
   hmall: '#6366F1',      // 인디고 (기존 파랑→파란보라로 분리)
   toss: '#84CC16',       // 라임 (기존 파랑→연두로 분리)
   ktalpha: '#10B981',    // 에메랄드
+  playauto: '#6B7280',   // 회색
 }
 
 function getMarketColor(marketType: string): string {
@@ -180,7 +181,7 @@ function UnassignedItem({
           <div style={{ fontSize: 10, color: '#666' }}>
             <span style={{ color: '#22C55E' }}>{fmtNum(item.registered_count)}</span>
             <span style={{ color: '#444' }}>/</span>
-            <span style={{ color: '#888' }}>{fmtNum(item.collected_count)}</span>
+            <span style={{ color: '#fff' }}>{fmtNum(item.collected_count)}</span>
           </div>
           <span style={{ fontSize: 9, color: '#ddd', whiteSpace: 'nowrap', fontWeight: 500 }}>
             {item.source_site}

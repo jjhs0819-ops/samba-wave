@@ -166,7 +166,7 @@ export default function BrandBlock({
               {fmtNum(block.registered_count)}
             </span>
             <span style={{ color: '#444' }}>/</span>
-            <span style={{ color: '#888' }}>{fmtNum(block.collected_count)}</span>
+            <span style={{ color: '#fff' }}>{fmtNum(block.collected_count)}</span>
           </div>
         </div>
         {/* 하단: 소싱처명 우측 정렬 */}
