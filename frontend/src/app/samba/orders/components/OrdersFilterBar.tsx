@@ -8,21 +8,6 @@ import { inputStyle, fmtNum } from '@/lib/samba/styles'
 import { formatDateInput, getPeriodStart, getPeriodEnd } from '@/lib/samba/utils'
 import { STATUS_MAP } from '../constants'
 
-const MARKET_STATUS_OPTIONS = [
-  '주문접수',
-  '배송대기중',
-  '상품준비',
-  '출고지연',
-  '배송중',
-  '배송완료',
-  '취소요청',
-  '취소완료',
-  '반품요청',
-  '반품완료',
-  '교환요청',
-  '교환완료',
-]
-
 interface Props {
   isProductMode: boolean
   period: string
@@ -216,7 +201,7 @@ export default function OrdersFilterBar(props: Props) {
           </select>
           <select style={{ ...inputStyle, width: '120px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketStatus} onChange={e => setMarketStatus(e.target.value)}>
             <option value="">배송상태</option>
-            {MARKET_STATUS_OPTIONS.map(status => <option key={status} value={status}>{status}</option>)}
+            {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
           <select style={{ ...inputStyle, width: '120px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={registrationFilter} onChange={e => setRegistrationFilter(e.target.value)}>
             <option value="">등록필터</option>
