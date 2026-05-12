@@ -307,6 +307,11 @@ export default function WarroomPage() {
   const [, setAutotuneLastTick] = useState<string | null>(null)
   const prevCyclesRef = useRef(0)
   const falseCountRef = useRef(0)
+  // 자동 재등록 쿨다운 (백엔드 재시작 시 무한 루프 방지) — 60초
+  const autoRejoinAtRef = useRef(0)
+  // load() 폴링 클로저에서 최신 filter/avail를 읽기 위한 ref (load deps 안정화)
+  const filterSourcesOuterRef = useRef<string[] | null>(null)
+  const availSourcesOuterRef = useRef<string[]>([])
 
   // 소싱처별 인터벌 설정
   const INTERVAL_SITES = [
@@ -386,6 +391,10 @@ export default function WarroomPage() {
   const [availSources, setAvailSources] = useState<string[]>([])
   const [availMarkets, setAvailMarkets] = useState<string[]>([])
   const filterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // load() 폴링 closure stale 방지 — 최신값 ref 동기화
+  useEffect(() => { filterSourcesOuterRef.current = filterSources }, [filterSources])
+  useEffect(() => { availSourcesOuterRef.current = availSources }, [availSources])
 
   useEffect(() => {
     // 1) 사용 가능 사이트/마켓 목록은 백엔드에서, 소싱처 체크 상태는 chrome.storage 우선
@@ -592,12 +601,48 @@ export default function WarroomPage() {
     ;(async () => {
       const { getDeviceId } = await import('@/lib/samba/deviceId')
       const dev = getDeviceId()
-      return collectorApi.autotuneStatus(dev || undefined)
+      const st = await collectorApi.autotuneStatus(dev || undefined)
+      return { st, dev }
     })()
-      .then(atStatus => {
+      .then(async ({ st: atStatus, dev }) => {
         // 본인 PC 인스턴스 기준 running/cycle 사용
         handleAutotuneStatus(atStatus.running, atStatus.cycle_count, atStatus.last_tick, atStatus.refreshed_count || 0)
         setAutotuneRestarts(atStatus.restart_count || 0)
+        // 본인 PC가 서버에서 실행 중으로 확인되면 intent='start'로 복원 (페이지 새로고침 대응)
+        try {
+          if (atStatus.running && dev && (atStatus.running_pcs || []).includes(dev)) {
+            if (window.localStorage.getItem('samba.autotune.userIntent') !== 'start') {
+              window.localStorage.setItem('samba.autotune.userIntent', 'start')
+            }
+          }
+        } catch { /* ignore */ }
+        // 자동 재등록 — 사용자가 시작 의도를 가진 채 백엔드가 재시작된 경우 자동 복구
+        try {
+          const intent = window.localStorage.getItem('samba.autotune.userIntent')
+          const runningPcs = atStatus.running_pcs || []
+          const meMissing = !!dev && !runningPcs.includes(dev)
+          const now = Date.now()
+          const cooldownPassed = now - autoRejoinAtRef.current > 60_000
+          if (intent === 'start' && meMissing && cooldownPassed) {
+            autoRejoinAtRef.current = now
+            // PC분담 재등록 — load() 클로저 stale 방지를 위해 ref에서 최신값 사용
+            const curFilter = filterSourcesOuterRef.current
+            const curAvail = availSourcesOuterRef.current
+            const sites = curFilter === null ? [...curAvail] : curFilter
+            await registerPcAllowedSites(sites)
+            // 오토튠 재시작 (본인 PC 한정)
+            await collectorApi.autotuneStart('registered', undefined, dev || undefined)
+            // 확장앱에도 재합류 신호
+            window.postMessage(
+              { source: 'samba-page', type: 'AUTOTUNE_SET_JOIN', joined: true, sourceSites: curFilter },
+              window.location.origin,
+            )
+            falseCountRef.current = 0
+            setAutotuneRunning(true)
+            // eslint-disable-next-line no-console
+            console.info('[오토튠] 백엔드 재시작 감지 — 자동 재등록 완료')
+          }
+        } catch { /* ignore */ }
         // 소싱처 인터벌 동기화 (마운트 시 초기값 포함) — 별도 useEffect 제거하고 여기서 일원화
         if (atStatus.site_intervals) {
           setSiteIntervals(prev => {
@@ -625,7 +670,7 @@ export default function WarroomPage() {
 
     setLastFetched(new Date())
     nextPollRef.current = POLL_INTERVAL / 1000
-  }, [handleAutotuneStatus])
+  }, [handleAutotuneStatus, registerPcAllowedSites])
 
   // 로그 폴링은 AutotuneLogPanel 내부에서 독립적으로 처리
 
@@ -742,6 +787,8 @@ export default function WarroomPage() {
                 setAutotuneRunning(true)
                 setAutotuneCycles(0)
                 if (pno) setSingleProductNo('')
+                // 사용자 의도 저장 — 백엔드 재시작 시 자동 재등록 트리거용
+                try { window.localStorage.setItem('samba.autotune.userIntent', 'start') } catch { /* ignore */ }
               } catch { /* ignore */ }
             }}
             style={{
@@ -771,6 +818,8 @@ export default function WarroomPage() {
                 window.postMessage({ source: 'samba-page', type: 'AUTOTUNE_SET_JOIN', joined: false }, window.location.origin)
                 setAutotuneRunning(false)
                 falseCountRef.current = 0
+                // 사용자 의도 저장 — 자동 재등록 비활성화
+                try { window.localStorage.setItem('samba.autotune.userIntent', 'stop') } catch { /* ignore */ }
                 if (r.ok) {
                   showAlert('이 PC 오토튠 정지 완료', 'success')
                 } else {

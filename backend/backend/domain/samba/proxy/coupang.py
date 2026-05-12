@@ -797,17 +797,21 @@ class CoupangClient:
                 "emptyBarcode": True,
                 "emptyBarcodeReason": "바코드 없음",
                 "offerCondition": "NEW",
-                # attributes — 카테고리 MANDATORY(사이즈/색상) 유지 + 옵션 그룹명 기반 자유 입력
-                # 두 번째 토큰이 사이즈 패턴 아니면(예: "Gift box") 자유 attribute 로 등록하고
-                # 사이즈 attribute 는 "FREE" 로 채워 MANDATORY 충족.
+                # attributes — 색상축 + 옵션 그룹명 기반 자유 입력 attribute
+                # 두 번째 그룹(예: "Gift box 추가") 이 있으면 사이즈축은 추가하지 않고
+                # 색상 × extra 2축으로만 등록. 두 번째 그룹이 없을 때만 사이즈축 채움.
                 "attributes": (
-                    [
-                        {
-                            "attributeTypeName": "패션의류/잡화 사이즈",
-                            "attributeValueName": (
-                                "FREE" if extra_attr_name else size_val
-                            ),
-                        },
+                    (
+                        []
+                        if extra_attr_name
+                        else [
+                            {
+                                "attributeTypeName": "패션의류/잡화 사이즈",
+                                "attributeValueName": size_val,
+                            },
+                        ]
+                    )
+                    + [
                         {
                             "attributeTypeName": "색상",
                             "attributeValueName": resolved_color,
