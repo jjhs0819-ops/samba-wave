@@ -6364,6 +6364,13 @@ def _parse_elevenst_order(item: dict, account_id: str, label: str) -> dict:
     # 정산예정금액: stlPlnAmt
     revenue = _to_int(item.get("stlPlnAmt"), sale_price)
 
+    # 수수료율 = (1 - 정산예정금액 / 판매가) × 100
+    # 음수/이상값 방지: revenue가 sale_price보다 크면 0으로 처리
+    if sale_price > 0 and 0 < revenue <= sale_price:
+        fee_rate = round((1 - revenue / sale_price) * 100, 2)
+    else:
+        fee_rate = 0.0
+
     return {
         "channel_id": account_id,
         "channel_name": label,
@@ -6378,6 +6385,7 @@ def _parse_elevenst_order(item: dict, account_id: str, label: str) -> dict:
         "sale_price": sale_price,
         "cost": 0,
         "revenue": revenue,
+        "fee_rate": fee_rate,
         "status": status,
         "shipping_status": shipping_status,
         "customer_name": str(item.get("rcvrNm", "") or item.get("ordNm", "") or ""),
