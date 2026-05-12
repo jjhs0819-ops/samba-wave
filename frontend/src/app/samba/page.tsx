@@ -130,6 +130,7 @@ export default function SambaDashboard() {
   const lastMonthFulfillmentSales = stats?.lastMonth.fulfillmentSales || 0
   const lastMonthFulfillment = lastMonthSales > 0 ? Math.round(lastMonthFulfillmentSales / lastMonthSales * 100) : 0
   const salesChange = stats?.salesChange || 0
+  const marketRegisteredCount = stats?.marketRegisteredCount ?? 0
   const weeklyData = (stats?.weekly || []).map(w => ({
     date: new Date(w.date),
     totalSale: w.sales,
@@ -137,8 +138,8 @@ export default function SambaDashboard() {
     rate: w.sales > 0 ? Math.round(w.fulfillmentSales / w.sales * 100) : 0,
     newRegistered: w.newRegistered ?? 0,
     marketDeleted: w.marketDeleted ?? 0,
+    registeredCount: marketRegisteredCount,
   }))
-  const marketRegisteredCount = stats?.marketRegisteredCount ?? 0
   const monthlyData = stats?.monthly || []
 
   if (loading && !stats) {
@@ -275,6 +276,7 @@ export default function SambaDashboard() {
                 <th style={{ textAlign: 'right', padding: '0.625rem 0', color: '#888', fontWeight: 500 }}>이행율</th>
                 <th style={{ textAlign: 'right', padding: '0.625rem 0', color: '#888', fontWeight: 500 }}>신규등록</th>
                 <th style={{ textAlign: 'right', padding: '0.625rem 0', color: '#888', fontWeight: 500 }}>마켓삭제</th>
+                <th style={{ textAlign: 'right', padding: '0.625rem 0', color: '#888', fontWeight: 500 }}>등록상품수</th>
               </tr>
             </thead>
             <tbody>
@@ -286,6 +288,7 @@ export default function SambaDashboard() {
                   <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>{d.rate}%</td>
                   <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>{fmtNum(d.newRegistered)}</td>
                   <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>{fmtNum(d.marketDeleted)}</td>
+                  <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#FF8C00' }}>{fmtNum(d.registeredCount)}</td>
                 </tr>
               ))}
             </tbody>

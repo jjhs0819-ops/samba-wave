@@ -75,8 +75,9 @@ def upgrade() -> None:
         WHERE cp.id = ev.product_id
           AND cp.first_market_registered_at IS NULL
           AND cp.registered_accounts IS NOT NULL
-          AND jsonb_typeof(cp.registered_accounts) = 'array'
-          AND jsonb_array_length(cp.registered_accounts) > 0
+          AND CASE WHEN jsonb_typeof(cp.registered_accounts) = 'array'
+                   THEN jsonb_array_length(cp.registered_accounts) > 0
+                   ELSE false END
         """
     )
     # 2) 이벤트 없는 상품(이미 등록된 채로 보존기간 초과) — created_at으로 fallback
@@ -86,8 +87,9 @@ def upgrade() -> None:
         SET first_market_registered_at = created_at
         WHERE first_market_registered_at IS NULL
           AND registered_accounts IS NOT NULL
-          AND jsonb_typeof(registered_accounts) = 'array'
-          AND jsonb_array_length(registered_accounts) > 0
+          AND CASE WHEN jsonb_typeof(registered_accounts) = 'array'
+                   THEN jsonb_array_length(registered_accounts) > 0
+                   ELSE false END
         """
     )
 
@@ -108,7 +110,9 @@ def upgrade() -> None:
           AND (
               cp.registered_accounts IS NULL
               OR jsonb_typeof(cp.registered_accounts) != 'array'
-              OR jsonb_array_length(cp.registered_accounts) = 0
+              OR CASE WHEN jsonb_typeof(cp.registered_accounts) = 'array'
+                      THEN jsonb_array_length(cp.registered_accounts) = 0
+                      ELSE true END
           )
         """
     )
