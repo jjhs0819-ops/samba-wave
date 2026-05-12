@@ -661,6 +661,24 @@ async def _start_lotteon_ghost_reconciler() -> None:
     )
 
 
+_coupang_pid_reconciler_task: asyncio.Task | None = None
+
+
+async def _start_coupang_pid_reconciler() -> None:
+    """쿠팡 노출상품ID(productId) 백필 reconciler — 30분 주기.
+
+    등록 직후 productId 가 null 인 임시저장 상태의 상품을 주기적으로 재조회하여
+    노출ID/옵션ID 가 발급되면 DB 에 채워 vp/products URL 이 정상 동작하게 함.
+    """
+    global _coupang_pid_reconciler_task
+    from backend.domain.samba.proxy.coupang_pid_reconciler import pid_reconciler_loop
+
+    _coupang_pid_reconciler_task = asyncio.create_task(pid_reconciler_loop())
+    logging.getLogger("backend.lifecycle").info(
+        "[lifecycle] 쿠팡 노출ID 백필 reconciler 시작"
+    )
+
+
 def _validate_startup_settings() -> None:
     if sys.version_info[:3] != SUPPORTED_PYTHON_VERSION:
         current = ".".join(str(part) for part in sys.version_info[:3])
@@ -809,6 +827,7 @@ async def lifespan(app: FastAPI):
         await _start_sourcing_job_cleanup()
         await _start_lotteon_ghost_reconciler()
         await _start_elevenst_ghost_reconciler()
+        await _start_coupang_pid_reconciler()
     _validate_startup_settings()
 
     try:

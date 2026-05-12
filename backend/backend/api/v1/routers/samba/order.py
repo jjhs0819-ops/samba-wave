@@ -742,7 +742,8 @@ async def dashboard_stats(
         )
 
     # 최근 7일 신규등록/마켓삭제 상품 단위 일별 카운트 (KST 기준)
-    # 기준: registered_accounts 0↔≥1 전환 시점 (first_market_registered_at / fully_unregistered_at)
+    # 신규등록: registered_accounts 0→≥1 전환 시점 (first_market_registered_at)
+    # 마켓삭제: 품절 인식 이벤트(sold_out) 기준 — 1상품/1일 중복 제거
     from backend.api.v1.routers.samba.collector_common import (
         build_market_registered_conditions,
     )
@@ -772,23 +773,34 @@ async def dashboard_stats(
     new_reg_rows = (await session.execute(new_reg_q)).all()
     new_reg_map = {str(r.day): int(r.cnt) for r in new_reg_rows}
 
-    del_date = SambaCollectedProduct.fully_unregistered_at + text("INTERVAL '9 hours'")
+    # 마켓삭제(이탈) 카운트: 품절 인식 이벤트 기준
+    # — 품절 인식 시 다운스트림에서 전 마켓 자동 삭제/판매중지 처리되므로
+    #   sold_out 이벤트 = 마켓 이탈 1회로 간주 (1상품/1일 중복 제거)
+    from backend.domain.samba.warroom.model import SambaMonitorEvent
+
+    sold_out_date = SambaMonitorEvent.created_at + text("INTERVAL '9 hours'")
     del_q = (
         select(
-            func.date(del_date).label("day"),
-            func.count().label("cnt"),
+            func.date(sold_out_date).label("day"),
+            func.count(func.distinct(SambaMonitorEvent.product_id)).label("cnt"),
         )
         .where(
-            SambaCollectedProduct.fully_unregistered_at != None,  # noqa: E711
-            del_date >= week_ago,
+            SambaMonitorEvent.event_type == "sold_out",
+            SambaMonitorEvent.product_id != None,  # noqa: E711
+            sold_out_date >= week_ago,
         )
-        .group_by(func.date(del_date))
+        .group_by(func.date(sold_out_date))
     )
     if tenant_id is not None:
+        # 멀티테넌시 필터: 상품의 tenant_id로 제한
         del_q = del_q.where(
-            or_(
-                SambaCollectedProduct.tenant_id == tenant_id,
-                SambaCollectedProduct.tenant_id == None,  # noqa: E711
+            SambaMonitorEvent.product_id.in_(
+                select(SambaCollectedProduct.id).where(
+                    or_(
+                        SambaCollectedProduct.tenant_id == tenant_id,
+                        SambaCollectedProduct.tenant_id == None,  # noqa: E711
+                    )
+                )
             )
         )
     del_rows = (await session.execute(del_q)).all()
