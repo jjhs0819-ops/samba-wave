@@ -366,10 +366,18 @@ class ImageTransformService:
         self,
         url: str,
         client: httpx.AsyncClient | None = None,
+        max_size: int | None = None,
     ) -> bytes:
-        """이미지 URL에서 바이트 다운로드 (실패 시 1회 재시도)."""
+        """이미지 URL에서 바이트 다운로드 (실패 시 1회 재시도).
+
+        max_size: 다운로드 허용 최대 바이트. None이면 _MAX_DOWNLOAD_SIZE(5MB) 사용.
+        1038 방어망(mirror_oversized_to_r2)처럼 큰 원본이라도 리사이즈해서
+        마켓에 미러해야 하는 경우는 호출부에서 20MB 등 더 큰 값을 전달한다.
+        """
         import asyncio
         from urllib.parse import urlparse
+
+        cap = max_size if (max_size is not None) else self._MAX_DOWNLOAD_SIZE
 
         parsed = urlparse(url)
         referer = f"{parsed.scheme}://{parsed.netloc}/"
@@ -390,15 +398,13 @@ class ImageTransformService:
                     async with c.stream("GET", url, headers=_headers) as resp:
                         resp.raise_for_status()
                         cl = resp.headers.get("content-length")
-                        if cl and int(cl) > self._MAX_DOWNLOAD_SIZE:
-                            raise ValueError(
-                                f"이미지 용량 초과({int(cl)}B > {self._MAX_DOWNLOAD_SIZE}B)"
-                            )
+                        if cl and int(cl) > cap:
+                            raise ValueError(f"이미지 용량 초과({int(cl)}B > {cap}B)")
                         chunks: list[bytes] = []
                         total = 0
                         async for chunk in resp.aiter_bytes(chunk_size=65536):
                             total += len(chunk)
-                            if total > self._MAX_DOWNLOAD_SIZE:
+                            if total > cap:
                                 raise ValueError(f"이미지 용량 초과(스트림 {total}B)")
                             chunks.append(chunk)
                         content = b"".join(chunks)
@@ -829,6 +835,9 @@ class ImageTransformService:
     _HOTLINK_BLOCKED_HOSTS = (
         "msscdn.net",
         "image.musinsa.com",
+        # 롯데온 CDN — HEAD 403/비표준 path(`/dims/optimize/resizemc/...`)로
+        # 11번가 등록 시 "기본이미지 존재하지 않음" 에러 유발 → R2 선미러 필요
+        "contents.lotteon.com",
     )
 
     async def mirror_external_to_r2(
@@ -987,7 +996,11 @@ class ImageTransformService:
                         continue
 
                     # 다운로드 후 PIL 로 리사이즈
-                    image_bytes = await self._download_image(url)
+                    # 1038 방어망용 — 5MB 기본 가드를 20MB까지 풀어줘야
+                    # 도매 CDN(leecom01 등) 6~10MB 원본도 미러 가능
+                    image_bytes = await self._download_image(
+                        url, max_size=20 * 1024 * 1024
+                    )
                     if not image_bytes:
                         result.append(url)
                         continue

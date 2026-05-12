@@ -567,6 +567,31 @@ class SmartStorePlugin(MarketPlugin):
             detail_attr.pop("productCertificationInfos", None)
             return payload
 
+        # 반품안심케어 비허용 카테고리 에러 감지
+        # 메시지 예: "반품안심케어를 설정할 수 없는 카테고리입니다."
+        def _is_return_safeguard_error(err: Exception) -> bool:
+            s = str(err)
+            return "반품안심" in s or "freeReturnInsuranceYn" in s
+
+        # payload에서 freeReturnInsuranceYn 제거 (단일/그룹 구조 모두 대응)
+        def _strip_return_safeguard_inplace(
+            payload: dict[str, Any],
+        ) -> dict[str, Any]:
+            # 단일 상품: originProduct.deliveryInfo.claimDeliveryInfo
+            op = payload.get("originProduct")
+            if isinstance(op, dict):
+                cd = (op.get("deliveryInfo") or {}).get("claimDeliveryInfo")
+                if isinstance(cd, dict):
+                    cd.pop("freeReturnInsuranceYn", None)
+            # 그룹 상품: groupProduct.specificProducts[].deliveryInfo.claimDeliveryInfo
+            gp = payload.get("groupProduct")
+            if isinstance(gp, dict):
+                for sp in gp.get("specificProducts") or []:
+                    cd = (sp.get("deliveryInfo") or {}).get("claimDeliveryInfo")
+                    if isinstance(cd, dict):
+                        cd.pop("freeReturnInsuranceYn", None)
+            return payload
+
         # register_product 호출을 공통 fallback으로 감싸는 헬퍼
         # leafCategoryId 에러 → 기본 카테고리 fallback
         # KC/어린이제품 인증 에러 → 인증대상 아님 선언 fallback
@@ -608,6 +633,13 @@ class SmartStorePlugin(MarketPlugin):
                     )
                     return await client.register_product(retry_payload)
 
+                if _is_return_safeguard_error(reg_e):
+                    logger.warning(
+                        f"[스마트스토어] 반품안심케어 비허용 카테고리 감지 → freeReturnInsuranceYn 제거 후 재시도: {reg_e}"
+                    )
+                    _strip_return_safeguard_inplace(payload)
+                    return await client.register_product(payload)
+
                 raise
 
         # 기존 상품번호가 있으면 수정, 없으면 신규등록
@@ -640,6 +672,24 @@ class SmartStorePlugin(MarketPlugin):
                         except Exception as _cert_retry_e:
                             logger.error(
                                 f"[스마트스토어] PUT 인증면제 재시도도 실패: {_cert_retry_e}"
+                            )
+                            raise
+
+                    if _is_return_safeguard_error(e):
+                        logger.warning(
+                            f"[스마트스토어] PUT 반품안심케어 비허용 카테고리 감지 → freeReturnInsuranceYn 제거 후 재시도: {e}"
+                        )
+                        try:
+                            _strip_return_safeguard_inplace(d)
+                            r = await client.update_product(existing_no, d)
+                            return {
+                                "success": True,
+                                "message": "스마트스토어 수정 성공 (반품안심 제거 fallback)",
+                                "data": r,
+                            }
+                        except Exception as _rs_retry_e:
+                            logger.error(
+                                f"[스마트스토어] PUT 반품안심 제거 재시도도 실패: {_rs_retry_e}"
                             )
                             raise
 
