@@ -1450,54 +1450,73 @@ class SmartStoreClient:
         all_statuses: list[dict[str, Any]] = []
         seen_po_ids: set[str] = set()
 
-        query_dates = [since_str]
+        # 페이지네이션: 네이버 last-changed-statuses는 응답이 lastChangedDate 오름차순으로
+        # 정렬되며 응답 limit이 있어 since가 멀수록 잘림(2026-05-12 검증: since=5/7 → 1건만,
+        # since=5/10 → 9건). 응답이 잘리면 마지막 lastChangedDate를 새 cursor로 써서
+        # 더 이상 새 productOrderId가 안 나올 때까지 반복 호출.
+        async def _fetch_with_pagination(initial_from: str) -> None:
+            cursor = initial_from
+            for _page in range(20):  # 안전 상한: 20페이지
+                qparams = dict(params)
+                qparams["lastChangedFrom"] = cursor
+                qparams.pop("lastChangedType", None)
+                result = None
+                for _retry in range(3):
+                    try:
+                        result = await self._call_api(
+                            "GET",
+                            "/v1/pay-order/seller/product-orders/last-changed-statuses",
+                            params=qparams,
+                        )
+                        break
+                    except Exception as _api_err:
+                        if "429" in str(_api_err):
+                            wait = 2.0 * (_retry + 1)
+                            logger.info(
+                                f"[스마트스토어] 429 재시도 {_retry + 1}/3 ({wait}초 대기)"
+                            )
+                            await asyncio.sleep(wait)
+                            continue
+                        logger.warning(
+                            f"[스마트스토어] last-changed-statuses 호출 실패 (from={cursor}): {_api_err}"
+                        )
+                        break
+                if result is None:
+                    return
+                await asyncio.sleep(1.0)
+                data = result.get("data", result) if isinstance(result, dict) else {}
+                statuses_list = (
+                    (
+                        data.get("lastChangeStatuses", [])
+                        or data.get("lastChangedStatuses", [])
+                    )
+                    if isinstance(data, dict)
+                    else []
+                )
+                new_count = 0
+                last_changed_date = None
+                for s in statuses_list:
+                    pid = s.get("productOrderId", "")
+                    lcd = s.get("lastChangedDate")
+                    if lcd and (last_changed_date is None or lcd > last_changed_date):
+                        last_changed_date = lcd
+                    if pid and pid not in seen_po_ids:
+                        seen_po_ids.add(pid)
+                        all_statuses.append(s)
+                        new_count += 1
+                # 종료 조건: 응답 비었거나 새 ID 0건이거나 커서 진전 없음
+                if not statuses_list or new_count == 0 or not last_changed_date:
+                    return
+                if last_changed_date <= cursor:
+                    return
+                cursor = last_changed_date
+
+        # since_str 시작 + 최근 1일 보강 호출 (이미 잡힌 건은 dedup으로 skip)
+        await _fetch_with_pagination(since_str)
         recent = datetime.now(kst) - timedelta(days=1)
         recent_str = recent.strftime("%Y-%m-%dT%H:%M:%S.000+09:00")
-        if recent_str != since_str:
-            query_dates.append(recent_str)
-
-        for qdate in query_dates:
-            qparams = dict(params)
-            qparams["lastChangedFrom"] = qdate
-            qparams.pop("lastChangedType", None)
-            result = None
-            for _retry in range(3):
-                try:
-                    result = await self._call_api(
-                        "GET",
-                        "/v1/pay-order/seller/product-orders/last-changed-statuses",
-                        params=qparams,
-                    )
-                    break
-                except Exception as _api_err:
-                    if "429" in str(_api_err):
-                        wait = 2.0 * (_retry + 1)  # 2초→4초→6초
-                        logger.info(
-                            f"[스마트스토어] 429 재시도 {_retry + 1}/3 ({wait}초 대기)"
-                        )
-                        await asyncio.sleep(wait)
-                        continue
-                    logger.warning(
-                        f"[스마트스토어] last-changed-statuses 호출 실패 (from={qdate}): {_api_err}"
-                    )
-                    break
-            if result is None:
-                continue
-            await asyncio.sleep(1.0)
-            data = result.get("data", result) if isinstance(result, dict) else {}
-            statuses_list = (
-                (
-                    data.get("lastChangeStatuses", [])
-                    or data.get("lastChangedStatuses", [])
-                )
-                if isinstance(data, dict)
-                else []
-            )
-            for s in statuses_list:
-                pid = s.get("productOrderId", "")
-                if pid and pid not in seen_po_ids:
-                    seen_po_ids.add(pid)
-                    all_statuses.append(s)
+        if recent_str > since_str:
+            await _fetch_with_pagination(recent_str)
 
         logger.info(f"[스마트스토어] 주문 변경 조회 완료 — 총 {len(all_statuses)}건")
 
