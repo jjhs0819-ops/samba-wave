@@ -95,7 +95,7 @@ interface DeleteScopeModal {
 }
 
 const SCALE_RULER_WIDTH = 56
-const COLUMN_WIDTH = 280
+const COLUMN_WIDTH = 227
 const COLUMN_GAP = 12
 
 export default function TetrisBoard() {
