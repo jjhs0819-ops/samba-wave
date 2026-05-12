@@ -886,27 +886,34 @@ export default function ShipmentsPage() {
     }
     setProgress({ current: 0, total: tasks.length })
 
-    // 테트리스 배치 조회 — 브랜드에 배치 계정이 있으면 정책 계정 대신 테트리스 계정 사용
-    const tetrisMap: Map<string, string> = new Map()
+    // 테트리스 배치 조회 — 브랜드당 마켓별로 여러 계정 누적 (Map.set 덮어쓰기 금지)
+    const tetrisMap: Map<string, string[]> = new Map()
     try {
       const tetrisAssignments = await tetrisApi.listAssignments()
       for (const a of tetrisAssignments) {
-        tetrisMap.set(`${a.source_site}:${a.brand_name}`, a.market_account_id)
+        const key = `${a.source_site}:${a.brand_name}`
+        const arr = tetrisMap.get(key) || []
+        arr.push(a.market_account_id)
+        tetrisMap.set(key, arr)
       }
     } catch { /* 조회 실패 시 기존 정책 로직으로 폴백 */ }
 
-    // 테트리스 배치가 있는 상품은 해당 계정으로 targetAccIds 교체
-    // 단, 사용자가 UI에서 선택한 마켓 계정(selectedSet)에 포함된 경우에만 적용 — 미필터링 시 선택 안 한 마켓까지 전송되는 버그 발생
+    // 테트리스 배치가 있으면 마켓별로 정책 계정을 테트리스 계정으로 교체, 미배정 마켓은 정책 계정 유지
     let hasTetrisOverride = false
     const tetrisTasks = tasks.map(task => {
       const prod = productsById.get(task.pid)
       if (!prod) return task
-      const tetrisAccId = tetrisMap.get(`${prod.source_site}:${prod.brand}`)
-      if (tetrisAccId && selectedSet.has(tetrisAccId)) {
-        hasTetrisOverride = true
-        return { ...task, targetAccIds: [tetrisAccId] }
-      }
-      return task
+      const tetrisAccIds = tetrisMap.get(`${prod.source_site}:${prod.brand}`) || []
+      const applicable = tetrisAccIds.filter(aid => selectedSet.has(aid) && accountsById.get(aid))
+      if (applicable.length === 0) return task
+      const overrideMarkets = new Set(applicable.map(aid => accountsById.get(aid)!.market_type))
+      const keptPolicy = task.targetAccIds.filter(aid => {
+        const m = accountsById.get(aid)?.market_type
+        return m && !overrideMarkets.has(m)
+      })
+      const newAccIds = [...new Set([...keptPolicy, ...applicable])]
+      if (newAccIds.join(',') !== task.targetAccIds.join(',')) hasTetrisOverride = true
+      return { ...task, targetAccIds: newAccIds }
     })
 
     // Job 큐로 백그라운드 전송 (건수 무관)
