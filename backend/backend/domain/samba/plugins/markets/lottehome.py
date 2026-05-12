@@ -111,26 +111,34 @@ def _transform_for_lottehome(
 
     _brand_mappings = creds.get("brandMappings", [])
     _product_brand = (product.get("brand") or "").strip().lower()
+    _product_brand_ns = _product_brand.replace(" ", "")  # 공백 제거 버전
     _product_name = (product.get("name") or "").strip().lower()
+    _product_name_ns = _product_name.replace(" ", "")
     _matched_brnd_no = None
-    # 1순위: 전체 배열에서 brand 정확 매칭
+    # 1순위: 정확 매칭 (공백 정규화 포함)
     for _m in _brand_mappings:
         _nm = (_m.get("brnd_nm") or "").strip().lower()
-        if _nm and _nm == _product_brand:
+        _nm_ns = _nm.replace(" ", "")
+        if _nm and (_nm == _product_brand or _nm_ns == _product_brand_ns):
             _matched_brnd_no = _m["brnd_no"]
             break
-    # 2순위: brand 포함 매칭 (_product_brand 비어있으면 스킵)
+    # 2순위: brand 포함 매칭 (공백 정규화 포함, _product_brand 비어있으면 스킵)
     if not _matched_brnd_no and _product_brand:
         for _m in _brand_mappings:
             _nm = (_m.get("brnd_nm") or "").strip().lower()
-            if _nm and (_nm in _product_brand or _product_brand in _nm):
+            _nm_ns = _nm.replace(" ", "")
+            if _nm and (
+                _nm in _product_brand or _product_brand in _nm
+                or _nm_ns in _product_brand_ns or _product_brand_ns in _nm_ns
+            ):
                 _matched_brnd_no = _m["brnd_no"]
                 break
-    # 3순위: 상품명에 브랜드명 포함
+    # 3순위: 상품명에 브랜드명 포함 (공백 정규화 포함)
     if not _matched_brnd_no:
         for _m in _brand_mappings:
             _nm = (_m.get("brnd_nm") or "").strip().lower()
-            if _nm and _nm in _product_name:
+            _nm_ns = _nm.replace(" ", "")
+            if _nm and (_nm in _product_name or _nm_ns in _product_name_ns):
                 _matched_brnd_no = _m["brnd_no"]
                 break
     if _brand_mappings and not product.get("brand_code") and not _matched_brnd_no:

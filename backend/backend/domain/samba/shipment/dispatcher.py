@@ -583,6 +583,15 @@ async def _delete_lottehome(
     account: Any = None,
 ) -> dict[str, Any]:
     """롯데홈쇼핑 상품 삭제 (영구중단)."""
+    # MD 승인 대기 중인 상품은 goods_no가 없으므로 삭제 불가 — 차단
+    if account:
+        m_nos = product.get("market_product_nos", {}) or {}
+        if m_nos.get(f"{account.id}_qa") == "pending":
+            return {
+                "success": False,
+                "message": "롯데홈쇼핑 MD 승인 대기 중인 상품입니다. 승인 완료 후 삭제해주세요.",
+            }
+
     from backend.domain.samba.proxy.lottehome import LotteHomeClient
 
     creds: dict[str, Any] | None = None
