@@ -741,6 +741,76 @@ async def dashboard_stats(
             }
         )
 
+    # 최근 7일 신규등록/마켓삭제 상품 단위 일별 카운트 (KST 기준)
+    # 기준: registered_accounts 0↔≥1 전환 시점 (first_market_registered_at / fully_unregistered_at)
+    from backend.api.v1.routers.samba.collector_common import (
+        build_market_registered_conditions,
+    )
+    from backend.domain.samba.collector.model import SambaCollectedProduct
+
+    reg_date = SambaCollectedProduct.first_market_registered_at + text(
+        "INTERVAL '9 hours'"
+    )
+    new_reg_q = (
+        select(
+            func.date(reg_date).label("day"),
+            func.count().label("cnt"),
+        )
+        .where(
+            SambaCollectedProduct.first_market_registered_at != None,  # noqa: E711
+            reg_date >= week_ago,
+        )
+        .group_by(func.date(reg_date))
+    )
+    if tenant_id is not None:
+        new_reg_q = new_reg_q.where(
+            or_(
+                SambaCollectedProduct.tenant_id == tenant_id,
+                SambaCollectedProduct.tenant_id == None,  # noqa: E711
+            )
+        )
+    new_reg_rows = (await session.execute(new_reg_q)).all()
+    new_reg_map = {str(r.day): int(r.cnt) for r in new_reg_rows}
+
+    del_date = SambaCollectedProduct.fully_unregistered_at + text("INTERVAL '9 hours'")
+    del_q = (
+        select(
+            func.date(del_date).label("day"),
+            func.count().label("cnt"),
+        )
+        .where(
+            SambaCollectedProduct.fully_unregistered_at != None,  # noqa: E711
+            del_date >= week_ago,
+        )
+        .group_by(func.date(del_date))
+    )
+    if tenant_id is not None:
+        del_q = del_q.where(
+            or_(
+                SambaCollectedProduct.tenant_id == tenant_id,
+                SambaCollectedProduct.tenant_id == None,  # noqa: E711
+            )
+        )
+    del_rows = (await session.execute(del_q)).all()
+    del_map = {str(r.day): int(r.cnt) for r in del_rows}
+
+    for w in weekly:
+        w["newRegistered"] = int(new_reg_map.get(w["date"], 0))
+        w["marketDeleted"] = int(del_map.get(w["date"], 0))
+
+    # 마켓 1개 이상 등록된 상품수 (현재 시점)
+    market_registered_q = select(func.count(SambaCollectedProduct.id)).where(
+        *build_market_registered_conditions(SambaCollectedProduct)
+    )
+    if tenant_id is not None:
+        market_registered_q = market_registered_q.where(
+            or_(
+                SambaCollectedProduct.tenant_id == tenant_id,
+                SambaCollectedProduct.tenant_id == None,  # noqa: E711
+            )
+        )
+    market_registered_count = (await session.execute(market_registered_q)).scalar() or 0
+
     tm_fulfillment_rate = (
         round(int(tm.fulfillment_count or 0) / int(tm.count) * 100) if tm.count else 0
     )
@@ -771,6 +841,7 @@ async def dashboard_stats(
         "salesChange": sales_change,
         "weekly": weekly,
         "monthly": monthly,
+        "marketRegisteredCount": int(market_registered_count),
     }
 
 

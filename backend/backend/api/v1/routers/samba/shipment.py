@@ -459,6 +459,76 @@ async def cleanup_smartstore_orphans(
     }
 
 
+@router.get("/ghost-summary")
+async def ghost_summary(
+    hours: int = Query(48, ge=1, le=720, description="최근 N시간 내 이벤트 집계"),
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """최근 N시간 내 유령 감지 이벤트 요약.
+
+    상품관리 페이지 상단 배너용. 마켓별 최신 이벤트 1건씩 + 총 건수 합산.
+    """
+    from sqlalchemy import text as sa_text
+
+    sql = sa_text(
+        """
+        SELECT event_type, market_type, severity, summary, detail, created_at
+        FROM samba_monitor_event
+        WHERE event_type IN (
+            'lotteon_ghost_detected',
+            'elevenst_missing_prdno_detected',
+            'smartstore_ghost_detected'
+        )
+          AND created_at >= NOW() - (:h || ' hours')::interval
+        ORDER BY created_at DESC
+        """
+    )
+    rows = (await session.execute(sql, {"h": hours})).mappings().all()
+
+    by_market: dict[str, dict] = {}
+    for r in rows:
+        m = r.get("market_type") or "unknown"
+        if m not in by_market:
+            detail = r.get("detail") or {}
+            # JSONB는 dict로 들어옴
+            count_keys = ("total_missing", "ghosts", "total")
+            n = 0
+            if isinstance(detail, dict):
+                for k in count_keys:
+                    v = detail.get(k)
+                    if isinstance(v, (int, float)):
+                        n = int(v)
+                        break
+            by_market[m] = {
+                "market": m,
+                "event_type": r.get("event_type"),
+                "severity": r.get("severity"),
+                "summary": r.get("summary"),
+                "count": n,
+                "created_at": r.get("created_at").isoformat()
+                if r.get("created_at")
+                else None,
+            }
+        else:
+            # 같은 마켓 추가 이벤트는 count 누적 (계정별 분리)
+            detail = r.get("detail") or {}
+            if isinstance(detail, dict):
+                for k in ("total_missing", "ghosts", "total"):
+                    v = detail.get(k)
+                    if isinstance(v, (int, float)):
+                        by_market[m]["count"] += int(v)
+                        break
+
+    markets = list(by_market.values())
+    total = sum(m.get("count", 0) for m in markets)
+    return {
+        "ok": True,
+        "hours": hours,
+        "total_count": total,
+        "markets": markets,
+    }
+
+
 class ElevenstCleanupRequest(BaseModel):
     # 화면 필터로 좁혀진 product_id 목록 — 비어있으면 해당 계정 전체
     product_ids: Optional[list[str]] = None

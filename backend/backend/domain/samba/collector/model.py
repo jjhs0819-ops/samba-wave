@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Any, List, Optional
 
-from sqlalchemy import BigInteger, Boolean, Index, Integer, String, text
+from sqlalchemy import BigInteger, Boolean, Index, Integer, String, event, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Column, DateTime, Field, JSON, SQLModel, Text
 
@@ -377,6 +377,18 @@ class SambaCollectedProduct(SQLModel, table=True):
         default=None, sa_column=Column(BigInteger, nullable=True)
     )
 
+    # 마켓 등록 전환 추적 (대시보드 신규등록/삭제 카운트용)
+    # 처음으로 마켓 1개 이상에 등록된 시각 (한 번 찍히면 갱신 안 함, 모두 삭제 후 재등록 시는 다시 None→찍힘)
+    first_market_registered_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True, index=True),
+    )
+    # 마켓에 1개도 등록 안 된 상태가 된 시각 (≥1 → 0 전환 시점)
+    fully_unregistered_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True, index=True),
+    )
+
     # Timestamps
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False),
@@ -386,6 +398,50 @@ class SambaCollectedProduct(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), nullable=False),
         default_factory=lambda: datetime.now(tz=timezone.utc),
     )
+
+
+def _count_registered(value: Any) -> int:
+    """registered_accounts 값에서 유효한 계정 수 카운트."""
+    if not value or not isinstance(value, list):
+        return 0
+    return sum(1 for x in value if x)
+
+
+def _track_market_registered_transition(
+    mapper: Any, connection: Any, target: "SambaCollectedProduct"
+) -> None:
+    """registered_accounts 변동 감지 → 0↔≥1 전환 시각 기록.
+
+    before_update/before_insert에서 SQLAlchemy history를 조회해
+    이전 값과 비교, 전환 시점에만 first_market_registered_at / fully_unregistered_at 갱신.
+    """
+    from sqlalchemy.orm.attributes import get_history
+
+    hist = get_history(target, "registered_accounts")
+    if not hist.has_changes():
+        return
+    # added: 신규 값 (현재 적용될 값), deleted: 이전 값
+    old_val = hist.deleted[0] if hist.deleted else None
+    new_val = hist.added[0] if hist.added else target.registered_accounts
+    old_count = _count_registered(old_val)
+    new_count = _count_registered(new_val)
+    now = datetime.now(tz=timezone.utc)
+    if old_count == 0 and new_count > 0:
+        # 0 → ≥1 전환: 신규 마켓등록
+        target.first_market_registered_at = now
+        target.fully_unregistered_at = None
+    elif old_count > 0 and new_count == 0:
+        # ≥1 → 0 전환: 마켓 전체삭제
+        target.fully_unregistered_at = now
+
+
+# 이벤트 리스너 등록 — registered_accounts가 mutate될 때마다 자동 추적
+event.listen(
+    SambaCollectedProduct, "before_update", _track_market_registered_transition
+)
+event.listen(
+    SambaCollectedProduct, "before_insert", _track_market_registered_transition
+)
 
 
 def generate_search_cache_id() -> str:

@@ -135,7 +135,10 @@ export default function SambaDashboard() {
     totalSale: w.sales,
     fulfillmentSale: w.fulfillmentSales,
     rate: w.sales > 0 ? Math.round(w.fulfillmentSales / w.sales * 100) : 0,
+    newRegistered: w.newRegistered ?? 0,
+    marketDeleted: w.marketDeleted ?? 0,
   }))
+  const marketRegisteredCount = stats?.marketRegisteredCount ?? 0
   const monthlyData = stats?.monthly || []
 
   if (loading && !stats) {
@@ -229,8 +232,8 @@ export default function SambaDashboard() {
         <p style={{ fontSize: '0.875rem', color: '#888' }}>{year}년 {month + 1}월 {now.getDate()}일</p>
       </div>
 
-      {/* KPI 카드 4개 */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
+      {/* KPI 카드 5개 */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
         <div style={{ ...card, padding: '1.5rem', borderColor: 'rgba(255,140,0,0.25)' }}>
           <p style={{ fontSize: '0.8125rem', color: '#888', marginBottom: '0.5rem' }}>총 매출 (금월)</p>
           <p style={{ fontSize: '1.75rem', fontWeight: 700, color: '#FF8C00' }}>₩{fmtNum(thisMonthSales)}</p>
@@ -244,7 +247,12 @@ export default function SambaDashboard() {
         <div style={{ ...card, padding: '1.5rem', borderColor: 'rgba(255,140,0,0.25)' }}>
           <p style={{ fontSize: '0.8125rem', color: '#888', marginBottom: '0.5rem' }}>수집상품</p>
           <p style={{ fontSize: '1.75rem', fontWeight: 700, color: '#FF8C00' }}>{fmtNum(collectedCount)}개</p>
-          <p style={{ fontSize: '0.8125rem', color: '#888', marginTop: '0.5rem' }}>등록된 상품</p>
+          <p style={{ fontSize: '0.8125rem', color: '#888', marginTop: '0.5rem' }}>전체 수집</p>
+        </div>
+        <div style={{ ...card, padding: '1.5rem', borderColor: 'rgba(255,140,0,0.25)' }}>
+          <p style={{ fontSize: '0.8125rem', color: '#888', marginBottom: '0.5rem' }}>마켓등록 상품수</p>
+          <p style={{ fontSize: '1.75rem', fontWeight: 700, color: '#FF8C00' }}>{fmtNum(marketRegisteredCount)}개</p>
+          <p style={{ fontSize: '0.8125rem', color: '#888', marginTop: '0.5rem' }}>1개 마켓이라도 등록</p>
         </div>
         <div style={{ ...card, padding: '1.5rem', borderColor: 'rgba(255,140,0,0.25)' }}>
           <p style={{ fontSize: '0.8125rem', color: '#888', marginBottom: '0.5rem' }}>주문이행율</p>
@@ -265,6 +273,8 @@ export default function SambaDashboard() {
                 <th style={{ textAlign: 'right', padding: '0.625rem 0', color: '#888', fontWeight: 500 }}>총매출</th>
                 <th style={{ textAlign: 'right', padding: '0.625rem 0', color: '#888', fontWeight: 500 }}>이행매출</th>
                 <th style={{ textAlign: 'right', padding: '0.625rem 0', color: '#888', fontWeight: 500 }}>이행율</th>
+                <th style={{ textAlign: 'right', padding: '0.625rem 0', color: '#888', fontWeight: 500 }}>신규등록</th>
+                <th style={{ textAlign: 'right', padding: '0.625rem 0', color: '#888', fontWeight: 500 }}>마켓삭제</th>
               </tr>
             </thead>
             <tbody>
@@ -274,6 +284,8 @@ export default function SambaDashboard() {
                   <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>₩{fmtNum(d.totalSale)}</td>
                   <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>₩{fmtNum(d.fulfillmentSale)}</td>
                   <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>{d.rate}%</td>
+                  <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>{fmtNum(d.newRegistered)}</td>
+                  <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>{fmtNum(d.marketDeleted)}</td>
                 </tr>
               ))}
             </tbody>

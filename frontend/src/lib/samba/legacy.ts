@@ -113,8 +113,9 @@ export interface OrderDashboardStats {
   thisMonth: { count: number; sales: number; fulfillmentSales: number; fulfillmentCount: number; fulfillment: number }
   lastMonth: { count: number; sales: number; fulfillmentSales: number; fulfillmentCount: number; fulfillment: number }
   salesChange: number
-  weekly: { date: string; sales: number; count: number; fulfillmentSales: number; fulfillmentCount: number }[]
+  weekly: { date: string; sales: number; count: number; fulfillmentSales: number; fulfillmentCount: number; newRegistered: number; marketDeleted: number }[]
   monthly: { month: number; sales: number; fulfillmentSales: number }[]
+  marketRegisteredCount: number
 }
 
 export interface PaginatedOrderList {
@@ -987,6 +988,25 @@ export const shipmentApi = {
       method: 'POST',
       body: JSON.stringify({ product_ids: productIds && productIds.length > 0 ? productIds : null }),
     })
+  },
+
+  // 유령 감지 요약 (최근 N시간) — 상품관리 페이지 배너용
+  ghostSummary: (hours = 48) => {
+    const params = new URLSearchParams()
+    params.set('hours', String(hours))
+    return request<{
+      ok: boolean
+      hours: number
+      total_count: number
+      markets: {
+        market: string
+        event_type: string
+        severity: string
+        summary: string
+        count: number
+        created_at: string | null
+      }[]
+    }>(`${SAMBA_PREFIX}/shipments/ghost-summary?${params.toString()}`)
   },
 
   // 11번가 prdNo 누락 매핑 정리 (registered만 있고 prdNo 없는 케이스)

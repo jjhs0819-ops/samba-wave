@@ -632,6 +632,20 @@ async def _start_sourcing_job_cleanup() -> None:
 
 
 _lotteon_ghost_reconciler_task: asyncio.Task | None = None
+_elevenst_ghost_reconciler_task: asyncio.Task | None = None
+
+
+async def _start_elevenst_ghost_reconciler() -> None:
+    """11번가 prdNo 누락 매핑 일일 자동 감지 잡 — 24시간 주기."""
+    global _elevenst_ghost_reconciler_task
+    from backend.domain.samba.proxy.elevenst_ghost_reconciler import (
+        ghost_reconciler_loop,
+    )
+
+    _elevenst_ghost_reconciler_task = asyncio.create_task(ghost_reconciler_loop())
+    logging.getLogger("backend.lifecycle").info(
+        "[lifecycle] 11번가 prdNo 누락 reconciler 시작"
+    )
 
 
 async def _start_lotteon_ghost_reconciler() -> None:
@@ -794,6 +808,7 @@ async def lifespan(app: FastAPI):
         await _start_tetris_sync_scheduler()
         await _start_sourcing_job_cleanup()
         await _start_lotteon_ghost_reconciler()
+        await _start_elevenst_ghost_reconciler()
     _validate_startup_settings()
 
     try:
@@ -813,6 +828,7 @@ async def lifespan(app: FastAPI):
         await _cancel_task(_lottehome_qa_poller_task)
         await _cancel_task(_tetris_sync_task)
         await _cancel_task(_lotteon_ghost_reconciler_task)
+        await _cancel_task(_elevenst_ghost_reconciler_task)
         await _shutdown_worker_runtime(worker_runtime)
         await _cancel_task(getattr(app.state, "_pool_monitor_task", None))
         await _disconnect_cache()

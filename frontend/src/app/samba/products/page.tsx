@@ -141,6 +141,39 @@ export default function ProductsPage() {
   // 유령삭제 마켓 선택 모달
   const [ghostChoiceModal, setGhostChoiceModal] = useState(false)
 
+  // 유령 감지 배너 — 상단에 노출
+  const [ghostBanner, setGhostBanner] = useState<{
+    total: number
+    markets: { market: string; count: number; summary: string }[]
+  } | null>(null)
+  useEffect(() => {
+    // 오늘 날짜 스누즈 체크
+    const today = new Date().toISOString().slice(0, 10)
+    if (typeof window !== 'undefined' && window.localStorage.getItem('samba_ghost_banner_dismissed') === today) return
+    let aborted = false
+    ;(async () => {
+      try {
+        const res = await shipmentApi.ghostSummary(48)
+        if (aborted) return
+        if (res.total_count > 0) {
+          setGhostBanner({
+            total: res.total_count,
+            markets: res.markets.map(m => ({ market: m.market, count: m.count, summary: m.summary })),
+          })
+        }
+      } catch { /* 무시 */ }
+    })()
+    return () => { aborted = true }
+  }, [])
+  const marketLabel = (m: string) => m === '11st' ? '11번가' : m === 'lotteon' ? '롯데온' : m === 'smartstore' ? '스마트스토어' : m
+  const dismissGhostBanner = () => {
+    if (typeof window !== 'undefined') {
+      const today = new Date().toISOString().slice(0, 10)
+      window.localStorage.setItem('samba_ghost_banner_dismissed', today)
+    }
+    setGhostBanner(null)
+  }
+
   // AI 작업 진행 모달
   const [aiJobModal, setAiJobModal] = useState(false)
   const [aiJobTitle, setAiJobTitle] = useState('')
@@ -1104,6 +1137,41 @@ export default function ProductsPage() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
+      {ghostBanner && ghostBanner.total > 0 && (
+        <div style={{
+          padding: '10px 16px', margin: '8px 12px 0',
+          borderRadius: '8px',
+          background: 'rgba(255,107,107,0.12)', border: '1px solid #FF6B6B',
+          color: '#FF6B6B', fontSize: '0.82rem', fontWeight: 600,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px',
+          flexWrap: 'wrap',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <span>⚠ 유령 매핑 감지 (최근 48시간)</span>
+            <span style={{ color: '#FFD0D0', fontWeight: 400 }}>
+              {ghostBanner.markets.map(m => `${marketLabel(m.market)} ${fmt(m.count)}건`).join(' · ')}
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              onClick={() => setGhostChoiceModal(true)}
+              style={{
+                fontSize: '0.78rem', padding: '4px 12px', fontWeight: 600,
+                border: '1px solid #FF6B6B', borderRadius: '6px',
+                color: '#FFF', background: '#FF6B6B', cursor: 'pointer',
+              }}
+            >정리하기</button>
+            <button
+              onClick={dismissGhostBanner}
+              style={{
+                fontSize: '0.78rem', padding: '4px 10px',
+                border: '1px solid #FF6B6B', borderRadius: '6px',
+                color: '#FF6B6B', background: 'transparent', cursor: 'pointer',
+              }}
+            >오늘 그만보기</button>
+          </div>
+        </div>
+      )}
       {/* AI 작업 진행 모달 */}
       {marketDeleteModal && (
         <div style={{
