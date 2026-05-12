@@ -590,9 +590,13 @@ export default function WarroomPage() {
     ;(collectorApi.probeStatus().catch(() => ({})) as Promise<Record<string, Record<string, Record<string, unknown>>>>)
       .then(p => { if (p && Object.keys(p).length > 0) setProbeData(p) })
 
-    collectorApi.autotuneStatus()
+    ;(async () => {
+      const { getDeviceId } = await import('@/lib/samba/deviceId')
+      const dev = getDeviceId()
+      return collectorApi.autotuneStatus(dev || undefined)
+    })()
       .then(atStatus => {
-        // 오토튠 상태는 handleAutotuneStatus를 통해 처리 (falseCountRef 가드 적용, 경쟁 상태 방지)
+        // 본인 PC 인스턴스 기준 running/cycle 사용
         handleAutotuneStatus(atStatus.running, atStatus.cycle_count, atStatus.last_tick, atStatus.refreshed_count || 0)
         setAutotuneRestarts(atStatus.restart_count || 0)
         // 소싱처 인터벌 동기화 (마운트 시 초기값 포함) — 별도 useEffect 제거하고 여기서 일원화
@@ -783,17 +787,29 @@ export default function WarroomPage() {
           >시작</button>
           <button
             onClick={async () => {
+              const { showAlert } = await import('@/components/samba/Modal')
               try {
                 const { API_BASE_URL: apiBase } = await import('@/config/api')
                 const { getDeviceId } = await import('@/lib/samba/deviceId')
-                await fetchWithAuth(`${apiBase}/api/v1/samba/collector/autotune/leave`, {
+                const dev = getDeviceId()
+                // 본인 PC만 정지 — 다른 PC는 영향 없음
+                const r = await fetchWithAuth(`${apiBase}/api/v1/samba/collector/autotune/stop`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ device_id: getDeviceId() }),
+                  body: JSON.stringify({ device_id: dev }),
                 })
                 window.postMessage({ source: 'samba-page', type: 'AUTOTUNE_SET_JOIN', joined: false }, window.location.origin)
                 setAutotuneRunning(false)
-              } catch { /* ignore */ }
+                falseCountRef.current = 0
+                if (r.ok) {
+                  showAlert('이 PC 오토튠 정지 완료', 'success')
+                } else {
+                  showAlert(`정지 요청 응답 ${r.status} — UI는 정지 상태로 동기화됨`, 'info')
+                }
+              } catch {
+                setAutotuneRunning(false)
+                showAlert('정지 요청 실패 — 백엔드 연결 확인 필요', 'error')
+              }
             }}
             style={{
               padding: '0.25rem 0.75rem',
@@ -806,36 +822,6 @@ export default function WarroomPage() {
               cursor: 'pointer',
             }}
             >작업취소</button>
-          <button
-            onClick={async () => {
-              const { showAlert } = await import('@/components/samba/Modal')
-              try {
-                const { API_BASE_URL: apiBase } = await import('@/config/api')
-                const r = await fetchWithAuth(`${apiBase}/api/v1/samba/collector/autotune/stop`, { method: 'POST' })
-                window.postMessage({ source: 'samba-page', type: 'AUTOTUNE_SET_JOIN', joined: false }, window.location.origin)
-                setAutotuneRunning(false)
-                falseCountRef.current = 0
-                if (r.ok) {
-                  showAlert('오토튠 정지 완료', 'success')
-                } else {
-                  showAlert(`정지 요청 응답 ${r.status} — UI는 정지 상태로 동기화됨`, 'info')
-                }
-              } catch {
-                setAutotuneRunning(false)
-                showAlert('정지 요청 실패 — 백엔드 연결 확인 필요', 'error')
-              }
-            }}
-            style={{
-              padding: '0.25rem 0.75rem',
-              background: 'rgba(239,68,68,0.06)',
-              border: '1px solid rgba(239,68,68,0.5)',
-              borderRadius: '6px',
-              color: '#EF4444',
-              fontSize: '0.8125rem',
-              fontWeight: 700,
-              cursor: 'pointer',
-            }}
-          >전체 중지</button>
             <button
               onClick={handlePriorityToggle}
               style={{

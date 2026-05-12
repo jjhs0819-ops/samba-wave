@@ -138,6 +138,9 @@ export default function ProductsPage() {
   const [imgFiltering, setImgFiltering] = useState(false)
   const [imgFilterScopes, setImgFilterScopes] = useState<Set<string>>(new Set(['detail_images']))
 
+  // 유령삭제 마켓 선택 모달
+  const [ghostChoiceModal, setGhostChoiceModal] = useState(false)
+
   // AI 작업 진행 모달
   const [aiJobModal, setAiJobModal] = useState(false)
   const [aiJobTitle, setAiJobTitle] = useState('')
@@ -891,6 +894,214 @@ export default function ProductsPage() {
     });
   };
 
+  // 유령삭제 — 스마트스토어: Naver엔 있는데 DB 매핑 없는 고아 상품 정리 + DB→Naver 역고아 매핑 정리
+  const runSmartstoreGhostSync = async () => {
+    if (!await showConfirm('스마트스토어 동기화를 실행합니다.\n\n1단계: DB에 없는 Naver 등록 상품(고아 상품) 조회\n2단계: 목록 확인 후 실제 삭제 여부 선택\n\n계속하시겠습니까?')) return
+
+    setAiJobTitle('스마트스토어 동기화')
+    setAiJobLogs(['고아 상품 조회 중... (Naver 상품 전체 페이징 수집 — 수 분 소요)'])
+    setAiJobDone(false)
+    setAiJobModal(true)
+
+    try {
+      const syncAccountId = appliedStatusFilter.startsWith('reg_') ? appliedStatusFilter.replace('reg_', '') : undefined
+      let filteredIds: string[] = []
+      try {
+        const idRes = await collectorApi.getProductIds({
+          search: appliedSearchQ.trim() || undefined,
+          search_type: appliedSearchQ.trim() ? appliedSearchType : undefined,
+          source_site: appliedSiteFilter || undefined,
+          status: appliedStatusFilter || undefined,
+          sold_out_filter: appliedSoldOutFilter || undefined,
+          ai_filter: appliedAiFilter || undefined,
+          search_filter_id: appliedFilterByGroupId || undefined,
+        })
+        filteredIds = idRes.ids ?? []
+      } catch (idErr) {
+        setAiJobLogs([`필터 ID 조회 실패: ${idErr instanceof Error ? idErr.message : String(idErr)}`])
+        setAiJobDone(true)
+        return
+      }
+      const res = await shipmentApi.cleanupSmartstoreOrphans(true, 50, syncAccountId, filteredIds)
+      const dbCount = res.db_no_count ?? 0
+      const staleCount = res.total_stale_db ?? 0
+      const logs: string[] = [
+        syncAccountId ? `계정 필터: ${syncAccountId}` : '전체 계정',
+        `DB 등록 상품: ${fmt(dbCount)}개 (화면 필터)`,
+        `Naver 등록 상품: ${fmt(res.total_naver)}개`,
+        `Naver→DB 고아: ${fmt(res.total_orphans)}개 (Naver엔 있는데 DB 매핑 없음)`,
+        `DB→Naver 역고아: ${fmt(staleCount)}개 (DB엔 판매중인데 Naver에 없음)`,
+        '',
+      ]
+      for (const a of res.accounts) {
+        if (a.error) {
+          logs.push(`[${a.account_id}] ${a.error}`)
+          continue
+        }
+        const failedPages = a.failed_pages ?? []
+        const totalP = a.total_pages ?? 0
+        const fpSuffix = failedPages.length > 0
+          ? ` ⚠ 페이지 누락 ${fmt(failedPages.length)}/${fmt(totalP)}`
+          : ''
+        logs.push(`[${a.account_id}] Naver ${fmt(a.naver_count ?? 0)}개 / 고아 ${fmt(a.orphan_count ?? 0)}개 / 역고아 ${fmt(a.stale_db_count ?? 0)}개${fpSuffix}`)
+        for (const o of (a.orphans ?? []).slice(0, 30)) {
+          logs.push(`  [고아] ${o.origin_no}  ${o.name}`)
+        }
+        if ((a.orphans?.length ?? 0) > 30) {
+          logs.push(`  ... 외 ${(a.orphans!.length - 30).toLocaleString()}개`)
+        }
+        for (const s of (a.stale_db ?? []).slice(0, 30)) {
+          const sid = s.site_product_id ? ` 상품번호=${s.site_product_id}` : ''
+          logs.push(`  [역고아]${sid}  originNo=${s.mapped_origin_no}  ${s.product_name}  (style=${s.style_code})`)
+        }
+        if ((a.stale_db?.length ?? 0) > 30) {
+          logs.push(`  ... 외 ${(a.stale_db!.length - 30).toLocaleString()}개`)
+        }
+      }
+      setAiJobLogs(logs)
+      setAiJobDone(true)
+
+      if (res.total_orphans === 0 && staleCount === 0) {
+        logs.push('', '고아/역고아 상품이 없습니다.')
+        setAiJobLogs([...logs])
+        return
+      }
+
+      const totalToDelete = res.total_orphans
+      const estSec = Math.ceil(totalToDelete * 0.4)
+      const staleN = res.total_stale_db ?? 0
+      const staleMsg = staleN > 0 ? `\n+ 역고아 ${fmt(staleN)}개 DB 매핑 자동 정리 (Naver 호출 없음)` : ''
+      if (!await showConfirm(`고아 상품 ${fmt(totalToDelete)}개를 전부 삭제하시겠습니까?\n(예상 소요 ${fmt(estSec)}초 — 호출당 0.3초 throttle + 429 재시도)${staleMsg}`)) {
+        logs.push('', '삭제 취소됨.')
+        setAiJobLogs([...logs])
+        return
+      }
+
+      logs.push('', `삭제 실행 중... (${fmt(totalToDelete)}개, 예상 ${fmt(estSec)}초)`)
+      setAiJobLogs([...logs])
+      setAiJobDone(false)
+
+      const del = await shipmentApi.cleanupSmartstoreOrphans(false, totalToDelete, syncAccountId, filteredIds)
+      logs.push(`고아 삭제 완료: ${fmt(del.total_deleted)}개`)
+      if ((del.total_stale_cleared ?? 0) > 0) {
+        logs.push(`역고아 DB 매핑 정리: ${fmt(del.total_stale_cleared!)}개`)
+      }
+      for (const a of del.accounts) {
+        if (a.failed && a.failed.length > 0) {
+          logs.push(`[${a.account_id}] 실패 ${fmt(a.failed.length)}건:`)
+          for (const f of a.failed.slice(0, 10)) {
+            logs.push(`  - ${f.origin_no}: ${f.error}`)
+          }
+        }
+      }
+      if (del.total_orphans > del.total_deleted) {
+        logs.push('', `남은 고아 상품 ${fmt(del.total_orphans - del.total_deleted)}개 — 동기화 다시 실행하세요.`)
+      }
+      setAiJobLogs([...logs])
+    } catch (e) {
+      setAiJobLogs(prev => [...prev, '', `실패: ${e instanceof Error ? e.message : String(e)}`])
+    }
+    setAiJobDone(true)
+  }
+
+  // 유령삭제 — 11번가: registered만 있고 prdNo 없는 매핑 정리 (sellerPrdCd 역조회 → 판매중지 또는 DB 정리)
+  const runElevenstGhostMissing = async () => {
+    if (!await showConfirm('11번가 유령정리를 실행합니다.\n\nDB에 "11번가 등록됨"으로 표시되지만 상품번호(prdNo)가 비어있는 매핑을 찾아 정리합니다.\n\n1단계: 11번가 셀러상품코드로 역조회 (살아있음/판매종료/미존재 분류)\n2단계: 살아있으면 판매중지 + DB 정리, 죽었으면 DB만 정리\n\n계속하시겠습니까?')) return
+
+    setAiJobTitle('11번가 유령정리 (prdNo 누락)')
+    setAiJobLogs(['대상 조회 중...'])
+    setAiJobDone(false)
+    setAiJobModal(true)
+
+    try {
+      const syncAccountId = appliedStatusFilter.startsWith('reg_') ? appliedStatusFilter.replace('reg_', '') : undefined
+      let filteredIds: string[] = []
+      try {
+        const idRes = await collectorApi.getProductIds({
+          search: appliedSearchQ.trim() || undefined,
+          search_type: appliedSearchQ.trim() ? appliedSearchType : undefined,
+          source_site: appliedSiteFilter || undefined,
+          status: appliedStatusFilter || undefined,
+          sold_out_filter: appliedSoldOutFilter || undefined,
+          ai_filter: appliedAiFilter || undefined,
+          search_filter_id: appliedFilterByGroupId || undefined,
+        })
+        filteredIds = idRes.ids ?? []
+      } catch (idErr) {
+        setAiJobLogs([`필터 ID 조회 실패: ${idErr instanceof Error ? idErr.message : String(idErr)}`])
+        setAiJobDone(true)
+        return
+      }
+
+      const res = await shipmentApi.cleanupElevenstMissingPrdno(true, 500, syncAccountId, filteredIds)
+      const logs: string[] = [
+        syncAccountId ? `계정 필터: ${syncAccountId}` : '전체 11번가 계정',
+        `점검 대상: ${fmt(res.total_checked)}개`,
+        `  살아있음(판매중): ${fmt(res.total_alive)}개 → 판매중지 후 DB 정리 예정`,
+        `  판매종료: ${fmt(res.total_dead)}개 → DB만 정리 예정`,
+        `  11번가에도 없음: ${fmt(res.total_missing)}개 → DB만 정리 예정`,
+        `  실패: ${fmt(res.total_failed)}개`,
+        '',
+      ]
+      for (const a of res.accounts) {
+        if (a.error) {
+          logs.push(`[${a.account_id}] ${a.error}`)
+          continue
+        }
+        logs.push(`[${a.label || a.account_id}] 점검 ${fmt(a.checked ?? 0)} / 살아있음 ${fmt(a.alive_count ?? 0)} / 종료 ${fmt(a.dead_count ?? 0)} / 미존재 ${fmt(a.missing_count ?? 0)} / 실패 ${fmt(a.failed_count ?? 0)}`)
+        for (const it of (a.alive ?? []).slice(0, 30)) {
+          logs.push(`  [살아있음] prdNo=${it.prd_no}  ${it.name}  (${it.sel_stat_nm || it.sel_stat_cd})`)
+        }
+        if ((a.alive?.length ?? 0) > 30) logs.push(`  ... 외 ${((a.alive?.length ?? 0) - 30).toLocaleString()}개`)
+        for (const it of (a.dead ?? []).slice(0, 20)) {
+          logs.push(`  [종료] prdNo=${it.prd_no}  ${it.name}  (${it.sel_stat_nm || it.sel_stat_cd})`)
+        }
+        for (const it of (a.missing ?? []).slice(0, 20)) {
+          logs.push(`  [미존재] sellerCode=${it.seller_code}  ${it.name}`)
+        }
+        for (const f of (a.failed ?? []).slice(0, 10)) {
+          logs.push(`  [실패] ${f.product_id}: ${f.error}`)
+        }
+      }
+      setAiJobLogs(logs)
+      setAiJobDone(true)
+
+      const totalToProcess = res.total_alive + res.total_dead + res.total_missing
+      if (totalToProcess === 0) {
+        logs.push('', '정리할 유령 매핑이 없습니다.')
+        setAiJobLogs([...logs])
+        return
+      }
+      const estSec = Math.ceil(res.total_alive * 0.8 + (res.total_dead + res.total_missing) * 0.1)
+      if (!await showConfirm(`총 ${fmt(totalToProcess)}건을 정리하시겠습니까?\n- 살아있음 ${fmt(res.total_alive)}건: 11번가 판매중지 + DB 정리\n- 종료 ${fmt(res.total_dead)}건: DB만 정리\n- 미존재 ${fmt(res.total_missing)}건: DB만 정리\n\n예상 소요 ${fmt(estSec)}초 (호출당 0.4초 throttle)`)) {
+        logs.push('', '정리 취소됨.')
+        setAiJobLogs([...logs])
+        return
+      }
+
+      logs.push('', `정리 실행 중... (${fmt(totalToProcess)}건, 예상 ${fmt(estSec)}초)`)
+      setAiJobLogs([...logs])
+      setAiJobDone(false)
+
+      const del = await shipmentApi.cleanupElevenstMissingPrdno(false, 500, syncAccountId, filteredIds)
+      logs.push(`복구(판매중지+DB정리): ${fmt(del.total_recovered)}건`)
+      logs.push(`DB 매핑 정리: ${fmt(del.total_db_cleared)}건`)
+      if (del.total_failed > 0) logs.push(`실패: ${fmt(del.total_failed)}건`)
+      for (const a of del.accounts) {
+        if (a.failed && a.failed.length > 0) {
+          logs.push(`[${a.label || a.account_id}] 실패 ${fmt(a.failed.length)}건:`)
+          for (const f of a.failed.slice(0, 10)) {
+            logs.push(`  - ${f.product_id}: ${f.error}`)
+          }
+        }
+      }
+      setAiJobLogs([...logs])
+    } catch (e) {
+      setAiJobLogs(prev => [...prev, '', `실패: ${e instanceof Error ? e.message : String(e)}`])
+    }
+    setAiJobDone(true)
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
       {/* AI 작업 진행 모달 */}
@@ -978,6 +1189,62 @@ export default function ProductsPage() {
                 padding: '7px 16px', borderRadius: '6px', border: 'none',
                 background: '#FF6B6B', color: '#FFF', cursor: 'pointer', fontWeight: 700,
               }}>삭제 실행</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {ghostChoiceModal && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 99999,
+            background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+          onClick={() => setGhostChoiceModal(false)}
+        >
+          <div
+            style={{
+              background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px',
+              width: '420px', padding: '20px',
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#E5E5E5', marginBottom: '8px' }}>유령삭제 — 마켓 선택</div>
+            <div style={{ fontSize: '0.78rem', color: '#888', marginBottom: '14px', lineHeight: 1.5 }}>
+              마켓에는 등록되어 있지만 DB 매핑이 끊긴 상품을 정리합니다.<br />
+              점검할 마켓을 선택하세요. (화면 필터가 적용된 상품 범위에서만 점검)
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <button
+                onClick={() => { setGhostChoiceModal(false); runSmartstoreGhostSync() }}
+                style={{
+                  padding: '10px 14px', fontSize: '0.82rem', fontWeight: 600,
+                  border: '1px solid #3D3D3D', borderRadius: '8px', color: '#E5E5E5',
+                  background: 'rgba(80,140,255,0.15)', cursor: 'pointer', textAlign: 'left',
+                }}
+              >
+                스마트스토어<br />
+                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>Naver엔 있는데 DB 매핑 없는 고아 상품 + 역고아 정리</span>
+              </button>
+              <button
+                onClick={() => { setGhostChoiceModal(false); runElevenstGhostMissing() }}
+                style={{
+                  padding: '10px 14px', fontSize: '0.82rem', fontWeight: 600,
+                  border: '1px solid #3D3D3D', borderRadius: '8px', color: '#E5E5E5',
+                  background: 'rgba(255,140,80,0.15)', cursor: 'pointer', textAlign: 'left',
+                }}
+              >
+                11번가<br />
+                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>DB에 "등록됨"이지만 prdNo 누락된 매핑 → 셀러상품코드로 역조회 후 정리</span>
+              </button>
+              <button
+                onClick={() => setGhostChoiceModal(false)}
+                style={{
+                  padding: '8px 14px', fontSize: '0.78rem',
+                  border: '1px solid #3D3D3D', borderRadius: '8px', color: '#888',
+                  background: 'transparent', cursor: 'pointer', marginTop: '4px',
+                }}
+              >취소</button>
             </div>
           </div>
         </div>
@@ -2119,116 +2386,8 @@ export default function ProductsPage() {
             }}
           >강제삭제</button>
           <button
-            onClick={async () => {
-              if (!await showConfirm('스마트스토어 동기화를 실행합니다.\n\n1단계: DB에 없는 Naver 등록 상품(고아 상품) 조회\n2단계: 목록 확인 후 실제 삭제 여부 선택\n\n계속하시겠습니까?')) return
-
-              setAiJobTitle('스마트스토어 동기화')
-              setAiJobLogs(['고아 상품 조회 중... (Naver 상품 전체 페이징 수집 — 수 분 소요)'])
-              setAiJobDone(false)
-              setAiJobModal(true)
-
-              try {
-                const syncAccountId = appliedStatusFilter.startsWith('reg_') ? appliedStatusFilter.replace('reg_', '') : undefined
-                // 화면 필터에 매칭되는 모든 product_id 조회 (8,785개) — 백엔드 분석 범위 한정
-                let filteredIds: string[] = []
-                try {
-                  const idRes = await collectorApi.getProductIds({
-                    search: appliedSearchQ.trim() || undefined,
-                    search_type: appliedSearchQ.trim() ? appliedSearchType : undefined,
-                    source_site: appliedSiteFilter || undefined,
-                    status: appliedStatusFilter || undefined,
-                    sold_out_filter: appliedSoldOutFilter || undefined,
-                    ai_filter: appliedAiFilter || undefined,
-                    search_filter_id: appliedFilterByGroupId || undefined,
-                  })
-                  filteredIds = idRes.ids ?? []
-                } catch (idErr) {
-                  setAiJobLogs([`필터 ID 조회 실패: ${idErr instanceof Error ? idErr.message : String(idErr)}`])
-                  setAiJobDone(true)
-                  return
-                }
-                const res = await shipmentApi.cleanupSmartstoreOrphans(true, 50, syncAccountId, filteredIds)
-                const dbCount = res.db_no_count ?? 0
-                const staleCount = res.total_stale_db ?? 0
-                const logs: string[] = [
-                  syncAccountId ? `계정 필터: ${syncAccountId}` : '전체 계정',
-                  `DB 등록 상품: ${fmt(dbCount)}개 (화면 필터)`,
-                  `Naver 등록 상품: ${fmt(res.total_naver)}개`,
-                  `Naver→DB 고아: ${fmt(res.total_orphans)}개 (Naver엔 있는데 DB 매핑 없음)`,
-                  `DB→Naver 역고아: ${fmt(staleCount)}개 (DB엔 판매중인데 Naver에 없음)`,
-                  '',
-                ]
-                for (const a of res.accounts) {
-                  if (a.error) {
-                    logs.push(`[${a.account_id}] ${a.error}`)
-                    continue
-                  }
-                  const failedPages = a.failed_pages ?? []
-                  const totalP = a.total_pages ?? 0
-                  const fpSuffix = failedPages.length > 0
-                    ? ` ⚠ 페이지 누락 ${fmt(failedPages.length)}/${fmt(totalP)}`
-                    : ''
-                  logs.push(`[${a.account_id}] Naver ${fmt(a.naver_count ?? 0)}개 / 고아 ${fmt(a.orphan_count ?? 0)}개 / 역고아 ${fmt(a.stale_db_count ?? 0)}개${fpSuffix}`)
-                  for (const o of (a.orphans ?? []).slice(0, 30)) {
-                    logs.push(`  [고아] ${o.origin_no}  ${o.name}`)
-                  }
-                  if ((a.orphans?.length ?? 0) > 30) {
-                    logs.push(`  ... 외 ${(a.orphans!.length - 30).toLocaleString()}개`)
-                  }
-                  for (const s of (a.stale_db ?? []).slice(0, 30)) {
-                    const sid = s.site_product_id ? ` 상품번호=${s.site_product_id}` : ''
-                    logs.push(`  [역고아]${sid}  originNo=${s.mapped_origin_no}  ${s.product_name}  (style=${s.style_code})`)
-                  }
-                  if ((a.stale_db?.length ?? 0) > 30) {
-                    logs.push(`  ... 외 ${(a.stale_db!.length - 30).toLocaleString()}개`)
-                  }
-                }
-                setAiJobLogs(logs)
-                setAiJobDone(true)
-
-                if (res.total_orphans === 0 && staleCount === 0) {
-                  logs.push('', '고아/역고아 상품이 없습니다.')
-                  setAiJobLogs([...logs])
-                  return
-                }
-
-                const totalToDelete = res.total_orphans
-                const estSec = Math.ceil(totalToDelete * 0.4)
-                const staleN = res.total_stale_db ?? 0
-                const staleMsg = staleN > 0 ? `\n+ 역고아 ${fmt(staleN)}개 DB 매핑 자동 정리 (Naver 호출 없음)` : ''
-                if (!await showConfirm(`고아 상품 ${fmt(totalToDelete)}개를 전부 삭제하시겠습니까?\n(예상 소요 ${fmt(estSec)}초 — 호출당 0.3초 throttle + 429 재시도)${staleMsg}`)) {
-                  logs.push('', '삭제 취소됨.')
-                  setAiJobLogs([...logs])
-                  return
-                }
-
-                logs.push('', `삭제 실행 중... (${fmt(totalToDelete)}개, 예상 ${fmt(estSec)}초)`)
-                setAiJobLogs([...logs])
-                setAiJobDone(false)
-
-                const del = await shipmentApi.cleanupSmartstoreOrphans(false, totalToDelete, syncAccountId, filteredIds)
-                logs.push(`고아 삭제 완료: ${fmt(del.total_deleted)}개`)
-                if ((del.total_stale_cleared ?? 0) > 0) {
-                  logs.push(`역고아 DB 매핑 정리: ${fmt(del.total_stale_cleared!)}개`)
-                }
-                for (const a of del.accounts) {
-                  if (a.failed && a.failed.length > 0) {
-                    logs.push(`[${a.account_id}] 실패 ${fmt(a.failed.length)}건:`)
-                    for (const f of a.failed.slice(0, 10)) {
-                      logs.push(`  - ${f.origin_no}: ${f.error}`)
-                    }
-                  }
-                }
-                if (del.total_orphans > del.total_deleted) {
-                  logs.push('', `남은 고아 상품 ${fmt(del.total_orphans - del.total_deleted)}개 — 동기화 다시 실행하세요.`)
-                }
-                setAiJobLogs([...logs])
-              } catch (e) {
-                setAiJobLogs(prev => [...prev, '', `실패: ${e instanceof Error ? e.message : String(e)}`])
-              }
-              setAiJobDone(true)
-            }}
-            title="삼바에는 판매처 등록되어 있지 않은데 판매처에 등록된 상품 삭제"
+            onClick={() => setGhostChoiceModal(true)}
+            title="마켓에는 등록되어 있지만 DB 매핑이 끊어진 유령 상품 정리 (스스/11번가 선택)"
             style={{
               fontSize: "0.78rem", padding: "4px 12px",
               border: "1px solid #3D3D3D", borderRadius: "5px",

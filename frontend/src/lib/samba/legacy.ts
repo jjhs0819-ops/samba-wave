@@ -783,10 +783,10 @@ export const collectorApi = {
     request<{ ok: boolean; status: string; error?: string }>(`${SAMBA_PREFIX}/collector/autotune/start`, { method: 'POST', body: JSON.stringify({ target, target_product_no: targetProductNo || undefined, device_id: deviceId || undefined }) }),
   autotuneRefreshOne: (productNo: string) =>
     request<{ ok: boolean; error?: string; product_id?: string; brand?: string; name?: string; time?: string; status?: string; detail?: string }>(`${SAMBA_PREFIX}/collector/autotune/refresh-one`, { method: 'POST', body: JSON.stringify({ product_no: productNo }) }),
-  autotuneStop: () =>
-    request<{ ok: boolean; status: string }>(`${SAMBA_PREFIX}/collector/autotune/stop`, { method: 'POST' }),
-  autotuneStatus: () =>
-    request<{ running: boolean; last_tick: string | null; cycle_count: number; restart_count: number; target: string; refreshed_count: number; breaker_tripped: Record<string, number>; site_intervals?: Record<string, number>; site_autotune_concurrency?: Record<string, number>; traffic?: { collecting: boolean; transmitting: boolean; busy: boolean } }>(`${SAMBA_PREFIX}/collector/autotune/status`),
+  autotuneStop: (deviceId?: string) =>
+    request<{ ok: boolean; status: string }>(`${SAMBA_PREFIX}/collector/autotune/stop`, { method: 'POST', body: JSON.stringify({ device_id: deviceId || undefined }) }),
+  autotuneStatus: (deviceId?: string) =>
+    request<{ running: boolean; last_tick: string | null; cycle_count: number; restart_count: number; target: string; refreshed_count: number; breaker_tripped: Record<string, number>; site_intervals?: Record<string, number>; site_autotune_concurrency?: Record<string, number>; running_pcs?: string[]; traffic?: { collecting: boolean; transmitting: boolean; busy: boolean } }>(`${SAMBA_PREFIX}/collector/autotune/status${deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : ''}`),
   autotuneUpdateInterval: (site: string, interval: number) =>
     request<{ ok: boolean; site: string; interval: number }>(`${SAMBA_PREFIX}/collector/autotune/interval`, { method: 'POST', body: JSON.stringify({ site, interval }) }),
   autotuneGetConcurrency: () =>
@@ -984,6 +984,45 @@ export const shipmentApi = {
         error?: string
       }[]
     }>(`${SAMBA_PREFIX}/shipments/smartstore/cleanup-orphans?${params.toString()}`, {
+      method: 'POST',
+      body: JSON.stringify({ product_ids: productIds && productIds.length > 0 ? productIds : null }),
+    })
+  },
+
+  // 11번가 prdNo 누락 매핑 정리 (registered만 있고 prdNo 없는 케이스)
+  cleanupElevenstMissingPrdno: (dryRun = true, maxCheck = 500, accountId?: string, productIds?: string[]) => {
+    const params = new URLSearchParams()
+    params.set('dry_run', String(dryRun))
+    params.set('max_check', String(maxCheck))
+    if (accountId) params.set('account_id', accountId)
+    return request<{
+      ok: boolean
+      dry_run: boolean
+      max_check: number
+      total_checked: number
+      total_alive: number
+      total_dead: number
+      total_missing: number
+      total_recovered: number
+      total_db_cleared: number
+      total_failed: number
+      accounts: {
+        account_id: string
+        label?: string
+        error?: string
+        checked?: number
+        alive_count?: number
+        alive?: { product_id: string; name: string; seller_code: string; prd_no: string; sel_stat_cd: string; sel_stat_nm: string }[]
+        dead_count?: number
+        dead?: { product_id: string; name: string; seller_code: string; prd_no: string; sel_stat_cd: string; sel_stat_nm: string }[]
+        missing_count?: number
+        missing?: { product_id: string; name: string; seller_code: string; prd_no: string; sel_stat_cd: string; sel_stat_nm: string }[]
+        recovered_count?: number
+        db_cleared_count?: number
+        failed_count?: number
+        failed?: { product_id: string; error: string }[]
+      }[]
+    }>(`${SAMBA_PREFIX}/shipments/elevenst/cleanup-missing-prdno?${params.toString()}`, {
       method: 'POST',
       body: JSON.stringify({ product_ids: productIds && productIds.length > 0 ? productIds : null }),
     })

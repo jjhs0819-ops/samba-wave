@@ -6019,7 +6019,8 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
         "product_id": str(item.get("spdNo", "") or ""),
         "product_name": item.get("spdNm", "") or "",
         "product_option": item.get("sitmNm", "") or "",
-        "quantity": int(item.get("odQty", 1) or 1),
+        # 롯데ON 주문 응답 수량 필드는 slQty(판매 수량) — odQty는 존재하지 않아 폴백값 1로 박혔던 버그
+        "quantity": int(item.get("slQty") or item.get("odQty") or 1),
         "sale_price": int(item.get("slAmt", 0) or item.get("slPrc", 0) or 0),
         "cost": 0,
         "status": status,

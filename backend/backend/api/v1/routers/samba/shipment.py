@@ -665,6 +665,278 @@ async def cleanup_elevenst_orphans(
     }
 
 
+@router.post("/elevenst/cleanup-missing-prdno")
+async def cleanup_elevenst_missing_prdno(
+    body: ElevenstCleanupRequest = ElevenstCleanupRequest(),
+    dry_run: bool = Query(
+        True, description="true면 조회만, false면 실제 판매중지+DB정리"
+    ),
+    account_id: Optional[str] = Query(
+        None, description="특정 계정만 (미지정 시 모든 11번가 계정)"
+    ),
+    max_check: int = Query(500, ge=1, le=20000, description="계정당 점검 최대 상품 수"),
+    session: AsyncSession = Depends(get_write_session_dependency),
+    admin: str = Depends(require_admin),
+):
+    """11번가 prdNo 누락 매핑 정리.
+
+    상황: registered_accounts에는 11번가 계정이 있는데, market_product_nos에 prdNo가
+    저장 안 된 케이스. 등록 도중 응답 미수신 또는 과거 ghost 방지 패치 이전 데이터.
+
+    절차:
+    1) sellerPrdCd(=samba product.id)로 11번가 sellerprodcode API 역조회
+    2) selStatCd=103(판매중) → prdNo 복구 + 판매중지(stopdisplay) 호출 + DB 정리
+    3) selStatCd=104/105/106/108 → 이미 판매 종료 상태, DB만 정리
+    4) 11번가에도 없음(404) → DB만 정리
+    """
+    from sqlalchemy.orm.attributes import flag_modified
+    from sqlmodel import select
+
+    from backend.domain.samba.account.model import SambaMarketAccount
+    from backend.domain.samba.collector.model import SambaCollectedProduct
+    from backend.domain.samba.proxy.elevenst import (
+        ElevenstApiError,
+        ElevenstClient,
+        ElevenstRateLimitError,
+    )
+
+    # 1) 11번가 계정 조회
+    q = select(SambaMarketAccount).where(
+        SambaMarketAccount.market_type == "11st",
+        SambaMarketAccount.is_active == True,  # noqa: E712
+    )
+    if account_id:
+        q = q.where(SambaMarketAccount.id == account_id)
+    accounts = (await session.execute(q)).scalars().all()
+    if not accounts:
+        raise HTTPException(status_code=404, detail="활성 11번가 계정 없음")
+
+    # 판매 종료 상태 코드
+    DEAD_STATS = {"104", "105", "106", "108"}
+
+    per_account: list[dict] = []
+    total_checked = 0
+    total_alive = 0
+    total_dead = 0
+    total_missing = 0
+    total_failed = 0
+    total_recovered = 0  # prdNo 복구 후 판매중지 성공
+    total_db_cleared = 0  # DB 매핑 정리
+
+    for account in accounts:
+        add_f = account.additional_fields or {}
+        api_key = (
+            (add_f.get("apiKey") if isinstance(add_f, dict) else "")
+            or account.api_key
+            or ""
+        )
+        if not api_key:
+            per_account.append(
+                {
+                    "account_id": account.id,
+                    "label": account.account_label,
+                    "error": "API 키 없음",
+                }
+            )
+            continue
+
+        # 2) registered_accounts에 이 계정은 있지만 prdNo 없는 상품 추출
+        prod_q = select(SambaCollectedProduct).where(
+            SambaCollectedProduct.registered_accounts.op("@>")([account.id])
+        )
+        if body.product_ids:
+            prod_q = prod_q.where(SambaCollectedProduct.id.in_(body.product_ids))
+        products = (await session.execute(prod_q)).scalars().all()
+
+        targets: list[SambaCollectedProduct] = []
+        for p in products:
+            nos = p.market_product_nos or {}
+            v = nos.get(account.id)
+            prd_no = ""
+            if isinstance(v, str):
+                prd_no = v.strip()
+            elif isinstance(v, dict):
+                prd_no = str(v.get("prdNo") or v.get("productNo") or "").strip()
+            if not prd_no:
+                targets.append(p)
+            if len(targets) >= max_check:
+                break
+
+        client = ElevenstClient(api_key)
+        alive_items: list[dict] = []  # 살아있음 → 판매중지 대상
+        dead_items: list[dict] = []  # 이미 판매종료 → DB만 정리
+        missing_items: list[dict] = []  # 11번가에도 없음 → DB만 정리
+        failed: list[dict] = []
+        recovered_ids: list[str] = []
+        db_cleared_ids: list[str] = []
+
+        for prod in targets:
+            seller_code = str(prod.id)
+            try:
+                info = await client.find_by_seller_code(seller_code)
+            except ElevenstRateLimitError as e:
+                logger.warning(
+                    f"[유령정리-누락][11번가] {account.id} rate limit 중단: {e}"
+                )
+                failed.append({"product_id": prod.id, "error": "rate_limit"})
+                break
+            except ElevenstApiError as e:
+                failed.append({"product_id": prod.id, "error": str(e)[:120]})
+                await asyncio.sleep(0.4)
+                continue
+            except Exception as e:
+                failed.append({"product_id": prod.id, "error": str(e)[:120]})
+                await asyncio.sleep(0.4)
+                continue
+
+            entry = {
+                "product_id": prod.id,
+                "name": (prod.name or "")[:60],
+                "seller_code": seller_code,
+                "prd_no": info.get("prd_no", ""),
+                "sel_stat_cd": info.get("sel_stat_cd", ""),
+                "sel_stat_nm": info.get("sel_stat_nm", ""),
+            }
+
+            if not info.get("found"):
+                missing_items.append(entry)
+            elif info.get("sel_stat_cd") in DEAD_STATS:
+                dead_items.append(entry)
+            else:
+                # 판매중(103) 또는 그 외 → 살아있음으로 간주
+                alive_items.append(entry)
+
+            await asyncio.sleep(0.4)  # ~2.5 RPS
+
+        # 3) dry_run=false 일 때 실제 처리
+        if not dry_run:
+            # 3-1) 살아있는 케이스 → prdNo DB 저장 후 stopdisplay 호출 후 DB 정리
+            for item in list(alive_items):
+                pid = item["product_id"]
+                prd_no = item["prd_no"]
+                prod = next((p for p in targets if p.id == pid), None)
+                if prod is None or not prd_no:
+                    continue
+
+                # prdNo 일단 DB에 기록 (중단 시에도 다음 시도에 활용)
+                nos = dict(prod.market_product_nos or {})
+                nos[account.id] = prd_no
+                prod.market_product_nos = nos
+                flag_modified(prod, "market_product_nos")
+                session.add(prod)
+                await session.commit()
+
+                # 판매중지 호출
+                try:
+                    await client.delete_product(prd_no)
+                    recovered_ids.append(pid)
+                except ElevenstRateLimitError as e:
+                    logger.warning(
+                        f"[유령정리-누락][11번가] stopdisplay rate limit {pid}: {e}"
+                    )
+                    failed.append({"product_id": pid, "error": "rate_limit"})
+                    break
+                except ElevenstApiError as e:
+                    msg = str(e)
+                    # 이미 죽은 상태로 응답하면 dead로 격하
+                    if "삭제된 상품" in msg or "존재하지 않는 상품" in msg:
+                        dead_items.append(item)
+                    else:
+                        failed.append({"product_id": pid, "error": msg[:120]})
+                        await asyncio.sleep(0.4)
+                        continue
+                except Exception as e:
+                    failed.append({"product_id": pid, "error": str(e)[:120]})
+                    await asyncio.sleep(0.4)
+                    continue
+
+                # 판매중지 성공 → DB 매핑 제거
+                nos2 = dict(prod.market_product_nos or {})
+                for k in (account.id, f"{account.id}_origin"):
+                    nos2.pop(k, None)
+                prod.market_product_nos = nos2
+                flag_modified(prod, "market_product_nos")
+                regs = [a for a in (prod.registered_accounts or []) if a != account.id]
+                prod.registered_accounts = regs
+                flag_modified(prod, "registered_accounts")
+                session.add(prod)
+                await session.commit()
+                db_cleared_ids.append(pid)
+                await asyncio.sleep(0.4)
+
+            # 3-2) 이미 죽은 케이스 + 11번가에도 없는 케이스 → DB만 정리
+            for bucket in (dead_items, missing_items):
+                for item in bucket:
+                    pid = item["product_id"]
+                    prod = next((p for p in targets if p.id == pid), None)
+                    if prod is None:
+                        continue
+                    nos2 = dict(prod.market_product_nos or {})
+                    changed = False
+                    for k in (account.id, f"{account.id}_origin"):
+                        if k in nos2:
+                            nos2.pop(k, None)
+                            changed = True
+                    if changed:
+                        prod.market_product_nos = nos2
+                        flag_modified(prod, "market_product_nos")
+                    regs_old = list(prod.registered_accounts or [])
+                    if account.id in regs_old:
+                        prod.registered_accounts = [
+                            a for a in regs_old if a != account.id
+                        ]
+                        flag_modified(prod, "registered_accounts")
+                        changed = True
+                    if changed:
+                        session.add(prod)
+                        db_cleared_ids.append(pid)
+            if db_cleared_ids:
+                await session.commit()
+                logger.warning(
+                    f"[유령정리-누락][11번가] {account.id} 복구 {len(recovered_ids)} / DB정리 {len(db_cleared_ids)}"
+                )
+
+        total_checked += len(targets)
+        total_alive += len(alive_items)
+        total_dead += len(dead_items)
+        total_missing += len(missing_items)
+        total_failed += len(failed)
+        total_recovered += len(recovered_ids)
+        total_db_cleared += len(db_cleared_ids)
+
+        per_account.append(
+            {
+                "account_id": account.id,
+                "label": account.account_label,
+                "checked": len(targets),
+                "alive_count": len(alive_items),
+                "alive": alive_items[:100],
+                "dead_count": len(dead_items),
+                "dead": dead_items[:100],
+                "missing_count": len(missing_items),
+                "missing": missing_items[:100],
+                "recovered_count": len(recovered_ids),
+                "db_cleared_count": len(db_cleared_ids),
+                "failed_count": len(failed),
+                "failed": failed[:50],
+            }
+        )
+
+    return {
+        "ok": True,
+        "dry_run": dry_run,
+        "max_check": max_check,
+        "total_checked": total_checked,
+        "total_alive": total_alive,
+        "total_dead": total_dead,
+        "total_missing": total_missing,
+        "total_recovered": total_recovered,
+        "total_db_cleared": total_db_cleared,
+        "total_failed": total_failed,
+        "accounts": per_account,
+    }
+
+
 @router.get("")
 async def list_shipments(
     skip: int = Query(0, ge=0),

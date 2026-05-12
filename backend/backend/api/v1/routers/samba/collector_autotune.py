@@ -1,9 +1,16 @@
-"""SambaWave Collector — 자동조율(오토튠) 엔드포인트."""
+"""SambaWave Collector — 자동조율(오토튠) 엔드포인트.
+
+PC별 독립 인스턴스 모델 (2026-05-12):
+  - 각 PC가 자기 device_id를 키로 자기 인스턴스를 가짐
+  - 시작/중지/사이클/잡 발행 모두 PC 단위로 분리
+  - 같은 사이트를 두 PC가 동시 처리 가능 (중복 갱신은 멱등)
+  - 잡 발행 시 owner_device_id=발행자_PC로 박혀서 다른 PC가 가로채지 못함
+"""
 
 import asyncio
+import contextvars
 import logging
 import os
-import threading
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -25,17 +32,29 @@ router = APIRouter(prefix="/collector", tags=["samba-collector"])
 
 
 # ══════════════════════════════════════════════════════════════
-# 오토튠 백그라운드 루프 (무한 반복)
+# 오토튠 백그라운드 루프 — PC별 독립 인스턴스
 # ══════════════════════════════════════════════════════════════
 
-_autotune_task: Optional[asyncio.Task] = None
-_autotune_running_event = threading.Event()  # 스레드 간 동기화
-_autotune_last_tick: Optional[str] = None
-_autotune_cycle_count = 0
-_autotune_restart_count = 0  # 사이클 재시작 횟수 추적
-_autotune_force_stopped = False  # stop 직후 확장앱 in-flight 작업 즉시 중단용
+# PC별 인스턴스 상태 (key = device_id)
+_pc_running: dict[str, asyncio.Event] = {}
+_pc_main_task: dict[str, asyncio.Task] = {}
+_pc_cycle_count: dict[str, int] = {}
+_pc_restart_count: dict[str, int] = {}
+_pc_last_tick: dict[str, str] = {}
+_pc_site_tasks: dict[str, dict[str, asyncio.Task]] = {}
+_pc_site_cycle_counts: dict[str, dict[str, int]] = {}
+_pc_site_last_ticks: dict[str, dict[str, str]] = {}
+_pc_site_empty_hits: dict[str, dict[str, int]] = {}
+_pc_site_heartbeats: dict[str, dict[str, float]] = {}
+_pc_target_ids: dict[str, Optional[set]] = {}
 
-# 소싱처별 품절 서킷브레이커
+# 잡 발행자 PC를 사이트별/상품별 호출 컨텍스트에 전파 (sourcing_queue.get_autotune_owner가 읽음).
+# 사이트 루프 진입 시 set, 종료 시 reset. PC별 독립 실행 → 컨텍스트 격리 보장.
+current_pc_owner: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "current_pc_owner", default=""
+)
+
+# 소싱처별 품절 서킷브레이커 (사이트 단위 글로벌 — 모든 PC 공유)
 SOLDOUT_BREAK_THRESHOLD = 10  # 연속 품절 N개 → 해당 소싱처 중단
 _site_consecutive_soldout: dict[str, int] = {}  # {소싱처: 연속 품절 수}
 _site_breaker_tripped: dict[str, bool] = {}  # {소싱처: 중단 여부}
@@ -44,21 +63,93 @@ _site_breaker_tripped: dict[str, bool] = {}  # {소싱처: 중단 여부}
 # {product_id: pending_cost}: 이전 사이클에서 감지된 원가 상승값 보관
 _pending_cost_increase: dict[str, float] = {}
 
-# 소싱처별 독립 루프 관리
-_site_tasks: dict[str, asyncio.Task] = {}  # 소싱처별 asyncio 태스크
-_site_cycle_counts: dict[str, int] = {}  # 소싱처별 누적 사이클 수
-_site_last_ticks: dict[str, str] = {}  # 소싱처별 마지막 tick 시간
-_site_empty_hits: dict[str, int] = {}  # 소싱처별 연속 빈 products 횟수
+# 사이트별 연속 빈 결과 cooldown (사이트 단위 글로벌 — 모든 PC 공유)
 SITE_EMPTY_SKIP_THRESHOLD = 3  # N회 연속 빈 결과 시 해당 소싱처 60초 제외
 _site_empty_skip_until: dict[str, float] = {}  # {소싱처: 제외 해제 시각(time.time())}
 
-# Watchdog — stuck 감지/복구
-_site_heartbeats: dict[str, float] = {}  # {소싱처: time.time()}
+# Watchdog
 STUCK_TIMEOUT_SECONDS = 300  # 5분간 heartbeat 없으면 stuck 판정
 MAX_RESTART_COUNT = 50  # 코디네이터 재시작 상한선
 
-# 단일 상품 오토튠 필터 (설정 시 해당 상품만 갱신)
-_autotune_target_ids: Optional[set] = None
+
+def _get_pc_event(dev: str) -> asyncio.Event:
+    """PC별 running event 가져오기/생성."""
+    ev = _pc_running.get(dev)
+    if ev is None:
+        ev = asyncio.Event()
+        _pc_running[dev] = ev
+    return ev
+
+
+def _is_pc_running(dev: str) -> bool:
+    """해당 PC의 오토튠 인스턴스가 실행 중인지."""
+    ev = _pc_running.get(dev)
+    return ev is not None and ev.is_set()
+
+
+def _pc_st(dev: str) -> dict[str, asyncio.Task]:
+    """PC별 site_tasks dict (없으면 생성)."""
+    d = _pc_site_tasks.get(dev)
+    if d is None:
+        d = {}
+        _pc_site_tasks[dev] = d
+    return d
+
+
+def _pc_hb(dev: str) -> dict[str, float]:
+    """PC별 site_heartbeats dict."""
+    d = _pc_site_heartbeats.get(dev)
+    if d is None:
+        d = {}
+        _pc_site_heartbeats[dev] = d
+    return d
+
+
+def _pc_scc(dev: str) -> dict[str, int]:
+    """PC별 site_cycle_counts dict."""
+    d = _pc_site_cycle_counts.get(dev)
+    if d is None:
+        d = {}
+        _pc_site_cycle_counts[dev] = d
+    return d
+
+
+def _pc_slt(dev: str) -> dict[str, str]:
+    """PC별 site_last_ticks dict."""
+    d = _pc_site_last_ticks.get(dev)
+    if d is None:
+        d = {}
+        _pc_site_last_ticks[dev] = d
+    return d
+
+
+def _pc_seh(dev: str) -> dict[str, int]:
+    """PC별 site_empty_hits dict."""
+    d = _pc_site_empty_hits.get(dev)
+    if d is None:
+        d = {}
+        _pc_site_empty_hits[dev] = d
+    return d
+
+
+def _cleanup_pc_instance(dev: str) -> None:
+    """PC 인스턴스 상태 전부 제거 (stop 후 호출)."""
+    _pc_running.pop(dev, None)
+    _pc_main_task.pop(dev, None)
+    _pc_cycle_count.pop(dev, None)
+    _pc_restart_count.pop(dev, None)
+    _pc_last_tick.pop(dev, None)
+    _pc_site_tasks.pop(dev, None)
+    _pc_site_cycle_counts.pop(dev, None)
+    _pc_site_last_ticks.pop(dev, None)
+    _pc_site_empty_hits.pop(dev, None)
+    _pc_site_heartbeats.pop(dev, None)
+    _pc_target_ids.pop(dev, None)
+
+
+def any_pc_running() -> bool:
+    """어떤 PC라도 오토튠 실행 중이면 True."""
+    return any(ev.is_set() for ev in _pc_running.values())
 
 
 # 등급 분류 기준 기간 (일)
@@ -105,15 +196,10 @@ async def _run_transmit_in_background(coro_factory):
 
 
 # PC별 분담 등록: device_id → set of sites this PC will process.
-# - 빈 set = 이 PC는 아무 작업 안 받음 (전체해제)
-# - 미등록 PC = 무관 (백엔드는 등록된 PC들의 합집합만 처리)
-# 폴링 시점에 갱신되며 PC_LAST_SEEN_TTL 동안 폴링 없으면 자동 제거.
+# 폴링 시점에 X-Allowed-Sites 헤더로 갱신, PC_LAST_SEEN_TTL 동안 폴링 없으면 자동 제거.
 _pc_allowed_sites: dict[str, set[str]] = {}
 _pc_last_seen: dict[str, float] = {}
-PC_LAST_SEEN_TTL = 86400.0  # 24시간 — 오토튠 중단까지 등록 유지
-# 현재 오토튠에 합류한 PC 집합 — 시작 시 추가, 개별 중지(leave) 시 제거.
-# 모든 PC가 나가면 오토튠 백엔드 자동 중지.
-_pc_joined_set: set[str] = set()
+PC_LAST_SEEN_TTL = 86400.0  # 24시간
 # 다음 폴링 시 해당 PC에게만 forceStop 신호를 전달할 집합 (개별 중지용)
 _pc_force_stop_set: set[str] = set()
 
@@ -125,11 +211,15 @@ def update_pc_last_seen(device_id: str) -> None:
 
 
 def register_pc_allowed_sites(device_id: str, sites: list[str] | None) -> None:
-    """PC 분담 등록/갱신.
+    """PC 분담 등록/갱신 (UI/폴링용 메타데이터).
 
-    sites=None → PC 등록 자체를 제거 (오토튠 전체에서 빠짐, 합집합 비기여)
-    sites=[] → 등록은 유지하되 빈 set (이 PC는 아무 사이트 안 받음 = 전체해제)
-    sites=[...] → 명시된 사이트만 받음
+    sites=None → 등록 제거
+    sites=[] → 빈 분담 (이 PC는 아무 사이트 안 받음)
+    sites=[...] → 명시 사이트만 받음
+
+    이 등록값은 UI 표시(pc_assignments)와 폴링 X-Allowed-Sites 헤더의 출처일 뿐,
+    실제 오토튠 사이클 active_sites 결정은 시작한 PC의 인스턴스가 자기 사이트만
+    독립적으로 처리하므로 직접적인 영향 없음.
     """
     dev = (device_id or "").strip()
     if not dev:
@@ -140,10 +230,6 @@ def register_pc_allowed_sites(device_id: str, sites: list[str] | None) -> None:
         return
     _pc_allowed_sites[dev] = {s.strip() for s in sites if s and s.strip()}
     _pc_last_seen[dev] = time.time()
-    # 오토튠 실행 중이면 소싱처별 owner 매핑 즉시 재계산
-    # 서버 재시작 후 PC가 재등록할 때 자동으로 owner 매핑 복원됨
-    if _autotune_running_event.is_set():
-        apply_site_owners_from_pc_registry()
 
 
 def get_active_pcs() -> dict[str, set[str]]:
@@ -156,50 +242,13 @@ def get_active_pcs() -> dict[str, set[str]]:
     return {d: sites for d, sites in _pc_allowed_sites.items() if d in _pc_last_seen}
 
 
-def get_union_active_sites() -> set[str] | None:
-    """모든 살아있는 PC의 분담 사이트 합집합. 등록 PC 0개면 None(전체).
-
-    None 반환 = 단일 PC 모드 또는 등록 미사용 → 백엔드는 DB 활성 사이트 모두 처리.
-    set() 반환 = 모든 PC가 빈 분담(전체해제) → 백엔드는 아무것도 처리 안 함.
-    """
-    pcs = get_active_pcs()
-    if not pcs:
+def get_pc_allowed_sites(device_id: str) -> set[str] | None:
+    """해당 PC가 처리할 사이트 집합. 미등록이면 None(=전체)."""
+    dev = (device_id or "").strip()
+    if not dev:
         return None
-    union: set[str] = set()
-    for sites in pcs.values():
-        union |= sites
-    return union
-
-
-def apply_site_owners_from_pc_registry() -> None:
-    """PC 분담 등록 기반으로 소싱처별 ownerDeviceId 자동 설정.
-
-    특정 소싱처를 딱 1개 PC만 담당 → 그 PC로 고정 (다른 PC에서 탭 열림 방지).
-    여러 PC가 동일 소싱처 담당 → owner 미설정 (어느 PC든 처리 가능).
-    오토튠 시작 시 + PC 분담 등록 변경 시마다 호출되어 항상 최신 상태 유지.
-    """
-    from backend.domain.samba.proxy.sourcing_queue import (
-        clear_autotune_owners,
-        set_autotune_owner,
-        set_autotune_owner_for_site,
-    )
-
-    # 기존 매핑 초기화 후 전체 재계산 (stale 매핑 방지)
-    clear_autotune_owners()
-    set_autotune_owner("")
-
     pcs = get_active_pcs()
-    if not pcs:
-        return
-
-    site_pcs: dict[str, list[str]] = {}
-    for dev, sites in pcs.items():
-        for site in sites:
-            site_pcs.setdefault(site, []).append(dev)
-
-    for site, devs in site_pcs.items():
-        if len(devs) == 1:
-            set_autotune_owner_for_site(site, devs[0])
+    return pcs.get(dev)
 
 
 async def _classify_products(session) -> dict[str, int]:
@@ -337,16 +386,21 @@ async def _patch_event_detail(event_id: str, patch: dict) -> None:
         )
 
 
-async def _site_autotune_loop(site: str):
-    """소싱처별 독립 오토튠 루프 — 작업 완료 즉시 다음 사이클 재시작."""
-    log = logging.getLogger("autotune")
-    log.info("[오토튠][%s] 소싱처 루프 시작", site)
+async def _site_autotune_loop(device_id: str, site: str):
+    """소싱처별 독립 오토튠 루프 — 작업 완료 즉시 다음 사이클 재시작.
 
+    device_id: 이 루프 소속 PC. 발행되는 모든 잡의 owner_device_id로 박힘.
+    """
+    log = logging.getLogger("autotune")
+    log.info("[오토튠][%s][%s] 소싱처 루프 시작", device_id[:8], site)
+
+    # 발행자 PC를 컨텍스트에 박아 sourcing_queue.get_autotune_owner가 읽을 수 있게 함
+    _owner_token = current_pc_owner.set(device_id)
     try:
-        while _autotune_running_event.is_set():
+        while _is_pc_running(device_id):
             try:
                 # Watchdog heartbeat 갱신
-                _site_heartbeats[site] = time.time()
+                _pc_hb(device_id)[site] = time.time()
 
                 from backend.domain.samba.emergency import is_emergency_stopped
 
@@ -412,9 +466,10 @@ async def _site_autotune_loop(site: str):
                         _CP.applied_policy_id != None,
                         _CP.source_site == site,
                     ]
-                    # 단일 상품 오토튠 필터
-                    if _autotune_target_ids:
-                        _where.append(_CP.id.in_(_autotune_target_ids))
+                    # 단일 상품 오토튠 필터 (PC별)
+                    _target_ids = _pc_target_ids.get(device_id)
+                    if _target_ids:
+                        _where.append(_CP.id.in_(_target_ids))
                     stmt = (
                         select(_CP)
                         .where(*_where)
@@ -642,13 +697,13 @@ async def _site_autotune_loop(site: str):
                                 _lot_verify_count
 
                             async with _session_lock:
-                                # heartbeat 갱신 — Watchdog stuck 오판 방지
-                                _site_heartbeats[product.source_site or "UNKNOWN"] = (
+                                # heartbeat 갱신 — Watchdog stuck 오판 방지 (PC별)
+                                _pc_hb(device_id)[product.source_site or "UNKNOWN"] = (
                                     time.time()
                                 )
 
                                 if (
-                                    not _autotune_running_event.is_set()
+                                    not _is_pc_running(device_id)
                                     or is_emergency_stopped()
                                 ):
                                     return
@@ -2085,34 +2140,36 @@ async def _site_autotune_loop(site: str):
                             deleted_count,
                         )
                     else:
-                        _site_empty_hits[site] = _site_empty_hits.get(site, 0) + 1
-                        if _site_empty_hits[site] >= SITE_EMPTY_SKIP_THRESHOLD:
+                        _seh = _pc_seh(device_id)
+                        _seh[site] = _seh.get(site, 0) + 1
+                        if _seh[site] >= SITE_EMPTY_SKIP_THRESHOLD:
                             _site_empty_skip_until[site] = time.time() + 60
                             log.info(
                                 "[오토튠][%s] 대상 상품 없음 (%d회 연속) — 60초 제외",
                                 site,
-                                _site_empty_hits[site],
+                                _seh[site],
                             )
-                            _site_empty_hits[site] = 0
+                            _seh[site] = 0
                         else:
                             log.info("[오토튠][%s] 대상 상품 없음 — 루프 종료", site)
                         break
 
-                    _site_empty_hits[site] = 0  # 정상 사이클 → 카운터 리셋
-                    _site_cycle_counts[site] = _site_cycle_counts.get(site, 0) + 1
-                    _site_last_ticks[site] = now.isoformat()
+                    _pc_seh(device_id)[site] = 0  # 정상 사이클 → 카운터 리셋
+                    _scc = _pc_scc(device_id)
+                    _scc[site] = _scc.get(site, 0) + 1
+                    _pc_slt(device_id)[site] = now.isoformat()
                     log.info(
                         "[오토튠][%s] 사이클 완료 (누적 %d회) — 즉시 재시작",
                         site,
-                        _site_cycle_counts.get(site, 0),
+                        _scc.get(site, 0),
                     )
 
             except asyncio.CancelledError:
-                if not _autotune_running_event.is_set():
+                if not _is_pc_running(device_id):
                     log.info("[오토튠][%s] 루프 취소됨 (정상 종료)", site)
                     break
-                # Watchdog에 의해 _site_tasks에서 제거된 경우 → 좀비 루프 방지 종료
-                _my_task = _site_tasks.get(site)
+                # Watchdog에 의해 site_tasks에서 제거된 경우 → 좀비 루프 방지 종료
+                _my_task = _pc_st(device_id).get(site)
                 if _my_task is not asyncio.current_task():
                     log.info(
                         "[오토튠][%s] Watchdog에 의해 교체됨 — 좀비 루프 방지 종료",
@@ -2168,23 +2225,30 @@ async def _site_autotune_loop(site: str):
                 await asyncio.sleep(2)
 
     finally:
-        log.info("[오토튠][%s] 소싱처 루프 종료", site)
+        try:
+            current_pc_owner.reset(_owner_token)
+        except Exception:
+            pass
+        log.info("[오토튠][%s][%s] 소싱처 루프 종료", device_id[:8], site)
 
 
-async def _autotune_loop():
-    """오토튠 코디네이터 — 소싱처별 독립 루프 생성/관리.
+async def _autotune_loop(device_id: str):
+    """오토튠 코디네이터 (PC별) — 이 PC가 처리할 소싱처 루프만 생성/관리.
 
-    공통 작업(등급 분류, 쿠키 갱신)을 수행하고
-    소싱처별 독립 태스크를 생성한다.
-    각 소싱처는 자기 작업이 끝나면 즉시 다음 사이클을 시작한다.
+    이 PC의 _pc_allowed_sites 등록값을 active_sites로 사용.
+    소싱처 루프는 _site_autotune_loop(device_id, site)로 실행되며
+    발행하는 모든 잡에 owner_device_id=이 PC가 박혀서 다른 PC가 가로채지 못함.
     """
-    global _autotune_last_tick, _autotune_cycle_count, _autotune_restart_count
     log = logging.getLogger("autotune")
-    log.info("[오토튠] 코디네이터 시작")
+    _dev_tag = device_id[:8] if device_id else "?"
+    log.info("[오토튠][%s] 코디네이터 시작", _dev_tag)
     _last_logged_active: set[str] = set()  # active_sites 변동 감지용
 
+    # 발행자 PC를 컨텍스트에 박음 (예방 차원 — 사이트 루프에서도 각자 set)
+    _owner_token = current_pc_owner.set(device_id)
+
     try:
-        while _autotune_running_event.is_set():
+        while _is_pc_running(device_id):
             try:
                 # 이전 취소/비상정지 플래그 잔존 방지
                 from backend.domain.samba.collector.refresher import clear_bulk_cancel
@@ -2198,7 +2262,7 @@ async def _autotune_loop():
 
                 if _is_es():
                     clear_emergency_stop()
-                    log.info("[오토튠] 잔존 비상정지 해제")
+                    log.info("[오토튠][%s] 잔존 비상정지 해제", _dev_tag)
 
                 from backend.db.orm import get_write_session
 
@@ -2231,7 +2295,9 @@ async def _autotune_loop():
                         try:
                             await _classify_products(session)
                         except Exception as cls_err:
-                            log.warning("[오토튠] 등급 분류 실패: %s", cls_err)
+                            log.warning(
+                                "[오토튠][%s] 등급 분류 실패: %s", _dev_tag, cls_err
+                            )
 
                     # 활성 소싱처 목록 파악
                     from backend.api.v1.routers.samba.collector_common import (
@@ -2239,10 +2305,6 @@ async def _autotune_loop():
                     )
 
                     market_cond = build_market_registered_conditions(_CP)
-
-                    _enabled_sources = await _get_setting(
-                        session, AUTOTUNE_FILTER_SOURCES_KEY
-                    )
 
                     site_stmt = select(func.distinct(_CP.source_site)).where(
                         *market_cond,
@@ -2253,19 +2315,12 @@ async def _autotune_loop():
                     site_result = await session.execute(site_stmt)
                     active_sites = [r[0] for r in site_result.all() if r[0]]
 
-                    # 소싱처 필터 적용 (legacy 글로벌 필터)
-                    if _enabled_sources and isinstance(_enabled_sources, list):
-                        active_sites = [
-                            s for s in active_sites if s in _enabled_sources
-                        ]
-
-                    # PC별 분담 합집합 적용 — 등록된 PC들의 union으로 제한
-                    # 등록 PC 없음(None) → legacy 동작 유지(active_sites 그대로)
-                    # 등록 PC 있음 → union에 포함된 사이트만 처리
-                    # union이 빈 set → 모든 PC가 전체해제 → active_sites=[]
-                    pc_union = get_union_active_sites()
-                    if pc_union is not None:
-                        active_sites = [s for s in active_sites if s in pc_union]
+                    # 이 PC가 처리할 사이트만 — _pc_allowed_sites 기준
+                    # 미등록(None) → 이 PC가 모든 사이트 처리 (단일 PC 운영)
+                    # 등록됨 → 그 사이트만
+                    my_sites = get_pc_allowed_sites(device_id)
+                    if my_sites is not None:
+                        active_sites = [s for s in active_sites if s in my_sites]
 
                     # 서킷브레이커 제외
                     active_sites = [
@@ -2280,42 +2335,33 @@ async def _autotune_loop():
                         if _now_skip >= _site_empty_skip_until.get(s, 0)
                     ]
 
-                    # PC 분담 상황 로그 (active_sites 변동 시에만)
                     if set(active_sites) != _last_logged_active:
-                        _pcs = get_active_pcs()
-                        _pc_info = (
-                            " / ".join(
-                                f"{d[:12]}→[{','.join(sorted(s)) or '전체해제'}]"
-                                for d, s in _pcs.items()
-                            )
-                            if _pcs
-                            else "미등록(레거시모드)"
-                        )
                         log.info(
-                            "[오토튠] PC분담: %s | union=%s | enabled_sources=%s | active_sites=%s",
-                            _pc_info,
-                            sorted(pc_union) if pc_union is not None else "전체",
-                            sorted(_enabled_sources) if _enabled_sources else "전체",
+                            "[오토튠][%s] active_sites=%s (allowed=%s)",
+                            _dev_tag,
                             sorted(active_sites),
+                            sorted(my_sites) if my_sites is not None else "전체",
                         )
                         _last_logged_active = set(active_sites)
 
-                # 소싱처별 독립 루프 태스크 생성
+                # 소싱처별 독립 루프 태스크 생성 (이 PC의 site_tasks dict에)
+                _site_tasks = _pc_st(device_id)
                 _newly_spawned = []
                 for _site in active_sites:
                     existing = _site_tasks.get(_site)
                     if existing and not existing.done():
                         continue
                     task = asyncio.create_task(
-                        _site_autotune_loop(_site),
-                        name=f"autotune-{_site}",
+                        _site_autotune_loop(device_id, _site),
+                        name=f"autotune-{_dev_tag}-{_site}",
                     )
                     _site_tasks[_site] = task
                     _newly_spawned.append(_site)
 
                 if _newly_spawned:
                     log.info(
-                        "[오토튠] 소싱처 루프 시작: %s (활성 %d개)",
+                        "[오토튠][%s] 소싱처 루프 시작: %s (활성 %d개)",
+                        _dev_tag,
                         ", ".join(_newly_spawned),
                         len([t for t in _site_tasks.values() if not t.done()]),
                     )
@@ -2329,112 +2375,113 @@ async def _autotune_loop():
                             pass
                         except Exception as _te:
                             log.error(
-                                "[오토튠] %s 소싱처 루프 예외 종료: %s",
+                                "[오토튠][%s] %s 소싱처 루프 예외 종료: %s",
+                                _dev_tag,
                                 _s,
                                 _te,
                             )
                         del _site_tasks[_s]
 
                 # 필터에서 빠진 site의 살아있는 task 종료
-                # — 사용자가 소싱처/판매처 체크 해제 시 다음 watchdog 틱에 정지
                 _active_set = set(active_sites)
+                _heartbeats = _pc_hb(device_id)
                 for _s in list(_site_tasks.keys()):
                     if _s in _active_set:
                         continue
                     _t = _site_tasks[_s]
                     if not _t.done():
-                        log.info("[오토튠][%s] 필터 제외 — 루프 종료", _s)
+                        log.info("[오토튠][%s][%s] 필터 제외 — 루프 종료", _dev_tag, _s)
                         _t.cancel()
                     del _site_tasks[_s]
-                    _site_heartbeats.pop(_s, None)
+                    _heartbeats.pop(_s, None)
 
                 # Watchdog — stuck 소싱처 루프 강제 재시작
                 _now_ts = time.time()
                 for _s, _t in list(_site_tasks.items()):
                     if _t.done():
                         continue
-                    _last_hb = _site_heartbeats.get(_s, _now_ts)
+                    _last_hb = _heartbeats.get(_s, _now_ts)
                     if _now_ts - _last_hb > STUCK_TIMEOUT_SECONDS:
                         log.warning(
-                            "[오토튠][%s] stuck 감지 (%.0f초 무응답) — 강제 재시작",
+                            "[오토튠][%s][%s] stuck 감지 (%.0f초 무응답) — 강제 재시작",
+                            _dev_tag,
                             _s,
                             _now_ts - _last_hb,
                         )
                         _t.cancel()
                         del _site_tasks[_s]
-                        _site_heartbeats.pop(_s, None)
+                        _heartbeats.pop(_s, None)
 
-                # 전역 통계 갱신
-                _autotune_cycle_count = sum(_site_cycle_counts.values())
-                _ticks = [v for v in _site_last_ticks.values() if v]
+                # PC별 통계 갱신
+                _pc_cycle_count[device_id] = sum(_pc_scc(device_id).values())
+                _ticks = [v for v in _pc_slt(device_id).values() if v]
                 if _ticks:
-                    _autotune_last_tick = max(_ticks)
+                    _pc_last_tick[device_id] = max(_ticks)
 
-                # 5초 대기 (1초 단위로 중지 확인) — 소싱처 체크 해제 후 빠르게 반영
+                # 5초 대기 (1초 단위로 중지 확인)
                 for _ in range(5):
-                    if not _autotune_running_event.is_set():
+                    if not _is_pc_running(device_id):
                         break
                     await asyncio.sleep(1)
 
             except asyncio.CancelledError:
-                if not _autotune_running_event.is_set():
-                    log.info("[오토튠] 코디네이터 취소 (정상 종료)")
+                if not _is_pc_running(device_id):
+                    log.info("[오토튠][%s] 코디네이터 취소 (정상 종료)", _dev_tag)
                     break
-                _autotune_restart_count += 1
-                if _autotune_restart_count >= MAX_RESTART_COUNT:
+                _pc_restart_count[device_id] = _pc_restart_count.get(device_id, 0) + 1
+                if _pc_restart_count[device_id] >= MAX_RESTART_COUNT:
                     log.error(
-                        "[오토튠] 재시작 상한(%d회) 도달 — 코디네이터 중단",
+                        "[오토튠][%s] 재시작 상한(%d회) 도달 — 코디네이터 중단",
+                        _dev_tag,
                         MAX_RESTART_COUNT,
                     )
                     break
                 log.warning(
-                    "[오토튠] CancelledError — 코디네이터 재시작 (누적 %d회)",
-                    _autotune_restart_count,
+                    "[오토튠][%s] CancelledError — 코디네이터 재시작 (누적 %d회)",
+                    _dev_tag,
+                    _pc_restart_count[device_id],
                 )
                 await asyncio.sleep(2)
             except Exception as e:
-                _autotune_restart_count += 1
-                if _autotune_restart_count >= MAX_RESTART_COUNT:
+                _pc_restart_count[device_id] = _pc_restart_count.get(device_id, 0) + 1
+                if _pc_restart_count[device_id] >= MAX_RESTART_COUNT:
                     log.error(
-                        "[오토튠] 재시작 상한(%d회) 도달 — 코디네이터 중단",
+                        "[오토튠][%s] 재시작 상한(%d회) 도달 — 코디네이터 중단",
+                        _dev_tag,
                         MAX_RESTART_COUNT,
                     )
                     break
                 log.error(
-                    "[오토튠] 코디네이터 오류 (누적 %d회): %s",
-                    _autotune_restart_count,
+                    "[오토튠][%s] 코디네이터 오류 (누적 %d회): %s",
+                    _dev_tag,
+                    _pc_restart_count[device_id],
                     e,
                     exc_info=True,
                 )
                 await asyncio.sleep(5)
 
     finally:
-        # 모든 소싱처 태스크 종료
+        try:
+            current_pc_owner.reset(_owner_token)
+        except Exception:
+            pass
+        # 이 PC의 모든 소싱처 태스크 종료
+        _site_tasks = _pc_st(device_id)
         for _s, _t in list(_site_tasks.items()):
             if not _t.done():
                 _t.cancel()
         _site_tasks.clear()
-        _autotune_running_event.clear()
-        log.info("[오토튠] 코디네이터 종료 — running event 해제")
+        ev = _pc_running.get(device_id)
+        if ev is not None:
+            ev.clear()
+        log.info("[오토튠][%s] 코디네이터 종료", _dev_tag)
 
 
 class AutotuneStartRequest(BaseModel):
     target_product_no: Optional[str] = None
-    # 오토튠을 시작하는 브라우저의 확장앱 deviceId.
-    # 이 deviceId와 일치하는 확장앱만 SSG/롯데온 등의 수집 탭 작업을 집어간다.
-    # 비어 있으면 레거시 동작(아무 확장앱이나 집어감)을 유지한다.
+    # 오토튠을 시작하는 브라우저의 확장앱 deviceId. 이 PC 인스턴스의 키이자
+    # 발행되는 모든 잡의 owner_device_id로 박혀서 다른 PC가 가로채지 못함.
     device_id: Optional[str] = None
-    # 사이트별 owner 매핑 — PC 분산용 (선택).
-    # 예) {"ABCmart": "device_A", "LOTTEON": "device_B"}
-    # 매핑된 사이트는 해당 deviceId로만 작업 발행, 나머지는 device_id로 fallback.
-    # 익스텐션 부담 분산 + 사이트 간 진짜 병렬 처리를 위해 PC 2대 운영 시 활용.
-    site_owners: Optional[dict[str, str]] = None
-
-
-class AutotuneSiteOwnersRequest(BaseModel):
-    """오토튠 실행 중 사이트별 owner 매핑 동적 변경용."""
-
-    site_owners: dict[str, str]
 
 
 async def _save_autotune_state(enabled: bool, device_id: str = ""):
@@ -2553,32 +2600,20 @@ async def auto_start_if_enabled():
                 )
                 await asyncio.sleep(5)
 
-            global _autotune_task, _autotune_cycle_count
             from backend.domain.samba.collector.refresher import clear_bulk_cancel
 
-            if not _autotune_running_event.is_set():
-                # 소싱큐 owner는 빈 문자열로 복원 — fresh autotune_start와 정책 통일.
-                # PC 분담은 _pc_allowed_sites 등록값(폴링으로 자동 채워짐)으로 처리되므로
-                # owner를 saved_device_id에 묶으면 다른 PC가 작업을 못 받아 PC분담이 깨진다.
-                try:
-                    from backend.domain.samba.proxy.sourcing_queue import (
-                        set_autotune_owner,
-                    )
-
-                    set_autotune_owner("")
-                except Exception:
-                    pass
-
-                _autotune_running_event.set()
-                _autotune_cycle_count = 0
-                _site_cycle_counts.clear()
-                _site_last_ticks.clear()
-                _site_tasks.clear()
-                _site_empty_hits.clear()
+            if not _is_pc_running(saved_device_id):
                 _site_empty_skip_until.clear()
                 clear_bulk_cancel("autotune")
                 clear_bulk_cancel("transmit")
-                _autotune_task = asyncio.create_task(_autotune_loop())
+                ev = _get_pc_event(saved_device_id)
+                ev.set()
+                _pc_cycle_count[saved_device_id] = 0
+                _pc_restart_count[saved_device_id] = 0
+                _pc_main_task[saved_device_id] = asyncio.create_task(
+                    _autotune_loop(saved_device_id),
+                    name=f"autotune-main-{saved_device_id[:8]}",
+                )
                 logger.info(
                     "[오토튠] 서버 시작 — DB 설정에 따라 자동 시작 (owner=%s)",
                     saved_device_id[:8],
@@ -2784,18 +2819,17 @@ async def autotune_start(
     except Exception:
         pass  # 모듈 로드 실패 시 기존 동작 유지
 
-    global \
-        _autotune_task, \
-        _autotune_cycle_count, \
-        _autotune_restart_count, \
-        _autotune_target_ids
     from backend.domain.samba.collector.refresher import clear_bulk_cancel
 
-    if _autotune_running_event.is_set():
+    dev = (body.device_id or "").strip()
+    if not dev:
+        return {"ok": False, "error": "device_id 필수"}
+
+    if _is_pc_running(dev):
         return {"ok": True, "status": "already_running"}
 
-    # 단일 상품 오토튠: 상품번호 → 내부 ID 변환
-    _autotune_target_ids = None
+    # 단일 상품 오토튠: 상품번호 → 내부 ID 변환 (이 PC 인스턴스에만 적용)
+    _target_ids: Optional[set] = None
     if body.target_product_no:
         pno = body.target_product_no.strip()
         if pno:
@@ -2831,177 +2865,92 @@ async def autotune_start(
                         "ok": False,
                         "error": f"'{pno}' 상품을 찾을 수 없습니다",
                     }
-                _autotune_target_ids = {row}
+                _target_ids = {row}
 
-    global _autotune_force_stopped
-    _autotune_force_stopped = False
-    _autotune_running_event.set()
-    _autotune_cycle_count = 0
-    _autotune_restart_count = 0
-    _site_cycle_counts.clear()
-    _site_last_ticks.clear()
-    # 이전 소싱처 루프 명시적 취소 — clear()만 하면 태스크가 계속 실행되어 write_session 점유
-    for _t in list(_site_tasks.values()):
+    _pc_target_ids[dev] = _target_ids
+    _pc_force_stop_set.discard(dev)
+    # 이 PC 인스턴스 상태 초기화
+    _pc_cycle_count[dev] = 0
+    _pc_restart_count[dev] = 0
+    _pc_last_tick.pop(dev, None)
+    _pc_site_cycle_counts[dev] = {}
+    _pc_site_last_ticks[dev] = {}
+    _pc_site_empty_hits[dev] = {}
+    _pc_site_heartbeats[dev] = {}
+    # 이전 소싱처 루프 명시적 취소
+    _existing_tasks = _pc_site_tasks.get(dev) or {}
+    for _t in list(_existing_tasks.values()):
         if not _t.done():
             _t.cancel()
-    _site_tasks.clear()
-    _site_heartbeats.clear()
-    _site_empty_hits.clear()
-    _site_empty_skip_until.clear()
+    _pc_site_tasks[dev] = {}
+
+    # bulk_cancel 플래그는 이 PC만의 신호가 아니라 모든 PC 공통이므로 신중히 다룸 —
+    # 시작 시점에서 fresh state 보장을 위해 전체 클리어 (다른 PC는 자기 사이클 다음 틱에서 자연 복원)
     clear_bulk_cancel()
 
-    # 시작 PC를 합류 집합에 추가 (개별 중지 추적용)
-    if body.device_id:
-        _pc_joined_set.add(body.device_id.strip())
-        _pc_force_stop_set.discard(body.device_id.strip())
-
-    # 오토튠 작업 owner 정책:
-    # - 기본 owner는 비움(""): ownerDeviceId 없이 발행 → X-Allowed-Sites 필터로 분담.
-    # - PC 분담 등록(_pc_allowed_sites)에서 소싱처를 딱 1개 PC만 담당하면 그 PC로 고정.
-    #   (다른 PC에서 탭이 열리는 것 방지)
-    # - site_owners 명시 시 그 설정이 자동 설정보다 우선.
-    try:
-        from backend.domain.samba.proxy.sourcing_queue import (
-            clear_autotune_owners,
-            set_autotune_owner,
-            set_autotune_owner_for_site,
-        )
-
-        clear_autotune_owners()  # 이전 매핑 잔재 제거
-        set_autotune_owner("")
-        if body.site_owners:
-            # 명시 설정 우선
-            for _site, _dev in body.site_owners.items():
-                set_autotune_owner_for_site(_site, _dev or "")
-        else:
-            # PC 분담 등록 기반으로 소싱처별 owner 자동 설정
-            apply_site_owners_from_pc_registry()
-    except Exception:
-        pass
-
-    _autotune_task = asyncio.create_task(_autotune_loop())
+    ev = _get_pc_event(dev)
+    ev.set()
+    _pc_main_task[dev] = asyncio.create_task(
+        _autotune_loop(dev),
+        name=f"autotune-main-{dev[:8]}",
+    )
     if not body.target_product_no:
-        # Cloud Run 인스턴스 교체 시 복원 경로에서 deviceId를 다시 세팅할 수 있도록 함께 저장
-        await _save_autotune_state(True, body.device_id or "")
+        # 서버 재시작 후 자동 복원 — 한 PC라도 켜져 있었다는 사실 + 마지막 owner deviceId 저장
+        await _save_autotune_state(True, dev)
     return {"ok": True, "status": "started", "target": "registered"}
 
 
+class AutotuneStopRequest(BaseModel):
+    device_id: str = ""
+
+
 @router.post("/autotune/stop")
-async def autotune_stop():
-    """오토튠 무한 루프 정지 — 진행 중인 갱신도 즉시 중단."""
-    global _autotune_task
+async def autotune_stop(body: AutotuneStopRequest = AutotuneStopRequest()):
+    """오토튠 정지 — 이 PC 인스턴스만 정지. 다른 PC는 영향 없음."""
     from backend.domain.samba.collector.refresher import request_bulk_cancel_all
 
-    if not _autotune_running_event.is_set():
+    dev = (body.device_id or "").strip()
+    if not dev:
+        return {"ok": False, "error": "device_id 필수"}
+
+    if not _is_pc_running(dev):
         return {"ok": True, "status": "already_stopped"}
-    global _autotune_force_stopped
-    _autotune_force_stopped = True  # 확장앱 in-flight 작업 즉시 중단 신호
-    _autotune_running_event.clear()
-    request_bulk_cancel_all()  # 갱신 + 전송 잡 모두 즉시 중단
-    # 소싱처별 태스크 전부 취소
+
+    # 다음 폴링 시 이 PC 확장앱에 forceStop 신호 전달
+    _pc_force_stop_set.add(dev)
+
+    ev = _pc_running.get(dev)
+    if ev is not None:
+        ev.clear()
+
+    # 이 PC의 소싱처 루프 모두 취소
+    _site_tasks = _pc_site_tasks.get(dev) or {}
     for _st in list(_site_tasks.values()):
         if not _st.done():
             _st.cancel()
     _site_tasks.clear()
-    _site_empty_hits.clear()
-    _site_empty_skip_until.clear()
-    if _autotune_task and not _autotune_task.done():
-        _autotune_task.cancel()
-    _autotune_task = None
 
-    # 소싱큐 즉시 비움 — 누적된 detail job(SSG/롯데온/ABC 등)이 그대로 살아있으면
-    # 확장앱이 계속 폴링·탭 오픈하므로, 큐를 비우고 in-flight future도 RuntimeError로 종료
-    try:
-        from backend.domain.samba.proxy.sourcing_queue import (
-            SourcingQueue,
-            clear_autotune_owners,
-        )
+    # 메인 코디네이터 태스크 취소
+    _main = _pc_main_task.get(dev)
+    if _main and not _main.done():
+        _main.cancel()
+    _pc_main_task.pop(dev, None)
 
-        SourcingQueue.cancel_all("autotune stopped by user")
-        clear_autotune_owners()  # 기본 owner + 사이트별 매핑 모두 리셋
-    except Exception:
-        pass
-
-    await _save_autotune_state(False)
-    _pc_joined_set.clear()
-    _pc_force_stop_set.clear()
-    return {"ok": True, "status": "stopped"}
-
-
-class AutotuneLeaveRequest(BaseModel):
-    device_id: str = ""
-
-
-@router.post("/autotune/leave")
-async def autotune_leave(body: AutotuneLeaveRequest):
-    """이 PC만 오토튠 참여 해제 — 다른 PC는 계속 동작.
-
-    해당 device_id의 확장앱이 다음 collect-queue 폴링 시 forceStop을 수신해 즉시 중단.
-    합류 중인 모든 PC가 나갔거나 없으면 백엔드도 자동 중지.
-    """
-    dev = (body.device_id or "").strip()
-    if dev:
-        _pc_joined_set.discard(dev)
-        _pc_force_stop_set.add(dev)
-
-    # 합류 PC가 모두 나갔으면 백엔드 전체 중지
-    if not _pc_joined_set and _autotune_running_event.is_set():
-        global _autotune_force_stopped
-        _autotune_force_stopped = True
-        _autotune_running_event.clear()
-        from backend.domain.samba.collector.refresher import request_bulk_cancel_all
-
+    # 어떤 PC도 안 돌면 전역 bulk cancel + DB 상태 OFF로 표시
+    if not any_pc_running():
         request_bulk_cancel_all()
-        for _st in list(_site_tasks.values()):
-            if not _st.done():
-                _st.cancel()
-        _site_tasks.clear()
-        if _autotune_task and not _autotune_task.done():
-            _autotune_task.cancel()
         try:
-            from backend.domain.samba.proxy.sourcing_queue import (
-                SourcingQueue,
-                clear_autotune_owners,
-            )
+            from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
 
-            SourcingQueue.cancel_all("all PCs left")
-            clear_autotune_owners()
+            SourcingQueue.cancel_all("all PCs stopped")
         except Exception:
             pass
         await _save_autotune_state(False)
-        logger.info(f"[오토튠] 모든 PC 이탈 → 백엔드 자동 중지 (마지막 PC: {dev})")
-        return {"ok": True, "status": "stopped", "reason": "all_pcs_left"}
 
-    logger.info(
-        f"[오토튠] PC 이탈: {dev[:8] if dev else '?'} "
-        f"(남은 PC: {len(_pc_joined_set)}개)"
-    )
-    return {"ok": True, "status": "left", "remaining_pcs": len(_pc_joined_set)}
+    # 인스턴스 상태 cleanup
+    _cleanup_pc_instance(dev)
 
-
-@router.get("/autotune/site-owners")
-async def autotune_site_owners_get():
-    """현재 사이트별 owner 매핑 + 기본 owner 조회 (PC 분산 모니터링용)."""
-    from backend.domain.samba.proxy.sourcing_queue import get_autotune_owner_mapping
-
-    return get_autotune_owner_mapping()
-
-
-@router.post("/autotune/site-owners")
-async def autotune_site_owners_set(body: AutotuneSiteOwnersRequest):
-    """오토튠 실행 중 사이트별 owner 매핑 동적 변경 (PC 분산).
-
-    예) {"site_owners": {"ABCmart": "device_A", "LOTTEON": "device_B"}}
-    빈 deviceId 전달 시 해당 사이트 매핑 제거(기본 owner로 fallback).
-    """
-    from backend.domain.samba.proxy.sourcing_queue import (
-        get_autotune_owner_mapping,
-        set_autotune_owner_for_site,
-    )
-
-    for _site, _dev in body.site_owners.items():
-        set_autotune_owner_for_site(_site, _dev or "")
-    return {"ok": True, "mapping": get_autotune_owner_mapping()}
+    return {"ok": True, "status": "stopped"}
 
 
 class PcAllowedSitesRequest(BaseModel):
@@ -3018,13 +2967,12 @@ class PcAllowedSitesRequest(BaseModel):
 
 @router.post("/autotune/pc-allowed-sites")
 async def autotune_pc_allowed_sites_set(body: PcAllowedSitesRequest):
-    """PC 분담 등록 — 백엔드 사이클이 합집합으로 active_sites 결정."""
+    """PC 분담 등록 — 이 PC가 처리할 사이트 목록."""
     register_pc_allowed_sites(body.device_id, body.sites)
     pcs = get_active_pcs()
     return {
         "ok": True,
         "registered_pcs": len(pcs),
-        "union": sorted(get_union_active_sites() or []),
         "this_pc": sorted(pcs.get(body.device_id.strip(), set())),
     }
 
@@ -3035,14 +2983,16 @@ async def autotune_pc_allowed_sites_get():
     pcs = get_active_pcs()
     return {
         "registered_pcs": len(pcs),
-        "union": sorted(get_union_active_sites() or []),
         "by_device": {dev: sorted(sites) for dev, sites in pcs.items()},
     }
 
 
 @router.get("/autotune/status")
-async def autotune_status():
-    """오토튠 상태 조회 — 24h 갱신 수는 DB 기반."""
+async def autotune_status(device_id: str = ""):
+    """오토튠 상태 조회 — device_id 미지정 시 글로벌 합계(any_pc_running) 반환.
+
+    device_id 지정 시 그 PC 인스턴스 기준 cycle/last_tick/site_loops 반환.
+    """
     from backend.db.orm import get_read_session
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP2
 
@@ -3083,24 +3033,56 @@ async def autotune_status():
     except Exception:
         pass
 
-    # 소싱처별 활성 루프 정보 + heartbeat
+    dev = (device_id or "").strip()
     _now_hb = time.time()
-    _active_site_loops = {
-        s: {
-            "running": not t.done(),
-            "cycles": _site_cycle_counts.get(s, 0),
-            "heartbeat_ago": round(_now_hb - _site_heartbeats.get(s, _now_hb)),
+    if dev:
+        _site_tasks = _pc_site_tasks.get(dev) or {}
+        _scc = _pc_site_cycle_counts.get(dev) or {}
+        _shb = _pc_site_heartbeats.get(dev) or {}
+        _active_site_loops = {
+            s: {
+                "running": not t.done(),
+                "cycles": _scc.get(s, 0),
+                "heartbeat_ago": round(_now_hb - _shb.get(s, _now_hb)),
+            }
+            for s, t in _site_tasks.items()
         }
-        for s, t in _site_tasks.items()
-    }
+        main_task = _pc_main_task.get(dev)
+        running = _is_pc_running(dev) and main_task is not None and not main_task.done()
+        last_tick = _pc_last_tick.get(dev)
+        cycle_count = _pc_cycle_count.get(dev, 0)
+        restart_count = _pc_restart_count.get(dev, 0)
+    else:
+        # 글로벌 뷰: 어떤 PC라도 실행 중이면 running=True. 사이트 루프는 모든 PC 합산
+        _active_site_loops = {}
+        for _d, _stasks in _pc_site_tasks.items():
+            _scc = _pc_site_cycle_counts.get(_d) or {}
+            _shb = _pc_site_heartbeats.get(_d) or {}
+            for s, t in _stasks.items():
+                prev = _active_site_loops.get(s)
+                cycles = _scc.get(s, 0)
+                hb_ago = round(_now_hb - _shb.get(s, _now_hb))
+                if prev is None:
+                    _active_site_loops[s] = {
+                        "running": not t.done(),
+                        "cycles": cycles,
+                        "heartbeat_ago": hb_ago,
+                    }
+                else:
+                    prev["running"] = prev["running"] or not t.done()
+                    prev["cycles"] = prev["cycles"] + cycles
+                    prev["heartbeat_ago"] = min(prev["heartbeat_ago"], hb_ago)
+        running = any_pc_running()
+        last_tick_vals = [v for v in _pc_last_tick.values() if v]
+        last_tick = max(last_tick_vals) if last_tick_vals else None
+        cycle_count = sum(_pc_cycle_count.values())
+        restart_count = sum(_pc_restart_count.values())
 
     return {
-        "running": _autotune_running_event.is_set()
-        and _autotune_task is not None
-        and not _autotune_task.done(),
-        "last_tick": _autotune_last_tick,
-        "cycle_count": _autotune_cycle_count,
-        "restart_count": _autotune_restart_count,
+        "running": running,
+        "last_tick": last_tick,
+        "cycle_count": cycle_count,
+        "restart_count": restart_count,
         "max_restart": MAX_RESTART_COUNT,
         "refreshed_count": refreshed_24h,
         "target": "registered",
@@ -3110,10 +3092,12 @@ async def autotune_status():
         "priority_enabled": priority_enabled,
         "site_loops": _active_site_loops,
         "stuck_timeout": STUCK_TIMEOUT_SECONDS,
-        # PC별 분담 현황 (UI 표시용) — 등록된 사이트 전체 표시 (활성 루프 필터 제거)
+        # PC별 분담 현황 (UI 표시용)
         "pc_assignments": {
             dev: sorted(sites) for dev, sites in get_active_pcs().items() if sites
         },
+        # 현재 오토튠 실행 중인 PC 목록 (UI에서 본인이 그 중에 있는지 판단)
+        "running_pcs": sorted(d for d, ev in _pc_running.items() if ev.is_set()),
     }
 
 

@@ -325,6 +325,85 @@ class ElevenstClient:
         """상품 조회."""
         return await self._call_api("GET", f"/product/{prd_no}")
 
+    async def find_by_seller_code(self, seller_prd_cd: str) -> dict[str, Any]:
+        """판매자상품코드(sellerPrdCd)로 11번가 상품 조회.
+
+        11번가 공식 API: GET /rest/prodmarketservice/sellerprodcode/{sellerprdcd}
+        성공 시 ns2:product 내부의 prdNo, selStatCd, selStatNm, prdNm 등을 반환한다.
+
+        Returns:
+            {
+                "found": bool,        # 11번가에 등록 존재 여부
+                "prd_no": str,        # 11번가 상품번호
+                "sel_stat_cd": str,   # 판매상태 코드 (103=판매중, 104=품절, 105=전시중지, 106=정상종료, 108=금지)
+                "sel_stat_nm": str,
+                "prd_nm": str,
+                "raw_text": str,      # 디버그용 응답 앞부분
+            }
+        """
+        import re as _re
+
+        url = f"https://api.11st.co.kr/rest/prodmarketservice/sellerprodcode/{seller_prd_cd}"
+        headers = self._headers()
+        client = _get_elevenst_http_client(self.api_key)
+
+        try:
+            resp = await client.get(url, headers=headers)
+        except (httpx.ConnectError, httpx.RemoteProtocolError) as conn_err:
+            _elevenst_clients.pop(self.api_key, None)
+            client = _get_elevenst_http_client(self.api_key)
+            resp = await client.get(url, headers=headers)
+
+        logger.info(
+            f"[11번가] GET /sellerprodcode/{seller_prd_cd} → {resp.status_code}"
+        )
+
+        # Rate limit 우선 처리
+        if resp.status_code == 429:
+            try:
+                retry_after = int(resp.headers.get("Retry-After", "5"))
+            except ValueError:
+                retry_after = 5
+            raise ElevenstRateLimitError(retry_after=retry_after)
+        if resp.status_code in (503, 504):
+            raise ElevenstRateLimitError(retry_after=10)
+
+        # euc-kr 인코딩 응답을 명시적 디코딩
+        try:
+            raw_bytes = resp.content
+            text = raw_bytes.decode("euc-kr", errors="replace")
+        except Exception:
+            text = resp.text
+
+        # 404 또는 본문에 product 노드 없음 → 미존재
+        if resp.status_code == 404 or "<prdNo>" not in text:
+            return {
+                "found": False,
+                "prd_no": "",
+                "sel_stat_cd": "",
+                "sel_stat_nm": "",
+                "prd_nm": "",
+                "raw_text": text[:300],
+            }
+
+        if not resp.is_success:
+            raise ElevenstApiError(f"HTTP {resp.status_code}: {text[:300]}")
+
+        # ns2:* prefix XML — 정규식으로 첫 번째 상품 정보만 추출 (일치하는 sellerPrdCd 단일 케이스)
+        def _first(tag: str) -> str:
+            m = _re.search(rf"<{tag}>([^<]*)</{tag}>", text)
+            return m.group(1).strip() if m else ""
+
+        prd_no = _first("prdNo")
+        return {
+            "found": bool(prd_no),
+            "prd_no": prd_no,
+            "sel_stat_cd": _first("selStatCd"),
+            "sel_stat_nm": _first("selStatNm"),
+            "prd_nm": _first("prdNm"),
+            "raw_text": text[:300],
+        }
+
     async def test_auth(self) -> bool:
         """API 키 유효성 확인 — 카테고리 조회로 인증 테스트."""
         try:

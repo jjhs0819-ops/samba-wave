@@ -72,73 +72,30 @@ async def _db_update_completed(request_id: str, data: dict[str, Any]) -> None:
         logger.warning(f"[소싱큐-DB] completed UPDATE 실패 (무시): {exc}")
 
 
-# 오토튠 등 백엔드 자동화 경로에서 add_detail_job을 호출할 때
-# 기본 소유자(작업을 처리해야 할 브라우저의 deviceId)를 설정하는 전역 저장소.
-# autotune_start에서 set_autotune_owner로 세팅하고, autotune_stop에서 리셋한다.
-# 이 deviceId와 일치하는 확장앱만 해당 작업을 집어가게 된다.
-_autotune_owner_device_id: str = ""
-
-# 사이트별 owner override (PC 분산용).
-# 예: {"ABCmart": "device_A", "LOTTEON": "device_B"} — ABCmart 작업은 PC A,
-# LOTTEON 작업은 PC B로 발행. 매핑 없는 사이트는 _autotune_owner_device_id로 fallback.
-# autotune_stop / clear_autotune_owners()에서 비워준다.
-_autotune_owner_by_site: dict[str, str] = {}
-
-
-def set_autotune_owner(device_id: str) -> None:
-    """오토튠이 발행하는 작업의 기본 소유자 deviceId 설정.
-
-    사이트별 override(set_autotune_owner_for_site)가 없는 사이트의 fallback으로 사용된다.
-    """
-    global _autotune_owner_device_id
-    _autotune_owner_device_id = (device_id or "").strip()
-
-
-def set_autotune_owner_for_site(site: str, device_id: str) -> None:
-    """사이트별 owner 매핑 — PC 분산용.
-
-    예) set_autotune_owner_for_site("ABCmart", "device_A")
-        set_autotune_owner_for_site("LOTTEON", "device_B")
-
-    빈 device_id 전달 시 해당 사이트 매핑 제거(기본 owner로 fallback).
-    """
-    global _autotune_owner_by_site
-    site_key = (site or "").strip()
-    dev = (device_id or "").strip()
-    if not site_key:
-        return
-    if dev:
-        _autotune_owner_by_site[site_key] = dev
-        logger.info(f"[소싱큐] 사이트별 owner 매핑: {site_key} → {dev[:8]}")
-    else:
-        if site_key in _autotune_owner_by_site:
-            _autotune_owner_by_site.pop(site_key, None)
-            logger.info(f"[소싱큐] 사이트별 owner 매핑 제거: {site_key}")
-
-
-def clear_autotune_owners() -> None:
-    """오토튠 종료 시 모든 owner(기본 + 사이트별) 리셋."""
-    global _autotune_owner_device_id, _autotune_owner_by_site
-    _autotune_owner_device_id = ""
-    _autotune_owner_by_site = {}
-    logger.info("[소싱큐] 오토튠 owner 전체 리셋")
+# 오토튠 잡 owner는 PC별 인스턴스 모델로 전환 (2026-05-12).
+# 발행자 PC 컨텍스트(collector_autotune.current_pc_owner)를 읽어 owner_device_id로 박는다.
+# 글로벌 owner state는 더 이상 유지하지 않음.
 
 
 def get_autotune_owner(site: str | None = None) -> str:
-    """사이트별 owner 조회. 사이트 매핑이 있으면 그걸, 없으면 기본 owner를 반환한다."""
-    if site:
-        site_key = site.strip()
-        if site_key in _autotune_owner_by_site:
-            return _autotune_owner_by_site[site_key]
-    return _autotune_owner_device_id
+    """현재 잡 발행 컨텍스트의 owner device_id 반환.
+
+    site 인자는 historical compatibility 용도(무신사 등 호출처 시그니처 유지).
+    실제로는 contextvar 값만 사용한다.
+    """
+    try:
+        from backend.api.v1.routers.samba.collector_autotune import (
+            current_pc_owner,
+        )
+
+        return current_pc_owner.get() or ""
+    except Exception:
+        return ""
 
 
 def get_autotune_owner_mapping() -> dict[str, str]:
-    """현재 사이트별 owner 매핑 + 기본 owner 조회 (디버그/모니터링용)."""
-    return {
-        "default": _autotune_owner_device_id,
-        "by_site": dict(_autotune_owner_by_site),
-    }
+    """historical compatibility — 빈 매핑 반환."""
+    return {"default": "", "by_site": {}}
 
 
 # 사이트별 검색 URL 템플릿

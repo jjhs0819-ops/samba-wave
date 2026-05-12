@@ -111,19 +111,6 @@ async def sourcing_collect_queue(request: Request) -> Any:
     except Exception:
         pass
 
-    # 오토튠 전체 강제 stop 직후 — 확장앱 in-flight 작업 즉시 중단 신호
-    # 단, 멀티워커 환경에서 stop을 받은 워커만 flag=True가 되고 start는 다른 워커에서
-    # 처리될 수 있으므로, 같은 워커에서 오토튠이 다시 실행 중이면 stale flag로 간주해 무시.
-    try:
-        from backend.api.v1.routers.samba.collector_autotune import (
-            _autotune_force_stopped,
-            _autotune_running_event,
-        )
-
-        if _autotune_force_stopped and not _autotune_running_event.is_set():
-            return {"hasJob": False, "forceStop": True}
-    except Exception:
-        pass
     # PC 분담 last_seen 갱신 + allowed_sites 동기화
     # 서버 재시작 후 폴링이 재개되면 _pc_allowed_sites 자동 복원
     try:

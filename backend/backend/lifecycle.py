@@ -696,21 +696,31 @@ def _validate_startup_settings() -> None:
 
 async def _stop_autotune_and_refreshers() -> None:
     from backend.api.v1.routers.samba.collector_autotune import (
-        _autotune_running_event,
-        _site_tasks,
-        _autotune_task,
+        _pc_running,
+        _pc_site_tasks,
+        _pc_main_task,
     )
     from backend.domain.samba.collector.refresher import request_bulk_cancel_all
 
-    _autotune_running_event.clear()
+    # 모든 PC 인스턴스 중지 신호
+    for ev in list(_pc_running.values()):
+        ev.clear()
     request_bulk_cancel_all()
-    site_tasks = list(_site_tasks.values())
-    _site_tasks.clear()
-    for task in site_tasks:
+
+    # 모든 PC의 소싱처 태스크 취소
+    all_site_tasks: list = []
+    for site_tasks in _pc_site_tasks.values():
+        all_site_tasks.extend(site_tasks.values())
+        site_tasks.clear()
+    for task in all_site_tasks:
         task.cancel()
-    if site_tasks:
-        await asyncio.gather(*site_tasks, return_exceptions=True)
-    await _cancel_task(_autotune_task)
+    if all_site_tasks:
+        await asyncio.gather(*all_site_tasks, return_exceptions=True)
+
+    # 모든 PC의 메인 코디네이터 태스크 취소
+    for main_task in list(_pc_main_task.values()):
+        await _cancel_task(main_task)
+    _pc_main_task.clear()
 
 
 async def _shutdown_worker_runtime(runtime: WorkerRuntime) -> None:
