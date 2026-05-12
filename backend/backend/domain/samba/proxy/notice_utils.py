@@ -1010,7 +1010,11 @@ def build_lotteon_notice(product: dict[str, Any], **kwargs: str) -> dict[str, An
             {"pdArtlCd": "0200", "pdArtlCnts": fallback},
         ]
     else:
-        # 기타 미분류 — 기타재화(38)와 동일 코드셋으로 fallback
+        # 기타 미분류(10/18/21 등 전용 분기 없는 코드 포함)
+        # → pdItmsCd 도 "38"(기타재화)로 통일해야 articleCd와 itemCd 가 일치.
+        # 미통일 시: pdItmsCd=10 + articleCd=[0210,1420,0070,1440] 미스매치로
+        # 롯데ON 9999 "[상품품목고시정보] 반드시 입력" 에러 발생.
+        code = "38"
         articles = [
             {"pdArtlCd": "0210", "pdArtlCnts": fallback},
             {"pdArtlCd": "1420", "pdArtlCnts": origin},
