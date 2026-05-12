@@ -106,7 +106,7 @@ export default function MarketColumn({
   }
 
   return (
-    <div style={{ minWidth: 260, width: 280, flexShrink: 0 }}>
+    <div style={{ minWidth: 234, width: 252, flexShrink: 0 }}>
       <div style={{
         background: 'rgba(20,20,20,0.5)',
         border: '1px solid #333',

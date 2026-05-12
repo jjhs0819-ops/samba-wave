@@ -437,7 +437,7 @@ export default function TetrisBoard() {
             return (
               <div
                 key={market.market_name}
-                style={{ minWidth: COLUMN_WIDTH, width: COLUMN_WIDTH, flexShrink: 0, padding: '8px 10px' }}
+                style={{ minWidth: COLUMN_WIDTH, width: COLUMN_WIDTH, flexShrink: 0, padding: '8px 10px', textAlign: 'center' }}
               >
                 <div style={{ fontSize: 13, color: '#eee', fontWeight: 700, marginBottom: 2 }}>
                   {market.market_name}
