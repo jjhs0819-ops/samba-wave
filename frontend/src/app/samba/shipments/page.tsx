@@ -288,6 +288,29 @@ export default function ShipmentsPage() {
     })()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 일시정지된 transmit 잡 복원 — 새로고침/재진입 후에도 이어하기 가능하도록
+  // FAILED + current<total 조건을 백엔드가 검증, CANCELLED(작업중지)는 제외됨
+  useEffect(() => {
+    (async () => {
+      try {
+        const { API_BASE_URL: apiBase } = await import('@/config/api')
+        const res = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/last-resumable-transmit`)
+        if (!res.ok) return
+        const data = await res.json()
+        if (!data || !data.payload) return
+        // 사용자가 이미 새 전송을 시작했거나 이어하기 진행 중이면 덮어쓰지 않음
+        if (transmittingRef.current || activeJobIdRef.current) return
+        setPausedJobPayload({
+          job_type: data.job_type || 'transmit',
+          payload: data.payload,
+        })
+        const cur = data.current || 0
+        const tot = data.total || 0
+        appendShipmentLog(setLogMessages, `[${fmtTime()}] 일시정지된 전송 발견 — ${fmtNum(cur)}/${fmtNum(tot)}부터 이어하기 가능`)
+      } catch { /* ignore */ }
+    })()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   // 상시 백그라운드 폴링 — 삭제 로그를 다른 창에서도 실시간으로 표시하기 위해 2초마다 링 버퍼 조회
   useEffect(() => {
     let polling = false
@@ -1360,6 +1383,23 @@ export default function ShipmentsPage() {
                   activeJobIdRef.current = ''
                   setJobQueueStatus({ running: [], pending: [] })
                   setLogMessages(prev => [...prev, `[${ts}] 일시정지 완료 — 이어하기로 재개 가능`].slice(-30))
+                  // 백엔드 워커가 잡 상태를 'failed'로 마킹할 때까지 잠깐 대기 후 페이로드 복원 시도
+                  // (mount 폴링으로 진입한 세션은 pausedJobPayload가 비어있어 이어하기 버튼이 비활성화되는 문제 방지)
+                  for (let attempt = 0; attempt < 10; attempt++) {
+                    await new Promise(r => setTimeout(r, 500))
+                    try {
+                      const r2 = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/last-resumable-transmit`)
+                      if (!r2.ok) continue
+                      const data = await r2.json()
+                      if (data && data.payload) {
+                        setPausedJobPayload({
+                          job_type: data.job_type || 'transmit',
+                          payload: data.payload,
+                        })
+                        break
+                      }
+                    } catch { /* 다음 시도 */ }
+                  }
                 } catch {
                   setLogMessages(prev => [...prev, `[${ts}] 일시정지 실패`].slice(-30))
                 }

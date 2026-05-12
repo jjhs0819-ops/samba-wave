@@ -684,20 +684,22 @@ class SambaTetrisService:
         return cancelled
 
     async def cancel_pending_tetris_jobs(self, tenant_id: Optional[str]) -> int:
-        """테트리스 발 PENDING transmit 잡을 모두 취소.
+        """테트리스 발 PENDING + RUNNING transmit 잡을 모두 취소.
 
         식별 기준 — payload.origin == 'tetris_sync' (sync_all 생성 시 부착한 마커).
-        RUNNING 잡은 건드리지 않음 — 사용자 의도가 '신규 진행 차단' 이지
-        '현재 진행 중 강제 중단' 이 아니기 때문. 필요 시 개별 '취소' 버튼으로 중단.
+        - PENDING: 상태만 CANCELLED 로 변경 (워커가 픽업 안 함)
+        - RUNNING: request_cancel_transmit(job_id) 로 워커에 graceful 중단 신호 +
+          상태도 CANCELLED 로 즉시 변경 (전송 페이지 즉시 반영).
 
         tenant_id 가 주어지면 해당 테넌트 잡만, None 이면 NULL 테넌트 잡만 대상.
         """
         from backend.domain.samba.job.model import JobStatus, SambaJob
+        from backend.domain.samba.shipment.service import request_cancel_transmit
         from sqlmodel import select
 
         stmt = select(SambaJob).where(
             SambaJob.job_type == "transmit",
-            SambaJob.status == JobStatus.PENDING,
+            SambaJob.status.in_([JobStatus.PENDING, JobStatus.RUNNING]),
             SambaJob.payload.op("->>")("origin") == "tetris_sync",
         )
         if tenant_id is None:
@@ -708,15 +710,20 @@ class SambaTetrisService:
         rows = await self._session.execute(stmt)
         jobs = rows.scalars().all()
         cancelled = 0
+        running_cancelled = 0
         for job in jobs:
+            if job.status == JobStatus.RUNNING:
+                request_cancel_transmit(job.id)
+                running_cancelled += 1
             job.status = JobStatus.CANCELLED
             self._session.add(job)
             cancelled += 1
         if cancelled > 0:
             await self._session.commit()
             logger.info(
-                f"[테트리스] 토글 OFF — 테트리스 발 PENDING 잡 {cancelled}건 취소 "
-                f"(tenant_id={tenant_id})"
+                f"[테트리스] 토글 OFF — 테트리스 발 잡 {cancelled}건 취소 "
+                f"(RUNNING {running_cancelled}건 graceful 중단 신호 포함, "
+                f"tenant_id={tenant_id})"
             )
         return cancelled
 

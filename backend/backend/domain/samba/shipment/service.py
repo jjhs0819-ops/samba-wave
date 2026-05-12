@@ -1887,6 +1887,12 @@ class SambaShipmentService:
         # 결과 병합 + DB 일괄 업데이트
         merged_nos = dict(product_row.market_product_nos or {})
         merged_sent = dict(product_row.last_sent_data or {})
+        # A칸(registered_accounts) 동기화: 정상 전송 성공 경로에서도 함께 갱신
+        # — 기존엔 스마트스토어 group 등록·삭제·재시도 경로만 A칸을 갱신해서
+        #   11번가/쿠팡/롯데홈 등 일반 마켓은 B칸만 채워지고 A칸은 backfill 루프가
+        #   채워줄 때까지(때로는 1시간+) 비어있어, 테트리스 sync가 같은 상품을
+        #   '미등록'으로 오판해 헛걸음 잡을 반복 생성했음 → 'skipped(이미 등록됨, 변동 없음)' 로그 발생.
+        merged_reg = list(product_row.registered_accounts or [])
         for ar in account_results:
             if isinstance(ar, Exception):
                 continue
@@ -1896,11 +1902,20 @@ class SambaShipmentService:
                 transmit_error[aid] = ar["error"]
             if ar["is_update"]:
                 update_mode_accounts.add(aid)
-            # 404 초기화
+            # 404 초기화 — B칸과 A칸에서 동시 제거
             for key in ar.get("clear_nos", []):
                 merged_nos.pop(key, None)
-            # 상품번호 병합
-            merged_nos.update(ar.get("product_nos", {}))
+                if key == aid and aid in merged_reg:
+                    merged_reg.remove(aid)
+            # 상품번호 병합 — B칸에 account_id 키가 채워지면 A칸도 동기화
+            _new_nos = ar.get("product_nos", {}) or {}
+            merged_nos.update(_new_nos)
+            if (
+                ar.get("status") == "success"
+                and _new_nos.get(aid)
+                and aid not in merged_reg
+            ):
+                merged_reg.append(aid)
             # 스냅샷 병합
             if ar.get("sent_snapshot"):
                 # 전송 성공 — sent_snapshot으로 덮어써서 기존 failed_at 마킹 자동 제거
@@ -1923,6 +1938,7 @@ class SambaShipmentService:
             await product_repo.update_async(
                 product_id,
                 market_product_nos=merged_nos or None,
+                registered_accounts=merged_reg or None,
                 last_sent_data=merged_sent or None,
             )
         except Exception as _db_e:
