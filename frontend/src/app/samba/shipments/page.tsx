@@ -1263,8 +1263,12 @@ export default function ShipmentsPage() {
           ...localDeleteJobs,
         ]
         const sortedPending = [...jobQueueStatus.pending].sort((a, b) => {
+          // 1) 마켓·계정명 그룹핑
           const byMarket = (a.markets || '').localeCompare(b.markets || '')
           if (byMarket !== 0) return byMarket
+          // 2) 같은 계정 내에서는 상품 수 적은 잡 먼저 (백엔드 픽업 순서와 일치)
+          const byCount = (a.product_count || 0) - (b.product_count || 0)
+          if (byCount !== 0) return byCount
           return (a.id || '').localeCompare(b.id || '')
         })
         const transmitCount = runningAll.filter(j => j.kind !== 'delete').length
