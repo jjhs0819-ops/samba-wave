@@ -1443,7 +1443,7 @@ class LotteonClient:
             ],
             "cnclPsbYn": "Y",
             "dmstOvsDvDvsCd": "DMST",
-            "impDvsCd": "DRC_IMP",  # 공식수입 (직수입)
+            "impDvsCd": "NONE",  # 해당없음 (국내제작 기본값, 직수입 불허 카테고리 대응)
             "dvProcTypCd": "LO_ENTP",
             "dvPdTypCd": "GNRL",
             "dvRsvDvsCd": "GNRL_DV",

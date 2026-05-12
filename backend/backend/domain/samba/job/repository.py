@@ -56,12 +56,25 @@ class SambaJobRepository(BaseRepository[SambaJob]):
                               payload->'target_account_ids' 배열 중 하나라도 이 셋과 겹치는
                               transmit 잡은 건너뜀 → 같은 계정은 순차 실행 보장.
         """
-        from sqlalchemy import and_, or_
+        from sqlalchemy import and_, case, func, or_
+
+        # transmit 잡은 product_ids 개수가 적은 것부터 우선 픽 — 짧은 잡이
+        # 큰 잡 뒤에 묶여 대기하는 것을 방지. 다른 타입은 key=0으로 FIFO 유지.
+        _transmit_size_key = case(
+            (
+                SambaJob.job_type == "transmit",
+                func.coalesce(
+                    func.json_array_length(SambaJob.payload.op("->")("product_ids")),
+                    0,
+                ),
+            ),
+            else_=0,
+        )
 
         stmt = (
             select(SambaJob)
             .where(SambaJob.status == JobStatus.PENDING)
-            .order_by(SambaJob.created_at.asc())
+            .order_by(_transmit_size_key.asc(), SambaJob.created_at.asc())
             .limit(1)
             .with_for_update(skip_locked=True)
         )
