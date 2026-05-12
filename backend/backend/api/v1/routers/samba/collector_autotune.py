@@ -1511,18 +1511,25 @@ async def _site_autotune_loop(device_id: str, site: str):
                                                             if isinstance(_result, dict)
                                                             else _result
                                                         )
-                                                        _sale_stat = str(
-                                                            _goods_info.get(
-                                                                "SaleStatCd", ""
+                                                        # API가 빈 문자열/None을 반환할 때 .get() AttributeError 가드
+                                                        if not isinstance(
+                                                            _goods_info, dict
+                                                        ):
+                                                            _sale_stat = ""
+                                                            _qa_rslt = ""
+                                                        else:
+                                                            _sale_stat = str(
+                                                                _goods_info.get(
+                                                                    "SaleStatCd", ""
+                                                                )
+                                                                or ""
                                                             )
-                                                            or ""
-                                                        )
-                                                        _qa_rslt = str(
-                                                            _goods_info.get(
-                                                                "QaRsltCd", ""
+                                                            _qa_rslt = str(
+                                                                _goods_info.get(
+                                                                    "QaRsltCd", ""
+                                                                )
+                                                                or ""
                                                             )
-                                                            or ""
-                                                        )
                                                         if (
                                                             _sale_stat == "10"
                                                             or _qa_rslt

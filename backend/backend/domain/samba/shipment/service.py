@@ -765,6 +765,21 @@ class SambaShipmentService:
             )
             return shipment
 
+        # 롯데온/SSG/나이키 — AI 이미지 변환된 상품만 전송 허용 (신규/재전송 모두)
+        _AI_REQUIRED_SITES = {"LOTTEON", "SSG", "NIKE"}
+        if (product_row.source_site or "").upper() in _AI_REQUIRED_SITES:
+            if "__ai_image__" not in (product_row.tags or []):
+                _msg = f"{product_row.source_site} 상품은 AI 이미지 변환 후에만 등록 가능합니다."
+                logger.info(
+                    f"[전송] AI 변환 미완료 차단: {product_id} ({product_row.source_site})"
+                )
+                await self.repo.update_async(
+                    shipment.id,
+                    status="failed",
+                    transmit_error={"_all": _msg},
+                )
+                return shipment
+
         # OOM 방지: 전송에 불필요한 대용량 필드 제외
         product_dict = product_row.model_dump(exclude={"last_sent_data", "extra_data"})
 

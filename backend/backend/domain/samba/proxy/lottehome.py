@@ -806,9 +806,12 @@ class LotteHomeClient:
         )
 
     async def search_goods_view(self, goods_no: str) -> dict[str, Any]:
-        """전시상품 상세 조회 (승인 상태 확인용)."""
+        """전시상품 상세 조회 (승인 상태 확인용).
+
+        다른 메서드와 동일하게 _call_api_auto_retry 경유 — 인증키 만료 시 자동 재발급.
+        """
         cert_key = await self._ensure_auth()
-        return await self._call_api(
+        return await self._call_api_auto_retry(
             "searchGoodsViewListOpenApi.lotte",
             "GET",
             {"subscriptionId": cert_key, "goods_no": goods_no},
