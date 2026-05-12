@@ -5790,9 +5790,17 @@ def _parse_smartstore_order(
         or order_info.get("ordererTel", "")
     )
 
-    # 마켓 상품번호 (구매페이지 URL 생성용)
+    # 마켓 상품번호 (구매페이지 URL 생성용 + 수집상품 매칭 키)
+    # 우선순위: channelProductNo > originalProductId > productId
+    # - 다른 정상 케이스는 channelProductNo가 있어 그대로 동작
+    # - 선물하기/위탁판매 옵션 상품은 channelProductNo 누락 + productId가 옵션별로 별도 발급되어
+    #   수집상품 매칭 실패 사고가 있었음(2026-05-12 이종영 주문). 등록은 originalProductId로
+    #   되어있는 경우가 많아 fallback 키로 활용.
     channel_product_no = str(
-        po.get("channelProductNo", "") or po.get("productId", "") or ""
+        po.get("channelProductNo", "")
+        or po.get("originalProductId", "")
+        or po.get("productId", "")
+        or ""
     )
 
     return {
@@ -5805,6 +5813,7 @@ def _parse_smartstore_order(
         "product_option": po.get("productOption", "") or "",
         "product_image": po.get("imageUrl", ""),
         "customer_name": customer_name,
+        "orderer_name": order_info.get("ordererName", "") or "",
         "customer_phone": customer_tel,
         "customer_address": (shipping.get("baseAddress", "") or "").strip(),
         "customer_address_detail": (shipping.get("detailedAddress", "") or "").strip(),
