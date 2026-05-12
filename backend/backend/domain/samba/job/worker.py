@@ -1012,8 +1012,10 @@ class JobWorker:
         from backend.db.orm import get_write_session
 
         # tetris 매칭 사전 로드
-        # (source_site_norm, brand_norm) → market_account_id
-        _tetris_account_map: dict[tuple[str, str], str] = {}
+        # (source_site_norm, brand_norm) → list[market_account_id] (브랜드당 여러 마켓 배정 가능)
+        _tetris_account_map: dict[tuple[str, str], list[str]] = {}
+        # market_account_id → market_type (오버라이드 시 마켓별 교체 판정용)
+        _tetris_acc_market: dict[str, str] = {}
         try:
             from backend.domain.samba.forbidden.model import SambaSettings
             from backend.domain.samba.tetris.repository import SambaTetrisRepository
@@ -1048,12 +1050,23 @@ class JobWorker:
                 if _tetris_enabled:
                     _tet_repo = SambaTetrisRepository(_cfg_sess)
                     _assignments = await _tet_repo.list_by_tenant(_tenant_id)
+                    _acc_repo_pre = SambaMarketAccountRepository(_cfg_sess)
                     for _a in _assignments:
                         _norm_key = (
                             _ts_norm_site(_a.source_site),
                             _ts_norm_brand(_a.brand_name),
                         )
-                        _tetris_account_map[_norm_key] = _a.market_account_id
+                        _tetris_account_map.setdefault(_norm_key, []).append(
+                            _a.market_account_id
+                        )
+                        if _a.market_account_id not in _tetris_acc_market:
+                            _acc_obj = await _acc_repo_pre.get_async(
+                                _a.market_account_id
+                            )
+                            if _acc_obj:
+                                _tetris_acc_market[_a.market_account_id] = (
+                                    _acc_obj.market_type
+                                )
                     logger.info(
                         f"[잡워커] tetris 매칭 활성 — {len(_tetris_account_map)}개 브랜드 배치 로드"
                     )
@@ -1111,16 +1124,35 @@ class JobWorker:
                     if _source:
                         prod_name = f"[{_source}] {prod_name}"
 
-                    # tetris 매칭이 활성화된 경우 배치된 계정으로 target 재지정
-                    effective_account_ids = target_account_ids
+                    # tetris 매칭이 활성화된 경우 — 마켓별로 정책 계정을 테트리스 계정으로 교체
+                    # (브랜드당 여러 마켓 배정 가능: 매칭된 마켓만 교체, 미매칭 마켓은 정책 계정 유지)
+                    effective_account_ids = list(target_account_ids)
                     if _tetris_account_map and prod:
                         _norm_k = (
                             _ts_norm_site(prod.source_site),
                             _ts_norm_brand(prod.brand),
                         )
-                        _assigned = _tetris_account_map.get(_norm_k)
-                        if _assigned:
-                            effective_account_ids = [_assigned]
+                        _assigned_list = _tetris_account_map.get(_norm_k) or []
+                        if _assigned_list:
+                            _override_markets = {
+                                _tetris_acc_market[a]
+                                for a in _assigned_list
+                                if a in _tetris_acc_market
+                            }
+                            _kept: list[str] = []
+                            for _tid in target_account_ids:
+                                _tacc = await acc_repo.get_async(_tid)
+                                if not _tacc:
+                                    continue
+                                if _tacc.market_type not in _override_markets:
+                                    _kept.append(_tid)
+                            # 중복 제거 + 순서 유지
+                            _seen: set[str] = set()
+                            effective_account_ids = []
+                            for _x in _kept + _assigned_list:
+                                if _x not in _seen:
+                                    _seen.add(_x)
+                                    effective_account_ids.append(_x)
 
                     item_svc = SambaShipmentService(
                         SambaShipmentRepository(item_session), item_session
