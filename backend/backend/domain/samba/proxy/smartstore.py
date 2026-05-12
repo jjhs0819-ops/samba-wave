@@ -1439,85 +1439,67 @@ class SmartStoreClient:
             params["lastChangedType"] = order_status
 
         # 1단계: 변경된 주문 ID 목록 조회
-        # lastChangedType별로 조회해야 취소/반품도 수집됨
+        # 과거: lastChangedType 13개 루프 호출 — 11개 타입이 400 에러("정확한 타입 아님")로 죽고
+        #       살아있는 PAYED·PURCHASE_DECIDED 2개만 동작. 배송지변경(DELIVERY_ADDRESS_CHANGED)된
+        #       신규주문은 마지막 이벤트가 비-PAYED라 영영 누락되는 사고가 있었다(2026-05-12 이종영 주문).
+        # 현재: lastChangedType 파라미터 생략 — 모든 변경 유형을 한 호출로 받는다.
+        #       네이버 공식 답변(commerce-api Discussion #1646)도 type 생략을 권고.
+        # 요청 기간 + 최근 1일 두 시점 호출은 그대로 유지 — 응답 누락 방지 안전장치.
         logger.info(f"[스마트스토어] 주문 조회 시작 lastChangedFrom={since_str}")
 
         all_statuses: list[dict[str, Any]] = []
         seen_po_ids: set[str] = set()
 
-        # 변경 유형별 조회 (미지정 시 PAYED만 반환되므로 각 타입 명시)
-        # 주의: lastChangedType 파라미터는 CANCEL_REQUEST (D 없음) — productOrderStatus와 다름
-        change_types = [
-            "PAYED",
-            "DELIVERING",
-            "DELIVERED",
-            "PURCHASE_DECIDED",
-            "EXCHANGED",
-            "CANCELED",
-            "RETURNED",
-            "CANCEL_REQUEST",  # 취소요청 (CANCEL_REQUESTED X — API 파라미터 값)
-            "CANCEL_DONE",  # 취소완료
-            "RETURN_REQUEST",  # 반품요청
-            "RETURN_DONE",  # 반품완료
-            "EXCHANGE_REQUEST",  # 교환요청
-            "EXCHANGE_DONE",  # 교환완료
-        ]
-
-        # 요청 기간 + 최근 1일 병행 조회
         query_dates = [since_str]
         recent = datetime.now(kst) - timedelta(days=1)
         recent_str = recent.strftime("%Y-%m-%dT%H:%M:%S.000+09:00")
         if recent_str != since_str:
             query_dates.append(recent_str)
 
-        for change_type in change_types:
-            for qdate in query_dates:
-                qparams = dict(params)
-                qparams["lastChangedFrom"] = qdate
-                qparams["lastChangedType"] = change_type
-                result = None
-                for _retry in range(3):
-                    try:
-                        result = await self._call_api(
-                            "GET",
-                            "/v1/pay-order/seller/product-orders/last-changed-statuses",
-                            params=qparams,
-                        )
-                        break
-                    except Exception as _api_err:
-                        if "429" in str(_api_err):
-                            wait = 2.0 * (_retry + 1)  # 2초→4초→6초
-                            logger.info(
-                                f"[스마트스토어] 429 재시도 {_retry + 1}/3 ({wait}초 대기)"
-                            )
-                            await asyncio.sleep(wait)
-                            continue
-                        if "400" in str(_api_err):
-                            logger.warning(
-                                "[스마트스토어] last-changed-statuses 400 "
-                                f"(type={change_type}, from={qdate}): {_api_err}"
-                            )
-                        break
-                if result is None:
-                    continue
-                # 요청 간 간격 — 429 방지 (1초)
-                await asyncio.sleep(1.0)
-                data = result.get("data", result) if isinstance(result, dict) else {}
-                statuses_list = (
-                    (
-                        data.get("lastChangeStatuses", [])
-                        or data.get("lastChangedStatuses", [])
+        for qdate in query_dates:
+            qparams = dict(params)
+            qparams["lastChangedFrom"] = qdate
+            qparams.pop("lastChangedType", None)
+            result = None
+            for _retry in range(3):
+                try:
+                    result = await self._call_api(
+                        "GET",
+                        "/v1/pay-order/seller/product-orders/last-changed-statuses",
+                        params=qparams,
                     )
-                    if isinstance(data, dict)
-                    else []
+                    break
+                except Exception as _api_err:
+                    if "429" in str(_api_err):
+                        wait = 2.0 * (_retry + 1)  # 2초→4초→6초
+                        logger.info(
+                            f"[스마트스토어] 429 재시도 {_retry + 1}/3 ({wait}초 대기)"
+                        )
+                        await asyncio.sleep(wait)
+                        continue
+                    logger.warning(
+                        f"[스마트스토어] last-changed-statuses 호출 실패 (from={qdate}): {_api_err}"
+                    )
+                    break
+            if result is None:
+                continue
+            await asyncio.sleep(1.0)
+            data = result.get("data", result) if isinstance(result, dict) else {}
+            statuses_list = (
+                (
+                    data.get("lastChangeStatuses", [])
+                    or data.get("lastChangedStatuses", [])
                 )
-                for s in statuses_list:
-                    pid = s.get("productOrderId", "")
-                    if pid and pid not in seen_po_ids:
-                        seen_po_ids.add(pid)
-                        all_statuses.append(s)
+                if isinstance(data, dict)
+                else []
+            )
+            for s in statuses_list:
+                pid = s.get("productOrderId", "")
+                if pid and pid not in seen_po_ids:
+                    seen_po_ids.add(pid)
+                    all_statuses.append(s)
 
-        logger.info(f"[스마트스토어] 변경 유형별 조회 완료 — 총 {len(all_statuses)}건")
+        logger.info(f"[스마트스토어] 주문 변경 조회 완료 — 총 {len(all_statuses)}건")
 
         if not all_statuses:
             return []
