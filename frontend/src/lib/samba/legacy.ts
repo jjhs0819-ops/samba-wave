@@ -329,6 +329,22 @@ export const orderApi = {
       `${SAMBA_PREFIX}/orders/tracking-sync/${jobId}/dispatch?dry_run=${dryRun}`,
       { method: 'POST' },
     ),
+  listRecentTrackingSyncJobs: (limit = 50) =>
+    request<{
+      counts: Record<string, number>
+      recent: Array<{
+        id: string
+        orderId: string
+        site: string
+        sourcingOrderNumber: string
+        status: string
+        courier?: string | null
+        tracking?: string | null
+        lastError?: string | null
+        attempts: number
+        updatedAt?: string | null
+      }>
+    }>(`${SAMBA_PREFIX}/orders/tracking-sync/recent?limit=${limit}`),
   getAlarmSettings: () =>
     request<{ hour: number; min: number; sleep_start: string; sleep_end: string }>(`${SAMBA_PREFIX}/orders/alarm-settings`),
   saveAlarmSettings: (data: { hour: number; min: number; sleep_start: string; sleep_end: string }) =>

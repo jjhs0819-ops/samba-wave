@@ -1149,6 +1149,59 @@ async def dispatch_tracking_to_market(job_id: str, dry_run: bool = True) -> dict
     return await dispatch_to_market(job_id, dry_run=dry_run)
 
 
+@router.get("/tracking-sync/recent")
+async def list_recent_tracking_sync_jobs(
+    limit: int = Query(50, ge=1, le=200),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+) -> dict:
+    """최근 송장 자동전송 잡 목록 + 상태 카운트.
+
+    프론트가 일괄 송장수집 후 폴링해서 진행상황 보여주는 용도.
+    """
+    from sqlalchemy import select, func
+    from backend.db.orm import get_read_session
+    from backend.domain.samba.tracking_sync.model import SambaTrackingSyncJob
+
+    async with get_read_session() as session:
+        # 카운트
+        count_stmt = select(SambaTrackingSyncJob.status, func.count()).group_by(
+            SambaTrackingSyncJob.status
+        )
+        if tenant_id:
+            count_stmt = count_stmt.where(SambaTrackingSyncJob.tenant_id == tenant_id)
+        rows = (await session.execute(count_stmt)).all()
+        counts = {status: int(cnt) for status, cnt in rows}
+
+        # 최근 N건 (가장 새로운 순)
+        recent_stmt = (
+            select(SambaTrackingSyncJob)
+            .order_by(SambaTrackingSyncJob.updated_at.desc())
+            .limit(limit)
+        )
+        if tenant_id:
+            recent_stmt = recent_stmt.where(SambaTrackingSyncJob.tenant_id == tenant_id)
+        jobs = (await session.execute(recent_stmt)).scalars().all()
+
+    return {
+        "counts": counts,
+        "recent": [
+            {
+                "id": j.id,
+                "orderId": j.order_id,
+                "site": j.sourcing_site,
+                "sourcingOrderNumber": j.sourcing_order_number,
+                "status": j.status,
+                "courier": j.scraped_courier,
+                "tracking": j.scraped_tracking,
+                "lastError": j.last_error,
+                "attempts": j.attempts,
+                "updatedAt": j.updated_at.isoformat() if j.updated_at else None,
+            }
+            for j in jobs
+        ],
+    }
+
+
 @router.get("/cancel-alert-count")
 async def get_cancel_alert_count(
     session: AsyncSession = Depends(get_read_session_dependency),
@@ -6301,6 +6354,28 @@ def _parse_playauto_order(
     order_date_raw = ro.get("OrderDate", "") or ""
     paid_at = kst_str_to_utc(order_date_raw)
 
+    # 주소 분리 — 플레이오토는 RecipientAddress 한 필드에 도로명+상세를 통째로 내려줌
+    # (openapi.json 확인: 별도 상세주소 필드 없음). 휴리스틱으로 기본/상세 분리.
+    # 패턴1: ", "로 명시 구분 ("디지털로26길 123, 14층 플레이오토")
+    # 패턴2: 도로명(...대로/로/길) + 본번(숫자 또는 숫자-숫자) 뒤 공백 기준 분리
+    #         ("대구 동구 아양로 218 113동 201호(효목1동 45-1)")
+    import re as _re_addr
+
+    _addr_full = str(ro.get("RecipientAddress", "") or "").strip()
+    _addr_base = _addr_full
+    _addr_detail = ""
+    if _addr_full:
+        if ", " in _addr_full:
+            _b, _, _d = _addr_full.partition(", ")
+            _addr_base, _addr_detail = _b.strip(), _d.strip()
+        else:
+            _m = _re_addr.match(
+                r"^(.+?(?:대로|로|길)\s+\d+(?:-\d+)?)\s+(.+)$", _addr_full
+            )
+            if _m:
+                _addr_base = _m.group(1).strip()
+                _addr_detail = _m.group(2).strip()
+
     return {
         "order_number": ro.get("OrderCode", ""),
         "shipment_id": str(ro.get("Number", "")),
@@ -6315,7 +6390,8 @@ def _parse_playauto_order(
         or ro.get("RecipientTel", "")
         or ro.get("OrderHtel", "")
         or ro.get("OrderTel", ""),
-        "customer_address": ro.get("RecipientAddress", ""),
+        "customer_address": _addr_base,
+        "customer_address_detail": _addr_detail,
         "quantity": quantity,
         "sale_price": sale_price,
         "cost": 0,

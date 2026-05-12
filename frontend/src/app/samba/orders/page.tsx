@@ -352,6 +352,37 @@ export default function OrdersPage() {
   })
   const [trackingOrder, setTrackingOrder] = useState<SambaOrder | null>(null)
   const [trackingSyncing, setTrackingSyncing] = useState(false)
+  const [trackingStatusOpen, setTrackingStatusOpen] = useState(false)
+  const [trackingStatusData, setTrackingStatusData] = useState<{
+    counts: Record<string, number>
+    recent: Array<{
+      id: string; orderId: string; site: string; sourcingOrderNumber: string
+      status: string; courier?: string | null; tracking?: string | null
+      lastError?: string | null; attempts: number; updatedAt?: string | null
+    }>
+  } | null>(null)
+  const [trackingPolling, setTrackingPolling] = useState(false)
+
+  const refreshTrackingStatus = useCallback(async () => {
+    try {
+      const data = await orderApi.listRecentTrackingSyncJobs(50)
+      setTrackingStatusData(data)
+    } catch (err) {
+      setLogMessages(prev => [...prev, `[송장상태] 조회 실패: ${(err as Error).message}`])
+    }
+  }, [])
+
+  // 송장 상태 모달 열려있으면 5초마다 자동 갱신 (PENDING/DISPATCHED 잡 있을 때만)
+  useEffect(() => {
+    if (!trackingStatusOpen) return
+    refreshTrackingStatus()
+    const interval = setInterval(() => {
+      const inFlight = (trackingStatusData?.counts.PENDING || 0)
+        + (trackingStatusData?.counts.DISPATCHED || 0)
+      if (inFlight > 0 || trackingPolling) refreshTrackingStatus()
+    }, 5000)
+    return () => clearInterval(interval)
+  }, [trackingStatusOpen, trackingStatusData, trackingPolling, refreshTrackingStatus])
 
   const handleTrackingSyncOne = async (o: SambaOrder) => {
     try {
@@ -378,7 +409,10 @@ export default function OrdersPage() {
         `[송장 일괄] 큐 적재 ${fmtNum(res.queued)}건 / 스킵 ${fmtNum(res.skipped)}건 / 오류 ${fmtNum(res.errors.length)}건`,
         ...res.errors.slice(0, 5).map(e => `  · ${e}`),
       ])
-      setTimeout(() => loadOrders(), 3000)
+      // 적재 직후 상태 모달 자동 오픈 — 진행상황 가시화
+      setTrackingStatusOpen(true)
+      setTrackingPolling(true)
+      setTimeout(() => { setTrackingPolling(false); loadOrders() }, 60000)
     } catch (err) {
       setLogMessages(prev => [...prev, `[송장 일괄] 오류: ${(err as Error).message}`])
     } finally {
@@ -476,10 +510,20 @@ export default function OrdersPage() {
           미발송 주문을 소싱처(무신사/롯데/SSG/ABC/GS/패션플러스/나이키/올리브영)에서 추출 → 마켓 전송
         </span>
         <button
+          onClick={() => { setTrackingStatusOpen(true); refreshTrackingStatus() }}
+          style={{
+            marginLeft: 'auto',
+            padding: '6px 14px',
+            background: '#374151', color: '#fff', border: 'none', borderRadius: 4,
+            cursor: 'pointer', fontSize: 13, fontWeight: 600,
+          }}
+        >
+          📊 진행 현황
+        </button>
+        <button
           onClick={handleTrackingSyncBulk}
           disabled={trackingSyncing}
           style={{
-            marginLeft: 'auto',
             padding: '6px 14px',
             background: trackingSyncing ? '#444' : '#2563eb',
             color: '#fff', border: 'none', borderRadius: 4,
@@ -644,6 +688,112 @@ export default function OrdersPage() {
         order={trackingOrder}
         onClose={() => setTrackingOrder(null)}
       />
+
+      {/* 송장 자동전송 진행 현황 모달 */}
+      {trackingStatusOpen && (
+        <div
+          onClick={() => setTrackingStatusOpen(false)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#1f2937', color: '#e5e7eb',
+              width: 880, maxWidth: '92vw', maxHeight: '85vh',
+              borderRadius: 8, padding: 20, overflow: 'auto',
+              border: '1px solid #374151',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>📦 송장 자동전송 진행 현황</h3>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  onClick={refreshTrackingStatus}
+                  style={{ padding: '4px 10px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
+                >새로고침</button>
+                <button
+                  onClick={() => setTrackingStatusOpen(false)}
+                  style={{ padding: '4px 10px', background: '#4b5563', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
+                >닫기</button>
+              </div>
+            </div>
+
+            {/* 상태 카운트 카드 */}
+            <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+              {[
+                { key: 'PENDING', label: '대기', color: '#6b7280' },
+                { key: 'DISPATCHED', label: '추출중', color: '#0ea5e9' },
+                { key: 'SCRAPED', label: '추출완료', color: '#16a34a' },
+                { key: 'SENT_TO_MARKET', label: '마켓전송', color: '#22c55e' },
+                { key: 'NO_TRACKING', label: '미발송', color: '#f59e0b' },
+                { key: 'FAILED', label: '실패', color: '#ef4444' },
+              ].map(({ key, label, color }) => {
+                const cnt = trackingStatusData?.counts[key] || 0
+                return (
+                  <div key={key} style={{
+                    flex: 1, minWidth: 110, padding: '10px 12px',
+                    background: '#111827', border: `1px solid ${color}`, borderRadius: 6,
+                  }}>
+                    <div style={{ color, fontSize: 11, fontWeight: 600 }}>{label}</div>
+                    <div style={{ fontSize: 22, fontWeight: 700, marginTop: 2 }}>{fmtNum(cnt)}</div>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* 최근 잡 목록 */}
+            <div style={{ background: '#111827', borderRadius: 6, overflow: 'hidden', border: '1px solid #374151' }}>
+              <div style={{
+                display: 'grid', gridTemplateColumns: '90px 1fr 80px 110px 130px 1fr',
+                padding: '8px 10px', background: '#0f172a', fontSize: 11, fontWeight: 700, color: '#9ca3af',
+              }}>
+                <div>상태</div>
+                <div>주문ID</div>
+                <div>소싱처</div>
+                <div>택배사</div>
+                <div>송장번호</div>
+                <div>오류/메모</div>
+              </div>
+              {(trackingStatusData?.recent || []).map(j => {
+                const statusColor: Record<string, string> = {
+                  PENDING: '#6b7280', DISPATCHED: '#0ea5e9', SCRAPED: '#16a34a',
+                  SENT_TO_MARKET: '#22c55e', NO_TRACKING: '#f59e0b', FAILED: '#ef4444',
+                }
+                return (
+                  <div key={j.id} style={{
+                    display: 'grid', gridTemplateColumns: '90px 1fr 80px 110px 130px 1fr',
+                    padding: '6px 10px', borderTop: '1px solid #1f2937', fontSize: 12,
+                  }}>
+                    <div>
+                      <span style={{
+                        padding: '2px 6px', borderRadius: 3, fontSize: 10, fontWeight: 700,
+                        background: statusColor[j.status] || '#374151', color: '#fff',
+                      }}>{j.status}</span>
+                    </div>
+                    <div style={{ fontFamily: 'monospace', fontSize: 11 }}>{j.orderId}</div>
+                    <div>{j.site}</div>
+                    <div>{j.courier || '-'}</div>
+                    <div style={{ fontFamily: 'monospace' }}>{j.tracking || '-'}</div>
+                    <div style={{ color: '#9ca3af', fontSize: 11 }}>{j.lastError || ''}</div>
+                  </div>
+                )
+              })}
+              {(!trackingStatusData?.recent || trackingStatusData.recent.length === 0) && (
+                <div style={{ padding: 20, textAlign: 'center', color: '#6b7280', fontSize: 12 }}>
+                  아직 적재된 송장 잡이 없습니다.
+                </div>
+              )}
+            </div>
+
+            <div style={{ marginTop: 12, fontSize: 11, color: '#6b7280' }}>
+              💡 모달이 열려있는 동안 5초마다 자동 갱신됩니다. 일괄 송장수집 직후 60초 동안 자동 폴링됩니다.
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
