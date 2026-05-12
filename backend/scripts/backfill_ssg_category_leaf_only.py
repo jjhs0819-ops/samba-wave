@@ -100,34 +100,76 @@ def build_leaf_paths(
 
 
 async def load_ssg_tree(conn: asyncpg.Connection) -> dict[str, list[tuple]]:
-    row = await conn.fetchrow(
-        "SELECT cat1, cat2, cat3, cat4 FROM samba_category_tree WHERE site_name=$1",
-        SITE,
+    """leaf 이름 → 풀패스 후보 리스트.
+
+    1순위 소스: samba_collected_product 의 풀패스 SSG 상품들 (실데이터 기반).
+    2순위(보조): samba_category_tree('ssg' 또는 'SSG').
+    """
+    leaf_map: dict[str, list[tuple]] = defaultdict(list)
+    seen_paths: set[tuple] = set()
+
+    rows = await conn.fetch(
+        """
+        SELECT DISTINCT category1, category2, category3, category4
+        FROM samba_collected_product
+        WHERE source_site='SSG'
+          AND category1 IS NOT NULL AND category1<>''
+          AND category2 IS NOT NULL AND category2<>''
+        """
     )
-    if not row:
-        logger.error("samba_category_tree에 SSG 항목 없음 — 보정 불가")
-        return {}
-
-    def _j(v):
-        if v is None:
-            return None
-        if isinstance(v, (list, dict)):
-            return v
-        return json.loads(v)
-
-    cat1 = _j(row["cat1"]) or []
-    cat2 = _j(row["cat2"]) or {}
-    cat3 = _j(row["cat3"]) or {}
-    cat4 = _j(row["cat4"]) or {}
-    leaf_map = build_leaf_paths(cat1, cat2, cat3, cat4)
+    for r in rows:
+        c1 = (r["category1"] or "").strip()
+        c2 = (r["category2"] or "").strip()
+        c3 = (r["category3"] or "").strip()
+        c4 = (r["category4"] or "").strip()
+        path = (c1, c2, c3, c4)
+        if path in seen_paths:
+            continue
+        seen_paths.add(path)
+        leaf = c4 or c3 or c2 or c1
+        if leaf:
+            leaf_map[normalize(leaf)].append(path)
     logger.info(
-        "SSG 트리 로드 — leaf 후보 %d개 (1L %d, 2L %d, 3L %d, 4L %d)",
+        "샘플링: 풀패스 상품 %d개 조합에서 leaf 후보 %d개 추출",
+        len(rows),
         len(leaf_map),
-        len(cat1),
-        sum(len(v) for v in cat2.values()) if isinstance(cat2, dict) else 0,
-        sum(len(v) for v in cat3.values()) if isinstance(cat3, dict) else 0,
-        sum(len(v) for v in cat4.values()) if isinstance(cat4, dict) else 0,
     )
+
+    for sn in ("ssg", "SSG"):
+        row = await conn.fetchrow(
+            "SELECT cat1, cat2, cat3, cat4 FROM samba_category_tree WHERE site_name=$1",
+            sn,
+        )
+        if not row:
+            continue
+
+        def _j(v):
+            if v is None:
+                return None
+            if isinstance(v, (list, dict)):
+                return v
+            return json.loads(v)
+
+        cat1 = _j(row["cat1"]) or []
+        cat2 = _j(row["cat2"]) or {}
+        cat3 = _j(row["cat3"]) or {}
+        cat4 = _j(row["cat4"]) or {}
+        sub = build_leaf_paths(cat1, cat2, cat3, cat4)
+        added = 0
+        for k, paths in sub.items():
+            for p in paths:
+                if p not in seen_paths:
+                    seen_paths.add(p)
+                    leaf_map[k].append(p)
+                    added += 1
+        logger.info(
+            "samba_category_tree[%s] 머지: 신규 조합 %d, leaf 키 %d",
+            sn,
+            added,
+            len(sub),
+        )
+        break
+
     return leaf_map
 
 
