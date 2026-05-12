@@ -1882,10 +1882,7 @@ class ElevenstClient:
                 return u
             # webp → jpg (11번가는 webp 거부)
             u = _re_img.sub(r"(_\d+)\.webp(\?|$)", r"\1.jpg\2", u)
-            # /images/goods_img/... → /thumbnails/images/goods_img/...?w=1100
-            if "/thumbnails/" not in u and "/images/goods_img/" in u:
-                u = u.replace("/images/goods_img/", "/thumbnails/images/goods_img/")
-                u = u + ("&" if "?" in u else "?") + "w=1100"
+            # 2026-05-12: thumbnails?w=1100 치환은 msscdn 정책 변경으로 404 발생 → 원본 _500.jpg 그대로 사용
             return u
 
         def _ext_ok(url: str) -> bool:
