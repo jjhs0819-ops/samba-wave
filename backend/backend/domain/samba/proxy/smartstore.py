@@ -280,10 +280,9 @@ def _build_combination_options(
     # 2차 그룹명은 소싱처 응답(option_group_names[1])을 우선, 없으면 "사이즈" 폴백.
     _src_groups = [g for g in (option_group_names or []) if g]
     if has_slash:
-        second = _src_groups[1][:25] if len(_src_groups) >= 2 else "옵션"
-        option_groups = ["선택", second]
+        option_groups = ["옵션1", "옵션2"]
     else:
-        option_groups = ["선택"]
+        option_groups = ["옵션1"]
 
     def _clean_option_name(n: str) -> str:
         """옵션명에서 삭제어 제거."""

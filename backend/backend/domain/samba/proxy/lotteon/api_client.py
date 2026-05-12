@@ -1246,14 +1246,11 @@ class LotteonClient:
             has_slash = any(" / " in (o.get("name") or "") for o in options)
 
             # 그룹명(차원명) 결정
-            _src_groups = [g for g in (product.get("option_group_names") or []) if g]
             if has_slash:
-                first_opt_nm = _src_groups[0][:200] if len(_src_groups) >= 1 else "선택"
-                second_opt_nm = (
-                    _src_groups[1][:200] if len(_src_groups) >= 2 else "옵션2"
-                )
+                first_opt_nm = "옵션1"
+                second_opt_nm = "옵션2"
             else:
-                first_opt_nm = _detect_opt_nm(options[0])
+                first_opt_nm = "옵션1"
                 second_opt_nm = ""
 
             # 옵션별 추가금 산정용 base — 활성 옵션 중 최저가

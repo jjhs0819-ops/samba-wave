@@ -2392,12 +2392,8 @@ def _build_elevenst_option_xml(
 
     if has_slash:
         # 2D 멀티옵션 (선택형: optMixYn=N + ProductOptionExt)
-        title1 = _sanitize_elevenst_option_text(groups[0]) if len(groups) >= 1 else ""
-        title2 = _sanitize_elevenst_option_text(groups[1]) if len(groups) >= 2 else ""
-        if not title1:
-            title1 = "선택"
-        if not title2:
-            title2 = "옵션"
+        title1 = "옵션1"
+        title2 = "옵션2"
 
         axis1_values: list[str] = []
         axis2_values: list[str] = []
@@ -2462,9 +2458,7 @@ def _build_elevenst_option_xml(
         )
 
     # 1D 싱글옵션
-    title = _sanitize_elevenst_option_text(groups[0]) if groups else ""
-    if not title:
-        title = "선택"
+    title = "옵션1"
     xml = (
         "<optUpdateYn>Y</optUpdateYn>"
         "<optSelectYn>Y</optSelectYn>"
