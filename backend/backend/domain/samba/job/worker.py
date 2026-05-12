@@ -1364,6 +1364,13 @@ class JobWorker:
                         tx2 = r2.get("transmit_result", {})
                         tx2_err = r2.get("transmit_error", {})
                         any_ok = any(s == "success" for s in tx2.values())
+                        # 전체 차단 사유 (계정별 결과 없이 일찍 return된 경우)
+                        # 예: AI 이미지 미변환, 상품 미존재 등
+                        _all_block_msg = ""
+                        if not tx2:
+                            _all_block_msg = (
+                                str(r2.get("error") or tx2_err.get("_all") or "")
+                            )[:200]
                         # 갱신 항목 라벨 (price→가격, stock→재고 등)
                         _item_label_map = {
                             "price": "가격",
@@ -1411,11 +1418,14 @@ class JobWorker:
                                 f"[재시도 {ri + 1}/{len(failed_pids)}] {prod_name}: 복구 ({_detail})",
                             )
                         else:
-                            _detail = (
-                                f"{_items_label} → {', '.join(_ng_labels)} 재실패"
-                                if _ng_labels
-                                else f"{_items_label} → 재실패"
-                            )
+                            if _ng_labels:
+                                _detail = (
+                                    f"{_items_label} → {', '.join(_ng_labels)} 재실패"
+                                )
+                            elif _all_block_msg:
+                                _detail = f"{_items_label} → 재실패 ({_all_block_msg})"
+                            else:
+                                _detail = f"{_items_label} → 재실패"
                             _add_job_log(
                                 job.id,
                                 f"[재시도 {ri + 1}/{len(failed_pids)}] {prod_name}: {_detail}",
