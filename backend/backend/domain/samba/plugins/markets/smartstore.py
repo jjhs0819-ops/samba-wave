@@ -473,6 +473,19 @@ class SmartStorePlugin(MarketPlugin):
             try:
                 existing_data = await client.get_product(existing_no)
                 origin = existing_data.get("originProduct", {})
+                # statusType 보강 — GET 응답 origin에 statusType이 누락된 경우,
+                # channelProducts[].statusType 또는 transform 기본값("SALE")으로 채움.
+                # pop으로 channelProducts 제거 전에 먼저 추출해야 함.
+                if not origin.get("statusType"):
+                    ch_list = existing_data.get("channelProducts") or []
+                    ch_status = None
+                    if ch_list and isinstance(ch_list, list):
+                        ch_status = (ch_list[0] or {}).get("statusType")
+                    origin["statusType"] = (
+                        ch_status
+                        or data.get("originProduct", {}).get("statusType")
+                        or "SALE"
+                    )
                 # 읽기전용 필드 제거
                 for k in [
                     "productNo",

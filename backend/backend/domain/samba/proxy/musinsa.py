@@ -1136,6 +1136,34 @@ class MusinsaClient:
                     }
                 )
 
+            # 의미없는 "FREE" 단일축 제거 — 무신사가 사이즈축에 FREE 하나만 넣은 경우
+            # 예: [색상, 사이즈=FREE] × 엑스트라(선택안함) → 3축이 되어 쿠팡에서 중복 에러
+            # 모든 옵션에서 값이 동일하게 "FREE" 인 컬럼을 메인 옵션명/그룹명에서 드롭
+            if options and option_group_names:
+                n_cols = len(option_group_names)
+                vals_per_item: list[list[str]] = []
+                for opt in options:
+                    parts = (opt.get("name") or "").split(" / ")
+                    vals_per_item.append(parts if len(parts) == n_cols else [])
+                aligned = [v for v in vals_per_item if v]
+                if aligned:
+                    drop_idx = [
+                        i
+                        for i in range(n_cols)
+                        if {v[i].strip().upper() for v in aligned} == {"FREE"}
+                    ]
+                    keep_idx = [i for i in range(n_cols) if i not in drop_idx]
+                    # 남는 축이 1개 이상일 때만 드롭 (전부 FREE 단일축 상품은 유지)
+                    if drop_idx and keep_idx:
+                        for opt, parts in zip(options, vals_per_item):
+                            if parts:
+                                opt["name"] = " / ".join(parts[i] for i in keep_idx)
+                        option_group_names = [option_group_names[i] for i in keep_idx]
+                        logger.info(
+                            f"[옵션] {goods_no} 무의미한 FREE 축 {len(drop_idx)}개 제거 "
+                            f"→ 그룹={option_group_names}"
+                        )
+
             # extra(추가) 옵션 처리 — 메인 × 엑스트라 2D 조합 SKU로 통합
             # Naver Commerce v2 의 productAddItems 는 inline 등록 안 되므로,
             # 메인×엑스트라를 cartesian 곱으로 2D optionCombinations 만들어

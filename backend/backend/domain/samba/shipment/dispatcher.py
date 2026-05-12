@@ -586,7 +586,8 @@ async def _delete_lottehome(
     # MD 승인 대기 중인 상품은 goods_no가 없으므로 삭제 불가 — 차단
     if account:
         m_nos = product.get("market_product_nos", {}) or {}
-        if m_nos.get(f"{account.id}_qa") == "pending":
+        account_id = getattr(account, "id", None)
+        if account_id and m_nos.get(f"{account_id}_qa") == "pending":
             return {
                 "success": False,
                 "message": "롯데홈쇼핑 MD 승인 대기 중인 상품입니다. 승인 완료 후 삭제해주세요.",

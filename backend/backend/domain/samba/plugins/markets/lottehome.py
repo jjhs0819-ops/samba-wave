@@ -128,8 +128,10 @@ def _transform_for_lottehome(
             _nm = (_m.get("brnd_nm") or "").strip().lower()
             _nm_ns = _nm.replace(" ", "")
             if _nm and (
-                _nm in _product_brand or _product_brand in _nm
-                or _nm_ns in _product_brand_ns or _product_brand_ns in _nm_ns
+                _nm in _product_brand
+                or _product_brand in _nm
+                or _nm_ns in _product_brand_ns
+                or _product_brand_ns in _nm_ns
             ):
                 _matched_brnd_no = _m["brnd_no"]
                 break
