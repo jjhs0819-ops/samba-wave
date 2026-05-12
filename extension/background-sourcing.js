@@ -2068,6 +2068,39 @@ async function extractDetailData(tabId, site, productId) {
           if (_spEl) {
             domSalePrice = parseInt(_spEl.textContent.replace(/[^\d]/g, ''), 10) || 0
           }
+          // 카테고리 빵부스러기 DOM 직접 추출 — html 필드는 script 태그만이라
+          // _parse_result_item_obj의 DOM regex(`카테고리 로케이션`, `신세계백화점 /`)가
+          // 모두 매칭 실패해 cat2/cat3가 비고 leaf 1개만 저장되는 버그 차단.
+          // 1순위: data-react-tarea="...카테고리 로케이션|대/중/소/세카테고리"
+          // 2순위: .cdtl_loca_lst a, .lo_depth_xx a 등 백화점 페이지 호환 셀렉터
+          const domBreadcrumb = []
+          try {
+            const bcSeen = new Set()
+            const _pushBc = function(txt) {
+              const _t = (txt || '').trim()
+              if (!_t || bcSeen.has(_t)) return
+              if (_t === '신세계백화점' || _t === 'SSG' || _t === 'SSG.COM') return
+              bcSeen.add(_t)
+              domBreadcrumb.push(_t)
+            }
+            // 1순위: data-react-tarea 속성 (ssg.com 일반)
+            const _tareaLinks = document.querySelectorAll('[data-react-tarea*="카테고리 로케이션"]')
+            if (_tareaLinks.length > 0) {
+              _tareaLinks.forEach(function(a) { _pushBc(a.textContent) })
+            }
+            // 2순위: department.ssg.com 백화점 페이지 — cdtl_loca_lst > li > a
+            if (domBreadcrumb.length === 0) {
+              const _locLinks = document.querySelectorAll('.cdtl_loca_lst a, .cdtl_loca a, ul.cdtl_loca_lst li a')
+              _locLinks.forEach(function(a) { _pushBc(a.textContent) })
+            }
+            // 3순위: 일반 breadcrumb/location 셀렉터 (호환)
+            if (domBreadcrumb.length === 0) {
+              const _bcEl = document.querySelector('[class*="breadcrumb"], [class*="location"], nav[aria-label="breadcrumb"]')
+              if (_bcEl) {
+                _bcEl.querySelectorAll('a').forEach(function(a) { _pushBc(a.textContent) })
+              }
+            }
+          } catch (_e) { /* breadcrumb 추출 실패 시 무시 */ }
           // 추가이미지 — `img.zoom_thumb` 썸네일을 DOM에서 직접 추출.
           // 백엔드에 전달되는 html 필드는 script 태그만 포함하므로 body의 <img> URL은
           // 정규식으로 잡히지 않아 i2~iN 추가이미지가 0건이 되는 문제를 해결한다.
@@ -2097,6 +2130,7 @@ async function extractDetailData(tabId, site, productId) {
             domCardPrice: domCardPrice,  // 카드혜택가 DOM 직접 추출값 → cost(원가)에 반영
             domSalePrice: domSalePrice,  // 판매가 DOM 직접 추출값 → salePrice에 반영 (sellprc 대체)
             domImages: domImages,  // 추가이미지 DOM 직접 추출 (i2~iN, 1200 고해상도)
+            domBreadcrumb: domBreadcrumb,  // 카테고리 빵부스러기 DOM 직접 추출 (대>중>소>세, leaf-only 저장 사고 차단)
             url: location.href,
           }
         } catch (e) {

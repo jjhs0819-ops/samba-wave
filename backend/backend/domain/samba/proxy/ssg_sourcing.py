@@ -1387,7 +1387,11 @@ class SSGSourcingClient:
             return {}
 
     def _parse_result_item_obj(
-        self, html: str, item_id: str, refresh_only: bool
+        self,
+        html: str,
+        item_id: str,
+        refresh_only: bool,
+        dom_breadcrumb: list[str] | None = None,
     ) -> dict[str, Any]:
         """var resultItemObj JS 변수에서 상품 정보 추출 (1순위).
 
@@ -1544,7 +1548,23 @@ class SSGSourcingClient:
         _disp_scls = obj.get("dispCtgSclsNm", "")
         _disp_dcls = obj.get("dispCtgDclsNm", "")
 
-        if _disp_lcls:
+        # 0순위: 확장앱이 직접 보낸 DOM breadcrumb (body HTML이 없어 backend regex가
+        # 못 잡는 경우 대비). leaf-only 저장 사고 차단용.
+        _dom_bc = [
+            (p or "").strip()
+            for p in (dom_breadcrumb or [])
+            if (p or "").strip()
+            and (p or "").strip() not in ("신세계백화점", "SSG", "SSG.COM")
+        ]
+        if _dom_bc and len(_dom_bc) >= 2:
+            cat1 = _dom_bc[0] if len(_dom_bc) > 0 else ""
+            cat2 = _dom_bc[1] if len(_dom_bc) > 1 else ""
+            cat3 = _dom_bc[2] if len(_dom_bc) > 2 else ""
+            cat4 = _dom_bc[3] if len(_dom_bc) > 3 else ""
+            logger.debug(
+                f"[SSG] 카테고리 확장앱 DOM breadcrumb 사용: {cat1}>{cat2}>{cat3}"
+            )
+        elif _disp_lcls:
             # 1순위: dispCtg 레벨명 (가장 정확한 전시카테고리)
             cat1 = _disp_lcls
             cat2 = _disp_mcls

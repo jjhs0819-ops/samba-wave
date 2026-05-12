@@ -380,39 +380,6 @@ export default function TetrisBoard() {
         </button>
       </div>
 
-      {/* 스케일 +/- 고정 패널 — 화면 좌측 중앙 */}
-      <div style={{
-        position: 'fixed',
-        left: 8,
-        top: '50%',
-        transform: 'translateY(-50%)',
-        zIndex: 50,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        gap: 6,
-        background: 'rgba(20,20,20,0.9)',
-        border: '1px solid #333',
-        borderRadius: 6,
-        padding: '8px 6px',
-      }}>
-        <button
-          onClick={() => zoomFromCenter(2)}
-          style={{ width: 28, height: 28, background: '#2a2a2a', border: '1px solid #444', color: '#ccc', borderRadius: 4, cursor: 'pointer', fontSize: 16, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-        >
-          +
-        </button>
-        <span style={{ color: '#555', fontSize: 9, textAlign: 'center', lineHeight: 1.3 }}>
-          {fmtNum(currentStep)}
-        </span>
-        <button
-          onClick={() => zoomFromCenter(0.5)}
-          style={{ width: 28, height: 28, background: '#2a2a2a', border: '1px solid #444', color: '#ccc', borderRadius: 4, cursor: 'pointer', fontSize: 16, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-        >
-          -
-        </button>
-      </div>
-
       {/* Sticky 마켓명 헤더 row */}
       <div style={{
         position: 'sticky',
@@ -453,6 +420,38 @@ export default function TetrisBoard() {
 
       {/* 눈금자 + 마켓 컬럼 (가로 스크롤) */}
       <div style={{ display: 'flex', gap: 0, alignItems: 'flex-start' }}>
+        {/* 스케일 +/- 패널 — 단위 그리드 바로 좌측 */}
+        <div style={{
+          position: 'sticky',
+          top: 80,
+          alignSelf: 'flex-start',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 6,
+          background: 'rgba(20,20,20,0.9)',
+          border: '1px solid #333',
+          borderRadius: 6,
+          padding: '8px 6px',
+          marginRight: 4,
+          zIndex: 25,
+        }}>
+          <button
+            onClick={() => zoomFromCenter(2)}
+            style={{ width: 28, height: 28, background: '#2a2a2a', border: '1px solid #444', color: '#ccc', borderRadius: 4, cursor: 'pointer', fontSize: 16, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          >
+            +
+          </button>
+          <span style={{ color: '#555', fontSize: 9, textAlign: 'center', lineHeight: 1.3 }}>
+            {fmtNum(currentStep)}
+          </span>
+          <button
+            onClick={() => zoomFromCenter(0.5)}
+            style={{ width: 28, height: 28, background: '#2a2a2a', border: '1px solid #444', color: '#ccc', borderRadius: 4, cursor: 'pointer', fontSize: 16, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          >
+            -
+          </button>
+        </div>
         <ScaleRuler
           globalMax={globalMax}
           pixelsPerUnit={pixelsPerUnit}

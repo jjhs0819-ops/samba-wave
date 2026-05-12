@@ -3213,12 +3213,15 @@ class JobWorker:
                         logger.debug(f"[SSG] 확장앱 상세 실패: {spid} — {_ext_result}")
                     elif isinstance(_ext_result, dict) and _ext_result.get("success"):
                         _html = _ext_result.get("html", "")
+                        _dom_bc = _ext_result.get("domBreadcrumb", []) or []
                         if _html:
                             _loop = asyncio.get_event_loop()
                             detail = await _loop.run_in_executor(
                                 None,
                                 lambda: (
-                                    client._parse_result_item_obj(_html, spid, False)
+                                    client._parse_result_item_obj(
+                                        _html, spid, False, dom_breadcrumb=_dom_bc
+                                    )
                                     or {}
                                 ),
                             )
@@ -3572,13 +3575,17 @@ class JobWorker:
                         _r_ext = await asyncio.wait_for(_r_fut, timeout=45)
                         if isinstance(_r_ext, dict) and _r_ext.get("success"):
                             _r_html = _r_ext.get("html", "")
+                            _r_dom_bc = _r_ext.get("domBreadcrumb", []) or []
                             if _r_html:
                                 _r_loop = asyncio.get_event_loop()
                                 _det = await _r_loop.run_in_executor(
                                     None,
                                     lambda: (
                                         client._parse_result_item_obj(
-                                            _r_html, _spid, False
+                                            _r_html,
+                                            _spid,
+                                            False,
+                                            dom_breadcrumb=_r_dom_bc,
                                         )
                                         or {}
                                     ),
@@ -5073,13 +5080,17 @@ class JobWorker:
                             "success"
                         ):
                             _html = _ext_result.get("html", "")
+                            _s_dom_bc = _ext_result.get("domBreadcrumb", []) or []
                             if _html:
                                 _s_loop = asyncio.get_event_loop()
                                 det = await _s_loop.run_in_executor(
                                     None,
                                     lambda: (
                                         client._parse_result_item_obj(
-                                            _html, spid, False
+                                            _html,
+                                            spid,
+                                            False,
+                                            dom_breadcrumb=_s_dom_bc,
                                         )
                                         or {}
                                     ),
