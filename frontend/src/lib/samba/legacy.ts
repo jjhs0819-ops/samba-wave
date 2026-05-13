@@ -1078,6 +1078,109 @@ export const shipmentApi = {
       body: JSON.stringify({ product_ids: productIds && productIds.length > 0 ? productIds : null }),
     })
   },
+
+  // 쿠팡 유령삭제 양방향 (list_seller_products 기반 — orphan 삭제 + stale DB 정리)
+  cleanupCoupangOrphans: (dryRun = true, maxDelete = 50, accountId?: string, productIds?: string[]) => {
+    const params = new URLSearchParams()
+    params.set('dry_run', String(dryRun))
+    params.set('max_delete', String(maxDelete))
+    if (accountId) params.set('account_id', accountId)
+    return request<{
+      ok: boolean
+      dry_run: boolean
+      total_market: number
+      total_orphans: number
+      total_stale_db: number
+      total_deleted: number
+      total_stale_cleared: number
+      max_delete: number
+      accounts: {
+        account_id: string
+        label?: string
+        error?: string
+        market_count?: number
+        orphan_count?: number
+        orphans?: { spid: string; name: string; status_name: string }[]
+        stale_db_count?: number
+        stale_db?: { db_id: string; style_code: string; mapped_spid: string; product_name: string }[]
+        stale_cleared?: string[]
+        deleted?: string[]
+        failed?: { spid: string; error: string }[]
+      }[]
+    }>(`${SAMBA_PREFIX}/shipments/coupang/cleanup-orphans?${params.toString()}`, {
+      method: 'POST',
+      body: JSON.stringify({ product_ids: productIds && productIds.length > 0 ? productIds : null }),
+    })
+  },
+
+  // 11번가 유령삭제 양방향 v2 (list_seller_products 기반)
+  cleanupElevenstOrphansV2: (dryRun = true, maxDelete = 50, accountId?: string, productIds?: string[]) => {
+    const params = new URLSearchParams()
+    params.set('dry_run', String(dryRun))
+    params.set('max_delete', String(maxDelete))
+    if (accountId) params.set('account_id', accountId)
+    return request<{
+      ok: boolean
+      dry_run: boolean
+      total_market: number
+      total_orphans: number
+      total_stale_db: number
+      total_deleted: number
+      total_stale_cleared: number
+      max_delete: number
+      accounts: {
+        account_id: string
+        label?: string
+        error?: string
+        market_count?: number
+        orphan_count?: number
+        orphans?: { prd_no: string; name: string; seller_code: string }[]
+        stale_db_count?: number
+        stale_db?: { db_id: string; style_code: string; mapped_prdno: string; product_name: string }[]
+        stale_cleared?: string[]
+        deleted?: string[]
+        failed?: { prd_no: string; error: string }[]
+        recovered_via_seller_code?: number
+      }[]
+    }>(`${SAMBA_PREFIX}/shipments/elevenst/cleanup-orphans-v2?${params.toString()}`, {
+      method: 'POST',
+      body: JSON.stringify({ product_ids: productIds && productIds.length > 0 ? productIds : null }),
+    })
+  },
+
+  // 롯데ON 유령삭제 양방향
+  cleanupLotteonOrphans: (dryRun = true, maxDelete = 50, accountId?: string, productIds?: string[]) => {
+    const params = new URLSearchParams()
+    params.set('dry_run', String(dryRun))
+    params.set('max_delete', String(maxDelete))
+    if (accountId) params.set('account_id', accountId)
+    return request<{
+      ok: boolean
+      dry_run: boolean
+      total_market: number
+      total_orphans: number
+      total_stale_db: number
+      total_deleted: number
+      total_stale_cleared: number
+      max_delete: number
+      accounts: {
+        account_id: string
+        label?: string
+        error?: string
+        market_count?: number
+        orphan_count?: number
+        orphans?: { spd_no: string; name: string; sl_stat_cd: string }[]
+        stale_db_count?: number
+        stale_db?: { db_id: string; style_code: string; mapped_spd: string; product_name: string }[]
+        stale_cleared?: string[]
+        deleted?: string[]
+        failed?: { spd_no: string; error: string }[]
+      }[]
+    }>(`${SAMBA_PREFIX}/shipments/lotteon/cleanup-orphans?${params.toString()}`, {
+      method: 'POST',
+      body: JSON.stringify({ product_ids: productIds && productIds.length > 0 ? productIds : null }),
+    })
+  },
 };
 
 // ── Forbidden Words ──

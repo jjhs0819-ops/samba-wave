@@ -1135,6 +1135,127 @@ export default function ProductsPage() {
     setAiJobDone(true)
   }
 
+  // 유령삭제 — 양방향 공통 러너: 스마트스토어 패턴(쿠팡/11번가v2/롯데ON)
+  const runBidirectionalGhostSync = async (
+    marketLabel: string,
+    apiFn: (dryRun: boolean, maxDelete: number, accountId?: string, productIds?: string[]) => Promise<{
+      ok: boolean
+      total_market: number
+      total_orphans: number
+      total_stale_db: number
+      total_deleted: number
+      total_stale_cleared: number
+      accounts: Array<{
+        account_id: string
+        label?: string
+        error?: string
+        market_count?: number
+        orphan_count?: number
+        orphans?: Array<Record<string, string>>
+        stale_db_count?: number
+        stale_db?: Array<Record<string, string>>
+        deleted?: string[]
+        failed?: Array<Record<string, string>>
+        recovered_via_seller_code?: number
+      }>
+    }>,
+    orphanLabel: { idKey: string; name: string },
+  ) => {
+    if (!await showConfirm(`${marketLabel} 동기화를 실행합니다.\n\n1단계: ${marketLabel} 등록 상품 전체 페이징 수집(수 분 소요)\n2단계: 목록 확인 후 실제 처리 여부 선택\n  - orphan(${marketLabel}만 존재) → ${marketLabel}에서 삭제/판매중지\n  - stale(DB만 존재) → DB 매핑 정리\n\n계속하시겠습니까?`)) return
+
+    setAiJobTitle(`${marketLabel} 동기화`)
+    setAiJobLogs([`목록 수집 중... (${marketLabel} 전체 페이징 — 수 분 소요)`])
+    setAiJobDone(false)
+    setAiJobModal(true)
+
+    try {
+      const syncAccountId = appliedStatusFilter.startsWith('reg_') ? appliedStatusFilter.replace('reg_', '') : undefined
+      let filteredIds: string[] = []
+      try {
+        const idRes = await collectorApi.getProductIds({
+          search: appliedSearchQ.trim() || undefined,
+          search_type: appliedSearchQ.trim() ? appliedSearchType : undefined,
+          source_site: appliedSiteFilter || undefined,
+          status: appliedStatusFilter || undefined,
+          sold_out_filter: appliedSoldOutFilter || undefined,
+          ai_filter: appliedAiFilter || undefined,
+          search_filter_id: appliedFilterByGroupId || undefined,
+        })
+        filteredIds = idRes.ids ?? []
+      } catch (idErr) {
+        setAiJobLogs([`필터 ID 조회 실패: ${idErr instanceof Error ? idErr.message : String(idErr)}`])
+        setAiJobDone(true)
+        return
+      }
+
+      const res = await apiFn(true, 50, syncAccountId, filteredIds)
+      const logs: string[] = [
+        syncAccountId ? `계정 필터: ${syncAccountId}` : `전체 ${marketLabel} 계정`,
+        `${marketLabel} 등록 상품: ${fmt(res.total_market)}개`,
+        `orphan(${marketLabel}만): ${fmt(res.total_orphans)}개 → ${marketLabel}에서 삭제 예정`,
+        `stale(DB만): ${fmt(res.total_stale_db)}개 → DB 매핑 정리 예정`,
+        '',
+      ]
+      for (const a of res.accounts) {
+        if (a.error) {
+          logs.push(`[${a.label || a.account_id}] ${a.error}`)
+          continue
+        }
+        const rec = a.recovered_via_seller_code ? ` / 셀러코드보강 ${fmt(a.recovered_via_seller_code)}` : ''
+        logs.push(`[${a.label || a.account_id}] ${marketLabel} ${fmt(a.market_count ?? 0)} / orphan ${fmt(a.orphan_count ?? 0)} / stale ${fmt(a.stale_db_count ?? 0)}${rec}`)
+        for (const o of (a.orphans ?? []).slice(0, 30)) {
+          logs.push(`  [orphan] ${orphanLabel.idKey}=${o[orphanLabel.idKey] || ''}  ${o.name || ''}`)
+        }
+        if ((a.orphans?.length ?? 0) > 30) logs.push(`  ... 외 ${fmt((a.orphans!.length) - 30)}개`)
+        for (const s of (a.stale_db ?? []).slice(0, 20)) {
+          logs.push(`  [stale] db=${s.db_id || ''}  ${s.product_name || ''}`)
+        }
+        if ((a.stale_db?.length ?? 0) > 20) logs.push(`  ... 외 ${fmt((a.stale_db!.length) - 20)}개`)
+      }
+      setAiJobLogs(logs)
+      setAiJobDone(true)
+
+      const totalToProcess = res.total_orphans + res.total_stale_db
+      if (totalToProcess === 0) {
+        logs.push('', 'orphan/stale 없음 — 이미 일치 상태입니다.')
+        setAiJobLogs([...logs])
+        return
+      }
+
+      const estSec = Math.ceil(res.total_orphans * 0.5)
+      if (!await showConfirm(`총 ${fmt(totalToProcess)}건을 처리하시겠습니까?\n- orphan ${fmt(res.total_orphans)}건: ${marketLabel}에서 삭제 (예상 ${fmt(estSec)}초)\n- stale ${fmt(res.total_stale_db)}건: DB 매핑 정리`)) {
+        logs.push('', '처리 취소됨.')
+        setAiJobLogs([...logs])
+        return
+      }
+
+      logs.push('', `처리 실행 중... (orphan ${fmt(res.total_orphans)}건, 예상 ${fmt(estSec)}초)`)
+      setAiJobLogs([...logs])
+      setAiJobDone(false)
+
+      const del = await apiFn(false, res.total_orphans, syncAccountId, filteredIds)
+      logs.push(`${marketLabel} 삭제: ${fmt(del.total_deleted)}건`)
+      logs.push(`DB 매핑 정리: ${fmt(del.total_stale_cleared)}건`)
+      for (const a of del.accounts) {
+        if (a.failed && a.failed.length > 0) {
+          logs.push(`[${a.label || a.account_id}] 실패 ${fmt(a.failed.length)}건:`)
+          for (const f of a.failed.slice(0, 10)) {
+            const idVal = f[orphanLabel.idKey] || f.spid || f.prd_no || f.spd_no || ''
+            logs.push(`  - ${idVal}: ${f.error}`)
+          }
+        }
+      }
+      setAiJobLogs([...logs])
+    } catch (e) {
+      setAiJobLogs(prev => [...prev, '', `실패: ${e instanceof Error ? e.message : String(e)}`])
+    }
+    setAiJobDone(true)
+  }
+
+  const runCoupangGhostSync = () => runBidirectionalGhostSync('쿠팡', shipmentApi.cleanupCoupangOrphans, { idKey: 'spid', name: 'name' })
+  const runElevenstGhostSyncV2 = () => runBidirectionalGhostSync('11번가', shipmentApi.cleanupElevenstOrphansV2, { idKey: 'prd_no', name: 'name' })
+  const runLotteonGhostSync = () => runBidirectionalGhostSync('롯데ON', shipmentApi.cleanupLotteonOrphans, { idKey: 'spd_no', name: 'name' })
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
       {ghostBanner && ghostBanner.total > 0 && (
@@ -1295,15 +1416,48 @@ export default function ProductsPage() {
                 <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>Naver엔 있는데 DB 매핑 없는 고아 상품 + 역고아 정리</span>
               </button>
               <button
-                onClick={() => { setGhostChoiceModal(false); runElevenstGhostMissing() }}
+                onClick={() => { setGhostChoiceModal(false); runElevenstGhostSyncV2() }}
                 style={{
                   padding: '10px 14px', fontSize: '0.82rem', fontWeight: 600,
                   border: '1px solid #3D3D3D', borderRadius: '8px', color: '#E5E5E5',
                   background: 'rgba(255,140,80,0.15)', cursor: 'pointer', textAlign: 'left',
                 }}
               >
-                11번가<br />
-                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>DB에 "등록됨"이지만 prdNo 누락된 매핑 → 셀러상품코드로 역조회 후 정리</span>
+                11번가 (양방향)<br />
+                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>11번가 판매중 전체 vs DB 비교 → orphan은 판매중지, stale은 DB 정리</span>
+              </button>
+              <button
+                onClick={() => { setGhostChoiceModal(false); runLotteonGhostSync() }}
+                style={{
+                  padding: '10px 14px', fontSize: '0.82rem', fontWeight: 600,
+                  border: '1px solid #3D3D3D', borderRadius: '8px', color: '#E5E5E5',
+                  background: 'rgba(255,80,140,0.15)', cursor: 'pointer', textAlign: 'left',
+                }}
+              >
+                롯데ON (양방향)<br />
+                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>롯데ON 판매중 전체 vs DB 비교 → orphan은 END 전환, stale은 DB 정리</span>
+              </button>
+              <button
+                onClick={() => { setGhostChoiceModal(false); runCoupangGhostSync() }}
+                style={{
+                  padding: '10px 14px', fontSize: '0.82rem', fontWeight: 600,
+                  border: '1px solid #3D3D3D', borderRadius: '8px', color: '#E5E5E5',
+                  background: 'rgba(255,200,80,0.15)', cursor: 'pointer', textAlign: 'left',
+                }}
+              >
+                쿠팡 (양방향)<br />
+                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>쿠팡 등록상품 전체 vs DB 비교 → orphan은 삭제, stale은 DB 정리</span>
+              </button>
+              <button
+                onClick={() => { setGhostChoiceModal(false); runElevenstGhostMissing() }}
+                style={{
+                  padding: '8px 14px', fontSize: '0.76rem', fontWeight: 500,
+                  border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888',
+                  background: 'rgba(80,80,80,0.15)', cursor: 'pointer', textAlign: 'left',
+                }}
+              >
+                11번가 보조 — prdNo 누락 정리<br />
+                <span style={{ fontSize: '0.7rem', fontWeight: 400, color: '#666' }}>DB에 "등록됨"이지만 prdNo가 비어있는 매핑만 별도 정리 (셀러상품코드 역조회)</span>
               </button>
               <button
                 onClick={() => setGhostChoiceModal(false)}

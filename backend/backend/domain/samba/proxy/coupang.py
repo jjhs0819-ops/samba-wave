@@ -660,6 +660,84 @@ class CoupangClient:
             f"/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/{seller_product_id}",
         )
 
+    async def list_seller_products(
+        self,
+        status: Optional[str] = None,
+        max_per_page: int = 100,
+        max_pages: int = 2000,
+        throttle: float = 0.4,
+    ) -> list[dict[str, Any]]:
+        """등록된 모든 셀러상품 페이징 조회 (유령삭제 양방향 동기화용).
+
+        쿠팡 Wing API: GET /v2/providers/seller_api/apis/api/v1/marketplace/seller-products
+        - 페이징: nextToken (빈 문자열이면 마지막 페이지)
+        - status (선택): IN_REVIEW/SAVED/APPROVING/APPROVED/PARTIAL_APPROVED/DENIED/DELETED
+          미지정 시 전체 상태 반환. DELETED는 수집 후 호출측에서 필터.
+        - maxPerPage: 1~100 (기본 100)
+        - max_pages: 안전장치 (2000 페이지 = 최대 20만개)
+        - throttle: 호출 간격 (rate limit 회피)
+        """
+        path = "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products"
+        results: list[dict[str, Any]] = []
+        next_token = ""
+        page_count = 0
+
+        while page_count < max_pages:
+            params: dict[str, str] = {
+                "vendorId": self.vendor_id,
+                "maxPerPage": str(max_per_page),
+            }
+            if next_token:
+                params["nextToken"] = next_token
+            if status:
+                params["status"] = status
+
+            try:
+                resp = await self._call_api("GET", path, params=params)
+            except CoupangApiError as e:
+                # 429 (rate limit) 대응 — 1회 재시도
+                if "429" in str(e) or "TOO_MANY" in str(e).upper():
+                    logger.warning(
+                        "[쿠팡] list_seller_products 429 → 5초 대기 후 재시도"
+                    )
+                    await asyncio.sleep(5)
+                    resp = await self._call_api("GET", path, params=params)
+                else:
+                    raise
+
+            data = resp.get("data", []) if isinstance(resp, dict) else []
+            if not isinstance(data, list):
+                data = []
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                spid = item.get("sellerProductId")
+                if not spid:
+                    continue
+                results.append(
+                    {
+                        "seller_product_id": str(spid),
+                        "product_id": str(item.get("productId") or ""),
+                        "product_name": str(item.get("sellerProductName") or ""),
+                        "status_name": str(item.get("statusName") or ""),
+                        "created_at": str(item.get("createdAt") or ""),
+                    }
+                )
+
+            next_token = (
+                str(resp.get("nextToken") or "") if isinstance(resp, dict) else ""
+            )
+            page_count += 1
+            if not next_token:
+                break
+            await asyncio.sleep(throttle)
+
+        logger.info(
+            f"[쿠팡] list_seller_products 완료: {len(results)}개 "
+            f"(페이지 {page_count}, status={status or 'ALL'})"
+        )
+        return results
+
     # ------------------------------------------------------------------
     # 상품 데이터 변환
     # ------------------------------------------------------------------

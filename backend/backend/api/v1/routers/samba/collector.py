@@ -991,11 +991,10 @@ async def scroll_products(
         )
         acc_ids = acc_result.scalars().all()
         if acc_ids:
+            # jsonb_array_length 금지 — 스칼라값 행에서 에러. no_registered_accounts 헬퍼 사용
             conditions.append(
                 or_(
-                    _CP.registered_accounts.is_(None),
-                    func.jsonb_typeof(_CP.registered_accounts) != "array",
-                    func.jsonb_array_length(_CP.registered_accounts) == 0,
+                    no_registered_accounts(_CP),
                     and_(
                         *[
                             ~_CP.registered_accounts.op("@>")(
@@ -1015,11 +1014,10 @@ async def scroll_products(
     elif status and status.startswith("unreg_"):
         # 특정 계정에 미등록된 상품: registered_accounts JSONB에 account_id 미포함 (~@>)
         account_id = status[6:]  # "unreg_ma_xxx" → "ma_xxx"
+        # jsonb_array_length 금지 — 스칼라값 행에서 에러. no_registered_accounts 헬퍼 사용
         conditions.append(
             or_(
-                _CP.registered_accounts.is_(None),
-                func.jsonb_typeof(_CP.registered_accounts) != "array",
-                func.jsonb_array_length(_CP.registered_accounts) == 0,
+                no_registered_accounts(_CP),
                 ~_CP.registered_accounts.op("@>")(func.jsonb_build_array(account_id)),
             )
         )
