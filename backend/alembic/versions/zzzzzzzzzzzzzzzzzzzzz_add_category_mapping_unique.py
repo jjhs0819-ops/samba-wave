@@ -47,6 +47,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute(
-        "DROP INDEX IF EXISTS uq_samba_category_mapping_site_category"
-    )
+    op.execute("DROP INDEX IF EXISTS uq_samba_category_mapping_site_category")

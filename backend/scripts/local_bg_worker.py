@@ -65,7 +65,7 @@ def upload_to_r2(image_bytes: bytes, filename: str) -> str | None:
                 Bucket=_r2["bucket"],
                 Key=key,
                 Body=image_bytes,
-                ContentType="image/webp",
+                ContentType="image/jpeg",
             )
             return f"{_r2['public_url'].rstrip('/')}/transformed/{filename}"
         except Exception as e:
@@ -237,7 +237,7 @@ def _is_bg_removed(result_bytes: bytes) -> bool:
 def remove_watermark(image_bytes: bytes) -> bytes | None:
     """우상단 패턴에 따라 분기 — 결과는 항상 원본 해상도 유지(마켓 업로드 화질 보존):
 
-    - 흰배경(워터마크 없음)        → 원본 그대로 webp 저장
+    - 흰배경(워터마크 없음)        → 원본 그대로 jpg 저장
     - 흰배경 + 로고 패턴            → 원본에 흰박스 덮어 저장 (rembg 미사용)
     - 사진 컨텐츠(모델/배경)        → 768px로 다운스케일해 rembg alpha mask 추출 →
                                       mask를 원본 크기로 업스케일 → 원본 RGB와 흰배경 합성
@@ -264,7 +264,7 @@ def remove_watermark(image_bytes: bytes) -> bytes | None:
     avg = ImageStat.Stat(crop).mean
     if all(c >= _WM_NO_LOGO_THRESHOLD for c in avg[:3]):
         buf = io.BytesIO()
-        src_orig.save(buf, format="WEBP", quality=90)
+        src_orig.save(buf, format="JPEG", quality=90)
         return buf.getvalue()
 
     # 2) 흰배경 + 로고 패턴 → 원본 좌표로 box 환산해 배경색 박스 덮음 (rembg 미사용)
@@ -281,7 +281,7 @@ def remove_watermark(image_bytes: bytes) -> bytes | None:
         bg_color = _sample_bg_color(src_orig)
         ImageDraw.Draw(out).rectangle(box_orig, fill=bg_color)
         buf = io.BytesIO()
-        out.save(buf, format="WEBP", quality=90)
+        out.save(buf, format="JPEG", quality=90)
         return buf.getvalue()
 
     # 3) 사진 컨텐츠 → rembg matting=False 만 사용 (matting=True는 pymatting Cholesky
@@ -296,7 +296,7 @@ def remove_watermark(image_bytes: bytes) -> bytes | None:
     def _save_composite(alpha: Image.Image) -> bytes:
         composite = _composite_with_alpha(src_orig, alpha)
         buf = io.BytesIO()
-        composite.save(buf, format="WEBP", quality=90)
+        composite.save(buf, format="JPEG", quality=90)
         return buf.getvalue()
 
     try:
@@ -351,7 +351,7 @@ async def process_image(client: httpx.AsyncClient, url: str) -> str | None:
             # rembg 폴백 실패 — 원본 유지, 변환된 것으로 카운트하지 않음
             return None
         md5 = hashlib.md5(resp.content).hexdigest()[:8]
-        filename = f"ai_{md5}_{uuid.uuid4().hex[:6]}.webp"
+        filename = f"ai_{md5}_{uuid.uuid4().hex[:6]}.jpg"
         result_url = upload_to_r2(processed, filename)
         return result_url
     except Exception as e:
