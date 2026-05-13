@@ -1241,73 +1241,66 @@ async def list_recent_tracking_sync_jobs(
     프론트가 일괄 송장수집 후 폴링해서 진행상황 보여주는 용도.
     SambaOrder (상품주문번호/고객명) + SambaSourcingAccount (소싱처 계정 라벨) LEFT JOIN.
     """
-    from sqlalchemy import select, func
+    from sqlalchemy import select
     from sqlalchemy.orm import aliased
     from backend.db.orm import get_read_session
-    from backend.domain.samba.order.model import SambaOrder
+    from backend.domain.samba.order.model import (
+        EXCLUDED_ORDER_STATUSES,
+        SHIPPED_SHIPPING_STATUS_KEYWORDS,
+        SambaOrder,
+    )
     from backend.domain.samba.sourcing_account.model import SambaSourcingAccount
     from backend.domain.samba.tracking_sync.model import SambaTrackingSyncJob
-    from backend.domain.samba.tracking_sync.service import (
-        SKIP_SHIPPING_STATUS_KEYWORDS,
-    )
+
+    def _is_excluded(order_status, shipping_status) -> bool:
+        """페이지 필터 '취소/반품/교환 제외 + 배송중/배송완료 제외' 와 동일 기준."""
+        if order_status and order_status in EXCLUDED_ORDER_STATUSES:
+            return True
+        if shipping_status and any(
+            kw in shipping_status for kw in SHIPPED_SHIPPING_STATUS_KEYWORDS
+        ):
+            return True
+        return False
 
     async with get_read_session() as session:
-        # 카운트 — shipping_status가 취소/교환/반품/배송중/배송완료인 주문 잡은 제외
-        count_stmt = (
-            select(SambaTrackingSyncJob.status, func.count())
-            .join(
-                SambaOrder, SambaOrder.id == SambaTrackingSyncJob.order_id, isouter=True
-            )
-            .group_by(SambaTrackingSyncJob.status)
-        )
-        for kw in SKIP_SHIPPING_STATUS_KEYWORDS:
-            count_stmt = count_stmt.where(
-                (SambaOrder.shipping_status.is_(None))
-                | (~SambaOrder.shipping_status.like(f"%{kw}%"))
-            )
-        if tenant_id:
-            count_stmt = count_stmt.where(SambaTrackingSyncJob.tenant_id == tenant_id)
-        rows = (await session.execute(count_stmt)).all()
-        counts = {status: int(cnt) for status, cnt in rows}
-
-        # 최근 N건 (가장 새로운 순) — SambaOrder + SambaSourcingAccount LEFT JOIN
         O = aliased(SambaOrder)
         A = aliased(SambaSourcingAccount)
-        # NO_TRACKING/FAILED 잡은 재시도 시 새 row가 누적되므로
-        # 모달 표시 시에는 order_id 기준 최신 1건만 노출 (이력은 DB에 그대로 보존).
-        recent_stmt = (
+        # 잡 + 주문 메타를 한 번에 가져와 Python에서 dedup → 카운트/리스트 일관 처리
+        base_stmt = (
             select(
                 SambaTrackingSyncJob,
                 O.order_number,
                 O.customer_name,
                 O.channel_name,
+                O.status,
+                O.shipping_status,
                 A.account_label,
             )
             .join(O, O.id == SambaTrackingSyncJob.order_id, isouter=True)
             .join(A, A.id == SambaTrackingSyncJob.sourcing_account_id, isouter=True)
             .order_by(SambaTrackingSyncJob.updated_at.desc())
-            .limit(limit * 5)
+            .limit(limit * 10)
         )
-        # 모달 리스트도 동일 패스 조건 적용 — 교환중/취소/배송중 등 클레임/완료 단계 주문 제외
-        for kw in SKIP_SHIPPING_STATUS_KEYWORDS:
-            recent_stmt = recent_stmt.where(
-                (O.shipping_status.is_(None)) | (~O.shipping_status.like(f"%{kw}%"))
-            )
         if tenant_id:
-            recent_stmt = recent_stmt.where(SambaTrackingSyncJob.tenant_id == tenant_id)
-        raw_rows = (await session.execute(recent_stmt)).all()
+            base_stmt = base_stmt.where(SambaTrackingSyncJob.tenant_id == tenant_id)
+        raw_rows = (await session.execute(base_stmt)).all()
 
-        # order_id별 최신 1건만 선별 (updated_at desc 이미 정렬됨)
+        # order_id별 최신 1건만 선별 + 페이지 필터와 동일 기준 제외
         seen_order_ids: set[str] = set()
         result_rows = []
+        counts: dict[str, int] = {}
         for row in raw_rows:
             j = row[0]
+            order_status = row[4]
+            shipping_status = row[5]
             if j.order_id in seen_order_ids:
                 continue
             seen_order_ids.add(j.order_id)
-            result_rows.append(row)
-            if len(result_rows) >= limit:
-                break
+            if _is_excluded(order_status, shipping_status):
+                continue
+            counts[j.status] = counts.get(j.status, 0) + 1
+            if len(result_rows) < limit:
+                result_rows.append(row)
 
     return {
         "counts": counts,
@@ -1328,7 +1321,7 @@ async def list_recent_tracking_sync_jobs(
                 "attempts": j.attempts,
                 "updatedAt": j.updated_at.isoformat() if j.updated_at else None,
             }
-            for j, order_number, customer_name, channel_name, account_label in result_rows
+            for j, order_number, customer_name, channel_name, _os, _ss, account_label in result_rows
         ],
     }
 

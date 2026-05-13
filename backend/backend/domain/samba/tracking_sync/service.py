@@ -17,7 +17,11 @@ from typing import Any, Optional
 from sqlmodel import select
 
 from backend.db.orm import get_write_session
-from backend.domain.samba.order.model import SambaOrder
+from backend.domain.samba.order.model import (
+    EXCLUDED_ORDER_STATUSES,
+    SHIPPED_SHIPPING_STATUS_KEYWORDS,
+    SambaOrder,
+)
 from backend.domain.samba.tracking_sync.model import (
     STATUS_CANCELLED,
     STATUS_DISPATCHED,
@@ -31,16 +35,6 @@ from backend.domain.samba.tracking_sync.model import (
 from backend.utils.logger import logger
 
 _UTC = timezone.utc
-
-# 송장 조회 패스 조건 — shipping_status에 이 키워드가 포함되면 큐잉/표시 제외
-# (배송 진행/종료, 클레임 단계 주문). shipping_status는 마켓 원본 한글값.
-SKIP_SHIPPING_STATUS_KEYWORDS = (
-    "취소",  # 취소요청/취소처리중/취소완료
-    "교환",  # 교환요청/교환완료
-    "반품",  # 반품요청/반품완료
-    "배송중",
-    "배송완료",
-)
 
 
 # 소싱처 배송조회 URL 빌더 — 확장앱 content-script와 셀렉터 짝꿍
@@ -228,6 +222,7 @@ async def enqueue_pending_orders(
 
     since = datetime.now(_UTC) - timedelta(days=days)
     async with get_write_session() as session:
+        # 페이지 필터 "취소/반품/교환 제외 + 배송중/배송완료 제외" 와 정확히 동일 기준
         stmt = (
             select(SambaOrder)
             .where(
@@ -235,12 +230,16 @@ async def enqueue_pending_orders(
                 SambaOrder.sourcing_order_number.is_not(None),
                 SambaOrder.source_site.is_not(None),
                 SambaOrder.created_at >= since,
+                ~SambaOrder.status.in_(EXCLUDED_ORDER_STATUSES),
             )
             .order_by(SambaOrder.created_at.desc())
             .limit(limit)
         )
-        for kw in SKIP_SHIPPING_STATUS_KEYWORDS:
-            stmt = stmt.where(~SambaOrder.shipping_status.like(f"%{kw}%"))
+        for kw in SHIPPED_SHIPPING_STATUS_KEYWORDS:
+            stmt = stmt.where(
+                (SambaOrder.shipping_status.is_(None))
+                | (~SambaOrder.shipping_status.like(f"%{kw}%"))
+            )
         if tenant_id:
             stmt = stmt.where(SambaOrder.tenant_id == tenant_id)
         orders = (await session.execute(stmt)).scalars().all()

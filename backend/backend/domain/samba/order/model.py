@@ -211,3 +211,26 @@ class SambaOrder(SQLModel, table=True):
     delivered_at: Optional[datetime] = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
     )
+
+
+# 송장수집·진행현황 모달에서 "취소/반품/교환"으로 분류해 제외하는 status 영문 enum 집합.
+# 페이지 필터 "취소/반품/교환 제외"가 사용하는 기준과 동일.
+EXCLUDED_ORDER_STATUSES: tuple[str, ...] = (
+    "cancel_requested",
+    "cancelling",
+    "cancelled",
+    "return_requested",
+    "returning",
+    "returned",
+    "return_completed",
+    "exchange_requested",
+    "exchanging",
+    "exchanged",
+    "exchange_pending",
+    "exchange_done",
+    "ship_failed",
+    "undeliverable",
+)
+
+# 배송이 이미 진행/종료된 단계 — shipping_status(마켓 원본 한글)에 이 키워드 포함 시 제외.
+SHIPPED_SHIPPING_STATUS_KEYWORDS: tuple[str, ...] = ("배송중", "배송완료")
