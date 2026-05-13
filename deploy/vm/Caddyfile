@@ -9,6 +9,18 @@
 # 재시작: sudo docker compose restart caddy
 
 api.samba-wave.co.kr {
+    # /images/* — Cloudflare R2 reverse proxy
+    # 롯데홈쇼핑 등 일부 마켓 API가 r2.dev 도메인 다운로드 실패 → 자체 도메인으로 우회
+    handle_path /images/* {
+        reverse_proxy https://pub-0a884386abd84479a98975550fc32055.r2.dev {
+            header_up Host pub-0a884386abd84479a98975550fc32055.r2.dev
+            transport http {
+                tls
+                tls_server_name pub-0a884386abd84479a98975550fc32055.r2.dev
+            }
+        }
+    }
+
     reverse_proxy samba-api:8080 samba-api-staging:8080 {
         # 첫번째(blue) 우선 — fail 시에만 두번째(green)로 fallback
         lb_policy first
