@@ -226,8 +226,12 @@ async def enqueue_pending_orders(
         stmt = (
             select(SambaOrder)
             .where(
-                SambaOrder.tracking_number.is_(None),
+                # tracking_number는 NULL 또는 빈 문자열 모두 "송장 미입력"으로 취급
+                # (페이지 필터와 동일 — 실 데이터에 ''로 들어오는 케이스가 다수)
+                (SambaOrder.tracking_number.is_(None))
+                | (SambaOrder.tracking_number == ""),
                 SambaOrder.sourcing_order_number.is_not(None),
+                SambaOrder.sourcing_order_number != "",
                 SambaOrder.source_site.is_not(None),
                 SambaOrder.created_at >= since,
                 ~SambaOrder.status.in_(EXCLUDED_ORDER_STATUSES),
