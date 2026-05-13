@@ -1161,7 +1161,7 @@ export default function ProductsPage() {
     }>,
     orphanLabel: { idKey: string; name: string },
   ) => {
-    if (!await showConfirm(`${marketLabel} 동기화를 실행합니다.\n\n1단계: ${marketLabel} 등록 상품 전체 페이징 수집(수 분 소요)\n2단계: 목록 확인 후 실제 처리 여부 선택\n  - orphan(${marketLabel}만 존재) → ${marketLabel}에서 삭제/판매중지\n  - stale(DB만 존재) → DB 매핑 정리\n\n계속하시겠습니까?`)) return
+    if (!await showConfirm(`${marketLabel} 동기화를 실행합니다.\n\n1단계: ${marketLabel} 등록상품 전체를 수집합니다 (수 분 소요)\n2단계: 결과 확인 후 실제 처리 여부를 선택합니다\n  · ${marketLabel}에만 있는 상품 → ${marketLabel}에서 삭제\n  · 삼바에만 등록표시된 상품 → 삼바 등록표시 해제\n\n계속하시겠습니까?`)) return
 
     setAiJobTitle(`${marketLabel} 동기화`)
     setAiJobLogs([`목록 수집 중... (${marketLabel} 전체 페이징 — 수 분 소요)`])
@@ -1191,9 +1191,9 @@ export default function ProductsPage() {
       const res = await apiFn(true, 50, syncAccountId, filteredIds)
       const logs: string[] = [
         syncAccountId ? `계정 필터: ${syncAccountId}` : `전체 ${marketLabel} 계정`,
-        `${marketLabel} 등록 상품: ${fmt(res.total_market)}개`,
-        `orphan(${marketLabel}만): ${fmt(res.total_orphans)}개 → ${marketLabel}에서 삭제 예정`,
-        `stale(DB만): ${fmt(res.total_stale_db)}개 → DB 매핑 정리 예정`,
+        `${marketLabel} 등록상품: ${fmt(res.total_market)}개`,
+        `${marketLabel}에만 있는 상품: ${fmt(res.total_orphans)}개 → ${marketLabel}에서 삭제 예정`,
+        `삼바에만 등록표시된 상품: ${fmt(res.total_stale_db)}개 → 등록표시 해제 예정`,
         '',
       ]
       for (const a of res.accounts) {
@@ -1202,13 +1202,13 @@ export default function ProductsPage() {
           continue
         }
         const rec = a.recovered_via_seller_code ? ` / 셀러코드보강 ${fmt(a.recovered_via_seller_code)}` : ''
-        logs.push(`[${a.label || a.account_id}] ${marketLabel} ${fmt(a.market_count ?? 0)} / orphan ${fmt(a.orphan_count ?? 0)} / stale ${fmt(a.stale_db_count ?? 0)}${rec}`)
+        logs.push(`[${a.label || a.account_id}] ${marketLabel} ${fmt(a.market_count ?? 0)}개 / 마켓에만 ${fmt(a.orphan_count ?? 0)}개 / 삼바에만 ${fmt(a.stale_db_count ?? 0)}개${rec}`)
         for (const o of (a.orphans ?? []).slice(0, 30)) {
-          logs.push(`  [orphan] ${orphanLabel.idKey}=${o[orphanLabel.idKey] || ''}  ${o.name || ''}`)
+          logs.push(`  [마켓에만] ${orphanLabel.idKey}=${o[orphanLabel.idKey] || ''}  ${o.name || ''}`)
         }
         if ((a.orphans?.length ?? 0) > 30) logs.push(`  ... 외 ${fmt((a.orphans!.length) - 30)}개`)
         for (const s of (a.stale_db ?? []).slice(0, 20)) {
-          logs.push(`  [stale] db=${s.db_id || ''}  ${s.product_name || ''}`)
+          logs.push(`  [삼바에만] db=${s.db_id || ''}  ${s.product_name || ''}`)
         }
         if ((a.stale_db?.length ?? 0) > 20) logs.push(`  ... 외 ${fmt((a.stale_db!.length) - 20)}개`)
       }
@@ -1217,25 +1217,25 @@ export default function ProductsPage() {
 
       const totalToProcess = res.total_orphans + res.total_stale_db
       if (totalToProcess === 0) {
-        logs.push('', 'orphan/stale 없음 — 이미 일치 상태입니다.')
+        logs.push('', '차이 없음 — 삼바 DB와 마켓이 이미 일치합니다.')
         setAiJobLogs([...logs])
         return
       }
 
       const estSec = Math.ceil(res.total_orphans * 0.5)
-      if (!await showConfirm(`총 ${fmt(totalToProcess)}건을 처리하시겠습니까?\n- orphan ${fmt(res.total_orphans)}건: ${marketLabel}에서 삭제 (예상 ${fmt(estSec)}초)\n- stale ${fmt(res.total_stale_db)}건: DB 매핑 정리`)) {
+      if (!await showConfirm(`총 ${fmt(totalToProcess)}건을 처리하시겠습니까?\n· ${marketLabel}에만 있는 상품 ${fmt(res.total_orphans)}건 → ${marketLabel}에서 삭제 (예상 ${fmt(estSec)}초)\n· 삼바에만 등록표시된 상품 ${fmt(res.total_stale_db)}건 → 삼바 등록표시 해제`)) {
         logs.push('', '처리 취소됨.')
         setAiJobLogs([...logs])
         return
       }
 
-      logs.push('', `처리 실행 중... (orphan ${fmt(res.total_orphans)}건, 예상 ${fmt(estSec)}초)`)
+      logs.push('', `처리 실행 중... (마켓 삭제 ${fmt(res.total_orphans)}건, 예상 ${fmt(estSec)}초)`)
       setAiJobLogs([...logs])
       setAiJobDone(false)
 
       const del = await apiFn(false, res.total_orphans, syncAccountId, filteredIds)
-      logs.push(`${marketLabel} 삭제: ${fmt(del.total_deleted)}건`)
-      logs.push(`DB 매핑 정리: ${fmt(del.total_stale_cleared)}건`)
+      logs.push(`${marketLabel} 삭제 완료: ${fmt(del.total_deleted)}건`)
+      logs.push(`삼바 등록표시 해제: ${fmt(del.total_stale_cleared)}건`)
       for (const a of del.accounts) {
         if (a.failed && a.failed.length > 0) {
           logs.push(`[${a.label || a.account_id}] 실패 ${fmt(a.failed.length)}건:`)
@@ -1400,7 +1400,9 @@ export default function ProductsPage() {
           >
             <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#E5E5E5', marginBottom: '8px' }}>유령삭제 — 마켓 선택</div>
             <div style={{ fontSize: '0.78rem', color: '#888', marginBottom: '14px', lineHeight: 1.5 }}>
-              마켓에는 등록되어 있지만 DB 매핑이 끊긴 상품을 정리합니다.<br />
+              삼바 DB와 마켓 등록상품 목록을 100% 일치시킵니다.<br />
+              · 마켓에만 있는 상품 → 마켓에서 삭제<br />
+              · 삼바에만 등록 표시된 상품 → 삼바 등록표시 해제<br />
               점검할 마켓을 선택하세요. (화면 필터가 적용된 상품 범위에서만 점검)
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -1413,7 +1415,7 @@ export default function ProductsPage() {
                 }}
               >
                 스마트스토어<br />
-                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>마켓 전체 vs DB 비교 → orphan은 마켓에서 삭제, stale은 DB 정리</span>
+                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>마켓에만 있는 상품은 마켓에서 삭제, 삼바에만 있는 등록표시는 해제</span>
               </button>
               <button
                 onClick={() => { setGhostChoiceModal(false); runElevenstGhostSyncV2() }}
@@ -1424,7 +1426,7 @@ export default function ProductsPage() {
                 }}
               >
                 11번가<br />
-                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>마켓 전체 vs DB 비교 → orphan은 마켓에서 삭제, stale은 DB 정리</span>
+                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>마켓에만 있는 상품은 마켓에서 삭제, 삼바에만 있는 등록표시는 해제</span>
               </button>
               <button
                 onClick={() => { setGhostChoiceModal(false); runLotteonGhostSync() }}
@@ -1435,7 +1437,7 @@ export default function ProductsPage() {
                 }}
               >
                 롯데ON<br />
-                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>마켓 전체 vs DB 비교 → orphan은 마켓에서 삭제, stale은 DB 정리</span>
+                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>마켓에만 있는 상품은 마켓에서 삭제, 삼바에만 있는 등록표시는 해제</span>
               </button>
               <button
                 onClick={() => { setGhostChoiceModal(false); runCoupangGhostSync() }}
@@ -1446,18 +1448,7 @@ export default function ProductsPage() {
                 }}
               >
                 쿠팡<br />
-                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>마켓 전체 vs DB 비교 → orphan은 마켓에서 삭제, stale은 DB 정리</span>
-              </button>
-              <button
-                onClick={() => { setGhostChoiceModal(false); runElevenstGhostMissing() }}
-                style={{
-                  padding: '8px 14px', fontSize: '0.76rem', fontWeight: 500,
-                  border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888',
-                  background: 'rgba(80,80,80,0.15)', cursor: 'pointer', textAlign: 'left',
-                }}
-              >
-                11번가 보조 — prdNo 누락 정리<br />
-                <span style={{ fontSize: '0.7rem', fontWeight: 400, color: '#666' }}>DB에 "등록됨"이지만 prdNo가 비어있는 매핑만 별도 정리 (셀러상품코드 역조회)</span>
+                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>마켓에만 있는 상품은 마켓에서 삭제, 삼바에만 있는 등록표시는 해제</span>
               </button>
               <button
                 onClick={() => setGhostChoiceModal(false)}
