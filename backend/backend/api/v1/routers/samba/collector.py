@@ -1491,7 +1491,7 @@ async def product_dashboard_stats(
         by_account = []
 
     result = {"by_source": by_source, "by_account": by_account}
-    await cache.set("products:dashboard-stats-v3", result, ttl=60)
+    await cache.set("products:dashboard-stats-v3", result, ttl=600)
     return result
 
 

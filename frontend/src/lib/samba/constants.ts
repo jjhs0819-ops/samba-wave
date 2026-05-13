@@ -17,13 +17,11 @@ export const SITE_COLORS: Record<string, string> = {
 }
 
 export const PERIOD_BUTTONS = [
-  { key: 'lastmonth', label: '지난달' },
   { key: 'thismonth', label: '이번달' },
   { key: 'lastweek', label: '지난주' },
   { key: 'thisweek', label: '이번주' },
   { key: 'yesterday', label: '어제' },
   { key: 'today', label: '오늘' },
-  { key: '5days', label: '5일' },
   { key: '1week', label: '일주일' },
   { key: '1month', label: '한달' },
   { key: 'thisyear', label: '올해' },

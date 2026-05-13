@@ -940,12 +940,19 @@ class ImageTransformService:
         max_bytes: int = 900_000,
         max_dim: int = 1500,
         quality: int = 85,
+        min_dim: int = 0,
+        enforce_max_dim: bool = False,
     ) -> tuple[list[str], dict[str, str]]:
-        """용량 초과 이미지를 다운로드/리사이즈하여 R2로 업로드.
+        """용량/픽셀 초과·미달 이미지를 다운로드/리사이즈하여 R2로 업로드.
 
         롯데홈쇼핑 [1038] 등 마켓 측 이미지 용량 한도 대응 — 호스트 무관하게
         max_bytes 초과로 추정되거나 실제 다운로드 크기가 초과인 경우만 R2 미러.
         msscdn 등 차단 도메인은 mirror_external_to_r2 가 별도로 처리하므로 중복 미러 안 함.
+
+        쿠팡 검증(500x500~5000x5000) 대응:
+        - min_dim > 0 또는 enforce_max_dim=True 이면 HEAD 분기 우회하고 무조건 다운로드 →
+          PIL 로 픽셀 크기 확인 → min_dim 미만이면 LANCZOS 업스케일, max_dim 초과면 다운스케일.
+        - 기본값(min_dim=0, enforce_max_dim=False)은 기존 동작 그대로 (1038/lottehome 무영향).
 
         반환: (치환 결과 URL 리스트, 원본→R2 매핑)
         """
@@ -976,24 +983,29 @@ class ImageTransformService:
                     if public_host and host == public_host:
                         result.append(url)
                         continue
+                    # min_dim/enforce_max_dim 모드: HEAD 우회하고 무조건 다운로드
+                    # — HEAD 로는 픽셀 크기를 알 수 없으므로 PIL 로 직접 확인 필요.
+                    strict_pixel = bool(min_dim > 0 or enforce_max_dim)
+
                     # HEAD 로 size 조회 — 초과 후보만 다운로드
                     # Content-Length 누락/비숫자 또는 HEAD 자체 실패 시 over=True 로 fallthrough
                     # (msscdn 등 일부 CDN은 HEAD 에 CL 미반환 → 사전 스킵되던 [1038] 재발 원인)
                     over = False
-                    try:
-                        head = await http_client.head(url)
-                        cl = head.headers.get("content-length", "")
-                        if cl.isdigit():
-                            over = int(cl) > max_bytes
-                        else:
+                    if not strict_pixel:
+                        try:
+                            head = await http_client.head(url)
+                            cl = head.headers.get("content-length", "")
+                            if cl.isdigit():
+                                over = int(cl) > max_bytes
+                            else:
+                                over = True
+                        except Exception:
+                            # HEAD 실패 → 일단 다운로드 후 판단
                             over = True
-                    except Exception:
-                        # HEAD 실패 → 일단 다운로드 후 판단
-                        over = True
 
-                    if not over:
-                        result.append(url)
-                        continue
+                        if not over:
+                            result.append(url)
+                            continue
 
                     # 다운로드 후 PIL 로 리사이즈
                     # 1038 방어망용 — 5MB 기본 가드를 20MB까지 풀어줘야
@@ -1004,17 +1016,35 @@ class ImageTransformService:
                     if not image_bytes:
                         result.append(url)
                         continue
-                    if len(image_bytes) <= max_bytes:
-                        # HEAD 가 잘못 보고된 케이스 — 원본 유지
-                        result.append(url)
-                        continue
 
                     from PIL import Image  # noqa: F811
 
                     img = Image.open(io.BytesIO(image_bytes))
                     img = img.convert("RGB")
+                    w, h = img.size
+
+                    # 변경 필요 여부 판단
+                    need_upscale = bool(min_dim > 0 and min(w, h) < min_dim)
+                    need_downscale = bool(
+                        (enforce_max_dim or not strict_pixel) and max(w, h) > max_dim
+                    )
+                    over_bytes = len(image_bytes) > max_bytes
+
+                    # 픽셀/용량 모두 통과면 원본 유지
+                    if not need_upscale and not need_downscale and not over_bytes:
+                        result.append(url)
+                        continue
+
+                    # 쿠팡 최소사이즈 검증(500x500) 대응 — 비율 유지하며 LANCZOS 업스케일
+                    if need_upscale:
+                        ratio = float(min_dim) / float(min(w, h))
+                        new_w = max(int(round(w * ratio)), min_dim)
+                        new_h = max(int(round(h * ratio)), min_dim)
+                        img = img.resize((new_w, new_h), Image.LANCZOS)
+
                     if max(img.size) > max_dim:
                         img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+
                     out = io.BytesIO()
                     # 품질 단계적 하향: 85 → 70 → 55 까지 시도
                     final_bytes = b""
@@ -1065,8 +1095,13 @@ class ImageTransformService:
         html: str,
         max_bytes: int = 900_000,
         max_dim: int = 1500,
+        min_dim: int = 0,
+        enforce_max_dim: bool = False,
     ) -> str:
-        """HTML 내부 <img src> 중 용량 초과분만 리사이즈 후 R2 URL 로 치환."""
+        """HTML 내부 <img src> 중 용량/픽셀 검증을 통과 못한 항목을 리사이즈 후 R2 URL 로 치환.
+
+        쿠팡 검증(500x500~5000x5000) 대응 — min_dim/enforce_max_dim 전달 시 픽셀 보정 포함.
+        """
         if not html:
             return html
         import re as _re
@@ -1080,7 +1115,11 @@ class ImageTransformService:
         if not candidates:
             return html
         _, url_map = await self.mirror_oversized_to_r2(
-            candidates, max_bytes=max_bytes, max_dim=max_dim
+            candidates,
+            max_bytes=max_bytes,
+            max_dim=max_dim,
+            min_dim=min_dim,
+            enforce_max_dim=enforce_max_dim,
         )
         if not url_map:
             return html

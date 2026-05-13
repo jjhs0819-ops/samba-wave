@@ -33,10 +33,10 @@ export default function ReturnsPage() {
     const next = typeof v === 'function' ? v(prev) : v
     return next.slice(-30)
   })
-  const [period, setPeriod] = useState('5days')
+  const [period, setPeriod] = useState('today')
   const [syncAccountId, setSyncAccountId] = useState('')
-  const [customStart, setCustomStart] = useState((getPeriodStart('5days') ?? new Date()).toLocaleDateString('sv-SE'))
-  const [customEnd, setCustomEnd] = useState(getPeriodEnd('5days').toLocaleDateString('sv-SE'))
+  const [customStart, setCustomStart] = useState((getPeriodStart('today') ?? new Date()).toLocaleDateString('sv-SE'))
+  const [customEnd, setCustomEnd] = useState(getPeriodEnd('today').toLocaleDateString('sv-SE'))
   const [startLocked, setStartLocked] = useState(false)
   const [dateLocked, setDateLocked] = useState(false)
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])

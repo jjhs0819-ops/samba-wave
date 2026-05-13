@@ -2,14 +2,16 @@
 
 사이트: https://snkrdunk.com/en
 수집 방식:
-  - 검색: GET /en/v1/search?keyword=&perPage=&page=&type=
-  - 자동완성: GET /en/v1/search/keywords?keyword=
-  - 상세: HTML SSR + JSON-LD `<script type="application/ld+json">` 파싱
+  - 통합 검색: GET /en/v1/search?keyword=&perPage=&page=&type=
+  - 브랜드 카드 리스트: GET /en/v1/trading-cards?brandId=&categoryId=&perPage=&page=
+    (perPage 최대 100)
+  - 상세(스니커즈/스트릿웨어): HTML SSR + JSON-LD <script application/ld+json> 파싱
   - 통화: /en/ 사이트는 USD 결제 — JSON-LD offers 중 priceCurrency=USD 항목 사용
 
 설계:
   - USD 원본 저장 (영문 사이트 기본 결제 통화)
-  - sneakers / streetwears 두 카탈로그 모두 지원 (extra_data.snkr_type 으로 구분)
+  - sneakers / streetwears / trading-card 세 카탈로그 지원 (extra_data.snkr_type)
+  - 트레이딩카드는 상세 JSON-LD 없음 → 리스트 응답만으로 필드 채움
   - 인증 없음. User-Agent 만 필요.
 """
 
@@ -26,8 +28,14 @@ from backend.utils.logger import logger
 BASE = "https://snkrdunk.com"
 SEARCH_URL = f"{BASE}/en/v1/search"
 KEYWORDS_URL = f"{BASE}/en/v1/search/keywords"
+TRADING_CARDS_URL = f"{BASE}/en/v1/trading-cards"
 DETAIL_SNEAKER_URL = f"{BASE}/en/sneakers/{{id}}"
 DETAIL_STREETWEAR_URL = f"{BASE}/en/streetwears/{{id}}"
+# 브랜드+카테고리 URL 패턴: https://snkrdunk.com/en/brands/{brand}/trading-cards?categoryId={cat}
+BRAND_TRADING_CARDS_URL_RE = re.compile(
+    r"https?://snkrdunk\.com/en/brands/([^/?]+)/trading-cards(?:\?[^#]*?categoryId=(\d+))?",
+    re.IGNORECASE,
+)
 
 HEADERS = {
     "User-Agent": (
@@ -44,17 +52,42 @@ HEADERS = {
 TARGET_CURRENCY = "USD"
 
 
+_CATEGORY_LABELS = {
+    "sneaker": "스니커즈",
+    "streetwear": "스트릿웨어",
+    "trading-card": "트레이딩카드",
+}
+
+
+def _category_label(snkr_type: str | None) -> str:
+    return _CATEGORY_LABELS.get(snkr_type or "", "스트릿웨어")
+
+
 def _is_streetwear_id(site_product_id: str) -> bool:
     """순수 숫자면 streetwear, 그 외(예: IQ1323-001)는 sneaker."""
     return site_product_id.isdigit()
 
 
 def _detail_url(site_product_id: str, snkr_type: str | None = None) -> str:
-    if snkr_type == "streetwear" or (
+    # trading-card 도 streetwears 경로를 사용 (검색 API에서 streetwears 배열에 포함)
+    if snkr_type in ("streetwear", "trading-card") or (
         snkr_type is None and _is_streetwear_id(site_product_id)
     ):
         return DETAIL_STREETWEAR_URL.format(id=site_product_id)
     return DETAIL_SNEAKER_URL.format(id=site_product_id)
+
+
+def parse_brand_category_url(url: str) -> tuple[str, str] | None:
+    """`/en/brands/{brand}/trading-cards?categoryId={cat}` URL → (brand_id, category_id).
+
+    categoryId 누락 시 빈 문자열 반환.
+    """
+    m = BRAND_TRADING_CARDS_URL_RE.search(url or "")
+    if not m:
+        return None
+    brand = m.group(1) or ""
+    cat = m.group(2) or ""
+    return brand, cat
 
 
 def _parse_size_label(desc: str) -> str:
@@ -98,9 +131,20 @@ class SnkrdunkClient:
     ) -> dict[str, Any]:
         """키워드 검색 — sneakers + streetwears 통합 결과 반환.
 
+        keyword가 `https://snkrdunk.com/en/brands/{brand}/trading-cards?categoryId={cat}`
+        형식이면 트레이딩카드 전체 페이지네이션 수집으로 라우팅.
+
         Returns:
             {"products": [...], "total": int}
         """
+        bc = parse_brand_category_url(keyword)
+        if bc is not None:
+            brand_id, category_id = bc
+            return await self.collect_brand_cards(
+                brand_id=brand_id,
+                category_id=category_id,
+                max_count=max(max_count, 10000),
+            )
         products: list[dict[str, Any]] = []
         total = 0
         async with httpx.AsyncClient(
@@ -167,9 +211,9 @@ class SnkrdunkClient:
                     "brand": "",
                     "source_site": "SNKRDUNK",
                     "source_url": _detail_url(sid, snkr_type),
-                    "category": "스니커즈" if snkr_type == "sneaker" else "스트릿웨어",
+                    "category": _category_label(snkr_type),
                     "category1": "SNKRDUNK",
-                    "category2": "스니커즈" if snkr_type == "sneaker" else "스트릿웨어",
+                    "category2": _category_label(snkr_type),
                     "category3": "",
                     "color": "",
                     "url": _detail_url(sid, snkr_type),
@@ -183,6 +227,121 @@ class SnkrdunkClient:
                         "min_price_format": it.get("minPriceFormat"),
                         "listing_count": str(it.get("listingCount", "")),
                         "offer_count": str(it.get("offerCount", "")),
+                    },
+                }
+            )
+        return results
+
+    async def collect_brand_cards(
+        self,
+        brand_id: str,
+        category_id: str = "",
+        per_page: int = 100,
+        max_count: int = 50000,
+        sleep_between_pages: float = 0.5,
+    ) -> dict[str, Any]:
+        """브랜드+카테고리의 트레이딩카드 전체 페이지네이션 수집.
+
+        Args:
+            brand_id: ex) "pokemon"
+            category_id: ex) "25" (없으면 빈 문자열)
+            per_page: 페이지당 (최대 100)
+            max_count: 상한 (안전장치)
+        """
+        import asyncio
+
+        products: list[dict[str, Any]] = []
+        per_page = max(1, min(int(per_page or 100), 100))
+        async with httpx.AsyncClient(
+            headers=HEADERS, timeout=self._timeout, follow_redirects=True
+        ) as client:
+            page = 1
+            seen: set[str] = set()
+            while len(products) < max_count:
+                params: dict[str, Any] = {
+                    "brandId": brand_id,
+                    "perPage": per_page,
+                    "page": page,
+                }
+                if category_id:
+                    params["categoryId"] = category_id
+                try:
+                    r = await client.get(TRADING_CARDS_URL, params=params)
+                    r.raise_for_status()
+                    data = r.json()
+                except Exception as e:
+                    logger.warning(
+                        f"[SNKRDUNK] 카드 수집 실패 brand={brand_id} "
+                        f"cat={category_id} page={page}: {e}"
+                    )
+                    break
+                items = data.get("tradingCards") or []
+                if not items:
+                    break
+                page_items = self._parse_card_items(items)
+                # 중복 제거 (간헐적 페이지 겹침 대비)
+                new_items = [p for p in page_items if p["site_product_id"] not in seen]
+                seen.update(p["site_product_id"] for p in new_items)
+                products.extend(new_items)
+                logger.info(
+                    f"[SNKRDUNK] 카드 수집 brand={brand_id} cat={category_id} "
+                    f"p{page} +{len(new_items)}건 (누적 {len(products)})"
+                )
+                if len(items) < per_page:
+                    break
+                page += 1
+                if sleep_between_pages:
+                    await asyncio.sleep(sleep_between_pages)
+
+        products = products[:max_count]
+        return {"products": products, "total": len(products)}
+
+    @staticmethod
+    def _parse_card_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """tradingCards 응답 배열 → 정규화."""
+        results: list[dict[str, Any]] = []
+        for it in items:
+            sid = str(it.get("id", "")).strip()
+            if not sid:
+                continue
+            thumb = it.get("thumbnailUrl") or ""
+            min_price = it.get("minPrice")
+            sale_price = int(min_price) if isinstance(min_price, (int, float)) else 0
+            url = _detail_url(sid, "trading-card")
+            listing_count = str(it.get("listingCount", "0"))
+            # 매물 0이면 품절 처리
+            sale_status = "in_stock" if listing_count not in ("", "0") else "sold_out"
+            results.append(
+                {
+                    "site_product_id": sid,
+                    "name": (it.get("name") or "").strip(),
+                    "original_price": sale_price,
+                    "sale_price": sale_price,
+                    "images": [thumb] if thumb else [],
+                    "brand": "",
+                    "source_site": "SNKRDUNK",
+                    "source_url": url,
+                    "category": _category_label("trading-card"),
+                    "category1": "SNKRDUNK",
+                    "category2": _category_label("trading-card"),
+                    "category3": "",
+                    "color": "",
+                    "url": url,
+                    "video_url": url,
+                    "options": [{"name": "기본", "price": sale_price, "stock": 1}]
+                    if sale_status == "in_stock"
+                    else [],
+                    "detail_html": "",
+                    "free_shipping": False,
+                    "sale_status": sale_status,
+                    "extra_data": {
+                        "snkr_type": "trading-card",
+                        "currency": TARGET_CURRENCY,
+                        "product_number": it.get("productNumber"),
+                        "min_price_format": it.get("minPriceFormat"),
+                        "listing_count": listing_count,
+                        "offer_count": str(it.get("offerCount", "")),
+                        "released_at": it.get("releasedAt"),
                     },
                 }
             )

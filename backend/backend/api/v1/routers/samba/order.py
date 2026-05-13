@@ -806,11 +806,35 @@ async def dashboard_stats(
     del_rows = (await session.execute(del_q)).all()
     del_map = {str(r.day): int(r.cnt) for r in del_rows}
 
-    for w in weekly:
-        w["newRegistered"] = int(new_reg_map.get(w["date"], 0))
-        w["marketDeleted"] = int(del_map.get(w["date"], 0))
+    # 일별 누적 등록상품수: 해당일 24시(KST) 시점에 마켓 1개라도 등록 상태였던 상품 수
+    # 조건: first_market_registered_at <= day_end_kst
+    #       AND (fully_unregistered_at IS NULL OR fully_unregistered_at > day_end_kst)
+    # 저장 컬럼은 UTC naive — KST day_end에서 9시간을 빼 UTC 비교 시각 산출
+    reg_count_map: dict[str, int] = {}
+    today_str = (week_ago + timedelta(days=6)).strftime("%Y-%m-%d")
+    for i in range(6):  # 오늘은 별도 처리 (현재 marketRegisteredCount 사용)
+        d_kst = week_ago + timedelta(days=i)
+        day_end_utc = d_kst + timedelta(days=1, hours=-9)
+        reg_cnt_q = select(func.count(SambaCollectedProduct.id)).where(
+            SambaCollectedProduct.first_market_registered_at != None,  # noqa: E711
+            SambaCollectedProduct.first_market_registered_at < day_end_utc,
+            or_(
+                SambaCollectedProduct.fully_unregistered_at == None,  # noqa: E711
+                SambaCollectedProduct.fully_unregistered_at >= day_end_utc,
+            ),
+        )
+        if tenant_id is not None:
+            reg_cnt_q = reg_cnt_q.where(
+                or_(
+                    SambaCollectedProduct.tenant_id == tenant_id,
+                    SambaCollectedProduct.tenant_id == None,  # noqa: E711
+                )
+            )
+        reg_count_map[d_kst.strftime("%Y-%m-%d")] = (
+            await session.execute(reg_cnt_q)
+        ).scalar() or 0
 
-    # 마켓 1개 이상 등록된 상품수 (현재 시점)
+    # 마켓 1개 이상 등록된 상품수 (현재 시점) — KPI + 오늘 행에 사용
     market_registered_q = select(func.count(SambaCollectedProduct.id)).where(
         *build_market_registered_conditions(SambaCollectedProduct)
     )
@@ -822,6 +846,12 @@ async def dashboard_stats(
             )
         )
     market_registered_count = (await session.execute(market_registered_q)).scalar() or 0
+    reg_count_map[today_str] = int(market_registered_count)
+
+    for w in weekly:
+        w["newRegistered"] = int(new_reg_map.get(w["date"], 0))
+        w["marketDeleted"] = int(del_map.get(w["date"], 0))
+        w["registeredCount"] = int(reg_count_map.get(w["date"], 0))
 
     tm_fulfillment_rate = (
         round(int(tm.fulfillment_count or 0) / int(tm.count) * 100) if tm.count else 0

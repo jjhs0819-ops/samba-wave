@@ -138,7 +138,7 @@ export default function SambaDashboard() {
     rate: w.sales > 0 ? Math.round(w.fulfillmentSales / w.sales * 100) : 0,
     newRegistered: w.newRegistered ?? 0,
     marketDeleted: w.marketDeleted ?? 0,
-    registeredCount: marketRegisteredCount,
+    registeredCount: w.registeredCount ?? 0,
   }))
   const monthlyData = stats?.monthly || []
 

@@ -188,6 +188,43 @@ class CoupangPlugin(MarketPlugin):
                 # 메타 조회 실패는 등록 자체를 막지 않음 — fallback 사용
                 pass
 
+        # 쿠팡 이미지 검증 사양 정규화 — 승인 반려 사유 대응
+        # 사양: 최대 10MB / 최소 500x500 / 최대 5000x5000 (대표/추가/DETAIL/detail_html 공통)
+        try:
+            from backend.domain.samba.image.service import ImageTransformService
+
+            _img_svc = ImageTransformService(session)
+            _kw = dict(
+                max_bytes=10 * 1024 * 1024,
+                max_dim=5000,
+                min_dim=500,
+                enforce_max_dim=True,
+            )
+            product = dict(product)  # 원본 dict 변형 방지
+            _images = product.get("images") or []
+            _detail_images = product.get("detail_images") or []
+            _main = product.get("coupang_main_image") or ""
+            _detail_html = product.get("detail_html") or ""
+
+            if _images:
+                product["images"], _ = await _img_svc.mirror_oversized_to_r2(
+                    _images, **_kw
+                )
+            if _detail_images:
+                (
+                    product["detail_images"],
+                    _,
+                ) = await _img_svc.mirror_oversized_to_r2(_detail_images, **_kw)
+            if _main:
+                fixed, _ = await _img_svc.mirror_oversized_to_r2([_main], **_kw)
+                product["coupang_main_image"] = fixed[0] if fixed else ""
+            if _detail_html:
+                product["detail_html"] = await _img_svc.mirror_oversized_in_html(
+                    _detail_html, **_kw
+                )
+        except Exception as e:
+            logger.warning(f"[쿠팡] 이미지 정규화 단계 오류 — 원본 URL 유지: {e}")
+
         # AS 전화번호 주입은 base._apply_market_settings 에서 처리됨
         data = CoupangClient.transform_product(
             product,
