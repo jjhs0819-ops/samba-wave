@@ -11,12 +11,13 @@
 api.samba-wave.co.kr {
     # /images/* — Cloudflare R2 reverse proxy
     # 롯데홈쇼핑 등 일부 마켓 API가 r2.dev 도메인 다운로드 실패 → 자체 도메인으로 우회
+    # R2_PUBLIC_HOST 환경변수: 자기 R2 public host (pub-XXXX.r2.dev), 도커 compose 에서 주입
     handle_path /images/* {
-        reverse_proxy https://pub-0a884386abd84479a98975550fc32055.r2.dev {
-            header_up Host pub-0a884386abd84479a98975550fc32055.r2.dev
+        reverse_proxy https://{$R2_PUBLIC_HOST} {
+            header_up Host {$R2_PUBLIC_HOST}
             transport http {
                 tls
-                tls_server_name pub-0a884386abd84479a98975550fc32055.r2.dev
+                tls_server_name {$R2_PUBLIC_HOST}
             }
         }
     }
