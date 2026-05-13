@@ -361,7 +361,7 @@ export default function OrdersPage() {
     counts: Record<string, number>
     recent: Array<{
       id: string; orderId: string; orderNumber: string; customerName: string
-      site: string; sourcingOrderNumber: string; sourcingAccountLabel: string
+      channelName: string; site: string; sourcingOrderNumber: string; sourcingAccountLabel: string
       status: string; courier?: string | null; tracking?: string | null
       lastError?: string | null; attempts: number; updatedAt?: string | null
     }>
@@ -708,7 +708,7 @@ export default function OrdersPage() {
             onClick={(e) => e.stopPropagation()}
             style={{
               background: '#1f2937', color: '#e5e7eb',
-              width: 1100, maxWidth: '95vw', maxHeight: '85vh',
+              width: 1240, maxWidth: '96vw', maxHeight: '85vh',
               borderRadius: 8, padding: 20, overflow: 'auto',
               border: '1px solid #374151',
             }}
@@ -754,28 +754,31 @@ export default function OrdersPage() {
             {/* 최근 잡 목록 */}
             <div style={{ background: '#111827', borderRadius: 6, overflow: 'hidden', border: '1px solid #374151' }}>
               <div style={{
-                display: 'grid', gridTemplateColumns: '88px 150px 80px 80px 90px 90px 120px 1fr',
+                display: 'grid', gridTemplateColumns: '36px 88px 150px 80px 100px 80px 90px 90px 120px 1fr',
                 padding: '8px 10px', background: '#0f172a', fontSize: 11, fontWeight: 700, color: '#9ca3af',
               }}>
+                <div>#</div>
                 <div>상태</div>
                 <div>상품주문번호</div>
                 <div>고객명</div>
+                <div>판매처</div>
                 <div>소싱처</div>
                 <div>소싱처계정</div>
                 <div>택배사</div>
                 <div>송장번호</div>
                 <div>오류/메모</div>
               </div>
-              {(trackingStatusData?.recent || []).map(j => {
+              {(trackingStatusData?.recent || []).map((j, idx) => {
                 const statusColor: Record<string, string> = {
                   PENDING: '#6b7280', DISPATCHED: '#0ea5e9', SCRAPED: '#16a34a',
                   SENT_TO_MARKET: '#22c55e', NO_TRACKING: '#f59e0b', CANCELLED: '#a855f7', FAILED: '#ef4444',
                 }
                 return (
                   <div key={j.id} style={{
-                    display: 'grid', gridTemplateColumns: '88px 150px 80px 80px 90px 90px 120px 1fr',
+                    display: 'grid', gridTemplateColumns: '36px 88px 150px 80px 100px 80px 90px 90px 120px 1fr',
                     padding: '6px 10px', borderTop: '1px solid #1f2937', fontSize: 12,
                   }}>
+                    <div style={{ color: '#6b7280', fontSize: 11 }}>{fmtNum(idx + 1)}</div>
                     <div>
                       <span style={{
                         padding: '2px 6px', borderRadius: 3, fontSize: 10, fontWeight: 700,
@@ -784,6 +787,7 @@ export default function OrdersPage() {
                     </div>
                     <div style={{ fontFamily: 'monospace', fontSize: 11 }}>{j.orderNumber || j.orderId}</div>
                     <div>{j.customerName || '-'}</div>
+                    <div>{j.channelName || '-'}</div>
                     <div>{j.site}</div>
                     <div>{j.sourcingAccountLabel || '-'}</div>
                     <div>{j.courier || '-'}</div>

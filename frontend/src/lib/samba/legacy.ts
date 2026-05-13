@@ -341,6 +341,7 @@ export const orderApi = {
         orderId: string
         orderNumber: string
         customerName: string
+        channelName: string
         site: string
         sourcingOrderNumber: string
         sourcingAccountLabel: string

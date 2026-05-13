@@ -217,6 +217,15 @@ async def enqueue_pending_orders(
     errors: list[str] = []
 
     since = datetime.now(_UTC) - timedelta(days=days)
+    # 송장 조회 패스 — 배송이 이미 진행/종료됐거나 클레임 단계인 주문은 큐잉 제외.
+    # shipping_status는 마켓 원본 한글값이라 부분일치(LIKE)로 매칭.
+    SKIP_SHIPPING_STATUSES = (
+        "취소",  # 취소요청/취소처리중/취소완료
+        "교환",  # 교환요청/교환완료
+        "반품",  # 반품요청/반품완료
+        "배송중",
+        "배송완료",
+    )
     async with get_write_session() as session:
         stmt = (
             select(SambaOrder)
@@ -229,6 +238,8 @@ async def enqueue_pending_orders(
             .order_by(SambaOrder.created_at.desc())
             .limit(limit)
         )
+        for kw in SKIP_SHIPPING_STATUSES:
+            stmt = stmt.where(~SambaOrder.shipping_status.like(f"%{kw}%"))
         if tenant_id:
             stmt = stmt.where(SambaOrder.tenant_id == tenant_id)
         orders = (await session.execute(stmt)).scalars().all()

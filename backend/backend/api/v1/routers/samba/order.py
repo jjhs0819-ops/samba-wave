@@ -459,7 +459,13 @@ async def _build_order_filters(
                 )
             )
         else:
-            filters.append(SambaOrder.customer_name.ilike(lower_q, escape="\\"))
+            # 고객명(수령인) + 주문자명 모두 매칭 — 선물하기 등 수령인≠주문자 케이스 대응
+            filters.append(
+                or_(
+                    SambaOrder.customer_name.ilike(lower_q, escape="\\"),
+                    SambaOrder.orderer_name.ilike(lower_q, escape="\\"),
+                )
+            )
 
     return filters
 
@@ -823,33 +829,14 @@ async def dashboard_stats(
     del_rows = (await session.execute(del_q)).all()
     del_map = {str(r.day): int(r.cnt) for r in del_rows}
 
-    # 일별 누적 등록상품수: 해당일 24시(KST) 시점에 마켓 1개라도 등록 상태였던 상품 수
-    # 조건: first_market_registered_at <= day_end_kst
-    #       AND (fully_unregistered_at IS NULL OR fully_unregistered_at > day_end_kst)
-    # 저장 컬럼은 UTC naive — KST day_end에서 9시간을 빼 UTC 비교 시각 산출
-    reg_count_map: dict[str, int] = {}
+    # 일별 누적 등록상품수: "지금 마켓에 1개 이상 등록된 상품수" 정의로 통일
+    #   - 오늘(today_str): 실시간 build_market_registered_conditions 계산값
+    #   - 과거 6일: samba_daily_registered_snapshot 테이블의 그날 0시 스냅샷
+    #   - 스냅샷이 없는 과거일은 오늘값에서 역산: count(d) = count(d+1) - newReg(d+1) + delete(d+1)
+    from backend.domain.samba.collector.model import SambaDailyRegisteredSnapshot
+
     today_str = (week_ago + timedelta(days=6)).strftime("%Y-%m-%d")
-    for i in range(6):  # 오늘은 별도 처리 (현재 marketRegisteredCount 사용)
-        d_kst = week_ago + timedelta(days=i)
-        day_end_utc = d_kst + timedelta(days=1, hours=-9)
-        reg_cnt_q = select(func.count(SambaCollectedProduct.id)).where(
-            SambaCollectedProduct.first_market_registered_at != None,  # noqa: E711
-            SambaCollectedProduct.first_market_registered_at < day_end_utc,
-            or_(
-                SambaCollectedProduct.fully_unregistered_at == None,  # noqa: E711
-                SambaCollectedProduct.fully_unregistered_at >= day_end_utc,
-            ),
-        )
-        if tenant_id is not None:
-            reg_cnt_q = reg_cnt_q.where(
-                or_(
-                    SambaCollectedProduct.tenant_id == tenant_id,
-                    SambaCollectedProduct.tenant_id == None,  # noqa: E711
-                )
-            )
-        reg_count_map[d_kst.strftime("%Y-%m-%d")] = (
-            await session.execute(reg_cnt_q)
-        ).scalar() or 0
+    reg_count_map: dict[str, int] = {}
 
     # 마켓 1개 이상 등록된 상품수 (현재 시점) — KPI + 오늘 행에 사용
     market_registered_q = select(func.count(SambaCollectedProduct.id)).where(
@@ -864,6 +851,36 @@ async def dashboard_stats(
         )
     market_registered_count = (await session.execute(market_registered_q)).scalar() or 0
     reg_count_map[today_str] = int(market_registered_count)
+
+    # 과거 6일 스냅샷 일괄 조회
+    past_dates = [(week_ago + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(6)]
+    snap_q = select(
+        SambaDailyRegisteredSnapshot.snapshot_date,
+        SambaDailyRegisteredSnapshot.registered_count,
+    ).where(SambaDailyRegisteredSnapshot.snapshot_date.in_(past_dates))
+    snap_rows = (await session.execute(snap_q)).all()
+    snap_map = {r.snapshot_date: int(r.registered_count) for r in snap_rows}
+
+    # 스냅샷 없는 과거일은 역산으로 채움 (최신일부터 역순)
+    #   d+1일의 등록상품수 = d일의 등록상품수 + (d+1일 신규등록) - (d+1일 마켓삭제)
+    #   => d일의 등록상품수 = d+1일의 등록상품수 - (d+1일 신규등록) + (d+1일 마켓삭제)
+    running = int(market_registered_count)
+    for i in range(5, -1, -1):
+        d_str = past_dates[i]
+        next_d_str = past_dates[i + 1] if i + 1 < 6 else today_str
+        # 다음날의 신규등록/마켓삭제 빼서 어제값 역산
+        running = (
+            running
+            - int(new_reg_map.get(next_d_str, 0))
+            + int(del_map.get(next_d_str, 0))
+        )
+        # 스냅샷이 있으면 그것을 우선 사용, 없으면 역산값 사용
+        if d_str in snap_map:
+            reg_count_map[d_str] = snap_map[d_str]
+            # 다음 역산 기준도 스냅샷값으로 동기화 (역산 오차 누적 방지)
+            running = snap_map[d_str]
+        else:
+            reg_count_map[d_str] = max(running, 0)
 
     for w in weekly:
         w["newRegistered"] = int(new_reg_map.get(w["date"], 0))
@@ -1236,6 +1253,7 @@ async def list_recent_tracking_sync_jobs(
                 SambaTrackingSyncJob,
                 O.order_number,
                 O.customer_name,
+                O.channel_name,
                 A.account_label,
             )
             .join(O, O.id == SambaTrackingSyncJob.order_id, isouter=True)
@@ -1255,6 +1273,7 @@ async def list_recent_tracking_sync_jobs(
                 "orderId": j.order_id,
                 "orderNumber": order_number or "",
                 "customerName": customer_name or "",
+                "channelName": channel_name or "",
                 "site": j.sourcing_site,
                 "sourcingOrderNumber": j.sourcing_order_number,
                 "sourcingAccountLabel": account_label or "",
@@ -1265,7 +1284,7 @@ async def list_recent_tracking_sync_jobs(
                 "attempts": j.attempts,
                 "updatedAt": j.updated_at.isoformat() if j.updated_at else None,
             }
-            for j, order_number, customer_name, account_label in result_rows
+            for j, order_number, customer_name, channel_name, account_label in result_rows
         ],
     }
 
