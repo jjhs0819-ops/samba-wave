@@ -9,7 +9,6 @@ import gc
 import json
 import logging
 import re
-import threading
 import time as _time
 from collections import deque
 from datetime import datetime, timezone
@@ -317,39 +316,6 @@ async def _fail_job_safe(job_id: str, error_msg: str) -> None:
         await repo.fail_job(job_id, error_msg)
         await session.commit()
     _add_job_log(job_id, f"수집 실패: {error_msg}", job_type="collect")
-
-
-def _run_collect_in_thread(worker: "JobWorker", job_id: str, payload: dict):
-    """별도 스레드에서 독립 이벤트 루프로 수집 실행."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(worker._execute_collect_isolated(job_id, payload))
-    except Exception as e:
-        logger.error(f"[잡워커] 수집 스레드 에러: {job_id} — {e}")
-        # 잡 상태를 FAILED로 업데이트 — 미처리 시 RUNNING 고착 → stuck 복구 → 무한 재시작
-        try:
-            loop.run_until_complete(_fail_job_safe(job_id, f"수집 스레드 에러: {e}"))
-        except Exception as fe:
-            logger.error(
-                f"[잡워커] 수집 스레드 에러 후 잡 상태 갱신 실패: {job_id} — {fe}"
-            )
-    finally:
-        # 스레드 전용 엔진 dispose — 풀의 TCP 커넥션을 Cloud SQL에 즉시 반납
-        # 생략 시 loop.close() 만으로는 asyncpg 소켓이 GC까지 살아있어 좀비 누적 → max_connections 고갈 원인
-        try:
-            from backend.db.orm import _write_engine_cache, _read_engine_cache
-
-            for _cache in (_write_engine_cache, _read_engine_cache):
-                _eng = _cache.get(loop)
-                if _eng is not None:
-                    try:
-                        loop.run_until_complete(_eng.dispose())
-                    except Exception as de:
-                        logger.warning(f"[잡워커] 수집 엔진 dispose 실패: {de}")
-        except Exception:
-            pass
-        loop.close()
 
 
 def _run_transmit_in_thread(worker: "JobWorker", job_id: str, payload: dict):
@@ -713,31 +679,39 @@ class JobWorker:
                         f"[잡워커] brand_all 시작 — 직렬 실행 플래그 set: {_job_id} site={_collect_site}"
                     )
                 logger.info(
-                    f"[잡워커] 수집 실행 (격리 스레드): {_job_id} site={_collect_site}"
+                    f"[잡워커] 수집 실행 (메인 루프 task): {_job_id} site={_collect_site}"
                 )
-                thread = threading.Thread(
-                    target=_run_collect_in_thread,
-                    args=(self, _job_id, _job_payload),
-                    daemon=True,
+                # 메인 이벤트 루프에서 task로 실행 — 글로벌 AsyncEngine과 동일 루프 사용
+                # (별도 스레드 격리 시 SQLAlchemy greenlet_spawn 에러 발생)
+                _collect_task = asyncio.create_task(
+                    self._execute_collect_isolated(_job_id, _job_payload),
+                    name=f"collect-exec-{_job_id}",
                 )
-                thread.start()
                 _NO_PROGRESS_SEC = 600  # 10분 동안 새 저장 없으면 타임아웃
                 _collect_last_progress[_job_id] = _time.time()  # 시작 기준점 초기화
-                while thread.is_alive():
+                _cancel_reason: str | None = None
+                while not _collect_task.done():
                     if self._shutting_down:
-                        logger.info(
-                            f"[잡워커] 배포 종료 — 수집 스레드 대기 중단: {_job_id}"
-                        )
+                        _cancel_reason = "shutdown"
+                        logger.info(f"[잡워커] 배포 종료 — 수집 task 취소: {_job_id}")
                         break
                     idle_sec = _time.time() - _collect_last_progress.get(
                         _job_id, _time.time()
                     )
                     if idle_sec > _NO_PROGRESS_SEC:
+                        _cancel_reason = "no_progress"
                         break  # 진행 없음 → 타임아웃
                     await asyncio.sleep(2)
                 _collect_last_progress.pop(_job_id, None)
-                if thread.is_alive():
-                    if self._shutting_down:
+
+                if _cancel_reason:
+                    _collect_task.cancel()
+                    try:
+                        await _collect_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+
+                    if _cancel_reason == "shutdown":
                         # 배포/재시작 중단 — pending으로 복구 (다음 인스턴스에서 재실행)
                         logger.info(
                             f"[잡워커] 수집 중 배포 중단 → pending 복구: {_job_id}"
@@ -783,6 +757,19 @@ class JobWorker:
                                 await timeout_session.commit()
                         except Exception as te:
                             logger.error(f"[잡워커] 진행없음 pending 복구 실패: {te}")
+                else:
+                    # 정상 완료 — task 내부에서 finish_job/fail_job 처리 완료
+                    # 단, task 자체 예외는 여기서 catch 후 잡 상태 갱신
+                    try:
+                        await _collect_task
+                    except Exception as e:
+                        logger.error(f"[잡워커] 수집 task 예외: {_job_id} — {e}")
+                        try:
+                            await _fail_job_safe(_job_id, f"수집 예외: {e}")
+                        except Exception as fe:
+                            logger.error(
+                                f"[잡워커] 수집 예외 후 잡 상태 갱신 실패: {_job_id} — {fe}"
+                            )
                 return
 
             # 전송 + 기타: 직접 실행 (인메모리 로그 공유)
