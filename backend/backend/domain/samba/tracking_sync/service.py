@@ -164,6 +164,73 @@ def _detect_site_from_url(url: str) -> str:
     return ""
 
 
+async def _try_backend_fetch_musinsa(order, session) -> Optional[dict[str, Any]]:
+    """MUSINSA 송장 정보 백엔드 직접 fetch — 성공 시 SCRAPED 잡 row 생성 후 결과 반환.
+
+    실패/누락 시 None 반환 → enqueue_for_order 호출자가 SourcingQueue 폴백.
+    """
+    from backend.api.v1.routers.samba.collector_common import get_musinsa_cookie
+    from backend.domain.samba.proxy.musinsa import MusinsaClient
+
+    ord_no = (order.sourcing_order_number or "").strip()
+    ord_opt_no = (order.musinsa_ord_opt_no or "").strip()
+    if not ord_no or not ord_opt_no:
+        return None
+    cookie = await get_musinsa_cookie(session)
+    if not cookie:
+        logger.info("[송장동기화] MUSINSA backend fetch 스킵 — 쿠키 없음")
+        return None
+
+    client = MusinsaClient(cookie=cookie)
+    result = await client.fetch_tracking(ord_no, ord_opt_no)
+    if not result.get("ok"):
+        logger.info(
+            f"[송장동기화] MUSINSA backend fetch 실패 (폴백 진행): "
+            f"order={order.id} ord_no={ord_no} err={result.get('error')}"
+        )
+        return None
+
+    courier = normalize_courier_name(result.get("courier") or "")
+    tracking = (result.get("trackingNumber") or "").strip()
+    if not tracking:
+        return None
+
+    # SambaTrackingSyncJob을 SCRAPED 상태로 즉시 생성
+    job = SambaTrackingSyncJob(
+        tenant_id=order.tenant_id,
+        order_id=order.id,
+        sourcing_site="MUSINSA",
+        sourcing_order_number=ord_no,
+        sourcing_account_id=order.sourcing_account_id,
+        owner_device_id=None,
+        request_id=None,
+        status=STATUS_SCRAPED,
+        scraped_courier=courier,
+        scraped_tracking=tracking,
+        scraped_at=datetime.now(_UTC),
+    )
+    session.add(job)
+
+    # SambaOrder.tracking_number / shipping_company도 함께 갱신
+    order.tracking_number = tracking
+    order.shipping_company = courier or order.shipping_company
+    order.updated_at = datetime.now(_UTC)
+    session.add(order)
+
+    await session.commit()
+    logger.info(
+        f"[송장동기화] MUSINSA backend fetch 성공: order={order.id} "
+        f"courier={courier} tracking={tracking}"
+    )
+    return {
+        "success": True,
+        "jobId": job.id,
+        "backendFetch": True,
+        "courier": courier,
+        "tracking": tracking,
+    }
+
+
 async def _resolve_actual_source_site(order, session) -> str:
     """주문의 진짜 소싱처 코드 결정.
 
@@ -231,6 +298,14 @@ async def enqueue_for_order(order_id: str, *, force: bool = False) -> dict[str, 
                 }
 
         owner_device_id = await _resolve_owner_device_id(order.sourcing_account_id)
+
+        # MUSINSA 백엔드 직접 fetch 분기 — ord_opt_no가 DB에 저장돼 있으면
+        # 확장앱 탭 폴링 없이 cookie 기반 deliveryInfo API 직접 호출.
+        if actual_site == "MUSINSA" and (order.musinsa_ord_opt_no or "").strip():
+            backend_result = await _try_backend_fetch_musinsa(order, session)
+            if backend_result:
+                return backend_result
+            # backend fetch 실패 시 기존 SourcingQueue 폴백으로 진행
 
         # 1) SourcingQueue에 잡 적재 (확장앱 폴링이 받음) — actual_site 사용
         try:
