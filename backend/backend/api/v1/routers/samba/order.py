@@ -344,6 +344,15 @@ async def _build_order_filters(
             filters.append(SambaOrder.status.in_(ACTIVE_ORDER_STATUSES))
         elif status_filter == "cancel_return_excluded":
             filters.append(~SambaOrder.status.in_(EXCLUDED_ORDER_STATUSES))
+            # shipping_status가 배송중/출고/배송완료인 주문도 제외 (마켓 원본 한글값 기준)
+            shipping_exclude_keywords = ("배송중", "출고", "배송완료")
+            for kw in shipping_exclude_keywords:
+                filters.append(
+                    or_(
+                        SambaOrder.shipping_status.is_(None),
+                        ~SambaOrder.shipping_status.like(f"%{kw}%"),
+                    )
+                )
         elif status_filter == "pending":
             filters.append(SambaOrder.status.in_(PENDING_ORDER_STATUSES))
         else:

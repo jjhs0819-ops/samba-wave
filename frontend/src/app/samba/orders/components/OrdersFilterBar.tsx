@@ -229,7 +229,7 @@ export default function OrdersFilterBar(props: Props) {
           </select>
           <select style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
             <option value="">전체 주문상태</option>
-            <option value="cancel_return_excluded">취소/반품/교환 제외</option>
+            <option value="cancel_return_excluded">취소/반품/교환/배송 제외</option>
             {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
           <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ ...inputStyle, width: '63px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }}>
