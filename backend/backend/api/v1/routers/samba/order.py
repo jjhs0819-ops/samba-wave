@@ -273,6 +273,7 @@ async def _build_order_filters(
     market_status: str = "",
     status_filter: str = "",
     input_filter: str = "",
+    invoice_filter: str = "",
     registration_filter: str = "",
     search_text: str = "",
     search_category: str = "customer",
@@ -388,6 +389,22 @@ async def _build_order_filters(
         action_filter = _build_action_tag_filter(input_filter)
         if action_filter is not None:
             filters.append(action_filter)
+
+    # 송장필터 — 입력필터와 독립적으로 동작 (이중 선택 가능)
+    if invoice_filter == "has_invoice":
+        filters.append(
+            and_(
+                SambaOrder.tracking_number != None,  # noqa: E711
+                SambaOrder.tracking_number != "",
+            )
+        )
+    elif invoice_filter == "no_invoice":
+        filters.append(
+            or_(
+                SambaOrder.tracking_number == None,  # noqa: E711
+                SambaOrder.tracking_number == "",
+            )
+        )
 
     # 등록필터 — 입력필터와 독립적으로 동작 (이중 선택 가능)
     if registration_filter == "registered":
@@ -908,6 +925,7 @@ async def list_orders_by_date_range_paged(
     market_status: str = Query(""),
     status_filter: str = Query(""),
     input_filter: str = Query(""),
+    invoice_filter: str = Query(""),
     registration_filter: str = Query(""),
     search_text: str = Query(""),
     search_category: str = Query("customer"),
@@ -927,6 +945,7 @@ async def list_orders_by_date_range_paged(
         market_status=market_status,
         status_filter=status_filter,
         input_filter=input_filter,
+        invoice_filter=invoice_filter,
         registration_filter=registration_filter,
         search_text=search_text,
         search_category=search_category,
@@ -956,6 +975,7 @@ async def list_orders_by_collected_product_paged(
     market_status: str = Query(""),
     status_filter: str = Query(""),
     input_filter: str = Query(""),
+    invoice_filter: str = Query(""),
     registration_filter: str = Query(""),
     search_text: str = Query(""),
     search_category: str = Query("customer"),
@@ -972,6 +992,7 @@ async def list_orders_by_collected_product_paged(
         market_status=market_status,
         status_filter=status_filter,
         input_filter=input_filter,
+        invoice_filter=invoice_filter,
         registration_filter=registration_filter,
         search_text=search_text,
         search_category=search_category,

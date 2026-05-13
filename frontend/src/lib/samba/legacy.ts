@@ -205,6 +205,7 @@ export const orderApi = {
     market_status?: string
     status_filter?: string
     input_filter?: string
+    invoice_filter?: string
     registration_filter?: string
     search_text?: string
     search_category?: string
@@ -221,6 +222,7 @@ export const orderApi = {
       market_status: params.market_status ?? '',
       status_filter: params.status_filter ?? '',
       input_filter: params.input_filter ?? '',
+      invoice_filter: params.invoice_filter ?? '',
       registration_filter: params.registration_filter ?? '',
       search_text: params.search_text ?? '',
       search_category: params.search_category ?? 'customer',
@@ -240,6 +242,7 @@ export const orderApi = {
     market_status?: string
     status_filter?: string
     input_filter?: string
+    invoice_filter?: string
     registration_filter?: string
     search_text?: string
     search_category?: string
@@ -255,6 +258,7 @@ export const orderApi = {
       market_status: params.market_status ?? '',
       status_filter: params.status_filter ?? '',
       input_filter: params.input_filter ?? '',
+      invoice_filter: params.invoice_filter ?? '',
       registration_filter: params.registration_filter ?? '',
       search_text: params.search_text ?? '',
       search_category: params.search_category ?? 'customer',

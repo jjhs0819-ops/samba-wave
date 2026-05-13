@@ -1413,7 +1413,7 @@ export default function ProductsPage() {
                 }}
               >
                 스마트스토어<br />
-                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>Naver엔 있는데 DB 매핑 없는 고아 상품 + 역고아 정리</span>
+                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>마켓 전체 vs DB 비교 → orphan은 마켓에서 삭제, stale은 DB 정리</span>
               </button>
               <button
                 onClick={() => { setGhostChoiceModal(false); runElevenstGhostSyncV2() }}
@@ -1423,8 +1423,8 @@ export default function ProductsPage() {
                   background: 'rgba(255,140,80,0.15)', cursor: 'pointer', textAlign: 'left',
                 }}
               >
-                11번가 (양방향)<br />
-                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>11번가 판매중 전체 vs DB 비교 → orphan은 판매중지, stale은 DB 정리</span>
+                11번가<br />
+                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>마켓 전체 vs DB 비교 → orphan은 마켓에서 삭제, stale은 DB 정리</span>
               </button>
               <button
                 onClick={() => { setGhostChoiceModal(false); runLotteonGhostSync() }}
@@ -1434,8 +1434,8 @@ export default function ProductsPage() {
                   background: 'rgba(255,80,140,0.15)', cursor: 'pointer', textAlign: 'left',
                 }}
               >
-                롯데ON (양방향)<br />
-                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>롯데ON 판매중 전체 vs DB 비교 → orphan은 END 전환, stale은 DB 정리</span>
+                롯데ON<br />
+                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>마켓 전체 vs DB 비교 → orphan은 마켓에서 삭제, stale은 DB 정리</span>
               </button>
               <button
                 onClick={() => { setGhostChoiceModal(false); runCoupangGhostSync() }}
@@ -1445,8 +1445,8 @@ export default function ProductsPage() {
                   background: 'rgba(255,200,80,0.15)', cursor: 'pointer', textAlign: 'left',
                 }}
               >
-                쿠팡 (양방향)<br />
-                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>쿠팡 등록상품 전체 vs DB 비교 → orphan은 삭제, stale은 DB 정리</span>
+                쿠팡<br />
+                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>마켓 전체 vs DB 비교 → orphan은 마켓에서 삭제, stale은 DB 정리</span>
               </button>
               <button
                 onClick={() => { setGhostChoiceModal(false); runElevenstGhostMissing() }}

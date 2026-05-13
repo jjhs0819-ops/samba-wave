@@ -66,6 +66,7 @@ export default function OrdersPage() {
   const [accountFilter, setAccountFilter] = useState('')
   const [registrationFilter, setRegistrationFilter] = useState('registered')
   const [inputFilter, setInputFilter] = useState('')
+  const [invoiceFilter, setInvoiceFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('cancel_return_excluded')
   // CS 페이지 등 외부에서 ?search=...&search_type=... 로 진입 시 자동 검색
   const initialSearch = searchParams.get('search') || ''
@@ -157,6 +158,7 @@ export default function OrdersPage() {
             market_status: marketStatus,
             status_filter: statusFilter,
             input_filter: inputFilter,
+            invoice_filter: invoiceFilter,
             registration_filter: registrationFilter,
             search_text: appliedSearchText,
             search_category: searchCategory,
@@ -173,6 +175,7 @@ export default function OrdersPage() {
             market_status: marketStatus,
             status_filter: statusFilter,
             input_filter: inputFilter,
+            invoice_filter: invoiceFilter,
             registration_filter: registrationFilter,
             search_text: appliedSearchText,
             search_category: searchCategory,
@@ -202,7 +205,7 @@ export default function OrdersPage() {
       setLogMessages(prev => [...prev, `[${fmtTime()}] 주문 조회 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`])
     }
     setLoading(false)
-  }, [isProductMode, cpId, currentPage, pageSize, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, registrationFilter, appliedSearchText, searchCategory, sortBy, customStart, customEnd, setSentFlags])
+  }, [isProductMode, cpId, currentPage, pageSize, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, invoiceFilter, registrationFilter, appliedSearchText, searchCategory, sortBy, customStart, customEnd, setSentFlags])
 
   const patchOrder = useCallback((id: string, patch: Partial<SambaOrder>) => {
     setOrders(prev => prev.map(order => (
@@ -249,7 +252,7 @@ export default function OrdersPage() {
   useEffect(() => { loadOrders() }, [loadOrders])
   useEffect(() => {
     setCurrentPage(1)
-  }, [pageSize, customStart, customEnd, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, registrationFilter, inputFilter, searchCategory, sortBy, isProductMode, cpId])
+  }, [pageSize, customStart, customEnd, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, registrationFilter, inputFilter, invoiceFilter, searchCategory, sortBy, isProductMode, cpId])
   useEffect(() => {
     const ids = [...new Set(orders.map(o => o.collected_product_id).filter((id): id is string => !!id))]
     if (ids.length === 0) {
@@ -491,6 +494,7 @@ export default function OrdersPage() {
         marketStatus={marketStatus} setMarketStatus={setMarketStatus}
         registrationFilter={registrationFilter} setRegistrationFilter={setRegistrationFilter}
         inputFilter={inputFilter} setInputFilter={setInputFilter}
+        invoiceFilter={invoiceFilter} setInvoiceFilter={setInvoiceFilter}
         statusFilter={statusFilter} setStatusFilter={setStatusFilter}
         sortBy={sortBy} setSortBy={setSortBy}
         pageSize={pageSize} setPageSize={setPageSize}

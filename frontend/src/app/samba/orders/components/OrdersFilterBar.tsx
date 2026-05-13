@@ -48,6 +48,8 @@ interface Props {
   setRegistrationFilter: Dispatch<SetStateAction<string>>
   inputFilter: string
   setInputFilter: Dispatch<SetStateAction<string>>
+  invoiceFilter: string
+  setInvoiceFilter: Dispatch<SetStateAction<string>>
   statusFilter: string
   setStatusFilter: Dispatch<SetStateAction<string>>
   sortBy: string
@@ -71,7 +73,7 @@ export default function OrdersFilterBar(props: Props) {
     marketFilter, setMarketFilter, siteFilter, setSiteFilter,
     accountFilter, setAccountFilter, marketStatus, setMarketStatus,
     registrationFilter, setRegistrationFilter,
-    inputFilter, setInputFilter, statusFilter, setStatusFilter,
+    inputFilter, setInputFilter, invoiceFilter, setInvoiceFilter, statusFilter, setStatusFilter,
     sortBy, setSortBy, pageSize, setPageSize,
     accounts, sourcingAccounts, siteOptions,
   } = props
@@ -167,7 +169,7 @@ export default function OrdersFilterBar(props: Props) {
           <option value="product_id">상품ID</option>
           <option value="order_number">주문번호</option>
         </select>
-        <input style={{ ...inputStyle, width: '144px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadOrders() }} />
+        <input style={{ ...inputStyle, width: '86px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadOrders() }} />
         <button onClick={loadOrders} style={{ background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', padding: '0.22rem 0.75rem', borderRadius: '5px', fontSize: '0.75rem', border: 'none', cursor: 'pointer' }}>검색</button>
         <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto', flexWrap: 'wrap' }}>
           <select style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
@@ -185,7 +187,7 @@ export default function OrdersFilterBar(props: Props) {
               ])
             })()}
           </select>
-          <select style={{ ...inputStyle, width: '108px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}>
+          <select style={{ ...inputStyle, width: '97px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}>
             <option value="">전체 소싱처</option>
             {siteOptions.map(site => <option key={site.value} value={site.value}>{site.label}</option>)}
           </select>
@@ -199,21 +201,19 @@ export default function OrdersFilterBar(props: Props) {
               </optgroup>
             ))}
           </select>
-          <select style={{ ...inputStyle, width: '108px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketStatus} onChange={e => setMarketStatus(e.target.value)}>
+          <select style={{ ...inputStyle, width: '86px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketStatus} onChange={e => setMarketStatus(e.target.value)}>
             <option value="">배송상태</option>
             {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
-          <select style={{ ...inputStyle, width: '108px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={registrationFilter} onChange={e => setRegistrationFilter(e.target.value)}>
+          <select style={{ ...inputStyle, width: '86px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={registrationFilter} onChange={e => setRegistrationFilter(e.target.value)}>
             <option value="">등록필터</option>
             <option value="registered">등록상품</option>
             <option value="unregistered">미등록상품</option>
           </select>
           <select style={{ ...inputStyle, width: '120px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={inputFilter} onChange={e => setInputFilter(e.target.value)}>
             <option value="">입력필터</option>
-            <option value="has_order">소싱주문번호 있음</option>
-            <option value="no_order">소싱주문번호 없음</option>
-            <option value="has_invoice">송장입력</option>
-            <option value="no_invoice">송장미입력</option>
+            <option value="has_order">주문번호O</option>
+            <option value="no_order">주문번호X</option>
             <option value="direct">직배</option>
             <option value="kkadaegi">까대기</option>
             <option value="gift">선물</option>
@@ -221,6 +221,11 @@ export default function OrdersFilterBar(props: Props) {
             <option value="no_stock">재고X</option>
             <option value="staff_a">직원A</option>
             <option value="staff_b">직원B</option>
+          </select>
+          <select style={{ ...inputStyle, width: '108px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={invoiceFilter} onChange={e => setInvoiceFilter(e.target.value)}>
+            <option value="">송장필터</option>
+            <option value="has_invoice">송장입력</option>
+            <option value="no_invoice">송장미입력</option>
           </select>
           <select style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
             <option value="">전체 주문상태</option>
@@ -235,7 +240,7 @@ export default function OrdersFilterBar(props: Props) {
             <option value="price_desc">매출높음</option>
             <option value="price_asc">매출낮음</option>
           </select>
-          <select style={{ ...inputStyle, width: '83px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={pageSize} onChange={e => setPageSize(Number(e.target.value))}>
+          <select style={{ ...inputStyle, width: '66px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={pageSize} onChange={e => setPageSize(Number(e.target.value))}>
             <option value={20}>20개</option>
             <option value={50}>50개</option>
             <option value={100}>100개</option>
