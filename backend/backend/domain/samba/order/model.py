@@ -179,6 +179,13 @@ class SambaOrder(SQLModel, table=True):
     proc_seq: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     sitm_no: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
+    # 무신사 주문옵션번호 — 마이페이지 trace URL의 ord_opt_no 파라미터.
+    # ord_no만으로는 deliveryInfo API 호출 불가, 옵션번호 함께 필요.
+    # 확장앱이 마이페이지 API 가로채서 매핑 캡처 → 백엔드 저장.
+    musinsa_ord_opt_no: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
     # 11번가 라인 키 (판매불가처리/취소승인 등 클레임 API 필수 파라미터)
     ord_prd_seq: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)
