@@ -167,27 +167,44 @@ def _detect_site_from_url(url: str) -> str:
 async def _try_backend_fetch_musinsa(order, session) -> Optional[dict[str, Any]]:
     """MUSINSA 송장 정보 백엔드 직접 fetch — 성공 시 SCRAPED 잡 row 생성 후 결과 반환.
 
+    쿠키 풀(musinsa_cookies) 전체를 순회하며 한 쿠키라도 성공하면 OK.
+    무신사 마이페이지 deliveryInfo는 그 주문이 자기 계정 주문일 때만 200 SUCCESS,
+    아니면 FAIL 반환. 즉 풀 순회로 "이 주문이 누구 계정 거냐"를 자동 매칭함.
+
     실패/누락 시 None 반환 → enqueue_for_order 호출자가 SourcingQueue 폴백.
     """
-    from backend.api.v1.routers.samba.collector_common import get_musinsa_cookie
+    from backend.domain.samba.collector.refresher import _get_musinsa_cookies
     from backend.domain.samba.proxy.musinsa import MusinsaClient
 
     ord_no = (order.sourcing_order_number or "").strip()
     ord_opt_no = (order.musinsa_ord_opt_no or "").strip()
     if not ord_no or not ord_opt_no:
         return None
-    cookie = await get_musinsa_cookie(session)
-    if not cookie:
-        logger.info("[송장동기화] MUSINSA backend fetch 스킵 — 쿠키 없음")
+
+    cookies = await _get_musinsa_cookies()
+    if not cookies:
+        logger.info("[송장동기화] MUSINSA backend fetch 스킵 — 쿠키 풀 비어있음")
         return None
 
-    client = MusinsaClient(cookie=cookie)
-    result = await client.fetch_tracking(ord_no, ord_opt_no)
-    if not result.get("ok"):
+    result = None
+    last_error = ""
+    for idx, cookie in enumerate(cookies):
+        client = MusinsaClient(cookie=cookie)
+        result = await client.fetch_tracking(ord_no, ord_opt_no)
+        if result.get("ok"):
+            logger.info(
+                f"[송장동기화] MUSINSA backend fetch 성공 (cookie #{idx + 1}/{len(cookies)}): "
+                f"order={order.id} ord_no={ord_no}"
+            )
+            break
+        last_error = result.get("error") or ""
+    else:
         logger.info(
-            f"[송장동기화] MUSINSA backend fetch 실패 (폴백 진행): "
-            f"order={order.id} ord_no={ord_no} err={result.get('error')}"
+            f"[송장동기화] MUSINSA backend fetch 모든 쿠키 실패 ({len(cookies)}개 시도, 폴백): "
+            f"order={order.id} ord_no={ord_no} last_err={last_error}"
         )
+        return None
+    if not result or not result.get("ok"):
         return None
 
     courier = normalize_courier_name(result.get("courier") or "")
