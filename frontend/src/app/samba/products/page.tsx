@@ -1290,17 +1290,17 @@ export default function ProductsPage() {
         '',
       ]
 
-      type StaleItem = { account_id: string; db_id: string; product_name: string }
-      type OrphanItem = { account_id: string; spid: string; name: string }
+      type StaleItem = { account_id: string; db_id: string; product_name: string; style_code: string }
+      type OrphanItem = { account_id: string; spid: string; name: string; status_name: string }
       const staleList: StaleItem[] = []
       const orphanList: OrphanItem[] = []
       for (const a of res.accounts) {
         if (a.error) { logs.push(`[${a.label || a.account_id}] ${a.error}`); continue }
         for (const s of (a.stale_db ?? [])) {
-          if (s.db_id) staleList.push({ account_id: a.account_id, db_id: s.db_id, product_name: s.product_name || '' })
+          if (s.db_id) staleList.push({ account_id: a.account_id, db_id: s.db_id, product_name: s.product_name || '', style_code: s.style_code || '' })
         }
         for (const o of (a.orphans ?? [])) {
-          if (o.spid) orphanList.push({ account_id: a.account_id, spid: o.spid, name: o.name || '' })
+          if (o.spid) orphanList.push({ account_id: a.account_id, spid: o.spid, name: o.name || '', status_name: o.status_name || '' })
         }
       }
       setAiJobLogs([...logs])
@@ -1329,18 +1329,19 @@ export default function ProductsPage() {
       for (let i = 0; i < staleList.length; i++) {
         const s = staleList[i]
         const idx = `${fmt(i + 1)}/${fmt(staleList.length)}`
+        const sLabel = `${s.style_code ? s.style_code + ' ' : ''}${s.product_name.slice(0, 40)}`
         try {
           const r = await shipmentApi.clearCoupangStaleMapping(s.account_id, s.db_id)
           if (r.ok) {
             staleOk++
-            logs.push(`[삼바해제 ${idx}] db=${s.db_id} ${s.product_name.slice(0, 40)} → ${r.cleared ? '완료' : '변경없음'}`)
+            logs.push(`[삼바해제 ${idx}] db=${s.db_id} ${sLabel} → ${r.cleared ? '완료' : '변경없음'}`)
           } else {
             staleFail++
-            logs.push(`[삼바해제 ${idx}] db=${s.db_id} 실패: ${r.error || '알수없음'}`)
+            logs.push(`[삼바해제 ${idx}] db=${s.db_id} ${sLabel} 실패: ${r.error || '알수없음'}`)
           }
         } catch (e) {
           staleFail++
-          logs.push(`[삼바해제 ${idx}] db=${s.db_id} 실패: ${e instanceof Error ? e.message : String(e)}`)
+          logs.push(`[삼바해제 ${idx}] db=${s.db_id} ${sLabel} 실패: ${e instanceof Error ? e.message : String(e)}`)
         }
         if ((i + 1) % 5 === 0 || i === staleList.length - 1) setAiJobLogs([...logs])
       }
@@ -1356,18 +1357,19 @@ export default function ProductsPage() {
       for (let i = 0; i < orphanList.length; i++) {
         const o = orphanList[i]
         const idx = `${fmt(i + 1)}/${fmt(orphanList.length)}`
+        const oLabel = `${o.status_name ? '[' + o.status_name + '] ' : ''}${o.name.slice(0, 50) || '(상품명없음)'}`
         try {
           const r = await shipmentApi.deleteCoupangOrphan(o.account_id, o.spid)
           if (r.ok) {
             orphanOk++
-            logs.push(`[쿠팡삭제 ${idx}] spid=${o.spid} ${o.name.slice(0, 40)} → 완료`)
+            logs.push(`[쿠팡삭제 ${idx}] spid=${o.spid} ${oLabel} → 완료`)
           } else {
             orphanFail++
-            logs.push(`[쿠팡삭제 ${idx}] spid=${o.spid} 실패: ${r.error || '알수없음'}`)
+            logs.push(`[쿠팡삭제 ${idx}] spid=${o.spid} ${oLabel} 실패: ${r.error || '알수없음'}`)
           }
         } catch (e) {
           orphanFail++
-          logs.push(`[쿠팡삭제 ${idx}] spid=${o.spid} 실패: ${e instanceof Error ? e.message : String(e)}`)
+          logs.push(`[쿠팡삭제 ${idx}] spid=${o.spid} ${oLabel} 실패: ${e instanceof Error ? e.message : String(e)}`)
         }
         if ((i + 1) % 3 === 0 || i === orphanList.length - 1) setAiJobLogs([...logs])
       }
