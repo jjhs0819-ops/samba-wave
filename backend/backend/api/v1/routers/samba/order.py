@@ -1234,12 +1234,24 @@ async def list_recent_tracking_sync_jobs(
     from backend.domain.samba.order.model import SambaOrder
     from backend.domain.samba.sourcing_account.model import SambaSourcingAccount
     from backend.domain.samba.tracking_sync.model import SambaTrackingSyncJob
+    from backend.domain.samba.tracking_sync.service import (
+        SKIP_SHIPPING_STATUS_KEYWORDS,
+    )
 
     async with get_read_session() as session:
-        # 카운트
-        count_stmt = select(SambaTrackingSyncJob.status, func.count()).group_by(
-            SambaTrackingSyncJob.status
+        # 카운트 — shipping_status가 취소/교환/반품/배송중/배송완료인 주문 잡은 제외
+        count_stmt = (
+            select(SambaTrackingSyncJob.status, func.count())
+            .join(
+                SambaOrder, SambaOrder.id == SambaTrackingSyncJob.order_id, isouter=True
+            )
+            .group_by(SambaTrackingSyncJob.status)
         )
+        for kw in SKIP_SHIPPING_STATUS_KEYWORDS:
+            count_stmt = count_stmt.where(
+                (SambaOrder.shipping_status.is_(None))
+                | (~SambaOrder.shipping_status.like(f"%{kw}%"))
+            )
         if tenant_id:
             count_stmt = count_stmt.where(SambaTrackingSyncJob.tenant_id == tenant_id)
         rows = (await session.execute(count_stmt)).all()
@@ -1263,6 +1275,11 @@ async def list_recent_tracking_sync_jobs(
             .order_by(SambaTrackingSyncJob.updated_at.desc())
             .limit(limit * 5)
         )
+        # 모달 리스트도 동일 패스 조건 적용 — 교환중/취소/배송중 등 클레임/완료 단계 주문 제외
+        for kw in SKIP_SHIPPING_STATUS_KEYWORDS:
+            recent_stmt = recent_stmt.where(
+                (O.shipping_status.is_(None)) | (~O.shipping_status.like(f"%{kw}%"))
+            )
         if tenant_id:
             recent_stmt = recent_stmt.where(SambaTrackingSyncJob.tenant_id == tenant_id)
         raw_rows = (await session.execute(recent_stmt)).all()
