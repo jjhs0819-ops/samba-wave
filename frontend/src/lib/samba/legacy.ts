@@ -1129,9 +1129,9 @@ export const shipmentApi = {
       { method: 'POST', body: JSON.stringify({ account_id: accountId, db_id: dbId }) },
     ),
 
-  // 쿠팡 단건 orphan 삭제 (쿠팡 API 1회 호출)
+  // 쿠팡 단건 orphan 삭제 (dispatcher 위임 — stop-then-delete 우회 포함)
   deleteCoupangOrphan: (accountId: string, spid: string) =>
-    request<{ ok: boolean; error?: string }>(
+    request<{ ok: boolean; error?: string; message?: string; ghost_cleanup?: boolean }>(
       `${SAMBA_PREFIX}/shipments/coupang/delete-orphan`,
       { method: 'POST', body: JSON.stringify({ account_id: accountId, spid }) },
     ),

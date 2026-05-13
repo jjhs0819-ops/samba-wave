@@ -1339,11 +1339,15 @@ async def delete_coupang_orphan(
     session: AsyncSession = Depends(get_write_session_dependency),
     admin: str = Depends(require_admin),
 ):
-    """쿠팡 orphan 단건 삭제 — 쿠팡 API delete_product 1회 호출."""
+    """쿠팡 orphan 단건 삭제 — 상품삭제 버튼과 동일한 stop-then-delete 우회 로직 사용.
+
+    승인완료(APPROVED)/부분승인 상품은 즉시 DELETE 가 거부되므로 dispatcher 가
+    옵션 전체 sales/stop → 대기 → DELETE 재시도 (5s/15s/30s) 까지 자동 수행한다.
+    """
     from sqlmodel import select
 
     from backend.domain.samba.account.model import SambaMarketAccount
-    from backend.domain.samba.proxy.coupang import CoupangApiError, CoupangClient
+    from backend.domain.samba.shipment.dispatcher import delete_from_market
 
     account = (
         await session.execute(
@@ -1353,33 +1357,30 @@ async def delete_coupang_orphan(
     if not account or account.market_type != "coupang":
         raise HTTPException(status_code=404, detail="쿠팡 계정 없음")
 
-    add_f = account.additional_fields or {}
-    if not isinstance(add_f, dict):
-        add_f = {}
-    access_key = str(add_f.get("accessKey") or account.api_key or "").strip()
-    secret_key = str(add_f.get("secretKey") or account.api_secret or "").strip()
-    vendor_id = str(add_f.get("vendorId") or account.seller_id or "").strip()
-    if not access_key or not secret_key or not vendor_id:
-        return {"ok": False, "error": "쿠팡 인증정보 누락"}
+    # orphan 은 DB 매핑 없음 → product_dict 를 spid 만으로 최소 구성
+    product_dict = {
+        "id": "",
+        "market_product_no": {"coupang": body.spid},
+        "registered_accounts": [body.account_id],
+    }
 
-    client = CoupangClient(access_key, secret_key, vendor_id)
-    last_err: str | None = None
-    # 429만 짧게 1회 재시도, 그외는 즉시 실패 반환 (프론트가 다음 항목 진행)
-    for attempt in range(2):
-        try:
-            await client.delete_product(body.spid)
-            return {"ok": True}
-        except CoupangApiError as e:
-            err_msg = str(e)
-            last_err = err_msg
-            if ("429" in err_msg or "TOO_MANY" in err_msg.upper()) and attempt == 0:
-                await asyncio.sleep(1.0)
-                continue
-            break
-        except Exception as e:
-            last_err = str(e)[:200]
-            break
-    return {"ok": False, "error": last_err or "알 수 없는 오류"}
+    try:
+        result = await delete_from_market(
+            session,
+            "coupang",
+            product_dict,
+            account=account,
+            market_delete=True,
+        )
+        if result.get("success"):
+            return {
+                "ok": True,
+                "message": result.get("message", "삭제 완료"),
+                "ghost_cleanup": bool(result.get("ghost_cleanup")),
+            }
+        return {"ok": False, "error": result.get("message", "삭제 실패")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
 
 
 # ----------------------------------------------------------------------

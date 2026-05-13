@@ -1362,7 +1362,8 @@ export default function ProductsPage() {
           const r = await shipmentApi.deleteCoupangOrphan(o.account_id, o.spid)
           if (r.ok) {
             orphanOk++
-            logs.push(`[쿠팡삭제 ${idx}] spid=${o.spid} ${oLabel} → 완료`)
+            const tail = r.message ? ` (${r.message})` : ''
+            logs.push(`[쿠팡삭제 ${idx}] spid=${o.spid} ${oLabel} → 완료${tail}`)
           } else {
             orphanFail++
             logs.push(`[쿠팡삭제 ${idx}] spid=${o.spid} ${oLabel} 실패: ${r.error || '알수없음'}`)
