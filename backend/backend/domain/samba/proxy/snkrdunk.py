@@ -36,6 +36,11 @@ BRAND_TRADING_CARDS_URL_RE = re.compile(
     r"https?://snkrdunk\.com/en/brands/([^/?]+)/trading-cards(?:\?[^#]*?categoryId=(\d+))?",
     re.IGNORECASE,
 )
+# 전역 트레이딩카드 리스트 URL 패턴: https://snkrdunk.com/en/trading-cards?type=hottest&slide=right
+GLOBAL_TRADING_CARDS_URL_RE = re.compile(
+    r"https?://snkrdunk\.com/en/trading-cards(?:\?|$)",
+    re.IGNORECASE,
+)
 
 HEADERS = {
     "User-Agent": (
@@ -144,6 +149,11 @@ class SnkrdunkClient:
                 brand_id=brand_id,
                 category_id=category_id,
                 max_count=max(max_count, 10000),
+            )
+        # 전역 트레이딩카드 리스트 URL (예: /en/trading-cards?type=hottest&slide=right)
+        if GLOBAL_TRADING_CARDS_URL_RE.search(keyword or ""):
+            return await self.collect_listing_cards(
+                url=keyword, max_count=max(max_count, 1000)
             )
         products: list[dict[str, Any]] = []
         total = 0
@@ -286,6 +296,78 @@ class SnkrdunkClient:
                 logger.info(
                     f"[SNKRDUNK] 카드 수집 brand={brand_id} cat={category_id} "
                     f"p{page} +{len(new_items)}건 (누적 {len(products)})"
+                )
+                if len(items) < per_page:
+                    break
+                page += 1
+                if sleep_between_pages:
+                    await asyncio.sleep(sleep_between_pages)
+
+        products = products[:max_count]
+        return {"products": products, "total": len(products)}
+
+    async def collect_listing_cards(
+        self,
+        url: str,
+        per_page: int = 100,
+        max_count: int = 1000,
+        sleep_between_pages: float = 0.5,
+    ) -> dict[str, Any]:
+        """전역 트레이딩카드 리스트 URL 페이지네이션 수집.
+
+        예: `/en/trading-cards?type=hottest&slide=right`
+        URL의 쿼리스트링(type/slide/brandId/categoryId 등)을 그대로
+        `/en/v1/trading-cards` API에 전달.
+        """
+        import asyncio
+        from urllib.parse import urlparse, parse_qs
+
+        per_page = max(1, min(int(per_page or 100), 100))
+        # URL 쿼리스트링 → API 파라미터로 그대로 전달
+        base_params: dict[str, Any] = {}
+        try:
+            qs = parse_qs(urlparse(url or "").query)
+            for k, v in qs.items():
+                if not v:
+                    continue
+                # 페이지/사이즈는 우리가 관리
+                if k in ("perPage", "page"):
+                    continue
+                base_params[k] = v[0]
+        except Exception as exc:
+            logger.warning(f"[SNKRDUNK] 리스트 URL 파싱 실패: {exc}")
+
+        products: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        async with httpx.AsyncClient(
+            headers=HEADERS, timeout=self._timeout, follow_redirects=True
+        ) as client:
+            page = 1
+            while len(products) < max_count:
+                params: dict[str, Any] = {
+                    **base_params,
+                    "perPage": per_page,
+                    "page": page,
+                }
+                try:
+                    r = await client.get(TRADING_CARDS_URL, params=params)
+                    r.raise_for_status()
+                    data = r.json()
+                except Exception as e:
+                    logger.warning(
+                        f"[SNKRDUNK] 리스트 수집 실패 params={base_params} page={page}: {e}"
+                    )
+                    break
+                items = data.get("tradingCards") or []
+                if not items:
+                    break
+                page_items = self._parse_card_items(items)
+                new_items = [p for p in page_items if p["site_product_id"] not in seen]
+                seen.update(p["site_product_id"] for p in new_items)
+                products.extend(new_items)
+                logger.info(
+                    f"[SNKRDUNK] 리스트 수집 params={base_params} p{page} "
+                    f"+{len(new_items)}건 (누적 {len(products)})"
                 )
                 if len(items) < per_page:
                     break

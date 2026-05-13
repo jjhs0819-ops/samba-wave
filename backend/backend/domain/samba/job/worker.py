@@ -1559,6 +1559,7 @@ class JobWorker:
             "LOTTEON",
             "SSG",
             "NAVERSTORE",
+            "SNKRDUNK",
         }
         # 확장앱 기반 소싱처 (소싱큐)
         EXTENSION_SITES = {
@@ -4270,6 +4271,10 @@ class JobWorker:
             )
 
             client = NaverStoreSourcingClient()
+        elif site == "SNKRDUNK":
+            from backend.domain.samba.proxy.snkrdunk import SnkrdunkClient
+
+            client = SnkrdunkClient()
 
         # 확장앱 소싱큐 기반 사이트 — 소싱큐로 검색 요청
         if not client:
