@@ -8,6 +8,13 @@
 ;(() => {
   'use strict'
 
+  function isOrderCancelled() {
+    try {
+      const text = (document.body?.innerText || '').slice(0, 8000)
+      return /(취소완료|취소처리완료|구매취소완료|주문이\s*취소|취소된\s*주문)/.test(text)
+    } catch { return false }
+  }
+
   function clickDeliveryDetail() {
     for (const btn of document.querySelectorAll('button')) {
       const t = btn.textContent.trim()
@@ -54,6 +61,9 @@
   }
 
   async function scrape() {
+    if (isOrderCancelled()) {
+      return { success: false, cancelled: true, error: 'order_cancelled' }
+    }
     let dialog = document.querySelector('dialog[open], [role="dialog"]')
     if (!dialog) {
       if (!clickDeliveryDetail()) {

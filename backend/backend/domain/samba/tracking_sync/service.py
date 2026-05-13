@@ -19,6 +19,7 @@ from sqlmodel import select
 from backend.db.orm import get_write_session
 from backend.domain.samba.order.model import SambaOrder
 from backend.domain.samba.tracking_sync.model import (
+    STATUS_CANCELLED,
     STATUS_DISPATCHED,
     STATUS_FAILED,
     STATUS_NO_TRACKING,
@@ -268,13 +269,24 @@ async def apply_tracking_result(
     courier_name: str = "",
     tracking_number: str = "",
     error: str = "",
+    cancelled: bool = False,
     auto_dispatch: bool = False,
     dry_run: bool = True,
 ) -> dict[str, Any]:
     """확장앱이 보낸 결과를 DB에 반영하고 (옵션) 마켓 dispatch까지 트리거.
 
     auto_dispatch=False가 기본 — 안정화 전까지 추출만 하고 마켓 push는 별도 단계.
+
+    cancelled=True 또는 error에 "order_cancelled"/"주문취소" 마커가 있으면
+    소싱처 원주문 취소로 간주 — SambaOrder.status="cancelling" + notes "원주문 취소" prepend.
     """
+    reason_lower = (error or "").lower()
+    is_cancelled = (
+        bool(cancelled)
+        or "order_cancelled" in reason_lower
+        or "주문취소" in (error or "")
+    )
+
     async with get_write_session() as session:
         stmt = select(SambaTrackingSyncJob).where(
             SambaTrackingSyncJob.request_id == request_id
@@ -286,6 +298,24 @@ async def apply_tracking_result(
 
         job.attempts = (job.attempts or 0) + 1
         job.updated_at = datetime.now(_UTC)
+
+        # 원주문 취소 분기 — 가장 먼저 처리 (재시도 안 함)
+        if is_cancelled:
+            job.status = STATUS_CANCELLED
+            job.last_error = "원주문 취소"
+            order = await session.get(SambaOrder, job.order_id)
+            if order:
+                order.status = "cancelling"
+                prev_notes = (order.notes or "").strip()
+                tag = "원주문 취소"
+                if tag not in prev_notes:
+                    order.notes = f"{tag} / {prev_notes}" if prev_notes else tag
+                order.updated_at = datetime.now(_UTC)
+                session.add(order)
+            session.add(job)
+            await session.commit()
+            logger.info(f"[송장동기화] 원주문 취소 감지: order={job.order_id}")
+            return {"success": False, "status": job.status, "reason": "원주문 취소"}
 
         if not success or not tracking_number:
             # 캡챠/미발송/실패 — 재시도 여지 두기

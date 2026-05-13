@@ -494,6 +494,7 @@ async function handleTrackingJob(job) {
       courierName: result.courierName || '',
       trackingNumber: result.trackingNumber || '',
       error: result.error || '',
+      cancelled: !!result.cancelled,
     })
   } catch (err) {
     console.warn(`[송장] 처리 실패 req=${requestId}:`, err)
@@ -524,6 +525,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         courierName: msg.courierName || '',
         trackingNumber: msg.trackingNumber || '',
         error: msg.error || '',
+        cancelled: !!msg.cancelled,
       })
     }
     sendResponse({ ack: true })

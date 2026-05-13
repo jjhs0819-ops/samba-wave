@@ -339,8 +339,11 @@ export const orderApi = {
       recent: Array<{
         id: string
         orderId: string
+        orderNumber: string
+        customerName: string
         site: string
         sourcingOrderNumber: string
+        sourcingAccountLabel: string
         status: string
         courier?: string | null
         tracking?: string | null

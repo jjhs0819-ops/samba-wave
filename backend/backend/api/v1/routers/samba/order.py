@@ -1209,9 +1209,13 @@ async def list_recent_tracking_sync_jobs(
     """최근 송장 자동전송 잡 목록 + 상태 카운트.
 
     프론트가 일괄 송장수집 후 폴링해서 진행상황 보여주는 용도.
+    SambaOrder (상품주문번호/고객명) + SambaSourcingAccount (소싱처 계정 라벨) LEFT JOIN.
     """
     from sqlalchemy import select, func
+    from sqlalchemy.orm import aliased
     from backend.db.orm import get_read_session
+    from backend.domain.samba.order.model import SambaOrder
+    from backend.domain.samba.sourcing_account.model import SambaSourcingAccount
     from backend.domain.samba.tracking_sync.model import SambaTrackingSyncJob
 
     async with get_read_session() as session:
@@ -1224,15 +1228,24 @@ async def list_recent_tracking_sync_jobs(
         rows = (await session.execute(count_stmt)).all()
         counts = {status: int(cnt) for status, cnt in rows}
 
-        # 최근 N건 (가장 새로운 순)
+        # 최근 N건 (가장 새로운 순) — SambaOrder + SambaSourcingAccount LEFT JOIN
+        O = aliased(SambaOrder)
+        A = aliased(SambaSourcingAccount)
         recent_stmt = (
-            select(SambaTrackingSyncJob)
+            select(
+                SambaTrackingSyncJob,
+                O.order_number,
+                O.customer_name,
+                A.account_label,
+            )
+            .join(O, O.id == SambaTrackingSyncJob.order_id, isouter=True)
+            .join(A, A.id == SambaTrackingSyncJob.sourcing_account_id, isouter=True)
             .order_by(SambaTrackingSyncJob.updated_at.desc())
             .limit(limit)
         )
         if tenant_id:
             recent_stmt = recent_stmt.where(SambaTrackingSyncJob.tenant_id == tenant_id)
-        jobs = (await session.execute(recent_stmt)).scalars().all()
+        result_rows = (await session.execute(recent_stmt)).all()
 
     return {
         "counts": counts,
@@ -1240,8 +1253,11 @@ async def list_recent_tracking_sync_jobs(
             {
                 "id": j.id,
                 "orderId": j.order_id,
+                "orderNumber": order_number or "",
+                "customerName": customer_name or "",
                 "site": j.sourcing_site,
                 "sourcingOrderNumber": j.sourcing_order_number,
+                "sourcingAccountLabel": account_label or "",
                 "status": j.status,
                 "courier": j.scraped_courier,
                 "tracking": j.scraped_tracking,
@@ -1249,7 +1265,7 @@ async def list_recent_tracking_sync_jobs(
                 "attempts": j.attempts,
                 "updatedAt": j.updated_at.isoformat() if j.updated_at else None,
             }
-            for j in jobs
+            for j, order_number, customer_name, account_label in result_rows
         ],
     }
 

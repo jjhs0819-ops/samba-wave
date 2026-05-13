@@ -17,6 +17,15 @@
   const MAX_WAIT_MS = 15000
   const POLL_INTERVAL = 300
 
+  // 원주문 취소 감지 — "취소완료/취소처리완료/구매취소완료/주문이 취소" 같은 완결형 문구만
+  // (단순 "주문취소" / "취소요청"은 신청 단계라 제외 — 오탐 방지)
+  function isOrderCancelled() {
+    try {
+      const text = (document.body?.innerText || '').slice(0, 8000)
+      return /(취소완료|취소처리완료|구매취소완료|주문이\s*취소|취소된\s*주문)/.test(text)
+    } catch { return false }
+  }
+
   function isCaptcha() {
     const title = (document.title || '').toLowerCase()
     if (title.includes('보안 인증') || title.includes('captcha')) return true
@@ -38,6 +47,9 @@
   async function scrape() {
     if (isCaptcha()) {
       return { success: false, error: 'captcha' }
+    }
+    if (isOrderCancelled()) {
+      return { success: false, cancelled: true, error: 'order_cancelled' }
     }
 
     // 택배사 셀렉터 (overlink 검증)
