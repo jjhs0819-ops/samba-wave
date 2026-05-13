@@ -709,7 +709,7 @@ export default function OrdersPage() {
             onClick={(e) => e.stopPropagation()}
             style={{
               background: '#1f2937', color: '#e5e7eb',
-              width: 1240, maxWidth: '96vw', maxHeight: '85vh',
+              width: 1612, maxWidth: '98vw', maxHeight: '85vh',
               borderRadius: 8, padding: 20, overflow: 'auto',
               border: '1px solid #374151',
             }}
@@ -755,7 +755,7 @@ export default function OrdersPage() {
             {/* 최근 잡 목록 */}
             <div style={{ background: '#111827', borderRadius: 6, overflow: 'hidden', border: '1px solid #374151' }}>
               <div style={{
-                display: 'grid', gridTemplateColumns: '36px 88px 150px 80px 100px 80px 90px 90px 120px 1fr',
+                display: 'grid', gridTemplateColumns: '36px 88px 150px 160px 200px 80px 90px 90px 120px 266px',
                 padding: '8px 10px', background: '#0f172a', fontSize: 11, fontWeight: 700, color: '#9ca3af',
               }}>
                 <div>#</div>
@@ -776,7 +776,7 @@ export default function OrdersPage() {
                 }
                 return (
                   <div key={j.id} style={{
-                    display: 'grid', gridTemplateColumns: '36px 88px 150px 80px 100px 80px 90px 90px 120px 1fr',
+                    display: 'grid', gridTemplateColumns: '36px 88px 150px 160px 200px 80px 90px 90px 120px 266px',
                     padding: '6px 10px', borderTop: '1px solid #1f2937', fontSize: 12,
                   }}>
                     <div style={{ color: '#6b7280', fontSize: 11 }}>{fmtNum(idx + 1)}</div>
