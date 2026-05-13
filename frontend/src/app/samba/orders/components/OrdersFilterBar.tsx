@@ -210,7 +210,7 @@ export default function OrdersFilterBar(props: Props) {
             <option value="registered">등록상품</option>
             <option value="unregistered">미등록상품</option>
           </select>
-          <select style={{ ...inputStyle, width: '120px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={inputFilter} onChange={e => setInputFilter(e.target.value)}>
+          <select style={{ ...inputStyle, width: '84px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={inputFilter} onChange={e => setInputFilter(e.target.value)}>
             <option value="">입력필터</option>
             <option value="has_order">주문번호O</option>
             <option value="no_order">주문번호X</option>
@@ -232,7 +232,7 @@ export default function OrdersFilterBar(props: Props) {
             <option value="cancel_return_excluded">취소/반품/교환 제외</option>
             {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
-          <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ ...inputStyle, width: '90px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }}>
+          <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ ...inputStyle, width: '63px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }}>
             <option value="date_desc">최신순</option>
             <option value="date_asc">오래된순</option>
             <option value="profit_desc">마진높음</option>

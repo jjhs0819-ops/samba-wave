@@ -16,9 +16,9 @@ async def main() -> None:
     conn = await asyncpg.connect(
         host="172.18.0.2",
         port=5432,
-        user=settings.SAMBA_DB_USER,
-        password=settings.SAMBA_DB_PASSWORD,
-        database=settings.SAMBA_DB_NAME,
+        user=settings.read_db_user,
+        password=settings.read_db_password,
+        database=settings.read_db_name,
         ssl=False,
     )
 
@@ -29,7 +29,7 @@ async def main() -> None:
     print(f"[설정] tetris_sync_interval_hours = {row['value'] if row else 'NULL'}")
     print()
 
-    # 2) 최근 24시간 transmit 잡 상태 분포
+    # 2) 현재 PENDING/RUNNING transmit 잡 상태 분포 (bounded set)
     rows = await conn.fetch(
         """
         SELECT
@@ -38,12 +38,12 @@ async def main() -> None:
           COUNT(*) AS cnt
         FROM samba_jobs
         WHERE job_type = 'transmit'
-          AND created_at > now() - interval '24 hour'
+          AND status IN ('pending', 'running')
         GROUP BY status, origin
         ORDER BY status, origin
         """
     )
-    print("[최근 24h transmit 잡 분포]")
+    print("[현재 PENDING/RUNNING transmit 잡 분포]")
     for r in rows:
         print(f"  {r['status']:12s} | origin={r['origin']:20s} | {r['cnt']:5d}건")
     print()
@@ -58,7 +58,7 @@ async def main() -> None:
           payload->>'source_site' AS site,
           payload->>'brand_name' AS brand,
           payload->>'target_account_ids' AS accts,
-          jsonb_array_length(COALESCE(payload->'product_ids', '[]'::jsonb)) AS pid_cnt,
+          jsonb_array_length(COALESCE((payload::jsonb)->'product_ids', '[]'::jsonb)) AS pid_cnt,
           created_at,
           started_at
         FROM samba_jobs
@@ -91,12 +91,10 @@ async def main() -> None:
         f"[가설 1 검증] origin != 'tetris_sync' 인 PENDING/RUNNING transmit 잡: "
         f"{row['cnt']}건"
     )
-    print(
-        "  → 이 값이 0이 아니면 cancel_pending_tetris_jobs 필터가 누락하는 잡 존재"
-    )
+    print("  → 이 값이 0이 아니면 cancel_pending_tetris_jobs 필터가 누락하는 잡 존재")
     print()
 
-    # 5) 최근 24시간 CANCELLED transmit 잡 — 토글 OFF 효과 확인
+    # 5) 최근 2시간 CANCELLED transmit 잡 — 토글 OFF 효과 확인
     rows = await conn.fetch(
         """
         SELECT
@@ -105,12 +103,12 @@ async def main() -> None:
         FROM samba_jobs
         WHERE job_type = 'transmit'
           AND status = 'cancelled'
-          AND completed_at > now() - interval '24 hour'
+          AND completed_at > now() - interval '2 hour'
         GROUP BY origin
         ORDER BY origin
         """
     )
-    print("[최근 24h CANCELLED transmit 잡 — origin별]")
+    print("[최근 2h CANCELLED transmit 잡 — origin별]")
     for r in rows:
         print(f"  origin={r['origin']:20s} | {r['cnt']:5d}건")
 

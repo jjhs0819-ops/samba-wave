@@ -929,7 +929,7 @@ export default function ProductsPage() {
 
   // 유령삭제 — 스마트스토어: Naver엔 있는데 DB 매핑 없는 고아 상품 정리 + DB→Naver 역고아 매핑 정리
   const runSmartstoreGhostSync = async () => {
-    if (!await showConfirm('스마트스토어 동기화를 실행합니다.\n\n1단계: DB에 없는 Naver 등록 상품(고아 상품) 조회\n2단계: 목록 확인 후 실제 삭제 여부 선택\n\n계속하시겠습니까?')) return
+    if (!await showConfirm('스마트스토어 동기화를 실행합니다.\n\n1단계: 스마트스토어 등록상품 전체를 수집합니다 (수 분 소요)\n2단계: 결과 확인 후 실제 처리 여부를 선택합니다\n  · 스마트스토어에만 있는 상품 → 스마트스토어에서 삭제\n  · 삼바에만 등록표시된 상품 → 삼바 등록표시 해제\n\n계속하시겠습니까?')) return
 
     setAiJobTitle('스마트스토어 동기화')
     setAiJobLogs(['고아 상품 조회 중... (Naver 상품 전체 페이징 수집 — 수 분 소요)'])

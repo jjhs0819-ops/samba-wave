@@ -35,6 +35,7 @@ import UrlInputModal from './components/UrlInputModal'
 import SmsTemplateEditModal from './components/SmsTemplateEditModal'
 import AlarmSettingModal from './components/AlarmSettingModal'
 import TrackingModal from './components/TrackingModal'
+import { showConfirm } from '@/components/samba/Modal'
 
 interface OrderForm {
   channel_id: string; product_name: string; customer_name: string; customer_phone: string
@@ -403,7 +404,7 @@ export default function OrdersPage() {
   }
 
   const handleTrackingSyncBulk = async () => {
-    if (!confirm('미발송 주문 최대 50건의 송장을 일괄 동기화합니다. 진행할까요?')) return
+    if (!await showConfirm('미발송 주문 최대 50건의 송장을 일괄 동기화합니다. 진행할까요?')) return
     setTrackingSyncing(true)
     try {
       const res = await orderApi.syncTrackingBulk(50)
@@ -535,7 +536,7 @@ export default function OrdersPage() {
             fontSize: 13, fontWeight: 600,
           }}
         >
-          {trackingSyncing ? '큐 적재 중...' : '미발송 일괄 송장수집'}
+          {trackingSyncing ? '큐 적재 중...' : '송장수집'}
         </button>
         {selectedIds.size > 0 && (
           <button
