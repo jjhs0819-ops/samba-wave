@@ -40,8 +40,12 @@ _UTC = timezone.utc
 # 소싱처 배송조회 URL 빌더 — 확장앱 content-script와 셀렉터 짝꿍
 # overlink-invoice-extension config.js 검증값 이식 (2026-05-13)
 def build_tracking_url(site: str, sourcing_order_number: str) -> str:
-    s = (site or "").upper()
+    raw = site or ""
+    s = raw.upper()
     ord_no = sourcing_order_number
+    # 한글/별칭 별명 정규화 — 일부 주문에 'GS이숍(고경)' 같은 계정 라벨이 source_site에 들어옴
+    if "GS이숍" in raw or "GS샵" in raw or s.startswith("GSSHOP"):
+        s = "GSSHOP"
     if s == "MUSINSA":
         return (
             f"https://www.musinsa.com/order-service/my/delivery/trace?ord_no={ord_no}"
