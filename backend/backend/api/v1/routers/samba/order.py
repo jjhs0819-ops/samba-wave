@@ -1248,6 +1248,8 @@ async def list_recent_tracking_sync_jobs(
         # 최근 N건 (가장 새로운 순) — SambaOrder + SambaSourcingAccount LEFT JOIN
         O = aliased(SambaOrder)
         A = aliased(SambaSourcingAccount)
+        # NO_TRACKING/FAILED 잡은 재시도 시 새 row가 누적되므로
+        # 모달 표시 시에는 order_id 기준 최신 1건만 노출 (이력은 DB에 그대로 보존).
         recent_stmt = (
             select(
                 SambaTrackingSyncJob,
@@ -1259,11 +1261,23 @@ async def list_recent_tracking_sync_jobs(
             .join(O, O.id == SambaTrackingSyncJob.order_id, isouter=True)
             .join(A, A.id == SambaTrackingSyncJob.sourcing_account_id, isouter=True)
             .order_by(SambaTrackingSyncJob.updated_at.desc())
-            .limit(limit)
+            .limit(limit * 5)
         )
         if tenant_id:
             recent_stmt = recent_stmt.where(SambaTrackingSyncJob.tenant_id == tenant_id)
-        result_rows = (await session.execute(recent_stmt)).all()
+        raw_rows = (await session.execute(recent_stmt)).all()
+
+        # order_id별 최신 1건만 선별 (updated_at desc 이미 정렬됨)
+        seen_order_ids: set[str] = set()
+        result_rows = []
+        for row in raw_rows:
+            j = row[0]
+            if j.order_id in seen_order_ids:
+                continue
+            seen_order_ids.add(j.order_id)
+            result_rows.append(row)
+            if len(result_rows) >= limit:
+                break
 
     return {
         "counts": counts,
