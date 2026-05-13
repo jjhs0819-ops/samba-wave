@@ -1252,7 +1252,132 @@ export default function ProductsPage() {
     setAiJobDone(true)
   }
 
-  const runCoupangGhostSync = () => runBidirectionalGhostSync('쿠팡', shipmentApi.cleanupCoupangOrphans, { idKey: 'spid', name: 'name' })
+  // 쿠팡 유령삭제 — 단건 스트리밍 러너 (stale DB 먼저, orphan 나중, 1건씩 로그)
+  const runCoupangGhostSync = async () => {
+    if (!await showConfirm('쿠팡 동기화를 실행합니다.\n\n1단계: 쿠팡 등록상품 전체를 수집합니다 (수 분 소요)\n2단계: 결과 확인 후 실제 처리 여부를 선택합니다\n  · 삼바에만 등록표시된 상품 → DB 등록표시 해제 (먼저, 빠름)\n  · 쿠팡에만 있는 상품 → 쿠팡에서 삭제 (1건씩 진행 로그)\n\n계속하시겠습니까?')) return
+
+    setAiJobTitle('쿠팡 동기화')
+    setAiJobLogs(['목록 수집 중... (쿠팡 전체 페이징 — 수 분 소요)'])
+    setAiJobDone(false)
+    setAiJobModal(true)
+
+    try {
+      const syncAccountId = appliedStatusFilter.startsWith('reg_') ? appliedStatusFilter.replace('reg_', '') : undefined
+      let filteredIds: string[] = []
+      try {
+        const idRes = await collectorApi.getProductIds({
+          search: appliedSearchQ.trim() || undefined,
+          search_type: appliedSearchQ.trim() ? appliedSearchType : undefined,
+          source_site: appliedSiteFilter || undefined,
+          status: appliedStatusFilter || undefined,
+          sold_out_filter: appliedSoldOutFilter || undefined,
+          ai_filter: appliedAiFilter || undefined,
+          search_filter_id: appliedFilterByGroupId || undefined,
+        })
+        filteredIds = idRes.ids ?? []
+      } catch (idErr) {
+        setAiJobLogs([`필터 ID 조회 실패: ${idErr instanceof Error ? idErr.message : String(idErr)}`])
+        setAiJobDone(true)
+        return
+      }
+
+      const res = await shipmentApi.cleanupCoupangOrphans(true, 100000, syncAccountId, filteredIds, true)
+      const logs: string[] = [
+        syncAccountId ? `계정 필터: ${syncAccountId}` : `전체 쿠팡 계정`,
+        `쿠팡 등록상품: ${fmt(res.total_market)}개`,
+        `쿠팡에만 있는 상품(orphan): ${fmt(res.total_orphans)}개`,
+        `삼바에만 등록표시된 상품(stale): ${fmt(res.total_stale_db)}개`,
+        '',
+      ]
+
+      type StaleItem = { account_id: string; db_id: string; product_name: string }
+      type OrphanItem = { account_id: string; spid: string; name: string }
+      const staleList: StaleItem[] = []
+      const orphanList: OrphanItem[] = []
+      for (const a of res.accounts) {
+        if (a.error) { logs.push(`[${a.label || a.account_id}] ${a.error}`); continue }
+        for (const s of (a.stale_db ?? [])) {
+          if (s.db_id) staleList.push({ account_id: a.account_id, db_id: s.db_id, product_name: s.product_name || '' })
+        }
+        for (const o of (a.orphans ?? [])) {
+          if (o.spid) orphanList.push({ account_id: a.account_id, spid: o.spid, name: o.name || '' })
+        }
+      }
+      setAiJobLogs([...logs])
+      setAiJobDone(true)
+
+      const totalToProcess = staleList.length + orphanList.length
+      if (totalToProcess === 0) {
+        logs.push('차이 없음 — 삼바 DB와 쿠팡이 이미 일치합니다.')
+        setAiJobLogs([...logs])
+        return
+      }
+
+      if (!await showConfirm(`총 ${fmt(totalToProcess)}건을 처리하시겠습니까?\n· 삼바 DB 등록표시 해제 ${fmt(staleList.length)}건 (먼저, 1건씩)\n· 쿠팡 삭제 ${fmt(orphanList.length)}건 (나중, 1건씩 ~0.5초/건)`)) {
+        logs.push('처리 취소됨.')
+        setAiJobLogs([...logs])
+        return
+      }
+
+      setAiJobDone(false)
+
+      // 1단계: stale DB 1건씩 정리 (빠름)
+      logs.push(`▶ DB 등록표시 해제 시작 (${fmt(staleList.length)}건)`)
+      setAiJobLogs([...logs])
+      let staleOk = 0
+      let staleFail = 0
+      for (let i = 0; i < staleList.length; i++) {
+        const s = staleList[i]
+        const idx = `${fmt(i + 1)}/${fmt(staleList.length)}`
+        try {
+          const r = await shipmentApi.clearCoupangStaleMapping(s.account_id, s.db_id)
+          if (r.ok) {
+            staleOk++
+            logs.push(`[삼바해제 ${idx}] db=${s.db_id} ${s.product_name.slice(0, 40)} → ${r.cleared ? '완료' : '변경없음'}`)
+          } else {
+            staleFail++
+            logs.push(`[삼바해제 ${idx}] db=${s.db_id} 실패: ${r.error || '알수없음'}`)
+          }
+        } catch (e) {
+          staleFail++
+          logs.push(`[삼바해제 ${idx}] db=${s.db_id} 실패: ${e instanceof Error ? e.message : String(e)}`)
+        }
+        if ((i + 1) % 5 === 0 || i === staleList.length - 1) setAiJobLogs([...logs])
+      }
+      logs.push(`▶ DB 등록표시 해제 완료: 성공 ${fmt(staleOk)}건 / 실패 ${fmt(staleFail)}건`)
+      logs.push('')
+      setAiJobLogs([...logs])
+
+      // 2단계: orphan 쿠팡 삭제 1건씩
+      logs.push(`▶ 쿠팡 삭제 시작 (${fmt(orphanList.length)}건)`)
+      setAiJobLogs([...logs])
+      let orphanOk = 0
+      let orphanFail = 0
+      for (let i = 0; i < orphanList.length; i++) {
+        const o = orphanList[i]
+        const idx = `${fmt(i + 1)}/${fmt(orphanList.length)}`
+        try {
+          const r = await shipmentApi.deleteCoupangOrphan(o.account_id, o.spid)
+          if (r.ok) {
+            orphanOk++
+            logs.push(`[쿠팡삭제 ${idx}] spid=${o.spid} ${o.name.slice(0, 40)} → 완료`)
+          } else {
+            orphanFail++
+            logs.push(`[쿠팡삭제 ${idx}] spid=${o.spid} 실패: ${r.error || '알수없음'}`)
+          }
+        } catch (e) {
+          orphanFail++
+          logs.push(`[쿠팡삭제 ${idx}] spid=${o.spid} 실패: ${e instanceof Error ? e.message : String(e)}`)
+        }
+        if ((i + 1) % 3 === 0 || i === orphanList.length - 1) setAiJobLogs([...logs])
+      }
+      logs.push(`▶ 쿠팡 삭제 완료: 성공 ${fmt(orphanOk)}건 / 실패 ${fmt(orphanFail)}건`)
+      setAiJobLogs([...logs])
+    } catch (e) {
+      setAiJobLogs(prev => [...prev, '', `실패: ${e instanceof Error ? e.message : String(e)}`])
+    }
+    setAiJobDone(true)
+  }
   const runElevenstGhostSyncV2 = () => runBidirectionalGhostSync('11번가', shipmentApi.cleanupElevenstOrphansV2, { idKey: 'prd_no', name: 'name' })
   const runLotteonGhostSync = () => runBidirectionalGhostSync('롯데ON', shipmentApi.cleanupLotteonOrphans, { idKey: 'spd_no', name: 'name' })
 

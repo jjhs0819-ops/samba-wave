@@ -1020,6 +1020,10 @@ async def cleanup_coupang_orphans(
     max_delete: int = Query(
         50, ge=0, le=100000, description="한 번에 삭제할 최대 orphan 수"
     ),
+    full: bool = Query(
+        False,
+        description="true면 orphans/stale_db 전체 반환 (단건 스트리밍 러너용). false면 100개로 캡.",
+    ),
     session: AsyncSession = Depends(get_write_session_dependency),
     admin: str = Depends(require_admin),
 ):
@@ -1236,9 +1240,9 @@ async def cleanup_coupang_orphans(
                 "label": account.account_label,
                 "market_count": len(market_spids),
                 "orphan_count": len(orphans),
-                "orphans": orphans[:100],
+                "orphans": orphans if full else orphans[:100],
                 "stale_db_count": len(stale_db),
-                "stale_db": stale_db[:100],
+                "stale_db": stale_db if full else stale_db[:100],
                 "stale_cleared": stale_cleared,
                 "deleted": deleted_here,
                 "failed": failed,
@@ -1256,6 +1260,126 @@ async def cleanup_coupang_orphans(
         "max_delete": max_delete,
         "accounts": per_account,
     }
+
+
+# ----------------------------------------------------------------------
+# 쿠팡 유령삭제 — 단건 처리 (스트리밍 로그용)
+#   - 프론트가 1건씩 호출해 항목별 성공/실패를 실시간으로 표시
+#   - 단일 워커 점유 시간 짧음 → Caddy timeout / health-fail 회피
+# ----------------------------------------------------------------------
+
+
+class CoupangClearStaleRequest(BaseModel):
+    account_id: str
+    db_id: str
+
+
+class CoupangDeleteOrphanRequest(BaseModel):
+    account_id: str
+    spid: str
+
+
+@router.post("/coupang/clear-stale-mapping")
+async def clear_coupang_stale_mapping(
+    body: CoupangClearStaleRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+    admin: str = Depends(require_admin),
+):
+    """쿠팡 stale 매핑 단건 정리 — 삼바 DB만 손댐(쿠팡 API 호출 없음)."""
+    from sqlalchemy.orm.attributes import flag_modified
+    from sqlmodel import select
+
+    from backend.domain.samba.account.model import SambaMarketAccount
+    from backend.domain.samba.collector.model import SambaCollectedProduct
+
+    account = (
+        await session.execute(
+            select(SambaMarketAccount).where(SambaMarketAccount.id == body.account_id)
+        )
+    ).scalar_one_or_none()
+    if not account or account.market_type != "coupang":
+        raise HTTPException(status_code=404, detail="쿠팡 계정 없음")
+
+    prod = (
+        await session.execute(
+            select(SambaCollectedProduct).where(SambaCollectedProduct.id == body.db_id)
+        )
+    ).scalar_one_or_none()
+    if not prod:
+        return {"ok": False, "cleared": False, "error": "상품 없음"}
+
+    changed = False
+    nos = dict(prod.market_product_nos or {})
+    for k in (
+        account.id,
+        f"{account.id}_pid",
+        f"{account.id}_vid",
+        f"{account.id}_origin",
+    ):
+        if k in nos:
+            nos.pop(k, None)
+            changed = True
+    if changed:
+        prod.market_product_nos = nos
+        flag_modified(prod, "market_product_nos")
+    regs = list(prod.registered_accounts or [])
+    if account.id in regs:
+        prod.registered_accounts = [a for a in regs if a != account.id]
+        flag_modified(prod, "registered_accounts")
+        changed = True
+    if changed:
+        session.add(prod)
+        await session.commit()
+    return {"ok": True, "cleared": changed}
+
+
+@router.post("/coupang/delete-orphan")
+async def delete_coupang_orphan(
+    body: CoupangDeleteOrphanRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+    admin: str = Depends(require_admin),
+):
+    """쿠팡 orphan 단건 삭제 — 쿠팡 API delete_product 1회 호출."""
+    from sqlmodel import select
+
+    from backend.domain.samba.account.model import SambaMarketAccount
+    from backend.domain.samba.proxy.coupang import CoupangApiError, CoupangClient
+
+    account = (
+        await session.execute(
+            select(SambaMarketAccount).where(SambaMarketAccount.id == body.account_id)
+        )
+    ).scalar_one_or_none()
+    if not account or account.market_type != "coupang":
+        raise HTTPException(status_code=404, detail="쿠팡 계정 없음")
+
+    add_f = account.additional_fields or {}
+    if not isinstance(add_f, dict):
+        add_f = {}
+    access_key = str(add_f.get("accessKey") or account.api_key or "").strip()
+    secret_key = str(add_f.get("secretKey") or account.api_secret or "").strip()
+    vendor_id = str(add_f.get("vendorId") or account.seller_id or "").strip()
+    if not access_key or not secret_key or not vendor_id:
+        return {"ok": False, "error": "쿠팡 인증정보 누락"}
+
+    client = CoupangClient(access_key, secret_key, vendor_id)
+    last_err: str | None = None
+    # 429만 짧게 1회 재시도, 그외는 즉시 실패 반환 (프론트가 다음 항목 진행)
+    for attempt in range(2):
+        try:
+            await client.delete_product(body.spid)
+            return {"ok": True}
+        except CoupangApiError as e:
+            err_msg = str(e)
+            last_err = err_msg
+            if ("429" in err_msg or "TOO_MANY" in err_msg.upper()) and attempt == 0:
+                await asyncio.sleep(1.0)
+                continue
+            break
+        except Exception as e:
+            last_err = str(e)[:200]
+            break
+    return {"ok": False, "error": last_err or "알 수 없는 오류"}
 
 
 # ----------------------------------------------------------------------

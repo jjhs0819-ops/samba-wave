@@ -1088,11 +1088,12 @@ export const shipmentApi = {
   },
 
   // 쿠팡 유령삭제 양방향 (list_seller_products 기반 — orphan 삭제 + stale DB 정리)
-  cleanupCoupangOrphans: (dryRun = true, maxDelete = 50, accountId?: string, productIds?: string[]) => {
+  cleanupCoupangOrphans: (dryRun = true, maxDelete = 50, accountId?: string, productIds?: string[], full = false) => {
     const params = new URLSearchParams()
     params.set('dry_run', String(dryRun))
     params.set('max_delete', String(maxDelete))
     if (accountId) params.set('account_id', accountId)
+    if (full) params.set('full', 'true')
     return request<{
       ok: boolean
       dry_run: boolean
@@ -1120,6 +1121,20 @@ export const shipmentApi = {
       body: JSON.stringify({ product_ids: productIds && productIds.length > 0 ? productIds : null }),
     })
   },
+
+  // 쿠팡 단건 stale 정리 (DB만, 빠름)
+  clearCoupangStaleMapping: (accountId: string, dbId: string) =>
+    request<{ ok: boolean; cleared?: boolean; error?: string }>(
+      `${SAMBA_PREFIX}/shipments/coupang/clear-stale-mapping`,
+      { method: 'POST', body: JSON.stringify({ account_id: accountId, db_id: dbId }) },
+    ),
+
+  // 쿠팡 단건 orphan 삭제 (쿠팡 API 1회 호출)
+  deleteCoupangOrphan: (accountId: string, spid: string) =>
+    request<{ ok: boolean; error?: string }>(
+      `${SAMBA_PREFIX}/shipments/coupang/delete-orphan`,
+      { method: 'POST', body: JSON.stringify({ account_id: accountId, spid }) },
+    ),
 
   // 11번가 유령삭제 양방향 v2 (list_seller_products 기반)
   cleanupElevenstOrphansV2: (dryRun = true, maxDelete = 50, accountId?: string, productIds?: string[]) => {
