@@ -131,6 +131,60 @@ async def _resolve_owner_device_id(sourcing_account_id: Optional[str]) -> str:
         return ""
 
 
+def _detect_site_from_url(url: str) -> str:
+    """source_url 도메인에서 소싱처 코드 추론. 매칭 없으면 ''."""
+    if not url:
+        return ""
+    try:
+        from urllib.parse import urlparse
+
+        host = (urlparse(url).hostname or url).lower()
+    except Exception:
+        host = (url or "").lower()
+    if "musinsa.com" in host:
+        return "MUSINSA"
+    if "kream.co.kr" in host:
+        return "KREAM"
+    if "fashionplus.co.kr" in host:
+        return "FASHIONPLUS"
+    if "grandstage.a-rt.com" in host:
+        return "GRANDSTAGE"
+    if "abcmart" in host or host == "www.a-rt.com" or host == "a-rt.com":
+        return "ABCMART"
+    if "nike.com" in host:
+        return "NIKE"
+    if "ssg.com" in host:
+        return "SSG"
+    if "lotteon.com" in host:
+        return "LOTTEON"
+    if "gsshop.com" in host:
+        return "GSSHOP"
+    if "oliveyoung.co.kr" in host:
+        return "OLIVEYOUNG"
+    return ""
+
+
+async def _resolve_actual_source_site(order, session) -> str:
+    """주문의 진짜 소싱처 코드 결정.
+
+    우선순위: source_url 도메인 → collected_product.source_site → order.source_site
+    OrderInfoCell.tsx의 배지 로직과 동일.
+    """
+    detected = _detect_site_from_url(order.source_url or "")
+    if detected:
+        return detected
+    if order.collected_product_id:
+        try:
+            from backend.domain.samba.collector.model import SambaCollectedProduct
+
+            cp = await session.get(SambaCollectedProduct, order.collected_product_id)
+            if cp and cp.source_site:
+                return cp.source_site.strip()
+        except Exception as exc:
+            logger.warning(f"[송장동기화] collected_product 조회 실패: {exc}")
+    return (order.source_site or "").strip()
+
+
 async def enqueue_for_order(order_id: str, *, force: bool = False) -> dict[str, Any]:
     """단건 주문에 대해 송장 추출 잡을 큐에 적재.
 
@@ -144,7 +198,9 @@ async def enqueue_for_order(order_id: str, *, force: bool = False) -> dict[str, 
             return {"success": False, "error": "주문을 찾을 수 없습니다"}
         if not order.sourcing_order_number:
             return {"success": False, "error": "소싱처 주문번호가 없습니다"}
-        if not order.source_site:
+        # 진짜 소싱처는 source_url > collected_product > source_site 순으로 결정
+        actual_site = await _resolve_actual_source_site(order, session)
+        if not actual_site:
             return {"success": False, "error": "소싱처 정보가 없습니다"}
         if order.tracking_number and not force:
             return {
@@ -176,14 +232,14 @@ async def enqueue_for_order(order_id: str, *, force: bool = False) -> dict[str, 
 
         owner_device_id = await _resolve_owner_device_id(order.sourcing_account_id)
 
-        # 1) SourcingQueue에 잡 적재 (확장앱 폴링이 받음)
+        # 1) SourcingQueue에 잡 적재 (확장앱 폴링이 받음) — actual_site 사용
         try:
-            url = build_tracking_url(order.source_site, order.sourcing_order_number)
+            url = build_tracking_url(actual_site, order.sourcing_order_number)
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
 
         request_id, _future = SourcingQueue.add_tracking_job(
-            site=order.source_site,
+            site=actual_site,
             url=url,
             order_id=order.id,
             sourcing_order_number=order.sourcing_order_number,
@@ -194,7 +250,7 @@ async def enqueue_for_order(order_id: str, *, force: bool = False) -> dict[str, 
         job = SambaTrackingSyncJob(
             tenant_id=order.tenant_id,
             order_id=order.id,
-            sourcing_site=order.source_site,
+            sourcing_site=actual_site,
             sourcing_order_number=order.sourcing_order_number,
             sourcing_account_id=order.sourcing_account_id,
             owner_device_id=owner_device_id or None,
@@ -205,7 +261,7 @@ async def enqueue_for_order(order_id: str, *, force: bool = False) -> dict[str, 
         await session.commit()
 
         logger.info(
-            f"[송장동기화] 큐 적재: order={order.id} site={order.source_site} "
+            f"[송장동기화] 큐 적재: order={order.id} site={actual_site} "
             f"ord_no={order.sourcing_order_number} req={request_id}"
         )
         return {"success": True, "jobId": job.id, "requestId": request_id}
