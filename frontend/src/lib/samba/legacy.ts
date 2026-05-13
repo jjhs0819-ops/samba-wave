@@ -323,9 +323,9 @@ export const orderApi = {
       `${SAMBA_PREFIX}/orders/${orderId}/sync-tracking?force=${force}`,
       { method: 'POST' },
     ),
-  syncTrackingBulk: (limit = 50) =>
+  syncTrackingBulk: (limit = 500, days = 7) =>
     request<{ success: boolean; queued: number; skipped: number; errors: string[] }>(
-      `${SAMBA_PREFIX}/orders/sync-tracking/bulk?limit=${limit}`,
+      `${SAMBA_PREFIX}/orders/sync-tracking/bulk?limit=${limit}&days=${days}`,
       { method: 'POST' },
     ),
   dispatchTrackingToMarket: (jobId: string, dryRun = true) =>

@@ -404,10 +404,10 @@ export default function OrdersPage() {
   }
 
   const handleTrackingSyncBulk = async () => {
-    if (!await showConfirm('미발송 주문 최대 50건의 송장을 일괄 동기화합니다. 진행할까요?')) return
+    if (!await showConfirm('최근 7일 내 미발송 주문(소싱처 주문번호 있고 송장 미입력)의 송장을 일괄 동기화합니다. 진행할까요?')) return
     setTrackingSyncing(true)
     try {
-      const res = await orderApi.syncTrackingBulk(50)
+      const res = await orderApi.syncTrackingBulk(500, 7)
       setLogMessages(prev => [
         ...prev,
         `[송장 일괄] 큐 적재 ${fmtNum(res.queued)}건 / 스킵 ${fmtNum(res.skipped)}건 / 오류 ${fmtNum(res.errors.length)}건`,

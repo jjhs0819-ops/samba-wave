@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from sqlmodel import select
@@ -204,13 +204,18 @@ async def enqueue_for_order(order_id: str, *, force: bool = False) -> dict[str, 
 
 async def enqueue_pending_orders(
     tenant_id: Optional[str] = None,
-    limit: int = 50,
+    limit: int = 500,
+    days: int = 7,
 ) -> dict[str, Any]:
-    """미발송 주문 일괄 적재 — 수동 트리거 + 스케줄러 공용."""
+    """미발송 주문 일괄 적재 — 수동 트리거 + 스케줄러 공용.
+
+    조건: 최근 N일(기본 7일) 이내 + 소싱처 주문번호 있음 + 송장번호 없음 + 소싱처 식별됨.
+    """
     queued = 0
     skipped = 0
     errors: list[str] = []
 
+    since = datetime.now(_UTC) - timedelta(days=days)
     async with get_write_session() as session:
         stmt = (
             select(SambaOrder)
@@ -218,6 +223,7 @@ async def enqueue_pending_orders(
                 SambaOrder.tracking_number.is_(None),
                 SambaOrder.sourcing_order_number.is_not(None),
                 SambaOrder.source_site.is_not(None),
+                SambaOrder.created_at >= since,
             )
             .order_by(SambaOrder.created_at.desc())
             .limit(limit)

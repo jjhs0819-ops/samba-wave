@@ -1180,13 +1180,14 @@ async def sync_order_tracking(order_id: str, force: bool = False) -> dict:
 
 @router.post("/sync-tracking/bulk")
 async def sync_order_tracking_bulk(
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(500, ge=1, le=1000),
+    days: int = Query(7, ge=1, le=90),
     tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ) -> dict:
-    """미발송 주문 일괄 송장 추출 큐잉."""
+    """미발송 주문 일괄 송장 추출 큐잉 — 최근 N일 + 소싱처 주문번호 있음 + 송장 미입력."""
     from backend.domain.samba.tracking_sync.service import enqueue_pending_orders
 
-    return await enqueue_pending_orders(tenant_id=tenant_id, limit=limit)
+    return await enqueue_pending_orders(tenant_id=tenant_id, limit=limit, days=days)
 
 
 @router.post("/tracking-sync/{job_id}/dispatch")
