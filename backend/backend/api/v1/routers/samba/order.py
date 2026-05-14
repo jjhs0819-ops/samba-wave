@@ -1333,6 +1333,17 @@ async def list_recent_tracking_sync_jobs(
         O = aliased(SambaOrder)
         A = aliased(SambaSourcingAccount)
         # 잡 + 주문 메타를 한 번에 가져와 Python에서 dedup → 카운트/리스트 일관 처리
+        # 큐잉 필터(enqueue_pending_orders)와 100% 동일 조건 적용:
+        #   2) sourcing_order_number 있음
+        #   3) source_site 있음
+        #   4) 최근 7일 (created_at >= now-7d)
+        #   7) action_tag 에 'kkadaegi' 토큰 없음
+        # 1/5/6 (송장 미입력 / 상태 제외 / 배송중·완료 제외) 은 Python loop 에서 처리.
+        from datetime import timedelta, timezone
+        from sqlalchemy import and_, func, not_, or_
+
+        _since = datetime.now(timezone.utc) - timedelta(days=7)
+        action_tag_expr = func.concat(",", func.coalesce(O.action_tag, ""), ",")
         base_stmt = (
             select(
                 SambaTrackingSyncJob,
@@ -1347,6 +1358,19 @@ async def list_recent_tracking_sync_jobs(
             )
             .join(O, O.id == SambaTrackingSyncJob.order_id, isouter=True)
             .join(A, A.id == SambaTrackingSyncJob.sourcing_account_id, isouter=True)
+            .where(
+                and_(
+                    O.sourcing_order_number.is_not(None),
+                    O.sourcing_order_number != "",
+                    O.source_site.is_not(None),
+                    O.created_at >= _since,
+                    not_(action_tag_expr.like("%,kkadaegi,%")),
+                    or_(
+                        O.tracking_number.is_(None),
+                        O.tracking_number == "",
+                    ),
+                )
+            )
             .order_by(SambaTrackingSyncJob.updated_at.desc())
             .limit(limit * 10)
         )
@@ -1369,10 +1393,7 @@ async def list_recent_tracking_sync_jobs(
             seen_order_ids.add(j.order_id)
             if _is_excluded(order_status, shipping_status):
                 continue
-            # 마켓 전송 완료(SENT_TO_MARKET)는 처리 끝났으므로 숨김.
-            # SCRAPED / DISPATCH_FAILED 는 tracking_number 있어도 표시 (마켓 push 필요/재시도)
-            if j.status == "SENT_TO_MARKET":
-                continue
+            # tracking_number 비어있음은 WHERE 절에서 이미 처리됨.
             counts[j.status] = counts.get(j.status, 0) + 1
             if len(result_rows) < limit:
                 result_rows.append(row)
