@@ -6099,6 +6099,17 @@ def _parse_smartstore_order(
 
     # 배송지 정보
     shipping = po.get("shippingAddress", {})
+    # 우편번호 후보 키 모두 비어있으면 1회 INFO 로그 (실제 응답 키 진단용)
+    if shipping and not (
+        shipping.get("zipCode")
+        or shipping.get("zipcode")
+        or shipping.get("postCode")
+        or shipping.get("zipNo")
+    ):
+        logger.info(
+            f"[스마트스토어][zip진단] po={po.get('productOrderId')} "
+            f"keys={list(shipping.keys())}"
+        )
     # 수령인(배송지) 우선 — 선물하기 주문은 주문자(보내는 사람) ≠ 수령인(받는 사람)이므로
     # CS/배송 단위에서 의미있는 customer는 수령인. 일반 주문은 둘이 동일하므로 영향 없음.
     customer_name = shipping.get("name", "") or order_info.get("ordererName", "")
@@ -6135,8 +6146,17 @@ def _parse_smartstore_order(
         "customer_phone": customer_tel,
         "customer_address": (shipping.get("baseAddress", "") or "").strip(),
         "customer_address_detail": (shipping.get("detailedAddress", "") or "").strip(),
-        # 우편번호 — 화면 확인용 (복사 버튼 분리)
-        "customer_postal_code": (shipping.get("zipCode", "") or "").strip() or None,
+        # 우편번호 — 화면 확인용 (복사 버튼 분리). 네이버 응답 케이스 변형 흡수 fallback chain
+        "customer_postal_code": (
+            str(
+                shipping.get("zipCode")
+                or shipping.get("zipcode")
+                or shipping.get("postCode")
+                or shipping.get("zipNo")
+                or ""
+            ).strip()
+            or None
+        ),
         "customer_note": po.get("shippingMemo", "") or "",
         "quantity": quantity,
         "sale_price": sale_price,
@@ -6417,8 +6437,25 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
     # 배송지 주소 분리 저장 (dvpStnmZipAddr=도로명기본주소, dvpStnmDtlAddr=상세주소)
     addr_base = (item.get("dvpStnmZipAddr") or "").strip()
     addr_detail = (item.get("dvpStnmDtlAddr") or "").strip()
-    # 우편번호 — 화면 확인용 (복사 버튼 분리)
-    postal_code = str(item.get("dvpZipNo") or "").strip() or None
+    # 우편번호 — 화면 확인용 (복사 버튼 분리). 롯데ON 응답 키 변형 흡수 fallback chain
+    postal_code = (
+        str(
+            item.get("dvpZpcd")
+            or item.get("dvpZipNo")
+            or item.get("dvpStnmZpcd")
+            or item.get("dvpJbngZpcd")
+            or item.get("zipNo")
+            or ""
+        ).strip()
+        or None
+    )
+    # 모든 후보 비어있으면 1회 키 후보 로그 (실제 응답 키 진단용)
+    if not postal_code:
+        _zip_keys = [k for k in item.keys() if "zp" in k.lower() or "zip" in k.lower()]
+        if _zip_keys:
+            logger.info(
+                f"[롯데ON][zip진단] od={item.get('odNo')} zip_keys={_zip_keys}"
+            )
 
     _od_no = str(item.get("odNo", "") or "")
     _od_seq = str(item.get("odSeq", "1") or "1")
