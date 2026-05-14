@@ -243,7 +243,9 @@ export default function OrdersTable(props: OrdersTableProps) {
                       </select>
                       <input
                         type="text"
-                        placeholder="소싱주문번호"
+                        placeholder={o.sourcing_account_id ? "소싱주문번호" : "주문계정 먼저 선택"}
+                        disabled={!o.sourcing_account_id}
+                        title={!o.sourcing_account_id ? '주문계정을 먼저 선택하세요' : undefined}
                         value={editingOrderNumbers[o.id] ?? o.sourcing_order_number ?? ''}
                         onChange={e => setEditingOrderNumbers(prev => ({ ...prev, [o.id]: e.target.value }))}
                         onBlur={async (e) => {
@@ -261,7 +263,13 @@ export default function OrdersTable(props: OrdersTableProps) {
                             ;(e.target as HTMLInputElement).blur()
                           }
                         }}
-                        style={{ ...inputStyle, flex: 1, fontSize: '0.75rem' }}
+                        style={{
+                          ...inputStyle,
+                          flex: 1,
+                          fontSize: '0.75rem',
+                          opacity: o.sourcing_account_id ? 1 : 0.5,
+                          cursor: o.sourcing_account_id ? 'text' : 'not-allowed',
+                        }}
                       />
                     </div>
 
@@ -291,6 +299,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                             </optgroup>
                           ))
                         })()}
+                        <option value="etc">기타</option>
                       </select>
                       <div style={{
                         flex: 1, padding: '0.25rem 0.375rem',
