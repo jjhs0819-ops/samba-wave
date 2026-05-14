@@ -6135,6 +6135,8 @@ def _parse_smartstore_order(
         "customer_phone": customer_tel,
         "customer_address": (shipping.get("baseAddress", "") or "").strip(),
         "customer_address_detail": (shipping.get("detailedAddress", "") or "").strip(),
+        # 우편번호 — 화면 확인용 (복사 버튼 분리)
+        "customer_postal_code": (shipping.get("zipCode", "") or "").strip() or None,
         "customer_note": po.get("shippingMemo", "") or "",
         "quantity": quantity,
         "sale_price": sale_price,
@@ -6274,6 +6276,11 @@ def _parse_coupang_order(
     )
     customer_address = receiver_addr.strip()
     customer_address_detail = receiver_addr_detail.strip()
+    # 우편번호 — 화면 확인용 (복사 버튼 분리)
+    customer_postal_code = (
+        str(receiver.get("postCode") or order.get("receiverPostCode") or "").strip()
+        or None
+    )
 
     orderer_name = (
         orderer.get("name")
@@ -6321,6 +6328,7 @@ def _parse_coupang_order(
         "customer_phone": orderer_tel,
         "customer_address": customer_address,
         "customer_address_detail": customer_address_detail,
+        "customer_postal_code": customer_postal_code,
         "customer_note": (
             order.get("parcelPrintMessage", "")
             or order.get("shippingMessage", "")
@@ -6409,6 +6417,8 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
     # 배송지 주소 분리 저장 (dvpStnmZipAddr=도로명기본주소, dvpStnmDtlAddr=상세주소)
     addr_base = (item.get("dvpStnmZipAddr") or "").strip()
     addr_detail = (item.get("dvpStnmDtlAddr") or "").strip()
+    # 우편번호 — 화면 확인용 (복사 버튼 분리)
+    postal_code = str(item.get("dvpZipNo") or "").strip() or None
 
     _od_no = str(item.get("odNo", "") or "")
     _od_seq = str(item.get("odSeq", "1") or "1")
@@ -6443,6 +6453,7 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
         or "",
         "customer_address": addr_base,
         "customer_address_detail": addr_detail,
+        "customer_postal_code": postal_code,
         "customer_note": item.get("dvMsg", "") or "",
         "paid_at": paid_at,
         # created_at은 명시 X — DB default_factory(now)가 실제 삽입 시각 기록
@@ -6624,6 +6635,8 @@ def _parse_playauto_order(
         or ro.get("OrderTel", ""),
         "customer_address": _addr_base,
         "customer_address_detail": _addr_detail,
+        # 우편번호 — 화면 확인용 (복사 버튼 분리). 플레이오토 EMP는 RecipientZipCode 필드 사용.
+        "customer_postal_code": str(ro.get("RecipientZipCode") or "").strip() or None,
         "quantity": quantity,
         "sale_price": sale_price,
         "cost": 0,
@@ -6718,6 +6731,8 @@ def _parse_elevenst_order(item: dict, account_id: str, label: str) -> dict:
     # 수령인 주소 분리 저장 (실제 API 필드: rcvrBaseAddr=기본, rcvrDtlsAddr=상세)
     addr_base = str(item.get("rcvrBaseAddr", "") or "").strip()
     addr_detail = str(item.get("rcvrDtlsAddr", "") or "").strip()
+    # 우편번호 — 화면 확인용 (복사 버튼 분리). 11번가 API 우편번호 필드: rcvrMlmtNo
+    postal_code = str(item.get("rcvrMlmtNo") or "").strip() or None
 
     # 판매금액: selPrc(단가) 우선, 없으면 ordAmt(주문금액)
     sale_price = _to_int(item.get("selPrc"), _to_int(item.get("ordAmt")))
@@ -6757,6 +6772,7 @@ def _parse_elevenst_order(item: dict, account_id: str, label: str) -> dict:
         ),
         "customer_address": addr_base,
         "customer_address_detail": addr_detail,
+        "customer_postal_code": postal_code,
         "customer_note": str(
             item.get("ordDlvReqCont", "") or item.get("dlvMsg", "") or ""
         ),
@@ -6799,12 +6815,13 @@ def _parse_ebay_order(
         if ship_to:
             break
     contact = ship_to.get("contactAddress") or {}
+    # 우편번호 — 화면 확인용으로 별도 컬럼에 저장 (복사 버튼 분리)
+    ebay_postal_code = str(contact.get("postalCode", "") or "").strip() or None
     addr_parts = [
         contact.get("addressLine1", ""),
         contact.get("addressLine2", ""),
         contact.get("city", ""),
         contact.get("stateOrProvince", ""),
-        contact.get("postalCode", ""),
         contact.get("countryCode", ""),
     ]
     customer_address = ", ".join([p for p in addr_parts if p])
@@ -6864,6 +6881,7 @@ def _parse_ebay_order(
         "customer_phone": (ship_to.get("primaryPhone") or {}).get("phoneNumber", "")
         or "",
         "customer_address": customer_address,
+        "customer_postal_code": ebay_postal_code,
         "quantity": int(first_item.get("quantity", 1) or 1),
         "sale_price": sale_price_krw,
         "cost": 0,
@@ -7070,6 +7088,11 @@ def _parse_lottehome_order(
         "customer_name": recv_name,
         "customer_phone": recv_tel,
         "customer_address": f"{recv_addr} {recv_addr2}".strip(),
+        # 우편번호 — 화면 확인용 (복사 버튼 분리). 롯데홈쇼핑 API 필드: recvZipCd
+        "customer_postal_code": (
+            str(delv_info.get("recvZipCd") or delv_info.get("ZipCd") or "").strip()
+            or None
+        ),
         "quantity": qty,
         "sale_price": sale_price,
         "total_payment_amount": sale_price * qty,
