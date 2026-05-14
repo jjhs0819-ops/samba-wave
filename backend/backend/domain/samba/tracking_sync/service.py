@@ -304,6 +304,14 @@ async def enqueue_for_order(order_id: str, *, force: bool = False) -> dict[str, 
             return {"success": False, "error": "주문을 찾을 수 없습니다"}
         if not order.sourcing_order_number:
             return {"success": False, "error": "소싱처 주문번호가 없습니다"}
+        # 까대기 주문은 자체 직배라 소싱처 운송장 추출 불가 — 명시적 거부
+        _tags = f",{(order.action_tag or '').strip()},"
+        if ",kkadaegi," in _tags:
+            return {
+                "success": True,
+                "skipped": True,
+                "reason": "까대기 주문은 송장 추출 대상이 아닙니다",
+            }
         # 진짜 소싱처는 source_url > collected_product > source_site 순으로 결정
         actual_site = await _resolve_actual_source_site(order, session)
         if not actual_site:
@@ -407,6 +415,14 @@ async def enqueue_pending_orders(
 
     since = datetime.now(_UTC) - timedelta(days=days)
     async with get_write_session() as session:
+        from sqlalchemy import func
+
+        # action_tag(csv) 에 'kkadaegi' 토큰이 들어 있으면 송장 추출 대상에서 제외.
+        # 까대기는 자체 직접 배송이라 소싱처 운송장 추출 불가.
+        action_tag_expr = func.concat(
+            ",", func.coalesce(SambaOrder.action_tag, ""), ","
+        )
+
         # 페이지 필터 "취소/반품/교환 제외 + 배송중/배송완료 제외" 와 정확히 동일 기준
         stmt = (
             select(SambaOrder)
@@ -420,6 +436,7 @@ async def enqueue_pending_orders(
                 SambaOrder.source_site.is_not(None),
                 SambaOrder.created_at >= since,
                 ~SambaOrder.status.in_(EXCLUDED_ORDER_STATUSES),
+                ~action_tag_expr.like("%,kkadaegi,%"),
             )
             .order_by(SambaOrder.created_at.desc())
             .limit(limit)
