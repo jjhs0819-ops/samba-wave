@@ -719,16 +719,22 @@ async def task_brand_collect_jobs(
     """)
 
     # source_site + brand → filter_ids 매핑 (브랜드별 1개 잡)
+    # SSG는 leaf-only 사고 차단을 위해 brand 단위가 아닌 filter 단위 잡으로 enqueue
+    # → 수동 카테고리 스캔과 동일한 _run_collect → _collect_direct_api 경로 사용.
     brand_map: dict[tuple[str, str], list[str]] = defaultdict(list)
+    ssg_brand_filters: dict[str, list[str]] = defaultdict(list)  # brand → [filter_id]
     for f in filters:
         name = f["name"] or ""
         source = f["source_site"] or ""
         parts = name.split("_")
         if len(parts) >= 2:
             brand = parts[1]
-            brand_map[(source, brand)].append(f["id"])
+            if source == "SSG":
+                ssg_brand_filters[brand].append(f["id"])
+            else:
+                brand_map[(source, brand)].append(f["id"])
 
-    if not brand_map:
+    if not brand_map and not ssg_brand_filters:
         print("  브랜드 없음 — 완료")
         return {"created": 0, "skipped": 0}
 
@@ -804,8 +810,46 @@ async def task_brand_collect_jobs(
         )
         created += 1
 
-    print(f"  생성:{created:,}개, 스킵(5일이내또는큐존재):{skipped:,}개")
-    return {"created": created, "skipped": skipped}
+    # SSG: filter 단위 잡 enqueue (brand_all 미포함 → 수동 카테고리 스캔과 동일 경로)
+    # 5일 인터벌·active 체크는 brand 단위로 유지 — 같은 brand의 filter 잡이 큐에 있거나
+    # 최근 완료 기록이 있으면 해당 brand의 모든 filter를 한꺼번에 skip.
+    ssg_created = 0
+    for brand, filter_ids in ssg_brand_filters.items():
+        if ("SSG", brand) in active_keys:
+            skipped += 1
+            continue
+        last = last_completed.get(("SSG", brand))
+        if last is not None:
+            last_aware = (
+                last.replace(tzinfo=timezone.utc) if last.tzinfo is None else last
+            )
+            if last_aware >= cutoff:
+                skipped += 1
+                continue
+        for filter_id in filter_ids:
+            job_id = f"job_{ulid.ULID()}"
+            payload = {
+                "filter_id": filter_id,
+                "source_site": "SSG",
+                "brand": brand,  # last_completed/active_keys 매칭용
+                "keyword": brand,
+            }
+            await conn.execute(
+                """
+                INSERT INTO samba_jobs (id, job_type, status, payload, progress, total, current, attempt, created_at)
+                VALUES ($1, 'collect', 'pending', $2::json, 0, 1, 0, 0, NOW())
+                """,
+                job_id,
+                json.dumps(payload, ensure_ascii=False),
+            )
+            created += 1
+            ssg_created += 1
+
+    print(
+        f"  생성:{created:,}개(SSG filter별 {ssg_created:,}개 포함), "
+        f"스킵(5일이내또는큐존재):{skipped:,}개"
+    )
+    return {"created": created, "skipped": skipped, "ssg_created": ssg_created}
 
 
 # ===== TASK 6: 일별 등록상품수 스냅샷 =====
