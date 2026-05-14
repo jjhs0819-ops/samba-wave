@@ -124,7 +124,8 @@
 
     const btn = await findTraceButton(MAX_WAIT_MS)
     if (!btn) {
-      send(requestId, { success: false, error: '배송조회 버튼 없음 (주문상세 페이지)' })
+      // 배송조회 버튼이 없음 = 아직 배송이 시작되지 않은 단계 (택배사가 송장 발급 전)
+      send(requestId, { success: false, error: '배송대기중' })
       try { sessionStorage.removeItem(SS_KEY) } catch {}
       return
     }

@@ -1279,8 +1279,16 @@ async def sync_order_tracking_bulk(
     )
 
 
+@router.post("/tracking-sync/dispatch/bulk")
+async def dispatch_tracking_bulk(dry_run: bool = False) -> dict:
+    """SCRAPED + DISPATCH_FAILED 잡 전부 일괄 마켓 전송 (재시도 포함)."""
+    from backend.domain.samba.tracking_sync.service import dispatch_pending_to_market
+
+    return await dispatch_pending_to_market(dry_run=dry_run)
+
+
 @router.post("/tracking-sync/{job_id}/dispatch")
-async def dispatch_tracking_to_market(job_id: str, dry_run: bool = True) -> dict:
+async def dispatch_tracking_to_market(job_id: str, dry_run: bool = False) -> dict:
     """추출 완료된(SCRAPED) 잡의 운송장을 마켓으로 push.
 
     dry_run=True (기본): 페이로드만 로그. False면 실제 마켓 API 호출.
@@ -1334,6 +1342,7 @@ async def list_recent_tracking_sync_jobs(
                 O.status,
                 O.shipping_status,
                 A.account_label,
+                O.tracking_number,
             )
             .join(O, O.id == SambaTrackingSyncJob.order_id, isouter=True)
             .join(A, A.id == SambaTrackingSyncJob.sourcing_account_id, isouter=True)
@@ -1344,7 +1353,8 @@ async def list_recent_tracking_sync_jobs(
             base_stmt = base_stmt.where(SambaTrackingSyncJob.tenant_id == tenant_id)
         raw_rows = (await session.execute(base_stmt)).all()
 
-        # order_id별 최신 1건만 선별 + 페이지 필터와 동일 기준 제외
+        # order_id별 최신 1건만 선별 + 페이지 필터와 동일 기준 제외 +
+        # 이미 송장 입력된 주문은 처리 대상 아니므로 제외 (모달 = "처리 필요" 잡만 표시)
         seen_order_ids: set[str] = set()
         result_rows = []
         counts: dict[str, int] = {}
@@ -1352,10 +1362,15 @@ async def list_recent_tracking_sync_jobs(
             j = row[0]
             order_status = row[4]
             shipping_status = row[5]
+            order_tracking_number = row[7]
             if j.order_id in seen_order_ids:
                 continue
             seen_order_ids.add(j.order_id)
             if _is_excluded(order_status, shipping_status):
+                continue
+            # 마켓 전송 완료(SENT_TO_MARKET)는 처리 끝났으므로 숨김.
+            # SCRAPED / DISPATCH_FAILED 는 tracking_number 있어도 표시 (마켓 push 필요/재시도)
+            if j.status == "SENT_TO_MARKET":
                 continue
             counts[j.status] = counts.get(j.status, 0) + 1
             if len(result_rows) < limit:
@@ -1380,7 +1395,7 @@ async def list_recent_tracking_sync_jobs(
                 "attempts": j.attempts,
                 "updatedAt": j.updated_at.isoformat() if j.updated_at else None,
             }
-            for j, order_number, customer_name, channel_name, _os, _ss, account_label in result_rows
+            for j, order_number, customer_name, channel_name, _os, _ss, account_label, _otn in result_rows
         ],
     }
 

@@ -24,6 +24,7 @@ from backend.domain.samba.order.model import (
 )
 from backend.domain.samba.tracking_sync.model import (
     STATUS_CANCELLED,
+    STATUS_DISPATCH_FAILED,
     STATUS_DISPATCHED,
     STATUS_FAILED,
     STATUS_NO_TRACKING,
@@ -487,12 +488,13 @@ async def apply_tracking_result(
     tracking_number: str = "",
     error: str = "",
     cancelled: bool = False,
-    auto_dispatch: bool = False,
-    dry_run: bool = True,
+    auto_dispatch: bool = True,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
     """확장앱이 보낸 결과를 DB에 반영하고 (옵션) 마켓 dispatch까지 트리거.
 
-    auto_dispatch=False가 기본 — 안정화 전까지 추출만 하고 마켓 push는 별도 단계.
+    auto_dispatch=True 기본 — SCRAPED 직후 자동 마켓 push. 실패 시 DISPATCH_FAILED 로
+    표시되고 UI 에서 재시도 가능.
 
     cancelled=True 또는 error에 "order_cancelled"/"주문취소" 마커가 있으면
     소싱처 원주문 취소로 간주 — SambaOrder.status="cancelling" + notes "원주문 취소" prepend.
@@ -592,18 +594,54 @@ async def apply_tracking_result(
 # ---------------------------------------------------------------------------
 
 
-async def dispatch_to_market(
-    tracking_sync_job_id: str, *, dry_run: bool = True
-) -> dict[str, Any]:
-    """SCRAPED 상태 잡의 운송장을 마켓 API로 push.
+async def dispatch_pending_to_market(*, dry_run: bool = False) -> dict[str, Any]:
+    """SCRAPED + DISPATCH_FAILED 상태 잡 전체 일괄 마켓 전송 (재시도 포함)."""
+    from sqlalchemy import select as _select
 
-    dry_run=True (기본): 실제 호출 없이 페이로드만 로그 출력.
+    sent = 0
+    failed = 0
+    errors: list[str] = []
+    async with get_write_session() as session:
+        stmt = _select(SambaTrackingSyncJob.id).where(
+            SambaTrackingSyncJob.status.in_([STATUS_SCRAPED, STATUS_DISPATCH_FAILED])
+        )
+        job_ids = [row[0] for row in (await session.execute(stmt)).all()]
+
+    for job_id in job_ids:
+        try:
+            res = await dispatch_to_market(job_id, dry_run=dry_run)
+            if res.get("success"):
+                sent += 1
+            else:
+                failed += 1
+                errors.append(f"{job_id}: {res.get('error')}")
+        except Exception as exc:
+            failed += 1
+            errors.append(f"{job_id}: {exc}")
+
+    logger.info(f"[송장동기화] 일괄 dispatch 결과: sent={sent} failed={failed}")
+    return {
+        "success": True,
+        "total": len(job_ids),
+        "sent": sent,
+        "failed": failed,
+        "errors": errors[:20],
+    }
+
+
+async def dispatch_to_market(
+    tracking_sync_job_id: str, *, dry_run: bool = False
+) -> dict[str, Any]:
+    """SCRAPED / DISPATCH_FAILED 잡의 운송장을 마켓 API로 push.
+
+    dry_run=False (기본): 실제 마켓 API 호출. 실패 시 STATUS_DISPATCH_FAILED 로 표시.
+    재시도는 DISPATCH_FAILED 상태에서도 호출 가능.
     """
     async with get_write_session() as session:
         job = await session.get(SambaTrackingSyncJob, tracking_sync_job_id)
         if not job:
             return {"success": False, "error": "잡을 찾을 수 없습니다"}
-        if job.status not in (STATUS_SCRAPED, STATUS_FAILED):
+        if job.status not in (STATUS_SCRAPED, STATUS_DISPATCH_FAILED, STATUS_FAILED):
             return {
                 "success": False,
                 "error": f"dispatch 가능한 상태 아님: {job.status}",
@@ -657,11 +695,17 @@ async def dispatch_to_market(
                     invoice_number=job.scraped_tracking,
                 )
                 result["api"] = api_resp
+            elif channel_source == "playauto":
+                api_resp = await _dispatch_playauto_invoice(order, job)
+                result["api"] = api_resp
+                if not api_resp.get("ok"):
+                    raise RuntimeError(
+                        api_resp.get("error") or "플레이오토 송장 전송 실패"
+                    )
             else:
-                # 미지원 채널 — dry-run으로 fallback
-                result["unsupported_channel"] = True
-                logger.warning(
-                    f"[송장동기화] 미지원 채널: {channel_source} order={order.id}"
+                # 미지원 채널 — DISPATCH_FAILED 로 명시
+                raise RuntimeError(
+                    f"미지원 채널: {channel_source} (마켓 송장 전송 미구현)"
                 )
 
             job.status = STATUS_SENT
@@ -681,7 +725,7 @@ async def dispatch_to_market(
             return {"success": True, **result}
 
         except Exception as exc:
-            job.status = STATUS_FAILED
+            job.status = STATUS_DISPATCH_FAILED
             job.last_error = f"dispatch 실패: {exc}"[:500]
             job.dispatch_result = {"error": str(exc), **result}
             session.add(job)
@@ -691,3 +735,113 @@ async def dispatch_to_market(
                 f"err={exc}"
             )
             return {"success": False, "error": str(exc), **result}
+
+
+async def _dispatch_playauto_invoice(order, job) -> dict[str, Any]:
+    """플레이오토 송장 전송 — EMP API send_invoice 호출.
+
+    필수 사전 조건:
+      - order.shipment_id 가 int 변환 가능한 PlayAuto Number
+      - order.channel_id → SambaMarketAccount(api_key) 조회 가능
+      - PlayAuto 택배사 코드 lookup 가능
+    """
+    from backend.domain.samba.account.model import SambaMarketAccount
+    from backend.domain.samba.proxy.playauto import PlayAutoClient
+
+    try:
+        pa_number = int(order.shipment_id or 0)
+    except (TypeError, ValueError):
+        return {
+            "ok": False,
+            "error": f"플레이오토 Number 형식 오류: shipment_id={order.shipment_id}",
+        }
+    if not pa_number:
+        return {"ok": False, "error": "플레이오토 Number 없음(shipment_id 미설정)"}
+
+    # 채널 계정 → API Key
+    if not order.channel_id:
+        return {"ok": False, "error": "플레이오토 채널 계정 미연결(channel_id 없음)"}
+
+    async with get_write_session() as acc_session:
+        account = await acc_session.get(SambaMarketAccount, order.channel_id)
+    if not account:
+        return {"ok": False, "error": "플레이오토 마켓 계정 조회 실패"}
+    pa_extras = account.additional_fields or {}
+    pa_api_key = pa_extras.get("apiKey", "") or account.api_key or ""
+    if not pa_api_key:
+        return {"ok": False, "error": "플레이오토 API Key 미설정"}
+
+    pa_client = PlayAutoClient(pa_api_key)
+    try:
+        deliv_codes = await pa_client.get_deliv_codes()
+    except Exception as exc:
+        return {"ok": False, "error": f"플레이오토 택배사 코드 조회 실패: {exc}"}
+
+    # 한글 택배사명 → T-code 매핑 (order.py 의 _playauto_carrier_candidates 와 동일 로직)
+    def _norm(s: str) -> str:
+        return (s or "").replace(" ", "").strip()
+
+    courier_name = (job.scraped_courier or "").strip()
+    aliases = {
+        "CJ대한통운": ["대한통운", "CJ택배", "씨제이대한통운", "CJGLS"],
+        "대한통운": ["CJ대한통운", "CJ택배", "씨제이대한통운", "CJGLS"],
+        "한진택배": ["한진", "HANJIN"],
+        "롯데택배": ["롯데", "현대택배"],
+        "로젠택배": ["로젠"],
+        "우체국택배": ["우체국", "우체국소포"],
+    }
+    wanted_names = {_norm(courier_name)} | {
+        _norm(a) for a in aliases.get(courier_name, [])
+    }
+
+    sender_code = ""
+    for row in deliv_codes or []:
+        row_name = _norm(
+            row.get("name") or row.get("Name") or row.get("deliveryCompanyName") or ""
+        )
+        if row_name and row_name in wanted_names:
+            sender_code = row.get("code", "") or row.get("Code", "")
+            if sender_code:
+                break
+    if not sender_code:
+        return {
+            "ok": False,
+            "error": f"플레이오토 택배사 코드 미매칭: {courier_name}",
+        }
+
+    try:
+        results = await pa_client.send_invoice(
+            invoices=[
+                {
+                    "number": pa_number,
+                    "sender": sender_code,
+                    "senderno": job.scraped_tracking,
+                }
+            ],
+            change_state=False,
+            overwrite=True,
+        )
+    except Exception as exc:
+        return {"ok": False, "error": f"플레이오토 API 호출 실패: {exc}"}
+
+    # 응답 파싱: {status, msg} 직접 또는 {"성공 유형N":{...}} 래핑 모두 대응
+    for r in results or []:
+        if not isinstance(r, dict):
+            continue
+        candidates = (
+            [r]
+            if "status" in r
+            else [v for v in r.values() if isinstance(v, dict) and "status" in v]
+        )
+        for c in candidates:
+            if str(c.get("status", "")).lower() == "true":
+                return {"ok": True, "raw": results}
+    # 모든 결과가 실패
+    err_msgs = []
+    for r in results or []:
+        if isinstance(r, dict):
+            err_msgs.append(str(r.get("msg") or r))
+    return {
+        "ok": False,
+        "error": "; ".join(err_msgs)[:400] or "플레이오토 송장 전송 실패",
+    }

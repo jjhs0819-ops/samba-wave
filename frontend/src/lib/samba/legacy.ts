@@ -329,9 +329,14 @@ export const orderApi = {
       `${SAMBA_PREFIX}/orders/sync-tracking/bulk?limit=${limit}&days=${days}&force=${force}`,
       { method: 'POST' },
     ),
-  dispatchTrackingToMarket: (jobId: string, dryRun = true) =>
+  dispatchTrackingToMarket: (jobId: string, dryRun = false) =>
     request<{ success: boolean; dryRun?: boolean; channel?: string; courier?: string; tracking?: string; error?: string }>(
       `${SAMBA_PREFIX}/orders/tracking-sync/${jobId}/dispatch?dry_run=${dryRun}`,
+      { method: 'POST' },
+    ),
+  dispatchTrackingBulk: (dryRun = false) =>
+    request<{ success: boolean; total: number; sent: number; failed: number; errors: string[] }>(
+      `${SAMBA_PREFIX}/orders/tracking-sync/dispatch/bulk?dry_run=${dryRun}`,
       { method: 'POST' },
     ),
   listRecentTrackingSyncJobs: (limit = 50) =>

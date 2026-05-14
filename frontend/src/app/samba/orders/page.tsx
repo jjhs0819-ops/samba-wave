@@ -718,6 +718,23 @@ export default function OrdersPage() {
               <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>📦 송장 자동전송 진행 현황</h3>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button
+                  onClick={async () => {
+                    if (!await showConfirm('SCRAPED + 송장전송실패 상태 잡 전체를 마켓에 일괄 전송합니다. 진행할까요?')) return
+                    try {
+                      const res = await orderApi.dispatchTrackingBulk(false)
+                      setLogMessages(prev => [
+                        ...prev,
+                        `[마켓 일괄전송] 총 ${fmtNum(res.total)}건 / 성공 ${fmtNum(res.sent)}건 / 실패 ${fmtNum(res.failed)}건`,
+                        ...res.errors.slice(0, 5).map(e => `  · ${e}`),
+                      ])
+                      refreshTrackingStatus()
+                    } catch (err) {
+                      setLogMessages(prev => [...prev, `[마켓 일괄전송] 오류: ${(err as Error).message}`])
+                    }
+                  }}
+                  style={{ padding: '4px 10px', background: '#16a34a', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
+                >일괄 마켓전송</button>
+                <button
                   onClick={refreshTrackingStatus}
                   style={{ padding: '4px 10px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
                 >새로고침</button>
@@ -735,6 +752,7 @@ export default function OrdersPage() {
                 { key: 'DISPATCHED', label: '추출중', color: '#0ea5e9' },
                 { key: 'SCRAPED', label: '추출완료', color: '#16a34a' },
                 { key: 'SENT_TO_MARKET', label: '마켓전송', color: '#22c55e' },
+                { key: 'DISPATCH_FAILED', label: '송장전송실패', color: '#dc2626' },
                 { key: 'NO_TRACKING', label: '미발송', color: '#f59e0b' },
                 { key: 'CANCELLED', label: '원주문취소', color: '#a855f7' },
                 { key: 'FAILED', label: '실패', color: '#ef4444' },
@@ -773,7 +791,8 @@ export default function OrdersPage() {
               {(trackingStatusData?.recent || []).map((j, idx) => {
                 const statusColor: Record<string, string> = {
                   PENDING: '#6b7280', DISPATCHED: '#0ea5e9', SCRAPED: '#16a34a',
-                  SENT_TO_MARKET: '#22c55e', NO_TRACKING: '#f59e0b', CANCELLED: '#a855f7', FAILED: '#ef4444',
+                  SENT_TO_MARKET: '#22c55e', DISPATCH_FAILED: '#dc2626',
+                  NO_TRACKING: '#f59e0b', CANCELLED: '#a855f7', FAILED: '#ef4444',
                 }
                 // 소싱처 원주문링크 URL 매핑 (대소문자/한글 변형 모두 대응)
                 const buildSourcingOrderUrl = (site: string, srcNo: string): string | null => {
@@ -829,6 +848,27 @@ export default function OrdersPage() {
                     <div style={{ fontFamily: 'monospace' }}>{j.tracking || '-'}</div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
                       <span style={{ color: '#9ca3af', fontSize: 11, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={j.lastError || ''}>{j.lastError || ''}</span>
+                      {(j.status === 'SCRAPED' || j.status === 'DISPATCH_FAILED') && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              const res = await orderApi.dispatchTrackingToMarket(j.id, false)
+                              setLogMessages(prev => [...prev, res.success
+                                ? `[마켓전송] ${j.orderNumber || j.orderId} 성공 (${res.channel || '-'})`
+                                : `[마켓전송] ${j.orderNumber || j.orderId} 실패: ${res.error || '-'}`])
+                              refreshTrackingStatus()
+                            } catch (err) {
+                              setLogMessages(prev => [...prev, `[마켓전송] ${j.orderNumber || j.orderId} 오류: ${(err as Error).message}`])
+                            }
+                          }}
+                          style={{
+                            padding: '2px 6px', fontSize: 10, borderRadius: 3,
+                            background: j.status === 'DISPATCH_FAILED' ? '#dc2626' : '#16a34a',
+                            color: '#fff', border: '1px solid #4b5563',
+                            cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
+                          }}
+                        >{j.status === 'DISPATCH_FAILED' ? '재전송' : '마켓전송'}</button>
+                      )}
                       <button
                         onClick={() => {
                           if (!sourcingUrl) {
