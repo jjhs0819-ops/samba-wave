@@ -2223,6 +2223,33 @@ async function extractDetailData(tabId, site, productId) {
               domImages.push(_s)
             }
           })
+          // 상세설명 DOM 추출 — 백엔드 html 필드는 script 태그만이라 cdtl_desc DOM이
+          // 없어 detail_html이 항상 빈 값으로 저장되던 77% 누락 사고 차단.
+          // 셀렉터 폴백 체인으로 ssg.com / department.ssg.com / SHINSEGAE 페이지 호환.
+          let detailHtml = ''
+          let detailEl = null
+          try {
+            detailEl = document.querySelector(
+              '#cdtl_desc, #detail_cont, .cdtl_desc, .cdtl_detail_cont, [class*="cdtl_desc"]'
+            )
+            if (detailEl) {
+              detailHtml = detailEl.innerHTML || ''
+            }
+          } catch (_e) { /* detail 추출 실패 시 무시 */ }
+          // detail 영역 내부 이미지도 domImages에 병합 (zoom_thumb로 못 잡은 i2~iN 보강)
+          if (detailEl) {
+            try {
+              detailEl.querySelectorAll('img').forEach(function(img) {
+                let _s2 = (img.getAttribute('src') || img.src || '').trim()
+                if (!_s2) return
+                if (_s2.indexOf('ssgcdn.com') === -1) return
+                if (!_imgSeen.has(_s2)) {
+                  _imgSeen.add(_s2)
+                  domImages.push(_s2)
+                }
+              })
+            } catch (_e) { /* 무시 */ }
+          }
           return {
             success: true,
             site_product_id: prdId,
@@ -2234,8 +2261,9 @@ async function extractDetailData(tabId, site, productId) {
             domOptions: domOptions,  // DOM 파싱 실재고 (JS 렌더링 후, 우선순위 최상)
             domCardPrice: domCardPrice,  // 카드혜택가 DOM 직접 추출값 → cost(원가)에 반영
             domSalePrice: domSalePrice,  // 판매가 DOM 직접 추출값 → salePrice에 반영 (sellprc 대체)
-            domImages: domImages,  // 추가이미지 DOM 직접 추출 (i2~iN, 1200 고해상도)
+            domImages: domImages,  // 추가이미지 DOM 직접 추출 (i2~iN, 1200 고해상도) + detail 내부 이미지
             domBreadcrumb: domBreadcrumb,  // 카테고리 빵부스러기 DOM 직접 추출 (대>중>소>세, leaf-only 저장 사고 차단)
+            detailHtml: detailHtml,  // 상세설명 영역 innerHTML — 백엔드 detail_html 컬럼 채움
             url: location.href,
           }
         } catch (e) {

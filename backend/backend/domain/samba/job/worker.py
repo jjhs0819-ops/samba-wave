@@ -3220,6 +3220,13 @@ class JobWorker:
                                     or {}
                                 ),
                             )
+                        # 확장앱 detailHtml 머지 — _ext_result에 있으면 detail에 주입해
+                        # 이후 _build_product_data 의 detail.get("detailHtml", "") 폴백이
+                        # 정상 작동. 백엔드 html 필드는 script 태그만이라 cdtl_desc DOM
+                        # 추출 불가하므로 확장앱이 보내준 것을 그대로 사용.
+                        _ext_detail_html = _ext_result.get("detailHtml", "")
+                        if _ext_detail_html and detail is not None:
+                            detail["detailHtml"] = _ext_detail_html
                         # 확장앱 DOM 썸네일(domImages) 머지 — 추가이미지 백필.
                         # html 필드가 script 태그만이라 _build_images_from_base_url 정규식이
                         # body의 <img.zoom_thumb>를 못 잡아 i2~iN이 누락되는 문제 해결.
