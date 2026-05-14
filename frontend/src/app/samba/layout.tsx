@@ -99,19 +99,23 @@ export default function SambaLayout({
       // start = 영업 시작 (HH:MM), end = 영업 종료 (HH:MM)
       // start <= end 면 일반 케이스 (07:00 ~ 23:00 처럼 같은 날 안에서 끝남)
       // start > end 면 야간 케이스 (예: 22:00 ~ 06:00)
+      // 데이터 이상 시(빈 문자열/잘못된 형식/예외)는 안전하게 false(영업시간 외) — 알람 차단 우선.
       try {
+        if (!start || !end || typeof start !== "string" || typeof end !== "string") return false;
         const now = new Date();
         const cur = now.getHours() * 60 + now.getMinutes();
         const [sh, sm] = start.split(":").map(Number);
         const [eh, em] = end.split(":").map(Number);
         const startMin = sh * 60 + sm;
         const endMin = eh * 60 + em;
-        if (Number.isNaN(startMin) || Number.isNaN(endMin)) return true;
-        if (startMin === endMin) return true; // 동일 시각이면 24시간 운영으로 간주
-        if (startMin < endMin) return cur >= startMin && cur < endMin;
-        return cur >= startMin || cur < endMin;
+        if (Number.isNaN(startMin) || Number.isNaN(endMin)) return false;
+        if (startMin === endMin) return false; // 시작=종료 = 운영 시간 미정 = 알람 차단
+        const inRange = startMin < endMin
+          ? (cur >= startMin && cur < endMin)
+          : (cur >= startMin || cur < endMin);
+        return inRange;
       } catch {
-        return true;
+        return false;
       }
     };
 
@@ -133,30 +137,33 @@ export default function SambaLayout({
       } catch {}
     };
 
-    const start = async () => {
+    // 첫 진입 시 영업시간 무관 강제호출은 "주문 페이지 진입" 또는 "설정 변경"일 때만.
+    // 다른 페이지(상품관리 등)에선 force=false → 영업시간 게이트 적용, 인터벌만 정상 작동.
+    const isOrdersPage = (pathname || "").startsWith("/samba/orders");
+
+    const start = async (forceFirst: boolean) => {
       try {
         const settings = await orderApi.getAlarmSettings();
         if (cancelled) return;
         curSettings = settings;
-        // 페이지 진입·설정 변경 직후 1회는 영업시간 무관 강제 호출.
-        // 사고 위험은 시간 안 따지므로 인지는 항상 가능해야 한다.
-        await pollOnce(true);
+        await pollOnce(forceFirst);
         const intervalMs = (Number(settings.hour) * 3600 + Number(settings.min) * 60) * 1000;
         // 0초 설정이면 반복 폴링 안 함, 30초 미만이면 부하 보호로 30초로 보정.
-        // 반복 폴링은 영업시간을 따른다 (force=false 기본).
+        // 반복 폴링은 항상 영업시간 게이트 적용.
         if (intervalMs > 0) {
           intervalId = window.setInterval(() => pollOnce(false), Math.max(intervalMs, 30_000));
         }
       } catch {}
     };
-    start();
+    start(isOrdersPage);
 
     const onUpdate = () => {
       if (intervalId !== null) {
         window.clearInterval(intervalId);
         intervalId = null;
       }
-      start();
+      // 설정 변경 직후 1회는 영업시간 무관 force — 사용자가 방금 바꾼 결과를 즉시 보여주기 위함.
+      start(true);
     };
     window.addEventListener("alarm-settings-updated", onUpdate);
 
@@ -165,7 +172,7 @@ export default function SambaLayout({
       if (intervalId !== null) window.clearInterval(intervalId);
       window.removeEventListener("alarm-settings-updated", onUpdate);
     };
-  }, [authChecked, currentUser, isLoginPage, isLicensePage]);
+  }, [authChecked, currentUser, isLoginPage, isLicensePage, pathname]);
 
   // 로그인/라이선스 페이지는 레이아웃 헤더 없이 바로 렌더링
   if (isLoginPage || isLicensePage) {

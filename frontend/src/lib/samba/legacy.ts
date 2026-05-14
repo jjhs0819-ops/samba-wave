@@ -687,7 +687,7 @@ export const collectorApi = {
       body: JSON.stringify({ ids }),
     }),
   lookupByMarketNo: (marketProductNo: string) =>
-    request<{ found: boolean; id?: string; source_site?: string; site_product_id?: string; original_link?: string; product_image?: string }>(
+    request<{ found: boolean; id?: string; source_site?: string; site_product_id?: string; name?: string; original_link?: string; product_image?: string; market_product_nos?: Record<string, string | number | { originProductNo?: string | number }> }>(
       `${SAMBA_PREFIX}/collector/products/lookup-by-market-no/${marketProductNo}`),
   scrollProducts: (params: {
     skip?: number; limit?: number; search?: string; search_type?: string;

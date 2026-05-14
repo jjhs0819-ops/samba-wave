@@ -55,12 +55,26 @@ export function useOrderLinks(accounts: SambaMarketAccount[]) {
     showAlert('소싱처 원문링크 정보가 없습니다', 'info')
   }
 
-  const handleMarketLink = (o: SambaOrder) => {
+  const handleMarketLink = async (o: SambaOrder) => {
     const acc = accounts.find(a => a.id === o.channel_id)
     const marketType = acc?.market_type || ''
     const sellerId = acc?.seller_id || ''
     const storeSlug = (acc?.additional_fields as Record<string, string> | undefined)?.storeSlug || ''
-    const productNo = o.product_id || ''
+    let productNo = o.product_id || ''
+
+    // 스마트스토어 URL은 originProductNo만 받음 (주문에는 channelProductNo 저장됨)
+    // → 수집상품 역추적해서 market_product_nos[acc.id_origin] 우선 사용
+    if (marketType === 'smartstore' && o.product_id && o.channel_id) {
+      try {
+        const lookup = await collectorApi.lookupByMarketNo(o.product_id)
+        const mpn = lookup?.market_product_nos || {}
+        const originRaw = mpn[`${o.channel_id}_origin`]
+        const originNo = typeof originRaw === 'object' && originRaw !== null
+          ? (originRaw.originProductNo ?? '')
+          : (originRaw ?? '')
+        if (originNo) productNo = String(originNo)
+      } catch { /* ignore — channelProductNo로 fallback */ }
+    }
 
     const urlMap: Record<string, string> = {
       smartstore: `https://smartstore.naver.com/${storeSlug || sellerId}/products/${productNo}`,

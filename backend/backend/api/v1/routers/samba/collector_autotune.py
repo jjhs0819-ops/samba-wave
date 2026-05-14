@@ -418,7 +418,17 @@ async def _site_autotune_loop(device_id: str, site: str):
     # 발행자 PC를 컨텍스트에 박아 sourcing_queue.get_autotune_owner가 읽을 수 있게 함
     _owner_token = current_pc_owner.set(device_id)
     try:
+        _cycle_seq = 0
         while _is_pc_running(device_id):
+            _cycle_seq += 1
+            _cycle_started_ts = time.time()
+            log.info(
+                "[오토튠][디버그][%s][%s] 사이클 #%d 시작 (epoch=%.3f)",
+                device_id[:8],
+                site,
+                _cycle_seq,
+                _cycle_started_ts,
+            )
             try:
                 # Watchdog heartbeat 갱신
                 _pc_hb(device_id)[site] = time.time()
@@ -561,6 +571,14 @@ async def _site_autotune_loop(device_id: str, site: str):
 
                     if products:
                         filtered_count = len(products)
+                        log.info(
+                            "[오토튠][디버그][%s][%s] 사이클 #%d SELECT 완료: %d건 대상 (elapsed=%.1fs)",
+                            device_id[:8],
+                            site,
+                            _cycle_seq,
+                            filtered_count,
+                            time.time() - _cycle_started_ts,
+                        )
 
                         # 결과 처리에 필요한 서비스 사전 초기화
                         import backend.domain.samba.collector.refresher as _ref_mod
@@ -1937,10 +1955,33 @@ async def _site_autotune_loop(device_id: str, site: str):
                         async def _on_result_releasing(product, r, idx=0, total=0):
                             await _on_result(product, r, idx, total)
 
+                        log.info(
+                            "[오토튠][디버그][%s][%s] 사이클 #%d bulk 시작 "
+                            "(concurrency=%s, elapsed=%.1fs)",
+                            device_id[:8],
+                            site,
+                            _cycle_seq,
+                            dict(_SAC).get(site, "default"),
+                            time.time() - _cycle_started_ts,
+                        )
+                        _bulk_start_ts = time.time()
                         results, summary = await refresh_products_bulk(
                             products,
                             max_concurrency=dict(_SAC),
                             on_result=_on_result_releasing,
+                        )
+                        log.info(
+                            "[오토튠][디버그][%s][%s] 사이클 #%d bulk 종료: "
+                            "results=%d/%d (refreshed=%d, errors=%d) bulk_elapsed=%.1fs, cycle_elapsed=%.1fs",
+                            device_id[:8],
+                            site,
+                            _cycle_seq,
+                            len(results),
+                            filtered_count,
+                            summary.refreshed,
+                            summary.errors,
+                            time.time() - _bulk_start_ts,
+                            time.time() - _cycle_started_ts,
                         )
 
                         # 에러 결과 후처리 (콜백에서 처리 안 된 에러 건)
@@ -2320,6 +2361,16 @@ async def _site_autotune_loop(device_id: str, site: str):
                     )
 
             except asyncio.CancelledError:
+                log.warning(
+                    "[오토튠][디버그][%s][%s] 사이클 #%d CancelledError 진입 "
+                    "(cycle_elapsed=%.1fs, pc_running=%s)",
+                    device_id[:8],
+                    site,
+                    _cycle_seq,
+                    time.time() - _cycle_started_ts,
+                    _is_pc_running(device_id),
+                    exc_info=True,
+                )
                 if not _is_pc_running(device_id):
                     log.info("[오토튠][%s] 루프 취소됨 (정상 종료)", site)
                     break
@@ -2353,8 +2404,12 @@ async def _site_autotune_loop(device_id: str, site: str):
                 await asyncio.sleep(2)
             except Exception as e:
                 log.error(
-                    "[오토튠][%s] tick 오류: %s",
+                    "[오토튠][디버그][%s][%s] 사이클 #%d tick 오류 "
+                    "(cycle_elapsed=%.1fs): %s",
+                    device_id[:8],
                     site,
+                    _cycle_seq,
+                    time.time() - _cycle_started_ts,
                     e,
                     exc_info=True,
                 )

@@ -1676,7 +1676,7 @@ async def lookup_by_market_product_no(
     # 패턴 모두 적용.
     safe = escape_like(market_product_no)
     sql = sa_text(
-        "SELECT id, source_site, site_product_id, name, images, source_url "
+        "SELECT id, source_site, site_product_id, name, images, source_url, market_product_nos "
         "FROM samba_collected_product "
         "WHERE market_product_nos::text LIKE :pattern ESCAPE '\\' "
         "   OR market_product_nos::text LIKE :pattern_bare ESCAPE '\\' "
@@ -1696,7 +1696,9 @@ async def lookup_by_market_product_no(
     row = result.fetchone()
     if not row:
         return {"found": False}
-    pid, source_site, site_product_id, name, images, source_url = row
+    pid, source_site, site_product_id, name, images, source_url, market_product_nos = (
+        row
+    )
     thumb = images[0] if images and isinstance(images, list) and images else ""
     return {
         "found": True,
@@ -1706,6 +1708,8 @@ async def lookup_by_market_product_no(
         "name": name,
         "original_link": source_url or "",
         "product_image": thumb,
+        # 스마트스토어 originProductNo 등 마켓별 등록 상품번호 (account_id / account_id_origin 키)
+        "market_product_nos": market_product_nos or {},
     }
 
 

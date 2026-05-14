@@ -37,7 +37,7 @@ interface Props {
   handleDanawa: (productName: string) => void
   handleNaver: (productName: string) => void
   handleSourceLink: (o: SambaOrder) => void | Promise<void>
-  handleMarketLink: (o: SambaOrder) => void
+  handleMarketLink: (o: SambaOrder) => void | Promise<void>
   openUrlModal: (orderId: string) => void
   handleTracking: (order: SambaOrder) => void
   loadOrders: () => void | Promise<void>
