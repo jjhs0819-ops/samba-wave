@@ -83,6 +83,11 @@ class SambaOrder(SQLModel, table=True):
     source_site: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)
     )
+    # 판매처 별칭 — PlayAuto 1 채널 × 다 site_id 구조 (예: "GS이숍(캐논)", "롯데홈쇼핑(037800LT)").
+    # source_site 는 진짜 소싱처 코드(MUSINSA/LOTTEON/SSG 등)만 들어가도록 분리.
+    sales_channel_alias: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
     # 수집상품 직접 참조 (근본적 연결)
     collected_product_id: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True, index=True)

@@ -86,14 +86,16 @@ export default function OrderInfoCell(props: Props) {
   })()
   // 두 배지는 완전 별개 차원 — 항상 함께 표시.
   // (1) 소싱처 배지: 어디서 가져온 상품 (MUSINSA, LOTTEON, SSG 등)
-  //     우선순위 source_url 도메인 → collected_product.source_site
-  // (2) 별칭 배지: 플레이오토 1 channel 5 site_id 구조에서 실제 판매된 GS샵 계정 구분
-  //     o.source_site 안의 괄호 형식(예: 'GS이숍(고경)', '롯데홈쇼핑(037800LT)')
+  //     우선순위 source_url 도메인 → collected_product.source_site → o.source_site(레거시 호환)
+  // (2) 별칭 배지: 플레이오토 1 channel × 다 site_id 구조의 실제 판매처 별칭
+  //     우선순위 o.sales_channel_alias(신규) → o.source_site 안의 괄호 형식(레거시 호환)
   const sourcingSite = String(sourceFromUrl || actualSourceSite || '').trim()
   const sourceBadgeLabel = sourcingSite
     ? (formatSourceSiteLabel(sourcingSite, siteAliasMap) || sourcingSite)
     : ''
   const aliasBadgeRaw = (() => {
+    const fromNew = String(o.sales_channel_alias || '').trim()
+    if (fromNew) return fromNew
     const raw = String(o.source_site || '').trim()
     return raw && raw.includes('(') ? raw : ''
   })()

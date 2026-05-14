@@ -406,10 +406,10 @@ export default function OrdersPage() {
   }
 
   const handleTrackingSyncBulk = async () => {
-    if (!await showConfirm('최근 7일 내 미발송 주문(소싱처 주문번호 있고 송장 미입력)의 송장을 일괄 동기화합니다. 진행할까요?')) return
+    if (!await showConfirm('최근 7일 내 미발송 주문(소싱처 주문번호 있고 송장 미입력)의 송장을 일괄 동기화합니다.\n기존 처리 안 된(좀비 PENDING 포함) 잡은 닫고 새로 큐잉합니다. 진행할까요?')) return
     setTrackingSyncing(true)
     try {
-      const res = await orderApi.syncTrackingBulk(500, 7)
+      const res = await orderApi.syncTrackingBulk(500, 7, true)
       setLogMessages(prev => [
         ...prev,
         `[송장 일괄] 큐 적재 ${fmtNum(res.queued)}건 / 스킵 ${fmtNum(res.skipped)}건 / 오류 ${fmtNum(res.errors.length)}건`,
@@ -775,19 +775,34 @@ export default function OrdersPage() {
                   PENDING: '#6b7280', DISPATCHED: '#0ea5e9', SCRAPED: '#16a34a',
                   SENT_TO_MARKET: '#22c55e', NO_TRACKING: '#f59e0b', CANCELLED: '#a855f7', FAILED: '#ef4444',
                 }
-                // 소싱처 원주문링크 URL 매핑 (OrderInfoCell.tsx 와 동일 규칙)
+                // 소싱처 원주문링크 URL 매핑 (대소문자/한글 변형 모두 대응)
                 const buildSourcingOrderUrl = (site: string, srcNo: string): string | null => {
                   if (!srcNo) return null
-                  const code = (site || '').split('(')[0].trim()
+                  const raw = (site || '').split('(')[0].trim().toUpperCase()
+                  // 한글 → 코드 정규화
+                  const aliasMap: Record<string, string> = {
+                    'GS이숍': 'GSSHOP',
+                    'GS샵': 'GSSHOP',
+                    '롯데ON': 'LOTTEON',
+                    '롯데온': 'LOTTEON',
+                    '무신사': 'MUSINSA',
+                    '크림': 'KREAM',
+                    '나이키': 'NIKE',
+                    '패션플러스': 'FASHIONPLUS',
+                    '올리브영': 'OLIVEYOUNG',
+                  }
+                  const code = aliasMap[raw] || raw
                   const map: Record<string, string> = {
                     MUSINSA: `https://www.musinsa.com/order/order-detail/${srcNo}`,
                     KREAM: `https://kream.co.kr/my/purchasing/${srcNo}`,
-                    FashionPlus: `https://www.fashionplus.co.kr/mypage/order/detail/${srcNo}`,
-                    ABCmart: `https://abcmart.a-rt.com/mypage/order/read-order-detail?orderNo=${srcNo}`,
-                    GrandStage: `https://grandstage.a-rt.com/mypage/order/read-order-detail?orderNo=${srcNo}`,
-                    Nike: `https://www.nike.com/kr/orders/${srcNo}`,
+                    FASHIONPLUS: `https://www.fashionplus.co.kr/mypage/order/detail/${srcNo}`,
+                    ABCMART: `https://abcmart.a-rt.com/mypage/order/read-order-detail?orderNo=${srcNo}`,
+                    GRANDSTAGE: `https://grandstage.a-rt.com/mypage/order/read-order-detail?orderNo=${srcNo}`,
+                    NIKE: `https://www.nike.com/kr/orders/${srcNo}`,
                     SSG: `https://pay.ssg.com/myssg/orderInfoDetail.ssg?orordNo=${encodeURIComponent(srcNo)}&viewType=Ssg`,
                     LOTTEON: `https://www.lotteon.com/p/order/claim/orderDetail?odNo=${srcNo}`,
+                    GSSHOP: `https://www.gsshop.com/ord/dlvcursta/popup/ordDtl.gs?orderNo=${srcNo}`,
+                    OLIVEYOUNG: `https://www.oliveyoung.co.kr/store/mypage/getOrderDetail.do?dlvNo=${srcNo}`,
                   }
                   return map[code] || null
                 }

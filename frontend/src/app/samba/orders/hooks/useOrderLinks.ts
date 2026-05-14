@@ -76,8 +76,10 @@ export function useOrderLinks(accounts: SambaMarketAccount[]) {
     }
 
     if (productNo) {
-      if (marketType === 'playauto' && o.source_site) {
-        const site = o.source_site.split('(')[0]
+      // PlayAuto 판매처 별칭: 신규 sales_channel_alias 우선, 없으면 레거시 source_site
+      const playautoAlias = (o.sales_channel_alias || o.source_site || '').trim()
+      if (marketType === 'playauto' && playautoAlias) {
+        const site = playautoAlias.split('(')[0]
         const siteUrlMap: Record<string, (no: string) => string> = {
           'GS이숍': (no) => `https://www.gsshop.com/prd/prd.gs?prdid=${no}`,
           'G마켓': (no) => `https://item.gmarket.co.kr/Item?goodscode=${no}`,

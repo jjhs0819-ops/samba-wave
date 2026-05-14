@@ -1265,12 +1265,18 @@ async def sync_order_tracking(order_id: str, force: bool = False) -> dict:
 async def sync_order_tracking_bulk(
     limit: int = Query(500, ge=1, le=1000),
     days: int = Query(7, ge=1, le=90),
+    force: bool = Query(False),
     tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ) -> dict:
-    """미발송 주문 일괄 송장 추출 큐잉 — 최근 N일 + 소싱처 주문번호 있음 + 송장 미입력."""
+    """미발송 주문 일괄 송장 추출 큐잉 — 최근 N일 + 소싱처 주문번호 있음 + 송장 미입력.
+
+    force=True 면 기존 PENDING/DISPATCHED 잡(만료 좀비 포함)을 FAILED 로 닫고 새로 큐잉.
+    """
     from backend.domain.samba.tracking_sync.service import enqueue_pending_orders
 
-    return await enqueue_pending_orders(tenant_id=tenant_id, limit=limit, days=days)
+    return await enqueue_pending_orders(
+        tenant_id=tenant_id, limit=limit, days=days, force=force
+    )
 
 
 @router.post("/tracking-sync/{job_id}/dispatch")
@@ -6586,14 +6592,17 @@ def _parse_playauto_order(
         # 매칭용 임시 키 — DB 저장 전 pop. plapro 응답에 MasterCode 있으면 추출해
         # _mpn_cache 매칭에 ProdCode와 함께 시도. 매칭 우선순위: master_code > product_id.
         "_pa_master_code": master_code,
-        # 판매처(사업자) 정보 — 별칭 매핑 적용
-        "source_site": (
+        # 판매처(사업자) 별칭 — PlayAuto 1 채널 × 다 site_id 구조 (예: "GS이숍(캐논)").
+        # source_site 와 분리 — source_site 는 진짜 소싱처 코드 전용.
+        "sales_channel_alias": (
             f"{site_name}({alias_map[site_id]})"
             if alias_map and site_id in alias_map and site_name
             else f"{site_name}({site_id})"
             if site_name
             else ""
         ),
+        # source_site 는 collected_product 매칭 후 자동 채워짐 — 임포트 시점엔 빈 값.
+        "source_site": "",
     }
 
 

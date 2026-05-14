@@ -248,11 +248,30 @@ async def _try_backend_fetch_musinsa(order, session) -> Optional[dict[str, Any]]
     }
 
 
+_KNOWN_SOURCE_SITES = {
+    "MUSINSA",
+    "KREAM",
+    "LOTTEON",
+    "GSSHOP",
+    "GSSHOP_KKD",
+    "SSG",
+    "ABCMART",
+    "GRANDSTAGE",
+    "NIKE",
+    "FASHIONPLUS",
+    "OLIVEYOUNG",
+}
+
+
 async def _resolve_actual_source_site(order, session) -> str:
     """주문의 진짜 소싱처 코드 결정.
 
     우선순위: source_url 도메인 → collected_product.source_site → order.source_site
     OrderInfoCell.tsx의 배지 로직과 동일.
+
+    Note: order.source_site 에 PlayAuto 별칭(예: "GS이숍(캐논)")이 과거 데이터로
+    남아있을 수 있어, 괄호 포함 / 미지의 코드는 무시한다. 이런 경우 송장 추출은
+    collected_product 매칭이 되어야만 가능.
     """
     detected = _detect_site_from_url(order.source_url or "")
     if detected:
@@ -266,7 +285,10 @@ async def _resolve_actual_source_site(order, session) -> str:
                 return cp.source_site.strip()
         except Exception as exc:
             logger.warning(f"[송장동기화] collected_product 조회 실패: {exc}")
-    return (order.source_site or "").strip()
+    raw = (order.source_site or "").strip()
+    if not raw or "(" in raw:
+        return ""
+    return raw if raw.upper() in _KNOWN_SOURCE_SITES else ""
 
 
 async def enqueue_for_order(order_id: str, *, force: bool = False) -> dict[str, Any]:
@@ -293,7 +315,7 @@ async def enqueue_for_order(order_id: str, *, force: bool = False) -> dict[str, 
                 "reason": "이미 송장번호가 있습니다",
             }
 
-        # 중복 큐잉 방지
+        # 중복 큐잉 방지 / force=True 시 기존 PENDING·DISPATCHED 잡 FAILED 처리 후 재큐잉
         if not force:
             stmt = (
                 select(SambaTrackingSyncJob)
@@ -313,6 +335,16 @@ async def enqueue_for_order(order_id: str, *, force: bool = False) -> dict[str, 
                     "reason": "이미 진행 중인 잡이 있습니다",
                     "jobId": existing.id,
                 }
+        else:
+            # 기존 PENDING/DISPATCHED 잡을 FAILED 로 닫고 신규 잡 생성 — 중복 누적 방지
+            stale_stmt = select(SambaTrackingSyncJob).where(
+                SambaTrackingSyncJob.order_id == order_id,
+                SambaTrackingSyncJob.status.in_([STATUS_PENDING, STATUS_DISPATCHED]),
+            )
+            for stale in (await session.execute(stale_stmt)).scalars().all():
+                stale.status = STATUS_FAILED
+                stale.last_error = "강제 재큐잉으로 만료 처리"
+                stale.updated_at = datetime.now(_UTC)
 
         owner_device_id = await _resolve_owner_device_id(order.sourcing_account_id)
 
@@ -363,6 +395,7 @@ async def enqueue_pending_orders(
     tenant_id: Optional[str] = None,
     limit: int = 500,
     days: int = 7,
+    force: bool = False,
 ) -> dict[str, Any]:
     """미발송 주문 일괄 적재 — 수동 트리거 + 스케줄러 공용.
 
@@ -402,7 +435,7 @@ async def enqueue_pending_orders(
 
     for order in orders:
         try:
-            res = await enqueue_for_order(order.id)
+            res = await enqueue_for_order(order.id, force=force)
             if res.get("skipped"):
                 skipped += 1
             elif res.get("success"):

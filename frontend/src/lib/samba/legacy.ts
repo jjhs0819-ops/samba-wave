@@ -137,6 +137,7 @@ export interface SambaOrder {
   coupang_display_name?: string;
   source_url?: string;
   source_site?: string;
+  sales_channel_alias?: string;
   collected_product_id?: string;
   customer_name?: string;
   orderer_name?: string;
@@ -323,9 +324,9 @@ export const orderApi = {
       `${SAMBA_PREFIX}/orders/${orderId}/sync-tracking?force=${force}`,
       { method: 'POST' },
     ),
-  syncTrackingBulk: (limit = 500, days = 7) =>
+  syncTrackingBulk: (limit = 500, days = 7, force = false) =>
     request<{ success: boolean; queued: number; skipped: number; errors: string[] }>(
-      `${SAMBA_PREFIX}/orders/sync-tracking/bulk?limit=${limit}&days=${days}`,
+      `${SAMBA_PREFIX}/orders/sync-tracking/bulk?limit=${limit}&days=${days}&force=${force}`,
       { method: 'POST' },
     ),
   dispatchTrackingToMarket: (jobId: string, dryRun = true) =>
