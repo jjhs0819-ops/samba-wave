@@ -61,11 +61,16 @@ def upload_to_r2(image_bytes: bytes, filename: str) -> str | None:
                 region_name="auto",
             )
             key = f"transformed/{filename}"
+            # 마켓 서버(특히 롯데홈쇼핑) fetch 호환:
+            # - inline + 명시적 .jpg 파일명 → 외부 fetch 시 확장자 파싱 안정화
+            # - CacheControl → 마켓 캐시 친화적
             s3.put_object(
                 Bucket=_r2["bucket"],
                 Key=key,
                 Body=image_bytes,
                 ContentType="image/jpeg",
+                ContentDisposition=f'inline; filename="{filename}"',
+                CacheControl="public, max-age=31536000",
             )
             return f"{_r2['public_url'].rstrip('/')}/transformed/{filename}"
         except Exception as e:

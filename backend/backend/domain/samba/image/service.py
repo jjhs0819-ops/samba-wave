@@ -781,11 +781,54 @@ class ImageTransformService:
 
         파일명을 결정적(content-hash)으로 생성하여 동일 바이트는 동일 경로에 저장한다.
         R2에 이미 존재하면 업로드를 생략하여 NAT egress 비용을 절감한다.
+
+        [중요] Gemini API는 PNG 바이트를 반환하지만 파일명/MIME 은 .jpg/image/jpeg 로
+        통일하므로 실제 magic bytes 가 Content-Type 과 불일치하게 된다.
+        롯데홈쇼핑 등 일부 마켓 서버는 외부 fetch 후 magic bytes 검증에서 거부하므로
+        반드시 PIL 로 JPEG 변환 후 업로드한다. 투명 채널은 흰 배경으로 합성.
         """
+        # 매직바이트 ≠ Content-Type 불일치 방지: 모든 입력을 JPEG 로 정규화
+        try:
+            from PIL import Image
+
+            img = Image.open(io.BytesIO(image_bytes))
+            if img.mode in ("RGBA", "LA"):
+                # 투명 배경 → 흰 배경 합성 (롯데홈/스마트스토어 등 알파 거부 대응)
+                bg = Image.new("RGB", img.size, (255, 255, 255))
+                rgba = img.convert("RGBA")
+                bg.paste(rgba, mask=rgba.split()[3])
+                img = bg
+            elif img.mode == "P":
+                # 팔레트 → RGBA 경유 후 흰 배경 합성
+                rgba = img.convert("RGBA")
+                bg = Image.new("RGB", rgba.size, (255, 255, 255))
+                bg.paste(rgba, mask=rgba.split()[3])
+                img = bg
+            elif img.mode != "RGB":
+                img = img.convert("RGB")
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=92, optimize=True)
+            image_bytes = buf.getvalue()
+        except Exception as e:
+            logger.warning(
+                f"[이미지] JPEG 정규화 실패 — 원본 바이트 그대로 저장 시도: {e}"
+            )
+
         # content-hash 기반 결정적 파일명 (중복 업로드 방지)
         content_hash = hashlib.md5(image_bytes).hexdigest()[:16]
         filename = f"ai_{content_hash}.jpg"
         key = f"transformed/{filename}"
+
+        # 마켓 서버 fetch 호환을 위한 R2 ExtraArgs:
+        # - ContentType: image/jpeg (실제 magic bytes 와 일치)
+        # - ContentDisposition: inline + 명시적 .jpg 파일명 (롯데홈 등 일부 마켓이
+        #   attachment 응답을 거부하거나 확장자 파싱 실패하는 케이스 방지)
+        # - CacheControl: 마켓 서버 측 캐시 친화적 응답
+        extra_args = {
+            "ContentType": "image/jpeg",
+            "ContentDisposition": f'inline; filename="{filename}"',
+            "CacheControl": "public, max-age=31536000",
+        }
 
         # R2 저장 시도
         r2 = await self._get_r2_client()
@@ -795,7 +838,9 @@ class ImageTransformService:
                 import asyncio as _aio
                 from functools import partial
 
-                # HeadObject로 기존 객체 확인 — 존재 시 업로드 스킵
+                # HeadObject로 기존 객체 확인 — 존재 시 메타데이터만 갱신
+                # (기존 PNG 매직바이트로 잘못 저장된 객체는 새 content_hash 가 되므로
+                #  자연스럽게 신규 객체로 업로드됨)
                 def _exists() -> bool:
                     try:
                         client.head_object(Bucket=bucket_name, Key=key)
@@ -812,7 +857,7 @@ class ImageTransformService:
                         io.BytesIO(image_bytes),
                         bucket_name,
                         key,
-                        ExtraArgs={"ContentType": "image/jpeg"},
+                        ExtraArgs=extra_args,
                     ),
                 )
                 return f"{public_url}/{key}"
