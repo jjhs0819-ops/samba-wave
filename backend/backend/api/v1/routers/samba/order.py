@@ -1457,8 +1457,10 @@ async def get_cancel_alert_count(
     )
     if tenant_id is not None:
         stmt = stmt.where(OrderModel.tenant_id == tenant_id)
-    result = await session.exec(stmt)  # type: ignore[arg-type]
-    count = result.one()
+    # session.exec(select(func.count()))는 SQLModel에서 Row 객체를 반환해
+    # FastAPI 직렬화가 실패한다(500). session.execute().scalar_one() 으로 정수만 추출.
+    result = await session.execute(stmt)
+    count = int(result.scalar_one())
     return {"count": count}
 
 
