@@ -52,8 +52,16 @@ function appendShipmentLogs(
   if (messages.length === 0) return
 
   setLogMessages(prev => {
+    // 폴러 간 fetch race로 동일 메시지가 다시 들어오는 경우 방어 —
+    // 직전 N줄(<=30)에 이미 존재하는 라인은 스킵 (같은 타임스탬프+같은 본문)
+    const seen = new Set(prev)
     const next = [...prev]
-    for (const msg of messages) next.push(fmtTextNumbers(msg))
+    for (const raw of messages) {
+      const formatted = fmtTextNumbers(raw)
+      if (seen.has(formatted)) continue
+      seen.add(formatted)
+      next.push(formatted)
+    }
     return next.slice(-30)
   })
 }
@@ -129,7 +137,7 @@ export default function ShipmentsPage() {
   const sinceIdxRef = useRef(0)  // 링 버퍼 폴링용
 
   // 실시간 Job 큐 상태
-  type JobQueueItem = { id?: string, status?: string, kind?: 'transmit' | 'delete', markets: string, source_sites?: string[], brands?: string[], product_count: number, current: number, total: number, started_at?: string | null }
+  type JobQueueItem = { id?: string, status?: string, kind?: 'transmit' | 'delete', markets: string, source_sites?: string[], brands?: string[], product_count: number, current: number, total: number, started_at?: string | null, per_item_sec?: number | null }
   const [jobQueueStatus, setJobQueueStatus] = useState<{
     running: JobQueueItem[],
     pending: JobQueueItem[],
@@ -311,29 +319,10 @@ export default function ShipmentsPage() {
     })()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 상시 백그라운드 폴링 — 삭제 로그를 다른 창에서도 실시간으로 표시하기 위해 2초마다 링 버퍼 조회
-  useEffect(() => {
-    let polling = false
-    const bgPoll = async () => {
-      // 전송/삭제 전용 폴링이 이미 실행 중이면 중복 실행 생략
-      if (jobPollRef.current || deletePollRef.current) return
-      // 탭이 백그라운드면 스킵 — 다른 탭에서 부하 누적 방지
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
-      if (polling) return
-      polling = true
-      try {
-        const { API_BASE_URL: apiBase } = await import('@/config/api')
-        const lr = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`)
-        const logData = await lr.json()
-        const newLogs = (logData.logs || []) as string[]
-        sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
-        appendShipmentLogs(setLogMessages, newLogs)
-      } catch { /* ignore */ }
-      polling = false
-    }
-    bgPollRef.current = setInterval(bgPoll, BG_LOG_POLL_INTERVAL_MS)
-    return () => { if (bgPollRef.current) clearInterval(bgPollRef.current) }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  // (제거됨) 상시 백그라운드 폴링 — startBackgroundLogPolling(L147)이 동일 역할 수행.
+  // 두 useEffect가 모두 bgPollRef.current에 setInterval을 세팅하던 탓에
+  // 한쪽이 ref를 덮어쓰면 다른 쪽은 고아 인터벌로 계속 살아남아
+  // 같은 since_idx로 shipment-logs를 두 번 가져와 화면에 같은 줄이 2번 찍히는 원인이었음.
 
   // handleStart 최신 참조를 유지하는 ref (stale closure 방지)
   const handleStartRef = useRef<(targetIds?: string[]) => Promise<void>>(async () => {})
@@ -1293,7 +1282,10 @@ export default function ShipmentsPage() {
                   : '-'
                 const pct = j.total > 0 ? Math.floor((j.current / j.total) * 100) : 0
                 const elapsedMs = started ? Math.max(0, Date.now() - started.getTime()) : 0
-                const perItemSec = j.current > 0 && elapsedMs > 0 ? elapsedMs / 1000 / j.current : 0
+                // 백엔드 최근 윈도우 기준 건당 처리시간 우선 사용 — 누적평균(시작이후 전체 elapsed/current)은 초기 오버헤드 때문에 부풀려짐
+                const perItemSec = (typeof j.per_item_sec === 'number' && j.per_item_sec > 0)
+                  ? j.per_item_sec
+                  : (j.current > 0 && elapsedMs > 0 ? elapsedMs / 1000 / j.current : 0)
                 const perItemStr = perItemSec > 0
                   ? (perItemSec >= 10 ? `${fmtNum(Math.round(perItemSec))}초/1건` : `${perItemSec.toFixed(1)}초/1건`)
                   : '—'

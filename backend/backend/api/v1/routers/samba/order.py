@@ -14,6 +14,7 @@ from backend.db.orm import (
     get_read_session_dependency,
     get_write_session_dependency,
 )
+from backend.domain.samba.cache import cache
 from backend.domain.samba.tenant.middleware import get_optional_tenant_id
 from backend.domain.samba.order.model import SambaOrder
 from backend.domain.samba.order.playauto_alias import (
@@ -579,6 +580,12 @@ async def dashboard_stats(
     tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     """대시보드 집계 — DB에서 SUM/COUNT 후 결과만 반환 (빠름)."""
+    # 캐시 조회 (TTL 60초, tenant별 키)
+    _cache_key = f"order:dashboard-stats:{tenant_id or '_global'}"
+    _cached = await cache.get(_cache_key)
+    if _cached:
+        return _cached
+
     from sqlalchemy import select, func, case, and_, extract, text, or_
     from datetime import datetime, timedelta, timezone as tz
 
@@ -895,10 +902,54 @@ async def dashboard_stats(
         else:
             reg_count_map[d_str] = max(running, 0)
 
+    # 일별 누적 수집상품수: 전체 수집수 - (그날 이후 신규수집 합)
+    #   - 전체 수집수: samba_collected_product 전체 카운트
+    #   - 일별 신규수집: created_at KST 기준 일별 카운트
+    collected_total_q = select(func.count(SambaCollectedProduct.id))
+    if tenant_id is not None:
+        collected_total_q = collected_total_q.where(
+            or_(
+                SambaCollectedProduct.tenant_id == tenant_id,
+                SambaCollectedProduct.tenant_id == None,  # noqa: E711
+            )
+        )
+    collected_total = int((await session.execute(collected_total_q)).scalar() or 0)
+
+    created_date = SambaCollectedProduct.created_at + text("INTERVAL '9 hours'")
+    new_col_q = (
+        select(
+            func.date(created_date).label("day"),
+            func.count().label("cnt"),
+        )
+        .where(
+            SambaCollectedProduct.created_at != None,  # noqa: E711
+            created_date >= week_ago,
+        )
+        .group_by(func.date(created_date))
+    )
+    if tenant_id is not None:
+        new_col_q = new_col_q.where(
+            or_(
+                SambaCollectedProduct.tenant_id == tenant_id,
+                SambaCollectedProduct.tenant_id == None,  # noqa: E711
+            )
+        )
+    new_col_rows = (await session.execute(new_col_q)).all()
+    new_col_map = {str(r.day): int(r.cnt) for r in new_col_rows}
+
+    collected_count_map: dict[str, int] = {today_str: collected_total}
+    running_c = collected_total
+    for i in range(5, -1, -1):
+        d_str = past_dates[i]
+        next_d_str = past_dates[i + 1] if i + 1 < 6 else today_str
+        running_c = running_c - int(new_col_map.get(next_d_str, 0))
+        collected_count_map[d_str] = max(running_c, 0)
+
     for w in weekly:
         w["newRegistered"] = int(new_reg_map.get(w["date"], 0))
         w["marketDeleted"] = int(del_map.get(w["date"], 0))
         w["registeredCount"] = int(reg_count_map.get(w["date"], 0))
+        w["collectedCount"] = int(collected_count_map.get(w["date"], 0))
 
     tm_fulfillment_rate = (
         round(int(tm.fulfillment_count or 0) / int(tm.count) * 100) if tm.count else 0
@@ -912,7 +963,7 @@ async def dashboard_stats(
         else 0
     )
 
-    return {
+    result = {
         "thisMonth": {
             "count": int(tm.count),
             "sales": float(tm.sales),
@@ -932,6 +983,8 @@ async def dashboard_stats(
         "monthly": monthly,
         "marketRegisteredCount": int(market_registered_count),
     }
+    await cache.set(_cache_key, result, ttl=60)
+    return result
 
 
 @router.get("/search", response_model=list[SambaOrder])

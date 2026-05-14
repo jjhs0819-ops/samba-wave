@@ -31,6 +31,27 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/collector", tags=["samba-collector"])
 
 
+def _is_stale_conn_error(exc: BaseException) -> bool:
+    """좀비 connection/끊긴 트랜잭션 감지.
+
+    Cloud SQL idle_in_transaction_session_timeout으로 끊긴 세션을 재사용할 때
+    SQLAlchemy/asyncpg가 던지는 대표 메시지/예외 이름을 모아서 판정한다.
+    """
+    msg = str(exc)
+    name = type(exc).__name__
+    return (
+        "Can't reconnect" in msg
+        or "invalid transaction" in msg
+        or "InvalidRequestError" in name
+        or "PendingRollbackError" in name
+        or "OperationalError" in name
+        or "InterfaceError" in name
+        or "connection is closed" in msg.lower()
+        or "ssl connection has been closed" in msg.lower()
+        or "terminating connection due to" in msg.lower()
+    )
+
+
 # ══════════════════════════════════════════════════════════════
 # 오토튠 백그라운드 루프 — PC별 독립 인스턴스
 # ══════════════════════════════════════════════════════════════
@@ -670,6 +691,11 @@ async def _site_autotune_loop(device_id: str, site: str):
 
                             outer session은 refresh 직전 close()됐으므로 재사용 시
                             greenlet_spawn 에러 발생 — 매번 새 세션 획득.
+
+                            좀비 connection을 풀에서 받아오면 첫 execute가 'Can't
+                            reconnect until invalid transaction is rolled back'으로
+                            깨지는데, 풀이 다음 연결을 새로 채워주므로 1회 재시도하면
+                            대부분 통과한다. 2회까지만 시도해 무한루프 방지.
                             """
                             from backend.domain.samba.collector.model import (
                                 SambaCollectedProduct as _PU_CP,
@@ -682,9 +708,27 @@ async def _site_autotune_loop(device_id: str, site: str):
                             stmt = (
                                 sa_update(_PU_CP).where(_PU_CP.id == pid).values(**vals)
                             )
-                            async with _get_pu_session() as _pu_s:
-                                await _pu_s.execute(stmt)
-                                await _pu_s.commit()
+                            _last_exc: Exception | None = None
+                            for _attempt in range(2):
+                                try:
+                                    async with _get_pu_session() as _pu_s:
+                                        await _pu_s.execute(stmt)
+                                        await _pu_s.commit()
+                                    return
+                                except Exception as _ex:
+                                    _last_exc = _ex
+                                    if _is_stale_conn_error(_ex) and _attempt == 0:
+                                        log.warning(
+                                            "[오토튠][DB재시도] partial_update %s "
+                                            "좀비 connection 감지 → 새 세션으로 재시도: %s",
+                                            pid,
+                                            str(_ex)[:120],
+                                        )
+                                        await asyncio.sleep(0.1)
+                                        continue
+                                    raise
+                            if _last_exc:
+                                raise _last_exc
 
                         async def _on_result(product, r, idx=0, total=0):
                             """리프레시 직후 호출 — DB 업데이트 + 즉시 마켓 전송."""
@@ -1659,25 +1703,59 @@ async def _site_autotune_loop(device_id: str, site: str):
                                     # 세마포어를 여기서 획득하면 안 됨
                                     # — start_update → _dispatch_one 내부에서 계정별 세마포어를
                                     #   다시 획득하므로 데드락 발생 (Semaphore(1) 비재진입)
+                                    #
+                                    # 세션-수명 설계: start_update는 내부에서 마켓 HTTP를
+                                    # 호출하므로 트랜잭션이 90~180s 가까이 idle 상태가 될 수
+                                    # 있다. 좀비 connection으로 깨지면 (Can't reconnect /
+                                    # InvalidRequestError 계열) 새 세션을 받아 1회 재시도한다.
                                     try:
-                                        async with get_write_session() as _tx_s:
-                                            from backend.domain.samba.shipment.repository import (
-                                                SambaShipmentRepository as _FRepo,
-                                            )
-                                            from backend.domain.samba.shipment.service import (
-                                                SambaShipmentService as _FSvc,
-                                            )
+                                        _tx_result = None
+                                        _tx_exc: Exception | None = None
+                                        for _tx_attempt in range(2):
+                                            try:
+                                                async with get_write_session() as _tx_s:
+                                                    from backend.domain.samba.shipment.repository import (
+                                                        SambaShipmentRepository as _FRepo,
+                                                    )
+                                                    from backend.domain.samba.shipment.service import (
+                                                        SambaShipmentService as _FSvc,
+                                                    )
 
-                                            _svc = _FSvc(_FRepo(_tx_s), _tx_s)
-                                            _tx_result = await _svc.start_update(
-                                                [_pid],
-                                                _items,
-                                                _accs_list,
-                                                skip_unchanged=False,
-                                                skip_refresh=True,
-                                            )
-                                            await _tx_s.commit()
-
+                                                    _svc = _FSvc(_FRepo(_tx_s), _tx_s)
+                                                    _tx_result = (
+                                                        await _svc.start_update(
+                                                            [_pid],
+                                                            _items,
+                                                            _accs_list,
+                                                            skip_unchanged=False,
+                                                            skip_refresh=True,
+                                                        )
+                                                    )
+                                                    # HTTP 끝났으면 즉시 commit — 세션이 idle
+                                                    # 상태로 더 머무르지 않도록 transaction 종료
+                                                    await _tx_s.commit()
+                                                _tx_exc = None
+                                                break
+                                            except Exception as _try_exc:
+                                                _tx_exc = _try_exc
+                                                if (
+                                                    _is_stale_conn_error(_try_exc)
+                                                    and _tx_attempt == 0
+                                                ):
+                                                    log.warning(
+                                                        "[오토튠][DB재시도] transmit_group "
+                                                        "pid=%s 좀비 connection 감지 → "
+                                                        "새 세션으로 재시도: %s",
+                                                        _pid,
+                                                        str(_try_exc)[:120],
+                                                    )
+                                                    await asyncio.sleep(0.2)
+                                                    continue
+                                                raise
+                                        if _tx_exc:
+                                            raise _tx_exc
+                                        if _tx_result is None:
+                                            _tx_result = {"results": []}
                                         # 결과 검증: start_update는 실패 시 예외 없이 dict로 반환
                                         # 결과 구조: results[0] = {product_id, status, transmit_result: {acc: status}, transmit_error: {acc: err}, update_result: {acc: ...}}
                                         _tx_res_list = _tx_result.get("results", [])

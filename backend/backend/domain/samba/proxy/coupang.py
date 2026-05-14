@@ -885,14 +885,14 @@ class CoupangClient:
                         else [
                             {
                                 "attributeTypeName": "패션의류/잡화 사이즈",
-                                "attributeValueName": size_val,
+                                "attributeValueName": (size_val or "")[:30],
                             },
                         ]
                     )
                     + [
                         {
                             "attributeTypeName": "색상",
-                            "attributeValueName": resolved_color,
+                            "attributeValueName": (resolved_color or "")[:30],
                         },
                     ]
                     + (

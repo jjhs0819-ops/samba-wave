@@ -1399,12 +1399,19 @@ async function handleSourcingJob(job) {
                 return { ready: false, hasObj: false, hasCard: false, staffOnly: true }
               }
               const hasObj = !!(window.resultItemObj && window.resultItemObj.itemNm)
-              if (!hasObj) return { ready: false, hasObj: false, hasCard: false }
+              if (!hasObj) return { ready: false, hasObj: false, hasCard: false, hasNotice: false }
               let hasCard = false
               document.querySelectorAll('dt').forEach((dt) => {
                 if (dt.textContent.trim() === '카드혜택가') hasCard = true
               })
-              return { ready: hasObj && hasCard, hasObj: true, hasCard: hasCard }
+              // 상품필수정보(제조국/색상/재질/제품소재) DOM 등장 여부 — 크론잡 lazy-render 누락 방지
+              let hasNotice = false
+              const _noticeLabels = ['제조국', '색상', '재질', '제품소재', '제품의주소재', '상품의주소재', '주소재', '소재']
+              document.querySelectorAll('dt, th').forEach((el) => {
+                const t = (el.textContent || '').replace(/\s+/g, '')
+                if (_noticeLabels.some((l) => t === l || t.indexOf(l) !== -1)) hasNotice = true
+              })
+              return { ready: hasObj && hasCard && hasNotice, hasObj: true, hasCard: hasCard, hasNotice: hasNotice }
             },
           }).catch(() => [{ result: { ready: false } }])
           const r = _chk?.result || {}
