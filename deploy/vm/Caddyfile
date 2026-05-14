@@ -12,7 +12,19 @@ api.samba-wave.co.kr {
     # /images/* — Cloudflare R2 reverse proxy
     # 롯데홈쇼핑 등 일부 마켓 API가 r2.dev 도메인 다운로드 실패 → 자체 도메인으로 우회
     # R2_PUBLIC_HOST 환경변수: 자기 R2 public host (pub-XXXX.r2.dev), 도커 compose 에서 주입
+    #
+    # 마켓 서버 fetch 호환:
+    # - site-level 보안 헤더(X-Frame-Options/HSTS/X-Content-Type-Options)는 이미지에
+    #   불필요하며 일부 검증 서버가 거부 트리거로 쓸 수 있음 → /images/* 에서는 제거.
+    # - Server/Via 등 프록시 식별 헤더 제거 — 외부 fetch 시 평범한 origin 응답처럼 보이게.
     handle_path /images/* {
+        header -X-Frame-Options
+        header -Strict-Transport-Security
+        header -X-Content-Type-Options
+        header -Via
+        header -Server
+        header -Cf-Ray
+        header -Alt-Svc
         reverse_proxy https://{$R2_PUBLIC_HOST} {
             header_up Host {$R2_PUBLIC_HOST}
             transport http {

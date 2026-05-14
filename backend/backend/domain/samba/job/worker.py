@@ -979,6 +979,8 @@ class JobWorker:
         # 새 잡 시작 — 이 잡의 잔존 플래그만 해제 (__all__ 유지 — 일시정지 중 다음 잡 클레임 차단)
         clear_cancel_transmit(job.id)
         clear_emergency_stop()
+        # 이전 잡 로그 잔재가 새 잡 화면에 흘러나오지 않도록 ring buffer 격리
+        clear_shipment_logs()
 
         payload = job.payload or {}
         product_ids = payload.get("product_ids", [])

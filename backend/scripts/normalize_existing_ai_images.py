@@ -130,15 +130,23 @@ async def main(dry_run: bool, limit: int | None) -> None:
 
     for i, key in enumerate(keys, 1):
         try:
+            # HeadObject 로 메타데이터만 먼저 받아서 크기 확인 — 큰 객체 다운로드 회피
+            head = s3.head_object(Bucket=bucket, Key=key)
+            content_length = head.get("ContentLength", 0)
             obj = s3.get_object(Bucket=bucket, Key=key)
             data = obj["Body"].read()
-            new_data, orig, new_size = _normalize(data)
-            unchanged = new_data == data
-            if unchanged:
+            # 1차 빠른 스킵: PIL 로 사이즈만 확인 (재인코딩 X)
+            img_meta = Image.open(io.BytesIO(data))
+            W0, H0 = img_meta.size
+            if W0 >= TARGET and H0 >= TARGET and W0 == H0:
                 stats["skip_big"] += 1
-                if i % 50 == 0 or i <= 5:
-                    logger.info(f"[{i}/{len(keys)}] SKIP {key} {orig} (정상)")
+                if i % 200 == 0 or i <= 3:
+                    logger.info(
+                        f"[{i}/{len(keys)}] SKIP {key} {(W0, H0)} (이미 정사각형 ≥ {TARGET})"
+                    )
                 continue
+            new_data, orig, new_size = _normalize(data)
+            _ = content_length
             if orig[0] < TARGET or orig[1] < TARGET:
                 stats["resized"] += 1
             elif orig[0] != orig[1]:

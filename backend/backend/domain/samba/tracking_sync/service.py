@@ -47,9 +47,9 @@ def build_tracking_url(site: str, sourcing_order_number: str) -> str:
     if "GS이숍" in raw or "GS샵" in raw or s.startswith("GSSHOP"):
         s = "GSSHOP"
     if s == "MUSINSA":
-        return (
-            f"https://www.musinsa.com/order-service/my/delivery/trace?ord_no={ord_no}"
-        )
+        # 직접 trace URL은 "정상적인 접근이 아닙니다" 거부됨 (ord_opt_no 필수).
+        # 주문상세 페이지로 진입 → 확장앱이 "배송 조회" 버튼 클릭 → trace 페이지로 navigation.
+        return f"https://www.musinsa.com/order/order-detail/{ord_no}"
     if s == "LOTTEON":
         return f"https://www.lotteon.com/p/order/claim/orderDetail?odNo={ord_no}"
     if s == "SSG":

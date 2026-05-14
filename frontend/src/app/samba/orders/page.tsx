@@ -755,7 +755,7 @@ export default function OrdersPage() {
             {/* 최근 잡 목록 */}
             <div style={{ background: '#111827', borderRadius: 6, overflow: 'hidden', border: '1px solid #374151' }}>
               <div style={{
-                display: 'grid', gridTemplateColumns: '36px 88px 150px 160px 200px 80px 90px 90px 120px 266px',
+                display: 'grid', gridTemplateColumns: '36px 88px 150px 160px 200px 80px 140px 90px 90px 120px 266px',
                 padding: '8px 10px', background: '#0f172a', fontSize: 11, fontWeight: 700, color: '#9ca3af',
               }}>
                 <div>#</div>
@@ -764,6 +764,7 @@ export default function OrdersPage() {
                 <div>고객명</div>
                 <div>판매처</div>
                 <div>소싱처</div>
+                <div>소싱주문번호</div>
                 <div>소싱처계정</div>
                 <div>택배사</div>
                 <div>송장번호</div>
@@ -793,7 +794,7 @@ export default function OrdersPage() {
                 const sourcingUrl = buildSourcingOrderUrl(j.site, j.sourcingOrderNumber || '')
                 return (
                   <div key={j.id} style={{
-                    display: 'grid', gridTemplateColumns: '36px 88px 150px 160px 200px 80px 90px 90px 120px 266px',
+                    display: 'grid', gridTemplateColumns: '36px 88px 150px 160px 200px 80px 140px 90px 90px 120px 266px',
                     padding: '6px 10px', borderTop: '1px solid #1f2937', fontSize: 12,
                   }}>
                     <div style={{ color: '#6b7280', fontSize: 11 }}>{fmtNum(idx + 1)}</div>
@@ -807,6 +808,7 @@ export default function OrdersPage() {
                     <div>{j.customerName || '-'}</div>
                     <div>{j.channelName || '-'}</div>
                     <div>{j.site}</div>
+                    <div style={{ fontFamily: 'monospace', fontSize: 11 }}>{j.sourcingOrderNumber || '-'}</div>
                     <div>{j.sourcingAccountLabel || '-'}</div>
                     <div>{j.courier || '-'}</div>
                     <div style={{ fontFamily: 'monospace' }}>{j.tracking || '-'}</div>

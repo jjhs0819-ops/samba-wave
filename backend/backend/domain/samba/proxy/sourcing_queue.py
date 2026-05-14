@@ -17,7 +17,7 @@ from backend.shutdown_state import is_shutting_down
 from backend.utils.logger import logger
 
 _UTC = timezone.utc
-_JOB_TTL_SEC: dict[str, int] = {"search": 600, "detail": 180, "tracking": 300}
+_JOB_TTL_SEC: dict[str, int] = {"search": 600, "detail": 180, "tracking": 3600}
 
 
 async def _db_insert_job(

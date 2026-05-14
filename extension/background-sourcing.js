@@ -465,12 +465,12 @@ async function handleTrackingJob(job) {
     tabId = tab.id
     await waitForTabLoad(tabId, 30000)
 
-    // content script 결과 message 대기 (최대 30초)
+    // content script 결과 message 대기 (최대 60초 — MUSINSA 2-hop navigation 여유)
     const result = await new Promise((resolve) => {
       const timeoutId = setTimeout(() => {
         _trackingPending.delete(requestId)
         resolve({ success: false, error: 'timeout: content script 응답 없음' })
-      }, 30000)
+      }, 60000)
       _trackingPending.set(requestId, { resolve, timeoutId, tabId })
 
       // content-tracking-musinsa.js 등은 자체적으로 추출 후 message 전송

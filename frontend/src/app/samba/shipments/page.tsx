@@ -259,6 +259,12 @@ export default function ShipmentsPage() {
         activeJobIdRef.current = jobId
         setTransmitting(true)
         setProgress({ current: (job.current || 0) as number, total: (job.total || 0) as number })
+        // 이전 잡 로그 잔재 노출 방지 — 현재 버퍼 끝(current_idx)부터 폴링 시작
+        try {
+          const headLr = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=999999999`)
+          const headData = await headLr.json()
+          sinceIdxRef.current = headData.current_idx || 0
+        } catch { /* ignore */ }
         // 증분 폴링 즉시 시작 (500ms)
         let polling = false
         const poll = async () => {
