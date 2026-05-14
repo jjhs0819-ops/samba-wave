@@ -431,6 +431,31 @@ export default function OrdersTable(props: OrdersTableProps) {
                         }}
                         onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
                       />
+                      <button
+                        onClick={async () => {
+                          const co = (document.getElementById(`ship-co-${o.id}`) as HTMLSelectElement)?.value || o.shipping_company || ''
+                          const tn = (editingTrackings[o.id] ?? o.tracking_number ?? '').trim()
+                          if (!co || !tn) {
+                            setLogMessages(prev => [...prev, `[${fmtTime()}] ${o.order_number} 택배사/송장번호 누락 — 전송 불가`])
+                            return
+                          }
+                          setLogMessages(prev => [...prev, `[${fmtTime()}] ${o.order_number} 마켓 전송 중... (${co} ${tn})`])
+                          try {
+                            const res = await orderApi.shipOrder(o.id, co, tn)
+                            setLogMessages(prev => [...prev, `[${fmtTime()}] ${o.order_number} ${res.message}`])
+                            if (!res.market_sent) {
+                              await orderApi.updateStatus(o.id, 'ship_failed').catch(() => {})
+                            }
+                            loadOrders()
+                          } catch (err) {
+                            await orderApi.updateStatus(o.id, 'ship_failed').catch(() => {})
+                            setLogMessages(prev => [...prev, `[${fmtTime()}] ${o.order_number} 마켓 전송 실패: ${(err as Error).message}`])
+                            loadOrders()
+                          }
+                        }}
+                        style={{ padding: '0.18rem 0.5rem', fontSize: '0.7rem', borderRadius: '4px', background: o.status === 'ship_failed' ? '#dc2626' : '#16a34a', color: '#fff', border: '1px solid #4b5563', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                        title="택배사+송장번호를 마켓에 전송 (재전송 가능)"
+                      >{o.status === 'ship_failed' ? '재전송' : '마켓전송'}</button>
                     </div>
 
                     {/* 간단메모 */}

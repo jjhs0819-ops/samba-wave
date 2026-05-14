@@ -853,27 +853,6 @@ export default function OrdersPage() {
                     <div style={{ fontFamily: 'monospace' }}>{j.tracking || '-'}</div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
                       <span style={{ color: '#9ca3af', fontSize: 11, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={j.lastError || ''}>{j.lastError || ''}</span>
-                      {(j.status === 'SCRAPED' || j.status === 'DISPATCH_FAILED') && (
-                        <button
-                          onClick={async () => {
-                            try {
-                              const res = await orderApi.dispatchTrackingToMarket(j.id, false)
-                              setLogMessages(prev => [...prev, res.success
-                                ? `[마켓전송] ${j.orderNumber || j.orderId} 성공 (${res.channel || '-'})`
-                                : `[마켓전송] ${j.orderNumber || j.orderId} 실패: ${res.error || '-'}`])
-                              refreshTrackingStatus()
-                            } catch (err) {
-                              setLogMessages(prev => [...prev, `[마켓전송] ${j.orderNumber || j.orderId} 오류: ${(err as Error).message}`])
-                            }
-                          }}
-                          style={{
-                            padding: '2px 6px', fontSize: 10, borderRadius: 3,
-                            background: j.status === 'DISPATCH_FAILED' ? '#dc2626' : '#16a34a',
-                            color: '#fff', border: '1px solid #4b5563',
-                            cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
-                          }}
-                        >{j.status === 'DISPATCH_FAILED' ? '재전송' : '마켓전송'}</button>
-                      )}
                       <button
                         onClick={() => {
                           if (!sourcingUrl) {

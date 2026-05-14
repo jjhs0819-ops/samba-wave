@@ -1331,7 +1331,7 @@ async def list_recent_tracking_sync_jobs(
         #   7) action_tag 에 'kkadaegi' 토큰 없음
         # 1/5/6 (송장 미입력 / 상태 제외 / 배송중·완료 제외) 은 Python loop 에서 처리.
         from datetime import timedelta, timezone
-        from sqlalchemy import and_, func, not_, or_
+        from sqlalchemy import and_, func, not_
 
         # KST 캘린더 7일 (오늘 포함 -6일) + paid_at(폴백 created_at) 기준
         _KST = timezone(timedelta(hours=9))
@@ -1364,10 +1364,8 @@ async def list_recent_tracking_sync_jobs(
                     date_col >= _since,
                     date_col < _until,
                     not_(action_tag_expr.like("%,kkadaegi,%")),
-                    or_(
-                        O.tracking_number.is_(None),
-                        O.tracking_number == "",
-                    ),
+                    # 송장 채워졌어도 잡 자체는 표시 (수집 결과 확인용).
+                    # 큐 적재 단계에서만 송장 있는 주문 제외 — enqueue_for_order 가 처리.
                 )
             )
             .order_by(SambaTrackingSyncJob.updated_at.desc())
