@@ -1343,6 +1343,7 @@ async def list_recent_tracking_sync_jobs(
                 O.shipping_status,
                 A.account_label,
                 O.tracking_number,
+                O.paid_at,
             )
             .join(O, O.id == SambaTrackingSyncJob.order_id, isouter=True)
             .join(A, A.id == SambaTrackingSyncJob.sourcing_account_id, isouter=True)
@@ -1394,8 +1395,9 @@ async def list_recent_tracking_sync_jobs(
                 "lastError": j.last_error,
                 "attempts": j.attempts,
                 "updatedAt": j.updated_at.isoformat() if j.updated_at else None,
+                "paidAt": paid_at.isoformat() if paid_at else None,
             }
-            for j, order_number, customer_name, channel_name, _os, _ss, account_label, _otn in result_rows
+            for j, order_number, customer_name, channel_name, _os, _ss, account_label, _otn, paid_at in result_rows
         ],
     }
 

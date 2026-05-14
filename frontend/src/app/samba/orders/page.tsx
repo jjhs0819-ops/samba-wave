@@ -365,6 +365,7 @@ export default function OrdersPage() {
       channelName: string; site: string; sourcingOrderNumber: string; sourcingAccountLabel: string
       status: string; courier?: string | null; tracking?: string | null
       lastError?: string | null; attempts: number; updatedAt?: string | null
+      paidAt?: string | null
     }>
   } | null>(null)
   const [trackingPolling, setTrackingPolling] = useState(false)
@@ -773,11 +774,12 @@ export default function OrdersPage() {
             {/* 최근 잡 목록 */}
             <div style={{ background: '#111827', borderRadius: 6, overflow: 'hidden', border: '1px solid #374151' }}>
               <div style={{
-                display: 'grid', gridTemplateColumns: '36px 88px 150px 160px 200px 80px 140px 90px 90px 120px 266px',
+                display: 'grid', gridTemplateColumns: '36px 88px 110px 150px 160px 200px 80px 140px 90px 90px 120px 266px',
                 padding: '8px 10px', background: '#0f172a', fontSize: 11, fontWeight: 700, color: '#9ca3af',
               }}>
                 <div>#</div>
                 <div>상태</div>
+                <div>결제일</div>
                 <div>상품주문번호</div>
                 <div>고객명</div>
                 <div>판매처</div>
@@ -828,7 +830,7 @@ export default function OrdersPage() {
                 const sourcingUrl = buildSourcingOrderUrl(j.site, j.sourcingOrderNumber || '')
                 return (
                   <div key={j.id} style={{
-                    display: 'grid', gridTemplateColumns: '36px 88px 150px 160px 200px 80px 140px 90px 90px 120px 266px',
+                    display: 'grid', gridTemplateColumns: '36px 88px 110px 150px 160px 200px 80px 140px 90px 90px 120px 266px',
                     padding: '6px 10px', borderTop: '1px solid #1f2937', fontSize: 12,
                   }}>
                     <div style={{ color: '#6b7280', fontSize: 11 }}>{fmtNum(idx + 1)}</div>
@@ -837,6 +839,9 @@ export default function OrdersPage() {
                         padding: '2px 6px', borderRadius: 3, fontSize: 10, fontWeight: 700,
                         background: statusColor[j.status] || '#374151', color: '#fff',
                       }}>{j.status}</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: '#9ca3af' }}>
+                      {j.paidAt ? new Date(j.paidAt).toLocaleString('ko-KR', { year: '2-digit', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) : '-'}
                     </div>
                     <div style={{ fontFamily: 'monospace', fontSize: 11 }}>{j.orderNumber || j.orderId}</div>
                     <div>{j.customerName || '-'}</div>
