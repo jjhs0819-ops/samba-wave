@@ -202,14 +202,10 @@ export default function OrdersFilterBar(props: Props) {
           </select>
           <select style={{ ...inputStyle, width: '86px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketStatus} onChange={e => setMarketStatus(e.target.value)}>
             <option value="">배송상태</option>
-            <option value="결제완료">결제완료</option>
-            <option value="발주확인">발주확인</option>
-            <option value="발송대기">발송대기</option>
-            <option value="출고지시">출고지시</option>
+            <option value="결제완료">주문접수</option>
             <option value="배송대기중">배송대기중</option>
             <option value="국내배송중">국내배송중</option>
             <option value="배송완료">배송완료</option>
-            <option value="송장전송완료">송장전송완료</option>
             <option value="취소요청">취소요청</option>
             <option value="취소완료">취소완료</option>
             <option value="반품요청">반품요청</option>

@@ -418,27 +418,29 @@ function _siteSemRelease(site) {
   if (sem) sem.active = Math.max(0, sem.active - 1)
 }
 
-// 무신사 송장 잡 직렬화 락 — Next.js SPA + 백그라운드 탭에서 React hydration 지연으로
-// 버튼 click이 무시되는 회귀 차단. 한 번에 1건씩 활성 탭으로 처리.
-const _musinsaTrackingLock = { busy: false }
+// 무신사 송장 잡 직렬화 — Next.js SPA + 백그라운드 탭에서 React hydration 지연으로
+// 버튼 click이 무시되는 회귀 차단. Promise chain 으로 race condition 없이 1건씩 처리.
+// (이전 boolean 락은 Promise.all 동시 진입 시 while 검사 모두 false 보고 통과 → 직렬화 실패)
+let _musinsaTrackingChain = Promise.resolve()
+function _serializeMusinsaTracking(fn) {
+  const next = _musinsaTrackingChain.then(() => fn(), () => fn())
+  _musinsaTrackingChain = next.catch(() => {})
+  return next
+}
 
 async function _processJobWithCap(job) {
   const site = job.site || 'unknown'
   // 송장 추출 잡(type=tracking) — 가격수집과 격리. 동일 사이트 캡 공유로 무신사 폭주 방지
   if (job.type === 'tracking') {
     if (site === 'MUSINSA') {
-      // MUSINSA만 직렬화 — 4개 탭 동시 background 진입 시 React click 미발화 사고 차단
-      while (_musinsaTrackingLock.busy) {
-        await wait(200)
-      }
-      _musinsaTrackingLock.busy = true
-      _markSourcingSiteActive(site)
-      try {
-        return await handleTrackingJob(job)
-      } finally {
-        _markSourcingSiteInactive(site)
-        _musinsaTrackingLock.busy = false
-      }
+      return _serializeMusinsaTracking(async () => {
+        _markSourcingSiteActive(site)
+        try {
+          return await handleTrackingJob(job)
+        } finally {
+          _markSourcingSiteInactive(site)
+        }
+      })
     }
     await _siteSemAcquire(site)
     _markSourcingSiteActive(site)
