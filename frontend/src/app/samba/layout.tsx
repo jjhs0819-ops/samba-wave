@@ -121,7 +121,7 @@ export default function SambaLayout({
 
     let curSettings: { hour: number; min: number; sleep_start: string; sleep_end: string } | null = null;
 
-    const pollOnce = async (force = false) => {
+    const pollOnce = async (force = false, fromInterval = false) => {
       if (cancelled || !curSettings) return;
       // sleep_end = 영업 시작, sleep_start = 영업 종료 (모달 입력 라벨 기준)
       // force=true 면 페이지 진입·설정 변경 등 사용자 액션이라 영업시간 무관 호출.
@@ -129,11 +129,13 @@ export default function SambaLayout({
       try {
         const { count } = await orderApi.getCancelAlertCount();
         if (cancelled) return;
-        const prev = prevCountRef.current;
         prevCountRef.current = count;
         setCancelCount(count);
-        // 0 → 1+ 로 새로 발생한 순간만 모달 강제 노출 (피로도 방지)
-        if (count > 0 && prev === 0) setShowCancelModal(true);
+        // 모달 강제 노출 조건:
+        //  - force=true (주문 페이지 진입 또는 설정 변경 직후)
+        //  - fromInterval=true (수집주기 정기 폴링) — 어느 페이지에 있든 강제 알림
+        //  ※ 다른 페이지 첫 진입(force=false, interval=false)에선 모달 안 띄움 (뱃지만 갱신)
+        if (count > 0 && (force || fromInterval)) setShowCancelModal(true);
       } catch {}
     };
 
@@ -146,12 +148,12 @@ export default function SambaLayout({
         const settings = await orderApi.getAlarmSettings();
         if (cancelled) return;
         curSettings = settings;
-        await pollOnce(forceFirst);
+        await pollOnce(forceFirst, false);
         const intervalMs = (Number(settings.hour) * 3600 + Number(settings.min) * 60) * 1000;
         // 0초 설정이면 반복 폴링 안 함, 30초 미만이면 부하 보호로 30초로 보정.
-        // 반복 폴링은 항상 영업시간 게이트 적용.
+        // 반복 폴링은 영업시간 게이트 적용 + 매 사이클 count>0 이면 모달 강제 노출.
         if (intervalMs > 0) {
-          intervalId = window.setInterval(() => pollOnce(false), Math.max(intervalMs, 30_000));
+          intervalId = window.setInterval(() => pollOnce(false, true), Math.max(intervalMs, 30_000));
         }
       } catch {}
     };
