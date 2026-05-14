@@ -2223,31 +2223,34 @@ async function extractDetailData(tabId, site, productId) {
               domImages.push(_s)
             }
           })
-          // 상세설명 DOM 추출 — 백엔드 html 필드는 script 태그만이라 cdtl_desc DOM이
-          // 없어 detail_html이 항상 빈 값으로 저장되던 77% 누락 사고 차단.
-          // 셀렉터 폴백 체인으로 ssg.com / department.ssg.com / SHINSEGAE 페이지 호환.
+          // 상세설명 추출 — SSG는 `<p class="cdtl_desc">` 가 안내 텍스트(22자)만 담는
+          // 함정 element이므로 querySelector 방식은 못 쓴다. 백엔드 ssg_sourcing.py의
+          // _parse_detail_content 와 동일한 정규식으로 페이지 outerHTML 에서 상세 영역
+          // 통째로 추출. cdtl_review/cdtl_qna/cdtl_notice/footer 가 시작되기 전까지의
+          // 본 상세설명+이미지가 모두 포함됨 (정상 8만~10만 chars).
           let detailHtml = ''
-          let detailEl = null
           try {
-            detailEl = document.querySelector(
-              '#cdtl_desc, #detail_cont, .cdtl_desc, .cdtl_detail_cont, [class*="cdtl_desc"]'
-            )
-            if (detailEl) {
-              detailHtml = detailEl.innerHTML || ''
+            const _fullHtml = document.documentElement.outerHTML || ''
+            const _re = /(?:id="cdtl_desc"|id="detail_cont"|class="[^"]*cdtl_desc[^"]*")[^>]*>([\s\S]*?)(?=<div[^>]+(?:id|class)="[^"]*(?:cdtl_review|cdtl_qna|cdtl_notice|footer)[^"]*")/i
+            const _m = _fullHtml.match(_re)
+            if (_m && _m[1]) {
+              detailHtml = _m[1]
             }
           } catch (_e) { /* detail 추출 실패 시 무시 */ }
-          // detail 영역 내부 이미지도 domImages에 병합 (zoom_thumb로 못 잡은 i2~iN 보강)
-          if (detailEl) {
+          // 상세설명 내부 이미지도 domImages 에 병합 (zoom_thumb 못 잡은 i2~iN 보강)
+          if (detailHtml) {
             try {
-              detailEl.querySelectorAll('img').forEach(function(img) {
-                let _s2 = (img.getAttribute('src') || img.src || '').trim()
-                if (!_s2) return
-                if (_s2.indexOf('ssgcdn.com') === -1) return
+              const _imgRe = /<img[^>]+src="([^"]+)"/gi
+              let _im
+              while ((_im = _imgRe.exec(detailHtml)) !== null) {
+                let _s2 = (_im[1] || '').trim()
+                if (!_s2) continue
+                if (_s2.indexOf('ssgcdn.com') === -1) continue
                 if (!_imgSeen.has(_s2)) {
                   _imgSeen.add(_s2)
                   domImages.push(_s2)
                 }
-              })
+              }
             } catch (_e) { /* 무시 */ }
           }
           return {
