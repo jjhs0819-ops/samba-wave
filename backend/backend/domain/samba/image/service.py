@@ -787,31 +787,46 @@ class ImageTransformService:
         롯데홈쇼핑 등 일부 마켓 서버는 외부 fetch 후 magic bytes 검증에서 거부하므로
         반드시 PIL 로 JPEG 변환 후 업로드한다. 투명 채널은 흰 배경으로 합성.
         """
-        # 매직바이트 ≠ Content-Type 불일치 방지: 모든 입력을 JPEG 로 정규화
+        # 매직바이트 ≠ Content-Type 불일치 방지 + 마켓 호환을 위한 사양 정규화:
+        # 1) JPEG 강제 변환 (PNG 등 다른 매직바이트가 .jpg 로 저장되는 문제 차단)
+        # 2) 1000x1000 미만이면 비율 유지 upscale (롯데홈쇼핑 등 최소 해상도 미달로
+        #    대표/추가이미지가 placeholder 로 대체되는 문제 해결)
+        # 3) 정사각형 아니면 흰 배경 padding (마켓별 정사각형 요구 호환)
         try:
             from PIL import Image
 
             img = Image.open(io.BytesIO(image_bytes))
             if img.mode in ("RGBA", "LA"):
-                # 투명 배경 → 흰 배경 합성 (롯데홈/스마트스토어 등 알파 거부 대응)
                 bg = Image.new("RGB", img.size, (255, 255, 255))
                 rgba = img.convert("RGBA")
                 bg.paste(rgba, mask=rgba.split()[3])
                 img = bg
             elif img.mode == "P":
-                # 팔레트 → RGBA 경유 후 흰 배경 합성
                 rgba = img.convert("RGBA")
                 bg = Image.new("RGB", rgba.size, (255, 255, 255))
                 bg.paste(rgba, mask=rgba.split()[3])
                 img = bg
             elif img.mode != "RGB":
                 img = img.convert("RGB")
+
+            target = 1000
+            W, H = img.size
+            if max(W, H) < target:
+                scale = target / max(W, H)
+                img = img.resize((round(W * scale), round(H * scale)), Image.LANCZOS)
+                W, H = img.size
+            if W != H:
+                side = max(W, H)
+                canvas = Image.new("RGB", (side, side), (255, 255, 255))
+                canvas.paste(img, ((side - W) // 2, (side - H) // 2))
+                img = canvas
+
             buf = io.BytesIO()
             img.save(buf, format="JPEG", quality=92, optimize=True)
             image_bytes = buf.getvalue()
         except Exception as e:
             logger.warning(
-                f"[이미지] JPEG 정규화 실패 — 원본 바이트 그대로 저장 시도: {e}"
+                f"[이미지] JPEG/사이즈 정규화 실패 — 원본 바이트 그대로 저장 시도: {e}"
             )
 
         # content-hash 기반 결정적 파일명 (중복 업로드 방지)

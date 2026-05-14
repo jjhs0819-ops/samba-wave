@@ -44,11 +44,48 @@ _r2: dict = {}
 
 
 # ── R2 upload ────────────────────────────────────────────
+def _normalize_for_market(image_bytes: bytes) -> bytes:
+    """마켓 등록 호환 사양으로 정규화: 1000x1000 미만 → 비율유지 upscale +
+    정사각형 아니면 흰배경 padding. JPEG 재인코딩.
+
+    롯데홈쇼핑 등은 대표이미지 최소 해상도 미달 시 fetch 후 placeholder 로 대체.
+    """
+    try:
+        src = Image.open(io.BytesIO(image_bytes))
+        if src.mode != "RGB":
+            if src.mode in ("RGBA", "LA"):
+                bg = Image.new("RGB", src.size, (255, 255, 255))
+                rgba = src.convert("RGBA")
+                bg.paste(rgba, mask=rgba.split()[3])
+                src = bg
+            else:
+                src = src.convert("RGB")
+        target = 1000
+        W, H = src.size
+        if max(W, H) < target:
+            scale = target / max(W, H)
+            src = src.resize((round(W * scale), round(H * scale)), Image.LANCZOS)
+            W, H = src.size
+        if W != H:
+            side = max(W, H)
+            canvas = Image.new("RGB", (side, side), (255, 255, 255))
+            canvas.paste(src, ((side - W) // 2, (side - H) // 2))
+            src = canvas
+        out = io.BytesIO()
+        src.save(out, format="JPEG", quality=92, optimize=True)
+        return out.getvalue()
+    except Exception as e:
+        print(f"[Worker]   [normalize] 사이즈 정규화 실패, 원본 유지: {e}")
+        return image_bytes
+
+
 def upload_to_r2(image_bytes: bytes, filename: str) -> str | None:
     """R2 업로드 — 일시 장애 대비 3회 재시도(1.5s/3s 백오프)."""
     if not _r2.get("bucket"):
         return None
     import boto3
+
+    image_bytes = _normalize_for_market(image_bytes)
 
     last_err: Exception | None = None
     for attempt in range(3):
