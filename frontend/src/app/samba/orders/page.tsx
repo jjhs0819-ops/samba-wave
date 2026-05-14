@@ -774,6 +774,23 @@ export default function OrdersPage() {
                   PENDING: '#6b7280', DISPATCHED: '#0ea5e9', SCRAPED: '#16a34a',
                   SENT_TO_MARKET: '#22c55e', NO_TRACKING: '#f59e0b', CANCELLED: '#a855f7', FAILED: '#ef4444',
                 }
+                // 소싱처 원주문링크 URL 매핑 (OrderInfoCell.tsx 와 동일 규칙)
+                const buildSourcingOrderUrl = (site: string, srcNo: string): string | null => {
+                  if (!srcNo) return null
+                  const code = (site || '').split('(')[0].trim()
+                  const map: Record<string, string> = {
+                    MUSINSA: `https://www.musinsa.com/order/order-detail/${srcNo}`,
+                    KREAM: `https://kream.co.kr/my/purchasing/${srcNo}`,
+                    FashionPlus: `https://www.fashionplus.co.kr/mypage/order/detail/${srcNo}`,
+                    ABCmart: `https://abcmart.a-rt.com/mypage/order/read-order-detail?orderNo=${srcNo}`,
+                    GrandStage: `https://grandstage.a-rt.com/mypage/order/read-order-detail?orderNo=${srcNo}`,
+                    Nike: `https://www.nike.com/kr/orders/${srcNo}`,
+                    SSG: `https://pay.ssg.com/myssg/orderInfoDetail.ssg?orordNo=${encodeURIComponent(srcNo)}&viewType=Ssg`,
+                    LOTTEON: `https://www.lotteon.com/p/order/claim/orderDetail?odNo=${srcNo}`,
+                  }
+                  return map[code] || null
+                }
+                const sourcingUrl = buildSourcingOrderUrl(j.site, j.sourcingOrderNumber || '')
                 return (
                   <div key={j.id} style={{
                     display: 'grid', gridTemplateColumns: '36px 88px 150px 160px 200px 80px 90px 90px 120px 266px',
@@ -793,7 +810,27 @@ export default function OrdersPage() {
                     <div>{j.sourcingAccountLabel || '-'}</div>
                     <div>{j.courier || '-'}</div>
                     <div style={{ fontFamily: 'monospace' }}>{j.tracking || '-'}</div>
-                    <div style={{ color: '#9ca3af', fontSize: 11 }}>{j.lastError || ''}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                      <span style={{ color: '#9ca3af', fontSize: 11, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={j.lastError || ''}>{j.lastError || ''}</span>
+                      <button
+                        onClick={() => {
+                          if (!sourcingUrl) {
+                            setLogMessages(prev => [...prev, `[원주문링크] ${j.site} 소싱처는 지원하지 않거나 소싱주문번호가 없습니다`])
+                            return
+                          }
+                          window.open(sourcingUrl, '_blank')
+                        }}
+                        disabled={!sourcingUrl}
+                        style={{
+                          padding: '2px 6px', fontSize: 10, borderRadius: 3,
+                          background: sourcingUrl ? '#374151' : '#1f2937',
+                          color: sourcingUrl ? '#e5e7eb' : '#4b5563',
+                          border: '1px solid #4b5563',
+                          cursor: sourcingUrl ? 'pointer' : 'not-allowed',
+                          whiteSpace: 'nowrap', flexShrink: 0,
+                        }}
+                      >원주문링크</button>
+                    </div>
                   </div>
                 )
               })}
