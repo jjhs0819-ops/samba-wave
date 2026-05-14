@@ -23,11 +23,11 @@ async def main() -> None:
     from backend.core.config import settings
 
     conn = await asyncpg.connect(
-        host=settings.db_write_host,
-        port=settings.db_write_port,
-        user=settings.db_user,
-        password=settings.db_password,
-        database=settings.db_name,
+        host=settings.write_db_host,
+        port=settings.write_db_port,
+        user=settings.write_db_user,
+        password=settings.write_db_password,
+        database=settings.write_db_name,
         ssl=False,
     )
     try:
