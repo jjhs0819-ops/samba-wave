@@ -444,7 +444,19 @@ async def enqueue_pending_orders(
                 | (SambaOrder.tracking_number == ""),
                 SambaOrder.sourcing_order_number.is_not(None),
                 SambaOrder.sourcing_order_number != "",
-                SambaOrder.source_site.is_not(None),
+                # source_site DB 컬럼이 비어 있어도 source_url 도메인 / collected_product 로 추론 가능하면 OK.
+                # _resolve_actual_source_site 가 Python 레벨에서 실제 소싱처 결정.
+                (
+                    (
+                        SambaOrder.source_site.is_not(None)
+                        & (SambaOrder.source_site != "")
+                    )
+                    | (
+                        SambaOrder.source_url.is_not(None)
+                        & (SambaOrder.source_url != "")
+                    )
+                    | (SambaOrder.collected_product_id.is_not(None))
+                ),
                 date_col >= since,
                 date_col < until,
                 ~SambaOrder.status.in_(EXCLUDED_ORDER_STATUSES),

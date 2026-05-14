@@ -1331,7 +1331,7 @@ async def list_recent_tracking_sync_jobs(
         #   7) action_tag 에 'kkadaegi' 토큰 없음
         # 1/5/6 (송장 미입력 / 상태 제외 / 배송중·완료 제외) 은 Python loop 에서 처리.
         from datetime import timedelta, timezone
-        from sqlalchemy import and_, func, not_
+        from sqlalchemy import and_, func, not_, or_
 
         # KST 캘린더 7일 (오늘 포함 -6일) + paid_at(폴백 created_at) 기준
         _KST = timezone(timedelta(hours=9))
@@ -1360,7 +1360,12 @@ async def list_recent_tracking_sync_jobs(
                 and_(
                     O.sourcing_order_number.is_not(None),
                     O.sourcing_order_number != "",
-                    O.source_site.is_not(None),
+                    # source_site 비어있어도 source_url / collected_product 로 추론 가능하면 포함
+                    or_(
+                        and_(O.source_site.is_not(None), O.source_site != ""),
+                        and_(O.source_url.is_not(None), O.source_url != ""),
+                        O.collected_product_id.is_not(None),
+                    ),
                     date_col >= _since,
                     date_col < _until,
                     not_(action_tag_expr.like("%,kkadaegi,%")),
@@ -6454,7 +6459,15 @@ def _normalize_synced_order_status(order_data: dict[str, Any]) -> None:
 
 
 def _can_override_source_site_from_sourcing(order_data: dict[str, Any]) -> bool:
-    return str(order_data.get("source") or "").strip().lower() != "playauto"
+    """매칭된 collected_product 의 source_site 로 order.source_site 를 덮어써도 되는지.
+
+    과거: PlayAuto 주문은 source_site 에 별칭("GS이숍(캐논)" 등)을 넣어서 매칭으로 덮어쓰면 안 됐음.
+    현재(sales_channel_alias 분리 후): PlayAuto 도 source_site="" 로 임포트되므로 비어 있으면 채워야 정상.
+    별칭은 이제 sales_channel_alias 컬럼에 별도 보관됨.
+    """
+    raw = str(order_data.get("source_site") or "").strip()
+    # 비어 있으면 항상 채움. 이미 값이 있으면 (소싱처 코드든 별칭이든) 보존.
+    return not raw
 
 
 def _normalize_carrier_name(value: Any) -> str:
