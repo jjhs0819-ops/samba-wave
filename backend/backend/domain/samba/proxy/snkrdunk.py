@@ -211,6 +211,9 @@ class SnkrdunkClient:
             thumb = it.get("thumbnailUrl") or ""
             min_price = it.get("minPrice")
             sale_price = int(min_price) if isinstance(min_price, (int, float)) else 0
+            # 입찰자 없는 0원(또는 가격 미존재) 상품은 수집 제외
+            if sale_price <= 0:
+                continue
             results.append(
                 {
                     "site_product_id": sid,
@@ -380,19 +383,29 @@ class SnkrdunkClient:
 
     @staticmethod
     def _parse_card_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """tradingCards 응답 배열 → 정규화."""
+        """tradingCards 응답 배열 → 정규화.
+
+        입찰 0건(listingCount=0) 또는 가격 미존재 카드는 수집 제외.
+        """
         results: list[dict[str, Any]] = []
         for it in items:
             sid = str(it.get("id", "")).strip()
             if not sid:
                 continue
-            thumb = it.get("thumbnailUrl") or ""
+            # 입찰자 수 확인
+            try:
+                listing_count_int = int(str(it.get("listingCount", "0") or "0"))
+            except Exception:
+                listing_count_int = 0
             min_price = it.get("minPrice")
             sale_price = int(min_price) if isinstance(min_price, (int, float)) else 0
+            # 입찰 0건 또는 가격 0원은 등록 가치 없음 → 수집 제외
+            if listing_count_int <= 0 or sale_price <= 0:
+                continue
+
+            thumb = it.get("thumbnailUrl") or ""
             url = _detail_url(sid, "trading-card")
-            listing_count = str(it.get("listingCount", "0"))
-            # 매물 0이면 품절 처리
-            sale_status = "in_stock" if listing_count not in ("", "0") else "sold_out"
+            listing_count = str(listing_count_int)
             results.append(
                 {
                     "site_product_id": sid,
@@ -410,12 +423,10 @@ class SnkrdunkClient:
                     "color": "",
                     "url": url,
                     "video_url": url,
-                    "options": [{"name": "기본", "price": sale_price, "stock": 1}]
-                    if sale_status == "in_stock"
-                    else [],
+                    "options": [{"name": "기본", "price": sale_price, "stock": 1}],
                     "detail_html": "",
                     "free_shipping": False,
-                    "sale_status": sale_status,
+                    "sale_status": "in_stock",
                     "extra_data": {
                         "snkr_type": "trading-card",
                         "currency": TARGET_CURRENCY,

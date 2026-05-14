@@ -540,6 +540,8 @@ async def delete_filter(
         logger.info(f"그룹 삭제: {filter_id} → 상품 {deleted_count}건 연동 삭제")
 
     await svc.delete_filter(filter_id)
+    await cache.delete("filters:tree:v3")
+    await cache.clear_pattern("filters:tree:counts:*")
     return {"ok": True, "deleted_products": deleted_count}
 
 

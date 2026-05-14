@@ -2960,10 +2960,18 @@ class JobWorker:
             if f.category_filter:
                 cat_filter_map[f.category_filter] = f.id
             # f.name = "SSG_브랜드_대분류_중분류_소분류" → "대분류 > 중분류 > 소분류"
+            # 추가: leaf 단일 토큰("소분류")도 alias 키로 등록 — SSG 크론 수집 시
+            # 검색결과 detail이 풀 path를 못 가져와 leaf만 알 때(가장 흔한 케이스)
+            # 기존 카테고리 매핑(스캔으로 만든 풀 path 필터)을 재사용해 leaf 자동생성
+            # 무한증식을 차단한다. leaf 충돌(여러 필터가 같은 leaf) 시 먼저 등록된 것을
+            # 우선해 후속 등록은 무시 — UI 매핑현황의 정의 순서 따름.
             if f.name:
                 _nm_parts = f.name.split("_")
                 if len(_nm_parts) > 2:
                     cat_name_map[" > ".join(_nm_parts[2:])] = f.id
+                    _leaf = _nm_parts[-1].strip()
+                    if _leaf and _leaf not in cat_name_map:
+                        cat_name_map[_leaf] = f.id
             # repBrandId 추출 (keyword URL)
             if f.keyword and "repBrandId=" in f.keyword:
                 try:
@@ -3345,6 +3353,44 @@ class JobWorker:
                                 ) or cat_name_map.get(_sub)
                                 if filter_id:
                                     break
+
+                    # 3.5순위: leaf 단일 토큰으로 cat_name_map 룩업 (카테고리 스캔으로
+                    # 만든 기존 풀 path 필터의 leaf alias 매칭). 검색결과 detail이
+                    # dispCtgLclsNm/Mcls/Scls를 비워 보내고 dispCtgNm(leaf)만 가져오는
+                    # 케이스를 위한 폴백 — leaf 1개로 새 필터 자동생성하는 무한증식을 차단.
+                    if not filter_id:
+                        _leaf_candidates: list[str] = []
+                        if _cat_parts:
+                            _leaf_candidates.append(_cat_parts[-1])
+                        _disp_nm_leaf = (detail.get("dispCtgNm") or "").strip()
+                        if _disp_nm_leaf and _disp_nm_leaf not in _leaf_candidates:
+                            _leaf_candidates.append(_disp_nm_leaf)
+                        _full_cat_leaf = (detail.get("category") or "").strip()
+                        if _full_cat_leaf:
+                            _fc_leaf = _full_cat_leaf.split(" > ")[-1].strip()
+                            if _fc_leaf and _fc_leaf not in _leaf_candidates:
+                                _leaf_candidates.append(_fc_leaf)
+                        for _leaf_key in _leaf_candidates:
+                            filter_id = cat_name_map.get(_leaf_key)
+                            if filter_id:
+                                # 풀 path 필터에 매칭됐으니 leaf-only 기록 방지를 위해
+                                # _cat_parts도 매칭 필터명에서 복원해 product.category가
+                                # 풀 path로 저장되도록 한다.
+                                _f_match = next(
+                                    (f for f in filters if f.id == filter_id), None
+                                )
+                                if _f_match and _f_match.name:
+                                    _name_parts = _f_match.name.split("_")
+                                    if len(_name_parts) > 2:
+                                        _restored = [p for p in _name_parts[2:] if p]
+                                        if len(_restored) > len(_cat_parts):
+                                            _cat_parts = _restored
+                                _add_job_log(
+                                    job.id,
+                                    f"[필터leaf매칭] '{_leaf_key}' → 기존 매핑 재사용",
+                                    job_type="collect",
+                                )
+                                break
 
                     # 3순위도 실패 시 필터 자동 생성 — 누수 0 보장
                     if not filter_id:
