@@ -408,13 +408,21 @@ async def enqueue_pending_orders(
 ) -> dict[str, Any]:
     """미발송 주문 일괄 적재 — 수동 트리거 + 스케줄러 공용.
 
-    조건: 최근 N일(기본 7일) 이내 + 소싱처 주문번호 있음 + 송장번호 없음 + 소싱처 식별됨.
+    조건: KST 캘린더 7일(오늘 포함 -6일) + paid_at(폴백 created_at) +
+          소싱처 주문번호 있음 + 송장번호 없음 + 소싱처 식별됨.
     """
     queued = 0
     skipped = 0
     errors: list[str] = []
 
-    since = datetime.now(_UTC) - timedelta(days=days)
+    # KST 캘린더 N일 (오늘 포함, 즉 days=7 → 오늘 + 이전 6일)
+    _KST = timezone(timedelta(hours=9))
+    _today_kst = datetime.now(_KST).replace(hour=0, minute=0, second=0, microsecond=0)
+    _start_kst = _today_kst - timedelta(days=days - 1)
+    _end_kst = _today_kst + timedelta(days=1)  # exclusive upper bound
+    since = _start_kst.astimezone(_UTC)
+    until = _end_kst.astimezone(_UTC)
+
     async with get_write_session() as session:
         from sqlalchemy import func
 
@@ -423,6 +431,8 @@ async def enqueue_pending_orders(
         action_tag_expr = func.concat(
             ",", func.coalesce(SambaOrder.action_tag, ""), ","
         )
+        # 페이지 필터와 동일하게 paid_at 기준 (NULL 시 created_at 폴백)
+        date_col = func.coalesce(SambaOrder.paid_at, SambaOrder.created_at)
 
         # 페이지 필터 "취소/반품/교환 제외 + 배송중/배송완료 제외" 와 정확히 동일 기준
         stmt = (
@@ -435,11 +445,12 @@ async def enqueue_pending_orders(
                 SambaOrder.sourcing_order_number.is_not(None),
                 SambaOrder.sourcing_order_number != "",
                 SambaOrder.source_site.is_not(None),
-                SambaOrder.created_at >= since,
+                date_col >= since,
+                date_col < until,
                 ~SambaOrder.status.in_(EXCLUDED_ORDER_STATUSES),
                 ~action_tag_expr.like("%,kkadaegi,%"),
             )
-            .order_by(SambaOrder.created_at.desc())
+            .order_by(date_col.desc())
             .limit(limit)
         )
         for kw in SHIPPED_SHIPPING_STATUS_KEYWORDS:

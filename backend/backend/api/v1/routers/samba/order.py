@@ -194,6 +194,9 @@ EXCLUDED_ORDER_STATUSES = (
     "exchange_done",
     "ship_failed",
     "undeliverable",
+    "shipping",
+    "delivered",
+    "confirmed",
 )
 PENDING_ORDER_STATUSES = (
     "pending",
@@ -344,20 +347,8 @@ async def _build_order_filters(
         if status_filter == "active":
             filters.append(SambaOrder.status.in_(ACTIVE_ORDER_STATUSES))
         elif status_filter == "cancel_return_excluded":
+            # status 컬럼만 기준 — shipping_status 는 일절 관여 금지
             filters.append(~SambaOrder.status.in_(EXCLUDED_ORDER_STATUSES))
-            # status가 shipping/delivered/confirmed인 주문 제외 (영문 키)
-            filters.append(
-                ~SambaOrder.status.in_(("shipping", "delivered", "confirmed"))
-            )
-            # shipping_status가 배송중/출고/배송완료/구매확정인 주문도 제외 (마켓 원본 한글값)
-            shipping_exclude_keywords = ("배송중", "출고", "배송완료", "구매확정")
-            for kw in shipping_exclude_keywords:
-                filters.append(
-                    or_(
-                        SambaOrder.shipping_status.is_(None),
-                        ~SambaOrder.shipping_status.like(f"%{kw}%"),
-                    )
-                )
         elif status_filter == "pending":
             filters.append(SambaOrder.status.in_(PENDING_ORDER_STATUSES))
         else:
@@ -1342,8 +1333,15 @@ async def list_recent_tracking_sync_jobs(
         from datetime import timedelta, timezone
         from sqlalchemy import and_, func, not_, or_
 
-        _since = datetime.now(timezone.utc) - timedelta(days=7)
+        # KST 캘린더 7일 (오늘 포함 -6일) + paid_at(폴백 created_at) 기준
+        _KST = timezone(timedelta(hours=9))
+        _today_kst = datetime.now(_KST).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        _since = (_today_kst - timedelta(days=6)).astimezone(timezone.utc)
+        _until = (_today_kst + timedelta(days=1)).astimezone(timezone.utc)
         action_tag_expr = func.concat(",", func.coalesce(O.action_tag, ""), ",")
+        date_col = func.coalesce(O.paid_at, O.created_at)
         base_stmt = (
             select(
                 SambaTrackingSyncJob,
@@ -1363,7 +1361,8 @@ async def list_recent_tracking_sync_jobs(
                     O.sourcing_order_number.is_not(None),
                     O.sourcing_order_number != "",
                     O.source_site.is_not(None),
-                    O.created_at >= _since,
+                    date_col >= _since,
+                    date_col < _until,
                     not_(action_tag_expr.like("%,kkadaegi,%")),
                     or_(
                         O.tracking_number.is_(None),
@@ -4238,10 +4237,11 @@ async def sync_orders_from_markets(
                     for ps in progress_states:
                         od_no = str(ps.get("odNo", "") or "")
                         od_seq = str(ps.get("odSeq", 1) or 1)
-                        proc_seq = str(ps.get("procSeq", 1) or 1)
                         if not od_no:
                             continue
-                        order_number = f"{od_no}_{od_seq}_{proc_seq}"
+                        # 저장 시 키와 동일하게 (odNo, odSeq) 2부분만 사용
+                        # procSeq는 처리 단계마다 바뀌므로 키에서 제외
+                        order_number = f"{od_no}_{od_seq}"
                         if order_number in _already_in_data:
                             continue
                         step_cd = str(ps.get("odPrgsStepCd", "") or "")
