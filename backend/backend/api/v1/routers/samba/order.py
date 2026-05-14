@@ -5572,6 +5572,12 @@ async def sync_orders_from_markets(
                         existing.customer_address_detail or ""
                     ):
                         update_fields["customer_address_detail"] = new_cust_addr_dtl
+                    # 우편번호 — UPDATE path 에서도 채움 (신규 INSERT 만 채워지던 버그 fix)
+                    new_postal = order_data.get("customer_postal_code")
+                    if new_postal and new_postal != (
+                        existing.customer_postal_code or ""
+                    ):
+                        update_fields["customer_postal_code"] = new_postal
                     # 마켓 상품번호 보충 (기존 주문에 없으면 채움)
                     if order_data.get("product_id") and not existing.product_id:
                         update_fields["product_id"] = order_data["product_id"]
