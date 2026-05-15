@@ -290,13 +290,28 @@ class ESMPlusClient:
             return await self._call_api("DELETE", f"/item/v1/goods/{goods_no}")
         except RuntimeError as exc:
             err = str(exc)
-            # ESM 의 등록직후 cooldown 메시지 — 15초 대기 후 1회 재시도
-            if "F001000" in err or "다른 판매자의 주문" in err:
+            # ESM 의 등록직후 cooldown 메시지 — 점진적 대기 (15s/30s/45s) 후 최대 2회 재시도.
+            # 실 호출 검증: 등록+STOP+DELETE 직후 30s 이내 거부, 45s 안정.
+            if "F001000" not in err and "다른 판매자의 주문" not in err:
+                raise
+            for wait in (30, 45):
                 logger.warning(
-                    f"[{self.cfg['label']}] 삭제 cooldown 감지 — 15초 대기 후 재시도 (goodsNo={goods_no})"
+                    f"[{self.cfg['label']}] 삭제 cooldown 감지 — {wait}초 대기 후 재시도 (goodsNo={goods_no})"
                 )
-                await asyncio.sleep(15)
-                return await self._call_api("DELETE", f"/item/v1/goods/{goods_no}")
+                await asyncio.sleep(wait)
+                try:
+                    return await self._call_api(
+                        "DELETE", f"/item/v1/goods/{goods_no}"
+                    )
+                except RuntimeError as inner:
+                    if "F001000" not in str(inner) and "다른 판매자의 주문" not in str(
+                        inner
+                    ):
+                        raise
+            # 마지막 시도까지 cooldown 지속 — 운영자 수동 정리 필요
+            logger.error(
+                f"[{self.cfg['label']}] 삭제 cooldown 75초 후에도 지속 — 운영자 수동 정리 필요 (goodsNo={goods_no})"
+            )
             raise
 
     # ------------------------------------------------------------------
@@ -388,6 +403,94 @@ class ESMPlusClient:
         if cat_code:
             path = f"{path}/{cat_code}"
         return await self._call_api("GET", path)
+
+    # ------------------------------------------------------------------
+    # 추천옵션 (recommended-options)
+    # ------------------------------------------------------------------
+    # ESM 의 옵션 모델은 카테고리별 미리 정의된 옵션그룹/옵션값 사용.
+    # 자유 텍스트 옵션은 별도 /order-options endpoint (권한 별도 필요).
+    #
+    # 등록 흐름:
+    #   1. get_recommended_opt_groups(cat_code) — 카테고리의 옵션그룹 list
+    #   2. get_recommended_opt_values(recommendedOptNo) — 그룹의 옵션값 list
+    #   3. samba 옵션값 → ESM recommendedOptValueNo 매핑 (텍스트 매칭)
+    #   4. set_recommended_options(goods_no, payload) — 상품 등록 후 옵션 추가
+    # ------------------------------------------------------------------
+
+    async def get_recommended_opt_groups(
+        self, cat_code: str
+    ) -> list[dict[str, Any]]:
+        """카테고리별 추천옵션그룹 — GET /item/v1/options/recommended-opts?catCode=...
+
+        응답 key 'details' (응답 구조 확인: 색상/사이즈/직접입력 등).
+        각 항목: { recommendedOptNo, recommendedOptName: {kor, eng, chi, jpn},
+                  recommendedOptTypeName }
+        """
+        try:
+            result = await self._call_api(
+                "GET",
+                "/item/v1/options/recommended-opts",
+                params={"catCode": cat_code},
+            )
+            return result.get("details", []) or []
+        except Exception as exc:
+            logger.warning(
+                f"[{self.cfg['label']}] 추천옵션그룹 조회 실패 cat={cat_code}: {exc}"
+            )
+            return []
+
+    async def get_recommended_opt_values(
+        self, recommended_opt_no: int | str
+    ) -> list[dict[str, Any]]:
+        """추천옵션그룹별 선택 항목 list — GET /item/v1/options/recommended-opts/{recommendedOptNo}"""
+        try:
+            result = await self._call_api(
+                "GET", f"/item/v1/options/recommended-opts/{recommended_opt_no}"
+            )
+            # 응답이 list 직접 또는 dict 안 list — 양쪽 처리
+            if isinstance(result, list):
+                return result
+            # dict 안의 list 후보 키
+            for key in ("details", "values", "recommendedOptValues"):
+                v = result.get(key)
+                if isinstance(v, list):
+                    return v
+            return []
+        except Exception as exc:
+            logger.warning(
+                f"[{self.cfg['label']}] 추천옵션값 조회 실패 optNo={recommended_opt_no}: {exc}"
+            )
+            return []
+
+    async def set_recommended_options(
+        self, goods_no: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """상품에 추천옵션 등록/수정 — PUT /item/v1/goods/{goodsNo}/recommended-options
+
+        Payload 구조 (페이지 26, 16):
+            {
+                "type": 1,                     # 1=선택형, 2=2조합, 3=3조합, 5=텍스트형, ...
+                "isStockManage": true,
+                "independent": {               # type=1 (선택형)
+                    "recommendedOptNo": <int>,
+                    "details": [{ "recommendedOptValueNo": <int>, "addAmnt": 0,
+                                  "qty": {"Gmkt": 10, "Iac": 10}, "isSoldOut": false,
+                                  "isDisplay": true, "manageCode": "" }, ...]
+                },
+                "combination": null,
+            }
+        """
+        return await self._call_api(
+            "PUT", f"/item/v1/goods/{goods_no}/recommended-options", data=payload
+        )
+
+    async def get_recommended_options(
+        self, goods_no: str
+    ) -> dict[str, Any]:
+        """상품 추천옵션 조회 — GET /item/v1/goods/{goodsNo}/recommended-options"""
+        return await self._call_api(
+            "GET", f"/item/v1/goods/{goods_no}/recommended-options"
+        )
 
     # ------------------------------------------------------------------
     # 카테고리 트리 전체 수집
