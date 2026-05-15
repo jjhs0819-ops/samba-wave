@@ -567,21 +567,23 @@ class ESMPlusClient:
 
     @staticmethod
     def match_option_value(
-        samba_text: str, esm_values: list[dict[str, Any]]
+        samba_text: str,
+        esm_values: list[dict[str, Any]],
+        fuzzy_threshold: float = 0.85,
     ) -> int | None:
         """samba 자유 텍스트 옵션값 → ESM recommendedOptValueNo 매칭.
 
         매칭 우선순위 (대소문자/공백 무시):
-          1. kor 정확 일치
-          2. eng 정확 일치
-          3. korEng (한+영) 정확 일치
-          4. kor / eng 부분 포함 (substring)
-        없으면 None — 운영자가 '직접입력' 그룹 또는 텍스트형(type=5) 으로 fallback.
+          1. kor / eng / korEng 정확 일치
+          2. 부분 포함 (samba ⊆ ESM 또는 ESM ⊆ samba)
+          3. difflib SequenceMatcher 비율 >= fuzzy_threshold (default 0.85)
+        없으면 None.
 
         Args:
           samba_text: samba 옵션값 (예: "네이비", "GREEN", "Navy", "검정")
-          esm_values: get_recommended_opt_values() 응답 list. recommendedOptValueNo=0
-                      placeholder 는 호출자가 사전 제외 권장.
+          esm_values: get_recommended_opt_values() 응답 list.
+                      recommendedOptValueNo=0 placeholder 는 사전 제외 권장.
+          fuzzy_threshold: 0.0~1.0. 낮을수록 관대 (오매칭 가능), 높을수록 엄격.
         """
         if not samba_text or not esm_values:
             return None
@@ -616,7 +618,27 @@ class ESMPlusClient:
                     continue
                 if target in normalized or normalized in target:
                     return int(no)
-        return None
+
+        # 3차: 유사도 매칭 (difflib SequenceMatcher) — threshold 이상 중 최대값.
+        # 한글/영어 동시 비교. ESM 값 1,000건+ 일 수도 — O(n) 비교지만 한 번/그룹 호출.
+        from difflib import SequenceMatcher
+
+        best_no: int | None = None
+        best_ratio = fuzzy_threshold
+        for v in esm_values:
+            no = v.get("recommendedOptValueNo")
+            if not no:
+                continue
+            name = v.get("recommendedOptValueName") or {}
+            for key in ("kor", "eng", "korEng"):
+                normalized = _norm(name.get(key))
+                if not normalized:
+                    continue
+                ratio = SequenceMatcher(None, target, normalized).ratio()
+                if ratio > best_ratio:
+                    best_ratio = ratio
+                    best_no = int(no)
+        return best_no
 
     # ------------------------------------------------------------------
     # 카테고리 트리 전체 수집
@@ -1114,6 +1136,186 @@ def esm_find_category_by_path(path: str, site: str) -> str:
 # ------------------------------------------------------------------
 
 
+async def _build_independent(
+    client: ESMPlusClient,
+    cat_code: str,
+    samba_opt: dict[str, Any],
+    site_key: str,
+    stock_per_value: int,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """type=1 선택형 payload.independent 생성. (combination 은 None)"""
+    name, values = _normalize_samba_option(samba_opt)
+    if not name or not values:
+        return None, None
+    group, pool = await _resolve_esm_group(client, cat_code, name)
+    if not group:
+        logger.warning(f"[ESM] 옵션 그룹 매칭 실패: samba='{name}' cat={cat_code}")
+        return None, None
+
+    rec_opt_no = group["recommendedOptNo"]
+    details: list[dict[str, Any]] = []
+    for v in values:
+        qty = stock_per_value if v["qty"] <= 0 else v["qty"]
+        rec_val_no = ESMPlusClient.match_option_value(v["text"], pool)
+        if rec_val_no:
+            details.append(
+                {
+                    "recommendedOptValueNo": rec_val_no,
+                    "addAmnt": v["add_amnt"],
+                    "qty": {site_key: 0 if v["sold_out"] else qty},
+                    "isSoldOut": v["sold_out"],
+                    "isDisplay": True,
+                    "manageCode": f"OPT{rec_val_no}",
+                }
+            )
+            continue
+        # 직접입력 fallback — recommendedOptValueNo=0 + koreanText 자유 텍스트.
+        # ESM 카테고리 권한에 따라 거부 가능 — 운영자 검증 후 활성화 권장.
+        logger.warning(
+            f"[ESM] 옵션값 매칭 실패 → 직접입력 fallback: cat={cat_code} group={rec_opt_no} text='{v['text']}'"
+        )
+        details.append(
+            {
+                "recommendedOptValueNo": 0,
+                "recommendedOptValue": {"koreanText": v["text"][:50]},
+                "addAmnt": v["add_amnt"],
+                "qty": {site_key: 0 if v["sold_out"] else qty},
+                "isSoldOut": v["sold_out"],
+                "isDisplay": True,
+                "manageCode": f"OPT-FREE-{v['text'][:10]}",
+            }
+        )
+    return {
+        "recommendedOptNo": rec_opt_no,
+        "details": details,
+        "_group_label": group.get("recommendedOptName"),
+    }, None
+
+
+async def _build_combination(
+    client: ESMPlusClient,
+    cat_code: str,
+    samba_opts: list[dict[str, Any]],
+    site_key: str,
+    stock_per_value: int,
+) -> tuple[dict[str, Any] | None, int, int, Any]:
+    """type=2/3 조합형 payload.combination 생성. cartesian product."""
+    if len(samba_opts) < 2:
+        return None, 0, 0, None
+    # 각 축별 그룹/옵션값 매칭
+    axes: list[
+        tuple[dict[str, Any], list[dict[str, Any]], list[int | None]]
+    ] = []  # (group, samba_values_normalized, resolved_value_nos)
+    for opt in samba_opts:
+        name, samba_vals = _normalize_samba_option(opt)
+        if not name or not samba_vals:
+            return None, 0, 0, None
+        group, pool = await _resolve_esm_group(client, cat_code, name)
+        if not group:
+            logger.warning(
+                f"[ESM] 조합형 축 매칭 실패: samba='{name}' cat={cat_code}"
+            )
+            return None, 0, 0, None
+        resolved = [
+            ESMPlusClient.match_option_value(v["text"], pool) for v in samba_vals
+        ]
+        axes.append((group, samba_vals, resolved))
+
+    # cartesian product 생성 — 각 축의 매칭된 값만
+    import itertools
+
+    requested = 1
+    for _, vs, _ in axes:
+        requested *= len(vs)
+
+    details: list[dict[str, Any]] = []
+    indices_per_axis = [
+        [i for i, no in enumerate(resolved) if no] for _, _, resolved in axes
+    ]
+    for combo in itertools.product(*indices_per_axis):
+        entry: dict[str, Any] = {
+            "qty": {site_key: 0},
+            "isSoldOut": False,
+            "isDisplay": True,
+            "manageCode": "",
+            "addAmnt": 0,
+        }
+        manage_parts: list[str] = []
+        any_sold_out = False
+        # 첫 축의 stock 을 조합 stock 으로 사용 (단순화)
+        first_axis_idx = combo[0]
+        first_qty = axes[0][1][first_axis_idx]["qty"] or stock_per_value
+        sum_add_amnt = 0
+        for axis_idx, (group, samba_vals, resolved) in enumerate(axes):
+            val_idx = combo[axis_idx]
+            v = samba_vals[val_idx]
+            rec_val_no = resolved[val_idx]
+            entry[f"recommendedOptValueNo{axis_idx + 1}"] = rec_val_no
+            if v["sold_out"]:
+                any_sold_out = True
+            sum_add_amnt += v["add_amnt"]
+            manage_parts.append(str(rec_val_no))
+        entry["qty"] = {site_key: 0 if any_sold_out else first_qty}
+        entry["isSoldOut"] = any_sold_out
+        entry["addAmnt"] = sum_add_amnt
+        entry["manageCode"] = "OPT" + "-".join(manage_parts)
+        details.append(entry)
+
+    if not details:
+        return None, 0, requested, None
+
+    combination_payload: dict[str, Any] = {"details": details}
+    for axis_idx, (group, _, _) in enumerate(axes):
+        combination_payload[f"recommendedOptNo{axis_idx + 1}"] = group[
+            "recommendedOptNo"
+        ]
+    group_label = [g.get("recommendedOptName") for g, _, _ in axes]
+    return combination_payload, len(details), requested, group_label
+
+
+def _normalize_samba_option(opt: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+    """samba option dict → (name, normalized_values list).
+
+    각 value: {text, qty, add_amnt, sold_out}.
+    """
+    name = opt.get("name") or opt.get("option_name") or ""
+    raw_values = opt.get("values") or opt.get("option_values") or []
+    if isinstance(raw_values, str):
+        raw_values = [v.strip() for v in raw_values.split(",") if v.strip()]
+    normalized: list[dict[str, Any]] = []
+    for sv in raw_values:
+        if isinstance(sv, dict):
+            normalized.append(
+                {
+                    "text": sv.get("name") or sv.get("value") or "",
+                    "qty": int(sv.get("stock", 99) or 99),
+                    "add_amnt": int(
+                        sv.get("priceAdjust", 0) or sv.get("addPrice", 0) or 0
+                    ),
+                    "sold_out": bool(sv.get("isSoldOut") or sv.get("is_sold_out")),
+                }
+            )
+        else:
+            normalized.append(
+                {"text": str(sv), "qty": 99, "add_amnt": 0, "sold_out": False}
+            )
+    return name, normalized
+
+
+async def _resolve_esm_group(
+    client: ESMPlusClient,
+    cat_code: str,
+    samba_opt_name: str,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    """samba 옵션 이름 → ESM 그룹 + 옵션값 list (캐시 적용)."""
+    groups = await client.get_recommended_opt_groups(cat_code)
+    g = ESMPlusClient.detect_esm_option_group(samba_opt_name, groups)
+    if not g:
+        return None, []
+    values = await client.get_recommended_opt_values(g["recommendedOptNo"])
+    return g, [v for v in values if v.get("recommendedOptValueNo")]
+
+
 async def register_esm_options(
     client: ESMPlusClient,
     goods_no: str,
@@ -1125,85 +1327,90 @@ async def register_esm_options(
 ) -> dict[str, Any]:
     """samba options → ESM 추천옵션 매핑 + 등록.
 
-    samba options 형식: [{"name": "색상", "values": [{"name": "네이비", "stock": 10}, ...]}]
+    samba options 형식: [{"name": "색상", "values": [{"name": "네이비", "stock": 10}, ...]}, ...]
 
-    한계 (별도 PR 영역):
-      - 첫 옵션 그룹만 처리 (type=1 선택형). 2-3 조합형(type=2/3) 미지원.
-      - 매핑 실패한 옵션값 = 해당 항목 스킵 (운영자 수동 매핑 권장).
+    옵션 갯수 → ESM type:
+      - 1개  → type=1 선택형 (최대 50건)
+      - 2개  → type=2 2조합형 (최대 500건, cartesian product)
+      - 3개+ → type=3 (3 조합, 첫 3개만 사용)
+    한계:
+      - 매핑 실패 항목 = 스킵 + warning.
+      - 조합형은 cartesian product (모든 조합) 생성. addAmnt = 각 값 합.
+      - "직접입력" 그룹 (recommendedOptNo=0) fallback 미지원 (별도 PR).
     """
     if not samba_options:
         return {"success": False, "message": "samba_options 비어있음"}
-    first_opt = samba_options[0]
-    samba_opt_name = first_opt.get("name") or first_opt.get("option_name") or ""
-    samba_values = (
-        first_opt.get("values") or first_opt.get("option_values") or []
-    )
-    if not samba_opt_name or not samba_values:
-        return {"success": False, "message": "옵션 이름/값 누락"}
-
-    groups = await client.get_recommended_opt_groups(cat_code)
-    matched_group = ESMPlusClient.detect_esm_option_group(samba_opt_name, groups)
-    if not matched_group:
-        return {
-            "success": False,
-            "message": f"ESM 그룹 매칭 실패: samba='{samba_opt_name}', cat={cat_code}",
-        }
-    rec_opt_no = matched_group["recommendedOptNo"]
-    values_pool = await client.get_recommended_opt_values(rec_opt_no)
-    values_pool = [v for v in values_pool if v.get("recommendedOptValueNo")]
 
     site_key = ESMPlusClient.SITE_CONFIG[site]["siteKey"]
-    details: list[dict[str, Any]] = []
-    matched = 0
-    for sv in samba_values:
-        if isinstance(sv, dict):
-            value_text = sv.get("name") or sv.get("value") or ""
-            qty = int(sv.get("stock", stock_per_value) or stock_per_value)
-            add_amnt = int(
-                sv.get("priceAdjust", 0) or sv.get("addPrice", 0) or 0
-            )
-            sold_out = bool(sv.get("isSoldOut") or sv.get("is_sold_out"))
-        else:
-            value_text = str(sv)
-            qty = stock_per_value
-            add_amnt = 0
-            sold_out = False
-        rec_val_no = ESMPlusClient.match_option_value(value_text, values_pool)
-        if not rec_val_no:
-            logger.warning(
-                f"[ESM] 옵션값 매칭 실패: cat={cat_code} group={rec_opt_no} text='{value_text}'"
-            )
-            continue
-        details.append(
-            {
-                "recommendedOptValueNo": rec_val_no,
-                "addAmnt": add_amnt,
-                "qty": {site_key: 0 if sold_out else qty},
-                "isSoldOut": sold_out,
-                "isDisplay": True,
-                "manageCode": f"OPT{rec_val_no}",
-            }
-        )
-        matched += 1
+    opt_count = min(len(samba_options), 3)
 
-    if not details:
-        return {
-            "success": False,
-            "matched": 0,
-            "requested": len(samba_values),
-            "message": "매칭된 옵션값 0건",
-        }
+    if opt_count == 1:
+        opt_type = 1
+        independent, combination = await _build_independent(
+            client, cat_code, samba_options[0], site_key, stock_per_value
+        )
+        if not independent or not independent.get("details"):
+            return {
+                "success": False,
+                "matched": 0,
+                "requested": len(
+                    _normalize_samba_option(samba_options[0])[1]
+                ),
+                "message": "매칭된 옵션값 0건 (선택형)",
+            }
+        matched = len(independent["details"])
+        requested = len(_normalize_samba_option(samba_options[0])[1])
+        group_label = independent.get("_group_label")
+        independent.pop("_group_label", None)
+    else:
+        opt_type = opt_count  # 2 또는 3
+        independent = None
+        combination, matched, requested, group_label = await _build_combination(
+            client, cat_code, samba_options[:opt_count], site_key, stock_per_value
+        )
+        if not combination or not combination.get("details"):
+            return {
+                "success": False,
+                "matched": 0,
+                "requested": requested,
+                "message": f"매칭된 조합 0건 ({opt_type}조합형)",
+            }
 
     payload = {
-        "type": 1,
+        "type": opt_type,
         "isStockManage": True,
-        "independent": {"recommendedOptNo": rec_opt_no, "details": details},
-        "combination": None,
+        "independent": independent,
+        "combination": combination,
     }
-    await client.set_recommended_options(goods_no, payload)
+    # ESM 이미지 propagation 대기 — 등록 직후 옵션 PUT 시 "잘못된 상품 이미지" 응답.
+    # 점진적 대기 (30s/60s/90s) + 최대 3회 재시도. 운영 환경 real CDN 이미지는 보통 빠르게 propagation.
+    last_exc: Exception | None = None
+    for wait in (0, 30, 60):
+        if wait > 0:
+            logger.warning(
+                f"[ESM] 옵션 PUT 이미지 propagation 대기 {wait}s 후 재시도 (goods={goods_no})"
+            )
+            await asyncio.sleep(wait)
+        try:
+            await client.set_recommended_options(goods_no, payload)
+            return {
+                "success": True,
+                "type": opt_type,
+                "matched": matched,
+                "requested": requested,
+                "group": group_label,
+            }
+        except RuntimeError as exc:
+            msg = str(exc)
+            # 이미지 propagation 외 다른 에러는 즉시 재발생
+            if "잘못된 상품 이미지" not in msg and "404" not in msg:
+                raise
+            last_exc = exc
+    # 90s 후에도 propagation 미완료 — 운영자 수동 옵션 등록 안내
     return {
-        "success": True,
-        "matched": matched,
-        "requested": len(samba_values),
-        "group": matched_group.get("recommendedOptName"),
+        "success": False,
+        "type": opt_type,
+        "matched": 0,
+        "requested": requested,
+        "message": f"이미지 propagation 90s 후에도 옵션 등록 실패: {last_exc}",
     }

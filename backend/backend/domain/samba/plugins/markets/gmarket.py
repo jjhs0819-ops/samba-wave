@@ -131,12 +131,11 @@ class GMarketMarketPlugin(MarketPlugin):
                 )
 
         # 추천옵션 등록 — samba options 있고 cat_code 있을 때만.
-        # ESM 측 이미지 캐시 propagation 미완료 시 옵션 PUT 거부 → 30s sleep.
+        # register_esm_options 가 이미지 propagation polling (0/30/60s, 최대 90s) 자체 처리.
         if samba_options and goods_no and cat_code:
             try:
                 from backend.domain.samba.proxy.esmplus import register_esm_options
 
-                await asyncio.sleep(30)
                 opt_result = await register_esm_options(
                     client, goods_no, cat_code, samba_options, site="gmarket"
                 )

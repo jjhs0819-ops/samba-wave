@@ -126,12 +126,12 @@ class AuctionPlugin(MarketPlugin):
             except Exception as img_e:
                 logger.warning(f"[옥션] 추가 이미지 설정 실패: {img_e}")
 
-        # 추천옵션 등록 — samba options 있고 cat_code 있을 때만 (image propagation 대기 30s)
+        # 추천옵션 등록 — samba options 있고 cat_code 있을 때만.
+        # register_esm_options 가 이미지 propagation polling (0/30/60s, 최대 90s) 자체 처리.
         if samba_options and goods_no and cat_code:
             try:
                 from backend.domain.samba.proxy.esmplus import register_esm_options
 
-                await asyncio.sleep(30)
                 opt_result = await register_esm_options(
                     client, goods_no, cat_code, samba_options, site="auction"
                 )
