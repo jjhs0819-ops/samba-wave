@@ -699,9 +699,13 @@ class LotteHomePlugin(MarketPlugin):
             except Exception as e:
                 logger.warning(f"[롯데홈쇼핑] 배송지/정책 자동 조회 실패: {e}")
 
-        # 이미지 용량 초과 사전 차단 — 롯데홈쇼핑 [1038] 대응
-        # 호스트 무관 (yswholesale 등 도매업체 CDN 포함) 모든 이미지 점검 후
-        # 900KB 초과 시 R2 리사이즈 미러로 대체
+        # 이미지 정규화 — 롯데홈쇼핑 [1036] 확장자 / [1038] 용량 동시 대응
+        # 1) mirror_external_to_r2: msscdn/lotteon CDN 등 차단/위장-확장자 이미지를
+        #    R2로 선미러 + PIL JPEG 강제 변환 → 매직바이트 ≠ ContentType 거절 차단
+        #    (`.webp` URL을 sanitize 가 `.jpg` 로 rename 만 해도 msscdn 이 webp 본문을
+        #    그대로 응답 → 롯데홈 매직바이트 검증 실패 → 1036 재발. 11번가와 동일 패턴.)
+        # 2) mirror_oversized_to_r2: 그 외 도매업체 CDN(yswholesale 등) 900KB 초과분
+        #    리사이즈 — 1038 방어.
         try:
             from backend.domain.samba.image.service import ImageTransformService
 
@@ -712,20 +716,21 @@ class LotteHomePlugin(MarketPlugin):
             if _images or _detail_images or _detail_html:
                 product = dict(product)  # 원본 dict 변형 방지
                 if _images:
-                    product["images"], _ = await _img_svc.mirror_oversized_to_r2(
-                        _images
-                    )
+                    _imgs1, _ = await _img_svc.mirror_external_to_r2(_images)
+                    product["images"], _ = await _img_svc.mirror_oversized_to_r2(_imgs1)
                 if _detail_images:
+                    _dimgs1, _ = await _img_svc.mirror_external_to_r2(_detail_images)
                     (
                         product["detail_images"],
                         _,
-                    ) = await _img_svc.mirror_oversized_to_r2(_detail_images)
+                    ) = await _img_svc.mirror_oversized_to_r2(_dimgs1)
                 if _detail_html:
+                    _html1 = await _img_svc.mirror_urls_in_html(_detail_html)
                     product["detail_html"] = await _img_svc.mirror_oversized_in_html(
-                        _detail_html
+                        _html1
                     )
         except Exception as e:
-            logger.warning(f"[롯데홈쇼핑] 이미지 리사이즈 단계 오류 — 원본 유지: {e}")
+            logger.warning(f"[롯데홈쇼핑] 이미지 정규화 단계 오류 — 원본 유지: {e}")
 
         goods_data = _transform_for_lottehome(product, category_id, auth_creds)
 

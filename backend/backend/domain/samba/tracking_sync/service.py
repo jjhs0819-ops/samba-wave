@@ -374,7 +374,9 @@ async def enqueue_for_order(order_id: str, *, force: bool = False) -> dict[str, 
                 stale.last_error = "강제 재큐잉으로 만료 처리"
                 stale.updated_at = datetime.now(_UTC)
 
-        owner_device_id = await _resolve_owner_device_id(order.sourcing_account_id)
+        # owner_device_id 미사용 — 어느 PC가 폴링하든 잡을 가져갈 수 있게 None 으로 적재.
+        # 확장앱이 받아 현재 로그인 계정으로 시도 → 다른 계정 주문이면 패스(NO_TRACKING).
+        # 계정 분리 운영은 사용자가 PC별 로그인으로 관리.
 
         # MUSINSA 백엔드 직접 fetch 분기 — ord_opt_no가 DB에 저장돼 있으면
         # 확장앱 탭 폴링 없이 cookie 기반 deliveryInfo API 직접 호출.
@@ -395,7 +397,7 @@ async def enqueue_for_order(order_id: str, *, force: bool = False) -> dict[str, 
             url=url,
             order_id=order.id,
             sourcing_order_number=order.sourcing_order_number,
-            owner_device_id=owner_device_id or None,
+            owner_device_id=None,
             sourcing_account_id=order.sourcing_account_id or None,
         )
 
@@ -406,7 +408,7 @@ async def enqueue_for_order(order_id: str, *, force: bool = False) -> dict[str, 
             sourcing_site=actual_site,
             sourcing_order_number=order.sourcing_order_number,
             sourcing_account_id=order.sourcing_account_id,
-            owner_device_id=owner_device_id or None,
+            owner_device_id=None,
             request_id=request_id,
             status=STATUS_PENDING,
         )

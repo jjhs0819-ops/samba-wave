@@ -47,7 +47,7 @@ DB_CONFIG = dict(
 BACKEND_URL = os.environ.get("SAMBA_BACKEND_URL", "http://localhost:8080")
 SS_BASE = "https://api.commerce.naver.com/external"
 
-MARKETS_6 = ("coupang", "smartstore", "gmarket", "auction", "lotteon", "elevenst")
+MARKETS_6 = ("coupang", "smartstore", "gmarket", "auction", "lotteon", "11st")
 KIDS_KEYWORDS = {"유아", "아동", "주니어", "키즈", "베이비", "kids", "junior", "baby"}
 SYNONYMS: dict[str, list[str]] = {
     "아우터": ["재킷", "점퍼", "코트", "자켓", "바람막이", "패딩", "야상"],
@@ -212,96 +212,107 @@ async def validate_tag(tag: str, token: str, http: httpx.AsyncClient) -> str | N
     return None
 
 
-# ===== TASK 1: 카테고리 매핑 =====
+# ===== TASK 1: 카테고리 매핑 (검증 + 신규 매핑) =====
 async def task_category_mapping(conn: asyncpg.Connection) -> dict:
-    print("\n[TASK 1] 미매핑 카테고리 매핑 시작")
+    """매일 카테고리 매핑 점검.
 
-    # SSG 카테고리 목록 (힌트용)
-    ssg_tree = await conn.fetchrow(
-        "SELECT cat1 FROM samba_category_tree WHERE site_name='SSG'"
+    - 검증: 기존 매핑값이 해당 마켓 cat1 트리에 실재하는지 확인
+            깨진 매핑은 빈값으로 초기화 (자동 재매핑 금지 — 의미 어긋남 위험)
+    - 신규 매핑: 빈값 칸은 해당 마켓 자기 cat1에서 find_best_category로 후보 채움
+                  (기존 깨진 매핑을 자동 교정하지 않음 — 운영자 수동 처리)
+    """
+    print("\n[TASK 1] 카테고리 매핑 검증 + 신규 매핑 시작")
+
+    # 마켓별 cat1 트리 로드 (예전 버그: SSG 트리를 5대 마켓에 공통 사용 → 마켓별로 수정)
+    market_cats: dict[str, list[str]] = {}
+    market_sets: dict[str, set[str]] = {}
+    for m in MARKETS_6:
+        r = await conn.fetchrow(
+            "SELECT cat1 FROM samba_category_tree WHERE site_name=$1", m
+        )
+        cat1: list[str] = []
+        if r and r["cat1"]:
+            cat1 = json.loads(r["cat1"]) if isinstance(r["cat1"], str) else r["cat1"]
+        market_cats[m] = cat1
+        market_sets[m] = set(cat1)
+        print(f"  트리 로드: {m} = {len(cat1):,}건")
+
+    # 전체 매핑 행 조회
+    rows = await conn.fetch(
+        "SELECT id, source_site, source_category, target_mappings::text AS tm "
+        "FROM samba_category_mapping ORDER BY source_site, source_category"
     )
-    ssg_cats: list[str] = []
-    if ssg_tree and ssg_tree["cat1"]:
-        ssg_cats = (
-            json.loads(ssg_tree["cat1"])
-            if isinstance(ssg_tree["cat1"], str)
-            else ssg_tree["cat1"]
-        )
-
-    # 11번가 카테고리 목록
-    tree_11st = await conn.fetchrow(
-        "SELECT cat1 FROM samba_category_tree WHERE site_name='11st'"
-    )
-    cats_11st: list[str] = []
-    if tree_11st and tree_11st["cat1"]:
-        cats_11st = (
-            json.loads(tree_11st["cat1"])
-            if isinstance(tree_11st["cat1"], str)
-            else tree_11st["cat1"]
-        )
-
-    # 미매핑 항목 조회 (6대 마켓 중 하나라도 없는 경우)
-    rows = await conn.fetch("""
-        SELECT id, source_site, source_category, target_mappings::text AS tm
-        FROM samba_category_mapping
-        WHERE NOT (
-            (target_mappings::jsonb ? 'coupang') AND (target_mappings::jsonb->>'coupang') > ''
-            AND (target_mappings::jsonb ? 'smartstore') AND (target_mappings::jsonb->>'smartstore') > ''
-            AND (target_mappings::jsonb ? 'gmarket') AND (target_mappings::jsonb->>'gmarket') > ''
-            AND (target_mappings::jsonb ? 'auction') AND (target_mappings::jsonb->>'auction') > ''
-            AND (target_mappings::jsonb ? 'lotteon') AND (target_mappings::jsonb->>'lotteon') > ''
-            AND (target_mappings::jsonb ? 'elevenst') AND (target_mappings::jsonb->>'elevenst') > ''
-        )
-        ORDER BY source_site, source_category
-    """)
 
     if not rows:
-        print("  미매핑 없음 — 완료")
-        return {"mapped": 0, "failed": 0}
+        print("  매핑 행 없음 — 완료")
+        return {"mapped": 0, "failed": 0, "broken": 0, "cleared": 0}
 
-    print(f"  처리 대상: {len(rows):,}개")
-    mapped = failed = 0
+    print(f"  점검 대상: {len(rows):,}개")
+    mapped = failed = broken = cleared = 0
+    broken_samples: list[tuple] = []
 
     for r in rows:
         tm = json.loads(r["tm"]) if r["tm"] else {}
         source_cat = r["source_category"]
+        changed = False
 
-        # 기존 매핑을 힌트로 수집 (SSG 포함)
-        hint_cats = [v for k, v in tm.items() if v and k != "elevenst"]
+        # A. 검증: 기존 매핑값이 해당 마켓 트리에 실재? 깨졌으면 비움(자동 재매핑 금지)
+        for market in MARKETS_6:
+            val = (tm.get(market) or "").strip()
+            ms = market_sets[market]
+            if not val or not ms:
+                continue
+            if val not in ms:
+                # 트리에 실재하지 않는 깨진 매핑 — 의미 어긋난 자동 교정 위험 있어
+                # 빈값으로 초기화하고 운영자가 매핑 페이지에서 수동 설정하도록 유도
+                broken += 1
+                broken_samples.append((r["source_site"], source_cat, market, val))
+                tm[market] = ""
+                cleared += 1
+                changed = True
 
-        # 5대 마켓 (coupang, smartstore, gmarket, auction, lotteon) 매핑
-        for market in ("coupang", "smartstore", "gmarket", "auction", "lotteon"):
+        # B. 신규 매핑: 빈값 칸만 채움 (각 마켓 자기 cat1에서 후보 선택)
+        for market in MARKETS_6:
             if tm.get(market):
                 continue
+            cats = market_cats[market]
+            if not cats:
+                continue
             hints = [v for k, v in tm.items() if v and k != market]
-            best = find_best_category(ssg_cats, source_cat, hints)
+            best = find_best_category(cats, source_cat, hints)
             if best:
                 tm[market] = best
+                changed = True
 
-        # elevenst 매핑 (11번가 카테고리 트리 사용)
-        if not tm.get("elevenst") and cats_11st:
-            hint_cats = [v for k, v in tm.items() if v and k != "elevenst"]
-            best_11st = find_best_category(cats_11st, source_cat, hint_cats)
-            if best_11st:
-                tm["elevenst"] = best_11st
-
-        # 하나라도 신규 매핑됐으면 업데이트
         all_mapped = all(tm.get(m) for m in MARKETS_6)
-        if any(tm.get(m) for m in MARKETS_6):
-            await conn.execute(
-                "UPDATE samba_category_mapping SET target_mappings=$1::json, updated_at=NOW() WHERE id=$2",
-                json.dumps(tm, ensure_ascii=False),
-                r["id"],
-            )
-            if all_mapped:
-                mapped += 1
-            else:
-                failed += 1  # 일부만 매핑됨
+        if all_mapped:
+            mapped += 1
+        elif any(tm.get(m) for m in MARKETS_6):
+            failed += 1  # 부분 매핑
         else:
             failed += 1
 
-    print(f"  완료: {mapped:,}개 전체매핑, {failed:,}개 부분/미매핑")
-    return {"mapped": mapped, "failed": failed}
+        if changed:
+            await conn.execute(
+                "UPDATE samba_category_mapping SET target_mappings=$1::jsonb, updated_at=NOW() WHERE id=$2",
+                json.dumps(tm, ensure_ascii=False),
+                r["id"],
+            )
+
+    print(
+        f"  완료: 전체매핑 {mapped:,} / 부분·미매핑 {failed:,} / "
+        f"깨진매핑 {broken:,}건 비움 (영향행 {cleared:,})"
+    )
+    if broken_samples:
+        print("  [깨진 매핑 샘플 — 운영자 수동 매핑 필요]")
+        for s in broken_samples[:20]:
+            print(f"    {s[0]} | {s[1]} | {s[2]}: '{s[3]}'")
+    return {
+        "mapped": mapped,
+        "failed": failed,
+        "broken": broken,
+        "cleared": cleared,
+    }
 
 
 # ===== TASK 2: AI 태그 설정 =====

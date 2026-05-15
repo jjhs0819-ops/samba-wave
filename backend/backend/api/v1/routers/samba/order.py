@@ -3887,13 +3887,20 @@ async def sync_orders_from_markets(
                 #   기본수수료는 카테고리 fee_rate × slAmt, PCS는 가격비교 채널만 부과,
                 #   조정(당사부담환급)은 prSfcoShrAmtSum 으로 대체.
                 # 정산공식: pymtAmt = actualAmt − (bseCmsn + pcsCmsn + dvCmsn − ajstDcAmt)
-                sl_amt_map: dict[str, int] = {}  # 총판매금액 (slAmt)
-                fvr_amt_map: dict[str, int] = {}  # 전체 할인합
-                actual_amt_map: dict[str, int] = {}  # 고객결제금액 (actualAmt)
-                lotte_dc_map: dict[str, int] = {}  # 당사부담할인 (prSfcoShrAmtSum)
+                # 키: (odNo, odSeq) — 같은 odNo에 여러 옵션/수량이 묶인 멀티라인 주문에서
+                # odNo만 사용하면 한 라인의 값이 다른 라인을 덮어써 모든 라인의 결제/정산 금액이
+                # 동일해지는 버그가 발생함(2026-05-15 수정).
+                sl_amt_map: dict[tuple[str, str], int] = {}  # 총판매금액 (slAmt)
+                fvr_amt_map: dict[tuple[str, str], int] = {}  # 전체 할인합
+                actual_amt_map: dict[
+                    tuple[str, str], int
+                ] = {}  # 고객결제금액 (actualAmt)
+                lotte_dc_map: dict[
+                    tuple[str, str], int
+                ] = {}  # 당사부담할인 (prSfcoShrAmtSum)
                 ch_no_map: dict[
                     str, str
-                ] = {}  # 채널번호 (chNo) — PCS 수수료 부과 판단용
+                ] = {}  # 채널번호 (chNo) — 주문 단위라 odNo 키 유지
 
                 def _pick(d: dict, *keys: str) -> int:
                     for k in keys:
@@ -3909,19 +3916,22 @@ async def sync_orders_from_markets(
                     _od_no = str(ro.get("odNo") or "")
                     if not _od_no:
                         continue
+                    _od_seq = str(ro.get("odSeq", "1") or "1")
+                    _line_key = (_od_no, _od_seq)
                     _slamt = _pick(ro, "slAmt", "slPrc")
                     _fvr = _pick(ro, "fvrAmtSum")
                     _actual = _pick(ro, "actualAmt")
                     _lotte_dc = _pick(ro, "prSfcoShrAmtSum")
                     _ch_no = str(ro.get("chNo") or "")
-                    if _slamt > sl_amt_map.get(_od_no, 0):
-                        sl_amt_map[_od_no] = _slamt
-                    if _fvr > fvr_amt_map.get(_od_no, 0):
-                        fvr_amt_map[_od_no] = _fvr
-                    if _actual > actual_amt_map.get(_od_no, 0):
-                        actual_amt_map[_od_no] = _actual
-                    if _lotte_dc > lotte_dc_map.get(_od_no, 0):
-                        lotte_dc_map[_od_no] = _lotte_dc
+                    # 라인(odSeq) 단위 저장 — 같은 odNo의 다른 옵션/수량이 서로 덮어쓰지 않도록.
+                    if _slamt > sl_amt_map.get(_line_key, 0):
+                        sl_amt_map[_line_key] = _slamt
+                    if _fvr > fvr_amt_map.get(_line_key, 0):
+                        fvr_amt_map[_line_key] = _fvr
+                    if _actual > actual_amt_map.get(_line_key, 0):
+                        actual_amt_map[_line_key] = _actual
+                    if _lotte_dc > lotte_dc_map.get(_line_key, 0):
+                        lotte_dc_map[_line_key] = _lotte_dc
                     if _ch_no:
                         ch_no_map[_od_no] = _ch_no
                 logger.info(
@@ -5297,9 +5307,11 @@ async def sync_orders_from_markets(
                 # 정산 API(SettleItmdSales) 매칭으로 이미 revenue가 세팅됐으면 확정값이므로 건드리지 않음.
                 if order_data.get("source") == "lotteon":
                     _od_no = str(order_data.get("od_no") or "")
-                    _slamt = int(sl_amt_map.get(_od_no, 0))
-                    _actual = int(actual_amt_map.get(_od_no, 0))
-                    _lotte_dc = int(lotte_dc_map.get(_od_no, 0))
+                    _od_seq = str(order_data.get("od_seq", "1") or "1")
+                    _line_key = (_od_no, _od_seq)
+                    _slamt = int(sl_amt_map.get(_line_key, 0))
+                    _actual = int(actual_amt_map.get(_line_key, 0))
+                    _lotte_dc = int(lotte_dc_map.get(_line_key, 0))
                     _ch_no = ch_no_map.get(_od_no, "")
 
                     # 가격비교 채널 = PCS 수수료 부과 대상
@@ -5312,7 +5324,7 @@ async def sync_orders_from_markets(
                         _customer_paid = (
                             _actual
                             if _actual > 0
-                            else max(0, _slamt - int(fvr_amt_map.get(_od_no, 0)))
+                            else max(0, _slamt - int(fvr_amt_map.get(_line_key, 0)))
                         )
                         order_data["total_payment_amount"] = _customer_paid
 

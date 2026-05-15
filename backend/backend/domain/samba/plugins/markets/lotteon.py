@@ -1819,6 +1819,24 @@ class LotteonPlugin(MarketPlugin):
             f"extras.shippingType={extras.get('shippingType')!r}"
         )
 
+        # ── 차단 CDN 사전 R2 미러링 (HEAD 검증 0장 회피) ──
+        # GS샵(asset.m-gs.kr / static.m-gs.kr), 무신사(msscdn.net),
+        # 롯데온(contents.lotteon.com) 등 핫링크 차단 도메인은 일반 httpx HEAD에
+        # 403/거절을 내려 filter_alive_urls가 전부 드롭 → "유효한 이미지 0장" 가드 발동.
+        # 롯데홈쇼핑(lottehome.py)과 동일하게 R2로 선미러해 R2 URL로 교체한다.
+        # _HOTLINK_BLOCKED_HOSTS에 등록된 도메인만 미러 — 다른 소싱처는 원본 유지.
+        try:
+            from backend.domain.samba.image.service import ImageTransformService
+
+            _img_svc = ImageTransformService()
+            if product_copy.get("images"):
+                _mirrored, _ = await _img_svc.mirror_external_to_r2(
+                    product_copy["images"]
+                )
+                product_copy["images"] = _mirrored
+        except Exception as e:
+            logger.warning(f"[롯데ON] 차단 CDN R2 미러링 실패 — 원본 유지: {e}")
+
         # ── 외부 이미지 URL 사전 검증 (9999 회피) ──
         # 죽은 URL 또는 거부 확장자가 origImgFileNm에 들어가면 롯데ON이
         # "URL 형식이 올바르지 않습니다(9999)"로 응답한다.

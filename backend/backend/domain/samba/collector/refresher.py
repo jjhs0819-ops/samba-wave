@@ -361,6 +361,10 @@ def _get_rotated_proxy(site: str = "MUSINSA") -> str | None:
         logger.info(f"[autotune][{site}] {_msg}")
         now = datetime.now(timezone.utc)
         kst = now + timedelta(hours=9)
+        # 메시지에 [IP로테이션] [{site}] 태그를 붙여 프론트 extractSiteFromLog가
+        # site를 추출하도록 함 — PC분담 필터(filterSources) 자동 적용으로,
+        # 담당 소싱처가 아닌 PC 화면에서는 해당 IP 로테이션 로그가 숨김 처리된다.
+        _msg = f"[IP로테이션] [{site}] -> {label} ({_from}~{_to}건)"
         _refresh_log_buffer.append(
             {
                 "ts": now.isoformat(),
