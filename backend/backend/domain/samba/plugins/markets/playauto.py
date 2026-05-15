@@ -293,6 +293,19 @@ class PlayAutoPlugin(MarketPlugin):
 
         return product
 
+    # PlayAuto EMP 서버가 직접 가져갈 수 없어 R2 미러가 필요한 도메인 화이트리스트.
+    # 실측(2026-05-15) 기준: GSShop(asset.m-gs.kr 등) / FashionPlus 미러링 시 PlayAuto가
+    # 응답 못 주고 90초+ 행업 → R2 업로드 필요.
+    # MUSINSA(msscdn) / ABCmart(a-rt.com) / LOTTEON(contents.lotteon.com) / SSG는
+    # 직접 URL로 1~16초만에 등록 성공 — R2 우회 불필요.
+    _R2_REQUIRED_HOSTS = (
+        "asset.m-gs.kr",
+        "static.m-gs.kr",
+        "gsshop.com",
+        "fashionplus.co.kr",
+        "img.fashionplus.co.kr",
+    )
+
     async def _ensure_accessible(
         self,
         dl_client: httpx.AsyncClient,
@@ -301,10 +314,23 @@ class PlayAutoPlugin(MarketPlugin):
         public_url: str,
         image_url: str,
     ) -> str:
-        """소싱처 이미지 → R2 업로드 (EMP 서버에서 접근 가능하도록)."""
-        # R2 이미지도 스킵하지 않음 — 확장자 없는 WebP가 있으므로
-        # v5 캐시에 이미 있으면 head_object에서 빠르게 반환됨
+        """소싱처 이미지 → 필요한 경우에만 R2 업로드.
 
+        - 이미 우리 도메인(/images/transformed/, /images/playauto/v5/) → 그대로
+        - 화이트리스트 도메인(GSShop/FashionPlus) → R2 업로드
+        - 그 외(무신사/ABCmart/롯데ON 등) → 원본 URL 그대로 (PlayAuto 직접 fetch 가능)
+        """
+        host = (urlparse(image_url).netloc or "").lower()
+
+        # 이미 우리 도메인이거나 R2 미러본이면 그대로 사용
+        if "samba-wave.co.kr" in host:
+            return image_url
+
+        # 화이트리스트에 없으면 원본 URL 그대로 (PlayAuto가 직접 fetch 가능)
+        if not any(blocked in host for blocked in self._R2_REQUIRED_HOSTS):
+            return image_url
+
+        # 차단 도메인 — R2 업로드 필요
         # 해시 기반 중복 방지 — 동일 소싱처 URL은 같은 R2 파일로
         url_hash = hashlib.md5(image_url.encode()).hexdigest()[:12]
         ext = ".jpg"
@@ -325,7 +351,6 @@ class PlayAutoPlugin(MarketPlugin):
         except Exception:
             pass
 
-        # 소싱처 이미지는 무조건 R2 업로드 (EMP 서버에서 소싱처 직접 접근 불가)
         return await self._upload_single_image(
             dl_client, s3_client, bucket_name, public_url, image_url, r2_key
         )
