@@ -85,10 +85,10 @@ export function useSmsMessage(accounts: SambaMarketAccount[]) {
     })
     const sellerName = matchedAccount?.business_name || matchedAccount?.seller_id || matchedAccount?.account_label || ''
     let marketName = matchedAccount?.market_name || order.channel_name || ''
-    // 플레이오토 주문은 실제 판매처가 sales_channel_alias(예: GSSHOP(고경))에 있음 → 그 별칭으로 치환
+    // 플레이오토 주문은 실제 판매처가 sales_channel_alias(예: GSSHOP(고경))에 있음 → 판매처명만 추출(괄호 안 계정명 제외)
     if (marketName.includes('플레이오토')) {
       const alias = String(order.sales_channel_alias || '').trim()
-      if (alias) marketName = alias
+      if (alias) marketName = alias.split('(')[0].trim() || alias
     }
     const variables: Record<string, string> = {
       sellerName,
