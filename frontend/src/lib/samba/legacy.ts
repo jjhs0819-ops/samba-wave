@@ -624,6 +624,20 @@ export interface RefreshResult {
   details?: RefreshDetail[]
 }
 
+export interface BrandScanResult {
+  categories: { categoryCode: string; path: string; count: number; category1: string; category2: string; category3: string }[]
+  total: number
+  groupCount: number
+}
+
+export interface BrandScanProgress {
+  job_id: string
+  status: 'running' | 'done' | 'error'
+  result?: BrandScanResult | null
+  error?: string | null
+  meta?: Record<string, unknown>
+}
+
 export const collectorApi = {
   // Filters
   listFilters: () => request<SambaSearchFilter[]>(`${SAMBA_PREFIX}/collector/filters`),
@@ -666,12 +680,29 @@ export const collectorApi = {
   gsshopScanProgress: () =>
     request<{ stage: string; keyword?: string; page?: number; products?: number; detail_ok?: number; detail_fail?: number; detail_total?: number }>(
       `${SAMBA_PREFIX}/collector/gsshop-scan-progress`),
-  brandScan: (brand: string, gf?: string, keyword?: string, source_site?: string, selected_brands?: string[], brand_ids?: string[], brand_total?: number, options?: Record<string, boolean>) =>
-    request<{ categories: { categoryCode: string; path: string; count: number; category1: string; category2: string; category3: string }[]; total: number; groupCount: number }>(
+  // SSG 는 비동기 job 응답 ({job_id, status}) — Cloudflare 100s origin timeout 우회.
+  // 그 외 사이트는 기존 동기 응답 ({categories, total, groupCount}).
+  // brandScan 호출자는 항상 BrandScanResult 를 받음 — job_id 응답이면 polling 으로 변환.
+  brandScan: async (brand: string, gf?: string, keyword?: string, source_site?: string, selected_brands?: string[], brand_ids?: string[], brand_total?: number, options?: Record<string, boolean>): Promise<BrandScanResult> => {
+    const res = await request<BrandScanResult | { job_id: string; status: 'running' }>(
       `${SAMBA_PREFIX}/collector/brand-scan`,
       { method: "POST", body: JSON.stringify({ brand, gf: gf || 'A', keyword: keyword || '', source_site: source_site || 'MUSINSA', selected_brands: selected_brands || [], brand_ids: brand_ids || [], brand_total: brand_total || 0, options: options || {} }) },
       { timeoutMs: 600_000 },
-    ),
+    )
+    if (!('job_id' in res)) return res
+    // 2s 간격 polling. 최대 600s 대기.
+    const jobId = res.job_id
+    const maxAttempts = 300
+    for (let attempts = 0; attempts < maxAttempts; attempts += 1) {
+      await new Promise<void>(r => setTimeout(r, 2000))
+      const p = await request<BrandScanProgress>(
+        `${SAMBA_PREFIX}/collector/brand-scan-progress/${encodeURIComponent(jobId)}`,
+      )
+      if (p.status === 'done' && p.result) return p.result
+      if (p.status === 'error') throw new Error(p.error || '스캔 실패')
+    }
+    throw new Error('스캔 시간 초과 (600초)')
+  },
   brandCreateGroups: (data: { brand: string; brand_name?: string; gf?: string; categories: { categoryCode: string; path: string; count: number }[]; requested_count_per_group?: number; real_total?: number; applied_policy_id?: string; options?: Record<string, boolean>; source_site?: string; selected_brands?: string[]; brand_ids?: string[] }) =>
     request<{ created: number; groups: { id: string; name: string; count: number; path: string }[] }>(
       `${SAMBA_PREFIX}/collector/brand-create-groups`,
