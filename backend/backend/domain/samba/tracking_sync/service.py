@@ -427,6 +427,8 @@ async def enqueue_pending_orders(
     queued = 0
     skipped = 0
     errors: list[str] = []
+    # 이번 배치에서 생성/재사용된 잡 id — 프론트가 모달에 고정 표시할 때 사용
+    job_ids: list[str] = []
 
     # KST 캘린더 N일 (오늘 포함, 즉 days=7 → 오늘 + 이전 6일)
     _KST = timezone(timedelta(hours=9))
@@ -490,6 +492,9 @@ async def enqueue_pending_orders(
     for order in orders:
         try:
             res = await enqueue_for_order(order.id, force=force)
+            jid = res.get("jobId")
+            if jid:
+                job_ids.append(jid)
             if res.get("skipped"):
                 skipped += 1
             elif res.get("success"):
@@ -508,6 +513,7 @@ async def enqueue_pending_orders(
         "queued": queued,
         "skipped": skipped,
         "errors": errors[:20],
+        "job_ids": job_ids,
     }
 
 

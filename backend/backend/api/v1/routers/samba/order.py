@@ -927,9 +927,9 @@ async def dashboard_stats(
         else:
             reg_count_map[d_str] = max(running, 0)
 
-    # 일별 누적 수집상품수: 전체 수집수 - (그날 이후 신규수집 합)
-    #   - 전체 수집수: samba_collected_product 전체 카운트
-    #   - 일별 신규수집: created_at KST 기준 일별 카운트
+    # 일별 누적 수집상품수
+    #   - 오늘: 현재 시점 전체 수집상품수
+    #   - 과거 6일: 해당일 24시(KST) 기준 누적 카운트 = count(*) WHERE created_at < (해당일+1일 00시 KST)
     collected_total_q = select(func.count(SambaCollectedProduct.id))
     if tenant_id is not None:
         collected_total_q = collected_total_q.where(
@@ -940,35 +940,27 @@ async def dashboard_stats(
         )
     collected_total = int((await session.execute(collected_total_q)).scalar() or 0)
 
-    created_date = SambaCollectedProduct.created_at + text("INTERVAL '9 hours'")
-    new_col_q = (
-        select(
-            func.date(created_date).label("day"),
-            func.count().label("cnt"),
-        )
-        .where(
-            SambaCollectedProduct.created_at != None,  # noqa: E711
-            created_date >= week_ago,
-        )
-        .group_by(func.date(created_date))
-    )
-    if tenant_id is not None:
-        new_col_q = new_col_q.where(
-            or_(
-                SambaCollectedProduct.tenant_id == tenant_id,
-                SambaCollectedProduct.tenant_id == None,  # noqa: E711
-            )
-        )
-    new_col_rows = (await session.execute(new_col_q)).all()
-    new_col_map = {str(r.day): int(r.cnt) for r in new_col_rows}
-
     collected_count_map: dict[str, int] = {today_str: collected_total}
-    running_c = collected_total
-    for i in range(5, -1, -1):
+
+    # 해당일 24시(KST) = created_at(KST) < 다음날 00시(KST) = created_at + 9h < 다음날 00시
+    created_kst = SambaCollectedProduct.created_at + text("INTERVAL '9 hours'")
+    for i in range(6):
         d_str = past_dates[i]
-        next_d_str = past_dates[i + 1] if i + 1 < 6 else today_str
-        running_c = running_c - int(new_col_map.get(next_d_str, 0))
-        collected_count_map[d_str] = max(running_c, 0)
+        next_day_str = (week_ago + timedelta(days=i + 1)).strftime("%Y-%m-%d")
+        cutoff_q = select(func.count(SambaCollectedProduct.id)).where(
+            SambaCollectedProduct.created_at != None,  # noqa: E711
+            created_kst < text(f"TIMESTAMP '{next_day_str} 00:00:00'"),
+        )
+        if tenant_id is not None:
+            cutoff_q = cutoff_q.where(
+                or_(
+                    SambaCollectedProduct.tenant_id == tenant_id,
+                    SambaCollectedProduct.tenant_id == None,  # noqa: E711
+                )
+            )
+        collected_count_map[d_str] = int(
+            (await session.execute(cutoff_q)).scalar() or 0
+        )
 
     for w in weekly:
         w["newRegistered"] = int(new_reg_map.get(w["date"], 0))
@@ -1460,6 +1452,84 @@ async def list_recent_tracking_sync_jobs(
             for j, order_number, customer_name, channel_name, _os, _ss, account_label, _otn, paid_at in result_rows
         ],
     }
+
+
+@router.post("/tracking-sync/by-ids")
+async def list_tracking_sync_jobs_by_ids(body: dict) -> dict:
+    """송장수집 배치에 속한 잡들만 조회 — 모달 "이번 배치 고정" 용도.
+
+    프론트가 일괄 송장수집 직후 받은 job_ids 를 그대로 전달.
+    송장 채워진 행도 응답에 포함(상태 변화 추적용)하고, 순서는 paid_at ASC 로 고정.
+    """
+    from sqlalchemy import select
+    from sqlalchemy.orm import aliased
+    from backend.db.orm import get_read_session
+    from backend.domain.samba.order.model import SambaOrder
+    from backend.domain.samba.sourcing_account.model import SambaSourcingAccount
+    from backend.domain.samba.tracking_sync.model import SambaTrackingSyncJob
+
+    raw_ids = body.get("job_ids") or []
+    if not isinstance(raw_ids, list):
+        raise HTTPException(400, "job_ids 는 배열이어야 합니다")
+    job_ids: list[str] = [str(x) for x in raw_ids if x]
+    if not job_ids:
+        return {"counts": {}, "recent": []}
+    if len(job_ids) > 1000:
+        job_ids = job_ids[:1000]
+
+    async with get_read_session() as session:
+        from sqlalchemy import func
+
+        O = aliased(SambaOrder)
+        A = aliased(SambaSourcingAccount)
+        date_col = func.coalesce(O.paid_at, O.created_at)
+        stmt = (
+            select(
+                SambaTrackingSyncJob,
+                O.order_number,
+                O.customer_name,
+                O.channel_name,
+                A.account_label,
+                O.paid_at,
+            )
+            .join(O, O.id == SambaTrackingSyncJob.order_id, isouter=True)
+            .join(A, A.id == SambaTrackingSyncJob.sourcing_account_id, isouter=True)
+            .where(SambaTrackingSyncJob.id.in_(job_ids))
+            .order_by(date_col.asc())
+        )
+        raw_rows = (await session.execute(stmt)).all()
+
+    counts: dict[str, int] = {}
+    items = []
+    for row in raw_rows:
+        j = row[0]
+        order_number = row[1]
+        customer_name = row[2]
+        channel_name = row[3]
+        account_label = row[4]
+        paid_at = row[5]
+        counts[j.status] = counts.get(j.status, 0) + 1
+        items.append(
+            {
+                "id": j.id,
+                "orderId": j.order_id,
+                "orderNumber": order_number or "",
+                "customerName": customer_name or "",
+                "channelName": channel_name or "",
+                "site": j.sourcing_site,
+                "sourcingOrderNumber": j.sourcing_order_number,
+                "sourcingAccountLabel": account_label or "",
+                "status": j.status,
+                "courier": j.scraped_courier,
+                "tracking": j.scraped_tracking,
+                "lastError": j.last_error,
+                "attempts": j.attempts,
+                "updatedAt": j.updated_at.isoformat() if j.updated_at else None,
+                "paidAt": paid_at.isoformat() if paid_at else None,
+            }
+        )
+
+    return {"counts": counts, "recent": items}
 
 
 @router.get("/cancel-alert-count")
@@ -6418,7 +6488,7 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
         "30": "국내배송중",
         "40": "배송완료",
         "50": "구매확정",
-        "90": "취소",
+        "90": "취소완료",
     }
     status = status_map.get(step_cd, "pending")
     shipping_status = shipping_map.get(step_cd, "출고지시")

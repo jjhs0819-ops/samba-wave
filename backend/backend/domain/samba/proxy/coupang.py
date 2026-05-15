@@ -1311,9 +1311,7 @@ class CoupangClient:
         """
         # docs 제약: 조회 기간 최대 7일 (쿠팡 inquiryStartAt/EndAt inclusive)
         if days > 7:
-            logger.warning(
-                f"[쿠팡] CS 문의 조회 days={days} 가 7 초과 — 7일로 clamp"
-            )
+            logger.warning(f"[쿠팡] CS 문의 조회 days={days} 가 7 초과 — 7일로 clamp")
             days = 7
 
         now = datetime.now(timezone.utc)

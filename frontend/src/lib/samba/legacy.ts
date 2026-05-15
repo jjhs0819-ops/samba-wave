@@ -325,7 +325,7 @@ export const orderApi = {
       { method: 'POST' },
     ),
   syncTrackingBulk: (limit = 500, days = 7, force = false) =>
-    request<{ success: boolean; queued: number; skipped: number; errors: string[] }>(
+    request<{ success: boolean; queued: number; skipped: number; errors: string[]; job_ids: string[] }>(
       `${SAMBA_PREFIX}/orders/sync-tracking/bulk?limit=${limit}&days=${days}&force=${force}`,
       { method: 'POST' },
     ),
@@ -359,6 +359,30 @@ export const orderApi = {
         updatedAt?: string | null
       }>
     }>(`${SAMBA_PREFIX}/orders/tracking-sync/recent?limit=${limit}`),
+  listTrackingSyncJobsByIds: (jobIds: string[]) =>
+    request<{
+      counts: Record<string, number>
+      recent: Array<{
+        id: string
+        orderId: string
+        orderNumber: string
+        customerName: string
+        channelName: string
+        site: string
+        sourcingOrderNumber: string
+        sourcingAccountLabel: string
+        status: string
+        courier?: string | null
+        tracking?: string | null
+        lastError?: string | null
+        attempts: number
+        updatedAt?: string | null
+        paidAt?: string | null
+      }>
+    }>(`${SAMBA_PREFIX}/orders/tracking-sync/by-ids`, {
+      method: 'POST',
+      body: JSON.stringify({ job_ids: jobIds }),
+    }),
   getAlarmSettings: () =>
     request<{ hour: number; min: number; sleep_start: string; sleep_end: string }>(`${SAMBA_PREFIX}/orders/alarm-settings`),
   saveAlarmSettings: (data: { hour: number; min: number; sleep_start: string; sleep_end: string }) =>

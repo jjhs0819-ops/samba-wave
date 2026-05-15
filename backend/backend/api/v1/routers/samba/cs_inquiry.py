@@ -420,7 +420,9 @@ async def reply_cs_inquiry(
                         market_sent = True
                         market_msg = "쿠팡 CS 답변 전송 완료"
                     elif not reply_by:
-                        market_msg = "쿠팡 Wing 로그인 ID 미설정 (계정 스토어 ID 입력 필요)"
+                        market_msg = (
+                            "쿠팡 Wing 로그인 ID 미설정 (계정 스토어 ID 입력 필요)"
+                        )
 
             elif inquiry.market == "eBay":
                 from backend.domain.samba.account.model import SambaMarketAccount

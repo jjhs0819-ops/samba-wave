@@ -392,20 +392,32 @@ export default function OrdersPage() {
       paidAt?: string | null
     }>
   } | null>(null)
+  // 이번 송장수집 배치 잡 id 목록 — 모달이 이 id들만 고정 표시하기 위한 키
+  // 비어있으면 기존 recent 풀(7일 미입력 전체) 폴백
+  const [trackingBatchIds, setTrackingBatchIds] = useState<string[]>([])
   const refreshTrackingStatus = useCallback(async () => {
     try {
-      const data = await orderApi.listRecentTrackingSyncJobs(50)
+      const data = trackingBatchIds.length > 0
+        ? await orderApi.listTrackingSyncJobsByIds(trackingBatchIds)
+        : await orderApi.listRecentTrackingSyncJobs(50)
       setTrackingStatusData(data)
     } catch (err) {
       setLogMessages(prev => [...prev, `[송장상태] 조회 실패: ${(err as Error).message}`])
     }
-  }, [])
+  }, [trackingBatchIds])
 
-  // 모달 열릴 때 1회만 조회. 폴링은 하지 않는다 — 큐잉된 잡은 백엔드/확장앱이 알아서 처리.
+  // 모달이 열려있고 처리 중인 잡(PENDING/DISPATCHED)이 있으면 5초 폴링
+  // 배치 id로만 조회하므로 행 추가/제거 없이 셀 값만 갱신 — 리스트 출렁임 없음
   useEffect(() => {
     if (!trackingStatusOpen) return
     refreshTrackingStatus()
-  }, [trackingStatusOpen, refreshTrackingStatus])
+    const interval = setInterval(() => {
+      const inFlight = (trackingStatusData?.counts.PENDING || 0)
+        + (trackingStatusData?.counts.DISPATCHED || 0)
+      if (inFlight > 0) refreshTrackingStatus()
+    }, 5000)
+    return () => clearInterval(interval)
+  }, [trackingStatusOpen, trackingStatusData, refreshTrackingStatus])
 
   const handleTrackingSyncOne = async (o: SambaOrder) => {
     try {
@@ -432,7 +444,8 @@ export default function OrdersPage() {
         `[송장 일괄] 큐 적재 ${fmtNum(res.queued)}건 / 스킵 ${fmtNum(res.skipped)}건 / 오류 ${fmtNum(res.errors.length)}건`,
         ...res.errors.slice(0, 5).map(e => `  · ${e}`),
       ])
-      // 적재 직후 상태 모달 자동 오픈 — 큐잉된 잡 목록 1회 표시 (폴링 없음)
+      // 이번 배치 잡 id 목록 저장 — 모달이 이 id들만 고정 표시 + 5초 폴링으로 셀 값만 갱신
+      setTrackingBatchIds(res.job_ids || [])
       setTrackingStatusOpen(true)
       setTimeout(() => { loadOrders() }, 60000)
     } catch (err) {
@@ -533,7 +546,7 @@ export default function OrdersPage() {
           미발송 주문을 소싱처(무신사/롯데/SSG/ABC/GS/패션플러스/나이키/올리브영)에서 추출 → 마켓 전송
         </span>
         <button
-          onClick={() => { setTrackingStatusOpen(true); refreshTrackingStatus() }}
+          onClick={() => { setTrackingBatchIds([]); setTrackingStatusOpen(true) }}
           style={{
             marginLeft: 'auto',
             padding: '6px 14px',
