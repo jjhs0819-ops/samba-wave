@@ -1085,7 +1085,6 @@ class JobWorker:
         success_count = prev_result.get("success", 0) if start_from > 0 else 0
         fail_count = prev_result.get("failed", 0) if start_from > 0 else 0
         skip_count = prev_result.get("skipped", 0) if start_from > 0 else 0
-        failed_pids: list[str] = []  # 재시도 대상
 
         # 상품별 전송 루프 (단건 순차 처리)
         if start_from > 0:
@@ -1312,14 +1311,11 @@ class JobWorker:
             for idx, res in zip(batch, batch_results):
                 if isinstance(res, BaseException):
                     fail_count += 1
-                    failed_pids.append(product_ids[idx])
                 else:
                     _s, _sk, _f, _fp = res
                     success_count += _s
                     skip_count += _sk
                     fail_count += _f
-                    if _fp:
-                        failed_pids.append(_fp)
 
             # OOM 방지: 50건마다 gc + malloc_trim으로 RSS 회수
             if (i_last + 1) % 50 < BATCH_SIZE:
@@ -1347,130 +1343,6 @@ class JobWorker:
                     await session.rollback()
                 except Exception as exc:
                     logger.warning(f"[잡워커] 세션 롤백 실패: {job.id} — {exc}")
-
-        # 2차 재시도 — 실패 상품만 (건별 독립 세션)
-        retry_success = 0
-        if failed_pids:
-            _add_job_log(job.id, f"재시도 시작 — 실패 {len(failed_pids)}건")
-            await asyncio.sleep(3)  # 세마포어 해제 대기
-            for ri, pid in enumerate(failed_pids):
-                from backend.domain.samba.emergency import is_emergency_stopped
-
-                if (
-                    is_emergency_stopped()
-                    or is_cancel_requested(job.id)
-                    or await repo.is_cancelled(job.id)
-                ):
-                    clear_cancel_transmit(job.id)  # 이 잡 플래그만 — __all__ 유지
-                    clear_emergency_stop()
-                    break
-                try:
-                    async with get_write_session() as retry_session:
-                        retry_cp = SambaCollectedProductRepository(retry_session)
-                        prod = await retry_cp.get_async(pid)
-                        site_pid = prod.site_product_id if prod else ""
-                        _source = (prod.source_site or "").upper() if prod else ""
-                        _brand = (prod.brand or "") if prod else ""
-                        _style = (prod.style_code or "") if prod else ""
-                        _raw_name = (prod.name or "") if prod else pid[-8:]
-                        prod_name = f"{_brand} {_raw_name}".strip()[:35]
-                        if _style:
-                            prod_name = f"{prod_name} {_style}"
-                        if site_pid:
-                            prod_name = f"{prod_name} ({site_pid})"
-                        if _source:
-                            prod_name = f"[{_source}] {prod_name}"
-                        retry_svc = SambaShipmentService(
-                            SambaShipmentRepository(retry_session), retry_session
-                        )
-                        prev_fail = fail_count
-                        result = await retry_svc.start_update(
-                            [pid],
-                            update_items,
-                            target_account_ids,
-                            skip_unchanged=skip_unchanged,
-                            # 첫 실행과 동일하게 테트리스 매칭 ON 시 정책 accountIds 필터 우회
-                            skip_policy_account_filter=_tetris_enabled,
-                        )
-                        r2 = (result.get("results", []) or [{}])[0]
-                        tx2 = r2.get("transmit_result", {})
-                        tx2_err = r2.get("transmit_error", {})
-                        any_ok = any(s == "success" for s in tx2.values())
-                        # 전체 차단 사유 (계정별 결과 없이 일찍 return된 경우)
-                        # 예: AI 이미지 미변환, 상품 미존재 등
-                        _all_block_msg = ""
-                        if not tx2:
-                            _all_block_msg = (
-                                str(r2.get("error") or tx2_err.get("_all") or "")
-                            )[:200]
-                        # 갱신 항목 라벨 (price→가격, stock→재고 등)
-                        _item_label_map = {
-                            "price": "가격",
-                            "stock": "재고",
-                            "image": "이미지",
-                            "name": "상품명",
-                            "detail": "상세",
-                            "option": "옵션",
-                            "category": "카테고리",
-                        }
-                        _items_label = (
-                            "·".join(
-                                _item_label_map.get(str(k), str(k))
-                                for k in (update_items or [])
-                            )
-                            or "전체"
-                        )
-                        # 계정 라벨 매핑 (재시도 세션 기준)
-                        retry_acc_repo = SambaMarketAccountRepository(retry_session)
-                        _ok_labels: list[str] = []
-                        _ng_labels: list[str] = []
-                        for _aid, _astatus in tx2.items():
-                            _acc = await retry_acc_repo.get_async(_aid)
-                            _alabel = (
-                                f"{_acc.market_name}({_acc.seller_id or _acc.business_name or '-'})"
-                                if _acc
-                                else str(_aid)
-                            )
-                            if _astatus == "success":
-                                _ok_labels.append(_alabel)
-                            else:
-                                _err = str(tx2_err.get(_aid, "") or "")[:80]
-                                _ng_labels.append(
-                                    f"{_alabel}:{_err}" if _err else _alabel
-                                )
-                        if any_ok:
-                            retry_success += 1
-                            success_count += 1
-                            fail_count = prev_fail - 1
-                            _detail = f"{_items_label} → {', '.join(_ok_labels)} {len(_ok_labels):,}건 성공"
-                            if _ng_labels:
-                                _detail += f", {', '.join(_ng_labels)} 실패"
-                            _add_job_log(
-                                job.id,
-                                f"[재시도 {ri + 1}/{len(failed_pids)}] {prod_name}: 복구 ({_detail})",
-                            )
-                        else:
-                            if _ng_labels:
-                                _detail = (
-                                    f"{_items_label} → {', '.join(_ng_labels)} 재실패"
-                                )
-                            elif _all_block_msg:
-                                _detail = f"{_items_label} → 재실패 ({_all_block_msg})"
-                            else:
-                                _detail = f"{_items_label} → 재실패"
-                            _add_job_log(
-                                job.id,
-                                f"[재시도 {ri + 1}/{len(failed_pids)}] {prod_name}: {_detail}",
-                            )
-                        await retry_session.commit()
-                except Exception as e:
-                    _add_job_log(
-                        job.id, f"[재시도 {ri + 1}/{len(failed_pids)}] {prod_name}: {e}"
-                    )
-            if retry_success > 0:
-                _add_job_log(
-                    job.id, f"재시도 완료 — {retry_success}/{len(failed_pids)}건 복구"
-                )
 
         final_fail = fail_count
         _add_job_log(

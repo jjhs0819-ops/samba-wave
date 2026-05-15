@@ -2561,6 +2561,23 @@ class LotteonPlugin(MarketPlugin):
                                     f"[롯데ON] pdItmsInfo 제거 후에도 실패: {_ea_final}"
                                 )
                                 _reg_exception = _ea_final
+                    elif "등록이 불가한 브랜드" in str(_e):
+                        # 거래처-브랜드-전시카테고리 계약 누락: brdNo 공란으로 1회 재시도
+                        _reg_exception = _e
+                        _orig_brd_no = ""
+                        if data.get("spdLst") and isinstance(data["spdLst"], list):
+                            _spd_b = data["spdLst"][0]
+                            _orig_brd_no = _spd_b.get("brdNo", "") or ""
+                            _spd_b["brdNo"] = ""
+                        logger.info(
+                            f"[롯데ON] 브랜드 불가 fallback — brdNo={_orig_brd_no!r} → '' 재시도 (원인: {_e})"
+                        )
+                        try:
+                            api_result = await client.register_product(data)
+                            _reg_exception = None
+                        except Exception as _eb:
+                            logger.warning(f"[롯데ON] 브랜드 공란 재시도 실패: {_eb}")
+                            _reg_exception = _eb
                     else:
                         raise
                 if _reg_exception is not None:
