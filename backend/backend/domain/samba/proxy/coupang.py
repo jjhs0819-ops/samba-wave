@@ -1120,26 +1120,116 @@ class CoupangClient:
         self,
         shipment_box_ids: list[int],
     ) -> list[dict[str, Any]]:
-        """발주확인 (주문시트 확인).
+        """발주확인 (상품준비중 처리) — ACCEPT → INSTRUCT.
 
-        쿠팡 Wing API: PUT /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/ordersheets/confirmation
+        쿠팡 Wing API:
+          PUT /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/ordersheets/acknowledgement
+          body: {"vendorId": ..., "shipmentBoxIds": [...최대 50...]}
+
+        응답: HTTP 200 고정. body code/data 로 chunk·box 단위 성공/실패 판별.
+          code(or responseCode) 0=성공, 1=일부실패, 99=전체실패.
+          이미 INSTRUCT 이상이면 99 + 개별 실패 메시지 (멱등).
+
+        rate limit: vendorId 단위 5 req/sec → chunk 사이 0.3s sleep.
+        반환: box 단위 결과 리스트 (호출부 변경 폭 최소화 위해 기존 시그니처 유지).
         """
         results: list[dict[str, Any]] = []
-        # 쿠팡은 shipmentBoxId 단위로 확인
-        for box_id in shipment_box_ids:
+        if not shipment_box_ids:
+            return results
+
+        CHUNK = 50
+        path = f"/v2/providers/openapi/apis/api/v4/vendors/{self.vendor_id}/ordersheets/acknowledgement"
+
+        for idx in range(0, len(shipment_box_ids), CHUNK):
+            chunk = shipment_box_ids[idx : idx + CHUNK]
+            if idx > 0:
+                await asyncio.sleep(0.3)
+
+            body = {"vendorId": self.vendor_id, "shipmentBoxIds": chunk}
             try:
-                path = f"/v2/providers/openapi/apis/api/v4/vendors/{self.vendor_id}/ordersheets/{box_id}/confirmation"
-                result = await self._call_api("PUT", path)
-                results.append(
-                    {"shipmentBoxId": box_id, "success": True, "data": result}
-                )
+                resp = await self._call_api("PUT", path, body=body)
             except CoupangApiError as e:
-                logger.warning(f"[쿠팡] 발주확인 실패 (boxId={box_id}): {e}")
-                results.append(
-                    {"shipmentBoxId": box_id, "success": False, "error": str(e)}
+                # _call_api 에서 raise 된 경우 (네트워크/4xx/code==ERROR 등) chunk 전체 실패 처리
+                logger.warning(
+                    f"[쿠팡] 발주확인 chunk 실패 ({len(chunk)}건, idx={idx}): {e}"
                 )
+                for box_id in chunk:
+                    results.append(
+                        {"shipmentBoxId": box_id, "success": False, "error": str(e)}
+                    )
+                continue
+
+            # 응답 형식: 최상위 code/responseCode + data 안에 개별 결과.
+            # 문서·실제 응답 어느 키가 오는지 가변적이므로 두 키 모두 시도.
+            top_code = resp.get("code")
+            if top_code is None:
+                top_code = resp.get("responseCode")
+            data_node = resp.get("data")
+
+            # 1) chunk 전체 성공 (code == 0 / "0" / "SUCCESS")
+            if str(top_code) in ("0", "SUCCESS"):
+                for box_id in chunk:
+                    results.append({"shipmentBoxId": box_id, "success": True})
+                continue
+
+            # 2) data 가 개별 결과 리스트인 경우 — box 단위로 매핑
+            #    문서: data: [{"shipmentBoxId": ..., "succeed": bool, "message": "..."}] 형태로 추정
+            individual: dict[int, tuple[bool, str]] = {}
+            if isinstance(data_node, list):
+                for item in data_node:
+                    if not isinstance(item, dict):
+                        continue
+                    raw_box = item.get("shipmentBoxId")
+                    try:
+                        box_id_i = int(raw_box) if raw_box is not None else None
+                    except (TypeError, ValueError):
+                        box_id_i = None
+                    if box_id_i is None:
+                        continue
+                    succeed_v = item.get("succeed")
+                    if succeed_v is None:
+                        succeed_v = item.get("success")
+                    msg = (
+                        item.get("message")
+                        or item.get("resultMessage")
+                        or item.get("error")
+                        or ""
+                    )
+                    individual[box_id_i] = (bool(succeed_v), str(msg))
+
+            for box_id in chunk:
+                if box_id in individual:
+                    ok, msg = individual[box_id]
+                    if ok:
+                        results.append({"shipmentBoxId": box_id, "success": True})
+                    else:
+                        logger.warning(
+                            f"[쿠팡] 발주확인 실패 (boxId={box_id}): {msg or top_code}"
+                        )
+                        results.append(
+                            {
+                                "shipmentBoxId": box_id,
+                                "success": False,
+                                "error": msg or f"code={top_code}",
+                            }
+                        )
+                else:
+                    # 개별 결과를 못 받았는데 chunk 전체 성공도 아님 → 실패 처리
+                    msg = (
+                        resp.get("message")
+                        or resp.get("resultMessage")
+                        or f"code={top_code}"
+                    )
+                    logger.warning(f"[쿠팡] 발주확인 결과 누락 (boxId={box_id}): {msg}")
+                    results.append(
+                        {"shipmentBoxId": box_id, "success": False, "error": str(msg)}
+                    )
+
+        ok_cnt = sum(1 for r in results if r["success"])
+        chunk_cnt = (len(shipment_box_ids) + CHUNK - 1) // CHUNK
         logger.info(
-            f"[쿠팡] 발주확인 요청: {len(shipment_box_ids)}건, 성공: {sum(1 for r in results if r['success'])}건"
+            f"[쿠팡] 발주확인 요청: {len(shipment_box_ids)}건 (chunk {chunk_cnt}), "
+            f"성공: {ok_cnt}건, 실패: {len(results) - ok_cnt}건"
         )
         return results
 

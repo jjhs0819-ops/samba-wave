@@ -4449,6 +4449,8 @@ async def sync_orders_from_markets(
                     if raw_orders is None:
                         raw_orders = await client.get_orders(days=body.days)
                     logger.info(f"[주문동기화] 쿠팡({label}): {len(raw_orders)}건 조회")
+                    # ACCEPT(결제완료) + 취소/반품요청 없는 건만 자동 발주확인 대상
+                    unconfirmed_box_ids: list[int] = []
                     for ro in raw_orders:
                         try:
                             orders_data.append(
@@ -4457,6 +4459,46 @@ async def sync_orders_from_markets(
                         except Exception as parse_err:
                             logger.warning(f"[주문동기화] 쿠팡 파싱 실패: {parse_err}")
                             continue
+                        if (
+                            (ro.get("status") or "").upper() == "ACCEPT"
+                            and not ro.get("cancelRequests")
+                            and not ro.get("returnRequests")
+                        ):
+                            box_id_raw = ro.get("shipmentBoxId")
+                            try:
+                                if box_id_raw is not None:
+                                    unconfirmed_box_ids.append(int(box_id_raw))
+                            except (TypeError, ValueError):
+                                pass
+
+                    # 발주확인 호출 (ACCEPT → INSTRUCT, 상품준비중)
+                    if unconfirmed_box_ids:
+                        try:
+                            ack_results = await client.confirm_orders(
+                                unconfirmed_box_ids
+                            )
+                            success_box_strs = {
+                                str(r["shipmentBoxId"])
+                                for r in ack_results
+                                if r.get("success")
+                            }
+                            if success_box_strs:
+                                # 로컬 표시도 즉시 상품준비중으로 갱신 (다음 sync 까지 대기 X)
+                                for od in orders_data:
+                                    if (
+                                        od.get("source") == "coupang"
+                                        and od.get("order_number") in success_box_strs
+                                        and od.get("shipping_status") == "결제완료"
+                                    ):
+                                        od["shipping_status"] = "상품준비중"
+                            logger.info(
+                                f"[주문동기화] 쿠팡({label}): "
+                                f"{len(success_box_strs)}/{len(unconfirmed_box_ids)}건 발주확인 완료"
+                            )
+                        except Exception as ce:
+                            logger.warning(
+                                f"[주문동기화] {label}: 쿠팡 발주확인 실패 — {ce}"
+                            )
                 except Exception as e:
                     logger.warning(f"[주문동기화] {label}: 쿠팡 조회 실패 — {e}")
                     results.append(
