@@ -65,30 +65,47 @@ export default function OrdersTopBar(props: Props) {
   return (
     <>
       {notifications.length > 0 && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: '#1A1A1A', border: '2px solid #FF4444', borderRadius: '16px', padding: '2rem', maxWidth: '420px', width: '90%', boxShadow: '0 8px 32px rgba(255,68,68,0.3)' }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: '#1A1A1A', border: '2px solid #FF4444', borderRadius: '16px', padding: '2rem', maxWidth: '440px', width: '90%', boxShadow: '0 8px 32px rgba(255,68,68,0.3)', position: 'relative' }}>
+            {/* X 닫기 (우측 상단) — 단순히 알람 닫기 */}
+            <button
+              aria-label='알람 닫기'
+              title='닫기'
+              onClick={() => setNotifications([])}
+              style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', borderRadius: '6px', color: '#AAA', fontSize: '1.25rem', fontWeight: 700, cursor: 'pointer', lineHeight: 1 }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = '#FF6B6B'; e.currentTarget.style.background = 'rgba(255,107,107,0.1)' }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = '#AAA'; e.currentTarget.style.background = 'transparent' }}
+            >
+              &#10005;
+            </button>
             <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
               <div style={{ fontSize: '3rem', marginBottom: '0.75rem' }}>&#9888;</div>
               <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#FF6B6B', marginBottom: '0.5rem' }}>주문 취소요청 감지</h3>
+              <p style={{ fontSize: '0.875rem', color: '#AAA', lineHeight: 1.5 }}>
+                고객이 취소요청한 주문이 <b style={{ color: '#FF6B6B' }}>{fmtNum(notifications.length)}건</b> 있습니다. 발주·송장 등록 전에 확인해 주세요.
+              </p>
             </div>
-            {notifications.map(n => (
-              <div key={n.id} style={{ background: 'rgba(255,80,80,0.1)', border: '1px solid rgba(255,80,80,0.3)', borderRadius: '8px', padding: '0.75rem 1rem', marginBottom: '0.75rem', color: '#FF6B6B', fontSize: '0.9375rem', fontWeight: 600 }}>
-                {n.message}
-              </div>
-            ))}
-            <button
-              onClick={() => {
-                setNotifications([])
-                setStatusFilter('')
-                setMarketStatus('cancel_requested')
-                setCustomStart('2020-01-01')
-                setCustomEnd(formatDateInput(getKstTodayDate()))
-                setPeriod('')
-              }}
-              style={{ width: '100%', padding: '0.75rem', background: '#FF4444', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '1rem', fontWeight: 700, cursor: 'pointer', marginTop: '0.5rem' }}
-            >
-              취소요청 확인하기
-            </button>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button
+                onClick={() => setNotifications([])}
+                style={{ flex: 1, padding: '0.75rem', background: 'transparent', border: '1px solid #444', borderRadius: '8px', color: '#AAA', fontSize: '0.9375rem', fontWeight: 600, cursor: 'pointer' }}
+              >
+                나중에
+              </button>
+              <button
+                onClick={() => {
+                  setNotifications([])
+                  setStatusFilter('')
+                  setMarketStatus('cancel_requested')
+                  setCustomStart('2020-01-01')
+                  setCustomEnd(formatDateInput(getKstTodayDate()))
+                  setPeriod('')
+                }}
+                style={{ flex: 2, padding: '0.75rem', background: '#FF4444', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.9375rem', fontWeight: 700, cursor: 'pointer' }}
+              >
+                지금 확인하기
+              </button>
+            </div>
           </div>
         </div>
       )}
