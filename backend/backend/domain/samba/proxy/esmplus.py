@@ -416,13 +416,21 @@ class ESMPlusClient:
         place_no = int(product.get("_shipping_place_no", 0) or 0)
         return_place_no = int(product.get("_return_place_no", 0) or 0)
 
+        # 배송비 타입 enum — 1=무료, 2=유료, 3=조건부무료 (ESM API 검증 필수)
+        _DELIVERY_FEE_TYPE_MAP = {"FREE": 1, "PAID": 2, "CONDITIONAL": 3}
+        delivery_fee_type_code = _DELIVERY_FEE_TYPE_MAP.get(
+            delivery_fee_type.upper(), 1
+        )
+
         shipping: dict[str, Any] = {
             "type": shipping_type,
+            "deliveryFeeType": delivery_fee_type_code,
         }
         if company_no:
             shipping["companyNo"] = company_no
+        # 발송정책 번호 — ESM API 가 SiteInfoModel<Int64> 형태(사이트별 dict) 요구
         if dispatch_policy_no:
-            shipping["dispatchPolicyNo"] = dispatch_policy_no
+            shipping["dispatchPolicyNo"] = {site_key: dispatch_policy_no}
         policy_obj: dict[str, Any] = {}
         if place_no:
             policy_obj["placeNo"] = place_no
@@ -431,7 +439,7 @@ class ESMPlusClient:
         if policy_obj:
             shipping["policy"] = policy_obj
 
-        if delivery_fee_type == "PAID" and delivery_base_fee > 0:
+        if delivery_fee_type_code == 2 and delivery_base_fee > 0:
             shipping["fee"] = delivery_base_fee
 
         # 판매기간 (-1=무제한)
@@ -504,6 +512,10 @@ class ESMPlusClient:
         # 주의: ESM Plus API 스펙상 필드명이 "itemAddtionalInfo" (오타 아님)
         # 등록/수정 API: PascalCase 키 (Gmkt, Iac)
         # sell-status API: camelCase 키 (gmkt, iac) — 스펙상 의도적 차이
+        # 성인상품/면세 여부 — ESM API 등록 필수 필드 (대부분 False)
+        is_adult_product = bool(product.get("is_adult_product", False))
+        is_vat_free = bool(product.get("is_vat_free", False))
+
         data: dict[str, Any] = {
             "itemBasicInfo": {
                 "goodsName": {
@@ -523,11 +535,19 @@ class ESMPlusClient:
                 "images": {
                     "basicImgURL": basic_img,
                 },
+                # 상세 — type 2(HTML) 명시. 1=ContentsId, 2=HTML
                 "descriptions": {
                     "kor": {
+                        "type": 2,
                         "html": detail_html,
                     },
                 },
+                # 추천 옵션 — RecommendedOptI 단일 객체 필수.
+                # type 0 = 추천옵션 미사용 (옵션 없는 상품). type 1+ = 별도 API
+                # (POST /item/v1/{goodsNo}/recommended-options) 로 등록.
+                "recommendedOpts": {"type": 0},
+                "isAdultProduct": is_adult_product,
+                "isVatFree": is_vat_free,
             },
         }
 
@@ -540,9 +560,18 @@ class ESMPlusClient:
             data["itemAddtionalInfo"]["optionType"] = option_type
             data["itemAddtionalInfo"]["options"] = option_list
 
-        # 고시정보
+        # 고시정보 — 그룹 번호 + details (등록 필수 필드).
+        # 응답 키: GET .../groups/{no}/codes 의 `codes` 리스트.
+        # 요청 키: details 리스트 (POST /item/v1/goods 본문).
+        # isExtraMark=true 항목 모두 채워야 ESM 등록 검증 통과.
         if official_notice_no:
-            data["itemAddtionalInfo"]["officialNoticeNo"] = official_notice_no
+            notice_items = _build_esm_notice_items(official_notice_no, product)
+            notice_payload: dict[str, Any] = {
+                "officialNoticeNo": official_notice_no,
+            }
+            if notice_items:
+                notice_payload["details"] = notice_items
+            data["itemAddtionalInfo"]["officialNotice"] = notice_payload
 
         # 원산지
         if origin:
@@ -565,23 +594,66 @@ class ESMPlusClient:
 # ------------------------------------------------------------------
 
 # ESM Plus 고시정보 그룹 번호 (officialNoticeNo)
-# 실제 번호는 GET /item/v1/official-notice/groups 로 조회 가능
-# 아래는 일반적 매핑 (마켓에서 조회 후 갱신 필요)
+# 검증 출처: GET /item/v1/official-notice/groups (2026-05-15 movestory1 응답)
 _ESM_NOTICE_MAP: dict[str, int] = {
-    "wear": 1,  # 의류
-    "shoes": 2,  # 신발
-    "bag": 3,  # 가방
-    "accessories": 4,  # 패션잡화
-    "cosmetic": 5,  # 화장품
-    "food": 6,  # 식품
-    "electronics": 7,  # 전자제품
-    "etc": 35,  # 기타
+    "wear": 1,       # 의류
+    "shoes": 2,      # 구두/신발
+    "bag": 3,        # 가방
+    "accessories": 4,  # 패션잡화(모자/벨트/액세서리 등)
+    "cosmetic": 18,  # 화장품
+    "food": 20,      # 농수축산물 (가공식품은 21, 건강기능식품은 22)
+    "electronics": 12,  # 소형전자 (휴대형 통신기기 13, 가정용 전기제품 8 등 세분 가능)
+    "sports": 25,    # 스포츠 용품
+    "etc": 35,       # 기타 재화
 }
 
 
 def _get_esm_notice_no(group: str) -> int:
     """고시정보 그룹 → ESM Plus 고시정보 번호."""
     return _ESM_NOTICE_MAP.get(group, 35)
+
+
+# 그룹별 고시정보 항목 코드 매핑 (group → list[(itemelementCode, source_field)])
+# 검증 출처: GET /item/v1/official-notice/groups/{no}/codes
+# isExtraMark=true 항목 모두 채워야 ESM 등록 검증 통과. fallback="[상세설명참조]" 안전.
+_ESM_NOTICE_ITEMS: dict[int, list[tuple[str, str]]] = {
+    1: [  # 의류
+        ("1-1", "material"),         # 제품소재
+        ("1-2", "color"),             # 색상
+        ("1-3", ""),                  # 치수 (옵션/상세설명 참조)
+        ("1-4", "manufacturer"),     # 제조자/수입자
+        ("1-5", "origin"),            # 제조국
+        ("1-6", "care_instructions"),  # 세탁방법
+        ("1-7", ""),                  # 제조연월
+        ("1-8", "quality_guarantee"),  # 품질보증기준
+        ("1-9", "_as_phone"),         # A/S 책임자/전화
+        ("1-10", ""),                 # 주문후 예상 배송기간
+    ],
+}
+
+
+def _build_esm_notice_items(
+    group_no: int, product: dict[str, Any]
+) -> list[dict[str, str]]:
+    """ESM 고시정보 그룹에 따른 itemelement 리스트 생성.
+
+    isExtraMark=true(필수) 항목 모두 채움. 값 없으면 fallback("[상세설명참조]") 으로
+    검증 통과만 보장. 운영자는 실제 정확한 값 입력 권장.
+    """
+    fallback = "[상세설명참조]"
+    fields = _ESM_NOTICE_ITEMS.get(group_no)
+    if not fields:
+        # 미정의 그룹 — ESM 의 official notice codes endpoint 호출 후 동적 매핑 가능.
+        # 일단 빈 리스트 반환 (ESM 측에서 일부 그룹은 필수 필드 없을 수 있음).
+        return []
+    items: list[dict[str, str]] = []
+    for code, source_key in fields:
+        raw = (product.get(source_key) if source_key else "") or ""
+        val = str(raw).strip() or fallback
+        items.append(
+            {"officialNoticeItemelementCode": code, "value": val}
+        )
+    return items
 
 
 # ------------------------------------------------------------------
