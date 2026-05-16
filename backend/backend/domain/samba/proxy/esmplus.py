@@ -842,6 +842,141 @@ class ESMPlusClient:
         )
 
     # ------------------------------------------------------------------
+    # 이벤트 홍보 (event-promotions)
+    # ------------------------------------------------------------------
+
+    async def create_event_promotion(
+        self, data: dict[str, Any]
+    ) -> dict[str, Any]:
+        """이벤트 홍보 등록 — POST /item/v1/event-promotions.
+
+        data: { name, detail, isExposure, isApplyAll, exposureDate: {startDate, endDate} }
+        Returns: { PromotionNo }
+        """
+        return await self._call_api("POST", "/item/v1/event-promotions", data=data)
+
+    async def update_event_promotion(
+        self, promotion_no: int | str, data: dict[str, Any]
+    ) -> dict[str, Any]:
+        """이벤트 홍보 수정 — PUT /item/v1/event-promotions/{promotionNo}."""
+        return await self._call_api(
+            "PUT", f"/item/v1/event-promotions/{promotion_no}", data=data
+        )
+
+    async def get_event_promotion(
+        self, promotion_no: int | str
+    ) -> dict[str, Any]:
+        """이벤트 홍보 조회."""
+        return await self._call_api(
+            "GET", f"/item/v1/event-promotions/{promotion_no}"
+        )
+
+    async def delete_event_promotion(
+        self, promotion_no: int | str
+    ) -> dict[str, Any]:
+        """이벤트 홍보 삭제."""
+        return await self._call_api(
+            "DELETE", f"/item/v1/event-promotions/{promotion_no}"
+        )
+
+    async def add_event_promotion_goods(
+        self, promotion_no: int | str, site_goods_nos: list[str]
+    ) -> dict[str, Any]:
+        """홍보에 상품 추가 — POST /item/v1/event-promotions/{promotionNo}/goods.
+
+        최대 1,000 상품/홍보. G마켓 vs 옥션 separate.
+        """
+        return await self._call_api(
+            "POST",
+            f"/item/v1/event-promotions/{promotion_no}/goods",
+            data={"siteGoodsNos": [str(x) for x in site_goods_nos]},
+        )
+
+    # ------------------------------------------------------------------
+    # 고객혜택 (customer-benefit) — 상품 단위 할인/캐시백/광고
+    # ------------------------------------------------------------------
+
+    async def set_multiple_purchase_discount(
+        self, goods_no: str, data: dict[str, Any]
+    ) -> dict[str, Any]:
+        """복수구매할인 등록/수정 — POST /item/v1/goods/{goodsNo}/customer-benefit/multiple-purchase-discount."""
+        return await self._call_api(
+            "POST",
+            f"/item/v1/goods/{goods_no}/customer-benefit/multiple-purchase-discount",
+            data=data,
+        )
+
+    async def set_special_discount(
+        self, goods_no: str, data: dict[str, Any]
+    ) -> dict[str, Any]:
+        """특별할인 등록/수정 — POST .../customer-benefit/special-discount."""
+        return await self._call_api(
+            "POST",
+            f"/item/v1/goods/{goods_no}/customer-benefit/special-discount",
+            data=data,
+        )
+
+    async def set_cashback(
+        self, goods_no: str, data: dict[str, Any]
+    ) -> dict[str, Any]:
+        """판매자 스마일캐시 등록/수정 — POST .../customer-benefit/cashback."""
+        return await self._call_api(
+            "POST",
+            f"/item/v1/goods/{goods_no}/customer-benefit/cashback",
+            data=data,
+        )
+
+    # ------------------------------------------------------------------
+    # 판매자 할인 (seller-discounts) — 상품 단위 할인
+    # ------------------------------------------------------------------
+
+    async def set_seller_discounts(
+        self, goods_no: str, data: dict[str, Any]
+    ) -> dict[str, Any]:
+        """판매자할인 등록/수정 — POST /item/v1/goods/{goodsNo}/seller-discounts."""
+        return await self._call_api(
+            "POST", f"/item/v1/goods/{goods_no}/seller-discounts", data=data
+        )
+
+    async def delete_seller_discounts(self, goods_no: str) -> dict[str, Any]:
+        """판매자할인 해제."""
+        return await self._call_api(
+            "DELETE", f"/item/v1/goods/{goods_no}/seller-discounts"
+        )
+
+    # ------------------------------------------------------------------
+    # 그룹 상품 관리 (groups)
+    # ------------------------------------------------------------------
+
+    async def create_group(self, data: dict[str, Any]) -> dict[str, Any]:
+        """그룹 생성 — POST /item/v1/groups."""
+        return await self._call_api("POST", "/item/v1/groups", data=data)
+
+    async def update_group(
+        self, group_no: int | str, data: dict[str, Any]
+    ) -> dict[str, Any]:
+        """그룹 수정 — PUT /item/v1/groups/{groupNo}."""
+        return await self._call_api(
+            "PUT", f"/item/v1/groups/{group_no}", data=data
+        )
+
+    async def delete_group(self, group_no: int | str) -> dict[str, Any]:
+        """그룹 삭제."""
+        return await self._call_api(
+            "DELETE", f"/item/v1/groups/{group_no}"
+        )
+
+    async def add_group_goods(
+        self, group_no: int | str, site_goods_nos: list[str]
+    ) -> dict[str, Any]:
+        """그룹에 상품 등록 — POST /item/v1/groups/{groupNo}/goods."""
+        return await self._call_api(
+            "POST",
+            f"/item/v1/groups/{group_no}/goods",
+            data={"siteGoodsNos": [str(x) for x in site_goods_nos]},
+        )
+
+    # ------------------------------------------------------------------
     # 정산조회 (account/v1/settle/...)
     # SiteType: 'A'(옥션) 또는 'G'(G마켓) — 문자열.
     # 환불된 주문은 반대 부호.
