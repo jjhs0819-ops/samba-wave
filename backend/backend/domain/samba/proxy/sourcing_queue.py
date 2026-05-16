@@ -342,10 +342,18 @@ class SourcingQueue:
                     params[f"site_{i}"] = s
 
             where = " AND ".join(conditions)
+            # [중요] sourcing_account_id 우선 정렬 — 같은 계정 잡을 연속으로 dequeue 해서
+            # 자동 로그인 스왑 횟수 최소화. 송장수집 자동 로그아웃 → 로그인 후 같은 계정
+            # 잡들을 한 번에 처리하는 흐름 보장. (payload->>'sourcingAccountId' JSONB 접근)
+            # NULL 또는 빈 값은 가장 뒤로 (NULLS LAST).
+            # 같은 계정 안에서는 created_at ASC 로 FIFO.
             sql = text(
                 f"SELECT request_id, payload FROM samba_sourcing_job "
                 f"WHERE {where} "
-                f"ORDER BY created_at ASC LIMIT 1 "
+                f"ORDER BY "
+                f"  NULLIF(payload->>'sourcingAccountId', '') ASC NULLS LAST, "
+                f"  created_at ASC "
+                f"LIMIT 1 "
                 f"FOR UPDATE SKIP LOCKED"
             )
 
