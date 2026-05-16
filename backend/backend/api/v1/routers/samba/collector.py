@@ -13,7 +13,11 @@ from sqlalchemy import or_
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from backend.db.orm import get_read_session_dependency, get_write_session_dependency
+from backend.db.orm import (
+    get_read_session,
+    get_read_session_dependency,
+    get_write_session_dependency,
+)
 from backend.domain.samba.cache import cache
 from backend.domain.samba.collector.model import FIXED_REQUESTED_COUNT
 from backend.domain.user.auth_service import get_user_id
@@ -1109,16 +1113,15 @@ async def scroll_products(
 
     # 소싱처 목록 (캐시 TTL 5분)
     sites = await cache.get("products:sites")
-    sites_task = None
+    sites_stmt = None
     if not sites:
         sites_stmt = (
             select(_CP.source_site).distinct().where(_CP.source_site.isnot(None))
         )
-        sites_task = session.execute(sites_stmt)
 
-    # KPI 카운트 (캐시 TTL 30초)
+    # KPI 카운트 (캐시 TTL 5분) — 별도 read 세션으로 병렬 실행
     counts = await cache.get("products:counts")
-    counts_task = None
+    counts_stmt = None
     if not counts:
         from sqlalchemy import case, literal
 
@@ -1134,7 +1137,6 @@ async def scroll_products(
                 "sold_out"
             ),
         ).select_from(_CP)
-        counts_task = session.execute(counts_stmt)
 
     # 데이터 쿼리
     data_stmt = select(*list_cols)
@@ -1160,20 +1162,35 @@ async def scroll_products(
 
     data_stmt = data_stmt.offset(skip).limit(limit)
 
-    # 순차 실행 (같은 세션에서 asyncio.gather 사용 시 asyncpg 충돌 방지)
-    count_result = await session.execute(count_stmt)
-    total = count_result.scalar() or 0
+    # 병렬 실행: 메인 세션은 count + data 직렬, sites/counts는 별도 read 세션
+    # (asyncpg는 같은 세션에서 병렬 쿼리 불가 — 별도 세션으로 우회)
+    async def _main_query() -> tuple[int, list[Any]]:
+        c_res = await session.execute(count_stmt)
+        d_res = await session.execute(data_stmt)
+        return (c_res.scalar() or 0, d_res.mappings().all())
 
-    data_result = await session.execute(data_stmt)
-    rows = data_result.mappings().all()
+    async def _side_query(stmt: Any) -> Any:
+        async with get_read_session() as s:
+            return await s.execute(stmt)
 
-    # 사이트/카운트 결과 수집
-    if sites_task:
-        sites_result = await sites_task
+    tasks: list[Any] = [_main_query()]
+    side_indices: dict[str, int] = {}
+    if sites_stmt is not None:
+        side_indices["sites"] = len(tasks)
+        tasks.append(_side_query(sites_stmt))
+    if counts_stmt is not None:
+        side_indices["counts"] = len(tasks)
+        tasks.append(_side_query(counts_stmt))
+
+    results = await asyncio.gather(*tasks)
+    total, rows = results[0]
+
+    if "sites" in side_indices:
+        sites_result = results[side_indices["sites"]]
         sites = sorted([r[0] for r in sites_result.all() if r[0]])
         await cache.set("products:sites", sites, ttl=300)
-    if counts_task:
-        counts_row = (await counts_task).one()
+    if "counts" in side_indices:
+        counts_row = results[side_indices["counts"]].one()
         counts = {
             "total": counts_row.total,
             "registered": counts_row.registered,
