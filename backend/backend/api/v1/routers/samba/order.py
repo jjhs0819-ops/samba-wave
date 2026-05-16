@@ -3153,10 +3153,6 @@ async def ship_order(
                     if sent:
                         market_sent = True
                         market_msg = "롯데ON 송장 등록 완료"
-                        await svc.update_order(
-                            order_id,
-                            {"shipping_status": "송장전송완료", "status": "shipping"},
-                        )
                     else:
                         market_msg = "롯데ON 송장 등록 실패 (로그 확인)"
 
@@ -3188,9 +3184,6 @@ async def ship_order(
                     )
                     market_sent = True
                     market_msg = "스마트스토어 송장 전송 완료"
-                    await svc.update_order(
-                        order_id, {"shipping_status": "송장전송완료"}
-                    )
 
             elif account and account.market_type == "11st":
                 from backend.domain.samba.proxy.elevenst import (
@@ -3240,13 +3233,6 @@ async def ship_order(
                         if sent:
                             market_sent = True
                             market_msg = "11번가 송장 전송 완료"
-                            await svc.update_order(
-                                order_id,
-                                {
-                                    "shipping_status": "송장전송완료",
-                                    "status": "shipping",
-                                },
-                            )
                         else:
                             market_msg = "11번가 송장 전송 실패 (로그 확인)"
 
@@ -3300,13 +3286,6 @@ async def ship_order(
                         )
                         market_sent = True
                         market_msg = "eBay 송장 전송 완료"
-                        await svc.update_order(
-                            order_id,
-                            {
-                                "shipping_status": "송장전송완료",
-                                "status": "shipping",
-                            },
-                        )
                     except EbayApiError as e:
                         market_msg = f"eBay 송장 실패: {e}"
 
@@ -3317,6 +3296,13 @@ async def ship_order(
     except Exception as e:
         market_msg = f"송장 전송 실패: {e}"
         logger.warning(f"[송장전송] {order.order_number}: {e}")
+
+    # 마켓 송장 전송 성공 시 status를 '국내배송중'으로 일괄 변경
+    if market_sent:
+        await svc.update_order(
+            order_id,
+            {"shipping_status": "송장전송완료", "status": "shipping"},
+        )
 
     return {
         "ok": True,
