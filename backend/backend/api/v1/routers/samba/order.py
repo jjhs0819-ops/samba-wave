@@ -3290,8 +3290,11 @@ async def ship_order(
                         market_msg = f"eBay 송장 실패: {e}"
 
             elif account and account.market_type == "playauto":
-                # 플레이오토 주문은 마켓 전송 없이 DB 저장만 수행 (사용자 요청)
-                # 실제 마켓(스스/11번가/쿠팡 등) 송장 입력은 플레이오토 원본 마켓 측에서 별도 처리
+                # 플레이오토는 EMP API 송장전송이 실효성 없어 마켓 전송 생략하고 DB 저장만 수행.
+                # 실제 마켓(스스/11번가/쿠팡 등) 송장 입력은 플레이오토 원본 마켓 측에서 별도 처리.
+                # 프론트가 market_sent=False를 실패로 간주해 status='ship_failed'로 박는 사고를
+                # 막기 위해 성공으로 표기 — 아래 unified 블록이 status='shipping'으로 갱신.
+                market_sent = True
                 market_msg = "플레이오토 주문 — 송장번호 저장만 완료 (마켓 전송 생략)"
     except Exception as e:
         market_msg = f"송장 전송 실패: {e}"
