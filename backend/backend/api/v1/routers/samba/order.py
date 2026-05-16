@@ -3147,197 +3147,14 @@ async def ship_order(
         },
     )
 
-    # 마켓 송장 전송
-    market_sent = False
-    market_msg = ""
+    # 마켓 송장 전송 — 통일 service (자동 dispatch_to_market 도 같은 함수 호출).
+    # [통일 2026-05-16] 이전엔 이곳과 dispatch_to_market 가 마켓별 분기를 중복 구현 →
+    # 자동 dispatch 가 자격증명 누락/필드 차이로 실패하던 회귀 차단. 단일 진실의 출처.
+    from backend.domain.samba.order.dispatch_service import send_invoice_to_market
 
-    try:
-        if order.channel_id and order.order_number:
-            from backend.domain.samba.account.repository import (
-                SambaMarketAccountRepository,
-            )
-
-            account_repo = SambaMarketAccountRepository(session)
-            account = await account_repo.get_async(order.channel_id)
-
-            if account and account.market_type == "lotteon":
-                from backend.domain.samba.proxy.lotteon import LotteonClient
-                from backend.domain.samba.forbidden.repository import (
-                    SambaSettingsRepository,
-                )
-
-                lo_api_key = (
-                    (account.additional_fields or {}).get("apiKey", "")
-                    or account.api_key
-                    or ""
-                )
-                if not lo_api_key:
-                    _lo_repo = SambaSettingsRepository(session)
-                    _lo_row = await _lo_repo.find_by_async(key="store_lotteon")
-                    if _lo_row and isinstance(_lo_row.value, dict):
-                        lo_api_key = _lo_row.value.get("apiKey", "")
-                if lo_api_key:
-                    client = LotteonClient(lo_api_key)
-                    await client.test_auth()
-                    sent = await client.ship_order(
-                        od_no=order.od_no or order.order_number,
-                        od_seq=order.od_seq or "1",
-                        proc_seq=order.proc_seq or "1",
-                        sitm_no=order.sitm_no or order.shipment_id or "",
-                        spd_no=order.product_id or "",
-                        quantity=order.quantity or 1,
-                        shipping_company=body.shipping_company,
-                        tracking_number=body.tracking_number,
-                    )
-                    if sent:
-                        market_sent = True
-                        market_msg = "롯데ON 송장 등록 완료"
-                    else:
-                        market_msg = "롯데ON 송장 등록 실패 (로그 확인)"
-
-            elif account and account.market_type == "smartstore":
-                from backend.domain.samba.proxy.smartstore import SmartStoreClient
-                from backend.domain.samba.forbidden.repository import (
-                    SambaSettingsRepository,
-                )
-
-                _ss_extras = account.additional_fields or {}
-                ss_client_id = _ss_extras.get("clientId", "") or account.api_key or ""
-                ss_client_secret = (
-                    _ss_extras.get("clientSecret", "") or account.api_secret or ""
-                )
-                if not ss_client_id or not ss_client_secret:
-                    _ss_repo = SambaSettingsRepository(session)
-                    _ss_row = await _ss_repo.find_by_async(key="store_smartstore")
-                    if _ss_row and isinstance(_ss_row.value, dict):
-                        ss_client_id = ss_client_id or _ss_row.value.get("clientId", "")
-                        ss_client_secret = ss_client_secret or _ss_row.value.get(
-                            "clientSecret", ""
-                        )
-                if ss_client_id and ss_client_secret:
-                    client = SmartStoreClient(ss_client_id, ss_client_secret)
-                    await client.ship_product_order(
-                        order.order_number,
-                        body.shipping_company,
-                        body.tracking_number,
-                    )
-                    market_sent = True
-                    market_msg = "스마트스토어 송장 전송 완료"
-
-            elif account and account.market_type == "11st":
-                from backend.domain.samba.proxy.elevenst import (
-                    ElevenstClient,
-                )
-
-                _CARRIER_MAP = {
-                    "CJ대한통운": "00034",
-                    "대한통운": "00034",
-                    "롯데택배": "00012",
-                    "한진택배": "00011",
-                    "우체국택배": "00002",
-                    "로젠택배": "00017",
-                    "GS포스트박스": "00015",
-                    "경동택배": "00004",
-                    "합동택배": "00005",
-                    "딜리박스": "00133",
-                    # 직접배송 → 11번가는 dlvMthdCd=03 (직접/화물배달) 사용, 택배사 코드는 기타(00099)
-                    "직접배송": "00099",
-                    "직접 배송": "00099",
-                }
-                api_key = account.api_key or ""
-                if not api_key and isinstance(account.additional_fields, dict):
-                    api_key = account.additional_fields.get("apiKey", "") or ""
-
-                if not api_key:
-                    market_msg = "11번가 API Key가 없습니다. 설정을 확인해주세요."
-                else:
-                    dlv_no = order.shipment_id or ""
-                    if not dlv_no:
-                        market_msg = "배송번호(dlvNo)가 없습니다. 주문을 다시 수집 후 시도해주세요."
-                    else:
-                        dlv_etprs_cd = _CARRIER_MAP.get(
-                            body.shipping_company, body.shipping_company
-                        )
-                        # 직접배송 선택 시 배송방식 03(직접/화물배달), 그 외 01(택배)
-                        _is_direct = (body.shipping_company or "").replace(
-                            " ", ""
-                        ) == "직접배송"
-                        _11st_client = ElevenstClient(api_key)
-                        sent = await _11st_client.ship_order(
-                            dlv_no=dlv_no,
-                            invc_no=body.tracking_number,
-                            dlv_etprs_cd=dlv_etprs_cd,
-                            dlv_mthd_cd="03" if _is_direct else "01",
-                        )
-                        if sent:
-                            market_sent = True
-                            market_msg = "11번가 송장 전송 완료"
-                        else:
-                            market_msg = "11번가 송장 전송 실패 (로그 확인)"
-
-            elif account and account.market_type == "ebay":
-                from backend.domain.samba.proxy.ebay import (
-                    EbayApiError,
-                    EbayClient,
-                )
-
-                extras = account.additional_fields or {}
-                app_id = (
-                    extras.get("clientId")
-                    or extras.get("appId")
-                    or account.api_key
-                    or ""
-                )
-                cert_id = (
-                    extras.get("clientSecret")
-                    or extras.get("certId")
-                    or account.api_secret
-                    or ""
-                )
-                refresh_token = (
-                    extras.get("oauthToken") or extras.get("authToken", "") or ""
-                )
-                if app_id and cert_id and refresh_token:
-                    ebay_client = EbayClient(
-                        app_id=app_id,
-                        dev_id="",
-                        cert_id=cert_id,
-                        refresh_token=refresh_token,
-                        sandbox=bool(extras.get("sandbox", False)),
-                    )
-                    # 배송사 한글→eBay carrier code 매핑
-                    # eBay US는 한국 택배사 미지원 — 전부 KoreaPost로 매핑
-                    # (USPS/UPS/FedEx/DHL만 공식 지원, 한국 택배사는 KoreaPost가 유일)
-                    carrier_map = {
-                        "USPS": "USPS",
-                        "UPS": "UPS",
-                        "FedEx": "FEDEX",
-                        "DHL": "DHL",
-                    }
-                    ebay_carrier = carrier_map.get(body.shipping_company, "KoreaPost")
-                    try:
-                        # ext_order_number에 orderId, order_number에 legacyOrderId
-                        ebay_order_id = order.ext_order_number or order.order_number
-                        await ebay_client.ship_order(
-                            order_id=ebay_order_id,
-                            tracking_number=body.tracking_number,
-                            carrier_code=ebay_carrier,
-                        )
-                        market_sent = True
-                        market_msg = "eBay 송장 전송 완료"
-                    except EbayApiError as e:
-                        market_msg = f"eBay 송장 실패: {e}"
-
-            elif account and account.market_type == "playauto":
-                # 플레이오토는 EMP API 송장전송이 실효성 없어 마켓 전송 생략하고 DB 저장만 수행.
-                # 실제 마켓(스스/11번가/쿠팡 등) 송장 입력은 플레이오토 원본 마켓 측에서 별도 처리.
-                # 프론트가 market_sent=False를 실패로 간주해 status='ship_failed'로 박는 사고를
-                # 막기 위해 성공으로 표기 — 아래 unified 블록이 status='shipping'으로 갱신.
-                market_sent = True
-                market_msg = "플레이오토 주문 — 송장번호 저장만 완료 (마켓 전송 생략)"
-    except Exception as e:
-        market_msg = f"송장 전송 실패: {e}"
-        logger.warning(f"[송장전송] {order.order_number}: {e}")
+    market_sent, market_msg = await send_invoice_to_market(
+        order, body.shipping_company, body.tracking_number, session
+    )
 
     # 마켓 송장 전송 성공 시 status를 '국내배송중'으로 일괄 변경
     if market_sent:
@@ -5782,6 +5599,20 @@ async def sync_orders_from_markets(
                             "취소완료",
                         ):
                             update_fields["shipping_status"] = new_ship_status
+                    # shipping_status 가 "국내배송중"으로 진입 시 status 드롭다운도 함께 동기화.
+                    # 라벨/드롭다운이 어긋난 채 wait_ship 으로 남아 페이지 필터를 통과해 노출되던 사고 방지.
+                    _new_ss_final = update_fields.get(
+                        "shipping_status", existing.shipping_status
+                    )
+                    if _new_ss_final == "국내배송중" and existing.status in (
+                        "pending",
+                        "preparing",
+                        "wait_ship",
+                        "arrived",
+                        "processing",
+                        "shipped",
+                    ):
+                        update_fields["status"] = "shipping"
                     # 정산금액(revenue) / 수수료율 갱신
                     new_revenue = order_data.get("revenue")
                     new_fee_rate = order_data.get("fee_rate")
@@ -6743,9 +6574,11 @@ def _parse_playauto_order(
         "신규주문": "pending",
         "송장출력": "wait_ship",
         "송장입력": "processing",
-        "출고": "shipped",
-        "배송중": "shipped",
-        "국내배송중": "shipped",
+        # shipping_status 가 "국내배송중"일 때 status 드롭다운도 "국내배송중"(shipping)으로 보이도록 동기화.
+        # 과거에 "shipped"로 매핑되어 프론트 STATUS_MAP 에 없는 enum 으로 저장되던 버그도 같이 닫힘.
+        "출고": "shipping",
+        "배송중": "shipping",
+        "국내배송중": "shipping",
         "수취확인": "delivered",
         "정산완료": "delivered",
         "주문확인": "pending",
