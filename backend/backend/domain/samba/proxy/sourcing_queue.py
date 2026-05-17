@@ -355,6 +355,19 @@ class SourcingQueue:
         future: asyncio.Future[Any] = loop.create_future()
         if owner_device_id is None:
             owner_device_id = get_autotune_owner(site)
+        # owner 미지정 시 가장 최근 폴링한 PC를 owner로 박음 — 멀티PC 환경에서
+        # 옛 버전 확장앱(reward 분기 모름)이 잡을 가로채 '파싱 실패'로 끝나는
+        # 사고 방지. 활성 PC 1대 = 가장 최근 폴링한 device_id가 사용자 메인 PC.
+        if not owner_device_id:
+            try:
+                from backend.api.v1.routers.samba.collector_autotune import (
+                    _pc_last_seen,
+                )
+
+                if _pc_last_seen:
+                    owner_device_id = max(_pc_last_seen, key=_pc_last_seen.get)
+            except Exception:
+                pass
 
         job: dict[str, Any] = {
             "requestId": request_id,
@@ -448,13 +461,16 @@ class SourcingQueue:
                     return {"hasJob": False}
 
                 request_id, payload = row
+                # owner_device_id가 NULL/빈 잡(reward 등)은 클레이밍 device_id를 기록 —
+                # 어느 PC가 잡 가져갔는지 추적용. 기존 소유자 잡은 owner 유지.
                 await session.execute(
                     text(
                         "UPDATE samba_sourcing_job "
-                        "SET status = 'dispatched', dispatched_at = now() "
+                        "SET status = 'dispatched', dispatched_at = now(), "
+                        "    owner_device_id = COALESCE(NULLIF(owner_device_id, ''), :did) "
                         "WHERE request_id = :rid"
                     ),
-                    {"rid": request_id},
+                    {"rid": request_id, "did": device_id or None},
                 )
                 await session.commit()
 
