@@ -355,19 +355,9 @@ class SourcingQueue:
         future: asyncio.Future[Any] = loop.create_future()
         if owner_device_id is None:
             owner_device_id = get_autotune_owner(site)
-        # owner 미지정 시 가장 최근 폴링한 PC를 owner로 박음 — 멀티PC 환경에서
-        # 옛 버전 확장앱(reward 분기 모름)이 잡을 가로채 '파싱 실패'로 끝나는
-        # 사고 방지. 활성 PC 1대 = 가장 최근 폴링한 device_id가 사용자 메인 PC.
-        if not owner_device_id:
-            try:
-                from backend.api.v1.routers.samba.collector_autotune import (
-                    _pc_last_seen,
-                )
-
-                if _pc_last_seen:
-                    owner_device_id = max(_pc_last_seen, key=_pc_last_seen.get)
-            except Exception:
-                pass
+        # reward 잡은 owner 안 박음 — 대신 get_next_job 에서 X-Ext-Version 헤더로
+        # 옛 확장앱(reward 분기 모름) 필터링. "가장 최근 폴링 PC = 사용자 PC" 가정은
+        # 멀티PC 환경에서 다른 PC가 폴링 더 자주 하면 깨짐 → 검증 실패.
 
         job: dict[str, Any] = {
             "requestId": request_id,
@@ -392,6 +382,7 @@ class SourcingQueue:
         cls,
         device_id: str | None = None,
         allowed_sites: list[str] | None = None,
+        ext_version: str | None = None,
     ) -> dict[str, Any]:
         """DB에서 다음 작업 가져오기 (확장앱 폴링용).
 
@@ -402,6 +393,8 @@ class SourcingQueue:
           - None  = 전체 처리 (단일 PC 디폴트)
           - []    = 아무것도 처리 안 함
           - [...] = 해당 사이트만
+        ext_version: 확장앱 버전. reward 잡은 v2.13.27 미만 PC에 안 줌
+          (옛 PC는 reward 분기 모름 → '파싱 실패' 반환 회피).
         """
         if is_shutting_down():
             return {"hasJob": False, "shuttingDown": True}
@@ -420,6 +413,19 @@ class SourcingQueue:
                 "expires_at > now()",
             ]
             params: dict[str, Any] = {}
+
+            # reward 잡은 v2.13.27+ 확장앱만 처리 — 옛 확장앱은 type=reward 분기 코드
+            # 자체가 없어서 일반 가격수집 잡으로 잘못 라우팅 → '파싱 실패' 사고
+            def _ver_tuple(v: str) -> tuple[int, ...]:
+                try:
+                    return tuple(int(x) for x in v.split(".") if x.isdigit())
+                except Exception:
+                    return (0, 0, 0)
+
+            min_reward_ver = (2, 13, 27)
+            client_ver = _ver_tuple(ext_version or "")
+            if client_ver < min_reward_ver:
+                conditions.append("job_type != 'reward'")
 
             # owner 필터
             if device_id:
