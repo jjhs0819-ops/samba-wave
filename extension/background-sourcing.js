@@ -1969,7 +1969,16 @@ async function handleSourcingJob(job) {
       // 검증(2026-05-10): focused:false popup은 Chromium 페이지 라이프사이클 throttling으로
       //   AJAX(카드혜택가/최대혜택가)가 발화하지 않음 → 사용자 클릭해야 로딩 시작 → 빈화면 멈춤.
       // 해결: focused:true로 활성화 보장 + 좌측 하단 작은 코너에 배치(사용자 작업 영역인 상단 미가림).
-      // 메인 윈도우 focused 복원은 호출하지 않음(이전 회귀: 다른 앱 가림 문제).
+      // 포커스 복원(2026-05-17): 팝업 생성 전 "현재 OS 포커스를 가진 크롬 창"이 있으면 ID를 보관하고,
+      //   팝업 생성 직후 그 창으로 포커스 되돌림. focused:true 창이 없으면(=크롬이 백그라운드 앱)
+      //   복원 안 함 → 다른 앱(엑셀·메모장 등) 가림 회귀 차단.
+      let _prevFocusedWinId = null
+      try {
+        const _allWins = await chrome.windows.getAll()
+        const _f = _allWins.find(w => w.focused)
+        if (_f) _prevFocusedWinId = _f.id
+      } catch {}
+
       let _bottomY = 800   // fallback (1080 해상도 기준 - 하단 280)
       let _leftX = 10
       try {
@@ -1992,6 +2001,13 @@ async function handleSourcingJob(job) {
       tab = win.tabs?.[0]
       sourcingWindowId = win.id
       openedSourcingWindow = true
+
+      // 이전 포커스 창이 크롬에 있었다면 즉시 포커스 복원 — 사용자가 크롬에서 다른 작업 중이었으면
+      // 그 창이 다시 위로 올라옴. (페이지 라이프사이클상 popup 생성 시점에 focused:true였으므로
+      // AJAX는 발화 시작됨 — 이후 background 상태에서도 in-flight 요청은 정상 완료.)
+      if (_prevFocusedWinId && _prevFocusedWinId !== win.id) {
+        try { await chrome.windows.update(_prevFocusedWinId, { focused: true }) } catch {}
+      }
     } else {
       tab = await chrome.tabs.create({ url: job.url, active: false })
     }
