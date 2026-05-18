@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 def register_tenant_filter_events() -> None:
     """SQLAlchemy event 리스너 등록 — 앱 시작 시 한 번만 호출."""
 
-    @event.listens_for(Session, "do_orm_execute")
+    @event.listens_for(Session, "do_orm_execute", propagate=True)
     def _apply_tenant_filter(orm_execute_state):
         """SELECT 자동 WHERE tenant_id = ? 추가.
 
@@ -56,7 +56,7 @@ def register_tenant_filter_events() -> None:
             except Exception as e:
                 logger.debug(f"[tenant_filter] entity {entity} 필터 적용 실패: {e}")
 
-    @event.listens_for(Session, "before_flush")
+    @event.listens_for(Session, "before_flush", propagate=True)
     def _auto_set_tenant_id(session, flush_context, instances):
         """INSERT 시 tenant_id 미세팅 신규 객체에 자동 채움."""
         tenant_id = current_tenant_id.get()

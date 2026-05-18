@@ -75,6 +75,25 @@ class TenantContextMiddleware:
             tenant_id = await _db_lookup_tenant_id(user_id)
 
         token = current_tenant_id.set(tenant_id)
+        # 진단 로그 — 운영자 데이터 누수 디버깅용 (path 일부만)
+        try:
+            path = scope.get("path", "")
+            if any(
+                seg in path
+                for seg in (
+                    "/products",
+                    "/settings",
+                    "/cs",
+                    "/forbidden",
+                    "/scroll",
+                    "/dashboard",
+                )
+            ):
+                logger.info(
+                    f"[tenant_ctx] path={path} user_id={user_id} tid={tenant_id}"
+                )
+        except Exception:
+            pass
         try:
             await self.app(scope, receive, send)
         finally:
