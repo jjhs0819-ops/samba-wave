@@ -840,6 +840,7 @@ async def scroll_products(
     sort_by: str = Query("collect-desc"),
     ids_only: bool = Query(False),
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     """서버사이드 필터/정렬/페이지네이션 — 무한스크롤용.
 
@@ -859,8 +860,10 @@ async def scroll_products(
 
     mapper = _sa_inspect(_CP)
 
-    # 기본 조건
+    # 기본 조건 — 테넌트 격리 강제 (projection/count 쿼리는 ORM 자동 필터 우회됨)
     conditions = []
+    if tenant_id is not None:
+        conditions.append(_CP.tenant_id == tenant_id)
 
     # 텍스트 검색
     q = search.strip()
@@ -1112,16 +1115,20 @@ async def scroll_products(
     for c in conditions:
         count_stmt = count_stmt.where(c)
 
-    # 소싱처 목록 (캐시 TTL 5분)
-    sites = await cache.get("products:sites")
+    # 소싱처 목록 (캐시 TTL 5분, 테넌트별 분리)
+    sites_cache_key = f"products:sites:{tenant_id or 'global'}"
+    sites = await cache.get(sites_cache_key)
     sites_stmt = None
     if not sites:
         sites_stmt = (
             select(_CP.source_site).distinct().where(_CP.source_site.isnot(None))
         )
+        if tenant_id is not None:
+            sites_stmt = sites_stmt.where(_CP.tenant_id == tenant_id)
 
-    # KPI 카운트 (캐시 TTL 5분) — 별도 read 세션으로 병렬 실행
-    counts = await cache.get("products:counts")
+    # KPI 카운트 (캐시 TTL 5분, 테넌트별 분리)
+    counts_cache_key = f"products:counts:{tenant_id or 'global'}"
+    counts = await cache.get(counts_cache_key)
     counts_stmt = None
     if not counts:
         from sqlalchemy import case, literal
@@ -1138,6 +1145,8 @@ async def scroll_products(
                 "sold_out"
             ),
         ).select_from(_CP)
+        if tenant_id is not None:
+            counts_stmt = counts_stmt.where(_CP.tenant_id == tenant_id)
 
     # 데이터 쿼리
     data_stmt = select(*list_cols)
@@ -1189,7 +1198,7 @@ async def scroll_products(
     if "sites" in side_indices:
         sites_result = results[side_indices["sites"]]
         sites = sorted([r[0] for r in sites_result.all() if r[0]])
-        await cache.set("products:sites", sites, ttl=300)
+        await cache.set(sites_cache_key, sites, ttl=300)
     if "counts" in side_indices:
         counts_row = results[side_indices["counts"]].one()
         counts = {
@@ -1198,7 +1207,7 @@ async def scroll_products(
             "policy_applied": counts_row.policy_applied,
             "sold_out": counts_row.sold_out,
         }
-        await cache.set("products:counts", counts, ttl=300)
+        await cache.set(counts_cache_key, counts, ttl=300)
 
     return {
         "items": [dict(r) for r in rows],

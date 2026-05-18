@@ -54,14 +54,8 @@ async def list_accounts(
     # tenant_id가 있으면 해당 테넌트 + 기존(NULL) 마켓 계정 모두 조회
     stmt = select(SambaMarketAccount).order_by(SambaMarketAccount.created_at.desc())
     if tenant_id is not None:
-        from sqlalchemy import or_
-
-        stmt = stmt.where(
-            or_(
-                SambaMarketAccount.tenant_id == tenant_id,
-                SambaMarketAccount.tenant_id == None,  # noqa: E711
-            )
-        )
+        # backfill 완료 후 NULL 계정 없음 — 본인 테넌트만 조회
+        stmt = stmt.where(SambaMarketAccount.tenant_id == tenant_id)
     result = await session.execute(stmt)
     accounts = result.scalars().all()
     return [mask_model_secrets(a.model_dump()) for a in accounts]
@@ -81,14 +75,8 @@ async def list_active_accounts(
         .order_by(SambaMarketAccount.created_at.desc())
     )
     if tenant_id is not None:
-        from sqlalchemy import or_
-
-        stmt = stmt.where(
-            or_(
-                SambaMarketAccount.tenant_id == tenant_id,
-                SambaMarketAccount.tenant_id == None,  # noqa: E711
-            )
-        )
+        # backfill 완료 후 NULL 계정 없음 — 본인 테넌트만 조회
+        stmt = stmt.where(SambaMarketAccount.tenant_id == tenant_id)
     result = await session.execute(stmt)
     accounts = result.scalars().all()
     return [mask_model_secrets(a.model_dump()) for a in accounts]

@@ -306,13 +306,17 @@ async def get_shipment_log_buffer(
     if current_idx == 0 and since_idx == 0 and not is_shipment_log_cleared():
         # jsonb 캐스팅 오류 방지: left('[') 로 배열 여부 텍스트 레벨에서 먼저 확인
         # (planner가 jsonb_array_length를 scalar 행에 먼저 평가해 터지던 버그 회피)
+        from backend.core.tenant_context import current_tenant_id as _ctv
+
+        _tid = _ctv.get()
         result = await session.execute(
             _text(
                 "SELECT logs FROM samba_jobs"
                 " WHERE job_type='transmit' AND logs IS NOT NULL"
                 " AND left(trim(logs::text), 1) = '['"
+                " AND (:tid IS NULL OR tenant_id = :tid)"
                 " ORDER BY created_at DESC LIMIT 1"
-            )
+            ).bindparams(tid=_tid)
         )
         row = result.first()
         if row and row[0]:
@@ -349,14 +353,18 @@ async def get_collect_log_buffer(
     if len(logs) == 0:
         # 크로스 인스턴스 fallback: 실행 중인 collect job의 DB 로그 조회
         # jsonb 캐스팅 오류 방지: left('[') 로 배열 여부 텍스트 레벨에서 먼저 확인
+        from backend.core.tenant_context import current_tenant_id as _ctv
+
+        _tid = _ctv.get()
         result = await session.execute(
             _text(
                 "SELECT logs FROM samba_jobs"
                 " WHERE job_type='collect' AND status='running'"
                 " AND logs IS NOT NULL"
                 " AND left(trim(logs::text), 1) = '['"
+                " AND (:tid IS NULL OR tenant_id = :tid)"
                 " ORDER BY started_at DESC LIMIT 1"
-            )
+            ).bindparams(tid=_tid)
         )
         row = result.first()
         if row and row[0]:
