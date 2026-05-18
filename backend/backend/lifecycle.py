@@ -716,11 +716,13 @@ async def _order_auto_sync_loop() -> None:
                 from sqlalchemy import text as _sa_text2
 
                 async with get_write_session() as ms:
+                    # result 컬럼은 JSON 타입 — jsonb로 캐스팅 후 머지하고 다시 json으로 캐스팅해 저장
+                    # (COALESCE에서 json/jsonb 혼합 불가, json || jsonb 연산자도 없음)
                     await ms.execute(
                         _sa_text2(
                             "UPDATE samba_jobs "
-                            "SET result = COALESCE(result, '{}'::jsonb) || "
-                            "jsonb_build_object('tracking_sync', CAST(:ts AS jsonb)) "
+                            "SET result = (COALESCE(result::jsonb, '{}'::jsonb) || "
+                            "jsonb_build_object('tracking_sync', CAST(:ts AS jsonb)))::json "
                             "WHERE id = :jid"
                         ),
                         {"ts": json.dumps(tracking_summary), "jid": job_id},
