@@ -1604,6 +1604,32 @@ class SSGClient:
             )
         return data
 
+    @staticmethod
+    def _parse_ssg_dts(raw_val: Any) -> Optional[datetime]:
+        """SSG 일시 문자열을 UTC datetime으로 변환.
+
+        지원 포맷: YYYYMMDDHH24MISS(14), YYYYMMDDHHMM(12), YYYY-MM-DD HH:MM:SS,
+        YYYYMMDD(8). SSG 응답은 KST 기준이므로 UTC로 변환해 반환.
+        """
+        s = str(raw_val or "").strip()
+        if not s:
+            return None
+        KST = timezone(timedelta(hours=9))
+        # 숫자만 추출 — 구분자 제거(예: "2026-05-18 15:21:40" → "20260518152140")
+        digits = "".join(ch for ch in s if ch.isdigit())
+        try:
+            if len(digits) >= 14:
+                dt = datetime.strptime(digits[:14], "%Y%m%d%H%M%S")
+            elif len(digits) >= 12:
+                dt = datetime.strptime(digits[:12], "%Y%m%d%H%M")
+            elif len(digits) >= 8:
+                dt = datetime.strptime(digits[:8], "%Y%m%d")
+            else:
+                return None
+        except ValueError:
+            return None
+        return dt.replace(tzinfo=KST).astimezone(timezone.utc)
+
     def parse_order(
         self,
         raw: dict[str, Any],
@@ -1691,10 +1717,25 @@ class SSGClient:
         # - orordNo: 원주문번호 (프론트 '상품주문번호' 란 표시용)
         shipment_id = f"{shpp_no}|{ord_item_seq}|{or_ord_no}"
 
+        # 결제일(paid_at) — 주문 목록 화면이 paid_at IS NOT NULL 로 필터링하므로
+        # 누락되면 SSG 주문이 목록에서 통째로 사라짐. 결제완료>주문일시 우선순위.
+        paid_at = (
+            self._parse_ssg_dts(raw.get("pymtCmplDts"))
+            or self._parse_ssg_dts(raw.get("pymtDts"))
+            or self._parse_ssg_dts(raw.get("ordDts"))
+            or self._parse_ssg_dts(raw.get("ordDt"))
+        )
+        if paid_at is None:
+            logger.warning(
+                f"[SSG 주문 파싱] paid_at 추출 실패 — ordNo={ord_no}, "
+                f"date_keys={[k for k in raw.keys() if 'Dt' in str(k) or 'dt' in str(k)]}"
+            )
+
         return {
             "order_number": ord_no,
             "shipment_id": shipment_id,
             "customer_note": str(raw.get("ordMemoCntt", "") or ""),
+            "paid_at": paid_at,
             "channel_id": account_id,
             "channel_name": label,
             "product_id": item_id_str,
