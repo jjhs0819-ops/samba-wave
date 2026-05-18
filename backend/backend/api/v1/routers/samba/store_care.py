@@ -12,6 +12,7 @@ from backend.domain.samba.store_care.repository import (
     StoreCarePurchaseRepository,
 )
 from backend.domain.samba.store_care.service import StoreCareService
+from backend.domain.samba.tenant.middleware import get_current_tenant_id
 
 router = APIRouter(prefix="/store-care", tags=["samba-store-care"])
 
@@ -30,10 +31,11 @@ def _svc(session: AsyncSession) -> StoreCareService:
 @router.get("/stats")
 async def get_stats(
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: str = Depends(get_current_tenant_id),
 ):
     """오늘 가구매 통계."""
     svc = _svc(session)
-    return await svc.today_stats()
+    return await svc.today_stats(tenant_id=tenant_id)
 
 
 # ── 스케줄 ──
@@ -64,20 +66,24 @@ class ScheduleUpdate(BaseModel):
 @router.get("/schedules")
 async def list_schedules(
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: str = Depends(get_current_tenant_id),
 ):
     """활성 스케줄 목록 조회."""
     svc = _svc(session)
-    return await svc.list_schedules()
+    return await svc.list_schedules(tenant_id=tenant_id)
 
 
 @router.post("/schedules", status_code=201)
 async def create_schedule(
     body: ScheduleCreate,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: str = Depends(get_current_tenant_id),
 ):
     """스케줄 생성."""
     svc = _svc(session)
-    return await svc.create_schedule(body.model_dump())
+    data = body.model_dump()
+    data["tenant_id"] = tenant_id
+    return await svc.create_schedule(data)
 
 
 @router.put("/schedules/{schedule_id}")
@@ -124,7 +130,10 @@ async def list_purchases(
     limit: int = Query(50, ge=1, le=500),
     market_type: Optional[str] = None,
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: str = Depends(get_current_tenant_id),
 ):
     """최근 구매 이력 조회."""
     svc = _svc(session)
-    return await svc.list_purchases(limit=limit, market_type=market_type)
+    return await svc.list_purchases(
+        limit=limit, market_type=market_type, tenant_id=tenant_id
+    )

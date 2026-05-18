@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
+from backend.domain.samba.tenant.middleware import get_current_tenant_id
 
 router = APIRouter(prefix="/wholesale", tags=["samba-wholesale"])
 
@@ -49,6 +50,7 @@ def _read_service(session: AsyncSession):
 async def search_wholesale(
     body: WholesaleSearchRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: str = Depends(get_current_tenant_id),
 ):
     """도매몰 상품 검색 후 DB 저장.
 
@@ -60,6 +62,7 @@ async def search_wholesale(
             source=body.source,
             keyword=body.keyword,
             page=body.page,
+            tenant_id=tenant_id,
         )
         return {"saved": len(items), "items": items}
     finally:
@@ -75,6 +78,7 @@ async def list_wholesale_products(
     page: int = Query(1, ge=1, description="페이지 번호"),
     size: int = Query(20, ge=1, le=100, description="페이지 크기"),
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: str = Depends(get_current_tenant_id),
 ):
     """저장된 도매 상품 목록 조회.
 
@@ -86,5 +90,6 @@ async def list_wholesale_products(
         keyword=keyword,
         page=page,
         size=size,
+        tenant_id=tenant_id,
     )
     return {"items": items, "page": page, "size": size}

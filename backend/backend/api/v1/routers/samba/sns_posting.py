@@ -11,6 +11,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
 from backend.domain.samba.sns_posting.service import SnsPostingService
+from backend.domain.samba.tenant.middleware import get_current_tenant_id
 
 router = APIRouter(prefix="/sns", tags=["samba-sns-posting"])
 
@@ -73,6 +74,7 @@ class AutoConfigRequest(BaseModel):
 async def connect_wordpress(
     req: WpConnectRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: str = Depends(get_current_tenant_id),
 ):
     """워드프레스 사이트를 연결하고 DB에 등록한다."""
     svc = SnsPostingService(session)
@@ -80,6 +82,7 @@ async def connect_wordpress(
         site_url=req.site_url,
         username=req.username,
         app_password=req.app_password,
+        tenant_id=tenant_id,
     )
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("error", "연결 실패"))
@@ -99,10 +102,11 @@ async def connect_wordpress(
 @router.get("/wordpress/sites")
 async def list_wordpress_sites(
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: str = Depends(get_current_tenant_id),
 ):
     """등록된 워드프레스 사이트 목록을 반환한다."""
     svc = SnsPostingService(session)
-    sites = await svc.list_wp_sites()
+    sites = await svc.list_wp_sites(tenant_id=tenant_id)
     return {
         "items": [
             {
@@ -127,6 +131,7 @@ async def list_wordpress_sites(
 async def create_keyword_group(
     req: KeywordGroupRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: str = Depends(get_current_tenant_id),
 ):
     """키워드 그룹을 생성한다."""
     svc = SnsPostingService(session)
@@ -134,6 +139,7 @@ async def create_keyword_group(
         name=req.name,
         category=req.category,
         keywords=req.keywords,
+        tenant_id=tenant_id,
     )
     return {
         "id": group.id,
@@ -148,10 +154,11 @@ async def create_keyword_group(
 @router.get("/keywords")
 async def list_keyword_groups(
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: str = Depends(get_current_tenant_id),
 ):
     """키워드 그룹 목록을 반환한다."""
     svc = SnsPostingService(session)
-    groups = await svc.list_keyword_groups()
+    groups = await svc.list_keyword_groups(tenant_id=tenant_id)
     return {
         "items": [
             {
@@ -211,6 +218,7 @@ async def search_issues(req: IssueSearchRequest):
 async def publish_post(
     req: PublishRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: str = Depends(get_current_tenant_id),
 ):
     """이슈 기반으로 AI 글을 생성하고 워드프레스에 발행한다."""
     svc = SnsPostingService(session)
@@ -220,6 +228,7 @@ async def publish_post(
         category=req.category,
         language=req.language,
         product_info=req.product_info,
+        tenant_id=tenant_id,
     )
     if not result.get("ok"):
         raise HTTPException(status_code=500, detail=result.get("error", "발행 실패"))
@@ -262,12 +271,15 @@ async def save_auto_config(
 async def start_auto_posting(
     wp_site_id: str,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: str = Depends(get_current_tenant_id),
 ):
     """자동 포스팅을 시작한다 — SSE 스트리밍 응답."""
     svc = SnsPostingService(session)
 
     async def _event_stream():
-        async for chunk in svc.auto_posting_stream(wp_site_id=wp_site_id):
+        async for chunk in svc.auto_posting_stream(
+            wp_site_id=wp_site_id, tenant_id=tenant_id
+        ):
             yield chunk
 
     return StreamingResponse(_event_stream(), media_type="text/event-stream")
@@ -299,10 +311,13 @@ async def list_posts(
     size: int = 50,
     status: Optional[str] = None,
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: str = Depends(get_current_tenant_id),
 ):
     """발행된 SNS 포스트 목록을 반환한다."""
     svc = SnsPostingService(session)
-    posts = await svc.list_posts(page=page, size=size, status=status)
+    posts = await svc.list_posts(
+        page=page, size=size, status=status, tenant_id=tenant_id
+    )
     return {
         "items": [
             {
@@ -328,7 +343,8 @@ async def list_posts(
 @router.get("/dashboard")
 async def get_dashboard(
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: str = Depends(get_current_tenant_id),
 ):
     """자동 포스팅 대시보드 통계를 반환한다."""
     svc = SnsPostingService(session)
-    return await svc.get_dashboard()
+    return await svc.get_dashboard(tenant_id=tenant_id)
