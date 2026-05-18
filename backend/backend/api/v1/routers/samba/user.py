@@ -94,12 +94,8 @@ async def create_user(
     body: UserCreateDto,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    """새 사용자 계정 생성. 프로덕션에서 비활성화."""
-    from backend.core.config import settings
-
-    if settings.is_production:
-        raise HTTPException(status_code=403, detail="회원가입은 관리자에게 문의하세요")
-    # 초대 코드 검증
+    """새 사용자 계정 생성 — 초대코드 검증 + 테넌트 자동 생성."""
+    # 초대 코드 검증 (프로덕션 보호는 초대 코드로 대체)
     if body.invite_code != INVITE_CODE:
         raise HTTPException(status_code=403, detail="초대 코드가 올바르지 않습니다")
 
@@ -118,7 +114,26 @@ async def create_user(
         is_admin=False,
         status="active",
     )
-    logger.info(f"[사용자관리] 계정 생성: {user.email}")
+
+    # 신규 테넌트 자동 생성 → 데이터 격리 보장
+    from backend.domain.samba.tenant.model import SambaTenant
+
+    tenant = SambaTenant(
+        name=body.name,
+        owner_user_id=user.id,
+        plan="free",
+    )
+    session.add(tenant)
+    await session.flush()  # tenant.id 확정
+
+    # 사용자에 tenant_id 연결 + owner 역할 부여
+    user.tenant_id = tenant.id
+    user.role = "owner"
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+
+    logger.info(f"[사용자관리] 계정 생성: {user.email} / 테넌트 {tenant.id} 자동 생성")
 
     return UserOut(
         id=user.id,
