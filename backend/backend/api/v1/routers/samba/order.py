@@ -1693,6 +1693,75 @@ async def set_auto_sync_interval(
     return {"interval_minutes": minutes}
 
 
+@router.get("/auto-sync-history")
+async def get_auto_sync_history(
+    limit: int = 2,
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict:
+    """주문 자동실행(order_sync 잡) 최근 이력 N건 요약.
+
+    프론트 '주문 자동실행' 섹션에서 최근 수집 결과를 표시하기 위함.
+    """
+    from sqlalchemy import text as _t
+
+    limit = max(1, min(int(limit or 2), 10))
+    rows = await session.execute(
+        _t(
+            "SELECT id, status, created_at, started_at, completed_at, result, error "
+            "FROM samba_jobs WHERE job_type = 'order_sync' "
+            "ORDER BY created_at DESC LIMIT :lim"
+        ),
+        {"lim": limit},
+    )
+    items: list[dict] = []
+    for r in rows.fetchall():
+        job_id, status, created_at, started_at, completed_at, result, error = r
+        result_dict = result if isinstance(result, dict) else {}
+        results_list = result_dict.get("results") or []
+        per_market: list[dict] = []
+        for it in results_list:
+            if not isinstance(it, dict):
+                continue
+            per_market.append(
+                {
+                    "account": it.get("account", ""),
+                    "status": it.get("status", ""),
+                    "synced": int(it.get("synced") or 0),
+                    "fetched": int(it.get("fetched") or 0),
+                    "message": (it.get("message") or "")[:200],
+                }
+            )
+        duration_sec: int | None = None
+        if started_at and completed_at:
+            duration_sec = int((completed_at - started_at).total_seconds())
+        ts = result_dict.get("tracking_sync") or {}
+        tracking_summary: dict | None = None
+        if isinstance(ts, dict) and ts:
+            tracking_summary = {
+                "success": bool(ts.get("success")),
+                "queued": int(ts.get("queued") or 0),
+                "skipped": int(ts.get("skipped") or 0),
+                "jobs": int(ts.get("job_ids_count") or 0),
+                "errors": [str(e)[:200] for e in (ts.get("errors") or [])][:3],
+                "ran_at": ts.get("ran_at"),
+            }
+        items.append(
+            {
+                "job_id": job_id,
+                "status": status,
+                "created_at": created_at.isoformat() if created_at else None,
+                "started_at": started_at.isoformat() if started_at else None,
+                "completed_at": completed_at.isoformat() if completed_at else None,
+                "duration_sec": duration_sec,
+                "total_synced": int(result_dict.get("total_synced") or 0),
+                "per_market": per_market,
+                "tracking_sync": tracking_summary,
+                "error": (error or "")[:300] if error else None,
+            }
+        )
+    return {"items": items}
+
+
 @router.get("/{order_id}", response_model=SambaOrder)
 async def get_order(
     order_id: str,
