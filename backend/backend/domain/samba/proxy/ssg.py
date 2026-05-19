@@ -1687,6 +1687,22 @@ class SSGClient:
             "shipping_status": "취소요청",
         }
 
+    async def get_order_detail(self, or_ord_no: str) -> list[dict[str, Any]]:
+        """원주문번호로 주문 상세 조회 — ordItemDiv(021=취소) 등 현재 상태 확인용.
+
+        API: GET /api/claim/v2/order/{orordNo}
+        """
+        data = await self._call_api("GET", f"/api/claim/v2/order/{or_ord_no}")
+        result = data.get("result", {})
+        if not isinstance(result, dict):
+            return []
+        result_data = result.get("resultData", [])
+        if isinstance(result_data, dict):
+            result_data = [result_data]
+        elif not isinstance(result_data, list):
+            return []
+        return result_data
+
     async def confirm_order(self, shpp_no: str, shpp_seq: str) -> dict[str, Any]:
         """발주확인 처리."""
         body = {
