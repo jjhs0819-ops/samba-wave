@@ -129,6 +129,7 @@ class SSGPlugin(MarketPlugin):
 
         # 추가수수료율 역산 + 100원 단위 올림
         import math as _math
+
         extra_fee_rate = float(creds.get("extraFeeRate") or 0)
         _orig_price = int(product.get("sale_price", 0) or 0)
         if _orig_price > 0:

@@ -141,7 +141,10 @@ class SSGClient:
             resp = await client.get(url, headers=headers, params=params)
         elif method == "POST":
             import json as _json
-            logger.info(f"[SSG REQ] POST {path} body={_json.dumps(body or {}, ensure_ascii=False)[:500]}")
+
+            logger.info(
+                f"[SSG REQ] POST {path} body={_json.dumps(body or {}, ensure_ascii=False)[:500]}"
+            )
             resp = await client.post(
                 url, headers=headers, json=body or {}, params=params
             )
@@ -1833,7 +1836,9 @@ class SSGClient:
         ord_no = str(raw.get("ordNo", "") or "")
         ord_item_seq = str(raw.get("ordItemSeq", "") or "")
         shpp_no = str(raw.get("shppNo", "") or "")
-        shpp_seq = str(raw.get("shppSeq", "") or ord_item_seq)  # 배송순번 (운송장등록/발주확인에 사용)
+        shpp_seq = str(
+            raw.get("shppSeq", "") or ord_item_seq
+        )  # 배송순번 (운송장등록/발주확인에 사용)
         # orordNo: 원주문번호 (신세계몰 주문관리 페이지의 '원주문번호' 항목)
         or_ord_no = str(raw.get("orordNo", "") or "")
 
@@ -1894,7 +1899,9 @@ class SSGClient:
             "sale_price": sell_price,
             "cost": 0,
             "fee_rate": fee_rate,
-            "revenue": round(spl_prc * 1.1) if spl_prc > 0 else round(sell_price / 1.1 * (1 - fee_rate / 100)),
+            "revenue": round(spl_prc * 1.1)
+            if spl_prc > 0
+            else round(sell_price / 1.1 * (1 - fee_rate / 100)),
             "source": "ssg",
             "status": status,
             "shipping_status": shipping_status,
