@@ -506,13 +506,19 @@ const _CURRENT_ACCOUNT_CACHE_TTL_MS = 30 * 60 * 1000  // 30분
 // 사이트별 마이페이지 URL + username 스크랩 함수
 const _CURRENT_ACCOUNT_DETECTORS = {
   MUSINSA: {
-    mypageUrl: 'https://www.musinsa.com/mypage/order',
+    // /mypage/order는 무신사 측이 폐기 — 2026-05-19 404 확인. /mypage 로 변경.
+    mypageUrl: 'https://www.musinsa.com/mypage',
     scrape: () => {
-      // 프로필 영역에서 닉네임/아이디 추출 — 무신사 마이페이지 헤더 패턴
-      for (const el of document.querySelectorAll('a[href*="/my"], a[href*="/member"], a[href*="/mypage"]')) {
-        const t = (el.textContent || '').trim().replace(/\s*>.*/, '')
-        if (t && t.length >= 2 && t.length <= 30 && !t.includes('마이') && !t.includes('로그') && !t.includes('주문') && !t.includes('회원')) {
-          return t
+      // 무신사 /mypage 프로필 영역 "서병기" 같은 닉네임 텍스트 추출.
+      // 1순위: 프로필 닉네임 패턴 (a/button 안에 한글/영문 ID + > 화살표)
+      for (const el of document.querySelectorAll('a, button, span, div')) {
+        const txt = (el.textContent || '').trim().replace(/\s*>.*/, '').replace(/\s*프로필.*$/, '').trim()
+        if (txt && txt.length >= 2 && txt.length <= 20
+            && /^[가-힣A-Za-z0-9_]+$/.test(txt)
+            && !['마이', '주문', '쿠폰', '적립금', '회원', '로그인', '로그아웃',
+                 'MUSINSA', 'BEAUTY', 'SPORTS', 'OUTLET', 'BOUTIQUE', 'KICKS',
+                 'KIDS', 'USED', 'SNAP', '검색', '좋아요', '장바구니'].includes(txt)) {
+          return txt
         }
       }
       // 폴백: "OOO님" 패턴

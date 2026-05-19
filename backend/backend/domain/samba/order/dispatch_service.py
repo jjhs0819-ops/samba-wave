@@ -347,7 +347,10 @@ async def _send_ssg(order, account, courier, tracking, session):
 
     shipment_id = (order.shipment_id or "").strip()
     if not shipment_id or "|" not in shipment_id:
-        return False, f"SSG shipment_id 형식 오류: {shipment_id!r} (shppNo|shppSeq 필요)"
+        return (
+            False,
+            f"SSG shipment_id 형식 오류: {shipment_id!r} (shppNo|shppSeq 필요)",
+        )
 
     parts = shipment_id.split("|")
     shpp_no = parts[0].strip()

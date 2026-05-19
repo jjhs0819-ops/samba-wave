@@ -1761,9 +1761,15 @@ class SSGClient:
         }
         data = await self._call_api("POST", "/api/pd/1/saveWblNo.ssg", body=body)
         result = data.get("result", {})
-        result_code = (result.get("resultCode") or "") if isinstance(result, dict) else ""
+        result_code = (
+            (result.get("resultCode") or "") if isinstance(result, dict) else ""
+        )
         if result_code != "00":
-            desc = (result.get("resultDesc") or result.get("resultMessage") or str(data)) if isinstance(result, dict) else str(data)
+            desc = (
+                (result.get("resultDesc") or result.get("resultMessage") or str(data))
+                if isinstance(result, dict)
+                else str(data)
+            )
             raise RuntimeError(f"SSG 운송장 등록 실패 ({result_code}): {desc}")
         return data
 
@@ -1788,9 +1794,15 @@ class SSGClient:
             "POST", "/api/pd/1/saveWhOutCompleteProcess.ssg", body=body
         )
         result = data.get("result", {})
-        result_code = (result.get("resultCode") or "") if isinstance(result, dict) else ""
+        result_code = (
+            (result.get("resultCode") or "") if isinstance(result, dict) else ""
+        )
         if result_code != "00":
-            desc = (result.get("resultDesc") or result.get("resultMessage") or str(data)) if isinstance(result, dict) else str(data)
+            desc = (
+                (result.get("resultDesc") or result.get("resultMessage") or str(data))
+                if isinstance(result, dict)
+                else str(data)
+            )
             raise RuntimeError(f"SSG 출고처리 실패 ({result_code}): {desc}")
         return data
 

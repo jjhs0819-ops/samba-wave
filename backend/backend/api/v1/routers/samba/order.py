@@ -5767,6 +5767,11 @@ async def sync_orders_from_markets(
                     not existing
                     and order_data.get("shipment_id")
                     and order_data.get("product_id")
+                    # 롯데ON 제외: 같은 sitmNo(shipment_id)에 서로 다른 odNo의 주문이 다수 존재
+                    # 가능 — fallback 매칭이 다른 사람 행을 잘못 매칭해 한 행에 두 주문 데이터를
+                    # 짬뽕시키는 사고 원인 (2026-05-19 임재광/최호선 사례).
+                    # 롯데ON은 (channel_id, od_no, od_seq) 매칭만 신뢰.
+                    and order_data.get("source") != "lotteon"
                 ):
                     # 같은 orderId + 상품번호로 이미 있는 주문 검색
                     _dup_candidates = await svc.repo.filter_by_async(
