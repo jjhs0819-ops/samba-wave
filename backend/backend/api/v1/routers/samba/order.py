@@ -5043,10 +5043,12 @@ async def sync_orders_from_markets(
                         orders_data.append(_ord)
                         # 상품준비중(11) = 발주확인 미처리 신규주문 → 출고대기로 변경 대상
                         if str(_ssg_ro.get("shppProgStatDtlCd", "")) == "11":
-                            _ssg_unconfirmed.append((
-                                str(_ssg_ro.get("shppNo", "")),
-                                str(_ssg_ro.get("shppSeq", "")),
-                            ))
+                            _ssg_unconfirmed.append(
+                                (
+                                    str(_ssg_ro.get("shppNo", "")),
+                                    str(_ssg_ro.get("shppSeq", "")),
+                                )
+                            )
 
                     # 자동 발주확인 (출고대기로 변경)
                     if _ssg_unconfirmed:
@@ -5067,11 +5069,16 @@ async def sync_orders_from_markets(
                     # 취소신청 주문 조회 → 상태 업데이트
                     _ssg_cancels: list[dict] = []
                     try:
-                        _ssg_cancels = await _ssg_client.get_cancel_requests(days=body.days)
+                        _ssg_cancels = await _ssg_client.get_cancel_requests(
+                            days=body.days
+                        )
                         for _ssg_cr in _ssg_cancels:
                             orders_data.append(
                                 _ssg_client.parse_cancel_request(
-                                    _ssg_cr, account["id"], label, fee_rate=_ssg_fee_rate
+                                    _ssg_cr,
+                                    account["id"],
+                                    label,
+                                    fee_rate=_ssg_fee_rate,
                                 )
                             )
                         if _ssg_cancels:
@@ -5079,7 +5086,9 @@ async def sync_orders_from_markets(
                                 f"[주문동기화] {label}: 취소신청 {len(_ssg_cancels)}건 조회"
                             )
                     except Exception as _ssg_ce:
-                        logger.warning(f"[주문동기화] {label}: SSG 취소신청 조회 실패 — {_ssg_ce}")
+                        logger.warning(
+                            f"[주문동기화] {label}: SSG 취소신청 조회 실패 — {_ssg_ce}"
+                        )
 
                     # SSG 취소 상태 전환 감지
                     # 1) 활성 주문 중 listShppDirection에 없는 것 → 취소요청 여부 단건 확인
@@ -5087,7 +5096,12 @@ async def sync_orders_from_markets(
                     # 3) 취소요청 주문이 listShppDirection에 다시 나타나면 → parse_order가 이미 처리
                     try:
                         from sqlalchemy import text as _sa_text_cdet
-                        from datetime import datetime as _cdet_dt, timezone as _ctz, timedelta as _ctd
+                        from datetime import (
+                            datetime as _cdet_dt,
+                            timezone as _ctz,
+                            timedelta as _ctd,
+                        )
+
                         _ssg_seen_ord_nos = {
                             str(_ro.get("ordNo") or "")
                             for _ro in _ssg_raw_orders
@@ -5099,9 +5113,8 @@ async def sync_orders_from_markets(
                             for _cr in _ssg_cancels
                             if _cr.get("ordNo")
                         }
-                        _cdet_cutoff = (
-                            _cdet_dt.now(_ctz(_ctd(hours=9)))
-                            - _ctd(days=body.days)
+                        _cdet_cutoff = _cdet_dt.now(_ctz(_ctd(hours=9))) - _ctd(
+                            days=body.days
                         )
                         async with get_read_session() as _cdet_sess:
                             _cdet_q = await _cdet_sess.execute(
@@ -5118,8 +5131,16 @@ async def sync_orders_from_markets(
                                 {"cid": account["id"], "cutoff": _cdet_cutoff},
                             )
                             _cdet_rows = _cdet_q.fetchall()
-                        _db_active_nos = {r[0] for r in _cdet_rows if r[1] not in ("취소요청", "취소처리중")}
-                        _db_cancel_req_nos = {r[0] for r in _cdet_rows if r[1] in ("취소요청", "취소처리중")}
+                        _db_active_nos = {
+                            r[0]
+                            for r in _cdet_rows
+                            if r[1] not in ("취소요청", "취소처리중")
+                        }
+                        _db_cancel_req_nos = {
+                            r[0]
+                            for r in _cdet_rows
+                            if r[1] in ("취소요청", "취소처리중")
+                        }
 
                         # 활성 주문 중 listShppDirection에 없는 것 → 단건 조회로 취소요청 확인
                         _ssg_need_check = _db_active_nos - _ssg_seen_ord_nos
@@ -5139,18 +5160,20 @@ async def sync_orders_from_markets(
                                         str(it.get("ordItemDiv", "")) == "021"
                                         for it in _detail_items
                                     ):
-                                        orders_data.append({
-                                            "order_number": _chk_ord_no,
-                                            "channel_id": account["id"],
-                                            "channel_name": label,
-                                            "status": "cancel_requested",
-                                            "shipping_status": "취소요청",
-                                            "source": "ssg",
-                                            "sale_price": 0.0,
-                                            "revenue": 0.0,
-                                            "fee_rate": _ssg_fee_rate,
-                                            "cost": 0,
-                                        })
+                                        orders_data.append(
+                                            {
+                                                "order_number": _chk_ord_no,
+                                                "channel_id": account["id"],
+                                                "channel_name": label,
+                                                "status": "cancel_requested",
+                                                "shipping_status": "취소요청",
+                                                "source": "ssg",
+                                                "sale_price": 0.0,
+                                                "revenue": 0.0,
+                                                "fee_rate": _ssg_fee_rate,
+                                                "cost": 0,
+                                            }
+                                        )
                                         _ssg_cancel_found += 1
                                         logger.info(
                                             f"[주문동기화] {label}: SSG 취소 감지 "
@@ -5168,25 +5191,31 @@ async def sync_orders_from_markets(
                                 )
 
                         # 취소요청 주문 중 cancel_requests·listShppDirection 모두에 없는 것 → 취소완료
-                        _ssg_completed = _db_cancel_req_nos - _ssg_cancel_req_nos - _ssg_seen_ord_nos
+                        _ssg_completed = (
+                            _db_cancel_req_nos - _ssg_cancel_req_nos - _ssg_seen_ord_nos
+                        )
                         if _ssg_completed:
                             logger.info(
                                 f"[주문동기화] {label}: SSG 취소완료 감지 {len(_ssg_completed)}건"
                             )
                             for _cpno in _ssg_completed:
-                                orders_data.append({
-                                    "order_number": _cpno,
-                                    "channel_id": account["id"],
-                                    "channel_name": label,
-                                    "status": "cancelled",
-                                    "shipping_status": "취소완료",
-                                    "source": "ssg",
-                                    "sale_price": 0.0,
-                                    "revenue": 0.0,
-                                    "fee_rate": _ssg_fee_rate,
-                                    "cost": 0,
-                                })
-                                logger.info(f"[주문동기화] {label}: SSG 취소완료 — {_cpno}")
+                                orders_data.append(
+                                    {
+                                        "order_number": _cpno,
+                                        "channel_id": account["id"],
+                                        "channel_name": label,
+                                        "status": "cancelled",
+                                        "shipping_status": "취소완료",
+                                        "source": "ssg",
+                                        "sale_price": 0.0,
+                                        "revenue": 0.0,
+                                        "fee_rate": _ssg_fee_rate,
+                                        "cost": 0,
+                                    }
+                                )
+                                logger.info(
+                                    f"[주문동기화] {label}: SSG 취소완료 — {_cpno}"
+                                )
                     except Exception as _cdet_e:
                         logger.warning(
                             f"[주문동기화] {label}: SSG 취소 감지 실패 — {_cdet_e}"
@@ -5993,7 +6022,10 @@ async def sync_orders_from_markets(
                         update_fields["status"] = "shipping"
                     elif _new_ss_final == "취소완료" and existing.status != "cancelled":
                         update_fields["status"] = "cancelled"
-                    elif _new_ss_final == "취소요청" and existing.status != "cancel_requested":
+                    elif (
+                        _new_ss_final == "취소요청"
+                        and existing.status != "cancel_requested"
+                    ):
                         update_fields["status"] = "cancel_requested"
                     # 플레이오토 미등록 주문의 취소요청/취소완료는 status 드롭다운도 동기화.
                     # 신규 insert는 _normalize_synced_order_status 예외에서 처리되지만,

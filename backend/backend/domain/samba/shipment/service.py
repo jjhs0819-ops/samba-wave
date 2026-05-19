@@ -1607,7 +1607,10 @@ class SambaShipmentService:
                         if _pkey:
                             _mp_copy = dict(policy_market_data.get(_pkey, {}))
                             _mp_copy["feeRate"] = _acct_fee_rate
-                            _effective_market_data = {**policy_market_data, _pkey: _mp_copy}
+                            _effective_market_data = {
+                                **policy_market_data,
+                                _pkey: _mp_copy,
+                            }
                     calc_price = calc_market_price(
                         effective_cost,
                         policy.pricing,
