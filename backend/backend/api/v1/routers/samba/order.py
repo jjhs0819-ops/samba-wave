@@ -5065,6 +5065,7 @@ async def sync_orders_from_markets(
                         )
 
                     # 취소신청 주문 조회 → 상태 업데이트
+                    _ssg_cancels: list[dict] = []
                     try:
                         _ssg_cancels = await _ssg_client.get_cancel_requests(days=body.days)
                         for _ssg_cr in _ssg_cancels:
@@ -5080,36 +5081,47 @@ async def sync_orders_from_markets(
                     except Exception as _ssg_ce:
                         logger.warning(f"[주문동기화] {label}: SSG 취소신청 조회 실패 — {_ssg_ce}")
 
-                    # SSG 취소 감지: DB의 활성 주문 중 이번 listShppDirection에 없는 것을
-                    # /api/claim/v2/order/{orordNo} 단건 조회로 취소 여부 확인
+                    # SSG 취소 상태 전환 감지
+                    # 1) 활성 주문 중 listShppDirection에 없는 것 → 취소요청 여부 단건 확인
+                    # 2) 취소요청 주문 중 get_cancel_requests+listShppDirection 모두에 없는 것 → 취소완료
+                    # 3) 취소요청 주문이 listShppDirection에 다시 나타나면 → parse_order가 이미 처리
                     try:
                         from sqlalchemy import text as _sa_text_cdet
-                        from datetime import timezone as _ctz, timedelta as _ctd
+                        from datetime import datetime as _cdet_dt, timezone as _ctz, timedelta as _ctd
                         _ssg_seen_ord_nos = {
                             str(_ro.get("ordNo") or "")
                             for _ro in _ssg_raw_orders
                             if _ro.get("ordNo")
                         }
+                        # get_cancel_requests 결과에서 아직 취소신청 중인 주문번호 집합
+                        _ssg_cancel_req_nos = {
+                            str(_cr.get("ordNo") or "")
+                            for _cr in _ssg_cancels
+                            if _cr.get("ordNo")
+                        }
                         _cdet_cutoff = (
-                            datetime.now(_ctz(_ctd(hours=9)))
+                            _cdet_dt.now(_ctz(_ctd(hours=9)))
                             - _ctd(days=body.days)
-                        ).strftime("%Y-%m-%d")
+                        )
                         async with get_read_session() as _cdet_sess:
                             _cdet_q = await _cdet_sess.execute(
                                 _sa_text_cdet(
-                                    "SELECT order_number FROM samba_order "
+                                    "SELECT order_number, shipping_status FROM samba_order "
                                     "WHERE source = 'ssg' "
                                     "AND channel_id = :cid "
                                     "AND shipping_status NOT IN ("
-                                    "  '취소요청','취소처리중','취소완료',"
-                                    "  '반품요청','반품완료','구매확정'"
+                                    "  '취소완료','반품완료','구매확정'"
                                     ") "
                                     "AND (paid_at IS NULL OR paid_at >= :cutoff) "
                                     "AND order_number IS NOT NULL AND order_number != ''"
                                 ),
                                 {"cid": account["id"], "cutoff": _cdet_cutoff},
                             )
-                            _db_active_nos = {r[0] for r in _cdet_q.fetchall()}
+                            _cdet_rows = _cdet_q.fetchall()
+                        _db_active_nos = {r[0] for r in _cdet_rows if r[1] not in ("취소요청", "취소처리중")}
+                        _db_cancel_req_nos = {r[0] for r in _cdet_rows if r[1] in ("취소요청", "취소처리중")}
+
+                        # 활성 주문 중 listShppDirection에 없는 것 → 단건 조회로 취소요청 확인
                         _ssg_need_check = _db_active_nos - _ssg_seen_ord_nos
                         if _ssg_need_check:
                             logger.info(
@@ -5154,6 +5166,27 @@ async def sync_orders_from_markets(
                                     f"[주문동기화] {label}: SSG 취소 감지 "
                                     f"{_ssg_cancel_found}건 취소요청 처리"
                                 )
+
+                        # 취소요청 주문 중 cancel_requests·listShppDirection 모두에 없는 것 → 취소완료
+                        _ssg_completed = _db_cancel_req_nos - _ssg_cancel_req_nos - _ssg_seen_ord_nos
+                        if _ssg_completed:
+                            logger.info(
+                                f"[주문동기화] {label}: SSG 취소완료 감지 {len(_ssg_completed)}건"
+                            )
+                            for _cpno in _ssg_completed:
+                                orders_data.append({
+                                    "order_number": _cpno,
+                                    "channel_id": account["id"],
+                                    "channel_name": label,
+                                    "status": "cancelled",
+                                    "shipping_status": "취소완료",
+                                    "source": "ssg",
+                                    "sale_price": 0.0,
+                                    "revenue": 0.0,
+                                    "fee_rate": _ssg_fee_rate,
+                                    "cost": 0,
+                                })
+                                logger.info(f"[주문동기화] {label}: SSG 취소완료 — {_cpno}")
                     except Exception as _cdet_e:
                         logger.warning(
                             f"[주문동기화] {label}: SSG 취소 감지 실패 — {_cdet_e}"
@@ -5958,6 +5991,10 @@ async def sync_orders_from_markets(
                         "shipped",
                     ):
                         update_fields["status"] = "shipping"
+                    elif _new_ss_final == "취소완료" and existing.status != "cancelled":
+                        update_fields["status"] = "cancelled"
+                    elif _new_ss_final == "취소요청" and existing.status != "cancel_requested":
+                        update_fields["status"] = "cancel_requested"
                     # 정산금액(revenue) / 수수료율 갱신
                     new_revenue = order_data.get("revenue")
                     new_fee_rate = order_data.get("fee_rate")
