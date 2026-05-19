@@ -44,9 +44,15 @@
 
     try {
       const url = proxyUrl || DEFAULT_PROXY_URL
+      // X-Device-Id 동봉 — 백엔드 owner_device_ids 화이트리스트 가드 통과용.
+      // 포크 확장앱은 본인 deviceId 가 아니므로 403 받고 키 발급 차단됨.
+      const deviceId = await getOrCreateDeviceId()
       const res = await fetch(`${url}/api/v1/samba/sourcing-accounts/extension-key`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Device-Id': deviceId,
+        },
         body: JSON.stringify({}),
       })
       if (res.ok) {

@@ -1006,6 +1006,33 @@ async def receive_reward_result(
 # ==================== 확장앱 전용 엔드포인트 (extension_router) ====================
 
 
+def _check_owner_device(request: Request) -> None:
+    """소유자 deviceId 화이트리스트 가드.
+
+    민감 엔드포인트(/login-credential, /extension-key) 전용 — 포크된 확장앱이
+    원본 백엔드를 그대로 가리키는 케이스에서 평문 자격증명/API 키 유출 차단.
+
+    settings.owner_device_ids 가 비어있으면 가드 무효(레거시 호환).
+    설정되어 있고 X-Device-Id 헤더가 화이트리스트에 없으면 403.
+    """
+    from backend.core.config import settings
+
+    raw = (getattr(settings, "owner_device_ids", "") or "").strip()
+    if not raw:
+        return  # 가드 미설정 — 레거시 호환
+    allowed = {d.strip() for d in raw.split(",") if d.strip()}
+    device_id = (request.headers.get("X-Device-Id") or "").strip()
+    if not device_id or device_id not in allowed:
+        client_ip = request.headers.get("X-Forwarded-For", "") or (
+            request.client.host if request.client else ""
+        )
+        logger.warning(
+            f"[owner-guard] 차단 path={request.url.path} "
+            f"device_id={device_id[:12]}... ip={client_ip[:60]}"
+        )
+        raise HTTPException(403, "허용되지 않은 디바이스입니다.")
+
+
 class SyncChromeProfileRequest(BaseModel):
     email: str
     gaia_id: Optional[str] = None
@@ -1033,12 +1060,18 @@ async def get_extension_key(request: Request):
       - IP당 1분 10회 레이트리밋
       - User-Agent / Origin 누락 시 경고 로그 (차단은 안 함 — 정식 확장앱 호환 유지)
       - 정식 해결책(JWT 또는 tenant-scoped 키) 도입 전 한시 조치
+
+    추가 (2026-05-19): owner_device_ids 화이트리스트 가드 — 포크 확장앱이 원본
+    백엔드를 가리켜 API 키를 빼가는 케이스 차단. owner_device_ids 미설정 시
+    가드 무효(레거시 호환).
     """
     import time as _time
     import logging as _logging
 
     from backend.core.config import settings
     from backend.core.rate_limit import _client_key
+
+    _check_owner_device(request)
 
     _logger = _logging.getLogger(__name__)
     # Caddy 리버스 프록시 뒤라 request.client.host는 docker bridge IP로 뭉침 →
@@ -1070,6 +1103,7 @@ async def get_extension_key(request: Request):
 
 @extension_router.get("/login-credential")
 async def get_login_credential(
+    request: Request,
     site_name: str | None = Query(
         None,
         description="사이트 ID (예: LOTTEON, ABCmart, SSG) — account_id 없을 때 라디오 기본 계정 조회",
@@ -1098,9 +1132,13 @@ async def get_login_credential(
     보안 메모:
     - 평문 username/password 노출 (Chrome 자동완성 불가능한 SPA 사이트의 직접 .value 설정용)
     - DB 자체에 평문 저장된 자격증명을 그대로 전달 — 새로운 보안 위험 추가 없음.
+    - (2026-05-19) owner_device_ids 화이트리스트 가드 — 포크 확장앱이 원본
+      백엔드에서 자격증명 빼가는 사고 차단. 미설정 시 레거시 호환으로 가드 무효.
     """
     from sqlalchemy import select as sa_select
     from backend.domain.samba.sourcing_account.model import SambaSourcingAccount
+
+    _check_owner_device(request)
 
     account = None
 
