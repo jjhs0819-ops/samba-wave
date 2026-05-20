@@ -1917,7 +1917,9 @@ class SambaShipmentService:
                 try:
                     await on_account_done(_aid, _ar)
                 except Exception as _cb_exc:
-                    logger.warning(f"[전송] on_account_done 콜백 실패 (무시): {_cb_exc}")
+                    logger.warning(
+                        f"[전송] on_account_done 콜백 실패 (무시): {_cb_exc}"
+                    )
 
         # 결과 병합 + DB 일괄 업데이트
         merged_nos = dict(product_row.market_product_nos or {})

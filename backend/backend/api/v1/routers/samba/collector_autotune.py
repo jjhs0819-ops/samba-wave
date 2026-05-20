@@ -1780,7 +1780,12 @@ async def _site_autotune_loop(device_id: str, site: str):
                                     # 계정별 진행 로그를 완료 즉시 흘리기 위한 사전 인덱싱
                                     _entry_by_acc = {
                                         _e_acc: (_e_label, _e_action)
-                                        for (_, _e_acc, _e_label, _e_action) in _entries_list
+                                        for (
+                                            _,
+                                            _e_acc,
+                                            _e_label,
+                                            _e_action,
+                                        ) in _entries_list
                                     }
                                     _logged_accs: set[str] = set()
 
@@ -1835,7 +1840,9 @@ async def _site_autotune_loop(device_id: str, site: str):
                                                 )
                                         else:
                                             _fail_msg = (
-                                                str(_ar_err)[:200] if _ar_err else "결과없음"
+                                                str(_ar_err)[:200]
+                                                if _ar_err
+                                                else "결과없음"
                                             )
                                             _log_line(
                                                 _site,
@@ -1859,15 +1866,13 @@ async def _site_autotune_loop(device_id: str, site: str):
                                                     )
 
                                                     _svc = _FSvc(_FRepo(_tx_s), _tx_s)
-                                                    _tx_result = (
-                                                        await _svc.start_update(
-                                                            [_pid],
-                                                            _items,
-                                                            _accs_list,
-                                                            skip_unchanged=False,
-                                                            skip_refresh=True,
-                                                            on_account_done=_on_account_done,
-                                                        )
+                                                    _tx_result = await _svc.start_update(
+                                                        [_pid],
+                                                        _items,
+                                                        _accs_list,
+                                                        skip_unchanged=False,
+                                                        skip_refresh=True,
+                                                        on_account_done=_on_account_done,
                                                     )
                                                     # HTTP 끝났으면 즉시 commit — 세션이 idle
                                                     # 상태로 더 머무르지 않도록 transaction 종료
@@ -2234,8 +2239,13 @@ async def _site_autotune_loop(device_id: str, site: str):
                                         summary=f"오토튠[{site}] 사이클 완료 (1바퀴 {_g_total_now:,}건): {_cstats['ok']:,}건 성공, {_cstats['err']:,}건 실패{_c_err_detail} / 배치 {_cstats['batches']:,}회 | {int(_c_dur_sec):,}초, {_c_rate}건/초",
                                         source_site=site,
                                         detail={
-                                            "total": _cstats["total"],
+                                            # total = 분모(1바퀴 전체 상품 수)로 고정.
+                                            # UI 카드 "대상 {total}" 자리에 절대 200 같은 배치 단위 숫자가
+                                            # 표시되지 않도록 안전장치.
+                                            "total": _g_total_now,
                                             "total_global": _g_total_now,
+                                            "processed": _cstats["total"],
+                                            "is_full_cycle": True,
                                             "ok": _cstats["ok"],
                                             "errors": _cstats["err"],
                                             "no_pid": _cstats["no_pid"],

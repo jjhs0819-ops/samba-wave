@@ -1014,6 +1014,13 @@ export default function WarroomPage() {
                           border: `1px solid ${siteColor}30`,
                           flexShrink: 0,
                         }}>{siteName}</span>
+                        <span style={{
+                          fontSize: '0.7rem', color: '#51CF66',
+                          padding: '0.08rem 0.3rem', borderRadius: '3px',
+                          background: '#51CF6615',
+                          border: '1px solid #51CF6630',
+                          flexShrink: 0,
+                        }}>1바퀴 완료</span>
 
                         <span style={{ fontSize: '0.78rem', color: '#666', marginLeft: 'auto' }}>
                           {cycles > 1 ? `최근 ${fmtNum(cycles)}사이클` : ''}
@@ -1029,6 +1036,8 @@ export default function WarroomPage() {
                         const priceTx = _d?.price_transmit as number | undefined
                         const stockTx = _d?.stock_transmit as number | undefined
                         const deleted = _d?.deleted as number | undefined
+                        const processed = _d?.processed as number | undefined
+                        const batches = _d?.batches as number | undefined
                         const startedAt = _d?.started_at as string | undefined
                         const endedAt = _d?.ended_at as string | undefined
                         const fmtTime = (iso?: string) => {
@@ -1056,6 +1065,12 @@ export default function WarroomPage() {
                                 }
                                 return <span style={{ fontSize: '0.78rem', color: '#aaa' }}>대상 {fmtNum(total)}</span>
                               })()}
+                              {batches != null && batches > 0 && (
+                                <span style={{ fontSize: '0.72rem', color: '#888' }}>배치 {fmtNum(batches)}회</span>
+                              )}
+                              {processed != null && processed > 0 && (
+                                <span style={{ fontSize: '0.78rem', color: '#aaa' }}>처리 {fmtNum(processed)}</span>
+                              )}
                               {ok != null && (
                                 <span style={{ fontSize: '0.78rem', color: '#aaa' }}>성공 {fmtNum(ok)}</span>
                               )}
