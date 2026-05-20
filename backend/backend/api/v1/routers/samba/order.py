@@ -476,37 +476,11 @@ async def _build_order_filters(
             )
         )
 
-    # 등록필터 — 입력필터와 독립적으로 동작 (이중 선택 가능)
+    # 등록필터 — collected_product_id 기준으로만 판단 (삼바 등록 여부)
     if registration_filter == "registered":
-        # collected_product_id가 있거나, "미등록 입력"으로 source_url/product_image를 채운 주문도 등록된 것으로 간주
-        filters.append(
-            or_(
-                SambaOrder.collected_product_id != None,  # noqa: E711
-                and_(
-                    SambaOrder.source_url != None,  # noqa: E711
-                    SambaOrder.source_url != "",
-                ),
-                and_(
-                    SambaOrder.product_image != None,  # noqa: E711
-                    SambaOrder.product_image != "",
-                ),
-            )
-        )
+        filters.append(SambaOrder.collected_product_id != None)  # noqa: E711
     elif registration_filter == "unregistered":
-        # collected_product_id가 없고 source_url/product_image도 모두 비어있어야 미등록
-        filters.append(
-            and_(
-                SambaOrder.collected_product_id == None,  # noqa: E711
-                or_(
-                    SambaOrder.source_url == None,  # noqa: E711
-                    SambaOrder.source_url == "",
-                ),
-                or_(
-                    SambaOrder.product_image == None,  # noqa: E711
-                    SambaOrder.product_image == "",
-                ),
-            )
-        )
+        filters.append(SambaOrder.collected_product_id == None)  # noqa: E711
 
     normalized_search = search_text.strip()
     if normalized_search:
