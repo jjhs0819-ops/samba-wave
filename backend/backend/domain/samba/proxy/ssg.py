@@ -141,7 +141,10 @@ class SSGClient:
             resp = await client.get(url, headers=headers, params=params)
         elif method == "POST":
             import json as _json
-            logger.info(f"[SSG REQ] POST {path} body={_json.dumps(body or {}, ensure_ascii=False)[:500]}")
+
+            logger.info(
+                f"[SSG REQ] POST {path} body={_json.dumps(body or {}, ensure_ascii=False)[:500]}"
+            )
             resp = await client.post(
                 url, headers=headers, json=body or {}, params=params
             )
@@ -1792,11 +1795,7 @@ class SSGClient:
         shpp_type_cd: str = "20",
         shpp_type_dtl_cd: str = "22",
     ) -> dict[str, Any]:
-        """운송장 등록 — /api/pd/1/saveWblNo.ssg.
-
-        shpp_type_cd: 20=택배배송(기본), 10=자사배송
-        shpp_type_dtl_cd: 22=업체택배배송(기본), 14=업체자사배송
-        """
+        """운송장 등록 — /api/pd/1/saveWblNo.ssg."""
         body = {
             "requestWhOutCompleteProcess": {
                 "shppNo": shpp_no,
@@ -1809,9 +1808,15 @@ class SSGClient:
         }
         data = await self._call_api("POST", "/api/pd/1/saveWblNo.ssg", body=body)
         result = data.get("result", {})
-        result_code = (result.get("resultCode") or "") if isinstance(result, dict) else ""
+        result_code = (
+            (result.get("resultCode") or "") if isinstance(result, dict) else ""
+        )
         if result_code != "00":
-            desc = (result.get("resultDesc") or result.get("resultMessage") or str(data)) if isinstance(result, dict) else str(data)
+            desc = (
+                (result.get("resultDesc") or result.get("resultMessage") or str(data))
+                if isinstance(result, dict)
+                else str(data)
+            )
             raise RuntimeError(f"SSG 운송장 등록 실패 ({result_code}): {desc}")
         return data
 
@@ -1836,9 +1841,15 @@ class SSGClient:
             "POST", "/api/pd/1/saveWhOutCompleteProcess.ssg", body=body
         )
         result = data.get("result", {})
-        result_code = (result.get("resultCode") or "") if isinstance(result, dict) else ""
+        result_code = (
+            (result.get("resultCode") or "") if isinstance(result, dict) else ""
+        )
         if result_code != "00":
-            desc = (result.get("resultDesc") or result.get("resultMessage") or str(data)) if isinstance(result, dict) else str(data)
+            desc = (
+                (result.get("resultDesc") or result.get("resultMessage") or str(data))
+                if isinstance(result, dict)
+                else str(data)
+            )
             raise RuntimeError(f"SSG 출고처리 실패 ({result_code}): {desc}")
         return data
 
@@ -1970,7 +1981,9 @@ class SSGClient:
         ord_no = str(raw.get("ordNo", "") or "")
         ord_item_seq = str(raw.get("ordItemSeq", "") or "")
         shpp_no = str(raw.get("shppNo", "") or "")
-        shpp_seq = str(raw.get("shppSeq", "") or ord_item_seq)  # 배송순번 (운송장등록/발주확인에 사용)
+        shpp_seq = str(
+            raw.get("shppSeq", "") or ord_item_seq
+        )  # 배송순번 (운송장등록/발주확인에 사용)
         # orordNo: 원주문번호 (신세계몰 주문관리 페이지의 '원주문번호' 항목)
         or_ord_no = str(raw.get("orordNo", "") or "")
 
@@ -2031,7 +2044,9 @@ class SSGClient:
             "sale_price": sell_price,
             "cost": 0,
             "fee_rate": fee_rate,
-            "revenue": round(spl_prc * 1.1) if spl_prc > 0 else round(sell_price / 1.1 * (1 - fee_rate / 100)),
+            "revenue": round(spl_prc * 1.1)
+            if spl_prc > 0
+            else round(sell_price / 1.1 * (1 - fee_rate / 100)),
             "source": "ssg",
             "status": status,
             "shipping_status": shipping_status,

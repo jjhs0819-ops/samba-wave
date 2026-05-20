@@ -1192,6 +1192,12 @@ class SSGSourcingClient:
                 skipped_deal_item += 1
                 continue
 
+            # www.ssg.com(신세계몰 일반/개인 판매자 상품) 제외 — 백화점 상품(department.ssg.com)만 수집.
+            # siteNo 필터가 비어있을 때를 대비한 URL 기반 추가 가드.
+            if "www.ssg.com" in _detail_link:
+                skipped_other_site += 1
+                continue
+
             item_name = item.get("itemName", "").strip()
             if not item_name:
                 continue

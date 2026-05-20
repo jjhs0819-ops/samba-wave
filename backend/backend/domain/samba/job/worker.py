@@ -1130,8 +1130,9 @@ class JobWorker:
                     if _source:
                         prod_name = f"[{_source}] {prod_name}"
 
-                    # tetris 매칭이 활성화된 경우 — 매칭된 계정으로만 전송
-                    # 매칭 없거나 선택 마켓 범위 밖이면 전송 자체 스킵 (사용자 의도)
+                    # tetris 매칭 — 선택적 오버라이드 (issue #193).
+                    # 배치 있는 브랜드: 해당 마켓의 정책 계정을 테트리스 계정으로 교체.
+                    # 배치 없는 브랜드: 원래 target_account_ids 그대로 정책 계정 전송.
                     effective_account_ids = list(target_account_ids)
                     if _tetris_enabled and prod:
                         _norm_k = (
@@ -1140,31 +1141,42 @@ class JobWorker:
                         )
                         _assigned_all = _tetris_account_map.get(_norm_k) or []
                         if not _assigned_all:
-                            # 테트리스 매칭 없음 → 전송 스킵
-                            effective_account_ids = []
+                            # 배치 없음 → effective_account_ids 유지 (정책 계정 그대로)
+                            pass
                         elif target_account_ids:
-                            # 선택된 마켓 범위 내의 매칭 계정만 사용
-                            _selected_markets: set[str] = set()
+                            # 배치된 테트리스 계정의 market_type 집합
+                            _assigned_markets = {
+                                _tetris_acc_market.get(a) for a in _assigned_all
+                            } - {None, ""}
+                            # target 정책 계정의 market_type 사전 로드 (1회만)
+                            _target_acc_market: dict[str, str] = {}
                             for _tid in target_account_ids:
                                 _tacc = await acc_repo.get_async(_tid)
                                 if _tacc:
-                                    _selected_markets.add(_tacc.market_type)
-                            _assigned_list = [
+                                    _target_acc_market[_tid] = _tacc.market_type or ""
+                            _selected_markets = set(_target_acc_market.values())
+                            # 1) 배치된 마켓의 정책 계정 제거 (테트리스가 대체)
+                            _kept_policy = [
+                                tid
+                                for tid, mt in _target_acc_market.items()
+                                if mt not in _assigned_markets
+                            ]
+                            # 2) 선택된 마켓 범위 내의 테트리스 계정 추가
+                            _tetris_picks = [
                                 a
                                 for a in _assigned_all
                                 if _tetris_acc_market.get(a) in _selected_markets
                             ]
-                            # 매칭됐지만 선택 마켓 범위 밖 → 전송 스킵
-                            effective_account_ids = list(_assigned_list)
+                            effective_account_ids = _kept_policy + _tetris_picks
                         else:
-                            # target_account_ids 미지정 시 매칭된 계정 전부 사용
+                            # target 미지정 — 배치된 테트리스 계정 전부 사용
                             effective_account_ids = list(_assigned_all)
 
-                    # 테트리스 매칭 없음/범위 밖 → 전송 스킵
-                    if _tetris_enabled and not effective_account_ids:
+                    # 전송 대상 계정이 비었을 때만 스킵
+                    if not effective_account_ids:
                         _add_job_log(
                             job.id,
-                            f"[{i + 1}/{total:,}] {prod_name}: 스킵 (테트리스 매칭 없음)",
+                            f"[{i + 1}/{total:,}] {prod_name}: 스킵 (전송 대상 계정 없음)",
                         )
                         await item_session.commit()
                         return 0, 1, 0, None

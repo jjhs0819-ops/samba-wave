@@ -123,9 +123,10 @@ class CoupangPlugin(MarketPlugin):
                         else:
                             stk = 999
                         new_stk = min(int(stk), 99999)
-                        if item.get("maximumBuyCount") != new_stk:
-                            await client.update_item_quantity(vendor_item_id, new_stk)
-                            qty_updates += 1
+                        # maximumBuyCount는 1회 구매 한도 필드라 PUT /quantities 후 GET 응답에 반영되지 않음.
+                        # 이전 조건 비교는 항상 false로 떨어져 재고 API 호출이 스킵되는 버그가 있었음(issue #200).
+                        await client.update_item_quantity(vendor_item_id, new_stk)
+                        qty_updates += 1
 
                     _parts = []
                     if new_price > 0:

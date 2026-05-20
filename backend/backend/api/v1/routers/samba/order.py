@@ -5043,10 +5043,12 @@ async def sync_orders_from_markets(
                         orders_data.append(_ord)
                         # 상품준비중(11) = 발주확인 미처리 신규주문 → 출고대기로 변경 대상
                         if str(_ssg_ro.get("shppProgStatDtlCd", "")) == "11":
-                            _ssg_unconfirmed.append((
-                                str(_ssg_ro.get("shppNo", "")),
-                                str(_ssg_ro.get("shppSeq", "")),
-                            ))
+                            _ssg_unconfirmed.append(
+                                (
+                                    str(_ssg_ro.get("shppNo", "")),
+                                    str(_ssg_ro.get("shppSeq", "")),
+                                )
+                            )
 
                     # 자동 발주확인 (출고대기로 변경)
                     if _ssg_unconfirmed:
@@ -5067,11 +5069,16 @@ async def sync_orders_from_markets(
                     # 취소신청 주문 조회 → 상태 업데이트
                     _ssg_cancels: list[dict] = []
                     try:
-                        _ssg_cancels = await _ssg_client.get_cancel_requests(days=body.days)
+                        _ssg_cancels = await _ssg_client.get_cancel_requests(
+                            days=body.days
+                        )
                         for _ssg_cr in _ssg_cancels:
                             orders_data.append(
                                 _ssg_client.parse_cancel_request(
-                                    _ssg_cr, account["id"], label, fee_rate=_ssg_fee_rate
+                                    _ssg_cr,
+                                    account["id"],
+                                    label,
+                                    fee_rate=_ssg_fee_rate,
                                 )
                             )
                         if _ssg_cancels:
@@ -5079,7 +5086,9 @@ async def sync_orders_from_markets(
                                 f"[주문동기화] {label}: 취소신청 {len(_ssg_cancels)}건 조회"
                             )
                     except Exception as _ssg_ce:
-                        logger.warning(f"[주문동기화] {label}: SSG 취소신청 조회 실패 — {_ssg_ce}")
+                        logger.warning(
+                            f"[주문동기화] {label}: SSG 취소신청 조회 실패 — {_ssg_ce}"
+                        )
 
                     # 반품/교환 회수 대상 조회 → 상태 업데이트
                     try:
@@ -5116,7 +5125,12 @@ async def sync_orders_from_markets(
                     # 3) 취소요청 주문이 listShppDirection에 다시 나타나면 → parse_order가 이미 처리
                     try:
                         from sqlalchemy import text as _sa_text_cdet
-                        from datetime import datetime as _cdet_dt, timezone as _ctz, timedelta as _ctd
+                        from datetime import (
+                            datetime as _cdet_dt,
+                            timezone as _ctz,
+                            timedelta as _ctd,
+                        )
+
                         _ssg_seen_ord_nos = {
                             str(_ro.get("ordNo") or "")
                             for _ro in _ssg_raw_orders
@@ -5128,9 +5142,8 @@ async def sync_orders_from_markets(
                             for _cr in _ssg_cancels
                             if _cr.get("ordNo")
                         }
-                        _cdet_cutoff = (
-                            _cdet_dt.now(_ctz(_ctd(hours=9)))
-                            - _ctd(days=body.days)
+                        _cdet_cutoff = _cdet_dt.now(_ctz(_ctd(hours=9))) - _ctd(
+                            days=body.days
                         )
                         async with get_read_session() as _cdet_sess:
                             _cdet_q = await _cdet_sess.execute(
@@ -5147,8 +5160,16 @@ async def sync_orders_from_markets(
                                 {"cid": account["id"], "cutoff": _cdet_cutoff},
                             )
                             _cdet_rows = _cdet_q.fetchall()
-                        _db_active_nos = {r[0] for r in _cdet_rows if r[1] not in ("취소요청", "취소처리중")}
-                        _db_cancel_req_nos = {r[0] for r in _cdet_rows if r[1] in ("취소요청", "취소처리중")}
+                        _db_active_nos = {
+                            r[0]
+                            for r in _cdet_rows
+                            if r[1] not in ("취소요청", "취소처리중")
+                        }
+                        _db_cancel_req_nos = {
+                            r[0]
+                            for r in _cdet_rows
+                            if r[1] in ("취소요청", "취소처리중")
+                        }
 
                         # 활성 주문 중 listShppDirection에 없는 것 → 단건 조회로 취소요청 확인
                         _ssg_need_check = _db_active_nos - _ssg_seen_ord_nos
@@ -5164,38 +5185,45 @@ async def sync_orders_from_markets(
                                     _detail_items = await _ssg_client.get_order_detail(
                                         _chk_ord_no
                                     )
-                                    _divs = {str(it.get("ordItemDiv", "")) for it in _detail_items}
+                                    _divs = {
+                                        str(it.get("ordItemDiv", ""))
+                                        for it in _detail_items
+                                    }
                                     if "021" in _divs:
-                                        orders_data.append({
-                                            "order_number": _chk_ord_no,
-                                            "channel_id": account["id"],
-                                            "channel_name": label,
-                                            "status": "cancel_requested",
-                                            "shipping_status": "취소요청",
-                                            "source": "ssg",
-                                            "sale_price": 0.0,
-                                            "revenue": 0.0,
-                                            "fee_rate": _ssg_fee_rate,
-                                            "cost": 0,
-                                        })
+                                        orders_data.append(
+                                            {
+                                                "order_number": _chk_ord_no,
+                                                "channel_id": account["id"],
+                                                "channel_name": label,
+                                                "status": "cancel_requested",
+                                                "shipping_status": "취소요청",
+                                                "source": "ssg",
+                                                "sale_price": 0.0,
+                                                "revenue": 0.0,
+                                                "fee_rate": _ssg_fee_rate,
+                                                "cost": 0,
+                                            }
+                                        )
                                         _ssg_cancel_found += 1
                                         logger.info(
                                             f"[주문동기화] {label}: SSG 취소 감지 "
                                             f"— {_chk_ord_no}"
                                         )
-                                    elif "031" in _divs or "041" in _divs:
-                                        orders_data.append({
-                                            "order_number": _chk_ord_no,
-                                            "channel_id": account["id"],
-                                            "channel_name": label,
-                                            "status": "return_requested",
-                                            "shipping_status": "반품요청",
-                                            "source": "ssg",
-                                            "sale_price": 0.0,
-                                            "revenue": 0.0,
-                                            "fee_rate": _ssg_fee_rate,
-                                            "cost": 0,
-                                        })
+                                    elif _divs & {"031", "041"}:
+                                        orders_data.append(
+                                            {
+                                                "order_number": _chk_ord_no,
+                                                "channel_id": account["id"],
+                                                "channel_name": label,
+                                                "status": "return_requested",
+                                                "shipping_status": "반품요청",
+                                                "source": "ssg",
+                                                "sale_price": 0.0,
+                                                "revenue": 0.0,
+                                                "fee_rate": _ssg_fee_rate,
+                                                "cost": 0,
+                                            }
+                                        )
                                         logger.info(
                                             f"[주문동기화] {label}: SSG 반품 감지 "
                                             f"— {_chk_ord_no}"
@@ -5212,25 +5240,31 @@ async def sync_orders_from_markets(
                                 )
 
                         # 취소요청 주문 중 cancel_requests·listShppDirection 모두에 없는 것 → 취소완료
-                        _ssg_completed = _db_cancel_req_nos - _ssg_cancel_req_nos - _ssg_seen_ord_nos
+                        _ssg_completed = (
+                            _db_cancel_req_nos - _ssg_cancel_req_nos - _ssg_seen_ord_nos
+                        )
                         if _ssg_completed:
                             logger.info(
                                 f"[주문동기화] {label}: SSG 취소완료 감지 {len(_ssg_completed)}건"
                             )
                             for _cpno in _ssg_completed:
-                                orders_data.append({
-                                    "order_number": _cpno,
-                                    "channel_id": account["id"],
-                                    "channel_name": label,
-                                    "status": "cancelled",
-                                    "shipping_status": "취소완료",
-                                    "source": "ssg",
-                                    "sale_price": 0.0,
-                                    "revenue": 0.0,
-                                    "fee_rate": _ssg_fee_rate,
-                                    "cost": 0,
-                                })
-                                logger.info(f"[주문동기화] {label}: SSG 취소완료 — {_cpno}")
+                                orders_data.append(
+                                    {
+                                        "order_number": _cpno,
+                                        "channel_id": account["id"],
+                                        "channel_name": label,
+                                        "status": "cancelled",
+                                        "shipping_status": "취소완료",
+                                        "source": "ssg",
+                                        "sale_price": 0.0,
+                                        "revenue": 0.0,
+                                        "fee_rate": _ssg_fee_rate,
+                                        "cost": 0,
+                                    }
+                                )
+                                logger.info(
+                                    f"[주문동기화] {label}: SSG 취소완료 — {_cpno}"
+                                )
                     except Exception as _cdet_e:
                         logger.warning(
                             f"[주문동기화] {label}: SSG 취소 감지 실패 — {_cdet_e}"
@@ -5704,9 +5738,12 @@ async def sync_orders_from_markets(
                     if _id_match:
                         _sid = _id_match.group(1)
                         # 1차-A: site_product_id 정확 매칭
+                        # cp.source_url을 직접 끌어와 sourcing_urls 템플릿 기반 추정보다 우선 사용한다
+                        # (2026-05-20: 상품명 끝 숫자로 추정한 URL이 옵션/스타일코드와 충돌해
+                        # 엉뚱한 상품을 열어주던 사고 — 푸마↔스파이더 — 재발 방지).
                         _cp_check = await session.execute(
                             _sa_text(
-                                "SELECT id, source_site, images, site_product_id "
+                                "SELECT id, source_site, images, site_product_id, source_url "
                                 "FROM samba_collected_product "
                                 "WHERE site_product_id = :sid "
                                 "ORDER BY (market_product_nos IS NOT NULL) DESC, created_at ASC "
@@ -5715,31 +5752,25 @@ async def sync_orders_from_markets(
                             {"sid": _sid},
                         )
                         _cp_row = _cp_check.fetchone()
-                        # 1차-B: prefix 매칭 (예: SSG itemId '1000807183548'은 _sid '1000807183'로
-                        # 시작 — 정확 매칭 실패 시 prefix로 시도하되, 단 1건일 때만 신뢰)
-                        if not _cp_row:
-                            _cp_pref = await session.execute(
-                                _sa_text(
-                                    "SELECT id, source_site, images, site_product_id "
-                                    "FROM samba_collected_product "
-                                    "WHERE site_product_id LIKE :pfx "
-                                    "ORDER BY (market_product_nos IS NOT NULL) DESC, created_at ASC "
-                                    "LIMIT 2"
-                                ),
-                                {"pfx": _sid + "%"},
-                            )
-                            _cp_pref_rows = _cp_pref.fetchall()
-                            if len(_cp_pref_rows) == 1:
-                                _cp_row = _cp_pref_rows[0]
+                        # 1차-B prefix 매칭 영구 제거 (2026-05-20).
+                        # 상품명 끝 6자리(_sid='403372')가 무관한 다른 cp의 7자리
+                        # site_product_id(예: '4033721' 스파이더)와 prefix LIKE로 우연
+                        # 일치하여 엉뚱한 상품으로 매칭되는 사고 발생.
+                        # SSG itemId 끝자리 잘림은 정확 매칭만으로 처리하거나 별도 정규화 필요.
                         if _cp_row:
                             _matched_spid = _cp_row[3] or _sid
+                            _cp_source_url = _cp_row[4] if len(_cp_row) > 4 else None
                             if not order_data.get("collected_product_id"):
                                 order_data["collected_product_id"] = _cp_row[0]
                             if _can_override_source_site_from_sourcing(order_data):
                                 order_data["source_site"] = _cp_row[1]
-                            order_data["source_url"] = _sourcing_urls.get(
-                                _cp_row[1], ""
-                            ).format(_matched_spid)
+                            # cp.source_url 우선, 없으면 sourcing_urls 템플릿 fallback
+                            order_data["source_url"] = (
+                                _cp_source_url
+                                or _sourcing_urls.get(_cp_row[1], "").format(
+                                    _matched_spid
+                                )
+                            )
                             if (
                                 not order_data.get("product_image")
                                 and _cp_row[2]
@@ -5782,6 +5813,11 @@ async def sync_orders_from_markets(
                     not existing
                     and order_data.get("shipment_id")
                     and order_data.get("product_id")
+                    # 롯데ON 제외: 같은 sitmNo(shipment_id)에 서로 다른 odNo의 주문이 다수 존재
+                    # 가능 — fallback 매칭이 다른 사람 행을 잘못 매칭해 한 행에 두 주문 데이터를
+                    # 짬뽕시키는 사고 원인 (2026-05-19 임재광/최호선 사례).
+                    # 롯데ON은 (channel_id, od_no, od_seq) 매칭만 신뢰.
+                    and order_data.get("source") != "lotteon"
                 ):
                     # 같은 orderId + 상품번호로 이미 있는 주문 검색
                     _dup_candidates = await svc.repo.filter_by_async(
@@ -6047,8 +6083,23 @@ async def sync_orders_from_markets(
                         update_fields["status"] = "shipping"
                     elif _new_ss_final == "취소완료" and existing.status != "cancelled":
                         update_fields["status"] = "cancelled"
-                    elif _new_ss_final == "취소요청" and existing.status != "cancel_requested":
+                    elif (
+                        _new_ss_final == "취소요청"
+                        and existing.status != "cancel_requested"
+                    ):
                         update_fields["status"] = "cancel_requested"
+                    # 플레이오토 미등록 주문의 취소요청/취소완료는 status 드롭다운도 동기화.
+                    # 신규 insert는 _normalize_synced_order_status 예외에서 처리되지만,
+                    # 이미 DB에 'pending'으로 들어가 있는 기존 주문은 여기서 갱신해야 함.
+                    if (
+                        order_data.get("source") == "playauto"
+                        and not existing.collected_product_id
+                        and not (existing.source_url or "")
+                        and not (existing.product_image or "")
+                    ):
+                        _mapped = SHIPPING_LABEL_TO_STATUS_KEY.get(_new_ss_final or "")
+                        if _mapped and _mapped != existing.status:
+                            update_fields["status"] = _mapped
                     # 정산금액(revenue) / 수수료율 갱신
                     new_revenue = order_data.get("revenue")
                     new_fee_rate = order_data.get("fee_rate")
@@ -6925,7 +6976,31 @@ def _normalize_playauto_alias_code(value: Any) -> str:
 
 
 def _normalize_synced_order_status(order_data: dict[str, Any]) -> None:
-    """Market sync must only drive shipping_status; status stays user-managed."""
+    """Market sync must only drive shipping_status; status stays user-managed.
+
+    예외: 플레이오토 미등록 주문의 취소요청/취소완료 상태는 status도 동기화해야
+    UI 드롭다운이 어긋나지 않음 (cancel_requested/cancelled 보존).
+    """
+    preserved = {
+        "cancel_requested",
+        "cancelled",
+        "cancelling",
+        "return_requested",
+        "returning",
+        "returned",
+        "exchanging",
+        "exchanged",
+        "return_completed",
+    }
+    cur_status = str(order_data.get("status") or "")
+    if (
+        order_data.get("source") == "playauto"
+        and not order_data.get("collected_product_id")
+        and not order_data.get("source_url")
+        and not order_data.get("product_image")
+        and cur_status in preserved
+    ):
+        return
     order_data["status"] = "pending"
 
 
