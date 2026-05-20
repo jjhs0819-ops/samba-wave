@@ -555,7 +555,7 @@ class SSGClient:
     ) -> list[dict[str, Any]]:
         """신상품 MD 승인 상태 조회.
 
-        SSG Open API: GET /item/0.1/getItemChngDemndList.ssg
+        SSG Open API: GET /item/0.1/getItemChngDemandList.ssg
         chngDemndProcStatCd: 10=MD승인요청(대기), 20=승인완료, 30=MD반려
         itemrChngDemndDivCd: 00=신상품등록, 01=상품수정
         """
@@ -563,9 +563,9 @@ class SSGClient:
         if div_cd:
             params["itemrChngDemndDivCd"] = div_cd
         resp = await self._call_api(
-            "GET", "/item/0.1/getItemChngDemndList.ssg", params=params
+            "GET", "/item/0.1/getItemChngDemandList.ssg", params=params
         )
-        result_obj = resp.get("result", {})
+        result_obj = resp.get("responseItemChngDemndList", resp.get("result", {}))
         raw = result_obj.get("itemChngDemndList", {})
         if isinstance(raw, dict):
             item_val = raw.get("itemChngDemnd", [])
@@ -575,7 +575,15 @@ class SSGClient:
                 return item_val
             return []
         if isinstance(raw, list):
-            return raw
+            result = []
+            for item in raw:
+                if isinstance(item, dict):
+                    demnd = item.get("itemChngDemnd")
+                    if isinstance(demnd, dict):
+                        result.append(demnd)
+                    elif isinstance(demnd, list):
+                        result.extend(demnd)
+            return result
         return []
 
     async def get_product_list(
