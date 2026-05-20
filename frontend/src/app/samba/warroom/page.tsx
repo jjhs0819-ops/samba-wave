@@ -548,7 +548,7 @@ export default function WarroomPage() {
     // 사이클 완료 시 이벤트 타임라인 갱신
     if (cycles > prevCyclesRef.current) {
       prevCyclesRef.current = cycles
-      monitorApi.recentEvents(200).then(ev => setEvents(ev.map(row => ({
+      monitorApi.recentEvents(100).then(ev => setEvents(ev.map(row => ({
         ...row,
         source_site: normalizeWarroomSourceSite(row.source_site),
       })))).catch(() => {})
@@ -575,7 +575,7 @@ export default function WarroomPage() {
       .catch(() => { /* ignore */ })
       .finally(() => setLoading(false))
 
-    monitorApi.recentEvents(200)
+    monitorApi.recentEvents(100)
       .then(rows => {
         setEvents(rows.map(row => ({
           ...row,

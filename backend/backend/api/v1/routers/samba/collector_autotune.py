@@ -124,6 +124,7 @@ STUCK_TIMEOUT_SECONDS = 300  # 5분간 heartbeat 없으면 stuck 판정
 # 늘려서 cycle 끝까지 가도록 함 → scheduler_tick 이벤트 정상 발행.
 _SITE_STUCK_TIMEOUT_OVERRIDE = {
     "LOTTEON": 900,  # 15분 (concurrency=1 + WAF 차단 대응)
+    "MUSINSA": 600,  # 10분 (IP 차단/로테이션으로 200건 배치 5분 초과 → Watchdog 강제재시작 방지)
 }
 MAX_RESTART_COUNT = 50  # 코디네이터 재시작 상한선
 
