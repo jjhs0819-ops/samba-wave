@@ -281,11 +281,15 @@ async def musinsa_auth_status(
         )
         row = result.scalar_one_or_none()
         if row and row.value:
-            return {"status": "ok", "message": "무신사 인증 완료"}
+            return {
+                "status": "ok",
+                "message": "무신사 인증 완료",
+                "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+            }
     except Exception as e:
         # DB 조회 실패 등 심각한 에러가 삼켜지지 않도록 로깅
         logger.error(f"[musinsa-auth-status] 인증 상태 조회 실패: {e}", exc_info=True)
-    return {"status": "error", "message": "무신사 인증 필요"}
+    return {"status": "error", "message": "무신사 인증 필요", "updated_at": None}
 
 
 # ── Search Filters ──
