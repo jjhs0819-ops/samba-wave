@@ -261,8 +261,46 @@ class ElevenstPlugin(MarketPlugin):
                         "success": False,
                         "message": "11번가 등록 실패: 이미지 미러링 후 사용 가능한 이미지가 없습니다.",
                     }
+                # issue #218 — 미러링 후에도 핫링크 차단 도메인(msscdn 등) URL이 남아있으면 등록 차단
+                # 그대로 등록되면 무신사 광고 배너가 11번가 상품 페이지에 노출됨
+                _still_blocked = [
+                    u
+                    for u in (product.get("images") or [])
+                    if ImageTransformService.is_hotlink_blocked_url(u)
+                ]
+                if _still_blocked:
+                    return {
+                        "success": False,
+                        "message": (
+                            f"11번가 등록 취소: R2 미러링 실패로 핫링크 차단 URL {len(_still_blocked)}개 잔존. "
+                            "R2 설정을 확인하고 재시도하세요."
+                        ),
+                    }
         except Exception as e:
-            logger.warning(f"[11번가] 이미지 미러링 단계 오류 — 원본 URL 유지: {e}")
+            # R2 설정 자체가 없는 경우(개발환경) 대비 — 차단 도메인 잔존 시에만 등록 차단
+            try:
+                from backend.domain.samba.image.service import (
+                    ImageTransformService as _ITS,
+                )
+
+                _blocked = [
+                    u
+                    for u in (product.get("images") or [])
+                    if _ITS.is_hotlink_blocked_url(u)
+                ]
+            except Exception:
+                _blocked = []
+            if _blocked:
+                logger.error(
+                    f"[11번가] R2 미러링 오류 + 차단 URL 존재 — 등록 차단: {e}"
+                )
+                return {
+                    "success": False,
+                    "message": f"11번가 등록 취소: R2 미러링 오류. {e}",
+                }
+            logger.warning(
+                f"[11번가] 이미지 미러링 단계 오류 — 차단 URL 없어 원본 유지: {e}"
+            )
 
         # 카테고리 키속성 메타 조회 (TTL 캐시 — 재호출 시 즉시 반환)
         # 선글라스/시계 등은 치수 키속성이 필수이며, 누락 시 11번가가 500 반환

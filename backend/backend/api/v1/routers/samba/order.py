@@ -6023,6 +6023,14 @@ async def sync_orders_from_markets(
                     # 마켓 상품번호 보충 (기존 주문에 없으면 채움)
                     if order_data.get("product_id") and not existing.product_id:
                         update_fields["product_id"] = order_data["product_id"]
+                    # issue #213 — 롯데ON quantity 자기치유: known-bad(=1) 일 때만 교정
+                    if order_data.get("source") == "lotteon":
+                        try:
+                            _new_qty = int(order_data.get("quantity") or 0)
+                        except (TypeError, ValueError):
+                            _new_qty = 0
+                        if _new_qty > 1 and (existing.quantity or 1) == 1:
+                            update_fields["quantity"] = _new_qty
                     # 송장전송완료/배송중 이상 상태는 덮어쓰지 않음
                     # 단, 롯데ON은 발송완료/배송중/배송완료로 진행된 경우 갱신 허용
                     new_ship_status = order_data.get("shipping_status")
@@ -6908,6 +6916,19 @@ def _parse_coupang_order(
     }
 
 
+def _coerce_lotteon_quantity(item: dict) -> int:
+    """롯데ON 주문 수량 안전 파싱 — odQty 우선, float/str 모두 처리 (issue #213)."""
+    for key in ("odQty", "slQty"):
+        v = item.get(key)
+        if v in (None, "", 0, "0"):
+            continue
+        try:
+            return max(1, int(float(v)))
+        except (TypeError, ValueError):
+            continue
+    return 1
+
+
 def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
     """롯데ON 주문 데이터 → SambaOrder dict 변환."""
 
@@ -7014,8 +7035,9 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
         "product_id": str(item.get("spdNo", "") or ""),
         "product_name": item.get("spdNm", "") or "",
         "product_option": item.get("sitmNm", "") or "",
-        # 롯데ON 주문 응답 수량 필드는 slQty(판매 수량) — odQty는 존재하지 않아 폴백값 1로 박혔던 버그
-        "quantity": int(item.get("slQty") or item.get("odQty") or 1),
+        # issue #213 — odQty/slQty 응답이 float("5.0") 또는 str로 올 수 있어 int(float()) 사용
+        # SellerDeliveryProgressStateSearch/SellerDeliveryOrdersSearch는 odQty, getSROrderList는 둘 다 부재
+        "quantity": _coerce_lotteon_quantity(item),
         "sale_price": int(item.get("slAmt", 0) or item.get("slPrc", 0) or 0),
         "cost": 0,
         "status": status,
@@ -7675,7 +7697,15 @@ def _parse_lottehome_order(
 
     # 송장전송(registDeliver.lotte)에 ord_no + ord_dtl_sn 둘 다 필수.
     # ext_order_number 에 "ord_no:ord_dtl_sn" 형식으로 합쳐 저장한다.
-    ord_dtl_sn = str(prod_info.get("OrdDtlSn") or prod_info.get("DlvUnitSn") or "")
+    # issue #216 — 신규주문 API(searchNewOrdLstOpenApi.lotte)는 OrdDtlSn/DlvUnitSn 키 없음.
+    # OrgOrdDtlSn(=같은 값) 또는 ProdSeq 폴백 필수, 누락 시 송장 전송 시 형식 오류로 즉시 실패.
+    ord_dtl_sn = str(
+        prod_info.get("OrdDtlSn")
+        or prod_info.get("DlvUnitSn")
+        or prod_info.get("OrgOrdDtlSn")
+        or prod_info.get("ProdSeq")
+        or ""
+    )
     ext_order_number = (
         f"{order_no}:{ord_dtl_sn}" if (order_no and ord_dtl_sn) else order_no
     )

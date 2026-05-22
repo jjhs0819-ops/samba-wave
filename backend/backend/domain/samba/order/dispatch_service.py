@@ -316,14 +316,50 @@ async def _send_lottehome(order, account, courier, tracking, session):
 
     courier_code = lottehome_courier_code(courier)
     extras = account.additional_fields or {}
-    if not extras.get("userId") or not extras.get("password"):
+
+    # issue #216 — plugins/markets/lottehome.py 와 동일한 자격증명 우선순위 적용:
+    # additional_fields → lottehome_credentials → store_lottehome → seller_id
+    from backend.domain.samba.forbidden.model import SambaSettings
+    from sqlmodel import select as _select
+
+    async def _load_setting(key: str):
+        try:
+            _r = await session.execute(
+                _select(SambaSettings).where(SambaSettings.key == key)
+            )
+            _row = _r.scalars().first()
+            return _row.value if _row else None
+        except Exception:
+            return None
+
+    _lh_creds = await _load_setting("lottehome_credentials")
+    _lh_store = await _load_setting("store_lottehome")
+
+    def _pick(*keys: str) -> str:
+        for src in (
+            extras,
+            _lh_creds if isinstance(_lh_creds, dict) else {},
+            _lh_store if isinstance(_lh_store, dict) else {},
+        ):
+            for k in keys:
+                v = src.get(k) if isinstance(src, dict) else None
+                if v:
+                    return str(v)
+        return ""
+
+    user_id = _pick("userId") or (getattr(account, "seller_id", "") or "")
+    password = _pick("password")
+    agnc_no = _pick("agncNo") or user_id
+    env = _pick("env") or "test"
+
+    if not user_id or not password:
         return False, "롯데홈쇼핑 자격증명(userId/password) 누락"
 
     client = LotteHomeClient(
-        user_id=extras.get("userId", ""),
-        password=extras.get("password", ""),
-        agnc_no=extras.get("agncNo", ""),
-        env=extras.get("env", "test"),
+        user_id=user_id,
+        password=password,
+        agnc_no=agnc_no,
+        env=env,
     )
     api_resp = await client.send_invoice(
         ord_no=ord_no,

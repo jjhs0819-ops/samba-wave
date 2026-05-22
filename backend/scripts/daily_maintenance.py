@@ -594,6 +594,7 @@ async def task_soldout_cleanup(conn: asyncpg.Connection) -> dict:
             registered_accounts IS NULL
             OR registered_accounts::text = 'null'
             OR registered_accounts::text = '[]'
+            OR jsonb_typeof(registered_accounts::jsonb) != 'array'
             OR jsonb_array_length(registered_accounts::jsonb) = 0
           )
     """)
@@ -614,6 +615,7 @@ async def task_soldout_cleanup(conn: asyncpg.Connection) -> dict:
         WHERE sale_status = 'sold_out'
           AND registered_accounts IS NOT NULL
           AND registered_accounts::text NOT IN ('null', '[]', '')
+          AND jsonb_typeof(registered_accounts::jsonb) = 'array'
           AND jsonb_array_length(registered_accounts::jsonb) > 0
     """)
 

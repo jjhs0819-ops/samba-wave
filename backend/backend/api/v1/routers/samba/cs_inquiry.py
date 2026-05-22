@@ -1849,9 +1849,15 @@ async def _do_sync_cs_from_markets(
                 )
 
         except Exception as e:
-            logger.error(f"[CS동기화] 롯데ON({lo_setting.key}) 동기화 실패: {e}")
+            # issue #214 — SambaMarketAccount/SambaSettings 양쪽 안전 폴백
+            _label = (
+                getattr(lo_setting, "account_label", None)
+                or getattr(lo_setting, "key", None)
+                or ""
+            )
+            logger.error(f"[CS동기화] 롯데ON({_label}) 동기화 실패: {e}")
             errors.append(
-                f"롯데ON({lo_setting.key}): {str(e)}"
+                f"롯데ON({_label}): {str(e)}"
             )  # 독립 에러 격리 — 다른 마켓에 영향 없음
 
     # 미연결 CS 문의 일괄 매칭 (market_product_no → market_product_nos)
