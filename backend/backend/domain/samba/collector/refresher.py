@@ -598,6 +598,8 @@ class RefreshResult:
     new_sale_price: Optional[float] = None
     new_original_price: Optional[float] = None
     new_cost: Optional[float] = None
+    # 무신사 보유 적립금 사용 제외 cost (정책 토글 excludeHeldPoint=True에서 사용)
+    new_cost_excl_held_point: Optional[float] = None
     new_sale_status: str = "in_stock"  # in_stock / sold_out
     new_options: Optional[list] = None
     # 수집 시점 일부 경로 버그로 name/brand 가 빈 문자열로 저장된 케이스 백필용.
@@ -1029,6 +1031,10 @@ def _process_musinsa_detail(
     new_cost = detail.get("bestBenefitPrice")
     if new_cost is not None and new_cost <= 0:
         new_cost = None
+    # 보유 적립금 사용 제외 cost (정책 토글용) — 무신사만 별도 계산값 제공
+    new_cost_excl_held_point = detail.get("bestBenefitPriceExclHeldPoint")
+    if new_cost_excl_held_point is not None and new_cost_excl_held_point <= 0:
+        new_cost_excl_held_point = None
     new_sale_status = detail.get("saleStatus", "in_stock")
     new_options = detail.get("options")
 
@@ -1049,6 +1055,10 @@ def _process_musinsa_detail(
         old_cost = getattr(product, "cost", None)
         if old_cost and old_cost > 0:
             new_cost = old_cost
+    if new_sale_status == "sold_out" and new_cost_excl_held_point is None:
+        old_excl = getattr(product, "cost_excl_held_point", None)
+        if old_excl and old_excl > 0:
+            new_cost_excl_held_point = old_excl
 
     # 품절 상품 옵션 가격 0 → 기존 옵션 가격 보존
     if new_sale_status == "sold_out" and new_options:
@@ -1148,6 +1158,7 @@ def _process_musinsa_detail(
         new_sale_price=new_sale_price,
         new_original_price=new_original_price,
         new_cost=new_cost,
+        new_cost_excl_held_point=new_cost_excl_held_point,
         new_sale_status=new_sale_status,
         new_options=new_options,
         new_is_point_restricted=detail.get("isPointRestricted"),

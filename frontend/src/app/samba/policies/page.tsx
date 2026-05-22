@@ -40,6 +40,8 @@ interface SourceSiteMargin {
   marginAmount: number
   // 적립금 사용 가능 상품에만 추가 마진 적용 (현재 무신사만 지원)
   pointOnly?: boolean
+  // 보유 적립금 사용 할인을 최대혜택가에서 제외하고 원가 계산 (현재 무신사만 지원)
+  excludeHeldPoint?: boolean
 }
 
 interface PricingForm {
@@ -628,6 +630,19 @@ export default function PoliciesPage() {
     triggerAutoSave()
   }
 
+  // 소싱처별 보유 적립금 할인 제외 토글 (무신사만)
+  const toggleSourceSiteExcludeHeldPoint = (siteId: string, value: boolean) => {
+    const current = pricing.sourceSiteMargins[siteId] || { marginRate: 0, marginAmount: 0 }
+    setPricing({
+      ...pricing,
+      sourceSiteMargins: {
+        ...pricing.sourceSiteMargins,
+        [siteId]: { ...current, excludeHeldPoint: value },
+      },
+    })
+    triggerAutoSave()
+  }
+
   // 현재 마켓 탭에 해당하는 스토어 계정 목록 가져오기
   const handleToggleTetrisMatching = async () => {
     const nextValue = !tetrisMatchingEnabled
@@ -934,12 +949,15 @@ export default function PoliciesPage() {
                     <span style={{ width: '100px', fontSize: '0.7rem', color: '#555', textAlign: 'center' }}>추가 마진율(%)</span>
                     <span style={{ width: '110px', fontSize: '0.7rem', color: '#555', textAlign: 'center' }}>추가 마진금액(원)</span>
                     <span style={{ width: '170px', fontSize: '0.7rem', color: '#555', textAlign: 'center' }}>적립금 사용가능 상품만</span>
+                    <span style={{ width: '170px', fontSize: '0.7rem', color: '#555', textAlign: 'center' }}>보유적립금 할인 제외</span>
                   </div>
                   {Object.keys(SOURCING_SITE_LABELS).map(siteId => {
                     const ssm = pricing.sourceSiteMargins[siteId] || { marginRate: 0, marginAmount: 0 }
                     const isSet = ssm.marginRate !== 0 || ssm.marginAmount !== 0
                     // 적립금 제한 정보를 수집하는 소싱처만 활성화 (현재 무신사만)
                     const supportsPointOnly = siteId === 'MUSINSA'
+                    // 보유적립금 할인 제외 토글 — 무신사만 별도 cost 계산 지원
+                    const supportsExcludeHeldPoint = siteId === 'MUSINSA'
                     return (
                       <div key={siteId} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <span style={{
@@ -983,10 +1001,34 @@ export default function PoliciesPage() {
                           />
                           <span>적립금 사용가능만</span>
                         </label>
+                        <label
+                          title={supportsExcludeHeldPoint ? '체크 시 보유 적립금 사용 할인을 최대혜택가에서 제외하고 원가 계산' : '이 소싱처는 보유 적립금 정보를 수집하지 않습니다'}
+                          style={{
+                            width: '170px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '0.25rem',
+                            fontSize: '0.7rem',
+                            color: supportsExcludeHeldPoint ? '#C5C5C5' : '#444',
+                            cursor: supportsExcludeHeldPoint ? 'pointer' : 'not-allowed',
+                            opacity: supportsExcludeHeldPoint ? 1 : 0.45,
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={Boolean(ssm.excludeHeldPoint)}
+                            disabled={!supportsExcludeHeldPoint}
+                            onChange={(e) => toggleSourceSiteExcludeHeldPoint(siteId, e.target.checked)}
+                            style={{ cursor: supportsExcludeHeldPoint ? 'pointer' : 'not-allowed' }}
+                          />
+                          <span>보유적립금 제외</span>
+                        </label>
                         {isSet && (
                           <span style={{ fontSize: '0.7rem', color: '#FF8C00' }}>
                             {ssm.marginRate > 0 ? '+' : ''}{ssm.marginRate !== 0 ? `${ssm.marginRate}%` : ''}{ssm.marginRate !== 0 && ssm.marginAmount !== 0 ? ' + ' : ''}{ssm.marginAmount > 0 ? '+' : ''}{ssm.marginAmount !== 0 ? `${fmtNum(ssm.marginAmount)}원` : ''}
                             {ssm.pointOnly && supportsPointOnly ? ' · 적립금가능만' : ''}
+                            {ssm.excludeHeldPoint && supportsExcludeHeldPoint ? ' · 보유적립금제외' : ''}
                           </span>
                         )}
                       </div>

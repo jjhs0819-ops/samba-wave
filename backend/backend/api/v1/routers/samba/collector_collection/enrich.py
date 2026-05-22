@@ -598,6 +598,11 @@ async def enrich_product(
                 updates["original_price"] = result.new_original_price
             if result.new_cost is not None:
                 updates["cost"] = result.new_cost
+            # 보유 적립금 제외 cost (무신사 토글용) — 무신사 외 소싱처는 cost 동일값
+            if result.new_cost_excl_held_point is not None:
+                updates["cost_excl_held_point"] = result.new_cost_excl_held_point
+            elif result.new_cost is not None:
+                updates["cost_excl_held_point"] = result.new_cost
             if result.new_sale_status:
                 updates["sale_status"] = result.new_sale_status
             if result.new_options is not None:

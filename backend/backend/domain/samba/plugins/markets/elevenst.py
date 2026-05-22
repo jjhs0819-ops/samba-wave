@@ -182,6 +182,40 @@ class ElevenstPlugin(MarketPlugin):
                     _origin_parts.append(f"<orgnNmVal>{_escape_xml(_onv)}</orgnNmVal>")
                 _origin_xml = "".join(_origin_parts)
 
+                # 배송 — 11번가는 PUT 시 dlvCstInstBasiCd(배송비 설정 코드)도 조건부 재검증
+                # 저장된 값이 빈 경우 가격만 보내도 STATUS[103] 검증 실패 → 전체XML 폴백 → dispCtgrNo 권한 에러 연쇄
+                # → 경량 XML에서도 배송 블록 동봉 (transform_product 와 동일 매핑)
+                _dlv_code_map = {"DV_FREE": "01", "DV_FIXED": "02", "DV_COND": "03"}
+                _raw_dlv = _acct_extras.get("deliveryType", "01")
+                _delivery_type = _dlv_code_map.get(_raw_dlv, _raw_dlv) or "01"
+                _delivery_fee = int(_acct_extras.get("deliveryFee", 0) or 0)
+                _return_fee = int(_acct_extras.get("returnFee", 4000) or 4000)
+                _exchange_fee = int(_acct_extras.get("exchangeFee", 8000) or 8000)
+                _jeju_fee = int(_acct_extras.get("jejuFee", 0) or 0)
+                _island_fee = int(_acct_extras.get("islandFee", 0) or 0)
+                _ship_from = _acct_extras.get("shipFromAddress", "") or ""
+                _return_addr = _acct_extras.get("returnAddress", "") or ""
+                _dispatch_tmpl = str(
+                    _acct_extras.get("dispatchTemplateNo", "") or ""
+                ).strip()
+                _dispatch_tmpl_xml = (
+                    f"<dlvSendCloseTmpltNo>{_escape_xml(_dispatch_tmpl)}</dlvSendCloseTmpltNo>"
+                    if _dispatch_tmpl
+                    else ""
+                )
+                _delivery_xml = (
+                    f"<dlvCnFee>{_delivery_fee}</dlvCnFee>"
+                    f"<dlvGrntYn>Y</dlvGrntYn>"
+                    f"{_dispatch_tmpl_xml}"
+                    f"<dlvCstInstBasiCd>{_delivery_type}</dlvCstInstBasiCd>"
+                    f"<jejuDlvCst>{_jeju_fee}</jejuDlvCst>"
+                    f"<islandDlvCst>{_island_fee}</islandDlvCst>"
+                    f"<rtngdDlvCst>{_return_fee}</rtngdDlvCst>"
+                    f"<exchDlvCst>{_exchange_fee}</exchDlvCst>"
+                    f"<dlvBsPlc>{_escape_xml(_ship_from)}</dlvBsPlc>"
+                    f"<rtngBsPlc>{_escape_xml(_return_addr)}</rtngBsPlc>"
+                )
+
                 xml_data = (
                     '<?xml version="1.0" encoding="UTF-8"?>'
                     "<Product>"
@@ -189,6 +223,7 @@ class ElevenstPlugin(MarketPlugin):
                     f"<selPrc>{new_price}</selPrc>"
                     f"{_brand_xml}"
                     f"{_origin_xml}"
+                    f"{_delivery_xml}"
                     f"{option_xml}"
                     "</Product>"
                 )

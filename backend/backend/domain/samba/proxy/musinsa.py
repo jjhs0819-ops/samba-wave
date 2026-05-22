@@ -385,6 +385,24 @@ class MusinsaClient:
             # 무신사 상품페이지 최대혜택가는 선할인(savePoint)까지 포함
             best_benefit_price = display_benefit_price - pre_discount
 
+            # 보유 적립금(point_usage) 제외 버전 — 정책 토글용
+            # point_usage만 0으로 재계산. 등급할인/선할인은 유지
+            # 선할인은 remaining(=display_benefit_price)에 의존하므로 동일 로직 재적용
+            display_benefit_price_excl_held = benefit_base - grade_discount
+            pre_discount_excl = 0
+            if is_pre_point:
+                grade_point_excl = (
+                    self._floor_to_10(
+                        display_benefit_price_excl_held * grade_save_point_rate / 100
+                    )
+                    if grade_save_point_rate > 0
+                    else 0
+                )
+                pre_discount_excl = grade_point_excl + save_point_value
+            best_benefit_price_excl_held_point = (
+                display_benefit_price_excl_held - pre_discount_excl
+            )
+
             # 추가 비로그인 검출 신호: 쿠키 있는데 회원 혜택(등급할인/적립금/선할인)이 전부 0
             # 5259516 사례 — 쿠폰은 적용됐지만 등급할인/적립금만 누락된 비로그인 응답
             _anon_zero_benefits = (
@@ -409,7 +427,7 @@ class MusinsaClient:
                 f"등급할인({grade_discount_rate}%,limitedDc={is_limited_dc})=-{grade_discount}, "
                 f"적립금({point_rate_pct}%,보유={member_point},사용가능={can_use_point})=-{point_usage}(base={point_base}), "
                 f"선할인(savePtRate={grade_save_point_rate}%+savePt={save_point_value})=-{pre_discount}, "
-                f"혜택가={best_benefit_price}"
+                f"혜택가={best_benefit_price}, 보유적립금제외={best_benefit_price_excl_held_point}"
             )
 
             # 배송 정보: 무료배송(플러스배송) / 당일발송(플러스배송 OR isTodayReleaseGoods)
@@ -479,6 +497,7 @@ class MusinsaClient:
                 "salePrice": s_price,
                 "couponPrice": benefit_base,
                 "bestBenefitPrice": best_benefit_price,
+                "bestBenefitPriceExclHeldPoint": best_benefit_price_excl_held_point,
                 "memberDiscountRate": grade_discount_rate,
                 "isLoggedIn": bool(self.cookie),
                 "discountRate": gp.get("discountRate", 0),

@@ -938,6 +938,13 @@ async def _site_autotune_loop(device_id: str, site: str):
                                     updates["original_price"] = r.new_original_price
                                 if r.new_cost is not None:
                                     updates["cost"] = r.new_cost
+                                # 보유 적립금 제외 cost (무신사 토글용)
+                                if r.new_cost_excl_held_point is not None:
+                                    updates["cost_excl_held_point"] = (
+                                        r.new_cost_excl_held_point
+                                    )
+                                elif r.new_cost is not None:
+                                    updates["cost_excl_held_point"] = r.new_cost
                                 if r.new_options is not None:
                                     updates["options"] = r.new_options
                                 # 적립금 사용 제한 여부 (무신사 등) — 오토튠에서 함께 갱신
@@ -1348,9 +1355,18 @@ async def _site_autotune_loop(device_id: str, site: str):
                                     # (모든 lottehome 상품마다 외부 API를 부르던 비용 99% 감소)
 
                                     if policy and policy.pricing:
+                                        # 토글 excludeHeldPoint=True 이면 보유적립금 제외 cost 사용
+                                        from backend.domain.samba.shipment.service import (
+                                            resolve_cost_for_policy,
+                                        )
+
+                                        _resolved_cost = resolve_cost_for_policy(
+                                            product, policy.pricing, site
+                                        )
+                                        _cost_for_calc = _resolved_cost or new_cost
                                         cost_info = await convert_cost_by_source_site(
                                             session,
-                                            new_cost,
+                                            _cost_for_calc,
                                             site,
                                             getattr(product, "tenant_id", None),
                                         )
