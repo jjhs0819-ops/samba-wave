@@ -709,8 +709,15 @@ export default function WarroomPage() {
         handleAutotuneStatus(atStatus.running, atStatus.cycle_count, atStatus.last_tick, atStatus.refreshed_count || 0)
         setAutotuneRestarts(atStatus.restart_count || 0)
         // 본인 PC가 서버에서 실행 중으로 확인되면 intent='start'로 복원 (페이지 새로고침 대응)
+        // 단, 백엔드 enabled=false(사용자가 정지)면 intent를 'stop'으로 내려 자동재합류 차단.
+        // 정지 직후 코디네이터가 채 안 죽은 순간의 status 폴링이 intent를 'start'로 되살려
+        // 60초마다 재시작하던 "정지 안 됨" 루프의 근본 원인을 막는다.
         try {
-          if (atStatus.running && dev && (atStatus.running_pcs || []).includes(dev)) {
+          if (atStatus.enabled === false) {
+            if (window.localStorage.getItem('samba.autotune.userIntent') !== 'stop') {
+              window.localStorage.setItem('samba.autotune.userIntent', 'stop')
+            }
+          } else if (atStatus.running && dev && (atStatus.running_pcs || []).includes(dev)) {
             if (window.localStorage.getItem('samba.autotune.userIntent') !== 'start') {
               window.localStorage.setItem('samba.autotune.userIntent', 'start')
             }
@@ -729,7 +736,8 @@ export default function WarroomPage() {
             _lastAutoRejoinAt = Number(window.localStorage.getItem('samba.autotune.autoRejoinAt') || '0')
           } catch { /* ignore */ }
           const cooldownPassed = now - Math.max(autoRejoinAtRef.current, _lastAutoRejoinAt) > 60_000
-          if (intent === 'start' && meMissing && cooldownPassed) {
+          // enabled=false(사용자 정지) 면 자동재합류 금지 — intent 게이트와 이중 방어.
+          if (intent === 'start' && meMissing && cooldownPassed && atStatus.enabled !== false) {
             autoRejoinAtRef.current = now
             try { window.localStorage.setItem('samba.autotune.autoRejoinAt', String(now)) } catch { /* ignore */ }
             // PC분담 재등록 — load() 클로저 stale 방지를 위해 ref에서 최신값 사용

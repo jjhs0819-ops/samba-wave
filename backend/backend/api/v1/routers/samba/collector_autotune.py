@@ -256,6 +256,11 @@ _pc_last_seen: dict[str, float] = {}
 PC_LAST_SEEN_TTL = 86400.0  # 24시간
 # 다음 폴링 시 해당 PC에게만 forceStop 신호를 전달할 집합 (개별 중지용)
 _pc_force_stop_set: set[str] = set()
+# 사용자 의도(전역 enabled) 인메모리 미러 — DB autotune_enabled 와 동기.
+# autotune_status 가 매 폴링마다 DB 안 읽도록 미러. 단일 작성처 _save_autotune_state +
+# auto_start_if_enabled 에서 갱신. 프론트 자동재합류가 "사용자 정지(enabled=False)"를
+# 구분해, 정지를 무시하고 60초마다 재시작하던 루프를 막는 데 쓴다.
+_autotune_enabled_flag: bool = False
 
 
 def update_pc_last_seen(device_id: str) -> None:
@@ -3109,6 +3114,8 @@ async def _save_autotune_state(enabled: bool, device_id: str = ""):
     복원하면서 소유자 deviceId까지 함께 복구해야, SSG/롯데온 탭 작업이
     다른 PC의 확장앱으로 새나가지 않는다.
     """
+    global _autotune_enabled_flag
+    _autotune_enabled_flag = enabled
     try:
         from backend.db.orm import get_write_session
         from backend.api.v1.routers.samba.proxy import _set_setting
@@ -3169,6 +3176,8 @@ async def auto_start_if_enabled():
                     async with _get_ws() as _ws:
                         await _ss(_ws, "autotune_enabled", False)
                         await _ws.commit()
+                    global _autotune_enabled_flag
+                    _autotune_enabled_flag = False
                 except Exception as _e:
                     logger.warning(f"[오토튠] enabled=False 동기화 실패: {_e}")
 
@@ -3232,6 +3241,7 @@ async def auto_start_if_enabled():
                     _autotune_loop(saved_device_id),
                     name=f"autotune-main-{saved_device_id[:8]}",
                 )
+                _autotune_enabled_flag = True
                 logger.info(
                     "[오토튠] 서버 시작 — DB 설정에 따라 자동 시작 (owner=%s)",
                     saved_device_id[:8],
@@ -3707,6 +3717,10 @@ async def autotune_status(device_id: str = ""):
 
     return {
         "running": running,
+        # 사용자 의도(전역 enabled) — 프론트 자동재합류가 "정지(False)"를 구분해
+        # 정지 무시 재시작 루프를 막는 데 사용. running 은 코디네이터 실시간 상태,
+        # enabled 는 사용자가 켜둔 상태(정지 누르면 False).
+        "enabled": _autotune_enabled_flag,
         "last_tick": last_tick,
         "cycle_count": cycle_count,
         "restart_count": restart_count,

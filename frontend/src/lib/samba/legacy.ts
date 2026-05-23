@@ -939,7 +939,7 @@ export const collectorApi = {
   autotuneStop: (deviceId?: string) =>
     request<{ ok: boolean; status: string }>(`${SAMBA_PREFIX}/collector/autotune/stop`, { method: 'POST', body: JSON.stringify({ device_id: deviceId || undefined }) }),
   autotuneStatus: (deviceId?: string) =>
-    request<{ running: boolean; last_tick: string | null; cycle_count: number; restart_count: number; target: string; refreshed_count: number; breaker_tripped: Record<string, number>; site_intervals?: Record<string, number>; site_autotune_concurrency?: Record<string, number>; running_pcs?: string[]; traffic?: { collecting: boolean; transmitting: boolean; busy: boolean } }>(`${SAMBA_PREFIX}/collector/autotune/status${deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : ''}`),
+    request<{ running: boolean; enabled?: boolean; last_tick: string | null; cycle_count: number; restart_count: number; target: string; refreshed_count: number; breaker_tripped: Record<string, number>; site_intervals?: Record<string, number>; site_autotune_concurrency?: Record<string, number>; running_pcs?: string[]; traffic?: { collecting: boolean; transmitting: boolean; busy: boolean } }>(`${SAMBA_PREFIX}/collector/autotune/status${deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : ''}`),
   autotuneUpdateInterval: (site: string, interval: number) =>
     request<{ ok: boolean; site: string; interval: number }>(`${SAMBA_PREFIX}/collector/autotune/interval`, { method: 'POST', body: JSON.stringify({ site, interval }) }),
   autotuneGetConcurrency: () =>
