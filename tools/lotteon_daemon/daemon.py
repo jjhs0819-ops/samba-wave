@@ -21,15 +21,22 @@ import argparse
 import asyncio
 import json
 import logging
+import logging.handlers
 import os
 import re
 import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
+
+# Windows: subprocess.Popen 자식이 새 콘솔창 열지 않도록.
+CREATE_NO_WINDOW = 0x08000000
+CREATE_NEW_PROCESS_GROUP = 0x00000200
+DETACHED_PROCESS = 0x00000008
 
 # PyInstaller frozen 모드 — 번들된 Chromium 경로 사전 설정. playwright import 전에 set.
 if getattr(sys, "frozen", False):
@@ -50,7 +57,7 @@ from playwright.async_api import (
 # ====================================================================
 # 데몬 버전 — build.ps1 가 갱신. 자동 업데이트 비교 기준.
 # ====================================================================
-DAEMON_VERSION = "1.0.5"
+DAEMON_VERSION = "1.0.6"
 
 
 # ====================================================================
@@ -125,9 +132,7 @@ def _self_install_and_relaunch() -> None:
     # device_id URL 인자 / 파일명 추출 보존을 위해 원래 argv 그대로 전달
     args = sys.argv[1:]
     try:
-        DETACHED_PROCESS = 0x00000008
-        CREATE_NEW_PROCESS_GROUP = 0x00000200
-        creationflags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        creationflags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
         subprocess.Popen(
             [str(dst), *args],
             close_fds=True,
@@ -140,10 +145,27 @@ def _self_install_and_relaunch() -> None:
     os._exit(0)
 
 
+def _log_file_path() -> Path:
+    return _install_dir() / "daemon.log"
+
+
 def logger_print(msg: str) -> None:
-    """frozen 초기 부트스트랩 단계 — logging 모듈 set 전이라 print 폴백."""
+    """frozen 초기 부트스트랩 단계 — logging 모듈 set 전 파일 폴백.
+
+    --noconsole 빌드라 stderr 콘솔이 없어 stderr 출력은 사라짐. 파일에 직접 append.
+    """
+    line = f"[autotune-daemon] {msg}\n"
     try:
-        print(f"[autotune-daemon] {msg}", file=sys.stderr, flush=True)
+        log_path = _log_file_path()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as fp:
+            fp.write(line)
+    except Exception:
+        pass
+    # 디버그용 — 콘솔 있으면 표시(--console 빌드 또는 .py 실행 시)
+    try:
+        sys.stderr.write(line)
+        sys.stderr.flush()
     except Exception:
         pass
 
@@ -840,8 +862,139 @@ async def run_daemon(args: argparse.Namespace) -> int:
 
 
 def _setup_logging() -> None:
+    """파일 로깅 (RotatingFileHandler) — --noconsole 빌드에서 stderr 사라져도 로그 영구 보존."""
     fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
-    logging.basicConfig(level=logging.INFO, format=fmt, stream=sys.stderr)
+    formatter = logging.Formatter(fmt)
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    # 기존 핸들러 제거 — basicConfig 중복 방지
+    for h in list(root.handlers):
+        root.removeHandler(h)
+    try:
+        log_path = _log_file_path()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        fh = logging.handlers.RotatingFileHandler(
+            str(log_path),
+            maxBytes=5 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+        )
+        fh.setFormatter(formatter)
+        root.addHandler(fh)
+    except Exception:
+        pass
+    # stderr 핸들러도 추가 — --console 빌드 / .py 실행 시 화면 출력
+    try:
+        sh = logging.StreamHandler(sys.stderr)
+        sh.setFormatter(formatter)
+        root.addHandler(sh)
+    except Exception:
+        pass
+
+
+# ====================================================================
+# 트레이 아이콘 — supervisor 모드에서 daemon thread 로 실행.
+# 콘솔창 대체용. 우클릭 메뉴: 로그 열기 / 폴더 열기 / 버전 / 종료.
+# ====================================================================
+
+
+def _open_log_file() -> None:
+    try:
+        log_path = _log_file_path()
+        if not log_path.exists():
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.touch()
+        os.startfile(str(log_path))  # type: ignore[attr-defined]
+    except Exception as exc:
+        logger_print(f"로그 열기 실패: {exc}")
+
+
+def _open_install_dir() -> None:
+    try:
+        d = _install_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        os.startfile(str(d))  # type: ignore[attr-defined]
+    except Exception as exc:
+        logger_print(f"폴더 열기 실패: {exc}")
+
+
+def _make_tray_icon_image():
+    """64x64 단색 PNG 메모리 이미지 생성 (외부 파일 의존성 X)."""
+    from PIL import Image, ImageDraw
+
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    # 진한 주황 원 + 흰색 S
+    d.ellipse((2, 2, 62, 62), fill=(234, 88, 12, 255))
+    try:
+        d.text((20, 14), "S", fill=(255, 255, 255, 255))
+    except Exception:
+        pass
+    return img
+
+
+_tray_icon_ref: Any = None
+
+
+def _start_tray_icon() -> None:
+    """tray icon daemon thread 시작. supervisor 가 메인 스레드 점유."""
+    global _tray_icon_ref
+    try:
+        import pystray  # type: ignore
+    except Exception as exc:
+        logger_print(f"pystray import 실패 — 트레이 스킵: {exc}")
+        return
+
+    image = _make_tray_icon_image()
+
+    def _on_quit(icon: Any, _item: Any) -> None:
+        try:
+            icon.stop()
+        except Exception:
+            pass
+        # supervisor + 현재 worker 종료. os._exit(0) 으로 강제.
+        os._exit(0)
+
+    def _on_log(_icon: Any, _item: Any) -> None:
+        _open_log_file()
+
+    def _on_folder(_icon: Any, _item: Any) -> None:
+        _open_install_dir()
+
+    def _on_version(_icon: Any, _item: Any) -> None:
+        try:
+            ver_path = _install_dir() / "version.txt"
+            ver_path.parent.mkdir(parents=True, exist_ok=True)
+            ver_path.write_text(
+                f"autotune-daemon v{DAEMON_VERSION}\n", encoding="utf-8"
+            )
+            os.startfile(str(ver_path))  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+    menu = pystray.Menu(
+        pystray.MenuItem("로그 열기", _on_log),
+        pystray.MenuItem("설치 폴더 열기", _on_folder),
+        pystray.MenuItem(f"버전 {DAEMON_VERSION}", _on_version),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("종료", _on_quit),
+    )
+    icon = pystray.Icon(
+        "autotune-daemon",
+        image,
+        f"오토튠 데몬 v{DAEMON_VERSION}",
+        menu,
+    )
+    _tray_icon_ref = icon
+
+    def _run() -> None:
+        try:
+            icon.run()
+        except Exception as exc:
+            logger_print(f"tray run 예외: {exc}")
+
+    t = threading.Thread(target=_run, name="tray-icon", daemon=True)
+    t.start()
 
 
 def _parse_args() -> argparse.Namespace:
@@ -959,6 +1112,12 @@ def _supervisor_loop() -> int:
     재시작 간격 증가 (5s → 30s → 60s 상한). 정상 가동 ≥10s 시 backoff 리셋.
     """
     logger_print(f"supervisor 시작 pid={os.getpid()}")
+    # 트레이 아이콘 시작 — Windows + frozen 일 때만. 콘솔창 없이 상태 표시 + 종료 메뉴 제공.
+    if os.name == "nt":
+        try:
+            _start_tray_icon()
+        except Exception as exc:
+            logger_print(f"트레이 시작 실패(무시): {exc}")
     restart_count = 0
     backoff = 5
     BACKOFF_MAX = 60
@@ -971,10 +1130,22 @@ def _supervisor_loop() -> int:
         else:
             cmd = [sys.executable, sys.argv[0], *sys.argv[1:], "--worker"]
         try:
+            # CREATE_NEW_PROCESS_GROUP + CREATE_NO_WINDOW — worker 자식이 새 콘솔창 안 띄움
             creationflags = (
-                0x00000200 if os.name == "nt" else 0
-            )  # CREATE_NEW_PROCESS_GROUP
-            child = subprocess.Popen(cmd, creationflags=creationflags)
+                (CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW) if os.name == "nt" else 0
+            )
+            # worker stdout/stderr 도 log 파일로 redirect — 파편화된 출력 방지
+            try:
+                log_fp = open(str(_log_file_path()), "a", encoding="utf-8")
+            except Exception:
+                log_fp = subprocess.DEVNULL  # type: ignore[assignment]
+            child = subprocess.Popen(
+                cmd,
+                creationflags=creationflags,
+                stdout=log_fp,
+                stderr=log_fp,
+                stdin=subprocess.DEVNULL,
+            )
         except Exception as exc:
             logger_print(f"supervisor: worker spawn 실패: {exc} — {backoff}초 후 재시도")
             time.sleep(backoff)

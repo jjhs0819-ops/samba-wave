@@ -295,9 +295,21 @@ class SambaCollectorService:
                 .first()
             )
             if existing:
+                # 시스템 태그(__로 시작) 보존 — AI 이미지 변환/편집 흔적 유실 방지 (#227)
+                preserved_sys_tags = [
+                    t
+                    for t in (existing.tags or [])
+                    if isinstance(t, str) and t.startswith("__")
+                ]
                 for k, v in data.items():
                     if k not in ("id", "source_site", "site_product_id", "created_at"):
                         setattr(existing, k, v)
+                if preserved_sys_tags:
+                    merged = list(existing.tags or [])
+                    for t in preserved_sys_tags:
+                        if t not in merged:
+                            merged.append(t)
+                    existing.tags = merged
                 await self.product_repo.session.flush()
                 return existing
             raise

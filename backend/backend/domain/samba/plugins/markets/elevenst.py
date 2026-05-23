@@ -411,6 +411,67 @@ class ElevenstPlugin(MarketPlugin):
                     "message": f"11번가 유령 매핑 자동정리 (사유: {err})",
                     "ghost_cleanup": True,
                 }
+            # 상위 카테고리 권한 에러(STATUS[103]) → DB prdNo가 11번가 실제 prdNo와 불일치할 때 발생
+            # sellerprodcode로 진짜 prdNo 재조회 후 DB 동기화 + 1회 재시도
+            if existing_no and (
+                "상위 카테고리를 수정할 수 있는 권한" in err or "STATUS : [103]" in err
+            ):
+                pid = str(product.get("id") or "")
+                aid = getattr(account, "id", "") if account else ""
+                try:
+                    lookup = await client.find_by_seller_code(pid)
+                    real_prd_no = (lookup.get("prd_no") or "").strip()
+                except Exception as _e:
+                    real_prd_no = ""
+                    logger.warning(
+                        f"[11번가] STATUS[103] 자동복구 — sellerprodcode 조회 실패 product={pid}: {_e}"
+                    )
+                if real_prd_no and real_prd_no != existing_no:
+                    # DB market_product_nos[aid] 갱신
+                    try:
+                        from sqlalchemy.orm.attributes import flag_modified
+                        from sqlmodel import select
+
+                        from backend.domain.samba.collector.model import (
+                            SambaCollectedProduct,
+                        )
+
+                        stmt = select(SambaCollectedProduct).where(
+                            SambaCollectedProduct.id == pid
+                        )
+                        prod = (await session.execute(stmt)).scalars().first()
+                        if prod and aid:
+                            nos = dict(prod.market_product_nos or {})
+                            nos[aid] = real_prd_no
+                            prod.market_product_nos = nos
+                            flag_modified(prod, "market_product_nos")
+                            session.add(prod)
+                            await session.commit()
+                            logger.warning(
+                                f"[11번가] STATUS[103] 자동복구 — DB prdNo 갱신 product={pid} account={aid} {existing_no}→{real_prd_no}"
+                            )
+                    except Exception as _e:
+                        logger.warning(f"[11번가] STATUS[103] DB 갱신 실패: {_e}")
+                    # 진짜 prdNo로 PUT 1회 재시도
+                    try:
+                        retry_result = await client.update_product(
+                            real_prd_no, xml_data
+                        )
+                        logger.info(
+                            f"[11번가] STATUS[103] 재시도 성공 prdNo={real_prd_no}"
+                        )
+                        return {
+                            "success": True,
+                            "product_no": real_prd_no,
+                            "message": f"11번가 수정 성공 (prdNo 재동기화: {existing_no}→{real_prd_no})",
+                            "data": retry_result,
+                            "prd_no_resync": True,
+                        }
+                    except Exception as _e:
+                        return {
+                            "success": False,
+                            "message": f"11번가 수정 실패 (prdNo 재동기화 후 재시도 실패): {_e}",
+                        }
             if "해외 쇼핑 카테고리" in err:
                 return {
                     "success": False,

@@ -1555,8 +1555,8 @@ async def _site_autotune_loop(device_id: str, site: str):
                                         and expected_price != last_price
                                     ):
                                         _nontx_actions.append(
-                                            f"[초기cost] 이전 cost={_last_cost_pre:,}(정가폴백) "
-                                            f"→ 새 cost={int(new_cost):,} 교정, 전송 스킵 → {acc_label}"
+                                            f"[초기cost·{acc_label}] 이전 cost={_last_cost_pre:,}(정가폴백) "
+                                            f"→ 새 cost={int(new_cost):,} 내부 보정만 (마켓 전송 없음)"
                                         )
                                         log.info(
                                             "[오토튠][초기cost] %s acc=%s: "
