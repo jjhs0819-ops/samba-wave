@@ -285,7 +285,9 @@ LOTTEON_EXTRACT_JS = r"""
           document.querySelector('header, #header, .header, [class*="header"], nav, [class*="gnb"]')?.innerText
           || (document.body?.innerText || '').substring(0, 400)
         ).replace(/\s+/g, ' ')
-        if (['로그아웃', '마이롯데', 'MY LOTTE', '주문배송'].some(t => _headerText.includes(t))) {
+        // "로그아웃"만 신뢰 — "마이롯데"/"MY LOTTE"/"주문배송"은 비로그인에도 항상 노출돼
+        // login_link(비로그인) 판정을 logout_link로 잘못 덮어써 비로그인 가격 저장 유발.
+        if (_headerText.includes('로그아웃')) {
           isLoggedIn = true; _domLoginSignal = 'logout_link'
         } else if (_domLoginSignal !== 'login_link' && (
           ['로그인', '회원가입'].some(t => _headerText.includes(t)) || sawLoggedOutScript
@@ -473,18 +475,39 @@ def _extract_install_token() -> str:
 
 
 def _extract_backend_from_argv_or_exename() -> str | None:
-    """파일명/argv 에서 backend URL 추출. 포크 사용자도 본인 backend 가리킬 수 있게."""
+    """파일명/argv 에서 backend URL 추출. 포크 사용자도 본인 backend 가리킬 수 있게.
+
+    다운로드 파일명은 '=' 가 브라우저에서 잘려 `backend=` 가 유실되므로,
+    '=' 없는 `_be-<hex>`(URL 을 hex 인코딩) 형식을 우선 추출한다('_it-' 토큰과 동일 전략).
+    """
+    # 1. '=' 없는 _be-<hex> (다운로드 파일명/argv) 우선 — 브라우저 '=' 절단 회피
+    candidates: list[str] = []
+    try:
+        candidates.append(Path(sys.executable).name)
+    except Exception:
+        pass
+    candidates.extend(sys.argv[1:])
+    for src in candidates:
+        m = re.search(r"_be-([0-9a-f]{6,})(?:_|\.exe|$)", src)
+        if m:
+            try:
+                url = bytes.fromhex(m.group(1)).decode("utf-8").strip()
+            except Exception:
+                url = ""
+            if url:
+                if not url.startswith(("http://", "https://")):
+                    url = f"https://{url}"
+                return url
+    # 2. argv backend= (하위호환)
     val = _extract_kv_from_argv_or_exename("backend")
     if not val:
         return None
-    # URL-encoded 값 복호화 (예: https%3A//api.example.com)
     try:
         from urllib.parse import unquote
 
         val = unquote(val)
     except Exception:
         pass
-    # 스킴 보강
     if val and not val.startswith(("http://", "https://")):
         val = f"https://{val}"
     return val
@@ -539,36 +562,51 @@ async def bootstrap_api_key(
     cache_path: Path,
     injected_key: str = "",
 ) -> str:
-    """API key 결정. 우선순위: 캐시(long-lived) > 주입 키 교환/사용 > 글로벌 발급(레거시).
+    """API key 결정. 우선순위: install-token 교환 > 캐시(long-lived) > 글로벌 발급(레거시).
 
-    injected_key(--api-key/DAEMON_API_KEY, 파일명 apikey=): 다운로드 시 박힌 install-token.
-    첫 실행 시 /extension-keys/exchange 로 long-lived 키와 교환 후 캐시에 저장.
-    교환 실패(이미 long-lived 거나 무효)면 주입 키를 그대로 사용.
-    재실행 시엔 캐시된 long-lived 키 우선 — install-token 은 일회용이라 재교환 불가.
+    injected_key(파일명 apikey=<install-token>): 웹 /samba/extension-link 다운로드 시 박힌
+    1시간 테넌트 install-token. fresh 토큰이면 stale 글로벌 캐시보다 교환을 먼저 시도해
+    테넌트 키로 갈아끼운다(2026-05-23). 과거엔 캐시 무조건 우선이라, 마이그레이션 전
+    글로벌 키가 캐시된 데몬은 재다운로드해도 글로벌에 고착 → 소싱처 credential 403 으로
+    자동로그인 불가였다. install-token 은 일회용 — 이미 교환됐으면 exchange 가 빈값을
+    반환하므로 그때는 캐시(교환된 테넌트 키)를 사용한다.
     """
-    # 1. 캐시된 long-lived 키 우선 (재실행 — install-token 은 이미 교환·폐기됨)
+    cached = ""
     if cache_path.exists():
         cached = cache_path.read_text(encoding="utf-8").strip()
-        if cached:
-            logger.info("API key 캐시 사용: %s", cache_path)
-            return cached
-    # 2. 주입 키(install-token) → 첫 실행 1회 교환
+
+    # 1. 주입된 install-token 우선 교환 — fresh 다운로드 시 stale 글로벌 캐시를 덮어쓴다.
     if injected_key:
         exchanged = await _exchange_install_token(
             client, backend_url, injected_key, device_id
         )
+        if exchanged:
+            try:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                cache_path.write_text(exchanged, encoding="utf-8")
+            except Exception as exc:
+                logger.debug("API key 캐시 저장 실패(무시): %s", exc)
+            logger.info("install-token → long-lived 테넌트 키 교환 성공 — 캐시 갱신")
+            return exchanged
+        # 교환 실패(이미 교환/만료/long-lived) → 캐시된 테넌트 키 우선 사용
+        if cached:
+            logger.info("install-token 교환 불가 — 캐시 키 사용: %s", cache_path)
+            return cached
+        # 캐시도 없으면 주입 키 자체를 long-lived 로 간주
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
-            if exchanged:
-                logger.info("install-token → long-lived 키 교환 성공 — 캐시 저장")
-                cache_path.write_text(exchanged, encoding="utf-8")
-                return exchanged
-            # 교환 실패 → 주입 키 자체가 long-lived 일 수 있음
-            logger.info("주입 키를 long-lived 로 간주하고 사용 — 캐시 저장")
             cache_path.write_text(injected_key, encoding="utf-8")
         except Exception as exc:
             logger.debug("API key 캐시 저장 실패(무시): %s", exc)
+        logger.info("주입 키를 long-lived 로 간주하고 사용 — 캐시 저장")
         return injected_key
+
+    # 2. 캐시된 long-lived 키 (install-token 없는 재실행)
+    if cached:
+        logger.info("API key 캐시 사용: %s", cache_path)
+        return cached
+
+    # 3. 글로벌 발급 (레거시 — 테넌트 credential 조회 불가, install-token 없을 때만)
     logger.info("API key 발급 요청 → /proxy/extension-key")
     r = await client.post(
         f"{backend_url}/api/v1/samba/sourcing-accounts/extension-key",
@@ -652,8 +690,10 @@ async def is_lotteon_logged_in(page: Page) -> bool:
                 }
                 const txt = (document.querySelector('header, #header, nav, [class*="gnb"]')?.innerText
                   || (document.body?.innerText || '').substring(0, 400)).replace(/\\s+/g, ' ')
-                if (['로그아웃', '마이롯데', 'MY LOTTE'].some(t => txt.includes(t))) return 'logged_in'
-                if (txt.includes('로그인/회원가입') || ['로그인', '회원가입'].some(t => txt.includes(t))) return 'logged_out'
+                // 비로그인 신호 우선. "마이롯데"/"MY LOTTE"는 로그인 무관 항상 노출돼
+                // 로그인으로 오판 → 자동로그인 스킵 사고 유발하므로 제외. "로그아웃"만 신뢰.
+                if (txt.includes('로그인/회원가입')) return 'logged_out'
+                if (txt.includes('로그아웃')) return 'logged_in'
                 return 'unknown'
               } catch (e) { return 'unknown' }
             }
@@ -1148,13 +1188,15 @@ async def run_daemon(args: argparse.Namespace) -> int:
     profile_dir.mkdir(parents=True, exist_ok=True)
     api_key_path = profile_dir / "api_key.txt"
 
-    # 활성 사이트 — `--sites=LOTTEON,ABCmart,SSG` 콤마 구분. 기본 LOTTEON 하위호환.
-    raw_sites = (getattr(args, "sites", "") or "LOTTEON").strip()
+    # 활성 사이트 — `--sites=LOTTEON,ABCmart,SSG` 콤마 구분.
+    # 기본값은 데몬 전용 사이트 전체(SITE_HANDLERS) — 확장앱 detail 가드가 거는
+    # LOTTEON/ABCmart/GrandStage/SSG 를 한 데몬이 모두 처리한다.
+    raw_sites = (getattr(args, "sites", "") or ",".join(SITE_HANDLERS)).strip()
     active_sites = [
         s.strip() for s in raw_sites.split(",") if s.strip() in SITE_HANDLERS
     ]
     if not active_sites:
-        active_sites = ["LOTTEON"]
+        active_sites = list(SITE_HANDLERS)
     allowed_sites_header = ",".join(active_sites)
     login_sites = [s for s in active_sites if SITE_HANDLERS[s].requires_login]
     dialog_accept_sites = {
@@ -1483,10 +1525,10 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--sites",
-        default=os.environ.get("DAEMON_SITES", "LOTTEON"),
+        default=os.environ.get("DAEMON_SITES", ",".join(SITE_HANDLERS)),
         help=(
             "처리 사이트 콤마구분 (예: LOTTEON,ABCmart,SSG). "
-            "X-Allowed-Sites 헤더로 백엔드에 전달. 기본 LOTTEON 하위호환."
+            "X-Allowed-Sites 헤더로 백엔드에 전달. 기본값은 데몬 전용 사이트 전체."
         ),
     )
     # backend URL 우선순위:

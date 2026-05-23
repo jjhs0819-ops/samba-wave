@@ -122,6 +122,10 @@ def create_application() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
         allow_origin_regex=settings.cors_origin_regex,
+        # 데몬 설치 다운로드는 Content-Disposition 파일명에 install-token(_it-)을 박는다.
+        # 크로스오리진(vercel→api) 프론트가 fetch 로 그 파일명을 읽으려면 노출 필수.
+        # 누락 시 프론트가 토큰 없는 폴백명으로 저장 → 데몬이 글로벌 키 고착 → credential 403.
+        expose_headers=["Content-Disposition"],
     )
     app.add_middleware(SlowAPIMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)

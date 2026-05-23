@@ -2055,6 +2055,8 @@ class SSGClient:
         )  # listWarehouseOut은 splPrc
         # 수령인 우선, 없으면 주문자 fallback (str 정규화)
         customer_name = str(raw.get("rcptpeNm", "") or raw.get("ordpeNm", "") or "")
+        # 주문자명 — SSG ordpeNm (수령인 rcptpeNm과 다를 수 있음: 선물하기 등)
+        orderer_name = str(raw.get("ordpeNm", "") or raw.get("rcptpeNm", "") or "")
         # 수령인 연락처 우선 (휴대폰 → 집전화 → 주문자 휴대폰)
         customer_phone = str(
             raw.get("rcptpeHpno", "")
@@ -2140,6 +2142,7 @@ class SSGClient:
             "product_image": "",
             "source_url": source_url,
             "customer_name": customer_name,
+            "orderer_name": orderer_name,
             "customer_phone": customer_phone,
             "customer_address": customer_address,
             "quantity": raw.get("ordQty", 1) or 1,

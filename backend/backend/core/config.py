@@ -93,6 +93,12 @@ class BackendSettings(BaseSettings):
     비어있으면 기존 흐름(오토튠 시작 PC 확장앱) 유지 — 즉시 롤백 가능.
     각 데몬은 본인 deviceId 만 picking — 백엔드 get_next_job 가 owner 매칭."""
 
+    daemon_public_backend_url: str = ""
+    """데몬 설치본이 가리킬 백엔드 공개 URL (포크 운영자용).
+    설정 시 /daemon-installer 가 파일명에 `_be-<hex>` 로 박아 데몬이 본인 백엔드를 향하게 한다.
+    비어있으면 미박음 → 데몬 기본값(https://api.samba-wave.co.kr) 사용. 메인 운영은 비워둬도 동일.
+    예) "https://api.myfork.com" """
+
     # ===========================================
     # AI / Anthropic Configuration
     # ===========================================

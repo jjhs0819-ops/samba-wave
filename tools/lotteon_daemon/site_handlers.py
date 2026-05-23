@@ -47,13 +47,27 @@ ABCMART_LOGIN_SELECTORS = {
     "btn": ["#login", 'input[type="button"][value*="로그인"]'],
 }
 
-# ABCmart 로그인 체크 JS — 헤더 텍스트 기반.
+# ABCmart 로그인 체크 JS — loginYn(세션 기반) 우선, 헤더 영문 토큰 폴백.
+# 과거 한글 토큰("로그아웃/마이페이지") 추측은 ABCmart 헤더가 영문(LOGOUT/LOGIN/JOIN)이라
+# 로그인 상태에서도 항상 'unknown' → 로그인 확정 실패 → 사이트 제외 사고. loginYn 으로 교체.
 ABCMART_LOGIN_CHECK_JS = r"""
-(() => {
+(async () => {
   try {
+    // loginYn — 세션 기반 확실한 신호. 전용 member API 가 없어 /product/info 로 세션값 조회.
+    try {
+      const r = await fetch('/product/info?prdtNo=1010103285', {
+        credentials: 'include',
+        headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' }
+      })
+      const j = await r.json()
+      if (j && typeof j.loginYn === 'string') {
+        return j.loginYn.toUpperCase() === 'Y' ? 'logged_in' : 'logged_out'
+      }
+    } catch (_) {}
+    // 폴백: 헤더 토큰 (ABCmart 헤더는 LOGOUT/LOGIN/JOIN 영문)
     const txt = (document.body?.innerText || '').substring(0, 600)
-    if (/로그아웃|MY\s*PAGE|마이페이지|마이 ABC/.test(txt)) return 'logged_in'
-    if (/로그인|회원가입/.test(txt)) return 'logged_out'
+    if (/\bLOGOUT\b|로그아웃/.test(txt)) return 'logged_in'
+    if (/\bLOGIN\b|\bJOIN\b|로그인|회원가입/.test(txt)) return 'logged_out'
     return 'unknown'
   } catch (_) { return 'unknown' }
 })()
@@ -114,7 +128,8 @@ _ABCMART_EXTRACT_JS = r"""
       _result.name = (apiData.prdtName || '').trim()
       _result.sale_price = salePrice
       _result.original_price = normalAmt || salePrice
-      _result.best_benefit_price = loginYn === 'Y' ? benefit : 0
+      // API 계산은 폴백용으로만 보관 — best_benefit_price 는 DOM "최대 혜택가" 1순위.
+      _result._apiBenefit = loginYn === 'Y' ? benefit : 0
       _result._domLoginSignal = loginYn === 'Y' ? 'logout_link' : 'login_link'
       _result.login_required = loginYn !== 'Y'
       if (salePrice > 0) _result.success = true
@@ -132,13 +147,20 @@ _ABCMART_EXTRACT_JS = r"""
       })
     } catch (_) {}
 
-    if (!_result.best_benefit_price) {
+    // 최대혜택가: DOM 표시값 1순위. ABCmart API의 alwaysDscntAmt는 등급별 실적용
+    // 멤버십과 불일치(예: API 3,000 vs 페이지 2,700) → 재계산 시 300원 과할인.
+    // 페이지가 등급+쿠폰 모두 반영해 표시한 "최대 혜택가"가 100% 정확. 확장앱과 동일 정책.
+    {
       const bodyText = document.body?.innerText || ''
       const m = bodyText.match(/최대\s*혜택가\s*([\d,]+)\s*원/)
       if (m) {
         const v = parseInt(m[1].replace(/,/g, ''), 10)
         if (v > 0) _result.best_benefit_price = v
       }
+    }
+    // DOM 미표기 상품(쿠폰/멤버십 0)만 API 계산 폴백
+    if (!_result.best_benefit_price && _result._apiBenefit > 0) {
+      _result.best_benefit_price = _result._apiBenefit
     }
 
     try {

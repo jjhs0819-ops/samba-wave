@@ -201,8 +201,16 @@ async def daemon_installer(
     await session.commit()
 
     # 파일명에 '=' 쓰면 브라우저 Content-Disposition 파싱에서 잘려 토큰 유실됨.
-    # '=' 없는 '_it-<token>' 형식으로 박고 데몬이 정규식으로 추출한다.
-    fname = f"autotune-daemon-setup_it-{raw_token}.exe"
+    # '=' 없는 '_it-<token>'(+포크용 '_be-<hex>') 형식으로 박고 데몬이 정규식으로 추출한다.
+    # daemon_public_backend_url 설정 시 백엔드 URL 을 hex 로 박아 포크 데몬이 본인 백엔드를 향함.
+    # 미설정(메인 운영)이면 미박음 → 데몬 기본값 사용(동일 동작).
+    _be_part = ""
+    _be_url = (
+        (getattr(settings, "daemon_public_backend_url", "") or "").strip().rstrip("/")
+    )
+    if _be_url:
+        _be_part = f"_be-{_be_url.encode('utf-8').hex()}"
+    fname = f"autotune-daemon-setup{_be_part}_it-{raw_token}.exe"
 
     # 350MB exe 를 메모리에 통째로 올리지 않고 청크 스트리밍 — 메모리 안전 + 즉시 응답 시작.
     # (r.content 통짜 로드 시 fetch+로드 동안 응답이 안 와 브라우저 다운로드가 멈춤)
