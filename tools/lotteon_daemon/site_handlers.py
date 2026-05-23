@@ -218,18 +218,24 @@ _SSG_EXTRACT_JS = r"""
     let domCardPrice = 0
     let domSalePrice = 0
     try {
-      const cardEl = document.querySelector('.cdtl_price.point .ssg_price, .cdtl_card_price .ssg_price')
-      if (cardEl) domCardPrice = _intVal(cardEl.textContent)
+      // 카드혜택가: "카드혜택가" dt → dd em.ssg_price 1순위 (현 SSG 레이아웃, dt 복귀).
+      // .cdtl_price.point 는 판매가라 카드가로 쓰면 안 됨 — 과거 카드가였으나 레이아웃 변경으로
+      // 판매가를 잡아 cost=판매가 오류 발생(검증 2026-05-23: 카드 115,200인데 128,000 잡힘).
+      document.querySelectorAll('dt').forEach((dt) => {
+        if (dt.textContent.trim() !== '카드혜택가') return
+        const dd = dt.nextElementSibling
+        if (dd) {
+          const em = dd.querySelector('em.ssg_price') || dd
+          const v = _intVal(em.textContent)
+          if (v) domCardPrice = v
+        }
+      })
+      // 폴백: 모바일/구 레이아웃 카드가 영역
       if (!domCardPrice) {
-        document.querySelectorAll('dt').forEach((dt) => {
-          if (dt.textContent.trim() !== '카드혜택가') return
-          const dd = dt.nextElementSibling
-          if (dd) {
-            const em = dd.querySelector('em.ssg_price') || dd
-            const v = _intVal(em.textContent)
-            if (v) domCardPrice = v
-          }
-        })
+        const cardEl = document.querySelector(
+          '.mndtl_card_price em.ssg_price, .mndtl_card_btnmore .ssg_price, .cdtl_card_price .ssg_price'
+        )
+        if (cardEl) domCardPrice = _intVal(cardEl.textContent)
       }
       const saleEl = document.querySelector('.cdtl_new_price.notranslate em.ssg_price, .cdtl_price .ssg_price')
       if (saleEl) domSalePrice = _intVal(saleEl.textContent)

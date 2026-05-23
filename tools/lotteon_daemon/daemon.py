@@ -1636,7 +1636,11 @@ def _parse_args() -> argparse.Namespace:
         default=True,
         help="headed 모드로 전환 (LOTTEON WAF 차단 시 디버깅용).",
     )
-    return p.parse_args()
+    # parse_known_args: self-install 재실행 시 argv 에 붙는 식별자(_it-<token>/_be-<hex>/did=)는
+    # argparse 가 모르는 토큰이라 parse_args 면 'unrecognized arguments' 로 크래시(rc=2)한다.
+    # 이 식별자들은 _extract_install_token/_extract_backend_* 가 sys.argv 를 정규식으로 직접
+    # 읽어 처리하므로, argparse 는 무시(tolerate)하면 된다.
+    return p.parse_known_args()[0]
 
 
 async def _check_and_self_update(client: httpx.AsyncClient, backend_url: str) -> bool:
