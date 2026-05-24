@@ -52,10 +52,11 @@ const saveFilterSourcesToSession = (v: string[] | null): void => {
 }
 
 // 오토튠 실시간 로그 (독립 컴포넌트 — 대시보드 리렌더링 영향 없음)
-const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, externalRunning, filterSources }: {
+const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, externalRunning, filterSources, deviceId }: {
   onStatusChange?: (running: boolean, cycles: number, lastTick: string | null, refreshed: number) => void
   externalRunning?: boolean
   filterSources?: string[] | null
+  deviceId?: string  // 이 PC device_id — 본인 잡 로그만 표시 (PC 분리, 2026-05-25)
 }) {
   // 로그에 클라이언트 부여 시퀀스 번호 — React key 안정화용
   const [logs, setLogs] = useState<Array<RefreshLogEntry & { __seq: number }>>([])
@@ -126,7 +127,7 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, extern
         // 무거운 status 쿼리(samba_extension_key + count(samba_collected_product 24h))가
         // 500ms마다 read 풀을 점유해 refreshLogs가 직렬 await에 막혀 1분+ 지연 발생.
         const idx = sinceIdxRef.current
-        const res = await monitorApi.refreshLogs(idx)
+        const res = await monitorApi.refreshLogs(idx, deviceId || '')
         if (res.current_idx < idx) {
           sinceIdxRef.current = 0
           pollingRef.current = false
@@ -384,6 +385,17 @@ export default function WarroomPage() {
   const [autotuneRunning, setAutotuneRunning] = useState(false)
   const [autotuneCycles, setAutotuneCycles] = useState(0)
   const [autotuneRestarts, setAutotuneRestarts] = useState(0)
+  // 이 PC device_id — 실시간 로그 PC별 분리(2026-05-25)
+  const [pcDeviceId, setPcDeviceId] = useState<string>('')
+  useEffect(() => {
+    (async () => {
+      try {
+        const { getDeviceId } = await import('@/lib/samba/deviceId')
+        const dev = getDeviceId()
+        if (dev) setPcDeviceId(dev)
+      } catch { /* ignore */ }
+    })()
+  }, [])
   const [singleProductNo, setSingleProductNo] = useState('')
   const [, setAutotuneLastTick] = useState<string | null>(null)
   const prevCyclesRef = useRef(0)
@@ -1128,6 +1140,7 @@ export default function WarroomPage() {
         onStatusChange={handleAutotuneStatus}
         externalRunning={autotuneRunning}
         filterSources={filterSources}
+        deviceId={pcDeviceId}
       />
 
       {/* 이벤트 타임라인 (로그 아래) */}

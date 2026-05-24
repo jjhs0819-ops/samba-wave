@@ -2112,8 +2112,13 @@ export const monitorApi = {
     request<{ sources: DashboardStats['site_health']; markets: DashboardStats['market_health'] }>(
       `${SAMBA_PREFIX}/monitor/site-health`,
     ),
-  refreshLogs: (sinceIdx = 0) =>
-    request<RefreshLogsResponse>(`${SAMBA_PREFIX}/monitor/refresh-logs?since_idx=${sinceIdx}`),
+  refreshLogs: (sinceIdx = 0, deviceId = '') => {
+    const params = new URLSearchParams({ since_idx: String(sinceIdx) })
+    if (deviceId) params.set('device_id', deviceId)
+    return request<RefreshLogsResponse>(
+      `${SAMBA_PREFIX}/monitor/refresh-logs?${params.toString()}`,
+    )
+  },
   storeScores: () =>
     request<Record<string, { account_id: string; account_label: string; market_type: string; grade: string; grade_code: string; good_service: Record<string, number> | null; penalty: number | null; penalty_rate: number | null; updated_at: string }>>(`${SAMBA_PREFIX}/monitor/store-scores`),
   refreshStoreScores: () =>

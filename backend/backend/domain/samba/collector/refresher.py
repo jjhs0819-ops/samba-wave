@@ -428,6 +428,20 @@ _refresh_log_buffer: deque[Dict[str, Any]] = deque(maxlen=300)
 _refresh_log_total: int = 0  # 누적 카운터 (밀려나도 증가만)
 
 
+def _get_current_device_id() -> str:
+    """autotune cycle 의 현재 PC owner device_id — 로그 device_id 태깅용.
+
+    cycle 시작 시 collector_autotune.current_pc_owner contextvar 가 세팅됨.
+    HTTP/cycle 컨텍스트 없는 경우 빈 문자열(글로벌 메시지로 간주).
+    """
+    try:
+        from backend.api.v1.routers.samba.collector_autotune import current_pc_owner
+
+        return current_pc_owner.get() or ""
+    except Exception:
+        return ""
+
+
 def _log_refresh(
     site: str,
     product_id: str,
@@ -438,7 +452,11 @@ def _log_refresh(
     total: int = 0,
     source: str = "autotune",
 ) -> None:
-    """갱신 로그를 링 버퍼에 추가. 오토튠 로그만 저장, 나머지(transmit/manual)는 버림."""
+    """갱신 로그를 링 버퍼에 추가. 오토튠 로그만 저장, 나머지(transmit/manual)는 버림.
+
+    device_id 태깅: 현재 cycle PC owner 자동 첨부. frontend 에서 자기 device_id 로 필터
+    하면 다른 PC 잡 로그가 화면에 안 보임 (PC 분리, 2026-05-25 사용자 일주일째 요청).
+    """
     current_source = _current_refresh_source.get()
     if current_source != "autotune":
         return
@@ -460,6 +478,7 @@ def _log_refresh(
             "msg": full_msg,
             "level": level,
             "source": source,
+            "device_id": _get_current_device_id(),
         }
     )
     _refresh_log_total += 1
@@ -473,10 +492,15 @@ def clear_refresh_logs() -> None:
 
 
 def get_refresh_logs(
-    since_idx: int = 0, source_filter: str = ""
+    since_idx: int = 0,
+    source_filter: str = "",
+    device_id_filter: str = "",
 ) -> tuple[List[Dict[str, Any]], int]:
     """로그 조회. since_idx 이후 로그만 반환 + 누적 인덱스.
+
     source_filter: "autotune"이면 오토튠 로그만, ""이면 전체.
+    device_id_filter: 지정 시 그 device_id 로그만 + 글로벌(device_id 없거나 빈값) 로그
+      도 함께 표시 (쿠키 로테이션 등 PC 무관 메시지). 빈 문자열이면 전체(레거시).
     """
     global _refresh_log_total
     buf_len = len(_refresh_log_buffer)
@@ -492,6 +516,13 @@ def get_refresh_logs(
 
     if source_filter:
         logs = [l for l in logs if l.get("source") == source_filter]
+    if device_id_filter:
+        # 자기 device_id 로그 + 글로벌(device_id 빈값) 로그 표시. 다른 PC 잡 차단.
+        logs = [
+            l
+            for l in logs
+            if not l.get("device_id") or l.get("device_id") == device_id_filter
+        ]
     return logs, _refresh_log_total
 
 
