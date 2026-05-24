@@ -60,6 +60,10 @@ HEADERS = {
 # 추출할 통화 코드 (영문 사이트 결제 통화)
 TARGET_CURRENCY = "USD"
 
+# 트레이딩카드 상세 SSR HTML의 productNumber(품번, 예: pkmn-tcg-SV-P-261) 추출
+# Vue SSR prop `:trading-card="{...}"` 안에 HTML 엔티티(&#34;=")로 임베드됨
+_PRODUCT_NUMBER_RE = re.compile(r"productNumber&#34;:&#34;([^&]+)&#34;")
+
 
 _CATEGORY_LABELS = {
     "sneaker": "스니커즈",
@@ -469,6 +473,7 @@ class SnkrdunkClient:
         code_id = card_id
         name = ""
         image = ""
+        product_number = ""
         cond_min: dict[str, int] = {}
         cond_cnt: dict[str, int] = {}
 
@@ -521,6 +526,16 @@ class SnkrdunkClient:
                 page += 1
                 await asyncio.sleep(0.3)
 
+            # 품번(productNumber) 추출 — 상세 SSR HTML의 :trading-card prop
+            # 예: pkmn-tcg-SV-P-261 (used-listings/variations API엔 없음)
+            try:
+                hr = await client.get(DETAIL_TRADING_CARD_URL.format(id=card_id))
+                _pm = _PRODUCT_NUMBER_RE.search(hr.text)
+                if _pm:
+                    product_number = _pm.group(1).strip()
+            except Exception as e:
+                logger.warning(f"[SNKRDUNK] 품번 추출 실패 {card_id}: {e}")
+
         # 재고 있는 컨디션만 옵션화 → 가격 오름차순 정렬
         options = [
             {"name": cond, "price": cond_min[cond], "stock": cond_cnt[cond]}
@@ -551,9 +566,11 @@ class SnkrdunkClient:
             "sale_status": sale_status,
             "free_shipping": False,
             "color": "",
+            "style_code": product_number,  # 품번 = productNumber (예: pkmn-tcg-SV-P-261)
             "extra_data": {
                 "snkr_type": "trading-card",
                 "currency": TARGET_CURRENCY,
+                "product_number": product_number,
                 "condition_count": {k: cond_cnt[k] for k in cond_cnt},
             },
         }
