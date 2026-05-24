@@ -211,6 +211,42 @@ async def autotune_daemon_latest_version() -> dict[str, Any]:
     }
 
 
+# 확장앱 자가 업데이트 — extension/manifest.json version 단일 출처.
+# Dockerfile 이 manifest.json 을 /app/backend/extension/ 로 COPY → 여기서 읽는다.
+# 컨테이너에서 못 읽으면(로컬 개발 등) fallback 상수 사용. manifest 가 진실 원천이라
+# manifest 만 올리면 프로덕션 백엔드가 자동 동기화(상수 중복 갱신 불필요).
+_EXT_VERSION_FALLBACK = "2.13.44"
+
+
+def _read_extension_version() -> str:
+    import json as _json
+    from pathlib import Path as _Path
+
+    try:
+        p = _Path("/app/backend/extension/manifest.json")
+        if p.is_file():
+            v = _json.loads(p.read_text(encoding="utf-8")).get("version")
+            if v:
+                return str(v)
+    except Exception:
+        pass
+    return _EXT_VERSION_FALLBACK
+
+
+# 모듈 로드 시 1회 평가 — 컨테이너 재배포마다 갱신됨.
+EXTENSION_LATEST_VERSION = _read_extension_version()
+
+
+@sourcing_queue_router.get("/autotune-daemon/extension-version")
+async def extension_latest_version() -> dict[str, Any]:
+    """확장앱이 주기적으로 호출 — 신버전 감지 시 chrome.runtime.reload() self-update.
+
+    인증 불필요(EXEMPT prefix). 키 없는 미연결 PC도 업데이트받게 함.
+    응답 = {version}.
+    """
+    return {"version": EXTENSION_LATEST_VERSION}
+
+
 @sourcing_queue_router.get("/autotune-daemon/health")
 async def autotune_daemon_health(
     device_id: str = Query("", description="(legacy, 무시됨)"),

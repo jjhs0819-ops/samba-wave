@@ -34,36 +34,140 @@ from backend.utils.logger import logger
 router = APIRouter(prefix="/orders", tags=["samba-orders"])
 
 
-# ── 매칭 캐시(_mpn_cache) 모듈 전역 TTL 캐시 ──
-# 매 sync마다 collected_product 12.6만건 SELECT + 인덱싱 부담을
-# TTL로 한 번만 빌드해 재사용. 신규 cp 등록은 TTL 안에 매칭됨.
-# (images 배열 통째 SELECT가 빌드를 ~165초까지 부풀려 60초 TTL이 무용 → read 풀 고갈 유발했음.
-#  images->>0(첫 장만)로 전송량 축소 + TTL을 빌드 시간보다 길게 상향)
-_MPN_CACHE_TTL_SEC = 180.0
+# ── 매칭 캐시(_mpn_cache) 모듈 전역 — 증분 갱신 ──
+# 과거: 호출마다 등록상품 전체(~10만건, 1GB) 풀스캔 빌드 → 빌드(150초)>TTL 이라
+# 캐시가 안 채워지고 무한 재스캔 → read 풀 고갈 사고.
+# 현재: updated_at(ix_scp_updated_at_desc) 변경분만 증분 머지 + 주기적 전체 재빌드.
+_MPN_CACHE_TTL_SEC = 180.0  # 증분 적용 최소 간격(초)
+_MPN_FULL_REBUILD_SEC = 1800.0  # 전체 재빌드 주기(초) — 삭제·등록해제 staleness 정리
 # (by_global, by_account) 튜플 — by_account는 정확 매칭(account_id, product_no) 인덱스
 _mpn_cache_data: tuple[dict[str, dict], dict[str, dict]] | None = None
-_mpn_cache_built_at: float = 0.0
+_mpn_cache_built_at: float = 0.0  # 마지막 빌드/증분 monotonic
+_mpn_cache_full_built_at: float = 0.0  # 마지막 전체빌드 monotonic
+_mpn_cache_delta_since = None  # 증분 쿼리 기준 wall-clock(datetime, UTC)
 _mpn_cache_lock = asyncio.Lock()
+
+
+def _index_mpn_row(_row, by_global: dict, by_account: dict, sourcing_urls: dict) -> int:
+    """수집상품 1행을 by_global / by_account 인덱스에 반영. ambiguous 신규 발생 수 반환.
+
+    전체 빌드와 증분 머지 둘 다 이 함수를 재사용 — 인덱싱 규칙을 1곳에 모은다.
+    """
+    _cpid, _site, _spid, _thumb_raw, _mpnos, _src_url, _cat = _row
+    if not (_mpnos and isinstance(_mpnos, dict)):
+        return 0
+    # SELECT에서 (images->>0)로 첫 이미지 URL만 가져옴 (전체 배열 전송 회피)
+    _thumb = _thumb_raw or ""
+    _olink = _src_url or (
+        sourcing_urls.get(_site, "").format(_spid)
+        if _site in sourcing_urls and _spid
+        else ""
+    )
+    # account_id별 등록된 site_ids 모음 — `{account_id}_sites` 키 패턴.
+    _sites_by_account: dict[str, list[str]] = {}
+    for _k, _v in _mpnos.items():
+        if _k.endswith("_sites") and isinstance(_v, list):
+            _account_id = _k[: -len("_sites")]
+            _sites_by_account[_account_id] = [str(s) for s in _v if s]
+
+    _ambiguous_new = 0
+    for _k, _v in _mpnos.items():
+        if not _v or _k.endswith("_qa") or _k.endswith("_sites"):
+            continue
+        # _origin 키도 인덱싱한다 — 스마트스토어 주문 product_id 에는
+        # channelProductNo 대신 originProductNo 가 들어오는 케이스가 있어
+        # 매칭 실패 → source_site/source_url 공란 저장 사고가 반복되어 추가.
+        if _k.endswith("_origin"):
+            _account_key = _k[: -len("_origin")]
+        else:
+            _account_key = str(_k)
+        if isinstance(_v, dict):
+            _values = [
+                _v.get("smartstoreChannelProductNo"),
+                _v.get("originProductNo"),
+                _v.get("channelProductNo"),
+            ]
+        else:
+            _values = [_v]
+        for _sub_v in _values:
+            if not _sub_v:
+                continue
+            _key = str(_sub_v)
+            # 글로벌 인덱스 — 충돌 감지 (다른 cp가 같은 키 차지 시 ambiguous)
+            _existing_global = by_global.get(_key)
+            if not _existing_global:
+                by_global[_key] = {
+                    "collected_product_id": _cpid,
+                    "source_site": _site,
+                    "product_image": _thumb,
+                    "original_link": _olink,
+                    "category": _cat or "",
+                    "site_ids_by_account": dict(_sites_by_account),
+                }
+            elif _existing_global.get("collected_product_id") != _cpid:
+                if not _existing_global.get("ambiguous"):
+                    _ambiguous_new += 1
+                _existing_global["ambiguous"] = True
+            else:
+                # 같은 cp 재반영(증분 포함) — site_ids만 보강
+                for acc, sites in _sites_by_account.items():
+                    _existing_global["site_ids_by_account"].setdefault(acc, []).extend(
+                        s
+                        for s in sites
+                        if s not in _existing_global["site_ids_by_account"].get(acc, [])
+                    )
+            # 정확 매칭 인덱스 — (account_id, product_no). 증분 시 동일 cp는 갱신,
+            # 다른 cp가 이미 점유 중이면 가장 오래된 것 우선(덮어쓰기 안 함).
+            _acc_key = f"{_account_key}:{_key}"
+            _existing_acc = by_account.get(_acc_key)
+            if (
+                _existing_acc is None
+                or _existing_acc.get("collected_product_id") == _cpid
+            ):
+                by_account[_acc_key] = {
+                    "collected_product_id": _cpid,
+                    "source_site": _site,
+                    "product_image": _thumb,
+                    "original_link": _olink,
+                    "category": _cat or "",
+                    "site_ids_by_account": dict(_sites_by_account),
+                }
+    return _ambiguous_new
+
+
+_MPN_SELECT_COLS = (
+    "SELECT id, source_site, site_product_id, (images->>0) AS thumb, "
+    "market_product_nos, source_url, category FROM samba_collected_product "
+    "WHERE market_product_nos IS NOT NULL"
+)
 
 
 async def _get_mpn_cache(
     session, sourcing_urls: dict
 ) -> tuple[dict[str, dict], dict[str, dict]]:
-    """market_product_no → collected_product 인덱스 (TTL 60초).
+    """market_product_no → collected_product 인덱스 (증분 갱신).
 
     리턴: (by_global, by_account)
       - by_global[product_no]            = entry  (기존 호환 키, 충돌 시 entry["ambiguous"]=True)
-      - by_account[f"{account_id}:{no}"] = entry  (정확 매칭용, 충돌 없음)
+      - by_account[f"{account_id}:{no}"] = entry  (정확 매칭용)
 
-    SELECT 전용이므로 write session(외부 마켓 API 동안 idle in transaction
-    timeout으로 죽을 수 있음)에 의존하지 않고 내부에서 별도 read session을
-    연다. 인자 ``session``은 호환을 위해 유지되며 사용되지 않는다.
+    [성능] 과거엔 호출마다 등록상품 전체(~10만건, 1GB 테이블)를 풀스캔해 빌드 →
+    빌드(150초)가 TTL보다 길어 캐시가 안 채워지고 무한 재스캔 → read 풀 고갈 사고.
+    이제 증분 방식:
+      - 콜드스타트 / 전체 재빌드 주기(_MPN_FULL_REBUILD_SEC) 경과 시: 전체 빌드
+      - 그 외: updated_at >= 직전빌드 변경분만(ix_scp_updated_at_desc) 가져와 기존 캐시에 머지
+    삭제·등록해제로 사라진 키는 증분에서 안 지워지나, 전체 재빌드 주기마다 정리됨.
+    매칭 키는 정확 키만 쓰므로 staleness가 오매칭을 만들지 않음.
+
+    SELECT 전용이라 별도 read session을 연다. 인자 ``session``은 호환용(미사용).
     """
     import time as _t
+    from datetime import datetime, timezone
 
     from sqlalchemy import text as _sa_text
 
-    global _mpn_cache_data, _mpn_cache_built_at
+    global _mpn_cache_data, _mpn_cache_built_at, _mpn_cache_full_built_at
+    global _mpn_cache_delta_since
     async with _mpn_cache_lock:
         now = _t.monotonic()
         if (
@@ -71,111 +175,53 @@ async def _get_mpn_cache(
             and (now - _mpn_cache_built_at) < _MPN_CACHE_TTL_SEC
         ):
             return _mpn_cache_data
-        async with get_read_session() as _read_sess:
-            _cp_result = await _read_sess.execute(
-                _sa_text(
-                    "SELECT id, source_site, site_product_id, (images->>0) AS thumb, market_product_nos, source_url, category "
-                    "FROM samba_collected_product WHERE market_product_nos IS NOT NULL"
-                )
-            )
-            _cp_rows = _cp_result.fetchall()
-        new_cache: dict[str, dict] = {}
-        new_by_account: dict[str, dict] = {}
-        _ambiguous_count = 0
-        for _row in _cp_rows:
-            _cpid, _site, _spid, _thumb_raw, _mpnos, _src_url, _cat = _row
-            if not (_mpnos and isinstance(_mpnos, dict)):
-                continue
-            # SELECT에서 (images->>0)로 첫 이미지 URL만 가져옴 (전체 배열 전송 회피)
-            _thumb = _thumb_raw or ""
-            _olink = _src_url or (
-                sourcing_urls.get(_site, "").format(_spid)
-                if _site in sourcing_urls and _spid
-                else ""
-            )
-            # account_id별 등록된 site_ids 모음 — `{account_id}_sites` 키 패턴.
-            # 신규 등록 액션에서 이 키에 [site_id, ...] 저장 (Phase 3에서 구현).
-            # 기존 cp는 _sites 키 없음 → cache value의 site_ids_by_account = {} 유지 →
-            # 매칭 시 호환 모드(site_id 검증 안 함).
-            _sites_by_account: dict[str, list[str]] = {}
-            for _k, _v in _mpnos.items():
-                if _k.endswith("_sites") and isinstance(_v, list):
-                    _account_id = _k[: -len("_sites")]
-                    _sites_by_account[_account_id] = [str(s) for s in _v if s]
 
-            for _k, _v in _mpnos.items():
-                if not _v or _k.endswith("_qa") or _k.endswith("_sites"):
-                    continue
-                # _origin 키도 인덱싱한다 — 스마트스토어 주문 product_id 에는
-                # channelProductNo 대신 originProductNo 가 들어오는 케이스가 있어
-                # 매칭 실패 → source_site/source_url 공란 저장 사고가 반복되어 추가.
-                # 정확 매칭 인덱스 키는 account_id 로 정규화하여 동일 account 의
-                # 두 키(channel/origin) 가 동일 entry 를 가리키도록 통일.
-                if _k.endswith("_origin"):
-                    _account_key = _k[: -len("_origin")]
-                else:
-                    _account_key = str(_k)
-                if isinstance(_v, dict):
-                    _values = [
-                        _v.get("smartstoreChannelProductNo"),
-                        _v.get("originProductNo"),
-                        _v.get("channelProductNo"),
-                    ]
-                else:
-                    _values = [_v]
-                for _sub_v in _values:
-                    if not _sub_v:
-                        continue
-                    _key = str(_sub_v)
-                    # 글로벌 인덱스 — 충돌 감지 (다른 cp가 같은 키 차지 시 ambiguous)
-                    _existing_global = new_cache.get(_key)
-                    if not _existing_global:
-                        _entry = {
-                            "collected_product_id": _cpid,
-                            "source_site": _site,
-                            "product_image": _thumb,
-                            "original_link": _olink,
-                            "category": _cat or "",
-                            "site_ids_by_account": dict(_sites_by_account),
-                        }
-                        new_cache[_key] = _entry
-                    elif _existing_global.get("collected_product_id") != _cpid:
-                        # 다른 cp가 같은 글로벌 키를 차지 → 글로벌 매칭 거부 표시
-                        if not _existing_global.get("ambiguous"):
-                            _ambiguous_count += 1
-                        _existing_global["ambiguous"] = True
-                    else:
-                        # 같은 cp 내 여러 키 — site_ids만 보강
-                        for acc, sites in _sites_by_account.items():
-                            _existing_global["site_ids_by_account"].setdefault(
-                                acc, []
-                            ).extend(
-                                s
-                                for s in sites
-                                if s
-                                not in _existing_global["site_ids_by_account"].get(
-                                    acc, []
-                                )
-                            )
-                    # 정확 매칭 인덱스 — (account_id, product_no) 쌍은 충돌 거의 없음.
-                    # 첫 번째 entry 유지(같은 키에 여러 cp 등록 시 가장 오래된 것 우선).
-                    _acc_key = f"{_account_key}:{_key}"
-                    if _acc_key not in new_by_account:
-                        new_by_account[_acc_key] = {
-                            "collected_product_id": _cpid,
-                            "source_site": _site,
-                            "product_image": _thumb,
-                            "original_link": _olink,
-                            "category": _cat or "",
-                            "site_ids_by_account": dict(_sites_by_account),
-                        }
-        _mpn_cache_data = (new_cache, new_by_account)
-        _mpn_cache_built_at = now
-        logger.info(
-            f"[주문동기화] _mpn_cache 재빌드 완료 — global={len(new_cache):,} "
-            f"by_account={len(new_by_account):,} ambiguous={_ambiguous_count:,} "
-            f"TTL={_MPN_CACHE_TTL_SEC}s"
+        now_wall = datetime.now(timezone.utc)
+        _full_rebuild = (
+            _mpn_cache_data is None
+            or (now - _mpn_cache_full_built_at) >= _MPN_FULL_REBUILD_SEC
         )
+
+        if _full_rebuild:
+            by_global: dict[str, dict] = {}
+            by_account: dict[str, dict] = {}
+            _ambiguous = 0
+            async with get_read_session() as _read_sess:
+                _cp_result = await _read_sess.execute(_sa_text(_MPN_SELECT_COLS))
+                _cp_rows = _cp_result.fetchall()
+            for _row in _cp_rows:
+                _ambiguous += _index_mpn_row(_row, by_global, by_account, sourcing_urls)
+            _mpn_cache_data = (by_global, by_account)
+            _mpn_cache_full_built_at = now
+            _mpn_cache_delta_since = now_wall
+            _mpn_cache_built_at = now
+            logger.info(
+                f"[주문동기화] _mpn_cache 전체빌드 — global={len(by_global):,} "
+                f"by_account={len(by_account):,} ambiguous={_ambiguous:,} "
+                f"행={len(_cp_rows):,}"
+            )
+        else:
+            # 증분 머지 — 변경분만. 시계 오차/경계 누락 방지 위해 10초 여유
+            by_global, by_account = _mpn_cache_data
+            _since = _mpn_cache_delta_since or now_wall
+            from datetime import timedelta
+
+            _since_q = _since - timedelta(seconds=10)
+            async with get_read_session() as _read_sess:
+                _cp_result = await _read_sess.execute(
+                    _sa_text(_MPN_SELECT_COLS + " AND updated_at >= :since"),
+                    {"since": _since_q},
+                )
+                _cp_rows = _cp_result.fetchall()
+            _ambiguous = 0
+            for _row in _cp_rows:
+                _ambiguous += _index_mpn_row(_row, by_global, by_account, sourcing_urls)
+            _mpn_cache_delta_since = now_wall
+            _mpn_cache_built_at = now
+            logger.info(
+                f"[주문동기화] _mpn_cache 증분머지 — 변경 {len(_cp_rows):,}건 "
+                f"global={len(by_global):,} ambiguous신규={_ambiguous:,}"
+            )
         return _mpn_cache_data
 
 

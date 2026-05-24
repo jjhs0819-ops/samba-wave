@@ -1023,6 +1023,12 @@ async def run_tasks(task_ids: list[int]):
     results = {}
 
     try:
+        # TASK 6(등록상품수 스냅샷)을 가장 먼저 실행 — 정리 작업(5/4/3) 중
+        # 하나가 예외를 던져도 그날 0시 스냅샷은 반드시 기록되도록 보장 (#235).
+        # 과거 6이 맨 뒤라 앞 작업 실패 시 스냅샷이 누락되어 등록상품수가
+        # 날짜별로 쌓이지 않던 버그가 있었음.
+        if 6 in task_ids:
+            results["snapshot"] = await task_daily_snapshot(conn)
         if 5 in task_ids:
             results["collect"] = await task_brand_collect_jobs(conn, interval_days=5)
         if 4 in task_ids:
@@ -1033,8 +1039,6 @@ async def run_tasks(task_ids: list[int]):
             results["ai_tags"] = await task_ai_tags(conn)
         if 1 in task_ids:
             results["category"] = await task_category_mapping(conn)
-        if 6 in task_ids:
-            results["snapshot"] = await task_daily_snapshot(conn)
     finally:
         await conn.close()
 

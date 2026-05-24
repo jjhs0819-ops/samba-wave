@@ -123,7 +123,12 @@
     }
     // 확장앱 연결 페이지(/samba/extension-link)에서 발급된 키 저장
     if (msg.type === 'SAMBA_SET_API_KEY' && msg.apiKey) {
-      chrome.storage.local.set({ apiKey: msg.apiKey })
+      chrome.storage.local.set({ apiKey: msg.apiKey }, () => {
+        // 저장 완료 → 연결 페이지 탭 자동 닫기 (사용자 수동 닫기 제거)
+        setTimeout(() => {
+          try { chrome.runtime.sendMessage({ type: 'SAMBA_CLOSE_LINK_TAB' }) } catch {}
+        }, 1200)
+      })
     }
   })
 })()

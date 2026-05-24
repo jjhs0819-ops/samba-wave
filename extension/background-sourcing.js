@@ -3467,3 +3467,66 @@ async function extractDetailData(tabId, site, productId) {
 
   return result?.result || { success: false, message: 'DOM 파싱 실패' }
 }
+
+// ============================================================
+// 자가 업데이트 — 백엔드 latest 버전과 비교해 구버전이면 chrome.runtime.reload().
+// 공유폴더 동기화로 디스크 파일이 최신이면 reload 시 최신본을 다시 읽는다.
+// (롯데ON 데몬의 self-update 와 동일 패턴 — sourcing.py)
+// ============================================================
+const _SELF_UPDATE_ALARM = 'sambaSelfUpdate'
+const _SELF_UPDATE_INTERVAL_MIN = 360 // 6시간
+
+function _cmpSemver(a, b) {
+  const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0)
+  const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0)
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] || 0
+    const y = pb[i] || 0
+    if (x !== y) return x - y
+  }
+  return 0
+}
+
+async function _checkSelfUpdate() {
+  try {
+    // 오토튠/잡 실행 중인 PC는 reload 보류 — 작업 끊김 방지. 다음 주기에 재시도.
+    if (_localAutotuneJoined) return
+
+    const { proxyUrl } = await chrome.storage.local.get('proxyUrl')
+    if (!proxyUrl) return
+
+    const res = await fetch(
+      `${proxyUrl}/api/v1/samba/proxy/autotune-daemon/extension-version`,
+      { method: 'GET' },
+    )
+    if (!res.ok) return
+    const data = await res.json().catch(() => ({}))
+    const latest = data && data.version
+    const current = chrome.runtime.getManifest().version
+    if (!latest || _cmpSemver(current, latest) >= 0) return // 이미 최신
+
+    // 무한루프 가드: 디스크 파일이 아직 구버전(공유폴더 미동기화)이면 reload 해도
+    // 같은 버전 → 반복. 같은 latest 로 6시간 내 시도했으면 skip.
+    const stored = await chrome.storage.local.get('_selfUpdateTried')
+    const tried = stored._selfUpdateTried || {}
+    const now = Date.now()
+    if (tried.version === latest && now - (tried.at || 0) < _SELF_UPDATE_INTERVAL_MIN * 60 * 1000) {
+      return
+    }
+    // reload 가 worker 를 죽이므로 가드 기록 flush 를 await 로 보장한 뒤 reload.
+    await chrome.storage.local.set({ _selfUpdateTried: { version: latest, at: now } })
+    console.log(`[SAMBA] 자가 업데이트 ${current} → ${latest} — reload`)
+    chrome.runtime.reload()
+  } catch (e) {
+    console.warn('[SAMBA] 자가 업데이트 체크 실패:', e && e.message)
+  }
+}
+
+// 부팅 1분 후 첫 체크 + 6시간 주기 (동일 이름이면 덮어써져 중복 안 됨)
+chrome.alarms.create(_SELF_UPDATE_ALARM, {
+  delayInMinutes: 1,
+  periodInMinutes: _SELF_UPDATE_INTERVAL_MIN,
+})
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm && alarm.name === _SELF_UPDATE_ALARM) _checkSelfUpdate()
+})

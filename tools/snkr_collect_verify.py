@@ -58,8 +58,8 @@ async def main():
                 "category2": d.get("category2"),
                 "category3": "",
                 "source_url": d.get("url"),
-                "url": d.get("url"),
                 "video_url": d.get("url"),
+                "style_code": d.get("style_code"),
                 "detail_html": "",
                 "sale_status": d.get("sale_status"),
                 "free_shipping": False,
@@ -84,8 +84,8 @@ async def main():
         rows = (
             await session.execute(
                 text(
-                    "SELECT site_product_id, name, sale_price, sale_status, options "
-                    "FROM samba_collected_product WHERE source_site='SNKRDUNK' "
+                    "SELECT site_product_id, name, sale_price, sale_status, options, "
+                    "style_code FROM samba_collected_product WHERE source_site='SNKRDUNK' "
                     "ORDER BY created_at DESC LIMIT 5"
                 )
             )
@@ -93,7 +93,10 @@ async def main():
         for r in rows:
             opts = r[4]
             n = len(opts) if isinstance(opts, list) else 0
-            print(f"  {r[0]} {str(r[1])[:26]!r} sale={r[2]} status={r[3]} 등급={n}개")
+            print(
+                f"  {r[0]} 품번={r[5]!r} {str(r[1])[:24]!r} "
+                f"sale={r[2]}(달러) status={r[3]} 등급={n}개"
+            )
             if isinstance(opts, list):
                 for o in opts[:5]:
                     print(
