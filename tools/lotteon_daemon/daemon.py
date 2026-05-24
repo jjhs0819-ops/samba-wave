@@ -78,7 +78,7 @@ except ImportError:
 # ====================================================================
 # 데몬 버전 — build.ps1 가 갱신. 자동 업데이트 비교 기준.
 # ====================================================================
-DAEMON_VERSION = "1.2.0"
+DAEMON_VERSION = "1.2.1"
 
 
 # ====================================================================
@@ -1502,6 +1502,34 @@ async def process_job(
         )
         state.record_failure()
         return None
+
+    # 097bf07b race fix — login_required 즉시 재로그인 + 재추출.
+    # startup ensure_logged_in 누락/실패해도 잡별로 자동 회복. 송장의 ensure_logged_in_as_account 패턴과 동일.
+    if (
+        isinstance(data, dict)
+        and data.get("login_required")
+        and handler.requires_login
+        and device_id
+    ):
+        logger.warning(
+            "[%s] login_required 감지 → 즉시 재로그인 시도 (req=%s)", site, request_id
+        )
+        try:
+            ok_login = await ensure_logged_in_for_site(
+                page, client, backend_url, device_id, api_key, handler
+            )
+            if ok_login:
+                logger.info("[%s] 재로그인 성공 → 재추출 (req=%s)", site, request_id)
+                try:
+                    data = await asyncio.wait_for(
+                        extract_pdp(page, url, product_id, handler), timeout=50.0
+                    )
+                except Exception as exc:
+                    logger.warning("재추출 예외 req=%s: %s", request_id, exc)
+            else:
+                logger.warning("[%s] 재로그인 실패 — 잡 실패 회신 (req=%s)", site, request_id)
+        except Exception as exc:
+            logger.warning("[%s] 재로그인 예외 req=%s: %s", site, request_id, exc)
 
     ok = await post_result(client, backend_url, request_id, data, api_key)
     dt = time.time() - t0
