@@ -210,7 +210,7 @@ async def sourcing_collect_queue(request: Request) -> Any:
 AUTOTUNE_DAEMON_LATEST_VERSION = "1.2.0"
 AUTOTUNE_DAEMON_DOWNLOAD_URL = (
     "https://github.com/sbk0674-web/samba-wave/releases/download/"
-    "lotteon-daemon-v1.1.6/lotteon-daemon-setup.exe"
+    "lotteon-daemon-v1.2.0/lotteon-daemon-setup.exe"
 )
 
 
