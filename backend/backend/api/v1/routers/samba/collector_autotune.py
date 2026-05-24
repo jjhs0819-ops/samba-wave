@@ -3591,54 +3591,57 @@ class AutotuneStopRequest(BaseModel):
 
 @router.post("/autotune/stop")
 async def autotune_stop(body: AutotuneStopRequest = AutotuneStopRequest()):
-    """오토튠 정지 — 실행 중인 모든 device 인스턴스를 정지한다.
+    """오토튠 정지 — 요청 dev 인스턴스만 정지 (다른 PC 영향 없음).
 
-    프론트 localStorage device_id 와 실제 실행 중 owner device_id 가 불일치하면(예:
-    auto_start_if_enabled 가 DB 저장 owner did 로 복원하면 프론트 did 와 달라짐) 특정
-    dev 하나만 정지 시 엉뚱한 did 를 멈춰 실제 루프는 계속 돌던 사고가 있었다(정지 눌러도
-    실행 중 지속). 자기운영 단일유저 환경이므로, 정지는 실행 중인 모든 device 를 멈추고
-    autotune_enabled 를 무조건 False 로 내려 auto_start_if_enabled 재시작까지 차단한다.
+    이전 구현은 전역 정지(모든 실행 dev + bulk_cancel_all + SourcingQueue.cancel_all +
+    autotune_enabled=False) 였으나, 멀티 PC 환경에서 1개 PC 정지가 전체 PC를 죽이는
+    사고 → dev 한정 정지로 전환 (2026-05-25 사용자 재요청 "분리되어야해").
+
+    dev 비어있고 실행 중인 PC가 1개뿐이면 그 PC를 정지 (UI device_id 누락 가드 보조).
+    여러 PC 실행 중이고 dev 없으면 거절 (전역 영향 차단).
     """
-    from backend.domain.samba.collector.refresher import request_bulk_cancel_all
-
     dev = (body.device_id or "").strip()
-    # 실행 중인 모든 device(+요청 dev) 정지 대상 — did 불일치해도 확실히 멈춤
-    targets = {d for d, ev in _pc_running.items() if ev.is_set()}
-    if dev:
-        targets.add(dev)
-    if not targets:
+    running_devs = {d for d, ev in _pc_running.items() if ev.is_set()}
+
+    if not dev:
+        if len(running_devs) == 0:
+            await _save_autotune_state(False)
+            return {"ok": True, "status": "already_stopped"}
+        if len(running_devs) == 1:
+            dev = next(iter(running_devs))
+        else:
+            return {
+                "ok": False,
+                "error": "device_id 필수 — 다중 PC 실행 중, 전역 정지 차단",
+            }
+
+    # dev 한 개만 정지
+    _pc_force_stop_set.add(dev)
+    ev = _pc_running.get(dev)
+    if ev is not None:
+        ev.clear()
+    _site_tasks = _pc_site_tasks.get(dev) or {}
+    for _st in list(_site_tasks.values()):
+        if not _st.done():
+            _st.cancel()
+    _site_tasks.clear()
+    _main = _pc_main_task.get(dev)
+    if _main and not _main.done():
+        _main.cancel()
+    _pc_main_task.pop(dev, None)
+    _cleanup_pc_instance(dev)
+
+    # 다른 PC가 한 대도 안 돌고 있으면만 전역 enabled=False (재시작 차단)
+    other_running = {d for d, ev in _pc_running.items() if d != dev and ev.is_set()}
+    if not other_running:
         await _save_autotune_state(False)
-        return {"ok": True, "status": "already_stopped"}
 
-    for d in targets:
-        _pc_force_stop_set.add(d)
-        ev = _pc_running.get(d)
-        if ev is not None:
-            ev.clear()
-        _site_tasks = _pc_site_tasks.get(d) or {}
-        for _st in list(_site_tasks.values()):
-            if not _st.done():
-                _st.cancel()
-        _site_tasks.clear()
-        _main = _pc_main_task.get(d)
-        if _main and not _main.done():
-            _main.cancel()
-        _pc_main_task.pop(d, None)
-
-    # 전역 정지 — enabled 무조건 False (auto_start_if_enabled 자동 재시작 차단)
-    request_bulk_cancel_all()
-    try:
-        from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
-
-        SourcingQueue.cancel_all("autotune stopped by user")
-    except Exception:
-        pass
-    await _save_autotune_state(False)
-
-    for d in targets:
-        _cleanup_pc_instance(d)
-
-    return {"ok": True, "status": "stopped", "stopped_devices": len(targets)}
+    return {
+        "ok": True,
+        "status": "stopped",
+        "stopped_device": dev,
+        "remaining_devices": len(other_running),
+    }
 
 
 class PcAllowedSitesRequest(BaseModel):
@@ -3979,16 +3982,40 @@ async def autotune_get_filters():
             mkts = sorted([r[0] for r in mk_result.all() if r[0]])
         return srcs, mkts
 
-    # available_* — TTL 캐시 (cache-miss 시 Lock 으로 중복 무거운 쿼리 차단)
+    # available_* — stale-while-revalidate. cache 있으면 즉시 반환(stale 포함),
+    # stale 이면 백그라운드에서 재계산. cache 자체가 없을 때만 블로킹 (콜드 스타트).
+    # → TTL 만료 시점에 100초 블로킹 → 체크박스 사라짐 사고 방지 (2026-05-25).
     cached = _filters_avail_cache
-    if cached and (time.time() - cached.get("ts", 0)) < _FILTERS_AVAIL_TTL:
+    if cached:
         available_sources = cached["sources"]
         available_markets = cached["markets"]
+        if (time.time() - cached.get("ts", 0)) >= _FILTERS_AVAIL_TTL:
+            # stale — 백그라운드 재계산 트리거 (중복 방지: lock locked 면 skip)
+            async def _refresh_in_background():
+                global _filters_avail_cache
+                async with _filters_avail_lock:
+                    # 진입 후 신선해졌으면 skip
+                    c2 = _filters_avail_cache
+                    if c2 and (time.time() - c2.get("ts", 0)) < _FILTERS_AVAIL_TTL:
+                        return
+                    try:
+                        srcs, mkts = await _compute_available()
+                        _filters_avail_cache = {
+                            "sources": srcs,
+                            "markets": mkts,
+                            "ts": time.time(),
+                        }
+                    except Exception as exc:
+                        logger.warning(
+                            f"[오토튠][filters] 백그라운드 재계산 실패: {exc}"
+                        )
+
+            if not _filters_avail_lock.locked():
+                asyncio.create_task(_refresh_in_background())
     else:
         async with _filters_avail_lock:
-            # lock 대기 중 다른 요청이 채웠으면 재사용
             cached = _filters_avail_cache
-            if cached and (time.time() - cached.get("ts", 0)) < _FILTERS_AVAIL_TTL:
+            if cached:
                 available_sources = cached["sources"]
                 available_markets = cached["markets"]
             else:

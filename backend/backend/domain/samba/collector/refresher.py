@@ -517,12 +517,10 @@ def get_refresh_logs(
     if source_filter:
         logs = [l for l in logs if l.get("source") == source_filter]
     if device_id_filter:
-        # 자기 device_id 로그 + 글로벌(device_id 빈값) 로그 표시. 다른 PC 잡 차단.
-        logs = [
-            l
-            for l in logs
-            if not l.get("device_id") or l.get("device_id") == device_id_filter
-        ]
+        # 자기 device_id 로그만 표시 — strict. device_id 빈값(글로벌) 로그도 차단.
+        # 빈값 포함 시 다른 PC cycle 컨텍스트 누락 로그(예: 집PC LOTTEON 잡)가 새는
+        # 사고가 있어 strict 로 전환 (2026-05-25 사용자 재요청).
+        logs = [l for l in logs if l.get("device_id") == device_id_filter]
     return logs, _refresh_log_total
 
 
