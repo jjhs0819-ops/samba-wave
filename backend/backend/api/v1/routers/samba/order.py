@@ -53,12 +53,11 @@ def _index_mpn_row(_row, by_global: dict, by_account: dict, sourcing_urls: dict)
 
     전체 빌드와 증분 머지 둘 다 이 함수를 재사용 — 인덱싱 규칙을 1곳에 모은다.
     """
-    _cpid, _site, _spid, _mpnos, _src_url, _cat = _row
+    _cpid, _site, _spid, _thumb_raw, _mpnos, _src_url, _cat = _row
     if not (_mpnos and isinstance(_mpnos, dict)):
         return 0
-    # 썸네일은 bulk 스캔에서 제외(images TOAST 비용 회피) — 표시용이라 빈값.
-    # 필요 시 /fetch-product-image 지연조회 또는 마켓 자동채움이 보완.
-    _thumb = ""
+    # 썸네일은 (images->>0)로 첫 URL만 추출 — TOAST 전체 fetch 회피하면서 표시용 확보.
+    _thumb = _thumb_raw or ""
     _olink = _src_url or (
         sourcing_urls.get(_site, "").format(_spid)
         if _site in sourcing_urls and _spid
@@ -140,7 +139,7 @@ def _index_mpn_row(_row, by_global: dict, by_account: dict, sourcing_urls: dict)
 # 빌드가 per-account 타임아웃(180~300초)에 매번 killed → 캐시 영영 미생성 사고.
 # product_image는 표시용일 뿐(마켓 자동채움 + /fetch-product-image 지연조회 존재)이라 빈값으로 둔다.
 _MPN_SELECT_COLS = (
-    "SELECT id, source_site, site_product_id, "
+    "SELECT id, source_site, site_product_id, (images->>0) AS thumb, "
     "market_product_nos, source_url, category FROM samba_collected_product "
     "WHERE market_product_nos IS NOT NULL"
 )
