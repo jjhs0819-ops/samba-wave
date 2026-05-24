@@ -69,6 +69,34 @@ _pc_site_last_ticks: dict[str, dict[str, str]] = {}
 _pc_site_empty_hits: dict[str, dict[str, int]] = {}
 _pc_site_heartbeats: dict[str, dict[str, float]] = {}
 _pc_target_ids: dict[str, Optional[set]] = {}
+# 사이트별 적응 배치 크기 (device_id → site → int).
+# 직전 배치 소요시간 기준으로 다음 배치 SELECT limit 자동 조정. 미설정 시 env 기본값 사용.
+_pc_site_batch_size: dict[str, dict[str, int]] = {}
+
+
+def _pc_bs(dev: str) -> dict[str, int]:
+    return _pc_site_batch_size.setdefault(dev, {})
+
+
+def _adapt_batch_size(dev: str, site: str, elapsed: float, env_max: int) -> None:
+    """직전 배치 elapsed 기반 다음 배치 크기 조정. 하한 50, 상한 max(env_max, 400).
+
+    - elapsed > 120초: 절반으로 (사이클 길어짐 → 풀/응답 부담 완화)
+    - elapsed < 30초: +50 (여유 있으면 처리량 증가)
+    - 그 사이: 유지
+    """
+    _bs = _pc_bs(dev)
+    _cur = _bs.get(site, env_max)
+    _hi = max(env_max, 400)
+    if elapsed > 120:
+        _new = max(50, _cur // 2)
+    elif elapsed < 30:
+        _new = min(_hi, _cur + 50)
+    else:
+        _new = _cur
+    if _new != _cur:
+        _bs[site] = _new
+
 
 # 잡 발행자 PC를 사이트별/상품별 호출 컨텍스트에 전파 (sourcing_queue.get_autotune_owner가 읽음).
 # 사이트 루프 진입 시 set, 종료 시 reset. PC별 독립 실행 → 컨텍스트 격리 보장.
@@ -203,6 +231,7 @@ def _cleanup_pc_instance(dev: str) -> None:
     _pc_site_empty_hits.pop(dev, None)
     _pc_site_heartbeats.pop(dev, None)
     _pc_target_ids.pop(dev, None)
+    _pc_site_batch_size.pop(dev, None)
 
 
 def any_pc_running() -> bool:
@@ -546,6 +575,8 @@ async def _site_autotune_loop(device_id: str, site: str):
                     _AUTOTUNE_CYCLE_BATCH = int(
                         os.environ.get("AUTOTUNE_CYCLE_BATCH", "200")
                     )
+                    # 적응 배치: 직전 배치 소요시간 기반 자동 조정값 우선 (없으면 env 기본)
+                    _batch_limit = _pc_bs(device_id).get(site, _AUTOTUNE_CYCLE_BATCH)
                     stmt = (
                         select(_CP)
                         .where(*_where)
@@ -558,7 +589,7 @@ async def _site_autotune_loop(device_id: str, site: str):
                         )
                     )
                     if not _target_ids:
-                        stmt = stmt.limit(_AUTOTUNE_CYCLE_BATCH)
+                        stmt = stmt.limit(_batch_limit)
                     result = await session.exec(stmt)
                     _seen_ids: set[str] = set()
                     products = []
@@ -2288,6 +2319,15 @@ async def _site_autotune_loop(device_id: str, site: str):
                             time.time() - _cycle_started_ts,
                         )
 
+                        # 적응 배치: 이번 배치 소요시간으로 다음 배치 크기 조정 (단일 타겟 제외)
+                        if not _target_ids:
+                            _adapt_batch_size(
+                                device_id,
+                                site,
+                                time.time() - _cycle_started_ts,
+                                _AUTOTUNE_CYCLE_BATCH,
+                            )
+
                         # 에러 결과 후처리 (콜백에서 처리 안 된 에러 건)
                         for r in results:
                             if r.error and r.error != "cancelled":
@@ -2370,19 +2410,7 @@ async def _site_autotune_loop(device_id: str, site: str):
                         _g_total_now = _autotune_global_total.get(_gkey, 0)
                         _is_full_cycle = _g_total_now > 0 and _g_idx_now >= _g_total_now
 
-                        # 배치 완료 로그 (매 배치마다)
-                        _ref_mod._refresh_log_buffer.append(
-                            {
-                                "ts": _now.isoformat(),
-                                "site": site,
-                                "product_id": "",
-                                "name": "",
-                                "msg": f"[{_kst.strftime('%H:%M:%S')}] -- [{site}] 배치 완료 [{_g_idx_now:,}/{_g_total_now:,}]: {_ok_count:,}건 성공, {_err_count:,}건 실패{_err_detail} / 총 {len(results):,}건, 가격전송 {len(_all_price_pids):,}건, 재고전송 {len(_all_stock_pids):,}건, 동기 {_synced_count:,}건, 마켓삭제 {deleted_count:,}건 --",
-                                "level": "info",
-                                "source": "autotune",
-                            }
-                        )
-                        _ref_mod._refresh_log_total += 1
+                        # 배치 완료 로그 — UI 실시간 로그에는 미노출(불필요), 서버 로그만 유지
                         log.info(
                             "[오토튠] 배치 완료 [%s/%s]: %d성공, %d실패%s / %d건",
                             f"{_g_idx_now:,}",
