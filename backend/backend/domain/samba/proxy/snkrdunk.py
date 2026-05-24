@@ -151,16 +151,16 @@ class SnkrdunkClient:
         bc = parse_brand_category_url(keyword)
         if bc is not None:
             brand_id, category_id = bc
+            # 호출자 max_count 존중 — 강제 10000 제거(검색 120초 타임아웃 유발)
             return await self.collect_brand_cards(
                 brand_id=brand_id,
                 category_id=category_id,
-                max_count=max(max_count, 10000),
+                max_count=max_count,
             )
         # 전역 트레이딩카드 리스트 URL (예: /en/trading-cards?type=hottest&slide=right)
         if GLOBAL_TRADING_CARDS_URL_RE.search(keyword or ""):
-            return await self.collect_listing_cards(
-                url=keyword, max_count=max(max_count, 1000)
-            )
+            # 호출자 max_count 존중 — 강제 1000 제거(검색 120초 타임아웃 유발)
+            return await self.collect_listing_cards(url=keyword, max_count=max_count)
         products: list[dict[str, Any]] = []
         total = 0
         async with httpx.AsyncClient(
@@ -257,7 +257,8 @@ class SnkrdunkClient:
         category_id: str = "",
         per_page: int = 100,
         max_count: int = 50000,
-        sleep_between_pages: float = 0.5,
+        sleep_between_pages: float = 0.2,
+        max_pages: int = 15,
     ) -> dict[str, Any]:
         """브랜드+카테고리의 트레이딩카드 전체 페이지네이션 수집.
 
@@ -266,6 +267,7 @@ class SnkrdunkClient:
             category_id: ex) "25" (없으면 빈 문자열)
             per_page: 페이지당 (최대 100)
             max_count: 상한 (안전장치)
+            max_pages: 페이지 상한 — 검색 120초 타임아웃 방지 (req_count 불명 시 가드)
         """
         import asyncio
 
@@ -276,7 +278,7 @@ class SnkrdunkClient:
         ) as client:
             page = 1
             seen: set[str] = set()
-            while len(products) < max_count:
+            while len(products) < max_count and page <= max_pages:
                 params: dict[str, Any] = {
                     "brandId": brand_id,
                     "perPage": per_page,
@@ -320,13 +322,16 @@ class SnkrdunkClient:
         url: str,
         per_page: int = 100,
         max_count: int = 1000,
-        sleep_between_pages: float = 0.5,
+        sleep_between_pages: float = 0.2,
+        max_pages: int = 15,
     ) -> dict[str, Any]:
         """전역 트레이딩카드 리스트 URL 페이지네이션 수집.
 
         예: `/en/trading-cards?type=hottest&slide=right`
         URL의 쿼리스트링(type/slide/brandId/categoryId 등)을 그대로
         `/en/v1/trading-cards` API에 전달.
+
+        max_pages: 페이지 상한 — 검색 120초 타임아웃 방지 (req_count 불명 시 가드)
         """
         import asyncio
         from urllib.parse import urlparse, parse_qs
@@ -352,7 +357,7 @@ class SnkrdunkClient:
             headers=HEADERS, timeout=self._timeout, follow_redirects=True
         ) as client:
             page = 1
-            while len(products) < max_count:
+            while len(products) < max_count and page <= max_pages:
                 params: dict[str, Any] = {
                     **base_params,
                     "perPage": per_page,
