@@ -54,14 +54,21 @@ def _daemon_only_for_job(job_type: str) -> set[str]:
 
 
 def _resolve_job_owner(site: str, job_type: str) -> str | None:
-    """잡 owner = PC 체크박스 단일 룰 (2026-05-25 정리).
+    """잡 owner = PC 체크박스 단일 룰 (2026-05-26 재정리).
 
-    데몬 우선 → 확장앱 폴백. 둘 다 매칭 없으면 잡 발행 skip (None).
-    `current_pc_owner` contextvar 의존 폐기 — 분담 무시 사고 차단.
-    daemon_only 정책도 폐기 — 체크박스 있으면 그 PC 가 처리.
+    site 가 DAEMON_ONLY_JOB_SITES[job_type] 에 속하면 **데몬만** 매칭, 확장앱 폴백 차단.
+    그 외 사이트는 데몬 우선 → 확장앱 폴백. 둘 다 매칭 없으면 None → 잡 발행 skip.
+
+    배경: 송장수집을 데몬 헤드리스로 전환했음에도 데몬 미응답 시 확장앱 폴백으로
+    탭 팝업 회귀하던 버그. job_type 인자가 받기만 하고 무시되던 결함 제거.
     """
-    from backend.domain.samba.proxy.daemon_pool import pick_any_owner
+    from backend.domain.samba.proxy.daemon_pool import (
+        pick_any_owner,
+        pick_daemon_owner,
+    )
 
+    if (site or "").upper() in {s.upper() for s in _daemon_only_for_job(job_type)}:
+        return pick_daemon_owner(site)
     return pick_any_owner(site)
 
 

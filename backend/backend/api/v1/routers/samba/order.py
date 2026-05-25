@@ -1230,6 +1230,81 @@ async def list_orders_by_collected_product_paged(
     )
 
 
+@router.get("/analytics-aggregate")
+async def analytics_aggregate(
+    start: str = Query(..., description="시작일 YYYY-MM-DD"),
+    end: str = Query(..., description="종료일 YYYY-MM-DD"),
+    session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+):
+    """매출통계 페이지 전용 사전집계 엔드포인트.
+
+    paid_at(KST) 일자 × channel_name × source_site × status 단위로
+    sum(sale_price), count(*)를 미리 집계해서 반환한다.
+    매출통계 페이지가 raw 주문 4천+건(6MB)을 통째 받아 클라이언트에서
+    필터링하던 구조를 대체 — 페이로드 99% 축소, 무음 실패 회귀 방지.
+    """
+    from sqlalchemy import select as sa_select, func as sa_func, or_
+    from backend.domain.samba.account.model import SambaMarketAccount
+    from backend.utils import kst_date_range_to_utc
+
+    start_dt, end_dt = kst_date_range_to_utc(start, end)
+
+    # paid_at(timestamptz) → KST 변환 후 일자만 추출
+    kst_date = sa_func.date(sa_func.timezone("Asia/Seoul", SambaOrder.paid_at))
+
+    # 마켓 그룹키 — samba_market_account.market_name(G마켓/옥션/11번가/...) 우선,
+    # 매칭 안 되면 channel_name 사용. channel_name(=계정 닉네임 "가디(...)")으로
+    # 그룹화하면 마켓별 통계에 계정 닉네임이 노출되는 문제 발생(2026-05-26).
+    market_key = sa_func.coalesce(
+        SambaMarketAccount.market_name, SambaOrder.channel_name
+    )
+
+    stmt = (
+        sa_select(
+            kst_date.label("date"),
+            market_key.label("channel_name"),
+            SambaOrder.source_site,
+            SambaOrder.status,
+            sa_func.coalesce(sa_func.sum(SambaOrder.sale_price), 0).label("sales"),
+            sa_func.count().label("orders"),
+        )
+        .select_from(SambaOrder)
+        .outerjoin(SambaMarketAccount, SambaMarketAccount.id == SambaOrder.channel_id)
+        .where(
+            SambaOrder.paid_at != None,  # noqa: E711
+            SambaOrder.paid_at >= start_dt,
+            SambaOrder.paid_at <= end_dt,
+        )
+        .group_by(
+            kst_date,
+            market_key,
+            SambaOrder.source_site,
+            SambaOrder.status,
+        )
+    )
+    if tenant_id is not None:
+        stmt = stmt.where(
+            or_(
+                SambaOrder.tenant_id == tenant_id,
+                SambaOrder.tenant_id == None,  # noqa: E711
+            )
+        )
+    result = await session.execute(stmt)
+    rows = [
+        {
+            "date": str(r.date),
+            "channel_name": r.channel_name or "",
+            "source_site": r.source_site or "",
+            "status": r.status or "",
+            "sales": float(r.sales or 0),
+            "orders": int(r.orders or 0),
+        }
+        for r in result.all()
+    ]
+    return {"rows": rows}
+
+
 @router.get("/by-date-range", response_model=list[SambaOrder])
 async def list_orders_by_date_range(
     start: str = Query(..., description="시작일 YYYY-MM-DD"),

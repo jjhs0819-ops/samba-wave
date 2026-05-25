@@ -14,6 +14,7 @@ export {
 export type {
   OrderDashboardStats,
   SambaOrder,
+  AnalyticsAggregateRow,
   SambaChannel,
   SambaPolicy,
   SambaSearchFilter,

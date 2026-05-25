@@ -118,6 +118,15 @@ export interface OrderDashboardStats {
   marketRegisteredCount: number
 }
 
+export interface AnalyticsAggregateRow {
+  date: string
+  channel_name: string
+  source_site: string
+  status: string
+  sales: number
+  orders: number
+}
+
 export interface PaginatedOrderList {
   items: SambaOrder[]
   total_count: number
@@ -196,6 +205,8 @@ export const orderApi = {
   },
   listByDateRange: (start: string, end: string) =>
     request<SambaOrder[]>(`${SAMBA_PREFIX}/orders/by-date-range?start=${start}&end=${end}`),
+  analyticsAggregate: (start: string, end: string) =>
+    request<{ rows: AnalyticsAggregateRow[] }>(`${SAMBA_PREFIX}/orders/analytics-aggregate?start=${start}&end=${end}`),
   listByDateRangePaged: (params: {
     start: string
     end: string
