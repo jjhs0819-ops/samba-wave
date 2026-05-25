@@ -354,6 +354,26 @@ _order_auto_sync_task: asyncio.Task | None = None
 _order_auto_sync_last_run: float = 0.0
 _reward_auto_task: asyncio.Task | None = None
 _reward_auto_last_run: float = 0.0
+_pc_sync_task: asyncio.Task | None = None
+
+
+async def _pc_sync_loop() -> None:
+    """매 10초 PC 분담 매핑 DB → in-memory 동기화 (worker 간 sync).
+
+    Gunicorn 다중 worker 환경에서 UI POST 가 1개 worker 만 갱신해 다른 worker 의
+    잡 발행 시 stale 매핑 사용 → 잡 발행 skip 사고 차단. lifecycle background task.
+    """
+    from backend.api.v1.routers.samba.collector_autotune import (
+        sync_pc_allowed_sites_from_db,
+    )
+
+    _lg = logging.getLogger("backend.pc-sync")
+    while True:
+        try:
+            await sync_pc_allowed_sites_from_db()
+        except Exception as exc:
+            _lg.warning(f"[lifecycle][pc-sync] 동기화 실패(무시): {exc}")
+        await asyncio.sleep(10)
 
 
 async def _tetris_sync_loop() -> None:
@@ -577,11 +597,12 @@ async def _warmup_tetris_board_cache(logger: logging.Logger) -> None:
 
 
 async def _start_tetris_sync_scheduler() -> None:
-    global _tetris_sync_task
+    global _tetris_sync_task, _pc_sync_task
 
     _tetris_sync_task = asyncio.create_task(_tetris_sync_loop())
+    _pc_sync_task = asyncio.create_task(_pc_sync_loop())
     logging.getLogger("backend.lifecycle").info(
-        "[lifecycle] 테트리스 sync 스케줄러 시작"
+        "[lifecycle] 테트리스 sync + PC 분담 sync 스케줄러 시작"
     )
 
 

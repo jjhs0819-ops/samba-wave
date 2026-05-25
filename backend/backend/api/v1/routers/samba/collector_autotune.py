@@ -292,6 +292,53 @@ async def _run_transmit_in_background(coro_factory):
 _pc_allowed_sites: dict[str, set[str]] = {}
 _pc_last_seen: dict[str, float] = {}
 PC_LAST_SEEN_TTL = 86400.0  # 24시간
+
+# Gunicorn 다중 worker 환경에서 in-memory dict 는 worker 마다 별도.
+# lifecycle background task 가 매 10초 sync_pc_allowed_sites_from_db 호출 → 모든
+# worker 의 _pc_allowed_sites 가 DB 진실 출처와 일치.
+
+
+async def sync_pc_allowed_sites_from_db() -> None:
+    """DB autotune_pc_allowed_sites 를 in-memory _pc_allowed_sites 로 동기화.
+
+    Gunicorn 다중 worker 환경에서 UI POST 가 1개 worker 만 갱신해 다른 worker 가
+    잡 발행 시 stale → "데몬 미등록 skip" 발생. lifecycle background task 가 10초마다
+    호출해 모든 worker 의 in-memory 를 DB 진실 출처와 일치시킴.
+
+    last_seen 은 보존 — 데몬/확장앱 폴링 시점 그대로. 새 device 는 last_seen=now 박음.
+    """
+    try:
+        from backend.db.orm import get_read_session
+        from backend.api.v1.routers.samba.proxy._helpers import _get_setting
+
+        async with get_read_session() as _sess:
+            data = await _get_setting(_sess, "autotune_pc_allowed_sites")
+        if not isinstance(data, dict):
+            return
+        now = time.time()
+        seen: set[str] = set()
+        for dev, sites in data.items():
+            if not isinstance(dev, str) or not isinstance(sites, list):
+                continue
+            dev_clean = dev.strip()
+            if not dev_clean:
+                continue
+            new_set = {s.strip() for s in sites if isinstance(s, str) and s.strip()}
+            _pc_allowed_sites[dev_clean] = new_set
+            if dev_clean not in _pc_last_seen:
+                _pc_last_seen[dev_clean] = now
+            seen.add(dev_clean)
+        # DB 에 없는 device 정리 — UI 에서 사용자가 토글 off 한 분담
+        for dev in list(_pc_allowed_sites.keys()):
+            if dev not in seen:
+                _pc_allowed_sites.pop(dev, None)
+                _pc_last_seen.pop(dev, None)
+    except Exception as _exc:
+        logging.getLogger("autotune").warning(
+            f"[sync_pc_allowed_sites_from_db] sync 실패(무시): {_exc}"
+        )
+
+
 # deviceId당 최근 폴링된 사이트셋 이력 — {device_id: {frozenset(sites): last_ts}}.
 # 같은 deviceId 를 여러 PC(예: 프로필 복사/시드로 deviceId 중복)가 서로 다른
 # X-Allowed-Sites 로 폴링하면 register 가 매 폴링 last-write 로 덮어써 active_sites 가
