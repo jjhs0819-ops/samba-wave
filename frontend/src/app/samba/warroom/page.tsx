@@ -807,8 +807,14 @@ export default function WarroomPage() {
             const curAvail = availSourcesOuterRef.current
             const sites = curFilter === null ? [...curAvail] : curFilter
             await registerPcAllowedSites(sites)
-            // 오토튠 재시작 (본인 PC 한정)
+            // 오토튠 재시작 (본인 PC 확장앱 + 데몬 둘 다)
             await collectorApi.autotuneStart('registered', undefined, dev || undefined)
+            try {
+              const daemonDev = (typeof window !== 'undefined' && window.localStorage.getItem('samba.autotune.daemon.deviceId')) || ''
+              if (daemonDev) {
+                await collectorApi.autotuneStart('registered', undefined, daemonDev)
+              }
+            } catch { /* 무시 */ }
             // 확장앱에도 재합류 신호
             window.postMessage(
               { source: 'samba-page', type: 'AUTOTUNE_SET_JOIN', joined: true, sourceSites: curFilter },
@@ -1078,6 +1084,13 @@ export default function WarroomPage() {
                   showAlert(res.error || '시작 실패', 'error')
                   return
                 }
+                // (옵션 C) 데몬 device 도 사이클 시작 — 같은 PC 의 데몬 분담 사이트 (SSG/ABC/GS/LOTTEON) 사이클 트리거
+                try {
+                  const daemonDev = (typeof window !== 'undefined' && window.localStorage.getItem('samba.autotune.daemon.deviceId')) || ''
+                  if (daemonDev) {
+                    await collectorApi.autotuneStart('registered', pno, daemonDev)
+                  }
+                } catch { /* 데몬 사이클 시작 실패는 무시 */ }
                 // 이 PC의 확장앱에만 폴링 합류 신호 전달 (다른 PC는 자동 편승 안 함)
                 // sourceSites: null=전체, [...]=지정 소싱처 — 불필요한 pre-login 차단
                 window.postMessage({ source: 'samba-page', type: 'AUTOTUNE_SET_JOIN', joined: true, sourceSites: filterSources }, window.location.origin)
