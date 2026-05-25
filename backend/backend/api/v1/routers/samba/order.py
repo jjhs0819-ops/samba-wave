@@ -978,13 +978,13 @@ async def dashboard_stats(
     # 일별 누적 등록상품수: "지금 마켓에 1개 이상 등록된 상품수" 정의로 통일
     #   - 오늘(today_str): 실시간 build_market_registered_conditions 계산값
     #   - 과거 6일: samba_daily_registered_snapshot 테이블의 그날 0시 스냅샷
-    #   - 스냅샷이 없는 과거일은 오늘값으로 평탄 채움
+    #   - 스냅샷이 없는 과거일은 None(프론트에서 "-" 표시) — 거짓 평탄 채움 금지
     #     (역산은 first_market_registered_at의 0→≥1 사이클 재진입 때문에
     #      오토튠 재등록 시 신규등록이 과대 집계돼 과거값이 비정상적으로 작아짐 — 사용 금지)
     from backend.domain.samba.collector.model import SambaDailyRegisteredSnapshot
 
     today_str = (week_ago + timedelta(days=6)).strftime("%Y-%m-%d")
-    reg_count_map: dict[str, int] = {}
+    reg_count_map: dict[str, Optional[int]] = {}
 
     # 마켓 1개 이상 등록된 상품수 (현재 시점) — KPI + 오늘 행에 사용
     market_registered_q = select(func.count(SambaCollectedProduct.id)).where(
@@ -1009,11 +1009,10 @@ async def dashboard_stats(
     snap_rows = (await session.execute(snap_q)).all()
     snap_map = {r.snapshot_date: int(r.registered_count) for r in snap_rows}
 
-    # 스냅샷이 있으면 사용, 없으면 오늘값으로 평탄 채움
+    # 스냅샷이 있으면 사용, 없으면 None(프론트 "-" 표시)
     # — 매일 0시 TASK 6 누적되면 자연스럽게 진짜 스냅샷으로 대체됨
-    today_count = int(market_registered_count)
     for d_str in past_dates:
-        reg_count_map[d_str] = snap_map.get(d_str, today_count)
+        reg_count_map[d_str] = snap_map.get(d_str)
 
     # 일별 누적 수집상품수 = "그 날(말) 시점 삼바에 저장되어있는 전체 상품수"
     # 구현: 현재 total 에서 그 다음날 이후 created 된 행수를 빼서 역산 (1풀스캔 + 1범위스캔)
@@ -1058,11 +1057,37 @@ async def dashboard_stats(
         running_total -= daily_new_map.get(next_d_str, 0)
         collected_count_map[d_str] = max(running_total, 0)
 
-    for w in weekly:
-        w["newRegistered"] = int(new_reg_map.get(w["date"], 0))
-        w["marketDeleted"] = int(del_map.get(w["date"], 0))
-        w["registeredCount"] = int(reg_count_map.get(w["date"], 0))
-        w["collectedCount"] = int(collected_count_map.get(w["date"], 0))
+    # 7일 이전(week_ago - 1d) 스냅샷 추가 조회 — 첫 행 신규등록 역산용
+    prev_day_str = (week_ago - timedelta(days=1)).strftime("%Y-%m-%d")
+    prev_snap_row = (
+        await session.execute(
+            select(SambaDailyRegisteredSnapshot.registered_count).where(
+                SambaDailyRegisteredSnapshot.snapshot_date == prev_day_str
+            )
+        )
+    ).scalar()
+    reg_count_map[prev_day_str] = (
+        int(prev_snap_row) if prev_snap_row is not None else None
+    )
+
+    # 신규등록 = (등록상품수[d] - 등록상품수[d-1]) + 마켓삭제[d] 로 역산
+    #   - first_market_registered_at 기반 카운트는 오토튠 재등록 시 중복 → 사용 금지
+    #   - 등록상품수[d] 또는 [d-1] 스냅샷 없으면 None
+    all_dates = [(week_ago + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+    for idx, w in enumerate(weekly):
+        d_str = w["date"]
+        prev_str = prev_day_str if idx == 0 else all_dates[idx - 1]
+        reg_today = reg_count_map.get(d_str)
+        reg_prev = reg_count_map.get(prev_str)
+        deleted = int(del_map.get(d_str, 0))
+        if reg_today is not None and reg_prev is not None:
+            new_reg = (reg_today - reg_prev) + deleted
+            w["newRegistered"] = max(new_reg, 0)
+        else:
+            w["newRegistered"] = None
+        w["marketDeleted"] = deleted
+        w["registeredCount"] = reg_today
+        w["collectedCount"] = int(collected_count_map.get(d_str, 0))
 
     tm_fulfillment_rate = (
         round(int(tm.fulfillment_count or 0) / int(tm.count) * 100) if tm.count else 0
@@ -4527,17 +4552,16 @@ async def sync_orders_from_markets(
                         {"account": label, "status": "skip", "message": "API Key 없음"}
                     )
                     continue
-                # 별칭 매핑 로드 (store_playauto 설정에서)
+                # 별칭 매핑 로드 — 2026-05-25 store_* samba_settings 폐기 후
+                # samba_market_account.additional_fields 가 단일 진실 출처.
+                # 현재 처리 중인 playauto 계정의 extras(=additional_fields)에서 alias1~5 추출.
                 alias_map: dict[str, str] = {}
                 try:
-                    settings_repo = SambaSettingsRepository(session)
-                    pa_setting = await settings_repo.find_by_async(key="store_playauto")
-                    if pa_setting and isinstance(pa_setting.value, dict):
-                        for ak in ("alias1", "alias2", "alias3", "alias4", "alias5"):
-                            av = pa_setting.value.get(ak, "")
-                            code, nick = parse_playauto_alias_entry(av)
-                            if code and nick:
-                                alias_map[code] = nick
+                    for ak in ("alias1", "alias2", "alias3", "alias4", "alias5"):
+                        av = str(extras.get(ak, "") or "")
+                        code, nick = parse_playauto_alias_entry(av)
+                        if code and nick:
+                            alias_map[code] = nick
                 except Exception:
                     pass
                 # 롯데홈쇼핑 직접 연동 계정이 있으면 플레이오토 중복 주문 차단

@@ -8,7 +8,6 @@ import {
   accountApi,
   proxyApi,
   collectorApi,
-  forbiddenApi,
   type SambaOrder,
   type SambaChannel,
   type SambaMarketAccount,
@@ -342,18 +341,23 @@ export default function OrdersPage() {
     channelApi.list().then(setChannels).catch(() => {})
     accountApi.listActiveCached(setAccounts)
     sourcingAccountApi.list().then(accs => setSourcingAccounts(accs.filter(a => a.is_active))).catch(() => {})
-    forbiddenApi.getSetting('store_playauto').then(data => {
-      const d = data as Record<string, string> | null
-      if (!d) return
-      const map: Record<string, string> = {}
+  }, [])
+
+  // 별칭 매핑 — 2026-05-25 store_* samba_settings 폐기 후 samba_market_account.additional_fields 가
+  // 단일 진실 출처. 활성 playauto 계정들의 alias1~5 모두 머지 (멀티계정 환경 대응).
+  useEffect(() => {
+    const map: Record<string, string> = {}
+    for (const acc of accounts) {
+      if (acc.market_type !== 'playauto' || !acc.is_active) continue
+      const af = (acc.additional_fields || {}) as Record<string, unknown>
       for (const k of ['alias1', 'alias2', 'alias3', 'alias4', 'alias5']) {
-        const v = d[k] || ''
+        const v = String(af[k] || '')
         const { code, alias } = parsePlayautoAliasEntry(v)
         if (code && alias) map[code] = alias
       }
-      setSiteAliasMap(map)
-    }).catch(() => {})
-  }, [])
+    }
+    setSiteAliasMap(map)
+  }, [accounts])
 
   // 외부 알리고 SMS 잔여건수 — 외부 API 지연이 드롭다운 표시를 막지 않도록 분리.
   useEffect(() => {
