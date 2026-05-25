@@ -7,6 +7,7 @@ import hashlib
 import io
 import logging
 import os
+import re
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -949,7 +950,13 @@ class ImageTransformService:
                     continue
 
                 # 차단 도메인 — 다운로드 후 R2 업로드
-                image_bytes = await self._download_image(url)
+                # msscdn(무신사) _NNN.jpg(예: _500.jpg, _320.jpg) → _big.jpg(1500x1800) 강제
+                # ESM 옥션 600x600 한도 미만은 reject → 다운로드 단계에서 큰 사이즈로 swap
+                # 원본 url은 키로 유지(detail_html 치환용), 다운로드용 fetch_url만 swap
+                fetch_url = url
+                if "msscdn.net" in host:
+                    fetch_url = re.sub(r"_\d{3,4}\.jpg$", "_big.jpg", url)
+                image_bytes = await self._download_image(fetch_url)
                 # 11번가 등 일부 마켓은 webp 거부 + magic bytes 검증 수행
                 # → 받은 바이트를 PIL로 열어서 무조건 JPEG로 변환 후 업로드
                 # (AI 가공 경로 _save_image 와 동일한 정규화 정책)

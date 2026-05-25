@@ -5700,6 +5700,116 @@ async def sync_orders_from_markets(
                     f"[주문동기화] {label}: 롯데홈쇼핑 주문 {len(orders_data)}건 조회"
                 )
 
+            elif market_type in ("gmarket", "auction"):
+                from backend.domain.samba.proxy.esmplus import (
+                    ESMPlusClient,
+                    resolve_esm_credentials,
+                )
+
+                # 인증 정보 — account 모델 직접 조회 (sync는 dict 스냅샷이라 model 어댑터 작성)
+                class _AccountAdapter:
+                    def __init__(self, fields: dict[str, Any]) -> None:
+                        self.additional_fields = fields
+
+                _esm_account = _AccountAdapter(extras)
+                esm_hosting_id, esm_secret_key = await resolve_esm_credentials(
+                    session, _esm_account
+                )
+                if not esm_hosting_id or not esm_secret_key:
+                    results.append(
+                        {
+                            "account": label,
+                            "status": "skip",
+                            "message": "ESM 인증정보 없음",
+                        }
+                    )
+                    continue
+                if not seller_id:
+                    results.append(
+                        {
+                            "account": label,
+                            "status": "skip",
+                            "message": "ESM seller_id 없음",
+                        }
+                    )
+                    continue
+
+                _esm_site = market_type  # "gmarket" or "auction"
+                _esm_site_type = 2 if market_type == "gmarket" else 1
+                # 기간 클램프: G마켓 31일 / 옥션 180일
+                _esm_max_days = 31 if market_type == "gmarket" else 180
+                _esm_days = min(int(body.days or 1), _esm_max_days)
+
+                from datetime import (
+                    datetime as _esm_dt,
+                    timedelta as _esm_td,
+                    UTC as _esm_UTC,
+                )
+
+                _esm_end = _esm_dt.now(_esm_UTC)
+                _esm_start = _esm_end - _esm_td(days=_esm_days)
+                _esm_from = _esm_start.strftime("%Y-%m-%d")
+                _esm_to = _esm_end.strftime("%Y-%m-%d")
+
+                esm_client = ESMPlusClient(
+                    esm_hosting_id, esm_secret_key, seller_id, site=_esm_site
+                )
+                _clients_to_close.append(esm_client)
+
+                _esm_seen: set[str] = set()
+                _esm_total = 0
+                # OrderStatus 루프 — 1=결제완료, 2=배송준비, 3=배송중, 4=배송완료, 5=구매결정
+                # search_orders 내부 _esm_order_throttle()로 5.2초 인터벌 보장
+                for _esm_status in (1, 2, 3, 4, 5):
+                    _esm_page_index = 1
+                    while True:
+                        try:
+                            _esm_resp = await esm_client.search_orders(
+                                {
+                                    "siteType": _esm_site_type,
+                                    "orderStatus": _esm_status,
+                                    "requestDateType": 1,
+                                    "requestDateFrom": _esm_from,
+                                    "requestDateTo": _esm_to,
+                                    "pageIndex": _esm_page_index,
+                                    "pageSize": 500,
+                                }
+                            )
+                        except Exception as _esm_e:
+                            logger.warning(
+                                f"[주문동기화] {label}: ESM 주문 조회 실패 "
+                                f"status={_esm_status} page={_esm_page_index} — {_esm_e}"
+                            )
+                            break
+                        _esm_data = (
+                            _esm_resp.get("Data")
+                            if isinstance(_esm_resp, dict)
+                            else None
+                        ) or {}
+                        _esm_items = _esm_data.get("RequestOrders") or []
+                        if not _esm_items:
+                            break
+                        for _esm_it in _esm_items:
+                            if not isinstance(_esm_it, dict):
+                                continue
+                            _oid = str(_esm_it.get("OrderNo") or "")
+                            if not _oid or _oid in _esm_seen:
+                                continue
+                            _esm_seen.add(_oid)
+                            orders_data.append(
+                                _parse_esmplus_order(
+                                    _esm_it, account["id"], label, market_type
+                                )
+                            )
+                            _esm_total += 1
+                        # 다음 페이지 종료 조건 — 500 미만이면 끝
+                        if len(_esm_items) < 500:
+                            break
+                        _esm_page_index += 1
+                logger.info(
+                    f"[주문동기화] {label}: ESM({market_type}) 주문 {_esm_total}건 조회"
+                )
+
             else:
                 results.append(
                     {
@@ -6422,6 +6532,23 @@ async def sync_orders_from_markets(
                         and existing.status != "cancel_requested"
                     ):
                         update_fields["status"] = "cancel_requested"
+                        # 자동 발주취소 트리거 — fire-and-forget, 4중 가드 내장
+                        from backend.domain.samba.proxy.sourcing_queue import (
+                            SourcingQueue as _SQ,
+                        )
+
+                        asyncio.create_task(
+                            _SQ.maybe_trigger_auto_cancel(
+                                order_id=existing.id,
+                                source_site=existing.source_site,
+                                sourcing_order_number=existing.sourcing_order_number,
+                                sourcing_account_id=existing.sourcing_account_id,
+                                new_status="cancel_requested",
+                                shipping_status=update_fields.get("shipping_status")
+                                or existing.shipping_status,
+                                prev_status=existing.status,
+                            )
+                        )
                     # 플레이오토 미등록 주문의 취소요청/취소완료는 status 드롭다운도 동기화.
                     # 신규 insert는 _normalize_synced_order_status 예외에서 처리되지만,
                     # 이미 DB에 'pending'으로 들어가 있는 기존 주문은 여기서 갱신해야 함.
@@ -8077,4 +8204,119 @@ def _parse_lottehome_order(
         "source": "lottehome",
         "shipment_id": order_no,
         "ext_order_number": ext_order_number,
+    }
+
+
+def _parse_esmplus_order(
+    item: dict,
+    account_id: str,
+    label: str,
+    market_type: str,
+) -> dict[str, Any]:
+    """ESM Plus(G마켓/옥션) RequestOrders 응답 item → SambaOrder dict.
+
+    응답 키 PascalCase. 주요 필드:
+      OrderNo, OutOrderNo, OrderStatus(1~5), OrderDate, PayDate(KST naive),
+      SiteGoodsNo, GoodsName, SalePrice(string), OrderAmount, ContrAmount,
+      ServiceFee, ShippingFee, BuyerName, ReceiverName, HpNo, TelNo,
+      ZipCode, DelFrontAddress, DelBackAddress, DelMemo,
+      TakbaeName, NoSongjang, ItemOptionSelectList[]
+    """
+    from datetime import datetime as _dt, timezone as _tz
+    from zoneinfo import ZoneInfo as _ZI
+
+    def _s(v: Any) -> str:
+        return str(v or "").strip()
+
+    def _f(v: Any) -> float:
+        try:
+            return float(str(v or "0"))
+        except (ValueError, TypeError):
+            return 0.0
+
+    def _i(v: Any, default: int = 0) -> int:
+        try:
+            return int(_f(v))
+        except (ValueError, TypeError):
+            return default
+
+    def _kst_to_utc(val: str | None) -> datetime | None:
+        if not val:
+            return None
+        try:
+            s = str(val).strip()
+            if "." in s:
+                s = s.split(".")[0]
+            dt = _dt.fromisoformat(s)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=_ZI("Asia/Seoul"))
+            return dt.astimezone(_tz.utc)
+        except (ValueError, TypeError):
+            return None
+
+    # 내부 status / shipping_status 매핑
+    # ESM OrderStatus: 1=결제완료, 2=배송준비, 3=배송중, 4=배송완료, 5=구매결정
+    _status = _i(item.get("OrderStatus"), 1)
+    status_map = {
+        1: ("pending", "결제완료"),
+        2: ("pending", "배송준비중"),
+        3: ("shipped", "국내배송중"),
+        4: ("delivered", "배송완료"),
+        5: ("delivered", "구매확정"),
+    }
+    internal_status, shipping_status = status_map.get(_status, ("pending", "결제완료"))
+
+    # 옵션 문자열 — ItemOptionSelectList[{ItemOptionValue, ItemOptionOrderCnt}]
+    options = item.get("ItemOptionSelectList") or []
+    opt_parts: list[str] = []
+    if isinstance(options, list):
+        for opt in options:
+            if isinstance(opt, dict):
+                ov = _s(opt.get("ItemOptionValue"))
+                if ov:
+                    opt_parts.append(ov)
+    product_option = " / ".join(opt_parts)
+
+    # 가격 / 수량
+    sale_price = _f(item.get("SalePrice"))
+    quantity = _i(item.get("ContrAmount"), 1) or 1
+    order_amount = _f(item.get("OrderAmount"))
+    service_fee = _f(item.get("ServiceFee"))
+    fee_rate = round(service_fee / order_amount * 100, 2) if order_amount > 0 else 0.0
+    revenue = order_amount - service_fee if order_amount > 0 else sale_price * quantity
+
+    # 주소
+    front_addr = _s(item.get("DelFrontAddress"))
+    back_addr = _s(item.get("DelBackAddress"))
+    full_addr = _s(item.get("DelFullAddress")) or f"{front_addr} {back_addr}".strip()
+
+    return {
+        "order_number": _s(item.get("OrderNo")),
+        "shipment_id": _s(item.get("OrderNo")),
+        "channel_id": account_id,
+        "channel_name": label,
+        "product_id": _s(item.get("SiteGoodsNo")) or _s(item.get("OutGoodsNo")),
+        "product_name": _s(item.get("GoodsName")),
+        "product_option": product_option,
+        "product_image": "",
+        "customer_name": _s(item.get("ReceiverName")) or _s(item.get("BuyerName")),
+        "orderer_name": _s(item.get("BuyerName")),
+        "customer_phone": _s(item.get("HpNo")) or _s(item.get("TelNo")),
+        "customer_address": front_addr or full_addr,
+        "customer_address_detail": back_addr,
+        "customer_postal_code": _s(item.get("ZipCode")) or None,
+        "customer_note": _s(item.get("DelMemo")),
+        "quantity": quantity,
+        "sale_price": sale_price,
+        "total_payment_amount": order_amount or (sale_price * quantity),
+        "cost": 0,
+        "fee_rate": fee_rate,
+        "revenue": revenue,
+        "status": internal_status,
+        "shipping_status": shipping_status,
+        "shipping_company": _s(item.get("TakbaeName")),
+        "tracking_number": _s(item.get("NoSongjang")),
+        "paid_at": _kst_to_utc(item.get("PayDate") or item.get("OrderDate")),
+        "source": market_type,
+        "ext_order_number": _s(item.get("OutOrderNo")),
     }
