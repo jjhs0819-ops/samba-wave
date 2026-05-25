@@ -240,15 +240,6 @@ const card: React.CSSProperties = {
   padding: '1.25rem',
 }
 
-type StoreScore = {
-  account_id: string; account_label: string; market_type: string
-  grade: string; grade_code: string
-  good_service: Record<string, number> | null
-  penalty: number | null; penalty_rate: number | null
-  product_count?: number; max_products?: number
-  updated_at: string
-}
-
 const normalizeWarroomSourceSite = (value: string | null | undefined) => {
   const site = String(value || '').trim()
   if (!site) return ''
@@ -369,17 +360,11 @@ export default function WarroomPage() {
 
   const [loading, setLoading] = useState(true)
   const [, setLastFetched] = useState<Date | null>(null)
-  const [storeScores, setStoreScores] = useState<Record<string, StoreScore>>({})
-  const [scoreTab, setScoreTab] = useState('smartstore')
-  const [showPenaltyGuide, setShowPenaltyGuide] = useState(false)
-  const [scoreRefreshing, setScoreRefreshing] = useState(false)
   const nextPollRef = useRef(POLL_INTERVAL / 1000)
 
   // 실시간 로그 상태
 
   // 소싱처/마켓 상태
-  const [probeData, setProbeData] = useState<Record<string, Record<string, Record<string, unknown>>>>({})
-  const [probeLoading, setProbeLoading] = useState(false)
 
   // 오토튠 상태
   const [autotuneRunning, setAutotuneRunning] = useState(false)
@@ -734,50 +719,15 @@ export default function WarroomPage() {
     }
   }, [])
 
-  const runProbe = async () => {
-    setProbeLoading(true)
-    try {
-      const data = await collectorApi.probeRun() as Record<string, Record<string, Record<string, unknown>>>
-      setProbeData(data)
-    } catch { /* ignore */ }
-    setProbeLoading(false)
-  }
-
   const load = useCallback(async () => {
     // 각 API를 독립 발사 — 도착하는 대로 setState (Promise.all 블로킹 제거).
-    // dashboard만 도착하면 setLoading(false) → 가장 무거운 API에 묶이지 않고
+    // 이벤트 타임라인 3개 (recentEvents/siteChanges/marketChanges) 는 30분 폴링용 별도 useEffect 로 분리.
+    // dashboard 만 도착하면 setLoading(false) → 가장 무거운 API 에 묶이지 않고
     // 화면이 즉시 표시되고, 나머지 영역은 자기 데이터가 도착하는 대로 채워진다.
     monitorApi.dashboard()
       .then(d => { if (d) setStats(d) })
       .catch(() => { /* ignore */ })
       .finally(() => setLoading(false))
-
-    monitorApi.recentEvents(100)
-      .then(rows => {
-        setEvents(rows.map(row => ({
-          ...row,
-          source_site: normalizeWarroomSourceSite(row.source_site),
-        })))
-      })
-      .catch(() => { /* ignore */ })
-
-    monitorApi.siteChanges(5)
-      .then(c => {
-        if (!c || Object.keys(c).length === 0) return
-        setSiteChanges(normalizeWarroomSiteChanges(c))
-      })
-      .catch(() => { /* ignore */ })
-
-    monitorApi.marketChanges(5)
-      .then(c => { if (c && Object.keys(c).length > 0) setMarketChanges(c) })
-      .catch(() => { /* ignore */ })
-
-    monitorApi.storeScores()
-      .then(s => { if (s && Object.keys(s).length > 0) setStoreScores(s) })
-      .catch(() => { /* ignore */ })
-
-    ;(collectorApi.probeStatus().catch(() => ({})) as Promise<Record<string, Record<string, Record<string, unknown>>>>)
-      .then(p => { if (p && Object.keys(p).length > 0) setProbeData(p) })
 
     ;(async () => {
       const { getDeviceId } = await import('@/lib/samba/deviceId')
@@ -877,6 +827,34 @@ export default function WarroomPage() {
     const poll = setInterval(() => load(), POLL_INTERVAL)
     return () => clearInterval(poll)
   }, [load])
+
+  // 이벤트 타임라인 — 30분 폴링 (load() 10초 폴링에서 분리). autotune cycle 진행 시(handleAutotuneStatus) 즉시 갱신 트리거 유지.
+  useEffect(() => {
+    const fetchEventTimeline = () => {
+      monitorApi.recentEvents(100)
+        .then(rows => {
+          setEvents(rows.map(row => ({
+            ...row,
+            source_site: normalizeWarroomSourceSite(row.source_site),
+          })))
+        })
+        .catch(() => { /* ignore */ })
+
+      monitorApi.siteChanges(5)
+        .then(c => {
+          if (!c || Object.keys(c).length === 0) return
+          setSiteChanges(normalizeWarroomSiteChanges(c))
+        })
+        .catch(() => { /* ignore */ })
+
+      monitorApi.marketChanges(5)
+        .then(c => { if (c && Object.keys(c).length > 0) setMarketChanges(c) })
+        .catch(() => { /* ignore */ })
+    }
+    fetchEventTimeline()
+    const timer = setInterval(fetchEventTimeline, 30 * 60 * 1000)
+    return () => clearInterval(timer)
+  }, [])
 
   // 이벤트 필터링 — scheduler_cycle(1바퀴 단위) 소싱처별 최신 2건 표시
   // scheduler_tick(200건 배치 단위)은 타임라인에서 숨김 — 디버깅용 DB 잔존
@@ -1706,424 +1684,8 @@ export default function WarroomPage() {
         )}
       </div>
 
-      {/* A-2. 마켓별 스토어 현황 분석 */}
-      {false && (() => {
-        const MARKET_TABS = [
-          { key: 'smartstore', label: '스마트스토어', color: '#51CF66' },
-          { key: 'coupang', label: '쿠팡', color: '#FF6B6B' },
-          { key: '11st', label: '11번가', color: '#FFD93D' },
-          { key: 'lotteon', label: '롯데ON', color: '#FB923C' },
-          { key: 'ssg', label: 'SSG', color: '#A78BFA' },
-        ]
-        const GRADE_COLORS: Record<string, string> = {
-          '빅파워': '#FF8C00', '파워': '#4C9AFF', '프리미엄': '#51CF66', '새싹': '#34D399', '씨앗': '#888',
-          '연결됨': '#51CF66', '등록됨': '#4C9AFF', '인증 실패': '#FF6B6B', 'Vendor ID 없음': '#FFD93D',
-        }
-        const tabAccounts = Object.values(storeScores).filter(s => s.market_type === scoreTab)
 
-        return (
-          <div style={{ ...card, padding: '1rem 1.25rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#E5E5E5' }}>스토어 현황 분석</span>
-                <span style={{ fontSize: '0.7rem', color: '#666' }}>{fmtNum(tabAccounts.length)}개 계정</span>
-              </div>
-              <button
-                onClick={async () => {
-                  setScoreRefreshing(true)
-                  try {
-                    await monitorApi.refreshStoreScores()
-                    const scores = await monitorApi.storeScores()
-                    if (scores) setStoreScores(scores)
-                  } catch { /* ignore */ }
-                  setScoreRefreshing(false)
-                }}
-                style={{
-                  padding: '0.2rem 0.6rem', fontSize: '0.72rem', borderRadius: '5px', cursor: 'pointer',
-                  background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.3)', color: '#FF8C00',
-                }}
-              >{scoreRefreshing ? '조회 중...' : '등급 새로고침'}</button>
-              {scoreTab === 'smartstore' && (
-                <button
-                  onClick={() => setShowPenaltyGuide(true)}
-                  style={{
-                    padding: '0.2rem 0.6rem', fontSize: '0.72rem', borderRadius: '5px', cursor: 'pointer',
-                    background: 'rgba(66,133,244,0.1)', border: '1px solid rgba(66,133,244,0.3)', color: '#4285F4',
-                  }}
-                >판매관리 기준</button>
-              )}
-            </div>
-            {/* 마켓 탭 */}
-            <div style={{ display: 'flex', gap: '0', marginBottom: '0.75rem', borderBottom: '1px solid #2D2D2D' }}>
-              {MARKET_TABS.map(tab => (
-                <button key={tab.key} onClick={() => setScoreTab(tab.key)} style={{
-                  padding: '0.4rem 1rem', fontSize: '0.78rem', fontWeight: scoreTab === tab.key ? 600 : 400, cursor: 'pointer',
-                  background: 'transparent', border: 'none', color: scoreTab === tab.key ? tab.color : '#666',
-                  borderBottom: scoreTab === tab.key ? `2px solid ${tab.color}` : '2px solid transparent',
-                }}>{tab.label}</button>
-              ))}
-            </div>
-            {/* 계정 카드 */}
-            {tabAccounts.length === 0 ? (
-              <div style={{ padding: '2rem', textAlign: 'center', color: '#555', fontSize: '0.8rem' }}>
-                등급 새로고침 버튼을 눌러 계정 정보를 조회하세요
-              </div>
-            ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '0.75rem' }}>
-                {tabAccounts.map(acc => (
-                  <div key={acc.account_id} style={{
-                    background: 'rgba(20,20,20,0.6)', border: '1px solid #2D2D2D', borderRadius: '10px', padding: '0.875rem',
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.6rem' }}>
-                      <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#E5E5E5' }}>{acc.account_label}</span>
-                      {acc.grade && (
-                        <span style={{
-                          fontSize: '0.7rem', fontWeight: 700, padding: '2px 8px', borderRadius: '4px',
-                          background: `${GRADE_COLORS[acc.grade] || '#888'}20`,
-                          color: GRADE_COLORS[acc.grade] || '#888',
-                          border: `1px solid ${GRADE_COLORS[acc.grade] || '#888'}50`,
-                        }}>{acc.grade}</span>
-                      )}
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-                      <div>
-                        <div style={{ fontSize: '0.65rem', color: '#666', marginBottom: '0.3rem' }}>굿서비스 점수</div>
-                        {acc.good_service ? (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                            {Object.entries(acc.good_service).map(([k, v]) => (
-                              <div key={k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem' }}>
-                                <span style={{ color: '#999' }}>{k}</span>
-                                <span style={{ color: v >= 80 ? '#51CF66' : v >= 50 ? '#FFD93D' : '#FF6B6B', fontWeight: 600 }}>{v}점</span>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <span style={{ fontSize: '0.7rem', color: '#555' }}>—</span>
-                        )}
-                      </div>
-                      <div>
-                        <div style={{ fontSize: '0.65rem', color: '#666', marginBottom: '0.3rem' }}>판매 패널티</div>
-                        <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem' }}>
-                          <span style={{
-                            fontSize: '0.85rem', fontWeight: 700,
-                            color: (acc.penalty ?? 0) > 0 ? '#FF6B6B' : '#51CF66',
-                          }}>{acc.penalty ?? 0}점</span>
-                          <span style={{ fontSize: '0.68rem', color: '#888' }}>{acc.penalty_rate ?? 0}%</span>
-                        </div>
-                      </div>
-                      {(acc.max_products !== undefined && acc.max_products > 0) && (
-                      <div>
-                        <div style={{ fontSize: '0.65rem', color: '#666', marginBottom: '0.3rem' }}>등록 상품</div>
-                        <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem' }}>
-                          <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#4C9AFF' }}>
-                            {fmtNum(acc.product_count ?? 0)}
-                          </span>
-                          <span style={{ fontSize: '0.68rem', color: '#888' }}>/ {fmtNum(acc.max_products)}</span>
-                        </div>
-                      </div>
-                      )}
-                    </div>
-                    {acc.updated_at && (
-                      <div style={{ fontSize: '0.58rem', color: '#444', marginTop: '0.4rem', textAlign: 'right' }}>
-                        {new Date(acc.updated_at).toLocaleString('ko')}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )
-      })()}
 
-      {/* C. 소싱처/마켓 헬스 */}
-      <div style={{ display: 'none', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-        {/* 소싱처 헬스 */}
-        <div style={card}>
-          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#FF8C00', marginBottom: '0.75rem' }}>소싱처 상태</div>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid #2D2D2D' }}>
-                <th style={{ textAlign: 'left', padding: '0.4rem 0.5rem', color: '#888', fontWeight: 500 }}>소싱처</th>
-                <th style={{ textAlign: 'center', padding: '0.4rem 0.5rem', color: '#888', fontWeight: 500 }}>상태</th>
-                <th style={{ textAlign: 'center', padding: '0.4rem 0.5rem', color: '#888', fontWeight: 500 }}>인터벌</th>
-                <th style={{ textAlign: 'center', padding: '0.4rem 0.5rem', color: '#888', fontWeight: 500 }}>에러</th>
-                <th style={{ textAlign: 'center', padding: '0.4rem 0.5rem', color: '#888', fontWeight: 500 }}>응답</th>
-              </tr>
-            </thead>
-            <tbody>
-              {Object.entries(site_health).map(([site, h]) => (
-                <tr key={site} style={{ borderBottom: '1px solid #1D1D1D' }}>
-                  <td style={{ padding: '0.4rem 0.5rem', color: '#E5E5E5' }}>{site}</td>
-                  <td style={{ padding: '0.4rem 0.5rem', textAlign: 'center' }}>
-                    <span style={{
-                      display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
-                      color: h.probe_ok === true ? '#51CF66' : h.probe_ok === false ? '#FF6B6B' : '#888',
-                      fontSize: '0.75rem',
-                    }}>
-                      <span style={{
-                        width: 6, height: 6, borderRadius: '50%', display: 'inline-block',
-                        background: h.probe_ok === true ? '#51CF66' : h.probe_ok === false ? '#FF6B6B' : '#888',
-                      }} />
-                      {h.probe_ok === true ? '정상' : h.probe_ok === false ? '이상' : site === 'KREAM' ? '확장앱' : '-'}
-                    </span>
-                  </td>
-                  <td style={{ padding: '0.4rem 0.5rem', textAlign: 'center', color: h.interval > 2 ? '#FFD93D' : '#E5E5E5' }}>
-                    {h.interval.toFixed(1)}s
-                  </td>
-                  <td style={{ padding: '0.4rem 0.5rem', textAlign: 'center', color: h.errors > 0 ? '#FF6B6B' : '#E5E5E5' }}>
-                    {fmtNum(h.errors)}
-                  </td>
-                  <td style={{ padding: '0.4rem 0.5rem', textAlign: 'center', color: '#E5E5E5' }}>
-                    {h.latency_ms != null ? `${h.latency_ms}ms` : '-'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        {/* 마켓 헬스 */}
-        <div style={card}>
-          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#FF8C00', marginBottom: '0.75rem' }}>마켓 상태</div>
-          {Object.keys(market_health).length === 0 ? (
-            <div style={{ fontSize: '0.8rem', color: '#666', padding: '1rem 0' }}>마켓 Probe 데이터 없음</div>
-          ) : (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid #2D2D2D' }}>
-                  <th style={{ textAlign: 'left', padding: '0.4rem 0.5rem', color: '#888', fontWeight: 500 }}>마켓</th>
-                  <th style={{ textAlign: 'center', padding: '0.4rem 0.5rem', color: '#888', fontWeight: 500 }}>상태</th>
-                  <th style={{ textAlign: 'center', padding: '0.4rem 0.5rem', color: '#888', fontWeight: 500 }}>응답</th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.entries(market_health).map(([mt, h]) => (
-                  <tr key={mt} style={{ borderBottom: '1px solid #1D1D1D' }}>
-                    <td style={{ padding: '0.4rem 0.5rem', color: '#E5E5E5' }}>{mt}</td>
-                    <td style={{ padding: '0.4rem 0.5rem', textAlign: 'center' }}>
-                      <span style={{
-                        display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
-                        color: h.probe_ok ? '#51CF66' : '#FF6B6B',
-                        fontSize: '0.75rem',
-                      }}>
-                        <span style={{
-                          width: 6, height: 6, borderRadius: '50%', display: 'inline-block',
-                          background: h.probe_ok ? '#51CF66' : '#FF6B6B',
-                        }} />
-                        {h.probe_ok ? '정상' : h.error || '이상'}
-                      </span>
-                    </td>
-                    <td style={{ padding: '0.4rem 0.5rem', textAlign: 'center', color: '#E5E5E5' }}>
-                      {h.latency_ms}ms
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
-
-      {/* D. 24시간 가격 변동 추이 */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1rem' }}>
-        {/* 24시간 세로 바 차트 */}
-        <div style={card}>
-          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#FF8C00', marginBottom: '0.75rem' }}>24시간 가격 변동 추이</div>
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '120px' }}>
-            {hourly_changes.map((v, i) => {
-              const heightPct = (v / maxHourly) * 100
-              return (
-                <div
-                  key={i}
-                  style={{
-                    flex: 1,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'flex-end',
-                    height: '100%',
-                  }}
-                >
-                  {v > 0 && (
-                    <span style={{ fontSize: '0.6rem', color: '#888', marginBottom: '2px' }}>{v}</span>
-                  )}
-                  <div
-                    style={{
-                      width: '100%',
-                      height: `${Math.max(heightPct, v > 0 ? 4 : 1)}%`,
-                      background: v > 0 ? '#FF8C00' : '#2D2D2D',
-                      borderRadius: '2px 2px 0 0',
-                      minHeight: '2px',
-                      transition: 'height 0.3s',
-                    }}
-                  />
-                </div>
-              )
-            })}
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px', fontSize: '0.6rem', color: '#666' }}>
-            <span>0시</span>
-            <span>6시</span>
-            <span>12시</span>
-            <span>18시</span>
-            <span>23시</span>
-          </div>
-        </div>
-
-      </div>
-
-      {/* 소싱처/마켓 상태 대시보드 */}
-      <div style={{ ...card, display: 'none', padding: '1.5rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#51CF66' }}>소싱처/마켓 상태</span>
-          <span style={{ fontSize: '0.8125rem', color: '#666' }}>소싱처 API 구조 변경 및 마켓 인증 상태를 실시간으로 확인합니다.</span>
-          <button
-            onClick={runProbe}
-            disabled={probeLoading}
-            style={{ marginLeft: 'auto', background: probeLoading ? 'rgba(50,50,50,0.5)' : 'rgba(50,50,50,0.8)', border: '1px solid #3D3D3D', color: probeLoading ? '#666' : '#C5C5C5', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: probeLoading ? 'default' : 'pointer' }}
-          >{probeLoading ? '체크 중...' : '수동 체크'}</button>
-        </div>
-
-        {/* 소싱처 */}
-        <div style={{ marginBottom: '1rem' }}>
-          <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#888', marginBottom: '0.5rem' }}>소싱처</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-            {Object.entries(probeData?.sources || {}).length === 0 ? (
-              <span style={{ fontSize: '0.8125rem', color: '#555' }}>수동 체크 버튼으로 상태를 확인하세요</span>
-            ) : (
-              Object.entries(probeData?.sources || {}).map(([site, info]) => {
-                const d = info as Record<string, unknown>
-                const isOk = d.ok === true
-                const latency = Number(d.latency_ms || 0)
-                const missing = (d.missing_fields as string[]) || []
-                const error = d.error as string | null
-                const checkedAt = d.checked_at ? new Date(d.checked_at as string).toLocaleString('ko-KR', { hour12: false }) : '-'
-                return (
-                  <div key={site} style={{ padding: '0.625rem 1rem', borderRadius: '8px', minWidth: '200px', background: isOk ? 'rgba(81,207,102,0.08)' : 'rgba(255,107,107,0.08)', border: `1px solid ${isOk ? 'rgba(81,207,102,0.3)' : 'rgba(255,107,107,0.3)'}` }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-                      <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: isOk ? '#51CF66' : '#FF6B6B' }} />
-                      <span style={{ fontWeight: 600, fontSize: '0.875rem', color: '#E5E5E5' }}>{site}</span>
-                      <span style={{ fontSize: '0.75rem', color: '#888' }}>{latency}ms</span>
-                    </div>
-                    {missing.length > 0 && <div style={{ fontSize: '0.75rem', color: '#FFD93D' }}>누락 필드: {missing.join(', ')}</div>}
-                    {error && <div style={{ fontSize: '0.75rem', color: '#FF6B6B' }}>{error}</div>}
-                    <div style={{ fontSize: '0.6875rem', color: '#555', marginTop: '0.25rem' }}>{checkedAt}</div>
-                  </div>
-                )
-              })
-            )}
-          </div>
-        </div>
-
-        {/* 마켓 */}
-        <div>
-          <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#888', marginBottom: '0.5rem' }}>마켓</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-            {Object.entries(probeData?.markets || {}).length === 0 ? (
-              <span style={{ fontSize: '0.8125rem', color: '#555' }}>수동 체크 버튼으로 상태를 확인하세요</span>
-            ) : (
-              Object.entries(probeData?.markets || {}).map(([mt, info]) => {
-                const d = info as Record<string, unknown>
-                const isOk = d.ok === true
-                const latency = Number(d.latency_ms || 0)
-                const error = d.error as string | null
-                const checkedAt = d.checked_at ? new Date(d.checked_at as string).toLocaleString('ko-KR', { hour12: false }) : '-'
-                return (
-                  <div key={mt} style={{ padding: '0.5rem 0.875rem', borderRadius: '8px', minWidth: '140px', background: isOk ? 'rgba(81,207,102,0.06)' : error === '설정 없음' ? 'rgba(100,100,100,0.1)' : 'rgba(255,107,107,0.06)', border: `1px solid ${isOk ? 'rgba(81,207,102,0.25)' : error === '설정 없음' ? 'rgba(100,100,100,0.3)' : 'rgba(255,107,107,0.25)'}` }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', marginBottom: '0.125rem' }}>
-                      <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: isOk ? '#51CF66' : error === '설정 없음' ? '#555' : '#FF6B6B' }} />
-                      <span style={{ fontWeight: 600, fontSize: '0.8125rem', color: '#E5E5E5' }}>{mt}</span>
-                      {latency > 0 && <span style={{ fontSize: '0.6875rem', color: '#888' }}>{latency}ms</span>}
-                    </div>
-                    {error && <div style={{ fontSize: '0.6875rem', color: error === '설정 없음' ? '#666' : '#FF6B6B' }}>{error}</div>}
-                    <div style={{ fontSize: '0.625rem', color: '#555' }}>{checkedAt}</div>
-                  </div>
-                )
-              })
-            )}
-          </div>
-        </div>
-      </div>
-      {/* 스마트스토어 판매관리 기준 모달 */}
-      {showPenaltyGuide && (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.7)', zIndex: 9999, display: 'flex', justifyContent: 'center', alignItems: 'center' }} onClick={() => setShowPenaltyGuide(false)}>
-          <div style={{ background: '#1A1A1A', border: '1px solid #333', borderRadius: '12px', width: '90%', maxWidth: '900px', maxHeight: '85vh', overflow: 'auto', padding: '2rem' }} onClick={e => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#4285F4' }}>스마트스토어 판매관리 프로그램</h2>
-              <button onClick={() => setShowPenaltyGuide(false)} style={{ background: 'none', border: 'none', color: '#888', fontSize: '1.5rem', cursor: 'pointer' }}>x</button>
-            </div>
-            <p style={{ fontSize: '0.8125rem', color: '#AAA', marginBottom: '1.5rem', lineHeight: 1.6 }}>
-              소비자 권익을 해칠 수 있는 판매활동이 확인되면 페널티가 부여되며, 점수가 누적되면 단계적 제재를 받습니다.
-            </p>
-            <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#FF8C00', marginBottom: '0.75rem' }}>페널티 부과 기준</h3>
-            <div style={{ overflowX: 'auto', marginBottom: '1.5rem' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem', minWidth: '700px' }}>
-                <thead>
-                  <tr style={{ background: 'rgba(255,140,0,0.1)' }}>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', color: '#FFB84D', borderBottom: '1px solid #333' }}>항목</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', color: '#FFB84D', borderBottom: '1px solid #333' }}>상세 기준</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'center', color: '#FFB84D', borderBottom: '1px solid #333' }}>일반</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'center', color: '#FFB84D', borderBottom: '1px solid #333' }}>오늘출발</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'center', color: '#FFB84D', borderBottom: '1px solid #333' }}>정기구독</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {[
-                    ['발송처리 지연', '발송처리기한까지 미발송', '1점', '1점', '1점'],
-                    ['발송처리 지연 (4영업일)', '발송처리기한 +4영업일 경과 후 미발송', '3점', '3점', '3점'],
-                    ['발송지연 후 미발송', '발송지연 처리 후 발송예정일까지 미발송', '2점', '3점', '3점'],
-                    ['허위 송장 (국내)', '송장 입력 +2영업일까지 배송상태 없음', '3점', '3점', '3점'],
-                    ['허위 송장 (해외)', '송장 입력 +15영업일까지 배송상태 없음', '3점', '3점', '3점'],
-                    ['품절취소', '취소 사유가 품절', '2점', '2점', '3점'],
-                    ['품절취소 (선물하기)', '선물하기 주문 품절 취소', '3점', '3점', '-'],
-                    ['반품 처리지연', '수거 완료일 +3영업일 이상 경과', '1점', '1점', '1점'],
-                    ['교환 처리지연', '수거 완료일 +3영업일 이상 경과', '1점', '1점', '1점'],
-                  ].map(([item, desc, normal, today, sub], i) => (
-                    <tr key={i} style={{ borderBottom: '1px solid rgba(45,45,45,0.5)' }}>
-                      <td style={{ padding: '0.5rem', color: '#E5E5E5', fontWeight: 600 }}>{item}</td>
-                      <td style={{ padding: '0.5rem', color: '#AAA' }}>{desc}</td>
-                      <td style={{ padding: '0.5rem', textAlign: 'center', color: '#FF6B6B', fontWeight: 600 }}>{normal}</td>
-                      <td style={{ padding: '0.5rem', textAlign: 'center', color: '#FF6B6B', fontWeight: 600 }}>{today}</td>
-                      <td style={{ padding: '0.5rem', textAlign: 'center', color: '#FF6B6B', fontWeight: 600 }}>{sub}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#FF8C00', marginBottom: '0.75rem' }}>발송처리기한</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1.5rem' }}>
-              {[
-                ['일반 발송', '결제완료일 + 3영업일'],
-                ['오늘 출발', '설정시간 내 결제 → 당일 / 이후 → +1영업일'],
-                ['정기 구독', '결제완료일 + 1영업일'],
-                ['희망배송일', '희망배송일 당일'],
-              ].map(([type, limit], i) => (
-                <div key={i} style={{ background: 'rgba(30,30,30,0.8)', padding: '0.625rem 0.75rem', borderRadius: '6px', border: '1px solid #2D2D2D' }}>
-                  <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#FFB84D' }}>{type}</span>
-                  <span style={{ fontSize: '0.75rem', color: '#AAA', marginLeft: '0.5rem' }}>{limit}</span>
-                </div>
-              ))}
-            </div>
-            <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#FF8C00', marginBottom: '0.75rem' }}>단계별 제재</h3>
-            <p style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.75rem' }}>최근 30일 페널티 10점 이상 + 페널티 비율 40% 이상 시 적용 (마지막 제재일로부터 1년간 누적)</p>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem' }}>
-              <div style={{ background: 'rgba(255,200,50,0.08)', padding: '1rem', borderRadius: '8px', border: '1px solid rgba(255,200,50,0.2)' }}>
-                <div style={{ fontSize: '0.875rem', fontWeight: 700, color: '#FFD93D', marginBottom: '0.5rem' }}>1단계 — 주의</div>
-                <p style={{ fontSize: '0.7rem', color: '#AAA', lineHeight: 1.5 }}>최초 발생 시 주의 통보. 제재 없음.</p>
-              </div>
-              <div style={{ background: 'rgba(255,140,0,0.08)', padding: '1rem', borderRadius: '8px', border: '1px solid rgba(255,140,0,0.2)' }}>
-                <div style={{ fontSize: '0.875rem', fontWeight: 700, color: '#FF8C00', marginBottom: '0.5rem' }}>2단계 — 경고</div>
-                <p style={{ fontSize: '0.7rem', color: '#AAA', lineHeight: 1.5 }}>7일간 신규 상품 등록 금지 (센터 + API)</p>
-              </div>
-              <div style={{ background: 'rgba(255,80,80,0.08)', padding: '1rem', borderRadius: '8px', border: '1px solid rgba(255,80,80,0.2)' }}>
-                <div style={{ fontSize: '0.875rem', fontWeight: 700, color: '#FF6B6B', marginBottom: '0.5rem' }}>3단계 — 이용제한</div>
-                <p style={{ fontSize: '0.7rem', color: '#AAA', lineHeight: 1.5 }}>판매 활동 전면 제한, 정산 비즈월렛 전환</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
