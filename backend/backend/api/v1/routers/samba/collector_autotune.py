@@ -32,6 +32,112 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/collector", tags=["samba-collector"])
 
 
+# ── 활성 소싱처 distinct 결과 글로벌 캐시 ──
+# 코디네이터가 5초마다 distinct(source_site)를 풀스캔 → PC 11대 동시 실행 시
+# IPC/BufferIO 대기로 active 쿼리 60초까지 누적. 결과는 모든 PC에서 동일하므로
+# 30초 TTL 글로벌 캐시 1개로 통합 → 부하 12배+ 감소.
+_ACTIVE_SITES_CACHE_TTL = 30.0
+_active_sites_cache: dict = {"ts": 0.0, "data": None}
+_active_sites_cache_lock = asyncio.Lock()
+
+
+async def _get_active_sites_cached() -> list[str]:
+    """모든 PC가 공유하는 활성 소싱처 distinct 결과 (TTL 30s).
+
+    독립된 read session 사용 — 호출자의 write session 점유 시간 단축.
+    Cold start 시 lock 대기는 read pool에서만 발생, write pool 영향 없음.
+    """
+    from backend.api.v1.routers.samba.collector_common import (
+        build_market_registered_conditions,
+    )
+    from backend.db.orm import get_read_session
+    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
+
+    now_ts = time.monotonic()
+    cached = _active_sites_cache.get("data")
+    if (
+        cached is not None
+        and (now_ts - _active_sites_cache["ts"]) < _ACTIVE_SITES_CACHE_TTL
+    ):
+        return list(cached)
+
+    # lock 점유 중이면 다른 코루틴이 갱신 중 → stale 반환(없으면 직접 조회)
+    if _active_sites_cache_lock.locked() and cached is not None:
+        return list(cached)
+
+    async with _active_sites_cache_lock:
+        # double-check
+        cached = _active_sites_cache.get("data")
+        now_ts = time.monotonic()
+        if (
+            cached is not None
+            and (now_ts - _active_sites_cache["ts"]) < _ACTIVE_SITES_CACHE_TTL
+        ):
+            return list(cached)
+
+        market_cond = build_market_registered_conditions(_CP)
+        stmt = select(func.distinct(_CP.source_site)).where(
+            *market_cond,
+            _CP.applied_policy_id != None,
+            _CP.source_site != None,
+            _CP.source_site != "",
+        )
+        async with get_read_session() as rs:
+            result = await rs.execute(stmt)
+            sites = [r[0] for r in result.all() if r[0]]
+        _active_sites_cache["data"] = sites
+        _active_sites_cache["ts"] = time.monotonic()
+        return list(sites)
+
+
+# ── autotune/status refreshed_24h 글로벌 캐시 ──
+# /autotune/status 엔드포인트가 매 호출마다 count(last_refreshed_at>=24h) 풀스캔.
+# PC 8대 폴링 시 동시 8개 → IPC/BufferIO 누적. 60초 TTL이면 충분.
+_REFRESHED_24H_CACHE_TTL = 60.0
+_refreshed_24h_cache: dict = {"ts": 0.0, "value": None}
+_refreshed_24h_cache_lock = asyncio.Lock()
+
+
+async def _get_refreshed_24h_cached() -> int:
+    """24h 갱신 건수 글로벌 캐시 (TTL 60s)."""
+    from backend.db.orm import get_read_session
+    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP2
+
+    now_ts = time.monotonic()
+    cached = _refreshed_24h_cache.get("value")
+    if (
+        cached is not None
+        and (now_ts - _refreshed_24h_cache["ts"]) < _REFRESHED_24H_CACHE_TTL
+    ):
+        return int(cached)
+
+    if _refreshed_24h_cache_lock.locked() and cached is not None:
+        return int(cached)
+
+    async with _refreshed_24h_cache_lock:
+        cached = _refreshed_24h_cache.get("value")
+        now_ts = time.monotonic()
+        if (
+            cached is not None
+            and (now_ts - _refreshed_24h_cache["ts"]) < _REFRESHED_24H_CACHE_TTL
+        ):
+            return int(cached)
+
+        try:
+            since_24h = datetime.now(timezone.utc) - timedelta(hours=24)
+            async with get_read_session() as rs:
+                cnt_stmt = select(func.count(_CP2.id)).where(
+                    _CP2.last_refreshed_at >= since_24h
+                )
+                value = (await rs.execute(cnt_stmt)).scalar() or 0
+        except Exception:
+            value = 0
+
+        _refreshed_24h_cache["value"] = int(value)
+        _refreshed_24h_cache["ts"] = time.monotonic()
+        return int(value)
+
+
 def _is_stale_conn_error(exc: BaseException) -> bool:
     """좀비 connection/끊긴 트랜잭션 감지.
 
@@ -3082,9 +3188,6 @@ async def _autotune_loop(device_id: str):
 
                 # 공통 사전 작업 (분류, 쿠키)
                 async with get_write_session() as session:
-                    from backend.domain.samba.collector.model import (
-                        SambaCollectedProduct as _CP,
-                    )
                     from backend.api.v1.routers.samba.proxy import _get_setting
 
                     # 롯데ON 쿠키 갱신
@@ -3096,21 +3199,8 @@ async def _autotune_loop(device_id: str):
                     if _lt_cookie:
                         set_lotteon_cookie(str(_lt_cookie))
 
-                    # 활성 소싱처 목록 파악
-                    from backend.api.v1.routers.samba.collector_common import (
-                        build_market_registered_conditions,
-                    )
-
-                    market_cond = build_market_registered_conditions(_CP)
-
-                    site_stmt = select(func.distinct(_CP.source_site)).where(
-                        *market_cond,
-                        _CP.applied_policy_id != None,
-                        _CP.source_site != None,
-                        _CP.source_site != "",
-                    )
-                    site_result = await session.execute(site_stmt)
-                    active_sites = [r[0] for r in site_result.all() if r[0]]
+                    # 활성 소싱처 목록 파악 (글로벌 30s 캐시 — 모든 PC 공유, read pool 전용)
+                    active_sites = await _get_active_sites_cached()
 
                     # 이 PC가 처리할 사이트만 — _pc_allowed_sites 기준
                     # 미등록(None) → 이 PC가 모든 사이트 처리 (단일 PC 운영)
@@ -3838,7 +3928,6 @@ async def autotune_status(device_id: str = ""):
     device_id 지정 시 그 PC 인스턴스 기준 cycle/last_tick/site_loops 반환.
     """
     from backend.db.orm import get_read_session
-    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP2
     from backend.core.tenant_context import current_tenant_id as _ctv
 
     # 본인 테넌트의 device_id 목록 조회 → module-global 상태를 본인 것만 필터링
@@ -3866,17 +3955,8 @@ async def autotune_status(device_id: str = ""):
         if _site_breaker_tripped.get(site)
     }
 
-    # DB 기반 24h 갱신 수 (서버 재시작해도 유지)
-    refreshed_24h = 0
-    try:
-        since_24h = datetime.now(timezone.utc) - timedelta(hours=24)
-        async with get_read_session() as rs:
-            cnt_stmt = select(func.count(_CP2.id)).where(
-                _CP2.last_refreshed_at >= since_24h
-            )
-            refreshed_24h = (await rs.execute(cnt_stmt)).scalar() or 0
-    except Exception:
-        refreshed_24h = 0
+    # 24h 갱신 건수 — 글로벌 60s 캐시 (PC 8대 동시 폴링 시 IPC/BufferIO 누적 차단)
+    refreshed_24h = await _get_refreshed_24h_cached()
 
     # 소싱처별 인터벌 정보
     from backend.domain.samba.collector.refresher import (
