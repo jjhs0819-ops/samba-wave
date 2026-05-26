@@ -13,7 +13,29 @@ interface ErrorProps {
 
 export default function Error({ error, reset }: ErrorProps) {
   useEffect(() => {
-    // Log the error to an error reporting service
+    // 배포 직후 chunk 로딩 실패 (옛 chunk hash reference) 자동 1회 reload.
+    // 30초 내 중복 reload 방지 — 실제 에러 무한 loop 차단.
+    const msg = error?.message || "";
+    const isChunkError =
+      msg.includes("Loading chunk") ||
+      msg.includes("ChunkLoadError") ||
+      msg.includes("Failed to fetch dynamically imported module") ||
+      msg.includes("Importing a module script failed") ||
+      msg.includes("error loading dynamically imported module") ||
+      error?.name === "ChunkLoadError";
+    if (isChunkError && typeof window !== "undefined") {
+      try {
+        const key = "samba.chunkReloadAt";
+        const last = Number(window.sessionStorage.getItem(key) || "0");
+        if (Date.now() - last > 30_000) {
+          window.sessionStorage.setItem(key, String(Date.now()));
+          window.location.reload();
+          return;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
     console.error("Application error:", error);
   }, [error]);
 

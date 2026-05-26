@@ -29,7 +29,6 @@ import logging.handlers
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import threading
@@ -78,7 +77,7 @@ except ImportError:
 # ====================================================================
 # 데몬 버전 — build.ps1 가 갱신. 자동 업데이트 비교 기준.
 # ====================================================================
-DAEMON_VERSION = "1.4.8"
+DAEMON_VERSION = "1.4.9"
 
 
 # ====================================================================
@@ -132,8 +131,7 @@ def _register_run_key(exe_path: Path) -> None:
 
 
 _DAEMON_UPDATE_URL_LEGACY = (
-    "https://github.com/sbk0674-web/samba-wave/releases/latest/download/"
-    "samba.exe"
+    "https://github.com/sbk0674-web/samba-wave/releases/latest/download/samba.exe"
 )
 # v1.4.2+: backend 경유 self-update — install-token 박힌 exe 자동 받음.
 # 데몬이 자동 키 갱신 가능 (옛 키 invalid 케이스도 자동 복구).
@@ -162,9 +160,10 @@ def _perform_self_update(api_key: str = "") -> bool:
             req = urllib.request.Request(
                 _DAEMON_UPDATE_URL_BACKEND, headers={"X-Api-Key": api_key}
             )
-            with urllib.request.urlopen(req, timeout=120) as resp, open(
-                new_path, "wb"
-            ) as f:
+            with (
+                urllib.request.urlopen(req, timeout=120) as resp,
+                open(new_path, "wb") as f,
+            ):
                 while True:
                     chunk = resp.read(1 << 16)
                     if not chunk:
@@ -1747,9 +1746,7 @@ async def post_cancel_result(
     return False
 
 
-async def extract_cancel(
-    page: Page, url: str, handler: SiteHandler
-) -> dict[str, Any]:
+async def extract_cancel(page: Page, url: str, handler: SiteHandler) -> dict[str, Any]:
     """주문상세/취소 페이지 진입 + 취소 실행 → {success, cancelled, alreadyShipped, ...}.
 
     단일 페이지: goto → cancel_js evaluate.
@@ -1780,7 +1777,10 @@ async def extract_cancel(
             else:
                 await page.wait_for_load_state("domcontentloaded", timeout=20_000)
         except Exception as exc:
-            return {"success": False, "error": f"cancel 네비 대기 예외: {str(exc)[:120]}"}
+            return {
+                "success": False,
+                "error": f"cancel 네비 대기 예외: {str(exc)[:120]}",
+            }
 
     try:
         data = await page.evaluate(handler.cancel_js)
@@ -2002,7 +2002,9 @@ async def process_job(
                 except Exception as exc:
                     logger.warning("재추출 예외 req=%s: %s", request_id, exc)
             else:
-                logger.warning("[%s] 재로그인 실패 — 잡 실패 회신 (req=%s)", site, request_id)
+                logger.warning(
+                    "[%s] 재로그인 실패 — 잡 실패 회신 (req=%s)", site, request_id
+                )
         except Exception as exc:
             logger.warning("[%s] 재로그인 예외 req=%s: %s", site, request_id, exc)
 
@@ -2460,9 +2462,7 @@ async def run_daemon(args: argparse.Namespace) -> int:
                     if time.time() - _last_version_check_at > 300:
                         _last_version_check_at = time.time()
                         try:
-                            if await _check_and_self_update(
-                                http_client, backend_url
-                            ):
+                            if await _check_and_self_update(http_client, backend_url):
                                 logger.info(
                                     "주기 버전 체크: 신버전 감지 — 종료(supervisor 자동 업데이트 트리거)"
                                 )
@@ -2766,6 +2766,34 @@ async def _check_and_self_update(client: httpx.AsyncClient, backend_url: str) ->
         return False
 
 
+def _kill_other_daemon_instances() -> None:
+    """자기 PID 제외 모든 daemon.exe process 종료 — 중복 인스턴스 충돌 방지.
+
+    Run 키 자동 시작 + 사용자 수동 실행 + self-update 잔존 등으로 같은 PC 에 daemon.exe 가
+    여러 개 떠 같은 device_id 로 동시 polling → backend race 또는 polling 누락 사고 차단.
+    """
+    if os.name != "nt":
+        return
+    try:
+        my_pid = os.getpid()
+        subprocess.run(
+            [
+                "taskkill",
+                "/F",
+                "/IM",
+                "daemon.exe",
+                "/FI",
+                f"PID ne {my_pid}",
+            ],
+            creationflags=CREATE_NO_WINDOW,
+            capture_output=True,
+            timeout=10,
+        )
+        logger_print(f"중복 daemon.exe 인스턴스 정리 완료 (자기 PID={my_pid} 제외)")
+    except Exception as exc:
+        logger_print(f"중복 인스턴스 정리 실패(무시): {exc}")
+
+
 def _supervisor_loop() -> int:
     """parent supervisor — 자기 자신을 --worker 모드로 spawn + 죽으면 backoff 재시작.
 
@@ -2775,8 +2803,13 @@ def _supervisor_loop() -> int:
 
     Backoff: 정상 가동 10초 안에 죽으면 즉시 죽은 것으로 간주 →
     재시작 간격 증가 (5s → 30s → 60s 상한). 정상 가동 ≥10s 시 backoff 리셋.
+
+    단일 인스턴스 guard: supervisor 진입 시 옛 daemon.exe (자기 제외) 모두 강제 종료.
     """
     logger_print(f"supervisor 시작 pid={os.getpid()}")
+    # 중복 인스턴스 정리 — worker spawn 전 옛 daemon.exe 모두 죽임.
+    # race: 늦게 실행된 supervisor 가 일찍 실행된 모든 인스턴스 kill → 단일 생존.
+    _kill_other_daemon_instances()
     # 트레이 아이콘 시작 — Windows + frozen 일 때만. 콘솔창 없이 상태 표시 + 종료 메뉴 제공.
     if os.name == "nt":
         try:

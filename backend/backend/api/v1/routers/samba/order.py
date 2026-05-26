@@ -4171,18 +4171,28 @@ async def sync_orders_from_markets(
                 _already_fetched = {
                     d["order_number"] for d in orders_data if d.get("order_number")
                 }
-                from sqlalchemy import select as _sa_select
+                from sqlalchemy import and_ as _and_, or_ as _or_, select as _sa_select
                 from backend.domain.samba.order.model import SambaOrder as _SambaOrder
                 from datetime import datetime as _dt, timedelta, timezone as _tz
 
+                # 취소요청/취소처리중은 철회가 30일 이후에도 발생 가능 → 시간 cap 제거.
+                # 그 외 미완결은 stuck 누적 방지를 위해 기존 30일 cap 유지.
                 _cutoff = _dt.now(_tz.utc) - timedelta(days=max(body.days, 30))
+                _cancel_pending = {"취소요청", "취소처리중"}
+                _other_pending = _pending_statuses - _cancel_pending
                 _stmt = (
                     _sa_select(_SambaOrder.order_number)
                     .where(
                         _SambaOrder.channel_id == account["id"],
-                        _SambaOrder.shipping_status.in_(_pending_statuses),
-                        _SambaOrder.updated_at >= _cutoff,
+                        _or_(
+                            _SambaOrder.shipping_status.in_(_cancel_pending),
+                            _and_(
+                                _SambaOrder.shipping_status.in_(_other_pending),
+                                _SambaOrder.updated_at >= _cutoff,
+                            ),
+                        ),
                     )
+                    .order_by(_SambaOrder.updated_at.desc())
                     .limit(300)
                 )
                 _res = await session.execute(_stmt)
