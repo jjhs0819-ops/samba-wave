@@ -399,6 +399,115 @@ async def sourcing_tracking_result(body: dict[str, Any]) -> dict[str, Any]:
     return res
 
 
+async def _maybe_approve_market_cancel(
+    sess, ord_row, now_kst_tag: str, sourcing_site: str, sourcing_ord_no: str
+) -> None:
+    """소싱처 자동취소 성공 후 → 마켓 측 cancel 승인 자동 처리.
+
+    현재 지원: 스마트스토어(approve_cancel API).
+    실패 시 status='cancelling' 유지(이미 update 됨) + 노트만 추가.
+    """
+    from datetime import datetime, timezone
+
+    from sqlalchemy import update
+
+    from backend.domain.samba.order.model import SambaOrder
+    from backend.utils.logger import logger
+
+    if not ord_row.channel_id or not ord_row.order_number:
+        return
+
+    try:
+        from backend.domain.samba.account.repository import (
+            SambaMarketAccountRepository,
+        )
+
+        acc_repo = SambaMarketAccountRepository(sess)
+        account = await acc_repo.get_async(ord_row.channel_id)
+    except Exception as e:
+        logger.warning(f"[cancel-result] account 조회 실패: {e}")
+        return
+    if not account:
+        return
+
+    market_type = (account.market_type or "").strip().lower()
+    if market_type != "smartstore":
+        # 다른 마켓 자동 승인 미구현 (운영자 수동 처리)
+        return
+
+    try:
+        from backend.domain.samba.forbidden.repository import (
+            SambaSettingsRepository,
+        )
+        from backend.domain.samba.proxy.smartstore import SmartStoreClient
+
+        extras = account.additional_fields or {}
+        client_id = extras.get("clientId", "") or account.api_key or ""
+        client_secret = extras.get("clientSecret", "") or account.api_secret or ""
+        if not client_id or not client_secret:
+            settings_repo = SambaSettingsRepository(sess)
+            row = await settings_repo.find_by_async(key="store_smartstore")
+            if row and isinstance(row.value, dict):
+                client_id = client_id or row.value.get("clientId", "")
+                client_secret = client_secret or row.value.get("clientSecret", "")
+        if not client_id or not client_secret:
+            await _append_cancel_note(
+                sess,
+                ord_row.id,
+                f"[{now_kst_tag}] 스마트스토어 인증정보 없음 — 취소승인 수동 처리 필요",
+            )
+            return
+
+        client = SmartStoreClient(client_id, client_secret)
+        await client.approve_cancel(ord_row.order_number)
+
+        # 승인 성공 → status='cancelled' + shipping_status='취소완료'
+        await sess.execute(
+            update(SambaOrder)
+            .where(SambaOrder.id == ord_row.id)
+            .values(
+                status="cancelled",
+                shipping_status="취소완료",
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
+        await _append_cancel_note(
+            sess,
+            ord_row.id,
+            f"[{now_kst_tag}] 스마트스토어 취소승인 완료 → 취소완료",
+        )
+        await sess.commit()
+        logger.info(
+            f"[cancel-result] 스마트스토어 취소승인 완료 order={ord_row.id} ord_no={ord_row.order_number}"
+        )
+    except Exception as e:
+        await _append_cancel_note(
+            sess,
+            ord_row.id,
+            f"[{now_kst_tag}] 스마트스토어 취소승인 실패: {e} — 수동 처리 필요",
+        )
+        await sess.commit()
+        logger.warning(
+            f"[cancel-result] 스마트스토어 취소승인 실패 order={ord_row.id}: {e}"
+        )
+
+
+async def _append_cancel_note(sess, order_id: str, line: str) -> None:
+    """SambaOrder.notes 에 한 줄 append (별도 commit 안 함 — caller 책임)."""
+    from sqlalchemy import update
+
+    from backend.domain.samba.order.model import SambaOrder
+
+    row = await sess.get(SambaOrder, order_id)
+    if not row:
+        return
+    prev = (row.notes or "").strip()
+    new_notes = (prev + "\n" + line).strip() if prev else line
+    await sess.execute(
+        update(SambaOrder).where(SambaOrder.id == order_id).values(notes=new_notes)
+    )
+
+
 @sourcing_queue_router.post("/sourcing/cancel-result")
 async def sourcing_cancel_result(body: dict[str, Any]) -> dict[str, Any]:
     """데몬/확장앱이 발주취소 결과 회신 (인증 불필요, X-Api-Key 사용).
@@ -536,6 +645,13 @@ async def sourcing_cancel_result(body: dict[str, Any]) -> dict[str, Any]:
                 .values(**update_values)
             )
             await sess.commit()
+
+            # 무신사 자동취소 성공 시 → 마켓 측 cancel 승인 자동 처리
+            # 스마트스토어: approve_cancel → status=cancelled / shipping_status=취소완료
+            if cancelled:
+                await _maybe_approve_market_cancel(
+                    sess, ord_row, now_kst_tag, site, sourcing_order_number
+                )
     except Exception as e:
         logger.warning(f"[cancel-result] order 업데이트 실패 id={order_id}: {e}")
         return {"ok": False, "error": str(e)}
