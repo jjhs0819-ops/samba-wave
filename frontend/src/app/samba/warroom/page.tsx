@@ -422,12 +422,15 @@ export default function WarroomPage() {
   // 같은 PC 데몬만 응답(loopback) → 사용자 수동 입력 X, 포크 유저 동일 흐름.
   const [pcDeviceId, setPcDeviceId] = useState<string>('')
   useEffect(() => {
-    (async () => {
+    // 마운트 1회 + 매 60초 51425 fetch — 데몬 v1.4.6 자동업데이트 시 device_id 가 새로 발급되면
+    // localStorage 캐시를 즉시 갱신해 다음 시작/register 가 신규 device_id 로 박힘.
+    // (2026-05-26 회귀: 데몬 v2 마이그레이션 후 페이지 stale localStorage 가 옛 device_id 박은 사고)
+    let cancelled = false
+    const syncDaemonDev = async () => {
       try {
         const { getDeviceId } = await import('@/lib/samba/deviceId')
         const dev = getDeviceId()
         let daemonDev = ''
-        // 1) 데몬 sync 서버 우선
         try {
           const ctrl = new AbortController()
           const t = setTimeout(() => ctrl.abort(), 1500)
@@ -437,21 +440,30 @@ export default function WarroomPage() {
             const j = await r.json()
             if (j && typeof j.device_id === 'string' && j.device_id) {
               daemonDev = j.device_id
-              window.localStorage.setItem('samba.autotune.daemon.deviceId', daemonDev)
+              const cached = window.localStorage.getItem('samba.autotune.daemon.deviceId') || ''
+              if (cached !== daemonDev) {
+                window.localStorage.setItem('samba.autotune.daemon.deviceId', daemonDev)
+              }
             }
           }
         } catch { /* 데몬 안 켜진 PC — 무시 */ }
-        // 2) fallback: localStorage 캐시
         if (!daemonDev) {
           daemonDev = (typeof window !== 'undefined' && (
             window.localStorage.getItem('samba.autotune.daemon.deviceId') ||
             window.localStorage.getItem('samba.lotteon.daemon.deviceId')
           )) || ''
         }
+        if (cancelled) return
         const ids = [dev, daemonDev].filter(Boolean)
-        if (ids.length) setPcDeviceId(ids.join(','))
+        if (ids.length) setPcDeviceId(prev => {
+          const next = ids.join(',')
+          return next === prev ? prev : next
+        })
       } catch { /* ignore */ }
-    })()
+    }
+    syncDaemonDev()
+    const timer = setInterval(syncDaemonDev, 60_000)
+    return () => { cancelled = true; clearInterval(timer) }
   }, [])
   const [singleProductNo, setSingleProductNo] = useState('')
   const [, setAutotuneLastTick] = useState<string | null>(null)
