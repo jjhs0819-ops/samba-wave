@@ -344,6 +344,120 @@ async function downloadDaemonInstaller(did: string): Promise<boolean> {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 활성 사이클 패널 — backend in-memory _pc_site_tasks 의 모든 (device, site)
+// 진행 중 cycle 표시 + 개별 [중단] 버튼. 사용자 visibility/control 요구
+// (2026-05-26 "다른 PC 잡도 보이게 + 인지 못 한 잡 stop").
+// ─────────────────────────────────────────────────────────────────────────────
+interface ActiveCycle {
+  device_id: string
+  site: string
+  idx: number
+  total: number
+  cycle_count: number
+  last_tick: string
+  heartbeat_ago_sec: number | null
+}
+
+function ActiveCyclesPanel(): React.ReactElement {
+  const [cycles, setCycles] = useState<ActiveCycle[]>([])
+  const [busy, setBusy] = useState<string>('')
+  const card: React.CSSProperties = {
+    background: '#1F1F1F', border: '1px solid #3D3D3D', borderRadius: '8px',
+    padding: '1rem', marginTop: '1rem',
+  }
+  const fetchCycles = useCallback(async () => {
+    try {
+      const { API_BASE_URL: api } = await import('@/config/api')
+      const r = await fetchWithAuth(`${api}/api/v1/samba/collector/autotune/active-cycles`)
+      if (!r.ok) return
+      const d = await r.json() as { count: number; cycles: ActiveCycle[] }
+      setCycles(d.cycles || [])
+    } catch { /* ignore */ }
+  }, [])
+  useEffect(() => {
+    fetchCycles()
+    const t = setInterval(fetchCycles, 5000)
+    return () => clearInterval(t)
+  }, [fetchCycles])
+  const cancelCycle = useCallback(async (device_id: string, site: string) => {
+    const key = `${device_id}|${site}`
+    setBusy(key)
+    try {
+      const { API_BASE_URL: api } = await import('@/config/api')
+      const r = await fetchWithAuth(`${api}/api/v1/samba/collector/autotune/cancel-cycle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_id, site }),
+      })
+      const d = await r.json().catch(() => ({} as { ok?: boolean; error?: string }))
+      if (!d || !d.ok) {
+        const { showAlert } = await import('@/components/samba/Modal')
+        showAlert(d?.error || '중단 실패', 'error')
+      }
+      await fetchCycles()
+    } finally {
+      setBusy('')
+    }
+  }, [fetchCycles])
+  return (
+    <div style={card}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+        <div style={{ fontSize: '0.96rem', fontWeight: 600, color: '#E5E5E5' }}>
+          활성 사이클 ({fmtNum(cycles.length)}개)
+        </div>
+        <button onClick={fetchCycles} style={{ padding: '0.25rem 0.6rem', background: 'rgba(76,154,255,0.12)', border: '1px solid rgba(76,154,255,0.35)', borderRadius: '6px', color: '#4C9AFF', fontSize: '0.75rem', cursor: 'pointer' }}>새로고침</button>
+      </div>
+      {cycles.length === 0 ? (
+        <div style={{ fontSize: '0.85rem', color: '#666', padding: '0.5rem 0' }}>활성 사이클 없음</div>
+      ) : (
+        <table style={{ width: '100%', fontSize: '0.85rem', color: '#E5E5E5', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ color: '#888', borderBottom: '1px solid #3D3D3D' }}>
+              <th style={{ textAlign: 'left', padding: '0.4rem' }}>PC (device)</th>
+              <th style={{ textAlign: 'left', padding: '0.4rem' }}>사이트</th>
+              <th style={{ textAlign: 'right', padding: '0.4rem' }}>진행</th>
+              <th style={{ textAlign: 'right', padding: '0.4rem' }}>사이클#</th>
+              <th style={{ textAlign: 'right', padding: '0.4rem' }}>최근 활동</th>
+              <th style={{ textAlign: 'center', padding: '0.4rem' }}>중단</th>
+            </tr>
+          </thead>
+          <tbody>
+            {cycles.map(c => {
+              const k = `${c.device_id}|${c.site}`
+              const hbStr = c.heartbeat_ago_sec === null ? '-' : `${fmtNum(c.heartbeat_ago_sec)}초 전`
+              return (
+                <tr key={k} style={{ borderBottom: '1px solid #2A2A2A' }}>
+                  <td style={{ padding: '0.4rem', fontFamily: 'monospace', fontSize: '0.75rem' }}>{c.device_id.slice(0, 28)}</td>
+                  <td style={{ padding: '0.4rem' }}>{c.site}</td>
+                  <td style={{ padding: '0.4rem', textAlign: 'right' }}>{fmtNum(c.idx)} / {fmtNum(c.total)}</td>
+                  <td style={{ padding: '0.4rem', textAlign: 'right' }}>{fmtNum(c.cycle_count)}</td>
+                  <td style={{ padding: '0.4rem', textAlign: 'right', color: '#888' }}>{hbStr}</td>
+                  <td style={{ padding: '0.4rem', textAlign: 'center' }}>
+                    <button
+                      disabled={busy === k}
+                      onClick={() => cancelCycle(c.device_id, c.site)}
+                      style={{
+                        padding: '0.2rem 0.6rem',
+                        background: busy === k ? '#444' : 'rgba(239,68,68,0.15)',
+                        border: '1px solid rgba(239,68,68,0.4)',
+                        borderRadius: '4px',
+                        color: '#EF4444',
+                        fontSize: '0.75rem',
+                        cursor: busy === k ? 'wait' : 'pointer',
+                      }}
+                    >{busy === k ? '중단중…' : '중단'}</button>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+}
+
 export default function WarroomPage() {
   useEffect(() => { document.title = 'SAMBA-오토튠' }, [])
 
@@ -1264,6 +1378,10 @@ export default function WarroomPage() {
         filterSources={filterSources}
         deviceId={pcDeviceId}
       />
+
+      {/* 활성 사이클 — backend in-memory 의 모든 (device, site) 진행 중 cycle.
+          사용자 visibility 보완 (2026-05-26 요구) + 인지 못 한 사이클 개별 중단. */}
+      <ActiveCyclesPanel />
 
       {/* 이벤트 타임라인 (로그 아래) */}
       <div style={card}>

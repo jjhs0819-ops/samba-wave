@@ -3310,8 +3310,26 @@ async def _autotune_loop(device_id: str):
                         )
                         _last_logged_active = set(active_sites)
 
-                # 소싱처별 독립 루프 태스크 생성 (이 PC의 site_tasks dict에)
+                # 소싱처별 독립 루프 태스크 관리 (이 PC의 site_tasks dict에)
                 _site_tasks = _pc_st(device_id)
+                _active_set = set(active_sites)
+                # active_sites 에서 빠진 site 의 옛 task cancel — 사용자 체크박스 해제 시
+                # 그 사이트 사이클 즉시 중단 (2026-05-26 사고: 체크 해제해도 backend cycle
+                # 계속 돌아서 "체크박스는 로그 가림용일뿐" 사용자 항의).
+                _stopped = []
+                for _old_site in list(_site_tasks.keys()):
+                    if _old_site not in _active_set:
+                        _old_task = _site_tasks[_old_site]
+                        if _old_task and not _old_task.done():
+                            _old_task.cancel()
+                        del _site_tasks[_old_site]
+                        _stopped.append(_old_site)
+                if _stopped:
+                    log.info(
+                        "[오토튠][%s] 소싱처 루프 중단: %s (체크박스 해제)",
+                        _dev_tag,
+                        ", ".join(_stopped),
+                    )
                 _newly_spawned = []
                 for _site in active_sites:
                     existing = _site_tasks.get(_site)
@@ -4138,6 +4156,69 @@ async def autotune_pc_allowed_sites_get():
         "by_device": {dev: sorted(sites) for dev, sites in pcs.items()},
         "daemons": daemons,
     }
+
+
+@router.get("/autotune/active-cycles")
+async def autotune_active_cycles():
+    """현재 backend in-memory 에서 활성 동작 중인 모든 (device_id, site) cycle 목록.
+
+    사용자 visibility — 어느 PC 의 어느 사이트 사이클이 도는지 한눈에. 인지 못 한
+    좀비 사이클 발견 + 개별 cancel 가능 (POST /autotune/cancel-cycle).
+    """
+    cycles = []
+    now_ts = time.time()
+    for dev, site_tasks in list(_pc_site_tasks.items()):
+        if not isinstance(site_tasks, dict):
+            continue
+        for site, task in list(site_tasks.items()):
+            if task is None or task.done():
+                continue
+            gkey = (dev, site)
+            idx = _autotune_global_idx.get(gkey, 0)
+            total = _autotune_global_total.get(gkey, 0)
+            cycle_count = _pc_site_cycle_counts.get(dev, {}).get(site, 0)
+            last_tick = _pc_site_last_ticks.get(dev, {}).get(site, "")
+            hb = _pc_site_heartbeats.get(dev, {}).get(site, 0)
+            hb_ago = int(now_ts - hb) if hb else None
+            cycles.append(
+                {
+                    "device_id": dev,
+                    "site": site,
+                    "idx": idx,
+                    "total": total,
+                    "cycle_count": cycle_count,
+                    "last_tick": last_tick,
+                    "heartbeat_ago_sec": hb_ago,
+                }
+            )
+    cycles.sort(key=lambda c: (c["device_id"], c["site"]))
+    return {"count": len(cycles), "cycles": cycles}
+
+
+class CancelCycleRequest(BaseModel):
+    device_id: str
+    site: str
+
+
+@router.post("/autotune/cancel-cycle")
+async def autotune_cancel_cycle(body: CancelCycleRequest):
+    """특정 (device_id, site) cycle 즉시 중단 — 사용자 visibility 보완.
+
+    예: 인지 못 한 LOTTEON cycle 발견 → 이 endpoint 로 즉시 cancel.
+    Main loop 이 다음 tick 에 active_sites 빠진 site 자동 재spawn 안 함.
+    """
+    dev = (body.device_id or "").strip()
+    site = (body.site or "").strip()
+    if not dev or not site:
+        return {"ok": False, "error": "device_id 와 site 필수"}
+    site_tasks = _pc_site_tasks.get(dev) or {}
+    task = site_tasks.get(site)
+    if task is None:
+        return {"ok": False, "error": f"활성 cycle 없음: {dev[:12]} / {site}"}
+    if not task.done():
+        task.cancel()
+    site_tasks.pop(site, None)
+    return {"ok": True, "cancelled": True, "device_id": dev, "site": site}
 
 
 @router.get("/autotune/status")
