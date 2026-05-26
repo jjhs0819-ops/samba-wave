@@ -11,11 +11,23 @@ const POLL_INTERVAL = 10_000
 const LOG_POLL_INTERVAL = 500
 
 // 로그 메시지 앞부분의 [SITE] 태그 추출 — 예: "[12:34:56] [1/100] [MUSINSA] ..." → "MUSINSA"
+// 알려진 사이트명 화이트리스트 — 위치 변동에 robust 한 site 추출.
+// 옛 "3번째 [...]" 가정은 _idx_prefix 비거나 [int=X.Xs] 추가 시 매칭 깨짐
+// (2026-05-26 사고: 재고변동/스킵 로그 등 일부 msg 가 사용자 화면에 안 보임).
+const KNOWN_SITES = new Set([
+  'ABCmart', 'GrandStage', 'GSShop', 'MUSINSA', 'LOTTEON', 'SSG',
+  'KREAM', '다나와', '패션플러스', 'FashionPlus', 'Nike', 'Adidas',
+  '렉스몬드', 'Lexmond', '이랜드몰', 'SSF샵', 'SSFShop',
+])
+
 const extractSiteFromLog = (msg: string): string | null => {
-  // 첫 [...] 두 개는 시간/카운터, 세 번째 [...]가 사이트 태그
   const matches = msg.match(/\[([^\]]+)\]/g)
-  if (!matches || matches.length < 3) return null
-  return matches[2].slice(1, -1)
+  if (!matches) return null
+  for (const m of matches) {
+    const inner = m.slice(1, -1)
+    if (KNOWN_SITES.has(inner)) return inner
+  }
+  return null
 }
 
 // PC분담 필터: filterSources 기준으로 로그 표시 여부 결정
