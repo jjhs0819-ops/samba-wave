@@ -829,9 +829,21 @@ async def sourcing_cancel_result(body: dict[str, Any]) -> dict[str, Any]:
             if not ord_row:
                 return {"ok": True, "applied": False, "reason": "order 없음"}
             prev_notes = ord_row.notes or ""
-            new_notes = (
-                (prev_notes + "\n" + note_line).strip() if prev_notes else note_line
+            # 노트 중복 차단 — 같은 ord_no + 같은 fail/success 키워드 이미 노트 마지막에 있으면 skip.
+            # 마켓 폴러 무한 반복(28분 cooldown 가드 우회 등)으로 같은 메시지 N개 박혀 사용자 화면 어지러움.
+            note_signature = f"({site} ord={sourcing_order_number})"
+            tail = prev_notes[-800:] if prev_notes else ""
+            already_noted = note_signature in tail and (
+                ("자동취소 실패" in note_line and "자동취소 실패" in tail)
+                or ("자동취소 성공" in note_line and "자동취소 성공" in tail)
+                or ("이미 발송" in note_line and "이미 발송" in tail)
             )
+            if already_noted:
+                new_notes = prev_notes  # 노트 추가 X
+            else:
+                new_notes = (
+                    (prev_notes + "\n" + note_line).strip() if prev_notes else note_line
+                )
             update_values["notes"] = new_notes
             await sess.execute(
                 update(SambaOrder)

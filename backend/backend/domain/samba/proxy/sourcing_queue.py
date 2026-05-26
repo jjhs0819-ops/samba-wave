@@ -717,7 +717,11 @@ class SourcingQueue:
             if not device_id.startswith("samba-daemon-"):
                 _sites = sorted(DAEMON_ONLY_SITES)
                 _dph = ", ".join(f":dsite_{i}" for i in range(len(_sites)))
-                conditions.append(f"UPPER(site) NOT IN ({_dph})")
+                # cancel_order 잡은 확장앱 라우팅 허용 — 데몬 자동로그인 봇 차단(LOTTEON 등)
+                # 우회. 다른 job_type(detail/tracking/search/reward)은 데몬 전용 유지.
+                conditions.append(
+                    f"(job_type = 'cancel_order' OR UPPER(site) NOT IN ({_dph}))"
+                )
                 for i, s in enumerate(_sites):
                     params[f"dsite_{i}"] = s.upper()
 
@@ -725,10 +729,15 @@ class SourcingQueue:
             # detail 잡 site='ABCmart'(혼합)인데 tracking 잡 site='ABCMART'(대문자)라
             # 데몬 폴링(X-Poll-Site='ABCmart')이 ABCMART tracking 잡을 dequeue 하려면
             # UPPER 양쪽 비교 필요. 사이트명 충돌 없어 안전.
+            # cancel_order 잡은 사이트 분담 무시(모든 PC 라우팅) — 고객 취소요청
+            # 실패 시 사용자 noise 차단 + 자동취소 즉시 처리. 계정 mismatch는
+            # 확장앱 _cancelMusinsa/_cancelLotteon 사전 검증으로 abort.
             if allowed_sites is not None:
                 site_list = [s.strip() for s in allowed_sites if s.strip()]
                 placeholders = ", ".join(f":site_{i}" for i in range(len(site_list)))
-                conditions.append(f"UPPER(site) IN ({placeholders})")
+                conditions.append(
+                    f"(job_type = 'cancel_order' OR UPPER(site) IN ({placeholders}))"
+                )
                 for i, s in enumerate(site_list):
                     params[f"site_{i}"] = s.upper()
 
