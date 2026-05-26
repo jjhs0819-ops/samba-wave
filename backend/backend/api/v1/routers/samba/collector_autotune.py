@@ -368,7 +368,7 @@ _AUTOTUNE_TRANSMIT_MAX_CONCURRENCY = int(
 # 무신사 = 6 (대용량 + 잦은 변동), GSShop = 1 (정책 변동 적음 + 보수적),
 # 나머지 = 3 (default).
 SITE_TRANSMIT_CONCURRENCY: dict[str, int] = {
-    "MUSINSA": 6,
+    "MUSINSA": 8,
     "GSShop": 1,
 }
 # PC × 사이트별 transmit 세마포어 — (device_id, site) 단위 분리.
