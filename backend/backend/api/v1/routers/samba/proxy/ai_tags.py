@@ -170,6 +170,73 @@ _BRAND_PARTIAL_MATCH: frozenset[str] = frozenset(
 # ── 헬퍼 함수 ──
 
 
+def _apply_preserved_system_tags(
+    existing_tags: list | None, new_tags: list[str] | None
+) -> list[str] | None:
+    """기존 시스템 태그(__접두)를 보존하고 일반 태그만 new_tags 로 교체.
+
+    issue #239 — `p.tags = None` / `p.tags = body.tags` 같은 통째 덮어쓰기가
+    `__ai_image__`, `__ai_tagged__` 같은 시스템 태그를 wipe 시켜 마켓 전송 차단
+    유령 상태 유발 (SSG/LOTTEON 나이키 ~8천 건 사고). 본 헬퍼로 시스템 태그
+    보존 후 일반 태그만 교체.
+
+    new_tags=None 이면 일반 태그 전부 제거(시스템 태그만 남김).
+    """
+    preserved = [
+        t for t in (existing_tags or []) if isinstance(t, str) and t.startswith("__")
+    ]
+    if new_tags is None:
+        return preserved if preserved else None
+    return list(dict.fromkeys([*preserved, *new_tags]))
+
+
+async def _atomic_merge_tags(
+    session: AsyncSession,
+    product_ids: list[str],
+    new_tags: list[str],
+    add_ai_tagged_marker: bool = True,
+) -> None:
+    """tags 컬럼을 atomic UPDATE — fetch-then-write race 차단.
+
+    issue #239 원인 2 — SELECT tags → in-memory preserve → UPDATE 패턴은
+    SELECT~UPDATE 사이에 다른 트랜잭션이 commit 시 덮어쓰기 가능
+    (samba-task2-aitag routine + 복원 작업 동시 실행 시 재현).
+
+    본 함수는 outer UPDATE 의 row lock 안에서 SELECT 하여 race 차단:
+      DB 현재 시점의 __접두 시스템 태그 + ('__ai_tagged__' 마커) + new_tags
+      를 jsonb_agg(DISTINCT) 로 merge 후 단일 UPDATE.
+    """
+    if not product_ids:
+        return
+
+    import json
+
+    from sqlalchemy import text
+
+    marker_sql = "UNION SELECT '__ai_tagged__'" if add_ai_tagged_marker else ""
+    await session.execute(
+        text(
+            f"""
+            UPDATE samba_collected_product
+            SET tags = (
+                SELECT COALESCE(jsonb_agg(DISTINCT elem), '[]'::jsonb)
+                FROM (
+                    SELECT t AS elem
+                    FROM jsonb_array_elements_text(COALESCE(tags, '[]'::jsonb)) AS t
+                    WHERE strpos(t, '__') = 1
+                    {marker_sql}
+                    UNION SELECT t
+                    FROM jsonb_array_elements_text(CAST(:new_tags AS JSONB)) AS t
+                ) merged
+            ),
+            updated_at = NOW()
+            WHERE id = ANY(CAST(:ids AS TEXT[]))
+            """
+        ),
+        {"new_tags": json.dumps(new_tags), "ids": product_ids},
+    )
+
+
 def _make_ai_tag_group_key_id(search_filter_id: str, group_key: str) -> str:
     return f"{_AI_TAG_GROUP_KEY_PREFIX}{search_filter_id}:{group_key}"
 
@@ -793,20 +860,27 @@ async def generate_ai_tags(
                         f"[AI태그] 그룹 {gid}: 등재 태그 부족 — 태그 {len(tags)}개/10개"
                     )
 
-                # 태그 생성 후 그룹 전체 상품 조회 → 벌크 적용
-                # 기존 태그는 __센티넬만 보존하고 새 태그로 교체 (누적 방지)
-                for p in products:
-                    preserved = [
-                        t
-                        for t in (p.tags or [])
-                        if isinstance(t, str) and t.startswith("__")
-                    ]
-                    merged = list(dict.fromkeys([*preserved, "__ai_tagged__", *tags]))
-                    update_data: dict = {"tags": merged}
-                    if seo_kws:
-                        update_data["seo_keywords"] = seo_kws
-                    await repo.update_async(p.id, **update_data)
-                    total_tagged += 1
+                # 태그 생성 후 그룹 전체 상품에 atomic merge — issue #239 race 차단.
+                # repo.update_async 의 SELECT-then-UPDATE 패턴 대신 DB 시점 시스템 태그
+                # 보존하는 단일 UPDATE 로 전환.
+                product_ids = [p.id for p in products]
+                await _atomic_merge_tags(
+                    session, product_ids, list(tags), add_ai_tagged_marker=True
+                )
+                if seo_kws:
+                    import json as _json
+
+                    from sqlalchemy import text as _text
+
+                    await session.execute(
+                        _text(
+                            "UPDATE samba_collected_product "
+                            "SET seo_keywords = CAST(:kws AS JSONB), updated_at = NOW() "
+                            "WHERE id = ANY(CAST(:ids AS TEXT[]))"
+                        ),
+                        {"kws": _json.dumps(seo_kws), "ids": product_ids},
+                    )
+                total_tagged += len(products)
 
             except Exception as e:
                 logger.error(f"[AI태그] 그룹 {gid} 실패: {e}")
@@ -1286,25 +1360,27 @@ async def apply_ai_tags(
                 if len(seo_kws) >= 2:
                     break
 
-        # 그룹 내 모든 상품에 적용 (개별 커밋 없이 일괄 처리)
-        from sqlalchemy.orm.attributes import flag_modified as _fm
-        from datetime import datetime as _dt, UTC as _utc
+        # 그룹 내 모든 상품에 atomic merge — issue #239 race 차단.
+        # DB 시점 시스템 태그 + '__ai_tagged__' + tags 를 jsonb_agg(DISTINCT) UPDATE.
+        # seo_keywords 는 race 무관 → 별도 raw UPDATE.
+        product_ids = [p.id for p in products]
+        await _atomic_merge_tags(
+            session, product_ids, list(tags), add_ai_tagged_marker=True
+        )
+        if seo_kws:
+            import json as _json
 
-        for p in products:
-            # 기존 태그는 __센티넬만 보존하고 새 태그로 교체 (누적 방지)
-            preserved = [
-                t for t in (p.tags or []) if isinstance(t, str) and t.startswith("__")
-            ]
-            merged = list(dict.fromkeys([*preserved, "__ai_tagged__", *tags]))
-            p.tags = merged
-            _fm(p, "tags")
-            if seo_kws:
-                p.seo_keywords = seo_kws
-                _fm(p, "seo_keywords")
-            if hasattr(p, "updated_at"):
-                p.updated_at = _dt.now(_utc)
-            session.add(p)
-            total_tagged += 1
+            from sqlalchemy import text as _text
+
+            await session.execute(
+                _text(
+                    "UPDATE samba_collected_product "
+                    "SET seo_keywords = CAST(:kws AS JSONB), updated_at = NOW() "
+                    "WHERE id = ANY(CAST(:ids AS TEXT[]))"
+                ),
+                {"kws": _json.dumps(seo_kws), "ids": product_ids},
+            )
+        total_tagged += len(products)
 
     await session.commit()
     await cache.clear_pattern("filters:tree:counts:*")
@@ -1344,7 +1420,8 @@ async def clear_ai_tags(
     for gid in group_ids:
         _, products = await _resolve_ai_tag_apply_products(repo, {"group_id": gid})
         for p in products:
-            p.tags = None
+            # issue #239 — `p.tags = None` 전부 wipe 금지. __접두 시스템 태그 보존.
+            p.tags = _apply_preserved_system_tags(p.tags, None)
             p.seo_keywords = None
             _fm(p, "tags")
             _fm(p, "seo_keywords")

@@ -2169,7 +2169,11 @@ async def bulk_update_tags(
     products = results.all()
     for p in products:
         if body.tags is not None:
-            p.tags = body.tags
+            # issue #239 — `p.tags = body.tags` 통째 덮어쓰기 금지. __접두 시스템 태그 보존.
+            preserved = [
+                t for t in (p.tags or []) if isinstance(t, str) and t.startswith("__")
+            ]
+            p.tags = list(dict.fromkeys([*preserved, *body.tags]))
         if body.seo_keywords is not None:
             p.seo_keywords = body.seo_keywords
         session.add(p)
