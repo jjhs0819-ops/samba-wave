@@ -307,6 +307,12 @@ class MusinsaClient:
             # 4) 가격 계산
             normal_p = gp.get("normalPrice", 0) or 0
             raw_sale = gp.get("immediateDiscountedPrice") or gp.get("salePrice", 0) or 0
+            # 무신사 신규 "최저가 도전"/이벤트 할인 — salePrice 에는 미반영, extraDiscountAmount 에 별도 차감액
+            # finalPrice = salePrice - extraDiscountAmount - couponPrice 일체 적용된 최종 노출가
+            # 우리는 쿠폰 분은 _fetch_coupons 에서 별도 계산하므로 extraDiscountAmount 만 차감 (이중 차감 방지)
+            extra_disc = gp.get("extraDiscountAmount", 0) or 0
+            if raw_sale > 0 and extra_disc > 0:
+                raw_sale = max(0, raw_sale - extra_disc)
             s_price = (
                 raw_sale
                 if (raw_sale > 0 and (normal_p == 0 or raw_sale <= normal_p))
@@ -928,11 +934,15 @@ class MusinsaClient:
                         or d.get("isSoldOut")
                         or (d.get("goodsPrice") or {}).get("isSoldOut")
                     )
+                    _gp_p = d.get("goodsPrice") or {}
                     price = (
-                        (d.get("goodsPrice") or {}).get("immediateDiscountedPrice")
-                        or (d.get("goodsPrice") or {}).get("salePrice")
+                        _gp_p.get("immediateDiscountedPrice")
+                        or _gp_p.get("salePrice")
                         or 0
                     )
+                    _extra_p = _gp_p.get("extraDiscountAmount", 0) or 0
+                    if price > 0 and _extra_p > 0:
+                        price = max(0, price - _extra_p)
                     results.append(
                         {
                             "goodsNo": goods_no,
@@ -988,6 +998,9 @@ class MusinsaClient:
                         or gp_inner.get("salePrice")
                         or 0
                     )
+                    _extra_cp = gp_inner.get("extraDiscountAmount", 0) or 0
+                    if current_price > 0 and _extra_cp > 0:
+                        current_price = max(0, current_price - _extra_cp)
                     stored_price = p.get("storedPrice", 0)
                     diff = current_price - stored_price
                     diff_rate = (
@@ -1137,6 +1150,9 @@ class MusinsaClient:
                 or gp.get("salePrice")
                 or gp.get("normalPrice", 0)
             )
+            _extra_bp = gp.get("extraDiscountAmount", 0) or 0
+            if base_price > 0 and _extra_bp > 0:
+                base_price = max(0, base_price - _extra_bp)
             # 품절 상품이라도 normalPrice가 있으면 가격 보존
             if not base_price and gp.get("normalPrice"):
                 base_price = gp["normalPrice"]
