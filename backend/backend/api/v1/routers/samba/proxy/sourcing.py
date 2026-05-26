@@ -404,7 +404,12 @@ async def _maybe_approve_market_cancel(
 ) -> None:
     """소싱처 자동취소 성공 후 → 마켓 측 cancel 승인 자동 처리.
 
-    현재 지원: 스마트스토어(approve_cancel API).
+    지원 마켓:
+      - smartstore: approve_cancel(order_number)
+      - 11st: confirm_cancel(clm_req_seq, order_number, ord_prd_seq) — SambaReturn 필요
+      - ebay: 별도 API 없음 — DB 동기화만 (셀러측 이미 자동 취소)
+      - 그 외(쿠팡/playauto/lotteon/esm 등): 자동 승인 API 미확인 — 노트만, status=cancelling 유지
+
     실패 시 status='cancelling' 유지(이미 update 됨) + 노트만 추가.
     """
     from datetime import datetime, timezone
@@ -431,65 +436,250 @@ async def _maybe_approve_market_cancel(
         return
 
     market_type = (account.market_type or "").strip().lower()
-    if market_type != "smartstore":
-        # 다른 마켓 자동 승인 미구현 (운영자 수동 처리)
-        return
 
-    try:
-        from backend.domain.samba.forbidden.repository import (
-            SambaSettingsRepository,
-        )
-        from backend.domain.samba.proxy.smartstore import SmartStoreClient
+    async def _finalize_cancelled(approver_name: str) -> None:
+        """승인 성공 — status/shipping_status 최종 advance + 원가/배송비 클리어 + 노트.
 
-        extras = account.additional_fields or {}
-        client_id = extras.get("clientId", "") or account.api_key or ""
-        client_secret = extras.get("clientSecret", "") or account.api_secret or ""
-        if not client_id or not client_secret:
-            settings_repo = SambaSettingsRepository(sess)
-            row = await settings_repo.find_by_async(key="store_smartstore")
-            if row and isinstance(row.value, dict):
-                client_id = client_id or row.value.get("clientId", "")
-                client_secret = client_secret or row.value.get("clientSecret", "")
-        if not client_id or not client_secret:
-            await _append_cancel_note(
-                sess,
-                ord_row.id,
-                f"[{now_kst_tag}] 스마트스토어 인증정보 없음 — 취소승인 수동 처리 필요",
-            )
-            return
-
-        client = SmartStoreClient(client_id, client_secret)
-        await client.approve_cancel(ord_row.order_number)
-
-        # 승인 성공 → status='cancelled' + shipping_status='취소완료'
+        원주문 취소 성공 = 실제 발주·배송 발생 안 함 → cost/shipping_fee/profit 0 으로.
+        """
         await sess.execute(
             update(SambaOrder)
             .where(SambaOrder.id == ord_row.id)
             .values(
                 status="cancelled",
                 shipping_status="취소완료",
+                cost=0,
+                shipping_fee=0,
+                profit=0,
                 updated_at=datetime.now(timezone.utc),
             )
         )
         await _append_cancel_note(
             sess,
             ord_row.id,
-            f"[{now_kst_tag}] 스마트스토어 취소승인 완료 → 취소완료",
+            f"[{now_kst_tag}] {approver_name} 취소승인 완료 → 취소완료 (원가/배송비/실수익 0 처리)",
         )
         await sess.commit()
         logger.info(
-            f"[cancel-result] 스마트스토어 취소승인 완료 order={ord_row.id} ord_no={ord_row.order_number}"
+            f"[cancel-result] {approver_name} 취소승인 완료 order={ord_row.id} ord_no={ord_row.order_number}"
         )
-    except Exception as e:
+
+    async def _record_failure(approver_name: str, reason: str) -> None:
         await _append_cancel_note(
             sess,
             ord_row.id,
-            f"[{now_kst_tag}] 스마트스토어 취소승인 실패: {e} — 수동 처리 필요",
+            f"[{now_kst_tag}] {approver_name} 취소승인 실패: {reason} — 수동 처리 필요",
         )
         await sess.commit()
         logger.warning(
-            f"[cancel-result] 스마트스토어 취소승인 실패 order={ord_row.id}: {e}"
+            f"[cancel-result] {approver_name} 취소승인 실패 order={ord_row.id}: {reason}"
         )
+
+    # ── 스마트스토어 ──────────────────────────────────────────────
+    if market_type == "smartstore":
+        try:
+            from backend.domain.samba.forbidden.repository import (
+                SambaSettingsRepository,
+            )
+            from backend.domain.samba.proxy.smartstore import SmartStoreClient
+
+            extras = account.additional_fields or {}
+            client_id = extras.get("clientId", "") or account.api_key or ""
+            client_secret = extras.get("clientSecret", "") or account.api_secret or ""
+            if not client_id or not client_secret:
+                settings_repo = SambaSettingsRepository(sess)
+                row = await settings_repo.find_by_async(key="store_smartstore")
+                if row and isinstance(row.value, dict):
+                    client_id = client_id or row.value.get("clientId", "")
+                    client_secret = client_secret or row.value.get("clientSecret", "")
+            if not client_id or not client_secret:
+                await _record_failure("스마트스토어", "인증정보 없음")
+                return
+            client = SmartStoreClient(client_id, client_secret)
+            await client.approve_cancel(ord_row.order_number)
+            await _finalize_cancelled("스마트스토어")
+        except Exception as e:
+            await _record_failure("스마트스토어", str(e))
+        return
+
+    # ── 11번가 ────────────────────────────────────────────────────
+    if market_type == "11st":
+        try:
+            from backend.domain.samba.proxy.elevenst import ElevenstClient
+            from backend.domain.samba.returns.repository import SambaReturnRepository
+
+            api_key = (
+                (account.additional_fields or {}).get("apiKey", "")
+                or account.api_key
+                or ""
+            )
+            if not api_key:
+                await _record_failure("11번가", "API 키 없음")
+                return
+            return_repo = SambaReturnRepository(sess)
+            rets = await return_repo.filter_by_async(order_id=ord_row.id)
+            ret = rets[0] if rets else None
+            clm_req_seq = (ret.clm_req_seq if ret else None) or ""
+            ord_prd_seq = (ret.ord_prd_seq if ret else None) or ""
+            if not clm_req_seq or not ord_prd_seq:
+                await _record_failure(
+                    "11번가",
+                    "취소 클레임 정보 없음 (clm_req_seq/ord_prd_seq 미수집)",
+                )
+                return
+            client = ElevenstClient(api_key)
+            await client.confirm_cancel(clm_req_seq, ord_row.order_number, ord_prd_seq)
+            if ret:
+                await return_repo.update_async(
+                    ret.id, status="cancelled", market_order_status="취소완료"
+                )
+            await _finalize_cancelled("11번가")
+        except Exception as e:
+            await _record_failure("11번가", str(e))
+        return
+
+    # ── 롯데ON ────────────────────────────────────────────────────
+    if market_type == "lotteon":
+        try:
+            from backend.domain.samba.proxy.lotteon import LotteonClient
+
+            extras = account.additional_fields or {}
+            api_key = extras.get("apiKey", "") or account.api_key or ""
+            if not api_key:
+                await _record_failure("롯데ON", "API Key 없음")
+                return
+            client = LotteonClient(api_key)
+            try:
+                await client.test_auth()
+            except Exception as e:
+                await _record_failure("롯데ON", f"인증 실패: {e}")
+                return
+            success, message = await client.seller_cancel_order(
+                od_no=(ord_row.od_no or ord_row.order_number),
+                reason_code="CC11",  # 고객변심
+                reason_text="고객 취소요청",
+                od_seq=int(ord_row.od_seq or 1),
+                proc_seq=int(ord_row.proc_seq or 1),
+            )
+            if not success:
+                await _record_failure("롯데ON", f"판매자취소 실패: {message}")
+                return
+            # 같은 od_no 동반 cancel — 기존 패턴 (order.py:2440)
+            from sqlalchemy import select as _select
+
+            from backend.domain.samba.order.model import SambaOrder as _SO
+
+            if ord_row.od_no:
+                stmt = (
+                    _select(_SO)
+                    .where(_SO.od_no == ord_row.od_no)
+                    .where(_SO.channel_id == ord_row.channel_id)
+                    .where(_SO.id != ord_row.id)
+                    .where(_SO.status != "cancelled")
+                )
+                sib_rows = (await sess.execute(stmt)).scalars().all()
+                for sib in sib_rows:
+                    await sess.execute(
+                        update(_SO)
+                        .where(_SO.id == sib.id)
+                        .values(
+                            status="cancelled",
+                            shipping_status="취소완료",
+                            cost=0,
+                            shipping_fee=0,
+                            profit=0,
+                            updated_at=datetime.now(timezone.utc),
+                        )
+                    )
+            await _finalize_cancelled("롯데ON")
+        except Exception as e:
+            await _record_failure("롯데ON", str(e))
+        return
+
+    # ── SSG ───────────────────────────────────────────────────────
+    if market_type == "ssg":
+        try:
+            from backend.domain.samba.proxy.ssg import SSGClient
+
+            api_key = (
+                (account.additional_fields or {}).get("apiKey", "")
+                or account.api_key
+                or ""
+            )
+            if not api_key:
+                await _record_failure("SSG", "API Key 없음")
+                return
+            # shipment_id 형식: "{shppNo}|{ord_item_seq}" 또는 "|{ord_item_seq}"
+            shipment_id = (ord_row.shipment_id or "").strip()
+            ord_item_seq = shipment_id.split("|", 1)[1] if "|" in shipment_id else ""
+            if not ord_item_seq:
+                await _record_failure("SSG", "ordItemSeq 미수집 (shipment_id 비어있음)")
+                return
+            client = SSGClient(api_key)
+            await client.approve_cancel(ord_row.order_number, ord_item_seq)
+            await _finalize_cancelled("SSG")
+        except Exception as e:
+            await _record_failure("SSG", str(e))
+        return
+
+    # ── 옥션 / G마켓 (ESM) ────────────────────────────────────────
+    if market_type in ("gmarket", "auction"):
+        try:
+            from backend.domain.samba.proxy.esmplus import ESMPlusClient
+
+            extras = account.additional_fields or {}
+            api_key = extras.get("apiKey", "") or account.api_key or ""
+            if not api_key:
+                await _record_failure(market_type, "API Key 없음")
+                return
+            site_type = 2 if market_type == "gmarket" else 1  # 1=옥션, 2=G마켓
+            client = ESMPlusClient(api_key)
+            res = await client.approve_cancel_by_orderno(
+                ord_row.order_number, site_type
+            )
+            result_code = res.get("ResultCode") if isinstance(res, dict) else None
+            biz_code = res.get("BizRuleCode", "") if isinstance(res, dict) else ""
+            # 0=성공. 8668+W8-2 = 이미 취소승인 (성공 동급 처리)
+            if result_code == 0 or (result_code == 8668 and biz_code == "W8-2"):
+                await _finalize_cancelled(
+                    "옥션" if market_type == "auction" else "G마켓"
+                )
+            else:
+                await _record_failure(
+                    market_type,
+                    f"ResultCode={result_code} {res.get('Message', '')}",
+                )
+        except Exception as e:
+            await _record_failure(market_type, str(e))
+        return
+
+    # ── eBay ───────────────────────────────────────────────────────
+    if market_type == "ebay":
+        # 셀러측에서 이미 cancel 처리됨 — DB 동기화만
+        try:
+            from backend.domain.samba.returns.repository import SambaReturnRepository
+
+            await _finalize_cancelled("eBay")
+            ret_repo = SambaReturnRepository(sess)
+            rets = await ret_repo.filter_by_async(order_id=ord_row.id)
+            for ret in rets:
+                await ret_repo.update_async(
+                    ret.id, status="completed", market_order_status="취소완료"
+                )
+            await sess.commit()
+        except Exception as e:
+            await _record_failure("eBay", str(e))
+        return
+
+    # ── 그 외 마켓 ─────────────────────────────────────────────────
+    # 쿠팡/PlayAuto/LOTTEON/ESM 등 — 자동 승인 API 미확인 또는 셀러측 자동 처리.
+    # status='cancelling' 유지 + 노트만. 운영자가 status 드롭다운 직접 'cancelled' 변경.
+    await _append_cancel_note(
+        sess,
+        ord_row.id,
+        f"[{now_kst_tag}] {market_type} 자동 취소승인 미지원 — 운영자 수동 처리 필요",
+    )
+    await sess.commit()
 
 
 async def _append_cancel_note(sess, order_id: str, line: str) -> None:
@@ -586,12 +776,16 @@ async def sourcing_cancel_result(body: dict[str, Any]) -> dict[str, Any]:
 
     if cancelled:
         # 성공 → '취소중'(cancelling) 으로 advance. 추후 마켓 폴러가 '취소완료' 확정 시 cancelled 로.
+        # 원주문 취소 성공 = 실제 발주·배송 발생 안 함 → cost/shipping_fee/profit 즉시 0 처리.
         note_line = (
             f"[{now_kst_tag}] 소싱처 자동취소 성공 → 취소중 "
-            f"({site} ord={sourcing_order_number})"
+            f"({site} ord={sourcing_order_number}) (원가/배송비/실수익 0 처리)"
         )
         update_values = {
             "status": "cancelling",
+            "cost": 0,
+            "shipping_fee": 0,
+            "profit": 0,
             "updated_at": datetime.now(timezone.utc),
         }
     elif already_shipped:

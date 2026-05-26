@@ -1083,6 +1083,19 @@ class ESMPlusClient:
             "POST", "/claim/v1/sa/Cancels/Approval", data=params
         )
 
+    async def approve_cancel_by_orderno(
+        self, order_no: str, site_type: int
+    ) -> dict[str, Any]:
+        """취소승인 (단건) — PUT /claim/v1/sa/Cancel/{OrderNo}.
+
+        ESM Trading API 공식 문서. site_type: 1=옥션, 2=G마켓.
+        성공: ResultCode == 0. 옥션 8668+BizRuleCode W8-2 = 이미 취소승인.
+        이미 발송된 주문은 발송처리 API로 처리 → 자동 취소거부됨 (별도 거부 API 없음).
+        """
+        return await self._call_api(
+            "PUT", f"/claim/v1/sa/Cancel/{order_no}", data={"SiteType": site_type}
+        )
+
     async def seller_cancel(self, params: dict[str, Any]) -> dict[str, Any]:
         """판매취소 (품절 등) — POST /claim/v1/sa/Cancels/SellerCancel."""
         return await self._call_api(

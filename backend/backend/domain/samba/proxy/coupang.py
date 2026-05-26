@@ -1331,6 +1331,29 @@ class CoupangClient:
         logger.info(f"[쿠팡] 반품 승인 완료: receiptId={receipt_id}")
         return result
 
+    async def stopped_shipment(
+        self, receipt_id: int, cancel_count: int
+    ) -> dict[str, Any]:
+        """출고중지완료 처리 — 고객 취소요청 + 미발송 단계.
+
+        쿠팡 Wing API: PUT /v2/.../vendors/{vendorId}/returnRequests/{receiptId}/stoppedShipment
+        body: {vendorId, receiptId, cancelCount}
+        조건: 반품상태=출고중지요청(RELEASE_STOP_UNCHECKED) 또는 반품접수미확인 + releaseStatus="N".
+        주의: 출고 후 호출 시 반품처리되어 왕복 배송비 판매자 부담.
+        """
+        path = (
+            f"/v2/providers/openapi/apis/api/v4/vendors/{self.vendor_id}/"
+            f"returnRequests/{receipt_id}/stoppedShipment"
+        )
+        body = {
+            "vendorId": self.vendor_id,
+            "receiptId": receipt_id,
+            "cancelCount": cancel_count,
+        }
+        result = await self._call_api("PUT", path, body=body)
+        logger.info(f"[쿠팡] 출고중지완료: receiptId={receipt_id} count={cancel_count}")
+        return result
+
     async def get_exchange_requests(
         self,
         days: int = 7,
