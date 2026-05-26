@@ -140,27 +140,6 @@ async def list_keys(
     ]
 
 
-@router.delete("/{key_id}", status_code=204)
-async def revoke_key(
-    key_id: str,
-    ctx: _UserCtx = Depends(_get_user_ctx),
-    session: AsyncSession = Depends(get_write_session_dependency),
-):
-    """키 revoke — 이후 해당 키로 API 접근 불가."""
-    result = await session.execute(
-        update(SambaExtensionKey)
-        .where(
-            SambaExtensionKey.id == key_id,
-            SambaExtensionKey.user_id == ctx.user_id,
-            SambaExtensionKey.revoked_at.is_(None),
-        )
-        .values(revoked_at=datetime.now(_UTC))
-    )
-    await session.commit()
-    if result.rowcount == 0:
-        raise HTTPException(404, "키를 찾을 수 없거나 이미 revoke됨")
-
-
 # 데몬 설치 exe 원본 (GitHub Release). 단일 파일명 `samba.exe` — 모든 PC 동일 파일.
 # 토큰/PC명 임베드 제거(2026-05-25, v1.3.0): 유상 판매용 깔끔한 파일명. 인증은 별도 키 발급
 # 엔드포인트(`/extension-keys/daemon-key/issue`)로 분리 — 사용자 UI에서 키 발급/복사 후
@@ -289,6 +268,30 @@ async def issue_daemon_key(
     session.add(record)
     await session.commit()
     return _DaemonKeyResponse(api_key=raw_token, id=record.id, label=label)
+
+
+# 동적 path `/{key_id}` 은 마지막에 정의 — `/daemon-installer` `/daemon-key/issue`
+# 같은 정적 경로보다 뒤에 와야 FastAPI 라우트 매칭 우선순위 정상.
+# (2026-05-26 사고: DELETE `/{key_id}` 가 먼저 정의돼 GET `/daemon-installer` 도 405 반환)
+@router.delete("/{key_id}", status_code=204)
+async def revoke_key(
+    key_id: str,
+    ctx: _UserCtx = Depends(_get_user_ctx),
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """키 revoke — 이후 해당 키로 API 접근 불가."""
+    result = await session.execute(
+        update(SambaExtensionKey)
+        .where(
+            SambaExtensionKey.id == key_id,
+            SambaExtensionKey.user_id == ctx.user_id,
+            SambaExtensionKey.revoked_at.is_(None),
+        )
+        .values(revoked_at=datetime.now(_UTC))
+    )
+    await session.commit()
+    if result.rowcount == 0:
+        raise HTTPException(404, "키를 찾을 수 없거나 이미 revoke됨")
 
 
 # ── 데몬 self-update (X-Api-Key 인증, JWT 면제) — SaaS 1클릭 자동 갱신 ─────────
