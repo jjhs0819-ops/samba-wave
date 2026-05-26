@@ -211,6 +211,11 @@ class SambaOrder(SQLModel, table=True):
         default=None, sa_column=Column(Text, nullable=True)
     )
 
+    # 쿠팡 옵션 ID (송장업로드 /orders/invoices 본문 필수 파라미터)
+    vendor_item_id: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
     # 출처
     source: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     shipment_id: Optional[str] = Field(

@@ -289,12 +289,34 @@ async def _send_coupang(order, account, courier, tracking, session):
     if not (access_key and secret_key and vendor_id):
         return False, "쿠팡 자격증명(accessKey/secretKey/vendorId) 누락"
 
+    # 쿠팡 ingest 매핑:
+    #   order.order_number  = shipmentBoxId (배송번호=묶음배송)
+    #   order.shipment_id   = orderId       (주문번호)
+    #   order.vendor_item_id = vendorItemId (옵션 ID)
+    # 과거 ext_order_number → shipmentBoxId 폴백 경로는 잘못된 매핑이라 제거.
     try:
-        shipment_box_id = int(order.ext_order_number or order.shipment_id or 0)
+        shipment_box_id = int(order.order_number or 0)
     except (TypeError, ValueError):
-        return False, f"쿠팡 shipmentBoxId 형식 오류: {order.ext_order_number}"
+        return False, f"쿠팡 shipmentBoxId 형식 오류: {order.order_number}"
     if not shipment_box_id:
-        return False, "쿠팡 shipmentBoxId 누락 (ext_order_number/shipment_id)"
+        return False, "쿠팡 shipmentBoxId 누락 (order_number)"
+
+    try:
+        order_id_val = int(order.shipment_id or 0)
+    except (TypeError, ValueError):
+        return False, f"쿠팡 orderId 형식 오류: {order.shipment_id}"
+    if not order_id_val:
+        return False, "쿠팡 orderId 누락 (shipment_id)"
+
+    try:
+        vendor_item_id_val = int(getattr(order, "vendor_item_id", None) or 0)
+    except (TypeError, ValueError):
+        return (
+            False,
+            f"쿠팡 vendorItemId 형식 오류: {getattr(order, 'vendor_item_id', None)}",
+        )
+    if not vendor_item_id_val:
+        return False, "쿠팡 vendorItemId 누락 (vendor_item_id) — 발주서 재수집 필요"
 
     try:
         client = CoupangClient(
@@ -307,6 +329,8 @@ async def _send_coupang(order, account, courier, tracking, session):
         shipment_box_id=shipment_box_id,
         delivery_company_code=courier,
         invoice_number=tracking,
+        order_id=order_id_val,
+        vendor_item_id=vendor_item_id_val,
     )
     if isinstance(api_resp, dict) and api_resp.get("ok", True):
         return True, "쿠팡 송장 전송 완료"

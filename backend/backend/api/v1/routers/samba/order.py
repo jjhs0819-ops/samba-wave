@@ -1364,6 +1364,20 @@ async def export_orders_excel(
         c.fill = yellow
         c.alignment = center
 
+    # 마켓별 마켓주문번호 컬럼 보정:
+    #   - 롯데ON: order_number 형식 "{odNo}_{odSeq}" → 끝의 "_숫자" suffix 제거하여 odNo만 노출
+    #   - 쿠팡: order_number 에 shipmentBoxId(=배송번호)가 들어 있으나, 발주서의 "주문번호"는 orderId.
+    #          orderId 는 shipment_id 컬럼에 저장되어 있으므로 shipment_id 를 우선 사용.
+    lotteon_suffix_re = re.compile(r"_\d+$")
+
+    def excel_market_order_no(o: SambaOrder, market_name: str) -> str:
+        raw = (o.order_number or "").strip()
+        if market_name == "쿠팡":
+            return (o.shipment_id or raw or "").strip()
+        if market_name == "롯데ON":
+            return lotteon_suffix_re.sub("", raw)
+        return raw
+
     for o in rows:
         market_name, market_account = split_channel(o.channel_name)
         paid_kst = ""
@@ -1379,7 +1393,7 @@ async def export_orders_excel(
                 market_account,
                 o.customer_name or "",
                 o.product_name or "",
-                o.order_number or "",
+                excel_market_order_no(o, market_name),
                 int(o.cost or 0),
                 int(o.shipping_fee or 0),
                 o.sourcing_order_number or "",
@@ -7443,9 +7457,13 @@ def _parse_coupang_order(
     # shipmentBoxId 우선 (배송단위 안정 ID), orderId fallback
     order_number = str(shipment_box_id or order_id or "")
 
+    # 쿠팡 옵션 ID — 송장업로드 API(/orders/invoices) body 필수 파라미터
+    vendor_item_id = str(first_item.get("vendorItemId") or "") or None
+
     return {
         "order_number": order_number,
         "shipment_id": str(order_id) if order_id else "",
+        "vendor_item_id": vendor_item_id,
         "channel_id": account_id,
         "channel_name": account_label,
         "product_id": str(

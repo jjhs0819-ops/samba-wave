@@ -1242,21 +1242,56 @@ class CoupangClient:
         shipment_box_id: int,
         delivery_company_code: str,
         invoice_number: str,
+        order_id: int | None = None,
+        vendor_item_id: int | None = None,
     ) -> dict[str, Any]:
-        """송장번호 입력 (배송 시작).
+        """송장업로드 처리 (배송지시 상태로 변경).
 
-        쿠팡 Wing API: PUT /v2/.../vendors/{vendorId}/ordersheets/{shipmentBoxId}/invoices
+        쿠팡 Wing API:
+          POST /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/orders/invoices
+
+        body.orderSheetInvoiceApplyDtos[] 에 shipmentBoxId/orderId/vendorItemId 모두 필수.
+        과거 PUT /ordersheets/{id}/invoices 경로는 404 — 사용 금지.
         """
-        path = f"/v2/providers/openapi/apis/api/v4/vendors/{self.vendor_id}/ordersheets/{shipment_box_id}/invoices"
+        if not order_id or not vendor_item_id:
+            raise ValueError(
+                "쿠팡 송장업로드 필수 파라미터 누락 (orderId/vendorItemId)"
+            )
+        path = f"/v2/providers/openapi/apis/api/v4/vendors/{self.vendor_id}/orders/invoices"
         body = {
             "vendorId": self.vendor_id,
-            "shipmentBoxId": shipment_box_id,
-            "deliveryCompanyCode": delivery_company_code,
-            "invoiceNumber": invoice_number,
+            "orderSheetInvoiceApplyDtos": [
+                {
+                    "shipmentBoxId": shipment_box_id,
+                    "orderId": order_id,
+                    "vendorItemId": vendor_item_id,
+                    "deliveryCompanyCode": delivery_company_code,
+                    "invoiceNumber": invoice_number,
+                    "splitShipping": False,
+                    "preSplitShipped": False,
+                    "estimatedShippingDate": "",
+                }
+            ],
         }
-        result = await self._call_api("PUT", path, body=body)
+        result = await self._call_api("POST", path, body=body)
+        # 부분 실패 감지 — responseList[0].succeed 가 false 면 에러로 처리.
+        try:
+            data = result.get("data") if isinstance(result, dict) else None
+            rl = (data or {}).get("responseList") or []
+            if rl:
+                first = rl[0]
+                if not first.get("succeed"):
+                    code = first.get("resultCode") or "UNKNOWN"
+                    msg = first.get("resultMessage") or ""
+                    return {
+                        "ok": False,
+                        "error": f"{code} {msg}".strip(),
+                        "raw": result,
+                    }
+        except Exception:
+            pass
         logger.info(
-            f"[쿠팡] 송장 입력 완료: boxId={shipment_box_id}, 송장={invoice_number}"
+            f"[쿠팡] 송장 입력 완료: boxId={shipment_box_id}, orderId={order_id}, vendorItemId={vendor_item_id}, 송장={invoice_number}"
         )
         return result
 
