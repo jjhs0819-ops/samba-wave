@@ -254,8 +254,15 @@ export default function OrdersPage() {
   useEffect(() => {
     setCurrentPage(1)
   }, [pageSize, customStart, customEnd, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, registrationFilter, inputFilter, invoiceFilter, searchCategory, sortBy, isProductMode, cpId])
-  useEffect(() => {
+  // 주문에 연결된 상품 id 집합이 바뀔 때만 재fetch — patchOrder로 orders 참조만 바뀌면 fetch 생략
+  const collectedProductIdsKey = useMemo(() => {
     const ids = [...new Set(orders.map(o => o.collected_product_id).filter((id): id is string => !!id))]
+    ids.sort()
+    return ids.join(',')
+  }, [orders])
+
+  useEffect(() => {
+    const ids = collectedProductIdsKey ? collectedProductIdsKey.split(',') : []
     if (ids.length === 0) {
       setCollectedProductCosts({})
       setCollectedProductSourceSites({})
@@ -282,7 +289,7 @@ export default function OrdersPage() {
       }
     })()
     return () => { cancelled = true }
-  }, [orders])
+  }, [collectedProductIdsKey])
 
   useEffect(() => {
     orderApi.getAlarmSettings().then(d => {

@@ -239,7 +239,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                           color: o.status === 'ship_failed' ? '#FF3232' : inputStyle.color,
                         }}
                       >
-                        {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k} style={k === 'ship_failed' ? { color: '#FF3232' } : {}}>{v.label}</option>)}
+                        {Object.entries(STATUS_MAP).filter(([k]) => k !== 'preparing').map(([k, v]) => <option key={k} value={k} style={k === 'ship_failed' ? { color: '#FF3232' } : {}}>{v.label}</option>)}
                       </select>
                       <input
                         type="text"
