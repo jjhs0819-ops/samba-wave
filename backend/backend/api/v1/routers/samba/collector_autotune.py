@@ -364,26 +364,38 @@ _filters_avail_lock = asyncio.Lock()
 _AUTOTUNE_TRANSMIT_MAX_CONCURRENCY = int(
     os.environ.get("AUTOTUNE_TRANSMIT_MAX_CONCURRENCY", "5")
 )
-_autotune_transmit_sem: Optional[asyncio.Semaphore] = None
+# PC 별 transmit 세마포어 — 한 PC 의 transmit 점유가 다른 PC starvation 일으키지
+# 않도록 device_id 단위 분리 (2026-05-26 ABC starvation 사고).
+# 옛 글로벌 단일 세마포어 = MUSINSA 등 transmit 많은 사이트가 5건 점유 시 ABC
+# cycle 의 transmit task 가 같은 슬롯 대기 → ABC cycle blocked.
+_autotune_transmit_sems: dict[str, asyncio.Semaphore] = {}
 
 
-def _get_transmit_sem() -> asyncio.Semaphore:
-    """이벤트 루프에 바인딩된 세마포어 lazy init (모듈 import 시점엔 루프 없음)."""
-    global _autotune_transmit_sem
-    if _autotune_transmit_sem is None:
-        _autotune_transmit_sem = asyncio.Semaphore(_AUTOTUNE_TRANSMIT_MAX_CONCURRENCY)
-    return _autotune_transmit_sem
+def _get_transmit_sem(device_id: str = "") -> asyncio.Semaphore:
+    """PC 별 세마포어 lazy init — 한 PC 의 transmit 가 다른 PC 영향 X."""
+    key = (device_id or "").strip() or "_default"
+    sem = _autotune_transmit_sems.get(key)
+    if sem is None:
+        sem = asyncio.Semaphore(_AUTOTUNE_TRANSMIT_MAX_CONCURRENCY)
+        _autotune_transmit_sems[key] = sem
+    return sem
 
 
 async def _run_transmit_in_background(coro_factory):
-    """fire-and-forget으로 전송 실행 — 세마포어로 동시 실행 제한.
+    """fire-and-forget으로 전송 실행 — PC 별 세마포어로 동시 실행 제한.
 
     coro_factory: 호출 시 코루틴을 반환하는 callable.
     예외는 로그로만 남김 (refresher 본 흐름에 영향 없음).
+    PC 별 분리 (current_pc_owner ContextVar) — 한 PC 의 transmit 가 다른 PC 영향 X.
     """
     from backend.domain.samba.collector.refresher import is_bulk_cancelled
 
-    sem = _get_transmit_sem()
+    # 현재 사이클 publisher device_id 컨텍스트 — _site_autotune_loop 에서 set 됨.
+    try:
+        _dev = current_pc_owner.get()
+    except LookupError:
+        _dev = ""
+    sem = _get_transmit_sem(_dev)
     async with sem:
         if is_bulk_cancelled("transmit"):
             return
