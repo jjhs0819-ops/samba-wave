@@ -3,8 +3,18 @@
 #
 # 사전 준비:
 # 1. /opt/samba/.env 에 환경변수 배치 (WRITE_DB_*, READ_DB_*, 기타 시크릿)
+#    + 운영 식별자: GCP_PROJECT, AR_REGION, AR_REPO, IMAGE_NAME, CLOUDSQL_INSTANCE
 # 2. /opt/samba/sa-key.json 에 Cloud SQL 접근 서비스 계정 키 배치
 # 3. sudo docker login ghcr.io (이미지 pull 권한)
+#
+# 운영 식별자(GCP project ID, Cloud SQL instance) 는 .env 의 변수로 분리 — public repo
+# leak 차단. docker compose 가 ${VAR} 패턴을 .env 에서 자동 치환.
+# 예시 .env:
+#   GCP_PROJECT=my-gcp-project-id
+#   AR_REGION=asia-northeast3
+#   AR_REPO=cloud-run-source-deploy
+#   IMAGE_NAME=samba-wave-api
+#   CLOUDSQL_INSTANCE=my-gcp-project-id:asia-northeast3:samba-wave-db
 #
 # 실행:
 #   cd /opt/samba && sudo docker compose up -d
@@ -39,7 +49,9 @@ services:
       - "--credentials-file=/sa-key.json"
       - "--address=0.0.0.0"
       - "--port=5432"
-      - "fresh-sanctuary-489804-v4:asia-northeast3:samba-wave-db"
+      - "${CLOUDSQL_INSTANCE:?CLOUDSQL_INSTANCE 미설정 — /opt/samba/.env 확인}"
+    env_file:
+      - /opt/samba/.env
     volumes:
       - /opt/samba/sa-key.json:/sa-key.json:ro
     networks:
@@ -47,7 +59,7 @@ services:
 
   # Blue (메인) — 평소 활성. Caddy lb_policy first 의 우선 upstream.
   samba-api:
-    image: asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/cloud-run-source-deploy/samba-wave-api:latest
+    image: ${AR_REGION:-asia-northeast3}-docker.pkg.dev/${GCP_PROJECT:?GCP_PROJECT 미설정}/${AR_REPO:-cloud-run-source-deploy}/${IMAGE_NAME:-samba-wave-api}:latest
     restart: unless-stopped
     depends_on:
       - cloud-sql-proxy
@@ -73,7 +85,7 @@ services:
   # Green (스테이징) — 평소 stopped. 무중단 배포 시 임시 활성화되어 Caddy 자동 fallback 대상.
   # 'staging' profile 로 격리해 평상시 'docker compose up -d' 에 포함되지 않음.
   samba-api-staging:
-    image: asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/cloud-run-source-deploy/samba-wave-api:latest
+    image: ${AR_REGION:-asia-northeast3}-docker.pkg.dev/${GCP_PROJECT:?GCP_PROJECT 미설정}/${AR_REPO:-cloud-run-source-deploy}/${IMAGE_NAME:-samba-wave-api}:latest
     restart: "no"
     profiles: ["staging"]
     depends_on:

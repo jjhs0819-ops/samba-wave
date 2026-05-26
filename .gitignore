@@ -41,6 +41,10 @@ deploy/personal/Caddyfile.rendered
 sa-key.json
 *.sa-key.json
 
+# 운영 식별자 로컬 설정 (PROJECT_ID/VM_HOST/SA_EMAIL 등) — public repo leak 차단
+deploy/.env.deploy
+.env.deploy
+
 # Claude IDE 전체 (프로덕션 무관)
 .claude/
 backend/.claude/

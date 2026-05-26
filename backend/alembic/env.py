@@ -41,8 +41,12 @@ db_port = os.getenv("WRITE_DB_PORT") or os.getenv("write_db_port", "5433")
 db_name = os.getenv("WRITE_DB_NAME") or os.getenv("write_db_name", "test_little_boy")
 
 # ── 운영 DB 직접 마이그레이션 차단 ──
-# Cloud Run(ENVIRONMENT=production)에서는 허용, 로컬 개발 환경에서만 차단
-_PRODUCTION_HOSTS = ["/cloudsql/fresh-sanctuary", "/cloudsql/samba-wave-molle"]
+# Cloud Run(ENVIRONMENT=production)에서는 허용, 로컬 개발 환경에서만 차단.
+# 운영 host prefix 는 PRODUCTION_DB_HOSTS env 콤마 분리로 분리 — public repo leak 차단.
+# 예: PRODUCTION_DB_HOSTS="/cloudsql/<project>,34.47.96.236"
+_PRODUCTION_HOSTS = [
+    h.strip() for h in os.getenv("PRODUCTION_DB_HOSTS", "").split(",") if h.strip()
+]
 _is_production_host = any(p in db_host for p in _PRODUCTION_HOSTS)
 _app_env = os.getenv("ENVIRONMENT", "development")
 if (

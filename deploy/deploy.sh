@@ -16,16 +16,38 @@
 set -e
 
 # ─────────────────────────────────────
-# 설정
+# 설정 — 운영 식별자는 환경변수 / .env.deploy 로 분리 (public repo leak 차단)
+#
+# 우선순위: 1) 쉘 export 환경변수 → 2) ~/samba-vm-secrets/deploy.env source
+#         → 3) gcloud config get-value project (PROJECT_ID 만)
+# 누락 시 즉시 fail-fast.
+# .env.deploy.example 템플릿 참고.
 # ─────────────────────────────────────
-PROJECT_ID="fresh-sanctuary-489804-v4"
-AR_REGION="asia-northeast3"
-AR_REPO="cloud-run-source-deploy"
-IMAGE_NAME="samba-wave-api"
-VM_HOST="api.samba-wave.co.kr"
-VM_USER="sbk0674"
-SSH_KEY="$HOME/samba-vm-secrets/ssh/deploy_key"
-ENV_FILE="$HOME/samba-vm-secrets/deploy.env"
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="${SAMBA_DEPLOY_ENV:-$HOME/samba-vm-secrets/deploy.env}"
+
+# 1) deploy.env 파일 source (카카오 토큰 + 운영 식별자 포함 가능)
+if [[ -f "$ENV_FILE" ]]; then
+  set +e
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set -e
+fi
+
+# 2) PROJECT_ID 미설정 시 gcloud 활성 project 폴백
+if [[ -z "${PROJECT_ID:-}" ]]; then
+  PROJECT_ID="$(gcloud config get-value project 2>/dev/null || echo "")"
+fi
+
+# 3) 필수 변수 검증
+: "${PROJECT_ID:?PROJECT_ID 미설정 — deploy.env 작성 또는 export 필요}"
+: "${VM_HOST:?VM_HOST 미설정 — deploy.env 작성 또는 export 필요}"
+: "${VM_USER:?VM_USER 미설정 — deploy.env 작성 또는 export 필요}"
+
+AR_REGION="${AR_REGION:-asia-northeast3}"
+AR_REPO="${AR_REPO:-cloud-run-source-deploy}"
+IMAGE_NAME="${IMAGE_NAME:-samba-wave-api}"
+SSH_KEY="${SSH_KEY:-$HOME/samba-vm-secrets/ssh/deploy_key}"
 
 IMAGE="${AR_REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/${IMAGE_NAME}"
 SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "local")
@@ -42,11 +64,8 @@ for arg in "$@"; do
   esac
 done
 
-if [[ -f "$ENV_FILE" ]] && [[ "$SKIP_KAKAO" == "false" ]]; then
-  set +e
-  source "$ENV_FILE"
-  set -e
-fi
+# 카카오 토큰은 위 ENV_FILE source 단계에서 이미 로드됨 (운영 식별자와 동일 파일)
+# SKIP_KAKAO 옵션은 알림 호출만 skip — env 로드는 항상 시도.
 
 # ─────────────────────────────────────
 # 컬러 출력

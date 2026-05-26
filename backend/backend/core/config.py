@@ -1,3 +1,4 @@
+import os
 import re
 from typing import Literal
 
@@ -233,10 +234,11 @@ class BackendSettings(BaseSettings):
 _settings = BackendSettings()
 
 # ── 개발 환경에서 운영 DB 접속 차단 ──
+# 운영 DB 호스트 식별자는 PRODUCTION_DB_HOSTS env 콤마 분리로 분리 — public repo
+# leak 차단. 빈값이면 차단 로직 비활성(개발자 책임).
+# 예: PRODUCTION_DB_HOSTS="34.47.96.236,/cloudsql/<project>,/cloudsql/<other>"
 _PRODUCTION_DB_HOSTS = [
-    "34.47.96.236",
-    "/cloudsql/fresh-sanctuary",  # 팀장님 운영 DB
-    "/cloudsql/samba-wave-molle",  # 준길 운영 DB
+    h.strip() for h in os.getenv("PRODUCTION_DB_HOSTS", "").split(",") if h.strip()
 ]
 if _settings.is_development:
     for _h in _PRODUCTION_DB_HOSTS:

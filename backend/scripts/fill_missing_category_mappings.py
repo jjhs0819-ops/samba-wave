@@ -1,6 +1,7 @@
 """미매핑 카테고리 14건을 일괄 INSERT (프로덕션 DB).
 
-사전 조건: cloud-sql-proxy --port 15432 fresh-sanctuary-489804-v4:asia-northeast3:samba-wave-db
+사전 조건: cloud-sql-proxy --port 15432 <YOUR_GCP_PROJECT>:<REGION>:<CLOUDSQL_INSTANCE>
+         (예: <PROJECT>:asia-northeast3:samba-wave-db)
 """
 
 import asyncio

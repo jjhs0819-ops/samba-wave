@@ -1,9 +1,22 @@
 availableSecrets:
   secretManager:
-    - versionName: projects/fresh-sanctuary-489804-v4/secrets/kakao-rest-api-key/versions/latest
+    - versionName: projects/$PROJECT_ID/secrets/kakao-rest-api-key/versions/latest
       env: KAKAO_API_KEY
-    - versionName: projects/fresh-sanctuary-489804-v4/secrets/kakao-refresh-token/versions/latest
+    - versionName: projects/$PROJECT_ID/secrets/kakao-refresh-token/versions/latest
       env: KAKAO_REFRESH_TOKEN
+
+# 운영 식별자는 user-defined substitution 으로 분리 — public repo leak 차단.
+# project ID 는 Cloud Build 빌트인 $PROJECT_ID 사용.
+# Cloud Run URL/project number 는 _CLOUD_RUN_URL 로 분리 (override 필수).
+#
+# 기본값은 메인 운영자 환경 기준이 아닌 placeholder. 실제 트리거에서
+# --substitutions=_CLOUD_RUN_URL=... 또는 Cloud Build 트리거 설정에서 주입.
+substitutions:
+  _AR_REGION: asia-northeast3
+  _AR_REPO: cloud-run-source-deploy
+  _IMAGE_NAME: samba-wave-api
+  _CLOUD_RUN_SERVICE: samba-wave-api
+  _CLOUD_RUN_URL: ""  # 트리거에서 주입 (예: my-svc-NNN.region.run.app)
 
 steps:
   # Step 1: 마이그레이션 체크 (HEAD~1 없는 shallow clone 환경이면 스킵)
@@ -37,7 +50,7 @@ steps:
     args:
       - '-c'
       - |
-        docker pull asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/cloud-run-source-deploy/samba-wave-api:latest || true
+        docker pull ${_AR_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:latest || true
 
   # Step 3: Docker 빌드 (BuildKit inline cache 활용)
   - name: 'gcr.io/cloud-builders/docker'
@@ -47,13 +60,13 @@ steps:
     args:
       - build
       - '--cache-from'
-      - 'asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/cloud-run-source-deploy/samba-wave-api:latest'
+      - '${_AR_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:latest'
       - '--build-arg'
       - 'BUILDKIT_INLINE_CACHE=1'
       - '-t'
-      - 'asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/cloud-run-source-deploy/samba-wave-api:$COMMIT_SHA'
+      - '${_AR_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:$COMMIT_SHA'
       - '-t'
-      - 'asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/cloud-run-source-deploy/samba-wave-api:latest'
+      - '${_AR_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:latest'
       - './backend'
 
   # Step 4: 이미지 푸시
@@ -62,7 +75,7 @@ steps:
     args:
       - push
       - '--all-tags'
-      - 'asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/cloud-run-source-deploy/samba-wave-api'
+      - '${_AR_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}'
 
   # Step 5: Cloud Run 배포 (빌드된 이미지 사용)
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -72,10 +85,10 @@ steps:
       - '-c'
       - |
         SHORT_SHA=$$(echo "$COMMIT_SHA" | cut -c1-7)
-        gcloud run deploy samba-wave-api \
-          --image "asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/cloud-run-source-deploy/samba-wave-api:$COMMIT_SHA" \
-          --region asia-northeast3 \
-          --project fresh-sanctuary-489804-v4 \
+        gcloud run deploy ${_CLOUD_RUN_SERVICE} \
+          --image "${_AR_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:$COMMIT_SHA" \
+          --region ${_AR_REGION} \
+          --project $PROJECT_ID \
           --revision-suffix="$$SHORT_SHA" \
           --update-labels="commit-sha=$$SHORT_SHA" \
           --update-env-vars "COMMIT_SHA=$COMMIT_SHA,WEB_CONCURRENCY=1,GUNICORN_CMD_ARGS=--timeout 300 --graceful-timeout 300,TERMINATION_GRACE_HACK=1" \
@@ -95,23 +108,23 @@ steps:
       - '-c'
       - |
         LATEST=$$(gcloud run revisions list \
-          --service=samba-wave-api \
-          --region=asia-northeast3 \
-          --project=fresh-sanctuary-489804-v4 \
+          --service=${_CLOUD_RUN_SERVICE} \
+          --region=${_AR_REGION} \
+          --project=$PROJECT_ID \
           --sort-by=~createTime \
           --limit=1 \
           --format="value(name)")
-        SERVING=$$(gcloud run services describe samba-wave-api \
-          --region=asia-northeast3 \
-          --project=fresh-sanctuary-489804-v4 \
+        SERVING=$$(gcloud run services describe ${_CLOUD_RUN_SERVICE} \
+          --region=${_AR_REGION} \
+          --project=$PROJECT_ID \
           --format="value(status.traffic[0].revisionName)")
         echo "최신 리비전: $$LATEST"
         echo "트래픽 리비전: $$SERVING"
         if [ "$$LATEST" != "$$SERVING" ]; then
           echo "⚠️ 트래픽이 구 리비전에 고정됨 — 강제 전환"
-          gcloud run services update-traffic samba-wave-api \
-            --region=asia-northeast3 \
-            --project=fresh-sanctuary-489804-v4 \
+          gcloud run services update-traffic ${_CLOUD_RUN_SERVICE} \
+            --region=${_AR_REGION} \
+            --project=$PROJECT_ID \
             --to-latest --quiet
           echo "✅ 최신 리비전으로 트래픽 전환 완료"
         fi
@@ -124,8 +137,12 @@ steps:
       - '-c'
       - |
         sleep 15
+        if [ -z "${_CLOUD_RUN_URL}" ]; then
+          echo "⚠️ _CLOUD_RUN_URL 미설정 — health check skip (트리거 substitution 확인 권장)"
+          exit 0
+        fi
         STATUS=$$(curl -s -o /dev/null -w "%{http_code}" \
-          https://samba-wave-api-363598397345.asia-northeast3.run.app/api/v1/health)
+          https://${_CLOUD_RUN_URL}/api/v1/health)
         if [ "$$STATUS" != "200" ]; then
           echo "❌ Health check 실패 (HTTP $$STATUS)"
           exit 1
@@ -149,11 +166,11 @@ steps:
         SHORT_SHA=$(echo "$COMMIT_SHA" | cut -c1-7)
         curl -s -X POST https://kapi.kakao.com/v2/api/talk/memo/default/send \
           -H "Authorization: Bearer $$ACCESS_TOKEN" \
-          --data-urlencode "template_object={\"object_type\":\"text\",\"text\":\"✅ 배포 완료\n커밋: $${SHORT_SHA}\n브랜치: $BRANCH_NAME\",\"link\":{\"web_url\":\"https://console.cloud.google.com/cloud-build/builds?project=fresh-sanctuary-489804-v4\"}}"
+          --data-urlencode "template_object={\"object_type\":\"text\",\"text\":\"✅ 배포 완료\n커밋: $${SHORT_SHA}\n브랜치: $BRANCH_NAME\",\"link\":{\"web_url\":\"https://console.cloud.google.com/cloud-build/builds?project=$PROJECT_ID\"}}"
 
 images:
-  - 'asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/cloud-run-source-deploy/samba-wave-api:$COMMIT_SHA'
-  - 'asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/cloud-run-source-deploy/samba-wave-api:latest'
+  - '${_AR_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:$COMMIT_SHA'
+  - '${_AR_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:latest'
 
 options:
   logging: CLOUD_LOGGING_ONLY

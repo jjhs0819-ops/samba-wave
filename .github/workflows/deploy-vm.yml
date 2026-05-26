@@ -5,7 +5,8 @@
 # - 협업자가 배포 트리거
 #
 # 사전 설정 (Settings → Secrets → Actions):
-# - GCP_SA_KEY, VM_SSH_PRIVATE_KEY, VM_HOST, VM_USER
+# - GCP_SA_KEY, GCP_PROJECT_ID, VM_SSH_PRIVATE_KEY, VM_HOST, VM_USER
+# - (선택) AR_REGION, AR_REPO, IMAGE_NAME — 미설정 시 아래 기본값 사용
 
 name: Deploy to GCE VM
 
@@ -18,10 +19,11 @@ on:
         default: "manual"
 
 env:
-  GCP_PROJECT: fresh-sanctuary-489804-v4
-  AR_REGION: asia-northeast3
-  AR_REPO: cloud-run-source-deploy
-  IMAGE_NAME: samba-wave-api
+  # 운영 식별자는 secrets 로 분리 — public repo leak 차단.
+  GCP_PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+  AR_REGION: ${{ vars.AR_REGION || 'asia-northeast3' }}
+  AR_REPO: ${{ vars.AR_REPO || 'cloud-run-source-deploy' }}
+  IMAGE_NAME: ${{ vars.IMAGE_NAME || 'samba-wave-api' }}
 
 jobs:
   build-and-deploy:
