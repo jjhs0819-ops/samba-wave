@@ -175,6 +175,10 @@ _pc_cycle_count: dict[str, int] = {}
 _pc_restart_count: dict[str, int] = {}
 _pc_last_tick: dict[str, str] = {}
 _pc_site_tasks: dict[str, dict[str, asyncio.Task]] = {}
+# PC별 백그라운드 transmit fire-and-forget 태스크 — autotune_stop에서 함께 cancel.
+# fire-and-forget으로 띄운 transmit 잡이 main_task/site_tasks와 분리돼 정지 후에도 계속
+# 살아 전송되던 버그(2026-05-27) 해결용. dev별 분리, done 시 discard.
+_pc_bg_transmit_tasks: dict[str, set[asyncio.Task]] = {}
 _pc_site_cycle_counts: dict[str, dict[str, int]] = {}
 _pc_site_last_ticks: dict[str, dict[str, str]] = {}
 _pc_site_empty_hits: dict[str, dict[str, int]] = {}
@@ -344,6 +348,7 @@ def _cleanup_pc_instance(dev: str) -> None:
     _pc_site_heartbeats.pop(dev, None)
     _pc_target_ids.pop(dev, None)
     _pc_site_batch_size.pop(dev, None)
+    _pc_bg_transmit_tasks.pop(dev, None)
 
 
 def any_pc_running() -> bool:
@@ -413,6 +418,9 @@ async def _run_transmit_in_background(coro_factory, site: str = ""):
     sem = _get_transmit_sem(_dev, site)
     async with sem:
         if is_bulk_cancelled("transmit"):
+            return
+        # 세마포어 대기 중 stop 눌렸으면 대기 잡도 진입 차단 — 정지 후 잔여 transmit 방지.
+        if _dev and not _is_pc_running(_dev):
             return
         try:
             await coro_factory()
@@ -583,15 +591,37 @@ def register_pc_allowed_sites(
     return changed
 
 
-async def persist_pc_allowed_sites(session: AsyncSession) -> None:
-    """현재 메모리의 PC 분담 dict를 samba_settings에 저장 (재시작 복원용).
+async def persist_pc_allowed_sites(
+    session: AsyncSession, device_id: str | None = None
+) -> None:
+    """PC 분담 dict를 samba_settings 에 저장.
 
-    값 형식: {device_id: [sites...]}. 호출자가 변경 발생 시에만 호출해 write 부담 최소화.
+    device_id 지정 (권장): read-modify-write 로 그 dev 1개만 갱신. 다른 데몬 분담 보존.
+    device_id=None (legacy): 메모리 전체 snapshot 으로 DB 덮어쓰기 — 콜드 스타트 race
+      에서 다른 데몬 분담 0으로 만드는 사고 (2026-05-27) 의 진원지. restore 자가치유 등
+      "메모리가 진실 출처임이 확실한 경우"에만 사용.
     """
     _log = logging.getLogger("autotune")
     try:
-        from backend.api.v1.routers.samba.proxy._helpers import _set_setting
+        from backend.api.v1.routers.samba.proxy._helpers import (
+            _get_setting,
+            _set_setting,
+        )
 
+        if device_id:
+            dev = device_id.strip()
+            if not dev:
+                return
+            current = await _get_setting(session, PC_ALLOWED_SITES_DB_KEY)
+            if not isinstance(current, dict):
+                current = {}
+            mem = _pc_allowed_sites.get(dev)
+            if mem is None:
+                current.pop(dev, None)
+            else:
+                current[dev] = sorted(mem)
+            await _set_setting(session, PC_ALLOWED_SITES_DB_KEY, current)
+            return
         snapshot = {dev: sorted(sites) for dev, sites in _pc_allowed_sites.items()}
         await _set_setting(session, PC_ALLOWED_SITES_DB_KEY, snapshot)
     except Exception as _e:
@@ -2641,11 +2671,17 @@ async def _site_autotune_loop(device_id: str, site: str):
                                 # 세마포어로 동시 transmit 수 제한해 OOM 방지.
                                 # 정책 변경 직후 폭주(수천 건)에서도 refresher가 await에 막혀
                                 # throughput이 1/min으로 떨어지던 문제 해결.
-                                asyncio.create_task(
+                                _bg_task = asyncio.create_task(
                                     _run_transmit_in_background(
                                         _fire_transmit_group, site=site
                                     )
                                 )
+                                # autotune_stop에서 cancel 가능하도록 dev별 set에 등록.
+                                _bg_set = _pc_bg_transmit_tasks.setdefault(
+                                    device_id, set()
+                                )
+                                _bg_set.add(_bg_task)
+                                _bg_task.add_done_callback(_bg_set.discard)
 
                         # ③ 소싱처별 병렬 갱신 + 결과 즉시 처리 (콜백)
                         from backend.domain.samba.collector.refresher import (
@@ -4136,6 +4172,14 @@ async def autotune_stop(body: AutotuneStopRequest = AutotuneStopRequest()):
         if not _st.done():
             _st.cancel()
     _site_tasks.clear()
+    # 백그라운드 transmit fire-and-forget 태스크도 함께 cancel —
+    # 갱신은 멈춰도 전송이 계속되던 버그(2026-05-27) 해결.
+    _bg_tasks = _pc_bg_transmit_tasks.pop(dev, set())
+    _bg_cancelled = 0
+    for _bt in list(_bg_tasks):
+        if not _bt.done():
+            _bt.cancel()
+            _bg_cancelled += 1
     _main = _pc_main_task.get(dev)
     if _main and not _main.done():
         _main.cancel()
@@ -4155,6 +4199,7 @@ async def autotune_stop(body: AutotuneStopRequest = AutotuneStopRequest()):
         "status": "stopped",
         "stopped_device": dev,
         "remaining_devices": len(other_running),
+        "cancelled_bg_transmits": _bg_cancelled,
     }
 
 
@@ -4218,7 +4263,7 @@ async def autotune_pc_allowed_sites_set(body: PcAllowedSitesRequest):
         from backend.db.orm import get_write_session
 
         async with get_write_session() as _sess:
-            await persist_pc_allowed_sites(_sess)
+            await persist_pc_allowed_sites(_sess, body.device_id)
             await _sess.commit()
     pcs = get_active_pcs()
     return {
@@ -4403,7 +4448,7 @@ async def autotune_cancel_cycle(body: CancelCycleRequest):
             from backend.db.orm import get_write_session
 
             async with get_write_session() as _ws:
-                await persist_pc_allowed_sites(_ws)
+                await persist_pc_allowed_sites(_ws, dev)
         except Exception as _exc:
             logging.getLogger("autotune").warning(
                 f"[cancel-cycle] persist 실패 (무시): {_exc}"

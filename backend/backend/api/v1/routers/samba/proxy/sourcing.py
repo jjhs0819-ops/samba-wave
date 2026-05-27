@@ -136,7 +136,7 @@ async def sourcing_collect_queue(request: Request) -> Any:
                 from backend.db.orm import get_write_session
 
                 async with get_write_session() as _persist_sess:
-                    await persist_pc_allowed_sites(_persist_sess)
+                    await persist_pc_allowed_sites(_persist_sess, device_id)
                     await _persist_sess.commit()
         # 확장앱: 분담 자동 갱신 폐기 — UI 체크박스 저장만 분담 갱신 권한.
     except Exception:
@@ -321,7 +321,7 @@ async def autotune_daemon_concurrency(request: Request) -> dict[str, Any]:
                 from backend.db.orm import get_write_session
 
                 async with get_write_session() as _persist_sess:
-                    await persist_pc_allowed_sites(_persist_sess)
+                    await persist_pc_allowed_sites(_persist_sess, device_id)
                     await _persist_sess.commit()
         _my = get_pc_allowed_sites(device_id)
         if _my:
