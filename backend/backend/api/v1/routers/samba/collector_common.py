@@ -285,17 +285,43 @@ def _get_services(session: AsyncSession):
 # ── 무신사 쿠키 조회 ──
 
 
+async def _get_login_default_musinsa_cookie(session: AsyncSession) -> str:
+    """is_login_default=True 무신사 계정의 cookie 조회 (단일 진실).
+
+    SourcingAccount.additional_fields.musinsa_cookie 만 신뢰. 만료(cookie_expired=True)
+    이거나 미설정이면 빈 문자열 반환 → 호출부가 fallback 결정.
+    """
+    try:
+        from backend.domain.samba.sourcing_account.service import (
+            SambaSourcingAccountService,
+        )
+        from backend.domain.samba.sourcing_account.repository import (
+            SambaSourcingAccountRepository,
+        )
+
+        svc = SambaSourcingAccountService(SambaSourcingAccountRepository(session))
+        acc = await svc.get_login_default("MUSINSA")
+        if not acc:
+            return ""
+        af = acc.additional_fields or {}
+        if af.get("cookie_expired"):
+            return ""
+        return af.get("musinsa_cookie", "") or ""
+    except Exception:
+        return ""
+
+
 async def get_musinsa_cookie(session: AsyncSession | None = None) -> str:
     """DB에서 무신사 쿠키를 조회하여 반환.
 
-    session이 주어지면 해당 세션으로 조회하고,
-    없으면 새 읽기 세션을 열어 조회한다.
+    우선순위 (2026-05-27 변경):
+      1) is_login_default=True SourcingAccount.additional_fields.musinsa_cookie
+         — 자동로그인 계정 단일 진실. 오토튠 _get_autologin_musinsa_cookie 와 동일 경로로
+         일치시켜 cost 계산 들쑥날쑥 차단.
+      2) (fallback) SambaSettings.musinsa_cookie — 자동로그인 계정 미설정/만료 시.
 
-    SambaSettings.musinsa_cookie는 _set_setting을 통해 Fernet 암호화 상태로 저장되므로
-    조회 시 반드시 decrypt_value로 복호화해야 한다. 복호화 누락 시 무신사 API에 암호화
-    토큰('gAAAAA...')이 그대로 전달되어 인증 안 된 요청으로 인식, 등급 할인이 0%로
-    응답되는 문제가 발생함 (2026-05-01 진단). decrypt_value는 평문 폴백을 지원해
-    마이그레이션 기간 동안 평문 데이터도 안전하게 처리한다.
+    SambaSettings.musinsa_cookie 는 _set_setting 을 통해 Fernet 암호화 상태로 저장되므로
+    조회 시 반드시 decrypt_value 로 복호화 (2026-05-01 진단).
     """
     from backend.domain.samba.forbidden.model import SambaSettings
     from backend.utils.crypto import decrypt_value
@@ -303,6 +329,9 @@ async def get_musinsa_cookie(session: AsyncSession | None = None) -> str:
 
     if session is not None:
         try:
+            cookie = await _get_login_default_musinsa_cookie(session)
+            if cookie:
+                return cookie
             result = await session.execute(
                 _sel(SambaSettings).where(SambaSettings.key == "musinsa_cookie")
             )
@@ -320,6 +349,9 @@ async def get_musinsa_cookie(session: AsyncSession | None = None) -> str:
         from backend.db.orm import get_read_session
 
         async with get_read_session() as new_session:
+            cookie = await _get_login_default_musinsa_cookie(new_session)
+            if cookie:
+                return cookie
             result = await new_session.execute(
                 _sel(SambaSettings).where(SambaSettings.key == "musinsa_cookie")
             )

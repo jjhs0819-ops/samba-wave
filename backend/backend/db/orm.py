@@ -113,10 +113,14 @@ def _build_write_engine() -> AsyncEngine:
         connect_args={
             "timeout": 10,  # asyncpg 연결 타임아웃 10초
             "server_settings": {
-                # 좀비 차단 단축 — idle in transaction 60s 초과 시 PostgreSQL 자동 종료.
-                # 풀 점유 좀비 (image 23건 발견 2026-05-26) 회수 가속.
-                # transmit task 가 60s 넘는 마켓 HTTP 호출 가지면 실패 — 대부분 30~45s 라 안전.
-                "idle_in_transaction_session_timeout": "60000",
+                # 좀비 차단 — idle in transaction 초과 시 PostgreSQL 자동 종료.
+                # 60s → 180s 상향 (2026-05-27): transmit/worker 가 마켓 HTTP 호출
+                # 동안 write 세션 트랜잭션 보유 → 60s IIT 만나면 서버 강제 close →
+                # 다음 commit/query 에서 `connection is closed` (InterfaceError) → 잡 실패.
+                # 사례: 24h 12건 InterfaceError, worker.py:1311 _process_one (26s),
+                # collector_autotune.py:418 _run_transmit_in_background (5~17s) 핫스팟.
+                # 좀비 회수는 pool_recycle=45 + 명시적 rollback 경로가 담당, IIT 는 보조.
+                "idle_in_transaction_session_timeout": "180000",
             },
         },
     )

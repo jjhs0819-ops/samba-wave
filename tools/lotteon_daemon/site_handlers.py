@@ -106,7 +106,16 @@ _ABCMART_MARKER_JS = r"""
 (() => {
   try {
     const t = (document.body && document.body.innerText) || ''
-    return /최대\s*혜택가\s*[\d,]+\s*원/.test(t)
+    // fast-path: 혜택가 텍스트 보이면 즉시 hit.
+    if (/최대\s*혜택가\s*[\d,]+\s*원/.test(t)) return true
+    // 혜택가 없는 상품(쿠폰/멤버십 0) 무한 대기 차단 — 상품명 요소 렌더되면 ready 판정.
+    // extract_js 가 API fetch 로 _apiBenefit 폴백 처리하므로 best_benefit_price 누락 안 됨.
+    if (document.querySelector(
+      '.product-detail .prd-name, .prdt-name, [class*="prdName"], [class*="productName"], h1'
+    )) return true
+    // 최후 폴백: 페이지 거의 다 그려진 상태 + 본문 충분히 채워짐.
+    if (document.readyState === 'complete' && t.length > 800) return true
+    return false
   } catch (_) { return false }
 })()
 """
@@ -785,8 +794,9 @@ SITE_HANDLERS: dict[str, SiteHandler] = {
         login_check_js=ABCMART_LOGIN_CHECK_JS,
         pre_extract_marker_js=_ABCMART_MARKER_JS,
         # 실측(2026-05-24, 10상품): "최대 혜택가" 텍스트 최대 1.64s 등장.
-        # timeout 6s = floor 대비 넉넉. 혜택가 없는 상품은 timeout 후 API 폴백(_apiBenefit).
-        pre_extract_marker_timeout_ms=6_000,
+        # 6s → 2.5s (2026-05-27 A+C): 혜택가 텍스트 없는 상품군이 6s 풀 타임아웃 소비해
+        # 건당 8.5s 유발. marker JS 에 상품명 selector / readyState 폴백 추가해 floor 1.64s 안전 마진.
+        pre_extract_marker_timeout_ms=2_500,
         pre_extract_wait_ms=200,
         tracking_js=_ABCMART_TRACKING_JS,
         logout_url=ABCMART_LOGOUT_URL,

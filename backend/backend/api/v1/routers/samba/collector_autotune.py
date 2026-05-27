@@ -4369,23 +4369,66 @@ class CancelCycleRequest(BaseModel):
 
 @router.post("/autotune/cancel-cycle")
 async def autotune_cancel_cycle(body: CancelCycleRequest):
-    """특정 (device_id, site) cycle 즉시 중단 — 사용자 visibility 보완.
+    """특정 (device_id, site) cycle 즉시 중단.
 
-    예: 인지 못 한 LOTTEON cycle 발견 → 이 endpoint 로 즉시 cancel.
-    Main loop 이 다음 tick 에 active_sites 빠진 site 자동 재spawn 안 함.
+    (2026-05-27) 즉시 재spawn 버그 fix.
+    기존: task.cancel() + site_tasks.pop 만 수행. _pc_allowed_sites 안 건드려서
+    _autotune_loop 다음 tick(~3초) 에서 active_sites 에 site 살아있음 → 라인 3426
+    `for _site in active_sites: spawn` → 즉시 재시작. 중단 버튼 1~3초만 멈췄다 재가동.
+    수정:
+      1) _pc_allowed_sites[dev] 에서 site 제거 → 다음 tick 재spawn 차단
+      2) DB autotune_pc_allowed_sites persist → lifecycle sync 가 덮어쓰지 못하게
+      3) _active_sites_cache invalidate → TTL 만료 안 기다림
+      4) task cancel
     """
     dev = (body.device_id or "").strip()
     site = (body.site or "").strip()
     if not dev or not site:
         return {"ok": False, "error": "device_id 와 site 필수"}
+
+    # 1) allowed_sites 에서 site 제거 (in-memory)
+    _re_spawn_blocked = False
+    current = _pc_allowed_sites.get(dev)
+    if current is not None and site in current:
+        new_sites = sorted(current - {site})
+        register_pc_allowed_sites(dev, new_sites, authoritative=True)
+        _re_spawn_blocked = True
+
+        # 2) DB persist — lifecycle sync_pc_allowed_sites_from_db 가 다른 worker
+        # 에서 옛 값으로 복원하지 못하도록 진실 출처 갱신.
+        try:
+            from backend.db.orm import get_write_session
+
+            async with get_write_session() as _ws:
+                await persist_pc_allowed_sites(_ws)
+        except Exception as _exc:
+            logging.getLogger("autotune").warning(
+                f"[cancel-cycle] persist 실패 (무시): {_exc}"
+            )
+
+        # 3) active_sites_cache invalidate — _get_active_sites_cached TTL 만료 대기 제거
+        _active_sites_cache["ts"] = 0.0
+        _active_sites_cache["data"] = None
+
+    # 4) task cancel
     site_tasks = _pc_site_tasks.get(dev) or {}
     task = site_tasks.get(site)
-    if task is None:
-        return {"ok": False, "error": f"활성 cycle 없음: {dev[:12]} / {site}"}
-    if not task.done():
+    cancelled = False
+    if task is not None and not task.done():
         task.cancel()
+        cancelled = True
     site_tasks.pop(site, None)
-    return {"ok": True, "cancelled": True, "device_id": dev, "site": site}
+
+    if not cancelled and not _re_spawn_blocked:
+        return {"ok": False, "error": f"활성 cycle 없음: {dev[:12]} / {site}"}
+
+    return {
+        "ok": True,
+        "cancelled": cancelled,
+        "respawn_blocked": _re_spawn_blocked,
+        "device_id": dev,
+        "site": site,
+    }
 
 
 @router.get("/autotune/status")

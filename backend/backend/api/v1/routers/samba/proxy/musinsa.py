@@ -231,28 +231,13 @@ async def musinsa_set_cookie(
     except Exception as exc:  # pragma: no cover — fallback 실패해도 단수는 저장됨
         logger.warning(f"[set-cookie] musinsa_cookies 풀 갱신 실패 (무시): {exc}")
 
-    # 이슈 244 — refresher 가 cost 갱신 시 읽는 sourcing_account 위치에도 동기화.
-    # 확장앱이 samba_settings 만 갱신해 sync 위치 mismatch → "원가 갱신 중단" 모달 영구.
-    # is_login_default=True 무신사 계정 1건에 cookie 박고 cookie_expired 클리어.
-    try:
-        from backend.domain.samba.sourcing_account.service import (
-            SambaSourcingAccountService,
-        )
-        from backend.domain.samba.sourcing_account.repository import (
-            SambaSourcingAccountRepository,
-        )
-
-        _svc = SambaSourcingAccountService(
-            SambaSourcingAccountRepository(write_session)
-        )
-        _acc = await _svc.get_login_default("MUSINSA")
-        if _acc:
-            _extra = dict(_acc.additional_fields or {})
-            _extra["musinsa_cookie"] = body.cookie
-            _extra["cookie_expired"] = False
-            await _svc.repo.update_async(_acc.id, additional_fields=_extra)
-    except Exception as exc:
-        logger.warning(f"[set-cookie] sourcing_account 동기화 실패 (무시): {exc}")
+    # (2026-05-27) 자동로그인 계정 자리 강제 덮어쓰기 영구 제거.
+    # 이전: 발신자 식별 없이 무조건 is_login_default 계정 additional_fields.musinsa_cookie
+    # 박음 → 다른 계정으로 로그인된 PC 가 push 하면 자동로그인 계정 쿠키 자리에 타계정
+    # 쿠키 박힘 → 오토튠/원가 갱신이 잘못된 등급/적립률/쿠폰으로 cost 계산 (들쑥날쑥).
+    # 자동로그인 계정 자리는 sourcing_account.py 의 잔액동기화(profileEmail/username 매칭)
+    # 경유로만 박힘 — 본인 계정 push 만 자기 자리 갱신. 풀(musinsa_cookies)은 위에서
+    # 이미 머지 완료.
 
     return result
 
