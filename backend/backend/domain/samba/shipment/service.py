@@ -2618,6 +2618,13 @@ class SambaShipmentService:
                     new_result[account_id] = "failed"
                     new_errors[account_id] = "카테고리 매핑 없음"
                     continue
+                # 모든 DB 읽기 완료 — HTTP 전송 전 트랜잭션 종료 (idle in transaction 방지)
+                # (2026-05-27) line 1794 와 동일 패턴 적용. dispatch_to_market 은 마켓
+                # HTTP 호출 30~60s — 세션 보유 시 IIT 누적 → connection-closed.
+                try:
+                    await self.session.commit()
+                except Exception:
+                    pass
                 result = await dispatch_to_market(
                     self.session,
                     account.market_type,

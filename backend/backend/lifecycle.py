@@ -963,6 +963,11 @@ async def _sourcing_job_cleanup_loop() -> None:
         await asyncio.sleep(60)
         if is_shutting_down():
             break
+        # (2026-05-27) 단일 트랜잭션 분해: UPDATE + DELETE 한 번에 잡으면 hot 테이블
+        # samba_sourcing_job 락 17s 보유 → write pool 핫스팟. 각 쿼리별 세션 분리해
+        # 트랜잭션 짧게.
+        _expired_n = 0
+        _deleted_n = 0
         try:
             async with get_write_session() as session:
                 expired = await session.execute(
@@ -971,6 +976,12 @@ async def _sourcing_job_cleanup_loop() -> None:
                         "WHERE expires_at < now() AND status IN ('pending', 'dispatched')"
                     )
                 )
+                await session.commit()
+                _expired_n = expired.rowcount or 0
+        except Exception as exc:
+            _log.warning("[sourcing-cleanup] expired UPDATE 실패 (무시): %s", exc)
+        try:
+            async with get_write_session() as session:
                 deleted = await session.execute(
                     text(
                         "DELETE FROM samba_sourcing_job "
@@ -979,14 +990,13 @@ async def _sourcing_job_cleanup_loop() -> None:
                     )
                 )
                 await session.commit()
-                if expired.rowcount or deleted.rowcount:
-                    _log.info(
-                        "[sourcing-cleanup] expired=%d deleted=%d",
-                        expired.rowcount,
-                        deleted.rowcount,
-                    )
+                _deleted_n = deleted.rowcount or 0
         except Exception as exc:
-            _log.warning("[sourcing-cleanup] 실패 (무시): %s", exc)
+            _log.warning("[sourcing-cleanup] 7일 DELETE 실패 (무시): %s", exc)
+        if _expired_n or _deleted_n:
+            _log.info(
+                "[sourcing-cleanup] expired=%d deleted=%d", _expired_n, _deleted_n
+            )
 
 
 async def _start_sourcing_job_cleanup() -> None:
