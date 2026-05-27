@@ -361,10 +361,22 @@ _pc_cleanup_task: asyncio.Task | None = None
 async def _pc_sync_loop() -> None:
     """매 10초 PC 분담 매핑 DB → in-memory 동기화 (worker 간 sync).
 
-    Gunicorn 다중 worker 환경에서 UI POST 가 1개 worker 만 갱신해 다른 worker 의
+    Gunicorn 다중 worker 환경에서 UI POST 가 1개 worker among 갱신해 다른 worker 의
     잡 발행 시 stale 매핑 사용 → 잡 발행 skip 사고 차단. lifecycle background task.
+
+    추가: 분담 박혀있는 데몬 dev autotune cycle 자동 spawn (2026-05-27).
+    데몬은 UI 시작 안 거치므로 _pc_sync_loop 가 매 tick 마다 spawn 보장.
     """
+    import asyncio as _asyncio
+
     from backend.api.v1.routers.samba.collector_autotune import (
+        _autotune_loop,
+        _get_pc_event,
+        _is_pc_running,
+        _pc_allowed_sites,
+        _pc_cycle_count,
+        _pc_main_task,
+        _pc_restart_count,
         sync_pc_allowed_sites_from_db,
     )
 
@@ -372,6 +384,25 @@ async def _pc_sync_loop() -> None:
     while True:
         try:
             await sync_pc_allowed_sites_from_db()
+            # 분담 박힌 데몬 dev autotune cycle 자동 spawn.
+            # 사용자 PC 의 pc_allowed_sites 는 DAEMON_ONLY(SSG/ABC/LOTTEON) 사이트 strip
+            # 되므로 데몬 cycle 없으면 4개 사이트 처리 자체가 안 됨.
+            for _ddev, _dsites in list(_pc_allowed_sites.items()):
+                if not _ddev.startswith("samba-daemon-"):
+                    continue
+                if not _dsites:
+                    continue
+                if _is_pc_running(_ddev):
+                    continue
+                _pc_cycle_count[_ddev] = 0
+                _pc_restart_count[_ddev] = 0
+                _ev = _get_pc_event(_ddev)
+                _ev.set()
+                _pc_main_task[_ddev] = _asyncio.create_task(
+                    _autotune_loop(_ddev),
+                    name=f"autotune-main-{_ddev[:8]}",
+                )
+                _lg.info(f"[pc-sync] 데몬 자동 spawn: {_ddev} sites={sorted(_dsites)}")
         except Exception as exc:
             _lg.warning(f"[lifecycle][pc-sync] 동기화 실패(무시): {exc}")
         await asyncio.sleep(10)
