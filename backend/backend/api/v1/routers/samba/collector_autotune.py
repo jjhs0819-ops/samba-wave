@@ -1904,6 +1904,20 @@ async def _site_autotune_loop(device_id: str, site: str):
                                         if acc_last
                                         else False
                                     )
+                                    # preemptive failed_at (transmit 큐 진입 시 박힘) 이
+                                    # transmit 성공 후 자동 제거되기 전 다음 사이클이 보면
+                                    # 가격 동일이라도 재시도 트리거 → write pool 압박 +
+                                    # 무신사 처리속도 0.7→4초 사고 (2026-05-27).
+                                    # failed_at 가 마지막 sent_at 보다 최신일 때만 진짜
+                                    # 실패로 인정. transmit 성공 후 sent_at 갱신되면
+                                    # failed_at < sent_at 자동 → _has_failed_mark=False.
+                                    if _has_failed_mark and acc_last:
+                                        _sent_at_str = acc_last.get("sent_at") or ""
+                                        _failed_at_str = acc_last.get("failed_at") or ""
+                                        if _sent_at_str and _failed_at_str:
+                                            _has_failed_mark = (
+                                                _failed_at_str > _sent_at_str
+                                            )
 
                                     # 초기 cost 교정 — 이전 전송 cost가 정가 폴백(과거 추출실패 잔재)인 경우
                                     # 새로 정확한 혜택가가 들어와도 "가격변동"으로 인식되어 전송되는 사고 차단.
