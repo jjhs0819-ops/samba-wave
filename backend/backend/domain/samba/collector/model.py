@@ -205,6 +205,13 @@ class SambaCollectedProduct(SQLModel, table=True):
     detail_images: Optional[List[str]] = Field(
         default=None, sa_column=Column(JSON, nullable=True)
     )
+    # 차단 도메인 이미지 R2 미러 매핑 { 원본URL: R2URL }
+    # 마켓 등록 시 첫 미러링 결과를 저장해 N마켓×재전송 시 재다운로드/재인코딩/재업로드 회피.
+    # 무효화 정책 없음 — 새 키만 누적, 사라진 원본 URL은 조회되지 않으므로 무해.
+    # 같은 bytes 는 같은 R2 키(content-hash)로 결정되므로 stale 매핑도 정합성 영향 없음.
+    image_mirror_map: Optional[Any] = Field(
+        default=None, sa_column=Column(JSONB, nullable=True)
+    )
     video_url: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)
     )

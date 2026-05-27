@@ -1943,8 +1943,8 @@ class LotteonPlugin(MarketPlugin):
 
             _img_svc = ImageTransformService(session)
             if product_copy.get("images"):
-                _mirrored, _ = await _img_svc.mirror_external_to_r2(
-                    product_copy["images"]
+                _mirrored, _ = await _img_svc.mirror_with_persistence(
+                    product_copy.get("id"), product_copy["images"]
                 )
                 product_copy["images"] = _mirrored
         except Exception as e:

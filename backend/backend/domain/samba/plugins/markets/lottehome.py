@@ -728,11 +728,14 @@ class LotteHomePlugin(MarketPlugin):
             _detail_html = product.get("detail_html") or ""
             if _images or _detail_images or _detail_html:
                 product = dict(product)  # 원본 dict 변형 방지
+                _pid = product.get("id")
                 if _images:
-                    _imgs1, _ = await _img_svc.mirror_external_to_r2(_images)
+                    _imgs1, _ = await _img_svc.mirror_with_persistence(_pid, _images)
                     product["images"], _ = await _img_svc.mirror_oversized_to_r2(_imgs1)
                 if _detail_images:
-                    _dimgs1, _ = await _img_svc.mirror_external_to_r2(_detail_images)
+                    _dimgs1, _ = await _img_svc.mirror_with_persistence(
+                        _pid, _detail_images
+                    )
                     (
                         product["detail_images"],
                         _,

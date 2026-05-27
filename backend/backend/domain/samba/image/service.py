@@ -1053,6 +1053,65 @@ class ImageTransformService:
         result = [x for x in result_slots if x is not None]
         return result, url_map
 
+    async def mirror_with_persistence(
+        self, product_id: str | None, urls: list[str]
+    ) -> tuple[list[str], dict[str, str]]:
+        """DB 영속 매핑(samba_collected_product.image_mirror_map) 활용 + 신규 매핑 저장.
+
+        - product_id 없으면 일반 mirror_external_to_r2 와 동일 (DB 미관여)
+        - DB의 기존 매핑을 프로세스 캐시에 시드해 즉시 hit
+        - 미러링 후 신규 매핑만 DB에 머지 저장 (commit 포함)
+        - 실패 시 일반 미러 결과만 반환 (DB 오류는 로깅 후 무시 — 등록 자체는 진행)
+        """
+        if not urls or not product_id:
+            return await self.mirror_external_to_r2(urls)
+
+        from sqlalchemy import select, update
+
+        from backend.domain.samba.collector.model import SambaCollectedProduct
+
+        _db_map: dict[str, str] = {}
+        try:
+            _row = (
+                await self.session.execute(
+                    select(SambaCollectedProduct.image_mirror_map).where(
+                        SambaCollectedProduct.id == product_id
+                    )
+                )
+            ).first()
+            if _row and _row[0]:
+                _db_map = dict(_row[0])
+        except Exception as e:
+            logger.warning(f"[이미지미러] DB 매핑 로드 실패 — 캐시만 사용: {e}")
+
+        # DB 매핑을 프로세스 캐시에 시드 (배포 직후 첫 미러도 다운로드 0회 달성)
+        for _k, _v in _db_map.items():
+            self._R2_MIRROR_CACHE.setdefault(_k, _v)
+
+        _result, _url_map = await self.mirror_external_to_r2(urls)
+
+        # 신규(또는 변경) 매핑만 DB에 머지
+        _new = {k: v for k, v in _url_map.items() if _db_map.get(k) != v}
+        if _new:
+            _merged = {**_db_map, **_new}
+            try:
+                await self.session.execute(
+                    update(SambaCollectedProduct)
+                    .where(SambaCollectedProduct.id == product_id)
+                    .values(image_mirror_map=_merged)
+                )
+                await self.session.commit()
+            except Exception as e:
+                logger.warning(
+                    f"[이미지미러] DB 매핑 저장 실패 — 다음 등록 시 재시도: {e}"
+                )
+                try:
+                    await self.session.rollback()
+                except Exception:
+                    pass
+
+        return _result, _url_map
+
     @staticmethod
     def is_hotlink_blocked_url(url: str) -> bool:
         """detail_html 문자열에서 차단 도메인 URL을 식별할 때 사용."""

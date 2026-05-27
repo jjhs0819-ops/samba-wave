@@ -92,7 +92,9 @@ class AuctionPlugin(MarketPlugin):
                 (
                     product_copy["detail_images"],
                     _,
-                ) = await _img_svc.mirror_external_to_r2(_detail_imgs)
+                ) = await _img_svc.mirror_with_persistence(
+                    product_copy.get("id"), _detail_imgs
+                )
             if _dhtml:
                 product_copy["detail_html"] = await _img_svc.mirror_urls_in_html(_dhtml)
             # 미러링 후에도 핫링크 차단 URL이 남으면 등록 차단(깨진 이미지 방지)

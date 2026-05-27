@@ -269,12 +269,16 @@ class SSGPlugin(MarketPlugin):
             _detail_html = product.get("detail_html") or ""
             if _images or _detail_images or _detail_html:
                 product = dict(product)
+                _pid = product.get("id")
                 if _images:
-                    product["images"], _ = await _img_svc.mirror_external_to_r2(_images)
-                if _detail_images:
-                    product["detail_images"], _ = await _img_svc.mirror_external_to_r2(
-                        _detail_images
+                    product["images"], _ = await _img_svc.mirror_with_persistence(
+                        _pid, _images
                     )
+                if _detail_images:
+                    (
+                        product["detail_images"],
+                        _,
+                    ) = await _img_svc.mirror_with_persistence(_pid, _detail_images)
                 if _detail_html:
                     product["detail_html"] = await _img_svc.mirror_urls_in_html(
                         _detail_html
