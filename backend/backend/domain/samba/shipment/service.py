@@ -1017,7 +1017,9 @@ class SambaShipmentService:
             product_dict["_skip_image_upload"] = True
 
         # 상세 HTML은 항상 정책 기반으로 재생성 (원문 상세이미지 유출 방지)
-        if not is_price_stock_only:
+        # 정책이 있는 경우 아래 1037에서 _apply_name_rule_effects 후 다시 빌드하므로
+        # 여기서는 정책 없을 때만 빌드 (중복 호출 제거 — issue #249)
+        if not is_price_stock_only and not product_row.applied_policy_id:
             product_dict["detail_html"] = await self._build_detail_html(product_dict)
 
         # 3. 카테고리 매핑 자동 조회 — product.category(전체 경로) 우선

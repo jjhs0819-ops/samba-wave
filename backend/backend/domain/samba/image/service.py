@@ -890,6 +890,15 @@ class ImageTransformService:
         )
         return f"{base_url}/static/images/{filename}"
 
+    # ── 프로세스 레벨 미러 캐시 (원본URL → R2URL) ──────────────────────
+    # 같은 워커 프로세스가 동일 상품을 N개 마켓 등록할 때 동일 이미지를 N번
+    # 다운로드+JPEG재인코딩+업로드하던 회귀를 차단. 키는 정규화한 원본 URL,
+    # 값은 미러링 성공 시 반환된 R2 publicUrl. R2 키가 content-hash 기반이라
+    # 같은 URL이 같은 R2 객체로 결정적으로 매핑되므로 캐시 사용이 안전.
+    # 영속 캐시(DB 컬럼)는 별도 작업으로 분리 — 여기는 프로세스 수명만 보장.
+    _R2_MIRROR_CACHE: dict[str, str] = {}
+    _R2_MIRROR_CACHE_MAX = 20000
+
     # 외부 CDN(referer 차단) → R2 미러링: 마켓 등록 시 핫링크 워터마크 방지용
     # 무신사 image.msscdn.net 등은 외부 도메인이 fetch하면 워터마크 응답
     _HOTLINK_BLOCKED_HOSTS = (
@@ -932,89 +941,116 @@ class ImageTransformService:
         client, bucket_name, public_url = r2
         public_host = urlparse(public_url).netloc if public_url else ""
 
-        result: list[str] = []
+        # 결과 슬롯 — 입력 순서 보존
+        result_slots: list[str | None] = [None] * len(urls)
         url_map: dict[str, str] = {}
-        for url in urls:
+
+        # 1차 패스: 캐시/패스스루/차단대상 분류
+        to_download: list[tuple[int, str]] = []  # (slot_idx, url)
+        for _i, url in enumerate(urls):
             if not url:
                 continue
-            try:
-                parsed = urlparse(url)
-                host = (parsed.netloc or "").lower()
-                # 이미 R2(publicUrl) 호스트면 그대로 사용
-                if public_host and host == public_host:
-                    result.append(url)
-                    continue
-                # 차단 도메인이 아니면 원본 유지
-                if not any(blocked in host for blocked in self._HOTLINK_BLOCKED_HOSTS):
-                    result.append(url)
-                    continue
-
-                # 차단 도메인 — 다운로드 후 R2 업로드
-                # msscdn(무신사) _NNN.jpg(예: _500.jpg, _320.jpg) → _big.jpg(1500x1800) 강제
-                # ESM 옥션 600x600 한도 미만은 reject → 다운로드 단계에서 큰 사이즈로 swap
-                # 원본 url은 키로 유지(detail_html 치환용), 다운로드용 fetch_url만 swap
-                fetch_url = url
-                if "msscdn.net" in host:
-                    fetch_url = re.sub(r"_\d{3,4}\.jpg$", "_big.jpg", url)
-                image_bytes = await self._download_image(fetch_url)
-                # 11번가 등 일부 마켓은 webp 거부 + magic bytes 검증 수행
-                # → 받은 바이트를 PIL로 열어서 무조건 JPEG로 변환 후 업로드
-                # (AI 가공 경로 _save_image 와 동일한 정규화 정책)
-                try:
-                    from PIL import Image
-
-                    _img = Image.open(io.BytesIO(image_bytes))
-                    if _img.mode in ("RGBA", "LA", "P"):
-                        _bg = Image.new("RGB", _img.size, (255, 255, 255))
-                        _rgba = _img.convert("RGBA")
-                        _bg.paste(_rgba, mask=_rgba.split()[3])
-                        _img = _bg
-                    elif _img.mode != "RGB":
-                        _img = _img.convert("RGB")
-                    _buf = io.BytesIO()
-                    _img.save(_buf, format="JPEG", quality=92, optimize=True)
-                    image_bytes = _buf.getvalue()
-                    mime = "image/jpeg"
-                    ext = "jpg"
-                except Exception as _e:
-                    # PIL 열기 실패 시 원본 바이트 그대로 사용 (기존 동작)
-                    logger.warning(
-                        f"[이미지미러] JPEG 정규화 실패, 원본 유지: {url} — {_e}"
-                    )
-                    mime = self._detect_mime(image_bytes)
-                    ext = {
-                        "image/png": "png",
-                        "image/webp": "webp",
-                        "image/jpeg": "jpg",
-                    }.get(mime, "jpg")
-                content_hash = hashlib.md5(image_bytes).hexdigest()[:16]
-                key = f"mirror/{content_hash}.{ext}"
-
-                # HeadObject로 기존 객체 확인 → 존재 시 업로드 스킵
-                def _exists(_key: str = key) -> bool:
-                    try:
-                        client.head_object(Bucket=bucket_name, Key=_key)
-                        return True
-                    except Exception:
-                        return False
-
-                if not await asyncio.to_thread(_exists):
-                    await asyncio.to_thread(
-                        partial(
-                            client.upload_fileobj,
-                            io.BytesIO(image_bytes),
-                            bucket_name,
-                            key,
-                            ExtraArgs={"ContentType": mime},
-                        ),
-                    )
-                mirrored = f"{public_url}/{key}"
-                result.append(mirrored)
-                url_map[url] = mirrored
-            except Exception as e:
-                logger.warning(f"[이미지미러] 실패로 드롭: {url} — {e}")
+            # 프로세스 캐시 hit — 다운로드/재인코딩/업로드 전부 skip
+            _cached = self._R2_MIRROR_CACHE.get(url)
+            if _cached:
+                result_slots[_i] = _cached
+                url_map[url] = _cached
                 continue
+            parsed = urlparse(url)
+            host = (parsed.netloc or "").lower()
+            # 이미 R2(publicUrl) 호스트면 그대로 사용
+            if public_host and host == public_host:
+                result_slots[_i] = url
+                continue
+            # 차단 도메인이 아니면 원본 유지
+            if not any(blocked in host for blocked in self._HOTLINK_BLOCKED_HOSTS):
+                result_slots[_i] = url
+                continue
+            to_download.append((_i, url))
 
+        # 2차 패스: 차단 도메인 병렬 미러링 (Semaphore로 1CPU/네트워크 부하 제어)
+        if to_download:
+            _sem = asyncio.Semaphore(4)
+
+            async def _mirror_one(_idx: int, _url: str) -> tuple[int, str, str | None]:
+                async with _sem:
+                    try:
+                        parsed = urlparse(_url)
+                        host = (parsed.netloc or "").lower()
+                        fetch_url = _url
+                        if "msscdn.net" in host:
+                            fetch_url = re.sub(r"_\d{3,4}\.jpg$", "_big.jpg", _url)
+                        image_bytes = await self._download_image(fetch_url)
+                        # 11번가 등 일부 마켓은 webp 거부 + magic bytes 검증 수행
+                        # → PIL로 무조건 JPEG 변환 후 업로드 (AI 가공 _save_image와 동일)
+                        try:
+                            from PIL import Image
+
+                            _img = Image.open(io.BytesIO(image_bytes))
+                            if _img.mode in ("RGBA", "LA", "P"):
+                                _bg = Image.new("RGB", _img.size, (255, 255, 255))
+                                _rgba = _img.convert("RGBA")
+                                _bg.paste(_rgba, mask=_rgba.split()[3])
+                                _img = _bg
+                            elif _img.mode != "RGB":
+                                _img = _img.convert("RGB")
+                            _buf = io.BytesIO()
+                            _img.save(_buf, format="JPEG", quality=92, optimize=True)
+                            image_bytes = _buf.getvalue()
+                            mime = "image/jpeg"
+                            ext = "jpg"
+                        except Exception as _e:
+                            logger.warning(
+                                f"[이미지미러] JPEG 정규화 실패, 원본 유지: {_url} — {_e}"
+                            )
+                            mime = self._detect_mime(image_bytes)
+                            ext = {
+                                "image/png": "png",
+                                "image/webp": "webp",
+                                "image/jpeg": "jpg",
+                            }.get(mime, "jpg")
+                        content_hash = hashlib.md5(image_bytes).hexdigest()[:16]
+                        key = f"mirror/{content_hash}.{ext}"
+
+                        def _exists(_key: str = key) -> bool:
+                            try:
+                                client.head_object(Bucket=bucket_name, Key=_key)
+                                return True
+                            except Exception:
+                                return False
+
+                        if not await asyncio.to_thread(_exists):
+                            await asyncio.to_thread(
+                                partial(
+                                    client.upload_fileobj,
+                                    io.BytesIO(image_bytes),
+                                    bucket_name,
+                                    key,
+                                    ExtraArgs={"ContentType": mime},
+                                ),
+                            )
+                        return (_idx, _url, f"{public_url}/{key}")
+                    except Exception as e:
+                        logger.warning(f"[이미지미러] 실패로 드롭: {_url} — {e}")
+                        return (_idx, _url, None)
+
+            _gathered = await asyncio.gather(
+                *(_mirror_one(_i, _u) for _i, _u in to_download)
+            )
+            for _idx, _src_url, _mirror_url in _gathered:
+                if _mirror_url is None:
+                    continue
+                result_slots[_idx] = _mirror_url
+                url_map[_src_url] = _mirror_url
+                # 캐시 적재 (사이즈 캡 — 단순 FIFO drop)
+                if len(self._R2_MIRROR_CACHE) >= self._R2_MIRROR_CACHE_MAX:
+                    try:
+                        self._R2_MIRROR_CACHE.pop(next(iter(self._R2_MIRROR_CACHE)))
+                    except StopIteration:
+                        pass
+                self._R2_MIRROR_CACHE[_src_url] = _mirror_url
+
+        result = [x for x in result_slots if x is not None]
         return result, url_map
 
     @staticmethod
