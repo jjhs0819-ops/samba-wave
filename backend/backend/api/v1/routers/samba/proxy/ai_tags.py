@@ -222,7 +222,9 @@ async def _atomic_merge_tags(
                 SELECT COALESCE(jsonb_agg(DISTINCT elem), '[]'::jsonb)
                 FROM (
                     SELECT t AS elem
-                    FROM jsonb_array_elements_text(COALESCE(tags, '[]'::jsonb)) AS t
+                    FROM jsonb_array_elements_text(
+                        CASE WHEN jsonb_typeof(tags) = 'array' THEN tags ELSE '[]'::jsonb END
+                    ) AS t
                     WHERE strpos(t, '__') = 1
                     {marker_sql}
                     UNION SELECT t
