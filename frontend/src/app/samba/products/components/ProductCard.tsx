@@ -448,12 +448,17 @@ const ProductCard = React.memo(function ProductCard({
       if (full?.images && full.images.length > 0) setProductImages(full.images)
     }).catch(() => {})
   }
-  // 원가: best_benefit_price(최대혜택가) > sale_price > original_price 순 우선
-  const cost = p.cost || p.sale_price || p.original_price || 0
   // 통화 기호: SNKRDUNK 등 USD 소싱처는 달러($)로 표기 (원화 환산 안 함, 달러 값 그대로)
   const curSym = ((p.extra_data as Record<string, unknown> | undefined)?.currency === 'USD') ? '$' : '₩'
   const policy = policies.find((pol) => pol.id === p.applied_policy_id)
   const pricing = (policy?.pricing || {}) as Record<string, unknown>
+  // 원가: excludeHeldPoint 토글 켜져 있고 cost_excl_held_point 값이 있으면 그것 우선
+  // (백엔드 resolve_cost_for_policy 와 일치, 이슈 #259)
+  const _ssmAll = (pricing.sourceSiteMargins || {}) as Record<string, { excludeHeldPoint?: boolean }>
+  const _excludeHeldPoint = Boolean(_ssmAll?.[p.source_site]?.excludeHeldPoint)
+  const _costExclHeldPoint = (p as unknown as { cost_excl_held_point?: number }).cost_excl_held_point
+  const _useExcl = _excludeHeldPoint && (_costExclHeldPoint ?? 0) > 0
+  const cost = (_useExcl ? _costExclHeldPoint : p.cost) || p.sale_price || p.original_price || 0
   const baseMarginRate = (pricing.marginRate as number) || 15
   // 가격범위별 마진 매칭 (백엔드 _calculate_range_margin과 동일: cost >= min && cost < max)
   const useRangeMargin = Boolean(pricing.useRangeMargin)
@@ -1560,9 +1565,14 @@ const ProductCard = React.memo(function ProductCard({
                       (상품가 {fmt(cost - (p.sourcing_shipping_fee ?? 0))}+배송비 {fmt(p.sourcing_shipping_fee ?? 0)})
                     </span>
                   )}
-                  {p.source_site === 'MUSINSA' && p.is_point_restricted === false && (
+                  {p.source_site === 'MUSINSA' && p.is_point_restricted === false && !_useExcl && (
                     <span style={{ marginLeft: '0.4rem', fontSize: '0.65rem', padding: '1px 6px', borderRadius: '3px', background: 'rgba(81,207,102,0.12)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.3)' }}>
                       적립금 사용
+                    </span>
+                  )}
+                  {p.source_site === 'MUSINSA' && p.is_point_restricted === false && _useExcl && (
+                    <span style={{ marginLeft: '0.4rem', fontSize: '0.65rem', padding: '1px 6px', borderRadius: '3px', background: 'rgba(255,184,77,0.12)', color: '#FFB84D', border: '1px solid rgba(255,184,77,0.3)' }}>
+                      적립금 제외
                     </span>
                   )}
                   {p.source_site === 'MUSINSA' && p.is_point_restricted === true && (
