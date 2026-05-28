@@ -2666,10 +2666,16 @@ class SambaShipmentService:
                     await self.session.commit()
                 except Exception:
                     pass
+                # SSG 표준카테고리(stdCtgId) 주입 — 정상 send path 와 동일 패턴
+                acct_product = dict(product_dict)
+                if account.market_type == "ssg":
+                    _std_cat = mapped_categories.get("ssg_std", "")
+                    if _std_cat:
+                        acct_product["_std_category_id"] = _std_cat
                 result = await dispatch_to_market(
                     self.session,
                     account.market_type,
-                    product_dict,
+                    acct_product,
                     category_id,
                     account=account,
                 )

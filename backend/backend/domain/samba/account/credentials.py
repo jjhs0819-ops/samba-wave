@@ -34,7 +34,7 @@ def lotteon_creds(account: Optional["SambaMarketAccount"]) -> dict[str, Any]:
         return {}
     ext = _extras(account)
     return {
-        "apiKey": account.api_key or "",
+        "apiKey": account.api_key or ext.get("apiKey", "") or "",
         "dvCstPolNo": ext.get("dvCstPolNo", ""),
         "owhpNo": ext.get("owhpNo", ""),
         "rtrpNo": ext.get("rtrpNo", ""),

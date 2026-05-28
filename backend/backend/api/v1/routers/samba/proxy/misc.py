@@ -674,9 +674,14 @@ async def ssg_shipping_policies(
         result = await client.get_shipping_policies()
         raw = result.get("result", {})
         policies_wrapper = raw.get("shppcstPlcys", [{}])
+        # SSG가 단건이면 dict 반환 — addresses 핸들러와 동일한 정규화
+        if isinstance(policies_wrapper, dict):
+            policies_wrapper = [policies_wrapper]
         policy_list = (
             policies_wrapper[0].get("shppcstPlcy", []) if policies_wrapper else []
         )
+        if isinstance(policy_list, dict):
+            policy_list = [policy_list]
         policies = []
         for p in policy_list:
             policies.append(
@@ -685,7 +690,7 @@ async def ssg_shipping_policies(
                     "feeAmt": p.get("shppcst", 0) or p.get("dlvCstAmt", 0),
                     "prpayCodDivNm": p.get("prpayCodDivNm", ""),
                     "shppcstAplUnitNm": p.get("shppcstAplUnitNm", ""),
-                    "divCd": p.get("shppcstPlcyDivCd", 0),
+                    "divCd": int(p.get("shppcstPlcyDivCd", 0) or 0),
                 }
             )
         return {"success": True, "policies": policies}

@@ -385,10 +385,11 @@ export function StoreSettingsPanel(props: Props) {
                       <option value=''>버튼으로 불러오기</option>
                       {ssgShippingOptions
                         .filter(o => {
-                          if (field.name === 'whoutShppcstId') return o.divCd === 10
-                          if (field.name === 'retShppcstId') return o.divCd === 20
-                          if (field.name === 'addShppcstIdJeju') return o.divCd === 70
-                          if (field.name === 'addShppcstIdIsland') return o.divCd === 60
+                          const cd = Number(o.divCd)
+                          if (field.name === 'whoutShppcstId') return cd === 10
+                          if (field.name === 'retShppcstId') return cd === 20
+                          if (field.name === 'addShppcstIdJeju') return cd === 70
+                          if (field.name === 'addShppcstIdIsland') return cd === 60
                           return false
                         })
                         .map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
