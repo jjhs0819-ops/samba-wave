@@ -8191,6 +8191,15 @@ def _parse_coupang_order(
         or None
     )
 
+    # 수령인/주문자 분리 — 쿠팡 ordersheet는 receiver(수취인)와 orderer(주문자)를 별도 제공.
+    # 과거: 단일 필드에 합쳐 customer_name에만 박아 orderer_name NULL → 화면에서 동일 표시 버그.
+    customer_name = (
+        receiver.get("name")
+        or orderer.get("name")
+        or order.get("receiverName", "")
+        or order.get("ordererName", "")
+        or ""
+    )
     orderer_name = (
         orderer.get("name")
         or receiver.get("name")
@@ -8198,18 +8207,20 @@ def _parse_coupang_order(
         or order.get("receiverName", "")
         or ""
     )
-    orderer_tel = (
+    # 연락처 — 스펙: orderer.safeNumber 는 "수취인 안심번호"(orderer 객체 안이지만 의미상 수취인용).
+    # 우선순위: orderer 안심 > receiver 안심/실번 > orderer 실번호 폴백.
+    customer_phone = (
         orderer.get("safeNumber")
-        or orderer.get("ordererNumber")
         or receiver.get("safeNumber")
         or receiver.get("receiverNumber")
+        or orderer.get("ordererNumber")
+        or order.get("receiverPhoneNumber", "")
         or order.get("ordererPhoneNumber", "")
         or order.get("orderPhoneNumber", "")
-        or order.get("receiverPhoneNumber", "")
         or ""
     )
 
-    if not orderer_name and not customer_address:
+    if not customer_name and not customer_address:
         logger.warning(
             f"[쿠팡][주문파싱] customer 빈값 — keys={list(order.keys())[:25]} "
             f"receiver_keys={list(receiver.keys()) if isinstance(receiver, dict) else 'NA'} "
@@ -8267,8 +8278,9 @@ def _parse_coupang_order(
         "coupang_display_name": first_item.get("vendorItemPackageName", "") or "",
         "product_option": option_name,
         "product_image": "",
-        "customer_name": orderer_name,
-        "customer_phone": orderer_tel,
+        "customer_name": customer_name,
+        "orderer_name": orderer_name,
+        "customer_phone": customer_phone,
         "customer_address": customer_address,
         "customer_address_detail": customer_address_detail,
         "customer_postal_code": customer_postal_code,
