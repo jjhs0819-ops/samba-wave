@@ -390,7 +390,7 @@ export default function SambaLayout({
                     )}
                     {isOrdersTab && cancelCount > 0 && (
                       <span
-                        title={`미처리 취소요청 ${fmtNum(cancelCount)}건`}
+                        title={`미처리 마켓 취소 ${fmtNum(cancelCount)}건`}
                         style={{
                           position: "absolute",
                           top: "4px",
@@ -587,11 +587,11 @@ export default function SambaLayout({
             <div style={{ textAlign: "center", marginBottom: "1.5rem" }}>
               <div style={{ fontSize: "3rem", marginBottom: "0.75rem" }}>⚠️</div>
               <h3 style={{ fontSize: "1.25rem", fontWeight: 700, color: "#FF6B6B", marginBottom: "0.5rem" }}>
-                주문 취소요청 감지
+                마켓 취소 미반영 감지
               </h3>
               <p style={{ fontSize: "0.875rem", color: "#AAA", lineHeight: 1.5 }}>
-                고객이 취소요청한 주문이 <b style={{ color: "#FF6B6B" }}>{fmtNum(cancelCount)}건</b>{" "}
-                있습니다. 발주·송장 등록 전에 확인해 주세요.
+                마켓에서 취소요청·취소완료된 주문이 <b style={{ color: "#FF6B6B" }}>{fmtNum(cancelCount)}건</b>{" "}
+                있지만 내부 상태가 아직 처리/배송 단계입니다. 발주·송장 등록 전에 확인해 주세요.
               </p>
             </div>
             <div style={{ display: "flex", gap: "0.5rem" }}>
