@@ -1160,8 +1160,13 @@ def build_ssg_notice(
     color = product.get("color", "") or _pol_color or fallback
     origin = product.get("origin", "") or ""
 
-    # 치수 및 굽높이
-    size_heel = product.get("_ssg_notice_size", "") or fallback
+    # 치수 및 굽높이 — 정책 주입값 우선, 없으면 소싱 데이터(ABCmart sizeNotice/heelHeight), 최종 fallback(이슈#279)
+    size_heel = (
+        product.get("_ssg_notice_size", "")
+        or product.get("sizeNotice", "")
+        or product.get("heelHeight", "")
+        or fallback
+    )
 
     # 수입여부 — 정책값 우선, 없으면 원산지로 자동 판별
     if "_ssg_import_yn" in product:
