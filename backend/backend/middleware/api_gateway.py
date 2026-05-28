@@ -213,11 +213,39 @@ class ApiGatewayMiddleware(BaseHTTPMiddleware):
             request.state.tenant_id = None
             return await call_next(request)
 
-        logger.warning(
+        # 차단 로그 — docker 내부 IP (172.16.0.0/12 RFC1918) 는 caddy/proxy 헬스체크
+        # 등 정상 트래픽이 X-Api-Key 없이 호출하는 케이스 다수 → 로그 노이즈. DEBUG 로 낮춤.
+        # 외부 IP 의 invalid key 시도만 WARNING 유지 (진짜 차단 신호).
+        _client_ip = request.client.host if request.client else "unknown"
+        _is_internal = _client_ip.startswith(
+            (
+                "172.16.",
+                "172.17.",
+                "172.18.",
+                "172.19.",
+                "172.20.",
+                "172.21.",
+                "172.22.",
+                "172.23.",
+                "172.24.",
+                "172.25.",
+                "172.26.",
+                "172.27.",
+                "172.28.",
+                "172.29.",
+                "172.30.",
+                "172.31.",
+                "10.",
+                "192.168.",
+                "127.",
+            )
+        )
+        _log_fn = logger.debug if _is_internal else logger.warning
+        _log_fn(
             "[api-gateway] 차단: %s %s (IP: %s)",
             request.method,
             request.url.path,
-            request.client.host if request.client else "unknown",
+            _client_ip,
         )
         return JSONResponse(
             status_code=403,

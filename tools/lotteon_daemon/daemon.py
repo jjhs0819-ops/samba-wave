@@ -77,7 +77,7 @@ except ImportError:
 # ====================================================================
 # 데몬 버전 — build.ps1 가 갱신. 자동 업데이트 비교 기준.
 # ====================================================================
-DAEMON_VERSION = "1.4.15"
+DAEMON_VERSION = "1.4.16"
 
 
 # ====================================================================
@@ -606,6 +606,14 @@ class DaemonState:
         self.consecutive_login_required = 0
         self.max_consecutive_fail = max_consecutive_fail
         self.started_at = time.time()
+        # force-die 플래그 — max-uptime 도달 시 외부에서 die() 호출하여 worker 종료 트리거.
+        # (2026-05-28: v1.4.15 가 state.die() 호출했는데 메서드 미정의로 AttributeError
+        # 크래시 — 1시간 메모리 초기화 재시작 로직 자체가 망가짐 사고.)
+        self._force_die = False
+
+    def die(self) -> None:
+        """외부에서 worker 종료 요청 (max-uptime 도달 등). should_die() 가 True 반환."""
+        self._force_die = True
 
     def record_success(self) -> None:
         self.processed += 1
@@ -625,7 +633,7 @@ class DaemonState:
         self.consecutive_login_required = 0
 
     def should_die(self) -> bool:
-        return self.consecutive_fail >= self.max_consecutive_fail
+        return self._force_die or self.consecutive_fail >= self.max_consecutive_fail
 
 
 def _extract_kv_from_argv_or_exename(key: str) -> str | None:

@@ -225,20 +225,6 @@ async def sourcing_collect_queue(request: Request) -> Any:
     if _poll_site:
         allowed_sites = [_poll_site]
     ext_version = request.headers.get("X-Ext-Version", "").strip()
-    # [TEMP-DIAG] device_id 등록 flip-flop 추적 — 비데몬 폴러의 X-Allowed-Sites/출처 기록.
-    # ebfa9121(코디네이터) 충돌 원인 식별용. 추적 후 제거.
-    if device_id and not device_id.startswith("samba-daemon-"):
-        from backend.utils.logger import logger as _diag_log
-
-        _diag_log.warning(
-            "[TEMP-DIAG][collect-queue] dev=%s allowed=%s poll=%s ext=%s xff=%s ua=%s",
-            device_id,
-            request.headers.get("X-Allowed-Sites"),
-            _poll_site,
-            ext_version,
-            request.headers.get("X-Forwarded-For", ""),
-            (request.headers.get("User-Agent", "") or "")[:60],
-        )
     job = await SourcingQueue.get_next_job(
         device_id=device_id,
         allowed_sites=allowed_sites,
@@ -256,7 +242,7 @@ async def sourcing_collect_queue(request: Request) -> Any:
 # ====================================================================
 
 # build/release 시 갱신. 데몬이 시작 시 비교하여 신버전이면 자기 종료(다음 시작 시 갱신).
-AUTOTUNE_DAEMON_LATEST_VERSION = "1.4.15"
+AUTOTUNE_DAEMON_LATEST_VERSION = "1.4.16"
 # asset 명에 버전 박힘 (`samba-v{ver}.exe`) — 지침: 데몬 설치파일명 버전 노출 필수.
 AUTOTUNE_DAEMON_DOWNLOAD_URL = (
     f"https://github.com/sbk0674-web/samba-wave/releases/download/"
