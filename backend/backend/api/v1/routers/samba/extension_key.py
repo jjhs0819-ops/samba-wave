@@ -140,13 +140,19 @@ async def list_keys(
     ]
 
 
-# 데몬 설치 exe 원본 (GitHub Release). 단일 파일명 `samba.exe` — 모든 PC 동일 파일.
-# 토큰/PC명 임베드 제거(2026-05-25, v1.3.0): 유상 판매용 깔끔한 파일명. 인증은 별도 키 발급
-# 엔드포인트(`/extension-keys/daemon-key/issue`)로 분리 — 사용자 UI에서 키 발급/복사 후
-# 데몬 첫 실행 시 입력. 멀티PC = 같은 파일 + 같은 키 사용 가능 (Datadog Agent 패턴).
-_DAEMON_EXE_URL = (
-    "https://github.com/sbk0674-web/samba-wave/releases/latest/download/samba.exe"
+# 데몬 설치 exe 원본 (GitHub Release). 파일명에 버전 박힘 (`samba-v{ver}.exe`) —
+# 지침: 데몬 설치파일명 버전 노출 필수. 단일 출처는 sourcing.AUTOTUNE_DAEMON_DOWNLOAD_URL.
+# 토큰/PC명 임베드 제거(2026-05-25, v1.3.0): 인증은 별도 키 발급 엔드포인트
+# (`/extension-keys/daemon-key/issue`)로 분리. 멀티PC = 같은 파일 + 같은 키 사용 가능.
+from backend.api.v1.routers.samba.proxy.sourcing import (
+    AUTOTUNE_DAEMON_DOWNLOAD_URL as _DAEMON_EXE_URL,
+    AUTOTUNE_DAEMON_LATEST_VERSION as _DAEMON_VERSION,
 )
+
+
+def _daemon_filename() -> str:
+    """다운로드 파일명 — 버전 박힘 (`samba-v{ver}.exe`). 지침: 파일명 버전 노출 필수."""
+    return f"samba-v{_DAEMON_VERSION}.exe"
 
 
 @router.get("/daemon-installer")
@@ -180,7 +186,7 @@ async def daemon_installer(
     session.add(install_record)
     await session.commit()
 
-    fname = "samba.exe"
+    fname = _daemon_filename()
     # 토큰 마커 — 데몬이 exe 파일 마지막에서 찾는다. 충돌 회피용 prefix/suffix.
     token_marker = f"\n#SAMBA_TOKEN={raw_token}#\n".encode()
 
@@ -356,7 +362,7 @@ async def daemon_self_update(
             await upstream.aclose()
             await client.aclose()
 
-    headers = {"Content-Disposition": 'attachment; filename="samba.exe"'}
+    headers = {"Content-Disposition": f'attachment; filename="{_daemon_filename()}"'}
     _clen = upstream.headers.get("content-length")
     if _clen:
         headers["Content-Length"] = str(int(_clen) + len(token_marker))

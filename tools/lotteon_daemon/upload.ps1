@@ -6,9 +6,10 @@
 #   - dist\daemon.exe 존재 (.\build.ps1 로 생성)
 #
 # 동작:
-#   - GitHub Release v<VERSION> 생성 (이미 존재하면 asset 만 갱신)
-#   - lotteon-daemon-setup.exe 이름으로 asset 첨부
-#   - 사용자 다운로드 URL = https://github.com/<owner>/<repo>/releases/latest/download/lotteon-daemon-setup.exe
+#   - GitHub Release samba-daemon-v<VERSION> 생성 (이미 존재하면 asset 만 갱신)
+#   - samba-v<VERSION>.exe 이름으로 asset 첨부 (파일명에 버전 포함 — 지침 강제)
+#   - 사용자 다운로드 URL = https://github.com/<owner>/<repo>/releases/download/samba-daemon-v<VERSION>/samba-v<VERSION>.exe
+#     (release/latest/download/ 경로는 자산명 변동돼 못 씀 — 항상 tag 기반 URL 사용)
 
 [CmdletBinding()]
 param(
@@ -25,14 +26,15 @@ if (-not (Test-Path $src)) {
   exit 1
 }
 
-# 업로드용 이름 — github release asset 'samba.exe' 단일 파일 (v1.3.0+, 유상 판매용 깔끔한 이름).
+# 업로드용 이름 — 파일명에 버전 포함 (samba-v{Version}.exe). 지침: 데몬 설치파일명 버전 노출 필수.
 $assetDir = Join-Path $here 'dist\release'
 New-Item -ItemType Directory -Path $assetDir -Force | Out-Null
-$assetPath = Join-Path $assetDir 'samba.exe'
+$assetName = "samba-v$Version.exe"
+$assetPath = Join-Path $assetDir $assetName
 Copy-Item -Path $src -Destination $assetPath -Force
 
 $tag = "samba-daemon-v$Version"
-Write-Host "GitHub Release 생성/갱신: $tag"
+Write-Host "GitHub Release 생성/갱신: $tag (asset=$assetName)"
 
 # 기존 릴리스 있으면 자산 교체, 없으면 새로 생성
 $existing = & gh release view $tag 2>$null
@@ -41,10 +43,10 @@ if ($LASTEXITCODE -eq 0) {
   & gh release upload $tag $assetPath --clobber
 } else {
   Write-Host "신규 릴리스 생성"
-  & gh release create $tag $assetPath --title "Samba Daemon $Version" --notes "삼바 헤드리스 데몬 $Version (samba.exe 단일 파일, 멀티PC 지원)"
+  & gh release create $tag $assetPath --title "Samba Daemon $Version" --notes "삼바 헤드리스 데몬 $Version ($assetName, 멀티PC 지원)"
 }
 
 Write-Host ""
 Write-Host "완료." -ForegroundColor Green
-Write-Host "다운로드 URL: https://github.com/sbk0674-web/samba-wave/releases/latest/download/samba.exe"
+Write-Host "다운로드 URL: https://github.com/sbk0674-web/samba-wave/releases/download/$tag/$assetName"
 Write-Host "다음 단계: backend sourcing.py AUTOTUNE_DAEMON_LATEST_VERSION → '$Version' 갱신 후 배포"

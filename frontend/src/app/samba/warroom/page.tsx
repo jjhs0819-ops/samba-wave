@@ -327,7 +327,7 @@ async function downloadDaemonInstaller(did: string): Promise<boolean> {
     }
     const cd = res.headers.get('Content-Disposition') || ''
     const m = cd.match(/filename="(.+?)"/)
-    const fname = m?.[1] || 'autotune-daemon-setup.exe'
+    const fname = m?.[1] || 'samba.exe'
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -586,39 +586,6 @@ export default function WarroomPage() {
     return () => { cancelled = true; clearInterval(t) }
   }, [])
 
-  // LOTTEON 데몬 health 체크 — 60s 폴링.
-  // 미감지 시 1회 자동 다운로드 트리거 + 토스트 (오토튠 이용 위해 1번 실행 필요).
-  const autotuneInstallTriggeredRef = useRef(false)
-  useEffect(() => {
-    let cancelled = false
-    const did = getOrCreateAutotuneDaemonDeviceId()
-    if (!did) return
-    const apiBase = process.env.NEXT_PUBLIC_API_URL || 'https://api.samba-wave.co.kr'
-    const tick = async () => {
-      try {
-        const r = await fetch(
-          `${apiBase}/api/v1/samba/proxy/autotune-daemon/health?device_id=${encodeURIComponent(did)}`
-        )
-        if (!r.ok) return
-        const data = await r.json()
-        if (cancelled) return
-        const alive = Boolean(data?.alive)
-        if (!alive && !autotuneInstallTriggeredRef.current) {
-          // 단 한 번만 자동 다운로드 (브라우저 prof 영구). 이후 alive=false 여도
-          // 빨간 배너만 노출 — 사용자가 "다시 다운로드" 버튼 클릭 시만 재트리거.
-          autotuneInstallTriggeredRef.current = true
-          let alreadyDownloaded = false
-          try { alreadyDownloaded = window.localStorage.getItem('samba.autotune.daemon.downloadedOnce') === '1' } catch {}
-          if (alreadyDownloaded) return
-          try { window.localStorage.setItem('samba.autotune.daemon.downloadedOnce', '1') } catch {}
-          await downloadDaemonInstaller(did)
-        }
-      } catch { /* ignore */ }
-    }
-    tick()
-    const t = setInterval(tick, 60_000)
-    return () => { cancelled = true; clearInterval(t) }
-  }, [])
   const [stats, setStats] = useState<DashboardStats | null>(null)
   // 이벤트 타임라인 state 제거 (2026-05-26 사용자 요구) — 활성 사이클 패널이 대체.
   // monitorApi.recentEvents/siteChanges/marketChanges 폴링 + DB 부담 제거.
