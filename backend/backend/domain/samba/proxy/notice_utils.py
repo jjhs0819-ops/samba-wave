@@ -170,9 +170,18 @@ def detect_notice_group(product: dict[str, Any]) -> str:
     PRIORITY_GROUPS = ("wear", "shoes", "bag", "accessories")
 
     # 1) cat2 / cat3 정확 매칭 (가장 구체적인 분류)
-    for cat in (cat2, cat3):
-        if cat and cat in _CATEGORY_GROUP:
-            return _CATEGORY_GROUP[cat]
+    # cat2="등산"(→sports) 이 cat3="남성등산의류"(→wear) 보다 먼저 평가돼
+    # 품목 그룹(wear/shoes/bag/accessories)을 활동 그룹(sports)이 가로채면
+    # sports 가 _SSG_NOTICE_TYPE_MAP 미존재 → 0000000035 폴백 → SSG 등록 실패.
+    # 정확 매칭 결과 중 품목 그룹(PRIORITY_GROUPS)을 활동 그룹보다 우선 반환한다.
+    _exact_groups = [
+        _CATEGORY_GROUP[cat] for cat in (cat2, cat3) if cat and cat in _CATEGORY_GROUP
+    ]
+    for _g in _exact_groups:
+        if _g in PRIORITY_GROUPS:
+            return _g
+    if _exact_groups:
+        return _exact_groups[0]
 
     # 2) cat1 정확 매칭
     if cat1 in _CATEGORY_GROUP:

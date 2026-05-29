@@ -1102,8 +1102,38 @@ class LotteHomeClient:
         """CS문의/메모(VOC) 조회 (searchCSCounselMemoListOpenApi.lotte).
 
         proc_stat_cd: 빈값=전체, 01=미처리, 02=완료
-        mvot_tp_cd:   빈값=전체, 05=답변필요, 06=알림
+        mvot_tp_cd:   빈값=전체(05+06 분할 회수), 05=답변필요, 06=알림
+
+        주의: 롯데홈 OpenAPI 는 mvot_tp_cd 를 생략하면 전체가 아니라 0건을
+        silent 반환한다(과거 docstring "빈값=전체" 기재는 사실과 다름).
+        따라서 mvot_tp_cd 빈값 시 05/06 두 번 호출 후 CcnNo+MvotReqSn 기준
+        dedupe 병합하여 전체를 회수한다. 호출부 시그니처는 그대로 보존.
         """
+        if not mvot_tp_cd:
+            merged: dict[str, dict[str, Any]] = {}
+            for _tp in ("05", "06"):
+                _items = await self._search_cs_voc_single(
+                    req_start_dtime, req_end_dtime, proc_stat_cd, _tp
+                )
+                for _it in _items:
+                    _ccn = str(_it.get("CcnNo") or "").strip()
+                    _sn = str(_it.get("MvotReqSn") or "").strip()
+                    _key = f"{_ccn}:{_sn}"
+                    merged.setdefault(_key, _it)
+            return list(merged.values())
+
+        return await self._search_cs_voc_single(
+            req_start_dtime, req_end_dtime, proc_stat_cd, mvot_tp_cd
+        )
+
+    async def _search_cs_voc_single(
+        self,
+        req_start_dtime: str,
+        req_end_dtime: str,
+        proc_stat_cd: str,
+        mvot_tp_cd: str,
+    ) -> list[dict[str, Any]]:
+        """search_cs_voc 의 단일 mvot_tp_cd 호출 (내부용)."""
         cert_key = await self._ensure_auth()
         params: dict[str, Any] = {
             "subscriptionId": cert_key,

@@ -216,6 +216,9 @@ class AbcMartPlugin(SourcingPlugin):
             best_benefit_price = 0
             new_sale_price = 0
             new_original_price = 0
+            # DOM 위임 실패(데몬 미등록 등) 시 가격 불확실 마킹 → 오토튠이 cost 갱신·전송 보류.
+            # 품절/재고는 API에서 수집하므로 그대로 살린다(LOTTEON price_uncertain 패턴과 동일).
+            price_uncertain = False
 
             # ── DOM 위임 — 가격·혜택가 모두 DOM에서 수집 ──
             try:
@@ -289,7 +292,23 @@ class AbcMartPlugin(SourcingPlugin):
                     error="ABCmart 확장앱 미응답 (110s 타임아웃) — 갱신 차단",
                 )
             except Exception as _dom_err:
-                logger.debug(f"[ABCmart] DOM 위임 예외: {site_product_id} — {_dom_err}")
+                # 데몬 미등록 시 add_detail_job 이 RuntimeError raise → 여기로 잡힘.
+                # 과거 silent debug + fall-through 로 best_benefit_price=0 → new_cost=None →
+                # 오토튠 가격 카운터 0 고정 회귀. 가격 불확실로 마킹해 cost 갱신·전송 보류.
+                price_uncertain = True
+                logger.warning(
+                    f"[ABCmart][가격불확실] DOM 위임 실패 → cost 갱신 및 전송 보류: "
+                    f"{site_product_id} — {_dom_err}"
+                )
+
+            # DOM 위임은 성공했으나 혜택가/판매가 추출 실패(0원) → 가격 불확실 마킹
+            # (예외 없이 통과했지만 가격 0인 케이스. cost=0 으로 잘못 전송되는 것 방지)
+            if not price_uncertain and best_benefit_price <= 0 and new_sale_price <= 0:
+                price_uncertain = True
+                logger.warning(
+                    f"[ABCmart][가격불확실] DOM 가격 추출 실패(0원) → cost 갱신 및 전송 보류: "
+                    f"{site_product_id}"
+                )
 
             # 옵션 데이터 변환 (재고는 API에서 수집)
             new_options = None
@@ -331,6 +350,7 @@ class AbcMartPlugin(SourcingPlugin):
                 new_options=new_options,
                 changed=changed,
                 stock_changed=_stock_changes > 0,
+                price_uncertain=price_uncertain,
             )
 
         except Exception as e:

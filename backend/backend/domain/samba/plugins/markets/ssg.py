@@ -186,6 +186,8 @@ class SSGPlugin(MarketPlugin):
         # 1단계: 신세계몰(6004) 카테고리 ID → 카테고리명 조회
         # 2단계: 해당 leaf명으로 SSG.COM(6005) 전시카테고리 검색
         main_category_id = ""
+        # 6005 후보 dispCtgId 유사도 순 리스트 — 등록 거부 시 다음 후보로 순차 재시도용
+        main_cat_candidates: list[str] = []
         if category_id:
             try:
                 # 1단계: 신세계몰 카테고리 이름 조회
@@ -217,6 +219,7 @@ class SSGPlugin(MarketPlugin):
 
                 name_cats = _extract_cats(name_resp)
                 leaf_name = ""
+                path_6004 = ""  # 6005 후보 유사도 비교 기준 (신세계몰 전체 경로)
                 if name_cats:
                     # category_id와 일치하는 항목 우선, 없으면 마지막 항목(가장 세분류)
                     target = next(
@@ -230,28 +233,79 @@ class SSGPlugin(MarketPlugin):
                     path = target.get("dispCtgPathNm", "") or target.get(
                         "dispCtgNm", ""
                     )
+                    path_6004 = path
                     leaf_name = (
                         path.split(">")[-1].strip() if ">" in path else path.strip()
                     )
                     logger.info(f"[SSG] 신세계몰 카테고리 이름: {leaf_name!r}")
 
-                # 2단계: SSG.COM(6005)에서 leaf_name 검색 (전체 → 첫 단어 순으로 시도)
+                # 2단계: SSG.COM(6005)에서 leaf_name 검색
+                # 검색 결과 [0] 무검증 선택 금지 — leaf명만으로는 영유아/아동 등
+                # 엉뚱한 매장 카테고리가 [0]에 와서 "매장 전시 불가" 거부 발생.
+                # 6004 전체 경로와 토큰 유사도로 정렬해 가장 적합한 후보를 선택한다.
                 if leaf_name:
                     keywords = [leaf_name]
                     short = leaf_name.split("/")[0].strip()
                     if short and short != leaf_name:
                         keywords.append(short)
+
+                    # 영유아/아동 등 — 6004 경로에 없는데 후보 경로에만 있으면 페널티
+                    _penalty_tokens = (
+                        "영유아",
+                        "유아",
+                        "아동",
+                        "임부",
+                        "베이비",
+                        "키즈",
+                        "신생아",
+                    )
+
+                    def _path_tokens(_p: str) -> set[str]:
+                        _out: set[str] = set()
+                        for _seg in _p.replace(">", " ").replace("/", " ").split():
+                            if _seg.strip():
+                                _out.add(_seg.strip())
+                        return _out
+
+                    _ref_tokens = _path_tokens(path_6004)
+
+                    def _cand_score(_cand: dict) -> int:
+                        _cp = _cand.get("dispCtgPathNm", "") or _cand.get(
+                            "dispCtgNm", ""
+                        )
+                        _overlap = len(_ref_tokens & _path_tokens(_cp))
+                        _penalty = sum(
+                            3
+                            for _t in _penalty_tokens
+                            if _t in _cp and _t not in path_6004
+                        )
+                        return _overlap - _penalty
+
+                    _all_cands: list[dict] = []
+                    _seen_ids: set[str] = set()
                     for kw in keywords:
                         com_resp = await client.search_display_categories(
                             kw, site_no="6005"
                         )
-                        com_cats = _extract_cats(com_resp)
-                        if com_cats:
-                            main_category_id = str(com_cats[0].get("dispCtgId", ""))
-                            logger.info(
-                                f"[SSG] SSG.COM(6005) 전시카테고리 자동 조회 성공 ({kw!r}): {main_category_id}"
-                            )
-                            break
+                        for _c in _extract_cats(com_resp):
+                            _cid = str(_c.get("dispCtgId", ""))
+                            if _cid and _cid not in _seen_ids:
+                                _seen_ids.add(_cid)
+                                _all_cands.append(_c)
+
+                    if _all_cands:
+                        _all_cands.sort(key=_cand_score, reverse=True)
+                        main_cat_candidates = [
+                            str(_c.get("dispCtgId", ""))
+                            for _c in _all_cands
+                            if _c.get("dispCtgId")
+                        ]
+                        main_category_id = main_cat_candidates[0]
+                        _best_path = _all_cands[0].get("dispCtgPathNm", "")
+                        logger.info(
+                            f"[SSG] SSG.COM(6005) 전시카테고리 유사도 선택: {main_category_id} "
+                            f"({_best_path!r}, 후보 {len(main_cat_candidates)}개)"
+                        )
                     else:
                         logger.warning(
                             f"[SSG] SSG.COM(6005) '{leaf_name}' 검색 결과 없음"
@@ -402,6 +456,52 @@ class SSGPlugin(MarketPlugin):
                                 logger.error(
                                     f"[SSG] itemMngPropId 재시도 실패: {e}\n{_tb.format_exc()}"
                                 )
+
+        # 6005 메인매장 전시카테고리 거부 자동 재시도 (신규등록 한정)
+        # "잘못된 카테고리 정보입니다 … 전시 할 수 없습니다" 거부 시
+        # 유사도 차순위 후보로 dispCtgId 만 교체해 순차 재시도(최대 3개).
+        if not data.get("itemId") and len(main_cat_candidates) > 1:
+            for _next_cat in main_cat_candidates[1:4]:
+                _rd = result.get("data", {}) if isinstance(result, dict) else {}
+                _rr = _rd.get("result", {}) if isinstance(_rd, dict) else {}
+                if not isinstance(_rr, dict):
+                    break
+                _rc = str(_rr.get("resultCode", "") or "")
+                if not _rc or _rc in ("00", "SUCCESS"):
+                    break  # 이미 성공 — 재시도 불필요
+                _rmsg = _rr.get("resultDesc", "") or _rr.get("resultMessage", "") or ""
+                _is_cat_reject = ("전시" in _rmsg and "할 수 없" in _rmsg) or (
+                    "잘못된 카테고리" in _rmsg
+                )
+                if not _is_cat_reject:
+                    break  # 카테고리 거부가 아니면 중단
+                logger.warning(
+                    f"[SSG] 6005 전시카테고리 거부({main_category_id}) → "
+                    f"차순위 후보 재시도: {_next_cat}"
+                )
+                main_category_id = _next_cat
+                try:
+                    data = client.transform_product(
+                        product,
+                        category_id,
+                        std_category_id=std_category_id,
+                        main_category_id=main_category_id,
+                        infra=infra,
+                        margin_rate=margin_rate,
+                        shpp_rqrm_dcnt=shpp_rqrm_dcnt,
+                        day_max_qty=day_max_qty,
+                        once_min_qty=once_min_qty,
+                        once_max_qty=once_max_qty,
+                        brand_mappings=brand_mappings,
+                    )
+                    result = await client.register_product(data)
+                except Exception as e:
+                    import traceback as _tb
+
+                    logger.error(
+                        f"[SSG] 6005 카테고리 재시도 실패: {e}\n{_tb.format_exc()}"
+                    )
+                    break
 
         # SSG API 응답 검증
         result_data = result.get("data", {})

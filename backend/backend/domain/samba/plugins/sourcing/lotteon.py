@@ -604,7 +604,11 @@ class LotteonSourcingPlugin(SourcingPlugin):
                 error="LOTTEON 확장앱 미응답 (60s 타임아웃) — 갱신 차단",
             )
         except Exception as _dom_err:
-            logger.debug(f"[LOTTEON] DOM 위임 예외: {site_product_id} — {_dom_err}")
+            # dom_ext 는 None 유지 → 하단 else 분기에서 price_uncertain=True 처리됨.
+            # 데몬 미등록(RuntimeError) 등 원인 가시성 확보를 위해 warning 으로 노출.
+            logger.warning(
+                f"[LOTTEON] DOM 위임 실패 → 가격 불확실 처리: {site_product_id} — {_dom_err}"
+            )
 
         if dom_ext and dom_ext.get("options") and detail.get("options"):
             _changes = _merge_dom_stock(detail["options"], dom_ext["options"])

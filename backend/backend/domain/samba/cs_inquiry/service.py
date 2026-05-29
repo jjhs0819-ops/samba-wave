@@ -432,7 +432,7 @@ class SambaCSInquiryService:
             qna_items = await lh_client.search_qna_list(
                 req_start_dtime=start_date,
                 req_end_dtime=end_date,
-                c_val="",      # 전체 (2=상품정보Q&A, 17=핫라인)
+                c_val="",  # 전체 (2=상품정보Q&A, 17=핫라인)
                 proc_fin_yn="",  # 전체
             )
         except Exception as e:
