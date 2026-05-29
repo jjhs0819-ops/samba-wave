@@ -2484,6 +2484,9 @@ async def _site_autotune_loop(device_id: str, site: str):
                                         ) in _entries_list
                                     }
                                     _logged_accs: set[str] = set()
+                                    # 콜백에서 성공 확정된 계정 — 결과 stale-conn 재시도 시
+                                    # 이미 성공한 계정은 재시도 판정에서 제외하기 위함
+                                    _succeeded_accs: set[str] = set()
 
                                     async def _on_account_done(_acc_id, _ar):
                                         """판매처 한 곳 끝나는 즉시 _log_line 발사 — 워룸 로그가
@@ -2522,6 +2525,7 @@ async def _site_autotune_loop(device_id: str, site: str):
                                         )
                                         if _acc_ok:
                                             _synced_count += 1
+                                            _succeeded_accs.add(_acc_id)
                                             if _was_deleted:
                                                 _log_line(
                                                     _site,
@@ -2534,19 +2538,12 @@ async def _site_autotune_loop(device_id: str, site: str):
                                                     _pid,
                                                     f"{_idx_pfx}{_e_label}: {_e_action} 전송완료{_t}",
                                                 )
-                                        else:
-                                            _fail_msg = (
-                                                str(_ar_err)[:200]
-                                                if _ar_err
-                                                else "결과없음"
-                                            )
-                                            _log_line(
-                                                _site,
-                                                _pid,
-                                                f"{_idx_pfx}{_e_label}: {_e_action} 전송실패: {_fail_msg}{_t}",
-                                                "error",
-                                            )
-                                        _logged_accs.add(_acc_id)
+                                            _logged_accs.add(_acc_id)
+                                        # 실패는 콜백에서 즉시 로그/등록하지 않는다.
+                                        # 단일 세션을 여러 계정 긴 HTTP 동안 공유하다 연결이
+                                        # 만료되면 greenlet_spawn 등 stale-conn 에러가 계정별로
+                                        # 삼켜져 들어온다. 새 세션 재시도로 복구될 수 있으므로
+                                        # 재시도 종료 후 post-result 블록에서 최종 판정/로그한다.
 
                                     try:
                                         _tx_result = None
@@ -2581,6 +2578,53 @@ async def _site_autotune_loop(device_id: str, site: str):
                                                     # 상태로 더 머무르지 않도록 transaction 종료
                                                     await _tx_s.commit()
                                                 _tx_exc = None
+                                                # start_update가 예외 없이 반환해도 계정별
+                                                # transmit_error에 greenlet_spawn 등 stale-conn
+                                                # 에러가 삼켜져 들어올 수 있다(공유 세션 만료).
+                                                # 아직 성공 못한 계정에 stale 에러가 남아 있으면
+                                                # 새 세션으로 재시도. 오토튠은 가격/재고 수정
+                                                # (멱등 PUT)이라 그룹 전체 재전송해도 중복등록 위험 없음.
+                                                _stale_in_result = False
+                                                for _rr in (
+                                                    _tx_result.get("results") or []
+                                                ):
+                                                    if not isinstance(_rr, dict):
+                                                        continue
+                                                    _rr_err = (
+                                                        _rr.get("transmit_error") or {}
+                                                    )
+                                                    if not isinstance(_rr_err, dict):
+                                                        continue
+                                                    for _eacc, _eerr in _rr_err.items():
+                                                        if _eacc in _succeeded_accs:
+                                                            continue
+                                                        if _is_stale_conn_error(
+                                                            Exception(str(_eerr))
+                                                        ):
+                                                            _stale_in_result = True
+                                                            break
+                                                    if _stale_in_result:
+                                                        break
+                                                if (
+                                                    _stale_in_result
+                                                    and _tx_attempt
+                                                    < len(_TX_RETRY_DELAYS)
+                                                ):
+                                                    _delay = _TX_RETRY_DELAYS[
+                                                        _tx_attempt
+                                                    ]
+                                                    log.warning(
+                                                        "[오토튠][DB재시도] transmit_group "
+                                                        "pid=%s 결과 stale-conn 감지 "
+                                                        "(시도 %d/%d, %.1fs 대기) "
+                                                        "→ 새 세션 재시도",
+                                                        _pid,
+                                                        _tx_attempt + 1,
+                                                        len(_TX_RETRY_DELAYS) + 1,
+                                                        _delay,
+                                                    )
+                                                    await asyncio.sleep(_delay)
+                                                    continue
                                                 break
                                             except Exception as _try_exc:
                                                 _tx_exc = _try_exc
