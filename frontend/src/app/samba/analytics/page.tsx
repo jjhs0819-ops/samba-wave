@@ -46,9 +46,11 @@ export default function AnalyticsPage() {
 
   const {
     loading, error, marketAccounts, aggregate,
-    dailyData, sourcingRoi, bestSellers, brandData, load,
+    bestSellers, brandData, load,
   } = useAnalyticsData({
-    searchYear, searchMonth, setSelectedSites, setSelectedMarkets,
+    searchYear, searchMonth,
+    selectedMarkets, selectedSites, selectedStatuses,
+    setSelectedSites, setSelectedMarkets,
     hasStoredMarkets: selectedMarkets.length > 0,
     hasStoredSites: selectedSites.length > 0,
   })
@@ -83,6 +85,39 @@ export default function AnalyticsPage() {
   // 전체 합계
   const totalSales = filteredRows.reduce((s, r) => s + (r.sales || 0), 0)
   const totalOrders = filteredRows.reduce((s, r) => s + (r.orders || 0), 0)
+
+  // ── filteredRows 기반 차트 데이터 ──
+  // 매출 추이: 날짜별 집계
+  const filteredChartData = (() => {
+    const map: Record<string, { date: string; sales: number; profit: number; orders: number }> = {}
+    for (const r of filteredRows) {
+      if (!r.date) continue
+      if (!map[r.date]) map[r.date] = { date: r.date, sales: 0, profit: 0, orders: 0 }
+      map[r.date].sales += r.sales || 0
+      map[r.date].profit += r.profit || 0
+      map[r.date].orders += r.orders || 0
+    }
+    return Object.values(map).sort((a, b) => a.date.localeCompare(b.date))
+  })()
+
+  // 소싱처 ROI: filteredRows 기반 집계
+  const filteredSourcingRoi = (() => {
+    const map: Record<string, { source_site: string; total_revenue: number; total_cost: number; total_profit: number; order_count: number }> = {}
+    for (const r of filteredRows) {
+      const site = r.source_site || '미분류'
+      if (!map[site]) map[site] = { source_site: site, total_revenue: 0, total_cost: 0, total_profit: 0, order_count: 0 }
+      map[site].total_revenue += r.sales || 0
+      map[site].total_cost += r.cost || 0
+      map[site].total_profit += r.profit || 0
+      map[site].order_count += r.orders || 0
+    }
+    return Object.values(map).map(item => ({
+      ...item,
+      avg_profit_per_order: item.order_count > 0 ? Math.round(item.total_profit / item.order_count) : 0,
+      avg_margin_rate: item.total_revenue > 0 ? Math.round(item.total_profit / item.total_revenue * 1000) / 10 : 0,
+      roi: item.total_cost > 0 ? Math.round((item.total_revenue - item.total_cost) / item.total_cost * 1000) / 10 : 0,
+    })).filter(item => item.order_count > 0).sort((a, b) => b.total_revenue - a.total_revenue)
+  })()
 
   // ──────────────────────────────────────────────
   // 집계 함수: 월 선택 시 일별, 전체 시 월별
@@ -421,7 +456,7 @@ export default function AnalyticsPage() {
             border: '1px solid #2D2D2D',
           }}>최근 30일 매출 추이</div>
           <div style={{ ...card, padding: '1.25rem', borderTopLeftRadius: 0, borderTopRightRadius: 0, borderTop: 'none' }}>
-            <RevenueTrendLine data={dailyData} />
+            <RevenueTrendLine data={filteredChartData} />
           </div>
         </div>
       </div>
@@ -480,7 +515,7 @@ export default function AnalyticsPage() {
       )}
 
       {/* 소싱처 ROI */}
-      {sourcingRoi.length > 0 && (
+      {filteredSourcingRoi.length > 0 && (
         <div style={{ marginTop: '1.5rem' }}>
           <div style={{
             fontSize: '0.9375rem', fontWeight: 700,
@@ -505,7 +540,7 @@ export default function AnalyticsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sourcingRoi.map(r => (
+                  {filteredSourcingRoi.map(r => (
                     <tr key={r.source_site} style={{ borderBottom: '1px solid #1A1A1A' }}>
                       <td style={{ padding: '0.4rem 0.5rem', fontWeight: 600 }}>{r.source_site}</td>
                       <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right', color: '#FF8C00' }}>₩{fmt(r.total_revenue)}</td>

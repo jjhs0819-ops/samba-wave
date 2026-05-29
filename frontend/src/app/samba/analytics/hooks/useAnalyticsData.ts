@@ -14,6 +14,9 @@ import { SOURCE_SITES } from '../constants'
 interface Args {
   searchYear: number
   searchMonth: number
+  selectedMarkets: string[]
+  selectedSites: string[]
+  selectedStatuses: string[]
   setSelectedSites: (v: string[]) => void
   setSelectedMarkets: (v: string[]) => void
   hasStoredMarkets: boolean
@@ -21,7 +24,9 @@ interface Args {
 }
 
 export function useAnalyticsData({
-  searchYear, searchMonth, setSelectedSites, setSelectedMarkets,
+  searchYear, searchMonth,
+  selectedMarkets, selectedSites, selectedStatuses,
+  setSelectedSites, setSelectedMarkets,
   hasStoredMarkets, hasStoredSites,
 }: Args) {
   const [loading, setLoading] = useState(true)
@@ -56,12 +61,15 @@ export function useAnalyticsData({
       }
       setAggregate(rows)
 
+      const mkts = selectedMarkets.length > 0 ? selectedMarkets : undefined
+      const sts = selectedSites.length > 0 ? selectedSites : undefined
+      const stats = selectedStatuses.length > 0 ? selectedStatuses : undefined
       const [ch, daily, roi, best, brands] = await Promise.all([
         analyticsApi.channels().catch(() => []),
         analyticsApi.daily(30).catch(() => []),
         analyticsApi.sourcingRoi(start, end).catch(() => []),
-        analyticsApi.bestSellers(10, 30).catch(() => []),
-        analyticsApi.brands(start, end).catch(() => []),
+        analyticsApi.bestSellers(10, 30, mkts, sts, stats).catch(() => []),
+        analyticsApi.brands(start, end, mkts, sts, stats).catch(() => []),
       ])
       setChannelData(ch)
       setDailyData(daily)
@@ -71,7 +79,8 @@ export function useAnalyticsData({
     } finally {
       setLoading(false)
     }
-  }, [searchYear, searchMonth])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchYear, searchMonth, selectedMarkets, selectedSites, selectedStatuses])
 
   useEffect(() => { load() }, [load])
 
@@ -112,7 +121,7 @@ export function useAnalyticsData({
 
   return {
     loading, error, marketAccounts, aggregate,
-    dailyData, sourcingRoi, bestSellers, brandData,
+    bestSellers, brandData,
     load,
   }
 }

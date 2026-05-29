@@ -298,7 +298,13 @@ class SambaAnalyticsService:
     # ==================== Best / Worst Sellers ====================
 
     async def get_best_sellers(
-        self, limit: int = 10, days: int = 30, tenant_id: Optional[str] = None
+        self,
+        limit: int = 10,
+        days: int = 30,
+        tenant_id: Optional[str] = None,
+        markets: list[str] | None = None,
+        sites: list[str] | None = None,
+        statuses: list[str] | None = None,
     ) -> List[Dict[str, Any]]:
         """매출 상위 상품 (베스트셀러).
 
@@ -314,6 +320,14 @@ class SambaAnalyticsService:
             for o in all_orders
             if o.created_at >= cutoff and (o.sourcing_order_number or "").strip()
         ]
+        if markets:
+            filtered = [
+                o for o in filtered if (o.channel_name or "").split("(")[0] in markets
+            ]
+        if sites:
+            filtered = [o for o in filtered if (o.source_site or "") in sites]
+        if statuses:
+            filtered = [o for o in filtered if (o.status or "") in statuses]
 
         agg: Dict[str, Dict[str, Any]] = defaultdict(
             lambda: {"sales": 0.0, "profit": 0.0, "orders": 0, "units": 0}
@@ -376,6 +390,9 @@ class SambaAnalyticsService:
         start_date: datetime | None = None,
         end_date: datetime | None = None,
         tenant_id: Optional[str] = None,
+        markets: list[str] | None = None,
+        sites: list[str] | None = None,
+        statuses: list[str] | None = None,
     ) -> List[Dict[str, Any]]:
         """브랜드별 매출 분석."""
         all_orders = self._filter_by_tenant(
@@ -385,6 +402,14 @@ class SambaAnalyticsService:
             all_orders = [o for o in all_orders if o.created_at >= start_date]
         if end_date:
             all_orders = [o for o in all_orders if o.created_at <= end_date]
+        if markets:
+            all_orders = [
+                o for o in all_orders if (o.channel_name or "").split("(")[0] in markets
+            ]
+        if sites:
+            all_orders = [o for o in all_orders if (o.source_site or "") in sites]
+        if statuses:
+            all_orders = [o for o in all_orders if (o.status or "") in statuses]
 
         # collected_product_id → brand 매핑 구축
         cp_ids = {o.collected_product_id for o in all_orders if o.collected_product_id}

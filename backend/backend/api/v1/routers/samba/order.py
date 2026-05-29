@@ -1465,6 +1465,10 @@ async def analytics_aggregate(
             SambaOrder.status,
             sa_func.coalesce(sa_func.sum(SambaOrder.sale_price), 0).label("sales"),
             sa_func.count().label("orders"),
+            sa_func.coalesce(sa_func.sum(SambaOrder.profit), 0).label("profit"),
+            sa_func.coalesce(
+                sa_func.sum(SambaOrder.cost * SambaOrder.quantity), 0
+            ).label("cost"),
         )
         .select_from(SambaOrder)
         .outerjoin(SambaMarketAccount, SambaMarketAccount.id == SambaOrder.channel_id)
@@ -1496,6 +1500,8 @@ async def analytics_aggregate(
             "status": r.status or "",
             "sales": float(r.sales or 0),
             "orders": int(r.orders or 0),
+            "profit": float(r.profit or 0),
+            "cost": float(r.cost or 0),
         }
         for r in result.all()
     ]

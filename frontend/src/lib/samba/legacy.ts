@@ -125,6 +125,8 @@ export interface AnalyticsAggregateRow {
   status: string
   sales: number
   orders: number
+  profit: number
+  cost: number
 }
 
 export interface PaginatedOrderList {
@@ -2673,14 +2675,24 @@ export const analyticsApi = {
     if (end) p.set('end_date', end)
     return request<SourcingRoi[]>(`${SAMBA_PREFIX}/analytics/sourcing-roi?${p}`)
   },
-  bestSellers: (limit = 10, days = 30) =>
-    request<ProductPerformance[]>(`${SAMBA_PREFIX}/analytics/best-sellers?limit=${limit}&days=${days}`),
+  bestSellers: (limit = 10, days = 30, markets?: string[], sites?: string[], statuses?: string[]) => {
+    const p = new URLSearchParams()
+    p.set('limit', String(limit))
+    p.set('days', String(days))
+    markets?.forEach(m => p.append('markets', m))
+    sites?.forEach(s => p.append('sites', s))
+    statuses?.forEach(s => p.append('statuses', s))
+    return request<ProductPerformance[]>(`${SAMBA_PREFIX}/analytics/best-sellers?${p}`)
+  },
   worstSellers: (limit = 10, days = 30) =>
     request<ProductPerformance[]>(`${SAMBA_PREFIX}/analytics/worst-sellers?limit=${limit}&days=${days}`),
-  brands: (start?: string, end?: string) => {
+  brands: (start?: string, end?: string, markets?: string[], sites?: string[], statuses?: string[]) => {
     const p = new URLSearchParams()
     if (start) p.set('start_date', start)
     if (end) p.set('end_date', end)
+    markets?.forEach(m => p.append('markets', m))
+    sites?.forEach(s => p.append('sites', s))
+    statuses?.forEach(s => p.append('statuses', s))
     return request<BrandSales[]>(`${SAMBA_PREFIX}/analytics/brands?${p}`)
   },
 }

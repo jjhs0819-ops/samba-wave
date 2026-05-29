@@ -126,12 +126,22 @@ async def get_sourcing_roi(
 async def get_best_sellers(
     limit: int = Query(10, ge=1, le=50),
     days: int = Query(30, ge=1, le=365),
+    markets: list[str] = Query(default=[]),
+    sites: list[str] = Query(default=[]),
+    statuses: list[str] = Query(default=[]),
     session: AsyncSession = Depends(get_read_session_dependency),
     tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     """매출 상위 상품 (베스트셀러)."""
     svc = _get_service(session)
-    return await svc.get_best_sellers(limit=limit, days=days, tenant_id=tenant_id)
+    return await svc.get_best_sellers(
+        limit=limit,
+        days=days,
+        tenant_id=tenant_id,
+        markets=markets or None,
+        sites=sites or None,
+        statuses=statuses or None,
+    )
 
 
 @router.get("/worst-sellers")
@@ -150,6 +160,9 @@ async def get_worst_sellers(
 async def get_sales_by_brand(
     start_date: str = Query(None, description="시작일 (YYYY-MM-DD)"),
     end_date: str = Query(None, description="종료일 (YYYY-MM-DD)"),
+    markets: list[str] = Query(default=[]),
+    sites: list[str] = Query(default=[]),
+    statuses: list[str] = Query(default=[]),
     session: AsyncSession = Depends(get_read_session_dependency),
     tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
@@ -157,4 +170,11 @@ async def get_sales_by_brand(
     svc = _get_service(session)
     sd = datetime.fromisoformat(start_date) if start_date else None
     ed = datetime.fromisoformat(end_date) if end_date else None
-    return await svc.get_sales_by_brand(sd, ed, tenant_id=tenant_id)
+    return await svc.get_sales_by_brand(
+        sd,
+        ed,
+        tenant_id=tenant_id,
+        markets=markets or None,
+        sites=sites or None,
+        statuses=statuses or None,
+    )
