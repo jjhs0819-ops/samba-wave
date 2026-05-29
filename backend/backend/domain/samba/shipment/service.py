@@ -1791,6 +1791,12 @@ class SambaShipmentService:
                             )
                         else:
                             existing_product_no = raw_existing
+                elif market_type in ("gmarket", "auction"):
+                    # 수정/판매상태 API는 마스터 goodsNo 필요 — _master 우선,
+                    # 없으면(레거시) siteGoodsNo. plugin이 siteGoodsNo→master 변환 백업.
+                    existing_product_no = existing_nos.get(
+                        f"{account_id}_master", ""
+                    ) or existing_nos.get(account_id, "")
                 else:
                     existing_product_no = existing_nos.get(account_id, "")
                 if existing_product_no:
@@ -1973,6 +1979,9 @@ class SambaShipmentService:
                                 _esm_d = {}
                             _site_goods_no = str(_esm_d.get("siteGoodsNo", "") or "")
                             _seller_pid = str(_esm_d.get("sellerProductId", "") or "")
+                            # 마스터 goodsNo — 수정/삭제/판매상태 API 가 마스터번호 요구.
+                            # 저장 안 하면 siteGoodsNo로 호출돼 404 (오토튠 가격/재고 실패).
+                            _master_no = str(_esm_d.get("goodsNo", "") or "")
                             # "0"/"0.0" 무효값 차단(이슈#278) — 기존 유효 ID 덮어쓰기 방지
                             if _site_goods_no and _site_goods_no.strip() not in (
                                 "0",
@@ -1984,9 +1993,12 @@ class SambaShipmentService:
                                 "0.0",
                             ):
                                 nos[f"{account_id}_origin"] = _seller_pid
-                            if _site_goods_no or _seller_pid:
+                            if _master_no and _master_no.strip() not in ("0", "0.0"):
+                                nos[f"{account_id}_master"] = _master_no
+                            if _site_goods_no or _seller_pid or _master_no:
                                 logger.info(
-                                    f"[전송] {market_type} 상품번호 — siteGoodsNo={_site_goods_no}, sellerProductId={_seller_pid}"
+                                    f"[전송] {market_type} 상품번호 — siteGoodsNo={_site_goods_no}, "
+                                    f"sellerProductId={_seller_pid}, master={_master_no}"
                                 )
                         res["product_nos"] = nos
                         logger.info(f"[전송] {market_type} 상품번호: {product_no}")

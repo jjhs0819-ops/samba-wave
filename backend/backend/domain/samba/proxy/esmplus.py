@@ -1963,6 +1963,105 @@ async def _resolve_esm_group(
     return g, [v for v in values if v.get("recommendedOptValueNo")]
 
 
+async def resolve_esm_brand_no(client: ESMPlusClient, brand_name: str) -> int | None:
+    """브랜드명 → ESM brandNo 매핑 (정확명 매칭).
+
+    ESM 등록 시 itemBasicInfo.catalog.brandNo 가 실제 브랜드 필드.
+    문자열 brand 만 보내면 ESM이 무시 → 마켓 리스팅 브랜드 빈칸.
+    search_brands 응답: {"brands": [{"brandNo", "brandName", "makerNo", ...}]}.
+    오매칭 방지 위해 공백/대소문자 무시 '정확 일치'만 채택. 없으면 None.
+    """
+    if not brand_name or not brand_name.strip():
+        return None
+    try:
+        resp = await client.search_brands(brand_name.strip())
+    except Exception as e:
+        logger.warning(f"[ESM] 브랜드 코드 조회 실패: '{brand_name}' {e}")
+        return None
+    brands = (resp or {}).get("brands") or []
+    target = re.sub(r"\s+", "", brand_name).lower()
+    for b in brands:
+        bn = re.sub(r"\s+", "", (b.get("brandName") or "")).lower()
+        if bn == target and b.get("brandNo"):
+            return int(b["brandNo"])
+    logger.warning(
+        f"[ESM] 브랜드 정확매칭 없음 — catalog.brandNo 미설정 (brand='{brand_name}', "
+        f"후보 {len(brands)}건)"
+    )
+    return None
+
+
+# 셀러+사이트별 {siteGoodsNo → master goodsNo} 맵 + master 집합 캐시 (TTL 10분).
+# 수정/삭제 API는 마스터번호 필수인데 과거 저장값은 siteGoodsNo라 404 → 역매핑 필요.
+_ESM_MASTER_MAP_CACHE: dict[str, tuple[float, tuple[dict[str, str], set[str]]]] = {}
+_ESM_MASTER_MAP_TTL = 600.0
+
+
+async def _build_esm_master_map(
+    client: ESMPlusClient,
+) -> tuple[dict[str, str], set[str]]:
+    """셀러 전체 카탈로그 페이징 → ({siteGoodsNo: master}, {master...}).
+
+    search_products 가 managedCode/siteGoodsNo 필터를 무시함(검증됨)이라
+    전체 목록을 훑어 매칭. siteGoodsNo 는 {gmkt, iac} 구조 — 사이트별 키만 채택.
+    """
+    site_key = client.cfg["siteKey"].lower()  # "iac"(옥션) | "gmkt"(지마켓)
+    site_map: dict[str, str] = {}
+    masters: set[str] = set()
+    for page in range(1, 41):  # 최대 40페이지(2,000건) 안전상한
+        try:
+            r = await client.search_products({"pageIndex": page, "pageSize": 50})
+        except Exception as e:
+            logger.warning(f"[ESM] 카탈로그 스캔 중단 page={page}: {e}")
+            break
+        items = r.get("items") or []
+        if not items:
+            break
+        for it in items:
+            master = str(it.get("goodsNo") or "").strip()
+            if not master:
+                continue
+            masters.add(master)
+            sno = str((it.get("siteGoodsNo") or {}).get(site_key) or "").strip()
+            if sno:
+                site_map[sno] = master
+        if len(items) < 50:
+            break
+    return site_map, masters
+
+
+async def resolve_esm_master_goods_no(
+    client: ESMPlusClient, goods_no: str
+) -> str | None:
+    """저장 상품번호(siteGoodsNo 또는 master) → 마스터 goodsNo.
+
+    ESM 수정/삭제/판매상태 API(/goods/{goodsNo}/...)는 마스터번호 필수.
+    과거 저장값은 siteGoodsNo(옥션 F.../지마켓 숫자)라 그대로 호출 시 404.
+    카탈로그 전체 스캔으로 매핑(셀러별 10분 캐시). 이미 master면 그대로 반환.
+    """
+    val = str(goods_no or "").strip()
+    if not val:
+        return None
+    cache_key = f"{client.site}:{client.seller_id}"
+    now = time.time()
+    cached = _ESM_MASTER_MAP_CACHE.get(cache_key)
+    if not cached or (now - cached[0]) >= _ESM_MASTER_MAP_TTL:
+        cached = (now, await _build_esm_master_map(client))
+        _ESM_MASTER_MAP_CACHE[cache_key] = cached
+    site_map, masters = cached[1]
+    if val in masters:
+        return val
+    if val in site_map:
+        return site_map[val]
+    # 캐시 miss — 신규 등록 직후 stale 대비 1회 강제 재스캔
+    fresh = await _build_esm_master_map(client)
+    _ESM_MASTER_MAP_CACHE[cache_key] = (now, fresh)
+    site_map, masters = fresh
+    if val in masters:
+        return val
+    return site_map.get(val)
+
+
 async def register_esm_options(
     client: ESMPlusClient,
     goods_no: str,

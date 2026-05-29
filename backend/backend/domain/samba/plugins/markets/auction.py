@@ -211,9 +211,28 @@ class AuctionPlugin(MarketPlugin):
         price_only = product.get("_price_stock_only", False)
 
         if skip_image or price_only:
+            # 오토튠 가격/재고/판매중지 동기화 — 옵션상품은 sell-status 본품재고가
+            # 무시되므로 옵션별 재고/품절은 recommended-options로 처리.
+            # 브랜드 조회 전에 조기 반환해 불필요한 search_brands 호출 차단.
             return await self._update_price_stock(
-                client, existing_no, product_copy, data
+                client, existing_no, product_copy, data, cat_code=category_id
             )
+
+        # 브랜드 코드 매핑 — 신규등록·전체수정 경로만 (오토튠 가격/재고 제외).
+        # ESM 실제 브랜드 필드는 catalog.brandNo(정수). 문자열 brand만 보내면
+        # ESM이 무시 → 마켓 리스팅 브랜드 빈칸.
+        from backend.domain.samba.proxy.esmplus import resolve_esm_brand_no
+
+        _brand = (data.get("itemBasicInfo", {}) or {}).get("brand") or ""
+        if _brand:
+            _brand_no = await resolve_esm_brand_no(client, _brand)
+            if _brand_no:
+                data.setdefault("itemBasicInfo", {}).setdefault("catalog", {})[
+                    "brandNo"
+                ] = _brand_no
+                logger.info(
+                    f"[옥션] 브랜드 코드 매핑: '{_brand}' → brandNo={_brand_no}"
+                )
 
         # 등록/수정 분기
         if existing_no:
@@ -324,15 +343,20 @@ class AuctionPlugin(MarketPlugin):
         pending_images: dict | None,
     ) -> dict[str, Any]:
         """기존 상품 수정."""
+        from backend.domain.samba.proxy.esmplus import resolve_esm_master_goods_no
+
+        # 수정 API는 마스터 goodsNo 필요 — 저장값이 siteGoodsNo면 404. 변환.
+        master_no = await resolve_esm_master_goods_no(client, goods_no) or goods_no
+
         # PUT 엔드포인트는 isSell을 루트 레벨에 요구함 (POST는 itemAddtionalInfo 안)
         _is_sell = data.get("itemAddtionalInfo", {}).get("isSell", {"Iac": 1})
         update_data = {**data, "isSell": _is_sell}
         try:
-            await client.update_product(goods_no, update_data)
+            await client.update_product(master_no, update_data)
         except RuntimeError as e:
             err_msg = str(e)
             if "상품이 없습니다" in err_msg or "not exist" in err_msg.lower():
-                logger.warning(f"[옥션] 상품 {goods_no} 없음 → 신규등록 전환")
+                logger.warning(f"[옥션] 상품 {master_no} 없음 → 신규등록 전환")
                 result = await client.register_product(update_data)
                 new_goods_no = result.get("goodsNo", "")
                 return {
@@ -345,14 +369,14 @@ class AuctionPlugin(MarketPlugin):
 
         if pending_images:
             try:
-                await client.update_images(goods_no, {"imageModel": pending_images})
+                await client.update_images(master_no, {"imageModel": pending_images})
             except Exception as img_e:
                 logger.warning(f"[옥션] 이미지 수정 실패: {img_e}")
 
         return {
             "success": True,
             "message": "옥션 수정 성공",
-            "data": {"sellerProductId": goods_no},
+            "data": {"sellerProductId": goods_no, "goodsNo": master_no},
         }
 
     async def _update_price_stock(
@@ -361,35 +385,54 @@ class AuctionPlugin(MarketPlugin):
         goods_no: str,
         product: dict,
         data: dict[str, Any],
+        cat_code: str = "",
     ) -> dict[str, Any]:
-        """가격/재고만 수정 — sell-status API 활용."""
+        """가격/재고/판매중지 수정 (오토튠).
+
+        - 마스터 goodsNo 해석(저장값 siteGoodsNo면 404 → 카탈로그 스캔 변환).
+        - 가격 + 판매상태: sell-status.
+        - 옵션상품: 옵션별 재고/품절은 recommended-options PUT (sell-status 본품재고 무시됨).
+        - 전 옵션 품절: sell-status isSell=false 만 (recommended-options "최소 1개 판매" 에러 회피).
+        """
         if not goods_no:
             return {"success": False, "message": "상품번호가 없어 가격/재고 수정 불가"}
 
-        # ESM Plus 스펙 — 등록과 sell-status 모두 PascalCase(Iac). 실 호출 검증 결과
-        # 'isSell' camelCase 는 'IsSell 필드가 필요합니다' 응답 → PascalCase 통일.
+        from backend.domain.samba.proxy.esmplus import (
+            register_esm_options,
+            resolve_esm_master_goods_no,
+        )
+
+        master_no = await resolve_esm_master_goods_no(client, goods_no) or goods_no
+
+        # ESM Plus 스펙 — sell-status PascalCase(Iac).
         price = data.get("itemAddtionalInfo", {}).get("price", {}).get("Iac", 0)
         stock = data.get("itemAddtionalInfo", {}).get("stock", {}).get("Iac", 0)
 
+        # 판매가능 여부 — 옵션상품은 옵션별, 본품상품은 본품 재고로 판단
+        options = product.get("options") or []
+        has_options = bool(options)
+        if has_options:
+            any_sellable = any(
+                not (o.get("isSoldOut") or o.get("is_sold_out"))
+                and int(o.get("stock", 0) or 0) > 0
+                for o in options
+            )
+        else:
+            any_sellable = int(stock or 0) > 0
+        is_sell = bool(any_sellable)
+
         sell_data: dict[str, Any] = {
-            "IsSell": {"Iac": True},
+            "IsSell": {"Iac": is_sell},
             "itemBasicInfo": {
                 "price": {"Iac": price},
-                "stock": {"Iac": stock},
+                # 옵션상품은 본품재고 무시되나 1~99999 범위 필수
+                "stock": {"Iac": max(1, min(int(stock or 1), 99999))},
                 "sellingPeriod": {"Iac": 0},
             },
         }
 
         try:
-            await client.update_sell_status(goods_no, sell_data)
-            logger.info(
-                f"[옥션] 가격/재고 수정 성공: goodsNo={goods_no}, price={price}, stock={stock}"
-            )
-            return {
-                "success": True,
-                "message": "옥션 가격/재고 수정 성공",
-                "data": {"sellerProductId": goods_no},
-            }
+            await client.update_sell_status(master_no, sell_data)
         except RuntimeError as e:
             if "상품이 없습니다" in str(e):
                 return {
@@ -399,6 +442,44 @@ class AuctionPlugin(MarketPlugin):
                     "_clear_product_no": True,
                 }
             raise
+
+        # 옵션별 재고/품절 동기화 — 판매가능 옵션 있을 때만.
+        # 전 옵션 품절이면 위 isSell=false로 전체 중지 완료 — recommended-options는
+        # "주문선택사항 최소 1개 판매" 에러나므로 호출 안 함.
+        opt_msg = ""
+        if has_options and any_sellable and cat_code:
+            try:
+                samba_options = _to_grouped_options(
+                    options, product.get("option_group_names") or []
+                )
+                opt_result = await register_esm_options(
+                    client, master_no, cat_code, samba_options, site="auction"
+                )
+                if opt_result.get("success"):
+                    opt_msg = (
+                        f" [옵션재고 {opt_result.get('matched')}/"
+                        f"{opt_result.get('requested')}]"
+                    )
+                else:
+                    opt_msg = (
+                        f" [옵션재고 동기화 실패: {opt_result.get('message', '')[:60]}]"
+                    )
+                    logger.warning(
+                        f"[옵션] 옵션 재고 동기화 실패: {opt_result.get('message')}"
+                    )
+            except Exception as opt_e:
+                opt_msg = f" [옵션재고 오류: {str(opt_e)[:50]}]"
+                logger.warning(f"[옥션] 옵션 재고 동기화 오류: {opt_e}")
+
+        logger.info(
+            f"[옥션] 가격/재고/판매상태 수정: master={master_no}, price={price}, "
+            f"isSell={is_sell}{opt_msg}"
+        )
+        return {
+            "success": True,
+            "message": f"옥션 가격/재고 수정 성공{opt_msg}",
+            "data": {"sellerProductId": goods_no, "goodsNo": master_no},
+        }
 
     async def delete(self, session, product_no: str, account) -> dict[str, Any]:
         """옥션 상품 판매중지."""
@@ -423,10 +504,15 @@ class AuctionPlugin(MarketPlugin):
             return {"success": False, "message": "ESM 인증정보 없음"}
         client = ESMPlusClient(hosting_id, secret_key, seller_id, site="auction")
 
+        # 판매중지도 마스터 goodsNo 필요 — 저장값이 siteGoodsNo면 404. 변환.
+        from backend.domain.samba.proxy.esmplus import resolve_esm_master_goods_no
+
+        master_no = await resolve_esm_master_goods_no(client, product_no) or product_no
+
         # 판매중지 — 실 호출 검증 schema (PascalCase). 'IsSell' 만으로도 ESM 측 검증 통과.
         suspend_data = {"IsSell": {"Iac": False}}
-        await client.update_sell_status(product_no, suspend_data)
-        logger.info(f"[옥션] 판매중지 완료: goodsNo={product_no}")
+        await client.update_sell_status(master_no, suspend_data)
+        logger.info(f"[옥션] 판매중지 완료: goodsNo={master_no}")
         return {"success": True, "message": "옥션 판매중지 완료"}
 
     async def _inject_account_settings(self, session, product: dict, account) -> dict:
