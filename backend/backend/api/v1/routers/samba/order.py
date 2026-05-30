@@ -5303,14 +5303,13 @@ async def sync_orders_from_markets(
 
                     # 취소·반품 요청 통합 조회 (#246) — ordersheets v5에 cancelRequests/
                     # returnRequests 필드가 없으므로 returnRequests v6 API를 별도 호출해 머지.
-                    # orderId 기준으로 매핑 (1 orderId : 0..N receipt).
-                    cancel_map: dict[int, dict] = {}
+                    # 키: (orderId, vendorItemId) — 멀티옵션 주문에서 옵션별 정확한 매칭 (#296)
+                    # vendorItemId가 없는 receipt는 (orderId, None) fallback
+                    cancel_map: dict[tuple[int, int | None], dict] = {}
                     try:
                         cr_list = await client.get_cancel_and_return_requests(
                             days=max(body.days, 30)
                         )
-                        # receiptType=CANCEL 우선 (배송 전), 같은 orderId면 createdAt 최신 우선
-                        # returnRequests 응답의 orderId 키는 카멜케이스 그대로
                         for cr in cr_list or []:
                             if not isinstance(cr, dict):
                                 continue
@@ -5321,21 +5320,41 @@ async def sync_orders_from_markets(
                                 oid = None
                             if oid is None:
                                 continue
-                            prev = cancel_map.get(oid)
-                            if prev is None:
-                                cancel_map[oid] = cr
-                            else:
-                                # CANCEL 우선
-                                if (
-                                    cr.get("receiptType") or ""
-                                ).upper() == "CANCEL" and (
-                                    prev.get("receiptType") or ""
-                                ).upper() != "CANCEL":
-                                    cancel_map[oid] = cr
+                            # cancelItems / returnItems에서 vendorItemId 추출
+                            items = cr.get("cancelItems") or cr.get("returnItems") or []
+                            vids: list[int | None] = []
+                            for itm in items if isinstance(items, list) else []:
+                                if isinstance(itm, dict):
+                                    vid_raw = itm.get("vendorItemId")
+                                    try:
+                                        vids.append(
+                                            int(vid_raw)
+                                            if vid_raw is not None
+                                            else None
+                                        )
+                                    except (TypeError, ValueError):
+                                        vids.append(None)
+                            if not vids:
+                                vids = [
+                                    None
+                                ]  # vendorItemId 없는 receipt → orderId만 fallback
+                            for vid in vids:
+                                key = (oid, vid)
+                                prev = cancel_map.get(key)
+                                if prev is None:
+                                    cancel_map[key] = cr
+                                else:
+                                    # CANCEL 우선 (배송 전 취소 > 반품)
+                                    if (
+                                        cr.get("receiptType") or ""
+                                    ).upper() == "CANCEL" and (
+                                        prev.get("receiptType") or ""
+                                    ).upper() != "CANCEL":
+                                        cancel_map[key] = cr
                         logger.info(
                             f"[주문동기화] 쿠팡({label}): "
                             f"취소·반품 요청 {len(cr_list or [])}건 머지 "
-                            f"({len(cancel_map)} orderId)"
+                            f"({len(cancel_map)} orderId×vendorItemId)"
                         )
                     except Exception as cre:
                         logger.warning(
@@ -5350,7 +5369,30 @@ async def sync_orders_from_markets(
                             oid = int(oid_raw) if oid_raw is not None else None
                         except (TypeError, ValueError):
                             oid = None
-                        ci = cancel_map.get(oid) if oid is not None else None
+                        # 해당 라인 vendorItemId로 정확한 매칭, 없으면 (oid, None) fallback
+                        ci = None
+                        if oid is not None:
+                            first_item_tmp = (
+                                (ro.get("orderItems") or [{}])[0]
+                                if ro.get("orderItems")
+                                else {}
+                            )
+                            vid_raw_tmp = (
+                                first_item_tmp.get("vendorItemId")
+                                if isinstance(first_item_tmp, dict)
+                                else None
+                            )
+                            try:
+                                vid_tmp = (
+                                    int(vid_raw_tmp)
+                                    if vid_raw_tmp is not None
+                                    else None
+                                )
+                            except (TypeError, ValueError):
+                                vid_tmp = None
+                            ci = cancel_map.get((oid, vid_tmp)) or cancel_map.get(
+                                (oid, None)
+                            )
                         try:
                             orders_data.append(
                                 _parse_coupang_order(
