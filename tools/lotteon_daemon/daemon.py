@@ -78,7 +78,7 @@ except ImportError:
 # ====================================================================
 # 데몬 버전 — build.ps1 가 갱신. 자동 업데이트 비교 기준.
 # ====================================================================
-DAEMON_VERSION = "1.4.20"
+DAEMON_VERSION = "1.4.21"
 
 
 # ── 가격수집 도메인 화이트리스트 ───────────────────────────────────────────
@@ -2463,10 +2463,17 @@ async def run_daemon(args: argparse.Namespace) -> int:
             # 같은 page 를 수천 번 navigate 하면 렌더러에 DOM/JS 가 쌓여 메모리가 GB 단위로
             # 부푼다(실측 1.9GB/탭, 합 5.6GB). _PAGE_RECYCLE 개 잡마다 page 를 닫고 새로 열어
             # 렌더러 메모리를 리셋한다. max-uptime(1시간) 재시작 전에 누수를 끊는 1차 방어선.
-            _PAGE_RECYCLE = int(os.environ.get("DAEMON_PAGE_RECYCLE", "50"))
+            # 2026-05-30: 50→10 하향(실측 탭당 ~2GB 누적 → 4탭 ~8GB). 10잡마다 리셋하면
+            # 탭당 피크 ~0.5GB 로 억제. 재생성 비용은 new_page 1회(로그인은 context 단위라 유지)로 미미.
+            _PAGE_RECYCLE = int(os.environ.get("DAEMON_PAGE_RECYCLE", "10"))
+            # 유휴(잡 없음)가 이 초를 넘으면 page 를 닫아 렌더러 메모리를 즉시 회수한다.
+            # 백엔드 503/잡 고갈 시 누수 메모리를 계속 쥐고 있던 문제 해결(다음 잡에서 재생성).
+            _IDLE_PAGE_CLOSE_SEC = int(os.environ.get("DAEMON_IDLE_PAGE_CLOSE_SEC", "90"))
 
             async def _site_worker(site: str, wid: str, wpage: Page) -> None:
                 _idle_at = 0.0
+                _idle_since = 0.0  # 유휴 시작 시각 — _IDLE_PAGE_CLOSE_SEC 초과 시 page 닫음
+                _page_open = True  # 현재 wpage 가 열려있는지 (유휴 닫힘 후 잡 오면 재생성)
                 _done = 0  # 처리한 잡 수 — _PAGE_RECYCLE 마다 page 재생성(메모리 리셋)
                 try:
                     while not state.should_die():
@@ -2491,6 +2498,8 @@ async def run_daemon(args: argparse.Namespace) -> int:
                             continue
                         if not job:
                             _now = time.time()
+                            if _idle_since == 0.0:
+                                _idle_since = _now
                             if _now - _idle_at > 60:
                                 logger.info(
                                     "[%s] 대기 중 (processed=%d ok=%d fail=%d)",
@@ -2500,8 +2509,26 @@ async def run_daemon(args: argparse.Namespace) -> int:
                                     state.failed,
                                 )
                                 _idle_at = _now
+                            # 유휴 지속 시 page 닫아 렌더러 메모리 회수 (다음 잡에서 재생성)
+                            if _page_open and (_now - _idle_since) > _IDLE_PAGE_CLOSE_SEC:
+                                try:
+                                    await wpage.close()
+                                except Exception:
+                                    pass
+                                _page_open = False
+                                logger.info(
+                                    "[%s] 유휴 %d초 — 페이지 닫아 메모리 회수",
+                                    wid,
+                                    int(_now - _idle_since),
+                                )
                             await asyncio.sleep(args.poll_interval)
                             continue
+                        # 잡 수신 — 유휴 리셋 + 닫힌 page 재생성
+                        _idle_since = 0.0
+                        if not _page_open:
+                            wpage = await context.new_page()
+                            _page_open = True
+                            logger.info("[%s] 잡 수신 — 페이지 재생성", wid)
                         try:
                             await process_job(
                                 wpage,
