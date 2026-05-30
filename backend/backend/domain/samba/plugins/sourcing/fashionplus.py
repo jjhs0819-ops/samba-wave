@@ -113,6 +113,22 @@ class FashionPlusPlugin(SourcingPlugin):
                 new_sale_status = "sold_out"
                 stock_changed = True
 
+        # 가격불확실 — sale_price/original_price/sale_status/options 갱신 모두 보류.
+        # 옵션 stock 만 보고 in_stock 박으면, 이전 좀비 cost(예: 3000) 가 유지된 채
+        # 마켓에 가짜 가격(8400 등)으로 노출되는 회귀.
+        if _price_uncertain:
+            return RefreshResult(
+                product_id=product_id,
+                new_sale_price=None,
+                new_original_price=None,
+                new_cost=None,
+                new_sale_status=getattr(product, "sale_status", "in_stock"),
+                new_options=None,
+                changed=False,
+                stock_changed=False,
+                price_uncertain=True,
+            )
+
         return RefreshResult(
             product_id=product_id,
             new_sale_price=new_sale_price,
