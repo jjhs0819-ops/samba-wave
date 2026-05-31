@@ -7362,14 +7362,17 @@ async def sync_orders_from_markets(
                     # 마켓 상품번호 보충 (기존 주문에 없으면 채움)
                     if order_data.get("product_id") and not existing.product_id:
                         update_fields["product_id"] = order_data["product_id"]
-                    # issue #213 — 롯데ON quantity 자기치유: known-bad(=1) 일 때만 교정
-                    if order_data.get("source") == "lotteon":
-                        try:
-                            _new_qty = int(order_data.get("quantity") or 0)
-                        except (TypeError, ValueError):
-                            _new_qty = 0
-                        if _new_qty > 1 and (existing.quantity or 1) == 1:
-                            update_fields["quantity"] = _new_qty
+                    # quantity 자기치유 (issue #213 롯데ON → 전 소싱처 확대):
+                    # 재동기화 수량 > 1 이고 기존이 known-bad(=1) 일 때만 교정.
+                    # 쿠팡 orderQuantity→shippingCount 키 교정(4a7ccda2) 이전에 들어와
+                    # quantity=1 로 박힌 멀티수량 주문을 재동기화로 자동 복구하기 위함.
+                    # 조건이 보수적(>1 & 기존=1)이라 정상 단품 주문은 영향 없음.
+                    try:
+                        _new_qty = int(order_data.get("quantity") or 0)
+                    except (TypeError, ValueError):
+                        _new_qty = 0
+                    if _new_qty > 1 and (existing.quantity or 1) == 1:
+                        update_fields["quantity"] = _new_qty
                     # 송장전송완료/배송중 이상 상태는 덮어쓰지 않음
                     # 단, 롯데ON은 발송완료/배송중/배송완료로 진행된 경우 갱신 허용
                     new_ship_status = order_data.get("shipping_status")
