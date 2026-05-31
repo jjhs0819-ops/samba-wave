@@ -227,7 +227,8 @@ class SmartStorePlugin(MarketPlugin):
                     style_code = code_match.group()
 
             # 브랜드명 정제 — "나이키 키즈" → "나이키", "아디다스 골프" → "아디다스"
-            _brand_suffixes = r"\s*(키즈|kids|kid|주니어|junior|jr|아동|유아|베이비|baby|우먼|women|맨즈|men|골프|golf|스포츠|sports|아웃도어|outdoor)\s*$"
+            # \s+ 사용: 공백 분리 접미사만 제거 — "코오롱스포츠"/"잔스포츠" 보존 (issue #303 회귀 방지)
+            _brand_suffixes = r"\s+(키즈|kids|kid|주니어|junior|jr|아동|유아|베이비|baby|우먼|women|맨즈|men|골프|golf|스포츠|sports|아웃도어|outdoor)\s*$"
             brand_name = product_copy.get("brand", "")
             if brand_name:
                 brand_name = (

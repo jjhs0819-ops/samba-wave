@@ -1876,6 +1876,7 @@ class SSGClient:
         "KT로지스": "0000033021",
         "동원로엑스": "0020089384",
         "쿠팡로지스틱스": "0024803687",
+        "딜리박스": "0024850579",
     }
 
     def get_courier_code(self, courier_name: str) -> str:

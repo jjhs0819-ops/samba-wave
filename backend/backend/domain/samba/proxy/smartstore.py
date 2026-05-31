@@ -759,9 +759,9 @@ class SmartStoreClient:
         variants: list[str] = []
         for candidate in [
             name,
-            # 카테고리 접미사 제거
+            # 카테고리 접미사 제거 (\s+ — 공백 분리 접미사만, "코오롱스포츠" 보존, issue #303)
             re.sub(
-                r"\s*(키즈|kids|kid|주니어|junior|jr|아동|유아|베이비|baby|우먼|women|맨즈|men|골프|golf|스포츠|sports|아웃도어|outdoor)\s*$",
+                r"\s+(키즈|kids|kid|주니어|junior|jr|아동|유아|베이비|baby|우먼|women|맨즈|men|골프|golf|스포츠|sports|아웃도어|outdoor)\s*$",
                 "",
                 name,
                 flags=re.IGNORECASE,
@@ -2201,9 +2201,10 @@ class SmartStoreClient:
 
         # 브랜드명 접미사 정제 — brandId 유무와 무관하게 항상 실행 (issue #211)
         # 카탈로그가 brandName 미반환 + 파생표기(키즈/골프 등) 남으면 brandId 불일치로 400 발생
+        # \s+ 사용: 공백으로 분리된 접미사만 제거 — "코오롱스포츠"/"잔스포츠"는 보존 (issue #303 회귀 방지)
         import re as _re_brand
 
-        _brand_suffixes = r"\s*(키즈|kids|kid|주니어|junior|jr|아동|유아|베이비|baby|우먼|women|맨즈|men|골프|golf|스포츠|sports|아웃도어|outdoor)\s*$"
+        _brand_suffixes = r"\s+(키즈|kids|kid|주니어|junior|jr|아동|유아|베이비|baby|우먼|women|맨즈|men|골프|golf|스포츠|sports|아웃도어|outdoor)\s*$"
         if brand:
             brand = (
                 _re_brand.sub(
