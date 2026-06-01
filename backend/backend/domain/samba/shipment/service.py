@@ -2041,10 +2041,14 @@ class SambaShipmentService:
                             f"상품={product_id}, 계정={account_id}"
                         )
 
-                    # 등록 성공 직후 즉시 DB 저장 (transmitting stuck 방지):
-                    # 프로세스가 최종 업데이트 전에 종료돼도 registered_accounts + product_no 보존.
+                    # 등록/수정 성공 직후 즉시 DB 저장 (transmitting stuck + greenlet 에러 방지):
+                    # 프로세스가 최종 업데이트 전에 종료돼도 아래 3가지 보존:
+                    # 1) registered_accounts + product_no (신규 등록 시)
+                    # 2) last_sent_data.sent_at (성공 기록 → 다음 사이클 재시도 방지)
+                    # 3) last_sent_data.failed_at 제거 (preemptive 마킹 즉시 해소)
                     _imm_nos = res.get("product_nos") or {}
-                    if _imm_nos:
+                    _imm_snap = res.get("sent_snapshot")
+                    if _imm_nos or _imm_snap:
                         try:
                             _pr_now = await product_repo.get_async(product_id)
                             if _pr_now:
@@ -2056,11 +2060,18 @@ class SambaShipmentService:
                                 )
                                 _imm_mpn = dict(_pr_now.market_product_nos or {})
                                 _imm_mpn.update(_imm_nos)
+                                # last_sent_data: sent_snapshot 저장 + failed_at 제거
+                                _imm_lsd = dict(_pr_now.last_sent_data or {})
+                                if _imm_snap:
+                                    _imm_lsd[account_id] = _imm_snap
+                                elif isinstance(_imm_lsd.get(account_id), dict):
+                                    _imm_lsd[account_id].pop("failed_at", None)
                                 await product_repo.update_async(
                                     product_id,
                                     registered_accounts=_imm_reg,
                                     market_product_nos=_imm_mpn,
                                     status="registered",
+                                    last_sent_data=_imm_lsd or None,
                                 )
                                 await self.session.commit()
                         except Exception as _ie:
