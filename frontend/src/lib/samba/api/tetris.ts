@@ -27,6 +27,7 @@ export interface TetrisAccountBlock {
   total_registered: number
   total_collected: number
   assignments: TetrisBrandBlock[]
+  tetris_excluded?: boolean
 }
 
 export interface TetrisMarketGroup {
@@ -159,6 +160,13 @@ export const tetrisApi = {
         market_account_id: marketAccountId,
         excluded,
       }),
+      headers: { 'Content-Type': 'application/json' },
+    }),
+
+  setAccountExcluded: (accountId: string, excluded: boolean) =>
+    request<{ account_id: string; tetris_excluded: boolean }>(`${BASE}/accounts/${accountId}/exclude`, {
+      method: 'POST',
+      body: JSON.stringify({ excluded }),
       headers: { 'Content-Type': 'application/json' },
     }),
 }

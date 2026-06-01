@@ -7065,30 +7065,34 @@ async def sync_orders_from_markets(
                             _bse_cmsn = int(_slamt * _fee / 100)
                             _pcs_cmsn = int(_slamt * _pcs_rate / 100)
                             # ─────────────────────────────────────────────────────────────
-                            # 롯데ON 정산예상 공식 [영구 가드 · 절대 변경 금지 · 2026-05-23 확정]
+                            # 롯데ON 정산예상 공식 [2026-06-02 실측 검증 · 이슈 #313]
                             #
-                            # 정산예상 = _customer_paid − _bse_cmsn − _pcs_cmsn
-                            #         (= actualAmt − 기본수수료 − PCS수수료)
+                            # SellerDeliveryOrdersSearch raw 응답 실측 확인 (2026-06-02):
+                            #   - prSfcoShrAmtSum (롯데ON부담 환급) = 전 주문 present, non-zero
+                            #   - prEntpShrAmtSum (제휴몰부담) = 일부 present
+                            #   - slrDcAmt / bseCmsn / pcsCmsn / pymtAmt = MISSING (SettleItmdSales에만)
+                            #   → 2026-05-23 가드의 "raw에 환급 필드 없음" 가정 = 틀림
                             #
-                            # 샵마인 셀러센터 "정산내역" 모달 공식과 동일:
-                            #   공급금액   = 총주문금액 − 마켓수수료
-                            #   정산예상   = 공급금액 − 할인금액
-                            #            = (slAmt − bseCmsn) − fvrAmtSum
-                            #            = actualAmt − bseCmsn   (actualAmt는 전체할인 차감 후)
+                            # 공식 (롯데ON 정산예정금액 엑셀과 일치):
+                            #   pymtAmt = actualAmt − (bseCmsn + pcsCmsn − prSfcoShrAmtSum)
+                            #           = _customer_paid − _bse_cmsn − _pcs_cmsn + _lotte_dc
                             #
                             # ⛔ 회귀 방지 — 다음 패턴 절대 추가 금지:
                             #   1. `_slamt − _slr_dc` 또는 `_slamt − _slr_dc − _lotte_dc`
                             #      → actualAmt가 이미 전체할인(셀러+롯데+제휴몰) 반영했는데
                             #        다시 일부 할인만 차감 = 항상 한쪽이 깨짐 (a401c15e 사고)
-                            #   2. `+ _lotte_dc` 환급 가산 (a91b2221 가짜 가정 — raw에 환급 필드 없음)
-                            #   3. `_slamt − _slr_dc − fvrAmtSum` (66fc0837 이중차감 사고)
+                            #   2. `_slamt − _slr_dc − fvrAmtSum` (66fc0837 이중차감 사고)
+                            #   3. `+ _entp_dc` (prEntpShrAmtSum 제휴몰부담 환급) 추가
+                            #      → 롯데ON 정산 공식 비포함 — 제휴몰이 별도 정산하는 구조
                             #
-                            # 핵심 원칙: 할인은 _customer_paid 계산 단계(5701~5712)에서 한 번만 반영.
-                            #          revenue 식에서는 _customer_paid를 그대로 쓰고 수수료만 차감.
-                            # bseCmsn은 raw에 없어도 카테고리 fee_rate × slAmt 폴백으로 충분 (샵마인도 동일).
-                            # 확정값 필요시 SettleItmdSales.pymtAmt 매칭(4010~4029) — 구매확정 후 덮어씀.
+                            # 핵심 원칙: 할인은 _customer_paid 계산에서 한 번만 반영.
+                            #          revenue = _customer_paid − 수수료 + 롯데부담환급(_lotte_dc)
+                            # 확정값: SettleItmdSales.pymtAmt 매칭 성공 시 덮어씀.
                             # ─────────────────────────────────────────────────────────────
-                            _revenue = max(0, _customer_paid - _bse_cmsn - _pcs_cmsn)
+                            _revenue = max(
+                                0,
+                                _customer_paid - _bse_cmsn - _pcs_cmsn + _lotte_dc,
+                            )
                             order_data["revenue"] = _revenue
                             # 화면 수수료율 — 마켓수수료/실결제 기준 (롯데ON 정산내역 "실수수료율" 정의)
                             order_data["fee_rate"] = (
@@ -7110,7 +7114,10 @@ async def sync_orders_from_markets(
                             if _sp > 0
                             else _fee
                         )
-                        order_data["revenue"] = max(0, _sp - _bse_cmsn - _pcs_cmsn)
+                        # fallback: raw 없으면 _lotte_dc=0 — 공식 일관성 유지
+                        order_data["revenue"] = max(
+                            0, _sp - _bse_cmsn - _pcs_cmsn + _lotte_dc
+                        )
                 # 롯데홈쇼핑 정산금액 계산 — account.additional_fields.commission_rate 우선, 폴백 25%
                 if order_data.get("source") == "lottehome":
                     _lh_fee = float(

@@ -250,6 +250,30 @@ export function useTetris() {
     }
   }, [])
 
+  const handleToggleAccountExcluded = useCallback(async (
+    accountId: string,
+    currentExcluded: boolean,
+  ) => {
+    const next = !currentExcluded
+    try {
+      await tetrisApi.setAccountExcluded(accountId, next)
+      setBoard(prev => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          markets: prev.markets.map(m => ({
+            ...m,
+            accounts: m.accounts.map(a =>
+              a.account_id === accountId ? { ...a, tetris_excluded: next } : a
+            ),
+          })),
+        }
+      })
+    } catch (e) {
+      showAlert('계정 배제 상태 변경 실패: ' + String(e))
+    }
+  }, [])
+
   const handleRemoveLegacyFromAccount = useCallback(async (sourceSite: string, brandName: string, accountId: string) => {
     const confirmed = await showConfirm(
       `"${brandName}" 브랜드를 이 계정에서 제거합니다.\n진행 중인 전송이 취소되고, 마켓 등록 상품이 삭제됩니다.`
@@ -281,6 +305,7 @@ export function useTetris() {
     handleDeleteBrandScope,
     handleRemoveLegacyFromAccount,
     handleToggleExcluded,
+    handleToggleAccountExcluded,
     refresh,
   }
 }

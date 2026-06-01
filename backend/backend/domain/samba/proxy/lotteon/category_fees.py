@@ -3,8 +3,9 @@
 출처: 롯데ON 셀러센터 "카테고리별 판매 수수료 안내" (2026-04-18 확인, 76개 1뎁스 카테고리).
 
 이 값은 롯데ON이 실제로 판매자 정산 시 공제하는 수수료율.
-주문 즉시 "예상 정산금액" 계산에 사용:
-  revenue = sale_price × (1 - fee_rate / 100) - 판매자부담할인
+주문 즉시 "예상 정산금액" 계산에 사용 (2026-06-02 이슈 #313 실측 검증):
+  revenue = actualAmt − (slAmt × fee_rate / 100) − pcsCmsn + prSfcoShrAmtSum(롯데부담환급)
+  ※ prSfcoShrAmtSum = SellerDeliveryOrdersSearch raw 응답에 실제 존재 (전수 확인)
 이후 정산 API(SettleItmdSales)의 pymtAmt 매칭 성공 시 확정 값으로 덮어씀.
 """
 

@@ -614,6 +614,7 @@ class SambaTetrisService:
                     "total_registered": total_registered,
                     "total_collected": total_collected,
                     "assignments": assignment_blocks,
+                    "tetris_excluded": bool(add_fields.get("tetrisExcluded", False)),
                 }
             )
 
@@ -1126,6 +1127,69 @@ class SambaTetrisService:
         return assignment
 
     # ──────────────────────────────────────────────
+    # 계정(판매처) 단위 배제 토글
+    # ──────────────────────────────────────────────
+
+    async def toggle_account_excluded(
+        self,
+        tenant_id: Optional[str],
+        account_id: str,
+        excluded: bool,
+    ) -> dict:
+        """판매처 계정 단위 전송잡 배제 토글 — additional_fields.tetrisExcluded 저장."""
+        from backend.domain.samba.account.repository import SambaMarketAccountRepository
+        from backend.domain.samba.account.service import SambaMarketAccountService
+
+        acct_svc = SambaMarketAccountService(
+            SambaMarketAccountRepository(self._session)
+        )
+        existing = await acct_svc.get_account(account_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다")
+        if tenant_id is not None and existing.tenant_id != tenant_id:
+            raise HTTPException(status_code=403, detail="권한이 없습니다")
+
+        await acct_svc.update_account(
+            account_id, {"additional_fields": {"tetrisExcluded": excluded}}
+        )
+
+        if excluded:
+            cancelled = await self._cancel_all_transmit_jobs_for_account(account_id)
+            logger.info(
+                f"[테트리스] 계정 배제 ON — {account_id} (pending취소={cancelled})"
+            )
+        else:
+            logger.info(f"[테트리스] 계정 배제 OFF — {account_id}")
+
+        return {"account_id": account_id, "tetris_excluded": excluded}
+
+    async def _cancel_all_transmit_jobs_for_account(self, account_id: str) -> int:
+        """특정 계정의 모든 pending/running transmit 잡 취소."""
+        from backend.domain.samba.job.model import JobStatus, SambaJob
+        from backend.domain.samba.shipment.service import request_cancel_transmit
+        from sqlmodel import select
+
+        rows = await self._session.execute(
+            select(SambaJob).where(
+                SambaJob.job_type == "transmit",
+                SambaJob.status.in_([JobStatus.PENDING, JobStatus.RUNNING]),
+            )
+        )
+        jobs = rows.scalars().all()
+        cancelled = 0
+        for job in jobs:
+            target_ids = (job.payload or {}).get("target_account_ids", [])
+            if account_id not in target_ids:
+                continue
+            if job.status == JobStatus.PENDING:
+                job.status = JobStatus.CANCELLED
+                self._session.add(job)
+            else:
+                request_cancel_transmit(job.id)
+            cancelled += 1
+        return cancelled
+
+    # ──────────────────────────────────────────────
     # 배치 이동
     # ──────────────────────────────────────────────
 
@@ -1266,6 +1330,17 @@ class SambaTetrisService:
 
         assignments = await self._repo.list_by_tenant(tenant_id)
 
+        # 계정 단위 배제 목록 로드 — additional_fields.tetrisExcluded=true 인 계정
+        excluded_acct_rows = await self._session.execute(
+            text("""
+                SELECT id FROM samba_market_account
+                WHERE additional_fields->>'tetrisExcluded' = 'true'
+                  AND (tenant_id IS NULL AND :tid_is_null OR tenant_id = :tid)
+            """),
+            {"tid": tenant_id, "tid_is_null": tenant_id is None},
+        )
+        excluded_account_ids: set[str] = {row[0] for row in excluded_acct_rows}
+
         job_repo = SambaJobRepository(self._session)
         job_count = 0
         total_products = 0
@@ -1343,6 +1418,10 @@ class SambaTetrisService:
             # 배제 플래그가 켜진 배치는 transmit 잡 생성 스킵 + 레거시 루프에서도 처리되지 않도록
             # processed_keys 에 미리 등록
             if a.excluded:
+                processed_keys.add((a.source_site, a.brand_name, a.market_account_id))
+                continue
+            # 계정 단위 배제 — 이 판매처 전체 전송잡 생성 차단
+            if a.market_account_id in excluded_account_ids:
                 processed_keys.add((a.source_site, a.brand_name, a.market_account_id))
                 continue
             # brand_name 양쪽 공백 정규화 — 가드 매칭 실패로 중복 누적 방지
@@ -1430,6 +1509,10 @@ class SambaTetrisService:
                 continue
             key = (row.source_site, row.brand_name, row.account_id)
             if key in processed_keys:
+                continue
+            # 계정 단위 배제
+            if row.account_id in excluded_account_ids:
+                processed_keys.add(key)
                 continue
             # 삭제(delete_market) 잡 진행 중인 조합은 레거시 복원 금지
             # — registered_accounts 갱신이 지연되어 오인 복원되는 버그 방지

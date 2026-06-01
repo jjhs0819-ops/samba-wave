@@ -25,6 +25,7 @@ interface Props {
   onRemoveLegacyFromAccount: (sourceSite: string, brandName: string, accountId: string) => Promise<void>
   onPolicyChange: (assignmentId: string, policyId: string | null, accountId: string) => Promise<void>
   onToggleExcluded: (block: TetrisBrandBlock, accountId: string) => Promise<void>
+  onToggleAccountExcluded: (accountId: string, currentExcluded: boolean) => Promise<void>
   isDragging: boolean
   isAccountDragging: boolean
   onAccountDragStart: (accountId: string) => void
@@ -75,6 +76,7 @@ export default function AccountBlock({
   onRemoveLegacyFromAccount,
   onPolicyChange,
   onToggleExcluded,
+  onToggleAccountExcluded,
   isDragging,
   isAccountDragging,
   onAccountDragStart,
@@ -133,7 +135,8 @@ export default function AccountBlock({
         transition: 'background 0.15s, opacity 0.15s',
         overflow: 'hidden',
         boxSizing: 'border-box',
-        opacity: isThisBeingDragged ? 0.4 : 1,
+        opacity: isThisBeingDragged ? 0.4 : account.tetris_excluded ? 0.5 : 1,
+        filter: account.tetris_excluded ? 'grayscale(0.6)' : 'none',
         cursor: isThisBeingDragged ? 'grabbing' : 'grab',
       }}
       onDragOver={e => { if (isAccountDragging || isSameAccountDrag) return; e.preventDefault(); setIsOver(true) }}
@@ -177,17 +180,34 @@ export default function AccountBlock({
           flexDirection: 'column',
           alignItems: 'center',
           gap: 2,
-          pointerEvents: 'none',
           maxWidth: 'calc(100% - 16px)',
         }}
       >
-        <div style={{ fontSize: 12, color: '#EF4444', fontWeight: 600, maxWidth: '100%', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', textAlign: 'center' }}>
+        <div style={{ fontSize: 12, color: account.tetris_excluded ? '#888' : '#EF4444', fontWeight: 600, maxWidth: '100%', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', textAlign: 'center' }}>
           {account.account_label.split('-')[0]}
         </div>
-        <div style={{ fontSize: 10, color: '#888', whiteSpace: 'nowrap', textAlign: 'center' }}>
+        <div style={{ fontSize: 10, color: '#888', whiteSpace: 'nowrap', textAlign: 'center', pointerEvents: 'none' }}>
           <span style={{ color: progressColor }}>{fmtNum(account.total_registered)}</span>
           <span>/{fmtNum(account.total_collected)}</span>
         </div>
+        <button
+          onClick={e => { e.stopPropagation(); onToggleAccountExcluded(account.account_id, !!account.tetris_excluded) }}
+          title={account.tetris_excluded ? '배제 해제 — 전송잡 재개' : '이 판매처 전송잡 배제'}
+          style={{
+            marginTop: 2,
+            fontSize: 9,
+            padding: '1px 7px',
+            borderRadius: 3,
+            background: account.tetris_excluded ? 'rgba(239,68,68,0.18)' : 'rgba(60,60,60,0.5)',
+            border: account.tetris_excluded ? '1px solid rgba(239,68,68,0.45)' : '1px solid #3a3a3a',
+            color: account.tetris_excluded ? '#FCA5A5' : '#555',
+            cursor: 'pointer',
+            fontWeight: 600,
+            letterSpacing: 0.3,
+          }}
+        >
+          {account.tetris_excluded ? '배제중' : '배제'}
+        </button>
       </div>
 
 

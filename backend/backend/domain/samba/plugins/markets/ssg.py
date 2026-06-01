@@ -192,12 +192,14 @@ class SSGPlugin(MarketPlugin):
         )
 
         # SSG.COM(6005) 메인매장 전시카테고리 자동 조회
+        # ssgComEnabled=true 설정 시에만 실행 — 신세계몰(6004) 단일 셀러는 불필요(API 2회 낭비)
         # 1단계: 신세계몰(6004) 카테고리 ID → 카테고리명 조회
         # 2단계: 해당 leaf명으로 SSG.COM(6005) 전시카테고리 검색
         main_category_id = ""
         # 6005 후보 dispCtgId 유사도 순 리스트 — 등록 거부 시 다음 후보로 순차 재시도용
         main_cat_candidates: list[str] = []
-        if category_id:
+        _ssg_com_enabled = creds.get("ssgComEnabled") in (True, "true", "True", "1")
+        if category_id and _ssg_com_enabled:
             try:
                 # 1단계: 신세계몰 카테고리 이름 조회
                 name_resp = await client._call_api(

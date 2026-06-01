@@ -356,6 +356,8 @@ export const STORE_MARKETS: MarketConfig[] = [
     { name: 'whoutAddrId', label: '출고지', type: 'ssg-addr-select', placeholder: '버튼으로 불러오기' },
     { name: 'snbkAddrId', label: '반송지', type: 'ssg-addr-select', placeholder: '버튼으로 불러오기' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
+    { name: '_divider_ssgcom', label: 'SSG.COM 연동', type: 'divider' },
+    { name: 'ssgComEnabled', label: 'SSG.COM 동시 등록', type: 'checkbox', placeholder: '신세계몰+SSG.COM 양쪽 등록 (계약 셀러 전용 — 미체크 시 등록 속도 향상)' },
   ]},
   { key: 'gsshop', label: 'GSSHOP', authField: 'apiKeyProd', guideUrl: 'https://partners.gsshop.com/api/apiMain', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
