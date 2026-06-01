@@ -302,10 +302,11 @@ async def _delete_smartstore(
             origin = existing.get("originProduct", {})
             for k in ["productNo", "channelProducts", "regDate", "modifiedDate"]:
                 origin.pop(k, None)
-            # statusType 을 OUTOFSTOCK 으로 명시 — GET 응답의 statusType(예: SUSPENSION
-            # 등) 가 PUT API 에서 invalid enum 으로 거부되는 회귀. pop 만 하면 PUT 이
-            # "statusType 없음" 으로 거부 — 품절 폴백 의도와 일치하게 OUTOFSTOCK set.
-            origin["statusType"] = "OUTOFSTOCK"
+            # 원상품 수정(PUT) statusType 은 SALE/SUSPENSION 만 입력 가능(공식 문서).
+            # OUTOFSTOCK 은 입력 불가 enum — 직접 set 하면 거부됨. 대신 stockQuantity=0 이면
+            # statusType 은 무시되고 네이버가 자동으로 OUTOFSTOCK(품절)으로 저장. GET 응답의
+            # statusType(예: OUTOFSTOCK/WAIT 등 입력불가값)을 SALE 로 덮어 PUT 거부 회피.
+            origin["statusType"] = "SALE"
             origin["stockQuantity"] = 0
             opt_info = (origin.get("detailAttribute", {}).get("optionInfo")) or {}
             # SmartStore GET 응답은 optionCombinations 키 사용 (transform_product와 동일)
