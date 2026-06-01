@@ -59,6 +59,13 @@ def _normalize_sourcing_site_name(site_name: str | None) -> str:
         "다나와": "DANAWA",
         "NAVERSTORE": "NAVERSTORE",
         "네이버스토어": "NAVERSTORE",
+        # 더현대Hi — 로컬-only 운영 (env var gate 통과 시에만 플러그인 등록)
+        "THEHYUNDAI": "THEHYUNDAI",
+        "더현대": "THEHYUNDAI",
+        "더현대HI": "THEHYUNDAI",
+        "더현대닷컴": "THEHYUNDAI",
+        "현대백화점": "THEHYUNDAI",
+        "HITHEHYUNDAI": "THEHYUNDAI",
     }
     return alias_map.get(compact, raw)
 

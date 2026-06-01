@@ -168,6 +168,7 @@ async def brand_refresh(
             "LOTTEON",
             "GSShop",
             "KREAM",
+            "THEHYUNDAI",
         }
         if site not in _SCAN_SUPPORTED:
             raise HTTPException(
@@ -205,6 +206,16 @@ async def brand_refresh(
             from backend.domain.samba.plugins.sourcing.kream import KreamPlugin
 
             scan_result = await KreamPlugin().scan_categories(keyword)
+            categories = scan_result.get("categories", [])
+        elif site == "THEHYUNDAI":
+            # env var gate 통과 시에만 import 성공
+            from backend.domain.samba.plugins.sourcing.thehyundai import (
+                TheHyundaiPlugin,
+            )
+
+            scan_result = await TheHyundaiPlugin().scan_categories(
+                keyword, selected_brands=[keyword] if keyword else None
+            )
             categories = scan_result.get("categories", [])
         else:
             # MUSINSA — brand-scan과 동일한 필터 API 재귀 탐색 방식 사용 (전체 카테고리)
