@@ -1435,6 +1435,18 @@ class SambaShipmentService:
                 await self.session.rollback()
             except Exception:
                 pass
+            # pool_recycle(60s) 로 만료된 connection 이 있으면 asyncio greenlet context 내에서
+            # 미리 갱신 — 직전 계정의 긴 HTTP 전송(마켓 API) 후 connection 교체 시
+            # "greenlet_spawn has not been called" 에러 방지.
+            # pool_pre_ping SELECT 1(idle in transaction 좀비 유발)과 다름:
+            # 여기서는 이미 rollback된 clean session에서 수동 실행이므로 zombie 없음.
+            try:
+                from sqlalchemy import text as _gc_text
+
+                await self.session.execute(_gc_text("SELECT 1"))
+                await self.session.rollback()
+            except Exception:
+                pass
             try:
                 # 전송 시작 전 취소 체크
                 if is_cancel_requested():
