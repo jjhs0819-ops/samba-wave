@@ -78,7 +78,7 @@ except ImportError:
 # ====================================================================
 # 데몬 버전 — build.ps1 가 갱신. 자동 업데이트 비교 기준.
 # ====================================================================
-DAEMON_VERSION = "1.4.24"
+DAEMON_VERSION = "1.4.25"
 
 
 # ── 가격수집 도메인 화이트리스트 ───────────────────────────────────────────
@@ -1421,13 +1421,68 @@ async def ensure_logged_in_as_account(
     return ok
 
 
+async def _relogin_in_place(
+    page: Page, handler: SiteHandler, credential: dict[str, str]
+) -> bool:
+    """현재 페이지(예: member.one/login?entryToken)에서 form fill+submit — goto 안 함.
+
+    무신사 배송조회 클릭 시 trace 가 별도 SSO 도메인(member.one) 재인증을 요구하며
+    login?entryToken= 으로 튕긴다. 이 페이지에서 그대로 재로그인하면 entryToken
+    핸드셰이크가 완료되어 trace 로 자동 리다이렉트되는 것을 기대(2026-06-01 실측 기반).
+    auto_login_site 는 login_url 로 goto 해 entryToken 컨텍스트를 잃으므로 별도 in-place.
+    """
+    await page.wait_for_timeout(1_500)
+    selectors_payload = json.dumps(handler.login_selectors)
+    cred_payload = json.dumps(credential)
+    fill_js = f"""
+    (() => {{
+      const sel = {selectors_payload}
+      const cred = {cred_payload}
+      const nativeSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype, 'value').set
+      function pick(arr) {{
+        if (typeof arr === 'string') arr = [arr]
+        for (const s of arr) {{ const el = document.querySelector(s); if (el) return el }}
+        return null
+      }}
+      const idField = pick(sel.id)
+      const pwField = pick(sel.pw)
+      if (!idField || !pwField) return {{ ok: false, reason: 'fields not found' }}
+      idField.focus(); nativeSetter.call(idField, cred.username)
+      idField.dispatchEvent(new Event('input', {{ bubbles: true }}))
+      idField.dispatchEvent(new Event('change', {{ bubbles: true }}))
+      pwField.focus(); nativeSetter.call(pwField, cred.password)
+      pwField.dispatchEvent(new Event('input', {{ bubbles: true }}))
+      pwField.dispatchEvent(new Event('change', {{ bubbles: true }}))
+      const btn = pick(sel.btn)
+      if (!btn) return {{ ok: false, reason: 'btn not found' }}
+      btn.click()
+      return {{ ok: true }}
+    }})()
+    """
+    try:
+        res = await page.evaluate(fill_js)
+    except Exception as exc:
+        logger.warning("%s 재로그인(in-place) fill 예외: %s", handler.site, exc)
+        return False
+    if not (isinstance(res, dict) and res.get("ok")):
+        logger.warning("%s 재로그인(in-place) fill 실패: %s", handler.site, res)
+        return False
+    logger.info("%s 배송조회 SSO 재로그인 제출 — trace 리다이렉트 대기", handler.site)
+    return True
+
+
 async def extract_tracking(
-    page: Page, url: str, handler: SiteHandler
+    page: Page,
+    url: str,
+    handler: SiteHandler,
+    credential: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """송장조회 페이지 진입 + 스크랩 → {success, courierName, trackingNumber}.
 
     단일 페이지(SSG/ABC/LOTTEON): goto → tracking_js evaluate.
     2단계(MUSINSA): goto 주문상세 → tracking_click_js 클릭 → trace 네비 대기 → tracking_js.
+    credential: 배송조회 클릭 후 member.one SSO 로 튕길 때 in-place 재로그인용 (선택).
     """
     if not handler.tracking_js:
         return {"success": False, "error": f"{handler.site} tracking_js 미정의"}
@@ -1471,10 +1526,34 @@ async def extract_tracking(
         try:
             await page.wait_for_url(handler.tracking_trace_url_glob, timeout=20_000)
         except Exception:
-            return {
-                "success": False,
-                "error": f"trace 페이지 미진입 (현재 {page.url})",
-            }
+            # 배송조회는 trace 가 별도 SSO 도메인(member.one) 인증을 요구해 login?entryToken=
+            # 으로 튕기는 경우가 있다(2026-06-01 실측). 그 페이지에서 in-place 재로그인하면
+            # entryToken 핸드셰이크가 완료되어 trace 로 리다이렉트된다.
+            _cur = page.url
+            if "member.one.musinsa.com/login" in _cur and credential:
+                logger.info(
+                    "%s 배송조회 → member.one SSO 튕김 — 재로그인 후 trace 재대기", handler.site
+                )
+                if await _relogin_in_place(page, handler, credential):
+                    try:
+                        await page.wait_for_url(
+                            handler.tracking_trace_url_glob, timeout=20_000
+                        )
+                    except Exception:
+                        return {
+                            "success": False,
+                            "error": f"SSO 재로그인 후에도 trace 미진입 (현재 {page.url})",
+                        }
+                else:
+                    return {
+                        "success": False,
+                        "error": f"member.one SSO 재로그인 실패 (현재 {page.url})",
+                    }
+            else:
+                return {
+                    "success": False,
+                    "error": f"trace 페이지 미진입 (현재 {_cur})",
+                }
         try:
             data = await page.evaluate(handler.tracking_js)
         except Exception as exc:
@@ -1591,9 +1670,14 @@ async def process_tracking_job(
         return
 
     # 2) 송장조회 페이지 스크랩
+    # 배송조회 클릭 후 member.one SSO 재인증 튕김 대비 — 같은 계정 자격증명 전달(in-place 재로그인용)
+    _cred_for_trace = await fetch_credential(
+        client, backend_url, device_id, api_key, site, account_id=account_id
+    )
     try:
         data = await asyncio.wait_for(
-            extract_tracking(page, url, handler), timeout=90.0
+            extract_tracking(page, url, handler, credential=_cred_for_trace),
+            timeout=90.0,
         )
     except asyncio.TimeoutError:
         data = {"success": False, "error": "daemon 송장 추출 타임아웃"}
