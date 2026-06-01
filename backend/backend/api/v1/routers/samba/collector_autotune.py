@@ -1418,7 +1418,11 @@ async def _site_autotune_loop(device_id: str, site: str):
                                         {**o, "stock": 0} if isinstance(o, dict) else o
                                         for o in product.options
                                     ]
-                                updates["sale_status"] = r.new_sale_status
+                                # 가격불확실(price_uncertain=True) 시 sale_status 덮어쓰기 보류.
+                                # 플러그인이 옵션 stock 만 보고 'in_stock' 박으면, 사용자가 수동 정리한
+                                # sold_out 이 한 사이클만에 in_stock 으로 회귀되는 사고 방지.
+                                if not r.price_uncertain:
+                                    updates["sale_status"] = r.new_sale_status
                                 # cost 변경도 price_changed_at에 반영 (warm/hot 분류 기준)
                                 if (
                                     r.changed
