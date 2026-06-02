@@ -3,7 +3,7 @@ import { useState, useCallback, useEffect } from 'react'
 import { collectorApi, tetrisApi } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtNum } from '@/lib/samba/styles'
-import type { TetrisBoardResponse, TetrisBrandBlock } from '@/lib/samba/api/tetris'
+import type { TetrisAccountBlock, TetrisBoardResponse, TetrisBrandBlock } from '@/lib/samba/api/tetris'
 
 export type DragState = {
   block: TetrisBrandBlock
@@ -250,6 +250,31 @@ export function useTetris() {
     }
   }, [])
 
+  const handleToggleMarketExcluded = useCallback(async (
+    accounts: TetrisAccountBlock[],
+    currentAllExcluded: boolean,
+  ) => {
+    const next = !currentAllExcluded
+    try {
+      await Promise.all(accounts.map(a => tetrisApi.setAccountExcluded(a.account_id, next)))
+      const targetIds = new Set(accounts.map(a => a.account_id))
+      setBoard(prev => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          markets: prev.markets.map(m => ({
+            ...m,
+            accounts: m.accounts.map(a =>
+              targetIds.has(a.account_id) ? { ...a, tetris_excluded: next } : a
+            ),
+          })),
+        }
+      })
+    } catch (e) {
+      showAlert('판매처 배제 상태 변경 실패: ' + String(e))
+    }
+  }, [])
+
   const handleToggleAccountExcluded = useCallback(async (
     accountId: string,
     currentExcluded: boolean,
@@ -306,6 +331,7 @@ export function useTetris() {
     handleRemoveLegacyFromAccount,
     handleToggleExcluded,
     handleToggleAccountExcluded,
+    handleToggleMarketExcluded,
     refresh,
   }
 }

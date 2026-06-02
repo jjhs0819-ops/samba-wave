@@ -116,6 +116,7 @@ export default function TetrisBoard() {
     handleRemoveLegacyFromAccount,
     handleToggleExcluded,
     handleToggleAccountExcluded,
+    handleToggleMarketExcluded,
     refresh,
   } = useTetris()
 
@@ -402,13 +403,32 @@ export default function TetrisBoard() {
           {sortedMarkets.map(market => {
             const totalRegistered = market.accounts.reduce((s, a) => s + a.total_registered, 0)
             const totalCollected  = market.accounts.reduce((s, a) => s + a.total_collected, 0)
+            const allExcluded = market.accounts.length > 0 && market.accounts.every(a => !!a.tetris_excluded)
             return (
               <div
                 key={market.market_name}
                 style={{ minWidth: COLUMN_WIDTH, width: COLUMN_WIDTH, flexShrink: 0, padding: '8px 10px', textAlign: 'center' }}
               >
-                <div style={{ fontSize: 13, color: '#eee', fontWeight: 700, marginBottom: 2 }}>
+                <div style={{ fontSize: 13, color: allExcluded ? '#555' : '#eee', fontWeight: 700, marginBottom: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                   {market.market_name}
+                  <button
+                    onClick={() => handleToggleMarketExcluded(market.accounts, allExcluded)}
+                    title={allExcluded ? '배제 해제 — 전송잡 재개' : '이 판매처 전송잡 전체 배제'}
+                    style={{
+                      fontSize: 9,
+                      padding: '1px 7px',
+                      borderRadius: 3,
+                      background: allExcluded ? 'rgba(239,68,68,0.18)' : 'rgba(50,50,50,0.7)',
+                      border: allExcluded ? '1px solid rgba(239,68,68,0.45)' : '1px solid #3a3a3a',
+                      color: allExcluded ? '#FCA5A5' : '#555',
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                      letterSpacing: 0.3,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {allExcluded ? '배제중' : '배제'}
+                  </button>
                 </div>
                 <div style={{ fontSize: 10, color: '#666' }}>
                   등록 {fmtNum(totalRegistered)} / 수집 {fmtNum(totalCollected)}
