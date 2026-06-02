@@ -1442,24 +1442,10 @@ class SambaShipmentService:
                 "clear_nos": [],
                 "db_update_failed": False,
             }
-            # 직전 계정 처리에서 commit 실패로 SessionTransaction PREPARED 고착 가능성 사전 청소(이슈#276)
-            # rollback은 ACTIVE/DEACTIVE/PREPARED 모두에서 호출 가능, CLOSED에서는 no-op
-            try:
-                await self.session.rollback()
-            except Exception:
-                pass
-            # pool_recycle(60s) 로 만료된 connection 이 있으면 asyncio greenlet context 내에서
-            # 미리 갱신 — 직전 계정의 긴 HTTP 전송(마켓 API) 후 connection 교체 시
-            # "greenlet_spawn has not been called" 에러 방지.
-            # pool_pre_ping SELECT 1(idle in transaction 좀비 유발)과 다름:
-            # 여기서는 이미 rollback된 clean session에서 수동 실행이므로 zombie 없음.
-            try:
-                from sqlalchemy import text as _gc_text
-
-                await self.session.execute(_gc_text("SELECT 1"))
-                await self.session.rollback()
-            except Exception:
-                pass
+            # 기존 rollback 2개 제거:
+            # - "직전 계정 청소" rollback: 계정별 개별 세션으로 변경됐으므로 불필요
+            # - "SELECT 1 + rollback" connection refresh: 역시 불필요
+            # 두 rollback 모두 ORM 객체를 expired 시켜 greenlet_spawn 에러 유발.
             try:
                 # 전송 시작 전 취소 체크
                 if is_cancel_requested():
