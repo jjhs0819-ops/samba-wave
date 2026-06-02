@@ -57,7 +57,15 @@ class ElevenstExchangeClient:
 
         result_code = root.findtext("result_code", "")
         if result_code:
-            if result_code == "0":
+            if result_code in ("0", "-1"):
+                # 0 또는 -1 + "해당 건이 없습니다" → 결과 없음 (정상)
+                # 메인 _fetch_claim_list(elevenst.py)와 동일 처리. 누락 시 교환 없음이
+                # 매번 예외로 raise되어 order_sync의 asyncio.gather가 통째로 실패함.
+                result_text = root.findtext("result_text", "")
+                if result_code == "-1" and "없습니다" not in (result_text or ""):
+                    raise ElevenstApiError(
+                        f"교환 목록 조회 에러 ({result_code}): {result_text}"
+                    )
                 return []
             result_text = root.findtext("result_text", "")
             raise ElevenstApiError(

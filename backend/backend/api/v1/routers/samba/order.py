@@ -5730,6 +5730,9 @@ async def sync_orders_from_markets(
 
                     _exchange_client = ElevenstExchangeClient(api_key)
                     _clients_to_close.append(_exchange_client)
+                    # return_exceptions=True — 한 종류(취소/반품/교환) 조회가 실패해도
+                    # 나머지는 처리되도록 격리. 과거 교환 빈결과(-1) 예외가 gather 전체를
+                    # 무너뜨려 취소/반품 클레임 처리가 통째로 누락되던 회귀 방지 (issue #316)
                     (
                         _cancel_claims,
                         _return_claims,
@@ -5738,7 +5741,23 @@ async def sync_orders_from_markets(
                         _11st_client.get_cancel_requests(_start_time, _end_time),
                         _11st_client.get_return_requests(_start_time, _end_time),
                         _exchange_client.get_exchange_requests(_start_time, _end_time),
+                        return_exceptions=True,
                     )
+                    if isinstance(_cancel_claims, BaseException):
+                        logger.warning(
+                            f"[주문동기화] {label}: 11번가 취소 조회 실패(무시) — {_cancel_claims}"
+                        )
+                        _cancel_claims = []
+                    if isinstance(_return_claims, BaseException):
+                        logger.warning(
+                            f"[주문동기화] {label}: 11번가 반품 조회 실패(무시) — {_return_claims}"
+                        )
+                        _return_claims = []
+                    if isinstance(_exchange_claims, BaseException):
+                        logger.warning(
+                            f"[주문동기화] {label}: 11번가 교환 조회 실패(무시) — {_exchange_claims}"
+                        )
+                        _exchange_claims = []
                     logger.info(
                         f"[주문동기화] {label}: 취소 {len(_cancel_claims)}건, "
                         f"반품 {len(_return_claims)}건, "
@@ -5754,15 +5773,22 @@ async def sync_orders_from_markets(
                         "구매확정",
                     }
                     for _claim in _cancel_claims:
+                        # 상품주문번호(ordPrdNo) 우선, 없으면 주문번호(ordNo) 폴백 —
+                        # returns.py:1808 검증된 패턴. silent continue 금지(issue #316)
                         _c_ord_no = _claim.get("ordNo", "")
-                        if not _c_ord_no:
+                        _c_prd_no = _claim.get("ordPrdNo", "")
+                        _match_no = _c_prd_no or _c_ord_no
+                        if not _match_no:
+                            logger.warning(
+                                f"[주문동기화][11번가] 취소 클레임에 주문번호 없음 — 스킵: {_claim}"
+                            )
                             continue
                         _found = False
                         for _od in orders_data:
-                            if _od.get("order_number") == _c_ord_no:
+                            if _od.get("order_number") in (_match_no, _c_ord_no):
                                 if _od.get("shipping_status") in _shipped_guard:
                                     logger.info(
-                                        f"[주문동기화][11번가] 배송 진행 상태 보호: {_c_ord_no} "
+                                        f"[주문동기화][11번가] 배송 진행 상태 보호: {_match_no} "
                                         f"{_od.get('shipping_status')} → 취소요청 차단"
                                     )
                                 else:
@@ -5772,13 +5798,18 @@ async def sync_orders_from_markets(
                                 break
                         # _found 여부와 관계없이 DB에 즉시 반영
                         # (upsert 단계에서 ordPrdStat=900 → 취소완료로 덮어씌워질 수 있으므로 선제 업데이트)
+                        # ordPrdNo → ordNo 양방향 조회로 매칭 누락 방지
                         _ex_cancel = await svc.repo.find_by_async(
-                            order_number=_c_ord_no
+                            order_number=_match_no
                         )
+                        if not _ex_cancel and _c_ord_no and _c_ord_no != _match_no:
+                            _ex_cancel = await svc.repo.find_by_async(
+                                order_number=_c_ord_no
+                            )
                         if _ex_cancel:
                             if _ex_cancel.shipping_status in _shipped_guard:
                                 logger.info(
-                                    f"[주문동기화][11번가] 배송 진행 상태 보호(DB): {_c_ord_no} "
+                                    f"[주문동기화][11번가] 배송 진행 상태 보호(DB): {_match_no} "
                                     f"{_ex_cancel.shipping_status} → 취소요청 차단"
                                 )
                             else:

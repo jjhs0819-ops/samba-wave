@@ -251,12 +251,15 @@ async def coupang_auth_test(
     tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ) -> dict[str, Any]:
     """쿠팡 Wing API 인증 테스트 — HMAC 서명으로 카테고리 조회."""
+    # 세 필드가 모두 채워졌을 때만 form_payload 구성 — 하나라도 비면(예: secretKey
+    # 마스킹) None 으로 두어 DB(account_id)/store_coupang 폴백을 타게 함. OR 조건으로
+    # 부분 구성하면 secretKey="" 가 resolver 에 그대로 전달돼 인증 실패 (issue #318)
     form_payload = None
-    if body.access_key or body.secret_key or body.vendor_id:
+    if body.access_key and body.secret_key and body.vendor_id:
         form_payload = {
-            "accessKey": body.access_key or "",
-            "secretKey": body.secret_key or "",
-            "vendorId": body.vendor_id or "",
+            "accessKey": body.access_key,
+            "secretKey": body.secret_key,
+            "vendorId": body.vendor_id,
         }
     creds = await _resolve_creds(
         session,
@@ -266,6 +269,13 @@ async def coupang_auth_test(
         form_payload=form_payload,
         account_id=body.account_id,
     )
+    # store_coupang 레거시 폴백 — 프론트 저장 경로가 아직 PUT /forbidden/settings/store_coupang
+    # 를 쓰므로 samba_market_account 가 비어 resolver 가 {} 를 반환하는 경우 보강.
+    # (프론트 저장 경로가 POST /accounts 로 완전 전환되면 제거 가능, issue #318)
+    if not creds or not creds.get("secretKey"):
+        store = await _get_setting(session, "store_coupang", tenant_id=tenant_id)
+        if isinstance(store, dict) and store.get("secretKey"):
+            creds = store
     if not creds:
         return {"success": False, "message": "쿠팡 설정이 저장되지 않았습니다."}
 
