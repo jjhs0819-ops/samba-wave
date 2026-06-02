@@ -2524,7 +2524,10 @@ async def _site_autotune_loop(device_id: str, site: str):
                                         str(_pe)[:120],
                                     )
 
-                            _tx_groups: dict[tuple, list[tuple]] = {}
+                            # 계정별 개별 task — items 조합으로 그룹화하지 않음.
+                            # 기존 그룹화(_tx_groups)는 여러 계정을 단일 세션에서 순차 처리해
+                            # 세션이 계정수×마켓HTTP 동안 점유 → 120s 초과 시 greenlet 에러.
+                            # 계정별 분리로 세션 수명 = 계정 1개 전송시간(~40s)으로 단축.
                             for (
                                 _tx_pid,
                                 _tx_items,
@@ -2532,113 +2535,22 @@ async def _site_autotune_loop(device_id: str, site: str):
                                 _tx_label,
                                 _tx_action_text,
                             ) in _transmit_queue:
-                                _items_key = tuple(sorted(_tx_items))
-                                _tx_groups.setdefault(_items_key, []).append(
-                                    (_tx_pid, _tx_acc, _tx_label, _tx_action_text)
-                                )
 
-                            for _items_key, _entries in _tx_groups.items():
-                                _items_list = list(_items_key)
-                                _gpid = _entries[0][0]  # 사이클 내 동일 pid
-                                _accs = [e[1] for e in _entries]
-
-                                async def _fire_transmit_group(
-                                    _pid=_gpid,
-                                    _items=_items_list,
-                                    _accs_list=_accs,
-                                    _entries_list=_entries,
+                                async def _fire_transmit_account(
+                                    _pid=_tx_pid,
+                                    _items=_tx_items,
+                                    _acc=_tx_acc,
+                                    _label=_tx_label,
+                                    _action_text=_tx_action_text,
                                     _site=site,
                                     _idx_pfx=_idx_prefix,
                                     _t=_tail,
                                 ):
                                     nonlocal _synced_count
-                                    # 세마포어를 여기서 획득하면 안 됨
-                                    # — start_update → _dispatch_one 내부에서 계정별 세마포어를
-                                    #   다시 획득하므로 데드락 발생 (Semaphore(1) 비재진입)
-                                    #
-                                    # 세션-수명 설계: start_update는 내부에서 마켓 HTTP를
-                                    # 호출하므로 트랜잭션이 90~180s 가까이 idle 상태가 될 수
-                                    # 있다. 좀비 connection으로 깨지면 (Can't reconnect /
-                                    # InvalidRequestError 계열) 새 세션을 받아 1회 재시도한다.
-                                    # 계정별 진행 로그를 완료 즉시 흘리기 위한 사전 인덱싱
-                                    _entry_by_acc = {
-                                        _e_acc: (_e_label, _e_action)
-                                        for (
-                                            _,
-                                            _e_acc,
-                                            _e_label,
-                                            _e_action,
-                                        ) in _entries_list
-                                    }
-                                    _logged_accs: set[str] = set()
-                                    # 콜백에서 성공 확정된 계정 — 결과 stale-conn 재시도 시
-                                    # 이미 성공한 계정은 재시도 판정에서 제외하기 위함
-                                    _succeeded_accs: set[str] = set()
-
-                                    async def _on_account_done(_acc_id, _ar):
-                                        """판매처 한 곳 끝나는 즉시 _log_line 발사 — 워룸 로그가
-                                        순차적으로 흐르도록(이전엔 모든 판매처 완료 후 일괄 출력).
-                                        """
-                                        nonlocal _synced_count
-                                        if _acc_id in _logged_accs:
-                                            return
-                                        _label_action = _entry_by_acc.get(_acc_id)
-                                        if not _label_action:
-                                            return
-                                        _e_label, _e_action = _label_action
-                                        _ar_status = (
-                                            _ar.get("status")
-                                            if isinstance(_ar, dict)
-                                            else None
-                                        )
-                                        _ar_err = (
-                                            _ar.get("error")
-                                            if isinstance(_ar, dict)
-                                            else None
-                                        )
-                                        _ar_results = (
-                                            _ar.get("results", {})
-                                            if isinstance(_ar, dict)
-                                            else {}
-                                        )
-                                        _was_deleted = (
-                                            isinstance(_ar_results, dict)
-                                            and _ar_results.get(_acc_id) == "deleted"
-                                        )
-                                        _acc_ok = not _ar_err and _ar_status in (
-                                            "success",
-                                            "completed",
-                                            "skipped",
-                                        )
-                                        if _acc_ok:
-                                            _synced_count += 1
-                                            _succeeded_accs.add(_acc_id)
-                                            if _was_deleted:
-                                                _log_line(
-                                                    _site,
-                                                    _pid,
-                                                    f"{_idx_pfx}{_e_label}: {_e_action} → 마켓삭제(품절){_t}",
-                                                )
-                                            else:
-                                                _log_line(
-                                                    _site,
-                                                    _pid,
-                                                    f"{_idx_pfx}{_e_label}: {_e_action} 전송완료{_t}",
-                                                )
-                                            _logged_accs.add(_acc_id)
-                                        # 실패는 콜백에서 즉시 로그/등록하지 않는다.
-                                        # 단일 세션을 여러 계정 긴 HTTP 동안 공유하다 연결이
-                                        # 만료되면 greenlet_spawn 등 stale-conn 에러가 계정별로
-                                        # 삼켜져 들어온다. 새 세션 재시도로 복구될 수 있으므로
-                                        # 재시도 종료 후 post-result 블록에서 최종 판정/로그한다.
-
+                                    _logged = False
                                     try:
                                         _tx_result = None
                                         _tx_exc: Exception | None = None
-                                        # 좀비/prepared state 에러 retry — 1회로 부족 (사용자 케이스 2026-05-27).
-                                        # 마켓 HTTP 길이 60s 초과 시 idle_in_transaction_session_timeout
-                                        # 으로 session 끊김 → "prepared state" 에러 → retry 후 새 session.
-                                        # 3회로 늘림 + 짧은→긴 backoff (0.2/0.5/1.5초).
                                         _TX_RETRY_DELAYS = (0.2, 0.5, 1.5)
                                         for _tx_attempt in range(
                                             len(_TX_RETRY_DELAYS) + 1
@@ -2656,22 +2568,14 @@ async def _site_autotune_loop(device_id: str, site: str):
                                                     _tx_result = await _svc.start_update(
                                                         [_pid],
                                                         _items,
-                                                        _accs_list,
+                                                        [_acc],
                                                         skip_unchanged=False,
                                                         skip_refresh=True,
                                                         skip_policy_account_filter=True,
-                                                        on_account_done=_on_account_done,
                                                     )
-                                                    # HTTP 끝났으면 즉시 commit — 세션이 idle
-                                                    # 상태로 더 머무르지 않도록 transaction 종료
                                                     await _tx_s.commit()
                                                 _tx_exc = None
-                                                # start_update가 예외 없이 반환해도 계정별
-                                                # transmit_error에 greenlet_spawn 등 stale-conn
-                                                # 에러가 삼켜져 들어올 수 있다(공유 세션 만료).
-                                                # 아직 성공 못한 계정에 stale 에러가 남아 있으면
-                                                # 새 세션으로 재시도. 오토튠은 가격/재고 수정
-                                                # (멱등 PUT)이라 그룹 전체 재전송해도 중복등록 위험 없음.
+                                                # 단일 계정 stale-conn 판정
                                                 _stale_in_result = False
                                                 for _rr in (
                                                     _tx_result.get("results") or []
@@ -2681,18 +2585,16 @@ async def _site_autotune_loop(device_id: str, site: str):
                                                     _rr_err = (
                                                         _rr.get("transmit_error") or {}
                                                     )
-                                                    if not isinstance(_rr_err, dict):
-                                                        continue
-                                                    for _eacc, _eerr in _rr_err.items():
-                                                        if _eacc in _succeeded_accs:
-                                                            continue
-                                                        if _is_stale_conn_error(
-                                                            Exception(str(_eerr))
-                                                        ):
-                                                            _stale_in_result = True
-                                                            break
-                                                    if _stale_in_result:
-                                                        break
+                                                    _eerr = (
+                                                        _rr_err.get(_acc)
+                                                        if isinstance(_rr_err, dict)
+                                                        else None
+                                                    )
+                                                    if _eerr and _is_stale_conn_error(
+                                                        Exception(str(_eerr))
+                                                    ):
+                                                        _stale_in_result = True
+                                                    break
                                                 if (
                                                     _stale_in_result
                                                     and _tx_attempt
@@ -2702,11 +2604,11 @@ async def _site_autotune_loop(device_id: str, site: str):
                                                         _tx_attempt
                                                     ]
                                                     log.warning(
-                                                        "[오토튠][DB재시도] transmit_group "
-                                                        "pid=%s 결과 stale-conn 감지 "
-                                                        "(시도 %d/%d, %.1fs 대기) "
-                                                        "→ 새 세션 재시도",
+                                                        "[오토튠][DB재시도] transmit_account"
+                                                        " pid=%s acc=%s stale-conn"
+                                                        " (시도 %d/%d, %.1fs 대기)",
                                                         _pid,
+                                                        _acc[:12],
                                                         _tx_attempt + 1,
                                                         len(_TX_RETRY_DELAYS) + 1,
                                                         _delay,
@@ -2725,14 +2627,15 @@ async def _site_autotune_loop(device_id: str, site: str):
                                                         _tx_attempt
                                                     ]
                                                     log.warning(
-                                                        "[오토튠][DB재시도] transmit_group "
-                                                        "pid=%s 좀비/prepared (시도 %d/%d, "
-                                                        "%.1fs 대기) → 새 세션 재시도: %s",
+                                                        "[오토튠][DB재시도] transmit_account"
+                                                        " pid=%s acc=%s 좀비/prepared"
+                                                        " (시도 %d/%d, %.1fs): %s",
                                                         _pid,
+                                                        _acc[:12],
                                                         _tx_attempt + 1,
                                                         len(_TX_RETRY_DELAYS) + 1,
                                                         _delay,
-                                                        str(_try_exc)[:120],
+                                                        str(_try_exc)[:80],
                                                     )
                                                     await asyncio.sleep(_delay)
                                                     continue
@@ -2741,129 +2644,106 @@ async def _site_autotune_loop(device_id: str, site: str):
                                             raise _tx_exc
                                         if _tx_result is None:
                                             _tx_result = {"results": []}
-                                        # 결과 검증: start_update는 실패 시 예외 없이 dict로 반환
-                                        # 결과 구조: results[0] = {product_id, status, transmit_result: {acc: status}, transmit_error: {acc: err}, update_result: {acc: ...}}
-                                        _tx_res_list = _tx_result.get("results", [])
+                                        # 결과 판정
                                         _tx_row = next(
                                             (
                                                 r
-                                                for r in _tx_res_list
+                                                for r in (
+                                                    _tx_result.get("results") or []
+                                                )
                                                 if isinstance(r, dict)
                                             ),
                                             None,
                                         )
-                                        _tx_status_map = (
-                                            _tx_row.get("transmit_result", {})
+                                        _acc_err = (
+                                            (
+                                                (
+                                                    _tx_row.get("transmit_error") or {}
+                                                ).get(_acc)
+                                            )
                                             if _tx_row
-                                            else {}
+                                            else None
                                         )
-                                        _tx_err_map = (
-                                            _tx_row.get("transmit_error", {})
+                                        _acc_status = (
+                                            (
+                                                (
+                                                    _tx_row.get("transmit_result") or {}
+                                                ).get(_acc)
+                                            )
                                             if _tx_row
-                                            else {}
+                                            else None
                                         )
-                                        _tx_update_map = (
-                                            _tx_row.get("update_result", {})
-                                            if _tx_row
-                                            else {}
-                                        )
-                                        # 그룹 전체 ok 판정 (기존 호환성: row.status로 판정)
                                         _row_status = (
                                             _tx_row.get("status") if _tx_row else None
                                         )
-                                        _group_ok = _row_status in (
-                                            "success",
-                                            "completed",
+                                        _acc_ok = not _acc_err and (
+                                            _acc_status
+                                            in (None, "success", "completed")
+                                            or _row_status in ("success", "completed")
                                         )
-
-                                        # 계정별 성공/실패 로그는 _on_account_done 콜백에서 이미
-                                        # 완료 순서대로 발사됨. 여기선 콜백이 못 잡은 계정만
-                                        # 폴백 처리(예: start_update 자체가 일부만 처리하고 반환).
-                                        for _entry in _entries_list:
-                                            _, _eacc, _elabel, _eaction = _entry
-                                            if _eacc in _logged_accs:
-                                                continue
-                                            _acc_status = (
-                                                _tx_status_map.get(_eacc)
-                                                if isinstance(_tx_status_map, dict)
-                                                else None
-                                            )
-                                            _acc_err = (
-                                                _tx_err_map.get(_eacc)
-                                                if isinstance(_tx_err_map, dict)
-                                                else None
-                                            )
-                                            _acc_was_deleted = False
-                                            if isinstance(_tx_update_map, dict):
-                                                _u = _tx_update_map.get(_eacc)
-                                                if isinstance(_u, dict):
-                                                    _acc_was_deleted = any(
-                                                        v
-                                                        in (
-                                                            "deleted",
-                                                            "soldout_fallback",
-                                                        )
-                                                        for v in _u.values()
+                                        _acc_was_deleted = False
+                                        if _tx_row:
+                                            _u = (
+                                                _tx_row.get("update_result") or {}
+                                            ).get(_acc)
+                                            if isinstance(_u, dict):
+                                                _acc_was_deleted = any(
+                                                    v
+                                                    in (
+                                                        "deleted",
+                                                        "soldout_fallback",
                                                     )
-                                                elif _u in (
-                                                    "deleted",
-                                                    "soldout_fallback",
-                                                ):
-                                                    _acc_was_deleted = True
-                                            _acc_ok = not _acc_err and (
-                                                _acc_status
-                                                in (None, "success", "completed")
-                                                or _group_ok
-                                            )
-                                            if _acc_ok:
-                                                _synced_count += 1
-                                                if _acc_was_deleted:
-                                                    _log_line(
-                                                        _site,
-                                                        _pid,
-                                                        f"{_idx_pfx}{_elabel}: {_eaction} → 마켓삭제(품절){_t}",
-                                                    )
-                                                else:
-                                                    _log_line(
-                                                        _site,
-                                                        _pid,
-                                                        f"{_idx_pfx}{_elabel}: {_eaction} 전송완료{_t}",
-                                                    )
-                                            else:
-                                                _fail_msg = (
-                                                    str(_acc_err)[:200]
-                                                    if _acc_err
-                                                    else "결과없음"
+                                                    for v in _u.values()
                                                 )
+                                            elif _u in (
+                                                "deleted",
+                                                "soldout_fallback",
+                                            ):
+                                                _acc_was_deleted = True
+                                        if _acc_ok:
+                                            _synced_count += 1
+                                            _logged = True
+                                            if _acc_was_deleted:
                                                 _log_line(
                                                     _site,
                                                     _pid,
-                                                    f"{_idx_pfx}{_elabel}: {_eaction} 전송실패(검증): {_fail_msg}{_t}",
-                                                    "error",
+                                                    f"{_idx_pfx}{_label}: {_action_text} → 마켓삭제(품절){_t}",
                                                 )
-                                    except Exception as _fe:
-                                        for _entry in _entries_list:
-                                            _, _eacc, _elabel, _eaction = _entry
-                                            if _eacc in _logged_accs:
-                                                continue
+                                            else:
+                                                _log_line(
+                                                    _site,
+                                                    _pid,
+                                                    f"{_idx_pfx}{_label}: {_action_text} 전송완료{_t}",
+                                                )
+                                        else:
+                                            _fail_msg = (
+                                                str(_acc_err)[:200]
+                                                if _acc_err
+                                                else "결과없음"
+                                            )
                                             _log_line(
                                                 _site,
                                                 _pid,
-                                                f"{_idx_pfx}{_elabel}: {_eaction} 전송실패: {str(_fe)[:200]}{_t}",
+                                                f"{_idx_pfx}{_label}: {_action_text} 전송실패(검증): {_fail_msg}{_t}",
+                                                "error",
+                                            )
+                                            _logged = True
+                                    except Exception as _fe:
+                                        if not _logged:
+                                            _log_line(
+                                                _site,
+                                                _pid,
+                                                f"{_idx_pfx}{_label}: {_action_text} 전송실패: {str(_fe)[:200]}{_t}",
                                                 "error",
                                             )
                                     await asyncio.sleep(0.3)
 
-                                # 전송을 fire-and-forget으로 띄움 — 갱신은 즉시 다음 상품으로 진행.
-                                # 세마포어로 동시 transmit 수 제한해 OOM 방지.
-                                # 정책 변경 직후 폭주(수천 건)에서도 refresher가 await에 막혀
-                                # throughput이 1/min으로 떨어지던 문제 해결.
+                                # 계정별 fire-and-forget task
                                 _bg_task = asyncio.create_task(
                                     _run_transmit_in_background(
-                                        _fire_transmit_group, site=site
+                                        _fire_transmit_account, site=site
                                     )
                                 )
-                                # autotune_stop에서 cancel 가능하도록 dev별 set에 등록.
                                 _bg_set = _pc_bg_transmit_tasks.setdefault(
                                     device_id, set()
                                 )
