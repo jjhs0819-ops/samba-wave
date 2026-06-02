@@ -1310,16 +1310,22 @@ class JobWorker:
                             await item_session.commit()
                             return 0, 1, 0, None
 
-                    item_svc = SambaShipmentService(
-                        SambaShipmentRepository(item_session), item_session
-                    )
-                    result = await item_svc.start_update(
-                        [pid],
-                        update_items,
-                        effective_account_ids,
-                        skip_unchanged=skip_unchanged,
-                        skip_policy_account_filter=_tetris_enabled,
-                    )
+                    # 마켓 HTTP 동안 item_session 미점유 — 별도 단명 세션 사용
+                    # (item_session이 여러 계정×마켓HTTP 동안 열리면 pool_recycle 만료
+                    # → greenlet_spawn 에러. _transmit_session은 전송 중에만 점유)
+                    async with get_write_session() as _transmit_session:
+                        item_svc = SambaShipmentService(
+                            SambaShipmentRepository(_transmit_session),
+                            _transmit_session,
+                        )
+                        result = await item_svc.start_update(
+                            [pid],
+                            update_items,
+                            effective_account_ids,
+                            skip_unchanged=skip_unchanged,
+                            skip_policy_account_filter=_tetris_enabled,
+                        )
+                        await _transmit_session.commit()
                     results_list = result.get("results", [])
                     r = results_list[0] if results_list else {}
                     status = r.get("status", "unknown")
