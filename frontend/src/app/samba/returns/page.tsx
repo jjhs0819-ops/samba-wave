@@ -14,6 +14,16 @@ import {
 } from './constants'
 import { ReturnDetailModal } from './components/ReturnDetailModal'
 
+// 완료내역(completion_detail) 옵션 + 색상 (다크테마: 옅은 배경 + 글자색)
+const COMPLETION_DEFAULT = '대기중'
+const COMPLETION_OPTIONS = ['대기중', '취소완료', '반품완료', '교환완료']
+const COMPLETION_COLORS: Record<string, { bg: string; fg: string }> = {
+  '대기중': { bg: 'rgba(255,217,61,0.12)', fg: '#FFD93D' },   // 노랑
+  '취소완료': { bg: 'rgba(255,107,107,0.12)', fg: '#FF6B6B' }, // 빨강
+  '반품완료': { bg: 'rgba(247,131,172,0.14)', fg: '#F783AC' }, // 핑크
+  '교환완료': { bg: 'rgba(76,154,255,0.12)', fg: '#4C9AFF' },  // 파랑
+}
+
 export default function ReturnsPage() {
   useEffect(() => { document.title = 'SAMBA-반품관리' }, [])
   const [returns, setReturns] = useState<SambaReturn[]>([])
@@ -231,8 +241,8 @@ export default function ReturnsPage() {
   // completion_detail 기준 통계
   const completionCounts = {
     total: returns.length,
-    requested: returns.filter(r => (r.completion_detail || '진행중') === '진행중').length,
-    completed: returns.filter(r => ['취소', '교환', '반품'].includes(r.completion_detail || '')).length,
+    requested: returns.filter(r => (r.completion_detail || COMPLETION_DEFAULT) === '대기중').length,
+    completed: returns.filter(r => ['취소완료', '반품완료', '교환완료'].includes(r.completion_detail || '')).length,
     rejected: returns.filter(r => (r.completion_detail || '') === '거부').length,
   }
 
@@ -366,7 +376,7 @@ export default function ReturnsPage() {
               ])
             })()}
           </select>
-          <select style={{ ...inputStyle, width: '110px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}><option value="">전체내역</option>{['진행중','취소','교환','반품','거부'].map(s => <option key={s} value={s}>{s}</option>)}</select>
+          <select style={{ ...inputStyle, width: '110px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}><option value="">전체내역</option>{COMPLETION_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}</select>
           <select style={{ ...inputStyle, width: '92px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={pageSize} onChange={e => setPageSize(Number(e.target.value))}>
             <option value={50}>50개 보기</option><option value={100}>100개 보기</option><option value={200}>200개 보기</option><option value={500}>500개 보기</option>
           </select>
@@ -458,7 +468,7 @@ export default function ReturnsPage() {
               </thead>
               <tbody>
                 {returns.filter(r => {
-                  if (siteFilter && (r.completion_detail || '진행중') !== siteFilter) return false
+                  if (siteFilter && (r.completion_detail || COMPLETION_DEFAULT) !== siteFilter) return false
                   if (marketFilter) {
                     if (marketFilter.startsWith('type:')) {
                       const mType = marketFilter.replace('type:', '')
@@ -533,8 +543,12 @@ export default function ReturnsPage() {
                         />
                       </td>
                       <td style={{ ...tdCenter, padding: '0.375rem' }}>
+                        {(() => {
+                          const cd = r.completion_detail || COMPLETION_DEFAULT
+                          const cc = COMPLETION_COLORS[cd]
+                          return (
                         <select
-                          value={r.completion_detail || '진행중'}
+                          value={cd}
                           onChange={async (e) => {
                             const val = e.target.value
                             setReturns(prev => prev.map(x => x.id === r.id ? { ...x, completion_detail: val } : x))
@@ -542,14 +556,12 @@ export default function ReturnsPage() {
                               await returnApi.patch(r.id, { completion_detail: val })
                             } catch (_e) { /* 무시 */ }
                           }}
-                          style={{ padding: '0.2rem 0.3rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', fontSize: '0.75rem', cursor: 'pointer', outline: 'none' }}
+                          style={{ padding: '0.2rem 0.3rem', background: cc?.bg || '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: cc?.fg || '#E5E5E5', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', outline: 'none' }}
                         >
-                          <option value="진행중">진행중</option>
-                          <option value="취소">취소</option>
-                          <option value="교환">교환</option>
-                          <option value="반품">반품</option>
-                          <option value="거부">거부</option>
+                          {COMPLETION_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
                         </select>
+                          )
+                        })()}
                       </td>
                       <td style={{ ...tdCenter, maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.product_name || '-'}</td>
                       <td style={{ ...tdCenter, padding: '0.375rem' }}>
