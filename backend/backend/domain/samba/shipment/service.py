@@ -1274,6 +1274,14 @@ class SambaShipmentService:
         _stmt2 = _sel2(_SMA).where(_SMA.id.in_(target_account_ids))
         _res2 = await self.session.execute(_stmt2)
         _dispatch_account_map = {a.id: a for a in _res2.scalars().all()}
+        # account 객체를 세션에서 분리 — 이후 commit이 ORM 객체를 expired로 만들어
+        # _dispatch_one 내 account.market_type 접근 시 lazy load → greenlet_spawn 에러 발생.
+        # expunge로 세션 분리 시 이미 로드된 컬럼 속성은 그대로 유지됨.
+        for _acc_obj in _dispatch_account_map.values():
+            try:
+                self.session.expunge(_acc_obj)
+            except Exception:
+                pass
 
         # 배치 읽기 완료 — soldout refresh(최대 30초) 전 커밋으로 idle in transaction 방지
         # commit 실패 시 rollback으로 SessionTransaction PREPARED 고착 차단(이슈#276)
