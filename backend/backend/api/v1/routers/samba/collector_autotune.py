@@ -2747,6 +2747,37 @@ async def _site_autotune_loop(device_id: str, site: str):
                                             _fail_msg = str(
                                                 _acc_err or _row_error or "결과없음"
                                             )[:200]
+                                            # 진단: "결과없음"(빈 transmit 결과) 근본원인 추적용.
+                                            # _acc_err/_row_error 가 둘 다 없는데 실패 판정 =
+                                            # results 가 비었거나(_tx_row None) 계정 키 누락.
+                                            # 다음 간헐 실패 때 transmit 결과 구조를 그대로 덤프.
+                                            if not (_acc_err or _row_error):
+                                                try:
+                                                    _diag_results = (
+                                                        _tx_result or {}
+                                                    ).get("results") or []
+                                                    log.warning(
+                                                        "[오토튠][결과없음 진단] site=%s pid=%s acc=%s | "
+                                                        "tx_row=%s results_len=%d tx_keys=%s | "
+                                                        "row_status=%s acc_status=%s row_keys=%s | "
+                                                        "tx_result_head=%s",
+                                                        _site,
+                                                        _pid,
+                                                        _acc[:16],
+                                                        "None"
+                                                        if _tx_row is None
+                                                        else "present",
+                                                        len(_diag_results),
+                                                        list((_tx_result or {}).keys()),
+                                                        _row_status,
+                                                        _acc_status,
+                                                        list(_tx_row.keys())
+                                                        if isinstance(_tx_row, dict)
+                                                        else None,
+                                                        str(_tx_result)[:400],
+                                                    )
+                                                except Exception:
+                                                    pass
                                             _log_line(
                                                 _site,
                                                 _pid,
