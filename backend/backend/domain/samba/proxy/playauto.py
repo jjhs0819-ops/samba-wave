@@ -12,6 +12,14 @@ EMP_BASE_URL = "https://playauto-api.playauto.co.kr/emp/v1"
 COMMON_BASE_URL = "https://playapi.api.plto.com/restApi/empapi"
 
 
+def _truncate_to_bytes(text: str, max_bytes: int) -> str:
+    """UTF-8 바이트 기준 안전 절단 — 멀티바이트(한글) 경계 보호."""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    return encoded[:max_bytes].decode("utf-8", errors="ignore").strip()
+
+
 class PlayAutoApiError(Exception):
     """플레이오토 API 에러."""
 
@@ -453,7 +461,7 @@ class PlayAutoClient:
         # 기본 정보
         data: dict[str, Any] = {
             "MasterCode": "__AUTO__",
-            "ProdName": str(product.get("name", ""))[:200],
+            "ProdName": _truncate_to_bytes(str(product.get("name", "")), 100),
             "Price": str(int(product.get("sale_price", 0))),
             "Count": str(stock_qty),
             "MadeIn": _normalize_origin(product.get("origin")),

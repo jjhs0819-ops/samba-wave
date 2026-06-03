@@ -61,6 +61,7 @@ const MARKET_NAME_LIMITS: Record<string, number> = {
 const MARKET_NAME_BYTE_LIMITS: Record<string, number> = {
   '롯데ON': 149,
   '11번가': 99,
+  '플레이오토': 100,
 }
 
 function truncateToBytes(text: string, maxBytes: number): string {
