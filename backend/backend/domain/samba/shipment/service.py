@@ -996,10 +996,27 @@ class SambaShipmentService:
             refresh_status = f"원가 {_cur_cost:,}, 옵션 {_opt_count}건"
 
         # 조기 스킵: 이미 등록된 상품 + 가격재고 업데이트 모드 + 변동 없음 → 나머지 로직 전부 건너뜀
+        # 단, target 계정이 전부 이미 마켓에 등록돼 있을 때만. 미등록 계정이 섞이면
+        # 신규 등록이 필요하므로 조기 스킵 금지 → 계정별 스킵 로직(아래 1849)이 처리한다.
+        # (상품 status="registered"는 "어떤 계정엔가 등록됨"일 뿐, target 계정 등록을 보장 안 함)
+        _existing_nos_map = product_row.market_product_nos or {}
+
+        def _acct_already_registered(_aid: str) -> bool:
+            # 계정별 스킵과 동일한 키 규칙 (smartstore _origin, gmarket/auction _master)
+            if _existing_nos_map.get(_aid):
+                return True
+            for _suf in ("_origin", "_master"):
+                if _existing_nos_map.get(f"{_aid}{_suf}"):
+                    return True
+            return False
+
+        _all_targets_registered = bool(target_account_ids) and all(
+            _acct_already_registered(_aid) for _aid in target_account_ids
+        )
         _is_registered = product_row.status == "registered" and bool(
             product_row.registered_accounts
         )
-        if skip_unchanged and has_update and _is_registered:
+        if skip_unchanged and has_update and _is_registered and _all_targets_registered:
             # 소싱처 최신화에서 변동이 없었으면 즉시 스킵
             if not pending_refresh_updates or refresh_status.startswith("최신화실패"):
                 pass  # 최신화 안 했거나 실패 → 스킵 판정 불가, 계속 진행
@@ -2287,7 +2304,8 @@ class SambaShipmentService:
                     _lsd_sa_text(
                         "UPDATE samba_collected_product"
                         " SET last_sent_data = ("
-                        "  COALESCE(CAST(last_sent_data AS jsonb), '{}'::jsonb)"
+                        "  CASE WHEN jsonb_typeof(CAST(last_sent_data AS jsonb)) = 'object'"
+                        "       THEN CAST(last_sent_data AS jsonb) ELSE '{}'::jsonb END"
                         "  || CAST(:updates AS jsonb))::json,"
                         " updated_at = NOW()"
                         " WHERE id = :pid"
