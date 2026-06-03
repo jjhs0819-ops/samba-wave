@@ -829,15 +829,17 @@ export default function WarroomPage() {
     try {
       const { getDeviceId } = await import('@/lib/samba/deviceId')
       const dev = getDeviceId()
-      if (!dev) return
+      const daemonDev = (typeof window !== 'undefined' &&
+        window.localStorage.getItem('samba.autotune.daemon.deviceId')) || ''
+      // 확장앱 id 가 페이지에 안 꽂힌 PC(데몬 전용 원격 PC 등)에서도 데몬 사이트는 등록돼야 함.
+      // 둘 다 없을 때만 중단 (2026-06-04: 확장앱 id null → 데몬 ABC 등록 누락 사고).
+      if (!dev && !daemonDev) return
       const { API_BASE_URL: apiBase } = await import('@/config/api')
       // 사이트별 dev 분리 (2026-05-25 사용자 룰):
       //  - 데몬 전용(SSG/ABCmart/GrandStage/LOTTEON) → 데몬 dev 에만 (가격수집+송장 둘 다 데몬)
       //  - 무신사/GSShop → 브라우저 dev 에만 (가격수집은 확장앱). 송장(tracking)은 데몬에
       //    등록하지 않아도 백엔드 dequeue 의 tracking site-분담 예외로 데몬 기존 워커가 처리.
       //    (무신사를 데몬 active_sites 에 넣으면 가격수집 워커가 중복 스폰되는 사고 — 등록 금지)
-      const daemonDev = (typeof window !== 'undefined' &&
-        window.localStorage.getItem('samba.autotune.daemon.deviceId')) || ''
       const _DAEMON_ONLY = new Set(['SSG', 'ABCmart', 'GrandStage', 'LOTTEON'])
       // ABCmart 체크 = ABCmart + GrandStage 자동 expand (같은 a-rt.com 도메인)
       const _SITE_EXPAND: Record<string, string[]> = {
@@ -857,14 +859,16 @@ export default function WarroomPage() {
       // 라 last-write-wins 으로 먼저 박힌 device row 가 덮어써짐 → 브라우저 dev 분담이 DB
       // 에서 사라지고 lifecycle sync 가 _pc_allowed_sites.pop → 무신사/GS 사이클 cancel.
       // 순차 await 로 직렬화.
-      await fetchWithAuth(
-        `${apiBase}/api/v1/samba/collector/autotune/pc-allowed-sites`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ device_id: dev, sites: browserSites }),
-        },
-      )
+      if (dev) {
+        await fetchWithAuth(
+          `${apiBase}/api/v1/samba/collector/autotune/pc-allowed-sites`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ device_id: dev, sites: browserSites }),
+          },
+        )
+      }
       if (daemonDev) {
         await fetchWithAuth(
           `${apiBase}/api/v1/samba/collector/autotune/pc-allowed-sites`,
@@ -1165,17 +1169,32 @@ export default function WarroomPage() {
                 // PC분담 먼저 등록 — 오토튠 첫 사이클에서 올바른 소싱처만 실행되도록 보장
                 // (등록 없이 시작하면 첫 사이클에서 union=None → 전체 소싱처 루프 생성됨)
                 await registerPcAllowedSites(filterSources === null ? [...availSources] : filterSources)
-                const res = await collectorApi.autotuneStart('registered', pno, getDeviceId())
-                if (!res.ok) {
+                const extDev = getDeviceId()
+                const daemonDev = (typeof window !== 'undefined' && window.localStorage.getItem('samba.autotune.daemon.deviceId')) || ''
+                // 확장앱 id 가 페이지에 안 꽂힌 PC(데몬 전용 원격 PC)에서도 데몬 사이클은 시작돼야 함.
+                // 확장앱 id 있으면 확장앱 사이클 시작, 없으면 데몬 id 로만 진행 (2026-06-04 사고 fix).
+                if (extDev) {
+                  const res = await collectorApi.autotuneStart('registered', pno, extDev)
+                  if (!res.ok) {
+                    const { showAlert } = await import('@/components/samba/Modal')
+                    showAlert(res.error || '시작 실패', 'error')
+                    return
+                  }
+                } else if (!daemonDev) {
                   const { showAlert } = await import('@/components/samba/Modal')
-                  showAlert(res.error || '시작 실패', 'error')
+                  showAlert('확장앱/데몬 미감지 — 시작 불가', 'error')
                   return
                 }
                 // (옵션 C) 데몬 device 도 사이클 시작 — 같은 PC 의 데몬 분담 사이트 (SSG/ABC/GS/LOTTEON) 사이클 트리거
                 try {
-                  const daemonDev = (typeof window !== 'undefined' && window.localStorage.getItem('samba.autotune.daemon.deviceId')) || ''
                   if (daemonDev) {
-                    await collectorApi.autotuneStart('registered', pno, daemonDev)
+                    const dres = await collectorApi.autotuneStart('registered', pno, daemonDev)
+                    // 확장앱 id 없는 데몬 전용 PC 면 데몬 start 결과가 곧 시작 성공 여부
+                    if (!dres.ok && !extDev) {
+                      const { showAlert } = await import('@/components/samba/Modal')
+                      showAlert(dres.error || '데몬 시작 실패', 'error')
+                      return
+                    }
                   }
                 } catch { /* 데몬 사이클 시작 실패는 무시 */ }
                 // 이 PC의 확장앱에만 폴링 합류 신호 전달 (다른 PC는 자동 편승 안 함)
