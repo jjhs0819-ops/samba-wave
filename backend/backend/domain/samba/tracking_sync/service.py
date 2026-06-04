@@ -499,7 +499,49 @@ async def enqueue_pending_orders(
             stmt = stmt.where(SambaOrder.tenant_id == tenant_id)
         orders = (await session.execute(stmt)).scalars().all()
 
+    # ── 계정 단위 로그인-실패 서킷브레이커 ──
+    # 잠긴 소싱처 계정(예: SSG 보안잠금)으로 매 사이클 수백 주문이 재큐잉되면
+    # 같은 계정에 로그인 시도가 폭주(실측 1,304회)해 잠금을 더 오래 유지시킨다.
+    # 최근 1시간 "로그인 실패"가 THRESHOLD 이상인 계정은 이번 배치에서 건너뛴다.
+    # 계정 복구(비번 변경 등) 후 실패가 1시간 윈도우에서 빠지면 자동 해제(자가치유).
+    # 로그인 실패만 카운트 — CTX 파괴/미발송 등 다른 실패는 차단 대상 아님.
+    _LOGIN_FAIL_THRESHOLD = 5
+    _login_broken_accounts: set[str] = set()
+    from sqlalchemy import text as _brk_text
+
+    async with get_write_session() as _brk_session:
+        _brk_rows = (
+            await _brk_session.execute(
+                _brk_text(
+                    "SELECT sourcing_account_id AS acc, count(*) AS c "
+                    "FROM samba_tracking_sync_job "
+                    "WHERE created_at >= now() - interval '1 hour' "
+                    "AND status = :failed "
+                    "AND last_error ILIKE :pat "
+                    "AND sourcing_account_id IS NOT NULL "
+                    "GROUP BY sourcing_account_id "
+                    "HAVING count(*) >= :thr"
+                ),
+                {
+                    "failed": STATUS_FAILED,
+                    "pat": "%로그인 실패%",
+                    "thr": _LOGIN_FAIL_THRESHOLD,
+                },
+            )
+        ).all()
+    _login_broken_accounts = {r.acc for r in _brk_rows}
+    if _login_broken_accounts:
+        logger.warning(
+            f"[송장동기화] 로그인 차단 계정 {len(_login_broken_accounts)}개 — "
+            f"이번 배치 재큐잉 건너뜀(로그인 폭주/계정잠금 방지): "
+            f"{sorted(_login_broken_accounts)}"
+        )
+
     for order in orders:
+        _oacc = (order.sourcing_account_id or "").strip()
+        if _oacc and _oacc in _login_broken_accounts:
+            skipped += 1
+            continue
         try:
             res = await enqueue_for_order(order.id, force=force)
             jid = res.get("jobId")
