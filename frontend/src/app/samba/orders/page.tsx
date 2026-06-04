@@ -418,12 +418,15 @@ export default function OrdersPage() {
     error: string | null
   }
   const [autoSyncHistory, setAutoSyncHistory] = useState<AutoSyncHistoryItem[]>([])
-  // 전담 송장 PC (멀티PC 동시 SSG 로그인 잠금 차단)
-  const [daemonPcs, setDaemonPcs] = useState<{ device_id: string; sites: string[]; alive: boolean }[]>([])
+  // 전담 송장 PC (멀티PC 동시 SSG 로그인 잠금 차단) — "이 PC 전담" 토글 방식
   const [trackingOwnerDevice, setTrackingOwnerDevice] = useState<string>('')
+  const [localDaemonId, setLocalDaemonId] = useState<string>('')
   const [ownerSaving, setOwnerSaving] = useState<boolean>(false)
   const loadTrackingOwner = useCallback(() => {
-    orderApi.listDaemonPcs().then(r => setDaemonPcs(r.daemons || [])).catch(() => {})
+    try {
+      const d = (typeof window !== 'undefined' && window.localStorage.getItem('samba.autotune.daemon.deviceId')) || ''
+      setLocalDaemonId(d)
+    } catch { setLocalDaemonId('') }
     orderApi.getTrackingOwnerDevice().then(r => setTrackingOwnerDevice(r.tracking_owner_device || '')).catch(() => {})
   }, [])
   useEffect(() => { loadTrackingOwner() }, [loadTrackingOwner])
@@ -661,51 +664,47 @@ export default function OrdersPage() {
           </div>
         </div>
 
-        {/* 전담 송장 PC — 멀티PC 동시 SSG 로그인 잠금 차단 */}
-        <div style={{
-          marginTop: 10, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.06)',
-          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-        }}>
-          <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#E5E5E5' }}>🖥️ 송장 전담 PC</span>
-          <select
-            value={trackingOwnerDevice}
-            disabled={ownerSaving}
-            onChange={e => handleSetTrackingOwner(e.target.value)}
-            style={{
-              minWidth: 240, background: '#2A2A2A', border: '1px solid #444', color: '#ccc',
-              borderRadius: 6, padding: '5px 8px', fontSize: '0.8125rem',
-              cursor: ownerSaving ? 'not-allowed' : 'pointer',
-            }}
-          >
-            <option value="">전담 안 함 (모든 PC 수집 — SSG 잠금 위험)</option>
-            {daemonPcs.map(d => {
-              const short = d.device_id.replace('samba-daemon-', '').slice(0, 8)
-              const siteHint = d.sites.length ? ` [${d.sites.join(',')}]` : ''
-              return (
-                <option key={d.device_id} value={d.device_id}>
-                  {d.alive ? '🟢' : '⚪'} {short}{siteHint}
-                </option>
-              )
-            })}
-            {/* 저장된 전담 PC가 현재 목록에 없을 때도 보이게 */}
-            {trackingOwnerDevice && !daemonPcs.some(d => d.device_id === trackingOwnerDevice) && (
-              <option value={trackingOwnerDevice}>
-                ⚠ {trackingOwnerDevice.replace('samba-daemon-', '').slice(0, 8)} (오프라인/미등록)
-              </option>
-            )}
-          </select>
-          <span style={{ fontSize: '0.72rem', color: '#888' }}>
-            지정 시 그 PC만 송장 수집 → 여러 PC가 같은 계정 동시 로그인하는 SSG 보안잠금 방지.
-          </span>
-          <button
-            onClick={loadTrackingOwner}
-            style={{
-              padding: '4px 10px', borderRadius: 6, border: '1px solid #3D3D3D',
-              background: 'rgba(50,50,50,0.9)', color: '#C5C5C5', fontSize: '0.72rem',
-              cursor: 'pointer', whiteSpace: 'nowrap',
-            }}
-          >새로고침</button>
-        </div>
+        {/* 송장 전담 PC — "이 PC 전담" 토글. 송장 돌릴 PC에서 켜면 그 PC만 수집(멀티PC 잠금 차단) */}
+        {(() => {
+          const isThisPc = !!localDaemonId && trackingOwnerDevice === localDaemonId
+          const ownerSetElsewhere = !!trackingOwnerDevice && trackingOwnerDevice !== localDaemonId
+          let statusText = ''
+          let statusColor = '#888'
+          if (isThisPc) { statusText = '✅ 이 PC가 송장 전담 — 이 PC만 송장 수집'; statusColor = '#22C55E' }
+          else if (ownerSetElsewhere) { statusText = `다른 PC가 전담 중(${trackingOwnerDevice.replace('samba-daemon-', '').slice(0, 8)}) — 이 PC로 바꾸려면 켜기`; statusColor = '#FFB84D' }
+          else { statusText = '⚠ 전담 미지정 — 모든 PC가 송장 수집(SSG 동시로그인 잠금 위험)'; statusColor = '#FF8C00' }
+          return (
+            <div style={{
+              marginTop: 10, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.06)',
+              display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+            }}>
+              <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#E5E5E5' }}>🖥️ 이 PC가 송장 전담</span>
+              <button
+                onClick={() => handleSetTrackingOwner(isThisPc ? '' : localDaemonId)}
+                disabled={ownerSaving || !localDaemonId}
+                title={!localDaemonId ? '이 PC에 데몬 deviceId가 없습니다(오토튠 페이지 1회 방문 필요)' : ''}
+                style={{
+                  minWidth: 64, padding: '0.4rem 0.8rem', borderRadius: '999px',
+                  border: isThisPc ? '1px solid rgba(34,197,94,0.35)' : '1px solid #444',
+                  background: isThisPc ? '#22C55E' : '#2A2A2A',
+                  color: isThisPc ? '#06130A' : '#FFB84D',
+                  fontSize: '0.8125rem', fontWeight: 700,
+                  cursor: (ownerSaving || !localDaemonId) ? 'not-allowed' : 'pointer',
+                  opacity: (ownerSaving || !localDaemonId) ? 0.6 : 1,
+                }}
+              >{ownerSaving ? '저장 중' : isThisPc ? 'ON' : 'OFF'}</button>
+              <span style={{ fontSize: '0.72rem', color: statusColor }}>{statusText}</span>
+              <button
+                onClick={loadTrackingOwner}
+                style={{
+                  padding: '4px 10px', borderRadius: 6, border: '1px solid #3D3D3D',
+                  background: 'rgba(50,50,50,0.9)', color: '#C5C5C5', fontSize: '0.72rem',
+                  cursor: 'pointer', whiteSpace: 'nowrap',
+                }}
+              >새로고침</button>
+            </div>
+          )
+        })()}
 
         {/* 최근 자동실행 이력 2건 요약 — 작동 여부 확인용 */}
         {autoSyncHistory.length > 0 && (
