@@ -992,6 +992,44 @@ class JobWorker:
 
             _current_transmit_job_id.reset(_ctx_token)
 
+    async def _clear_global_cancel_if_drained(self, job_id: str) -> None:
+        """대기/실행 중인 전송 잡이 더 없으면 전역 취소 플래그(__all__)를 해제한다.
+
+        버그2 대응: 작업취소는 emergency만 풀고 __all__를 남겨, 오토튠 등 후속 전송의
+        start_update가 계속 강제취소되던 문제를 막는다. PENDING/RUNNING 전송 잡이
+        남아 있으면 유지(그 잡들도 __all__로 드레인되어야 함). 호출 시점에 현재 잡은
+        이미 FAILED/CANCELLED/COMPLETED 로 마감돼 있어 카운트에서 제외된다.
+        """
+        from backend.domain.samba.shipment.service import clear_cancel_transmit
+        from backend.db.orm import get_write_session
+
+        try:
+            from sqlalchemy import text as _flag_text
+
+            async with get_write_session() as _flag_sess:
+                # 현재 잡(job_id)은 명시 제외 — fail_job/complete_job이 별도 세션의
+                # 미커밋 상태일 수 있어, self 카운트로 __all__가 잘못 잔존하는 것 방지.
+                _remain = (
+                    await _flag_sess.execute(
+                        _flag_text(
+                            "SELECT count(*) FROM samba_jobs "
+                            "WHERE job_type = 'transmit' "
+                            "AND status IN ('pending', 'running') "
+                            "AND id != :jid"
+                        ),
+                        {"jid": job_id},
+                    )
+                ).scalar() or 0
+            if _remain == 0:
+                clear_cancel_transmit(None)  # __all__ 전역 해제
+                logger.info(
+                    f"[잡워커] 전송 잡 모두 드레인 — 전역 취소 플래그(__all__) 해제: {job_id}"
+                )
+        except Exception as _flag_exc:
+            logger.warning(
+                f"[잡워커] __all__ 해제 체크 실패(무시): {job_id} — {_flag_exc}"
+            )
+
     async def _run_transmit(self, job, repo, session):
         """전송 잡 실행 — 기존 shipment_service 호출."""
         from backend.domain.samba.shipment.service import (
@@ -1327,6 +1365,16 @@ class JobWorker:
                             skip_policy_account_filter=_tetris_enabled,
                         )
                         await _transmit_session.commit()
+                    # 작업취소/비상정지로 start_update가 루프 첫 줄에서 break →
+                    # results 비어 있고 cancelled>0. 취소는 실패가 아니므로(취소 ≠ 실패)
+                    # 집계에서 제외하고 즉시 반환. 배치 루프(1487)가 다음 주기에 정상 중단 처리.
+                    if result.get("cancelled", 0) > 0 and not result.get("results"):
+                        _add_job_log(
+                            job.id,
+                            f"[{i + 1}/{total}] {prod_name}: 작업취소됨",
+                        )
+                        await item_session.commit()
+                        return 0, 0, 0, None
                     results_list = result.get("results", [])
                     r = results_list[0] if results_list else {}
                     status = r.get("status", "unknown")
@@ -1494,8 +1542,10 @@ class JobWorker:
                 await repo.fail_job(
                     job.id, f"{reason}: {i_first}건 완료, {cancelled}건 중단"
                 )
-                clear_cancel_transmit(job.id)  # 이 잡 플래그만 해제, __all__ 유지
+                clear_cancel_transmit(job.id)  # 이 잡 플래그만 해제
                 clear_emergency_stop()
+                # 현재 잡은 위 fail_job으로 FAILED/CANCELLED 마감 → 카운트 제외
+                await self._clear_global_cancel_if_drained(job.id)
                 return
 
             # 배치 내 병렬 처리
@@ -1576,6 +1626,12 @@ class JobWorker:
                 )
 
         final_fail = fail_count
+        # 작업취소가 마지막/유일 상품에서 발생하면 배치 루프 취소 브랜치(1487)를 거치지
+        # 않고 여기로 떨어진다(예: 상품 1개 전송 중 취소 — 이슈 #339 재현 그대로).
+        # 이때도 잔존 플래그(emergency + __all__)를 정리해야 후속 전송이 막히지 않는다.
+        _was_cancelled = is_cancel_requested(job.id)
+        if _was_cancelled:
+            _add_job_log(job.id, "작업취소됨 — 전송 중단")
         _add_job_log(
             job.id,
             f"전송 완료 — 성공 {success_count}건, 스킵 {skip_count}건, 실패 {final_fail}건",
@@ -1592,6 +1648,11 @@ class JobWorker:
         logger.info(
             f"[잡워커] 전송 완료: {job.id} (성공 {success_count}, 스킵 {skip_count}, 실패 {final_fail}/{total}건)"
         )
+        # complete_job으로 현재 잡이 COMPLETED 마감된 뒤 호출 → 카운트 제외.
+        if _was_cancelled:
+            clear_cancel_transmit(job.id)
+            clear_emergency_stop()
+            await self._clear_global_cancel_if_drained(job.id)
 
     async def _run_collect(self, job, repo, session):
         """수집 잡 실행 — collector_collection의 _stream_musinsa 로직 이식."""
