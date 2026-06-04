@@ -40,8 +40,8 @@ class TestCandidateOdNos:
         # 사용자 사례: 'L02682376475_2682376509'
         out = _lotteon_candidate_od_nos("L02682376475_2682376509")
         assert "L02682376475_2682376509" in out  # 원본
-        assert "L02682376475" in out             # _ 앞부분
-        assert "02682376475" in out              # L 제거된 순수 숫자
+        assert "L02682376475" in out  # _ 앞부분
+        assert "02682376475" in out  # L 제거된 순수 숫자
 
     def test_blank_returns_empty(self) -> None:
         assert _lotteon_candidate_od_nos("") == []

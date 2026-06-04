@@ -199,7 +199,14 @@ class SSGPlugin(MarketPlugin):
         # 6005 후보 dispCtgId 유사도 순 리스트 — 등록 거부 시 다음 후보로 순차 재시도용
         main_cat_candidates: list[str] = []
         _ssg_com_enabled = creds.get("ssgComEnabled") in (True, "true", "True", "1")
-        if category_id and _ssg_com_enabled:
+
+        async def _lookup_6005_main_cat() -> None:
+            """신세계몰(6004) 카테고리명으로 SSG.COM(6005) 메인매장 전시카테고리를 유사도 검색.
+
+            ssgComEnabled off 매장이 6005 필수로 등록 거부될 때 재호출(self-heal)도 한다.
+            결과를 main_category_id / main_cat_candidates 에 채운다.
+            """
+            nonlocal main_category_id, main_cat_candidates
             try:
                 # 1단계: 신세계몰 카테고리 이름 조회
                 name_resp = await client._call_api(
@@ -323,6 +330,9 @@ class SSGPlugin(MarketPlugin):
                         )
             except Exception as _e:
                 logger.warning(f"[SSG] SSG.COM(6005) 전시카테고리 조회 실패: {_e}")
+
+        if category_id and _ssg_com_enabled:
+            await _lookup_6005_main_cat()
 
         # 6005 전시카테고리 보존(회귀 #312 보정) — 수정(existing_no) 인데 위 조회로
         # main_category_id 를 못 채운 경우, 기존 등록 아이템이 이미 6005 카테고리를
@@ -505,6 +515,47 @@ class SSGPlugin(MarketPlugin):
                                 logger.error(
                                     f"[SSG] itemMngPropId 재시도 실패: {e}\n{_tb.format_exc()}"
                                 )
+
+        # ssgComEnabled off 매장 self-heal — "SSG.COM몰 메인매장 카테고리는 1개 이상 필수"
+        # 거부 시 그 자리에서 6005 조회를 1회 수행 후 재시도. 스위치를 안 켜도 자동 복구되어
+        # 매장별 수동 설정을 기억할 필요가 없다.
+        if not data.get("itemId") and not main_category_id and category_id:
+            _hd = result.get("data", {}) if isinstance(result, dict) else {}
+            _hr = _hd.get("result", {}) if isinstance(_hd, dict) else {}
+            if isinstance(_hr, dict):
+                _hc = str(_hr.get("resultCode", "") or "")
+                _hmsg = _hr.get("resultDesc", "") or _hr.get("resultMessage", "") or ""
+                if (
+                    _hc
+                    and _hc not in ("00", "SUCCESS")
+                    and "메인매장 카테고리" in _hmsg
+                ):
+                    logger.warning(
+                        "[SSG] 메인매장 카테고리 필수 거부 → ssgComEnabled 무관 6005 자동 조회 후 재시도"
+                    )
+                    await _lookup_6005_main_cat()
+                    if main_category_id:
+                        try:
+                            data = client.transform_product(
+                                product,
+                                category_id,
+                                std_category_id=std_category_id,
+                                main_category_id=main_category_id,
+                                infra=infra,
+                                margin_rate=margin_rate,
+                                shpp_rqrm_dcnt=shpp_rqrm_dcnt,
+                                day_max_qty=day_max_qty,
+                                once_min_qty=once_min_qty,
+                                once_max_qty=once_max_qty,
+                                brand_mappings=brand_mappings,
+                            )
+                            result = await client.register_product(data)
+                        except Exception as e:
+                            import traceback as _tb
+
+                            logger.error(
+                                f"[SSG] 메인매장 카테고리 self-heal 재시도 실패: {e}\n{_tb.format_exc()}"
+                            )
 
         # 6005 메인매장 전시카테고리 거부 자동 재시도 (신규등록 한정)
         # "잘못된 카테고리 정보입니다 … 전시 할 수 없습니다" 거부 시
