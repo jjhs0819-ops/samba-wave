@@ -361,11 +361,10 @@ export default function ReturnsPage() {
         <select style={{ ...inputStyle, width: '80px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
           <option value="product">상품</option>
           <option value="customer">고객</option>
-          <option value="product_id">상품번호</option>
           <option value="order_number">주문번호</option>
         </select>
-        <input style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadReturns() }} />
-        <button onClick={loadReturns} style={{ background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', padding: '0.22rem 0.75rem', borderRadius: '5px', fontSize: '0.75rem', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>검색</button>
+        <input style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} placeholder="검색어 입력" />
+        <button onClick={() => { /* 검색은 입력 즉시 목록에 반영됨 */ }} style={{ background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', padding: '0.22rem 0.75rem', borderRadius: '5px', fontSize: '0.75rem', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>검색</button>
         <button
           onClick={handleBatchDelete}
           style={{ padding: '0.22rem 0.6rem', fontSize: '0.75rem', background: 'transparent', border: '1px solid #FF6B6B33', borderRadius: '4px', color: '#FF6B6B', cursor: 'pointer', whiteSpace: 'nowrap' }}
@@ -488,6 +487,16 @@ export default function ReturnsPage() {
                       const acc = accounts.find(a => a.id === accId)
                       if (acc && !r.market?.includes(acc.market_name || '')) return false
                     }
+                  }
+                  // 검색어 필터 (카테고리별 필드 기준, 대소문자 무시)
+                  const q = searchText.trim().toLowerCase()
+                  if (q) {
+                    const field =
+                      searchCategory === 'customer' ? r.customer_name :
+                      searchCategory === 'product' ? r.product_name :
+                      searchCategory === 'order_number' ? (r.order_number || r.order_id) :
+                      ''
+                    if (!(field || '').toLowerCase().includes(q)) return false
                   }
                   return true
                 }).map((r, idx) => {
