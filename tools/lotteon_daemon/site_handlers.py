@@ -398,6 +398,15 @@ _LOTTEON_TRACKING_JS = r"""
 LOTTEON_LOGOUT_URL = "https://www.lotteon.com/p/member/logout"
 ABCMART_LOGOUT_URL = "https://abcmart.a-rt.com/member/logout"
 
+# GrandStage 전용 URL — ABCmart 와 같은 a-rt.com 계정/폼이지만 세션 쿠키는
+# 서브도메인별로 따로 박힌다. abcmart 주소로 로그인하면 grandstage.a-rt.com
+# 마이페이지(송장조회)에선 미로그인 → /login 302 → evaluate 컨텍스트 파괴.
+# 따라서 GrandStage 는 자기 서브도메인(grandstage.a-rt.com)으로 로그인해야 한다.
+# (2026-06-04 CDP 실측: grandstage/login 폼 = abcmart 와 동일 #username/#password/#login)
+GRANDSTAGE_LOGIN_URL = "https://grandstage.a-rt.com/login"
+GRANDSTAGE_HOME_URL = "https://grandstage.a-rt.com"
+GRANDSTAGE_LOGOUT_URL = "https://grandstage.a-rt.com/member/logout"
+
 # ── SSG 송장 + 로그인 (마이페이지는 가격수집과 달리 로그인 필수) ──
 # 로그인폼 실측(2026-05-24, incognito): #mem_id / #mem_pw / #loginBtn.
 SSG_TRACKING_LOGIN_URL = "https://member.ssg.com/member/login.ssg"
@@ -813,15 +822,19 @@ SITE_HANDLERS: dict[str, SiteHandler] = {
         site="GrandStage",
         extract_js=_ABCMART_EXTRACT_JS,  # 동일 도메인 a-rt.com
         requires_login=True,
-        login_url=ABCMART_LOGIN_URL,
-        home_url=ABCMART_HOME_URL,
+        # grandstage 서브도메인으로 로그인 — abcmart 주소로 로그인하면 세션이
+        # grandstage.a-rt.com 송장페이지에 안 붙어 302 로 튕긴다(서브도메인별 쿠키).
+        login_url=GRANDSTAGE_LOGIN_URL,
+        home_url=GRANDSTAGE_HOME_URL,
+        # 폼/로그인체크 JS 는 abcmart 와 동일(같은 a-rt.com 플랫폼, login_check_js 는
+        # 상대경로 /product/info 라 현재 grandstage 세션을 그대로 조회).
         login_selectors=ABCMART_LOGIN_SELECTORS,
         login_check_js=ABCMART_LOGIN_CHECK_JS,
         pre_extract_marker_js=_ABCMART_MARKER_JS,
         pre_extract_marker_timeout_ms=6_000,
         pre_extract_wait_ms=200,
         tracking_js=_ABCMART_TRACKING_JS,
-        logout_url=ABCMART_LOGOUT_URL,
+        logout_url=GRANDSTAGE_LOGOUT_URL,
     ),
     "SSG": SiteHandler(
         site="SSG",
