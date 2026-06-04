@@ -453,16 +453,9 @@ async def _build_order_filters(
                 )
             )
     if account_filter:
-        if account_filter == "etc":
-            # 기타(미매핑) — sourcing_account_id 가 'etc'/빈값/NULL 인 주문 전부.
-            # 미매핑 주문 대부분이 NULL 이라 == 'etc' 만으론 누락(실측 NULL 4,880 vs etc 24).
-            filters.append(
-                (SambaOrder.sourcing_account_id == "etc")
-                | (SambaOrder.sourcing_account_id == "")
-                | (SambaOrder.sourcing_account_id.is_(None))
-            )
-        else:
-            filters.append(SambaOrder.sourcing_account_id == account_filter)
+        # '기타'(account_filter='etc') = 주문계정을 명시적으로 '기타'로 지정한 주문만.
+        # NULL(소싱계정 미지정)은 '기타'가 아니므로 포함하지 않는다 — exact match.
+        filters.append(SambaOrder.sourcing_account_id == account_filter)
     if market_status:
         filters.append(SambaOrder.shipping_status == market_status)
 
