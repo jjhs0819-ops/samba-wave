@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, Fragment } from 'react'
 import { accountApi, orderApi, type SambaMarketAccount } from '@/lib/samba/api/commerce'
 import { returnApi, type SambaReturn } from '@/lib/samba/api/support'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
@@ -474,7 +474,7 @@ export default function ReturnsPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
               <thead>
                 <tr style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid #1E1E1E' }}>
-                  <th style={{ width: '36px', textAlign: 'center', padding: '0.3rem 0.5rem', verticalAlign: 'middle' }}>
+                  <th rowSpan={2} style={{ width: '36px', textAlign: 'center', padding: '0.3rem 0.5rem', verticalAlign: 'middle' }}>
                     <input
                       type="checkbox"
                       checked={returns.length > 0 && selectedIds.size === returns.length}
@@ -485,9 +485,16 @@ export default function ReturnsPage() {
                       style={{ width: '13px', height: '13px', cursor: 'pointer', accentColor: '#F59E0B' }}
                     />
                   </th>
-                  {['사진', '고객', '사업자', '주문번호', '마켓', '주문일', '고객', '회사', '완료내역', '상품명', '체크날짜', '고객전화번호', '지역', '메모', '반품링크', 'CS접수일', '상품위치', '반품신청한곳', '상태', '고객주문', '원주문'].map((h, i) => (
+                  <th rowSpan={2} style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: '#888', fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap', verticalAlign: 'middle' }}>사진</th>
+                  {['고객', '사업자', '주문번호', '마켓', '주문일', '고객', '회사', '완료내역', '상품명', '체크날짜', '고객전화번호'].map((h, i) => (
                     <th key={i} style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: '#888', fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
+                </tr>
+                <tr style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid #2D2D2D' }}>
+                  {['지역', '메모', '반품링크', 'CS접수일', '상품위치', '반품신청한곳', '상태', '고객주문'].map((h, i) => (
+                    <th key={i} style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: '#888', fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>{h}</th>
+                  ))}
+                  <th colSpan={3} style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: '#888', fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>원주문</th>
                 </tr>
               </thead>
               <tbody>
@@ -517,8 +524,9 @@ export default function ReturnsPage() {
                   return true
                 }).map((r, idx) => {
                   return (
-                      <tr key={r.id} style={{ borderBottom: '1px solid rgba(45,45,45,0.5)' }}>
-                        <td style={{ width: '36px', textAlign: 'center', padding: '0.5rem', verticalAlign: 'middle' }}>
+                    <Fragment key={r.id}>
+                      <tr>
+                        <td rowSpan={2} style={{ width: '36px', textAlign: 'center', padding: '0.5rem', verticalAlign: 'middle' }}>
                           <div style={{ fontSize: '0.675rem', color: '#666', marginBottom: '2px' }}>{idx + 1}</div>
                           <input
                             type="checkbox"
@@ -532,7 +540,7 @@ export default function ReturnsPage() {
                             style={{ width: '13px', height: '13px', cursor: 'pointer', accentColor: '#F59E0B' }}
                           />
                         </td>
-                        <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center', verticalAlign: 'middle' }}>
+                        <td rowSpan={2} style={{ padding: '0.625rem 0.5rem', textAlign: 'center', verticalAlign: 'middle' }}>
                         {r.product_image ? (
                           <img
                             src={r.product_image}
@@ -692,6 +700,8 @@ export default function ReturnsPage() {
                           style={{ width: '110px', padding: '0.3rem 0.5rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', fontSize: '0.8rem', textAlign: 'center' }}
                         />
                       </td>
+                      </tr>
+                      <tr style={{ borderBottom: '1px solid rgba(45,45,45,0.5)' }}>
                       <td style={tdCenter}>
                         {r.region ? (
                           <span
@@ -804,7 +814,7 @@ export default function ReturnsPage() {
                           <option value="return_complete">완료</option>
                         </select>
                       </td>
-                      <td style={{ ...tdCenter, padding: '0.375rem' }}>
+                      <td colSpan={3} style={{ ...tdCenter, padding: '0.375rem' }}>
                         <select
                           value={r.original_order_no || 'return_incomplete'}
                           onChange={async (e) => {
@@ -821,10 +831,11 @@ export default function ReturnsPage() {
                         </select>
                       </td>
                       </tr>
+                    </Fragment>
                   )
                 })}
                 {returns.length === 0 && (
-                  <tr><td colSpan={22} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>반품/교환 내역이 없습니다</td></tr>
+                  <tr><td colSpan={13} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>반품/교환 내역이 없습니다</td></tr>
                 )}
               </tbody>
             </table>
