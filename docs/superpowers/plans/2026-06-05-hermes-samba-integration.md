@@ -58,12 +58,39 @@
 - 민감하지 않은(돈 안 나가는) 작업부터
 
 ### Phase 5 — 주문처리 자동화 (North Star) ⚠️ 최후·신중
-신규 주문 감지 → 원문 결제 → 삼바 입력. **실제 금전이 오가므로 안전장치 필수.**
-- 5a. 신규 주문 감지 + 원문 링크 파싱 (결제 없음, 읽기만)
-- 5b. **드라이런**: 결제 직전까지 자동, 마지막 결제는 사람이 승인 (텔레그램 확인 버튼)
-- 5c. 결제정보 삼바 자동 입력 (5b 성공 후)
-- 5d. 신뢰 누적 후 특정 조건(금액 한도·소싱처 화이트리스트)에서만 전액 자동
-- 리스크: 소싱처 계정 잠금/봇 감지, 금액 오류, 환불/취소 처리. 한도·로깅·롤백 필수.
+
+**현황 (코드 조사 결과):** 파이프라인의 약 95%가 이미 자동화돼 있다.
+- ✅ 자동: 주문 인입(8개 마켓 `order/poller.py`), `source_url`/`source_site` 저장,
+  소싱처 **자동 로그인**(`extension/background-autologin.js`), 가격 수집
+  (레시피 엔진 + `tools/lotteon_daemon/daemon.py` Playwright), 송장 수집,
+  마켓 송장 전송(`send_invoice_to_market`).
+- ❌ **유일한 빈칸 = 결제(장바구니→결제 클릭)** + 결제 후 `sourcing_order_number` 기록.
+
+즉 "100% 자동화"의 실제 미션은 **자동 결제(checkout) 한 조각**이다.
+
+**재사용할 기존 인프라:** 레시피 엔진(사이트별 단계 시퀀스), 데몬(Playwright 헤드리스),
+job queue(`samba_sourcing_job`, 크래시 복원), `/proxy/sourcing/collect-result` 콜백.
+
+**Hermes(두뇌)의 역할:** 결제 클릭 자체는 레시피/데몬이 수행. Hermes는 판단 보조 —
+(a) **옵션 매칭**: 주문 옵션("270/블랙") ↔ 소싱처 옵션 셀렉터 연결(퍼지 매칭),
+(b) 주문확인 페이지에서 `sourcing_order_number` 추출.
+
+**안전 단계 (반드시 순차, 텔레그램 봇 = 승인 게이트):**
+- 5a. (돈 X) 신규 주문 감지 → 텔레그램 알림 + Hermes 옵션 매칭 제안. 읽기 전용.
+- 5b. (돈 X) **드라이런**: 로그인→장바구니→옵션선택→결제 직전까지 자동, 결제 버튼 직전 정지.
+  텔레그램으로 "결제할까요? [예/아니오]" 승인 요청(금액·상품 표시).
+- 5c. 승인 시 결제 실행 + 결과 페이지에서 `sourcing_order_number` 자동 추출 →
+  `PUT /api/v1/samba/orders/{id}` 로 기록.
+- 5d. 신뢰 누적 후 조건부(금액 한도·소싱처 화이트리스트·계정별) 전액 자동.
+- 리스크: 소싱처 계정 잠금/봇 감지, 금액·옵션 오류, 환불/취소. 한도·전체 로깅·롤백 필수.
+
+**핵심 파일(구현 시 진입점):**
+- 주문: `backend/backend/domain/samba/order/{model,service,repository,poller}.py`,
+  `backend/backend/api/v1/routers/samba/order.py`
+- 소싱 계정/상품: `domain/samba/sourcing_account/model.py`, `domain/samba/product/model.py`
+- 자동화 실행: `extension/background-sourcing.js`, `extension/recipe-executor.js`,
+  `tools/lotteon_daemon/daemon.py`, `domain/samba/proxy/sourcing_queue.py`
+- 결제 기록 필드: `SambaOrder.sourcing_order_number`, `.sourcing_account_id`
 
 ## 비고
 - 이 토대 커밋은 기존 Gemma 경로를 바꾸지 않는다(추가만). 토글 기본 `gemma`.
