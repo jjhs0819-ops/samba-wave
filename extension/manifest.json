@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SAMBA-WAVE",
-  "version": "2.13.58",
+  "version": "2.13.59",
   "description": "무재고 위탁판매 솔루션 - 무신사/KREAM/소싱처 수집 + 송장 자동전송 + 적립금 + 리뷰 자동작성",
   "permissions": [
     "cookies",
@@ -40,6 +40,8 @@
     "https://*.nike.com/*",
     "https://www.oliveyoung.co.kr/*",
     "https://*.oliveyoung.co.kr/*",
+    "https://hi.thehyundai.com/*",
+    "https://*.thehyundai.com/*",
     "https://sell.smartstore.naver.com/*",
     "https://smartstore.naver.com/*",
     "https://brand.naver.com/*",
@@ -199,6 +201,15 @@
       ],
       "js": [
         "content-tracking-oliveyoung.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://hi.thehyundai.com/mypage/order/detail*"
+      ],
+      "js": [
+        "content-tracking-thehyundai.js"
       ],
       "run_at": "document_idle"
     },
