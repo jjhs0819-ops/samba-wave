@@ -519,6 +519,13 @@ export default function OrdersPage() {
   const handleTrackingSyncOne = async (o: SambaOrder) => {
     try {
       const res = await orderApi.syncTracking(o.id)
+      // [2026-06-05] 확장앱 폴링 합류 — join 안 하면 적재돼도 확장앱이 폴링 안 해 PENDING 멈춤.
+      try {
+        window.postMessage(
+          { source: 'samba-page', type: 'AUTOTUNE_SET_JOIN', joined: true, sourceSites: null },
+          window.location.origin,
+        )
+      } catch { /* ignore */ }
       if (res.skipped) {
         setLogMessages(prev => [...prev, `[송장] 스킵: ${res.reason || '이미 처리됨'}`])
       } else if (res.success) {
@@ -536,9 +543,21 @@ export default function OrdersPage() {
     setTrackingSyncing(true)
     try {
       const res = await orderApi.syncTrackingBulk(500, 7, true)
+      // [2026-06-05] 송장수집 = 확장앱 폴링 필요. 확장앱은 join(폴링 합류) 상태에서만 collect-queue를
+      // 폴링하므로, 적재만으론 PENDING에 멈춘다. 이 PC 확장앱을 폴링 합류시켜 송장 잡을 가져가게 한다.
+      // sourceSites=null(전체) — []는 백엔드 get_next_job이 "작업 안 받음"으로 막음. 송장(tracking)은
+      // dequeue에서 site 필터를 우회하므로 전체로 폴링해도 송장만 정상 수신(autotune detail은
+      // 이 확장앱 owner 매칭분만, 무신사는 서버 bulk라 거의 없음).
+      try {
+        window.postMessage(
+          { source: 'samba-page', type: 'AUTOTUNE_SET_JOIN', joined: true, sourceSites: null },
+          window.location.origin,
+        )
+      } catch { /* ignore */ }
       setLogMessages(prev => [
         ...prev,
         `[송장 일괄] 큐 적재 ${fmtNum(res.queued)}건 / 스킵 ${fmtNum(res.skipped)}건 / 오류 ${fmtNum(res.errors.length)}건`,
+        '[송장] 이 PC 확장앱 폴링 시작 — 브라우저가 송장 페이지 열어 처리합니다.',
         ...res.errors.slice(0, 5).map(e => `  · ${e}`),
       ])
       // 이번 배치 잡 id 목록 저장 — 모달이 이 batch 의 잡들만 고정 표시 (status 변화 추적).
