@@ -292,6 +292,13 @@ _SITE_STUCK_TIMEOUT_OVERRIDE = {
 }
 MAX_RESTART_COUNT = 50  # 코디네이터 재시작 상한선
 
+# 품절잔존 마켓삭제 영구실패(롯데홈쇼핑 "MD 승인 대기" 등) 재시도 쿨다운.
+# 승인 전엔 삭제 불가한 상품을 매 사이클 헛시도 → 무신사 사이클 4분 점유(화면 공백)
+# + 처리량 절반 낭비 + STUCK_TIMEOUT(600초) 초과로 Watchdog 강제재시작 유발.
+# 실패 시 product_id → 재시도 차단 만료시각(UTC) 기록, 다음 SELECT에서 제외.
+_soldout_delete_retry_block: dict[str, datetime] = {}
+_SOLDOUT_DELETE_BLOCK_TTL_SEC = 21600  # 6시간 (승인 완료까지 대기 후 재시도)
+
 
 def _get_pc_event(dev: str) -> asyncio.Event:
     """PC별 running event 가져오기/생성."""
@@ -3141,6 +3148,18 @@ async def _site_autotune_loop(device_id: str, site: str):
                                 _soldout_where.append(
                                     _CP.id.not_in(list(_cycle_deleted_pids))
                                 )
+                            # 영구실패(승인 대기) 쿨다운 상품 제외 — 매 사이클 헛시도 차단.
+                            # 만료 지난 항목은 정리하고, 아직 유효한 차단만 제외 조건에 반영.
+                            _now_blk = datetime.now(timezone.utc)
+                            for _bpid in [
+                                _p
+                                for _p, _u in _soldout_delete_retry_block.items()
+                                if _u <= _now_blk
+                            ]:
+                                _soldout_delete_retry_block.pop(_bpid, None)
+                            _blocked_del_ids = list(_soldout_delete_retry_block.keys())
+                            if _blocked_del_ids:
+                                _soldout_where.append(_CP.id.not_in(_blocked_del_ids))
                             _soldout_retry_stmt = (
                                 select(_CP).where(*_soldout_where).limit(50)
                             )
@@ -3250,6 +3269,20 @@ async def _site_autotune_loop(device_id: str, site: str):
                                                     f"{_sp_site_tag}{_sp_brand_part}{_sp.name or _sp.id}: 품절잔존 → {_del_label} 마켓삭제 완료",
                                                 )
                                             else:
+                                                _del_msg = _dr.get("message") or ""
+                                                # 승인 대기류 = 승인 전 삭제 불가 → 6시간 재시도 차단
+                                                # (매 사이클 헛시도 폭주 → 무신사 4분 점유 방지)
+                                                if (
+                                                    "승인 대기" in _del_msg
+                                                    or "승인대기" in _del_msg
+                                                ):
+                                                    _soldout_delete_retry_block[
+                                                        _sp.id
+                                                    ] = datetime.now(
+                                                        timezone.utc
+                                                    ) + timedelta(
+                                                        seconds=_SOLDOUT_DELETE_BLOCK_TTL_SEC
+                                                    )
                                                 log.warning(
                                                     "[오토튠] 품절잔존 %s → %s 마켓삭제 실패: %s",
                                                     _sp.id,
