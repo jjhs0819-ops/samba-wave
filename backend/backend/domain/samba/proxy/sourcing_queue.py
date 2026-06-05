@@ -426,32 +426,12 @@ class SourcingQueue:
         loop = asyncio.get_event_loop()
         future: asyncio.Future[Any] = loop.create_future()
         if owner_device_id is None:
-            site_u = (site or "").upper()
-            if site_u in {s.upper() for s in _daemon_only_for_job("tracking")}:
-                # 송장(tracking)은 오토튠 담당(_pc_allowed_sites)과 무관해야 한다.
-                # owner 를 pick_daemon_owner(=오토튠 SSG 체크 PC)로 박으면, SSG 오토튠
-                # 담당 PC가 0대이거나 그 PC 데몬이 죽으면 송장이 영영 막힌다(2026-06-01
-                # 버그: SSG 오토튠을 다른 PC가 돌리는 중이라 송장이 그 PC에만 라우팅 →
-                # 그 PC 구버전 데몬이 매번 로그인 실패, 다른 PC는 처리 못 함).
-                # owner="" 로 두고 dequeue 가드(get_next_job: tracking 은 site 분담 예외
-                # + 비데몬 차단)가 살아있는 데몬 아무나 매칭하게 한다.
-                from backend.domain.samba.proxy.daemon_pool import has_alive_daemon
-
-                if not has_alive_daemon():
-                    logger.warning(
-                        f"[소싱큐] {site} 송장 — 살아있는 데몬 없음, 잡 발행 skip: "
-                        f"ord={sourcing_order_number}"
-                    )
-                    raise RuntimeError(f"{site} 살아있는 데몬 없음 — 송장 잡 발행 불가")
-                owner_device_id = ""  # 빈값 → dequeue 가 데몬 아무나 매칭
-            else:
-                # 비데몬 tracking 사이트(무신사/GSShop 등): owner='' 로 두고 활성 확장앱
-                # 아무나 dequeue 하게 한다. 특정 device 로 고정(pick_any_owner)하면 그 PC
-                # 확장앱이 마침 미가동일 때 잡이 영영 PENDING 으로 막힌다(2026-06-01 실측:
-                # owner=특정확장앱 고정 → 그 확장앱 비활성 → 176초+ PENDING).
-                # dequeue 가드가 비데몬을 DAEMON_ONLY_SITES(4개)에서만 차단하므로 무신사
-                # 송장은 확장앱이 정상 claim. 송장 잡 자체는 무조건 발행(모달 노출 보장).
-                owner_device_id = ""
+            # [2026-06-05 송장 확장앱 복구] 송장(tracking)은 전 사이트 확장앱(브라우저)이 처리.
+            # owner="" 로 두면 켜져있는 확장앱 아무나 dequeue. dequeue 가드가 데몬은 tracking
+            # 차단 + 확장앱은 전 사이트 tracking 허용하므로 자동으로 확장앱에만 라우팅된다.
+            # (데몬 헤드리스 송장의 SSG 계정잠금/about:blank/wrong_account 에러 과다로 복구.)
+            # 특정 device 고정 안 함 — 그 PC 미가동 시 영영 PENDING 막힘 방지(2026-06-01 실측).
+            owner_device_id = ""
 
         job: dict[str, Any] = {
             "requestId": request_id,
@@ -783,26 +763,22 @@ class SourcingQueue:
             if not device_id.startswith("samba-daemon-"):
                 _sites = sorted(DAEMON_ONLY_SITES)
                 _dph = ", ".join(f":dsite_{i}" for i in range(len(_sites)))
-                # cancel_order 잡은 확장앱 라우팅 허용 — 데몬 자동로그인 봇 차단(LOTTEON 등)
-                # 우회. 다른 job_type(detail/tracking/search/reward)은 데몬 전용 유지.
+                # cancel_order + tracking(송장) 잡은 확장앱 라우팅 허용.
+                # [2026-06-05 송장 확장앱 복구] 송장수집을 헤드리스 데몬에서 다시 확장앱(브라우저)
+                # 방식으로 되돌림 — 데몬 헤드리스가 SSG 계정잠금/about:blank/wrong_account 등
+                # 에러 과다. SSG/ABCmart/GrandStage/LOTTEON 송장도 확장앱 content-tracking-*.js
+                # 가 처리(핸들러 전부 존재). detail/search/reward 가격수집은 여전히 데몬 전용.
                 conditions.append(
-                    f"(job_type = 'cancel_order' OR UPPER(site) NOT IN ({_dph}))"
+                    f"(job_type IN ('cancel_order', 'tracking') "
+                    f"OR UPPER(site) NOT IN ({_dph}))"
                 )
                 for i, s in enumerate(_sites):
                     params[f"dsite_{i}"] = s.upper()
             else:
-                # 데몬 dequeue 차단 — 무신사/GSShop 등은 trace(배송조회)가 member.one SSO +
-                # app_atk/mss_mac/cf_clearance 토큰을 요구해 헤드리스 데몬으론 못 뚫는다
-                # (2026-06-01 실측). owner='' 로 두면 항상 켜진 데몬이 먼저 가로채 로그인/trace
-                # 실패 → 확장앱이 못 받음. 데몬은 이 사이트 tracking dequeue 차단 → 확장앱 전담.
-                _tds = sorted(TRACKING_ONLY_DAEMON_SITES)
-                if _tds:
-                    _tph = ", ".join(f":tdsite_{i}" for i in range(len(_tds)))
-                    conditions.append(
-                        f"NOT (job_type = 'tracking' AND UPPER(site) IN ({_tph}))"
-                    )
-                    for i, s in enumerate(_tds):
-                        params[f"tdsite_{i}"] = s.upper()
+                # [2026-06-05 송장 확장앱 복구] 데몬은 송장(tracking) 일절 처리 안 함 — 전부
+                # 확장앱 전담. 데몬은 가격수집(detail/search/reward)만. owner='' 송장 잡을
+                # 데몬이 먼저 가로채지 못하게 dequeue 단에서 tracking 전체 차단.
+                conditions.append("job_type != 'tracking'")
 
             # site 필터 — 케이싱 무관 매칭.
             # detail 잡 site='ABCmart'(혼합)인데 tracking 잡 site='ABCMART'(대문자)라

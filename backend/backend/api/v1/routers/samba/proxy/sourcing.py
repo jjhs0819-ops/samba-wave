@@ -356,9 +356,6 @@ async def autotune_daemon_concurrency(request: Request) -> dict[str, Any]:
     """
     device_id = (request.headers.get("X-Device-Id") or "").strip()
     assigned: list[str] = []
-    # 전담 송장용으로만 union된 tracking 사이트(autotune 실제 배정 아님) — 동시성 1로 강제해
-    # SSG 등 병렬 로그인 폭주(봇차단) 방지.
-    track_only: set[str] = set()
     try:
         from backend.api.v1.routers.samba.collector_autotune import (
             get_pc_allowed_sites,
@@ -377,29 +374,8 @@ async def autotune_daemon_concurrency(request: Request) -> dict[str, Any]:
         _my = get_pc_allowed_sites(device_id)
         if _my:
             assigned = sorted(_my)
-        # 전담 송장 데몬 디커플 — autotune 사이트가 없어도(=[]) 데몬 tracking 사이트
-        # (SSG/ABCmart/GrandStage/LOTTEON) 워커를 띄워야 송장을 처리한다. assigned 에 tracking
-        # 사이트를 union 해 데몬이 워커를 스폰하게 한다. detail/search 잡은 owner 불일치로 안
-        # 받아 autotune 충돌 없음(owner 라우팅은 _pc_allowed_sites 기준이라 이 응답 추가는 무영향).
-        # 2026-06-05: SSG autotune을 원격으로 옮기니 전담 PC assigned=[] → 워커 0 → 송장 전면정지 fix.
-        if device_id.startswith("samba-daemon-"):
-            from backend.api.v1.routers.samba.proxy._helpers import _get_setting
-            from backend.db.orm import get_read_session
-            from backend.domain.samba.proxy.sourcing_queue import (
-                DAEMON_ONLY_TRACKING_SITES,
-            )
-
-            try:
-                async with get_read_session() as _own_sess:
-                    _track_owner = (
-                        await _get_setting(_own_sess, "tracking_owner_device") or ""
-                    )
-                if str(_track_owner).strip() == device_id:
-                    _autotune_set = set(assigned)
-                    track_only = set(DAEMON_ONLY_TRACKING_SITES) - _autotune_set
-                    assigned = sorted(_autotune_set | set(DAEMON_ONLY_TRACKING_SITES))
-            except Exception:
-                pass
+        # [2026-06-05 송장 확장앱 복구] 데몬은 송장 안 함(확장앱 전담)으로 되돌림 — 전담 데몬에
+        # tracking 사이트를 union 하던 로직 제거. 데몬은 autotune 가격수집만 담당.
     except Exception:
         assigned = []
 
@@ -415,15 +391,6 @@ async def autotune_daemon_concurrency(request: Request) -> dict[str, Any]:
     # 데몬은 담당 사이트만 워커 스폰 — 배정 없으면 빈 conc(대기). 비데몬은 legacy 전체.
     if device_id.startswith("samba-daemon-"):
         conc = {s: n for s, n in conc.items() if s in assigned}
-        # 송장 전용 union 사이트는 동시성 1로 강제 — SSG 등 병렬 로그인/탭 동시 오픈이
-        # "연속적인 접근" 봇차단을 유발하므로 직렬(탭 1개) 처리. autotune 동시성(SSG:3 등)을
-        # 그대로 쓰면 워커 3개가 동시에 SSG 로그인 → 차단. (2026-06-05 사용자 보고)
-        for _s in track_only:
-            conc[_s] = 1
-        # 워커 스폰 보장 — assigned 인데 conc에 없으면 1 부여(autotune 동시성 미설정 사이트).
-        for _s in assigned:
-            if _s not in conc:
-                conc[_s] = 1
     return {"concurrency": conc, "assigned_sites": assigned}
 
 
