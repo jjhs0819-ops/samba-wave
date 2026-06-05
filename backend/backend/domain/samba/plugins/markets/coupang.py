@@ -6,10 +6,41 @@
 
 from __future__ import annotations
 
+import asyncio
+
+import httpx
+
 from typing import Any
 
 from backend.domain.samba.plugins.market_base import MarketPlugin
 from backend.utils.logger import logger
+
+# 일시 오류(쿠팡 게이트웨이 타임아웃/혼잡) 마커 — 이 경우만 재시도. 4xx(404 등)는 영구오류라 즉시 raise.
+_COUPANG_TRANSIENT_MARKERS = ("502", "503", "504", "timeout", "timed out")
+
+
+async def _call_with_retry(coro_factory, *, attempts: int = 3, base_delay: float = 1.0):
+    """일시 오류면 같은 호출을 재시도, 영구 오류면 즉시 전파.
+
+    coro_factory: 매 시도마다 새 코루틴을 만드는 무인자 콜러블 (예: lambda: client.foo()).
+    경량 업데이트(vendor-items)의 504 타임아웃이 깨진 전체수정 PUT(404)으로 둔갑하던
+    문제 대응 — 일시 504는 여기서 흡수.
+    """
+    last_exc: Exception | None = None
+    for i in range(attempts):
+        try:
+            return await coro_factory()
+        except Exception as e:
+            msg = str(e).lower()
+            is_transient = isinstance(
+                e, (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError)
+            ) or any(m in msg for m in _COUPANG_TRANSIENT_MARKERS)
+            if not is_transient or i == attempts - 1:
+                raise
+            last_exc = e
+            await asyncio.sleep(base_delay * (i + 1))
+    if last_exc:
+        raise last_exc
 
 
 class CoupangPlugin(MarketPlugin):
@@ -73,8 +104,16 @@ class CoupangPlugin(MarketPlugin):
         # 가격/재고는 vendor-items 부분 endpoint로 가야 함. 이미지/이름 등 다른
         # 필드 변경은 본 분기에서 다루지 않음 (별도 의도 — 후속 PR).
         if existing_no:
+            # ── 기존 상품 가격/재고 업데이트 = vendor-items 경량 endpoint 전용 ──
+            # 쿠팡 공식: 승인상품의 가격/재고/판매상태/할인은 product-modification(PUT
+            # /seller-products)이 아니라 vendor-items 별도 API로만 해야 함.
+            # 전체수정 PUT(/seller-products/{id})은 쿠팡 spec 미정의(GET/DELETE만)라 404.
+            # 따라서 경량 업데이트가 실패해도 전체수정으로 폴백하지 않고(404 둔갑 방지),
+            # 깔끔한 재시도가능 실패를 반환해 잡큐가 다음 사이클에 재시도하게 한다.
             try:
-                existing = await client.get_product(existing_no)
+                existing = await _call_with_retry(
+                    lambda: client.get_product(existing_no)
+                )
                 prod_data = existing.get("data", existing)
                 if isinstance(prod_data, dict):
                     items = prod_data.get("items") or []
@@ -82,74 +121,98 @@ class CoupangPlugin(MarketPlugin):
                     items = []
 
                 if not items:
+                    # 옵션(items) 없음 = 임시저장/심사중 등 비승인 상태 추정.
+                    # vendor-items 불가 + 전체수정 PUT 404 → 폴백 불가. 재시도가능 실패 반환.
                     logger.warning(
-                        f"[쿠팡] 경량 업데이트 실패 — items 없음, 전체 수정으로 폴백: {existing_no}"
-                    )
-                else:
-                    new_price = int(product.get("sale_price", 0)) // 10 * 10
-                    new_options = product.get("options") or []
-                    opt_stock_map = {
-                        (o.get("name", "") or o.get("size", "") or ""): o.get(
-                            "stock", 999
-                        )
-                        for o in new_options
-                    }
-
-                    # vendorItemId 단위 부분 endpoint(/prices, /quantities)로 호출.
-                    # update_product PUT(/seller-products/{id})는 쿠팡 spec에 미정의(GET/DELETE만) — 404 반환됨.
-                    price_updates = 0
-                    qty_updates = 0
-                    skipped = 0
-                    for item in items:
-                        vendor_item_id = item.get("vendorItemId")
-                        if not vendor_item_id:
-                            skipped += 1
-                            continue
-
-                        # 가격: 변경 시만 호출
-                        if new_price > 0 and item.get("salePrice") != new_price:
-                            await client.update_item_price(vendor_item_id, new_price)
-                            price_updates += 1
-
-                        # 재고: 옵션명 매칭 후 변경 시만 호출
-                        item_name = item.get("itemName", "")
-                        if item_name in opt_stock_map:
-                            stk = opt_stock_map[item_name]
-                        elif new_options:
-                            stk = min(
-                                (o.get("stock", 999) for o in new_options),
-                                default=999,
-                            )
-                        else:
-                            stk = 999
-                        new_stk = min(int(stk), 99999)
-                        # maximumBuyCount는 1회 구매 한도 필드라 PUT /quantities 후 GET 응답에 반영되지 않음.
-                        # 이전 조건 비교는 항상 false로 떨어져 재고 API 호출이 스킵되는 버그가 있었음(issue #200).
-                        await client.update_item_quantity(vendor_item_id, new_stk)
-                        qty_updates += 1
-
-                    _parts = []
-                    if new_price > 0:
-                        _parts.append(f"가격({new_price:,}원, {price_updates}건)")
-                    if new_options:
-                        _parts.append(f"재고({qty_updates}건)")
-                    if skipped:
-                        _parts.append(f"skip({skipped}건 vendorItemId 없음)")
-                    logger.info(
-                        f"[쿠팡] 경량 업데이트 완료: {existing_no} — {', '.join(_parts)}"
+                        f"[쿠팡] 경량 업데이트 불가 — items 없음(비승인 상태 추정): {existing_no}"
                     )
                     return {
-                        "success": True,
+                        "success": False,
                         "product_no": existing_no,
-                        "message": f"쿠팡 경량 업데이트: {', '.join(_parts)}",
+                        "message": (
+                            f"쿠팡 경량 업데이트 불가: 옵션 정보 없음"
+                            f"(비승인 상태 추정) — {existing_no}"
+                        ),
                         "data": {"sellerProductId": existing_no},
                     }
 
-            except Exception as e:
-                logger.warning(
-                    f"[쿠팡] 경량 업데이트 실패, 전체 수정으로 폴백: {existing_no} — {e}"
+                new_price = int(product.get("sale_price", 0)) // 10 * 10
+                new_options = product.get("options") or []
+                opt_stock_map = {
+                    (o.get("name", "") or o.get("size", "") or ""): o.get("stock", 999)
+                    for o in new_options
+                }
+
+                # vendorItemId 단위 부분 endpoint(/prices, /quantities)로 호출.
+                # 일시 504/타임아웃은 _call_with_retry 가 흡수(2~3회 재시도).
+                price_updates = 0
+                qty_updates = 0
+                skipped = 0
+                for item in items:
+                    vendor_item_id = item.get("vendorItemId")
+                    if not vendor_item_id:
+                        skipped += 1
+                        continue
+
+                    # 가격: 변경 시만 호출
+                    if new_price > 0 and item.get("salePrice") != new_price:
+                        await _call_with_retry(
+                            lambda vid=vendor_item_id: client.update_item_price(
+                                vid, new_price
+                            )
+                        )
+                        price_updates += 1
+
+                    # 재고: 옵션명 매칭 후 변경 시만 호출
+                    item_name = item.get("itemName", "")
+                    if item_name in opt_stock_map:
+                        stk = opt_stock_map[item_name]
+                    elif new_options:
+                        stk = min(
+                            (o.get("stock", 999) for o in new_options),
+                            default=999,
+                        )
+                    else:
+                        stk = 999
+                    new_stk = min(int(stk), 99999)
+                    # maximumBuyCount는 1회 구매 한도 필드라 PUT /quantities 후 GET 응답에 반영되지 않음.
+                    # 이전 조건 비교는 항상 false로 떨어져 재고 API 호출이 스킵되는 버그가 있었음(issue #200).
+                    await _call_with_retry(
+                        lambda vid=vendor_item_id,
+                        q=new_stk: client.update_item_quantity(vid, q)
+                    )
+                    qty_updates += 1
+
+                _parts = []
+                if new_price > 0:
+                    _parts.append(f"가격({new_price:,}원, {price_updates}건)")
+                if new_options:
+                    _parts.append(f"재고({qty_updates}건)")
+                if skipped:
+                    _parts.append(f"skip({skipped}건 vendorItemId 없음)")
+                logger.info(
+                    f"[쿠팡] 경량 업데이트 완료: {existing_no} — {', '.join(_parts)}"
                 )
-                # 폴백: 아래 전체 로직으로 계속 진행
+                return {
+                    "success": True,
+                    "product_no": existing_no,
+                    "message": f"쿠팡 경량 업데이트: {', '.join(_parts)}",
+                    "data": {"sellerProductId": existing_no},
+                }
+
+            except Exception as e:
+                # 재시도 소진 후 도달. 깨진 전체수정 PUT(404)으로 폴백하지 않음 —
+                # 재시도가능 실패 반환 → 잡큐가 다음 사이클에 재시도.
+                logger.warning(
+                    f"[쿠팡] 경량 업데이트 실패(전체수정 폴백 안 함, 재시도 대기): "
+                    f"{existing_no} — {e}"
+                )
+                return {
+                    "success": False,
+                    "product_no": existing_no,
+                    "message": f"쿠팡 경량 업데이트 실패(재시도 대기): {str(e)[:200]}",
+                    "data": {"sellerProductId": existing_no},
+                }
 
         # 카테고리 코드가 숫자가 아니면 쿠팡 API로 동적 조회
         if category_id and not str(category_id).isdigit():
@@ -312,16 +375,12 @@ class CoupangPlugin(MarketPlugin):
             # deliveryCompanyCode 정합성 필요 — popup 에서 명시한 셀러 의도 존중
             data["remoteAreaDeliverable"] = "Y"
 
-        # 기존 상품번호가 있으면 수정, 없으면 신규등록
-        if existing_no:
-            await client.update_product(existing_no, data)
-            return {
-                "success": True,
-                "product_no": existing_no,
-                "message": "쿠팡 수정 성공",
-                "data": {"sellerProductId": existing_no},
-            }
-        else:
+        # 신규등록 전용 경로.
+        # NOTE: existing_no(기존 상품)는 함수 상단의 vendor-items 경량 업데이트에서
+        # 이미 success/failure 를 return 하므로 여기 도달하지 않는다. 과거 이 지점의
+        # update_product PUT(/seller-products/{id})은 쿠팡 spec 미정의(404)라 폴백이
+        # 일시 504를 영구 404로 둔갑시키던 버그가 있었어 제거함.
+        if not existing_no:
             result = await client.register_product(data)
 
             # 쿠팡 응답에서 sellerProductId 추출 (data 필드에 숫자로 반환)
