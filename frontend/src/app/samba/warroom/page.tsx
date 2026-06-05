@@ -1147,6 +1147,17 @@ export default function WarroomPage() {
             {pcDeviceId && autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#51CF66' }}>실행 중</span>}
             {pcDeviceId && autotuneRunning && autotuneRestarts > 0 && <span style={{ fontSize: '0.75rem', color: '#FF6B6B' }}>재시작 {fmtNum(autotuneRestarts)}회</span>}
             {pcDeviceId && !autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#FF6B6B' }}>정지</span>}
+            {pcDeviceId && (
+              <span
+                title="이 PC device_id — 아래 '활성 사이클'의 PC 열과 매칭. 클릭 시 복사."
+                onClick={() => { try { navigator.clipboard?.writeText(pcDeviceId) } catch { /* ignore */ } }}
+                style={{
+                  fontSize: '0.7rem', color: '#9AA', fontFamily: 'monospace',
+                  background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)',
+                  padding: '1px 6px', borderRadius: 4, cursor: 'pointer', whiteSpace: 'nowrap',
+                }}
+              >이 PC: {pcDeviceId}</span>
+            )}
           </div>
           <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', color: '#888', alignItems: 'center' }}>
             <button
