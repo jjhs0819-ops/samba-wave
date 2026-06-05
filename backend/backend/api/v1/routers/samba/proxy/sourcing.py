@@ -356,6 +356,9 @@ async def autotune_daemon_concurrency(request: Request) -> dict[str, Any]:
     """
     device_id = (request.headers.get("X-Device-Id") or "").strip()
     assigned: list[str] = []
+    # 전담 송장용으로만 union된 tracking 사이트(autotune 실제 배정 아님) — 동시성 1로 강제해
+    # SSG 등 병렬 로그인 폭주(봇차단) 방지.
+    track_only: set[str] = set()
     try:
         from backend.api.v1.routers.samba.collector_autotune import (
             get_pc_allowed_sites,
@@ -392,7 +395,9 @@ async def autotune_daemon_concurrency(request: Request) -> dict[str, Any]:
                         await _get_setting(_own_sess, "tracking_owner_device") or ""
                     )
                 if str(_track_owner).strip() == device_id:
-                    assigned = sorted(set(assigned) | set(DAEMON_ONLY_TRACKING_SITES))
+                    _autotune_set = set(assigned)
+                    track_only = set(DAEMON_ONLY_TRACKING_SITES) - _autotune_set
+                    assigned = sorted(_autotune_set | set(DAEMON_ONLY_TRACKING_SITES))
             except Exception:
                 pass
     except Exception:
@@ -410,11 +415,15 @@ async def autotune_daemon_concurrency(request: Request) -> dict[str, Any]:
     # 데몬은 담당 사이트만 워커 스폰 — 배정 없으면 빈 conc(대기). 비데몬은 legacy 전체.
     if device_id.startswith("samba-daemon-"):
         conc = {s: n for s, n in conc.items() if s in assigned}
-        # 전담 송장 데몬에 union된 tracking 사이트가 conc에 없으면(autotune 동시성 미설정)
-        # 워커 미스폰 → 송장 처리 불가. 누락 사이트에 기본 캡 부여해 워커가 반드시 뜨게 한다.
+        # 송장 전용 union 사이트는 동시성 1로 강제 — SSG 등 병렬 로그인/탭 동시 오픈이
+        # "연속적인 접근" 봇차단을 유발하므로 직렬(탭 1개) 처리. autotune 동시성(SSG:3 등)을
+        # 그대로 쓰면 워커 3개가 동시에 SSG 로그인 → 차단. (2026-06-05 사용자 보고)
+        for _s in track_only:
+            conc[_s] = 1
+        # 워커 스폰 보장 — assigned 인데 conc에 없으면 1 부여(autotune 동시성 미설정 사이트).
         for _s in assigned:
             if _s not in conc:
-                conc[_s] = 2
+                conc[_s] = 1
     return {"concurrency": conc, "assigned_sites": assigned}
 
 
