@@ -106,6 +106,20 @@ class BackendSettings(BaseSettings):
     """Claude API 키 (카테고리 AI 매핑 등)."""
 
     # ===========================================
+    # 로컬 LLM (Ollama / Hermes) — 맥미니 두뇌
+    # ===========================================
+    ollama_base_url: str = "http://127.0.0.1:11434"
+    """Ollama 서버 주소. 같은 머신이면 기본값, 원격 맥미니는 Tailscale IP 등으로 지정.
+    예) http://100.x.y.z:11434 (이 경우 맥미니에서 OLLAMA_HOST=0.0.0.0 바인딩 필요)."""
+
+    hermes_model: str = "hermes3:8b"
+    """기본 Hermes 모델 태그 (Ollama)."""
+
+    ai_text_provider: Literal["gemma", "hermes"] = "gemma"
+    """텍스트 생성 기본 제공자 토글. 기본 gemma — hermes 로 바꾸면 로컬 두뇌 사용.
+    점진 전환·즉시 롤백용. 비전(이미지)은 항상 gemma."""
+
+    # ===========================================
     # Redis 설정
     # ===========================================
     redis_url: str | None = None  # 환경변수: REDIS_URL
