@@ -571,23 +571,18 @@ const _CURRENT_ACCOUNT_CACHE_TTL_MS = 30 * 60 * 1000  // 30분
 // 사이트별 마이페이지 URL + username 스크랩 함수
 const _CURRENT_ACCOUNT_DETECTORS = {
   MUSINSA: {
-    // /mypage/order는 무신사 측이 폐기 — 2026-05-19 404 확인. /mypage 로 변경.
-    mypageUrl: 'https://www.musinsa.com/mypage',
+    // [2026-06-06] /mypage 는 닉네임("임성희1")만 노출 → 백엔드 find-by-username 은
+    // username(edelvise06)/account_label(성희) 로만 매칭하므로 닉네임으론 404 → 감지 영영 실패.
+    // /mypage/myinfo 는 "ID: edelvise06"(로그인 아이디) 를 정확히 노출 (CDP 실측 확인).
+    // 여기서 아이디를 추출해야 백엔드 username 매칭이 성립한다.
+    mypageUrl: 'https://www.musinsa.com/mypage/myinfo',
     scrape: () => {
-      // 무신사 /mypage 프로필 영역 "서병기" 같은 닉네임 텍스트 추출.
-      // 1순위: 프로필 닉네임 패턴 (a/button 안에 한글/영문 ID + > 화살표)
-      for (const el of document.querySelectorAll('a, button, span, div')) {
-        const txt = (el.textContent || '').trim().replace(/\s*>.*/, '').replace(/\s*프로필.*$/, '').trim()
-        if (txt && txt.length >= 2 && txt.length <= 20
-            && /^[가-힣A-Za-z0-9_]+$/.test(txt)
-            && !['마이', '주문', '쿠폰', '적립금', '회원', '로그인', '로그아웃',
-                 'MUSINSA', 'BEAUTY', 'SPORTS', 'OUTLET', 'BOUTIQUE', 'KICKS',
-                 'KIDS', 'USED', 'SNAP', '검색', '좋아요', '장바구니'].includes(txt)) {
-          return txt
-        }
-      }
-      // 폴백: "OOO님" 패턴
-      const greet = (document.body?.innerText || '').match(/([가-힣A-Za-z0-9_]{2,20})\s*님/)
+      // 1순위: "ID: edelvise06" 패턴 → 로그인 아이디(username) 추출 (백엔드 username 매칭용).
+      const body = document.body?.innerText || ''
+      const idMatch = body.match(/ID:\s*([A-Za-z0-9_]{3,30})/)
+      if (idMatch) return idMatch[1]
+      // 폴백: "OOO님" 패턴 (계정명/account_label 매칭용)
+      const greet = body.match(/([가-힣A-Za-z0-9_]{2,20})\s*님/)
       if (greet) return greet[1]
       return ''
     },
@@ -1190,7 +1185,24 @@ async function handleTrackingJob(job) {
     // 같은 계정으로 재시도해도 같은 결과 + 다른 계정 자동 순회는 무신사 보안 차단 위험 ↑.
     // → 자동 재시도 안 함. 경고 메시지만 남기고 운영자 수동 처리(매핑 확인) 위임.
     if (_isWrong(result)) {
-      console.warn(`⚠ [송장][wrong_account] 자동 재시도 안 함 — 백엔드 sourcing_account_id 매핑이 잘못됐을 가능성. 운영자가 해당 주문의 진짜 무신사 계정을 확인 후 매핑 수정 필요. (acc=${sourcingAccountId || '-'}, ord=${sourcingOrderNumber})`)
+      // [2026-06-06] wrong_account = 메모리 캐시(_lastEnsured)와 실제 무신사 세션이 어긋난
+      // 캐시-stale 일 수 있음 → 캐시 무효화 + **잡 계정으로만** 강제 재로그인 + 1회 재시도.
+      // 같은 잡 계정 재로그인이라 다른 계정 순회(무신사 보안 차단) 위험 없음.
+      // 재로그인 후에도 wrong 이면 진짜 매핑 오류 → 경고 후 포기.
+      console.warn(`⚠ [송장][wrong_account] 캐시-stale 의심 → 캐시 무효화 + ${sourcingAccountId || '-'} 강제 재로그인 + 1회 재시도 (ord=${sourcingOrderNumber})`)
+      if (autoLoginKey && _lastEnsuredTrackingAccount[autoLoginKey]) {
+        delete _lastEnsuredTrackingAccount[autoLoginKey]
+      }
+      try { if (tabId) { await chrome.tabs.remove(tabId); tabId = null } } catch {}
+      const _reloginOk = await _swapToJobAccount('wrong_account-retry')
+      if (_reloginOk) {
+        result = await _runOnce()
+        if (_isWrong(result)) {
+          console.warn(`⚠ [송장][wrong_account] 재로그인 후에도 불일치 — 진짜 매핑 오류 가능. 운영자가 진짜 무신사 계정 확인 후 매핑 수정 필요. (acc=${sourcingAccountId || '-'}, ord=${sourcingOrderNumber})`)
+        }
+      } else {
+        console.warn(`⚠ [송장][wrong_account] 잡 계정 재로그인 실패 — 다른 PC fallback. (acc=${sourcingAccountId || '-'})`)
+      }
     }
 
     // timeout / unexpected_page / needsLogin 만 자동 재시도 (최대 2회 + 백오프).
