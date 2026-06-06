@@ -174,6 +174,18 @@ class SambaClient:
             and o.get("status") not in cancelled_statuses
         ]
 
+    def get_newest_unplaced_order(self, prefer_site: str = "MUSINSA") -> dict | None:
+        """가장 최근 미발주 주문 1건. 가능하면 prefer_site(무신사) 우선."""
+        orders = self.get_unplaced_orders()
+        if not orders:
+            return None
+        orders.sort(
+            key=lambda o: (o.get("paid_at") or o.get("created_at") or ""),
+            reverse=True,
+        )
+        preferred = [o for o in orders if (o.get("source_site") or "").upper() == prefer_site.upper()]
+        return (preferred or orders)[0]
+
 
 samba = SambaClient()
 
@@ -195,6 +207,21 @@ def tg_send(chat_id: int, text: str) -> None:
 # ══════════════════════════════════════════════════════════════════════════
 # Hermes 두뇌
 # ══════════════════════════════════════════════════════════════════════════
+
+def ask_hermes_oneshot(prompt: str) -> str:
+    """대화 기억을 건드리지 않는 1회성 질문 (옵션매칭 등 분석용)."""
+    messages = [{"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt}]
+    try:
+        data = _http_json(
+            f"{OLLAMA_BASE_URL}/api/chat",
+            {"model": HERMES_MODEL, "messages": messages, "stream": False},
+            timeout=180,
+        )
+        return str(data.get("message", {}).get("content", "")).strip() or "(분석 실패)"
+    except Exception as e:
+        return f"(헤르메스 분석 실패: {e})"
+
 
 def ask_hermes(chat_id: int, user_text: str) -> str:
     history = _HISTORY.setdefault(chat_id, [])
@@ -305,6 +332,65 @@ def cmd_unplaced(chat_id: int) -> None:
     tg_send(chat_id, "\n".join(lines))
 
 
+def cmd_process(chat_id: int) -> None:
+    """5a: 최신 미발주 주문을 분석하고 발주 준비 카드를 만든다 (결제 없음)."""
+    if not samba.is_ready:
+        tg_send(chat_id, "⚠️ SAMBA_EMAIL / SAMBA_PASSWORD 환경변수가 없어.")
+        return
+    tg_send(chat_id, "🔍 최신 미발주 주문 분석 중...")
+    order = samba.get_newest_unplaced_order()
+    if not order:
+        tg_send(chat_id, "✅ 처리할 미발주 주문이 없어! 모두 발주 완료야.")
+        return
+
+    channel = order.get("channel_name") or "?"
+    product = order.get("product_name") or "상품명없음"
+    option = (order.get("product_option") or "").strip() or "(옵션 정보 없음)"
+    qty = order.get("quantity") or 1
+    source_site = order.get("source_site") or "소싱처미상"
+    source_url = (order.get("source_url") or "").strip()
+    sale_price = _fmt_price(order.get("sale_price"))
+    cost = _fmt_price(order.get("cost"))
+
+    # 헤르메스 옵션매칭 제안 (1회성)
+    prompt = (
+        f"우리 쇼핑몰 고객 주문을 소싱처({source_site})에서 대신 구매하려고 해. "
+        f"고객이 고른 옵션을 소싱처에서 어떻게 선택해야 하는지 정리해줘.\n\n"
+        f"상품명: {product}\n"
+        f"고객 선택 옵션: {option}\n"
+        f"수량: {qty}\n\n"
+        f"아래 형식으로 한국어로만 간결하게 답해:\n"
+        f"• 색상: (있으면)\n"
+        f"• 사이즈: (있으면)\n"
+        f"• 기타 옵션: (있으면)\n"
+        f"• 주의: (옵션이 애매하거나 확인 필요하면 적기, 없으면 '없음')"
+    )
+    suggestion = ask_hermes_oneshot(prompt)
+
+    lines = [
+        "📋 발주 준비 카드 (5a — 결제 전 단계)",
+        "",
+        f"🛒 마켓: {channel}",
+        f"📦 상품: {product}",
+        f"🎨 고객 옵션: {option}",
+        f"🔢 수량: {qty}",
+        f"💰 판매가: {sale_price}  (원가: {cost})",
+        f"🏬 소싱처: {source_site}",
+    ]
+    if source_url:
+        lines.append(f"🔗 원문: {source_url}")
+    lines += [
+        "",
+        "🧠 헤르메스 옵션매칭 제안:",
+        suggestion,
+        "",
+        "─────────────",
+        "위 정보로 무신사에서 직접 발주하면 돼.",
+        "(다음 단계 5b에서 장바구니~결제 직전까지 자동화 예정)",
+    ]
+    tg_send(chat_id, "\n".join(lines))
+
+
 def cmd_help(chat_id: int) -> None:
     samba_status = "✅ 연결됨" if samba.is_ready else "❌ 미연결 (SAMBA_EMAIL/PASSWORD 없음)"
     tg_send(chat_id, (
@@ -313,6 +399,7 @@ def cmd_help(chat_id: int) -> None:
         "📦 주문 조회\n"
         "  /오늘   — 오늘 주문 현황 요약\n"
         "  /미발주 — 발주 필요한 주문 목록\n"
+        "  /처리   — 최신 미발주 주문 분석·발주 준비 (결제 전)\n"
         "\n"
         "💬 AI 대화\n"
         "  아무 말이나 → Hermes가 답해\n"
@@ -412,6 +499,14 @@ def handle_message(msg: dict) -> None:
 
     if text in ("/미발주", "/unplaced"):
         cmd_unplaced(chat_id)
+        return
+
+    # /처리 또는 자연어("주문처리해줘", "처리해줘", "신규주문 처리")
+    if (text.startswith(("/처리", "/process"))
+            or "주문처리" in text
+            or "처리해" in text
+            or ("신규" in text and "처리" in text)):
+        cmd_process(chat_id)
         return
 
     # 일반 AI 대화
