@@ -1801,6 +1801,14 @@ async def _site_autotune_loop(device_id: str, site: str):
                                                     else:
                                                         pno = _raw
                                                 pno = str(pno) if pno else ""
+                                            elif _del_acc.market_type in (
+                                                "gmarket",
+                                                "auction",
+                                            ):
+                                                # ESM 삭제 API는 마스터 goodsNo 필요 — _master 우선
+                                                pno = m_nos.get(
+                                                    f"{_del_acc_id}_master"
+                                                ) or m_nos.get(_del_acc_id, "")
                                             else:
                                                 pno = m_nos.get(_del_acc_id, "")
                                             pd = {
@@ -3323,6 +3331,14 @@ async def _site_autotune_loop(device_id: str, site: str):
                                                 else:
                                                     _pno = _raw2
                                             _pno = str(_pno) if _pno else ""
+                                        elif _del_acc.market_type in (
+                                            "gmarket",
+                                            "auction",
+                                        ):
+                                            # ESM 삭제 API는 마스터 goodsNo 필요 — _master 우선
+                                            _pno = _m_nos.get(
+                                                f"{_del_acc_id}_master"
+                                            ) or _m_nos.get(_del_acc_id, "")
                                         else:
                                             _pno = _m_nos.get(_del_acc_id, "")
                                         _pd = {

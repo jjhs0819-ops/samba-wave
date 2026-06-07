@@ -262,7 +262,54 @@ class GMarketMarketPlugin(MarketPlugin):
         samba_options: list[dict] | None = None,
         cat_code: str = "",
     ) -> dict[str, Any]:
-        """신규 상품 등록 + 옵션/이미지 후처리."""
+        """신규 상품 등록 + 옵션/이미지 후처리.
+
+        옵션은 등록 POST 본문 itemAddtionalInfo.recommendedOpts 에 인라인 동봉
+        (atomic). propagation polling/race 제거 (#368 ①).
+        """
+        # 옵션 인라인 빌드 — 등록 전에 recommendedOpts payload 동봉
+        opt_msg = ""
+        opt_built = False
+        if samba_options and cat_code:
+            try:
+                from backend.domain.samba.proxy.esmplus import register_esm_options
+
+                _bo = await register_esm_options(
+                    client,
+                    "",
+                    cat_code,
+                    samba_options,
+                    site="gmarket",
+                    build_only=True,
+                )
+                if _bo.get("success") and _bo.get("payload"):
+                    data.setdefault("itemAddtionalInfo", {})["recommendedOpts"] = _bo[
+                        "payload"
+                    ]
+                    opt_built = True
+                    opt_msg = (
+                        f" [옵션 {_bo.get('matched')}/{_bo.get('requested')}개 인라인]"
+                    )
+                elif _bo.get("multi_variant"):
+                    # 미발행 가드 — 멀티변형인데 옵션매핑 실패 시 옵션없는 등록 차단(#361)
+                    logger.warning(
+                        f"[지마켓] 옵션 매핑 실패(멀티변형) → 미발행: "
+                        f"{_bo.get('message')}"
+                    )
+                    return {
+                        "success": False,
+                        "message": f"옵션 매핑 실패로 미발행(멀티변형): {str(_bo.get('message', ''))[:80]}",
+                    }
+                else:
+                    # 단일변형(선택지 1개) — 옵션없이 등록 허용
+                    opt_msg = f" [옵션 매핑실패·단일변형 옵션없이 등록: {str(_bo.get('message', ''))[:60]}]"
+            except Exception as opt_e:
+                # 빌드 자체 예외 — 안전하게 옵션없이 등록 진행
+                logger.warning(f"[지마켓] 옵션 인라인 빌드 오류: {opt_e}")
+                opt_msg = f" [옵션 빌드 오류: {str(opt_e)[:60]}]"
+        elif samba_options and not cat_code:
+            opt_msg = " [옵션 등록 스킵: cat_code 없음]"
+
         result = await client.register_product(data)
         goods_no = result.get("goodsNo", "")
         site_goods_no = result.get("siteGoodsNo", "")
@@ -300,40 +347,9 @@ class GMarketMarketPlugin(MarketPlugin):
                     f"[지마켓] 추가 이미지 설정 최종 실패: goodsNo={goods_no}"
                 )
 
-        # 추천옵션 등록 — samba options 있고 cat_code 있을 때만.
-        # register_esm_options 가 이미지 propagation polling (0/30/60s, 최대 90s) 자체 처리.
-        # 옵션 실패 시 message 에 표면화 — 무음 단일옵션 등록 방지 (#361).
-        opt_msg = ""
-        if samba_options and goods_no and cat_code:
-            try:
-                import asyncio as _asyncio
-                from backend.domain.samba.proxy.esmplus import register_esm_options
-
-                opt_result = await _asyncio.wait_for(
-                    register_esm_options(
-                        client, goods_no, cat_code, samba_options, site="gmarket"
-                    ),
-                    timeout=120,
-                )
-                if opt_result.get("success"):
-                    opt_msg = f" [옵션 {opt_result.get('matched')}/{opt_result.get('requested')}개 등록]"
-                    logger.info(
-                        f"[지마켓] 옵션 등록 완료: goodsNo={goods_no} matched={opt_result.get('matched')}/{opt_result.get('requested')}"
-                    )
-                else:
-                    opt_msg = (
-                        f" [옵션 등록 실패: {str(opt_result.get('message', ''))[:80]}]"
-                    )
-                    logger.warning(
-                        f"[지마켓] 옵션 등록 부분 실패: {opt_result.get('message')}"
-                    )
-            except (_asyncio.TimeoutError, Exception) as opt_e:
-                opt_msg = f" [옵션 등록 오류: {str(opt_e)[:60]}]"
-                logger.warning(
-                    f"[지마켓] 옵션 등록 실패 (상품 등록은 성공 처리): {opt_e}"
-                )
-        elif samba_options and not cat_code:
-            opt_msg = " [옵션 등록 스킵: cat_code 없음]"
+        # 옵션은 등록 POST 에 인라인 동봉됨 (위 build_only) — 사후 PUT 제거 (#368 ①)
+        if opt_built:
+            logger.info(f"[지마켓] 옵션 인라인 등록 완료: goodsNo={goods_no}{opt_msg}")
 
         return {
             "success": True,

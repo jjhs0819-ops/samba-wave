@@ -111,6 +111,9 @@ async def _retransmit_if_changed(
                             or raw_no.get("groupProductNo")
                             or ""
                         )
+                elif account.market_type in ("gmarket", "auction"):
+                    # ESM 삭제 API는 마스터 goodsNo 필요 — _master 우선
+                    raw_no = m_nos.get(f"{account_id}_master") or raw_no
                 pd = {
                     **product_dict,
                     "market_product_no": {

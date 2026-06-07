@@ -1629,6 +1629,11 @@ class SambaShipmentService:
                                     else:
                                         _pno = _raw
                                 _pno = str(_pno) if _pno else ""
+                            elif market_type in ("gmarket", "auction"):
+                                # ESM 삭제 API는 마스터 goodsNo 필요 — _master 우선
+                                _pno = _m_nos.get(f"{account_id}_master") or _m_nos.get(
+                                    account_id, ""
+                                )
                             else:
                                 _pno = _m_nos.get(account_id, "")
                             _del_pd = {
@@ -3151,6 +3156,11 @@ class SambaShipmentService:
                         else:
                             product_no = raw
                     product_no = str(product_no) if product_no else ""
+                elif account.market_type in ("gmarket", "auction"):
+                    # ESM 삭제 API는 마스터 goodsNo 필요 — _master 우선
+                    product_no = market_product_nos.get(
+                        f"{account_id}_master"
+                    ) or market_product_nos.get(account_id, "")
                 else:
                     product_no = market_product_nos.get(account_id, "")
                 product_dict["market_product_no"] = {account.market_type: product_no}

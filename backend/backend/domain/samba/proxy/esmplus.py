@@ -599,7 +599,7 @@ class ESMPlusClient:
     def match_option_value(
         samba_text: str,
         esm_values: list[dict[str, Any]],
-        fuzzy_threshold: float = 0.85,
+        fuzzy_threshold: float = 0.92,
     ) -> int | None:
         """samba 자유 텍스트 옵션값 → ESM recommendedOptValueNo 매칭.
 
@@ -636,18 +636,21 @@ class ESMPlusClient:
                 if _norm(name.get(key)) == target:
                     return int(no)
 
-        # 2차: 부분 포함 (samba 가 ESM 값에 포함되거나 그 반대)
-        for v in esm_values:
-            no = v.get("recommendedOptValueNo")
-            if not no:
-                continue
-            name = v.get("recommendedOptValueName") or {}
-            for key in ("kor", "eng", "korEng"):
-                normalized = _norm(name.get(key))
-                if not normalized:
+        # 2차: 부분 포함 — samba ⊆ ESM 방향만 (len>=2).
+        # ESM ⊆ samba 방향은 제거: 1~2글자 ESM 사이즈값("L")이 임의 텍스트
+        # ("Pearl Ribbon Keyring")의 부분문자열로 오매칭되는 손상 차단(#368 ④).
+        if len(target) >= 2:
+            for v in esm_values:
+                no = v.get("recommendedOptValueNo")
+                if not no:
                     continue
-                if target in normalized or normalized in target:
-                    return int(no)
+                name = v.get("recommendedOptValueName") or {}
+                for key in ("kor", "eng", "korEng"):
+                    normalized = _norm(name.get(key))
+                    if not normalized:
+                        continue
+                    if target in normalized:
+                        return int(no)
 
         # 3차: 유사도 매칭 (difflib SequenceMatcher) — threshold 이상 중 최대값.
         # 한글/영어 동시 비교. ESM 값 1,000건+ 일 수도 — O(n) 비교지만 한 번/그룹 호출.
@@ -1539,6 +1542,11 @@ def _build_esm_notice_items(
     for code, source_key in fields:
         raw = (product.get(source_key) if source_key else "") or ""
         val = str(raw).strip() or fallback
+        # ESM 고시 항목당 1,000byte 제한 (#368 ③) — 초과 시 등록 자체 거부.
+        # 취급주의사항(세탁/관리)이 3,000byte+ 인 브랜드(나이키 등) 대응.
+        encoded = val.encode("utf-8")
+        if len(encoded) > 1000:
+            val = encoded[:1000].decode("utf-8", "ignore")
         items.append({"officialNoticeItemelementCode": code, "value": val})
     return items
 
@@ -1669,6 +1677,17 @@ async def resolve_esm_credentials(
 # ------------------------------------------------------------------
 
 
+def _clamp_manage_code(natural: str, index_code: str) -> str:
+    """ESM 옵션 관리코드 20byte 제한 (#368 ⑤).
+
+    한글 조합형/직접입력은 자연코드가 20byte 초과 → ESM "옵션 관리코드는
+    20byte를 초과" 등록거부. 초과 시 짧고 유일한 인덱스코드로 대체.
+    """
+    if len(natural.encode("utf-8")) <= 20:
+        return natural
+    return index_code
+
+
 async def _build_independent(
     client: ESMPlusClient,
     cat_code: str,
@@ -1687,7 +1706,7 @@ async def _build_independent(
 
     rec_opt_no = group["recommendedOptNo"]
     details: list[dict[str, Any]] = []
-    for v in values:
+    for i, v in enumerate(values):
         qty = stock_per_value if v["qty"] <= 0 else v["qty"]
         rec_val_no = ESMPlusClient.match_option_value(v["text"], pool)
         if rec_val_no:
@@ -1698,7 +1717,7 @@ async def _build_independent(
                     "qty": {site_key: 0 if v["sold_out"] else qty},
                     "isSoldOut": v["sold_out"],
                     "isDisplay": True,
-                    "manageCode": f"OPT{rec_val_no}",
+                    "manageCode": _clamp_manage_code(f"OPT{rec_val_no}", f"OPTF{i}"),
                 }
             )
             continue
@@ -1715,7 +1734,9 @@ async def _build_independent(
                 "qty": {site_key: 0 if v["sold_out"] else qty},
                 "isSoldOut": v["sold_out"],
                 "isDisplay": True,
-                "manageCode": f"OPT-FREE-{v['text'][:10]}",
+                "manageCode": _clamp_manage_code(
+                    f"OPT-FREE-{v['text'][:10]}", f"OPTF{i}"
+                ),
             }
         )
     # recommendedOptValueNo 중복 제거 — 같은 optValueNo가 여러 번 등록되면 ESM 1000 에러
@@ -1809,7 +1830,7 @@ async def _build_combination(
     details: list[dict[str, Any]] = []
     # 매칭 여부와 무관하게 모든 인덱스 포함 (fallback 처리)
     indices_per_axis = [list(range(len(samba_vals))) for _, samba_vals, _ in axes]
-    for combo in itertools.product(*indices_per_axis):
+    for ci, combo in enumerate(itertools.product(*indices_per_axis)):
         entry: dict[str, Any] = {
             "qty": {site_key: 0},
             "isSoldOut": False,
@@ -1855,7 +1876,9 @@ async def _build_combination(
         entry["qty"] = {site_key: 0 if _final_sold_out else _final_qty}
         entry["isSoldOut"] = _final_sold_out
         entry["addAmnt"] = sum_add_amnt
-        entry["manageCode"] = "OPT" + "-".join(manage_parts)
+        entry["manageCode"] = _clamp_manage_code(
+            "OPT" + "-".join(manage_parts), f"OPTC{ci}"
+        )
         details.append(entry)
 
     # 조합형 중복 제거 — (optValueNo1, optValueNo2, ...) 튜플이 동일하면 ESM 1000 에러
@@ -1901,16 +1924,42 @@ def _normalize_samba_option(opt: dict[str, Any]) -> tuple[str, list[dict[str, An
     raw_values = opt.get("values") or opt.get("option_values") or []
     if isinstance(raw_values, str):
         raw_values = [v.strip() for v in raw_values.split(",") if v.strip()]
+
+    def _to_int(v: Any) -> int | None:
+        if v in (None, ""):
+            return None
+        try:
+            return int(float(v))
+        except (TypeError, ValueError):
+            return None
+
+    # 1차 패스: 절대 price 표현 감지 (#368 ②).
+    # 일부 소싱처(마스마룰즈 등)는 추가금을 priceAdjust/addPrice 가 아니라
+    # 옵션별 절대 price 로 표현 → base(min) 대비 차액을 add_amnt 로 환산.
+    has_adjust = False
+    abs_prices: list[int] = []
+    for sv in raw_values:
+        if isinstance(sv, dict):
+            if sv.get("priceAdjust") or sv.get("addPrice"):
+                has_adjust = True
+            p = _to_int(sv.get("price"))
+            if p is not None:
+                abs_prices.append(p)
+    base_price = min(abs_prices) if (abs_prices and not has_adjust) else None
+
     normalized: list[dict[str, Any]] = []
     for sv in raw_values:
         if isinstance(sv, dict):
+            add_amnt = int(sv.get("priceAdjust", 0) or sv.get("addPrice", 0) or 0)
+            if add_amnt == 0 and base_price is not None:
+                p = _to_int(sv.get("price"))
+                if p is not None:
+                    add_amnt = max(0, p - base_price)
             normalized.append(
                 {
                     "text": sv.get("name") or sv.get("value") or "",
                     "qty": int(sv.get("stock", 99) or 99),
-                    "add_amnt": int(
-                        sv.get("priceAdjust", 0) or sv.get("addPrice", 0) or 0
-                    ),
+                    "add_amnt": add_amnt,
                     "sold_out": bool(sv.get("isSoldOut") or sv.get("is_sold_out")),
                 }
             )
@@ -2070,6 +2119,7 @@ async def register_esm_options(
     *,
     site: str = "gmarket",
     stock_per_value: int = 99,
+    build_only: bool = False,
 ) -> dict[str, Any]:
     """samba options → ESM 추천옵션 매핑 + 등록.
 
@@ -2083,6 +2133,11 @@ async def register_esm_options(
       - 매핑 실패 항목 = 스킵 + warning.
       - 조합형은 cartesian product (모든 조합) 생성. addAmnt = 각 값 합.
       - "직접입력" 그룹 (recommendedOptNo=0) fallback 미지원 (별도 PR).
+
+    build_only=True (#368 ①): set_recommended_options PUT 을 호출하지 않고
+    등록 POST 본문 itemAddtionalInfo.recommendedOpts 에 인라인 동봉할 payload 만
+    빌드해서 반환. propagation polling/race 제거(atomic 등록). 반환 dict 에
+    payload(빌드 성공 시) + multi_variant(총 옵션값 2개+ 여부) 포함.
     """
     if not samba_options:
         return {"success": False, "message": "samba_options 비어있음"}
@@ -2095,6 +2150,13 @@ async def register_esm_options(
     site_key = ESMPlusClient.SITE_CONFIG[site]["siteKey"]
     opt_count = min(len(samba_options), 3)
 
+    # 총 옵션값(변형)수 — 미발행 가드 판단용 (#368 ①).
+    # 축수가 아닌 총 변형수 기준: 구매자가 고를 변형이 둘 이상이면 multi_variant.
+    total_variants = sum(
+        len(_normalize_samba_option(o)[1]) for o in samba_options[:opt_count]
+    )
+    multi_variant = total_variants >= 2
+
     if opt_count == 1:
         opt_type = 1
         independent, combination = await _build_independent(
@@ -2105,6 +2167,7 @@ async def register_esm_options(
                 "success": False,
                 "matched": 0,
                 "requested": len(_normalize_samba_option(samba_options[0])[1]),
+                "multi_variant": multi_variant,
                 "message": "매칭된 옵션값 0건 (선택형)",
             }
         matched = len(independent["details"])
@@ -2150,6 +2213,7 @@ async def register_esm_options(
                     "success": False,
                     "matched": 0,
                     "requested": requested,
+                    "multi_variant": multi_variant,
                     "message": f"조합형 및 선택형 모두 실패 (원본 {opt_count}축)",
                 }
         if combination:
@@ -2193,6 +2257,19 @@ async def register_esm_options(
         "independent": independent,
         "combination": combination,
     }
+
+    # build_only — PUT 없이 인라인 동봉용 payload 반환 (#368 ①, atomic 등록)
+    if build_only:
+        return {
+            "success": True,
+            "type": opt_type,
+            "matched": matched,
+            "requested": requested,
+            "group": group_label,
+            "multi_variant": multi_variant,
+            "payload": payload,
+        }
+
     ok, err_msg = await _try_set_options(payload)
     if ok:
         return {

@@ -547,11 +547,16 @@ async def refresh_products(
                     if not account:
                         continue
                     m_nos = product.market_product_nos or {}
+                    if account.market_type in ("gmarket", "auction"):
+                        # ESM 삭제 API는 마스터 goodsNo 필요 — _master 우선
+                        _del_no = m_nos.get(f"{account_id}_master") or m_nos.get(
+                            account_id, ""
+                        )
+                    else:
+                        _del_no = m_nos.get(account_id, "")
                     pd = {
                         **product_dict,
-                        "market_product_no": {
-                            account.market_type: m_nos.get(account_id, "")
-                        },
+                        "market_product_no": {account.market_type: _del_no},
                     }
                     delete_targets.append((pid, pd, account_id, account))
 
