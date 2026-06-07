@@ -53,9 +53,11 @@ def _index_mpn_row(_row, by_global: dict, by_account: dict, sourcing_urls: dict)
 
     전체 빌드와 증분 머지 둘 다 이 함수를 재사용 — 인덱싱 규칙을 1곳에 모은다.
     """
-    _cpid, _site, _spid, _thumb_raw, _mpnos, _src_url, _cat = _row
+    _cpid, _site, _spid, _thumb_raw, _mpnos, _src_url, _cat, _cost = _row
     if not (_mpnos and isinstance(_mpnos, dict)):
         return 0
+    # cp 단가 원가(주문 cost 보강용, issue #365) — float 컬럼이라 TOAST 부담 없음
+    _cp_cost = float(_cost) if _cost else 0.0
     # 썸네일은 (images->>0)로 첫 URL만 추출 — TOAST 전체 fetch 회피하면서 표시용 확보.
     _thumb = _thumb_raw or ""
     _olink = _src_url or (
@@ -102,6 +104,7 @@ def _index_mpn_row(_row, by_global: dict, by_account: dict, sourcing_urls: dict)
                     "product_image": _thumb,
                     "original_link": _olink,
                     "category": _cat or "",
+                    "cost": _cp_cost,
                     "site_ids_by_account": dict(_sites_by_account),
                 }
             elif _existing_global.get("collected_product_id") != _cpid:
@@ -130,6 +133,7 @@ def _index_mpn_row(_row, by_global: dict, by_account: dict, sourcing_urls: dict)
                     "product_image": _thumb,
                     "original_link": _olink,
                     "category": _cat or "",
+                    "cost": _cp_cost,
                     "site_ids_by_account": dict(_sites_by_account),
                 }
     return _ambiguous_new
@@ -140,7 +144,7 @@ def _index_mpn_row(_row, by_global: dict, by_account: dict, sourcing_urls: dict)
 # product_image는 표시용일 뿐(마켓 자동채움 + /fetch-product-image 지연조회 존재)이라 빈값으로 둔다.
 _MPN_SELECT_COLS = (
     "SELECT id, source_site, site_product_id, (images->>0) AS thumb, "
-    "market_product_nos, source_url, category FROM samba_collected_product "
+    "market_product_nos, source_url, category, cost FROM samba_collected_product "
     "WHERE market_product_nos IS NOT NULL"
 )
 
@@ -7421,6 +7425,17 @@ async def sync_orders_from_markets(
                         "original_link"
                     ):
                         order_data["source_url"] = _matched["original_link"]
+                    # cost 보강 (issue #365): 롯데홈쇼핑 주문은 파서가 cost=0 고정 →
+                    # 매칭된 cp 단가 원가 × 수량으로 라인 총액 원가를 채운다(원가0=profit 과대 방지).
+                    # cost 미설정(0/None)일 때만 — 정산 확정값(SettleItmdSales 등) 덮어쓰기 금지.
+                    # 다른 마켓은 기존 동작 유지(파서/정산 경로가 cost 담당) — lottehome 한정.
+                    if (
+                        order_data.get("source") == "lottehome"
+                        and not order_data.get("cost")
+                        and float(_matched.get("cost") or 0) > 0
+                    ):
+                        _qty = int(order_data.get("quantity") or 1)
+                        order_data["cost"] = float(_matched["cost"]) * _qty
                 # sourcing_account_id 보충 — source_site 확정됐고 계정이 비어있으면 (#299)
                 # LOTTEON 등 source_site 매칭 성공 후 sourcing_account_id="etc"/NULL 잔존 방지
                 _cur_said = order_data.get("sourcing_account_id") or ""
@@ -9692,9 +9707,7 @@ async def _lh_resolve_by_style_code(
     try:
         from sqlalchemy import text as _sa_text2
 
-        _cols = (
-            "id, source_site, source_url, (images->>0) AS thumb, category, style_code"
-        )
+        _cols = "id, source_site, source_url, (images->>0) AS thumb, category, style_code, cost"
         async with get_read_session() as _s:
             ch_rows = (
                 await _s.execute(
@@ -9734,6 +9747,7 @@ async def _lh_resolve_by_style_code(
                     "product_image": _picked[3] or "",
                     "original_link": _picked[2] or "",
                     "category": _picked[4] or "",
+                    "cost": float(_picked[6]) if _picked[6] else 0.0,
                     "site_ids_by_account": {},
                 }
                 logger.info(
