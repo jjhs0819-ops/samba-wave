@@ -7886,10 +7886,19 @@ async def sync_orders_from_markets(
                         "customer_note"
                     ] != str(existing.customer_note or ""):
                         update_fields["customer_note"] = order_data["customer_note"]
-                    if order_data.get("shipment_id") and order_data[
-                        "shipment_id"
-                    ] != str(existing.shipment_id or ""):
-                        update_fields["shipment_id"] = order_data["shipment_id"]
+                    # SSG 취소신청 동기화는 shppNo 없는 "|seq" 형식 shipment_id를 만든다.
+                    # 같은 주문이 출고대기(shppNo 있음)와 취소신청에 동시 존재하면 정상
+                    # "shppNo|seq"를 "|seq"가 덮어써 송장 전송이 shppNo 누락으로 실패한다.
+                    # 기존에 유효 shppNo가 있으면 빈-shppNo 값으로 덮어쓰지 않도록 가드.
+                    # (타 마켓 shipment_id는 "|"로 시작하지 않아 무영향)
+                    _new_sid = str(order_data.get("shipment_id") or "")
+                    _old_sid = str(existing.shipment_id or "")
+                    if (
+                        _new_sid
+                        and _new_sid != _old_sid
+                        and not (_new_sid.startswith("|") and _old_sid.split("|")[0])
+                    ):
+                        update_fields["shipment_id"] = _new_sid
                     if order_data.get("ord_prd_seq") and not existing.ord_prd_seq:
                         update_fields["ord_prd_seq"] = order_data["ord_prd_seq"]
                     # 쿠팡 vendor_item_id 백필 — 컬럼 추가(2026-05-26) 이전 수집된 기존 주문은

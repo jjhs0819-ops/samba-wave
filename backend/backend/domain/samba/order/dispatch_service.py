@@ -572,6 +572,10 @@ async def _send_ssg(order, account, courier, tracking, session):
         return False, f"SSG 미등록 택배사: {courier!r} — delicoVenId 매핑 없음"
 
     qty = int(order.quantity or 1)
+    # SSG는 취소요청 주문에 운송장 등록 시 내부적으로 자동 취소거절 + 국내배송중 전환을
+    # 수행한다. 이 경우 process_outbound는 "피킹완료 상태에서만 출고완료 처리" 로 실패하므로
+    # 송장 등록만 하고 출고처리는 생략한다(생략 안 하면 send_invoice 성공해도 전송 실패로 오판).
+    _is_cancel_req = str(order.status or "") in ("cancel_requested", "cancelling")
     try:
         await client.send_invoice(
             shpp_no=shpp_no,
@@ -579,6 +583,8 @@ async def _send_ssg(order, account, courier, tracking, session):
             wbl_no=tracking,
             delico_ven_id=delico_ven_id,
         )
+        if _is_cancel_req:
+            return True, "SSG 운송장 등록 완료 (취소요청 주문 — 출고처리 생략)"
         await client.process_outbound(shpp_no=shpp_no, shpp_seq=shpp_seq, qty=qty)
         return True, "SSG 운송장 등록 및 출고처리 완료"
     except RuntimeError as e:
