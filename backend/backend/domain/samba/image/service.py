@@ -989,7 +989,17 @@ class ImageTransformService:
                         fetch_url = _url
                         if "msscdn.net" in host:
                             fetch_url = re.sub(r"_\d{3,4}\.jpg$", "_big.jpg", _url)
-                        image_bytes = await self._download_image(fetch_url)
+                        try:
+                            image_bytes = await self._download_image(fetch_url)
+                        except Exception:
+                            # msscdn _big.jpg 고해상도 변형이 없는 상품(404 등)은
+                            # 원본 해상도 URL로 폴백. 폴백 없으면 메인이미지가 전부
+                            # 드롭돼 11번가 "미러링 후 이미지없음"으로 등록 거부됨
+                            # (프로덕션 583건, 원본 _500.jpg는 100% 다운로드 가능 검증).
+                            if fetch_url != _url:
+                                image_bytes = await self._download_image(_url)
+                            else:
+                                raise
                         # 11번가 등 일부 마켓은 webp 거부 + magic bytes 검증 수행
                         # → PIL로 무조건 JPEG 변환 후 업로드 (AI 가공 _save_image와 동일)
                         try:
