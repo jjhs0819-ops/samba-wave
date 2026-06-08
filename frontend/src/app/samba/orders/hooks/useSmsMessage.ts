@@ -27,6 +27,7 @@ const DEFAULT_SMS_TEMPLATES: SmsTemplate[] = [
 export function useSmsMessage(accounts: SambaMarketAccount[]) {
   const [msgModal, setMsgModal] = useState<{ type: 'sms' | 'kakao'; order: SambaOrder } | null>(null)
   const [msgText, setMsgText] = useState('')
+  const [msgPhone, setMsgPhone] = useState('')
   const [msgSending, setMsgSending] = useState(false)
   const msgTextRef = useRef<HTMLTextAreaElement>(null)
   const [msgHistory, setMsgHistory] = useState<MessageLog[]>([])
@@ -105,12 +106,9 @@ export function useSmsMessage(accounts: SambaMarketAccount[]) {
   }, [accounts])
 
   const openMsgModal = (type: 'sms' | 'kakao', order: SambaOrder) => {
-    if (!order.customer_phone) {
-      showAlert('고객 전화번호가 없습니다', 'error')
-      return
-    }
     setMsgModal({ type, order })
     setMsgText('')
+    setMsgPhone(order.customer_phone || '')
     setMsgHistory([])
     proxyApi.fetchMessageHistory(order.id).then(setMsgHistory).catch(() => {})
   }
@@ -120,9 +118,13 @@ export function useSmsMessage(accounts: SambaMarketAccount[]) {
       showAlert('메시지를 입력해주세요', 'error')
       return
     }
+    const phone = msgPhone.replace(/[^0-9]/g, '')
+    if (!phone) {
+      showAlert('전화번호를 입력해주세요', 'error')
+      return
+    }
     setMsgSending(true)
     try {
-      const phone = msgModal.order.customer_phone || ''
       const renderedMsg = renderMsgTemplate(msgText, msgModal.order).trim()
       if (!renderedMsg) {
         showAlert('치환 후 발송할 메시지가 비어 있습니다.', 'error')
@@ -157,6 +159,7 @@ export function useSmsMessage(accounts: SambaMarketAccount[]) {
   return {
     msgModal, setMsgModal,
     msgText, setMsgText,
+    msgPhone, setMsgPhone,
     msgSending,
     msgTextRef,
     msgHistory,

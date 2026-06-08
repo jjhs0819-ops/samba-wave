@@ -23,6 +23,8 @@ interface Props {
   setMsgModal: Dispatch<SetStateAction<{ type: 'sms' | 'kakao'; order: SambaOrder } | null>>
   msgText: string
   setMsgText: Dispatch<SetStateAction<string>>
+  msgPhone: string
+  setMsgPhone: Dispatch<SetStateAction<string>>
   msgTextRef: RefObject<HTMLTextAreaElement | null>
   msgSending: boolean
   msgHistory: MessageLog[]
@@ -38,6 +40,7 @@ export default function MessageModal(props: Props) {
   const {
     msgModal, setMsgModal,
     msgText, setMsgText,
+    msgPhone, setMsgPhone,
     msgTextRef, msgSending, msgHistory,
     smsTemplates, insertMsgTag,
     openEditTemplate, openNewTemplate, deleteTemplate,
@@ -58,9 +61,17 @@ export default function MessageModal(props: Props) {
 
         {/* 주문 정보 */}
         <div style={{ background: '#111', borderRadius: '8px', padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.8125rem' }}>
-          <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '0.375rem' }}>
+          <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '0.375rem', alignItems: 'center' }}>
             <div><span style={{ color: '#666' }}>수신자: </span><span style={{ color: '#E5E5E5' }}>{msgModal.order.customer_name || '-'}</span></div>
-            <div><span style={{ color: '#666' }}>전화번호: </span><span style={{ color: '#E5E5E5' }}>{msgModal.order.customer_phone}</span></div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+              <span style={{ color: '#666' }}>전화번호: </span>
+              <input
+                value={msgPhone}
+                onChange={e => setMsgPhone(e.target.value)}
+                placeholder="01012345678"
+                style={{ width: '140px', padding: '0.25rem 0.5rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '6px', color: '#E5E5E5', fontSize: '0.8125rem', outline: 'none' }}
+              />
+            </div>
           </div>
           <div>
             <span style={{ color: '#666' }}>상품: </span>

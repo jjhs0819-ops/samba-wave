@@ -120,6 +120,7 @@ export default function OrdersPage() {
   const {
     msgModal, setMsgModal,
     msgText, setMsgText,
+    msgPhone, setMsgPhone,
     msgSending, msgTextRef, msgHistory,
     sentFlags, setSentFlags,
     smsTemplates,
@@ -977,6 +978,8 @@ export default function OrdersPage() {
         setMsgModal={setMsgModal}
         msgText={msgText}
         setMsgText={setMsgText}
+        msgPhone={msgPhone}
+        setMsgPhone={setMsgPhone}
         msgTextRef={msgTextRef}
         msgSending={msgSending}
         msgHistory={msgHistory}
