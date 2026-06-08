@@ -325,6 +325,24 @@ export default function OrdersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams])
 
+  // CS 페이지 등 외부에서 ?search=...로 진입 시 — 상태필터 전체 + 최근 10일 기간으로 세팅
+  // (기본 'cancel_return_excluded'·오늘 필터에 걸려 옛 주문/취소·반품·교환 주문이 0건 나오던 버그 해결)
+  useEffect(() => {
+    if (searchParams.get('search')) {
+      setStatusFilter('')
+      setMarketStatus('')
+      setRegistrationFilter('')
+      setInputFilter('')
+      setInvoiceFilter('')
+      const start = getKstTodayDate()
+      start.setDate(start.getDate() - 10)
+      setCustomStart(formatDateInput(start))
+      setCustomEnd(formatDateInput(getKstTodayDate()))
+      setPeriod('')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams])
+
   // 알람 모달 X 버튼 → 디폴트 오늘 주문 화면으로 복귀 (초기 진입 상태와 동일)
   useEffect(() => {
     const handler = () => {
