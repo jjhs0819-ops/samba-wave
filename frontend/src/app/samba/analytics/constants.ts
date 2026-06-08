@@ -1,5 +1,10 @@
 export const SOURCE_SITES = ['MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'REXMONDE', 'SSG', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF']
 
+// 미등록상품(source_site 없음 또는 SOURCE_SITES 밖) — 소싱사이트 필터에서 토글 가능한 항목
+export const UNREGISTERED_SITE = '미등록상품'
+// 소싱사이트 필터 UI/전체선택 기준 목록 (실제 소싱처 + 미등록상품)
+export const SITE_FILTER_OPTIONS = [...SOURCE_SITES, UNREGISTERED_SITE]
+
 // 주문상태 목록 (배송중/배송완료는 가장 우측)
 export const ORDER_STATUSES = [
   { key: 'pending', label: '주문접수' },

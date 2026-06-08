@@ -7,7 +7,8 @@ import { STORAGE_KEYS } from '@/lib/samba/constants'
 import { card, fmtNum } from '@/lib/samba/styles'
 import { RevenueTrendLine, SalesBarChart } from '@/components/samba/AnalyticsCharts'
 import {
-  SOURCE_SITES, ORDER_STATUSES, DEFAULT_STATUSES,
+  SOURCE_SITES, SITE_FILTER_OPTIONS, UNREGISTERED_SITE,
+  ORDER_STATUSES, DEFAULT_STATUSES,
   type AnalyticsSearch, type MonthlyCell,
 } from './constants'
 import { useAnalyticsData } from './hooks/useAnalyticsData'
@@ -75,9 +76,9 @@ export default function AnalyticsPage() {
     if (selectedMarkets.length > 0) {
       if (!selectedMarkets.includes(channelToMarket(r.channel_name))) return false
     }
-    if (selectedSites.length > 0 && selectedSites.length < SOURCE_SITES.length) {
-      const siteKey = r.source_site && SOURCE_SITES.includes(r.source_site) ? r.source_site : '미등록상품'
-      if (siteKey !== '미등록상품' && !selectedSites.includes(siteKey)) return false
+    if (selectedSites.length > 0 && selectedSites.length < SITE_FILTER_OPTIONS.length) {
+      const siteKey = r.source_site && SOURCE_SITES.includes(r.source_site) ? r.source_site : UNREGISTERED_SITE
+      if (!selectedSites.includes(siteKey)) return false
     }
     return true
   })
@@ -152,7 +153,7 @@ export default function AnalyticsPage() {
   // 소싱처별 통계
   const siteTable = buildTable(r => {
     const site = r.source_site
-    if (!site || !SOURCE_SITES.includes(site)) return '미등록상품'
+    if (!site || !SOURCE_SITES.includes(site)) return UNREGISTERED_SITE
     return site
   })
   // 주문상태별 통계
@@ -388,16 +389,16 @@ export default function AnalyticsPage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.625rem 0', borderTop: '1px solid #2D2D2D', flexWrap: 'wrap' }}>
           <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '65px', flexShrink: 0 }}>소싱사이트</span>
           {(() => {
-            const isAll = selectedSites.length === SOURCE_SITES.length
+            const isAll = selectedSites.length === SITE_FILTER_OPTIONS.length
             return (
               <>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8125rem', color: '#888', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={isAll} onChange={() => setSelectedSites(isAll ? [] : [...SOURCE_SITES])} /> 전체
+                  <input type="checkbox" checked={isAll} onChange={() => setSelectedSites(isAll ? [] : [...SITE_FILTER_OPTIONS])} /> 전체
                 </label>
-                {SOURCE_SITES.map(site => (
+                {SITE_FILTER_OPTIONS.map(site => (
                   <label key={site} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8125rem', cursor: 'pointer' }}>
                     <input type="checkbox" checked={isAll || selectedSites.includes(site)} onChange={() => {
-                      if (isAll) setSelectedSites(SOURCE_SITES.filter(s => s !== site))
+                      if (isAll) setSelectedSites(SITE_FILTER_OPTIONS.filter(s => s !== site))
                       else toggleItem(selectedSites, setSelectedSites, site)
                     }} style={{ accentColor: '#FF8C00' }} />
                     <span style={{ color: '#FF8C00' }}>{site}</span>

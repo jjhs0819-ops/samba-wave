@@ -9,7 +9,7 @@ import {
   analyticsApi,
   type SourcingRoi, type ProductPerformance, type BrandSales,
 } from '@/lib/samba/api/operations'
-import { SOURCE_SITES } from '../constants'
+import { SOURCE_SITES, UNREGISTERED_SITE } from '../constants'
 
 interface Args {
   searchYear: number
@@ -93,7 +93,8 @@ export function useAnalyticsData({
         const allData = await collectorApi.scrollProducts({ limit: 1 }).catch(() => null)
         if (allData) {
           const collectedSites = (allData.sites || []).filter((s: string) => SOURCE_SITES.includes(s))
-          if (collectedSites.length > 0) setSelectedSites(collectedSites)
+          // 미등록상품도 기본 체크 — 기존처럼 소싱처별 통계에 포함 유지
+          if (collectedSites.length > 0) setSelectedSites([...collectedSites, UNREGISTERED_SITE])
         }
       }
     }
