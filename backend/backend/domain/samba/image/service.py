@@ -924,12 +924,15 @@ class ImageTransformService:
     )
 
     async def mirror_external_to_r2(
-        self, urls: list[str]
+        self, urls: list[str], min_bytes: int = 0
     ) -> tuple[list[str], dict[str, str]]:
         """차단 도메인의 이미지 URL을 R2로 미러링하여 R2 URL로 치환.
 
         - msscdn.net 등 referer/hotlink 차단 도메인만 다운로드 후 R2 업로드
-        - 이미 R2 publicUrl 도메인이거나 차단 대상이 아니면 원본 URL 유지
+        - min_bytes>0 이면 차단 도메인이 아니어도 URL 바이트 길이가 그 값을 초과하는
+          이미지는 미러링(짧은 R2 URL로 단축). 롯데ON origImgFileNm 200byte 한도처럼
+          긴 URL(인코딩된 한글 파일명 등)이 거부되는 경우 대응.
+        - 이미 R2 publicUrl 도메인이거나 (차단 대상도 아니고 min_bytes도 안 넘으면) 원본 유지
         - 다운로드/업로드 실패 시 해당 URL은 결과에서 제외(드롭)
         - 원본 포맷(MIME) 보존: webp 변환 없이 그대로 저장
 
@@ -971,8 +974,10 @@ class ImageTransformService:
             if public_host and host == public_host:
                 result_slots[_i] = url
                 continue
-            # 차단 도메인이 아니면 원본 유지
-            if not any(blocked in host for blocked in self._HOTLINK_BLOCKED_HOSTS):
+            # 차단 도메인이 아니고 min_bytes도 안 넘으면 원본 유지
+            _blocked = any(b in host for b in self._HOTLINK_BLOCKED_HOSTS)
+            _too_long = bool(min_bytes) and len(url.encode("utf-8")) > min_bytes
+            if not _blocked and not _too_long:
                 result_slots[_i] = url
                 continue
             to_download.append((_i, url))
@@ -1073,7 +1078,7 @@ class ImageTransformService:
         return result, url_map
 
     async def mirror_with_persistence(
-        self, product_id: str | None, urls: list[str]
+        self, product_id: str | None, urls: list[str], min_bytes: int = 0
     ) -> tuple[list[str], dict[str, str]]:
         """DB 영속 매핑(samba_collected_product.image_mirror_map) 활용 + 신규 매핑 저장.
 
@@ -1083,7 +1088,7 @@ class ImageTransformService:
         - 실패 시 일반 미러 결과만 반환 (DB 오류는 로깅 후 무시 — 등록 자체는 진행)
         """
         if not urls or not product_id:
-            return await self.mirror_external_to_r2(urls)
+            return await self.mirror_external_to_r2(urls, min_bytes=min_bytes)
 
         from sqlalchemy import select, update
 
@@ -1107,7 +1112,7 @@ class ImageTransformService:
         for _k, _v in _db_map.items():
             self._R2_MIRROR_CACHE.setdefault(_k, _v)
 
-        _result, _url_map = await self.mirror_external_to_r2(urls)
+        _result, _url_map = await self.mirror_external_to_r2(urls, min_bytes=min_bytes)
 
         # 신규(또는 변경) 매핑만 DB에 머지
         _new = {k: v for k, v in _url_map.items() if _db_map.get(k) != v}

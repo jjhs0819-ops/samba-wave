@@ -1975,8 +1975,11 @@ class LotteonPlugin(MarketPlugin):
 
             _img_svc = ImageTransformService(session)
             if product_copy.get("images"):
+                # min_bytes=200: 롯데ON origImgFileNm 은 200byte 한도 — 인코딩된 한글
+                # 파일명 등 긴 URL(예: img.dk-on.com 236byte)은 호스트 무관 미러해
+                # 짧은 R2 URL로 단축, "origImgFileNm는 200 Byte 이하" 거부 방지.
                 _mirrored, _ = await _img_svc.mirror_with_persistence(
-                    product_copy.get("id"), product_copy["images"]
+                    product_copy.get("id"), product_copy["images"], min_bytes=200
                 )
                 product_copy["images"] = _mirrored
         except Exception as e:
