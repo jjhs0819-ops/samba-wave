@@ -20,6 +20,38 @@ from ._helpers import _get_setting
 router = APIRouter(tags=["samba-proxy"])
 
 
+def _parse_aligo_response(resp: httpx.Response, context: str) -> dict[str, Any]:
+    """알리고 응답을 안전하게 파싱.
+
+    알리고 API 서버(apis.aligo.in)가 장애 시 HTTP 5xx + 빈 본문(text/html)을
+    반환하는데, 이를 그대로 resp.json() 하면 'Expecting value: line 1 column 1'
+    이라는 정체불명 에러가 노출됨. status·본문을 먼저 확인해 명확한 메시지로 변환.
+    """
+    body_snippet = resp.text[:300]
+    # 비2xx → 알리고측 장애로 간주
+    if resp.status_code >= 400:
+        logger.error(
+            f"[알리고] {context} HTTP {resp.status_code} "
+            f"(len={len(resp.text)}, body={body_snippet!r})"
+        )
+        raise ValueError(
+            f"알리고 SMS 서버 오류(HTTP {resp.status_code}). "
+            f"알리고측 일시 장애로 보입니다. 잠시 후 다시 시도해주세요."
+        )
+    # 2xx 이지만 본문이 비었거나 JSON 아님
+    try:
+        return resp.json()
+    except Exception:
+        logger.error(
+            f"[알리고] {context} 비JSON 응답 "
+            f"(status={resp.status_code}, len={len(resp.text)}, body={body_snippet!r})"
+        )
+        raise ValueError(
+            "알리고 응답을 해석할 수 없습니다(빈/비JSON 응답). "
+            "알리고측 장애 가능성이 있으니 잠시 후 다시 시도해주세요."
+        )
+
+
 # ═══════════════════════════════════════════════
 # 알리고 (Aligo) SMS 잔여건수 조회
 # ═══════════════════════════════════════════════
@@ -47,7 +79,7 @@ async def aligo_remain(
                 data={"key": api_key, "user_id": user_id},
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             )
-            data = resp.json()
+            data = _parse_aligo_response(resp, "잔여건수 조회")
             if data.get("result_code") == 1 or str(data.get("result_code")) == "1":
                 return {
                     "success": True,
@@ -61,6 +93,9 @@ async def aligo_remain(
                     "success": False,
                     "message": data.get("message", "알리고 API 인증 실패"),
                 }
+    except ValueError as exc:
+        # _parse_aligo_response가 이미 명확한 메시지 + 로깅 완료
+        return {"success": False, "message": str(exc)}
     except Exception as exc:
         logger.error(f"[알리고] 잔여건수 조회 실패: {exc}")
         return {"success": False, "message": f"알리고 API 호출 실패: {exc}"}
@@ -124,13 +159,16 @@ async def aligo_send_sms(
                 data=data,
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             )
-            result = resp.json()
+            result = _parse_aligo_response(resp, "SMS 발송")
             if result.get("result_code") == 1 or str(result.get("result_code")) == "1":
                 success = True
                 msg_id = str(result.get("msg_id", ""))
                 result_msg = f"{'LMS' if is_lms else 'SMS'} 발송 성공"
             else:
                 result_msg = result.get("message", "발송 실패")
+    except ValueError as exc:
+        # _parse_aligo_response가 이미 명확한 메시지 + 로깅 완료
+        result_msg = str(exc)
     except Exception as exc:
         logger.error(f"[알리고] SMS 발송 실패: {exc}")
         result_msg = f"SMS 발송 실패: {exc}"
@@ -237,12 +275,15 @@ async def aligo_send_kakao(
                 data=data,
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             )
-            result = resp.json()
+            result = _parse_aligo_response(resp, "카카오 발송")
             if result.get("code") == 0 or str(result.get("code")) == "0":
                 success = True
                 result_msg = "카카오톡 발송 성공"
             else:
                 result_msg = result.get("message", "카카오 발송 실패")
+    except ValueError as exc:
+        # _parse_aligo_response가 이미 명확한 메시지 + 로깅 완료
+        result_msg = str(exc)
     except Exception as exc:
         logger.error(f"[알리고] 카카오 발송 실패: {exc}")
         result_msg = f"카카오 발송 실패: {exc}"
