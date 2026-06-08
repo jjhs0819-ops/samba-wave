@@ -397,6 +397,26 @@ export default function CSPage() {
     }
   }
 
+  // AI 초안 바로 전송 — 모달 없이 목록에서 1클릭 전송
+  const handleQuickSend = async (item: SambaCSInquiry) => {
+    if (!item.draft_reply) return
+    if (!await showConfirm('이 AI 초안으로 바로 전송할까요?')) return
+    try {
+      const finalText = sanitizeReplyTextForInquiry(item.draft_reply, item)
+      const res = await csInquiryApi.reply(item.id, finalText)
+      const marketMsg = (res as unknown as Record<string, unknown>).market_message as string
+      const marketSent = (res as unknown as Record<string, unknown>).market_sent as boolean
+      await load()
+      if (marketSent) {
+        showAlert(marketMsg || '답변 전송 완료', 'success')
+      } else if (marketMsg) {
+        showAlert(`답변 저장 완료 (${marketMsg})`, 'info')
+      }
+    } catch (e) {
+      showAlert(e instanceof Error ? e.message : '전송 실패', 'error')
+    }
+  }
+
   // 단건 삭제
   const handleDelete = async (id: string) => {
     if (!await showConfirm('이 문의를 삭제하시겠습니까?')) return
@@ -782,6 +802,34 @@ export default function CSPage() {
                             htmlToText(item.content)
                           )}
                         </div>
+
+                        {/* CS 자동화 — AI 초안 인라인 표시 + 바로 전송 (미답변 + 초안 있을 때) */}
+                        {item.reply_status === 'pending' && item.draft_status === 'suggested' && item.draft_reply && (
+                          <div style={{ marginTop: '0.5rem', padding: '0.5rem 0.75rem', background: 'rgba(186,104,255,0.08)', borderRadius: '6px', borderLeft: '3px solid #BA68FF' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                              <div style={{ fontSize: '0.75rem', color: '#BA68FF', fontWeight: 600 }}>
+                                AI 초안{item.draft_confidence != null ? ` ${Math.round(item.draft_confidence * 100)}%` : ''}
+                              </div>
+                              <div style={{ display: 'flex', gap: '0.375rem' }}>
+                                <button
+                                  onClick={() => handleQuickSend(item)}
+                                  style={{ padding: '0.15rem 0.55rem', background: 'rgba(81,207,102,0.15)', border: '1px solid rgba(81,207,102,0.4)', borderRadius: '4px', color: '#51CF66', fontSize: '0.6875rem', cursor: 'pointer', whiteSpace: 'nowrap', fontWeight: 600 }}
+                                >
+                                  바로 전송
+                                </button>
+                                <button
+                                  onClick={() => { setReplyModal(item); setReplyText(sanitizeReplyTextForInquiry(item.draft_reply || '', item)); setSelectedTemplate('') }}
+                                  style={{ padding: '0.15rem 0.55rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', fontSize: '0.6875rem', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                >
+                                  수정
+                                </button>
+                              </div>
+                            </div>
+                            <div style={{ color: '#ccc', fontSize: '0.8125rem', lineHeight: '1.5', whiteSpace: 'pre-wrap' }}>
+                              {htmlToText(item.draft_reply || '')}
+                            </div>
+                          </div>
+                        )}
 
                         {/* 답변 내용 */}
                         {item.reply && (
