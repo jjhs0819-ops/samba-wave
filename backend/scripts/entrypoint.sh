@@ -92,17 +92,26 @@ async def fix():
         # PID 637179가 30분간 idle in transaction 상태로 ACCESS EXCLUSIVE LOCK 보유 →
         # 이후 ALTER TABLE 무한 대기 → connection pool 도미노 고갈 → 1시간 다운.
         # 'idle'은 즉시, 'idle in transaction*'은 5분 이상 방치된 것만 종료(정상 짧은 트랜잭션 보호).
-        ('terminate_idle', 'SELECT COUNT(*) FROM pg_stat_activity'
-                           ' WHERE datname = current_database()'
-                           ' AND pid <> pg_backend_pid()'
-                           ' AND ('
-                             'state = \'idle\''
-                             ' OR ('
-                               'state IN (\'idle in transaction\', \'idle in transaction (aborted)\')'
-                               ' AND now() - state_change > interval \'5 minutes\''
+        # #373 수정: pg_terminate_backend(pid)를 WHERE절에 두면 Postgres가 AND 평가
+        # 순서를 보장하지 않아, self-exclusion(pid<>pg_backend_pid) 필터 전에 volatile
+        # 함수가 cloudsqladmin(NULL-usename 시스템 연결)에도 평가됨 → permission denied
+        # 또는 실행 connection 자체 드롭 → terminate_idle 이후 전 statement가
+        # 'connection is closed'로 silent skip(2026-04-28 이후 emergency 블록 no-op).
+        # → 대상 pid를 MATERIALIZED CTE로 먼저 확정(optimization fence)하고 SELECT
+        # 목록에서만 terminate 호출, usename=current_user로 앱 role 연결만 한정.
+        ('terminate_idle', 'WITH targets AS MATERIALIZED ('
+                             ' SELECT pid FROM pg_stat_activity'
+                             ' WHERE datname = current_database()'
+                             ' AND pid <> pg_backend_pid()'
+                             ' AND usename = current_user'
+                             ' AND ('
+                               'state = \'idle\''
+                               ' OR ('
+                                 'state IN (\'idle in transaction\', \'idle in transaction (aborted)\')'
+                                 ' AND now() - state_change > interval \'5 minutes\''
+                               ')'
                              ')'
-                           ')'
-                           ' AND pg_terminate_backend(pid)'),
+                           ') SELECT count(pg_terminate_backend(pid)) FROM targets'),
         ('alter_search_filter', 'ALTER TABLE samba_search_filter ADD COLUMN IF NOT EXISTS source_brand_name TEXT'),
         # (제거됨) drop_market_account_sort_order — 컬럼 이미 드롭 완료(#331, no-op DROP도 ACCESS EXCLUSIVE 락 잡음)
         ('alter_return_clm_req_seq', 'ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS clm_req_seq TEXT'),
