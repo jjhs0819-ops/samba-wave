@@ -24,7 +24,7 @@ OUT_DIR = os.path.expanduser("~/hermes-bot/recon")
 LOG_PATH = os.path.join(OUT_DIR, "clicks.log")
 
 INIT_JS = r"""
-() => {
+(() => {
   if (window.__recHooked) return;
   window.__recHooked = true;
   document.addEventListener('click', (e) => {
@@ -47,7 +47,7 @@ INIT_JS = r"""
       if (typeof window.__recordClick === 'function') window.__recordClick(JSON.stringify(info));
     } catch (err) {}
   }, true);
-}
+})();
 """
 
 
