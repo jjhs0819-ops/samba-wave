@@ -178,12 +178,24 @@ def set_address(ctx, order_page, c: dict) -> None:
     (기본 배송지는 건드리지 않는다.) 비-기본 슬롯이 없으면 '배송지 추가하기'.
     """
     log("🚚 배송지 변경 클릭...")
-    order_page.locator("text=배송지 변경").first.click(timeout=8000)
-    lst = _find_page(ctx, "/addresses/order", 15)
+    order_page.wait_for_timeout(800)
+    # 배송지 변경은 새 윈도우(팝업)로 열린다 → expect_page 로 직접 캐치
+    lst = None
+    try:
+        with ctx.expect_page(timeout=15000) as pinfo:
+            order_page.get_by_text("배송지 변경").first.click(timeout=8000)
+        lst = pinfo.value
+        lst.wait_for_load_state("domcontentloaded")
+    except Exception as e:
+        log(f"expect_page 실패({e}) — 열린 페이지 스캔 시도")
+        lst = _find_page(ctx, "/addresses/order", 6)
     if not lst:
+        log(f"현재 열린 페이지들: {[p.url for p in ctx.pages]}")
         raise RuntimeError("배송지 목록 팝업을 찾지 못했습니다.")
-    lst.wait_for_load_state("domcontentloaded")
-    lst.wait_for_timeout(1500)
+    if "/addresses/order" not in lst.url:
+        _wait_url_contains(lst, "/addresses/order", 8)
+    log(f"배송지 팝업 열림: {lst.url[:60]}")
+    lst.wait_for_timeout(1800)
 
     # 비-기본(삭제 버튼 있는) 항목의 '수정' 진입, 없으면 추가
     edit_btn = lst.locator(
