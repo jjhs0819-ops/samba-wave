@@ -365,11 +365,34 @@ async def trigger_sync_playauto(
     """플레이오토 CS 동기화를 내부 토큰으로 직접 트리거.
 
     samba_auth 없이 호출 가능 — 상품평 포함 최근 30일치 수집.
-    """
-    from backend.api.v1.routers.samba.cs_inquiry import _do_sync_cs_from_markets
 
-    result = await _do_sync_cs_from_markets(session, market_name="플레이오토")
-    return result
+    [테넌트 격리] 내부 토큰 경로는 JWT가 없어 TenantContextMiddleware가
+    ContextVar를 채우지 못한다. ContextVar=None이면 _do_sync_cs_from_markets가
+    전 테넌트 플레이오토 계정을 무차별 순회한다(데이터 누수). 활성 테넌트별로
+    ContextVar를 세팅해 각 테넌트 계정만 동기화한다.
+    """
+    from sqlmodel import select as _sel
+
+    from backend.api.v1.routers.samba.cs_inquiry import _do_sync_cs_from_markets
+    from backend.core.tenant_context import current_tenant_id
+    from backend.domain.samba.tenant.model import SambaTenant
+
+    trows = await session.execute(
+        _sel(SambaTenant.id).where(SambaTenant.is_active == True)  # noqa: E712
+    )
+    tids = [r[0] for r in trows.all()]
+
+    total: Dict[str, Any] = {"synced": 0, "linked": 0, "tenants": len(tids)}
+    for tid in tids:
+        token = current_tenant_id.set(tid)
+        try:
+            r = await _do_sync_cs_from_markets(session, market_name="플레이오토")
+            if isinstance(r, dict):
+                total["synced"] += r.get("synced", 0) or 0
+                total["linked"] += r.get("linked", 0) or 0
+        finally:
+            current_tenant_id.reset(token)
+    return total
 
 
 async def _fallback_draft(

@@ -68,11 +68,12 @@ class SambaCSInquiryRepository(BaseRepository[SambaCSInquiry]):
         end_dt: Optional[datetime] = None,
     ) -> int:
         """필터 적용된 총 개수."""
-        stmt = (
-            select(func.count())
-            .select_from(SambaCSInquiry)
-            .where(SambaCSInquiry.is_hidden == False)
-        )  # noqa: E712
+        # func.count(컬럼) 형태로 entity를 노출해야 ORM 자동 tenant 필터가 적용된다.
+        # select(func.count()).select_from(...) 은 column_descriptions에 entity가
+        # 잡히지 않아 tenant 필터가 스킵된다(카운트만 전 테넌트로 새는 사각지대).
+        stmt = select(func.count(SambaCSInquiry.id)).where(
+            SambaCSInquiry.is_hidden == False  # noqa: E712
+        )
 
         if market:
             stmt = stmt.where(SambaCSInquiry.market == market)

@@ -82,6 +82,10 @@ class SambaLoginHistory(SQLModel, table=True):
         primary_key=True,
         max_length=30,
     )
+    # 테넌트 격리
+    tenant_id: Optional[str] = Field(
+        default=None, sa_column=Column(String, index=True, nullable=True)
+    )
     user_id: str = Field(sa_column=Column(Text, nullable=False, index=True))
     email: str = Field(sa_column=Column(Text, nullable=False))
     ip_address: Optional[str] = Field(

@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Boolean, Float
+from sqlalchemy import Boolean, Float, String
 from sqlmodel import Column, DateTime, Field, SQLModel, Text
 
 from ulid import ULID
@@ -22,6 +22,10 @@ class SambaCSInquiry(SQLModel, table=True):
         default_factory=generate_cs_inquiry_id,
         primary_key=True,
         max_length=30,
+    )
+    # 테넌트 격리
+    tenant_id: Optional[str] = Field(
+        default=None, sa_column=Column(String, index=True, nullable=True)
     )
 
     # 마켓 정보

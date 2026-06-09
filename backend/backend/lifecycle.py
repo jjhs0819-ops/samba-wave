@@ -957,11 +957,24 @@ async def _order_auto_sync_loop() -> None:
 
             # 1-b) CS 문의 동기화도 주문 자동수집에 연동 — 별도 30분 폴러가 아닌
             #      주문 자동수집 인터벌마다 cs_sync 잡을 함께 큐잉(중복 실행 방지 내장).
+            #      [테넌트 격리] tenant_id=None 단일 잡은 ContextVar가 비어 전 테넌트
+            #      마켓계정을 무차별 순회한다(데이터 누수 사고 원인). 활성 테넌트별로
+            #      잡을 나눠 생성해야 각 잡이 자기 테넌트 계정만 동기화한다.
             try:
+                from sqlmodel import select as _sel
+
                 from backend.domain.samba.order.poller import _create_cs_sync_job
+                from backend.domain.samba.tenant.model import SambaTenant
 
                 async with get_write_session() as cs_ws:
-                    await _create_cs_sync_job(cs_ws, tenant_id=None)
+                    _trows = await cs_ws.execute(
+                        _sel(SambaTenant.id).where(
+                            SambaTenant.is_active == True  # noqa: E712
+                        )
+                    )
+                    _tids = [r[0] for r in _trows.all()]
+                    for _tid in _tids:
+                        await _create_cs_sync_job(cs_ws, tenant_id=_tid)
             except Exception as _cs_e:
                 _log.warning(f"[주문 auto sync] cs_sync 잡 생성 실패: {_cs_e}")
 

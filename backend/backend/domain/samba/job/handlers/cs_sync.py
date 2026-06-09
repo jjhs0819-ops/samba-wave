@@ -26,6 +26,13 @@ async def run(
     """
     _add_job_log(job.id, "CS 문의 동기화 시작")
 
+    # 테넌트 격리: 백그라운드 잡은 ContextVar가 비어 있어 ORM 자동 tenant 필터가
+    # 패스된다. job.tenant_id를 ContextVar에 세팅하면
+    # ① 마켓계정 SELECT가 해당 테넌트로 자동 격리되고
+    # ② 새로 수집되는 CS 문의 INSERT에 tenant_id가 자동 스탬프된다.
+    from backend.core.tenant_context import current_tenant_id
+
+    token = current_tenant_id.set(job.tenant_id)
     try:
         from backend.api.v1.routers.samba.cs_inquiry import _do_sync_cs_from_markets
 
@@ -39,5 +46,7 @@ async def run(
         logger.error(f"[cs_sync] CS 동기화 실패: {e}")
         _add_job_log(job.id, f"CS 동기화 오류: {e}")
         raise
+    finally:
+        current_tenant_id.reset(token)
 
     await repo.complete_job(job.id, result={"synced": synced, "linked": linked})

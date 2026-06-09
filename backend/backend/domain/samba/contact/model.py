@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
+from sqlalchemy import String
 from sqlmodel import Column, DateTime, Field, SQLModel, Text
 
 from ulid import ULID
@@ -21,6 +22,10 @@ class SambaContactLog(SQLModel, table=True):
         default_factory=generate_contact_id,
         primary_key=True,
         max_length=30,
+    )
+    # 테넌트 격리
+    tenant_id: Optional[str] = Field(
+        default=None, sa_column=Column(String, index=True, nullable=True)
     )
 
     # 연결 정보
