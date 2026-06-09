@@ -486,13 +486,13 @@ export default function ReturnsPage() {
                     />
                   </th>
                   <th rowSpan={2} style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: '#888', fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap', verticalAlign: 'middle' }}>사진</th>
-                  {['고객', '사업자', '소싱주문번호', '마켓', '주문번호', '고객비용', '회사비용', '완료내역', '메모'].map((h, i) => (
+                  {['고객', '마켓', '소싱주문번호', '사업자', '주문/CS접수일', '고객비용', '회사비용', '완료내역', '메모'].map((h, i) => (
                     <th key={i} style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: '#888', fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                   <th colSpan={2} style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: '#888', fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>고객주문</th>
                 </tr>
                 <tr style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid #2D2D2D' }}>
-                  {['지역', '상품명', '고객전화번호', '주문/CS접수일', '상품위치', '반품신청한곳', '상태', '체크날짜'].map((h, i) => (
+                  {['지역', '상품명', '고객전화번호', '주문번호', '상품위치', '반품신청한곳', '상태', '체크날짜'].map((h, i) => (
                     <th key={i} style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: '#888', fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                   <th style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: '#888', fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>반품링크</th>
@@ -566,7 +566,9 @@ export default function ReturnsPage() {
                         })()}
                       </td>
                       <td style={{ ...tdCenter, maxWidth: '64px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.customer_name || ''}>{r.customer_name || '-'}</td>
-                      <td style={tdCenter}>{r.business_name || '-'}</td>
+                      <td style={{ ...tdCenter, maxWidth: '70px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.market || ''}>
+                        <span>{r.market || '-'}</span>
+                      </td>
                       <td style={{ ...tdCenter, padding: '0.375rem' }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem' }}>
                           <input
@@ -590,10 +592,12 @@ export default function ReturnsPage() {
                           />
                         </div>
                       </td>
-                      <td style={{ ...tdCenter, maxWidth: '70px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.market || ''}>
-                        <span>{r.market || '-'}</span>
+                      <td style={tdCenter}>{r.business_name || '-'}</td>
+                      <td style={{ ...tdCenter, color: '#888' }}>
+                        <div style={{ fontSize: '0.7rem', whiteSpace: 'nowrap' }}>
+                          주문 {fmtMD(r.order_date)} · 접수 {fmtMD(r.return_request_date || r.created_at)}
+                        </div>
                       </td>
-                      <td style={{ ...tdCenter, maxWidth: '90px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.order_number || ''}>{r.order_number || '-'}</td>
                       <td style={{ ...tdCenter, padding: '0.375rem' }}>
                         <input
                           type="text"
@@ -723,12 +727,7 @@ export default function ReturnsPage() {
                           style={{ width: '110px', padding: '0.3rem 0.5rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', fontSize: '0.8rem', textAlign: 'center' }}
                         />
                       </td>
-                      <td style={{ ...tdCenter, color: '#888', maxWidth: '70px' }}>
-                        <div style={{ fontSize: '0.7rem', lineHeight: 1.35, whiteSpace: 'nowrap' }}>
-                          <div>주문 {fmtMD(r.order_date)}</div>
-                          <div>접수 {fmtMD(r.return_request_date || r.created_at)}</div>
-                        </div>
-                      </td>
+                      <td style={{ ...tdCenter, maxWidth: '90px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.order_number || ''}>{r.order_number || '-'}</td>
                       <td style={{ ...tdCenter, padding: '0.375rem' }}>
                         <select
                           value={r.product_location || '고객'}

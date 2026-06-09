@@ -336,23 +336,30 @@ async def list_returns(
 
         acc_stmt = select(
             AccountModel.id,
+            AccountModel.account_label,
             AccountModel.business_name,
             AccountModel.market_name,
         ).where(col(AccountModel.id).in_(channel_ids))
         acc_rows = (await session.execute(acc_stmt)).all()
         for acc in acc_rows:
-            account_map[acc.id] = acc.business_name or acc.market_name or ""
+            # 사업자칸 표시명: account_label('가디'/'소경' 등 별칭) 우선 → 없으면 사업자명/마켓명
+            account_map[acc.id] = (
+                acc.account_label or acc.business_name or acc.market_name or ""
+            )
 
     results = []
     for r in returns:
         data = r.model_dump() if hasattr(r, "model_dump") else r.__dict__.copy()
         # 동적 생성 우선 → DB 값은 폴백
         data["return_link"] = link_map.get(r.order_id) or r.return_link or None
-        # business_name이 없으면 계정에서 동적 보정
-        if not data.get("business_name"):
-            cid = channel_id_map.get(r.order_id)
-            if cid:
-                data["business_name"] = account_map.get(cid) or None
+        # 사업자칸: 계정 별칭(account_label '가디'/'소경')으로 항상 우선 표기.
+        # 생성 시 channel_name(ID성 값)이 박혀도 계정 매칭되면 별칭으로 덮어씀.
+        cid = channel_id_map.get(r.order_id)
+        acc_label = account_map.get(cid) if cid else None
+        if acc_label:
+            data["business_name"] = acc_label
+        elif not data.get("business_name"):
+            data["business_name"] = None
         # order_date가 없으면 주문의 paid_at으로 동적 보정
         if not data.get("order_date"):
             data["order_date"] = order_date_map.get(r.order_id)
