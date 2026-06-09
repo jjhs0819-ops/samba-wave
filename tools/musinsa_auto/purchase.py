@@ -125,6 +125,126 @@ def enter_pin(pin_page, pin: str) -> None:
         log("입력완료 버튼 자동 진행(또는 6자리 후 자동제출)")
 
 
+def _find_page(ctx, substr, timeout=15):
+    """ctx의 열린 페이지 중 URL에 substr 포함된 페이지를 기다려 반환."""
+    end = time.time() + timeout
+    while time.time() < end:
+        for pg in list(ctx.pages):
+            try:
+                if substr in pg.url:
+                    return pg
+            except Exception:
+                pass
+        time.sleep(0.3)
+    return None
+
+
+# 주소폼 Vue 인스턴스에 값을 채우는 JS (무신사 자체 함수 findAddressComplete 활용)
+FILL_ADDR_JS = r"""
+(c) => {
+  const root = document.querySelector('#commonLayoutContents');
+  const vm = root && root.__vue__;
+  if (!vm || !vm.form) return 'NO_VUE';
+  vm.form.name = c.name;
+  vm.form.mobile = c.phone;
+  if (typeof vm.findAddressComplete === 'function') {
+    vm.findAddressComplete({ zipcode: c.postal, address1: c.addr });
+  } else {
+    vm.form.zipcode = c.postal;
+    vm.form.address1 = c.addr;
+  }
+  vm.form.address2 = c.addr2;
+  if (c.memo) {
+    const presets = (vm.ui && vm.ui.additionalMessageType) || [];
+    if (presets.includes(c.memo)) {
+      vm.form.additionalMessage = c.memo;
+    } else {
+      vm.form.additionalMessage = '직접입력';
+      vm.form.additionalMessageManual = c.memo;
+    }
+  }
+  return 'OK:' + JSON.stringify({
+    name: vm.form.name, mobile: vm.form.mobile,
+    zipcode: vm.form.zipcode, address1: vm.form.address1, address2: vm.form.address2,
+  });
+}
+"""
+
+
+def set_address(ctx, order_page, c: dict) -> None:
+    """주문서에서 고객 배송지를 입력/선택한다.
+
+    전략: 비-기본 배송지 슬롯을 재사용(수정)해 고객정보로 덮어쓰고 선택.
+    (기본 배송지는 건드리지 않는다.) 비-기본 슬롯이 없으면 '배송지 추가하기'.
+    """
+    log("🚚 배송지 변경 클릭...")
+    order_page.locator("text=배송지 변경").first.click(timeout=8000)
+    lst = _find_page(ctx, "/addresses/order", 15)
+    if not lst:
+        raise RuntimeError("배송지 목록 팝업을 찾지 못했습니다.")
+    lst.wait_for_load_state("domcontentloaded")
+    lst.wait_for_timeout(1500)
+
+    # 비-기본(삭제 버튼 있는) 항목의 '수정' 진입, 없으면 추가
+    edit_btn = lst.locator(
+        ".order-address-item:has(button:has-text('삭제')) button:has-text('수정')"
+    )
+    if edit_btn.count() > 0:
+        log("기존 비기본 배송지 슬롯 '수정' 진입(덮어쓰기)")
+        edit_btn.first.click()
+        if not _wait_url_contains(lst, "/addresses/update/", 15):
+            log(f"(현재 URL: {lst.url})")
+    else:
+        log("'배송지 추가하기' 진입")
+        lst.locator("a.order-address-item__add").first.click()
+        if not _wait_url_contains(lst, "/addresses/add", 15):
+            log(f"(현재 URL: {lst.url})")
+    lst.wait_for_timeout(1800)
+
+    # Vue form 채우기
+    res = lst.evaluate(FILL_ADDR_JS, c)
+    log(f"폼 채움 결과: {res}")
+    if res == "NO_VUE":
+        shot(lst, "addr_no_vue")
+        raise RuntimeError("주소폼 Vue 인스턴스 접근 실패(__vue__). 화면 확인 필요.")
+    lst.wait_for_timeout(800)
+    shot(lst, "addr_filled")
+
+    # 저장(formSubmit)
+    log("주소 저장(formSubmit)...")
+    lst.evaluate(
+        "() => { const vm=document.querySelector('#commonLayoutContents').__vue__; vm.formSubmit(); }"
+    )
+    # 저장 성공 시 목록으로 복귀
+    if not _wait_url_contains(lst, "/addresses/order", 15):
+        log(f"(저장 후 URL: {lst.url}) — 검증 실패했을 수 있음")
+        shot(lst, "addr_after_submit")
+    lst.wait_for_timeout(1500)
+
+    # 방금 저장한 고객 주소 선택 + 변경하기
+    log(f"'{c['name']}' 배송지 선택...")
+    try:
+        lst.locator(f".order-address-item__information:has-text(\"{c['name']}\")").first.click(timeout=5000)
+    except Exception:
+        log("이름으로 항목 클릭 실패 — 첫 항목 라디오 시도")
+    lst.wait_for_timeout(500)
+    lst.locator(".page-button button").first.click(timeout=5000)  # 변경하기
+    log("변경하기 클릭 — 주문서로 복귀")
+    order_page.wait_for_timeout(2500)
+
+
+def _wait_url_contains(page, substr, timeout=15) -> bool:
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            if substr in page.url:
+                return True
+        except Exception:
+            pass
+        time.sleep(0.3)
+    return False
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("url")
@@ -133,6 +253,13 @@ def main() -> None:
     ap.add_argument("--max", type=int, default=150000, help="최대 결제 허용 금액(원)")
     ap.add_argument("--pin", default=os.environ.get("MUSINSA_PIN", ""),
                     help="결제 비밀번호 (기본: 환경변수 MUSINSA_PIN)")
+    # 고객 배송지 (지정 시 주소 자동입력 수행)
+    ap.add_argument("--name", help="받는분 이름")
+    ap.add_argument("--phone", help="연락처 (010-XXXX-XXXX)")
+    ap.add_argument("--postal", help="우편번호 (5자리)")
+    ap.add_argument("--addr", help="기본주소(도로명)")
+    ap.add_argument("--addr2", help="상세주소")
+    ap.add_argument("--memo", default="", help="배송 메모")
     args = ap.parse_args()
 
     if args.stage == "full" and not args.pin:
@@ -164,6 +291,15 @@ def main() -> None:
             log(f"(현재 URL: {page.url})")
         page.wait_for_timeout(2500)
         shot(page, "order_form")
+
+        # 고객 배송지 자동입력 (--name 지정 시)
+        if args.name:
+            customer = {
+                "name": args.name, "phone": args.phone, "postal": args.postal,
+                "addr": args.addr, "addr2": args.addr2, "memo": args.memo,
+            }
+            set_address(ctx, page, customer)
+            shot(page, "order_form_with_address")
 
         # 금액 확인 (상한 체크)
         total = read_total_amount(page)
