@@ -64,6 +64,8 @@ def main() -> None:
     logf = open(LOG_PATH, "w", encoding="utf-8")
 
     def write_line(obj: dict) -> None:
+        if logf.closed:
+            return  # 종료 중 들어온 이벤트는 무시
         logf.write(json.dumps(obj, ensure_ascii=False) + "\n")
         logf.flush()
 
@@ -144,10 +146,10 @@ def main() -> None:
             except Exception:
                 pass
 
-        logf.close()
         print(f"\n✅ 기록 완료: 클릭 {count}건 → {LOG_PATH}")
         print("📤 이 파일을 개발자에게 업로드하세요.", flush=True)
-        ctx.close()
+        ctx.close()        # 먼저 브라우저/리스너 종료
+        logf.close()       # 그 다음 파일 닫기 (종료 중 이벤트는 write_line이 무시)
 
 
 if __name__ == "__main__":
