@@ -92,14 +92,15 @@ def click_buy(page) -> None:
 
 def read_total_amount(page) -> int:
     """주문서의 '총 결제 금액'을 정수(원)로 읽어온다. 실패하면 -1."""
+    import re
     try:
-        # "총 결제 금액" 근처의 숫자를 찾는다
         body = page.locator("body").inner_text()
-        import re
-        # "총 결제 금액 ... 45,120원" 패턴
-        m = re.search(r"총\s*결제\s*금액[^0-9]*([\d,]+)\s*원", body)
-        if m:
-            return int(m.group(1).replace(",", ""))
+        # "총 결제 금액 ... 8% 45,120원" → 3자리 이상 숫자만 인정(8% 같은 한자리 무시)
+        for pat in (r"총\s*결제\s*금액[\s\S]{0,30}?([\d,]{3,})\s*원",
+                    r"([\d,]{4,})\s*원\s*결제하기"):
+            m = re.search(pat, body)
+            if m:
+                return int(m.group(1).replace(",", ""))
     except Exception:
         pass
     return -1
