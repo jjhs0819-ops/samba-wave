@@ -81,13 +81,30 @@ def main() -> None:
 
         print("\n" + "=" * 64)
         print("🟢 기록 시작! 클릭하면 아래에 '📍 클릭' 이 떠야 정상입니다.")
-        print("   1) 사이즈/옵션 선택  2) 구매하기  3) 주문서 화면까지")
-        print("   ⚠️  실제 결제 비밀번호는 입력하지 마세요! (주문서까지만)")
-        print("   끝나면 이 터미널에서 Enter 를 누르세요.")
+        print("   1) 사이즈/옵션 선택  2) 구매하기  3) 주문서  4) 결제 비번 화면")
+        print("   ⚠️  실제 결제 비밀번호는 입력하지 마세요!")
+        print("   💾 화면 저장: 원하는 화면에서 터미널에 'd' 입력 후 Enter")
+        print("      → 꼭 저장할 화면: (a)사이즈 목록이 열린 상태 (b)주문서 (c)비번 화면")
+        print("   🏁 끝내기: 그냥 Enter (빈 줄)")
         print("=" * 64 + "\n", flush=True)
 
         last_urls: dict = {}
         count = 0
+        dump_idx = 0
+
+        def do_dump() -> None:
+            nonlocal dump_idx
+            dump_idx += 1
+            for i, pg in enumerate(list(ctx.pages)):
+                try:
+                    base = os.path.join(OUT_DIR, f"dump{dump_idx}_p{i}")
+                    pg.screenshot(path=base + ".png", full_page=True)
+                    with open(base + ".html", "w", encoding="utf-8") as f:
+                        f.write(pg.content())
+                    print(f"  💾 저장: {base}.png / .html  ({pg.url[:48]})", flush=True)
+                except Exception as e:
+                    print(f"  💾 저장 실패(탭{i}): {e}", flush=True)
+
         while True:
             # 모든 열린 탭을 순회하며 클릭 버퍼를 비워 기록
             for pg in list(ctx.pages):
@@ -109,11 +126,14 @@ def main() -> None:
                 except Exception:
                     pass  # 페이지 이동/닫힘 중이면 다음 루프에
 
-            # Enter 입력 감지 (0.3초 타임아웃 폴링)
+            # 입력 감지 (0.3초 타임아웃 폴링): 'd'=화면저장, 빈줄=종료
             r, _, _ = select.select([sys.stdin], [], [], 0.3)
             if r:
-                sys.stdin.readline()
-                break
+                cmd = sys.stdin.readline().strip().lower()
+                if cmd == "d":
+                    do_dump()
+                else:
+                    break
 
         # 종료 직전 마지막 버퍼 한 번 더 수거
         for pg in list(ctx.pages):
