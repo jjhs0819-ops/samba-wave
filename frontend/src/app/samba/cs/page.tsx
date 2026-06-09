@@ -341,6 +341,12 @@ export default function CSPage() {
     }
   }
 
+  // 고객/주문번호 검색 — 동기화가 아니라 목록 필터만 (search state 변경 → load 재실행)
+  const handleFilterSearch = () => {
+    setPage(0)
+    setSearch(searchInput.trim())
+  }
+
   // 전체 선택
   const toggleAll = () => {
     if (selected.size === inquiries.length) {
@@ -514,8 +520,8 @@ export default function CSPage() {
 
       {/* 필터 바 */}
       <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
-        <input style={{ ...inputStyle, width: '150px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={searchInput} onChange={e => setSearchInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleSearch() }} placeholder='고객/주문번호 검색' />
-        <button onClick={handleSearch} style={{ background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', padding: '0 0.6rem', borderRadius: '4px', fontSize: '0.75rem', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap', height: '28px' }}>검색</button>
+        <input style={{ ...inputStyle, width: '150px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={searchInput} onChange={e => setSearchInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleFilterSearch() }} placeholder='고객/주문번호 검색' />
+        <button onClick={handleFilterSearch} style={{ background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', padding: '0 0.6rem', borderRadius: '4px', fontSize: '0.75rem', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap', height: '28px' }}>검색</button>
         <button
           onClick={handleBatchDelete}
           style={{ padding: '0 0.6rem', fontSize: '0.75rem', background: 'transparent', border: '1px solid #FF6B6B33', borderRadius: '4px', color: '#FF6B6B', cursor: 'pointer', whiteSpace: 'nowrap', height: '28px', lineHeight: '26px' }}
