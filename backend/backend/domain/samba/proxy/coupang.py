@@ -1480,6 +1480,9 @@ class CoupangClient:
         mapped_company_code = self.DELIVERY_COMPANY_MAP.get(
             delivery_company_code, delivery_company_code
         )
+        # 쿠팡은 하이픈/공백 들어간 송장번호 거부(INVALID_INVOICE_NUMBER)
+        # 예: "2612-1362-5746" → "261213625746" 로 정규화 후 전송
+        clean_invoice = (invoice_number or "").replace("-", "").replace(" ", "")
         body = {
             "vendorId": self.vendor_id,
             "orderSheetInvoiceApplyDtos": [
@@ -1488,7 +1491,7 @@ class CoupangClient:
                     "orderId": order_id,
                     "vendorItemId": vendor_item_id,
                     "deliveryCompanyCode": mapped_company_code,
-                    "invoiceNumber": invoice_number,
+                    "invoiceNumber": clean_invoice,
                     "splitShipping": False,
                     "preSplitShipped": False,
                     "estimatedShippingDate": "",
@@ -1505,6 +1508,14 @@ class CoupangClient:
                 if not first.get("succeed"):
                     code = first.get("resultCode") or "UNKNOWN"
                     msg = first.get("resultMessage") or ""
+                    # INVALID_STATUS = 이미 송장 들어가 배송진행중인 주문(중복 전송).
+                    # 송장은 이미 반영된 상태라 멱등 성공으로 처리.
+                    if code == "INVALID_STATUS":
+                        logger.info(
+                            f"[쿠팡] 이미 배송중(송장 반영됨): boxId={shipment_box_id} "
+                            f"orderId={order_id} {msg}"
+                        )
+                        return result
                     return {
                         "ok": False,
                         "error": f"{code} {msg}".strip(),
@@ -1513,7 +1524,7 @@ class CoupangClient:
         except Exception:
             pass
         logger.info(
-            f"[쿠팡] 송장 입력 완료: boxId={shipment_box_id}, orderId={order_id}, vendorItemId={vendor_item_id}, 송장={invoice_number}"
+            f"[쿠팡] 송장 입력 완료: boxId={shipment_box_id}, orderId={order_id}, vendorItemId={vendor_item_id}, 송장={clean_invoice}"
         )
         return result
 

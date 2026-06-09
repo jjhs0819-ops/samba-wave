@@ -13,6 +13,11 @@ import { STATUS_MAP, SHIPPING_COMPANIES, ACTION_BUTTONS } from '../constants'
 import { parseActionTags } from '../utils/actionTag'
 import OrderInfoCell from './OrderInfoCell'
 
+// 같은 주문 송장 동시 전송 차단 — 송장번호 input blur + 마켓전송 버튼 click 이
+// 동시에 발동해 중복 전송되면, 첫 전송 성공 후 두 번째가 INVALID_STATUS 실패로 잡힘.
+// 전송 중인 주문 id를 담아 두 번째 호출을 무시한다.
+const _shippingInFlight = new Set<string>()
+
 // Props 타입 정의
 interface OrdersTableProps {
   // 데이터
@@ -473,6 +478,8 @@ export default function OrdersTable(props: OrdersTableProps) {
                             patchOrder(o.id, { shipping_company: co, tracking_number: tn })
                             setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 수정 저장완료 (${co} ${tn}) — 마켓에서는 송장수정이 반영되지 않습니다. 마켓 판매자센터에서 직접 수정해주세요.`])
                           } else if (co && tn) {
+                            if (_shippingInFlight.has(o.id)) return
+                            _shippingInFlight.add(o.id)
                             const ts = fmtTime
                             setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 전송 중... (${co} ${tn})`])
                             try {
@@ -489,6 +496,8 @@ export default function OrdersTable(props: OrdersTableProps) {
                               await orderApi.updateStatus(o.id, 'ship_failed').catch(() => {})
                               patchOrder(o.id, { shipping_company: co, tracking_number: tn, status: 'ship_failed' })
                               setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 전송 실패`])
+                            } finally {
+                              setTimeout(() => _shippingInFlight.delete(o.id), 1500)
                             }
                           } else if (co) {
                             try { await orderApi.update(o.id, { shipping_company: co }) } catch { /* ignore */ }
@@ -518,6 +527,8 @@ export default function OrdersTable(props: OrdersTableProps) {
                             patchOrder(o.id, { shipping_company: co, tracking_number: tn })
                             setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 수정 저장완료 (${co} ${tn}) — 마켓에서는 송장수정이 반영되지 않습니다. 마켓 판매자센터에서 직접 수정해주세요.`])
                           } else if (co && tn && (changed || retry)) {
+                            if (_shippingInFlight.has(o.id)) return
+                            _shippingInFlight.add(o.id)
                             const ts = fmtTime
                             setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 전송 중... (${co} ${tn})`])
                             try {
@@ -534,6 +545,8 @@ export default function OrdersTable(props: OrdersTableProps) {
                               await orderApi.updateStatus(o.id, 'ship_failed').catch(() => {})
                               patchOrder(o.id, { shipping_company: co, tracking_number: tn, status: 'ship_failed' })
                               setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 전송 실패`])
+                            } finally {
+                              setTimeout(() => _shippingInFlight.delete(o.id), 1500)
                             }
                           } else if (tn && tn !== (o.tracking_number || '')) {
                             try { await orderApi.update(o.id, { tracking_number: tn }) } catch { /* ignore */ }
@@ -550,6 +563,8 @@ export default function OrdersTable(props: OrdersTableProps) {
                             setLogMessages(prev => [...prev, `[${fmtTime()}] ${o.order_number} 택배사/송장번호 누락 — 전송 불가`])
                             return
                           }
+                          if (_shippingInFlight.has(o.id)) return
+                          _shippingInFlight.add(o.id)
                           setLogMessages(prev => [...prev, `[${fmtTime()}] ${o.order_number} 마켓 전송 중... (${co} ${tn})`])
                           try {
                             const res = await orderApi.shipOrder(o.id, co, tn)
@@ -564,6 +579,8 @@ export default function OrdersTable(props: OrdersTableProps) {
                             await orderApi.updateStatus(o.id, 'ship_failed').catch(() => {})
                             patchOrder(o.id, { shipping_company: co, tracking_number: tn, status: 'ship_failed' })
                             setLogMessages(prev => [...prev, `[${fmtTime()}] ${o.order_number} 마켓 전송 실패: ${(err as Error).message}`])
+                          } finally {
+                            setTimeout(() => _shippingInFlight.delete(o.id), 1500)
                           }
                         }}
                         style={{ padding: '0.18rem 0.5rem', fontSize: '0.7rem', borderRadius: '4px', background: o.status === 'ship_failed' ? '#dc2626' : '#16a34a', color: '#fff', border: '1px solid #4b5563', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
