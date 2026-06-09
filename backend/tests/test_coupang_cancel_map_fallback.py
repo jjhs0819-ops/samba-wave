@@ -79,21 +79,76 @@ class TestUnmatchedCancelLoggingPresent:
 
 
 class TestCoupangSyncStatusListDocumented:
-    """fix B — coupang.py 의 returnRequests status 리스트 의도 주석 보강."""
+    """fix B — coupang.py 의 returnRequests status 리스트 + 공식 의미 주석."""
 
     def setup_method(self) -> None:
         self.src = COUPANG_PY.read_text(encoding="utf-8")
 
     def test_four_statuses_kept(self) -> None:
-        """4개 status (RU, CC, PR, UC) 유지 — UC 가 출고중지요청 잡음."""
+        """4개 status (RU, CC, PR, UC) 유지 — RETURN 카테고리 전체 합산."""
         assert '["RU", "CC", "PR", "UC"]' in self.src, (
-            "쿠팡 status 리스트 변형 — UC 가 출고중지요청 잡으므로 유지 필요"
+            "쿠팡 status 리스트 변형 — 4개 합산 호출 필요"
         )
 
-    def test_release_stop_unchecked_intent_documented(self) -> None:
-        """UC = RELEASE_STOP_UNCHECKED 의도가 주석에 명시되어 있어야."""
-        assert "RELEASE_STOP_UNCHECKED" in self.src or "출고전 중지요청" in self.src, (
-            "UC=출고중지요청미확인 의도 주석 누락 — 다음 개발자가 모르고 status 빼는 회귀"
+    def test_ru_is_release_stop_request(self) -> None:
+        """RU = 출고중지요청 의미가 주석에 명시 (공식 API 문서 기준).
+
+        2026-06-09 팀장님 피드백: 옛 주석은 UC=출고중지요청미확인으로 잘못 명시.
+        공식: RU = 출고중지요청 (상품준비중 단계 고객 취소요청).
+        """
+        assert "RU = 출고중지요청" in self.src, (
+            "RU = 출고중지요청 의미 주석 누락 — 공식 API 명세 위반"
+        )
+
+    def test_uc_is_returns_request(self) -> None:
+        """UC = 반품접수 의미가 주석에 명시 (공식 기준)."""
+        assert "UC = 반품접수" in self.src, "UC = 반품접수 의미 주석 누락"
+
+
+class TestCancelTypeCancelCallAdded:
+    """팀장님 피드백 보강 — cancelType=CANCEL 별도 호출.
+
+    공식 API 명시: "결제완료 단계에서 취소된 주문 조회를 위해서는 status, orderId
+    파라메터를 제외하고 cancelType=CANCEL 파라메터를 사용해야 합니다."
+
+    PR #390 초안엔 누락돼 결제 직후 취소 케이스가 통째로 sync 못 잡았음.
+    """
+
+    def setup_method(self) -> None:
+        self.src = COUPANG_PY.read_text(encoding="utf-8")
+
+    def test_get_return_requests_accepts_cancel_type_param(self) -> None:
+        """get_return_requests 함수 시그니처에 cancel_type 파라미터 존재."""
+        assert 'cancel_type: str = ""' in self.src, (
+            "get_return_requests 에 cancel_type 파라미터 누락"
+        )
+
+    def test_cancel_type_branch_uses_correct_param_name(self) -> None:
+        """cancel_type='CANCEL' 호출 시 쿠팡 API 가 받는 정확한 파라미터명 'cancelType' 사용."""
+        assert '"cancelType": "CANCEL"' in self.src, (
+            "cancelType=CANCEL 파라미터 누락 — 공식 API 명세 위반"
+        )
+
+    def test_cancel_type_branch_excludes_status(self) -> None:
+        """cancelType=CANCEL 호출 시 status 파라미터 제외 (공식 명세)."""
+        # CANCEL 분기 추출 (cancel_type.upper() == "CANCEL" 시점부터 다음 if/return 까지)
+        idx = self.src.find('cancel_type.upper() == "CANCEL"')
+        assert idx != -1
+        # 그 분기 직후 ~500자 안에 'status' 파라미터 명시 없어야 (status= 검사)
+        branch = self.src[idx : idx + 1500]
+        # status_freq, statuses 같은 다른 변수와 구분
+        assert '"status": st' not in branch, (
+            "CANCEL 분기에 status 파라미터 포함 — 공식 명세 위반 (제외 필요)"
+        )
+
+    def test_unified_call_invokes_both_categories(self) -> None:
+        """get_cancel_and_return_requests 가 RETURN + CANCEL 둘 다 호출."""
+        # 함수 본문에 cancel_type="CANCEL" 호출이 있어야 함
+        unified_idx = self.src.find("async def get_cancel_and_return_requests")
+        assert unified_idx != -1
+        body = self.src[unified_idx : unified_idx + 3000]
+        assert 'cancel_type="CANCEL"' in body or "cancel_type='CANCEL'" in body, (
+            "get_cancel_and_return_requests 가 CANCEL 카테고리 별도 호출 누락"
         )
 
 
