@@ -2248,6 +2248,9 @@ async def _do_sync_cs_from_markets(
                             changed = True
                         if changed:
                             session.add(existing_row)
+                            # get_write_session는 auto-commit 안 함 → 명시적 commit 필수
+                            # (안 하면 product_link/매칭/reply_status 갱신이 롤백됨)
+                            await session.commit()
                         continue
 
                     raw_date = qna.get("WriteDate") or qna.get("QDate")
