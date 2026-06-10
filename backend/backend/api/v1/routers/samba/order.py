@@ -7661,6 +7661,14 @@ async def sync_orders_from_markets(
                         _ch_id,
                         _lh_style_cache,
                     )
+                # 3.6) 쿠팡 vendor_item_id 글로벌 폴백 — _pid(productId) 오저장/노후화 대비 (#398).
+                # 등록 직후 임시 productId가 승인 후 바뀌어도 _vid(옵션ID)는 안정적.
+                if not _matched:
+                    _vid = str(order_data.get("vendor_item_id") or "")
+                    if _vid:
+                        _cand = _mpn_global.get(_vid)
+                        if _cand and not _cand.get("ambiguous"):
+                            _matched = _cand
                 # 플레이오토 별칭(site_id) 단위 매칭 검증 — 1 channel_id에 5개 별칭이
                 # 묶인 구조에서 사용자가 특정 별칭에만 등록한 cp가 다른 별칭 주문에
                 # 잘못 매칭되는 것을 차단. cp.market_product_nos에 `{account_id}_sites`
