@@ -3062,6 +3062,54 @@ async def approve_cancel(
         logger.info(f"[취소승인][SSG] {order.order_number} 취소승인 완료")
         return {"ok": True, "message": "SSG 취소승인 완료"}
 
+    elif account.market_type in ("gmarket", "auction"):
+        # ESM(옥션/G마켓) 취소승인 — PUT /claim/v1/sa/Cancel/{OrderNo}
+        # site_type: 옥션=1, G마켓=2 (PUT 엔드포인트 기준, search_cancels 의 1/3 과 다름)
+        from backend.domain.samba.proxy.esmplus import (
+            ESMPlusClient,
+            resolve_esm_credentials,
+        )
+        from backend.domain.samba.returns.repository import SambaReturnRepository
+
+        hosting_id, secret_key = await resolve_esm_credentials(session, account)
+        seller_id = (account.seller_id or "").strip()
+        if not hosting_id or not secret_key:
+            raise HTTPException(status_code=400, detail="ESM 인증정보 없음")
+        if not seller_id:
+            raise HTTPException(status_code=400, detail="ESM seller_id 없음")
+
+        site_type = 2 if account.market_type == "gmarket" else 1
+        client = ESMPlusClient(
+            hosting_id, secret_key, seller_id, site=account.market_type
+        )
+        try:
+            await client.approve_cancel_by_orderno(order.order_number, site_type)
+        except Exception as e:
+            # 옥션 resultCode=8668 (BizRuleCode W8-2) = 이미 취소승인된 건 → 멱등 성공 처리
+            if "8668" in str(e):
+                logger.info(
+                    f"[취소승인][ESM] {order.order_number} 이미 취소승인됨(멱등 처리)"
+                )
+            else:
+                raise HTTPException(status_code=500, detail=f"취소승인 실패: {e}")
+        finally:
+            try:
+                await client.aclose()
+            except Exception:
+                pass
+
+        # status='cancelled' 도 같이 변경 — 다른 마켓 분기와 일관(빨간 '취소요청' 배지 제거)
+        await svc.update_order(
+            order_id, {"shipping_status": "취소완료", "status": "cancelled"}
+        )
+        ret_repo = SambaReturnRepository(session)
+        for ret in await ret_repo.filter_by_async(order_id=order_id):
+            await ret_repo.update_async(
+                ret.id, status="cancelled", market_order_status="취소완료"
+            )
+        logger.info(f"[취소승인][ESM] {order.order_number} 취소승인 완료")
+        return {"ok": True, "message": "ESM 취소승인 완료"}
+
     else:
         raise HTTPException(
             status_code=400, detail=f"{account.market_type} 취소승인 미지원"
