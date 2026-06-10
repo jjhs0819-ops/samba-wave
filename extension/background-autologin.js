@@ -785,6 +785,7 @@ async function _ensureLoggedInImpl(siteKey, accountId) {
 
   try {
     let ok = false
+    _spaLoginFatal = null // 이전 사이트/계정의 fatal 잔존값 제거
     for (let attempt = 1; attempt <= AUTO_LOGIN_MAX_RETRIES; attempt++) {
       console.log(`[자동로그인] ${site.name} 시도 (${attempt}/${AUTO_LOGIN_MAX_RETRIES})`)
       ok = await _ensureLoggedInSingle(siteKey, accountId)
