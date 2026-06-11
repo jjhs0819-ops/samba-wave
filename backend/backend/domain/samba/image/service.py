@@ -921,6 +921,9 @@ class ImageTransformService:
         "innerplan.co.kr",
         "yswholesale.com",
         "cloudinary.com",
+        # ABCMart CDN — SSG 등록 시 서버 fetch 차단으로 이미지 미표시
+        # → R2 선미러 필요
+        "image.a-rt.com",
     )
 
     async def mirror_external_to_r2(
