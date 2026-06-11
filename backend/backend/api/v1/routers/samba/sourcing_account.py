@@ -866,10 +866,37 @@ class RewardRunRequest(BaseModel):
     actions: Optional[list[str]] = None  # None이면 사이트별 전체 액션
 
 
+def _reward_owner_override(site: str, trigger_device_id: Optional[str]) -> Optional[str]:
+    """수동 적립 실행 시 잡 owner 결정 — 오토튠 PC 바인딩과 동일 맥락.
+
+    트리거 PC(버튼 누른 브라우저)의 device_id 가 있으면, 확장앱 라우팅 사이트
+    (무신사/GSShop/KREAM/NAVERSTORE)는 그 PC 에 owner 를 박아 **다른 PC(예: 팀장님 PC)
+    가 잡을 가로채지 못하게** 한다. 즉 실행을 누른 그 컴퓨터에서만 돌아간다.
+
+    데몬 전용 사이트(SSG/ABCmart/LOTTEON 등)는 브라우저 device 에 바인딩 불가 →
+    None 반환해 기존 데몬 라우팅(add_reward_job 내부 _resolve_job_owner) 유지.
+    trigger_device_id 없으면(자동 스케줄러/확장앱 미설치 PC) None → 기존 라운드로빈 동작.
+    """
+    dev = (trigger_device_id or "").strip()
+    if not dev or dev.startswith("samba-daemon-"):
+        return None
+    from backend.domain.samba.proxy.sourcing_queue import _daemon_only_for_job
+
+    if (site or "").upper() in {s.upper() for s in _daemon_only_for_job("reward")}:
+        return None  # 데몬 전용 — 브라우저 PC 바인딩 불가, 기존 데몬 라우팅 유지
+    return dev
+
+
 async def _enqueue_reward_for_account(
-    account, actions: Optional[list[str]] = None
+    account,
+    actions: Optional[list[str]] = None,
+    trigger_device_id: Optional[str] = None,
 ) -> list[dict]:
-    """소싱처 계정 1개에 대해 reward 잡 적재. 24h 내 동일 액션은 스킵."""
+    """소싱처 계정 1개에 대해 reward 잡 적재. 24h 내 동일 액션은 스킵.
+
+    trigger_device_id: 버튼 누른 PC 의 확장앱 device_id. 확장앱 라우팅 사이트는
+    이 PC 에 owner 를 박아 해당 PC 에서만 실행되게 한다(_reward_owner_override).
+    """
     from backend.domain.samba.proxy.sourcing_queue import (
         SITE_REWARD_ACTIONS,
         SourcingQueue,
@@ -905,6 +932,7 @@ async def _enqueue_reward_for_account(
                 site=site,
                 action=action,
                 sourcing_account_id=account.id,
+                owner_device_id=_reward_owner_override(site, trigger_device_id),
             )
             enqueued.append({"action": action, "request_id": request_id})
         except Exception as e:
@@ -917,10 +945,17 @@ async def _enqueue_reward_for_account(
 @router.post("/rewards/run-now")
 async def run_rewards_now(
     body: RewardRunRequest,
+    request: Request,
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
-    """수동 1회 실행 — 활성 소싱처 계정 전체에 reward 잡 적재."""
+    """수동 1회 실행 — 활성 소싱처 계정 전체에 reward 잡 적재.
+
+    X-Device-Id(버튼 누른 PC)를 잡 owner 로 박아 확장앱 라우팅 사이트는 그 PC 에서만
+    실행되게 한다(오토튠과 동일). 데몬 전용 사이트는 기존 데몬 라우팅 유지.
+    """
     from backend.domain.samba.sourcing_account.model import SambaSourcingAccount
+
+    trigger_device_id = (request.headers.get("X-Device-Id") or "").strip()
 
     stmt = select(SambaSourcingAccount).where(
         SambaSourcingAccount.site_name.in_(  # type: ignore[attr-defined]
@@ -933,7 +968,9 @@ async def run_rewards_now(
 
     summary: list[dict] = []
     for a in accounts:
-        enq = await _enqueue_reward_for_account(a, actions=body.actions)
+        enq = await _enqueue_reward_for_account(
+            a, actions=body.actions, trigger_device_id=trigger_device_id
+        )
         summary.append(
             {
                 "account_id": a.id,
@@ -951,14 +988,21 @@ async def run_rewards_now(
 async def run_rewards_for_account(
     account_id: str,
     body: RewardRunRequest,
+    request: Request,
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
-    """특정 계정만 즉시 실행. 24h 가드 무시(사용자 수동 의도)."""
+    """특정 계정만 즉시 실행. 24h 가드 무시(사용자 수동 의도).
+
+    X-Device-Id(버튼 누른 PC)를 잡 owner 로 박아 확장앱 라우팅 사이트는 그 PC 에서만
+    실행되게 한다(오토튠과 동일). 데몬 전용 사이트는 기존 데몬 라우팅 유지.
+    """
     from backend.domain.samba.proxy.sourcing_queue import (
         SITE_REWARD_ACTIONS,
         SourcingQueue,
     )
     from backend.domain.samba.sourcing_account.model import SambaSourcingAccount
+
+    trigger_device_id = (request.headers.get("X-Device-Id") or "").strip()
 
     account = await session.get(SambaSourcingAccount, account_id)
     if not account:
@@ -975,6 +1019,7 @@ async def run_rewards_for_account(
                 site=site,
                 action=action,
                 sourcing_account_id=account.id,
+                owner_device_id=_reward_owner_override(site, trigger_device_id),
             )
             enqueued.append({"action": action, "request_id": request_id})
         except Exception as e:
