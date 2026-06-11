@@ -144,8 +144,8 @@ def _get_rembg_session():
             if _rembg_session is None:
                 from rembg import new_session
 
-                _rembg_session = new_session("u2net")
-                print("[Worker] rembg 세션 초기화 완료 (u2net)")
+                _rembg_session = new_session("isnet-general-use")
+                print("[Worker] rembg 세션 초기화 완료 (isnet-general-use)")
     return _rembg_session
 
 
