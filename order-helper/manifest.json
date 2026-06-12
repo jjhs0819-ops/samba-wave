@@ -25,12 +25,6 @@
     },
     {
       "matches": ["https://samba-wave-xi.vercel.app/*"],
-      "js": ["inject-samba-main.js"],
-      "run_at": "document_start",
-      "world": "MAIN"
-    },
-    {
-      "matches": ["https://samba-wave-xi.vercel.app/*"],
       "js": ["content-samba.js"],
       "run_at": "document_idle"
     },

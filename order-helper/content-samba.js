@@ -2,7 +2,6 @@
 // 원문링크 클릭 → 주문 카드에서 고객정보 파싱 → source_url 캡처 → 자동주문 시작.
 (function () {
   const log = (...a) => console.log('%c[주문도우미·삼바]', 'color:#1971c2;font-weight:bold', ...a);
-  let pending = null;
 
   function toast(msg, color = '#1971c2') {
     let el = document.getElementById('__oh_toast');
@@ -77,47 +76,36 @@
     return { name, phone, postal, addr, addr2, memo, size, optionRaw, qty: parseInt(qty) || 1, extNo, ordNo };
   }
 
-  // 원문링크 클릭을 capture 단계에서 감지 (React onClick 보다 먼저 실행)
+  // 원문링크 클릭을 capture 단계에서 감지 (React onClick 보다 먼저 실행).
+  // 작업(job)만 저장하고, 무신사 탭은 원래 원문링크(window.open) 동작 그대로 열림.
+  // 무신사 탭이 뜨면 content-musinsa가 저장된 job을 읽어 자동 진행.
   document.addEventListener('click', (e) => {
     const btn = e.target.closest && e.target.closest('button');
     if (!btn) return;
     const txt = (btn.textContent || '').replace(/\s/g, '');
-    // 디버그: '링크' 들어간 버튼 클릭은 모두 로그 (진단용)
     if (txt.includes('링크')) log('버튼 클릭 감지:', JSON.stringify(txt));
-    // '원문링크' 정확히 (원주문링크=마켓 이동이라 제외)
-    if (txt === '원문링크') {
-      const o = parseOrderCard(btn);
-      if (!o || !o.name || !o.addr) {
-        log('주문 파싱 실패(원문링크는 정상 동작) →', o);
-        toast('주문 정보를 못 읽어 자동주문 미실행 (원문링크만 열림)', '#c92a2a');
-        pending = null;
-        return; // 무장 안 함 → window.open 정상 동작
-      }
-      pending = o;
-      window.dispatchEvent(new CustomEvent('OH_ARM')); // MAIN world 무장
-      log('원문링크 트리거 무장 →', o);
-    }
-  }, true);
+    if (txt !== '원문링크') return; // 원주문링크=마켓 이동이라 제외
 
-  // MAIN world에서 source_url 캡처되면 자동주문 시작
-  window.addEventListener('OH_TRIGGER', (e) => {
-    const url = e.detail && e.detail.url;
-    if (!pending || !url) return;
-    const p = pending; pending = null;
+    const o = parseOrderCard(btn);
+    if (!o || !o.name || !o.addr) {
+      log('주문 파싱 실패(원문링크는 정상 동작) →', o);
+      toast('주문 정보를 못 읽어 자동주문 미실행 (원문링크만 열림)', '#c92a2a');
+      return;
+    }
     const job = {
       status: 'active', phase: 'start',
-      size: p.size, quantity: p.qty,
-      orderId: p.ordNo || p.extNo || '',
-      extNo: p.extNo, ordNo: p.ordNo,
+      size: o.size, quantity: o.qty,
+      orderId: o.ordNo || o.extNo || '',
+      extNo: o.extNo, ordNo: o.ordNo,
       customer: {
-        name: p.name, phone: p.phone, postal: p.postal,
-        addr: p.addr, addr2: p.addr2, memo: p.memo,
+        name: o.name, phone: o.phone, postal: o.postal,
+        addr: o.addr, addr2: o.addr2, memo: o.memo,
       },
     };
-    log('자동주문 시작 →', { url, job });
-    toast(`자동주문 시작: ${p.name} / ${p.size} / 우편 ${p.postal}`, '#2b8a3e');
-    chrome.runtime.sendMessage({ type: 'START_JOB', job, productUrl: url }, (res) => log('START_JOB', res));
-  });
+    chrome.storage.local.set({ job }, () => log('자동주문 job 저장 →', job));
+    toast(`자동주문 준비: ${o.name} / ${o.size}${o.postal ? ' / 우편 ' + o.postal : ''} — 무신사 탭에서 진행`, '#2b8a3e');
+    // preventDefault 안 함 → React 원문링크 핸들러가 무신사 탭을 연다
+  }, true);
 
   log('삼바 주문도우미 활성화 — 원문링크 클릭 시 자동주문');
 })();
