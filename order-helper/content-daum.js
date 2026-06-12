@@ -1,13 +1,15 @@
-// 삼바 주문도우미 — 우편번호 검색 iframe 자동화 (모든 frame 주입, 검색창일 때만 동작)
-// 무신사 '주소 찾기'(Daum/Kakao)가 열리면: 고객 주소 입력 → 검색 → 최상단 결과 선택.
-// job.addrSearching === true 일 때만.
+// 삼바 주문도우미 — 우편번호 검색 iframe (모든 frame 주입, 검색창일 때만 동작)
+// 무신사 '주소 찾기'(Daum/Kakao)에서: 고객 주소 입력 → 검색 → 결과 우편번호를 '읽기'만 함.
+// ⚠️ 결과를 클릭하지 않음(차단 위험 회피). 매칭되는 결과의 우편번호를 storage에 저장하면
+//    무신사 쪽(content-musinsa)이 그 우편번호로 직접 폼을 채워 저장한다.
+// job.addrSearching === true 일 때만, 프레임당 1회만 동작 (안전).
 (function () {
   const log = (...a) => console.log('%c[주문도우미·우편]', 'color:#d9480f;font-weight:bold', ...a);
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
   function setNativeValue(el, val) {
-    const proto = window.HTMLInputElement.prototype;
-    try { Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, val); }
+    try { Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(el, val); }
     catch (e) { el.value = val; }
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
@@ -17,17 +19,6 @@
       el.dispatchEvent(new KeyboardEvent(type, { bubbles: true, cancelable: true, key: 'Enter', code: 'Enter', keyCode: 13, which: 13 }));
     }
   }
-  // 실제 사용자 클릭처럼 — pointer/mouse 전체 시퀀스
-  function deepClick(el) {
-    const seq = ['pointerover', 'pointerenter', 'mouseover', 'mousemove', 'pointerdown', 'mousedown', 'focus', 'pointerup', 'mouseup', 'click'];
-    for (const type of seq) {
-      try {
-        const Ctor = type.startsWith('pointer') ? (window.PointerEvent || MouseEvent) : (type === 'focus' ? FocusEvent : MouseEvent);
-        el.dispatchEvent(new Ctor(type, { bubbles: true, cancelable: true, view: window }));
-      } catch (e) { try { el.dispatchEvent(new MouseEvent('click', { bubbles: true })); } catch (e2) { /* noop */ } }
-    }
-  }
-
   function isPostcodeFrame() {
     if (/postcode|daum|kakao|zipcode|juso/i.test(location.href)) return true;
     const bt = (document.body && document.body.innerText) || '';
@@ -41,23 +32,34 @@
       || inputs.find((i) => i.type === 'text' || i.type === 'search' || !i.type)
       || inputs[0] || null;
   }
+  async function mark(patch) {
+    try {
+      const { job } = await chrome.storage.local.get('job');
+      await chrome.storage.local.set({ job: Object.assign({}, job, patch) });
+    } catch (e) { /* noop */ }
+  }
 
   async function run() {
     let job;
     try { ({ job } = await chrome.storage.local.get('job')); } catch (e) { return; }
     if (!job || job.status === 'done' || !job.addrSearching) return;
     if (!isPostcodeFrame()) return;
+    if (window.__ohDaumDone) return; // 안전: 프레임당 1회만
+    window.__ohDaumDone = true;
 
     let query = (job.customer && job.customer.addr) || '';
     if (!query) return;
     query = query.replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
-    const roadToken = (query.split(/\s+/).find((t) => /[로길]/.test(t))) || query.split(/\s+/).slice(-2)[0] || '';
-    log('우편번호 검색 시작:', query, '| roadToken:', roadToken, '@', location.href);
+    const parts = query.split(/\s+/);
+    const roadToken = parts.find((t) => /[로길]/.test(t)) || parts.slice(-2)[0] || '';
+    const bnoMatch = roadToken && query.match(new RegExp(esc(roadToken) + '\\s*(\\d+(?:-\\d+)?)'));
+    const bno = bnoMatch ? bnoMatch[1] : '';
+    log('검색 시작:', query, '| 도로명:', roadToken, '| 건물번호:', bno, '@', location.href);
 
-    // 1) 검색창 입력 + 검색
+    // 1) 입력 + 검색 (한 번만)
     let input = null;
-    for (let i = 0; i < 80 && !input; i++) { input = findInput(); if (!input) await wait(150); }
-    if (!input) { log('❌ 검색창 못 찾음'); return; }
+    for (let i = 0; i < 60 && !input; i++) { input = findInput(); if (!input) await wait(150); }
+    if (!input) { log('❌ 검색창 못 찾음 — 중단'); await mark({ searchFailed: true }); return; }
     log('검색창 발견:', input.id || input.className || input.placeholder);
     input.focus();
     setNativeValue(input, query);
@@ -67,39 +69,36 @@
     const sb = document.querySelector('button.btn_search, .btn_search, button[type=submit]');
     if (sb) { try { sb.click(); } catch (e) { /* noop */ } }
 
-    // 2) 결과행 찾기: roadToken 포함 + 같은 조상에 5자리 우편번호
-    let row = null;
-    for (let i = 0; i < 60 && !row; i++) {
+    // 2) 결과에서 '매칭되는' 우편번호 읽기 (클릭 안 함). 최대 ~6초 후 중단(안전)
+    let zip = null;
+    const roadRe = bno ? new RegExp(esc(roadToken) + '\\s*' + esc(bno) + '(?!\\d)') : null;
+    for (let i = 0; i < 30 && !zip; i++) {
       await wait(200);
-      const els = Array.from(document.querySelectorAll('*')).filter((el) => el.offsetParent !== null);
-      const roadEls = els
+      const blocks = Array.from(document.querySelectorAll('*'))
         .filter((el) => {
+          if (el.offsetParent === null) return false;
           const t = (el.textContent || '').replace(/\s+/g, ' ');
-          return roadToken && t.includes(roadToken) && t.length < 160;
+          if (t.length > 300) return false;
+          if (roadToken && !t.includes(roadToken)) return false;
+          if (roadRe && !roadRe.test(t)) return false;   // 입력 주소와 정확히 매칭
+          return /\b\d{5}\b/.test(t);
         })
         .sort((a, b) => (a.textContent || '').length - (b.textContent || '').length);
-      if (roadEls.length) {
-        const target = roadEls[0];
-        // 우편번호(5자리)를 포함하는 가장 가까운 조상 = 결과행
-        let anc = target, found = null;
-        for (let k = 0; k < 7 && anc; k++) { if (/\d{5}/.test(anc.textContent || '')) found = anc; anc = anc.parentElement; }
-        row = found || target;
-        log('결과행 발견:', (row.innerText || '').replace(/\s+/g, ' ').slice(0, 70));
+      if (blocks.length) {
+        const m = (blocks[0].textContent || '').match(/\b(\d{5})\b/);
+        if (m) {
+          zip = m[1];
+          log('✅ 매칭 결과 우편번호:', zip, '|', (blocks[0].innerText || '').replace(/\s+/g, ' ').slice(0, 70));
+        }
       }
     }
 
-    // 3) 선택(클릭)
-    if (row) {
-      // 도로명 텍스트 조각 우선 클릭 후 행 클릭 (핸들러 위치 불문 커버)
-      const roadChild = Array.from(row.querySelectorAll('*'))
-        .find((e) => (e.textContent || '').includes(roadToken) && e.children.length <= 1) || row;
-      deepClick(roadChild);
-      await wait(120);
-      deepClick(row);
-      log('✅ 최상단 결과 선택 클릭 완료');
+    if (zip) {
+      await mark({ resolvedZip: zip });
+      log('우편번호 전달 완료 →', zip);
     } else {
-      log('❌ 결과행 못 찾음 (roadToken=', roadToken, '). body 일부:',
-        ((document.body && document.body.innerText) || '').replace(/\s+/g, ' ').slice(0, 300));
+      log('❌ 입력 주소와 매칭되는 결과 없음 — 중단(안전)');
+      await mark({ searchFailed: true });
     }
   }
 

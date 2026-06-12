@@ -42,6 +42,12 @@
     await chrome.storage.local.set({ job: j });
     return j;
   }
+  function sendMsg(type, extra) {
+    return new Promise((resolve) => {
+      try { chrome.runtime.sendMessage(Object.assign({ type }, extra), (r) => resolve(r || { ok: false, error: 'no response' })); }
+      catch (e) { resolve({ ok: false, error: String(e) }); }
+    });
+  }
 
   function banner(msg, color = '#2b8a3e') {
     let el = document.getElementById('__oh_banner');
@@ -183,26 +189,43 @@
     else { banner('배송지 추가하기...'); const a = q(SEL.addrAddLink); if (a) a.click(); }
   }
 
-  // ── 단계 4: 배송지 입력 폼 — 삼바의 정확한 기본/상세주소를 그대로 입력 ─
+  // ── 단계 4: 배송지 입력 폼 — 삼바 정확값 입력 (+우편번호 없으면 주소찾기로 조회) ─
   async function stepAddrForm(job) {
     if (job.addrStep !== 'editing') return;
     banner('고객정보 자동입력 중...');
 
-    // 삼바에서 이미 정확히 나눠 읽은 값을 그대로 사용 (재분리/가공 안 함)
-    const c = Object.assign({}, job.customer);
+    const c = Object.assign({}, job.customer); // 삼바 정확값(기본/상세주소) 그대로
     const hasPostal = /^\d{5}$/.test(String(c.postal || ''));
     log('주소 입력:', { address1: c.addr, address2: c.addr2, 우편번호: c.postal, hasPostal });
 
-    // 우편번호 없으면 Daum 검색 스크립트가 이 주소(c.addr)로 검색
-    await setJob({ customer: c, addrSearching: !hasPostal });
-    if (!hasPostal) banner('우편번호 없음 → 주소찾기 자동검색 중...', '#d9480f');
-
     let res;
-    try {
-      res = await chrome.runtime.sendMessage({ type: 'FILL_ADDRESS', customer: c, hasPostal });
-    } catch (e) { res = { ok: false, error: String(e) }; }
-    log('주소 자동입력 결과', res);
-    if (res && res.ok) await setJob({ addrStep: 'saved', addrSearching: false });
+    if (hasPostal) {
+      res = await sendMsg('FILL_ZIP', { customer: c, zip: c.postal });
+    } else {
+      banner('우편번호 없음 → 주소찾기 자동검색 중...', '#d9480f');
+      // content-daum이 이 주소로 검색하도록 표시 + 주소찾기 오픈
+      await setJob({ customer: c, addrSearching: true, resolvedZip: null, searchFailed: false });
+      await sendMsg('OPEN_SEARCH', { customer: c });
+
+      // content-daum이 매칭 결과 우편번호를 storage에 기록할 때까지 대기 (안전: 최대 ~12초)
+      let zip = null;
+      for (let i = 0; i < 30 && !zip; i++) {
+        await wait(400);
+        const j = await getJob();
+        if (j && j.resolvedZip) { zip = j.resolvedZip; break; }
+        if (j && j.searchFailed) break;
+      }
+      if (!zip) {
+        banner('주소찾기 우편번호 자동조회 실패 — 직접 진행해주세요', '#c92a2a');
+        await setJob({ addrSearching: false });
+        return;
+      }
+      log('주소찾기 우편번호 수신:', zip);
+      res = await sendMsg('FILL_ZIP', { customer: c, zip });
+    }
+
+    log('주소 저장 결과', res);
+    if (res && res.ok) await setJob({ addrStep: 'saved', addrSearching: false, resolvedZip: null });
     else banner('주소 자동입력 실패: ' + (res && res.error), '#c92a2a');
   }
 
