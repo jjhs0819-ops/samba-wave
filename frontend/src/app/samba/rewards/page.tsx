@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import { rewardsApi, type RewardAccountRow, type RewardsStatus } from '@/lib/samba/api'
+import { rewardsApi, type RewardAccountRow, type RewardJob, type RewardsStatus } from '@/lib/samba/api'
+import { getDeviceId } from '@/lib/samba/deviceId'
 import { fmtNum } from '@/lib/samba/styles'
 
 function formatRelative(iso: string | null): string {
@@ -35,6 +36,21 @@ const ACTION_LABEL: Record<string, string> = {
   lotteon_review: '리뷰 자동작성',
   naver_review: '리뷰 자동작성',
   kream_review: '리뷰 자동작성',
+}
+
+const JOB_STATUS_VIEW: Record<string, { label: string; color: string; bg: string }> = {
+  pending: { label: '적재됨', color: '#A0A0A0', bg: 'rgba(160,160,160,0.12)' },
+  dispatched: { label: '실행중', color: '#4C9AFF', bg: 'rgba(76,154,255,0.15)' },
+  completed: { label: '완료', color: '#51CF66', bg: 'rgba(81,207,102,0.15)' },
+  failed: { label: '실패', color: '#E74C3C', bg: 'rgba(231,76,60,0.15)' },
+  expired: { label: '만료', color: '#E8A33D', bg: 'rgba(232,163,61,0.15)' },
+}
+
+// 처리 PC 표시: 내 PC(트리거 device)와 일치하면 '이 PC', 아니면 device 끝 4자리.
+function deviceTag(ownerDeviceId: string, myDeviceId: string): { label: string; mine: boolean } {
+  if (!ownerDeviceId) return { label: '미배정', mine: false }
+  if (myDeviceId && ownerDeviceId === myDeviceId) return { label: '이 PC', mine: true }
+  return { label: `타 PC ${ownerDeviceId.slice(-4)}`, mine: false }
 }
 
 const SITE_LABEL: Record<string, string> = {
@@ -70,6 +86,8 @@ export default function RewardsPage() {
   const [intervalDraft, setIntervalDraft] = useState<number>(24)
   const [busy, setBusy] = useState<string | null>(null)
   const [msg, setMsg] = useState<string>('')
+  const [jobs, setJobs] = useState<RewardJob[]>([])
+  const [myDeviceId, setMyDeviceId] = useState<string>('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -93,6 +111,25 @@ export default function RewardsPage() {
     return () => clearInterval(t)
   }, [load])
 
+  // 잡 실행 상태 — 별도 빠른 폴링(4s). 적재→실행중→완료/실패 + 처리 PC 가시화.
+  const loadJobs = useCallback(async () => {
+    try {
+      const res = await rewardsApi.jobStatus()
+      setJobs(res.jobs || [])
+    } catch {
+      // 상태 표시는 보조 기능 — 실패해도 본 화면에 영향 없음
+    }
+  }, [])
+
+  useEffect(() => {
+    setMyDeviceId(getDeviceId())
+    void loadJobs()
+    const t = setInterval(() => {
+      void loadJobs()
+    }, 4000)
+    return () => clearInterval(t)
+  }, [loadJobs])
+
   const grouped = useMemo(() => {
     const m = new Map<string, RewardAccountRow[]>()
     if (!data) return m
@@ -102,6 +139,21 @@ export default function RewardsPage() {
     }
     return m
   }, [data])
+
+  // account_id → 최근 잡 (액션별 최신 1개). 백엔드가 created_at desc 정렬해서 내려줌.
+  const jobsByAccount = useMemo(() => {
+    const m = new Map<string, RewardJob[]>()
+    const seen = new Set<string>()
+    for (const j of jobs) {
+      const key = `${j.account_id}|${j.action}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      const list = m.get(j.account_id)
+      if (list) list.push(j)
+      else m.set(j.account_id, [j])
+    }
+    return m
+  }, [jobs])
 
   const totalMusinsaMoney = useMemo(
     () =>
@@ -128,6 +180,7 @@ export default function RewardsPage() {
       const total = arr.reduce((s, x) => s + (x.enqueued?.length || 0), 0)
       setMsg(`전체 실행 — 잡 ${fmtNum(total)}건 적재`)
       await load()
+      void loadJobs()
     } catch (e) {
       setMsg(`실행 실패: ${(e as Error).message}`)
     } finally {
@@ -142,6 +195,7 @@ export default function RewardsPage() {
       const r = await rewardsApi.runAccount(accountId, action ? [action] : undefined)
       setMsg(`계정 실행 — 잡 ${fmtNum(r.enqueued.length)}건 적재`)
       await load()
+      void loadJobs()
     } catch (e) {
       setMsg(`실행 실패: ${(e as Error).message}`)
     } finally {
@@ -323,6 +377,8 @@ export default function RewardsPage() {
                       a={a}
                       busy={busy}
                       onRun={handleRunAccount}
+                      jobs={jobsByAccount.get(a.id)}
+                      myDeviceId={myDeviceId}
                     />
                   ))}
                 </tbody>
@@ -354,10 +410,14 @@ function AccountRow({
   a,
   busy,
   onRun,
+  jobs,
+  myDeviceId,
 }: {
   a: RewardAccountRow
   busy: string | null
   onRun: (accountId: string, action?: string) => void
+  jobs?: RewardJob[]
+  myDeviceId: string
 }) {
   const isMusinsa = a.site_name === 'MUSINSA'
   const isAbc = a.site_name === 'ABCmart'
@@ -370,6 +430,46 @@ function AccountRow({
       <td style={tdStyle}>
         <div style={{ fontWeight: 600, color: '#E5E5E5' }}>{a.account_label}</div>
         <div style={{ color: '#888', fontSize: '0.75rem' }}>{a.username}</div>
+        {jobs && jobs.length > 0 && (
+          <div
+            style={{
+              marginTop: '0.35rem',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.2rem',
+            }}
+          >
+            {jobs.map((j) => {
+              const v = JOB_STATUS_VIEW[j.status] || JOB_STATUS_VIEW.pending
+              const dt = deviceTag(j.owner_device_id, myDeviceId)
+              return (
+                <div
+                  key={j.request_id}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.7rem' }}
+                >
+                  <span style={{ color: '#999' }}>{ACTION_LABEL[j.action] || j.action}</span>
+                  <span
+                    style={{
+                      padding: '0.05rem 0.35rem',
+                      borderRadius: '3px',
+                      fontWeight: 600,
+                      color: v.color,
+                      background: v.bg,
+                    }}
+                  >
+                    {v.label}
+                  </span>
+                  <span style={{ color: dt.mine ? '#51CF66' : '#888' }}>{dt.label}</span>
+                  {j.error && (
+                    <span title={j.error} style={{ color: '#E74C3C', cursor: 'help' }}>
+                      ⓘ
+                    </span>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
       </td>
 
       {isMusinsa && (
