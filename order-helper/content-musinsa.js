@@ -145,37 +145,25 @@
     // → addresses/update 또는 add 로 이동 → stepAddrForm
   }
 
-  // ── 단계 4: 배송지 입력 폼 (Vue) — MAIN world 주입으로 채움 ──────
+  // ── 단계 4: 배송지 입력 폼 (Vue) — background의 MAIN world 주입으로 채움 ──
   async function stepAddrForm(job) {
     if (job.addrStep !== 'editing') return;
-    await wait(1800); // Vue mount 대기
+    await wait(600);
     banner('고객정보 자동입력 중...');
-    injectVueFill(job.customer);
-    await setJob({ addrStep: 'saved' });
-    // injectVueFill 내부에서 formSubmit → addresses/order 로 복귀 → stepAddrList(saved)
-  }
-
-  // 페이지(MAIN) 컨텍스트에서 무신사 Vue 인스턴스를 직접 조작해 폼을 채우고 저장
-  function injectVueFill(c) {
-    const code =
-      '(()=>{try{' +
-      'var c=' + JSON.stringify(c) + ';' +
-      'var root=document.querySelector("#commonLayoutContents");' +
-      'var vm=root&&root.__vue__;' +
-      'if(!vm||!vm.form){console.warn("[주문도우미] Vue 폼 없음");return;}' +
-      'vm.form.name=c.name; vm.form.mobile=c.phone;' +
-      'if(typeof vm.findAddressComplete==="function"){vm.findAddressComplete({zipcode:c.postal,address1:c.addr});}' +
-      'else{vm.form.zipcode=c.postal; vm.form.address1=c.addr;}' +
-      'vm.form.address2=c.addr2;' +
-      'if(c.memo){var pre=(vm.ui&&vm.ui.additionalMessageType)||[];' +
-      ' if(pre.indexOf(c.memo)>=0){vm.form.additionalMessage=c.memo;}' +
-      ' else{vm.form.additionalMessage="직접입력"; vm.form.additionalMessageManual=c.memo;}}' +
-      'setTimeout(function(){try{vm.formSubmit();}catch(e){console.warn(e);}},700);' +
-      '}catch(e){console.warn("[주문도우미] 주입 오류",e);}})();';
-    const s = document.createElement('script');
-    s.textContent = code;
-    document.documentElement.appendChild(s);
-    s.remove();
+    // CSP 우회: background가 chrome.scripting(world:MAIN)으로 페이지에서 실행
+    let res;
+    try {
+      res = await chrome.runtime.sendMessage({ type: 'FILL_ADDRESS', customer: job.customer });
+    } catch (e) {
+      res = { ok: false, error: String(e) };
+    }
+    log('주소 자동입력 결과', res);
+    if (res && res.ok) {
+      await setJob({ addrStep: 'saved' });
+      // formSubmit → addresses/order 로 복귀 → stepAddrList(saved)
+    } else {
+      banner('주소 자동입력 실패: ' + (res && res.error), '#c92a2a');
+    }
   }
 
   // ── 단계 5: 결제완료 결과 페이지 — 주문번호/금액 스크랩 + 기입 ────
