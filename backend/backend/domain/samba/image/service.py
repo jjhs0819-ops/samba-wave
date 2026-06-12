@@ -921,6 +921,12 @@ class ImageTransformService:
         "innerplan.co.kr",
         "yswholesale.com",
         "cloudinary.com",
+        # ABCmart/GrandStage CDN — SSG 등록 시 서버 fetch 실패로 이미지 미표시
+        # (#410). 우리 서버(로컬·VM)는 다운로드 가능 실측 — puma.net 과 동일
+        # 패턴(마켓 서버 fetch 만 실패) → R2 선미러 필요.
+        # ai_tools.py 핫링크 목록엔 이미 등록돼 있던 도메인.
+        "image.a-rt.com",
+        "img.a-rt.com",
     )
 
     async def mirror_external_to_r2(

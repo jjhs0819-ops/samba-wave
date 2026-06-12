@@ -58,9 +58,7 @@ def filter_daepyo_options(options: list[dict]) -> list[dict]:
     """
     if not options:
         return options
-    non_daepyo = [
-        o for o in options if str(o.get("name", "")).strip() != "대표단품"
-    ]
+    non_daepyo = [o for o in options if str(o.get("name", "")).strip() != "대표단품"]
     return non_daepyo if non_daepyo else options
 
 
@@ -1436,9 +1434,7 @@ class SSGSourcingClient:
         if html:
             dom_bc = ext.get("domBreadcrumb", []) or []
             detail = (
-                self._parse_result_item_obj(
-                    html, item_id, False, dom_breadcrumb=dom_bc
-                )
+                self._parse_result_item_obj(html, item_id, False, dom_breadcrumb=dom_bc)
                 or {}
             )
             if detail and ext.get("detailHtml"):
