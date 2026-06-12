@@ -115,13 +115,19 @@
       chrome.storage.local.remove('job'); // 이전 job 잔존으로 인한 오작동 방지
       return;
     }
+    // 0502 안심번호 → 고정 연락처로 대체
+    let phone = o.phone;
+    if (/^0502/.test((phone || '').replace(/[^0-9]/g, ''))) {
+      phone = '010-8282-3536';
+      log('안심번호(0502) 감지 → 010-8282-3536 으로 대체');
+    }
     const job = {
       status: 'active', phase: 'start',
       size: o.size, quantity: o.qty,
       orderId: o.ordNo || o.extNo || '',
       extNo: o.extNo, ordNo: o.ordNo,
       customer: {
-        name: o.name, phone: o.phone, postal: o.postal,
+        name: o.name, phone, postal: o.postal,
         addr: o.addr, addr2: o.addr2, memo: o.memo,
       },
     };

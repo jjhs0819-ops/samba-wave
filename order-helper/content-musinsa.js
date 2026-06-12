@@ -133,7 +133,11 @@
     ) || items.find(
       (e) => (e.innerText || '').trim().toUpperCase().startsWith(String(job.size).toUpperCase())
     );
-    if (!target) { banner(`사이즈 '${job.size}' 옵션 없음(품절?)`, '#c92a2a'); return; }
+    if (!target) {
+      banner(`옵션 없음 ('${job.size}') — 자동 진행 중단. 직접 진행해주세요.`, '#c92a2a');
+      await setJob({ aborted: true }); // 이후 모든 자동활동 중단
+      return;
+    }
     target.click();
     await wait(250);
     await setJob({ phase: 'orderform' });
@@ -264,6 +268,7 @@
       }
     }
     if (!job) return;
+    if (job.aborted) return; // 옵션없음 등으로 중단된 작업 — 아무것도 안 함
     const url = location.href;
     try {
       if (CFG.resultUrlRe.test(url)) return await stepResult(job);
