@@ -48,9 +48,30 @@
     const phone = clean(copyTexts(groupDiv('연락처'))[0]);
     const addrDiv = groupDiv('주소');
     const addrTexts = copyTexts(addrDiv);
-    const addr = clean(addrTexts[0]);
-    const addr2 = clean(addrTexts[1]);
-    const postal = addrDiv ? ((addrDiv.textContent.match(/\[(\d{5})\]/) || [])[1] || '') : '';
+    let addr = clean(addrTexts[0]);
+    let addr2 = clean(addrTexts[1]);
+    let postal = addrDiv ? ((addrDiv.textContent.match(/\[(\d{5})\]/) || [])[1] || '') : '';
+
+    // 폴백: span 기반이 비면 카드 innerText 정규식으로 보강
+    let nameF = name, phoneF = phone;
+    if (!nameF || !addr) {
+      const ct = (card.innerText || '').replace(/ /g, ' ');
+      nameF = nameF || ((ct.match(/수령인\s+([^\n]+?)\s+연락처/) || [])[1] || '').trim();
+      phoneF = phoneF || ((ct.match(/연락처\s+([0-9\-]+)/) || [])[1] || '').trim();
+      postal = postal || ((ct.match(/\[(\d{5})\]/) || [])[1] || '');
+      if (!addr) {
+        let raw = ((ct.match(/주소\s+([\s\S]+?)(?:\s*\[\d{5}\]|고객메모|타마켓|쿠팡노출|$)/) || [])[1] || '')
+          .replace(/\s+/g, ' ').trim();
+        // 삼바 표시의 '/' 구분자로 기본/상세 분리 (정확 일치)
+        if (raw.includes('/')) {
+          const i = raw.indexOf('/');
+          addr = raw.slice(0, i).trim();
+          addr2 = raw.slice(i + 1).trim();
+        } else {
+          addr = raw;
+        }
+      }
+    }
 
     // 고객메모
     let memo = '';
@@ -73,7 +94,7 @@
     if (numEnd) size = numEnd[1];
     else { const toks = optionRaw.split(/\s+/).filter(Boolean); size = toks[toks.length - 1] || optionRaw; }
 
-    return { name, phone, postal, addr, addr2, memo, size, optionRaw, qty: parseInt(qty) || 1, extNo, ordNo };
+    return { name: nameF, phone: phoneF, postal, addr, addr2, memo, size, optionRaw, qty: parseInt(qty) || 1, extNo, ordNo };
   }
 
   // 원문링크 클릭을 capture 단계에서 감지 (React onClick 보다 먼저 실행).
@@ -87,9 +108,11 @@
     if (txt !== '원문링크') return; // 원주문링크=마켓 이동이라 제외
 
     const o = parseOrderCard(btn);
+    log('파싱 결과 →', o);
     if (!o || !o.name || !o.addr) {
-      log('주문 파싱 실패(원문링크는 정상 동작) →', o);
+      log('주문 파싱 실패(원문링크는 정상 동작)');
       toast('주문 정보를 못 읽어 자동주문 미실행 (원문링크만 열림)', '#c92a2a');
+      chrome.storage.local.remove('job'); // 이전 job 잔존으로 인한 오작동 방지
       return;
     }
     const job = {

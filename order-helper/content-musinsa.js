@@ -114,9 +114,13 @@
     return { address1, address2: address2 || detail, _road: isRoad };
   }
 
+  let ranProduct = false; // 옵션선택 중복 실행 방지(경합/onChanged 이중 트리거 대비)
+
   // ── 단계 1: 상품 — 옵션 선택 + 구매하기 ─────────────────────────
   async function stepProduct(job) {
     if (job.phase && job.phase !== 'start') return;
+    if (ranProduct) return;
+    ranProduct = true;
     banner(`옵션 '${job.size}' 선택 중...`);
     const trigger = await waitFor(SEL.optionTrigger);
     if (!trigger) { banner('옵션 버튼을 못 찾음', '#c92a2a'); return; }
@@ -275,4 +279,16 @@
   }
 
   main();
+
+  // 경합 보강: 상품 페이지 로드 후 job(phase=start)이 늦게 들어와도 즉시 반응
+  try {
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== 'local' || !changes.job) return;
+      const j = changes.job.newValue;
+      if (j && j.phase === 'start' && j.status !== 'done' &&
+          /\/products\//.test(location.href) && !ranProduct) {
+        main();
+      }
+    });
+  } catch (e) { /* noop */ }
 })();
