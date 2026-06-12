@@ -320,61 +320,14 @@ async def _fail_job_safe(job_id: str, error_msg: str) -> None:
 
 
 def _ssg_daemon_detail_fallback(ext_result: dict) -> dict:
-    """SSG 헤드리스 데몬 응답 → 수집용 detail 변환.
+    """SSG 데몬 응답(html 미회신, 파싱 완료값) → 수집용 detail 변환.
 
-    데몬은 html·resultItemObj 없이 파싱 완료값(name/sale_price/best_benefit_price/
-    options/images)만 회신한다. 수집 경로가 html 파싱만 처리해 데몬 응답을 통째로
-    버리던 문제의 폴백 — plugins/sourcing/ssg.py refresh 의 데몬 분기와 동일 규칙.
-    카테고리(dispCtg*)는 데몬이 회신하지 않으므로 호출측 폴백(그룹 ctgPath,
-    필터명 복원 등)에 맡긴다.
+    구현은 proxy/ssg_sourcing.daemon_detail_fallback 공용 — collect.py URL 수집과
+    동일 규칙 공유. '대표단품' 더미 옵션 필터링 포함.
     """
-    if not isinstance(ext_result, dict):
-        return {}
-    _sale = (
-        int(ext_result.get("domSalePrice", 0) or 0)
-        or int(ext_result.get("sale_price", 0) or 0)
-        or int(ext_result.get("best_benefit_price", 0) or 0)
-    )
-    _card = int(ext_result.get("domCardPrice", 0) or 0)
-    _benefit = _card or int(ext_result.get("best_benefit_price", 0) or 0) or _sale
-    _orig = int(ext_result.get("original_price", 0) or 0) or _sale
-    _name = (ext_result.get("name") or "").strip()
-    _opts: list[dict] = []
-    for _o in ext_result.get("options", []) or []:
-        if not isinstance(_o, dict):
-            continue
-        _nm = (_o.get("name") or "").strip()
-        if not _nm:
-            continue
-        _so = bool(_o.get("isSoldOut"))
-        _stk = _o.get("stock")
-        # 품절=0, 실재고 있으면 그대로, 불명(None)→99 (기본 재고 규칙)
-        _opts.append(
-            {
-                "name": _nm,
-                "price": _sale,
-                "stock": 0 if _so else (_stk if _stk is not None else 99),
-                "isSoldOut": _so,
-            }
-        )
-    if not _name and _sale <= 0 and not _opts:
-        return {}
-    _all_sold = bool(_opts) and all(_o["isSoldOut"] for _o in _opts)
-    return {
-        "itemNm": _name,
-        "name": _name,
-        # sellprc/bestAmt: brand_all 저장 루프가 판매가/원가로 읽는 키
-        "sellprc": _sale,
-        "bestAmt": _benefit,
-        "salePrice": _sale,
-        "originalPrice": _orig,
-        "bestBenefitPrice": _benefit,
-        "images": [i for i in (ext_result.get("images") or []) if i][:9],
-        "options": _opts,
-        "soldOut": "Y" if _all_sold else "N",
-        "isSoldOut": _all_sold,
-        "isOutOfStock": _all_sold,
-    }
+    from backend.domain.samba.proxy.ssg_sourcing import daemon_detail_fallback
+
+    return daemon_detail_fallback(ext_result)
 
 
 def _run_transmit_in_thread(worker: "JobWorker", job_id: str, payload: dict):
@@ -3562,21 +3515,27 @@ class JobWorker:
                                 or not _has_layered_detail
                                 or len(_detail_opts) < len(_uitem_opts)
                             ):
+                                from backend.domain.samba.proxy.ssg_sourcing import (
+                                    filter_daepyo_options as _fdo,
+                                )
+
                                 # 이중옵션(색상/사이즈) 전체 교체
                                 _price_fallback = int(detail.get("salePrice", 0) or 0)
-                                detail["options"] = [
-                                    {
-                                        "name": _uo.get("name", ""),
-                                        "price": int(_uo.get("price", 0) or 0)
-                                        or _price_fallback,
-                                        "stock": _uo.get("usablInvQty", 0)
-                                        if not _uo.get("isSoldOut")
-                                        else 0,
-                                        "isSoldOut": _uo.get("isSoldOut", False),
-                                    }
-                                    for _uo in _uitem_opts
-                                    if _uo.get("name")
-                                ]
+                                detail["options"] = _fdo(
+                                    [
+                                        {
+                                            "name": _uo.get("name", ""),
+                                            "price": int(_uo.get("price", 0) or 0)
+                                            or _price_fallback,
+                                            "stock": _uo.get("usablInvQty", 0)
+                                            if not _uo.get("isSoldOut")
+                                            else 0,
+                                            "isSoldOut": _uo.get("isSoldOut", False),
+                                        }
+                                        for _uo in _uitem_opts
+                                        if _uo.get("name")
+                                    ]
+                                )
                             elif _detail_opts:
                                 # 단일 옵션: 품절 상태만 보정
                                 _soldout_names = {

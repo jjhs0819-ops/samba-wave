@@ -49,6 +49,80 @@ def _is_staff_only(html: str) -> bool:
     return any(marker in html for marker in _STAFF_ONLY_MARKERS)
 
 
+def filter_daepyo_options(options: list[dict]) -> list[dict]:
+    """'대표단품' 더미 옵션 제거 — 실제 옵션이 따로 있을 때만.
+
+    SSG uitemObjList 첫 행이 '대표단품'(사이즈 미지정 더미)으로 내려오는 상품이
+    다수라, 그대로 두면 마켓 구매자 선택지에 사이즈가 아닌 '대표단품'이 노출된다.
+    실제 옵션(사이즈/색상)이 있으면 제외하고, 대표단품 단독(단일 상품)이면 유지.
+    """
+    if not options:
+        return options
+    non_daepyo = [
+        o for o in options if str(o.get("name", "")).strip() != "대표단품"
+    ]
+    return non_daepyo if non_daepyo else options
+
+
+def daemon_detail_fallback(ext_result: dict) -> dict:
+    """SSG 헤드리스 데몬 응답 → 수집용 detail 변환.
+
+    데몬은 html·resultItemObj 없이 파싱 완료값(name/sale_price/best_benefit_price/
+    options/images)만 회신한다. 수집 경로가 html 파싱만 처리해 데몬 응답을 통째로
+    버리던 문제의 폴백 — plugins/sourcing/ssg.py refresh 의 데몬 분기와 동일 규칙.
+    카테고리(dispCtg*)는 데몬이 회신하지 않으므로 호출측 폴백(그룹 ctgPath,
+    필터명 복원 등)에 맡긴다.
+    """
+    if not isinstance(ext_result, dict):
+        return {}
+    _sale = (
+        int(ext_result.get("domSalePrice", 0) or 0)
+        or int(ext_result.get("sale_price", 0) or 0)
+        or int(ext_result.get("best_benefit_price", 0) or 0)
+    )
+    _card = int(ext_result.get("domCardPrice", 0) or 0)
+    _benefit = _card or int(ext_result.get("best_benefit_price", 0) or 0) or _sale
+    _orig = int(ext_result.get("original_price", 0) or 0) or _sale
+    _name = (ext_result.get("name") or "").strip()
+    _opts: list[dict] = []
+    for _o in ext_result.get("options", []) or []:
+        if not isinstance(_o, dict):
+            continue
+        _nm = (_o.get("name") or "").strip()
+        if not _nm:
+            continue
+        _so = bool(_o.get("isSoldOut"))
+        _stk = _o.get("stock")
+        # 품절=0, 실재고 있으면 그대로, 불명(None)→99 (기본 재고 규칙)
+        _opts.append(
+            {
+                "name": _nm,
+                "price": _sale,
+                "stock": 0 if _so else (_stk if _stk is not None else 99),
+                "isSoldOut": _so,
+            }
+        )
+    _opts = filter_daepyo_options(_opts)
+    if not _name and _sale <= 0 and not _opts:
+        return {}
+    _all_sold = bool(_opts) and all(_o["isSoldOut"] for _o in _opts)
+    return {
+        "itemNm": _name,
+        "name": _name,
+        # sellprc/bestAmt: worker.py brand_all 저장 루프가 판매가/원가로 읽는 키
+        "sellprc": _sale,
+        "bestAmt": _benefit,
+        "salePrice": _sale,
+        "originalPrice": _orig,
+        "bestBenefitPrice": _benefit,
+        "images": [i for i in (ext_result.get("images") or []) if i][:9],
+        "options": _opts,
+        "soldOut": "Y" if _all_sold else "N",
+        "isSoldOut": _all_sold,
+        "isOutOfStock": _all_sold,
+    }
+
+
 class RateLimitError(Exception):
     """SSG 차단 감지 (429/403)."""
 
@@ -1323,6 +1397,66 @@ class SSGSourcingClient:
     # 상세 조회
     # ------------------------------------------------------------------
 
+    async def get_product_detail_via_queue(
+        self, item_id: str, *, priority: bool = False, timeout: int = 100
+    ) -> dict[str, Any]:
+        """SSG 상품 상세 — 확장앱/데몬 소싱큐 위임 조회 (서버사이드 차단 우회).
+
+        worker.py SSG 선취합과 동일 규칙:
+          html 회신(확장앱/신형 데몬) → _parse_result_item_obj 파싱,
+          html 미회신(현행 데몬)    → daemon_detail_fallback 파싱값 직접 사용.
+        실패/타임아웃/데몬 미등록 시 빈 dict — 호출측이 직접 HTTP 폴백 가능.
+        """
+        import asyncio as _asyncio
+
+        from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+
+        try:
+            _req_id, _future = SourcingQueue.add_detail_job(
+                "SSG", item_id, priority=priority
+            )
+        except Exception as exc:  # 데몬 미등록 등 — 잡 발행 불가
+            logger.warning(f"[SSG] 소싱큐 상세 발행 실패: {item_id} — {exc}")
+            return {}
+        try:
+            ext = await _asyncio.wait_for(_future, timeout=timeout)
+        except _asyncio.TimeoutError:
+            SourcingQueue.resolvers.pop(_req_id, None)
+            logger.warning(f"[SSG] 소싱큐 상세 타임아웃({timeout}s): {item_id}")
+            return {}
+        except Exception as exc:
+            logger.warning(f"[SSG] 소싱큐 상세 실패: {item_id} — {exc}")
+            return {}
+
+        if not isinstance(ext, dict) or not ext.get("success"):
+            return {}
+
+        detail: dict[str, Any] = {}
+        html = ext.get("html", "")
+        if html:
+            dom_bc = ext.get("domBreadcrumb", []) or []
+            detail = (
+                self._parse_result_item_obj(
+                    html, item_id, False, dom_breadcrumb=dom_bc
+                )
+                or {}
+            )
+            if detail and ext.get("detailHtml"):
+                detail["detailHtml"] = ext["detailHtml"]
+        # [데몬 분기] html 미회신 — 파싱 완료값으로 직접 구성
+        if not detail:
+            detail = daemon_detail_fallback(ext)
+        # uitemOptions(AJAX 후 실재고)로 품절 보정
+        _uitems = ext.get("uitemOptions", [])
+        if _uitems and detail.get("options"):
+            _soldout_names = {o["name"] for o in _uitems if o.get("isSoldOut")}
+            if _soldout_names:
+                for _opt in detail["options"]:
+                    if _opt.get("name") in _soldout_names:
+                        _opt["isSoldOut"] = True
+                        _opt["stock"] = 0
+        return detail
+
     async def get_product_detail(
         self,
         item_id: str,
@@ -1881,7 +2015,7 @@ class SSGSourcingClient:
                     opt_entry[f"optionName{i}"] = p
             options.append(opt_entry)
 
-        return options
+        return filter_daepyo_options(options)
 
     def _build_images_from_base_url(
         self, base_img_url: str, item_id: str, html: str

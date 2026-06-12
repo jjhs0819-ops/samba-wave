@@ -824,7 +824,11 @@ async def collect_by_url(
 
             for item_id in targets:
                 try:
-                    detail = await client.get_product_detail(item_id)
+                    # 소싱큐(데몬/확장앱) 위임 우선 — 서버사이드 직접 HTTP 는 운영
+                    # IP 차단으로 실패하므로 폴백으로만 사용 (로컬/가정 IP 용).
+                    detail = await client.get_product_detail_via_queue(item_id)
+                    if not detail or not detail.get("name"):
+                        detail = await client.get_product_detail(item_id)
                     if not detail or not detail.get("name"):
                         await asyncio.sleep(_site_intervals.get("SSG", 1.0))
                         continue
@@ -905,7 +909,11 @@ async def collect_by_url(
             item_id = match.group(1)
 
             client = SSGSourcingClient()
-            data = await client.get_product_detail(item_id)
+            # 소싱큐(데몬/확장앱) 위임 우선 — 수동 단건이라 priority 로 큐 맨 앞 삽입.
+            # 서버사이드 직접 HTTP 는 운영 IP 차단으로 실패하므로 폴백으로만 사용.
+            data = await client.get_product_detail_via_queue(item_id, priority=True)
+            if not data or not data.get("name"):
+                data = await client.get_product_detail(item_id)
             if not data or not data.get("name"):
                 raise HTTPException(502, "SSG 상품 조회 실패")
 

@@ -179,6 +179,12 @@ class SSGPlugin(SourcingPlugin):
                                 "isSoldOut": _so,
                             }
                         )
+                    # '대표단품' 더미 옵션 제거 — 수집 경로와 동일 규칙 (실옵션 있을 때만)
+                    from backend.domain.samba.proxy.ssg_sourcing import (
+                        filter_daepyo_options as _fdo_d,
+                    )
+
+                    _d_opts = _fdo_d(_d_opts)
                     _all_sold = bool(_d_opts) and all(_o["isSoldOut"] for _o in _d_opts)
                     # detail 만 구성하고 아래 공통 finalization(가격/원가/옵션/변동판정)으로 흘려보냄.
                     # 데몬 응답엔 html·resultItemObj 가 없어 아래 확장앱 파싱 블록은 자연히 no-op.
@@ -333,11 +339,17 @@ class SSGPlugin(SourcingPlugin):
                                     _entry[f"optionName{_i}"] = _p
                             return _entry
 
-                        detail["options"] = [
-                            _build_uitem_opt(_opt)
-                            for _opt in _uitem_opts
-                            if _opt.get("name")
-                        ]
+                        from backend.domain.samba.proxy.ssg_sourcing import (
+                            filter_daepyo_options as _fdo_u,
+                        )
+
+                        detail["options"] = _fdo_u(
+                            [
+                                _build_uitem_opt(_opt)
+                                for _opt in _uitem_opts
+                                if _opt.get("name")
+                            ]
+                        )
                     if _dom_opts:
                         # DOM 파싱 결과 우선 — "남은수량 N" 실재고 반영
                         _dom_map = {o["name"]: o for o in _dom_opts if o.get("name")}
