@@ -37,7 +37,8 @@
     const name = m(/수령인\s+([^\n]+?)\s+연락처/);
     const phone = m(/연락처\s+([0-9\-]+)/);
     const postal = m(/\[(\d{5})\]/);
-    const addr = m(/주소\s+([\s\S]+?)(?:\s*\[\d{5}\]|고객메모|타마켓|쿠팡노출|$)/);
+    let addr = m(/주소\s+([\s\S]+?)(?:\s*\[\d{5}\]|고객메모|타마켓|쿠팡노출|$)/);
+    addr = addr.replace(/\s+/g, ' ').trim(); // 줄바꿈(기본/상세 분리)을 공백으로
     let memo = m(/고객메모\s+([^\n]+)/);
     if (memo === '-') memo = '';
     const optionRaw = m(/\[옵션\]\s*([^\n]+)/);
@@ -64,7 +65,7 @@
     // '원문링크' 정확히 (원주문링크=마켓 이동이라 제외)
     if (txt === '원문링크') {
       const o = parseOrderCard(btn);
-      if (!o || !o.name || !o.postal) {
+      if (!o || !o.name || !o.addr) {
         log('주문 파싱 실패(원문링크는 정상 동작) →', o);
         toast('주문 정보를 못 읽어 자동주문 미실행 (원문링크만 열림)', '#c92a2a');
         pending = null;

@@ -6,7 +6,9 @@
   "permissions": ["storage", "tabs", "scripting", "activeTab"],
   "host_permissions": [
     "https://*.musinsa.com/*",
-    "https://samba-wave-xi.vercel.app/*"
+    "https://samba-wave-xi.vercel.app/*",
+    "https://*.daum.net/*",
+    "https://postcode.map.daum.net/*"
   ],
   "icons": {
     "16": "icon16.png",
@@ -31,6 +33,12 @@
       "matches": ["https://samba-wave-xi.vercel.app/*"],
       "js": ["content-samba.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://*.daum.net/*", "https://postcode.map.daum.net/*"],
+      "js": ["content-daum.js"],
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ],
   "action": {

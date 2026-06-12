@@ -191,17 +191,21 @@
     // 주소 분리/정규화
     const c = Object.assign({}, job.customer);
     const sp = splitAddress(c.addr, c.addr2);
-    log('주소 분리:', { 입력_main: c.addr, 입력_detail: c.addr2 },
-        '→', { address1: sp.address1, address2: sp.address2 });
     c.addr = sp.address1;
     c.addr2 = sp.address2;
+    const hasPostal = /^\d{5}$/.test(String(c.postal || ''));
+    log('주소 분리:', { address1: c.addr, address2: c.addr2, 우편번호: c.postal, hasPostal });
+
+    // 분리된 주소를 job에 반영 (우편번호 없으면 Daum 검색 스크립트가 이 주소로 검색)
+    await setJob({ customer: c, addrSearching: !hasPostal });
+    if (!hasPostal) banner('우편번호 없음 → 주소찾기 자동검색 중...', '#d9480f');
 
     let res;
     try {
-      res = await chrome.runtime.sendMessage({ type: 'FILL_ADDRESS', customer: c });
+      res = await chrome.runtime.sendMessage({ type: 'FILL_ADDRESS', customer: c, hasPostal });
     } catch (e) { res = { ok: false, error: String(e) }; }
     log('주소 자동입력 결과', res);
-    if (res && res.ok) await setJob({ addrStep: 'saved' });
+    if (res && res.ok) await setJob({ addrStep: 'saved', addrSearching: false });
     else banner('주소 자동입력 실패: ' + (res && res.error), '#c92a2a');
   }
 

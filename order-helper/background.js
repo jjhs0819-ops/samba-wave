@@ -3,7 +3,7 @@
 
 // 페이지(MAIN) 컨텍스트에서 실행될 함수 — 무신사 Vue 인스턴스로 주소폼을 채우고 저장.
 // executeScript(world:'MAIN')로 주입되므로 페이지 CSP의 영향을 받지 않는다.
-function pageFillAddress(c) {
+function pageFillAddress(c, hasPostal) {
   return new Promise((resolve) => {
     let tries = 0;
     const iv = setInterval(() => {
@@ -16,30 +16,44 @@ function pageFillAddress(c) {
         try {
           vm.form.name = c.name;
           vm.form.mobile = c.phone;
-          if (typeof vm.findAddressComplete === 'function') {
-            vm.findAddressComplete({ zipcode: c.postal, address1: c.addr });
-          } else {
-            vm.form.zipcode = c.postal;
-            vm.form.address1 = c.addr;
-          }
           vm.form.address2 = c.addr2;
           if (c.memo) {
             const pre = (vm.ui && vm.ui.additionalMessageType) || [];
-            if (pre.indexOf(c.memo) >= 0) {
-              vm.form.additionalMessage = c.memo;
-            } else {
-              vm.form.additionalMessage = '직접입력';
-              vm.form.additionalMessageManual = c.memo;
-            }
+            if (pre.indexOf(c.memo) >= 0) vm.form.additionalMessage = c.memo;
+            else { vm.form.additionalMessage = '직접입력'; vm.form.additionalMessageManual = c.memo; }
           }
-          const filled = {
-            name: vm.form.name, mobile: vm.form.mobile,
-            zipcode: vm.form.zipcode, address1: vm.form.address1, address2: vm.form.address2,
-          };
-          setTimeout(() => {
-            try { vm.formSubmit(); } catch (e) { /* noop */ }
-            resolve({ ok: true, filled });
-          }, 400);
+
+          if (hasPostal) {
+            // 빠른 경로: 우편번호 직접 세팅
+            if (typeof vm.findAddressComplete === 'function') {
+              vm.findAddressComplete({ zipcode: c.postal, address1: c.addr });
+            } else {
+              vm.form.zipcode = c.postal; vm.form.address1 = c.addr;
+            }
+            setTimeout(() => {
+              try { vm.formSubmit(); } catch (e) { /* noop */ }
+              resolve({ ok: true, mode: 'postal',
+                filled: { zipcode: vm.form.zipcode, address1: vm.form.address1, address2: vm.form.address2 } });
+            }, 400);
+          } else {
+            // 검색 경로: 주소찾기 열기 → content-daum이 검색/최상단 선택 → zipcode 채워짐
+            try { vm.searchAddressOpen(); } catch (e) { resolve({ ok: false, error: 'searchOpen:' + e }); return; }
+            let p = 0;
+            const pv = setInterval(() => {
+              p++;
+              if (vm.form.zipcode && String(vm.form.zipcode).length === 5) {
+                clearInterval(pv);
+                setTimeout(() => {
+                  try { vm.formSubmit(); } catch (e) { /* noop */ }
+                  resolve({ ok: true, mode: 'search',
+                    filled: { zipcode: vm.form.zipcode, address1: vm.form.address1, address2: vm.form.address2 } });
+                }, 300);
+              } else if (p > 120) { // ~24초
+                clearInterval(pv);
+                resolve({ ok: false, error: 'search timeout (주소찾기 결과 미수신)' });
+              }
+            }, 200);
+          }
         } catch (e) {
           resolve({ ok: false, error: String(e) });
         }
@@ -68,7 +82,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         target: { tabId, allFrames: false },
         world: 'MAIN',
         func: pageFillAddress,
-        args: [msg.customer],
+        args: [msg.customer, !!msg.hasPostal],
       })
       .then((arr) => {
         const r = (arr && arr[0] && arr[0].result) || { ok: false, error: 'no result' };
