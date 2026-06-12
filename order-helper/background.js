@@ -39,15 +39,15 @@ function pageFillAddress(c) {
           setTimeout(() => {
             try { vm.formSubmit(); } catch (e) { /* noop */ }
             resolve({ ok: true, filled });
-          }, 800);
+          }, 400);
         } catch (e) {
           resolve({ ok: false, error: String(e) });
         }
-      } else if (tries > 40) {
+      } else if (tries > 50) {
         clearInterval(iv);
         resolve({ ok: false, error: 'NO_VUE' });
       }
-    }, 200);
+    }, 120);
   });
 }
 
