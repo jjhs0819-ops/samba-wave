@@ -35,10 +35,11 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://*.daum.net/*", "https://postcode.map.daum.net/*"],
+      "matches": ["https://*/*"],
       "js": ["content-daum.js"],
       "run_at": "document_idle",
-      "all_frames": true
+      "all_frames": true,
+      "match_about_blank": true
     }
   ],
   "action": {
