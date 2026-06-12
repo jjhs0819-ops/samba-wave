@@ -244,7 +244,16 @@
   }
 
   async function main() {
-    const job = await getJob();
+    let job = await getJob();
+    // 상품 페이지: 원문링크 트리거 직후 job 저장과 페이지 로드가 겹칠 수 있어
+    // 새로 트리거된 job(phase=start, 미완료)이 들어올 때까지 잠깐 대기(경합 방지).
+    if (/\/products\//.test(location.href)) {
+      for (let i = 0; i < 16; i++) {
+        if (job && job.phase === 'start' && job.status !== 'done') break;
+        await wait(300);
+        job = await getJob();
+      }
+    }
     if (!job) return;
     const url = location.href;
     try {
