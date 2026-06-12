@@ -58,7 +58,11 @@
   document.addEventListener('click', (e) => {
     const btn = e.target.closest && e.target.closest('button');
     if (!btn) return;
-    if (btn.textContent.trim() === '원문링크') {
+    const txt = (btn.textContent || '').replace(/\s/g, '');
+    // 디버그: '링크' 들어간 버튼 클릭은 모두 로그 (진단용)
+    if (txt.includes('링크')) log('버튼 클릭 감지:', JSON.stringify(txt));
+    // '원문링크' 정확히 (원주문링크=마켓 이동이라 제외)
+    if (txt === '원문링크') {
       const o = parseOrderCard(btn);
       if (!o || !o.name || !o.postal) {
         log('주문 파싱 실패(원문링크는 정상 동작) →', o);
