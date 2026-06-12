@@ -183,20 +183,17 @@
     else { banner('배송지 추가하기...'); const a = q(SEL.addrAddLink); if (a) a.click(); }
   }
 
-  // ── 단계 4: 배송지 입력 폼 — 주소 분리 후 background(MAIN)로 채움 ─
+  // ── 단계 4: 배송지 입력 폼 — 삼바의 정확한 기본/상세주소를 그대로 입력 ─
   async function stepAddrForm(job) {
     if (job.addrStep !== 'editing') return;
     banner('고객정보 자동입력 중...');
 
-    // 주소 분리/정규화
+    // 삼바에서 이미 정확히 나눠 읽은 값을 그대로 사용 (재분리/가공 안 함)
     const c = Object.assign({}, job.customer);
-    const sp = splitAddress(c.addr, c.addr2);
-    c.addr = sp.address1;
-    c.addr2 = sp.address2;
     const hasPostal = /^\d{5}$/.test(String(c.postal || ''));
-    log('주소 분리:', { address1: c.addr, address2: c.addr2, 우편번호: c.postal, hasPostal });
+    log('주소 입력:', { address1: c.addr, address2: c.addr2, 우편번호: c.postal, hasPostal });
 
-    // 분리된 주소를 job에 반영 (우편번호 없으면 Daum 검색 스크립트가 이 주소로 검색)
+    // 우편번호 없으면 Daum 검색 스크립트가 이 주소(c.addr)로 검색
     await setJob({ customer: c, addrSearching: !hasPostal });
     if (!hasPostal) banner('우편번호 없음 → 주소찾기 자동검색 중...', '#d9480f');
 

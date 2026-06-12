@@ -36,13 +36,18 @@ function pageFillAddress(c, hasPostal) {
                 filled: { zipcode: vm.form.zipcode, address1: vm.form.address1, address2: vm.form.address2 } });
             }, 400);
           } else {
-            // 검색 경로: 주소찾기 열기 → content-daum이 검색/최상단 선택 → zipcode 채워짐
+            // 검색 경로: 기존(이전 슬롯) 우편번호·주소를 먼저 비워야 새 결과를 정확히 감지
+            vm.form.zipcode = '';
+            vm.form.address1 = '';
             try { vm.searchAddressOpen(); } catch (e) { resolve({ ok: false, error: 'searchOpen:' + e }); return; }
             let p = 0;
             const pv = setInterval(() => {
               p++;
               if (vm.form.zipcode && String(vm.form.zipcode).length === 5) {
                 clearInterval(pv);
+                // Daum이 채운 주소를 삼바 정확값으로 덮어쓰기 (우편번호만 Daum 사용)
+                vm.form.address1 = c.addr;
+                vm.form.address2 = c.addr2;
                 setTimeout(() => {
                   try { vm.formSubmit(); } catch (e) { /* noop */ }
                   resolve({ ok: true, mode: 'search',

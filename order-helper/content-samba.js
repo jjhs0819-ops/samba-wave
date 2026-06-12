@@ -31,28 +31,50 @@
       card = card.parentElement;
     }
     if (!card) return null;
-    const t = (card.innerText || '').replace(/ /g, ' ');
-    const m = (re) => { const x = t.match(re); return x ? x[1].trim() : ''; };
+    // 라벨(수령인/연락처/주소...) span을 찾아 그 그룹 div 반환
+    const groupDiv = (label) => {
+      const spans = Array.from(card.querySelectorAll('div > span'));
+      const lab = spans.find(
+        (s) => s.textContent.trim() === label &&
+               s.parentElement && s.parentElement.querySelector('[role="button"]')
+      );
+      return lab ? lab.parentElement : null;
+    };
+    const copyTexts = (div) =>
+      div ? Array.from(div.querySelectorAll('[role="button"]')).map((s) => s.textContent.trim()) : [];
+    const clean = (s) => (s && s !== '-' ? s : '');
 
-    const name = m(/수령인\s+([^\n]+?)\s+연락처/);
-    const phone = m(/연락처\s+([0-9\-]+)/);
-    const postal = m(/\[(\d{5})\]/);
-    let addr = m(/주소\s+([\s\S]+?)(?:\s*\[\d{5}\]|고객메모|타마켓|쿠팡노출|$)/);
-    addr = addr.replace(/\s+/g, ' ').trim(); // 줄바꿈(기본/상세 분리)을 공백으로
-    let memo = m(/고객메모\s+([^\n]+)/);
-    if (memo === '-') memo = '';
-    const optionRaw = m(/\[옵션\]\s*([^\n]+)/);
-    const qty = m(/수량\s*[:：]\s*(\d+)/) || '1';
-    const extNo = m(/상품주문번호\s+([^\s|]+)/);
-    const ordNo = m(/주문번호\s+([^\s|]+)/);
+    // 핵심: 삼바가 이미 나눠둔 기본주소/상세주소 span을 그대로 읽음 (100% 동일, '/' 무시)
+    const name = clean(copyTexts(groupDiv('수령인'))[0]);
+    const phone = clean(copyTexts(groupDiv('연락처'))[0]);
+    const addrDiv = groupDiv('주소');
+    const addrTexts = copyTexts(addrDiv);
+    const addr = clean(addrTexts[0]);
+    const addr2 = clean(addrTexts[1]);
+    const postal = addrDiv ? ((addrDiv.textContent.match(/\[(\d{5})\]/) || [])[1] || '') : '';
 
-    // 사이즈 추출: 끝의 숫자(신발 250 등) 우선, 없으면 마지막 토큰(L 등)
+    // 고객메모
+    let memo = '';
+    const memoLab = Array.from(card.querySelectorAll('span')).find((s) => s.textContent.trim() === '고객메모');
+    if (memoLab && memoLab.parentElement) {
+      memo = (memoLab.parentElement.innerText || '').replace('고객메모', '').trim();
+      if (memo === '-') memo = '';
+    }
+
+    // 옵션/수량/주문번호 (제품 영역)
+    const t = card.innerText || '';
+    const optionRaw = ((t.match(/\[옵션\]\s*([^\n]+)/) || [])[1] || '').trim();
+    const qty = (t.match(/수량\s*[:：]\s*(\d+)/) || [])[1] || '1';
+    const extNo = (t.match(/상품주문번호\s+([^\s|]+)/) || [])[1] || '';
+    const ordNo = (t.match(/주문번호\s+([^\s|]+)/) || [])[1] || '';
+
+    // 사이즈: 끝의 숫자(신발 250 등) 우선, 없으면 마지막 토큰(L/S 등)
     let size = optionRaw;
     const numEnd = optionRaw.match(/(\d{2,3})\s*$/);
     if (numEnd) size = numEnd[1];
     else { const toks = optionRaw.split(/\s+/).filter(Boolean); size = toks[toks.length - 1] || optionRaw; }
 
-    return { name, phone, postal, addr, addr2: '', memo, size, optionRaw, qty: parseInt(qty) || 1, extNo, ordNo };
+    return { name, phone, postal, addr, addr2, memo, size, optionRaw, qty: parseInt(qty) || 1, extNo, ordNo };
   }
 
   // 원문링크 클릭을 capture 단계에서 감지 (React onClick 보다 먼저 실행)
