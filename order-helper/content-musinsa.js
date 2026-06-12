@@ -258,14 +258,16 @@
 
   async function main() {
     let job = await getJob();
-    // 상품 페이지: 원문링크 트리거 직후 job 저장과 페이지 로드가 겹칠 수 있어
-    // 새로 트리거된 job(phase=start, 미완료)이 들어올 때까지 잠깐 대기(경합 방지).
+    // 상품 페이지: '방금(이 탭 열림 직전) 생성된' 작업만 채택 (이전 주문의 잔존 작업 무시)
     if (/\/products\//.test(location.href)) {
+      const fresh = (j) => j && j.phase === 'start' && j.status !== 'done' && !j.aborted &&
+                           j.ts && (Date.now() - j.ts) < 30000;
       for (let i = 0; i < 16; i++) {
-        if (job && job.phase === 'start' && job.status !== 'done') break;
+        if (fresh(job)) break;
         await wait(300);
         job = await getJob();
       }
+      if (!fresh(job)) { log('이 탭에 해당하는 최신 작업 없음 — 대기/무시'); return; }
     }
     if (!job) return;
     if (job.aborted) return; // 옵션없음 등으로 중단된 작업 — 아무것도 안 함
@@ -290,7 +292,8 @@
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== 'local' || !changes.job) return;
       const j = changes.job.newValue;
-      if (j && j.phase === 'start' && j.status !== 'done' &&
+      if (j && j.phase === 'start' && j.status !== 'done' && !j.aborted &&
+          j.ts && (Date.now() - j.ts) < 30000 &&
           /\/products\//.test(location.href) && !ranProduct) {
         main();
       }

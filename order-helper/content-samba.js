@@ -139,6 +139,7 @@
     }
     const job = {
       status: 'active', phase: 'start',
+      ts: Date.now(), // 생성 시각 — 무신사 탭이 '방금 만든 작업'만 채택하도록
       size: o.size, quantity: o.qty,
       orderId: o.ordNo || o.extNo || '',
       extNo: o.extNo, ordNo: o.ordNo,
