@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "삼바 주문도우미 (Order Helper)",
+  "version": "0.1.0",
+  "description": "반자동 무신사 주문처리 — 원문링크 클릭 → 배송지 자동입력 → (수동결제) → 주문번호 자동기입. 추후 삼바 확장으로 이전 가능한 독립 모듈.",
+  "permissions": ["storage", "tabs", "scripting", "activeTab"],
+  "host_permissions": [
+    "https://*.musinsa.com/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://*.musinsa.com/*"],
+      "js": ["config.js", "content-musinsa.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "삼바 주문도우미"
+  }
+}

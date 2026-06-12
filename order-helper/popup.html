@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { width: 300px; font: 13px/1.5 -apple-system, sans-serif; padding: 12px; }
+    h3 { margin: 0 0 8px; font-size: 14px; }
+    label { display: block; margin: 6px 0 2px; color: #555; font-size: 11px; }
+    input { width: 100%; box-sizing: border-box; padding: 4px 6px; font-size: 12px; }
+    button { width: 100%; padding: 8px; margin-top: 10px; background: #2b8a3e; color: #fff;
+             border: 0; border-radius: 4px; font-weight: 600; cursor: pointer; }
+    .muted { color: #888; font-size: 11px; margin-top: 8px; }
+    #status { margin-top: 8px; font-size: 11px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h3>🤖 주문도우미 (테스트)</h3>
+  <label>상품 URL</label>
+  <input id="url" value="https://www.musinsa.com/products/6149001" />
+  <label>사이즈</label>
+  <input id="size" value="L" />
+  <label>받는분</label>
+  <input id="name" value="최주경" />
+  <label>연락처</label>
+  <input id="phone" value="010-5653-6701" />
+  <label>우편번호</label>
+  <input id="postal" value="08076" />
+  <label>기본주소</label>
+  <input id="addr" value="서울 양천구 중앙로29길 11" />
+  <label>상세주소</label>
+  <input id="addr2" value="호반써밋 202동1003호" />
+  <label>배송메모</label>
+  <input id="memo" value="부재 시 문 앞에 놓아주세요" />
+  <button id="start">자동주문 시작 (주소입력까지)</button>
+  <div id="status"></div>
+  <div class="muted">결제(쿠폰·결제수단·비번)는 직접 진행하세요.<br>결제완료 시 주문번호가 자동 감지됩니다.</div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
