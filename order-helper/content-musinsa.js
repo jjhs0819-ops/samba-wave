@@ -192,6 +192,13 @@
   // ── 단계 4: 배송지 입력 폼 — 삼바 정확값 입력 (+우편번호 없으면 주소찾기로 조회) ─
   async function stepAddrForm(job) {
     if (job.addrStep !== 'editing') return;
+    // 루프 방지: 진입 즉시 'saved'로 전환 → 저장 후 목록에서 '수정' 재진입 차단
+    const count = (job.addrFormCount || 0) + 1;
+    await setJob({ addrStep: 'saved', addrFormCount: count });
+    if (count > 3) {
+      banner('주소 자동입력 반복 감지 — 중단. 직접 진행해주세요.', '#c92a2a');
+      return; // 안전장치: 반복 시 더 이상 자동입력 안 함
+    }
     banner('고객정보 자동입력 중...');
 
     const c = Object.assign({}, job.customer); // 삼바 정확값(기본/상세주소) 그대로
@@ -203,11 +210,9 @@
       res = await sendMsg('FILL_ZIP', { customer: c, zip: c.postal });
     } else {
       banner('우편번호 없음 → 주소찾기 자동검색 중...', '#d9480f');
-      // content-daum이 이 주소로 검색하도록 표시 + 주소찾기 오픈
-      await setJob({ customer: c, addrSearching: true, resolvedZip: null, searchFailed: false });
+      await setJob({ addrSearching: true, resolvedZip: null, searchFailed: false });
       await sendMsg('OPEN_SEARCH', { customer: c });
 
-      // content-daum이 매칭 결과 우편번호를 storage에 기록할 때까지 대기 (안전: 최대 ~12초)
       let zip = null;
       for (let i = 0; i < 30 && !zip; i++) {
         await wait(400);
@@ -224,9 +229,9 @@
       res = await sendMsg('FILL_ZIP', { customer: c, zip });
     }
 
+    await setJob({ addrSearching: false, resolvedZip: null });
     log('주소 저장 결과', res);
-    if (res && res.ok) await setJob({ addrStep: 'saved', addrSearching: false, resolvedZip: null });
-    else banner('주소 자동입력 실패: ' + (res && res.error), '#c92a2a');
+    if (!(res && res.ok)) banner('주소 자동입력 실패: ' + (res && res.error), '#c92a2a');
   }
 
   // ── 단계 5: 결제완료 — 주문번호/금액 스크랩 + 기입 ──────────────
