@@ -117,13 +117,29 @@
   let ranProduct = false; // 옵션선택 중복 실행 방지(경합/onChanged 이중 트리거 대비)
 
   // ── 단계 1: 상품 — 옵션 선택 + 구매하기 ─────────────────────────
+  //  · 옵션 드롭다운이 1개(사이즈만)면 자동 선택 + 구매하기
+  //  · 옵션이 여러 개(색상+사이즈 등)이거나 사이즈를 못 찾으면 자동선택하지 않고
+  //    사용자가 직접 고르게 안내. (job은 살려둠 → 주문서 가면 배송지 자동입력)
   async function stepProduct(job) {
     if (job.phase && job.phase !== 'start') return;
     if (ranProduct) return;
     ranProduct = true;
-    banner(`옵션 '${job.size}' 선택 중...`);
+
+    const MANUAL = '옵션을 직접 선택하고 [구매하기]를 누르세요. 주문서에서 배송지는 자동 입력됩니다.';
     const trigger = await waitFor(SEL.optionTrigger);
-    if (!trigger) { banner('옵션 버튼을 못 찾음', '#c92a2a'); return; }
+    if (!trigger) {
+      banner('🛈 ' + MANUAL, '#1971c2');
+      return; // 옵션 UI 못 찾음 → 수동. job 유지(주문서에서 주소 자동입력)
+    }
+
+    // 옵션 드롭다운 개수 확인 (색상+사이즈처럼 2개 이상이면 수동)
+    const triggers = qa(SEL.optionTrigger);
+    if (triggers.length >= 2) {
+      banner('🛈 옵션이 여러 개예요(예: 색상·사이즈). ' + MANUAL, '#1971c2');
+      return; // 자동선택 안 함, job 유지
+    }
+
+    banner(`옵션 '${job.size}' 선택 중...`);
     trigger.click();
     await waitFor(SEL.optionValue, 6000);
     const items = qa(SEL.optionValue);
@@ -134,8 +150,8 @@
       (e) => (e.innerText || '').trim().toUpperCase().startsWith(String(job.size).toUpperCase())
     );
     if (!target) {
-      banner(`옵션 없음 ('${job.size}') — 자동 진행 중단. 직접 진행해주세요.`, '#c92a2a');
-      await setJob({ aborted: true }); // 이후 모든 자동활동 중단
+      // 사이즈 자동매칭 실패 → 중단하지 말고 수동 안내 (주문서 가면 주소 자동입력)
+      banner(`🛈 사이즈 '${job.size}' 자동선택 실패. ` + MANUAL, '#d9480f');
       return;
     }
     target.click();
@@ -143,7 +159,7 @@
     await setJob({ phase: 'orderform' });
     banner('구매하기...');
     const buy = await waitFor(SEL.buyButton);
-    if (!buy) { banner('구매하기 버튼 없음', '#c92a2a'); return; }
+    if (!buy) { banner('🛈 ' + MANUAL, '#1971c2'); return; }
     buy.click();
   }
 
