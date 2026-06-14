@@ -25,6 +25,17 @@ $('start').addEventListener('click', () => {
   });
 });
 
+// 카카오 키 저장/표시
+chrome.storage.local.get('kakaoKey', ({ kakaoKey }) => {
+  if (kakaoKey) $('kakaoKey').value = kakaoKey;
+});
+$('saveKey').addEventListener('click', () => {
+  const k = $('kakaoKey').value.trim();
+  chrome.storage.local.set({ kakaoKey: k }, () => {
+    $('status').textContent = k ? '✅ 카카오 키 저장됨' : '키 삭제됨';
+  });
+});
+
 // 현재 작업 상태 표시
 chrome.storage.local.get('job', ({ job }) => {
   if (job) {

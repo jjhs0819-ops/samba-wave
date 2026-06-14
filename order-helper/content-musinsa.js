@@ -229,31 +229,24 @@
     const hasPostal = /^\d{5}$/.test(String(c.postal || ''));
     log('주소 입력:', { address1: c.addr, address2: c.addr2, 우편번호: c.postal, hasPostal });
 
-    let res;
-    if (hasPostal) {
-      res = await sendMsg('FILL_ZIP', { customer: c, zip: c.postal });
-    } else {
-      banner('우편번호 없음 → 주소찾기 자동검색 중...', '#d9480f');
-      await setJob({ addrSearching: true, resolvedZip: null });
-      await sendMsg('OPEN_SEARCH', { customer: c });
-
-      // content-daum(Daum frame)이 매칭 결과 우편번호를 기록할 때까지 대기 (~18초)
-      let zip = null;
-      for (let i = 0; i < 45 && !zip; i++) {
-        await wait(400);
-        const j = await getJob();
-        if (j && j.resolvedZip) { zip = j.resolvedZip; break; }
-      }
-      if (!zip) {
-        banner('주소찾기 우편번호 자동조회 실패 — 직접 진행해주세요', '#c92a2a');
-        await setJob({ addrSearching: false });
+    let zip = c.postal;
+    if (!hasPostal) {
+      // 카카오 우편번호 API로 1회 조회 (재시도/DOM긁기 없음)
+      banner('우편번호 자동조회 중...', '#d9480f');
+      const r = await sendMsg('RESOLVE_ZIP', { address: c.addr });
+      log('우편번호 조회 결과', r);
+      if (r && r.ok && r.zip) {
+        zip = r.zip;
+      } else {
+        // 키 없음/실패 → 주소찾기 창만 열어주고 사용자가 직접 선택+저장 (재시도 안 함)
+        const why = r && r.error === 'no key' ? '카카오 API 키 미설정' : '자동조회 실패';
+        banner(`우편번호 ${why} → 주소찾기에서 직접 선택 후 저장해주세요.`, '#c92a2a');
+        await sendMsg('OPEN_SEARCH', { customer: c });
         return;
       }
-      log('주소찾기 우편번호 수신:', zip);
-      res = await sendMsg('FILL_ZIP', { customer: c, zip });
     }
 
-    await setJob({ addrSearching: false, resolvedZip: null });
+    const res = await sendMsg('FILL_ZIP', { customer: c, zip });
     log('주소 저장 결과', res);
     if (!(res && res.ok)) banner('주소 자동입력 실패: ' + (res && res.error), '#c92a2a');
   }

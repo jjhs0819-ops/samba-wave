@@ -33,6 +33,12 @@
   <input id="memo" value="부재 시 문 앞에 놓아주세요" />
   <button id="start">자동주문 시작 (주소입력까지)</button>
   <div id="status"></div>
+
+  <hr style="margin:12px 0;border:none;border-top:1px solid #eee" />
+  <label>카카오 REST API 키 (우편번호 자동조회용)</label>
+  <input id="kakaoKey" placeholder="KakaoAK 키 붙여넣기" />
+  <button id="saveKey" style="background:#444">키 저장</button>
+  <div class="muted">발급: developers.kakao.com → 앱 생성 → REST API 키 복사.<br>미설정 시 우편번호 없는 주문은 주소찾기 창에서 직접 선택해야 합니다.</div>
   <div class="muted">결제(쿠폰·결제수단·비번)는 직접 진행하세요.<br>결제완료 시 주문번호가 자동 감지됩니다.</div>
 
   <script src="popup.js"></script>

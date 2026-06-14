@@ -102,6 +102,28 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === 'RESOLVE_ZIP') {
+    chrome.storage.local.get('kakaoKey', async ({ kakaoKey }) => {
+      if (!kakaoKey) { sendResponse({ ok: false, error: 'no key' }); return; }
+      try {
+        const r = await fetch(
+          'https://dapi.kakao.com/v2/local/search/address.json?query=' + encodeURIComponent(msg.address),
+          { headers: { Authorization: 'KakaoAK ' + kakaoKey } }
+        );
+        const d = await r.json();
+        const docs = d.documents || [];
+        const doc = docs.find((x) => x.road_address && x.road_address.zone_no) || docs[0];
+        const zip = doc && doc.road_address && doc.road_address.zone_no
+          ? doc.road_address.zone_no
+          : (doc && doc.address && doc.address.zip_code) || '';
+        const road = doc && doc.road_address ? doc.road_address.address_name : '';
+        if (zip) sendResponse({ ok: true, zip, road });
+        else sendResponse({ ok: false, error: 'no result' });
+      } catch (e) { sendResponse({ ok: false, error: String(e) }); }
+    });
+    return true;
+  }
+
   if (msg.type === 'WRITEBACK') {
     console.log('[주문도우미] WRITEBACK (삼바 기입 예정)', msg);
     sendResponse({ ok: true });
