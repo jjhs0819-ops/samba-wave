@@ -8,6 +8,7 @@
     "https://*.musinsa.com/*",
     "https://abcmart.a-rt.com/*",
     "https://grandstage.a-rt.com/*",
+    "https://www.lotteon.com/*",
     "https://samba-wave-xi.vercel.app/*",
     "https://dapi.kakao.com/*"
   ],
@@ -32,6 +33,11 @@
     {
       "matches": ["https://abcmart.a-rt.com/*", "https://grandstage.a-rt.com/*"],
       "js": ["content-abc.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.lotteon.com/*"],
+      "js": ["content-lotteon.js"],
       "run_at": "document_idle"
     }
   ],

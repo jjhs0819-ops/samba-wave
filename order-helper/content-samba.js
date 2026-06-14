@@ -125,7 +125,7 @@
       chrome.storage.local.remove('job'); // 이전 job 잔존으로 인한 오작동 방지
       return;
     }
-    if (o.source && ['MUSINSA', 'ABCMART', 'GRANDSTAGE'].indexOf(o.source) < 0) {
+    if (o.source && ['MUSINSA', 'ABCMART', 'GRANDSTAGE', 'LOTTEON'].indexOf(o.source) < 0) {
       log('미지원 소싱처 →', o.source);
       toast(`${o.source} 주문은 자동주문 미지원. 원문링크만 열립니다.`, '#c92a2a');
       chrome.storage.local.remove('job');
