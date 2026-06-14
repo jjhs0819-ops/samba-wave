@@ -85,17 +85,38 @@
     }
     setVal(q('#rcvrDtlAddr'), String(c.addr2 || '').slice(0, 40));
 
-    // 배송메모: 직접입력으로 정확히 (삼바 메모 그대로)
-    if (c.memo) {
-      const sel = q('#dlvyMemo');
-      if (sel) {
-        sel.value = 'write';
-        sel.dispatchEvent(new Event('change', { bubbles: true }));
-        setRO(q('#dlvyMemoText'), String(c.memo).slice(0, 40));
+    // 배송메모: 항상 '직접입력' 선택 → 메모(없으면 '-') 입력 → 수정 가능하게(readonly 해제)
+    const sel = q('#dlvyMemo');
+    if (sel) {
+      sel.value = 'write';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      const memoInput = q('#dlvyMemoText');
+      if (memoInput) {
+        memoInput.readOnly = false; // 영구 해제 — 사용자가 수정 가능
+        setVal(memoInput, (String(c.memo || '').trim() || '-').slice(0, 40));
       }
     }
+
+    // [필수] 주문 내역에 대한 동의 자동 체크
+    checkRequiredAgree();
+
     await setJob({ addrDone: true });
     banner('배송지 입력 완료 ✅ 결제(결제하기)는 직접 진행하세요.', '#1971c2');
+  }
+
+  // 필수 동의 체크박스 자동 체크 (주문 내역 동의 등)
+  function checkRequiredAgree() {
+    let n = 0;
+    qa('input[type="checkbox"]').forEach((cb) => {
+      const scope = cb.closest('li, label') || cb.parentElement;
+      const t = (scope && scope.textContent || '').replace(/\s+/g, ' ');
+      if (/\[필수\]|주문 내역에 대한 동의|구매에 동의|전자상거래법/.test(t)) {
+        if (!cb.checked) { cb.click(); cb.dispatchEvent(new Event('change', { bubbles: true })); }
+        n++;
+      }
+    });
+    const hid = q('#termAgreeYn1'); if (hid) hid.value = 'Y';
+    log('필수 동의 체크', n, '개');
   }
 
   async function main() {
