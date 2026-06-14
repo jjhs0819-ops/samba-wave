@@ -2,6 +2,9 @@
 // 메시지 허브 + MAIN world 주소입력(CSP 우회) + 삼바 writeback 중계.
 // ⚠️ executeScript(func)로 주입되는 함수는 '자기완결형'이어야 함 (외부 함수 참조 금지).
 
+// 카카오 REST API 키 (팝업에서 저장한 키가 있으면 그게 우선). 우편번호 조회용.
+const DEFAULT_KAKAO_KEY = '08bff9e4d109b15fe0d21d7f930bfa0d';
+
 // 우편번호 없는 경우: 이름/연락처/상세/메모 채우고 주소찾기(Daum) 오픈
 function pageOpenSearch(c) {
   return new Promise((resolve) => {
@@ -104,11 +107,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === 'RESOLVE_ZIP') {
     chrome.storage.local.get('kakaoKey', async ({ kakaoKey }) => {
-      if (!kakaoKey) { sendResponse({ ok: false, error: 'no key' }); return; }
+      const key = kakaoKey || DEFAULT_KAKAO_KEY;
+      if (!key) { sendResponse({ ok: false, error: 'no key' }); return; }
       try {
         const r = await fetch(
           'https://dapi.kakao.com/v2/local/search/address.json?query=' + encodeURIComponent(msg.address),
-          { headers: { Authorization: 'KakaoAK ' + kakaoKey } }
+          { headers: { Authorization: 'KakaoAK ' + key } }
         );
         const d = await r.json();
         const docs = d.documents || [];
