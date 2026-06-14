@@ -1742,11 +1742,17 @@ async def _build_independent(
     site_key: str,
     stock_per_value: int,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    """type=1 선택형 payload.independent 생성. (combination 은 None)"""
+    """type=1 선택형 payload.independent 생성. (combination 은 None)
+
+    옵션 VALUE 는 추천카탈로그 매칭 없이 전부 자유입력(recommendedOptValueNo=0 +
+    recommendedOptValue.koreanText)으로 전송한다(#418). 그룹(색상/사이즈→optNo)만
+    _resolve_esm_group 으로 확정. 비표준 옵션값 미발행/오매칭을 원천 차단하며,
+    전 옵션이 uniform 자유입력이라 #395(혼합 대표단품) 발생 불가.
+    """
     name, values = _normalize_samba_option(samba_opt)
     if not name or not values:
         return None, None
-    group, pool = await _resolve_esm_group(client, cat_code, name)
+    group, _pool = await _resolve_esm_group(client, cat_code, name)
     if not group:
         logger.warning(f"[ESM] 옵션 그룹 매칭 실패: samba='{name}' cat={cat_code}")
         return None, None
@@ -1755,23 +1761,16 @@ async def _build_independent(
     details: list[dict[str, Any]] = []
     for i, v in enumerate(values):
         qty = stock_per_value if v["qty"] <= 0 else v["qty"]
-        rec_val_no = ESMPlusClient.match_option_value(v["text"], pool)
-        if rec_val_no:
-            details.append(
-                {
-                    "recommendedOptValueNo": rec_val_no,
-                    "addAmnt": v["add_amnt"],
-                    "qty": {site_key: 0 if v["sold_out"] else qty},
-                    "isSoldOut": v["sold_out"],
-                    "isDisplay": True,
-                    "manageCode": _clamp_manage_code(f"OPT{rec_val_no}", f"OPTF{i}"),
-                }
-            )
-            continue
-        # 매칭 실패 — recommendedOptValueNo=0(직접입력)을 보내면 옥션/지마켓이 이를
-        # "대표단품" 옵션값으로 노출시킨다. 0번을 보내지 말고 해당 값만 스킵.
-        logger.warning(
-            f"[ESM] 옵션값 매칭 실패 → 스킵(대표단품 방지): cat={cat_code} group={rec_opt_no} text='{v['text']}'"
+        details.append(
+            {
+                "recommendedOptValueNo": 0,
+                "recommendedOptValue": {"koreanText": v["text"]},
+                "addAmnt": v["add_amnt"],
+                "qty": {site_key: 0 if v["sold_out"] else qty},
+                "isSoldOut": v["sold_out"],
+                "isDisplay": True,
+                "manageCode": _clamp_manage_code(f"OPTF{i}", f"OPTF{i}"),
+            }
         )
     # recommendedOptValueNo 중복 제거 — 같은 optValueNo가 여러 번 등록되면 ESM 1000 에러
     seen_val_nos: set[str] = set()
@@ -1861,8 +1860,18 @@ async def _build_combination(
     if samba_opts and isinstance(samba_opts[0], dict):
         _combo_stock_map = samba_opts[0].get("_combo_stock_map") or {}
 
+    # per-combo 절대가격 base(최저) — 추가금(addAmnt) 차액 환산용 (#418②).
+    # _split_multi_group_options 가 축분리 시 price 를 누락해 combo add_amnt 가
+    # 항상 0이던 회귀 보정. price 없으면 None → 기존 sum_add_amnt 폴백.
+    _combo_prices = [
+        int(_ci["price"])
+        for _ci in _combo_stock_map.values()
+        if isinstance(_ci, dict) and _ci.get("price") is not None
+    ]
+    _combo_base = min(_combo_prices) if _combo_prices else None
+
     details: list[dict[str, Any]] = []
-    # 매칭 여부와 무관하게 모든 인덱스 포함 (fallback 처리)
+    # 전 축 자유입력(recommendedOptValueNo=0) — 매칭 스킵 없이 모든 조합 포함
     indices_per_axis = [list(range(len(samba_vals))) for _, samba_vals, _ in axes]
     for ci, combo in enumerate(itertools.product(*indices_per_axis)):
         entry: dict[str, Any] = {
@@ -1874,30 +1883,19 @@ async def _build_combination(
         }
         manage_parts: list[str] = []
         any_sold_out = False
-        skip_combo = False
         first_axis_idx = combo[0]
         first_qty = axes[0][1][first_axis_idx]["qty"] or stock_per_value
         sum_add_amnt = 0
         for axis_idx, (group, samba_vals, resolved) in enumerate(axes):
             val_idx = combo[axis_idx]
             v = samba_vals[val_idx]
-            rec_val_no = resolved[val_idx]
-            if rec_val_no:
-                entry[f"recommendedOptValueNo{axis_idx + 1}"] = rec_val_no
-                manage_parts.append(str(rec_val_no))
-            else:
-                # 매칭 실패 — 0번(직접입력)은 "대표단품"으로 노출되므로 이 조합을 스킵.
-                logger.warning(
-                    f"[ESM] 조합형 옵션값 매칭 실패 → 조합 스킵(대표단품 방지): "
-                    f"cat={cat_code} axis={axis_idx + 1} text='{v['text']}'"
-                )
-                skip_combo = True
-                break
+            # 전면 자유입력(#418) — 추천값 매칭 없이 koreanText 그대로 전송.
+            entry[f"recommendedOptValueNo{axis_idx + 1}"] = 0
+            entry[f"recommendedOptValue{axis_idx + 1}"] = {"koreanText": v["text"]}
+            manage_parts.append(str(val_idx))
             if v["sold_out"]:
                 any_sold_out = True
             sum_add_amnt += v["add_amnt"]
-        if skip_combo:
-            continue
         # 조합별 재고 맵이 있으면 per-combination 재고 사용, 없으면 첫 축 재고로 fallback
         _combo_key = "/".join(axes[ai][1][combo[ai]]["text"] for ai in range(len(axes)))
         _combo_info = _combo_stock_map.get(_combo_key)
@@ -1914,7 +1912,16 @@ async def _build_combination(
             _final_sold_out = any_sold_out
         entry["qty"] = {site_key: 0 if _final_sold_out else _final_qty}
         entry["isSoldOut"] = _final_sold_out
-        entry["addAmnt"] = sum_add_amnt
+        # 추가금(#418②): per-combo 절대가격이 있으면 base(최저) 대비 차액,
+        # 없으면 축별 add_amnt 합 폴백.
+        if (
+            _combo_info is not None
+            and _combo_info.get("price") is not None
+            and _combo_base is not None
+        ):
+            entry["addAmnt"] = max(0, int(_combo_info["price"]) - _combo_base)
+        else:
+            entry["addAmnt"] = sum_add_amnt
         entry["manageCode"] = _clamp_manage_code(
             "OPT" + "-".join(manage_parts), f"OPTC{ci}"
         )

@@ -79,13 +79,24 @@ def _infer_group_names(options: list[dict]) -> list[str] | None:
         return bool(u) and all(re.match(r"^\d+$", v) for v in u)
 
     a0, a1 = _is_size_axis(axis0), _is_size_axis(axis1)
+    n0, n1 = len(set(axis0)), len(set(axis1))
     # 양 축 모두 순수 숫자 → 허리/인심 팬츠 사이즈 조합 (#399)
     if not a0 and not a1 and _is_all_numeric(axis0) and _is_all_numeric(axis1):
         return ["허리", "인심"]
+    # 앞축(axis0)이 단일 상수값(접두코드 등)이면 가짜 색상축 → 2축 분리 취소,
+    # 단일축으로 처리 (#419). 예 "A/XS,A/S,A/M" → 1축 사이즈. 가드는 axis0 에만:
+    # 뒤축 단일값("블랙/M","화이트/M" = 2색 1사이즈)은 진짜 2축이라 거르면 안 됨.
+    if n0 <= 1:
+        return None
     if a1 and not a0:
         return ["색상", "사이즈"]
     if a0 and not a1:
         return ["사이즈", "색상"]
+    # 양축 비-사이즈라도 둘 다 다중 distinct 값이면 진짜 2축 결합옵션 (#418).
+    # 예 "위트/C10" 비표준코드 — 전면 자유입력이라 추천매칭 불필요 →
+    # 단일그룹화(미발행) 대신 2축 분리 등록.
+    if not a0 and not a1 and n0 >= 2 and n1 >= 2:
+        return ["색상", "사이즈"]
     return None
 
 
@@ -114,6 +125,8 @@ def _split_multi_group_options(
         combo_stock_map["/".join(parts)] = {
             "stock": stock,
             "isSoldOut": bool(opt.get("isSoldOut") or stock <= 0),
+            # per-combo 절대가격 보존 — _build_combination 추가금 차액 환산용(#418②)
+            "price": (int(opt["price"]) if opt.get("price") is not None else None),
         }
 
     result: list[dict] = []

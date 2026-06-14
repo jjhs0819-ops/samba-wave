@@ -482,6 +482,35 @@ def _get_transmit_sem(device_id: str = "", site: str = "") -> asyncio.Semaphore:
     return sem
 
 
+def _soldout_divergent(api_opts, sent_opts) -> bool:
+    """오버셀-critical 판정 (#417).
+
+    소싱(api_opts) 옵션이 품절(stock<=0)인데 마지막 전송(sent_opts)엔 재고>0 으로
+    남아있으면 마켓에 품절옵션이 판매중으로 떠 오버셀 위험 → critical.
+    이 경우 전송을 fire-and-forget 로 던지지 않고 shield-await 로 완료 보장한다.
+
+    옵션 이름(name 또는 size)으로 매칭. 한쪽이라도 비면 판정 불가 → False.
+    """
+    if not api_opts or not sent_opts:
+        return False
+    _sent_map = {
+        (o.get("name", "") or o.get("size", "")): (o.get("stock", 0) or 0)
+        for o in sent_opts
+        if isinstance(o, dict)
+    }
+    for _o in api_opts:
+        if not isinstance(_o, dict):
+            continue
+        _k = _o.get("name", "") or _o.get("size", "")
+        if not _k:
+            continue
+        _ns = _o.get("stock", 0) or 0
+        _ss = _sent_map.get(_k, 0) or 0
+        if _ns <= 0 and _ss > 0:
+            return True
+    return False
+
+
 async def _run_transmit_in_background(coro_factory, site: str = ""):
     """fire-and-forget으로 전송 실행 — PC × 사이트별 세마포어로 동시 실행 제한.
 
@@ -3005,17 +3034,40 @@ async def _site_autotune_loop(device_id: str, site: str):
                                     _tx_pid,
                                     f"{_idx_prefix}{_tx_label}: {_tx_action_text} 전송{_tail}",
                                 )
-                                # 계정별 fire-and-forget task
-                                _bg_task = asyncio.create_task(
-                                    _run_transmit_in_background(
-                                        _fire_transmit_account, site=site
+                                # 오버셀-critical(품절 divergence) 판정 — 소싱 품절인데
+                                # 마지막 전송엔 재고>0 이면 fire-and-forget 유실 시 오버셀.
+                                # 이 경우만 shield-await 로 사이클 취소·PC stop 와 무관하게
+                                # 끝까지 완료(유실 원천차단, #417). 일반 변경은 기존대로
+                                # fire-and-forget 으로 throughput 유지.
+                                _critical = _soldout_divergent(
+                                    r.new_options, last_sent.get(_tx_acc)
+                                )
+                                if _critical:
+                                    try:
+                                        await asyncio.shield(_fire_transmit_account())
+                                    except asyncio.CancelledError:
+                                        # 사이클이 취소돼도 shield 내부 전송은 계속 완료됨.
+                                        # awaiter 만 취소 전파받음 — 재전파해 정상 종료.
+                                        raise
+                                    except Exception as _ce:
+                                        log.warning(
+                                            "[오토튠][품절shield] 전송 실패 pid=%s acc=%s: %s",
+                                            _tx_pid,
+                                            str(_tx_acc)[:12],
+                                            str(_ce)[:160],
+                                        )
+                                else:
+                                    # 계정별 fire-and-forget task
+                                    _bg_task = asyncio.create_task(
+                                        _run_transmit_in_background(
+                                            _fire_transmit_account, site=site
+                                        )
                                     )
-                                )
-                                _bg_set = _pc_bg_transmit_tasks.setdefault(
-                                    device_id, set()
-                                )
-                                _bg_set.add(_bg_task)
-                                _bg_task.add_done_callback(_bg_set.discard)
+                                    _bg_set = _pc_bg_transmit_tasks.setdefault(
+                                        device_id, set()
+                                    )
+                                    _bg_set.add(_bg_task)
+                                    _bg_task.add_done_callback(_bg_set.discard)
 
                         # ③ 소싱처별 병렬 갱신 + 결과 즉시 처리 (콜백)
                         from backend.domain.samba.collector.refresher import (
