@@ -125,21 +125,26 @@
       chrome.storage.local.remove('job'); // 이전 job 잔존으로 인한 오작동 방지
       return;
     }
-    if (o.source && o.source !== 'MUSINSA') {
-      log('무신사 외 소싱처 →', o.source, '(자동주문 미지원)');
-      toast(`${o.source} 주문은 자동주문 미지원 (무신사 전용). 원문링크만 열립니다.`, '#c92a2a');
+    if (o.source && ['MUSINSA', 'ABCMART', 'GRANDSTAGE'].indexOf(o.source) < 0) {
+      log('미지원 소싱처 →', o.source);
+      toast(`${o.source} 주문은 자동주문 미지원. 원문링크만 열립니다.`, '#c92a2a');
       chrome.storage.local.remove('job');
       return;
     }
-    // 0502 안심번호 → 고정 연락처로 대체
+    // 연락처 규칙: ABC는 무조건 고정번호, 무신사는 0502 안심번호만 대체
     let phone = o.phone;
-    if (/^0502/.test((phone || '').replace(/[^0-9]/g, ''))) {
+    const isAbc = o.source === 'ABCMART' || o.source === 'GRANDSTAGE';
+    if (isAbc) {
+      phone = '010-8282-3536';
+      log('ABC 주문 → 연락처 010-8282-3536 고정');
+    } else if (/^0502/.test((phone || '').replace(/[^0-9]/g, ''))) {
       phone = '010-8282-3536';
       log('안심번호(0502) 감지 → 010-8282-3536 으로 대체');
     }
     const job = {
       status: 'active', phase: 'start',
-      ts: Date.now(), // 생성 시각 — 무신사 탭이 '방금 만든 작업'만 채택하도록
+      ts: Date.now(),
+      source: o.source || 'MUSINSA',
       size: o.size, quantity: o.qty,
       orderId: o.ordNo || o.extNo || '',
       extNo: o.extNo, ordNo: o.ordNo,

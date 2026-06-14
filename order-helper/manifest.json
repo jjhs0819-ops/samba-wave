@@ -6,6 +6,8 @@
   "permissions": ["storage", "tabs", "scripting", "activeTab"],
   "host_permissions": [
     "https://*.musinsa.com/*",
+    "https://abcmart.a-rt.com/*",
+    "https://grandstage.a-rt.com/*",
     "https://samba-wave-xi.vercel.app/*",
     "https://dapi.kakao.com/*"
   ],
@@ -25,6 +27,11 @@
     {
       "matches": ["https://samba-wave-xi.vercel.app/*"],
       "js": ["content-samba.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://abcmart.a-rt.com/*", "https://grandstage.a-rt.com/*"],
+      "js": ["content-abc.js"],
       "run_at": "document_idle"
     }
   ],

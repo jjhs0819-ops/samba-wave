@@ -280,6 +280,7 @@
       if (!fresh(job)) { log('이 탭에 해당하는 최신 작업 없음 — 대기/무시'); return; }
     }
     if (!job) return;
+    if (job.source && job.source !== 'MUSINSA') return; // ABC 등 타 소싱 작업은 무시
     if (job.aborted) return; // 옵션없음 등으로 중단된 작업 — 아무것도 안 함
     const url = location.href;
     try {

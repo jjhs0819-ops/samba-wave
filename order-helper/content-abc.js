@@ -1,0 +1,128 @@
+// 삼바 주문도우미 — ABC마트/그랜드스테이지 자동화 (a-rt.com)
+// 흐름: 삼바 원문링크 → ABC 상품(/product/new?prdtNo=) → 사이즈선택 → 바로구매
+//      → 주문서(/order) → 배송지 자동입력. 결제(#btnPayment)는 사람이 직접.
+(function () {
+  const log = (...a) => console.log('%c[주문도우미·ABC]', 'color:#e8590c;font-weight:bold', ...a);
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const q = (s) => document.querySelector(s);
+  const qa = (s) => Array.from(document.querySelectorAll(s));
+  async function getJob() { const { job } = await chrome.storage.local.get('job'); return job || null; }
+  async function setJob(p) { const j = (await getJob()) || {}; Object.assign(j, p); await chrome.storage.local.set({ job: j }); return j; }
+  function sendMsg(type, extra) {
+    return new Promise((res) => { try { chrome.runtime.sendMessage(Object.assign({ type }, extra), (r) => res(r || { ok: false })); } catch (e) { res({ ok: false, error: String(e) }); } });
+  }
+  async function waitFor(sel, t = 12000) {
+    const end = Date.now() + t;
+    while (Date.now() < end) { const e = q(sel); if (e && e.offsetParent !== null) return e; await wait(120); }
+    return q(sel);
+  }
+  function banner(msg, color = '#e8590c') {
+    let el = document.getElementById('__oh_banner');
+    if (!el) {
+      el = document.createElement('div'); el.id = '__oh_banner';
+      el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:10px 16px;font:600 14px/1.4 -apple-system,sans-serif;color:#fff;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.2)';
+      document.documentElement.appendChild(el);
+    }
+    el.style.background = color; el.textContent = '🤖 주문도우미: ' + msg;
+  }
+  function setVal(el, v) {
+    if (!el) return false;
+    const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, v == null ? '' : v);
+    ['input', 'change', 'blur'].forEach((t) => el.dispatchEvent(new Event(t, { bubbles: true })));
+    return true;
+  }
+  function setRO(el, v) { if (!el) return false; const w = el.readOnly; el.readOnly = false; setVal(el, v); el.readOnly = w; return true; }
+
+  let ranProduct = false;
+
+  // ── 상품: 사이즈 선택 + 바로구매 ──
+  async function stepProduct(job) {
+    if (job.phase && job.phase !== 'start') return;
+    if (ranProduct) return; ranProduct = true;
+    const MANUAL = '옵션을 직접 선택하고 [바로구매]를 누르세요. 주문서에서 배송지는 자동 입력됩니다.';
+    const size = String(job.size || '').trim();
+    await waitFor('button.btn-prod-size', 10000);
+    let btn = qa(`li[data-product-option-no="${size}"] button.btn-prod-size`)
+      .find((b) => b.offsetParent !== null && !b.classList.contains('sold-out'));
+    if (!btn) btn = qa('button.btn-prod-size')
+      .find((b) => b.offsetParent !== null && !b.classList.contains('sold-out') && (b.textContent || '').trim() === size);
+    if (!btn) { banner('🛈 사이즈 자동선택 실패(' + size + '). ' + MANUAL, '#1971c2'); return; }
+    banner(`옵션 '${size}' 선택 중...`);
+    btn.click();
+    await wait(400);
+    await setJob({ phase: 'order' });
+    banner('바로구매...');
+    const buy = qa('button[data-product-button="buy-now"]').find((b) => b.offsetParent !== null) || q('button[data-product-button="buy-now"]');
+    if (!buy) { banner('🛈 ' + MANUAL, '#1971c2'); return; }
+    buy.click();
+  }
+
+  // ── 주문서: 배송지 자동입력 (결제는 사람이) ──
+  async function stepOrder(job) {
+    if (job.addrDone) { banner('배송지 입력 완료 ✅ 결제(결제하기)는 직접 진행하세요.', '#1971c2'); return; }
+    const c = job.customer || {};
+    banner('배송지 자동입력 중...');
+    // 신규입력 모드
+    const radio = await waitFor('#newDlvy', 10000);
+    if (radio && !radio.checked) { radio.click(); radio.dispatchEvent(new Event('change', { bubbles: true })); }
+    await wait(300);
+    setVal(q('#rcvrName'), c.name || '');
+    setVal(q('#rcvrHdphn'), String(c.phone || '010-8282-3536').replace(/[^0-9]/g, ''));
+
+    // 우편번호: 5자리 있으면 사용, 없으면 카카오 API 조회 → readonly 직접 주입
+    let zip = /^\d{5}$/.test(String(c.postal || '')) ? c.postal : null;
+    if (!zip) {
+      const r = await sendMsg('RESOLVE_ZIP', { address: c.addr });
+      log('우편번호 조회', r);
+      if (r && r.ok && r.zip) zip = r.zip;
+    }
+    if (zip) {
+      setRO(q('#rcvrPostCode'), zip);
+      setRO(q('#rcvrPostAddr'), c.addr || ''); // 삼바 기본주소 그대로
+    } else {
+      banner('우편번호 자동조회 실패 — [우편번호 찾기]로 직접 선택 후 결제하세요.', '#c92a2a');
+    }
+    setVal(q('#rcvrDtlAddr'), String(c.addr2 || '').slice(0, 40));
+
+    // 배송메모: 직접입력으로 정확히 (삼바 메모 그대로)
+    if (c.memo) {
+      const sel = q('#dlvyMemo');
+      if (sel) {
+        sel.value = 'write';
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        setRO(q('#dlvyMemoText'), String(c.memo).slice(0, 40));
+      }
+    }
+    await setJob({ addrDone: true });
+    banner('배송지 입력 완료 ✅ 결제(결제하기)는 직접 진행하세요.', '#1971c2');
+  }
+
+  async function main() {
+    let job = await getJob();
+    const url = location.href;
+    if (/\/product\//.test(url)) {
+      // 신선도: 방금 생성된 ABC 작업만 채택
+      const fresh = (j) => j && j.phase === 'start' && j.status !== 'done' &&
+        (j.source === 'ABCMART' || j.source === 'GRANDSTAGE') && j.ts && (Date.now() - j.ts) < 30000;
+      for (let i = 0; i < 16; i++) { if (fresh(job)) break; await wait(300); job = await getJob(); }
+      if (!fresh(job)) return;
+    }
+    if (!job) return;
+    if (job.source !== 'ABCMART' && job.source !== 'GRANDSTAGE') return; // ABC 작업만
+    try {
+      if (/\/product\//.test(url)) return await stepProduct(job);
+      if (/\/order(\b|\/|\?|$)/.test(url)) return await stepOrder(job);
+    } catch (e) { log('오류', e); banner('오류 발생 — 콘솔 확인', '#c92a2a'); }
+  }
+
+  main();
+  try {
+    chrome.storage.onChanged.addListener((ch, area) => {
+      if (area !== 'local' || !ch.job) return;
+      const j = ch.job.newValue;
+      if (j && j.phase === 'start' && (j.source === 'ABCMART' || j.source === 'GRANDSTAGE') &&
+        j.ts && (Date.now() - j.ts) < 30000 && /\/product\//.test(location.href) && !ranProduct) main();
+    });
+  } catch (e) { /* noop */ }
+})();
