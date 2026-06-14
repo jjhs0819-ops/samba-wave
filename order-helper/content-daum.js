@@ -70,25 +70,24 @@
     const sb = document.querySelector('button.btn_search, .btn_search, button[type=submit]');
     if (sb) { try { sb.click(); } catch (e) { /* noop */ } }
 
-    // 2) 결과에서 '매칭되는' 우편번호 읽기 (클릭 안 함). 최대 ~16초 대기(느린 로딩 대비)
+    // 2) 결과에서 '매칭되는' 우편번호 읽기 (클릭 안 함, 텍스트만). 결과 뜨면 즉시 멈춤.
+    //    ※ offsetParent 가시성 필터 제거: Daum 결과가 position:fixed 등이라 걸러지던 문제 해결.
     let zip = null;
     const roadRe = bno ? new RegExp(esc(roadToken) + '\\s*' + esc(bno) + '(?!\\d)') : null;
-    for (let i = 0; i < 80 && !zip; i++) {
-      await wait(200);
-      // 검색 재시도(중간에 한 번): 8회까지 결과 없으면 Enter 재발사
-      if (i === 8) { try { fireEnter(input); } catch (e) { /* noop */ } }
+    for (let i = 0; i < 60 && !zip; i++) {
+      await wait(250);
+      if (i === 10) { try { fireEnter(input); } catch (e) { /* noop */ } } // 결과 없으면 1회만 재검색
       const blocks = Array.from(document.querySelectorAll('*'))
         .filter((el) => {
-          if (el.offsetParent === null) return false;
           const t = (el.textContent || '').replace(/\s+/g, ' ');
-          if (t.length > 300) return false;
+          if (t.length > 300 || !/\d{5}/.test(t)) return false;
           if (roadToken && !t.includes(roadToken)) return false;
           if (roadRe && !roadRe.test(t)) return false;   // 입력 주소와 정확히 매칭
-          return /\b\d{5}\b/.test(t);
+          return true;
         })
         .sort((a, b) => (a.textContent || '').length - (b.textContent || '').length);
       if (blocks.length) {
-        const m = (blocks[0].textContent || '').match(/\b(\d{5})\b/);
+        const m = (blocks[0].textContent || '').match(/\b(\d{5})\b/) || (blocks[0].textContent || '').match(/(\d{5})/);
         if (m) {
           zip = m[1];
           log('✅ 매칭 결과 우편번호:', zip, '|', (blocks[0].innerText || '').replace(/\s+/g, ' ').slice(0, 70));
