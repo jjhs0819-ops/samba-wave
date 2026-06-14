@@ -2389,6 +2389,40 @@ async def set_coupang_auto_confirm(
     return {"ok": True, "enabled": enabled}
 
 
+@router.get("/esm-auto-confirm")
+async def get_esm_auto_confirm(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict:
+    """ESM(G마켓/옥션) 자동 발주확인(OrderCheck) 토글 조회 (#423).
+
+    기본값 True. OFF 시 sync 에서 confirm_order 호출 스킵 → 수동 /confirm 사용.
+    """
+    from backend.api.v1.routers.samba.proxy import _get_setting
+
+    raw = await _get_setting(session, "esm_auto_confirm_orders")
+    enabled = True
+    if isinstance(raw, dict):
+        v = raw.get("enabled")
+        if isinstance(v, bool):
+            enabled = v
+    elif isinstance(raw, bool):
+        enabled = raw
+    return {"enabled": enabled}
+
+
+@router.post("/esm-auto-confirm")
+async def set_esm_auto_confirm(
+    body: dict,
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict:
+    """ESM 자동 발주확인 토글 저장 (#423)."""
+    from backend.api.v1.routers.samba.proxy import _set_setting
+
+    enabled = bool(body.get("enabled", True))
+    await _set_setting(session, "esm_auto_confirm_orders", {"enabled": enabled})
+    return {"ok": True, "enabled": enabled}
+
+
 @router.get("/auto-sync-interval")
 async def get_auto_sync_interval(
     session: AsyncSession = Depends(get_read_session_dependency),
@@ -3764,6 +3798,32 @@ async def confirm_order(
 
         await svc.update_order(order_id, {"shipping_status": "출고지시"})
         logger.info(f"[주문확인] 롯데ON {order.order_number} 완료")
+        return {"ok": True, "message": "주문확인 완료"}
+
+    if account.market_type in ("gmarket", "auction"):
+        from backend.domain.samba.proxy.esmplus import (
+            ESMPlusClient,
+            resolve_esm_credentials,
+        )
+
+        extras = account.additional_fields or {}
+        hosting_id, secret_key = await resolve_esm_credentials(session, account)
+        seller_id = (
+            extras.get("apiKey") or extras.get("sellerId") or (account.seller_id or "")
+        ).strip()
+        if not (hosting_id and secret_key and seller_id):
+            raise HTTPException(status_code=400, detail="ESM 인증정보 없음")
+        client = ESMPlusClient(
+            hosting_id, secret_key, seller_id, site=account.market_type
+        )
+        try:
+            await client.confirm_order(order.order_number)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"주문확인 실패: {e}")
+        finally:
+            await client.aclose()
+        await svc.update_order(order_id, {"shipping_status": "배송준비중"})
+        logger.info(f"[주문확인] ESM({account.market_type}) {order.order_number} 완료")
         return {"ok": True, "message": "주문확인 완료"}
 
     raise HTTPException(
@@ -6268,14 +6328,20 @@ async def sync_orders_from_markets(
                     logger.info(
                         f"[주문동기화] {label}: 11번가 배송준비중 {len(_raw_packaging)}건 조회"
                     )
-                    _fetched_nos = {d["order_number"] for d in orders_data}
+                    # dedup 키 = (ordNo, ordPrdSeq) — 한 주문 다중옵션(여러 ordPrdSeq)
+                    # 2번째+ 라인이 ordNo 단독 dedup 으로 탈락하던 누락 수정(#422, #208 회귀).
+                    _fetched_keys = {
+                        (d["order_number"], str(d.get("ord_prd_seq") or ""))
+                        for d in orders_data
+                    }
                     for _ro in _raw_packaging:
                         _ord_no = _ro.get("ordNo", "")
-                        if _ord_no and _ord_no not in _fetched_nos:
+                        _seq = str(_ro.get("ordPrdSeq", "") or "").strip()
+                        if _ord_no and (_ord_no, _seq) not in _fetched_keys:
                             orders_data.append(
                                 _parse_elevenst_order(_ro, account["id"], label)
                             )
-                            _fetched_nos.add(_ord_no)
+                            _fetched_keys.add((_ord_no, _seq))
 
                 except Exception as _e:
                     logger.warning(
@@ -7383,6 +7449,8 @@ async def sync_orders_from_markets(
 
                 _esm_seen: set[str] = set()
                 _esm_total = 0
+                # 신규주문(결제완료, OrderStatus=1) — 자동 발주확인(OrderCheck) 대상(#423)
+                _esm_confirm_nos: list[str] = []
                 # OrderStatus 루프 — 1=결제완료, 2=배송준비, 3=배송중, 4=배송완료, 5=구매결정
                 # search_orders 내부 _esm_order_throttle()로 5.2초 인터벌 보장
                 for _esm_status in (1, 2, 3, 4, 5):
@@ -7427,6 +7495,9 @@ async def sync_orders_from_markets(
                                 )
                             )
                             _esm_total += 1
+                            # 결제완료(신규) → 발주확인 대상 적재
+                            if _esm_status == 1:
+                                _esm_confirm_nos.append(_oid)
                         # 다음 페이지 종료 조건 — 500 미만이면 끝
                         if len(_esm_items) < 500:
                             break
@@ -7434,6 +7505,49 @@ async def sync_orders_from_markets(
                 logger.info(
                     f"[주문동기화] {label}: ESM({market_type}) 주문 {_esm_total}건 조회"
                 )
+
+                # 자동 발주확인(OrderCheck) — 신규주문(결제완료)을 배송준비중으로 전이(#423).
+                # 토글 esm_auto_confirm_orders 기본 True. 멱등(이미확인 무시)·_call_api
+                # rate-limit·try/except 로 sync 비중단. 쿠팡/11번가 패턴 미러.
+                if _esm_confirm_nos:
+                    from backend.api.v1.routers.samba.proxy import _get_setting
+
+                    _esm_auto = await _get_setting(session, "esm_auto_confirm_orders")
+                    _esm_auto_on = True
+                    if isinstance(_esm_auto, dict):
+                        _v = _esm_auto.get("enabled")
+                        if isinstance(_v, bool):
+                            _esm_auto_on = _v
+                    elif isinstance(_esm_auto, bool):
+                        _esm_auto_on = _esm_auto
+                    if not _esm_auto_on:
+                        logger.info(
+                            f"[주문동기화] {label}: ESM 자동 발주확인 OFF — "
+                            f"{len(_esm_confirm_nos)}건 스킵"
+                        )
+                    else:
+                        _esm_conf_ok = 0
+                        for _cno in _esm_confirm_nos:
+                            try:
+                                await esm_client.confirm_order(_cno)
+                                _esm_conf_ok += 1
+                                # 로컬 표시도 즉시 배송준비중으로 갱신
+                                for od in orders_data:
+                                    if (
+                                        od.get("order_number") == _cno
+                                        and od.get("shipping_status") == "결제완료"
+                                    ):
+                                        od["shipping_status"] = "배송준비중"
+                            except Exception as _ce:
+                                # 이미 확인된 주문 등 — 멱등 처리(경고만, sync 비중단)
+                                logger.warning(
+                                    f"[주문동기화] {label}: ESM 발주확인 실패 "
+                                    f"ord={_cno} — {str(_ce)[:120]}"
+                                )
+                        logger.info(
+                            f"[주문동기화] {label}: ESM({market_type}) 발주확인 "
+                            f"{_esm_conf_ok}/{len(_esm_confirm_nos)}건 완료"
+                        )
 
             else:
                 results.append(
@@ -7544,7 +7658,16 @@ async def sync_orders_from_markets(
                     if od.get("source") != "lotteon" and od.get("order_number")
                 }
             )
-            _existing_id_map: dict[str, int] = {}
+            # 키 = order_number(타 마켓) 또는 (order_number, ord_prd_seq)(11번가).
+            # 11번가 한 주문 다중옵션(여러 ord_prd_seq)이 order_number 단독 키로
+            # seq1 행에 매칭돼 seq2 가 UPDATE 경로로 조용히 소실되던 회귀 수정(#422).
+            _existing_id_map: dict[Any, int] = {}
+
+            def _existing_key(_onum: str, _src: str, _seq) -> Any:
+                if _src == "11st":
+                    return (_onum, str(_seq or ""))
+                return _onum
+
             if _non_lotteon_nos:
                 _batch_tid = account["tenant_id"] or tenant_id
                 _batch_cid = next(
@@ -7564,7 +7687,7 @@ async def sync_orders_from_markets(
                 _bulk_params["cid"] = _batch_cid
                 _bulk_q = await session.execute(
                     _sa_text(
-                        f"SELECT id, order_number FROM samba_order "
+                        f"SELECT id, order_number, source, ord_prd_seq FROM samba_order "
                         f"WHERE order_number IN ({_ph}) "
                         f"AND tenant_id IS NOT DISTINCT FROM :tid "
                         f"AND channel_id IS NOT DISTINCT FROM :cid "
@@ -7573,8 +7696,9 @@ async def sync_orders_from_markets(
                     _bulk_params,
                 )
                 for _br in _bulk_q.fetchall():
-                    if _br[1] not in _existing_id_map:
-                        _existing_id_map[_br[1]] = _br[0]
+                    _k = _existing_key(_br[1], _br[2], _br[3])
+                    if _k not in _existing_id_map:
+                        _existing_id_map[_k] = _br[0]
                 logger.info(
                     f"[주문동기화] {label}: 배치 중복 조회 완료 "
                     f"{len(_existing_id_map)}/{len(_non_lotteon_nos)}건 기존"
@@ -7994,7 +8118,11 @@ async def sync_orders_from_markets(
                     existing = await svc.repo.get_async(_lo_id) if _lo_id else None
                 else:
                     _existing_id = _existing_id_map.get(
-                        str(order_data.get("order_number", ""))
+                        _existing_key(
+                            str(order_data.get("order_number", "")),
+                            order_data.get("source", ""),
+                            order_data.get("ord_prd_seq"),
+                        )
                     )
                     existing = (
                         await svc.repo.get_async(_existing_id) if _existing_id else None
@@ -8020,6 +8148,13 @@ async def sync_orders_from_markets(
                             if d.product_id == order_data["product_id"]
                             and (d.product_option or "")
                             == (order_data.get("product_option") or "")
+                            # 11번가는 ord_prd_seq 일치까지 요구 — 같은 dlvNo·상품의
+                            # 동일옵션 다중라인 오합치 차단(#422)
+                            and (
+                                order_data.get("source") != "11st"
+                                or (d.ord_prd_seq or "")
+                                == (order_data.get("ord_prd_seq") or "")
+                            )
                         ),
                         None,
                     )

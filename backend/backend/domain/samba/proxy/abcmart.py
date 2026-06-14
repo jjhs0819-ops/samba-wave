@@ -571,7 +571,10 @@ class ARTSourcingClient:
             "brand": detail.get("brand", ""),
             "sale_price": detail.get("salePrice", 0),
             "original_price": detail.get("originalPrice", 0),
-            "cost": detail.get("bestBenefitPrice", 0) or detail.get("salePrice", 0),
+            # cost = 일반 판매가 기준(#421). 혜택가는 bestBenefitPrice 로 별도 노출 —
+            # use_max_discount 수집 옵션에서만 cost 로 채택(worker 가 분기). get_detail 이
+            # 무조건 혜택가를 cost 로 주던 역마진 위험 제거.
+            "cost": detail.get("salePrice", 0),
             "bestBenefitPrice": detail.get("bestBenefitPrice", 0),
             "images": detail.get("images", []),
             "options": detail.get("options", []),

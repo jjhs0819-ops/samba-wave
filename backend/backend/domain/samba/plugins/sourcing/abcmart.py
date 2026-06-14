@@ -345,7 +345,10 @@ class AbcMartPlugin(SourcingPlugin):
                 new_original_price=float(new_original_price)
                 if new_original_price
                 else None,
-                new_cost=float(best_benefit_price) if best_benefit_price else None,
+                # cost = 일반 판매가(salePrice) — 멤버십/쿠폰 미적용 실매입가 기준(#421).
+                # 과거 best_benefit_price(최대혜택가)를 cost 로 덮어써 cost<salePrice 역마진
+                # 위험을 유발했다. 혜택가는 collection 의 use_max_discount 옵션에서만 사용.
+                new_cost=float(new_sale_price) if new_sale_price else None,
                 new_sale_status=new_sale_status,
                 new_options=new_options,
                 changed=changed,
