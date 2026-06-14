@@ -239,7 +239,8 @@
         zip = r.zip;
       } else {
         // 키 없음/실패 → 주소찾기 창만 열어주고 사용자가 직접 선택+저장 (재시도 안 함)
-        const why = r && r.error === 'no key' ? '카카오 API 키 미설정' : '자동조회 실패';
+        const err = (r && r.error) || '알 수 없음';
+        const why = err === 'no key' ? '카카오 API 키 미설정' : ('자동조회 실패: ' + err);
         banner(`우편번호 ${why} → 주소찾기에서 직접 선택 후 저장해주세요.`, '#c92a2a');
         await sendMsg('OPEN_SEARCH', { customer: c });
         return;

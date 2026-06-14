@@ -114,6 +114,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           'https://dapi.kakao.com/v2/local/search/address.json?query=' + encodeURIComponent(msg.address),
           { headers: { Authorization: 'KakaoAK ' + key } }
         );
+        if (!r.ok) {
+          const body = await r.text().catch(() => '');
+          sendResponse({ ok: false, error: 'HTTP ' + r.status + ' ' + body.slice(0, 120) });
+          return;
+        }
         const d = await r.json();
         const docs = d.documents || [];
         const doc = docs.find((x) => x.road_address && x.road_address.zone_no) || docs[0];
