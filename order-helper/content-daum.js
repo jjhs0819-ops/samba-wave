@@ -56,10 +56,11 @@
     const bno = bnoMatch ? bnoMatch[1] : '';
     log('검색 시작:', query, '| 도로명:', roadToken, '| 건물번호:', bno, '@', location.href);
 
-    // 1) 입력 + 검색 (한 번만)
+    // 1) 입력 + 검색 (한 번만). 검색창 없으면 이 frame은 대상이 아님 → 조용히 종료
+    //    (무신사 zipCode 래퍼 frame엔 입력창이 없음. 실제 Daum frame만 처리)
     let input = null;
-    for (let i = 0; i < 60 && !input; i++) { input = findInput(); if (!input) await wait(150); }
-    if (!input) { log('❌ 검색창 못 찾음 — 중단'); await mark({ searchFailed: true }); return; }
+    for (let i = 0; i < 40 && !input; i++) { input = findInput(); if (!input) await wait(150); }
+    if (!input) { log('이 frame엔 검색창 없음 — 대상 아님(종료)'); return; }
     log('검색창 발견:', input.id || input.className || input.placeholder);
     input.focus();
     setNativeValue(input, query);
@@ -69,11 +70,13 @@
     const sb = document.querySelector('button.btn_search, .btn_search, button[type=submit]');
     if (sb) { try { sb.click(); } catch (e) { /* noop */ } }
 
-    // 2) 결과에서 '매칭되는' 우편번호 읽기 (클릭 안 함). 최대 ~6초 후 중단(안전)
+    // 2) 결과에서 '매칭되는' 우편번호 읽기 (클릭 안 함). 최대 ~16초 대기(느린 로딩 대비)
     let zip = null;
     const roadRe = bno ? new RegExp(esc(roadToken) + '\\s*' + esc(bno) + '(?!\\d)') : null;
-    for (let i = 0; i < 30 && !zip; i++) {
+    for (let i = 0; i < 80 && !zip; i++) {
       await wait(200);
+      // 검색 재시도(중간에 한 번): 8회까지 결과 없으면 Enter 재발사
+      if (i === 8) { try { fireEnter(input); } catch (e) { /* noop */ } }
       const blocks = Array.from(document.querySelectorAll('*'))
         .filter((el) => {
           if (el.offsetParent === null) return false;
@@ -97,8 +100,7 @@
       await mark({ resolvedZip: zip });
       log('우편번호 전달 완료 →', zip);
     } else {
-      log('❌ 입력 주소와 매칭되는 결과 없음 — 중단(안전)');
-      await mark({ searchFailed: true });
+      log('이 frame에서 매칭 결과 못 읽음 — 종료(다른 frame/타임아웃에 맡김)');
     }
   }
 

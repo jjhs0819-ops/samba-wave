@@ -234,15 +234,15 @@
       res = await sendMsg('FILL_ZIP', { customer: c, zip: c.postal });
     } else {
       banner('우편번호 없음 → 주소찾기 자동검색 중...', '#d9480f');
-      await setJob({ addrSearching: true, resolvedZip: null, searchFailed: false });
+      await setJob({ addrSearching: true, resolvedZip: null });
       await sendMsg('OPEN_SEARCH', { customer: c });
 
+      // content-daum(Daum frame)이 매칭 결과 우편번호를 기록할 때까지 대기 (~18초)
       let zip = null;
-      for (let i = 0; i < 30 && !zip; i++) {
+      for (let i = 0; i < 45 && !zip; i++) {
         await wait(400);
         const j = await getJob();
         if (j && j.resolvedZip) { zip = j.resolvedZip; break; }
-        if (j && j.searchFailed) break;
       }
       if (!zip) {
         banner('주소찾기 우편번호 자동조회 실패 — 직접 진행해주세요', '#c92a2a');
