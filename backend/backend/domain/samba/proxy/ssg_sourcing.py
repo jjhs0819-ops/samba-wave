@@ -202,6 +202,16 @@ def daemon_detail_fallback(ext_result: dict) -> dict:
         "soldOut": "Y" if _all_sold else "N",
         "isSoldOut": _all_sold,
         "isOutOfStock": _all_sold,
+        # 카테고리 브레드크럼 passthrough(#431) — 데몬 v1.4.36+ 가 dispCtg 회신.
+        # worker brand_all 3단계 매핑(dispCtgId→filter, 레벨명 경로, category)이
+        # 이 값으로 동작해 데몬 수집물이 '기타'로 굳지 않게 한다. 구버전 데몬(미회신)은
+        # 빈 문자열 → 기존과 동일(호출측 그룹명 폴백).
+        "dispCtgLclsNm": ext_result.get("dispCtgLclsNm", "") or "",
+        "dispCtgMclsNm": ext_result.get("dispCtgMclsNm", "") or "",
+        "dispCtgSclsNm": ext_result.get("dispCtgSclsNm", "") or "",
+        "dispCtgDclsNm": ext_result.get("dispCtgDclsNm", "") or "",
+        "dispCtgId": str(ext_result.get("dispCtgId", "") or ""),
+        "dispCtgNm": ext_result.get("dispCtgNm", "") or "",
     }
 
 

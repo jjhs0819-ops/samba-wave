@@ -332,6 +332,14 @@ _SSG_EXTRACT_JS = r"""
       images,
       options,
       uitemOptions,
+      // 카테고리 브레드크럼(#431) — resultItemObj 에 존재. 데몬이 추출해 회신하면
+      // 백엔드 daemon_detail_fallback passthrough → worker dispCtg 매핑 동작(기타 분류 방지).
+      dispCtgLclsNm: obj.dispCtgLclsNm || '',
+      dispCtgMclsNm: obj.dispCtgMclsNm || '',
+      dispCtgSclsNm: obj.dispCtgSclsNm || '',
+      dispCtgDclsNm: obj.dispCtgDclsNm || '',
+      dispCtgId: (obj.dispCtgId || '').toString(),
+      dispCtgNm: obj.dispCtgNm || '',
       source_site: 'SSG',
     }
   } catch (e) {
