@@ -3733,6 +3733,20 @@ class JobWorker:
                                 if len(_restored) > len(_cat_parts):
                                     _cat_parts = _restored
                     _raw_cat = " > ".join(_cat_parts)
+                    # 이미지 정제+확장(#425) — sui UI에셋(장바구니/카드) 제거·_1200 고화질
+                    # 승격·실존 추가이미지 복원. 데몬 병목(batch=2·아이템당 20-40s)이라
+                    # GET Range 확인이 CDN 부하로 이어지지 않음.
+                    from backend.domain.samba.proxy.ssg_sourcing import (
+                        expand_ssg_images as _expand_ssg,
+                        sanitize_ssg_images as _sanitize_ssg,
+                    )
+
+                    _ssg_imgs = _sanitize_ssg(
+                        detail.get("images")
+                        or ([it["images"][0]] if it.get("images") else []),
+                        spid,
+                    )
+                    _ssg_imgs = await _expand_ssg(spid, _ssg_imgs)
                     detail_for_build: dict = {
                         "name": detail.get("itemNm")
                         or detail.get("name")
@@ -3740,8 +3754,7 @@ class JobWorker:
                         "brand": detail.get("repBrandNm")
                         or detail.get("brand")
                         or it.get("brand", ""),
-                        "images": detail.get("images")
-                        or ([it["images"][0]] if it.get("images") else []),
+                        "images": _ssg_imgs,
                         "detailImages": detail.get("detailImages") or [],
                         "options": detail.get("options") or [],
                         "sourceUrl": detail.get("sourceUrl")

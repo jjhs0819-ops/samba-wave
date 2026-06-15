@@ -62,6 +62,90 @@ def filter_daepyo_options(options: list[dict]) -> list[dict]:
     return non_daepyo if non_daepyo else options
 
 
+_SSG_SITEM_HOST = "sitem.ssgcdn.com"
+
+
+def _ssg_sitem_base(item_id: str) -> str:
+    """item_id → sitem 대표 i1 고화질 URL 구성(#425).
+
+    경로 = item_id 끝 6자리를 2자리씩 역순 (예 ...840969 → 69/09/84).
+    실측 검증: 1000822840969 → /69/09/84/item/..._i1_1200.jpg
+    """
+    s = str(item_id or "")
+    if not s.isdigit() or len(s) < 6:
+        return ""
+    t = s[-6:]
+    return f"https://{_SSG_SITEM_HOST}/{t[4:6]}/{t[2:4]}/{t[0:2]}/item/{s}_i1_1200.jpg"
+
+
+def sanitize_ssg_images(images: list, item_id: str) -> list:
+    """SSG 수집 이미지 정제(#425).
+
+    - sui.ssgcdn(장바구니/카드 UI에셋)·타 CDN 제거
+    - sitem.ssgcdn + 해당 item_id 만 인정(연관상품 혼입 차단)
+    - _iN_36/232/500 → _iN_1200 고화질 승격
+    """
+    _id = str(item_id or "")
+    out: list[str] = []
+    seen: set[str] = set()
+    for u in images or []:
+        if not isinstance(u, str) or not u:
+            continue
+        if _SSG_SITEM_HOST not in u.lower():
+            continue
+        if _id and f"/{_id}_i" not in u:
+            continue
+        hq = re.sub(r"(_i\d+)_\d+(\.jpg)", r"\1_1200\2", u)
+        if hq not in seen:
+            out.append(hq)
+            seen.add(hq)
+    return out[:9]
+
+
+async def expand_ssg_images(item_id: str, sanitized: list) -> list:
+    """대표 i1 기준 i2~i9 실존분만 GET Range 로 복원(#425).
+
+    item_id 로 sitem 대표 i1 을 구성(없으면 sanitized 첫 sitem 사용)하고 i1~i9 를
+    GET Range(bytes=0-0)로 확인 — 206/200=있음, 404=없음. HEAD 는 SSG CDN 이 없는
+    이미지에도 200 을 주므로 사용 불가. i 시퀀스가 연속이라 첫 결번에서 종료.
+    실패/예외 시 sanitized 그대로 보존(graceful, 대표이미지 유실 방지).
+    """
+    import httpx as _httpx
+
+    base = _ssg_sitem_base(item_id)
+    if not base:
+        for u in sanitized or []:
+            if isinstance(u, str) and re.search(r"_i\d+_1200\.jpg", u):
+                base = re.sub(r"_i\d+_1200\.jpg", "_i1_1200.jpg", u)
+                break
+    if not base:
+        return sanitized or []
+    try:
+        found: list[str] = []
+        async with _httpx.AsyncClient(timeout=10, follow_redirects=True) as _c:
+            for n in range(1, 10):
+                cand = re.sub(r"_i1_1200\.jpg", f"_i{n}_1200.jpg", base)
+                try:
+                    r = await _c.get(
+                        cand,
+                        headers={
+                            "Range": "bytes=0-0",
+                            "User-Agent": "Mozilla/5.0",
+                        },
+                    )
+                except Exception:
+                    break
+                if r.status_code in (200, 206):
+                    found.append(cand)
+                else:
+                    break
+        if found:
+            return found[:9]
+    except Exception:
+        pass
+    return sanitized or []
+
+
 def daemon_detail_fallback(ext_result: dict) -> dict:
     """SSG 헤드리스 데몬 응답 → 수집용 detail 변환.
 
@@ -1451,6 +1535,11 @@ class SSGSourcingClient:
                     if _opt.get("name") in _soldout_names:
                         _opt["isSoldOut"] = True
                         _opt["stock"] = 0
+        # 이미지 정제+확장(#425) — sui UI에셋(장바구니/카드) 제거·_1200 고화질 승격·
+        # 실존 추가이미지(i2~i9) 복원. collect 전용 경로라 오토튠 refresh 영향 없음.
+        if detail.get("name"):
+            _clean = sanitize_ssg_images(detail.get("images") or [], item_id)
+            detail["images"] = await expand_ssg_images(item_id, _clean)
         return detail
 
     async def get_product_detail(
