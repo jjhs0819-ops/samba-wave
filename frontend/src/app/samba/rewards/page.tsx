@@ -91,6 +91,8 @@ export default function RewardsPage() {
   const [logMessages, setLogMessages] = useState<string[]>(['[대기] 적립 로그'])
   const prevJobStatusRef = useRef<Map<string, string>>(new Map())
   const logSeededRef = useRef(false)
+  // 폴링 주기 결정용 — 최신 잡 목록을 인터벌 스케줄러에서 참조
+  const jobsRef = useRef<RewardJob[]>([])
 
   const pushLog = useCallback((line: string) => {
     setLogMessages((p) => [...p, line].slice(-300))
@@ -118,23 +120,37 @@ export default function RewardsPage() {
     return () => clearInterval(t)
   }, [load])
 
-  // 잡 실행 상태 — 별도 빠른 폴링(4s). 적재→실행중→완료/실패 + 처리 PC 가시화.
+  // 잡 실행 상태 폴링. 적재→실행중→완료/실패 + 처리 PC 가시화.
   const loadJobs = useCallback(async () => {
     try {
       const res = await rewardsApi.jobStatus()
-      setJobs(res.jobs || [])
+      const list = res.jobs || []
+      jobsRef.current = list
+      setJobs(list)
     } catch {
       // 상태 표시는 보조 기능 — 실패해도 본 화면에 영향 없음
     }
   }, [])
 
+  // 적응형 폴링: 진행중(pending/dispatched) 잡 있으면 4s, 없으면 12s.
+  // 상시 4s 폴링은 read 풀(소싱처계정+잡 조회)을 계속 점유 → 평상시 부하 절감.
   useEffect(() => {
     setMyDeviceId(getDeviceId())
-    void loadJobs()
-    const t = setInterval(() => {
-      void loadJobs()
-    }, 4000)
-    return () => clearInterval(t)
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout>
+    const tick = async () => {
+      await loadJobs()
+      if (stopped) return
+      const active = jobsRef.current.some(
+        (j) => j.status === 'pending' || j.status === 'dispatched',
+      )
+      timer = setTimeout(tick, active ? 4000 : 12000)
+    }
+    void tick()
+    return () => {
+      stopped = true
+      clearTimeout(timer)
+    }
   }, [loadJobs])
 
   const grouped = useMemo(() => {
@@ -363,7 +379,7 @@ export default function RewardsPage() {
         <div style={{ padding: '6px 14px', background: '#0D1117', borderBottom: '1px solid #1C2333', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#94A3B8' }}>적립 로그</span>
           <div style={{ display: 'flex', gap: '4px' }}>
-            <button onClick={() => navigator.clipboard.writeText(logMessages.join('\n'))} style={logBtnStyle}>복사</button>
+            <button onClick={() => { void navigator.clipboard?.writeText(logMessages.join('\n')).catch(() => {}) }} style={logBtnStyle}>복사</button>
             <button onClick={() => setLogMessages(['[대기] 로그가 초기화되었습니다.'])} style={logBtnStyle}>초기화</button>
           </div>
         </div>
