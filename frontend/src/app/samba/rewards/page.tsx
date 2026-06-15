@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { rewardsApi, type RewardAccountRow, type RewardJob, type RewardsStatus } from '@/lib/samba/api'
 import { getDeviceId } from '@/lib/samba/deviceId'
@@ -88,6 +88,13 @@ export default function RewardsPage() {
   const [msg, setMsg] = useState<string>('')
   const [jobs, setJobs] = useState<RewardJob[]>([])
   const [myDeviceId, setMyDeviceId] = useState<string>('')
+  const [logMessages, setLogMessages] = useState<string[]>(['[대기] 적립 로그'])
+  const prevJobStatusRef = useRef<Map<string, string>>(new Map())
+  const logSeededRef = useRef(false)
+
+  const pushLog = useCallback((line: string) => {
+    setLogMessages((p) => [...p, line].slice(-300))
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -155,6 +162,34 @@ export default function RewardsPage() {
     return m
   }, [jobs])
 
+  // 잡 상태 전이를 로그로 — 적재됨→실행중→완료/실패. 첫 로드는 seed만(과거 잡 스팸 방지).
+  useEffect(() => {
+    const acctLabel = new Map(
+      (data?.accounts || []).map((a) => [a.id, a.account_label]),
+    )
+    const next = new Map<string, string>()
+    const lines: string[] = []
+    for (const j of jobs) {
+      next.set(j.request_id, j.status)
+      if (
+        logSeededRef.current &&
+        prevJobStatusRef.current.get(j.request_id) !== j.status
+      ) {
+        const acct = acctLabel.get(j.account_id) || (j.account_id || '').slice(-6) || '계정'
+        const act = ACTION_LABEL[j.action] || j.action
+        const st = JOB_STATUS_VIEW[j.status]?.label || j.status
+        const dt = deviceTag(j.owner_device_id, myDeviceId)
+        lines.push(`[적립] ${acct} ${act}: ${st} (${dt.label})`)
+      }
+    }
+    prevJobStatusRef.current = next
+    if (!logSeededRef.current) {
+      logSeededRef.current = true
+      return
+    }
+    if (lines.length) setLogMessages((p) => [...p, ...lines].slice(-300))
+  }, [jobs, data, myDeviceId])
+
   const totalMusinsaMoney = useMemo(
     () =>
       (data?.accounts || [])
@@ -174,15 +209,18 @@ export default function RewardsPage() {
   const handleRunAll = async () => {
     setBusy('all')
     setMsg('전체 실행 중...')
+    pushLog('[적립] 지금 전체 실행 — 큐 적재 시작...')
     try {
       const r = await rewardsApi.runNow()
       const arr = (r.summary as Array<{ enqueued: unknown[] }>) || []
       const total = arr.reduce((s, x) => s + (x.enqueued?.length || 0), 0)
       setMsg(`전체 실행 — 잡 ${fmtNum(total)}건 적재`)
+      pushLog(`[적립] 전체 실행 큐 적재 완료 — ${fmtNum(total)}건 (확장앱이 처리 중...)`)
       await load()
       void loadJobs()
     } catch (e) {
       setMsg(`실행 실패: ${(e as Error).message}`)
+      pushLog(`[적립] 전체 실행 실패: ${(e as Error).message}`)
     } finally {
       setBusy(null)
     }
@@ -191,13 +229,20 @@ export default function RewardsPage() {
   const handleRunAccount = async (accountId: string, action?: string) => {
     setBusy(`${accountId}:${action || 'all'}`)
     setMsg('실행 중...')
+    const acctLabel =
+      (data?.accounts || []).find((a) => a.id === accountId)?.account_label ||
+      accountId.slice(-6)
+    const actLabel = action ? ACTION_LABEL[action] || action : '전체'
+    pushLog(`[적립] 계정 실행 — ${acctLabel}/${actLabel} 큐 적재 시작...`)
     try {
       const r = await rewardsApi.runAccount(accountId, action ? [action] : undefined)
       setMsg(`계정 실행 — 잡 ${fmtNum(r.enqueued.length)}건 적재`)
+      pushLog(`[적립] ${acctLabel} 큐 적재 완료 — ${fmtNum(r.enqueued.length)}건 (확장앱이 처리 중...)`)
       await load()
       void loadJobs()
     } catch (e) {
       setMsg(`실행 실패: ${(e as Error).message}`)
+      pushLog(`[적립] ${acctLabel} 실행 실패: ${(e as Error).message}`)
     } finally {
       setBusy(null)
     }
@@ -312,6 +357,29 @@ export default function RewardsPage() {
           {msg}
         </div>
       )}
+
+      {/* 적립 로그 — 주문 송장 로그와 동일 패턴: 액션 + 잡 상태전이(적재→실행중→완료/실패 + 처리 PC) */}
+      <div style={{ border: '1px solid #1C2333', borderRadius: '8px', overflow: 'hidden', marginBottom: '0.75rem' }}>
+        <div style={{ padding: '6px 14px', background: '#0D1117', borderBottom: '1px solid #1C2333', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#94A3B8' }}>적립 로그</span>
+          <div style={{ display: 'flex', gap: '4px' }}>
+            <button onClick={() => navigator.clipboard.writeText(logMessages.join('\n'))} style={logBtnStyle}>복사</button>
+            <button onClick={() => setLogMessages(['[대기] 로그가 초기화되었습니다.'])} style={logBtnStyle}>초기화</button>
+          </div>
+        </div>
+        <div
+          ref={(el) => {
+            if (el) el.scrollTop = el.scrollHeight
+          }}
+          style={{ height: '144px', overflowY: 'auto', padding: '8px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.788rem', color: '#8A95B0', background: '#080A10', lineHeight: 1.8 }}
+        >
+          {logMessages.map((m, i) => (
+            <p key={i} style={{ color: '#8A95B0', margin: 0 }}>
+              {m}
+            </p>
+          ))}
+        </div>
+      </div>
 
       {loading && !data ? (
         <div style={{ color: '#888', fontSize: '0.9rem' }}>불러오는 중...</div>
@@ -604,6 +672,16 @@ function AccountRow({
       </td>
     </tr>
   )
+}
+
+const logBtnStyle: React.CSSProperties = {
+  fontSize: '0.72rem',
+  color: '#555',
+  background: 'transparent',
+  border: '1px solid #1C2333',
+  padding: '1px 8px',
+  borderRadius: '4px',
+  cursor: 'pointer',
 }
 
 const cardStyle: React.CSSProperties = {
