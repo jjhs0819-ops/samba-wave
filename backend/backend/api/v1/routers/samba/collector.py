@@ -1534,6 +1534,20 @@ async def product_counts(
     return result
 
 
+# 대시보드 통계 single-flight 락 — 캐시 미스 시 동시 N개 요청이
+# 무거운 풀스캔을 N번 동시에 실행해 read 풀을 고갈시키는 것 방지.
+# asyncio 단일 스레드라 get→없으면 생성 사이에 await 없음 → 레이스 없음.
+_dash_locks: dict[str, asyncio.Lock] = {}
+
+
+def _get_dash_lock(key: str) -> asyncio.Lock:
+    lock = _dash_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _dash_locks[key] = lock
+    return lock
+
+
 @router.get("/products/dashboard-stats")
 async def product_dashboard_stats(
     session: AsyncSession = Depends(get_read_session_dependency),
@@ -1553,6 +1567,8 @@ async def product_dashboard_stats(
 
     # 캐시 키 테넌트 분리 — 운영자/임성희 등이 같은 캐시 공유하면 격리 깨짐
     cache_key = f"products:dashboard-stats-v5:{tenant_id or 'global'}"
+    # 부분 실패 시 빈 결과로 덮지 않도록, 마지막 성공값을 따로 길게 백업
+    stale_key = f"{cache_key}:stale"
     cached = await cache.get(cache_key)
     if cached:
         return cached
@@ -1623,105 +1639,131 @@ async def product_dashboard_stats(
             rows = (await s.execute(stmt)).all()
             return {r.channel_id: int(r.sold_cnt) for r in rows}
 
-    # 3개 무거운 쿼리 병렬 실행 — return_exceptions 로 부분 실패 허용
-    brand_site_rows, brand_acct_rows, sold_by_acct = await asyncio.gather(
-        _run_brand_site(),
-        _run_brand_acct(),
-        _run_sold(),
-        return_exceptions=True,
-    )
-    if isinstance(brand_site_rows, Exception):
-        logger.warning("대시보드 brand_site 조회 실패: %s", brand_site_rows)
-        brand_site_rows = []
-    if isinstance(brand_acct_rows, Exception):
-        logger.warning("대시보드 brand_acct 조회 실패: %s", brand_acct_rows)
-        brand_acct_rows = []
-    if isinstance(sold_by_acct, Exception):
-        logger.warning("대시보드 sold 조회 실패: %s", sold_by_acct)
-        sold_by_acct = {}
+    # single-flight: 캐시 미스 시 동시 요청이 풀스캔을 중복 실행 → read 풀 고갈 방지.
+    # 락 안에서 캐시 재확인(double-check) — 먼저 계산한 요청 결과를 그대로 재사용.
+    lock = _get_dash_lock(cache_key)
+    async with lock:
+        cached = await cache.get(cache_key)
+        if cached:
+            return cached
 
-    # 소싱처별 합계는 brand_site 집계에서 Python 합산으로 도출 — 추가 쿼리 불필요
-    brand_by_source: dict[str, list[dict]] = defaultdict(list)
-    site_totals: dict[str, dict[str, int]] = defaultdict(
-        lambda: {"total": 0, "registered": 0, "sold_out": 0}
-    )
-    for r in brand_site_rows:
-        brand_by_source[r.source_site].append(
-            {
-                "brand": r.brand_name,
-                "total": r.total,
-                "registered": r.registered,
-                "sold_out": r.sold_out,
-            }
+        # 3개 무거운 쿼리 병렬 실행 — return_exceptions 로 부분 실패 허용
+        brand_site_rows, brand_acct_rows, sold_by_acct = await asyncio.gather(
+            _run_brand_site(),
+            _run_brand_acct(),
+            _run_sold(),
+            return_exceptions=True,
         )
-        site_totals[r.source_site]["total"] += r.total
-        site_totals[r.source_site]["registered"] += r.registered
-        site_totals[r.source_site]["sold_out"] += r.sold_out
+        # 성공 여부 추적 — 실패한 부분을 빈 결과로 캐시해 빈칸이 굳는 것 방지
+        site_ok = not isinstance(brand_site_rows, Exception)
+        acct_ok = not isinstance(brand_acct_rows, Exception)
+        if not site_ok:
+            logger.warning("대시보드 brand_site 조회 실패: %s", brand_site_rows)
+            brand_site_rows = []
+        if not acct_ok:
+            logger.warning("대시보드 brand_acct 조회 실패: %s", brand_acct_rows)
+            brand_acct_rows = []
+        if isinstance(sold_by_acct, Exception):
+            logger.warning("대시보드 sold 조회 실패: %s", sold_by_acct)
+            sold_by_acct = {}
 
-    by_source = sorted(
-        [
-            {
-                "source_site": site,
-                "total": tot["total"],
-                "registered": tot["registered"],
-                "sold_out": tot["sold_out"],
-                "brands": brand_by_source.get(site, []),
-            }
-            for site, tot in site_totals.items()
-        ],
-        key=lambda x: x["total"],
-        reverse=True,
-    )
-
-    # 계정별 합계도 brand_acct 에서 Python 합산
-    brand_by_acct: dict[str, list[dict]] = defaultdict(list)
-    acct_totals: dict[str, int] = defaultdict(int)
-    for r in brand_acct_rows:
-        brand_by_acct[r.aid].append(
-            {
-                "source_site": r.source_site,
-                "brand": r.brand_name,
-                "registered": r.cnt,
-            }
+        # 소싱처별 합계는 brand_site 집계에서 Python 합산으로 도출 — 추가 쿼리 불필요
+        brand_by_source: dict[str, list[dict]] = defaultdict(list)
+        site_totals: dict[str, dict[str, int]] = defaultdict(
+            lambda: {"total": 0, "registered": 0, "sold_out": 0}
         )
-        acct_totals[r.aid] += r.cnt
-
-    # 계정 ID → 마켓명/계정라벨 매핑 (작은 쿼리, 메인 세션 사용)
-    acct_ids = list(acct_totals.keys())
-    acct_map: dict[str, dict[str, str]] = {}
-    if acct_ids:
-        try:
-            ma_stmt = select(_MA.id, _MA.market_name, _MA.account_label).where(
-                _MA.id.in_(acct_ids)
-            )
-            ma_rows = (await session.execute(ma_stmt)).all()
-            for m in ma_rows:
-                acct_map[m.id] = {
-                    "market_name": m.market_name,
-                    "account_label": m.account_label,
+        for r in brand_site_rows:
+            brand_by_source[r.source_site].append(
+                {
+                    "brand": r.brand_name,
+                    "total": r.total,
+                    "registered": r.registered,
+                    "sold_out": r.sold_out,
                 }
-        except Exception as e:
-            logger.warning("대시보드 계정 매핑 조회 실패: %s", e)
+            )
+            site_totals[r.source_site]["total"] += r.total
+            site_totals[r.source_site]["registered"] += r.registered
+            site_totals[r.source_site]["sold_out"] += r.sold_out
 
-    by_account = sorted(
-        [
-            {
-                "account_id": aid,
-                "market_name": acct_map.get(aid, {}).get("market_name", "알 수 없음"),
-                "account_label": acct_map.get(aid, {}).get("account_label", ""),
-                "registered": cnt,
-                "sold_products": sold_by_acct.get(aid, 0),
-                "brands": brand_by_acct.get(aid, []),
-            }
-            for aid, cnt in acct_totals.items()
-        ],
-        key=lambda x: x["registered"],
-        reverse=True,
-    )
+        by_source = sorted(
+            [
+                {
+                    "source_site": site,
+                    "total": tot["total"],
+                    "registered": tot["registered"],
+                    "sold_out": tot["sold_out"],
+                    "brands": brand_by_source.get(site, []),
+                }
+                for site, tot in site_totals.items()
+            ],
+            key=lambda x: x["total"],
+            reverse=True,
+        )
 
-    result = {"by_source": by_source, "by_account": by_account}
-    await cache.set(cache_key, result, ttl=600)
-    return result
+        # 계정별 합계도 brand_acct 에서 Python 합산
+        brand_by_acct: dict[str, list[dict]] = defaultdict(list)
+        acct_totals: dict[str, int] = defaultdict(int)
+        for r in brand_acct_rows:
+            brand_by_acct[r.aid].append(
+                {
+                    "source_site": r.source_site,
+                    "brand": r.brand_name,
+                    "registered": r.cnt,
+                }
+            )
+            acct_totals[r.aid] += r.cnt
+
+        # 계정 ID → 마켓명/계정라벨 매핑 (작은 쿼리, 메인 세션 사용)
+        acct_ids = list(acct_totals.keys())
+        acct_map: dict[str, dict[str, str]] = {}
+        if acct_ids:
+            try:
+                ma_stmt = select(_MA.id, _MA.market_name, _MA.account_label).where(
+                    _MA.id.in_(acct_ids)
+                )
+                ma_rows = (await session.execute(ma_stmt)).all()
+                for m in ma_rows:
+                    acct_map[m.id] = {
+                        "market_name": m.market_name,
+                        "account_label": m.account_label,
+                    }
+            except Exception as e:
+                logger.warning("대시보드 계정 매핑 조회 실패: %s", e)
+
+        by_account = sorted(
+            [
+                {
+                    "account_id": aid,
+                    "market_name": acct_map.get(aid, {}).get(
+                        "market_name", "알 수 없음"
+                    ),
+                    "account_label": acct_map.get(aid, {}).get("account_label", ""),
+                    "registered": cnt,
+                    "sold_products": sold_by_acct.get(aid, 0),
+                    "brands": brand_by_acct.get(aid, []),
+                }
+                for aid, cnt in acct_totals.items()
+            ],
+            key=lambda x: x["registered"],
+            reverse=True,
+        )
+
+        result = {"by_source": by_source, "by_account": by_account}
+
+        if site_ok and acct_ok:
+            # 둘 다 성공 — 정상 캐시 + 마지막 성공값 백업(6시간)
+            await cache.set(cache_key, result, ttl=600)
+            await cache.set(stale_key, result, ttl=21600)
+        else:
+            # 부분 실패 — 빈 결과를 캐시하지 않음(다음 요청서 재시도).
+            # 화면 빈칸 방지 위해 실패/빈 구간만 마지막 성공값(stale)으로 채워 반환.
+            stale = await cache.get(stale_key)
+            if stale:
+                if not acct_ok or not result["by_account"]:
+                    result["by_account"] = stale.get("by_account", result["by_account"])
+                if not site_ok or not result["by_source"]:
+                    result["by_source"] = stale.get("by_source", result["by_source"])
+        return result
 
 
 @router.get("/products/category-tree")
