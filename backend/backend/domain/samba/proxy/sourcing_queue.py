@@ -23,6 +23,7 @@ _JOB_TTL_SEC: dict[str, int] = {
     "tracking": 3600,
     "reward": 3600,
     "cancel_order": 1800,
+    "store_metrics": 1800,
 }
 
 # 데몬 전용 사이트 — 사용자 룰 (3일 강조): SSG/ABC/GrandStage/LOTTEON 은 데몬으로만.
@@ -138,6 +139,42 @@ SITE_REWARD_ACTIONS: dict[str, list[str]] = {
     "LOTTEON": ["lotteon_review"],
     "NAVERSTORE": ["naver_review"],
     "KREAM": ["kream_review"],
+}
+
+
+# 마켓 판매자 점수·품절률 — 파트너/셀러 포털 진입 URL (확장앱이 탭 열고 content script 주입).
+# market_type(소문자) 기준. content script = content-metrics-{market}.js (확장앱 전용).
+STORE_METRICS_URLS: dict[str, str] = {
+    "11st": "https://soffice.11st.co.kr/view/main",
+    "ssg": "https://po.ssgadm.com/main.ssg",  # SSG 파트너오피스(통합관리시스템)
+    "gsshop": "https://withgs.gsshop.com/cmm/main#",  # GS샵 WithNet
+}
+
+
+# 마켓별 점수관리 목표 (에르메스 결정엔진 참고용 — 2026-06-16 사용자 스펙).
+# 에르메스가 현재값 대비 이 목표를 보고 구매 갯수를 산정해 직접 구매(추후 M5).
+STORE_METRICS_TARGETS: dict[str, dict] = {
+    # GS: 전일기준 당월 품절률이 8% 이상이면 안 됨.
+    "gsshop": {
+        "metric": "soldout_rate",
+        "op": "<",
+        "value": 8.0,
+        "basis": "전일기준 당월 품절률",
+    },
+    # SSG: 매주 월요일 기준 D-7~D-37(30일) 주문이행 90% 이상 유지.
+    "ssg": {
+        "metric": "order_fulfillment",
+        "op": ">=",
+        "value": 90.0,
+        "basis": "매주 월요일 D-7~D-37(30일) 주문이행",
+    },
+    # 11번가: 최근 1주 / 전 30일 주문이행 95% 이상 (포털 목표값, 2026-06-16 확정).
+    "11st": {
+        "metric": "order_fulfillment",
+        "op": ">=",
+        "value": 95.0,
+        "basis": "최근 1주/전 30일 주문이행",
+    },
 }
 
 
@@ -511,6 +548,54 @@ class SourcingQueue:
         return request_id, future
 
     @classmethod
+    async def add_store_metrics_job(
+        cls,
+        market_type: str,
+        *,
+        owner_device_id: str,
+        tenant_id: str | None = None,
+        account_id: str = "",
+        account_label: str = "",
+        url: str | None = None,
+    ) -> tuple[str, asyncio.Future[Any]]:
+        """마켓 판매자 점수·품절률 수집 작업 큐에 추가 (확장앱 전용).
+
+        파트너/셀러 포털은 로그인된 실제 브라우저에서만 스크래핑 가능 → 항상 확장앱.
+        owner_device_id = 버튼 누른 트리거 PC (그 PC 브라우저에 포털 로그인돼 있어야 함).
+        결과는 라우터 `POST /sourcing/store-metrics-result` 로 수신 → StoreCareMarketMetric 적재.
+        get_next_job 에서 store_metrics 는 tracking/cancel_order 처럼 확장앱 강제 + 데몬 차단.
+        """
+        cls._ensure_accepting_jobs()
+        mt = (market_type or "").strip().lower()
+        entry_url = url or STORE_METRICS_URLS.get(mt)
+        if not entry_url:
+            raise ValueError(f"지원하지 않는 마켓 점수수집: {market_type}")
+        if not owner_device_id:
+            raise RuntimeError("store_metrics 잡은 트리거 PC(owner_device_id) 필수")
+        request_id = str(uuid.uuid4())[:8]
+        loop = asyncio.get_event_loop()
+        future: asyncio.Future[Any] = loop.create_future()
+        job: dict[str, Any] = {
+            "requestId": request_id,
+            # site 는 라우팅/사이트필터용이나 store_metrics 는 owner 바인딩 + job_type
+            # 확장앱강제라 사이트 분담 무시됨. 가독성 위해 market_type 대문자 사용.
+            "site": mt.upper(),
+            "type": "store_metrics",
+            "marketType": mt,
+            "url": entry_url,
+            "tenantId": tenant_id or "",
+            "accountId": account_id or "",
+            "accountLabel": account_label or "",
+            "ownerDeviceId": owner_device_id,
+        }
+        cls.resolvers[request_id] = future
+        await _db_insert_job(job, "store_metrics")
+        logger.info(
+            f"[소싱큐] 점수수집 추가: {mt} owner={owner_device_id} (id={request_id})"
+        )
+        return request_id, future
+
+    @classmethod
     async def add_cancel_order_job(
         cls,
         site: str,
@@ -774,7 +859,7 @@ class SourcingQueue:
                 # 에러 과다. SSG/ABCmart/GrandStage/LOTTEON 송장도 확장앱 content-tracking-*.js
                 # 가 처리(핸들러 전부 존재). detail/search/reward 가격수집은 여전히 데몬 전용.
                 conditions.append(
-                    f"(job_type IN ('cancel_order', 'tracking') "
+                    f"(job_type IN ('cancel_order', 'tracking', 'store_metrics') "
                     f"OR UPPER(site) NOT IN ({_dph}))"
                 )
                 for i, s in enumerate(_sites):
@@ -783,7 +868,8 @@ class SourcingQueue:
                 # [2026-06-05 송장 확장앱 복구] 데몬은 송장(tracking) 일절 처리 안 함 — 전부
                 # 확장앱 전담. 데몬은 가격수집(detail/search/reward)만. owner='' 송장 잡을
                 # 데몬이 먼저 가로채지 못하게 dequeue 단에서 tracking 전체 차단.
-                conditions.append("job_type != 'tracking'")
+                # store_metrics(파트너포털 점수수집)도 데몬 차단 — 확장앱 로그인 세션 전용.
+                conditions.append("job_type NOT IN ('tracking', 'store_metrics')")
 
             # site 필터 — 케이싱 무관 매칭.
             # detail 잡 site='ABCmart'(혼합)인데 tracking 잡 site='ABCMART'(대문자)라
@@ -801,7 +887,7 @@ class SourcingQueue:
                 # 송장도 즉석 로그인+스크랩 가능. 비데몬(확장앱)은 위 DAEMON_ONLY 가드
                 # (job_type='cancel_order' OR site NOT IN daemon_only)가 여전히 차단.
                 conditions.append(
-                    f"(job_type IN ('cancel_order', 'tracking') "
+                    f"(job_type IN ('cancel_order', 'tracking', 'store_metrics') "
                     f"OR UPPER(site) IN ({placeholders}))"
                 )
                 for i, s in enumerate(site_list):

@@ -7,7 +7,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.domain.shared.base_repository import BaseRepository
-from .model import StoreCareSchedule, StoreCarePurchase
+from .model import StoreCareSchedule, StoreCarePurchase, StoreCareMarketMetric
 
 UTC = timezone.utc
 
@@ -79,3 +79,23 @@ class StoreCarePurchaseRepository(BaseRepository[StoreCarePurchase]):
             "failed": row.failed,
             "total_amount": row.total_amount,
         }
+
+
+class StoreCareMarketMetricRepository(BaseRepository[StoreCareMarketMetric]):
+    def __init__(self, session: AsyncSession):
+        super().__init__(session, StoreCareMarketMetric)
+
+    async def list_latest_per_market(
+        self, tenant_id: str | None = None
+    ) -> list[StoreCareMarketMetric]:
+        """마켓별 최신 스냅샷 1건씩 (collected_at 내림차순 dedup)."""
+        stmt = select(StoreCareMarketMetric)
+        if tenant_id:
+            stmt = stmt.where(StoreCareMarketMetric.tenant_id == tenant_id)
+        stmt = stmt.order_by(StoreCareMarketMetric.collected_at.desc())
+        rows = list((await self.session.execute(stmt)).scalars().all())
+        latest: dict[str, StoreCareMarketMetric] = {}
+        for r in rows:
+            if r.market_type not in latest:
+                latest[r.market_type] = r
+        return list(latest.values())

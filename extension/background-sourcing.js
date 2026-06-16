@@ -493,6 +493,17 @@ async function _processJobWithCap(job) {
       _siteSemRelease(site)
     }
   }
+  // 마켓 점수·품절률 수집 잡(type=store_metrics) — 적립금과 동일 격리/세마포어.
+  if (job.type === 'store_metrics') {
+    await _siteSemAcquire(site)
+    _markSourcingSiteActive(site)
+    try {
+      return await handleStoreMetricsJob(job)
+    } finally {
+      _markSourcingSiteInactive(site)
+      _siteSemRelease(site)
+    }
+  }
   // 발주취소 잡(type=cancel_order) — 가격수집과 격리, 사이트 세마포어 사용.
   // 사이트별 cancel_js 분석·작성 전이라 현재는 '미지원' 회신만.
   // 실제 사이트 DOM 자동화는 content-cancel-{site}.js + 본 핸들러에서 라우팅 (분석 후 채움).
@@ -901,6 +912,217 @@ async function handleReviewJob(job) {
   })
   console.log(`[적립금-리뷰] ${action} 종료 — 작성 ${writeCount}건, 에러='${lastError}'`)
 }
+
+// ==================== 마켓 점수·품절률 수집 (store_metrics) ====================
+// 적립금(handleRewardJob)과 동일 패턴: 파트너/셀러 포털 탭 열고 content script 주입 →
+// STORE_METRICS_RESULT 수신 → POST /api/v1/samba/proxy/sourcing/store-metrics-result.
+// 포털은 로그인된 실제 브라우저에서만 스크래핑 가능 → store_metrics 는 확장앱 전용.
+
+// 마켓별 스크랩 설정 (executeScript func 로 페이지에서 직접 실행 → 값 반환).
+const _STORE_METRICS_CFG = {
+  '11st': {
+    market: '11st',
+    scoreLabels: ['주문이행', '발송일준수', '출고준수', '24시간 문의응대', '24시간 내 답변', '서비스평점'],
+    primaryLabel: '주문이행',
+    // N(전체 주문수): 판매자평점조회 서브페이지에서 자동 추출 (최근30일 평가창)
+    nUrl: 'https://soffice.11st.co.kr/view/317201',
+    nLabels: ['전체 주문건수', '전체 주문', '전체주문'],
+  },
+  'ssg': {
+    market: 'ssg',
+    scoreLabels: ['서비스평점', '주문이행', '출고준수', '24시간 내 답변', '24시간내답변'],
+    primaryLabel: '주문이행',
+    gradeWords: ['웰컴', '패밀리', '프렌즈', '파트너', 'VIP', '우수', '일반', '골드', '실버', '브론즈'],
+    totalLabels: ['전체주문', '총주문', '주문건수', '전체 건수'],
+  },
+  'gsshop': {
+    market: 'gsshop',
+    soldout: true,
+    totalLabels: ['전체주문', '총주문', '주문건수', '전체 건수'],
+  },
+}
+
+// 페이지 컨텍스트에서 실행됨(self-contained). innerText 정규식으로 지표 + raw 추출.
+function _scrapeStoreMetrics(cfg) {
+  function pickNum(text, label) {
+    const i = text.indexOf(label)
+    if (i < 0) return null
+    const t = text.slice(i, i + 120)
+    const m = t.match(/(\d+(?:\.\d+)?)\s*%/) || t.match(/(\d+(?:\.\d+)?)/)
+    return m ? parseFloat(m[1]) : null
+  }
+  function pickLevel(text, label) {
+    const i = text.indexOf(label)
+    if (i < 0) return null
+    const t = text.slice(i, i + 120)
+    const m = t.match(/(우수|양호|주의|경고|위험)/)
+    return m ? m[1] : null
+  }
+  const text = (document.body && document.body.innerText) || ''
+  const out = {
+    marketType: cfg.market,
+    metrics: {},
+    raw: { innerTextSnippet: text.slice(0, 5000), url: location.href, title: document.title },
+  }
+  for (const label of (cfg.scoreLabels || [])) {
+    const v = pickNum(text, label)
+    if (v != null) out.metrics[label] = { value: v, level: pickLevel(text, label) }
+  }
+  if (cfg.primaryLabel && out.metrics[cfg.primaryLabel]) {
+    out.score = out.metrics[cfg.primaryLabel].value
+  } else if (Object.keys(out.metrics).length) {
+    out.score = Object.values(out.metrics)[0].value
+  }
+  if (cfg.soldout) {
+    let scope = text
+    const si = text.indexOf('품절률')
+    if (si >= 0) scope = text.slice(si, si + 300)
+    const cm = scope.match(/당월\s*[:：]?\s*(\d+(?:\.\d+)?)\s*%/)
+    if (cm) out.soldoutRate = parseFloat(cm[1])
+    const pm = scope.match(/전월\s*[:：]?\s*(\d+(?:\.\d+)?)\s*%/)
+    if (pm) out.soldoutRatePrev = parseFloat(pm[1])
+    out.periodLabel = '전일기준 당월/전월'
+  }
+  if (cfg.gradeWords) {
+    const gi = text.indexOf('판매등급')
+    if (gi >= 0) {
+      const gt = text.slice(gi, gi + 60)
+      for (const w of cfg.gradeWords) { if (gt.includes(w)) { out.grade = w; break } }
+    }
+  }
+  const pen = text.match(/경고\s*(\d+)\s*개/)
+  if (pen) out.penalty = parseInt(pen[1], 10)
+  for (const nl of (cfg.totalLabels || [])) {
+    const v = pickNum(text, nl)
+    if (v != null) { out.metrics['전체주문'] = v; break }
+  }
+  const per = text.match(/평가기간[^\d]*([\d.]+\s*~\s*[\d.]+)/)
+  if (per) out.periodLabel = per[1].replace(/\s+/g, '')
+  out.success = !!(out.score != null || out.soldoutRate != null || Object.keys(out.metrics).length)
+  if (!out.success) out.error = '지표 못 찾음 (로그인/페이지 확인 필요) — raw 참고'
+  return out
+}
+
+// N(전체 주문수) 서브페이지 스크랩 — 프레임별로 라벨 나올 때까지 폴링(최대 12s).
+// allFrames 로 주입되므로 평점 데이터가 iframe에 있어도 그 프레임에서 잡힌다.
+async function _scrapeStoreN(labels) {
+  function pickNum(text, label) {
+    const i = text.indexOf(label)
+    if (i < 0) return null
+    const t = text.slice(i, i + 80)
+    const m = t.match(/([\d,]+)\s*건/) || t.match(/([\d,]+)/)
+    return m ? parseInt(m[1].replace(/,/g, ''), 10) : null
+  }
+  const deadline = Date.now() + 12000
+  while (Date.now() < deadline) {
+    const text = (document.body && document.body.innerText) || ''
+    for (const label of labels) {
+      const n = pickNum(text, label)
+      if (n != null) return { n, label, raw: text.slice(0, 3000), url: location.href }
+    }
+    await new Promise(r => setTimeout(r, 500))
+  }
+  const text = (document.body && document.body.innerText) || ''
+  return { n: null, raw: text.slice(0, 3000), url: location.href }
+}
+
+async function handleStoreMetricsJob(job) {
+  const { requestId, marketType, url } = job
+  console.log(`[점수수집] 잡 수신 market=${marketType} req=${requestId}`)
+
+  const cfg = _STORE_METRICS_CFG[marketType]
+  if (!cfg) {
+    await postResult('sourcing/store-metrics-result', {
+      requestId, marketType, success: false, error: `unknown market: ${marketType}`,
+    })
+    return
+  }
+
+  let tabId = null
+  try {
+    if (!url) throw new Error('점수수집 URL 누락')
+    // active:true — 일부 셀러 포털 SPA는 백그라운드 탭에서 렌더가 멈춰 active로 연다.
+    const tab = await chrome.tabs.create({ url, active: true })
+    tabId = tab.id
+    try { await waitForTabLoad(tabId, 20000) } catch {}
+    // 포털 SPA 렌더 안정화
+    await new Promise(r => setTimeout(r, 3500))
+
+    // executeScript func → 페이지에서 직접 실행하고 값을 반환받음(메시지 타임아웃 없음).
+    let result
+    try {
+      const [inj] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: _scrapeStoreMetrics,
+        args: [cfg],
+      })
+      result = (inj && inj.result) || { success: false, error: '스크랩 결과 없음(주입 반환 null)' }
+    } catch (e) {
+      result = { success: false, error: `스크랩 실패: ${e?.message || e}` }
+    }
+
+    // N(전체 주문수) 서브페이지 스크랩 (nUrl 있는 마켓만) → metrics['전체주문']
+    if (cfg.nUrl && cfg.nLabels) {
+      let nTabId = null
+      try {
+        const nTab = await chrome.tabs.create({ url: cfg.nUrl, active: true })
+        nTabId = nTab.id
+        try { await waitForTabLoad(nTabId, 15000) } catch {}
+        await new Promise(r => setTimeout(r, 1500))
+        // allFrames: 셀러오피스 평점 데이터가 iframe에 있을 수 있어 전 프레임 스크랩.
+        const ninjs = await chrome.scripting.executeScript({
+          target: { tabId: nTabId, allFrames: true },
+          func: _scrapeStoreN,
+          args: [cfg.nLabels],
+        })
+        const nres = (ninjs || []).map(x => x && x.result).find(r => r && r.n != null)
+          || (ninjs && ninjs[0] && ninjs[0].result) || null
+        if (nres && nres.n != null) {
+          result.metrics = result.metrics || {}
+          result.metrics['전체주문'] = nres.n
+        }
+        if (nres) {
+          result.raw = result.raw || {}
+          result.raw.nUrl = nres.url
+          result.raw.nSnippet = (nres.raw || '').slice(0, 2000)
+        }
+        console.log(`[점수수집] ${marketType} N=${nres && nres.n}`)
+      } catch (e) {
+        // N 실패는 무시 — 점수는 살리고 N은 수동입력으로 보정
+      } finally {
+        if (nTabId) { try { await chrome.tabs.remove(nTabId) } catch {} }
+      }
+    }
+
+    await postResult('sourcing/store-metrics-result', {
+      requestId,
+      marketType,
+      success: !!result.success,
+      soldoutRate: result.soldoutRate ?? null,
+      soldoutRatePrev: result.soldoutRatePrev ?? null,
+      score: result.score ?? null,
+      grade: result.grade ?? null,
+      penalty: result.penalty ?? null,
+      metrics: result.metrics ?? null,
+      raw: result.raw ?? null,
+      periodLabel: result.periodLabel ?? null,
+      error: result.error || '',
+    })
+    console.log(`[점수수집] 결과 전송 market=${marketType} success=${result.success}`)
+  } catch (err) {
+    console.warn(`[점수수집] 처리 실패 req=${requestId}:`, err)
+    try {
+      await postResult('sourcing/store-metrics-result', {
+        requestId, marketType, success: false, error: String(err?.message || err),
+      })
+    } catch {}
+  } finally {
+    if (tabId) {
+      try { await chrome.tabs.remove(tabId) } catch {}
+    }
+  }
+}
+
 
 async function handleRewardJob(job) {
   const { requestId, site, url, action, sourcingAccountId } = job
