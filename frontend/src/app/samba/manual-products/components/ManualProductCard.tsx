@@ -62,7 +62,6 @@ function toEditOptions(raw: unknown[] | undefined): EditOption[] {
 export default function ManualProductCard({ product, policies, accounts, onDeleted, onUpdated, onRefresh }: Props) {
   const [showCategories, setShowCategories] = useState(false)
   const [showImageModal, setShowImageModal] = useState(false)
-  const [selectedAccounts, setSelectedAccounts] = useState<string[]>([])
   const [transmitting, setTransmitting] = useState(false)
   const [result, setResult] = useState('')
   const [logs, setLogs] = useState<LogEntry[]>([])
@@ -76,7 +75,7 @@ export default function ManualProductCard({ product, policies, accounts, onDelet
   const [edit, setEdit] = useState({
     name: '', brand: '', original_price: '', sale_price: '', cost: '',
     manufacturer: '', style_code: '', origin: '', sex: '남녀공용', season: '사계절',
-    color: '', material: '',
+    color: '', material: '', tags: '',
   })
   const [editOptions, setEditOptions] = useState<EditOption[]>([])
 
@@ -95,6 +94,7 @@ export default function ManualProductCard({ product, policies, accounts, onDelet
       season: product.season || '사계절',
       color: product.color ?? '',
       material: product.material ?? '',
+      tags: (product.tags ?? []).join(', '),
     })
     setEditOptions(toEditOptions(product.options))
     setEditing(true)
@@ -128,6 +128,7 @@ export default function ManualProductCard({ product, policies, accounts, onDelet
         season: edit.season || undefined,
         color: edit.color.trim() || undefined,
         material: edit.material.trim() || undefined,
+        tags: edit.tags.split(',').map(t => t.trim()).filter(Boolean),
         options: editOptions
           .filter(o => o.name.trim())
           .map(o => ({ name: o.name.trim(), price: o.price, stock: o.stock })),
@@ -178,18 +179,21 @@ export default function ManualProductCard({ product, policies, accounts, onDelet
   }
 
   const transmit = async () => {
-    if (selectedAccounts.length === 0) { setResult('전송할 계정을 선택하세요'); return }
+    if (!product.applied_policy_id) { setResult('정책을 선택하세요'); return }
+    const policy = policies.find(p => p.id === product.applied_policy_id)
+    const targetIds = policyAccountIds(policy, accounts).map(a => a.id)
+    if (targetIds.length === 0) { setResult('정책에 전송 계정이 없습니다'); return }
     setTransmitting(true)
     setResult('')
     try {
       await shipmentApi.start(
         [product.id],
         ['price', 'stock', 'image', 'description'],
-        selectedAccounts,
+        targetIds,
         false,
       )
       setResult('전송 요청 완료')
-      addLog('transmit', `전송 완료 (${fmtNum(selectedAccounts.length)}개 계정)`, true)
+      addLog('transmit', `전송 완료 (${fmtNum(targetIds.length)}개 계정)`, true)
     } catch (e) {
       const msg = '전송 실패: ' + String(e)
       setResult(msg)
@@ -291,6 +295,12 @@ export default function ManualProductCard({ product, policies, accounts, onDelet
             <input className='col-span-2 px-2.5 py-1.5 bg-[#0A0A0A] border border-[#1A1A1A] rounded text-sm text-[#E5E5E5] placeholder-[#444] focus:outline-none focus:border-[#FF8C00]' value={edit.material} onChange={e => setEditField('material', e.target.value)} placeholder='재질 (예: 면 100%)' />
           </div>
 
+          {/* 태그 (쉼표 구분) */}
+          <div>
+            <label className={LABEL}>태그 (쉼표로 구분)</label>
+            <input className={INPUT} value={edit.tags} onChange={e => setEditField('tags', e.target.value)} placeholder='예: 봄신상, 캐주얼, 데일리' />
+          </div>
+
           {/* 옵션 */}
           <div>
             <div className='flex justify-between items-center mb-1'>
@@ -333,29 +343,6 @@ export default function ManualProductCard({ product, policies, accounts, onDelet
             <option key={p.id} value={p.id}>{p.name}</option>
           ))}
         </select>
-      </div>
-
-      {/* 전송 계정 */}
-      <div>
-        <label className='text-xs text-[#666] block mb-1'>전송 계정</label>
-        <div className='flex flex-wrap gap-1'>
-          {accounts.map(acc => (
-            <label key={acc.id} className='flex items-center gap-1.5 text-xs bg-[#0A0A0A] border border-[#1A1A1A] rounded px-2 py-1 cursor-pointer select-none hover:border-[#2D2D2D]'>
-              <input
-                type='checkbox'
-                checked={selectedAccounts.includes(acc.id)}
-                onChange={e =>
-                  setSelectedAccounts(prev =>
-                    e.target.checked ? [...prev, acc.id] : prev.filter(id => id !== acc.id)
-                  )
-                }
-                className='accent-[#FF8C00]'
-              />
-              <span className='text-[#999]'>{acc.market_type}</span>
-              <span className='text-[#666]'>{acc.account_name}</span>
-            </label>
-          ))}
-        </div>
       </div>
 
       {/* 카테고리 — 정책 연결 시에만 표시 */}
