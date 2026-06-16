@@ -260,9 +260,10 @@
       : (document.body.innerText.match(/주문번호\s*[:：]?\s*([0-9\-]+)/) || [])[1] || '';
     const amtMatch = document.body.innerText.match(/총\s*결제\s*금액[\s\S]{0,30}?([\d,]{3,})\s*원/);
     const amount = amtMatch ? amtMatch[1].replace(/,/g, '') : '';
-    log('결제완료 감지', { orderNo, amount, orderId: job.orderId });
+    const marketNo = job.extNo || job.ordNo || '';
+    log('결제완료 감지', { sourcingNo: orderNo, amount, marketNo });
     banner(`주문완료! 주문번호 ${orderNo} / ${amount}원 — 삼바 기입 전송`, '#1971c2');
-    chrome.runtime.sendMessage({ type: 'WRITEBACK', orderId: job.orderId, orderNo, amount });
+    chrome.runtime.sendMessage({ type: 'WRITEBACK', marketNo, sourcingNo: orderNo, amount });
     await setJob({ status: 'done', result: { orderNo, amount } });
   }
 

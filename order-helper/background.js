@@ -134,7 +134,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === 'WRITEBACK') {
-    console.log('[주문도우미] WRITEBACK (삼바 기입 예정)', msg);
+    const wb = { marketNo: msg.marketNo, sourcingNo: msg.sourcingNo, amount: msg.amount, ts: Date.now() };
+    console.log('[주문도우미] WRITEBACK', wb);
+    // 삼바 탭이 나중에 열려도 처리되도록 저장 + 열려있는 삼바 탭들에 즉시 전달
+    chrome.storage.local.set({ pendingWriteback: wb });
+    chrome.tabs.query({ url: 'https://samba-wave-xi.vercel.app/*' }, (tabs) => {
+      (tabs || []).forEach((t) => {
+        try { chrome.tabs.sendMessage(t.id, Object.assign({ type: 'WRITEBACK_APPLY' }, wb), () => void chrome.runtime.lastError); } catch (e) { /* noop */ }
+      });
+    });
     sendResponse({ ok: true });
     return true;
   }

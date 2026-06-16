@@ -159,4 +159,65 @@
   }, true);
 
   log('삼바 주문도우미 활성화 — 원문링크 클릭 시 자동주문');
+
+  // ── 결제완료 후 삼바 기입(writeback) ──
+  // 무신사 결제완료 → background → 삼바 탭. 해당 주문 행에 소싱주문번호/실구매가/
+  // 상태(배송대기중)/메모(장재훈) 입력. (삼바가 자체 인증으로 저장)
+  const qa2 = (s, r = document) => Array.from((r || document).querySelectorAll(s));
+  function setReact(el, val) {
+    if (!el) return;
+    const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype
+      : el.tagName === 'SELECT' ? window.HTMLSelectElement.prototype : window.HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, val);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    if (el.tagName !== 'SELECT') el.dispatchEvent(new Event('blur', { bubbles: true }));
+  }
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  async function applyWriteback(wb) {
+    if (!wb || !wb.marketNo) return;
+    let tr = null;
+    for (let i = 0; i < 20 && !tr; i++) {
+      tr = qa2('tr').find((r) => (r.textContent || '').includes(wb.marketNo));
+      if (!tr) await sleep(300);
+    }
+    if (!tr) { toast(`삼바에서 주문(${wb.marketNo}) 행을 못 찾음 — 화면에 그 주문이 보이게 해주세요`, '#c92a2a'); return; }
+    toast('주문번호/금액/상태/메모 기입 중...', '#1971c2');
+    const selects = qa2('select', tr);
+
+    // 소싱주문번호 입력 활성화를 위해 주문계정(MUSINSA) 선택 (비활성 시)
+    let srcInput = tr.querySelector('input[placeholder*="소싱주문번호"], input[placeholder*="주문계정 먼저"]');
+    if (srcInput && srcInput.disabled) {
+      const acct = selects.find((s) => qa2('option', s).some((o) => o.textContent.trim() === '주문계정'));
+      if (acct) {
+        const opt = qa2('optgroup[label="MUSINSA"] option', acct)[0]
+          || qa2('option', acct).find((o) => o.value && o.value !== 'etc' && o.textContent.trim() !== '주문계정');
+        if (opt) { setReact(acct, opt.value); await sleep(800); }
+      }
+    }
+    // 주문상태 → 배송대기중(wait_ship)
+    const statusSel = qa2('select', tr).find((s) => qa2('option', s).some((o) => o.value === 'wait_ship'));
+    if (statusSel) setReact(statusSel, 'wait_ship');
+    // 소싱주문번호
+    srcInput = tr.querySelector('input[placeholder*="소싱주문번호"]');
+    if (srcInput && !srcInput.disabled && wb.sourcingNo) setReact(srcInput, String(wb.sourcingNo));
+    // 실구매가
+    const cost = tr.querySelector('input[placeholder*="실구매가"]');
+    if (cost && wb.amount) setReact(cost, String(wb.amount));
+    // 간단메모 = 장재훈
+    const notes = tr.querySelector('textarea[placeholder="간단메모"]');
+    if (notes) setReact(notes, '장재훈');
+
+    toast(`✅ 기입 완료: 주문번호 ${wb.sourcingNo} / ${Number(wb.amount).toLocaleString()}원 / 배송대기중 / 메모 장재훈`, '#2b8a3e');
+    chrome.storage.local.remove('pendingWriteback');
+  }
+
+  chrome.runtime.onMessage.addListener((msg, _s, resp) => {
+    if (msg && msg.type === 'WRITEBACK_APPLY') { applyWriteback(msg).then(() => resp({ ok: true })); return true; }
+  });
+  // 삼바 탭이 결제 후 열렸거나 새로고침된 경우 대비 — 보류 중 writeback 처리
+  chrome.storage.local.get('pendingWriteback', ({ pendingWriteback }) => {
+    if (pendingWriteback && Date.now() - pendingWriteback.ts < 10 * 60000) applyWriteback(pendingWriteback);
+  });
 })();
