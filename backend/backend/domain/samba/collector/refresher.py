@@ -23,7 +23,7 @@ SITE_CONCURRENCY: dict[str, int] = {
     "MUSINSA": 20,  # 벌크 갱신용 (오토튠은 collector_autotune.py에서 별도 4로 제한)
     "KREAM": 5,
     "DANAWA": 5,
-    "FashionPlus": 10,
+    "FashionPlus": 5,  # 차단 예방 — 동시 호출 수 보수적 (2026-06-15)
     "Nike": 5,
     "Adidas": 5,
     "ABCmart": 5,  # worker._ABC_BATCH=5와 통일
@@ -49,7 +49,7 @@ SITE_BASE_INTERVAL: dict[str, float] = {
     "MUSINSA": 0,
     "KREAM": 0,
     "DANAWA": 0,
-    "FashionPlus": 0,
+    "FashionPlus": 0,  # 오토튠은 평소 빠르게, 막히면 backoff가 자동 감속
     "Nike": 0,
     "Adidas": 0,
     "ABCmart": 0,
@@ -1428,14 +1428,80 @@ def _has_stock_diff(old_options: list | None, new_options: list | None) -> bool:
 async def _parse_fashionplus(product: Any) -> RefreshResult:
     """패션플러스 가격/재고 갱신 — 검색 API + 상세 페이지."""
     from backend.domain.samba.proxy.fashionplus import FashionPlusClient
+    from backend.domain.samba.proxy.musinsa import RateLimitError
+
+    _idx = getattr(product, "_refresh_idx", 0)
+    _total = getattr(product, "_refresh_total", 0)
 
     pid = getattr(product, "site_product_id", "")
     if not pid:
         return RefreshResult(product_id=product.id, error="site_product_id 없음")
 
-    client = FashionPlusClient()
+    # 오토튠이면 메인↔프록시 IP 로테이션 (무신사와 동일 패턴, 20건 단위 교체)
+    _is_autotune = _current_refresh_source.get() == "autotune"
+    _proxy = _get_rotated_proxy("FashionPlus") if _is_autotune else None
+    client = FashionPlusClient(proxy_url=_proxy)
     try:
         detail = await client.get_detail(pid)
+        # 성공 → 인터벌 점진 복원 (무신사와 동일 패턴)
+        base = SITE_BASE_INTERVAL.get("FashionPlus", 0.0)
+        step = SITE_INTERVAL_STEP.get("FashionPlus", 0.3)
+        prev_interval = _site_intervals.get("FashionPlus", base)
+        new_interval = max(base, prev_interval - step)
+        _site_intervals["FashionPlus"] = new_interval
+        _site_consecutive_errors["FashionPlus"] = 0
+        if new_interval <= _site_safe_intervals.get("FashionPlus", 999):
+            _site_safe_intervals["FashionPlus"] = new_interval
+    except RateLimitError as e:
+        # 차단 → 인터벌 2배 증가 (최대 30초).
+        # 기본 인터벌이 0(사용자 요구)이라 0*2=0으로 backoff가 무력화되는 것을 막기 위해
+        # 하한 1초를 보장한다 → 막히기 시작하면 2→4→8…초로 실제 감속, 성공하면 0으로 복원.
+        current = _site_intervals.get("FashionPlus", 1.0) or 1.0
+        _site_intervals["FashionPlus"] = min(30.0, max(1.0, current) * 2)
+        _site_consecutive_errors["FashionPlus"] = (
+            _site_consecutive_errors.get("FashionPlus", 0) + 1
+        )
+        _log_refresh(
+            "FashionPlus",
+            product.id,
+            getattr(product, "name", ""),
+            f"차단 HTTP {e.status} (연속 {_site_consecutive_errors['FashionPlus']}회, 인터벌→{_site_intervals['FashionPlus']:.1f}s)",
+            level="warning",
+            idx=_idx,
+            total=_total,
+        )
+        # 연속 5회 이상이면 해당 소싱처 전체 일시 중단
+        if _site_consecutive_errors["FashionPlus"] >= 5:
+            _log_refresh(
+                "FashionPlus",
+                product.id,
+                getattr(product, "name", ""),
+                f"연속 {_site_consecutive_errors['FashionPlus']}회 차단 — 일시 중단",
+                level="error",
+                idx=_idx,
+                total=_total,
+            )
+            return RefreshResult(
+                product_id=product.id,
+                error=f"차단 감지: HTTP {e.status} (연속 {_site_consecutive_errors['FashionPlus']}회, "
+                f"인터벌 {_site_intervals['FashionPlus']}초)",
+            )
+        # Retry-After가 있으면 대기 후 1회 재시도 (상한 60초)
+        if e.retry_after > 0:
+            capped_wait = min(e.retry_after, 60)
+            logger.warning(
+                f"[패션플러스] {pid} 차단({e.status}), {capped_wait}초 후 재시도 (원본 Retry-After={e.retry_after})"
+            )
+            await asyncio.sleep(capped_wait)
+            try:
+                detail = await client.get_detail(pid)
+                _site_consecutive_errors["FashionPlus"] = 0
+            except Exception:
+                return RefreshResult(
+                    product_id=product.id, error=f"차단 후 재시도 실패: HTTP {e.status}"
+                )
+        else:
+            return RefreshResult(product_id=product.id, error=f"차단: HTTP {e.status}")
     except Exception as e:
         return RefreshResult(product_id=product.id, error=f"상세 조회 실패: {e}")
 
