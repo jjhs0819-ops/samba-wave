@@ -8,7 +8,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
-
+from sqlmodel import select
 from backend.db.orm import (
     get_read_session,
     get_read_session_dependency,
@@ -10574,3 +10574,108 @@ def _parse_esmplus_order(
         "source": market_type,
         "ext_order_number": _s(item.get("OutOrderNo")),
     }
+# ═══════════════════════════════════════════════════════════════
+# 롯데ON 선물하기 — 카톡 알림 기반 송장 자동입력 + 마켓전송
+# 카톡(다른 PC)이 읽은 {이름, 품번, 송장번호}를 받아 주문을 찾아 처리한다.
+# 안전규칙: 이름+품번으로 '송장 없는' 주문이 정확히 1건일 때만 처리.
+#           0건/2건↑ 은 건너뜀(로그만). dry_run 이면 실제 전송 안 함.
+# ═══════════════════════════════════════════════════════════════
+class ShipByKakaoRequest(BaseModel):
+    customer_name: str
+    product_code: str
+    shipping_company: str = "롯데택배"
+    tracking_number: str
+    dry_run: bool = False
+
+
+def _extract_product_code(text: Optional[str]) -> Optional[str]:
+    """상품명 안에서 품번(YMM24377Z1 형태) 추출."""
+    if not text:
+        return None
+    m = re.search(r"[A-Z]{2,4}\d[A-Z0-9]{5,9}", text.upper())
+    return m.group(0) if m else None
+
+
+def _validate_invoice(inv: str) -> tuple[bool, str]:
+    """송장 형식 검증. 3184 하드코딩 안 함(번호 바뀔 수 있음).
+    필수: 숫자 + 자릿수(10~14). 3184 미시작은 막지 않고 '경고'만."""
+    inv = (inv or "").strip()
+    if not inv.isdigit():
+        return False, "송장번호가 숫자가 아님"
+    if not (10 <= len(inv) <= 14):
+        return False, f"송장 자릿수 비정상({len(inv)}자리)"
+    warn = "" if inv.startswith("3184") else "송장 패턴이 평소와 다름(확인 권장)"
+    return True, warn
+
+
+@router.post("/ship-by-kakao")
+async def ship_by_kakao(
+    body: ShipByKakaoRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+):
+    """카톡 알림(이름+품번+송장)으로 주문을 찾아 송장입력 + 마켓전송."""
+    name = (body.customer_name or "").strip()
+    code = (body.product_code or "").strip().upper()
+    inv = (body.tracking_number or "").strip()
+
+    # 1) 송장 형식 검증
+    ok, warn = _validate_invoice(inv)
+    if not ok:
+        logger.warning("[ship-by-kakao] 송장검증실패 name=%s code=%s inv=%s (%s)",
+                       name, code, inv, warn)
+        return {"ok": False, "action": "rejected", "reason": warn}
+
+    # 2) 이름 일치 + 송장 없는 주문 후보 조회
+    svc = _write_service(session)
+    stmt = select(SambaOrder).where(SambaOrder.customer_name == name)
+    if tenant_id is not None:
+        stmt = stmt.where(SambaOrder.tenant_id == tenant_id)
+    result = await session.execute(stmt)
+    candidates = result.scalars().all()
+
+    # 3) 품번 일치 + 아직 송장 없는 것만 필터
+    matched = [
+        o for o in candidates
+        if not (o.tracking_number or "").strip()
+        and _extract_product_code(o.product_name) == code
+    ]
+
+    # 4) 안전규칙: 정확히 1건일 때만 처리
+    if len(matched) == 0:
+        logger.info("[ship-by-kakao] 매칭 0건 — 건너뜀 name=%s code=%s", name, code)
+        return {"ok": False, "action": "skipped", "reason": "매칭 주문 없음(미수집/이미처리)"}
+    if len(matched) > 1:
+        logger.warning("[ship-by-kakao] 매칭 %d건 — 건너뜀(사람확인) name=%s code=%s ids=%s",
+                       len(matched), name, code, [o.id for o in matched])
+        return {"ok": False, "action": "skipped",
+                "reason": f"매칭 {len(matched)}건(사람 확인 필요)",
+                "order_ids": [o.id for o in matched]}
+
+    order = matched[0]
+
+    # 5) dry_run: 실제 전송 안 하고 '이렇게 보낼 것'만 반환
+    if body.dry_run:
+        return {"ok": True, "action": "dry_run", "order_id": order.id,
+                "would_send": {"shipping_company": body.shipping_company,
+                               "tracking_number": inv},
+                "warning": warn}
+
+    # 6) 실제 처리 — 기존 ship_order 와 동일 로직 재사용
+    await svc.update_order(
+        order.id,
+        {"shipping_company": body.shipping_company, "tracking_number": inv},
+    )
+    from backend.domain.samba.order.dispatch_service import send_invoice_to_market
+    market_sent, market_msg = await send_invoice_to_market(
+        order, body.shipping_company, inv, session
+    )
+    if market_sent:
+        await svc.update_order(
+            order.id, {"shipping_status": "송장전송완료", "status": "shipping"},
+        )
+    logger.info("[ship-by-kakao] 처리완료 order=%s sent=%s name=%s code=%s%s",
+                order.id, market_sent, name, code,
+                f" / {warn}" if warn else "")
+    return {"ok": True, "action": "shipped", "order_id": order.id,
+            "market_sent": market_sent, "message": market_msg, "warning": warn}
