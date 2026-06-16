@@ -252,6 +252,17 @@ async def _run_direct_order_sync(tenant_ids: set[str | None]) -> None:
                     exc,
                 )
 
+        # 동기화 완료 → 역마진(가격X)/재고없음(재고X) 자동 판정 + 상품 갱신 + 메모 기록.
+        # 별도 트랜잭션(자체 세션)으로 실행 — 위 sync 트랜잭션과 분리.
+        try:
+            from backend.domain.samba.order.auto_issue_check import (
+                auto_check_order_issues,
+            )
+
+            await auto_check_order_issues(tenant_id)
+        except Exception as exc:
+            logger.warning("[주문폴러] 주문이슈 자동체크 실패: %s", exc)
+
 
 async def _create_cs_sync_job(session, tenant_id: str | None) -> None:
     """cs_sync 잡 생성 (중복 실행 방지 포함)."""
