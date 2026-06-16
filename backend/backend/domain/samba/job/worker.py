@@ -1083,6 +1083,10 @@ class JobWorker:
         update_items = payload.get("update_items", [])
         target_account_ids = payload.get("target_account_ids", [])
         skip_unchanged = payload.get("skip_unchanged", False)
+        # 오토튠 발행 전송잡(process-split-design step8): 이미 갱신된 가격으로 전송하므로
+        # 재수집(refresh) 생략. payload skip_refresh=True 일 때만 start_update 에 전달.
+        # 기본 False → 기존 수동/테트리스 전송잡 동작 불변.
+        skip_refresh = bool(payload.get("skip_refresh", False))
         # 프론트에서 테트리스 배치 기반으로 직접 target_account_ids 구성한 경우 True
         _payload_tetris_flag = bool(payload.get("skip_policy_account_filter", False))
 
@@ -1417,6 +1421,7 @@ class JobWorker:
                         effective_account_ids,
                         skip_unchanged=skip_unchanged,
                         skip_policy_account_filter=_tetris_enabled,
+                        skip_refresh=skip_refresh,
                     )
                     await _transmit_session.commit()
                 # 작업취소/비상정지로 start_update가 루프 첫 줄에서 break →
