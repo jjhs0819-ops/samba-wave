@@ -634,23 +634,19 @@ const ProductCard = React.memo(function ProductCard({
       })
   }, [regAccIds, accounts, p.name, marketProductNos]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 리셀 플랫폼(KREAM/POIZON/StockX) 카탈로그 매칭 배지
-  const resellMatches = useMemo(() => {
+  // 리셀 판매처(KREAM/POIZON/StockX) — 3개 고정 행, 매칭된 상품번호 or 미매칭
+  const resellRows = useMemo(() => {
     const rm = (p.resell_matches || {}) as Record<string, { product_id?: string; confidence?: number }>
-    const PLAT: Record<string, { name: string; url?: (id: string) => string }> = {
-      kream: { name: 'KREAM', url: (id) => `https://kream.co.kr/products/${id}` },
-      poizon: { name: 'POIZON' },
-      stockx: { name: 'StockX' },
-    }
-    return Object.entries(rm)
-      .filter(([, v]) => v && v.product_id)
-      .map(([k, v]) => ({
-        key: k,
-        name: PLAT[k]?.name || k,
-        id: String(v!.product_id),
-        url: PLAT[k]?.url ? PLAT[k]!.url!(String(v!.product_id)) : '',
-        conf: v!.confidence,
-      }))
+    const PLAT: { key: string; name: string; url?: (id: string) => string }[] = [
+      { key: 'kream', name: 'KREAM', url: (id) => `https://kream.co.kr/products/${id}` },
+      { key: 'poizon', name: 'POIZON' },
+      { key: 'stockx', name: 'StockX' },
+    ]
+    return PLAT.map(pl => {
+      const m = rm[pl.key]
+      const id = m?.product_id ? String(m.product_id) : ''
+      return { key: pl.key, name: pl.name, id, url: id && pl.url ? pl.url(id) : '', conf: m?.confidence }
+    })
   }, [p.resell_matches])
 
   const tdLabel: React.CSSProperties = { padding: '6px 8px', color: '#555', fontSize: '0.75rem', whiteSpace: 'nowrap', verticalAlign: 'middle' }
@@ -1330,17 +1326,6 @@ const ProductCard = React.memo(function ProductCard({
               padding: '2px 8px', whiteSpace: 'nowrap',
             }}>{p.source_site}</span>
           )}
-          {resellMatches.map(rm => (
-            <span key={rm.key} title={rm.conf != null ? `매칭 신뢰도 ${rm.conf}%` : '리셀 매칭'} style={{
-              fontSize: '0.7rem', color: '#22C55E', background: 'rgba(34,197,94,0.12)',
-              border: '1px solid rgba(34,197,94,0.3)', borderRadius: '4px',
-              padding: '2px 8px', whiteSpace: 'nowrap',
-            }}>
-              {rm.url
-                ? <a href={rm.url} target="_blank" rel="noreferrer" style={{ color: '#22C55E', textDecoration: 'none' }}>{rm.name} {rm.id}</a>
-                : <>{rm.name} {rm.id}</>}
-            </span>
-          ))}
           <span>수집 <span style={{ color: '#888' }}>{regDate}</span></span>
           {p.updated_at && <span>최신화 <span style={{ color: '#888' }}>{updatedDate}</span></span>}
           {isActive && (
@@ -1949,6 +1934,29 @@ const ProductCard = React.memo(function ProductCard({
                   )
                 })
               })()}
+              {/* 리셀 판매처 (KREAM/POIZON/StockX) */}
+              {resellRows.map(rr => (
+                <tr key={`resell-${rr.key}`} style={{ borderBottom: '1px solid #1E1E1E' }}>
+                  <td style={tdLabel}>{rr.name}</td>
+                  <td style={tdVal}>
+                    {rr.id ? (
+                      rr.url ? (
+                        <button
+                          onClick={() => window.open(rr.url, '_blank')}
+                          style={{ fontSize: '0.65rem', padding: '2px 8px', background: 'rgba(81,207,102,0.08)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.2)' }}
+                          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}
+                          title={`${rr.name} 판매페이지`}
+                        >{rr.id}{rr.conf != null ? ` (매칭 ${fmtNum(rr.conf)}%)` : ''}</button>
+                      ) : (
+                        <span style={{ fontSize: '0.72rem', color: '#C5C5C5' }}>{rr.id}{rr.conf != null ? ` (매칭 ${fmtNum(rr.conf)}%)` : ''}</span>
+                      )
+                    ) : (
+                      <span style={{ fontSize: '0.68rem', color: '#555' }}>미매칭</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
               {/* 카테고리 */}
               <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
                 <td style={tdLabel}>카테고리</td>
