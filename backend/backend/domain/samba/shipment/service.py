@@ -144,6 +144,12 @@ def calc_market_price(
     m_margin_rate = common_margin_rate
     m_shipping = mp.get("shippingCost") or common_shipping
     m_fee = mp.get("feeRate") or common_fee
+    # 롯데홈쇼핑: marginRate 가 위탁수수료율로 쓰이는 구성(feeRate 없이 marginRate만) 대응 —
+    # 정책마진 가드는 marginRate 를 수수료 fallback 으로 보는데 calc 는 feeRate 만 봐
+    # gross-up 누락 → 비대칭. 가드와 동일하게 feeRate or marginRate or common_fee 순(#435).
+    # mp.marginRate 는 calc 의 margin(common pr 기반)과 별개라 중복 차감 없음.
+    if market_type == "lottehome":
+        m_fee = mp.get("feeRate") or mp.get("marginRate") or common_fee
 
     margin_amt = round(cost * m_margin_rate / 100)
     if min_margin > 0 and margin_amt < min_margin:
@@ -172,7 +178,11 @@ def calc_market_price(
         calc_price = math.ceil(calc_price / (1 - m_fee / 100))
     if common_extra > 0:
         calc_price += common_extra
-    # 100원 단위 내림 (111 → 100)
+    # 롯데홈쇼핑: 100원 단위 올림 — 내림 시 수수료 gross-up 결과가 정책마진 가드
+    # 임계 바로 아래로 떨어져 마진미달 차단되는 비대칭 방지(#435).
+    if market_type == "lottehome":
+        return math.ceil(int(calc_price) / 100) * 100
+    # 그 외: 100원 단위 내림 (111 → 100)
     return (int(calc_price) // 100) * 100
 
 
