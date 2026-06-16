@@ -7389,6 +7389,73 @@ async def sync_orders_from_markets(
                     f"[주문동기화] {label}: 롯데홈쇼핑 주문 {len(orders_data)}건 조회"
                 )
 
+                # ② 유령상품 goods_no 자동복구(#434) — 방금 수집한 주문(product_id=
+                # SiteGoodsNo, product_name=GoodsName)으로 번호 잃은 등록상품을 이름
+                # 단일매칭으로 재연결. 롯데홈 API 무호출(IP리스크 0). 등록은 됐는데 번호
+                # 유실된 케이스를 다음 주문 동기화 때 스스로 복구.
+                try:
+                    import json as _bf_json
+                    import re as _bf_re
+
+                    from sqlalchemy import text as _bf_text
+
+                    def _bf_norm(s: object) -> str:
+                        return _bf_re.sub(r"[^0-9a-z가-힣]", "", str(s or "").lower())
+
+                    _bf_acc = str(account["id"])
+                    _bf_map: dict[str, set] = {}
+                    for _bf_od in orders_data:
+                        if _bf_od.get("source") != "lottehome":
+                            continue
+                        _bf_pid = str(_bf_od.get("product_id") or "")
+                        _bf_pn = _bf_norm(_bf_od.get("product_name"))
+                        if _bf_pn and _bf_pid.isdigit():
+                            _bf_map.setdefault(_bf_pn, set()).add(_bf_pid)
+                    if _bf_map:
+                        _bf_ghosts = (
+                            await session.execute(
+                                _bf_text(
+                                    "SELECT id, name, COALESCE(market_names->>:k,'') "
+                                    "FROM samba_collected_product "
+                                    "WHERE registered_accounts @> CAST(:a AS jsonb) "
+                                    "AND NOT jsonb_exists("
+                                    "COALESCE(market_product_nos,'{}'::jsonb), :k)"
+                                ),
+                                {"k": _bf_acc, "a": _bf_json.dumps([_bf_acc])},
+                            )
+                        ).fetchall()
+                        _bf_n = 0
+                        for _bf_gid, _bf_gn, _bf_gm in _bf_ghosts:
+                            _bf_cand = _bf_map.get(_bf_norm(_bf_gm)) or _bf_map.get(
+                                _bf_norm(_bf_gn)
+                            )
+                            if _bf_cand and len(_bf_cand) == 1:
+                                await session.execute(
+                                    _bf_text(
+                                        "UPDATE samba_collected_product SET "
+                                        "market_product_nos = "
+                                        "COALESCE(market_product_nos,'{}'::jsonb) || "
+                                        "jsonb_build_object(CAST(:k AS text), "
+                                        "to_jsonb(CAST(:v AS text))) WHERE id = :i"
+                                    ),
+                                    {
+                                        "k": _bf_acc,
+                                        "v": next(iter(_bf_cand)),
+                                        "i": _bf_gid,
+                                    },
+                                )
+                                _bf_n += 1
+                        if _bf_n:
+                            await session.commit()
+                            logger.info(
+                                f"[주문동기화] {label}: 롯데홈 유령 goods_no "
+                                f"자동복구 {_bf_n}건(#434)"
+                            )
+                except Exception as _bf_e:
+                    logger.warning(
+                        f"[주문동기화] {label}: 롯데홈 유령 복구 스킵(무시): {_bf_e}"
+                    )
+
             elif market_type in ("gmarket", "auction"):
                 from backend.domain.samba.proxy.esmplus import (
                     ESMPlusClient,

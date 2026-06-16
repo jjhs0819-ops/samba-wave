@@ -915,6 +915,15 @@ class LotteHomePlugin(MarketPlugin):
             goods_no = ""
             if isinstance(g_result, dict):
                 goods_no = g_result.get("goods_no", "") or g_result.get("Result", "")
+            # 등록은 됐는데 응답에서 goods_no 추출 실패 = 번호 유실(유령상품화)의 주원인.
+            # 조용히 넘기지 말고 loud 에러로 즉시 포착(#434 예방). 사후 주문 기반 복구 대상.
+            if not goods_no:
+                logger.error(
+                    "[롯데홈쇼핑][번호유실] 등록 응답에서 goods_no 추출 실패 — "
+                    "유령상품 위험. product=%s rawXml=%s",
+                    product.get("id"),
+                    str(result.get("rawXml", ""))[:500],
+                )
 
         # DB에 등록 정보 저장 (registered_accounts, market_product_nos)
         if goods_no and account:
@@ -960,7 +969,15 @@ class LotteHomePlugin(MarketPlugin):
                         f"market_product_nos={market_nos}"
                     )
             except Exception as e:
-                logger.warning(f"[롯데홈쇼핑] DB 저장 실패: {e}")
+                # DB 저장 실패 = 롯데홈엔 등록됐는데 우리 번호만 유실 → 유령상품.
+                # silent warning 금지(#434): loud 에러로 노출해 즉시 수동/자동 복구 유도.
+                logger.error(
+                    "[롯데홈쇼핑][번호유실] 등록 성공(goods_no=%s)했으나 DB 저장 실패 — "
+                    "유령상품화. product=%s err=%s",
+                    goods_no,
+                    product.get("id"),
+                    e,
+                )
 
         return {
             "success": True,
