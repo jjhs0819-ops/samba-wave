@@ -634,6 +634,25 @@ const ProductCard = React.memo(function ProductCard({
       })
   }, [regAccIds, accounts, p.name, marketProductNos]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 리셀 플랫폼(KREAM/POIZON/StockX) 카탈로그 매칭 배지
+  const resellMatches = useMemo(() => {
+    const rm = (p.resell_matches || {}) as Record<string, { product_id?: string; confidence?: number }>
+    const PLAT: Record<string, { name: string; url?: (id: string) => string }> = {
+      kream: { name: 'KREAM', url: (id) => `https://kream.co.kr/products/${id}` },
+      poizon: { name: 'POIZON' },
+      stockx: { name: 'StockX' },
+    }
+    return Object.entries(rm)
+      .filter(([, v]) => v && v.product_id)
+      .map(([k, v]) => ({
+        key: k,
+        name: PLAT[k]?.name || k,
+        id: String(v!.product_id),
+        url: PLAT[k]?.url ? PLAT[k]!.url!(String(v!.product_id)) : '',
+        conf: v!.confidence,
+      }))
+  }, [p.resell_matches])
+
   const tdLabel: React.CSSProperties = { padding: '6px 8px', color: '#555', fontSize: '0.75rem', whiteSpace: 'nowrap', verticalAlign: 'middle' }
   const tdVal: React.CSSProperties = { padding: '6px 8px', verticalAlign: 'middle' }
   const marketNameInputBaseStyle: React.CSSProperties = {
@@ -1311,6 +1330,17 @@ const ProductCard = React.memo(function ProductCard({
               padding: '2px 8px', whiteSpace: 'nowrap',
             }}>{p.source_site}</span>
           )}
+          {resellMatches.map(rm => (
+            <span key={rm.key} title={rm.conf != null ? `매칭 신뢰도 ${rm.conf}%` : '리셀 매칭'} style={{
+              fontSize: '0.7rem', color: '#22C55E', background: 'rgba(34,197,94,0.12)',
+              border: '1px solid rgba(34,197,94,0.3)', borderRadius: '4px',
+              padding: '2px 8px', whiteSpace: 'nowrap',
+            }}>
+              {rm.url
+                ? <a href={rm.url} target="_blank" rel="noreferrer" style={{ color: '#22C55E', textDecoration: 'none' }}>{rm.name} {rm.id}</a>
+                : <>{rm.name} {rm.id}</>}
+            </span>
+          ))}
           <span>수집 <span style={{ color: '#888' }}>{regDate}</span></span>
           {p.updated_at && <span>최신화 <span style={{ color: '#888' }}>{updatedDate}</span></span>}
           {isActive && (

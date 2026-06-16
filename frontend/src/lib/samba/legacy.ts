@@ -729,6 +729,8 @@ export interface SambaCollectedProduct {
   registered_accounts?: string[];
   market_product_nos?: Record<string, string>;
   market_names?: Record<string, string>;
+  // 리셀 플랫폼(KREAM/POIZON/StockX) 카탈로그 매칭
+  resell_matches?: Record<string, { product_id?: string; confidence?: number; matched_by?: string[]; matched_at?: string }>;
   is_sold_out: boolean;
   sale_status?: string;
   kream_data?: Record<string, unknown>;
