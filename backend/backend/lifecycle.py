@@ -994,6 +994,18 @@ async def _order_auto_sync_loop() -> None:
                     _log.info(f"[주문 auto sync] order_sync 잡 종료: {status}")
                     break
 
+            # 2-b) 역마진(가격X)/재고없음(재고X) 자동 판정 + 상품갱신 + 메모 기록.
+            #      자동주문수집 본 경로(이 루프)에서 sync 끝난 직후 실행.
+            try:
+                from backend.domain.samba.order.auto_issue_check import (
+                    auto_check_order_issues,
+                )
+
+                _ai_summary = await auto_check_order_issues()
+                _log.info(f"[주문 auto sync] 주문이슈 자동체크: {_ai_summary}")
+            except Exception as _ai_e:
+                _log.warning(f"[주문 auto sync] 주문이슈 자동체크 실패: {_ai_e}")
+
             # 3) 송장수집 큐 적재 + 결과를 order_sync 잡 result에 머지
             tracking_summary: dict = {}
             try:
