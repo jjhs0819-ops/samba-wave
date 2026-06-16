@@ -184,7 +184,10 @@ def recommend_purchase_qty(target: dict, current_value, denom) -> dict:
     t = float(target.get("value", 0)) / 100.0
     cur = float(current_value) / 100.0
     if denom is None or denom <= 0:
-        return {"qty": None, "reason": "전체 주문수(분모 N) 필요 — 포털 수집/입력 시 자동계산"}
+        return {
+            "qty": None,
+            "reason": "전체 주문수(분모 N) 필요 — 포털 수집/입력 시 자동계산",
+        }
     N = float(denom)
     if metric == "order_fulfillment":
         if cur >= t:

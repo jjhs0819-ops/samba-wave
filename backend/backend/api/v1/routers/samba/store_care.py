@@ -177,9 +177,7 @@ async def collect_market_metrics(
 
     trigger_device_id = (request.headers.get("X-Device-Id") or "").strip()
     if not trigger_device_id:
-        raise HTTPException(
-            400, "X-Device-Id 필요 — 확장앱이 설치된 PC에서 실행하세요"
-        )
+        raise HTTPException(400, "X-Device-Id 필요 — 확장앱이 설치된 PC에서 실행하세요")
 
     requested = [m.lower() for m in ((body.markets if body else None) or [])]
     markets = [

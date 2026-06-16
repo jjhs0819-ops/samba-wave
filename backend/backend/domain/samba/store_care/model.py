@@ -4,7 +4,17 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from ulid import ULID
-from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, JSON, Text, text
+from sqlalchemy import (
+    Column,
+    String,
+    Integer,
+    Float,
+    Boolean,
+    DateTime,
+    JSON,
+    Text,
+    text,
+)
 from sqlmodel import SQLModel, Field
 
 UTC = timezone.utc
