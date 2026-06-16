@@ -10695,7 +10695,10 @@ async def ship_by_kakao(
 
     # 2) 이름 일치 + 송장 없는 주문 후보 조회
     svc = _write_service(session)
-    stmt = select(SambaOrder).where(SambaOrder.customer_name == name)
+    stmt = select(SambaOrder).where(
+        SambaOrder.customer_name == name,
+        SambaOrder.source == "lotteon",  # 롯데온 선물하기 주문만 대상 (타 사이트 오매칭 방지)
+    )
     if tenant_id is not None:
         stmt = stmt.where(SambaOrder.tenant_id == tenant_id)
     result = await session.execute(stmt)
