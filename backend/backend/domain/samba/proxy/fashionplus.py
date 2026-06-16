@@ -6,11 +6,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any
 
 import httpx
 
+from backend.domain.samba.proxy.musinsa import RateLimitError
 from backend.utils.logger import logger
 
 HEADERS = {
@@ -51,9 +53,23 @@ class FashionPlusClient:
     SEARCH_API = "https://www.fashionplus.co.kr/search/goods/fetch"
     DETAIL_URL = "https://www.fashionplus.co.kr/goods/detail"
 
+    # 수집 시 페이지 간 딜레이(초) — 차단 예방. 안전 우선(느려도 안 짤리게).
+    SEARCH_PAGE_DELAY = 1.0
+
+    def __init__(self, *, proxy_url: str | None = None) -> None:
+        # 오토튠 IP 로테이션용 프록시 (무신사와 동일 패턴). None이면 메인 IP.
+        self.proxy_url = proxy_url
+
+    def _client_kwargs(self) -> dict[str, Any]:
+        """httpx.AsyncClient 생성 인자 — 프록시 있으면 주입."""
+        kw: dict[str, Any] = {"timeout": 15, "follow_redirects": True}
+        if self.proxy_url:
+            kw["proxy"] = self.proxy_url
+        return kw
+
     async def _fetch_search_meta(self, keyword: str) -> dict[str, Any]:
         """검색 API 호출 후 categories/brands 메타데이터 반환 (상품 목록은 1건만)."""
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+        async with httpx.AsyncClient(**self._client_kwargs()) as client:
             params: dict[str, str] = {
                 "searchWord": keyword,
                 "page": "1",
@@ -61,8 +77,14 @@ class FashionPlusClient:
             }
             try:
                 resp = await client.get(self.SEARCH_API, params=params, headers=HEADERS)
+                # 429/403 차단 감지 (무신사와 동일 패턴)
+                if resp.status_code in (429, 403):
+                    retry_after = int(resp.headers.get("Retry-After", "30"))
+                    raise RateLimitError(resp.status_code, retry_after)
                 resp.raise_for_status()
                 return resp.json()
+            except RateLimitError:
+                raise
             except Exception as e:
                 logger.warning(f"[패션플러스] 검색 메타 조회 실패: {e}")
                 return {}
@@ -75,8 +97,17 @@ class FashionPlusClient:
         for b in raw_brands:
             name = b.get("name", "")
             count = b.get("goodsCountInContext", 0)
+            # id 필수 — 서버측 브랜드 필터(brands=<id>)에 사용된다.
+            # 문자열로 반환: 프론트 brand_ids(list[str]) 검증 통과 + URL 파라미터 일관성.
+            bid = b.get("id")
             if name and count > 0:
-                brands.append({"name": name, "count": count})
+                brands.append(
+                    {
+                        "id": str(bid) if bid is not None else None,
+                        "name": name,
+                        "count": count,
+                    }
+                )
         brands.sort(key=lambda x: -x["count"])
         logger.info(f"[패션플러스] 브랜드 탐색 '{keyword}' → {len(brands)}개 브랜드")
         return {"brands": brands, "total": len(brands)}
@@ -207,7 +238,7 @@ class FashionPlusClient:
         current_page = page
         last_error = ""
 
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+        async with httpx.AsyncClient(**self._client_kwargs()) as client:
             while True:
                 params: dict[str, str] = {
                     "searchWord": keyword,
@@ -225,20 +256,28 @@ class FashionPlusClient:
                 ):
                     if kwargs.get(k):
                         params[k] = str(kwargs[k])
-                # brands 파라미터
+                # 브랜드 필터 — 패플은 `brands=<id>` 단일 파라미터만 서버측 필터됨.
+                # (brands[][id]/brands[][name]은 무시되어 키워드 전체가 반환됨 → 잡브랜드 혼입)
                 brand_id = kwargs.get("brand_id")
                 brand_name = kwargs.get("brand_name")
                 if brand_id:
-                    params["brands[][id]"] = str(brand_id)
-                if brand_name:
+                    params["brands"] = str(brand_id)
+                elif brand_name:
+                    # id 없을 때 폴백 — 서버 필터는 안 되고 아래 클라이언트 필터로 거른다
                     params["brands[][name]"] = str(brand_name)
 
                 try:
                     resp = await client.get(
                         self.SEARCH_API, params=params, headers=HEADERS
                     )
+                    # 429/403 차단 감지 — 상위로 전파(무신사와 동일 패턴)
+                    if resp.status_code in (429, 403):
+                        retry_after = int(resp.headers.get("Retry-After", "30"))
+                        raise RateLimitError(resp.status_code, retry_after)
                     resp.raise_for_status()
                     data = resp.json()
+                except RateLimitError:
+                    raise
                 except Exception as e:
                     last_error = str(e)
                     logger.warning(f"[패션플러스] 검색 p{current_page} 실패: {e}")
@@ -251,9 +290,13 @@ class FashionPlusClient:
                 if not items:
                     break
 
-                # brand_name 지정 시 응답에서도 정확 일치 필터 — 키워드 검색 결과에
-                # 타브랜드 상품이 혼입되는 사고 차단
-                target_brand = (brand_name or "").strip().lower() if brand_name else ""
+                # brand_id로 서버측 필터된 경우 클라 필터 불필요(brand_name 부정확 시
+                # 오필터 방지). id 없이 name만 있으면 정확 일치로 타브랜드 혼입 차단.
+                target_brand = (
+                    ""
+                    if brand_id
+                    else ((brand_name or "").strip().lower() if brand_name else "")
+                )
                 filtered_items = []
                 for item in items:
                     if item.get("isSoldout"):
@@ -289,14 +332,20 @@ class FashionPlusClient:
                 current_page += 1
                 if current_page > 25:
                     break
+                # 다음 페이지 요청 전 딜레이 — 차단 예방 (수집 안전 우선)
+                await asyncio.sleep(self.SEARCH_PAGE_DELAY)
 
         return {"products": all_products, "total": total, "last_error": last_error}
 
     async def get_detail(self, product_id: str) -> dict[str, Any]:
         """상품 상세 조회 — HTML 파싱 + 옵션 API 호출."""
         url = f"{self.DETAIL_URL}/{product_id}"
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+        async with httpx.AsyncClient(**self._client_kwargs()) as client:
             resp = await client.get(url, headers={**HEADERS, "Accept": "text/html"})
+            # 429/403 차단 감지 (무신사와 동일 패턴)
+            if resp.status_code in (429, 403):
+                retry_after = int(resp.headers.get("Retry-After", "30"))
+                raise RateLimitError(resp.status_code, retry_after)
             resp.raise_for_status()
             result = self._parse_detail_html(resp.text, product_id)
 
@@ -306,21 +355,53 @@ class FashionPlusClient:
                     f"{self.DETAIL_URL}/{product_id}/fetch-option-data",
                     headers={**HEADERS, "X-Requested-With": "XMLHttpRequest"},
                 )
+                if opt_resp.status_code in (429, 403):
+                    retry_after = int(opt_resp.headers.get("Retry-After", "30"))
+                    raise RateLimitError(opt_resp.status_code, retry_after)
                 if opt_resp.status_code == 200:
                     opt_data = opt_resp.json()
                     result["options"] = self._parse_options(opt_data)
+            except RateLimitError:
+                raise
             except Exception as e:
                 logger.warning(f"[패션플러스] 옵션 조회 실패 {product_id}: {e}")
+
+            # 빈 슬롯(placeholder, ~1245B) 제외 — 같은 품번 후보 중 실제 이미지만 남긴다.
+            # plgk/plgl/plgr 등이 실제 추가컷이면 유지, 빈 슬롯이면 제거.
+            _imgs = result.get("images") or []
+            if len(_imgs) > 1:
+
+                async def _img_size(u: str) -> int:
+                    try:
+                        h = await client.head(u, headers=HEADERS)
+                        return int(h.headers.get("content-length", 0))
+                    except Exception:
+                        return 0
+
+                _sizes = await asyncio.gather(*[_img_size(u) for u in _imgs])
+                _real = [u for u, sz in zip(_imgs, _sizes) if sz > 2000]
+                if _real:
+                    result["images"] = _real[:9]
+                    result["detail_images"] = list(_real[:9])
+                    result["detail_html"] = "\n".join(
+                        f'<div style="text-align:center;"><img src="{img}" '
+                        f'style="max-width:860px;width:100%;" /></div>'
+                        for img in _real[:9]
+                    )
 
             return result
 
     async def fetch_options(self, product_id: str) -> list[dict[str, Any]]:
         """옵션/재고 단독 조회."""
         url = f"{self.DETAIL_URL}/{product_id}/fetch-option-data"
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+        async with httpx.AsyncClient(**self._client_kwargs()) as client:
             resp = await client.get(
                 url, headers={**HEADERS, "X-Requested-With": "XMLHttpRequest"}
             )
+            # 429/403 차단 감지 (무신사와 동일 패턴)
+            if resp.status_code in (429, 403):
+                retry_after = int(resp.headers.get("Retry-After", "30"))
+                raise RateLimitError(resp.status_code, retry_after)
             resp.raise_for_status()
             return self._parse_options(resp.json())
 
@@ -454,40 +535,52 @@ class FashionPlusClient:
                         if isinstance(brand_info, dict)
                         else str(brand_info)
                     )
-                    # SKU → seller_id 추출 (이미지 URL 필터링용, 내부 상품번호이므로 품번으로 사용하지 않음)
+                    # SKU → seller_id + 품번(style_no) 추출.
+                    # 이미지 파일명이 plg{seller_id}_{품번}.jpg 형태라, seller_id만으로
+                    # 거르면 같은 판매자의 추천/연관 상품 이미지가 혼입된다 → 품번으로 필터.
                     sku = data.get("sku", "")
                     seller_id = sku.split("_")[0] if "_" in sku else ""
+                    style_no = sku.split("_", 1)[1] if "_" in sku else ""
             except (json.JSONDecodeError, ValueError):
                 seller_id = ""
+                style_no = ""
         else:
             seller_id = ""
+            style_no = ""
             name_m = re.search(
                 r'<meta[^>]+property="og:title"[^>]+content="([^"]+)"', html
             )
             if name_m:
                 result["name"] = name_m.group(1)
 
-        # 2) 상품 이미지 — 동일 seller_id의 product_img만 추출
-        #    plgk/plgr/plgl 등 사이즈 접두사가 다른 동일 이미지 중복 제거
+        # 2) 상품 이미지 — 이 상품 품번(style_no)이 든 product_img만 추출.
+        #    seller_id만으로 거르면 같은 판매자의 추천/연관 상품 이미지가 혼입되므로
+        #    품번으로 필터한다. 품번 명명 규칙이 다른 상품 대비 seller_id fallback 유지.
+        #    plgk/plgr/plgl 등 사이즈 접두사가 다른 동일 이미지는 아래에서 중복 제거.
         all_product_imgs = re.findall(
             r"(https://img\.fashionplus\.co\.kr/mall/assets/product_img/[^\"\'>\s?]+)",
             html,
         )
-        if seller_id:
+        if style_no:
+            imgs = [img for img in all_product_imgs if style_no in img]
+            # 품번이 이미지 파일명에 없는 상품(명명 규칙 상이) → seller_id로 폴백
+            if not imgs and seller_id:
+                imgs = [img for img in all_product_imgs if f"/{seller_id}/" in img]
+        elif seller_id:
             imgs = [img for img in all_product_imgs if f"/{seller_id}/" in img]
         else:
             imgs = all_product_imgs[:5]
-        # 사이즈 접두사(plgk/plgr/plgl/plgs 등) 제거 후 파일명 기준 중복 제거
-        seen_basenames: set[str] = set()
+        # 같은 품번의 접두사 변형(plg/plgk/plgl/plgr…)은 추가컷일 수도, 빈 슬롯일 수도
+        # 있다. 여기서 접두사로 합치면 실제 추가컷까지 사라지므로(셀러마다 다름),
+        # 완전 동일 URL만 제거해 후보를 모두 남기고, get_detail()에서 실제 크기로
+        # 빈 슬롯(placeholder)을 걸러낸다.
+        seen: set[str] = set()
         unique_imgs: list[str] = []
         for img in imgs:
-            # .../plgk671652_5008758480.jpg → 671652_5008758480.jpg
-            fname = img.rsplit("/", 1)[-1]
-            base = re.sub(r"^plg[a-z]", "", fname)
-            if base not in seen_basenames:
-                seen_basenames.add(base)
+            if img not in seen:
+                seen.add(img)
                 unique_imgs.append(img)
-        result["images"] = unique_imgs[:9]
+        result["images"] = unique_imgs[:15]
 
         # 3) 고시정보 추출 (상품 정보 제공고시 테이블)
         notice_match = re.search(

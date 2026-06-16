@@ -789,6 +789,10 @@ async def brand_create_groups(
             _c3_name = cat.get("category3", "")
             _md_fp = "&maxDiscount=1" if body.options.get("maxDiscount") else ""
             _so_fp = "&includeSoldOut=1" if _opts_include_sold_out else ""
+            # 선택 브랜드 id를 URL에 포함 → 워커가 brands[][id]로 파싱하여
+            # search(brand_id=...) 호출 → 패플 서버측 필터(brands=<id>) 적용.
+            # 없으면 키워드 전체가 수집돼 잡브랜드가 혼입된다.
+            _brand_fp = f"&brands[][id]={body.brand_ids[0]}" if body.brand_ids else ""
             _cat_params = ""
             if _c1:
                 _cat_params += f"&category1Id={_c1}"
@@ -804,7 +808,7 @@ async def brand_create_groups(
                     _cat_params += f"&category3Name={_quote_fp(_c3_name)}"
             keyword = (
                 f"https://www.fashionplus.co.kr/search/goods/result"
-                f"?searchWord={_quote_fp(_label_fp)}{_cat_params}{_md_fp}{_so_fp}"
+                f"?searchWord={_quote_fp(_label_fp)}{_brand_fp}{_cat_params}{_md_fp}{_so_fp}"
             )
             category_filter = code or None
         else:  # LOTTEON
