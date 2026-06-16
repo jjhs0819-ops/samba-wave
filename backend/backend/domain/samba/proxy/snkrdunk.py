@@ -326,30 +326,39 @@ class SnkrdunkClient:
         url: str,
         per_page: int = 100,
         max_count: int = 1000,
-        sleep_between_pages: float = 0.2,
-        max_pages: int = 15,
+        sleep_between_pages: float = 1.0,
+        max_pages: int = 60,
+        start_page: int = 1,
     ) -> dict[str, Any]:
         """전역 트레이딩카드 리스트 URL 페이지네이션 수집.
 
         예: `/en/trading-cards?type=hottest&slide=right`
-        URL의 쿼리스트링(type/slide/brandId/categoryId 등)을 그대로
-        `/en/v1/trading-cards` API에 전달.
+        브랜드 지정 없이 `/en/v1/trading-cards?page=N` 글로벌 피드를 페이징하면
+        전 브랜드 카드가 신상순으로 섞여 나온다(브랜드 열거 불필요). `_parse_card_items`
+        가 listingCount>0 & minPrice>0 (재고 있는) 카드만 통과시킨다.
 
-        max_pages: 페이지 상한 — 검색 120초 타임아웃 방지 (req_count 불명 시 가드)
+        주의(검증값):
+          - `type`/`slide` 등 UI 파라미터를 v1 API에 넘기면 400(INVALID_ARGUMENT)으로
+            전건 실패 → brandId/categoryId만 화이트리스트로 전달.
+          - 요청 간격이 짧으면(<1s) 400 레이트리밋 발생 → sleep 1.0 보수값.
+          - worker가 search()를 120초 timeout으로 감싸므로 단일 잡은 max_pages=60
+            (≈90~100s) 내로 제한. 전체 카탈로그(수백 페이지)는 start_page 기반
+            이어하기로 잡을 나눠 수집.
+
+        start_page: 이어하기 — 깊은 페이지부터 재개(반복 잡이 앞쪽만 재스캔 방지)
         """
         import asyncio
         from urllib.parse import urlparse, parse_qs
 
         per_page = max(1, min(int(per_page or 100), 100))
-        # URL 쿼리스트링 → API 파라미터로 그대로 전달
+        # URL 쿼리스트링 중 v1 API가 허용하는 키만 전달 (type/slide 등은 400 유발)
         base_params: dict[str, Any] = {}
         try:
             qs = parse_qs(urlparse(url or "").query)
             for k, v in qs.items():
                 if not v:
                     continue
-                # 페이지/사이즈는 우리가 관리
-                if k in ("perPage", "page"):
+                if k not in ("brandId", "categoryId"):
                     continue
                 base_params[k] = v[0]
         except Exception as exc:
@@ -360,8 +369,9 @@ class SnkrdunkClient:
         async with httpx.AsyncClient(
             headers=HEADERS, timeout=self._timeout, follow_redirects=True
         ) as client:
-            page = 1
-            while len(products) < max_count and page <= max_pages:
+            page = max(1, int(start_page or 1))
+            last_page = page + max_pages - 1
+            while len(products) < max_count and page <= last_page:
                 params: dict[str, Any] = {
                     **base_params,
                     "perPage": per_page,
