@@ -905,44 +905,16 @@ export default function ProductsPage() {
     );
   };
 
-  const handleSelectAll = async (checked: boolean) => {
+  const handleSelectAll = (checked: boolean) => {
     if (!checked) {
       setSelectAll(false);
       setSelectedIds(new Set());
       return;
     }
-    // 단일 페이지면 현재 페이지 ID로 충분
-    if (serverTotal <= products.length) {
-      setSelectAll(true);
-      setSelectedIds(new Set(products.map((p) => p.id)));
-      return;
-    }
-    // 검색결과 전체 ID 조회 (1회 자동 재시도, 실패 시 무음 폴백 금지)
+    // 전체선택은 항상 "현재 페이지에 보이는 상품"만 선택한다.
+    // (검색결과 전체를 선택하던 기존 동작은 삭제 시 의도치 않게 전체가 지워져 제거함)
     setSelectAll(true);
-    const fetchIds = () =>
-      collectorApi.getProductIds({
-        search: appliedSearchQ.trim() || undefined,
-        search_type: appliedSearchQ.trim() ? appliedSearchType : undefined,
-        source_site: appliedSiteFilter || undefined,
-        status: appliedStatusFilter || undefined,
-        sold_out_filter: appliedSoldOutFilter || undefined,
-        ai_filter: appliedAiFilter || undefined,
-        search_filter_id: appliedFilterByGroupId || undefined,
-      })
-    try {
-      const res = await fetchIds()
-      setSelectedIds(new Set(res.ids))
-    } catch {
-      await new Promise((r) => setTimeout(r, 600))
-      try {
-        const res = await fetchIds()
-        setSelectedIds(new Set(res.ids))
-      } catch {
-        setSelectAll(false)
-        setSelectedIds(new Set())
-        showAlert('전체선택 실패: 잠시 후 다시 시도해주세요', 'error')
-      }
-    }
+    setSelectedIds(new Set(products.map((p) => p.id)));
   };
 
   // 성능 최적화: 안정적인 콜백 참조로 ProductCard 불필요한 리렌더 방지
@@ -2933,6 +2905,7 @@ export default function ProductsPage() {
             <option value={20}>20건</option>
             <option value={50}>50건</option>
             <option value={100}>100건</option>
+            <option value={500}>500건</option>
           </select>
         </div>
       </div>
