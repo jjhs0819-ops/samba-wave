@@ -97,9 +97,15 @@ services:
   samba-worker:
     image: ${AR_REGION:-asia-northeast3}-docker.pkg.dev/${GCP_PROJECT:?GCP_PROJECT 미설정}/${AR_REPO:-cloud-run-source-deploy}/${IMAGE_NAME:-samba-wave-api}:latest
     restart: unless-stopped
+    # 부팅 자동기동 보장: service_healthy 로 두면 콜드부팅 시 samba-api 가 healthy 될 때까지
+    # (60~120초+) docker compose up -d 가 블로킹 → samba-stack.service TimeoutStartSec(90s)
+    # 초과로 ExecStart 죽어 worker 가 안 뜨던 버그. service_started 로 완화(B 는 DB 만 필요,
+    # entrypoint 가 cloud-sql-proxy 를 직접 대기). 마이그레이션 순서는 deploy.sh 가 보장.
     depends_on:
+      cloud-sql-proxy:
+        condition: service_started
       samba-api:
-        condition: service_healthy
+        condition: service_started
     env_file:
       - /opt/samba/.env
     environment:
