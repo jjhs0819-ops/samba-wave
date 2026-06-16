@@ -21,6 +21,161 @@ import jwt
 from backend.domain.samba.proxy.notice_utils import detect_notice_group
 from backend.utils.logger import logger
 
+# 이미지 재푸시 직렬화 — 여러 상품 보정이 동시에 update_images 를 때리면 ESM 이
+# 이미지 fetch 를 또 동시 처리하다 일부를 놓치는 악순환(등록 시 누락과 동일 원인)이
+# 생긴다. 전역 세마포어로 한 번에 소수만 재푸시해 ESM 의 동시 fetch 부담을 낮춘다.
+_IMG_REPAIR_SEM = asyncio.Semaphore(2)
+
+# fire-and-forget 보정 태스크 강참조 보관 — 안 잡아두면 파이썬이 실행 도중 GC 로
+# 회수해 태스크가 조용히 사라진다(대량 등록 시 보정이 안 도는 근본 원인). 완료 시 해제.
+_REPAIR_TASKS: "set[asyncio.Task[Any]]" = set()
+
+
+def spawn_image_repair(
+    hosting_id: str,
+    secret_key: str,
+    seller_id: str,
+    site: str,
+    master_goods_no: str,
+    image_model: dict[str, Any],
+) -> None:
+    """등록 직후 이미지 보정 태스크를 안전하게 spawn(강참조 보관으로 GC 방지)."""
+    if not (master_goods_no and image_model):
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.warning("[ESM] 이미지 보정 spawn 실패 — 실행 중 이벤트루프 없음")
+        return
+    task = loop.create_task(
+        verify_and_repair_images(
+            hosting_id, secret_key, seller_id, site, master_goods_no, image_model
+        )
+    )
+    _REPAIR_TASKS.add(task)
+    task.add_done_callback(_REPAIR_TASKS.discard)
+
+
+async def _probe_is_image(probe: "httpx.AsyncClient", url: str) -> bool:
+    if not url:
+        return False
+    if url.startswith("//"):
+        url = f"http:{url}"
+    try:
+        r = await probe.get(url)
+        return "image" in r.headers.get("content-type", "")
+    except Exception:
+        return False
+
+
+async def verify_and_repair_images(
+    hosting_id: str,
+    secret_key: str,
+    seller_id: str,
+    site: str,
+    master_goods_no: str,
+    image_model: dict[str, Any],
+    rounds: int = 14,
+) -> None:
+    """등록 후 대표+추가 이미지 수집을 확인하고, 누락 슬롯을 재푸시해 ESM 재수집을 유도.
+
+    ESM 은 등록 시(동시 fetch) 이미지를 간헐적으로 수집 누락한다 — 대표(basicImgURL)도
+    가끔, 추가(addtionalImgURL)도 자주. 누락 메커니즘이 슬롯 종류별로 달라 재푸시 방식이
+    다르다(실측):
+      - 대표: **원본 URL 그대로** 재푸시해야 재수집됨(변형 URL 은 효과 없음).
+      - 추가: **재인코딩 변형 URL**(새 경로)로 재푸시해야 재수집됨(동일 URL 은 스킵됨).
+    그래서 매 라운드: 대표는 원본 유지, 누락된 추가만 변형 URL 로 교체해 full 모델 재푸시.
+    수집은 라운드마다 확률적으로 일부씩 차므로 누락이 없어질 때까지(최대 rounds) 반복한다.
+
+    등록 응답 직후 비차단 백그라운드 태스크로 호출한다. 판정은 ESM 메타데이터의
+    실제 CDN URL 을 probe 하므로 지마켓/옥션 공용. 이미 정상인 슬롯은 건드리지 않는다.
+    """
+    if not (master_goods_no and image_model and image_model.get("BasicImage")):
+        return
+    label = "지마켓" if site == "gmarket" else "옥션"
+    # 추가이미지 슬롯 수
+    add_idxs = sorted(
+        int(k.removeprefix("AdditionalImage"))
+        for k in image_model
+        if k.startswith("AdditionalImage")
+    )
+    client = ESMPlusClient(hosting_id, secret_key, seller_id, site=site)
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as probe:
+            for attempt in range(rounds):
+                await asyncio.sleep(60 if attempt == 0 else 75)
+                try:
+                    body = await client.get_product(master_goods_no)
+                except Exception as e:
+                    logger.warning(f"[{label}] 이미지 확인 조회 실패: {e}")
+                    continue
+                cdn = (
+                    (body.get("itemAddtionalInfo", {}) or {}).get("images", {}) or {}
+                )
+                basic_missing = not await _probe_is_image(
+                    probe, cdn.get("basicImgURL", "")
+                )
+                missing_adds = [
+                    i
+                    for i in add_idxs
+                    if not await _probe_is_image(probe, cdn.get(f"addtionalImg{i}URL", ""))
+                ]
+                if not basic_missing and not missing_adds:
+                    if attempt > 0:
+                        logger.info(
+                            f"[{label}] 이미지 보정 완료: goodsNo={master_goods_no}"
+                        )
+                    return  # 전부 정상 — 종료
+                logger.warning(
+                    f"[{label}] 이미지 누락(대표={basic_missing}, 추가={missing_adds}) "
+                    f"→ 재푸시 (round {attempt + 1}/{rounds}): goodsNo={master_goods_no}"
+                )
+                # 모델 재구성: 대표=원본, 누락 추가=변형(재인코딩 새 URL), 나머지=원본
+                model = {"BasicImage": dict(image_model["BasicImage"])}
+                if missing_adds:
+                    from backend.db.orm import get_write_sessionmaker
+                    from backend.domain.samba.image.service import (
+                        ImageTransformService,
+                    )
+
+                    async with get_write_sessionmaker()() as _s:
+                        _svc = ImageTransformService(_s)
+                        for i in add_idxs:
+                            orig = image_model[f"AdditionalImage{i}"].get("URL", "")
+                            if i in missing_adds and orig:
+                                variant = await _svc.reencode_variant(
+                                    orig, quality=84 - attempt
+                                )
+                                model[f"AdditionalImage{i}"] = {
+                                    "URL": variant or orig
+                                }
+                            else:
+                                model[f"AdditionalImage{i}"] = {"URL": orig}
+                else:
+                    for i in add_idxs:
+                        model[f"AdditionalImage{i}"] = dict(
+                            image_model[f"AdditionalImage{i}"]
+                        )
+                # 재푸시 직렬화 — 여러 상품 보정이 동시에 밀면 ESM 이 또 흘리므로
+                # 한 번에 소수만(전역 세마포어) 보내 ESM 동시 fetch 부담을 낮춘다.
+                try:
+                    async with _IMG_REPAIR_SEM:
+                        await client.update_images(
+                            master_goods_no, {"imageModel": model}
+                        )
+                except Exception as e:
+                    logger.warning(f"[{label}] 이미지 재푸시 실패: {e}")
+        logger.warning(
+            f"[{label}] 이미지 {rounds}회 보정 후에도 일부 미수집: goodsNo={master_goods_no}"
+        )
+    except Exception as e:
+        logger.warning(f"[{label}] 이미지 보정 태스크 오류: {e}")
+    finally:
+        try:
+            await client.aclose()
+        except Exception:
+            pass
+
 
 class _AsyncTokenBucket:
     """공유 토큰버킷 — ESM Plus API 호출 빈도 제한.
@@ -1267,10 +1422,17 @@ class ESMPlusClient:
         image_model: dict[str, Any] = {}
         if basic_img:
             image_model["BasicImage"] = {"URL": basic_img}
+        # 등록 POST images 인라인 payload — 대표+추가 이미지를 등록 시점에 동봉.
+        # 사후 update_images(POST /goods/{no}/images)는 ESM 색인 전 호출 시
+        # resultCode=0 인데도 수집이 조용히 실패해 대표+추가가 공란이 되는 race 가
+        # 있다(옵션 인라인 #368 과 동일한 atomic 패턴으로 해소). 키 이름은 ESM GET
+        # 응답과 동일한 addtionalImgNURL (ESM 스펙상 오타 그대로).
+        images_payload: dict[str, Any] = {"basicImgURL": basic_img}
         for i, img_url in enumerate(images[1:15], start=1):
             if img_url.startswith("//"):
                 img_url = f"https:{img_url}"
             image_model[f"AdditionalImage{i}"] = {"URL": img_url}
+            images_payload[f"addtionalImg{i}URL"] = img_url
 
         # 상세 HTML
         detail_html = product.get("detail_html", "") or ""
@@ -1417,9 +1579,7 @@ class ESMPlusClient:
                 # 판매여부 — ESM 서버 필수. 누락 시 G마켓 등록 reject "판매 여부(isSell)를 입력해주세요"
                 "isSell": {site_key: 1},
                 "shipping": shipping,
-                "images": {
-                    "basicImgURL": basic_img,
-                },
+                "images": images_payload,
                 # 상세 — type 2(HTML) 명시. 1=ContentsId, 2=HTML
                 "descriptions": {
                     "kor": {

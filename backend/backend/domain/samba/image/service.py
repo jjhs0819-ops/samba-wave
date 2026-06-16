@@ -1159,6 +1159,53 @@ class ImageTransformService:
             blocked in host for blocked in ImageTransformService._HOTLINK_BLOCKED_HOSTS
         )
 
+    async def reencode_variant(self, image_url: str, quality: int = 84) -> str | None:
+        """이미지를 다른 quality 로 재인코딩해 새 경로(content-hash)의 R2 URL 생성.
+
+        ESM 추가이미지(addtionalImgURL)는 update_images 재푸시 시 URL 경로가 동일하면
+        재수집을 스킵한다(쿼리스트링 캐시버스터도 무시 — 실측). 누락 슬롯을 강제로
+        재수집시키려면 실제로 경로가 다른 URL 이 필요 → 같은 이미지를 quality 만 바꿔
+        재인코딩하면 바이트가 달라져 content-hash 키(resized/{hash}.jpg)가 바뀐다.
+        (대표이미지 basicImgURL 은 반대로 원본 URL 그대로 재푸시해야 재수집됨.)
+        """
+        r2 = await self._get_r2_client()
+        if not r2:
+            return None
+        client_r2, bucket_name, public_url = r2
+        try:
+            from PIL import Image
+
+            image_bytes = await self._download_image(image_url)
+            if not image_bytes:
+                return None
+            img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            out = io.BytesIO()
+            img.save(out, format="JPEG", quality=quality, optimize=True)
+            final_bytes = out.getvalue()
+            key = f"resized/{hashlib.md5(final_bytes).hexdigest()[:16]}.jpg"
+
+            def _exists() -> bool:
+                try:
+                    client_r2.head_object(Bucket=bucket_name, Key=key)
+                    return True
+                except Exception:
+                    return False
+
+            if not await asyncio.to_thread(_exists):
+                await asyncio.to_thread(
+                    partial(
+                        client_r2.upload_fileobj,
+                        io.BytesIO(final_bytes),
+                        bucket_name,
+                        key,
+                        ExtraArgs={"ContentType": "image/jpeg"},
+                    ),
+                )
+            return f"{public_url}/{key}"
+        except Exception as e:
+            logger.warning(f"[이미지] 변형 재인코딩 실패: {image_url} — {e}")
+            return None
+
     async def mirror_oversized_to_r2(
         self,
         urls: list[str],

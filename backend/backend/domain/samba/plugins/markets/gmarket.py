@@ -7,7 +7,6 @@ siteType, siteKey, ssiPrefix만 다르다.
 
 from __future__ import annotations
 
-import asyncio
 import re
 from typing import Any
 
@@ -422,23 +421,31 @@ class GMarketMarketPlugin(MarketPlugin):
                 "_already_registered": True,
             }
 
-        # 추가 이미지 설정 (등록 후 propagation 대기 필요 — ESM CDN 캐시)
-        # ESM이 신규 등록 상품을 색인하는 데 시간이 필요하므로 재시도 로직 적용
-        if pending_images and goods_no:
-            for _img_wait in (10, 15, 20):
-                try:
-                    await asyncio.sleep(_img_wait)
-                    await client.update_images(goods_no, {"imageModel": pending_images})
-                    logger.info(f"[지마켓] 추가 이미지 설정 완료: goodsNo={goods_no}")
-                    break
-                except Exception as img_e:
-                    logger.warning(
-                        f"[지마켓] 추가 이미지 설정 실패 ({_img_wait}s 후 재시도): {img_e}"
-                    )
-            else:
-                logger.warning(
-                    f"[지마켓] 추가 이미지 설정 최종 실패: goodsNo={goods_no}"
-                )
+        # 대표+추가 이미지는 등록 POST 의 images 에 인라인 동봉됨 (transform_product).
+        # 사후 update_images(POST /goods/{no}/images)는 색인 전 호출 시 resultCode=0
+        # 인데도 ESM 수집이 조용히 실패해 대표+추가 전체가 공란이 되는 race 가 있어 제거
+        # (옵션 인라인 #368 과 동일한 atomic 패턴). pending_images 는 수정 경로에서만 사용.
+
+        # 대표이미지 간헐 누락 보정 — ESM 이 등록 시 대표를 가끔 수집 누락(추가/옵션은 정상).
+        # 비차단 백그라운드로 대표 CDN 수집을 확인하고, 누락 시 원본 모델 재푸시로 재수집.
+        _repair_model = pending_images
+        if not _repair_model:
+            _basic = (
+                (data.get("itemAddtionalInfo", {}) or {}).get("images", {}) or {}
+            ).get("basicImgURL", "")
+            if _basic:
+                _repair_model = {"BasicImage": {"URL": _basic}}
+        if _repair_model and goods_no:
+            from backend.domain.samba.proxy.esmplus import spawn_image_repair
+
+            spawn_image_repair(
+                client.hosting_id,
+                client.secret_key,
+                client.seller_id,
+                "gmarket",
+                str(goods_no),
+                _repair_model,
+            )
 
         # 옵션은 등록 POST 에 인라인 동봉됨 (위 build_only) — 사후 PUT 제거 (#368 ①)
         if opt_built:
