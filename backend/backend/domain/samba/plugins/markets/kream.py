@@ -83,11 +83,21 @@ class KreamPlugin(MarketPlugin):
         if not token:
             return {"success": False, "message": "KREAM 인증 정보가 없습니다."}
 
+        from backend.domain.samba.proxy.kream_matcher import (
+            map_condition_to_kream_size,
+        )
+
         client = KreamClient(token=token, cookie=cookie)
         kream_data = product.get("kream_data") or {}
-        # KREAM 상품 ID 추출 — DB 스네이크/카멜/kream_data 내부 모두 폴백
+        extra = product.get("extra_data") or {}
+        if not isinstance(extra, dict):
+            extra = {}
+        # 타 소싱처(SNKRDUNK 등)는 site_product_id가 KREAM ID가 아님 →
+        # 사전 매칭으로 저장된 extra_data.kream_product_id 우선 사용.
+        is_cross_source = bool(extra.get("snkr_type") or extra.get("kream_product_id"))
         product_id = (
-            product.get("site_product_id")
+            extra.get("kream_product_id")
+            or product.get("site_product_id")
             or product.get("siteProductId")
             or kream_data.get("product_id")
             or kream_data.get("siteProductId")
@@ -96,11 +106,18 @@ class KreamPlugin(MarketPlugin):
         product_id = str(product_id).strip()
         if not product_id:
             return {"success": False, "message": "KREAM 상품 ID가 없습니다."}
+        if is_cross_source and not extra.get("kream_product_id"):
+            # KREAM 매칭이 안 된 SNKRDUNK 상품 → SNKRDUNK ID로 입찰하면 오등록.
+            return {
+                "success": False,
+                "message": "KREAM 품번 매칭 안 됨(kream_product_id 없음) — 등록 보류",
+            }
 
         # 사이즈별 매도 입찰 — 옵션 스키마는 {name, price, stock} 또는 {size, price}
         options = product.get("options") or []
         sale_type = "auction"
         results: list[dict[str, Any]] = []
+        skipped: list[str] = []
         fallback_price = 0
         try:
             fallback_price = int(product.get("sale_price", 0) or 0)
@@ -108,7 +125,17 @@ class KreamPlugin(MarketPlugin):
             fallback_price = 0
 
         for opt in options:
-            size = (opt.get("name") or opt.get("size") or "").strip()
+            raw_name = (opt.get("name") or opt.get("size") or "").strip()
+            # SNKRDUNK 등 타 소싱처는 컨디션 → KREAM size 라벨로 변환.
+            # 매핑 불가(미검증 등급)면 건너뜀(오등록 방지).
+            if is_cross_source:
+                size = map_condition_to_kream_size(raw_name)
+                if not size:
+                    if raw_name:
+                        skipped.append(raw_name)
+                    continue
+            else:
+                size = raw_name
             try:
                 price = int(opt.get("price") or fallback_price)
             except (TypeError, ValueError):
