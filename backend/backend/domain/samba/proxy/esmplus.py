@@ -26,6 +26,13 @@ from backend.utils.logger import logger
 # 생긴다. 전역 세마포어로 한 번에 소수만 재푸시해 ESM 의 동시 fetch 부담을 낮춘다.
 _IMG_REPAIR_SEM = asyncio.Semaphore(2)
 
+# 동시 폴링 보정 태스크 상한 — 대량 등록 시 상품마다 ~16분짜리 폴링 태스크가 쌓이면
+# 각자 get_product 를 75초마다 호출해 전역 _ESM_RATE_LIMITER(30/min)를 라이브 등록과
+# 나눠 먹다 실제 등록 호출이 굶는다. 보정은 best-effort 백그라운드이므로 소수만 동시에
+# 진행하고 나머지는 대기시켜 등록 API 대역폭을 보호한다(_IMG_REPAIR_SEM 은 update_images
+# 한정, 이건 get_product 폴링 포함 태스크 전체를 제한).
+_REPAIR_ACTIVE_SEM = asyncio.Semaphore(4)
+
 # fire-and-forget 보정 태스크 강참조 보관 — 안 잡아두면 파이썬이 실행 도중 GC 로
 # 회수해 태스크가 조용히 사라진다(대량 등록 시 보정이 안 도는 근본 원인). 완료 시 해제.
 _REPAIR_TASKS: "set[asyncio.Task[Any]]" = set()
@@ -62,8 +69,11 @@ async def _probe_is_image(probe: "httpx.AsyncClient", url: str) -> bool:
     if url.startswith("//"):
         url = f"http:{url}"
     try:
-        r = await probe.get(url)
-        return "image" in r.headers.get("content-type", "")
+        # stream GET — 헤더(content-type)만 보고 바디는 받지 않는다. full GET 으로
+        # 받으면 슬롯×라운드마다 이미지 전체를 다운로드해 대역폭을 크게 낭비한다
+        # (HEAD 는 일부 CDN 이 405/콘텐츠타입 누락이라 stream 으로 우회).
+        async with probe.stream("GET", url) as r:
+            return "image" in r.headers.get("content-type", "")
     except Exception:
         return False
 
@@ -92,8 +102,30 @@ async def verify_and_repair_images(
     """
     if not (master_goods_no and image_model and image_model.get("BasicImage")):
         return
+    # 동시 폴링 상한 — 세마포어 획득 전에는 client(httpx)도 만들지 않아 대기 태스크가
+    # 자원을 점유하지 않는다. 등록 API 대역폭 보호용.
+    async with _REPAIR_ACTIVE_SEM:
+        await _run_image_repair_loop(
+            hosting_id,
+            secret_key,
+            seller_id,
+            site,
+            master_goods_no,
+            image_model,
+            rounds,
+        )
+
+
+async def _run_image_repair_loop(
+    hosting_id: str,
+    secret_key: str,
+    seller_id: str,
+    site: str,
+    master_goods_no: str,
+    image_model: dict[str, Any],
+    rounds: int,
+) -> None:
     label = "지마켓" if site == "gmarket" else "옥션"
-    # 추가이미지 슬롯 수
     add_idxs = sorted(
         int(k.removeprefix("AdditionalImage"))
         for k in image_model
@@ -109,16 +141,16 @@ async def verify_and_repair_images(
                 except Exception as e:
                     logger.warning(f"[{label}] 이미지 확인 조회 실패: {e}")
                     continue
-                cdn = (
-                    (body.get("itemAddtionalInfo", {}) or {}).get("images", {}) or {}
-                )
+                cdn = (body.get("itemAddtionalInfo", {}) or {}).get("images", {}) or {}
                 basic_missing = not await _probe_is_image(
                     probe, cdn.get("basicImgURL", "")
                 )
                 missing_adds = [
                     i
                     for i in add_idxs
-                    if not await _probe_is_image(probe, cdn.get(f"addtionalImg{i}URL", ""))
+                    if not await _probe_is_image(
+                        probe, cdn.get(f"addtionalImg{i}URL", "")
+                    )
                 ]
                 if not basic_missing and not missing_adds:
                     if attempt > 0:
@@ -146,9 +178,7 @@ async def verify_and_repair_images(
                                 variant = await _svc.reencode_variant(
                                     orig, quality=84 - attempt
                                 )
-                                model[f"AdditionalImage{i}"] = {
-                                    "URL": variant or orig
-                                }
+                                model[f"AdditionalImage{i}"] = {"URL": variant or orig}
                             else:
                                 model[f"AdditionalImage{i}"] = {"URL": orig}
                 else:
