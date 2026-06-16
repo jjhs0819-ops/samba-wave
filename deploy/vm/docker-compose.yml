@@ -79,6 +79,10 @@ services:
       # A 코어를 오토튠 루프·HTTP·수집에 집중 → 데몬 폴 503 해소 + 무신사 건당 회복.
       # 되돌리려면 아래 줄 주석 처리 후 재배포(B 가 죽어 있으면 전송 적체되니 B 생존 확인 필수).
       WORKER_EXCLUDE_TYPES: "transmit,order_sync"
+      # ── step8 활성 (process-split-design) — 2026-06-17 ──
+      # 오토튠 in-process 전송을 samba_jobs transmit 잡 발행으로 전환 → B(3코어) 실행.
+      # A 이벤트루프에서 전송 CPU 제거 → 무신사 건당 시간 단축. 문제 시 "0"/주석 후 재배포.
+      AUTOTUNE_TRANSMIT_VIA_QUEUE: "1"
     networks:
       - samba-net
     healthcheck:
