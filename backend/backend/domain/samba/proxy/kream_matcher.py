@@ -283,10 +283,10 @@ def match_candidate(
     )
     if src_is_set:
         if re.search(r"세트|박스|컬렉션|덱|로더", cand):
-            score += 6
+            score += 10
         elif re.search(r"(?<![A-Za-z])(OP|EB|ST)\d{1,2}-\d{2,3}", cand):
-            # 후보가 세트코드 싱글 → 세트 원본과 불일치
-            score -= 8
+            # 후보가 세트코드 싱글 → 세트 원본과 불일치 (강한 감점)
+            score -= 16
     # 출처/변종
     for v in variants:
         if _norm(v) in cn:
