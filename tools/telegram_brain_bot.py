@@ -13,13 +13,18 @@
   SAMBA_EMAIL               (필수, 삼바 기능) 삼바 로그인 이메일
   SAMBA_PASSWORD            (필수, 삼바 기능) 삼바 로그인 비밀번호
   NEW_ORDER_POLL_MINUTES    (선택) 신규 미발주 감지 주기(분), 기본 10
+  DAILY_REPORT_HOUR         (선택) 아침 자동 다이제스트 시각(KST 0~23), 기본 9. 비우면 끔.
 
 명령:
-  /오늘    — 오늘 주문 현황 요약
-  /미발주  — 발주 필요한 주문 목록 (최근 7일)
-  /도움말  — 전체 명령어 안내
-  /reset   — 대화 기억 초기화
-  /whoami  — 내 텔레그램 user id
+  /오늘     — 오늘 주문 현황 요약
+  /미발주   — 발주 필요한 주문 목록 (최근 7일)
+  /매출     — 오늘 + 이달 누계 매출·이익·마진 + 베스트셀러
+  /주문현황 — 상태별 건수 + 미발송 + 전월대비
+  /CS       — 미답변/답변완료 + 마켓별·유형별 분포
+  /반품     — 반품 상태별·유형별·사유별 + 승인대기
+  /도움말   — 전체 명령어 안내
+  /reset    — 대화 기억 초기화
+  /whoami   — 내 텔레그램 user id
 """
 
 from __future__ import annotations
@@ -48,6 +53,8 @@ SAMBA_URL = os.environ.get("SAMBA_BACKEND_URL", "http://127.0.0.1:28080").rstrip
 SAMBA_EMAIL = os.environ.get("SAMBA_EMAIL", "")
 SAMBA_PASSWORD = os.environ.get("SAMBA_PASSWORD", "")
 NEW_ORDER_POLL_MINUTES = int(os.environ.get("NEW_ORDER_POLL_MINUTES", "10"))
+# 아침 자동 다이제스트 발송 시각(KST, 0~23). 빈 값이면 자동보고 비활성화.
+DAILY_REPORT_HOUR = os.environ.get("DAILY_REPORT_HOUR", "9").strip()
 
 TG_API = f"https://api.telegram.org/bot{TOKEN}"
 KST = timezone(timedelta(hours=9))
@@ -185,6 +192,48 @@ class SambaClient:
         )
         preferred = [o for o in orders if (o.get("source_site") or "").upper() == prefer_site.upper()]
         return (preferred or orders)[0]
+
+    # ── 보고용 범용 GET (401 시 1회 재로그인 후 재시도) ──────────────────────
+    def _get(self, path: str, params: dict | None = None):
+        """삼바 백엔드 GET. 성공 시 dict/list, 실패 시 None."""
+        if not self.is_ready:
+            return None
+        url = f"{SAMBA_URL}{path}"
+        for attempt in range(2):
+            try:
+                return _http_get(url, params=params,
+                                 headers=self._auth_headers(), timeout=20)
+            except urllib.error.HTTPError as e:
+                if e.code == 401 and attempt == 0:
+                    self._token = None  # 강제 재로그인 후 1회 재시도
+                    continue
+                print(f"[삼바] GET {path} 실패: {e}", file=sys.stderr)
+                return None
+            except Exception as e:
+                print(f"[삼바] GET {path} 실패: {e}", file=sys.stderr)
+                return None
+        return None
+
+    # 보고 영역별 호출 (경로/파라미터는 백엔드 라우터 본문 기준)
+    def analytics_range(self, start: str, end: str) -> dict | None:
+        return self._get("/api/v1/samba/analytics/range",
+                         {"start_date": start, "end_date": end})
+
+    def order_dashboard(self) -> dict | None:
+        return self._get("/api/v1/samba/orders/dashboard-stats")
+
+    def order_status_stats(self) -> dict | None:
+        return self._get("/api/v1/samba/analytics/order-status")
+
+    def best_sellers(self, days: int = 30, limit: int = 3) -> list | None:
+        return self._get("/api/v1/samba/analytics/best-sellers",
+                         {"days": str(days), "limit": str(limit)})
+
+    def cs_stats(self) -> dict | None:
+        return self._get("/api/v1/samba/cs-inquiries/stats")
+
+    def return_stats(self) -> dict | None:
+        return self._get("/api/v1/samba/returns/stats")
 
 
 samba = SambaClient()
@@ -391,6 +440,227 @@ def cmd_process(chat_id: int) -> None:
     tg_send(chat_id, "\n".join(lines))
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# 보고 명령 — 매출 / 주문현황 / CS / 반품
+# ══════════════════════════════════════════════════════════════════════════
+
+# 주문 상태 코드 → 한글 표시
+_ORDER_STATUS_LABELS = {
+    "pending": "접수/대기", "wait_ship": "발송대기", "processing": "처리중",
+    "arrived": "입고", "ship_failed": "발송실패", "shipping": "배송중",
+    "shipped": "발송완료", "delivered": "배송완료",
+    "cancelled": "취소", "cancel_requested": "취소요청",
+    "returned": "반품", "return_requested": "반품요청",
+    "exchanged": "교환완료", "exchanging": "교환중", "exchange_requested": "교환요청",
+}
+_RETURN_STATUS_LABELS = {
+    "requested": "요청", "approved": "승인", "completed": "완료",
+    "rejected": "거부", "cancelled": "취소",
+}
+_CLAIM_TYPE_LABELS = {"cancel": "취소", "return": "반품", "exchange": "교환"}
+_CS_TYPE_LABELS = {
+    "product_question": "상품문의", "delivery": "배송", "exchange_return": "교환/반품",
+    "general": "일반", "urgent_inquiry": "긴급", "claim": "클레임",
+}
+
+
+def _kst_date(offset_days: int = 0) -> str:
+    return (datetime.now(KST) + timedelta(days=offset_days)).strftime("%Y-%m-%d")
+
+
+def hermes_comment(area: str, facts: str) -> str:
+    """수치 요약을 받아 한 줄짜리 한국어 인사이트를 생성. 실패 시 빈 문자열."""
+    if not facts.strip():
+        return ""
+    prompt = (
+        f"다음은 우리 쇼핑몰의 '{area}' 지표야. 딱 한 문장(40자 이내)으로 "
+        f"가장 눈에 띄는 포인트나 해야 할 일을 한국어로만 짚어줘. "
+        f"인사말·수식어 없이 핵심만. 특이사항 없으면 '특이사항 없음'.\n\n{facts}"
+    )
+    try:
+        line = ask_hermes_oneshot(prompt).strip().split("\n")[0]
+        return line[:80]
+    except Exception:
+        return ""
+
+
+def _append_comment(lines: list[str], area: str) -> None:
+    facts = "; ".join(s.strip() for s in lines if s.strip())[:600]
+    c = hermes_comment(area, facts)
+    if c:
+        lines += ["", f"🧠 {c}"]
+
+
+def build_sales_text(with_comment: bool = True) -> str:
+    """오늘 + 이달 누계 매출/이익/마진 + 베스트셀러."""
+    today, tomorrow = _kst_date(), _kst_date(1)
+    month_first = datetime.now(KST).strftime("%Y-%m-01")
+
+    day = samba.analytics_range(today, tomorrow)
+    month = samba.analytics_range(month_first, tomorrow)
+    dash = samba.order_dashboard()
+    if day is None and month is None and dash is None:
+        return "❌ 삼바 서버 연결 실패 (매출)."
+
+    lines = [f"💰 매출 보고 ({datetime.now(KST).strftime('%m월 %d일')})", ""]
+    if day:
+        lines += [
+            "▪️ 오늘",
+            f"  매출 {_fmt_price(day.get('total_sales'))} · 주문 {int(day.get('total_orders') or 0)}건",
+            f"  이익 {_fmt_price(day.get('total_profit'))} · 마진 {float(day.get('profit_rate') or 0):.1f}% · 객단가 {_fmt_price(day.get('avg_order_value'))}",
+        ]
+    if month:
+        lines += [
+            "",
+            "▪️ 이달 누계",
+            f"  매출 {_fmt_price(month.get('total_sales'))} · 주문 {int(month.get('total_orders') or 0)}건",
+            f"  이익 {_fmt_price(month.get('total_profit'))} · 마진 {float(month.get('profit_rate') or 0):.1f}%",
+        ]
+    if isinstance(dash, dict):
+        change = dash.get("salesChange")
+        tm = dash.get("thisMonth") or {}
+        if change is not None:
+            arrow = "▲" if change > 0 else ("▼" if change < 0 else "—")
+            lines.append(f"  전월대비 {arrow}{abs(change)}% · 이행률 {tm.get('fulfillment', 0)}%")
+
+    best = samba.best_sellers(days=30, limit=3)
+    if best:
+        lines += ["", "🏆 베스트셀러 (최근 30일)"]
+        for i, p in enumerate(best, 1):
+            name = (p.get("product_name") or "?")[:24]
+            lines.append(f"  {i}. {name} · {_fmt_price(p.get('sales'))} ({int(p.get('units') or 0)}개)")
+
+    if with_comment:
+        _append_comment(lines, "매출")
+    return "\n".join(lines)
+
+
+def build_order_status_text(with_comment: bool = True) -> str:
+    """이달 처리량 + 상태별 건수."""
+    dash = samba.order_dashboard()
+    status = samba.order_status_stats()
+    if dash is None and status is None:
+        return "❌ 삼바 서버 연결 실패 (주문현황)."
+
+    lines = ["📦 주문 처리 현황", ""]
+    if isinstance(dash, dict):
+        tm = dash.get("thisMonth") or {}
+        lines += [
+            "▪️ 이달",
+            f"  주문 {int(tm.get('count') or 0)}건 · 매출 {_fmt_price(tm.get('sales'))}",
+            f"  이행완료 {int(tm.get('fulfillmentCount') or 0)}건 ({tm.get('fulfillment', 0)}%)",
+        ]
+    if isinstance(status, dict) and status:
+        lines += ["", "▪️ 상태별 (전체 누적)"]
+        shown: set[str] = set()
+        for key, label in _ORDER_STATUS_LABELS.items():
+            if status.get(key):
+                lines.append(f"  {label}: {int(status[key])}건")
+                shown.add(key)
+        for key, val in status.items():
+            if key not in shown and val:
+                lines.append(f"  {key}: {int(val)}건")
+
+    if with_comment:
+        _append_comment(lines, "주문 처리")
+    return "\n".join(lines)
+
+
+def build_cs_text(with_comment: bool = True) -> str:
+    """CS 미답변/답변완료 + 유형/마켓 분포."""
+    st = samba.cs_stats()
+    if st is None:
+        return "❌ 삼바 서버 연결 실패 (CS)."
+
+    total = int(st.get("total") or 0)
+    pending = int(st.get("pending") or 0)
+    replied = int(st.get("replied") or 0)
+    lines = [
+        "💬 CS 현황", "",
+        f"전체 {total}건 · ⏳미답변 {pending}건 · ✅답변완료 {replied}건",
+    ]
+    by_type = st.get("by_type") or {}
+    parts = [f"{_CS_TYPE_LABELS.get(k, k)} {v}"
+             for k, v in sorted(by_type.items(), key=lambda x: -x[1]) if v]
+    if parts:
+        lines += ["", "유형별: " + ", ".join(parts)]
+    by_market = st.get("by_market") or {}
+    mparts = [f"{k} {v}"
+              for k, v in sorted(by_market.items(), key=lambda x: -x[1]) if v]
+    if mparts:
+        lines.append("마켓별: " + ", ".join(mparts[:6]))
+
+    if with_comment:
+        _append_comment(lines, "CS")
+    return "\n".join(lines)
+
+
+def build_returns_text(with_comment: bool = True) -> str:
+    """반품 상태별/유형별/사유별 + 승인대기."""
+    st = samba.return_stats()
+    if st is None:
+        return "❌ 삼바 서버 연결 실패 (반품)."
+
+    total = int(st.get("total") or 0)
+    by_status = st.get("by_status") or {}
+    by_type = st.get("by_type") or {}
+    by_reason = st.get("by_reason") or {}
+    waiting = int(by_status.get("requested") or 0)
+    lines = [
+        "🔄 반품/교환 현황", "",
+        f"전체 {total}건 · ⏳승인대기 {waiting}건 · 누적환불 {_fmt_price(st.get('total_refund_amount'))}",
+    ]
+    sparts = [f"{_RETURN_STATUS_LABELS.get(k, k)} {v}" for k, v in by_status.items() if v]
+    if sparts:
+        lines += ["", "상태별: " + ", ".join(sparts)]
+    tparts = [f"{_CLAIM_TYPE_LABELS.get(k, k)} {v}" for k, v in by_type.items() if v]
+    if tparts:
+        lines.append("유형별: " + ", ".join(tparts))
+    top_reasons = sorted(by_reason.items(), key=lambda x: -x[1])[:3]
+    rparts = [f"{k} {v}" for k, v in top_reasons if v]
+    if rparts:
+        lines.append("사유 Top3: " + ", ".join(rparts))
+
+    if with_comment:
+        _append_comment(lines, "반품")
+    return "\n".join(lines)
+
+
+def _require_samba(chat_id: int) -> bool:
+    if not samba.is_ready:
+        tg_send(chat_id, "⚠️ SAMBA_EMAIL / SAMBA_PASSWORD 환경변수가 없어.\n삼바 연결 설정이 필요해.")
+        return False
+    return True
+
+
+def cmd_sales(chat_id: int) -> None:
+    if not _require_samba(chat_id):
+        return
+    tg_send(chat_id, "💰 매출 집계 중...")
+    tg_send(chat_id, build_sales_text())
+
+
+def cmd_order_status(chat_id: int) -> None:
+    if not _require_samba(chat_id):
+        return
+    tg_send(chat_id, "📦 주문 현황 집계 중...")
+    tg_send(chat_id, build_order_status_text())
+
+
+def cmd_cs(chat_id: int) -> None:
+    if not _require_samba(chat_id):
+        return
+    tg_send(chat_id, "💬 CS 현황 집계 중...")
+    tg_send(chat_id, build_cs_text())
+
+
+def cmd_returns(chat_id: int) -> None:
+    if not _require_samba(chat_id):
+        return
+    tg_send(chat_id, "🔄 반품 현황 집계 중...")
+    tg_send(chat_id, build_returns_text())
+
+
 def cmd_help(chat_id: int) -> None:
     samba_status = "✅ 연결됨" if samba.is_ready else "❌ 미연결 (SAMBA_EMAIL/PASSWORD 없음)"
     tg_send(chat_id, (
@@ -400,6 +670,12 @@ def cmd_help(chat_id: int) -> None:
         "  /오늘   — 오늘 주문 현황 요약\n"
         "  /미발주 — 발주 필요한 주문 목록\n"
         "  /처리   — 최신 미발주 주문 분석·발주 준비 (결제 전)\n"
+        "\n"
+        "📊 보고\n"
+        "  /매출     — 오늘+이달 매출·이익·마진·베스트셀러\n"
+        "  /주문현황 — 상태별 건수·이행률·전월대비\n"
+        "  /CS       — 미답변/답변완료·유형별\n"
+        "  /반품     — 반품 상태·유형·사유·승인대기\n"
         "\n"
         "💬 AI 대화\n"
         "  아무 말이나 → Hermes가 답해\n"
@@ -458,6 +734,43 @@ def _poll_new_orders() -> None:
             print(f"[신규주문감지] 오류: {e}", file=sys.stderr)
 
 
+def _daily_report_loop() -> None:
+    """매일 DAILY_REPORT_HOUR(KST)에 4종 통합 다이제스트를 발송."""
+    if not samba.is_ready or not DAILY_REPORT_HOUR:
+        return
+    try:
+        hour = int(DAILY_REPORT_HOUR)
+        if not 0 <= hour <= 23:
+            raise ValueError
+    except ValueError:
+        print(f"[자동보고] DAILY_REPORT_HOUR 값이 잘못됨: {DAILY_REPORT_HOUR!r} — 비활성화", file=sys.stderr)
+        return
+
+    print(f"[자동보고] 매일 {hour:02d}:00(KST) 아침 다이제스트 활성.")
+    while True:
+        now = datetime.now(KST)
+        target = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+        if target <= now:
+            target += timedelta(days=1)
+        time.sleep(max((target - now).total_seconds(), 1))
+
+        if not _notify_chat_ids:
+            continue  # 아직 봇과 대화한 사용자가 없음 → 수신자 없음
+        try:
+            # 다이제스트는 숫자만(LLM 코멘트 생략)으로 빠르게 — 온디맨드 명령은 코멘트 포함
+            digest = "\n\n".join([
+                f"🌅 {datetime.now(KST).strftime('%Y년 %m월 %d일')} 아침 보고",
+                build_sales_text(with_comment=False),
+                build_order_status_text(with_comment=False),
+                build_cs_text(with_comment=False),
+                build_returns_text(with_comment=False),
+            ])
+        except Exception as e:
+            digest = f"⚠️ 아침 보고 생성 실패: {e}"
+        for cid in list(_notify_chat_ids):
+            tg_send(cid, digest)
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # 메시지 핸들러
 # ══════════════════════════════════════════════════════════════════════════
@@ -501,6 +814,22 @@ def handle_message(msg: dict) -> None:
         cmd_unplaced(chat_id)
         return
 
+    if text in ("/매출", "/sales"):
+        cmd_sales(chat_id)
+        return
+
+    if text in ("/주문현황", "/orderstatus"):
+        cmd_order_status(chat_id)
+        return
+
+    if text in ("/CS", "/cs", "/씨에스"):
+        cmd_cs(chat_id)
+        return
+
+    if text in ("/반품", "/returns"):
+        cmd_returns(chat_id)
+        return
+
     # /처리 또는 자연어("주문처리해줘", "처리해줘", "신규주문 처리")
     if (text.startswith(("/처리", "/process"))
             or "주문처리" in text
@@ -535,6 +864,7 @@ def main() -> None:
     if samba.is_ready:
         threading.Thread(target=samba._ensure_token, daemon=True).start()
         threading.Thread(target=_poll_new_orders, daemon=True).start()
+        threading.Thread(target=_daily_report_loop, daemon=True).start()
 
     offset = 0
     while True:
