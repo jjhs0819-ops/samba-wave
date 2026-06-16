@@ -413,6 +413,24 @@ class JobWorker:
         # 검색 결과 캐시: {(site, keyword): (items_list, timestamp)}
         # 동일 브랜드 그룹 수집 시 전수 검색 1회만 실행
         self._search_cache: dict[tuple[str, str], tuple[list, float]] = {}
+        # ── 프로세스 분리 (process-split-design) ──
+        # WORKER_ONLY_TYPES 지정 시 해당 job_type만 처리 (전송 전용 B 워커).
+        # WORKER_EXCLUDE_TYPES 지정 시 해당 타입을 항상 제외 (API 프로세스의 A 워커가
+        # transmit/order_sync 를 B 에 위임). 미설정 시 현행 단일 워커 동작 유지.
+        _only = os.environ.get("WORKER_ONLY_TYPES", "").strip()
+        self._only_types: set[str] | None = {
+            t.strip() for t in _only.split(",") if t.strip()
+        } or None
+        _excl_env = os.environ.get("WORKER_EXCLUDE_TYPES", "").strip()
+        self._extra_exclude_types: set[str] = {
+            t.strip() for t in _excl_env.split(",") if t.strip()
+        }
+        if self._only_types:
+            logger.info(f"[잡워커] 전용 모드 — only_types={sorted(self._only_types)}")
+        if self._extra_exclude_types:
+            logger.info(
+                f"[잡워커] 제외 타입 — exclude={sorted(self._extra_exclude_types)}"
+            )
 
     @staticmethod
     def _extract_transmit_account_ids(payload: dict[str, Any] | None) -> list[str]:
@@ -605,6 +623,8 @@ class JobWorker:
                     _excl_accounts.update(_aids)
                 # 일시정지 중이면 transmit 클레임 스킵 — PENDING 잡 대기 유지
                 _excl_types: set[str] = {"bg_remove"}
+                # 프로세스 분리: API(A) 워커는 transmit/order_sync 를 B 에 위임
+                _excl_types |= self._extra_exclude_types
                 if is_cancel_requested("__all__"):
                     if self._poll_count % 12 == 0:  # 60초(5s × 12)마다 1회 경고
                         logger.warning(
@@ -617,6 +637,7 @@ class JobWorker:
                     exclude_brand_all=self._brand_all_running,
                     exclude_types=_excl_types,
                     exclude_accounts=_excl_accounts or None,
+                    only_types=self._only_types,
                 )
                 if not job:
                     break

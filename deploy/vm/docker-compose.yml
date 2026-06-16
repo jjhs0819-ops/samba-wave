@@ -73,6 +73,46 @@ services:
       READ_DB_PORT: "5432"
       GUNICORN_CMD_ARGS: "--timeout 600 --graceful-timeout 600"
       WEB_CONCURRENCY: "1"
+      PROCESS_ROLE: api
+      # ── 프로세스 분리 cutover (process-split-design) ──
+      # samba-worker(B) 가 정상 기동·전송 처리 확인된 뒤에만 아래 주석 해제.
+      # 해제 시 A 는 transmit/order_sync 를 직접 처리하지 않고 B 에 위임 → A 코어 여유 확보.
+      # 해제 전 B 가 죽어 있으면 전송이 DB 큐에 적체되니 순서 엄수.
+      # WORKER_EXCLUDE_TYPES: "transmit,order_sync"
+    networks:
+      - samba-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  # 전송 전용 워커(B) — 프로세스 분리 (process-split-design).
+  # PROCESS_ROLE=worker 면 entrypoint 가 마이그레이션/스키마픽스/리컨실러를 스킵하고
+  # gunicorn -w (nproc-1) 로 JobWorker 만 기동. WORKER_ONLY_TYPES 로 전송/주문동기화만 처리.
+  # samba_jobs 를 FOR UPDATE SKIP LOCKED 로 안전하게 병렬 소비(A 와도 중복 claim 없음).
+  # Caddy 라우팅 없음 — HTTP 미사용(헬스체크용 포트만 bind).
+  # depends_on: samba-api 가 마이그레이션 끝낸 뒤 기동.
+  samba-worker:
+    image: ${AR_REGION:-asia-northeast3}-docker.pkg.dev/${GCP_PROJECT:?GCP_PROJECT 미설정}/${AR_REPO:-cloud-run-source-deploy}/${IMAGE_NAME:-samba-wave-api}:latest
+    restart: unless-stopped
+    depends_on:
+      samba-api:
+        condition: service_healthy
+    env_file:
+      - /opt/samba/.env
+    environment:
+      ENVIRONMENT: production
+      WRITE_DB_HOST: cloud-sql-proxy
+      WRITE_DB_PORT: "5432"
+      READ_DB_HOST: cloud-sql-proxy
+      READ_DB_PORT: "5432"
+      PROCESS_ROLE: worker
+      WORKER_ONLY_TYPES: "transmit,order_sync"
+      # WORKER_REPLICAS 미설정 → entrypoint 가 nproc-1 자동 산정.
+      # 4코어 VM = 3 워커. 고정하려면 숫자 지정.
+      # WORKER_REPLICAS: "3"
     networks:
       - samba-net
     healthcheck:

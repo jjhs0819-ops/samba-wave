@@ -1527,6 +1527,12 @@ async def lifespan(app: FastAPI):
         "yes",
     )
 
+    # 프로세스 분리 (process-split-design): PROCESS_ROLE=worker 면 전송 전용 워커.
+    # JobWorker(WORKER_ONLY_TYPES=transmit,order_sync)만 기동하고 오토튠 루프·데몬
+    # 엔드포인트·리컨실러는 띄우지 않는다(이들은 API 프로세스 A 가 담당).
+    # in-memory Future/오토튠 상태 결합 때문에 A 에만 둬야 함.
+    _process_role = os.environ.get("PROCESS_ROLE", "api").strip().lower()
+
     if _disable_bg:
         startup_logger.warning(
             "[startup] DISABLE_BACKGROUND_WORKERS=1 — "
@@ -1535,6 +1541,14 @@ async def lifespan(app: FastAPI):
         worker_runtime = WorkerRuntime(
             worker=None, worker_task=None, watchdog_task=None
         )
+    elif _process_role == "worker":
+        startup_logger.warning(
+            "[startup] PROCESS_ROLE=worker — 전송 전용 워커 모드. "
+            "JobWorker 만 기동(오토튠/리컨실러/주문폴러 비활성)"
+        )
+        # 전송 잡 boot 복구 후 JobWorker 만 기동. 수집/소싱 복구는 A 가 담당.
+        await _recover_running_jobs(startup_logger)
+        worker_runtime = await _start_worker_runtime()
     else:
         await _recover_running_jobs(startup_logger)
         await _recover_sourcing_jobs(startup_logger)
