@@ -26,7 +26,6 @@ interface Props {
 interface OptionRow {
   id: string
   name: string
-  price: number
   stock: number
 }
 
@@ -64,7 +63,7 @@ export default function NewProductCard({ accounts, policies, onCreated }: Props)
   const [tagInput, setTagInput] = useState('')
   const [tags, setTags] = useState<string[]>([])
   const [options, setOptions] = useState<OptionRow[]>([
-    { id: crypto.randomUUID(), name: '', price: 0, stock: 0 },
+    { id: crypto.randomUUID(), name: '', stock: 0 },
   ])
   const [selectedPolicyId, setSelectedPolicyId] = useState('')
   const [pendingCategories, setPendingCategories] = useState<Record<string, string>>({})
@@ -80,10 +79,10 @@ export default function NewProductCard({ accounts, policies, onCreated }: Props)
   const removeTag = (t: string) => setTags(prev => prev.filter(v => v !== t))
 
   const addOption = () =>
-    setOptions(prev => [...prev, { id: crypto.randomUUID(), name: '', price: 0, stock: 0 }])
+    setOptions(prev => [...prev, { id: crypto.randomUUID(), name: '', stock: 0 }])
   const removeOption = (id: string) =>
     setOptions(prev => prev.filter(o => o.id !== id))
-  const updateOption = (id: string, key: 'name' | 'price' | 'stock', val: string | number) =>
+  const updateOption = (id: string, key: 'name' | 'stock', val: string | number) =>
     setOptions(prev => prev.map(o => o.id === id ? { ...o, [key]: val } : o))
 
   const reset = () => {
@@ -92,7 +91,7 @@ export default function NewProductCard({ accounts, policies, onCreated }: Props)
     setManufacturer(''); setStyleCode(''); setOrigin('')
     setSex('남녀공용'); setSeason('사계절'); setColor(''); setMaterial('')
     setImages([]); setDetailImages([]); setTags([])
-    setOptions([{ id: crypto.randomUUID(), name: '', price: 0, stock: 0 }])
+    setOptions([{ id: crypto.randomUUID(), name: '', stock: 0 }])
     setSelectedPolicyId('')
     setPendingCategories({})
     setError('')
@@ -266,14 +265,13 @@ export default function NewProductCard({ accounts, policies, onCreated }: Props)
             <label className={LABEL}>옵션</label>
             <button onClick={addOption} className='text-xs text-[#FF8C00] hover:text-[#E07B00]'>+ 추가</button>
           </div>
-          <div className='grid grid-cols-[1fr_100px_100px_24px] gap-2 text-xs text-[#666] px-0.5 mb-1'>
-            <span>옵션명</span><span>가격</span><span>재고</span><span />
+          <div className='grid grid-cols-[1fr_100px_24px] gap-2 text-xs text-[#666] px-0.5 mb-1'>
+            <span>옵션명</span><span>재고</span><span />
           </div>
           <div className='space-y-1.5'>
             {options.map(opt => (
-              <div key={opt.id} className='grid grid-cols-[1fr_100px_100px_24px] gap-2'>
+              <div key={opt.id} className='grid grid-cols-[1fr_100px_24px] gap-2'>
                 <input className={INPUT} value={opt.name} onChange={e => updateOption(opt.id, 'name', e.target.value)} placeholder='옵션명 (예: 블랙/L)' />
-                <input type='number' className={INPUT} value={opt.price} onChange={e => updateOption(opt.id, 'price', Number(e.target.value))} placeholder='0' />
                 <input type='number' className={INPUT} value={opt.stock} onChange={e => updateOption(opt.id, 'stock', Number(e.target.value))} placeholder='0' />
                 {options.length > 1 ? (
                   <button onClick={() => removeOption(opt.id)} className='text-[#FF6B6B] text-sm'>×</button>

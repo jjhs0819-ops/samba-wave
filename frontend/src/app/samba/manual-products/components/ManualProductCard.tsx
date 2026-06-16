@@ -1,13 +1,14 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { manualProductApi, shipmentApi } from '@/lib/samba/legacy'
 import CategorySelector from './CategorySelector'
 import ImageManagerModal from './ImageManagerModal'
 import type { SambaCollectedProduct } from '@/lib/samba/legacy'
 import { fmtNum } from '@/lib/samba/styles'
+import { buildMarketPriceList } from '@/lib/samba/marketPrice'
 
-interface Policy { id: string; name: string; market_policies?: Record<string, unknown> }
+interface Policy { id: string; name: string; market_policies?: Record<string, unknown>; pricing?: Record<string, unknown> }
 
 function policyAccountIds(policy: Policy | undefined, accounts: Account[]): Account[] {
   if (!policy?.market_policies) return []
@@ -19,7 +20,7 @@ function policyAccountIds(policy: Policy | undefined, accounts: Account[]): Acco
   })
   return accounts.filter(a => ids.includes(a.id))
 }
-interface Account { id: string; market_type: string; account_name: string }
+interface Account { id: string; market_type: string; account_name: string; additional_fields?: Record<string, unknown> }
 
 interface LogEntry {
   id: number
@@ -42,8 +43,8 @@ const SELECT = 'w-full px-2.5 py-1.5 bg-[#0A0A0A] border border-[#1A1A1A] rounde
 const INPUT = 'w-full px-2.5 py-1.5 bg-[#0A0A0A] border border-[#1A1A1A] rounded text-sm text-[#E5E5E5] placeholder-[#444] focus:outline-none focus:border-[#FF8C00]'
 const LABEL = 'text-xs text-[#666] mb-1 block'
 
-// 수정 폼 옵션 행 (UI 전용 id 포함)
-interface EditOption { id: string; name: string; price: number; stock: number }
+// 수정 폼 옵션 행 (UI 전용 id 포함) — 옵션별 가격 미사용(판매가는 정책 기반)
+interface EditOption { id: string; name: string; stock: number }
 
 // 상품 옵션 배열을 수정 폼용으로 정규화 (런타임 형태가 제각각이라 안전 변환)
 function toEditOptions(raw: unknown[] | undefined): EditOption[] {
@@ -53,7 +54,6 @@ function toEditOptions(raw: unknown[] | undefined): EditOption[] {
     return {
       id: crypto.randomUUID(),
       name: typeof m.name === 'string' ? m.name : '',
-      price: Number(m.price ?? 0) || 0,
       stock: Number(m.stock ?? 0) || 0,
     }
   })
@@ -104,10 +104,10 @@ export default function ManualProductCard({ product, policies, accounts, onDelet
     setEdit(prev => ({ ...prev, [key]: val }))
 
   const addEditOption = () =>
-    setEditOptions(prev => [...prev, { id: crypto.randomUUID(), name: '', price: 0, stock: 0 }])
+    setEditOptions(prev => [...prev, { id: crypto.randomUUID(), name: '', stock: 0 }])
   const removeEditOption = (id: string) =>
     setEditOptions(prev => prev.filter(o => o.id !== id))
-  const updateEditOption = (id: string, key: 'name' | 'price' | 'stock', val: string | number) =>
+  const updateEditOption = (id: string, key: 'name' | 'stock', val: string | number) =>
     setEditOptions(prev => prev.map(o => o.id === id ? { ...o, [key]: val } : o))
 
   const saveEdit = async () => {
@@ -131,7 +131,7 @@ export default function ManualProductCard({ product, policies, accounts, onDelet
         tags: edit.tags.split(',').map(t => t.trim()).filter(Boolean),
         options: editOptions
           .filter(o => o.name.trim())
-          .map(o => ({ name: o.name.trim(), price: o.price, stock: o.stock })),
+          .map(o => ({ name: o.name.trim(), price: 0, stock: o.stock })),
       })
       onUpdated(updated)
       setEditing(false)
@@ -231,6 +231,21 @@ export default function ManualProductCard({ product, policies, accounts, onDelet
   const catCount = Object.keys(savedCats).length
   const marketProductNos = (product.market_product_nos as Record<string, string> | undefined) ?? {}
 
+  // 판매처별 판매가 (정책 기반 — 상품관리 카드와 동일 계산식)
+  const appliedPolicy = policies.find(p => p.id === product.applied_policy_id)
+  const priceCost = product.cost || product.sale_price || product.original_price || 0
+  const marketPriceList = useMemo(() => {
+    if (!appliedPolicy?.pricing) return []
+    return buildMarketPriceList({
+      pricing: appliedPolicy.pricing,
+      marketPolicies: appliedPolicy.market_policies ?? {},
+      accounts,
+      cost: priceCost,
+      sourceSite: product.source_site || '',
+      isPointRestricted: (product as { is_point_restricted?: boolean | null }).is_point_restricted,
+    })
+  }, [appliedPolicy, accounts, priceCost, product])
+
   return (
     <div className='bg-[#111] border border-[#1A1A1A] rounded-lg p-4 space-y-3'>
       {/* 상품 기본 정보 */}
@@ -307,14 +322,13 @@ export default function ManualProductCard({ product, policies, accounts, onDelet
               <label className={LABEL}>옵션</label>
               <button onClick={addEditOption} className='text-xs text-[#FF8C00] hover:text-[#E07B00]'>+ 추가</button>
             </div>
-            <div className='grid grid-cols-[1fr_90px_90px_24px] gap-2 text-xs text-[#666] px-0.5 mb-1'>
-              <span>옵션명</span><span>가격</span><span>재고</span><span />
+            <div className='grid grid-cols-[1fr_90px_24px] gap-2 text-xs text-[#666] px-0.5 mb-1'>
+              <span>옵션명</span><span>재고</span><span />
             </div>
             <div className='space-y-1.5'>
               {editOptions.map(opt => (
-                <div key={opt.id} className='grid grid-cols-[1fr_90px_90px_24px] gap-2'>
+                <div key={opt.id} className='grid grid-cols-[1fr_90px_24px] gap-2'>
                   <input className={INPUT} value={opt.name} onChange={e => updateEditOption(opt.id, 'name', e.target.value)} placeholder='옵션명 (예: 블랙/L)' />
-                  <input type='number' className={INPUT} value={opt.price} onChange={e => updateEditOption(opt.id, 'price', Number(e.target.value))} placeholder='0' />
                   <input type='number' className={INPUT} value={opt.stock} onChange={e => updateEditOption(opt.id, 'stock', Number(e.target.value))} placeholder='0' />
                   <button onClick={() => removeEditOption(opt.id)} className='text-[#FF6B6B] text-sm'>×</button>
                 </div>
@@ -344,6 +358,24 @@ export default function ManualProductCard({ product, policies, accounts, onDelet
           ))}
         </select>
       </div>
+
+      {/* 판매처별 판매가 — 정책 기반 계산 (상품관리와 동일) */}
+      {marketPriceList.length > 0 && (
+        <div>
+          <label className='text-xs text-[#666] block mb-1'>판매처별 판매가</label>
+          <div className='flex flex-col gap-1.5'>
+            {marketPriceList.map(m => (
+              <div key={m.marketName} className='bg-[#0A0A0A] border border-[#1A1A1A] rounded px-2.5 py-1.5'>
+                <div className='flex items-center justify-between'>
+                  <span className='text-xs text-[#999]'>{m.marketName === '신세계몰(전시)' ? '신세계몰' : m.marketName}</span>
+                  <span className='text-sm font-semibold text-[#FFB84D]'>{m.calcStr.split(' = ')[0]}</span>
+                </div>
+                <div className='text-[0.68rem] text-[#666] mt-0.5'>{m.calcStr.split(' = ')[1]}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 카테고리 — 정책 연결 시에만 표시 */}
       {product.applied_policy_id && (() => {

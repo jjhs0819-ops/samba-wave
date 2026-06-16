@@ -6,8 +6,8 @@ import type { SambaCollectedProduct, SambaPolicy, SambaMarketAccount } from '@/l
 import NewProductCard from './components/NewProductCard'
 import ManualProductCard from './components/ManualProductCard'
 
-interface Policy { id: string; name: string; market_policies?: Record<string, unknown> }
-interface Account { id: string; market_type: string; account_name: string }
+interface Policy { id: string; name: string; market_policies?: Record<string, unknown>; pricing?: Record<string, unknown> }
+interface Account { id: string; market_type: string; account_name: string; additional_fields?: Record<string, unknown> }
 
 export default function ManualProductsPage() {
   const [products, setProducts] = useState<SambaCollectedProduct[]>([])
@@ -24,12 +24,13 @@ export default function ManualProductsPage() {
         accountApi.list(),
       ])
       setProducts(prods)
-      setPolicies((pols as SambaPolicy[]).map(p => ({ id: p.id, name: p.name, market_policies: p.market_policies })))
+      setPolicies((pols as SambaPolicy[]).map(p => ({ id: p.id, name: p.name, market_policies: p.market_policies, pricing: p.pricing })))
       setAccounts(
         (accs as SambaMarketAccount[]).map(a => ({
           id: a.id,
           market_type: a.market_type,
           account_name: a.account_label,
+          additional_fields: a.additional_fields,
         }))
       )
     } catch (e) {
