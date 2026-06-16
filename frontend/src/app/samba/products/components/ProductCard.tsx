@@ -634,7 +634,7 @@ const ProductCard = React.memo(function ProductCard({
       })
   }, [regAccIds, accounts, p.name, marketProductNos]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 리셀 판매처(KREAM/POIZON/StockX) — 3개 고정 행, 매칭된 상품번호 or 미매칭
+  // 리셀 판매처(KREAM/POIZON/StockX) — 타 마켓처럼 판매가 계산 + 매칭 상품번호
   const resellRows = useMemo(() => {
     const rm = (p.resell_matches || {}) as Record<string, { product_id?: string; confidence?: number }>
     const PLAT: { key: string; name: string; url?: (id: string) => string }[] = [
@@ -645,9 +645,15 @@ const ProductCard = React.memo(function ProductCard({
     return PLAT.map(pl => {
       const m = rm[pl.key]
       const id = m?.product_id ? String(m.product_id) : ''
-      return { key: pl.key, name: pl.name, id, url: id && pl.url ? pl.url(id) : '', conf: m?.confidence }
+      const r = calcPrice(cost, marginRate, shippingCost, feeRate, extraCharge, minMarginAmount, ssMRate, ssMAmount, curSym)
+      return {
+        key: pl.key, name: pl.name, id,
+        url: id && pl.url ? pl.url(id) : '',
+        conf: m?.confidence,
+        price: r.price, calcStr: r.calcStr,
+      }
     })
-  }, [p.resell_matches])
+  }, [p.resell_matches, cost, marginRate, shippingCost, feeRate, extraCharge, minMarginAmount, ssMRate, ssMAmount, curSym])
 
   const tdLabel: React.CSSProperties = { padding: '6px 8px', color: '#555', fontSize: '0.75rem', whiteSpace: 'nowrap', verticalAlign: 'middle' }
   const tdVal: React.CSSProperties = { padding: '6px 8px', verticalAlign: 'middle' }
@@ -1825,6 +1831,35 @@ const ProductCard = React.memo(function ProductCard({
                   </td>
                 </tr>
               )}
+              {/* 리셀 판매처 (KREAM/POIZON/StockX) — 판매가 계산 + 매칭 상품번호 */}
+              {resellRows.map(rr => (
+                <tr key={`resell-${rr.key}`} style={{ borderBottom: '1px solid #1E1E1E' }}>
+                  <td style={tdLabel}>{rr.name}</td>
+                  <td style={tdVal}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <span style={{ color: '#FFB84D', fontWeight: 600 }}>{curSym}{fmt(rr.price)}</span>
+                        {rr.id ? (
+                          rr.url ? (
+                            <button
+                              onClick={() => window.open(rr.url, '_blank')}
+                              style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.2)' }}
+                              onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}
+                              title={`${rr.name} 판매페이지`}
+                            >{rr.id}{rr.conf != null ? ` (매칭 ${fmtNum(rr.conf)}%)` : ''}</button>
+                          ) : (
+                            <span style={{ fontSize: '0.6rem', color: '#51CF66', whiteSpace: 'nowrap' }}>{rr.id}</span>
+                          )
+                        ) : (
+                          <span style={{ fontSize: '0.68rem', color: '#555' }}>미매칭</span>
+                        )}
+                      </div>
+                      <span style={{ fontSize: '0.72rem', color: '#666' }}>{rr.calcStr}</span>
+                    </div>
+                  </td>
+                </tr>
+              ))}
               {/* 스토어별 상품명 — 마켓가격 행에 없는 등록 스토어도 상품명 편집 가능 */}
               {(() => {
                 const _mktNames = (p.market_names || {}) as Record<string, string>
@@ -1934,29 +1969,6 @@ const ProductCard = React.memo(function ProductCard({
                   )
                 })
               })()}
-              {/* 리셀 판매처 (KREAM/POIZON/StockX) */}
-              {resellRows.map(rr => (
-                <tr key={`resell-${rr.key}`} style={{ borderBottom: '1px solid #1E1E1E' }}>
-                  <td style={tdLabel}>{rr.name}</td>
-                  <td style={tdVal}>
-                    {rr.id ? (
-                      rr.url ? (
-                        <button
-                          onClick={() => window.open(rr.url, '_blank')}
-                          style={{ fontSize: '0.65rem', padding: '2px 8px', background: 'rgba(81,207,102,0.08)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.2)' }}
-                          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}
-                          title={`${rr.name} 판매페이지`}
-                        >{rr.id}{rr.conf != null ? ` (매칭 ${fmtNum(rr.conf)}%)` : ''}</button>
-                      ) : (
-                        <span style={{ fontSize: '0.72rem', color: '#C5C5C5' }}>{rr.id}{rr.conf != null ? ` (매칭 ${fmtNum(rr.conf)}%)` : ''}</span>
-                      )
-                    ) : (
-                      <span style={{ fontSize: '0.68rem', color: '#555' }}>미매칭</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
               {/* 카테고리 */}
               <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
                 <td style={tdLabel}>카테고리</td>
