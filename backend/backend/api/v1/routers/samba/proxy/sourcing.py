@@ -460,6 +460,48 @@ async def sourcing_tracking_result(body: dict[str, Any]) -> dict[str, Any]:
     return res
 
 
+@sourcing_queue_router.post("/sourcing/store-metrics-result")
+async def sourcing_store_metrics_result(body: dict[str, Any]) -> dict[str, Any]:
+    """확장앱이 파트너/셀러 포털 점수·품절률 스크래핑 결과 전달 (인증 불필요).
+
+    body = {
+      requestId: str,
+      success: bool,
+      marketType?: str,
+      soldoutRate?: number|str,   # 품절률 % (예: 9.7 또는 "9.7%")
+      score?: number|str,         # 대표 점수
+      grade?: str,                # 판매등급/등급 라벨
+      penalty?: number|str,       # 패널티/경고 수
+      metrics?: dict,             # 마켓별 원시 지표 전부
+      error?: str,
+    }
+    """
+    from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+    from backend.domain.samba.store_care.service import apply_store_metrics_result
+
+    request_id = (body.get("requestId") or "").strip()
+    if not request_id:
+        raise HTTPException(status_code=400, detail="requestId 누락")
+
+    data = {
+        "success": bool(body.get("success")),
+        "marketType": body.get("marketType"),
+        "soldoutRate": body.get("soldoutRate"),
+        "soldoutRatePrev": body.get("soldoutRatePrev"),
+        "score": body.get("score"),
+        "grade": body.get("grade"),
+        "penalty": body.get("penalty"),
+        "metrics": body.get("metrics"),
+        "raw": body.get("raw"),
+        "periodLabel": body.get("periodLabel"),
+        "error": body.get("error"),
+    }
+    # 인메모리 Future 깨우기 + samba_sourcing_job completed 처리
+    SourcingQueue.resolve_job(request_id, data)
+    res = await apply_store_metrics_result(request_id, data)
+    return {"success": True, **res}
+
+
 # 롯데ON 취소클레임 진행단계 — '완료' 로 간주하는 코드(멱등 성공 처리용).
 # 그 외 모든 단계는 승인 대상으로 보고 cnclRequestApproval 시도한다.
 # 실측(2026-06-01 getCancellationRequestAndComplateList): odPrgsStepCd = 02 요청 / 21 취소완료

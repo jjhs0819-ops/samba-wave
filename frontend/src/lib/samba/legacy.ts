@@ -2491,6 +2491,36 @@ export interface StoreCarePurchase {
   completed_at?: string
 }
 
+export interface StoreCareMarketMetric {
+  id: string
+  tenant_id?: string
+  market_type: string
+  account_id?: string
+  account_label: string
+  soldout_rate?: number | null
+  soldout_rate_prev?: number | null
+  score?: number | null
+  grade?: string | null
+  penalty?: number | null
+  metrics?: Record<string, unknown> | null
+  raw?: Record<string, unknown> | null
+  period_label?: string | null
+  status: string
+  error?: string | null
+  source_url?: string | null
+  collected_at: string
+}
+
+export interface MetricRecommendation {
+  market_type: string
+  target: { metric: string; op: string; value: number; basis?: string }
+  has_metric?: boolean
+  current_value: number | null
+  denom: number | null
+  collected_at?: string | null
+  recommendation: { qty: number | null; reason: string }
+}
+
 export const storeCareApi = {
   // 통계
   stats: () =>
@@ -2518,6 +2548,16 @@ export const storeCareApi = {
     if (marketType) p.set('market_type', marketType)
     return request<StoreCarePurchase[]>(`${SAMBA_PREFIX}/store-care/purchases?${p}`)
   },
+  // 마켓 점수·품절률
+  listMetrics: () =>
+    request<StoreCareMarketMetric[]>(`${SAMBA_PREFIX}/store-care/metrics`),
+  collectMetrics: (markets?: string[]) =>
+    request<{ ok: boolean; device_id: string; enqueued: { market_type: string; request_id?: string; error?: string }[] }>(
+      `${SAMBA_PREFIX}/store-care/metrics/collect`,
+      { method: 'POST', body: JSON.stringify({ markets: markets ?? null }) }
+    ),
+  recommendations: () =>
+    request<MetricRecommendation[]>(`${SAMBA_PREFIX}/store-care/metrics/recommendations`),
 }
 
 export const snsApi = {
