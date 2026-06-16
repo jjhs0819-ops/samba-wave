@@ -12,6 +12,8 @@
   SAMBA_BACKEND_URL         (선택) 기본 http://127.0.0.1:28080
   SAMBA_EMAIL               (필수, 삼바 기능) 삼바 로그인 이메일
   SAMBA_PASSWORD            (필수, 삼바 기능) 삼바 로그인 비밀번호
+  SAMBA_API_KEY             (운영 필수) X-Api-Key. 프론트 NEXT_PUBLIC_API_GATEWAY_KEY 와 동일.
+                            운영 백엔드는 이 헤더 없으면 삼바 API 403 차단.
   NEW_ORDER_POLL_MINUTES    (선택) 신규 미발주 감지 주기(분), 기본 10
   DAILY_REPORT_HOUR         (선택) 아침 자동 다이제스트 시각(KST 0~23), 기본 9. 비우면 끔.
 
@@ -52,6 +54,9 @@ HERMES_MODEL = os.environ.get("HERMES_MODEL", "hermes3:8b")
 SAMBA_URL = os.environ.get("SAMBA_BACKEND_URL", "http://127.0.0.1:28080").rstrip("/")
 SAMBA_EMAIL = os.environ.get("SAMBA_EMAIL", "")
 SAMBA_PASSWORD = os.environ.get("SAMBA_PASSWORD", "")
+# API 게이트웨이 키(X-Api-Key). 프론트의 NEXT_PUBLIC_API_GATEWAY_KEY 와 동일한 공개 키.
+# 운영 백엔드는 이 헤더가 없으면 삼바 API를 403 차단함.
+SAMBA_API_KEY = os.environ.get("SAMBA_API_KEY", "")
 NEW_ORDER_POLL_MINUTES = int(os.environ.get("NEW_ORDER_POLL_MINUTES", "10"))
 # 아침 자동 다이제스트 발송 시각(KST, 0~23). 빈 값이면 자동보고 비활성화.
 DAILY_REPORT_HOUR = os.environ.get("DAILY_REPORT_HOUR", "9").strip()
@@ -114,12 +119,14 @@ class SambaClient:
 
     def _login(self) -> bool:
         try:
+            # 삼바 사용자 로그인 — samba_user 테이블 기반. JWT는 access_token 필드로 반환.
+            # (구 /auth/email/login 은 user 테이블 기반이라 이 SaaS 에선 미작동)
             resp = _http_json(
-                f"{SAMBA_URL}/api/v1/auth/email/login",
+                f"{SAMBA_URL}/api/v1/samba/users/login",
                 {"email": SAMBA_EMAIL, "password": SAMBA_PASSWORD},
                 timeout=15,
             )
-            self._token = resp.get("app_auth_token")
+            self._token = resp.get("access_token")
             # 29일 후 만료로 설정 (실제 30일, 여유 1일)
             self._token_expiry = time.time() + 60 * 60 * 24 * 29
             print(f"[삼바] 로그인 성공 (닉네임: {resp.get('nickname', SAMBA_EMAIL)})")
@@ -137,7 +144,12 @@ class SambaClient:
 
     def _auth_headers(self) -> dict:
         token = self._ensure_token()
-        return {"Authorization": f"Bearer {token}"} if token else {}
+        headers: dict = {}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        if SAMBA_API_KEY:  # 운영 API 게이트웨이 통과용 (없으면 403)
+            headers["X-Api-Key"] = SAMBA_API_KEY
+        return headers
 
     def _get_orders_paged(self, start_kst: str, end_kst: str, limit: int = 500) -> dict | None:
         try:
