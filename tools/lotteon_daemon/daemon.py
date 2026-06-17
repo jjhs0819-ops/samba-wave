@@ -351,6 +351,29 @@ def _log_file_path() -> Path:
     return _install_dir() / f"daemon{suffix}.log"
 
 
+LOG_MAX_LINES = 100  # 로그파일 최대 보존 줄수 — 항상 작게 유지(열기 쉽게).
+
+
+def _trim_log_file(max_lines: int = LOG_MAX_LINES) -> None:
+    """로그파일을 최근 max_lines 줄로 잘라냄 (best-effort, 멀티프로세스 race 허용).
+
+    supervisor/worker/child-redirect 다중 writer 환경이라 정확성보다 "항상 작게"가 목적.
+    실패는 무시.
+    """
+    try:
+        log_path = _log_file_path()
+        if not log_path.exists():
+            return
+        with open(log_path, "r", encoding="utf-8", errors="replace") as fp:
+            lines = fp.readlines()
+        if len(lines) <= max_lines:
+            return
+        with open(log_path, "w", encoding="utf-8") as fp:
+            fp.writelines(lines[-max_lines:])
+    except Exception:
+        pass
+
+
 def logger_print(msg: str) -> None:
     """frozen 초기 부트스트랩 단계 — logging 모듈 set 전 파일 폴백.
 
@@ -362,6 +385,7 @@ def logger_print(msg: str) -> None:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with open(log_path, "a", encoding="utf-8") as fp:
             fp.write(line)
+        _trim_log_file()
     except Exception:
         pass
     # 디버그용 — 콘솔 있으면 표시(--console 빌드 또는 .py 실행 시)
@@ -3311,6 +3335,28 @@ class SafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
                 pass
 
 
+class _CappedFileHandler(logging.Handler):
+    """로그파일을 최대 LOG_MAX_LINES 줄로 유지 — 매 emit 시 append 후 trim.
+
+    스트림을 열어두지 않고 emit마다 open/append/close → 다른 프로세스(supervisor
+    logger_print / child stderr redirect)의 외부 trim·append 와 충돌 없이 항상 작게 유지.
+    데몬 로그가 수MB로 불어나 열기조차 어렵던 문제 해결(로그양 최대 100줄, 사용자 요청).
+    """
+
+    def __init__(self, path: str) -> None:
+        super().__init__()
+        self._path = str(path)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            line = self.format(record)
+            with open(self._path, "a", encoding="utf-8") as fp:
+                fp.write(line + "\n")
+            _trim_log_file()
+        except Exception:
+            self.handleError(record)
+
+
 def _setup_logging() -> None:
     """파일 로깅 (SafeRotatingFileHandler) — --noconsole 빌드에서 stderr 사라져도 로그 영구 보존."""
     fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -3328,12 +3374,7 @@ def _setup_logging() -> None:
     try:
         log_path = _log_file_path()
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        fh = SafeRotatingFileHandler(
-            str(log_path),
-            maxBytes=5 * 1024 * 1024,
-            backupCount=3,
-            encoding="utf-8",
-        )
+        fh = _CappedFileHandler(str(log_path))
         fh.setFormatter(formatter)
         root.addHandler(fh)
     except Exception:
@@ -3780,6 +3821,7 @@ def _supervisor_loop() -> int:
                 pass
             return 0
         duration = time.time() - start_ts
+        _trim_log_file()  # child 가 raw redirect로 쌓은 출력도 100줄로 정리
         logger_print(f"supervisor: worker exit rc={rc} duration={duration:.1f}s")
         if rc == 0:
             logger_print("supervisor: worker 정상 종료 — supervisor 도 종료")
