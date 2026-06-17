@@ -63,7 +63,7 @@ export default function StoreCare() {
   const [recs, setRecs] = useState<MetricRecommendation[]>([])
   const [nInput, setNInput] = useState<Record<string, string>>({})
   const [stats, setStats] = useState({ total: 0, success: 0, failed: 0, total_amount: 0 })
-  const [tab, setTab] = useState<'overview' | 'schedule' | 'history' | 'metrics'>('overview')
+  const [tab, setTab] = useState<'overview' | 'schedule' | 'history' | 'metrics'>('metrics')
   const [collecting, setCollecting] = useState(false)
   const [loading, setLoading] = useState(true)
 
