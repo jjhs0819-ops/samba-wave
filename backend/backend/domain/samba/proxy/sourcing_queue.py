@@ -596,6 +596,58 @@ class SourcingQueue:
         return request_id, future
 
     @classmethod
+    async def add_purchase_job(
+        cls,
+        market_type: str,
+        *,
+        owner_device_id: str,
+        product_url: str,
+        option: str = "",
+        quantity: int = 1,
+        purchase_id: str = "",
+        tenant_id: str | None = None,
+        sourcing_account_id: str = "",
+    ) -> tuple[str, asyncio.Future[Any]]:
+        """가구매(셀프구매) 장바구니 담기 작업 큐에 추가 (확장앱 전용).
+
+        SHOW PASS 이식 — 쇼핑몰 상품 페이지를 열어 옵션 선택 + 장바구니 담기.
+        owner_device_id = 버튼 누른 트리거 PC (그 PC 브라우저에 쇼핑몰 로그인돼 있어야 함).
+        결과는 라우터 `POST /sourcing/purchase-result` 로 수신.
+        get_next_job 에서 purchase 는 store_metrics 처럼 확장앱 강제 + 데몬 차단 + 분담 우회.
+        M1 = 장바구니 담기까지. 결제대기/일시품절 원복(SHOW PASS 전체 루프)은 M3.
+        """
+        cls._ensure_accepting_jobs()
+        mt = (market_type or "").strip().lower()
+        if not product_url:
+            raise ValueError("purchase 잡은 product_url 필수")
+        if not owner_device_id:
+            raise RuntimeError("purchase 잡은 트리거 PC(owner_device_id) 필수")
+        request_id = str(uuid.uuid4())[:8]
+        loop = asyncio.get_event_loop()
+        future: asyncio.Future[Any] = loop.create_future()
+        job: dict[str, Any] = {
+            "requestId": request_id,
+            # site=마켓(SSG 등). purchase 는 owner 바인딩 + 확장앱강제라 분담 무시됨.
+            "site": mt.upper(),
+            "type": "purchase",
+            "marketType": mt,
+            "productUrl": product_url,
+            "option": option or "",
+            "quantity": int(quantity) if quantity else 1,
+            "purchaseId": purchase_id or "",
+            "tenantId": tenant_id or "",
+            "sourcingAccountId": sourcing_account_id or "",
+            "ownerDeviceId": owner_device_id,
+        }
+        cls.resolvers[request_id] = future
+        await _db_insert_job(job, "purchase")
+        logger.info(
+            f"[소싱큐] 가구매 추가: {mt} opt='{option}' x{quantity} "
+            f"owner={owner_device_id} (id={request_id})"
+        )
+        return request_id, future
+
+    @classmethod
     async def add_cancel_order_job(
         cls,
         site: str,
@@ -859,7 +911,7 @@ class SourcingQueue:
                 # 에러 과다. SSG/ABCmart/GrandStage/LOTTEON 송장도 확장앱 content-tracking-*.js
                 # 가 처리(핸들러 전부 존재). detail/search/reward 가격수집은 여전히 데몬 전용.
                 conditions.append(
-                    f"(job_type IN ('cancel_order', 'tracking', 'store_metrics') "
+                    f"(job_type IN ('cancel_order', 'tracking', 'store_metrics', 'purchase') "
                     f"OR UPPER(site) NOT IN ({_dph}))"
                 )
                 for i, s in enumerate(_sites):
@@ -869,7 +921,7 @@ class SourcingQueue:
                 # 확장앱 전담. 데몬은 가격수집(detail/search/reward)만. owner='' 송장 잡을
                 # 데몬이 먼저 가로채지 못하게 dequeue 단에서 tracking 전체 차단.
                 # store_metrics(파트너포털 점수수집)도 데몬 차단 — 확장앱 로그인 세션 전용.
-                conditions.append("job_type NOT IN ('tracking', 'store_metrics')")
+                conditions.append("job_type NOT IN ('tracking', 'store_metrics', 'purchase')")
 
             # site 필터 — 케이싱 무관 매칭.
             # detail 잡 site='ABCmart'(혼합)인데 tracking 잡 site='ABCMART'(대문자)라
@@ -894,7 +946,7 @@ class SourcingQueue:
                 # 이미 "이 PC 가 받는다"를 확정했으므로 분담 재적용은 모순 → 우회한다.
                 _owner_bypass = "OR owner_device_id = :device_id " if device_id else ""
                 conditions.append(
-                    f"(job_type IN ('cancel_order', 'tracking', 'store_metrics') "
+                    f"(job_type IN ('cancel_order', 'tracking', 'store_metrics', 'purchase') "
                     f"{_owner_bypass}"
                     f"OR UPPER(site) IN ({placeholders}))"
                 )

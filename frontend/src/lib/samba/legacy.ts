@@ -2592,6 +2592,23 @@ export const storeCareApi = {
     ),
   recommendations: () =>
     request<MetricRecommendation[]>(`${SAMBA_PREFIX}/store-care/metrics/recommendations`),
+  // 가구매(셀프구매) — M1: SSG 장바구니 담기 (동기, 확장앱이 자동로그인+담기)
+  runPurchase: (data: {
+    market_type?: string
+    product_url: string
+    option?: string
+    quantity?: number
+    account_id?: string
+  }) =>
+    request<{
+      ok: boolean
+      request_id: string
+      result?: { success?: boolean; error?: string; cartCount?: number }
+      error?: string
+    }>(`${SAMBA_PREFIX}/store-care/purchase/run`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
 }
 
 export const snsApi = {

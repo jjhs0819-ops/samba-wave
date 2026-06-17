@@ -29,6 +29,7 @@ SUPPORTED_SOURCING_SITES = [
     {"id": "LOTTEON", "name": "롯데ON", "group": "오픈마켓"},
     {"id": "GSShop", "name": "GS샵", "group": "오픈마켓"},
     {"id": "SSG", "name": "SSG", "group": "오픈마켓"},
+    {"id": "11ST", "name": "11번가", "group": "오픈마켓"},
     {"id": "DANAWA", "name": "다나와", "group": "가격비교"},
     {"id": "NAVERSTORE", "name": "네이버스토어", "group": "오픈마켓"},
     {"id": "TheHyundai", "name": "더현대", "group": "백화점"},

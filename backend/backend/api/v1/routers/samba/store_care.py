@@ -148,6 +148,16 @@ class MetricsCollectRequest(BaseModel):
     markets: Optional[list] = None  # None이면 STORE_METRICS_URLS 전체 마켓
 
 
+class PurchaseRunRequest(BaseModel):
+    """가구매(셀프구매) 장바구니 담기 요청. M1=SSG 수동 1건."""
+
+    market_type: str = "ssg"  # M1=ssg. 향후 gsshop/11st 등 추가
+    product_url: str  # 쇼핑몰 상품 페이지 URL
+    option: Optional[str] = None  # 옵션값 (예: "270")
+    quantity: int = 1
+    account_id: Optional[str] = None  # 저장 소싱계정 id(자동로그인). 없으면 site 기본계정
+
+
 @router.get("/metrics")
 async def list_market_metrics(
     session: AsyncSession = Depends(get_read_session_dependency),
@@ -216,3 +226,49 @@ async def list_metric_recommendations(
     """
     svc = _svc(session)
     return await svc.list_recommendations(tenant_id=tenant_id)
+
+
+@router.post("/purchase/run")
+async def run_purchase(
+    request: Request,
+    body: PurchaseRunRequest,
+    tenant_id: str = Depends(get_current_tenant_id),
+):
+    """가구매(셀프구매) 장바구니 담기 트리거 (M1 — 수동 1건).
+
+    X-Device-Id(버튼 누른 PC)의 확장앱이 저장계정으로 자동로그인 후 상품페이지를 열어
+    옵션 선택 + 장바구니 담기. 결과는 동기로 반환(확장앱 → /proxy/sourcing/purchase-result).
+    결제(폰 QR)·일시품절 원복은 M3. (배치 다건은 추후 fire-and-forget + 폴링으로 전환)
+    """
+    import asyncio
+
+    from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+
+    trigger_device_id = (request.headers.get("X-Device-Id") or "").strip()
+    if not trigger_device_id:
+        raise HTTPException(400, "X-Device-Id 필요 — 확장앱이 설치된 PC에서 실행하세요")
+    if not body.product_url:
+        raise HTTPException(400, "product_url 필요")
+
+    request_id, future = await SourcingQueue.add_purchase_job(
+        body.market_type or "ssg",
+        owner_device_id=trigger_device_id,
+        product_url=body.product_url,
+        option=body.option or "",
+        quantity=body.quantity or 1,
+        sourcing_account_id=body.account_id or "",
+        tenant_id=tenant_id,
+    )
+    try:
+        result = await asyncio.wait_for(future, timeout=120)
+    except asyncio.TimeoutError:
+        return {
+            "ok": False,
+            "request_id": request_id,
+            "error": "시간 초과 — 확장앱이 처리하지 못했습니다 (확장앱 연결/로그인 확인)",
+        }
+    return {
+        "ok": bool(result.get("success")),
+        "request_id": request_id,
+        "result": result,
+    }

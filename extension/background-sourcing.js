@@ -504,6 +504,17 @@ async function _processJobWithCap(job) {
       _siteSemRelease(site)
     }
   }
+  // 가구매(셀프구매) 장바구니 담기 잡(type=purchase) — 적립금과 동일 격리/세마포어. 확장앱 전용.
+  if (job.type === 'purchase') {
+    await _siteSemAcquire(site)
+    _markSourcingSiteActive(site)
+    try {
+      return await handlePurchaseJob(job)
+    } finally {
+      _markSourcingSiteInactive(site)
+      _siteSemRelease(site)
+    }
+  }
   // 발주취소 잡(type=cancel_order) — 가격수집과 격리, 사이트 세마포어 사용.
   // 사이트별 cancel_js 분석·작성 전이라 현재는 '미지원' 회신만.
   // 실제 사이트 DOM 자동화는 content-cancel-{site}.js + 본 핸들러에서 라우팅 (분석 후 채움).
@@ -1159,6 +1170,94 @@ async function handleStoreMetricsJob(job) {
     try {
       await postResult('sourcing/store-metrics-result', {
         requestId, marketType, success: false, error: String(err?.message || err),
+      })
+    } catch {}
+  } finally {
+    if (tabId) {
+      try { await chrome.tabs.remove(tabId) } catch {}
+    }
+  }
+}
+
+
+// ==================== 가구매(셀프구매) 장바구니 담기 (purchase) ====================
+// SHOW PASS 이식. ①기존 자동로그인(ensureLoggedIn) 재사용 → ②쇼핑몰 상품탭 열기 →
+// ③content-purchase-{market}.js 주입 + 장바구니 메시지 → ④/purchase-result 콜백.
+// M1 = SSG 장바구니 1건 담기까지. 결제(폰 QR)·일시품절 원복(PlayAuto API)은 M3.
+// 수량/다건(N개 주문) 처리도 M2+ (M1은 1건 담기 검증).
+const _PURCHASE_AUTO_LOGIN = { ssg: 'ssg', gsshop: 'gs', '11st': '11st' } // marketType → 자동로그인 siteKey
+const _PURCHASE_CONTENT = {
+  ssg: 'content-purchase-ssg.js',
+  gsshop: 'content-purchase-gs.js', // ⚠️ 셀렉터 라이브 보정 필요(SHOW PASS도 TODO)
+  '11st': 'content-purchase-11st.js', // ⚠️ 셀렉터 추정 — 라이브 보정 필요(SHOW PASS 소스 없음)
+}
+
+async function handlePurchaseJob(job) {
+  const { requestId, marketType, productUrl, option, quantity, sourcingAccountId } = job
+  const mt = (marketType || '').toLowerCase()
+  console.log(`[가구매] 잡 수신 market=${mt} opt='${option}' x${quantity} req=${requestId}`)
+
+  const autoKey = _PURCHASE_AUTO_LOGIN[mt]
+  const contentFile = _PURCHASE_CONTENT[mt]
+  if (!autoKey || !contentFile) {
+    await postResult('sourcing/purchase-result', {
+      requestId, marketType: mt, productUrl, option,
+      success: false, error: `미지원 가구매 마켓: ${mt}`,
+    })
+    return
+  }
+
+  // ① 자동로그인 — 저장계정으로 (accountId 명시 → 오토튠 게이트 우회). 기존 엔진 재사용.
+  if (sourcingAccountId && typeof globalThis.ensureLoggedIn === 'function') {
+    try {
+      const ok = await globalThis.ensureLoggedIn(autoKey, { accountId: sourcingAccountId })
+      if (!ok) {
+        const err = globalThis._lastEnsureLoginError
+        await postResult('sourcing/purchase-result', {
+          requestId, marketType: mt, productUrl, option, success: false,
+          error: `자동로그인 실패: ${(err && err.message) || '로그인 안 됨 (계정/비번 확인)'}`,
+        })
+        return
+      }
+    } catch (e) {
+      // 로그인 호출 예외는 무시하고 진행 — 이미 로그인된 세션일 수 있음
+      console.warn(`[가구매] ensureLoggedIn 예외(무시): ${e?.message || e}`)
+    }
+  }
+
+  // ② 상품 페이지 열기 + ③ 옵션선택·장바구니 담기
+  let tabId = null
+  try {
+    if (!productUrl) throw new Error('product_url 누락')
+    const tab = await chrome.tabs.create({ url: productUrl, active: true })
+    tabId = tab.id
+    try { await waitForTabLoad(tabId, 25000) } catch {}
+    await new Promise((r) => setTimeout(r, 2000)) // 상품 옵션 렌더 대기
+
+    try {
+      await chrome.scripting.executeScript({ target: { tabId }, files: [contentFile] })
+    } catch (e) {
+      throw new Error(`content script 주입 실패: ${e?.message || e}`)
+    }
+
+    const result = await chrome.tabs
+      .sendMessage(tabId, { action: 'samba_purchase_addToCart', option: option || '' })
+      .catch((e) => ({ success: false, error: e?.message || String(e) }))
+
+    await postResult('sourcing/purchase-result', {
+      requestId, marketType: mt, productUrl, option,
+      success: !!(result && result.success),
+      cartCount: result && result.success ? 1 : 0, // M1=1건. 수량처리는 M2+
+      stage: 'cart',
+      error: (result && result.error) || '',
+    })
+    console.log(`[가구매] 결과 전송 success=${result && result.success}`)
+  } catch (err) {
+    console.warn(`[가구매] 처리 실패 req=${requestId}:`, err)
+    try {
+      await postResult('sourcing/purchase-result', {
+        requestId, marketType: mt, productUrl, option,
+        success: false, error: String(err?.message || err),
       })
     } catch {}
   } finally {

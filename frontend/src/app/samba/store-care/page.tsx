@@ -2,10 +2,16 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { accountApi, type SambaMarketAccount } from '@/lib/samba/api/commerce'
-import { storeCareApi, type StoreCareSchedule, type StoreCarePurchase, type StoreCareMarketMetric, type MetricRecommendation } from '@/lib/samba/api/operations'
+import { storeCareApi, sourcingAccountApi, type StoreCareSchedule, type StoreCarePurchase, type StoreCareMarketMetric, type MetricRecommendation, type SambaSourcingAccount } from '@/lib/samba/api/operations'
 import { card as baseCard, fmtNum } from '@/lib/samba/styles'
 
 const card = { ...baseCard, padding: '20px' }
+
+const inputStyle = {
+  padding: '8px 10px', fontSize: '0.82rem', background: '#1A1A1A',
+  border: '1px solid #3D3D3D', borderRadius: '6px', color: '#E5E5E5',
+  width: '100%', boxSizing: 'border-box' as const,
+}
 
 const MARKET_COLORS: Record<string, string> = {
   smartstore: '#03C75A', coupang: '#E6282B', '11st': '#FF0038',
@@ -33,6 +39,8 @@ function getStatusBadge(status: string) {
 }
 
 const MARKET_NAME: Record<string, string> = { '11st': '11번가', ssg: 'SSG', gsshop: 'GS샵' }
+// 가구매 마켓 → SambaSourcingAccount.site_name (자동로그인 계정 필터용)
+const PURCHASE_SITE_NAME: Record<string, string> = { ssg: 'SSG', gsshop: 'GSShop', '11st': '11ST' }
 
 // 부족분 계산 (백엔드 recommend_purchase_qty 와 동일 공식) — 수동 N 입력용
 function deficitQty(target: { metric: string; value: number }, current: number | null, n: number | null): number | null {
@@ -63,9 +71,14 @@ export default function StoreCare() {
   const [recs, setRecs] = useState<MetricRecommendation[]>([])
   const [nInput, setNInput] = useState<Record<string, string>>({})
   const [stats, setStats] = useState({ total: 0, success: 0, failed: 0, total_amount: 0 })
-  const [tab, setTab] = useState<'overview' | 'schedule' | 'history' | 'metrics'>('metrics')
+  const [tab, setTab] = useState<'overview' | 'schedule' | 'history' | 'metrics' | 'purchase'>('metrics')
   const [collecting, setCollecting] = useState(false)
   const [loading, setLoading] = useState(true)
+  // 가구매(M1 — SSG 수동 1건)
+  const [purchaseAccounts, setPurchaseAccounts] = useState<SambaSourcingAccount[]>([])
+  const [purchaseForm, setPurchaseForm] = useState({ market: 'ssg', account_id: '', product_url: '', option: '', quantity: 1 })
+  const [purchaseResult, setPurchaseResult] = useState('')
+  const [purchaseRunning, setPurchaseRunning] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -105,6 +118,34 @@ export default function StoreCare() {
     }
   }, [])
 
+  // 가구매 — SSG 소싱계정(자동로그인용) 로드
+  useEffect(() => {
+    sourcingAccountApi.list()
+      .then(accs => setPurchaseAccounts(accs.filter(a => ['SSG', 'GSShop', '11ST'].includes(a.site_name) && a.is_active)))
+      .catch(() => {})
+  }, [])
+
+  const runPurchase = useCallback(async () => {
+    if (!purchaseForm.product_url.trim()) { setPurchaseResult('상품 URL을 입력하세요.'); return }
+    setPurchaseRunning(true)
+    setPurchaseResult('실행 중… (자동로그인 + 장바구니 담기, 최대 2분)')
+    try {
+      const r = await storeCareApi.runPurchase({
+        market_type: purchaseForm.market,
+        product_url: purchaseForm.product_url.trim(),
+        option: purchaseForm.option.trim() || undefined,
+        quantity: purchaseForm.quantity || 1,
+        account_id: purchaseForm.account_id || undefined,
+      })
+      if (r.ok) setPurchaseResult('✅ 장바구니 담기 완료!')
+      else setPurchaseResult(`❌ 실패: ${r.result?.error || r.error || '알 수 없음'}`)
+    } catch (e) {
+      setPurchaseResult(`❌ 오류: ${(e as Error).message}`)
+    } finally {
+      setPurchaseRunning(false)
+    }
+  }, [purchaseForm])
+
   // KPI
   const todayTotal = stats.total_amount
   const todaySuccess = stats.success
@@ -132,14 +173,14 @@ export default function StoreCare() {
           <p style={{ fontSize: '0.78rem', color: '#8A95B0', marginTop: '4px' }}>마켓 점수 관리 · 자동 가구매 · 모니터링</p>
         </div>
         <div style={{ display: 'flex', gap: '6px' }}>
-          {(['overview', 'schedule', 'history', 'metrics'] as const).map(t => (
+          {(['overview', 'schedule', 'history', 'metrics', 'purchase'] as const).map(t => (
             <button key={t} onClick={() => setTab(t)} style={{
               padding: '6px 14px', fontSize: '0.78rem', borderRadius: '6px', cursor: 'pointer', fontWeight: 600,
               background: tab === t ? '#FF8C00' : 'rgba(255,255,255,0.05)',
               color: tab === t ? '#000' : '#8A95B0',
               border: tab === t ? 'none' : '1px solid #2D2D2D',
             }}>
-              {{ overview: '종합현황', schedule: '스케줄 관리', history: '구매 이력', metrics: '마켓점수' }[t]}
+              {{ overview: '종합현황', schedule: '스케줄 관리', history: '구매 이력', metrics: '마켓점수', purchase: '가구매' }[t]}
             </button>
           ))}
         </div>
@@ -453,6 +494,70 @@ export default function StoreCare() {
                   ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* 가구매 탭 (M1 — SSG 수동 1건 장바구니 담기) */}
+          {tab === 'purchase' && (
+            <div style={card}>
+              <div style={{ marginBottom: '16px' }}>
+                <h3 style={{ fontSize: '0.9rem', fontWeight: 600, color: '#E5E5E5', margin: 0 }}>가구매 (셀프구매)</h3>
+                <p style={{ fontSize: '0.72rem', color: '#8A95B0', marginTop: '4px' }}>
+                  저장된 계정으로 자동로그인 → 옵션 선택 → 장바구니 담기. 결제(폰 QR)·일시품절 원복은 다음 단계. (확장앱 설치된 PC에서 실행)
+                </p>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '560px' }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <span style={{ fontSize: '0.72rem', color: '#8A95B0' }}>마켓</span>
+                  <select value={purchaseForm.market} onChange={e => setPurchaseForm(f => ({ ...f, market: e.target.value, account_id: '' }))} style={inputStyle}>
+                    <option value="ssg">SSG</option>
+                    <option value="gsshop">GS샵 (셀렉터 라이브보정)</option>
+                    <option value="11st">11번가 (셀렉터 라이브보정)</option>
+                  </select>
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <span style={{ fontSize: '0.72rem', color: '#8A95B0' }}>{MARKET_NAME[purchaseForm.market] || purchaseForm.market} 계정 (자동로그인)</span>
+                  <select value={purchaseForm.account_id} onChange={e => setPurchaseForm(f => ({ ...f, account_id: e.target.value }))} style={inputStyle}>
+                    <option value="">기본 계정 (사이트 기본 로그인 계정)</option>
+                    {purchaseAccounts.filter(a => a.site_name === PURCHASE_SITE_NAME[purchaseForm.market]).map(a => (
+                      <option key={a.id} value={a.id}>{a.account_label} ({a.username})</option>
+                    ))}
+                  </select>
+                  {purchaseAccounts.filter(a => a.site_name === PURCHASE_SITE_NAME[purchaseForm.market]).length === 0 && (
+                    <span style={{ fontSize: '0.66rem', color: '#FF8C00' }}>저장된 {MARKET_NAME[purchaseForm.market] || purchaseForm.market} 계정 없음 → 설정 &gt; 소싱계정 관리에서 추가</span>
+                  )}
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <span style={{ fontSize: '0.72rem', color: '#8A95B0' }}>상품 URL ({MARKET_NAME[purchaseForm.market] || purchaseForm.market})</span>
+                  <input type="text" placeholder="https://www.ssg.com/item/itemView.ssg?itemId=..." value={purchaseForm.product_url} onChange={e => setPurchaseForm(f => ({ ...f, product_url: e.target.value }))} style={inputStyle} />
+                </label>
+                <div style={{ display: 'flex', gap: '12px' }}>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 2 }}>
+                    <span style={{ fontSize: '0.72rem', color: '#8A95B0' }}>옵션 (선택)</span>
+                    <input type="text" placeholder="예: 270" value={purchaseForm.option} onChange={e => setPurchaseForm(f => ({ ...f, option: e.target.value }))} style={inputStyle} />
+                  </label>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
+                    <span style={{ fontSize: '0.72rem', color: '#8A95B0' }}>수량</span>
+                    <input type="number" min={1} value={purchaseForm.quantity} onChange={e => setPurchaseForm(f => ({ ...f, quantity: Math.max(1, Number(e.target.value) || 1) }))} style={inputStyle} />
+                  </label>
+                </div>
+                <button onClick={runPurchase} disabled={purchaseRunning} style={{
+                  marginTop: '4px', padding: '10px', fontSize: '0.85rem', borderRadius: '8px', fontWeight: 700,
+                  cursor: purchaseRunning ? 'default' : 'pointer',
+                  background: purchaseRunning ? 'rgba(255,255,255,0.08)' : '#FF8C00',
+                  color: purchaseRunning ? '#8A95B0' : '#000', border: 'none',
+                }}>
+                  {purchaseRunning ? '실행 중…' : '지금 실행 (장바구니 담기)'}
+                </button>
+                {purchaseResult && (
+                  <div style={{ padding: '12px', borderRadius: '8px', fontSize: '0.8rem', background: 'rgba(255,255,255,0.03)', border: '1px solid #2D2D2D', color: '#E5E5E5', whiteSpace: 'pre-wrap' }}>
+                    {purchaseResult}
+                  </div>
+                )}
+              </div>
+              <div style={{ fontSize: '0.66rem', color: '#666', marginTop: '14px' }}>
+                M1: SSG 장바구니 담기 검증 단계. 수량/다건·결제·일시품절 원복은 다음 단계에서 추가돼요.
+              </div>
             </div>
           )}
         </>
