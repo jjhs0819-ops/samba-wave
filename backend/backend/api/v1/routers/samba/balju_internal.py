@@ -148,7 +148,12 @@ async def lookup(
         res = await session.execute(stmt, {"keys": all_keys})
         for m in res.mappings():
             d = dict(m)
-            for k in (d["order_number"], d["od_no"], d["ext_order_number"]):
+            for k in (
+                d["order_number"],
+                d["od_no"],
+                d["ext_order_number"],
+                d["shipment_id"],
+            ):
                 if k:
                     matched_by_key.setdefault(str(k), []).append(d)
 
