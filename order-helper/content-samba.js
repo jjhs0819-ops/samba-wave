@@ -164,16 +164,29 @@
   // 무신사 결제완료 → background → 삼바 탭. 해당 주문 행에 소싱주문번호/실구매가/
   // 상태(배송대기중)/메모(장재훈) 입력. (삼바가 자체 인증으로 저장)
   const qa2 = (s, r = document) => Array.from((r || document).querySelectorAll(s));
-  function setReact(el, val) {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // 삼바 표(React 19 / Next 15)에 값 입력 + '저장'까지 트리거.
+  //  - input/change → React onChange (텍스트칸: editingCosts/editingNotes 등 편집상태 갱신,
+  //    드롭다운: onChange 에서 orderApi.update 로 즉시 저장)
+  //  - (대기) 리렌더로 편집상태가 commit 되도록 → onBlur 저장 핸들러가 최신값을 읽음
+  //  - focusout(+native blur) → React onBlur → orderApi.update 호출(서버 저장)
+  //    ※ React 17+/19 는 onBlur 를 'blur' 가 아니라 'focusout' 으로 수신한다.
+  //      과거엔 가짜 'blur' 만 쏴서, 화면엔 채워져도 서버 저장이 안 돼
+  //      새로고침하면 소싱주문번호/실구매가/간단메모가 사라졌다.
+  async function setReact(el, val) {
     if (!el) return;
     const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype
       : el.tagName === 'SELECT' ? window.HTMLSelectElement.prototype : window.HTMLInputElement.prototype;
+    try { el.focus(); } catch (e) { /* noop */ }
     Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, val);
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
-    if (el.tagName !== 'SELECT') el.dispatchEvent(new Event('blur', { bubbles: true }));
+    if (el.tagName === 'SELECT') { await sleep(150); return; } // 드롭다운은 onChange 로 이미 저장
+    await sleep(90);  // onChange 가 편집상태에 반영(리렌더)될 시간 → onBlur 가 최신값을 읽음
+    el.dispatchEvent(new FocusEvent('focusout', { bubbles: true })); // React onBlur 트리거
+    try { el.blur(); } catch (e) { /* noop */ }
+    await sleep(160); // orderApi.update(async) 저장 완료 대기
   }
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   async function applyWriteback(wb) {
     if (!wb || !wb.marketNo) return;
@@ -193,21 +206,21 @@
       if (acct) {
         const opt = qa2('optgroup[label="MUSINSA"] option', acct)[0]
           || qa2('option', acct).find((o) => o.value && o.value !== 'etc' && o.textContent.trim() !== '주문계정');
-        if (opt) { setReact(acct, opt.value); await sleep(800); }
+        if (opt) { await setReact(acct, opt.value); await sleep(500); } // 저장+리렌더로 입력칸 활성화 대기
       }
     }
     // 주문상태 → 배송대기중(wait_ship)
     const statusSel = qa2('select', tr).find((s) => qa2('option', s).some((o) => o.value === 'wait_ship'));
-    if (statusSel) setReact(statusSel, 'wait_ship');
-    // 소싱주문번호
+    if (statusSel) await setReact(statusSel, 'wait_ship');
+    // 소싱주문번호 (재조회 — 위 저장으로 리렌더되었을 수 있음)
     srcInput = tr.querySelector('input[placeholder*="소싱주문번호"]');
-    if (srcInput && !srcInput.disabled && wb.sourcingNo) setReact(srcInput, String(wb.sourcingNo));
+    if (srcInput && !srcInput.disabled && wb.sourcingNo) await setReact(srcInput, String(wb.sourcingNo));
     // 실구매가
     const cost = tr.querySelector('input[placeholder*="실구매가"]');
-    if (cost && wb.amount) setReact(cost, String(wb.amount));
+    if (cost && wb.amount) await setReact(cost, String(wb.amount));
     // 간단메모 = 장재훈
     const notes = tr.querySelector('textarea[placeholder="간단메모"]');
-    if (notes) setReact(notes, '장재훈');
+    if (notes) await setReact(notes, '장재훈');
 
     toast(`✅ 기입 완료: 주문번호 ${wb.sourcingNo} / ${Number(wb.amount).toLocaleString()}원 / 배송대기중 / 메모 장재훈`, '#2b8a3e');
     chrome.storage.local.remove('pendingWriteback');
