@@ -186,6 +186,8 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
 
         # 4) 상품 DB 최신화 — 신뢰 가능한 결과만 핵심필드 반영 (거대 모니터/재전송 로직은 제외)
         now = datetime.now(timezone.utc)
+        # 역마진 감지된 상품 ID 수집 → 오토튠 우선 처리용
+        no_price_product_ids: set[str] = set()
         for r in results:
             prod = product_map.get(r.product_id)
             if not prod:
@@ -203,7 +205,25 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
                 prod.sale_status = r.new_sale_status  # type: ignore[assignment]
             if r.changed and r.new_sale_price is not None:
                 prod.sale_price = r.new_sale_price  # type: ignore[assignment]
-            prod.last_refreshed_at = now  # type: ignore[assignment]
+            # last_refreshed_at: 역마진/재고없음 감지 상품은 오토튠이 다음 사이클에서
+            # 최우선 처리하도록 2일 과거로 설정. 정상 상품만 now로 기록.
+            prod.last_refreshed_at = now  # type: ignore[assignment]  # 5)에서 no_price 확인 후 재설정
+            # 가격이력 스냅샷 추가 (UI 가격/재고 이력에 표시되도록)
+            _snapshot = {
+                "date": now.isoformat(),
+                "source": "order-issue-check",
+                "sale_price": r.new_sale_price
+                if r.new_sale_price is not None
+                else getattr(prod, "sale_price", None),
+                "cost": r.new_cost
+                if r.new_cost is not None
+                else getattr(prod, "cost", None),
+                "sale_status": r.new_sale_status,
+                "changed": r.changed,
+            }
+            _history = list(getattr(prod, "price_history", None) or [])
+            _history.insert(0, _snapshot)
+            prod.price_history = _history[:200]  # type: ignore[assignment]
             session.add(prod)
 
         # 5) 주문별 판정 + 태깅 + 메모
@@ -259,6 +279,9 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
                         )
                         changed = True
                         summary["no_price"] += 1
+                        pid = o.collected_product_id
+                        if pid:
+                            no_price_product_ids.add(pid)
 
             # 재고없음(재고X): 상품 전체 품절 또는 주문 옵션 품절
             if "no_stock" not in tag_set:
@@ -277,11 +300,29 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
                     )
                     changed = True
                     summary["no_stock"] += 1
+                    pid = o.collected_product_id
+                    if pid:
+                        no_price_product_ids.add(pid)
 
             if changed:
                 o.action_tag = ",".join(sorted(tag_set))
                 o.notes = new_notes
                 session.add(o)
+
+        # 6) 역마진/재고없음 감지 상품 → last_refreshed_at 2일 과거로 재설정
+        #    오토튠이 ORDER BY last_refreshed_at ASC 로 처리하므로, 과거로 설정하면
+        #    다음 사이클에서 최우선 처리 → 마켓 판매가 즉시 재계산·전송
+        if no_price_product_ids:
+            _past = now - timedelta(days=2)
+            for _pid in no_price_product_ids:
+                _p = product_map.get(_pid)
+                if _p:
+                    _p.last_refreshed_at = _past  # type: ignore[assignment]
+                    session.add(_p)
+            logger.info(
+                "[주문이슈체크] 역마진/재고없음 상품 %d개 → 오토튠 우선 처리 예약",
+                len(no_price_product_ids),
+            )
 
         await session.commit()
 

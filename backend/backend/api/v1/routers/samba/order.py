@@ -8262,6 +8262,16 @@ async def sync_orders_from_markets(
                             update_fields["total_payment_amount"] = float(
                                 new_total_paid
                             )
+                    # 결제금액 1,000원 이하인 기존 주문이 아직 pending 이면 배송완료로 전환
+                    if existing.status == "pending":
+                        _ex_pamt = float(
+                            update_fields.get("total_payment_amount")
+                            or existing.total_payment_amount
+                            or order_data.get("sale_price")
+                            or 0
+                        )
+                        if 0 < _ex_pamt <= 1000:
+                            update_fields["status"] = "delivered"
                     if order_data.get("product_image") and not existing.product_image:
                         update_fields["product_image"] = order_data["product_image"]
                     # 상품명/옵션명이 빈 경우 새 데이터로 복구
@@ -9657,7 +9667,14 @@ def _normalize_synced_order_status(order_data: dict[str, Any]) -> None:
     # update 경로가 관리하므로 여기서 pending 으로 떨어뜨려도 무방.
     if order_data.get("source") == "lottehome" and cur_status in preserved:
         return
-    order_data["status"] = "pending"
+    # 결제금액 1,000원 이하 주문은 수집 즉시 배송완료 처리 (서비스 비용·증정 등)
+    _pamt = float(
+        order_data.get("total_payment_amount") or order_data.get("sale_price") or 0
+    )
+    if 0 < _pamt <= 1000:
+        order_data["status"] = "delivered"
+    else:
+        order_data["status"] = "pending"
 
 
 def _can_override_source_site_from_sourcing(order_data: dict[str, Any]) -> bool:

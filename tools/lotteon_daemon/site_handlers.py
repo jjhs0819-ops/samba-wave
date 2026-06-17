@@ -341,9 +341,25 @@ _SSG_EXTRACT_JS = r"""
       uitemOptions,
       // 카테고리 브레드크럼(#431) — resultItemObj 에 존재. 데몬이 추출해 회신하면
       // 백엔드 daemon_detail_fallback passthrough → worker dispCtg 매핑 동작(기타 분류 방지).
-      dispCtgLclsNm: obj.dispCtgLclsNm || '',
-      dispCtgMclsNm: obj.dispCtgMclsNm || '',
-      dispCtgSclsNm: obj.dispCtgSclsNm || '',
+      // resultItemObj에 dispCtgLclsNm 없는 케이스 — 백엔드 ssg_sourcing.py 동일 패턴으로 DOM 폴백.
+      ...(() => {
+        let lcls = obj.dispCtgLclsNm || '', mcls = obj.dispCtgMclsNm || '', scls = obj.dispCtgSclsNm || ''
+        if (!lcls) {
+          try {
+            const lvs = ['대카테고리', '중카테고리', '소카테고리']
+            const parts = []
+            for (const lv of lvs) {
+              const el = document.querySelector('[data-react-tarea*="카테고리 로케이션|' + lv + '"]')
+              if (el) parts.push(el.textContent.trim())
+              else break
+            }
+            if (parts[0]) lcls = parts[0]
+            if (parts[1]) mcls = parts[1]
+            if (parts[2]) scls = parts[2]
+          } catch (_) {}
+        }
+        return { dispCtgLclsNm: lcls, dispCtgMclsNm: mcls, dispCtgSclsNm: scls }
+      })(),
       dispCtgDclsNm: obj.dispCtgDclsNm || '',
       dispCtgId: (obj.dispCtgId || '').toString(),
       dispCtgNm: obj.dispCtgNm || '',

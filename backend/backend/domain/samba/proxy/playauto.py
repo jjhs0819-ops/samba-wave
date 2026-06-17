@@ -461,7 +461,7 @@ class PlayAutoClient:
         # 기본 정보
         data: dict[str, Any] = {
             "MasterCode": "__AUTO__",
-            "ProdName": _truncate_to_bytes(str(product.get("name", "")), 100),
+            "ProdName": str(product.get("name", "")),
             "Price": str(int(product.get("sale_price", 0))),
             "Count": str(stock_qty),
             "MadeIn": _normalize_origin(product.get("origin")),
