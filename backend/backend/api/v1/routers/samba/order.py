@@ -10698,9 +10698,9 @@ async def _verify_kakao_secret(
 async def ship_by_kakao(
     body: ShipByKakaoRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
-    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     """카톡 알림(이름+품번+송장)으로 주문을 찾아 송장입력 + 마켓전송."""
+    tenant_id = (body.tenant_id or "").strip()
     name = (body.customer_name or "").strip()
     code = (body.product_code or "").strip().upper()
     inv = (body.tracking_number or "").strip()
