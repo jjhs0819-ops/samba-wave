@@ -7,8 +7,29 @@ from typing import Any, Dict, List, Optional
 _KST = timezone(timedelta(hours=9))
 
 from backend.domain.samba.channel.repository import SambaChannelRepository
+from backend.domain.samba.order.model import EXCLUDED_ORDER_STATUSES
 from backend.domain.samba.order.repository import SambaOrderRepository
 from backend.domain.samba.product.repository import SambaProductRepository
+
+
+def _counts_as_sale(order) -> bool:
+    """매출 집계 대상인지 판단. 취소/반품/교환 주문은 제외한다.
+    status enum(EXCLUDED_ORDER_STATUSES) 우선, enum 미동기화 대비로
+    마켓 원본 한글 shipping_status 키워드도 함께 검사.
+    """
+    if (order.status or "").strip().lower() in EXCLUDED_ORDER_STATUSES:
+        return False
+    ship = order.shipping_status or ""
+    if "취소" in ship or "반품" in ship or "교환" in ship:
+        return False
+    return True
+
+
+def _to_kst(dt: datetime) -> datetime:
+    """naive 면 KST 로 간주, aware 면 KST 로 변환."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=_KST)
+    return dt.astimezone(_KST)
 
 
 class SambaAnalyticsService:
@@ -37,8 +58,8 @@ class SambaAnalyticsService:
     # ==================== Today ====================
 
     async def get_today_stats(self, tenant_id: Optional[str] = None) -> Dict[str, Any]:
-        """오늘 기준 매출/주문/수익 통계."""
-        now = datetime.now(UTC)
+        """오늘(KST) 기준 매출/주문/수익 통계."""
+        now = datetime.now(_KST)
         start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
         return await self._compute_stats_for_period(
             start_of_day, now, tenant_id=tenant_id
@@ -459,12 +480,26 @@ class SambaAnalyticsService:
     async def _compute_stats_for_period(
         self, start: datetime, end: datetime, tenant_id: Optional[str] = None
     ) -> Dict[str, Any]:
-        """기간 내 주문으로 통계 계산."""
+        """기간 내 '실제 결제' 주문으로 매출/이익 통계 계산.
+
+        - 날짜 기준: paid_at(실제 결제 시각). 미결제(paid_at=None)는 매출 아님 → 제외.
+        - 시간대: start/end 가 naive 면 KST 로 간주. paid_at 은 KST 로 변환 후 비교.
+        - 취소/반품/교환 주문은 매출·이익에서 제외(_counts_as_sale).
+        """
         all_orders = self._filter_by_tenant(
             await self.order_repo.list_async(), tenant_id
         )
 
-        filtered = [o for o in all_orders if start <= o.created_at <= end]
+        start_kst = _to_kst(start)
+        end_kst = _to_kst(end)
+
+        filtered = [
+            o
+            for o in all_orders
+            if o.paid_at is not None
+            and _counts_as_sale(o)
+            and start_kst <= _to_kst(o.paid_at) <= end_kst
+        ]
 
         total_sales = sum(o.sale_price * o.quantity for o in filtered)
         total_profit = sum(o.profit for o in filtered)
