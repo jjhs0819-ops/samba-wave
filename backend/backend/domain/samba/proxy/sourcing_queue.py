@@ -921,7 +921,9 @@ class SourcingQueue:
                 # 확장앱 전담. 데몬은 가격수집(detail/search/reward)만. owner='' 송장 잡을
                 # 데몬이 먼저 가로채지 못하게 dequeue 단에서 tracking 전체 차단.
                 # store_metrics(파트너포털 점수수집)도 데몬 차단 — 확장앱 로그인 세션 전용.
-                conditions.append("job_type NOT IN ('tracking', 'store_metrics', 'purchase')")
+                conditions.append(
+                    "job_type NOT IN ('tracking', 'store_metrics', 'purchase')"
+                )
 
             # site 필터 — 케이싱 무관 매칭.
             # detail 잡 site='ABCmart'(혼합)인데 tracking 잡 site='ABCMART'(대문자)라

@@ -1,6 +1,7 @@
 """소싱 관련 엔드포인트 (sourcing_queue_router 포함)."""
 
 import asyncio
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
@@ -12,6 +13,8 @@ from backend.core.rate_limit import RATE_SET_COOKIE, limiter
 from backend.db.orm import get_write_session_dependency
 
 from ._helpers import _set_setting
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["samba-proxy"])
 
@@ -242,7 +245,11 @@ async def sourcing_collect_queue(request: Request) -> Any:
 # ====================================================================
 
 # build/release 시 갱신. 데몬이 시작 시 비교하여 신버전이면 자기 종료(다음 시작 시 갱신).
-AUTOTUNE_DAEMON_LATEST_VERSION = "1.4.38"
+# ⚠️ 반드시 GitHub 릴리스에 samba-v{ver}.exe 가 실제 업로드된 버전만 적을 것.
+# 51f3eefb 가 1.4.38 로 올렸으나 v1.4.38 릴리스/exe 미업로드 → 전 데몬이 404 받고
+# self-update 자살 루프(60초마다 rc=10 재시작) = "데몬 자꾸 죽음" 사고(2026-06-17).
+# 릴리스된 최신(1.4.37)로 되돌림. 1.4.38 데몬개선 필요 시 exe 빌드·업로드 후 재상향.
+AUTOTUNE_DAEMON_LATEST_VERSION = "1.4.37"
 # asset 명에 버전 박힘 (`samba-v{ver}.exe`) — 지침: 데몬 설치파일명 버전 노출 필수.
 AUTOTUNE_DAEMON_DOWNLOAD_URL = (
     f"https://github.com/sbk0674-web/samba-wave/releases/download/"
@@ -267,6 +274,33 @@ async def autotune_daemon_latest_version() -> dict[str, Any]:
         "version": AUTOTUNE_DAEMON_LATEST_VERSION,
         "download_url": AUTOTUNE_DAEMON_DOWNLOAD_URL,
     }
+
+
+@sourcing_queue_router.post("/autotune-daemon/crash-report")
+async def autotune_daemon_crash_report(body: dict[str, Any]) -> dict[str, Any]:
+    """데몬 supervisor가 worker 비정상 종료 시 호출 — 원격 PC 크래시 진단용.
+
+    인증 불필요(데몬 long-lived key 가용 시 헤더로 옴). 로그 마지막 줄(크래시
+    트레이스백 포함)을 서버 로그에 WARNING으로 남겨 docker logs 로 원격 분석 가능.
+    body = {deviceId, version, rc, hung, durationSec, logTail}.
+    """
+    _dev = str(body.get("deviceId") or "?")[:64]
+    _ver = str(body.get("version") or "?")[:20]
+    _rc = body.get("rc")
+    _hung = bool(body.get("hung"))
+    _dur = body.get("durationSec")
+    _tail = str(body.get("logTail") or "")[-8000:]
+    logger.warning(
+        "[데몬크래시] device=%s v=%s rc=%s hung=%s duration=%ss\n"
+        "--- 데몬 로그 tail ---\n%s\n--- /데몬 로그 tail ---",
+        _dev,
+        _ver,
+        _rc,
+        _hung,
+        _dur,
+        _tail,
+    )
+    return {"ok": True}
 
 
 # 확장앱 자가 업데이트 버전 fallback.

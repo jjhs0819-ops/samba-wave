@@ -78,7 +78,7 @@ except ImportError:
 # ====================================================================
 # 데몬 버전 — build.ps1 가 갱신. 자동 업데이트 비교 기준.
 # ====================================================================
-DAEMON_VERSION = "1.4.38"
+DAEMON_VERSION = "1.4.39"
 
 
 # ── 가격수집 도메인 화이트리스트 ───────────────────────────────────────────
@@ -3317,6 +3317,11 @@ def _setup_logging() -> None:
     formatter = logging.Formatter(fmt)
     root = logging.getLogger()
     root.setLevel(logging.INFO)
+    # 로그 폭증 억제 — httpx/httpcore 가 폴링(latest-version/next-job)마다 INFO로
+    # "HTTP Request: GET ... 200 OK" 를 찍어 로그파일이 수MB로 불어나 열기조차 어려움.
+    # 이 시끄러운 라이브러리 로거만 WARNING으로 낮춰 핵심 데몬 INFO는 유지.
+    for _noisy in ("httpx", "httpcore", "websockets", "asyncio", "PIL", "urllib3"):
+        logging.getLogger(_noisy).setLevel(logging.WARNING)
     # 기존 핸들러 제거 — basicConfig 중복 방지
     for h in list(root.handlers):
         root.removeHandler(h)
@@ -3618,6 +3623,59 @@ def _kill_other_daemon_instances() -> None:
         logger_print(f"중복 인스턴스 정리 실패(무시): {exc}")
 
 
+def _resolve_backend_url() -> str:
+    """sys.argv 의 --backend-url 또는 기본 백엔드 URL."""
+    for _i, _a in enumerate(sys.argv):
+        if _a == "--backend-url" and _i + 1 < len(sys.argv):
+            return sys.argv[_i + 1].rstrip("/")
+        if _a.startswith("--backend-url="):
+            return _a.split("=", 1)[1].rstrip("/")
+    return "https://api.samba-wave.co.kr"
+
+
+def _report_worker_crash(rc: int, duration: float, hung: bool = False) -> None:
+    """worker 비정상 종료를 백엔드에 보고 — 원격 PC 데몬 크래시 진단용.
+
+    데몬이 다른 PC에서 돌아 콘솔 로그를 직접 못 볼 때, 죽는 순간의 로그
+    마지막 줄(크래시 트레이스백 포함)을 서버로 보내 원격 진단한다. 실패는 무시.
+    """
+    try:
+        backend = _resolve_backend_url()
+        tail = ""
+        try:
+            with open(
+                str(_log_file_path()), "r", encoding="utf-8", errors="replace"
+            ) as _f:
+                tail = "".join(_f.readlines()[-80:])[-8000:]
+        except Exception:
+            pass
+        key = ""
+        try:
+            _kp = _install_dir() / "api_key.txt"
+            if _kp.is_file():
+                key = _kp.read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
+        payload = {
+            "deviceId": _default_device_id(),
+            "version": DAEMON_VERSION,
+            "rc": rc,
+            "hung": bool(hung),
+            "durationSec": round(duration, 1),
+            "logTail": tail,
+        }
+        headers = {"X-Api-Key": key} if key else {}
+        httpx.post(
+            f"{backend}/api/v1/samba/proxy/autotune-daemon/crash-report",
+            json=payload,
+            headers=headers,
+            timeout=10,
+        )
+        logger_print("supervisor: worker 크래시 서버 보고 완료")
+    except Exception as _exc:
+        logger_print(f"supervisor: 크래시 보고 실패(무시): {_exc}")
+
+
 def _supervisor_loop() -> int:
     """parent supervisor — 자기 자신을 --worker 모드로 spawn + 죽으면 backoff 재시작.
 
@@ -3705,6 +3763,7 @@ def _supervisor_loop() -> int:
                 logger_print(
                     f"supervisor: worker {_watchdog}s 무응답(hung 의심) — 강제 kill 후 재시작"
                 )
+                _report_worker_crash(-9, time.time() - start_ts, hung=True)
                 try:
                     child.kill()
                 except Exception:
@@ -3741,6 +3800,9 @@ def _supervisor_loop() -> int:
                 logger_print("supervisor: 자동 업데이트 위임 완료 — 종료")
                 return 0
             logger_print("supervisor: 자동 업데이트 실패 — 구버전으로 계속")
+        elif rc != 0:
+            # 비정상 종료(크래시/예외) — 업데이트(rc=10)·정상(rc=0) 제외. 서버 보고.
+            _report_worker_crash(rc, duration)
         if duration >= HEALTHY_SECS:
             backoff = 5  # 정상 가동했으니 backoff 리셋
         else:

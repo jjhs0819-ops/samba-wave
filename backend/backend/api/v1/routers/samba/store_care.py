@@ -155,7 +155,9 @@ class PurchaseRunRequest(BaseModel):
     product_url: str  # 쇼핑몰 상품 페이지 URL
     option: Optional[str] = None  # 옵션값 (예: "270")
     quantity: int = 1
-    account_id: Optional[str] = None  # 저장 소싱계정 id(자동로그인). 없으면 site 기본계정
+    account_id: Optional[str] = (
+        None  # 저장 소싱계정 id(자동로그인). 없으면 site 기본계정
+    )
 
 
 @router.get("/metrics")
