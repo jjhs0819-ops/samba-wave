@@ -886,8 +886,16 @@ class SourcingQueue:
                 # 처리해야 한다(2026-06-01). 데몬은 모든 사이트 active 라 담당 외 사이트
                 # 송장도 즉석 로그인+스크랩 가능. 비데몬(확장앱)은 위 DAEMON_ONLY 가드
                 # (job_type='cancel_order' OR site NOT IN daemon_only)가 여전히 차단.
+                # [2026-06-17 적립금 PC바인딩 후속] owner_device_id 가 이 PC로 명시된 잡은
+                # 분담(allowed_sites) 우회. 적립금 PC바인딩(KREAM/무신사/GSShop/NAVERSTORE)이
+                # owner 를 트리거 PC로 박아도, 그 PC 의 소싱처 분담에 해당 사이트(KREAM 등)가
+                # 없으면 이 site 필터에 걸려 영영 dequeue 안 돼 'pending→만료'로 죽던 문제
+                # (KREAM 은 소싱처 체크박스 자체가 없어 분담에 넣을 방법도 없음). owner 가
+                # 이미 "이 PC 가 받는다"를 확정했으므로 분담 재적용은 모순 → 우회한다.
+                _owner_bypass = "OR owner_device_id = :device_id " if device_id else ""
                 conditions.append(
                     f"(job_type IN ('cancel_order', 'tracking', 'store_metrics') "
+                    f"{_owner_bypass}"
                     f"OR UPPER(site) IN ({placeholders}))"
                 )
                 for i, s in enumerate(site_list):
