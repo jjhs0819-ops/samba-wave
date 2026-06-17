@@ -349,6 +349,11 @@ class AbcMartPlugin(SourcingPlugin):
                 # 과거 best_benefit_price(최대혜택가)를 cost 로 덮어써 cost<salePrice 역마진
                 # 위험을 유발했다. 혜택가는 collection 의 use_max_discount 옵션에서만 사용.
                 new_cost=float(new_sale_price) if new_sale_price else None,
+                # 혜택가(멤버십+쿠폰 적용 DOM값) — cost 로는 안 쓰지만(#421) 주문 역마진
+                # 판정용으로 별도 노출. 0/미수집이면 None → 판정 보류.
+                new_benefit_cost=float(best_benefit_price)
+                if best_benefit_price and best_benefit_price > 0
+                else None,
                 new_sale_status=new_sale_status,
                 new_options=new_options,
                 changed=changed,

@@ -23,8 +23,13 @@ from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
-# 출고 전 활성 상태만 판정 — 이미 발송/취소/반품/완료된 주문은 역마진/재고 판정 의미 없음
-_ACTIVE_STATUSES = ("pending", "preparing", "wait_ship", "arrived", "ship_failed")
+# 기본값(주문접수=pending) 상태만 판정. status 드롭박스가 기본값이 아니면 = 사람이 손댄
+# 주문(처리중/배송/취소 등)이므로 자동판정(주문처리) 대상에서 제외한다.
+_ACTIVE_STATUSES = ("pending",)
+
+# ABC/GrandStage = 혜택가가 판매가와 분리(#421) + 배송비 별도. 역마진 판정 시 배송비 가산.
+_ABC_FAMILY = {"ABCMART", "GRANDSTAGE"}
+_ABC_SHIPPING = 2300
 
 # 한 번 실행에 재조회할 최대 상품 수 (소싱처 부하/차단 방지)
 _MAX_PRODUCTS_PER_RUN = 150
@@ -86,7 +91,7 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
 
     Returns: 처리 요약 dict (검사 주문수/스킵/가격X/재고X 카운트).
     """
-    from sqlmodel import col, select
+    from sqlmodel import col, or_, select
 
     from backend.db.orm import get_write_session
     from backend.domain.samba.collector.model import SambaCollectedProduct
@@ -97,9 +102,16 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
 
     async with get_write_session() as session:
         # 1) 활성 + 수집상품 연결된 주문 조회
+        # 이미 소싱처에 발주(주문처리)된 건은 제외 — 발주 시 실제 매입가가 확정되므로
+        # refresh 한 현재가로 재판정하면 오판(예: ABC 는 #421 로 cost=판매가라 혜택가보다
+        # 과대계상 → 흑자 주문을 역마진으로 오판). sourcing_order_number 있으면 주문처리 완료.
         stmt = select(SambaOrder).where(
             col(SambaOrder.status).in_(_ACTIVE_STATUSES),
             col(SambaOrder.collected_product_id).is_not(None),
+            or_(
+                col(SambaOrder.sourcing_order_number).is_(None),
+                col(SambaOrder.sourcing_order_number) == "",
+            ),
         )
         if tenant_id is not None:
             stmt = stmt.where(SambaOrder.tenant_id == tenant_id)
@@ -212,22 +224,38 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
             changed = False
 
             qty = int(o.quantity or 1)
+            prod = product_map.get(o.collected_product_id or "")
+            site_u = (getattr(prod, "source_site", "") or "").upper() if prod else ""
+            is_abc = site_u in _ABC_FAMILY
 
-            # 역마진(가격X): 원소싱처 원가(단가) × 수량 + 배송비 > 정산금액(revenue)
-            if "no_price" not in tag_set and r.new_cost is not None:
-                unit_cost = float(r.new_cost or 0)
+            # 역마진(가격X): "혜택가" 기준. 대부분 사이트는 new_cost 자체가 혜택가.
+            # ABC/GrandStage 는 new_cost=판매가(#421)라 혜택가(new_benefit_cost)를 별도로 쓰고,
+            # ABC 혜택가는 배송 미포함이라 배송비 2,300 을 가산한다.
+            # ABC 혜택가를 못 얻으면(new_benefit_cost None) 판매가로 오판하지 않도록 보류.
+            if is_abc:
+                benefit = (
+                    float(r.new_benefit_cost)
+                    if r.new_benefit_cost is not None
+                    else None
+                )
+            else:
+                benefit = float(r.new_cost) if r.new_cost is not None else None
+
+            if "no_price" not in tag_set and benefit is not None and benefit > 0:
                 revenue = float(o.revenue or 0)
-                ship_fee = float(o.shipping_fee or 0)
-                if unit_cost > 0 and revenue > 0:
-                    line_cost = unit_cost * qty
-                    profit = revenue - line_cost - ship_fee
+                ship_add = _ABC_SHIPPING if is_abc else 0
+                if revenue > 0:
+                    line_cost = benefit * qty
+                    effective = line_cost + ship_add
+                    profit = revenue - effective
                     if profit < 0:
                         tag_set.add("no_price")
+                        _ship_txt = f" + 배송 {_fmt(ship_add)}" if ship_add else ""
                         new_notes = _append_note(
                             new_notes,
-                            f"[{_now_kst_str()}] 자동: 역마진 감지 — 원가 {_fmt(unit_cost)}"
-                            f"×{_fmt(qty)}={_fmt(line_cost)} + 배송 {_fmt(ship_fee)} > "
-                            f"정산 {_fmt(revenue)} (손익 {_fmt(profit)})",
+                            f"[{_now_kst_str()}] 자동: 역마진 감지 — 혜택가 {_fmt(benefit)}"
+                            f"×{_fmt(qty)}={_fmt(line_cost)}{_ship_txt} > 정산 "
+                            f"{_fmt(revenue)} (손익 {_fmt(profit)})",
                         )
                         changed = True
                         summary["no_price"] += 1

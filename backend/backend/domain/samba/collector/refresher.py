@@ -639,6 +639,9 @@ class RefreshResult:
     new_cost: Optional[float] = None
     # 무신사 보유 적립금 사용 제외 cost (정책 토글 excludeHeldPoint=True에서 사용)
     new_cost_excl_held_point: Optional[float] = None
+    # 혜택가(멤버십+쿠폰 적용가, 배송 미포함). 대부분 사이트는 new_cost와 동일하지만
+    # ABC/GrandStage 는 new_cost=판매가(#421)라 혜택가를 별도로 노출(주문 역마진 판정용).
+    new_benefit_cost: Optional[float] = None
     new_sale_status: str = "in_stock"  # in_stock / sold_out
     new_options: Optional[list] = None
     # 수집 시점 일부 경로 버그로 name/brand 가 빈 문자열로 저장된 케이스 백필용.
