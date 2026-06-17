@@ -508,6 +508,43 @@ async def sourcing_store_metrics_result(body: dict[str, Any]) -> dict[str, Any]:
     return {"success": True, **res}
 
 
+@sourcing_queue_router.post("/sourcing/purchase-result")
+async def sourcing_purchase_result(body: dict[str, Any]) -> dict[str, Any]:
+    """확장앱이 가구매(셀프구매) 장바구니 담기 결과 전달 (인증 불필요).
+
+    body = {
+      requestId: str,
+      success: bool,
+      marketType?: str,
+      productUrl?: str,
+      option?: str,
+      cartCount?: int,        # 담은 수량
+      stage?: str,            # M1='cart'. 향후 'payment_waiting'/'reverted' 등
+      error?: str,
+    }
+    in-memory Future 를 깨워 /purchase/run 이 결과를 동기로 받아 UI 에 반환한다.
+    (M3: StoreCarePurchase 상태머신 영속화는 결제감지/일시품절원복과 함께 추가)
+    """
+    from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+
+    request_id = (body.get("requestId") or "").strip()
+    if not request_id:
+        raise HTTPException(status_code=400, detail="requestId 누락")
+
+    data = {
+        "success": bool(body.get("success")),
+        "marketType": body.get("marketType"),
+        "productUrl": body.get("productUrl"),
+        "option": body.get("option"),
+        "cartCount": body.get("cartCount"),
+        "stage": body.get("stage") or "cart",
+        "error": body.get("error"),
+    }
+    # 인메모리 Future 깨우기 + samba_sourcing_job completed 처리
+    SourcingQueue.resolve_job(request_id, data)
+    return {"success": True, **data}
+
+
 # 롯데ON 취소클레임 진행단계 — '완료' 로 간주하는 코드(멱등 성공 처리용).
 # 그 외 모든 단계는 승인 대상으로 보고 cnclRequestApproval 시도한다.
 # 실측(2026-06-01 getCancellationRequestAndComplateList): odPrgsStepCd = 02 요청 / 21 취소완료
