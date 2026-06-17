@@ -14,7 +14,8 @@
   SAMBA_PASSWORD            (필수, 삼바 기능) 삼바 로그인 비밀번호
   SAMBA_API_KEY             (운영 필수) X-Api-Key. 프론트 NEXT_PUBLIC_API_GATEWAY_KEY 와 동일.
                             운영 백엔드는 이 헤더 없으면 삼바 API 403 차단.
-  NEW_ORDER_POLL_MINUTES    (선택) 신규 미발주 감지 주기(분), 기본 10
+  NEW_ORDER_PUSH            (선택) 주문별 실시간 푸시. 기본 OFF. 1/true/on 이면 켜짐.
+  NEW_ORDER_POLL_MINUTES    (선택) 신규 미발주 감지 주기(분), 기본 10 (NEW_ORDER_PUSH 켤 때만)
   DAILY_REPORT_HOUR         (선택) 아침 자동 다이제스트 시각(KST 0~23), 기본 9. 비우면 끔.
 
 명령:
@@ -58,6 +59,8 @@ SAMBA_PASSWORD = os.environ.get("SAMBA_PASSWORD", "")
 # 운영 백엔드는 이 헤더가 없으면 삼바 API를 403 차단함.
 SAMBA_API_KEY = os.environ.get("SAMBA_API_KEY", "")
 NEW_ORDER_POLL_MINUTES = int(os.environ.get("NEW_ORDER_POLL_MINUTES", "10"))
+# 주문별 실시간 푸시 알림. 기본 OFF — 미발주는 아침 다이제스트에만 표시.
+NEW_ORDER_PUSH = os.environ.get("NEW_ORDER_PUSH", "").strip() in ("1", "true", "on", "yes")
 # 아침 자동 다이제스트 발송 시각(KST, 0~23). 빈 값이면 자동보고 비활성화.
 DAILY_REPORT_HOUR = os.environ.get("DAILY_REPORT_HOUR", "9").strip()
 
@@ -875,7 +878,13 @@ def main() -> None:
 
     if samba.is_ready:
         threading.Thread(target=samba._ensure_token, daemon=True).start()
-        threading.Thread(target=_poll_new_orders, daemon=True).start()
+        # 주문별 실시간 푸시는 기본 OFF — 미발주는 아침 다이제스트에만 표시.
+        # 켜고 싶으면 NEW_ORDER_PUSH=1 환경변수 설정.
+        if NEW_ORDER_PUSH:
+            threading.Thread(target=_poll_new_orders, daemon=True).start()
+            print(f"[신규주문감지] 실시간 푸시 ON ({NEW_ORDER_POLL_MINUTES}분 주기)")
+        else:
+            print("[신규주문감지] 실시간 푸시 OFF (미발주는 아침 다이제스트에만 표시)")
         threading.Thread(target=_daily_report_loop, daemon=True).start()
 
     offset = 0
