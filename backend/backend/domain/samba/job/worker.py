@@ -403,6 +403,14 @@ class JobWorker:
             os.environ.get("JOB_TRANSMIT_MAX_CONCURRENCY", "8")
         )
         self._transmit_semaphore = asyncio.Semaphore(self._transmit_max_concurrency)
+        # 백그라운드 전송(오토튠/테트리스) 전용 상한 세마포어 — 메인보다 작게(기본 6<8).
+        # 백그라운드 잡은 bg(외부)+메인(내부) 둘 다 획득 → bg 잡이 메인 8슬롯을 다 못 먹고
+        # 최소 (메인-bg)=2 슬롯이 항상 수동 상품전송용으로 남음. step8 큐 합류 후
+        # 오토튠 폭주가 수동 전송을 굶기던 문제(2026-06-17) 방지. bg를 외부에 둬
+        # 대기 중 bg 잡이 메인 슬롯을 점유하지 않게 함.
+        self._bg_transmit_semaphore = asyncio.Semaphore(
+            int(os.environ.get("JOB_BG_TRANSMIT_MAX_CONCURRENCY", "6"))
+        )
         # delete_market 전용 세마포어 — transmit 세마포어와 분리하여 전송 포화 시에도 즉시 실행
         self._delete_semaphore = asyncio.Semaphore(
             int(os.environ.get("JOB_DELETE_MAX_CONCURRENCY", "2"))
@@ -658,10 +666,25 @@ class JobWorker:
                         async with self._delete_semaphore:
                             await self._execute_job(_j)
                 else:
+                    # 백그라운드 전송(오토튠 source=autotune / 테트리스 origin=tetris_sync)은
+                    # bg 세마포어(외부)+메인(내부) 둘 다 획득 → 최대 bg슬롯(6)까지만.
+                    # 수동 상품전송은 메인만 → 오토튠 포화여도 항상 ≥2슬롯 확보.
+                    _pl = job.payload or {}
+                    _is_bg_tx = (
+                        _pl.get("source") == "autotune"
+                        or _pl.get("origin") == "tetris_sync"
+                    )
+                    if _is_bg_tx:
 
-                    async def _run_with_limit(_j=job):  # type: ignore[misc]
-                        async with self._transmit_semaphore:
-                            await self._execute_job(_j)
+                        async def _run_with_limit(_j=job):  # type: ignore[misc]
+                            async with self._bg_transmit_semaphore:
+                                async with self._transmit_semaphore:
+                                    await self._execute_job(_j)
+                    else:
+
+                        async def _run_with_limit(_j=job):  # type: ignore[misc]
+                            async with self._transmit_semaphore:
+                                await self._execute_job(_j)
 
                 task = asyncio.create_task(
                     _run_with_limit(),

@@ -95,10 +95,29 @@ class SambaJobRepository(BaseRepository[SambaJob]):
             else_=1,
         )
 
+        # 백그라운드 전송(오토튠 source=autotune / 테트리스 origin=tetris_sync)은
+        # 후순위. 사용자가 직접 누른 수동 상품전송(최초등록)이 항상 먼저 claim되게 함.
+        # step8 큐 합류 후 오토튠 size1 잡이 _transmit_size_key 로 수동 잡을 앞질러
+        # 수동 전송이 굶던 문제(2026-06-17) 해소. 수동 잡은 key=0 으로 최우선.
+        _bg_source_key = case(
+            (
+                and_(
+                    SambaJob.job_type == "transmit",
+                    or_(
+                        SambaJob.payload.op("->>")("source") == "autotune",
+                        SambaJob.payload.op("->>")("origin") == "tetris_sync",
+                    ),
+                ),
+                1,
+            ),
+            else_=0,
+        )
+
         stmt = (
             select(SambaJob)
             .where(SambaJob.status == JobStatus.PENDING)
             .order_by(
+                _bg_source_key.asc(),
                 _priority_market_key.asc(),
                 _transmit_size_key.asc(),
                 SambaJob.created_at.asc(),
