@@ -149,6 +149,8 @@ async def create_job(
             logger.info("[전송잡 생성] 전역 취소 플래그(__all__) 자동 해제")
 
         # 1) PENDING/RUNNING 잡과 중복 → 기존 잡 그대로 반환
+        # 오토튠/테트리스 백그라운드 잡은 제외 — 수동 전송이 백그라운드 잡과
+        # 상품 겹친다고 409 막히거나 중복 오판되는 것 방지.
         active_jobs = (
             (
                 await session.execute(
@@ -158,6 +160,8 @@ async def create_job(
                         col(SambaJob.status).in_(
                             [JobStatus.PENDING, JobStatus.RUNNING]
                         ),
+                        _text("(payload->>'source' IS DISTINCT FROM 'autotune')"),
+                        _text("(payload->>'origin' IS DISTINCT FROM 'tetris_sync')"),
                     )
                     .order_by(SambaJob.created_at.desc())
                     .limit(5)
@@ -199,6 +203,8 @@ async def create_job(
                 )
 
         # 2) FAILED 잡이 있으면 이어하기 (current 위치부터 재개)
+        # 오토튠/테트리스 백그라운드 잡은 제외 — 수동 이어하기가 백그라운드 FAILED 잡을
+        # 잘못 집어 재개하는 것 방지.
         prev = (
             (
                 await session.execute(
@@ -209,6 +215,8 @@ async def create_job(
                         SambaJob.total > 0,
                         SambaJob.current > 0,
                         SambaJob.current < SambaJob.total,  # 전체 완료된 Job 제외
+                        _text("(payload->>'source' IS DISTINCT FROM 'autotune')"),
+                        _text("(payload->>'origin' IS DISTINCT FROM 'tetris_sync')"),
                     )
                     .order_by(SambaJob.created_at.desc())
                     .limit(1)
@@ -505,14 +513,21 @@ async def get_transmit_queue_status(
     (create_job 참고). 매 폴링마다 product 메타를 IN 조회하던 N+1 비용 제거.
     """
     from sqlmodel import select, col
+    from sqlalchemy import text as _text
     from backend.domain.samba.job.model import SambaJob
     from backend.domain.samba.account.model import SambaMarketAccount
 
+    # 상품전송 탭은 사용자가 직접 누른 수동 전송잡만 표시.
+    # 오토튠(payload.source='autotune')·테트리스(payload.origin='tetris_sync') 같은
+    # 백그라운드 잡은 상품 1개당 1잡이라 수만 건씩 쌓여 목록 폭증+렉 유발 → 제외.
+    # IS DISTINCT FROM: source/origin 없는 수동 잡(NULL)은 통과, 백그라운드만 차단.
     stmt = (
         select(SambaJob)
         .where(
             col(SambaJob.job_type).in_(["transmit", "delete_market"]),
             col(SambaJob.status).in_([JobStatus.RUNNING, JobStatus.PENDING]),
+            _text("(payload->>'source' IS DISTINCT FROM 'autotune')"),
+            _text("(payload->>'origin' IS DISTINCT FROM 'tetris_sync')"),
         )
         .order_by(SambaJob.created_at.asc())
     )
@@ -682,6 +697,8 @@ async def get_last_resumable_transmit(
                     # 오토튠이 발행한 잡은 이어하기 대상에서 제외 (상품전송 페이지에 노출 방지)
                     # payload에 source 키가 없는 기존 잡(NULL)은 그대로 이어하기 허용
                     (SambaJob.payload["source"].astext).is_distinct_from("autotune"),
+                    # 테트리스 백그라운드 잡도 제외
+                    (SambaJob.payload["origin"].astext).is_distinct_from("tetris_sync"),
                 )
                 .order_by(SambaJob.created_at.desc())
                 .limit(1)
