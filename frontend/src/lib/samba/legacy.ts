@@ -46,7 +46,11 @@ export async function fetchWithAuth(url: string, init?: RequestInit): Promise<Re
   return res
 }
 
-export async function request<T>(url: string, init?: RequestInit, options?: { timeoutMs?: number }): Promise<T> {
+export async function request<T>(
+  url: string,
+  init?: RequestInit,
+  options?: { timeoutMs?: number; retries?: number },
+): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(init?.headers as Record<string, string>),
@@ -69,42 +73,67 @@ export async function request<T>(url: string, init?: RequestInit, options?: { ti
     if (_did) headers['X-Device-Id'] = _did
   }
 
-  const timeoutMs = options?.timeoutMs
-  const controller = timeoutMs ? new AbortController() : null
-  const timer = controller && timeoutMs ? setTimeout(() => controller.abort(), timeoutMs) : null
+  // 재시도 옵션. retries 사용 시 기본 타임아웃 15초 부여 —
+  // 배포/일시 끊김에 요청이 무한 대기(2분+)하는 것을 막고, abort 후 재시도로 빠르게 복구.
+  const retries = options?.retries ?? 0
+  const timeoutMs = options?.timeoutMs ?? (retries > 0 ? 15000 : undefined)
+  const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 
-  let res: Response
-  try {
-    res = await fetch(url, {
-      cache: 'no-store',
-      ...init,
-      headers,
-      ...(controller ? { signal: controller.signal } : {}),
-    })
-  } finally {
-    if (timer) clearTimeout(timer)
-  }
-  if (!res.ok) {
-    // 401이면 토큰 만료 — 로그인 페이지로 강제 리다이렉트
-    // .catch(() => []) 에 삼켜지지 않도록 never-resolving promise 반환
-    if (res.status === 401 && typeof window !== 'undefined') {
-      localStorage.removeItem(STORAGE_KEYS.SAMBA_USER)
-      document.cookie = 'samba_user=; path=/; max-age=0'
-      window.location.href = '/samba/login'
-      return new Promise<T>(() => {})
+  let lastErr: unknown
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const controller = timeoutMs ? new AbortController() : null
+    const timer = controller && timeoutMs ? setTimeout(() => controller.abort(), timeoutMs) : null
+
+    let res: Response
+    try {
+      res = await fetch(url, {
+        cache: 'no-store',
+        ...init,
+        headers,
+        ...(controller ? { signal: controller.signal } : {}),
+      })
+    } catch (e) {
+      // 네트워크 오류 / 타임아웃(abort) — 일시적이므로 남은 재시도가 있으면 재요청
+      if (timer) clearTimeout(timer)
+      lastErr = e
+      if (attempt < retries) {
+        await sleep(400 * (attempt + 1))
+        continue
+      }
+      throw e
+    } finally {
+      if (timer) clearTimeout(timer)
     }
-    const data = await res.json().catch(() => null);
-    const detail = data?.detail
-    const msg = typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map((d: Record<string, unknown>) => d.msg || JSON.stringify(d)).join(', ') : `HTTP ${res.status}`
-    throw new Error(msg);
+
+    if (!res.ok) {
+      // 401이면 토큰 만료 — 로그인 페이지로 강제 리다이렉트
+      // .catch(() => []) 에 삼켜지지 않도록 never-resolving promise 반환
+      if (res.status === 401 && typeof window !== 'undefined') {
+        localStorage.removeItem(STORAGE_KEYS.SAMBA_USER)
+        document.cookie = 'samba_user=; path=/; max-age=0'
+        window.location.href = '/samba/login'
+        return new Promise<T>(() => {})
+      }
+      // 502/503/504 = 배포/게이트웨이 일시 오류 → 남은 재시도가 있으면 재요청
+      if ([502, 503, 504].includes(res.status) && attempt < retries) {
+        await sleep(400 * (attempt + 1))
+        continue
+      }
+      const data = await res.json().catch(() => null);
+      const detail = data?.detail
+      const msg = typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map((d: Record<string, unknown>) => d.msg || JSON.stringify(d)).join(', ') : `HTTP ${res.status}`
+      throw new Error(msg);
+    }
+    const text = await res.text();
+    if (!text) return {} as T;
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      throw new Error(`응답 JSON 파싱 실패: ${text.slice(0, 100)}`);
+    }
   }
-  const text = await res.text();
-  if (!text) return {} as T;
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    throw new Error(`응답 JSON 파싱 실패: ${text.slice(0, 100)}`);
-  }
+  // 모든 재시도 소진 (네트워크 오류 계열)
+  throw lastErr instanceof Error ? lastErr : new Error('요청 실패')
 }
 
 // ── Orders ──
@@ -938,7 +967,10 @@ export const collectorApi = {
       sites: string[];
       counts: { total: number; registered: number; policy_applied: number; sold_out: number };
     }>(
-      `${SAMBA_PREFIX}/collector/products/scroll?${p}`
+      `${SAMBA_PREFIX}/collector/products/scroll?${p}`,
+      undefined,
+      // 타임아웃 20초 + 2회 재시도 — 배포/일시 끊김에 2분 무한대기 방지(빠른 자동복구)
+      { timeoutMs: 20000, retries: 2 },
     )
   },
   getProductIds: (params: {
