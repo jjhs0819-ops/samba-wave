@@ -248,8 +248,9 @@ async def sourcing_collect_queue(request: Request) -> Any:
 # ⚠️ 반드시 GitHub 릴리스에 samba-v{ver}.exe 가 실제 업로드된 버전만 적을 것.
 # 51f3eefb 가 1.4.38 로 올렸으나 v1.4.38 릴리스/exe 미업로드 → 전 데몬이 404 받고
 # self-update 자살 루프(60초마다 rc=10 재시작) = "데몬 자꾸 죽음" 사고(2026-06-17).
-# 릴리스된 최신(1.4.37)로 되돌림. 1.4.38 데몬개선 필요 시 exe 빌드·업로드 후 재상향.
-AUTOTUNE_DAEMON_LATEST_VERSION = "1.4.37"
+# 1.4.39: v1.4.39 릴리스 업로드 + 다운로드 200 검증 완료(로그 100줄 캡 + httpx 억제 +
+# 크래시 서버보고). 로컬 1.4.39 worker 기동·httpx억제·로그캡 실측 확인 후 상향.
+AUTOTUNE_DAEMON_LATEST_VERSION = "1.4.39"
 # asset 명에 버전 박힘 (`samba-v{ver}.exe`) — 지침: 데몬 설치파일명 버전 노출 필수.
 AUTOTUNE_DAEMON_DOWNLOAD_URL = (
     f"https://github.com/sbk0674-web/samba-wave/releases/download/"
