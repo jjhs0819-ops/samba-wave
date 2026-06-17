@@ -294,6 +294,7 @@ async def list_jobs(
             "created_at": j.created_at,
             "started_at": j.started_at,
             "completed_at": j.completed_at,
+            "source": (j.payload or {}).get("source"),
         }
         for j in jobs
     ]
@@ -678,6 +679,9 @@ async def get_last_resumable_transmit(
                     SambaJob.total > 0,
                     SambaJob.current > 0,
                     SambaJob.current < SambaJob.total,
+                    # 오토튠이 발행한 잡은 이어하기 대상에서 제외 (상품전송 페이지에 노출 방지)
+                    # payload에 source 키가 없는 기존 잡(NULL)은 그대로 이어하기 허용
+                    (SambaJob.payload["source"].astext).is_distinct_from("autotune"),
                 )
                 .order_by(SambaJob.created_at.desc())
                 .limit(1)

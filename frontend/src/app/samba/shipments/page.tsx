@@ -282,7 +282,7 @@ export default function ShipmentsPage() {
         // 실행 중인 Job 확인 (가벼운 호출만)
         const res = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs?status=running&limit=1`)
         const jobs = await res.json()
-        const job = Array.isArray(jobs) ? jobs.find((j: Record<string, unknown>) => j.job_type === 'transmit') : null
+        const job = Array.isArray(jobs) ? jobs.find((j: Record<string, unknown>) => j.job_type === 'transmit' && j.source !== 'autotune') : null
         if (!job) return
         if (jobPollRef.current || activeJobIdRef.current) return
         const jobId = job.id as string
@@ -342,6 +342,8 @@ export default function ShipmentsPage() {
         if (!res.ok) return
         const data = await res.json()
         if (!data || !data.payload) return
+        // 오토튠이 발행한 잡은 이어하기 노출 금지 (백엔드에서도 제외하나 이중 방어)
+        if (data.payload.source === 'autotune') return
         // 사용자가 이미 새 전송을 시작했거나 이어하기 진행 중이면 덮어쓰지 않음
         if (transmittingRef.current || activeJobIdRef.current) return
         setPausedJobPayload({
