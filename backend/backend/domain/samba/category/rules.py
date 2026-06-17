@@ -595,6 +595,10 @@ def _rule_match(
         except ImportError:
             pass
 
+    # 신세계몰(SSG/ssg_std): 룰 미스 시 기본 카테고리 고정
+    if not result and market in ("ssg", "ssg_std"):
+        return "신세계몰메인매장 > 스포츠웨어/용품 > 러닝화/의류"
+
     if not result:
         return None
 
