@@ -696,9 +696,13 @@ async def get_last_resumable_transmit(
                     SambaJob.current < SambaJob.total,
                     # 오토튠이 발행한 잡은 이어하기 대상에서 제외 (상품전송 페이지에 노출 방지)
                     # payload에 source 키가 없는 기존 잡(NULL)은 그대로 이어하기 허용
-                    (SambaJob.payload["source"].astext).is_distinct_from("autotune"),
+                    # payload 컬럼이 JSON(JSONB 아님)이라 .astext 없음 → ->> 연산자 사용
+                    # ('Comparator' object has no attribute 'astext' 500 회피)
+                    SambaJob.payload.op("->>")("source").is_distinct_from("autotune"),
                     # 테트리스 백그라운드 잡도 제외
-                    (SambaJob.payload["origin"].astext).is_distinct_from("tetris_sync"),
+                    SambaJob.payload.op("->>")("origin").is_distinct_from(
+                        "tetris_sync"
+                    ),
                 )
                 .order_by(SambaJob.created_at.desc())
                 .limit(1)

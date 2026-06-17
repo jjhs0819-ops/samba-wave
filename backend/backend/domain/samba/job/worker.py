@@ -1157,8 +1157,17 @@ class JobWorker:
                     .first()
                 )
                 _tetris_enabled = bool(_setting_row.value) if _setting_row else False
-                # payload 플래그가 True이면 DB 설정과 무관하게 테트리스 오버라이드 활성화
-                if _payload_tetris_flag:
+                # skip_policy_account_filter 는 오토튠/테트리스 백그라운드 잡이 정책 계정필터를
+                # 우회하려 박는 플래그. 과거엔 이 플래그만으로 테트리스 게이트를 강제 ON 했으나,
+                # 수동 전송잡도 이 플래그를 달고 와 테넌트 테트리스 OFF 설정을 무시 → fanout
+                # 게이트(#386)가 작동해 미배치 마켓(정책 연결계정) 전송이 전부 스킵되던 버그.
+                # 백그라운드 잡(source=autotune / origin=tetris_sync)에만 강제 ON 적용하고,
+                # 수동 잡은 테넌트 tetris_matching_enabled 설정을 그대로 따른다(OFF면 정책계정 전송).
+                _is_bg_job = (
+                    payload.get("source") == "autotune"
+                    or payload.get("origin") == "tetris_sync"
+                )
+                if _payload_tetris_flag and _is_bg_job:
                     _tetris_enabled = True
                 if _tetris_enabled:
                     _tet_repo = SambaTetrisRepository(_cfg_sess)
@@ -1329,6 +1338,9 @@ class JobWorker:
                     # 배치 있는 브랜드: 해당 마켓의 정책 계정을 테트리스 계정으로 교체.
                     # 배치 없는 브랜드: 원래 target_account_ids 그대로 정책 계정 전송.
                     effective_account_ids = list(target_account_ids)
+                    # 미배치 마켓 스킵 로그를 이미 찍었는지 — 아래 "전송 대상 계정 없음"
+                    # 중복 로그 방지용 (같은 상품에 스킵 2줄 뜨던 문제).
+                    _unmatched_logged = False
                     if _tetris_enabled and prod:
                         _norm_k = (
                             _ts_norm_site(prod.source_site),
@@ -1383,6 +1395,7 @@ class JobWorker:
                                         f"(테트리스 배치 없음 → 전 계정 발행 차단): "
                                         f"{', '.join(_skipped_markets)}",
                                     )
+                                    _unmatched_logged = True
                                 effective_account_ids = _tetris_picks
                             else:
                                 effective_account_ids = _kept_policy + _tetris_picks
@@ -1391,11 +1404,14 @@ class JobWorker:
                             effective_account_ids = list(_assigned_all)
 
                     # 전송 대상 계정이 비었을 때만 스킵
+                    # 미배치 마켓 스킵 로그를 이미 찍었으면 중복 줄 생략 (스킵 2줄 방지).
+                    # 그 외 사유(정책 계정 자체 없음/차단)면 generic 스킵 로그 1줄 출력.
                     if not effective_account_ids:
-                        _add_job_log(
-                            job.id,
-                            f"[{i + 1}/{total:,}] {prod_name}: 스킵 (전송 대상 계정 없음)",
-                        )
+                        if not _unmatched_logged:
+                            _add_job_log(
+                                job.id,
+                                f"[{i + 1}/{total:,}] {prod_name}: 스킵 (전송 대상 계정 없음)",
+                            )
                         return 0, 1, 0, None
 
                     # 잡 단위 차단 계정 제거 — 등록 한도 초과 등으로 더 이상 시도 불가
