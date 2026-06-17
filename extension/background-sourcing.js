@@ -747,13 +747,46 @@ const _REVIEW_META = {
   },
   kream_review: {
     mode: 'inplace',
+    reloadBetween: true, // 제출 후 모달 잔여 오버레이가 다음 별점 클릭을 막음 → 매 건 목록 새로고침
     listUrl: 'https://kream.co.kr/my/reviews?tab=to_write',
     site: 'KREAM',
   },
 }
 
-// 리뷰 잡 처리 (사이트 공통 orchestrator)
+// ─── MV3 서비스워커 keepalive ───────────────────────────────────────────────
+// 긴 리뷰 루프(여러 건 × 수초)가 도는 동안 서비스워커가 idle(약 30초) 종료되면
+// 잡이 postResult 를 못 하고 'dispatched'(=화면 '실행중')로 영영 남는다.
+// (실측 2026-06-17: KREAM 적립 1건 쓰고 '실행중'에서 멈춤 → 결과 보고 누락)
+// 25초마다 가벼운 chrome API 호출로 idle 타이머를 리셋해 잡 처리 동안 워커를 살려둔다.
+let _keepAliveTimer = null
+let _keepAliveCount = 0
+function _startKeepAlive() {
+  _keepAliveCount++
+  if (!_keepAliveTimer) {
+    _keepAliveTimer = setInterval(() => {
+      try { chrome.runtime.getPlatformInfo(() => void chrome.runtime.lastError) } catch {}
+    }, 25000)
+  }
+}
+function _stopKeepAlive() {
+  _keepAliveCount = Math.max(0, _keepAliveCount - 1)
+  if (_keepAliveCount === 0 && _keepAliveTimer) {
+    clearInterval(_keepAliveTimer)
+    _keepAliveTimer = null
+  }
+}
+
+// 리뷰 잡 처리 (사이트 공통 orchestrator) — keepalive 래퍼로 감싼다.
 async function handleReviewJob(job) {
+  _startKeepAlive()
+  try {
+    return await _handleReviewJobInner(job)
+  } finally {
+    _stopKeepAlive()
+  }
+}
+
+async function _handleReviewJobInner(job) {
   const { requestId, action, sourcingAccountId, site } = job
   const meta = _REVIEW_META[action]
   if (!meta) {
@@ -808,7 +841,19 @@ async function handleReviewJob(job) {
           noNewCount++
           if (noNewCount >= 3) break
         }
-        await new Promise(r => setTimeout(r, 3000 + Math.random() * 4000))
+        // [2026-06-17] reloadBetween(KREAM): 제출 후 모달 잔여 오버레이가 다음 항목
+        // 별점 클릭을 막아 '별점 클릭 3회 실패'로 1건만 쓰고 멈추던 문제 → 매 건 목록
+        // 페이지를 새로고침해 깨끗한 상태에서 다음 항목 처리. reviewed 항목은 목록에서
+        // 사라져 중복 없음. (가상스크롤 초기 렌더 대기 4s)
+        if (meta.reloadBetween) {
+          try {
+            await chrome.tabs.update(listTabId, { url: meta.listUrl })
+            await waitForTabLoad(listTabId, 30000)
+            await new Promise(r => setTimeout(r, 4000))
+          } catch {}
+        } else {
+          await new Promise(r => setTimeout(r, 3000 + Math.random() * 4000))
+        }
       }
       await postResult('sourcing-accounts/extension/reward-result', {
         request_id: requestId,
