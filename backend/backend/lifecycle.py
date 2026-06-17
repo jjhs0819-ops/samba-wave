@@ -1238,9 +1238,53 @@ async def _sourcing_job_cleanup_loop() -> None:
                 _deleted_n = deleted.rowcount or 0
         except Exception as exc:
             _log.warning("[sourcing-cleanup] 7일 DELETE 실패 (무시): %s", exc)
-        if _expired_n or _deleted_n:
+        # transmit 잡 청소 (2026-06-17):
+        # 테트리스 매칭이 매 sync 마다 브랜드×계정×상품 단위로 transmit 잡을 대량 생성 →
+        # samba_jobs 에 종료(completed/failed/cancelled) 잡이 수만 건 누적돼 테이블 bloat + 목록 렉.
+        # 활성(pending/running)은 절대 건드리지 않음.
+        # 이어하기/큐상태/잡목록 조회는 모두 최근 잡 기준이라 오래된 종료 잡 삭제는 무해.
+        #  ① 모든 transmit 종료 잡: 7일↑ 삭제 (소싱 잡 청소와 동일 보존 기간)
+        #  ② tetris_sync 출처: 3일↑ 삭제 (churn 다발이라 더 공격적으로)
+        _tx_old_deleted = 0
+        _tetris_job_deleted = 0
+        try:
+            async with get_write_session() as session:
+                txdel = await session.execute(
+                    text(
+                        "DELETE FROM samba_jobs "
+                        "WHERE job_type = 'transmit' "
+                        "AND status IN ('completed', 'failed', 'cancelled') "
+                        "AND created_at < now() - interval '7 days'"
+                    )
+                )
+                await session.commit()
+                _tx_old_deleted = txdel.rowcount or 0
+        except Exception as exc:
+            _log.warning("[sourcing-cleanup] transmit 7일 DELETE 실패 (무시): %s", exc)
+        try:
+            async with get_write_session() as session:
+                tdel = await session.execute(
+                    text(
+                        "DELETE FROM samba_jobs "
+                        "WHERE job_type = 'transmit' "
+                        "AND status IN ('completed', 'failed', 'cancelled') "
+                        "AND payload->>'origin' = 'tetris_sync' "
+                        "AND created_at < now() - interval '3 days'"
+                    )
+                )
+                await session.commit()
+                _tetris_job_deleted = tdel.rowcount or 0
+        except Exception as exc:
+            _log.warning(
+                "[sourcing-cleanup] 테트리스 transmit 잡 DELETE 실패 (무시): %s", exc
+            )
+        if _expired_n or _deleted_n or _tx_old_deleted or _tetris_job_deleted:
             _log.info(
-                "[sourcing-cleanup] expired=%d deleted=%d", _expired_n, _deleted_n
+                "[sourcing-cleanup] expired=%d deleted=%d transmit_7d=%d tetris_3d=%d",
+                _expired_n,
+                _deleted_n,
+                _tx_old_deleted,
+                _tetris_job_deleted,
             )
 
 

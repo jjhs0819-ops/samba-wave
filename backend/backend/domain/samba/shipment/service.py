@@ -2398,9 +2398,19 @@ class SambaShipmentService:
             # 상품번호 병합 — B칸에 account_id 키가 채워지면 A칸도 동기화
             _new_nos = ar.get("product_nos", {}) or {}
             merged_nos.update(_new_nos)
+            # 수정 모드(is_update) 성공도 A칸 backfill 대상에 포함:
+            # 마켓이 수정 응답에 상품번호를 안 돌려주면(예: lottehome) product_nos가
+            # 비어 _new_nos.get(aid)=None → A칸 미반영 → 테트리스가 '미등록' 오판으로
+            # 매 사이클 같은 상품 헛전송(churn). is_update=True는 기존 상품번호(B칸) 존재
+            # = 실제 마켓 등록됨을 의미하므로 번호 미반환이어도 A칸에 계정 추가해야 함.
+            # 404 초기화 경로는 status!=success 라 여기 진입 안 함(충돌 없음).
             if (
                 ar.get("status") == "success"
-                and (_new_nos.get(aid) or ar.get("_already_exists"))
+                and (
+                    _new_nos.get(aid)
+                    or ar.get("_already_exists")
+                    or ar.get("is_update")
+                )
                 and aid not in merged_reg
             ):
                 merged_reg.append(aid)
