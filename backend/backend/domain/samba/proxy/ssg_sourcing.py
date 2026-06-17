@@ -49,17 +49,35 @@ def _is_staff_only(html: str) -> bool:
     return any(marker in html for marker in _STAFF_ONLY_MARKERS)
 
 
-def filter_daepyo_options(options: list[dict]) -> list[dict]:
+def filter_daepyo_options(
+    options: list[dict], product_name: str | None = None
+) -> list[dict]:
     """'대표단품' 더미 옵션 제거 — 실제 옵션이 따로 있을 때만.
 
     SSG uitemObjList 첫 행이 '대표단품'(사이즈 미지정 더미)으로 내려오는 상품이
     다수라, 그대로 두면 마켓 구매자 선택지에 사이즈가 아닌 '대표단품'이 노출된다.
     실제 옵션(사이즈/색상)이 있으면 제외하고, 대표단품 단독(단일 상품)이면 유지.
+
+    product_name 지정 시 옵션명이 상품명과 동일한 대표행 더미도 제거(#448).
+    데몬 경로엔 uitemId(="00000")가 없어, 옵션명 빈 대표행이 uitemNm(상품명)으로
+    폴백되며 "상품명을 옵션값으로 갖는 군더더기 옵션"이 생긴다(50byte 초과 시 지마켓
+    등록 실패 + 리스팅 오염). 사이즈/색상 옵션명은 상품명과 같을 수 없으므로
+    공백정규화 후 exact 매칭만 제거한다(색상명에 품번 포함되는 실옵션 오삭제 방지).
+    대표행 더미만 있던 상품은 옵션 없는 단일상품으로 둔다(빈 리스트 반환).
     """
     if not options:
         return options
-    non_daepyo = [o for o in options if str(o.get("name", "")).strip() != "대표단품"]
-    return non_daepyo if non_daepyo else options
+    result = [o for o in options if str(o.get("name", "")).strip() != "대표단품"]
+    result = result if result else options
+    if product_name:
+        _pn = re.sub(r"\s+", " ", str(product_name)).strip()
+        if _pn:
+            result = [
+                o
+                for o in result
+                if re.sub(r"\s+", " ", str((o or {}).get("name", ""))).strip() != _pn
+            ]
+    return result
 
 
 _SSG_SITEM_HOST = "sitem.ssgcdn.com"

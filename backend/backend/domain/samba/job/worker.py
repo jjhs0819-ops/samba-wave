@@ -3599,7 +3599,8 @@ class JobWorker:
                                         }
                                         for _uo in _uitem_opts
                                         if _uo.get("name")
-                                    ]
+                                    ],
+                                    detail.get("name"),
                                 )
                             elif _detail_opts:
                                 # 단일 옵션: 품절 상태만 보정
