@@ -27,6 +27,7 @@ _EXEMPT_PATHS = {
     "/api/v1/license/verify",
     "/api/v1/samba/users",  # 회원가입 POST (목록조회 GET은 라우터에서 require_admin)
     "/api/v1/samba/users/login",  # 로그인
+    "/api/v1/samba/orders/ship-by-kakao",  # 카톡 송장 자동입력 — 라우트 자체 X-Kakao-Secret 검증
     "/api/v1/auth/email/sign-up",
     "/api/v1/auth/email/login",
     "/api/v1/auth/refresh",

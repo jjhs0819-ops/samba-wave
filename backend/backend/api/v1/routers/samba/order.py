@@ -10685,6 +10685,7 @@ async def _verify_kakao_secret(
     """카톡 송장 자동입력 전용 인증. JWT 대신 전용 시크릿 키로 검증."""
     import secrets
     from backend.core.config import settings
+
     expected = (settings.kakao_ship_secret or "").strip()
     if not expected:
         raise HTTPException(status_code=503, detail="서버 인증 키 미설정")
