@@ -63,7 +63,12 @@ class BackendSettings(BaseSettings):
     # ===========================================
     mock_auth_enabled: bool = False
     """Enable mock authentication for development."""
-
+    # ===========================================
+    # 카톡 송장 자동입력(ship-by-kakao) 전용 키
+    # ===========================================
+    kakao_ship_secret: str = ""
+    """롯데ON 선물하기 카톡 송장 자동입력 API 전용 인증 키.
+    카톡PC가 X-Kakao-Secret 헤더로 전송. 환경변수 KAKAO_SHIP_SECRET 로 주입."""
     # ===========================================
     # CORS Configuration
     # ===========================================

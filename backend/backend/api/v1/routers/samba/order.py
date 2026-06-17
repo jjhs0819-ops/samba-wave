@@ -5,7 +5,7 @@ import re
 from datetime import datetime
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
@@ -32,7 +32,7 @@ from backend.dtos.samba.order import (
 from backend.utils.logger import logger
 
 router = APIRouter(prefix="/orders", tags=["samba-orders"])
-
+public_router = APIRouter(prefix="/orders", tags=["samba-orders-public"])
 
 # ── 매칭 캐시(_mpn_cache) 모듈 전역 — 증분 갱신 ──
 # 과거: 호출마다 등록상품 전체(~10만건, 1GB) 풀스캔 빌드 → 빌드(150초)>TTL 이라
@@ -10655,6 +10655,7 @@ class ShipByKakaoRequest(BaseModel):
     product_code: str
     shipping_company: str = "롯데택배"
     tracking_number: str
+    tenant_id: str
     dry_run: bool = False
 
 
@@ -10678,13 +10679,28 @@ def _validate_invoice(inv: str) -> tuple[bool, str]:
     return True, warn
 
 
-@router.post("/ship-by-kakao")
+async def _verify_kakao_secret(
+    x_kakao_secret: str = Header(default="", alias="X-Kakao-Secret"),
+) -> None:
+    """카톡 송장 자동입력 전용 인증. JWT 대신 전용 시크릿 키로 검증."""
+    import secrets
+    from backend.core.config import settings
+    expected = (settings.kakao_ship_secret or "").strip()
+    if not expected:
+        raise HTTPException(status_code=503, detail="서버 인증 키 미설정")
+    if not x_kakao_secret:
+        raise HTTPException(status_code=401, detail="인증 키 없음")
+    if not secrets.compare_digest(x_kakao_secret, expected):
+        raise HTTPException(status_code=403, detail="인증 키 불일치")
+
+
+@public_router.post("/ship-by-kakao", dependencies=[Depends(_verify_kakao_secret)])
 async def ship_by_kakao(
     body: ShipByKakaoRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
-    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     """카톡 알림(이름+품번+송장)으로 주문을 찾아 송장입력 + 마켓전송."""
+    tenant_id = (body.tenant_id or "").strip()
     name = (body.customer_name or "").strip()
     code = (body.product_code or "").strip().upper()
     inv = (body.tracking_number or "").strip()

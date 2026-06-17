@@ -39,7 +39,10 @@ from backend.api.v1.routers.samba.job import router as samba_job_router
 from backend.api.v1.routers.samba.naverstore_sourcing import (
     router as samba_naverstore_sourcing_router,
 )
-from backend.api.v1.routers.samba.order import router as samba_order_router
+from backend.api.v1.routers.samba.order import (
+    router as samba_order_router,
+    public_router as samba_order_public_router,
+)
 from backend.api.v1.routers.samba.policy import router as samba_policy_router
 from backend.api.v1.routers.samba.product import router as samba_product_router
 from backend.api.v1.routers.samba.proxy import (
@@ -156,6 +159,7 @@ def create_application() -> FastAPI:
     app.include_router(
         samba_order_router, prefix="/api/v1/samba", dependencies=samba_auth
     )
+    app.include_router(samba_order_public_router, prefix="/api/v1/samba")
     app.include_router(
         samba_channel_router, prefix="/api/v1/samba", dependencies=samba_auth
     )
