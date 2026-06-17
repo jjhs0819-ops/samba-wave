@@ -2904,8 +2904,6 @@ export default function ProductsPage() {
             style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: '#1A1A1A', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '6px' }}>
             <option value={20}>20건</option>
             <option value={50}>50건</option>
-            <option value={100}>100건</option>
-            <option value={500}>500건</option>
           </select>
         </div>
       </div>
