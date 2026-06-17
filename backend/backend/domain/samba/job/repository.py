@@ -39,6 +39,7 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         exclude_sources: set[str] | None = None,
         exclude_brand_all: bool = False,
         exclude_accounts: set[str] | None = None,
+        only_types: set[str] | None = None,
     ) -> Optional[SambaJob]:
         """Pending 잡 1개를 원자적으로 claim (FOR UPDATE SKIP LOCKED).
 
@@ -46,6 +47,9 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         write session 컨텍스트 안에서 호출해야 하며, 호출부에서 commit() 필요.
 
         Args:
+            only_types: 지정 시 이 job_type 집합만 claim (전송 전용 워커 프로세스용).
+                        프로세스 분리 시 B 워커가 {"transmit", "order_sync"}만 처리하도록 제한.
+                        exclude_types 와 함께 쓰면 둘 다 적용(교집합).
             exclude_types: 제외할 job_type 집합 (예: {"collect"})
             exclude_sources: 제외할 수집 소싱처 집합 — 현재 실행 중인 소싱처 스킵용.
                              payload->>'source_site' 값이 이 셋에 포함된 collect 잡은 건너뜀.
@@ -102,6 +106,9 @@ class SambaJobRepository(BaseRepository[SambaJob]):
             .limit(1)
             .with_for_update(skip_locked=True)
         )
+        if only_types:
+            # 전송 전용 워커: 지정 타입만 claim (B 프로세스 = {"transmit", "order_sync"})
+            stmt = stmt.where(SambaJob.job_type.in_(list(only_types)))
         if exclude_types:
             stmt = stmt.where(SambaJob.job_type.notin_(list(exclude_types)))
         if exclude_sources:

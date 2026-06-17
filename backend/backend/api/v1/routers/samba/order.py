@@ -9429,6 +9429,7 @@ def _parse_coupang_order(
     return {
         "order_number": order_number,
         "shipment_id": str(order_id) if order_id else "",
+        "ext_order_number": str(order_id) if order_id else "",
         "vendor_item_id": vendor_item_id,
         "channel_id": account_id,
         "channel_name": account_label,
@@ -10641,6 +10642,8 @@ def _parse_esmplus_order(
         "source": market_type,
         "ext_order_number": _s(item.get("OutOrderNo")),
     }
+
+
 # ═══════════════════════════════════════════════════════════════
 # 롯데ON 선물하기 — 카톡 알림 기반 송장 자동입력 + 마켓전송
 # 카톡(다른 PC)이 읽은 {이름, 품번, 송장번호}를 받아 주문을 찾아 처리한다.
@@ -10705,15 +10708,21 @@ async def ship_by_kakao(
     # 1) 송장 형식 검증
     ok, warn = _validate_invoice(inv)
     if not ok:
-        logger.warning("[ship-by-kakao] 송장검증실패 name=%s code=%s inv=%s (%s)",
-                       name, code, inv, warn)
+        logger.warning(
+            "[ship-by-kakao] 송장검증실패 name=%s code=%s inv=%s (%s)",
+            name,
+            code,
+            inv,
+            warn,
+        )
         return {"ok": False, "action": "rejected", "reason": warn}
 
     # 2) 이름 일치 + 송장 없는 주문 후보 조회
     svc = _write_service(session)
     stmt = select(SambaOrder).where(
         SambaOrder.customer_name == name,
-        SambaOrder.source == "lotteon",  # 롯데온 선물하기 주문만 대상 (타 사이트 오매칭 방지)
+        SambaOrder.source
+        == "lotteon",  # 롯데온 선물하기 주문만 대상 (타 사이트 오매칭 방지)
     )
     if tenant_id is not None:
         stmt = stmt.where(SambaOrder.tenant_id == tenant_id)
@@ -10722,7 +10731,8 @@ async def ship_by_kakao(
 
     # 3) 품번 일치 + 아직 송장 없는 것만 필터
     matched = [
-        o for o in candidates
+        o
+        for o in candidates
         if not (o.tracking_number or "").strip()
         and _extract_product_code(o.product_name) == code
     ]
@@ -10730,22 +10740,40 @@ async def ship_by_kakao(
     # 4) 안전규칙: 정확히 1건일 때만 처리
     if len(matched) == 0:
         logger.info("[ship-by-kakao] 매칭 0건 — 건너뜀 name=%s code=%s", name, code)
-        return {"ok": False, "action": "skipped", "reason": "매칭 주문 없음(미수집/이미처리)"}
+        return {
+            "ok": False,
+            "action": "skipped",
+            "reason": "매칭 주문 없음(미수집/이미처리)",
+        }
     if len(matched) > 1:
-        logger.warning("[ship-by-kakao] 매칭 %d건 — 건너뜀(사람확인) name=%s code=%s ids=%s",
-                       len(matched), name, code, [o.id for o in matched])
-        return {"ok": False, "action": "skipped",
-                "reason": f"매칭 {len(matched)}건(사람 확인 필요)",
-                "order_ids": [o.id for o in matched]}
+        logger.warning(
+            "[ship-by-kakao] 매칭 %d건 — 건너뜀(사람확인) name=%s code=%s ids=%s",
+            len(matched),
+            name,
+            code,
+            [o.id for o in matched],
+        )
+        return {
+            "ok": False,
+            "action": "skipped",
+            "reason": f"매칭 {len(matched)}건(사람 확인 필요)",
+            "order_ids": [o.id for o in matched],
+        }
 
     order = matched[0]
 
     # 5) dry_run: 실제 전송 안 하고 '이렇게 보낼 것'만 반환
     if body.dry_run:
-        return {"ok": True, "action": "dry_run", "order_id": order.id,
-                "would_send": {"shipping_company": body.shipping_company,
-                               "tracking_number": inv},
-                "warning": warn}
+        return {
+            "ok": True,
+            "action": "dry_run",
+            "order_id": order.id,
+            "would_send": {
+                "shipping_company": body.shipping_company,
+                "tracking_number": inv,
+            },
+            "warning": warn,
+        }
 
     # 6) 실제 처리 — 기존 ship_order 와 동일 로직 재사용
     await svc.update_order(
@@ -10753,15 +10781,28 @@ async def ship_by_kakao(
         {"shipping_company": body.shipping_company, "tracking_number": inv},
     )
     from backend.domain.samba.order.dispatch_service import send_invoice_to_market
+
     market_sent, market_msg = await send_invoice_to_market(
         order, body.shipping_company, inv, session
     )
     if market_sent:
         await svc.update_order(
-            order.id, {"shipping_status": "송장전송완료", "status": "shipping"},
+            order.id,
+            {"shipping_status": "송장전송완료", "status": "shipping"},
         )
-    logger.info("[ship-by-kakao] 처리완료 order=%s sent=%s name=%s code=%s%s",
-                order.id, market_sent, name, code,
-                f" / {warn}" if warn else "")
-    return {"ok": True, "action": "shipped", "order_id": order.id,
-            "market_sent": market_sent, "message": market_msg, "warning": warn}
+    logger.info(
+        "[ship-by-kakao] 처리완료 order=%s sent=%s name=%s code=%s%s",
+        order.id,
+        market_sent,
+        name,
+        code,
+        f" / {warn}" if warn else "",
+    )
+    return {
+        "ok": True,
+        "action": "shipped",
+        "order_id": order.id,
+        "market_sent": market_sent,
+        "message": market_msg,
+        "warning": warn,
+    }

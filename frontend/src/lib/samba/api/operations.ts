@@ -20,6 +20,8 @@ export type {
   AISourcingResult,
   StoreCareSchedule,
   StoreCarePurchase,
+  StoreCareMarketMetric,
+  MetricRecommendation,
   SambaSourcingAccount,
   ChromeProfile,
   RewardAccountRow,

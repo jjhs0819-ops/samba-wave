@@ -994,6 +994,18 @@ async def _order_auto_sync_loop() -> None:
                     _log.info(f"[주문 auto sync] order_sync 잡 종료: {status}")
                     break
 
+            # 2-b) 역마진(가격X)/재고없음(재고X) 자동 판정 + 상품갱신 + 메모 기록.
+            #      자동주문수집 본 경로(이 루프)에서 sync 끝난 직후 실행.
+            try:
+                from backend.domain.samba.order.auto_issue_check import (
+                    auto_check_order_issues,
+                )
+
+                _ai_summary = await auto_check_order_issues()
+                _log.info(f"[주문 auto sync] 주문이슈 자동체크: {_ai_summary}")
+            except Exception as _ai_e:
+                _log.warning(f"[주문 auto sync] 주문이슈 자동체크 실패: {_ai_e}")
+
             # 3) 송장수집 큐 적재 + 결과를 order_sync 잡 result에 머지
             tracking_summary: dict = {}
             try:
@@ -1527,6 +1539,12 @@ async def lifespan(app: FastAPI):
         "yes",
     )
 
+    # 프로세스 분리 (process-split-design): PROCESS_ROLE=worker 면 전송 전용 워커.
+    # JobWorker(WORKER_ONLY_TYPES=transmit,order_sync)만 기동하고 오토튠 루프·데몬
+    # 엔드포인트·리컨실러는 띄우지 않는다(이들은 API 프로세스 A 가 담당).
+    # in-memory Future/오토튠 상태 결합 때문에 A 에만 둬야 함.
+    _process_role = os.environ.get("PROCESS_ROLE", "api").strip().lower()
+
     if _disable_bg:
         startup_logger.warning(
             "[startup] DISABLE_BACKGROUND_WORKERS=1 — "
@@ -1535,6 +1553,14 @@ async def lifespan(app: FastAPI):
         worker_runtime = WorkerRuntime(
             worker=None, worker_task=None, watchdog_task=None
         )
+    elif _process_role == "worker":
+        startup_logger.warning(
+            "[startup] PROCESS_ROLE=worker — 전송 전용 워커 모드. "
+            "JobWorker 만 기동(오토튠/리컨실러/주문폴러 비활성)"
+        )
+        # 전송 잡 boot 복구 후 JobWorker 만 기동. 수집/소싱 복구는 A 가 담당.
+        await _recover_running_jobs(startup_logger)
+        worker_runtime = await _start_worker_runtime()
     else:
         await _recover_running_jobs(startup_logger)
         await _recover_sourcing_jobs(startup_logger)

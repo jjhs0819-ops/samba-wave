@@ -413,6 +413,24 @@ class JobWorker:
         # 검색 결과 캐시: {(site, keyword): (items_list, timestamp)}
         # 동일 브랜드 그룹 수집 시 전수 검색 1회만 실행
         self._search_cache: dict[tuple[str, str], tuple[list, float]] = {}
+        # ── 프로세스 분리 (process-split-design) ──
+        # WORKER_ONLY_TYPES 지정 시 해당 job_type만 처리 (전송 전용 B 워커).
+        # WORKER_EXCLUDE_TYPES 지정 시 해당 타입을 항상 제외 (API 프로세스의 A 워커가
+        # transmit/order_sync 를 B 에 위임). 미설정 시 현행 단일 워커 동작 유지.
+        _only = os.environ.get("WORKER_ONLY_TYPES", "").strip()
+        self._only_types: set[str] | None = {
+            t.strip() for t in _only.split(",") if t.strip()
+        } or None
+        _excl_env = os.environ.get("WORKER_EXCLUDE_TYPES", "").strip()
+        self._extra_exclude_types: set[str] = {
+            t.strip() for t in _excl_env.split(",") if t.strip()
+        }
+        if self._only_types:
+            logger.info(f"[잡워커] 전용 모드 — only_types={sorted(self._only_types)}")
+        if self._extra_exclude_types:
+            logger.info(
+                f"[잡워커] 제외 타입 — exclude={sorted(self._extra_exclude_types)}"
+            )
 
     @staticmethod
     def _extract_transmit_account_ids(payload: dict[str, Any] | None) -> list[str]:
@@ -605,6 +623,8 @@ class JobWorker:
                     _excl_accounts.update(_aids)
                 # 일시정지 중이면 transmit 클레임 스킵 — PENDING 잡 대기 유지
                 _excl_types: set[str] = {"bg_remove"}
+                # 프로세스 분리: API(A) 워커는 transmit/order_sync 를 B 에 위임
+                _excl_types |= self._extra_exclude_types
                 if is_cancel_requested("__all__"):
                     if self._poll_count % 12 == 0:  # 60초(5s × 12)마다 1회 경고
                         logger.warning(
@@ -617,6 +637,7 @@ class JobWorker:
                     exclude_brand_all=self._brand_all_running,
                     exclude_types=_excl_types,
                     exclude_accounts=_excl_accounts or None,
+                    only_types=self._only_types,
                 )
                 if not job:
                     break
@@ -1062,6 +1083,10 @@ class JobWorker:
         update_items = payload.get("update_items", [])
         target_account_ids = payload.get("target_account_ids", [])
         skip_unchanged = payload.get("skip_unchanged", False)
+        # 오토튠 발행 전송잡(process-split-design step8): 이미 갱신된 가격으로 전송하므로
+        # 재수집(refresh) 생략. payload skip_refresh=True 일 때만 start_update 에 전달.
+        # 기본 False → 기존 수동/테트리스 전송잡 동작 불변.
+        skip_refresh = bool(payload.get("skip_refresh", False))
         # 프론트에서 테트리스 배치 기반으로 직접 target_account_ids 구성한 경우 True
         _payload_tetris_flag = bool(payload.get("skip_policy_account_filter", False))
 
@@ -1396,6 +1421,7 @@ class JobWorker:
                         effective_account_ids,
                         skip_unchanged=skip_unchanged,
                         skip_policy_account_filter=_tetris_enabled,
+                        skip_refresh=skip_refresh,
                     )
                     await _transmit_session.commit()
                 # 작업취소/비상정지로 start_update가 루프 첫 줄에서 break →
@@ -4475,6 +4501,16 @@ class JobWorker:
                     _search_kwargs["brand_id"] = brand_ids[0]
                 if brand_names:
                     _search_kwargs["brand_name"] = brand_names[0]
+                # 패플: brand_id/brand_name 둘 다 URL에 없으면(구 그룹·생성 누락) 선택
+                # 브랜드명(source_brand_name)으로 사후 필터 폴백 — 패플 키워드검색에
+                # 섞여 들어오는 타판매처(예: 케이티알파쇼핑) 상품을 차단한다.
+                if (
+                    site == "FashionPlus"
+                    and not brand_ids
+                    and not brand_names
+                    and getattr(sf, "source_brand_name", None)
+                ):
+                    _search_kwargs["brand_name"] = (sf.source_brand_name or "").strip()
                 # SSG repBrandId 파라미터 → brand_ids 리스트로 전달
                 _rep_brand_id = qs.get("repBrandId", [""])[0]
                 if _rep_brand_id:

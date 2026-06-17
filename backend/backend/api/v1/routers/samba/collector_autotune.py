@@ -538,6 +538,47 @@ async def _run_transmit_in_background(coro_factory, site: str = ""):
             logger.warning(f"[오토튠][백그라운드전송] 실패: {exc}")
 
 
+# ── 프로세스 분리 step8 (process-split-design) ──
+# AUTOTUNE_TRANSMIT_VIA_QUEUE=1 이면 오토튠 전송을 in-process 실행 대신 samba_jobs
+# transmit 잡으로 발행 → 전송 전용 워커(samba-worker, B)가 별도 코어에서 실행.
+# A(오토튠) 이벤트루프에서 전송 CPU(XML/이미지/HTTP)를 들어내 무신사 건당 회복.
+# 기본 off(미설정) → 기존 in-process fire-and-forget 동작 그대로.
+def _autotune_transmit_via_queue() -> bool:
+    return os.environ.get("AUTOTUNE_TRANSMIT_VIA_QUEUE", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+async def _enqueue_autotune_transmit(
+    pid: str, items: list, acc_id: str, tenant_id: str | None
+) -> None:
+    """오토튠 전송을 samba_jobs transmit 잡으로 발행 (step8).
+
+    B 워커가 skip_refresh=True 로 처리 — 오토튠이 이미 가격 갱신했으므로 재수집 생략,
+    오토튠이 계정을 직접 지정하므로 정책 계정필터 우회(skip_policy_account_filter).
+    """
+    from backend.db.orm import get_write_session
+    from backend.domain.samba.job.repository import SambaJobRepository
+
+    async with get_write_session() as _js:
+        repo = SambaJobRepository(_js)
+        await repo.create_async(
+            job_type="transmit",
+            payload={
+                "product_ids": [pid],
+                "update_items": items,
+                "target_account_ids": [acc_id],
+                "skip_unchanged": False,
+                "skip_policy_account_filter": True,
+                "skip_refresh": True,
+                "source": "autotune",
+            },
+            tenant_id=tenant_id,
+        )
+
+
 # PC별 분담 등록: device_id → set of sites this PC will process.
 # 폴링 시점에 X-Allowed-Sites 헤더로 갱신, PC_LAST_SEEN_TTL 동안 폴링 없으면 자동 제거.
 _pc_allowed_sites: dict[str, set[str]] = {}
@@ -3042,7 +3083,25 @@ async def _site_autotune_loop(device_id: str, site: str):
                                 _critical = _soldout_divergent(
                                     r.new_options, last_sent.get(_tx_acc)
                                 )
-                                if _critical:
+                                if _autotune_transmit_via_queue():
+                                    # step8: in-process 실행 대신 samba_jobs 발행 →
+                                    # 전송 전용 워커(B)가 별도 코어에서 처리. 발행(DB persist)은
+                                    # await 해 잡 유실 방지(품절-critical 포함 durable).
+                                    try:
+                                        await _enqueue_autotune_transmit(
+                                            _tx_pid,
+                                            _tx_items,
+                                            _tx_acc,
+                                            getattr(product, "tenant_id", None),
+                                        )
+                                    except Exception as _qe:
+                                        log.warning(
+                                            "[오토튠][전송큐발행실패] pid=%s acc=%s: %s",
+                                            _tx_pid,
+                                            str(_tx_acc)[:12],
+                                            str(_qe)[:160],
+                                        )
+                                elif _critical:
                                     try:
                                         await asyncio.shield(_fire_transmit_account())
                                     except asyncio.CancelledError:

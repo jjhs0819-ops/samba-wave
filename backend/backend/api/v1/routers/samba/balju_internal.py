@@ -46,7 +46,7 @@ class BaljuLookupReq(BaseModel):
 
 
 _SELECT_COLS = (
-    "order_number, od_no, ext_order_number, sourcing_order_number, "
+    "order_number, od_no, ext_order_number, shipment_id, sourcing_order_number, "
     "cost, shipping_fee, source, status, product_name, product_option, paid_at"
 )
 
@@ -143,7 +143,7 @@ async def lookup(
         stmt = sa_text(
             f"SELECT {_SELECT_COLS} FROM samba_order "
             "WHERE order_number IN :keys OR od_no IN :keys "
-            "OR ext_order_number IN :keys"
+            "OR ext_order_number IN :keys OR shipment_id IN :keys"
         ).bindparams(bindparam("keys", expanding=True))
         res = await session.execute(stmt, {"keys": all_keys})
         for m in res.mappings():

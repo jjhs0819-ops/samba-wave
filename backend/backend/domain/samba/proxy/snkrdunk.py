@@ -81,6 +81,62 @@ def _is_streetwear_id(site_product_id: str) -> bool:
     return site_product_id.isdigit()
 
 
+# 트레이딩카드 브랜드(프랜차이즈) 추론 — 이름 키워드 + 품번 접두어
+_CARD_BRAND_NAME_MAP = [
+    ("one piece", "ONE PIECE"),
+    ("pokemon", "Pokémon"),
+    ("pokémon", "Pokémon"),
+    ("dragon ball", "DRAGON BALL"),
+    ("yu-gi-oh", "Yu-Gi-Oh!"),
+    ("yugioh", "Yu-Gi-Oh!"),
+    ("weiss", "Weiss Schwarz"),
+    ("duel masters", "Duel Masters"),
+    ("lorcana", "Disney Lorcana"),
+    ("union arena", "Union Arena"),
+    ("gundam", "GUNDAM"),
+    ("digimon", "Digimon"),
+    ("hololive", "hololive"),
+    ("detective conan", "Detective Conan"),
+    ("ultraman", "ULTRAMAN"),
+    ("magic", "Magic: The Gathering"),
+]
+_CARD_BRAND_PREFIX_MAP = [
+    ("pkmn", "Pokémon"),
+    ("ygo", "Yu-Gi-Oh!"),
+    ("dbsc", "DRAGON BALL"),
+    ("dbsd", "DRAGON BALL"),
+    ("uatcg", "Union Arena"),
+    ("ws", "Weiss Schwarz"),
+    ("dm", "Duel Masters"),
+    ("mtg", "Magic: The Gathering"),
+    ("disny", "Disney Lorcana"),
+    ("kkk", "Murakami.Flowers"),
+    ("holo", "hololive"),
+    ("gcg", "GUNDAM"),
+    ("cnn", "Detective Conan"),
+    ("opcd", "ONE PIECE"),
+    ("opc", "ONE PIECE"),
+    ("op", "ONE PIECE"),
+    ("eb", "ONE PIECE"),
+    ("st", "ONE PIECE"),
+    ("prb", "ONE PIECE"),
+    ("p-", "ONE PIECE"),
+]
+
+
+def _derive_card_brand(name: str, product_number: str = "") -> str:
+    """트레이딩카드 브랜드(프랜차이즈) 추론. 못 찾으면 빈 문자열."""
+    low = (name or "").lower()
+    for kw, brand in _CARD_BRAND_NAME_MAP:
+        if kw in low:
+            return brand
+    sc = (product_number or "").lower()
+    for pre, brand in _CARD_BRAND_PREFIX_MAP:
+        if sc.startswith(pre):
+            return brand
+    return ""
+
+
 def _detail_url(site_product_id: str, snkr_type: str | None = None) -> str:
     # 트레이딩카드는 전용 상세 경로 사용 (/en/trading-cards/{id})
     if snkr_type == "trading-card":
@@ -438,7 +494,9 @@ class SnkrdunkClient:
                     "original_price": sale_price,
                     "sale_price": sale_price,
                     "images": [thumb] if thumb else [],
-                    "brand": "",
+                    "brand": _derive_card_brand(
+                        it.get("name") or "", str(it.get("productNumber") or "")
+                    ),
                     "source_site": "SNKRDUNK",
                     "source_url": url,
                     "category": _category_label("trading-card"),
@@ -559,7 +617,7 @@ class SnkrdunkClient:
         return {
             "site_product_id": card_id,
             "name": name,
-            "brand": "",
+            "brand": _derive_card_brand(name, product_number),
             "sale_price": sale_price,
             "original_price": sale_price,
             "images": [image] if image else [],

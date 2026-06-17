@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -10,6 +10,7 @@ from backend.db.orm import get_read_session_dependency, get_write_session_depend
 from backend.domain.samba.store_care.repository import (
     StoreCareScheduleRepository,
     StoreCarePurchaseRepository,
+    StoreCareMarketMetricRepository,
 )
 from backend.domain.samba.store_care.service import StoreCareService
 from backend.domain.samba.tenant.middleware import get_current_tenant_id
@@ -22,6 +23,7 @@ def _svc(session: AsyncSession) -> StoreCareService:
     return StoreCareService(
         StoreCareScheduleRepository(session),
         StoreCarePurchaseRepository(session),
+        StoreCareMarketMetricRepository(session),
     )
 
 
@@ -137,3 +139,80 @@ async def list_purchases(
     return await svc.list_purchases(
         limit=limit, market_type=market_type, tenant_id=tenant_id
     )
+
+
+# ── 마켓 점수·품절률 ──
+
+
+class MetricsCollectRequest(BaseModel):
+    markets: Optional[list] = None  # None이면 STORE_METRICS_URLS 전체 마켓
+
+
+@router.get("/metrics")
+async def list_market_metrics(
+    session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: str = Depends(get_current_tenant_id),
+):
+    """마켓별 최신 점수·품절률 스냅샷."""
+    svc = _svc(session)
+    return await svc.list_market_metrics(tenant_id=tenant_id)
+
+
+@router.post("/metrics/collect")
+async def collect_market_metrics(
+    request: Request,
+    body: Optional[MetricsCollectRequest] = None,
+    session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: str = Depends(get_current_tenant_id),
+):
+    """마켓 점수·품절률 수집 트리거.
+
+    X-Device-Id(버튼 누른 PC)의 확장앱이 로그인된 파트너/셀러 포털을 열어 스크래핑한다.
+    결과는 POST /proxy/sourcing/store-metrics-result 로 비동기 수신되어 적재된다.
+    """
+    from backend.domain.samba.proxy.sourcing_queue import (
+        STORE_METRICS_URLS,
+        SourcingQueue,
+    )
+
+    trigger_device_id = (request.headers.get("X-Device-Id") or "").strip()
+    if not trigger_device_id:
+        raise HTTPException(400, "X-Device-Id 필요 — 확장앱이 설치된 PC에서 실행하세요")
+
+    requested = [m.lower() for m in ((body.markets if body else None) or [])]
+    markets = [
+        m
+        for m in (requested or list(STORE_METRICS_URLS.keys()))
+        if m in STORE_METRICS_URLS
+    ]
+    if not markets:
+        raise HTTPException(
+            400, "수집 가능한 마켓이 없습니다 (STORE_METRICS_URLS 등록 마켓만 가능)"
+        )
+
+    enqueued: list[dict] = []
+    for mt in markets:
+        try:
+            request_id, _ = await SourcingQueue.add_store_metrics_job(
+                mt,
+                owner_device_id=trigger_device_id,
+                tenant_id=tenant_id,
+            )
+            enqueued.append({"market_type": mt, "request_id": request_id})
+        except Exception as e:  # noqa: BLE001
+            enqueued.append({"market_type": mt, "error": str(e)})
+
+    return {"ok": True, "device_id": trigger_device_id, "enqueued": enqueued}
+
+
+@router.get("/metrics/recommendations")
+async def list_metric_recommendations(
+    session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: str = Depends(get_current_tenant_id),
+):
+    """가) 부족분 계산 — 마켓별 목표 대비 '사야 할 구매 갯수'.
+
+    전체 주문수(N)가 수집되면 자동 계산, 없으면 reason에 'N 필요' 표시.
+    """
+    svc = _svc(session)
+    return await svc.list_recommendations(tenant_id=tenant_id)

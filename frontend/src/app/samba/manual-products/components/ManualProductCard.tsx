@@ -61,6 +61,7 @@ function toEditOptions(raw: unknown[] | undefined): EditOption[] {
 
 export default function ManualProductCard({ product, policies, accounts, onDeleted, onUpdated, onRefresh }: Props) {
   const [showCategories, setShowCategories] = useState(false)
+  const [showPrices, setShowPrices] = useState(false)
   const [showImageModal, setShowImageModal] = useState(false)
   const [transmitting, setTransmitting] = useState(false)
   const [result, setResult] = useState('')
@@ -362,18 +363,25 @@ export default function ManualProductCard({ product, policies, accounts, onDelet
       {/* 판매처별 판매가 — 정책 기반 계산 (상품관리와 동일) */}
       {marketPriceList.length > 0 && (
         <div>
-          <label className='text-xs text-[#666] block mb-1'>판매처별 판매가</label>
-          <div className='flex flex-col gap-1.5'>
-            {marketPriceList.map(m => (
-              <div key={m.marketName} className='bg-[#0A0A0A] border border-[#1A1A1A] rounded px-2.5 py-1.5'>
-                <div className='flex items-center justify-between'>
-                  <span className='text-xs text-[#999]'>{m.marketName === '신세계몰(전시)' ? '신세계몰' : m.marketName}</span>
-                  <span className='text-sm font-semibold text-[#FFB84D]'>{m.calcStr.split(' = ')[0]}</span>
+          <button
+            onClick={() => setShowPrices(v => !v)}
+            className='text-xs text-[#FF8C00] hover:text-[#E07B00]'
+          >
+            {showPrices ? '판매처별 판매가 접기 ▲' : `판매처별 판매가 보기 ▼ (${fmtNum(marketPriceList.length)}개)`}
+          </button>
+          {showPrices && (
+            <div className='flex flex-col gap-1.5 mt-1'>
+              {marketPriceList.map(m => (
+                <div key={m.marketName} className='bg-[#0A0A0A] border border-[#1A1A1A] rounded px-2.5 py-1.5'>
+                  <div className='flex items-center justify-between'>
+                    <span className='text-xs text-[#999]'>{m.marketName === '신세계몰(전시)' ? '신세계몰' : m.marketName}</span>
+                    <span className='text-sm font-semibold text-[#FFB84D]'>{m.calcStr.split(' = ')[0]}</span>
+                  </div>
+                  <div className='text-[0.68rem] text-[#666] mt-0.5'>{m.calcStr.split(' = ')[1]}</div>
                 </div>
-                <div className='text-[0.68rem] text-[#666] mt-0.5'>{m.calcStr.split(' = ')[1]}</div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

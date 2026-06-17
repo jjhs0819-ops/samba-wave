@@ -25,8 +25,6 @@ function getMarketProductUrl(
 ): string | null {
   switch (marketType) {
     case 'coupang': {
-      // 쿠팡 vp/products URL 은 {productId}?vendorItemId={vendorItemId} 형식.
-      // pid 없으면 sellerProductId 로 fallback (접속 안 될 수 있음).
       const pid = extras?.pid
       const vid = extras?.vid
       if (pid) {
@@ -56,29 +54,36 @@ export default function CategorySelector({
   const [suggestions, setSuggestions] = useState<Record<string, string[]>>({})
   const [loading, setLoading] = useState<Record<string, boolean>>({})
 
-  const search = async (accountId: string, marketType: string, q: string) => {
-    setQueries(prev => ({ ...prev, [accountId]: q }))
+  // 판매처(market_type)별로 계정 묶기
+  const groups = accounts.reduce<Record<string, Account[]>>((acc, a) => {
+    if (!acc[a.market_type]) acc[a.market_type] = []
+    acc[a.market_type].push(a)
+    return acc
+  }, {})
+
+  const search = async (marketType: string, q: string) => {
+    setQueries(prev => ({ ...prev, [marketType]: q }))
     if (!q.trim()) {
-      setSuggestions(prev => ({ ...prev, [accountId]: [] }))
+      setSuggestions(prev => ({ ...prev, [marketType]: [] }))
       return
     }
-    setLoading(prev => ({ ...prev, [accountId]: true }))
+    setLoading(prev => ({ ...prev, [marketType]: true }))
     try {
       const result = await categoryApi.suggest(q, marketType)
       const list = Array.isArray(result) ? (result as string[]) : []
-      setSuggestions(prev => ({ ...prev, [accountId]: list }))
+      setSuggestions(prev => ({ ...prev, [marketType]: list }))
     } catch {
-      setSuggestions(prev => ({ ...prev, [accountId]: [] }))
+      setSuggestions(prev => ({ ...prev, [marketType]: [] }))
     } finally {
-      setLoading(prev => ({ ...prev, [accountId]: false }))
+      setLoading(prev => ({ ...prev, [marketType]: false }))
     }
   }
 
-  const select = (accountId: string, cat: string) => {
-    const updated = { ...cats, [accountId]: cat }
+  const select = (marketType: string, cat: string) => {
+    const updated = { ...cats, [marketType]: cat }
     setCats(updated)
-    setSuggestions(prev => ({ ...prev, [accountId]: [] }))
-    setQueries(prev => ({ ...prev, [accountId]: cat }))
+    setSuggestions(prev => ({ ...prev, [marketType]: [] }))
+    setQueries(prev => ({ ...prev, [marketType]: cat }))
     onSave(updated)
   }
 
@@ -88,75 +93,20 @@ export default function CategorySelector({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {accounts.map(acc => {
-        const productNo = marketProductNos?.[acc.id]
-        const isRegistered = !!productNo
-        const marketUrl = isRegistered
-          ? getMarketProductUrl(acc.market_type, productNo, {
-              pid: marketProductNos?.[`${acc.id}_pid`],
-              vid: marketProductNos?.[`${acc.id}_vid`],
-            })
-          : null
-        const isDeleting = deletingAccountId === acc.id
-
+      {Object.entries(groups).map(([marketType, accs]) => {
         return (
           <div
-            key={acc.id}
+            key={marketType}
             style={{ background: '#0A0A0A', border: '1px solid #1A1A1A', borderRadius: 6, padding: 8 }}
           >
-            {/* 헤더: 계정명 + 구매페이지/삭제 버튼 */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-              <p style={{ fontSize: 11, color: '#666', margin: 0 }}>
-                {acc.market_type} · {acc.account_name}
-              </p>
-              {isRegistered && (
-                <div style={{ display: 'flex', gap: 4 }}>
-                  {marketUrl && (
-                    <button
-                      onClick={() => window.open(marketUrl, '_blank')}
-                      title='구매페이지 열기'
-                      style={{
-                        padding: '2px 8px',
-                        fontSize: 11,
-                        background: '#0F1C2E',
-                        border: '1px solid #1A3A5C',
-                        borderRadius: 4,
-                        color: '#4A9EFF',
-                        cursor: 'pointer',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      구매페이지
-                    </button>
-                  )}
-                  {onDeleteFromMarket && (
-                    <button
-                      onClick={() => !isDeleting && onDeleteFromMarket(acc.id)}
-                      disabled={isDeleting}
-                      title='마켓에서 삭제'
-                      style={{
-                        padding: '2px 8px',
-                        fontSize: 11,
-                        background: '#1A0A0A',
-                        border: '1px solid #3A1A1A',
-                        borderRadius: 4,
-                        color: isDeleting ? '#666' : '#FF6B6B',
-                        cursor: isDeleting ? 'not-allowed' : 'pointer',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {isDeleting ? '삭제 중...' : '마켓삭제'}
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
+            {/* 헤더: 판매처명 */}
+            <p style={{ fontSize: 11, color: '#666', margin: '0 0 6px 0' }}>{marketType}</p>
 
-            {/* 카테고리 검색 */}
+            {/* 카테고리 검색 (판매처 단위) */}
             <div style={{ position: 'relative' }}>
               <input
-                value={queries[acc.id] ?? cats[acc.id] ?? ''}
-                onChange={e => search(acc.id, acc.market_type, e.target.value)}
+                value={queries[marketType] ?? cats[marketType] ?? ''}
+                onChange={e => search(marketType, e.target.value)}
                 placeholder='카테고리 검색...'
                 style={{
                   width: '100%',
@@ -170,12 +120,12 @@ export default function CategorySelector({
                   boxSizing: 'border-box',
                 }}
               />
-              {loading[acc.id] && (
+              {loading[marketType] && (
                 <span style={{ position: 'absolute', right: 8, top: 8, fontSize: 11, color: '#666' }}>
                   검색 중
                 </span>
               )}
-              {(suggestions[acc.id] ?? []).length > 0 && (
+              {(suggestions[marketType] ?? []).length > 0 && (
                 <ul
                   style={{
                     position: 'absolute',
@@ -194,10 +144,10 @@ export default function CategorySelector({
                     boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
                   }}
                 >
-                  {suggestions[acc.id].map((cat, i) => (
+                  {suggestions[marketType].map((cat, i) => (
                     <li
                       key={i}
-                      onClick={() => select(acc.id, cat)}
+                      onClick={() => select(marketType, cat)}
                       style={{ padding: '7px 12px', color: '#E5E5E5', cursor: 'pointer' }}
                       onMouseEnter={e => { (e.currentTarget as HTMLLIElement).style.background = '#1A1A1A' }}
                       onMouseLeave={e => { (e.currentTarget as HTMLLIElement).style.background = 'transparent' }}
@@ -208,8 +158,63 @@ export default function CategorySelector({
                 </ul>
               )}
             </div>
-            {cats[acc.id] && (
-              <p style={{ fontSize: 11, color: '#FF8C00', marginTop: 4 }}>선택됨: {cats[acc.id]}</p>
+            {cats[marketType] && (
+              <p style={{ fontSize: 11, color: '#FF8C00', marginTop: 4 }}>선택됨: {cats[marketType]}</p>
+            )}
+
+            {/* 계정별 등록상품 버튼 */}
+            {marketProductNos && accs.some(a => !!marketProductNos[a.id]) && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
+                {accs.map(acc => {
+                  const productNo = marketProductNos[acc.id]
+                  if (!productNo) return null
+                  const marketUrl = getMarketProductUrl(acc.market_type, productNo, {
+                    pid: marketProductNos[`${acc.id}_pid`],
+                    vid: marketProductNos[`${acc.id}_vid`],
+                  })
+                  const isDeleting = deletingAccountId === acc.id
+                  return (
+                    <div key={acc.id} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ fontSize: 11, color: '#555', flex: 1 }}>{acc.account_name}</span>
+                      {marketUrl && (
+                        <button
+                          onClick={() => window.open(marketUrl, '_blank')}
+                          style={{
+                            padding: '2px 8px',
+                            fontSize: 11,
+                            background: '#0F1C2E',
+                            border: '1px solid #1A3A5C',
+                            borderRadius: 4,
+                            color: '#4A9EFF',
+                            cursor: 'pointer',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          구매페이지
+                        </button>
+                      )}
+                      {onDeleteFromMarket && (
+                        <button
+                          onClick={() => !isDeleting && onDeleteFromMarket(acc.id)}
+                          disabled={isDeleting}
+                          style={{
+                            padding: '2px 8px',
+                            fontSize: 11,
+                            background: '#1A0A0A',
+                            border: '1px solid #3A1A1A',
+                            borderRadius: 4,
+                            color: isDeleting ? '#666' : '#FF6B6B',
+                            cursor: isDeleting ? 'not-allowed' : 'pointer',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {isDeleting ? '삭제 중...' : '마켓삭제'}
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
             )}
           </div>
         )

@@ -56,6 +56,20 @@ exit(0 if r else 1)
     fi
   done
 
+  # ── 프로세스 분리 (process-split-design): 전송 전용 워커(B) ──
+  # PROCESS_ROLE=worker 면 마이그레이션/스키마픽스/리컨실러를 모두 스킵하고(이들은
+  # API 프로세스 A 가 담당) 곧바로 JobWorker 만 기동한다.
+  # gunicorn worker 수 = nproc-1 (A 가 1코어 차지). 각 gunicorn 워커가 독립 JobWorker 를
+  # 띄우고 samba_jobs 를 FOR UPDATE SKIP LOCKED 로 안전하게 병렬 소비한다.
+  # WORKER_REPLICAS env 로 override 가능(미설정 시 nproc-1 자동).
+  if [ "$PROCESS_ROLE" = "worker" ]; then
+    _CORES=$(nproc 2>/dev/null || echo 2)
+    _WK=${WORKER_REPLICAS:-$(( _CORES - 1 ))}
+    if [ "$_WK" -lt 1 ]; then _WK=1; fi
+    echo "Starting TRANSMIT-ONLY worker (PROCESS_ROLE=worker, gunicorn -w $_WK, cores=$_CORES)..."
+    exec uv run --no-dev -m gunicorn -w "$_WK" -k uvicorn.workers.UvicornWorker backend.main:app --bind 0.0.0.0:8080 --timeout 120 --graceful-timeout 600
+  fi
+
   # Emergency schema fixes — alembic_version=873871a20399 stamp 상태에서 누락된 테이블/컬럼 수동 보완
   # (2026-04-17 사고 이후 stamp-DB 간극 해소용. 신규 누락 항목은 여기 추가)
   #

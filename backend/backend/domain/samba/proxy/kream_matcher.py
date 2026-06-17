@@ -114,6 +114,194 @@ def map_condition_to_kream_size(condition: str | None) -> str | None:
     return _CONDITION_TO_KREAM_SIZE.get(condition.strip())
 
 
+# ── 버전(에디션) 추출 — 매칭 정확도 핵심 (일/중/영판 혼동 방지) ──
+_VERSION_KR_TOKENS = ["일어판", "중문판", "중문", "영문판", "한글판", "대만판"]
+
+
+def extract_version_kr(name_en: str) -> str:
+    """SNKRDUNK 영문명 → 기대 KREAM 버전 토큰. 없으면 ''."""
+    low = (name_en or "").lower()
+    if "chinese" in low or "(cn)" in low or "tw ver" in low:
+        return "중문판"
+    if "japanese" in low or "(jp)" in low or "jpn" in low:
+        return "일어판"
+    if (
+        "english" in low
+        or "(en)" in low
+        or "[en]" in low
+        or low.rstrip().endswith(" en")
+        or " en " in low
+    ):
+        return "영문판"
+    return ""
+
+
+# 영문 쿼리/스코어용 — 의미없는 노이즈 단어 제거
+_EN_STOP = {
+    "card",
+    "game",
+    "the",
+    "card game",
+    "tcg",
+    "ver",
+    "vol",
+    "pack",
+    "set",
+    "promotional",
+    "promo",
+    "booster",
+    "box",
+    "edition",
+    "and",
+    "for",
+    "from",
+    "unopen",
+    "unopened",
+    "serial",
+    "numbered",
+    "prize",
+    "participation",
+    "japanese",
+    "english",
+    "chinese",
+    "winner",
+    "champion",
+    "champions",
+    "expansion",
+    "collection",
+    "special",
+    "starter",
+    "premium",
+    "limited",
+    "version",
+    "deck",
+    "kit",
+}
+
+
+def en_content_tokens(name_en: str) -> list[str]:
+    """영문명에서 의미있는 토큰(캐릭터/세트어) 추출 — 검색어/스코어용."""
+    if not name_en:
+        return []
+    # 대괄호[코드]만 제거 — 괄호() 안 세트명(EMOTION 등)은 보존
+    base = re.sub(r"\[[^\]]*\]", " ", name_en)
+    base = re.sub(r"[^A-Za-z0-9.\- ]", " ", base)
+    out: list[str] = []
+    seen: set[str] = set()
+    for w in base.split():
+        wl = w.lower().strip(".-")
+        if len(wl) < 2 or wl in _EN_STOP or wl.isdigit():
+            continue
+        if wl not in seen:
+            seen.add(wl)
+            out.append(wl)
+    return out
+
+
+def build_en_query(name_en: str, style_code: str | None = None) -> str:
+    """KREAM 영문 검색어 — 캐릭터/세트 영문어 + (KREAM이 쓰는) 세트코드 품번.
+
+    품번은 KREAM이 실제 쓰는 형식(OP/EB/ST/P-NNN)만 추가 — 정확 변종 surface용.
+    SNKRDUNK 내부코드(OPC-/pkmn-/DBSC- 등)는 KREAM에 없어 검색 0 유발 → 제외.
+    """
+    toks = en_content_tokens(name_en)[:4]
+    pnum = normalize_product_number(style_code)
+    if pnum and re.match(r"^(OP|EB|ST|PRB|P)\d{0,2}-\d{2,3}$", pnum.upper()):
+        toks.append(pnum)
+    return " ".join(toks)
+
+
+def match_candidate(
+    name_en: str,
+    style_code: str | None,
+    cand_text: str,
+    rank: int = 0,
+) -> tuple[int, bool]:
+    """영문명 기반 후보 점수 — 품번 필수 폐기(보너스만), 버전/등급/순위 결합.
+
+    반환 (score, valid). valid=실신호(키워드/영문/품번) 1개+ 있을 때만.
+    cand_text = KREAM 검색결과 스니펫(영문 prefix + 한글명).
+    """
+    cand = cand_text or ""
+    cn = _norm(cand)
+    cl = cand.lower()
+    kws = translate_keywords(name_en)
+    rarity = extract_rarity(name_en)
+    variants = variant_kr_terms(name_en)
+    pnum = normalize_product_number(style_code)
+    ver = extract_version_kr(name_en)
+
+    score = 0
+    signals = 0
+    # 한글 키워드(번역사전) 매칭
+    for k in kws:
+        if _norm(k) in cn:
+            score += 5
+            signals += 1
+    # 영문 토큰 직접 매칭 (KREAM 영문 prefix/이름에 남은 영문)
+    for t in en_content_tokens(name_en):
+        if t in cl:
+            score += 4
+            signals += 1
+    # 품번 보너스 (필수 아님)
+    if pnum and any(_norm(v) in cn for v in _pnum_variants(pnum)):
+        score += 10
+        signals += 1
+    # 등급 정확매칭
+    if rarity and re.search(
+        r"(?<![A-Za-z])" + re.escape(rarity) + r"(?![A-Za-z\-])", cand
+    ):
+        score += 8
+    # 버전: 일치 +8, 충돌(다른 버전 표기) -12
+    if ver:
+        if _norm(ver) in cn or (ver == "중문판" and "중문" in cand):
+            score += 8
+        else:
+            for other in _VERSION_KR_TOKENS:
+                if other != ver and _norm(other) in cn:
+                    score -= 12
+                    break
+    # Vol 번호 매칭 (세트 Vol.1/Vol.6 변종 구분)
+    mv = re.search(r"vol(?:ume)?\.?\s*(\d+)", name_en or "", re.I)
+    if mv:
+        vn = mv.group(1)
+        if re.search(r"vol\.?\s*0*" + vn + r"(?!\d)", cand, re.I):
+            score += 10
+        elif re.search(r"vol\.?\s*\d+", cand, re.I):
+            score -= 10
+    # N주년(anniversary) 매칭 (2nd→2주년, 3rd→3주년)
+    ma = re.search(r"(\d+)\s*(?:st|nd|rd|th)\s+anniversar", name_en or "", re.I)
+    if ma:
+        an = ma.group(1)
+        if (an + "주년") in cand:
+            score += 10
+        elif re.search(r"\d+\s*주년", cand):
+            score -= 8
+    # 세트/실드 vs 싱글 타입 구분 — 세트 원본이 싱글 후보에 잘못 매칭 방지
+    src_is_set = not rarity and bool(
+        re.search(r"\b(set|collection|box|deck|loader)\b", name_en or "", re.I)
+    )
+    if src_is_set:
+        if re.search(r"세트|박스|컬렉션|덱|로더", cand):
+            score += 10
+        elif re.search(r"(?<![A-Za-z])(OP|EB|ST)\d{1,2}-\d{2,3}", cand):
+            # 후보가 세트코드 싱글 → 세트 원본과 불일치 (강한 감점)
+            score -= 16
+    # 출처/변종
+    for v in variants:
+        if _norm(v) in cn:
+            score += 5
+    # 번들 패널티
+    if "bundle" not in (name_en or "").lower():
+        for vt in _VARIANT_TOKENS_KR:
+            if _norm(vt) in cn and not any(_norm(vt) in _norm(k) for k in kws):
+                score -= 6
+    # KREAM 관련도 순위 보너스 (상위일수록)
+    score += max(0, 5 - rank)
+    valid = signals >= 1
+    return (score, valid)
+
+
 def normalize_product_number(style_code: str | None) -> str:
     """소싱처 품번 → KREAM 대조용 핵심 토큰.
 
@@ -158,6 +346,67 @@ def translate_keywords(name_en: str) -> list[str]:
     return out
 
 
+# ── 변종/출처 영→한 (등급 구분용 — query엔 안 쓰고 점수만) ──
+VARIANT_EN_KR: dict[str, list[str]] = {
+    "serial numbered": ["시리얼"],
+    "champion's prize": ["플래그십", "우승", "챔피언"],
+    "championship": ["플래그십", "우승", "챔피언"],
+    "winner prize": ["우승", "위너"],
+    "participation": ["참가"],
+    "flagship": ["플래그십"],
+    "tournament": ["배틀", "토너먼트", "대회"],
+    "store battle": ["스토어", "배틀"],
+}
+
+# ── 등급(rarity) 토큰 — KREAM도 동일 영문 표기. 긴 것 우선 매칭 ──
+_RARITY_TOKENS = [
+    "SEC-P",
+    "SEC",
+    "SR-P",
+    "SR",
+    "SCR",
+    "UC-P",
+    "UC",
+    "L-P",
+    "R-P",
+    "C-P",
+    "SP-P",
+    "SP",
+    "TR",
+    "DON",
+    "L",
+    "R",
+    "C",
+]
+
+
+def extract_rarity(name_en: str) -> str:
+    """SNKRDUNK 이름의 등급 토큰 추출 (품번 [..] 앞부분에서). 없으면 ''."""
+    if not name_en:
+        return ""
+    head = re.split(r"[\[(]", name_en, 1)[0]
+    for tok in _RARITY_TOKENS:  # 긴 것 우선 (SEC-P 가 SEC 보다 먼저)
+        if re.search(r"(?<![A-Za-z])" + re.escape(tok) + r"(?![A-Za-z])", head):
+            return tok
+    return ""
+
+
+def variant_kr_terms(name_en: str) -> list[str]:
+    """출처/변종 한글 키워드 (시리얼/플래그십/우승 등)."""
+    if not name_en:
+        return []
+    low = name_en.lower()
+    out: list[str] = []
+    seen: set[str] = set()
+    for en, kos in VARIANT_EN_KR.items():
+        if en in low:
+            for k in kos:
+                if k not in seen:
+                    seen.add(k)
+                    out.append(k)
+    return out
+
+
 def _norm(s: str) -> str:
     return re.sub(r"\s+", "", (s or "").lower())
 
@@ -167,10 +416,13 @@ def score_candidate(
     kr_keywords: list[str],
     is_bundle_src: bool,
     cand_name: str,
+    rarity: str = "",
+    variant_terms: list[str] | None = None,
 ) -> tuple[int, bool]:
     """후보 점수 + 품번포함여부.
 
     품번 미포함 → (-1, False) 즉시 제외 신호.
+    등급(rarity) 정확매칭 + 출처(시리얼/우승 등) 키워드로 변종 구분.
     """
     cand_norm = _norm(cand_name)
     pnum_hit = any(_norm(v) in cand_norm for v in _pnum_variants(pnum_token))
@@ -180,7 +432,17 @@ def score_candidate(
     for k in kr_keywords:
         if _norm(k) in cand_norm:
             score += 5
-    # 변종 패널티: 원본이 번들 아닌데 후보가 번들/덱 등이면 감점
+    # 등급 정확매칭 — KREAM 후보명에 동일 등급 토큰(standalone, -P 구분)
+    if rarity:
+        if re.search(
+            r"(?<![A-Za-z])" + re.escape(rarity) + r"(?![A-Za-z\-])", cand_name
+        ):
+            score += 8
+    # 출처/변종 키워드 (시리얼/플래그십/우승 등) — 변종 동점 깨기
+    for v in variant_terms or []:
+        if _norm(v) in cand_norm:
+            score += 5
+    # 번들 패널티: 원본이 번들 아닌데 후보가 번들/덱 등이면 감점
     if not is_bundle_src:
         for vt in _VARIANT_TOKENS_KR:
             if _norm(vt) in cand_norm and not any(
@@ -204,6 +466,8 @@ async def find_kream_product(
     """
     pnum = normalize_product_number(style_code)
     kr_keywords = translate_keywords(name_en)
+    rarity = extract_rarity(name_en)
+    variant_terms = variant_kr_terms(name_en)
     is_bundle_src = bool(
         re.search(r"bundle|번들|\d+\s*(pcs|cards)", (name_en or "").lower())
     )
@@ -240,7 +504,9 @@ async def find_kream_product(
     scored = []
     for r in results:
         cname = r.get("name", "")
-        sc, ok = score_candidate(pnum, kr_keywords, is_bundle_src, cname)
+        sc, ok = score_candidate(
+            pnum, kr_keywords, is_bundle_src, cname, rarity, variant_terms
+        )
         if not ok:
             continue
         scored.append({"product_id": str(r.get("id", "")), "name": cname, "score": sc})
@@ -259,7 +525,9 @@ async def find_kream_product(
 
     top = scored[0]
     second = scored[1]["score"] if len(scored) > 1 else -999
-    is_high = (
+    # 후보 1개(품번 유일매칭) = 모호성 없음 → 자동 high
+    # 또는 점수 충분 + 2등과 격차 확보
+    is_high = (len(scored) == 1 and top["score"] >= 10) or (
         top["score"] >= high_conf_min and (top["score"] - second) >= high_conf_margin
     )
     return {

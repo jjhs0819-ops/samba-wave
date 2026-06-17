@@ -1607,9 +1607,12 @@ class SambaShipmentService:
                     f"[전송] {market_type}({account_id}) 시작 — category_id_in_map={mapped_categories.get(market_type, '없음')}"
                 )
 
-                # 0순위: 수동등록 상품의 계정별 명시 카테고리
-                # manual_market_categories는 {account_id: category_id} 구조
-                category_id = _manual_market_categories.get(str(account_id), "")
+                # 0순위: 수동등록 상품의 판매처별 명시 카테고리
+                # manual_market_categories는 {market_type: category_id} 구조
+                # (구버전 호환: account_id 키도 fallback으로 조회)
+                category_id = _manual_market_categories.get(
+                    market_type, ""
+                ) or _manual_market_categories.get(str(account_id), "")
                 if category_id:
                     logger.info(
                         f"[전송] 수동등록 카테고리 사용: {market_type} account={account_id} → {category_id}"

@@ -92,11 +92,20 @@ class KreamPlugin(MarketPlugin):
         extra = product.get("extra_data") or {}
         if not isinstance(extra, dict):
             extra = {}
-        # 타 소싱처(SNKRDUNK 등)는 site_product_id가 KREAM ID가 아님 →
-        # 사전 매칭으로 저장된 extra_data.kream_product_id 우선 사용.
-        is_cross_source = bool(extra.get("snkr_type") or extra.get("kream_product_id"))
+        # 리셀 매칭 기록(resell_matches.kream.product_id) 우선 — 사전 매칭으로 확보한 KREAM 카탈로그 ID.
+        # 타 소싱처(SNKRDUNK 등)는 site_product_id가 KREAM ID가 아니므로 매칭 없으면 등록 보류.
+        resell = product.get("resell_matches") or {}
+        kream_match = resell.get("kream") if isinstance(resell, dict) else None
+        matched_kream_id = ""
+        if isinstance(kream_match, dict):
+            matched_kream_id = str(kream_match.get("product_id") or "").strip()
+        # 구 위치(extra_data.kream_product_id) 폴백 — 이전 기록 호환
+        if not matched_kream_id:
+            matched_kream_id = str(extra.get("kream_product_id") or "").strip()
+
+        is_cross_source = bool(extra.get("snkr_type"))
         product_id = (
-            extra.get("kream_product_id")
+            matched_kream_id
             or product.get("site_product_id")
             or product.get("siteProductId")
             or kream_data.get("product_id")
@@ -106,11 +115,11 @@ class KreamPlugin(MarketPlugin):
         product_id = str(product_id).strip()
         if not product_id:
             return {"success": False, "message": "KREAM 상품 ID가 없습니다."}
-        if is_cross_source and not extra.get("kream_product_id"):
-            # KREAM 매칭이 안 된 SNKRDUNK 상품 → SNKRDUNK ID로 입찰하면 오등록.
+        if is_cross_source and not matched_kream_id:
+            # KREAM 매칭이 안 된 타 소싱처 상품 → site_product_id로 입찰하면 오등록.
             return {
                 "success": False,
-                "message": "KREAM 품번 매칭 안 됨(kream_product_id 없음) — 등록 보류",
+                "message": "KREAM 매칭 안 됨(resell_matches.kream 없음) — 등록 보류",
             }
 
         # 사이즈별 매도 입찰 — 옵션 스키마는 {name, price, stock} 또는 {size, price}
