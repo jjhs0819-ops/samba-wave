@@ -482,9 +482,15 @@ class SambaAnalyticsService:
     ) -> Dict[str, Any]:
         """기간 내 '실제 결제' 주문으로 매출/이익 통계 계산.
 
+        정의(사장님 기준):
+        - 매출  = 고객 실결제금액(total_payment_amount). 없으면 sale_price×수량 폴백.
+        - 이익  = 실결제금액 − 소싱처 구매금액(cost).
+        필터:
         - 날짜 기준: paid_at(실제 결제 시각). 미결제(paid_at=None)는 매출 아님 → 제외.
         - 시간대: start/end 가 naive 면 KST 로 간주. paid_at 은 KST 로 변환 후 비교.
         - 취소/반품/교환 주문은 매출·이익에서 제외(_counts_as_sale).
+        주의: 주문에 cost(소싱처 구매금액)가 0/누락이면 이익이 매출만큼 부풀려진다.
+        이를 드러내기 위해 orders_missing_cost(원가 누락 건수)를 함께 반환한다.
         """
         all_orders = self._filter_by_tenant(
             await self.order_repo.list_async(), tenant_id
@@ -501,9 +507,15 @@ class SambaAnalyticsService:
             and start_kst <= _to_kst(o.paid_at) <= end_kst
         ]
 
-        total_sales = sum(o.sale_price * o.quantity for o in filtered)
-        total_profit = sum(o.profit for o in filtered)
+        def _payment(o) -> float:
+            if o.total_payment_amount is not None:
+                return float(o.total_payment_amount)
+            return float(o.sale_price) * o.quantity
+
+        total_sales = sum(_payment(o) for o in filtered)
+        total_profit = sum(_payment(o) - float(o.cost or 0) for o in filtered)
         total_orders = len(filtered)
+        orders_missing_cost = sum(1 for o in filtered if not (o.cost or 0) > 0)
 
         return {
             "total_sales": total_sales,
@@ -511,4 +523,5 @@ class SambaAnalyticsService:
             "total_profit": total_profit,
             "avg_order_value": total_sales / total_orders if total_orders > 0 else 0,
             "profit_rate": (total_profit / total_sales * 100) if total_sales > 0 else 0,
+            "orders_missing_cost": orders_missing_cost,
         }

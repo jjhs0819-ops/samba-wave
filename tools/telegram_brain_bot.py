@@ -531,6 +531,13 @@ def build_sales_text(with_comment: bool = True) -> str:
             f"  매출 {_fmt_price(month.get('total_sales'))} · 주문 {int(month.get('total_orders') or 0)}건",
             f"  이익 {_fmt_price(month.get('total_profit'))} · 마진 {float(month.get('profit_rate') or 0):.1f}%",
         ]
+        # 원가(소싱처 구매금액) 누락 주문은 이익이 매출만큼 부풀려짐 → 경고 노출
+        missing = int(month.get("orders_missing_cost") or 0)
+        total = int(month.get("total_orders") or 0)
+        if missing > 0:
+            lines.append(
+                f"  ⚠️ 원가 미입력 {missing}/{total}건 — 이 건들은 이익이 실제보다 부풀려져 있어"
+            )
     if isinstance(dash, dict):
         change = dash.get("salesChange")
         tm = dash.get("thisMonth") or {}
@@ -545,6 +552,7 @@ def build_sales_text(with_comment: bool = True) -> str:
             name = (p.get("product_name") or "?")[:24]
             lines.append(f"  {i}. {name} · {_fmt_price(p.get('sales'))} ({int(p.get('units') or 0)}개)")
 
+    lines.append("\nℹ️ 매출=고객 실결제금액 · 이익=실결제−소싱처원가")
     if with_comment:
         _append_comment(lines, "매출")
     return "\n".join(lines)
