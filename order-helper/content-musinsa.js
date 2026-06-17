@@ -226,6 +226,19 @@
     banner('고객정보 자동입력 중...');
 
     const c = Object.assign({}, job.customer); // 삼바 정확값(기본/상세주소) 그대로
+    // 라자다(해외묶음) 등 — 기본주소에 'A동 GMARKET(...)' 상세가 한 덩어리로 합쳐져
+    // 들어와 상세주소가 빈 경우, 도로명+건물번호 뒤를 상세주소로 분리한다.
+    // 예) '인천광역시 서구 북항로120번길 13-53 A동 GMARKET(4458762907)'
+    //   → 주소: '인천광역시 서구 북항로120번길 13-53' / 상세: 'A동 GMARKET(4458762907)'
+    // (상세주소가 이미 있으면 삼바 정확값을 그대로 유지.)
+    if (!String(c.addr2 || '').trim()) {
+      const sp = splitAddress(c.addr, '');
+      if (sp.address2 && sp.address2.trim()) {
+        log('상세주소 자동분리:', { 기본: sp.address1, 상세: sp.address2 });
+        c.addr = sp.address1;
+        c.addr2 = sp.address2;
+      }
+    }
     const hasPostal = /^\d{5}$/.test(String(c.postal || ''));
     log('주소 입력:', { address1: c.addr, address2: c.addr2, 우편번호: c.postal, hasPostal });
 
