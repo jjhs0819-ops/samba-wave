@@ -250,7 +250,7 @@ async def sourcing_collect_queue(request: Request) -> Any:
 # self-update 자살 루프(60초마다 rc=10 재시작) = "데몬 자꾸 죽음" 사고(2026-06-17).
 # 1.4.39: v1.4.39 릴리스 업로드 + 다운로드 200 검증 완료(로그 100줄 캡 + httpx 억제 +
 # 크래시 서버보고). 로컬 1.4.39 worker 기동·httpx억제·로그캡 실측 확인 후 상향.
-AUTOTUNE_DAEMON_LATEST_VERSION = "1.4.39"
+AUTOTUNE_DAEMON_LATEST_VERSION = "1.4.40"
 # asset 명에 버전 박힘 (`samba-v{ver}.exe`) — 지침: 데몬 설치파일명 버전 노출 필수.
 AUTOTUNE_DAEMON_DOWNLOAD_URL = (
     f"https://github.com/sbk0674-web/samba-wave/releases/download/"
@@ -275,6 +275,27 @@ async def autotune_daemon_latest_version() -> dict[str, Any]:
         "version": AUTOTUNE_DAEMON_LATEST_VERSION,
         "download_url": AUTOTUNE_DAEMON_DOWNLOAD_URL,
     }
+
+
+_daemon_proxy_call_count = 0
+
+
+@sourcing_queue_router.get("/autotune-daemon/proxy")
+async def autotune_daemon_proxy() -> dict[str, Any]:
+    """데몬이 Playwright 브라우저 프록시로 사용할 autotune 용 프록시 URL 반환.
+
+    호출마다 라운드로빈으로 프록시를 순환 반환 — 데몬 재기동마다 다른 프록시 사용.
+    인증 불필요. 응답 = {url: "http://user:pass@host:port", index: N} 또는 {url: null, index: 0}.
+    """
+    global _daemon_proxy_call_count
+    from backend.domain.samba.collector.refresher import get_autotune_proxies
+
+    proxies = get_autotune_proxies()
+    if not proxies:
+        return {"url": None, "index": 0, "total": 0}
+    idx = _daemon_proxy_call_count % len(proxies)
+    _daemon_proxy_call_count += 1
+    return {"url": proxies[idx], "index": idx, "total": len(proxies)}
 
 
 @sourcing_queue_router.post("/autotune-daemon/crash-report")

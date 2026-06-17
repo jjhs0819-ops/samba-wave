@@ -78,7 +78,10 @@ except ImportError:
 # ====================================================================
 # 데몬 버전 — build.ps1 가 갱신. 자동 업데이트 비교 기준.
 # ====================================================================
-DAEMON_VERSION = "1.4.39"
+DAEMON_VERSION = "1.4.40"
+
+# N건 처리 후 프록시 교체를 위해 supervisor 재기동 유도 (0=비활성)
+_PROXY_ROTATE_AFTER = 10
 
 
 # ── 가격수집 도메인 화이트리스트 ───────────────────────────────────────────
@@ -1214,15 +1217,19 @@ async def fetch_credential(
     백엔드 엔드포인트가 account_id 우선 처리.
     """
     params = {"account_id": account_id} if account_id else {"site_name": site_name}
-    r = await client.get(
-        f"{backend_url}/api/v1/samba/sourcing-accounts/login-credential",
-        params=params,
-        headers={
-            "X-Device-Id": device_id,
-            "X-Api-Key": api_key,
-        },
-        timeout=15.0,
-    )
+    try:
+        r = await client.get(
+            f"{backend_url}/api/v1/samba/sourcing-accounts/login-credential",
+            params=params,
+            headers={
+                "X-Device-Id": device_id,
+                "X-Api-Key": api_key,
+            },
+            timeout=15.0,
+        )
+    except (httpx.TimeoutException, httpx.NetworkError) as exc:
+        logger.warning("%s login-credential 네트워크 오류(무시) — %s", site_name, exc)
+        return None
     if r.status_code == 404:
         logger.warning(
             "%s 계정 미등록 (account_id=%s) — 삼바웨이브에서 소싱처 계정 추가 필요",
@@ -2803,6 +2810,39 @@ async def run_daemon(args: argparse.Namespace) -> int:
         login_sites = _compute_login_sites(active_sites)
         logger.info("초기 담당 사이트: %s (login=%s)", active_sites, login_sites)
 
+        # 백엔드 autotune 프록시 조회 — PC IP 차단 시 Playwright 우회
+        _browser_proxy: dict | None = None
+        try:
+            _pr = await http_client.get(
+                f"{backend_url}/api/v1/samba/proxy/sourcing/autotune-daemon/proxy",
+                timeout=10.0,
+            )
+            if _pr.status_code == 200:
+                _pdata = _pr.json() or {}
+                _pu = _pdata.get("url") or ""
+                if _pu:
+                    import re as _re
+
+                    _m = _re.match(r"https?://([^:@]+):([^@]+)@(.+)", _pu)
+                    if _m:
+                        _browser_proxy = {
+                            "server": f"http://{_m.group(3)}",
+                            "username": _m.group(1),
+                            "password": _m.group(2),
+                        }
+                    else:
+                        _browser_proxy = {"server": _pu}
+                    logger.info(
+                        "Playwright 프록시 설정: %s [%d/%d]",
+                        _pu.split("@")[-1],
+                        _pdata.get("index", 0) + 1,
+                        _pdata.get("total", 1),
+                    )
+                else:
+                    logger.info("Playwright 프록시 없음 (DB 미설정) — 직접 접속")
+        except Exception as _pe:
+            logger.warning("프록시 조회 실패(무시) — 직접 접속: %s", _pe)
+
         # launch + new_context(storage_state) — persistent_context 는 headless=True 무시하고
         # 창 띄우는 알려진 버그가 있어 쿠키만 storage_state.json 영속 저장.
         storage_state_path = profile_dir / "storage_state.json"
@@ -2818,6 +2858,8 @@ async def run_daemon(args: argparse.Namespace) -> int:
             }
             if storage_state_path.exists():
                 context_kwargs["storage_state"] = str(storage_state_path)
+            if _browser_proxy:
+                context_kwargs["proxy"] = _browser_proxy
             context: BrowserContext = await browser.new_context(**context_kwargs)
 
             # 가격수집 도메인 화이트리스트 상태 — 런타임 active_sites 변경 시 _sync_assignment 가 갱신.
@@ -3263,6 +3305,18 @@ async def run_daemon(args: argparse.Namespace) -> int:
                         logger.info(
                             "max-uptime %ds 도달 — 메모리 초기화 재시작",
                             args.max_uptime,
+                        )
+                        state.die()
+                        break
+                    # 프록시 로테이션 — N건 처리 후 재시작해 다음 프록시 사용
+                    if (
+                        _PROXY_ROTATE_AFTER > 0
+                        and _browser_proxy is not None
+                        and state.processed >= _PROXY_ROTATE_AFTER
+                    ):
+                        logger.info(
+                            "프록시 로테이션 — %d건 처리 완료, 다음 프록시로 재시작",
+                            state.processed,
                         )
                         state.die()
                         break
