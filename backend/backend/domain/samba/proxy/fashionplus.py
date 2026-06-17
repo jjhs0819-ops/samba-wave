@@ -27,6 +27,16 @@ HEADERS = {
 }
 
 
+def _norm_brand(s: str) -> str:
+    """브랜드명 비교용 정규화 — 모든 공백 제거 + 소문자.
+
+    패플은 같은 브랜드를 "코오롱 스포츠"(공백 포함)로 주고, 우리 검색그룹의
+    source_brand_name 은 "코오롱스포츠"(공백 없음)인 경우가 많다. 공백만 다른
+    동일 브랜드를 오필터하지 않도록 공백을 제거하고 비교한다.
+    """
+    return "".join((s or "").split()).lower()
+
+
 # 패션플러스 카테고리 ID → 이름 매핑
 _CATEGORY_MAP: dict[str, str] = {
     "18": "여성의류",
@@ -290,13 +300,11 @@ class FashionPlusClient:
                 if not items:
                     break
 
-                # brand_id로 서버측 필터된 경우 클라 필터 불필요(brand_name 부정확 시
-                # 오필터 방지). id 없이 name만 있으면 정확 일치로 타브랜드 혼입 차단.
-                target_brand = (
-                    ""
-                    if brand_id
-                    else ((brand_name or "").strip().lower() if brand_name else "")
-                )
+                # brand_id로 서버측 필터된 경우 클라 필터 불필요. id 없이 name만 있으면
+                # 공백 정규화 후 정확 일치로 타판매처/타브랜드 혼입 차단.
+                # (패플 키워드검색은 "케이티알파쇼핑" 같은 입점 판매처 상품을 brand 로
+                #  섞어 반환 — brand_id 누락 그룹에서 source_brand_name 폴백으로 거른다.)
+                target_brand = "" if brand_id else _norm_brand(brand_name)
                 filtered_items = []
                 for item in items:
                     if item.get("isSoldout"):
@@ -304,15 +312,11 @@ class FashionPlusClient:
                     if target_brand:
                         item_brand = item.get("brand") or {}
                         item_brand_name = (
-                            (
-                                item_brand.get("name", "")
-                                if isinstance(item_brand, dict)
-                                else str(item_brand)
-                            )
-                            .strip()
-                            .lower()
+                            item_brand.get("name", "")
+                            if isinstance(item_brand, dict)
+                            else str(item_brand)
                         )
-                        if item_brand_name != target_brand:
+                        if _norm_brand(item_brand_name) != target_brand:
                             continue
                     filtered_items.append(item)
                 products = [self._map_item(item) for item in filtered_items]

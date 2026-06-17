@@ -4501,6 +4501,16 @@ class JobWorker:
                     _search_kwargs["brand_id"] = brand_ids[0]
                 if brand_names:
                     _search_kwargs["brand_name"] = brand_names[0]
+                # 패플: brand_id/brand_name 둘 다 URL에 없으면(구 그룹·생성 누락) 선택
+                # 브랜드명(source_brand_name)으로 사후 필터 폴백 — 패플 키워드검색에
+                # 섞여 들어오는 타판매처(예: 케이티알파쇼핑) 상품을 차단한다.
+                if (
+                    site == "FashionPlus"
+                    and not brand_ids
+                    and not brand_names
+                    and getattr(sf, "source_brand_name", None)
+                ):
+                    _search_kwargs["brand_name"] = (sf.source_brand_name or "").strip()
                 # SSG repBrandId 파라미터 → brand_ids 리스트로 전달
                 _rep_brand_id = qs.get("repBrandId", [""])[0]
                 if _rep_brand_id:
