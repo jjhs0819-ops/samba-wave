@@ -19,10 +19,13 @@ function pageOpenSearch(c) {
           vm.form.name = c.name;
           vm.form.mobile = c.phone;
           vm.form.address2 = c.addr2;
-          if (c.memo) {
+          // 배송 요청사항(선택): 삼바 메모가 있으면 그대로, 비어 있으면 공백 1칸을
+          // '직접입력'으로 넣어 무신사에 이전 요청사항이 자동으로 남는 것을 방지한다.
+          {
+            const memo = (c.memo && c.memo.trim()) ? c.memo : ' ';
             const pre = (vm.ui && vm.ui.additionalMessageType) || [];
-            if (pre.indexOf(c.memo) >= 0) vm.form.additionalMessage = c.memo;
-            else { vm.form.additionalMessage = '직접입력'; vm.form.additionalMessageManual = c.memo; }
+            if (memo.trim() && pre.indexOf(memo) >= 0) vm.form.additionalMessage = memo;
+            else { vm.form.additionalMessage = '직접입력'; vm.form.additionalMessageManual = memo; }
           }
           vm.form.zipcode = '';
           vm.form.address1 = '';
@@ -49,10 +52,13 @@ function pageFillZip(c, zip) {
           vm.form.name = c.name;
           vm.form.mobile = c.phone;
           vm.form.address2 = c.addr2;
-          if (c.memo) {
+          // 배송 요청사항(선택): 삼바 메모가 있으면 그대로, 비어 있으면 공백 1칸을
+          // '직접입력'으로 넣어 무신사에 이전 요청사항이 자동으로 남는 것을 방지한다.
+          {
+            const memo = (c.memo && c.memo.trim()) ? c.memo : ' ';
             const pre = (vm.ui && vm.ui.additionalMessageType) || [];
-            if (pre.indexOf(c.memo) >= 0) vm.form.additionalMessage = c.memo;
-            else { vm.form.additionalMessage = '직접입력'; vm.form.additionalMessageManual = c.memo; }
+            if (memo.trim() && pre.indexOf(memo) >= 0) vm.form.additionalMessage = memo;
+            else { vm.form.additionalMessage = '직접입력'; vm.form.additionalMessageManual = memo; }
           }
           if (typeof vm.findAddressComplete === 'function') {
             vm.findAddressComplete({ zipcode: String(zip), address1: c.addr });
