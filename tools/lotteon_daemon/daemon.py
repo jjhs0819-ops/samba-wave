@@ -2066,30 +2066,132 @@ async def post_result(
 async def extract_pdp(
     page: Page, url: str, product_id: str, handler: SiteHandler
 ) -> dict[str, Any]:
-    """사이트 핸들러 기반 PDP 추출 — marker 폴링 + extract_js + 재시도."""
+    """사이트 핸들러 기반 PDP 추출 — marker 폴링 + extract_js + 재시도.
+
+    각 page.evaluate 는 12s timeout 으로 wrapping. ABCmart 헤드리스 탐지로
+    extract_js 내부 fetch 가 hang 하면 외부 50s wait_for 까지 모든 worker 가 stuck
+    → page_dirty 누적 회귀. evaluate 단위로 끊어 12s 안에 실패 판정.
+    """
     # commit — 네비게이션 커밋 즉시 반환. marker 폴링이 준비 판정을 담당하므로
     # DOMContentLoaded 까지 기다리는 중복 대기 제거.
-    await page.goto(url, wait_until="commit", timeout=30_000)
-    await page.evaluate(f"window.__PRD_ID__ = {json.dumps(product_id)}")
+    # asyncio.wait_for 외부 래핑 — Playwright 자체 timeout 이 CDP pipe hang 시 작동 안 하는
+    # 회귀 (2026-05-31 ABCmart 50s wait_for 5/5 사고) 대비. 외부 cancel 로 page_dirty 회복.
+    _site = handler.site
+    _pid = product_id
+    _t_step = time.time()
+    logger.info("[extract_pdp] %s/%s step=goto.start", _site, _pid)
+    # goto timeout 22s → 35s (2026-06-02 3차): ABCmart goto.TIMEOUT 31% (dominant 회귀).
+    # 페이지 자체 응답 지연 (a-rt.com 서버 부하 또는 봇 차단 throttle) 으로 22s 부족.
+    # 정상 페이지 1-3s, timeout 도달은 사실상 페이지 죽음이지만 35s 까지 응답하는
+    # 회복 케이스가 ABCmart 에 있을 것으로 기대 (LOTTEON/SSG 는 이미 22s 내 안정).
+    try:
+        await asyncio.wait_for(
+            page.goto(url, wait_until="commit", timeout=33_000), timeout=35.0
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "[extract_pdp] %s/%s step=goto.TIMEOUT (%.1fs)",
+            _site,
+            _pid,
+            time.time() - _t_step,
+        )
+        return {"success": False, "error": "daemon page.goto 35s timeout"}
+    logger.info(
+        "[extract_pdp] %s/%s step=goto.done (%.1fs)",
+        _site,
+        _pid,
+        time.time() - _t_step,
+    )
+    _t_step = time.time()
+    # inject timeout 10s → 15s (2026-06-02 2차): ABCmart inject.done avg=6.67s, max=9.90s 라
+    # 10s 도 빠듯 — 43건 timeout. 15s 로 추가 상향. 정상 페이지 ms 단위라 영향 없음.
+    try:
+        await asyncio.wait_for(
+            page.evaluate(f"window.__PRD_ID__ = {json.dumps(product_id)}"),
+            timeout=15.0,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "[extract_pdp] %s/%s step=inject.TIMEOUT (%.1fs)",
+            _site,
+            _pid,
+            time.time() - _t_step,
+        )
+        return {"success": False, "error": "daemon __PRD_ID__ inject 15s timeout"}
+    logger.info(
+        "[extract_pdp] %s/%s step=inject.done (%.1fs)",
+        _site,
+        _pid,
+        time.time() - _t_step,
+    )
 
+    _t_step = time.time()
+    # marker polling — wall-clock 기준. page.wait_for_timeout 는 CDP pipe hang 시
+    # 무한 wait 회귀 (v1.4.25 진단 결과 ABCmart marker.done 37-40s). asyncio.sleep 로
+    # 교체해 asyncio cancel 가능. + outer asyncio.wait_for 로 폴링 전체 hard cap.
     if handler.pre_extract_marker_js:
-        deadline = handler.pre_extract_marker_timeout_ms
-        step = 500
-        elapsed = 0
-        while elapsed < deadline:
-            try:
-                hit = await page.evaluate(handler.pre_extract_marker_js)
-            except Exception:
-                hit = False
-            if hit:
-                break
-            await page.wait_for_timeout(step)
-            elapsed += step
-        await page.wait_for_timeout(handler.pre_extract_wait_ms)
-    else:
-        await page.wait_for_timeout(handler.pre_extract_wait_ms)
+        deadline_s = handler.pre_extract_marker_timeout_ms / 1000.0
+        marker_hard_cap = max(8.0, deadline_s + 2.0)
 
-    data = await page.evaluate(handler.extract_js)
+        async def _marker_loop() -> None:
+            t0 = time.time()
+            while time.time() - t0 < deadline_s:
+                try:
+                    hit = await asyncio.wait_for(
+                        page.evaluate(handler.pre_extract_marker_js), timeout=3.0
+                    )
+                except Exception:
+                    hit = False
+                if hit:
+                    return
+                await asyncio.sleep(0.5)
+
+        try:
+            await asyncio.wait_for(_marker_loop(), timeout=marker_hard_cap)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "[extract_pdp] %s/%s step=marker.HARDCAP (%.1fs)",
+                _site,
+                _pid,
+                time.time() - _t_step,
+            )
+    # pre_extract_wait_ms 도 asyncio.sleep 으로 (CDP hang 무관)
+    try:
+        await asyncio.sleep(handler.pre_extract_wait_ms / 1000.0)
+    except Exception:
+        pass
+    logger.info(
+        "[extract_pdp] %s/%s step=marker.done (%.1fs)",
+        _site,
+        _pid,
+        time.time() - _t_step,
+    )
+
+    _t_step = time.time()
+    # extract timeout: site별 분기 (handler.extract_timeout_s). default 24s.
+    # ABCmart 만 36s — extract_js 무거움 실측 avg 18s/max 24s.
+    _ext_to = handler.extract_timeout_s
+    try:
+        data = await asyncio.wait_for(
+            page.evaluate(handler.extract_js), timeout=_ext_to
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "[extract_pdp] %s/%s step=extract.TIMEOUT (%.1fs)",
+            _site,
+            _pid,
+            time.time() - _t_step,
+        )
+        return {
+            "success": False,
+            "error": f"daemon extract_js evaluate {int(_ext_to)}s timeout",
+        }
+    logger.info(
+        "[extract_pdp] %s/%s step=extract.done (%.1fs)",
+        _site,
+        _pid,
+        time.time() - _t_step,
+    )
     retry_field = handler.extract_retry_field
     # 재시도 조건 2가지:
     # (a) 부분 추출 — sale_price/options 있으나 retry_field(best_benefit_price) 비어있음
@@ -2112,7 +2214,12 @@ async def extract_pdp(
     )
     if _need_retry_partial or _need_retry_full:
         await page.wait_for_timeout(3_000)
-        data2 = await page.evaluate(handler.extract_js)
+        try:
+            data2 = await asyncio.wait_for(
+                page.evaluate(handler.extract_js), timeout=handler.extract_timeout_s
+            )
+        except asyncio.TimeoutError:
+            data2 = None
         if isinstance(data2, dict) and (data2.get(retry_field) or data2.get("success")):
             data = data2
     return (
@@ -2417,9 +2524,13 @@ async def process_job(
 
     logger.info("처리 시작 site=%s req=%s pid=%s", site, request_id, product_id)
     t0 = time.time()
+    # outer extract_pdp timeout 50s → 80s (2026-06-02 4차): inner timeout 누적 (goto 35 +
+    # inject 15 + marker 10 + extract 36 + retry 24 ≈ 120s max) 이 50s 한계 초과하면서
+    # ABCmart 215건/h (1h 윈도우) failed = "daemon PDP 추출 타임아웃" 으로 dominant.
+    # 실측 ABCmart 평균 잡 시간 43초 → 50s 한계라 7s buffer만. 80s 면 회복 케이스 다수 확보.
     try:
         data = await asyncio.wait_for(
-            extract_pdp(page, url, product_id, handler), timeout=50.0
+            extract_pdp(page, url, product_id, handler), timeout=80.0
         )
     except asyncio.TimeoutError:
         logger.warning("PDP 추출 타임아웃 req=%s pid=%s", request_id, product_id)
@@ -2427,11 +2538,16 @@ async def process_job(
             client,
             backend_url,
             request_id,
-            {"success": False, "error": "daemon PDP 추출 타임아웃"},
+            {"success": False, "error": "daemon PDP 추출 타임아웃 (80s)"},
             api_key,
         )
         state.record_failure()
-        return None
+        # wait_for 가 extract_pdp coroutine 을 cancel 해도 Playwright page.goto 는
+        # 백그라운드에서 pending 상태로 남는다. 다음 잡에서 같은 page 에 새 goto 호출 시
+        # "Navigation to A is interrupted by another navigation to B" 회귀로
+        # ABCmart/GrandStage 전체 fail 누적 (2026-05-31 사고). caller 에게 page
+        # 재생성 신호 반환 — _site_worker 가 wpage 닫고 새 페이지 spawn.
+        return "page_dirty"
     except Exception as exc:
         logger.exception("PDP 추출 예외 req=%s pid=%s: %s", request_id, product_id, exc)
         await post_result(
@@ -2442,7 +2558,8 @@ async def process_job(
             api_key,
         )
         state.record_failure()
-        return None
+        # 예외 발생 시도 page 상태 불확실 — 안전하게 재생성 신호.
+        return "page_dirty"
 
     # 097bf07b race fix — login_required 즉시 재로그인 + 재추출.
     # startup ensure_logged_in 누락/실패해도 잡별로 자동 회복. 송장의 ensure_logged_in_as_account 패턴과 동일.
@@ -2885,8 +3002,9 @@ async def run_daemon(args: argparse.Namespace) -> int:
                             wpage = await context.new_page()
                             _page_open = True
                             logger.info("[%s] 잡 수신 — 페이지 재생성", wid)
+                        _pj_result: str | None = None
                         try:
-                            await process_job(
+                            _pj_result = await process_job(
                                 wpage,
                                 http_client,
                                 backend_url,
@@ -2901,6 +3019,21 @@ async def run_daemon(args: argparse.Namespace) -> int:
                             logger.warning(
                                 "[%s] process_job 예외: %s", wid, str(exc)[:120]
                             )
+                            _pj_result = "page_dirty"
+                        # PDP 추출 타임아웃/예외 → page 가 미완료 navigation 을 안고 있다.
+                        # 다음 goto 시 "Navigation interrupted" 회귀를 막기 위해 즉시 재생성.
+                        if _pj_result == "page_dirty":
+                            try:
+                                await wpage.close()
+                            except Exception:
+                                pass
+                            wpage = await context.new_page()
+                            logger.info(
+                                "[%s] page_dirty — 페이지 재생성 (navigation 정리)",
+                                wid,
+                            )
+                            _done += 1
+                            continue
                         # 잡 처리 후 페이지 재활용 카운트 — 같은 page 를 계속 navigate 하면
                         # 렌더러 메모리가 GB 단위로 누적된다. _PAGE_RECYCLE 마다 page 를 닫고
                         # 새로 열어 메모리를 리셋(이미지 차단 route 는 context 단위라 자동 상속).
@@ -3000,27 +3133,70 @@ async def run_daemon(args: argparse.Namespace) -> int:
             # 동안 fetch_job 폴링 공백으로 backend last_seen 60s 초과 → pick_daemon_owner
             # 풀에서 빠져 "데몬 미등록 — 잡 발행 불가" SSG 5000+건 연쇄 실패 차단.
             # 15s 주기 GET /collect-queue?X-Heartbeat=1 — 잡 dequeue 없이 last_seen 만 갱신.
+            # 2026-06-01 (C-1 fix): httpx timeout=10s 만으로 부족 — 실측 last_seen 187~189s
+            # stall 발생 (httpx connection pool stuck / macOS sleep throttling 의심).
+            # wait_for 외부 가드 (12s 강제 cancel) + watchdog (60s 안 갱신 시 task respawn).
+            _hb_last_at: list[float] = [time.time()]
+
             async def _heartbeat_loop() -> None:
                 hb_url = f"{backend_url}/api/v1/samba/proxy/sourcing/collect-queue"
                 while not state.should_die():
                     await asyncio.sleep(15)
                     try:
-                        await http_client.get(
-                            hb_url,
-                            headers={
-                                "X-Device-Id": args.device_id,
-                                "X-Allowed-Sites": allowed_sites_header,
-                                "X-Heartbeat": "1",
-                                "X-Api-Key": api_key,
-                            },
-                            timeout=10.0,
+                        await asyncio.wait_for(
+                            http_client.get(
+                                hb_url,
+                                headers={
+                                    "X-Device-Id": args.device_id,
+                                    "X-Allowed-Sites": allowed_sites_header,
+                                    "X-Heartbeat": "1",
+                                    "X-Api-Key": api_key,
+                                },
+                                timeout=10.0,
+                            ),
+                            timeout=12.0,
                         )
+                        _hb_last_at[0] = time.time()
                     except asyncio.CancelledError:
                         raise
                     except Exception as exc:
                         logger.debug("heartbeat 실패(무시): %s", str(exc)[:80])
 
+            _hb_task_holder: list[asyncio.Task] = []
+
+            async def _heartbeat_watchdog() -> None:
+                # 30s 주기로 _hb_last_at 확인 — 60s 안 갱신되면 task hang 으로 판단.
+                # _hb_task cancel + 새 task spawn 으로 강제 복구.
+                # backend pick_daemon_owner TTL 300s 안에 복구 시도하여 SSG 잡 거부 차단.
+                while not state.should_die():
+                    await asyncio.sleep(30)
+                    age = time.time() - _hb_last_at[0]
+                    if age > 60:
+                        if _hb_task_holder:
+                            _old_task = _hb_task_holder[0]
+                            logger.warning(
+                                "heartbeat hang 감지 — task 재생성 (last %ds 전, done=%s)",
+                                int(age),
+                                _old_task.done(),
+                            )
+                            try:
+                                _old_task.cancel()
+                                try:
+                                    await asyncio.wait_for(_old_task, timeout=2.0)
+                                except (asyncio.CancelledError, asyncio.TimeoutError):
+                                    pass
+                            except Exception:
+                                pass
+                        _hb_last_at[0] = time.time()
+                        _new_task = asyncio.create_task(_heartbeat_loop())
+                        if _hb_task_holder:
+                            _hb_task_holder[0] = _new_task
+                        else:
+                            _hb_task_holder.append(_new_task)
+
             _hb_task = asyncio.create_task(_heartbeat_loop())
+            _hb_task_holder.append(_hb_task)
+            asyncio.create_task(_heartbeat_watchdog())
 
             async def _sync_assignment() -> dict:
                 # 백엔드에서 동시실행 + 담당 사이트 조회 → active_sites/login 반영 후

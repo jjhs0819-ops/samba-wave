@@ -31,6 +31,9 @@ class SiteHandler:
     pre_extract_marker_js: str = ""
     pre_extract_marker_timeout_ms: int = 15_000
     extract_retry_field: str = "best_benefit_price"
+    # extract_js evaluate timeout (초). 기본 24s — 페이지 reflow stuck 대응 (2026-06-02).
+    # ABCmart 처럼 extract_js 가 무거운 사이트는 override (실측 ABCmart avg 18s, max 24s).
+    extract_timeout_s: float = 24.0
     # ── 송장(tracking) 전용 ──
     # 송장조회 페이지에서 택배사/송장번호를 추출하는 self-contained async IIFE.
     # 반환: {success, courierName, trackingNumber, error?, cancelled?}
@@ -139,13 +142,17 @@ _ABCMART_EXTRACT_JS = r"""
   try {
     let apiData = null
     try {
+      const _ctrl = new AbortController()
+      const _to = setTimeout(() => _ctrl.abort(), 7000)
       const resp = await fetch(`/product/info?prdtNo=${_prdt}`, {
         credentials: 'include',
+        signal: _ctrl.signal,
         headers: {
           'Accept': 'application/json, text/plain, */*',
           'X-Requested-With': 'XMLHttpRequest',
         }
       })
+      clearTimeout(_to)
       const text = await resp.text()
       try { apiData = JSON.parse(text) } catch (_) {}
     } catch (_) {}
@@ -823,6 +830,10 @@ SITE_HANDLERS: dict[str, SiteHandler] = {
         # 건당 8.5s 유발. marker JS 에 상품명 selector / readyState 폴백 추가해 floor 1.64s 안전 마진.
         pre_extract_marker_timeout_ms=2_500,
         pre_extract_wait_ms=200,
+        # ABCmart extract_js 가 다른 사이트 대비 매우 무거움 — 실측(2026-06-02 fix 후 1h+):
+        # extract.done avg=17.98s, max=23.80s (SSG avg=8.80s 의 2배). 24s 한계라 61건 timeout.
+        # 36s 로 상향 — 실측 max 24s 면 12초 buffer 확보, worker 시간 12s 추가는 net 이득.
+        extract_timeout_s=36.0,
         tracking_js=_ABCMART_TRACKING_JS,
         logout_url=ABCMART_LOGOUT_URL,
     ),

@@ -355,6 +355,12 @@ async def autotune_daemon_concurrency(request: Request) -> dict[str, Any]:
       assigned_sites: [site] — UI 지정 담당 사이트. 빈 배열이면 대기(워커 0).
     """
     device_id = (request.headers.get("X-Device-Id") or "").strip()
+    # v2:samba-daemon-... prefix 호환 (2026-06-02 회귀 fix).
+    # 데몬 v2 api_key 도입 후 X-Device-Id 가 'v2:samba-daemon-...' 형태로 변경되며
+    # startswith("samba-daemon-") 매칭 실패 → assigned=[] + concurrency 필터/정렬 누락 →
+    # 데몬측 _eff_conc 가 conc.items() 순서로 budget(16) 소진 → LOTTEON/SSG/ABCmart
+    # worker spawn 0개 회귀. lookup 키도 DB 는 prefix 없는 ID 라 정규화 후 사용.
+    _dev = device_id.removeprefix("v2:")
     assigned: list[str] = []
     try:
         from backend.api.v1.routers.samba.collector_autotune import (
@@ -362,16 +368,16 @@ async def autotune_daemon_concurrency(request: Request) -> dict[str, Any]:
             touch_daemon_presence,
         )
 
-        if device_id.startswith("samba-daemon-"):
+        if _dev.startswith("samba-daemon-"):
             # 하트비트 — extension_key 자가등록만 (분담 persist 금지, 위 사고 회귀 차단)
-            touch_daemon_presence(device_id)
-            if device_id not in _daemon_autoreg_done:
+            touch_daemon_presence(_dev)
+            if _dev not in _daemon_autoreg_done:
                 from backend.db.orm import get_write_session
 
                 async with get_write_session() as _persist_sess:
-                    await _ensure_daemon_extension_key(_persist_sess, device_id)
+                    await _ensure_daemon_extension_key(_persist_sess, _dev)
                     await _persist_sess.commit()
-        _my = get_pc_allowed_sites(device_id)
+        _my = get_pc_allowed_sites(_dev)
         if _my:
             assigned = sorted(_my)
         # [2026-06-05 송장 확장앱 복구] 데몬은 송장 안 함(확장앱 전담)으로 되돌림 — 전담 데몬에
@@ -389,7 +395,7 @@ async def autotune_daemon_concurrency(request: Request) -> dict[str, Any]:
         conc = {}
 
     # 데몬은 담당 사이트만 워커 스폰 — 배정 없으면 빈 conc(대기). 비데몬은 legacy 전체.
-    if device_id.startswith("samba-daemon-"):
+    if _dev.startswith("samba-daemon-"):
         conc = {s: n for s, n in conc.items() if s in assigned}
     return {"concurrency": conc, "assigned_sites": assigned}
 
