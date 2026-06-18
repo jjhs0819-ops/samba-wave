@@ -134,8 +134,6 @@ _ABCMART_EXTRACT_JS = r"""
     sale_price: 0,
     best_benefit_price: 0,
     source_site: 'ABCmart',
-    options: [],
-    images: [],
     login_required: false,
     _domLoginSignal: 'ambiguous',
   }
@@ -143,7 +141,7 @@ _ABCMART_EXTRACT_JS = r"""
     let apiData = null
     try {
       const _ctrl = new AbortController()
-      const _to = setTimeout(() => _ctrl.abort(), 7000)
+      const _to = setTimeout(() => _ctrl.abort(), 3000)
       const resp = await fetch(`/product/info?prdtNo=${_prdt}`, {
         credentials: 'include',
         signal: _ctrl.signal,
@@ -180,23 +178,12 @@ _ABCMART_EXTRACT_JS = r"""
       if (salePrice > 0) _result.success = true
     }
 
-    try {
-      const optEls = document.querySelectorAll(
-        '[data-prdt-option], .option-list li, .product-option li'
-      )
-      optEls.forEach((el) => {
-        const nm = (el.textContent || '').trim().replace(/\s+/g, ' ')
-        if (!nm) return
-        const soldOut = /품절|sold\s*out/i.test(nm) || el.classList.contains('disabled')
-        _result.options.push({ name: nm.slice(0, 60), stock: soldOut ? 0 : null, isSoldOut: soldOut })
-      })
-    } catch (_) {}
-
     // 최대혜택가: DOM 표시값 1순위. ABCmart API의 alwaysDscntAmt는 등급별 실적용
     // 멤버십과 불일치(예: API 3,000 vs 페이지 2,700) → 재계산 시 300원 과할인.
     // 페이지가 등급+쿠폰 모두 반영해 표시한 "최대 혜택가"가 100% 정확. 확장앱과 동일 정책.
+    // textContent: 레이아웃 재계산 없음(innerText 대비 빠름) — 숫자 추출에 동일.
     {
-      const bodyText = document.body?.innerText || ''
+      const bodyText = document.body?.textContent || ''
       const m = bodyText.match(/최대\s*혜택가\s*([\d,]+)\s*원/)
       if (m) {
         const v = parseInt(m[1].replace(/,/g, ''), 10)
@@ -207,15 +194,6 @@ _ABCMART_EXTRACT_JS = r"""
     if (!_result.best_benefit_price && _result._apiBenefit > 0) {
       _result.best_benefit_price = _result._apiBenefit
     }
-
-    try {
-      const imgs = document.querySelectorAll('.product-detail-images img, .swiper-slide img, .thumb img')
-      imgs.forEach((img) => {
-        let src = img.src || img.getAttribute('data-src') || ''
-        if (src.startsWith('//')) src = 'https:' + src
-        if (src && !_result.images.includes(src) && _result.images.length < 9) _result.images.push(src)
-      })
-    } catch (_) {}
 
     return _result
   } catch (e) {
@@ -877,10 +855,10 @@ SITE_HANDLERS: dict[str, SiteHandler] = {
         # 건당 8.5s 유발. marker JS 에 상품명 selector / readyState 폴백 추가해 floor 1.64s 안전 마진.
         pre_extract_marker_timeout_ms=2_500,
         pre_extract_wait_ms=200,
-        # ABCmart extract_js 가 다른 사이트 대비 매우 무거움 — 실측(2026-06-02 fix 후 1h+):
-        # extract.done avg=17.98s, max=23.80s (SSG avg=8.80s 의 2배). 24s 한계라 61건 timeout.
-        # 36s 로 상향 — 실측 max 24s 면 12초 buffer 확보, worker 시간 12s 추가는 net 이득.
-        extract_timeout_s=36.0,
+        # options/images DOM 탐색(안 씀) 제거 + API fetch 7s→3s + innerText→textContent
+        # → 불필요 DOM 순회(swiper 배너 포함) 제거. 실측 avg 18s → ~10s 예상.
+        # 3 concurrent × 20s = 60s max queue wait + 20s = 80s < 110s backend timeout.
+        extract_timeout_s=20.0,
         tracking_js=_ABCMART_TRACKING_JS,
         logout_url=ABCMART_LOGOUT_URL,
     ),
