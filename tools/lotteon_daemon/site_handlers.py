@@ -292,6 +292,14 @@ _SSG_EXTRACT_JS = r"""
     const salePrice = domSalePrice || bestAmt
     const originalPrice = norprc || sellprc || salePrice
     const cost = domCardPrice || bestAmt || salePrice
+    // 전품절 여부: resultItemObj.soldOut="Y" 1순위, DOM "품절" 버튼 폴백
+    let soldOut = String(obj.soldOut || '').toUpperCase() === 'Y'
+    if (!soldOut) {
+      try {
+        const buyArea = document.querySelector('.cdtl_btn_buy_wrap, .cdtl_buy_area, .cdtl_btn_area, .cdtl_buy_btn')
+        if (buyArea && /품절/.test(buyArea.textContent)) soldOut = true
+      } catch (_) {}
+    }
 
     // 옵션별 실재고: resultItemObj.uitemObjList.usablInvQty 1순위 (확장앱
     // background-sourcing.js:2833 과 동일). 백엔드 ssg.py 가 uitemOptions 키로
@@ -339,6 +347,7 @@ _SSG_EXTRACT_JS = r"""
       images,
       options,
       uitemOptions,
+      soldOut: soldOut ? 'Y' : 'N',
       // 카테고리 브레드크럼(#431) — resultItemObj 에 존재. 데몬이 추출해 회신하면
       // 백엔드 daemon_detail_fallback passthrough → worker dispCtg 매핑 동작(기타 분류 방지).
       // resultItemObj에 dispCtgLclsNm 없는 케이스 — 백엔드 ssg_sourcing.py 동일 패턴으로 DOM 폴백.

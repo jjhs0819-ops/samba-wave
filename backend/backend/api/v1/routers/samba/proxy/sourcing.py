@@ -250,7 +250,7 @@ async def sourcing_collect_queue(request: Request) -> Any:
 # self-update 자살 루프(60초마다 rc=10 재시작) = "데몬 자꾸 죽음" 사고(2026-06-17).
 # 1.4.39: v1.4.39 릴리스 업로드 + 다운로드 200 검증 완료(로그 100줄 캡 + httpx 억제 +
 # 크래시 서버보고). 로컬 1.4.39 worker 기동·httpx억제·로그캡 실측 확인 후 상향.
-AUTOTUNE_DAEMON_LATEST_VERSION = "1.4.40"
+AUTOTUNE_DAEMON_LATEST_VERSION = "1.4.41"
 # asset 명에 버전 박힘 (`samba-v{ver}.exe`) — 지침: 데몬 설치파일명 버전 노출 필수.
 AUTOTUNE_DAEMON_DOWNLOAD_URL = (
     f"https://github.com/sbk0674-web/samba-wave/releases/download/"

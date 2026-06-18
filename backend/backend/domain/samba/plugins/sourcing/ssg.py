@@ -186,6 +186,13 @@ class SSGPlugin(SourcingPlugin):
 
                     _d_opts = _fdo_d(_d_opts, _ext_result.get("name"))
                     _all_sold = bool(_d_opts) and all(_o["isSoldOut"] for _o in _d_opts)
+                    # 옵션 없거나 미전체품절이어도 데몬이 보낸 soldOut="Y" 신호로 전품절 판단
+                    # (uitemObjList 비어있는 SSG 품절 상품에서 재고있음 오판 방지)
+                    if (
+                        not _all_sold
+                        and str(_ext_result.get("soldOut", "N") or "N").upper() == "Y"
+                    ):
+                        _all_sold = True
                     # detail 만 구성하고 아래 공통 finalization(가격/원가/옵션/변동판정)으로 흘려보냄.
                     # 데몬 응답엔 html·resultItemObj 가 없어 아래 확장앱 파싱 블록은 자연히 no-op.
                     detail = {
