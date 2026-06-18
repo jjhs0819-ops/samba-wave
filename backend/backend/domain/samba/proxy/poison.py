@@ -31,6 +31,12 @@ class PoisonClient:
     PATH_SKU_BY_ARTICLE = "/dop/api/v1/pop/api/v1/intl-commodity/intl/sku/sku-basic-info/by-article-number"
     # Manual Listing (Ship-to-verify) — 사이즈별 판매 등록
     PATH_MANUAL_LISTING = "/dop/api/v1/pop/api/v1/submit-bid/normal-autonomous-bidding"
+    # 입찰가/재고 수정 (Update Manual Listing)
+    PATH_UPDATE_LISTING = "/dop/api/v1/pop/api/v1/update-bid/normal-autonomous-bidding"
+    # 입찰 취소 (Cancel Listing)
+    PATH_CANCEL_LISTING = "/dop/api/v1/pop/api/v1/cancel-bid/cancel-bidding"
+    # 추천 입찰가(최저가) 조회
+    PATH_RECOMMEND_PRICE = "/dop/api/v1/pop/api/v1/recommend-bid/price"
 
     # POIZON sizeType 허용값
     _ALLOWED_SIZE_TYPES = {"EU", "US", "UK", "CN", "JP"}
@@ -219,4 +225,98 @@ class PoisonClient:
                 or f"POIZON 등록 실패(code={data.get('code')})"
             ),
             "data": data,
+        }
+
+    # ------------------------------------------------------------------
+    # 입찰 수정 / 취소 / 최저가 조회 (오토튠 변동 대응용)
+    # ------------------------------------------------------------------
+
+    async def update_listing(
+        self,
+        *,
+        seller_bidding_no: str,
+        price: int,
+        quantity: int,
+        global_sku_id: int | None = None,
+        old_quantity: int | None = None,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        """기존 입찰(sellerBiddingNo)의 가격/재고 수정 (Update Manual Listing).
+
+        price 는 통화 최소단위 정수 (KRW=원).
+        """
+        business: dict[str, Any] = {
+            "requestId": request_id or str(uuid.uuid4()),
+            "sellerBiddingNo": str(seller_bidding_no),
+            "price": int(price),
+            "quantity": int(quantity),
+        }
+        if global_sku_id is not None:
+            business["globalSkuId"] = int(global_sku_id)
+        if old_quantity is not None:
+            business["oldQuantity"] = int(old_quantity)
+
+        data = await self._post(self.PATH_UPDATE_LISTING, business)
+        if data.get("code") == 200:
+            return {"success": True, "message": "POIZON 입찰 수정 완료", "data": data}
+        return {
+            "success": False,
+            "message": (
+                data.get("msg")
+                or data.get("message")
+                or f"POIZON 입찰 수정 실패(code={data.get('code')})"
+            ),
+            "data": data,
+        }
+
+    async def cancel_listing(self, seller_bidding_no: str) -> dict[str, Any]:
+        """입찰 취소 (Cancel Listing) — sellerBiddingNo 단일 필드."""
+        data = await self._post(
+            self.PATH_CANCEL_LISTING, {"sellerBiddingNo": str(seller_bidding_no)}
+        )
+        if data.get("code") == 200:
+            return {"success": True, "message": "POIZON 입찰 취소 완료", "data": data}
+        return {
+            "success": False,
+            "message": (
+                data.get("msg")
+                or data.get("message")
+                or f"POIZON 입찰 취소 실패(code={data.get('code')})"
+            ),
+            "data": data,
+        }
+
+    async def recommend_price(
+        self,
+        *,
+        global_sku_id: int,
+        bidding_type: int = 20,
+        currency: str | None = None,
+        region: str | None = None,
+    ) -> dict[str, Any]:
+        """추천 입찰가(최저/평균/최고) 조회 — 경쟁가 정책용.
+
+        Returns: {success, minPrice, averagePrice, maxPrice, data}
+        biddingType: 20(일반판매/예약판매), 27(직배송), 25(보관판매).
+        """
+        business: dict[str, Any] = {
+            "globalSkuId": int(global_sku_id),
+            "biddingType": int(bidding_type),
+            "currency": currency or self.currency,
+            "region": region or self.region,
+        }
+        data = await self._post(self.PATH_RECOMMEND_PRICE, business)
+        if data.get("code") != 200:
+            logger.warning(
+                f"[POIZON] 추천가 조회 실패: globalSkuId={global_sku_id} "
+                f"code={data.get('code')} msg={data.get('msg') or data.get('message')}"
+            )
+            return {"success": False, "data": data}
+        payload = data.get("data") or {}
+        return {
+            "success": True,
+            "minPrice": payload.get("minPrice"),
+            "averagePrice": payload.get("averagePrice"),
+            "maxPrice": payload.get("maxPrice"),
+            "data": payload,
         }

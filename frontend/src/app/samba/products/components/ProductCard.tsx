@@ -639,7 +639,7 @@ const ProductCard = React.memo(function ProductCard({
     const rm = (p.resell_matches || {}) as Record<string, { product_id?: string; confidence?: number }>
     const PLAT: { key: string; name: string; url?: (id: string) => string }[] = [
       { key: 'kream', name: 'KREAM', url: (id) => `https://kream.co.kr/products/${id}` },
-      { key: 'poizon', name: 'POIZON' },
+      { key: 'poison', name: 'POIZON', url: (id) => `https://www.poizon.com/product/${id}` },
       { key: 'stockx', name: 'StockX' },
     ]
     return PLAT.map(pl => {
