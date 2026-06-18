@@ -1043,7 +1043,7 @@ class JobWorker:
         except Exception as e:
             logger.error(f"[잡워커] 전송 세션 에러: {job_id} — {e}")
         finally:
-            await _flush_job_logs(job_id, list(_shipment_log_buffer), "전송")
+            await _flush_job_logs(job_id, list(_job_logs.get(job_id) or []), "전송")
 
             _current_transmit_job_id.reset(_ctx_token)
 

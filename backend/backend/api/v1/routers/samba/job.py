@@ -349,14 +349,28 @@ async def get_shipment_log_buffer(
         running_row = running_check.first()
 
         if running_row is not None:
-            # RUNNING 잡 있음 — logs flush 됐으면 표시, 없으면 since_idx 유지(루프 방지)
+            # RUNNING 잡 있음 — logs flush 됐으면 표시
             if running_row[0]:
                 db_logs = running_row[0] if isinstance(running_row[0], list) else []
                 if db_logs:
                     total = len(db_logs)
                     slice_from = min(since_idx, total)
                     return {"logs": db_logs[slice_from:], "current_idx": total}
-            # logs 미플러시 — 빈 응답이지만 since_idx 유지(0 리셋으로 나이키 로그 재표시 방지)
+            # logs 미플러시(tetris 등 소규모 잡) — 최근 완료 잡 로그로 fallback
+            if not is_shipment_log_cleared():
+                recent = await session.execute(
+                    _text(
+                        f"SELECT logs FROM samba_jobs WHERE {_base_cond} AND status='completed'"
+                        " ORDER BY created_at DESC LIMIT 1"
+                    ).bindparams(tid=_tid)
+                )
+                recent_row = recent.first()
+                if recent_row and recent_row[0]:
+                    db_logs = recent_row[0] if isinstance(recent_row[0], list) else []
+                    if db_logs:
+                        total = len(db_logs)
+                        slice_from = min(since_idx, total)
+                        return {"logs": db_logs[slice_from:], "current_idx": total}
             return {"logs": [], "current_idx": max(since_idx, 1)}
 
         # 2. RUNNING 없으면 최근 완료 잡 (초기화 후면 skip)
