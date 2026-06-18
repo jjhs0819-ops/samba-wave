@@ -10739,8 +10739,8 @@ async def ship_by_kakao(
     svc = _write_service(session)
     stmt = select(SambaOrder).where(
         SambaOrder.customer_name == name,
-        SambaOrder.source
-        == "lotteon",  # 롯데온 선물하기 주문만 대상 (타 사이트 오매칭 방지)
+        SambaOrder.source_site == "LOTTEON",  # 소싱처가 롯데ON
+        SambaOrder.action_tag.like("%gift%"),  # 선물하기 건만 (마켓 무관)
     )
     if tenant_id is not None:
         stmt = stmt.where(SambaOrder.tenant_id == tenant_id)
