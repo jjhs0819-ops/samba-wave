@@ -13,7 +13,7 @@ import logging
 import os
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
@@ -552,12 +552,17 @@ def _autotune_transmit_via_queue() -> bool:
 
 
 async def _enqueue_autotune_transmit(
-    pid: str, items: list, acc_id: str, tenant_id: str | None
+    pid: str,
+    items: list,
+    acc_id: str,
+    tenant_id: str | None,
+    market_type: str = "",
 ) -> None:
     """오토튠 전송을 samba_jobs transmit 잡으로 발행 (step8).
 
     B 워커가 skip_refresh=True 로 처리 — 오토튠이 이미 가격 갱신했으므로 재수집 생략,
     오토튠이 계정을 직접 지정하므로 정책 계정필터 우회(skip_policy_account_filter).
+    market_type 은 발행단 cap(#455)의 마켓별 depth 집계 키 — payload 에 심어 둠.
     """
     from backend.db.orm import get_write_session
     from backend.domain.samba.job.repository import SambaJobRepository
@@ -574,9 +579,102 @@ async def _enqueue_autotune_transmit(
                 "skip_policy_account_filter": True,
                 "skip_refresh": True,
                 "source": "autotune",
+                "market_type": market_type or "",
             },
             tenant_id=tenant_id,
         )
+
+
+# 전송큐 발행단 cap (#455) — 오토튠이 단일 transmit 큐를 full-rate 로 채워
+# 수동/테트리스 업로드 굶김 + 느린 마켓 head-of-line + DB풀 고갈 크래시(펜딩 플러드)를
+# 막기 위해 발행 직전 대기 depth 를 cap 과 비교해 보류한다. 보류분은 append/failed_at
+# 전 차단 → 다음 사이클 재감지(무손실). 품절-critical(오버셀 위험)은 호출부에서 예외.
+_AUTOTUNE_QUEUE_DEPTH_CACHE: dict[str, Any] = {"ts": 0.0, "total": 0, "by_market": {}}
+_AUTOTUNE_QUEUE_DEPTH_TTL = 20.0  # 20초 TTL — 매 항목 DB 집계 부하 방지
+
+
+def _autotune_queue_cap_global() -> int:
+    """전역 cap (pending 오토튠 transmit 총수). 0/미설정 = 비활성."""
+    try:
+        return int(os.environ.get("AUTOTUNE_QUEUE_CAP", "0") or "0")
+    except ValueError:
+        return 0
+
+
+def _autotune_queue_cap_per_market() -> int:
+    """마켓별 cap (마켓당 pending depth). 0/미설정 = 비활성."""
+    try:
+        return int(os.environ.get("AUTOTUNE_QUEUE_CAP_PER_MARKET", "0") or "0")
+    except ValueError:
+        return 0
+
+
+async def _autotune_queue_depth() -> tuple[int, dict[str, int]]:
+    """대기 오토튠 transmit 잡 depth (전역 total, 마켓별 dict). 20s TTL 캐시.
+
+    조회 실패 시 직전 캐시(없으면 0) 반환 → cap 미적용(안전측, 발행 막지 않음).
+    """
+    now = time.time()
+    if now - float(_AUTOTUNE_QUEUE_DEPTH_CACHE["ts"]) < _AUTOTUNE_QUEUE_DEPTH_TTL:
+        return _AUTOTUNE_QUEUE_DEPTH_CACHE["total"], _AUTOTUNE_QUEUE_DEPTH_CACHE[
+            "by_market"
+        ]
+    from sqlalchemy import func, select, text
+
+    from backend.db.orm import get_read_session
+    from backend.domain.samba.job.model import JobStatus, SambaJob
+
+    # payload 는 JSON 타입(jsonb 아님) → .astext 미지원, .as_string()(=->>) 사용.
+    # select/group_by 가 파라미터 불일치로 "must appear in GROUP BY" 나므로 ordinal
+    # group_by(text("1")) 로 첫 컬럼 그룹화. (프로덕션 DB 직접 실행 검증 완료, #455)
+    _mkt_col = SambaJob.payload["market_type"].as_string()
+    by_market: dict[str, int] = {}
+    total = 0
+    try:
+        async with get_read_session() as _s:
+            stmt = (
+                select(_mkt_col, func.count())
+                .where(
+                    SambaJob.job_type == "transmit",
+                    SambaJob.status == JobStatus.PENDING,
+                    SambaJob.payload["source"].as_string() == "autotune",
+                )
+                .group_by(text("1"))
+            )
+            rows = (await _s.execute(stmt)).all()
+        for _mkt, _cnt in rows:
+            _c = int(_cnt or 0)
+            total += _c
+            if _mkt:
+                by_market[str(_mkt)] = by_market.get(str(_mkt), 0) + _c
+    except Exception as _e:
+        logging.getLogger("autotune").warning(f"[queue-depth] 조회 실패(무시): {_e}")
+        return _AUTOTUNE_QUEUE_DEPTH_CACHE["total"], _AUTOTUNE_QUEUE_DEPTH_CACHE[
+            "by_market"
+        ]
+    _AUTOTUNE_QUEUE_DEPTH_CACHE["ts"] = now
+    _AUTOTUNE_QUEUE_DEPTH_CACHE["total"] = total
+    _AUTOTUNE_QUEUE_DEPTH_CACHE["by_market"] = by_market
+    return total, by_market
+
+
+async def _autotune_queue_blocked(market_type: str) -> bool:
+    """발행 cap 게이트 (#455). 마켓 cap 우선 → 전역 cap backstop.
+
+    True = 보류(발행 차단), False = 발행 허용. cap 둘 다 미설정(0)이면 항상 허용.
+    """
+    per_mkt = _autotune_queue_cap_per_market()
+    glob = _autotune_queue_cap_global()
+    if per_mkt <= 0 and glob <= 0:
+        return False
+    total, by_market = await _autotune_queue_depth()
+    # 마켓 cap 우선 — 느린 마켓만 막고 빠른 마켓은 자유 발행(head-of-line 해소)
+    if per_mkt > 0 and market_type and by_market.get(market_type, 0) >= per_mkt:
+        return True
+    # 전역 cap backstop — 전체 플러드 차단
+    if glob > 0 and total >= glob:
+        return True
+    return False
 
 
 # PC별 분담 등록: device_id → set of sites this PC will process.
@@ -2155,7 +2253,7 @@ async def _site_autotune_loop(device_id: str, site: str):
                                 ] = []  # 비전송 액션 (즉시 출력)
                                 _transmit_queue: list[
                                     tuple
-                                ] = []  # (pid, items, acc_id, label, action_text)
+                                ] = []  # (pid, items, acc_id, label, action_text, market_type)
 
                                 for acc_id in reg_accounts:
                                     acc = _account_cache.get(acc_id)
@@ -2793,6 +2891,30 @@ async def _site_autotune_loop(device_id: str, site: str):
                                                     )
                                                     continue
 
+                                        # 전송큐 발행 cap (#455) — via_queue 모드 한정.
+                                        # 단일 transmit 큐 full-rate 점유로 수동/테트리스
+                                        # 굶김 + 느린 마켓 head-of-line + DB풀 고갈 크래시
+                                        # 방지. 품절-critical(오버셀 위험)은 예외 통과.
+                                        # 보류분은 append/failed_at 전 차단 → 다음 사이클
+                                        # 재감지(무손실).
+                                        if _autotune_transmit_via_queue():
+                                            _q_critical = _soldout_divergent(
+                                                r.new_options, last_sent.get(acc_id)
+                                            )
+                                            if (
+                                                not _q_critical
+                                                and await _autotune_queue_blocked(
+                                                    market_type
+                                                )
+                                            ):
+                                                _log_line(
+                                                    site,
+                                                    r.product_id,
+                                                    f"{_idx_prefix}{_prod_label}: "
+                                                    f"전송큐 cap 보류 → 다음 사이클 재시도",
+                                                )
+                                                continue
+
                                         retransmitted += 1
                                         _combined_action_txt = " + ".join(
                                             _acc_action_parts
@@ -2805,6 +2927,7 @@ async def _site_autotune_loop(device_id: str, site: str):
                                                 acc_id,
                                                 f"{_prod_label}",
                                                 _combined_action_txt,
+                                                market_type,
                                             )
                                         )
                                         # preemptive failed_at — fire-and-forget transmit task 가
@@ -2871,6 +2994,7 @@ async def _site_autotune_loop(device_id: str, site: str):
                                         _pre_acc,
                                         _pre_label,
                                         _pre_action,
+                                        _pre_market,
                                     ) in _transmit_queue:
                                         _pre_data = dict(last_sent.get(_pre_acc) or {})
                                         _pre_data["failed_at"] = datetime.now(
@@ -2898,6 +3022,7 @@ async def _site_autotune_loop(device_id: str, site: str):
                                 _tx_acc,
                                 _tx_label,
                                 _tx_action_text,
+                                _tx_market,
                             ) in _transmit_queue:
 
                                 async def _fire_transmit_account(
@@ -3172,6 +3297,7 @@ async def _site_autotune_loop(device_id: str, site: str):
                                             _tx_items,
                                             _tx_acc,
                                             getattr(product, "tenant_id", None),
+                                            _tx_market,
                                         )
                                     except Exception as _qe:
                                         log.warning(
