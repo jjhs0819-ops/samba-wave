@@ -58,15 +58,28 @@ def _sanitize_image_url(url: str) -> str:
     return s
 
 
-async def _get_setting(session, key: str) -> Any:
-    """samba_settings 테이블에서 설정값 조회 후 즉시 커밋 — idle in transaction 방지."""
+async def _get_setting(session, key: str, tenant_id: str | None = None) -> Any:
+    """samba_settings 조회. tenant_id 있으면 '{tenant_id}:{key}' 우선, bare key 폴백."""
     from backend.domain.samba.forbidden.model import SambaSettings
-    from sqlmodel import select
+    from sqlalchemy import select
 
-    stmt = select(SambaSettings).where(SambaSettings.key == key)
-    result = await session.execute(stmt)
-    row = result.scalars().first()
-    val = row.value if row else None
+    async def _fetch(k: str) -> Any:
+        stmt = select(SambaSettings).where(SambaSettings.key == k)
+        result = await session.execute(stmt)
+        row = result.scalars().first()
+        return row.value if row else None
+
+    val = None
+    if tenant_id:
+        val = await _fetch(f"{tenant_id}:{key}")
+    if val is None:
+        val = await _fetch(key)
+    if val is None and not tenant_id:
+        stmt = select(SambaSettings).where(SambaSettings.key.like(f"%:{key}")).limit(2)
+        result = await session.execute(stmt)
+        candidates = result.scalars().all()
+        if candidates:
+            val = candidates[0].value
     try:
         await session.commit()
     except Exception:
@@ -506,11 +519,7 @@ class LotteHomePlugin(MarketPlugin):
         _tid = getattr(account, "tenant_id", None) if account else None
 
         # credentials 로드 (인증 정보) — tenant-aware
-        from backend.api.v1.routers.samba.proxy._helpers import (
-            _get_setting as _get_setting_tenant,
-        )
-
-        creds_setting = await _get_setting_tenant(
+        creds_setting = await _get_setting(
             session, "lottehome_credentials", tenant_id=_tid
         )
         if creds_setting and isinstance(creds_setting, dict):
@@ -519,11 +528,7 @@ class LotteHomePlugin(MarketPlugin):
             session, _tid, market_type="lottehome", store_key="store_lottehome"
         )
         store_lh = store_lh if isinstance(store_lh, dict) else {}
-        from backend.api.v1.routers.samba.proxy._helpers import (
-            _get_setting as _get_setting_tenant,
-        )
-
-        policy = await _get_setting_tenant(session, "lottehome_policy", tenant_id=_tid)
+        policy = await _get_setting(session, "lottehome_policy", tenant_id=_tid)
         policy = policy if isinstance(policy, dict) else {}
 
         # account.additional_fields 의 camelCase 값도 폴백 소스로 사용
