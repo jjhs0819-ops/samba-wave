@@ -553,12 +553,12 @@ class AuctionPlugin(MarketPlugin):
         if not goods_no:
             return {"success": False, "message": "상품번호가 없어 가격/재고 수정 불가"}
 
-        from backend.domain.samba.proxy.esmplus import (
-            register_esm_options,
-            resolve_esm_master_goods_no,
-        )
+        from backend.domain.samba.proxy.esmplus import register_esm_options
 
-        master_no = await resolve_esm_master_goods_no(client, goods_no) or goods_no
+        # 저장된 _master 직접 사용 — happy-path 에서 resolve(goods/search) 호출 안 함 (#451).
+        # 전송 결과 처리부가 등록/수정 응답 goodsNo 를 {account_id}_master 로 영속하므로
+        # 권위 master 가 이미 DB 에 있음. 카탈로그 재열거 불필요 → goods/search 30/분 예산 절약.
+        master_no = str(goods_no)
 
         # ESM Plus 스펙 — sell-status PascalCase(Iac).
         price = data.get("itemAddtionalInfo", {}).get("price", {}).get("Iac", 0)
@@ -587,17 +587,35 @@ class AuctionPlugin(MarketPlugin):
             },
         }
 
+        def _not_found() -> dict[str, Any]:
+            return {
+                "success": False,
+                "error_type": "product_not_found",
+                "message": f"상품 #{goods_no}이 옥션에 없습니다.",
+                "_clear_product_no": True,
+            }
+
         try:
             await client.update_sell_status(master_no, sell_data)
         except RuntimeError as e:
-            if "상품이 없습니다" in str(e):
-                return {
-                    "success": False,
-                    "error_type": "product_not_found",
-                    "message": f"상품 #{goods_no}이 옥션에 없습니다.",
-                    "_clear_product_no": True,
-                }
-            raise
+            if "상품이 없습니다" not in str(e):
+                raise
+            # 저장값이 레거시 siteGoodsNo/stale master — lazy-resolve 1회 + 재시도 (#451).
+            # 성공 시 master_no 가 응답 goodsNo 경로로 _master 에 persist → 다음부터 fast-path(자가치유).
+            from backend.domain.samba.proxy.esmplus import (
+                resolve_esm_master_goods_no,
+            )
+
+            resolved = await resolve_esm_master_goods_no(client, goods_no)
+            if not resolved or resolved == master_no:
+                return _not_found()
+            master_no = resolved
+            try:
+                await client.update_sell_status(master_no, sell_data)
+            except RuntimeError as e2:
+                if "상품이 없습니다" in str(e2):
+                    return _not_found()
+                raise
 
         # 옵션별 재고/품절 동기화 — 판매가능 옵션 있을 때만.
         # 전 옵션 품절이면 위 isSell=false로 전체 중지 완료 — recommended-options는
