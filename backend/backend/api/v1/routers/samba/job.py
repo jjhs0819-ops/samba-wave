@@ -325,30 +325,44 @@ async def get_shipment_log_buffer(
 
     logs, current_idx = get_shipment_logs(since_idx)
 
-    # 사용자가 방금 초기화 했다면 DB fallback 건너뜀 (옛 로그 재유입 차단)
-    if current_idx == 0 and since_idx == 0 and not is_shipment_log_cleared():
-        # jsonb 캐스팅 오류 방지: left('[') 로 배열 여부 텍스트 레벨에서 먼저 확인
-        # (planner가 jsonb_array_length를 scalar 행에 먼저 평가해 터지던 버그 회피)
+    # samba-worker(B)가 transmit 잡을 처리하므로 A의 in-memory 버퍼는 항상 비어있음.
+    # in-memory 비어있을 때 DB에서 직접 읽어 준실시간 스트리밍 (worker가 50줄마다 flush).
+    if current_idx == 0:
         from backend.core.tenant_context import current_tenant_id as _ctv
 
         _tid = _ctv.get()
+        _base_cond = (
+            "job_type='transmit' AND logs IS NOT NULL"
+            " AND left(trim(logs::text), 1) = '['"
+            " AND (:tid IS NULL OR tenant_id = :tid)"
+        )
+
+        # 1. RUNNING 잡 우선 (초기화 여부 무관 — 진행중 로그는 항상 표시)
         result = await session.execute(
             _text(
-                "SELECT logs FROM samba_jobs"
-                " WHERE job_type='transmit' AND logs IS NOT NULL"
-                " AND left(trim(logs::text), 1) = '['"
-                " AND (:tid IS NULL OR tenant_id = :tid)"
+                f"SELECT logs FROM samba_jobs WHERE {_base_cond} AND status='running'"
                 " ORDER BY created_at DESC LIMIT 1"
             ).bindparams(tid=_tid)
         )
         row = result.first()
+
+        # 2. RUNNING 없으면 최근 완료 잡 (초기화 후면 skip)
+        if not (row and row[0]) and not is_shipment_log_cleared():
+            result = await session.execute(
+                _text(
+                    f"SELECT logs FROM samba_jobs WHERE {_base_cond} AND status!='running'"
+                    " ORDER BY created_at DESC LIMIT 1"
+                ).bindparams(tid=_tid)
+            )
+            row = result.first()
+
         if row and row[0]:
             db_logs = row[0] if isinstance(row[0], list) else []
             if db_logs:
-                # 인덱스는 메모리 카운터(0) 기준으로 반환 — DB 개수로 주면
-                # 서버 재시작 직후 프론트 sinceIdx가 메모리 총량을 앞질러
-                # 신규 로그가 영영 반환되지 않는 버그 발생
-                return {"logs": db_logs[-300:], "current_idx": 1}
+                total = len(db_logs)
+                # since_idx를 DB 배열 오프셋으로 활용 — 증분 스트리밍 가능
+                slice_from = min(since_idx, total)
+                return {"logs": db_logs[slice_from:], "current_idx": total}
 
     return {"logs": logs, "current_idx": current_idx}
 
