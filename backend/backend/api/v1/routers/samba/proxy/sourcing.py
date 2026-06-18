@@ -167,13 +167,18 @@ async def sourcing_collect_queue(request: Request) -> Any:
     from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
 
     device_id = request.headers.get("X-Device-Id", "").strip()
+    # v2:samba-daemon-... prefix 정규화 — autotune_daemon_concurrency 와 동일 처리.
+    # 데몬 v2 api_key 도입 후 X-Device-Id 가 'v2:samba-daemon-...' 형태로 변경.
+    # prefix 그대로 두면 startswith("samba-daemon-") 실패 → touch_daemon_presence 미호출
+    # → _pc_last_seen 갱신 안 됨 → daemon_alive=False 고착.
+    _clean_device_id = device_id.removeprefix("v2:")
 
     # PC 개별 중지 신호 — 이 PC에게만 forceStop (다른 PC는 계속 동작)
     try:
         from backend.api.v1.routers.samba.collector_autotune import _pc_force_stop_set
 
-        if device_id and device_id in _pc_force_stop_set:
-            _pc_force_stop_set.discard(device_id)
+        if _clean_device_id and _clean_device_id in _pc_force_stop_set:
+            _pc_force_stop_set.discard(_clean_device_id)
             return {"hasJob": False, "forceStop": True}
     except Exception:
         pass
@@ -187,19 +192,19 @@ async def sourcing_collect_queue(request: Request) -> Any:
             update_pc_last_seen,
         )
 
-        update_pc_last_seen(device_id)
-        if device_id.startswith("samba-daemon-"):
+        update_pc_last_seen(_clean_device_id)
+        if _clean_device_id.startswith("samba-daemon-"):
             # 데몬 등록 — extension_key 자가등록만 (cleanup_loop active_set 통과용).
             # persist_pc_allowed_sites 호출 금지: 메모리 빈 set 이 DB 의 기존 사이트
             # 분담을 덮어쓰는 사고 회귀 (2026-05-27, 4번 패치 시도 끝 root cause 확정).
             # 분담 자체는 UI POST /pc-allowed-sites 가 유일한 작성 권한 + sync_pc_allowed_sites_from_db
             # 가 10초마다 DB→메모리 복원 → 데몬 dev 도 DB 값 자동 복원.
-            touch_daemon_presence(device_id)
-            if device_id not in _daemon_autoreg_done:
+            touch_daemon_presence(_clean_device_id)
+            if _clean_device_id not in _daemon_autoreg_done:
                 from backend.db.orm import get_write_session
 
                 async with get_write_session() as _persist_sess:
-                    await _ensure_daemon_extension_key(_persist_sess, device_id)
+                    await _ensure_daemon_extension_key(_persist_sess, _clean_device_id)
                     await _persist_sess.commit()
         # 확장앱: 분담 자동 갱신 폐기 — UI 체크박스 저장만 분담 갱신 권한.
     except Exception:
@@ -229,7 +234,7 @@ async def sourcing_collect_queue(request: Request) -> Any:
         allowed_sites = [_poll_site]
     ext_version = request.headers.get("X-Ext-Version", "").strip()
     job = await SourcingQueue.get_next_job(
-        device_id=device_id,
+        device_id=_clean_device_id,
         allowed_sites=allowed_sites,
         ext_version=ext_version or None,
     )
