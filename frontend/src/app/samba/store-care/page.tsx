@@ -598,7 +598,7 @@ export default function StoreCare() {
                           if (m) n += Math.abs(Number(m[2]) - Number(m[1])) + 1
                           else if (tok.trim()) n += 1
                         }
-                        return n > 1 ? ` · ${Math.min(n, 100)}개 담기` : ''
+                        return n > 1 ? ` · ${fmtNum(Math.min(n, 100))}개 담기` : ''
                       })()}
                     </span>
                     <input type="text" placeholder="예: 1~30 (범위) · 1,3,5 · 270" value={purchaseForm.option} onChange={e => setPurchaseForm(f => ({ ...f, option: e.target.value }))} style={inputStyle} />
