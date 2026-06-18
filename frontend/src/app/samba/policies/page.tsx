@@ -102,6 +102,9 @@ interface MarketPolicyForm {
   ssgBrandMappings?: { brandId: string; brandNm: string }[]
   ssgExtraFeeRate?: number
   extraFeeRate?: number
+  // 포이즌(리셀) 전용
+  minFeeAmount?: number        // 최소 수수료 (원) — POIZON 건당 최소 15,000원
+  ignoreCommonMargin?: boolean // 정책 공통 마진 설정 무시
 }
 
 
@@ -1412,7 +1415,7 @@ export default function PoliciesPage() {
                   </div>
                 </div>
               )}
-              {marketPolicyTab !== '롯데홈쇼핑' && (
+              {marketPolicyTab !== '롯데홈쇼핑' && marketPolicyTab !== '포이즌' && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>배송형태</span>
                   <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', fontSize: '0.8125rem', color: '#C5C5C5' }}>
@@ -1429,14 +1432,32 @@ export default function PoliciesPage() {
                   <NumInput value={mp.feeRate} onChange={(v) => { setCurrentMarketPolicy({ ...mp, feeRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
                 </div>
               )}
-              {marketPolicyTab !== '롯데홈쇼핑' && marketPolicyTab !== '신세계몰(전시)' && (
+              {/* 포이즌(리셀) 전용: 최소 수수료 + 공통 마진 무시 */}
+              {marketPolicyTab === '포이즌' && (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>최소 수수료</span>
+                    <NumInput value={mp.minFeeAmount ?? 0} onChange={(v) => { setCurrentMarketPolicy({ ...mp, minFeeAmount: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
+                    <span style={{ color: '#555', fontSize: '0.72rem' }}>POIZON 건당 최소 {fmtNum(15000)}원 — 이 금액 이상 마진 보장</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>공통 마진</span>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', cursor: 'pointer', fontSize: '0.8125rem', color: '#C5C5C5' }}>
+                      <input type="checkbox" checked={!!mp.ignoreCommonMargin} onChange={(e) => { setCurrentMarketPolicy({ ...mp, ignoreCommonMargin: e.target.checked }); triggerAutoSave() }} />
+                      정책 공통 마진 설정 무시
+                    </label>
+                    <span style={{ color: '#555', fontSize: '0.72rem' }}>체크 시 위 공통 마진율/범위마진 대신 포이즌 자체 가격(최소 수수료 기준)만 적용</span>
+                  </div>
+                </>
+              )}
+              {marketPolicyTab !== '롯데홈쇼핑' && marketPolicyTab !== '신세계몰(전시)' && marketPolicyTab !== '포이즌' && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>배송비</span>
                   <NumInput value={mp.shippingCost} onChange={(v) => { setCurrentMarketPolicy({ ...mp, shippingCost: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
                 </div>
               )}
               {/* 11번가는 판매자 계정의 발송예정일 템플릿을 사용하므로 정책 출고일 미사용 / 롯데홈쇼핑·신세계몰은 자체 블록에서 출고일 표시 */}
-              {marketPolicyTab !== '플레이오토' && marketPolicyTab !== '스마트스토어' && marketPolicyTab !== '11번가' && marketPolicyTab !== '롯데홈쇼핑' && marketPolicyTab !== '신세계몰(전시)' && (
+              {marketPolicyTab !== '플레이오토' && marketPolicyTab !== '스마트스토어' && marketPolicyTab !== '11번가' && marketPolicyTab !== '롯데홈쇼핑' && marketPolicyTab !== '신세계몰(전시)' && marketPolicyTab !== '포이즌' && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>출고일</span>
                 <NumInput value={mp.shippingDays || 3} onChange={(v) => { setCurrentMarketPolicy({ ...mp, shippingDays: v }); triggerAutoSave() }} style={{ width: '60px' }} suffix="일" />
