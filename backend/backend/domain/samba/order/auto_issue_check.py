@@ -98,7 +98,17 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
     from backend.domain.samba.collector.refresher import refresh_products_bulk
     from backend.domain.samba.order.model import SambaOrder
 
-    summary = {"checked": 0, "skipped": 0, "no_price": 0, "no_stock": 0, "errors": 0}
+    summary = {
+        "checked": 0,
+        "skipped": 0,
+        "no_price": 0,
+        "no_stock": 0,
+        "auto_delivered": 0,
+        "errors": 0,
+    }
+
+    # 정산금액 1,000원 미만 주문 → 소액 처리비만 남는 건으로 배송완료 자동 처리
+    _AUTO_DELIVER_THRESHOLD = 1000
 
     async with get_write_session() as session:
         # 1) 활성 + 수집상품 연결된 주문 조회
@@ -307,6 +317,20 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
                         no_stock_product_ids.add(pid)
                         no_price_product_ids.add(pid)  # last_refreshed_at 우선순위용
 
+            # 소액 주문 자동 배송완료: 정산금액 < 1,000원인 pending 주문
+            # (역마진·재고없음과 무관하게 처리 — 이미 배송완료 상태인 건은 건너뜀)
+            _rev = float(o.revenue or 0)
+            if o.status == "pending" and 0 < _rev < _AUTO_DELIVER_THRESHOLD:
+                o.status = "delivered"
+                o.shipping_status = "배송완료"
+                o.delivered_at = now
+                new_notes = _append_note(
+                    new_notes,
+                    f"[{_now_kst_str()}] 자동: 소액주문 배송완료 처리 — 정산 {_fmt(_rev)}원",
+                )
+                changed = True
+                summary["auto_delivered"] += 1
+
             if changed:
                 o.action_tag = ",".join(sorted(tag_set))
                 o.notes = new_notes
@@ -372,10 +396,11 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
                 )
 
     logger.info(
-        "[주문이슈체크] 완료 — 검사 %d / 보류 %d / 가격X %d / 재고X %d",
+        "[주문이슈체크] 완료 — 검사 %d / 보류 %d / 가격X %d / 재고X %d / 소액배송완료 %d",
         summary["checked"],
         summary["skipped"],
         summary["no_price"],
         summary["no_stock"],
+        summary["auto_delivered"],
     )
     return summary
