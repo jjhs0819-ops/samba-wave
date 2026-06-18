@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
-from backend.domain.samba.user.auth import get_optional_tenant_id
+from backend.domain.samba.tenant.middleware import get_optional_tenant_id
 from backend.utils.logger import logger
 
 from ._helpers import _get_setting, _set_setting
