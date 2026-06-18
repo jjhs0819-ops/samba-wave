@@ -79,6 +79,9 @@ export default function StoreCare() {
   const [purchaseForm, setPurchaseForm] = useState({ market: 'ssg', account_id: '', product_url: '', option: '', quantity: 1 })
   const [purchaseResult, setPurchaseResult] = useState('')
   const [purchaseRunning, setPurchaseRunning] = useState(false)
+  // 저장 상품 (가구매 북마크) — 이름으로 URL 저장/불러오기
+  const [savedProducts, setSavedProducts] = useState<Array<{ id: string; name: string; market_type: string; product_url: string }>>([])
+  const [selectedSavedId, setSelectedSavedId] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -124,6 +127,42 @@ export default function StoreCare() {
       .then(accs => setPurchaseAccounts(accs.filter(a => ['SSG', 'GSShop', '11ST'].includes(a.site_name) && a.is_active)))
       .catch(() => {})
   }, [])
+
+  // 저장 상품 — 로드 + 저장/불러오기/삭제
+  const loadSavedProducts = useCallback(() => {
+    storeCareApi.listSavedProducts().then(setSavedProducts).catch(() => {})
+  }, [])
+  useEffect(() => { loadSavedProducts() }, [loadSavedProducts])
+
+  const applySavedProduct = useCallback((id: string) => {
+    setSelectedSavedId(id)
+    const p = savedProducts.find(x => x.id === id)
+    if (p) setPurchaseForm(f => ({ ...f, market: p.market_type, product_url: p.product_url }))
+  }, [savedProducts])
+
+  const saveCurrentProduct = useCallback(async () => {
+    const url = purchaseForm.product_url.trim()
+    if (!url) { setPurchaseResult('저장할 상품 URL을 먼저 입력하세요.'); return }
+    const name = (typeof window !== 'undefined' ? window.prompt('상품 이름 (예: 신발끈)') : '') || ''
+    if (!name.trim()) return
+    try {
+      await storeCareApi.createSavedProduct({ name: name.trim(), market_type: purchaseForm.market, product_url: url })
+      loadSavedProducts()
+      setPurchaseResult(`저장됨: ${name.trim()}`)
+    } catch (e) {
+      setPurchaseResult(`저장 실패: ${(e as Error).message}`)
+    }
+  }, [purchaseForm, loadSavedProducts])
+
+  const deleteSavedProduct = useCallback(async (id: string) => {
+    try {
+      await storeCareApi.deleteSavedProduct(id)
+      setSelectedSavedId(prev => (prev === id ? '' : prev))
+      loadSavedProducts()
+    } catch (e) {
+      setPurchaseResult(`삭제 실패: ${(e as Error).message}`)
+    }
+  }, [loadSavedProducts])
 
   const runPurchase = useCallback(async () => {
     if (!purchaseForm.product_url.trim()) { setPurchaseResult('상품 URL을 입력하세요.'); return }
@@ -529,7 +568,23 @@ export default function StoreCare() {
                 </label>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <span style={{ fontSize: '0.72rem', color: '#8A95B0' }}>상품 URL ({MARKET_NAME[purchaseForm.market] || purchaseForm.market})</span>
-                  <input type="text" placeholder="https://www.ssg.com/item/itemView.ssg?itemId=..." value={purchaseForm.product_url} onChange={e => setPurchaseForm(f => ({ ...f, product_url: e.target.value }))} style={inputStyle} />
+                  {savedProducts.filter(p => p.market_type === purchaseForm.market).length > 0 && (
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '2px' }}>
+                      <select value={selectedSavedId} onChange={e => applySavedProduct(e.target.value)} style={{ ...inputStyle, flex: 1 }}>
+                        <option value="">📁 저장된 상품 불러오기…</option>
+                        {savedProducts.filter(p => p.market_type === purchaseForm.market).map(p => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                      {selectedSavedId && (
+                        <button type="button" onClick={() => deleteSavedProduct(selectedSavedId)} title="이 저장 상품 삭제" style={{ padding: '0 10px', borderRadius: '6px', border: '1px solid #4a2530', background: 'rgba(255,80,80,0.1)', color: '#ff8a8a', cursor: 'pointer' }}>🗑</button>
+                      )}
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <input type="text" placeholder="https://www.ssg.com/item/itemView.ssg?itemId=..." value={purchaseForm.product_url} onChange={e => { setSelectedSavedId(''); setPurchaseForm(f => ({ ...f, product_url: e.target.value })) }} style={{ ...inputStyle, flex: 1 }} />
+                    <button type="button" onClick={saveCurrentProduct} title="현재 URL을 이름 붙여 저장" style={{ padding: '0 12px', borderRadius: '6px', border: '1px solid #2D5A3D', background: 'rgba(80,200,120,0.12)', color: '#7ee0a0', cursor: 'pointer', whiteSpace: 'nowrap', fontSize: '0.78rem', fontWeight: 600 }}>💾 저장</button>
+                  </div>
                 </label>
                 <div style={{ display: 'flex', gap: '12px' }}>
                   <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 2 }}>

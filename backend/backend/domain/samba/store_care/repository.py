@@ -7,7 +7,12 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.domain.shared.base_repository import BaseRepository
-from .model import StoreCareSchedule, StoreCarePurchase, StoreCareMarketMetric
+from .model import (
+    StoreCareSchedule,
+    StoreCarePurchase,
+    StoreCareMarketMetric,
+    StoreCareSavedProduct,
+)
 
 UTC = timezone.utc
 
@@ -99,3 +104,19 @@ class StoreCareMarketMetricRepository(BaseRepository[StoreCareMarketMetric]):
             if r.market_type not in latest:
                 latest[r.market_type] = r
         return list(latest.values())
+
+
+class StoreCareSavedProductRepository(BaseRepository[StoreCareSavedProduct]):
+    def __init__(self, session: AsyncSession):
+        super().__init__(session, StoreCareSavedProduct)
+
+    async def list_by_tenant(
+        self, tenant_id: str | None = None
+    ) -> list[StoreCareSavedProduct]:
+        """테넌트의 저장 상품 목록 (최신순)."""
+        stmt = select(StoreCareSavedProduct)
+        if tenant_id:
+            stmt = stmt.where(StoreCareSavedProduct.tenant_id == tenant_id)
+        stmt = stmt.order_by(StoreCareSavedProduct.created_at.desc())
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())

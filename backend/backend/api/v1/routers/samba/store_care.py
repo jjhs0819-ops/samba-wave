@@ -322,3 +322,84 @@ async def run_purchase(
         "option_count": len(options),
         "result": result,
     }
+
+
+# ── 저장 상품 (가구매 북마크) — 이름으로 상품 URL 저장/불러오기 ──
+
+
+class SavedProductCreate(BaseModel):
+    name: str  # 표시 이름 (예: 신발끈)
+    market_type: str = "ssg"
+    product_url: str
+
+
+@router.get("/purchase/products")
+async def list_saved_products(
+    session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: str = Depends(get_current_tenant_id),
+):
+    """저장된 가구매 상품 목록 (마켓별 북마크, 최신순)."""
+    from backend.domain.samba.store_care.repository import (
+        StoreCareSavedProductRepository,
+    )
+
+    repo = StoreCareSavedProductRepository(session)
+    rows = await repo.list_by_tenant(tenant_id=tenant_id)
+    return [
+        {
+            "id": r.id,
+            "name": r.name,
+            "market_type": r.market_type,
+            "product_url": r.product_url,
+        }
+        for r in rows
+    ]
+
+
+@router.post("/purchase/products", status_code=201)
+async def create_saved_product(
+    body: SavedProductCreate,
+    session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: str = Depends(get_current_tenant_id),
+):
+    """가구매 상품 저장 (이름 + URL + 마켓)."""
+    from backend.domain.samba.store_care.repository import (
+        StoreCareSavedProductRepository,
+    )
+
+    name = (body.name or "").strip()
+    url = (body.product_url or "").strip()
+    if not name or not url:
+        raise HTTPException(400, "이름과 상품 URL이 필요합니다")
+    repo = StoreCareSavedProductRepository(session)
+    row = await repo.create_async(
+        tenant_id=tenant_id,
+        name=name[:120],
+        market_type=(body.market_type or "ssg").strip().lower(),
+        product_url=url,
+    )
+    return {
+        "id": row.id,
+        "name": row.name,
+        "market_type": row.market_type,
+        "product_url": row.product_url,
+    }
+
+
+@router.delete("/purchase/products/{product_id}")
+async def delete_saved_product(
+    product_id: str,
+    session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: str = Depends(get_current_tenant_id),
+):
+    """저장된 가구매 상품 삭제 (테넌트 소유 검증)."""
+    from backend.domain.samba.store_care.repository import (
+        StoreCareSavedProductRepository,
+    )
+
+    repo = StoreCareSavedProductRepository(session)
+    row = await repo.get_async(product_id)
+    if not row or row.tenant_id != tenant_id:
+        raise HTTPException(404, "저장된 상품을 찾을 수 없습니다")
+    await repo.delete_async(product_id)
+    return {"ok": True}
