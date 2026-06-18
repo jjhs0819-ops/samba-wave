@@ -35,6 +35,9 @@ DETAIL_TRADING_CARD_URL = f"{BASE}/en/trading-cards/{{id}}"
 # 트레이딩카드 컨디션(옵션)별 중고 리스팅 API
 # 상품코드는 SW---{id} 형식. isOnlyOnSale=true → 판매중(재고) 리스팅만
 USED_LISTINGS_URL = f"{BASE}/en/v1/products/SW---{{id}}/used-listings"
+# 박스/실드 상품 가격 API — used-listings(중고)에 안 잡히고 sizes(수량단)로 노출
+# 예: "1 box" $150(재고 481), "2 boxes" $313 ... 내부적으로 streetwear 타입 취급
+SIZES_URL = f"{BASE}/en/v1/products/SW---{{id}}/sizes"
 # 브랜드+카테고리 URL 패턴: https://snkrdunk.com/en/brands/{brand}/trading-cards?categoryId={cat}
 BRAND_TRADING_CARDS_URL_RE = re.compile(
     r"https?://snkrdunk\.com/en/brands/([^/?]+)/trading-cards(?:\?[^#]*?categoryId=(\d+))?",
@@ -594,6 +597,35 @@ class SnkrdunkClient:
                 page += 1
                 await asyncio.sleep(0.3)
 
+            # 박스/실드 상품: used-listings(중고)가 비면 sizes(수량단) API로 폴백
+            # "1 box"/"2 boxes" 별 최저가·재고(listingCount). 싱글카드는 used-listings로
+            # 이미 옵션이 잡히므로 비었을 때만 시도(싱글 동작 보존).
+            size_options: list[dict[str, Any]] = []
+            if not cond_min:
+                try:
+                    sr = await client.get(SIZES_URL.format(id=code_id))
+                    sr.raise_for_status()
+                    sdata = sr.json()
+                    for sz in sdata.get("sizes") or []:
+                        if not isinstance(sz, dict):
+                            continue
+                        price = sz.get("price")
+                        if not isinstance(price, (int, float)) or price <= 0:
+                            continue
+                        label = ((sz.get("size") or {}).get("text") or "기본").strip()
+                        cnt = sz.get("listingCount")
+                        stock = int(cnt) if isinstance(cnt, (int, float)) else 0
+                        if stock <= 0:
+                            continue
+                        size_options.append(
+                            {"name": label, "price": int(price), "stock": stock}
+                        )
+                    if not name:
+                        prod = sdata.get("product") or {}
+                        name = (prod.get("name") or "").strip()
+                except Exception as e:
+                    logger.warning(f"[SNKRDUNK] 박스 sizes 실패 id={card_id}: {e}")
+
             # 품번(productNumber) 추출 — 상세 SSR HTML의 :trading-card prop
             # 예: pkmn-tcg-SV-P-261 (used-listings/variations API엔 없음)
             try:
@@ -601,14 +633,29 @@ class SnkrdunkClient:
                 _pm = _PRODUCT_NUMBER_RE.search(hr.text)
                 if _pm:
                     product_number = _pm.group(1).strip()
+                if not name:
+                    _nm = re.search(
+                        r'<meta\s+property="og:title"\s+content="([^"]+)"', hr.text
+                    )
+                    if _nm:
+                        name = _nm.group(1).strip()
+                if not image:
+                    _im = re.search(
+                        r'<meta\s+property="og:image"\s+content="([^"]+)"', hr.text
+                    )
+                    if _im:
+                        image = _im.group(1).strip()
             except Exception as e:
                 logger.warning(f"[SNKRDUNK] 품번 추출 실패 {card_id}: {e}")
 
         # 재고 있는 컨디션만 옵션화 → 가격 오름차순 정렬
-        options = [
-            {"name": cond, "price": cond_min[cond], "stock": cond_cnt[cond]}
-            for cond in cond_min
-        ]
+        if cond_min:
+            options = [
+                {"name": cond, "price": cond_min[cond], "stock": cond_cnt[cond]}
+                for cond in cond_min
+            ]
+        else:
+            options = size_options
         options.sort(key=lambda o: o["price"])
 
         sale_price = options[0]["price"] if options else 0
