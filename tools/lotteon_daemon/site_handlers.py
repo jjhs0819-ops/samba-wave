@@ -316,7 +316,29 @@ _SSG_EXTRACT_JS = r"""
         uitemOptions.push({ name: nm, usablInvQty: qty, isSoldOut: qty === 0 })
         options.push({ name: nm, stock: qty, isSoldOut: qty === 0 })
       })
-      if (!options.length) {
+      // uitemObjList 기반 재고값이라도 DOM select "(매진)" 으로 개별 옵션 품절 보정
+      // (ssg_sourcing.py:1931 과 동일 로직 — API qty > 0 이지만 UI 품절 표시 불일치 방지)
+      if (options.length) {
+        try {
+          const soldOutNames = new Set()
+          document.querySelectorAll('select#ordOpt1 option, select#ordOpt2 option, select[id^="ordOpt"] option').forEach((el) => {
+            if (/\(매진\)|품절/.test(el.textContent || '')) {
+              const clean = (el.textContent || '').replace(/\s*\(매진\).*$/, '').replace(/\s*품절.*$/, '').trim()
+              if (clean) soldOutNames.add(clean)
+            }
+          })
+          if (soldOutNames.size) {
+            options.forEach((opt) => {
+              if (opt.isSoldOut) return
+              soldOutNames.forEach((sn) => {
+                if (opt.name.includes(sn) || sn.includes(opt.name)) {
+                  opt.stock = 0; opt.isSoldOut = true
+                }
+              })
+            })
+          }
+        } catch (_) {}
+      } else {
         document.querySelectorAll('.cdtl_opt_list li, [class*="option"] li').forEach((el) => {
           const nm = (el.textContent || '').trim().replace(/\s+/g, ' ')
           if (!nm) return

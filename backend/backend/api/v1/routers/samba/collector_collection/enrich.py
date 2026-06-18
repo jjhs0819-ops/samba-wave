@@ -701,12 +701,15 @@ async def enrich_product(
 
             if not updates:
                 return {"success": True, "message": "변동 없음", "product": product}
-            # 가격이력 스냅샷
+            # 가격이력 스냅샷 — 수동 업데이트는 dedup 없이 항상 기록
+            # (_trim_history 는 가격 동일 시 항목 제거하므로 수동 갱신 이력이 사라지는 문제)
             snapshot = {
                 "date": datetime.now(timezone.utc).isoformat(),
                 "sale_price": updates.get("sale_price", product.sale_price),
                 "original_price": updates.get("original_price", product.original_price),
                 "cost": updates.get("cost", product.cost),
+                "sale_status": updates.get("sale_status", product.sale_status),
+                "source": "manual-enrich",
             }
             # 옵션: 신규 수집 우선, 없으면 기존 DB 옵션 폴백
             _snap_opts = result.new_options
@@ -716,7 +719,10 @@ async def enrich_product(
                 snapshot["options"] = _snap_opts
             history = list(product.price_history or [])
             history.insert(0, snapshot)
-            updates["price_history"] = _trim_history(history)
+            # cap: 최초 1개 + 최근 49개 (dedup 없이 항상 삽입)
+            if len(history) > 50:
+                history = history[:49] + [history[-1]]
+            updates["price_history"] = history
             updated = await svc.update_collected_product(product_id, updates)
             retransmit = await _retransmit_if_changed(session, product, updates)
             return {
