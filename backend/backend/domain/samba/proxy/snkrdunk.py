@@ -547,6 +547,7 @@ class SnkrdunkClient:
         product_number = ""
         cond_min: dict[str, int] = {}
         cond_cnt: dict[str, int] = {}
+        had_listings = False  # 중고리스팅 자체가 있었나(있으면 단품 → sizes 폴백 안 함)
 
         async with httpx.AsyncClient(
             headers=HEADERS, timeout=self._timeout, follow_redirects=True
@@ -578,6 +579,7 @@ class SnkrdunkClient:
                 listings = data.get("usedListings") or []
                 if not listings:
                     break
+                had_listings = True
                 for x in listings:
                     if not isinstance(x, dict):
                         continue
@@ -585,6 +587,10 @@ class SnkrdunkClient:
                     if x.get("isSold"):
                         continue
                     cond = (x.get("condition") or "기본").strip()
+                    # PSA 등급만 수집 — KREAM은 PSA/BRG 슬랩으로 거래(낱장 raw 옵션 없음).
+                    # SNKR raw(A~D)/BGS/ARS는 KREAM에 자리 없어 제외. PSA만 호환(PSA↔PSA).
+                    if not cond.upper().startswith("PSA"):
+                        continue
                     price = x.get("priceAmount")
                     if not isinstance(price, (int, float)) or price <= 0:
                         continue
@@ -601,7 +607,9 @@ class SnkrdunkClient:
             # "1 box"/"2 boxes" 별 최저가·재고(listingCount). 싱글카드는 used-listings로
             # 이미 옵션이 잡히므로 비었을 때만 시도(싱글 동작 보존).
             size_options: list[dict[str, Any]] = []
-            if not cond_min:
+            # 박스/실드(중고리스팅 자체가 없음)만 sizes 폴백. PSA만 필터돼 비었어도
+            # 리스팅이 있었으면(단품) sizes 안 함.
+            if not cond_min and not had_listings:
                 try:
                     sr = await client.get(SIZES_URL.format(id=code_id))
                     sr.raise_for_status()
