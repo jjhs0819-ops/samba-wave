@@ -249,7 +249,7 @@ class PlayAutoPlugin(MarketPlugin):
             logger.warning("[플레이오토] R2 설정 없음 — 이미지 원본 URL 사용")
             return product
 
-        s3_client, bucket_name, public_url = r2
+        s3_client, bucket_name, public_url, r2_pub_url = r2
         proxy = self._get_proxy_for_download()
 
         # 상품 1건 처리 중 동일 URL 재업로드 방지 — head_object 호출 횟수 감소
@@ -259,7 +259,7 @@ class PlayAutoPlugin(MarketPlugin):
             if url in _url_cache:
                 return _url_cache[url]
             r2_url = await self._ensure_accessible(
-                dl_client, s3_client, bucket_name, public_url, url
+                dl_client, s3_client, bucket_name, public_url, url, r2_pub_url
             )
             _url_cache[url] = r2_url
             return r2_url
@@ -356,17 +356,32 @@ class PlayAutoPlugin(MarketPlugin):
         bucket_name: str,
         public_url: str,
         image_url: str,
+        r2_pub_url: str = "",
     ) -> str:
-        """소싱처 이미지 → 필요한 경우에만 R2 업로드.
+        """소싱처 이미지 → 필요한 경우에만 R2 업로드 후 pub URL 반환.
 
-        - 이미 우리 도메인(/images/transformed/, /images/playauto/v5/) → 그대로
-        - 화이트리스트 도메인(GSShop/FashionPlus) → R2 업로드
+        - 이미 우리 도메인(/images/playauto/v5/) → r2.dev clean URL로 교체
+        - 화이트리스트 도메인(GSShop/FashionPlus) → R2 업로드 → r2.dev clean URL
         - 그 외(무신사/ABCmart/롯데ON 등) → 원본 URL 그대로 (PlayAuto 직접 fetch 가능)
+
+        r2_pub_url: pub-xxx.r2.dev 형식 (PlayAuto 서버 접근 가능한 clean URL).
+        없으면 public_url(Caddy 경유) 사용(2026-06-18 실측: Caddy 경유 504).
         """
         host = (urlparse(image_url).netloc or "").lower()
 
-        # 이미 우리 도메인이거나 R2 미러본이면 그대로 사용
+        def _clean_url(r2_key: str) -> str:
+            """r2_pub_url이 있으면 r2.dev clean URL, 없으면 Caddy URL."""
+            if r2_pub_url:
+                return f"{r2_pub_url}/{r2_key}"
+            return f"{public_url}/{r2_key}"
+
+        # 이미 우리 도메인 — R2 key 추출 후 r2.dev URL로 교체
+        # (PlayAuto 서버에서 api.samba-wave.co.kr 직접 도달 불가 → 504)
         if "samba-wave.co.kr" in host:
+            path = urlparse(image_url).path
+            if "/images/" in path:
+                r2_key = path.split("/images/", 1)[1]
+                return _clean_url(r2_key)
             return image_url
 
         # 화이트리스트에 없으면 원본 URL 그대로 (PlayAuto가 직접 fetch 가능)
@@ -383,19 +398,18 @@ class PlayAutoPlugin(MarketPlugin):
         elif low.endswith(".gif"):
             ext = ".gif"
         r2_key = f"playauto/v5/{url_hash}{ext}"
-        r2_url = f"{public_url}/{r2_key}"
 
         # R2에 이미 존재하면 재업로드 스킵
         try:
             await asyncio.to_thread(
                 partial(s3_client.head_object, Bucket=bucket_name, Key=r2_key)
             )
-            return r2_url
+            return _clean_url(r2_key)
         except Exception:
             pass
 
         return await self._upload_single_image(
-            dl_client, s3_client, bucket_name, public_url, image_url, r2_key
+            dl_client, s3_client, bucket_name, public_url, image_url, r2_key, r2_pub_url
         )
 
     async def _upload_single_image(
@@ -406,6 +420,7 @@ class PlayAutoPlugin(MarketPlugin):
         public_url: str,
         image_url: str,
         r2_key: str = "",
+        r2_pub_url: str = "",
     ) -> str:
         """이미지 1장 다운로드 → R2 업로드 → 공개 URL 반환."""
 
@@ -471,8 +486,9 @@ class PlayAutoPlugin(MarketPlugin):
             )
         )
 
-        r2_url = f"{public_url}/{r2_key}"
-        return r2_url
+        if r2_pub_url:
+            return f"{r2_pub_url}/{r2_key}"
+        return f"{public_url}/{r2_key}"
 
     async def _replace_detail_images(
         self,
@@ -579,6 +595,10 @@ class PlayAutoPlugin(MarketPlugin):
         secret_key = str(creds.get("secretKey", "")).strip()
         bucket_name = str(creds.get("bucketName", "")).strip()
         r2_public_url = str(creds.get("publicUrl", "")).strip().rstrip("/")
+        # PlayAuto 이미지 전용 public URL (r2.dev direct).
+        # PlayAuto 서버가 api.samba-wave.co.kr(Caddy 경유)에 접근 불가 → 504.
+        # r2PubUrl(r2.dev)로 직접 서빙하면 1.4초 내 등록 성공(2026-06-18 실측).
+        r2_pub_url = str(creds.get("r2PubUrl", "")).strip().rstrip("/")
 
         if not access_key or not secret_key or not bucket_name:
             return None
@@ -599,7 +619,12 @@ class PlayAutoPlugin(MarketPlugin):
                 aws_secret_access_key=secret_key,
                 region_name="auto",
             )
-            _r2_client_cache[cache_key] = (client, bucket_name, r2_public_url)
+            _r2_client_cache[cache_key] = (
+                client,
+                bucket_name,
+                r2_public_url,
+                r2_pub_url,
+            )
             return _r2_client_cache[cache_key]
         except Exception:
             return None
