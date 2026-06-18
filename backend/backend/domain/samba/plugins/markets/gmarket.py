@@ -614,38 +614,45 @@ class GMarketMarketPlugin(MarketPlugin):
         # "주문선택사항 최소 1개 판매" 에러나므로 호출 안 함.
         opt_msg = ""
         if has_options and any_sellable and cat_code:
+            from backend.domain.samba.proxy.esmplus import (
+                update_existing_freetext_stock,
+            )
+
             try:
-                samba_options = _to_grouped_options(
-                    options, product.get("option_group_names") or []
+                # ③(#449) 자유입력 옵션 구조보존 우선 — register(전체재등록)는 폴백.
+                # 옵션 자유입력화(recommendedOptValueNo=0) 이후 대다수가 자유입력이라
+                # 구조 보존 갱신(GET+재고 PUT)이 가능 → 옵션깎임/단일옵션화 위험과
+                # 불필요한 전체재등록 부하를 피한다.
+                fb = await update_existing_freetext_stock(
+                    client, master_no, options, site="gmarket"
                 )
-                opt_result = await register_esm_options(
-                    client, master_no, cat_code, samba_options, site="gmarket"
-                )
-                if opt_result.get("success"):
+                if fb.get("success"):
                     opt_msg = (
-                        f" [옵션재고 {opt_result.get('matched')}/"
-                        f"{opt_result.get('requested')}]"
+                        f" [옵션재고(자유입력보존) {fb.get('matched')}/"
+                        f"{fb.get('total')}]"
                     )
                 else:
-                    # #413 — 추천옵션 매칭 0건이라도 이미 자유입력(valueNo=0)으로
-                    # 등록된 옵션이면 구조 보존하고 qty/품절만 갱신 (오버셀 방지).
-                    from backend.domain.samba.proxy.esmplus import (
-                        update_existing_freetext_stock,
+                    # 구조보존 불가(기존옵션 없음 / 추천옵션 카탈로그) 또는
+                    # 라벨 전체불일치(any_sellable인데 freetext all_sold_out = 라벨
+                    # 미스매치) → register 전체재등록으로 재매칭 폴백.
+                    samba_options = _to_grouped_options(
+                        options, product.get("option_group_names") or []
                     )
-
-                    fb = await update_existing_freetext_stock(
-                        client, master_no, options, site="gmarket"
+                    opt_result = await register_esm_options(
+                        client, master_no, cat_code, samba_options, site="gmarket"
                     )
-                    if fb.get("success"):
+                    if opt_result.get("success"):
                         opt_msg = (
-                            f" [옵션재고(자유입력보존) {fb.get('matched')}/"
-                            f"{fb.get('total')}]"
+                            f" [옵션재고(재등록) {opt_result.get('matched')}/"
+                            f"{opt_result.get('requested')}]"
                         )
                     else:
-                        opt_msg = f" [옵션재고 동기화 실패: {opt_result.get('message', '')[:60]}]"
+                        opt_msg = (
+                            f" [옵션재고 동기화 실패: {fb.get('message', '')[:60]}]"
+                        )
                         logger.warning(
-                            f"[지마켓] 옵션 재고 동기화 실패: {opt_result.get('message')} "
-                            f"/ freetext-fallback: {fb.get('message')}"
+                            f"[지마켓] 옵션 재고 동기화 실패 — freetext: {fb.get('message')} "
+                            f"/ register: {opt_result.get('message')}"
                         )
             except Exception as opt_e:
                 opt_msg = f" [옵션재고 오류: {str(opt_e)[:50]}]"

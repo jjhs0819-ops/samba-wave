@@ -398,15 +398,21 @@ class ESMPlusClient:
         """ESM Plus API 호출 공통 메서드.
 
         - 토큰버킷으로 분당 호출 빈도 제한 (default 30/min, settings override).
+          단, ESM 공식문서상 분당 30회 제한은 POST /item/v1/goods/search(목록조회)
+          전용이며 등록(POST /goods)·수정(PUT /goods)·조회(GET /goods)는 제한 없음.
+          → limiter는 경로에 /goods/search 가 포함될 때만 acquire (#449).
         - 429/5xx 응답 시 지수 백오프 + 재시도 (최대 3회, 1s/2s/4s + jitter).
         """
         url = f"{self.BASE}{path}"
         label = self.cfg["label"]
+        # 분당 30회 제한 대상은 목록조회(goods/search)뿐 — 그 외 전송은 제한 없음
+        _rate_limited = "/goods/search" in path
 
         last_resp: httpx.Response | None = None
         for attempt in range(self._MAX_RETRIES + 1):
-            # Rate limit — 분당 호출 빈도 제한
-            await _ESM_RATE_LIMITER.acquire()
+            # Rate limit — 목록조회 경로에서만 분당 호출 빈도 제한
+            if _rate_limited:
+                await _ESM_RATE_LIMITER.acquire()
 
             try:
                 client = await self._get_http_client()
