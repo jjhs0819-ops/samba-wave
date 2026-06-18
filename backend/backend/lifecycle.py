@@ -435,11 +435,15 @@ async def _start_autotune_if_enabled() -> None:
     from backend.api.v1.routers.samba.collector_autotune import (
         auto_start_if_enabled,
         restore_pc_allowed_sites_from_db,
+        restore_pc_last_seen_from_db,
     )
 
     # PC 분담 매핑(_pc_allowed_sites)을 DB에서 복원 — 재시작 직후 두 PC가 동일 사이트를
     # 동시에 띄우는 중복 사이클 문제 방지. 복원 실패해도 폴링 헤더로 채워지므로 무시 가능.
     await restore_pc_allowed_sites_from_db()
+    # 데몬 heartbeat 타임스탬프 복원 — API 재시작 후 다음 heartbeat 도달 전까지
+    # '데몬끊김'으로 보이던 문제 해결 (persist_pc_last_seen_to_db 와 쌍).
+    await restore_pc_last_seen_from_db()
     await auto_start_if_enabled()
 
 
@@ -476,13 +480,19 @@ async def _pc_sync_loop() -> None:
         _pc_cycle_count,
         _pc_main_task,
         _pc_restart_count,
+        persist_pc_last_seen_to_db,
         sync_pc_allowed_sites_from_db,
     )
 
     _lg = logging.getLogger("backend.pc-sync")
+    _persist_counter = 0
     while True:
         try:
             await sync_pc_allowed_sites_from_db()
+            _persist_counter += 1
+            if _persist_counter >= 6:  # 10s × 6 = 60s 마다 heartbeat 타임스탬프 영속화
+                _persist_counter = 0
+                await persist_pc_last_seen_to_db()
             # 분담 박힌 데몬 dev autotune cycle 자동 spawn.
             # 사용자 PC 의 pc_allowed_sites 는 DAEMON_ONLY(SSG/ABC/LOTTEON) 사이트 strip
             # 되므로 데몬 cycle 없으면 4개 사이트 처리 자체가 안 됨.

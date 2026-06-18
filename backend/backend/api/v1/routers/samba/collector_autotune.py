@@ -675,6 +675,7 @@ def touch_daemon_presence(device_id: str) -> bool:
 
 
 PC_ALLOWED_SITES_DB_KEY = "autotune_pc_allowed_sites"
+PC_LAST_SEEN_DB_KEY = "pc_last_seen_v2"  # API 재시작 생존용 heartbeat 타임스탬프 영속화
 
 
 def register_pc_allowed_sites(
@@ -907,6 +908,84 @@ async def restore_pc_allowed_sites_from_db() -> int:
     except Exception as _e:
         _log.warning("[오토튠] PC 분담 복원 실패(무시): %s", _e)
         return 0
+
+
+async def restore_pc_last_seen_from_db() -> int:
+    """서버 시작 시 samba_settings 에서 _pc_last_seen 복원.
+
+    API 재시작 후 데몬이 다음 heartbeat 를 보낼 때까지(최대 15s) '데몬끊김'으로
+    보이던 문제 해결. DB 에 저장된 타임스탬프가 180s 이내면 daemon_alive=True 유지.
+    1시간 이상 오래된 항목은 복원 제외(진짜 dead 데몬 오판 방지).
+    """
+    _log = logging.getLogger("autotune")
+    try:
+        from backend.api.v1.routers.samba.proxy._helpers import _get_setting
+        from backend.db.orm import get_read_session
+
+        async with get_read_session() as _sess:
+            data = await _get_setting(_sess, PC_LAST_SEEN_DB_KEY)
+        if not isinstance(data, dict):
+            return 0
+        now = time.time()
+        count = 0
+        for dev, ts in data.items():
+            if not isinstance(dev, str) or not isinstance(ts, (int, float)):
+                continue
+            ts_f = float(ts)
+            if now - ts_f > 3600:  # 1시간 이상 오래된 항목 제외
+                continue
+            dev_clean = dev.strip()
+            if not dev_clean:
+                continue
+            current = _pc_last_seen.get(dev_clean, 0.0)
+            if ts_f > current:
+                _pc_last_seen[dev_clean] = ts_f
+                count += 1
+        if count:
+            _log.info("[오토튠] pc_last_seen 복원: %d 항목", count)
+        return count
+    except Exception as _e:
+        _log.warning("[오토튠] pc_last_seen DB 복원 실패(무시): %s", _e)
+        return 0
+
+
+async def persist_pc_last_seen_to_db() -> None:
+    """현재 _pc_last_seen 을 samba_settings 에 저장 (60초마다 lifecycle 호출).
+
+    API 재시작 시 restore_pc_last_seen_from_db() 가 이 값을 복원해
+    데몬이 다음 heartbeat 를 보낼 때까지 alive 상태 유지.
+    """
+    try:
+        import json as _json
+        from sqlalchemy import text as _sa_text
+        from backend.db.orm import get_write_session
+
+        snapshot = {
+            dev: ts
+            for dev, ts in _pc_last_seen.items()
+            if isinstance(ts, float) and ts > 0
+        }
+        if not snapshot:
+            return
+        data_str = _json.dumps(snapshot)
+        async with get_write_session() as session:
+            await session.execute(
+                _sa_text(
+                    """
+                    INSERT INTO samba_settings (key, value, updated_at)
+                    VALUES (:k, CAST(:data AS json), NOW())
+                    ON CONFLICT (key) DO UPDATE SET
+                        value = CAST(:data AS json),
+                        updated_at = NOW()
+                    """
+                ),
+                {"k": PC_LAST_SEEN_DB_KEY, "data": data_str},
+            )
+            await session.commit()
+    except Exception as _e:
+        logging.getLogger("autotune").warning(
+            "[오토튠] pc_last_seen DB 저장 실패(무시): %s", _e
+        )
 
 
 def get_active_pcs() -> dict[str, set[str]]:
