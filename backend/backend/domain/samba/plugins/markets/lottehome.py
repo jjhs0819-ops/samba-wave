@@ -498,22 +498,32 @@ class LotteHomePlugin(MarketPlugin):
                 auth_creds.setdefault("agncNo", extra.get("agncNo", account.seller_id))
                 auth_creds.setdefault("env", extra.get("env", "test"))
 
-        # credentials 로드 (인증 정보)
-        creds_setting = await _get_setting(session, "lottehome_credentials")
-        if creds_setting and isinstance(creds_setting, dict):
-            auth_creds = {**auth_creds, **creds_setting}
-
         # store_lottehome(설정 페이지) → lottehome_policy(정책 페이지) 순으로 로드,
         # 뒤에 로드한 값이 우선(정책 페이지가 최종 override). 빈 값은 무시.
         # (2026-05-25) resolver 위임 + account.tenant_id 자동 추출.
         from backend.domain.samba.account.resolver import resolve_market_creds
 
         _tid = getattr(account, "tenant_id", None) if account else None
+
+        # credentials 로드 (인증 정보) — tenant-aware
+        from backend.api.v1.routers.samba.proxy._helpers import (
+            _get_setting as _get_setting_tenant,
+        )
+
+        creds_setting = await _get_setting_tenant(
+            session, "lottehome_credentials", tenant_id=_tid
+        )
+        if creds_setting and isinstance(creds_setting, dict):
+            auth_creds = {**auth_creds, **creds_setting}
         store_lh = await resolve_market_creds(
             session, _tid, market_type="lottehome", store_key="store_lottehome"
         )
         store_lh = store_lh if isinstance(store_lh, dict) else {}
-        policy = await _get_setting(session, "lottehome_policy")
+        from backend.api.v1.routers.samba.proxy._helpers import (
+            _get_setting as _get_setting_tenant,
+        )
+
+        policy = await _get_setting_tenant(session, "lottehome_policy", tenant_id=_tid)
         policy = policy if isinstance(policy, dict) else {}
 
         # account.additional_fields 의 camelCase 값도 폴백 소스로 사용
