@@ -78,7 +78,7 @@ except ImportError:
 # ====================================================================
 # 데몬 버전 — build.ps1 가 갱신. 자동 업데이트 비교 기준.
 # ====================================================================
-DAEMON_VERSION = "1.4.42"
+DAEMON_VERSION = "1.4.43"
 
 # N건 처리 후 프록시 교체를 위해 supervisor 재기동 유도 (0=비활성)
 _PROXY_ROTATE_AFTER = 10
@@ -705,6 +705,7 @@ class DaemonState:
         self.consecutive_login_required = 0
         self.max_consecutive_fail = max_consecutive_fail
         self.started_at = time.time()
+        self.last_job_at = time.time()
         # force-die 플래그 — max-uptime 도달 시 외부에서 die() 호출하여 worker 종료 트리거.
         # (2026-05-28: v1.4.15 가 state.die() 호출했는데 메서드 미정의로 AttributeError
         # 크래시 — 1시간 메모리 초기화 재시작 로직 자체가 망가짐 사고.)
@@ -717,12 +718,14 @@ class DaemonState:
     def record_success(self) -> None:
         self.processed += 1
         self.succeeded += 1
+        self.last_job_at = time.time()
         self.consecutive_fail = 0
         self.consecutive_login_required = 0
 
     def record_failure(self) -> None:
         self.processed += 1
         self.failed += 1
+        self.last_job_at = time.time()
         self.consecutive_fail += 1
 
     def record_login_required(self) -> None:
@@ -3317,6 +3320,17 @@ async def run_daemon(args: argparse.Namespace) -> int:
                         logger.info(
                             "프록시 로테이션 — %d건 처리 완료, 다음 프록시로 재시작",
                             state.processed,
+                        )
+                        state.die()
+                        break
+                    # 잡 기근 watchdog — 시작 10분 후에도 30분간 잡 0건이면 좀비 의심, 재시작.
+                    # 좀비 사례: heartbeat 살아있지만 폴링루프·Playwright 내부 hang.
+                    _no_job_secs = time.time() - state.last_job_at
+                    _alive_secs = time.time() - _start_ts
+                    if _alive_secs > 600 and _no_job_secs > 1800:
+                        logger.warning(
+                            "잡 기근 watchdog: %d분 동안 잡 0건 → 좀비 의심, 재시작",
+                            int(_no_job_secs / 60),
                         )
                         state.die()
                         break
