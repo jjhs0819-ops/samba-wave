@@ -327,7 +327,7 @@ async def get_shipment_log_buffer(
 
     # samba-worker(B)가 transmit 잡을 처리하므로 A의 in-memory 버퍼는 항상 비어있음.
     # in-memory 비어있을 때 DB에서 직접 읽어 준실시간 스트리밍 (worker가 50줄마다 flush).
-    if current_idx == 0:
+    if not logs:
         from backend.core.tenant_context import current_tenant_id as _ctv
 
         _tid = _ctv.get()
@@ -337,17 +337,30 @@ async def get_shipment_log_buffer(
             " AND (:tid IS NULL OR tenant_id = :tid)"
         )
 
-        # 1. RUNNING 잡 우선 (초기화 여부 무관 — 진행중 로그는 항상 표시)
-        result = await session.execute(
+        # 1. RUNNING 잡 존재 여부 확인 (logs 유무 무관 — logs 없어도 running이면 completed 폴백 금지)
+        running_check = await session.execute(
             _text(
-                f"SELECT logs FROM samba_jobs WHERE {_base_cond} AND status='running'"
+                "SELECT logs FROM samba_jobs"
+                " WHERE job_type='transmit' AND status='running'"
+                " AND (:tid IS NULL OR tenant_id = :tid)"
                 " ORDER BY created_at DESC LIMIT 1"
             ).bindparams(tid=_tid)
         )
-        row = result.first()
+        running_row = running_check.first()
+
+        if running_row is not None:
+            # RUNNING 잡 있음 — logs flush 됐으면 표시, 없으면 since_idx 유지(루프 방지)
+            if running_row[0]:
+                db_logs = running_row[0] if isinstance(running_row[0], list) else []
+                if db_logs:
+                    total = len(db_logs)
+                    slice_from = min(since_idx, total)
+                    return {"logs": db_logs[slice_from:], "current_idx": total}
+            # logs 미플러시 — 빈 응답이지만 since_idx 유지(0 리셋으로 나이키 로그 재표시 방지)
+            return {"logs": [], "current_idx": max(since_idx, 1)}
 
         # 2. RUNNING 없으면 최근 완료 잡 (초기화 후면 skip)
-        if not (row and row[0]) and not is_shipment_log_cleared():
+        if not is_shipment_log_cleared():
             result = await session.execute(
                 _text(
                     f"SELECT logs FROM samba_jobs WHERE {_base_cond} AND status!='running'"
@@ -355,14 +368,13 @@ async def get_shipment_log_buffer(
                 ).bindparams(tid=_tid)
             )
             row = result.first()
-
-        if row and row[0]:
-            db_logs = row[0] if isinstance(row[0], list) else []
-            if db_logs:
-                total = len(db_logs)
-                # since_idx를 DB 배열 오프셋으로 활용 — 증분 스트리밍 가능
-                slice_from = min(since_idx, total)
-                return {"logs": db_logs[slice_from:], "current_idx": total}
+            if row and row[0]:
+                db_logs = row[0] if isinstance(row[0], list) else []
+                if db_logs:
+                    total = len(db_logs)
+                    # since_idx를 DB 배열 오프셋으로 활용 — 증분 스트리밍 가능
+                    slice_from = min(since_idx, total)
+                    return {"logs": db_logs[slice_from:], "current_idx": total}
 
     return {"logs": logs, "current_idx": current_idx}
 
