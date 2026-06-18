@@ -1662,10 +1662,16 @@ class ESMPlusClient:
         if as_phone:
             data["itemAddtionalInfo"]["asPhone"] = as_phone
 
-        # 관리코드 (소싱처 상품 ID)
-        source_product_id = product.get("source_product_id", "")
-        if source_product_id:
-            data["itemBasicInfo"]["managedCode"] = str(source_product_id)[:50]
+        # 관리코드 (ESM dedup 키 — #454)
+        # 기존 source_product_id 키는 어디서도 안 채워져 항상 빈값 + itemBasicInfo 위치는
+        # ESM 이 무시(itemAddtionalInfo.managedCode 만 읽음) → managedCode 영구 빈값 →
+        # 동일 상품 재등록 dedup 불가(유령 양산 enabler). 실제 컬럼 site_product_id(소싱처
+        # 상품ID, 100% 채워짐) 우선 + collected_product.id 폴백, itemAddtionalInfo 위치로 교정.
+        managed_code = str(
+            product.get("site_product_id") or product.get("id") or ""
+        ).strip()
+        if managed_code:
+            data["itemAddtionalInfo"]["managedCode"] = managed_code[:50]
 
         return data
 

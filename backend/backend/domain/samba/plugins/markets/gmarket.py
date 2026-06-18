@@ -597,12 +597,19 @@ class GMarketMarketPlugin(MarketPlugin):
             },
         }
 
-        def _not_found() -> dict[str, Any]:
+        def _fail_soft() -> dict[str, Any]:
+            # 일시 404(ESM 색인지연/rate-limit/순간장애) 에 매핑 wipe 금지 — fail-soft (#454).
+            # _clear_product_no 반환 안 함 → service 가 _master/_origin/account_id 매핑 보존
+            # → 다음 사이클 재시도. clear 시 미등록 인식 → 재등록(유령/중복) 양산했음.
+            # 진짜 삭제분도 매핑 보존한 채 계속 실패로 떠서 운영자 수동처리(자동 재등록 안 함).
+            logger.warning(
+                f"[지마켓] sell-status 404 — 매핑 보존(fail-soft), 재시도 대기: "
+                f"goods_no={goods_no}, master={master_no}"
+            )
             return {
                 "success": False,
-                "error_type": "product_not_found",
-                "message": f"상품 #{goods_no}이 지마켓에 없습니다.",
-                "_clear_product_no": True,
+                "error_type": "product_not_found_soft",
+                "message": f"상품 #{goods_no} sell-status 404 (매핑 보존, 다음 사이클 재시도)",
             }
 
         try:
@@ -618,13 +625,13 @@ class GMarketMarketPlugin(MarketPlugin):
 
             resolved = await resolve_esm_master_goods_no(client, goods_no)
             if not resolved or resolved == master_no:
-                return _not_found()
+                return _fail_soft()
             master_no = resolved
             try:
                 await client.update_sell_status(master_no, sell_data)
             except RuntimeError as e2:
                 if "상품이 없습니다" in str(e2):
-                    return _not_found()
+                    return _fail_soft()
                 raise
 
         # 옵션별 재고/품절 동기화 — 판매가능 옵션 있을 때만.
