@@ -236,22 +236,25 @@ class AbcMartPlugin(SourcingPlugin):
                     pick_daemon_owner,
                 )
 
+                _is_manual_enrich = _current_refresh_source.get() == "manual"
                 _abc_owner = (
                     pick_daemon_owner("ABCmart")
                     or get_autotune_owner("ABCmart")
                     or None
                 )
+                # 수동 enrich: 데몬 없어도 현재 PC 확장앱 처리 허용 (owner_device_id="")
+                _eff_owner = _abc_owner if not _is_manual_enrich else (_abc_owner or "")
                 if _prefer_grandstage:
                     _gs_url = f"https://grandstage.a-rt.com/product/new?prdtNo={site_product_id}&tChnnlNo=10002"
                     _dom_req, _dom_fut = SourcingQueue.add_detail_job(
                         "ABCmart",
                         site_product_id,
                         url=_gs_url,
-                        owner_device_id=_abc_owner,
+                        owner_device_id=_eff_owner,
                     )
                 else:
                     _dom_req, _dom_fut = SourcingQueue.add_detail_job(
-                        "ABCmart", site_product_id, owner_device_id=_abc_owner
+                        "ABCmart", site_product_id, owner_device_id=_eff_owner
                     )
                 # popup 윈도우 처리시간: ~25-30초 평균, 최대 ~45초
                 # SSG 빈페이지 reload(최대 25s) + 다음 폴 사이클 대기 고려해 110s로 여유 확보
