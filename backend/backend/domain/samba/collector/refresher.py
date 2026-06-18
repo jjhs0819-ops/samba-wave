@@ -423,8 +423,9 @@ def is_bulk_cancelled(source: str = "autotune") -> bool:
     return _cancel_flags.get(source, False)
 
 
-# ── 실시간 로그 링 버퍼 (최대 300건) ──
-_refresh_log_buffer: deque[Dict[str, Any]] = deque(maxlen=300)
+# ── 실시간 로그 링 버퍼 (최대 600건) ──
+# step8 이후 수집완료 + 결과(스킵/전송) 2줄/상품 → 200상품 사이클 시 400건 필요
+_refresh_log_buffer: deque[Dict[str, Any]] = deque(maxlen=600)
 _refresh_log_total: int = 0  # 누적 카운터 (밀려나도 증가만)
 
 
@@ -1747,6 +1748,26 @@ async def refresh_products_bulk(
                         _rl,
                         f"실패: {_err_short}",
                         level="warning",
+                        idx=_log_idx,
+                        total=_log_total,
+                    )
+                # 수집 완료 즉시 로그 — on_result DB 처리(lock 경합·enqueue) 전에
+                # 실시간으로 표시. step8 이후 _on_result 지연으로 200건이 몰려 나타나는
+                # 현상 해소. 에러/AUTH_MISSING은 이미 위에서 로그 작성됨.
+                if source == "autotune" and not r.error:
+                    _rb = getattr(p, "brand", "") or ""
+                    _rn = getattr(p, "name", "") or ""
+                    _rs = getattr(p, "site_product_id", "") or ""
+                    _rl = (
+                        f"{_rb} {_rn} ({_rs})".strip()
+                        if _rs
+                        else f"{_rb} {_rn}".strip()
+                    )
+                    _log_refresh(
+                        site,
+                        getattr(p, "id", "unknown"),
+                        _rl,
+                        "수집",
                         idx=_log_idx,
                         total=_log_total,
                     )
