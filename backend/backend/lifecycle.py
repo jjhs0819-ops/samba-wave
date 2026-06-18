@@ -472,12 +472,16 @@ async def _pc_sync_loop() -> None:
     """
     import asyncio as _asyncio
 
-    from backend.api.v1.routers.samba.collector_autotune import (
+    import time as _time
+
+    from backend.api.v1.routers.samba.collector_autotune import (  # noqa: F811
+        _autotune_enabled_flag,
         _autotune_loop,
         _get_pc_event,
         _is_pc_running,
         _pc_allowed_sites,
         _pc_cycle_count,
+        _pc_last_seen,
         _pc_main_task,
         _pc_restart_count,
         persist_pc_last_seen_to_db,
@@ -512,6 +516,32 @@ async def _pc_sync_loop() -> None:
                     name=f"autotune-main-{_ddev[:8]}",
                 )
                 _lg.info(f"[pc-sync] 데몬 자동 spawn: {_ddev} sites={sorted(_dsites)}")
+            # 확장앱 dev 자동 spawn — 글로벌 오토튠 ON + 분담 있음 + 최근 폴링(5분 내).
+            # 체크박스 체크 + 오토튠 실행 중이면 배포/재시작 후 자동 재개 (데몬과 동일 UX).
+            # 5분 폴링 가드: 꺼진 PC는 재시작 금지 (탭 중복 열림 방지).
+            if _autotune_enabled_flag:
+                _now_ts = _time.time()
+                for _edev, _esites in list(_pc_allowed_sites.items()):
+                    if _edev.startswith("samba-daemon-"):
+                        continue
+                    if not _esites:
+                        continue
+                    if _is_pc_running(_edev):
+                        continue
+                    _last_poll = _pc_last_seen.get(_edev, 0)
+                    if not _last_poll or (_now_ts - _last_poll) > 300:
+                        continue
+                    _pc_cycle_count[_edev] = 0
+                    _pc_restart_count[_edev] = 0
+                    _ev2 = _get_pc_event(_edev)
+                    _ev2.set()
+                    _pc_main_task[_edev] = _asyncio.create_task(
+                        _autotune_loop(_edev),
+                        name=f"autotune-main-{_edev[:8]}",
+                    )
+                    _lg.info(
+                        f"[pc-sync] 확장앱 자동 spawn: {_edev} sites={sorted(_esites)}"
+                    )
         except Exception as exc:
             _lg.warning(f"[lifecycle][pc-sync] 동기화 실패(무시): {exc}")
         await asyncio.sleep(10)
