@@ -13,25 +13,6 @@ from backend.dtos.samba.cs_inquiry import (
     CSInquiryReply,
 )
 
-from datetime import datetime as _dt_type
-from zoneinfo import ZoneInfo
-
-_KST = ZoneInfo("Asia/Seoul")
-
-
-def _ensure_kst(dt: Optional[_dt_type]) -> Optional[_dt_type]:
-    """마켓 원본 날짜(KST 기준 naive) → KST aware datetime.
-
-    마켓 API 원본 시각은 KST naive 문자열(예: yyyyMMddHHmmss)이라
-    타임존 없이 저장하면 DB(timestamptz)가 UTC로 오인해 +9h 미래가 됨.
-    KST tzinfo를 부여해 삼바 표준(UTC aware 저장 + KST 표시)에 맞춤.
-    이미 aware면 그대로 둔다.
-    """
-    if dt is not None and dt.tzinfo is None:
-        dt = dt.replace(tzinfo=_KST)
-    return dt
-
-
 router = APIRouter(prefix="/cs-inquiries", tags=["samba-cs-inquiries"])
 
 
@@ -186,7 +167,6 @@ async def list_cs_inquiries(
     limit: int = Query(30, ge=1, le=500),
     market: Optional[str] = None,
     inquiry_type: Optional[str] = None,
-    exclude_inquiry_type: Optional[str] = None,
     reply_status: Optional[str] = None,
     search: Optional[str] = None,
     sort_field: str = Query("inquiry_date"),
@@ -202,7 +182,6 @@ async def list_cs_inquiries(
         limit=limit,
         market=market,
         inquiry_type=inquiry_type,
-        exclude_inquiry_type=exclude_inquiry_type,
         reply_status=reply_status,
         search=search,
         sort_field=sort_field,
@@ -599,78 +578,6 @@ async def reply_cs_inquiry(
                         else:
                             market_msg = "eBay 인증정보 없음"
 
-            elif inquiry.market == "플레이오토":
-                from backend.domain.samba.account.model import SambaMarketAccount
-                from backend.domain.samba.proxy.playauto import PlayAutoClient
-
-                # 플레이오토 문의는 수집 시 account_id 미저장(account_name만) +
-                # account_name 에 " (사이트명)" 접미사가 붙어 account_label 정확매칭 실패.
-                # → 활성 playauto 계정 직접 해석: account_label 접두 매칭 우선, 없으면 첫 계정.
-                pa_result = await session.execute(
-                    select(SambaMarketAccount).where(
-                        SambaMarketAccount.market_type == "playauto",
-                        SambaMarketAccount.is_active == True,  # noqa: E712
-                    )
-                )
-                pa_accounts = pa_result.scalars().all()
-                pa_acc = None
-                _acct_name = inquiry.account_name or ""
-                for _acc in pa_accounts:
-                    _label = _acc.account_label or _acc.business_name or ""
-                    if _label and _acct_name.startswith(_label):
-                        pa_acc = _acc
-                        break
-                if pa_acc is None and pa_accounts:
-                    pa_acc = pa_accounts[0]
-
-                if pa_acc is None:
-                    market_msg = "플레이오토 계정 없음"
-                else:
-                    _pa_af = pa_acc.additional_fields or {}
-                    pa_api_key = _pa_af.get("apiKey", "") or pa_acc.api_key or ""
-                    if not pa_api_key:
-                        market_msg = "플레이오토 API 키 미설정"
-                    else:
-                        pa_client = PlayAutoClient(pa_api_key)
-                        try:
-                            pa_resp = await pa_client.answer_qna(
-                                [
-                                    {
-                                        "number": int(inquiry.market_inquiry_no),
-                                        "Asubject": "답변드립니다",
-                                        "AContent": body.reply,
-                                    }
-                                ],
-                                overwrite=True,
-                            )
-                            # 응답 형식: [{"number": N, "status": true, "msg": "성공"}]
-                            # 예외 안 나도 status==True 검사 필수 — false success 방지
-                            # (CLAUDE.md 영구금지: playauto timeout 폴백 false success 917건 사고)
-                            _row = next(
-                                (
-                                    r
-                                    for r in pa_resp
-                                    if isinstance(r, dict)
-                                    and str(r.get("number", ""))
-                                    == str(inquiry.market_inquiry_no)
-                                ),
-                                None,
-                            )
-                            if _row and _row.get("status") is True:
-                                market_sent = True
-                                market_msg = "플레이오토 CS 답변 전송 완료"
-                            else:
-                                _emsg = (
-                                    _row.get("msg", "")
-                                    if isinstance(_row, dict)
-                                    else ""
-                                )
-                                market_msg = (
-                                    f"플레이오토 답변 전송 실패: {_emsg or pa_resp}"
-                                )
-                        finally:
-                            await pa_client.close()
-
             elif inquiry.market == "롯데홈쇼핑":
                 from backend.api.v1.routers.samba.proxy._helpers import (
                     _get_lotte_client,
@@ -765,13 +672,6 @@ async def reply_cs_inquiry(
         not inquiry.market_inquiry_no and inquiry.market not in _external_id_markets
     )
     updated = await svc.reply_inquiry(inquiry_id, body.reply, mark_replied=mark_replied)
-    # 플레이오토: 마켓 전송 실패 시 reply_inquiry가 reply 존재만으로 replied 처리하는 것을
-    # 되돌려 pending 유지 (실제 미전송인데 '답변완료'로 표시되던 가짜완료 방지)
-    if inquiry.market == "플레이오토" and not market_sent:
-        from backend.domain.samba.cs_inquiry.repository import SambaCSInquiryRepository
-
-        _pa_repo = SambaCSInquiryRepository(session)
-        updated = await _pa_repo.update_async(inquiry_id, reply_status="pending")
     if answer_no and answer_no != (inquiry.market_answer_no or ""):
         from backend.domain.samba.cs_inquiry.repository import SambaCSInquiryRepository
 
@@ -974,12 +874,12 @@ async def _sync_lotteon_qna(
             try:
                 from datetime import datetime as _dt
 
-                parsed_date = _ensure_kst(_dt.strptime(raw_date[:14], "%Y%m%d%H%M%S"))
+                parsed_date = _dt.strptime(raw_date[:14], "%Y%m%d%H%M%S")
             except Exception:
                 try:
                     from dateutil.parser import parse as parse_dt
 
-                    parsed_date = _ensure_kst(parse_dt(raw_date))
+                    parsed_date = parse_dt(raw_date)
                 except Exception:
                     parsed_date = None
 
@@ -1110,7 +1010,7 @@ async def _sync_lotteon_contact(
             try:
                 from datetime import datetime as _dt
 
-                parsed_date = _ensure_kst(_dt.strptime(raw_date[:14], "%Y%m%d%H%M%S"))
+                parsed_date = _dt.strptime(raw_date[:14], "%Y%m%d%H%M%S")
             except Exception:
                 pass
 
@@ -1219,7 +1119,7 @@ async def _sync_lotteon_compensate(
             try:
                 from datetime import datetime as _dt
 
-                parsed_date = _ensure_kst(_dt.strptime(raw_date[:14], "%Y%m%d%H%M%S"))
+                parsed_date = _dt.strptime(raw_date[:14], "%Y%m%d%H%M%S")
             except Exception:
                 pass
 
@@ -1500,7 +1400,7 @@ async def _do_sync_cs_from_markets(
                     try:
                         from dateutil.parser import parse as parse_dt
 
-                        parsed_date = _ensure_kst(parse_dt(raw_date))
+                        parsed_date = parse_dt(raw_date)
                     except Exception:
                         parsed_date = None
 
@@ -1622,7 +1522,7 @@ async def _do_sync_cs_from_markets(
                         try:
                             from dateutil.parser import parse as parse_dt
 
-                            parsed_date = _ensure_kst(parse_dt(raw_date))
+                            parsed_date = parse_dt(raw_date)
                         except Exception:
                             parsed_date = None
 
@@ -1996,20 +1896,16 @@ async def _do_sync_cs_from_markets(
             )  # 독립 에러 격리 — 다른 마켓에 영향 없음
 
     # 미연결 CS 문의 일괄 매칭 (market_product_no → market_product_nos)
-    # 전 상품 스캔(수만 행)이라 무거움 → 주기 전체동기화(market_name=None)에서만 수행.
-    # 수동 단일마켓 "가져오기"는 스킵해 즉시 응답(미연결 매칭은 다음 주기 동기화가 처리).
     linked = 0
     try:
         from sqlmodel import select as sel
 
-        unlinked_items = []
-        if market_name is None:
-            unlinked = await session.execute(
-                sel(SambaCSInquiry).where(
-                    SambaCSInquiry.collected_product_id.is_(None),
-                )
+        unlinked = await session.execute(
+            sel(SambaCSInquiry).where(
+                SambaCSInquiry.collected_product_id.is_(None),
             )
-            unlinked_items = unlinked.scalars().all()
+        )
+        unlinked_items = unlinked.scalars().all()
         if unlinked_items:
             from sqlalchemy import text as sa_text
 
@@ -2124,9 +2020,6 @@ async def _do_sync_cs_from_markets(
         )
         pa_result = await session.execute(pa_stmt)
         pa_accounts = pa_result.scalars().all()
-        # 마켓 필터: 특정 마켓만 선택 시 플레이오토 아니면 스킵
-        if market_name and market_name != "플레이오토":
-            pa_accounts = []
         if account_id:
             pa_accounts = (
                 [acc for acc in pa_accounts if acc.id == account_id]
@@ -2156,14 +2049,8 @@ async def _do_sync_cs_from_markets(
 
                 pa_synced = 0
                 for qna in pa_qnas:
-                    # 긴급메세지/문의/상품평 수집, 나머지 제외
-                    # 주의: PlayAuto 실제 QType은 "긴급메세지"(메세지) — 철자 둘 다 허용
-                    if qna.get("QType", "") not in (
-                        "긴급메세지",
-                        "긴급메시지",
-                        "문의",
-                        "상품평",
-                    ):
+                    # 긴급메시지/문의/상품평 수집
+                    if qna.get("QType", "") not in ("긴급메시지", "문의", "상품평"):
                         continue
                     qna_no = str(qna.get("Number", ""))
                     if not qna_no:
@@ -2179,17 +2066,10 @@ async def _do_sync_cs_from_markets(
                     existing_row = existing_result.scalar_one_or_none()
 
                     state = qna.get("State", "")
-                    # 답변완료/전송완료 OR 실제 답변(AContent) 존재 시 답변완료 처리
-                    # (답변 있는데 state 미반영돼 미답변으로 잡히던 오류 fix)
-                    is_answered = state in ("답변완료", "전송완료") or bool(
-                        (qna.get("AContent") or "").strip()
-                    )
+                    is_answered = state in ("답변완료", "전송완료")
 
                     site_name = qna.get("SiteName", "")
                     prod_code = qna.get("ProdCode") or qna.get("MasterCode") or ""
-                    # MasterCode(AM...)는 우리 market_product_nos에 저장된 값 → 수집상품 매칭 키.
-                    # (ProdCode=마켓 판매코드는 우리 DB에 없어 매칭 불가)
-                    master_code = qna.get("MasterCode") or ""
 
                     # SiteName → 판매 구매페이지 URL 매핑
                     _pa_site_url_map = {
@@ -2212,54 +2092,11 @@ async def _do_sync_cs_from_markets(
                         else ""
                     )
 
-                    # 기존 데이터 백필: product_link(판매링크) + MasterCode 매칭(원문링크/상품정보/상품명)
+                    # 기존 데이터가 있지만 product_link가 비어 있으면 URL만 업데이트
                     if existing_row:
-                        changed = False
                         if pa_product_link and not existing_row.product_link:
                             existing_row.product_link = pa_product_link
-                            changed = True
-                        if master_code and not existing_row.collected_product_id:
-                            try:
-                                m = await _find_collected_product_by_market_product_no(
-                                    session, master_code
-                                )
-                            except Exception:
-                                m = None
-                            if m:
-                                existing_row.collected_product_id = m["id"]
-                                if not existing_row.original_link:
-                                    existing_row.original_link = (
-                                        m.get("original_link") or ""
-                                    )
-                                if not existing_row.product_image:
-                                    existing_row.product_image = (
-                                        m.get("product_image") or ""
-                                    )
-                                if not existing_row.product_name:
-                                    existing_row.product_name = m.get("name") or ""
-                                changed = True
-                        # PlayAuto 현재 답변상태로 reply_status 재동기화 (PlayAuto = 권위 소스).
-                        # 스레드 재오픈(신규)·답변 미반영 건이 답변완료로 고착돼 미답변
-                        # 목록에서 빠지던 문제 방지. reply 본문은 보존(이전 답변 참고용).
-                        if is_answered and existing_row.reply_status != "replied":
-                            existing_row.reply_status = "replied"
-                            changed = True
-                        elif not is_answered and existing_row.reply_status == "replied":
-                            existing_row.reply_status = "pending"
-                            existing_row.replied_at = None
-                            changed = True
-                        if changed:
                             session.add(existing_row)
-                            # get_write_session는 auto-commit 안 함 → 명시적 commit 필수
-                            # (안 하면 product_link/매칭/reply_status 갱신이 롤백됨).
-                            # commit 실패 시 rollback로 세션 오염 차단(후속 마켓 줄줄이 실패 방지).
-                            try:
-                                await session.commit()
-                            except Exception as _ce:
-                                await session.rollback()
-                                logger.warning(
-                                    f"[CS동기화] 플레이오토 기존문의 갱신 commit 실패(무시): {_ce}"
-                                )
                         continue
 
                     raw_date = qna.get("WriteDate") or qna.get("QDate")
@@ -2268,21 +2105,9 @@ async def _do_sync_cs_from_markets(
                         try:
                             from dateutil.parser import parse as parse_dt
 
-                            parsed_date = _ensure_kst(parse_dt(raw_date))
+                            parsed_date = parse_dt(raw_date)
                         except Exception:
                             pass
-
-                    # MasterCode로 수집상품 매칭 → 원문링크/상품정보/상품명 채우기
-                    pa_matched = None
-                    if master_code:
-                        try:
-                            pa_matched = (
-                                await _find_collected_product_by_market_product_no(
-                                    session, master_code
-                                )
-                            )
-                        except Exception:
-                            pa_matched = None
 
                     inquiry_data = {
                         "market": "플레이오토",
@@ -2295,17 +2120,11 @@ async def _do_sync_cs_from_markets(
                         else pa_label,
                         "inquiry_type": qna.get("QType", "문의"),
                         "questioner": qna.get("QName", ""),
-                        "product_name": pa_matched["name"] if pa_matched else "",
-                        "product_image": pa_matched.get("product_image", "")
-                        if pa_matched
-                        else "",
+                        "product_name": "",
+                        "product_image": "",
                         "product_link": pa_product_link,
-                        "original_link": pa_matched.get("original_link", "")
-                        if pa_matched
-                        else "",
-                        "collected_product_id": pa_matched["id"]
-                        if pa_matched
-                        else None,
+                        "original_link": "",
+                        "collected_product_id": None,
                         "content": qna.get("QContent", "") or qna.get("QSubject", ""),
                         "reply": qna.get("AContent", "") if is_answered else None,
                         "reply_status": "replied" if is_answered else "pending",
@@ -2858,9 +2677,6 @@ async def _do_sync_cs_from_markets(
         )
         ssg_result = await session.execute(ssg_stmt)
         ssg_accounts = ssg_result.scalars().all()
-        # 마켓 필터: 특정 마켓만 선택 시 SSG(신세계몰) 아니면 스킵
-        if market_name and market_name != "신세계몰":
-            ssg_accounts = []
         if account_id:
             ssg_accounts = (
                 [acc for acc in ssg_accounts if acc.id == account_id]
@@ -2914,9 +2730,6 @@ async def _do_sync_cs_from_markets(
         )
         esm_result = await session.execute(esm_stmt)
         esm_accounts = esm_result.scalars().all()
-        # 마켓 필터: 특정 마켓만 선택 시 ESM(G마켓/옥션) 아니면 스킵
-        if market_name and market_name not in ("G마켓", "옥션"):
-            esm_accounts = []
         if account_id:
             esm_accounts = (
                 [acc for acc in esm_accounts if acc.id == account_id]
@@ -3552,21 +3365,17 @@ async def delete_cs_inquiry(
     return {"ok": True}
 
 
-@router.post("/{inquiry_id}/mark-replied")
-async def mark_cs_inquiry_replied(
+@router.post("/{inquiry_id}/hide")
+async def hide_cs_inquiry(
     inquiry_id: str,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    """CS 문의를 답변완료 상태로 변경 (실제 답변은 외부에서 이미 처리됨, 상태값만 변경)."""
-    from datetime import UTC, datetime as _dt
-
+    """CS 문의 숨기기."""
     svc = _write_service(session)
     inquiry = await svc.get_inquiry(inquiry_id)
     if not inquiry:
         raise HTTPException(status_code=404, detail="문의를 찾을 수 없습니다")
-    await svc.repo.update_async(
-        inquiry_id, reply_status="replied", replied_at=_dt.now(UTC)
-    )
+    await svc.repo.update_async(inquiry_id, is_hidden=True)
     return {"ok": True}
 
 
