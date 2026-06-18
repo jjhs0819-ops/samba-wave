@@ -905,16 +905,34 @@ export default function ProductsPage() {
     );
   };
 
-  const handleSelectAll = (checked: boolean) => {
+  const handleSelectAll = async (checked: boolean) => {
     if (!checked) {
       setSelectAll(false);
       setSelectedIds(new Set());
       return;
     }
-    // 전체선택은 항상 "현재 페이지에 보이는 상품"만 선택한다.
-    // (검색결과 전체를 선택하던 기존 동작은 삭제 시 의도치 않게 전체가 지워져 제거함)
-    setSelectAll(true);
-    setSelectedIds(new Set(products.map((p) => p.id)));
+    // 검색결과 전체 ID 조회 후 선택
+    try {
+      const knownStatus = ['has_orders', 'free_ship', 'same_day', 'free_same', 'market_registered', 'market_unregistered', 'sold_out']
+      const statusParam = (knownStatus.includes(appliedStatusFilter) || appliedStatusFilter.startsWith('reg_') || appliedStatusFilter.startsWith('unreg_'))
+        ? appliedStatusFilter : appliedStatusFilter || undefined
+      const aiParam = (appliedAiFilter === 'has_orders') ? appliedAiFilter : appliedAiFilter || undefined
+      const res = await collectorApi.getProductIds({
+        search: appliedSearchQ.trim() || _idFilter || undefined,
+        search_type: appliedSearchQ.trim() ? appliedSearchType : (_idFilter ? 'id' : undefined),
+        source_site: appliedSiteFilter || undefined,
+        status: statusParam,
+        sold_out_filter: appliedSoldOutFilter || undefined,
+        ai_filter: aiParam,
+        search_filter_id: appliedFilterByGroupId || undefined,
+      })
+      setSelectAll(true);
+      setSelectedIds(new Set(res.ids));
+    } catch {
+      // 폴백: 현재 페이지만
+      setSelectAll(true);
+      setSelectedIds(new Set(products.map((p) => p.id)));
+    }
   };
 
   // 성능 최적화: 안정적인 콜백 참조로 ProductCard 불필요한 리렌더 방지
