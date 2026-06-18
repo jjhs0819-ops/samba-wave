@@ -1706,6 +1706,9 @@ export const proxyApi = {
   marketAuthTest: (marketKey: string) =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/market/auth-test/${marketKey}`, { method: 'POST' }),
+  poisonAuthTest: (payload?: { app_key?: string; app_secret?: string }) =>
+    request<{ success: boolean; message: string }>(
+      `${SAMBA_PREFIX}/proxy/poison/auth-test`, { method: 'POST', body: JSON.stringify(payload || {}) }),
   lottehomeAuth: (body: { userId: string; password: string; agncNo?: string; env?: string }) =>
     request<{ success: boolean; message: string; certKey?: string }>(
       `${SAMBA_PREFIX}/proxy/lottehome/auth`, { method: 'POST', body: JSON.stringify(body) }),

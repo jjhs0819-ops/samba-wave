@@ -18,6 +18,7 @@ from . import (
     misc,
     musinsa,
     notifications,
+    poison,
     preset_images,
     smartstore,
     sourcing,
@@ -42,6 +43,7 @@ router.include_router(musinsa.router)
 router.include_router(kream.router)
 router.include_router(lottehome.router)
 router.include_router(gsshop.router)
+router.include_router(poison.router)
 
 # 확장앱 소싱큐 전용 라우터 (인증 불필요) — app_factory.py에서 별도 등록
 sourcing_queue_router = sourcing.sourcing_queue_router

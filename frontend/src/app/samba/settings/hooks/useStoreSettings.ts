@@ -225,6 +225,13 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
       // (2026-05-25) store_* samba_settings 저장 폐기 — samba_market_account 단일 진실 출처.
       // 아래 accountApi.create/update 가 market_account 저장 담당.
 
+      // poison: loadStoreSettings가 store_poison 에서 폼 초기값을 읽으므로 함께 동기화
+      if (marketKey === 'poison') {
+        try {
+          await forbiddenApi.saveSetting('store_poison', data)
+        } catch { /* 동기화 실패 무시 */ }
+      }
+
       // lottehome: proxy client는 lottehome_credentials 키를 읽으므로 함께 동기화
       if (marketKey === 'lottehome') {
         try {
@@ -372,6 +379,11 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
       } else if (marketKey === 'playauto') {
         result = await proxyApi.playautoAuthTest({
           api_key: String(safeData.apiKey || ''),
+        })
+      } else if (marketKey === 'poison') {
+        result = await proxyApi.poisonAuthTest({
+          app_key: String(safeData.apiKey || ''),
+          app_secret: String(safeData.apiSecret || ''),
         })
       } else {
         result = await proxyApi.marketAuthTest(marketKey)

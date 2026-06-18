@@ -29,11 +29,19 @@ class PoisonPlugin(MarketPlugin):
     required_fields = ["name", "sale_price"]
 
     async def _load_auth(self, session, account) -> dict | None:
-        """POIZON 인증 로드 — account.api_key/api_secret 우선, store_poison 폴백."""
+        """POIZON 인증 로드 — account.additional_fields 우선, store_poison 폴백."""
         if account:
             extras = account.additional_fields or {}
-            app_key = extras.get("appKey") or account.api_key or ""
-            app_secret = extras.get("appSecret") or account.api_secret or ""
+            # additional_fields 키: appKey(구), apiKey(신 프론트 저장명) 모두 허용
+            app_key = (
+                extras.get("appKey") or extras.get("apiKey") or account.api_key or ""
+            )
+            app_secret = (
+                extras.get("appSecret")
+                or extras.get("apiSecret")
+                or account.api_secret
+                or ""
+            )
             if app_key and app_secret:
                 return {"app_key": str(app_key), "app_secret": str(app_secret)}
             # account 지정됐으나 인증정보 없으면 폴백 없이 None (오인 전송 방지)
@@ -52,8 +60,18 @@ class PoisonPlugin(MarketPlugin):
         except Exception:
             pass
         if row and isinstance(row.value, dict):
-            app_key = row.value.get("appKey") or row.value.get("app_key") or ""
-            app_secret = row.value.get("appSecret") or row.value.get("app_secret") or ""
+            app_key = (
+                row.value.get("appKey")
+                or row.value.get("app_key")
+                or row.value.get("apiKey")
+                or ""
+            )
+            app_secret = (
+                row.value.get("appSecret")
+                or row.value.get("app_secret")
+                or row.value.get("apiSecret")
+                or ""
+            )
             if app_key and app_secret:
                 return {"app_key": str(app_key), "app_secret": str(app_secret)}
         return None
