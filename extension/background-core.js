@@ -12,6 +12,7 @@
     kream_buy_button_text: '구매하기',
     kream_fast_delivery: '빠른배송',
     kream_normal_delivery: '일반배송',
+    kream_overseas_delivery: '해외배송',
   }
 
   // 이 브라우저(확장앱 인스턴스)의 고유 deviceId를 발급·캐시한다.

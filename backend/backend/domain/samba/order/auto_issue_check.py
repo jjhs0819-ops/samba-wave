@@ -188,6 +188,8 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
         now = datetime.now(timezone.utc)
         # 역마진 감지된 상품 ID 수집 → 오토튠 우선 처리용
         no_price_product_ids: set[str] = set()
+        # 재고없음 감지된 상품 ID 수집 → 즉시 마켓 품절 전송용
+        no_stock_product_ids: set[str] = set()
         for r in results:
             prod = product_map.get(r.product_id)
             if not prod:
@@ -302,7 +304,8 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
                     summary["no_stock"] += 1
                     pid = o.collected_product_id
                     if pid:
-                        no_price_product_ids.add(pid)
+                        no_stock_product_ids.add(pid)
+                        no_price_product_ids.add(pid)  # last_refreshed_at 우선순위용
 
             if changed:
                 o.action_tag = ",".join(sorted(tag_set))
@@ -325,6 +328,48 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
             )
 
         await session.commit()
+
+        # 역마진/재고없음 감지 상품 → 즉시 가격·재고 transmit 잡 발행
+        # skip_refresh=True: 위에서 이미 소싱처 재조회 완료, DB 최신 원가/재고 반영됨
+        if no_price_product_ids:
+            from backend.domain.samba.job.repository import SambaJobRepository
+
+            _job_repo = SambaJobRepository(session)
+            _enqueued = 0
+            for _pid in no_price_product_ids:
+                _p = product_map.get(_pid)
+                if not _p:
+                    continue
+                for _acc_id in _p.registered_accounts or []:
+                    try:
+                        await _job_repo.create_async(
+                            job_type="transmit",
+                            payload={
+                                "product_ids": [_pid],
+                                "update_items": ["price", "stock"],
+                                "target_account_ids": [_acc_id],
+                                "skip_unchanged": False,
+                                "skip_policy_account_filter": True,
+                                "skip_refresh": True,
+                                "source": "order_issue_check",
+                            },
+                            tenant_id=getattr(_p, "tenant_id", None),
+                        )
+                        _enqueued += 1
+                    except Exception as _je:
+                        logger.warning(
+                            "[주문이슈체크] transmit 잡 발행 실패 pid=%s acc=%s: %s",
+                            _pid,
+                            str(_acc_id)[:12],
+                            str(_je)[:120],
+                        )
+            if _enqueued:
+                await session.commit()
+                logger.info(
+                    "[주문이슈체크] 역마진/재고없음 상품 %d개 → 즉시 가격·재고 전송 잡 %d건 발행",
+                    len(no_price_product_ids),
+                    _enqueued,
+                )
 
     logger.info(
         "[주문이슈체크] 완료 — 검사 %d / 보류 %d / 가격X %d / 재고X %d",

@@ -126,6 +126,7 @@ async function handleCollectJob(job) {
             kreamAsk: hasNumericPrice ? parseInt(o.priceText.replace(/[^0-9]/g, '')) : 0,
             kreamFastPrice: 0,
             kreamGeneralPrice: 0,
+            kreamOverseasPrice: 0,
             kreamBid: 0,
             kreamLastSale: 0
           }
@@ -157,21 +158,21 @@ async function handleCollectJob(job) {
           // 2) 배송옵션 바텀시트에서 빠른배송/일반배송 가격 읽기 (텍스트 기반 탐색)
           const [deliveryResult] = await chrome.scripting.executeScript({
             target: { tabId }, world: 'MAIN',
-            func: (fastText, generalText, sheetSel) => {
+            func: (fastText, generalText, overseasText, sheetSel) => {
               // fallback 체인: 여러 셀렉터 시도 (셀렉터 외부화)
               const sheet = document.querySelector(sheetSel + ' .bottomsheet__content')
                 || document.querySelector(sheetSel + ' [class*="content"]')
                 || document.querySelector(sheetSel)
               if (!sheet) return null
-              const result = { fast: 0, general: 0 }
+              const result = { fast: 0, general: 0, overseas: 0 }
 
               // 모든 텍스트 노드를 포함하는 요소 순회 — 텍스트 기반 탐색
               const allElements = sheet.querySelectorAll('*')
               const sections = []
-              // 배송 유형별 섹션을 그룹화
+              // 배송 유형별 섹션을 그룹화 (해외배송 포함)
               allElements.forEach(el => {
                 const text = el.textContent?.trim() || ''
-                if (text === fastText || text === generalText) {
+                if (text === fastText || text === generalText || text === overseasText) {
                   // 이 요소의 가장 가까운 클릭 가능한 부모 (섹션)
                   const section = el.closest('[class*="item"]') || el.closest('[class*="option"]') || el.closest('li') || el.parentElement?.parentElement
                   if (section) sections.push({ type: text, section })
@@ -181,43 +182,45 @@ async function handleCollectJob(job) {
               sections.forEach(({ type, section }) => {
                 const sectionTexts = Array.from(section.querySelectorAll('*'))
                   .map(el => el.textContent?.trim() || '')
-                // 해외배송 제외
-                if (sectionTexts.some(t => t.includes('해외배송'))) return
                 // 95점(하자상품) 제외
                 if (sectionTexts.some(t => t.includes('95점'))) return
                 // 가격 텍스트 찾기: "숫자,숫자원" 패턴
                 const priceText = sectionTexts.find(t => /^\d[\d,]*원$/.test(t))
                 if (!priceText) return
                 const price = parseInt(priceText.replace(/[^0-9]/g, ''))
-                if (type === fastText && price > 0) result.fast = price
-                if (type === generalText && price > 0) result.general = price
+                if (price <= 0) return
+                if (type === fastText) result.fast = price
+                else if (type === generalText) result.general = price
+                else if (type === overseasText) result.overseas = price
               })
 
               // fallback: 섹션 그룹화 실패 시 기존 children 순회
-              if (result.fast === 0 && result.general === 0) {
+              if (result.fast === 0 && result.general === 0 && result.overseas === 0) {
                 const firstChild = sheet.querySelector(':scope > div:first-child') || sheet
                 Array.from(firstChild.children || []).forEach(child => {
                   const pTexts = Array.from(child.querySelectorAll('p, span, div'))
                     .map(p => p.textContent?.trim() || '')
-                  if (pTexts.some(t => t.includes('해외배송'))) return
                   if (pTexts.some(t => t.includes('95점'))) return
                   const priceText = pTexts.find(t => /^\d[\d,]*원$/.test(t))
                   if (!priceText) return
                   const price = parseInt(priceText.replace(/[^0-9]/g, ''))
-                  if (pTexts.some(t => t.includes(fastText)) && price > 0) result.fast = price
-                  if (pTexts.some(t => t.includes(generalText)) && price > 0) result.general = price
+                  if (price <= 0) return
+                  if (pTexts.some(t => t.includes(overseasText))) result.overseas = price
+                  else if (pTexts.some(t => t.includes(fastText))) result.fast = price
+                  else if (pTexts.some(t => t.includes(generalText))) result.general = price
                 })
               }
 
               return result
             },
-            args: [selectors.kream_fast_delivery, selectors.kream_normal_delivery, selectors.kream_bottom_sheet]
+            args: [selectors.kream_fast_delivery, selectors.kream_normal_delivery, selectors.kream_overseas_delivery, selectors.kream_bottom_sheet]
           })
 
           if (deliveryResult?.result) {
             sizeOptions[i].kreamFastPrice = deliveryResult.result.fast || 0
             sizeOptions[i].kreamGeneralPrice = deliveryResult.result.general || 0
-            console.log(`[KREAM] ${sizeOptions[i].name}: 빠른 ${deliveryResult.result.fast}, 일반 ${deliveryResult.result.general}`)
+            sizeOptions[i].kreamOverseasPrice = deliveryResult.result.overseas || 0
+            console.log(`[KREAM] ${sizeOptions[i].name}: 빠른 ${deliveryResult.result.fast}, 일반 ${deliveryResult.result.general}, 해외 ${deliveryResult.result.overseas}`)
           } else {
             console.log(`[KREAM] ${sizeOptions[i].name}: 배송시트 데이터 없음`)
           }
