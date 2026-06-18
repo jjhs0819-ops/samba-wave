@@ -348,7 +348,7 @@ async def get_shipment_log_buffer(
                 # 인덱스는 메모리 카운터(0) 기준으로 반환 — DB 개수로 주면
                 # 서버 재시작 직후 프론트 sinceIdx가 메모리 총량을 앞질러
                 # 신규 로그가 영영 반환되지 않는 버그 발생
-                return {"logs": db_logs[-300:], "current_idx": 0}
+                return {"logs": db_logs[-300:], "current_idx": 1}
 
     return {"logs": logs, "current_idx": current_idx}
 
