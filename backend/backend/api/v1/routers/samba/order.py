@@ -300,17 +300,17 @@ SHIPPING_LABEL_TO_STATUS_KEY = {
 }
 
 # 취소요청 알람 — 마켓에서 취소 신호(shipping_status='취소요청'/'취소완료')가 들어왔지만
-# 우리 내부 status는 아직 처리/배송 단계라 발주·송장 등록 사고 위험이 있는 케이스.
-# UI 라벨 기준: 주문접수/상품준비중/배송대기중/사무실도착/국내배송중/송장전송실패/배송완료
+# 우리 내부 status가 아직 '송장 나가기 전' 단계라 발주·송장 등록 사고 위험이 있는 케이스.
+# UI 라벨 기준: 주문접수/상품준비중/배송대기중/송장전송실패 (= pending/preparing/wait_ship/ship_failed)
+# [2026-06-18] arrived(사무실도착)/shipping(국내배송중)/delivered(배송완료) 제거 — 이미 송장이
+#   나간 뒤라 '발주·송장 막기'가 불가능해 알람 취지에 안 맞음. 특히 배송완료 건의 마켓 '취소요청'은
+#   배송 후 반품요청(롯데온 등)이라 발주사고 방지와 무관 → 오탐 제거(배송완료 건 알람에서 빠짐).
 CANCEL_ALERT_SHIPPING_STATUSES = ("취소요청", "취소완료")
 CANCEL_ALERT_TARGET_STATUSES = (
     "pending",
     "preparing",
     "wait_ship",
-    "arrived",
-    "shipping",
     "ship_failed",
-    "delivered",
 )
 
 
