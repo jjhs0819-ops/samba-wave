@@ -205,3 +205,32 @@ class StoreCareMarketMetric(SQLModel, table=True):
             DateTime(timezone=True), index=True, server_default=text("now()")
         ),
     )
+
+
+class StoreCareSavedProduct(SQLModel, table=True):
+    """가구매 저장 상품 — 자주 쓰는 상품 URL을 이름으로 북마크 (마켓별).
+
+    "할 때마다 상품 URL 찾기 번거로움" 해소 — 이름(예: 신발끈)으로 저장해두고
+    가구매 폼에서 불러오면 마켓+URL이 자동 입력된다. 테넌트별 영구 보관.
+    """
+
+    __tablename__ = "store_care_saved_products"
+
+    id: str = Field(
+        default_factory=lambda: f"scv_{ULID()}",
+        sa_column=Column(String, primary_key=True),
+    )
+    tenant_id: Optional[str] = Field(
+        default=None, sa_column=Column(String, index=True, nullable=True)
+    )
+    name: str = Field(
+        sa_column=Column(String(120), nullable=False)
+    )  # 표시 이름 (예: 신발끈)
+    market_type: str = Field(
+        sa_column=Column(String(30), nullable=False)
+    )  # ssg | gsshop | 11st
+    product_url: str = Field(sa_column=Column(Text, nullable=False))
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        sa_column=Column(DateTime(timezone=True), server_default=text("now()")),
+    )

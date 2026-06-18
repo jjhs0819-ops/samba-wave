@@ -603,6 +603,7 @@ class SourcingQueue:
         owner_device_id: str,
         product_url: str,
         option: str = "",
+        options: list[str] | None = None,
         quantity: int = 1,
         purchase_id: str = "",
         tenant_id: str | None = None,
@@ -614,7 +615,7 @@ class SourcingQueue:
         owner_device_id = 버튼 누른 트리거 PC (그 PC 브라우저에 쇼핑몰 로그인돼 있어야 함).
         결과는 라우터 `POST /sourcing/purchase-result` 로 수신.
         get_next_job 에서 purchase 는 store_metrics 처럼 확장앱 강제 + 데몬 차단 + 분담 우회.
-        M1 = 장바구니 담기까지. 결제대기/일시품절 원복(SHOW PASS 전체 루프)은 M3.
+        M2 = 옵션 범위/다건 담기(options 리스트, 한 탭에서 누적 선택). 결제/일시품절 원복은 M3.
         """
         cls._ensure_accepting_jobs()
         mt = (market_type or "").strip().lower()
@@ -633,6 +634,7 @@ class SourcingQueue:
             "marketType": mt,
             "productUrl": product_url,
             "option": option or "",
+            "options": list(options) if options else ([option] if option else []),
             "quantity": int(quantity) if quantity else 1,
             "purchaseId": purchase_id or "",
             "tenantId": tenant_id or "",
@@ -641,8 +643,9 @@ class SourcingQueue:
         }
         cls.resolvers[request_id] = future
         await _db_insert_job(job, "purchase")
+        _opts = list(options) if options else ([option] if option else [])
         logger.info(
-            f"[소싱큐] 가구매 추가: {mt} opt='{option}' x{quantity} "
+            f"[소싱큐] 가구매 추가: {mt} opts={_opts} x{quantity} "
             f"owner={owner_device_id} (id={request_id})"
         )
         return request_id, future

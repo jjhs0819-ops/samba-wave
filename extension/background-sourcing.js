@@ -1193,9 +1193,11 @@ const _PURCHASE_CONTENT = {
 }
 
 async function handlePurchaseJob(job) {
-  const { requestId, marketType, productUrl, option, quantity, sourcingAccountId } = job
+  const { requestId, marketType, productUrl, option, options, quantity, sourcingAccountId } = job
   const mt = (marketType || '').toLowerCase()
-  console.log(`[가구매] 잡 수신 market=${mt} opt='${option}' x${quantity} req=${requestId}`)
+  // M2: options 리스트 우선(범위/다건), 없으면 단일 option 폴백
+  const optList = Array.isArray(options) && options.length ? options.map(String) : (option ? [String(option)] : [])
+  console.log(`[가구매] 잡 수신 market=${mt} opts=[${optList.join(',')}] x${quantity} req=${requestId}`)
 
   const autoKey = _PURCHASE_AUTO_LOGIN[mt]
   const contentFile = _PURCHASE_CONTENT[mt]
@@ -1241,13 +1243,13 @@ async function handlePurchaseJob(job) {
     }
 
     const result = await chrome.tabs
-      .sendMessage(tabId, { action: 'samba_purchase_addToCart', option: option || '' })
+      .sendMessage(tabId, { action: 'samba_purchase_addToCart', option: option || '', options: optList })
       .catch((e) => ({ success: false, error: e?.message || String(e) }))
 
     await postResult('sourcing/purchase-result', {
       requestId, marketType: mt, productUrl, option,
       success: !!(result && result.success),
-      cartCount: result && result.success ? 1 : 0, // M1=1건. 수량처리는 M2+
+      cartCount: result && result.success ? (result.count || optList.length || 1) : 0,
       stage: 'cart',
       error: (result && result.error) || '',
     })

@@ -1,5 +1,6 @@
 """스토어케어 API — 가구매 스케줄 + 이력."""
 
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -148,12 +149,54 @@ class MetricsCollectRequest(BaseModel):
     markets: Optional[list] = None  # None이면 STORE_METRICS_URLS 전체 마켓
 
 
-class PurchaseRunRequest(BaseModel):
-    """가구매(셀프구매) 장바구니 담기 요청. M1=SSG 수동 1건."""
+_OPTION_RANGE_MAX = 100  # 안전장치 — 범위 폭주 방지 (오타로 1~9999 등)
 
-    market_type: str = "ssg"  # M1=ssg. 향후 gsshop/11st 등 추가
+
+def _expand_option_range(option_str: Optional[str]) -> list[str]:
+    """옵션 문자열을 개별 옵션값 리스트로 확장 (M2 다건/범위).
+
+    - "1~30" / "1-30" → ["1","2",...,"30"] (숫자 범위)
+    - "1,3,5"        → ["1","3","5"]       (개별 나열)
+    - "1~5,10"       → ["1","2","3","4","5","10"]
+    - "270"          → ["270"]             (단일)
+    - "" / None      → []                  (옵션 없음 — 단순 담기)
+
+    숫자 범위(양쪽 정수)만 확장 — "S-100" 같이 '-'가 든 리터럴 옵션값은 범위로
+    오인하지 않고 단일 처리. 중복 제거 + 최대 _OPTION_RANGE_MAX 개 제한.
+    """
+    raw = (option_str or "").strip()
+    if not raw:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for token in raw.split(","):
+        t = token.strip()
+        if not t:
+            continue
+        m = re.match(r"^(\d+)\s*[~\-]\s*(\d+)$", t)
+        if m:
+            lo, hi = int(m.group(1)), int(m.group(2))
+            if lo > hi:
+                lo, hi = hi, lo
+            for n in range(lo, hi + 1):
+                s = str(n)
+                if s not in seen:
+                    seen.add(s)
+                    out.append(s)
+        elif t not in seen:
+            seen.add(t)
+            out.append(t)
+        if len(out) >= _OPTION_RANGE_MAX:
+            break
+    return out[:_OPTION_RANGE_MAX]
+
+
+class PurchaseRunRequest(BaseModel):
+    """가구매(셀프구매) 장바구니 담기 요청. M2=옵션 범위/다건 담기 지원."""
+
+    market_type: str = "ssg"  # ssg / gsshop / 11st
     product_url: str  # 쇼핑몰 상품 페이지 URL
-    option: Optional[str] = None  # 옵션값 (예: "270")
+    option: Optional[str] = None  # 옵션값. 범위/다건 가능: "1~30", "1,3,5", "270"
     quantity: int = 1
     account_id: Optional[str] = (
         None  # 저장 소싱계정 id(자동로그인). 없으면 site 기본계정
@@ -252,17 +295,21 @@ async def run_purchase(
     if not body.product_url:
         raise HTTPException(400, "product_url 필요")
 
+    options = _expand_option_range(body.option)
     request_id, future = await SourcingQueue.add_purchase_job(
         body.market_type or "ssg",
         owner_device_id=trigger_device_id,
         product_url=body.product_url,
         option=body.option or "",
+        options=options,
         quantity=body.quantity or 1,
         sourcing_account_id=body.account_id or "",
         tenant_id=tenant_id,
     )
+    # 옵션 다건이면 확장앱이 한 탭에서 N개 누적 선택 → 대기시간 가변(옵션당 ~4s + 여유)
+    _timeout = min(300, 90 + len(options) * 4)
     try:
-        result = await asyncio.wait_for(future, timeout=120)
+        result = await asyncio.wait_for(future, timeout=_timeout)
     except asyncio.TimeoutError:
         return {
             "ok": False,
@@ -272,5 +319,87 @@ async def run_purchase(
     return {
         "ok": bool(result.get("success")),
         "request_id": request_id,
+        "option_count": len(options),
         "result": result,
     }
+
+
+# ── 저장 상품 (가구매 북마크) — 이름으로 상품 URL 저장/불러오기 ──
+
+
+class SavedProductCreate(BaseModel):
+    name: str  # 표시 이름 (예: 신발끈)
+    market_type: str = "ssg"
+    product_url: str
+
+
+@router.get("/purchase/products")
+async def list_saved_products(
+    session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: str = Depends(get_current_tenant_id),
+):
+    """저장된 가구매 상품 목록 (마켓별 북마크, 최신순)."""
+    from backend.domain.samba.store_care.repository import (
+        StoreCareSavedProductRepository,
+    )
+
+    repo = StoreCareSavedProductRepository(session)
+    rows = await repo.list_by_tenant(tenant_id=tenant_id)
+    return [
+        {
+            "id": r.id,
+            "name": r.name,
+            "market_type": r.market_type,
+            "product_url": r.product_url,
+        }
+        for r in rows
+    ]
+
+
+@router.post("/purchase/products", status_code=201)
+async def create_saved_product(
+    body: SavedProductCreate,
+    session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: str = Depends(get_current_tenant_id),
+):
+    """가구매 상품 저장 (이름 + URL + 마켓)."""
+    from backend.domain.samba.store_care.repository import (
+        StoreCareSavedProductRepository,
+    )
+
+    name = (body.name or "").strip()
+    url = (body.product_url or "").strip()
+    if not name or not url:
+        raise HTTPException(400, "이름과 상품 URL이 필요합니다")
+    repo = StoreCareSavedProductRepository(session)
+    row = await repo.create_async(
+        tenant_id=tenant_id,
+        name=name[:120],
+        market_type=(body.market_type or "ssg").strip().lower(),
+        product_url=url,
+    )
+    return {
+        "id": row.id,
+        "name": row.name,
+        "market_type": row.market_type,
+        "product_url": row.product_url,
+    }
+
+
+@router.delete("/purchase/products/{product_id}")
+async def delete_saved_product(
+    product_id: str,
+    session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: str = Depends(get_current_tenant_id),
+):
+    """저장된 가구매 상품 삭제 (테넌트 소유 검증)."""
+    from backend.domain.samba.store_care.repository import (
+        StoreCareSavedProductRepository,
+    )
+
+    repo = StoreCareSavedProductRepository(session)
+    row = await repo.get_async(product_id)
+    if not row or row.tenant_id != tenant_id:
+        raise HTTPException(404, "저장된 상품을 찾을 수 없습니다")
+    await repo.delete_async(product_id)
+    return {"ok": True}

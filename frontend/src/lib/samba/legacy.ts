@@ -2612,6 +2612,21 @@ export const storeCareApi = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+  // 저장 상품 (가구매 북마크) — 이름으로 URL 저장/불러오기
+  listSavedProducts: () =>
+    request<Array<{ id: string; name: string; market_type: string; product_url: string }>>(
+      `${SAMBA_PREFIX}/store-care/purchase/products`,
+    ),
+  createSavedProduct: (data: { name: string; market_type: string; product_url: string }) =>
+    request<{ id: string; name: string; market_type: string; product_url: string }>(
+      `${SAMBA_PREFIX}/store-care/purchase/products`,
+      { method: 'POST', body: JSON.stringify(data) },
+    ),
+  deleteSavedProduct: (id: string) =>
+    request<{ ok: boolean }>(
+      `${SAMBA_PREFIX}/store-care/purchase/products/${encodeURIComponent(id)}`,
+      { method: 'DELETE' },
+    ),
 }
 
 export const snsApi = {
