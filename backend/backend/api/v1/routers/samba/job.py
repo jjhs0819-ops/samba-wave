@@ -517,17 +517,20 @@ async def get_transmit_queue_status(
     from backend.domain.samba.job.model import SambaJob
     from backend.domain.samba.account.model import SambaMarketAccount
 
-    # 상품전송 탭은 사용자가 직접 누른 수동 전송잡만 표시.
-    # 오토튠(payload.source='autotune')·테트리스(payload.origin='tetris_sync') 같은
-    # 백그라운드 잡은 상품 1개당 1잡이라 수만 건씩 쌓여 목록 폭증+렉 유발 → 제외.
-    # IS DISTINCT FROM: source/origin 없는 수동 잡(NULL)은 통과, 백그라운드만 차단.
+    # 상품전송 탭 표시 규칙:
+    # - 오토튠(source='autotune'): 항상 제외 (수만 건 렉 유발)
+    # - 테트리스(origin='tetris_sync'): RUNNING만 표시, PENDING 제외 (대기 수만건 렉 방지)
+    # - 수동 잡: 항상 표시
+    # IS DISTINCT FROM: source/origin 없는 수동 잡(NULL)은 통과
     stmt = (
         select(SambaJob)
         .where(
             col(SambaJob.job_type).in_(["transmit", "delete_market"]),
             col(SambaJob.status).in_([JobStatus.RUNNING, JobStatus.PENDING]),
             _text("(payload->>'source' IS DISTINCT FROM 'autotune')"),
-            _text("(payload->>'origin' IS DISTINCT FROM 'tetris_sync')"),
+            _text(
+                "(status = 'running' OR (payload->>'origin' IS DISTINCT FROM 'tetris_sync'))"
+            ),
         )
         .order_by(SambaJob.created_at.asc())
     )

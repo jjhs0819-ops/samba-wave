@@ -1098,10 +1098,16 @@ class JobWorker:
         # 새 잡 시작 — 이 잡의 잔존 플래그만 해제 (__all__ 유지 — 일시정지 중 다음 잡 클레임 차단)
         clear_cancel_transmit(job.id)
         clear_emergency_stop()
-        # 이전 잡 로그 잔재가 새 잡 화면에 흘러나오지 않도록 ring buffer 격리
-        clear_shipment_logs()
 
         payload = job.payload or {}
+        # 수동 잡만 로그 초기화 — 백그라운드 잡(테트리스/오토튠)은 초기화 금지.
+        # 동시 실행 시 bg잡이 clear_shipment_logs()를 호출하면 수동잡 로그를 덮어씀.
+        _is_bg_job = (
+            payload.get("source") == "autotune"
+            or payload.get("origin") == "tetris_sync"
+        )
+        if not _is_bg_job:
+            clear_shipment_logs()
         product_ids = payload.get("product_ids", [])
         update_items = payload.get("update_items", [])
         target_account_ids = payload.get("target_account_ids", [])
