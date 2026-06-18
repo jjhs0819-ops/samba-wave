@@ -48,13 +48,38 @@ async def poison_auth_test(
         return {"success": False, "message": "App Key 또는 App Secret이 없습니다."}
 
     client = PoisonClient(app_key=app_key, app_secret=app_secret)
-    # Nike Air Force 1 공식 품번으로 카탈로그 조회 — 성공 시 인증 유효
+    # Nike Air Force 1 공식 품번으로 카탈로그 조회 — 원시 응답 code 로 인증 판별.
+    # query_sku_by_article_number 는 에러코드도 []로 반환하므로 직접 _post 호출해
+    # POIZON 응답 code/msg 를 그대로 노출(권한 미승인 400010006 등을 거짓 성공으로 삼키지 않음).
     try:
-        result = await client.query_sku_by_article_number("315122-111")
-        return {"success": True, "message": f"POIZON 인증 성공 (SKU {len(result)}건)"}
+        raw = await client._post(
+            client.PATH_SKU_BY_ARTICLE,
+            {
+                "articleNumber": "315122-111",
+                "region": client.region,
+                "language": client.language,
+            },
+        )
     except Exception as e:
-        logger.warning(f"[POIZON] 인증 테스트 실패: {e}")
+        logger.warning(f"[POIZON] 인증 테스트 호출 실패: {e}")
         return {"success": False, "message": f"POIZON API 호출 실패: {e}"}
+
+    code = raw.get("code")
+    msg = str(raw.get("msg") or raw.get("message") or "").strip()
+    if code == 200:
+        data = raw.get("data") or []
+        count = len(data) if isinstance(data, list) else 0
+        return {"success": True, "message": f"POIZON 인증 성공 (SKU {count}건)"}
+    # 서명·키는 유효하나 API 권한 패키지(Default)가 아직 승인되지 않은 상태
+    if str(code) == "400010006":
+        return {
+            "success": False,
+            "message": "키·서명은 정상이나 API 권한 패키지(Default)가 아직 승인되지 않았습니다. POIZON 콘솔에서 권한 승인 후 다시 시도하세요.",
+        }
+    return {
+        "success": False,
+        "message": f"POIZON 인증 실패 (code={code}){f' — {msg}' if msg else ''}",
+    }
 
 
 @router.post("/poison/set-credentials")

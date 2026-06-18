@@ -381,9 +381,20 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
           api_key: String(safeData.apiKey || ''),
         })
       } else if (marketKey === 'poison') {
+        let appKey = String(safeData.apiKey || data.apiKey || '')
+        let appSecret = String(safeData.apiSecret || '')
+        // 수정모드: 마스킹된 Secret(****xxxx)은 safeData에서 제거되므로 빈값으로 전송됨
+        // → 계정 additional_fields에서 실제값을 복원해 전송 ('보기' 버튼과 동일 방식)
+        if (editingAccountId && !appSecret) {
+          try {
+            const secrets = await accountApi.getSecrets(editingAccountId) as Record<string, string>
+            if (secrets.apiSecret) appSecret = String(secrets.apiSecret)
+            if (!appKey && secrets.apiKey) appKey = String(secrets.apiKey)
+          } catch { /* 조회 실패 시 무시 — 빈값으로 백엔드 폴백 시도 */ }
+        }
         result = await proxyApi.poisonAuthTest({
-          app_key: String(safeData.apiKey || ''),
-          app_secret: String(safeData.apiSecret || ''),
+          app_key: appKey,
+          app_secret: appSecret,
         })
       } else {
         result = await proxyApi.marketAuthTest(marketKey)
