@@ -109,20 +109,30 @@ class SSGPlugin(SourcingPlugin):
             from backend.domain.samba.collector.refresher import _current_refresh_source
 
             _is_manual = _current_refresh_source.get("autotune") == "manual"
-            # 데몬 풀(X-Allowed-Sites=SSG) 우선, 없으면 글로벌 owner 폴백.
+            # 수동 enrich(상품관리 업데이트 버튼): owner_device_id="" → 이 PC 확장앱 처리.
+            # DAEMON_ONLY 제한은 오토튠 자동화용이고, 사용자가 직접 누른 단건 갱신은
+            # 데몬 없어도 현재 PC 확장앱 탭으로 처리 가능해야 함.
             from backend.domain.samba.proxy.daemon_pool import pick_daemon_owner
 
             _ssg_owner = pick_daemon_owner("SSG")
-            if _ssg_owner:
+            if _is_manual:
+                # 수동: 데몬 있으면 데몬 우선, 없으면 "" (어느 확장앱이든)
+                _req_id, _future = SourcingQueue.add_detail_job(
+                    "SSG",
+                    site_product_id,
+                    owner_device_id=_ssg_owner or "",
+                    priority=True,
+                )
+            elif _ssg_owner:
                 _req_id, _future = SourcingQueue.add_detail_job(
                     "SSG",
                     site_product_id,
                     owner_device_id=_ssg_owner,
-                    priority=_is_manual,
+                    priority=False,
                 )
             else:
                 _req_id, _future = SourcingQueue.add_detail_job(
-                    "SSG", site_product_id, priority=_is_manual
+                    "SSG", site_product_id, priority=False
                 )
             # 타임아웃 150s: 확장앱 슬롯 2개 × 아이템당 ~45s = 3배치 = 135s + 여유
             _ext_result = await asyncio.wait_for(_future, timeout=150)

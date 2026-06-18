@@ -910,9 +910,12 @@ class SourcingQueue:
                 # 방식으로 되돌림 — 데몬 헤드리스가 SSG 계정잠금/about:blank/wrong_account 등
                 # 에러 과다. SSG/ABCmart/GrandStage/LOTTEON 송장도 확장앱 content-tracking-*.js
                 # 가 처리(핸들러 전부 존재). detail/search/reward 가격수집은 여전히 데몬 전용.
+                # owner_device_id='' (broadcast) 잡은 수동 enrich 단건 갱신 —
+                # 데몬 없어도 현재 PC 확장앱이 처리 가능하도록 DAEMON_ONLY 가드 예외 허용.
                 conditions.append(
                     f"(job_type IN ('cancel_order', 'tracking', 'store_metrics', 'purchase') "
-                    f"OR UPPER(site) NOT IN ({_dph}))"
+                    f"OR UPPER(site) NOT IN ({_dph}) "
+                    f"OR owner_device_id = '')"
                 )
                 for i, s in enumerate(_sites):
                     params[f"dsite_{i}"] = s.upper()
