@@ -1047,7 +1047,8 @@ class SambaShipmentService:
         # 단, target 계정이 전부 이미 마켓에 등록돼 있을 때만. 미등록 계정이 섞이면
         # 신규 등록이 필요하므로 조기 스킵 금지 → 계정별 스킵 로직(아래 1849)이 처리한다.
         # (상품 status="registered"는 "어떤 계정엔가 등록됨"일 뿐, target 계정 등록을 보장 안 함)
-        _existing_nos_map = product_row.market_product_nos or {}
+        _raw_nos = product_row.market_product_nos
+        _existing_nos_map = _raw_nos if isinstance(_raw_nos, dict) else {}
 
         def _acct_already_registered(_aid: str) -> bool:
             # 계정별 스킵과 동일한 키 규칙 (smartstore _origin, gmarket/auction _master)
@@ -1690,7 +1691,8 @@ class SambaShipmentService:
                             # market_product_no(단수형)는 없음 → 명시적으로 주입 필요.
                             # 스마트스토어는 삭제 API가 originProductNo를 요구하므로
                             # {account_id}_origin 키 우선 (delete_from_markets 2347-2363과 동일 패턴)
-                            _m_nos = product_row.market_product_nos or {}
+                            _m_nos_raw = product_row.market_product_nos
+                            _m_nos = _m_nos_raw if isinstance(_m_nos_raw, dict) else {}
                             if market_type == "smartstore":
                                 _pno = _m_nos.get(f"{account_id}_origin", "")
                                 if not _pno:
@@ -1962,7 +1964,8 @@ class SambaShipmentService:
 
                 # 기존 상품번호 확인 — skip_unchanged 판단 전에 먼저 수행
                 # (미등록 상품은 last_sent_data가 있어도 스킵하면 안 됨)
-                existing_nos = product_row.market_product_nos or {}
+                _enos_raw = product_row.market_product_nos
+                existing_nos = _enos_raw if isinstance(_enos_raw, dict) else {}
                 if market_type == "smartstore":
                     existing_product_no = existing_nos.get(f"{account_id}_origin", "")
                     if not existing_product_no:
@@ -2336,7 +2339,8 @@ class SambaShipmentService:
 
         # product_row 필드 스냅샷 — _dispatch_one 내 connection refresh rollback 후에도
         # ORM lazy load 없이 안전하게 참조할 수 있도록 순수 Python 타입으로 추출
-        _row_mpn = dict(product_row.market_product_nos or {})
+        _mpn_raw = product_row.market_product_nos
+        _row_mpn = dict(_mpn_raw) if isinstance(_mpn_raw, dict) else {}
         _row_reg = list(product_row.registered_accounts or [])
         # last_sent_data 가 dict 아닌 오염값(과거 jsonb 병합 버그로 배열/JSON null
         # 저장)이면 빈 dict 취급 — dict() 크래시로 전송 전체가 막히는 것 방지

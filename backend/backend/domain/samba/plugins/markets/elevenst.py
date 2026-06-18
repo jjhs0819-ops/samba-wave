@@ -602,4 +602,39 @@ class ElevenstPlugin(MarketPlugin):
                     "success": False,
                     "message": f"카테고리 오류: 코드 {cat_code}가 해외쇼핑 카테고리입니다. 카테고리매핑에서 국내 카테고리 코드로 수정해주세요.",
                 }
+            # 신규 등록 시 발송마감 템플릿 미존재 — 템플릿 태그 제거 후 재시도
+            if not existing_no and "발송마감 템플릿" in err:
+                import re as _re_reg
+
+                _xml_no_tmpl = _re_reg.sub(
+                    r"<dlvSendCloseTmpltNo>[^<]*</dlvSendCloseTmpltNo>",
+                    "",
+                    xml_data,
+                )
+                logger.warning(
+                    "[11번가] 신규 등록 발송마감 템플릿 미존재 — 템플릿 없이 재시도"
+                )
+                try:
+                    _r3 = await client.register_product(_xml_no_tmpl)
+                    _prd3 = _r3.get("prd_no") or _r3.get("data", {}).get("prdNo", "")
+                    if not _prd3:
+                        return {
+                            "success": False,
+                            "product_no": "",
+                            "message": "11번가 등록 응답에 prdNo 없음 (발송마감 템플릿 제외 재시도)",
+                        }
+                    logger.info(
+                        f"[11번가] 신규 등록 성공 (발송마감 템플릿 제외) — product_no={_prd3}"
+                    )
+                    return {
+                        "success": True,
+                        "product_no": _prd3,
+                        "message": "11번가 등록 성공 (발송마감 템플릿 제외)",
+                        "data": _r3,
+                    }
+                except Exception as _e3:
+                    return {
+                        "success": False,
+                        "message": f"11번가 등록 실패 (발송마감 템플릿 제외 재시도도 실패): {_e3}",
+                    }
             return {"success": False, "message": f"11번가 등록 실패: {err}"}
