@@ -46,14 +46,18 @@
     if (!msg || msg.action !== 'samba_purchase_addToCart') return
     ;(async () => {
       try {
-        const option = msg.option || ''
-        if (option) {
-          const ok = await selectOption(option)
-          if (!ok) { sendResponse({ success: false, error: `옵션 "${option}" 선택 실패 (GS 셀렉터 라이브 보정 필요)` }); return }
-          await sleep(500)
+        // M2: options 배열(범위/다건) 우선, 없으면 단일 option 폴백
+        const options = Array.isArray(msg.options) && msg.options.length ? msg.options.map(String) : (msg.option ? [String(msg.option)] : [])
+        const selected = []
+        const failed = []
+        for (const opt of options) {
+          const ok = await selectOption(opt)
+          if (ok) selected.push(opt); else failed.push(opt)
+          await sleep(450)
         }
+        if (options.length && !selected.length) { sendResponse({ success: false, error: `옵션 전부 선택 실패: ${failed.join(',')} (GS 셀렉터 라이브 보정 필요)` }); return }
         const added = await clickAddToCart()
-        if (added) { console.log('[삼바-가구매-GS] 장바구니 담기 완료 ✓'); sendResponse({ success: true }) }
+        if (added) { console.log(`[삼바-가구매-GS] 장바구니 담기 완료 ✓ (${selected.length || 1}건)`); sendResponse({ success: true, count: selected.length || 1, failed }) }
         else sendResponse({ success: false, error: '장바구니 버튼 못 찾음 (GS 셀렉터 라이브 보정 필요)' })
       } catch (e) { sendResponse({ success: false, error: e.message }) }
     })()

@@ -533,8 +533,20 @@ export default function StoreCare() {
                 </label>
                 <div style={{ display: 'flex', gap: '12px' }}>
                   <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 2 }}>
-                    <span style={{ fontSize: '0.72rem', color: '#8A95B0' }}>옵션 (선택)</span>
-                    <input type="text" placeholder="예: 270" value={purchaseForm.option} onChange={e => setPurchaseForm(f => ({ ...f, option: e.target.value }))} style={inputStyle} />
+                    <span style={{ fontSize: '0.72rem', color: '#8A95B0' }}>
+                      옵션 (선택){(() => {
+                        const s = (purchaseForm.option || '').trim()
+                        if (!s) return ''
+                        let n = 0
+                        for (const tok of s.split(',')) {
+                          const m = tok.trim().match(/^(\d+)\s*[~-]\s*(\d+)$/)
+                          if (m) n += Math.abs(Number(m[2]) - Number(m[1])) + 1
+                          else if (tok.trim()) n += 1
+                        }
+                        return n > 1 ? ` · ${Math.min(n, 100)}개 담기` : ''
+                      })()}
+                    </span>
+                    <input type="text" placeholder="예: 1~30 (범위) · 1,3,5 · 270" value={purchaseForm.option} onChange={e => setPurchaseForm(f => ({ ...f, option: e.target.value }))} style={inputStyle} />
                   </label>
                   <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
                     <span style={{ fontSize: '0.72rem', color: '#8A95B0' }}>수량</span>
@@ -556,7 +568,7 @@ export default function StoreCare() {
                 )}
               </div>
               <div style={{ fontSize: '0.66rem', color: '#666', marginTop: '14px' }}>
-                M1: SSG 장바구니 담기 검증 단계. 수량/다건·결제·일시품절 원복은 다음 단계에서 추가돼요.
+                M2: 옵션 범위/다건 담기 지원 — 예 &quot;1~30&quot; = 옵션 30개를 한 탭에서 누적 담기. 결제·일시품절 원복은 다음 단계.
               </div>
             </div>
           )}
