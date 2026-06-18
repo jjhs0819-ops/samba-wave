@@ -122,8 +122,13 @@ def _build_display_product_name(product: dict[str, Any]) -> str:
     return result[:100]
 
 
-def _build_search_tags(product: dict[str, Any]) -> str:
-    """쿠팡 검색어 태그 생성 (최대 20개, 콤마 구분, 각 20자 이내).
+# 쿠팡 searchTags 허용 문자: 한글/영문/숫자/공백 + 특수문자 !@#$%^&*-+;:'. 만 허용.
+# 그 외 특수문자(예: '/', '(', ')')가 든 태그는 쿠팡이 거부하므로 제외한다.
+_COUPANG_TAG_DISALLOWED = re.compile(r"[^0-9A-Za-z가-힣ㄱ-ㅎㅏ-ㅣ\s!@#$%^&*+\-;:'.]")
+
+
+def _build_search_tags(product: dict[str, Any]) -> list[str]:
+    """쿠팡 검색어 태그 생성 (item 단위 필드, 최대 20개, 각 20자 이내, 허용 특수문자만).
 
     우선순위:
       1. brand (1개)
@@ -137,6 +142,8 @@ def _build_search_tags(product: dict[str, Any]) -> str:
     def _add(keyword: str) -> None:
         kw = keyword.strip()
         if len(kw) < 2 or len(kw) > 20:
+            return
+        if _COUPANG_TAG_DISALLOWED.search(kw):
             return
         kw_lower = kw.lower()
         if kw_lower in seen or kw in _DISPLAY_NAME_STOPWORDS:
@@ -201,7 +208,7 @@ def _build_search_tags(product: dict[str, Any]) -> str:
         color = (product.get("color") or "").strip()
         if color:
             _add(color)
-    return ",".join(tags[:20])
+    return tags[:20]
 
 
 def _parse_option_color_size(opt_name: str, default_color: str) -> tuple[str, str]:
@@ -1206,6 +1213,11 @@ class CoupangClient:
         # SEO 최적화: 노출상품명 + 검색태그
         display_name = _build_display_product_name(product)
         search_tags = _build_search_tags(product)
+        # 검색태그는 item 단위 필드(items[].searchTags, 문자열 배열) — 각 item에 주입.
+        # (과거 최상위 result["searchTags"] 문자열은 쿠팡 스펙 외라 무시됐음)
+        if search_tags:
+            for _it in items:
+                _it["searchTags"] = search_tags
 
         result: dict[str, Any] = {
             "displayCategoryCode": display_category,
@@ -1244,10 +1256,6 @@ class CoupangClient:
             "extraInfoMessage": "",
             "manufacture": product.get("manufacturer", "") or product.get("brand", ""),
         }
-
-        # 검색태그 추가
-        if search_tags:
-            result["searchTags"] = search_tags
 
         # 2026-08-01 brandId 의무화 대응 — 검색 성공 시에만 주입(빈 값 전송 금지)
         if brand_id:
