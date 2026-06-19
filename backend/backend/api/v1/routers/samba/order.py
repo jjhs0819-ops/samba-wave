@@ -7911,17 +7911,6 @@ async def sync_orders_from_markets(
                         "original_link"
                     ):
                         order_data["source_url"] = _matched["original_link"]
-                    # cost 보강 (issue #365): 롯데홈쇼핑 주문은 파서가 cost=0 고정 →
-                    # 매칭된 cp 단가 원가 × 수량으로 라인 총액 원가를 채운다(원가0=profit 과대 방지).
-                    # cost 미설정(0/None)일 때만 — 정산 확정값(SettleItmdSales 등) 덮어쓰기 금지.
-                    # 다른 마켓은 기존 동작 유지(파서/정산 경로가 cost 담당) — lottehome 한정.
-                    if (
-                        order_data.get("source") == "lottehome"
-                        and not order_data.get("cost")
-                        and float(_matched.get("cost") or 0) > 0
-                    ):
-                        _qty = int(order_data.get("quantity") or 1)
-                        order_data["cost"] = float(_matched["cost"]) * _qty
                 # sourcing_account_id 보충 — source_site 확정됐고 계정이 비어있으면 (#299)
                 # LOTTEON 등 source_site 매칭 성공 후 sourcing_account_id="etc"/NULL 잔존 방지
                 _cur_said = order_data.get("sourcing_account_id") or ""
