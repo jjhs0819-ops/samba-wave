@@ -10836,7 +10836,7 @@ async def ship_by_kakao(
 )
 async def kakao_name_candidates(
     body: KakaoNameCandidatesRequest,
-    session: AsyncSession = Depends(get_write_session_dependency),
+    session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """카톡 OCR 이름 깨짐 대응 — 품번으로 송장입력 가능한 후보 이름 목록 조회.
 
@@ -10850,14 +10850,17 @@ async def kakao_name_candidates(
 
     if not code:
         return {"ok": False, "reason": "품번 없음", "count": 0, "candidates": []}
+    # 테넌트 격리: tenant_id 없으면 전 테넌트 후보(타사 고객명)가 노출되므로 거부
+    if not tenant_id:
+        return {"ok": False, "reason": "tenant_id 없음", "count": 0, "candidates": []}
 
-    # ship-by-kakao 와 동일 기준: 롯데ON 선물 후보 조회
+    # ship-by-kakao 와 동일 기준: 롯데ON 선물 + 해당 테넌트 후보 조회.
+    # action_tag 는 콤마 다중태그라 경계매칭 헬퍼로 regift/gifted 등 오매칭 방지.
     stmt = select(SambaOrder).where(
         SambaOrder.source_site == "LOTTEON",  # 소싱처가 롯데ON
-        SambaOrder.action_tag.like("%gift%"),  # 선물하기 건만 (마켓 무관)
+        _build_action_tag_filter("gift"),  # 선물하기 건만 (마켓 무관)
+        SambaOrder.tenant_id == tenant_id,
     )
-    if tenant_id:
-        stmt = stmt.where(SambaOrder.tenant_id == tenant_id)
     result = await session.execute(stmt)
     rows = result.scalars().all()
 
@@ -10877,10 +10880,11 @@ async def kakao_name_candidates(
         }
         for o in matched
     ]
+    # 고객명(PII)은 로그에 남기지 않음 — 건수만 기록
     logger.info(
-        "[kakao-name-candidates] code=%s 후보=%d건 names=%s",
+        "[kakao-name-candidates] code=%s tenant=%s 후보=%d건",
         code,
+        tenant_id,
         len(candidates),
-        [c["customer_name"] for c in candidates],
     )
     return {"ok": True, "count": len(candidates), "candidates": candidates}
