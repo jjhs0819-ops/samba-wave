@@ -10680,6 +10680,11 @@ class ShipByKakaoRequest(BaseModel):
     dry_run: bool = False
 
 
+class KakaoNameCandidatesRequest(BaseModel):
+    product_code: str
+    tenant_id: str
+
+
 def _extract_product_code(text: Optional[str]) -> Optional[str]:
     """상품명 안에서 품번(YMM24377Z1 형태) 추출."""
     if not text:
@@ -10830,3 +10835,62 @@ async def ship_by_kakao(
         "message": market_msg,
         "warning": warn,
     }
+
+
+@public_router.post(
+    "/kakao-name-candidates", dependencies=[Depends(_verify_kakao_secret)]
+)
+async def kakao_name_candidates(
+    body: KakaoNameCandidatesRequest,
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """카톡 OCR 이름 깨짐 대응 — 품번으로 송장입력 가능한 후보 이름 목록 조회.
+
+    OCR이 고객 이름을 깨먹으면 ship-by-kakao 의 이름 매칭이 0건이 되어 처리 불가.
+    이때 품번으로 ship-by-kakao 와 동일 기준(롯데ON 선물 + 송장없음 + 품번일치)의
+    후보 주문을 찾아 '이름 목록'만 반환한다(읽기 전용, 송장 처리 안 함).
+    카톡PC가 OCR 이름과 후보를 비교/선택해 ship-by-kakao 를 재호출하는 용도.
+    """
+    tenant_id = (body.tenant_id or "").strip()
+    code = (body.product_code or "").strip().upper()
+
+    if not code:
+        return {"ok": False, "reason": "품번 없음", "count": 0, "candidates": []}
+    # 테넌트 격리: tenant_id 없으면 전 테넌트 후보(타사 고객명)가 노출되므로 거부
+    if not tenant_id:
+        return {"ok": False, "reason": "tenant_id 없음", "count": 0, "candidates": []}
+
+    # ship-by-kakao 와 동일 기준: 롯데ON 선물 + 해당 테넌트 후보 조회.
+    # action_tag 는 콤마 다중태그라 경계매칭 헬퍼로 regift/gifted 등 오매칭 방지.
+    stmt = select(SambaOrder).where(
+        SambaOrder.source_site == "LOTTEON",  # 소싱처가 롯데ON
+        _build_action_tag_filter("gift"),  # 선물하기 건만 (마켓 무관)
+        SambaOrder.tenant_id == tenant_id,
+    )
+    result = await session.execute(stmt)
+    rows = result.scalars().all()
+
+    # 품번 일치 + 아직 송장 없는 것만 (ship-by-kakao 3단계와 동일 필터)
+    matched = [
+        o
+        for o in rows
+        if not (o.tracking_number or "").strip()
+        and _extract_product_code(o.product_name) == code
+    ]
+
+    candidates = [
+        {
+            "order_id": o.id,
+            "customer_name": o.customer_name,
+            "product_name": o.product_name,
+        }
+        for o in matched
+    ]
+    # 고객명(PII)은 로그에 남기지 않음 — 건수만 기록
+    logger.info(
+        "[kakao-name-candidates] code=%s tenant=%s 후보=%d건",
+        code,
+        tenant_id,
+        len(candidates),
+    )
+    return {"ok": True, "count": len(candidates), "candidates": candidates}
