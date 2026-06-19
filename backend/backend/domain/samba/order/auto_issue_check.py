@@ -367,7 +367,7 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
                 for _acc_id in _p.registered_accounts or []:
                     try:
                         await _job_repo.create_async(
-                            job_type="transmit",
+                            job_type="autotune_transmit",
                             payload={
                                 "product_ids": [_pid],
                                 "update_items": ["price", "stock"],
