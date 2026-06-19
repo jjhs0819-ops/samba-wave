@@ -351,7 +351,14 @@ async def get_shipment_log_buffer(
         if running_row is not None:
             # RUNNING 잡 있음 — logs flush 됐으면 표시
             if running_row[0]:
-                db_logs = running_row[0] if isinstance(running_row[0], list) else []
+                _raw = running_row[0]
+                db_logs = (
+                    _raw
+                    if isinstance(_raw, list)
+                    else (
+                        __import__("json").loads(_raw) if isinstance(_raw, str) else []
+                    )
+                )
                 if db_logs:
                     total = len(db_logs)
                     slice_from = min(since_idx, total)
@@ -366,7 +373,16 @@ async def get_shipment_log_buffer(
                 )
                 recent_row = recent.first()
                 if recent_row and recent_row[0]:
-                    db_logs = recent_row[0] if isinstance(recent_row[0], list) else []
+                    _raw = recent_row[0]
+                    db_logs = (
+                        _raw
+                        if isinstance(_raw, list)
+                        else (
+                            __import__("json").loads(_raw)
+                            if isinstance(_raw, str)
+                            else []
+                        )
+                    )
                     if db_logs:
                         total = len(db_logs)
                         slice_from = min(since_idx, total)
@@ -383,7 +399,14 @@ async def get_shipment_log_buffer(
             )
             row = result.first()
             if row and row[0]:
-                db_logs = row[0] if isinstance(row[0], list) else []
+                _raw = row[0]
+                db_logs = (
+                    _raw
+                    if isinstance(_raw, list)
+                    else (
+                        __import__("json").loads(_raw) if isinstance(_raw, str) else []
+                    )
+                )
                 if db_logs:
                     total = len(db_logs)
                     # since_idx를 DB 배열 오프셋으로 활용 — 증분 스트리밍 가능
