@@ -570,7 +570,7 @@ async def _enqueue_autotune_transmit(
     async with get_write_session() as _js:
         repo = SambaJobRepository(_js)
         await repo.create_async(
-            job_type="transmit",
+            job_type="autotune_transmit",
             payload={
                 "product_ids": [pid],
                 "update_items": items,

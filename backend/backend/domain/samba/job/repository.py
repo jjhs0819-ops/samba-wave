@@ -39,6 +39,7 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         exclude_sources: set[str] | None = None,
         exclude_brand_all: bool = False,
         exclude_accounts: set[str] | None = None,
+        exclude_autotune_accounts: set[str] | None = None,
         only_types: set[str] | None = None,
     ) -> Optional[SambaJob]:
         """Pending 잡 1개를 원자적으로 claim (FOR UPDATE SKIP LOCKED).
@@ -95,18 +96,14 @@ class SambaJobRepository(BaseRepository[SambaJob]):
             else_=1,
         )
 
-        # 백그라운드 전송(오토튠 source=autotune / 테트리스 origin=tetris_sync)은
-        # 후순위. 사용자가 직접 누른 수동 상품전송(최초등록)이 항상 먼저 claim되게 함.
-        # step8 큐 합류 후 오토튠 size1 잡이 _transmit_size_key 로 수동 잡을 앞질러
-        # 수동 전송이 굶던 문제(2026-06-17) 해소. 수동 잡은 key=0 으로 최우선.
+        # transmit 내 우선순위: 수동(0) > 테트리스 신규등록(1).
+        # autotune_transmit은 별도 job_type — _db_account_lock이 type별로 격리되므로
+        # 테트리스와 오토튠이 같은 계정에서 서로 막지 않음(2026-06-19).
         _bg_source_key = case(
             (
                 and_(
                     SambaJob.job_type == "transmit",
-                    or_(
-                        SambaJob.payload.op("->>")("source") == "autotune",
-                        SambaJob.payload.op("->>")("origin") == "tetris_sync",
-                    ),
+                    SambaJob.payload.op("->>")("origin") == "tetris_sync",
                 ),
                 1,
             ),
@@ -159,11 +156,13 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         _job_accounts_sql = self._payload_account_array_sql("samba_jobs")
         _running_accounts_sql = self._payload_account_array_sql("r")
 
+        # transmit / autotune_transmit 각각 독립 격리 — 같은 job_type끼리만 블록.
+        # 오토튠(autotune_transmit) 실행 중이어도 테트리스(transmit)는 같은 계정 가능.
         _db_account_lock = _sa_text(
-            "(samba_jobs.job_type <> 'transmit' OR NOT EXISTS ("
+            "(samba_jobs.job_type NOT IN ('transmit', 'autotune_transmit') OR NOT EXISTS ("
             "SELECT 1 FROM samba_jobs r "
             "WHERE r.status = 'running' "
-            "AND r.job_type = 'transmit' "
+            "AND r.job_type = samba_jobs.job_type "
             "AND r.id <> samba_jobs.id "
             f"AND {_job_accounts_sql} && {_running_accounts_sql}"
             "))"
@@ -171,7 +170,7 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         stmt = stmt.where(_db_account_lock)
 
         if exclude_accounts:
-            # 같은 워커 내 인메모리 추적 — DB 검사 전에 빠르게 거름.
+            # transmit 전용 인메모리 락 — 같은 워커 내 transmit 잡 중복 실행 방지.
             _excl_acc_list = list(exclude_accounts)
             _no_overlap = _sa_text(
                 "(samba_jobs.job_type <> 'transmit' OR NOT EXISTS ("
@@ -179,6 +178,16 @@ class SambaJobRepository(BaseRepository[SambaJob]):
                 "WHERE v = ANY(:excl_accs)))"
             ).bindparams(excl_accs=_excl_acc_list)
             stmt = stmt.where(_no_overlap)
+
+        if exclude_autotune_accounts:
+            # autotune_transmit 전용 인메모리 락 — transmit 잡과 격리.
+            _excl_autotune_list = list(exclude_autotune_accounts)
+            _no_overlap_autotune = _sa_text(
+                "(samba_jobs.job_type <> 'autotune_transmit' OR NOT EXISTS ("
+                f"SELECT 1 FROM unnest({_job_accounts_sql}) AS v "
+                "WHERE v = ANY(:excl_autotune_accs)))"
+            ).bindparams(excl_autotune_accs=_excl_autotune_list)
+            stmt = stmt.where(_no_overlap_autotune)
 
         result = await self.session.execute(stmt)
         job = result.scalars().first()

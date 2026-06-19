@@ -393,6 +393,7 @@ class JobWorker:
         # 마켓 계정별 transmit 동시 실행 제어 — 같은 계정은 순차, 다른 계정은 병렬
         # job_id → list[account_id]
         self._active_transmit_accounts: dict[str, list[str]] = {}
+        self._active_autotune_accounts: dict[str, list[str]] = {}
         # 동일 계정 transmit 잡 직렬화 — 스케줄러 방어가 새더라도 실제 실행은 1개만 허용
         self._transmit_account_locks: dict[str, asyncio.Lock] = {}
         # 동일 계정 delete_market 잡 직렬화 — transmit 락과 독립 (전송/삭제 별개 실행)
@@ -596,6 +597,7 @@ class JobWorker:
             task = self._active_tasks.pop(jid)
             self._active_job_ids.discard(jid)
             self._active_transmit_accounts.pop(jid, None)
+            self._active_autotune_accounts.pop(jid, None)
             if task.cancelled():
                 # 취소된 Task — CancelledError는 BaseException이므로 exception() 호출 시 재발생
                 # start() 루프의 except CancelledError: break에 걸려 워커 사망 방지
@@ -629,6 +631,9 @@ class JobWorker:
                 _excl_accounts: set[str] = set()
                 for _aids in self._active_transmit_accounts.values():
                     _excl_accounts.update(_aids)
+                _excl_autotune_accounts: set[str] = set()
+                for _aids in self._active_autotune_accounts.values():
+                    _excl_autotune_accounts.update(_aids)
                 # 일시정지 중이면 transmit 클레임 스킵 — PENDING 잡 대기 유지
                 _excl_types: set[str] = {"bg_remove"}
                 # 프로세스 분리: API(A) 워커는 transmit/order_sync 를 B 에 위임
@@ -640,11 +645,13 @@ class JobWorker:
                             "새 전송을 시작하면 자동 해제됩니다."
                         )
                     _excl_types.add("transmit")
+                    _excl_types.add("autotune_transmit")
                 job = await repo.claim_pending_job(
                     exclude_sources=_excl_sources or None,
                     exclude_brand_all=self._brand_all_running,
                     exclude_types=_excl_types,
                     exclude_accounts=_excl_accounts or None,
+                    exclude_autotune_accounts=_excl_autotune_accounts or None,
                     only_types=self._only_types,
                 )
                 if not job:
@@ -653,12 +660,13 @@ class JobWorker:
                 await session.commit()
 
             # 전송/마켓삭제: asyncio.Task로 백그라운드 병렬 실행 (동일 계정 순차 보장)
-            if job.job_type in ("transmit", "delete_market"):
+            if job.job_type in ("transmit", "autotune_transmit", "delete_market"):
                 _tx_accounts = self._extract_transmit_account_ids(job.payload)
-                # transmit 잡만 등록 — delete_market은 별도 세마포어/락으로 관리하므로
-                # _active_transmit_accounts에 포함하면 같은 계정의 transmit 잡을 불필요하게 차단함
+                # 타입별 별도 인메모리 락 — autotune_transmit과 transmit이 서로 차단 금지.
                 if job.job_type == "transmit":
                     self._active_transmit_accounts[job.id] = _tx_accounts
+                elif job.job_type == "autotune_transmit":
+                    self._active_autotune_accounts[job.id] = _tx_accounts
 
                 if job.job_type == "delete_market":
 
@@ -666,12 +674,11 @@ class JobWorker:
                         async with self._delete_semaphore:
                             await self._execute_job(_j)
                 else:
-                    # 백그라운드 전송(오토튠 source=autotune / 테트리스 origin=tetris_sync)은
-                    # bg 세마포어(외부)+메인(내부) 둘 다 획득 → 최대 bg슬롯(6)까지만.
-                    # 수동 상품전송은 메인만 → 오토튠 포화여도 항상 ≥2슬롯 확보.
+                    # autotune_transmit은 항상 bg. tetris(origin=tetris_sync)도 bg.
+                    # 수동 transmit은 메인만 → 오토튠 포화여도 ≥2슬롯 확보.
                     _pl = job.payload or {}
                     _is_bg_tx = (
-                        _pl.get("source") == "autotune"
+                        job.job_type == "autotune_transmit"
                         or _pl.get("origin") == "tetris_sync"
                     )
                     if _is_bg_tx:
@@ -854,7 +861,7 @@ class JobWorker:
                 logger.info(f"[잡워커] 실행: {_job_id} ({_job_type})")
 
                 try:
-                    if _job_type == "transmit":
+                    if _job_type in ("transmit", "autotune_transmit"):
                         _tx_token = _current_transmit_job_id.set(_job_id)
                         _tx_accounts = sorted(
                             set(self._extract_transmit_account_ids(_job_payload))
@@ -941,6 +948,7 @@ class JobWorker:
             self._active_job_ids.discard(_job_id)
             self._active_tasks.pop(_job_id, None)
             self._active_transmit_accounts.pop(_job_id, None)
+            self._active_autotune_accounts.pop(_job_id, None)
             if _job_type == "collect":
                 _collect_site = (_job_payload or {}).get("source_site") or ""
                 if _collect_site:
@@ -1068,7 +1076,7 @@ class JobWorker:
                     await _flag_sess.execute(
                         _flag_text(
                             "SELECT count(*) FROM samba_jobs "
-                            "WHERE job_type = 'transmit' "
+                            "WHERE job_type IN ('transmit', 'autotune_transmit') "
                             "AND status IN ('pending', 'running') "
                             "AND id != :jid"
                         ),
