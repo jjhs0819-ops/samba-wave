@@ -206,6 +206,7 @@ def daemon_detail_fallback(ext_result: dict) -> dict:
     if not _name and _sale <= 0 and not _opts:
         return {}
     _all_sold = bool(_opts) and all(_o["isSoldOut"] for _o in _opts)
+    _notice = ext_result.get("productNotice") or {}
     return {
         "itemNm": _name,
         "name": _name,
@@ -220,6 +221,13 @@ def daemon_detail_fallback(ext_result: dict) -> dict:
         "soldOut": "Y" if _all_sold else "N",
         "isSoldOut": _all_sold,
         "isOutOfStock": _all_sold,
+        # 고시정보 — 데몬 v1.4.45+ 가 productNotice 회신. 구버전은 빈 문자열.
+        "color": _notice.get("color", ""),
+        "origin": _notice.get("origin", ""),
+        "material": _notice.get("material", ""),
+        "manufacturer": _notice.get("manufacturer", ""),
+        # 품번 — 데몬 v1.4.45+ 가 styleCode 회신.
+        "style_code": ext_result.get("styleCode", ""),
         # 카테고리 브레드크럼 passthrough(#431) — 데몬 v1.4.36+ 가 dispCtg 회신.
         # worker brand_all 3단계 매핑(dispCtgId→filter, 레벨명 경로, category)이
         # 이 값으로 동작해 데몬 수집물이 '기타'로 굳지 않게 한다. 구버전 데몬(미회신)은

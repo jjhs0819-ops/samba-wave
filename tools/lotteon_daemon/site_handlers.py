@@ -335,6 +335,49 @@ _SSG_EXTRACT_JS = r"""
       })
     } catch (_) {}
 
+    // 고시정보(상품정보제공고시) — th/td + dt/dd 쌍 파싱. 백엔드 _parse_product_notice 동일 로직.
+    const productNotice = {}
+    try {
+      const _lbl = (el) => (el.textContent || '').trim().replace(/\s+/g, '')
+      const _val = (el) => {
+        let v = (el.textContent || '').trim()
+        const pfx = /^[가-힣A-Za-z\/\s]+[:：]\s*/
+        if (pfx.test(v)) v = v.replace(pfx, '').trim()
+        return v === '0' ? '' : v
+      }
+      const processRow = (lblEl, valEl) => {
+        const lbl = _lbl(lblEl), val = _val(valEl)
+        if (!lbl || !val) return
+        if (lbl.includes('색상') && !productNotice.color) productNotice.color = val
+        else if (lbl.includes('제조국') && !productNotice.origin) productNotice.origin = val
+        else if (['제품의주소재','상품의주소재','소재','재질','주소재','제품소재'].includes(lbl) && !productNotice.material) productNotice.material = val
+        else if ((lbl.includes('제조사') || lbl.includes('수입자')) && !productNotice.manufacturer) productNotice.manufacturer = val
+      }
+      document.querySelectorAll('table tr').forEach(tr => {
+        const cells = tr.querySelectorAll('th, td')
+        for (let i = 0; i + 1 < cells.length; i += 2) processRow(cells[i], cells[i + 1])
+      })
+      document.querySelectorAll('dl').forEach(dl => {
+        const items = [...dl.querySelectorAll('dt, dd')]
+        for (let i = 0; i + 1 < items.length; i++) {
+          if (items[i].tagName === 'DT' && items[i + 1].tagName === 'DD') processRow(items[i], items[i + 1])
+        }
+      })
+    } catch (_) {}
+
+    // 품번(styleCode) — 상품명 패턴([A-Za-z]{1,3}\d{3,}-\d{2,}) 우선, 모델번호 폴백
+    let styleCode = ''
+    try {
+      const nm = (obj.itemNm || document.querySelector('meta[property="og:title"]')?.content || '').trim()
+      const sc = nm.match(/[A-Za-z]{1,3}\d{3,}-\d{2,}/)
+      if (sc) {
+        styleCode = sc[0]
+      } else {
+        const mm = document.body.innerText.match(/모델번호\s*[:：]\s*([A-Za-z0-9\-_./]+)/)
+        if (mm) styleCode = mm[1].trim()
+      }
+    } catch (_) {}
+
     return {
       success: salePrice > 0 || cost > 0,
       site_product_id: window.__PRD_ID__ || '',
@@ -348,6 +391,8 @@ _SSG_EXTRACT_JS = r"""
       options,
       uitemOptions,
       soldOut: soldOut ? 'Y' : 'N',
+      productNotice,
+      styleCode,
       // 카테고리 브레드크럼(#431) — resultItemObj 에 존재. 데몬이 추출해 회신하면
       // 백엔드 daemon_detail_fallback passthrough → worker dispCtg 매핑 동작(기타 분류 방지).
       // resultItemObj에 dispCtgLclsNm 없는 케이스 — 백엔드 ssg_sourcing.py 동일 패턴으로 DOM 폴백.

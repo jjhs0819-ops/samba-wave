@@ -70,10 +70,19 @@ class SSGPlugin(SourcingPlugin):
         return await client.discover_brands(keyword)
 
     async def get_detail(self, site_product_id: str) -> dict:
-        """SSG 상품 상세 조회."""
+        """SSG 상품 상세 조회 — 소싱큐(데몬/확장앱) 우선, 직접 HTTP 폴백.
+
+        GCP IP가 SSG itemView 페이지를 차단하므로(2026-06-18~) 데몬/확장앱 큐 경유가 기본.
+        큐 타임아웃(데몬 미연결)이면 백엔드 직접 HTTP로 폴백(로컬 개발·데몬 없는 환경).
+        """
         from backend.domain.samba.proxy.ssg_sourcing import SSGSourcingClient
 
         client = SSGSourcingClient()
+        result = await client.get_product_detail_via_queue(
+            site_product_id, priority=False, timeout=100
+        )
+        if result:
+            return result
         return await self.safe_call(client.get_product_detail(site_product_id))
 
     async def refresh(self, product) -> "RefreshResult":
