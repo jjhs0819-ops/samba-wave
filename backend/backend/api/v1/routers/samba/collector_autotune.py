@@ -1317,15 +1317,10 @@ async def _site_autotune_loop(device_id: str, site: str):
                     _target_ids = _pc_target_ids.get(device_id)
                     if _target_ids:
                         _where.append(_CP.id.in_(_target_ids))
-                    # 사이클당 배치 상한 — 무신사처럼 등록상품 많은 소싱처에서
-                    # 한 사이클 SELECT/사전로딩이 너무 길어져 첫 처리까지 수십 초~수 분
-                    # 대기하는 문제 방지. 정렬이 last_refreshed_at asc nullsfirst 이므로
-                    # 오래된 상품부터 자연스럽게 순환됨. 단일 타겟(_target_ids)은 그대로 전체 처리.
-                    _AUTOTUNE_CYCLE_BATCH = int(
-                        os.environ.get("AUTOTUNE_CYCLE_BATCH", "200")
-                    )
-                    # 적응 배치: 직전 배치 소요시간 기반 자동 조정값 우선 (없으면 env 기본)
-                    _batch_limit = _pc_bs(device_id).get(site, _AUTOTUNE_CYCLE_BATCH)
+                    # 배치 상한 제거 — 사이클당 전체 상품을 한 번에 처리.
+                    # last_refreshed_at asc nullsfirst 정렬로 오래된 상품 우선.
+                    # SELECT 후 즉시 session.commit()+close()로 연결 반납하므로
+                    # 긴 HTTP 처리 중 idle-in-transaction 없음.
                     stmt = (
                         select(_CP)
                         .where(*_where)
@@ -1337,8 +1332,6 @@ async def _site_autotune_loop(device_id: str, site: str):
                             defer(_CP.extra_data),
                         )
                     )
-                    if not _target_ids:
-                        stmt = stmt.limit(_batch_limit)
                     result = await session.exec(stmt)
                     _seen_ids: set[str] = set()
                     products = []
@@ -3378,15 +3371,6 @@ async def _site_autotune_loop(device_id: str, site: str):
                             time.time() - _bulk_start_ts,
                             time.time() - _cycle_started_ts,
                         )
-
-                        # 적응 배치: 이번 배치 소요시간으로 다음 배치 크기 조정 (단일 타겟 제외)
-                        if not _target_ids:
-                            _adapt_batch_size(
-                                device_id,
-                                site,
-                                time.time() - _cycle_started_ts,
-                                _AUTOTUNE_CYCLE_BATCH,
-                            )
 
                         # 에러 결과 후처리 (콜백에서 처리 안 된 에러 건)
                         for r in results:
