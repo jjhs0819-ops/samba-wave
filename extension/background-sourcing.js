@@ -1231,65 +1231,20 @@ async function handlePurchaseJob(job) {
   let tabId = null
   try {
     if (!productUrl) throw new Error('product_url 누락')
-    // URL 스킴 보강 — http(s):// 없으면 붙임 (없으면 whale-extension:// 파일경로 오인 → ERR_FILE_NOT_FOUND)
-    const _purchaseUrl = /^https?:\/\//i.test(productUrl) ? productUrl : 'https://' + productUrl.replace(/^\/+/, '')
-    const tab = await chrome.tabs.create({ url: _purchaseUrl, active: true })
+    const tab = await chrome.tabs.create({ url: productUrl, active: true })
     tabId = tab.id
     try { await waitForTabLoad(tabId, 25000) } catch {}
     await new Promise((r) => setTimeout(r, 2000)) // 상품 옵션 렌더 대기
 
-    let result
-    if (mt === '11st' && optList.length > 1) {
-      // 11번가 다건: 옵션을 ~3개 담으면 11번가가 페이지를 스스로 새로고침 → content script 죽음.
-      // → 옵션마다 상품페이지를 fresh 리로드 후 [선택+장바구니]. (장바구니는 서버에 누적되어 리로드 안전)
-      // 11번가가 선택 도중 자체 리로드하면 그 옵션만 간헐 실패(flaky) → 실패분은 끝에서 1회 재시도.
-      const addOne = async (opt, freshReload) => {
-        if (freshReload) {
-          try {
-            await chrome.tabs.update(tabId, { url: _purchaseUrl })
-            await waitForTabLoad(tabId, 20000)
-          } catch {}
-          await new Promise((r) => setTimeout(r, 2500))
-        }
-        try {
-          await chrome.scripting.executeScript({ target: { tabId }, files: [contentFile] })
-        } catch {}
-        const r = await chrome.tabs
-          .sendMessage(tabId, { action: 'samba_purchase_addToCart', options: [opt] })
-          .catch(() => null)
-        return !!(r && r.success)
-      }
-
-      const done = new Set()
-      for (let i = 0; i < optList.length; i++) {
-        const ok = await addOne(optList[i], i > 0)
-        if (ok) done.add(optList[i])
-        console.log(`[가구매] 11번가 옵션 ${optList[i]} → ${ok ? '담김' : '실패'} (누적 ${done.size}/${i + 1})`)
-      }
-      // 실패분 1회 재시도 (11번가 자체 리로드 타이밍에 의한 간헐 실패 복구)
-      const retryList = optList.filter((o) => !done.has(o))
-      for (const opt of retryList) {
-        const ok = await addOne(opt, true)
-        if (ok) done.add(opt)
-        console.log(`[가구매] 11번가 옵션 ${opt} 재시도 → ${ok ? '담김' : '실패'} (누적 ${done.size}/${optList.length})`)
-      }
-      const okCount = done.size
-      const missing = optList.filter((o) => !done.has(o))
-      result = {
-        success: okCount > 0,
-        count: okCount,
-        error: missing.length ? `${okCount}/${optList.length}건 담김 (실패: ${missing.join(',')})` : '',
-      }
-    } else {
-      try {
-        await chrome.scripting.executeScript({ target: { tabId }, files: [contentFile] })
-      } catch (e) {
-        throw new Error(`content script 주입 실패: ${e?.message || e}`)
-      }
-      result = await chrome.tabs
-        .sendMessage(tabId, { action: 'samba_purchase_addToCart', option: option || '', options: optList })
-        .catch((e) => ({ success: false, error: e?.message || String(e) }))
+    try {
+      await chrome.scripting.executeScript({ target: { tabId }, files: [contentFile] })
+    } catch (e) {
+      throw new Error(`content script 주입 실패: ${e?.message || e}`)
     }
+
+    const result = await chrome.tabs
+      .sendMessage(tabId, { action: 'samba_purchase_addToCart', option: option || '', options: optList })
+      .catch((e) => ({ success: false, error: e?.message || String(e) }))
 
     await postResult('sourcing/purchase-result', {
       requestId, marketType: mt, productUrl, option,
