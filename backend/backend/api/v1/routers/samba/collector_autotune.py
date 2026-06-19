@@ -1334,10 +1334,14 @@ async def _site_autotune_loop(device_id: str, site: str):
                     )
                     _seen_ids: set[str] = set()
                     products = []
+                    _row_idx = 0
                     async for p in await session.stream_scalars(stmt):
                         if p.id not in _seen_ids:
                             _seen_ids.add(p.id)
                             products.append(p)
+                        _row_idx += 1
+                        if _row_idx % 500 == 0:
+                            await asyncio.sleep(0)
 
                     # ── 판매처 필터 사전 적용 ──
                     # _enabled_markets 활성 시, 활성 마켓 타입에 등록된 계정이 하나라도
