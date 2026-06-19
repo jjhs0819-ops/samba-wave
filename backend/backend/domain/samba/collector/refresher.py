@@ -1661,8 +1661,8 @@ async def refresh_products_bulk(
                     )
                 _counter["i"] += 1
                 _idx = _counter["i"]
-                # 사이클 전체 카운터 (호출측에서 주입) — 로그 prefix [idx/total] 분모를
-                # 배치 크기(200) 가 아닌 사이클 전체(N만) 기준으로 통일.
+                # 사이클 전체 카운터 참조 준비 — 증가는 처리 완료 후로 이동
+                # (시작 시 증가하면 sem 획득 순서로 한꺼번에 점프해 실시간성 저하)
                 if global_counter:
                     _gk = global_counter.get("key")
                     # `or {}` 금지 — idx_ref가 빈 dict({})면 falsy라 매번 새 throwaway dict가
@@ -1673,14 +1673,12 @@ async def refresh_products_bulk(
                     _total_ref = global_counter.get("total_ref")
                     if _total_ref is None:
                         _total_ref = {}
-                    _idx_ref[_gk] = _idx_ref.get(_gk, 0) + 1
-                    _g_idx = _idx_ref[_gk]
                     _g_total = _total_ref.get(_gk, 0)
                 else:
-                    _g_idx = 0
+                    _gk = None
+                    _idx_ref = None
+                    _total_ref = None
                     _g_total = 0
-                _log_idx = _g_idx if (_g_idx and _g_total) else _idx
-                _log_total = _g_total if (_g_idx and _g_total) else _site_total
                 _product_timeout = get_product_timeout(site)
                 try:
                     r = await asyncio.wait_for(
@@ -1688,15 +1686,6 @@ async def refresh_products_bulk(
                         timeout=_product_timeout,
                     )
                 except asyncio.TimeoutError:
-                    _log_refresh(
-                        site,
-                        getattr(p, "id", "unknown"),
-                        getattr(p, "name", ""),
-                        f"전체 처리 타임아웃 ({_product_timeout}초) — 건너뜀",
-                        level="warning",
-                        idx=_log_idx,
-                        total=_log_total,
-                    )
                     r = RefreshResult(
                         product_id=getattr(p, "id", "unknown"),
                         error=f"전체 처리 타임아웃: {_product_timeout}초",
@@ -1712,26 +1701,18 @@ async def refresh_products_bulk(
                             ),
                             timeout=_product_timeout,
                         )
-                        if not r.error:
-                            _rb = getattr(p, "brand", "") or ""
-                            _rn = getattr(p, "name", "") or ""
-                            _rs = getattr(p, "site_product_id", "") or ""
-                            _rl = (
-                                f"{_rb} {_rn} ({_rs})".strip()
-                                if _rs
-                                else f"{_rb} {_rn}".strip()
-                            )
-                            _log_refresh(
-                                site,
-                                getattr(p, "id", "unknown"),
-                                _rl,
-                                "재시도 성공",
-                                idx=_log_idx,
-                                total=_log_total,
-                            )
                     except asyncio.TimeoutError:
                         pass  # 재시도도 실패 → 원래 에러 유지
-                # 에러 건도 로그에 표시 (on_result 콜백 전)
+                # 처리 완료 후 전역 카운터 증가 — 시작 시 증가하면 sem 획득 순서로
+                # 한꺼번에 점프하므로 완료 시점으로 이동해 실시간 1건씩 갱신.
+                if _gk is not None and _idx_ref is not None:
+                    _idx_ref[_gk] = _idx_ref.get(_gk, 0) + 1
+                    _g_idx = _idx_ref[_gk]
+                else:
+                    _g_idx = 0
+                _log_idx = _g_idx if (_g_idx and _g_total) else _idx
+                _log_total = _g_total if (_g_idx and _g_total) else _site_total
+                # 에러/타임아웃 로그
                 if r.error and source == "autotune":
                     _rb = getattr(p, "brand", "") or ""
                     _rn = getattr(p, "name", "") or ""
