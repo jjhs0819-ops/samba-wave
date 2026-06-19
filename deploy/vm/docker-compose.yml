@@ -83,6 +83,10 @@ services:
       # 오토튠 in-process 전송을 samba_jobs transmit 잡 발행으로 전환 → B(3코어) 실행.
       # A 이벤트루프에서 전송 CPU 제거 → 무신사 건당 시간 단축. 문제 시 "0"/주석 후 재배포.
       AUTOTUNE_TRANSMIT_VIA_QUEUE: "1"
+      # cap 비활성화 — 큐 차단으로 가격/재고 전송 누락 → 취소주문 발생 (2026-06-19)
+      # .env 에 설정된 값을 0으로 오버라이드해 cap 게이트 완전 해제.
+      AUTOTUNE_QUEUE_CAP: "0"
+      AUTOTUNE_QUEUE_CAP_PER_MARKET: "0"
     networks:
       - samba-net
     healthcheck:
