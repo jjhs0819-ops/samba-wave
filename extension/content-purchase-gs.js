@@ -6,38 +6,67 @@
   if (window.__sambaPurchaseGsLoaded) return
   window.__sambaPurchaseGsLoaded = true
 
+  // GS샵 alert/confirm 차단 (옵션 미선택 경고 등이 흐름 막는 것 방지)
+  ;(function blockAlert() {
+    const noop = () => {}
+    try {
+      Object.defineProperty(window, 'alert', { value: noop, writable: false, configurable: false })
+      Object.defineProperty(window, 'confirm', { value: () => true, writable: false, configurable: false })
+    } catch (e) {
+      window.alert = noop
+      window.confirm = () => true
+    }
+  })()
+
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
   async function selectOption(optionValue) {
     const val = String(optionValue)
-    for (const sel of document.querySelectorAll('select')) {
-      const target = Array.from(sel.options).find((o) => o.text.trim() === val || o.value === val)
-      if (target && !target.disabled) {
-        sel.value = target.value
-        sel.dispatchEvent(new Event('change', { bubbles: true }))
-        await sleep(600)
-        console.log(`[삼바-가구매-GS] 옵션 "${val}" 선택`)
+    // GS샵 옵션 = select2 스타일 커스텀 드롭다운 (라이브 확인 2026-06-19).
+    // 닫힘 상태 .optionTxt("옵션을 선택하세요") 클릭 → 열림. 아이템 = a.prditmidSel0 ("1/free/free/free").
+    const opener = document.querySelector('.optionTxt, .prd_option_area .optionTxt, .prditmidSel, .option_tit')
+    if (opener) { opener.click(); await sleep(900) }
+    // "val/" 접두 매칭 (1→"1/free…"; 10이 1로 오인 안 되게 "/" 구분자)
+    const items = document.querySelectorAll('a.prditmidSel0, .prditmidSel a, .tmp-select2 a')
+    for (const it of items) {
+      const t = it.textContent.trim()
+      if (t === val || t.startsWith(val + '/') || t.startsWith(val + ' ')) {
+        it.click()
+        await sleep(800)
+        console.log(`[삼바-가구매-GS] 옵션 "${val}" 선택 (${t.slice(0, 18)})`)
         return true
       }
+    }
+    // 폴백: 드롭다운 li / 일반 li 안 a
+    for (const it of document.querySelectorAll('.prditmidSel li, li a')) {
+      if (it.textContent.trim().startsWith(val + '/')) { it.click(); await sleep(800); return true }
     }
     return false
   }
 
   async function clickAddToCart() {
-    // ⚠️ [라이브 보정] GS샵 장바구니 버튼 셀렉터 — 실제 페이지에서 확인 후 보정
-    const selectors = ['.btn_basket', 'button[class*="basket"]', 'button[class*="cart"]', 'a[class*="cart"]']
+    // GS샵 장바구니 버튼 = #addCartButton (라이브 확인 2026-06-19). 담은 뒤 레이어 "계속 쇼핑하기" 닫기.
+    const selectors = ['#addCartButton', '#addCartButtonFR', '.btn_basket', 'button[class*="basket"]', 'button[class*="cart"]']
     for (const sel of selectors) {
       const btn = document.querySelector(sel)
-      if (btn && !btn.disabled) {
+      if (btn && !btn.disabled && !btn.classList.contains('disabled')) {
         btn.click()
-        await sleep(900)
-        const closeBtn = document.querySelector('.btn_close, [class*="close"]')
-        if (closeBtn) { try { closeBtn.click() } catch {} }
+        await sleep(1100)
+        // 담기 완료 레이어: "계속 쇼핑하기"(#addCartLayerCntnuButtn) — 장바구니로 이동 방지하며 닫기
+        const cont = document.querySelector('#addCartLayerCntnuButtn')
+        if (cont) { try { cont.click() } catch {} ; await sleep(300) }
+        else { const cb = document.querySelector('.btn_close, [class*="close"]'); if (cb) { try { cb.click() } catch {} } }
         return true
       }
     }
     for (const btn of document.querySelectorAll('button, a')) {
-      if (btn.textContent.trim() === '장바구니') { btn.click(); await sleep(900); return true }
+      if (btn.textContent.trim() === '장바구니') {
+        btn.click()
+        await sleep(1100)
+        const cont = document.querySelector('#addCartLayerCntnuButtn')
+        if (cont) { try { cont.click() } catch {} }
+        return true
+      }
     }
     return false
   }

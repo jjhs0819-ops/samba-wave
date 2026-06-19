@@ -294,20 +294,26 @@ async def run_purchase(
         raise HTTPException(400, "X-Device-Id 필요 — 확장앱이 설치된 PC에서 실행하세요")
     if not body.product_url:
         raise HTTPException(400, "product_url 필요")
+    # URL 스킴 보강 — "gsshop.com/..." 처럼 http(s):// 없으면 붙임
+    # (없으면 확장앱이 상대경로로 오인 → whale-extension://... ERR_FILE_NOT_FOUND)
+    product_url = body.product_url.strip()
+    if not product_url.lower().startswith(("http://", "https://")):
+        product_url = "https://" + product_url.lstrip("/")
 
     options = _expand_option_range(body.option)
     request_id, future = await SourcingQueue.add_purchase_job(
         body.market_type or "ssg",
         owner_device_id=trigger_device_id,
-        product_url=body.product_url,
+        product_url=product_url,
         option=body.option or "",
         options=options,
         quantity=body.quantity or 1,
         sourcing_account_id=body.account_id or "",
         tenant_id=tenant_id,
     )
-    # 옵션 다건이면 확장앱이 한 탭에서 N개 누적 선택 → 대기시간 가변(옵션당 ~4s + 여유)
-    _timeout = min(300, 90 + len(options) * 4)
+    # 옵션 다건 대기시간 가변. 11번가는 옵션마다 페이지 리로드(~8s/개)라 넉넉히, 나머지는 누적(~4s/개).
+    _per = 8 if (body.market_type or "").lower() == "11st" else 4
+    _timeout = min(300, 90 + len(options) * _per)
     try:
         result = await asyncio.wait_for(future, timeout=_timeout)
     except asyncio.TimeoutError:

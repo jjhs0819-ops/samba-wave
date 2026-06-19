@@ -5,26 +5,64 @@
   if (window.__sambaPurchase11stLoaded) return
   window.__sambaPurchase11stLoaded = true
 
+  // 11번가 alert/confirm 차단 (옵션/장바구니 경고가 흐름 막는 것 방지)
+  ;(function blockAlert() {
+    const noop = () => {}
+    try {
+      Object.defineProperty(window, 'alert', { value: noop, writable: false, configurable: false })
+      Object.defineProperty(window, 'confirm', { value: () => true, writable: false, configurable: false })
+    } catch (e) {
+      window.alert = noop
+      window.confirm = () => true
+    }
+  })()
+
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
   async function selectOption(optionValue) {
     const val = String(optionValue)
-    // select 방식
-    for (const sel of document.querySelectorAll('select')) {
-      const target = Array.from(sel.options).find(
-        (o) => o.text.trim() === val || o.value === val || o.text.trim().startsWith(val + ' ')
+    // 11번가 옵션 = 아코디언/커스텀 드롭다운 (라이브 확인 2026-06-19).
+    // 옵션 행(li)에서 첫 숫자가 val 과 일치하는 행의 "선택하기"(.c_product_btn_select) 클릭.
+    const rowSel =
+      '.accordion_body.dropdown_list li, .bot_option_section .dropdown_list li, .c_product_dropdown_wrap .dropdown_list li'
+    // 매칭되는 "선택하기" 버튼 찾기 — 버튼 있는 행만(실제 옵션). 카테고리 메뉴 행은 버튼 없어 배제.
+    // ⚠️ 11번가 전역 카테고리 메뉴 행("키즈의류(3-8세)" 등)이 숫자와 오매칭되어 그 <a>를
+    //    클릭→페이지 이동→content script 사망하던 버그 차단.
+    const findBtn = () => {
+      for (const li of document.querySelectorAll(rowSel)) {
+        const b = li.querySelector('.c_product_btn_select')
+        if (!b) continue
+        const m = (li.textContent || '').match(/\d+/)
+        if (m && m[0] === val) return b
+      }
+      return null
+    }
+    // ① 드롭다운 안 열고 먼저 시도 — 옵션 행은 숨김 상태로도 DOM에 있어 클릭됨.
+    //    (opener 클릭이 엉뚱하게 카테고리 메뉴를 펼치던 부작용 회피 → 카테고리 팝업 안 뜸)
+    let btn = findBtn()
+    // ② 못 찾을 때만 드롭다운 열고 재시도
+    if (!btn) {
+      const opener = document.querySelector(
+        '.bot_option_section .accordion_head, .bot_option_section .dropdown_selected, .c_product_dropdown_wrap .dropdown_selected',
       )
-      if (target && !target.disabled) {
-        sel.value = target.value
+      if (opener && !opener.closest('.active')) { opener.click(); await sleep(800) }
+      btn = findBtn()
+    }
+    if (btn) {
+      btn.click()
+      await sleep(700)
+      console.log(`[삼바-가구매-11번가] 옵션 "${val}" 선택`)
+      return true
+    }
+    // 폴백: 네이티브 select
+    for (const sel of document.querySelectorAll('select')) {
+      const t = Array.from(sel.options).find((o) => o.text.trim() === val || o.value === val)
+      if (t && !t.disabled) {
+        sel.value = t.value
         sel.dispatchEvent(new Event('change', { bubbles: true }))
         await sleep(600)
         return true
       }
-    }
-    // li/버튼 폴백 (11번가 옵션이 커스텀 드롭다운일 수 있음 — 라이브 보정)
-    for (const item of document.querySelectorAll('.c_product_option li, [class*="option"] li, [data-optitem], [class*="selectbox"] li')) {
-      const text = item.textContent.trim()
-      if (text === val || text.startsWith(val + ' ')) { item.click(); await sleep(600); return true }
     }
     return false
   }
