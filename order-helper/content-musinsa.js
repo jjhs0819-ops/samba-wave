@@ -276,7 +276,7 @@
     const marketNo = job.extNo || job.ordNo || '';
     log('결제완료 감지', { sourcingNo: orderNo, amount, marketNo });
     banner(`주문완료! 주문번호 ${orderNo} / ${amount}원 — 삼바 기입 전송`, '#1971c2');
-    chrome.runtime.sendMessage({ type: 'WRITEBACK', marketNo, sourcingNo: orderNo, amount });
+    chrome.runtime.sendMessage({ type: 'WRITEBACK', marketNo, sourcingNo: orderNo, amount, source: job.source || 'MUSINSA' });
     await setJob({ status: 'done', result: { orderNo, amount } });
   }
 

@@ -119,6 +119,27 @@
     log('필수 동의 체크', n, '개');
   }
 
+  // ── 결제완료: 주문번호/결제금액 스크랩 → 삼바 기입(writeback) ──
+  //  완료페이지: /order/complete?orderNo=...
+  //  주문번호 #orderNo (또는 URL orderNo=), 결제금액 #totalPaymentAmt
+  async function stepResult(job) {
+    if (job.status === 'done') return; // 새로고침 시 중복 전송 방지
+    await wait(800);
+    const orderNo =
+      ((q('#orderNo') && q('#orderNo').textContent) || '').trim() ||
+      (location.href.match(/orderNo=([0-9]+)/) || [])[1] || '';
+    const amtEl = q('#totalPaymentAmt');
+    const amount = amtEl
+      ? ((amtEl.textContent || '').match(/([\d,]{3,})/) || [])[1]?.replace(/,/g, '') || ''
+      : '';
+    const marketNo = job.extNo || job.ordNo || '';
+    log('결제완료 감지', { sourcingNo: orderNo, amount, marketNo, source: job.source });
+    if (!orderNo) { banner('주문번호를 못 읽음 — 삼바 기입 생략', '#c92a2a'); return; }
+    banner(`주문완료! 주문번호 ${orderNo} / ${amount}원 — 삼바 기입 전송`, '#1971c2');
+    chrome.runtime.sendMessage({ type: 'WRITEBACK', marketNo, sourcingNo: orderNo, amount, source: job.source });
+    await setJob({ status: 'done', result: { orderNo, amount } });
+  }
+
   async function main() {
     let job = await getJob();
     const url = location.href;
@@ -132,6 +153,8 @@
     if (!job) return;
     if (job.source !== 'ABCMART' && job.source !== 'GRANDSTAGE') return; // ABC 작업만
     try {
+      // 결제완료(/order/complete) 는 /order 보다 먼저 체크 (둘 다 매칭되므로)
+      if (/\/order\/complete/.test(url)) return await stepResult(job);
       if (/\/product\//.test(url)) return await stepProduct(job);
       if (/\/order(\b|\/|\?|$)/.test(url)) return await stepOrder(job);
     } catch (e) { log('오류', e); banner('오류 발생 — 콘솔 확인', '#c92a2a'); }

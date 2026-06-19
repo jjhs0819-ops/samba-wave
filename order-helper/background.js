@@ -140,7 +140,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === 'WRITEBACK') {
-    const wb = { marketNo: msg.marketNo, sourcingNo: msg.sourcingNo, amount: msg.amount, ts: Date.now() };
+    const wb = { marketNo: msg.marketNo, sourcingNo: msg.sourcingNo, amount: msg.amount, source: msg.source || 'MUSINSA', ts: Date.now() };
     console.log('[주문도우미] WRITEBACK', wb);
     // 삼바 탭이 나중에 열려도 처리되도록 저장 + 열려있는 삼바 탭들에 즉시 전달
     chrome.storage.local.set({ pendingWriteback: wb });
