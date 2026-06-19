@@ -4123,6 +4123,7 @@ async function extractDetailData(tabId, site, productId) {
                 let _s2 = (_im[1] || '').trim()
                 if (!_s2) continue
                 if (_s2.indexOf('ssgcdn.com') === -1) continue
+                if (_s2.indexOf('/' + prdId + '_') === -1) continue
                 if (!_imgSeen.has(_s2)) {
                   _imgSeen.add(_s2)
                   domImages.push(_s2)
