@@ -60,16 +60,24 @@ def _parse_tags(raw: str | None) -> list[str]:
 def _find_sold_out_option(product_option: str | None, options) -> str | None:
     """주문 옵션 문자열과 매칭되는 상품 옵션 중 재고 0 이하인 것의 이름을 반환.
 
-    매칭은 옵션 key(name 또는 size)가 주문 옵션 문자열에 포함되는지로 판단한다.
+    매칭은 옵션 key(name 또는 size)가 주문 옵션 문자열에 단어 경계 기준으로 포함되는지 판단한다.
+    단순 in 비교 시 "S" in "XS" = True 오판 발생 → regex 단어 경계로 방지.
     매칭되는 옵션이 없으면 None (옵션 단위 품절 판정 불가 → 호출부에서 전체품절만 사용).
     """
+    import re
+
     if not product_option or not options:
         return None
     for opt in options:
         if not isinstance(opt, dict):
             continue
         key = (opt.get("name") or opt.get("size") or "").strip()
-        if not key or key not in product_option:
+        if not key:
+            continue
+        # 단어 경계 매칭: XS 주문에 S 옵션이 걸리지 않도록 (S in XS = True 오판 방지)
+        if not re.search(
+            r"(?<![A-Za-z0-9])" + re.escape(key) + r"(?![A-Za-z0-9])", product_option
+        ):
             continue
         try:
             stock = int(opt.get("stock") or 0)
