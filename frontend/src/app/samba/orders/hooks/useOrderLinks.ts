@@ -103,8 +103,9 @@ export function useOrderLinks(accounts: SambaMarketAccount[]) {
           '롯데온': (no) => `https://www.lotteon.com/p/product/${no}`,
           '롯데홈쇼핑': (no) => `https://www.lotteimall.com/goods/viewGoodsDetail.lotte?goods_no=${no}`,
           '롯데아이몰': (no) => `https://www.lotteimall.com/goods/viewGoodsDetail.lotte?goods_no=${no}`,
-          '홈앤쇼핑': (no) => `https://www.hmall.com/p/pda/itemPtc.do?slitmCd=${no}`,
-          'HMALL': (no) => `https://www.hmall.com/p/pda/itemPtc.do?slitmCd=${no}`,
+          '홈앤쇼핑': (no) => `https://www.hmall.com/md/pda/itemPtc?slitmCd=${no}`,
+          'HMALL': (no) => `https://www.hmall.com/md/pda/itemPtc?slitmCd=${no}`,
+          '현대H몰': (no) => `https://www.hmall.com/md/pda/itemPtc?slitmCd=${no}`,
         }
         const builder = siteUrlMap[site]
         if (builder) {
