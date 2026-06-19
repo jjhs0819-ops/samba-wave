@@ -7879,6 +7879,21 @@ async def sync_orders_from_markets(
                         _cand = _mpn_global.get(_vid)
                         if _cand and not _cand.get("ambiguous"):
                             _matched = _cand
+                # 3.8) PlayAuto product_name style_code 보강 — MasterCode 미확보 후속.
+                # lottehome 동일 style_code DB 조회 재활용 (_lh_resolve_by_style_code).
+                # registered_accounts @> [channel_id] 가드로 타 채널 cp 유입 차단;
+                # multi-candidate skip으로 별칭 교차오염(1채널 내 복수별칭 동일style_code) 방어.
+                if (
+                    not _matched
+                    and order_data.get("source") == "playauto"
+                    and _ch_id
+                    and order_data.get("product_name")
+                ):
+                    _matched = await _lh_resolve_by_style_code(
+                        str(order_data.get("product_name", "")),
+                        _ch_id,
+                        _lh_style_cache,
+                    )
                 # 플레이오토 별칭(site_id) 단위 매칭 검증 — 1 channel_id에 5개 별칭이
                 # 묶인 구조에서 사용자가 특정 별칭에만 등록한 cp가 다른 별칭 주문에
                 # 잘못 매칭되는 것을 차단. cp.market_product_nos에 `{account_id}_sites`
