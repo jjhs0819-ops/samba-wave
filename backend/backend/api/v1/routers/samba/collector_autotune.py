@@ -1332,10 +1332,9 @@ async def _site_autotune_loop(device_id: str, site: str):
                             defer(_CP.extra_data),
                         )
                     )
-                    result = await session.exec(stmt)
                     _seen_ids: set[str] = set()
                     products = []
-                    for p in result.all():
+                    async for p in await session.stream_scalars(stmt):
                         if p.id not in _seen_ids:
                             _seen_ids.add(p.id)
                             products.append(p)
