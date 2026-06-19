@@ -371,6 +371,7 @@ interface ActiveCycle {
   // false = 데몬 죽음(백엔드 루프는 활성이지만 실제 데몬 폴링 끊김).
   daemon_alive?: boolean | null
   daemon_last_seen_ago_sec?: number | null
+  batch_started_ago_sec?: number | null
 }
 
 function ActiveCyclesPanel(): React.ReactElement {
@@ -391,7 +392,7 @@ function ActiveCyclesPanel(): React.ReactElement {
   }, [])
   useEffect(() => {
     fetchCycles()
-    const t = setInterval(fetchCycles, 5000)
+    const t = setInterval(fetchCycles, 2000)
     return () => clearInterval(t)
   }, [fetchCycles])
   const cancelCycle = useCallback(async (device_id: string, site: string) => {
@@ -474,6 +475,14 @@ function ActiveCyclesPanel(): React.ReactElement {
               const avgStr = c.avg_sec_per_item === null || c.avg_sec_per_item === undefined
                 ? '-'
                 : `${c.avg_sec_per_item.toFixed(1)}초/1건`
+              // 배치 경과 색상: 예상 배치 소요(avg × 200) 대비 초과 여부
+              const batchAgo = c.batch_started_ago_sec ?? null
+              const avgSec = c.avg_sec_per_item ?? 2
+              const expectedBatchSec = avgSec * 200
+              const batchColor = batchAgo === null ? '#888'
+                : batchAgo > expectedBatchSec * 3 ? '#EF4444'   // 빨강: stuck 의심
+                : batchAgo > expectedBatchSec * 1.5 ? '#FFB84D' // 주황: 지연
+                : '#4CD964'                                       // 초록: 정상
               // 시작 시각 → KST HH:MM:SS
               let startedStr = '-'
               if (c.started_at) {
@@ -514,7 +523,18 @@ function ActiveCyclesPanel(): React.ReactElement {
                   </td>
                   <td style={{ padding: '0.4rem' }}>{c.site}</td>
                   <td style={{ padding: '0.4rem', textAlign: 'center', fontSize: '0.72rem', color: statusColor }}>{statusLabel}</td>
-                  <td style={{ padding: '0.4rem', textAlign: 'right' }}>{isInactive ? '-' : `${fmtNum(c.idx)} / ${fmtNum(c.total)}`}</td>
+                  <td style={{ padding: '0.4rem', textAlign: 'right' }}>
+                    {isInactive ? '-' : (
+                      <div>
+                        <div>{`${fmtNum(c.idx)} / ${fmtNum(c.total)}`}</div>
+                        {batchAgo !== null && (
+                          <div style={{ fontSize: '0.7rem', color: batchColor }}>
+                            배치 {fmtNum(batchAgo)}초
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </td>
                   <td style={{ padding: '0.4rem', textAlign: 'right', color: '#FFB84D' }}>{isInactive ? '-' : avgStr}</td>
                   <td style={{ padding: '0.4rem', textAlign: 'right', color: '#4CD964' }}>{isInactive ? '-' : fmtNum(c.price_count)}</td>
                   <td style={{ padding: '0.4rem', textAlign: 'right', color: '#4C9AFF' }}>{isInactive ? '-' : fmtNum(c.stock_count)}</td>
