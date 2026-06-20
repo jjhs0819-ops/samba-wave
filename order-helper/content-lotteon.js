@@ -130,17 +130,32 @@
     rclick(findBtn);
 
     let search = null;
-    for (let i = 0; i < 40 && !search; i++) {
+    for (let i = 0; i < 50 && !search; i++) {
       await wait(150);
-      search = qa('input[type="text"], input:not([type])').find((el) =>
-        el.offsetParent !== null && /주소|검색|도로명|예\)/.test(el.placeholder || '') &&
-        el.id !== 'productTaker' && el.id !== 'companyAddress');
+      search = qa('input[type="text"], input:not([type]), input[type="search"]').find((el) =>
+        el.offsetParent !== null &&
+        /올림픽로|도로명|건물번호|주소|검색|예\)/.test(el.placeholder || '') &&
+        el.id !== 'productTaker' && el.id !== 'companyAddress' && el.id !== 'phoneNum');
     }
     if (!search) return fail('주소검색 입력창 못 찾음');
-    setVal(search, String(c.addr || '').replace(/\([^)]*\)/g, '').trim());
-    await wait(150);
-    for (const t of ['keydown', 'keypress', 'keyup']) search.dispatchEvent(new KeyboardEvent(t, { bubbles: true, key: 'Enter', keyCode: 13, which: 13 }));
-    const sBtn = byText('검색', 'button') || q('button.btnSearchInner'); if (sBtn) rclick(sBtn);
+    await wait(450); // 팝업 Vue v-model 바인딩 안정화 대기 (이른 입력 시 리셋됨)
+    const query = String(c.addr || '').replace(/\([^)]*\)/g, '').trim();
+    // 검색창 전용 입력: blur 없이 focus→value→input (blur 가 입력을 무효화하던 문제 회피)
+    const typeSearch = (v) => {
+      try { search.focus(); } catch (e) { /* noop */ }
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(search, v);
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+      search.dispatchEvent(new Event('keyup', { bubbles: true }));
+    };
+    typeSearch(query);
+    await wait(200);
+    if ((search.value || '') !== query) { typeSearch(query); await wait(200); } // 1회 재시도
+    // 검색 실행: Enter + 입력창 옆 돋보기 버튼(텍스트 없음) 클릭
+    for (const t of ['keydown', 'keypress', 'keyup']) search.dispatchEvent(new KeyboardEvent(t, { bubbles: true, key: 'Enter', code: 'Enter', keyCode: 13, which: 13 }));
+    const box = search.closest('div') || document;
+    const sBtn = qa('button', box).find((b) => b.offsetParent !== null)
+      || byText('검색', 'button') || q('button.btnSearchInner');
+    if (sBtn) rclick(sBtn);
 
     // 5) 첫 결과 펼치고 → (결과 안) 상세주소 입력 → '사용'
     const item = await waitFor('.accordion__item', 8000);
