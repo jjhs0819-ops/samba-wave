@@ -66,21 +66,6 @@ export const MARKET_ID_BY_LABEL: Record<string, string> = Object.fromEntries(
   MARKETS.map(m => [m.label, m.id])
 )
 
-/** 설정 페이지용 셀렉트 옵션 (categoryOnly 마켓 제외) */
-export const MARKET_SELECT_OPTIONS = [
-  { value: '', label: '── 국내 오픈마켓 ──', disabled: true },
-  ...MARKETS.filter(m => m.group === 'domestic' && !m.categoryOnly).map(m => ({ value: m.id, label: m.label })),
-  { value: '', label: '── 국내 홈쇼핑/종합몰 ──', disabled: true },
-  ...MARKETS.filter(m => m.group === 'domestic_home' && !m.categoryOnly).map(m => ({ value: m.id, label: m.label })),
-  { value: '', label: '── 국내 패션/리셀 ──', disabled: true },
-  ...MARKETS.filter(m => m.group === 'domestic_fashion' && !m.categoryOnly).map(m => ({ value: m.id, label: m.label })),
-  { value: '', label: '── 국내 종합솔루션 ──', disabled: true },
-  ...MARKETS.filter(m => m.group === 'solution' && !m.categoryOnly).map(m => ({ value: m.id, label: m.label })),
-  { value: '', label: '── 해외 마켓 ──', disabled: true },
-  ...MARKETS.filter(m => m.group === 'overseas' && !m.categoryOnly).map(m => ({ value: m.id, label: m.label })),
-  { value: '', label: '── 해외 패션/리셀 ──', disabled: true },
-  ...MARKETS.filter(m => m.group === 'overseas_fashion' && !m.categoryOnly).map(m => ({ value: m.id, label: m.label })),
-] as const
 
 // ── 그룹별 목록 ──
 

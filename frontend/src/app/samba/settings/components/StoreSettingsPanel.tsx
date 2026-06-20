@@ -6,7 +6,7 @@ import {
   forbiddenApi,
   proxyApi,
 } from '@/lib/samba/api/commerce'
-import { showAlert, showConfirm } from '@/components/samba/Modal'
+import { showAlert } from '@/components/samba/Modal'
 import { NumInputStr as NumInput } from '@/components/samba/NumInput'
 import { formatPlayautoAliasEntry, parsePlayautoAliasEntry } from '@/lib/samba/playautoAlias'
 import { STORE_MARKETS } from '../config'

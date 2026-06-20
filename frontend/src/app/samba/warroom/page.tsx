@@ -3,8 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState, memo } from 'react'
 import { collectorApi } from '@/lib/samba/api/commerce'
 import { fetchWithAuth } from '@/lib/samba/api/shared'
-import { monitorApi, type DashboardStats, type MonitorEvent, type RefreshLogEntry } from '@/lib/samba/api/operations'
-import { SITE_COLORS } from '@/lib/samba/constants'
+import { monitorApi, type DashboardStats, type RefreshLogEntry } from '@/lib/samba/api/operations'
 import { fmtNum, fmtTextNumbers, LOG_FONT_FAMILY } from '@/lib/samba/styles'
 
 const POLL_INTERVAL = 10_000
@@ -261,21 +260,6 @@ const normalizeWarroomSourceSite = (value: string | null | undefined) => {
   return site
 }
 
-const normalizeWarroomSiteChanges = (
-  changes: Record<string, Record<string, Array<{ id: string; product_id: string | null; product_name: string | null; detail: Record<string, unknown> | null; created_at: string }>>>,
-) => {
-  return Object.entries(changes).reduce<typeof changes>((acc, [site, byType]) => {
-    const key = normalizeWarroomSourceSite(site)
-    if (!acc[key]) acc[key] = {}
-    for (const [eventType, items] of Object.entries(byType)) {
-      const prev = acc[key][eventType] || []
-      acc[key][eventType] = [...prev, ...items]
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-        .slice(0, 5)
-    }
-    return acc
-  }, {})
-}
 
 // LOTTEON 데몬 device_id — 본 PC localStorage 영속. 첫 방문 시 자동 생성.
 // 설치 트리거 시 URL 파라미터 ?did=… 로 .exe 다운로드에 전달.
@@ -630,7 +614,6 @@ export default function WarroomPage() {
 
   // 오토튠 상태
   const [autotuneRunning, setAutotuneRunning] = useState(false)
-  const [autotuneCycles, setAutotuneCycles] = useState(0)
   const [autotuneRestarts, setAutotuneRestarts] = useState(0)
   // 이 PC device_id — 실시간 로그 PC별 분리(2026-05-25)
   // 브라우저 device + 본인 PC 데몬 device 둘 다 합쳐 보냄 → 데몬 잡 로그도 본인 PC 로그로 표시.
@@ -710,26 +693,8 @@ export default function WarroomPage() {
     { key: 'ElandMall', label: '이랜드몰' },
     { key: 'SSF', label: 'SSF샵' },
   ]
-  const [siteIntervals, setSiteIntervals] = useState<Record<string, string>>({})
-  const intervalTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const [siteConcurrency, setSiteConcurrency] = useState<Record<string, string>>({})
   const concurrencyTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
-
-  // 현재 인터벌은 load()의 autotuneStatus 응답에서 함께 설정됨 — 중복 호출 제거
-  // 동시성도 status 응답에 포함됨
-
-  const handleIntervalChange = useCallback((site: string, value: string) => {
-    setSiteIntervals(prev => ({ ...prev, [site]: value }))
-    // 디바운스 — 0.5초 후 자동 저장
-    if (intervalTimerRef.current[site]) clearTimeout(intervalTimerRef.current[site])
-    intervalTimerRef.current[site] = setTimeout(async () => {
-      const num = parseFloat(value)
-      if (isNaN(num) || num < 0 || num > 60) return
-      try {
-        await collectorApi.autotuneUpdateInterval(site, num)
-      } catch { /* ignore */ }
-    }, 500)
-  }, [])
 
   const handleConcurrencyChange = useCallback((site: string, value: string) => {
     setSiteConcurrency(prev => ({ ...prev, [site]: value }))
@@ -970,7 +935,6 @@ export default function WarroomPage() {
       falseCountRef.current = 0
     }
     setAutotuneRunning(running)
-    setAutotuneCycles(cycles)
     setAutotuneLastTick(lastTick)
     // 이벤트 타임라인 갱신 조건:
     //  (1) 사이클 증가 시 — 정상 동작 시 트리거
@@ -1044,34 +1008,6 @@ export default function WarroomPage() {
             }
           }
         } catch { /* ignore */ }
-        // 자동 재등록 — 사용자가 시작 의도를 가진 채 백엔드가 재시작된 경우 자동 복구
-        try {
-          const intent = window.localStorage.getItem('samba.autotune.userIntent')
-          const runningPcs = atStatus.running_pcs || []
-          const meMissing = !!dev && !runningPcs.includes(dev)
-          const now = Date.now()
-          // cooldown은 localStorage에 박아 페이지 재마운트 시에도 유지
-          // useRef는 unmount 시 0으로 리셋되어, 페이지 들어올 때마다 즉시 재시작 트리거되는 문제 방지
-          let _lastAutoRejoinAt = 0
-          try {
-            _lastAutoRejoinAt = Number(window.localStorage.getItem('samba.autotune.autoRejoinAt') || '0')
-          } catch { /* ignore */ }
-          const cooldownPassed = now - Math.max(autoRejoinAtRef.current, _lastAutoRejoinAt) > 10_000
-          // (2026-05-25) 자동재합류 폐기 — 사용자가 명시 "오토튠 활성" 토글 ON 한 경우만 시작.
-          // 페이지 접속 + intent==='start' 흔적만으로 자동 register/autotuneStart 호출하던 사고 차단.
-        } catch { /* ignore */ }
-        // 소싱처 인터벌 동기화 (마운트 시 초기값 포함) — 별도 useEffect 제거하고 여기서 일원화
-        if (atStatus.site_intervals) {
-          setSiteIntervals(prev => {
-            // 사용자가 디바운스 중인 값을 덮어쓰지 않도록 — 빈 상태일 때만 초기화
-            if (Object.keys(prev).length > 0) return prev
-            const init: Record<string, string> = {}
-            for (const [site, val] of Object.entries(atStatus.site_intervals!)) {
-              init[site] = String(val)
-            }
-            return init
-          })
-        }
         if (atStatus.site_autotune_concurrency) {
           setSiteConcurrency(prev => {
             if (Object.keys(prev).length > 0) return prev
@@ -1107,7 +1043,7 @@ export default function WarroomPage() {
     )
   }
 
-  const { product_stats, site_health, market_health, hourly_changes } = stats
+  const { hourly_changes } = stats
 
   // 가로 바 차트 최대값
   const maxHourly = Math.max(...hourly_changes, 1)
@@ -1259,7 +1195,6 @@ export default function WarroomPage() {
                 window.postMessage({ source: 'samba-page', type: 'AUTOTUNE_SET_JOIN', joined: true, sourceSites: filterSources }, window.location.origin)
                 falseCountRef.current = 0
                 setAutotuneRunning(true)
-                setAutotuneCycles(0)
                 if (pno) setSingleProductNo('')
                 // 사용자 의도 저장 — 백엔드 재시작 시 자동 재등록 트리거용
                 try {

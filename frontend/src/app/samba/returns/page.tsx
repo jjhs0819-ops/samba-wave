@@ -264,32 +264,6 @@ export default function ReturnsPage() {
     } catch (e) { showAlert(e instanceof Error ? e.message : `${labels[action]} 실패`, 'error') }
   }
 
-  const handleCancelApprove = async (r: SambaReturn) => {
-    const orderNum = r.order_number || r.order_id
-    if (!orderNum) { showAlert('주문번호가 없습니다', 'error'); return }
-    if (!await showConfirm(`${orderNum} 주문의 취소요청을 승인하시겠습니까?`)) return
-    try {
-      const order = await orderApi.findByOrderNumber(orderNum)
-      if (!order) { showAlert('해당 주문을 찾을 수 없습니다', 'error'); return }
-      const res = await orderApi.approveCancel(order.id)
-      showAlert(res.message || '취소승인 완료', 'success')
-      load()
-    } catch (e) { showAlert(e instanceof Error ? e.message : '취소승인 실패', 'error') }
-  }
-
-  const handleReturnAction = async (r: SambaReturn, action: string) => {
-    const orderNum = r.order_number || r.order_id
-    if (!orderNum) { showAlert('주문번호가 없습니다', 'error'); return }
-    const label = action === 'approve' ? '반품승인' : '반품거부'
-    if (!await showConfirm(`${orderNum} 주문을 ${label} 처리하시겠습니까?`)) return
-    try {
-      const order = await orderApi.findByOrderNumber(orderNum)
-      if (!order) { showAlert('해당 주문을 찾을 수 없습니다', 'error'); return }
-      const res = await orderApi.returnAction(order.id, action)
-      showAlert(res.message || `${label} 완료`, 'success')
-      load()
-    } catch (e) { showAlert(e instanceof Error ? e.message : `${label} 실패`, 'error') }
-  }
 
   // 주문번호 기준 중복 제거 — 같은 order_number 행은 하나만 남긴다.
   // 우선순위: ① 완료 상태(취소/반품/교환) 행을 우선 보존 — 완료 처리한 행이 사라지지 않도록.

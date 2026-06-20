@@ -1,7 +1,7 @@
 'use client'
 
 import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
-import { forbiddenApi, proxyApi } from '@/lib/samba/api/commerce'
+import { proxyApi } from '@/lib/samba/api/commerce'
 import { showAlert } from '@/components/samba/Modal'
 import { NumInputStr as NumInput } from '@/components/samba/NumInput'
 import { API_BASE } from '@/lib/samba/api/shared'
