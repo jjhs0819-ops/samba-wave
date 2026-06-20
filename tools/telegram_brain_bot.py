@@ -544,7 +544,7 @@ def _f(o: dict, key: str) -> float:
 
 
 def build_sales_text(with_comment: bool = True) -> str:
-    """매출(등록상품·취소제외) + 마진(주문번호 입력 건, 결제−수수료−소싱처구매)."""
+    """매출(등록상품·취소제외) + 실수익/수익률(주문번호·주문금액 입력 건)."""
     today = _kst_date()
     month_first = datetime.now(KST).strftime("%Y-%m-01")
     orders = samba.orders_by_date_range(month_first, today)
@@ -557,15 +557,17 @@ def build_sales_text(with_comment: bool = True) -> str:
     today_orders = [o for o in sale_orders if _order_kst_date(o) == today]
     today_sales = sum(_f(o, "sale_price") for o in today_orders)
 
-    # 마진 = 등록상품 + 주문번호(발주) 입력 건만
-    #   정산금액 = 결제금액 − 수수료(= sale_price × fee_rate%)
-    #   마진금액 = 정산금액 − 소싱처 구매금액(cost) · 마진율 = 마진금액 / 결제금액 × 100
-    m = [o for o in sale_orders if _order_has_so(o)]
-    pay = sum(_f(o, "sale_price") for o in m)
-    settle = sum(_f(o, "sale_price") * (1 - _f(o, "fee_rate") / 100) for o in m)
+    # 실수익/수익률 = 주문번호(sourcing_order_number) + 주문금액(cost>0) 입력 건 · 취소제외.
+    #   주문탭과 동일하게 백엔드 저장값 그대로 사용:
+    #     정산금액=revenue(결제−수수료) · 실수익=profit(정산−소싱처구매) · 수익률=실수익/결제×100
+    #   (fee_rate 재계산 금지 — 실제 적용 수수료율과 달라 부정확)
+    m = [o for o in orders
+         if _order_has_so(o) and _f(o, "cost") > 0 and not _order_cancelled(o)]
+    pay = sum(_f(o, "total_payment_amount") or _f(o, "sale_price") for o in m)
+    settle = sum(_f(o, "revenue") for o in m)
     sourcing = sum(_f(o, "cost") for o in m)
-    margin_amt = settle - sourcing
-    margin_rate = (margin_amt / pay * 100) if pay else 0.0
+    real_profit = sum(_f(o, "profit") for o in m)
+    profit_rate = (real_profit / pay * 100) if pay else 0.0
 
     lines = [
         f"💰 매출 보고 ({datetime.now(KST).strftime('%m월 %d일')})",
@@ -573,12 +575,11 @@ def build_sales_text(with_comment: bool = True) -> str:
         f"▪️ 오늘 매출 {_fmt_price(today_sales)} · {len(today_orders)}건",
         f"▪️ 이달 매출 {_fmt_price(mon_sales)} · {len(sale_orders)}건",
         "",
-        f"▪️ 이달 마진 (주문번호 입력 {len(m)}건)",
-        f"  정산금액 {_fmt_price(settle)}  (결제 {_fmt_price(pay)} − 수수료)",
-        f"  소싱처구매 {_fmt_price(sourcing)}",
-        f"  마진금액 {_fmt_price(margin_amt)} · 마진율 {margin_rate:.1f}%",
+        f"▪️ 이달 실수익 (주문번호·주문금액 입력 {len(m)}건)",
+        f"  결제 {_fmt_price(pay)} · 정산 {_fmt_price(settle)} · 소싱처구매 {_fmt_price(sourcing)}",
+        f"  실수익 {_fmt_price(real_profit)} · 수익률 {profit_rate:.1f}%",
         "",
-        "ℹ️ 매출=등록상품·취소제외 · 마진=결제−수수료−소싱처구매(주문번호 입력건)",
+        "ℹ️ 매출=등록상품·취소제외 · 실수익=정산−소싱처구매(주문번호·주문금액 입력건)",
     ]
     if with_comment:
         _append_comment(lines, "매출")
