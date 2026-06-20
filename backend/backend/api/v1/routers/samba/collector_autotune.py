@@ -221,7 +221,7 @@ _pc_site_last_ticks: dict[str, dict[str, str]] = {}
 _pc_site_empty_hits: dict[str, dict[str, int]] = {}
 _pc_site_heartbeats: dict[str, dict[str, float]] = {}
 _pc_target_ids: dict[str, Optional[set]] = {}
-_AUTOTUNE_CYCLE_BATCH = int(os.environ.get("AUTOTUNE_CYCLE_BATCH", "200"))
+_AUTOTUNE_CYCLE_BATCH = int(os.environ.get("AUTOTUNE_CYCLE_BATCH", "2000"))
 # 사이트별 적응 배치 크기 (device_id → site → int).
 # 직전 배치 소요시간 기준으로 다음 배치 SELECT limit 자동 조정. 미설정 시 env 기본값 사용.
 _pc_site_batch_size: dict[str, dict[str, int]] = {}
