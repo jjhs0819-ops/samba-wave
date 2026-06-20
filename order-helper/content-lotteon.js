@@ -89,7 +89,19 @@
     return null;
   }
 
-  // ── 주문서: 비기본 배송지 '수정' → 삼바 정보 입력 → 저장 → 선택 → 확인 → 계속하기 ──
+  // 배송지 선택 목록에서 이름이 일치하는 항목의 radio 선택 (기본배송지=장재훈 제외, 비기본만 radio)
+  function selectAddressRadioByName(name) {
+    const radios = qa('input[type="radio"]').filter((r) => r.offsetParent !== null);
+    for (const r of radios) {
+      let box = r.parentElement;
+      for (let d = 0; d < 6 && box; d++) {
+        if ((box.textContent || '').includes(name)) { rclick(r); return true; }
+        box = box.parentElement;
+      }
+    }
+    return false;
+  }
+
   async function stepOrder(job) {
     if (job.addrDone) { banner('배송지 입력 완료 ✅ 결제는 직접 진행하세요.', '#1971c2'); return; }
     if (job.addrPhase === 'running') return;
@@ -195,13 +207,21 @@
     rclick(saveBtn);
     await wait(1500);
 
-    // 9) 목록에서 방금 수정한 주소(이름 일치) 선택 + 확인 (변경 alert 자동수락)
-    const nameHit = qa('label, span, div, li').find((e) => (e.textContent || '').includes(c.name) && e.offsetParent !== null);
-    if (nameHit) { const radio = (nameHit.closest('li,div') || {}).querySelector && nameHit.closest('li,div').querySelector('input[type="radio"]'); rclick(radio || nameHit); }
-    await wait(300);
+    // 9) 저장 후 — 배송지 변경(목록)을 다시 열어 방금 수정한 주소(이름 일치) radio 선택 + 확인
+    //    (저장만으론 주문에 적용 안 됨. 목록에서 선택+확인 해야 기본배송지 대신 적용됨)
+    await wait(1000);
+    if (!byText('배송지 선택')) {
+      const reopen = (await waitFor('button.btnAddress', 5000)) || byText('변경', 'button');
+      if (reopen) rclick(reopen);
+      await waitText('배송지 선택', 5000);
+    }
+    let picked = false;
+    for (let i = 0; i < 15 && !picked; i++) { picked = selectAddressRadioByName(c.name || ''); if (!picked) await wait(250); }
+    if (!picked) banner('🛈 수정한 주소 자동선택 실패 — 목록에서 직접 선택 후 확인해주세요.', '#d9480f');
+    await wait(400);
     const confirmBtn = byText('확인', 'button');
     if (confirmBtn) rclick(confirmBtn);
-    await wait(1200);
+    await wait(1300);
 
     // 10) 주문서 '계속하기'
     const nextBtn = byText('계속하기', 'button') || byText('계속하기', 'a');
