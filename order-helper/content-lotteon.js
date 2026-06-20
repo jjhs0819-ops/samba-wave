@@ -251,20 +251,69 @@
     await setJob({ status: 'done', result: { orderNo, amount } });
   }
 
+  // ── 상품 페이지: 옵션(사이즈) 선택 + 바로 구매하기 ──
+  let ranProduct = false;
+  async function stepProduct(job) {
+    if (ranProduct) return; ranProduct = true;
+    const MANUAL = '옵션(색상/사이즈)을 직접 선택하고 [바로 구매하기]를 누르세요. 주문서에서 배송지는 자동 입력됩니다.';
+    const size = String(job.size || '').trim();
+    // 옵션 그룹(.optionWrap) — 1개면 자동선택, 색상+사이즈처럼 2개 이상이면 수동
+    await waitFor('.optionWrap', 8000);
+    const groups = qa('.optionWrap').filter((g) => g.offsetParent !== null);
+    if (groups.length === 0) { banner('🛈 ' + MANUAL, '#1971c2'); return; }
+    if (groups.length >= 2) { banner('🛈 옵션이 여러 개예요(색상·사이즈 등). ' + MANUAL, '#1971c2'); return; }
+
+    const group = groups[0];
+    banner(`옵션 '${size}' 선택 중...`);
+    // 1) 드롭다운 열기
+    rclick(q('.selectResult', group) || group);
+    // 2) 목록 대기
+    await waitFor('ul.selectLists', 4000, group);
+    await wait(300);
+    const listRoot = q('ul.selectLists', group) || group;
+    const items = qa('li', listRoot).filter((li) => li.offsetParent !== null);
+    // 3) 사이즈 매칭: li 의 첫 숫자 토큰 === size (품절 제외), 폴백으로 포함 매칭
+    let target = items.find((li) => {
+      const t = (li.textContent || '').replace(/\s+/g, ' ').trim();
+      if (/품절|sold|일시품절/i.test(t)) return false;
+      return ((t.match(/\d+/) || [])[0] || '') === size;
+    }) || items.find((li) => !/품절|sold|일시품절/i.test(li.textContent || '') && (li.textContent || '').includes(size));
+    if (!target) { banner(`🛈 사이즈 '${size}' 자동선택 실패. ` + MANUAL, '#d9480f'); return; }
+    rclick(q('.labelTextWrap', target) || target);
+    await wait(500);
+    // 4) 바로 구매하기
+    const buy = byText('바로 구매하기', 'button, a') || qa('button, a').find((b) => /바로\s*구매/.test(b.textContent || '') && b.offsetParent !== null);
+    if (!buy) { banner('🛈 ' + MANUAL, '#1971c2'); return; }
+    banner('바로 구매하기...');
+    rclick(buy);
+  }
+
   async function main() {
-    const job = await getJob();
-    if (!job || job.source !== 'LOTTEON') return;
+    let job = await getJob();
     const url = location.href;
+    // 상품 페이지: 방금 생성된 롯데온 작업 채택(작업이 늦게 들어와도 대기)
+    if (/\/p\/product\//.test(url)) {
+      const fresh = (j) => j && j.source === 'LOTTEON' && j.status !== 'done' && j.ts && (Date.now() - j.ts) < 60000;
+      for (let i = 0; i < 16 && !fresh(job); i++) { await wait(300); job = await getJob(); }
+      if (!fresh(job)) return;
+      try { return await stepProduct(job); } catch (e) { log('오류', e); banner('오류 발생 — 콘솔 확인', '#c92a2a'); return; }
+    }
+    if (!job || job.source !== 'LOTTEON') return;
     try {
       if (/\/orderDetail/.test(url)) return await stepResult(job);
       if (job.status === 'done') return;
-      if (/\/p\/product\//.test(url)) {
-        banner('🛈 옵션(색상/사이즈)을 직접 선택하고 [바로 구매하기]를 누르세요. 주문서에서 배송지는 자동 입력됩니다.', '#1971c2');
-        return;
-      }
       if (/\/p\/order\//.test(url)) return await stepOrder(job);
     } catch (e) { log('오류', e); banner('오류 발생 — 콘솔 확인', '#c92a2a'); }
   }
 
   main();
+  // 작업이 늦게 저장되는 경우 대비 — 상품 페이지에서 job 변경 감지 시 재시도
+  try {
+    chrome.storage.onChanged.addListener((ch, area) => {
+      if (area !== 'local' || !ch.job) return;
+      const j = ch.job.newValue;
+      if (j && j.source === 'LOTTEON' && j.status !== 'done' && j.ts && (Date.now() - j.ts) < 60000 &&
+        /\/p\/product\//.test(location.href) && !ranProduct) main();
+    });
+  } catch (e) { /* noop */ }
 })();
