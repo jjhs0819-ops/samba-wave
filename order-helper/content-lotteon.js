@@ -186,7 +186,11 @@
     await wait(300);
 
     // 8) 저장 (네이티브 완료 alert 는 자동수락됨)
-    const saveBtn = q('#fixingBtn button', modal) || byText('저장', 'button', modal);
+    // ⚠ #fixingBtn 안에는 약관 '보기' 버튼도 있으므로 .buttonGroup 의 저장 버튼을 정확히 지정
+    const fixing = document.querySelector('#fixingBtn');
+    const saveBtn = (fixing && (fixing.querySelector('.buttonGroup button') ||
+      qa('button', fixing).find((b) => /저장/.test(b.textContent || '') && b.offsetParent !== null)))
+      || qa('button').find((b) => /저장/.test(b.textContent || '') && b.offsetParent !== null);
     if (!saveBtn) return fail('저장 버튼 못 찾음');
     rclick(saveBtn);
     await wait(1500);
