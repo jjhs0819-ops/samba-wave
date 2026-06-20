@@ -718,22 +718,53 @@ def _dedup_returns(rows: list) -> list:
     return res
 
 
+def _order_return_requested(o: dict) -> bool:
+    """주문탭에서 '반품요청'으로 들어온 건 (실제 반품 진행 기준)."""
+    return o.get("status") == "return_requested" or "반품요청" in (o.get("shipping_status") or "")
+
+
+def _collect_bucket(status: str | None) -> str:
+    """반품 레코드 status → 수거 단계. collected=수거완료·collecting=수거중·그 외=미수거."""
+    if status == "collected":
+        return "collected"
+    if status == "collecting":
+        return "collecting"
+    return "not_collected"
+
+
 def build_returns_text(with_comment: bool = True) -> str:
-    """반품 — 이번달. 주문번호 기준 중복제거 후 대기중/취소완료 + 반품신청완료 수거상태."""
+    """반품 — 이번달. 대기중/취소완료 + 반품진행중(주문탭 반품요청건 → 수거상태)."""
     now = datetime.now(KST)
-    rows = samba.returns_list(now.strftime("%Y-%m-01"), _kst_date())  # order_date 기준 이번달
-    if rows is None:
+    month_first, today = now.strftime("%Y-%m-01"), _kst_date()
+    rows = samba.returns_list(month_first, today)
+    orders = samba.orders_by_date_range(month_first, today)
+    if rows is None or orders is None:
         return "❌ 삼바 서버 연결 실패 (반품)."
 
-    rows = _dedup_returns(rows)  # 페이지와 동일하게 중복제거 후 집계
-    # 완료내역(completion_detail) 기준 — 웹 /returns 페이지와 동일
-    waiting = sum(1 for r in rows if (r.get("completion_detail") or "진행중") == "진행중")
-    cancel_done = sum(1 for r in rows if r.get("completion_detail") == "취소")
+    deduped = _dedup_returns(rows)  # 페이지와 동일하게 중복제거 후 집계
+    waiting = sum(1 for r in deduped if (r.get("completion_detail") or "진행중") == "진행중")
+    cancel_done = sum(1 for r in deduped if r.get("completion_detail") == "취소")
 
-    collect = {"not_collected": 0, "collecting": 0, "collected": 0}
+    # 반품진행중: 주문탭 '반품요청' 건을 기준으로, 반품관리탭 수거상태로 분류.
+    rr_orders = {(o.get("order_number") or "").strip()
+                 for o in orders if _order_return_requested(o)}
+    rr_orders.discard("")
+    # 주문번호 → 가장 진행된 수거단계 (수거완료>수거중>미수거)
+    rank = {"not_collected": 1, "collecting": 2, "collected": 3}
+    best: dict[str, str] = {}
     for r in rows:
-        if "반품신청완료" in (r.get("memo") or "") and (r.get("status") or "") in collect:
-            collect[r["status"]] += 1
+        if r.get("type") != "return":
+            continue
+        on = (r.get("order_number") or "").strip()
+        if on not in rr_orders:
+            continue
+        b = _collect_bucket(r.get("status"))
+        if on not in best or rank[b] > rank[best[on]]:
+            best[on] = b
+    counts = {"not_collected": 0, "collecting": 0, "collected": 0}
+    for on in rr_orders:
+        counts[best.get(on, "not_collected")] += 1  # 반품레코드 없으면 미수거 처리
+    total = len(rr_orders)
 
     return "\n".join([
         "🔄 반품/교환 (이번달)",
@@ -741,8 +772,8 @@ def build_returns_text(with_comment: bool = True) -> str:
         f"· 대기중 {waiting}건",
         f"· 취소완료 {cancel_done}건",
         "",
-        "· 반품신청완료 메모",
-        f"  미수거 {collect['not_collected']} · 수거중 {collect['collecting']} · 수거완료 {collect['collected']}",
+        f"· 반품진행중 (총 {total}건)",
+        f"  미수거 {counts['not_collected']} · 수거중 {counts['collecting']} · 수거완료 {counts['collected']}",
     ])
 
 
