@@ -32,6 +32,7 @@
 
 from __future__ import annotations
 
+import calendar
 import json
 import os
 import sys
@@ -543,46 +544,85 @@ def _f(o: dict, key: str) -> float:
         return 0.0
 
 
-def build_sales_text(with_comment: bool = True) -> str:
-    """매출(등록상품·취소제외) + 실수익/수익률(주문번호·주문금액 입력 건)."""
-    today = _kst_date()
-    month_first = datetime.now(KST).strftime("%Y-%m-01")
-    orders = samba.orders_by_date_range(month_first, today)
-    if orders is None:
-        return "❌ 삼바 서버 연결 실패 (매출)."
+def _sales_metrics(orders: list) -> dict:
+    """주문 목록 → 매출/실수익 집계.
 
-    # 매출 = 등록상품 · 취소제외 (미등록상품 제외)
+    매출 = 등록상품·취소제외. 실수익 = 주문번호+주문금액(cost>0) 입력·취소제외 건의
+    백엔드 저장값(profit/revenue) 그대로 합산 (주문탭과 동일).
+    """
     sale_orders = [o for o in orders if _order_registered(o) and not _order_cancelled(o)]
-    mon_sales = sum(_f(o, "sale_price") for o in sale_orders)
-    today_orders = [o for o in sale_orders if _order_kst_date(o) == today]
-    today_sales = sum(_f(o, "sale_price") for o in today_orders)
-
-    # 실수익/수익률 = 주문번호(sourcing_order_number) + 주문금액(cost>0) 입력 건 · 취소제외.
-    #   주문탭과 동일하게 백엔드 저장값 그대로 사용:
-    #     정산금액=revenue(결제−수수료) · 실수익=profit(정산−소싱처구매) · 수익률=실수익/결제×100
-    #   (fee_rate 재계산 금지 — 실제 적용 수수료율과 달라 부정확)
     m = [o for o in orders
          if _order_has_so(o) and _f(o, "cost") > 0 and not _order_cancelled(o)]
     pay = sum(_f(o, "total_payment_amount") or _f(o, "sale_price") for o in m)
-    settle = sum(_f(o, "revenue") for o in m)
-    sourcing = sum(_f(o, "cost") for o in m)
-    real_profit = sum(_f(o, "profit") for o in m)
-    profit_rate = (real_profit / pay * 100) if pay else 0.0
+    profit = sum(_f(o, "profit") for o in m)
+    return {
+        "sale_orders": sale_orders,
+        "sales": sum(_f(o, "sale_price") for o in sale_orders),
+        "sales_cnt": len(sale_orders),
+        "margin_cnt": len(m),
+        "pay": pay,
+        "settle": sum(_f(o, "revenue") for o in m),
+        "buy": sum(_f(o, "cost") for o in m),
+        "profit": profit,
+        "rate": (profit / pay * 100) if pay else 0.0,
+    }
+
+
+def _arrow(d: float) -> str:
+    return "▲" if d > 0 else ("▼" if d < 0 else "—")
+
+
+def _last_month_same_period() -> tuple[str, str, str]:
+    """전월 동일 기간 (1일 ~ 오늘과 같은 일자). (시작, 끝, '5/20' 라벨) 반환."""
+    now = datetime.now(KST)
+    y, mth = (now.year - 1, 12) if now.month == 1 else (now.year, now.month - 1)
+    day = min(now.day, calendar.monthrange(y, mth)[1])
+    return f"{y:04d}-{mth:02d}-01", f"{y:04d}-{mth:02d}-{day:02d}", f"{mth}/{day}"
+
+
+def build_sales_text(with_comment: bool = True) -> str:
+    """매출(등록상품) + 실수익/수익률(주문번호·주문금액 입력) + 전월 동기간 비교."""
+    now = datetime.now(KST)
+    today = _kst_date()
+    orders = samba.orders_by_date_range(now.strftime("%Y-%m-01"), today)
+    if orders is None:
+        return "❌ 삼바 서버 연결 실패 (매출)."
+
+    cur = _sales_metrics(orders)
+    today_orders = [o for o in cur["sale_orders"] if _order_kst_date(o) == today]
+    today_sales = sum(_f(o, "sale_price") for o in today_orders)
 
     lines = [
-        f"💰 매출 보고 ({datetime.now(KST).strftime('%m월 %d일')})",
+        f"💰 매출 보고 ({now.strftime('%m월 %d일')})",
         "",
         f"▪️ 오늘 매출 {_fmt_price(today_sales)} · {len(today_orders)}건",
-        f"▪️ 이달 매출 {_fmt_price(mon_sales)} · {len(sale_orders)}건",
+        f"▪️ 이달 매출 {_fmt_price(cur['sales'])} · {cur['sales_cnt']}건",
         "",
-        f"▪️ 이달 실수익 (주문번호·주문금액 입력 {len(m)}건)",
-        f"  결제 {_fmt_price(pay)} · 정산 {_fmt_price(settle)} · 소싱처구매 {_fmt_price(sourcing)}",
-        f"  실수익 {_fmt_price(real_profit)} · 수익률 {profit_rate:.1f}%",
+        f"▪️ 이달 실수익 (주문건수 {cur['margin_cnt']}건)",
+        f"· 결제 {_fmt_price(cur['pay'])}",
+        f"· 정산 {_fmt_price(cur['settle'])}",
+        f"· 구매 {_fmt_price(cur['buy'])}",
         "",
-        "ℹ️ 매출=등록상품·취소제외 · 실수익=정산−소싱처구매(주문번호·주문금액 입력건)",
+        f"· 수익률 {cur['rate']:.1f}%",
+        "",
+        f"💵 수익 {_fmt_price(cur['profit'])}",
     ]
-    if with_comment:
-        _append_comment(lines, "매출")
+
+    # 전월 동기간 비교 (수익 / 건수 / 수익률)
+    lm_start, lm_end, lm_label = _last_month_same_period()
+    prev_orders = samba.orders_by_date_range(lm_start, lm_end)
+    if prev_orders is not None:
+        p = _sales_metrics(prev_orders)
+        prof_d = ((cur["profit"] - p["profit"]) / p["profit"] * 100) if p["profit"] else 0.0
+        cnt_d = cur["sales_cnt"] - p["sales_cnt"]
+        rate_d = cur["rate"] - p["rate"]
+        lines += [
+            "",
+            f"📊 전월 동기간(~{lm_label}) 대비",
+            f"· 수익 전월 {_fmt_price(p['profit'])} {_arrow(prof_d)}{abs(prof_d):.0f}%",
+            f"· 건수 전월 {p['sales_cnt']}건 {_arrow(cnt_d)}{abs(cnt_d)}건",
+            f"· 수익률 전월 {p['rate']:.1f}% {_arrow(rate_d)}{abs(rate_d):.1f}%p",
+        ]
     return "\n".join(lines)
 
 
