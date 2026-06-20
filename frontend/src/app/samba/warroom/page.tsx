@@ -361,6 +361,49 @@ interface ActiveCycle {
 function ActiveCyclesPanel(): React.ReactElement {
   const [cycles, setCycles] = useState<ActiveCycle[]>([])
   const [busy, setBusy] = useState<string>('')
+  // 애니메이션 카운터 — 실제 idx 값이 한번에 200씩 올라와도 화면에는 부드럽게 1씩 표시
+  const [displayIdx, setDisplayIdx] = useState<Map<string, number>>(new Map())
+  const targetIdxRef = useRef<Map<string, number>>(new Map())
+
+  // 폴링 결과 반영 시 타겟 갱신
+  useEffect(() => {
+    const activeKeys = new Set(cycles.map(c => `${c.device_id}|${c.site}`))
+    cycles.forEach(c => {
+      const key = `${c.device_id}|${c.site}`
+      const prev = targetIdxRef.current.get(key) ?? 0
+      if (c.idx < prev - 10) {
+        // 새 배치 시작 — 카운터 즉시 리셋
+        setDisplayIdx(d => { const n = new Map(d); n.set(key, 0); return n })
+      }
+      targetIdxRef.current.set(key, c.idx)
+    })
+    // 사라진 사이클 정리
+    for (const key of targetIdxRef.current.keys()) {
+      if (!activeKeys.has(key)) targetIdxRef.current.delete(key)
+    }
+  }, [cycles])
+
+  // 100ms 마다 표시값을 타겟 쪽으로 조금씩 이동 (2초 폴 주기 내에 따라잡기)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setDisplayIdx(prev => {
+        let changed = false
+        const next = new Map(prev)
+        for (const [key, target] of targetIdxRef.current) {
+          const cur = next.get(key) ?? 0
+          if (cur === target) continue
+          if (cur > target) { next.set(key, target); changed = true; continue }
+          // gap을 20틱(=2초) 안에 닫기 — step 최소 1
+          const step = Math.max(1, Math.ceil((target - cur) / 20))
+          next.set(key, Math.min(cur + step, target))
+          changed = true
+        }
+        return changed ? next : prev
+      })
+    }, 100)
+    return () => clearInterval(timer)
+  }, [])
+
   const card: React.CSSProperties = {
     background: '#1F1F1F', border: '1px solid #3D3D3D', borderRadius: '8px',
     padding: '1rem', marginTop: '1rem',
@@ -455,6 +498,7 @@ function ActiveCyclesPanel(): React.ReactElement {
           <tbody>
             {cycles.map(c => {
               const k = `${c.device_id}|${c.site}`
+              const animIdx = displayIdx.get(k) ?? c.idx
               const hbStr = c.heartbeat_ago_sec === null ? '-' : `${fmtNum(c.heartbeat_ago_sec)}초 전`
               const avgStr = c.avg_sec_per_item === null || c.avg_sec_per_item === undefined
                 ? '-'
@@ -510,7 +554,7 @@ function ActiveCyclesPanel(): React.ReactElement {
                   <td style={{ padding: '0.4rem', textAlign: 'right' }}>
                     {isInactive ? '-' : (
                       <div>
-                        <div>{`${fmtNum(c.idx)} / ${fmtNum(c.total)}`}</div>
+                        <div>{`${fmtNum(animIdx)} / ${fmtNum(c.total)}`}</div>
                         {batchAgo !== null && (
                           <div style={{ fontSize: '0.7rem', color: batchColor }}>
                             배치 {fmtNum(batchAgo)}초
