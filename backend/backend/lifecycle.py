@@ -1278,15 +1278,15 @@ async def _sourcing_job_cleanup_loop() -> None:
                 _deleted_n = deleted.rowcount or 0
         except Exception as exc:
             _log.warning("[sourcing-cleanup] 7일 DELETE 실패 (무시): %s", exc)
-        # transmit 잡 청소 (2026-06-17):
-        # 테트리스 매칭이 매 sync 마다 브랜드×계정×상품 단위로 transmit 잡을 대량 생성 →
-        # samba_jobs 에 종료(completed/failed/cancelled) 잡이 수만 건 누적돼 테이블 bloat + 목록 렉.
+        # transmit / autotune_transmit 잡 청소:
+        # 테트리스·오토튠이 매 sync 마다 대량 생성 → 종료 잡 수만 건 누적 → bloat + 목록 렉.
         # 활성(pending/running)은 절대 건드리지 않음.
-        # 이어하기/큐상태/잡목록 조회는 모두 최근 잡 기준이라 오래된 종료 잡 삭제는 무해.
-        #  ① 모든 transmit 종료 잡: 7일↑ 삭제 (소싱 잡 청소와 동일 보존 기간)
-        #  ② tetris_sync 출처: 3일↑ 삭제 (churn 다발이라 더 공격적으로)
+        #  ① transmit 종료 잡: 7일↑ 삭제
+        #  ② tetris_sync 출처 transmit: 3일↑ 삭제 (churn 다발)
+        #  ③ autotune_transmit 종료 잡: 1일↑ 삭제 (#459 — 고볼륨 transient sync)
         _tx_old_deleted = 0
         _tetris_job_deleted = 0
+        _autotune_tx_deleted = 0
         try:
             async with get_write_session() as session:
                 txdel = await session.execute(
@@ -1318,13 +1318,36 @@ async def _sourcing_job_cleanup_loop() -> None:
             _log.warning(
                 "[sourcing-cleanup] 테트리스 transmit 잡 DELETE 실패 (무시): %s", exc
             )
-        if _expired_n or _deleted_n or _tx_old_deleted or _tetris_job_deleted:
+        try:
+            async with get_write_session() as session:
+                atdel = await session.execute(
+                    text(
+                        "DELETE FROM samba_jobs "
+                        "WHERE job_type = 'autotune_transmit' "
+                        "AND status IN ('completed', 'failed', 'cancelled') "
+                        "AND created_at < now() - interval '1 day'"
+                    )
+                )
+                await session.commit()
+                _autotune_tx_deleted = atdel.rowcount or 0
+        except Exception as exc:
+            _log.warning(
+                "[sourcing-cleanup] autotune_transmit 1일 DELETE 실패 (무시): %s", exc
+            )
+        if (
+            _expired_n
+            or _deleted_n
+            or _tx_old_deleted
+            or _tetris_job_deleted
+            or _autotune_tx_deleted
+        ):
             _log.info(
-                "[sourcing-cleanup] expired=%d deleted=%d transmit_7d=%d tetris_3d=%d",
+                "[sourcing-cleanup] expired=%d deleted=%d transmit_7d=%d tetris_3d=%d autotune_1d=%d",
                 _expired_n,
                 _deleted_n,
                 _tx_old_deleted,
                 _tetris_job_deleted,
+                _autotune_tx_deleted,
             )
 
 
@@ -1470,6 +1493,156 @@ async def _start_smartstore_ghost_reconciler() -> None:
 
 
 _coupang_ghost_reconciler_task: asyncio.Task | None = None
+_soldout_cleanup_task: asyncio.Task | None = None
+
+
+async def _soldout_cleanup_loop() -> None:
+    """품절 잔존 상품 마켓삭제 재시도 루프 — 10분마다.
+
+    sale_status='sold_out'인데 registered_accounts가 남아있는 상품을
+    오토튠 사이클·배치 실행 여부와 무관하게 주기적으로 마켓 삭제.
+    배포/재시작으로 오토튠 배치가 실행되지 못한 경우도 커버.
+    """
+    _log = logging.getLogger("backend.lifecycle")
+    while True:
+        await asyncio.sleep(600)  # 10분 대기 후 실행
+        try:
+            from sqlmodel import select
+            from sqlalchemy import String, cast
+            from sqlalchemy.dialects.postgresql import JSONB
+            from backend.db.orm import get_write_session
+            from backend.domain.samba.collector.model import (
+                SambaCollectedProduct as _CP,
+            )
+            from backend.domain.samba.account.model import SambaMarketAccount
+            from backend.domain.samba.shipment.dispatcher import delete_from_market
+
+            # market_cond 조건과 동일
+            async with get_write_session() as session:
+                stmt = (
+                    select(_CP)
+                    .where(
+                        _CP.sale_status == "sold_out",
+                        _CP.lock_delete.is_not(True),
+                        _CP.registered_accounts.isnot(None),
+                        _CP.registered_accounts.op("!=")(cast("null", JSONB)),
+                        _CP.registered_accounts.op("!=")(cast("[]", JSONB)),
+                        _CP.market_product_nos.isnot(None),
+                        cast(_CP.market_product_nos, String) != "null",
+                        cast(_CP.market_product_nos, String) != "{}",
+                    )
+                    .limit(100)
+                )
+                result = await session.exec(stmt)
+                products = result.all()
+
+            if not products:
+                continue
+
+            _log.info("[soldout-cleanup] 품절 잔존 재시도: %d건", len(products))
+
+            # 계정 캐시 로드
+            all_acc_ids: set[str] = set()
+            for p in products:
+                if p.registered_accounts:
+                    all_acc_ids.update(p.registered_accounts)
+
+            acc_cache: dict[str, object] = {}
+            if all_acc_ids:
+                async with get_write_session() as session:
+                    acc_stmt = select(SambaMarketAccount).where(
+                        SambaMarketAccount.id.in_(list(all_acc_ids))
+                    )
+                    acc_result = await session.exec(acc_stmt)
+                    for a in acc_result.all():
+                        acc_cache[a.id] = a
+
+            # 상품별 마켓 삭제 시도
+            for sp in products:
+                sp_reg = list(sp.registered_accounts or [])
+                sp_mnos = dict(sp.market_product_nos or {})
+                ok_ids: list[str] = []
+
+                for acc_id in sp_reg:
+                    acc = acc_cache.get(acc_id)
+                    if not acc:
+                        continue
+                    m_type = acc.market_type
+                    if m_type in ("smartstore",):
+                        pno = sp_mnos.get(f"{acc_id}_origin", "") or sp_mnos.get(
+                            acc_id, ""
+                        )
+                    elif m_type in ("gmarket", "auction"):
+                        pno = sp_mnos.get(f"{acc_id}_master") or sp_mnos.get(acc_id, "")
+                    else:
+                        pno = sp_mnos.get(acc_id, "")
+                    if isinstance(pno, dict):
+                        pno = ""
+
+                    pd = {
+                        **{
+                            k: v
+                            for k, v in sp.__dict__.items()
+                            if not k.startswith("_")
+                        },
+                        "market_product_no": {m_type: pno},
+                    }
+                    try:
+                        async with get_write_session() as del_session:
+                            dr = await delete_from_market(
+                                del_session, m_type, pd, account=acc
+                            )
+                            await del_session.commit()
+                        if dr.get("success") and not dr.get("soldout_fallback"):
+                            ok_ids.append(acc_id)
+                            _log.info(
+                                "[soldout-cleanup] 삭제 완료: %s → %s(%s)",
+                                (sp.name or sp.id)[:30],
+                                acc.market_name,
+                                acc.seller_id or "-",
+                            )
+                        else:
+                            _log.warning(
+                                "[soldout-cleanup] 삭제 실패: %s → %s: %s",
+                                (sp.name or sp.id)[:30],
+                                acc.market_name,
+                                dr.get("message", "")[:100],
+                            )
+                    except Exception as del_e:
+                        _log.error(
+                            "[soldout-cleanup] 삭제 오류: %s → %s: %s",
+                            (sp.name or sp.id)[:30],
+                            m_type,
+                            del_e,
+                        )
+
+                if ok_ids:
+                    new_regs = [a for a in sp_reg if a not in ok_ids]
+                    async with get_write_session() as upd_session:
+                        upd_sp = await upd_session.get(_CP, sp.id)
+                        if upd_sp:
+                            upd_sp.registered_accounts = new_regs if new_regs else None
+                            if not new_regs:
+                                upd_sp.market_product_nos = None
+                            upd_session.add(upd_sp)
+                            await upd_session.commit()
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logging.getLogger("backend.lifecycle").error(
+                "[soldout-cleanup] 루프 오류: %s", e
+            )
+
+
+async def _start_soldout_cleanup() -> None:
+    """품절 잔존 마켓삭제 재시도 루프 시작."""
+    global _soldout_cleanup_task
+
+    _soldout_cleanup_task = asyncio.create_task(_soldout_cleanup_loop())
+    logging.getLogger("backend.lifecycle").info(
+        "[lifecycle] 품절 잔존 마켓삭제 재시도 루프 시작 (10분 주기)"
+    )
 
 
 async def _start_coupang_ghost_reconciler() -> None:
@@ -1644,6 +1817,30 @@ async def lifespan(app: FastAPI):
         )
         # 전송 잡 boot 복구 후 JobWorker 만 기동. 수집/소싱 복구는 A 가 담당.
         await _recover_running_jobs(startup_logger)
+        # 데몬 레지스트리 read-only 미러 — daemon-only source(SSG/ABC/LOTTEON) 전송 시
+        # owner 해석(_resolve_job_owner → pick_daemon_owner)이 _pc_allowed_sites /
+        # _pc_last_seen 을 참조하므로 워커도 복원 필요. write / autotune spawn 안 함.
+        from backend.api.v1.routers.samba.collector_autotune import (  # noqa: F811
+            restore_pc_allowed_sites_from_db,
+            restore_pc_last_seen_from_db,
+            sync_pc_allowed_sites_from_db,
+        )
+
+        await restore_pc_allowed_sites_from_db()
+        await restore_pc_last_seen_from_db()
+
+        async def _pc_sync_loop_worker() -> None:
+            """워커 전용 데몬 레지스트리 15s 주기 sync (read-only, autotune spawn 없음)."""
+            _wlg = logging.getLogger("backend.pc-sync-worker")
+            while True:
+                try:
+                    await sync_pc_allowed_sites_from_db()
+                    await restore_pc_last_seen_from_db()
+                except Exception as _e:
+                    _wlg.warning(f"[pc-sync-worker] sync 실패(무시): {_e}")
+                await asyncio.sleep(15)
+
+        asyncio.create_task(_pc_sync_loop_worker(), name="pc-sync-worker")
         worker_runtime = await _start_worker_runtime()
     else:
         await _recover_running_jobs(startup_logger)
@@ -1664,6 +1861,7 @@ async def lifespan(app: FastAPI):
         await _start_smartstore_ghost_reconciler()
         await _start_coupang_ghost_reconciler()
         await _start_tracking_dispatch_sweep()
+        await _start_soldout_cleanup()
     _validate_startup_settings()
 
     try:
@@ -1689,6 +1887,7 @@ async def lifespan(app: FastAPI):
         await _cancel_task(_smartstore_ghost_reconciler_task)
         await _cancel_task(_coupang_ghost_reconciler_task)
         await _cancel_task(_tracking_dispatch_sweep_task)
+        await _cancel_task(_soldout_cleanup_task)
         await _shutdown_worker_runtime(worker_runtime)
         await _cancel_task(getattr(app.state, "_pool_monitor_task", None))
         await _disconnect_cache()

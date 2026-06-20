@@ -198,6 +198,64 @@ class SambaJobRepository(BaseRepository[SambaJob]):
             await self.session.flush()
         return job
 
+    async def claim_autotune_pending_job(
+        self,
+        exclude_autotune_accounts: set[str] | None = None,
+    ) -> Optional[SambaJob]:
+        """autotune_transmit 잡 전용 고속 claim (FOR UPDATE SKIP LOCKED).
+
+        claim_pending_job 의 CASE 정렬키 3종은 job_type='transmit' 게이트라
+        autotune_transmit에서 전부 0(상수) → 실제 정렬은 created_at 뿐.
+        부분 인덱스 ix_samba_jobs_autotune_pending(created_at) WHERE
+        status='pending' AND job_type='autotune_transmit' 를 타면
+        pending 전체 스캔 없이 O(1) walk → 5,035ms → 0.25ms (#459).
+        """
+        from sqlalchemy import text as _sa_text
+
+        _job_accounts_sql = self._payload_account_array_sql("samba_jobs")
+        _running_accounts_sql = self._payload_account_array_sql("r")
+
+        # autotune_transmit끼리만 계정 직렬화 (transmit과 격리)
+        _db_account_lock = _sa_text(
+            "(NOT EXISTS ("
+            "SELECT 1 FROM samba_jobs r "
+            "WHERE r.status = 'running' "
+            "AND r.job_type = 'autotune_transmit' "
+            "AND r.id <> samba_jobs.id "
+            f"AND {_job_accounts_sql} && {_running_accounts_sql}"
+            "))"
+        )
+
+        stmt = (
+            select(SambaJob)
+            .where(
+                SambaJob.status == JobStatus.PENDING,
+                SambaJob.job_type == "autotune_transmit",
+            )
+            .where(_db_account_lock)
+            .order_by(SambaJob.created_at.asc())
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        )
+
+        if exclude_autotune_accounts:
+            _excl_list = list(exclude_autotune_accounts)
+            _no_overlap = _sa_text(
+                "(NOT EXISTS ("
+                f"SELECT 1 FROM unnest({_job_accounts_sql}) AS v "
+                "WHERE v = ANY(:excl_autotune_accs)))"
+            ).bindparams(excl_autotune_accs=_excl_list)
+            stmt = stmt.where(_no_overlap)
+
+        result = await self.session.execute(stmt)
+        job = result.scalars().first()
+        if job:
+            job.status = JobStatus.RUNNING
+            job.started_at = datetime.now(UTC)
+            self.session.add(job)
+            await self.session.flush()
+        return job
+
     # ── 레거시 메서드 (하위 호환용, 다른 호출부가 있을 수 있음) ──
 
     async def pick_next_pending(self) -> Optional[SambaJob]:

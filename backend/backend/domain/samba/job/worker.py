@@ -620,6 +620,8 @@ class JobWorker:
         # 비-transmit(collect/delete/기타)이 들어와도 큐 진행이 막히지 않도록 여유 둠
         max_picks = transmit_slots + 2
         picked = 0
+        # bg 세마포어 초기값 — over-claim 게이트용 (#459)
+        _bg_max = int(os.environ.get("JOB_BG_TRANSMIT_MAX_CONCURRENCY", "6"))
 
         for _ in range(max_picks):
             # 매 iteration마다 fresh write session — claim → commit 후 즉시 닫아
@@ -638,7 +640,8 @@ class JobWorker:
                 _excl_types: set[str] = {"bg_remove"}
                 # 프로세스 분리: API(A) 워커는 transmit/order_sync 를 B 에 위임
                 _excl_types |= self._extra_exclude_types
-                if is_cancel_requested("__all__"):
+                _cancel_all = is_cancel_requested("__all__")
+                if _cancel_all:
                     if self._poll_count % 12 == 0:  # 60초(5s × 12)마다 1회 경고
                         logger.warning(
                             "[잡워커] 전역 취소 플래그(__all__) 활성 → transmit 클레임 차단 중. "
@@ -646,18 +649,57 @@ class JobWorker:
                         )
                     _excl_types.add("transmit")
                     _excl_types.add("autotune_transmit")
-                job = await repo.claim_pending_job(
-                    exclude_sources=_excl_sources or None,
-                    exclude_brand_all=self._brand_all_running,
-                    exclude_types=_excl_types,
-                    exclude_accounts=_excl_accounts or None,
-                    exclude_autotune_accounts=_excl_autotune_accounts or None,
-                    only_types=self._only_types,
+
+                # autotune_transmit 고속 전용 claim (#459):
+                # claim_pending_job 의 CASE 정렬키는 job_type='transmit' 게이트라
+                # autotune_transmit에서 전부 0 → created_at 단일 정렬과 동일.
+                # 부분 인덱스(ix_samba_jobs_autotune_pending)로 O(1) walk.
+                # over-claim 게이트: bg 세마포어 여유분만큼만 claim.
+                _autotune_running = len(self._active_autotune_accounts)
+                _can_claim_autotune = (
+                    not _cancel_all
+                    and "autotune_transmit" not in _excl_types
+                    and (
+                        self._only_types is None
+                        or "autotune_transmit" in self._only_types
+                    )
+                    and _autotune_running < _bg_max
                 )
-                if not job:
-                    break
-                self._active_job_ids.add(job.id)
-                await session.commit()
+                if _can_claim_autotune:
+                    job = await repo.claim_autotune_pending_job(
+                        exclude_autotune_accounts=_excl_autotune_accounts or None,
+                    )
+                    if job:
+                        self._active_job_ids.add(job.id)
+                        await session.commit()
+                        # autotune 잡 직접 처리로 이동
+                        # (아래 일반 claim 없이 바로 루프 후반부로)
+                    else:
+                        # autotune 없음 → 일반 잡 claim
+                        job = await repo.claim_pending_job(
+                            exclude_sources=_excl_sources or None,
+                            exclude_brand_all=self._brand_all_running,
+                            exclude_types=_excl_types | {"autotune_transmit"},
+                            exclude_accounts=_excl_accounts or None,
+                            only_types=self._only_types,
+                        )
+                        if not job:
+                            break
+                        self._active_job_ids.add(job.id)
+                        await session.commit()
+                else:
+                    job = await repo.claim_pending_job(
+                        exclude_sources=_excl_sources or None,
+                        exclude_brand_all=self._brand_all_running,
+                        exclude_types=_excl_types,
+                        exclude_accounts=_excl_accounts or None,
+                        exclude_autotune_accounts=_excl_autotune_accounts or None,
+                        only_types=self._only_types,
+                    )
+                    if not job:
+                        break
+                    self._active_job_ids.add(job.id)
+                    await session.commit()
 
             # 전송/마켓삭제: asyncio.Task로 백그라운드 병렬 실행 (동일 계정 순차 보장)
             if job.job_type in ("transmit", "autotune_transmit", "delete_market"):

@@ -562,29 +562,66 @@ async def _enqueue_autotune_transmit(
     tenant_id: str | None,
     market_type: str = "",
 ) -> None:
-    """오토튠 전송을 samba_jobs transmit 잡으로 발행 (step8).
+    """오토튠 전송을 samba_jobs autotune_transmit 잡으로 발행 (step8).
 
     B 워커가 skip_refresh=True 로 처리 — 오토튠이 이미 가격 갱신했으므로 재수집 생략,
     오토튠이 계정을 직접 지정하므로 정책 계정필터 우회(skip_policy_account_filter).
     market_type 은 발행단 cap(#455)의 마켓별 depth 집계 키 — payload 에 심어 둠.
+
+    멱등 upsert (#459): 같은 (pid, acc_id) pending 잡이 있으면 payload만 갱신.
+    running 전환 시 INSERT 폴백 — 변경 유실 방지. 큐 depth 유계화.
     """
+    from sqlalchemy import text as _sa_text
+    from sqlmodel import select
+
     from backend.db.orm import get_write_session
+    from backend.domain.samba.job.model import JobStatus, SambaJob
     from backend.domain.samba.job.repository import SambaJobRepository
 
+    _new_payload = {
+        "product_ids": [pid],
+        "update_items": items,
+        "target_account_ids": [acc_id],
+        "skip_unchanged": False,
+        "skip_policy_account_filter": True,
+        "skip_refresh": True,
+        "source": "autotune",
+        "market_type": market_type or "",
+    }
     async with get_write_session() as _js:
+        # 같은 (pid, acc_id) pending 잡 조회 — 중복 발행 차단
+        _existing = (
+            (
+                await _js.execute(
+                    select(SambaJob)
+                    .where(
+                        SambaJob.job_type == "autotune_transmit",
+                        SambaJob.status == JobStatus.PENDING,
+                        _sa_text(
+                            "payload->'product_ids' @> CAST(:pid_json AS json)"
+                        ).bindparams(pid_json=f'["{pid}"]'),
+                        _sa_text(
+                            "payload->'target_account_ids' @> CAST(:acc_json AS json)"
+                        ).bindparams(acc_json=f'["{acc_id}"]'),
+                    )
+                    .limit(1)
+                    .with_for_update(skip_locked=True)
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if _existing:
+            # update_items 최신화 후 중복 INSERT 차단
+            _existing.payload = _new_payload
+            _js.add(_existing)
+            await _js.commit()
+            return
+        # pending 없음 → 신규 INSERT
         repo = SambaJobRepository(_js)
         await repo.create_async(
             job_type="autotune_transmit",
-            payload={
-                "product_ids": [pid],
-                "update_items": items,
-                "target_account_ids": [acc_id],
-                "skip_unchanged": False,
-                "skip_policy_account_filter": True,
-                "skip_refresh": True,
-                "source": "autotune",
-                "market_type": market_type or "",
-            },
+            payload=_new_payload,
             tenant_id=tenant_id,
         )
 
@@ -639,9 +676,9 @@ async def _autotune_queue_depth() -> tuple[int, dict[str, int]]:
             stmt = (
                 select(_mkt_col, func.count())
                 .where(
-                    SambaJob.job_type == "transmit",
+                    SambaJob.job_type
+                    == "autotune_transmit",  # #459: 잡타입 분리 후 오탈자 정정
                     SambaJob.status == JobStatus.PENDING,
-                    SambaJob.payload["source"].as_string() == "autotune",
                 )
                 .group_by(text("1"))
             )
