@@ -2533,6 +2533,34 @@ async def _site_autotune_loop(device_id: str, site: str):
                                             except Exception:
                                                 pass
 
+                                    # last_sent_data vs price_changed_at 불일치 감지 [재발방지]:
+                                    # 전송 성공 후 last_sent_data 업데이트 누락 시 expected==last
+                                    # 오판으로 소싱처 가격 변동을 마켓에 반영 못하는 버그 차단.
+                                    # price_changed_at > sent_at = 마지막 전송 이후 가격 변동 있음
+                                    # → expected==last라도 강제 재전송.
+                                    _price_stale = False
+                                    _pca = getattr(product, "price_changed_at", None)
+                                    _lsd_sent_at = (
+                                        acc_last.get("sent_at") if acc_last else None
+                                    )
+                                    if _pca and _lsd_sent_at:
+                                        try:
+                                            _sent_dt = datetime.fromisoformat(
+                                                str(_lsd_sent_at)
+                                            )
+                                            if _sent_dt.tzinfo is None:
+                                                _sent_dt = _sent_dt.replace(
+                                                    tzinfo=timezone.utc
+                                                )
+                                            _pca_aware = (
+                                                _pca
+                                                if _pca.tzinfo
+                                                else _pca.replace(tzinfo=timezone.utc)
+                                            )
+                                            _price_stale = _pca_aware > _sent_dt
+                                        except Exception:
+                                            pass
+
                                     # 초기 cost 교정 — 이전 전송 cost가 정가 폴백(과거 추출실패 잔재)인 경우
                                     # 새로 정확한 혜택가가 들어와도 "가격변동"으로 인식되어 전송되는 사고 차단.
                                     # 조건: 이전 acc_last.cost == product.original_price (정가 폴백 의심)
@@ -2583,8 +2611,24 @@ async def _site_autotune_loop(device_id: str, site: str):
                                         continue
 
                                     if (
-                                        expected_price != last_price or _has_failed_mark
+                                        expected_price != last_price
+                                        or _has_failed_mark
+                                        or _price_stale
                                     ) and not _price_blocked:
+                                        if (
+                                            _price_stale
+                                            and expected_price == last_price
+                                        ):
+                                            log.info(
+                                                "[오토튠][stale감지] %s acc=%s: "
+                                                "expected==last(%s)이나 price_changed_at(%s) > sent_at(%s) "
+                                                "→ 강제 재전송",
+                                                _prod_label,
+                                                acc_id[:20],
+                                                expected_price,
+                                                _pca,
+                                                _lsd_sent_at,
+                                            )
                                         price_changed_count += 1
                                         _all_price_pids.add(r.product_id)
                                         # 표시 전용: 실제 마켓 등록가(추가수수료 역산 반영).
