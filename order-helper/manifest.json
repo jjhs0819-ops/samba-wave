@@ -9,6 +9,7 @@
     "https://abcmart.a-rt.com/*",
     "https://grandstage.a-rt.com/*",
     "https://www.lotteon.com/*",
+    "https://www.fashionplus.co.kr/*",
     "https://samba-wave-xi.vercel.app/*",
     "https://dapi.kakao.com/*"
   ],
@@ -39,6 +40,12 @@
       "matches": ["https://www.lotteon.com/*"],
       "js": ["content-lotteon.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.fashionplus.co.kr/*"],
+      "js": ["content-fashionplus.js"],
+      "run_at": "document_idle",
+      "all_frames": false
     }
   ],
   "action": {

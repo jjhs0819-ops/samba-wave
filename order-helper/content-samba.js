@@ -125,18 +125,18 @@
       chrome.storage.local.remove('job'); // 이전 job 잔존으로 인한 오작동 방지
       return;
     }
-    if (o.source && ['MUSINSA', 'ABCMART', 'GRANDSTAGE', 'LOTTEON'].indexOf(o.source) < 0) {
+    if (o.source && ['MUSINSA', 'ABCMART', 'GRANDSTAGE', 'LOTTEON', 'FASHIONPLUS'].indexOf(o.source) < 0) {
       log('미지원 소싱처 →', o.source);
       toast(`${o.source} 주문은 자동주문 미지원. 원문링크만 열립니다.`, '#c92a2a');
       chrome.storage.local.remove('job');
       return;
     }
-    // 연락처 규칙: ABC는 무조건 고정번호, 무신사는 0502 안심번호만 대체
+    // 연락처 규칙: ABC/패션플러스/롯데온은 무조건 고정번호, 그 외(무신사)는 0502 안심번호만 대체
     let phone = o.phone;
-    const isAbc = o.source === 'ABCMART' || o.source === 'GRANDSTAGE';
-    if (isAbc) {
+    const FORCE_PHONE = ['ABCMART', 'GRANDSTAGE', 'FASHIONPLUS', 'LOTTEON'];
+    if (FORCE_PHONE.indexOf(o.source) >= 0) {
       phone = '010-8282-3536';
-      log('ABC 주문 → 연락처 010-8282-3536 고정');
+      log(`${o.source} 주문 → 연락처 010-8282-3536 고정`);
     } else if (/^0502/.test((phone || '').replace(/[^0-9]/g, ''))) {
       phone = '010-8282-3536';
       log('안심번호(0502) 감지 → 010-8282-3536 으로 대체');
