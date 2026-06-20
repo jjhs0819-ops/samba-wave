@@ -481,7 +481,11 @@ const ProductCard = React.memo(function ProductCard({
     }).catch(() => {})
   }
   // 통화 기호: SNKRDUNK 등 USD 소싱처는 달러($)로 표기 (원화 환산 안 함, 달러 값 그대로)
-  const curSym = ((p.extra_data as Record<string, unknown> | undefined)?.currency === 'USD') ? '$' : '₩'
+  // source_site 기준 판정 우선 — extra_data가 목록 응답에서 누락/미설정인 경우에도 일관 표기.
+  const USD_SOURCE_SITES = ['SNKRDUNK', 'AMAZON', 'EBAY', 'SHOPIFY', 'LAZADA', 'SHOPEE', 'QOO10']
+  const isUsdSource = USD_SOURCE_SITES.includes((p.source_site || '').toUpperCase())
+    || (p.extra_data as Record<string, unknown> | undefined)?.currency === 'USD'
+  const curSym = isUsdSource ? '$' : '₩'
   const policy = policies.find((pol) => pol.id === p.applied_policy_id)
   const pricing = (policy?.pricing || {}) as Record<string, unknown>
   // 원가: excludeHeldPoint 토글 켜져 있고 cost_excl_held_point 값이 있으면 그것 우선

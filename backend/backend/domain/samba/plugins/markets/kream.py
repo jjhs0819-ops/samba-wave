@@ -133,6 +133,31 @@ class KreamPlugin(MarketPlugin):
         except (TypeError, ValueError):
             fallback_price = 0
 
+        # 가격정책 적용 준비 — 옵션 원가(SNKRDUNK는 USD)를 정책관리 가격정책으로
+        # 환율변환(convert_cost_by_source_site, snkrdunk→USD) + 마진 계산해 KRW ask 가격 산출.
+        policy_id = str(product.get("applied_policy_id") or "").strip()
+        source_site = str(product.get("source_site") or "").strip()
+        tenant_id = product.get("tenant_id") or getattr(account, "tenant_id", None)
+        _policy_svc = None
+        if policy_id:
+            from backend.domain.samba.policy.repository import SambaPolicyRepository
+            from backend.domain.samba.policy.service import SambaPolicyService
+
+            _policy_svc = SambaPolicyService(SambaPolicyRepository(session))
+
+        async def _resolve_price(opt_cost: float) -> int:
+            """옵션 원가 → 정책 적용 KRW 입찰가. 정책 없으면 원가 그대로(환율만 미적용 폴백)."""
+            if _policy_svc and policy_id and opt_cost > 0:
+                try:
+                    return int(
+                        await _policy_svc.calculate_market_price(
+                            policy_id, float(opt_cost), 0.0, source_site, tenant_id
+                        )
+                    )
+                except Exception:
+                    pass
+            return int(opt_cost or 0)
+
         for opt in options:
             raw_name = (opt.get("name") or opt.get("size") or "").strip()
             # SNKRDUNK 등 타 소싱처는 컨디션 → KREAM size 라벨로 변환.
@@ -146,18 +171,18 @@ class KreamPlugin(MarketPlugin):
             else:
                 size = raw_name
             try:
-                price = int(opt.get("price") or fallback_price)
+                opt_cost = float(opt.get("price") or fallback_price)
             except (TypeError, ValueError):
-                price = fallback_price
+                opt_cost = float(fallback_price)
+            price = await _resolve_price(opt_cost)
             if size and price > 0:
                 r = await client.create_ask(product_id, size, price, sale_type)
                 results.append(r)
 
         if not results and fallback_price > 0:
             # 단일 상품 (옵션 없음) — KREAM이 거부할 수 있으나 응답 메시지로 노출
-            r = await client.create_ask(
-                product_id, "ONE_SIZE", fallback_price, sale_type
-            )
+            one_price = await _resolve_price(float(fallback_price))
+            r = await client.create_ask(product_id, "ONE_SIZE", one_price, sale_type)
             results.append(r)
 
         ok_count = sum(1 for r in results if r.get("success"))
