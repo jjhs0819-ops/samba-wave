@@ -221,6 +221,7 @@ _pc_site_last_ticks: dict[str, dict[str, str]] = {}
 _pc_site_empty_hits: dict[str, dict[str, int]] = {}
 _pc_site_heartbeats: dict[str, dict[str, float]] = {}
 _pc_target_ids: dict[str, Optional[set]] = {}
+_AUTOTUNE_CYCLE_BATCH = int(os.environ.get("AUTOTUNE_CYCLE_BATCH", "200"))
 # 사이트별 적응 배치 크기 (device_id → site → int).
 # 직전 배치 소요시간 기준으로 다음 배치 SELECT limit 자동 조정. 미설정 시 env 기본값 사용.
 _pc_site_batch_size: dict[str, dict[str, int]] = {}
@@ -1317,10 +1318,7 @@ async def _site_autotune_loop(device_id: str, site: str):
                     _target_ids = _pc_target_ids.get(device_id)
                     if _target_ids:
                         _where.append(_CP.id.in_(_target_ids))
-                    # 배치 상한 제거 — 사이클당 전체 상품을 한 번에 처리.
-                    # last_refreshed_at asc nullsfirst 정렬로 오래된 상품 우선.
-                    # SELECT 후 즉시 session.commit()+close()로 연결 반납하므로
-                    # 긴 HTTP 처리 중 idle-in-transaction 없음.
+                    _batch_limit = _pc_bs(device_id).get(site, _AUTOTUNE_CYCLE_BATCH)
                     stmt = (
                         select(_CP)
                         .where(*_where)
@@ -1332,16 +1330,15 @@ async def _site_autotune_loop(device_id: str, site: str):
                             defer(_CP.extra_data),
                         )
                     )
+                    if not _target_ids:
+                        stmt = stmt.limit(_batch_limit)
+                    result = await session.exec(stmt)
                     _seen_ids: set[str] = set()
                     products = []
-                    _row_idx = 0
-                    async for p in await session.stream_scalars(stmt):
+                    for p in result.all():
                         if p.id not in _seen_ids:
                             _seen_ids.add(p.id)
                             products.append(p)
-                        _row_idx += 1
-                        if _row_idx % 500 == 0:
-                            await asyncio.sleep(0)
 
                     # ── 판매처 필터 사전 적용 ──
                     # _enabled_markets 활성 시, 활성 마켓 타입에 등록된 계정이 하나라도
