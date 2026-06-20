@@ -680,52 +680,70 @@ def build_cs_text(with_comment: bool = True) -> str:
     )
 
     lines = [
-        "💬 CS 현황 (전날 기준)",
+        "💬 CS 현황 (전날)",
         "",
-        f"✅ 처리: {replied}건 · ⏳ 미처리: {pending}건",
-        f"⏰ 미처리 중 24시간 경과: {overdue}건",
+        f"· 처리 {replied}건",
+        f"· 미처리 {pending}건",
+        f"· 24시간 경과 {overdue}건",
     ]
-    if with_comment:
-        _append_comment(lines, "CS")
     return "\n".join(lines)
 
 
-# 수거 상태 코드 → 한글 (반품 status 필드 값)
-_COLLECT_LABELS = {"not_collected": "미수거", "collecting": "수거중", "collected": "수거완료"}
+def _dedup_returns(rows: list) -> list:
+    """주문번호 기준 중복제거 — /returns 페이지(dedupedReturns)와 동일 규칙.
+    완료(취소/반품/교환) 우선, 같으면 최신(return_request_date|created_at) 우선.
+    주문번호 없으면 각각 별개로 유지."""
+    def _done(r) -> bool:
+        return (r.get("completion_detail") or "") in ("취소", "반품", "교환")
+
+    def _ts(r) -> float:
+        d = _parse_dt(r.get("return_request_date") or r.get("created_at"))
+        return d.timestamp() if d else 0.0
+
+    seen: dict[str, int] = {}
+    res: list = []
+    for r in rows:
+        key = (r.get("order_number") or "").strip()
+        if not key:
+            res.append(r)
+            continue
+        if key not in seen:
+            seen[key] = len(res)
+            res.append(r)
+        else:
+            cur = res[seen[key]]
+            cd, ud = _done(r), _done(cur)
+            if (cd if cd != ud else _ts(r) > _ts(cur)):
+                res[seen[key]] = r
+    return res
 
 
 def build_returns_text(with_comment: bool = True) -> str:
-    """반품 — 최근 한 달. 대기중/취소완료 + '반품신청완료' 메모 건의 수거상태."""
-    today = _kst_date()
-    month_ago = _kst_date(-30)
-    rows = samba.returns_list(month_ago, today)  # order_date 기준 최근 30일
+    """반품 — 이번달. 주문번호 기준 중복제거 후 대기중/취소완료 + 반품신청완료 수거상태."""
+    now = datetime.now(KST)
+    rows = samba.returns_list(now.strftime("%Y-%m-01"), _kst_date())  # order_date 기준 이번달
     if rows is None:
         return "❌ 삼바 서버 연결 실패 (반품)."
 
-    # 완료내역 토글 기준 = completion_detail (웹 /returns 페이지와 동일)
+    rows = _dedup_returns(rows)  # 페이지와 동일하게 중복제거 후 집계
+    # 완료내역(completion_detail) 기준 — 웹 /returns 페이지와 동일
     waiting = sum(1 for r in rows if (r.get("completion_detail") or "진행중") == "진행중")
     cancel_done = sum(1 for r in rows if r.get("completion_detail") == "취소")
 
-    # 메모에 '반품신청완료' 적힌 건 중 미수거/수거중/수거완료
-    collect: dict[str, int] = {"not_collected": 0, "collecting": 0, "collected": 0}
+    collect = {"not_collected": 0, "collecting": 0, "collected": 0}
     for r in rows:
-        if "반품신청완료" in (r.get("memo") or ""):
-            stt = (r.get("status") or "")
-            if stt in collect:
-                collect[stt] += 1
+        if "반품신청완료" in (r.get("memo") or "") and (r.get("status") or "") in collect:
+            collect[r["status"]] += 1
 
-    lines = [
-        "🔄 반품/교환 현황 (최근 한 달)",
+    return "\n".join([
+        "🔄 반품/교환 (이번달)",
         "",
-        f"⏳ 대기중: {waiting}건",
-        f"✅ 취소완료: {cancel_done}건",
+        f"· 대기중 {waiting}건",
+        f"· 취소완료 {cancel_done}건",
         "",
-        "📦 '반품신청완료' 메모 건:",
-        f"  미수거 {collect['not_collected']} · 수거중 {collect['collecting']} · 수거완료 {collect['collected']}건",
-    ]
-    if with_comment:
-        _append_comment(lines, "반품")
-    return "\n".join(lines)
+        "· 반품신청완료 메모",
+        f"  미수거 {collect['not_collected']} · 수거중 {collect['collecting']} · 수거완료 {collect['collected']}",
+    ])
 
 
 def _require_samba(chat_id: int) -> bool:
@@ -864,8 +882,8 @@ def _daily_report_loop() -> None:
                 f"🌅 {datetime.now(KST).strftime('%Y년 %m월 %d일')} 아침 보고",
                 build_sales_text(with_comment=False),
                 build_order_status_text(with_comment=False),
-                build_cs_text(with_comment=False),
                 build_returns_text(with_comment=False),
+                build_cs_text(with_comment=False),
             ])
         except Exception as e:
             digest = f"⚠️ 아침 보고 생성 실패: {e}"
