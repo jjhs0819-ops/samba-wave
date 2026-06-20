@@ -78,7 +78,7 @@ except ImportError:
 # ====================================================================
 # 데몬 버전 — build.ps1 가 갱신. 자동 업데이트 비교 기준.
 # ====================================================================
-DAEMON_VERSION = "1.4.45"
+DAEMON_VERSION = "1.4.46"
 
 # N건 처리 후 프록시 교체를 위해 supervisor 재기동 유도 (0=비활성)
 _PROXY_ROTATE_AFTER = 10
@@ -2998,7 +2998,8 @@ async def run_daemon(args: argparse.Namespace) -> int:
             # 렌더러 메모리를 리셋한다. max-uptime(1시간) 재시작 전에 누수를 끊는 1차 방어선.
             # 2026-05-30: 50→10 하향(실측 탭당 ~2GB 누적 → 4탭 ~8GB). 10잡마다 리셋하면
             # 탭당 피크 ~0.5GB 로 억제. 재생성 비용은 new_page 1회(로그인은 context 단위라 유지)로 미미.
-            _PAGE_RECYCLE = int(os.environ.get("DAEMON_PAGE_RECYCLE", "10"))
+            # 2026-06-20: 10→5 하향(실측 53분에 탭당 ~1.7GB 누적 — 예상보다 높아 절반으로).
+            _PAGE_RECYCLE = int(os.environ.get("DAEMON_PAGE_RECYCLE", "5"))
             # 유휴(잡 없음)가 이 초를 넘으면 page 를 닫아 렌더러 메모리를 즉시 회수한다.
             # 백엔드 503/잡 고갈 시 누수 메모리를 계속 쥐고 있던 문제 해결(다음 잡에서 재생성).
             _IDLE_PAGE_CLOSE_SEC = int(
