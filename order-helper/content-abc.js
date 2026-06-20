@@ -34,6 +34,38 @@
   }
   function setRO(el, v) { if (!el) return false; const w = el.readOnly; el.readOnly = false; setVal(el, v); el.readOnly = w; return true; }
 
+  // 주소 분리(무신사/패션플러스와 동일): 도로명+건물번호 뒤(예: 'A동 GMARKET(...)')를 상세주소로.
+  function splitAddress(mainRaw, detailRaw) {
+    const main = (mainRaw || '').trim();
+    const detail = (detailRaw || '').trim();
+    const full = (main + ' ' + detail).replace(/\s+/g, ' ').trim();
+    if (!full) return { address1: main, address2: detail };
+    const tokens = full.split(' ');
+    let anchor = -1;
+    for (let i = 0; i < tokens.length; i++) {
+      if (/[로길]\d*(번길)?$/.test(tokens[i])) anchor = i;
+    }
+    if (anchor < 0) {
+      for (let i = 0; i < tokens.length; i++) {
+        if (/^[가-힣]+(읍|면|동|리)$/.test(tokens[i]) && !/^\d/.test(tokens[i])) anchor = i;
+      }
+    }
+    if (anchor < 0) return { address1: main, address2: detail };
+    let bn = -1;
+    for (let i = anchor + 1; i < tokens.length; i++) {
+      if (/^\d+(-\d+)?(번지)?$/.test(tokens[i])) { bn = i; break; }
+      if (/^\d+(-\d+)?번$/.test(tokens[i])) { bn = i; break; }
+    }
+    if (bn < 0) return { address1: main, address2: detail };
+    let end = bn;
+    if (tokens[bn + 1] && tokens[bn + 1].startsWith('(')) {
+      let j = bn + 1;
+      while (j < tokens.length && !tokens[j].includes(')')) j++;
+      if (j < tokens.length) end = j;
+    }
+    return { address1: tokens.slice(0, end + 1).join(' '), address2: tokens.slice(end + 1).join(' ') || detail };
+  }
+
   let ranProduct = false;
 
   // ── 상품: 사이즈 선택 + 바로구매 ──
@@ -61,7 +93,12 @@
   // ── 주문서: 배송지 자동입력 (결제는 사람이) ──
   async function stepOrder(job) {
     if (job.addrDone) { banner('배송지 입력 완료 ✅ 결제(결제하기)는 직접 진행하세요.', '#1971c2'); return; }
-    const c = job.customer || {};
+    const c = Object.assign({}, job.customer || {});
+    // 라자다 등 — 상세주소가 비어있고 기본주소에 'A동 GMARKET(...)'이 합쳐진 경우 분리
+    if (!String(c.addr2 || '').trim()) {
+      const sp = splitAddress(c.addr, '');
+      if (sp.address2 && sp.address2.trim()) { c.addr = sp.address1; c.addr2 = sp.address2; }
+    }
     banner('배송지 자동입력 중...');
     // 신규입력 모드
     const radio = await waitFor('#newDlvy', 10000);
