@@ -1708,6 +1708,8 @@ async def refresh_products_bulk(
                 if _gk is not None and _idx_ref is not None:
                     _idx_ref[_gk] = _idx_ref.get(_gk, 0) + 1
                     _g_idx = _idx_ref[_gk]
+                    # 카운터 갱신 후 이벤트루프 양보 — active-cycles HTTP 폴링이 즉시 반영
+                    await asyncio.sleep(0)
                 else:
                     _g_idx = 0
                 _log_idx = _g_idx if (_g_idx and _g_total) else _idx

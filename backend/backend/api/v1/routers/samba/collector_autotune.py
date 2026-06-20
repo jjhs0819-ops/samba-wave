@@ -221,7 +221,7 @@ _pc_site_last_ticks: dict[str, dict[str, str]] = {}
 _pc_site_empty_hits: dict[str, dict[str, int]] = {}
 _pc_site_heartbeats: dict[str, dict[str, float]] = {}
 _pc_target_ids: dict[str, Optional[set]] = {}
-_AUTOTUNE_CYCLE_BATCH = int(os.environ.get("AUTOTUNE_CYCLE_BATCH", "2000"))
+_AUTOTUNE_CYCLE_BATCH = int(os.environ.get("AUTOTUNE_CYCLE_BATCH", "200"))
 # 사이트별 적응 배치 크기 (device_id → site → int).
 # 직전 배치 소요시간 기준으로 다음 배치 SELECT limit 자동 조정. 미설정 시 env 기본값 사용.
 _pc_site_batch_size: dict[str, dict[str, int]] = {}
@@ -3737,6 +3737,8 @@ async def _site_autotune_loop(device_id: str, site: str):
                                     pass
 
                                 for _sp in _soldout_products:
+                                    # 품절 재시도 루프는 배치 후 순차 HTTP — heartbeat 없으면 10분 이상 미활성으로 오표시
+                                    _pc_hb(device_id)[site] = time.time()
                                     _sp_dict = _sp.model_dump()
                                     _sp_reg = list(_sp.registered_accounts or [])
                                     _sp_mnos = dict(_sp.market_product_nos or {})
