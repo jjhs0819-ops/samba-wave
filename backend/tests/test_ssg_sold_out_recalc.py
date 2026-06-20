@@ -165,7 +165,13 @@ def test_ssg_refresh_recomputes_sale_status_after_dom_stock_overlay(
 
         assert result.new_sale_status == "in_stock"
         assert result.new_options == [
-            {"name": "260", "price": 125100, "stock": 1, "isSoldOut": False}
+            {
+                "name": "260",
+                "price": 125100,
+                "stock": 1,
+                "isSoldOut": False,
+                "cost": 125100,
+            }
         ]
 
     asyncio.run(_run())

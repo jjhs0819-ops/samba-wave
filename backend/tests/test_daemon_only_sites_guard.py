@@ -62,8 +62,8 @@ def test_add_detail_job_blocks_daemon_only(site, _stub_db_insert):
     asyncio.run(_run())
 
 
-# 송장 데몬 전용은 SSG/ABCmart/GrandStage/LOTTEON 4개만 — 살아있는 데몬 없으면 RuntimeError.
-# 무신사/GSShop 등은 확장앱 처리(owner='' 로 발행, raise 안 함) → 이 테스트 대상 아님.
+# [2026-06-05] 송장은 전 사이트 확장앱 처리로 전환 — owner="" 발행, RuntimeError 없음.
+# 데몬 가드가 아니라 dequeue 가드(데몬은 tracking 차단)로 라우팅 분리.
 @pytest.mark.parametrize(
     "site",
     [
@@ -73,17 +73,15 @@ def test_add_detail_job_blocks_daemon_only(site, _stub_db_insert):
         "LOTTEON",
     ],
 )
-def test_add_tracking_job_blocks_daemon_only(site, _stub_db_insert):
-    """송장 잡은 11개 사이트 모두 데몬 전용 — 가드 검증."""
+def test_add_tracking_job_uses_extension_owner(site, _stub_db_insert):
+    """송장 잡은 전 사이트 확장앱(owner='') 발행 — 데몬 없어도 RuntimeError 없음."""
     from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
 
     async def _run():
-        # 데몬 매칭 실패 시 RuntimeError — 메시지는 "데몬 미등록"(개별 owner) 또는
-        # "살아있는 데몬 없음"(tracking owner='' 경로, 2026-06-01) 둘 다 가능.
-        with pytest.raises(RuntimeError, match="데몬"):
-            await SourcingQueue.add_tracking_job(
-                site, "https://example.com", "order-1", "ord-num-1"
-            )
+        request_id, _ = await SourcingQueue.add_tracking_job(
+            site, "https://example.com", "order-1", "ord-num-1"
+        )
+        assert request_id  # 잡 적재 성공
 
     asyncio.run(_run())
 

@@ -602,6 +602,13 @@ async def _delete_coupang(
                     "message": f"쿠팡 삭제 실패: {last_err}",
                 }
 
+    # items가 없고 3회 모두 "없거나 삭제 불가" → 쿠팡에 실제로 존재하지 않는 ghost 상품
+    if stop_ok == 0 and "없거나" in last_err:
+        return {
+            "success": True,
+            "message": f"쿠팡 상품 없음(자동정리 — items 0개+없거나 삭제불가): {last_err[:200]}",
+            "ghost_cleanup": True,
+        }
     return {
         "success": False,
         "message": (

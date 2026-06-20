@@ -12,8 +12,8 @@ from backend.domain.samba.cs_inquiry.classifier import (
 
 
 def test_auto_send_intents_is_notice_ack_only():
-    """자동전송 허용 의도는 notice_ack 뿐 — 범위 확장 시 의도적 검토 강제."""
-    assert AUTO_SEND_INTENTS == frozenset({"notice_ack"})
+    """자동전송 허용 의도 — 범위 확장 시 의도적 검토 강제."""
+    assert AUTO_SEND_INTENTS == frozenset({"notice_ack", "product_auth"})
 
 
 def test_platform_notice_is_auto_send_eligible():
