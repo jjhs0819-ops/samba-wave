@@ -38,6 +38,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
@@ -98,7 +99,6 @@ def _http_json(url: str, payload: dict | None = None,
 def _http_get(url: str, params: dict | None = None,
               headers: dict | None = None, timeout: float = 30.0) -> dict:
     if params:
-        import urllib.parse
         query = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
         url = f"{url}?{query}"
     req = urllib.request.Request(url, headers=headers or {})
@@ -208,41 +208,57 @@ class SambaClient:
         preferred = [o for o in orders if (o.get("source_site") or "").upper() == prefer_site.upper()]
         return (preferred or orders)[0]
 
-    # ── 보고용 범용 GET (401 시 1회 재로그인 후 재시도) ──────────────────────
-    def _get(self, path: str, params: dict | None = None):
-        """삼바 백엔드 GET. 성공 시 dict/list, 실패 시 None."""
+    # ── 보고용 범용 GET ──────────────────────────────────────────────────────
+    def _get(self, path: str, params: dict | None = None, timeout: float = 30.0):
+        """삼바 백엔드 GET. 성공 시 dict/list, 실패 시 None.
+
+        401 → 재로그인 후 재시도. 502/503/504·타임아웃 등 일시 오류 →
+        백오프 두며 최대 3회 재시도 (게이트웨이 블립·콜드캐시 대응).
+        """
         if not self.is_ready:
             return None
         url = f"{SAMBA_URL}{path}"
-        for attempt in range(2):
+        last_err = None
+        for attempt in range(3):
             try:
                 return _http_get(url, params=params,
-                                 headers=self._auth_headers(), timeout=20)
+                                 headers=self._auth_headers(), timeout=timeout)
             except urllib.error.HTTPError as e:
-                if e.code == 401 and attempt == 0:
-                    self._token = None  # 강제 재로그인 후 1회 재시도
+                last_err = e
+                if e.code == 401:
+                    self._token = None  # 재로그인 후 재시도
+                    continue
+                if e.code in (502, 503, 504) and attempt < 2:
+                    time.sleep(2 * (attempt + 1))  # 일시 게이트웨이 오류 백오프
                     continue
                 print(f"[삼바] GET {path} 실패: {e}", file=sys.stderr)
                 return None
-            except Exception as e:
+            except Exception as e:  # 타임아웃/URLError 등 → 재시도
+                last_err = e
+                if attempt < 2:
+                    time.sleep(2 * (attempt + 1))
+                    continue
                 print(f"[삼바] GET {path} 실패: {e}", file=sys.stderr)
                 return None
+        if last_err:
+            print(f"[삼바] GET {path} 재시도 소진: {last_err}", file=sys.stderr)
         return None
 
     # 보고 영역별 호출 (경로/파라미터는 백엔드 라우터 본문 기준)
-    def analytics_range(self, start: str, end: str) -> dict | None:
-        return self._get("/api/v1/samba/analytics/range",
-                         {"start_date": start, "end_date": end})
+    def analytics_aggregate(self, start: str, end: str) -> list | None:
+        """결제일(KST)·상태별 매출 사전집계 — 웹 매출통계와 동일 소스.
 
-    def order_dashboard(self) -> dict | None:
-        return self._get("/api/v1/samba/orders/dashboard-stats")
+        rows: [{date, channel_name, source_site, status, sales, orders, profit, cost}].
+        취소/반품 상태를 제외하면 웹의 '이행매출'과 일치.
+        """
+        data = self._get("/api/v1/samba/orders/analytics-aggregate",
+                         {"start": start, "end": end}, timeout=40)
+        if isinstance(data, dict):
+            return data.get("rows", [])
+        return None
 
     def order_status_stats(self) -> dict | None:
         return self._get("/api/v1/samba/analytics/order-status")
-
-    def best_sellers(self, days: int = 30, limit: int = 3) -> list | None:
-        return self._get("/api/v1/samba/analytics/best-sellers",
-                         {"days": str(days), "limit": str(limit)})
 
     def cs_stats(self) -> dict | None:
         return self._get("/api/v1/samba/cs-inquiries/stats")
@@ -466,16 +482,19 @@ _ORDER_STATUS_LABELS = {
     "shipped": "발송완료", "delivered": "배송완료",
     "cancelled": "취소", "cancel_requested": "취소요청",
     "returned": "반품", "return_requested": "반품요청",
+    "returning": "반품처리중", "return_completed": "반품완료",
     "exchanged": "교환완료", "exchanging": "교환중", "exchange_requested": "교환요청",
 }
 _RETURN_STATUS_LABELS = {
     "requested": "요청", "approved": "승인", "completed": "완료",
     "rejected": "거부", "cancelled": "취소",
+    "collecting": "수거중", "collected": "수거완료",
 }
 _CLAIM_TYPE_LABELS = {"cancel": "취소", "return": "반품", "exchange": "교환"}
 _CS_TYPE_LABELS = {
-    "product_question": "상품문의", "delivery": "배송", "exchange_return": "교환/반품",
-    "general": "일반", "urgent_inquiry": "긴급", "claim": "클레임",
+    "product_question": "상품문의", "product": "상품문의", "qna": "Q&A",
+    "delivery": "배송", "exchange_return": "교환/반품",
+    "general": "일반", "문의": "일반", "urgent_inquiry": "긴급", "claim": "클레임",
 }
 
 
@@ -506,72 +525,79 @@ def _append_comment(lines: list[str], area: str) -> None:
         lines += ["", f"🧠 {c}"]
 
 
-def build_sales_text(with_comment: bool = True) -> str:
-    """오늘 + 이달 누계 매출/이익/마진 + 베스트셀러."""
-    today, tomorrow = _kst_date(), _kst_date(1)
-    month_first = datetime.now(KST).strftime("%Y-%m-01")
+def _is_claim_status(status: str) -> bool:
+    """취소/반품 계열 상태인가 — 매출 집계에서 제외 대상.
 
-    day = samba.analytics_range(today, tomorrow)
-    month = samba.analytics_range(month_first, tomorrow)
-    dash = samba.order_dashboard()
-    if day is None and month is None and dash is None:
+    (cancelled/cancel_requested/returned/return_requested/returning 등.
+    교환(exchange)은 매출 유지 — 웹 '이행매출' 기준과 동일.)
+    """
+    s = (status or "").lower()
+    return "cancel" in s or "return" in s
+
+
+def _sum_rows(rows: list, pred) -> tuple[float, float, int]:
+    """집계 rows에서 조건에 맞는 sales/profit/orders 합계."""
+    s = sum((r.get("sales") or 0) for r in rows if pred(r))
+    p = sum((r.get("profit") or 0) for r in rows if pred(r))
+    o = sum((r.get("orders") or 0) for r in rows if pred(r))
+    return s, p, o
+
+
+def build_sales_text(with_comment: bool = True) -> str:
+    """오늘 + 이달 누계 매출/이익/마진 (결제일 KST · 취소·반품 제외 = 웹 이행매출 기준)."""
+    today = _kst_date()
+    month_first = datetime.now(KST).strftime("%Y-%m-01")
+    rows = samba.analytics_aggregate(month_first, today)
+    if rows is None:
         return "❌ 삼바 서버 연결 실패 (매출)."
 
-    lines = [f"💰 매출 보고 ({datetime.now(KST).strftime('%m월 %d일')})", ""]
-    if day:
-        lines += [
-            "▪️ 오늘",
-            f"  매출 {_fmt_price(day.get('total_sales'))} · 주문 {int(day.get('total_orders') or 0)}건",
-            f"  이익 {_fmt_price(day.get('total_profit'))} · 마진 {float(day.get('profit_rate') or 0):.1f}% · 객단가 {_fmt_price(day.get('avg_order_value'))}",
-        ]
-    if month:
-        lines += [
-            "",
-            "▪️ 이달 누계",
-            f"  매출 {_fmt_price(month.get('total_sales'))} · 주문 {int(month.get('total_orders') or 0)}건",
-            f"  이익 {_fmt_price(month.get('total_profit'))} · 마진 {float(month.get('profit_rate') or 0):.1f}%",
-        ]
-        # 원가(소싱처 구매금액) 누락 주문은 이익이 매출만큼 부풀려짐 → 경고 노출
-        missing = int(month.get("orders_missing_cost") or 0)
-        total = int(month.get("total_orders") or 0)
-        if missing > 0:
-            lines.append(
-                f"  ⚠️ 원가 미입력 {missing}/{total}건 — 이 건들은 이익이 실제보다 부풀려져 있어"
-            )
-    if isinstance(dash, dict):
-        change = dash.get("salesChange")
-        tm = dash.get("thisMonth") or {}
-        if change is not None:
-            arrow = "▲" if change > 0 else ("▼" if change < 0 else "—")
-            lines.append(f"  전월대비 {arrow}{abs(change)}% · 이행률 {tm.get('fulfillment', 0)}%")
+    valid = lambda r: not _is_claim_status(r.get("status"))  # noqa: E731
+    day_s, day_p, day_o = _sum_rows(rows, lambda r: r.get("date") == today and valid(r))
+    mon_s, mon_p, mon_o = _sum_rows(rows, valid)
+    cancel_s, _, cancel_o = _sum_rows(rows, lambda r: _is_claim_status(r.get("status")))
 
-    best = samba.best_sellers(days=30, limit=3)
-    if best:
-        lines += ["", "🏆 베스트셀러 (최근 30일)"]
-        for i, p in enumerate(best, 1):
-            name = (p.get("product_name") or "?")[:24]
-            lines.append(f"  {i}. {name} · {_fmt_price(p.get('sales'))} ({int(p.get('units') or 0)}개)")
+    def margin(p, s):
+        return (p / s * 100) if s else 0.0
 
-    lines.append("\nℹ️ 매출=고객 실결제금액 · 이익=실결제−소싱처원가")
+    def aov(s, o):
+        return (s / o) if o else 0
+
+    lines = [
+        f"💰 매출 보고 ({datetime.now(KST).strftime('%m월 %d일')})",
+        "",
+        "▪️ 오늘",
+        f"  매출 {_fmt_price(day_s)} · 주문 {day_o}건",
+        f"  이익 {_fmt_price(day_p)} · 마진 {margin(day_p, day_s):.1f}% · 객단가 {_fmt_price(aov(day_s, day_o))}",
+        "",
+        "▪️ 이달 누계",
+        f"  매출 {_fmt_price(mon_s)} · 주문 {mon_o}건",
+        f"  이익 {_fmt_price(mon_p)} · 마진 {margin(mon_p, mon_s):.1f}%",
+    ]
+    if cancel_o:
+        lines.append(f"  (취소/반품 {cancel_o}건 {_fmt_price(cancel_s)} 제외됨)")
+    lines.append("\nℹ️ 결제일 기준 · 취소/반품 제외 · 이익=실결제−소싱처원가")
     if with_comment:
         _append_comment(lines, "매출")
     return "\n".join(lines)
 
 
 def build_order_status_text(with_comment: bool = True) -> str:
-    """이달 처리량 + 상태별 건수."""
-    dash = samba.order_dashboard()
+    """이달 처리량(결제일·취소제외) + 상태별 누적 건수."""
+    today = _kst_date()
+    month_first = datetime.now(KST).strftime("%Y-%m-01")
+    rows = samba.analytics_aggregate(month_first, today)
     status = samba.order_status_stats()
-    if dash is None and status is None:
+    if rows is None and status is None:
         return "❌ 삼바 서버 연결 실패 (주문현황)."
 
     lines = ["📦 주문 처리 현황", ""]
-    if isinstance(dash, dict):
-        tm = dash.get("thisMonth") or {}
+    if rows is not None:
+        v_s, _, v_o = _sum_rows(rows, lambda r: not _is_claim_status(r.get("status")))
+        _, _, c_o = _sum_rows(rows, lambda r: _is_claim_status(r.get("status")))
         lines += [
-            "▪️ 이달",
-            f"  주문 {int(tm.get('count') or 0)}건 · 매출 {_fmt_price(tm.get('sales'))}",
-            f"  이행완료 {int(tm.get('fulfillmentCount') or 0)}건 ({tm.get('fulfillment', 0)}%)",
+            "▪️ 이달 (결제일 기준)",
+            f"  유효주문 {v_o}건 · 매출 {_fmt_price(v_s)}",
+            f"  취소/반품 {c_o}건",
         ]
     if isinstance(status, dict) and status:
         lines += ["", "▪️ 상태별 (전체 누적)"]
