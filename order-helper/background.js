@@ -5,6 +5,16 @@
 // 카카오 REST API 키 (팝업에서 저장한 키가 있으면 그게 우선). 우편번호 조회용.
 const DEFAULT_KAKAO_KEY = '08bff9e4d109b15fe0d21d7f930bfa0d';
 
+// 페이지(MAIN world) 네이티브 alert/confirm 자동수락 — 롯데온 배송지 저장/변경 시
+// 뜨는 네이티브 팝업이 자동화 흐름을 막지 않도록 무력화. (자기완결형 함수)
+function pageSuppressDialogs() {
+  try {
+    window.alert = function () {};
+    window.confirm = function () { return true; };
+    return { ok: true };
+  } catch (e) { return { ok: false, error: String(e) }; }
+}
+
 // 우편번호 없는 경우: 이름/연락처/상세/메모 채우고 주소찾기(Daum) 오픈
 function pageOpenSearch(c) {
   return new Promise((resolve) => {
@@ -98,6 +108,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   const tabId = sender.tab && sender.tab.id;
+
+  if (msg.type === 'SUPPRESS_DIALOGS') {
+    if (!tabId) { sendResponse({ ok: false, error: 'no tab' }); return; }
+    runInPage(tabId, pageSuppressDialogs, [], sendResponse);
+    return true;
+  }
 
   if (msg.type === 'OPEN_SEARCH') {
     if (!tabId) { sendResponse({ ok: false, error: 'no tab' }); return; }

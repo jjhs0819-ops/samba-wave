@@ -205,7 +205,7 @@
       const acct = selects.find((s) => qa2('option', s).some((o) => o.textContent.trim() === '주문계정'));
       if (acct) {
         // 소싱처 → 삼바 주문계정 optgroup 라벨 (ABCMART/GRANDSTAGE 는 'ABCmart' 로 정규화됨)
-        const SITE_LABEL = { MUSINSA: 'MUSINSA', ABCMART: 'ABCmart', GRANDSTAGE: 'ABCmart', FASHIONPLUS: 'FashionPlus' };
+        const SITE_LABEL = { MUSINSA: 'MUSINSA', ABCMART: 'ABCmart', GRANDSTAGE: 'ABCmart', FASHIONPLUS: 'FashionPlus', LOTTEON: 'LOTTEON' };
         const label = SITE_LABEL[String(wb.source || 'MUSINSA').toUpperCase()] || wb.source || 'MUSINSA';
         const opt = qa2(`optgroup[label="${label}"] option`, acct)[0]
           || qa2('option', acct).find((o) => o.value && o.value !== 'etc' && o.textContent.trim() !== '주문계정');
