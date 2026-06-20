@@ -133,6 +133,21 @@ class PoisonPlugin(MarketPlugin):
                 "message": "POIZON 매칭용 품번(style_code)이 없습니다.",
             }
 
+        # 최저가 소싱처(is_primary)만 등록 — 같은 품번이 소싱처마다 별도상품으로 존재,
+        # 전부 등록하면 POIZON 중복 listing. 매칭됐는데 primary 아니면 스킵.
+        _resell = product.get("resell_matches") or {}
+        _pm = _resell.get("poison") if isinstance(_resell, dict) else None
+        if (
+            isinstance(_pm, dict)
+            and _pm.get("product_id")
+            and _pm.get("is_primary") is not True
+        ):
+            return {
+                "success": False,
+                "skip": True,
+                "message": f"POIZON 최저가 소싱처 아님(품번 {article_number}) — 등록 스킵",
+            }
+
         client = PoisonClient(app_key=str(app_key), app_secret=str(app_secret))
 
         # 1. 카탈로그 SKU 조회 (사이즈별 globalSkuId)
