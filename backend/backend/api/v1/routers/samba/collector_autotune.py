@@ -590,6 +590,7 @@ async def _enqueue_autotune_transmit(
     }
     async with get_write_session() as _js:
         # 같은 (pid, acc_id) pending 잡 조회 — 중복 발행 차단
+        # payload 컬럼이 json 타입(jsonb 아님) → @> 미지원, json_array_elements_text 사용
         _existing = (
             (
                 await _js.execute(
@@ -598,11 +599,15 @@ async def _enqueue_autotune_transmit(
                         SambaJob.job_type == "autotune_transmit",
                         SambaJob.status == JobStatus.PENDING,
                         _sa_text(
-                            "payload->'product_ids' @> CAST(:pid_json AS json)"
-                        ).bindparams(pid_json=f'["{pid}"]'),
+                            "EXISTS ("
+                            "SELECT 1 FROM json_array_elements_text(payload->'product_ids') v "
+                            "WHERE v = :dup_pid)"
+                        ).bindparams(dup_pid=pid),
                         _sa_text(
-                            "payload->'target_account_ids' @> CAST(:acc_json AS json)"
-                        ).bindparams(acc_json=f'["{acc_id}"]'),
+                            "EXISTS ("
+                            "SELECT 1 FROM json_array_elements_text(payload->'target_account_ids') v "
+                            "WHERE v = :dup_acc)"
+                        ).bindparams(dup_acc=acc_id),
                     )
                     .limit(1)
                     .with_for_update(skip_locked=True)
