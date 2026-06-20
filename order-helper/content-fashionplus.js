@@ -55,6 +55,44 @@
     return true;
   }
 
+  // 받는사람 이름 정리: 라자다 주문 '(G2L) 4459753609' → 괄호 제거 후 '4459753609'.
+  // 패션플러스 이름칸은 10자 제한이라 잘라서 반환.
+  function cleanName(name) {
+    return String(name || '').replace(/\([^)]*\)/g, '').trim().slice(0, 10);
+  }
+
+  // 주소 분리(무신사와 동일 로직): 도로명+건물번호 뒤(예: 'A동 GMARKET(...)')를 상세주소로.
+  function splitAddress(mainRaw, detailRaw) {
+    const main = (mainRaw || '').trim();
+    const detail = (detailRaw || '').trim();
+    const full = (main + ' ' + detail).replace(/\s+/g, ' ').trim();
+    if (!full) return { address1: main, address2: detail };
+    const tokens = full.split(' ');
+    let anchor = -1;
+    for (let i = 0; i < tokens.length; i++) {
+      if (/[로길]\d*(번길)?$/.test(tokens[i])) anchor = i;
+    }
+    if (anchor < 0) {
+      for (let i = 0; i < tokens.length; i++) {
+        if (/^[가-힣]+(읍|면|동|리)$/.test(tokens[i]) && !/^\d/.test(tokens[i])) anchor = i;
+      }
+    }
+    if (anchor < 0) return { address1: main, address2: detail };
+    let bn = -1;
+    for (let i = anchor + 1; i < tokens.length; i++) {
+      if (/^\d+(-\d+)?(번지)?$/.test(tokens[i])) { bn = i; break; }
+      if (/^\d+(-\d+)?번$/.test(tokens[i])) { bn = i; break; }
+    }
+    if (bn < 0) return { address1: main, address2: detail };
+    let end = bn;
+    if (tokens[bn + 1] && tokens[bn + 1].startsWith('(')) {
+      let j = bn + 1;
+      while (j < tokens.length && !tokens[j].includes(')')) j++;
+      if (j < tokens.length) end = j;
+    }
+    return { address1: tokens.slice(0, end + 1).join(' '), address2: tokens.slice(end + 1).join(' ') || detail };
+  }
+
   let ranProduct = false;
 
   // ── 상품: 옵션 선택 + 바로구매 ──
@@ -123,7 +161,12 @@
     if (job.addrDone) { banner('배송지 입력 완료 ✅ 배송메모/동의 확인 후 [주문하기]는 직접 진행하세요.', '#1971c2'); return; }
     if (job.addrPhase === 'running') return;
     await setJob({ addrPhase: 'running' });
-    const c = job.customer || {};
+    const c = Object.assign({}, job.customer || {});
+    // 라자다 등 — 상세주소가 비어있고 기본주소에 'A동 GMARKET(...)'이 합쳐진 경우 분리
+    if (!String(c.addr2 || '').trim()) {
+      const sp = splitAddress(c.addr, '');
+      if (sp.address2 && sp.address2.trim()) { c.addr = sp.address1; c.addr2 = sp.address2; }
+    }
 
     // 1) '배송지 변경' → 모달(iframe) 오픈
     banner('배송지 변경 여는 중...');
@@ -149,7 +192,7 @@
     const roadI = readonlys[1];   // 검색주소(도로명)
 
     banner('배송지 자동입력 중...');
-    setVal(nameI, c.name || '');
+    setVal(nameI, cleanName(c.name)); // 라자다 '(G2L) 4459753609' → '4459753609' (10자 제한)
     setVal(phoneI, String(c.phone || '010-8282-3536').replace(/[^0-9]/g, '')); // 숫자만 (연락처는 삼바측에서 고정)
 
     // 우편번호: readonly → 카카오 API 조회 후 직접 주입 (실패 시 안내)
@@ -181,6 +224,27 @@
     banner('배송지 입력 완료 ✅ 배송메모/동의 확인 후 [주문하기]는 직접 진행하세요.', '#1971c2');
   }
 
+  // ── 결제완료(/order/{id}/complete): 주문번호/결제금액 스크랩 → 삼바 기입 ──
+  async function stepResult(job) {
+    if (job.status === 'done') return; // 새로고침 중복 전송 방지
+    await wait(800);
+    const orderNo =
+      (location.href.match(/\/order\/(\d+)\/complete/) || [])[1] ||
+      (((findByText('주문번호', 'small, span, p, li') || {}).textContent || '').match(/(\d{6,})/) || [])[1] || '';
+    // 최종 결제금액: '총 결제 예상금액' 행의 .text_price strong (예: 41,490)
+    let amount = '';
+    const totalP = qa('.text_total').find((p) => /결제/.test(p.textContent || ''));
+    const strong = (totalP && (totalP.querySelector('.text_price strong') || totalP.querySelector('strong')))
+      || q('.m_order-fin .text_total .text_price strong');
+    if (strong) amount = ((strong.textContent || '').match(/([\d,]{3,})/) || [])[1]?.replace(/,/g, '') || '';
+    const marketNo = job.extNo || job.ordNo || '';
+    log('결제완료 감지', { sourcingNo: orderNo, amount, marketNo });
+    if (!orderNo) { banner('주문번호를 못 읽음 — 삼바 기입 생략', '#c92a2a'); return; }
+    banner(`주문완료! 주문번호 ${orderNo} / ${amount}원 — 삼바 기입 전송`, '#1971c2');
+    chrome.runtime.sendMessage({ type: 'WRITEBACK', marketNo, sourcingNo: orderNo, amount, source: 'FASHIONPLUS' });
+    await setJob({ status: 'done', result: { orderNo, amount } });
+  }
+
   async function main() {
     let job = await getJob();
     const url = location.href;
@@ -194,9 +258,10 @@
     if (!job) return;
     if (job.source !== 'FASHIONPLUS') return; // 패션플러스 작업만
     try {
+      // 결제완료(/order/{id}/complete) 는 /order 보다 먼저 체크 (둘 다 매칭됨)
+      if (/\/order\/\d+\/complete/.test(url)) return await stepResult(job);
       if (/\/goods\/detail\//.test(url)) return await stepProduct(job);
       if (/\/order\//.test(url)) return await stepOrder(job);
-      // TODO: 결제완료 페이지(writeback) — 완료 URL/주문번호/결제금액 셀렉터 확인 후 추가
     } catch (e) { log('오류', e); banner('오류 발생 — 콘솔 확인', '#c92a2a'); }
   }
 
