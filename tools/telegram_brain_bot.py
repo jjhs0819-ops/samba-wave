@@ -245,26 +245,26 @@ class SambaClient:
         return None
 
     # 보고 영역별 호출 (경로/파라미터는 백엔드 라우터 본문 기준)
-    def analytics_aggregate(self, start: str, end: str) -> list | None:
-        """결제일(KST)·상태별 매출 사전집계 — 웹 매출통계와 동일 소스.
+    def orders_by_date_range(self, start: str, end: str) -> list | None:
+        """결제일(paid_at, KST) 기준 주문 전체 목록. 각 주문에 sale_price·fee_rate·
+        cost·collected_product_id·source_url·sourcing_order_number·status 포함."""
+        data = self._get("/api/v1/samba/orders/by-date-range",
+                         {"start": start, "end": end}, timeout=50)
+        return data if isinstance(data, list) else None
 
-        rows: [{date, channel_name, source_site, status, sales, orders, profit, cost}].
-        취소/반품 상태를 제외하면 웹의 '이행매출'과 일치.
-        """
-        data = self._get("/api/v1/samba/orders/analytics-aggregate",
-                         {"start": start, "end": end}, timeout=40)
+    def cs_list(self, start: str, end: str, limit: int = 500) -> list | None:
+        """CS 문의 목록 — inquiry_date 기준 필터. 각 item에 inquiry_date·reply_status.
+        응답은 {items, total} 구조이므로 items 만 반환."""
+        data = self._get("/api/v1/samba/cs-inquiries",
+                         {"start_date": start, "end_date": end, "limit": str(limit)})
         if isinstance(data, dict):
-            return data.get("rows", [])
-        return None
+            return data.get("items", [])
+        return data if isinstance(data, list) else None
 
-    def order_status_stats(self) -> dict | None:
-        return self._get("/api/v1/samba/analytics/order-status")
-
-    def cs_stats(self) -> dict | None:
-        return self._get("/api/v1/samba/cs-inquiries/stats")
-
-    def return_stats(self) -> dict | None:
-        return self._get("/api/v1/samba/returns/stats")
+    def returns_list(self, start: str, end: str, limit: int = 1000) -> list | None:
+        """반품/교환 목록 — order_date 기준 필터. completion_detail·status·memo 포함."""
+        return self._get("/api/v1/samba/returns",
+                         {"start_date": start, "end_date": end, "limit": str(limit)})
 
 
 samba = SambaClient()
@@ -475,29 +475,6 @@ def cmd_process(chat_id: int) -> None:
 # 보고 명령 — 매출 / 주문현황 / CS / 반품
 # ══════════════════════════════════════════════════════════════════════════
 
-# 주문 상태 코드 → 한글 표시
-_ORDER_STATUS_LABELS = {
-    "pending": "접수/대기", "wait_ship": "발송대기", "processing": "처리중",
-    "arrived": "입고", "ship_failed": "발송실패", "shipping": "배송중",
-    "shipped": "발송완료", "delivered": "배송완료",
-    "cancelled": "취소", "cancel_requested": "취소요청",
-    "returned": "반품", "return_requested": "반품요청",
-    "returning": "반품처리중", "return_completed": "반품완료",
-    "exchanged": "교환완료", "exchanging": "교환중", "exchange_requested": "교환요청",
-}
-_RETURN_STATUS_LABELS = {
-    "requested": "요청", "approved": "승인", "completed": "완료",
-    "rejected": "거부", "cancelled": "취소",
-    "collecting": "수거중", "collected": "수거완료",
-}
-_CLAIM_TYPE_LABELS = {"cancel": "취소", "return": "반품", "exchange": "교환"}
-_CS_TYPE_LABELS = {
-    "product_question": "상품문의", "product": "상품문의", "qna": "Q&A",
-    "delivery": "배송", "exchange_return": "교환/반품",
-    "general": "일반", "문의": "일반", "urgent_inquiry": "긴급", "claim": "클레임",
-}
-
-
 def _kst_date(offset_days: int = 0) -> str:
     return (datetime.now(KST) + timedelta(days=offset_days)).strftime("%Y-%m-%d")
 
@@ -525,151 +502,186 @@ def _append_comment(lines: list[str], area: str) -> None:
         lines += ["", f"🧠 {c}"]
 
 
-def _is_claim_status(status: str) -> bool:
-    """취소/반품 계열 상태인가 — 매출 집계에서 제외 대상.
-
-    (cancelled/cancel_requested/returned/return_requested/returning 등.
-    교환(exchange)은 매출 유지 — 웹 '이행매출' 기준과 동일.)
-    """
-    s = (status or "").lower()
+def _order_cancelled(o: dict) -> bool:
+    """취소/반품 계열 주문인가 (매출 집계 제외 대상)."""
+    s = (o.get("status") or "").lower()
     return "cancel" in s or "return" in s
 
 
-def _sum_rows(rows: list, pred) -> tuple[float, float, int]:
-    """집계 rows에서 조건에 맞는 sales/profit/orders 합계."""
-    s = sum((r.get("sales") or 0) for r in rows if pred(r))
-    p = sum((r.get("profit") or 0) for r in rows if pred(r))
-    o = sum((r.get("orders") or 0) for r in rows if pred(r))
-    return s, p, o
+def _order_registered(o: dict) -> bool:
+    """등록상품 주문인가 — collected_product_id 있거나, 비SSG이며 source_url 있음.
+    (백엔드 주문탭 '등록/미등록' 판정과 동일: order.py registration_filter)."""
+    if o.get("collected_product_id"):
+        return True
+    site = (o.get("source_site") or "").upper()
+    return site != "SSG" and bool((o.get("source_url") or "").strip())
+
+
+def _order_has_so(o: dict) -> bool:
+    """발주 주문번호(sourcing_order_number) 입력됨 = 이행 건."""
+    return bool((o.get("sourcing_order_number") or "").strip())
+
+
+def _order_kst_date(o: dict) -> str | None:
+    """주문의 결제일(paid_at, 없으면 created_at)을 KST 날짜 문자열로."""
+    p = o.get("paid_at") or o.get("created_at")
+    if not p:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(p).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(KST).strftime("%Y-%m-%d")
+
+
+def _f(o: dict, key: str) -> float:
+    try:
+        return float(o.get(key) or 0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def build_sales_text(with_comment: bool = True) -> str:
-    """오늘 + 이달 누계 매출/이익/마진 (결제일 KST · 취소·반품 제외 = 웹 이행매출 기준)."""
+    """매출(등록상품·취소제외) + 마진(주문번호 입력 건, 결제−수수료−소싱처구매)."""
     today = _kst_date()
     month_first = datetime.now(KST).strftime("%Y-%m-01")
-    rows = samba.analytics_aggregate(month_first, today)
-    if rows is None:
+    orders = samba.orders_by_date_range(month_first, today)
+    if orders is None:
         return "❌ 삼바 서버 연결 실패 (매출)."
 
-    valid = lambda r: not _is_claim_status(r.get("status"))  # noqa: E731
-    day_s, day_p, day_o = _sum_rows(rows, lambda r: r.get("date") == today and valid(r))
-    mon_s, mon_p, mon_o = _sum_rows(rows, valid)
-    cancel_s, _, cancel_o = _sum_rows(rows, lambda r: _is_claim_status(r.get("status")))
+    # 매출 = 등록상품 · 취소제외 (미등록상품 제외)
+    sale_orders = [o for o in orders if _order_registered(o) and not _order_cancelled(o)]
+    mon_sales = sum(_f(o, "sale_price") for o in sale_orders)
+    today_orders = [o for o in sale_orders if _order_kst_date(o) == today]
+    today_sales = sum(_f(o, "sale_price") for o in today_orders)
 
-    def margin(p, s):
-        return (p / s * 100) if s else 0.0
-
-    def aov(s, o):
-        return (s / o) if o else 0
+    # 마진 = 등록상품 + 주문번호(발주) 입력 건만
+    #   정산금액 = 결제금액 − 수수료(= sale_price × fee_rate%)
+    #   마진금액 = 정산금액 − 소싱처 구매금액(cost) · 마진율 = 마진금액 / 결제금액 × 100
+    m = [o for o in sale_orders if _order_has_so(o)]
+    pay = sum(_f(o, "sale_price") for o in m)
+    settle = sum(_f(o, "sale_price") * (1 - _f(o, "fee_rate") / 100) for o in m)
+    sourcing = sum(_f(o, "cost") for o in m)
+    margin_amt = settle - sourcing
+    margin_rate = (margin_amt / pay * 100) if pay else 0.0
 
     lines = [
         f"💰 매출 보고 ({datetime.now(KST).strftime('%m월 %d일')})",
         "",
-        "▪️ 오늘",
-        f"  매출 {_fmt_price(day_s)} · 주문 {day_o}건",
-        f"  이익 {_fmt_price(day_p)} · 마진 {margin(day_p, day_s):.1f}% · 객단가 {_fmt_price(aov(day_s, day_o))}",
+        f"▪️ 오늘 매출 {_fmt_price(today_sales)} · {len(today_orders)}건",
+        f"▪️ 이달 매출 {_fmt_price(mon_sales)} · {len(sale_orders)}건",
         "",
-        "▪️ 이달 누계",
-        f"  매출 {_fmt_price(mon_s)} · 주문 {mon_o}건",
-        f"  이익 {_fmt_price(mon_p)} · 마진 {margin(mon_p, mon_s):.1f}%",
+        f"▪️ 이달 마진 (주문번호 입력 {len(m)}건)",
+        f"  정산금액 {_fmt_price(settle)}  (결제 {_fmt_price(pay)} − 수수료)",
+        f"  소싱처구매 {_fmt_price(sourcing)}",
+        f"  마진금액 {_fmt_price(margin_amt)} · 마진율 {margin_rate:.1f}%",
+        "",
+        "ℹ️ 매출=등록상품·취소제외 · 마진=결제−수수료−소싱처구매(주문번호 입력건)",
     ]
-    if cancel_o:
-        lines.append(f"  (취소/반품 {cancel_o}건 {_fmt_price(cancel_s)} 제외됨)")
-    lines.append("\nℹ️ 결제일 기준 · 취소/반품 제외 · 이익=실결제−소싱처원가")
     if with_comment:
         _append_comment(lines, "매출")
     return "\n".join(lines)
 
 
 def build_order_status_text(with_comment: bool = True) -> str:
-    """이달 처리량(결제일·취소제외) + 상태별 누적 건수."""
+    """금일 신규주문 + 전날 총 주문 + 전날 이행(주문번호 입력) 건수."""
     today = _kst_date()
-    month_first = datetime.now(KST).strftime("%Y-%m-01")
-    rows = samba.analytics_aggregate(month_first, today)
-    status = samba.order_status_stats()
-    if rows is None and status is None:
+    yday = _kst_date(-1)
+    orders = samba.orders_by_date_range(yday, today)  # 결제일 KST: 어제~오늘
+    if orders is None:
         return "❌ 삼바 서버 연결 실패 (주문현황)."
 
-    lines = ["📦 주문 처리 현황", ""]
-    if rows is not None:
-        v_s, _, v_o = _sum_rows(rows, lambda r: not _is_claim_status(r.get("status")))
-        _, _, c_o = _sum_rows(rows, lambda r: _is_claim_status(r.get("status")))
-        lines += [
-            "▪️ 이달 (결제일 기준)",
-            f"  유효주문 {v_o}건 · 매출 {_fmt_price(v_s)}",
-            f"  취소/반품 {c_o}건",
-        ]
-    if isinstance(status, dict) and status:
-        lines += ["", "▪️ 상태별 (전체 누적)"]
-        shown: set[str] = set()
-        for key, label in _ORDER_STATUS_LABELS.items():
-            if status.get(key):
-                lines.append(f"  {label}: {int(status[key])}건")
-                shown.add(key)
-        for key, val in status.items():
-            if key not in shown and val:
-                lines.append(f"  {key}: {int(val)}건")
+    today_cnt = sum(1 for o in orders if _order_kst_date(o) == today)
+    yday_orders = [o for o in orders if _order_kst_date(o) == yday]
+    yday_cnt = len(yday_orders)
+    yday_fulfilled = sum(1 for o in yday_orders if _order_has_so(o))
+    rate = (yday_fulfilled / yday_cnt * 100) if yday_cnt else 0
 
+    lines = [
+        "📦 주문 처리 현황",
+        "",
+        f"오늘 신규주문: {today_cnt}건",
+        f"전날 총 주문: {yday_cnt}건",
+        f"  └ 이행(주문번호 입력): {yday_fulfilled}건 ({rate:.0f}%)",
+    ]
     if with_comment:
         _append_comment(lines, "주문 처리")
     return "\n".join(lines)
 
 
+def _parse_dt(s) -> "datetime | None":
+    if not s:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
 def build_cs_text(with_comment: bool = True) -> str:
-    """CS 미답변/답변완료 + 유형/마켓 분포."""
-    st = samba.cs_stats()
-    if st is None:
+    """전날 CS 처리/미처리 + 미처리 중 24시간 경과 건수."""
+    yday = _kst_date(-1)
+    items = samba.cs_list(yday, yday)  # inquiry_date 기준 어제
+    if items is None:
         return "❌ 삼바 서버 연결 실패 (CS)."
 
-    total = int(st.get("total") or 0)
-    pending = int(st.get("pending") or 0)
-    replied = int(st.get("replied") or 0)
-    lines = [
-        "💬 CS 현황", "",
-        f"전체 {total}건 · ⏳미답변 {pending}건 · ✅답변완료 {replied}건",
-    ]
-    by_type = st.get("by_type") or {}
-    parts = [f"{_CS_TYPE_LABELS.get(k, k)} {v}"
-             for k, v in sorted(by_type.items(), key=lambda x: -x[1]) if v]
-    if parts:
-        lines += ["", "유형별: " + ", ".join(parts)]
-    by_market = st.get("by_market") or {}
-    mparts = [f"{k} {v}"
-              for k, v in sorted(by_market.items(), key=lambda x: -x[1]) if v]
-    if mparts:
-        lines.append("마켓별: " + ", ".join(mparts[:6]))
+    replied = sum(1 for i in items if i.get("reply_status") == "replied")
+    pending_items = [i for i in items if i.get("reply_status") != "replied"]
+    pending = len(pending_items)
+    # 미처리 중 접수 후 24시간 경과
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    overdue = sum(
+        1 for i in pending_items
+        if (_parse_dt(i.get("inquiry_date")) or datetime.now(timezone.utc)) < cutoff
+    )
 
+    lines = [
+        "💬 CS 현황 (전날 기준)",
+        "",
+        f"✅ 처리: {replied}건 · ⏳ 미처리: {pending}건",
+        f"⏰ 미처리 중 24시간 경과: {overdue}건",
+    ]
     if with_comment:
         _append_comment(lines, "CS")
     return "\n".join(lines)
 
 
+# 수거 상태 코드 → 한글 (반품 status 필드 값)
+_COLLECT_LABELS = {"not_collected": "미수거", "collecting": "수거중", "collected": "수거완료"}
+
+
 def build_returns_text(with_comment: bool = True) -> str:
-    """반품 상태별/유형별/사유별 + 승인대기."""
-    st = samba.return_stats()
-    if st is None:
+    """반품 — 최근 한 달. 대기중/취소완료 + '반품신청완료' 메모 건의 수거상태."""
+    today = _kst_date()
+    month_ago = _kst_date(-30)
+    rows = samba.returns_list(month_ago, today)  # order_date 기준 최근 30일
+    if rows is None:
         return "❌ 삼바 서버 연결 실패 (반품)."
 
-    total = int(st.get("total") or 0)
-    by_status = st.get("by_status") or {}
-    by_type = st.get("by_type") or {}
-    by_reason = st.get("by_reason") or {}
-    waiting = int(by_status.get("requested") or 0)
-    lines = [
-        "🔄 반품/교환 현황", "",
-        f"전체 {total}건 · ⏳승인대기 {waiting}건 · 누적환불 {_fmt_price(st.get('total_refund_amount'))}",
-    ]
-    sparts = [f"{_RETURN_STATUS_LABELS.get(k, k)} {v}" for k, v in by_status.items() if v]
-    if sparts:
-        lines += ["", "상태별: " + ", ".join(sparts)]
-    tparts = [f"{_CLAIM_TYPE_LABELS.get(k, k)} {v}" for k, v in by_type.items() if v]
-    if tparts:
-        lines.append("유형별: " + ", ".join(tparts))
-    top_reasons = sorted(by_reason.items(), key=lambda x: -x[1])[:3]
-    rparts = [f"{k} {v}" for k, v in top_reasons if v]
-    if rparts:
-        lines.append("사유 Top3: " + ", ".join(rparts))
+    # 완료내역 토글 기준 = completion_detail (웹 /returns 페이지와 동일)
+    waiting = sum(1 for r in rows if (r.get("completion_detail") or "진행중") == "진행중")
+    cancel_done = sum(1 for r in rows if r.get("completion_detail") == "취소")
 
+    # 메모에 '반품신청완료' 적힌 건 중 미수거/수거중/수거완료
+    collect: dict[str, int] = {"not_collected": 0, "collecting": 0, "collected": 0}
+    for r in rows:
+        if "반품신청완료" in (r.get("memo") or ""):
+            stt = (r.get("status") or "")
+            if stt in collect:
+                collect[stt] += 1
+
+    lines = [
+        "🔄 반품/교환 현황 (최근 한 달)",
+        "",
+        f"⏳ 대기중: {waiting}건",
+        f"✅ 취소완료: {cancel_done}건",
+        "",
+        "📦 '반품신청완료' 메모 건:",
+        f"  미수거 {collect['not_collected']} · 수거중 {collect['collecting']} · 수거완료 {collect['collected']}건",
+    ]
     if with_comment:
         _append_comment(lines, "반품")
     return "\n".join(lines)
