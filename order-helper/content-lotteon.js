@@ -129,14 +129,14 @@
     if (!findBtn) return fail('우편번호 찾기 버튼 못 찾음');
     rclick(findBtn);
 
-    // 주소검색 팝업의 검색 입력창 (.searchArea 내 input[type=search], placeholder '예)올림픽로 300')
-    // ⚠ 헤더 전역검색('검색어를 입력하세요')과 절대 혼동 금지 → 주소팝업 컨테이너/‘올림픽로’로만 식별
+    // 주소검색 팝업의 검색 입력창. placeholder '예)올림픽로 300' 으로 식별.
+    // ⚠ 헤더 전역검색도 .searchArea 클래스를 쓰므로 그걸로 잡으면 안 됨 →
+    //    placeholder '올림픽로' 또는 팝업 전용 컨테이너(.zipCodeWrap/.searchAreaWrap)로만 식별.
     let search = null;
     for (let i = 0; i < 50 && !search; i++) {
       await wait(150);
-      search = q('.searchArea input[type="search"]') || q('.searchAreaWrap input[type="search"]') ||
-        qa('input[type="search"], input').find((el) =>
-          el.offsetParent !== null && /올림픽로/.test(el.placeholder || ''));
+      search = qa('input').find((el) => el.offsetParent !== null && /올림픽로/.test(el.placeholder || '')) ||
+        q('.zipCodeWrap input[type="search"]') || q('.searchAreaWrap input[type="search"]');
     }
     if (!search) return fail('주소검색 입력창 못 찾음');
     await wait(450); // 팝업 Vue v-model 바인딩 안정화 대기 (이른 입력 시 리셋됨)
@@ -153,8 +153,8 @@
     if ((search.value || '') !== query) { typeSearch(query); await wait(200); } // 1회 재시도
     // 검색 실행: 돋보기 버튼(.btnSearchInner) 우선, 삭제버튼(.btnSearchDel)은 제외
     for (const t of ['keydown', 'keypress', 'keyup']) search.dispatchEvent(new KeyboardEvent(t, { bubbles: true, key: 'Enter', code: 'Enter', keyCode: 13, which: 13 }));
-    const box = search.closest('.searchArea, .searchAreaWrap') || search.closest('div') || document;
-    const sBtn = q('.btnSearchInner', box) || q('.btnSearchInner') ||
+    const box = search.closest('.searchAreaWrap, .zipCodeWrap, .searchArea') || search.parentElement || document;
+    const sBtn = q('.btnSearchInner', box) ||
       qa('button', box).find((b) => b.offsetParent !== null && !/btnSearchDel/.test(b.className));
     if (sBtn) rclick(sBtn);
 
