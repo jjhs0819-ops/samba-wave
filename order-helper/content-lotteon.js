@@ -102,6 +102,23 @@
     return false;
   }
 
+  // 주문서 '배송요청사항'(.deliveryRequest)에 고객메모를 직접입력으로 채운다.
+  async function fillDeliveryRequest(memo) {
+    if (!memo) return;
+    const reqBox = q('.deliveryRequest') || q('[class*="deliveryRequest"]') || document;
+    let reqInput = qa('input[type="text"], textarea', reqBox).find((el) => el.offsetParent !== null && el.id !== 'productTaker');
+    if (!reqInput) {
+      const reqChange = q('button[data-cmpnt-name="ord_delrequest_change"]', reqBox) ||
+        qa('button', reqBox).find((b) => /변경/.test(b.textContent || '') && b.offsetParent !== null);
+      if (reqChange) { rclick(reqChange); await wait(700); }
+      const direct = qa('label, span, div, button, li', reqBox).find((e) => /직접\s*입력/.test(e.textContent || '') && e.offsetParent !== null);
+      if (direct) { rclick(direct); await wait(400); }
+      reqInput = qa('input[type="text"], textarea', reqBox).find((el) => el.offsetParent !== null && el.id !== 'productTaker');
+    }
+    if (reqInput) setVal(reqInput, String(memo).slice(0, 50));
+    else banner('🛈 배송요청사항 자동입력 실패 — 직접 입력해주세요.', '#d9480f');
+  }
+
   async function stepOrder(job) {
     if (job.addrDone) { banner('배송지 입력 완료 ✅ 결제는 직접 진행하세요.', '#1971c2'); return; }
     if (job.addrPhase === 'running') return;
@@ -222,6 +239,10 @@
     const confirmBtn = byText('확인', 'button');
     if (confirmBtn) rclick(confirmBtn);
     await wait(1300);
+
+    // 9-1) 배송요청사항(주문서)에 고객메모 직접입력
+    await fillDeliveryRequest(c.memo);
+    await wait(300);
 
     // 10) 주문서 '계속하기'
     const nextBtn = byText('계속하기', 'button') || byText('계속하기', 'a');
