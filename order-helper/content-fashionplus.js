@@ -134,14 +134,21 @@
     return null;
   }
 
-  // 배송메모: '직접 입력하기'(value=custom) 선택 → .syncer-ship-memo 동기화 입력칸 채움
-  function setShipMemo(memo) {
+  // 배송메모: '직접 입력하기'(value=custom) 선택 → .syncer-ship-memo 동기화 입력칸 채움.
+  // custom 전환 직후 입력칸 초기화/렌더 타이밍이 있어 대기 후 재조회하여 값을 넣는다.
+  async function setShipMemo(memo) {
     const sel = qa('select[data-select]').find((s) => qa('option', s).some((o) => o.value === 'custom'));
     if (!sel) { log('배송메모 select 없음'); return; }
     sel.value = 'custom';
     sel.dispatchEvent(new Event('change', { bubbles: true }));
-    const memoInput = q('.syncer-ship-memo');
-    if (memoInput) setVal(memoInput, (String(memo || '').trim() || '-').slice(0, 20));
+    await wait(350);
+    const txt = String(memo || '').trim().slice(0, 20);
+    if (!txt) return; // 고객메모 없으면 비워둠
+    const memoInput = q('.syncer-ship-memo') || q('input[placeholder*="배송메모"]');
+    if (!memoInput) { log('배송메모 입력칸 못 찾음'); return; }
+    try { memoInput.focus(); } catch (e) { /* noop */ }
+    setVal(memoInput, txt);
+    memoInput.dispatchEvent(new Event('keyup', { bubbles: true })); // 커스텀 syncer 보강
   }
 
   // 필수 동의: data-check 의 _group:'agree_check' 묶음. '전체 동의' 우선, 없으면 개별 체크.
@@ -217,7 +224,7 @@
     await wait(900);
 
     // 6) 주문서 본문: 배송메모 직접입력 + 메모, 필수동의 체크
-    setShipMemo(c.memo);
+    await setShipMemo(c.memo);
     checkRequiredAgree();
 
     await setJob({ addrDone: true, addrPhase: 'done' });

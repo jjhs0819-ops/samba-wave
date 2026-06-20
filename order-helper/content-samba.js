@@ -161,8 +161,8 @@
   log('삼바 주문도우미 활성화 — 원문링크 클릭 시 자동주문');
 
   // ── 결제완료 후 삼바 기입(writeback) ──
-  // 무신사 결제완료 → background → 삼바 탭. 해당 주문 행에 소싱주문번호/실구매가/
-  // 상태(배송대기중)/메모(장재훈) 입력. (삼바가 자체 인증으로 저장)
+  // 소싱처 결제완료 → background → 삼바 탭. 해당 주문 행에 소싱주문번호/실구매가/
+  // 상태(배송대기중)/직원A 입력. (간단메모는 비워둠. 삼바가 자체 인증으로 저장)
   const qa2 = (s, r = document) => Array.from((r || document).querySelectorAll(s));
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // 삼바 표(React 19 / Next 15)에 값 입력 + '저장'까지 트리거.
@@ -221,11 +221,16 @@
     // 실구매가
     const cost = tr.querySelector('input[placeholder*="실구매가"]');
     if (cost && wb.amount) await setReact(cost, String(wb.amount));
-    // 간단메모 = 장재훈
-    const notes = tr.querySelector('textarea[placeholder="간단메모"]');
-    if (notes) await setReact(notes, '장재훈');
+    // 간단메모: 비워둠 (요청에 따라 '장재훈' 등 아무것도 적지 않음)
+    // 직원A (action_tag staff_a) 선택 — 미활성 시에만 클릭(토글이라 중복 클릭 시 해제됨)
+    const staffBtn = qa2('button', tr).find((b) => (b.textContent || '').trim() === '직원A');
+    if (staffBtn) {
+      const bg = staffBtn.style.background || staffBtn.style.backgroundColor || '';
+      const active = /124,\s*58,\s*237/.test(bg) || /7c3aed/i.test(bg); // 활성색 #7C3AED
+      if (!active) { staffBtn.click(); await sleep(400); }
+    }
 
-    toast(`✅ 기입 완료: 주문번호 ${wb.sourcingNo} / ${Number(wb.amount).toLocaleString()}원 / 배송대기중 / 메모 장재훈`, '#2b8a3e');
+    toast(`✅ 기입 완료: 주문번호 ${wb.sourcingNo} / ${Number(wb.amount).toLocaleString()}원 / 배송대기중 / 직원A`, '#2b8a3e');
     chrome.storage.local.remove('pendingWriteback');
   }
 
