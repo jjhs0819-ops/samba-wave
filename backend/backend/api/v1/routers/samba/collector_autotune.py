@@ -590,7 +590,10 @@ async def _enqueue_autotune_transmit(
     }
     async with get_write_session() as _js:
         # 같은 (pid, acc_id) pending 잡 조회 — 중복 발행 차단
-        # payload 컬럼이 json 타입(jsonb 아님) → @> 미지원, json_array_elements_text 사용
+        # payload 컬럼이 json 타입(jsonb 아님) → @> 미지원.
+        # F3(#462): payload 는 항상 단일원소(product_ids:[pid]/target_account_ids:[acc])이므로
+        # json_array_elements_text 배열전개(O(pending)) 대신 scalar `->>0` 등치(O(1))로.
+        # 부분식 인덱스 ix_samba_jobs_autotune_pending_pid/_acc 를 탄다.
         _existing = (
             (
                 await _js.execute(
@@ -598,15 +601,11 @@ async def _enqueue_autotune_transmit(
                     .where(
                         SambaJob.job_type == "autotune_transmit",
                         SambaJob.status == JobStatus.PENDING,
+                        _sa_text("(payload->'product_ids'->>0) = :dup_pid").bindparams(
+                            dup_pid=pid
+                        ),
                         _sa_text(
-                            "EXISTS ("
-                            "SELECT 1 FROM json_array_elements_text(payload->'product_ids') v "
-                            "WHERE v = :dup_pid)"
-                        ).bindparams(dup_pid=pid),
-                        _sa_text(
-                            "EXISTS ("
-                            "SELECT 1 FROM json_array_elements_text(payload->'target_account_ids') v "
-                            "WHERE v = :dup_acc)"
+                            "(payload->'target_account_ids'->>0) = :dup_acc"
                         ).bindparams(dup_acc=acc_id),
                     )
                     .limit(1)

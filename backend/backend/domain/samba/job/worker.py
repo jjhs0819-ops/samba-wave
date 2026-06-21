@@ -622,6 +622,10 @@ class JobWorker:
         picked = 0
         # bg 세마포어 초기값 — over-claim 게이트용 (#459)
         _bg_max = int(os.environ.get("JOB_BG_TRANSMIT_MAX_CONCURRENCY", "6"))
+        # F1(#462): 일반 claim 래치 — 집중 pending 부하에서 autotune-first 가 매 iteration
+        # 느린 일반 claim 으로 폴백하며 autotune 슬롯을 못 채우던 회귀(동시성 10→5) 차단.
+        # 일반 claim 이 한 번 None 이면 이후 iteration 은 빠른 autotune claim 만 → poll 당 1회로 제한.
+        _general_exhausted = False
 
         for _ in range(max_picks):
             # 매 iteration마다 fresh write session — claim → commit 후 즉시 닫아
@@ -665,17 +669,12 @@ class JobWorker:
                     )
                     and _autotune_running < _bg_max
                 )
-                if _can_claim_autotune:
-                    job = await repo.claim_autotune_pending_job(
-                        exclude_autotune_accounts=_excl_autotune_accounts or None,
-                    )
-                    if job:
-                        self._active_job_ids.add(job.id)
-                        await session.commit()
-                        # autotune 잡 직접 처리로 이동
-                        # (아래 일반 claim 없이 바로 루프 후반부로)
-                    else:
-                        # autotune 없음 → 일반 잡 claim
+                # F1(#462): general-first + 래치. 느린 일반 claim 을 poll 당 1회로 제한하고
+                # 나머지 iteration 은 부분 인덱스 기반 고속 autotune claim 으로 슬롯을 채운다.
+                job = None
+                if not _general_exhausted:
+                    if _can_claim_autotune:
+                        # autotune 은 별도 고속 claim 으로 처리 → 일반 claim 에서 제외
                         job = await repo.claim_pending_job(
                             exclude_sources=_excl_sources or None,
                             exclude_brand_all=self._brand_all_running,
@@ -683,23 +682,27 @@ class JobWorker:
                             exclude_accounts=_excl_accounts or None,
                             only_types=self._only_types,
                         )
-                        if not job:
-                            break
-                        self._active_job_ids.add(job.id)
-                        await session.commit()
-                else:
-                    job = await repo.claim_pending_job(
-                        exclude_sources=_excl_sources or None,
-                        exclude_brand_all=self._brand_all_running,
-                        exclude_types=_excl_types,
-                        exclude_accounts=_excl_accounts or None,
+                    else:
+                        job = await repo.claim_pending_job(
+                            exclude_sources=_excl_sources or None,
+                            exclude_brand_all=self._brand_all_running,
+                            exclude_types=_excl_types,
+                            exclude_accounts=_excl_accounts or None,
+                            exclude_autotune_accounts=_excl_autotune_accounts or None,
+                            only_types=self._only_types,
+                        )
+                    if job is None:
+                        _general_exhausted = True
+
+                if job is None and _can_claim_autotune:
+                    job = await repo.claim_autotune_pending_job(
                         exclude_autotune_accounts=_excl_autotune_accounts or None,
-                        only_types=self._only_types,
                     )
-                    if not job:
-                        break
-                    self._active_job_ids.add(job.id)
-                    await session.commit()
+
+                if job is None:
+                    break
+                self._active_job_ids.add(job.id)
+                await session.commit()
 
             # 전송/마켓삭제: asyncio.Task로 백그라운드 병렬 실행 (동일 계정 순차 보장)
             if job.job_type in ("transmit", "autotune_transmit", "delete_market"):
