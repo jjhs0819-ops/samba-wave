@@ -17,6 +17,7 @@
   NEW_ORDER_PUSH            (선택) 주문별 실시간 푸시. 기본 OFF. 1/true/on 이면 켜짐.
   NEW_ORDER_POLL_MINUTES    (선택) 신규 미발주 감지 주기(분), 기본 10 (NEW_ORDER_PUSH 켤 때만)
   DAILY_REPORT_HOUR         (선택) 아침 자동 다이제스트 시각(KST 0~23), 기본 8. 비우면 끔.
+  PRODUCT_REPORT_HOUR       (선택) 상품 현황 보고 시각(KST 0~23), 기본 12(정오). 비우면 끔.
 
 명령:
   /오늘     — 오늘 주문 현황 요약
@@ -25,6 +26,7 @@
   /주문현황 — 상태별 건수 + 미발송 + 전월대비
   /CS       — 미답변/답변완료 + 마켓별·유형별 분포
   /반품     — 반품 상태별·유형별·사유별 + 승인대기
+  /상품     — 전체 수집 + 마켓별 등록/품절
   /도움말   — 전체 명령어 안내
   /reset    — 대화 기억 초기화
   /whoami   — 내 텔레그램 user id
@@ -65,6 +67,8 @@ NEW_ORDER_POLL_MINUTES = int(os.environ.get("NEW_ORDER_POLL_MINUTES", "10"))
 NEW_ORDER_PUSH = os.environ.get("NEW_ORDER_PUSH", "").strip() in ("1", "true", "on", "yes")
 # 아침 자동 다이제스트 발송 시각(KST, 0~23). 빈 값이면 자동보고 비활성화.
 DAILY_REPORT_HOUR = os.environ.get("DAILY_REPORT_HOUR", "8").strip()
+# 상품 현황 보고 발송 시각(KST, 0~23). 빈 값이면 비활성화. 기본 12시(정오).
+PRODUCT_REPORT_HOUR = os.environ.get("PRODUCT_REPORT_HOUR", "12").strip()
 
 TG_API = f"https://api.telegram.org/bot{TOKEN}"
 KST = timezone(timedelta(hours=9))
@@ -266,6 +270,20 @@ class SambaClient:
         """반품/교환 목록 — order_date 기준 필터. completion_detail·status·memo 포함."""
         return self._get("/api/v1/samba/returns",
                          {"start_date": start, "end_date": end, "limit": str(limit)})
+
+    def product_counts(self) -> dict | None:
+        """수집상품 전체 집계 — {total, registered, policy_applied, sold_out}."""
+        return self._get("/api/v1/samba/collector/products/counts")
+
+    def product_market_count(self, market_type: str, sold_out: bool = False) -> int | None:
+        """특정 마켓에 등록된 수집상품 수 (sold_out=True면 그 중 품절). /scroll total 사용."""
+        params = {"status": f"mtype_reg_{market_type}", "limit": "1"}
+        if sold_out:
+            params["sold_out_filter"] = "sold_out"
+        data = self._get("/api/v1/samba/collector/products/scroll", params, timeout=40)
+        if isinstance(data, dict):
+            return int(data.get("total") or 0)
+        return None
 
 
 samba = SambaClient()
@@ -774,6 +792,48 @@ def build_returns_text(with_comment: bool = True) -> str:
     ])
 
 
+# 판매마켓 (market_type, 표시명) — 등록/품절 보고 대상
+_REPORT_MARKETS = [
+    ("ssg", "신세계몰"),
+    ("lotteon", "롯데ON"),
+    ("11st", "11번가"),
+    ("coupang", "쿠팡"),
+    ("smartstore", "스스"),
+    ("lottehome", "롯데몰"),
+    ("gsshop", "지에스샵"),
+]
+
+
+def build_products_text() -> str:
+    """상품 현황 — 전체 수집 + 마켓별 등록/품절."""
+    counts = samba.product_counts()
+    if counts is None:
+        return "❌ 삼바 서버 연결 실패 (상품)."
+
+    # 마켓별 등록 / 품절 — 마켓당 2회 호출(직렬). /scroll 카운트가 무거워 ~24초.
+    # 2코어 운영 백엔드를 위해 병렬 대신 직렬(한 번에 1쿼리)로 부하를 낮춘다.
+    rows = []
+    for mtype, name in _REPORT_MARKETS:
+        rows.append((name, samba.product_market_count(mtype),
+                     samba.product_market_count(mtype, sold_out=True)))
+    rows.sort(key=lambda x: (x[1] or 0), reverse=True)  # 등록 많은 순
+
+    lines = [
+        f"📦 상품 현황 ({datetime.now(KST).strftime('%m월 %d일')})",
+        "",
+        f"· 전체 수집상품 {int(counts.get('total') or 0):,}개",
+        f"· 전체 등록상품 {int(counts.get('registered') or 0):,}개",
+        f"· 전체 품절 {int(counts.get('sold_out') or 0):,}개",
+        "",
+        "🏪 마켓별 등록 / 품절",
+    ]
+    for name, reg, so in rows:
+        reg_s = f"{reg:,}" if reg is not None else "?"
+        so_s = f"{so:,}" if so is not None else "?"
+        lines.append(f"· {name} {reg_s} / 품절 {so_s}")
+    return "\n".join(lines)
+
+
 def _require_samba(chat_id: int) -> bool:
     if not samba.is_ready:
         tg_send(chat_id, "⚠️ SAMBA_EMAIL / SAMBA_PASSWORD 환경변수가 없어.\n삼바 연결 설정이 필요해.")
@@ -809,6 +869,13 @@ def cmd_returns(chat_id: int) -> None:
     tg_send(chat_id, build_returns_text())
 
 
+def cmd_products(chat_id: int) -> None:
+    if not _require_samba(chat_id):
+        return
+    tg_send(chat_id, "📦 상품 현황 집계 중... (마켓별 조회로 ~25초 걸려요)")
+    tg_send(chat_id, build_products_text())
+
+
 def cmd_help(chat_id: int) -> None:
     samba_status = "✅ 연결됨" if samba.is_ready else "❌ 미연결 (SAMBA_EMAIL/PASSWORD 없음)"
     tg_send(chat_id, (
@@ -824,6 +891,7 @@ def cmd_help(chat_id: int) -> None:
         "  /주문현황 — 상태별 건수·이행률·전월대비\n"
         "  /CS       — 미답변/답변완료·유형별\n"
         "  /반품     — 반품 상태·유형·사유·승인대기\n"
+        "  /상품     — 전체 수집 + 마켓별 등록/품절\n"
         "\n"
         "💬 AI 대화\n"
         "  아무 말이나 → Hermes가 답해\n"
@@ -919,6 +987,36 @@ def _daily_report_loop() -> None:
             tg_send(cid, digest)
 
 
+def _product_report_loop() -> None:
+    """매일 PRODUCT_REPORT_HOUR(KST)에 상품 현황 보고를 발송."""
+    if not samba.is_ready or not PRODUCT_REPORT_HOUR:
+        return
+    try:
+        hour = int(PRODUCT_REPORT_HOUR)
+        if not 0 <= hour <= 23:
+            raise ValueError
+    except ValueError:
+        print(f"[상품보고] PRODUCT_REPORT_HOUR 값이 잘못됨: {PRODUCT_REPORT_HOUR!r} — 비활성화", file=sys.stderr)
+        return
+
+    print(f"[상품보고] 매일 {hour:02d}:00(KST) 상품 현황 보고 활성.")
+    while True:
+        now = datetime.now(KST)
+        target = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+        if target <= now:
+            target += timedelta(days=1)
+        time.sleep(max((target - now).total_seconds(), 1))
+
+        if not _notify_chat_ids:
+            continue
+        try:
+            report = build_products_text()
+        except Exception as e:
+            report = f"⚠️ 상품 보고 생성 실패: {e}"
+        for cid in list(_notify_chat_ids):
+            tg_send(cid, report)
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # 메시지 핸들러
 # ══════════════════════════════════════════════════════════════════════════
@@ -978,6 +1076,10 @@ def handle_message(msg: dict) -> None:
         cmd_returns(chat_id)
         return
 
+    if text in ("/상품", "/products", "/상품현황"):
+        cmd_products(chat_id)
+        return
+
     # /처리 또는 자연어("주문처리해줘", "처리해줘", "신규주문 처리")
     if (text.startswith(("/처리", "/process"))
             or "주문처리" in text
@@ -1019,6 +1121,7 @@ def main() -> None:
         else:
             print("[신규주문감지] 실시간 푸시 OFF (미발주는 아침 다이제스트에만 표시)")
         threading.Thread(target=_daily_report_loop, daemon=True).start()
+        threading.Thread(target=_product_report_loop, daemon=True).start()
 
     offset = 0
     while True:
