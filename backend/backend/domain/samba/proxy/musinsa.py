@@ -1408,7 +1408,14 @@ class MusinsaClient:
                         m = re.search(r"\(\+(\d+)\)", ev_name)
                         if m:
                             add_price = int(m.group(1))
-                    ev_stock = (ev.get("quantity") or 99) if is_stock_managed else 99
+                    # 재고관리 옵션은 quantity 그대로 보존(0=품절). None(불명)일 때만 99 대체.
+                    # 비관리 옵션은 무제한이므로 99. quantity=0 을 99 로 되살리면 품절 마킹옵션이
+                    # 판매 가능 조합으로 부활하는 버그(#461) 방지.
+                    if is_stock_managed:
+                        ev_qty = ev.get("quantity")
+                        ev_stock = 99 if ev_qty is None else ev_qty
+                    else:
+                        ev_stock = 99
                     if ev_stock and ev_stock > 9999:
                         ev_stock = 9999
                     extra_values.append(
@@ -1455,7 +1462,10 @@ class MusinsaClient:
                                 # 옵션별 추가금액 — 마켓 전송 시 salePrice 보정용
                                 "add_price": int(ev["add_price"] or 0),
                                 "stock": combo_stock,
-                                "isSoldOut": main.get("isSoldOut", False),
+                                # 조합 재고가 0 이하면 품절 처리(#461) — 메인이 품절이거나
+                                # extra 옵션 재고가 0(품절)인 경우 모두 판매불가로 마킹.
+                                "isSoldOut": main.get("isSoldOut", False)
+                                or (combo_stock is not None and combo_stock <= 0),
                                 "isBrandDelivery": main.get("isBrandDelivery", False),
                                 "deliveryType": main.get("deliveryType", ""),
                                 "managedCode": main.get("managedCode", ""),
