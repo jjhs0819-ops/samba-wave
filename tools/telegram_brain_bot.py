@@ -16,7 +16,7 @@
                             운영 백엔드는 이 헤더 없으면 삼바 API 403 차단.
   NEW_ORDER_PUSH            (선택) 주문별 실시간 푸시. 기본 OFF. 1/true/on 이면 켜짐.
   NEW_ORDER_POLL_MINUTES    (선택) 신규 미발주 감지 주기(분), 기본 10 (NEW_ORDER_PUSH 켤 때만)
-  DAILY_REPORT_HOUR         (선택) 아침 자동 다이제스트 시각(KST 0~23), 기본 9. 비우면 끔.
+  DAILY_REPORT_HOUR         (선택) 아침 자동 다이제스트 시각(KST 0~23), 기본 8. 비우면 끔.
 
 명령:
   /오늘     — 오늘 주문 현황 요약
@@ -64,7 +64,7 @@ NEW_ORDER_POLL_MINUTES = int(os.environ.get("NEW_ORDER_POLL_MINUTES", "10"))
 # 주문별 실시간 푸시 알림. 기본 OFF — 미발주는 아침 다이제스트에만 표시.
 NEW_ORDER_PUSH = os.environ.get("NEW_ORDER_PUSH", "").strip() in ("1", "true", "on", "yes")
 # 아침 자동 다이제스트 발송 시각(KST, 0~23). 빈 값이면 자동보고 비활성화.
-DAILY_REPORT_HOUR = os.environ.get("DAILY_REPORT_HOUR", "9").strip()
+DAILY_REPORT_HOUR = os.environ.get("DAILY_REPORT_HOUR", "8").strip()
 
 TG_API = f"https://api.telegram.org/bot{TOKEN}"
 KST = timezone(timedelta(hours=9))
@@ -640,16 +640,13 @@ def build_order_status_text(with_comment: bool = True) -> str:
     yday_fulfilled = sum(1 for o in yday_orders if _order_has_so(o))
     rate = (yday_fulfilled / yday_cnt * 100) if yday_cnt else 0
 
-    lines = [
+    return "\n".join([
         "📦 주문 처리 현황",
         "",
-        f"오늘 신규주문: {today_cnt}건",
-        f"전날 총 주문: {yday_cnt}건",
-        f"  └ 이행(주문번호 입력): {yday_fulfilled}건 ({rate:.0f}%)",
-    ]
-    if with_comment:
-        _append_comment(lines, "주문 처리")
-    return "\n".join(lines)
+        f"· 오늘 신규주문 {today_cnt}건",
+        f"· 전날 총 주문 {yday_cnt}건",
+        f"· 전날 이행 {yday_fulfilled}건 ({rate:.0f}%)",
+    ])
 
 
 def _parse_dt(s) -> "datetime | None":
