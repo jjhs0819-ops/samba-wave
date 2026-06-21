@@ -983,7 +983,33 @@ def cmd_help(chat_id: int) -> None:
 # ══════════════════════════════════════════════════════════════════════════
 
 _last_unplaced_ids: set[str] = set()
-_notify_chat_ids: set[int] = set()
+_notify_chat_ids: set[int] = set()  # 정기보고 수신 채팅 (재시작 시 시드+복원)
+# 수신자 영속화 파일 — 스크립트와 같은 디렉토리. 재시작 후에도 8시/12시 보고가
+# 수신자 0으로 스킵되지 않도록 한다.
+_NOTIFY_STORE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "notify_chats.json")
+
+
+def _seed_notify_chats() -> None:
+    """시작 시 수신자 복원: 허용 사용자ID(DM은 chat_id=user_id) + 저장 파일."""
+    for uid in ALLOWED:
+        try:
+            _notify_chat_ids.add(int(uid))
+        except ValueError:
+            pass
+    try:
+        with open(_NOTIFY_STORE, encoding="utf-8") as f:
+            for cid in json.load(f):
+                _notify_chat_ids.add(int(cid))
+    except (OSError, ValueError, TypeError):
+        pass
+
+
+def _save_notify_chats() -> None:
+    try:
+        with open(_NOTIFY_STORE, "w", encoding="utf-8") as f:
+            json.dump(sorted(_notify_chat_ids), f)
+    except OSError:
+        pass
 
 
 def _poll_new_orders() -> None:
@@ -1110,7 +1136,9 @@ def handle_message(msg: dict) -> None:
         tg_send(chat_id, "⛔ 허용되지 않은 사용자입니다.")
         return
 
-    _notify_chat_ids.add(chat_id)  # 신규 주문 알림 대상 등록
+    if chat_id not in _notify_chat_ids:
+        _notify_chat_ids.add(chat_id)  # 정기보고 수신 대상 등록
+        _save_notify_chats()  # 재시작 후에도 유지
 
     if text == "/start":
         warn = "" if ALLOWED else "\n⚠️ 지금 누구나 사용 가능. /whoami 로 id 확인 후 잠가줘."
@@ -1184,6 +1212,9 @@ def main() -> None:
 
     samba_status = "연결 대기중" if samba.is_ready else "미연결 (SAMBA_EMAIL/PASSWORD 없음)"
     print(f"[시작] Hermes 비서 봇 — 모델={HERMES_MODEL}, 삼바={samba_status}")
+
+    _seed_notify_chats()  # 재시작 후에도 정기보고 수신자 복원 (허용ID + 저장파일)
+    print(f"[정기보고] 수신자 {len(_notify_chat_ids)}명 시드됨")
 
     if samba.is_ready:
         threading.Thread(target=samba._ensure_token, daemon=True).start()
