@@ -848,6 +848,7 @@ def build_products_text() -> str:
         so_line,
         "",
         "🏪 마켓별 등록(목표대비) / 품절",
+        "",
     ]
     for name, reg, so, target in rows:
         reg_s = f"{reg:,}" if reg is not None else "?"
