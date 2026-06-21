@@ -285,6 +285,16 @@ class SambaClient:
             return int(data.get("total") or 0)
         return None
 
+    def product_soldout_split(self) -> tuple[int, int] | None:
+        """품절 상품을 (마켓등록 품절, 미등록 품절)로 분해. registered_accounts 유무로 판별."""
+        data = self._get("/api/v1/samba/collector/products/scroll",
+                         {"status": "sold_out", "limit": "1000"}, timeout=40)
+        if not isinstance(data, dict):
+            return None
+        items = data.get("items", [])
+        reg = sum(1 for x in items if (x.get("registered_accounts") or []))
+        return reg, len(items) - reg
+
 
 samba = SambaClient()
 
@@ -822,13 +832,20 @@ def build_products_text() -> str:
     total = int(counts.get("total") or 0)
     reg_total = int(counts.get("registered") or 0)
     reg_pct = f" ({reg_total / total * 100:.1f}%)" if total else ""
+    sold_out = int(counts.get("sold_out") or 0)
+    # 품절을 마켓등록/미등록으로 분해 (등록품절 = 오토튠 삭제 대상)
+    split = samba.product_soldout_split()
+    if split is not None:
+        so_line = f"· 전체 품절 {sold_out:,}개 (등록 {split[0]:,} · 미등록 {split[1]:,})"
+    else:
+        so_line = f"· 전체 품절 {sold_out:,}개"
 
     lines = [
         f"📦 상품 현황 ({datetime.now(KST).strftime('%m월 %d일')})",
         "",
         f"· 전체 수집상품 {total:,}개",
         f"· 전체 등록상품 {reg_total:,}개{reg_pct}",
-        f"· 전체 품절 {int(counts.get('sold_out') or 0):,}개",
+        so_line,
         "",
         "🏪 마켓별 등록(목표대비) / 품절",
     ]
