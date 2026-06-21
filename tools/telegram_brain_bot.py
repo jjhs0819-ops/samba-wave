@@ -792,20 +792,21 @@ def build_returns_text(with_comment: bool = True) -> str:
     ])
 
 
-# 판매마켓 (market_type, 표시명) — 등록/품절 보고 대상
+# 판매마켓 (market_type, 표시명, 목표 등록수) — 등록/품절 보고 대상
+# GS샵은 플레이오토(playauto) 연동으로 등록하므로 market_type=playauto.
 _REPORT_MARKETS = [
-    ("ssg", "신세계몰"),
-    ("lotteon", "롯데ON"),
-    ("11st", "11번가"),
-    ("coupang", "쿠팡"),
-    ("smartstore", "스스"),
-    ("lottehome", "롯데몰"),
-    ("gsshop", "지에스샵"),
+    ("ssg", "신세계몰", 50000),
+    ("lotteon", "롯데ON", 30000),
+    ("11st", "11번가", 25000),
+    ("coupang", "쿠팡", 40000),
+    ("smartstore", "스스", 8000),
+    ("lottehome", "롯데몰", 10000),
+    ("playauto", "GS샵", 10000),
 ]
 
 
 def build_products_text() -> str:
-    """상품 현황 — 전체 수집 + 마켓별 등록/품절."""
+    """상품 현황 — 전체 수집/등록율 + 마켓별 등록(목표대비)/품절."""
     counts = samba.product_counts()
     if counts is None:
         return "❌ 삼바 서버 연결 실패 (상품)."
@@ -813,24 +814,29 @@ def build_products_text() -> str:
     # 마켓별 등록 / 품절 — 마켓당 2회 호출(직렬). /scroll 카운트가 무거워 ~24초.
     # 2코어 운영 백엔드를 위해 병렬 대신 직렬(한 번에 1쿼리)로 부하를 낮춘다.
     rows = []
-    for mtype, name in _REPORT_MARKETS:
+    for mtype, name, target in _REPORT_MARKETS:
         rows.append((name, samba.product_market_count(mtype),
-                     samba.product_market_count(mtype, sold_out=True)))
+                     samba.product_market_count(mtype, sold_out=True), target))
     rows.sort(key=lambda x: (x[1] or 0), reverse=True)  # 등록 많은 순
+
+    total = int(counts.get("total") or 0)
+    reg_total = int(counts.get("registered") or 0)
+    reg_pct = f" ({reg_total / total * 100:.1f}%)" if total else ""
 
     lines = [
         f"📦 상품 현황 ({datetime.now(KST).strftime('%m월 %d일')})",
         "",
-        f"· 전체 수집상품 {int(counts.get('total') or 0):,}개",
-        f"· 전체 등록상품 {int(counts.get('registered') or 0):,}개",
+        f"· 전체 수집상품 {total:,}개",
+        f"· 전체 등록상품 {reg_total:,}개{reg_pct}",
         f"· 전체 품절 {int(counts.get('sold_out') or 0):,}개",
         "",
-        "🏪 마켓별 등록 / 품절",
+        "🏪 마켓별 등록(목표대비) / 품절",
     ]
-    for name, reg, so in rows:
+    for name, reg, so, target in rows:
         reg_s = f"{reg:,}" if reg is not None else "?"
         so_s = f"{so:,}" if so is not None else "?"
-        lines.append(f"· {name} {reg_s} / 품절 {so_s}")
+        pct = f" ({reg / target * 100:.0f}%)" if (reg is not None and target) else ""
+        lines.append(f"· {name} {reg_s}{pct} / 품절 {so_s}")
     return "\n".join(lines)
 
 
