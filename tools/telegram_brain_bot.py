@@ -303,12 +303,17 @@ samba = SambaClient()
 # 텔레그램 전송
 # ══════════════════════════════════════════════════════════════════════════
 
-def tg_send(chat_id: int, text: str) -> None:
-    for i in range(0, max(len(text), 1), 4000):
-        chunk = text[i:i + 4000] or "(빈 응답)"
+def tg_send(chat_id: int, text: str, parse_mode: str | None = None) -> None:
+    # parse_mode 사용 시(HTML <pre> 표 등) 4000자 청크 분할은 태그를 깨뜨릴 수 있어
+    # 단일 전송한다(상품 보고는 1천자 미만이라 안전).
+    chunks = [text] if parse_mode else [text[i:i + 4000] or "(빈 응답)"
+                                        for i in range(0, max(len(text), 1), 4000)]
+    for chunk in chunks:
+        payload = {"chat_id": chat_id, "text": chunk}
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
         try:
-            _http_json(f"{TG_API}/sendMessage",
-                       {"chat_id": chat_id, "text": chunk}, timeout=30)
+            _http_json(f"{TG_API}/sendMessage", payload, timeout=30)
         except urllib.error.URLError as e:
             print(f"[경고] 메시지 전송 실패: {e}", file=sys.stderr)
 
@@ -815,8 +820,29 @@ _REPORT_MARKETS = [
 ]
 
 
+def _dwidth(s: str) -> int:
+    """문자열의 모노스페이스 표시폭. 한글/CJK/전각은 2칸."""
+    w = 0
+    for ch in s:
+        o = ord(ch)
+        if (0xAC00 <= o <= 0xD7A3 or 0x1100 <= o <= 0x115F or 0x3000 <= o <= 0x303F
+                or 0x3130 <= o <= 0x318F or 0x4E00 <= o <= 0x9FFF or 0xFF00 <= o <= 0xFFEF):
+            w += 2
+        else:
+            w += 1
+    return w
+
+
+def _lpad(s: str, width: int) -> str:  # 왼쪽 정렬 (오른쪽에 공백)
+    return s + " " * max(0, width - _dwidth(s))
+
+
+def _rpad(s: str, width: int) -> str:  # 오른쪽 정렬 (왼쪽에 공백)
+    return " " * max(0, width - _dwidth(s)) + s
+
+
 def build_products_text() -> str:
-    """상품 현황 — 전체 수집/등록율 + 마켓별 등록(목표대비)/품절."""
+    """상품 현황 — 전체 수집/등록율 + 마켓별 등록(목표대비)/품절. 표는 모노스페이스 정렬."""
     counts = samba.product_counts()
     if counts is None:
         return "❌ 삼바 서버 연결 실패 (상품)."
@@ -840,22 +866,44 @@ def build_products_text() -> str:
     else:
         so_line = f"· 전체 품절 {sold_out:,}개"
 
-    lines = [
+    # 마켓별 모노스페이스 정렬표 (마켓 좌측정렬, 숫자 우측정렬)
+    header = ("마켓", "등록", "목표", "품절")
+    trows = [header]
+    for name, reg, so, target in rows:
+        reg_s = f"{reg:,}" if reg is not None else "?"
+        mk_s = f"{reg / target * 100:.0f}%" if (reg is not None and target) else "-"
+        so_s = f"{so:,}" if so is not None else "?"
+        trows.append((name, reg_s, mk_s, so_s))
+    w = [max(_dwidth(r[c]) for r in trows) for c in range(4)]
+    table = "\n".join(
+        _lpad(r[0], w[0]) + "  " + _rpad(r[1], w[1]) + "  "
+        + _rpad(r[2], w[2]) + "  " + _rpad(r[3], w[3])
+        for r in trows
+    )
+
+    return "\n".join([
         f"📦 상품 현황 ({datetime.now(KST).strftime('%m월 %d일')})",
         "",
         f"· 전체 수집상품 {total:,}개",
         f"· 전체 등록상품 {reg_total:,}개{reg_pct}",
         so_line,
         "",
-        "🏪 마켓별 등록(목표대비) / 품절",
+        "🏪 마켓별 등록 현황 (등록 / 목표대비 / 품절)",
         "",
-    ]
-    for name, reg, so, target in rows:
-        reg_s = f"{reg:,}" if reg is not None else "?"
-        so_s = f"{so:,}" if so is not None else "?"
-        pct = f" ({reg / target * 100:.0f}%)" if (reg is not None and target) else ""
-        lines.append(f"· {name} {reg_s}{pct} / 품절 {so_s}")
-    return "\n".join(lines)
+        table,
+    ])
+
+
+def _html_escape(s: str) -> str:
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _products_message() -> tuple[str, str | None]:
+    """상품 보고 메시지 + parse_mode. 표 정렬 위해 <pre>+HTML 사용. 에러는 평문."""
+    text = build_products_text()
+    if text.startswith("❌"):
+        return text, None
+    return f"<pre>{_html_escape(text)}</pre>", "HTML"
 
 
 def _require_samba(chat_id: int) -> bool:
@@ -897,7 +945,8 @@ def cmd_products(chat_id: int) -> None:
     if not _require_samba(chat_id):
         return
     tg_send(chat_id, "📦 상품 현황 집계 중... (마켓별 조회로 ~25초 걸려요)")
-    tg_send(chat_id, build_products_text())
+    msg, pm = _products_message()
+    tg_send(chat_id, msg, parse_mode=pm)
 
 
 def cmd_help(chat_id: int) -> None:
@@ -1034,11 +1083,11 @@ def _product_report_loop() -> None:
         if not _notify_chat_ids:
             continue
         try:
-            report = build_products_text()
+            msg, pm = _products_message()
         except Exception as e:
-            report = f"⚠️ 상품 보고 생성 실패: {e}"
+            msg, pm = f"⚠️ 상품 보고 생성 실패: {e}", None
         for cid in list(_notify_chat_ids):
-            tg_send(cid, report)
+            tg_send(cid, msg, parse_mode=pm)
 
 
 # ══════════════════════════════════════════════════════════════════════════
