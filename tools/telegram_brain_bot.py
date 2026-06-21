@@ -875,9 +875,10 @@ def build_products_text() -> str:
         so_s = f"{so:,}" if so is not None else "?"
         trows.append((name, reg_s, mk_s, so_s))
     w = [max(_dwidth(r[c]) for r in trows) for c in range(4)]
+    # 전부 왼쪽 정렬 — 각 열 숫자가 같은 위치에서 시작
     table = "\n".join(
-        _lpad(r[0], w[0]) + "  " + _rpad(r[1], w[1]) + "  "
-        + _rpad(r[2], w[2]) + "  " + _rpad(r[3], w[3])
+        _lpad(r[0], w[0]) + "  " + _lpad(r[1], w[1]) + "  "
+        + _lpad(r[2], w[2]) + "  " + r[3]
         for r in trows
     )
 
