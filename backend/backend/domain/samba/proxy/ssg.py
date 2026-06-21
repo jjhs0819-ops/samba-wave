@@ -2276,6 +2276,7 @@ class SSGClient:
         spl_prc = float(
             raw.get("splprc", 0) or raw.get("splPrc", 0) or 0
         )  # listWarehouseOut은 splPrc
+        _q = int(raw.get("ordQty", 1) or 1)  # 주문수량 — 멀티수량 라인총액 계산용(#460)
         # 수령인 우선, 없으면 주문자 fallback (str 정규화)
         customer_name = str(raw.get("rcptpeNm", "") or raw.get("ordpeNm", "") or "")
         # 주문자명 — SSG ordpeNm (수령인 rcptpeNm과 다를 수 있음: 선물하기 등)
@@ -2386,13 +2387,19 @@ class SSGClient:
             "orderer_name": orderer_name,
             "customer_phone": customer_phone,
             "customer_address": customer_address,
-            "quantity": raw.get("ordQty", 1) or 1,
+            # 멀티수량 주문 금액 단가표시 회귀 방지(#460) — 11번가 _parse_11st_order 패턴과 통일.
+            # sale_price 는 단가 유지, total_payment_amount/revenue 는 수량 반영한 라인총액.
+            "quantity": _q,
             "sale_price": sell_price,
+            "total_payment_amount": round(sell_price) * _q,
             "cost": 0,
             "fee_rate": fee_rate,
-            "revenue": round(spl_prc * 1.1)
-            if spl_prc > 0
-            else round(sell_price / 1.1 * (1 - fee_rate / 100)),
+            "revenue": (
+                round(spl_prc * 1.1)
+                if spl_prc > 0
+                else round(sell_price / 1.1 * (1 - fee_rate / 100))
+            )
+            * _q,
             "source": "ssg",
             "status": status,
             "shipping_status": shipping_status,
