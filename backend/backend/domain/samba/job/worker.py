@@ -576,6 +576,7 @@ class JobWorker:
 
             from backend.core.config import settings as _cfg
 
+            logger.info(f"[잡워커] rebalance start poll={self._poll_count}")
             _bg_max = int(os.environ.get("JOB_BG_TRANSMIT_MAX_CONCURRENCY", "26"))
             _min_pct = 0.15
             _max_pct = 0.35
