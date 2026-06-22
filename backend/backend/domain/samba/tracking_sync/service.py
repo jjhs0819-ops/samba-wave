@@ -295,10 +295,13 @@ async def enqueue_for_order(
                 f"[송장동기화][가드] 취소 주문 enqueue 차단 order_id={order_id} "
                 f"status={order.status} shipping_status={order.shipping_status}"
             )
+            # 취소요청 제외는 '오류'가 아니라 '스킵'(정상 제외) — 까대기/선물주문과 동일 분류.
+            # 이전엔 success=False+error 라 자동실행 이력에 '오류 N건' 빨간 표시로 잡혀
+            # 송장수집 실패로 오해되던 문제(2026-06-22).
             return {
-                "success": False,
-                "blocked": True,
-                "error": "취소요청 주문은 송장 추출 대상이 아닙니다",
+                "success": True,
+                "skipped": True,
+                "reason": "취소요청 주문은 송장 추출 대상이 아닙니다",
             }
         if not order.sourcing_order_number:
             return {"success": False, "error": "소싱처 주문번호가 없습니다"}
