@@ -10664,6 +10664,25 @@ def _extract_product_code(text: Optional[str]) -> Optional[str]:
     return m.group(0) if m else None
 
 
+def _kakao_code_matches(kakao_code, product_name):
+    """카톡 품번이 이 주문 상품명과 일치하는지.
+    1) 기존 방식: 상품명에서 추출한 품번과 정확히 같음
+    2) 포함 방식: 카톡 품번(7자 이상)이 상품명 안에 그대로 들어있음
+    둘 중 하나라도 맞으면 매칭. 짧은 품번(<7)은 오매칭 위험이 커서 포함매칭 제외."""
+    code = (kakao_code or "").upper().replace("-", "").replace(" ", "")
+    if not code:
+        return False
+    # 1) 기존 추출-동일 방식 (하위호환)
+    if _extract_product_code(product_name) == code:
+        return True
+    # 2) 포함 방식 (7자 이상만)
+    if len(code) >= 7:
+        norm = (product_name or "").upper().replace("-", "").replace(" ", "")
+        if code in norm:
+            return True
+    return False
+
+
 def _validate_invoice(inv: str) -> tuple[bool, str]:
     """송장 형식 검증. 3184 하드코딩 안 함(번호 바뀔 수 있음).
     필수: 숫자 + 자릿수(10~14). 3184 미시작은 막지 않고 '경고'만."""
@@ -10734,7 +10753,7 @@ async def ship_by_kakao(
         o
         for o in candidates
         if not (o.tracking_number or "").strip()
-        and _extract_product_code(o.product_name) == code
+        and _kakao_code_matches(code, o.product_name)
     ]
 
     # 4) 안전규칙: 정확히 1건일 때만 처리
@@ -10846,7 +10865,7 @@ async def kakao_name_candidates(
         o
         for o in rows
         if not (o.tracking_number or "").strip()
-        and _extract_product_code(o.product_name) == code
+        and _kakao_code_matches(code, o.product_name)
     ]
 
     candidates = [
