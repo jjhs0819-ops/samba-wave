@@ -12,6 +12,7 @@ export default function SambaLoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -111,25 +112,45 @@ export default function SambaLoginPage() {
             <label style={{ display: 'block', fontSize: '0.8125rem', color: '#888', marginBottom: '0.375rem' }}>
               비밀번호
             </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-              style={{
-                width: '100%',
-                padding: '0.625rem 0.75rem',
-                fontSize: '0.875rem',
-                background: '#111520',
-                border: '1px solid #2A3040',
-                borderRadius: '8px',
-                color: '#E5E5E5',
-                outline: 'none',
-                boxSizing: 'border-box',
-              }}
-              onFocus={(e) => { e.currentTarget.style.borderColor = '#FF8C00' }}
-              onBlur={(e) => { e.currentTarget.style.borderColor = '#2A3040' }}
-            />
+            <div style={{ position: 'relative' }}>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                style={{
+                  width: '100%',
+                  padding: '0.625rem 2.5rem 0.625rem 0.75rem',
+                  fontSize: '0.875rem',
+                  background: '#111520',
+                  border: '1px solid #2A3040',
+                  borderRadius: '8px',
+                  color: '#E5E5E5',
+                  outline: 'none',
+                  boxSizing: 'border-box',
+                }}
+                onFocus={(e) => { e.currentTarget.style.borderColor = '#FF8C00' }}
+                onBlur={(e) => { e.currentTarget.style.borderColor = '#2A3040' }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                style={{
+                  position: 'absolute',
+                  right: '0.625rem',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: '#666',
+                  fontSize: '0.75rem',
+                  padding: '0.25rem',
+                }}
+              >
+                {showPassword ? '숨김' : '표시'}
+              </button>
+            </div>
           </div>
 
           {error && (
