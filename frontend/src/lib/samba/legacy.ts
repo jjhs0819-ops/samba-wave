@@ -49,7 +49,7 @@ export async function fetchWithAuth(url: string, init?: RequestInit): Promise<Re
 export async function request<T>(
   url: string,
   init?: RequestInit,
-  options?: { timeoutMs?: number; retries?: number },
+  options?: { timeoutMs?: number; retries?: number; skipAuthRedirect?: boolean },
 ): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -109,10 +109,14 @@ export async function request<T>(
       // 401이면 토큰 만료 — 로그인 페이지로 강제 리다이렉트
       // .catch(() => []) 에 삼켜지지 않도록 never-resolving promise 반환
       if (res.status === 401 && typeof window !== 'undefined') {
-        localStorage.removeItem(STORAGE_KEYS.SAMBA_USER)
-        document.cookie = 'samba_user=; path=/; max-age=0'
-        window.location.href = '/samba/login'
-        return new Promise<T>(() => {})
+        if (!options?.skipAuthRedirect) {
+          // 일반 API: 토큰 만료 → 로그인 페이지 강제 리다이렉트
+          localStorage.removeItem(STORAGE_KEYS.SAMBA_USER)
+          document.cookie = 'samba_user=; path=/; max-age=0'
+          window.location.href = '/samba/login'
+          return new Promise<T>(() => {})
+        }
+        // skipAuthRedirect=true: 에러 throw해서 caller가 직접 처리 (로그인 API 등)
       }
       // 502/503/504 = 배포/게이트웨이 일시 오류 → 남은 재시도가 있으면 재요청
       if ([502, 503, 504].includes(res.status) && attempt < retries) {
@@ -2372,7 +2376,9 @@ export const userApi = {
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/users/${id}`, { method: 'DELETE' }),
   login: (email: string, password: string) =>
     request<SambaUser>(
-      `${SAMBA_PREFIX}/users/login`, { method: 'POST', body: JSON.stringify({ email, password }) }
+      `${SAMBA_PREFIX}/users/login`,
+      { method: 'POST', body: JSON.stringify({ email, password }) },
+      { skipAuthRedirect: true },
     ),
   loginHistory: (start?: string, end?: string, limit = 100) => {
     const p = new URLSearchParams({ limit: String(limit) })
