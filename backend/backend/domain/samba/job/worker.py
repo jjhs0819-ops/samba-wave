@@ -821,13 +821,18 @@ class JobWorker:
                             1,
                             round(_bg_max * 0.15),
                         )
+                        _special_mts = {"lottehome", "playauto"}
                         for _mt, _limit in self._autotune_slot_limits.items():
                             _cur = _running_per_mt.get(_mt, 0)
                             if _cur >= _limit:
                                 # 상한 초과 → exclude
                                 _slot_excl.update(_mt_to_accs.get(_mt, []))
-                            elif _cur < _min_slots and _mt_to_accs.get(_mt):
-                                # 하한 미달 → 우선 claim 대상
+                            elif (
+                                _mt in _special_mts
+                                and _cur < _min_slots
+                                and _mt_to_accs.get(_mt)
+                            ):
+                                # lottehome/playauto 하한 미달 → 우선 claim 대상
                                 _underflow_accs.update(_mt_to_accs[_mt])
 
                     # 하한 미달 판매처 우선 claim
