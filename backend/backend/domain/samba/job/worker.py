@@ -1437,12 +1437,14 @@ class JobWorker:
                                 if _tetris_acc_market.get(a) in _selected_markets
                             ]
                             # 부분배치 fanout 게이트 (issue #386):
-                            # _payload_tetris_flag=True = 프론트가 마켓 체크박스로 전 계정을
-                            # 펼친 fanout 전송(정책 accountIds 좁힘 없음). 이때 테트리스 배치가
-                            # 없는 미배치 마켓(_kept_policy)을 전 계정으로 발행하면 사고 →
-                            # 좁힐 근거가 전혀 없으므로 미배치 마켓은 스킵하고 배치 계정만 전송.
-                            # 정책 기반 전송(flag=False)은 기존대로 정책 계정 유지.
-                            if _payload_tetris_flag:
+                            # _payload_tetris_flag=True + 수동 fanout(프론트 마켓 체크박스):
+                            #   테트리스 배치 없는 미배치 마켓을 전 계정으로 발행하면 사고 →
+                            #   배치 계정만 전송, 미배치 마켓(_kept_policy) 스킵.
+                            # 오토튠/테트리스 bg 잡(_is_bg_job=True):
+                            #   target_account_ids가 이미 registered_accounts 기준으로 좁혀졌으므로
+                            #   미배치 마켓도 안전 → #193 방식 유지(_kept_policy + _tetris_picks).
+                            if _payload_tetris_flag and not _is_bg_job:
+                                # 수동 fanout: 배치 계정만
                                 if _kept_policy:
                                     _skipped_markets = sorted(
                                         {
@@ -1460,6 +1462,7 @@ class JobWorker:
                                     _unmatched_logged = True
                                 effective_account_ids = _tetris_picks
                             else:
+                                # 오토튠/bg 잡 또는 정책 기반: #193 방식
                                 effective_account_ids = _kept_policy + _tetris_picks
                         else:
                             # target 미지정 — 배치된 테트리스 계정 전부 사용
