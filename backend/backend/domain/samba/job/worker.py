@@ -572,55 +572,64 @@ class JobWorker:
         나머지 판매처: pending 비율 그대로, 최소 1개.
         """
         try:
-            from sqlalchemy import text as _sa_text
+            import asyncpg as _asyncpg
 
-            from backend.db.orm import get_read_session
+            from backend.core.config import settings as _cfg
 
             _bg_max = int(os.environ.get("JOB_BG_TRANSMIT_MAX_CONCURRENCY", "26"))
             _min_pct = 0.15
             _max_pct = 0.35
 
-            async with get_read_session() as session:
-                rows = await session.execute(
-                    _sa_text(
-                        "SELECT payload->'target_account_ids'->>0 AS acc, COUNT(*) AS cnt "
-                        "FROM samba_jobs "
-                        "WHERE status='pending' AND job_type='autotune_transmit' "
-                        "GROUP BY 1"
-                    )
+            _conn = await _asyncpg.connect(
+                host=_cfg.read_db_host,
+                port=_cfg.read_db_port,
+                user=_cfg.read_db_user,
+                password=_cfg.read_db_password,
+                database=_cfg.read_db_name,
+                ssl=False,
+            )
+            try:
+                _pending_rows = await _conn.fetch(
+                    "SELECT payload->'target_account_ids'->>0 AS acc, COUNT(*) AS cnt "
+                    "FROM samba_jobs "
+                    "WHERE status='pending' AND job_type='autotune_transmit' "
+                    "GROUP BY 1"
                 )
-                pending_by_acc: dict[str, int] = {r.acc: r.cnt for r in rows if r.acc}
+                pending_by_acc: dict[str, int] = {
+                    r["acc"]: r["cnt"] for r in _pending_rows if r["acc"]
+                }
 
                 if not pending_by_acc:
                     self._autotune_slot_limits = {}
                     return
 
                 # market_type 캐시 갱신 (미캐시 계정만)
-                for acc_id in pending_by_acc:
-                    if acc_id not in self._acc_market_type_cache:
-                        mt_row = await session.execute(
-                            _sa_text(
-                                "SELECT market_type FROM samba_market_account WHERE id=:aid"
-                            ).bindparams(aid=acc_id)
-                        )
-                        mt = mt_row.scalar()
-                        if mt:
-                            self._acc_market_type_cache[acc_id] = mt
+                _uncached = [
+                    a for a in pending_by_acc if a not in self._acc_market_type_cache
+                ]
+                if _uncached:
+                    _mt_rows = await _conn.fetch(
+                        "SELECT id, market_type FROM samba_market_account WHERE id=ANY($1)",
+                        _uncached,
+                    )
+                    for _r in _mt_rows:
+                        if _r["market_type"]:
+                            self._acc_market_type_cache[_r["id"]] = _r["market_type"]
 
                 # DB running 수 캐시 — 재시작 후 in-memory 비어있어도 상한 적용
-                running_rows = await session.execute(
-                    _sa_text(
-                        "SELECT ma.market_type, COUNT(*) AS cnt "
-                        "FROM samba_jobs j "
-                        "JOIN samba_market_account ma ON ma.id=(j.payload->'target_account_ids'->>0) "
-                        "WHERE j.status='running' AND j.job_type='autotune_transmit' "
-                        "  AND j.started_at > NOW() - INTERVAL '3 minutes' "
-                        "GROUP BY 1"
-                    )
+                _run_rows = await _conn.fetch(
+                    "SELECT ma.market_type, COUNT(*) AS cnt "
+                    "FROM samba_jobs j "
+                    "JOIN samba_market_account ma ON ma.id=(j.payload->'target_account_ids'->>0) "
+                    "WHERE j.status='running' AND j.job_type='autotune_transmit' "
+                    "  AND j.started_at > NOW() - INTERVAL '3 minutes' "
+                    "GROUP BY 1"
                 )
                 self._running_per_mt_db: dict[str, int] = {
-                    r.market_type: r.cnt for r in running_rows if r.market_type
+                    r["market_type"]: r["cnt"] for r in _run_rows if r["market_type"]
                 }
+            finally:
+                await _conn.close()
 
             # acc_id별 pending → market_type별 합산
             pending_by_mt: dict[str, int] = {}
