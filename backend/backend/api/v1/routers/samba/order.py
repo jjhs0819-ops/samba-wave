@@ -9712,8 +9712,13 @@ def _parse_playauto_order(
             pass
 
     # MasterCode 추출 (응답에 있으면 매칭에 활용 — Phase 4)
+    # SellerCode fallback: 일부 사이트(SiteId=1054236 등)에서 MasterCode="" + SellerCode=AM... 패턴
     master_code = (
-        ro.get("MasterCode") or ro.get("master_code") or ro.get("masterCode") or ""
+        ro.get("MasterCode")
+        or ro.get("master_code")
+        or ro.get("masterCode")
+        or ro.get("SellerCode")
+        or ""
     )
 
     status_map = {
