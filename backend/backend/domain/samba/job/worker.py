@@ -607,6 +607,21 @@ class JobWorker:
                         if mt:
                             self._acc_market_type_cache[acc_id] = mt
 
+                # DB running 수 캐시 — 재시작 후 in-memory 비어있어도 상한 적용
+                running_rows = await session.execute(
+                    _sa_text(
+                        "SELECT ma.market_type, COUNT(*) AS cnt "
+                        "FROM samba_jobs j "
+                        "JOIN samba_market_account ma ON ma.id=(j.payload->'target_account_ids'->>0) "
+                        "WHERE j.status='running' AND j.job_type='autotune_transmit' "
+                        "  AND j.started_at > NOW() - INTERVAL '3 minutes' "
+                        "GROUP BY 1"
+                    )
+                )
+                self._running_per_mt_db: dict[str, int] = {
+                    r.market_type: r.cnt for r in running_rows if r.market_type
+                }
+
             # acc_id별 pending → market_type별 합산
             pending_by_mt: dict[str, int] = {}
             for acc_id, cnt in pending_by_acc.items():
@@ -806,6 +821,7 @@ class JobWorker:
                     _slot_excl = set(_excl_autotune_accounts)
                     _underflow_accs: set[str] = set()  # 하한 미달 판매처 계정
                     if self._autotune_slot_limits:
+                        # in-memory 기준 running 수
                         _running_per_mt: dict[str, int] = {}
                         for _aids in self._active_autotune_accounts.values():
                             for _aid in _aids:
@@ -814,26 +830,27 @@ class JobWorker:
                                     _running_per_mt[_mt] = (
                                         _running_per_mt.get(_mt, 0) + 1
                                     )
+                        # DB cache로 보충 — 재시작 후 in-memory 비어있을 때 상한 적용
+                        for _mt, _db_cnt in getattr(
+                            self, "_running_per_mt_db", {}
+                        ).items():
+                            if _running_per_mt.get(_mt, 0) < _db_cnt:
+                                _running_per_mt[_mt] = _db_cnt
                         _mt_to_accs: dict[str, list[str]] = {}
                         for _aid, _mt in self._acc_market_type_cache.items():
                             _mt_to_accs.setdefault(_mt, []).append(_aid)
-                        _min_slots = max(
-                            1,
-                            round(_bg_max * 0.15),
-                        )
                         _special_mts = {"lottehome", "playauto"}
+                        _special_min = max(1, round(_bg_max * 0.15))
                         for _mt, _limit in self._autotune_slot_limits.items():
                             _cur = _running_per_mt.get(_mt, 0)
                             if _cur >= _limit:
                                 # 상한 초과 → exclude
                                 _slot_excl.update(_mt_to_accs.get(_mt, []))
-                            elif (
-                                _mt in _special_mts
-                                and _cur < _min_slots
-                                and _mt_to_accs.get(_mt)
-                            ):
-                                # lottehome/playauto 하한 미달 → 우선 claim 대상
-                                _underflow_accs.update(_mt_to_accs[_mt])
+                            else:
+                                # 하한 미달 → 우선 claim (lottehome/playauto=4개, 나머지=1개)
+                                _mt_min = _special_min if _mt in _special_mts else 1
+                                if _cur < _mt_min and _mt_to_accs.get(_mt):
+                                    _underflow_accs.update(_mt_to_accs[_mt])
 
                     # 하한 미달 판매처 우선 claim
                     if _underflow_accs:
