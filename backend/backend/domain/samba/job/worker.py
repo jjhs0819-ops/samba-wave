@@ -780,6 +780,13 @@ class JobWorker:
                 _excl_autotune_accounts: set[str] = set()
                 for _aids in self._active_autotune_accounts.values():
                     _excl_autotune_accounts.update(_aids)
+                # playauto/lottehome은 API키 기반 → 동일 계정 병렬 허용
+                _parallel_ok_accs = {
+                    acc
+                    for acc, mt in self._acc_market_type_cache.items()
+                    if mt in {"playauto", "lottehome"}
+                }
+                _excl_autotune_accounts -= _parallel_ok_accs
                 # 일시정지 중이면 transmit 클레임 스킵 — PENDING 잡 대기 유지
                 _excl_types: set[str] = {"bg_remove"}
                 # 프로세스 분리: API(A) 워커는 transmit/order_sync 를 B 에 위임
