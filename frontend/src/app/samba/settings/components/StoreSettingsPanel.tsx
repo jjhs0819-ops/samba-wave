@@ -518,6 +518,16 @@ export function StoreSettingsPanel(props: Props) {
                       />
                       {field.placeholder && <span style={{ fontSize: '0.72rem', color: '#888' }}>({field.placeholder})</span>}
                     </label>
+                  ) : field.type === 'toggle' ? (
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={storeData[market.key]?.[field.name] === 'true' || storeData[market.key]?.[field.name] as unknown === true}
+                        onChange={(e) => updateStoreField(market.key, field.name, e.target.checked ? 'true' : 'false')}
+                        style={{ accentColor: '#FF8C00', width: '14px', height: '14px' }}
+                      />
+                      {(field as { description?: string }).description && <span style={{ fontSize: '0.72rem', color: '#888' }}>{(field as { description?: string }).description}</span>}
+                    </label>
                   ) : field.type === 'number' ? (
                     <>
                       <NumInput

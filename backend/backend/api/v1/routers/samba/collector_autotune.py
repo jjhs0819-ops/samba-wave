@@ -2920,101 +2920,22 @@ async def _site_autotune_loop(device_id: str, site: str):
 
                                     # 가격+재고 합산 단일 전송 (충돌 방지)
                                     if _acc_items:
-                                        # 롯데홈쇼핑 MD 승인 대기 — 전송 직전에만 외부 API 확인
-                                        # (변동이 감지된 상품 한정 → 외부 호출 폭증 방지)
+                                        # 롯데홈쇼핑 MD 승인 대기 체크 — skipMdApproval=False인 경우만
                                         if market_type == "lottehome":
-                                            _qa_status = _m_nos.get(f"{acc_id}_qa", "")
-                                            if _qa_status == "pending":
-                                                _goods_no = _m_nos.get(acc_id, "")
-                                                _approved = False
-                                                if _goods_no:
-                                                    try:
-                                                        from backend.domain.samba.proxy.lottehome import (
-                                                            LotteHomeClient,
-                                                        )
-
-                                                        _creds = _lottehome_creds
-                                                        _lh = LotteHomeClient(
-                                                            _creds.get("userId", ""),
-                                                            _creds.get("password", ""),
-                                                            _creds.get("agncNo", ""),
-                                                            _creds.get("env", "prod"),
-                                                        )
-                                                        _detail = (
-                                                            await _lh.search_goods_view(
-                                                                _goods_no
-                                                            )
-                                                        )
-                                                        _d = _detail.get("data", {})
-                                                        _result = _d.get("Result", _d)
-                                                        _goods_info = (
-                                                            _result.get(
-                                                                "GoodsInfo", _result
-                                                            )
-                                                            if isinstance(_result, dict)
-                                                            else _result
-                                                        )
-                                                        # API가 빈 문자열/None을 반환할 때 .get() AttributeError 가드
-                                                        if not isinstance(
-                                                            _goods_info, dict
-                                                        ):
-                                                            _sale_stat = ""
-                                                            _qa_rslt = ""
-                                                        else:
-                                                            _sale_stat = str(
-                                                                _goods_info.get(
-                                                                    "SaleStatCd", ""
-                                                                )
-                                                                or ""
-                                                            )
-                                                            _qa_rslt = str(
-                                                                _goods_info.get(
-                                                                    "QaRsltCd", ""
-                                                                )
-                                                                or ""
-                                                            )
-                                                        if (
-                                                            _sale_stat == "10"
-                                                            or _qa_rslt
-                                                            in ("10", "15", "30")
-                                                        ):
-                                                            _approved = True
-                                                            _new_nos = dict(_m_nos)
-                                                            _new_nos[f"{acc_id}_qa"] = (
-                                                                "approved"
-                                                            )
-                                                            from sqlalchemy import (
-                                                                update as _sa_upd,
-                                                            )
-                                                            from backend.domain.samba.collector.model import (
-                                                                SambaCollectedProduct as _CP,
-                                                            )
-
-                                                            async with (
-                                                                get_write_session() as _upd_s
-                                                            ):
-                                                                await _upd_s.execute(
-                                                                    _sa_upd(_CP)
-                                                                    .where(
-                                                                        _CP.id
-                                                                        == product.id
-                                                                    )
-                                                                    .values(
-                                                                        market_product_nos=_new_nos
-                                                                    )
-                                                                )
-                                                                await _upd_s.commit()
-                                                            log.info(
-                                                                "[오토튠] %s 롯데홈쇼핑 승인 확인 → approved 처리",
-                                                                product.id,
-                                                            )
-                                                    except Exception as _qa_e:
-                                                        log.warning(
-                                                            "[오토튠] %s 롯데홈쇼핑 QA 확인 실패: %s",
-                                                            product.id,
-                                                            _qa_e,
-                                                        )
-                                                if not _approved:
+                                            _lh_acc_obj = _account_cache.get(acc_id)
+                                            _lh_extra = (
+                                                getattr(
+                                                    _lh_acc_obj,
+                                                    "additional_fields",
+                                                    None,
+                                                )
+                                                or {}
+                                            )
+                                            if not _lh_extra.get("skipMdApproval"):
+                                                _qa_status = _m_nos.get(
+                                                    f"{acc_id}_qa", ""
+                                                )
+                                                if _qa_status == "pending":
                                                     log.info(
                                                         "[오토튠] %s → 롯데홈쇼핑 MD 승인 대기 중, 전송 스킵",
                                                         product.id,

@@ -406,6 +406,7 @@ export const STORE_MARKETS: MarketConfig[] = [
     { name: 'addDlvPolcNo', label: '추가배송비정책', type: 'lottehome-extra-policy-select' },
     { name: 'corpRlsPlSn', label: '출고지', type: 'lottehome-shipping-select' },
     { name: 'corpDlvpSn', label: '반품지', type: 'lottehome-return-select' },
+    { name: 'skipMdApproval', label: 'MD 승인대기 스킵', type: 'toggle', description: '체크 시 MD 승인 없이 바로 전송·삭제 허용' },
   ]},
   { key: 'homeand', label: '홈앤쇼핑', authField: 'apiKey', guideUrl: 'https://partner.home-and.com', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },

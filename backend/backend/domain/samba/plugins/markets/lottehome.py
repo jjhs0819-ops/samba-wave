@@ -963,8 +963,10 @@ class LotteHomePlugin(MarketPlugin):
                     # market_product_nos 업데이트
                     market_nos = dict(collected.market_product_nos or {})
                     market_nos[account.id] = goods_no
-                    # MD 승인 대기 상태 표시
-                    market_nos[f"{account.id}_qa"] = "pending"
+                    # skipMdApproval=True면 승인대기 마킹 생략
+                    _extra = getattr(account, "additional_fields", None) or {}
+                    if not _extra.get("skipMdApproval"):
+                        market_nos[f"{account.id}_qa"] = "pending"
                     collected.market_product_nos = market_nos
 
                     # 롯데에 실제로 등록한 상품명으로 업데이트
