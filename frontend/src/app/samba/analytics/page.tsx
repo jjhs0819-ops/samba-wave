@@ -565,7 +565,7 @@ export default function AnalyticsPage() {
             background: 'rgba(15,15,15,0.97)', backdropFilter: 'blur(4px)',
             padding: '0.5rem 1.25rem',
             borderRadius: '12px 12px 0 0', border: '1px solid #2D2D2D',
-          }}>베스트셀러 TOP 10 (30일)</div>
+          }}>베스트셀러 TOP 10 (30일, 이행건수순)</div>
           <div style={{ ...card, padding: '1.25rem', borderTopLeftRadius: 0, borderTopRightRadius: 0, borderTop: 'none' }}>
             {bestSellers.length > 0 ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>

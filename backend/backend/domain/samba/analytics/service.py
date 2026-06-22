@@ -319,7 +319,7 @@ class SambaAnalyticsService:
             agg[pid]["units"] += order.quantity
 
         result = list(agg.values())
-        result.sort(key=lambda x: x["sales"], reverse=True)
+        result.sort(key=lambda x: x["orders"], reverse=True)
         return result[:limit]
 
     async def get_worst_sellers(
@@ -411,6 +411,9 @@ class SambaAnalyticsService:
 
         result = []
         for item in agg.values():
+            # 미분류(브랜드 정보 없는 미등록 상품) 제외
+            if item.get("brand") == "미분류":
+                continue
             rev = item["sales"]
             item["avg_margin_rate"] = round(
                 (item["profit"] / rev * 100) if rev > 0 else 0, 1
