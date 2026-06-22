@@ -1327,7 +1327,7 @@ export default function WarroomPage() {
         {availSources.length > 0 && pcDeviceId && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '0.75rem', color: '#9AA5C0', fontWeight: 600, whiteSpace: 'nowrap' }}>소싱처</span>
-            {availSources.map(src => {
+            {availSources.filter(src => src !== 'manual').map(src => {
               const checked = filterSources === null || filterSources.includes(src)
               const labelMap: Record<string, string> = { MUSINSA: '무신사', KREAM: 'KREAM', DANAWA: '다나와', FashionPlus: '패션플러스', Nike: 'Nike', Adidas: 'Adidas', ABCmart: 'ABC마트', REXMONDE: '렉스몬드', SSG: 'SSG', LOTTEON: '롯데ON', GSShop: 'GSShop', ElandMall: '이랜드몰', SSF: 'SSF샵' }
               return (
