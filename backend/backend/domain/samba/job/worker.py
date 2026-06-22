@@ -639,7 +639,7 @@ class JobWorker:
         max_picks = transmit_slots + 2
         picked = 0
         # bg 세마포어 초기값 — over-claim 게이트용 (#459)
-        _bg_max = int(os.environ.get("JOB_BG_TRANSMIT_MAX_CONCURRENCY", "6"))
+        _bg_max = int(os.environ.get("JOB_BG_TRANSMIT_MAX_CONCURRENCY", "26"))
         # F1(#462): 일반 claim 래치 — 집중 pending 부하에서 autotune-first 가 매 iteration
         # 느린 일반 claim 으로 폴백하며 autotune 슬롯을 못 채우던 회귀(동시성 10→5) 차단.
         # 일반 claim 이 한 번 None 이면 이후 iteration 은 빠른 autotune claim 만 → poll 당 1회로 제한.
