@@ -306,10 +306,6 @@ EXCLUDED_ORDER_STATUSES: tuple[str, ...] = (
     "exchange_done",
     "ship_failed",
     "undeliverable",
-    "wait_ship",
-    "shipping",
-    "delivered",
-    "confirmed",
 )
 
 # 배송이 이미 진행/종료된 단계 — shipping_status(마켓 원본 한글)에 이 키워드 포함 시 제외.

@@ -260,7 +260,6 @@ EXCLUDED_ORDER_STATUSES = (
     "exchange_done",
     "ship_failed",
     "undeliverable",
-    "wait_ship",
     "shipping",
     "delivered",
     "confirmed",
