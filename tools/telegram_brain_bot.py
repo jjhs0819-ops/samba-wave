@@ -820,29 +820,8 @@ _REPORT_MARKETS = [
 ]
 
 
-def _dwidth(s: str) -> int:
-    """문자열의 모노스페이스 표시폭. 한글/CJK/전각은 2칸."""
-    w = 0
-    for ch in s:
-        o = ord(ch)
-        if (0xAC00 <= o <= 0xD7A3 or 0x1100 <= o <= 0x115F or 0x3000 <= o <= 0x303F
-                or 0x3130 <= o <= 0x318F or 0x4E00 <= o <= 0x9FFF or 0xFF00 <= o <= 0xFFEF):
-            w += 2
-        else:
-            w += 1
-    return w
-
-
-def _lpad(s: str, width: int) -> str:  # 왼쪽 정렬 (오른쪽에 공백)
-    return s + " " * max(0, width - _dwidth(s))
-
-
-def _rpad(s: str, width: int) -> str:  # 오른쪽 정렬 (왼쪽에 공백)
-    return " " * max(0, width - _dwidth(s)) + s
-
-
 def build_products_text() -> str:
-    """상품 현황 — 전체 수집/등록율 + 마켓별 등록(목표대비)/품절. 표는 모노스페이스 정렬."""
+    """상품 현황 — 전체 수집/등록율 + 마켓별 등록(목표대비)/품절. 숫자열 모노스페이스 정렬."""
     counts = samba.product_counts()
     if counts is None:
         return "❌ 삼바 서버 연결 실패 (상품)."
@@ -866,20 +845,19 @@ def build_products_text() -> str:
     else:
         so_line = f"· 전체 품절 {sold_out:,}개"
 
-    # 마켓별 모노스페이스 정렬표 (마켓 좌측정렬, 숫자 우측정렬)
-    header = ("마켓", "등록", "목표", "품절")
-    trows = [header]
+    # 모노스페이스에서 한글은 폰트마다 폭이 달라(≠ASCII 2배) 정렬이 깨진다.
+    # → 숫자 3열(ASCII, 완벽 정렬)을 먼저 왼쪽정렬로 두고, 마켓명은 끝열에 붙인다.
+    num_rows = []
     for name, reg, so, target in rows:
         reg_s = f"{reg:,}" if reg is not None else "?"
         mk_s = f"{reg / target * 100:.0f}%" if (reg is not None and target) else "-"
         so_s = f"{so:,}" if so is not None else "?"
-        trows.append((name, reg_s, mk_s, so_s))
-    w = [max(_dwidth(r[c]) for r in trows) for c in range(4)]
-    # 전부 왼쪽 정렬 — 각 열 숫자가 같은 위치에서 시작
+        num_rows.append((reg_s, mk_s, so_s, name))
+    w0 = max(len(r[0]) for r in num_rows)
+    w1 = max(len(r[1]) for r in num_rows)
+    w2 = max(len(r[2]) for r in num_rows)
     table = "\n".join(
-        _lpad(r[0], w[0]) + "  " + _lpad(r[1], w[1]) + "  "
-        + _lpad(r[2], w[2]) + "  " + r[3]
-        for r in trows
+        f"{r[0]:<{w0}}  {r[1]:<{w1}}  {r[2]:<{w2}}  {r[3]}" for r in num_rows
     )
 
     return "\n".join([
@@ -889,7 +867,7 @@ def build_products_text() -> str:
         f"· 전체 등록상품 {reg_total:,}개{reg_pct}",
         so_line,
         "",
-        "🏪 마켓별 등록 현황 (등록 / 목표대비 / 품절)",
+        "🏪 마켓별 (등록 · 목표대비 · 품절 · 마켓)",
         "",
         table,
     ])
