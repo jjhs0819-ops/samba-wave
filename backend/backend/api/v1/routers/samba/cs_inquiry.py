@@ -1818,9 +1818,10 @@ async def _do_sync_cs_from_markets(
         try:
             import json as _json
 
-            # SambaMarketAccount 경로면 account_id 보존, SambaSettings 폴백이면 None
+            # SambaMarketAccount 경로면 lo_account_id 보존, SambaSettings 폴백이면 None
             # (2026-05-20: account_id 누락 시 답변 폴백이 잘못된 글로벌 계정 키 사용해 false success 사고)
-            account_id: str | None = None
+            # (2026-06-22: 함수 파라미터 account_id 와 분리 — 오염 시 후순위 마켓 CS 0건 버그 #465)
+            lo_account_id: str | None = None
             if hasattr(lo_setting, "additional_fields"):
                 lo_config = dict(lo_setting.additional_fields or {})
                 api_key = lo_config.get("apiKey", "") or lo_setting.api_key or ""
@@ -1830,7 +1831,7 @@ async def _do_sync_cs_from_markets(
                     or lo_setting.seller_id
                     or ""
                 )
-                account_id = lo_setting.id
+                lo_account_id = lo_setting.id
             else:
                 lo_config = (
                     _json.loads(lo_setting.value)
@@ -1852,7 +1853,7 @@ async def _do_sync_cs_from_markets(
             await lo_client.test_auth()  # trGrpCd/trNo 획득 (필수)
 
             lo_synced = await _sync_lotteon_qna(
-                lo_client, session, svc, account_name, account_id
+                lo_client, session, svc, account_name, lo_account_id
             )
             synced += lo_synced
 
@@ -1866,7 +1867,7 @@ async def _do_sync_cs_from_markets(
             # 판매자 연락(Contact) 동기화
             try:
                 lo_contact_synced = await _sync_lotteon_contact(
-                    lo_client, session, svc, account_name, account_id
+                    lo_client, session, svc, account_name, lo_account_id
                 )
                 synced += lo_contact_synced
             except Exception as ce:
@@ -1875,7 +1876,7 @@ async def _do_sync_cs_from_markets(
             # 보상 요청(Compensate) 동기화
             try:
                 lo_comp_synced = await _sync_lotteon_compensate(
-                    lo_client, session, svc, account_name, account_id
+                    lo_client, session, svc, account_name, lo_account_id
                 )
                 synced += lo_comp_synced
             except Exception as compe:
