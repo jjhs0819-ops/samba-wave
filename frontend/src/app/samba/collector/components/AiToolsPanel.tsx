@@ -286,7 +286,7 @@ export default function AiToolsPanel(props: Props) {
             setLastAiUsage({ calls: cnt, tokens: cnt * 2000, cost: cnt * 3, date: new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit' }) })
             setSelectedIds(new Set()); setSelectAll(false)
           }}
-          disabled={aiImgTransforming || selectedIds.size === 0}
+          disabled={aiImgTransforming}
           style={{ marginLeft: 'auto', background: aiImgTransforming ? '#333' : 'rgba(255,140,0,0.15)', border: '1px solid rgba(255,140,0,0.35)', color: aiImgTransforming ? '#888' : '#FF8C00', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', cursor: aiImgTransforming ? 'not-allowed' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
         >{aiImgTransforming ? '변환중...' : '변환 실행'}</button>
       </div>
@@ -414,7 +414,7 @@ export default function AiToolsPanel(props: Props) {
               load(); loadTree()
             }
           }}
-          disabled={imgFiltering || selectedIds.size === 0}
+          disabled={imgFiltering}
           style={{ marginLeft: 'auto', background: imgFiltering ? '#333' : 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.35)', color: imgFiltering ? '#888' : '#818CF8', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', cursor: imgFiltering ? 'not-allowed' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
         >{imgFiltering ? '필터링중...' : `필터링 실행 (${fmtNum(selectedIds.size)}개)`}</button>
       </div>
