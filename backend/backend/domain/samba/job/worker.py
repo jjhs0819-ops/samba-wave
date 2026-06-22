@@ -574,13 +574,13 @@ class JobWorker:
         try:
             from sqlalchemy import text as _sa_text
 
-            from backend.db.orm import get_write_session
+            from backend.db.orm import get_read_session
 
             _bg_max = int(os.environ.get("JOB_BG_TRANSMIT_MAX_CONCURRENCY", "26"))
             _min_pct = 0.15
             _max_pct = 0.35
 
-            async with get_write_session() as session:
+            async with get_read_session() as session:
                 rows = await session.execute(
                     _sa_text(
                         "SELECT payload->'target_account_ids'->>0 AS acc, COUNT(*) AS cnt "
