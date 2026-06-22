@@ -184,12 +184,10 @@ export default function OrdersFilterBar(props: Props) {
               <option value="returning">반품중</option>
               <option value="exchanging">교환중</option>
               <option value="cancel_requested">취소요청</option>
-              <option value="approve_cancel">취소승인(일괄)</option>
               <option value="return_requested">반품요청</option>
               <option value="cancelled">취소완료</option>
               <option value="returned">반품완료</option>
               <option value="exchanged">교환완료</option>
-              <option value="delete">삭제</option>
             </select>
             <button onClick={handleBulkAction} disabled={bulkUpdating || !bulkStatus || selectedIdsSize === 0} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: selectedIdsSize > 0 && bulkStatus ? '#C0392B' : 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: selectedIdsSize > 0 && bulkStatus ? '#fff' : '#666', borderRadius: '4px', cursor: bulkUpdating || !bulkStatus || selectedIdsSize === 0 ? 'not-allowed' : 'pointer' }}>{bulkUpdating ? '처리 중...' : `일괄 실행 (${fmtNum(selectedIdsSize)})`}</button>
           </div>
