@@ -109,3 +109,35 @@ def test_allowed_sites_none_skips_site_filter(monkeypatch):
     sql = _norm(cap["sql"])
 
     assert "UPPER(site) IN" not in sql, f"분담 None 인데 site 필터가 붙음:\n{sql}"
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 적립(reward) dequeue 측 데몬전용 가드 — 2026-06-22 후속 수정
+#
+# PR #463(발행 측 DAEMON_ONLY_JOB_SITES["reward"]=set())만으로는 부족했다:
+# get_next_job 의 DAEMON_ONLY_SITES 가드(dequeue 측 2번째 장벽)에 reward 가 허용
+# job_type 으로 빠져 있어, ABC/SSG/그랜드/롯데ON 적립을 owner 로 트리거 PC 에 박아도
+# 비데몬(확장앱) device 가 dequeue 못 했다 → SW 에 [적립금] 잡 수신조차 안 떴음.
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def test_reward_dequeuable_by_extension_for_daemon_only_site(monkeypatch):
+    """비데몬(확장앱) device 의 데몬전용 가드 허용 job_type 목록에 reward 포함."""
+    cap = _run_get_next_job(monkeypatch, device_id="ext-pc-A", allowed_sites=["MUSINSA"])
+    sql = _norm(cap["sql"])
+
+    assert (
+        "'cancel_order', 'tracking', 'store_metrics', 'purchase', 'reward'" in sql
+    ), f"dequeue 가드 허용목록에 reward 없음 — ABC/SSG 적립 확장앱 dequeue 차단됨:\n{sql}"
+
+
+def test_daemon_device_excluded_from_reward(monkeypatch):
+    """데몬 device 는 reward 잡 제외 — 적립은 content-reward-*.js 전담(데몬 핸들러 없음)."""
+    cap = _run_get_next_job(
+        monkeypatch, device_id="samba-daemon-x", allowed_sites=None
+    )
+    sql = _norm(cap["sql"])
+
+    assert (
+        "job_type NOT IN ('tracking', 'store_metrics', 'purchase', 'reward')" in sql
+    ), f"데몬 분기에서 reward 차단이 빠짐:\n{sql}"

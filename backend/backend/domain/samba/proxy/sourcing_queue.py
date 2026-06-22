@@ -906,22 +906,24 @@ class SourcingQueue:
                 conditions.append("(owner_device_id IS NULL OR owner_device_id = '')")
 
             # 데몬 전용 사이트 가드 — DAEMON_ONLY_SITES (LOTTEON/SSG/ABCmart/GrandStage)
-            # 의 모든 job_type (detail/search/tracking/reward/cancel_order) 확장앱 차단.
-            # 사용자 룰 (3일 강조): 4개 사이트는 데몬 전용. 발행 측 가드(add_*_job)와
-            # dequeue 측 가드 2중 장벽 — 옛 잡이 큐에 남아있어도 비데몬 dev 가 못 받음.
+            # 의 detail/search(가격수집) 잡만 확장앱 차단(데몬 전담). 사용자 룰 (3일 강조).
+            # 발행 측 가드(add_*_job)와 dequeue 측 가드 2중 장벽.
             # 모듈 상수 DAEMON_ONLY_SITES 재사용 (단일 진실 출처).
             if not device_id.startswith("samba-daemon-"):
                 _sites = sorted(DAEMON_ONLY_SITES)
                 _dph = ", ".join(f":dsite_{i}" for i in range(len(_sites)))
-                # cancel_order + tracking(송장) 잡은 확장앱 라우팅 허용.
+                # cancel_order + tracking(송장) + store_metrics + purchase(가구매) + reward(적립)
+                # 잡은 확장앱 라우팅 허용 — 모두 데몬 핸들러가 없고 content script 전담.
                 # [2026-06-05 송장 확장앱 복구] 송장수집을 헤드리스 데몬에서 다시 확장앱(브라우저)
-                # 방식으로 되돌림 — 데몬 헤드리스가 SSG 계정잠금/about:blank/wrong_account 등
-                # 에러 과다. SSG/ABCmart/GrandStage/LOTTEON 송장도 확장앱 content-tracking-*.js
-                # 가 처리(핸들러 전부 존재). detail/search/reward 가격수집은 여전히 데몬 전용.
-                # owner_device_id='' (broadcast) 잡은 수동 enrich 단건 갱신 —
-                # 데몬 없어도 현재 PC 확장앱이 처리 가능하도록 DAEMON_ONLY 가드 예외 허용.
+                # 방식으로 되돌림. SSG/ABCmart/GrandStage/LOTTEON 송장도 content-tracking-*.js 처리.
+                # [2026-06-22 적립 라우팅 수정] 적립(reward: 출석/리뷰)도 데몬이 처리 안 하고
+                # content-reward-*.js 전담 → DAEMON_ONLY 사이트라도 확장앱(트리거 PC)이 dequeue
+                # 가능해야 함. 이 게이트에 reward 가 빠져 있어, owner 를 트리거 PC 로 박아도(발행 측
+                # 수정 PR #463) dequeue 단에서 차단돼 ABC/SSG/롯데ON 적립이 안 돌던 버그. detail/
+                # search(가격수집)만 데몬 전담 유지.
+                # owner_device_id='' (broadcast) 잡은 수동 enrich 단건 갱신 — 데몬 없어도 처리.
                 conditions.append(
-                    f"(job_type IN ('cancel_order', 'tracking', 'store_metrics', 'purchase') "
+                    f"(job_type IN ('cancel_order', 'tracking', 'store_metrics', 'purchase', 'reward') "
                     f"OR UPPER(site) NOT IN ({_dph}) "
                     f"OR owner_device_id = '')"
                 )
@@ -929,11 +931,13 @@ class SourcingQueue:
                     params[f"dsite_{i}"] = s.upper()
             else:
                 # [2026-06-05 송장 확장앱 복구] 데몬은 송장(tracking) 일절 처리 안 함 — 전부
-                # 확장앱 전담. 데몬은 가격수집(detail/search/reward)만. owner='' 송장 잡을
+                # 확장앱 전담. 데몬은 가격수집(detail/search)만. owner='' 송장 잡을
                 # 데몬이 먼저 가로채지 못하게 dequeue 단에서 tracking 전체 차단.
-                # store_metrics(파트너포털 점수수집)도 데몬 차단 — 확장앱 로그인 세션 전용.
+                # store_metrics(파트너포털 점수수집)·purchase(가구매)도 데몬 차단 — 확장앱 세션 전용.
+                # [2026-06-22] 적립(reward)도 데몬 차단 — 출석/리뷰는 content-reward-*.js 전담이라
+                # 데몬 핸들러가 없음. 자동 스케줄러 적립(owner 미박힘)이 데몬으로 새지 않게.
                 conditions.append(
-                    "job_type NOT IN ('tracking', 'store_metrics', 'purchase')"
+                    "job_type NOT IN ('tracking', 'store_metrics', 'purchase', 'reward')"
                 )
 
             # site 필터 — 케이싱 무관 매칭.
