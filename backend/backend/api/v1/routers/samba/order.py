@@ -260,6 +260,7 @@ EXCLUDED_ORDER_STATUSES = (
     "exchange_done",
     "ship_failed",
     "undeliverable",
+    "wait_ship",
     "shipping",
     "delivered",
     "confirmed",
@@ -8068,19 +8069,7 @@ async def sync_orders_from_markets(
                             order_data["product_image"] = _unreg_matched[
                                 "product_image"
                             ]
-                # 플레이오토 미등록 주문 status를 shipping_status에 맞춰 동기화.
-                # 미등록 = collected_product_id 없음 + source_url/product_image 모두 비어있음.
-                # 매칭/미등록캐시 적용 이후 시점에 판정해야 정확함.
-                if (
-                    order_data.get("source") == "playauto"
-                    and not order_data.get("collected_product_id")
-                    and not order_data.get("source_url")
-                    and not order_data.get("product_image")
-                ):
-                    _ss = str(order_data.get("shipping_status") or "").strip()
-                    _mapped_status = SHIPPING_LABEL_TO_STATUS_KEY.get(_ss)
-                    if _mapped_status:
-                        order_data["status"] = _mapped_status
+                # status는 사용자가 직접 관리 — shipping_status 따라 자동변경 금지
                 # 상품명에서 소싱처 상품번호 추출 → source_site/source_url 보충
                 # 플레이오토는 1 channel에 5 별칭이 묶인 구조라 product_name 끝 공통 무신사
                 # goods_no가 별칭 무관하게 cross-매칭됨 (예: 캐논 주문이 고경 등록 cp에 매칭).
@@ -8579,17 +8568,7 @@ async def sync_orders_from_markets(
                         # 자동 발주취소 트리거는 SambaOrder after_flush event listener 가 단일 진입점.
                         # 여기 별도 호출 추가 시 중복 잡 발행(dedup race) 발생 — 절대 금지.
                     # 플레이오토 미등록 주문의 취소요청/취소완료는 status 드롭다운도 동기화.
-                    # 신규 insert는 _normalize_synced_order_status 예외에서 처리되지만,
-                    # 이미 DB에 'pending'으로 들어가 있는 기존 주문은 여기서 갱신해야 함.
-                    if (
-                        order_data.get("source") == "playauto"
-                        and not existing.collected_product_id
-                        and not (existing.source_url or "")
-                        and not (existing.product_image or "")
-                    ):
-                        _mapped = SHIPPING_LABEL_TO_STATUS_KEY.get(_new_ss_final or "")
-                        if _mapped and _mapped != existing.status:
-                            update_fields["status"] = _mapped
+                    # status는 사용자가 직접 관리 — shipping_status 따라 자동변경 금지
                     # 정산금액(revenue) / 수수료율 갱신
                     new_revenue = order_data.get("revenue")
                     new_fee_rate = order_data.get("fee_rate")
