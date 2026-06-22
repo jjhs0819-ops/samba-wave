@@ -306,7 +306,8 @@ for i in $(seq 1 300); do
     fi
 done
 
-remote_step "[6/6] green 컨테이너 정리 + 미사용 이미지 prune..."
+remote_step "[6/6] samba-worker 재시작 + green 컨테이너 정리 + 미사용 이미지 prune..."
+sudo docker compose up -d --no-deps --force-recreate samba-worker
 # blue healthy 후 Caddy active health(interval 2s)가 blue로 라우팅 복귀할 시간 확보 —
 # active health interval(2s) × 2회 = 4초면 first-priority blue로 복귀 충분 (10s→4s).
 sleep 4
