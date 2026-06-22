@@ -420,6 +420,15 @@ class JobWorker:
         # brand_all 잡 직렬화 — SSG+MUSINSA 동시 실행 시 DB/메모리 고갈 방지
         self._brand_all_running: bool = False
         self._poll_count = 0
+        # ── autotune 계정별 동적 슬롯 배분 ──
+        # pending 비율 기반, 30초마다 재계산.
+        # lottehome/playauto: 상한 35%(9개), 하한 15%(4개).
+        # _autotune_slot_limits[acc_id] = 해당 계정 최대 동시 실행 수
+        self._autotune_slot_limits: dict[str, int] = {}
+        # 계정 ID → market_type 캐시 (DB 조회 최소화)
+        self._acc_market_type_cache: dict[str, str] = {}
+        # 슬롯 재계산 인터벌: STUCK_CHECK_INTERVAL(2) × N = 30초 → 6회 poll
+        self._SLOT_REBALANCE_EVERY = 6
         # 검색 결과 캐시: {(site, keyword): (items_list, timestamp)}
         # 동일 브랜드 그룹 수집 시 전수 검색 1회만 실행
         self._search_cache: dict[tuple[str, str], tuple[list, float]] = {}
@@ -500,6 +509,8 @@ class JobWorker:
                 self._poll_count += 1
                 if self._poll_count % self.STUCK_CHECK_INTERVAL == 0:
                     await self._recover_stuck_jobs()
+                if self._poll_count % self._SLOT_REBALANCE_EVERY == 0:
+                    await self._rebalance_autotune_slots()
                 executed = await self._poll_once()
                 if not executed:
                     await asyncio.sleep(self.POLL_INTERVAL)
@@ -553,6 +564,79 @@ class JobWorker:
                     )
         except Exception as e:
             logger.warning(f"[잡워커] stuck 잡 복구 실패: {e}")
+
+    async def _rebalance_autotune_slots(self) -> None:
+        """autotune 계정별 슬롯 상한을 pending 비율로 재계산.
+
+        lottehome/playauto: 하한 15%(4개), 상한 35%(9개).
+        나머지 계정: 남은 슬롯 pending 비율 배분, 최소 1개.
+        """
+        try:
+            from sqlalchemy import text as _sa_text
+
+            from backend.db.orm import get_write_session
+
+            _bg_max = int(os.environ.get("JOB_BG_TRANSMIT_MAX_CONCURRENCY", "26"))
+            _min_pct = 0.15
+            _max_pct = 0.35
+
+            async with get_write_session() as session:
+                rows = await session.execute(
+                    _sa_text(
+                        "SELECT payload->'target_account_ids'->>0 AS acc, COUNT(*) AS cnt "
+                        "FROM samba_jobs "
+                        "WHERE status='pending' AND job_type='autotune_transmit' "
+                        "GROUP BY 1"
+                    )
+                )
+                pending_by_acc: dict[str, int] = {r.acc: r.cnt for r in rows if r.acc}
+
+                if not pending_by_acc:
+                    self._autotune_slot_limits = {}
+                    return
+
+                # market_type 캐시 갱신 (미캐시 계정만)
+                for acc_id in pending_by_acc:
+                    if acc_id not in self._acc_market_type_cache:
+                        mt_row = await session.execute(
+                            _sa_text(
+                                "SELECT market_type FROM samba_market_account WHERE id=:aid"
+                            ).bindparams(aid=acc_id)
+                        )
+                        mt = mt_row.scalar()
+                        if mt:
+                            self._acc_market_type_cache[acc_id] = mt
+
+            total_pending = sum(pending_by_acc.values())
+            if total_pending == 0:
+                self._autotune_slot_limits = {}
+                return
+
+            _special = {"lottehome", "playauto"}
+            _min_slots = max(1, round(_bg_max * _min_pct))
+            _max_slots = max(1, round(_bg_max * _max_pct))
+
+            new_limits: dict[str, int] = {}
+            for acc_id, cnt in pending_by_acc.items():
+                ratio = cnt / total_pending
+                raw = round(_bg_max * ratio)
+                mt = self._acc_market_type_cache.get(acc_id, "")
+                if mt in _special:
+                    slots = max(_min_slots, min(_max_slots, max(1, raw)))
+                else:
+                    slots = max(1, raw)
+                new_limits[acc_id] = slots
+
+            self._autotune_slot_limits = new_limits
+            logger.debug(
+                "[잡워커] autotune 슬롯 재배분: "
+                + ", ".join(
+                    f"{self._acc_market_type_cache.get(k, k[:8])}={v}"
+                    for k, v in sorted(new_limits.items(), key=lambda x: -x[1])
+                )
+            )
+        except Exception as e:
+            logger.warning(f"[잡워커] autotune 슬롯 재배분 실패(무시): {e}")
 
     def stop(self):
         self._running = False
@@ -713,8 +797,20 @@ class JobWorker:
                         _general_exhausted = True
 
                 if job is None and _can_claim_autotune:
+                    # 동적 슬롯: 계정별 running 수가 배분된 상한 초과 시 해당 계정 claim 제외
+                    _slot_excl = set(_excl_autotune_accounts)
+                    if self._autotune_slot_limits:
+                        _running_per_acc: dict[str, int] = {}
+                        for _aids in self._active_autotune_accounts.values():
+                            for _aid in _aids:
+                                _running_per_acc[_aid] = (
+                                    _running_per_acc.get(_aid, 0) + 1
+                                )
+                        for _aid, _limit in self._autotune_slot_limits.items():
+                            if _running_per_acc.get(_aid, 0) >= _limit:
+                                _slot_excl.add(_aid)
                     job = await repo.claim_autotune_pending_job(
-                        exclude_autotune_accounts=_excl_autotune_accounts or None,
+                        exclude_autotune_accounts=_slot_excl or None,
                     )
 
                 if job is None:
