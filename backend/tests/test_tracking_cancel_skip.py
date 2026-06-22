@@ -5,6 +5,7 @@
 '송장수집 실패'로 오해됨(팀장 문의). 까대기/선물주문 등 다른 정상 제외와 동일하게
 success=True + skipped 로 분류해 '스킵'으로 잡히게 한다(기능 변화 없음, 분류만).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -46,5 +47,9 @@ def test_cancelled_order_classified_as_skip_not_error(monkeypatch):
     res = asyncio.run(svc.enqueue_for_order("ord_test"))
 
     assert res.get("skipped") is True, f"취소요청이 스킵으로 분류 안 됨: {res}"
-    assert res.get("success") is True, f"취소요청 제외가 오류(success=False)로 잡힘: {res}"
-    assert "error" not in res, f"취소요청에 error 필드 잔존(자동실행 이력 '오류'로 집계): {res}"
+    assert res.get("success") is True, (
+        f"취소요청 제외가 오류(success=False)로 잡힘: {res}"
+    )
+    assert "error" not in res, (
+        f"취소요청에 error 필드 잔존(자동실행 이력 '오류'로 집계): {res}"
+    )

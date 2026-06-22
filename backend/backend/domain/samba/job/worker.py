@@ -3402,6 +3402,7 @@ class JobWorker:
         from backend.domain.samba.proxy.ssg_sourcing import SSGSourcingClient
         from backend.domain.samba.proxy.ssg_sourcing import (
             RateLimitError as SSGSearchRL,
+            sanitize_ssg_images as _ssg_sanitize,  # noqa: F811
         )
         from backend.api.v1.routers.samba.collector_common import (
             _build_product_data,
@@ -3743,6 +3744,9 @@ class JobWorker:
                                     if len(_cur_imgs) >= 9:
                                         break
                             detail["images"] = _cur_imgs[:9]
+                        # sui.ssgcdn(삼성카드/쿠폰배너 등) 비상품 이미지 제거
+                        if detail and detail.get("images"):
+                            detail["images"] = _ssg_sanitize(detail["images"], spid)
                         # _parse_result_item_obj 실패 시 (dept.ssg.com AJAX 로드):
                         # 확장앱 safeObj의 itemNm + HTML select 직접 파싱으로 폴백
                         if not detail:

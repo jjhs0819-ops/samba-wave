@@ -2151,7 +2151,12 @@ class SSGSourcingClient:
         if base_img_url:
             # _i1_36.jpg → _i1_1200.jpg 변환
             high_res = re.sub(r"_i1_\d+\.jpg", "_i1_1200.jpg", base_img_url)
-            if high_res:
+            # sitem.ssgcdn.com + item_id 검증 — sui.ssgcdn(삼성카드/쿠폰배너 등 UI에셋) 차단
+            if (
+                high_res
+                and _SSG_SITEM_HOST in high_res.lower()
+                and (not item_id or f"/{item_id}_i" in high_res)
+            ):
                 images.append(self._normalize_image(high_res))
 
         # HTML에서 sitem.ssgcdn.com 이미지 수집으로 보충

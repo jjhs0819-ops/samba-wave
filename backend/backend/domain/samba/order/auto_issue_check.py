@@ -23,9 +23,9 @@ from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
-# 기본값(주문접수=pending) 상태만 판정. status 드롭박스가 기본값이 아니면 = 사람이 손댄
-# 주문(처리중/배송/취소 등)이므로 자동판정(주문처리) 대상에서 제외한다.
-_ACTIVE_STATUSES = ("pending",)
+# pending(주문접수) + wait_ship(배송대기중) 상태만 판정.
+# GS샵 등 마켓에서 발주확인(301) 상태로 수집되면 wait_ship으로 저장되므로 포함.
+_ACTIVE_STATUSES = ("pending", "wait_ship")
 
 # ABC/GrandStage = 혜택가가 판매가와 분리(#421) + 배송비 별도. 역마진 판정 시 배송비 가산.
 _ABC_FAMILY = {"ABCMART", "GRANDSTAGE"}
@@ -328,10 +328,10 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
                         no_stock_product_ids.add(pid)
                         no_price_product_ids.add(pid)  # last_refreshed_at 우선순위용
 
-            # 소액 주문 자동 배송완료: 정산금액 < 1,000원인 pending 주문
+            # 소액 주문 자동 배송완료: 정산금액 < 1,000원인 주문
             # (역마진·재고없음과 무관하게 처리 — 이미 배송완료 상태인 건은 건너뜀)
             _rev = float(o.revenue or 0)
-            if o.status == "pending" and 0 < _rev < _AUTO_DELIVER_THRESHOLD:
+            if o.status in _ACTIVE_STATUSES and 0 < _rev < _AUTO_DELIVER_THRESHOLD:
                 o.status = "delivered"
                 o.shipping_status = "배송완료"
                 o.delivered_at = now
