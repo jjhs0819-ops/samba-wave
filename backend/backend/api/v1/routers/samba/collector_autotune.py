@@ -2136,6 +2136,13 @@ async def _site_autotune_loop(device_id: str, site: str):
                                                 ):
                                                     deleted_count += 1
                                                     _all_delete_pids.add(r.product_id)
+                                                    _cstats_live = (
+                                                        _autotune_cycle_stats.get(_gkey)
+                                                    )
+                                                    if _cstats_live is not None:
+                                                        _cstats_live[
+                                                            "deleted_pids"
+                                                        ].add(r.product_id)
                                                     _ok_del_ids.append(_del_acc_id)
                                                     _log_line(
                                                         site,
@@ -2630,6 +2637,9 @@ async def _site_autotune_loop(device_id: str, site: str):
                                             )
                                         price_changed_count += 1
                                         _all_price_pids.add(r.product_id)
+                                        _cstats_live = _autotune_cycle_stats.get(_gkey)
+                                        if _cstats_live is not None:
+                                            _cstats_live["price_pids"].add(r.product_id)
                                         # 표시 전용: 실제 마켓 등록가(추가수수료 역산 반영).
                                         # detection/last_sent은 base값(expected_price/last_price) 유지.
                                         _af = getattr(acc, "additional_fields", None)
@@ -2829,6 +2839,9 @@ async def _site_autotune_loop(device_id: str, site: str):
                                         _stock_changes_acc += 1
                                     if _stock_diff:
                                         _all_stock_pids.add(r.product_id)
+                                        _cstats_live = _autotune_cycle_stats.get(_gkey)
+                                        if _cstats_live is not None:
+                                            _cstats_live["stock_pids"].add(r.product_id)
                                         _stock_action_txt = f"재고전송({_stock_changes_acc}건) → {acc_label}"
                                         _acc_items.append("stock")
                                         _acc_action_parts.append(_stock_action_txt)
