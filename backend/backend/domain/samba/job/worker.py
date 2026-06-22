@@ -802,10 +802,10 @@ class JobWorker:
                         _general_exhausted = True
 
                 if job is None and _can_claim_autotune:
-                    # 동적 슬롯: 판매처별 running 수가 상한 초과 시 해당 판매처 모든 계정 exclude
+                    # 동적 슬롯: 판매처별 running 수 집계
                     _slot_excl = set(_excl_autotune_accounts)
+                    _underflow_accs: set[str] = set()  # 하한 미달 판매처 계정
                     if self._autotune_slot_limits:
-                        # 판매처별 현재 running 수 집계
                         _running_per_mt: dict[str, int] = {}
                         for _aids in self._active_autotune_accounts.values():
                             for _aid in _aids:
@@ -814,17 +814,34 @@ class JobWorker:
                                     _running_per_mt[_mt] = (
                                         _running_per_mt.get(_mt, 0) + 1
                                     )
-                        # market_type → 해당 판매처 계정 목록
                         _mt_to_accs: dict[str, list[str]] = {}
                         for _aid, _mt in self._acc_market_type_cache.items():
                             _mt_to_accs.setdefault(_mt, []).append(_aid)
-                        # 상한 초과 판매처의 모든 계정 exclude
+                        _min_slots = max(
+                            1,
+                            round(_bg_max * 0.15),
+                        )
                         for _mt, _limit in self._autotune_slot_limits.items():
-                            if _running_per_mt.get(_mt, 0) >= _limit:
+                            _cur = _running_per_mt.get(_mt, 0)
+                            if _cur >= _limit:
+                                # 상한 초과 → exclude
                                 _slot_excl.update(_mt_to_accs.get(_mt, []))
-                    job = await repo.claim_autotune_pending_job(
-                        exclude_autotune_accounts=_slot_excl or None,
-                    )
+                            elif _cur < _min_slots and _mt_to_accs.get(_mt):
+                                # 하한 미달 → 우선 claim 대상
+                                _underflow_accs.update(_mt_to_accs[_mt])
+
+                    # 하한 미달 판매처 우선 claim
+                    if _underflow_accs:
+                        _prio_excl = _slot_excl - _underflow_accs
+                        job = await repo.claim_autotune_pending_job(
+                            exclude_autotune_accounts=_prio_excl or None,
+                            only_accounts=_underflow_accs,
+                        )
+                    # 일반 claim (상한 초과 계정만 제외)
+                    if job is None:
+                        job = await repo.claim_autotune_pending_job(
+                            exclude_autotune_accounts=_slot_excl or None,
+                        )
 
                 if job is None:
                     break

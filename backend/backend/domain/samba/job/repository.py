@@ -201,6 +201,7 @@ class SambaJobRepository(BaseRepository[SambaJob]):
     async def claim_autotune_pending_job(
         self,
         exclude_autotune_accounts: set[str] | None = None,
+        only_accounts: set[str] | None = None,
     ) -> Optional[SambaJob]:
         """autotune_transmit 잡 전용 고속 claim (FOR UPDATE SKIP LOCKED).
 
@@ -209,26 +210,15 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         부분 인덱스 ix_samba_jobs_autotune_pending(created_at) WHERE
         status='pending' AND job_type='autotune_transmit' 를 타면
         pending 전체 스캔 없이 O(1) walk → 5,035ms → 0.25ms (#459).
+
+        _db_account_lock(계정당 1개 직렬화) 제거 — 판매처별 슬롯 상한을
+        worker의 exclude_autotune_accounts(running≥상한 계정)로 제어하므로
+        DB 레벨 1개 제한은 불필요. dedup(F3)이 같은(pid,acc) pending 1개 보장.
+        only_accounts: 하한 미달 판매처 계정만 우선 claim 시 사용.
         """
         from sqlalchemy import text as _sa_text
 
-        # F2(#462): autotune_transmit payload 는 항상 단일계정(target_account_ids:[acc],
-        # 운영 100% 측정)이므로 배열 `&&` overlap 대신 scalar `->>0` 등치 비교로 O(1).
-        # 멱등 price/stock 전송이라 best-effort 락의 일시 2-동시는 안전(오버셀 0·429 0 측정),
-        # dedup(F3)이 같은 (pid,acc) pending 을 1개로 강제해 같은 상품 2-동시 전송은 구조적 불가.
         _job_acc_scalar = "(samba_jobs.payload->'target_account_ids'->>0)"
-        _running_acc_scalar = "(r.payload->'target_account_ids'->>0)"
-
-        # autotune_transmit끼리만 계정 직렬화 (transmit과 격리)
-        _db_account_lock = _sa_text(
-            "(NOT EXISTS ("
-            "SELECT 1 FROM samba_jobs r "
-            "WHERE r.status = 'running' "
-            "AND r.job_type = 'autotune_transmit' "
-            "AND r.id <> samba_jobs.id "
-            f"AND {_running_acc_scalar} = {_job_acc_scalar}"
-            "))"
-        )
 
         stmt = (
             select(SambaJob)
@@ -236,7 +226,6 @@ class SambaJobRepository(BaseRepository[SambaJob]):
                 SambaJob.status == JobStatus.PENDING,
                 SambaJob.job_type == "autotune_transmit",
             )
-            .where(_db_account_lock)
             .order_by(SambaJob.created_at.asc())
             .limit(1)
             .with_for_update(skip_locked=True)
@@ -244,11 +233,17 @@ class SambaJobRepository(BaseRepository[SambaJob]):
 
         if exclude_autotune_accounts:
             _excl_list = list(exclude_autotune_accounts)
-            # 단일계정 전제 scalar 비교 (F2, #462)
             _no_overlap = _sa_text(
                 f"(NOT ({_job_acc_scalar} = ANY(:excl_autotune_accs)))"
             ).bindparams(excl_autotune_accs=_excl_list)
             stmt = stmt.where(_no_overlap)
+
+        if only_accounts:
+            _only_list = list(only_accounts)
+            _only_filter = _sa_text(
+                f"({_job_acc_scalar} = ANY(:only_accs))"
+            ).bindparams(only_accs=_only_list)
+            stmt = stmt.where(_only_filter)
 
         result = await self.session.execute(stmt)
         job = result.scalars().first()
