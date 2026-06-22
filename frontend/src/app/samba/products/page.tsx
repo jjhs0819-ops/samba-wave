@@ -144,6 +144,7 @@ export default function ProductsPage() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   // Selection
   const [selectAll, setSelectAll] = useState(false);
+  const [selectScope, setSelectScope] = useState<'search' | 'page'>('search');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   // 상품별 로그 (업데이트 버튼 클릭 시 해당 상품 위에 표시)
@@ -911,6 +912,7 @@ export default function ProductsPage() {
       setSelectedIds(new Set());
       return;
     }
+    setSelectScope('search');
     // 검색결과 전체 ID 조회 후 선택
     try {
       const knownStatus = ['has_orders', 'free_ship', 'same_day', 'free_same', 'market_registered', 'market_unregistered', 'sold_out']
@@ -933,6 +935,17 @@ export default function ProductsPage() {
       setSelectAll(true);
       setSelectedIds(new Set(products.map((p) => p.id)));
     }
+  };
+
+  const handleSelectPage = (checked: boolean) => {
+    if (!checked) {
+      setSelectAll(false);
+      setSelectedIds(new Set());
+      return;
+    }
+    setSelectScope('page');
+    setSelectAll(true);
+    setSelectedIds(new Set(products.map((p) => p.id)));
   };
 
   // 성능 최적화: 안정적인 콜백 참조로 ProductCard 불필요한 리렌더 방지
@@ -2613,13 +2626,23 @@ export default function ProductsPage() {
         display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px",
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
-          <label style={{ display: "flex", alignItems: "center", gap: "5px", cursor: "pointer", margin: 0 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: "4px", cursor: "pointer", margin: 0 }} title="검색결과 전체 선택">
             <input
               type="checkbox"
-              checked={selectAll}
+              checked={selectAll && selectScope === 'search'}
               onChange={(e) => handleSelectAll(e.target.checked)}
               style={{ accentColor: "#FF8C00", width: "13px", height: "13px", cursor: "pointer" }}
             />
+            <span style={{ fontSize: "0.72rem", color: "#888", userSelect: "none" }}>검색</span>
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: "4px", cursor: "pointer", margin: 0 }} title="현재 페이지만 선택">
+            <input
+              type="checkbox"
+              checked={selectAll && selectScope === 'page'}
+              onChange={(e) => handleSelectPage(e.target.checked)}
+              style={{ accentColor: "#FF8C00", width: "13px", height: "13px", cursor: "pointer" }}
+            />
+            <span style={{ fontSize: "0.72rem", color: "#888", userSelect: "none" }}>1PG</span>
           </label>
           <span style={{ fontSize: "0.875rem", color: "#E5E5E5", fontWeight: 600, whiteSpace: "nowrap" }}>
             상품관리 <span style={{ color: "#FF8C00" }}>( <span>{fmt(totalCount)}</span>개 )</span>
