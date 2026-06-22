@@ -420,10 +420,10 @@ class JobWorker:
         # brand_all 잡 직렬화 — SSG+MUSINSA 동시 실행 시 DB/메모리 고갈 방지
         self._brand_all_running: bool = False
         self._poll_count = 0
-        # ── autotune 계정별 동적 슬롯 배분 ──
-        # pending 비율 기반, 30초마다 재계산.
+        # ── autotune 판매처별 동적 슬롯 배분 ──
+        # market_type별 pending 비율 기반, 30초마다 재계산.
         # lottehome/playauto: 상한 35%(9개), 하한 15%(4개).
-        # _autotune_slot_limits[acc_id] = 해당 계정 최대 동시 실행 수
+        # _autotune_slot_limits[market_type] = 해당 판매처 최대 동시 실행 수
         self._autotune_slot_limits: dict[str, int] = {}
         # 계정 ID → market_type 캐시 (DB 조회 최소화)
         self._acc_market_type_cache: dict[str, str] = {}
@@ -566,10 +566,10 @@ class JobWorker:
             logger.warning(f"[잡워커] stuck 잡 복구 실패: {e}")
 
     async def _rebalance_autotune_slots(self) -> None:
-        """autotune 계정별 슬롯 상한을 pending 비율로 재계산.
+        """autotune 판매처(market_type)별 슬롯 상한을 pending 비율로 재계산.
 
         lottehome/playauto: 하한 15%(4개), 상한 35%(9개).
-        나머지 계정: 남은 슬롯 pending 비율 배분, 최소 1개.
+        나머지 판매처: pending 비율 그대로, 최소 1개.
         """
         try:
             from sqlalchemy import text as _sa_text
@@ -607,7 +607,13 @@ class JobWorker:
                         if mt:
                             self._acc_market_type_cache[acc_id] = mt
 
-            total_pending = sum(pending_by_acc.values())
+            # acc_id별 pending → market_type별 합산
+            pending_by_mt: dict[str, int] = {}
+            for acc_id, cnt in pending_by_acc.items():
+                mt = self._acc_market_type_cache.get(acc_id, acc_id)
+                pending_by_mt[mt] = pending_by_mt.get(mt, 0) + cnt
+
+            total_pending = sum(pending_by_mt.values())
             if total_pending == 0:
                 self._autotune_slot_limits = {}
                 return
@@ -617,21 +623,20 @@ class JobWorker:
             _max_slots = max(1, round(_bg_max * _max_pct))
 
             new_limits: dict[str, int] = {}
-            for acc_id, cnt in pending_by_acc.items():
+            for mt, cnt in pending_by_mt.items():
                 ratio = cnt / total_pending
                 raw = round(_bg_max * ratio)
-                mt = self._acc_market_type_cache.get(acc_id, "")
                 if mt in _special:
                     slots = max(_min_slots, min(_max_slots, max(1, raw)))
                 else:
                     slots = max(1, raw)
-                new_limits[acc_id] = slots
+                new_limits[mt] = slots
 
             self._autotune_slot_limits = new_limits
             logger.debug(
-                "[잡워커] autotune 슬롯 재배분: "
+                "[잡워커] autotune 슬롯 재배분(판매처): "
                 + ", ".join(
-                    f"{self._acc_market_type_cache.get(k, k[:8])}={v}"
+                    f"{k}={v}"
                     for k, v in sorted(new_limits.items(), key=lambda x: -x[1])
                 )
             )
@@ -797,18 +802,26 @@ class JobWorker:
                         _general_exhausted = True
 
                 if job is None and _can_claim_autotune:
-                    # 동적 슬롯: 계정별 running 수가 배분된 상한 초과 시 해당 계정 claim 제외
+                    # 동적 슬롯: 판매처별 running 수가 상한 초과 시 해당 판매처 모든 계정 exclude
                     _slot_excl = set(_excl_autotune_accounts)
                     if self._autotune_slot_limits:
-                        _running_per_acc: dict[str, int] = {}
+                        # 판매처별 현재 running 수 집계
+                        _running_per_mt: dict[str, int] = {}
                         for _aids in self._active_autotune_accounts.values():
                             for _aid in _aids:
-                                _running_per_acc[_aid] = (
-                                    _running_per_acc.get(_aid, 0) + 1
-                                )
-                        for _aid, _limit in self._autotune_slot_limits.items():
-                            if _running_per_acc.get(_aid, 0) >= _limit:
-                                _slot_excl.add(_aid)
+                                _mt = self._acc_market_type_cache.get(_aid, "")
+                                if _mt:
+                                    _running_per_mt[_mt] = (
+                                        _running_per_mt.get(_mt, 0) + 1
+                                    )
+                        # market_type → 해당 판매처 계정 목록
+                        _mt_to_accs: dict[str, list[str]] = {}
+                        for _aid, _mt in self._acc_market_type_cache.items():
+                            _mt_to_accs.setdefault(_mt, []).append(_aid)
+                        # 상한 초과 판매처의 모든 계정 exclude
+                        for _mt, _limit in self._autotune_slot_limits.items():
+                            if _running_per_mt.get(_mt, 0) >= _limit:
+                                _slot_excl.update(_mt_to_accs.get(_mt, []))
                     job = await repo.claim_autotune_pending_job(
                         exclude_autotune_accounts=_slot_excl or None,
                     )
