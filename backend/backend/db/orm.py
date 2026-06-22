@@ -121,11 +121,12 @@ def _build_write_engine() -> AsyncEngine:
         connect_args={
             "timeout": 10,
             "server_settings": {
-                # 좀비 차단 — IIT 초과 시 PostgreSQL 자동 종료. 120s 타협안:
-                # 60s = transmit/worker 마켓 HTTP 60s 초과 시 connection-closed 발생,
-                # 180s = 좀비 회수 늦어져 풀 idle 누적 → Cloud SQL 97/100 위험.
-                # 120s = transmit 평균 30~45s 대비 2~4배 마진 + 좀비 회수 가속.
-                "idle_in_transaction_session_timeout": "120000",
+                # 좀비 차단 — IIT 초과 시 PostgreSQL 자동 종료.
+                # collect 잡(_execute_collect_isolated)이 HTTP 대기 중 idle-in-transaction
+                # 상태로 최대 139s 점유 확인(2026-06-22) → 120s 설정에서 connection is closed
+                # → Gunicorn worker 크래시 반복. 300s 로 여유 확보.
+                # 좀비 회수는 pool_recycle=120s 가 담당(반환 시 만료 연결 폐기).
+                "idle_in_transaction_session_timeout": "300000",
             },
         },
     )

@@ -61,6 +61,7 @@ services:
   samba-api:
     image: ${AR_REGION:-asia-northeast3}-docker.pkg.dev/${GCP_PROJECT:?GCP_PROJECT 미설정}/${AR_REPO:-cloud-run-source-deploy}/${IMAGE_NAME:-samba-wave-api}:latest
     restart: unless-stopped
+    stop_grace_period: 30s
     depends_on:
       - cloud-sql-proxy
     env_file:
