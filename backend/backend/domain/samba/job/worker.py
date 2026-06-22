@@ -648,11 +648,19 @@ class JobWorker:
                 new_limits[mt] = slots
 
             self._autotune_slot_limits = new_limits
-            logger.debug(
+            logger.info(
                 "[잡워커] autotune 슬롯 재배분(판매처): "
                 + ", ".join(
                     f"{k}={v}"
                     for k, v in sorted(new_limits.items(), key=lambda x: -x[1])
+                )
+                + " | DB running: "
+                + ", ".join(
+                    f"{k}={v}"
+                    for k, v in sorted(
+                        getattr(self, "_running_per_mt_db", {}).items(),
+                        key=lambda x: -x[1],
+                    )
                 )
             )
         except Exception as e:
