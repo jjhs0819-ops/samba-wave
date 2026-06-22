@@ -2671,47 +2671,83 @@ async def _site_autotune_loop(device_id: str, site: str):
                                             _reason_lbl = "(정책변경)"
                                         else:
                                             _reason_lbl = ""
-                                        _price_action_txt = f"가격변동{_reason_lbl} {_disp_old:,}→{_disp_new:,} → {acc_label}"
-                                        _acc_items.append("price")
-                                        _acc_action_parts.append(_price_action_txt)
-                                        # 워룸 타임라인용 이벤트 수집 — 등록마켓 판매가 변경 기준
-                                        # (오토튠의 실제 전송 트리거와 동일 기준, 상품당 1건)
-                                        if r.product_id not in _price_change_events:
-                                            _diff_pct = (
-                                                round(
-                                                    (_disp_new - _disp_old)
-                                                    / _disp_old
-                                                    * 100,
-                                                    1,
-                                                )
-                                                if _disp_old
-                                                else 0
+                                        # base값 달라도 마켓 표시가 동일(반올림 후 같음) → 전송 불필요.
+                                        # last_price를 expected_price로 갱신해 다음 사이클 반복 방지.
+                                        if (
+                                            _disp_old == _disp_new
+                                            and not _has_failed_mark
+                                        ):
+                                            log.info(
+                                                "[오토튠][표시가동일스킵] %s acc=%s: "
+                                                "base %s→%s이나 표시가 동일(%s) → 전송 스킵, last_price 갱신",
+                                                _prod_label,
+                                                acc_id[:20],
+                                                last_price,
+                                                expected_price,
+                                                _disp_new,
                                             )
-                                            _price_change_events[r.product_id] = {
-                                                "source_site": product.source_site,
-                                                "product_id": r.product_id,
-                                                "product_name": product.name,
-                                                "site_product_id": product.site_product_id,
-                                                "old_price": _disp_old,
-                                                "new_price": _disp_new,
-                                                "diff_pct": _diff_pct,
-                                            }
-                                            # 변동 감지 즉시 DB 저장 — 사이클 미완주에도 유실 없음
-                                            _name_short = (product.name or "")[:30]
-                                            await _stream_event(
-                                                "price_changed",
-                                                "info",
-                                                summary=f"가격 변동 — {_name_short} ₩{int(_disp_old):,}→₩{int(_disp_new):,}",
-                                                source_site=product.source_site,
-                                                product_id=r.product_id,
-                                                product_name=product.name,
-                                                detail={
+                                            _new_acc_last = (
+                                                dict(acc_last) if acc_last else {}
+                                            )
+                                            _new_acc_last["price"] = expected_price
+                                            _new_last_sent = dict(last_sent)
+                                            _new_last_sent[acc_id] = _new_acc_last
+                                            await _partial_update(
+                                                r.product_id,
+                                                {"last_sent_data": _new_last_sent},
+                                            )
+                                            price_changed_count -= 1
+                                            _all_price_pids.discard(r.product_id)
+                                            # continue 금지 — 아래 재고 체크(line 2770+)도 실행해야 함
+                                        else:
+                                            # 재시도 때는 base 가격 노출 — display가 동일해도 차이 보임
+                                            if _has_failed_mark:
+                                                _price_action_txt = (
+                                                    f"가격변동(재시도) {last_price:,}→{expected_price:,}"
+                                                    f" (표시가:{_disp_new:,}) → {acc_label}"
+                                                )
+                                            else:
+                                                _price_action_txt = f"가격변동{_reason_lbl} {_disp_old:,}→{_disp_new:,} → {acc_label}"
+                                            _acc_items.append("price")
+                                            _acc_action_parts.append(_price_action_txt)
+                                            # 워룸 타임라인용 이벤트 수집 — 등록마켓 판매가 변경 기준
+                                            # (오토튠의 실제 전송 트리거와 동일 기준, 상품당 1건)
+                                            if r.product_id not in _price_change_events:
+                                                _diff_pct = (
+                                                    round(
+                                                        (_disp_new - _disp_old)
+                                                        / _disp_old
+                                                        * 100,
+                                                        1,
+                                                    )
+                                                    if _disp_old
+                                                    else 0
+                                                )
+                                                _price_change_events[r.product_id] = {
+                                                    "source_site": product.source_site,
+                                                    "product_id": r.product_id,
+                                                    "product_name": product.name,
+                                                    "site_product_id": product.site_product_id,
                                                     "old_price": _disp_old,
                                                     "new_price": _disp_new,
                                                     "diff_pct": _diff_pct,
-                                                    "site_product_id": product.site_product_id,
-                                                },
-                                            )
+                                                }
+                                                # 변동 감지 즉시 DB 저장 — 사이클 미완주에도 유실 없음
+                                                _name_short = (product.name or "")[:30]
+                                                await _stream_event(
+                                                    "price_changed",
+                                                    "info",
+                                                    summary=f"가격 변동 — {_name_short} ₩{int(_disp_old):,}→₩{int(_disp_new):,}",
+                                                    source_site=product.source_site,
+                                                    product_id=r.product_id,
+                                                    product_name=product.name,
+                                                    detail={
+                                                        "old_price": _disp_old,
+                                                        "new_price": _disp_new,
+                                                        "diff_pct": _diff_pct,
+                                                        "site_product_id": product.site_product_id,
+                                                    },
+                                                )
                                     elif expected_price == last_price:
                                         # 가격 동일 스킵 — 다중 마켓 디버그 로그
                                         if len(reg_accounts) > 1:
