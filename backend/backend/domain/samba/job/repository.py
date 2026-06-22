@@ -397,6 +397,7 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         exclude_ids: set[str] | None = None,
         threshold_sec: int = 0,
         fail_threshold_sec: int = 0,
+        job_type: str | None = None,
     ) -> int:
         """stuck된 running 잡을 pending으로 복구.
 
@@ -413,6 +414,8 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         conditions = [SambaJob.status == JobStatus.RUNNING]
         if exclude_ids:
             conditions.append(SambaJob.id.notin_(list(exclude_ids)))
+        if job_type is not None:
+            conditions.append(SambaJob.job_type == job_type)
         if threshold_sec > 0:
             cutoff = datetime.now(UTC) - timedelta(seconds=threshold_sec)
             conditions.append(SambaJob.started_at < cutoff)

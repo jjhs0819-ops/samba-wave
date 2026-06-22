@@ -109,9 +109,10 @@ def _build_write_engine() -> AsyncEngine:
         # (2026-05-27 PM) 풀 상한 축소: write 30+30=60 → 20+20=40.
         # 사용자 캡쳐 Cloud SQL 최대 연결 97/100 위험. 백엔드 단일 워커가 풀 상한
         # 90개(write 60 + read 30) 까지 차오를 수 있어 Cloud SQL max=100 한계 임박.
-        # 축소 후 합 max=60 (write 40 + read 20) — Cloud SQL 여유 35 확보.
+        # (2026-06-22) bg semaphore 증가(6→26)에 맞춰 write pool +20: max=60→80.
+        # Cloud SQL max=100, read pool max=20 → 여유 ~20개.
         pool_size=20,
-        max_overflow=20,
+        max_overflow=40,
         # (2026-05-27 PM) recycle 45→120 — transmit 잡 평균 30~45s 트랜잭션 중에
         # recycle 45초 만료되면 mid-tx close → greenlet_spawn 예외로 잡 전체 실패
         # (memory: jobworker_connection_close_greenlet). IIT=120s 와 정렬해

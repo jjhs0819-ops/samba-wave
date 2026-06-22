@@ -404,13 +404,14 @@ class JobWorker:
             os.environ.get("JOB_TRANSMIT_MAX_CONCURRENCY", "8")
         )
         self._transmit_semaphore = asyncio.Semaphore(self._transmit_max_concurrency)
-        # 백그라운드 전송(오토튠/테트리스) 전용 상한 세마포어 — 메인보다 작게(기본 6<8).
-        # 백그라운드 잡은 bg(외부)+메인(내부) 둘 다 획득 → bg 잡이 메인 8슬롯을 다 못 먹고
+        # 백그라운드 전송(오토튠/테트리스) 전용 상한 세마포어 — 메인보다 작게(기본 26<28).
+        # 백그라운드 잡은 bg(외부)+메인(내부) 둘 다 획득 → bg 잡이 메인 슬롯을 다 못 먹고
         # 최소 (메인-bg)=2 슬롯이 항상 수동 상품전송용으로 남음. step8 큐 합류 후
         # 오토튠 폭주가 수동 전송을 굶기던 문제(2026-06-17) 방지. bg를 외부에 둬
         # 대기 중 bg 잡이 메인 슬롯을 점유하지 않게 함.
+        # (2026-06-22) 처리량 확대: 6→26. write pool +20 동반(max_overflow 20→40).
         self._bg_transmit_semaphore = asyncio.Semaphore(
-            int(os.environ.get("JOB_BG_TRANSMIT_MAX_CONCURRENCY", "6"))
+            int(os.environ.get("JOB_BG_TRANSMIT_MAX_CONCURRENCY", "26"))
         )
         # delete_market 전용 세마포어 — transmit 세마포어와 분리하여 전송 포화 시에도 즉시 실행
         self._delete_semaphore = asyncio.Semaphore(
@@ -515,6 +516,7 @@ class JobWorker:
 
         force=True: threshold 없이 전체 복구 (재시작 직후 전용). 2h+ zombie는 failed.
         force=False: STUCK_THRESHOLD_SEC 초과 잡만 복구 (주기적 체크).
+        autotune_transmit은 항상 60초 초과 시 failed — 1개 상품 전송이라 1분이면 충분.
         """
         try:
             from backend.db.orm import get_write_session
@@ -530,10 +532,23 @@ class JobWorker:
                     threshold_sec=threshold,
                     fail_threshold_sec=fail_threshold,
                 )
-                if recovered:
+                # autotune_transmit 전용: 60초 초과 시 failed (1상품 전송, 1분이면 충분)
+                at_recovered = await repo.recover_stuck_running(
+                    exclude_ids=self._active_job_ids,
+                    threshold_sec=60,
+                    fail_threshold_sec=60,
+                    job_type="autotune_transmit",
+                )
+                total = recovered + at_recovered
+                if total:
                     await session.commit()
                     logger.info(
-                        f"[잡워커] stuck running 잡 {recovered}건 → pending/failed 복구"
+                        f"[잡워커] stuck running 잡 {total}건 → pending/failed 복구"
+                        + (
+                            f" (autotune_transmit {at_recovered}건 포함)"
+                            if at_recovered
+                            else ""
+                        )
                         + (" (강제 복구)" if force else "")
                     )
         except Exception as e:
