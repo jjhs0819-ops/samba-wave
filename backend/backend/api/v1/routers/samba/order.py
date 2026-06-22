@@ -1060,45 +1060,13 @@ async def dashboard_stats(
     new_reg_rows = (await session.execute(new_reg_q)).all()
     new_reg_map = {str(r.day): int(r.cnt) for r in new_reg_rows}
 
-    # 마켓삭제(이탈) 카운트: 품절 인식 이벤트 기준
-    # — 품절 인식 시 다운스트림에서 전 마켓 자동 삭제/판매중지 처리되므로
-    #   sold_out 이벤트 = 마켓 이탈 1회로 간주 (1상품/1일 중복 제거)
-    from backend.domain.samba.warroom.model import SambaMonitorEvent
-
-    sold_out_date = SambaMonitorEvent.created_at + text("INTERVAL '9 hours'")
-    del_q = (
-        select(
-            func.date(sold_out_date).label("day"),
-            func.count(func.distinct(SambaMonitorEvent.product_id)).label("cnt"),
-        )
-        .where(
-            SambaMonitorEvent.event_type == "sold_out",
-            SambaMonitorEvent.product_id != None,  # noqa: E711
-            sold_out_date >= week_ago,
-        )
-        .group_by(func.date(sold_out_date))
-    )
-    if tenant_id is not None:
-        # 멀티테넌시 필터: 상품의 tenant_id로 제한
-        del_q = del_q.where(
-            SambaMonitorEvent.product_id.in_(
-                select(SambaCollectedProduct.id).where(
-                    or_(
-                        SambaCollectedProduct.tenant_id == tenant_id,
-                        SambaCollectedProduct.tenant_id == None,  # noqa: E711
-                    )
-                )
-            )
-        )
-    del_rows = (await session.execute(del_q)).all()
-    del_map = {str(r.day): int(r.cnt) for r in del_rows}
+    # (del_q 제거 — sold_out 이벤트만 잡아 마켓삭제가 과소계산됨)
+    # 마켓삭제는 등록상품수 스냅샷 역산으로 구하므로 별도 쿼리 불필요
 
     # 일별 누적 등록상품수: "지금 마켓에 1개 이상 등록된 상품수" 정의로 통일
     #   - 오늘(today_str): 실시간 build_market_registered_conditions 계산값
     #   - 과거 6일: samba_daily_registered_snapshot 테이블의 그날 0시 스냅샷
     #   - 스냅샷이 없는 과거일은 None(프론트에서 "-" 표시) — 거짓 평탄 채움 금지
-    #     (역산은 first_market_registered_at의 0→≥1 사이클 재진입 때문에
-    #      오토튠 재등록 시 신규등록이 과대 집계돼 과거값이 비정상적으로 작아짐 — 사용 금지)
     from backend.domain.samba.collector.model import SambaDailyRegisteredSnapshot
 
     today_str = (week_ago + timedelta(days=6)).strftime("%Y-%m-%d")
@@ -1188,22 +1156,25 @@ async def dashboard_stats(
         int(prev_snap_row) if prev_snap_row is not None else None
     )
 
-    # 신규등록 = (등록상품수[d] - 등록상품수[d-1]) + 마켓삭제[d] 로 역산
-    #   - first_market_registered_at 기반 카운트는 오토튠 재등록 시 중복 → 사용 금지
-    #   - 등록상품수[d] 또는 [d-1] 스냅샷 없으면 None
+    # 신규등록 = first_market_registered_at 기준 (0→≥1 전환 날짜)
+    # 마켓삭제 = 등록상품수[d-1] + 신규등록[d] - 등록상품수[d] 역산
+    #   → 방정식 보장: 전일 + 신규등록 - 마켓삭제 = 금일 등록상품수
+    #   → DB 직접삭제·배치·판매중지 등 모든 경로로 사라진 것 자동 포함
+    #   → 스냅샷 없는 날은 두 값 모두 None
     all_dates = [(week_ago + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
     for idx, w in enumerate(weekly):
         d_str = w["date"]
         prev_str = prev_day_str if idx == 0 else all_dates[idx - 1]
         reg_today = reg_count_map.get(d_str)
         reg_prev = reg_count_map.get(prev_str)
-        deleted = int(del_map.get(d_str, 0))
+        new_reg = int(new_reg_map.get(d_str, 0))
         if reg_today is not None and reg_prev is not None:
-            new_reg = (reg_today - reg_prev) + deleted
-            w["newRegistered"] = max(new_reg, 0)
+            market_deleted = max((reg_prev + new_reg) - reg_today, 0)
+            w["newRegistered"] = new_reg
+            w["marketDeleted"] = market_deleted
         else:
             w["newRegistered"] = None
-        w["marketDeleted"] = deleted
+            w["marketDeleted"] = 0
         w["registeredCount"] = reg_today
         w["collectedCount"] = int(collected_count_map.get(d_str, 0))
 
