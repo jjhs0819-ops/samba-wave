@@ -34,14 +34,19 @@ DAEMON_ONLY_SITES: set[str] = {"SSG", "ABCmart", "GrandStage", "LOTTEON"}
 
 # 잡 타입별 데몬 강제 사이트 매트릭스 — 사이트 단일 집합으로는 한계.
 # 송장(tracking)은 MUSINSA/GSShop 까지 데몬 핸들러 등록 (site_handlers.py).
-# 그 외 잡 타입(search/detail/reward/cancel)은 SSG/ABC/GrandStage/LOTTEON 만 데몬 지원.
+# 그 외 잡 타입(search/detail/cancel)은 SSG/ABC/GrandStage/LOTTEON 만 데몬 지원.
 # 사이트 추가 시 `tools/lotteon_daemon/site_handlers.py` 핸들러 + --sites CLI + 본 dict 동시 갱신 필수.
 DAEMON_ONLY_JOB_SITES: dict[str, set[str]] = {
     "search": DAEMON_ONLY_SITES,
     "detail": DAEMON_ONLY_SITES,
-    "reward": DAEMON_ONLY_SITES,
+    # 적립(reward)은 데몬 핸들러가 없음 — 출석/리뷰 전부 확장앱 content script(content-reward-*.js)로만
+    # 동작(데몬 site_handlers.py 는 ABC/SSG 가격수집[detail]만 지원). 따라서 어떤 사이트도 데몬전용 아님
+    # → _reward_owner_override 가 트리거 device 를 owner 로 박아 "실행 누른 그 PC 에서만" 돌게 한다
+    # (KREAM/무신사와 동일). 2026-06-22 ABC마트 적립이 팀장님/타 PC 로 새서(거기 로그인 없어) 실패하던
+    # 버그 수정 — 이전엔 reward 가 DAEMON_ONLY 라 트리거 PC 바인딩 제외 + 데몬 미등록 시 발행 skip 됨.
+    "reward": set(),
     # LOTTEON 발주취소는 데몬 Playwright 자동로그인 봇 차단(2026-05-26 실측)으로 확장앱 라우팅 전환.
-    # cancel_order 만 LOTTEON 제외, 나머지(detail/tracking/search/reward) 정책 유지.
+    # cancel_order 만 LOTTEON 제외, 나머지(detail/tracking/search) 정책 유지.
     "cancel_order": DAEMON_ONLY_SITES - {"LOTTEON"},
     # 송장(tracking): 데몬은 SSG/ABC/GrandStage/LOTTEON 만. 무신사/GSShop 등은 확장앱 처리.
     # (무신사 trace 는 member.one SSO + app_atk/mss_mac/cf_clearance 토큰 요구 → 헤드리스
