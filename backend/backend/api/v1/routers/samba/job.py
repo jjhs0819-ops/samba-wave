@@ -314,9 +314,14 @@ async def list_jobs(
 @router.get("/shipment-logs")
 async def get_shipment_log_buffer(
     since_idx: int = Query(0, ge=0),
+    memory_only: bool = Query(False),
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
-    """전송 로그 링 버퍼 조회 — 창 닫아도 유지. 버퍼 비어있으면 DB fallback."""
+    """전송 로그 링 버퍼 조회 — 창 닫아도 유지. 버퍼 비어있으면 DB fallback.
+
+    memory_only=True: 마켓삭제 전용. in-memory 버퍼만 조회, DB fallback 없음.
+    (DB 인덱스 공간과 in-memory 인덱스 공간이 충돌하는 버그 방지)
+    """
     from backend.domain.samba.job.worker import (
         get_shipment_logs,
         is_shipment_log_cleared,
@@ -324,6 +329,9 @@ async def get_shipment_log_buffer(
     from sqlalchemy import text as _text
 
     logs, current_idx = get_shipment_logs(since_idx)
+
+    if memory_only:
+        return {"logs": logs, "current_idx": current_idx}
 
     # samba-worker(B)가 transmit 잡을 처리하므로 A의 in-memory 버퍼는 항상 비어있음.
     # in-memory 비어있을 때 DB에서 직접 읽어 준실시간 스트리밍 (worker가 50줄마다 flush).

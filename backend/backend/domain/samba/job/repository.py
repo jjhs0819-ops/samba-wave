@@ -396,6 +396,7 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         self,
         exclude_ids: set[str] | None = None,
         threshold_sec: int = 0,
+        fail_threshold_sec: int = 0,
     ) -> int:
         """stuck된 running 잡을 pending으로 복구.
 
@@ -403,6 +404,7 @@ class SambaJobRepository(BaseRepository[SambaJob]):
 
         exclude_ids: 현재 워커가 실행 중인 잡 ID 제외
         threshold_sec: >0이면 started_at 기준 N초 이상 경과한 잡만 복구
+        fail_threshold_sec: >0이면 이 임계값 초과한 잡은 pending 대신 failed — 재시작 후 zombie 반복 방지
         """
         from datetime import timedelta
 
@@ -421,10 +423,21 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         )
         result = await self.session.execute(stmt)
         stuck = list(result.scalars().all())
+        fail_cutoff = (
+            datetime.now(UTC) - timedelta(seconds=fail_threshold_sec)
+            if fail_threshold_sec > 0
+            else None
+        )
         for job in stuck:
-            job.status = JobStatus.PENDING
-            job.started_at = None
-            # current/progress 보존 — 전송 잡이 이어서 재개할 수 있도록
+            if fail_cutoff and job.started_at and job.started_at < fail_cutoff:
+                # 너무 오래된 zombie — 재시도해도 반복 stuck 가능성 높음, failed 처리
+                job.status = JobStatus.FAILED
+                job.error = "zombie: 재시작 후에도 2시간+ running 상태 — 자동 실패 처리"
+                job.completed_at = datetime.now(UTC)
+            else:
+                job.status = JobStatus.PENDING
+                job.started_at = None
+                # current/progress 보존 — 전송 잡이 이어서 재개할 수 있도록
             self.session.add(job)
         if stuck:
             await self.session.flush()

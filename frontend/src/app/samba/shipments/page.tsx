@@ -133,6 +133,7 @@ export default function ShipmentsPage() {
   const activeJobIdRef = useRef('')
   const jobPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const deletePollRef = useRef<ReturnType<typeof setInterval> | null>(null)  // 삭제 중 500ms 폴링
+  const deleteLogSinceIdxRef = useRef(0)  // 삭제 로그 전용 in-memory 인덱스 (sinceIdxRef는 DB 공간이라 충돌)
   const bgPollRef = useRef<ReturnType<typeof setInterval> | null>(null)  // 상시 2s 백그라운드 폴링 (다른 창 공유용)
   const sinceIdxRef = useRef(0)  // 링 버퍼 폴링용
   const headInitDoneRef = useRef(false)  // 마운트 시 sinceIdx 헤드 초기화 완료 여부 — 과거 잡 로그 재유입 차단용
@@ -182,6 +183,14 @@ export default function ShipmentsPage() {
     if (jobPollRef.current) return  // 전송 잡 폴링이 이미 로그를 가져오는 중이면 중복 실행 방지
     stopBackgroundLogPolling()
     const { API_BASE_URL: apiBase } = await import('@/config/api')
+
+    // in-memory 버퍼 현재 head 획득 (DB fallback 없이) — sinceIdxRef는 DB 공간 값이라 사용 불가
+    try {
+      const headRes = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=999999999&memory_only=true`)
+      const headData = await headRes.json()
+      deleteLogSinceIdxRef.current = headData.current_idx || 0
+    } catch { /* 0으로 유지 */ }
+
     let delPolling = false
     deletePollRef.current = setInterval(async () => {
       if (!headInitDoneRef.current) return  // 헤드 초기화 전엔 과거 로그 재유입 차단
@@ -189,10 +198,11 @@ export default function ShipmentsPage() {
       if (delPolling) return
       delPolling = true
       try {
-        const lr = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`)
+        // memory_only=true: DB fallback 없이 in-memory 버퍼만 조회 (인덱스 공간 충돌 방지)
+        const lr = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=${deleteLogSinceIdxRef.current}&memory_only=true`)
         const logData = await lr.json()
         const newLogs = (logData.logs || []) as string[]
-        sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
+        deleteLogSinceIdxRef.current = logData.current_idx || deleteLogSinceIdxRef.current
         appendShipmentLogs(setLogMessages, newLogs)
       } catch { /* ignore */ }
       delPolling = false

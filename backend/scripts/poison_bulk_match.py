@@ -108,19 +108,37 @@ async def load_creds():
 
 
 async def fetch_articles(limit=None):
-    """매칭 대상 고유 품번 목록 — 아직 poison 매칭 없는 것만."""
+    """매칭 대상 고유 품번 — 매칭이력 브랜드(=POIZON 매칭되는 브랜드) 집중, 미처리만.
+
+    레이트리밋 예산을 hit율 높은 브랜드에 집중(나이키/아디다스/노스페이스 등).
+    매칭이 늘면 브랜드 집합도 자동 확장(다음 실행 시 재계산).
+    """
     async with get_read_session() as s:
+        # POIZON 매칭이력 있는 브랜드 집합
+        mb = (
+            await s.execute(
+                text(
+                    "SELECT DISTINCT btrim(brand) b FROM samba_collected_product "
+                    "WHERE resell_matches -> 'poison' ->> 'product_id' <> '' "
+                    "AND brand IS NOT NULL AND btrim(brand) <> ''"
+                )
+            )
+        ).all()
+        brands = [x.b for x in mb]
+        if not brands:
+            return []
         sql = """
             SELECT btrim(style_code) AS code, COUNT(*) AS n
             FROM samba_collected_product
-            WHERE style_code IS NOT NULL AND btrim(style_code) <> ''
+            WHERE btrim(brand) = ANY(:brands)
+              AND style_code IS NOT NULL AND btrim(style_code) <> ''
               AND (resell_matches IS NULL OR resell_matches -> 'poison' IS NULL)
             GROUP BY btrim(style_code)
             ORDER BY n DESC
         """
         if limit:
             sql += f" LIMIT {int(limit)}"
-        rows = (await s.execute(text(sql))).all()
+        rows = (await s.execute(text(sql), {"brands": brands})).all()
         return [(r.code, r.n) for r in rows]
 
 

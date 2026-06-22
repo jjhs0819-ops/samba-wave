@@ -534,7 +534,7 @@ async function runFocusPoll() {
   focusPollActive = true
   console.log('[수집] 집중 폴링 모드 진입 (0.5초 간격, 최대 120회)')
   let emptyCount = 0
-  while (emptyCount < 120) {
+  while (emptyCount < 30) {
     if (Date.now() < pollPausedUntil) break
     // KREAM/AI소싱 폴링 비활성화
     const hadSourcing = await pollSourcingOnce()
@@ -543,7 +543,8 @@ async function runFocusPoll() {
     } else {
       emptyCount++
     }
-    if (emptyCount < 120) await wait(500)
+    // 폴링 간격 0.5→2초 완화 (오토튠 24/7 상시폴링 렉 억제. 잡 실행 건당 수초라 처리량 영향 미미)
+    if (emptyCount < 30) await wait(2_000)
   }
   focusPollActive = false
   console.log('[수집] 집중 폴링 종료 → alarm 대기 모드 (30초 주기)')
@@ -580,14 +581,34 @@ async function runPollCycle() {
   // KREAM(pollCollectOnce, pollSearchOnce), AI소싱(pollAiSourcingOnce) 폴링 비활성화 — 401 오류 방지
   const hadSourcing = await pollSourcingOnce()
   if (hadSourcing) {
+    // 잡 있음 → 1초 버스트 폴링 보장 + 카운터 리셋
     emptyPollCount = 0
+    ensureQuickPoll()
     runFocusPoll()
+  } else {
+    // 빈 결과 누적 → 일정 횟수 넘으면 1초 타이머 정지(30초 alarm만 유지).
+    // pollSourcingOnce 자체는 막지 않음(SSG 수동업데이트 영구금지 가드 회피) — 호출 "빈도"만 완화.
+    emptyPollCount += 1
+    if (emptyPollCount > IDLE_QUICK_STOP && quickPollTimer) {
+      clearInterval(quickPollTimer)
+      quickPollTimer = null
+      console.log(`[수집] 유휴 ${IDLE_QUICK_STOP}회 → 1초 폴링 정지, 30초 alarm만 유지(렉 완화)`)
+    }
   }
-  // 자동중지 제거 — 확장앱이 켜져 있는 한 항상 폴링 (혜택가 수집용)
 }
 
-// 수집 폴링 — job 없으면 5분 후 자동 중지
+// 수집 폴링 — 유휴 시 1초 타이머 정지, 잡 생기면 30초 alarm이 runPollCycle→ensureQuickPoll로 재개
 let quickPollTimer = null
+const IDLE_QUICK_STOP = 20 // 빈 결과 20회(약 20초) 연속 → 1초 폴링 정지
+
+// 1초 버스트 폴링 시작(미가동 시에만). 잡 처리 중 빠른 응답용.
+function ensureQuickPoll() {
+  if (quickPollTimer) return
+  quickPollTimer = setInterval(() => {
+    if (!focusPollActive) runPollCycle()
+  }, 2_000)
+  console.log('[수집] 2초 버스트 폴링 시작')
+}
 
 function startCollectPolling() {
   emptyPollCount = 0
@@ -595,16 +616,11 @@ function startCollectPolling() {
   chrome.alarms.get('collectPoll', (alarm) => {
     if (!alarm) {
       chrome.alarms.create('collectPoll', { periodInMinutes: 0.5 })
-      console.log('[수집] alarm 등록 (30초/실제 1분 백업)')
+      console.log('[수집] alarm 등록 (30초 백업)')
     }
   })
-  // setInterval 1초 보조 폴링 — 서비스 워커 활성 중 빠른 응답
-  if (!quickPollTimer) {
-    quickPollTimer = setInterval(() => {
-      if (!focusPollActive) runPollCycle()
-    }, 1_000)
-    console.log('[수집] 폴링 시작 (1초 주기 + alarm 백업)')
-  }
+  // 시작 시 1초 타이머 무조건 가동 X — 즉시 1회만 폴링해 잡 있을 때만 ensureQuickPoll로 버스트.
+  // 유휴(크림수집/오토튠 안 켠 PC)에선 30초 alarm만 돌아 렉 없음.
   runPollCycle()
 }
 
