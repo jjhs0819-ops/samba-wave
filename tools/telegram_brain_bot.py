@@ -22,6 +22,7 @@
 명령:
   /오늘     — 오늘 주문 현황 요약
   /미발주   — 발주 필요한 주문 목록 (최근 7일)
+  /보고     — 아침 통합 보고 (매출+주문현황+반품+CS) 온디맨드
   /매출     — 오늘 + 이달 누계 매출·이익·마진 + 베스트셀러
   /주문현황 — 상태별 건수 + 미발송 + 전월대비
   /CS       — 미답변/답변완료 + 마켓별·유형별 분포
@@ -928,6 +929,14 @@ def cmd_products(chat_id: int) -> None:
     tg_send(chat_id, msg, parse_mode=pm)
 
 
+def cmd_digest(chat_id: int) -> None:
+    """아침 통합 보고(매출/주문현황/반품/CS)를 온디맨드로 발송."""
+    if not _require_samba(chat_id):
+        return
+    tg_send(chat_id, "🌅 아침 보고 생성 중...")
+    tg_send(chat_id, build_morning_digest())
+
+
 def cmd_help(chat_id: int) -> None:
     samba_status = "✅ 연결됨" if samba.is_ready else "❌ 미연결 (SAMBA_EMAIL/PASSWORD 없음)"
     tg_send(chat_id, (
@@ -939,6 +948,7 @@ def cmd_help(chat_id: int) -> None:
         "  /처리   — 최신 미발주 주문 분석·발주 준비 (결제 전)\n"
         "\n"
         "📊 보고\n"
+        "  /보고     — 아침 통합 보고 (매출+주문+반품+CS)\n"
         "  /매출     — 오늘+이달 매출·이익·마진·베스트셀러\n"
         "  /주문현황 — 상태별 건수·이행률·전월대비\n"
         "  /CS       — 미답변/답변완료·유형별\n"
@@ -1028,6 +1038,17 @@ def _poll_new_orders() -> None:
             print(f"[신규주문감지] 오류: {e}", file=sys.stderr)
 
 
+def build_morning_digest() -> str:
+    """아침 통합 다이제스트 — 매출/주문현황/반품/CS (LLM 코멘트 생략)."""
+    return "\n\n".join([
+        f"🌅 {datetime.now(KST).strftime('%Y년 %m월 %d일')} 아침 보고",
+        build_sales_text(with_comment=False),
+        build_order_status_text(with_comment=False),
+        build_returns_text(with_comment=False),
+        build_cs_text(with_comment=False),
+    ])
+
+
 def _daily_report_loop() -> None:
     """매일 DAILY_REPORT_HOUR(KST)에 4종 통합 다이제스트를 발송."""
     if not samba.is_ready or not DAILY_REPORT_HOUR:
@@ -1051,14 +1072,7 @@ def _daily_report_loop() -> None:
         if not _notify_chat_ids:
             continue  # 아직 봇과 대화한 사용자가 없음 → 수신자 없음
         try:
-            # 다이제스트는 숫자만(LLM 코멘트 생략)으로 빠르게 — 온디맨드 명령은 코멘트 포함
-            digest = "\n\n".join([
-                f"🌅 {datetime.now(KST).strftime('%Y년 %m월 %d일')} 아침 보고",
-                build_sales_text(with_comment=False),
-                build_order_status_text(with_comment=False),
-                build_returns_text(with_comment=False),
-                build_cs_text(with_comment=False),
-            ])
+            digest = build_morning_digest()
         except Exception as e:
             digest = f"⚠️ 아침 보고 생성 실패: {e}"
         for cid in list(_notify_chat_ids):
@@ -1158,6 +1172,10 @@ def handle_message(msg: dict) -> None:
 
     if text in ("/상품", "/products", "/상품현황"):
         cmd_products(chat_id)
+        return
+
+    if text in ("/보고", "/아침보고", "/digest", "/report"):
+        cmd_digest(chat_id)
         return
 
     # /처리 또는 자연어("주문처리해줘", "처리해줘", "신규주문 처리")
