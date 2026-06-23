@@ -4,6 +4,7 @@
 매일 삼바에서 검증 가능. 삼바 N 이 마켓보다 작을 수 있어 +5% 버퍼로 과소구매 방지.
 GS(품절률)는 매핑 제외 → 포털 N 유지. 삼바 카운트 실패/0 이면 포털 N 폴백.
 """
+
 from __future__ import annotations
 
 import asyncio

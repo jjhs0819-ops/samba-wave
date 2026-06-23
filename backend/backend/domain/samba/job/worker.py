@@ -1335,6 +1335,9 @@ class JobWorker:
         _ctx_token = _current_collect_job_id.set(job_id)
         try:
             async with get_write_session() as session:
+                # HTTP 수집 중 중간 commit 후에도 job/sf ORM 객체 유효하게 유지
+                # (expire_on_commit=True 기본값이면 commit 후 속성 접근 시 re-query 발생)
+                session.expire_on_commit = False
                 repo = SambaJobRepository(session)
                 job = await session.get(SambaJob, job_id)
                 if not job:
@@ -2593,6 +2596,9 @@ class JobWorker:
             job_type="collect",
         )
         await repo.update_progress(job.id, existing_count, requested_count)
+
+        # 초기 DB 조회/업데이트 완료 — HTTP 수집 전 커넥션 반납 (IIT 방지)
+        await session.commit()
 
         # 수집 루프
         total_saved = 0
@@ -5189,6 +5195,11 @@ class JobWorker:
                 job.id, {"saved": 0, "message": f"이미 {existing_count}개 수집됨"}
             )
             return
+
+        # 초기 DB 조회 완료 — HTTP 수집 전 커넥션 반납 (IIT 방지)
+        # 이 commit 이후 DB 연결은 pool로 반환되고, 다음 DB 작업 시 자동 재취득됨
+        # session.expire_on_commit=False(_execute_collect_isolated에서 설정)로 job/sf 객체 유효 유지
+        await session.commit()
 
         # 클라이언트 생성 — 직접 API 소싱처
         client = None

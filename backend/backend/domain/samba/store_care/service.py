@@ -188,7 +188,9 @@ def _extract_denom(row) -> int | None:
 # sales_channel_alias 접두 매칭. 주문일(paid_at, 인덱스) 기준, 마켓 공식 기간.
 # ⚠️ market_types/alias 문자열은 운영 데이터로 한 번 검증 권장(드롭다운 "11번가"·"신세계몰" 기반).
 # GS(gsshop 품절률)는 매핑에서 제외 → 기존 포털 N 유지(별도 N 소스).
-_N_BUFFER_PCT = 5  # 과소집계 보정 — 삼바 N < 마켓 N 갭 대비 과소구매 방지(이행률만). 추후 설정값화.
+_N_BUFFER_PCT = (
+    5  # 과소집계 보정 — 삼바 N < 마켓 N 갭 대비 과소구매 방지(이행률만). 추후 설정값화.
+)
 _SAMBA_N_CFG: dict[str, dict] = {
     "ssg": {
         "market_types": ["신세계몰", "이마트몰", "SSG"],
