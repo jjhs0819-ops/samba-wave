@@ -912,11 +912,10 @@ class JobWorker:
                         ).items():
                             if _running_per_mt.get(_mt, 0) < _db_cnt:
                                 _running_per_mt[_mt] = _db_cnt
-                        # playauto fastpath는 수 초 내 완료 → 재배분 시 active=0으로 보임
-                        # in-process 카운터로 보정
+                        # playauto: 잡 5개=1배치=슬롯 1개. _active_autotune_accounts 개별 카운트(5)가
+                        # _mt_min(5)과 같아져 하한 미달 판정 실패 → 직렬 실행. 배치 수로 덮어씀.
                         _pa_live = self._playauto_batch_active
-                        if _pa_live > _running_per_mt.get("playauto", 0):
-                            _running_per_mt["playauto"] = _pa_live
+                        _running_per_mt["playauto"] = _pa_live
                         _mt_to_accs: dict[str, list[str]] = {}
                         for _aid, _mt in self._acc_market_type_cache.items():
                             _mt_to_accs.setdefault(_mt, []).append(_aid)
