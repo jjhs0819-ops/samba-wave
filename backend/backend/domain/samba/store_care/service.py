@@ -104,6 +104,14 @@ class StoreCareService:
                 continue
             cur = _current_value_for(target, row)
             denom = _extract_denom(row)
+            denom_source = "portal"  # 기본: 포털 스크랩 N
+            # 이행률 마켓(SSG/11번가)은 N 을 '삼바 주문수'(+버퍼)로 — 매일 삼바에서 검증 가능.
+            # 삼바 카운트 실패/0 이면 포털 N 으로 폴백(기존 동작 보존).
+            if target.get("metric") == "order_fulfillment" and mt in _SAMBA_N_CFG:
+                samba_n = await _count_samba_order_n_safe(mt, tenant_id)
+                if samba_n and samba_n > 0:
+                    denom = _buffered_n(samba_n)
+                    denom_source = f"samba+{_N_BUFFER_PCT}% (raw {samba_n})"
             out.append(
                 {
                     "market_type": mt,
@@ -111,6 +119,7 @@ class StoreCareService:
                     "has_metric": True,
                     "current_value": cur,
                     "denom": denom,
+                    "denom_source": denom_source,
                     "collected_at": (
                         row.collected_at.isoformat() if row.collected_at else None
                     ),
@@ -170,6 +179,100 @@ def _extract_denom(row) -> int | None:
         if isinstance(v, (int, float)):
             return int(v)
     return None
+
+
+# ── 삼바 주문수 N (전체주문 분모) — 점수수집 '이행률' 마켓 한정 ──────────────
+# 사용자 결정(2026-06-23): 주문이행률 분모 N 을 포털값 대신 '삼바 주문수'로 — 매일 삼바에서
+# 바로 검증 가능(마켓마다 로그인해 전체주문 확인 비현실적). 마켓 판별은 주문목록 market_filter
+# 와 동일(channel_id→SambaMarketAccount.market_type) + 플레이오토 경유 주문은
+# sales_channel_alias 접두 매칭. 주문일(paid_at, 인덱스) 기준, 마켓 공식 기간.
+# ⚠️ market_types/alias 문자열은 운영 데이터로 한 번 검증 권장(드롭다운 "11번가"·"신세계몰" 기반).
+# GS(gsshop 품절률)는 매핑에서 제외 → 기존 포털 N 유지(별도 N 소스).
+_N_BUFFER_PCT = 5  # 과소집계 보정 — 삼바 N < 마켓 N 갭 대비 과소구매 방지(이행률만). 추후 설정값화.
+_SAMBA_N_CFG: dict[str, dict] = {
+    "ssg": {
+        "market_types": ["신세계몰", "이마트몰", "SSG"],
+        "alias_prefixes": ["신세계몰", "이마트몰", "SSG"],
+        "period_days": 30,  # SSG 매주 월요일 D-7~D-37 ≈ 롤링 30일
+    },
+    "11st": {
+        "market_types": ["11번가"],
+        "alias_prefixes": ["11번가"],
+        "period_days": 30,  # 11번가 최근 1주/전 30일 → 30일 윈도우
+    },
+}
+
+
+def _buffered_n(samba_n: int) -> int:
+    """삼바 N 에 과소집계 보정 버퍼(+_N_BUFFER_PCT%) 적용(올림)."""
+    return math.ceil(samba_n * (1 + _N_BUFFER_PCT / 100.0))
+
+
+async def _count_samba_order_n(session, market_type: str, tenant_id) -> int | None:
+    """점수수집 마켓의 삼바 주문수 N — 마켓 공식 기간 내 paid_at 기준.
+
+    채널 직접 주문(channel_id→market_type) OR 플레이오토 경유(sales_channel_alias 접두) 매칭.
+    매핑(_SAMBA_N_CFG) 없는 마켓(gsshop 품절률 등)은 None → 기존 포털 N 유지.
+    """
+    cfg = _SAMBA_N_CFG.get(market_type)
+    if not cfg:
+        return None
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import func, or_, select
+
+    from backend.domain.samba.account.model import SambaMarketAccount
+    from backend.domain.samba.order.model import SambaOrder
+
+    since = datetime.now(timezone.utc) - timedelta(days=int(cfg["period_days"]))
+
+    # 1) market_type 매칭 마켓계정(channel_id) — 주문목록 market_filter 와 동일 로직
+    acc_stmt = select(SambaMarketAccount.id).where(
+        SambaMarketAccount.market_type.in_(cfg["market_types"])
+    )
+    if tenant_id is not None:
+        acc_stmt = acc_stmt.where(
+            or_(
+                SambaMarketAccount.tenant_id == tenant_id,
+                SambaMarketAccount.tenant_id == None,  # noqa: E711
+            )
+        )
+    channel_ids = [r[0] for r in (await session.execute(acc_stmt)).all() if r[0]]
+
+    # 2) 기간 내 주문 카운트 — (channel_id 직접) OR (alias 접두, 플레이오토 경유)
+    market_conds = []
+    if channel_ids:
+        market_conds.append(SambaOrder.channel_id.in_(channel_ids))
+    for p in cfg["alias_prefixes"]:
+        market_conds.append(SambaOrder.sales_channel_alias.like(f"{p}%"))
+    if not market_conds:
+        return None
+
+    cnt_stmt = (
+        select(func.count())
+        .select_from(SambaOrder)
+        .where(SambaOrder.paid_at >= since, or_(*market_conds))
+    )
+    if tenant_id is not None:
+        cnt_stmt = cnt_stmt.where(
+            or_(
+                SambaOrder.tenant_id == tenant_id,
+                SambaOrder.tenant_id == None,  # noqa: E711
+            )
+        )
+    n = (await session.execute(cnt_stmt)).scalar() or 0
+    return int(n)
+
+
+async def _count_samba_order_n_safe(market_type: str, tenant_id) -> int | None:
+    """_count_samba_order_n 을 자체 읽기 세션으로 실행 + 실패 시 None(포털 N 폴백)."""
+    try:
+        from backend.db.orm import get_read_session
+
+        async with get_read_session() as s:
+            return await _count_samba_order_n(s, market_type, tenant_id)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def recommend_purchase_qty(target: dict, current_value, denom) -> dict:
