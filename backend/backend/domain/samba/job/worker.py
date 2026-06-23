@@ -432,6 +432,8 @@ class JobWorker:
         self._acc_market_type_cache: dict[str, str] = {}
         # 슬롯 재계산 인터벌: STUCK_CHECK_INTERVAL(2) × N = 30초 → 6회 poll
         self._SLOT_REBALANCE_EVERY = 6
+        # playauto fastpath 처리 중 배치 수 (빠른 완료로 active에서 제거돼 재배분 시 0으로 보이는 문제 보정)
+        self._playauto_batch_active: int = 0
         # 검색 결과 캐시: {(site, keyword): (items_list, timestamp)}
         # 동일 브랜드 그룹 수집 시 전수 검색 1회만 실행
         self._search_cache: dict[tuple[str, str], tuple[list, float]] = {}
@@ -910,6 +912,11 @@ class JobWorker:
                         ).items():
                             if _running_per_mt.get(_mt, 0) < _db_cnt:
                                 _running_per_mt[_mt] = _db_cnt
+                        # playauto fastpath는 수 초 내 완료 → 재배분 시 active=0으로 보임
+                        # in-process 카운터로 보정
+                        _pa_live = self._playauto_batch_active
+                        if _pa_live > _running_per_mt.get("playauto", 0):
+                            _running_per_mt["playauto"] = _pa_live
                         _mt_to_accs: dict[str, list[str]] = {}
                         for _aid, _mt in self._acc_market_type_cache.items():
                             _mt_to_accs.setdefault(_mt, []).append(_aid)
@@ -1006,9 +1013,11 @@ class JobWorker:
                                 _batch=_pa_batch,
                             ):
                                 async with self._bg_transmit_semaphore:
+                                    self._playauto_batch_active += 1
                                     try:
                                         await self._run_autotune_playauto_fast(_batch)
                                     finally:
+                                        self._playauto_batch_active -= 1
                                         from backend.domain.samba.job.progress_tracker import (
                                             clear_job_logs as _cjl,
                                         )
