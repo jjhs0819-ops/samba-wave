@@ -806,7 +806,18 @@ class JobWorker:
                 # autotune_transmit에서 전부 0 → created_at 단일 정렬과 동일.
                 # 부분 인덱스(ix_samba_jobs_autotune_pending)로 O(1) walk.
                 # over-claim 게이트: bg 세마포어 여유분만큼만 claim.
-                _autotune_running = len(self._active_autotune_accounts)
+                # playauto/lottehome은 API stateless — 동일 계정 병렬 처리 허용.
+                # 이들 잡은 실제 동시 DB write가 아니므로 슬롯 카운트에서 1건으로 압축.
+                _parallel_ok_job_count = sum(
+                    1
+                    for _aids in self._active_autotune_accounts.values()
+                    if any(a in _parallel_ok_accs for a in _aids)
+                )
+                _autotune_running = (
+                    len(self._active_autotune_accounts)
+                    - _parallel_ok_job_count
+                    + min(1, _parallel_ok_job_count)
+                )
                 _can_claim_autotune = (
                     not _cancel_all
                     and "autotune_transmit" not in _excl_types
@@ -1102,10 +1113,20 @@ class JobWorker:
                         _tx_accounts = sorted(
                             set(self._extract_transmit_account_ids(_job_payload))
                         )
-                        _tx_locks = [
-                            self._get_transmit_account_lock(account_id)
-                            for account_id in _tx_accounts
-                        ]
+                        # playauto/lottehome은 API stateless → 동일 계정 병렬 허용, lock 불필요
+                        _need_lock = _job_type == "transmit" or not any(
+                            self._acc_market_type_cache.get(a)
+                            in ("playauto", "lottehome")
+                            for a in _tx_accounts
+                        )
+                        _tx_locks = (
+                            [
+                                self._get_transmit_account_lock(account_id)
+                                for account_id in _tx_accounts
+                            ]
+                            if _need_lock
+                            else []
+                        )
                         try:
                             for _lock in _tx_locks:
                                 await _lock.acquire()
