@@ -676,6 +676,9 @@ class JobWorker:
                 self._pending_snapshot_by_mt = dict(pending_by_mt)
                 self._pending_snapshot_ts = _now_ts
 
+            _special = {"lottehome", "playauto"}
+            _min_slots = max(1, round(_bg_max * _min_pct))  # special 판매처 최소 슬롯
+
             new_limits: dict[str, int] = {}
             for mt, cnt in pending_by_mt.items():
                 if total_delta > 0:
@@ -685,7 +688,10 @@ class JobWorker:
                     # 스냅샷 미충족 시 현재 pending 비율 fallback
                     ratio = cnt / total_pending
                 raw = round(_bg_max * ratio)
-                slots = max(1, min(_max_slots, raw))
+                if mt in _special:
+                    slots = max(_min_slots, min(_max_slots, max(1, raw)))
+                else:
+                    slots = max(1, min(_max_slots, raw))
                 new_limits[mt] = slots
 
             self._autotune_slot_limits = new_limits
