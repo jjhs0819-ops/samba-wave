@@ -2662,17 +2662,21 @@ async def _site_autotune_loop(device_id: str, site: str):
                                         if (
                                             _price_stale
                                             and expected_price == last_price
+                                            and not _has_failed_mark
                                         ):
-                                            log.info(
-                                                "[오토튠][stale감지] %s acc=%s: "
-                                                "expected==last(%s)이나 price_changed_at(%s) > sent_at(%s) "
-                                                "→ 강제 재전송",
+                                            # cost 미세변동으로 price_changed_at 갱신됐으나
+                                            # 마켓 판매가 동일 → 재전송 불필요, skip
+                                            log.debug(
+                                                "[오토튠][stale스킵] %s acc=%s: "
+                                                "expected==last(%s), price_changed_at(%s) > sent_at(%s) "
+                                                "이나 가격 동일 → 스킵",
                                                 _prod_label,
                                                 acc_id[:20],
                                                 expected_price,
                                                 _pca,
                                                 _lsd_sent_at,
                                             )
+                                            continue
                                         price_changed_count += 1
                                         _all_price_pids.add(r.product_id)
                                         _cstats_live = _autotune_cycle_stats.get(_gkey)

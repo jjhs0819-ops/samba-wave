@@ -421,10 +421,13 @@ class JobWorker:
         self._brand_all_running: bool = False
         self._poll_count = 0
         # ── autotune 판매처별 동적 슬롯 배분 ──
-        # market_type별 pending 비율 기반, 30초마다 재계산.
-        # lottehome/playauto: 상한 35%(9개), 하한 15%(4개).
+        # market_type별 pending 증가량 기반, 30초마다 재계산.
+        # 30분 전 스냅샷 대비 증가분 비율로 슬롯 배분.
         # _autotune_slot_limits[market_type] = 해당 판매처 최대 동시 실행 수
         self._autotune_slot_limits: dict[str, int] = {}
+        # 30분 단위 pending 스냅샷 (증가량 측정용)
+        self._pending_snapshot_by_mt: dict[str, int] = {}
+        self._pending_snapshot_ts: float = 0.0
         # 계정 ID → market_type 캐시 (DB 조회 최소화)
         self._acc_market_type_cache: dict[str, str] = {}
         # 슬롯 재계산 인터벌: STUCK_CHECK_INTERVAL(2) × N = 30초 → 6회 poll
@@ -643,23 +646,52 @@ class JobWorker:
                 self._autotune_slot_limits = {}
                 return
 
-            _special = {"lottehome", "playauto"}
-            _min_slots = max(1, round(_bg_max * _min_pct))
             _max_slots = max(1, round(_bg_max * _max_pct))
+
+            # 30분 단위 증가량 기반 슬롯 배분
+            import time as _time
+
+            _now_ts = _time.monotonic()
+            _SNAPSHOT_INTERVAL = 1800.0  # 30분
+
+            if (
+                self._pending_snapshot_by_mt
+                and (_now_ts - self._pending_snapshot_ts) >= _SNAPSHOT_INTERVAL
+            ):
+                # 30분 전 스냅샷 대비 증가분 계산
+                delta_by_mt = {
+                    mt: max(0, cnt - self._pending_snapshot_by_mt.get(mt, 0))
+                    for mt, cnt in pending_by_mt.items()
+                }
+                total_delta = sum(delta_by_mt.values())
+            else:
+                delta_by_mt = {}
+                total_delta = 0
+
+            # 스냅샷 갱신 (30분마다 또는 첫 실행)
+            if (
+                not self._pending_snapshot_by_mt
+                or (_now_ts - self._pending_snapshot_ts) >= _SNAPSHOT_INTERVAL
+            ):
+                self._pending_snapshot_by_mt = dict(pending_by_mt)
+                self._pending_snapshot_ts = _now_ts
 
             new_limits: dict[str, int] = {}
             for mt, cnt in pending_by_mt.items():
-                ratio = cnt / total_pending
-                raw = round(_bg_max * ratio)
-                if mt in _special:
-                    slots = max(_min_slots, min(_max_slots, max(1, raw)))
+                if total_delta > 0:
+                    # 30분 증가량 비율로 배분
+                    ratio = delta_by_mt.get(mt, 0) / total_delta
                 else:
-                    slots = max(1, raw)
+                    # 스냅샷 미충족 시 현재 pending 비율 fallback
+                    ratio = cnt / total_pending
+                raw = round(_bg_max * ratio)
+                slots = max(1, min(_max_slots, raw))
                 new_limits[mt] = slots
 
             self._autotune_slot_limits = new_limits
+            _basis = "증가량" if total_delta > 0 else "pending(초기)"
             logger.info(
-                "[잡워커] autotune 슬롯 재배분(판매처): "
+                f"[잡워커] autotune 슬롯 재배분(판매처)[{_basis}]: "
                 + ", ".join(
                     f"{k}={v}"
                     for k, v in sorted(new_limits.items(), key=lambda x: -x[1])
