@@ -1488,12 +1488,13 @@ class JobWorker:
                 .scalars()
                 .first()
             )
-            api_key = (_acc.api_key or "") if _acc else ""
-            max_stock = int(
-                ((_acc.additional_fields or {}).get("stockQuantity") or 0)
+            _af = (_acc.additional_fields or {}) if _acc else {}
+            api_key = (
+                _af.get("apiKey") or _af.get("api_key") or (_acc.api_key or "")
                 if _acc
-                else 0
+                else ""
             )
+            max_stock = int(_af.get("stockQuantity") or 0)
 
         if not api_key:
             async with get_write_session() as _fs:

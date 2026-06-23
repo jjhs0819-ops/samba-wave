@@ -1842,6 +1842,7 @@ async def _site_autotune_loop(device_id: str, site: str):
                                     else product.cost,
                                     "sale_status": r.new_sale_status,
                                     "changed": r.changed,
+                                    "stock_changed": r.stock_changed,
                                 }
                                 # 옵션: 신규 수집 우선, 없으면 기존 DB 옵션 폴백
                                 # 품절인데 new_options 없으면 기존 옵션의 재고를 0으로 처리
@@ -2855,12 +2856,7 @@ async def _site_autotune_loop(device_id: str, site: str):
                                             )
                                             _ss = _sent_map.get(_k, 0) or 0
                                             _ns = _o.get("stock", 0) or 0
-                                            if market_type == "lottehome":
-                                                # 롯데홈쇼핑: 정확한 수량 비교 (1→2도 감지)
-                                                if _ss != _ns:
-                                                    _stock_diff = True
-                                                    _stock_changes_acc += 1
-                                            elif (_ss <= 0) != (_ns <= 0):
+                                            if (_ss <= 0) != (_ns <= 0):
                                                 _stock_diff = True
                                                 _stock_changes_acc += 1
                                     # 품절 안전 재확인: boolean flip 안 걸려도 품절 옵션 + STALE 이면 강제 재전송 (#400)
