@@ -411,7 +411,7 @@ class JobWorker:
         # 대기 중 bg 잡이 메인 슬롯을 점유하지 않게 함.
         # (2026-06-22) 처리량 확대: 6→26. write pool +20 동반(max_overflow 20→40).
         self._bg_transmit_semaphore = asyncio.Semaphore(
-            int(os.environ.get("JOB_BG_TRANSMIT_MAX_CONCURRENCY", "16"))
+            int(os.environ.get("JOB_BG_TRANSMIT_MAX_CONCURRENCY", "24"))
         )
         # delete_market 전용 세마포어 — transmit 세마포어와 분리하여 전송 포화 시에도 즉시 실행
         self._delete_semaphore = asyncio.Semaphore(
@@ -577,9 +577,9 @@ class JobWorker:
             from backend.core.config import settings as _cfg
 
             logger.info(f"[잡워커] rebalance start poll={self._poll_count}")
-            _bg_max = int(os.environ.get("JOB_BG_TRANSMIT_MAX_CONCURRENCY", "16"))
+            _bg_max = int(os.environ.get("JOB_BG_TRANSMIT_MAX_CONCURRENCY", "24"))
             _min_pct = 0.15
-            _max_pct = 0.35
+            _max_pct = 0.60
 
             _conn = await _asyncpg.connect(
                 host=_cfg.read_db_host,
@@ -761,7 +761,7 @@ class JobWorker:
         max_picks = transmit_slots + 2
         picked = 0
         # bg 세마포어 초기값 — over-claim 게이트용 (#459)
-        _bg_max = int(os.environ.get("JOB_BG_TRANSMIT_MAX_CONCURRENCY", "16"))
+        _bg_max = int(os.environ.get("JOB_BG_TRANSMIT_MAX_CONCURRENCY", "24"))
         # F1(#462): 일반 claim 래치 — 집중 pending 부하에서 autotune-first 가 매 iteration
         # 느린 일반 claim 으로 폴백하며 autotune 슬롯을 못 채우던 회귀(동시성 10→5) 차단.
         # 일반 claim 이 한 번 None 이면 이후 iteration 은 빠른 autotune claim 만 → poll 당 1회로 제한.
