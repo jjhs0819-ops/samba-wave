@@ -932,8 +932,7 @@ class JobWorker:
 
                         async def _run_with_limit(_j=job):  # type: ignore[misc]
                             async with self._bg_transmit_semaphore:
-                                async with self._transmit_semaphore:
-                                    await self._execute_job(_j)
+                                await self._execute_job(_j)
                     else:
 
                         async def _run_with_limit(_j=job):  # type: ignore[misc]
