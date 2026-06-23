@@ -2483,6 +2483,44 @@ async def _site_autotune_loop(device_id: str, site: str):
                                             int(new_cost),
                                             int(_orig_p),
                                         )
+                                    # 원가 급락 방어: 직전 전송 원가 대비 60% 이상 급락 시 차단
+                                    # (정가 5% 가드로 못 잡는 20~30% 과소산정 원가 대응)
+                                    # env AUTOTUNE_COST_DROP_BLOCK_RATIO=0 으로 비활성 가능
+                                    _COST_DROP_RATIO = float(
+                                        os.environ.get(
+                                            "AUTOTUNE_COST_DROP_BLOCK_RATIO", "0.40"
+                                        )
+                                    )
+                                    if (
+                                        not _price_blocked
+                                        and _COST_DROP_RATIO > 0
+                                        and acc_last
+                                    ):
+                                        _prev_sent_cost = int(
+                                            acc_last.get("cost", 0) or 0
+                                        )
+                                        if (
+                                            _prev_sent_cost > 0
+                                            and new_cost > 0
+                                            and new_cost
+                                            < _prev_sent_cost * _COST_DROP_RATIO
+                                        ):
+                                            _price_blocked = True
+                                            _nontx_actions.append(
+                                                f"가격방어 차단 (원가 급락"
+                                                f" {int(new_cost):,}"
+                                                f" < 직전전송원가 {_prev_sent_cost:,}의"
+                                                f" {int(_COST_DROP_RATIO * 100)}%)"
+                                            )
+                                            log.error(
+                                                "[오토튠][가격방어] %s: 원가 급락 → "
+                                                "재전송 차단"
+                                                " (원가=%s, 직전전송원가=%s, 임계=%s%%)",
+                                                _prod_label,
+                                                int(new_cost),
+                                                _prev_sent_cost,
+                                                int(_COST_DROP_RATIO * 100),
+                                            )
                                     # 계정별 전송 아이템 수집 (가격+재고 합산 후 단일 전송)
                                     _acc_items: list[str] = []
                                     _acc_action_parts: list[str] = []
