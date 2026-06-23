@@ -83,13 +83,17 @@ async def lottehome_auth(
         }
     )
 
-    # 정책의 배송지/MD상품군/카테고리 정보 병합
+    # 정책의 배송지/MD코드/상품분류/카테고리 정보 병합 (차세대: md_gsgr_no → md_code + goods_grp_code)
     if policy:
         creds_to_save.update(
             {
                 "disp_no": policy.get("disp_no", creds_to_save.get("disp_no", "")),
-                "md_gsgr_no": policy.get(
-                    "md_gsgr_no", creds_to_save.get("md_gsgr_no", "")
+                "md_code": policy.get("md_code", creds_to_save.get("md_code", "")),
+                "goods_grp_code": policy.get(
+                    "goods_grp_code", creds_to_save.get("goods_grp_code", "")
+                ),
+                "opt_type_code": policy.get(
+                    "opt_type_code", creds_to_save.get("opt_type_code", "")
                 ),
                 "dlv_polc_no": policy.get(
                     "dlv_polc_no", creds_to_save.get("dlv_polc_no", "")
@@ -184,13 +188,15 @@ async def lottehome_brands(
 @router.get("/lottehome/categories")
 async def lottehome_categories(
     disp_tp_cd: str = Query(""),
-    md_gsgr_no: str = Query(""),
+    goods_grp_code: str = Query(""),
+    md_gsgr_no: str = Query(""),  # 구 파라미터 호환 유지
     session: AsyncSession = Depends(get_read_session_dependency),
 ) -> dict[str, Any]:
-    """롯데홈쇼핑 전시카테고리 목록 조회."""
+    """롯데홈쇼핑 전시카테고리 목록 조회. 차세대 API: goods_grp_code 우선, md_gsgr_no 폴백."""
     client = await _get_lotte_client(session)
+    effective_grp = goods_grp_code or md_gsgr_no
     try:
-        result = await client.search_categories(disp_tp_cd, md_gsgr_no)
+        result = await client.search_categories(disp_tp_cd, effective_grp)
         return {"success": True, "data": result.get("data")}
     except LotteApiError as exc:
         logger.warning(f"[롯데홈] 카테고리 조회 실패: {exc}")
@@ -201,7 +207,7 @@ async def lottehome_categories(
 async def lottehome_md_groups(
     session: AsyncSession = Depends(get_read_session_dependency),
 ) -> dict[str, Any]:
-    """롯데홈쇼핑 MD상품군 조회."""
+    """롯데홈쇼핑 MD상품군 조회 (구 API — 차세대에서는 /goods-grp 사용)."""
     client = await _get_lotte_client(session)
     try:
         result = await client.search_md_groups()
@@ -212,6 +218,39 @@ async def lottehome_md_groups(
         return {"success": True, "data": result.get("data")}
     except LotteApiError as exc:
         logger.warning(f"[롯데홈] MD상품군 조회 실패: {exc}")
+        return {"success": False, "message": str(exc), "code": exc.code}
+
+
+@router.get("/lottehome/md-list")
+async def lottehome_md_list(
+    md_nm: str = Query(""),
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """MD코드 목록 조회 — 차세대 API 정책 설정 시 md_code 선택용."""
+    client = await _get_lotte_client(session)
+    try:
+        result = await client.search_md_list(md_nm=md_nm)
+        return {"success": True, "data": result.get("data")}
+    except LotteApiError as exc:
+        logger.warning(f"[롯데홈] MD목록 조회 실패: {exc}")
+        return {"success": False, "message": str(exc), "code": exc.code}
+
+
+@router.get("/lottehome/goods-grp")
+async def lottehome_goods_grp(
+    md_code: str = Query(""),
+    goods_grp_code: str = Query(""),
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """상품분류정보 조회 — 차세대 API goods_grp_code 선택용 (6월 말 테스트 서버 반영 예정)."""
+    client = await _get_lotte_client(session)
+    try:
+        result = await client.search_goods_grp(
+            md_code=md_code, goods_grp_code=goods_grp_code
+        )
+        return {"success": True, "data": result.get("data")}
+    except LotteApiError as exc:
+        logger.warning(f"[롯데홈] 상품분류 조회 실패: {exc}")
         return {"success": False, "message": str(exc), "code": exc.code}
 
 

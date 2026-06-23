@@ -141,6 +141,10 @@ interface LotteCategory { disp_no: string; disp_nm: string; shop_pos?: string; d
 interface LotteBrand { brnd_no: string; brnd_nm: string; brnd_en?: string }
 interface LottePolicy {
   mdGsgrNo: string; mdGsgrNm: string
+  // 차세대 API (2026-06-22): md_gsgr_no 폐지 → md_code + goods_grp_code
+  mdCode: string
+  goodsGrpCode: string
+  optTypeCode: string
   dispNo: string; dispNm: string
   stdCatNo: string; stdCatNm: string
   brandMappings: { brnd_no: string; brnd_nm: string }[]
@@ -175,7 +179,7 @@ interface LottePolicy {
   itemAs: string
   extraFeeRate: string
 }
-const defaultLottePolicy: LottePolicy = { mdGsgrNo: '', mdGsgrNm: '', dispNo: '', dispNm: '', stdCatNo: '', stdCatNm: '', brandMappings: [], manufacturer: '', taxType: '', ageLimit: '', purchaseType: '', marginRate: '', extraFeeRate: '', saleType: '', saleMethod: '', priceCompareDisplay: '', purchaseQtyLimit: '', optionModify: '', optionStockMgmt: '사용함', imageResize: '', dlvPolcNo: '', dlvPolcNm: '', corpRlsPlSn: '', corpRlsPlNm: '', corpDlvpSn: '', corpDlvpNm: '', addDlvPolcNo: '', addDlvPolcNm: '', ecGoodsArtcCd: '', ecGoodsArtcNm: '', itemMaterial: '', itemColor: '', itemSize: '', itemImport: '', itemImportNote: '', itemWashing: '', itemMfgDate: '', itemQuality: '', itemQualityNote: '', itemAs: '' }
+const defaultLottePolicy: LottePolicy = { mdGsgrNo: '', mdGsgrNm: '', mdCode: '', goodsGrpCode: '', optTypeCode: '', dispNo: '', dispNm: '', stdCatNo: '', stdCatNm: '', brandMappings: [], manufacturer: '', taxType: '', ageLimit: '', purchaseType: '', marginRate: '', extraFeeRate: '', saleType: '', saleMethod: '', priceCompareDisplay: '', purchaseQtyLimit: '', optionModify: '', optionStockMgmt: '사용함', imageResize: '', dlvPolcNo: '', dlvPolcNm: '', corpRlsPlSn: '', corpRlsPlNm: '', corpDlvpSn: '', corpDlvpNm: '', addDlvPolcNo: '', addDlvPolcNm: '', ecGoodsArtcCd: '', ecGoodsArtcNm: '', itemMaterial: '', itemColor: '', itemSize: '', itemImport: '', itemImportNote: '', itemWashing: '', itemMfgDate: '', itemQuality: '', itemQualityNote: '', itemAs: '' }
 
 function extractLotteList<T>(data: unknown, ...keys: string[]): T[] {
   if (!data || typeof data !== 'object') return []
@@ -406,16 +410,20 @@ export default function PoliciesPage() {
     triggerAutoSave()
   }, [editingId, lottePolicy.extraFeeRate]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 롯데홈쇼핑 전시카테고리 (MD상품군 변경 시 로드)
+  // 롯데홈쇼핑 전시카테고리 (차세대: goodsGrpCode 우선, 구 API: mdGsgrNo 폴백)
   useEffect(() => {
-    if (!lottePolicy.mdGsgrNo) { setLotteCategories([]); setLotteStdCategories([]); return }
+    const grpKey = lottePolicy.goodsGrpCode || lottePolicy.mdGsgrNo
+    if (!grpKey) { setLotteCategories([]); setLotteStdCategories([]); return }
     setLotteCatLoading(true)
-    request<{ success: boolean; data: unknown }>(`${API_BASE}/api/v1/samba/proxy/lottehome/categories?md_gsgr_no=${lottePolicy.mdGsgrNo}`)
+    const param = lottePolicy.goodsGrpCode
+      ? `goods_grp_code=${lottePolicy.goodsGrpCode}`
+      : `md_gsgr_no=${lottePolicy.mdGsgrNo}`
+    request<{ success: boolean; data: unknown }>(`${API_BASE}/api/v1/samba/proxy/lottehome/categories?${param}`)
       .then(res => {
         const raw = extractLotteList<Record<string, string>>(res.data, 'Result', 'CategoryInfoList')
         setLotteCategories(raw.map(c => ({ disp_no: c.DispNo, disp_nm: c.DispNm, shop_pos: c.ShopPos, disp_tp_cd: c.DispTpCd || c.disp_tp_cd || '' })))
       }).catch(() => {}).finally(() => setLotteCatLoading(false))
-  }, [lottePolicy.mdGsgrNo])
+  }, [lottePolicy.goodsGrpCode, lottePolicy.mdGsgrNo])
 
   // 롯데홈쇼핑 표준카테고리 (전시카테고리 선택 시 로드)
   useEffect(() => {
@@ -551,7 +559,7 @@ export default function PoliciesPage() {
       // 롯데홈쇼핑 섹션 설정(brandMappings·MD상품군 등)도 정책 저장 시 함께 저장.
       // 기존엔 별도 섹션 저장 버튼을 눌러야만 /lottehome/policy 에 저장돼 누락이 잦았음(이중 저장 구조).
       // 로드 전 기본값(빈 brandMappings)으로 기존 저장본을 덮어쓰지 않도록, 실제 내용이 있을 때만 POST.
-      if (lottePolicy.mdGsgrNo || lottePolicy.brandMappings.length > 0) {
+      if (lottePolicy.mdGsgrNo || lottePolicy.goodsGrpCode || lottePolicy.mdCode || lottePolicy.brandMappings.length > 0) {
         parallel.push(
           request(`${API_BASE}/api/v1/samba/proxy/lottehome/policy`, {
             method: 'POST', body: JSON.stringify(lottePolicy),
@@ -1154,6 +1162,26 @@ export default function PoliciesPage() {
                 <div style={{ gridColumn: '1 / -1', borderBottom: '1px solid #2D2D2D', paddingBottom: '0.75rem', marginBottom: '0.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                   <span style={{ fontSize: '0.75rem', color: '#FF8C00', fontWeight: 600 }}>롯데홈쇼핑 기본 설정</span>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxWidth: '50%' }}>
+                    {/* ── 차세대 API 필드 (2026-06-22 ~) ── */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                      <span style={{ color: '#FF8C00', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>MD코드</span>
+                      <input type="text" placeholder="MD코드 (md_code)" style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5' }}
+                        value={lottePolicy.mdCode}
+                        onChange={e => setLottePolicy(p => ({ ...p, mdCode: e.target.value }))} />
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                      <span style={{ color: '#FF8C00', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>상품분류</span>
+                      <input type="text" placeholder="상품분류코드 (goods_grp_code)" style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5' }}
+                        value={lottePolicy.goodsGrpCode}
+                        onChange={e => setLottePolicy(p => ({ ...p, goodsGrpCode: e.target.value, dispNo: '', dispNm: '', stdCatNo: '', stdCatNm: '' }))} />
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                      <span style={{ color: '#FF8C00', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>옵션코드</span>
+                      <input type="text" placeholder="옵션타입코드 (opt_type_code, 6월 말~)" style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5' }}
+                        value={lottePolicy.optTypeCode}
+                        onChange={e => setLottePolicy(p => ({ ...p, optTypeCode: e.target.value }))} />
+                    </div>
+                    {/* ── 구 API (MD상품군) — 차세대 이전 계정 호환 ── */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
                       <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>MD상품군</span>
                       <select style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5' }}
@@ -1169,14 +1197,14 @@ export default function PoliciesPage() {
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
                       <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>전시카테고리</span>
-                      <select style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', opacity: !lottePolicy.mdGsgrNo ? 0.5 : 1 }}
-                        value={lottePolicy.dispNo} disabled={!lottePolicy.mdGsgrNo}
+                      <select style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', opacity: !(lottePolicy.goodsGrpCode || lottePolicy.mdGsgrNo) ? 0.5 : 1 }}
+                        value={lottePolicy.dispNo} disabled={!(lottePolicy.goodsGrpCode || lottePolicy.mdGsgrNo)}
                         onChange={e => {
                           const selected = lotteCategories.find(c => c.disp_no === e.target.value)
                           setLottePolicy(p => ({ ...p, dispNo: e.target.value, dispNm: selected?.disp_nm || '', stdCatNo: '', stdCatNm: '' }))
                           setLotteStdCategories([])
                         }}>
-                        <option value="">{!lottePolicy.mdGsgrNo ? 'MD상품군 먼저 선택' : lotteCatLoading ? '불러오는 중...' : '선택하세요'}</option>
+                        <option value="">{!(lottePolicy.goodsGrpCode || lottePolicy.mdGsgrNo) ? '상품분류/MD상품군 먼저 입력' : lotteCatLoading ? '불러오는 중...' : '선택하세요'}</option>
                         {lotteCategories.map(c => {
                           const label = c.disp_tp_cd === '10' ? '[필수] ' : c.disp_tp_cd === '20' ? '[추가] ' : ''
                           return <option key={c.disp_no} value={c.disp_no}>{label}{c.shop_pos || c.disp_nm}</option>

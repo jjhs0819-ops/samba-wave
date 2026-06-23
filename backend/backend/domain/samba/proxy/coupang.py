@@ -920,6 +920,7 @@ class CoupangClient:
         brand_id: str = "",
         required_attribute_types: list[str] | None = None,
         delivery_company_code: str = "CJGLS",
+        vendor_id: str = "",
     ) -> dict[str, Any]:
         """SambaCollectedProduct → 쿠팡 상품 등록 데이터 변환.
 
@@ -1125,12 +1126,13 @@ class CoupangClient:
                 _item["emptyBarcode"] = True
                 _item["emptyBarcodeReason"] = "바코드 없음"
 
-            # 중복등록(유령) 방지용 멱등키 — 업체상품코드(externalVendorSku)=samba product.id.
-            # 등록 전 find_by_external_sku 역조회 가드가 이 값으로 기존 등록을 찾아
-            # 재등록(중복 생성) 대신 기존 sellerProductId를 채택한다.
+            # 중복등록(유령) 방지용 멱등키 — {samba product.id}_{vendor_id} 조합.
+            # vendor_id 포함으로 다계정 환경에서 A 계정 등록분이 B 계정 가드를 오차단하는
+            # cross-contamination 방지. 등록 전 find_by_external_sku 역조회 가드가 동일 키로 조회.
             _ext_sku = str(product.get("id") or "").strip()
             if _ext_sku:
-                _item["externalVendorSku"] = _ext_sku[:100]
+                _keyed = f"{_ext_sku}_{vendor_id}" if vendor_id else _ext_sku
+                _item["externalVendorSku"] = _keyed[:100]
 
             return _item
 

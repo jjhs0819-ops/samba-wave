@@ -343,6 +343,7 @@ class CoupangPlugin(MarketPlugin):
             brand_id=brand_id,
             required_attribute_types=required_attr_types,
             delivery_company_code=outbound_delivery_code,
+            vendor_id=vendor_id,
         )
         data["vendorId"] = vendor_id
         data["vendorUserId"] = vendor_user_id or vendor_id
@@ -383,18 +384,21 @@ class CoupangPlugin(MarketPlugin):
         # update_product PUT(/seller-products/{id})은 쿠팡 spec 미정의(404)라 폴백이
         # 일시 504를 영구 404로 둔갑시키던 버그가 있었어 제거함.
         if not existing_no:
-            # 중복등록 방지(유령 차단): 등록 전 externalVendorSku(=samba product.id)로
+            # 중복등록 방지(유령 차단): 등록 전 {product.id}_{vendor_id} 키로
             # 쿠팡 기존 등록 확인. DB 매핑이 유실돼 existing_no가 비어도 쿠팡에 이미
             # 있으면 재등록(중복 생성) 대신 기존 sellerProductId를 채택한다.
-            # (externalVendorSku는 이번 패치 이후 등록분부터 채워지므로 점진 적용)
+            # vendor_id 포함으로 다계정 cross-contamination 방지.
             _ext_sku = str(product.get("id") or "").strip()
-            if _ext_sku:
+            _sku_key = (
+                f"{_ext_sku}_{vendor_id}" if (_ext_sku and vendor_id) else _ext_sku
+            )
+            if _sku_key:
                 try:
-                    _dup = await client.find_by_external_sku(_ext_sku)
+                    _dup = await client.find_by_external_sku(_sku_key)
                     if _dup.get("found") and _dup.get("seller_product_id"):
                         _exist_spid = str(_dup["seller_product_id"])
                         logger.warning(
-                            f"[쿠팡] 중복등록 방지 — externalVendorSku={_ext_sku} "
+                            f"[쿠팡] 중복등록 방지 — externalVendorSku={_sku_key} "
                             f"이미 존재(sellerProductId={_exist_spid}, 상태={_dup.get('status_name')}) → 기존 연결"
                         )
                         return {

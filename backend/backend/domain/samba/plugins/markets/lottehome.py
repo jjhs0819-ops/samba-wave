@@ -183,8 +183,15 @@ def _transform_for_lottehome(
     except (ValueError, TypeError):
         real_category_id = ""
 
-    # MD상품군번호 — category_id(숫자) 우선, 없으면 creds에서 기본값
-    md_gsgr_no = real_category_id or creds.get("md_gsgr_no", "")
+    # 구 API: md_gsgr_no — 8월 차세대 전환 전까지 유지
+    md_gsgr_no = (
+        real_category_id
+        or creds.get("goods_grp_code", "")
+        or creds.get("md_gsgr_no", "")
+    )
+    # TODO(차세대 8월): 아래 주석 해제 후 위 md_gsgr_no 라인 제거
+    # md_code = creds.get("md_code", "")
+    # goods_grp_code = real_category_id or creds.get("goods_grp_code", "")
 
     # 품목코드 — 기본 102(구두/신발), 빈 문자열이면 기본값 사용
     ec_goods_artc_cd = creds.get("ec_goods_artc_cd", "") or "102"
@@ -234,9 +241,8 @@ def _transform_for_lottehome(
         or _matched_brnd_no
         or creds.get("brnd_no", "010565"),
         "goods_nm": product.get("name", ""),
-        "md_gsgr_no": md_gsgr_no,
-        "pur_shp_cd": "3",  # 위탁판매
-        "sale_shp_cd": "10",  # 정상
+        "md_gsgr_no": md_gsgr_no,  # 8월 차세대 전환 시 → "md_code": md_code, "goods_grp_code": goods_grp_code 로 교체
+        "pur_shp_cd": "3",
         "sale_prc": str(sale_price),
         "mrgn_rt": str(margin_rate),
         "tdf_sct_cd": "1",  # 과세
@@ -273,7 +279,10 @@ def _transform_for_lottehome(
     # 옵션 처리 (단품관리) — 사이즈 순서대로 정렬
     options = product.get("options") or []
     if options:
-        opt_group_name = product.get("option_group_name") or "옵션"
+        # 차세대 API: opt_nm에 옵션코드 prefix (코드|이름) — creds.opt_type_code 설정 시 활성화
+        _opt_code = str(creds.get("opt_type_code", "") or "").strip()
+        _base_opt_nm = product.get("option_group_name") or "옵션"
+        opt_group_name = f"{_opt_code}|{_base_opt_nm}" if _opt_code else _base_opt_nm
         item_parts = []
         max_stock = int(product.get("_max_stock") or 0)
         logger.info(
@@ -549,7 +558,10 @@ class LotteHomePlugin(MarketPlugin):
             return ""
 
         _field_map = {
-            "md_gsgr_no": ("mdGsgrNo",),
+            # 차세대 API: md_code + goods_grp_code (구 md_gsgr_no 대체)
+            "md_code": ("mdCode",),
+            "goods_grp_code": ("goodsGrpCode", "mdGsgrNo"),  # 구 mdGsgrNo 폴백
+            "opt_type_code": ("optTypeCode",),  # 옵션코드 prefix (6월 말 API 반영 후)
             "disp_no": ("dispNo",),
             "dlv_polc_no": ("dlvPolcNo",),
             "ismr_dlv_polc_no": ("addDlvPolcNo",),
@@ -583,7 +595,7 @@ class LotteHomePlugin(MarketPlugin):
             auth_creds["brandMappings"] = brand_mappings
         if policy or store_lh:
             logger.info(
-                f"[롯데홈쇼핑 정책 로드] ec_goods_artc_cd={auth_creds.get('ec_goods_artc_cd')}, md_gsgr_no={auth_creds.get('md_gsgr_no')}, disp_no={auth_creds.get('disp_no')}, dlv_polc_no={auth_creds.get('dlv_polc_no')}, add_dlv_polc_no={auth_creds.get('add_dlv_polc_no')}, item_material={auth_creds.get('item_material')}, item_size={auth_creds.get('item_size')}, item_quality={auth_creds.get('item_quality')}"
+                f"[롯데홈쇼핑 정책 로드] ec_goods_artc_cd={auth_creds.get('ec_goods_artc_cd')}, md_code={auth_creds.get('md_code')}, goods_grp_code={auth_creds.get('goods_grp_code')}, disp_no={auth_creds.get('disp_no')}, dlv_polc_no={auth_creds.get('dlv_polc_no')}, add_dlv_polc_no={auth_creds.get('add_dlv_polc_no')}, item_material={auth_creds.get('item_material')}, item_size={auth_creds.get('item_size')}, item_quality={auth_creds.get('item_quality')}"
             )
         if not auth_creds:
             return {"success": False, "message": "롯데홈쇼핑 설정이 없습니다."}

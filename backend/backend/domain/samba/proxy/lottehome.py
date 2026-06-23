@@ -149,7 +149,7 @@ async def _load_cert_from_db(user_id: str, env: str) -> tuple[str, datetime] | N
 class LotteHomeClient:
     """롯데홈쇼핑(롯데아이몰) OpenAPI 클라이언트."""
 
-    TEST_BASE = "http://openapitst.lotteimall.com/openapi/"
+    TEST_BASE = "https://tst-oapiweb.lotteimall.com/openapi/"
     PROD_BASE = "https://openapi.lotteimall.com/openapi/"
 
     def __init__(
@@ -564,9 +564,12 @@ class LotteHomeClient:
         )
 
     async def search_categories(
-        self, disp_tp_cd: str = "", md_gsgr_no: str = ""
+        self, disp_tp_cd: str = "", goods_grp_code: str = ""
     ) -> dict[str, Any]:
-        """전시카테고리 목록 조회. disp_tp_cd 필수 — 미지정 시 10/20 각각 호출 후 병합."""
+        """전시카테고리 목록 조회. disp_tp_cd 필수 — 미지정 시 10/20 각각 호출 후 병합.
+
+        차세대 API: md_gsgr_no → goods_grp_code (2026-06-22 변경).
+        """
         cert_key = await self._ensure_auth()
         if disp_tp_cd:
             return await self._call_api_auto_retry(
@@ -575,7 +578,7 @@ class LotteHomeClient:
                 {
                     "subscriptionId": cert_key,
                     "disp_tp_cd": disp_tp_cd,
-                    "md_gsgr_no": md_gsgr_no,
+                    "goods_grp_code": goods_grp_code,
                 },
             )
         # disp_tp_cd 미지정: 10(필수)과 20(추가) 각각 호출 후 CategoryInfo 병합
@@ -588,7 +591,7 @@ class LotteHomeClient:
                     {
                         "subscriptionId": cert_key,
                         "disp_tp_cd": tp,
-                        "md_gsgr_no": md_gsgr_no,
+                        "goods_grp_code": goods_grp_code,
                     },
                 )
                 results.append(res)
@@ -664,6 +667,28 @@ class LotteHomeClient:
             "searchMDGsgrListOpenApi.lotte",
             "GET",
             {"subscriptionId": cert_key, "md_id": md_id},
+        )
+
+    async def search_goods_grp(
+        self, md_code: str = "", goods_grp_code: str = ""
+    ) -> dict[str, Any]:
+        """상품분류정보 조회 — 차세대 API (2026-06-22, 6월 말 테스트 서버 반영 예정).
+
+        기존 searchMDGsgrListOpenApi.lotte(MD상품군 조회)를 대체.
+        실제 엔드포인트는 테스트 서버 반영 후 확인 필요.
+        """
+        cert_key = await self._ensure_auth()
+        params: dict[str, Any] = {"subscriptionId": cert_key}
+        if self.agnc_no:
+            params["agnc_no"] = self.agnc_no
+        if md_code:
+            params["md_code"] = md_code
+        if goods_grp_code:
+            params["goods_grp_code"] = goods_grp_code
+        return await self._call_api_auto_retry(
+            "searchGoodsGrpListOpenApi.lotte",  # TODO: 테스트 서버 반영 후 URL 검증 필요
+            "GET",
+            params,
         )
 
     async def search_standard_categories(self, disp_no: str = "") -> dict[str, Any]:
