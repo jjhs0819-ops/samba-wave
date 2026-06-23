@@ -967,10 +967,73 @@ class JobWorker:
                         or _pl.get("origin") == "tetris_sync"
                     )
                     if _is_bg_tx:
+                        # playauto autotune: 같은 계정 pending 잡 배치 claim → API 1회
+                        _is_pa_autotune = (
+                            job.job_type == "autotune_transmit"
+                            and _pl.get("market_type") == "playauto"
+                            and _pl.get("source") == "autotune"
+                        )
+                        if _is_pa_autotune:
+                            _pa_acc = (_pl.get("target_account_ids") or [""])[0]
+                            _pa_extras: list = []
+                            if _pa_acc:
+                                from backend.db.orm import get_write_session as _gwsB
+                                from backend.domain.samba.job.repository import (
+                                    SambaJobRepository as _JRB,
+                                )
 
-                        async def _run_with_limit(_j=job):  # type: ignore[misc]
-                            async with self._bg_transmit_semaphore:
-                                await self._execute_job(_j)
+                                async with _gwsB() as _bs:
+                                    _br = _JRB(_bs)
+                                    _pa_extras = await _br.claim_autotune_batch_by_acc(
+                                        _pa_acc, n=4
+                                    )
+                                    await _bs.commit()
+                                for _ej in _pa_extras:
+                                    _ej_acc = (
+                                        (_ej.payload.get("target_account_ids") or [""])[
+                                            0
+                                        ]
+                                        if _ej.payload
+                                        else ""
+                                    )
+                                    self._active_autotune_accounts[_ej.id] = (
+                                        [_ej_acc] if _ej_acc else []
+                                    )
+                                    self._active_job_ids.add(_ej.id)
+                            _pa_batch = [job] + _pa_extras
+
+                            async def _run_with_limit(  # type: ignore[misc]
+                                _batch=_pa_batch,
+                            ):
+                                async with self._bg_transmit_semaphore:
+                                    try:
+                                        await self._run_autotune_playauto_fast(_batch)
+                                    finally:
+                                        from backend.domain.samba.job.progress_tracker import (
+                                            clear_job_logs as _cjl,
+                                        )
+
+                                        for _bj in _batch:
+                                            self._active_job_ids.discard(_bj.id)
+                                            self._active_tasks.pop(_bj.id, None)
+                                            self._active_transmit_accounts.pop(
+                                                _bj.id, None
+                                            )
+                                            self._active_autotune_accounts.pop(
+                                                _bj.id, None
+                                            )
+                                        try:
+                                            asyncio.get_running_loop().call_later(
+                                                60, _cjl, _batch[0].id
+                                            )
+                                        except RuntimeError:
+                                            pass
+
+                        else:
+
+                            async def _run_with_limit(_j=job):  # type: ignore[misc]
+                                async with self._bg_transmit_semaphore:
+                                    await self._execute_job(_j)
                     else:
 
                         async def _run_with_limit(_j=job):  # type: ignore[misc]
@@ -1386,6 +1449,216 @@ class JobWorker:
             logger.warning(
                 f"[잡워커] __all__ 해제 체크 실패(무시): {job_id} — {_flag_exc}"
             )
+
+    async def _run_autotune_playauto_fast(self, jobs: list) -> None:
+        """playauto autotune_transmit 배치 fastpath.
+
+        start_update 우회 — DB에서 직접 가격/재고 읽어 배치 API 1회 호출.
+        성공 후 last_sent_data atomic JSONB merge 업데이트 (다음 오토튠 사이클 재시도 방지).
+        """
+        import json as _json
+
+        from sqlalchemy import text as _text
+
+        from backend.db.orm import get_write_session
+        from backend.domain.samba.job.repository import SambaJobRepository
+        from backend.domain.samba.proxy.playauto import PlayAutoClient, _build_options
+
+        if not jobs:
+            return
+
+        _pl0 = jobs[0].payload or {}
+        acc_id = (_pl0.get("target_account_ids") or [""])[0]
+
+        # 계정 조회 (api_key, max_stock)
+        async with get_write_session() as _as:
+            from sqlalchemy import select as _sel
+
+            from backend.domain.samba.account.model import SambaMarketAccount
+
+            _acc = (
+                (
+                    await _as.execute(
+                        _sel(SambaMarketAccount).where(SambaMarketAccount.id == acc_id)
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            api_key = (_acc.api_key or "") if _acc else ""
+            max_stock = int(
+                ((_acc.additional_fields or {}).get("stockQuantity") or 0)
+                if _acc
+                else 0
+            )
+
+        if not api_key:
+            async with get_write_session() as _fs:
+                _fr = SambaJobRepository(_fs)
+                for _j in jobs:
+                    await _fr.fail_job(_j.id, "플레이오토 apiKey 없음")
+                await _fs.commit()
+            return
+
+        # 상품 정보 batch fetch
+        pids = [((_j.payload or {}).get("product_ids") or [None])[0] for _j in jobs]
+        pids = [p for p in pids if p]
+
+        async with get_write_session() as _ps:
+            _rows = (
+                await _ps.execute(
+                    _text(
+                        "SELECT id, sale_price, options, market_product_nos"
+                        " FROM samba_collected_product"
+                        " WHERE id = ANY(CAST(:pids AS text[]))"
+                    ),
+                    {"pids": pids},
+                )
+            ).fetchall()
+
+        prod_map = {r.id: r for r in _rows}
+
+        # pid → job 맵핑
+        job_by_pid: dict = {}
+        for _j in jobs:
+            _pid = ((_j.payload or {}).get("product_ids") or [None])[0]
+            if _pid:
+                job_by_pid[_pid] = _j
+
+        # 각 pid → playauto payload 구성
+        payloads: list = []  # [(pid, sale_price, options, master_code, minimal)]
+        for pid, _j in job_by_pid.items():
+            prod = prod_map.get(pid)
+            if not prod:
+                continue
+            mnos = prod.market_product_nos or {}
+            if isinstance(mnos, str):
+                mnos = _json.loads(mnos)
+            master_code = mnos.get(acc_id)
+            if not master_code:
+                continue
+
+            sale_price = int(prod.sale_price or 0)
+            options = prod.options or []
+            if isinstance(options, str):
+                options = _json.loads(options)
+
+            real_stock = sum(
+                int(o.get("stock") or 0) for o in options if not o.get("isSoldOut")
+            )
+            if max_stock > 0 and real_stock > 0:
+                stock_qty = min(real_stock, max_stock)
+            elif max_stock > 0:
+                stock_qty = max_stock
+            elif real_stock > 0:
+                stock_qty = real_stock
+            else:
+                stock_qty = 99
+
+            minimal: dict = {
+                "MasterCode": master_code,
+                "Price": str(sale_price),
+                "Count": str(stock_qty),
+            }
+            if options and isinstance(options, list):
+                emp_opts = _build_options(options, stock_qty)
+                if emp_opts:
+                    minimal["Opts"] = emp_opts
+                    has_two_axes = any(o.get("title2") for o in emp_opts)
+                    minimal["OptSelectType"] = "SM" if has_two_axes else "SS"
+
+            payloads.append((pid, sale_price, options, master_code, minimal))
+
+        if not payloads:
+            # MasterCode 없는 잡들 — 미등록 상품으로 complete (재발행 방지)
+            async with get_write_session() as _fs:
+                _fr = SambaJobRepository(_fs)
+                for _j in jobs:
+                    await _fr.complete_job(_j.id)
+                await _fs.commit()
+            return
+
+        # 배치 API 1회
+        client = PlayAutoClient(api_key)
+        all_minimums = [p[4] for p in payloads]
+        success_codes: set = set()
+
+        try:
+            results = await client.update_product(all_minimums, use_no_edit_slave=False)
+            if isinstance(results, list):
+                success_codes = {r["code"] for r in results if r.get("status")}
+            logger.info(
+                f"[플레이오토배치] acc={acc_id[:8]} {len(all_minimums)}건 → 성공={len(success_codes)}"
+            )
+        except Exception as _api_exc:
+            logger.error(f"[플레이오토배치] 배치 API 실패: {_api_exc}")
+            async with get_write_session() as _fs:
+                _fr = SambaJobRepository(_fs)
+                for _j in jobs:
+                    await _fr.fail_job(_j.id, f"배치 API 실패: {str(_api_exc)[:100]}")
+                await _fs.commit()
+            return
+
+        # 성공 pid: last_sent_data atomic JSONB merge (다음 사이클 재시도 방지)
+        from datetime import UTC, datetime as _dt
+
+        now_iso = _dt.now(UTC).isoformat()
+        success_pids: list = []
+        fail_pids: list = []
+
+        for pid, sale_price, options, master_code, _ in payloads:
+            if master_code in success_codes:
+                success_pids.append((pid, sale_price, options))
+            else:
+                fail_pids.append(pid)
+
+        if success_pids:
+            async with get_write_session() as _us:
+                for pid, sale_price, options in success_pids:
+                    snap = {
+                        "sale_price": sale_price,
+                        "cost": 0,
+                        "options": [
+                            {
+                                "name": o.get("name", ""),
+                                "price": o.get("price"),
+                                "stock": o.get("stock"),
+                            }
+                            for o in options
+                        ],
+                        "sent_at": now_iso,
+                    }
+                    await _us.execute(
+                        _text(
+                            "UPDATE samba_collected_product"
+                            " SET last_sent_data = ("
+                            "  CASE WHEN jsonb_typeof(CAST(last_sent_data AS jsonb)) = 'object'"
+                            "       THEN CAST(last_sent_data AS jsonb) ELSE '{}'::jsonb END"
+                            "  || CAST(:updates AS jsonb))::json,"
+                            " updated_at = NOW()"
+                            " WHERE id = :pid"
+                        ),
+                        {"updates": _json.dumps({acc_id: snap}), "pid": pid},
+                    )
+                await _us.commit()
+
+        # 잡 complete/fail 처리
+        success_pid_set = {p[0] for p in success_pids}
+        async with get_write_session() as _fs:
+            _fr = SambaJobRepository(_fs)
+            for _j in jobs:
+                _pid = ((_j.payload or {}).get("product_ids") or [None])[0]
+                if _pid in success_pid_set:
+                    await _fr.complete_job(_j.id)
+                elif _pid in fail_pids:
+                    _mc = (
+                        prod_map.get(_pid)
+                        and (prod_map[_pid].market_product_nos or {}).get(acc_id)
+                    ) or "?"
+                    await _fr.fail_job(_j.id, f"배치 전송 실패 MasterCode={_mc}")
+                else:
+                    await _fr.complete_job(_j.id)  # MasterCode 없음 — 미등록 상품 스킵
+            await _fs.commit()
 
     async def _run_transmit(self, job, repo, session):
         """전송 잡 실행 — 기존 shipment_service 호출."""

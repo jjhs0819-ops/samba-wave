@@ -254,6 +254,45 @@ class SambaJobRepository(BaseRepository[SambaJob]):
             await self.session.flush()
         return job
 
+    async def claim_autotune_batch_by_acc(
+        self,
+        account_id: str,
+        n: int = 4,
+    ) -> list[SambaJob]:
+        """같은 account_id의 autotune_transmit pending 잡 최대 n개 배치 claim.
+
+        playauto/lotteon 배치 fastpath용 — 첫 번째 잡 claim 이후 추가 잡들을
+        한 번에 묶기 위해 호출. SKIP LOCKED으로 다른 워커와 충돌 없음.
+        """
+        from sqlalchemy import text as _sa_text
+
+        _job_acc_scalar = "(samba_jobs.payload->'target_account_ids'->>0)"
+
+        stmt = (
+            select(SambaJob)
+            .where(
+                SambaJob.status == JobStatus.PENDING,
+                SambaJob.job_type == "autotune_transmit",
+                _sa_text(f"({_job_acc_scalar} = :acc_id)").bindparams(
+                    acc_id=account_id
+                ),
+            )
+            .order_by(SambaJob.created_at.asc())
+            .limit(n)
+            .with_for_update(skip_locked=True)
+        )
+
+        result = await self.session.execute(stmt)
+        jobs = list(result.scalars().all())
+        now = datetime.now(UTC)
+        for job in jobs:
+            job.status = JobStatus.RUNNING
+            job.started_at = now
+            self.session.add(job)
+        if jobs:
+            await self.session.flush()
+        return jobs
+
     # ── 레거시 메서드 (하위 호환용, 다른 호출부가 있을 수 있음) ──
 
     async def pick_next_pending(self) -> Optional[SambaJob]:
