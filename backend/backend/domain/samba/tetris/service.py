@@ -1038,28 +1038,11 @@ class SambaTetrisService:
                 tenant_id, product_ids, market_account_id, source_site, brand_name
             )
 
-        # issue #219 — 레거시 블럭 삭제 후 sync_all 보충등록 재발 방지 영구 마커.
-        # delete_market 잡 완료 후 pending_delete_keys 가드가 풀려도 excluded=True 배치가
-        # 남아있으면 sync_all 레거시 루프가 (site, brand, account) 를 재등록 대상에서 제외.
-        try:
-            _existing = await self._repo.find_existing(
-                tenant_id, source_site, brand_name, market_account_id
-            )
-            if _existing is None:
-                await self._repo.create_async(
-                    tenant_id=tenant_id,
-                    source_site=source_site,
-                    brand_name=brand_name,
-                    market_account_id=market_account_id,
-                    policy_id=None,
-                    position_order=0,
-                    excluded=True,
-                )
-                logger.info(
-                    f"[테트리스] 레거시 영구 배제 마커 생성 — {source_site}/{brand_name} ← {market_account_id}"
-                )
-        except Exception as _e:
-            logger.warning(f"[테트리스] 레거시 영구 배제 마커 생성 실패(무시): {_e}")
+        # 영구 배제 마커는 만들지 않는다 — 마켓삭제로 registered_accounts 가 비워져
+        # 등록수가 0이 되면 레거시 블록은 보드에서 자연히 사라진다. 마커를 남기면
+        # 등록 0인데도 회색 배제 블록으로 영구히 남아 "삭제했는데 안 사라지는" 문제가 됨.
+        # (삭제 진행 중 sync_all 재등록은 pending_delete_keys 가드가 막고,
+        #  삭제 완료 후엔 registered_accounts 가 비어 레거시 복원 대상에서 빠진다.)
 
         logger.info(
             f"[테트리스] remove_by_brand 완료 — {source_site}/{brand_name} ← {market_account_id} "
