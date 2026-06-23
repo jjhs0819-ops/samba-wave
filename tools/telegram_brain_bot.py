@@ -618,18 +618,30 @@ def build_sales_text(with_comment: bool = True) -> str:
     """매출(등록상품) + 실수익/수익률(주문번호·주문금액 입력) + 전월 동기간 비교."""
     now = datetime.now(KST)
     today = _kst_date()
-    orders = samba.orders_by_date_range(now.strftime("%Y-%m-01"), today)
+    yday = _kst_date(-1)
+    month_first = now.strftime("%Y-%m-01")
+    # 전날이 지난달(매월 1일)일 수 있어 조회 시작을 전날까지 확장
+    orders = samba.orders_by_date_range(min(month_first, yday), today)
     if orders is None:
         return "❌ 삼바 서버 연결 실패 (매출)."
 
-    cur = _sales_metrics(orders)
-    today_orders = [o for o in cur["sale_orders"] if _order_kst_date(o) == today]
-    today_sales = sum(_f(o, "sale_price") for o in today_orders)
+    # 이달 집계는 1일 이후만 (1일엔 전날=지난달이 섞이므로 분리)
+    month_orders = [o for o in orders if (_order_kst_date(o) or "") >= month_first]
+    cur = _sales_metrics(month_orders)
+
+    def _day_sales(day: str) -> tuple[float, int]:
+        ds = [o for o in orders if _order_kst_date(o) == day
+              and _order_registered(o) and not _order_cancelled(o)]
+        return sum(_f(o, "sale_price") for o in ds), len(ds)
+
+    yday_sales, yday_cnt = _day_sales(yday)
+    today_sales, today_cnt = _day_sales(today)
 
     lines = [
         f"💰 매출 보고 ({now.strftime('%m월 %d일')})",
         "",
-        f"▪️ 오늘 매출 {_fmt_price(today_sales)} · {len(today_orders)}건",
+        f"▪️ 전날 매출 {_fmt_price(yday_sales)} · {yday_cnt}건",
+        f"▪️ 오늘 매출 {_fmt_price(today_sales)} · {today_cnt}건",
         f"▪️ 이달 매출 {_fmt_price(cur['sales'])} · {cur['sales_cnt']}건",
         "",
         f"▪️ 이달 실수익 (주문건수 {cur['margin_cnt']}건)",
