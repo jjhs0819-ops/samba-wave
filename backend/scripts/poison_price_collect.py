@@ -25,7 +25,7 @@ from backend.core.config import settings  # noqa: E402
 from backend.db.orm import get_read_session, get_write_session  # noqa: E402
 from backend.domain.samba.proxy.poison import PoisonClient  # noqa: E402
 
-SLEEP = 1.5  # 호출 간격 — throttle 회피(poison_bulk_match.py 실측치)
+SLEEP = 2.5  # 호출 간격 — 21005101(일시 조회예외) 후반 누적 회피 위해 1.5→2.5 상향
 CIRCUIT_FAIL = 30  # 연속 레이트리밋 시 중단
 RL_BACKOFF = 5.0  # 빈도초과/연결에러 기본 대기초
 MAX_RETRY = 6  # 재시도 횟수
