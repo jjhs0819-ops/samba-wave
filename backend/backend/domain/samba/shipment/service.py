@@ -2710,7 +2710,25 @@ class SambaShipmentService:
                 composed = re.sub(re.escape(dw), " ", composed, flags=re.IGNORECASE)
             composed = re.sub(r"\s{2,}", " ", composed).strip()
 
+        # prefix/suffix 적용 — 마켓별 값이 있으면 전역 대신 사용(없으면 전역 폴백).
+        # 중복 제거(dedup)보다 먼저 적용한다 — 접두/접미어가 원본 상품명에 이미
+        # 들어있는 단어("매장정품" 등)와 겹쳐도 아래 dedup 단계에서 한 번만 남도록.
+        prefix = name_rule.prefix
+        suffix = name_rule.suffix
+        if market_type:
+            mp = getattr(name_rule, "market_prefixes", None)
+            if isinstance(mp, dict) and market_type in mp:
+                prefix = mp[market_type]
+            ms = getattr(name_rule, "market_suffixes", None)
+            if isinstance(ms, dict) and market_type in ms:
+                suffix = ms[market_type]
+        if prefix:
+            composed = f"{prefix} {composed}"
+        if suffix:
+            composed = f"{composed} {suffix}"
+
         # 중복 단어 제거 — 구두점 안에 묶인 부분단어까지 감지
+        # (prefix/suffix 적용 후라, 접두어가 원본과 겹치면 여기서 하나로 합쳐진다)
         if name_rule.dedup_enabled:
             seen: set[str] = set()
 
@@ -2731,21 +2749,6 @@ class SambaShipmentService:
             )
             # 연속 공백 정리
             composed = re.sub(r"\s+", " ", composed).strip()
-
-        # prefix/suffix 적용 — 마켓별 값이 있으면 전역 대신 사용(없으면 전역 폴백)
-        prefix = name_rule.prefix
-        suffix = name_rule.suffix
-        if market_type:
-            mp = getattr(name_rule, "market_prefixes", None)
-            if isinstance(mp, dict) and market_type in mp:
-                prefix = mp[market_type]
-            ms = getattr(name_rule, "market_suffixes", None)
-            if isinstance(ms, dict) and market_type in ms:
-                suffix = ms[market_type]
-        if prefix:
-            composed = f"{prefix} {composed}"
-        if suffix:
-            composed = f"{composed} {suffix}"
 
         # 방어: 데이터(style_code/name)에 섞인 <p> 등 HTML 태그가 상품명에 흘러나오지
         # 않도록 최종 단계에서 제거 + 공백 정리
