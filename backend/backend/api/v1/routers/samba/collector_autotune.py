@@ -2861,6 +2861,7 @@ async def _site_autotune_loop(device_id: str, site: str):
                                                 _stock_changes_acc += 1
                                     # 품절 안전 재확인: boolean flip 안 걸려도 품절 옵션 + STALE 이면 강제 재전송 (#400)
                                     # last_sent=0 기록 후 마켓 미반영(504/미반영) 시 영구 블라인드 방지
+                                    # 단, last_sent 품절 패턴과 현재 품절 패턴이 동일하면 skip (진짜 변동 없음)
                                     if (
                                         not _stock_diff
                                         and _api_opts
@@ -2873,8 +2874,23 @@ async def _site_autotune_loop(device_id: str, site: str):
                                             for o in _api_opts
                                         )
                                     ):
-                                        _stock_diff = True
-                                        _stock_changes_acc += 1
+                                        if _sent_opts:
+                                            _sent_soldout = {
+                                                (o.get("name", "") or o.get("size", ""))
+                                                for o in _sent_opts
+                                                if (o.get("stock", 0) or 0) <= 0
+                                            }
+                                            _api_soldout = {
+                                                (o.get("name", "") or o.get("size", ""))
+                                                for o in _api_opts
+                                                if (o.get("stock", 0) or 0) <= 0
+                                            }
+                                            if _sent_soldout != _api_soldout:
+                                                _stock_diff = True
+                                                _stock_changes_acc += 1
+                                        else:
+                                            _stock_diff = True
+                                            _stock_changes_acc += 1
                                     if _stock_diff:
                                         _all_stock_pids.add(r.product_id)
                                         _cstats_live = _autotune_cycle_stats.get(_gkey)
