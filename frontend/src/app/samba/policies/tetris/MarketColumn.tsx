@@ -133,11 +133,21 @@ export default function MarketColumn({
             const scaledCapacityHeight = account.max_count > 0
               ? Math.max(1, Math.round(account.max_count * pixelsPerUnit))
               : 0
-            const capacityHeight = scaledCapacityHeight > 0
+            const baseCapacity = scaledCapacityHeight > 0
               ? scaledCapacityHeight
               : account.total_collected > 0
                 ? Math.max(1, Math.round(account.total_collected * pixelsPerUnit))
                 : 60
+            // 배치된 브랜드 블록의 실제 높이 합이 박스(max_count 기준)보다 크면
+            // AccountBlock 의 overflow:hidden 으로 큰 브랜드가 잘려 안 보인다.
+            // 박스 높이를 블록 합 이상으로 보장해 모든 블록이 보이게 한다.
+            // (AccountBlock 의 블록 높이 계산 MIN_BLOCK_PX=24 + marginBottom 2 와 동일 기준)
+            const MIN_BLOCK_PX = 24
+            const blocksTotalHeight = account.assignments.reduce((sum, b) =>
+              sum + (b.collected_count > 0
+                ? Math.max(MIN_BLOCK_PX, Math.round(b.collected_count * pixelsPerUnit))
+                : MIN_BLOCK_PX) + 2, 0)
+            const capacityHeight = Math.max(baseCapacity, blocksTotalHeight + 16)
 
             return (
               <div key={account.account_id}>
