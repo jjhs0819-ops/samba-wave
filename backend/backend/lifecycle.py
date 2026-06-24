@@ -1013,8 +1013,12 @@ async def _order_auto_sync_loop() -> None:
                         )
                     )
                     _tids = [r[0] for r in _trows.all()]
-                    for _tid in _tids:
-                        await _create_cs_sync_job(cs_ws, tenant_id=_tid)
+                    if _tids:
+                        for _tid in _tids:
+                            await _create_cs_sync_job(cs_ws, tenant_id=_tid)
+                    else:
+                        # 싱글테넌트 모드: 활성 테넌트 없음 → tenant_id=None 잡으로 전체 계정 처리
+                        await _create_cs_sync_job(cs_ws, tenant_id=None)
             except Exception as _cs_e:
                 _log.warning(f"[주문 auto sync] cs_sync 잡 생성 실패: {_cs_e}")
 
