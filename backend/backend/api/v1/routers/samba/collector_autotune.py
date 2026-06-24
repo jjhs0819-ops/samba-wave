@@ -102,7 +102,8 @@ async def _get_active_sites_cached() -> list[str]:
         )
         async with get_read_session() as rs:
             result = await rs.execute(stmt)
-            sites = [r[0] for r in result.all() if r[0]]
+            # "manual" source_site는 실제 소싱처 플러그인이 없어 오토튠 실패 반복 — 제외
+            sites = [r[0] for r in result.all() if r[0] and r[0] != "manual"]
         _active_sites_cache["data"] = sites
         _active_sites_cache["ts"] = time.monotonic()
         return list(sites)
