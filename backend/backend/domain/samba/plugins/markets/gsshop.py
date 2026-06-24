@@ -237,6 +237,10 @@ class GsShopPlugin(MarketPlugin):
     policy_key = "GS샵"
     required_fields = ["name", "sale_price"]
 
+    def _validate_category(self, category_id: str) -> str:
+        """GS샵은 B코드(prdClsCd) 또는 숫자(prdSectListSectid) 모두 허용."""
+        return category_id or ""
+
     def transform(self, product: dict, category_id: str, **kwargs) -> dict:
         """상품 데이터 → GS샵 API 포맷 변환."""
         gs_margin_rate = kwargs.get("gs_margin_rate", 0)
