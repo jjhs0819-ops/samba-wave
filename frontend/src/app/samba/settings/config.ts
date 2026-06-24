@@ -373,7 +373,7 @@ export const STORE_MARKETS: MarketConfig[] = [
   { key: 'lottehome', label: '롯데홈쇼핑', authField: 'password', guideUrl: 'https://partner.lottehomeshopping.com', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
     { name: 'storeId', label: '로그인 ID', type: 'text', placeholder: '롯데홈쇼핑 로그인 ID' },
-    { name: 'agncNo', label: '업체번호', type: 'text', placeholder: '예: 037800LT' },
+    { name: 'agncNo', label: '업체번호', type: 'text', placeholder: '예: 000000XX' },
     { name: 'password', label: '비밀번호', type: 'password' },
     { name: 'asPhone', label: 'A/S 전화번호', type: 'text', placeholder: '' },
     { name: 'asMessage', label: 'A/S 안내 문구', type: 'text', placeholder: '' },
@@ -772,7 +772,7 @@ export const STORE_MARKETS: MarketConfig[] = [
     { name: 'stockQuantity', label: '재고수량', type: 'number', placeholder: '99 (기본값)' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
     { name: '_divider_alias', label: '마켓번호 별칭 (주문페이지 표시용)', type: 'divider' },
-    { name: 'alias1', label: '계정 1', type: 'alias', placeholder: '037800LT' },
+    { name: 'alias1', label: '계정 1', type: 'alias', placeholder: '마켓번호' },
     { name: 'alias2', label: '계정 2', type: 'alias', placeholder: '마켓번호' },
     { name: 'alias3', label: '계정 3', type: 'alias', placeholder: '마켓번호' },
     { name: 'alias4', label: '계정 4', type: 'alias', placeholder: '마켓번호' },

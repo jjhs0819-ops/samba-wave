@@ -191,10 +191,12 @@ class SambaAccountService:
             if existing:
                 existing_af = existing.additional_fields or {}
                 if isinstance(existing_af, dict):
-                    data["additional_fields"] = {
-                        **existing_af,
-                        **cleaned_incoming,
-                    }
+                    merged_af = {**existing_af, **cleaned_incoming}
+                    # 빈 문자열 = 프론트에서 명시적 삭제 요청 → 키 제거
+                    for k, v in cleaned_incoming.items():
+                        if v == "":
+                            merged_af.pop(k, None)
+                    data["additional_fields"] = merged_af
                 else:
                     data["additional_fields"] = cleaned_incoming
             else:

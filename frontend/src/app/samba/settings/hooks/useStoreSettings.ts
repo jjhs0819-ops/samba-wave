@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import {
   accountApi,
   forbiddenApi,
@@ -78,6 +78,18 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
   const [savedStoreData, setSavedStoreData] = useState<Record<string, Record<string, string>>>({})
   const [storeStatus, setStoreStatus] = useState<Record<string, string>>({})
   const [editingAccountId, setEditingAccountId] = useState<string | null>(null)
+  const _prevEditingId = useRef<string | null>(null)
+
+  // 수정 모드 → 비수정 모드 전환 시 현재 탭 storeData + visiblePasswords 자동 클리어
+  // "보기" 버튼으로 로딩된 비밀번호 평문이 취소/삭제 후에도 폼에 잔류하는 버그 방지
+  useEffect(() => {
+    if (_prevEditingId.current !== null && editingAccountId === null) {
+      setStoreData(prev => { const n = { ...prev }; delete n[storeTab]; return n })
+      setVisiblePasswords(new Set())
+    }
+    _prevEditingId.current = editingAccountId
+  }, [editingAccountId, storeTab])
+
   const [ssgShippingOptions, setSsgShippingOptions] = useState<{ value: string; label: string; divCd: number }[]>([])
   const [ssgAddrOptions, setSsgAddrOptions] = useState<{ value: string; label: string }[]>([])
   const [esmPlaceOptions, setEsmPlaceOptions] = useState<Record<string, { value: string; label: string }[]>>({})
@@ -202,9 +214,14 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
         .map(([k]) => k)
       // password 필드는 빈 값이면 payload에서 제거 → 백엔드가 기존 값 유지
       // 마스킹값(****XXXX)도 동일하게 제거 (defense-in-depth, 백엔드 가드와 이중 방어)
+      // 편집 모드에서 비password 빈 값은 payload에 포함(백엔드에서 해당 키 삭제 처리)
       const filtered = Object.fromEntries(
         Object.entries(current).filter(([k, v]) => {
-          if (v === '') return false
+          if (v === '') {
+            if (passwordFieldsForMerge.has(k)) return false  // password 빈값 = 기존 유지
+            if (editingAccountId) return true  // 편집 모드 + 비password 빈값 = 명시적 삭제
+            return false  // 신규 모드 빈값 = 미입력, 제외
+          }
           if (passwordFieldsForMerge.has(k) && /^\*{4}.{0,4}$/.test(String(v))) return false
           return true
         })
@@ -567,11 +584,11 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
     // 읽기 복제본 lag 때문에 await loadAccounts()가 막 삭제된 row를 다시 가져와
     // 카드가 사라졌다 되살아나는 버그가 있어 토스 등에서 "삭제가 안된다"고 보였음.
     setAccounts(prev => prev.filter(a => a.id !== id))
-    // 편집 중이던 계정이 삭제되면 폼·편집상태도 비움
-    if (editingAccountId === id) {
-      setEditingAccountId(null)
-      setStoreData(prev => { const next = { ...prev }; delete next[storeTab]; return next })
-    }
+    // 삭제 계정의 마켓 탭 폼·편집상태 항상 비움
+    // (편집 중이 아닐 때도 storeData에 잔류값이 남아 폼에 이전 정보 재노출되는 버그 방지)
+    const deletedMarket = accounts.find(a => a.id === id)?.market_type || storeTab
+    setEditingAccountId(null)
+    setStoreData(prev => { const next = { ...prev }; delete next[deletedMarket]; return next })
     try {
       const fresh = await accountApi.list()
       setAccounts(fresh.filter(a => a.id !== id))
