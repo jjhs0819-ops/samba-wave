@@ -9,12 +9,22 @@ from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
-from backend.domain.samba.proxy.gsshop import GsShopApiError
-from backend.domain.samba.tenant.middleware import require_admin
+from backend.domain.samba.account.resolver import resolve_market_creds
+from backend.domain.samba.proxy.gsshop import GsShopApiError, GsShopClient
+from backend.domain.samba.tenant.middleware import get_optional_tenant_id, require_admin
 
 from ._helpers import _get_gs_client, _set_setting
 
 router = APIRouter(tags=["samba-proxy"])
+
+
+def _gs_client_from_creds(creds: dict) -> GsShopClient:
+    return GsShopClient(
+        sup_cd=creds.get("supCd", ""),
+        aes_key=creds.get("aesKey", ""),
+        sub_sup_cd=creds.get("subSupCd", ""),
+        env=creds.get("env", "dev"),
+    )
 
 
 class GsShopCredsRequest(BaseModel):
@@ -64,10 +74,22 @@ async def gsshop_brands(
     brandNm: Optional[str] = Query(None),
     fromDtm: Optional[str] = Query(None),
     toDtm: Optional[str] = Query(None),
+    account_id: Optional[str] = Query(None),
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ) -> dict[str, Any]:
-    """GS샵 브랜드 조회."""
-    client = await _get_gs_client(session)
+    """GS샵 브랜드 조회 (계정별 자격증명 사용)."""
+    creds = await resolve_market_creds(
+        session,
+        tenant_id,
+        market_type="gsshop",
+        store_key="store_gsshop",
+        account_id=account_id,
+        allow_default_fallback=True,
+    )
+    if not creds.get("supCd"):
+        return {"success": False, "message": "GS샵 계정 설정 없음", "data": None}
+    client = _gs_client_from_creds(creds)
     try:
         result = await client.get_brands(
             brand_nm=brandNm, from_dtm=fromDtm, to_dtm=toDtm
@@ -134,10 +156,22 @@ async def gsshop_md_list(
     prcModAuthYn: str = Query("A"),
     prdNmModAuthYn: str = Query("A"),
     descdModAuthYn: str = Query("A"),
+    account_id: Optional[str] = Query(None),
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ) -> dict[str, Any]:
-    """GS샵 협력사 MDID 조회."""
-    client = await _get_gs_client(session)
+    """GS샵 협력사 MDID 조회 (계정별 자격증명 사용)."""
+    creds = await resolve_market_creds(
+        session,
+        tenant_id,
+        market_type="gsshop",
+        store_key="store_gsshop",
+        account_id=account_id,
+        allow_default_fallback=True,
+    )
+    if not creds.get("supCd"):
+        return {"success": False, "message": "GS샵 계정 설정 없음", "data": None}
+    client = _gs_client_from_creds(creds)
     try:
         result = await client.get_md_list(
             sub_sup_check_yn=subSupCheckYn,

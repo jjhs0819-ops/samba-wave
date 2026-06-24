@@ -485,12 +485,15 @@ export default function PoliciesPage() {
     return () => clearTimeout(timer)
   }, [lotteBrandKeyword])
 
+  const gsAccountId = marketPolicies['GS샵']?.accountId || ''
+
   // GS샵 브랜드 검색 (디바운스 300ms)
   useEffect(() => {
     if (!gsBrandKeyword.trim()) { setGsBrands([]); setGsBrandLoading(false); return }
     setGsBrandLoading(true)
     const timer = setTimeout(() => {
-      request<{ success: boolean; data: unknown }>(`${API_BASE}/api/v1/samba/proxy/gsshop/brands?brandNm=${encodeURIComponent(gsBrandKeyword)}`)
+      const gsUrl = `${API_BASE}/api/v1/samba/proxy/gsshop/brands?brandNm=${encodeURIComponent(gsBrandKeyword)}${gsAccountId ? `&account_id=${encodeURIComponent(gsAccountId)}` : ''}`
+      request<{ success: boolean; data: unknown }>(gsUrl)
         .then(res => {
           if (!res.success) { setGsBrands([]); return }
           // 백엔드 응답: { success, data: { success, resultCnt, resultList } }
@@ -503,7 +506,7 @@ export default function PoliciesPage() {
         .finally(() => setGsBrandLoading(false))
     }, 300)
     return () => clearTimeout(timer)
-  }, [gsBrandKeyword])
+  }, [gsBrandKeyword, gsAccountId])
 
 
   // GS샵 출고지/반품지 목록 로드
@@ -529,15 +532,17 @@ export default function PoliciesPage() {
   const loadGsMdList = useCallback(async () => {
     if (gsMdList.length > 0) return
     setGsMdLoading(true)
+    const accId = marketPolicies['GS샵']?.accountId || ''
     try {
-      const res = await request<{ success: boolean; data: unknown }>(`${API_BASE}/api/v1/samba/proxy/gsshop/md-list`)
+      const mdUrl = `${API_BASE}/api/v1/samba/proxy/gsshop/md-list${accId ? `?account_id=${encodeURIComponent(accId)}` : ''}`
+      const res = await request<{ success: boolean; data: unknown }>(mdUrl)
       if (res.success) {
         const outer = res.data as { resultList?: unknown[] } | null
         const list = (outer?.resultList || []) as Record<string, unknown>[]
         setGsMdList(list.map(m => ({ operMdId: String(m.mdId || m.operMdId || ''), operMdNm: String(m.mdNm || m.operMdNm || ''), fixMargnRt: Number(m.fixMargnRt || 0) })))
       }
     } catch { /* 무시 */ } finally { setGsMdLoading(false) }
-  }, [gsMdList.length])
+  }, [gsMdList.length, marketPolicies])
 
   // 템플릿 선택 시 imgChecks/imgOrder를 DB 값으로 초기화
   useEffect(() => {
