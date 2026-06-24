@@ -1110,6 +1110,9 @@ async def scroll_products(
         # 포이즌 카탈로그 매칭된 상품만 (resell_matches.poison.product_id 존재).
         # 미매칭은 no_match=true 로 product_id 가 없어 자동 제외됨.
         conditions.append(text("resell_matches -> 'poison' ->> 'product_id' <> ''"))
+    elif status == "kream_matched":
+        # 크림 카탈로그 매칭된 상품만 (resell_matches.kream.product_id 존재).
+        conditions.append(text("resell_matches -> 'kream' ->> 'product_id' <> ''"))
     elif status == "sold_out":
         conditions.append(
             or_(_CP.sale_status == "sold_out", _all_options_sold_out(_CP))

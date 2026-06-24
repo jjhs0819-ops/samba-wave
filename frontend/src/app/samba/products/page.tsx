@@ -309,7 +309,7 @@ export default function ProductsPage() {
     try {
       const skip = (targetPage - 1) * pageSize
       // status 필터에서 특수값 분리
-      const knownStatus = ['has_orders', 'free_ship', 'same_day', 'free_same', 'market_registered', 'market_unregistered', 'sold_out', 'poison_matched']
+      const knownStatus = ['has_orders', 'free_ship', 'same_day', 'free_same', 'market_registered', 'market_unregistered', 'sold_out', 'poison_matched', 'kream_matched']
       const statusParam = (knownStatus.includes(appliedStatusFilter) || appliedStatusFilter.startsWith('reg_') || appliedStatusFilter.startsWith('unreg_'))
         ? appliedStatusFilter : appliedStatusFilter || undefined
       const aiParam = (appliedAiFilter === 'has_orders') ? appliedAiFilter : appliedAiFilter || undefined
@@ -349,7 +349,7 @@ export default function ProductsPage() {
   // Phase 2: 메타데이터 8개 백그라운드 → 정책/계정 정보 채움
   const load = useCallback(async () => {
     if (!queryReady) return
-    const knownStatus2 = ['has_orders', 'free_ship', 'same_day', 'free_same', 'market_registered', 'market_unregistered', 'sold_out', 'poison_matched']
+    const knownStatus2 = ['has_orders', 'free_ship', 'same_day', 'free_same', 'market_registered', 'market_unregistered', 'sold_out', 'poison_matched', 'kream_matched']
     const statusParam = (knownStatus2.includes(appliedStatusFilter) || appliedStatusFilter.startsWith('reg_') || appliedStatusFilter.startsWith('unreg_'))
       ? appliedStatusFilter : appliedStatusFilter || undefined
     const aiParam = (appliedAiFilter === 'has_orders') ? appliedAiFilter : appliedAiFilter || undefined
@@ -918,7 +918,7 @@ export default function ProductsPage() {
     setSelectScope('search');
     // 검색결과 전체 ID 조회 후 선택
     try {
-      const knownStatus = ['has_orders', 'free_ship', 'same_day', 'free_same', 'market_registered', 'market_unregistered', 'sold_out', 'poison_matched']
+      const knownStatus = ['has_orders', 'free_ship', 'same_day', 'free_same', 'market_registered', 'market_unregistered', 'sold_out', 'poison_matched', 'kream_matched']
       const statusParam = (knownStatus.includes(appliedStatusFilter) || appliedStatusFilter.startsWith('reg_') || appliedStatusFilter.startsWith('unreg_'))
         ? appliedStatusFilter : appliedStatusFilter || undefined
       const aiParam = (appliedAiFilter === 'has_orders') ? appliedAiFilter : appliedAiFilter || undefined
@@ -2170,7 +2170,8 @@ export default function ProductsPage() {
             <option value="">마켓현황</option>
             <option value="market_unregistered">미등록상품</option>
             <option value="market_registered">등록상품</option>
-            <option value="poison_matched">⭐ 포이즌 매칭</option>
+            <option value="poison_matched">포이즌 매칭</option>
+            <option value="kream_matched">크림 매칭</option>
             {[...new Map(accounts.map(a => [a.market_type, a.market_name] as const)).entries()].map(([type, name]) => (
               <React.Fragment key={type}>
                 <option value={`mtype_reg_${type}`}>{name} 등록</option>
