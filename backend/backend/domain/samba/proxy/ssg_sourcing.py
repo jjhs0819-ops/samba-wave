@@ -1573,9 +1573,9 @@ class SSGSourcingClient:
                         _opt["stock"] = 0
         # 이미지 정제+확장(#425) — sui UI에셋(장바구니/카드) 제거·_1200 고화질 승격·
         # 실존 추가이미지(i2~i9) 복원. collect 전용 경로라 오토튠 refresh 영향 없음.
-        if detail.get("name"):
-            _clean = sanitize_ssg_images(detail.get("images") or [], item_id)
-            detail["images"] = await expand_ssg_images(item_id, _clean)
+        # name 유무 불문 항상 sanitize — name 없을 때 카드이미지 통과 버그 차단.
+        _clean = sanitize_ssg_images(detail.get("images") or [], item_id)
+        detail["images"] = await expand_ssg_images(item_id, _clean)
         return detail
 
     async def get_product_detail(

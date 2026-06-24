@@ -6530,12 +6530,10 @@ class JobWorker:
                     list(_detail_imgs or []) + list(_search_imgs or []), p_id
                 )
                 images = await _ssg_exp(p_id, _ssg_clean)
-                if not images:
-                    images = (
-                        _detail_imgs
-                        if len(_detail_imgs) > len(_search_imgs)
-                        else _search_imgs
-                    )
+                # sanitize 통과 못 한 UI에셋(카드/배너)으로 폴백 금지.
+                # expand_ssg_images 가 item_id 로 대표 i1 재구성하므로
+                # sanitize 결과가 비어도 올바른 상품이미지가 복원된다.
+                # 복원 실패해도 빈 이미지가 카드이미지보다 낫다.
             else:
                 images = (
                     _detail_imgs
