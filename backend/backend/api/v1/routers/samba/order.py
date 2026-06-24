@@ -10370,11 +10370,16 @@ _LH_STYLE_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 
 
 def _lh_style_tokens(name: str) -> list[str]:
-    """롯데홈 상품명에서 모델코드(style_code) 후보 추출 — 숫자 1+ AND 길이 6+."""
+    """롯데홈/플레이오토 상품명에서 모델코드(style_code) 후보 추출.
+
+    조건: 길이 6+, 숫자 포함, 영문자 포함.
+    순수 숫자 토큰(예: 6166973, 4974058) 제외 — 무관한 상품 style_code와 오매칭으로
+    ambiguous 판정을 유발해 진짜 코드(KMM26249N3 등) 매칭을 차단하는 버그 방지.
+    """
     return [
         t
         for t in _LH_STYLE_TOKEN_RE.findall(name or "")
-        if len(t) >= 6 and any(c.isdigit() for c in t)
+        if len(t) >= 6 and any(c.isdigit() for c in t) and any(c.isalpha() for c in t)
     ]
 
 
@@ -10431,6 +10436,24 @@ async def _lh_resolve_by_style_code(
                 if len(_gl_ids) == 1:
                     _picked = gl_rows[0]
                     _route = "global"
+                elif len(_gl_ids) > 1 and len(tokens) > 1:
+                    # 복수 토큰이 여러 CP 히트(ambiguous) → 개별 토큰 단독 재시도.
+                    # 가장 긴(=가장 구체적인) 토큰부터 시도해 고유 CP 단 1개면 매칭.
+                    for _tok in sorted(tokens, key=len, reverse=True):
+                        _gl2 = (
+                            await _s.execute(
+                                _sa_text2(
+                                    f"SELECT {_cols} FROM samba_collected_product "
+                                    "WHERE style_code = :t"
+                                ),
+                                {"t": _tok},
+                            )
+                        ).fetchall()
+                        _gl2_ids = {str(r[0]) for r in _gl2}
+                        if len(_gl2_ids) == 1:
+                            _picked = _gl2[0]
+                            _route = f"global-single({_tok})"
+                            break
             # 다중후보(채널>1 또는 글로벌>1)는 자동연결 금지 → None(수동)
             if _picked is not None:
                 res = {
