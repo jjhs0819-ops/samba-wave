@@ -113,7 +113,7 @@ export function OfficeShippingPanel() {
             style={inputStyle}
             value={form.address}
             onChange={e => setForm(p => ({ ...p, address: e.target.value }))}
-            placeholder="경상북도 경주시 광종3길 58"
+            placeholder="도로명 주소 입력"
           />
         </div>
         <div style={{ gridColumn: '1 / -1' }}>
