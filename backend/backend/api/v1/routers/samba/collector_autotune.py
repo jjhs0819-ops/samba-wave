@@ -4118,6 +4118,16 @@ async def _site_autotune_loop(device_id: str, site: str):
                         site,
                     )
                     break
+                # CancelledError 후 dirty asyncpg 연결이 pool로 반납되면
+                # 다음 HTTP 요청이 그 연결을 재사용해 ASGI exception → 워커 크래시.
+                # dispose(close=False): idle 연결만 닫고 active 연결은 유지.
+                # 새 요청은 fresh 연결 할당 → 오염 차단.
+                try:
+                    from backend.db.orm import get_write_engine
+
+                    get_write_engine().dispose(close=False)
+                except Exception:
+                    pass
                 try:
                     import backend.domain.samba.collector.refresher as _ref_cancel
 
