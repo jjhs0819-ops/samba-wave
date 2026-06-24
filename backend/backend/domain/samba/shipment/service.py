@@ -3161,7 +3161,7 @@ class SambaShipmentService:
         for market_type in convert_markets:
             if market_type in result:
                 cat_path = result[market_type]
-                if cat_path and not cat_path.isdigit():
+                if cat_path and not cat_path.isdigit() and "|" not in cat_path:
                     code = await category_svc.resolve_category_code(
                         market_type, cat_path
                     )

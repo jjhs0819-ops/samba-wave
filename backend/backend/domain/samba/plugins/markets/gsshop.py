@@ -210,34 +210,40 @@ def _transform_for_gsshop(
     if std_rels_ddcnt == 0 and gs.get("thedayRelsOrdDedlnTime") is not None:
         base_add_info["thedayRelsOrdDedlnTime"] = int(gs["thedayRelsOrdDedlnTime"])
 
-    return {
+    payload: dict[str, Any] = {
         "supPrdCd": sup_prd_cd,
-        "subSupCd": sub_sup_cd or "",
-        "prdBaseAddInfo": base_add_info,
-        "prdPrcInfo": {
-            "prdPrcValidStrDtm": now_dtm,
-            "prdPrcValidEndDtm": end_dtm,
-            "prdPrcSalePrc": sale_price,
-            "prdPrcSupGivRtamt": sup_prc,
-            "prdPrcSupGivRtamtCd": "01",
-        },
-        "prdNmChgInfo": {
-            "prdNmChgExposPrdNm": name,
-            "prdNmChgValidStrDtm": now_dtm,
-            "prdNmChgValidEndDtm": end_dtm,
-        },
-        "prdImgInfo": img_info,
-        "prdDescdHtmlInfo": {
-            "prdDescdHtmlDescdExplnCntnt": add_lazy_loading(detail_html),
-        },
-        "attrPrdList": attr_prd_list,
-        "prdSectList": prd_sect_list,
-        # 안전인증 — 의류는 safeCertGbnCd=0 (해당없음)
-        "prdSafeCertInfo": gs.get("prdSafeCertInfo")
-        or {"safeCertGbnCd": 0, "safeCertOrgCd": 0},
-        # 정보고시 — 의류 코드 1001~1009 (getPrdClsDtlInfo API 확인값)
-        "prdGovPublsItmList": gs.get("prdGovPublsItmList") or [],
     }
+    if sub_sup_cd:
+        payload["subSupCd"] = sub_sup_cd
+    payload.update(
+        {
+            "prdBaseAddInfo": base_add_info,
+            "prdPrcInfo": {
+                "prdPrcValidStrDtm": now_dtm,
+                "prdPrcValidEndDtm": end_dtm,
+                "prdPrcSalePrc": sale_price,
+                "prdPrcSupGivRtamt": sup_prc,
+                "prdPrcSupGivRtamtCd": "01",
+            },
+            "prdNmChgInfo": {
+                "prdNmChgExposPrdNm": name,
+                "prdNmChgValidStrDtm": now_dtm,
+                "prdNmChgValidEndDtm": end_dtm,
+            },
+            "prdImgInfo": img_info,
+            "prdDescdHtmlInfo": {
+                "prdDescdHtmlDescdExplnCntnt": add_lazy_loading(detail_html),
+            },
+            "attrPrdList": attr_prd_list,
+            "prdSectList": prd_sect_list,
+            # 안전인증 — 의류는 safeCertGbnCd=0 (해당없음)
+            "prdSafeCertInfo": gs.get("prdSafeCertInfo")
+            or {"safeCertGbnCd": 0, "safeCertOrgCd": 0},
+            # 정보고시 — 의류 코드 1001~1009 (getPrdClsDtlInfo API 확인값)
+            "prdGovPublsItmList": gs.get("prdGovPublsItmList") or [],
+        }
+    )
+    return payload
 
 
 class GsShopPlugin(MarketPlugin):
