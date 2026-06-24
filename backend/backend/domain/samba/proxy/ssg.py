@@ -2287,12 +2287,11 @@ class SSGClient:
             or raw.get("rcptpeTelno", "")
             or raw.get("ordpeHpno", "")
         )
-        # 도로명+상세주소 우선, 없으면 지번주소
-        bsc = raw.get("shpplocBascAddr", "") or raw.get("ordpeRoadAddr", "")
-        dtl = raw.get("shpplocDtlAddr", "")
-        customer_address = str(
-            (f"{bsc} {dtl}".strip() if bsc else "") or raw.get("shpplocAddr", "") or ""
-        )
+        # 도로명 기본주소 / 상세주소 분리 저장
+        bsc = str(raw.get("shpplocBascAddr", "") or raw.get("ordpeRoadAddr", "") or "")
+        dtl = str(raw.get("shpplocDtlAddr", "") or "")
+        customer_address = str(bsc or raw.get("shpplocAddr", "") or "")
+        customer_address_detail = dtl or None
         # 우편번호 — SSG 필드명 후보 fallback chain
         _zip = str(
             raw.get("shpplocZpCd", "")
@@ -2387,6 +2386,7 @@ class SSGClient:
             "orderer_name": orderer_name,
             "customer_phone": customer_phone,
             "customer_address": customer_address,
+            "customer_address_detail": customer_address_detail,
             # 멀티수량 주문 금액 단가표시 회귀 방지(#460) — 11번가 _parse_11st_order 패턴과 통일.
             # sale_price 는 단가 유지, total_payment_amount/revenue 는 수량 반영한 라인총액.
             "quantity": _q,
