@@ -338,10 +338,10 @@ export default function OrderInfoCell(props: Props) {
           (sourceFromUrl || actualSourceSite || o.source_site || '').trim().split('(')[0].trim()
         ) && o.source_url && (() => {
           const srcSite = (sourceFromUrl || actualSourceSite || o.source_site || '').trim().split('(')[0].trim()
-          async function triggerPlaceOrder(orderType: 'direct' | 'kkadaegi') {
+          async function triggerPlaceOrder(orderType: 'direct' | 'kkadaegi' | 'gift') {
             try {
               const officeRes = await fetchWithAuth('/api/v1/samba/proxy/config/office-shipping')
-              if (!officeRes.ok) { showAlert('사무실 배송정보를 먼저 설정해주세요', 'error'); return }
+              if (!officeRes.ok) { showAlert('설정 > 사무실 배송정보를 먼저 입력해주세요', 'error'); return }
               const office = await officeRes.json() as { name: string; phone: string; address: string; address_detail: string }
               if (!office.phone) { showAlert('설정 > 사무실 배송정보에 전화번호를 입력해주세요', 'error'); return }
               const payload = {
@@ -356,7 +356,8 @@ export default function OrderInfoCell(props: Props) {
                 shippingAddressDetail: orderType === 'direct' ? customerAddress.detail : office.address_detail,
               }
               window.postMessage({ source: 'samba-page', type: 'PLACE_ORDER', payload }, window.location.origin)
-              showAlert(`${orderType === 'direct' ? '직배' : '까대기'} 주문처리 시작 — 소싱처 탭에서 진행 중`, 'info')
+              const label = orderType === 'direct' ? '직배주문' : orderType === 'kkadaegi' ? '까대기주문' : '선물주문'
+              showAlert(`${label} 시작 — 소싱처 탭에서 진행 중`, 'info')
             } catch (e) {
               showAlert(e instanceof Error ? e.message : '주문처리 실패', 'error')
             }
@@ -364,9 +365,11 @@ export default function OrderInfoCell(props: Props) {
           return (
             <>
               <button onClick={() => triggerPlaceOrder('direct')}
-                style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2563EB', borderRadius: '4px', color: '#60A5FA', cursor: 'pointer' }}>직배</button>
+                style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2563EB', borderRadius: '4px', color: '#60A5FA', cursor: 'pointer' }}>직배주문</button>
               <button onClick={() => triggerPlaceOrder('kkadaegi')}
-                style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #D97706', borderRadius: '4px', color: '#FBBF24', cursor: 'pointer' }}>까대기</button>
+                style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #D97706', borderRadius: '4px', color: '#FBBF24', cursor: 'pointer' }}>까대기주문</button>
+              <button onClick={() => triggerPlaceOrder('gift')}
+                style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #7C3AED', borderRadius: '4px', color: '#A78BFA', cursor: 'pointer' }}>선물주문</button>
               {o.product_option && (
                 <span style={{ color: '#FACC15', fontSize: '0.7rem', fontWeight: 700 }}>{o.product_option}</span>
               )}

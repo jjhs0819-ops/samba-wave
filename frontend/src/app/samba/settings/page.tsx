@@ -10,6 +10,7 @@ import { StoreSettingsPanel } from './components/StoreSettingsPanel'
 import { useSourcingAccounts } from './hooks/useSourcingAccounts'
 import { SourcingAccountsPanel } from './components/SourcingAccountsPanel'
 import { LicensePanel } from './components/LicensePanel'
+import { OfficeShippingPanel } from './components/OfficeShippingPanel'
 
 export default function SettingsPage() {
   useEffect(() => { document.title = 'SAMBA-설정' }, [])
@@ -50,6 +51,9 @@ export default function SettingsPage() {
         visiblePasswords={storeSettings.visiblePasswords}
         togglePasswordVisibility={storeSettings.togglePasswordVisibility}
       />
+
+      {/* 사무실 배송정보 (주문처리용) */}
+      <OfficeShippingPanel />
 
       {/* 프록시 설정 */}
       <ProxySettingsPanel {...proxySettings} />

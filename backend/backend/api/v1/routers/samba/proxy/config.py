@@ -89,6 +89,36 @@ async def save_proxy_config(
     return {"ok": True, "count": len(items)}
 
 
+OFFICE_SHIPPING_KEY = "office_shipping"
+
+
+class OfficeShippingPayload(BaseModel):
+    name: str = ""
+    phone: str = ""
+    address: str = ""
+    address_detail: str = ""
+
+
+@router.get("/config/office-shipping")
+async def get_office_shipping(
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """사무실 배송정보 조회 (주문처리용)."""
+    data = await _get_setting(session, OFFICE_SHIPPING_KEY)
+    return data or {"name": "", "phone": "", "address": "", "address_detail": ""}
+
+
+@router.post("/config/office-shipping")
+async def save_office_shipping(
+    payload: OfficeShippingPayload,
+    session: AsyncSession = Depends(get_write_session_dependency),
+    user_id: str = Depends(get_user_id),
+):
+    """사무실 배송정보 저장."""
+    await _set_setting(session, OFFICE_SHIPPING_KEY, payload.model_dump())
+    return {"ok": True}
+
+
 @router.post("/config/proxies/test")
 async def test_proxy_connection(
     url: str = Form(...),
