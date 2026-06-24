@@ -296,6 +296,13 @@ class SambaCollectorService:
         await self._fill_source_brand(data)
         await self._inherit_group_attributes(data)
         _derive_sale_status(data)
+        # 이미지 없는 상품 수집 차단 — 이미지 없으면 마켓 등록 불가, DB 저장 자체를 막음
+        if not data.get("images"):
+            logger.warning(
+                f"[수집차단] 이미지 없음 — {data.get('source_site')} "
+                f"{data.get('site_product_id')} '{str(data.get('name', ''))[:40]}'"
+            )
+            return None
         # 동일 소싱처 내 동일 원 상품명 차단은 비활성화 — 색상/사이즈별 SKU가
         # 별개 site_product_id로 등록되는 소싱처(ABCmart/MUSINSA/LOTTEON/SSG/Nike 등)에서
         # 동명 상품이 정상이며, 차단 시 수집량이 크게 줄어 누락 발생.
@@ -534,6 +541,13 @@ class SambaCollectorService:
             seen_names.add(key)
             filtered_items.append(d)
         items = filtered_items
+
+        # 이미지 없는 상품 제거
+        _before = len(items)
+        items = [d for d in items if d.get("images")]
+        _dropped = _before - len(items)
+        if _dropped:
+            logger.warning(f"[수집차단] 이미지 없는 상품 {_dropped}건 제거 (배치)")
 
         created = 0
         # 항목별 savepoint 적용: IntegrityError 발생 시 해당 항목만 롤백하고

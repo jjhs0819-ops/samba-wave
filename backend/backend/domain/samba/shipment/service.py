@@ -865,6 +865,20 @@ class SambaShipmentService:
             )
             return shipment
 
+        # 이미지 없는 상품 전송 차단 — 마켓 등록 시 이미지 누락으로 오류/빈 이미지 등록 방지
+        if not (product_row.images or []):
+            _no_img_msg = "이미지 없음 — 전송 차단"
+            logger.warning(
+                f"[전송차단] 이미지 없음: {product_id} "
+                f"({product_row.source_site} / {product_row.name[:40] if product_row.name else ''})"
+            )
+            await self.repo.update_async(
+                shipment.id,
+                status="failed",
+                transmit_error={"_all": _no_img_msg},
+            )
+            return shipment
+
         # 롯데온/SSG의 '나이키' 브랜드 상품만 — AI 이미지 변환된 상품만 전송 허용
         # (다이나핏 등 다른 브랜드는 영향 없음)
         _AI_REQUIRED_SOURCE_SITES = {"LOTTEON", "SSG"}
