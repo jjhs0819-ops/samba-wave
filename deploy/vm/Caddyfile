@@ -49,15 +49,14 @@ api.samba-wave.co.kr {
         # - interval 5s: DNS 폴링 노이즈 감소 + 단일 워커 부담 감소.
         health_uri /api/v1/health
         health_interval 5s
-        health_timeout 5s
+        health_timeout 10s
 
         # Passive 헬스체크 —
-        # - max_fails 3: 단일 timeout으로 즉시 차단되던 도미노 차단 (staging fallback이
-        #   영구 DNS 실패 상태라 단발 fail이 502로 직결됨).
-        # - fail_duration 10s → 5s: 일시적 마운트 폭주로 인한 fail은 빠르게 회복.
-        #   사용자가 새로고침 1~2회로 회복 가능하도록 단축.
-        fail_duration 5s
-        max_fails 3
+        # - max_fails 10: 오토튠 이벤트루프 busy 구간(~30s)에 health_timeout 초과해도
+        #   upstream 즉시 차단 방지. 10회 실패(50s) 이상이어야 down 처리.
+        # - fail_duration 30s: 워커 재시작(~2분) 중 빠른 회복. 짧은 flap은 무시.
+        fail_duration 30s
+        max_fails 10
         unhealthy_status 5xx
 
         # 타임아웃 — 마켓 전송 Job/스마트스토어 동기화 등 긴 요청 대응

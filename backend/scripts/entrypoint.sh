@@ -246,7 +246,7 @@ asyncio.run(fix())
 
   # Gunicorn + Uvicorn worker (--no-dev: 런타임 dev 패키지 재설치 방지)
   echo "Starting production server with Gunicorn (1 worker, uvicorn worker class)..."
-  exec uv run --no-dev -m gunicorn -w 1 -k uvicorn.workers.UvicornWorker backend.main:app --bind 0.0.0.0:8080 --timeout 120 --graceful-timeout 600
+  exec uv run --no-dev -m gunicorn -w 1 -k uvicorn.workers.UvicornWorker backend.main:app --bind 0.0.0.0:8080 --timeout 600 --graceful-timeout 600
 else
   # Run the development server with Uvicorn and --reload
   echo "Starting development server with Uvicorn..."
