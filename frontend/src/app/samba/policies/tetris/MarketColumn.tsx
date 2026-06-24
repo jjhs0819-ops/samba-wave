@@ -116,10 +116,12 @@ export default function MarketColumn({
         padding: '0 6px',
       }}>
         <div style={{
+          height: columnHeight,
           minHeight: columnHeight,
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'flex-end',
+          overflow: 'hidden',
         }}>
           {isAccountDragging && (
             <AccountSlot
