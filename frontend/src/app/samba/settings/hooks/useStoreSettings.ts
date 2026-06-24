@@ -366,6 +366,7 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
           store_id: String(safeData.storeId || ''),
           api_key_dev: String(safeData.apiKeyDev || ''),
           api_key_prod: String(safeData.apiKeyProd || ''),
+          ...(editingAccountId ? { account_id: editingAccountId } : {}),
         })
       } else if (marketKey === 'lottehome') {
         const userId = safeData.storeId || ''

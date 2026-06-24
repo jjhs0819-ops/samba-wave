@@ -815,13 +815,16 @@ async def gsshop_auth_test(
     sup_cd = creds.get("supCd", "") or creds.get("storeId", "")
     api_key_dev = creds.get("apiKeyDev", "")
     api_key_prod = creds.get("apiKeyProd", "")
+    # UI에서 개발키 필드 제거 후 기존 apiKeyDev만 저장된 계정 호환
+    if not api_key_prod and not api_key_dev and body.api_key_prod:
+        api_key_prod = body.api_key_prod
 
     if not sup_cd:
         return {"success": False, "message": "스토어 ID(협력사코드)가 비어있습니다."}
     if not api_key_dev and not api_key_prod:
         return {
             "success": False,
-            "message": "개발 또는 운영 AES256 인증키를 입력해주세요.",
+            "message": "AES256 인증키를 입력해주세요.",
         }
 
     results: list[str] = []
