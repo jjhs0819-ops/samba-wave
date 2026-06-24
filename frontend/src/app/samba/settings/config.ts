@@ -361,7 +361,7 @@ export const STORE_MARKETS: MarketConfig[] = [
   ]},
   { key: 'gsshop', label: 'GSSHOP', authField: 'apiKeyProd', guideUrl: 'https://partners.gsshop.com/api/apiMain', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
-    { name: 'storeId', label: '스토어 ID', type: 'text' },
+    { name: 'storeId', label: '스토어 ID (협력사코드)', type: 'text' },
     { name: 'apiKeyProd', label: 'AES256 인증키', type: 'password' },
     { name: 'asPhone', label: 'A/S 전화번호', type: 'text', placeholder: '' },
     { name: 'asMessage', label: 'A/S 안내 문구', type: 'text', placeholder: '' },
