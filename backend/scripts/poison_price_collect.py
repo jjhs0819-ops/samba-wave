@@ -72,11 +72,9 @@ async def fetch_targets(limit=None):
                    resell_matches -> 'poison' AS pm
             FROM samba_collected_product
             WHERE resell_matches -> 'poison' ->> 'product_id' <> ''
-              AND (
-                (resell_matches -> 'poison' -> 'recommend') IS NULL
-                -- 일시 에러로 잘못 마킹된 no_price 도 재수집 대상에 포함(수렴 회복)
-                OR (resell_matches -> 'poison' -> 'recommend' ->> 'no_price') = 'true'
-              )
+              -- 시세가 제대로 수집된 것(minPrice 값 존재)만 제외.
+              -- 미수집 / no_price / 가격 None(이전 파싱버그) 전부 재수집 대상(수렴 회복).
+              AND (resell_matches -> 'poison' -> 'recommend' ->> 'minPrice') IS NULL
               AND style_code IS NOT NULL AND btrim(style_code) <> ''
         """
         if limit:
@@ -180,18 +178,36 @@ async def main():
             continue
         consec_rl = 0
 
+        # 포이즌 recommend_price 실제 응답엔 minPrice/averagePrice/maxPrice 키가 없음.
+        # 시세는 data.globalMinPrice/asiaMinPrice(시장 최저) + data.priceRangeItems(백분위)에 들어있음.
+        min_price = avg_price = max_price = None
         if status == "ok":
+            payload = res.get("data") or {}
+            prices = sorted(
+                int(it["price"])
+                for it in (payload.get("priceRangeItems") or [])
+                if it.get("price") is not None
+            )
+            min_price = (
+                payload.get("globalMinPrice")
+                or payload.get("asiaMinPrice")
+                or (prices[0] if prices else None)
+            )
+            avg_price = prices[len(prices) // 2] if prices else None  # 중간값(≈50%)
+            max_price = prices[-1] if prices else None  # 상위(≈90%)
+
+        if min_price is not None or avg_price is not None:
             recommend = {
-                "minPrice": res.get("minPrice"),
-                "averagePrice": res.get("averagePrice"),
-                "maxPrice": res.get("maxPrice"),
+                "minPrice": min_price,
+                "averagePrice": avg_price,
+                "maxPrice": max_price,
                 "global_sku_id": gid,
                 "size": size,
                 "collected_at": int(_time.time()),
             }
             ok += 1
         else:
-            # 시세 조회 실패도 마킹 — 재실행 시 무한 재시도 방지(수렴 보장)
+            # 시세값을 못 얻음(조회 실패 or 가격 비어있음) → no_price 마킹(다음 실행 재시도 대상)
             recommend = {
                 "no_price": True,
                 "global_sku_id": gid,
