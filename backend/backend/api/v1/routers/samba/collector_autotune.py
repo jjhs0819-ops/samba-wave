@@ -302,6 +302,8 @@ STUCK_TIMEOUT_SECONDS = 300  # 5분간 heartbeat 없으면 stuck 판정
 _SITE_STUCK_TIMEOUT_OVERRIDE = {
     "LOTTEON": 900,  # 15분 (concurrency=1 + WAF 차단 대응)
     "MUSINSA": 600,  # 10분 (IP 차단/로테이션으로 200건 배치 5분 초과 → Watchdog 강제재시작 방지)
+    "ABCmart": 1000,  # 17분 (실측 824s — 300s 기본 초과 시 CancelledError → 워커 크래시)
+    "SSG": 1000,  # 17분 (실측 679s — 동일 원인)
 }
 MAX_RESTART_COUNT = 50  # 코디네이터 재시작 상한선
 
