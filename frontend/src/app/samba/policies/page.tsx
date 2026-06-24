@@ -88,8 +88,6 @@ interface MarketPolicyForm {
     subSupCd?: string
     stdRelsDdcnt?: number
     dlvsCoCd?: string
-    rtpAmt?: number
-    exchAmt?: number
     govGrp?: number
     attrTypNm1?: string
   }
@@ -1749,14 +1747,7 @@ export default function PoliciesPage() {
                         <option value="LO">롯데 (LO)</option>
                       </select>
                     </div>
-                    {/* 반품/교환 배송비 */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '90px' }}>반품배송비</span>
-                      <NumInput value={typeof gs.rtpAmt === 'number' ? gs.rtpAmt : 5000} onChange={(v) => setGs({ rtpAmt: v })} style={{ width: 70 }} suffix="원" />
-                      <span style={{ color: '#888', fontSize: '0.8125rem', marginLeft: 8 }}>교환배송비</span>
-                      <NumInput value={typeof gs.exchAmt === 'number' ? gs.exchAmt : 5000} onChange={(v) => setGs({ exchAmt: v })} style={{ width: 70 }} suffix="원" />
-                    </div>
-                    {/* 정보고시 그룹, 옵션타입명 */}
+                                    {/* 정보고시 그룹, 옵션타입명 */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                       <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '90px' }}>정보고시그룹</span>
                       <select value={gs.govGrp || 10} onChange={e => setGs({ govGrp: Number(e.target.value) })} style={{ background: '#1F2937', border: '1px solid #374151', borderRadius: 4, color: '#E2E8F0', fontSize: '0.8125rem', padding: '3px 6px' }}>

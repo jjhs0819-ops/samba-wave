@@ -316,6 +316,12 @@ class GsShopPlugin(MarketPlugin):
                 # brandCd, prdClsCd, dlvsCoCd, prdRelspAddrCd 등 등록에 필요한 코드값
                 gs_settings = gs_policy.get("gsSettings") or {}
 
+        # 계정 설정 반품/교환비 fallback (정책 gsSettings에 없을 때)
+        if not gs_settings.get("rtpAmt") and auth_creds.get("returnFee"):
+            gs_settings = {**gs_settings, "rtpAmt": int(auth_creds["returnFee"])}
+        if not gs_settings.get("exchAmt") and auth_creds.get("exchangeFee"):
+            gs_settings = {**gs_settings, "exchAmt": int(auth_creds["exchangeFee"])}
+
         client = GsShopClient(sup_cd, aes_key, sub_sup_cd, env)
 
         # 기존 상품번호(prdCd) 있으면 수정 모드 — 가격+옵션(재고) 업데이트
