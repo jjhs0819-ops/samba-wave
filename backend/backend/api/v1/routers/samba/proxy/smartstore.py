@@ -8,7 +8,8 @@ from typing import Any, Optional
 
 import bcrypt
 import httpx
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Body, Depends, Query
+from sqlalchemy import text
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency
@@ -50,16 +51,37 @@ async def smartstore_search_manufacturer(
 
 @router.post("/smartstore/auth-test")
 async def smartstore_auth_test(
+    body: Optional[dict] = Body(None),
+    account_id: Optional[str] = Query(None),
     session: AsyncSession = Depends(get_read_session_dependency),
     tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ) -> dict[str, Any]:
     """스마트스토어 Commerce API 인증 테스트 — OAuth2 토큰 발급 시도."""
-    creds = await _get_setting(session, "store_smartstore", tenant_id=tenant_id)
-    if not creds or not isinstance(creds, dict):
-        return {"success": False, "message": "스마트스토어 설정이 저장되지 않았습니다."}
+    client_id = (body or {}).get("client_id", "")
+    client_secret = (body or {}).get("client_secret", "")
 
-    client_id = creds.get("clientId", "")
-    client_secret = creds.get("clientSecret", "")
+    # account_id 기반 DB 조회 (폼 비밀번호 마스킹 시 fallback)
+    if account_id and (not client_id or not client_secret):
+        row = (
+            await session.exec(
+                text(
+                    "SELECT additional_fields FROM samba_market_account WHERE id=:aid"
+                ),
+                params={"aid": account_id},
+            )
+        ).first()
+        if row and row[0]:
+            af = row[0] if isinstance(row[0], dict) else {}
+            client_id = client_id or af.get("clientId", "")
+            client_secret = client_secret or af.get("clientSecret", "")
+
+    # 글로벌 설정 fallback
+    if not client_id or not client_secret:
+        creds = await _get_setting(session, "store_smartstore", tenant_id=tenant_id)
+        if isinstance(creds, dict):
+            client_id = client_id or creds.get("clientId", "")
+            client_secret = client_secret or creds.get("clientSecret", "")
+
     if not client_id or not client_secret:
         return {
             "success": False,

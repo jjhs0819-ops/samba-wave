@@ -1616,9 +1616,10 @@ export const proxyApi = {
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/playauto/auth-test`,
       { method: 'POST', body: JSON.stringify(payload || {}) }),
-  smartstoreAuthTest: () =>
+  smartstoreAuthTest: (payload?: { client_id?: string; client_secret?: string; account_id?: string }) =>
     request<{ success: boolean; message: string; token_preview?: string }>(
-      `${SAMBA_PREFIX}/proxy/smartstore/auth-test`, { method: 'POST' }),
+      `${SAMBA_PREFIX}/proxy/smartstore/auth-test${payload?.account_id ? `?account_id=${encodeURIComponent(payload.account_id)}` : ''}`,
+      { method: 'POST', body: JSON.stringify({ client_id: payload?.client_id || '', client_secret: payload?.client_secret || '' }) }),
   elevenstAuthTest: (payload?: { api_key?: string; account_id?: string }) =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/11st/auth-test`,

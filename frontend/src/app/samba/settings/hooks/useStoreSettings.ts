@@ -338,7 +338,11 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
       // 마켓별 인증 테스트
       let result: { success: boolean; message: string }
       if (marketKey === 'smartstore') {
-        result = await proxyApi.smartstoreAuthTest()
+        result = await proxyApi.smartstoreAuthTest({
+          client_id: String(safeData.clientId || ''),
+          client_secret: String(safeData.clientSecret || ''),
+          account_id: editingAccountId || undefined,
+        })
       } else if (marketKey === '11st') {
         result = await proxyApi.elevenstAuthTest({
           api_key: String(safeData.apiKey || ''),
