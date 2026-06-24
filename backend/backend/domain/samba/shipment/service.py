@@ -2269,12 +2269,14 @@ class SambaShipmentService:
                                         product_id
                                     )
                                     if _pr_now:
-                                        _imm_reg = list(
-                                            set(
+                                        _imm_reg = [
+                                            a
+                                            for a in set(
                                                 (_pr_now.registered_accounts or [])
-                                                + [account_id]
+                                                + ([account_id] if account_id else [])
                                             )
-                                        )
+                                            if a is not None
+                                        ]
                                         _imm_mpn = dict(
                                             _pr_now.market_product_nos or {}
                                         )
@@ -2423,7 +2425,8 @@ class SambaShipmentService:
             # = 실제 마켓 등록됨을 의미하므로 번호 미반환이어도 A칸에 계정 추가해야 함.
             # 404 초기화 경로는 status!=success 라 여기 진입 안 함(충돌 없음).
             if (
-                ar.get("status") == "success"
+                aid
+                and ar.get("status") == "success"
                 and (
                     _new_nos.get(aid)
                     or ar.get("_already_exists")
