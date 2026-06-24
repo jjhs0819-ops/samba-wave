@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { card, inputStyle } from '@/lib/samba/styles'
-import { fetchWithAuth } from '@/lib/samba/api/shared'
+import { fetchWithAuth, SAMBA_PREFIX } from '@/lib/samba/api/shared'
 import { showAlert } from '@/components/samba/Modal'
 
 interface OfficeShipping {
@@ -26,7 +26,7 @@ export function OfficeShippingPanel() {
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
-    fetchWithAuth('/api/v1/samba/proxy/config/office-shipping')
+    fetchWithAuth('${SAMBA_PREFIX}/proxy/config/office-shipping')
       .then(r => r.json())
       .then((d: OfficeShipping) => {
         setForm(d)
@@ -45,7 +45,7 @@ export function OfficeShippingPanel() {
     }
     setSaving(true)
     try {
-      const res = await fetchWithAuth('/api/v1/samba/proxy/config/office-shipping', {
+      const res = await fetchWithAuth('${SAMBA_PREFIX}/proxy/config/office-shipping', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...form, phone: phoneStr }),

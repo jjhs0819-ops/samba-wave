@@ -6,7 +6,7 @@ import {
   collectorApi,
   type SambaOrder,
 } from '@/lib/samba/api/commerce'
-import { fetchWithAuth } from '@/lib/samba/api/shared'
+import { fetchWithAuth, SAMBA_PREFIX } from '@/lib/samba/api/shared'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtNum } from '@/lib/samba/styles'
 import { fmtDate, fmtTime } from '@/lib/samba/utils'
@@ -114,7 +114,7 @@ export default function OrderInfoCell(props: Props) {
 
   async function triggerPlaceOrder(orderType: 'direct' | 'kkadaegi' | 'gift') {
     try {
-      const officeRes = await fetchWithAuth('/api/v1/samba/proxy/config/office-shipping')
+      const officeRes = await fetchWithAuth(`${SAMBA_PREFIX}/proxy/config/office-shipping`)
       if (!officeRes.ok) { showAlert('설정 > 사무실 배송정보를 먼저 입력해주세요', 'error'); return }
       const office = await officeRes.json() as { name: string; phone: string; address: string; address_detail: string }
       if (!office.phone) { showAlert('설정 > 사무실 배송정보에 전화번호를 입력해주세요', 'error'); return }
