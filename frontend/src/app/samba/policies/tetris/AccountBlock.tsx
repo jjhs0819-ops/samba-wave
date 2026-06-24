@@ -218,6 +218,7 @@ export default function AccountBlock({
           padding: '8px 6px 6px',
           display: 'flex',
           flexDirection: 'column',
+          justifyContent: 'flex-end',
           boxSizing: 'border-box',
         }}
       >
@@ -227,7 +228,6 @@ export default function AccountBlock({
           </div>
         ) : (
           <>
-            <div style={{ flex: 1 }} />
             {isSameAccountDrag && !isAccountDragging && (
               <SlotZone
                 active={dropSlot === 0}
