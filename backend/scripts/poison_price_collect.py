@@ -25,7 +25,7 @@ from backend.core.config import settings  # noqa: E402
 from backend.db.orm import get_read_session, get_write_session  # noqa: E402
 from backend.domain.samba.proxy.poison import PoisonClient  # noqa: E402
 
-SLEEP = 1.5  # 호출 간격 — throttle 회피(poison_bulk_match.py 실측치)
+SLEEP = 2.5  # 호출 간격 — 21005101(일시 조회예외) 후반 누적 회피 위해 1.5→2.5 상향
 CIRCUIT_FAIL = 30  # 연속 레이트리밋 시 중단
 RL_BACKOFF = 5.0  # 빈도초과/연결에러 기본 대기초
 MAX_RETRY = 6  # 재시도 횟수
@@ -72,7 +72,11 @@ async def fetch_targets(limit=None):
                    resell_matches -> 'poison' AS pm
             FROM samba_collected_product
             WHERE resell_matches -> 'poison' ->> 'product_id' <> ''
-              AND (resell_matches -> 'poison' -> 'recommend') IS NULL
+              AND (
+                (resell_matches -> 'poison' -> 'recommend') IS NULL
+                -- 일시 에러로 잘못 마킹된 no_price 도 재수집 대상에 포함(수렴 회복)
+                OR (resell_matches -> 'poison' -> 'recommend' ->> 'no_price') = 'true'
+              )
               AND style_code IS NOT NULL AND btrim(style_code) <> ''
         """
         if limit:
@@ -115,7 +119,9 @@ async def fetch_price_with_backoff(client, gid):
         if res.get("success"):
             return ("ok", res)
         code = str((res.get("data") or {}).get("code"))
-        if code == "400010007":  # 빈도초과 → 백오프 재시도
+        # 400010007=빈도초과, 21005101=상품정보 일시 조회예외(请稍后重试) → 둘 다 일시 에러,
+        # 백오프 후 재시도(영구 실패로 마킹하면 다음 실행에 영영 누락됨)
+        if code in ("400010007", "21005101"):
             await asyncio.sleep(RL_BACKOFF * (attempt + 1))
             continue
         return ("miss", res)  # 진짜 실패(시세 없음 등) → 마킹하고 넘어감
