@@ -584,7 +584,6 @@ class JobWorker:
             logger.info(f"[잡워커] rebalance start poll={self._poll_count}")
             _bg_max = int(os.environ.get("JOB_BG_TRANSMIT_MAX_CONCURRENCY", "300"))
             _min_pct = 0.15
-            _max_pct = 0.60
 
             _conn = await _asyncpg.connect(
                 host=_cfg.read_db_host,
@@ -704,9 +703,11 @@ class JobWorker:
                     per_slot_10m = done_10m / running_now
                     # 생성속도 이상 처리하려면 필요한 슬롯
                     needed_for_gen = _math.ceil(created_10m / per_slot_10m)
-                    # 30분 안에 기존 펜딩 소화
+                    # 30분 안에 기존 펜딩 + 새 생성분 소화
                     needed_for_drain = (
-                        _math.ceil(cnt / (per_slot_10m * 3)) if per_slot_10m > 0 else 1
+                        _math.ceil((cnt + created_10m * 3) / (per_slot_10m * 3))
+                        if per_slot_10m > 0
+                        else 1
                     )
                     slots = max(needed_for_gen, needed_for_drain, 1)
                 else:
