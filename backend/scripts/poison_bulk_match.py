@@ -24,7 +24,7 @@ from backend.db.orm import get_read_session, get_write_session  # noqa: E402
 from backend.domain.samba.proxy.poison import PoisonClient  # noqa: E402
 
 # 전 소싱처 전수 시도 (POIZON 카탈로그가 매칭여부 판정 — 미취급 브랜드는 자동 miss)
-SLEEP = 1.5  # 호출 간격 — 연결 throttle 회피(1.0s는 ~16건 후 막힘 실측)
+SLEEP = 0.1  # 한도 상향됨(20/s·864k/day) — 0.1s+HTTP지연이면 ~2/s로 충분히 안전
 CIRCUIT_FAIL = 30  # 연속 진짜에러/레이트리밋 시 중단
 RL_BACKOFF = 5.0  # 레이트리밋(400010007)/연결에러 기본 대기초
 MAX_RETRY = 6  # 재시도 횟수
@@ -126,7 +126,7 @@ async def fetch_articles(limit=None):
         ).all()
         brands = [x.b for x in mb]
         if not brands:
-            return []
+            return [], []
         sql = """
             SELECT btrim(style_code) AS code, COUNT(*) AS n
             FROM samba_collected_product
@@ -139,11 +139,36 @@ async def fetch_articles(limit=None):
         if limit:
             sql += f" LIMIT {int(limit)}"
         rows = (await s.execute(text(sql), {"brands": brands})).all()
-        return [(r.code, r.n) for r in rows]
+        return [(r.code, r.n) for r in rows], brands
 
 
-async def save_match(code, payload_json):
-    """같은 style_code 모든 상품에 resell_matches.poison 병합 저장 (JSONB merge)."""
+async def build_code_to_ids(brands):
+    """품번(btrim style_code) → [상품 id] 맵 1회 구축.
+
+    btrim(style_code) 는 인덱스가 없어 매 UPDATE마다 풀스캔(5s/건)이라 느림.
+    시작 시 단 1회 스캔으로 맵을 만들고, 이후 UPDATE는 id(PK)로 빠르게 처리.
+    """
+    code_map = {}
+    async with get_read_session() as s:
+        rows = (
+            await s.execute(
+                text(
+                    "SELECT id, btrim(style_code) sc FROM samba_collected_product "
+                    "WHERE btrim(brand) = ANY(:brands) "
+                    "AND style_code IS NOT NULL AND btrim(style_code) <> ''"
+                ),
+                {"brands": brands},
+            )
+        ).all()
+    for r in rows:
+        code_map.setdefault(r.sc, []).append(r.id)
+    return code_map
+
+
+async def save_match(ids, payload_json):
+    """주어진 상품 id들에 resell_matches.poison 병합 저장 (id=PK 인덱스, 빠름)."""
+    if not ids:
+        return 0
     async with get_write_session() as s:
         # CAST(:p AS jsonb) — ':p::jsonb' placeholder 충돌 금지(CLAUDE.md)
         sql = text(
@@ -152,10 +177,10 @@ async def save_match(code, payload_json):
             SET resell_matches =
                 COALESCE(resell_matches, '{}'::jsonb)
                 || jsonb_build_object('poison', CAST(:p AS jsonb))
-            WHERE btrim(style_code) = :code
+            WHERE id = ANY(:ids)
             """
         )
-        res = await s.execute(sql, {"p": payload_json, "code": code})
+        res = await s.execute(sql, {"p": payload_json, "ids": ids})
         await s.commit()
         return res.rowcount
 
@@ -165,12 +190,16 @@ async def main():
     import time as _time
 
     limit = int(sys.argv[1]) if len(sys.argv) > 1 else None
-    articles = await fetch_articles(limit)
+    articles, brands = await fetch_articles(limit)
     total = len(articles)
-    print(f"매칭 대상 고유 품번: {total:,} (전 소싱처, 미매칭만)")
+    print(f"매칭 대상 고유 품번: {total:,} (집중 브랜드, 미처리만)")
     if not total:
         print("처리할 품번 없음 (전부 매칭 완료 or 대상 없음)")
         return
+
+    # 품번→[id] 맵 1회 구축 (UPDATE를 PK로 빠르게 — btrim 풀스캔 회피)
+    code_map = await build_code_to_ids(brands)
+    print(f"품번→id 맵 구축 완료 ({len(code_map):,} 품번)")
 
     app_key, app_secret = await load_creds()
     client = PoisonClient(app_key=app_key, app_secret=app_secret)
@@ -222,7 +251,7 @@ async def main():
                 ensure_ascii=False,
             )
             miss += 1
-        rc = await save_match(code, payload)
+        rc = await save_match(code_map.get(code, []), payload)
         updated_rows += rc
 
         if i % 50 == 0:
