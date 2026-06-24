@@ -1673,7 +1673,8 @@ class SambaShipmentService:
                 # 롯데ON은 BC 접두사 카테고리 코드 사용 (BC41030100 형식)
                 _lotteon_like = market_type in ("lotteon", "ssg")
                 if (
-                    market_type not in ("coupang", "playauto", "cafe24", "lottehome")
+                    market_type
+                    not in ("coupang", "playauto", "cafe24", "lottehome", "gsshop")
                     and not _lotteon_like
                     and not str(category_id).isdigit()
                 ):
