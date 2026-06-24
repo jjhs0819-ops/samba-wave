@@ -17,7 +17,8 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
-from sqlalchemy import func, update as sa_update
+from sqlalchemy import cast, func, or_, update as sa_update  # noqa: F401
+from sqlalchemy.dialects.postgresql import JSONB as _JSONB  # noqa: F401
 from sqlalchemy.orm import defer
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -1345,6 +1346,48 @@ async def _site_autotune_loop(device_id: str, site: str):
 
                     market_cond = build_market_registered_conditions(_CP)
 
+                    # ── 판매처 필터: SELECT WHERE에 적용 ──
+                    # Python 레벨 후필터 → DB 레벨 WHERE로 전환.
+                    # 이유: Python 레벨이면 배치 200건이 전부 비대상이어도 0건 반환 →
+                    # last_refreshed_at 업데이트 없음 → 다음 사이클도 같은 200건 반복
+                    # (무신사 playauto 전용 상품이 enabled_markets 미포함 사례).
+                    # DB WHERE에 eligible 계정 @> 조건 추가 → SELECT 단계서 제거,
+                    # GIN 인덱스(ix_scp_registered_accounts_gin) 자동 활용.
+                    _enabled_markets = await _get_setting(
+                        session, AUTOTUNE_FILTER_MARKETS_KEY
+                    )
+                    _market_filter_where: list = []
+                    if _enabled_markets and isinstance(_enabled_markets, list):
+                        from backend.domain.samba.account.model import (
+                            SambaMarketAccount as _EligAcc,
+                        )
+
+                        _elig_res = await session.execute(
+                            select(_EligAcc.id).where(
+                                _EligAcc.market_type.in_(list(_enabled_markets))
+                            )
+                        )
+                        _elig_ids = [r[0] for r in _elig_res.all()]
+                        if _elig_ids:
+                            _market_filter_where = [
+                                or_(
+                                    *[
+                                        _CP.registered_accounts.op("@>")(
+                                            cast(f'["{_eid}"]', _JSONB)
+                                        )
+                                        for _eid in _elig_ids
+                                    ]
+                                )
+                            ]
+                            log.debug(
+                                "[오토튠][%s] 판매처 필터 WHERE: %d계정 (활성 %s)",
+                                site,
+                                len(_elig_ids),
+                                ",".join(_enabled_markets),
+                            )
+                    # _on_result 계정 레벨 필터용 (다중 판매처 등록 상품의 per-account 전송 좁히기)
+                    _market_filter_active = bool(_market_filter_where)
+
                     # 정렬 안정성 보장 (issue #206) — id를 secondary sort로 두지 않으면
                     # last_refreshed_at NULL 행 수천 개 중 매 cycle 동일 200개만 잡혀
                     # 다른 NULL 행이 영원히 cycle 진입 못 하는 사고 발생.
@@ -1355,6 +1398,7 @@ async def _site_autotune_loop(device_id: str, site: str):
 
                     _where = [
                         *market_cond,
+                        *_market_filter_where,
                         _CP.applied_policy_id != None,
                         _CP.source_site == site,
                     ]
@@ -1383,55 +1427,6 @@ async def _site_autotune_loop(device_id: str, site: str):
                         if p.id not in _seen_ids:
                             _seen_ids.add(p.id)
                             products.append(p)
-
-                    # ── 판매처 필터 사전 적용 ──
-                    # _enabled_markets 활성 시, 활성 마켓 타입에 등록된 계정이 하나라도
-                    # 있는 상품만 통과시킨다. (refresh 전에 잘라서 ABC/무신사 등 대용량
-                    # 소싱처에서 마켓 등록 안 된 상품까지 무의미하게 갱신되는 낭비를 차단)
-                    # _on_result(833-845)의 per-account 필터는 다중 마켓 등록 상품의
-                    # 송신 계정 좁히기 용도로 별개 — 그대로 유지한다.
-                    _enabled_markets = await _get_setting(
-                        session, AUTOTUNE_FILTER_MARKETS_KEY
-                    )
-                    _market_filter_active = bool(
-                        _enabled_markets and isinstance(_enabled_markets, list)
-                    )
-                    if _market_filter_active and products:
-                        _enabled_markets_set = set(_enabled_markets)
-                        _pre_acc_ids: set[str] = set()
-                        for _p in products:
-                            if _p.registered_accounts:
-                                _pre_acc_ids.update(_p.registered_accounts)
-                        _eligible_acc_ids: set[str] = set()
-                        if _pre_acc_ids:
-                            from backend.domain.samba.account.model import (
-                                SambaMarketAccount as _PreAcc,
-                            )
-
-                            _pre_acc_stmt = select(
-                                _PreAcc.id, _PreAcc.market_type
-                            ).where(_PreAcc.id.in_(list(_pre_acc_ids)))
-                            _pre_acc_res = await session.execute(_pre_acc_stmt)
-                            for _aid, _mt in _pre_acc_res.all():
-                                if _mt in _enabled_markets_set:
-                                    _eligible_acc_ids.add(_aid)
-                        _before_cnt = len(products)
-                        products = [
-                            _p
-                            for _p in products
-                            if _p.registered_accounts
-                            and any(
-                                _a in _eligible_acc_ids for _a in _p.registered_accounts
-                            )
-                        ]
-                        if len(products) < _before_cnt:
-                            log.info(
-                                "[오토튠][%s] 판매처 필터: %d→%d건 (활성 %s)",
-                                site,
-                                _before_cnt,
-                                len(products),
-                                ",".join(_enabled_markets),
-                            )
 
                     if products:
                         filtered_count = len(products)
