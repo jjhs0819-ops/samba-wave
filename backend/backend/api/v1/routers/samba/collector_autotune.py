@@ -233,26 +233,6 @@ def _pc_bs(dev: str) -> dict[str, int]:
     return _pc_site_batch_size.setdefault(dev, {})
 
 
-def _adapt_batch_size(dev: str, site: str, elapsed: float, env_max: int) -> None:
-    """직전 배치 elapsed 기반 다음 배치 크기 조정. 하한 50, 상한 max(env_max, 400).
-
-    - elapsed > 120초: 절반으로 (사이클 길어짐 → 풀/응답 부담 완화)
-    - elapsed < 30초: +50 (여유 있으면 처리량 증가)
-    - 그 사이: 유지
-    """
-    _bs = _pc_bs(dev)
-    _cur = _bs.get(site, env_max)
-    _hi = max(env_max, 400)
-    if elapsed > 120:
-        _new = max(50, _cur // 2)
-    elif elapsed < 30:
-        _new = min(_hi, _cur + 50)
-    else:
-        _new = _cur
-    if _new != _cur:
-        _bs[site] = _new
-
-
 # 잡 발행자 PC를 사이트별/상품별 호출 컨텍스트에 전파 (sourcing_queue.get_autotune_owner가 읽음).
 # 사이트 루프 진입 시 set, 종료 시 reset. PC별 독립 실행 → 컨텍스트 격리 보장.
 current_pc_owner: contextvars.ContextVar[str] = contextvars.ContextVar(

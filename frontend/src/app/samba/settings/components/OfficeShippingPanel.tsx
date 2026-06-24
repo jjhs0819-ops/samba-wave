@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { card, inputStyle } from '@/lib/samba/styles'
-import { forbiddenApi } from '@/lib/samba/legacy'
+import { fetchWithAuth, SAMBA_PREFIX } from '@/lib/samba/legacy'
 import { showAlert } from '@/components/samba/Modal'
 
 interface OfficeShipping {
@@ -26,13 +26,11 @@ export function OfficeShippingPanel() {
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
-    forbiddenApi.getSetting('office_shipping')
-      .then((d) => {
-        const data = d as OfficeShipping | null
-        if (data && data.name) {
-          setForm(data)
-          setPh(splitPhone(data.phone || ''))
-        }
+    fetchWithAuth(`${SAMBA_PREFIX}/proxy/config/office-shipping`)
+      .then(r => r.json())
+      .then((d: OfficeShipping) => {
+        setForm(d)
+        setPh(splitPhone(d.phone || ''))
         setLoaded(true)
       })
       .catch(() => setLoaded(true))
@@ -47,8 +45,16 @@ export function OfficeShippingPanel() {
     }
     setSaving(true)
     try {
-      await forbiddenApi.saveSetting('office_shipping', { ...form, phone: phoneStr })
-      showAlert('사무실 배송정보 저장 완료')
+      const res = await fetchWithAuth(`${SAMBA_PREFIX}/proxy/config/office-shipping`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...form, phone: phoneStr }),
+      })
+      if (res.ok) {
+        showAlert('사무실 배송정보 저장 완료')
+      } else {
+        showAlert('저장 실패', 'error')
+      }
     } catch {
       showAlert('저장 실패', 'error')
     } finally {

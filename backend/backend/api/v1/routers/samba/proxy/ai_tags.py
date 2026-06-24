@@ -502,51 +502,6 @@ def _has_overlap_suffix(word: str, existing: list[str], min_suffix: int = 2) -> 
     return False
 
 
-def _extract_seo_keywords(
-    candidates: list[str],
-    cats: list,
-    banned: set[str],
-    name_words: set[str],
-    final_tags: list[str] | None = None,
-    max_count: int = 3,
-) -> list[str]:
-    """최종 검증 태그와 겹치지 않는 SEO 키워드 3개 추출.
-
-    최종 태그에 포함된 키워드는 SEO에서 제외하여 중복을 방지한다.
-    태그에 선정되지 않은 후보 중에서 SEO에 적합한 키워드를 추출한다.
-    """
-    seo: list[str] = []
-    # 최종 태그 집합 (소문자, 공백 제거)
-    tag_set = {t.lower().replace(" ", "") for t in (final_tags or [])}
-    # 태그에 포함되지 않은 후보 우선, 그 다음 전체 후보
-    non_tag_candidates = [
-        c for c in candidates if c.lower().replace(" ", "") not in tag_set
-    ]
-    pool = non_tag_candidates + [c for c in candidates if c not in non_tag_candidates]
-    for kw in pool:
-        cleaned = kw
-        for cat_part in cats:
-            if cat_part:
-                cleaned = cleaned.replace(cat_part, "").strip()
-        words = cleaned.split() if " " in cleaned else [cleaned]
-        for word in words:
-            w = word.strip()
-            wl = w.lower().replace(" ", "")
-            if len(w) < 2 or wl in banned or wl in name_words or w in seo:
-                continue
-            # 태그와 겹치면 SEO에서 제외
-            if wl in tag_set:
-                continue
-            if _has_overlap_suffix(w, seo):
-                continue
-            seo.append(w)
-            if len(seo) >= max_count:
-                break
-        if len(seo) >= max_count:
-            break
-    return seo
-
-
 async def _generate_coupang_longtail(
     http_client: httpx.AsyncClient,
     method: str,

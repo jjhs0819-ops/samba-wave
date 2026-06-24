@@ -9924,28 +9924,6 @@ def _normalize_carrier_name(value: Any) -> str:
     return normalized
 
 
-def _playauto_carrier_candidates(value: Any) -> list[str]:
-    normalized = _normalize_carrier_name(value)
-    if not normalized:
-        return []
-    variants = {normalized}
-    alias_map = {
-        "CJ대한통운": ["대한통운", "CJ택배", "씨제이대한통운", "CJGLS"],
-        "대한통운": ["CJ대한통운", "CJ택배", "씨제이대한통운", "CJGLS"],
-        "한진택배": ["한진", "HANJIN"],
-        "롯데택배": ["롯데", "현대택배"],
-        "로젠택배": ["로젠"],
-        "우체국택배": ["우체국", "우체국소포"],
-        "경동택배": ["경동"],
-        "대신택배": ["대신"],
-        "일양로지스": ["일양택배", "ILYANG"],
-        "편의점택배": ["CU편의점택배", "GS25편의점택배", "CVSNET"],
-    }
-    for alias in alias_map.get(str(value or "").strip(), []):
-        variants.add(_normalize_carrier_name(alias))
-    return [v for v in variants if v]
-
-
 def _parse_playauto_order(
     ro: dict,
     account_id: str,

@@ -1064,3 +1064,74 @@ async def bg_jobs_installer() -> Response:
         media_type="application/zip",
         headers={"Content-Disposition": 'attachment; filename="samba-bg-worker.zip"'},
     )
+
+
+@bg_worker_router.post("/bg-jobs/enqueue-nike-bg")
+async def enqueue_nike_bg(
+    x_worker_token: str = Header(default=""),
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """LOTTEON+SSG 나이키 상품 중 배경제거 미완료 상품을 bg-job에 등록.
+
+    X-Worker-Token 인증 전용 — JWT 불필요. 야간 배치(night_nike_bg_enqueue.py) 전용.
+    """
+    from sqlalchemy import or_, select as sa_select
+
+    from backend.domain.samba.collector.model import SambaCollectedProduct as CP
+    from backend.domain.samba.job.model import SambaJob
+
+    if not await _verify_worker_token(x_worker_token, session, _default_tenant_id()):
+        return {"success": False, "message": "인증 실패"}
+
+    # 나이키 상품 조회: LOTTEON+SSG, ai_image_transformed=False, brand ilike 나이키/nike
+    stmt = sa_select(CP.id).where(
+        CP.source_site.in_(["LOTTEON", "SSG"]),
+        CP.ai_image_transformed.is_(False),
+        or_(
+            CP.brand.ilike("%나이키%"),
+            CP.brand.ilike("%nike%"),
+        ),
+    )
+    result = await session.execute(stmt)
+    product_ids = [r[0] for r in result.all()]
+
+    if not product_ids:
+        logger.info("[나이키 야간배치] 처리할 상품 없음")
+        return {
+            "success": True,
+            "job_ids": [],
+            "total": 0,
+            "message": "처리할 상품 없음",
+        }
+
+    # 5,000개씩 배치로 bg-job 등록
+    BATCH = 5000
+    scope = {
+        "thumbnail": True,
+        "additional": False,
+        "detail": False,
+        "skip_processed": True,
+    }
+    job_ids: list[str] = []
+    for i in range(0, len(product_ids), BATCH):
+        chunk = product_ids[i : i + BATCH]
+        job = SambaJob(
+            job_type="bg_remove",
+            status="pending",
+            payload={"product_ids": chunk, "scope": scope},
+            total=len(chunk),
+        )
+        session.add(job)
+        await session.flush()
+        job_ids.append(str(job.id))
+
+    await session.commit()
+    logger.info(
+        f"[나이키 야간배치] {len(product_ids)}개 상품 → {len(job_ids)}개 job 등록"
+    )
+    return {
+        "success": True,
+        "job_ids": job_ids,
+        "total": len(product_ids),
+        "message": f"{len(product_ids):,}개 상품 bg-job 등록 완료",
+    }
