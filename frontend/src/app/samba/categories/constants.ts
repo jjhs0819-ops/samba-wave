@@ -8,8 +8,8 @@ import { MARKET_LABELS, MARKETS } from '@/lib/samba/markets'
 export const COST_PER_CALL_KRW = 15
 export const COST_BASIS = 'Sonnet4 $3/M in + $15/M out × ₩1,450'
 
-const ORDERED_ADJACENT_MARKETS = ['smartstore', 'lotteon', '11st']
-const HIDDEN_CATEGORY_MARKETS = new Set(['gsshop', 'lottehome'])
+const ORDERED_ADJACENT_MARKETS = ['smartstore', 'lotteon', '11st', 'gsshop', 'ssg', 'ssg_std']
+const HIDDEN_CATEGORY_MARKETS = new Set(['lottehome'])
 
 // 카테고리 매핑 미지원 마켓 제외 (예: 무신사 — hasCategory: false)
 const NO_CATEGORY_MARKETS = new Set(
