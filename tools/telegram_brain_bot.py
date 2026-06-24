@@ -695,8 +695,8 @@ def build_order_status_text(with_comment: bool = True) -> str:
     fulfilled = sum(1 for o in yday_active if _order_has_so(o))
     unfulfilled = active_cnt - fulfilled
     cancelled = yday_cnt - active_cnt  # 총주문 = 발주완료 + 미발주 + 취소완료
-    # 이행율 = 발주완료 / 발주대상(취소제외 매출건). 취소는 발주 대상 아니라 제외.
-    rate = (fulfilled / active_cnt * 100) if active_cnt else 0
+    # 주문이행율 = 발주완료 / 전체 들어온 주문(전날 총 주문).
+    rate = (fulfilled / yday_cnt * 100) if yday_cnt else 0
 
     return "\n".join([
         "📦 주문 처리 현황",
