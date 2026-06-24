@@ -2597,6 +2597,111 @@ async def backfill_product_links(
     return {"linked": linked, "total_cache": len(mpn_map)}
 
 
+@router.post("/backfill-playauto-style-code")
+async def backfill_playauto_style_code(
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """플레이오토 미등록 주문을 상품명 style_code로 일괄 백필.
+
+    - collected_product_id IS NULL + source='playauto' + product_name 있는 주문 대상
+    - _lh_style_tokens 로 토큰 추출 후 samba_collected_product.style_code 단일후보 매칭
+    - 글로벌 단일후보: 해당 토큰 style_code 가진 CP가 정확히 1개일 때만 연결 (다중 skip)
+    - 배치 CP 조회(토큰셋 1회) → N × DB 호출 없이 효율적 처리
+    """
+    from sqlalchemy import text as _t
+
+    # 미등록 플레이오토 주문 조회
+    null_rows = (
+        await session.execute(
+            _t(
+                "SELECT id, product_name FROM samba_order "
+                "WHERE source = 'playauto' "
+                "AND collected_product_id IS NULL "
+                "AND product_name IS NOT NULL AND product_name != ''"
+            )
+        )
+    ).fetchall()
+
+    if not null_rows:
+        return {"linked": 0, "skipped_ambiguous": 0, "no_cp": 0, "total": 0}
+
+    # 전체 토큰 수집
+    all_tokens: set[str] = set()
+    order_tokens: list[tuple[str, list[str]]] = []
+    for oid, pname in null_rows:
+        tokens = _lh_style_tokens(str(pname or ""))
+        order_tokens.append((str(oid), tokens))
+        all_tokens.update(tokens)
+
+    if not all_tokens:
+        return {
+            "linked": 0,
+            "skipped_ambiguous": 0,
+            "no_cp": 0,
+            "total": len(null_rows),
+        }
+
+    # 토큰 → CP 배치 조회 (1회)
+    _cols = (
+        "id, style_code, source_site, source_url, (images->>0) AS thumb, category, cost"
+    )
+    cp_rows = (
+        await session.execute(
+            _t(
+                f"SELECT {_cols} FROM samba_collected_product "
+                "WHERE style_code = ANY(:t)"
+            ),
+            {"t": list(all_tokens)},
+        )
+    ).fetchall()
+
+    # 토큰 → [cp_id, ...] 인덱스 구성
+    token_to_cp: dict[str, list[str]] = {}
+    for row in cp_rows:
+        sc = str(row[1] or "")
+        if sc:
+            token_to_cp.setdefault(sc, []).append(str(row[0]))
+
+    # 주문별 매칭
+    linked = skipped_ambiguous = no_cp = 0
+    for oid, tokens in order_tokens:
+        if not tokens:
+            no_cp += 1
+            continue
+        # 가장 긴 토큰부터 단독 고유 매칭 시도
+        matched_cpid: str | None = None
+        for tok in sorted(tokens, key=len, reverse=True):
+            cands = token_to_cp.get(tok, [])
+            if len(cands) == 1:
+                matched_cpid = cands[0]
+                break
+            elif len(cands) > 1:
+                skipped_ambiguous += 1
+                break
+        if matched_cpid:
+            await session.execute(
+                _t(
+                    "UPDATE samba_order SET collected_product_id = :cpid "
+                    "WHERE id = :oid AND collected_product_id IS NULL"
+                ),
+                {"cpid": matched_cpid, "oid": oid},
+            )
+            linked += 1
+        else:
+            no_cp += 1
+
+    await session.commit()
+    logger.info(
+        f"[백필/플레이오토-style] linked={linked} ambiguous={skipped_ambiguous} no_cp={no_cp}"
+    )
+    return {
+        "linked": linked,
+        "skipped_ambiguous": skipped_ambiguous,
+        "no_cp": no_cp,
+        "total": len(null_rows),
+    }
+
+
 @router.post("/fix-musinsa-fashionplus-mismatch")
 async def fix_musinsa_fashionplus_mismatch(
     session: AsyncSession = Depends(get_write_session_dependency),
