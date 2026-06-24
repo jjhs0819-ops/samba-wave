@@ -60,7 +60,7 @@ export const STORE_MARKETS: MarketConfig[] = [
   { key: 'smartstore', label: '스마트스토어', authField: 'clientSecret', guideUrl: 'https://apicenter.commerce.naver.com/ko/member/home', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
     { name: 'storeId', label: '스토어 ID', type: 'text' },
-    { name: 'clientId', label: 'Client ID', type: 'text' },
+    { name: 'clientId', label: '애플리케이션ID', type: 'text' },
     { name: 'clientSecret', label: 'Client Secret', type: 'password' },
     { name: 'asPhone', label: 'A/S 전화번호', type: 'text', placeholder: '' },
     { name: 'asMessage', label: 'A/S 안내 문구', type: 'text', placeholder: '' },
