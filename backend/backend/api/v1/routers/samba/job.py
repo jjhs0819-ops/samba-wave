@@ -282,11 +282,14 @@ async def list_jobs(
     status: Optional[str] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
-    session: AsyncSession = Depends(get_write_session_dependency),
+    session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """잡 목록 조회 (payload 제외 — 경량 응답).
 
-    Write DB 사용 — Read Replica 복제 지연으로 cancel 직후 stale 상태 반환 방지.
+    Read DB 사용 — 진행현황 폴링 조회를 read 풀로 분리.
+    수집 잡이 write 커넥션을 idle-in-transaction 으로 장시간 점유(orm.py:126)하는
+    동안 write 풀(20+40)이 포화되어 list_jobs 가 pool_timeout(10s)에 밀리던 문제 해결.
+    cancel 직후 replica 복제 지연 stale 은 폴링 다음 갱신에서 자동 보정(1프레임 무해).
     """
     svc = SambaJobService(SambaJobRepository(session))
     jobs = await svc.list_jobs(status=status, skip=skip, limit=limit)
