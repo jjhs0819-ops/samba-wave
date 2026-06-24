@@ -673,15 +673,20 @@ def build_sales_text(with_comment: bool = True) -> str:
 
 
 def build_order_status_text(with_comment: bool = True) -> str:
-    """금일 신규주문 + 전날 총 주문 + 전날 이행(주문번호 입력) 건수."""
+    """금일 신규주문 + 전날 총 주문 + 전날 이행(주문번호 입력) 건수.
+
+    기준: 등록상품(미등록 제외) · 취소 포함. 이행 = 그 중 주문번호(발주) 입력 건.
+    """
     today = _kst_date()
     yday = _kst_date(-1)
     orders = samba.orders_by_date_range(yday, today)  # 결제일 KST: 어제~오늘
     if orders is None:
         return "❌ 삼바 서버 연결 실패 (주문현황)."
 
-    today_cnt = sum(1 for o in orders if _order_kst_date(o) == today)
-    yday_orders = [o for o in orders if _order_kst_date(o) == yday]
+    today_cnt = sum(1 for o in orders
+                    if _order_kst_date(o) == today and _order_registered(o))
+    yday_orders = [o for o in orders
+                   if _order_kst_date(o) == yday and _order_registered(o)]
     yday_cnt = len(yday_orders)
     yday_fulfilled = sum(1 for o in yday_orders if _order_has_so(o))
     rate = (yday_fulfilled / yday_cnt * 100) if yday_cnt else 0
