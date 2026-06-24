@@ -820,11 +820,11 @@ class JobWorker:
                 _excl_autotune_accounts: set[str] = set()
                 for _aids in self._active_autotune_accounts.values():
                     _excl_autotune_accounts.update(_aids)
-                # playauto: API키 기반, lottehome: cert_key stateless → 동일 계정 병렬 허용
+                # playauto: API키 기반, lottehome: cert_key stateless, ssg/ssg_std: Authorization 헤더 stateless → 동일 계정 병렬 허용
                 _parallel_ok_accs = {
                     acc
                     for acc, mt in self._acc_market_type_cache.items()
-                    if mt in ("playauto", "lottehome")
+                    if mt in ("playauto", "lottehome", "ssg", "ssg_std")
                 }
                 _excl_autotune_accounts -= _parallel_ok_accs
                 # 일시정지 중이면 transmit 클레임 스킵 — PENDING 잡 대기 유지
@@ -919,7 +919,7 @@ class JobWorker:
                         _mt_to_accs: dict[str, list[str]] = {}
                         for _aid, _mt in self._acc_market_type_cache.items():
                             _mt_to_accs.setdefault(_mt, []).append(_aid)
-                        _special_mts = {"lottehome", "playauto"}
+                        _special_mts = {"lottehome", "playauto", "ssg", "ssg_std"}
                         _special_min = max(1, round(_bg_max * 0.15))
                         for _mt, _limit in self._autotune_slot_limits.items():
                             _cur = _running_per_mt.get(_mt, 0)
