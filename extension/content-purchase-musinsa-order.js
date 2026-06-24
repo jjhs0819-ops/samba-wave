@@ -26,25 +26,69 @@
 
     const parts = val.split('/').map(s => s.trim())
 
-    // 무신사 새 UI: DropdownTriggerInput (placeholder="컬러","사이즈") 순서대로 클릭 후 항목 선택
+    // 무신사 새 UI: DropdownTriggerBox 방식 (컬러 선택 후 사이즈 박스가 동적으로 생성됨)
+    const hasBoxes = document.querySelector('[data-mds="DropdownTriggerBox"]')
+    if (hasBoxes) {
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i]
+        await sleep(400)
+
+        // 현재 존재하는 DropdownTriggerBox 재조회 (동적 생성 대응)
+        const boxes = Array.from(document.querySelectorAll('[data-mds="DropdownTriggerBox"]'))
+        if (boxes.length === 0) break
+
+        // 아직 선택 안 된 (closed) 박스 우선, 없으면 i번째
+        const targetBox = boxes.find(b => b.getAttribute('data-state') === 'closed' && !b.querySelector('[data-mds="DropdownTriggerInput"]')?.value?.trim()) || boxes[i] || boxes[boxes.length - 1]
+        const ph = targetBox.querySelector('[data-mds="DropdownTriggerInput"]')?.getAttribute('placeholder') || ''
+
+        // 박스 클릭으로 드롭다운 열기
+        targetBox.click()
+        await sleep(500)
+
+        // DropdownItemContent__Container에서 part 텍스트 매칭
+        const containers = Array.from(document.querySelectorAll('[class*="DropdownItemContent__Container"]'))
+        let matched = false
+        for (const c of containers) {
+          const t = c.textContent.trim()
+          if (t === part || t.startsWith(part) || t.toLowerCase().includes(part.toLowerCase())) {
+            c.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+            c.click()
+            c.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+            await sleep(500)
+            console.log(`[삼바-주문처리-무신사] TriggerBox[${ph}] "${part}" 선택`)
+            matched = true
+            break
+          }
+        }
+        if (!matched) {
+          if (containers.length > 0) {
+            containers[0].dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+            containers[0].click()
+            await sleep(500)
+            console.log(`[삼바-주문처리-무신사] TriggerBox[${ph}] 첫 항목 자동선택 (${containers[0].textContent.trim()})`)
+          } else {
+            console.log(`[삼바-주문처리-무신사] TriggerBox[${ph}] "${part}" 항목 없음`)
+          }
+        }
+      }
+      return true
+    }
+
+    // DropdownTriggerInput 방식 폴백
     const triggers = Array.from(document.querySelectorAll('[data-mds="DropdownTriggerInput"]'))
     if (triggers.length > 0) {
       for (let i = 0; i < triggers.length; i++) {
         const part = parts[i] || parts[parts.length - 1]
         const trigger = triggers[i]
         const ph = trigger.getAttribute('placeholder') || ''
-        // 이미 값이 채워진 경우 스킵 (단일컬러 상품)
         if (trigger.value && trigger.value.trim() && part && trigger.value.trim().toLowerCase().includes(part.toLowerCase())) {
           console.log(`[삼바-주문처리-무신사] DropdownTrigger[${ph}] 이미 "${trigger.value}" 선택됨 — 스킵`)
           continue
         }
-        // 드롭다운 열기
         trigger.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
         trigger.click()
         await sleep(400)
 
-        // 열린 드롭다운에서 항목 매칭 클릭
-        // DropdownItemContent__Container 또는 텍스트 일치 요소 탐색
         let matched = false
         const candidates = Array.from(document.querySelectorAll('[class*="DropdownItemContent"],[class*="SelectedOption__SelectOptionItem"]'))
         for (const el of candidates) {
@@ -58,13 +102,10 @@
           }
         }
         if (!matched) {
-          // 폴백: 첫 번째 항목 자동선택 (단일옵션 상품)
           if (candidates.length > 0) {
             candidates[0].click()
             await sleep(500)
-            console.log(`[삼바-주문처리-무신사] DropdownItem[${ph}] 첫 항목 자동선택 (${candidates[0].textContent.trim()})`)
-          } else {
-            console.log(`[삼바-주문처리-무신사] DropdownItem[${ph}] "${part}" 항목 없음 — 스킵`)
+            console.log(`[삼바-주문처리-무신사] DropdownItem[${ph}] 첫 항목 자동선택`)
           }
         }
       }

@@ -915,6 +915,136 @@ class LotteHomePlugin(MarketPlugin):
             f"img_url4={_img_tag(goods_data.get('img_url4'))}, "
             f"img_url5={_img_tag(goods_data.get('img_url5'))}"
         )
+
+        # ── #480 수정: existing_no 있으면 register_goods 절대 금지 ──────────────
+        # full 전송(skip_image_upload 미설정)이어도 기등록 상품은 수정 API로만 처리.
+        # register_goods 호출 → 새 goods_no 발급 → orphan 누적 버그 차단.
+        if existing_no:
+            # market_product_nos[account_id + "_qa"] 기준으로 승인 전/후 분기
+            _market_nos_now = product.get("market_product_nos") or {}
+            _qa_status = str(
+                _market_nos_now.get(f"{account.id}_qa") if account else ""
+            ).strip()
+            # qa=approved → 전시상품수정 (승인 후), 그 외(pending/None 포함) → 신규상품수정
+            _use_display = _qa_status == "approved"
+            _modify_label = "전시상품수정" if _use_display else "신규상품수정"
+
+            logger.info(
+                f"[롯데홈쇼핑][#480] existing_no={existing_no} qa={_qa_status!r} "
+                f"→ {_modify_label} API 호출"
+            )
+
+            async def _call_modify(use_display: bool) -> dict[str, Any]:
+                """qa 상태에 맞는 수정 API 호출. [2013] 예외를 그대로 전파."""
+                if use_display:
+                    return await client.update_display_goods(existing_no, goods_data)
+                else:
+                    return await client.update_new_goods(existing_no, goods_data)
+
+            from backend.domain.samba.proxy.lottehome import LotteApiError
+
+            try:
+                mod_result = await _call_modify(_use_display)
+            except LotteApiError as _e:
+                if _e.code == "2013":
+                    # [2013]: 번호 lifecycle 불일치 — 반대 API로 1회 교차시도
+                    _opposite_label = "신규상품수정" if _use_display else "전시상품수정"
+                    logger.warning(
+                        f"[롯데홈쇼핑][#480] {_modify_label} [2013] → "
+                        f"{_opposite_label} 교차시도 (goods_no={existing_no})"
+                    )
+                    try:
+                        mod_result = await _call_modify(not _use_display)
+                    except LotteApiError as _e2:
+                        if _e2.code == "2013":
+                            # 양쪽 모두 [2013] → stale 실패 처리 (register 폴백 절대 금지)
+                            logger.error(
+                                "[롯데홈쇼핑][#480] 양방향 [2013] — stale 실패 처리. "
+                                "goods_no=%s product=%s",
+                                existing_no,
+                                product.get("id"),
+                            )
+                            return {
+                                "success": False,
+                                "message": (
+                                    f"롯데홈쇼핑 수정 [2013] stale — "
+                                    f"goods_no={existing_no} lifecycle 불일치"
+                                ),
+                            }
+                        raise
+                else:
+                    raise
+
+            # 수정 응답 Result 엄격 검사 (Result=1 만 성공)
+            mod_data = mod_result.get("data", {}) or {}
+            mod_g_results = mod_data.get("GoodsResults", mod_data.get("Result", {}))
+            if isinstance(mod_g_results, dict):
+                mod_result_code = str(mod_g_results.get("Result", "")).strip()
+            else:
+                mod_result_code = str(mod_g_results).strip()
+
+            logger.info(
+                f"[롯데홈쇼핑][#480] {_modify_label} 응답 Result={mod_result_code!r} "
+                f"goods_no={existing_no}"
+            )
+
+            if mod_result_code == "1":
+                # 수정 성공 — 옵션 캐시 무효화 (이미지/옵션 변경 반영)
+                _item_no_cache.pop(existing_no, None)
+                logger.info(
+                    f"[롯데홈쇼핑][#480] {_modify_label} 성공 — "
+                    f"item_no_cache 무효화 goods_no={existing_no}"
+                )
+                return {
+                    "success": True,
+                    "message": f"롯데홈쇼핑 {_modify_label} 성공",
+                    "goodsNo": existing_no,
+                }
+            elif mod_result_code == "3":
+                # Result=3: MD 재심사 접수 → _qa=pending 갱신
+                logger.info(
+                    f"[롯데홈쇼핑][#480] {_modify_label} MD 재심사 접수(Result=3) — "
+                    f"_qa=pending 갱신 goods_no={existing_no}"
+                )
+                try:
+                    from backend.domain.samba.collector.model import (
+                        SambaCollectedProduct,
+                    )
+                    from sqlmodel import select as _sel
+
+                    _stmt = _sel(SambaCollectedProduct).where(
+                        SambaCollectedProduct.id == product.get("id")
+                    )
+                    _r = await session.execute(_stmt)
+                    _cp = _r.scalars().first()
+                    if _cp and account:
+                        _nos = dict(_cp.market_product_nos or {})
+                        _nos[f"{account.id}_qa"] = "pending"
+                        _cp.market_product_nos = _nos
+                        session.add(_cp)
+                        await session.commit()
+                except Exception as _de:
+                    logger.warning(
+                        f"[롯데홈쇼핑][#480] _qa=pending DB 갱신 실패(무시): {_de}"
+                    )
+                _item_no_cache.pop(existing_no, None)
+                return {
+                    "success": True,
+                    "message": f"롯데홈쇼핑 {_modify_label} MD 재심사 접수(Result=3)",
+                    "goodsNo": existing_no,
+                    "qa_pending": True,
+                }
+            else:
+                # Result=2 또는 불명 → 실패
+                return {
+                    "success": False,
+                    "message": (
+                        f"롯데홈쇼핑 {_modify_label} 실패 Result={mod_result_code!r} "
+                        f"goods_no={existing_no}"
+                    ),
+                }
+        # ─────────────────────────────────────────────────────────────────
+
         # P2 중복방지(issue #365): 같은 style_code 가 이미 이 계정에 등록돼 있으면
         # register_goods(새 goods_no 발급)를 스킵하고 기존 goods_no 를 공유한다.
         # → 중복 goods_no 발급 차단(주문 미매칭 근원 제거). 실제 등록 API 호출 0건.
@@ -936,12 +1066,31 @@ class LotteHomePlugin(MarketPlugin):
             )
             logger.info(f"[롯데홈쇼핑 진단/RES_DATA] data={result.get('data', {})}")
 
-            # 상품번호 추출
+            # 상품번호 추출 — GoodsResults.Result == "1" 엄격 검사 (#480)
+            # 기존: Errors 없으면 success, Result 값을 goods_no 로 쓰는 폴백
+            # 수정: Result != "1" 이면 실패 처리, Result 를 goods_no 로 쓰는 폴백 제거
             g_data = result.get("data", {})
             g_result = g_data.get("GoodsResults", g_data.get("Result", g_data))
             goods_no = ""
             if isinstance(g_result, dict):
-                goods_no = g_result.get("goods_no", "") or g_result.get("Result", "")
+                _reg_result_code = str(g_result.get("Result", "")).strip()
+                if _reg_result_code == "1":
+                    goods_no = str(g_result.get("goods_no", "")).strip()
+                else:
+                    # Result != "1" (Result=2 실패 등) → false success 차단
+                    logger.error(
+                        "[롯데홈쇼핑][#480] 등록 응답 Result=%r (≠1) — 실패 처리. "
+                        "product=%s rawXml=%s",
+                        _reg_result_code,
+                        product.get("id"),
+                        str(result.get("rawXml", ""))[:500],
+                    )
+                    return {
+                        "success": False,
+                        "message": (
+                            f"롯데홈쇼핑 등록 실패 Result={_reg_result_code!r}"
+                        ),
+                    }
             # 등록은 됐는데 응답에서 goods_no 추출 실패 = 번호 유실(유령상품화)의 주원인.
             # 조용히 넘기지 말고 loud 에러로 즉시 포착(#434 예방). 사후 주문 기반 복구 대상.
             if not goods_no:
