@@ -345,11 +345,16 @@ function composeProductName(
       composed = composed.replace(delRegex, ' ').replace(/\s{2,}/g, ' ').trim()
     }
   }
+  // prefix/suffix 적용 — 중복 제거(dedup)보다 먼저 적용한다 (백엔드 _compose_product_name와 동일, #469).
+  // 접두/접미어가 원본 상품명에 이미 들어있는 단어("매장정품" 등)와 겹쳐도 아래 dedup에서 한 번만 남도록.
+  if (nameRule?.prefix) composed = `${nameRule.prefix} ${composed}`
+  if (nameRule?.suffix) composed = `${composed} ${nameRule.suffix}`
   // 중복 제거 — 구두점 안에 묶인 부분단어까지 감지
   if (nameRule?.dedup_enabled) {
     const seen = new Set<string>()
-    // 2자 이상 한글/영문 + 하이픈 연결 숫자(품번) + 3자 이상 순수 숫자
-    composed = composed.replace(/\p{L}{2,}|\d+(?:-\d+)+|\d{3,}/gu, (match) => {
+    // 2자 이상 단어 토큰(한글/영문/숫자 혼합 포함) + 하이픈 연결 숫자.
+    // 영문+숫자 품번(OQ2DE112)을 한 토큰으로 처리 — 쪼개면 중복 품번이 통째로 안 지워지고 숫자 파편("2 2")이 남던 버그 방지.
+    composed = composed.replace(/[\p{L}\p{N}]{2,}|\d+(?:-\d+)+/gu, (match) => {
       const lower = match.toLowerCase()
       if (seen.has(lower)) return ''
       seen.add(lower)
@@ -357,9 +362,6 @@ function composeProductName(
     })
     composed = composed.replace(/\s+/g, ' ').trim()
   }
-  // prefix/suffix 적용
-  if (nameRule?.prefix) composed = `${nameRule.prefix} ${composed}`
-  if (nameRule?.suffix) composed = `${composed} ${nameRule.suffix}`
   // 방어: 데이터(style_code/name)에 섞인 <p> 등 HTML 태그 제거 + 공백 정리
   composed = composed.replace(/<[^>]*>/g, '').replace(/\s{2,}/g, ' ')
   return composed.trim()

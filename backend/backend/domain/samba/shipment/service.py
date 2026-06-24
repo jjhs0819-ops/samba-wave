@@ -2740,9 +2740,11 @@ class SambaShipmentService:
                 seen.add(lower)
                 return word
 
-            # 2자 이상 한글/영문 + 하이픈 연결 숫자(품번) + 3자 이상 순수 숫자
+            # 2자 이상 단어 토큰(한글/영문/숫자 혼합 포함) + 하이픈 연결 숫자.
+            # 영문+숫자 품번(예 OQ2DE112)을 글자/숫자로 쪼개지 않고 한 토큰으로 처리 —
+            # 쪼개면 중복 품번이 통째로 안 지워지고 숫자 파편("2 2")이 남던 버그 방지.
             composed = re.sub(
-                r"[^\W\d_]{2,}|\d+(?:-\d+)+|\d{3,}",
+                r"[^\W_]{2,}|\d+(?:-\d+)+",
                 _dedup_replace,
                 composed,
                 flags=re.UNICODE,
