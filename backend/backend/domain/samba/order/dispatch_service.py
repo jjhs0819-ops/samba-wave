@@ -138,6 +138,8 @@ async def send_invoice_to_market(
             return await _send_lottehome(order, account, courier, tracking, session)
         if market_type == "ssg":
             return await _send_ssg(order, account, courier, tracking, session)
+        if market_type == "gsshop":
+            return await _send_gsshop(order, account, courier, tracking, session)
         return False, f"미지원 마켓: {market_type}"
     except Exception as e:
         logger.warning(
@@ -589,3 +591,153 @@ async def _send_ssg(order, account, courier, tracking, session):
         return True, "SSG 운송장 등록 및 출고처리 완료"
     except RuntimeError as e:
         return False, str(e)
+
+
+# GS샵 택배사 코드 매핑 (ORD03 deliveryCd) — GS샵 공식 명세 전체
+_GS_COURIER_MAP = {
+    "에어보이익스프레스": "AE",
+    "CJ KOREA": "CG",
+    "CJ코리아": "CG",
+    "천일택배": "CI",
+    "천일": "CI",
+    "CJGLS": "CJ",
+    "CJ GLS": "CJ",
+    "편의점택배": "CV",
+    "딜리박스": "DF",
+    "DHL Global Mail": "DG",
+    "CJ대한통운": "DH",
+    "CJ택배": "DH",
+    "DHL": "DL",
+    "동양매직": "DM",
+    "대신택배": "DS",
+    "대신": "DS",
+    "LG전자(대한통운)": "DZ",
+    "APEX": "EE",
+    "ECMS Express": "EE",
+    "우체국택배": "EP",
+    "우체국": "EP",
+    "우체국등기": "ER",
+    "EMS": "ES",
+    "Fedex": "FX",
+    "FedEx": "FX",
+    "페덱스": "FX",
+    "GSI Express": "GE",
+    "GSMNtoN": "GN",
+    "인로스": "GN",
+    "합동택배": "H1",
+    "합동": "H1",
+    "롯데택배": "HD",
+    "롯데글로벌로지스": "HD",
+    "Hyundai Global": "HG",
+    "현대글로벌": "HG",
+    "하이택배": "HI",
+    "한진택배": "HJ",
+    "한진": "HJ",
+    "우리택배": "HN",
+    "홈픽": "HP",
+    "한의사랑": "HS",
+    "한국야쿠르트": "HY",
+    "GTX로지스": "IN",
+    "GTX 로지스": "IN",
+    "GTX": "IN",
+    "i-Parcel": "IP",
+    "아이파슬": "IP",
+    "일양택배": "IY",
+    "일양": "IY",
+    "제니엘시스템": "JE",
+    "Hanjin Global": "JG",
+    "경동택배": "KD",
+    "경동": "KD",
+    "로젠택배": "KG",
+    "로젠": "KG",
+    "KGB택배": "KL",
+    "컬리넥스트마일": "KN",
+    "건영택배": "KY",
+    "건영": "KY",
+    "롯데백화점": "LC",
+    "LLC": "LC",
+    "롯데칠성": "LD",
+    "LG전자": "LE",
+    "롯데국제특송": "LK",
+    "LG전자(판토스)": "LP",
+    "판토스": "LP",
+    "GS프레시몰": "MB",
+    "GS 프레시몰": "MB",
+    "범한판토스": "PT",
+    "SB": "SB",
+    "삼성전자": "SE",
+    "TNT Express": "TE",
+    "TNT": "TE",
+    "팀프레시": "TM",
+    "로지스밸리택배": "TP",
+    "UPS": "UP",
+    "USPS": "US",
+    "부릉": "VR",
+    "발렉스": "VX",
+    "협력사직접발송": "ZX",
+    "직접발송": "ZX",
+    "업체배송": "ZY",
+    "설치배송": "ZY",
+    "업체설치배송": "ZY",
+}
+
+
+async def _send_gsshop(order, account, courier, tracking, session):
+    """GS샵 — 배송처리 (ORD03 DLVSTRT)."""
+    from backend.domain.samba.proxy.gsshop import GsShopClient
+    from backend.domain.samba.account.resolver import resolve_market_creds
+
+    extras = account.additional_fields or {}
+    _creds = (
+        await resolve_market_creds(
+            session,
+            getattr(account, "tenant_id", None),
+            market_type="gsshop",
+            store_key="store_gsshop",
+        )
+        or {}
+    )
+    sup_cd = (
+        _creds.get("supCd", "")
+        or _creds.get("storeId", "")
+        or extras.get("storeId", "")
+    )
+    aes_key = _creds.get("apiKeyProd", "") or extras.get("apiKeyProd", "")
+    if not sup_cd or not aes_key:
+        return False, "GS샵 협력사코드/인증키 누락"
+
+    # 주문번호: "ordNo:ordItemNo" 형태
+    order_number = order.order_number or ""
+    if ":" in order_number:
+        ord_no, ord_item_no = order_number.split(":", 1)
+    else:
+        ord_no = order_number
+        ord_item_no = order.shipment_id or "1"
+
+    if not tracking:
+        return False, "운송장 번호 누락"
+
+    delivery_cd = _GS_COURIER_MAP.get(courier, "")
+    if not delivery_cd:
+        # 코드 자체가 넘어온 경우 그대로 사용 (2자리 이내)
+        if courier and len(courier) <= 2:
+            delivery_cd = courier
+        else:
+            return False, f"GS샵 미등록 택배사: {courier!r}"
+
+    client = GsShopClient(
+        sup_cd=sup_cd,
+        aes_key=aes_key,
+        sub_sup_cd=sup_cd,
+        env="prod",
+    )
+    result = await client.ship_order(
+        ord_no=ord_no,
+        ord_item_no=ord_item_no,
+        delivery_cd=delivery_cd,
+        delivery_no=tracking,
+    )
+    result_cd = result.get("resultCd", "") if isinstance(result, dict) else ""
+    if result_cd == "S" or result.get("success"):
+        return True, "GS샵 배송처리 완료"
+    return False, f"GS샵 배송처리 실패: {result.get('resultMsg', '')}"

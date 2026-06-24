@@ -444,6 +444,283 @@ class GsShopClient:
             "/api/v3/modifyPromotionStatus.gs", "POST", body=body
         )
 
+    # ------------------------------------------------------------------
+    # 주문 수집 (ORD01)
+    # ------------------------------------------------------------------
+
+    async def get_orders(
+        self,
+        sd_dt: str,
+        process_type: str = "S",
+    ) -> list[dict[str, Any]]:
+        """GS샵 주문 데이터 수집 (ORD01).
+
+        process_type:
+            S = 주문/반품 (신규주문, 교환주문, 반품)
+            C = 취소 주문
+            N = 미배송(배송불필요/수거불필요) 주문
+        sd_dt: 조회 날짜 (YYYYMMDD)
+        """
+        from zoneinfo import ZoneInfo
+
+        now = datetime.now(tz=ZoneInfo("Asia/Seoul"))
+        sysdate = now.strftime("%Y%m%d%H%M%S")
+        token = self._generate_token()
+
+        body = {
+            "documentId": "ORDINF",
+            "supCd": self.sup_cd,
+            "processType": process_type,
+            "sdDt": sd_dt,
+        }
+
+        # ORD01은 POST + JSON body (명세서 GET 표기이나 body 전달 필요)
+        url = self.base_url + "/api/v5/dtr/supSendOrderInfo.gs"
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "supCd": self.sup_cd,
+            "token": token,
+        }
+
+        timeout = httpx.Timeout(60.0, connect=10.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(url, headers=headers, json=body)
+            text = resp.text
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                data = {"raw": text}
+
+        logger.info(
+            f"[GS샵ORD01] processType={process_type} sdDt={sd_dt} "
+            f"-> {resp.status_code} resultCd={data.get('resultCd', '')}"
+        )
+
+        if not resp.is_success:
+            raise GsShopApiError(
+                code=resp.status_code,
+                message=(data.get("resultMsg") or text[:120]),
+                data=data,
+            )
+
+        # 응답: {"resultCd":"S", "resultList":[...], ...}
+        result_cd = data.get("resultCd", "")
+        if result_cd == "E":
+            raise GsShopApiError(
+                code=200,
+                message=data.get("resultMsg", "주문 조회 실패"),
+                data=data,
+            )
+
+        return data.get("resultList") or []
+
+    # ------------------------------------------------------------------
+    # 발주확인/배송처리 (ORD02/ORD03)
+    # URL: /b2b/aliaSupCommonReceiveOrderInfo.gs
+    # ------------------------------------------------------------------
+
+    async def _send_order_info(
+        self,
+        process_type: str,
+        items: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """ORD02/ORD03 공통 전송 (발주확인/배송처리/취소처리)."""
+        token = self._generate_token()
+        url = self.base_url + "/b2b/aliaSupCommonReceiveOrderInfo.gs"
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "supCd": self.sup_cd,
+            "token": token,
+        }
+        body = {
+            "sender": self.sup_cd,
+            "receiver": "GS SHOP",
+            "documentId": "DLVINF",
+            "processType": process_type,
+            "orderList": items,
+        }
+        timeout = httpx.Timeout(30.0, connect=10.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(url, headers=headers, json=body)
+            text = resp.text
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                data = {"raw": text}
+
+        logger.info(
+            f"[GS샵ORD] processType={process_type} items={len(items)} "
+            f"-> {resp.status_code} resultCd={data.get('resultCd', '')}"
+        )
+
+        if not resp.is_success:
+            raise GsShopApiError(
+                code=resp.status_code,
+                message=(data.get("resultMsg") or text[:120]),
+                data=data,
+            )
+        return data
+
+    async def confirm_order(
+        self,
+        ord_no: str,
+        ord_item_no: str,
+    ) -> dict[str, Any]:
+        """발주확인 통보 (ORD02 - 발주완료 processType)."""
+        return await self._send_order_info(
+            "ORDCONF",
+            [{"ordNo": ord_no, "ordItemNo": ord_item_no}],
+        )
+
+    async def ship_order(
+        self,
+        ord_no: str,
+        ord_item_no: str,
+        delivery_cd: str,
+        delivery_no: str,
+        cmpul_dlv: str = "",
+    ) -> dict[str, Any]:
+        """배송처리 — 송장 전송 (ORD03).
+
+        delivery_cd: 택배사코드 (DH=CJ대한통운, CI=천일택배 등)
+        delivery_no: 송장번호
+        """
+        item: dict[str, Any] = {
+            "ordNo": ord_no,
+            "ordItemNo": ord_item_no,
+            "deliveryCd": delivery_cd,
+            "deliveryNo": delivery_no,
+        }
+        if cmpul_dlv:
+            item["cmpulDlv"] = cmpul_dlv
+        return await self._send_order_info("DLVSTRT", [item])
+
+    async def cancel_order(
+        self,
+        ord_no: str,
+        ord_item_no: str,
+    ) -> dict[str, Any]:
+        """취소 처리 — 취소 확인 통보."""
+        return await self._send_order_info(
+            "CNCCONF",
+            [{"ordNo": ord_no, "ordItemNo": ord_item_no}],
+        )
+
+    # ------------------------------------------------------------------
+    # CS 문의 (CST01/CST02)
+    # ------------------------------------------------------------------
+
+    async def get_cs_inquiries(
+        self,
+        sd_dt: str,
+        inq_type: str = "ALL",
+    ) -> list[dict[str, Any]]:
+        """GS샵 CS 문의 조회 (CST01).
+
+        sd_dt: 조회 시작일 (YYYYMMDD)
+        inq_type: ALL / QNA(상품Q&A) / ONE(1:1문의) / REV(리뷰)
+        """
+        token = self._generate_token()
+        url = "http://realapi.gsshop.com/b2b/aliaCommonCustomerInquiryInfo.gs"
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "supCd": self.sup_cd,
+            "token": token,
+        }
+        body = {
+            "supCd": self.sup_cd,
+            "inqType": inq_type,
+            "sdDt": sd_dt,
+        }
+        timeout = httpx.Timeout(30.0, connect=10.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(url, headers=headers, json=body)
+            text = resp.text
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                data = {"raw": text}
+
+        logger.info(
+            f"[GS샵CST01] sdDt={sd_dt} -> {resp.status_code} "
+            f"resultCd={data.get('resultCd', '')}"
+        )
+
+        if not resp.is_success:
+            raise GsShopApiError(
+                code=resp.status_code,
+                message=(data.get("resultMsg") or text[:120]),
+                data=data,
+            )
+
+        if data.get("resultCd") == "E":
+            raise GsShopApiError(
+                code=200,
+                message=data.get("resultMsg", "CS 조회 실패"),
+                data=data,
+            )
+
+        return data.get("resultList") or []
+
+    async def reply_cs(
+        self,
+        inq_no: str,
+        answer: str,
+        inq_type: str = "ONE",
+    ) -> dict[str, Any]:
+        """GS샵 CS 답변 전송 (CST02).
+
+        inq_no: 문의번호 (external_id)
+        answer: 답변 내용
+        inq_type: ONE(1:1문의) / QNA(상품Q&A)
+        """
+        token = self._generate_token()
+        url = "http://realapi.gsshop.com/b2b/aliaCommonReceiveCustomerInquiryInfo.gs"
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "supCd": self.sup_cd,
+            "token": token,
+        }
+        body = {
+            "sender": self.sup_cd,
+            "receiver": "GS SHOP",
+            "supCd": self.sup_cd,
+            "inqNo": inq_no,
+            "inqType": inq_type,
+            "ansCntnt": answer,
+        }
+        timeout = httpx.Timeout(30.0, connect=10.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(url, headers=headers, json=body)
+            text = resp.text
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                data = {"raw": text}
+
+        logger.info(
+            f"[GS샵CST02] inqNo={inq_no} -> {resp.status_code} "
+            f"resultCd={data.get('resultCd', '')}"
+        )
+
+        if not resp.is_success:
+            raise GsShopApiError(
+                code=resp.status_code,
+                message=(data.get("resultMsg") or text[:120]),
+                data=data,
+            )
+
+        result_cd = data.get("resultCd", "")
+        return {
+            "success": result_cd == "S",
+            "resultCd": result_cd,
+            "resultMsg": data.get("resultMsg", ""),
+        }
+
 
 class GsShopApiError(Exception):
     """GS샵 API 오류."""

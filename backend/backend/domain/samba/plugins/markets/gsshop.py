@@ -10,6 +10,7 @@ from typing import Any
 
 from backend.domain.samba.plugins.market_base import MarketPlugin
 from backend.utils import add_lazy_loading
+from backend.utils.logger import logger
 
 
 async def _get_setting(session, key: str) -> Any:
@@ -387,6 +388,7 @@ class GsShopPlugin(MarketPlugin):
         attr_prd_list = _build_attr_prd_list(options, now_dtm, end_dtm, brand)
 
         errors = []
+        _price_md_pending = False
 
         # 가격 수정
         price_result = await client.update_goods_price(
@@ -400,8 +402,20 @@ class GsShopPlugin(MarketPlugin):
             },
         )
         price_raw = price_result.get("data", {})
-        if isinstance(price_raw, dict) and price_raw.get("result") == "fail":
-            errors.append(f"가격: {price_raw.get('message', '실패')}")
+        if isinstance(price_raw, dict):
+            _pr = price_raw.get("result", "")
+            _pm = price_raw.get("message", "")
+            if _pr == "fail":
+                errors.append(f"가격: {_pm or '실패'}")
+            elif _pr == "success":
+                # "요청" 포함 = MD승인 대기 (즉시반영 아님)
+                # 즉시반영: "P : 처리하였습니다."
+                # MD대기: "P : 가격변경 요청되었습니다."
+                if "요청" in _pm or "대기" in _pm:
+                    _price_md_pending = True
+                    logger.info(
+                        f"[GS샵] 가격 MD승인 대기: {prd_cd} → {sale_price}원 (승인 후 반영)"
+                    )
 
         # 옵션/재고 수정 (옵션 있을 때만)
         if attr_prd_list:
@@ -419,6 +433,15 @@ class GsShopPlugin(MarketPlugin):
             return {
                 "success": False,
                 "message": f"GS샵 수정 실패: {'; '.join(errors)}",
+                "product_id": prd_cd,
+            }
+
+        if _price_md_pending:
+            return {
+                "success": True,
+                # 롯데홈쇼핑과 동일한 md_pending 규약 — 오토튠 재전송 폭주 방지
+                "approval": "md_pending",
+                "message": "GS샵 가격 MD승인 대기 (승인 후 반영)",
                 "product_id": prd_cd,
             }
 

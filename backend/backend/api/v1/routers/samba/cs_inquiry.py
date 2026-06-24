@@ -260,7 +260,7 @@ async def reply_cs_inquiry(
     )
 
     # 마켓 전송 시도 (market_inquiry_no가 있거나 external_id 기반 마켓인 경우)
-    _ext_id_markets = {"SSG", "롯데홈쇼핑"}
+    _ext_id_markets = {"SSG", "롯데홈쇼핑", "GS샵"}
     if inquiry.market_inquiry_no or (
         inquiry.market in _ext_id_markets and inquiry.external_id
     ):
@@ -660,6 +660,70 @@ async def reply_cs_inquiry(
                 else:
                     market_msg = "SSG 계정 없음"
 
+            elif inquiry.market == "GS샵":
+                from backend.domain.samba.account.model import SambaMarketAccount
+                from backend.domain.samba.proxy.gsshop import GsShopClient
+                from backend.domain.samba.account.resolver import resolve_market_creds
+
+                _gs_reply_acc = None
+                if inquiry.account_id:
+                    _gs_reply_result = await session.execute(
+                        select(SambaMarketAccount).where(
+                            SambaMarketAccount.id == inquiry.account_id
+                        )
+                    )
+                    _gs_reply_acc = _gs_reply_result.scalar_one_or_none()
+                if _gs_reply_acc is None:
+                    _gs_reply_result2 = await session.execute(
+                        select(SambaMarketAccount).where(
+                            SambaMarketAccount.market_type == "gsshop",
+                            SambaMarketAccount.is_active == True,  # noqa: E712
+                        )
+                    )
+                    _gs_reply_acc = _gs_reply_result2.scalars().first()
+
+                if _gs_reply_acc:
+                    _gs_reply_creds = (
+                        await resolve_market_creds(
+                            session,
+                            _gs_reply_acc.tenant_id,
+                            market_type="gsshop",
+                            store_key="store_gsshop",
+                        )
+                        or {}
+                    )
+                    _gs_r_af = _gs_reply_acc.additional_fields or {}
+                    _gs_r_sup_cd = (
+                        _gs_reply_creds.get("supCd", "")
+                        or _gs_reply_creds.get("storeId", "")
+                        or _gs_r_af.get("storeId", "")
+                    )
+                    _gs_r_aes = _gs_reply_creds.get("apiKeyProd", "") or _gs_r_af.get(
+                        "apiKeyProd", ""
+                    )
+                    if _gs_r_sup_cd and _gs_r_aes:
+                        _gs_reply_client = GsShopClient(
+                            sup_cd=_gs_r_sup_cd,
+                            aes_key=_gs_r_aes,
+                            sub_sup_cd=_gs_r_sup_cd,
+                            env="prod",
+                        )
+                        await svc.reply_inquiry(
+                            inquiry_id, body.reply, mark_replied=False
+                        )
+                        ok = await svc.send_reply_to_gsshop(
+                            inquiry_id, _gs_reply_client
+                        )
+                        if ok:
+                            market_sent = True
+                            market_msg = "GS샵 CS 답변 전송 완료"
+                        else:
+                            market_msg = "GS샵 답변 전송 실패"
+                    else:
+                        market_msg = "GS샵 인증정보 미설정"
+                else:
+                    market_msg = "GS샵 계정 없음"
+
         except Exception as e:
             logger.warning(f"[CS답변] 마켓 전송 실패 (DB 저장은 진행): {e}")
             market_msg = f"마켓 전송 실패: {e}"
@@ -667,7 +731,7 @@ async def reply_cs_inquiry(
     # DB 저장: 마켓 전송 성공 시에만 replied로 마킹, 실패 시 답변 내용만 저장
     # market_inquiry_no 없는 문의(플레이오토 등)는 항상 replied로 마킹
     # SSG/롯데홈쇼핑은 external_id 기반이므로 market_sent 결과에만 의존
-    _external_id_markets = {"SSG", "롯데홈쇼핑"}
+    _external_id_markets = {"SSG", "롯데홈쇼핑", "GS샵"}
     mark_replied = market_sent or (
         not inquiry.market_inquiry_no and inquiry.market not in _external_id_markets
     )
@@ -2953,6 +3017,68 @@ async def _do_sync_cs_from_markets(
                         errors.append(f"롯데홈쇼핑({lh_label}): {e}")
         except Exception as e:
             logger.warning(f"[CS동기화] 롯데홈쇼핑 계정 조회 실패: {e}")
+
+    # ── GS샵 CS 수집 ──────────────────────────────────────────────────────────
+    try:
+        from backend.domain.samba.account.model import SambaMarketAccount
+        from backend.domain.samba.account.resolver import resolve_market_creds
+        from backend.domain.samba.proxy.gsshop import GsShopClient
+
+        _gs_accts_result = await session.execute(
+            select(SambaMarketAccount).where(
+                SambaMarketAccount.market_type == "gsshop",
+                SambaMarketAccount.is_active == True,  # noqa: E712
+            )
+        )
+        _gs_accounts = _gs_accts_result.scalars().all()
+        for _gs_acc in _gs_accounts or []:
+            try:
+                _gs_af = _gs_acc.additional_fields or {}
+                _gs_creds = (
+                    await resolve_market_creds(
+                        session,
+                        _gs_acc.tenant_id,
+                        market_type="gsshop",
+                        store_key="store_gsshop",
+                    )
+                    or {}
+                )
+                _gs_sup_cd = (
+                    _gs_creds.get("supCd", "")
+                    or _gs_creds.get("storeId", "")
+                    or _gs_af.get("storeId", "")
+                )
+                _gs_aes = _gs_creds.get("apiKeyProd", "") or _gs_af.get(
+                    "apiKeyProd", ""
+                )
+                if not _gs_sup_cd or not _gs_aes:
+                    continue
+                _gs_client = GsShopClient(
+                    sup_cd=_gs_sup_cd,
+                    aes_key=_gs_aes,
+                    sub_sup_cd=_gs_sup_cd,
+                    env="prod",
+                )
+                _gs_label = (
+                    _gs_acc.account_label
+                    or _gs_acc.business_name
+                    or _gs_acc.seller_id
+                    or "GS샵"
+                )
+                _gs_collect = await svc.collect_from_gsshop(
+                    _gs_client,
+                    days_back=7,
+                    account_id=_gs_acc.id,
+                    account_label=_gs_label,
+                )
+                synced += _gs_collect.get("collected", 0)
+                logger.info(f"[CS동기화] GS샵({_gs_label}) CS: {_gs_collect}")
+            except Exception as _gs_e:
+                _gs_label = getattr(_gs_acc, "account_label", "") or "GS샵"
+                logger.error(f"[CS동기화] GS샵({_gs_label}) 실패: {_gs_e}")
+                errors.append(f"GS샵({_gs_label}): {_gs_e}")
+    except Exception as e:
+        logger.warning(f"[CS동기화] GS샵 계정 조회 실패: {e}")
 
     results: list[dict[str, Any]] = []
     try:

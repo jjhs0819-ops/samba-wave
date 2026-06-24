@@ -610,3 +610,118 @@ class SambaCSInquiryService:
             "by_market": market_counts,
             "by_type": type_counts,
         }
+
+    async def collect_from_gsshop(
+        self,
+        gs_client: Any,
+        days_back: int = 7,
+        account_id: Optional[str] = None,
+        account_label: Optional[str] = None,
+    ) -> Dict[str, int]:
+        """GS샵 CS 문의 수집 후 DB 저장."""
+        from datetime import timedelta
+
+        now = datetime.now(UTC)
+        start_dt = now - timedelta(days=days_back)
+        sd_dt = start_dt.strftime("%Y%m%d")
+
+        collected = 0
+        skipped = 0
+
+        try:
+            items = await gs_client.get_cs_inquiries(sd_dt=sd_dt, inq_type="ALL")
+        except Exception as e:
+            logger.warning(f"[GS샵CS] 수집 실패 ({account_label}): {e}")
+            return {"collected": 0, "skipped": 0, "error": str(e)}
+
+        for item in items:
+            # inqNo = 문의번호, inqType = ONE(1:1)/QNA(상품Q&A)/REV(리뷰)
+            ext_id = str(item.get("inqNo", "") or "")
+            if not ext_id:
+                continue
+
+            existing = await self.repo.find_by_external_id("GS샵", ext_id)
+            if existing:
+                skipped += 1
+                continue
+
+            inq_type_raw = str(item.get("inqType", "") or "ONE")
+            if inq_type_raw == "QNA":
+                inquiry_type = "product_question"
+            elif inq_type_raw == "REV":
+                inquiry_type = "review"
+            else:
+                inquiry_type = "note"
+
+            raw_date = item.get("regDt") or item.get("inqDt") or ""
+            parsed_date = _parse_date(raw_date)
+
+            # 답변 여부
+            reply_yn = str(item.get("ansYn", "") or "N")
+            reply_status = "replied" if reply_yn == "Y" else "pending"
+
+            content = str(item.get("inqCntnt", "") or item.get("content", "") or "")
+            product_name = str(item.get("prdNm", "") or "")
+            buyer_name = str(item.get("custNm", "") or "")
+
+            new_inquiry = SambaCSInquiry(
+                market="GS샵",
+                inquiry_type=inquiry_type,
+                external_id=ext_id,
+                content=content,
+                product_name=product_name,
+                buyer_name=buyer_name,
+                created_at=parsed_date,
+                reply_status=reply_status,
+                account_id=account_id,
+            )
+            await self.repo.create_async(new_inquiry, commit=False)
+            collected += 1
+
+        if collected:
+            await self.repo.session.commit()
+
+        logger.info(f"[GS샵CS] {account_label} 수집={collected} 스킵={skipped}")
+        return {"collected": collected, "skipped": skipped}
+
+    async def send_reply_to_gsshop(
+        self,
+        inquiry_id: str,
+        gs_client: Any,
+    ) -> bool:
+        """GS샵 CS 답변 전송."""
+        inquiry = await self.repo.get_async(inquiry_id)
+        if not inquiry:
+            logger.warning(f"[GS샵CS] 문의 없음: {inquiry_id}")
+            return False
+
+        ext_id = inquiry.external_id or ""
+        reply = inquiry.reply
+        if not ext_id or not reply:
+            logger.warning(f"[GS샵CS] external_id 또는 답변 없음: {inquiry_id}")
+            return False
+
+        inq_type = "QNA" if inquiry.inquiry_type == "product_question" else "ONE"
+
+        try:
+            result = await gs_client.reply_cs(
+                inq_no=ext_id,
+                answer=reply,
+                inq_type=inq_type,
+            )
+        except Exception as e:
+            logger.warning(f"[GS샵CS] 답변 전송 실패 ({inquiry_id}): {e}")
+            return False
+
+        ok = result.get("success", False)
+        if ok:
+            await self.repo.update_async(
+                inquiry_id, external_sent=True, reply_status="replied"
+            )
+            logger.info(f"[GS샵CS] 답변 전송 완료: {inquiry_id}")
+        else:
+            logger.warning(
+                f"[GS샵CS] 답변 전송 실패: {inquiry_id} "
+                f"resultCd={result.get('resultCd')} msg={result.get('resultMsg')}"
+            )
+        return ok

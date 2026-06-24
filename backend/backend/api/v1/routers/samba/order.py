@@ -5022,6 +5022,11 @@ async def sync_orders_from_markets(
                 _c = SSGClient(_ak)
                 return _aid, await _c.get_orders(days=days)
 
+            elif _mtype == "gsshop":
+                # GS샵은 본 루프에서 직접 수집 (processType 분기 필요)
+                # 병렬 사전조회 생략 — None 반환 시 본 루프가 처리
+                return _aid, None
+
         except Exception as _pfe:
             logger.warning(f"[주문동기화] 병렬 사전조회 실패 ({_mtype}): {_pfe}")
         return _aid, None
@@ -6977,6 +6982,169 @@ async def sync_orders_from_markets(
                         }
                     )
                     continue
+            elif market_type == "gsshop":
+                from backend.domain.samba.proxy.gsshop import GsShopClient
+                from backend.domain.samba.account.resolver import resolve_market_creds
+
+                _gs_creds: dict = dict(extras) if extras else {}
+                if not (_gs_creds.get("supCd") or _gs_creds.get("apiKeyProd")):
+                    _gs_creds = (
+                        await resolve_market_creds(
+                            session,
+                            account["tenant_id"],
+                            market_type="gsshop",
+                            store_key="store_gsshop",
+                        )
+                        or {}
+                    )
+                _gs_sup_cd = (
+                    _gs_creds.get("supCd", "")
+                    or _gs_creds.get("storeId", "")
+                    or extras.get("storeId", "")
+                )
+                _gs_aes_key = _gs_creds.get("apiKeyProd", "") or extras.get(
+                    "apiKeyProd", ""
+                )
+                if not _gs_sup_cd or not _gs_aes_key:
+                    results.append(
+                        {
+                            "account": label,
+                            "status": "skip",
+                            "message": "GS샵 협력사코드 또는 인증키 없음",
+                        }
+                    )
+                    continue
+
+                _gs_client = GsShopClient(
+                    sup_cd=_gs_sup_cd,
+                    aes_key=_gs_aes_key,
+                    sub_sup_cd=_gs_sup_cd,
+                    env="prod",
+                )
+                from datetime import datetime as _gsdt, timedelta as _gstd
+                from zoneinfo import ZoneInfo as _gszi
+
+                _gs_KST = _gszi("Asia/Seoul")
+                _gs_start = (
+                    _gsdt.now(_gs_KST) - _gstd(days=int(body.days or 7))
+                ).strftime("%Y%m%d")
+
+                # 신규주문(S), 취소(C) 각각 수집
+                _gs_raw_orders: list[dict] = []
+                for _gs_pt in ("S", "C"):
+                    try:
+                        _gs_rows = await _gs_client.get_orders(
+                            sd_dt=_gs_start, process_type=_gs_pt
+                        )
+                        _gs_raw_orders.extend(_gs_rows)
+                    except Exception as _gs_e:
+                        logger.warning(
+                            f"[주문동기화] {label}: GS샵 processType={_gs_pt} 실패 — {_gs_e}"
+                        )
+
+                # 발주확인 대상 — ordStCd=21(결제완료) / ordTypeCd=O
+                _gs_confirm_targets: list[tuple[str, str]] = []
+
+                for ro in _gs_raw_orders:
+                    _gs_ord_no = str(ro.get("ordNo", "") or "")
+                    _gs_ord_item_no = str(ro.get("ordItemNo", "") or "")
+                    _gs_ord_type = str(ro.get("ordTypeCd", "") or "")
+                    _gs_ord_st = str(ro.get("ordStCd", "") or "")
+                    _gs_sup_prd_cd = str(ro.get("supPrdCd", "") or "")
+                    _gs_dtl_prd_cd = str(ro.get("dtlPrdCd", "") or "")
+                    _gs_qty = int(ro.get("ordQty", 1) or 1)
+                    _gs_ord_dt = str(ro.get("ordDt", "") or "")
+                    _gs_buyer = str(ro.get("rlOrdPrsnNm", "") or "")
+                    _gs_receiver = str(ro.get("custPrsnNm", "") or "")
+                    _gs_phone = str(ro.get("custPrsnCelTel", "") or "")
+                    _gs_zip = str(ro.get("delivZip", "") or "")
+                    _gs_addr1 = str(
+                        ro.get("roadNmDelivAddr1", "") or ro.get("delivAddr1", "") or ""
+                    )
+                    _gs_addr2 = str(
+                        ro.get("roadNmDelivAddr2", "") or ro.get("delivAddr2", "") or ""
+                    )
+                    _gs_msg = str(ro.get("delivMsg", "") or "")
+                    _gs_sale_prc = int(ro.get("salePrc", 0) or 0)
+                    _gs_sup_give = int(ro.get("supGivRtamt", 0) or 0)
+                    _gs_opt1 = str(ro.get("attrTypNm1", "") or "")
+                    _gs_opt2 = str(ro.get("attrTypNm2", "") or "")
+                    _gs_opt3 = str(ro.get("attrTypNm3", "") or "")
+                    _gs_prd_nm = str(ro.get("prdNm", "") or "")
+                    _gs_prd_cd = str(ro.get("prdCd", "") or "")
+
+                    if not _gs_ord_no or not _gs_ord_item_no:
+                        continue
+
+                    # 주문번호: ordNo:ordItemNo 조합
+                    _gs_order_number = f"{_gs_ord_no}:{_gs_ord_item_no}"
+
+                    # 상태 매핑
+                    # ordTypeCd: O=주문, C=취소, R=반품, X=교환주문
+                    # ordStCd: 21/22=결제완료, 31=발주완료, 44=출고지시완료
+                    if _gs_ord_type == "C":
+                        _gs_status = "취소완료"
+                    elif _gs_ord_type == "R":
+                        _gs_status = "반품요청"
+                    elif _gs_ord_type == "X":
+                        _gs_status = "교환요청"
+                    elif _gs_ord_st in ("21", "22"):
+                        _gs_status = "결제완료"
+                        if _gs_ord_type == "O":
+                            _gs_confirm_targets.append((_gs_ord_no, _gs_ord_item_no))
+                    elif _gs_ord_st == "31":
+                        _gs_status = "발주완료"
+                    elif _gs_ord_st == "44":
+                        _gs_status = "배송준비"
+                    else:
+                        _gs_status = "결제완료"
+
+                    # 옵션 조합
+                    _gs_opt_parts = [o for o in [_gs_opt1, _gs_opt2, _gs_opt3] if o]
+                    _gs_option_str = " / ".join(_gs_opt_parts) if _gs_opt_parts else ""
+
+                    orders_data.append(
+                        {
+                            "order_number": _gs_order_number,
+                            "source": "gsshop",
+                            "channel_id": account["id"],
+                            "channel_name": label,
+                            "product_name": _gs_prd_nm or _gs_sup_prd_cd,
+                            "product_id": _gs_prd_cd or _gs_sup_prd_cd,
+                            "product_option": _gs_option_str,
+                            "quantity": _gs_qty,
+                            "paid_at": _gs_ord_dt or None,
+                            "orderer_name": _gs_buyer,
+                            "customer_name": _gs_receiver,
+                            "customer_phone": _gs_phone,
+                            "customer_postal_code": _gs_zip,
+                            "customer_address": f"{_gs_addr1} {_gs_addr2}".strip(),
+                            "customer_note": _gs_msg,
+                            "sale_price": _gs_sale_prc,
+                            "cost": _gs_sup_give,
+                            "shipping_status": _gs_status,
+                            "tenant_id": account["tenant_id"],
+                        }
+                    )
+
+                # 발주확인 통보 (결제완료 → 발주완료)
+                _gs_confirmed_cnt = 0
+                for _gc_ord_no, _gc_item_no in _gs_confirm_targets:
+                    try:
+                        await _gs_client.confirm_order(_gc_ord_no, _gc_item_no)
+                        _gs_confirmed_cnt += 1
+                    except Exception as _gce:
+                        logger.warning(
+                            f"[주문동기화] {label}: GS샵 발주확인 실패 "
+                            f"{_gc_ord_no}:{_gc_item_no} — {_gce}"
+                        )
+
+                if _gs_confirm_targets:
+                    logger.info(
+                        f"[주문동기화] {label}: GS샵 발주확인 "
+                        f"{_gs_confirmed_cnt}/{len(_gs_confirm_targets)}건"
+                    )
+
             elif market_type == "lottehome":
                 from backend.domain.samba.proxy.lottehome import LotteHomeClient
                 from backend.domain.samba.forbidden.model import SambaSettings
