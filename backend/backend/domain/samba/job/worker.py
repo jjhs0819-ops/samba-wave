@@ -1630,6 +1630,7 @@ class JobWorker:
             async with get_write_session() as _us:
                 for pid, sale_price, options in success_pids:
                     snap = {
+                        "price": sale_price,  # 오토튠 acc_last.get("price") 비교용
                         "sale_price": sale_price,
                         "cost": 0,
                         "options": [
