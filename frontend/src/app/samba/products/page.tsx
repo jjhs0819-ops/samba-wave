@@ -140,6 +140,8 @@ export default function ProductsPage() {
   const [appliedFilterByGroupId, setAppliedFilterByGroupId] = useState(searchParams.get("search_filter_id") || "")
   const [pageSize, setPageSize] = useState(20);
   const [currentPage, setCurrentPage] = useState(1);
+  // 검색 버튼 강제 refetch용 — 같은 조건으로 다시 검색해도 최신화되도록 매 검색마다 증가
+  const [searchNonce, setSearchNonce] = useState(0);
   const [viewMode, setViewMode] = useState<"card" | "compact" | "image">("card");
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   // Selection
@@ -408,7 +410,7 @@ export default function ProductsPage() {
         setCatMappingMap(map)
       }
     }).catch(e => console.error('metadata load error:', e))
-  }, [queryReady, pageSize, appliedSearchQ, appliedSearchType, _idFilter, appliedSiteFilter, appliedSoldOutFilter, appliedStatusFilter, appliedAiFilter, appliedFilterByGroupId, appliedSortBy])
+  }, [queryReady, pageSize, appliedSearchQ, appliedSearchType, _idFilter, appliedSiteFilter, appliedSoldOutFilter, appliedStatusFilter, appliedAiFilter, appliedFilterByGroupId, appliedSortBy, searchNonce])
 
   useEffect(() => { load() }, [load])
 
@@ -505,6 +507,7 @@ export default function ProductsPage() {
     setSelectAll(false)
     setSelectedIds(new Set())
     setCurrentPage(1)
+    setSearchNonce(n => n + 1)  // 조건이 같아도 항상 최신 데이터 재조회
   };
 
   const handleDelete = (id: string) => {
