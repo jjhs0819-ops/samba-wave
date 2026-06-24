@@ -134,5 +134,13 @@
         }, 1200)
       })
     }
+    // 직배/까대기 주문처리 요청 → background로 relay
+    if (msg.type === 'PLACE_ORDER') {
+      chrome.runtime.sendMessage({ type: 'PLACE_ORDER', payload: msg.payload }, (resp) => {
+        try {
+          window.postMessage({ source: 'samba-extension', type: 'PLACE_ORDER_RESULT', result: resp }, window.location.origin)
+        } catch {}
+      })
+    }
   })
 })()

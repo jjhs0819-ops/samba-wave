@@ -4739,3 +4739,205 @@ chrome.alarms.create(_SELF_UPDATE_ALARM, {
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm && alarm.name === _SELF_UPDATE_ALARM) _checkSelfUpdate()
 })
+
+// ==================== 직배/까대기 주문처리 (PLACE_ORDER) ====================
+// 소싱처별 content script 매핑
+const _PLACE_ORDER_SCRIPTS = {
+  MUSINSA: 'content-purchase-musinsa-order.js',
+  SSG: 'content-purchase-ssg-order.js',
+  LOTTEON: 'content-purchase-lotteon-order.js',
+  ABCmart: 'content-purchase-abcmart-order.js',
+  GrandStage: 'content-purchase-abcmart-order.js',
+  GSShop: 'content-purchase-gs-order.js',
+}
+
+// 주문서 URL 패턴 (각 소싱처별, 실측 확인값)
+const _ORDER_FORM_PATTERNS = {
+  MUSINSA: /musinsa\.com\/(order\/order-form|order\/payment)/,
+  SSG: /(ssg\.com|pay\.ssg\.com)\/(order|payment)/,
+  LOTTEON: /lotteon\.com\/(p\/)?order/,
+  ABCmart: /a-rt\.com\/(order|payment|checkout)/,
+  GrandStage: /a-rt\.com\/(order|payment|checkout)/,
+  GSShop: /gsshop\.com\/ord\//,
+}
+
+// 소싱처별 자동로그인 키 (가구매와 동일)
+const _PLACE_ORDER_AUTO_LOGIN_MAP = {
+  SSG: 'ssg',
+  LOTTEON: 'lotteon',
+  MUSINSA: 'musinsa',
+  ABCmart: 'abcmart',
+  GrandStage: 'abcmart',
+  GSShop: 'gsshop',
+}
+
+// SSG 배송지 팝업(member.ssg.com/comm/popup/shpplocList.ssg) 자동 처리
+// 배송지변경 버튼 클릭 → 팝업 탭 감지 → 이름 매칭 선택 → 배송지변경 버튼 클릭 → 팝업 닫힘 대기
+async function _handleSsgShippingPopup(orderTabId, shippingName) {
+  try {
+    // 1. 주문서에서 배송지변경 버튼 클릭
+    const clicked = await chrome.scripting.executeScript({
+      target: { tabId: orderTabId },
+      func: () => {
+        const btn = Array.from(document.querySelectorAll('a')).find(
+          (a) => a.textContent.trim().replace(/\s+/g, '').includes('배송지변경'),
+        )
+        if (btn) { btn.click(); return true }
+        return false
+      },
+    })
+    if (!clicked?.[0]?.result) return
+
+    // 2. 팝업 탭 열림 대기 (5초)
+    let popupTabId = null
+    await new Promise((resolve) => {
+      const h = (id, info, tabInfo) => {
+        if (id !== orderTabId && /shpplocList/.test(tabInfo?.url || '') && info.status === 'complete') {
+          popupTabId = id
+          chrome.tabs.onUpdated.removeListener(h)
+          resolve()
+        }
+      }
+      chrome.tabs.onUpdated.addListener(h)
+      setTimeout(() => { chrome.tabs.onUpdated.removeListener(h); resolve() }, 5000)
+    })
+    if (!popupTabId) return
+
+    await new Promise((r) => setTimeout(r, 800))
+
+    // 3. 팝업에서 이름 매칭 → 선택 → 배송지변경 버튼 클릭
+    await chrome.scripting.executeScript({
+      target: { tabId: popupTabId },
+      func: (name) => {
+        const radios = Array.from(document.querySelectorAll('input[type="radio"]'))
+        let found = false
+        if (name) {
+          for (const r of radios) {
+            const sec = r.closest('.mnodr_address_sec') || r.parentElement
+            if (sec && sec.textContent.includes(name)) { r.click(); found = true; break }
+          }
+        }
+        if (!found && radios.length) radios[0].click()
+        // 배송지 변경 버튼 (a.mnodr_btn.default)
+        const btn = document.querySelector('a.mnodr_btn.default')
+        if (btn) btn.click()
+      },
+      args: [shippingName || ''],
+    })
+
+    // 4. 팝업 탭 닫힘 대기 (8초)
+    await new Promise((resolve) => {
+      const h = (id) => { if (id === popupTabId) { chrome.tabs.onRemoved.removeListener(h); resolve() } }
+      chrome.tabs.onRemoved.addListener(h)
+      setTimeout(() => { chrome.tabs.onRemoved.removeListener(h); resolve() }, 8000)
+    })
+  } catch (e) {
+    console.warn(`[SSG 배송지팝업] 예외(무시): ${e?.message || e}`)
+  }
+}
+
+async function _handlePlaceOrder(payload) {
+  const { sourceSite, productUrl, orderType, productOption, shippingName, shippingPhone, shippingAddress, shippingAddressDetail, sourcingAccountId } = payload
+  const contentScript = _PLACE_ORDER_SCRIPTS[sourceSite]
+  const orderFormPattern = _ORDER_FORM_PATTERNS[sourceSite]
+  if (!contentScript || !orderFormPattern) return { success: false, error: `지원하지 않는 소싱처: ${sourceSite}` }
+  if (!productUrl) return { success: false, error: 'productUrl 없음' }
+
+  // 자동로그인 (가구매와 동일 방식)
+  const autoLoginKey = _PLACE_ORDER_AUTO_LOGIN_MAP[sourceSite]
+  if (autoLoginKey && sourcingAccountId && typeof globalThis.ensureLoggedIn === 'function') {
+    try {
+      await globalThis.ensureLoggedIn(autoLoginKey, { accountId: sourcingAccountId })
+    } catch (e) {
+      console.warn(`[직배/까대기] ensureLoggedIn 예외(무시): ${e?.message || e}`)
+    }
+  }
+
+  const msg = { action: 'samba_place_order', orderType, productOption, shippingName, shippingPhone, shippingAddress, shippingAddressDetail }
+
+  // 탭 열기
+  const tab = await chrome.tabs.create({ url: productUrl, active: true })
+  const tabId = tab.id
+
+  // 탭 로드 완료 대기
+  await new Promise((resolve) => {
+    const onUpdated = (tid, info) => {
+      if (tid === tabId && info.status === 'complete') {
+        chrome.tabs.onUpdated.removeListener(onUpdated)
+        resolve()
+      }
+    }
+    chrome.tabs.onUpdated.addListener(onUpdated)
+    setTimeout(() => { chrome.tabs.onUpdated.removeListener(onUpdated); resolve() }, 15000)
+  })
+  await new Promise((r) => setTimeout(r, 1500))
+
+  // 1단계: 상품 페이지 → 옵션 선택 + 바로구매
+  await chrome.scripting.executeScript({ target: { tabId }, files: [contentScript] })
+  await new Promise((r) => setTimeout(r, 500))
+  const step1 = await chrome.tabs.sendMessage(tabId, msg).catch((e) => {
+    // 페이지 이동으로 content script 종료 → sendResponse 못 보낸 것 = 바로구매 성공으로 처리
+    if (e.message.includes('message channel closed') || e.message.includes('before a response')) {
+      return { success: true, nextStep: 'order-form' }
+    }
+    return { success: false, error: e.message }
+  })
+  if (!step1 || !step1.success) return { success: false, error: step1?.error || '1단계 실패' }
+  if (step1.nextStep !== 'order-form') return { success: false, error: `예상치 못한 응답: ${step1.nextStep}` }
+
+  // 주문서 URL 이동 대기 (최대 35초)
+  let reachedOrderForm = false
+  await new Promise((resolve) => {
+    const onUpdated = (tid, info, tabInfo) => {
+      if (tid !== tabId) return
+      if (info.status === 'complete' && orderFormPattern.test(tabInfo.url || '')) {
+        reachedOrderForm = true
+        chrome.tabs.onUpdated.removeListener(onUpdated)
+        resolve()
+      }
+    }
+    chrome.tabs.onUpdated.addListener(onUpdated)
+    // 폴링 보조 (onUpdated가 URL 업데이트 시 누락할 수 있으므로)
+    let elapsed = 0
+    const poll = setInterval(async () => {
+      elapsed += 500
+      try {
+        const t = await chrome.tabs.get(tabId)
+        if (orderFormPattern.test(t.url || '')) { reachedOrderForm = true; clearInterval(poll); chrome.tabs.onUpdated.removeListener(onUpdated); resolve() }
+      } catch { clearInterval(poll); resolve() }
+      if (elapsed >= 35000) { clearInterval(poll); chrome.tabs.onUpdated.removeListener(onUpdated); resolve() }
+    }, 500)
+  })
+  if (!reachedOrderForm) return { success: false, error: '주문서 페이지 이동 실패 (35초 초과)' }
+
+  // 주문서 완전 로드 대기
+  await new Promise((r) => setTimeout(r, 2500))
+
+  // SSG: 배송지 팝업 처리 (background에서 직접)
+  if (sourceSite === 'SSG' && (orderType === 'direct' || orderType === 'kkaregi')) {
+    await _handleSsgShippingPopup(tabId, shippingName)
+    await new Promise((r) => setTimeout(r, 800))
+  }
+
+  // 2단계: 주문서 → 쿠폰 처리 후 결제 직전 대기
+  await chrome.scripting.executeScript({ target: { tabId }, files: [contentScript] })
+  await new Promise((r) => setTimeout(r, 500))
+  const step2 = await chrome.tabs.sendMessage(tabId, msg).catch((e) => ({ success: false, error: e.message }))
+  if (!step2 || !step2.success) return { success: false, error: step2?.error || '2단계 실패' }
+
+  return { success: true, status: 'ready-to-pay', tabId }
+}
+
+// PLACE_ORDER 메시지 핸들러 (content-samba-deviceid.js relay)
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (!msg || msg.type !== 'PLACE_ORDER') return
+  ;(async () => {
+    try {
+      const result = await _handlePlaceOrder(msg.payload || {})
+      sendResponse(result)
+    } catch (e) {
+      sendResponse({ success: false, error: e.message })
+    }
+  })()
+  return true
+})

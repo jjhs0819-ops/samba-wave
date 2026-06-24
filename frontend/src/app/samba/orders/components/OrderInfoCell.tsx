@@ -336,6 +336,43 @@ export default function OrderInfoCell(props: Props) {
           if (!o.order_number) { showAlert('주문번호가 없습니다', 'info'); return }
           window.open(`/samba/cs?search=${encodeURIComponent(o.order_number)}`, '_blank')
         }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>CS</button>
+        {/* 직배/까대기 버튼 — 지원 소싱처만 표시 */}
+        {['MUSINSA','SSG','LOTTEON','ABCmart','GrandStage','GSShop'].includes(
+          (sourceFromUrl || actualSourceSite || o.source_site || '').trim().split('(')[0].trim()
+        ) && o.source_url && (() => {
+          const srcSite = (sourceFromUrl || actualSourceSite || o.source_site || '').trim().split('(')[0].trim()
+          async function triggerPlaceOrder(orderType: 'direct' | 'kkadaegi') {
+            try {
+              const officeRes = await fetchWithAuth('/api/v1/samba/proxy/config/office-shipping')
+              if (!officeRes.ok) { showAlert('사무실 배송정보를 먼저 설정해주세요', 'error'); return }
+              const office = await officeRes.json() as { name: string; phone: string; address: string; address_detail: string }
+              if (!office.phone) { showAlert('설정 > 사무실 배송정보에 전화번호를 입력해주세요', 'error'); return }
+              const payload = {
+                sourceSite: srcSite,
+                productUrl: o.source_url,
+                orderType,
+                productOption: o.product_option || '',
+                sourcingAccountId: o.sourcing_account_id || '',
+                shippingName: orderType === 'direct' ? (o.customer_name || '') : office.name,
+                shippingPhone: office.phone,
+                shippingAddress: orderType === 'direct' ? customerAddress.base : office.address,
+                shippingAddressDetail: orderType === 'direct' ? customerAddress.detail : office.address_detail,
+              }
+              window.postMessage({ source: 'samba-page', type: 'PLACE_ORDER', payload }, window.location.origin)
+              showAlert(`${orderType === 'direct' ? '직배' : '까대기'} 주문처리 시작 — 소싱처 탭에서 진행 중`, 'info')
+            } catch (e) {
+              showAlert(e instanceof Error ? e.message : '주문처리 실패', 'error')
+            }
+          }
+          return (
+            <>
+              <button onClick={() => triggerPlaceOrder('direct')}
+                style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2563EB', borderRadius: '4px', color: '#60A5FA', cursor: 'pointer' }}>직배</button>
+              <button onClick={() => triggerPlaceOrder('kkadaegi')}
+                style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #D97706', borderRadius: '4px', color: '#FBBF24', cursor: 'pointer' }}>까대기</button>
+            </>
+          )
+        })()}
       </div>
 
       {/* 주문자/수령인/연락처/주소 한 줄 */}
