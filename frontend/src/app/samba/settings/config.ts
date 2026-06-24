@@ -366,6 +366,7 @@ export const STORE_MARKETS: MarketConfig[] = [
     { name: 'asPhone', label: 'A/S 전화번호', type: 'text', placeholder: '' },
     { name: 'asMessage', label: 'A/S 안내 문구', type: 'text', placeholder: '' },
     { name: 'stockQuantity', label: '재고수량', type: 'number', placeholder: '999 (기본값)' },
+    { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
     { name: 'returnFee', label: '반품배송비(편도)', type: 'number', placeholder: '3000' },
     { name: 'exchangeFee', label: '교환배송비(왕복)', type: 'number', placeholder: '6000' },
   ]},
