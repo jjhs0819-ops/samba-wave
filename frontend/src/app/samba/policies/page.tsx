@@ -77,6 +77,22 @@ interface MarketPolicyForm {
   smileCashRate: number
   // GS샵 전용
   gsMarginRate: number
+  gsSettings?: {
+    brandCd?: string
+    brandNm?: string
+    prdClsCd?: string
+    operMdId?: string | number
+    operMdNm?: string
+    sectId?: string | number
+    sectNm?: string
+    subSupCd?: string
+    stdRelsDdcnt?: number
+    dlvsCoCd?: string
+    rtpAmt?: number
+    exchAmt?: number
+    govGrp?: number
+    attrTypNm1?: string
+  }
   // 신세계몰 전용: 주문수량 제한
   dayMaxQty: number
   onceMinQty: number
@@ -308,10 +324,20 @@ export default function PoliciesPage() {
   const [lotteStdCategories, setLotteStdCategories] = useState<{ no: string; nm: string; path?: string }[]>([])
   const [lotteStdCatLoading, setLotteStdCatLoading] = useState(false)
 
+  // GS샵 설정 전용 상태
+  const [gsBrandKeyword, setGsBrandKeyword] = useState('')
+  const [gsBrands, setGsBrands] = useState<{ brandCd: string; brandNm: string; brandHanglNm: string; brandEngNm: string }[]>([])
+  const [gsBrandLoading, setGsBrandLoading] = useState(false)
+  const [gsSections, setGsSections] = useState<{ sectId: string; sectNm: string; sectLevel: number; sectLrgNm: string; sectMidNm: string; sectDtlNm: string }[]>([])
+  const [gsSectionsLoading, setGsSectionsLoading] = useState(false)
+  const [gsSectSearch, setGsSectSearch] = useState('')
+  const [gsMdList, setGsMdList] = useState<{ operMdId: string; operMdNm: string }[]>([])
+  const [gsMdLoading, setGsMdLoading] = useState(false)
+
 
   // 현재 마켓 정책 가져오기 (부분 데이터에도 기본값 보장)
   const getCurrentMarketPolicy = useCallback((): MarketPolicyForm => {
-    const defaults: MarketPolicyForm = { accountId: '', accountIds: [], shipType: 'domestic', feeRate: 21, shippingCost: 0, shippingDays: 3, marginRate: 0, brand: '', bulkDiscountQty: 2, bulkDiscountPrice: 0, smileCashRate: 0, gsMarginRate: 0, discountRate: 0, maxStock: 0, dayMaxQty: 5, onceMinQty: 1, onceMaxQty: 5, origin: '', streetPriceRate: 0, ssgBrandMappings: [] }
+    const defaults: MarketPolicyForm = { accountId: '', accountIds: [], shipType: 'domestic', feeRate: 21, shippingCost: 0, shippingDays: 3, marginRate: 0, brand: '', bulkDiscountQty: 2, bulkDiscountPrice: 0, smileCashRate: 0, gsMarginRate: 0, discountRate: 0, maxStock: 0, dayMaxQty: 5, onceMinQty: 1, onceMaxQty: 5, origin: '', streetPriceRate: 0, ssgBrandMappings: [], gsSettings: {} }
     return { ...defaults, ...(marketPolicies[marketPolicyTab] || {}) }
   }, [marketPolicies, marketPolicyTab])
 
@@ -459,6 +485,59 @@ export default function PoliciesPage() {
     }, 300)
     return () => clearTimeout(timer)
   }, [lotteBrandKeyword])
+
+  // GS샵 브랜드 검색 (디바운스 300ms)
+  useEffect(() => {
+    if (!gsBrandKeyword.trim()) { setGsBrands([]); setGsBrandLoading(false); return }
+    setGsBrandLoading(true)
+    const timer = setTimeout(() => {
+      request<{ success: boolean; data: unknown }>(`${API_BASE}/api/v1/samba/proxy/gsshop/brands?brandNm=${encodeURIComponent(gsBrandKeyword)}`)
+        .then(res => {
+          if (!res.success) { setGsBrands([]); return }
+          const outer = res.data as { data?: { resultList?: unknown[] } } | null
+          const list = (outer?.data?.resultList || []) as Record<string, string>[]
+          setGsBrands(list.map(b => ({ brandCd: String(b.brandCd || ''), brandNm: String(b.brandNm || ''), brandHanglNm: String(b.brandHanglNm || ''), brandEngNm: String(b.brandEngNm || '') })))
+        })
+        .catch(() => setGsBrands([]))
+        .finally(() => setGsBrandLoading(false))
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [gsBrandKeyword])
+
+  // GS샵 섹션(전시매장) 목록 로드
+  const loadGsSections = useCallback(async () => {
+    if (gsSections.length > 0) return
+    setGsSectionsLoading(true)
+    try {
+      const res = await request<{ success: boolean; data: unknown }>(`${API_BASE}/api/v1/samba/proxy/gsshop/categories?sectSts=A`)
+      if (res.success) {
+        const outer = res.data as { data?: { resultList?: unknown[] } } | null
+        const list = (outer?.data?.resultList || []) as Record<string, unknown>[]
+        setGsSections(list.map(s => ({
+          sectId: String(s.sectId || ''),
+          sectNm: String(s.sectNm || ''),
+          sectLevel: Number(s.sectLevel || 0),
+          sectLrgNm: String(s.sectLrgNm || s.sectNm || ''),
+          sectMidNm: String(s.sectMidNm || ''),
+          sectDtlNm: String(s.sectDtlNm || ''),
+        })))
+      }
+    } catch { /* 무시 */ } finally { setGsSectionsLoading(false) }
+  }, [gsSections.length])
+
+  // GS샵 MD 목록 로드
+  const loadGsMdList = useCallback(async () => {
+    if (gsMdList.length > 0) return
+    setGsMdLoading(true)
+    try {
+      const res = await request<{ success: boolean; data: unknown }>(`${API_BASE}/api/v1/samba/proxy/gsshop/md-list`)
+      if (res.success) {
+        const outer = res.data as { data?: { resultList?: unknown[] } } | null
+        const list = (outer?.data?.resultList || []) as Record<string, unknown>[]
+        setGsMdList(list.map(m => ({ operMdId: String(m.operMdId || ''), operMdNm: String(m.operMdNm || m.mdNm || '') })))
+      }
+    } catch { /* 무시 */ } finally { setGsMdLoading(false) }
+  }, [gsMdList.length])
 
   // 템플릿 선택 시 imgChecks/imgOrder를 DB 값으로 초기화
   useEffect(() => {
@@ -1578,14 +1657,127 @@ export default function PoliciesPage() {
                   </div>
                 </div>
               )}
-              {/* GS샵 전용: MD 협의 마진율 */}
-              {marketPolicyTab === 'GS샵' && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>마켓마진율</span>
-                  <NumInput value={mp.gsMarginRate || 0} onChange={(v) => { setCurrentMarketPolicy({ ...mp, gsMarginRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
-                  <span style={{ color: '#666', fontSize: '0.75rem' }}>MD 협의 필수항목</span>
-                </div>
-              )}
+              {/* GS샵 전용 설정 */}
+              {marketPolicyTab === 'GS샵' && (() => {
+                const gs = (mp.gsSettings || {}) as NonNullable<typeof mp.gsSettings>
+                const setGs = (patch: typeof gs) => { setCurrentMarketPolicy({ ...mp, gsSettings: { ...gs, ...patch } }); triggerAutoSave() }
+                const filteredSects = gsSections.filter(s =>
+                  !gsSectSearch.trim() || s.sectNm.includes(gsSectSearch) || s.sectLrgNm.includes(gsSectSearch) || s.sectMidNm.includes(gsSectSearch) || s.sectDtlNm.includes(gsSectSearch)
+                ).slice(0, 100)
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem', borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem' }}>
+                    {/* 마켓마진율 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '90px' }}>마켓마진율</span>
+                      <NumInput value={mp.gsMarginRate || 0} onChange={(v) => { setCurrentMarketPolicy({ ...mp, gsMarginRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
+                      <span style={{ color: '#666', fontSize: '0.75rem' }}>MD 협의 필수항목</span>
+                    </div>
+                    {/* 브랜드 검색 */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '90px' }}>브랜드</span>
+                        {gs.brandNm
+                          ? <span style={{ fontSize: '0.8125rem', color: '#E2E8F0' }}>{gs.brandNm} <span style={{ color: '#888' }}>({gs.brandCd})</span></span>
+                          : <span style={{ fontSize: '0.8125rem', color: '#666' }}>미설정</span>}
+                        <button onClick={() => { setGsBrands([]); setGsBrandKeyword('') }} style={{ fontSize: '0.75rem', padding: '2px 6px', background: '#374151', color: '#9CA3AF', border: '1px solid #4B5563', borderRadius: 4, cursor: 'pointer' }}>변경</button>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span style={{ minWidth: '90px' }} />
+                        <input value={gsBrandKeyword} onChange={e => setGsBrandKeyword(e.target.value)} placeholder="브랜드명 검색" style={{ flex: 1, maxWidth: 180, background: '#1F2937', border: '1px solid #374151', borderRadius: 4, color: '#E2E8F0', fontSize: '0.8125rem', padding: '3px 6px' }} />
+                        {gsBrandLoading && <span style={{ color: '#888', fontSize: '0.75rem' }}>검색 중...</span>}
+                      </div>
+                      {gsBrands.length > 0 && (
+                        <div style={{ marginLeft: 98, maxHeight: 140, overflowY: 'auto', background: '#111827', border: '1px solid #374151', borderRadius: 4 }}>
+                          {gsBrands.map(b => (
+                            <div key={b.brandCd} onClick={() => { setGs({ brandCd: b.brandCd, brandNm: b.brandHanglNm || b.brandNm }); setGsBrandKeyword(''); setGsBrands([]) }} style={{ padding: '4px 8px', cursor: 'pointer', fontSize: '0.8125rem', color: '#D1D5DB', borderBottom: '1px solid #1F2937' }}>
+                              {b.brandHanglNm || b.brandNm} <span style={{ color: '#6B7280', fontSize: '0.75rem' }}>({b.brandCd})</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {/* 전시매장(섹션) */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '90px' }}>전시매장</span>
+                        {gs.sectNm
+                          ? <span style={{ fontSize: '0.8125rem', color: '#E2E8F0' }}>{gs.sectNm} <span style={{ color: '#888' }}>({gs.sectId})</span></span>
+                          : <span style={{ fontSize: '0.8125rem', color: '#666' }}>미설정</span>}
+                        <button onClick={() => loadGsSections()} style={{ fontSize: '0.75rem', padding: '2px 6px', background: '#374151', color: '#9CA3AF', border: '1px solid #4B5563', borderRadius: 4, cursor: 'pointer' }}>
+                          {gsSectionsLoading ? '불러오는 중...' : '불러오기'}
+                        </button>
+                      </div>
+                      {gsSections.length > 0 && (
+                        <div style={{ marginLeft: 98, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          <input value={gsSectSearch} onChange={e => setGsSectSearch(e.target.value)} placeholder="매장명 검색" style={{ maxWidth: 200, background: '#1F2937', border: '1px solid #374151', borderRadius: 4, color: '#E2E8F0', fontSize: '0.8125rem', padding: '3px 6px' }} />
+                          <div style={{ maxHeight: 140, overflowY: 'auto', background: '#111827', border: '1px solid #374151', borderRadius: 4 }}>
+                            {filteredSects.map(s => (
+                              <div key={s.sectId} onClick={() => setGs({ sectId: s.sectId, sectNm: s.sectDtlNm || s.sectMidNm || s.sectLrgNm || s.sectNm })} style={{ padding: '4px 8px', cursor: 'pointer', fontSize: '0.8125rem', color: '#D1D5DB', borderBottom: '1px solid #1F2937' }}>
+                                {s.sectLrgNm}{s.sectMidNm ? ` > ${s.sectMidNm}` : ''}{s.sectDtlNm ? ` > ${s.sectDtlNm}` : ''} <span style={{ color: '#6B7280', fontSize: '0.75rem' }}>({s.sectId})</span>
+                              </div>
+                            ))}
+                            {filteredSects.length === 0 && <div style={{ padding: '6px 8px', color: '#666', fontSize: '0.8125rem' }}>결과 없음</div>}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    {/* MD */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '90px' }}>담당 MD</span>
+                      <select value={gs.operMdId || ''} onChange={e => setGs({ operMdId: e.target.value })} onClick={() => loadGsMdList()} style={{ flex: 1, maxWidth: 200, background: '#1F2937', border: '1px solid #374151', borderRadius: 4, color: '#E2E8F0', fontSize: '0.8125rem', padding: '3px 6px' }}>
+                        <option value="">{gsMdLoading ? '불러오는 중...' : '선택하세요'}</option>
+                        {gsMdList.map(m => <option key={m.operMdId} value={m.operMdId}>{m.operMdNm} ({m.operMdId})</option>)}
+                      </select>
+                      <input value={gs.operMdId || ''} onChange={e => setGs({ operMdId: e.target.value })} placeholder="MD ID 직접입력" style={{ width: 80, background: '#1F2937', border: '1px solid #374151', borderRadius: 4, color: '#E2E8F0', fontSize: '0.8125rem', padding: '3px 6px' }} />
+                    </div>
+                    {/* 상품분류코드 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '90px' }}>상품분류코드</span>
+                      <input value={gs.prdClsCd || ''} onChange={e => setGs({ prdClsCd: e.target.value })} placeholder="예: B43010101" style={{ width: 130, background: '#1F2937', border: '1px solid #374151', borderRadius: 4, color: '#E2E8F0', fontSize: '0.8125rem', padding: '3px 6px' }} />
+                      <span style={{ color: '#666', fontSize: '0.75rem' }}>prdClsCd</span>
+                    </div>
+                    {/* 출고일수, 택배사 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '90px' }}>출고일수</span>
+                      <NumInput value={typeof gs.stdRelsDdcnt === 'number' ? gs.stdRelsDdcnt : 1} onChange={(v) => setGs({ stdRelsDdcnt: v })} style={{ width: 50 }} suffix="일" />
+                      <span style={{ color: '#888', fontSize: '0.8125rem', marginLeft: 8 }}>택배사</span>
+                      <select value={gs.dlvsCoCd || 'DH'} onChange={e => setGs({ dlvsCoCd: e.target.value })} style={{ background: '#1F2937', border: '1px solid #374151', borderRadius: 4, color: '#E2E8F0', fontSize: '0.8125rem', padding: '3px 6px' }}>
+                        <option value="DH">대한통운 (DH)</option>
+                        <option value="CJ">CJ대한통운 (CJ)</option>
+                        <option value="KP">우체국 (KP)</option>
+                        <option value="HN">한진 (HN)</option>
+                        <option value="LO">롯데 (LO)</option>
+                      </select>
+                    </div>
+                    {/* 반품/교환 배송비 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '90px' }}>반품배송비</span>
+                      <NumInput value={typeof gs.rtpAmt === 'number' ? gs.rtpAmt : 5000} onChange={(v) => setGs({ rtpAmt: v })} style={{ width: 70 }} suffix="원" />
+                      <span style={{ color: '#888', fontSize: '0.8125rem', marginLeft: 8 }}>교환배송비</span>
+                      <NumInput value={typeof gs.exchAmt === 'number' ? gs.exchAmt : 5000} onChange={(v) => setGs({ exchAmt: v })} style={{ width: 70 }} suffix="원" />
+                    </div>
+                    {/* 정보고시 그룹, 옵션타입명 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '90px' }}>정보고시그룹</span>
+                      <select value={gs.govGrp || 10} onChange={e => setGs({ govGrp: Number(e.target.value) })} style={{ background: '#1F2937', border: '1px solid #374151', borderRadius: 4, color: '#E2E8F0', fontSize: '0.8125rem', padding: '3px 6px' }}>
+                        <option value={10}>10 - 의류</option>
+                        <option value={20}>20 - 신발</option>
+                        <option value={30}>30 - 가방</option>
+                        <option value={40}>40 - 패션잡화</option>
+                        <option value={50}>50 - 스포츠</option>
+                      </select>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', marginLeft: 8 }}>옵션타입명</span>
+                      <input value={gs.attrTypNm1 || '사이즈'} onChange={e => setGs({ attrTypNm1: e.target.value })} placeholder="예: 사이즈" style={{ width: 70, background: '#1F2937', border: '1px solid #374151', borderRadius: 4, color: '#E2E8F0', fontSize: '0.8125rem', padding: '3px 6px' }} />
+                    </div>
+                    {/* 하위협력사코드 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '90px' }}>하위협력사</span>
+                      <input value={gs.subSupCd || ''} onChange={e => setGs({ subSupCd: e.target.value })} placeholder="기본: 계정코드 자동" style={{ width: 130, background: '#1F2937', border: '1px solid #374151', borderRadius: 4, color: '#E2E8F0', fontSize: '0.8125rem', padding: '3px 6px' }} />
+                      <span style={{ color: '#666', fontSize: '0.75rem' }}>subSupCd (빈칸=계정코드)</span>
+                    </div>
+                  </div>
+                )
+              })()}
               {/* 옥션/지마켓 전용: 복수구매 할인, 스마일캐시 지급 */}
               {(marketPolicyTab === '옥션' || marketPolicyTab === '지마켓') && (
                 <>
