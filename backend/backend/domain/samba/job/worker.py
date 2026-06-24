@@ -1520,7 +1520,7 @@ class JobWorker:
             _rows = (
                 await _ps.execute(
                     _text(
-                        "SELECT id, sale_price, options, market_product_nos"
+                        "SELECT id, sale_price, options, market_product_nos, last_sent_data"
                         " FROM samba_collected_product"
                         " WHERE id = ANY(CAST(:pids AS text[]))"
                     ),
@@ -1550,9 +1550,21 @@ class JobWorker:
             if not master_code:
                 continue
 
-            # payload의 expected_price 우선 (오토튠 정책 계산가). 없으면 DB sale_price fallback.
-            _ep = int((_j.payload or {}).get("expected_price") or 0)
-            sale_price = _ep if _ep > 0 else int(prod.sale_price or 0)
+            # 가격 전송 기준:
+            # - update_items에 "price" 있음 → expected_price(정책 계산가) 우선
+            # - "price" 없음(재고만 변동) → last_sent_data 이전 전송가 사용
+            #   (PlayAuto PATCH /prods는 Price+Count 항상 함께 필수)
+            _pl = _j.payload or {}
+            _items = _pl.get("update_items") or []
+            _ep = int(_pl.get("expected_price") or 0)
+            if "price" in _items:
+                sale_price = _ep if _ep > 0 else int(prod.sale_price or 0)
+            else:
+                _lsd = prod.last_sent_data or {}
+                if isinstance(_lsd, str):
+                    _lsd = _json.loads(_lsd)
+                _lsd_price = int((_lsd.get(acc_id) or {}).get("price") or 0)
+                sale_price = _lsd_price if _lsd_price > 0 else int(prod.sale_price or 0)
             options = prod.options or []
             if isinstance(options, str):
                 options = _json.loads(options)
