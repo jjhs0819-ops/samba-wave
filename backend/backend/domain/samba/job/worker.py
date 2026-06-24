@@ -582,7 +582,7 @@ class JobWorker:
             from backend.core.config import settings as _cfg
 
             logger.info(f"[잡워커] rebalance start poll={self._poll_count}")
-            _bg_max = int(os.environ.get("JOB_BG_TRANSMIT_MAX_CONCURRENCY", "36"))
+            _bg_max = int(os.environ.get("JOB_BG_TRANSMIT_MAX_CONCURRENCY", "300"))
             _min_pct = 0.15
             _max_pct = 0.60
 
@@ -634,6 +634,30 @@ class JobWorker:
                 self._running_per_mt_db: dict[str, int] = {
                     r["market_type"]: r["cnt"] for r in _run_rows if r["market_type"]
                 }
+
+                # 처리량 측정 — 최근 10분 완료수/생성수/running으로 슬롯당 처리율 계산
+                _tp_rows = await _conn.fetch(
+                    "SELECT ma.market_type AS mt, "
+                    "  COUNT(*) FILTER (WHERE j.completed_at >= NOW() - INTERVAL '10 minutes') AS done_10m, "
+                    "  COUNT(*) FILTER (WHERE j.created_at >= NOW() - INTERVAL '10 minutes') AS created_10m, "
+                    "  COUNT(*) FILTER (WHERE j.status='running' AND j.started_at > NOW() - INTERVAL '3 minutes') AS running_now "
+                    "FROM samba_jobs j "
+                    "JOIN samba_market_account ma ON ma.id=(j.payload->'target_account_ids'->>0) "
+                    "WHERE j.job_type='autotune_transmit' "
+                    "  AND (j.completed_at >= NOW() - INTERVAL '10 minutes' "
+                    "   OR j.created_at >= NOW() - INTERVAL '10 minutes' "
+                    "   OR (j.status='running' AND j.started_at > NOW() - INTERVAL '3 minutes')) "
+                    "GROUP BY 1"
+                )
+                _throughput: dict[str, dict] = {
+                    r["mt"]: {
+                        "done": int(r["done_10m"]),
+                        "created": int(r["created_10m"]),
+                        "running": int(r["running_now"]),
+                    }
+                    for r in _tp_rows
+                    if r["mt"]
+                }
             finally:
                 await _conn.close()
 
@@ -648,56 +672,60 @@ class JobWorker:
                 self._autotune_slot_limits = {}
                 return
 
-            _max_slots = max(1, round(_bg_max * _max_pct))
+            # 판매처별 안전 상한선 (마켓 API 과부하 방지)
+            import math as _math
 
-            # 30분 단위 증가량 기반 슬롯 배분
-            import time as _time
-
-            _now_ts = _time.monotonic()
-            _SNAPSHOT_INTERVAL = 1800.0  # 30분
-
-            if (
-                self._pending_snapshot_by_mt
-                and (_now_ts - self._pending_snapshot_ts) >= _SNAPSHOT_INTERVAL
-            ):
-                # 30분 전 스냅샷 대비 증가분 계산
-                delta_by_mt = {
-                    mt: max(0, cnt - self._pending_snapshot_by_mt.get(mt, 0))
-                    for mt, cnt in pending_by_mt.items()
-                }
-                total_delta = sum(delta_by_mt.values())
-            else:
-                delta_by_mt = {}
-                total_delta = 0
-
-            # 스냅샷 갱신 (30분마다 또는 첫 실행)
-            if (
-                not self._pending_snapshot_by_mt
-                or (_now_ts - self._pending_snapshot_ts) >= _SNAPSHOT_INTERVAL
-            ):
-                self._pending_snapshot_by_mt = dict(pending_by_mt)
-                self._pending_snapshot_ts = _now_ts
+            _MARKET_MAX_SLOTS: dict[str, int] = {
+                "ssg": 60,
+                "ssg_std": 60,
+                "coupang": 50,
+                "lottehome": 40,
+                "11st": 40,
+                "smartstore": 30,
+                "gmarket": 20,
+                "auction": 20,
+                "ebay": 20,
+                "lotteon": 8,
+                "playauto": 3,
+            }
 
             _special = {"lottehome", "playauto"}
             _min_slots = max(1, round(_bg_max * _min_pct))  # special 판매처 최소 슬롯
 
             new_limits: dict[str, int] = {}
             for mt, cnt in pending_by_mt.items():
-                if total_delta > 0:
-                    # 30분 증가량 비율로 배분
-                    ratio = delta_by_mt.get(mt, 0) / total_delta
+                tp = _throughput.get(mt, {})
+                done_10m = tp.get("done", 0)
+                created_10m = tp.get("created", 0)
+                running_now = tp.get("running", 0)
+
+                if done_10m > 0 and running_now > 0:
+                    # 슬롯당 10분 처리건수
+                    per_slot_10m = done_10m / running_now
+                    # 생성속도 이상 처리하려면 필요한 슬롯
+                    needed_for_gen = _math.ceil(created_10m / per_slot_10m)
+                    # 30분 안에 기존 펜딩 소화
+                    needed_for_drain = (
+                        _math.ceil(cnt / (per_slot_10m * 3)) if per_slot_10m > 0 else 1
+                    )
+                    slots = max(needed_for_gen, needed_for_drain, 1)
                 else:
-                    # 스냅샷 미충족 시 현재 pending 비율 fallback
+                    # 처리 데이터 없음 → pending 비율 fallback
                     ratio = cnt / total_pending
-                raw = round(_bg_max * ratio)
+                    slots = max(1, round(_bg_max * ratio))
+
+                # 판매처별 안전 상한 적용
+                hard_max = _MARKET_MAX_SLOTS.get(mt, 20)
+                slots = min(slots, hard_max)
+
+                # special 최소 보장
                 if mt in _special:
-                    slots = max(_min_slots, min(_max_slots, max(1, raw)))
-                else:
-                    slots = max(1, min(_max_slots, raw))
+                    slots = max(_min_slots, slots)
+
                 new_limits[mt] = slots
 
             self._autotune_slot_limits = new_limits
-            _basis = "증가량" if total_delta > 0 else "pending(초기)"
+            _basis = "처리량기반"
             logger.info(
                 f"[잡워커] autotune 슬롯 재배분(판매처)[{_basis}]: "
                 + ", ".join(
@@ -801,7 +829,7 @@ class JobWorker:
         max_picks = transmit_slots + 2
         picked = 0
         # bg 세마포어 초기값 — over-claim 게이트용 (#459)
-        _bg_max = int(os.environ.get("JOB_BG_TRANSMIT_MAX_CONCURRENCY", "36"))
+        _bg_max = int(os.environ.get("JOB_BG_TRANSMIT_MAX_CONCURRENCY", "300"))
         # F1(#462): 일반 claim 래치 — 집중 pending 부하에서 autotune-first 가 매 iteration
         # 느린 일반 claim 으로 폴백하며 autotune 슬롯을 못 채우던 회귀(동시성 10→5) 차단.
         # 일반 claim 이 한 번 None 이면 이후 iteration 은 빠른 autotune claim 만 → poll 당 1회로 제한.
@@ -820,11 +848,24 @@ class JobWorker:
                 _excl_autotune_accounts: set[str] = set()
                 for _aids in self._active_autotune_accounts.values():
                     _excl_autotune_accounts.update(_aids)
-                # playauto: API키 기반, lottehome: cert_key stateless, ssg/ssg_std: Authorization 헤더 stateless → 동일 계정 병렬 허용
+                # REST API stateless 판매처 → 동일 계정 병렬 허용
+                # playauto: API키, lottehome: cert_key, ssg/ssg_std/coupang/11st/smartstore/gmarket/auction/ebay: Authorization 헤더
                 _parallel_ok_accs = {
                     acc
                     for acc, mt in self._acc_market_type_cache.items()
-                    if mt in ("playauto", "lottehome", "ssg", "ssg_std")
+                    if mt
+                    in (
+                        "playauto",
+                        "lottehome",
+                        "ssg",
+                        "ssg_std",
+                        "coupang",
+                        "11st",
+                        "smartstore",
+                        "gmarket",
+                        "auction",
+                        "ebay",
+                    )
                 }
                 _excl_autotune_accounts -= _parallel_ok_accs
                 # 일시정지 중이면 transmit 클레임 스킵 — PENDING 잡 대기 유지
