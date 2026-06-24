@@ -91,9 +91,9 @@ def _transform_for_gsshop(
     now_dtm = int(datetime.now(kst).strftime("%Y%m%d%H%M%S"))
     end_dtm = 29991231235959
 
-    # 공급가 계산 — 마진율 있으면 역산, 없으면 판매가 그대로
+    # 공급가 계산 — 마진율 있으면 역산 후 10원 단위 버림 (GS API 원단위 거부)
     if gs_margin_rate:
-        sup_prc = int(sale_price * (100 - gs_margin_rate) / 100)
+        sup_prc = int(sale_price * (100 - gs_margin_rate) / 100 / 10) * 10
     else:
         sup_prc = sale_price
 
@@ -212,9 +212,8 @@ def _transform_for_gsshop(
 
     payload: dict[str, Any] = {
         "supPrdCd": sup_prd_cd,
+        "subSupCd": sub_sup_cd if sub_sup_cd else None,
     }
-    if sub_sup_cd:
-        payload["subSupCd"] = sub_sup_cd
     payload.update(
         {
             "prdBaseAddInfo": base_add_info,
@@ -240,7 +239,19 @@ def _transform_for_gsshop(
             "prdSafeCertInfo": gs.get("prdSafeCertInfo")
             or {"safeCertGbnCd": 0, "safeCertOrgCd": 0},
             # 정보고시 — 의류 코드 1001~1009 (getPrdClsDtlInfo API 확인값)
-            "prdGovPublsItmList": gs.get("prdGovPublsItmList") or [],
+            # gs_settings에 없으면 "상품 페이지 참조" 기본값으로 채움
+            "prdGovPublsItmList": gs.get("prdGovPublsItmList")
+            or [
+                {"govPublsItmCd": "1001", "govPublsItmCntnt": "상품 페이지 참조"},
+                {"govPublsItmCd": "1002", "govPublsItmCntnt": "상품 페이지 참조"},
+                {"govPublsItmCd": "1003", "govPublsItmCntnt": "상품 페이지 참조"},
+                {"govPublsItmCd": "1004", "govPublsItmCntnt": "상품 페이지 참조"},
+                {"govPublsItmCd": "1005", "govPublsItmCntnt": "해외"},
+                {"govPublsItmCd": "1006", "govPublsItmCntnt": "상품 페이지 참조"},
+                {"govPublsItmCd": "1007", "govPublsItmCntnt": "상품 페이지 참조"},
+                {"govPublsItmCd": "1008", "govPublsItmCntnt": "상품 페이지 참조"},
+                {"govPublsItmCd": "1009", "govPublsItmCntnt": "상품 페이지 참조"},
+            ],
         }
     )
     return payload
@@ -317,7 +328,7 @@ class GsShopPlugin(MarketPlugin):
             or auth_creds.get("apiKeyProd", "")
             or auth_creds.get("apiKeyDev", "")
         )
-        sub_sup_cd = auth_creds.get("subSupCd", "")
+        sub_sup_cd = auth_creds.get("subSupCd") or sup_cd
         env = "prod" if auth_creds.get("apiKeyProd") else auth_creds.get("env", "dev")
 
         # 정책에서 GS샵 마켓마진율 + 기타 등록 설정 조회
@@ -342,6 +353,19 @@ class GsShopPlugin(MarketPlugin):
             gs_settings = {**gs_settings, "exchAmt": int(auth_creds["exchangeFee"])}
 
         client = GsShopClient(sup_cd, aes_key, sub_sup_cd, env)
+
+        # operMdId 미설정 시 MD 목록 API에서 자동 조회
+        if not gs_settings.get("operMdId"):
+            try:
+                md_result = await client.get_md_list()
+                md_list = (md_result.get("data", {}) or {}).get("resultList") or []
+                if md_list:
+                    gs_settings = {
+                        **gs_settings,
+                        "operMdId": int(md_list[0].get("mdId") or 0),
+                    }
+            except Exception:
+                pass
 
         # 기존 상품번호(prdCd) 있으면 수정 모드 — 가격+옵션(재고) 업데이트
         if existing_no:
@@ -371,11 +395,14 @@ class GsShopPlugin(MarketPlugin):
         # prdCd 추출 — {"data": {"data": {"prdCd": "..."}}}
         inner = raw.get("data", {}) if isinstance(raw, dict) else {}
         prd_cd = inner.get("prdCd") if isinstance(inner, dict) else None
+        # supPrdCd(=업체상품코드=style_code) 를 product_id로 저장
+        # GS API 수정/삭제 endpoint URL이 supPrdCd 기준 (/api/v3/products/{supPrdCd}/price)
+        sup_prd_cd_registered = goods_data.get("supPrdCd") or str(prd_cd or "")
 
         return {
             "success": True,
             "message": "GS샵 등록 성공",
-            "product_id": str(prd_cd or ""),
+            "product_id": sup_prd_cd_registered,
             "data": result,
         }
 
@@ -397,7 +424,7 @@ class GsShopPlugin(MarketPlugin):
 
         sale_price = int(product.get("sale_price") or 0)
         if gs_margin_rate:
-            sup_prc = int(sale_price * (100 - gs_margin_rate) / 100)
+            sup_prc = int(sale_price * (100 - gs_margin_rate) / 100 / 10) * 10
         else:
             sup_prc = sale_price
 
