@@ -464,8 +464,9 @@ def _track_market_registered_transition(
     new_count = _count_registered(new_val)
     now = datetime.now(tz=timezone.utc)
     if old_count == 0 and new_count > 0:
-        # 0 → ≥1 전환: 신규 마켓등록
-        target.first_market_registered_at = now
+        # 0 → ≥1 전환: 최초 마켓등록만 stamp (재등록 시 덮어쓰기 방지)
+        if target.first_market_registered_at is None:
+            target.first_market_registered_at = now
         target.fully_unregistered_at = None
     elif old_count > 0 and new_count == 0:
         # ≥1 → 0 전환: 마켓 전체삭제
