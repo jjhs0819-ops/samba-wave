@@ -49,23 +49,50 @@
   }
 
   // ── 주문서: 배송지 변경 ──
+  // 롯데ON 구조: button.btnAddress → 모달(li 목록, 라디오 hopeDlvN) → 이름 매칭 → 확인
   async function changeShipping(name, phone, address, detail) {
-    if (!name || !address) return
-    for (const btn of document.querySelectorAll('button, a')) {
-      const t = btn.textContent.trim()
-      if (t === '배송지 변경' || t === '새 배송지' || t === '배송지 추가') { btn.click(); await sleep(1500); break }
-    }
-    const inputs = [...document.querySelectorAll('input[type="text"],input:not([type])')]
-    const fill = (ph, v) => {
-      const el = inputs.find(i => (i.placeholder || '').includes(ph))
-      if (el) { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })) }
-    }
-    fill('이름', name); fill('연락', phone); fill('전화', phone)
-    fill('주소', address); fill('상세', detail || '')
-    await sleep(500)
-    for (const btn of document.querySelectorAll('button')) {
-      const t = btn.textContent.trim()
-      if (t === '저장' || t === '확인' || t === '완료') { btn.click(); await sleep(1500); break }
+    if (!name) return
+    // 배송지 변경 버튼 클릭 (텍스트 '변경', 클래스 btnAddress)
+    const changeBtn = document.querySelector('button.btnAddress') ||
+      Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === '변경' && b.offsetHeight > 0)
+    if (!changeBtn) return
+    changeBtn.click()
+    await sleep(1500)
+
+    // 모달에서 이름으로 배송지 찾기
+    const modal = document.querySelector('[role="dialog"], .v--modal-box')
+    if (modal) {
+      const items = modal.querySelectorAll('li')
+      let selected = false
+      for (const li of items) {
+        const txt = li.textContent.trim()
+        if (txt.includes(name)) {
+          const radio = li.querySelector('input[type="radio"]') || li
+          radio.click()
+          await sleep(500)
+          selected = true
+          break
+        }
+      }
+      // 이름 못 찾으면 새 배송지 추가 (새 배송지 추가 버튼 → 입력폼 → 저장)
+      if (!selected && address) {
+        const newBtn = Array.from(modal.querySelectorAll('button')).find(b => b.textContent.includes('새 배송지'))
+        if (newBtn) {
+          newBtn.click()
+          await sleep(1000)
+          const inputs = [...document.querySelectorAll('input[type="text"],input:not([type])')]
+          const fill = (ph, v) => {
+            const el = inputs.find(i => (i.placeholder || '').includes(ph))
+            if (el) { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })) }
+          }
+          fill('이름', name); fill('연락', phone || ''); fill('전화', phone || '')
+          fill('주소', address); fill('상세', detail || '')
+          await sleep(300)
+        }
+      }
+      // 확인 버튼 클릭
+      const confirmBtn = Array.from(modal.querySelectorAll('button')).find(b => b.textContent.trim() === '확인')
+      if (confirmBtn) { confirmBtn.click(); await sleep(1500) }
     }
   }
 
@@ -101,6 +128,13 @@
           await sleep(1500)
           if (orderType === 'direct') await changeShipping(shippingName, shippingPhone, shippingAddress, shippingAddressDetail)
           await selectCoupon()
+          // 롯데ON 주문서 1페이지(orders/N)에서 계속하기 클릭 → 결제 페이지(payments)로 이동
+          const continueBtn = Array.from(document.querySelectorAll('button')).find(b => b.offsetHeight > 0 && b.textContent.trim() === '계속하기')
+          if (continueBtn) {
+            sendResponse({ success: true, status: 'ready-to-pay' })
+            continueBtn.click()
+            return
+          }
           sendResponse({ success: true, status: 'ready-to-pay' })
         }
       } catch (e) { sendResponse({ success: false, error: e.message }) }

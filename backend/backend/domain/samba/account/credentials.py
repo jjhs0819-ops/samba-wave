@@ -92,7 +92,7 @@ def gsshop_creds(account: Optional["SambaMarketAccount"]) -> dict[str, Any]:
     ext = _extras(account)
     return {
         "supCd": account.seller_id or "",
-        "aesKey": account.api_key or "",
+        "aesKey": account.api_key or ext.get("apiKeyProd", "") or ext.get("aesKey", ""),
         "apiKeyDev": ext.get("apiKeyDev", ""),
         "apiKeyProd": ext.get("apiKeyProd", ""),
         "subSupCd": ext.get("subSupCd", ""),

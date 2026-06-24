@@ -41,12 +41,12 @@ async def main():
     from backend.core.config import settings
 
     conn = await asyncpg.connect(
-        host=settings.DB_WRITE_HOST,
-        port=settings.DB_WRITE_PORT,
-        database=settings.DB_NAME,
-        user=settings.DB_USER,
-        password=settings.DB_PASSWORD,
-        ssl=settings.DB_WRITE_SSL,
+        host=settings.write_db_host,
+        port=settings.write_db_port,
+        database=settings.write_db_name,
+        user=settings.write_db_user,
+        password=settings.write_db_password,
+        ssl="require" if settings.db_ssl_required else None,
     )
 
     try:

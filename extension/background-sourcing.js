@@ -4771,24 +4771,201 @@ const _PLACE_ORDER_AUTO_LOGIN_MAP = {
   GSShop: 'gsshop',
 }
 
-// SSG 배송지 팝업(member.ssg.com/comm/popup/shpplocList.ssg) 자동 처리
-// 배송지변경 버튼 클릭 → 팝업 탭 감지 → 이름 매칭 선택 → 배송지변경 버튼 클릭 → 팝업 닫힘 대기
-async function _handleSsgShippingPopup(orderTabId, shippingName) {
+// SSG 우편번호 검색 팝업(zipcd.ssg) 자동화
+// 주소 검색 → 첫 도로명 클릭 → 상세주소 입력 → 저장
+async function _handleSsgZipcdPopup(zipcodeTabId, address, detail) {
+  await new Promise(r => setTimeout(r, 1000))
+  // 주소 검색
+  await chrome.scripting.executeScript({
+    target: { tabId: zipcodeTabId },
+    func: (addr) => {
+      const inp = document.querySelector('input[name="searchKeyword"]')
+      if (!inp) return
+      inp.value = addr
+      inp.dispatchEvent(new Event('input', { bubbles: true }))
+      const btn = document.querySelector('.postcode_search_btn')
+      if (btn) btn.click()
+      else inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }))
+    },
+    args: [address],
+  })
+  await new Promise(r => setTimeout(r, 1500))
+  // 첫 번째 도로명 버튼 클릭
+  await chrome.scripting.executeScript({
+    target: { tabId: zipcodeTabId },
+    func: () => {
+      const btns = document.querySelectorAll('button[onclick="Zipcd.showZipcdDtl(this)"]')
+      if (btns.length) btns[0].click()
+    },
+  })
+  await new Promise(r => setTimeout(r, 1000))
+  // 상세주소 입력 + 저장 (addrDtlInput + addrDtlBtn)
+  await chrome.scripting.executeScript({
+    target: { tabId: zipcodeTabId },
+    func: (dtl) => {
+      const dtlInp = document.getElementById('addrDtlInput')
+      if (dtlInp && dtl) {
+        dtlInp.value = dtl
+        dtlInp.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+      const saveBtn = document.getElementById('addrDtlBtn')
+      if (saveBtn) saveBtn.click()
+    },
+    args: [detail || ''],
+  })
+  // zipcd 팝업 닫힘 대기 (8초)
+  await new Promise((resolve) => {
+    const h = (id) => { if (id === zipcodeTabId) { chrome.tabs.onRemoved.removeListener(h); resolve() } }
+    chrome.tabs.onRemoved.addListener(h)
+    setTimeout(() => { chrome.tabs.onRemoved.removeListener(h); resolve() }, 8000)
+  })
+}
+
+// SSG 새 배송지 추가 (shpplocList → shpplocForm → zipcd)
+async function _handleSsgNewAddress(listPopupTabId, name, phone, address, detail) {
   try {
-    // 1. 주문서에서 배송지변경 버튼 클릭
+    // "새 배송지 추가" 버튼 클릭
+    await chrome.scripting.executeScript({
+      target: { tabId: listPopupTabId },
+      func: () => {
+        const btn = Array.from(document.querySelectorAll('button,a')).find(
+          el => el.textContent.trim().replace(/\s+/g, '').includes('새배송지') ||
+                el.textContent.trim().replace(/\s+/g, '').includes('배송지추가'),
+        )
+        if (btn) btn.click()
+      },
+    })
+
+    // shpplocForm 팝업 대기 (6초)
+    let formTabId = null
+    await new Promise((resolve) => {
+      const h = (id, info, tabInfo) => {
+        if (id !== listPopupTabId && /shpplocForm/.test(tabInfo?.url || '') && info.status === 'complete') {
+          formTabId = id
+          chrome.tabs.onUpdated.removeListener(h)
+          resolve()
+        }
+      }
+      chrome.tabs.onUpdated.addListener(h)
+      setTimeout(() => { chrome.tabs.onUpdated.removeListener(h); resolve() }, 6000)
+    })
+    if (!formTabId) return
+
+    await new Promise(r => setTimeout(r, 800))
+
+    // "직접입력" 라디오 선택 + 우편번호 클릭 → zipcd 팝업
+    await chrome.scripting.executeScript({
+      target: { tabId: formTabId },
+      func: () => {
+        const direct = document.getElementById('address_customInput')
+        if (direct) direct.click()
+        setTimeout(() => {
+          const zip = document.getElementById('address_zipcode')
+          if (zip) zip.click()
+        }, 200)
+      },
+    })
+
+    // zipcd 팝업 대기 (6초)
+    let zipcodeTabId = null
+    await new Promise((resolve) => {
+      const h = (id, info, tabInfo) => {
+        if (/zipcd\.ssg/.test(tabInfo?.url || '') && info.status === 'complete') {
+          zipcodeTabId = id
+          chrome.tabs.onUpdated.removeListener(h)
+          resolve()
+        }
+      }
+      chrome.tabs.onUpdated.addListener(h)
+      setTimeout(() => { chrome.tabs.onUpdated.removeListener(h); resolve() }, 6000)
+    })
+    if (!zipcodeTabId) return
+
+    // 우편번호 팝업 자동화 (검색 → 선택 → 상세주소 → 저장)
+    await _handleSsgZipcdPopup(zipcodeTabId, address, detail)
+    await new Promise(r => setTimeout(r, 800))
+
+    // 이름/전화번호 입력 + 저장
+    const phoneDigits = (phone || '').replace(/-/g, '')
+    await chrome.scripting.executeScript({
+      target: { tabId: formTabId },
+      func: (nm, ph) => {
+        // 이름
+        const nameInp = document.getElementById('rcptpeNm')
+        if (nameInp) {
+          nameInp.value = nm
+          nameInp.dispatchEvent(new Event('input', { bubbles: true }))
+          nameInp.dispatchEvent(new Event('change', { bubbles: true }))
+        }
+        // 전화번호: "01012345678" → hpno1=010, hpno2=12345678
+        const sel = document.getElementById('hpno1')
+        if (sel) {
+          sel.value = ph.slice(0, 3)
+          sel.dispatchEvent(new Event('change', { bubbles: true }))
+        }
+        const hp2 = document.getElementById('hpno2')
+        if (hp2) {
+          hp2.value = ph.slice(3)
+          hp2.dispatchEvent(new Event('input', { bubbles: true }))
+          hp2.dispatchEvent(new Event('change', { bubbles: true }))
+        }
+        // 저장
+        setTimeout(() => {
+          const saveBtn = document.querySelector('.cmaddr_btn_save')
+          if (saveBtn) saveBtn.click()
+        }, 400)
+      },
+      args: [name || '', phoneDigits],
+    })
+
+    // 폼 저장 후 목록 갱신 대기
+    await new Promise(r => setTimeout(r, 3500))
+
+    // shpplocList에서 새 배송지 선택 + 배송지 변경
+    await chrome.scripting.executeScript({
+      target: { tabId: listPopupTabId },
+      func: (nm, ph) => {
+        const normalPhone = ph.replace(/-/g, '')
+        const radios = Array.from(document.querySelectorAll('input[type="radio"]'))
+        for (const radio of radios) {
+          const parent = radio.closest('li') || radio.parentElement?.parentElement
+          const text = (parent?.textContent || '').replace(/[\s-]/g, '')
+          if (normalPhone && text.includes(normalPhone)) { radio.click(); break }
+        }
+        if (!radios.some(r => r.checked) && nm) {
+          for (const radio of radios) {
+            const parent = radio.closest('li') || radio.parentElement?.parentElement
+            if ((parent?.textContent || '').includes(nm)) { radio.click(); break }
+          }
+        }
+        const changeBtn = document.querySelector('a.mnodr_btn.default') ||
+          Array.from(document.querySelectorAll('a,button')).find(b => /배송지\s*변경/.test(b.textContent))
+        if (changeBtn) changeBtn.click()
+      },
+      args: [name || '', phoneDigits],
+    })
+  } catch (e) {
+    console.warn(`[SSG 새배송지] 예외(무시): ${e?.message || e}`)
+  }
+}
+
+// SSG 배송지 팝업(shpplocList) 자동 처리
+// 배송지변경 버튼 클릭 → 팝업 탭 감지 → 전화번호/이름 매칭 → 없으면 새 배송지 추가
+async function _handleSsgShippingPopup(orderTabId, shippingName, shippingPhone, shippingAddress, shippingAddressDetail) {
+  try {
+    // 1. 주문서에서 배송지변경 버튼 클릭 (id^=btnChangeShpploc)
     const clicked = await chrome.scripting.executeScript({
       target: { tabId: orderTabId },
       func: () => {
-        const btn = Array.from(document.querySelectorAll('a')).find(
-          (a) => a.textContent.trim().replace(/\s+/g, '').includes('배송지변경'),
-        )
+        const btn = document.getElementById('btnChangeShpploc_0') ||
+          Array.from(document.querySelectorAll('[id^="btnChangeShpploc"]'))[0]
         if (btn) { btn.click(); return true }
         return false
       },
     })
     if (!clicked?.[0]?.result) return
 
-    // 2. 팝업 탭 열림 대기 (5초)
+    // 2. shpplocList 팝업 대기 (6초)
     let popupTabId = null
     await new Promise((resolve) => {
       const h = (id, info, tabInfo) => {
@@ -4799,37 +4976,54 @@ async function _handleSsgShippingPopup(orderTabId, shippingName) {
         }
       }
       chrome.tabs.onUpdated.addListener(h)
-      setTimeout(() => { chrome.tabs.onUpdated.removeListener(h); resolve() }, 5000)
+      setTimeout(() => { chrome.tabs.onUpdated.removeListener(h); resolve() }, 6000)
     })
     if (!popupTabId) return
 
-    await new Promise((r) => setTimeout(r, 800))
+    await new Promise(r => setTimeout(r, 800))
 
-    // 3. 팝업에서 이름 매칭 → 선택 → 배송지변경 버튼 클릭
-    await chrome.scripting.executeScript({
+    // 3. 전화번호 → 이름 순으로 기존 배송지 매칭
+    const normalPhone = (shippingPhone || '').replace(/-/g, '')
+    const found = await chrome.scripting.executeScript({
       target: { tabId: popupTabId },
-      func: (name) => {
+      func: (name, phone) => {
         const radios = Array.from(document.querySelectorAll('input[type="radio"]'))
-        let found = false
+        for (const radio of radios) {
+          const parent = radio.closest('li') || radio.parentElement?.parentElement
+          const text = (parent?.textContent || '').replace(/[\s-]/g, '')
+          if (phone && text.includes(phone)) { radio.click(); return true }
+        }
         if (name) {
-          for (const r of radios) {
-            const sec = r.closest('.mnodr_address_sec') || r.parentElement
-            if (sec && sec.textContent.includes(name)) { r.click(); found = true; break }
+          for (const radio of radios) {
+            const parent = radio.closest('li') || radio.parentElement?.parentElement
+            if ((parent?.textContent || '').includes(name)) { radio.click(); return true }
           }
         }
-        if (!found && radios.length) radios[0].click()
-        // 배송지 변경 버튼 (a.mnodr_btn.default)
-        const btn = document.querySelector('a.mnodr_btn.default')
-        if (btn) btn.click()
+        return false
       },
-      args: [shippingName || ''],
+      args: [shippingName || '', normalPhone],
     })
 
-    // 4. 팝업 탭 닫힘 대기 (8초)
+    if (found?.[0]?.result) {
+      // 기존 배송지 선택 → 배송지 변경 버튼 클릭
+      await chrome.scripting.executeScript({
+        target: { tabId: popupTabId },
+        func: () => {
+          const btn = document.querySelector('a.mnodr_btn.default') ||
+            Array.from(document.querySelectorAll('a,button')).find(b => /배송지\s*변경/.test(b.textContent))
+          if (btn) btn.click()
+        },
+      })
+    } else if (shippingAddress) {
+      // 새 배송지 추가 (전화번호+주소+상세주소)
+      await _handleSsgNewAddress(popupTabId, shippingName, shippingPhone, shippingAddress, shippingAddressDetail || '')
+    }
+
+    // 4. 팝업 닫힘 대기 (12초)
     await new Promise((resolve) => {
       const h = (id) => { if (id === popupTabId) { chrome.tabs.onRemoved.removeListener(h); resolve() } }
       chrome.tabs.onRemoved.addListener(h)
-      setTimeout(() => { chrome.tabs.onRemoved.removeListener(h); resolve() }, 8000)
+      setTimeout(() => { chrome.tabs.onRemoved.removeListener(h); resolve() }, 12000)
     })
   } catch (e) {
     console.warn(`[SSG 배송지팝업] 예외(무시): ${e?.message || e}`)
@@ -4843,11 +5037,11 @@ async function _handlePlaceOrder(payload) {
   if (!contentScript || !orderFormPattern) return { success: false, error: `지원하지 않는 소싱처: ${sourceSite}` }
   if (!productUrl) return { success: false, error: 'productUrl 없음' }
 
-  // 자동로그인 (가구매와 동일 방식)
+  // 자동로그인 — sourcingAccountId 있으면 해당 계정, 없으면 사이트 기본 계정
   const autoLoginKey = _PLACE_ORDER_AUTO_LOGIN_MAP[sourceSite]
-  if (autoLoginKey && sourcingAccountId && typeof globalThis.ensureLoggedIn === 'function') {
+  if (autoLoginKey && typeof globalThis.ensureLoggedIn === 'function') {
     try {
-      await globalThis.ensureLoggedIn(autoLoginKey, { accountId: sourcingAccountId })
+      await globalThis.ensureLoggedIn(autoLoginKey, sourcingAccountId ? { accountId: sourcingAccountId } : {})
     } catch (e) {
       console.warn(`[직배/까대기] ensureLoggedIn 예외(무시): ${e?.message || e}`)
     }
@@ -4871,6 +5065,29 @@ async function _handlePlaceOrder(payload) {
     setTimeout(() => { chrome.tabs.onUpdated.removeListener(onUpdated); resolve() }, 15000)
   })
   await new Promise((r) => setTimeout(r, 1500))
+
+  // ShopBack 캐시백 활성화 자동 클릭 (shadow DOM 내부 버튼, 최대 3초 대기)
+  ;(async () => {
+    for (let i = 0; i < 5; i++) {
+      try {
+        const r = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => {
+            const host = document.querySelector('.ShadowDomWrapper__Container-sc-1u051sj-0')
+            if (!host || !host.shadowRoot) return false
+            const btn = Array.from(host.shadowRoot.querySelectorAll('button')).find(
+              b => b.textContent.trim().includes('캐시백 활성화') || b.textContent.trim().includes('활성화'),
+            )
+            if (btn && btn.offsetHeight > 0) { btn.click(); return true }
+            return false
+          },
+        })
+        if (r?.[0]?.result) { console.log('[ShopBack] 캐시백 활성화 클릭 완료'); break }
+      } catch { break }
+      await new Promise(r => setTimeout(r, 600))
+    }
+  })()
+  await new Promise((r) => setTimeout(r, 500))
 
   // 1단계: 상품 페이지 → 옵션 선택 + 바로구매
   await chrome.scripting.executeScript({ target: { tabId }, files: [contentScript] })
@@ -4915,7 +5132,7 @@ async function _handlePlaceOrder(payload) {
 
   // SSG: 배송지 팝업 처리 (background에서 직접)
   if (sourceSite === 'SSG' && (orderType === 'direct' || orderType === 'kkaregi')) {
-    await _handleSsgShippingPopup(tabId, shippingName)
+    await _handleSsgShippingPopup(tabId, shippingName, shippingPhone, shippingAddress, shippingAddressDetail)
     await new Promise((r) => setTimeout(r, 800))
   }
 
@@ -4924,6 +5141,24 @@ async function _handlePlaceOrder(payload) {
   await new Promise((r) => setTimeout(r, 500))
   const step2 = await chrome.tabs.sendMessage(tabId, msg).catch((e) => ({ success: false, error: e.message }))
   if (!step2 || !step2.success) return { success: false, error: step2?.error || '2단계 실패' }
+
+  // 롯데ON: 계속하기 클릭 후 payments 페이지로 이동 — 추가 대기 (최대 20초)
+  if (sourceSite === 'LOTTEON') {
+    await new Promise((resolve) => {
+      const onUpdated = (tid, info, tabInfo) => {
+        if (tid !== tabId) return
+        if (info.status === 'complete' && /\/payments/.test(tabInfo.url || '')) {
+          chrome.tabs.onUpdated.removeListener(onUpdated)
+          resolve()
+        }
+      }
+      chrome.tabs.onUpdated.addListener(onUpdated)
+      // 이미 payments면 즉시 resolve
+      chrome.tabs.get(tabId).then(t => { if (/\/payments/.test(t.url || '')) { chrome.tabs.onUpdated.removeListener(onUpdated); resolve() } }).catch(() => {})
+      setTimeout(() => { chrome.tabs.onUpdated.removeListener(onUpdated); resolve() }, 20000)
+    })
+    await new Promise((r) => setTimeout(r, 1000))
+  }
 
   return { success: true, status: 'ready-to-pay', tabId }
 }

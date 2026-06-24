@@ -388,3 +388,15 @@ importScripts('recipe-executor.js')
 importScripts('background-sourcing.js')
 importScripts('background-bootstrap.js')
 importScripts('background-messages.js')
+
+// 확장앱 업데이트/시작 시 기존 samba 탭에 content script 재주입
+async function _reinjectSambaContentScript() {
+  try {
+    const tabs = await chrome.tabs.query({ url: ['http://localhost:3000/samba/*', 'https://*.vercel.app/samba/*'] })
+    for (const tab of tabs) {
+      chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content-samba-deviceid.js'] }).catch(() => {})
+    }
+  } catch {}
+}
+chrome.runtime.onInstalled.addListener(() => _reinjectSambaContentScript())
+chrome.runtime.onStartup.addListener(() => _reinjectSambaContentScript())
