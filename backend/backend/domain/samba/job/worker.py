@@ -1550,7 +1550,9 @@ class JobWorker:
             if not master_code:
                 continue
 
-            sale_price = int(prod.sale_price or 0)
+            # payload의 expected_price 우선 (오토튠 정책 계산가). 없으면 DB sale_price fallback.
+            _ep = int((_j.payload or {}).get("expected_price") or 0)
+            sale_price = _ep if _ep > 0 else int(prod.sale_price or 0)
             options = prod.options or []
             if isinstance(options, str):
                 options = _json.loads(options)

@@ -561,6 +561,7 @@ async def _enqueue_autotune_transmit(
     acc_id: str,
     tenant_id: str | None,
     market_type: str = "",
+    expected_price: int = 0,
 ) -> None:
     """오토튠 전송을 samba_jobs autotune_transmit 잡으로 발행 (step8).
 
@@ -587,6 +588,7 @@ async def _enqueue_autotune_transmit(
         "skip_refresh": True,
         "source": "autotune",
         "market_type": market_type or "",
+        "expected_price": expected_price,  # fastpath가 DB sale_price 대신 사용
     }
     async with get_write_session() as _js:
         # 같은 (pid, acc_id) pending 잡 조회 — 중복 발행 차단
@@ -3025,6 +3027,13 @@ async def _site_autotune_loop(device_id: str, site: str):
                                             _acc_action_parts
                                         )
                                         _tx_actions.append(_combined_action_txt)
+                                        # expected_price: "price" in _acc_items 케이스에서만 정의됨.
+                                        # 재고만 변동이면 0 → fastpath가 DB sale_price fallback.
+                                        _tx_ep = (
+                                            expected_price
+                                            if "price" in _acc_items
+                                            else 0
+                                        )
                                         _transmit_queue.append(
                                             (
                                                 r.product_id,
@@ -3033,6 +3042,7 @@ async def _site_autotune_loop(device_id: str, site: str):
                                                 f"{_prod_label}",
                                                 _combined_action_txt,
                                                 market_type,
+                                                _tx_ep,
                                             )
                                         )
                                         # preemptive failed_at — fire-and-forget transmit task 가
@@ -3100,6 +3110,7 @@ async def _site_autotune_loop(device_id: str, site: str):
                                         _pre_label,
                                         _pre_action,
                                         _pre_market,
+                                        *_,
                                     ) in _transmit_queue:
                                         _pre_data = dict(last_sent.get(_pre_acc) or {})
                                         _pre_data["failed_at"] = datetime.now(
@@ -3128,6 +3139,7 @@ async def _site_autotune_loop(device_id: str, site: str):
                                 _tx_label,
                                 _tx_action_text,
                                 _tx_market,
+                                _tx_price,
                             ) in _transmit_queue:
 
                                 async def _fire_transmit_account(
@@ -3403,6 +3415,7 @@ async def _site_autotune_loop(device_id: str, site: str):
                                             _tx_acc,
                                             getattr(product, "tenant_id", None),
                                             _tx_market,
+                                            _tx_price,
                                         )
                                     except Exception as _qe:
                                         log.warning(
