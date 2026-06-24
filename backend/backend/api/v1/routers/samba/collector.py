@@ -2143,11 +2143,49 @@ async def reset_product_registration(
     return {"ok": True}
 
 
+async def _snapshot_cp_to_orders(session: AsyncSession, cp_ids: list[str]) -> None:
+    """CP 삭제 전 주문에 이미지 URL + 소싱처 스냅샷 저장.
+
+    CP가 삭제되면 주문에서 썸네일/소싱처 조회 불가 — 삭제 전 미리 복사해둔다.
+    기존 값이 있는 주문은 덮어쓰지 않는다 (COALESCE + NULLIF).
+    """
+    from sqlalchemy import text as _t
+
+    if not cp_ids:
+        return
+    rows = (
+        await session.execute(
+            _t(
+                "SELECT id, source_site, images->>0 AS thumb "
+                "FROM samba_collected_product "
+                "WHERE id = ANY(:ids)"
+            ),
+            {"ids": cp_ids},
+        )
+    ).fetchall()
+    for cp_id, src, thumb in rows:
+        if not thumb and not src:
+            continue
+        await session.execute(
+            _t(
+                "UPDATE samba_order "
+                "SET product_image = CASE WHEN product_image IS NULL OR product_image = '' "
+                "    THEN :img ELSE product_image END, "
+                "source_site = CASE WHEN source_site IS NULL OR source_site = '' "
+                "    THEN :src ELSE source_site END, "
+                "collected_product_id = 'DELETED' "
+                "WHERE collected_product_id = :cpid"
+            ),
+            {"img": thumb or "", "src": src or "", "cpid": cp_id},
+        )
+
+
 @router.delete("/products/{product_id}")
 async def delete_collected_product(
     product_id: str,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
+    await _snapshot_cp_to_orders(session, [product_id])
     svc = _get_services(session)
     if not await svc.delete_collected_product(product_id):
         raise HTTPException(404, "상품을 찾을 수 없습니다")
@@ -2160,6 +2198,7 @@ async def bulk_delete_products(
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
     """상품 일괄 삭제 — 단일 DELETE 쿼리."""
+    await _snapshot_cp_to_orders(session, body.ids)
     svc = _get_services(session)
     deleted = await svc.bulk_delete_collected_products(body.ids)
     # 상품 삭제 시 캐시 무효화
@@ -2222,6 +2261,8 @@ async def block_and_delete_products(
         new_row = SambaSettings(key="collection_blacklist", value=blacklist)
         session.add(new_row)
 
+    # 삭제 전 주문 이미지/소싱처 스냅샷
+    await _snapshot_cp_to_orders(session, list(body.product_ids))
     # 상품 삭제
     del_stmt = sa_delete(SambaCollectedProduct).where(
         col(SambaCollectedProduct.id).in_(body.product_ids)

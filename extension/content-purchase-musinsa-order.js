@@ -19,31 +19,75 @@
   })()
 
   // ── 상품 페이지: 옵션 선택 ──
+  // option 형식: "FREE" 또는 "블랙/FREE" (컬러/사이즈 '/' 구분)
   async function selectSize(option) {
     const val = String(option).trim()
     if (!val) return true // 옵션 없으면 스킵
 
-    // 무신사 사이즈 버튼: [class*="SizeButton"] 또는 role="radio" 형태
-    // 텍스트 완전/부분 매칭
-    for (const el of document.querySelectorAll('[class*="SizeButton"], [class*="size-button"], [role="radio"], [class*="OptionItem"]')) {
-      const t = el.textContent.trim()
-      if (t === val || t.startsWith(val + ' ') || t.startsWith(val + '/')) {
-        el.click()
-        await sleep(500)
-        console.log(`[삼바-주문처리-무신사] 사이즈 "${val}" 선택`)
-        return true
+    const parts = val.split('/').map(s => s.trim())
+
+    // 무신사 새 UI: select 드롭다운 처리 (컬러, 사이즈 순)
+    const selects = Array.from(document.querySelectorAll('select'))
+    if (selects.length > 0) {
+      for (const part of parts) {
+        let matched = false
+        for (const sel of selects) {
+          const opt = Array.from(sel.options).find(
+            o => !o.disabled && o.value && (o.text.trim() === part || o.text.trim().startsWith(part + ' ') || o.text.trim().startsWith(part + '('))
+          )
+          if (opt) {
+            sel.value = opt.value
+            sel.dispatchEvent(new Event('focus', { bubbles: true }))
+            sel.dispatchEvent(new Event('change', { bubbles: true }))
+            sel.dispatchEvent(new Event('input', { bubbles: true }))
+            await sleep(700)
+            console.log(`[삼바-주문처리-무신사] select 옵션 "${part}" 선택`)
+            matched = true
+            break
+          }
+        }
+        // 못 찾으면 첫 번째 유효 select 첫 옵션 선택 (컬러 자동선택)
+        if (!matched) {
+          for (const sel of selects) {
+            const first = Array.from(sel.options).find(o => !o.disabled && o.value)
+            if (first && !sel.value) {
+              sel.value = first.value
+              sel.dispatchEvent(new Event('change', { bubbles: true }))
+              await sleep(700)
+              console.log(`[삼바-주문처리-무신사] select 첫 옵션 자동선택 (${first.text.trim()})`)
+              break
+            }
+          }
+        }
+      }
+      return true
+    }
+
+    // 무신사 구 UI: 버튼/라디오 형태
+    for (const part of parts) {
+      for (const el of document.querySelectorAll('[class*="SizeButton"], [class*="size-button"], [role="radio"], [class*="OptionItem"]')) {
+        const t = el.textContent.trim()
+        if (t === part || t.startsWith(part + ' ') || t.startsWith(part + '/')) {
+          el.click()
+          await sleep(500)
+          console.log(`[삼바-주문처리-무신사] 버튼 옵션 "${part}" 선택`)
+          break
+        }
       }
     }
+
     // 폴백: 모든 버튼에서 텍스트 매칭
-    for (const btn of document.querySelectorAll('button, li, [role="option"]')) {
-      if (btn.textContent.trim() === val) {
-        btn.click()
-        await sleep(500)
-        return true
+    for (const part of parts) {
+      for (const btn of document.querySelectorAll('button, li, [role="option"]')) {
+        if (btn.textContent.trim() === part) {
+          btn.click()
+          await sleep(500)
+          break
+        }
       }
     }
-    console.warn(`[삼바-주문처리-무신사] 사이즈 "${val}" 못 찾음`)
-    return false
+
+    return true
   }
 
   // ── 상품 페이지: 바로구매 클릭 ──
@@ -51,7 +95,7 @@
     // 무신사 "바로구매" 버튼 텍스트 매칭
     for (const btn of document.querySelectorAll('button')) {
       const t = btn.textContent.trim()
-      if (t === '바로구매' || t === '즉시구매' || t === '바로 구매') {
+      if (t === '바로구매' || t === '즉시구매' || t === '바로 구매' || t === '구매하기') {
         btn.click()
         await sleep(3000) // 주문서 페이지 이동 대기
         console.log('[삼바-주문처리-무신사] 바로구매 클릭')
@@ -235,10 +279,9 @@
           // ── 상품 페이지 ──
           console.log(`[삼바-주문처리-무신사] 상품 페이지 시작 | opt=${productOption} | type=${orderType}`)
 
-          // 옵션 선택
+          // 옵션 선택 (실패해도 계속 — FREE 단일사이즈 상품은 선택 UI 없음)
           if (productOption) {
-            const ok = await selectSize(productOption)
-            if (!ok) { sendResponse({ success: false, error: `옵션 "${productOption}" 선택 실패` }); return }
+            await selectSize(productOption)
           }
           await sleep(800)
 

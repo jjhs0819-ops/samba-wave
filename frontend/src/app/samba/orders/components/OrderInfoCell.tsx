@@ -236,7 +236,10 @@ export default function OrderInfoCell(props: Props) {
       <div style={{ display: 'flex', gap: '0.375rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
         <button onClick={() => handleDanawa(o.product_name || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>다나와</button>
         <button onClick={() => handleNaver(o.product_name || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>네이버</button>
-        <button onClick={async () => {
+        {o.collected_product_id === 'DELETED' ? (
+          <span style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: '#1A1A1A', border: '1px solid #444', borderRadius: '4px', color: '#555' }}>삭제완료</span>
+        ) : (
+          <button onClick={async () => {
           if (o.collected_product_id) {
             window.open(`/samba/products?search=${encodeURIComponent(o.collected_product_id)}&search_type=id&highlight=${o.collected_product_id}`, '_blank')
             return
@@ -275,6 +278,7 @@ export default function OrderInfoCell(props: Props) {
             showAlert('상품 정보가 없습니다', 'info')
           }
         }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>상품정보</button>
+        )}
         <button onClick={async () => {
           if (!o.product_id) { showAlert('상품 정보가 없습니다', 'info'); return }
           try {

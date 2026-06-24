@@ -1,9 +1,9 @@
-"""PlayAuto lookupProd 응답 구조 확인 — GoodsNo(마켓 상품번호) 포함 여부."""
-
+"""PlayAuto 주문 응답 전체 필드 확인 — MasterCode='110511' 주문의 raw JSON."""
 import asyncio
 import json
 import os
 import sys
+from datetime import UTC, datetime, timedelta
 
 sys.stdout.reconfigure(encoding="utf-8")
 sys.path.insert(0, "/app/backend")
@@ -13,10 +13,10 @@ os.environ.setdefault(
     "http://smart-zhej55fgrt0k:keGU2DZxflfM3QJj@119.206.200.126:6014",
 )
 
-from sqlalchemy import text  # noqa: E402
+from sqlalchemy import text
 
-from backend.db.orm import get_read_session  # noqa: E402
-from backend.domain.samba.proxy.playauto import PlayAutoClient  # noqa: E402
+from backend.db.orm import get_read_session
+from backend.domain.samba.proxy.playauto import PlayAutoApiError, PlayAutoClient
 
 PA_ACCOUNT_ID = "ma_01KP0919YA061YX5PHH25KWJAK"
 
@@ -32,25 +32,19 @@ async def main() -> None:
         extras = row[0] or {}
         api_key = extras.get("apiKey", "")
 
-    print(f"api_key={str(api_key)[:8]}...")
-
     client = PlayAutoClient(api_key=api_key)
     try:
-        products = await client.get_products()
+        start_date = (datetime.now(UTC) - timedelta(days=10)).strftime("%Y%m%d")
+        orders = await client.get_orders(start_date=start_date, count=5, page=1)
     finally:
         await client.close()
 
-    if not products:
-        print("lookupProd 응답 없음")
-        return
+    print(f"응답 {len(orders)}건")
 
-    print(f"lookupProd 응답 수: {len(products):,}개")
-
-    first = products[0]
-    print(f"\n첫 번째 항목 키 목록: {list(first.keys())}")
-    print(f"\n첫 번째 항목:")
-    for k, v in first.items():
-        print(f"  {k}: {str(v)[:100]!r}")
+    for i, o in enumerate(orders[:3]):
+        print(f"\n=== 주문 {i+1} ===")
+        for k, v in o.items():
+            print(f"  {k}: {str(v)!r}")
 
 
 asyncio.run(main())
