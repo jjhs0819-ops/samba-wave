@@ -121,7 +121,6 @@ export default function MarketColumn({
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'flex-end',
-          overflow: 'hidden',
         }}>
           {isAccountDragging && (
             <AccountSlot
