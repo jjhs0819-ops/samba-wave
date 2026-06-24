@@ -685,18 +685,21 @@ def build_order_status_text(with_comment: bool = True) -> str:
 
     today_cnt = sum(1 for o in orders
                     if _order_kst_date(o) == today and _order_registered(o))
+    # 전날 총 주문 = 등록상품(미등록 제외)·취소 포함
     yday_orders = [o for o in orders
                    if _order_kst_date(o) == yday and _order_registered(o)]
     yday_cnt = len(yday_orders)
-    yday_fulfilled = sum(1 for o in yday_orders if _order_has_so(o))
-    rate = (yday_fulfilled / yday_cnt * 100) if yday_cnt else 0
+    # 발주/미발주 = 취소제외(=매출 기준) 안에서 주문번호 입력 여부. 발주+미발주=매출 건수.
+    yday_active = [o for o in yday_orders if not _order_cancelled(o)]
+    fulfilled = sum(1 for o in yday_active if _order_has_so(o))
+    unfulfilled = len(yday_active) - fulfilled
 
     return "\n".join([
         "📦 주문 처리 현황",
         "",
         f"· 오늘 신규주문 {today_cnt}건",
         f"· 전날 총 주문 {yday_cnt}건",
-        f"· 전날 이행 {yday_fulfilled}건 ({rate:.0f}%)",
+        f"· 전날 발주완료 {fulfilled}건 · 미발주 {unfulfilled}건",
     ])
 
 
