@@ -19,66 +19,80 @@
   })()
 
   // ── 상품 페이지: 옵션 선택 ──
-  // option 형식: "FREE" 또는 "블랙/FREE" (컬러/사이즈 '/' 구분)
+  // option 형식: "FREE" 또는 "BLACK/FREE" (컬러/사이즈 '/' 구분)
   async function selectSize(option) {
     const val = String(option).trim()
-    if (!val) return true // 옵션 없으면 스킵
+    if (!val) return true
 
     const parts = val.split('/').map(s => s.trim())
 
-    // 무신사 새 UI: select 드롭다운 처리 (컬러, 사이즈 순)
-    const selects = Array.from(document.querySelectorAll('select'))
-    if (selects.length > 0) {
-      for (const part of parts) {
+    // 무신사 새 UI: DropdownTriggerInput (placeholder="컬러","사이즈") 순서대로 클릭 후 항목 선택
+    const triggers = Array.from(document.querySelectorAll('[data-mds="DropdownTriggerInput"]'))
+    if (triggers.length > 0) {
+      for (let i = 0; i < triggers.length; i++) {
+        const part = parts[i] || parts[parts.length - 1]
+        const trigger = triggers[i]
+        const ph = trigger.getAttribute('placeholder') || ''
+        // 이미 값이 채워진 경우 스킵 (단일컬러 상품)
+        if (trigger.value && trigger.value.trim() && part && trigger.value.trim().toLowerCase().includes(part.toLowerCase())) {
+          console.log(`[삼바-주문처리-무신사] DropdownTrigger[${ph}] 이미 "${trigger.value}" 선택됨 — 스킵`)
+          continue
+        }
+        // 드롭다운 열기
+        trigger.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+        trigger.click()
+        await sleep(400)
+
+        // 열린 드롭다운에서 항목 매칭 클릭
+        // DropdownItemContent__Container 또는 텍스트 일치 요소 탐색
         let matched = false
-        for (const sel of selects) {
-          const opt = Array.from(sel.options).find(
-            o => !o.disabled && o.value && (o.text.trim() === part || o.text.trim().startsWith(part + ' ') || o.text.trim().startsWith(part + '('))
-          )
-          if (opt) {
-            sel.value = opt.value
-            sel.dispatchEvent(new Event('focus', { bubbles: true }))
-            sel.dispatchEvent(new Event('change', { bubbles: true }))
-            sel.dispatchEvent(new Event('input', { bubbles: true }))
-            await sleep(700)
-            console.log(`[삼바-주문처리-무신사] select 옵션 "${part}" 선택`)
+        const candidates = Array.from(document.querySelectorAll('[class*="DropdownItemContent"],[class*="SelectedOption__SelectOptionItem"]'))
+        for (const el of candidates) {
+          const t = el.textContent.trim()
+          if (t === part || t.startsWith(part + ' ') || t.toLowerCase() === part.toLowerCase()) {
+            el.click()
+            await sleep(500)
+            console.log(`[삼바-주문처리-무신사] DropdownItem[${ph}] "${part}" 선택`)
             matched = true
             break
           }
         }
-        // 못 찾으면 첫 번째 유효 select 첫 옵션 선택 (컬러 자동선택)
         if (!matched) {
-          for (const sel of selects) {
-            const first = Array.from(sel.options).find(o => !o.disabled && o.value)
-            if (first && !sel.value) {
-              sel.value = first.value
-              sel.dispatchEvent(new Event('change', { bubbles: true }))
-              await sleep(700)
-              console.log(`[삼바-주문처리-무신사] select 첫 옵션 자동선택 (${first.text.trim()})`)
-              break
-            }
+          // 폴백: 첫 번째 항목 자동선택 (단일옵션 상품)
+          if (candidates.length > 0) {
+            candidates[0].click()
+            await sleep(500)
+            console.log(`[삼바-주문처리-무신사] DropdownItem[${ph}] 첫 항목 자동선택 (${candidates[0].textContent.trim()})`)
+          } else {
+            console.log(`[삼바-주문처리-무신사] DropdownItem[${ph}] "${part}" 항목 없음 — 스킵`)
           }
         }
       }
       return true
     }
 
-    // 무신사 구 UI: 버튼/라디오 형태
-    for (const part of parts) {
-      for (const el of document.querySelectorAll('[class*="SizeButton"], [class*="size-button"], [role="radio"], [class*="OptionItem"]')) {
-        const t = el.textContent.trim()
-        if (t === part || t.startsWith(part + ' ') || t.startsWith(part + '/')) {
-          el.click()
-          await sleep(500)
-          console.log(`[삼바-주문처리-무신사] 버튼 옵션 "${part}" 선택`)
-          break
+    // 구 UI 폴백: select 드롭다운
+    const selects = Array.from(document.querySelectorAll('select'))
+    if (selects.length > 0) {
+      for (const part of parts) {
+        for (const sel of selects) {
+          const opt = Array.from(sel.options).find(
+            o => !o.disabled && o.value && (o.text.trim() === part || o.text.trim().startsWith(part + ' '))
+          )
+          if (opt) {
+            sel.value = opt.value
+            sel.dispatchEvent(new Event('change', { bubbles: true }))
+            await sleep(600)
+            break
+          }
         }
       }
+      return true
     }
 
-    // 폴백: 모든 버튼에서 텍스트 매칭
+    // 구 UI 폴백: 버튼/라디오
     for (const part of parts) {
-      for (const btn of document.querySelectorAll('button, li, [role="option"]')) {
+      for (const btn of document.querySelectorAll('[class*="SizeButton"],[role="radio"],[class*="OptionItem"],button,li')) {
         if (btn.textContent.trim() === part) {
           btn.click()
           await sleep(500)
