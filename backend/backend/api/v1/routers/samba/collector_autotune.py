@@ -415,9 +415,43 @@ def any_pc_running() -> bool:
     return any(ev.is_set() for ev in _pc_running.values())
 
 
+async def _restore_cycle_counts_from_db(device_id: str) -> None:
+    """데몬 재시작 시 DB에서 사이클# 복원 — 1시간 재시작으로 카운트 리셋 방지."""
+    from backend.api.v1.routers.samba.proxy._helpers import _get_setting
+    from backend.db.orm import get_read_session
+
+    try:
+        async with get_read_session() as _s:
+            key = _CYCLE_COUNT_DB_KEY_PREFIX + device_id
+            saved = await _get_setting(_s, key) or {}
+        if not isinstance(saved, dict):
+            return
+        d = _pc_scc(device_id)
+        for _site, _cnt in saved.items():
+            d.setdefault(_site, _cnt)
+    except Exception as _e:
+        logging.getLogger("autotune").debug("[오토튠] 사이클# 복원 실패(무시): %s", _e)
+
+
+async def _persist_cycle_counts_bg(device_id: str) -> None:
+    """사이클 완료 시 사이클# DB 영속 (백그라운드)."""
+    from backend.api.v1.routers.samba.proxy._helpers import _set_setting
+    from backend.db.orm import get_write_session
+
+    try:
+        async with get_write_session() as _s:
+            key = _CYCLE_COUNT_DB_KEY_PREFIX + device_id
+            await _set_setting(_s, key, dict(_pc_scc(device_id)))
+    except Exception as _e:
+        logging.getLogger("autotune").warning(
+            "[오토튠] 사이클# DB 저장 실패(무시): %s", _e
+        )
+
+
 # 오토튠 필터 설정 키 (samba_settings)
 AUTOTUNE_FILTER_SOURCES_KEY = "autotune_enabled_sources"
 AUTOTUNE_FILTER_MARKETS_KEY = "autotune_enabled_markets"
+_CYCLE_COUNT_DB_KEY_PREFIX = "autotune_site_cycle_count_"
 
 # autotune_get_filters available_sources/markets 캐시 (2026-05-24).
 # registered 78k 스캔이 distinct(21초)+registered_accounts 전체 fetch(80초)=~100초라
@@ -1461,6 +1495,11 @@ async def _site_autotune_loop(device_id: str, site: str):
                             # 사이클# = 전체 한 바퀴 완료마다 +1 (2026-05-26 사용자 룰).
                             _scc_done = _pc_scc(device_id)
                             _scc_done[site] = _scc_done.get(site, 0) + 1
+                            # 데몬 재시작 후에도 사이클# 이어받도록 DB 영속 (백그라운드).
+                            asyncio.create_task(
+                                _persist_cycle_counts_bg(device_id),
+                                name=f"persist-cycle-{device_id[:8]}",
+                            )
                         elif _gkey not in _autotune_cycle_stats:
                             _autotune_cycle_stats[_gkey] = _new_cycle_stats()
                             _autotune_cycle_stats[_gkey]["started_at"] = now.isoformat()
@@ -4168,6 +4207,9 @@ async def _autotune_loop(device_id: str):
     _dev_tag = device_id[:8] if device_id else "?"
     log.info("[오토튠][%s] 코디네이터 시작", _dev_tag)
     _last_logged_active: set[str] = set()  # active_sites 변동 감지용
+
+    # 데몬 재시작으로 리셋된 사이클# DB에서 복원.
+    await _restore_cycle_counts_from_db(device_id)
 
     # 발행자 PC를 컨텍스트에 박음 (예방 차원 — 사이트 루프에서도 각자 set)
     _owner_token = current_pc_owner.set(device_id)
