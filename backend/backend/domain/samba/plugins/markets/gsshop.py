@@ -109,10 +109,18 @@ def _transform_for_gsshop(
         first_opt_name = first_nm.split(":")[0].strip() if ":" in first_nm else "사이즈"
 
     # 전시매장 — sectid 정수형
+    # category_id 형식: "B43071905|1662750" (prdClsCd|sectId) 또는 숫자(sectId만)
     prd_sect_list: list[dict[str, Any]] = []
+    category_prd_cls_cd: str = ""
     if category_id:
+        if "|" in str(category_id):
+            parts = str(category_id).split("|", 1)
+            category_prd_cls_cd = parts[0].strip()
+            sect_id_str = parts[1].strip()
+        else:
+            sect_id_str = str(category_id)
         try:
-            sect_id = int(category_id)
+            sect_id = int(sect_id_str)
         except (ValueError, TypeError):
             sect_id = 0
         if sect_id:
@@ -154,7 +162,7 @@ def _transform_for_gsshop(
     base_add_info: dict[str, Any] = {
         "prdNm": name,
         "brandCd": gs.get("brandCd") or "",
-        "prdClsCd": gs.get("prdClsCd") or "",
+        "prdClsCd": category_prd_cls_cd or gs.get("prdClsCd") or "",
         # 3100=직송(택배), 3200=직송(설치)
         "dlvPickMthodCd": int(gs.get("dlvPickMthodCd") or 3100),
         "dlvsCoCd": str(gs.get("dlvsCoCd") or "DH"),
