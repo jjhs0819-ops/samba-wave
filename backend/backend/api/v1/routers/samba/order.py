@@ -9873,8 +9873,14 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
         )
 
     # 배송지 주소 분리 저장 (dvpStnmZipAddr=도로명기본주소, dvpStnmDtlAddr=상세주소)
+    # 롯데ON API 특성: dvpStnmDtlAddr이 "번지수, 상세주소" 형태로 내려옴.
+    # 번지수는 도로명기본주소에 포함되어야 함 → "123, 101동 305호" → base += " 123", detail = "101동 305호"
     addr_base = (item.get("dvpStnmZipAddr") or "").strip()
     addr_detail = (item.get("dvpStnmDtlAddr") or "").strip()
+    _lot_match = re.match(r"^(\d+),\s*(.*)", addr_detail)
+    if _lot_match:
+        addr_base = f"{addr_base} {_lot_match.group(1)}"
+        addr_detail = _lot_match.group(2).strip()
     # 우편번호 — 화면 확인용 (복사 버튼 분리). 롯데ON 응답 키 변형 흡수 fallback chain
     postal_code = (
         str(

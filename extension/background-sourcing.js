@@ -4760,7 +4760,7 @@ const _ORDER_FORM_PATTERNS = {
   ABCmart: /a-rt\.com\/(order|payment|checkout)/,
   GrandStage: /a-rt\.com\/(order|payment|checkout)/,
   GSShop: /gsshop\.com\/ord\//,
-  FashionPlus: /fashionplus\.co\.kr\/order\/(write|sheet)/,
+  FashionPlus: /fashionplus\.co\.kr\/order\/(\d+|write|sheet)/,
 }
 
 // 소싱처별 자동로그인 키 (가구매와 동일)

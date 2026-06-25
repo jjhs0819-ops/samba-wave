@@ -73,44 +73,75 @@
   }
 
   // ── 주문서: 배송지 변경 ──
-  async function changeShipping(name, phone, address, detail) {
+  // FashionPlus 구조 (실측 확인):
+  //   배송지 변경 = a.btn-address 클릭 → iframe (.mm_modal iframe) 모달 팝업
+  //   iframe 내: 탭 "배송지 선택" / "새 주소 입력" (btn.btn_tab)
+  //   새 주소 입력 폼: input.textfield 순서 — 이름/전화/우편번호(readonly)/검색주소(readonly)/상세주소
+  //   제출: button.__btn_primary__ (등록하기)
+  async function changeShipping(name, phone, zipcode, address, detail) {
     if (!name || !address) return
 
-    // 배송지 변경 버튼 클릭
-    for (const btn of document.querySelectorAll('button, a')) {
-      const t = btn.textContent.trim()
-      if (t === '배송지 변경' || t === '새 배송지' || t === '배송지 추가' || t === '다른 배송지 선택') {
-        btn.click()
-        await sleep(1500)
-        break
-      }
+    // 배송지 변경 링크 클릭 (a.btn-address 또는 텍스트 매칭)
+    const changeLink = document.querySelector('a.btn-address') ||
+      Array.from(document.querySelectorAll('a, button')).find(el => el.textContent.trim() === '배송지 변경')
+    if (!changeLink) { console.log('[삼바-주문처리-패션플러스] 배송지 변경 링크 없음'); return }
+    changeLink.click()
+    await sleep(2500)
+
+    // iframe 내부 접근
+    const iframe = document.querySelector('div.mm_modal iframe')
+    if (!iframe) { console.log('[삼바-주문처리-패션플러스] 배송지 iframe 없음'); return }
+    const doc = iframe.contentDocument || iframe.contentWindow.document
+
+    // "새 주소 입력" 탭 클릭
+    const newAddrTab = Array.from(doc.querySelectorAll('.btn_tab')).find(b => b.textContent.trim() === '새 주소 입력')
+    if (newAddrTab) { newAddrTab.click(); await sleep(800) }
+
+    // 활성 탭에서 입력 필드 찾기 (순서: 이름/전화/우편번호/검색주소/상세)
+    const tabItem = doc.querySelector('.mm_tab-item.__tab-on') || doc.querySelector('.mm_tab-item')
+    if (!tabItem) { console.log('[삼바-주문처리-패션플러스] 주소 입력 탭 없음'); return }
+
+    const textfields = tabItem.querySelectorAll('input.textfield')
+    // [0]=이름, [1]=전화, [2]=우편번호(readonly), [3]=검색주소(readonly), [4]=상세주소
+
+    function setVal(input, value) {
+      if (!input) return
+      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')
+      if (nativeSetter && nativeSetter.set) nativeSetter.set.call(input, value)
+      else input.value = value
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, data: value }))
     }
 
-    // 입력 필드 채우기
-    const inputs = [...document.querySelectorAll('input[type="text"], input:not([type])')]
-    const fill = (ph, v) => {
-      const el = inputs.find(i => (i.placeholder || '').includes(ph) || (i.name || '').includes(ph))
-      if (el) {
-        el.value = v
-        el.dispatchEvent(new Event('input', { bubbles: true }))
-        el.dispatchEvent(new Event('change', { bubbles: true }))
-      }
+    if (textfields[0]) setVal(textfields[0], name)
+    await sleep(200)
+    if (textfields[1]) setVal(textfields[1], phone.replace(/[^0-9]/g, ''))
+    await sleep(200)
+
+    // 우편번호·검색주소 — readonly지만 직접 set
+    if (zipcode && textfields[2]) {
+      // readonly 임시 해제
+      textfields[2].removeAttribute('readonly')
+      setVal(textfields[2], zipcode)
+      textfields[2].setAttribute('readonly', 'readonly')
     }
-    fill('이름', name)
-    fill('수령', name)
-    fill('연락', phone)
-    fill('전화', phone)
+    if (address && textfields[3]) {
+      textfields[3].removeAttribute('readonly')
+      setVal(textfields[3], address)
+      textfields[3].setAttribute('readonly', 'readonly')
+    }
+    await sleep(200)
+    if (detail && textfields[4]) setVal(textfields[4], detail)
     await sleep(300)
 
-    // 저장/확인 버튼
-    for (const btn of document.querySelectorAll('button')) {
-      const t = btn.textContent.trim()
-      if (t === '저장' || t === '확인' || t === '완료') {
-        btn.click()
-        await sleep(1500)
-        break
-      }
+    // 등록하기 버튼 클릭
+    const registerBtn = tabItem.querySelector('button.__btn_primary__')
+    if (registerBtn) {
+      registerBtn.click()
+      await sleep(2000)
     }
+    console.log('[삼바-주문처리-패션플러스] 배송지 등록 완료')
   }
 
   // ── 주문서: 쿠폰 선택 ──
@@ -148,8 +179,8 @@
     if (!msg || msg.action !== 'samba_place_order') return
     ;(async () => {
       try {
-        const { orderType, productOption, shippingName, shippingPhone, shippingAddress, shippingAddressDetail } = msg
-        const isOrderForm = /fashionplus\.co\.kr\/order\/(write|sheet)/.test(window.location.href)
+        const { orderType, productOption, shippingName, shippingPhone, shippingZipcode, shippingAddress, shippingAddressDetail } = msg
+        const isOrderForm = /fashionplus\.co\.kr\/order\/(\d+|write|sheet)/.test(window.location.href)
 
         if (!isOrderForm) {
           // 1단계: 상품 페이지 — 옵션 선택 + 바로구매
@@ -162,7 +193,7 @@
           // 2단계: 주문서 — 배송지 + 쿠폰
           await sleep(1500)
           if (orderType === 'direct') {
-            await changeShipping(shippingName, shippingPhone, shippingAddress, shippingAddressDetail)
+            await changeShipping(shippingName, shippingPhone, shippingZipcode || '', shippingAddress, shippingAddressDetail)
           }
           await selectCoupon()
           sendResponse({ success: true, status: 'ready-to-pay' })
