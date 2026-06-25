@@ -88,8 +88,13 @@
     changeLink.click()
     await sleep(2500)
 
-    // iframe 내부 접근
-    const iframe = document.querySelector('div.mm_modal iframe')
+    // iframe 내부 접근 — 모달 컨테이너 클래스 무관하게 탐색
+    const iframe =
+      document.querySelector('div.mm_modal iframe') ||
+      document.querySelector('[class*="modal"] iframe') ||
+      Array.from(document.querySelectorAll('iframe')).find((f) => {
+        try { return f.contentDocument || f.contentWindow?.document } catch { return false }
+      })
     if (!iframe) { console.log('[삼바-주문처리-패션플러스] 배송지 iframe 없음'); return }
     const iframeWin = iframe.contentWindow
     const doc = iframe.contentDocument || iframeWin.document
@@ -138,8 +143,8 @@
     if (detail && textfields[4]) setVal(textfields[4], detail)
     await sleep(300)
 
-    // 등록하기 버튼 클릭
-    const registerBtn = tabItem.querySelector('button.__btn_primary__')
+    // 등록하기 버튼 클릭 (버튼은 tabItem 외부 footer에 위치하므로 doc 전체에서 탐색)
+    const registerBtn = doc.querySelector('button.__btn_primary__')
     if (registerBtn) {
       registerBtn.click()
       // 배송지 등록 완료 팝업 확인 버튼 폴링 — 최대 15초
@@ -233,7 +238,7 @@
           if (orderType === 'direct') {
             await changeShipping(shippingName, shippingPhone, shippingZipcode || '', shippingAddress, shippingAddressDetail)
           }
-          await selectCoupon()
+          // FashionPlus는 쿠폰 자동 적용 — selectCoupon 불필요
           await checkAllAgree()
           sendResponse({ success: true, status: 'ready-to-pay' })
         }
