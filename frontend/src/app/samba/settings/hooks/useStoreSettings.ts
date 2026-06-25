@@ -393,9 +393,10 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
         const userId = safeData.storeId || ''
         const password = safeData.password || ''
         const agncNo = safeData.agncNo || ''
-        if (!userId || !password) {
-          result = { success: false, message: '로그인 ID와 비밀번호를 입력해주세요.' }
+        if (!userId) {
+          result = { success: false, message: '로그인 ID를 입력해주세요.' }
         } else {
+          // password 미전송 시 백엔드가 저장된 credentials에서 폴백
           result = await proxyApi.lottehomeAuth({ userId, password, agncNo, env: safeData.env || 'prod' })
         }
       } else if (marketKey === 'playauto') {

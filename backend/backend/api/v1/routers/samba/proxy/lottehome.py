@@ -21,7 +21,7 @@ router = APIRouter(tags=["samba-proxy"])
 
 class LotteAuthRequest(BaseModel):
     userId: str
-    password: str
+    password: Optional[str] = ""
     agncNo: Optional[str] = ""
     env: Optional[str] = "test"
 
@@ -58,10 +58,8 @@ async def lottehome_auth(
     tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ) -> dict[str, Any]:
     """롯데홈쇼핑 인증키 발급."""
-    if not body.userId or not body.password:
-        raise HTTPException(
-            status_code=400, detail="협력업체ID와 비밀번호를 입력해주세요."
-        )
+    if not body.userId:
+        raise HTTPException(status_code=400, detail="협력업체ID를 입력해주세요.")
     # 기존 credentials와 정책 로드 (정책의 배송지/MD상품군/카테고리 병합)
     from ._helpers import _get_setting
 
@@ -69,6 +67,10 @@ async def lottehome_auth(
         await _get_setting(write_session, "lottehome_credentials", tenant_id=tenant_id)
         or {}
     )
+    # password 미전송(수정모드 마스킹) 시 저장된 credentials에서 폴백
+    effective_password = body.password or str(existing_creds.get("password", ""))
+    if not effective_password:
+        raise HTTPException(status_code=400, detail="비밀번호를 입력해주세요.")
     policy = (
         await _get_setting(write_session, "lottehome_policy", tenant_id=tenant_id) or {}
     )
@@ -77,7 +79,7 @@ async def lottehome_auth(
     creds_to_save.update(
         {
             "userId": body.userId,
-            "password": body.password,
+            "password": effective_password,
             "agncNo": body.agncNo or "",
             "env": body.env or "test",
         }
@@ -116,7 +118,7 @@ async def lottehome_auth(
     )
     client = LotteHomeClient(
         user_id=body.userId,
-        password=body.password,
+        password=effective_password,
         agnc_no=body.agncNo or "",
         env=body.env or "test",
     )
