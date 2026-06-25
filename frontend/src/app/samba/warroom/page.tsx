@@ -612,6 +612,199 @@ function ActiveCyclesPanel(): React.ReactElement {
   )
 }
 
+// ── 오토튠 작동 보고 ──────────────────────────────────────────────
+interface ReportSiteSummary {
+  site: string
+  cycles: number
+  ok: number
+  errors: number
+  success_rate: number
+  price_transmit: number
+  stock_transmit: number
+  synced: number
+  deleted: number
+  avg_duration_sec: number
+  avg_total: number
+}
+interface ReportCycle {
+  id: string
+  site: string
+  created_at: string
+  ok: number
+  errors: number
+  price_transmit: number
+  stock_transmit: number
+  deleted: number
+  total: number
+  duration_sec: number
+  rate: number
+}
+interface OperationReport {
+  hours: number
+  since: string
+  site_summary: ReportSiteSummary[]
+  recent_cycles: ReportCycle[]
+}
+
+function AutotuneOperationReport(): React.ReactElement {
+  const [report, setReport] = useState<OperationReport | null>(null)
+  const [hours, setHours] = useState(24)
+  const [showCycles, setShowCycles] = useState(false)
+  const card: React.CSSProperties = {
+    background: '#1F1F1F', border: '1px solid #3D3D3D', borderRadius: '8px',
+    padding: '1rem', marginTop: '1rem',
+  }
+
+  const fetchReport = useCallback(async (h: number) => {
+    try {
+      const { API_BASE_URL: api } = await import('@/config/api')
+      const r = await fetchWithAuth(`${api}/api/v1/samba/monitor/autotune-report?hours=${h}`)
+      if (!r.ok) return
+      const d = await r.json() as OperationReport
+      setReport(d)
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => {
+    fetchReport(hours)
+    const t = setInterval(() => fetchReport(hours), 30_000)
+    return () => clearInterval(t)
+  }, [fetchReport, hours])
+
+  const HOUR_OPTIONS = [
+    { label: '1시간', value: 1 },
+    { label: '24시간', value: 24 },
+    { label: '7일', value: 168 },
+  ]
+
+  const thStyle: React.CSSProperties = { textAlign: 'right', padding: '0.35rem 0.5rem', color: '#888', fontWeight: 500, whiteSpace: 'nowrap' }
+  const thLeftStyle: React.CSSProperties = { ...thStyle, textAlign: 'left' }
+  const tdStyle: React.CSSProperties = { textAlign: 'right', padding: '0.35rem 0.5rem' }
+  const tdLeftStyle: React.CSSProperties = { ...tdStyle, textAlign: 'left' }
+
+  return (
+    <div style={card}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+        <div style={{ fontSize: '0.96rem', fontWeight: 600, color: '#E5E5E5' }}>오토튠 작동 보고</div>
+        <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+          {HOUR_OPTIONS.map(o => (
+            <button
+              key={o.value}
+              onClick={() => { setHours(o.value); fetchReport(o.value) }}
+              style={{
+                padding: '0.2rem 0.55rem',
+                background: hours === o.value ? 'rgba(76,154,255,0.25)' : 'rgba(76,154,255,0.08)',
+                border: `1px solid ${hours === o.value ? 'rgba(76,154,255,0.7)' : 'rgba(76,154,255,0.25)'}`,
+                borderRadius: '5px', color: hours === o.value ? '#4C9AFF' : '#888',
+                fontSize: '0.75rem', cursor: 'pointer',
+              }}
+            >{o.label}</button>
+          ))}
+          <button
+            onClick={() => fetchReport(hours)}
+            style={{ padding: '0.2rem 0.55rem', background: 'rgba(76,154,255,0.08)', border: '1px solid rgba(76,154,255,0.25)', borderRadius: '5px', color: '#4C9AFF', fontSize: '0.75rem', cursor: 'pointer' }}
+          >새로고침</button>
+        </div>
+      </div>
+
+      {!report || report.site_summary.length === 0 ? (
+        <div style={{ fontSize: '0.85rem', color: '#666', padding: '0.5rem 0' }}>
+          {!report ? '로딩 중…' : `${hours}시간 내 완료된 사이클 없음`}
+        </div>
+      ) : (
+        <>
+          {/* 소싱처별 집계 테이블 */}
+          <table style={{ width: '100%', fontSize: '0.82rem', color: '#E5E5E5', borderCollapse: 'collapse', marginBottom: '0.75rem' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid #3D3D3D' }}>
+                <th style={thLeftStyle}>소싱처</th>
+                <th style={thStyle}>사이클</th>
+                <th style={thStyle}>성공</th>
+                <th style={thStyle}>실패</th>
+                <th style={thStyle}>성공률</th>
+                <th style={thStyle}>가격전송</th>
+                <th style={thStyle}>재고전송</th>
+                <th style={thStyle}>마켓삭제</th>
+                <th style={thStyle}>평균건수</th>
+                <th style={thStyle}>평균소요</th>
+              </tr>
+            </thead>
+            <tbody>
+              {report.site_summary.map(s => (
+                <tr key={s.site} style={{ borderBottom: '1px solid #252525' }}>
+                  <td style={tdLeftStyle}>{s.site}</td>
+                  <td style={tdStyle}>{fmtNum(s.cycles)}</td>
+                  <td style={{ ...tdStyle, color: '#4CD964' }}>{fmtNum(s.ok)}</td>
+                  <td style={{ ...tdStyle, color: s.errors > 0 ? '#EF4444' : '#666' }}>{fmtNum(s.errors)}</td>
+                  <td style={{ ...tdStyle, color: s.success_rate >= 95 ? '#4CD964' : s.success_rate >= 80 ? '#FFB84D' : '#EF4444' }}>
+                    {s.success_rate.toFixed(1)}%
+                  </td>
+                  <td style={{ ...tdStyle, color: '#4CD964' }}>{fmtNum(s.price_transmit)}</td>
+                  <td style={{ ...tdStyle, color: '#4C9AFF' }}>{fmtNum(s.stock_transmit)}</td>
+                  <td style={{ ...tdStyle, color: s.deleted > 0 ? '#EF4444' : '#666' }}>{fmtNum(s.deleted)}</td>
+                  <td style={tdStyle}>{fmtNum(s.avg_total)}건</td>
+                  <td style={tdStyle}>{s.avg_duration_sec > 0 ? `${fmtNum(Math.round(s.avg_duration_sec))}초` : '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {/* 최근 사이클 토글 */}
+          <button
+            onClick={() => setShowCycles(v => !v)}
+            style={{ fontSize: '0.78rem', color: '#4C9AFF', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, marginBottom: showCycles ? '0.5rem' : 0 }}
+          >
+            {showCycles ? '▲ 최근 사이클 숨기기' : `▼ 최근 사이클 ${Math.min(report.recent_cycles.length, 100)}건 보기`}
+          </button>
+
+          {showCycles && report.recent_cycles.length > 0 && (
+            <table style={{ width: '100%', fontSize: '0.78rem', color: '#E5E5E5', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #3D3D3D' }}>
+                  <th style={thLeftStyle}>시각 (KST)</th>
+                  <th style={thLeftStyle}>소싱처</th>
+                  <th style={thStyle}>총건</th>
+                  <th style={thStyle}>성공</th>
+                  <th style={thStyle}>실패</th>
+                  <th style={thStyle}>가격</th>
+                  <th style={thStyle}>재고</th>
+                  <th style={thStyle}>삭제</th>
+                  <th style={thStyle}>소요</th>
+                  <th style={thStyle}>속도</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.recent_cycles.map(c => {
+                  let kstStr = '-'
+                  try {
+                    const d = new Date(c.created_at)
+                    const kst = new Date(d.getTime() + 9 * 3600 * 1000)
+                    kstStr = kst.toISOString().slice(5, 19).replace('T', ' ')
+                  } catch { /* ignore */ }
+                  return (
+                    <tr key={c.id} style={{ borderBottom: '1px solid #252525' }}>
+                      <td style={{ ...tdLeftStyle, fontFamily: 'monospace', color: '#9AA5C0' }}>{kstStr}</td>
+                      <td style={tdLeftStyle}>{c.site}</td>
+                      <td style={tdStyle}>{fmtNum(c.total)}</td>
+                      <td style={{ ...tdStyle, color: '#4CD964' }}>{fmtNum(c.ok)}</td>
+                      <td style={{ ...tdStyle, color: c.errors > 0 ? '#EF4444' : '#666' }}>{fmtNum(c.errors)}</td>
+                      <td style={{ ...tdStyle, color: '#4CD964' }}>{fmtNum(c.price_transmit)}</td>
+                      <td style={{ ...tdStyle, color: '#4C9AFF' }}>{fmtNum(c.stock_transmit)}</td>
+                      <td style={{ ...tdStyle, color: c.deleted > 0 ? '#EF4444' : '#666' }}>{fmtNum(c.deleted)}</td>
+                      <td style={tdStyle}>{c.duration_sec > 0 ? `${fmtNum(Math.round(c.duration_sec))}초` : '-'}</td>
+                      <td style={{ ...tdStyle, color: '#888' }}>{c.rate > 0 ? `${c.rate.toFixed(1)}/초` : '-'}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 export default function WarroomPage() {
   useEffect(() => { document.title = 'SAMBA-오토튠' }, [])
 
@@ -1409,8 +1602,8 @@ export default function WarroomPage() {
           사용자 visibility 보완 (2026-05-26 요구) + 인지 못 한 사이클 개별 중단. */}
       <ActiveCyclesPanel />
 
-
-
+      {/* 오토튠 작동 보고 — scheduler_cycle 이벤트 집계 */}
+      <AutotuneOperationReport />
 
     </div>
   )

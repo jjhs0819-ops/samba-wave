@@ -244,6 +244,111 @@ async def clear_refresh_logs_endpoint():
     return {"ok": True}
 
 
+@router.get("/autotune-report")
+async def get_autotune_report(
+    hours: int = Query(24, ge=1, le=168),
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """오토튠 작동 보고 — scheduler_cycle 이벤트 집계.
+
+    hours 파라미터로 집계 기간 지정 (기본 24시간, 최대 168시간=7일).
+    소싱처별 사이클 수·성공률·가격/재고 전송 건수·평균 처리 속도를 반환.
+    """
+    cache_key = f"warroom:autotune_report:{hours}"
+
+    async def _factory():
+        repo = SambaMonitorEventRepository(session)
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        events = await repo.list_by_type("scheduler_cycle", limit=1000, since=since)
+
+        site_stats: dict = {}
+        recent_cycles: list = []
+
+        for e in events:
+            site = e.source_site or "기타"
+            d = e.detail or {}
+            if site not in site_stats:
+                site_stats[site] = {
+                    "site": site,
+                    "cycles": 0,
+                    "ok": 0,
+                    "errors": 0,
+                    "price_transmit": 0,
+                    "stock_transmit": 0,
+                    "synced": 0,
+                    "deleted": 0,
+                    "total_duration_sec": 0.0,
+                    "total_processed": 0,
+                }
+            s = site_stats[site]
+            s["cycles"] += 1
+            s["ok"] += d.get("ok", 0)
+            s["errors"] += d.get("errors", 0)
+            s["price_transmit"] += d.get("price_transmit", 0)
+            s["stock_transmit"] += d.get("stock_transmit", 0)
+            s["synced"] += d.get("synced", 0)
+            s["deleted"] += d.get("deleted", 0)
+            s["total_duration_sec"] += float(d.get("duration_sec", 0) or 0)
+            s["total_processed"] += int(d.get("total", d.get("total_global", 0)) or 0)
+
+            recent_cycles.append(
+                {
+                    "id": e.id,
+                    "site": site,
+                    "created_at": e.created_at.isoformat(),
+                    "ok": d.get("ok", 0),
+                    "errors": d.get("errors", 0),
+                    "price_transmit": d.get("price_transmit", 0),
+                    "stock_transmit": d.get("stock_transmit", 0),
+                    "deleted": d.get("deleted", 0),
+                    "total": int(d.get("total", d.get("total_global", 0)) or 0),
+                    "duration_sec": float(d.get("duration_sec", 0) or 0),
+                    "rate": float(d.get("rate", 0) or 0),
+                }
+            )
+
+        summary = []
+        for site, s in sorted(site_stats.items()):
+            total_ops = s["ok"] + s["errors"]
+            summary.append(
+                {
+                    "site": site,
+                    "cycles": s["cycles"],
+                    "ok": s["ok"],
+                    "errors": s["errors"],
+                    "success_rate": (
+                        round(s["ok"] / total_ops * 100, 1) if total_ops > 0 else 0.0
+                    ),
+                    "price_transmit": s["price_transmit"],
+                    "stock_transmit": s["stock_transmit"],
+                    "synced": s["synced"],
+                    "deleted": s["deleted"],
+                    "avg_duration_sec": (
+                        round(s["total_duration_sec"] / s["cycles"], 1)
+                        if s["cycles"] > 0
+                        else 0.0
+                    ),
+                    "avg_total": (
+                        round(s["total_processed"] / s["cycles"])
+                        if s["cycles"] > 0
+                        else 0
+                    ),
+                }
+            )
+
+        since_iso = (
+            datetime.now(timezone.utc) - timedelta(hours=hours)
+        ).isoformat()
+        return {
+            "hours": hours,
+            "since": since_iso,
+            "site_summary": summary,
+            "recent_cycles": recent_cycles[:100],
+        }
+
+    return await cache.get_or_compute(cache_key, _factory, ttl=60)
+
+
 @router.delete("/events/cleanup")
 async def cleanup_old_events(
     days: int = Query(30, ge=1, le=365),
