@@ -15,6 +15,7 @@ async def main():
         SELECT COUNT(*) FROM pg_stat_activity
         WHERE state = 'idle in transaction'
         AND datname = current_database()
+        AND state_change < now() - interval '150 seconds'
     """)
     print(f"idle in transaction 연결: {cnt}개")
 
@@ -24,6 +25,7 @@ async def main():
         WHERE state = 'idle in transaction'
         AND datname = current_database()
         AND pid <> pg_backend_pid()
+        AND state_change < now() - interval '150 seconds'
     """)
     print(f"정리됨: {killed}개")
 
@@ -31,6 +33,7 @@ async def main():
         SELECT COUNT(*) FROM pg_stat_activity
         WHERE state = 'idle in transaction'
         AND datname = current_database()
+        AND state_change < now() - interval '150 seconds'
     """)
     print(f"잔여: {remaining}개")
 
