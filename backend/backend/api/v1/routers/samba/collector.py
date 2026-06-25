@@ -1326,7 +1326,7 @@ async def scroll_products(
     if "sites" in side_indices:
         sites_result = results[side_indices["sites"]]
         sites = sorted([r[0] for r in sites_result.all() if r[0]])
-        await cache.set(sites_cache_key, sites, ttl=300)
+        await cache.set(sites_cache_key, sites, ttl=1800)
     if "counts" in side_indices:
         counts_row = results[side_indices["counts"]].one()
         counts = {
@@ -1335,7 +1335,7 @@ async def scroll_products(
             "policy_applied": counts_row.policy_applied,
             "sold_out": counts_row.sold_out,
         }
-        await cache.set(counts_cache_key, counts, ttl=300)
+        await cache.set(counts_cache_key, counts, ttl=1800)
 
     # 브랜드 영문 표기 병기용 — 국문 brand → 공식 영문(매핑 없으면 빈 문자열)
     from backend.domain.samba.policy.brand_en import brand_en as _brand_en_fn
