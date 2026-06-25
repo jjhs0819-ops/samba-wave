@@ -352,6 +352,7 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
           access_key: String(safeData.accessKey || ''),
           secret_key: String(safeData.secretKey || ''),
           vendor_id: String(safeData.vendorId || ''),
+          account_id: editingAccountId || undefined,
         })
       } else if (marketKey === 'lotteon') {
         // 멀티계정 환경 대응(2026-05-25) — 폼 입력값을 직접 전송.
