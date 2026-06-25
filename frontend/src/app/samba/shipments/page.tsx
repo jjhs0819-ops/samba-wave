@@ -22,7 +22,7 @@ import { fmtTime } from '@/lib/samba/utils'
 
 const JOB_POLL_INTERVAL_MS = 1000
 const DELETE_POLL_INTERVAL_MS = 1000
-const BG_LOG_POLL_INTERVAL_MS = 5000
+const BG_LOG_POLL_INTERVAL_MS = 2000
 
 const SOURCE_SITES = ['전체', 'MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'REXMONDE', 'SSG', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF']
 

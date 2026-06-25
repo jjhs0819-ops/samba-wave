@@ -259,11 +259,11 @@ def _add_job_log(job_id: str, msg: str, job_type: str = ""):
                 pass
     elif effective_type == "transmit":
         _add_shipment_log(msg)
-        # 50줄마다 DB 플러시 — Cloud Run 멀티 인스턴스에서도 로그 조회 가능하도록
+        # 10줄마다 DB 플러시 — 로그 실시간성 개선 (50→10)
         _collect_log_flush_counter[job_id] = (
             _collect_log_flush_counter.get(job_id, 0) + 1
         )
-        if _collect_log_flush_counter[job_id] % 50 == 0:
+        if _collect_log_flush_counter[job_id] % 10 == 0:
             import asyncio as _asyncio
 
             try:
