@@ -91,7 +91,8 @@
     // iframe 내부 접근
     const iframe = document.querySelector('div.mm_modal iframe')
     if (!iframe) { console.log('[삼바-주문처리-패션플러스] 배송지 iframe 없음'); return }
-    const doc = iframe.contentDocument || iframe.contentWindow.document
+    const iframeWin = iframe.contentWindow
+    const doc = iframe.contentDocument || iframeWin.document
 
     // "새 주소 입력" 탭 클릭
     const newAddrTab = Array.from(doc.querySelectorAll('.btn_tab')).find(b => b.textContent.trim() === '새 주소 입력')
@@ -104,14 +105,16 @@
     const textfields = tabItem.querySelectorAll('input.textfield')
     // [0]=이름, [1]=전화, [2]=우편번호(readonly), [3]=검색주소(readonly), [4]=상세주소
 
+    // iframe 내부 window의 네이티브 setter 사용 (Vue 반응성 트리거)
+    const iframeInputProto = iframeWin.HTMLInputElement.prototype
+    const nativeSetter = Object.getOwnPropertyDescriptor(iframeInputProto, 'value')
+
     function setVal(input, value) {
       if (!input) return
-      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')
       if (nativeSetter && nativeSetter.set) nativeSetter.set.call(input, value)
       else input.value = value
-      input.dispatchEvent(new Event('input', { bubbles: true }))
-      input.dispatchEvent(new Event('change', { bubbles: true }))
-      input.dispatchEvent(new InputEvent('input', { bubbles: true, data: value }))
+      input.dispatchEvent(new iframeWin.Event('input', { bubbles: true }))
+      input.dispatchEvent(new iframeWin.Event('change', { bubbles: true }))
     }
 
     if (textfields[0]) setVal(textfields[0], name)
@@ -135,11 +138,22 @@
     if (detail && textfields[4]) setVal(textfields[4], detail)
     await sleep(300)
 
+    // 등록하기 전 mm.bom.alert 자동 확인 (성공 후 팝업 뜨면 즉시 콜백 실행)
+    if (iframeWin.mm && iframeWin.mm.bom) {
+      const origAlert = iframeWin.mm.bom.alert.bind(iframeWin.mm.bom)
+      iframeWin.mm.bom.alert = (msg, callback) => { if (callback) callback(); else origAlert(msg) }
+    }
+
     // 등록하기 버튼 클릭
     const registerBtn = tabItem.querySelector('button.__btn_primary__')
     if (registerBtn) {
       registerBtn.click()
-      await sleep(2000)
+      await sleep(1000)
+      // mm.bom.alert 오버라이드가 안 됐을 경우 폴백: 확인 버튼 직접 클릭
+      const allBtns = [...document.querySelectorAll('button'), ...Array.from(doc.querySelectorAll('button'))]
+      const confirmBtn = allBtns.find((b) => b.textContent.trim() === '확인')
+      if (confirmBtn) { confirmBtn.click(); await sleep(500) }
+      await sleep(1500)
     }
     console.log('[삼바-주문처리-패션플러스] 배송지 등록 완료')
   }
