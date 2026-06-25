@@ -138,26 +138,22 @@
     if (detail && textfields[4]) setVal(textfields[4], detail)
     await sleep(300)
 
-    // 부모 페이지 mm.bom.alert 오버라이드 — iframe이 mm.modal.opener 통해 부모창에 팝업 렌더링
-    let origParentAlert = null
-    if (window.mm && window.mm.bom && window.mm.bom.alert) {
-      origParentAlert = window.mm.bom.alert.bind(window.mm.bom)
-      window.mm.bom.alert = (msg, callback) => { if (callback) setTimeout(callback, 100); }
-    }
-
     // 등록하기 버튼 클릭
     const registerBtn = tabItem.querySelector('button.__btn_primary__')
     if (registerBtn) {
       registerBtn.click()
-      await sleep(3000)
-      // 폴백: 오버라이드 실패 시 부모 DOM의 확인 버튼 직접 클릭
-      const confirmBtn = [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === '확인')
-      if (confirmBtn) { confirmBtn.click(); await sleep(1000) }
-    }
-
-    // alert 오버라이드 복원
-    if (origParentAlert && window.mm && window.mm.bom) {
-      window.mm.bom.alert = origParentAlert
+      // 배송지 등록 완료 팝업 확인 버튼 폴링 — 최대 15초
+      for (let i = 0; i < 75; i++) {
+        await sleep(200)
+        const confirmBtn = [...document.querySelectorAll('button')].find(
+          (b) => b.textContent.trim() === '확인' && b.offsetParent !== null
+        )
+        if (confirmBtn) {
+          confirmBtn.click()
+          await sleep(800)
+          break
+        }
+      }
     }
     console.log('[삼바-주문처리-패션플러스] 배송지 등록 완료')
   }
