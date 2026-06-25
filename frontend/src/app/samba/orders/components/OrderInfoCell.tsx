@@ -119,6 +119,7 @@ export default function OrderInfoCell(props: Props) {
       const office = await officeRes.json() as { name: string; phone: string; address: string; address_detail: string }
       if (!office.phone) { showAlert('설정 > 사무실 배송정보에 전화번호를 입력해주세요', 'error'); return }
       const payload = {
+        orderId: o.id,
         sourceSite: _srcSite,
         productUrl: o.source_url,
         orderType,

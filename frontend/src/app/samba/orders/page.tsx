@@ -362,6 +362,24 @@ export default function OrdersPage() {
     window.addEventListener('reset-orders-filter', handler)
     return () => window.removeEventListener('reset-orders-filter', handler)
   }, [])
+  // 직배/까대기 주문처리 완료 → 실구매가 자동 입력 + 저장
+  useEffect(() => {
+    const handler = async (e: MessageEvent) => {
+      if (e.data?.source !== 'samba-extension' || e.data?.type !== 'PLACE_ORDER_RESULT') return
+      const result = e.data?.result
+      if (!result?.success || !result?.orderId || result?.actualCost == null) return
+      const cost = Number(result.actualCost)
+      if (!Number.isFinite(cost) || cost <= 0) return
+      try {
+        await orderApi.update(result.orderId, { cost })
+        patchOrder(result.orderId, { cost })
+        setEditingCosts(prev => { const n = { ...prev }; delete n[result.orderId]; return n })
+      } catch {}
+    }
+    window.addEventListener('message', handler)
+    return () => window.removeEventListener('message', handler)
+  }, [patchOrder, setEditingCosts])
+
   // 마운트 1회 — 드롭다운 우선 메타데이터 (localStorage 캐시 + 백그라운드 갱신).
   useEffect(() => {
     channelApi.list().then(setChannels).catch(() => {})

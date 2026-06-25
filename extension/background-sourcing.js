@@ -5208,7 +5208,9 @@ async function _handleMusinsaShippingPopup(orderTabId, name, phone, address, det
     // 13+14. radio 선택 + 변경하기 클릭
     // element.click() / dispatchEvent(MouseEvent) 로는 React state 업데이트 안 됨 (CDP 실측 확인)
     // chrome.debugger Input.dispatchMouseEvent만 동작
-    await chrome.debugger.attach({ tabId: popupTabId }, '1.3').catch(() => {})
+    let _dbgAttached = false
+    try { await chrome.debugger.attach({ tabId: popupTabId }, '1.3'); _dbgAttached = true } catch (e) { console.warn('[무신사 배송지팝업] debugger attach 실패:', e?.message) }
+    console.log('[무신사 배송지팝업] debugger attach 결과:', _dbgAttached, 'tabId:', popupTabId)
     const _radioCoordRes = await chrome.scripting.executeScript({
       target: { tabId: popupTabId },
       func: (n) => {
@@ -5221,10 +5223,16 @@ async function _handleMusinsaShippingPopup(orderTabId, name, phone, address, det
       args: [name || ''],
     })
     const _radioCoord = _radioCoordRes[0]?.result
-    if (_radioCoord) {
-      await chrome.debugger.sendCommand({ tabId: popupTabId }, 'Input.dispatchMouseEvent', { type: 'mousePressed', x: _radioCoord.x, y: _radioCoord.y, button: 'left', clickCount: 1, buttons: 1 })
-      await new Promise(r => setTimeout(r, 50))
-      await chrome.debugger.sendCommand({ tabId: popupTabId }, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x: _radioCoord.x, y: _radioCoord.y, button: 'left', clickCount: 1 })
+    console.log('[무신사 배송지팝업] radio 좌표:', _radioCoord)
+    if (_radioCoord && _dbgAttached) {
+      try {
+        await chrome.debugger.sendCommand({ tabId: popupTabId }, 'Input.dispatchMouseEvent', { type: 'mousePressed', x: _radioCoord.x, y: _radioCoord.y, button: 'left', clickCount: 1, buttons: 1 })
+        await new Promise(r => setTimeout(r, 50))
+        await chrome.debugger.sendCommand({ tabId: popupTabId }, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x: _radioCoord.x, y: _radioCoord.y, button: 'left', clickCount: 1 })
+        console.log('[무신사 배송지팝업] radio 클릭 완료')
+      } catch (e) { console.warn('[무신사 배송지팝업] radio sendCommand 실패:', e?.message) }
+    } else if (_radioCoord) {
+      console.warn('[무신사 배송지팝업] debugger 없음 — radio 클릭 불가')
     } else {
       console.warn('[무신사 배송지팝업] radio 좌표 없음')
     }
@@ -5240,14 +5248,18 @@ async function _handleMusinsaShippingPopup(orderTabId, name, phone, address, det
       },
     })
     const _btnCoord = _btnCoordRes[0]?.result
-    if (_btnCoord) {
-      await chrome.debugger.sendCommand({ tabId: popupTabId }, 'Input.dispatchMouseEvent', { type: 'mousePressed', x: _btnCoord.x, y: _btnCoord.y, button: 'left', clickCount: 1, buttons: 1 })
-      await new Promise(r => setTimeout(r, 50))
-      await chrome.debugger.sendCommand({ tabId: popupTabId }, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x: _btnCoord.x, y: _btnCoord.y, button: 'left', clickCount: 1 })
-    } else {
+    console.log('[무신사 배송지팝업] 변경하기 좌표:', _btnCoord)
+    if (_btnCoord && _dbgAttached) {
+      try {
+        await chrome.debugger.sendCommand({ tabId: popupTabId }, 'Input.dispatchMouseEvent', { type: 'mousePressed', x: _btnCoord.x, y: _btnCoord.y, button: 'left', clickCount: 1, buttons: 1 })
+        await new Promise(r => setTimeout(r, 50))
+        await chrome.debugger.sendCommand({ tabId: popupTabId }, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x: _btnCoord.x, y: _btnCoord.y, button: 'left', clickCount: 1 })
+        console.log('[무신사 배송지팝업] 변경하기 클릭 완료')
+      } catch (e) { console.warn('[무신사 배송지팝업] 변경하기 sendCommand 실패:', e?.message) }
+    } else if (!_btnCoord) {
       console.warn('[무신사 배송지팝업] 변경하기 좌표 없음')
     }
-    await chrome.debugger.detach({ tabId: popupTabId }).catch(() => {})
+    if (_dbgAttached) await chrome.debugger.detach({ tabId: popupTabId }).catch(() => {})
 
     // 13. 팝업 닫힘 대기 + 주문서 업데이트 여유
     await new Promise((resolve) => {
@@ -5262,7 +5274,7 @@ async function _handleMusinsaShippingPopup(orderTabId, name, phone, address, det
 }
 
 async function _handlePlaceOrder(payload) {
-  const { sourceSite, productUrl, orderType, productOption, shippingName, shippingPhone, shippingZipcode, shippingAddress, shippingAddressDetail, sourcingAccountId } = payload
+  const { orderId, sourceSite, productUrl, orderType, productOption, shippingName, shippingPhone, shippingZipcode, shippingAddress, shippingAddressDetail, sourcingAccountId } = payload
   const contentScript = _PLACE_ORDER_SCRIPTS[sourceSite]
   const orderFormPattern = _ORDER_FORM_PATTERNS[sourceSite]
   if (!contentScript || !orderFormPattern) return { success: false, error: `지원하지 않는 소싱처: ${sourceSite}` }
@@ -5470,7 +5482,7 @@ async function _handlePlaceOrder(payload) {
     await new Promise((r) => setTimeout(r, 1000))
   }
 
-  return { success: true, status: 'ready-to-pay', tabId }
+  return { ...step2, tabId, orderId }
 }
 
 // PLACE_ORDER 메시지 핸들러 (content-samba-deviceid.js relay)
