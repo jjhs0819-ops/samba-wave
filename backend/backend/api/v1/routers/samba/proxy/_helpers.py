@@ -91,9 +91,13 @@ async def _get_kream_client(session: AsyncSession) -> KreamClient:
     return KreamClient(token=str(token), cookie=str(cookie))
 
 
-async def _get_lotte_client(session: AsyncSession) -> LotteHomeClient:
+async def _get_lotte_client(
+    session: AsyncSession, tenant_id: str | None = None
+) -> LotteHomeClient:
     """롯데홈쇼핑 클라이언트 생성 헬퍼."""
-    creds = await _get_setting(session, "lottehome_credentials") or {}
+    creds = (
+        await _get_setting(session, "lottehome_credentials", tenant_id=tenant_id) or {}
+    )
     if not isinstance(creds, dict):
         creds = {}
     return LotteHomeClient(

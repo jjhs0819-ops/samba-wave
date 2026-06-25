@@ -254,6 +254,15 @@ export function StoreSettingsPanel(props: Props) {
                             proxyApi.lottehomeDeliveryPolicies(),
                             proxyApi.lottehomePlaces(),
                           ])
+                          // API 실패 시 에러 메시지 노출
+                          if (!(polRes as { success?: boolean }).success) {
+                            showAlert(`배송정책 조회 실패: ${(polRes as { message?: string }).message || '인증 오류'}`, 'error')
+                            return
+                          }
+                          if (!(plcRes as { success?: boolean }).success) {
+                            showAlert(`배송지 조회 실패: ${(plcRes as { message?: string }).message || '인증 오류'}`, 'error')
+                            return
+                          }
                           let polCount = 0, extraCount = 0, shpCount = 0, retCount = 0
                           if (polRes.policies) {
                             const opts = polRes.policies.map(p => ({ value: p.no, label: p.nm || p.no }))

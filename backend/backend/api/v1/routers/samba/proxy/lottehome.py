@@ -276,9 +276,10 @@ async def lottehome_standard_categories(
 @router.get("/lottehome/delivery-policies")
 async def lottehome_delivery_policies(
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ) -> dict[str, Any]:
     """롯데홈쇼핑 배송비정책 조회 — policies 리스트로 파싱해서 반환."""
-    client = await _get_lotte_client(session)
+    client = await _get_lotte_client(session, tenant_id=tenant_id)
     try:
         result = await client.search_delivery_policies()
         data = result.get("data", {})
@@ -374,9 +375,10 @@ async def lottehome_delivery_policies(
 @router.get("/lottehome/delivery-places")
 async def lottehome_delivery_places(
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ) -> dict[str, Any]:
     """롯데홈쇼핑 배송지 조회 — shipping_places(출고지) / return_places(반품지) 구조로 반환."""
-    client = await _get_lotte_client(session)
+    client = await _get_lotte_client(session, tenant_id=tenant_id)
     try:
         return await client.search_return_places()
     except LotteApiError as exc:
