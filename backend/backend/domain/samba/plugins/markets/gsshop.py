@@ -86,6 +86,31 @@ def _transform_for_gsshop(
     brand = str(product.get("brand") or "")
     name = str(product.get("name") or "")
 
+    # 브랜드코드 — 정책 gsSettings.brands[](멀티선택)에서 상품 브랜드와 매칭.
+    # 정책 UI는 brands 배열로 저장하는데 legacy 단일 brandCd만 읽으면 비어서 GS 등록 실패함.
+    def _resolve_brand_cd() -> str:
+        single = str(gs.get("brandCd") or "")
+        brands = gs.get("brands") or []
+        if not brands:
+            return single
+        pb = brand.strip().lower().replace(" ", "")
+        # 1) 상품 브랜드명과 일치/부분포함
+        if pb:
+            for b in brands:
+                bn = str(b.get("brandNm") or "").strip().lower().replace(" ", "")
+                if bn and (bn == pb or bn in pb or pb in bn):
+                    return str(b.get("brandCd") or "")
+        # 2) 상품명에 브랜드명 포함
+        pn = name.lower().replace(" ", "")
+        for b in brands:
+            bn = str(b.get("brandNm") or "").strip().lower().replace(" ", "")
+            if bn and bn in pn:
+                return str(b.get("brandCd") or "")
+        # 3) 폴백: 단일 brandCd 또는 첫 브랜드
+        return single or str((brands[0] or {}).get("brandCd") or "")
+
+    brand_cd = _resolve_brand_cd()
+
     # 판매 기간 (KST 현재 ~ 9999-12-31)
     kst = timezone(timedelta(hours=9))
     now_dtm = int(datetime.now(kst).strftime("%Y%m%d%H%M%S"))
@@ -161,10 +186,10 @@ def _transform_for_gsshop(
     std_rels_ddcnt = int(gs.get("stdRelsDdcnt") or 1)
     base_add_info: dict[str, Any] = {
         "prdNm": name,
-        "brandCd": gs.get("brandCd") or "",
+        "brandCd": brand_cd,
         "prdClsCd": category_prd_cls_cd or gs.get("prdClsCd") or "",
-        # 3100=직송(택배), 3200=직송(설치)
-        "dlvPickMthodCd": int(gs.get("dlvPickMthodCd") or 3100),
+        # 3100=직송(설치), 3200=직송(택배) — 택배사(dlvsCoCd)는 직송(택배)일 때만 적용됨
+        "dlvPickMthodCd": int(gs.get("dlvPickMthodCd") or 3200),
         "dlvsCoCd": str(gs.get("dlvsCoCd") or "DH"),
         "saleStrDtm": now_dtm,
         "saleEndDtm": end_dtm,

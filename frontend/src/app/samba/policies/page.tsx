@@ -1706,11 +1706,11 @@ export default function PoliciesPage() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                       <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '90px' }}>택배사</span>
                       <select value={gs.dlvsCoCd || 'DH'} onChange={e => setGs({ dlvsCoCd: e.target.value })} style={{ background: '#1F2937', border: '1px solid #374151', borderRadius: 4, color: '#E2E8F0', fontSize: '0.8125rem', padding: '3px 6px' }}>
-                        <option value="DH">대한통운 (DH)</option>
-                        <option value="CJ">CJ대한통운 (CJ)</option>
-                        <option value="KP">우체국 (KP)</option>
-                        <option value="HN">한진 (HN)</option>
-                        <option value="LO">롯데 (LO)</option>
+                        <option value="DH">CJ대한통운 (DH)</option>
+                        <option value="HJ">한진택배 (HJ)</option>
+                        <option value="HD">롯데택배 (HD)</option>
+                        <option value="KG">로젠택배 (KG)</option>
+                        <option value="EP">우체국택배 (EP)</option>
                       </select>
                     </div>
                     {/* 브랜드 검색 (멀티 선택 — 롯데홈 방식, 세로 누적) */}
