@@ -186,19 +186,23 @@ def _extract_denom(row) -> int | None:
 # 바로 검증 가능(마켓마다 로그인해 전체주문 확인 비현실적). 마켓 판별은 주문목록 market_filter
 # 와 동일(channel_id→SambaMarketAccount.market_type) + 플레이오토 경유 주문은
 # sales_channel_alias 접두 매칭. 주문일(paid_at, 인덱스) 기준, 마켓 공식 기간.
-# ⚠️ market_types/alias 문자열은 운영 데이터로 한 번 검증 권장(드롭다운 "11번가"·"신세계몰" 기반).
+# market_type 은 영문 코드(11st, ssg, gmarket ...) — SambaMarketAccount.market_type 및 주문목록
+# 필터(_resolve_market_filter_channel_ids: `market_type == "11st"`)와 동일 값이어야 한다.
+# [2026-06-25 수정] 한글 "11번가"/"신세계몰" 로 잡고 있어 계정 매칭 0 → channel_ids=[] →
+# 삼바 N=0 → 포털 폴백 → 분모 빈칸("n") 버그. 영문 코드로 교정.
+# alias_prefixes 는 플레이오토 경유 주문의 sales_channel_alias(한글 표시명, 예 "11번가(...)") 접두 매칭.
 # GS(gsshop 품절률)는 매핑에서 제외 → 기존 포털 N 유지(별도 N 소스).
 _N_BUFFER_PCT = (
     5  # 과소집계 보정 — 삼바 N < 마켓 N 갭 대비 과소구매 방지(이행률만). 추후 설정값화.
 )
 _SAMBA_N_CFG: dict[str, dict] = {
     "ssg": {
-        "market_types": ["신세계몰", "이마트몰", "SSG"],
+        "market_types": ["ssg"],
         "alias_prefixes": ["신세계몰", "이마트몰", "SSG"],
         "period_days": 30,  # SSG 매주 월요일 D-7~D-37 ≈ 롤링 30일
     },
     "11st": {
-        "market_types": ["11번가"],
+        "market_types": ["11st", "elevenst"],
         "alias_prefixes": ["11번가"],
         "period_days": 30,  # 11번가 최근 1주/전 30일 → 30일 윈도우
     },
