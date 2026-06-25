@@ -9,6 +9,18 @@
 # 재시작: sudo docker compose restart caddy
 
 api.samba-wave.co.kr {
+    # OPTIONS CORS preflight — Caddy에서 직접 처리 (백엔드 worker 우회)
+    # 단일 worker가 오토튠으로 busy일 때 preflight까지 지연되어 "백엔드 서버 연결 실패" 발생하던 문제 해결.
+    # 실제 GET/POST 등 본 요청은 여전히 FastAPI CORS 미들웨어가 처리 — 보안 검증 유지.
+    @cors_preflight method OPTIONS
+    handle @cors_preflight {
+        header Access-Control-Allow-Origin {header.Origin}
+        header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+        header Access-Control-Allow-Headers "authorization, content-type, x-api-key, x-device-id"
+        header Access-Control-Max-Age "86400"
+        respond 204
+    }
+
     # /images/* — Cloudflare R2 reverse proxy
     # 롯데홈쇼핑 등 일부 마켓 API가 r2.dev 도메인 다운로드 실패 → 자체 도메인으로 우회
     # R2_PUBLIC_HOST 환경변수: 자기 R2 public host (pub-XXXX.r2.dev), 도커 compose 에서 주입

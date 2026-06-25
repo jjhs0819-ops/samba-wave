@@ -1067,7 +1067,8 @@ async def _delete_poison(
     cancelled = len(cancelled_keys)
     ok = cancelled > 0 or (already > 0 and not results)
     msg = (
-        f"POIZON {cancelled}개 입찰 취소" + (f" (이미취소 {already})" if already else "")
+        f"POIZON {cancelled}개 입찰 취소"
+        + (f" (이미취소 {already})" if already else "")
         if ok
         else "POIZON 입찰 취소 실패"
     )
