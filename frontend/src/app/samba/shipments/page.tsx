@@ -164,7 +164,13 @@ export default function ShipmentsPage() {
         const lr = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`)
         const logData = await lr.json()
         const newLogs = (logData.logs || []) as string[]
-        sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
+        const newIdx = logData.current_idx as number
+        // 새 잡 시작 감지: DB 인덱스가 이전 포인터보다 낮으면 새 잡 → 처음부터 읽기
+        if (newIdx > 0 && newIdx < sinceIdxRef.current) {
+          sinceIdxRef.current = 0
+        } else {
+          sinceIdxRef.current = newIdx || sinceIdxRef.current
+        }
         appendShipmentLogs(setLogMessages, newLogs)
       } catch { /* ignore */ }
       bgPolling = false
