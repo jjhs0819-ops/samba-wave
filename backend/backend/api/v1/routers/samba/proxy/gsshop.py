@@ -142,10 +142,26 @@ async def gsshop_delivery_places(
     addrGbnNm: str = Query(""),
     dirdlvRelspYn: str = Query(""),
     dirdlvRetpYn: str = Query(""),
+    account_id: Optional[str] = Query(None),
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ) -> dict[str, Any]:
-    """GS샵 출고지/반송지 조회."""
-    client = await _get_gs_client(session)
+    """GS샵 출고지/반송지 조회 (계정별 자격증명 — md-list/brands 와 동일 계정 조회).
+
+    account_id 미지정 시 활성 계정 폴백. _get_gs_client(활성계정) 로만 조회하면
+    정책의 GS 계정과 다른 계정(출고지 미등록)을 봐서 빈 목록 → 0001 폴백되던 문제 해소.
+    """
+    creds = await resolve_market_creds(
+        session,
+        tenant_id,
+        market_type="gsshop",
+        store_key="store_gsshop",
+        account_id=account_id,
+        allow_default_fallback=True,
+    )
+    if not creds.get("supCd"):
+        return {"success": False, "message": "GS샵 계정 설정 없음", "data": None}
+    client = _gs_client_from_creds(creds)
     try:
         result = await client.get_delivery_places(
             sup_addr_cd=supAddrCd,
