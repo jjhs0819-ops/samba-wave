@@ -83,7 +83,8 @@
     if (!name || !address) return
 
     const changeLink = document.querySelector('a.btn-address') ||
-      Array.from(document.querySelectorAll('a, button')).find(el => el.textContent.trim() === '배송지 변경')
+      Array.from(document.querySelectorAll('a, button')).find(el => el.textContent.trim() === '배송지 변경') ||
+      (() => { const b = Array.from(document.querySelectorAll('b')).find(el => el.textContent.trim() === '배송지 변경'); return b?.parentElement })()
     if (!changeLink) { console.log('[삼바-주문처리-패션플러스] 배송지 변경 링크 없음'); return }
     changeLink.click()
     await sleep(2500)
@@ -102,26 +103,8 @@
       await sleep(800)
     }
 
-    // 우편번호/도로명: script tag injection으로 iframe main world에서 Vue form 직접 설정
-    // CSP 없음 확인. background world:MAIN inject는 delivery-address frame 도달 실패.
-    if (zipcode && address) {
-      const safeZip = JSON.stringify(String(zipcode))
-      const safeAddr = JSON.stringify(String(address))
-      const s = doc.createElement('script')
-      s.textContent = `(function(){
-        var ral=window.Faple&&window.Faple.vues&&window.Faple.vues.receiveAddressList;
-        if(ral&&ral.form){ral.form.zipCode=${safeZip};ral.form.roadAddress=${safeAddr};}
-        var inp=document.querySelectorAll('input.textfield');
-        var sd=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value');
-        if(inp[2]){inp[2].removeAttribute('readonly');sd.set.call(inp[2],${safeZip});inp[2].dispatchEvent(new Event('input',{bubbles:true}));}
-        if(inp[3]){inp[3].removeAttribute('readonly');sd.set.call(inp[3],${safeAddr});inp[3].dispatchEvent(new Event('input',{bubbles:true}));}
-      })()`
-      doc.head.appendChild(s)
-      s.remove()
-      await sleep(300)
-    }
-
-    // 이름 / 전화 / 상세주소 입력
+    // 이름 / 전화 / 우편번호 / 도로명 / 상세주소 입력
+    // iframeWin.HTMLInputElement.prototype: content script isolated world가 아닌 iframe main world 네이티브 setter
     const textfields = doc.querySelectorAll('input.textfield')
     // [0]=이름, [1]=전화, [2]=우편번호(readonly), [3]=도로명(readonly), [4]=상세주소
     const iframeInputProto = iframeWin.HTMLInputElement.prototype
@@ -129,15 +112,26 @@
 
     function setVal(input, value) {
       if (!input) return
+      input.removeAttribute('readonly')
       if (nativeSetter && nativeSetter.set) nativeSetter.set.call(input, value)
       else input.value = value
       input.dispatchEvent(new iframeWin.Event('input', { bubbles: true }))
       input.dispatchEvent(new iframeWin.Event('change', { bubbles: true }))
     }
 
+    // Vue form 직접 설정 (iframeWin.Faple = iframe main world Vue 인스턴스)
+    const ral = iframeWin.Faple?.vues?.receiveAddressList
+    if (ral?.form) {
+      if (zipcode) ral.form.zipCode = String(zipcode)
+      if (address) ral.form.roadAddress = String(address)
+    }
+
     if (textfields[0]) setVal(textfields[0], name)
     await sleep(200)
     if (textfields[1]) setVal(textfields[1], phone.replace(/[^0-9]/g, ''))
+    await sleep(200)
+    if (zipcode && textfields[2]) setVal(textfields[2], String(zipcode))
+    if (address && textfields[3]) setVal(textfields[3], String(address))
     await sleep(200)
     if (detail && textfields[4]) setVal(textfields[4], detail)
     await sleep(300)
