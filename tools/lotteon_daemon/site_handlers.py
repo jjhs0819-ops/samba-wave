@@ -161,7 +161,10 @@ _ABCMART_EXTRACT_JS = r"""
       const sellAmt = parseInt(pi.sellAmt || 0)
       const normalAmt = parseInt(pi.normalAmt || 0)
       const alwaysDscntAmt = parseInt(apiData.alwaysDscntAmt || 0)
-      const loginYn = (apiData.loginYn || '').toUpperCase()
+      // loginYn: 'Y'=로그인, 'N'=비로그인, null/undefined=응답없음(ambiguous).
+      // (apiData.loginYn || '') 패턴은 부재 시 ''→'Y' 아님→login_required=true 오발화.
+      // ABCMART_LOGIN_CHECK_JS 와 동일하게 typeof string 체크로 부재 구분.
+      const loginYn = typeof apiData.loginYn === 'string' ? apiData.loginYn.toUpperCase() : null
       const coupons = apiData.maxBenefitCoupon || apiData.coupon || []
       const salePrice = displayPrice > 0 ? displayPrice : sellAmt
       let couponDiscount = 0
@@ -173,8 +176,8 @@ _ABCMART_EXTRACT_JS = r"""
       _result.original_price = normalAmt || salePrice
       // API 계산은 폴백용으로만 보관 — best_benefit_price 는 DOM "최대 혜택가" 1순위.
       _result._apiBenefit = loginYn === 'Y' ? benefit : 0
-      _result._domLoginSignal = loginYn === 'Y' ? 'logout_link' : 'login_link'
-      _result.login_required = loginYn !== 'Y'
+      _result._domLoginSignal = loginYn === 'Y' ? 'logout_link' : loginYn === 'N' ? 'login_link' : 'ambiguous'
+      _result.login_required = loginYn === 'N'
       if (salePrice > 0) _result.success = true
     }
 
