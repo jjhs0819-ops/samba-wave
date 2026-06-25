@@ -64,9 +64,11 @@
   }
 
   // ── 주문서: 배송지 변경 (직배/까대기) ──
+  // 실측 셀렉터: button.btn-plus 텍스트='배송지 수정하기'
   async function changeShipping(name, phone, address, detail) {
     if (!name) return
-    const changeBtn = document.querySelector('button.btnAddress') ||
+    const changeBtn = document.querySelector('button.btn-plus') ||
+      Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === '배송지 수정하기' && b.offsetHeight > 0) ||
       Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === '변경' && b.offsetHeight > 0)
     if (!changeBtn) return
     changeBtn.click()
@@ -106,19 +108,17 @@
   }
 
   // ── 선물 주문서: 수령인/전화 입력 ──
+  // 실측: #phoneReceiverMbNm0 (이름), #receiverPhoneNumber0 (전화)
+  // radio giftSendOption_single_phone = 기본 체크됨 (전화번호로 보내기)
   async function fillGiftRecipient(name, phone) {
     if (!name) return
-    await sleep(1500)
-    // 수령인 이름
-    const nameEl = document.querySelector('input[placeholder*="이름"]') ||
-      document.querySelector('input[placeholder*="받는 분"]') ||
-      document.querySelector('input[name*="name"], input[name*="receiver"]')
+    await sleep(800)
+    const nameEl = document.querySelector('#phoneReceiverMbNm0') ||
+      document.querySelector('input[placeholder="이름"]')
     if (nameEl) setVal(nameEl, name)
 
-    // 전화번호
-    const phoneEl = document.querySelector('input[placeholder*="전화"]') ||
-      document.querySelector('input[placeholder*="휴대폰"]') ||
-      document.querySelector('input[type="tel"]')
+    const phoneEl = document.querySelector('#receiverPhoneNumber0') ||
+      document.querySelector('input[placeholder="전화번호"][type="tel"]')
     if (phoneEl) setVal(phoneEl, (phone || '').replace(/-/g, ''))
 
     await sleep(300)
@@ -146,9 +146,9 @@
       const el = document.querySelector(sel)
       return el ? parseInt((el.textContent || '').replace(/[^\d]/g, '')) || 0 : 0
     }
-    // payments 페이지: 총 결제금액
-    const finalAmount = getText('.priceTotal em, .totalAmount em, .finalAmount em, [class*="totalPay"] em') ||
-      getText('.priceTotal, .totalAmount, .finalAmount, [class*="totalPay"]') || 0
+    // 실측: .totalPriceNum SPAN = '89,000'
+    const finalAmount = getText('.totalPriceNum') ||
+      getText('.totalPriceDetail') || 0
     return { finalAmount, actualCost: finalAmount }
   }
 
