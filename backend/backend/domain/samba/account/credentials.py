@@ -100,7 +100,11 @@ def gsshop_creds(account: Optional["SambaMarketAccount"]) -> dict[str, Any]:
         # (스토어 설정에서 개발 AES키 필드 제거 후 운영키만 쓰는데 env 가 안 박혀
         #  기본 dev 로 잡혀 dev 서버에 운영키 인증 → 401 나던 문제 해소)
         "env": ext.get("env")
-        or ("prod" if (account.api_key or ext.get("apiKeyProd")) and not ext.get("apiKeyDev") else "dev"),
+        or (
+            "prod"
+            if (account.api_key or ext.get("apiKeyProd")) and not ext.get("apiKeyDev")
+            else "dev"
+        ),
     }
 
 
