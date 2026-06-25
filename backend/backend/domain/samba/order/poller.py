@@ -142,9 +142,19 @@ async def _fetch_new_order_numbers(
                 lh_end_str = lh_end.strftime("%Y%m%d")
                 try:
                     for sel_option in ["01", "02", "03"]:
-                        lh_orders = await lh_client.search_new_orders(
-                            lh_start_str, lh_end_str, sel_option=sel_option
-                        )
+                        try:
+                            lh_orders = await lh_client.search_new_orders(
+                                lh_start_str, lh_end_str, sel_option=sel_option
+                            )
+                        except Exception as _lh_e:
+                            # 0001=데이터없음 포함 — 한 sel_option 실패가 나머지 차단 방지
+                            logger.warning(
+                                "[주문폴러] %s: search_new_orders sel=%s 실패(계속): %s",
+                                label,
+                                sel_option,
+                                _lh_e,
+                            )
+                            lh_orders = []
                         for ro in lh_orders:
                             prod = (
                                 ro.get("ProdInfo", {})

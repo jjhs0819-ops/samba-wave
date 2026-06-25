@@ -96,9 +96,12 @@ async def update_mapping(
     body: MappingUpdate,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    result = await _get_service(session).update_mapping(
-        mapping_id, body.model_dump(exclude_unset=True)
-    )
+    try:
+        result = await _get_service(session).update_mapping(
+            mapping_id, body.model_dump(exclude_unset=True)
+        )
+    except ValueError as e:
+        raise HTTPException(409, str(e))
     if not result:
         raise HTTPException(404, "매핑을 찾을 수 없습니다")
     return result
@@ -109,7 +112,11 @@ async def delete_mapping(
     mapping_id: str,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    if not await _get_service(session).delete_mapping(mapping_id):
+    try:
+        result = await _get_service(session).delete_mapping(mapping_id)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    if not result:
         raise HTTPException(404, "매핑을 찾을 수 없습니다")
     return {"ok": True}
 

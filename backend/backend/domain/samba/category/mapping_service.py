@@ -292,16 +292,45 @@ class CategoryMappingMixin:
             updated_at=now,
         )
 
+    async def _is_mapping_transmitted(
+        self, source_site: str, source_category: str
+    ) -> bool:
+        """해당 (source_site, source_category) 조합으로 마켓 전송된 상품이 있는지 확인."""
+        from sqlalchemy import text
+
+        result = await self.mapping_repo.session.execute(
+            text(
+                "SELECT EXISTS("
+                "  SELECT 1 FROM samba_collected_product"
+                "  WHERE source_site = :ss"
+                "    AND category = :sc"
+                "    AND registered_accounts IS NOT NULL"
+                "    AND jsonb_array_length(registered_accounts) > 0"
+                "  LIMIT 1"
+                ")"
+            ),
+            {"ss": source_site, "sc": source_category},
+        )
+        return bool(result.scalar())
+
     async def update_mapping(
         self, mapping_id: str, data: Dict[str, Any]
     ) -> Optional[SambaCategoryMapping]:
+        existing = await self.mapping_repo.get_async(mapping_id)
+        if not existing:
+            return None
+
+        if await self._is_mapping_transmitted(
+            existing.source_site or "", existing.source_category or ""
+        ):
+            raise ValueError("마켓에 전송된 카테고리 매핑은 수정할 수 없습니다")
+
         if "target_mappings" in data:
-            existing = await self.mapping_repo.get_async(mapping_id)
             data = dict(data)
             data["target_mappings"] = await self._sanitize_target_mappings(
                 data.get("target_mappings"),
-                source_site=str(getattr(existing, "source_site", "") or ""),
-                source_category=str(getattr(existing, "source_category", "") or ""),
+                source_site=str(existing.source_site or ""),
+                source_category=str(existing.source_category or ""),
             )
         result = await self.mapping_repo.update_async(mapping_id, **data)
         import asyncio
@@ -310,6 +339,11 @@ class CategoryMappingMixin:
         return result
 
     async def delete_mapping(self, mapping_id: str) -> bool:
+        existing = await self.mapping_repo.get_async(mapping_id)
+        if existing and await self._is_mapping_transmitted(
+            existing.source_site or "", existing.source_category or ""
+        ):
+            raise ValueError("마켓에 전송된 카테고리 매핑은 삭제할 수 없습니다")
         result = await self.mapping_repo.delete_async(mapping_id)
         import asyncio
 

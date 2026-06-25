@@ -625,14 +625,15 @@ def _build_order_sort(sort_by: str):
     from sqlalchemy import func
 
     date_col = func.coalesce(SambaOrder.paid_at, SambaOrder.created_at)
+    # 결제시간 동일 시 수집시간(created_at) 최신순 보조정렬
     sort_map = {
-        "date_asc": date_col.asc(),
-        "profit_desc": SambaOrder.profit.desc(),
-        "profit_asc": SambaOrder.profit.asc(),
-        "price_desc": SambaOrder.sale_price.desc(),
-        "price_asc": SambaOrder.sale_price.asc(),
+        "date_asc": [date_col.asc(), SambaOrder.created_at.desc()],
+        "profit_desc": [SambaOrder.profit.desc(), SambaOrder.created_at.desc()],
+        "profit_asc": [SambaOrder.profit.asc(), SambaOrder.created_at.desc()],
+        "price_desc": [SambaOrder.sale_price.desc(), SambaOrder.created_at.desc()],
+        "price_asc": [SambaOrder.sale_price.asc(), SambaOrder.created_at.desc()],
     }
-    return sort_map.get(sort_by, date_col.desc())
+    return sort_map.get(sort_by, [date_col.desc(), SambaOrder.created_at.desc()])
 
 
 async def _run_paginated_order_query(
@@ -665,7 +666,7 @@ async def _run_paginated_order_query(
     if query_filters:
         items_stmt = items_stmt.where(*query_filters)
     items_stmt = (
-        items_stmt.order_by(_build_order_sort(sort_by)).offset(skip).limit(limit)
+        items_stmt.order_by(*_build_order_sort(sort_by)).offset(skip).limit(limit)
     )
     items = list((await session.execute(items_stmt)).scalars().all())
 
@@ -1387,7 +1388,7 @@ async def export_orders_excel(
                     SambaOrder.tenant_id == None,  # noqa: E711
                 )
             )
-        stmt = stmt.order_by(_build_order_sort(payload.sort_by))
+        stmt = stmt.order_by(*_build_order_sort(payload.sort_by))
         rows = list((await session.execute(stmt)).scalars().all())
     else:
         if not payload.start or not payload.end:
@@ -1417,7 +1418,7 @@ async def export_orders_excel(
         stmt = (
             select(SambaOrder)
             .where(*filters, *extra)
-            .order_by(_build_order_sort(payload.sort_by))
+            .order_by(*_build_order_sort(payload.sort_by))
             .limit(MAX_FILTER_ROWS + 1)
         )
         rows = list((await session.execute(stmt)).scalars().all())
@@ -7441,9 +7442,16 @@ async def sync_orders_from_markets(
                     "03": ("pending", "발송약정"),
                 }
                 for _lh_sel in ["01", "02", "03"]:
-                    _lh_orders = await lh_client.search_new_orders(
-                        lh_start_str, lh_end_str, sel_option=_lh_sel
-                    )
+                    try:
+                        _lh_orders = await lh_client.search_new_orders(
+                            lh_start_str, lh_end_str, sel_option=_lh_sel
+                        )
+                    except Exception as _lh_ne:
+                        # 0001=데이터없음 포함 — 한 sel_option 실패가 전체 롯데홈 블록을 크래시시키지 않도록
+                        logger.warning(
+                            f"[주문동기화] {label}: search_new_orders sel={_lh_sel} 실패(계속): {_lh_ne}"
+                        )
+                        _lh_orders = []
                     _fs, _fss = _new_ord_status_map[_lh_sel]
                     for ro in _lh_orders:
                         _prod_info_raw = ro.get("ProdInfo")
@@ -9271,6 +9279,74 @@ async def sync_orders_from_markets(
         )
     except Exception as _upd_err:
         logger.warning(f"[주문동기화] 원주문 일괄 업데이트 실패: {_upd_err}")
+
+    # PlayAuto 미매칭 주문 자동 백필 — 동기화 후 collected_product_id IS NULL 잔존 해소.
+    # 현대H몰 등 PlayAuto 경유 마켓 주문은 style_code 매칭이 실패해도 DB에 저장은 됨.
+    # 매 sync 완료 시 재시도해 누적 미매칭 해소.
+    try:
+        from sqlalchemy import text as _pa_bf_text
+
+        _pa_null = (
+            await session.execute(
+                _pa_bf_text(
+                    "SELECT id, product_name FROM samba_order "
+                    "WHERE source = 'playauto' "
+                    "AND collected_product_id IS NULL "
+                    "AND product_name IS NOT NULL AND product_name != '' "
+                    "LIMIT 500"
+                )
+            )
+        ).fetchall()
+        if _pa_null:
+            _pa_all_tokens: set[str] = set()
+            _pa_order_tokens: list[tuple[str, list[str]]] = []
+            for _poid, _ppname in _pa_null:
+                _ptoks = _lh_style_tokens(str(_ppname or ""))
+                _pa_order_tokens.append((str(_poid), _ptoks))
+                _pa_all_tokens.update(_ptoks)
+            if _pa_all_tokens:
+                _pa_cp_rows = (
+                    await session.execute(
+                        _pa_bf_text(
+                            "SELECT id, style_code FROM samba_collected_product "
+                            "WHERE style_code = ANY(:t)"
+                        ),
+                        {"t": list(_pa_all_tokens)},
+                    )
+                ).fetchall()
+                _pa_tok_cp: dict[str, list[str]] = {}
+                for _pcr in _pa_cp_rows:
+                    _psc = str(_pcr[1] or "")
+                    if _psc:
+                        _pa_tok_cp.setdefault(_psc, []).append(str(_pcr[0]))
+                _pa_linked = 0
+                for _poid, _ptoks in _pa_order_tokens:
+                    if not _ptoks:
+                        continue
+                    _pcpid: str | None = None
+                    for _ptok in sorted(_ptoks, key=len, reverse=True):
+                        _pcands = _pa_tok_cp.get(_ptok, [])
+                        if len(_pcands) == 1:
+                            _pcpid = _pcands[0]
+                            break
+                        elif _pcands:
+                            break  # ambiguous — skip
+                    if _pcpid:
+                        await session.execute(
+                            _pa_bf_text(
+                                "UPDATE samba_order SET collected_product_id = :cpid "
+                                "WHERE id = :oid AND collected_product_id IS NULL"
+                            ),
+                            {"cpid": _pcpid, "oid": _poid},
+                        )
+                        _pa_linked += 1
+                if _pa_linked:
+                    await session.commit()
+                    logger.info(
+                        f"[주문동기화] PlayAuto 미매칭 자동 백필 {_pa_linked}건 완료"
+                    )
+    except Exception as _pa_bf_err:
+        logger.warning(f"[주문동기화] PlayAuto 백필 실패(무시): {_pa_bf_err}")
 
     if total_synced > 0:
         from backend.utils.kakao_notify import send_kakao_message
