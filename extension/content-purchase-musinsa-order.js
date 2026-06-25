@@ -47,6 +47,7 @@
         // 드롭다운 항목 polling — sleep(500) 고정 대기 시 이미 닫혀버림(실측 0.8초 내 닫힘)
         // 100ms 간격 최대 2초 polling으로 열리자마자 잡기
         const _ITEM_SELS = [
+          '[data-mds="StaticDropdownMenuItem"]',
           '[class*="DropdownItemContent__Container"]',
           '[data-mds="DropdownItem"]',
           '[role="option"]',

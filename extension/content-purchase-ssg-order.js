@@ -1,5 +1,8 @@
 // content-purchase-ssg-order.js — SSG 직배/까대기/선물 주문처리
-// 확인된 셀렉터: 바로구매 a#actionPayment
+// 확인된 셀렉터 (CDP 실측):
+//   바로구매: a.cdtl_btn_red.cdtl_btn_buy (텍스트 '바로구매')
+//   선물하기: a.cdtl_gift_btn (텍스트 '선물')
+//   옵션: select#ordOpt1._dropdown (jQuery trigger 필요)
 // 배송지 변경: background._handleSsgShippingPopup 에서 처리 (직배/까대기)
 ;(() => {
   if (window.__sambaSSGOrderLoaded) return
@@ -22,14 +25,30 @@
     return true
   }
 
+  function jqTrigger(sel) {
+    // SSG는 jQuery UI select: native이벤트 + jQuery trigger 필요
+    if (window.jQuery || window.$) {
+      try { (window.jQuery || window.$)(sel).trigger('change') } catch {}
+    }
+  }
+
   async function selectOption(val) {
     val = String(val).trim()
     if (!val) return true
     const parts = val.split('/').map(s => s.trim())
     for (const part of parts) {
       let matched = false
-      for (const sel of document.querySelectorAll('select')) {
-        if (triggerSelect(sel, part)) { matched = true; await sleep(700); break }
+      // SSG: select#ordOpt1._dropdown, select#ordOpt2._dropdown 등
+      const sels = [...document.querySelectorAll('select._dropdown, select#ordOpt1, select#ordOpt2')]
+      if (!sels.length) {
+        // 폴백: 모든 select
+        for (const sel of document.querySelectorAll('select')) {
+          if (triggerSelect(sel, part)) { jqTrigger(sel); matched = true; await sleep(700); break }
+        }
+      } else {
+        for (const sel of sels) {
+          if (triggerSelect(sel, part)) { jqTrigger(sel); matched = true; await sleep(700); break }
+        }
       }
       if (!matched) {
         for (const item of document.querySelectorAll('.opt_list li, .option_list li, [data-opt-no], [data-opt-val]')) {
@@ -42,18 +61,18 @@
   }
 
   async function clickBuyNow() {
-    const btn = document.querySelector('#actionPayment')
+    // 실측: a.cdtl_btn_red.cdtl_btn_buy 텍스트='바로구매'
+    const btn = document.querySelector('a.cdtl_btn_red.cdtl_btn_buy, a.cdtl_btn_buy')
+      || [...document.querySelectorAll('a, button')].find(b => b.offsetHeight > 0 && b.textContent.trim() === '바로구매')
     if (btn) { btn.click(); await sleep(3000); return true }
-    for (const b of document.querySelectorAll('button, a')) {
-      if (b.textContent.trim() === '바로구매') { b.click(); await sleep(3000); return true }
-    }
     return false
   }
 
   // ── 선물하기 버튼 클릭 ──
   async function clickGift() {
-    // SSG 선물하기: a[href*="gift"], button 텍스트 '선물하기'
-    const btn = [...document.querySelectorAll('a, button')].find(b => b.offsetHeight > 0 && b.textContent.trim().includes('선물하기'))
+    // 실측: a.cdtl_gift_btn 텍스트='선물'
+    const btn = document.querySelector('a.cdtl_gift_btn')
+      || [...document.querySelectorAll('a, button')].find(b => b.offsetHeight > 0 && b.textContent.trim().includes('선물') && !b.textContent.trim().includes('룰렛'))
     if (btn) { btn.click(); await sleep(3000); return true }
     return false
   }
