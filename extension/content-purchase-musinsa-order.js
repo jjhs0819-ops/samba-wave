@@ -89,9 +89,13 @@
         }
       }
 
-      // 제공된 parts 선택 후 남은 미선택 드롭다운 자동 첫번째 선택 (컬러 등 추가 옵션)
+      // 제공된 parts 수 < 전체 박스 수인 경우만 나머지 박스 자동선택
+      // parts 수 >= 박스 수면 이미 모두 지정됨 → 스킵 (이중선택 방지)
       await sleep(400)
       const remainingBoxes = Array.from(document.querySelectorAll('[data-mds="DropdownTriggerBox"]'))
+      if (remainingBoxes.length <= parts.length) {
+        // 모든 박스 이미 parts로 지정됨 — 자동선택 불필요
+      } else
       for (const box of remainingBoxes) {
         const inp = box.querySelector('[data-mds="DropdownTriggerInput"]')
         // innerText(span 표시) 우선 확인 — value는 항상 ""인 UI
