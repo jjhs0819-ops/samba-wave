@@ -93,21 +93,35 @@ def _transform_for_gsshop(
         brands = gs.get("brands") or []
         if not brands:
             return single
+
+        def _bn(b: dict[str, Any]) -> str:
+            return str(b.get("brandNm") or "").strip().lower().replace(" ", "")
+
         pb = brand.strip().lower().replace(" ", "")
-        # 1) 상품 브랜드명과 일치/부분포함
+        pn = name.lower().replace(" ", "")
+        # 1) 정확 일치 최우선 (전체 스캔) — "나이키" 상품이 "나이키 키즈"에 잘못 매칭되는 것 방지
         if pb:
             for b in brands:
-                bn = str(b.get("brandNm") or "").strip().lower().replace(" ", "")
-                if bn and (bn == pb or bn in pb or pb in bn):
+                if _bn(b) and _bn(b) == pb:
                     return str(b.get("brandCd") or "")
-        # 2) 상품명에 브랜드명 포함
-        pn = name.lower().replace(" ", "")
-        for b in brands:
-            bn = str(b.get("brandNm") or "").strip().lower().replace(" ", "")
-            if bn and bn in pn:
+        # 2) 정책 브랜드명이 상품 브랜드명에 포함 (예: 상품 "나이키골프" ⊃ 정책 "나이키").
+        #    구체적(긴) 브랜드명 우선해 "나이키 키즈"가 "나이키"보다 먼저 매칭되게.
+        #    주의: 반대방향(상품브랜드 ⊂ 정책브랜드)은 "나이키"→"나이키 키즈" 오매칭이라 제외.
+        if pb:
+            for b in sorted(brands, key=lambda x: -len(_bn(x))):
+                if _bn(b) and _bn(b) in pb:
+                    return str(b.get("brandCd") or "")
+        # 3) 상품명에 정책 브랜드명 포함 (긴 것 우선)
+        for b in sorted(brands, key=lambda x: -len(_bn(x))):
+            if _bn(b) and _bn(b) in pn:
                 return str(b.get("brandCd") or "")
-        # 3) 폴백: 단일 brandCd 또는 첫 브랜드
-        return single or str((brands[0] or {}).get("brandCd") or "")
+        # 4) 폴백: legacy 단일 brandCd → 브랜드가 1개뿐일 때만 그 브랜드.
+        #    매칭 실패 + 다중 브랜드면 임의 선택(오등록)하지 말고 빈값 → GS가 brandCd 필수로 막게 둠.
+        if single:
+            return single
+        if len(brands) == 1:
+            return str((brands[0] or {}).get("brandCd") or "")
+        return ""
 
     brand_cd = _resolve_brand_cd()
 
