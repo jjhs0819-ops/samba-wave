@@ -4749,6 +4749,7 @@ const _PLACE_ORDER_SCRIPTS = {
   ABCmart: 'content-purchase-abcmart-order.js',
   GrandStage: 'content-purchase-abcmart-order.js',
   GSShop: 'content-purchase-gs-order.js',
+  FashionPlus: 'content-purchase-fashionplus-order.js',
 }
 
 // 주문서 URL 패턴 (각 소싱처별, 실측 확인값)
@@ -4759,6 +4760,7 @@ const _ORDER_FORM_PATTERNS = {
   ABCmart: /a-rt\.com\/(order|payment|checkout)/,
   GrandStage: /a-rt\.com\/(order|payment|checkout)/,
   GSShop: /gsshop\.com\/ord\//,
+  FashionPlus: /fashionplus\.co\.kr\/order\/(write|sheet)/,
 }
 
 // 소싱처별 자동로그인 키 (가구매와 동일)
@@ -4769,6 +4771,7 @@ const _PLACE_ORDER_AUTO_LOGIN_MAP = {
   ABCmart: 'abcmart',
   GrandStage: 'abcmart',
   GSShop: 'gsshop',
+  FashionPlus: 'fashionplus',
 }
 
 // SSG 우편번호 검색 팝업(zipcd.ssg) 자동화

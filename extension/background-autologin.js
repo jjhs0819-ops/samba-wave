@@ -56,6 +56,14 @@ const AUTO_LOGIN_SITES = {
     isLoginPage: url => url.includes('login.gs') || url.includes('/login'),
     loginButtonSelector: '#btnLogin, button[type="submit"], .btn_login, #loginBtn',
   },
+  fashionplus: {
+    name: '패션플러스',
+    loginUrl: 'https://www.fashionplus.co.kr/auth/login',
+    checkUrl: 'https://www.fashionplus.co.kr/mypage/order',
+    isLoginPage: url => url.includes('/auth/login') && url.includes('fashionplus'),
+    // JS 소스 분석 확인: input#login_id, input[type="password"], button.mm_btn.__btn_lg_primary__
+    loginButtonSelector: 'button.mm_btn.__btn_lg_primary__, button[type="submit"], .btn_login',
+  },
   // ⚠️ [라이브 보정] 11번가 가구매용 자동로그인 — 로그인 URL·셀렉터 전부 추정값(SHOW PASS 소스 없음).
   // 실제 11번가 로그인 페이지에서 확인 후 보정 필요.
   '11st': {

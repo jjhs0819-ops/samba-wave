@@ -108,7 +108,7 @@ export default function OrderInfoCell(props: Props) {
     ? (formatSourceSiteLabel(aliasBadgeRaw, siteAliasMap) || aliasBadgeRaw)
     : ''
 
-  const _placeOrderSites = ['MUSINSA', 'SSG', 'LOTTEON', 'ABCmart', 'GrandStage', 'GSShop']
+  const _placeOrderSites = ['MUSINSA', 'SSG', 'LOTTEON', 'ABCmart', 'GrandStage', 'GSShop', 'FashionPlus']
   const _srcSite = (sourceFromUrl || actualSourceSite || o.source_site || '').trim().split('(')[0].trim()
   const showOrderBtns = _placeOrderSites.includes(_srcSite) && !!o.source_url
 
