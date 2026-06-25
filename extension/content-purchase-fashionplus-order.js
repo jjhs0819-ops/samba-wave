@@ -102,18 +102,13 @@
       await sleep(800)
     }
 
-    // 우편번호 자동화: zipBtn 클릭 → 카카오 팝업 → background가 팝업 iframe에 inject해서 검색+선택
+    // 우편번호/도로명: background가 world:MAIN으로 iframe에서 Vue form + DOM 직접 설정
+    // (CDP 검증 완료: ral.form.zipCode 직접 할당이 Vue 반응형 setter 트리거)
     if (zipcode && address) {
-      const zipBtn = Array.from(doc.querySelectorAll('a'))
-        .find(a => a.textContent.trim() === '우편번호 찾기')
-      if (zipBtn) {
-        zipBtn.click()
-        await sleep(2000) // 팝업 창 로드 대기
-        await new Promise((resolve) => {
-          chrome.runtime.sendMessage({ type: 'FASHIONPLUS_ZIP_POPUP_SEARCH', address }, resolve)
-        })
-        await sleep(1500) // oncomplete → Vue form 갱신 대기
-      }
+      await new Promise((resolve) => {
+        chrome.runtime.sendMessage({ type: 'FASHIONPLUS_ZIP_SET', zipcode, address }, resolve)
+      })
+      await sleep(300)
     }
 
     // 이름 / 전화 / 상세주소 입력

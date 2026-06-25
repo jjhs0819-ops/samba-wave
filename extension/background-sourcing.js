@@ -5437,85 +5437,46 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true
 })
 
-// 패션플러스 직배: 카카오 팝업 iframe에 inject → 주소 검색 + 첫 번째 결과 클릭
-// postcode.map.kakao.com이 host_permissions에 있어 cross-origin iframe도 inject 가능
+// 패션플러스 직배: delivery-address iframe에 world:MAIN inject → Vue form + DOM 직접 설정
+// CDP 검증 완료: ral.form.zipCode 직접 할당이 Vue 반응형 setter 트리거
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (!msg || msg.type !== 'FASHIONPLUS_ZIP_POPUP_SEARCH') return
+  if (!msg || msg.type !== 'FASHIONPLUS_ZIP_SET') return
   ;(async () => {
     try {
-      // 모든 탭에서 postcode.map.kakao.com 프레임 찾기
-      let kakaoTabId = null
-      let kakaoFrameId = null
-      const allTabs = await chrome.tabs.query({})
-      for (const tab of allTabs) {
-        try {
-          const frames = await chrome.webNavigation.getAllFrames({ tabId: tab.id })
-          if (!frames) continue
-          const f = frames.find((fr) => fr.url && fr.url.includes('postcode.map.kakao.com'))
-          if (f) {
-            kakaoTabId = tab.id
-            kakaoFrameId = f.frameId
-            break
-          }
-        } catch {
-          continue
-        }
-      }
-      if (!kakaoTabId) {
-        console.warn('[패션플러스 zip popup] 카카오 팝업 프레임 없음')
-        sendResponse({ ok: false, error: '카카오 팝업 없음' })
-        return
-      }
-
-      // 검색어 입력 + Enter
+      const tabId = sender.tab.id
       await chrome.scripting.executeScript({
-        target: { tabId: kakaoTabId, frameIds: [kakaoFrameId] },
+        target: { tabId, allFrames: true },
         world: 'MAIN',
-        func: (address) => {
-          const input = document.querySelector('input')
-          if (!input) return
-          const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
-          if (nativeSetter && nativeSetter.set) nativeSetter.set.call(input, address)
-          else input.value = address
-          input.dispatchEvent(new Event('input', { bubbles: true }))
-          input.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 13, key: 'Enter', bubbles: true }))
-          input.dispatchEvent(new KeyboardEvent('keyup', { keyCode: 13, key: 'Enter', bubbles: true }))
-          const btn = input.parentElement && input.parentElement.querySelector('button')
-          if (btn) btn.click()
-        },
-        args: [msg.address],
-      })
-
-      // 검색 결과 렌더 대기
-      await new Promise((r) => setTimeout(r, 2000))
-
-      // 첫 번째 결과 클릭
-      await chrome.scripting.executeScript({
-        target: { tabId: kakaoTabId, frameIds: [kakaoFrameId] },
-        world: 'MAIN',
-        func: () => {
-          const selectors = ['li[data-id] a', 'ul.list_post li:first-child a', 'ul li:first-child a', 'li:first-child a']
-          for (const sel of selectors) {
-            const el = document.querySelector(sel)
-            if (el) {
-              el.click()
-              return
-            }
+        func: (zipcode, address) => {
+          if (!window.location.href.includes('delivery-address')) return
+          // Vue form 직접 설정 (반응형 setter 트리거)
+          const ral =
+            window.Faple && window.Faple.vues && window.Faple.vues.receiveAddressList
+          if (ral && ral.form) {
+            ral.form.zipCode = zipcode
+            ral.form.roadAddress = address
           }
-          // fallback: data속성 있는 첫 li 클릭
-          const lis = document.querySelectorAll('li')
-          for (const li of lis) {
-            if (li.dataset && Object.keys(li.dataset).length > 0) {
-              li.click()
-              return
-            }
+          // DOM input도 직접 갱신
+          const inputs = document.querySelectorAll('input.textfield')
+          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
+          if (inputs[2]) {
+            inputs[2].removeAttribute('readonly')
+            if (setter && setter.set) setter.set.call(inputs[2], zipcode)
+            else inputs[2].value = zipcode
+            inputs[2].dispatchEvent(new Event('input', { bubbles: true }))
+          }
+          if (inputs[3]) {
+            inputs[3].removeAttribute('readonly')
+            if (setter && setter.set) setter.set.call(inputs[3], address)
+            else inputs[3].value = address
+            inputs[3].dispatchEvent(new Event('input', { bubbles: true }))
           }
         },
+        args: [msg.zipcode, msg.address],
       })
-
       sendResponse({ ok: true })
     } catch (e) {
-      console.warn('[패션플러스 zip popup search] 실패(무시):', e?.message)
+      console.warn('[패션플러스 zip set] 실패(무시):', e?.message)
       sendResponse({ ok: false, error: e.message })
     }
   })()
