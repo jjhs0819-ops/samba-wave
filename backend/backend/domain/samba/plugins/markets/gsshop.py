@@ -29,6 +29,25 @@ async def _get_setting(session, key: str) -> Any:
     return val
 
 
+_GS_CATEGORY_MAP_CACHE: dict[str, str] | None = None
+
+
+def _load_gs_category_map() -> dict[str, str]:
+    """소싱카테고리 → "prdClsCd|sectId" 기본 매핑(레포 커밋 JSON). 모듈 레벨 캐시."""
+    global _GS_CATEGORY_MAP_CACHE
+    if _GS_CATEGORY_MAP_CACHE is None:
+        import json
+        import os
+
+        path = os.path.join(os.path.dirname(__file__), "gsshop_category_map.json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                _GS_CATEGORY_MAP_CACHE = json.load(f)
+        except Exception:
+            _GS_CATEGORY_MAP_CACHE = {}
+    return _GS_CATEGORY_MAP_CACHE
+
+
 def _build_attr_prd_list(
     options: list[dict[str, Any]],
     sale_str_dtm: int,
@@ -85,6 +104,45 @@ def _transform_for_gsshop(
     sale_price = int(product.get("sale_price") or 0)
     brand = str(product.get("brand") or "")
     name = str(product.get("name") or "")
+
+    # 브랜드코드 — 정책 gsSettings.brands[](멀티선택)에서 상품 브랜드와 매칭.
+    # 정책 UI는 brands 배열로 저장하는데 legacy 단일 brandCd만 읽으면 비어서 GS 등록 실패함.
+    def _resolve_brand_cd() -> str:
+        single = str(gs.get("brandCd") or "")
+        brands = gs.get("brands") or []
+        if not brands:
+            return single
+
+        def _bn(b: dict[str, Any]) -> str:
+            return str(b.get("brandNm") or "").strip().lower().replace(" ", "")
+
+        pb = brand.strip().lower().replace(" ", "")
+        pn = name.lower().replace(" ", "")
+        # 1) 정확 일치 최우선 (전체 스캔) — "나이키" 상품이 "나이키 키즈"에 잘못 매칭되는 것 방지
+        if pb:
+            for b in brands:
+                if _bn(b) and _bn(b) == pb:
+                    return str(b.get("brandCd") or "")
+        # 2) 정책 브랜드명이 상품 브랜드명에 포함 (예: 상품 "나이키골프" ⊃ 정책 "나이키").
+        #    구체적(긴) 브랜드명 우선해 "나이키 키즈"가 "나이키"보다 먼저 매칭되게.
+        #    주의: 반대방향(상품브랜드 ⊂ 정책브랜드)은 "나이키"→"나이키 키즈" 오매칭이라 제외.
+        if pb:
+            for b in sorted(brands, key=lambda x: -len(_bn(x))):
+                if _bn(b) and _bn(b) in pb:
+                    return str(b.get("brandCd") or "")
+        # 3) 상품명에 정책 브랜드명 포함 (긴 것 우선)
+        for b in sorted(brands, key=lambda x: -len(_bn(x))):
+            if _bn(b) and _bn(b) in pn:
+                return str(b.get("brandCd") or "")
+        # 4) 폴백: legacy 단일 brandCd → 브랜드가 1개뿐일 때만 그 브랜드.
+        #    매칭 실패 + 다중 브랜드면 임의 선택(오등록)하지 말고 빈값 → GS가 brandCd 필수로 막게 둠.
+        if single:
+            return single
+        if len(brands) == 1:
+            return str((brands[0] or {}).get("brandCd") or "")
+        return ""
+
+    brand_cd = _resolve_brand_cd()
 
     # 판매 기간 (KST 현재 ~ 9999-12-31)
     kst = timezone(timedelta(hours=9))
@@ -161,10 +219,10 @@ def _transform_for_gsshop(
     std_rels_ddcnt = int(gs.get("stdRelsDdcnt") or 1)
     base_add_info: dict[str, Any] = {
         "prdNm": name,
-        "brandCd": gs.get("brandCd") or "",
+        "brandCd": brand_cd,
         "prdClsCd": category_prd_cls_cd or gs.get("prdClsCd") or "",
-        # 3100=직송(택배), 3200=직송(설치)
-        "dlvPickMthodCd": int(gs.get("dlvPickMthodCd") or 3100),
+        # 3100=직송(설치), 3200=직송(택배) — 택배사(dlvsCoCd)는 직송(택배)일 때만 적용됨
+        "dlvPickMthodCd": int(gs.get("dlvPickMthodCd") or 3200),
         "dlvsCoCd": str(gs.get("dlvsCoCd") or "DH"),
         "saleStrDtm": now_dtm,
         "saleEndDtm": end_dtm,
@@ -287,6 +345,22 @@ class GsShopPlugin(MarketPlugin):
         """GS샵 상품 등록 — 전체 로직."""
         from backend.domain.samba.proxy.gsshop import GsShopClient
 
+        # 카테고리 자동결정 — category_id가 비었으면 상품의 소싱 카테고리로 자동매핑.
+        # 수동 매핑 테이블 대신 source_category → "prdClsCd|sectId" 매핑 사용.
+        # 기본: 레포 커밋 JSON(gsshop_category_map.json), DB 설정(gsshop_category_map)으로 오버라이드/확장.
+        if not category_id:
+            _src_cat = str(product.get("category") or "").strip()
+            if _src_cat:
+                _cat_map = dict(_load_gs_category_map())
+                _db_map = await _get_setting(session, "gsshop_category_map")
+                if isinstance(_db_map, dict):
+                    _cat_map.update(_db_map)
+                if _cat_map.get(_src_cat):
+                    category_id = str(_cat_map[_src_cat])
+                    logger.info(
+                        f"[GS샵] 카테고리 자동매칭: '{_src_cat}' → {category_id}"
+                    )
+
         # creds가 비었으면 settings에서 조회.
         # (2026-05-25) store_gsshop 직접 호출 → resolver 위임 + account.tenant_id 자동 추출.
         auth_creds = dict(creds) if creds else {}
@@ -346,11 +420,18 @@ class GsShopPlugin(MarketPlugin):
                 # brandCd, prdClsCd, dlvsCoCd, prdRelspAddrCd 등 등록에 필요한 코드값
                 gs_settings = gs_policy.get("gsSettings") or {}
 
-        # 계정 설정 반품/교환비 fallback (정책 gsSettings에 없을 때)
-        if not gs_settings.get("rtpAmt") and auth_creds.get("returnFee"):
-            gs_settings = {**gs_settings, "rtpAmt": int(auth_creds["returnFee"])}
-        if not gs_settings.get("exchAmt") and auth_creds.get("exchangeFee"):
-            gs_settings = {**gs_settings, "exchAmt": int(auth_creds["exchangeFee"])}
+        # 계정 설정 반품/교환비 fallback (정책 gsSettings에 없을 때).
+        # returnFee/exchangeFee는 계정 additional_fields에 저장되는데 auth_creds 출처가
+        # 설정/resolver일 때 누락될 수 있어, 계정 additional_fields도 함께 조회한다.
+        _acct_extra = getattr(account, "additional_fields", None) or {} if account else {}
+        if not gs_settings.get("rtpAmt"):
+            _rf = auth_creds.get("returnFee") or _acct_extra.get("returnFee")
+            if _rf:
+                gs_settings = {**gs_settings, "rtpAmt": int(_rf)}
+        if not gs_settings.get("exchAmt"):
+            _ef = auth_creds.get("exchangeFee") or _acct_extra.get("exchangeFee")
+            if _ef:
+                gs_settings = {**gs_settings, "exchAmt": int(_ef)}
 
         client = GsShopClient(sup_cd, aes_key, sub_sup_cd, env)
 

@@ -90,9 +90,18 @@ async def gsshop_brands(
     if not creds.get("supCd"):
         return {"success": False, "message": "GS샵 계정 설정 없음", "data": None}
     client = _gs_client_from_creds(creds)
+    # getPrdBrandList는 영문명(brandEngNm) 기준 검색이라 한글 입력은 0건.
+    # 한글 브랜드명은 brand_en 매핑으로 영문 변환 후 검색 (예: 아디다스→ADIDAS).
+    _search_nm = brandNm
+    if brandNm:
+        from backend.domain.samba.policy.brand_en import brand_en
+
+        _eng = brand_en(brandNm)
+        if _eng:
+            _search_nm = _eng
     try:
         result = await client.get_brands(
-            brand_nm=brandNm, from_dtm=fromDtm, to_dtm=toDtm
+            brand_nm=_search_nm, from_dtm=fromDtm, to_dtm=toDtm
         )
         return {"success": True, "data": result.get("data")}
     except GsShopApiError as exc:
