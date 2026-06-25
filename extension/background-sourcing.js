@@ -5136,10 +5136,34 @@ async function _handlePlaceOrder(payload) {
     await new Promise((r) => setTimeout(r, 800))
   }
 
+  // chrome.debugger: 주문서 단계에서 뜨는 native alert/confirm 자동 수락
+  // (롯데ON 배송지 변경 후 "배송지가 변경되었습니다." alert이 blocking해서 멈추는 문제 방지)
+  let _debuggerAttached = false
+  const _onDebuggerEvent = async (source, method, params) => {
+    if (source.tabId !== tabId) return
+    if (method === 'Page.javascriptDialogOpening') {
+      console.log(`[직배/까대기] dialog 자동수락: ${params?.message}`)
+      try { await chrome.debugger.sendCommand({ tabId }, 'Page.handleJavaScriptDialog', { accept: true }) } catch {}
+    }
+  }
+  try {
+    await chrome.debugger.attach({ tabId }, '1.3')
+    _debuggerAttached = true
+    await chrome.debugger.sendCommand({ tabId }, 'Page.enable', {})
+    chrome.debugger.onEvent.addListener(_onDebuggerEvent)
+  } catch (e) {
+    console.warn('[직배/까대기] debugger attach 실패(무시):', e?.message)
+  }
+
   // 2단계: 주문서 → 쿠폰 처리 후 결제 직전 대기
   await chrome.scripting.executeScript({ target: { tabId }, files: [contentScript] })
   await new Promise((r) => setTimeout(r, 500))
   const step2 = await chrome.tabs.sendMessage(tabId, msg).catch((e) => ({ success: false, error: e.message }))
+
+  // debugger 정리
+  chrome.debugger.onEvent.removeListener(_onDebuggerEvent)
+  if (_debuggerAttached) { try { await chrome.debugger.detach({ tabId }) } catch {} }
+
   if (!step2 || !step2.success) return { success: false, error: step2?.error || '2단계 실패' }
 
   // 롯데ON: 계속하기 클릭 후 payments 페이지로 이동 — 추가 대기 (최대 20초)
