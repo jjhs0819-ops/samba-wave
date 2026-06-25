@@ -131,8 +131,6 @@ export default function OrderInfoCell(props: Props) {
         shippingAddressDetail: orderType === 'direct' ? customerAddress.detail : office.address_detail,
       }
       window.postMessage({ source: 'samba-page', type: 'PLACE_ORDER', payload }, window.location.origin)
-      const label = orderType === 'direct' ? '직배주문' : orderType === 'kkadaegi' ? '까대기주문' : '선물주문'
-      showAlert(`${label} 시작 — 소싱처 탭에서 진행 중`, 'info')
     } catch (e) {
       showAlert(e instanceof Error ? e.message : '주문처리 실패', 'error')
     }
