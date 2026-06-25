@@ -6,6 +6,7 @@ from typing import Any
 
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from backend.domain.samba.account.resolver import resolve_market_creds
 from backend.domain.samba.forbidden.repository import SambaSettingsRepository
 from backend.domain.samba.proxy.gsshop import GsShopClient
 from backend.domain.samba.proxy.kream import KreamClient
@@ -109,10 +110,35 @@ async def _get_lotte_client(
 
 
 async def _get_gs_client(session: AsyncSession) -> GsShopClient:
-    """GS샵 클라이언트 생성 헬퍼."""
-    creds = await _get_setting(session, "gsshop_credentials") or {}
-    if not isinstance(creds, dict):
-        creds = {}
+    """GS샵 클라이언트 생성 헬퍼. 계정 자격증명 우선(env 폴백 포함), 없으면 설정 폴백.
+
+    md-list/brands 와 동일하게 resolve_market_creds 로 계정에서 읽어 gsshop_creds
+    의 env 폴백(운영키만 있으면 prod)을 적용한다. 계정이 없을 때만 레거시
+    gsshop_credentials 설정으로 폴백.
+    """
+    creds = await resolve_market_creds(
+        session, None, market_type="gsshop", allow_default_fallback=True
+    )
+    if not creds.get("supCd"):
+        # default·tenant 매칭이 안 되면(default 미지정 / tenant 불일치) 활성 GS샵 계정 폴백.
+        from sqlalchemy import select as _select
+
+        from backend.domain.samba.account.credentials import gsshop_creds as _gsc
+        from backend.domain.samba.account.model import SambaMarketAccount as _SMA
+
+        _stmt = (
+            _select(_SMA)
+            .where(_SMA.market_type == "gsshop")
+            .where(_SMA.is_active.is_(True))
+            .order_by(_SMA.is_default.desc(), _SMA.updated_at.desc())
+        )
+        _acc = (await session.execute(_stmt)).scalars().first()
+        if _acc is not None:
+            creds = _gsc(_acc)
+    if not creds.get("supCd"):
+        setting = await _get_setting(session, "gsshop_credentials")
+        if isinstance(setting, dict) and setting.get("supCd"):
+            creds = setting
     return GsShopClient(
         sup_cd=creds.get("supCd", ""),
         aes_key=creds.get("aesKey", ""),
